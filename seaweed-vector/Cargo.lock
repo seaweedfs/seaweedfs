@@ -6472,6 +6472,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid",
  "weed-lance-worker",
 ]
 

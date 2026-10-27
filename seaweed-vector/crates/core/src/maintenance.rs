@@ -1,18 +1,30 @@
 //! Snapshot discipline under Lance maintenance: queries pin a dataset version,
 //! and version tags act as the lease maintenance must respect.
 
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
 use anyhow::Result;
 use lance::Dataset;
 use lance::dataset::refs::Ref;
+use uuid::Uuid;
 
 const QUERY_TAG_PREFIX: &str = "weed-vector-query-";
+/// A lease outliving this is treated as abandoned by a dead or cancelled
+/// request and reaped by the next [`pin`].
+const LEASE_TTL: Duration = Duration::from_secs(3600);
 
-/// The lease [`pin`] takes on a dataset version. Releasing is best-effort:
-/// dropping the lease deletes its tag on the current runtime so every exit
-/// path frees the version.
+/// A pinned dataset version. The lease tag is removed on drop; call
+/// [`Lease::release`] to await removal and observe failures.
 pub struct Lease {
     dataset: Dataset,
     tag: String,
+}
+
+impl Lease {
+    /// Remove the lease tag now instead of on drop.
+    pub async fn release(mut self) -> Result<()> {
+        release(&self.dataset, &std::mem::take(&mut self.tag)).await
+    }
 }
 
 impl Drop for Lease {
@@ -20,11 +32,13 @@ impl Drop for Lease {
         if self.tag.is_empty() {
             return;
         }
-        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
             let dataset = self.dataset.clone();
             let tag = std::mem::take(&mut self.tag);
-            runtime.spawn(async move {
-                let _ = release(&dataset, &tag).await;
+            handle.spawn(async move {
+                if let Err(err) = release(&dataset, &tag).await {
+                    tracing::warn!("releasing query lease {tag}: {err:#}");
+                }
             });
         }
     }
@@ -32,25 +46,43 @@ impl Drop for Lease {
 
 /// Lease-pin `dataset`'s current version with a tag so cleanup skips it.
 pub async fn pin(dataset: &Dataset) -> Result<Lease> {
-    let tag = format!(
-        "{QUERY_TAG_PREFIX}{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)?
-            .as_nanos()
-    );
+    reap_expired(dataset).await;
+    let nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let tag = format!("{QUERY_TAG_PREFIX}{nanos}-{}", Uuid::new_v4().simple());
     dataset
         .tags()
         .create(&tag, Ref::Version(None, Some(dataset.version().version)))
-        .await?;
+        .await
+        .map_err(anyhow::Error::msg)?;
     Ok(Lease {
         dataset: dataset.clone(),
         tag,
     })
 }
 
-/// Drop the lease tag `tag` on `dataset`.
-pub async fn release(dataset: &Dataset, tag: &str) -> Result<()> {
+async fn release(dataset: &Dataset, tag: &str) -> Result<()> {
     dataset.tags().delete(tag).await.map_err(anyhow::Error::msg)
+}
+
+/// Drop lease tags whose owner never released them, so an abandoned lease
+/// cannot keep a version out of cleanup forever.
+async fn reap_expired(dataset: &Dataset) {
+    let Ok(now) = SystemTime::now().duration_since(UNIX_EPOCH) else {
+        return;
+    };
+    let Ok(tags) = dataset.tags().list().await else {
+        return;
+    };
+    for name in tags.keys() {
+        let expired = name
+            .strip_prefix(QUERY_TAG_PREFIX)
+            .and_then(|rest| rest.split('-').next())
+            .and_then(|stamp| stamp.parse::<u128>().ok())
+            .is_some_and(|stamp| now.as_nanos().saturating_sub(stamp) > LEASE_TTL.as_nanos());
+        if expired {
+            let _ = dataset.tags().delete(name).await;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -111,8 +143,8 @@ mod tests {
         );
     }
 
-    /// A pinned version carrying a query tag is skipped by cleanup; dropping
-    /// the lease removes the tag and frees the version.
+    /// A pinned version carrying a query tag is skipped by cleanup; removing
+    /// the lease first lets cleanup delete it.
     #[tokio::test]
     async fn tagged_version_survives_cleanup() {
         let dir = TempDir::new().unwrap();
@@ -121,7 +153,6 @@ mod tests {
         let v1 = dataset.version().version;
         let before = pinned_hits(&dataset, v1, &[0.0, 0.0, 0.0, 1.0]).await;
         let lease = pin(&dataset).await.unwrap();
-        let tag = lease.tag.clone();
 
         testing::append_dataset(&mut dataset, &testing::vectors(4, 4), &["e", "f", "g", "h"]).await;
         let v2 = dataset.version().version;
@@ -149,15 +180,73 @@ mod tests {
             before
         );
 
-        // Lease dropped: the tag goes with it on the test runtime.
-        drop(lease);
-        for _ in 0..50 {
-            if dataset.tags().get(&tag).await.is_err() {
-                return;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        }
-        panic!("dropped lease left its tag behind");
+        // Lease released: the old version is now fair game.
+        lease.release().await.unwrap();
+        assert!(
+            dataset
+                .tags()
+                .list()
+                .await
+                .unwrap()
+                .keys()
+                .all(|t| !t.starts_with(QUERY_TAG_PREFIX))
+        );
+        cleanup_old_versions(
+            &dataset,
+            CleanupPolicy {
+                before_version: Some(v2),
+                delete_unverified: true,
+                error_if_tagged_old_versions: true,
+                clean_referenced_branches: false,
+                delete_rate_limit: None,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert!(dataset.checkout_version(v1).await.is_err());
+    }
+
+    /// Concurrent pins never collide on a tag name.
+    #[tokio::test]
+    async fn pins_get_distinct_tags() {
+        let dir = TempDir::new().unwrap();
+        let dataset =
+            testing::write_dataset(&dir, &testing::vectors(4, 4), &["a", "b", "c", "d"]).await;
+        let a = pin(&dataset).await.unwrap();
+        let b = pin(&dataset).await.unwrap();
+        assert_ne!(a.tag, b.tag);
+        assert_eq!(dataset.tags().list().await.unwrap().len(), 2);
+        a.release().await.unwrap();
+        b.release().await.unwrap();
+    }
+
+    /// A stale lease tag left behind is reaped by the next pin.
+    #[tokio::test]
+    async fn pin_reaps_abandoned_leases() {
+        let dir = TempDir::new().unwrap();
+        let dataset =
+            testing::write_dataset(&dir, &testing::vectors(4, 4), &["a", "b", "c", "d"]).await;
+        let stale = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+            - LEASE_TTL.as_nanos()
+            - 1;
+        dataset
+            .tags()
+            .create(
+                &format!("{QUERY_TAG_PREFIX}{stale}-deadbeef"),
+                Ref::Version(None, Some(dataset.version().version)),
+            )
+            .await
+            .unwrap();
+
+        let lease = pin(&dataset).await.unwrap();
+        let tags = dataset.tags().list().await.unwrap();
+        assert_eq!(tags.len(), 1);
+        assert!(tags.contains_key(&lease.tag));
+        lease.release().await.unwrap();
     }
 
     /// A data file deleted under a pinned query fails the request rather than
