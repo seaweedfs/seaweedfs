@@ -389,6 +389,12 @@ func (lock *LiveLock) attemptToLockWithin(lockDuration, attemptTimeout time.Dura
 		time.Sleep(time.Second)
 		return fmt.Errorf("%v", errorMessage)
 	}
+	if lock.renewToken == "" {
+		// A bare LockHostMovedTo redirect: nothing was acquired, so leave
+		// isLocked unset and keep the same ~1s cadence as other retries.
+		time.Sleep(time.Second)
+		return nil
+	}
 	if atomic.LoadInt32(&lock.isLocked) == 0 {
 		// Only log when transitioning from unlocked to locked
 		glog.V(1).Infof("LOCK: Successfully acquired key=%s owner=%s", lock.key, lock.self)
