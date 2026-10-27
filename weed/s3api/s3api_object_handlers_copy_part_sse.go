@@ -404,7 +404,7 @@ func (s3a *S3ApiServer) copyObjectPartViaReencryption(
 	applyDestChecksumHeaderToCopyRequest(cloned, uploadEntry)
 
 	filePath := s3a.genPartUploadPath(dstBucket, uploadID, partID)
-	tag, code, putSSE := s3a.putToFiler(cloned, filePath, srcReader, dstBucket, "", partID, 0, nil, false, s3a.toFilerPath(dstBucket, dstObject))
+	tag, code, putSSE := s3a.putToFiler(withMultipartPart(cloned), filePath, srcReader, dstBucket, "", partID, 0, nil, false, s3a.toFilerPath(dstBucket, dstObject))
 	if code != s3err.ErrNone {
 		return "", SSEResponseMetadata{}, code
 	}

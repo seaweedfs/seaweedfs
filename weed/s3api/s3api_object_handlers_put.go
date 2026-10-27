@@ -511,6 +511,21 @@ func (s3a *S3ApiServer) uploadChunkSize() int32 {
 	return sizeMB * 1024 * 1024
 }
 
+// multipartPartContextKey marks a putToFiler request as writing a staged
+// multipart part. Encryption for the upload is decided at
+// CreateMultipartUpload and replayed through request headers, so bucket
+// default encryption must not be re-evaluated for part writes.
+type multipartPartContextKey struct{}
+
+func withMultipartPart(r *http.Request) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), multipartPartContextKey{}, true))
+}
+
+func isMultipartPartRequest(r *http.Request) bool {
+	marked, _ := r.Context().Value(multipartPartContextKey{}).(bool)
+	return marked
+}
+
 // putToFiler writes one chunk of object bytes (a full PutObject body, a
 // single MPU part, a copy-part destination). lifecycleTTLSec is non-zero
 // only for top-level PutObject paths where the lifecycle XML's
@@ -590,12 +605,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 
 	// Apply bucket default encryption if no explicit encryption was provided
 	// This implements AWS S3 behavior where bucket default encryption automatically applies
-	// Multipart parts take their encryption from the decision snapshotted into the
-	// upload entry at CreateMultipartUpload (replayed above via request headers), so
-	// a PutBucketEncryption landing mid-upload must not split it into a mix of
-	// plaintext and ciphertext parts.
-	isMultipartPart := strings.HasPrefix(filePath, s3a.genUploadsFolder(bucket)+"/") && strings.HasSuffix(filePath, ".part")
-	if !isMultipartPart && !hasExplicitEncryption(customerKey, sseKMSKey, sseS3Key) {
+	if !isMultipartPartRequest(r) && !hasExplicitEncryption(customerKey, sseKMSKey, sseS3Key) {
 		glog.V(4).Infof("putToFiler: no explicit encryption detected, checking for bucket default encryption")
 
 		// Apply bucket default encryption and get the result
