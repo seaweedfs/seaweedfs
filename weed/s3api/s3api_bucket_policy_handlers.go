@@ -175,8 +175,12 @@ func (s3a *S3ApiServer) DeleteBucketPolicyHandler(w http.ResponseWriter, r *http
 
 	// Delete bucket policy
 	if err := s3a.deleteBucketPolicy(bucket); err != nil {
-		glog.Errorf("Failed to delete bucket policy for %s: %v", bucket, err)
-		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		if errors.Is(err, ErrBucketNotFound) {
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
+		} else {
+			glog.Errorf("Failed to delete bucket policy for %s: %v", bucket, err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		}
 		return
 	}
 
