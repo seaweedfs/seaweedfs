@@ -27,6 +27,10 @@ pub struct Query {
     pub postfilter: bool,
     pub distance: DistanceType,
     pub nprobes: Option<usize>,
+    /// Restrict the indexed scan to these physical index segments (the
+    /// Enterprise planner fans a query out across them). Unindexed fragments
+    /// are unaffected — they belong to no segment and are always covered.
+    pub index_segments: Option<Vec<uuid::Uuid>>,
 }
 
 /// One row of a top-K answer.
@@ -106,6 +110,11 @@ fn scanner(
     }
     if let Some(nprobes) = query.nprobes {
         scanner.nprobes(nprobes);
+    }
+    if let Some(segments) = &query.index_segments {
+        if use_index {
+            scanner.with_index_segments(segments.clone())?;
+        }
     }
     let mut columns = Vec::new();
     if let Some(key) = &table.key_column {
@@ -195,6 +204,7 @@ mod tests {
             postfilter: false,
             distance: DistanceType::L2,
             nprobes: None,
+            index_segments: None,
         };
         let hits = flat(&dataset, &table, &query).await.unwrap();
         assert_eq!(hits.len(), 2);
@@ -234,6 +244,7 @@ mod tests {
                 postfilter: false,
                 distance: DistanceType::L2,
                 nprobes: None,
+                index_segments: None,
             },
         )
         .await
@@ -311,6 +322,7 @@ mod tests {
                     postfilter: false,
                     distance: DistanceType::L2,
                     nprobes: None,
+                    index_segments: None,
                 },
             )
             .await
@@ -399,6 +411,7 @@ mod tests {
             postfilter: false,
             distance: DistanceType::L2,
             nprobes: None,
+            index_segments: None,
         };
         assert!(flat(&dataset, &table, &query).await.is_err());
     }
@@ -420,6 +433,7 @@ mod tests {
             postfilter: false,
             distance: DistanceType::L2,
             nprobes: None,
+            index_segments: None,
         };
         let indexed = ann(&dataset, &table, &query).await.unwrap();
         let exact = flat(&dataset, &table, &query).await.unwrap();

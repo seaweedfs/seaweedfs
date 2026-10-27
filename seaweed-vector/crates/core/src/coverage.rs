@@ -130,6 +130,7 @@ mod tests {
                 postfilter: false,
                 distance: DistanceType::L2,
                 nprobes: Some(4),
+                index_segments: None,
             },
         )
         .await
@@ -156,6 +157,7 @@ mod tests {
             postfilter: false,
             distance: DistanceType::L2,
             nprobes: Some(4),
+            index_segments: None,
         };
         let filtered = ann(&dataset, &table, &query).await.unwrap();
         let exact = flat(&dataset, &table, &query).await.unwrap();
@@ -191,6 +193,7 @@ mod tests {
                 postfilter: false,
                 distance: DistanceType::L2,
                 nprobes: None,
+                index_segments: None,
             },
         )
         .await

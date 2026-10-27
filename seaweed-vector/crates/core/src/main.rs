@@ -233,6 +233,7 @@ async fn main() -> Result<()> {
                 postfilter,
                 distance,
                 nprobes,
+                index_segments: None,
             };
             let hits = if flat {
                 query::flat(&dataset, &vector_table, &query).await?
