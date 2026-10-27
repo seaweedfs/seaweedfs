@@ -560,7 +560,7 @@ jobs:
                   print("cluster alias: hook waits on the renamed names and the chart's addresses")
 
           # Keys kept in a Secret are referenced, not inlined, so the hook
-          # must render valueFrom for non-string extraEnvironmentVars.
+          # must render valueFrom for map-valued extraEnvironmentVars.
           out = render(dict(jwt, **{
               "global.seaweedfs.extraEnvironmentVars.WEED_JWT_FILER_SIGNING_KEY.secretKeyRef.name": "signing-keys",
               "global.seaweedfs.extraEnvironmentVars.WEED_JWT_FILER_SIGNING_KEY.secretKeyRef.key": "filerWrite",
@@ -1222,6 +1222,43 @@ jobs:
                     file=sys.stderr)
               sys.exit(1)
           print("all-in-one env: shared key renders once, component value wins")
+          PYEOF
+
+          echo "=== Testing extraEnvironmentVars: numbers and booleans render as values ==="
+          # Only a string rendered as value; anything else went to valueFrom, so an
+          # unquoted 3306 or true in a values file (or --set) became "valueFrom: 3306"
+          # and the API server rejected the workload. A map still renders valueFrom,
+          # and a null still renders an empty variable. --set-json decodes numbers as
+          # float64, as values files do, which quote would print as 1e+06.
+          helm template test $CHART_DIR \
+            --set-json global.seaweedfs.extraEnvironmentVars.WEED_GLOBAL_INT=1000000 \
+            --set master.extraEnvironmentVars.WEED_MASTER_VOLUME_GROWTH_COPY_1=7 \
+            --set master.extraEnvironmentVars.WEED_EMPTY=null \
+            --set filer.extraEnvironmentVars.WEED_MYSQL_ENABLED=true \
+            --set filer.extraEnvironmentVars.WEED_MYSQL_PORT=3306 \
+            --set filer.extraEnvironmentVars.WEED_REF.secretKeyRef.name=s \
+            --set filer.extraEnvironmentVars.WEED_REF.secretKeyRef.key=k > /tmp/env-scalars.yaml
+          python3 - /tmp/env-scalars.yaml <<'PYEOF'
+          import sys, yaml
+          docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
+          def env(suffix):
+              sts = next(d for d in docs if d.get("kind") == "StatefulSet"
+                         and d["metadata"]["name"].endswith(suffix))
+              return {e["name"]: e for e in sts["spec"]["template"]["spec"]["containers"][0]["env"]}
+          master, filer = env("-master"), env("-filer")
+          want = [(master, "WEED_MASTER_VOLUME_GROWTH_COPY_1", "7"), (master, "WEED_GLOBAL_INT", "1000000"),
+                  (filer, "WEED_MYSQL_ENABLED", "true"), (filer, "WEED_MYSQL_PORT", "3306"),
+                  (filer, "WEED_GLOBAL_INT", "1000000")]
+          failed = [f"{name}: {e.get(name)}" for e, name, value in want
+                    if e.get(name) != {"name": name, "value": value}]
+          if master.get("WEED_EMPTY") != {"name": "WEED_EMPTY"}:
+              failed.append(f"WEED_EMPTY: {master.get('WEED_EMPTY')}")
+          if filer.get("WEED_REF", {}).get("valueFrom") != {"secretKeyRef": {"name": "s", "key": "k"}}:
+              failed.append(f"WEED_REF: {filer.get('WEED_REF')}")
+          if failed:
+              print("FAIL: extraEnvironmentVars rendered wrong:", *failed, sep="\n  ", file=sys.stderr)
+              sys.exit(1)
+          print("extraEnvironmentVars: numbers and booleans render as values, a map as valueFrom, a null as empty")
           PYEOF
 
           echo "=== Testing bucket versioning: YAML bool false suspends like string \"false\" ==="

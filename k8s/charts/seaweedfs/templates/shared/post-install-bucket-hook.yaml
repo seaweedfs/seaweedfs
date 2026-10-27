@@ -124,9 +124,11 @@ spec:
           - name: {{ $key }}
           {{- if kindIs "string" $value }}
             value: {{ tpl $value $ | quote }}
-          {{- else }}
+          {{- else if kindIs "map" $value }}
             valueFrom:
               {{ toYaml $value | nindent 14 | trim }}
+          {{- else if not (kindIs "invalid" $value) }}
+            value: {{ toJson $value | quote }}
           {{- end }}
           {{- end }}
           {{- end }}
