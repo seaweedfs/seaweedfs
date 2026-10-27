@@ -26,6 +26,27 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// Which side holds an entry's content, and the two processors that keep the
+// remote in step with it.
+//
+// An entry with local data (chunks or inline content) is authoritative: the
+// update uploads it. A chunkless entry stamped with a RemoteEntry is
+// remote-only: its content is the remote object its stamp describes, so the
+// chunkless entry is never uploaded, since it would write zero bytes over
+// the only copy, and the object goes only while the stamp still describes it
+// (remote_storage.StillCurrent). While the entry carries a
+// filer.ExtRemoteRenameSourceKey marker the content is the object at the
+// renamed-from path, until the rename's copy or upload restamps the entry
+// and clears it. A dropped local copy (remote.uncache, eviction,
+// remote.meta.sync) keeps the remote object's size; a size that moved off
+// the stamp (a truncate) is new content and uploads.
+//
+// processUpdateEvent serves filer remote.sync over one mounted directory;
+// makeBucketedEventProcessor in filer_remote_gateway_buckets.go serves filer
+// remote.gateway over the bucketed space. They implement the same protocol
+// and must change together: a guard added to one and not the other is how
+// the zero-byte re-upload on remote.uncache happened.
+
 func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *source.FilerSource, mountedDir string) error {
 
 	// read filer remote storage mount mappings

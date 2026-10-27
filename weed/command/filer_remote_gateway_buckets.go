@@ -73,6 +73,10 @@ func (option *RemoteGatewayOptions) followBucketUpdatesAndUploadToRemote(filerSo
 	return pb.FollowMetadata(pb.ServerAddress(*option.filerAddress), option.grpcDialOption, metadataFollowOption, processEventFnWithOffset)
 }
 
+// makeBucketedEventProcessor is the gateway half of the sync protocol
+// documented atop filer_remote_sync_dir.go: the same source-of-truth rules
+// applied per bucket, with each entry's object resolved through its own
+// bucket's mount. Guards added to processUpdateEvent belong here too.
 func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *source.FilerSource) (pb.ProcessMetadataFunc, error) {
 
 	handleCreateBucket := func(entry *filer_pb.Entry) error {
