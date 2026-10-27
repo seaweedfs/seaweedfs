@@ -985,19 +985,18 @@ func filterExpr(filter map[string]interface{}) (string, error) {
 }
 
 // fieldAccess renders the operand's comparison column over the serialized
-// json_extract text. Strings compare the serialized form directly, which is
-// exact-typed and never errors; numbers and booleans go through TRY_CAST,
-// which is NULL on any other stored type. The json_get_* extractors are not
-// used — they convert numeric-looking strings and booleans, and error on
-// mismatched types.
+// json_extract text. Strings and booleans compare the serialized form
+// directly, which is exact-typed and never errors — booleans serialize as
+// exactly 'true'/'false', and a cast would also accept the '1'/'0' a stored
+// number produces. Numbers go through TRY_CAST, which is NULL on any other
+// stored type. The json_get_* extractors are not used — they convert
+// numeric-looking strings and booleans, and error on mismatched types.
 func fieldAccess(field string, operand interface{}) (string, error) {
 	path := sqlEscape(existsPath(field))
 	switch operand.(type) {
 	case float64:
 		return fmt.Sprintf("TRY_CAST(json_extract(`metadata`, '%s') AS DOUBLE)", path), nil
-	case bool:
-		return fmt.Sprintf("TRY_CAST(json_extract(`metadata`, '%s') AS BOOLEAN)", path), nil
-	case string:
+	case bool, string:
 		return fmt.Sprintf("json_extract(`metadata`, '%s')", path), nil
 	default:
 		return "", fmt.Errorf("unsupported filter operand %v", operand)
@@ -1153,9 +1152,9 @@ func sqlLiteral(v interface{}) (string, error) {
 		return "'" + sqlEscape(jsonbString(t)) + "'", nil
 	case bool:
 		if t {
-			return "true", nil
+			return "'true'", nil
 		}
-		return "false", nil
+		return "'false'", nil
 	case float64:
 		return fmt.Sprintf("%v", t), nil
 	}

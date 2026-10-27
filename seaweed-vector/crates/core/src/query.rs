@@ -254,6 +254,8 @@ mod tests {
             r#"{"x": 1}"#,      // k4: missing key
             r#"{"k": [1, 2]}"#, // k5: array
             r#"{"k": null}"#,   // k6: null
+            r#"{"k": 1}"#,      // k7: serializes to '1', castable to boolean
+            r#"{"k": 0}"#,      // k8: serializes to '0', castable to boolean
         ];
         let schema = Arc::new(Schema::new(vec![
             Field::new("key", DataType::Utf8, false),
@@ -338,10 +340,12 @@ mod tests {
         .await;
         assert_eq!(keys_of(hits), ["k0"]);
 
+        // Booleans compare the serialized form as well: '1' and '0' would
+        // satisfy a cast but not the text match.
         let hits = run(
             &dataset,
             &table,
-            "TRY_CAST(json_extract(`metadata`, '$[\"k\"]') AS BOOLEAN) = true",
+            "json_extract(`metadata`, '$[\"k\"]') = 'true'",
         )
         .await;
         assert_eq!(keys_of(hits), ["k2"]);
@@ -362,7 +366,10 @@ mod tests {
             "NOT COALESCE(json_extract(`metadata`, '$[\"k\"]') = '\"3\"', false)",
         )
         .await;
-        assert_eq!(keys_of(hits), ["k0", "k2", "k3", "k4", "k5", "k6"]);
+        assert_eq!(
+            keys_of(hits),
+            ["k0", "k2", "k3", "k4", "k5", "k6", "k7", "k8"]
+        );
     }
 
     #[tokio::test]
