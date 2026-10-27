@@ -75,6 +75,19 @@ func (l *fhLockOwners) pop(fh uint64) map[uint64]struct{} {
 	return owners
 }
 
+func (l *fhLockOwners) remove(fh, owner uint64) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	owners := l.m[fh]
+	if owners == nil {
+		return
+	}
+	delete(owners, owner)
+	if len(owners) == 0 {
+		delete(l.m, fh)
+	}
+}
+
 // PosixLockTable is the per-mount POSIX lock manager.
 type PosixLockTable struct {
 	mu     sync.Mutex

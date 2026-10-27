@@ -78,3 +78,13 @@ func (wfs *WFS) noteFhLockOwner(in *fuse.LkIn, status fuse.Status) {
 	}
 	wfs.fhLocks.add(in.Fh, in.Owner)
 }
+
+// forgetLockOwner drops a lock owner from every recorded open of the inode.
+// Flush already releases the owner's process-wide locks, so keeping the
+// record would let a later Release of an unrelated open drop locks the
+// process acquired in between.
+func (wfs *WFS) forgetLockOwner(inode, owner uint64) {
+	for _, openFh := range wfs.fhMap.openFhIds(inode) {
+		wfs.fhLocks.remove(uint64(openFh), owner)
+	}
+}
