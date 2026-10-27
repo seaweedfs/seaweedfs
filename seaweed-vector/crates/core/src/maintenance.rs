@@ -63,11 +63,18 @@ pub async fn pin(dataset: &Dataset) -> Result<Lease> {
     let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
     reap_expired(dataset, now).await;
     let tag = format!("{QUERY_TAG_PREFIX}{now}-{}", Uuid::new_v4().simple());
+    let version = dataset.version().version;
     dataset
         .tags()
-        .create(&tag, Ref::Version(None, Some(dataset.version().version)))
+        .create(&tag, Ref::Version(None, Some(version)))
         .await
         .map_err(anyhow::Error::msg)?;
+    // A cleanup that listed tags before this create can still reclaim the
+    // version; fail the read now rather than mid-query.
+    if dataset.checkout_version(version).await.is_err() {
+        let _ = dataset.tags().delete(&tag).await;
+        anyhow::bail!("dataset version {version} was removed before it could be leased");
+    }
     if let Ok(mut live) = LIVE_TAGS.lock() {
         live.insert(tag.clone());
     }
@@ -344,6 +351,44 @@ mod tests {
         assert!(dataset.tags().list().await.unwrap().contains_key(&tag));
         first.release().await.unwrap();
         second.release().await.unwrap();
+    }
+
+    /// A version reclaimed before its lease lands fails the pin instead of
+    /// dying mid-query, and leaves no lease tag behind.
+    #[tokio::test]
+    async fn pin_fails_when_version_already_reclaimed() {
+        let dir = TempDir::new().unwrap();
+        let mut dataset =
+            testing::write_dataset(&dir, &testing::vectors(4, 4), &["a", "b", "c", "d"]).await;
+        let v1 = dataset.version().version;
+        let old = dataset.checkout_version(v1).await.unwrap();
+        testing::append_dataset(&mut dataset, &testing::vectors(4, 4), &["e", "f", "g", "h"]).await;
+        let v2 = dataset.version().version;
+        cleanup_old_versions(
+            &dataset,
+            CleanupPolicy {
+                before_version: Some(v2),
+                delete_unverified: true,
+                error_if_tagged_old_versions: false,
+                clean_referenced_branches: false,
+                delete_rate_limit: None,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert!(dataset.checkout_version(v1).await.is_err());
+
+        assert!(pin(&old).await.is_err());
+        assert!(
+            dataset
+                .tags()
+                .list()
+                .await
+                .unwrap()
+                .keys()
+                .all(|t| !t.starts_with(QUERY_TAG_PREFIX))
+        );
     }
 
     /// A data file deleted under a pinned query fails the request rather than
