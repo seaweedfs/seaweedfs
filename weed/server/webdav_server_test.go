@@ -72,16 +72,25 @@ func (f *noVolumeFiler) LookupVolume(_ context.Context, _ *filer_pb.LookupVolume
 
 type createRecordingFiler struct {
 	filer_pb.UnimplementedSeaweedFilerServer
-	req  *filer_pb.CreateEntryRequest
-	dirs map[string]bool // folders that exist, by full path
+	req    *filer_pb.CreateEntryRequest
+	delReq *filer_pb.DeleteEntryRequest
+	dirs   map[string]bool // folders that exist, by full path
+	files  map[string]bool // files that exist, by full path
 }
 
 func (f *createRecordingFiler) LookupDirectoryEntry(_ context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
-	if f.dirs[string(util.NewFullPath(req.Directory, req.Name))] {
+	p := string(util.NewFullPath(req.Directory, req.Name))
+	if f.dirs[p] {
 		return &filer_pb.LookupDirectoryEntryResponse{Entry: &filer_pb.Entry{
 			Name:        req.Name,
 			IsDirectory: true,
 			Attributes:  &filer_pb.FuseAttributes{FileMode: uint32(os.ModeDir | 0755)},
+		}}, nil
+	}
+	if f.files[p] {
+		return &filer_pb.LookupDirectoryEntryResponse{Entry: &filer_pb.Entry{
+			Name:       req.Name,
+			Attributes: &filer_pb.FuseAttributes{FileMode: 0644},
 		}}, nil
 	}
 	return nil, filer_pb.ErrNotFound
@@ -90,6 +99,11 @@ func (f *createRecordingFiler) LookupDirectoryEntry(_ context.Context, req *file
 func (f *createRecordingFiler) CreateEntry(_ context.Context, req *filer_pb.CreateEntryRequest) (*filer_pb.CreateEntryResponse, error) {
 	f.req = req
 	return &filer_pb.CreateEntryResponse{}, nil
+}
+
+func (f *createRecordingFiler) DeleteEntry(_ context.Context, req *filer_pb.DeleteEntryRequest) (*filer_pb.DeleteEntryResponse, error) {
+	f.delReq = req
+	return &filer_pb.DeleteEntryResponse{}, nil
 }
 
 type deleteRecordingFiler struct {
@@ -203,6 +217,22 @@ func TestWebDavFileSystem_MissingParent(t *testing.T) {
 	assert.Nil(t, filer.req)
 
 	assert.NoError(t, fs.Mkdir(context.Background(), "/top/", 0755), "a folder at the root needs no parent")
+}
+
+// A PUT overwrite checks the parent before deleting the file it replaces:
+// a failed check must leave the old file in place.
+func TestWebDavFileSystem_OverwriteKeepsTargetOnParentFailure(t *testing.T) {
+	filer := &createRecordingFiler{files: map[string]bool{"/missing/f.txt": true}}
+	filerAddr := startFakeWebDavFiler(t, filer)
+	fs := &WebDavFileSystem{option: &WebDavOption{
+		Filer:          filerAddr,
+		GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+	}}
+
+	_, err := fs.OpenFile(context.Background(), "/missing/f.txt", os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+	assert.ErrorIs(t, err, os.ErrNotExist)
+	assert.Nil(t, filer.delReq)
+	assert.Nil(t, filer.req)
 }
 
 // DELETE, and MOVE or COPY with Overwrite: T, remove a collection through RemoveAll, which must take its contents too.

@@ -312,6 +312,10 @@ func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, f
 		if strings.HasSuffix(fullFilePath, "/") {
 			return nil, os.ErrInvalid
 		}
+		dir, name := util.FullPath(fullFilePath).DirAndName()
+		if err := fs.checkParentDir(ctx, dir); err != nil {
+			return nil, err
+		}
 		fi, err := fs.stat(ctx, fullFilePath)
 		if err == nil {
 			if flag&os.O_EXCL != 0 || fi.IsDir() {
@@ -322,10 +326,6 @@ func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, f
 			return nil, err
 		}
 
-		dir, name := util.FullPath(fullFilePath).DirAndName()
-		if err := fs.checkParentDir(ctx, dir); err != nil {
-			return nil, err
-		}
 		err = fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 			if err := filer_pb.CreateEntry(context.Background(), client, &filer_pb.CreateEntryRequest{
 				Directory: dir,
