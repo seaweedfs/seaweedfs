@@ -454,6 +454,7 @@ func (s3opt *S3Options) startS3Server() bool {
 			localSocket = fmt.Sprintf("/tmp/seaweedfs-s3-%d.sock", *s3opt.port)
 		}
 		if s3SocketListener := pb.ListenOnLocalSocket(localSocket); s3SocketListener != nil {
+			s3SocketListener = &util.Listener{Listener: s3SocketListener, Timeout: idleTimeoutSeconds(s3opt.idleTimeout)}
 			socketServer := newHttpServer(router, nil)
 			httpServers = append(httpServers, socketServer)
 			go func() {

@@ -193,6 +193,7 @@ func (sftpOpt *SftpOptions) startSftpServer() bool {
 			localSocket = fmt.Sprintf("/tmp/seaweedfs-sftp-%d.sock", *sftpOpt.port)
 		}
 		if sftpSocketListener := pb.ListenOnLocalSocket(localSocket); sftpSocketListener != nil {
+			sftpSocketListener = &util.Listener{Listener: sftpSocketListener, Timeout: idleTimeout}
 			go func() {
 				// start on local unix socket
 				if err := service.Serve(sftpSocketListener); err != nil {

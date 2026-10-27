@@ -549,6 +549,7 @@ func (fo *FilerOptions) startFiler() {
 			localSocket = fmt.Sprintf("/tmp/seaweedfs-filer-%d.sock", *fo.port)
 		}
 		if filerSocketListener := pb.ListenOnLocalSocket(localSocket); filerSocketListener != nil {
+			filerSocketListener = &util.Listener{Listener: filerSocketListener, Timeout: idleTimeout}
 			socketServer := newHttpServer(defaultHandler, nil)
 			httpServers = append(httpServers, socketServer)
 			go socketServer.Serve(filerSocketListener)
