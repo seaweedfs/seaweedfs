@@ -73,6 +73,28 @@ func TestBucketSubresourceWritesOnMissingBucket(t *testing.T) {
 			t.Fatalf("missing bucket policy delete: %d %s, want 404 NoSuchBucket", code, body)
 		}
 	})
+
+	t.Run("get bucket encryption", func(t *testing.T) {
+		code, body := writeSubresource(t, &fakeLookupFiler{}, http.MethodGet, bucket, "",
+			func(s3a *S3ApiServer) http.HandlerFunc { return s3a.GetBucketEncryptionHandler })
+		if code != http.StatusNotFound || !strings.Contains(body, "NoSuchBucket") {
+			t.Fatalf("missing bucket encryption get: %d %s, want 404 NoSuchBucket", code, body)
+		}
+	})
+}
+
+// On a live bucket with no encryption configured the answer stays
+// ServerSideEncryptionConfigurationNotFoundError: the existence check must
+// only rewrite the missing-bucket case.
+func TestGetBucketEncryptionOnLiveBucketWithoutConfig(t *testing.T) {
+	const bucket = "unencrypted-bucket"
+	code, body := writeSubresource(t, &fakeLookupFiler{
+		entry: &filer_pb.Entry{Name: bucket, IsDirectory: true},
+	}, http.MethodGet, bucket, "",
+		func(s3a *S3ApiServer) http.HandlerFunc { return s3a.GetBucketEncryptionHandler })
+	if code != http.StatusNotFound || !strings.Contains(body, "ServerSideEncryptionConfigurationNotFoundError") {
+		t.Fatalf("live bucket encryption get: %d %s, want 404 ServerSideEncryptionConfigurationNotFoundError", code, body)
+	}
 }
 
 // A bucket deleted between the existence check and the write itself still
