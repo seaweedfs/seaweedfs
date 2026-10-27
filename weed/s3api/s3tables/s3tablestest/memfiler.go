@@ -34,6 +34,9 @@ type MemFiler struct {
 	// BeforeUpdate runs once, at the start of the next UpdateEntry, so a test
 	// can land a competing write in a handler's read-to-write window.
 	BeforeUpdate func()
+	// BeforeDelete runs once before the next DeleteEntry, so a test can land a
+	// competing write in a handler's check-to-delete window.
+	BeforeDelete func()
 	// RejectDelete returns the reason DeleteEntry refuses a path, answered the
 	// way the filer answers one: no transport error, the reason in the response.
 	RejectDelete func(dir, name string) string
@@ -170,6 +173,10 @@ func (f *MemFiler) UpdateEntry(_ context.Context, req *filer_pb.UpdateEntryReque
 }
 
 func (f *MemFiler) DeleteEntry(_ context.Context, req *filer_pb.DeleteEntryRequest) (*filer_pb.DeleteEntryResponse, error) {
+	if hook := f.BeforeDelete; hook != nil {
+		f.BeforeDelete = nil
+		hook()
+	}
 	if reject := f.RejectDelete; reject != nil {
 		if reason := reject(req.Directory, req.Name); reason != "" {
 			return &filer_pb.DeleteEntryResponse{Error: reason}, nil
@@ -177,6 +184,19 @@ func (f *MemFiler) DeleteEntry(_ context.Context, req *filer_pb.DeleteEntryReque
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	// The real filer evaluates ExpectedExtended under the path lock and refuses
+	// the delete when the entry no longer matches what the caller captured.
+	for key, expected := range req.ExpectedExtended {
+		var actual []byte
+		if d, ok := f.entries[req.Directory]; ok {
+			if existing := d[req.Name]; existing != nil {
+				actual = existing.Extended[key]
+			}
+		}
+		if !bytes.Equal(actual, expected) {
+			return nil, status.Errorf(codes.FailedPrecondition, "extended attribute %q changed", key)
+		}
+	}
 	if d, ok := f.entries[req.Directory]; ok {
 		delete(d, req.Name)
 	}

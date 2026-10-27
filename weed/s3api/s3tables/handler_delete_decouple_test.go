@@ -3,6 +3,7 @@ package s3tables
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"path"
 	"testing"
 
@@ -19,6 +20,86 @@ func runDeleteTable(t *testing.T, m *Manager, fs *s3tablestest.MemFiler, namespa
 		Namespace:      []string{namespace},
 		Name:           name,
 	}, nil, "")
+}
+
+// A write that lands between the delete's read and its conditional commit —
+// an xattr update keeps mtime — must turn a token delete into a conflict, not
+// get erased by it.
+func TestDeleteTableTokenDeleteLosesToConcurrentUpdate(t *testing.T) {
+	fs, m := startRenameManager(t)
+
+	token := "tok-ct"
+	meta, _ := json.Marshal(tableMetadataInternal{
+		Name:           "ct",
+		Namespace:      "ns",
+		Format:         "ICEBERG",
+		OwnerAccountID: DefaultAccountID,
+		VersionToken:   token,
+	})
+	fs.Put(GetNamespacePath(renameTestBucket, "ns"), "ct", map[string][]byte{
+		ExtendedKeyMetadata: meta,
+	})
+	tablePath := GetTablePath(renameTestBucket, "ns", "ct")
+	fs.Put(tablePath, "data", nil)
+
+	fs.BeforeDelete = func() {
+		fs.Put(GetNamespacePath(renameTestBucket, "ns"), "ct", map[string][]byte{
+			ExtendedKeyMetadata: meta,
+			ExtendedKeyTags:     []byte(`{"k":"v"}`),
+		})
+	}
+
+	status, resp := runHandler(t, m, fs.Client, "DeleteTable", &DeleteTableRequest{
+		TableBucketARN: mustBucketARN(t),
+		Namespace:      []string{"ns"},
+		Name:           "ct",
+		VersionToken:   token,
+	})
+	assert.Equal(t, http.StatusConflict, status)
+	assert.Equal(t, ErrCodeConflict, resp.Type)
+
+	assert.NotNil(t, fs.Get(GetNamespacePath(renameTestBucket, "ns"), "ct"), "the updated record must survive")
+	assert.NotNil(t, fs.Get(tablePath, "data"), "the table's data must survive")
+}
+
+// A create that checked the name while it was free must not write over a
+// delete's restore: the claim loses instead of layering new metadata over the
+// old tags, policy, and maintenance settings.
+func TestCreateTableLosesToRestoredMarkers(t *testing.T) {
+	fs, m := startRenameManager(t)
+
+	nsPath := GetNamespacePath(renameTestBucket, "ns")
+	fs.Put(nsPath, "newt", nil)
+
+	oldMeta, _ := json.Marshal(tableMetadataInternal{
+		Name:           "newt",
+		Namespace:      "ns",
+		Format:         "ICEBERG",
+		OwnerAccountID: DefaultAccountID,
+	})
+	restored := map[string][]byte{
+		ExtendedKeyMetadata:    oldMeta,
+		ExtendedKeyEntryType:   []byte(EntryTypeTable),
+		ExtendedKeyTags:        []byte(`{"old":"tag"}`),
+		ExtendedKeyMaintenance: []byte(`{"old":"maintenance"}`),
+	}
+	fs.BeforeUpdate = func() {
+		fs.Put(nsPath, "newt", restored)
+	}
+
+	status, resp := runHandler(t, m, fs.Client, "CreateTable", &CreateTableRequest{
+		TableBucketARN: mustBucketARN(t),
+		Namespace:      []string{"ns"},
+		Name:           "newt",
+		Format:         FormatIceberg,
+	})
+	assert.Equal(t, http.StatusConflict, status)
+	assert.Equal(t, ErrCodeTableAlreadyExists, resp.Type)
+
+	got := fs.Get(nsPath, "newt")
+	require.NotNil(t, got)
+	assert.Equal(t, restored[ExtendedKeyTags], got.Extended[ExtendedKeyTags], "restored markers must not be overwritten")
+	assert.Equal(t, restored[ExtendedKeyMetadata], got.Extended[ExtendedKeyMetadata])
 }
 
 // A table whose data was decoupled from its name (created over a leftover from a
