@@ -435,11 +435,12 @@ func (lock *LiveLock) doLock(lockDuration, attemptTimeout time.Duration) (errorM
 	previousHostFiler := lock.hostFiler
 	previousOwner := lock.owner
 
-	err = pb.WithFilerClient(false, 0, lock.hostFiler, lock.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-		// Bound the attempt so an unreachable owner fails within the retry
-		// window.
-		ctx, cancel := context.WithTimeout(context.Background(), attemptTimeout)
-		defer cancel()
+	// Bound the whole attempt — connection acquisition included — so an
+	// unreachable owner fails within the retry window.
+	ctx, cancel := context.WithTimeout(context.Background(), attemptTimeout)
+	defer cancel()
+	err = pb.WithGrpcClient(ctx, false, 0, func(grpcConnection *grpc.ClientConn) error {
+		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 		resp, err := client.DistributedLock(ctx, &filer_pb.LockRequest{
 			Name:          lock.key,
 			SecondsToLock: int64(lockDuration.Seconds()),
@@ -484,7 +485,7 @@ func (lock *LiveLock) doLock(lockDuration, attemptTimeout time.Duration) (errorM
 			}
 		}
 		return err
-	})
+	}, lock.hostFiler.ToGrpcAddress(), false, lock.grpcDialOption)
 
 	if err != nil && !lock.hostFiler.Equals(lock.lc.seedFiler) {
 		lock.consecutiveFailures++

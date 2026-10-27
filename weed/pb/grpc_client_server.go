@@ -272,7 +272,7 @@ func GrpcDial(ctx context.Context, address string, waitForReady bool, opts ...gr
 	return grpc.DialContext(ctx, address, options...)
 }
 
-func getOrCreateConnection(address string, waitForReady bool, opts ...grpc.DialOption) (*versionedGrpcClient, error) {
+func getOrCreateConnection(ctx context.Context, address string, waitForReady bool, opts ...grpc.DialOption) (*versionedGrpcClient, error) {
 
 	grpcClientsLock.Lock()
 	defer grpcClientsLock.Unlock()
@@ -284,7 +284,6 @@ func getOrCreateConnection(address string, waitForReady bool, opts ...grpc.DialO
 	}
 
 	glog.V(2).Infof("Creating new gRPC connection to %s", address)
-	ctx := context.Background()
 	grpcConnection, err := GrpcDial(ctx, address, waitForReady, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("fail to dial %s: %v", address, err)
@@ -468,15 +467,16 @@ func shouldInvalidateConnection(ctx context.Context, err error) bool {
 }
 
 // WithGrpcClient In streamingMode, always use a fresh connection. Otherwise, try to reuse an existing connection.
-// ctx must be the context that bounds the RPC fn issues, so that a
-// Canceled/DeadlineExceeded fired by ctx itself does not tear down the shared
-// cached ClientConn out from under other concurrent callers. Pass
-// context.Background() when fn picks its own context: a Canceled/DeadlineExceeded
-// then never invalidates, since nothing here can attribute it to the channel.
+// ctx must be the context that bounds this call's connection acquisition and
+// the RPC fn issues, so that a Canceled/DeadlineExceeded fired by ctx itself
+// does not tear down the shared cached ClientConn out from under other
+// concurrent callers. Pass context.Background() when fn picks its own
+// context: a Canceled/DeadlineExceeded then never invalidates, since nothing
+// here can attribute it to the channel.
 func WithGrpcClient(ctx context.Context, streamingMode bool, signature int32, fn func(*grpc.ClientConn) error, address string, waitForReady bool, opts ...grpc.DialOption) error {
 
 	if !streamingMode {
-		vgc, err := getOrCreateConnection(address, waitForReady, opts...)
+		vgc, err := getOrCreateConnection(ctx, address, waitForReady, opts...)
 		if err != nil {
 			return fmt.Errorf("getOrCreateConnection %s: %v", address, err)
 		}
@@ -498,7 +498,7 @@ func WithGrpcClient(ctx context.Context, streamingMode bool, signature int32, fn
 	}
 
 	// Streaming mode: dedicate a fresh ClientConn to this call.
-	dialCtx := context.Background()
+	dialCtx := ctx
 	if signature != 0 {
 		// Optimize: Use AppendToOutgoingContext instead of creating new map
 		dialCtx = metadata.AppendToOutgoingContext(dialCtx, "sw-client-id", fmt.Sprintf("%d", signature))
