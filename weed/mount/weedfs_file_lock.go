@@ -26,36 +26,55 @@ func (wfs *WFS) GetLk(cancel <-chan struct{}, in *fuse.LkIn, out *fuse.LkOut) fu
 // SetLk sets or clears a POSIX lock (non-blocking).
 // Returns EAGAIN if the lock conflicts with an existing lock from another owner.
 func (wfs *WFS) SetLk(cancel <-chan struct{}, in *fuse.LkIn) fuse.Status {
+	var status fuse.Status
 	if wfs.crossMountLocks() {
-		return wfs.routedSetLk(cancel, in)
+		status = wfs.routedSetLk(cancel, in)
+	} else {
+		lk := lockRange{
+			Start:   in.Lk.Start,
+			End:     in.Lk.End,
+			Typ:     in.Lk.Typ,
+			Owner:   in.Owner,
+			Pid:     in.Lk.Pid,
+			IsFlock: in.LkFlags&fuse.FUSE_LK_FLOCK != 0,
+		}
+		status = wfs.posixLocks.SetLk(in.NodeId, lk)
 	}
-	lk := lockRange{
-		Start:   in.Lk.Start,
-		End:     in.Lk.End,
-		Typ:     in.Lk.Typ,
-		Owner:   in.Owner,
-		Pid:     in.Lk.Pid,
-		IsFlock: in.LkFlags&fuse.FUSE_LK_FLOCK != 0,
-	}
-	return wfs.posixLocks.SetLk(in.NodeId, lk)
+	wfs.noteFhLockOwner(in, status)
+	return status
 }
 
 // SetLkw sets a POSIX lock (blocking).
 // Waits until the lock can be acquired or the request is cancelled.
 func (wfs *WFS) SetLkw(cancel <-chan struct{}, in *fuse.LkIn) fuse.Status {
+	var status fuse.Status
 	if wfs.crossMountLocks() {
-		return wfs.routedSetLkw(cancel, in)
+		status = wfs.routedSetLkw(cancel, in)
+	} else {
+		lk := lockRange{
+			Start:   in.Lk.Start,
+			End:     in.Lk.End,
+			Typ:     in.Lk.Typ,
+			Owner:   in.Owner,
+			Pid:     in.Lk.Pid,
+			IsFlock: in.LkFlags&fuse.FUSE_LK_FLOCK != 0,
+		}
+		if lk.Typ == f_UNLCK {
+			status = wfs.posixLocks.SetLk(in.NodeId, lk)
+		} else {
+			status = wfs.posixLocks.SetLkw(in.NodeId, lk, cancel)
+		}
 	}
-	lk := lockRange{
-		Start:   in.Lk.Start,
-		End:     in.Lk.End,
-		Typ:     in.Lk.Typ,
-		Owner:   in.Owner,
-		Pid:     in.Lk.Pid,
-		IsFlock: in.LkFlags&fuse.FUSE_LK_FLOCK != 0,
+	wfs.noteFhLockOwner(in, status)
+	return status
+}
+
+// noteFhLockOwner remembers a granted non-flock lock owner under the handle it
+// was taken on, so Release can drain every lock the file description held —
+// the kernel sends no cleanup notice for OFD locks.
+func (wfs *WFS) noteFhLockOwner(in *fuse.LkIn, status fuse.Status) {
+	if status != fuse.OK || in.Lk.Typ == f_UNLCK || in.LkFlags&fuse.FUSE_LK_FLOCK != 0 {
+		return
 	}
-	if lk.Typ == f_UNLCK {
-		return wfs.posixLocks.SetLk(in.NodeId, lk)
-	}
-	return wfs.posixLocks.SetLkw(in.NodeId, lk, cancel)
+	wfs.fhLocks.add(in.Fh, in.Owner)
 }

@@ -41,6 +41,39 @@ type lockWaiter struct {
 	wakeRefHeld bool
 }
 
+// fhLockOwners maps each open file handle to the non-flock lock owners that
+// acquired locks through it. The kernel scopes POSIX fcntl locks to the
+// process — released on FLUSH by LockOwner — while OFD fcntl locks are scoped
+// to the open file description and get no cleanup notice: RELEASE carries a
+// lock_owner only for flock holders. Tracking owners per handle lets Release
+// drop every lock the file description held.
+type fhLockOwners struct {
+	mu sync.Mutex
+	m  map[uint64]map[uint64]struct{}
+}
+
+func (l *fhLockOwners) add(fh, owner uint64) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.m == nil {
+		l.m = make(map[uint64]map[uint64]struct{})
+	}
+	owners := l.m[fh]
+	if owners == nil {
+		owners = make(map[uint64]struct{})
+		l.m[fh] = owners
+	}
+	owners[owner] = struct{}{}
+}
+
+func (l *fhLockOwners) pop(fh uint64) map[uint64]struct{} {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	owners := l.m[fh]
+	delete(l.m, fh)
+	return owners
+}
+
 // PosixLockTable is the per-mount POSIX lock manager.
 type PosixLockTable struct {
 	mu     sync.Mutex
