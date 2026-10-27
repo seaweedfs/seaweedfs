@@ -132,8 +132,12 @@ func TestNewFileWriterChecksTargetFile(t *testing.T) {
 	}
 	delete(filer.entries, "/home/alice/nested")
 	delete(filer.entries, "/home/alice/nested/ok.f")
-	if err := write("/gone/deeper.txt"); err != nil {
+	if err := fs.checkFilePermission("/home/alice/gone/deeper.txt", "write"); err != nil {
 		t.Errorf("expected write when ancestors resolve to the writable dir, got %v", err)
+	}
+	// The missing folder itself is not created on the way.
+	if err := write("/gone/deeper.txt"); err != os.ErrNotExist {
+		t.Errorf("expected os.ErrNotExist under a missing folder, got %v", err)
 	}
 }
 

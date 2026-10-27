@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -206,5 +207,23 @@ func TestCopyExistingContentTrailingGap(t *testing.T) {
 	want := append(append([]byte{}, chunkA...), make([]byte, 40)...)
 	if !bytes.Equal(dst.Bytes(), want) {
 		t.Fatalf("copied %d bytes, want %d with a zero-filled tail", dst.Len(), len(want))
+	}
+}
+
+// mkdir and uploads must not create a missing parent folder on the way.
+func TestRequireParentDir(t *testing.T) {
+	fs := newCopyTestServer(t, "", map[string]*filer_pb.Entry{
+		"/home/d":       {Name: "d", IsDirectory: true},
+		"/home/d/a.txt": {Name: "a.txt"},
+	})
+
+	if err := fs.requireParentDir("/home/d/new"); err != nil {
+		t.Fatalf("existing parent: %v", err)
+	}
+	if err := fs.requireParentDir("/home/missing/new"); err != os.ErrNotExist {
+		t.Fatalf("missing parent: got %v, want os.ErrNotExist", err)
+	}
+	if err := fs.requireParentDir("/home/d/a.txt/new"); err != os.ErrNotExist {
+		t.Fatalf("file as parent: got %v, want os.ErrNotExist", err)
 	}
 }

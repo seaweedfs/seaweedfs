@@ -157,6 +157,9 @@ func (fs *SftpServer) newFileWriter(r *sftp.Request) (io.WriterAt, error) {
 		glog.Errorf("Permission denied for %s", absPath)
 		return nil, err
 	}
+	if err := fs.requireParentDir(absPath); err != nil {
+		return nil, err
+	}
 	// Create a temporary file to buffer writes
 	tmpFile, err := os.CreateTemp("", "sftp-upload-*")
 	if err != nil {
@@ -513,6 +516,9 @@ func (fs *SftpServer) makeDir(absPath string) error {
 	if err := fs.checkFilePermission(dir, "write"); err != nil {
 		return err
 	}
+	if err := fs.requireParentDir(absPath); err != nil {
+		return err
+	}
 	// default mode and ownership
 	err := filer_pb.Mkdir(context.Background(), fs, string(dir), name, func(entry *filer_pb.Entry) {
 		mode := uint32(0755 | os.ModeDir)
@@ -532,6 +538,23 @@ func (fs *SftpServer) makeDir(absPath string) error {
 		entry.Extended["creator"] = []byte(fs.user.Username)
 	})
 	return err
+}
+
+// requireParentDir returns os.ErrNotExist unless the parent of absPath is a directory,
+// so mkdir and uploads don't create missing folders on the way.
+func (fs *SftpServer) requireParentDir(absPath string) error {
+	dir, _ := util.FullPath(absPath).DirAndName()
+	if dir == "/" {
+		return nil
+	}
+	entry, err := fs.getEntry(dir)
+	if err != nil {
+		return err
+	}
+	if !entry.IsDirectory {
+		return os.ErrNotExist
+	}
+	return nil
 }
 
 // removeDir deletes a directory.
