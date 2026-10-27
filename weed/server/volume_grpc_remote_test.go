@@ -815,13 +815,11 @@ func TestGuardedPeerHTTPClientCarriesClusterTLS(t *testing.T) {
 	}
 }
 
-// peerTLSServer runs handler over TLS on a non-loopback IPv4 — the only kind
-// of address the peer dialer connects to — under a self-signed cert carrying
-// that IP, and returns its host:port plus a pool trusting the cert.
-func peerTLSServer(t *testing.T, handler http.Handler) (string, *x509.CertPool) {
+// peerIPv4 returns a non-loopback IPv4 of this host — the only kind of
+// address the peer dialer connects to — or skips the test when none exists.
+func peerIPv4(t *testing.T) net.IP {
 	t.Helper()
 
-	var peerIP net.IP
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {
 		t.Skipf("list interface addresses: %v", err)
@@ -832,13 +830,20 @@ func peerTLSServer(t *testing.T, handler http.Handler) (string, *x509.CertPool) 
 			continue
 		}
 		if ip := ipnet.IP.To4(); ip != nil && !ip.IsLoopback() && !ip.IsLinkLocalUnicast() {
-			peerIP = ip
-			break
+			return ip
 		}
 	}
-	if peerIP == nil {
-		t.Skip("no non-loopback IPv4 for the peer dialer to reach")
-	}
+	t.Skip("no non-loopback IPv4 for the peer dialer to reach")
+	return nil
+}
+
+// peerTLSServer runs handler over TLS on a non-loopback IPv4 under a
+// self-signed cert carrying that IP, and returns its host:port plus a pool
+// trusting the cert.
+func peerTLSServer(t *testing.T, handler http.Handler) (string, *x509.CertPool) {
+	t.Helper()
+
+	peerIP := peerIPv4(t)
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -923,12 +928,30 @@ func TestGuardedPeerHTTPClientUploadsOverTLS(t *testing.T) {
 }
 
 // TestGuardedPeerHTTPClientRejectsHTTPSDowngrade pins the downgrade guard the
-// global client carries: an HTTPS peer answering with a redirect to http must
-// fail the upload rather than resend the body and auth header in plaintext.
+// global client carries: an HTTPS peer answering with a redirect to a
+// reachable http server must fail the upload rather than resend the body and
+// auth header in plaintext. The plaintext target sits on an address the peer
+// dialer accepts, so only the redirect policy can stop the resend.
 func TestGuardedPeerHTTPClientRejectsHTTPSDowngrade(t *testing.T) {
-	addr, pool := peerTLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var sawPlaintext atomic.Bool
+	plaintext := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawPlaintext.Store(true)
 		io.Copy(io.Discard, r.Body)
-		http.Redirect(w, r, "http://169.254.169.254/latest/meta-data", http.StatusTemporaryRedirect)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	listener, err := net.Listen("tcp", net.JoinHostPort(peerIPv4(t).String(), "0"))
+	if err != nil {
+		t.Skipf("bind non-loopback plaintext target: %v", err)
+	}
+	plaintext.Listener = listener
+	plaintext.Start()
+	defer plaintext.Close()
+
+	var sawUpload atomic.Bool
+	addr, pool := peerTLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawUpload.Store(true)
+		io.Copy(io.Discard, r.Body)
+		http.Redirect(w, r, "http://"+listener.Addr().String()+"/latest/meta-data", http.StatusTemporaryRedirect)
 	}))
 	usePeerCA(t, pool)
 
@@ -939,5 +962,11 @@ func TestGuardedPeerHTTPClientRejectsHTTPSDowngrade(t *testing.T) {
 		MaxAttempts:   1,
 	}); err == nil {
 		t.Error("HTTPS→HTTP redirect must fail the upload, not resend the body in plaintext")
+	}
+	if sawPlaintext.Load() {
+		t.Error("redirect resend reached the plaintext server")
+	}
+	if !sawUpload.Load() {
+		t.Error("HTTPS peer never saw the original upload")
 	}
 }
