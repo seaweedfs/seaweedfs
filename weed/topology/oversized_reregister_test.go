@@ -88,11 +88,73 @@ func TestOversizedVolumeRejectsExplicitWritableMark(t *testing.T) {
 	}
 
 	// A vacuum commit asks the node whether the volume fits; its fresh
-	// answer supersedes the remembered verdict once every replica reports.
+	// answer supersedes that replica's remembered verdict. Both replicas
+	// commit at the new shrunken size, so the stored records shrink first.
+	shrunk := v
+	shrunk.Size = 10
+	dn1.UpdateVolumes([]storage.VolumeInfo{shrunk})
+	dn2.UpdateVolumes([]storage.VolumeInfo{shrunk})
 	if vl.SetVolumeAvailable(dn1, v.Id, false, false, false) {
-		t.Fatal("the other replica's oversized mark still stands")
+		t.Fatal("the other replica's oversized verdict still stands")
 	}
 	if !vl.SetVolumeAvailable(dn2, v.Id, false, false, false) || !isWritable(t, topo, v) {
 		t.Fatal("a committed volume under the limit should be writable")
+	}
+}
+
+// One replica shrinking clears only its own remembered verdict: a second
+// replica last measured oversized keeps the volume out of the writable list
+// even after its location entry is gone, until it too reports under the
+// limit.
+func TestOversizedVerdictClearsOnlyForReportingReplica(t *testing.T) {
+	topo := NewTopology("topo", nil, 128, 3, false)
+	rp, _ := super_block.NewReplicaPlacementFromString("010")
+
+	dn1 := NewDataNode("server1")
+	dn1.Ip, dn1.Port = "10.0.0.1", 8080
+	dn2 := NewDataNode("server2")
+	dn2.Ip, dn2.Port = "10.0.0.2", 8080
+
+	v := storage.VolumeInfo{Id: 35, Collection: "c", ReplicaPlacement: rp, Ttl: needle.EMPTY_TTL, Size: 300}
+	dn1.UpdateVolumes([]storage.VolumeInfo{v})
+	dn2.UpdateVolumes([]storage.VolumeInfo{v})
+	topo.RegisterVolumeLayout(v, dn1)
+	topo.RegisterVolumeLayout(v, dn2)
+
+	vl := topo.GetVolumeLayout("c", rp, needle.EMPTY_TTL, types.HardDriveType)
+	vl.UpdateOversizedState(&v, dn1)
+	vl.UpdateOversizedState(&v, dn2)
+	vl.EnsureCorrectWritables(&v)
+
+	// dn2 leaves, taking its live mark with it; its verdict is remembered.
+	vl.SetVolumeUnavailable(dn2, v.Id)
+
+	// dn1 shrinks under the limit: its verdict clears, dn2's stands. The
+	// compaction bump makes the size drop real rather than pending decay.
+	shrunk := v
+	shrunk.Size = 10
+	shrunk.CompactRevision = v.CompactRevision + 1
+	vl.UpdateOversizedState(&shrunk, dn1)
+	vl.UpdateVolumeSize(v.Id, uint64(shrunk.Size), shrunk.CompactRevision, true)
+	vl.EnsureCorrectWritables(&shrunk)
+	if !vl.isMarkedOversized(v.Id) {
+		t.Fatal("one replica's under-limit report cleared the absent replica's verdict")
+	}
+
+	// dn2 returns from a report that carries no size; the verdict must
+	// still hold it out until it is re-measured.
+	small := v
+	small.Size = 0
+	topo.RegisterVolumeLayout(small, dn2)
+	if isWritable(t, topo, v) {
+		t.Fatal("an oversized replica was re-admitted before its size was re-measured")
+	}
+
+	// dn2's own under-limit report clears the last verdict.
+	vl.UpdateOversizedState(&shrunk, dn2)
+	vl.UpdateVolumeSize(v.Id, uint64(shrunk.Size), shrunk.CompactRevision, true)
+	vl.EnsureCorrectWritables(&shrunk)
+	if !isWritable(t, topo, v) {
+		t.Fatal("every replica under the limit should leave the volume writable")
 	}
 }
