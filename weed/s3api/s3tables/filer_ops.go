@@ -17,6 +17,7 @@ import (
 var (
 	ErrAttributeNotFound = errors.New("attribute not found")
 	ErrConcurrentUpdate  = errors.New("attribute changed concurrently")
+	ErrNameTaken         = errors.New("catalog name is taken")
 )
 
 // extendedAttributeUpdateAttempts bounds the read-modify-write retry loop in
@@ -174,6 +175,26 @@ func (h *S3TablesHandler) removeExtendedAttributesIf(
 		}
 		for _, key := range keys {
 			delete(extended, key)
+		}
+		return nil
+	})
+}
+
+// claimCatalogEntry writes a new catalog entry's marker attributes in one
+// compare-checked update. Every catalog marker must still be absent: a
+// delete's restore or a competing create that landed since the caller's check
+// is a name conflict, not a record this write may overwrite — an overwrite
+// would leave the loser's tags, policy, and maintenance settings on the new
+// record.
+func (h *S3TablesHandler) claimCatalogEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, path string, attrs map[string][]byte) error {
+	return h.mutateEntryExtended(ctx, client, path, func(extended map[string][]byte) error {
+		for _, key := range s3tablesExtendedKeys {
+			if _, ok := extended[key]; ok {
+				return fmt.Errorf("%w: %s set on %s", ErrNameTaken, key, path)
+			}
+		}
+		for key, data := range attrs {
+			extended[key] = data
 		}
 		return nil
 	})

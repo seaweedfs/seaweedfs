@@ -129,6 +129,14 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 		return fmt.Errorf("failed to marshal metadata: %w", err)
 	}
 
+	var tagsBytes []byte
+	if len(req.Tags) > 0 {
+		if tagsBytes, err = json.Marshal(req.Tags); err != nil {
+			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to marshal tags")
+			return fmt.Errorf("failed to marshal tags: %w", err)
+		}
+	}
+
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		// Ensure table directory exists (may already be created by object storage clients)
 		if err := h.ensureDirectory(r.Context(), client, tablePath); err != nil {
@@ -141,31 +149,21 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 			return err
 		}
 
-		// Set metadata as extended attribute
-		if err := h.setExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyMetadata, metadataBytes); err != nil {
-			return err
+		attrs := map[string][]byte{
+			ExtendedKeyMetadata:  metadataBytes,
+			ExtendedKeyEntryType: []byte(EntryTypeTable),
 		}
-
-		// Tag the entry as a table so view listings can exclude it.
-		if err := h.setExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyEntryType, []byte(EntryTypeTable)); err != nil {
-			return err
+		if len(tagsBytes) > 0 {
+			attrs[ExtendedKeyTags] = tagsBytes
 		}
-
-		// Set tags if provided
-		if len(req.Tags) > 0 {
-			tagsBytes, err := json.Marshal(req.Tags)
-			if err != nil {
-				return fmt.Errorf("failed to marshal tags: %w", err)
-			}
-			if err := h.setExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyTags, tagsBytes); err != nil {
-				return err
-			}
-		}
-
-		return nil
+		return h.claimCatalogEntry(r.Context(), client, tablePath, attrs)
 	})
 
 	if err != nil {
+		if errors.Is(err, ErrNameTaken) {
+			h.writeError(w, http.StatusConflict, ErrCodeTableAlreadyExists, fmt.Sprintf("table %s already exists", tableName))
+			return err
+		}
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to create table")
 		return err
 	}
@@ -282,9 +280,15 @@ func (h *S3TablesHandler) handleRegisterTable(w http.ResponseWriter, r *http.Req
 		if err := h.ensureDirectory(r.Context(), client, tablePath); err != nil {
 			return err
 		}
-		return h.setExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyMetadata, metadataBytes)
+		return h.claimCatalogEntry(r.Context(), client, tablePath, map[string][]byte{
+			ExtendedKeyMetadata: metadataBytes,
+		})
 	})
 	if err != nil {
+		if errors.Is(err, ErrNameTaken) {
+			h.writeError(w, http.StatusConflict, ErrCodeTableAlreadyExists, fmt.Sprintf("table %s already exists", tableName))
+			return err
+		}
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to register table")
 		return err
 	}
