@@ -286,6 +286,148 @@ func TestNewShortLivedLockFailsFastOnUnreachableFiler(t *testing.T) {
 	}
 }
 
+type hangingLockFiler struct {
+	filer_pb.UnimplementedSeaweedFilerServer
+}
+
+func (s *hangingLockFiler) DistributedLock(ctx context.Context, req *filer_pb.LockRequest) (*filer_pb.LockResponse, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+type grantingLockFiler struct {
+	filer_pb.UnimplementedSeaweedFilerServer
+}
+
+func (s *grantingLockFiler) DistributedLock(ctx context.Context, req *filer_pb.LockRequest) (*filer_pb.LockResponse, error) {
+	return &filer_pb.LockResponse{RenewToken: "tok"}, nil
+}
+
+// A ring member that accepts connections but never answers must not swallow
+// the retry window: when its budget is spent the seed route still gets an
+// attempt before acquisition gives up.
+func TestNewShortLivedLockFallsBackToSeedOnHangingPrimary(t *testing.T) {
+	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+
+	hangListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	hangServer := grpc.NewServer()
+	filer_pb.RegisterSeaweedFilerServer(hangServer, &hangingLockFiler{})
+	go hangServer.Serve(hangListener)
+	defer hangServer.Stop()
+
+	seedListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	seedServer := grpc.NewServer()
+	filer_pb.RegisterSeaweedFilerServer(seedServer, &grantingLockFiler{})
+	go seedServer.Serve(seedListener)
+	defer seedServer.Stop()
+
+	hangHost, hangPort, err := net.SplitHostPort(hangListener.Addr().String())
+	if err != nil {
+		t.Fatalf("split host port: %v", err)
+	}
+	seedHost, seedPort, err := net.SplitHostPort(seedListener.Addr().String())
+	if err != nil {
+		t.Fatalf("split host port: %v", err)
+	}
+	// ServerAddress.Equals compares the http port, so the two fake filers
+	// need distinct ones even though only the grpc port is dialed.
+	seedAddr := pb.ServerAddress(fmt.Sprintf("%s:1.%s", seedHost, seedPort))
+	primaryAddr := pb.ServerAddress(fmt.Sprintf("%s:2.%s", hangHost, hangPort))
+
+	lc := NewLockClient(dialOption, seedAddr)
+	lc.lockRpcTimeout = 50 * time.Millisecond
+	lc.noLockServerRetryPeriod = 200 * time.Millisecond
+	lc.SetRing([]pb.ServerAddress{primaryAddr}, 1)
+
+	start := time.Now()
+	lock := lc.NewShortLivedLock("test-key", "test-owner")
+	elapsed := time.Since(start)
+
+	if lock == nil {
+		t.Fatal("expected the seed fallback to acquire the lock")
+	}
+	if !lock.hostFiler.Equals(seedAddr) {
+		t.Fatalf("expected acquisition through the seed %s, got %s", seedAddr, lock.hostFiler)
+	}
+	if elapsed > 5*time.Second {
+		t.Fatalf("lock acquisition took %v, expected it bounded by the per-route window", elapsed)
+	}
+}
+
+// A failed attempt keeps the token it sent: the request may have renewed the
+// lease server-side before its response was lost, and a retry with the last
+// token can still succeed. Only a definitive rejection may clear it.
+func TestDoLockKeepsRenewTokenOnError(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	addr := listener.Addr().String()
+	listener.Close()
+
+	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		t.Fatalf("split host port: %v", err)
+	}
+	filerAddr := pb.ServerAddress(fmt.Sprintf("%s:0.%s", host, port))
+	lc := NewLockClient(dialOption, filerAddr)
+	lock := &LiveLock{
+		key:            "test-key",
+		renewToken:     "tok",
+		hostFiler:      filerAddr,
+		grpcDialOption: dialOption,
+		lc:             lc,
+	}
+	if _, err := lock.doLock(time.Second, 50*time.Millisecond); err == nil {
+		t.Fatal("expected the attempt to fail against a dead member")
+	}
+	if lock.renewToken != "tok" {
+		t.Errorf("renewToken = %q, want it kept for the next attempt", lock.renewToken)
+	}
+}
+
+// A definitive rejection answers with an empty token, which clears the stale
+// one — only transport failures keep it.
+func TestDoLockClearsRenewTokenOnRejection(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	grpcServer := grpc.NewServer()
+	filer_pb.RegisterSeaweedFilerServer(grpcServer, &contendedLockFiler{})
+	go grpcServer.Serve(listener)
+	defer grpcServer.Stop()
+
+	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+	host, port, err := net.SplitHostPort(listener.Addr().String())
+	if err != nil {
+		t.Fatalf("split host port: %v", err)
+	}
+	filerAddr := pb.ServerAddress(fmt.Sprintf("%s:0.%s", host, port))
+	lc := NewLockClient(dialOption, filerAddr)
+	lock := &LiveLock{
+		key:            "test-key",
+		renewToken:     "tok",
+		hostFiler:      filerAddr,
+		grpcDialOption: dialOption,
+		lc:             lc,
+	}
+	errorMessage, err := lock.doLock(time.Second, time.Second)
+	if err != nil || errorMessage == "" {
+		t.Fatalf("expected a contended attempt to report an error message, got errorMessage=%q err=%v", errorMessage, err)
+	}
+	if lock.renewToken != "" {
+		t.Errorf("renewToken = %q, want it cleared by the rejection", lock.renewToken)
+	}
+}
+
 // LiveLock.generation is a fencing token written and read with 64-bit atomic
 // operations. On 32-bit platforms (GOARCH=386 and GOARCH=arm) a 64-bit atomic
 // op requires an 8-byte-aligned address, which Go only guarantees for the
