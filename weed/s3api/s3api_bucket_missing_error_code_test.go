@@ -180,6 +180,14 @@ func TestBucketSubresourceWritesOnFilerFailure(t *testing.T) {
 			t.Fatalf("filer failure policy put: %d %s, want 500 InternalError", code, body)
 		}
 	})
+
+	t.Run("delete bucket policy", func(t *testing.T) {
+		code, body := writeSubresource(t, &fakeLookupFiler{lookupErr: filerError}, http.MethodDelete, bucket, "",
+			func(s3a *S3ApiServer) http.HandlerFunc { return s3a.DeleteBucketPolicyHandler })
+		if code != http.StatusInternalServerError || !strings.Contains(body, "InternalError") {
+			t.Fatalf("filer failure policy delete: %d %s, want 500 InternalError", code, body)
+		}
+	})
 }
 
 // The check must not reject a live bucket: with an entry present the write gets
