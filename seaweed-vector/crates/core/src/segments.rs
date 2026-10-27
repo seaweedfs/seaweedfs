@@ -222,5 +222,6 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+        assert!(partition(&[Uuid::nil()], 0).is_empty());
     }
 }
