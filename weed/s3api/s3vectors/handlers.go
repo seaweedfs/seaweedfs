@@ -164,6 +164,8 @@ func catalogErr(w http.ResponseWriter, err error) {
 }
 
 // vectorErr maps a VectorService gRPC status onto the API's error shape.
+// Engine messages reach clients only for codes that describe the request
+// itself; transport and internal details stay in the server log.
 func vectorErr(w http.ResponseWriter, err error) {
 	msg := status.Convert(err).Message()
 	switch status.Code(err) {
@@ -173,8 +175,11 @@ func vectorErr(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "ValidationException", msg)
 	case codes.PermissionDenied, codes.Unauthenticated:
 		writeError(w, http.StatusForbidden, "AccessDeniedException", "access denied")
+	case codes.Unavailable:
+		writeError(w, http.StatusServiceUnavailable, "ServiceUnavailableException", "vector service unavailable")
 	default:
-		writeError(w, http.StatusInternalServerError, "InternalFailure", msg)
+		glog.V(1).Infof("S3 Vectors: engine error: %v", err)
+		writeError(w, http.StatusInternalServerError, "InternalFailure", "internal error")
 	}
 }
 
