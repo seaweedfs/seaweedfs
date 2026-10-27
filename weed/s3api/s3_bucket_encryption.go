@@ -81,6 +81,10 @@ const (
 func (s3a *S3ApiServer) GetBucketEncryptionHandler(w http.ResponseWriter, r *http.Request) {
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 
+	if !s3a.checkBucketExistsOrReply(w, r, bucket) {
+		return
+	}
+
 	// Load bucket encryption configuration
 	config, errCode := s3a.getEncryptionConfiguration(bucket)
 	if errCode != s3err.ErrNone {
