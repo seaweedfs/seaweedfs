@@ -508,7 +508,7 @@ func TestDoLockKeepsRenewTokenOnError(t *testing.T) {
 		grpcDialOption: dialOption,
 		lc:             lc,
 	}
-	if _, err := lock.doLock(time.Second, 50*time.Millisecond); err == nil {
+	if _, _, err := lock.doLock(time.Second, 50*time.Millisecond); err == nil {
 		t.Fatal("expected the attempt to fail against a dead member")
 	}
 	if lock.renewToken != "tok" {
@@ -542,7 +542,7 @@ func TestDoLockClearsRenewTokenOnRejection(t *testing.T) {
 		grpcDialOption: dialOption,
 		lc:             lc,
 	}
-	errorMessage, err := lock.doLock(time.Second, time.Second)
+	errorMessage, _, err := lock.doLock(time.Second, time.Second)
 	if err != nil || errorMessage == "" {
 		t.Fatalf("expected a contended attempt to report an error message, got errorMessage=%q err=%v", errorMessage, err)
 	}
@@ -578,7 +578,7 @@ func TestDoLockKeepsRenewTokenOnCleanRedirect(t *testing.T) {
 		grpcDialOption: dialOption,
 		lc:             lc,
 	}
-	errorMessage, err := lock.doLock(time.Second, time.Second)
+	errorMessage, _, err := lock.doLock(time.Second, time.Second)
 	if err != nil || errorMessage != "" {
 		t.Fatalf("expected a clean redirect, got errorMessage=%q err=%v", errorMessage, err)
 	}

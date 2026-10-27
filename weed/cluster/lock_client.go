@@ -322,7 +322,7 @@ func (lock *LiveLock) retryUntilLocked(lockDuration time.Duration) error {
 	// window on every return to the seed would make that cycle unbounded.
 	seedRetried := false
 	var err error
-	for lock.renewToken == "" {
+	for {
 		attemptTimeout := lock.lc.lockRpcTimeout
 		if remaining := lock.lc.noLockServerRetryPeriod - time.Since(unavailableSince); remaining < attemptTimeout {
 			if remaining <= 0 {
@@ -342,10 +342,14 @@ func (lock *LiveLock) retryUntilLocked(lockDuration time.Duration) error {
 			attemptTimeout = remaining
 		}
 		hostBefore := lock.hostFiler
-		err = lock.attemptToLockWithin(lockDuration, attemptTimeout)
+		var granted bool
+		granted, err = lock.attemptToLockWithin(lockDuration, attemptTimeout)
 		if err == nil {
+			if granted {
+				return nil
+			}
 			// A clean LockHostMovedTo redirect returns no error and no
-			// token; it must still count against the window, or a redirect
+			// verdict; it must still count against the window, or a redirect
 			// cycle between ring-disagreeing filers retries forever.
 			continue
 		}
@@ -365,20 +369,20 @@ func (lock *LiveLock) retryUntilLocked(lockDuration time.Duration) error {
 			unavailableSince = time.Now()
 		}
 	}
-	return nil
 }
 
 func (lock *LiveLock) AttemptToLock(lockDuration time.Duration) error {
-	return lock.attemptToLockWithin(lockDuration, lock.lc.lockRpcTimeout)
+	_, err := lock.attemptToLockWithin(lockDuration, lock.lc.lockRpcTimeout)
+	return err
 }
 
-func (lock *LiveLock) attemptToLockWithin(lockDuration, attemptTimeout time.Duration) error {
+func (lock *LiveLock) attemptToLockWithin(lockDuration, attemptTimeout time.Duration) (granted bool, err error) {
 	glog.V(4).Infof("LOCK: AttemptToLock key=%s owner=%s", lock.key, lock.self)
-	errorMessage, err := lock.doLock(lockDuration, attemptTimeout)
+	errorMessage, granted, err := lock.doLock(lockDuration, attemptTimeout)
 	if err != nil {
 		glog.V(1).Infof("LOCK: doLock failed for key=%s: %v", lock.key, err)
 		time.Sleep(time.Second)
-		return err
+		return false, err
 	}
 	if errorMessage != "" {
 		if strings.Contains(errorMessage, "lock already owned") {
@@ -387,20 +391,21 @@ func (lock *LiveLock) attemptToLockWithin(lockDuration, attemptTimeout time.Dura
 			glog.V(2).Infof("LOCK: doLock returned error message for key=%s: %s", lock.key, errorMessage)
 		}
 		time.Sleep(time.Second)
-		return fmt.Errorf("%v", errorMessage)
+		return false, fmt.Errorf("%v", errorMessage)
 	}
-	if lock.renewToken == "" {
-		// A bare LockHostMovedTo redirect: nothing was acquired, so leave
-		// isLocked unset and keep the same ~1s cadence as other retries.
+	if !granted {
+		// A bare LockHostMovedTo redirect carries no verdict: nothing was
+		// acquired, so leave isLocked as it is and keep the same ~1s cadence
+		// as other retries.
 		time.Sleep(time.Second)
-		return nil
+		return false, nil
 	}
 	if atomic.LoadInt32(&lock.isLocked) == 0 {
 		// Only log when transitioning from unlocked to locked
 		glog.V(1).Infof("LOCK: Successfully acquired key=%s owner=%s", lock.key, lock.self)
 	}
 	atomic.StoreInt32(&lock.isLocked, 1)
-	return nil
+	return true, nil
 }
 
 func (lock *LiveLock) StopShortLivedLock() error {
@@ -459,7 +464,7 @@ func (lock *LiveLock) Stop() error {
 	return lock.StopShortLivedLock()
 }
 
-func (lock *LiveLock) doLock(lockDuration, attemptTimeout time.Duration) (errorMessage string, err error) {
+func (lock *LiveLock) doLock(lockDuration, attemptTimeout time.Duration) (errorMessage string, granted bool, err error) {
 	glog.V(4).Infof("LOCK: doLock calling DistributedLock - key=%s filer=%s owner=%s",
 		lock.key, lock.hostFiler, lock.self)
 
@@ -484,6 +489,7 @@ func (lock *LiveLock) doLock(lockDuration, attemptTimeout time.Duration) (errorM
 			// token, a rejection carries an error. A bare LockHostMovedTo
 			// redirect answers neither and must not drop a held token —
 			// the next attempt can still renew with it on the new host.
+			granted = resp.Error == "" && resp.RenewToken != ""
 			if resp.RenewToken != "" || resp.Error != "" {
 				lock.renewToken = resp.RenewToken
 			}
