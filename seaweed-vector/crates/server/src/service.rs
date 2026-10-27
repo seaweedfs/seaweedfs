@@ -1,7 +1,5 @@
 use anyhow::{Result, bail};
-use arrow_array::{
-    Array, ArrayRef, FixedSizeListArray, Float32Array, LargeBinaryArray, RecordBatch, StringArray,
-};
+use arrow_array::{Array, ArrayRef, FixedSizeListArray, Float32Array, RecordBatch, StringArray};
 use arrow_schema::{DataType, Field, Schema};
 use futures::TryStreamExt;
 use lance::Dataset;
@@ -10,10 +8,9 @@ use lance::dataset::WriteParams;
 use lance::dataset::{MergeInsertBuilder, WhenMatched, WhenNotMatched};
 use lance::io::ObjectStoreParams;
 use lance::io::StorageOptionsAccessor;
-use lance_arrow::json::{JsonArray, decode_json, json_field};
 use lance_linalg::distance::DistanceType;
 use prost_types::{ListValue, Struct, Value, value::Kind};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
 use weed_lance_worker::catalog::NamespaceClient;
@@ -77,17 +74,19 @@ fn schema_for(
         .into_iter()
         .collect(),
     );
-    // The metadata column uses Lance's JSONB storage so the json_get_* and
-    // json_exists UDFs filter it; a Utf8 JSON string cannot carry them.
-    let mut metadata_field = json_field(METADATA_COLUMN, true);
+    // The arrow.json extension marks the Utf8 column as JSON: lance stores it
+    // as jsonb, which is what the json_get_* filter functions take.
+    let mut metadata_meta = HashMap::from_iter([(
+        "ARROW:extension:name".to_string(),
+        "arrow.json".to_string(),
+    )]);
     if !non_filterable.is_empty() {
-        let mut field_metadata = metadata_field.metadata().clone();
-        field_metadata.insert(
+        metadata_meta.insert(
             "non_filterable_metadata_keys".to_string(),
             serde_json::to_string(non_filterable).unwrap_or_default(),
         );
-        metadata_field = metadata_field.with_metadata(field_metadata);
     }
+    let metadata_field = Field::new(METADATA_COLUMN, DataType::Utf8, true).with_metadata(metadata_meta);
     Arc::new(Schema::new(vec![
         Field::new(KEY_COLUMN, DataType::Utf8, false),
         vector_field,
@@ -113,8 +112,18 @@ fn batch_of(vectors: &[pb::Vector], dimension: usize, schema: Arc<Schema>) -> Re
         .flat_map(|v| v.data.iter().copied())
         .collect::<Vec<_>>();
     let values: ArrayRef = Arc::new(Float32Array::from(flat));
+    // Lance stores the list item as nullable even when the write schema
+    // declared it non-null, so the child field must come from the batch's
+    // schema rather than a fixed declaration.
+    let DataType::FixedSizeList(item_field, _) = schema
+        .field_with_name(VECTOR_COLUMN)
+        .map_err(anyhow::Error::from)?
+        .data_type()
+    else {
+        bail!("vector column is not a fixed-size list");
+    };
     let vectors_array = FixedSizeListArray::try_new(
-        Field::new("item", DataType::Float32, false).into(),
+        item_field.clone(),
         dimension as i32,
         values,
         None,
@@ -128,16 +137,20 @@ fn batch_of(vectors: &[pb::Vector], dimension: usize, schema: Arc<Schema>) -> Re
                 .transpose()
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let metas_array = JsonArray::try_from_iter(metas.iter().map(|m| m.as_deref()))
-        .map_err(|e| anyhow::anyhow!("encode metadata as JSONB: {e}"))?
-        .into_inner();
+    // The stored column is lance's jsonb (LargeBinary) once the field carries
+    // the arrow.json extension; encode the strings, else keep the Utf8 batch.
+    let metadata_array: ArrayRef = match schema
+        .field_with_name(METADATA_COLUMN)
+        .map(|f| f.data_type())
+    {
+        Ok(DataType::LargeBinary) => {
+            Arc::new(lance_arrow::json::JsonArray::try_from_iter(metas)?.into_inner())
+        }
+        _ => Arc::new(StringArray::from(metas)),
+    };
     RecordBatch::try_new(
         schema,
-        vec![
-            Arc::new(keys),
-            Arc::new(vectors_array),
-            Arc::new(metas_array),
-        ],
+        vec![Arc::new(keys), Arc::new(vectors_array), metadata_array],
     )
     .map_err(Into::into)
 }
@@ -205,21 +218,6 @@ fn key_list(keys: &[String]) -> String {
     )
 }
 
-// Read one metadata cell in either encoding: JSONB on indexes created against
-// Lance's JSON type, Utf8 JSON text on indexes made before it.
-fn metadata_at(column: &ArrayRef, i: usize) -> Option<Struct> {
-    if column.is_null(i) {
-        return None;
-    }
-    if let Some(metas) = column.as_any().downcast_ref::<StringArray>() {
-        return parse_struct(metas.value(i)).ok();
-    }
-    if let Some(metas) = column.as_any().downcast_ref::<LargeBinaryArray>() {
-        return parse_struct(&decode_json(metas.value(i))).ok();
-    }
-    None
-}
-
 fn rows_as_vectors(
     batches: &[RecordBatch],
     return_data: bool,
@@ -236,7 +234,9 @@ fn rows_as_vectors(
         let vectors = batch
             .column_by_name(VECTOR_COLUMN)
             .and_then(|c| c.as_any().downcast_ref::<FixedSizeListArray>());
-        let metas = batch.column_by_name(METADATA_COLUMN);
+        let metas = batch
+            .column_by_name(METADATA_COLUMN)
+            .and_then(|c| c.as_any().downcast_ref::<StringArray>());
         for i in 0..batch.num_rows() {
             let data = match (return_data, vectors) {
                 (true, Some(list)) => list
@@ -248,7 +248,7 @@ fn rows_as_vectors(
                 _ => Vec::new(),
             };
             let metadata = match (return_metadata, metas) {
-                (true, Some(column)) => metadata_at(column, i),
+                (true, Some(m)) if !m.is_null(i) => parse_struct(m.value(i)).ok(),
                 _ => None,
             };
             out.push(pb::Vector {
@@ -542,7 +542,9 @@ impl VectorService for VectorServer {
             let keys = batch
                 .column_by_name(KEY_COLUMN)
                 .and_then(|c| c.as_any().downcast_ref::<StringArray>());
-            let meta_col = batch.column_by_name(METADATA_COLUMN);
+            let meta_col = batch
+                .column_by_name(METADATA_COLUMN)
+                .and_then(|c| c.as_any().downcast_ref::<StringArray>());
             let data_col = batch
                 .column_by_name(VECTOR_COLUMN)
                 .and_then(|c| c.as_any().downcast_ref::<FixedSizeListArray>());
@@ -550,7 +552,14 @@ impl VectorService for VectorServer {
                 for i in 0..batch.num_rows() {
                     let key = keys.value(i).to_string();
                     if let Some(meta_col) = meta_col {
-                        metas.insert(key.clone(), metadata_at(meta_col, i));
+                        metas.insert(
+                            key.clone(),
+                            if meta_col.is_null(i) {
+                                None
+                            } else {
+                                parse_struct(meta_col.value(i)).ok()
+                            },
+                        );
                     }
                     if let Some(data_col) = data_col {
                         data_map.insert(
