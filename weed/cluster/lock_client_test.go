@@ -360,6 +360,67 @@ func TestNewShortLivedLockFallsBackToSeedOnHangingPrimary(t *testing.T) {
 	}
 }
 
+type redirectingLockFiler struct {
+	filer_pb.UnimplementedSeaweedFilerServer
+	movedTo string
+}
+
+func (s *redirectingLockFiler) DistributedLock(ctx context.Context, req *filer_pb.LockRequest) (*filer_pb.LockResponse, error) {
+	return &filer_pb.LockResponse{Error: "forward failed", LockHostMovedTo: s.movedTo}, nil
+}
+
+// The seed can redirect back to a dead primary via LockHostMovedTo. The seed
+// fallback gets one fresh window per acquisition — letting every return to
+// the seed refill it would make the primary->seed->primary cycle unbounded.
+func TestNewShortLivedLockBoundsSeedRedirectCycle(t *testing.T) {
+	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+
+	hangListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	hangServer := grpc.NewServer()
+	filer_pb.RegisterSeaweedFilerServer(hangServer, &hangingLockFiler{})
+	go hangServer.Serve(hangListener)
+	defer hangServer.Stop()
+
+	hangHost, hangPort, err := net.SplitHostPort(hangListener.Addr().String())
+	if err != nil {
+		t.Fatalf("split host port: %v", err)
+	}
+	primaryAddr := pb.ServerAddress(fmt.Sprintf("%s:2.%s", hangHost, hangPort))
+
+	seedListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	seedServer := grpc.NewServer()
+	filer_pb.RegisterSeaweedFilerServer(seedServer, &redirectingLockFiler{movedTo: string(primaryAddr)})
+	go seedServer.Serve(seedListener)
+	defer seedServer.Stop()
+
+	seedHost, seedPort, err := net.SplitHostPort(seedListener.Addr().String())
+	if err != nil {
+		t.Fatalf("split host port: %v", err)
+	}
+	seedAddr := pb.ServerAddress(fmt.Sprintf("%s:1.%s", seedHost, seedPort))
+
+	lc := NewLockClient(dialOption, seedAddr)
+	lc.lockRpcTimeout = 50 * time.Millisecond
+	lc.noLockServerRetryPeriod = 200 * time.Millisecond
+
+	start := time.Now()
+	lock := lc.NewShortLivedLock("test-key", "test-owner")
+	elapsed := time.Since(start)
+
+	if lock != nil {
+		t.Fatal("expected nil lock when the seed keeps redirecting to a dead primary")
+	}
+	if elapsed > 5*time.Second {
+		t.Fatalf("lock acquisition took %v, expected a bounded redirect cycle", elapsed)
+	}
+}
+
 // A failed attempt keeps the token it sent: the request may have renewed the
 // lease server-side before its response was lost, and a retry with the last
 // token can still succeed. Only a definitive rejection may clear it.

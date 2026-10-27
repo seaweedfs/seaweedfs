@@ -317,17 +317,22 @@ func (lock *LiveLock) retryUntilLocked(lockDuration time.Duration) error {
 	// filer — which can forward to the real owner — and that route gets
 	// its own window, so a reachable fallback is always tried.
 	unavailableSince := time.Now()
+	// The seed route gets one fresh window per acquisition: the seed can
+	// redirect back to a dead primary via LockHostMovedTo, and refilling the
+	// window on every return to the seed would make that cycle unbounded.
+	seedRetried := false
 	var err error
 	for lock.renewToken == "" {
 		attemptTimeout := lock.lc.lockRpcTimeout
 		if remaining := lock.lc.noLockServerRetryPeriod - time.Since(unavailableSince); remaining < attemptTimeout {
 			if remaining <= 0 {
-				if lock.hostFiler.Equals(lock.lc.seedFiler) {
+				if lock.hostFiler.Equals(lock.lc.seedFiler) || seedRetried {
 					return err
 				}
 				glog.V(0).Infof("LOCK: no response within %s for key=%s filer=%s, falling back to seed filer=%s",
 					lock.lc.noLockServerRetryPeriod, lock.key, lock.hostFiler, lock.lc.seedFiler)
 				lock.hostFiler = lock.lc.seedFiler
+				seedRetried = true
 				unavailableSince = time.Now()
 				continue
 			}
@@ -350,7 +355,8 @@ func (lock *LiveLock) retryUntilLocked(lockDuration time.Duration) error {
 		// connections — is a systemic fault waiting cannot fix. A failed
 		// attempt that fell back to the seed route gets a fresh window for
 		// it; a server redirect stays inside the current one.
-		if lock.hostFiler.Equals(lock.lc.seedFiler) && !hostBefore.Equals(lock.lc.seedFiler) {
+		if !seedRetried && lock.hostFiler.Equals(lock.lc.seedFiler) && !hostBefore.Equals(lock.lc.seedFiler) {
+			seedRetried = true
 			unavailableSince = time.Now()
 		}
 	}
