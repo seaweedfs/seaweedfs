@@ -609,7 +609,7 @@ func (s3a *S3ApiServer) patchBucketEntry(bucket string, m *filer_pb.ObjectMutati
 		}
 		// The only precondition on this request is the bucket's own existence,
 		// so a failed condition is a missing bucket, not a policy violation.
-		if resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED {
+		if resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED || resp.Error == "precondition failed" {
 			return fmt.Errorf("patch bucket %s: %w", bucket, filer_pb.ErrNotFound)
 		}
 		if resp.Error != "" {

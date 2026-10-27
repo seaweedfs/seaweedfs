@@ -21,10 +21,21 @@ type fakeLookupFiler struct {
 	filer_pb.UnimplementedSeaweedFilerServer
 	entry     *filer_pb.Entry
 	lookupErr error
+	lookups   int
+	failAfter int
+	failErr   error
 	deleted   []string
+	updateErr error
+	txnResp   *filer_pb.ObjectTransactionResponse
+	txnErr    error
+	txnSeen   []*filer_pb.ObjectTransactionRequest
 }
 
 func (f *fakeLookupFiler) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	f.lookups++
+	if f.failAfter > 0 && f.lookups > f.failAfter {
+		return nil, f.failErr
+	}
 	if f.lookupErr != nil {
 		return nil, f.lookupErr
 	}
@@ -35,6 +46,24 @@ func (f *fakeLookupFiler) DeleteEntry(ctx context.Context, req *filer_pb.DeleteE
 	f.deleted = append(f.deleted, path.Join(req.Directory, req.Name))
 	f.entry = nil
 	return &filer_pb.DeleteEntryResponse{}, nil
+}
+
+func (f *fakeLookupFiler) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
+	if f.updateErr != nil {
+		return nil, f.updateErr
+	}
+	return &filer_pb.UpdateEntryResponse{}, nil
+}
+
+func (f *fakeLookupFiler) ObjectTransaction(ctx context.Context, req *filer_pb.ObjectTransactionRequest) (*filer_pb.ObjectTransactionResponse, error) {
+	f.txnSeen = append(f.txnSeen, req)
+	if f.txnErr != nil {
+		return nil, f.txnErr
+	}
+	if f.txnResp != nil {
+		return f.txnResp, nil
+	}
+	return &filer_pb.ObjectTransactionResponse{}, nil
 }
 
 func newHeadBucketTestServer(t *testing.T, impl filer_pb.SeaweedFilerServer) *S3ApiServer {
