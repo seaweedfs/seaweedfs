@@ -18,6 +18,7 @@ path = "src/main.rs"
 # no common root manifest.
 weed-lance-worker = { path = "../../../seaweed-worker/crates/lance" }
 lance = { version = "10", default-features = false, features = ["aws"] }
+object_store = "0.13"
 lance-index = "10"
 lance-linalg = "10"
 lance-table = "10"

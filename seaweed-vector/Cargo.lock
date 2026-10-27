@@ -6465,6 +6465,7 @@ dependencies = [
  "lance-index",
  "lance-linalg",
  "lance-table",
+ "object_store",
  "roaring",
  "serde",
  "serde_json",

@@ -77,6 +77,30 @@ pub async fn pin(dataset: &Dataset) -> Result<Lease> {
     })
 }
 
+/// [`pin`] that answers the query anyway when the storage identity may read
+/// but not write: a denied tag write degrades to an unleased query rather
+/// than an error.
+pub async fn try_pin(dataset: &Dataset) -> Result<Option<Lease>> {
+    match pin(dataset).await {
+        Ok(lease) => Ok(Some(lease)),
+        Err(err) if denied(&err) => {
+            tracing::warn!("query runs without a version lease: {err:#}");
+            Ok(None)
+        }
+        Err(err) => Err(err),
+    }
+}
+
+fn denied(err: &anyhow::Error) -> bool {
+    err.chain().any(|cause| {
+        matches!(
+            cause.downcast_ref::<object_store::Error>(),
+            Some(object_store::Error::PermissionDenied { .. })
+                | Some(object_store::Error::Unauthenticated { .. })
+        )
+    })
+}
+
 async fn release(dataset: &Dataset, tag: &str) -> Result<()> {
     dataset.tags().delete(tag).await.map_err(anyhow::Error::msg)
 }

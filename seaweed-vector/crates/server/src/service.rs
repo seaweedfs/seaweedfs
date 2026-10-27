@@ -389,7 +389,7 @@ impl VectorService for VectorServer {
         let dataset = self.open(&table).await.map_err(open_status)?;
         // Lease the resolved version so maintenance cannot reclaim its files
         // while this query runs against it.
-        let _lease = weed_vector_core::maintenance::pin(&dataset)
+        let _lease = weed_vector_core::maintenance::try_pin(&dataset)
             .await
             .map_err(internal)?;
         let resolved = VectorTable::resolve(&dataset, None, Some(KEY_COLUMN)).map_err(invalid)?;
@@ -488,7 +488,7 @@ impl VectorService for VectorServer {
         let dataset = self.open(&table).await.map_err(open_status)?;
         // Lease the resolved version so maintenance cannot reclaim its files
         // while this query runs against it.
-        let _lease = weed_vector_core::maintenance::pin(&dataset)
+        let _lease = weed_vector_core::maintenance::try_pin(&dataset)
             .await
             .map_err(internal)?;
         let resolved = VectorTable::resolve(&dataset, None, Some(KEY_COLUMN)).map_err(invalid)?;
