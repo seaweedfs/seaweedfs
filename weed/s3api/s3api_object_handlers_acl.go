@@ -234,7 +234,8 @@ func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Reque
 
 	// **PERMISSION CHECKS**
 
-	isAdmin := s3a.isUserAdmin(r)
+	// Without auth there is no caller to check, as in checkAccessByOwnership.
+	isAdmin := s3a.isUserAdmin(r) || (s3a.iam != nil && !s3a.iam.isEnabled())
 
 	// Without stored owner metadata there is no way to prove a non-admin
 	// caller owns this object, so they must not modify its ACL or claim it.
