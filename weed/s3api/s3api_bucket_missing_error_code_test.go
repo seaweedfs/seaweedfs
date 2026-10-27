@@ -294,7 +294,7 @@ func TestPutBucketPolicyOnExistingBucketPassesExistenceCheck(t *testing.T) {
 	}, http.MethodPut, bucket, testPolicyBody(bucket),
 		func(s3a *S3ApiServer) http.HandlerFunc { return s3a.PutBucketPolicyHandler })
 
-	if code == http.StatusNotFound && strings.Contains(body, "NoSuchBucket") {
-		t.Fatalf("existing bucket was rejected as missing: %d %s", code, body)
+	if code != http.StatusNoContent {
+		t.Fatalf("existing bucket policy put failed: %d %s, want 204", code, body)
 	}
 }
