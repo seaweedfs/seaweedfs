@@ -3,6 +3,7 @@ package command
 import (
 	"crypto/tls"
 	"fmt"
+	"math"
 	"net/http"
 	"os"
 	"strings"
@@ -510,6 +511,17 @@ func runServer(cmd *Command, args []string) bool {
 	}
 
 	select {}
+}
+
+// idleTimeoutSeconds converts a seconds flag to the listener activity timeout,
+// keeping the 10s default when the option was never set. The clamp keeps the
+// multiplication from overflowing time.Duration; non-positive values disable
+// the timeout, as before.
+func idleTimeoutSeconds(seconds *int) time.Duration {
+	if seconds == nil {
+		return 10 * time.Second
+	}
+	return time.Duration(min(int64(*seconds), math.MaxInt64/int64(time.Second))) * time.Second
 }
 
 func newHttpServer(h http.Handler, tlsConfig *tls.Config) *http.Server {

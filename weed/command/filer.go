@@ -376,10 +376,7 @@ func (fo *FilerOptions) startFiler() {
 	if fo.listenOnLocalhost != nil {
 		listenOnLocalhost = *fo.listenOnLocalhost
 	}
-	idleTimeout := time.Duration(10) * time.Second
-	if fo.idleTimeout != nil {
-		idleTimeout = time.Duration(*fo.idleTimeout) * time.Second
-	}
+	idleTimeout := idleTimeoutSeconds(fo.idleTimeout)
 	if *fo.bindIp == "" {
 		*fo.bindIp = *fo.ip
 	}

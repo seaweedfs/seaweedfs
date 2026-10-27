@@ -135,10 +135,7 @@ func (iamopt *IamOptions) startIamServer() bool {
 	if iamopt.listenOnLocalhost != nil {
 		listenOnLocalhost = *iamopt.listenOnLocalhost
 	}
-	idleTimeout := time.Duration(10) * time.Second
-	if iamopt.idleTimeout != nil {
-		idleTimeout = time.Duration(*iamopt.idleTimeout) * time.Second
-	}
+	idleTimeout := idleTimeoutSeconds(iamopt.idleTimeout)
 
 	listenAddress := fmt.Sprintf(":%d", *iamopt.port)
 	iamApiListener, iamApiLocalListener, err := util.NewIpAndLocalListeners(bindIp, *iamopt.port, idleTimeout, listenOnLocalhost)

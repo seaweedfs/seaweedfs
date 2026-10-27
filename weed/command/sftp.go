@@ -114,10 +114,7 @@ func (sftpOpt *SftpOptions) startSftpServer() bool {
 	if sftpOpt.listenOnLocalhost != nil {
 		listenOnLocalhost = *sftpOpt.listenOnLocalhost
 	}
-	idleTimeout := time.Duration(10) * time.Second
-	if sftpOpt.idleTimeout != nil {
-		idleTimeout = time.Duration(*sftpOpt.idleTimeout) * time.Second
-	}
+	idleTimeout := idleTimeoutSeconds(sftpOpt.idleTimeout)
 	if *sftpOpt.bindIp == "" {
 		*sftpOpt.bindIp = "0.0.0.0"
 	}

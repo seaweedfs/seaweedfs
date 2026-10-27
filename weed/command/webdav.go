@@ -149,10 +149,7 @@ func (wo *WebDavOption) startWebDav() bool {
 
 	httpS := &http.Server{Handler: ws.Handler}
 
-	idleTimeout := time.Duration(10) * time.Second
-	if wo.idleTimeout != nil {
-		idleTimeout = time.Duration(*wo.idleTimeout) * time.Second
-	}
+	idleTimeout := idleTimeoutSeconds(wo.idleTimeout)
 
 	listenAddress := fmt.Sprintf("%s:%d", *wo.ipBind, *wo.port)
 	webDavListener, err := util.NewListener(listenAddress, idleTimeout)
