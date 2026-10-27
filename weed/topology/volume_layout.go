@@ -51,6 +51,12 @@ type volumeSizeTracking struct {
 // and out of writable within a single burst of assigns.
 const capacityRecoveryDelay = 30 * time.Second
 
+// oversizedVerdictTTL bounds how long a remembered oversized verdict holds
+// after the replica that earned it is gone. Long enough to outlive ordinary
+// re-registration churn, short enough that a permanently lost replica cannot
+// pin its volume out of the writable list forever.
+const oversizedVerdictTTL = 24 * time.Hour
+
 // mapping from volume to its locations, inverted from server to volume
 type VolumeLayout struct {
 	growRequest   atomic.Bool
@@ -64,13 +70,16 @@ type VolumeLayout struct {
 	// every volume on every heartbeat through ensureCorrectWritables.
 	writableMembers map[needle.VolumeId]struct{}
 	crowded         map[needle.VolumeId]struct{}
-	// oversizedVolumes remembers every vid a report has measured over the
-	// volume size limit. The per-replica marks in the location list die with
-	// the list when its last location leaves, and a replica re-registering
-	// from a size-less report would make the volume look writable again
-	// until the next full heartbeat re-measures it. An entry leaves only
-	// when a report measures the volume under the limit.
-	oversizedVolumes map[needle.VolumeId]struct{}
+	// oversizedVolumes remembers, per replica, when a report last measured
+	// the volume over the size limit. The per-replica marks in the location
+	// list die with the list when its last location leaves, and a replica
+	// re-registering from a size-less report would make the volume look
+	// writable again until the next full heartbeat re-measures it. A
+	// replica's entry leaves only when that replica reports under the
+	// limit, or when the verdict ages out — a replica gone that long either
+	// lost the volume or returns to a master that re-measures it on the
+	// next heartbeat.
+	oversizedVolumes map[needle.VolumeId]map[NodeId]time.Time
 	vacuumedVolumes  map[needle.VolumeId]time.Time
 	deletingVolumes  map[needle.VolumeId]struct{}
 	volumeSizeLimit  uint64
@@ -102,7 +111,7 @@ func NewVolumeLayout(rp *super_block.ReplicaPlacement, ttl *needle.TTL, diskType
 		writables:        *new([]needle.VolumeId),
 		writableMembers:  make(map[needle.VolumeId]struct{}),
 		crowded:          make(map[needle.VolumeId]struct{}),
-		oversizedVolumes: make(map[needle.VolumeId]struct{}),
+		oversizedVolumes: make(map[needle.VolumeId]map[NodeId]time.Time),
 		vacuumedVolumes:  make(map[needle.VolumeId]time.Time),
 		deletingVolumes:  make(map[needle.VolumeId]struct{}),
 		volumeSizeLimit:  volumeSizeLimit,
@@ -178,28 +187,47 @@ func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode, isQu
 }
 
 func (vl *VolumeLayout) rememberOversizedVolume(v *storage.VolumeInfo, dn *DataNode) {
-	if vl.isOversized(v) {
-		vl.oversizedVolumes[v.Id] = struct{}{}
-	} else {
-		delete(vl.oversizedVolumes, v.Id)
+	oversized := vl.isOversized(v)
+	if oversized {
+		replicas, ok := vl.oversizedVolumes[v.Id]
+		if !ok {
+			replicas = make(map[NodeId]time.Time)
+			vl.oversizedVolumes[v.Id] = replicas
+		}
+		replicas[dn.Id()] = time.Now()
+	} else if replicas, ok := vl.oversizedVolumes[v.Id]; ok {
+		delete(replicas, dn.Id())
+		if len(replicas) == 0 {
+			delete(vl.oversizedVolumes, v.Id)
+		}
 	}
 	if location, ok := vl.vid2location[v.Id]; ok {
-		location.SetOversized(dn, vl.isOversized(v))
+		location.SetOversized(dn, oversized)
 	}
 }
 
 // isMarkedOversized reports whether vid is known oversized: a remembered
-// report says so, or a location in the live list is marked.
+// report from some replica says so, or a location in the live list is
+// marked. Verdicts past oversizedVerdictTTL no longer count.
 func (vl *VolumeLayout) isMarkedOversized(vid needle.VolumeId) bool {
-	if _, ok := vl.oversizedVolumes[vid]; ok {
-		return true
+	if replicas, ok := vl.oversizedVolumes[vid]; ok {
+		now := time.Now()
+		for nodeId, markedAt := range replicas {
+			if now.Sub(markedAt) < oversizedVerdictTTL {
+				return true
+			}
+			delete(replicas, nodeId)
+		}
+		if len(replicas) == 0 {
+			delete(vl.oversizedVolumes, vid)
+		}
 	}
 	return vl.vid2location[vid].AnyOversized()
 }
 
 // UpdateOversizedState refreshes the per-replica oversized mark from the size
-// reported by this heartbeat, and is the only writer of that mark and of the
-// layout's remembered verdict. The delta heartbeat path (ApplyVolumeChanges)
+// reported by this heartbeat, and is the only writer of that mark and of this
+// replica's remembered verdict. The delta heartbeat path (ApplyVolumeChanges)
 // and the full heartbeat path (SyncDataNodeRegistration) both call it, or a
 // volume that grew past the limit would keep looking writable to
 // ensureCorrectWritables and bounce between writable and unwritable on every
@@ -1213,10 +1241,10 @@ func (vl *VolumeLayout) SetVolumeAvailable(dn *DataNode, vid needle.VolumeId, is
 	if vInfo.ReadOnly || isReadOnly || isFullCapacity {
 		return false
 	}
-	// The caller just asked the node whether the volume fits, so a
-	// remembered oversized verdict older than that answer is stale.
-	delete(vl.oversizedVolumes, vid)
-	location.SetOversized(dn, false)
+	// The caller just asked the node whether the volume fits; apply that
+	// fresh measurement to this replica's mark and remembered verdict
+	// instead of trusting the older ones.
+	vl.rememberOversizedVolume(&vInfo, dn)
 	vl.initSizeTracking(vid, vInfo.Size, vInfo.CompactRevision)
 
 	if vl.enoughCopies(vid) && vl.isAllWritable(vid) {
