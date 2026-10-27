@@ -984,48 +984,33 @@ func filterExpr(filter map[string]interface{}) (string, error) {
 	return strings.Join(parts, " AND "), nil
 }
 
-// fieldAccess renders the operand's typed extractor. Numbers go through
-// TRY_CAST of the serialized json_extract text, which is NULL on any other
-// stored type; the json_get_* extractors instead convert numeric-looking
-// strings and booleans, and error on mismatched types. Booleans compare the
-// serialized text to the JSON literals, since TRY_CAST's boolean conversion
-// also accepts '1' and '0'. Strings keep json_get_string, which must run only
-// under stringGuard.
+// fieldAccess renders the operand's comparison column over the serialized
+// json_extract text. Strings compare the serialized form directly, which is
+// exact-typed and never errors; numbers and booleans go through TRY_CAST,
+// which is NULL on any other stored type. The json_get_* extractors are not
+// used — they convert numeric-looking strings and booleans, and error on
+// mismatched types.
 func fieldAccess(field string, operand interface{}) (string, error) {
+	path := sqlEscape(existsPath(field))
 	switch operand.(type) {
 	case float64:
-		return fmt.Sprintf("TRY_CAST(json_extract(`metadata`, '%s') AS DOUBLE)", sqlEscape(existsPath(field))), nil
+		return fmt.Sprintf("TRY_CAST(json_extract(`metadata`, '%s') AS DOUBLE)", path), nil
 	case bool:
-		// TRY_CAST would also admit '1' and '0', so a stored number could
-		// satisfy a boolean filter; only the JSON literals count.
-		p := sqlEscape(existsPath(field))
-		return fmt.Sprintf("CASE WHEN json_extract(`metadata`, '%s') IN ('true', 'false') THEN json_extract(`metadata`, '%s') = 'true' END", p, p), nil
+		return fmt.Sprintf("TRY_CAST(json_extract(`metadata`, '%s') AS BOOLEAN)", path), nil
 	case string:
-		return fmt.Sprintf("json_get_string(`metadata`, '%s')", sqlEscape(field)), nil
+		return fmt.Sprintf("json_extract(`metadata`, '%s')", path), nil
 	default:
 		return "", fmt.Errorf("unsupported filter operand %v", operand)
 	}
 }
 
-// fieldMatch renders "field <rhs>" under exact JSON typing. String comparisons
-// sit behind stringGuard so json_get_string only evaluates rows storing a JSON
-// string; TRY_CAST already makes the number and boolean comparisons exact.
+// fieldMatch renders "field <rhs>".
 func fieldMatch(field string, operand interface{}, rhs string) (string, error) {
 	col, err := fieldAccess(field, operand)
 	if err != nil {
 		return "", err
 	}
-	expr := col + " " + rhs
-	if _, ok := operand.(string); ok {
-		expr = fmt.Sprintf("CASE WHEN %s THEN %s ELSE false END", stringGuard(field), expr)
-	}
-	return expr, nil
-}
-
-// stringGuard selects rows whose stored field is a JSON string: only a string
-// serializes with a leading quote in json_extract output.
-func stringGuard(field string) string {
-	return fmt.Sprintf("json_extract(`metadata`, '%s') LIKE '\"%%'", sqlEscape(existsPath(field)))
+	return col + " " + rhs, nil
 }
 
 // existsPath renders the field as a JSONPath for the json_exists and
@@ -1131,10 +1116,41 @@ func fieldClause(field string, cond interface{}) (string, error) {
 	}
 }
 
+// jsonbString renders s as the JSON text json_extract returns for a stored
+// string: quoted, with the same escapes the jsonb serializer emits.
+func jsonbString(s string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range s {
+		switch r {
+		case '"':
+			b.WriteString(`\"`)
+		case '\\':
+			b.WriteString(`\\`)
+		case '\n':
+			b.WriteString(`\n`)
+		case '\r':
+			b.WriteString(`\r`)
+		case '\t':
+			b.WriteString(`\t`)
+		case 0:
+			b.WriteString(`\0`)
+		default:
+			if r < 0x20 || (r >= 0x7f && r <= 0x9f) {
+				fmt.Fprintf(&b, `\u{%x}`, r)
+			} else {
+				b.WriteRune(r)
+			}
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
+}
+
 func sqlLiteral(v interface{}) (string, error) {
 	switch t := v.(type) {
 	case string:
-		return "'" + strings.ReplaceAll(t, "'", "''") + "'", nil
+		return "'" + sqlEscape(jsonbString(t)) + "'", nil
 	case bool:
 		if t {
 			return "true", nil

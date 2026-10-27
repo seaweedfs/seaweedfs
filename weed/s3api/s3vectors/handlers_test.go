@@ -208,13 +208,13 @@ func TestTranslateFilter(t *testing.T) {
 		want   string
 	}{
 		{"bare string equality", map[string]interface{}{"k": "v"},
-			"CASE WHEN json_extract(`metadata`, '$[\"k\"]') LIKE '\"%' THEN json_get_string(`metadata`, 'k') = 'v' ELSE false END"},
+			"json_extract(`metadata`, '$[\"k\"]') = '\"v\"'"},
 		{"bare number equality", map[string]interface{}{"k": float64(3)},
 			"TRY_CAST(json_extract(`metadata`, '$[\"k\"]') AS DOUBLE) = 3"},
 		{"bare bool equality", map[string]interface{}{"k": true},
 			"CASE WHEN json_extract(`metadata`, '$[\"k\"]') IN ('true', 'false') THEN json_extract(`metadata`, '$[\"k\"]') = 'true' END = true"},
 		{"ne", map[string]interface{}{"k": map[string]interface{}{"$ne": "v"}},
-			"NOT COALESCE(CASE WHEN json_extract(`metadata`, '$[\"k\"]') LIKE '\"%' THEN json_get_string(`metadata`, 'k') = 'v' ELSE false END, false)"},
+			"NOT COALESCE(json_extract(`metadata`, '$[\"k\"]') = '\"v\"', false)"},
 		{"exists true", map[string]interface{}{"k": map[string]interface{}{"$exists": true}},
 			"json_exists(`metadata`, '$[\"k\"]')"},
 		{"exists false", map[string]interface{}{"k": map[string]interface{}{"$exists": false}},
@@ -224,15 +224,15 @@ func TestTranslateFilter(t *testing.T) {
 		{"range", map[string]interface{}{"k": map[string]interface{}{"$gt": float64(1)}},
 			"TRY_CAST(json_extract(`metadata`, '$[\"k\"]') AS DOUBLE) > 1"},
 		{"in strings", map[string]interface{}{"k": map[string]interface{}{"$in": []interface{}{"a", "b"}}},
-			"(COALESCE(CASE WHEN json_extract(`metadata`, '$[\"k\"]') LIKE '\"%' THEN json_get_string(`metadata`, 'k') in ('a') ELSE false END, false) OR COALESCE(CASE WHEN json_extract(`metadata`, '$[\"k\"]') LIKE '\"%' THEN json_get_string(`metadata`, 'k') in ('b') ELSE false END, false))"},
+			"(COALESCE(json_extract(`metadata`, '$[\"k\"]') in ('\"a\"'), false) OR COALESCE(json_extract(`metadata`, '$[\"k\"]') in ('\"b\"'), false))"},
 		{"nin numbers", map[string]interface{}{"k": map[string]interface{}{"$nin": []interface{}{float64(1)}}},
 			"NOT (COALESCE(TRY_CAST(json_extract(`metadata`, '$[\"k\"]') AS DOUBLE) in (1), false))"},
 		{"and", map[string]interface{}{"$and": []interface{}{
 			map[string]interface{}{"a": "1"}, map[string]interface{}{"b": float64(2)},
 		}},
-			"(CASE WHEN json_extract(`metadata`, '$[\"a\"]') LIKE '\"%' THEN json_get_string(`metadata`, 'a') = '1' ELSE false END AND TRY_CAST(json_extract(`metadata`, '$[\"b\"]') AS DOUBLE) = 2)"},
+			"(json_extract(`metadata`, '$[\"a\"]') = '\"1\"' AND TRY_CAST(json_extract(`metadata`, '$[\"b\"]') AS DOUBLE) = 2)"},
 		{"sql injection", map[string]interface{}{"a'b": "v'1"},
-			"CASE WHEN json_extract(`metadata`, '$[\"a''b\"]') LIKE '\"%' THEN json_get_string(`metadata`, 'a''b') = 'v''1' ELSE false END"},
+			"json_extract(`metadata`, '$[\"a''b\"]') = '\"v''1\"'"},
 	}
 	for _, tc := range cases {
 		got, err := translateFilter(tc.filter)
