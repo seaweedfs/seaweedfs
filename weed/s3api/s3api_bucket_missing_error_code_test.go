@@ -8,8 +8,10 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 // Issue 12131: PUT/DELETE bucket encryption and PUT bucket policy answered 500
@@ -112,6 +114,76 @@ func TestBucketSubresourceWritesOnBucketVanishingMidRequest(t *testing.T) {
 			func(s3a *S3ApiServer) http.HandlerFunc { return s3a.DeleteBucketPolicyHandler })
 		if code != http.StatusNotFound || !strings.Contains(body, "NoSuchBucket") {
 			t.Fatalf("vanishing bucket policy delete: %d %s, want 404 NoSuchBucket", code, body)
+		}
+	})
+}
+
+// A bucket vanishing between the write's own lookup and its UpdateEntry
+// answers through the same classification: the filer's gRPC NotFound maps to
+// ErrBucketNotFound rather than surfacing as InternalError.
+func TestBucketSubresourceWritesOnVanishedUpdateEntry(t *testing.T) {
+	const bucket = "vanished-update-bucket"
+	policyEntry := &filer_pb.Entry{Name: bucket, IsDirectory: true,
+		Extended: map[string][]byte{BUCKET_POLICY_METADATA_KEY: []byte(testPolicyBody(bucket))}}
+	notFound := status.Error(codes.NotFound, "not found /buckets/"+bucket)
+
+	t.Run("put bucket policy", func(t *testing.T) {
+		code, body := writeSubresource(t, &fakeLookupFiler{entry: policyEntry, updateErr: notFound},
+			http.MethodPut, bucket, testPolicyBody(bucket),
+			func(s3a *S3ApiServer) http.HandlerFunc { return s3a.PutBucketPolicyHandler })
+		if code != http.StatusNotFound || !strings.Contains(body, "NoSuchBucket") {
+			t.Fatalf("vanished-update policy put: %d %s, want 404 NoSuchBucket", code, body)
+		}
+	})
+
+	t.Run("delete bucket policy", func(t *testing.T) {
+		code, body := writeSubresource(t, &fakeLookupFiler{entry: policyEntry, updateErr: notFound},
+			http.MethodDelete, bucket, "",
+			func(s3a *S3ApiServer) http.HandlerFunc { return s3a.DeleteBucketPolicyHandler })
+		if code != http.StatusNotFound || !strings.Contains(body, "NoSuchBucket") {
+			t.Fatalf("vanished-update policy delete: %d %s, want 404 NoSuchBucket", code, body)
+		}
+	})
+}
+
+// The patch transaction carries its own existence condition: a PATCH_EXTENDED
+// on an absent entry is a server-side idempotent no-op, so without the
+// condition a vanished bucket would acknowledge an encryption write that never
+// landed. The failed condition reports ErrNotFound -> NoSuchBucket.
+func TestBucketSubresourceWritesOnVanishedPatch(t *testing.T) {
+	const bucket = "vanished-patch-bucket"
+	failedTxn := &filer_pb.ObjectTransactionResponse{
+		Error:     "precondition failed",
+		ErrorCode: filer_pb.FilerError_PRECONDITION_FAILED}
+
+	t.Run("put bucket encryption", func(t *testing.T) {
+		filer := &fakeLookupFiler{
+			entry:   &filer_pb.Entry{Name: bucket, IsDirectory: true},
+			txnResp: failedTxn}
+		code, body := writeSubresource(t, filer, http.MethodPut, bucket, testEncryptionBody,
+			func(s3a *S3ApiServer) http.HandlerFunc { return s3a.PutBucketEncryptionHandler })
+		if code != http.StatusNotFound || !strings.Contains(body, "NoSuchBucket") {
+			t.Fatalf("vanished-patch encryption put: %d %s, want 404 NoSuchBucket", code, body)
+		}
+		if len(filer.txnSeen) != 1 ||
+			filer.txnSeen[0].GetCondition().GetClauses()[0].GetKind() != filer_pb.WriteCondition_IF_EXISTS {
+			t.Fatalf("bucket patch missing the existence condition: %+v", filer.txnSeen)
+		}
+	})
+
+	t.Run("delete bucket encryption", func(t *testing.T) {
+		encBytes, err := proto.Marshal(&s3_pb.BucketMetadata{
+			Encryption: &s3_pb.EncryptionConfiguration{SseAlgorithm: "AES256"}})
+		if err != nil {
+			t.Fatalf("marshal encryption metadata: %v", err)
+		}
+		filer := &fakeLookupFiler{
+			entry:   &filer_pb.Entry{Name: bucket, IsDirectory: true, Content: encBytes},
+			txnResp: failedTxn}
+		code, body := writeSubresource(t, filer, http.MethodDelete, bucket, "",
+			func(s3a *S3ApiServer) http.HandlerFunc { return s3a.DeleteBucketEncryptionHandler })
+		if code != http.StatusNotFound || !strings.Contains(body, "NoSuchBucket") {
+			t.Fatalf("vanished-patch encryption delete: %d %s, want 404 NoSuchBucket", code, body)
 		}
 	})
 }
