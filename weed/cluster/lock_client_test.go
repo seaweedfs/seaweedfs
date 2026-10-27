@@ -551,6 +551,42 @@ func TestDoLockClearsRenewTokenOnRejection(t *testing.T) {
 	}
 }
 
+// A bare LockHostMovedTo redirect is not a verdict on the token: the
+// request may have committed a renewal before the ring moved, so the held
+// token survives to renew against the new host.
+func TestDoLockKeepsRenewTokenOnCleanRedirect(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	grpcServer := grpc.NewServer()
+	filer_pb.RegisterSeaweedFilerServer(grpcServer, &cleanRedirectLockFiler{movedTo: "127.0.0.1:1.1"})
+	go grpcServer.Serve(listener)
+	defer grpcServer.Stop()
+
+	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+	host, port, err := net.SplitHostPort(listener.Addr().String())
+	if err != nil {
+		t.Fatalf("split host port: %v", err)
+	}
+	filerAddr := pb.ServerAddress(fmt.Sprintf("%s:0.%s", host, port))
+	lc := NewLockClient(dialOption, filerAddr)
+	lock := &LiveLock{
+		key:            "test-key",
+		renewToken:     "tok",
+		hostFiler:      filerAddr,
+		grpcDialOption: dialOption,
+		lc:             lc,
+	}
+	errorMessage, err := lock.doLock(time.Second, time.Second)
+	if err != nil || errorMessage != "" {
+		t.Fatalf("expected a clean redirect, got errorMessage=%q err=%v", errorMessage, err)
+	}
+	if lock.renewToken != "tok" {
+		t.Errorf("renewToken = %q, want it kept across the redirect", lock.renewToken)
+	}
+}
+
 // LiveLock.generation is a fencing token written and read with 64-bit atomic
 // operations. On 32-bit platforms (GOARCH=386 and GOARCH=arm) a 64-bit atomic
 // op requires an 8-byte-aligned address, which Go only guarantees for the

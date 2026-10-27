@@ -480,7 +480,13 @@ func (lock *LiveLock) doLock(lockDuration, attemptTimeout time.Duration) (errorM
 		})
 		glog.V(4).Infof("LOCK: DistributedLock response - key=%s err=%v", lock.key, err)
 		if err == nil && resp != nil {
-			lock.renewToken = resp.RenewToken
+			// Only a verdict replaces the token: a grant carries the new
+			// token, a rejection carries an error. A bare LockHostMovedTo
+			// redirect answers neither and must not drop a held token —
+			// the next attempt can still renew with it on the new host.
+			if resp.RenewToken != "" || resp.Error != "" {
+				lock.renewToken = resp.RenewToken
+			}
 			if resp.Generation > 0 {
 				atomic.StoreInt64(&lock.generation, resp.Generation)
 			}
