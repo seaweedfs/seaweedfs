@@ -311,26 +311,34 @@ func (lc *LockClient) StartLongLivedLock(key string, owner string, onLockOwnerCh
 // waiter must pick it up promptly, otherwise cross-mount write handoff stalls
 // long enough to time out clients.
 func (lock *LiveLock) retryUntilLocked(lockDuration time.Duration) error {
-	var unavailableSince time.Time
+	// The retry window bounds acquisition as a whole: the clock starts
+	// before the first attempt and each attempt gets what is left of it, so
+	// a bounded attempt cannot burn the window inside one call.
+	unavailableSince := time.Now()
 	for lock.renewToken == "" {
-		err := lock.AttemptToLock(lockDuration)
+		attemptTimeout := lock.lc.lockRpcTimeout
+		if remaining := lock.lc.noLockServerRetryPeriod - time.Since(unavailableSince); remaining < attemptTimeout {
+			if remaining <= 0 {
+				return fmt.Errorf("no lock server within %s", lock.lc.noLockServerRetryPeriod)
+			}
+			attemptTimeout = remaining
+		}
+		err := lock.attemptToLockWithin(lockDuration, attemptTimeout)
 		if err == nil {
-			unavailableSince = time.Time{}
+			unavailableSince = time.Now()
 			continue
 		}
 		glog.V(1).Infof("create lock %s: %v", lock.key, err)
 		if strings.Contains(err.Error(), "lock already owned") {
 			// Ordinary contention: a reachable server holds the lock, so
 			// waiting is the point and has no bound.
-			unavailableSince = time.Time{}
+			unavailableSince = time.Now()
 			continue
 		}
 		// Anything else — "no lock server found", a dead ring member refusing
 		// connections — is a systemic fault waiting cannot fix; give up once
 		// it persists past the retry period.
-		if unavailableSince.IsZero() {
-			unavailableSince = time.Now()
-		} else if time.Since(unavailableSince) > lock.lc.noLockServerRetryPeriod {
+		if time.Since(unavailableSince) > lock.lc.noLockServerRetryPeriod {
 			return err
 		}
 	}
@@ -338,8 +346,12 @@ func (lock *LiveLock) retryUntilLocked(lockDuration time.Duration) error {
 }
 
 func (lock *LiveLock) AttemptToLock(lockDuration time.Duration) error {
+	return lock.attemptToLockWithin(lockDuration, lock.lc.lockRpcTimeout)
+}
+
+func (lock *LiveLock) attemptToLockWithin(lockDuration, attemptTimeout time.Duration) error {
 	glog.V(4).Infof("LOCK: AttemptToLock key=%s owner=%s", lock.key, lock.self)
-	errorMessage, err := lock.doLock(lockDuration)
+	errorMessage, err := lock.doLock(lockDuration, attemptTimeout)
 	if err != nil {
 		glog.V(1).Infof("LOCK: doLock failed for key=%s: %v", lock.key, err)
 		time.Sleep(time.Second)
@@ -416,7 +428,7 @@ func (lock *LiveLock) Stop() error {
 	return lock.StopShortLivedLock()
 }
 
-func (lock *LiveLock) doLock(lockDuration time.Duration) (errorMessage string, err error) {
+func (lock *LiveLock) doLock(lockDuration, attemptTimeout time.Duration) (errorMessage string, err error) {
 	glog.V(4).Infof("LOCK: doLock calling DistributedLock - key=%s filer=%s owner=%s",
 		lock.key, lock.hostFiler, lock.self)
 
@@ -425,9 +437,8 @@ func (lock *LiveLock) doLock(lockDuration time.Duration) (errorMessage string, e
 
 	err = pb.WithFilerClient(false, 0, lock.hostFiler, lock.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		// Bound the attempt so an unreachable owner fails within the retry
-		// window. A timed-out attempt keeps no renew token, so the lock
-		// server still grants the key to at most one owner.
-		ctx, cancel := context.WithTimeout(context.Background(), lock.lc.lockRpcTimeout)
+		// window.
+		ctx, cancel := context.WithTimeout(context.Background(), attemptTimeout)
 		defer cancel()
 		resp, err := client.DistributedLock(ctx, &filer_pb.LockRequest{
 			Name:          lock.key,
