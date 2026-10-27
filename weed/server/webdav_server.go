@@ -98,6 +98,12 @@ type copyMoveGuardHandler struct {
 
 func (h copyMoveGuardHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "MOVE" || r.Method == "COPY" {
+		// a foreign-host Destination is another server's problem: the webdav
+		// handler answers 502, so the local checks below do not apply
+		if u, err := url.Parse(r.Header.Get("Destination")); err == nil && u.Host != "" && u.Host != r.Host {
+			h.next.ServeHTTP(w, r)
+			return
+		}
 		if u, err := url.Parse(r.Header.Get("Destination")); err == nil {
 			src := strings.Trim(path.Clean(r.URL.Path), "/")
 			dst := strings.Trim(path.Clean(u.Path), "/")
