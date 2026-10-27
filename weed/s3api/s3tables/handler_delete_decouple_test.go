@@ -249,3 +249,77 @@ func TestDeleteTableRefusesNestedSiblingDataPath(t *testing.T) {
 	assert.NotNil(t, fs.Get(GetNamespacePath(renameTestBucket, "nsa"), "vtab"),
 		"the victim table's catalog entry must survive")
 }
+
+// A rename that completes in the token delete's check-to-claim window moves
+// the record to another name: the stale delete must lose on the claim instead
+// of purging the data the moved record still points at.
+func TestDeleteTableTokenDeleteLosesToCompletedRename(t *testing.T) {
+	fs, m := startRenameManager(t)
+
+	token := "tok-rn"
+	meta, _ := json.Marshal(tableMetadataInternal{
+		Name:             "rn",
+		Namespace:        "ns",
+		Format:           "ICEBERG",
+		OwnerAccountID:   DefaultAccountID,
+		VersionToken:     token,
+		MetadataLocation: "s3://" + renameTestBucket + "/ns/old-x/metadata/v1.metadata.json",
+	})
+	fs.Put(GetNamespacePath(renameTestBucket, "ns"), "rn", map[string][]byte{
+		ExtendedKeyMetadata:  meta,
+		ExtendedKeyEntryType: []byte(EntryTypeTable),
+	})
+	dataPath := GetTablePath(renameTestBucket, "ns", "old-x")
+	fs.Put(dataPath, "data", nil)
+
+	fs.BeforeUpdate = func() {
+		// The rename's source clear has already run by the time the delete's
+		// claim write lands.
+		fs.Put(GetNamespacePath(renameTestBucket, "ns"), "rn", nil)
+	}
+
+	status, resp := runHandler(t, m, fs.Client, "DeleteTable", &DeleteTableRequest{
+		TableBucketARN: mustBucketARN(t),
+		Namespace:      []string{"ns"},
+		Name:           "rn",
+		VersionToken:   token,
+	})
+	assert.Equal(t, http.StatusConflict, status)
+	assert.Equal(t, ErrCodeConflict, resp.Type)
+
+	assert.NotNil(t, fs.Get(dataPath, "data"), "the moved table's data must survive the stale delete")
+}
+
+// A delete's claim on the source must turn a rename into a conflict before
+// any destination entry exists: the claim is what keeps a losing rename from
+// leaving a destination marker pointing at data the delete went on to purge.
+func TestRenameTableLosesToDeleteClaim(t *testing.T) {
+	fs, m := startRenameManager(t)
+
+	nsPath := GetNamespacePath(renameTestBucket, "ns")
+	fs.BeforeUpdate = func() {
+		e := fs.Get(nsPath, "t")
+		claimed := map[string][]byte{}
+		for k, v := range e.Extended {
+			claimed[k] = v
+		}
+		claimed[ExtendedKeyDeleting] = []byte("delete")
+		fs.Put(nsPath, "t", claimed)
+	}
+
+	status, resp := runHandler(t, m, fs.Client, "RenameTable", &RenameTableRequest{
+		TableBucketARN:  mustBucketARN(t),
+		SourceNamespace: []string{"ns"},
+		SourceName:      "t",
+		DestNamespace:   []string{"ns"},
+		DestName:        "t2",
+	})
+	assert.Equal(t, http.StatusConflict, status)
+	assert.Equal(t, ErrCodeConflict, resp.Type)
+
+	assert.Nil(t, fs.Get(nsPath, "t2"), "a losing rename must not publish the destination")
+	src := fs.Get(nsPath, "t")
+	require.NotNil(t, src)
+	assert.NotNil(t, src.Extended[ExtendedKeyMetadata], "the claimed source record must survive")
+	assert.NotNil(t, fs.Get(GetTablePath(renameTestBucket, "ns", "t"), "data"))
+}
