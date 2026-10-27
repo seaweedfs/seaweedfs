@@ -299,6 +299,38 @@ func (s *hangingLockFiler) DistributedLock(ctx context.Context, req *filer_pb.Lo
 	}
 }
 
+// A failed attempt keeps the token it sent: the request may have renewed the
+// lease server-side before its response was lost, and a retry with the last
+// token can still succeed. Only a definitive rejection may clear it.
+func TestDoLockKeepsRenewTokenOnError(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	addr := listener.Addr().String()
+	listener.Close()
+
+	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		t.Fatalf("split host port: %v", err)
+	}
+	lc := NewLockClient(dialOption, pb.ServerAddress(fmt.Sprintf("%s:0.%s", host, port)))
+	lock := &LiveLock{
+		key:            "test-key",
+		renewToken:     "tok",
+		hostFiler:      pb.ServerAddress(fmt.Sprintf("%s:0.%s", host, port)),
+		grpcDialOption: dialOption,
+		lc:             lc,
+	}
+	if _, err := lock.doLock(time.Second, 50*time.Millisecond); err == nil {
+		t.Fatal("expected the attempt to fail against a dead member")
+	}
+	if lock.renewToken != "tok" {
+		t.Errorf("renewToken = %q, want it kept for the next attempt", lock.renewToken)
+	}
+}
+
 // A ring member that accepts connections but never answers stalls the caller
 // the same way a partially partitioned peer does: each attempt must fail
 // within the per-attempt bound so the retry window can give up.
