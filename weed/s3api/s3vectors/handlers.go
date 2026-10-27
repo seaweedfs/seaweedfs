@@ -984,17 +984,22 @@ func filterExpr(filter map[string]interface{}) (string, error) {
 	return strings.Join(parts, " AND "), nil
 }
 
-// fieldAccess renders the operand's typed extractor. Numbers and booleans go
-// through TRY_CAST of the serialized json_extract text, which is NULL on any
-// other stored type; the json_get_* extractors instead convert numeric-looking
-// strings and booleans, and error on mismatched types. Strings keep
-// json_get_string, which must run only under stringGuard.
+// fieldAccess renders the operand's typed extractor. Numbers go through
+// TRY_CAST of the serialized json_extract text, which is NULL on any other
+// stored type; the json_get_* extractors instead convert numeric-looking
+// strings and booleans, and error on mismatched types. Booleans compare the
+// serialized text to the JSON literals, since TRY_CAST's boolean conversion
+// also accepts '1' and '0'. Strings keep json_get_string, which must run only
+// under stringGuard.
 func fieldAccess(field string, operand interface{}) (string, error) {
 	switch operand.(type) {
 	case float64:
 		return fmt.Sprintf("TRY_CAST(json_extract(`metadata`, '%s') AS DOUBLE)", sqlEscape(existsPath(field))), nil
 	case bool:
-		return fmt.Sprintf("TRY_CAST(json_extract(`metadata`, '%s') AS BOOLEAN)", sqlEscape(existsPath(field))), nil
+		// TRY_CAST would also admit '1' and '0', so a stored number could
+		// satisfy a boolean filter; only the JSON literals count.
+		p := sqlEscape(existsPath(field))
+		return fmt.Sprintf("CASE WHEN json_extract(`metadata`, '%s') IN ('true', 'false') THEN json_extract(`metadata`, '%s') = 'true' END", p, p), nil
 	case string:
 		return fmt.Sprintf("json_get_string(`metadata`, '%s')", sqlEscape(field)), nil
 	default:

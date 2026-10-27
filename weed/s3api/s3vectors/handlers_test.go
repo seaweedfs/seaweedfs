@@ -212,7 +212,7 @@ func TestTranslateFilter(t *testing.T) {
 		{"bare number equality", map[string]interface{}{"k": float64(3)},
 			"TRY_CAST(json_extract(`metadata`, '$[\"k\"]') AS DOUBLE) = 3"},
 		{"bare bool equality", map[string]interface{}{"k": true},
-			"TRY_CAST(json_extract(`metadata`, '$[\"k\"]') AS BOOLEAN) = true"},
+			"CASE WHEN json_extract(`metadata`, '$[\"k\"]') IN ('true', 'false') THEN json_extract(`metadata`, '$[\"k\"]') = 'true' END = true"},
 		{"ne", map[string]interface{}{"k": map[string]interface{}{"$ne": "v"}},
 			"NOT COALESCE(CASE WHEN json_extract(`metadata`, '$[\"k\"]') LIKE '\"%' THEN json_get_string(`metadata`, 'k') = 'v' ELSE false END, false)"},
 		{"exists true", map[string]interface{}{"k": map[string]interface{}{"$exists": true}},
