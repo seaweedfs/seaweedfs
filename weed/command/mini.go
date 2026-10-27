@@ -579,6 +579,7 @@ func initMiniWebDAVFlags() {
 	miniWebDavOptions.cacheSizeMB = cmdMini.Flag.Int64("webdav.cacheCapacityMB", 0, "local cache capacity in MB")
 	miniWebDavOptions.maxMB = cmdMini.Flag.Int("webdav.maxMB", 4, "split files larger than the limit")
 	miniWebDavOptions.filerRootPath = cmdMini.Flag.String("webdav.filer.path", "/", "use this remote path from filer server")
+	miniWebDavOptions.idleTimeout = cmdMini.Flag.Int("webdav.idleTimeout", 10, "connection idle seconds")
 }
 
 // initMiniAdminFlags initializes Admin server flag options

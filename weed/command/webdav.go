@@ -37,6 +37,7 @@ type WebDavOption struct {
 	cacheDir       *string
 	cacheSizeMB    *int64
 	maxMB          *int
+	idleTimeout    *int
 	// shutdownCtx, when non-nil, tells startWebDav to gracefully shut down the
 	// HTTP server once the ctx is cancelled. Used by weed mini; nil for
 	// standalone weed webdav.
@@ -57,6 +58,7 @@ func init() {
 	webDavStandaloneOptions.cacheSizeMB = cmdWebDav.Flag.Int64("cacheCapacityMB", 0, "local cache capacity in MB")
 	webDavStandaloneOptions.maxMB = cmdWebDav.Flag.Int("maxMB", 4, "split files larger than the limit")
 	webDavStandaloneOptions.filerRootPath = cmdWebDav.Flag.String("filer.path", "/", "use this remote path from filer server")
+	webDavStandaloneOptions.idleTimeout = cmdWebDav.Flag.Int("idleTimeout", 10, "connection idle seconds")
 }
 
 var cmdWebDav = &Command{
@@ -147,8 +149,13 @@ func (wo *WebDavOption) startWebDav() bool {
 
 	httpS := &http.Server{Handler: ws.Handler}
 
+	idleTimeout := time.Duration(10) * time.Second
+	if wo.idleTimeout != nil {
+		idleTimeout = time.Duration(*wo.idleTimeout) * time.Second
+	}
+
 	listenAddress := fmt.Sprintf("%s:%d", *wo.ipBind, *wo.port)
-	webDavListener, err := util.NewListener(listenAddress, time.Duration(10)*time.Second)
+	webDavListener, err := util.NewListener(listenAddress, idleTimeout)
 	if err != nil {
 		glog.Fatalf("WebDav Server listener on %s error: %v", listenAddress, err)
 	}

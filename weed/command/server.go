@@ -233,6 +233,7 @@ func init() {
 	webdavOptions.cacheSizeMB = cmdServer.Flag.Int64("webdav.cacheCapacityMB", 0, "local cache capacity in MB")
 	webdavOptions.maxMB = cmdServer.Flag.Int("webdav.maxMB", 4, "split files larger than the limit")
 	webdavOptions.filerRootPath = cmdServer.Flag.String("webdav.filer.path", "/", "use this remote path from filer server")
+	webdavOptions.idleTimeout = cmdServer.Flag.Int("webdav.idleTimeout", 10, "connection idle seconds")
 
 	mqBrokerOptions.port = cmdServer.Flag.Int("mq.broker.port", 17777, "message queue broker gRPC listen port")
 	mqBrokerOptions.logFlushInterval = cmdServer.Flag.Int("mq.broker.logFlushInterval", 5, "log buffer flush interval in seconds")
