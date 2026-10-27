@@ -200,6 +200,55 @@ func (h *S3TablesHandler) claimCatalogEntry(ctx context.Context, client filer_pb
 	})
 }
 
+// claimCatalogRecord reserves a catalog record for an in-flight delete or
+// rename under one compare-checked write: the entry must still hold exactly
+// expected. A record claimed by another kind of operation refuses the claim,
+// so the loser backs out before any data or destination entry is written;
+// a retry of the same kind may adopt its own earlier claim.
+func (h *S3TablesHandler) claimCatalogRecord(
+	ctx context.Context,
+	client filer_pb.SeaweedFilerClient,
+	path string,
+	expected map[string][]byte,
+	claim string,
+) error {
+	return h.mutateEntryExtended(ctx, client, path, func(extended map[string][]byte) error {
+		for key, want := range expected {
+			if key == ExtendedKeyDeleting {
+				continue
+			}
+			if !bytes.Equal(extended[key], want) {
+				return fmt.Errorf("%w: %s changed on %s", ErrConcurrentUpdate, key, path)
+			}
+		}
+		if cur, ok := extended[ExtendedKeyDeleting]; ok && string(cur) != claim {
+			return fmt.Errorf("%w: %s held on %s", ErrConcurrentUpdate, ExtendedKeyDeleting, path)
+		}
+		extended[ExtendedKeyDeleting] = []byte(claim)
+		return nil
+	})
+}
+
+// releaseCatalogRecord lifts a claimCatalogRecord reservation while the entry
+// still holds expected — which includes the claim itself — restoring the
+// record so the failed operation can be retried.
+func (h *S3TablesHandler) releaseCatalogRecord(
+	ctx context.Context,
+	client filer_pb.SeaweedFilerClient,
+	path string,
+	expected map[string][]byte,
+) error {
+	return h.mutateEntryExtended(ctx, client, path, func(extended map[string][]byte) error {
+		for key, want := range expected {
+			if !bytes.Equal(extended[key], want) {
+				return fmt.Errorf("%w: %s changed on %s", ErrConcurrentUpdate, key, path)
+			}
+		}
+		delete(extended, ExtendedKeyDeleting)
+		return nil
+	})
+}
+
 // updateExtendedAttribute applies mutate to the current value of key and writes
 // the result back. mutate runs again on each retry, so it always sees the
 // current value.
@@ -232,6 +281,7 @@ var s3tablesExtendedKeys = []string{
 	ExtendedKeyMaintenance,
 	ExtendedKeyMaintenanceStatus,
 	ExtendedKeyEntryType,
+	ExtendedKeyDeleting,
 }
 
 // SnapshotExtended captures an entry's attributes as an UpdateEntry
