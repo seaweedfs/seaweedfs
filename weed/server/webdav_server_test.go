@@ -479,10 +479,18 @@ func TestWebDavFileSystem_OpenFile_DoesNotReplaceFolder(t *testing.T) {
 
 type renameRecordingFiler struct {
 	filer_pb.UnimplementedSeaweedFilerServer
-	req *filer_pb.AtomicRenameEntryRequest
+	req  *filer_pb.AtomicRenameEntryRequest
+	dirs map[string]bool // folders that exist, by full path
 }
 
 func (f *renameRecordingFiler) LookupDirectoryEntry(_ context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	if f.dirs[string(util.NewFullPath(req.Directory, req.Name))] {
+		return &filer_pb.LookupDirectoryEntryResponse{Entry: &filer_pb.Entry{
+			Name:        req.Name,
+			IsDirectory: true,
+			Attributes:  &filer_pb.FuseAttributes{FileMode: uint32(os.ModeDir | 0755)},
+		}}, nil
+	}
 	if req.Name != "file.txt" {
 		return nil, filer_pb.ErrNotFound
 	}
@@ -496,7 +504,7 @@ func (f *renameRecordingFiler) AtomicRenameEntry(_ context.Context, req *filer_p
 
 // MOVE of a file onto an existing folder removes the folder, then renames onto "/dir/coll/".
 func TestWebDavFileSystem_Rename_FileOntoSlashedPath(t *testing.T) {
-	filer := &renameRecordingFiler{}
+	filer := &renameRecordingFiler{dirs: map[string]bool{"/dir": true}}
 	filerAddr := startFakeWebDavFiler(t, filer)
 	fs := &WebDavFileSystem{option: &WebDavOption{
 		Filer:          filerAddr,
@@ -508,4 +516,22 @@ func TestWebDavFileSystem_Rename_FileOntoSlashedPath(t *testing.T) {
 		assert.Equal(t, "/dir", filer.req.NewDirectory)
 		assert.Equal(t, "coll", filer.req.NewName)
 	}
+}
+
+// MOVE to a missing destination folder must fail before the rename: the filer
+// grows any missing parents itself, so an unchecked call would create them.
+func TestWebDavFileSystem_Rename_MissingDestParent(t *testing.T) {
+	filer := &renameRecordingFiler{dirs: map[string]bool{"/dir": true}}
+	filerAddr := startFakeWebDavFiler(t, filer)
+	fs := &WebDavFileSystem{option: &WebDavOption{
+		Filer:          filerAddr,
+		GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+	}}
+
+	assert.ErrorIs(t, fs.Rename(context.Background(), "/dir/file.txt", "/missing/moved.txt"), os.ErrNotExist)
+	assert.ErrorIs(t, fs.Rename(context.Background(), "/dir/nothere.txt", "/dir/file2.txt"), os.ErrNotExist)
+	assert.Nil(t, filer.req)
+
+	assert.NoError(t, fs.Rename(context.Background(), "/dir/file.txt", "/dir/moved.txt"))
+	assert.NotNil(t, filer.req)
 }

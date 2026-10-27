@@ -435,6 +435,10 @@ func (fs *WebDavFileSystem) Rename(ctx context.Context, oldName, newName string)
 	oldDir, oldBaseName := util.FullPath(oldName).DirAndName()
 	newDir, newBaseName := util.FullPath(newName).DirAndName()
 
+	if err := fs.checkParentDir(ctx, newDir); err != nil {
+		return err
+	}
+
 	return fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.AtomicRenameEntryRequest{
