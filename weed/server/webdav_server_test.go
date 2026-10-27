@@ -356,17 +356,19 @@ func TestCopyMoveGuardHandler_MissingDestParent(t *testing.T) {
 		method, src, dst string
 		want             int
 	}{
-		{"MOVE", "/dir/sub", "/missing/sub", http.StatusConflict},
-		{"COPY", "/dir/sub", "/missing/sub", http.StatusConflict},
-		{"COPY", "/dir", "/missing/deep/dir", http.StatusConflict},
-		{"MOVE", "/dir/sub", "/file/sub", http.StatusConflict}, // parent is a file
-		{"MOVE", "/dir/sub", "/broken/sub", http.StatusInternalServerError},
-		{"COPY", "/dir/sub", "/dir/other", 0}, // parent exists
-		{"MOVE", "/dir/sub", "/moved", 0},     // destination at the root
+		{"MOVE", "/dir/sub", "http://x/missing/sub", http.StatusConflict},
+		{"COPY", "/dir/sub", "http://x/missing/sub", http.StatusConflict},
+		{"COPY", "/dir", "http://x/missing/deep/dir", http.StatusConflict},
+		{"MOVE", "/dir/sub", "http://x/file/sub", http.StatusConflict}, // parent is a file
+		{"MOVE", "/dir/sub", "http://x/broken/sub", http.StatusInternalServerError},
+		{"COPY", "/dir/sub", "http://x/dir/other", 0},   // parent exists
+		{"MOVE", "/dir/sub", "http://x/moved", 0},       // destination at the root
+		{"MOVE", "/dir/sub", "http://y/missing/sub", 0}, // foreign host is a 502, not ours to judge
+		{"MOVE", "/dir/sub", "missing/sub", 0},          // a relative destination fails downstream
 	} {
 		called = false
 		req := httptest.NewRequest(tc.method, "http://x"+tc.src, nil)
-		req.Header.Set("Destination", "http://x"+tc.dst)
+		req.Header.Set("Destination", tc.dst)
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, req)
 		if tc.want == 0 {
