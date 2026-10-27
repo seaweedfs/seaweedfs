@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
@@ -1053,16 +1054,27 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 				// marker under a compare on the captured attributes, so a
 				// delete+recreate in between aborts here instead of losing the
 				// replacement, and only then purge the data.
-				err := h.removeExtendedAttributesIf(r.Context(), client, tablePath, snapshotExtended(tableEntry.Extended),
+				snapshot := snapshotExtended(tableEntry.Extended)
+				markerKeys := []string{
 					ExtendedKeyMetadata, ExtendedKeyMetadataVersion, ExtendedKeyPolicy, ExtendedKeyTags, ExtendedKeyEntryType,
-					ExtendedKeyMaintenance, ExtendedKeyMaintenanceStatus)
+					ExtendedKeyMaintenance, ExtendedKeyMaintenanceStatus,
+				}
+				err := h.removeExtendedAttributesIf(r.Context(), client, tablePath, snapshot, markerKeys...)
 				if err != nil {
 					if errors.Is(err, ErrConcurrentUpdate) {
 						return ErrVersionTokenMismatch
 					}
 					return err
 				}
-				return h.deleteDirectory(r.Context(), client, dataPath)
+				if err := h.deleteDirectory(r.Context(), client, dataPath); err != nil {
+					// The marker is already stripped; put it back so a retry
+					// finds the table and resumes the purge.
+					if restoreErr := h.restoreExtendedAttributes(r.Context(), client, tablePath, snapshot, markerKeys...); restoreErr != nil {
+						glog.V(1).Infof("delete table %s: data purge failed (%v) and marker restore failed: %v", tablePath, err, restoreErr)
+					}
+					return err
+				}
+				return nil
 			}
 			if err := h.deleteDirectory(r.Context(), client, dataPath); err != nil {
 				return err
@@ -1072,9 +1084,17 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 				ExtendedKeyMaintenance, ExtendedKeyMaintenanceStatus)
 		}
 		// Colocated table: the name path holds the data. A token caller's
-		// delete carries the observed mtime as a filer precondition, evaluated
-		// under the path lock: a recreated entry is newer and refused.
+		// delete first proves the entry still carries the captured attributes
+		// under the path lock — an xattr write keeps Mtime, so the mtime
+		// precondition alone cannot see it — then carries the observed mtime
+		// as a filer precondition: a recreated entry is newer and refused.
 		if req.VersionToken != "" && tableEntry != nil {
+			if err := h.assertEntryUnchanged(r.Context(), client, tablePath, tableEntry); err != nil {
+				if errors.Is(err, ErrConcurrentUpdate) {
+					return ErrVersionTokenMismatch
+				}
+				return err
+			}
 			if err := h.deleteDirectoryIfUnmodified(r.Context(), client, tablePath, tableMtimeNs); err != nil {
 				return err
 			}

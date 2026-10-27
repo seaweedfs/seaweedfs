@@ -179,6 +179,54 @@ func (h *S3TablesHandler) removeExtendedAttributesIf(
 	})
 }
 
+// assertEntryUnchanged verifies under the filer's path lock that the entry at
+// path still carries the extended attributes the caller captured. An xattr
+// update keeps Mtime, so the mtime-conditioned delete alone cannot see one;
+// this check fails the write before the delete runs. When only non-extended
+// fields changed the update writes the captured entry back, which the caller
+// tolerates: the captured state is the one it just authorized.
+func (h *S3TablesHandler) assertEntryUnchanged(ctx context.Context, client filer_pb.SeaweedFilerClient, path string, expected *filer_pb.Entry) error {
+	dir, _ := splitPath(path)
+	_, err := client.UpdateEntry(ctx, &filer_pb.UpdateEntryRequest{
+		Directory:        dir,
+		Entry:            expected,
+		ExpectedExtended: snapshotExtended(expected.Extended),
+	})
+	if status.Code(err) == codes.FailedPrecondition {
+		return fmt.Errorf("%w: %s", ErrConcurrentUpdate, path)
+	}
+	return err
+}
+
+// restoreExtendedAttributes puts previously removed attributes back only while
+// the entry still matches the state the removal left, so a rewritten or
+// recreated record is left alone.
+func (h *S3TablesHandler) restoreExtendedAttributes(ctx context.Context, client filer_pb.SeaweedFilerClient, path string, snapshot map[string][]byte, keys ...string) error {
+	removed := make(map[string]bool, len(keys))
+	for _, key := range keys {
+		removed[key] = true
+	}
+	return h.mutateEntryExtended(ctx, client, path, func(extended map[string][]byte) error {
+		for key, want := range snapshot {
+			if removed[key] {
+				if _, ok := extended[key]; ok {
+					return fmt.Errorf("%w: %s rewritten on %s", ErrConcurrentUpdate, key, path)
+				}
+				continue
+			}
+			if !bytes.Equal(extended[key], want) {
+				return fmt.Errorf("%w: %s changed on %s", ErrConcurrentUpdate, key, path)
+			}
+		}
+		for _, key := range keys {
+			if want, ok := snapshot[key]; ok {
+				extended[key] = want
+			}
+		}
+		return nil
+	})
+}
+
 // updateExtendedAttribute applies mutate to the current value of key and writes
 // the result back. mutate runs again on each retry, so it always sees the
 // current value.
