@@ -585,23 +585,23 @@ func applyBucketConfigToExtended(config *BucketConfig, ext map[string][]byte) er
 // patchBucketEntry applies a field-level PATCH_EXTENDED mutation to the bucket's
 // entry via ObjectTransaction, routed to the bucket's owner filer so its per-path
 // lock serializes concurrent config writes cluster-wide rather than racing
-// whole-entry rewrites. A nil/empty mutation is a no-op. The transaction
-// requires the bucket entry to exist: a PATCH on an absent entry is otherwise a
-// silent no-op, which would acknowledge a config write that never landed.
+// whole-entry rewrites. The transaction requires the bucket entry to exist: a
+// PATCH on an absent entry is otherwise a silent no-op, which would acknowledge
+// a config write that never landed. An empty mutation still ships so the
+// existence condition runs on its own.
 func (s3a *S3ApiServer) patchBucketEntry(bucket string, m *filer_pb.ObjectMutation) error {
-	if m == nil || (len(m.SetExtended) == 0 && len(m.DeleteExtended) == 0 && !m.SetContent) {
-		return nil
-	}
 	dir := s3a.option.BucketsPath
 	bucketPath := dir + "/" + bucket
-	m.Type = filer_pb.ObjectMutation_PATCH_EXTENDED
-	m.Directory = dir
-	m.Name = bucket
 	req := &filer_pb.ObjectTransactionRequest{
 		LockKey:   bucketPath,
 		RouteKey:  objectWriteRouteKeyPrefix + bucketPath,
 		Condition: clause(filer_pb.WriteCondition_IF_EXISTS),
-		Mutations: []*filer_pb.ObjectMutation{m},
+	}
+	if m != nil && (len(m.SetExtended) > 0 || len(m.DeleteExtended) > 0 || m.SetContent) {
+		m.Type = filer_pb.ObjectMutation_PATCH_EXTENDED
+		m.Directory = dir
+		m.Name = bucket
+		req.Mutations = []*filer_pb.ObjectMutation{m}
 	}
 	respErr := func(resp *filer_pb.ObjectTransactionResponse, err error) error {
 		if err != nil {

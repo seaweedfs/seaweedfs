@@ -143,4 +143,34 @@ func TestBucketConfigWritesOnVanishedPatch(t *testing.T) {
 			t.Fatal("bucket patch missing the existence condition")
 		}
 	})
+
+	// Rewriting the stored status produces an empty patch; it must still carry
+	// the existence condition rather than skip the transaction.
+	t.Run("unchanged config value", func(t *testing.T) {
+		var sawEmptyPatch bool
+		f := &ambiguousPutFiler{
+			entries: map[string]*filer_pb.Entry{
+				bucketKey: {
+					Name:        bucket,
+					IsDirectory: true,
+					Extended:    map[string][]byte{s3_constants.ExtVersioningKey: []byte(s3_constants.VersioningEnabled)},
+				},
+			},
+		}
+		f.txnCheck = func(req *filer_pb.ObjectTransactionRequest) {
+			for _, c := range req.GetCondition().GetClauses() {
+				if c.GetKind() == filer_pb.WriteCondition_IF_EXISTS && len(req.Mutations) == 0 {
+					sawEmptyPatch = true
+				}
+			}
+			delete(f.entries, bucketKey)
+		}
+		s3a := newPutTestServer(t, startFakeFiler(t, f))
+		if code := s3a.setBucketVersioningStatus(bucket, s3_constants.VersioningEnabled); code != s3err.ErrNoSuchBucket {
+			t.Fatalf("setBucketVersioningStatus = %v, want %v", code, s3err.ErrNoSuchBucket)
+		}
+		if !sawEmptyPatch {
+			t.Fatal("empty patch skipped the existence-condition transaction")
+		}
+	})
 }
