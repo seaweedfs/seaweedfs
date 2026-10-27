@@ -8,6 +8,7 @@
 pub mod coverage;
 pub mod maintenance;
 pub mod query;
+pub mod segments;
 pub mod table;
 #[cfg(test)]
 mod testing;

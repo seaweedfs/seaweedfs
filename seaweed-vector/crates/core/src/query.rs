@@ -7,6 +7,7 @@ use futures::TryStreamExt;
 use lance::Dataset;
 use lance::dataset::scanner::Scanner;
 use lance_linalg::distance::DistanceType;
+use lance_table::format::Fragment;
 
 use crate::table::VectorTable;
 
@@ -27,6 +28,17 @@ pub struct Query {
     pub postfilter: bool,
     pub distance: DistanceType,
     pub nprobes: Option<usize>,
+    /// Restrict the indexed scan to these physical index segments (the
+    /// Enterprise planner fans a query out across them). Without `fragments`,
+    /// unindexed fragments outside the segments are not searched — the caller
+    /// owns disjoint coverage of them. When `fragments` is also set the scan
+    /// covers both, so a worker can take its segment share plus an
+    /// unindexed-fragment sweep in one request.
+    pub index_segments: Option<Vec<uuid::Uuid>>,
+    /// Restrict the scan to these fragment ids — used by the planner to give
+    /// a worker the unindexed-fragment sweep. Listed ids that no longer exist
+    /// scan nothing.
+    pub fragments: Option<Vec<u64>>,
 }
 
 /// One row of a top-K answer.
@@ -41,14 +53,14 @@ pub struct Hit {
 
 /// Exact top-K over every fragment, ignoring any index.
 pub async fn flat(dataset: &Dataset, table: &VectorTable, query: &Query) -> Result<Vec<Hit>> {
-    run(scanner(dataset, table, query, false)?, table).await
+    run(scanner(dataset, table, query, false).await?, table).await
 }
 
 /// Top-K with the ANN index where it covers the fragment and a flat pass over
 /// the rest. Whether the index is used is Lance's decision per fragment, so
 /// rows written after the last index build are always candidates.
 pub async fn ann(dataset: &Dataset, table: &VectorTable, query: &Query) -> Result<Vec<Hit>> {
-    run(scanner(dataset, table, query, true)?, table).await
+    run(scanner(dataset, table, query, true).await?, table).await
 }
 
 /// Fetch rows by key.
@@ -80,7 +92,7 @@ pub async fn get(
         .context("scan by keys")
 }
 
-fn scanner(
+async fn scanner(
     dataset: &Dataset,
     table: &VectorTable,
     query: &Query,
@@ -106,6 +118,34 @@ fn scanner(
     }
     if let Some(nprobes) = query.nprobes {
         scanner.nprobes(nprobes);
+    }
+    let segments = query.index_segments.as_deref().unwrap_or(&[]);
+    if use_index && !segments.is_empty() {
+        scanner.with_index_segments(segments.to_vec())?;
+    }
+    // Lance intersects the fragment list with the selected segments, so a
+    // scoped scan must name the segment-covered fragments itself: the universe
+    // is the listed ids plus the live coverage of the selected segments. An
+    // empty universe (or an empty-segment, fragment-less assignment) scopes to
+    // nothing — `with_fragments` with an empty list scans nothing.
+    let mut wanted: Option<Vec<u64>> = query.fragments.clone();
+    if let Some(ids) = &mut wanted {
+        if use_index && !segments.is_empty() {
+            ids.extend(
+                crate::segments::covered_fragments(dataset, &table.vector_column, segments).await?,
+            );
+        }
+    } else if use_index && query.index_segments.as_ref().is_some_and(|s| s.is_empty()) {
+        wanted = Some(Vec::new());
+    }
+    if let Some(ids) = wanted {
+        let frags: Vec<Fragment> = dataset
+            .fragments()
+            .iter()
+            .filter(|f| ids.contains(&f.id))
+            .cloned()
+            .collect();
+        scanner.with_fragments(frags);
     }
     let mut columns = Vec::new();
     if let Some(key) = &table.key_column {
@@ -195,6 +235,8 @@ mod tests {
             postfilter: false,
             distance: DistanceType::L2,
             nprobes: None,
+            index_segments: None,
+            fragments: None,
         };
         let hits = flat(&dataset, &table, &query).await.unwrap();
         assert_eq!(hits.len(), 2);
@@ -234,6 +276,8 @@ mod tests {
                 postfilter: false,
                 distance: DistanceType::L2,
                 nprobes: None,
+                index_segments: None,
+                fragments: None,
             },
         )
         .await
@@ -311,6 +355,8 @@ mod tests {
                     postfilter: false,
                     distance: DistanceType::L2,
                     nprobes: None,
+                    index_segments: None,
+                    fragments: None,
                 },
             )
             .await
@@ -399,6 +445,8 @@ mod tests {
             postfilter: false,
             distance: DistanceType::L2,
             nprobes: None,
+            index_segments: None,
+            fragments: None,
         };
         assert!(flat(&dataset, &table, &query).await.is_err());
     }
@@ -420,6 +468,8 @@ mod tests {
             postfilter: false,
             distance: DistanceType::L2,
             nprobes: None,
+            index_segments: None,
+            fragments: None,
         };
         let indexed = ann(&dataset, &table, &query).await.unwrap();
         let exact = flat(&dataset, &table, &query).await.unwrap();

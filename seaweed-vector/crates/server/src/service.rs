@@ -76,17 +76,16 @@ fn schema_for(
     );
     // The arrow.json extension marks the Utf8 column as JSON: lance stores it
     // as jsonb, which is what the json_get_* filter functions take.
-    let mut metadata_meta = HashMap::from_iter([(
-        "ARROW:extension:name".to_string(),
-        "arrow.json".to_string(),
-    )]);
+    let mut metadata_meta =
+        HashMap::from_iter([("ARROW:extension:name".to_string(), "arrow.json".to_string())]);
     if !non_filterable.is_empty() {
         metadata_meta.insert(
             "non_filterable_metadata_keys".to_string(),
             serde_json::to_string(non_filterable).unwrap_or_default(),
         );
     }
-    let metadata_field = Field::new(METADATA_COLUMN, DataType::Utf8, true).with_metadata(metadata_meta);
+    let metadata_field =
+        Field::new(METADATA_COLUMN, DataType::Utf8, true).with_metadata(metadata_meta);
     Arc::new(Schema::new(vec![
         Field::new(KEY_COLUMN, DataType::Utf8, false),
         vector_field,
@@ -122,12 +121,8 @@ fn batch_of(vectors: &[pb::Vector], dimension: usize, schema: Arc<Schema>) -> Re
     else {
         bail!("vector column is not a fixed-size list");
     };
-    let vectors_array = FixedSizeListArray::try_new(
-        item_field.clone(),
-        dimension as i32,
-        values,
-        None,
-    )?;
+    let vectors_array =
+        FixedSizeListArray::try_new(item_field.clone(), dimension as i32, values, None)?;
     let metas = vectors
         .iter()
         .map(|v| {
@@ -523,6 +518,8 @@ impl VectorService for VectorServer {
             postfilter: req.postfilter,
             distance,
             nprobes: None,
+            index_segments: None,
+            fragments: None,
         };
         let hits = query::ann(&dataset, &resolved, &query)
             .await
