@@ -416,7 +416,7 @@ func (fs *WebDavFileSystem) Rename(ctx context.Context, oldName, newName string)
 	}
 
 	if _, err = fs.stat(ctx, oldName); err != nil {
-		return os.ErrExist
+		return err
 	}
 	oldName = string(util.NormalizePath(oldName))
 	newName = string(util.NormalizePath(newName))
