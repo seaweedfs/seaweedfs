@@ -98,6 +98,12 @@ type copyMoveGuardHandler struct {
 
 func (h copyMoveGuardHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "MOVE" || r.Method == "COPY" {
+		// a foreign-host Destination is another server's problem: the webdav
+		// handler answers 502, so the local checks below do not apply
+		if u, err := url.Parse(r.Header.Get("Destination")); err == nil && u.Host != "" && u.Host != r.Host {
+			h.next.ServeHTTP(w, r)
+			return
+		}
 		if u, err := url.Parse(r.Header.Get("Destination")); err == nil {
 			src := strings.Trim(path.Clean(r.URL.Path), "/")
 			dst := strings.Trim(path.Clean(u.Path), "/")
@@ -127,6 +133,25 @@ func (h copyMoveGuardHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 				u.Path = p
 				u.RawPath = ""
 				r.Header.Set("Destination", u.String())
+			}
+		}
+		// the destination's parent collection must exist; Mkdir and Rename
+		// errors surface as 403 below, not the 409 a missing parent requires
+		if u, err := url.Parse(r.Header.Get("Destination")); err == nil {
+			if dst := path.Clean(u.Path); strings.HasPrefix(dst, "/") && dst != "/" {
+				if parent := path.Dir(dst); parent != "/" {
+					if pfi, err := h.fs.Stat(r.Context(), parent); err != nil {
+						if os.IsNotExist(err) {
+							w.WriteHeader(http.StatusConflict)
+						} else {
+							w.WriteHeader(http.StatusInternalServerError)
+						}
+						return
+					} else if !pfi.IsDir() {
+						w.WriteHeader(http.StatusConflict)
+						return
+					}
+				}
 			}
 		}
 	}
@@ -251,8 +276,12 @@ func (fs *WebDavFileSystem) Mkdir(ctx context.Context, fullDirPath string, perm 
 		return err
 	}
 
+	dir, name := util.NormalizePath(fullDirPath).DirAndName()
+	if err := fs.checkParentDir(ctx, dir); err != nil {
+		return err
+	}
+
 	return fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		dir, name := util.NormalizePath(fullDirPath).DirAndName()
 		request := &filer_pb.CreateEntryRequest{
 			Directory: dir,
 			Entry: &filer_pb.Entry{
@@ -278,6 +307,23 @@ func (fs *WebDavFileSystem) Mkdir(ctx context.Context, fullDirPath string, perm 
 	})
 }
 
+// checkParentDir returns os.ErrNotExist, which x/net/webdav answers with 409
+// Conflict, when dir is missing or is not a folder: RFC 4918 9.3 and 9.7.1
+// forbid creating the intermediate collections of a MKCOL or PUT.
+func (fs *WebDavFileSystem) checkParentDir(ctx context.Context, dir string) error {
+	if dir == "/" {
+		return nil
+	}
+	fi, err := fs.stat(ctx, dir)
+	if err != nil {
+		return err
+	}
+	if !fi.IsDir() {
+		return os.ErrNotExist
+	}
+	return nil
+}
+
 func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, flag int, perm os.FileMode) (webdav.File, error) {
 	glog.V(2).Infof("WebDavFileSystem.OpenFile %v %x", fullFilePath, flag)
 
@@ -291,6 +337,10 @@ func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, f
 		if strings.HasSuffix(fullFilePath, "/") {
 			return nil, os.ErrInvalid
 		}
+		dir, name := util.FullPath(fullFilePath).DirAndName()
+		if err := fs.checkParentDir(ctx, dir); err != nil {
+			return nil, err
+		}
 		fi, err := fs.stat(ctx, fullFilePath)
 		if err == nil {
 			if flag&os.O_EXCL != 0 || fi.IsDir() {
@@ -301,7 +351,6 @@ func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, f
 			return nil, err
 		}
 
-		dir, name := util.FullPath(fullFilePath).DirAndName()
 		err = fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 			if err := filer_pb.CreateEntry(context.Background(), client, &filer_pb.CreateEntryRequest{
 				Directory: dir,
@@ -392,7 +441,7 @@ func (fs *WebDavFileSystem) Rename(ctx context.Context, oldName, newName string)
 	}
 
 	if _, err = fs.stat(ctx, oldName); err != nil {
-		return os.ErrExist
+		return err
 	}
 	oldName = string(util.NormalizePath(oldName))
 	newName = string(util.NormalizePath(newName))
@@ -410,6 +459,10 @@ func (fs *WebDavFileSystem) Rename(ctx context.Context, oldName, newName string)
 
 	oldDir, oldBaseName := util.FullPath(oldName).DirAndName()
 	newDir, newBaseName := util.FullPath(newName).DirAndName()
+
+	if err := fs.checkParentDir(ctx, newDir); err != nil {
+		return err
+	}
 
 	return fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
