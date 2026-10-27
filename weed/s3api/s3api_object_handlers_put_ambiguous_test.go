@@ -140,6 +140,8 @@ type ambiguousPutFiler struct {
 	respError     string
 	lookupErr     error
 	lookupFailKey string
+	updateErr     error
+	updateFailKey string
 	nextKey       uint64
 	// supersede, once, swaps in a concurrent write's entry as the routed
 	// transaction commits — issue 11631's client retry. txnNoApply models a
@@ -332,7 +334,11 @@ func (f *ambiguousPutFiler) ListEntries(req *filer_pb.ListEntriesRequest, stream
 func (f *ambiguousPutFiler) UpdateEntry(_ context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.entries[req.Directory+"/"+req.Entry.Name] = proto.Clone(req.Entry).(*filer_pb.Entry)
+	key := req.Directory + "/" + req.Entry.Name
+	if f.updateErr != nil && key == f.updateFailKey {
+		return nil, f.updateErr
+	}
+	f.entries[key] = proto.Clone(req.Entry).(*filer_pb.Entry)
 	return &filer_pb.UpdateEntryResponse{}, nil
 }
 

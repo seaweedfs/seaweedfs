@@ -11,6 +11,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // Bucket-level configuration writes against a bucket that does not exist must
@@ -46,4 +48,45 @@ func TestPutBucketPolicyOnMissingBucket(t *testing.T) {
 	if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "NoSuchBucket") {
 		t.Fatalf("status=%d body=%s, want 404 NoSuchBucket", rec.Code, rec.Body.String())
 	}
+}
+
+// A bucket deleted between the policy write's own lookup and its UpdateEntry
+// surfaces as a filer NotFound; the answer stays NoSuchBucket, not
+// InternalError.
+func TestBucketPolicyOpsOnVanishedUpdateEntry(t *testing.T) {
+	const bucket = "vanished-update-bucket"
+	policy := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::vanished-update-bucket/*"}]}`
+	newFiler := func() *ambiguousPutFiler {
+		return &ambiguousPutFiler{
+			entries: map[string]*filer_pb.Entry{
+				"/buckets/" + bucket: {
+					Name:        bucket,
+					IsDirectory: true,
+					Extended:    map[string][]byte{BUCKET_POLICY_METADATA_KEY: []byte(policy)},
+				},
+			},
+			updateErr:     status.Error(codes.NotFound, "not found /buckets/"+bucket),
+			updateFailKey: "/buckets/" + bucket,
+		}
+	}
+
+	t.Run("put", func(t *testing.T) {
+		s3a := newPutTestServer(t, startFakeFiler(t, newFiler()))
+		r := mux.SetURLVars(httptest.NewRequest(http.MethodPut, "/"+bucket, strings.NewReader(policy)), map[string]string{"bucket": bucket})
+		rec := httptest.NewRecorder()
+		s3a.PutBucketPolicyHandler(rec, r)
+		if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "NoSuchBucket") {
+			t.Fatalf("status=%d body=%s, want 404 NoSuchBucket", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("delete", func(t *testing.T) {
+		s3a := newPutTestServer(t, startFakeFiler(t, newFiler()))
+		r := mux.SetURLVars(httptest.NewRequest(http.MethodDelete, "/"+bucket, nil), map[string]string{"bucket": bucket})
+		rec := httptest.NewRecorder()
+		s3a.DeleteBucketPolicyHandler(rec, r)
+		if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "NoSuchBucket") {
+			t.Fatalf("status=%d body=%s, want 404 NoSuchBucket", rec.Code, rec.Body.String())
+		}
+	})
 }
