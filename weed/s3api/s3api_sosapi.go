@@ -216,14 +216,23 @@ func collectBucketUsageFromTopology(t *master_pb.TopologyInfo, collectionName st
 }
 
 // calculateClusterCapacity sums up the total and available capacity of the entire cluster.
+// Slot counts are an admission bound, not a capacity measurement — -max can
+// be set higher than the volumes a disk actually fills — so a disk that
+// reports physical counters is capped by them.
 func calculateClusterCapacity(t *master_pb.TopologyInfo, volumeSizeLimitMb uint64) (total, available int64) {
 	volumeSize := int64(volumeSizeLimitMb) * 1024 * 1024
 	for _, dc := range t.DataCenterInfos {
 		for _, r := range dc.RackInfos {
 			for _, dn := range r.DataNodeInfos {
 				for _, disk := range dn.DiskInfos {
-					total += int64(disk.MaxVolumeCount) * volumeSize
-					available += int64(disk.FreeVolumeCount) * volumeSize
+					slotTotal := int64(disk.MaxVolumeCount) * volumeSize
+					slotFree := int64(disk.FreeVolumeCount) * volumeSize
+					if disk.DiskTotalBytes > 0 {
+						slotTotal = min(slotTotal, int64(disk.DiskTotalBytes))
+						slotFree = min(slotFree, int64(disk.DiskFreeBytes))
+					}
+					total += slotTotal
+					available += slotFree
 				}
 			}
 		}
