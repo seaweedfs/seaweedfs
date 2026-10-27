@@ -208,18 +208,36 @@ func (vl *VolumeLayout) rememberOversizedVolume(v *storage.VolumeInfo, dn *DataN
 
 // isMarkedOversized reports whether vid is known oversized: a remembered
 // report from some replica says so, or a location in the live list is
-// marked. Verdicts past oversizedVerdictTTL no longer count.
+// marked. A verdict past oversizedVerdictTTL forgives a replica that never
+// came back, but still counts while its replica sits in the live list: a
+// remount announces the volume without a size, so expiring then would
+// re-admit an oversized volume until the next size-bearing heartbeat.
 func (vl *VolumeLayout) isMarkedOversized(vid needle.VolumeId) bool {
 	if replicas, ok := vl.oversizedVolumes[vid]; ok {
 		now := time.Now()
+		location := vl.vid2location[vid]
+		marked := false
 		for nodeId, markedAt := range replicas {
-			if now.Sub(markedAt) < oversizedVerdictTTL {
-				return true
+			present := false
+			if location != nil {
+				for _, dnl := range location.list {
+					if dnl.Id() == nodeId {
+						present = true
+						break
+					}
+				}
+			}
+			if now.Sub(markedAt) < oversizedVerdictTTL || present {
+				marked = true
+				continue
 			}
 			delete(replicas, nodeId)
 		}
 		if len(replicas) == 0 {
 			delete(vl.oversizedVolumes, vid)
+		}
+		if marked {
+			return true
 		}
 	}
 	return vl.vid2location[vid].AnyOversized()
