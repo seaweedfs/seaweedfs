@@ -10,6 +10,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -87,6 +88,59 @@ func TestBucketPolicyOpsOnVanishedUpdateEntry(t *testing.T) {
 		s3a.DeleteBucketPolicyHandler(rec, r)
 		if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "NoSuchBucket") {
 			t.Fatalf("status=%d body=%s, want 404 NoSuchBucket", rec.Code, rec.Body.String())
+		}
+	})
+}
+
+// The bucket patch transaction carries an existence condition: a PATCH on an
+// absent entry is otherwise a server-side no-op, so without it a bucket
+// deleted between the metadata read and the patch would acknowledge a config
+// write that never landed. The failed condition reports NoSuchBucket.
+func TestBucketConfigWritesOnVanishedPatch(t *testing.T) {
+	const bucket = "vanished-patch-bucket"
+	bucketKey := "/buckets/" + bucket
+	newFiler := func(sawCondition *bool) *ambiguousPutFiler {
+		f := &ambiguousPutFiler{
+			entries: map[string]*filer_pb.Entry{
+				bucketKey: {Name: bucket, IsDirectory: true},
+			},
+		}
+		f.txnCheck = func(req *filer_pb.ObjectTransactionRequest) {
+			for _, c := range req.GetCondition().GetClauses() {
+				if c.GetKind() == filer_pb.WriteCondition_IF_EXISTS {
+					*sawCondition = true
+				}
+			}
+			delete(f.entries, bucketKey)
+		}
+		return f
+	}
+
+	t.Run("put bucket encryption", func(t *testing.T) {
+		var sawCondition bool
+		s3a := newPutTestServer(t, startFakeFiler(t, newFiler(&sawCondition)))
+		body := `<ServerSideEncryptionConfiguration>` +
+			`<Rule><ApplyServerSideEncryptionByDefault><SSEAlgorithm>AES256</SSEAlgorithm>` +
+			`</ApplyServerSideEncryptionByDefault></Rule></ServerSideEncryptionConfiguration>`
+		r := mux.SetURLVars(httptest.NewRequest(http.MethodPut, "/"+bucket, strings.NewReader(body)), map[string]string{"bucket": bucket})
+		rec := httptest.NewRecorder()
+		s3a.PutBucketEncryptionHandler(rec, r)
+		if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "NoSuchBucket") {
+			t.Fatalf("status=%d body=%s, want 404 NoSuchBucket", rec.Code, rec.Body.String())
+		}
+		if !sawCondition {
+			t.Fatal("bucket patch missing the existence condition")
+		}
+	})
+
+	t.Run("update bucket config", func(t *testing.T) {
+		var sawCondition bool
+		s3a := newPutTestServer(t, startFakeFiler(t, newFiler(&sawCondition)))
+		if code := s3a.setBucketVersioningStatus(bucket, s3_constants.VersioningEnabled); code != s3err.ErrNoSuchBucket {
+			t.Fatalf("setBucketVersioningStatus = %v, want %v", code, s3err.ErrNoSuchBucket)
+		}
+		if !sawCondition {
+			t.Fatal("bucket patch missing the existence condition")
 		}
 	})
 }
