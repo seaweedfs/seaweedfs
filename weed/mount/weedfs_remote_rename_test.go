@@ -71,7 +71,7 @@ func TestRemoteRenameReplayLeavesTheTargetAlone(t *testing.T) {
 	oldPath, newPath := util.FullPath("/dir/file"), util.FullPath("/dir/renamed")
 
 	inode := wfs.inodeToPath.Lookup(oldPath, time.Now().Unix(), false, false, 0, true)
-	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+	fh, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
 		Name:       "file",
 		Attributes: &filer_pb.FuseAttributes{FileSize: 88},
 	}, 0, 0)
@@ -100,7 +100,7 @@ func TestRenameBelowTheVersionFenceStillMoves(t *testing.T) {
 	oldPath, newPath := util.FullPath("/dir/file"), util.FullPath("/dir/renamed")
 
 	inode := wfs.inodeToPath.Lookup(oldPath, time.Now().Unix(), false, false, 0, true)
-	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+	fh, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
 		Name:       "file",
 		Attributes: &filer_pb.FuseAttributes{FileSize: 88},
 	}, 0, 0)

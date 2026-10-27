@@ -267,7 +267,7 @@ func TestTruncateEntryClearsDirtyPagesForOpenHandle(t *testing.T) {
 		},
 	}
 
-	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, entry, 0, 0)
+	fh, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, entry, 0, 0)
 	fh.RememberPath(fullPath)
 
 	if err := fh.dirtyPages.AddPage(0, []byte("hello"), true, time.Now().UnixNano()); err != nil {
@@ -315,7 +315,7 @@ func TestAccessChecksPermissions(t *testing.T) {
 
 	fullPath := util.FullPath("/visible.txt")
 	inode := wfs.inodeToPath.Lookup(fullPath, 1, false, false, 0, true)
-	handle, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+	handle, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
 		Name: "visible.txt",
 		Attributes: &filer_pb.FuseAttributes{
 			FileMode: 0o640,
@@ -528,7 +528,7 @@ func TestAcquireHandleHonorsDefaultPermissions(t *testing.T) {
 			}
 			inode := wfs.inodeToPath.Lookup(util.FullPath("/secret.txt"), entry.Attributes.Crtime, false, false, entry.Attributes.Inode, true)
 
-			fh, status := wfs.AcquireHandle(context.Background(), inode, syscall.O_RDONLY, 999, 999)
+			fh, _, status := wfs.AcquireHandle(context.Background(), inode, syscall.O_RDONLY, 999, 999)
 			if status != tc.want {
 				t.Fatalf("AcquireHandle status = %v, want %v", status, tc.want)
 			}

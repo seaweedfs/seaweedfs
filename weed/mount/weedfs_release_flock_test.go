@@ -20,7 +20,7 @@ func TestReleaseDropsFlockWhileFlushBlocked(t *testing.T) {
 	startFakeFiler(t, wfs, &fakeFilerServer{})
 
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/f"), time.Now().Unix(), false, false, 0, false)
-	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+	fh, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
 		Name:       "f",
 		Attributes: &filer_pb.FuseAttributes{},
 	}, 0, 0)
@@ -73,5 +73,67 @@ func TestReleaseDropsFlockWhileFlushBlocked(t *testing.T) {
 	case <-done:
 	case <-time.After(10 * time.Second):
 		t.Fatal("release never completed after the flush unblocked")
+	}
+}
+
+// OFD locks are scoped to the open file description, not the process, and the
+// kernel reports no lock_owner for them at RELEASE — only flock holders carry
+// one. Draining the owners recorded for the released handle frees them, so a
+// restarted process (new owner) no longer sees the dead description's write
+// lock.
+func TestReleaseDropsOfdLocks(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+	wfs.posixLocks = NewPosixLockTable()
+	startFakeFiler(t, wfs, &fakeFilerServer{})
+
+	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/f"), time.Now().Unix(), false, false, 0, false)
+	entry := &filer_pb.Entry{
+		Name:       "f",
+		Attributes: &filer_pb.FuseAttributes{},
+	}
+	_, openFh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, entry, 0, 0)
+	_, siblingFh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, entry, 0, 0)
+	if siblingFh == openFh {
+		t.Fatal("sibling open must get its own fh value")
+	}
+
+	const ofdOwner = uint64(0x0fd0001)
+	ofd := &fuse.LkIn{
+		InHeader: fuse.InHeader{NodeId: inode},
+		Fh:       uint64(openFh),
+		Owner:    ofdOwner,
+		Lk:       fuse.FileLock{Start: 0, End: math.MaxUint64, Typ: f_RDLCK},
+	}
+	// A second open file description holds a read lock on the same inode;
+	// it must survive the first description's release.
+	const siblingOwner = uint64(0x0fd0002)
+	sibling := &fuse.LkIn{
+		InHeader: fuse.InHeader{NodeId: inode},
+		Fh:       uint64(siblingFh),
+		Owner:    siblingOwner,
+		Lk:       fuse.FileLock{Start: 0, End: math.MaxUint64, Typ: f_RDLCK},
+	}
+	if st := wfs.SetLk(nil, sibling); st != fuse.OK {
+		t.Fatalf("take sibling read lock: %v", st)
+	}
+	if st := wfs.SetLk(nil, ofd); st != fuse.OK {
+		t.Fatalf("take ofd lock: %v", st)
+	}
+
+	wfs.Release(nil, &fuse.ReleaseIn{
+		InHeader: fuse.InHeader{NodeId: inode},
+		Fh:       uint64(openFh),
+	})
+
+	// The dead description's read lock is gone: the sibling can upgrade to a
+	// write lock only because nothing else blocks it.
+	var out fuse.LkOut
+	wfs.posixLocks.GetLk(inode, lockRange{Start: 0, End: math.MaxUint64, Typ: f_WRLCK, Owner: 7}, &out)
+	if out.Lk.Typ != f_RDLCK {
+		t.Fatalf("sibling lock lost on release: typ=%d", out.Lk.Typ)
+	}
+	sibling.Lk.Typ = f_WRLCK
+	if st := wfs.SetLk(nil, sibling); st != fuse.OK {
+		t.Fatalf("ofd lock survived release: upgrade got %v", st)
 	}
 }

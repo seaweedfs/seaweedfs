@@ -54,20 +54,20 @@ func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, o
 			return fuse.Status(syscall.EEXIST)
 		}
 		inode = wfs.inodeToPath.Lookup(entryFullPath, newEntry.Attributes.Crtime, false, len(newEntry.HardLinkId) > 0, newEntry.Attributes.Inode, true)
-		fileHandle, status := wfs.AcquireHandle(ctx, inode, in.Flags, in.Uid, in.Gid)
+		fileHandle, openFh, status := wfs.AcquireHandle(ctx, inode, in.Flags, in.Uid, in.Gid)
 		if status != fuse.OK {
 			return status
 		}
 		if in.Flags&syscall.O_TRUNC != 0 && in.Flags&fuse.O_ANYWRITE != 0 {
 			if code = wfs.truncateEntry(entryFullPath, newEntry); code != fuse.OK {
-				wfs.ReleaseHandle(fileHandle.fh)
+				wfs.ReleaseHandle(openFh)
 				return code
 			}
 			newEntry = fileHandle.GetEntry().GetEntry()
 		}
 
 		wfs.outputPbEntry(&out.EntryOut, inode, newEntry)
-		out.Fh = uint64(fileHandle.fh)
+		out.Fh = uint64(openFh)
 		out.OpenFlags = 0
 		return fuse.OK
 	}
@@ -103,19 +103,19 @@ func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, o
 			return fuse.EIO
 		}
 		inode = wfs.inodeToPath.Lookup(entryFullPath, newEntry.Attributes.Crtime, false, len(newEntry.HardLinkId) > 0, newEntry.Attributes.Inode, true)
-		fileHandle, status := wfs.AcquireHandle(ctx, inode, in.Flags, in.Uid, in.Gid)
+		fileHandle, openFh, status := wfs.AcquireHandle(ctx, inode, in.Flags, in.Uid, in.Gid)
 		if status != fuse.OK {
 			return status
 		}
 		if in.Flags&syscall.O_TRUNC != 0 && in.Flags&fuse.O_ANYWRITE != 0 {
 			if code = wfs.truncateEntry(entryFullPath, newEntry); code != fuse.OK {
-				wfs.ReleaseHandle(fileHandle.fh)
+				wfs.ReleaseHandle(openFh)
 				return code
 			}
 			newEntry = fileHandle.GetEntry().GetEntry()
 		}
 		wfs.outputPbEntry(&out.EntryOut, inode, newEntry)
-		out.Fh = uint64(fileHandle.fh)
+		out.Fh = uint64(openFh)
 		out.OpenFlags = 0
 		return fuse.OK
 	} else if code != fuse.OK {
@@ -132,7 +132,7 @@ func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, o
 	// For deferred creates, bypass AcquireHandle (which calls maybeReadEntry
 	// and would fail since the entry is not yet on the filer or in the meta cache).
 	// We already have the entry from createRegularFile, so create the handle directly.
-	fileHandle, existed := wfs.fhMap.AcquireFileHandle(wfs, inode, newEntry, 0, 0)
+	fileHandle, openFh, existed := wfs.fhMap.AcquireFileHandle(wfs, inode, newEntry, 0, 0)
 	if existed {
 		// A create is authoritative for the entry it just made, so it takes
 		// effect even on a handle that outlived a previous incarnation.
@@ -155,7 +155,7 @@ func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, o
 		}
 	}
 
-	out.Fh = uint64(fileHandle.fh)
+	out.Fh = uint64(openFh)
 	out.OpenFlags = 0
 
 	return fuse.OK
