@@ -37,15 +37,35 @@ pub async fn segment_fragments(
         .collect())
 }
 
+/// Live fragment ids covered by `segments` on `field` — the union a scoped
+/// fragment list needs so the selected segments are not filtered out of the
+/// scan.
+pub async fn covered_fragments(
+    dataset: &Dataset,
+    field: &str,
+    segments: &[Uuid],
+) -> Result<Vec<u64>> {
+    Ok(segment_fragments(dataset, field)
+        .await?
+        .into_iter()
+        .filter(|(id, _)| segments.contains(id))
+        .flat_map(|(_, b)| b.iter().map(u64::from).collect::<Vec<_>>())
+        .collect())
+}
+
 /// Round-robin `segments` across `n` workers. Index order is unstable, so
 /// workers see disjoint, deterministic-in-name partitions rather than
-/// physically adjacent ones.
+/// physically adjacent ones. Zero workers means zero partitions — nothing is
+/// silently assigned.
 pub fn partition(segments: &[Uuid], n: usize) -> Vec<Vec<Uuid>> {
+    let mut out = vec![Vec::new(); n];
+    if n == 0 {
+        return out;
+    }
     let mut ids = segments.to_vec();
     ids.sort();
-    let mut out = vec![Vec::new(); n.max(1)];
     for (i, id) in ids.into_iter().enumerate() {
-        out[i % n.max(1)].push(id);
+        out[i % n].push(id);
     }
     out
 }
@@ -82,12 +102,14 @@ mod tests {
             )
             .await
             .unwrap();
-        // Second fragment + delta segment so the index has two parts.
+        // Second fragment + delta segment so the index has two parts, then a
+        // third fragment left unindexed for the sweep half of the plan.
         testing::append_dataset(&mut dataset, &testing::vectors(4, 4), &["i", "j", "k", "l"]).await;
         dataset
             .optimize_indices(&OptimizeOptions::append())
             .await
             .unwrap();
+        testing::append_dataset(&mut dataset, &testing::vectors(2, 4), &["m", "n"]).await;
 
         let resolved = VectorTable::resolve(&dataset, None, None).unwrap();
         let base = Query {
@@ -113,9 +135,9 @@ mod tests {
             segments.len() >= 2,
             "expected >=2 segments, got {segments:?}"
         );
-        // The unindexed fragment belongs to nobody's segment; worker 0
-        // sweeps it — the same contract plan_search implements on the
-        // enterprise side.
+        // The unindexed fragment belongs to nobody's segment; worker 0 sweeps
+        // it next to its own share — the same contract plan_search implements
+        // on the enterprise side.
         let unindexed: Vec<u64> = {
             let all: std::collections::BTreeSet<u64> =
                 dataset.fragments().iter().map(|f| f.id).collect();
@@ -125,11 +147,12 @@ mod tests {
             }
             all.difference(&indexed).copied().collect()
         };
+        assert!(!unindexed.is_empty(), "expected an unindexed fragment");
         let mut merged: Vec<(f32, u64)> = Vec::new();
         for (w, share) in partition(&segments, 2).into_iter().enumerate() {
             let mut worker_q = base.clone();
             worker_q.index_segments = Some(share);
-            if w == 0 && !unindexed.is_empty() {
+            if w == 0 {
                 worker_q.fragments = Some(unindexed.clone());
             }
             merged.extend(
@@ -151,5 +174,53 @@ mod tests {
             .map(|(d, id)| (*id, d.to_bits()))
             .collect();
         assert_eq!(got, want);
+    }
+
+    /// A scope of fragment ids that no longer exist, an empty list, or an
+    /// empty-segment assignment must return no hits — never fall through to
+    /// an unrestricted scan.
+    #[tokio::test]
+    async fn empty_scope_scans_nothing() {
+        let dir = TempDir::new().unwrap();
+        let dataset =
+            testing::write_dataset(&dir, &testing::vectors(4, 4), &["a", "b", "c", "d"]).await;
+        let resolved = VectorTable::resolve(&dataset, None, None).unwrap();
+        let mut q = Query {
+            vector: vec![0.5; 4],
+            k: 4,
+            filter: None,
+            postfilter: false,
+            distance: DistanceType::L2,
+            nprobes: None,
+            index_segments: None,
+            fragments: Some(vec![u64::MAX]),
+        };
+        assert!(
+            query::ann(&dataset, &resolved, &q)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            query::flat(&dataset, &resolved, &q)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        q.fragments = Some(Vec::new());
+        assert!(
+            query::ann(&dataset, &resolved, &q)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        q.fragments = None;
+        q.index_segments = Some(Vec::new());
+        assert!(
+            query::ann(&dataset, &resolved, &q)
+                .await
+                .unwrap()
+                .is_empty()
+        );
     }
 }

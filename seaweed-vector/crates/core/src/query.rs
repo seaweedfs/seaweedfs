@@ -29,14 +29,15 @@ pub struct Query {
     pub distance: DistanceType,
     pub nprobes: Option<usize>,
     /// Restrict the indexed scan to these physical index segments (the
-    /// Enterprise planner fans a query out across them). When `fragments` is
-    /// also set, listed fragments not covered by the selected segments are
-    /// searched with flat KNN by lance; without `fragments`, unindexed
-    /// fragments outside the segments are not searched — the caller owns
-    /// disjoint coverage of them.
+    /// Enterprise planner fans a query out across them). Without `fragments`,
+    /// unindexed fragments outside the segments are not searched — the caller
+    /// owns disjoint coverage of them. When `fragments` is also set the scan
+    /// covers both, so a worker can take its segment share plus an
+    /// unindexed-fragment sweep in one request.
     pub index_segments: Option<Vec<uuid::Uuid>>,
     /// Restrict the scan to these fragment ids — used by the planner to give
-    /// a worker the unindexed-fragment sweep. An empty list scans nothing.
+    /// a worker the unindexed-fragment sweep. Listed ids that no longer exist
+    /// scan nothing.
     pub fragments: Option<Vec<u64>>,
 }
 
@@ -52,28 +53,14 @@ pub struct Hit {
 
 /// Exact top-K over every fragment, ignoring any index.
 pub async fn flat(dataset: &Dataset, table: &VectorTable, query: &Query) -> Result<Vec<Hit>> {
-    if empty_scope(query) {
-        return Ok(Vec::new());
-    }
-    run(scanner(dataset, table, query, false)?, table).await
+    run(scanner(dataset, table, query, false).await?, table).await
 }
 
 /// Top-K with the ANN index where it covers the fragment and a flat pass over
 /// the rest. Whether the index is used is Lance's decision per fragment, so
 /// rows written after the last index build are always candidates.
 pub async fn ann(dataset: &Dataset, table: &VectorTable, query: &Query) -> Result<Vec<Hit>> {
-    if empty_scope(query) {
-        return Ok(Vec::new());
-    }
-    run(scanner(dataset, table, query, true)?, table).await
-}
-
-/// An explicitly-empty assignment means "search nothing", not "search all":
-/// `with_fragments` is skipped for empty lists, so they must short-circuit
-/// here instead of falling through to an unrestricted scan.
-fn empty_scope(query: &Query) -> bool {
-    matches!(&query.fragments, Some(f) if f.is_empty())
-        || (matches!(&query.index_segments, Some(s) if s.is_empty()) && query.fragments.is_none())
+    run(scanner(dataset, table, query, true).await?, table).await
 }
 
 /// Fetch rows by key.
@@ -105,7 +92,7 @@ pub async fn get(
         .context("scan by keys")
 }
 
-fn scanner(
+async fn scanner(
     dataset: &Dataset,
     table: &VectorTable,
     query: &Query,
@@ -132,21 +119,33 @@ fn scanner(
     if let Some(nprobes) = query.nprobes {
         scanner.nprobes(nprobes);
     }
-    if let Some(segments) = &query.index_segments {
-        if use_index && !segments.is_empty() {
-            scanner.with_index_segments(segments.clone())?;
-        }
+    let segments = query.index_segments.as_deref().unwrap_or(&[]);
+    if use_index && !segments.is_empty() {
+        scanner.with_index_segments(segments.to_vec())?;
     }
-    if let Some(ids) = &query.fragments {
+    // Lance intersects the fragment list with the selected segments, so a
+    // scoped scan must name the segment-covered fragments itself: the universe
+    // is the listed ids plus the live coverage of the selected segments. An
+    // empty universe (or an empty-segment, fragment-less assignment) scopes to
+    // nothing — `with_fragments` with an empty list scans nothing.
+    let mut wanted: Option<Vec<u64>> = query.fragments.clone();
+    if let Some(ids) = &mut wanted {
+        if use_index && !segments.is_empty() {
+            ids.extend(
+                crate::segments::covered_fragments(dataset, &table.vector_column, segments).await?,
+            );
+        }
+    } else if use_index && query.index_segments.as_ref().is_some_and(|s| s.is_empty()) {
+        wanted = Some(Vec::new());
+    }
+    if let Some(ids) = wanted {
         let frags: Vec<Fragment> = dataset
             .fragments()
             .iter()
             .filter(|f| ids.contains(&f.id))
             .cloned()
             .collect();
-        if !frags.is_empty() {
-            scanner.with_fragments(frags);
-        }
+        scanner.with_fragments(frags);
     }
     let mut columns = Vec::new();
     if let Some(key) = &table.key_column {
