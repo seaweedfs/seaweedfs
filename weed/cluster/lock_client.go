@@ -162,6 +162,9 @@ type LiveLock struct {
 	consecutiveFailures int // Track connection failures to trigger fallback
 }
 
+// lockRpcTimeout bounds a single DistributedLock attempt.
+const lockRpcTimeout = 10 * time.Second
+
 // NewShortLivedLock creates a lock with a 5-second duration.
 // It returns nil when the lock cannot be acquired because no lock server
 // exists; ordinary contention is still waited out.
@@ -417,7 +420,13 @@ func (lock *LiveLock) doLock(lockDuration time.Duration) (errorMessage string, e
 	previousOwner := lock.owner
 
 	err = pb.WithFilerClient(false, 0, lock.hostFiler, lock.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-		resp, err := client.DistributedLock(context.Background(), &filer_pb.LockRequest{
+		// Bound each attempt: a ring member that is reachable from the masters
+		// but not from this filer would otherwise block on the connect timeout.
+		// A timed-out attempt keeps no renew token, so the lock server still
+		// grants the key to at most one owner.
+		ctx, cancel := context.WithTimeout(context.Background(), lockRpcTimeout)
+		defer cancel()
+		resp, err := client.DistributedLock(ctx, &filer_pb.LockRequest{
 			Name:          lock.key,
 			SecondsToLock: int64(lockDuration.Seconds()),
 			RenewToken:    lock.renewToken,
