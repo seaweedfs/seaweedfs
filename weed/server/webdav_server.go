@@ -129,6 +129,25 @@ func (h copyMoveGuardHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 				r.Header.Set("Destination", u.String())
 			}
 		}
+		// the destination's parent collection must exist; Mkdir and Rename
+		// errors surface as 403 below, not the 409 a missing parent requires
+		if u, err := url.Parse(r.Header.Get("Destination")); err == nil {
+			if dst := path.Clean(u.Path); dst != "/" && dst != "." {
+				if parent := path.Dir(dst); parent != "/" {
+					if pfi, err := h.fs.Stat(r.Context(), parent); err != nil {
+						if os.IsNotExist(err) {
+							w.WriteHeader(http.StatusConflict)
+						} else {
+							w.WriteHeader(http.StatusInternalServerError)
+						}
+						return
+					} else if !pfi.IsDir() {
+						w.WriteHeader(http.StatusConflict)
+						return
+					}
+				}
+			}
+		}
 	}
 	h.next.ServeHTTP(w, r)
 }

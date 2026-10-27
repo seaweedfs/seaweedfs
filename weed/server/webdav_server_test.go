@@ -271,7 +271,10 @@ func TestWebDavFileSystem_RemoveAll_Recursive(t *testing.T) {
 func TestCopyMoveGuardHandler(t *testing.T) {
 	called := false
 	h := copyMoveGuardHandler{
-		fs: &stubDavFs{present: map[string]bool{"/dir": true, "/dir/sub": true, "/dirs": true, "/dir/other": true, "/anywhere": true}},
+		fs: &stubDavFs{
+			present: map[string]bool{"/dir": true, "/dir/sub": true, "/dirs": true, "/dir/other": true, "/anywhere": true},
+			dirs:    map[string]bool{"/dir": true, "/dirs": true},
+		},
 		next: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			called = true
 		}),
@@ -333,6 +336,45 @@ func TestCopyMoveGuardHandler(t *testing.T) {
 		errFs.ServeHTTP(w, req)
 		assert.Equal(t, tc.want, w.Code, "%s %s -> %s", tc.method, tc.src, tc.dst)
 		assert.False(t, called)
+	}
+}
+
+// MOVE or COPY under a missing collection is a 409: the webdav handler would
+// only report the failed Mkdir or Rename as 403.
+func TestCopyMoveGuardHandler_MissingDestParent(t *testing.T) {
+	called := false
+	h := copyMoveGuardHandler{
+		fs: &stubDavFs{
+			present:  map[string]bool{"/dir": true, "/dir/sub": true, "/file": true},
+			dirs:     map[string]bool{"/dir": true},
+			errPaths: map[string]bool{"/broken": true},
+		},
+		next: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { called = true }),
+	}
+
+	for _, tc := range []struct {
+		method, src, dst string
+		want             int
+	}{
+		{"MOVE", "/dir/sub", "/missing/sub", http.StatusConflict},
+		{"COPY", "/dir/sub", "/missing/sub", http.StatusConflict},
+		{"COPY", "/dir", "/missing/deep/dir", http.StatusConflict},
+		{"MOVE", "/dir/sub", "/file/sub", http.StatusConflict}, // parent is a file
+		{"MOVE", "/dir/sub", "/broken/sub", http.StatusInternalServerError},
+		{"COPY", "/dir/sub", "/dir/other", 0}, // parent exists
+		{"MOVE", "/dir/sub", "/moved", 0},     // destination at the root
+	} {
+		called = false
+		req := httptest.NewRequest(tc.method, "http://x"+tc.src, nil)
+		req.Header.Set("Destination", "http://x"+tc.dst)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		if tc.want == 0 {
+			assert.True(t, called, "%s %s -> %s", tc.method, tc.src, tc.dst)
+		} else {
+			assert.Equal(t, tc.want, w.Code, "%s %s -> %s", tc.method, tc.src, tc.dst)
+			assert.False(t, called)
+		}
 	}
 }
 
