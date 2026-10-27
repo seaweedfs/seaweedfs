@@ -788,7 +788,7 @@ func filterExpr(filter map[string]interface{}) (string, error) {
 }
 
 func fieldClause(field string, cond interface{}) (string, error) {
-	col := fmt.Sprintf("json_get_str(`metadata`, '%s')", strings.ReplaceAll(field, "'", "''"))
+	col := fmt.Sprintf("json_get_string(`metadata`, '%s')", strings.ReplaceAll(field, "'", "''"))
 	switch c := cond.(type) {
 	case map[string]interface{}:
 		parts := []string{}

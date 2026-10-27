@@ -110,8 +110,18 @@ fn batch_of(vectors: &[pb::Vector], dimension: usize, schema: Arc<Schema>) -> Re
         .flat_map(|v| v.data.iter().copied())
         .collect::<Vec<_>>();
     let values: ArrayRef = Arc::new(Float32Array::from(flat));
+    // Lance stores the list item as nullable even when the write schema
+    // declared it non-null, so the child field must come from the batch's
+    // schema rather than a fixed declaration.
+    let DataType::FixedSizeList(item_field, _) = schema
+        .field_with_name(VECTOR_COLUMN)
+        .map_err(anyhow::Error::from)?
+        .data_type()
+    else {
+        bail!("vector column is not a fixed-size list");
+    };
     let vectors_array = FixedSizeListArray::try_new(
-        Field::new("item", DataType::Float32, false).into(),
+        item_field.clone(),
         dimension as i32,
         values,
         None,
