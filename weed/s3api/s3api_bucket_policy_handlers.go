@@ -208,17 +208,15 @@ func (s3a *S3ApiServer) getBucketPolicy(bucket string) (*policy_engine.PolicyDoc
 
 	var policyDoc policy_engine.PolicyDocument
 	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		resp, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
+		resp, err := filer_pb.LookupEntry(context.Background(), client, &filer_pb.LookupDirectoryEntryRequest{
 			Directory: s3a.bucketRoot(bucket),
 			Name:      bucket,
 		})
 		if err != nil {
-			// Return sentinel error for bucket not found
-			return fmt.Errorf("%w: %v", ErrBucketNotFound, err)
-		}
-
-		if resp.Entry == nil {
-			return ErrPolicyNotFound
+			if errors.Is(err, filer_pb.ErrNotFound) {
+				return fmt.Errorf("%w: %v", ErrBucketNotFound, err)
+			}
+			return err
 		}
 
 		policyJSON, exists := resp.Entry.Extended[BUCKET_POLICY_METADATA_KEY]
@@ -250,15 +248,15 @@ func (s3a *S3ApiServer) setBucketPolicy(bucket string, policyDoc *policy_engine.
 
 	return s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		// First, get the current entry to preserve other attributes
-		resp, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
+		resp, err := filer_pb.LookupEntry(context.Background(), client, &filer_pb.LookupDirectoryEntryRequest{
 			Directory: s3a.bucketRoot(bucket),
 			Name:      bucket,
 		})
 		if err != nil {
-			return fmt.Errorf("%w: %v", ErrBucketNotFound, err)
-		}
-		if resp.Entry == nil {
-			return ErrBucketNotFound
+			if errors.Is(err, filer_pb.ErrNotFound) {
+				return fmt.Errorf("%w: %v", ErrBucketNotFound, err)
+			}
+			return err
 		}
 
 		entry := resp.Entry
@@ -283,12 +281,15 @@ func (s3a *S3ApiServer) setBucketPolicy(bucket string, policyDoc *policy_engine.
 func (s3a *S3ApiServer) deleteBucketPolicy(bucket string) error {
 	return s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		// Get the current entry
-		resp, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
+		resp, err := filer_pb.LookupEntry(context.Background(), client, &filer_pb.LookupDirectoryEntryRequest{
 			Directory: s3a.bucketRoot(bucket),
 			Name:      bucket,
 		})
 		if err != nil {
-			return fmt.Errorf("bucket not found: %v", err)
+			if errors.Is(err, filer_pb.ErrNotFound) {
+				return fmt.Errorf("%w: %v", ErrBucketNotFound, err)
+			}
+			return err
 		}
 
 		entry := resp.Entry
