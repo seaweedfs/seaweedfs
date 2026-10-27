@@ -442,9 +442,11 @@ func (lock *LiveLock) doLock(lockDuration time.Duration) (errorMessage string, e
 			lock.consecutiveFailures = 0 // Reset failure counter on success
 			glog.V(4).Infof("LOCK: Got renewToken for key=%s", lock.key)
 		} else {
-			//this can be retried. Need to remember the last valid renewToken
-			lock.renewToken = ""
-			glog.V(1).Infof("LOCK: Cleared renewToken for key=%s (err=%v)", lock.key, err)
+			// The request may have renewed the lease server-side before its
+			// response was lost: the last token can still be valid, so the
+			// next attempt retries with it. A definitive rejection clears it
+			// through the response's empty RenewToken.
+			glog.V(1).Infof("LOCK: no response for key=%s (err=%v)", lock.key, err)
 		}
 		if resp != nil {
 			errorMessage = resp.Error
@@ -478,7 +480,6 @@ func (lock *LiveLock) doLock(lockDuration time.Duration) (errorMessage string, e
 				lock.consecutiveFailures, lock.key, lock.hostFiler, lock.lc.seedFiler)
 			lock.hostFiler = lock.lc.seedFiler
 			lock.consecutiveFailures = 0
-			lock.renewToken = ""
 		}
 	}
 
