@@ -120,3 +120,33 @@ func TestLockManager_LostRenewalResponseReplaysToken(t *testing.T) {
 	assert.NoError(t, err)
 	assert.True(t, unlocked)
 }
+
+func TestLockManager_LostRenewalReplayAdvancesSeq(t *testing.T) {
+	lm := NewLockManager()
+	expires := time.Now().Add(30 * time.Second).UnixNano()
+	later := time.Now().Add(60 * time.Second).UnixNano()
+
+	_, token1, _, _, err := lm.Lock("key1", expires, "", "owner1")
+	assert.NoError(t, err)
+
+	_, token2, _, seq2, err := lm.Lock("key1", expires, token1, "owner1")
+	assert.NoError(t, err)
+
+	// A replay that extends the lease must advance seq, otherwise backups
+	// reject the replicated expiry as a stale mutation and can grant the
+	// lock when the old expiry passes after a promotion.
+	_, replayed, _, seq3, err := lm.Lock("key1", later, token1, "owner1")
+	assert.NoError(t, err)
+	assert.Equal(t, token2, replayed)
+	assert.Equal(t, seq2+1, seq3)
+
+	lock, found := lm.GetLock("key1")
+	assert.True(t, found)
+	assert.Equal(t, later, lock.ExpiredAtNs)
+	assert.Equal(t, seq3, lock.Seq)
+
+	// Repeated retries keep advancing instead of colliding at one seq.
+	_, _, _, seq4, err := lm.Lock("key1", later, token1, "owner1")
+	assert.NoError(t, err)
+	assert.Equal(t, seq3+1, seq4)
+}
