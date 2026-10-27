@@ -984,25 +984,48 @@ func filterExpr(filter map[string]interface{}) (string, error) {
 	return strings.Join(parts, " AND "), nil
 }
 
-// fieldAccess renders the JSONB extractor for the operand's type. The second
-// argument of the json_get_* family is a plain field name, not a JSONPath —
-// only json_exists parses JSONPath.
+// fieldAccess renders the operand's typed extractor. Numbers and booleans go
+// through TRY_CAST of the serialized json_extract text, which is NULL on any
+// other stored type; the json_get_* extractors instead convert numeric-looking
+// strings and booleans, and error on mismatched types. Strings keep
+// json_get_string, which must run only under stringGuard.
 func fieldAccess(field string, operand interface{}) (string, error) {
-	fn := "json_get_string"
 	switch operand.(type) {
 	case float64:
-		fn = "json_get_float"
+		return fmt.Sprintf("TRY_CAST(json_extract(`metadata`, '%s') AS DOUBLE)", sqlEscape(existsPath(field))), nil
 	case bool:
-		fn = "json_get_bool"
+		return fmt.Sprintf("TRY_CAST(json_extract(`metadata`, '%s') AS BOOLEAN)", sqlEscape(existsPath(field))), nil
 	case string:
+		return fmt.Sprintf("json_get_string(`metadata`, '%s')", sqlEscape(field)), nil
 	default:
 		return "", fmt.Errorf("unsupported filter operand %v", operand)
 	}
-	return fmt.Sprintf("%s(`metadata`, '%s')", fn, sqlEscape(field)), nil
 }
 
-// existsPath renders the field as a JSONPath for json_exists: bracket notation
-// keeps dots, spaces, and other specials inside the key literal.
+// fieldMatch renders "field <rhs>" under exact JSON typing. String comparisons
+// sit behind stringGuard so json_get_string only evaluates rows storing a JSON
+// string; TRY_CAST already makes the number and boolean comparisons exact.
+func fieldMatch(field string, operand interface{}, rhs string) (string, error) {
+	col, err := fieldAccess(field, operand)
+	if err != nil {
+		return "", err
+	}
+	expr := col + " " + rhs
+	if _, ok := operand.(string); ok {
+		expr = fmt.Sprintf("CASE WHEN %s THEN %s ELSE false END", stringGuard(field), expr)
+	}
+	return expr, nil
+}
+
+// stringGuard selects rows whose stored field is a JSON string: only a string
+// serializes with a leading quote in json_extract output.
+func stringGuard(field string) string {
+	return fmt.Sprintf("json_extract(`metadata`, '%s') LIKE '\"%%'", sqlEscape(existsPath(field)))
+}
+
+// existsPath renders the field as a JSONPath for the json_exists and
+// json_extract parsers: bracket notation keeps dots, spaces, and other
+// specials inside the key literal.
 func existsPath(field string) string {
 	field = strings.ReplaceAll(field, `\`, `\\`)
 	field = strings.ReplaceAll(field, `"`, `\"`)
@@ -1030,27 +1053,18 @@ func fieldClause(field string, cond interface{}) (string, error) {
 					return "", fmt.Errorf("$exists expects a boolean")
 				}
 			case "$eq", "$ne":
-				col, err := fieldAccess(field, operand)
-				if err != nil {
-					return "", err
-				}
 				lit, err := sqlLiteral(operand)
 				if err != nil {
 					return "", err
 				}
-				if typedOperand(operand) {
-					match := fmt.Sprintf("(%s = %s AND %s)", col, lit, nonStringGuard(field))
-					if op == "$ne" {
-						match = "NOT COALESCE(" + match + ", false)"
-					}
-					parts = append(parts, match)
-					continue
+				match, err := fieldMatch(field, operand, "= "+lit)
+				if err != nil {
+					return "", err
 				}
-				sym := "="
 				if op == "$ne" {
-					sym = "<>"
+					match = "NOT COALESCE(" + match + ", false)"
 				}
-				parts = append(parts, fmt.Sprintf("%s %s %s", col, sym, lit))
+				parts = append(parts, match)
 			case "$in", "$nin":
 				list, ok := operand.([]interface{})
 				if !ok {
@@ -1069,17 +1083,13 @@ func fieldClause(field string, cond interface{}) (string, error) {
 				// invert NULL into NULL under $nin, so every group coalesces.
 				var groups []string
 				for _, item := range list {
-					col, err := fieldAccess(field, item)
-					if err != nil {
-						return "", err
-					}
 					lit, err := sqlLiteral(item)
 					if err != nil {
 						return "", err
 					}
-					g := fmt.Sprintf("%s in (%s)", col, lit)
-					if typedOperand(item) {
-						g = "(" + g + " AND " + nonStringGuard(field) + ")"
+					g, err := fieldMatch(field, item, "in ("+lit+")")
+					if err != nil {
+						return "", err
 					}
 					groups = append(groups, fmt.Sprintf("COALESCE(%s, false)", g))
 				}
@@ -1097,47 +1107,23 @@ func fieldClause(field string, cond interface{}) (string, error) {
 					return "", err
 				}
 				sym := map[string]string{"$lt": "<", "$lte": "<=", "$gt": ">", "$gte": ">="}[op]
-				col := fmt.Sprintf("json_get_float(`metadata`, '%s')", sqlEscape(field))
-				parts = append(parts, fmt.Sprintf("(%s %s %s AND %s)", col, sym, lit, nonStringGuard(field)))
+				col, err := fieldAccess(field, operand)
+				if err != nil {
+					return "", err
+				}
+				parts = append(parts, fmt.Sprintf("%s %s %s", col, sym, lit))
 			default:
 				return "", fmt.Errorf("unsupported operator %s", op)
 			}
 		}
 		return strings.Join(parts, " AND "), nil
 	default:
-		col, err := fieldAccess(field, cond)
-		if err != nil {
-			return "", err
-		}
 		lit, err := sqlLiteral(cond)
 		if err != nil {
 			return "", err
 		}
-		if typedOperand(cond) {
-			return fmt.Sprintf("(%s = %s AND %s)", col, lit, nonStringGuard(field)), nil
-		}
-		return fmt.Sprintf("%s = %s", col, lit), nil
+		return fieldMatch(field, cond, "= "+lit)
 	}
-}
-
-// nonStringGuard excludes stored strings from a numeric or boolean
-// comparison: the jsonb extractors convert a numeric-looking string through
-// json_get_float and "true"/"false" through json_get_bool, so without it '3'
-// would satisfy a filter for the number 3 even though AWS treats metadata
-// types as exact.
-func nonStringGuard(field string) string {
-	return fmt.Sprintf("json_get_string(`metadata`, '%s') IS NULL", sqlEscape(field))
-}
-
-// typedOperand reports whether an operand's comparison can be satisfied by a
-// stored string through extractor conversion — floats and bools can, strings
-// cannot (json_get_string does not convert numbers or booleans).
-func typedOperand(operand interface{}) bool {
-	switch operand.(type) {
-	case float64, bool:
-		return true
-	}
-	return false
 }
 
 func sqlLiteral(v interface{}) (string, error) {
