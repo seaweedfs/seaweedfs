@@ -152,7 +152,7 @@ func (fs *FilerServer) FindLockOwner(ctx context.Context, req *filer_pb.FindLock
 func (fs *FilerServer) TransferLocks(ctx context.Context, req *filer_pb.TransferLocksRequest) (*filer_pb.TransferLocksResponse, error) {
 
 	for _, lock := range req.Locks {
-		fs.filer.Dlm.InsertLock(lock.Name, lock.ExpiredAtNs, lock.RenewToken, lock.Owner, lock.Generation, lock.Seq)
+		fs.filer.Dlm.InsertLock(lock.Name, lock.ExpiredAtNs, lock.RenewToken, lock.PrevRenewToken, lock.Owner, lock.Generation, lock.Seq)
 	}
 
 	return &filer_pb.TransferLocksResponse{}, nil
@@ -166,7 +166,7 @@ func (fs *FilerServer) ReplicateLock(ctx context.Context, req *filer_pb.Replicat
 		fs.filer.Dlm.RemoveBackupLockIfSeq(req.Name, req.Generation, req.Seq)
 		glog.V(4).Infof("FILER REPLICATE: removed backup lock %s generation=%d seq=%d", req.Name, req.Generation, req.Seq)
 	} else {
-		fs.filer.Dlm.InsertBackupLock(req.Name, req.ExpiredAtNs, req.RenewToken, req.Owner, req.Generation, req.Seq)
+		fs.filer.Dlm.InsertBackupLock(req.Name, req.ExpiredAtNs, req.RenewToken, req.PrevRenewToken, req.Owner, req.Generation, req.Seq)
 		glog.V(4).Infof("FILER REPLICATE: inserted backup lock %s owner=%s generation=%d seq=%d", req.Name, req.Owner, req.Generation, req.Seq)
 	}
 	return &filer_pb.ReplicateLockResponse{}, nil
@@ -194,7 +194,7 @@ func (fs *FilerServer) OnDlmChangeSnapshot(snapshot []pb.ServerAddress) {
 			}
 			// Replicate to (possibly new) backup
 			if backup != "" && fs.filer.Dlm.ReplicateFn != nil {
-				go fs.filer.Dlm.ReplicateFn(backup, lock.Key, lock.ExpiredAtNs, lock.Token, lock.Owner, lock.Generation, lock.Seq, false)
+				go fs.filer.Dlm.ReplicateFn(backup, lock.Key, lock.ExpiredAtNs, lock.Token, lock.PrevToken, lock.Owner, lock.Generation, lock.Seq, false)
 			}
 		} else if backup == fs.option.Host {
 			if !lock.IsBackup {
@@ -205,12 +205,13 @@ func (fs *FilerServer) OnDlmChangeSnapshot(snapshot []pb.ServerAddress) {
 					_, err := client.TransferLocks(ctx, &filer_pb.TransferLocksRequest{
 						Locks: []*filer_pb.Lock{
 							{
-								Name:        lock.Key,
-								RenewToken:  lock.Token,
-								ExpiredAtNs: lock.ExpiredAtNs,
-								Owner:       lock.Owner,
-								Generation:  lock.Generation,
-								Seq:         lock.Seq,
+								Name:           lock.Key,
+								RenewToken:     lock.Token,
+								PrevRenewToken: lock.PrevToken,
+								ExpiredAtNs:    lock.ExpiredAtNs,
+								Owner:          lock.Owner,
+								Generation:     lock.Generation,
+								Seq:            lock.Seq,
 							},
 						},
 					})
@@ -233,12 +234,13 @@ func (fs *FilerServer) OnDlmChangeSnapshot(snapshot []pb.ServerAddress) {
 				_, err := client.TransferLocks(ctx, &filer_pb.TransferLocksRequest{
 					Locks: []*filer_pb.Lock{
 						{
-							Name:        lock.Key,
-							RenewToken:  lock.Token,
-							ExpiredAtNs: lock.ExpiredAtNs,
-							Owner:       lock.Owner,
-							Generation:  lock.Generation,
-							Seq:         lock.Seq,
+							Name:           lock.Key,
+							RenewToken:     lock.Token,
+							PrevRenewToken: lock.PrevToken,
+							ExpiredAtNs:    lock.ExpiredAtNs,
+							Owner:          lock.Owner,
+							Generation:     lock.Generation,
+							Seq:            lock.Seq,
 						},
 					},
 				})
@@ -257,18 +259,19 @@ func (fs *FilerServer) OnDlmChangeSnapshot(snapshot []pb.ServerAddress) {
 // SetupDlmReplication sets up the replication callback for the DLM.
 // Called during filer server initialization.
 func (fs *FilerServer) SetupDlmReplication() {
-	fs.filer.Dlm.ReplicateFn = func(server pb.ServerAddress, key string, expiredAtNs int64, token string, owner string, generation int64, seq int64, isUnlock bool) {
+	fs.filer.Dlm.ReplicateFn = func(server pb.ServerAddress, key string, expiredAtNs int64, token string, prevToken string, owner string, generation int64, seq int64, isUnlock bool) {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		err := pb.WithFilerClient(false, 0, server, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 			_, err := client.ReplicateLock(ctx, &filer_pb.ReplicateLockRequest{
-				Name:        key,
-				RenewToken:  token,
-				ExpiredAtNs: expiredAtNs,
-				Owner:       owner,
-				Generation:  generation,
-				Seq:         seq,
-				IsUnlock:    isUnlock,
+				Name:           key,
+				RenewToken:     token,
+				PrevRenewToken: prevToken,
+				ExpiredAtNs:    expiredAtNs,
+				Owner:          owner,
+				Generation:     generation,
+				Seq:            seq,
+				IsUnlock:       isUnlock,
 			})
 			return err
 		})

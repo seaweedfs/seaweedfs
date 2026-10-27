@@ -17,7 +17,7 @@ var NoLockServerError = fmt.Errorf("no lock server found")
 // The caller (filer server) provides this to avoid a circular dependency.
 // seq is a per-lock monotonic sequence number for causal ordering — the backup
 // rejects mutations with seq <= its current seq for that key.
-type ReplicateFunc func(server pb.ServerAddress, key string, expiredAtNs int64, token string, owner string, generation int64, seq int64, isUnlock bool)
+type ReplicateFunc func(server pb.ServerAddress, key string, expiredAtNs int64, token string, prevToken string, owner string, generation int64, seq int64, isUnlock bool)
 
 type DistributedLockManager struct {
 	lockManager *LockManager
@@ -46,11 +46,11 @@ func (dlm *DistributedLockManager) LockWithTimeout(key string, expiredAtNs int64
 		// ring update and lock transfer completion — the old primary remains
 		// authoritative for locks it still holds.
 		if token != "" {
-			if lock, found := dlm.lockManager.GetLock(key); found && !lock.IsBackup && lock.Token == token {
+			if lock, found := dlm.lockManager.GetLock(key); found && !lock.IsBackup && (lock.Token == token || lock.PrevToken == token) {
 				var seq int64
 				lockOwner, renewToken, generation, seq, err = dlm.lockManager.Lock(key, expiredAtNs, token, owner)
 				if err == nil && renewToken != "" {
-					dlm.replicateToBackup(key, expiredAtNs, renewToken, owner, generation, seq, false)
+					dlm.replicateToBackup(key, expiredAtNs, renewToken, token, owner, generation, seq, false)
 				}
 				return
 			}
@@ -61,7 +61,7 @@ func (dlm *DistributedLockManager) LockWithTimeout(key string, expiredAtNs int64
 	var seq int64
 	lockOwner, renewToken, generation, seq, err = dlm.lockManager.Lock(key, expiredAtNs, token, owner)
 	if err == nil && renewToken != "" {
-		dlm.replicateToBackup(key, expiredAtNs, renewToken, owner, generation, seq, false)
+		dlm.replicateToBackup(key, expiredAtNs, renewToken, token, owner, generation, seq, false)
 	}
 	return
 }
@@ -95,13 +95,13 @@ func (dlm *DistributedLockManager) Unlock(key string, token string) (movedTo pb.
 	}
 	if primary != dlm.Host {
 		// If we still hold this lock locally, serve the unlock here
-		if lock, found := dlm.lockManager.GetLock(key); found && !lock.IsBackup && lock.Token == token {
+		if lock, found := dlm.lockManager.GetLock(key); found && !lock.IsBackup && token != "" && (lock.Token == token || lock.PrevToken == token) {
 			var isUnlocked bool
 			var generation int64
 			var seq int64
 			isUnlocked, generation, seq, err = dlm.lockManager.Unlock(key, token)
 			if isUnlocked {
-				dlm.replicateToBackup(key, 0, "", "", generation, seq, true)
+				dlm.replicateToBackup(key, 0, "", "", "", generation, seq, true)
 			}
 			return
 		}
@@ -113,7 +113,7 @@ func (dlm *DistributedLockManager) Unlock(key string, token string) (movedTo pb.
 	var seq int64
 	isUnlocked, generation, seq, err = dlm.lockManager.Unlock(key, token)
 	if isUnlocked {
-		dlm.replicateToBackup(key, 0, "", "", generation, seq, true)
+		dlm.replicateToBackup(key, 0, "", "", "", generation, seq, true)
 	}
 	return
 }
@@ -121,15 +121,15 @@ func (dlm *DistributedLockManager) Unlock(key string, token string) (movedTo pb.
 // InsertLock is used to insert a lock to a server unconditionally.
 // It is used when a server is down and the lock is moved to another server.
 // After inserting, it replicates to the backup for this key.
-func (dlm *DistributedLockManager) InsertLock(key string, expiredAtNs int64, token string, owner string, generation int64, seq int64) {
-	if dlm.lockManager.InsertLock(key, expiredAtNs, token, owner, generation, seq) {
-		dlm.replicateToBackup(key, expiredAtNs, token, owner, generation, seq, false)
+func (dlm *DistributedLockManager) InsertLock(key string, expiredAtNs int64, token string, prevToken string, owner string, generation int64, seq int64) {
+	if dlm.lockManager.InsertLock(key, expiredAtNs, token, prevToken, owner, generation, seq) {
+		dlm.replicateToBackup(key, expiredAtNs, token, prevToken, owner, generation, seq, false)
 	}
 }
 
 // InsertBackupLock inserts a lock as a backup copy, rejecting stale seq
-func (dlm *DistributedLockManager) InsertBackupLock(key string, expiredAtNs int64, token string, owner string, generation int64, seq int64) {
-	dlm.lockManager.InsertBackupLock(key, expiredAtNs, token, owner, generation, seq)
+func (dlm *DistributedLockManager) InsertBackupLock(key string, expiredAtNs int64, token string, prevToken string, owner string, generation int64, seq int64) {
+	dlm.lockManager.InsertBackupLock(key, expiredAtNs, token, prevToken, owner, generation, seq)
 }
 
 // RemoveBackupLock removes a backup lock unconditionally
@@ -181,12 +181,12 @@ func (dlm *DistributedLockManager) GetLock(key string) (*Lock, bool) {
 }
 
 // replicateToBackup asynchronously replicates a lock operation to the backup server
-func (dlm *DistributedLockManager) replicateToBackup(key string, expiredAtNs int64, token string, owner string, generation int64, seq int64, isUnlock bool) {
+func (dlm *DistributedLockManager) replicateToBackup(key string, expiredAtNs int64, token string, prevToken string, owner string, generation int64, seq int64, isUnlock bool) {
 	_, backup := dlm.LockRing.GetPrimaryAndBackup(key)
 	if backup == "" {
 		return // single-server deployment, no backup
 	}
 	if dlm.ReplicateFn != nil {
-		go dlm.ReplicateFn(backup, key, expiredAtNs, token, owner, generation, seq, isUnlock)
+		go dlm.ReplicateFn(backup, key, expiredAtNs, token, prevToken, owner, generation, seq, isUnlock)
 	}
 }

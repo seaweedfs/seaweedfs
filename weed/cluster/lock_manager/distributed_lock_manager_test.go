@@ -33,7 +33,7 @@ func newTestCluster(hosts ...pb.ServerAddress) *testCluster {
 	// Wire up replication: each node's ReplicateFn calls the backup's DLM directly
 	for _, dlm := range c.nodes {
 		d := dlm // capture
-		d.ReplicateFn = func(server pb.ServerAddress, key string, expiredAtNs int64, token string, owner string, generation int64, seq int64, isUnlock bool) {
+		d.ReplicateFn = func(server pb.ServerAddress, key string, expiredAtNs int64, token string, prevToken string, owner string, generation int64, seq int64, isUnlock bool) {
 			c.mu.Lock()
 			target, ok := c.nodes[server]
 			c.mu.Unlock()
@@ -43,7 +43,7 @@ func newTestCluster(hosts ...pb.ServerAddress) *testCluster {
 			if isUnlock {
 				target.RemoveBackupLockIfSeq(key, generation, seq)
 			} else {
-				target.InsertBackupLock(key, expiredAtNs, token, owner, generation, seq)
+				target.InsertBackupLock(key, expiredAtNs, token, prevToken, owner, generation, seq)
 			}
 		}
 	}
@@ -70,7 +70,7 @@ func (c *testCluster) addNode(host pb.ServerAddress) {
 	c.mu.Unlock()
 
 	// Wire up replication
-	dlm.ReplicateFn = func(server pb.ServerAddress, key string, expiredAtNs int64, token string, owner string, generation int64, seq int64, isUnlock bool) {
+	dlm.ReplicateFn = func(server pb.ServerAddress, key string, expiredAtNs int64, token string, prevToken string, owner string, generation int64, seq int64, isUnlock bool) {
 		c.mu.Lock()
 		target, ok := c.nodes[server]
 		c.mu.Unlock()
@@ -80,7 +80,7 @@ func (c *testCluster) addNode(host pb.ServerAddress) {
 		if isUnlock {
 			target.RemoveBackupLockIfSeq(key, generation, seq)
 		} else {
-			target.InsertBackupLock(key, expiredAtNs, token, owner, generation, seq)
+			target.InsertBackupLock(key, expiredAtNs, token, prevToken, owner, generation, seq)
 		}
 	}
 
@@ -311,7 +311,7 @@ func TestDLM_RollingRestart(t *testing.T) {
 			for _, lock := range dlm.AllLocks() {
 				newPrimary, _ := dlm.LockRing.GetPrimaryAndBackup(lock.Key)
 				if newPrimary == dlm.Host && !lock.IsBackup {
-					dlm.replicateToBackup(lock.Key, lock.ExpiredAtNs, lock.Token, lock.Owner, lock.Generation, lock.Seq, false)
+					dlm.replicateToBackup(lock.Key, lock.ExpiredAtNs, lock.Token, lock.PrevToken, lock.Owner, lock.Generation, lock.Seq, false)
 				}
 			}
 		}
@@ -370,7 +370,7 @@ func TestDLM_ReplicationFailure_PrimaryStillWorks(t *testing.T) {
 
 	// Break replication by setting a no-op ReplicateFn on all nodes
 	for _, dlm := range cluster.getNodes() {
-		dlm.ReplicateFn = func(server pb.ServerAddress, key string, expiredAtNs int64, token string, owner string, generation int64, seq int64, isUnlock bool) {
+		dlm.ReplicateFn = func(server pb.ServerAddress, key string, expiredAtNs int64, token string, prevToken string, owner string, generation int64, seq int64, isUnlock bool) {
 			// Simulate replication failure: do nothing
 		}
 	}
@@ -539,7 +539,7 @@ func TestDLM_NodeDropAndJoin_OwnershipDisruption(t *testing.T) {
 		for _, lock := range dlm.AllLocks() {
 			p, _ := dlm.LockRing.GetPrimaryAndBackup(lock.Key)
 			if p == dlm.Host && !lock.IsBackup {
-				dlm.replicateToBackup(lock.Key, lock.ExpiredAtNs, lock.Token, lock.Owner, lock.Generation, lock.Seq, false)
+				dlm.replicateToBackup(lock.Key, lock.ExpiredAtNs, lock.Token, lock.PrevToken, lock.Owner, lock.Generation, lock.Seq, false)
 			}
 		}
 	}
@@ -558,7 +558,7 @@ func TestDLM_NodeDropAndJoin_OwnershipDisruption(t *testing.T) {
 				// This lock should move to the new primary
 				target := cluster.get(p)
 				if target != nil {
-					target.InsertLock(lock.Key, lock.ExpiredAtNs, lock.Token, lock.Owner, lock.Generation, lock.Seq)
+					target.InsertLock(lock.Key, lock.ExpiredAtNs, lock.Token, lock.PrevToken, lock.Owner, lock.Generation, lock.Seq)
 					dlm.DemoteLock(lock.Key)
 				}
 			}
@@ -671,26 +671,96 @@ func TestDLM_RenewalDuringTransferWindow(t *testing.T) {
 	t.Logf("Key %s: primary changed from %s to %s, but renewal on old primary succeeded", key, primaryHost, newPrimary)
 }
 
+func TestDLM_ReplayedRenewalExtendsBackupExpiry(t *testing.T) {
+	hosts := []pb.ServerAddress{"filer1:8888", "filer2:8888", "filer3:8888"}
+	cluster := newTestCluster(hosts...)
+
+	key := "replay-expiry-lock"
+	token1, _, primaryHost, err := cluster.acquireLock(key, "owner1", 30*time.Second)
+	require.NoError(t, err)
+
+	_, backup := cluster.get(primaryHost).LockRing.GetPrimaryAndBackup(key)
+	require.NotEmpty(t, backup)
+	backupDlm := cluster.get(backup)
+	primary := cluster.get(primaryHost)
+
+	// Renewal rotates to token2, replicating seq=2 with expiry e1.
+	e1 := time.Now().Add(30 * time.Second).UnixNano()
+	_, token2, _, _, err := primary.LockWithTimeout(key, e1, token1, "owner1")
+	require.NoError(t, err)
+	time.Sleep(10 * time.Millisecond)
+
+	// The renewal response was lost; the client retries with the superseded
+	// token and a later expiry e2.
+	e2 := time.Now().Add(60 * time.Second).UnixNano()
+	_, replayed, _, _, err := primary.LockWithTimeout(key, e2, token1, "owner1")
+	require.NoError(t, err)
+	assert.Equal(t, token2, replayed)
+
+	// The backup must accept the extended expiry instead of rejecting the
+	// replayed mutation as stale.
+	require.Eventually(t, func() bool {
+		lock, found := backupDlm.GetLock(key)
+		return found && lock.ExpiredAtNs == e2 && lock.Seq == 3
+	}, time.Second, time.Millisecond)
+}
+
+func TestDLM_BackupPromotionKeepsLostRenewalRecovery(t *testing.T) {
+	hosts := []pb.ServerAddress{"filer1:8888", "filer2:8888", "filer3:8888"}
+	cluster := newTestCluster(hosts...)
+
+	key := "lost-renewal-move-lock"
+	token1, _, primaryHost, err := cluster.acquireLock(key, "owner1", 30*time.Second)
+	require.NoError(t, err)
+
+	// The renewal rotated the token; the client never learned token2.
+	token2, _, err := cluster.renewLock(key, "owner1", token1, 30*time.Second, primaryHost)
+	require.NoError(t, err)
+	require.NotEqual(t, token1, token2)
+
+	_, backup := cluster.get(primaryHost).LockRing.GetPrimaryAndBackup(key)
+	require.NotEmpty(t, backup)
+
+	// The backup copy must carry the superseded token too, or a promoted
+	// backup could not serve a retry of the lost renewal.
+	backupDlm := cluster.get(backup)
+	require.Eventually(t, func() bool {
+		lock, found := backupDlm.GetLock(key)
+		return found && lock.Token == token2 && lock.PrevToken == token1
+	}, time.Second, time.Millisecond)
+
+	// Primary dies; backup is promoted to primary.
+	cluster.removeNode(primaryHost)
+	require.True(t, backupDlm.PromoteLock(key))
+	assert.Equal(t, backup, backupDlm.LockRing.GetPrimary(key))
+
+	// A retry with the superseded token recovers the current one.
+	_, replayed, _, movedTo, err := backupDlm.LockWithTimeout(key, time.Now().Add(30*time.Second).UnixNano(), token1, "owner1")
+	require.NoError(t, err)
+	assert.Empty(t, movedTo)
+	assert.Equal(t, token2, replayed)
+}
+
 func TestDLM_StaleReplicationRejected(t *testing.T) {
 	// Verify that a stale replication (lower seq) does not overwrite a newer one
 	lm := NewLockManager()
 
 	// Insert backup with seq=3
-	lm.InsertBackupLock("key1", time.Now().Add(30*time.Second).UnixNano(), "token-new", "owner1", 1, 3)
+	lm.InsertBackupLock("key1", time.Now().Add(30*time.Second).UnixNano(), "token-new", "", "owner1", 1, 3)
 	lock, found := lm.GetLock("key1")
 	require.True(t, found)
 	assert.Equal(t, "token-new", lock.Token)
 	assert.Equal(t, int64(3), lock.Seq)
 
 	// Try to overwrite with stale seq=2 — should be rejected
-	lm.InsertBackupLock("key1", time.Now().Add(30*time.Second).UnixNano(), "token-old", "owner1", 1, 2)
+	lm.InsertBackupLock("key1", time.Now().Add(30*time.Second).UnixNano(), "token-old", "", "owner1", 1, 2)
 	lock, found = lm.GetLock("key1")
 	require.True(t, found)
 	assert.Equal(t, "token-new", lock.Token, "stale replication should be rejected")
 	assert.Equal(t, int64(3), lock.Seq)
 
 	// Update with higher seq=4 — should succeed
-	lm.InsertBackupLock("key1", time.Now().Add(30*time.Second).UnixNano(), "token-newer", "owner1", 1, 4)
+	lm.InsertBackupLock("key1", time.Now().Add(30*time.Second).UnixNano(), "token-newer", "", "owner1", 1, 4)
 	lock, found = lm.GetLock("key1")
 	require.True(t, found)
 	assert.Equal(t, "token-newer", lock.Token, "newer replication should be accepted")

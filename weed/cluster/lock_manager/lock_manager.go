@@ -24,6 +24,7 @@ type LockManager struct {
 }
 type Lock struct {
 	Token       string
+	PrevToken   string // token superseded by the latest renewal; a holder whose renewal response was lost still presents it
 	ExpiredAtNs int64
 	Key         string // only used for moving locks
 	Owner       string
@@ -102,19 +103,29 @@ func (lm *LockManager) Lock(path string, expiredAtNs int64, token string, owner 
 			generation = oldValue.Generation // keep same generation on renewal
 			seq = oldValue.Seq + 1
 			glog.V(4).Infof("key %s old token %v owner %v => %v owner %v", path, oldValue.Token, oldValue.Owner, renewToken, owner)
-			lm.locks[path] = &Lock{Token: renewToken, ExpiredAtNs: expiredAtNs, Owner: owner, Generation: generation, Seq: seq}
-			return
-		} else {
-			if token == "" {
-				// new lock
-				glog.V(4).Infof("key %s locked by %v", path, oldValue.Owner)
-				err = fmt.Errorf("lock already owned by %v", oldValue.Owner)
-				return
-			}
-			glog.V(4).Infof("key %s expected token %v owner %v received %v from %v", path, oldValue.Token, oldValue.Owner, token, owner)
-			err = fmt.Errorf("lock: token mismatch")
+			lm.locks[path] = &Lock{Token: renewToken, PrevToken: oldValue.Token, ExpiredAtNs: expiredAtNs, Owner: owner, Generation: generation, Seq: seq}
 			return
 		}
+		if token != "" && token == oldValue.PrevToken && owner == oldValue.Owner {
+			// The latest renewal already rotated the token but its response
+			// was lost: replay the current token so the holder recovers it
+			// instead of conflicting with its own lease until it expires.
+			renewToken = oldValue.Token
+			generation = oldValue.Generation
+			seq = oldValue.Seq + 1
+			oldValue.ExpiredAtNs = expiredAtNs
+			oldValue.Seq = seq
+			return
+		}
+		if token == "" {
+			// new lock
+			glog.V(4).Infof("key %s locked by %v", path, oldValue.Owner)
+			err = fmt.Errorf("lock already owned by %v", oldValue.Owner)
+			return
+		}
+		glog.V(4).Infof("key %s expected token %v owner %v received %v from %v", path, oldValue.Token, oldValue.Owner, token, owner)
+		err = fmt.Errorf("lock: token mismatch")
+		return
 	} else {
 		glog.V(4).Infof("key %s no lock owner %v", path, owner)
 		if token == "" {
@@ -148,7 +159,7 @@ func (lm *LockManager) Unlock(path string, token string) (isUnlocked bool, gener
 			delete(lm.locks, path)
 			return
 		}
-		if oldValue.Token == token {
+		if oldValue.Token == token || (token != "" && token == oldValue.PrevToken) {
 			isUnlocked = true
 			generation = oldValue.Generation
 			seq = oldValue.Seq + 1
@@ -210,7 +221,7 @@ func (lm *LockManager) SelectLocks(selectFn func(key string) bool) (locks []*Loc
 }
 
 // InsertLock inserts a lock from a transfer if it is newer than the current state.
-func (lm *LockManager) InsertLock(path string, expiredAtNs int64, token string, owner string, generation int64, seq int64) bool {
+func (lm *LockManager) InsertLock(path string, expiredAtNs int64, token string, prevToken string, owner string, generation int64, seq int64) bool {
 	lm.accessLock.Lock()
 	defer lm.accessLock.Unlock()
 
@@ -220,7 +231,7 @@ func (lm *LockManager) InsertLock(path string, expiredAtNs int64, token string, 
 			return false
 		}
 	}
-	lm.locks[path] = &Lock{Token: token, ExpiredAtNs: expiredAtNs, Owner: owner, Generation: generation, Seq: seq}
+	lm.locks[path] = &Lock{Token: token, PrevToken: prevToken, ExpiredAtNs: expiredAtNs, Owner: owner, Generation: generation, Seq: seq}
 	lm.advanceGenerationFloor(generation)
 	return true
 }
@@ -229,7 +240,7 @@ func (lm *LockManager) InsertLock(path string, expiredAtNs int64, token string, 
 // It rejects stale mutations by comparing (generation, seq). If a current primary
 // already exists on this node, newer replicated state refreshes that primary copy
 // without demoting it back to a backup.
-func (lm *LockManager) InsertBackupLock(path string, expiredAtNs int64, token string, owner string, generation int64, seq int64) {
+func (lm *LockManager) InsertBackupLock(path string, expiredAtNs int64, token string, prevToken string, owner string, generation int64, seq int64) {
 	lm.accessLock.Lock()
 	defer lm.accessLock.Unlock()
 
@@ -240,6 +251,7 @@ func (lm *LockManager) InsertBackupLock(path string, expiredAtNs int64, token st
 		}
 		lm.locks[path] = &Lock{
 			Token:       token,
+			PrevToken:   prevToken,
 			ExpiredAtNs: expiredAtNs,
 			Owner:       owner,
 			IsBackup:    existing.IsBackup,
@@ -249,7 +261,7 @@ func (lm *LockManager) InsertBackupLock(path string, expiredAtNs int64, token st
 		lm.advanceGenerationFloor(generation)
 		return
 	}
-	lm.locks[path] = &Lock{Token: token, ExpiredAtNs: expiredAtNs, Owner: owner, IsBackup: true, Generation: generation, Seq: seq}
+	lm.locks[path] = &Lock{Token: token, PrevToken: prevToken, ExpiredAtNs: expiredAtNs, Owner: owner, IsBackup: true, Generation: generation, Seq: seq}
 	lm.advanceGenerationFloor(generation)
 }
 

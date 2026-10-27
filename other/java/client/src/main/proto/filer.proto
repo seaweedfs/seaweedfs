@@ -872,6 +872,7 @@ message Lock {
     int64 generation = 5;
     bool is_backup = 6;
     int64 seq = 7;
+    string prev_renew_token = 8;
 }
 message TransferLocksRequest {
     repeated Lock locks = 1;
@@ -886,6 +887,7 @@ message ReplicateLockRequest {
     int64 generation = 5;
     bool is_unlock = 6;
     int64 seq = 7;
+    string prev_renew_token = 8;
 }
 message ReplicateLockResponse {
 }
