@@ -239,6 +239,44 @@ func TestGatewayRenameKeepsHeldPendingSource(t *testing.T) {
 	}
 }
 
+// TestGatewayRemoteOnlyRenameSourceOutOfCoverage: a rename source outside the
+// gateway's buckets is left untouched; when the destination already holds
+// the content the rename only refreshes the stamp instead of failing.
+func TestGatewayRemoteOnlyRenameSourceOutOfCoverage(t *testing.T) {
+	option, remote := gatewayTestOption("gatewaytest-outsrc")
+	t.Cleanup(func() { delete(remote_storage.RemoteStorageClientMakers, "gatewaytest-outsrc") })
+
+	stamp := &filer_pb.RemoteEntry{StorageName: "gatewaytest-outsrc", RemoteETag: `"abc"`, RemoteSize: 5, RemoteMtime: 100}
+	oldEntry := &filer_pb.Entry{Name: "old.txt", Attributes: &filer_pb.FuseAttributes{Mtime: 100, FileSize: 5}, RemoteEntry: stamp}
+	current := &filer_pb.Entry{
+		Name:        "new.txt",
+		Attributes:  &filer_pb.FuseAttributes{Mtime: 200, FileSize: 5},
+		RemoteEntry: stamp,
+		Extended:    map[string][]byte{filer.ExtRemoteRenameSourceKey: []byte("/unmanaged/dir/old.txt")},
+	}
+	resp := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets/gold/dir",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: oldEntry, NewParentPath: "/buckets/gold/dir", NewEntry: current,
+		},
+	}
+	filerClient := &stubFilerClient{entries: map[string]*filer_pb.Entry{"/buckets/gold/dir/new.txt": current}}
+
+	remote.objects = map[string][]byte{"/dir/new.txt": []byte("hello")}
+	remote.statETag = `"abc"`
+	remote.statMtime = 100
+
+	if err := gatewayRemoteOnlyRename(filerClient, option, resp, current); err != nil {
+		t.Fatalf("the completed destination should finalize without touching the out-of-coverage source: %v", err)
+	}
+	if filerClient.updates != 1 {
+		t.Errorf("stamped the entry %d times, want 1 to clear the pending-source marker", filerClient.updates)
+	}
+	if len(remote.deletes) != 0 || len(remote.writes) != 0 {
+		t.Errorf("deletes = %+v, writes = %+v, want the unmanaged source and destination left alone", remote.deletes, remote.writes)
+	}
+}
+
 // TestGatewayRenameOutKeepsRemoteOnlyObject: a remote-only entry renamed out
 // of the gateway's coverage keeps the remote object: it is the entry's only
 // content.
