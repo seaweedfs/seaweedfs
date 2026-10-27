@@ -1,9 +1,15 @@
 package filer
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -25,4 +31,28 @@ func TestIsSameDataLeavesChunkOrderAlone(t *testing.T) {
 	assert.Equal(t, "2,bbb", a.Chunks[1].FileId)
 	assert.Equal(t, "3,ccc", b.Chunks[0].FileId)
 	assert.Equal(t, "4,ddd", b.Chunks[1].FileId)
+}
+
+// A client hanging up mid-read must not evict or re-look-up the volume's locations.
+func TestCancelledFetchKeepsCachedLocations(t *testing.T) {
+	volume := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	t.Cleanup(volume.Close)
+
+	inv := &countingInvalidator{}
+	var lookups atomic.Int32
+	lookup := func(ctx context.Context, fileId string) ([]string, error) {
+		lookups.Add(1)
+		return nil, ctx.Err()
+	}
+
+	fileId := "4,12c8f6c18f"
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(50*time.Millisecond, cancel)
+	_, err := util_http.RetriedFetchChunkData(ctx, make([]byte, 8), []string{volume.URL + "/" + fileId}, nil, false, true, 0, fileId, refreshUrls(ctx, inv, lookup, fileId))
+
+	assert.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, int32(0), inv.invalidations.Load(), "a cancelled read must not evict the volume's locations")
+	assert.Equal(t, int32(0), lookups.Load(), "a cancelled read must not look the volume up again")
 }
