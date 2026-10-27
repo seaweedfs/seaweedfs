@@ -2,8 +2,10 @@ package weed_server
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	s3remote "github.com/seaweedfs/seaweedfs/weed/remote_storage/s3"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 // stubLookup returns a resolver func that maps the supplied hostnames to
@@ -777,5 +780,24 @@ func TestValidateRemoteConfForLoad(t *testing.T) {
 	}
 	if _, err := BuildGuardedRemoteStorageClient(context.Background(), aliyunNoEndpoint, false); err == nil {
 		t.Error("aliyun with empty endpoint should be rejected by the guard")
+	}
+}
+
+// TestGuardedPeerHTTPClientCarriesClusterTLS confirms the replica-upload
+// client borrows the shared global client's TLS configuration — an https
+// volume server expects the https.client cert and CA — while the remote
+// storage client stays on a plain transport.
+func TestGuardedPeerHTTPClientCarriesClusterTLS(t *testing.T) {
+	globalTransport := util_http.GetGlobalHttpClient().GetClientTransport()
+	original := globalTransport.TLSClientConfig
+	globalTransport.TLSClientConfig = &tls.Config{ServerName: "volume-peer.test"}
+	t.Cleanup(func() { globalTransport.TLSClientConfig = original })
+
+	peer := newGuardedPeerHTTPClient("10.0.0.1:8080").Transport.(*http.Transport)
+	if peer.TLSClientConfig != globalTransport.TLSClientConfig {
+		t.Error("peer upload client should share the global TLS config")
+	}
+	if remote := newGuardedHTTPClient("10.0.0.1:8080").Transport.(*http.Transport); remote.TLSClientConfig != nil {
+		t.Error("remote storage client should not carry cluster TLS config")
 	}
 }
