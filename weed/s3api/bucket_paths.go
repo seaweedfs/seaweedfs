@@ -221,3 +221,21 @@ func (s3a *S3ApiServer) getBucketEntry(bucket string) (*filer_pb.Entry, error) {
 	}
 	return s3a.getEntry(s3a.option.BucketsPath, bucket)
 }
+
+// checkBucketExistsOrReply answers a bucket subresource write the way S3 does
+// when the bucket does not exist: 404 NoSuchBucket. The configuration writes
+// behind it (encryption, policy) can only report a filer failure as a 500, so
+// they must not run for a bucket that is simply missing. It returns false after
+// writing the error response, true when the handler may continue.
+func (s3a *S3ApiServer) checkBucketExistsOrReply(w http.ResponseWriter, r *http.Request, bucket string) bool {
+	if _, err := s3a.getBucketEntry(bucket); err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
+		} else {
+			glog.Errorf("checkBucketExistsOrReply: failed to check bucket existence for %s: %v", bucket, err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		}
+		return false
+	}
+	return true
+}

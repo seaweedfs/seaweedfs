@@ -76,6 +76,10 @@ func (s3a *S3ApiServer) PutBucketPolicyHandler(w http.ResponseWriter, r *http.Re
 
 	glog.V(3).Infof("PutBucketPolicyHandler: bucket=%s", bucket)
 
+	if !s3a.checkBucketExistsOrReply(w, r, bucket) {
+		return
+	}
+
 	// Read policy document from request body
 	body, err := io.ReadAll(io.LimitReader(r.Body, policy_engine.MaxBucketPolicySize+1))
 	if err != nil {

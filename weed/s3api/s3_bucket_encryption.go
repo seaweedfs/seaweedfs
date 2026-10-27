@@ -109,6 +109,10 @@ func (s3a *S3ApiServer) GetBucketEncryptionHandler(w http.ResponseWriter, r *htt
 func (s3a *S3ApiServer) PutBucketEncryptionHandler(w http.ResponseWriter, r *http.Request) {
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 
+	if !s3a.checkBucketExistsOrReply(w, r, bucket) {
+		return
+	}
+
 	// Read and parse the request body
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -165,6 +169,10 @@ func (s3a *S3ApiServer) PutBucketEncryptionHandler(w http.ResponseWriter, r *htt
 // DeleteBucketEncryptionHandler handles DELETE bucket encryption requests
 func (s3a *S3ApiServer) DeleteBucketEncryptionHandler(w http.ResponseWriter, r *http.Request) {
 	bucket, _ := s3_constants.GetBucketAndObject(r)
+
+	if !s3a.checkBucketExistsOrReply(w, r, bucket) {
+		return
+	}
 
 	errCode := s3a.removeEncryptionConfiguration(bucket)
 	if errCode != s3err.ErrNone {
