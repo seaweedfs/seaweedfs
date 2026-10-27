@@ -899,11 +899,16 @@ func (s *Server) handleQueryVectors(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", "topK must be non-negative")
 		return
 	}
+	var filterJSON []byte
+	if len(req.Filter) > 0 {
+		filterJSON, _ = json.Marshal(req.Filter)
+	}
 	resp, err := s.vectors.QueryVectors(r.Context(), &vector_pb.QueryVectorsRequest{
 		Table:          tableID(arns.bucket, arns.index),
 		QueryVector:    queryVector,
 		TopK:           uint32(req.TopK),
 		Filter:         filter,
+		FilterJson:     string(filterJSON),
 		ReturnMetadata: req.ReturnMetadata,
 		ReturnDistance: req.ReturnDistance,
 	})

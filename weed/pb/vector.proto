@@ -108,6 +108,11 @@ message QueryVectorsRequest {
   // `metadata` column, so the gateway translates S3 Vectors filter
   // expressions onto it before they land here.
   string filter = 4;
+  // The raw S3 Vectors filter document. Indexes whose metadata column
+  // predates lance's jsonb storage cannot plan json_get_* calls; the engine
+  // evaluates this row-wise instead and constrains the scan by key. Gateways
+  // still send `filter` for engines that only know the SQL form.
+  string filter_json = 9;
   // Lance's post-filter escape hatch; off prefilters, matching S3 Vectors.
   bool postfilter = 5;
   bool return_metadata = 6;

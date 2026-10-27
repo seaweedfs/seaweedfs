@@ -823,6 +823,11 @@ type QueryVectorsRequest struct {
 	// `metadata` column, so the gateway translates S3 Vectors filter
 	// expressions onto it before they land here.
 	Filter string `protobuf:"bytes,4,opt,name=filter,proto3" json:"filter,omitempty"`
+	// The raw S3 Vectors filter document. Indexes whose metadata column
+	// predates lance's jsonb storage cannot plan json_get_* calls; the engine
+	// evaluates this row-wise instead and constrains the scan by key. Gateways
+	// still send `filter` for engines that only know the SQL form.
+	FilterJson string `protobuf:"bytes,9,opt,name=filter_json,json=filterJson,proto3" json:"filter_json,omitempty"`
 	// Lance's post-filter escape hatch; off prefilters, matching S3 Vectors.
 	Postfilter     bool `protobuf:"varint,5,opt,name=postfilter,proto3" json:"postfilter,omitempty"`
 	ReturnMetadata bool `protobuf:"varint,6,opt,name=return_metadata,json=returnMetadata,proto3" json:"return_metadata,omitempty"`
@@ -886,6 +891,13 @@ func (x *QueryVectorsRequest) GetTopK() uint32 {
 func (x *QueryVectorsRequest) GetFilter() string {
 	if x != nil {
 		return x.Filter
+	}
+	return ""
+}
+
+func (x *QueryVectorsRequest) GetFilterJson() string {
+	if x != nil {
+		return x.FilterJson
 	}
 	return ""
 }
@@ -1082,12 +1094,14 @@ const file_vector_proto_rawDesc = "" +
 	"\x13ListVectorsResponse\x12+\n" +
 	"\avectors\x18\x01 \x03(\v2\x11.vector_pb.VectorR\avectors\x12\x1d\n" +
 	"\n" +
-	"next_token\x18\x02 \x01(\tR\tnextToken\"\xa0\x02\n" +
+	"next_token\x18\x02 \x01(\tR\tnextToken\"\xc1\x02\n" +
 	"\x13QueryVectorsRequest\x12&\n" +
 	"\x05table\x18\x01 \x01(\v2\x10.vector_pb.TableR\x05table\x12!\n" +
 	"\fquery_vector\x18\x02 \x03(\x02R\vqueryVector\x12\x13\n" +
 	"\x05top_k\x18\x03 \x01(\rR\x04topK\x12\x16\n" +
-	"\x06filter\x18\x04 \x01(\tR\x06filter\x12\x1e\n" +
+	"\x06filter\x18\x04 \x01(\tR\x06filter\x12\x1f\n" +
+	"\vfilter_json\x18\t \x01(\tR\n" +
+	"filterJson\x12\x1e\n" +
 	"\n" +
 	"postfilter\x18\x05 \x01(\bR\n" +
 	"postfilter\x12'\n" +
