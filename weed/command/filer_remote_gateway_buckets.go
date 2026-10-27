@@ -418,6 +418,10 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 			}
 
 			// the following is entry rename
+			var oldDest *remote_pb.RemoteStorageLocation
+			if oldOk {
+				oldDest = toRemoteStorageLocation(oldBucket, util.NewFullPath(resp.Directory, message.OldEntry.Name), oldRemoteStorageMountLocation)
+			}
 			if newOk && !message.NewEntry.IsDirectory {
 				// A remote-only entry's content is the object its
 				// renamed-from path maps to; copying it on the remote
@@ -430,13 +434,19 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 				if isRemoteOnly(current) {
 					return gatewayRemoteOnlyRename(option, option, resp, current)
 				}
+				if current == nil && len(message.NewEntry.Extended[filer.ExtRemoteRenameSourceKey]) > 0 {
+					// the rename's copy was pending and the entry has moved
+					// on: a later rename carries the source in its own
+					// marker and finishes or releases it, so this leaves it
+					glog.V(0).Infof("keep %s: the pending rename moved on", util.NewFullPath(resp.Directory, message.OldEntry.Name))
+					return nil
+				}
 			}
 			if oldOk {
 				client, err := remote_storage.GetRemoteStorage(oldRemoteStorage)
 				if err != nil {
 					return err
 				}
-				oldDest := toRemoteStorageLocation(oldBucket, util.NewFullPath(resp.Directory, message.OldEntry.Name), oldRemoteStorageMountLocation)
 				if message.OldEntry.IsDirectory {
 					return client.RemoveDirectory(oldDest)
 				}
