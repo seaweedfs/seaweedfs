@@ -258,6 +258,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
+	copySourceVersionId := resolvedSourceVersionId(srcVersionId, entry)
 
 	if errCode := s3a.recheckCopySourcePolicy(r, srcBucket, srcObject, srcVersionId, entry.Extended, "CopyObjectHandler"); errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
@@ -438,6 +439,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		if dstVersionId != "" {
 			w.Header().Set("x-amz-version-id", dstVersionId)
 		}
+		setCopySourceVersionId(w, copySourceVersionId)
 		setEtag(w, etag)
 		writeSuccessResponseXML(w, r, CopyObjectResult{
 			ETag:         quoteETag(etag),
@@ -619,6 +621,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	if dstVersionId != "" {
 		w.Header().Set("x-amz-version-id", dstVersionId)
 	}
+	setCopySourceVersionId(w, copySourceVersionId)
 
 	setEtag(w, etag)
 
@@ -1093,6 +1096,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
+	copySourceVersionId := resolvedSourceVersionId(srcVersionId, entry)
 
 	// Cache remote-only sources before copying; the part-copy paths below
 	// iterate entry.GetChunks() and would otherwise produce an empty part.
@@ -1185,6 +1189,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		if !s3a.checkUploadStillOpen(w, r, dstBucket, dstObject, uploadID) {
 			return
 		}
+		setCopySourceVersionId(w, copySourceVersionId)
 		setEtag(w, etag)
 		// Mirror PutObjectPartHandler: write x-amz-server-side-encryption /
 		// x-amz-server-side-encryption-aws-kms-key-id headers on the response
@@ -1277,9 +1282,18 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 
 	// Calculate ETag for the part
 	etag := copyEntryETag(dstEntry)
+	setCopySourceVersionId(w, copySourceVersionId)
 	setEtag(w, etag)
 
 	writeSuccessResponseXML(w, r, buildCopyPartResult(etag, t, SSEResponseMetadata{}))
+}
+
+// setCopySourceVersionId reports which source version a copy read, as AWS does.
+// The null version is left out: AWS documents no value for it.
+func setCopySourceVersionId(w http.ResponseWriter, versionId string) {
+	if versionId != "" && versionId != "null" {
+		w.Header().Set("x-amz-copy-source-version-id", versionId)
+	}
 }
 
 func replaceDirective(reqHeader http.Header) (replaceMeta, replaceTagging bool) {
