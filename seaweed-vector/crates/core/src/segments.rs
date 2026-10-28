@@ -23,6 +23,20 @@ pub async fn segment_fragments(
     dataset: &Dataset,
     field: &str,
 ) -> Result<Vec<(Uuid, roaring::RoaringBitmap)>> {
+    Ok(named_segment_fragments(dataset, field)
+        .await?
+        .into_iter()
+        .map(|(id, _, b)| (id, b))
+        .collect())
+}
+
+/// Like `segment_fragments` but carries the logical index name — sharded
+/// builds create one named index per shard, and a `with_index_segments`
+/// scan must not mix names, so a fanout planner groups by name.
+pub async fn named_segment_fragments(
+    dataset: &Dataset,
+    field: &str,
+) -> Result<Vec<(Uuid, String, roaring::RoaringBitmap)>> {
     let field = dataset
         .schema()
         .field(field)
@@ -33,7 +47,11 @@ pub async fn segment_fragments(
         .await?
         .iter()
         .filter(|i| i.fields == [field.id])
-        .filter_map(|i| i.fragment_bitmap.clone().map(|b| (i.uuid, b & &live)))
+        .filter_map(|i| {
+            i.fragment_bitmap
+                .clone()
+                .map(|b| (i.uuid, i.name.clone(), b & &live))
+        })
         .collect())
 }
 
