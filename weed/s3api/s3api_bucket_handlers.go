@@ -1039,16 +1039,8 @@ func (s3a *S3ApiServer) GetBucketAclHandler(w http.ResponseWriter, r *http.Reque
 			ownerId = bucketConfig.Owner
 		}
 	}
-	// Buckets created before the admin fallback stored the caller's anonymous
-	// full-control grantee for that same owner.
-	if ownerId == AccountAdmin.Id {
-		for _, g := range storedGrants {
-			if g.Grantee != nil && g.Grantee.ID != nil && *g.Grantee.ID == AccountAnonymous.Id &&
-				g.Permission != nil && *g.Permission == s3_constants.PermissionFullControl {
-				*g.Grantee.ID = ownerId
-			}
-		}
-	}
+	// Stored grants are reported verbatim: an explicitly saved anonymous
+	// full-control grant must survive a GET-to-PUT round trip unchanged.
 	ownerDisplayName := s3a.iam.GetAccountNameById(ownerId)
 	response := AccessControlPolicy{
 		Owner: CanonicalUser{
