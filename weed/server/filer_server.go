@@ -103,9 +103,10 @@ type FilerOption struct {
 	// replays through the normal path.
 	SkipEmptyMembershipConfirm bool
 	// ClusterFreshHint, when non-nil, reports that the co-located master
-	// minted its TopologyId this boot — its persisted state was empty, so an
-	// empty peer scan cannot be a settling master and the confirm window may
-	// end early. Restarted masters recovering a prior id keep the window.
+	// minted its TopologyId this boot — its persisted state was empty, so the
+	// empty-scan confirm only needs to cover a reconnecting peer's keepalive
+	// retries rather than the full settling window. Restarted masters
+	// recovering a prior id keep the full window.
 	ClusterFreshHint func() bool
 	// AllowUntrustedRemoteEndpoints lets a read of a remote-only entry dial a
 	// mounted endpoint that resolves to a loopback / private / metadata host.
@@ -555,6 +556,13 @@ func (fs *FilerServer) AnnounceOnceCaughtUp(announce chan struct{}, waitStart ti
 // not a stalled startup.
 const emptyMembershipConfirmTimeout = 10 * time.Second
 
+// freshMembershipConfirmTimeout bounds the same hold when the co-located
+// master minted its TopologyId this boot: a fresh mint proves the master kept
+// no cluster state, but not that no external filer survived its loss — one
+// may still be mid-reconnect. A few keepalive cycles of empty scans cover the
+// reconnect while keeping a genuinely fresh cluster's announce prompt.
+const freshMembershipConfirmTimeout = 3 * time.Second
+
 // awaitPeerBootstrap re-polls membership while a fresh store's empty startup
 // scan can still be disproved: masters restarted or re-elected report no
 // filers until the existing ones reconnect. Peers found late are backfilled
@@ -563,6 +571,10 @@ const emptyMembershipConfirmTimeout = 10 * time.Second
 // metadata copy — is bounded by the shared announce deadline.
 func (fs *FilerServer) awaitPeerBootstrap(deadline time.Time) (peers []pb.ServerAddress) {
 	confirmBy := time.Now().Add(emptyMembershipConfirmTimeout)
+	if fs.option.ClusterFreshHint != nil && fs.option.ClusterFreshHint() {
+		glog.V(0).Infof("%s embedded master minted a fresh topology id; shortening the empty-scan confirm", fs.option.Host)
+		confirmBy = time.Now().Add(freshMembershipConfirmTimeout)
+	}
 	for time.Now().Before(deadline) {
 		ctx, cancel := context.WithDeadline(context.Background(), deadline)
 		nodes, listErr := fs.filer.ListExistingPeerUpdates(ctx)
@@ -579,10 +591,6 @@ func (fs *FilerServer) awaitPeerBootstrap(deadline time.Time) (peers []pb.Server
 		}
 		if len(remotes) == 0 {
 			if !time.Now().Before(confirmBy) {
-				return nil
-			}
-			if fs.option.ClusterFreshHint != nil && fs.option.ClusterFreshHint() {
-				glog.V(0).Infof("%s embedded master minted a fresh topology id; empty peer scan is final, announcing now", fs.option.Host)
 				return nil
 			}
 			time.Sleep(time.Second)

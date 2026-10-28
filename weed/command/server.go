@@ -458,9 +458,10 @@ func runServer(cmd *Command, args []string) bool {
 		}
 		if len(peerList) == 1 && *isStartingMasterServer {
 			// The embedded filer shares the master's process: when the master
-			// mints a fresh TopologyId its persisted state was empty, so an
-			// empty peer scan is final and the announce need not wait out the
-			// membership confirm. Prior state keeps the confirm in place.
+			// mints a fresh TopologyId its persisted state was empty, so the
+			// empty peer scan only has to survive a reconnecting peer's
+			// keepalive retries, not the full membership confirm. Prior state
+			// keeps the full window.
 			filerOptions.clusterFreshHint = func() bool {
 				ms := embeddedMaster.Load()
 				return ms != nil && ms.Topo.FreshMinted()
