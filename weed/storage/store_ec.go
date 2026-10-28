@@ -735,6 +735,14 @@ func (s *Store) rebuildEcShardNeedle(n *needle.Needle, needleId types.NeedleId, 
 		if candidate := try(suspects); candidate != nil {
 			return candidate
 		}
+		// The gather behind a failed candidate can itself have read a second
+		// corrupt shard as reconstruction input. With slack left in the parity
+		// budget, retry while dropping one gathered input at a time.
+		if len(suspects) < ecCtx.ParityShards {
+			if candidate := s.rebuildEcNeedleFromDroppedInputs(n, needleId, ecVolume, ecCtx, intervals, shardIds, offsets, offset, size, corrupted, suspects); candidate != nil {
+				return candidate
+			}
+		}
 		if len(suspects) == 1 {
 			return nil
 		}
@@ -743,6 +751,81 @@ func (s *Store) rebuildEcShardNeedle(n *needle.Needle, needleId types.NeedleId, 
 		if candidate := try(map[erasure_coding.ShardId]bool{shardId: true}); candidate != nil {
 			return candidate
 		}
+	}
+	return nil
+}
+
+// rebuildEcNeedleFromDroppedInputs handles a rebuild whose every suspect range
+// was recovered yet the candidate still failed to parse: the gather behind it
+// can itself have read a second corrupt shard as reconstruction input. Each
+// interval is gathered once — keeping every shard that answers rather than
+// stopping at DataShards — then the decode is retried with one gathered input
+// dropped at a time and a needle parse arbitrates. The hypotheses tried are
+// the inputs the first decode consumed, the only shards whose corruption can
+// explain the failed candidate. Nil when no dropped-input subset parses.
+func (s *Store) rebuildEcNeedleFromDroppedInputs(n *needle.Needle, needleId types.NeedleId, ecVolume *erasure_coding.EcVolume, ecCtx *erasure_coding.ECContext, intervals []erasure_coding.Interval, shardIds []erasure_coding.ShardId, offsets []int64, offset int64, size types.Size, corrupted []byte, suspects map[erasure_coding.ShardId]bool) []byte {
+	var totalSize int64
+	for _, interval := range intervals {
+		totalSize += int64(interval.Size)
+	}
+	weight := totalSize * int64(ecCtx.Total())
+	if weight > ecRecoverBudget {
+		weight = ecRecoverBudget
+	}
+	if err := ecRecoverSem.Acquire(context.Background(), weight); err != nil {
+		return nil
+	}
+	defer ecRecoverSem.Release(weight)
+
+	gathers := make([][][]byte, len(intervals))
+	picked := make(map[erasure_coding.ShardId]bool)
+	for i, interval := range intervals {
+		shardIntervals, _ := s.gatherEcShardIntervals(needleId, ecVolume, ecCtx, suspects, int(interval.Size), offsets[i], ecCtx.Total())
+		taken := 0
+		for shardId := 0; shardId < ecCtx.Total() && taken < ecCtx.DataShards; shardId++ {
+			if shardIntervals[shardId] != nil {
+				picked[erasure_coding.ShardId(shardId)] = true
+				taken++
+			}
+		}
+		gathers[i] = shardIntervals
+	}
+
+	for drop := erasure_coding.ShardId(0); int(drop) < ecCtx.Total(); drop++ {
+		if !picked[drop] {
+			continue
+		}
+		candidate := make([]byte, len(corrupted))
+		copy(candidate, corrupted)
+		pos := 0
+		ok := true
+		for i, interval := range intervals {
+			view := slices.Clone(gathers[i])
+			view[drop] = nil
+			if err := reconstructEcShardInterval(ecVolume, ecCtx, view, shardIds[i]); err != nil {
+				ok = false
+				break
+			}
+			copy(candidate[pos:pos+int(interval.Size)], view[shardIds[i]])
+			pos += int(interval.Size)
+		}
+		if !ok {
+			continue
+		}
+		if n.ReadBytes(candidate, offset, size, ecVolume.Version) != nil || n.Id != needleId {
+			continue
+		}
+		// The verdict convicts every differing range — and the dropped input,
+		// without which the same decode kept failing to parse.
+		pos = 0
+		for i, interval := range intervals {
+			if !bytes.Equal(candidate[pos:pos+int(interval.Size)], corrupted[pos:pos+int(interval.Size)]) {
+				forgetShardId(ecVolume, shardIds[i])
+			}
+			pos += int(interval.Size)
+		}
+		forgetShardId(ecVolume, drop)
+		return candidate
 	}
 	return nil
 }
@@ -950,14 +1033,15 @@ func (s *Store) doReadRemoteEcShardInterval(sourceDataNode pb.ServerAddress, nee
 
 // gatherEcShardIntervals collects the same interval from every shard outside skip,
 // returning one buffer per shard and nil where the shard could not be gathered. It stops
-// once DataShards of them are in hand: reconstruction consumes no more than that.
-func (s *Store) gatherEcShardIntervals(needleId types.NeedleId, ecVolume *erasure_coding.EcVolume, ecCtx *erasure_coding.ECContext, skip map[erasure_coding.ShardId]bool, size int, offset int64) (shardIntervals [][]byte, isDeleted bool) {
+// once want of them are in hand: reconstruction consumes no more than DataShards, so
+// callers pass that unless a retry needs the wider set.
+func (s *Store) gatherEcShardIntervals(needleId types.NeedleId, ecVolume *erasure_coding.EcVolume, ecCtx *erasure_coding.ECContext, skip map[erasure_coding.ShardId]bool, size int, offset int64, want int) (shardIntervals [][]byte, isDeleted bool) {
 	shardIntervals = make([][]byte, ecCtx.Total())
 
 	// A shard this server already holds costs no round trip and no peer buffer,
 	// so seed those before asking peers for the rest.
 	available := 0
-	for shardId := erasure_coding.ShardId(0); int(shardId) < ecCtx.Total() && available < ecCtx.DataShards; shardId++ {
+	for shardId := erasure_coding.ShardId(0); int(shardId) < ecCtx.Total() && available < want; shardId++ {
 		if skip[shardId] {
 			continue
 		}
@@ -999,8 +1083,8 @@ func (s *Store) gatherEcShardIntervals(needleId types.NeedleId, ecVolume *erasur
 	// Reconstruction consumes DataShards buffers, so reading every remaining shard
 	// holds a third more than that and asks a third more of peers that are, by
 	// then, already struggling. Widen only when a wave falls short.
-	for len(candidates) > 0 && available < ecCtx.DataShards {
-		wave := min(ecCtx.DataShards-available, len(candidates))
+	for len(candidates) > 0 && available < want {
+		wave := min(want-available, len(candidates))
 		var wg sync.WaitGroup
 		var fetched atomic.Int64
 		for _, shardId := range candidates[:wave] {
@@ -1134,7 +1218,7 @@ func (s *Store) recoverEcShardInterval(needleId types.NeedleId, ecVolume *erasur
 	}
 	defer ecRecoverSem.Release(weight)
 
-	shardIntervals, is_deleted := s.gatherEcShardIntervals(needleId, ecVolume, ecCtx, exclude, len(buf), offset)
+	shardIntervals, is_deleted := s.gatherEcShardIntervals(needleId, ecVolume, ecCtx, exclude, len(buf), offset, ecCtx.DataShards)
 	if err := reconstructEcShardInterval(ecVolume, ecCtx, shardIntervals, shardIdToRecover); err != nil {
 		return 0, is_deleted, err
 	}

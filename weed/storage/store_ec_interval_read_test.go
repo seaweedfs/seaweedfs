@@ -248,6 +248,41 @@ func TestReadEcShardNeedleHealsBitRottedShardInSpanningNeedle(t *testing.T) {
 	}
 }
 
+// The gather that rebuilds a suspect range can itself pick up a second corrupt
+// shard as reconstruction input. The first candidate then fails the needle
+// parse, and the read should retry the decode with that input dropped.
+func TestReadEcShardNeedleHealsWhenRebuildInputAlsoRotted(t *testing.T) {
+	store := newTestStore(t, 1)
+	const vid = needle.VolumeId(12)
+
+	n := randomNeedleOfSize(77, 1024)
+	ecVolume := encodeAndMountEcVolume(t, store, vid, []*needle.Needle{n})
+
+	_, _, intervals, err := ecVolume.LocateEcShardNeedle(n.Id, ecVolume.Version)
+	if err != nil {
+		t.Fatalf("locate needle: %v", err)
+	}
+	if len(intervals) != 1 {
+		t.Fatalf("needle covers %d intervals, want 1", len(intervals))
+	}
+	shardId, shardOffset := ecVolume.IntervalToShardIdAndOffset(intervals[0])
+	corruptEcShardRange(t, ecVolume, shardId, shardOffset, int64(intervals[0].Size))
+
+	// Every shard is local, so the rebuild gather takes the lowest-numbered
+	// surviving shards: the first parity shard is always one of the inputs.
+	parityInput := erasure_coding.ShardId(ecVolume.ECContext.DataShards)
+	corruptEcShardRange(t, ecVolume, parityInput, shardOffset, int64(intervals[0].Size))
+
+	got := new(needle.Needle)
+	got.Id = n.Id
+	if _, err := store.ReadEcShardNeedle(vid, got, nil); err != nil {
+		t.Fatalf("read should reconstruct past a corrupt rebuild input: %v", err)
+	}
+	if !bytes.Equal(got.Data, n.Data) {
+		t.Fatalf("read back %d bytes, want the %d written", len(got.Data), len(n.Data))
+	}
+}
+
 // When more shards than parity are corrupt in the same range no hypothesis can
 // gather enough clean input, so the read still fails instead of serving wrong
 // bytes.
