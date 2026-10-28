@@ -952,19 +952,19 @@ func translateFilter(filter map[string]interface{}) (string, error) {
 }
 
 // nonFilterableField returns the first blocked metadata key a filter
-// references, or "" when the filter is clean.
-func nonFilterableField(cfg *MetadataConfiguration, filter map[string]interface{}) string {
+// references; the bool reports whether any matched.
+func nonFilterableField(cfg *MetadataConfiguration, filter map[string]interface{}) (string, bool) {
 	if cfg == nil {
-		return ""
+		return "", false
 	}
 	fields := map[string]bool{}
 	filterFields(filter, fields)
 	for _, k := range cfg.NonFilterableMetadataKeys {
 		if fields[k] {
-			return k
+			return k, true
 		}
 	}
-	return ""
+	return "", false
 }
 
 // filterFields collects the field names a filter expression references —
@@ -1226,7 +1226,7 @@ func (s *Server) handleQueryVectors(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	idx := indexFromRecord(s, arns.bucket, arns.index, record)
-	if key := nonFilterableField(idx.MetadataConfiguration, req.Filter); key != "" {
+	if key, blocked := nonFilterableField(idx.MetadataConfiguration, req.Filter); blocked {
 		writeError(w, http.StatusBadRequest, "ValidationException",
 			fmt.Sprintf("metadata key %q is not filterable", key))
 		return

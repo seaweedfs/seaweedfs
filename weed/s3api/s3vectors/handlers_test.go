@@ -327,14 +327,20 @@ func TestFilterFieldsNestedOperators(t *testing.T) {
 
 	// The rejection gate the handler applies to the extracted fields.
 	blocked := &MetadataConfiguration{NonFilterableMetadataKeys: []string{"sku"}}
-	if got := nonFilterableField(blocked, filter); got != "sku" {
-		t.Fatalf("blocked key inside nested filter not detected: %q", got)
+	if got, hit := nonFilterableField(blocked, filter); !hit || got != "sku" {
+		t.Fatalf("blocked key inside nested filter not detected: %q %v", got, hit)
 	}
 	allowed := &MetadataConfiguration{NonFilterableMetadataKeys: []string{"secret"}}
-	if got := nonFilterableField(allowed, filter); got != "" {
+	if got, hit := nonFilterableField(allowed, filter); hit {
 		t.Fatalf("unrelated non-filterable key should pass, got %q", got)
 	}
-	if got := nonFilterableField(nil, filter); got != "" {
+	if got, hit := nonFilterableField(nil, filter); hit {
 		t.Fatalf("no configuration should pass, got %q", got)
+	}
+	emptyBlocked := &MetadataConfiguration{NonFilterableMetadataKeys: []string{""}}
+	if _, hit := nonFilterableField(emptyBlocked, map[string]interface{}{
+		"": map[string]interface{}{"$eq": "x"},
+	}); !hit {
+		t.Fatal("an empty blocked key should still reject")
 	}
 }
