@@ -176,6 +176,16 @@ func TestGrowthBlocker(t *testing.T) {
 	if err := topo.GrowthBlocker(&VolumeGrowOption{ReplicaPlacement: rp000, DataCenter: "dc9"}); err == nil {
 		t.Fatal("dc9 does not exist, 000 should report a blocker")
 	}
+
+	// The named location binds only the first replica: dc1 hosts it for 100
+	// and dc3 has room for the second, so the placement is reachable.
+	rp100, _ := super_block.NewReplicaPlacementFromString("100")
+	if err := topo.GrowthBlocker(&VolumeGrowOption{ReplicaPlacement: rp100, DataCenter: "dc1"}); err != nil {
+		t.Fatalf("dc3 has room for the second 100 replica, got blocker: %v", err)
+	}
+	if err := topo.GrowthBlocker(&VolumeGrowOption{ReplicaPlacement: rp100, DataCenter: "dc2"}); err == nil {
+		t.Fatal("dc2 has no room for the first 100 replica")
+	}
 }
 
 var topologyLayout2 = `
