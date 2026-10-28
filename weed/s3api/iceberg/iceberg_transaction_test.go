@@ -2,10 +2,17 @@ package iceberg
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/gorilla/mux"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 )
 
@@ -250,5 +257,61 @@ func (e *tableEntry) applyUpdate(req *s3tables.UpdateTableRequest) {
 	}
 	if req.MetadataVersion > 0 {
 		e.metadataVersion = req.MetadataVersion
+	}
+}
+
+// A transaction against a registration that kept only its metadata location
+// reads that file: the UUID assertion the client took from its load passes,
+// and the commit lands on the registered snapshots instead of a placeholder.
+func TestCommitTransactionReadsMetadataFileOfOlderRegistration(t *testing.T) {
+	fc := newMemFiler()
+	seedNamespace(fc, registerTestBucket, "finance", "alice")
+	s := NewServer(fc, nil)
+	location, registered := seedRegistrableMetadata(t, fc, "events")
+
+	err := fc.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return s.tablesManager.Execute(context.Background(), s3tables.NewManagerClient(client), "RegisterTable", &s3tables.RegisterTableRequest{
+			TableBucketARN:   buildTableBucketARN(registerTestBucket),
+			Namespace:        []string{"finance"},
+			Name:             "events",
+			MetadataLocation: location,
+		}, nil, "alice")
+	})
+	if err != nil {
+		t.Fatalf("seed older registration: %v", err)
+	}
+
+	commitTransaction := func(requirements, updates string) *httptest.ResponseRecorder {
+		body := `{"table-changes":[{"identifier":{"namespace":["finance"],"name":"events"},` +
+			`"requirements":[` + requirements + `],"updates":[` + updates + `]}]}`
+		r := httptest.NewRequest(http.MethodPost, "/v1/"+registerTestBucket+"/transactions/commit", strings.NewReader(body))
+		r = mux.SetURLVars(r, map[string]string{"prefix": registerTestBucket})
+		r = r.WithContext(s3_constants.SetIdentityNameInContext(r.Context(), "alice"))
+		w := httptest.NewRecorder()
+		s.handleCommitTransaction(w, r)
+		return w
+	}
+
+	w := commitTransaction(
+		`{"type":"assert-table-uuid","uuid":"`+registered.TableUUID().String()+`"}`,
+		`{"action":"set-properties","updates":{"committed":"true"}}`)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("uuid-asserting transaction: status = %d, want %d (body: %s)", w.Code, http.StatusNoContent, w.Body.String())
+	}
+
+	w = commitTransaction("", `{"action":"set-properties","updates":{"again":"true"}}`)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("requirement-free transaction: status = %d, want %d (body: %s)", w.Code, http.StatusNoContent, w.Body.String())
+	}
+
+	w = httptest.NewRecorder()
+	s.handleLoadTable(w, registeredTableRequest(http.MethodGet, "events", ""))
+	loaded := servedMetadata(t, "load after transactions", w)
+	checkServesRegistered(t, "load after transactions", loaded, registered)
+	if got := loaded.Properties()["committed"]; got != "true" {
+		t.Errorf("property committed = %q, want true", got)
+	}
+	if got := loaded.Properties()["again"]; got != "true" {
+		t.Errorf("property again = %q, want true", got)
 	}
 }
