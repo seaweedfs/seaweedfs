@@ -6,8 +6,25 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
+	"github.com/stretchr/testify/require"
 )
 
+func TestConfigStoreDoesNotDowngradeDescriptors(t *testing.T) {
+	for _, dir := range []string{"", t.TempDir()} {
+		store, err := NewConfigStore(dir)
+		require.NoError(t, err)
+		require.NoError(t, store.SaveDescriptor("vacuum", &plugin_pb.JobTypeDescriptor{
+			JobType: "vacuum", DescriptorVersion: 2, DetectionCooldownConfigField: "cooldown",
+		}))
+		require.NoError(t, store.SaveDescriptor("vacuum", &plugin_pb.JobTypeDescriptor{
+			JobType: "vacuum", DescriptorVersion: 1,
+		}))
+		got, err := store.LoadDescriptor("vacuum")
+		require.NoError(t, err)
+		require.Equal(t, uint32(2), got.DescriptorVersion)
+		require.Equal(t, "cooldown", got.DetectionCooldownConfigField)
+	}
+}
 func TestConfigStoreDescriptorRoundTrip(t *testing.T) {
 	t.Parallel()
 

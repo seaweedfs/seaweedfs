@@ -72,6 +72,46 @@ func TestManualDetectionSkipDoesNotChangeScheduledStatus(t *testing.T) {
 	require.Equal(t, "skipped", activities[0].Stage)
 }
 
+func TestPrefetchRefreshesSavedDescriptorFromReconnectingWorker(t *testing.T) {
+	p, err := New(Options{})
+	require.NoError(t, err)
+	defer p.Shutdown()
+	require.NoError(t, p.store.SaveDescriptor("vacuum", &plugin_pb.JobTypeDescriptor{JobType: "vacuum", DescriptorVersion: 1}))
+	require.NoError(t, p.SaveJobTypeConfig(&plugin_pb.PersistedJobTypeConfig{
+		JobType: "vacuum", WorkerConfigValues: map[string]*plugin_pb.ConfigValue{"cooldown": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 600}}},
+	}))
+	session := &streamSession{workerID: "upgraded", outgoing: make(chan *plugin_pb.AdminToWorkerMessage, 1), done: make(chan struct{})}
+	p.putSession(session)
+	done := make(chan struct{})
+	go func() {
+		p.prefetchDescriptorsFromHello(&plugin_pb.WorkerHello{
+			WorkerId: "upgraded", Capabilities: []*plugin_pb.JobTypeCapability{{JobType: "vacuum", CanDetect: true}},
+		})
+		close(done)
+	}()
+	select {
+	case request := <-session.outgoing:
+		require.True(t, request.GetRequestConfigSchema().GetForceRefresh())
+		p.handleConfigSchemaResponse(&plugin_pb.ConfigSchemaResponse{
+			RequestId: request.RequestId, JobType: "vacuum", Success: true,
+			JobTypeDescriptor: &plugin_pb.JobTypeDescriptor{JobType: "vacuum", DescriptorVersion: 2, DetectionCooldownConfigField: "cooldown"},
+		})
+	case <-time.After(time.Second):
+		t.Fatal("saved descriptor was not refreshed")
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("prefetch did not finish")
+	}
+	got, err := p.store.LoadDescriptor("vacuum")
+	require.NoError(t, err)
+	require.Equal(t, "cooldown", got.DetectionCooldownConfigField)
+	cfg, err := p.LoadJobTypeConfig("vacuum")
+	require.NoError(t, err)
+	require.Equal(t, int64(600), cfg.WorkerConfigValues["cooldown"].GetInt64Value())
+}
+
 func TestRunDetectionIncludesLatestSuccessfulRun(t *testing.T) {
 	pluginSvc, err := New(Options{})
 	if err != nil {

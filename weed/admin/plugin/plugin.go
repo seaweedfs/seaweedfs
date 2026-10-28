@@ -361,7 +361,10 @@ func (r *Plugin) RequestConfigSchema(ctx context.Context, jobType string, forceR
 	if err != nil {
 		return nil, err
 	}
+	return r.requestConfigSchema(ctx, jobType, forceRefresh, provider.WorkerID)
+}
 
+func (r *Plugin) requestConfigSchema(ctx context.Context, jobType string, forceRefresh bool, workerID string) (*plugin_pb.JobTypeDescriptor, error) {
 	requestID, err := newRequestID("schema")
 	if err != nil {
 		return nil, err
@@ -388,7 +391,7 @@ func (r *Plugin) RequestConfigSchema(ctx context.Context, jobType string, forceR
 		},
 	}
 
-	if err := r.sendToWorker(provider.WorkerID, requestMessage); err != nil {
+	if err := r.sendToWorker(workerID, requestMessage); err != nil {
 		return nil, err
 	}
 
