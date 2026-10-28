@@ -388,6 +388,7 @@ func (s *AdminServer) GetIcebergTableDetailsData(ctx context.Context, catalogNam
 		MetadataLocation: resp.MetadataLocation,
 	}
 
+	s.fillTableMetadata(ctx, &resp, bucketArn, strings.Join(namespaceParts, "/"), tableName)
 	applyIcebergMetadata(resp.Metadata, &details)
 	s.applyWorkerObservation(&details, bucketArn, namespaceParts, resp.Name)
 	return details, nil
