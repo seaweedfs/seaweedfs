@@ -1545,11 +1545,25 @@ func (t *Topology) IsGrowthFrozen() bool {
 			if t.growthFrozen.CompareAndSwap(true, false) {
 				stats.MasterVolumeGrowthFrozen.Set(0)
 				glog.V(0).Infof("volume growth unfrozen after %v", time.Duration(wait))
+				go t.replicateGrowthUnfreeze()
 			}
 			return false
 		}
 	}
 	return true
+}
+
+// replicateGrowthUnfreeze pushes the recovery-wait lift through raft like
+// ResumeVolumeGrowth, so a restart does not replay the freeze. A freeze that
+// landed after the lift owns the flag; skipping keeps its later command last
+// in the log.
+func (t *Topology) replicateGrowthUnfreeze() {
+	t.reportedTopologyIdsLock.Lock()
+	defer t.reportedTopologyIdsLock.Unlock()
+	if t.growthFrozen.Load() {
+		return
+	}
+	t.applyGrowthFreeze(false)
 }
 
 func (t *Topology) ResumeVolumeGrowth() bool {
