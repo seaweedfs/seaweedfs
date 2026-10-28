@@ -84,6 +84,11 @@ func (w *SeaweedSftpFileWriter) Close() error {
 		return err
 	}
 
+	// The parent may have been removed while the upload buffered.
+	if err := w.fs.requireParentDir(w.absPath); err != nil {
+		return err
+	}
+
 	// Stream the file to the absolute path (after HomeDir translation)
 	return w.fs.putFile(w.absPath, w.tmpFile, w.fs.user)
 }
