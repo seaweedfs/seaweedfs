@@ -184,3 +184,50 @@ func TestPutObjectAclPermissions(t *testing.T) {
 		})
 	}
 }
+
+// With auth off, objects are owned by the admin account but requests carry no
+// account, so the owner check denied PutObjectAcl to every caller.
+func TestPutObjectAclWithoutAuth(t *testing.T) {
+	const bucket, object = "acl-bucket", "image.png"
+	for _, tt := range []struct {
+		name      string
+		ownerless bool
+		forgedId  string
+	}{
+		{name: "stored owner"},
+		{name: "ownerless", ownerless: true},
+		{name: "forged account header", ownerless: true, forgedId: "forged-account"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			entry := &filer_pb.Entry{Name: object}
+			if !tt.ownerless {
+				entry.Extended = map[string][]byte{s3_constants.ExtAmzOwnerKey: []byte(AccountAdmin.Id)}
+			}
+			filer := &objectACLUpdateFiler{fakeLookupFiler: fakeLookupFiler{entry: entry}}
+			s3a := newHeadBucketTestServer(t, filer)
+			s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+			s3a.bucketConfigCache.Set(bucket, &BucketConfig{Name: bucket, Ownership: s3_constants.OwnershipObjectWriter})
+			s3a.iam = NewIdentityAccessManagementWithStore(s3a.option, nil, "memory")
+			t.Cleanup(s3a.iam.Shutdown)
+			require.False(t, s3a.iam.isEnabled())
+
+			req := httptest.NewRequest(http.MethodPut, "http://s3/"+bucket+"/"+object+"?acl", http.NoBody)
+			req = mux.SetURLVars(req, map[string]string{"bucket": bucket, "object": object})
+			req.Header.Set(s3_constants.AmzCannedAcl, "public-read")
+			if tt.forgedId != "" {
+				req.Header.Set(s3_constants.AmzAccountId, tt.forgedId)
+			}
+			rr := httptest.NewRecorder()
+			s3a.iam.Auth(s3a.PutObjectAclHandler, s3_constants.ACTION_WRITE_ACP)(rr, req)
+			require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+
+			filer.mu.Lock()
+			defer filer.mu.Unlock()
+			require.NotNil(t, filer.update)
+			require.Equal(t, AccountAdmin.Id, string(filer.update.Entry.Extended[s3_constants.ExtAmzOwnerKey]))
+			grants := GetAcpGrants(filer.update.Entry.Extended)
+			require.Len(t, grants, 2)
+			require.Equal(t, s3_constants.GranteeGroupAllUsers, aws.StringValue(grants[1].Grantee.URI))
+		})
+	}
+}
