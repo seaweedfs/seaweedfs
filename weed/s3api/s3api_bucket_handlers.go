@@ -1019,7 +1019,7 @@ func (s3a *S3ApiServer) GetBucketAclHandler(w http.ResponseWriter, r *http.Reque
 	// Report the bucket's owner (recorded at creation or by PutBucketAcl), not the
 	// caller; fall back to the caller only when no owner was persisted. Likewise
 	// return any stored ACL, defaulting to the owner's full-control grant.
-	ownerId := r.Header.Get(s3_constants.AmzAccountId)
+	ownerId := getAccountId(r)
 	var storedGrants []*s3.Grant
 	if bucketConfig, errCode := s3a.getBucketConfig(bucket); errCode == s3err.ErrNone {
 		storedGrants = parseAclGrants(bucketConfig.ACL)
@@ -1056,12 +1056,19 @@ func (s3a *S3ApiServer) PutBucketAclHandler(w http.ResponseWriter, r *http.Reque
 	// Without auth the request carries no account; resolve it as PutBucketHandler does.
 	aclAccountId := getAccountId(r)
 
+	// XML ACLs must name the owner GetBucketAcl reports: the stored owner when
+	// the bucket has one, else the request's account.
+	ownerId := aclAccountId
+	if config, errCode := s3a.getBucketConfig(bucket); errCode == s3err.ErrNone && config.Owner != "" {
+		ownerId = config.Owner
+	}
+
 	// Get bucket ownership settings (these would be used for ownership validation in a full implementation)
-	bucketOwnership := ""         // Default/simplified for now - in a full implementation this would be retrieved from bucket config
-	bucketOwnerId := aclAccountId // Simplified - bucket owner is current account
+	bucketOwnership := ""    // Default/simplified for now - in a full implementation this would be retrieved from bucket config
+	bucketOwnerId := ownerId // Simplified - bucket owner is current account
 
 	// Use the existing ACL parsing logic to handle both canned ACLs and XML body
-	grants, errCode := ExtractAcl(r, s3a.iam, bucketOwnership, bucketOwnerId, aclAccountId, aclAccountId)
+	grants, errCode := ExtractAcl(r, s3a.iam, bucketOwnership, bucketOwnerId, ownerId, aclAccountId)
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
@@ -1087,7 +1094,9 @@ func (s3a *S3ApiServer) PutBucketAclHandler(w http.ResponseWriter, r *http.Reque
 			config.ACL = nil
 			config.IsPublicRead = false
 		}
-		config.Owner = amzAccountId
+		if amzAccountId != "" {
+			config.Owner = amzAccountId
+		}
 		return nil
 	})
 
