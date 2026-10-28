@@ -1579,7 +1579,9 @@ func (t *Topology) replicateGrowthUnfreeze(frozenAt int64) {
 			time.Sleep(time.Duration(attempt) * time.Second)
 		}
 		if t.growthFrozenAt.Load() != frozenAt {
-			break // a newer freeze report superseded this lift
+			// A newer freeze owns the flag now; falling through to the
+			// re-arm would undo a resume that followed it.
+			return
 		}
 		if err := t.applyGrowthUnfreeze(frozenAt); err == nil {
 			return

@@ -146,6 +146,18 @@ func TestReplicateGrowthUnfreezeRearmsOnFailure(t *testing.T) {
 	}
 }
 
+func TestReplicateGrowthUnfreezeDoesNotRearmAfterResume(t *testing.T) {
+	topo := NewTopology("topo", nil, 128, 3, false)
+
+	topo.SetGrowthFrozen(true, 1000, 0)
+	topo.SetGrowthFrozen(true, 2000, 0)
+	topo.ResumeVolumeGrowth()
+	topo.replicateGrowthUnfreeze(1000)
+	if topo.growthFrozen.Load() {
+		t.Fatal("a superseded lift must not re-arm the freeze an operator resumed")
+	}
+}
+
 func TestCheckReportedTopologyIdBeforeTopologyIdKnown(t *testing.T) {
 	topo := NewTopology("topo", nil, 128, 3, false)
 	topo.SetGrowthFreezeConfig(true, 0)
