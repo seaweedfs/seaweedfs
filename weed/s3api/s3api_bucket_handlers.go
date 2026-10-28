@@ -722,11 +722,18 @@ func hasExplicitBucketACL(r *http.Request) bool {
 // setBucketOwner creates a function that sets the bucket owner from the request context
 func (s3a *S3ApiServer) setBucketOwner(r *http.Request) func(entry *filer_pb.Entry) {
 	currentIdentityId := s3_constants.GetIdentityNameFromContext(r)
+	if identityObj := s3_constants.GetIdentityFromContext(r); identityObj != nil {
+		if identity, ok := identityObj.(*Identity); ok && s3a.iam != nil &&
+			s3a.iam.identityAnonymous != nil && identity.Name == s3a.iam.identityAnonymous.Name {
+			currentIdentityId = ""
+		}
+	}
 	// Record the canonical account id too so GetBucketAcl can report the bucket
 	// owner instead of whoever is reading (e.g. an admin or another account).
-	// With auth off the header is client-supplied, so the bucket stays ownerless.
+	// Nothing is recorded when auth is off (client-supplied header, untrusted)
+	// or for the anonymous account: those buckets report the admin fallback.
 	accountId := r.Header.Get(s3_constants.AmzAccountId)
-	if s3a.iam != nil && !s3a.iam.isEnabled() {
+	if accountId == AccountAnonymous.Id || (s3a.iam != nil && !s3a.iam.isEnabled()) {
 		accountId = ""
 	}
 	return func(entry *filer_pb.Entry) {
