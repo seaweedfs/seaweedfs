@@ -179,7 +179,7 @@ func TestVersionedCopyDestinationReadsOnOwner(t *testing.T) {
 
 	second := httptest.NewRequest(http.MethodPut, "/destination/final/copy2", nil)
 	second = mux.SetURLVars(second, map[string]string{"bucket": "destination", "object": "final/copy2"})
-	second.Header.Set("X-Amz-Copy-Source", "/destination/final/object?versionId=" + versionId)
+	second.Header.Set("X-Amz-Copy-Source", "/destination/final/object?versionId="+versionId)
 	secondResult := httptest.NewRecorder()
 	s3a.CopyObjectHandler(secondResult, second)
 	require.Equal(t, http.StatusOK, secondResult.Code, secondResult.Body.String())
