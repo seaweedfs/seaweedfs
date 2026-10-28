@@ -109,11 +109,15 @@ spec:
             {{- /* The selected credential renders ahead of the merged vars so a later
                    entry such as WEED_MYSQL_DSN can reference it via $(...); Kubernetes
                    only resolves names declared earlier. A credential the user sets
-                   wins over the db secret's, secret-backed over plain. */}}
+                   wins over the db secret's, secret-backed over plain. One whose value
+                   itself holds a $(...) reference keeps its sorted position instead,
+                   so its own references still resolve. */}}
             {{- range $credential := list (list "WEED_MYSQL_USERNAME" "user") (list "WEED_MYSQL_PASSWORD" "password") }}
             {{- $key := index $credential 0 }}
             {{- $mergedHas := hasKey $mergedExtraEnvironmentVars $key }}
             {{- $mergedValue := index $mergedExtraEnvironmentVars $key }}
+            {{- if and $mergedHas (not (hasKey $secretExtraEnvironmentVars $key)) (kindIs "string" $mergedValue) (regexMatch `\$\(` $mergedValue) }}
+            {{- else }}
             {{- $_ := unset $mergedExtraEnvironmentVars $key }}
             {{- $_ := set $renderedCredentials $key true }}
             {{- if hasKey $secretExtraEnvironmentVars $key }}
@@ -134,6 +138,7 @@ spec:
                   name: {{ include "seaweedfs.fullname" $ }}-db-secret
                   key: {{ index $credential 1 }}
                   optional: true
+            {{- end }}
             {{- end }}
             {{- end }}
             {{- end }}
