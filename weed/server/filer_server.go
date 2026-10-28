@@ -571,10 +571,7 @@ const freshMembershipConfirmTimeout = 3 * time.Second
 // metadata copy — is bounded by the shared announce deadline.
 func (fs *FilerServer) awaitPeerBootstrap(deadline time.Time) (peers []pb.ServerAddress) {
 	confirmBy := time.Now().Add(emptyMembershipConfirmTimeout)
-	if fs.option.ClusterFreshHint != nil && fs.option.ClusterFreshHint() {
-		glog.V(0).Infof("%s embedded master minted a fresh topology id; shortening the empty-scan confirm", fs.option.Host)
-		confirmBy = time.Now().Add(freshMembershipConfirmTimeout)
-	}
+	var freshSince time.Time
 	for time.Now().Before(deadline) {
 		ctx, cancel := context.WithDeadline(context.Background(), deadline)
 		nodes, listErr := fs.filer.ListExistingPeerUpdates(ctx)
@@ -590,7 +587,20 @@ func (fs *FilerServer) awaitPeerBootstrap(deadline time.Time) (peers []pb.Server
 			}
 		}
 		if len(remotes) == 0 {
-			if !time.Now().Before(confirmBy) {
+			exitBy := confirmBy
+			// The mint lands after raft election, which can postdate this
+			// wait's start, so the hint is re-evaluated each pass rather than
+			// once up front.
+			if fs.option.ClusterFreshHint != nil && fs.option.ClusterFreshHint() {
+				if freshSince.IsZero() {
+					freshSince = time.Now()
+					glog.V(0).Infof("%s embedded master minted a fresh topology id; shortening the empty-scan confirm", fs.option.Host)
+				}
+				if freshBy := freshSince.Add(freshMembershipConfirmTimeout); freshBy.Before(exitBy) {
+					exitBy = freshBy
+				}
+			}
+			if !time.Now().Before(exitBy) {
 				return nil
 			}
 			time.Sleep(time.Second)
