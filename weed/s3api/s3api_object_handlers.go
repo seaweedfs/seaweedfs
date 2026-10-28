@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
@@ -416,7 +417,6 @@ func (s3a *S3ApiServer) checkDirectoryObject(bucket, object string) (*filer_pb.E
 		return nil, false, nil // Not a directory object
 	}
 
-	bucketDir := s3a.bucketDir(bucket)
 	cleanObject := strings.TrimSuffix(object, "/")
 
 	if cleanObject == "" {
@@ -424,7 +424,7 @@ func (s3a *S3ApiServer) checkDirectoryObject(bucket, object string) (*filer_pb.E
 	}
 
 	// Check if directory exists
-	dirEntry, err := s3a.getEntry(bucketDir, cleanObject)
+	dirEntry, err := s3a.getObjectEntryRoutedByKey(bucket, cleanObject)
 	if err != nil {
 		if errors.Is(err, filer_pb.ErrNotFound) {
 			return nil, true, nil // Directory object requested but doesn't exist
@@ -462,8 +462,7 @@ func (s3a *S3ApiServer) resolveObjectEntry(bucket, object, versionId string) (*f
 	}
 
 	// For non-versioned buckets, verify directly
-	bucketDir := s3a.bucketDir(bucket)
-	return s3a.getEntry(bucketDir, object)
+	return s3a.getObjectEntryRoutedByKey(bucket, object)
 }
 
 // serveDirectoryContent serves the content of a directory object directly
@@ -961,7 +960,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 			versionsDir := normalizedObject + s3_constants.VersionsFolder
 
 			// Quick check (no retries) for .versions/ directory
-			versionsEntry, versionsErr := s3a.getEntry(bucketDir, versionsDir)
+			versionsEntry, versionsErr := s3a.getObjectScopedEntryRoutedByKey(bucket, normalizedObject, bucketDir, versionsDir)
 
 			if versionsErr == nil && versionsEntry != nil {
 				// .versions/ exists, meaning real versions are stored there
@@ -974,7 +973,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 				}
 			} else if errors.Is(versionsErr, filer_pb.ErrNotFound) {
 				// .versions/ doesn't exist (confirmed not found), check regular path for null version
-				regularEntry, regularErr := s3a.getEntry(bucketDir, normalizedObject)
+				regularEntry, regularErr := s3a.getObjectEntryRoutedByKey(bucket, normalizedObject)
 				// A physical parent or bare-key object is not a trailing-slash null marker.
 				if regularErr == nil && isNullVersionObject(regularEntry, normalizedObject) {
 					// Found object at regular path - this is the null version
@@ -1251,7 +1250,10 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 					return newStreamErrorWithResponse(fmt.Errorf("cached entry authorization failed: %v", code))
 				}
 			}
-			if cacheErr == nil && cachedEntry != nil && len(cachedEntry.GetChunks()) > 0 {
+			// Swap only a fill of the resolved generation with matching size;
+			// totalSize, offset and size were computed from the first entry.
+			if cacheErr == nil && cachedEntry != nil && len(cachedEntry.GetChunks()) > 0 &&
+				sameRemoteObject(entry, cachedEntry) && int64(filer.FileSize(cachedEntry)) == totalSize {
 				// Cache completed, use cached chunks
 				chunks = cachedEntry.GetChunks()
 				entry = cachedEntry
@@ -2656,7 +2658,7 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 			versionsDir := normalizedObject + s3_constants.VersionsFolder
 
 			// Quick check (no retries) for .versions/ directory
-			versionsEntry, versionsErr := s3a.getEntry(bucketDir, versionsDir)
+			versionsEntry, versionsErr := s3a.getObjectScopedEntryRoutedByKey(bucket, normalizedObject, bucketDir, versionsDir)
 
 			if versionsErr == nil && versionsEntry != nil {
 				// .versions/ exists, meaning real versions are stored there
@@ -2669,7 +2671,7 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 				}
 			} else if errors.Is(versionsErr, filer_pb.ErrNotFound) {
 				// .versions/ doesn't exist (confirmed not found), check regular path for null version
-				regularEntry, regularErr := s3a.getEntry(bucketDir, normalizedObject)
+				regularEntry, regularErr := s3a.getObjectEntryRoutedByKey(bucket, normalizedObject)
 				// A physical parent or bare-key object is not a trailing-slash null marker.
 				if regularErr == nil && isNullVersionObject(regularEntry, normalizedObject) {
 					// Found object at regular path - this is the null version
@@ -3631,6 +3633,30 @@ func (s3a *S3ApiServer) doCacheRemoteObject(ctx context.Context, dir, name strin
 	return cachedEntry, err
 }
 
+// doCacheRemoteObjectOnFiler is doCacheRemoteObject against one filer: the
+// entry being cached may live only on the write owner that served the lookup,
+// ahead of peer replication. Callers fall back to doCacheRemoteObject on error.
+func (s3a *S3ApiServer) doCacheRemoteObjectOnFiler(ctx context.Context, filer pb.ServerAddress, dir, name string) (*filer_pb.Entry, error) {
+	if filer == "" {
+		return s3a.doCacheRemoteObject(ctx, dir, name)
+	}
+	var cachedEntry *filer_pb.Entry
+	err := pb.WithFilerClient(false, 0, filer, s3a.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		resp, cacheErr := client.CacheRemoteObjectToLocalCluster(ctx, &filer_pb.CacheRemoteObjectToLocalClusterRequest{
+			Directory: dir,
+			Name:      name,
+		})
+		if cacheErr != nil {
+			return cacheErr
+		}
+		if resp != nil && resp.Entry != nil {
+			cachedEntry = resp.Entry
+		}
+		return nil
+	})
+	return cachedEntry, err
+}
+
 func (s3a *S3ApiServer) buildVersionedRemoteObjectPath(bucket, object, versionId string) (dir, name string) {
 	// versionId names a .versions file, so a value that is not a valid path
 	// segment falls back to the unversioned remote path rather than escaping it.
@@ -3646,6 +3672,19 @@ func (s3a *S3ApiServer) buildVersionedRemoteObjectPath(bucket, object, versionId
 // only check inline since its downstream cannot read from inline Content.
 func cachedEntryHasLocalData(entry *filer_pb.Entry) bool {
 	return entry != nil && (len(entry.GetChunks()) > 0 || len(entry.Content) > 0)
+}
+
+// sameRemoteObject reports whether two entries describe the same remote object
+// generation. A cache response can come back from a filer holding an older
+// generation of the key; it must not replace the resolved entry.
+func sameRemoteObject(src, cached *filer_pb.Entry) bool {
+	srcRemote, cachedRemote := src.GetRemoteEntry(), cached.GetRemoteEntry()
+	if srcRemote == nil || cachedRemote == nil {
+		return srcRemote == cachedRemote
+	}
+	return srcRemote.RemoteETag == cachedRemote.RemoteETag &&
+		srcRemote.RemoteMtime == cachedRemote.RemoteMtime &&
+		srcRemote.RemoteSize == cachedRemote.RemoteSize
 }
 
 // remoteCacheStreamingTimeoutNS bounds (nanoseconds) how long the streaming read
@@ -3693,7 +3732,10 @@ func (s3a *S3ApiServer) cacheRemoteObjectForStreamingWithShortTimeout(r *http.Re
 
 	glog.V(2).Infof("cacheRemoteObjectForStreamingWithShortTimeout: polling cache status for %s/%s (timeout=%v)", dir, name, pollTimeout)
 
-	cachedEntry, err := s3a.doCacheRemoteObject(cacheCtx, dir, name)
+	cachedEntry, err := s3a.doCacheRemoteObjectOnFiler(cacheCtx, s3a.routableWriteOwner(bucket, object), dir, name)
+	if err != nil {
+		cachedEntry, err = s3a.doCacheRemoteObject(cacheCtx, dir, name)
+	}
 	if err != nil {
 		// Distinguish transient errors (timeout/cancellation) from permanent errors
 		if cacheCtx.Err() != nil {
@@ -3726,7 +3768,10 @@ func (s3a *S3ApiServer) cacheRemoteObjectForStreaming(r *http.Request, entry *fi
 
 	glog.V(1).Infof("cacheRemoteObjectForStreaming: caching %s/%s (remote size: %d, versionId: %s)", dir, name, entry.RemoteEntry.RemoteSize, versionId)
 
-	cachedEntry, err := s3a.doCacheRemoteObject(cacheCtx, dir, name)
+	cachedEntry, err := s3a.doCacheRemoteObjectOnFiler(cacheCtx, s3a.routableWriteOwner(bucket, object), dir, name)
+	if err != nil {
+		cachedEntry, err = s3a.doCacheRemoteObject(cacheCtx, dir, name)
+	}
 	if err != nil {
 		// A bounded-wait timeout (or client disconnect) is not a cache failure:
 		// the filer keeps downloading and the caller maps a nil return to 503.
@@ -3738,7 +3783,7 @@ func (s3a *S3ApiServer) cacheRemoteObjectForStreaming(r *http.Request, entry *fi
 		return nil
 	}
 
-	if cachedEntry != nil && len(cachedEntry.GetChunks()) > 0 {
+	if cachedEntry != nil && len(cachedEntry.GetChunks()) > 0 && sameRemoteObject(entry, cachedEntry) {
 		glog.V(1).Infof("cacheRemoteObjectForStreaming: successfully cached %s/%s (%d chunks)", dir, name, len(cachedEntry.GetChunks()))
 		return cachedEntry
 	}
@@ -3749,8 +3794,9 @@ func (s3a *S3ApiServer) cacheRemoteObjectForStreaming(r *http.Request, entry *fi
 // cacheRemoteObjectForCopy caches a remote-only source before CopyObject /
 // CopyObjectPart reads it; otherwise the copy would write a destination with
 // FileSize > 0 but no chunks/content. Bounded so a stuck cache can't hang
-// the copy. Returns nil if caching failed or produced no local data.
-func (s3a *S3ApiServer) cacheRemoteObjectForCopy(ctx context.Context, bucket, object, versionId string) *filer_pb.Entry {
+// the copy. Returns nil if caching failed, produced no local data, or the
+// fill resolved a different generation than the authorized source.
+func (s3a *S3ApiServer) cacheRemoteObjectForCopy(ctx context.Context, src *filer_pb.Entry, bucket, object, versionId string) *filer_pb.Entry {
 	const cacheTimeout = 30 * time.Second
 	cacheCtx, cancel := context.WithTimeout(ctx, cacheTimeout)
 	defer cancel()
@@ -3759,7 +3805,12 @@ func (s3a *S3ApiServer) cacheRemoteObjectForCopy(ctx context.Context, bucket, ob
 
 	glog.V(1).Infof("cacheRemoteObjectForCopy: caching %s/%s (versionId: %s)", dir, name, versionId)
 
-	cachedEntry, err := s3a.doCacheRemoteObject(cacheCtx, dir, name)
+	// An owner-routed source read can return a remote-only entry that has not
+	// replicated to the default filer; cache it on the filer that has it.
+	cachedEntry, err := s3a.doCacheRemoteObjectOnFiler(cacheCtx, s3a.routableWriteOwner(bucket, object), dir, name)
+	if err != nil {
+		cachedEntry, err = s3a.doCacheRemoteObject(cacheCtx, dir, name)
+	}
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
 			glog.Warningf("cacheRemoteObjectForCopy: timeout caching %s/%s after %v", dir, name, cacheTimeout)
@@ -3769,7 +3820,11 @@ func (s3a *S3ApiServer) cacheRemoteObjectForCopy(ctx context.Context, bucket, ob
 		return nil
 	}
 
-	if cachedEntryHasLocalData(cachedEntry) {
+	// A fallback filer can answer for an older generation of the key; only a
+	// fill of the resolved source — same remote generation and size — may
+	// replace it.
+	if cachedEntryHasLocalData(cachedEntry) && sameRemoteObject(src, cachedEntry) &&
+		filer.FileSize(cachedEntry) == filer.FileSize(src) {
 		glog.V(1).Infof("cacheRemoteObjectForCopy: successfully cached %s/%s (chunks=%d, inline=%d)", dir, name, len(cachedEntry.GetChunks()), len(cachedEntry.Content))
 		return cachedEntry
 	}
@@ -3800,7 +3855,10 @@ func (s3a *S3ApiServer) startBackgroundRemoteCache(bucket, object, versionId str
 			glog.V(2).Infof("startBackgroundRemoteCache: caching disabled for %s/%s", dir, name)
 			return
 		}
-		_, err := s3a.doCacheRemoteObject(bgCtx, dir, name)
+		_, err := s3a.doCacheRemoteObjectOnFiler(bgCtx, s3a.routableWriteOwner(bucket, object), dir, name)
+		if err != nil {
+			_, err = s3a.doCacheRemoteObject(bgCtx, dir, name)
+		}
 		if err != nil {
 			glog.V(2).Infof("startBackgroundRemoteCache: cache failed for %s/%s: %v", bucket, object, err)
 		} else {

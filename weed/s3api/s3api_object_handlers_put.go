@@ -249,6 +249,9 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			if !objectLockEnabled {
 				return s3err.ErrNone
 			}
+			// mkdir replaces the entry on the default filer, so the lock check
+			// must read there too — a routed read can miss a marker the owner
+			// has not received yet.
 			existing, existErr := s3a.getEntry(fullDirPath, entryName)
 			if existErr != nil {
 				return s3err.ErrNone

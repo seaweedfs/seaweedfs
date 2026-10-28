@@ -29,7 +29,9 @@ const objectWriteRouteKeyPrefix = s3_constants.ObjectWriteRouteKeyPrefix
 // filer (reached because the gateway's ring view was stale) forwards the
 // transaction to the owner. All of an object's writes share this key.
 func (s3a *S3ApiServer) objectRouteKey(bucket, object string) string {
-	return objectWriteRouteKeyPrefix + s3a.toFilerPath(bucket, object)
+	// A trailing-slash marker key ("dir/") names the same entry as the object
+	// ("dir"), so both hash and lock to one owner.
+	return objectWriteRouteKeyPrefix + strings.TrimSuffix(s3a.toFilerPath(bucket, object), "/")
 }
 
 // routableWriteOwner returns the owner filer for an object's writes, or "" to
@@ -187,6 +189,27 @@ func (s3a *S3ApiServer) objectTxnOnFiler(owner pb.ServerAddress, req *filer_pb.O
 	return resp, err
 }
 
+// withWriteOwnerFilerClient runs fn on the object's write owner so a read
+// routed to the owner sees the change without waiting for replication. An
+// error fn returns on the owner is authoritative and surfaces as-is: replaying
+// the mutation on a lagging replica could update a stale entry and still
+// report success. Only a channel that never came up — provably nothing sent —
+// lets the failover walk reach another filer; with no resolved owner the
+// default filer applies the mutation.
+func (s3a *S3ApiServer) withWriteOwnerFilerClient(owner pb.ServerAddress, fn func(client filer_pb.SeaweedFilerClient) error) error {
+	if owner == "" {
+		return s3a.WithFilerClient(false, fn)
+	}
+	if s3a.filerClient == nil {
+		return pb.WithFilerClient(false, 0, owner, s3a.option.GrpcDialOption, fn)
+	}
+	preferred := owner
+	if s3a.ownerRecentlyUnreachable(owner) {
+		preferred = ""
+	}
+	return s3a.withFilerClientFailover(context.Background(), preferred, false, false, fn)
+}
+
 // routedPut writes an entry as a PUT, optionally followed by finalize mutations,
 // as one ObjectTransaction applied in order under lockKey on the owner filer.
 // lockKey is normally the entry's own path; a versioned add instead passes the
@@ -241,6 +264,15 @@ func (s3a *S3ApiServer) routedMkFile(owner pb.ServerAddress, routeKey, parentDir
 	resp, err := s3a.routedPut(owner, routeKey, filePath, filePath, entry, cond, conditionKey, "", finalize)
 	if err != nil {
 		return err
+	}
+	if resp.ErrorCode == filer_pb.FilerError_EXISTING_IS_DIRECTORY && !isReservedDirectoryName(name) {
+		// Other keys are nested under this one, so the object goes onto the
+		// directory they live in — the same retry mkFile makes off the ring.
+		entry.MarkPrefixObject()
+		resp, err = s3a.routedPut(owner, routeKey, filePath, filePath, entry, cond, conditionKey, "", finalize)
+		if err != nil {
+			return err
+		}
 	}
 	if resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED {
 		return errUploadRemoved

@@ -166,7 +166,7 @@ func (s3a *S3ApiServer) getVersionIdFormat(bucket, object string) bool {
 	versionsPath := object + s3_constants.VersionsFolder
 
 	// Try to get the .versions directory entry
-	versionsEntry, err := s3a.getEntry(bucketDir, versionsPath)
+	versionsEntry, err := s3a.getObjectScopedEntryRoutedByKey(bucket, object, bucketDir, versionsPath)
 	if err != nil {
 		// .versions directory doesn't exist yet - use new format
 		return true

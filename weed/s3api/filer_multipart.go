@@ -1165,7 +1165,7 @@ func (s3a *S3ApiServer) abortMultipartUpload(input *s3.AbortMultipartUploadInput
 // lock: a directory that outlived the object it completed into shares chunks
 // with it and goes metadata-only; anything else frees the parts' chunks.
 func (s3a *S3ApiServer) removeUploadDir(bucket, uploadId, object string) s3err.ErrorCode {
-	completed, err := s3a.uploadCompleted(s3a.bucketDir(bucket), uploadId, object)
+	completed, err := s3a.uploadCompleted(bucket, uploadId, object)
 	if err != nil {
 		glog.Errorf("bucket %s remove upload %s completed check: %v", bucket, uploadId, err)
 		return s3err.ErrInternalError
@@ -1237,10 +1237,11 @@ func (s3a *S3ApiServer) routedUploadDirDelete(bucket, uploadId, object string) s
 // uploadCompleted reports whether the upload assembled into an object: the
 // object entry, or any version file under <key>.versions, still carries the
 // upload id completion stamps on it.
-func (s3a *S3ApiServer) uploadCompleted(bucketDir, uploadId, objectKey string) (bool, error) {
+func (s3a *S3ApiServer) uploadCompleted(bucket, uploadId, objectKey string) (bool, error) {
 	if objectKey == "" {
 		return false, nil
 	}
+	bucketDir := s3a.bucketDir(bucket)
 	name := path.Base(objectKey)
 	dir := path.Dir(objectKey)
 	if dir == "." {
@@ -1248,7 +1249,7 @@ func (s3a *S3ApiServer) uploadCompleted(bucketDir, uploadId, objectKey string) (
 	}
 	objectDir := path.Join(bucketDir, dir)
 
-	entry, err := s3a.getEntry(objectDir, name)
+	entry, err := s3a.getObjectEntryRoutedByKey(bucket, objectKey)
 	if err != nil && !isFilerNotFound(err) {
 		return false, err
 	}
@@ -1256,7 +1257,7 @@ func (s3a *S3ApiServer) uploadCompleted(bucketDir, uploadId, objectKey string) (
 		return true, nil
 	}
 
-	versions, _, err := s3a.list(objectDir+"/"+name+s3_constants.VersionsFolder, "", "", false, math.MaxInt32)
+	versions, _, err := s3a.listObjectScopedEntriesRoutedByKey(bucket, objectKey, objectDir+"/"+name+s3_constants.VersionsFolder, "", "", false, math.MaxInt32)
 	if err != nil {
 		if isFilerNotFound(err) {
 			return false, nil

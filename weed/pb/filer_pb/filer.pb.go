@@ -1702,18 +1702,19 @@ func (x *ObjectMutation) GetKeepRemoteObject() bool {
 // latest version after a specific version is deleted, where the scan must run
 // under the lock.
 type Recompute struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ScanDir       string                 `protobuf:"bytes,1,opt,name=scan_dir,json=scanDir,proto3" json:"scan_dir,omitempty"`                                                                                          // directory whose direct children are scanned
-	Descending    bool                   `protobuf:"varint,2,opt,name=descending,proto3" json:"descending,omitempty"`                                                                                                  // pick the child that sorts last by name (else first)
-	CopyExtended  map[string]string      `protobuf:"bytes,3,rep,name=copy_extended,json=copyExtended,proto3" json:"copy_extended,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // pointer extended key -> source extended key on the chosen child
-	NameToKey     string                 `protobuf:"bytes,4,opt,name=name_to_key,json=nameToKey,proto3" json:"name_to_key,omitempty"`                                                                                  // if set, store the chosen child's name under this pointer key
-	SizeToKey     string                 `protobuf:"bytes,5,opt,name=size_to_key,json=sizeToKey,proto3" json:"size_to_key,omitempty"`                                                                                  // if set, store the chosen child's FileSize (decimal) under this pointer key
-	MtimeToKey    string                 `protobuf:"bytes,6,opt,name=mtime_to_key,json=mtimeToKey,proto3" json:"mtime_to_key,omitempty"`                                                                               // if set, store the chosen child's Mtime (decimal) under this pointer key
-	DemoteKey     string                 `protobuf:"bytes,7,opt,name=demote_key,json=demoteKey,proto3" json:"demote_key,omitempty"`                                                                                    // if set, stamp demote_value on the prior name_to_key target when it changes
-	DemoteValue   []byte                 `protobuf:"bytes,8,opt,name=demote_value,json=demoteValue,proto3" json:"demote_value,omitempty"`                                                                              // value for demote_key
-	ExcludeName   string                 `protobuf:"bytes,9,opt,name=exclude_name,json=excludeName,proto3" json:"exclude_name,omitempty"`                                                                              // if set, skip this child when scanning (e.g. a version about to be deleted)
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	ScanDir           string                 `protobuf:"bytes,1,opt,name=scan_dir,json=scanDir,proto3" json:"scan_dir,omitempty"`                                                                                          // directory whose direct children are scanned
+	Descending        bool                   `protobuf:"varint,2,opt,name=descending,proto3" json:"descending,omitempty"`                                                                                                  // pick the child that sorts last by name (else first)
+	CopyExtended      map[string]string      `protobuf:"bytes,3,rep,name=copy_extended,json=copyExtended,proto3" json:"copy_extended,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // pointer extended key -> source extended key on the chosen child
+	NameToKey         string                 `protobuf:"bytes,4,opt,name=name_to_key,json=nameToKey,proto3" json:"name_to_key,omitempty"`                                                                                  // if set, store the chosen child's name under this pointer key
+	SizeToKey         string                 `protobuf:"bytes,5,opt,name=size_to_key,json=sizeToKey,proto3" json:"size_to_key,omitempty"`                                                                                  // if set, store the chosen child's FileSize (decimal) under this pointer key
+	MtimeToKey        string                 `protobuf:"bytes,6,opt,name=mtime_to_key,json=mtimeToKey,proto3" json:"mtime_to_key,omitempty"`                                                                               // if set, store the chosen child's Mtime (decimal) under this pointer key
+	DemoteKey         string                 `protobuf:"bytes,7,opt,name=demote_key,json=demoteKey,proto3" json:"demote_key,omitempty"`                                                                                    // if set, stamp demote_value on the prior name_to_key target when it changes
+	DemoteValue       []byte                 `protobuf:"bytes,8,opt,name=demote_value,json=demoteValue,proto3" json:"demote_value,omitempty"`                                                                              // value for demote_key
+	ExcludeName       string                 `protobuf:"bytes,9,opt,name=exclude_name,json=excludeName,proto3" json:"exclude_name,omitempty"`                                                                              // if set, skip this child when scanning (e.g. a version about to be deleted)
+	OnlyIfCurrentName string                 `protobuf:"bytes,10,opt,name=only_if_current_name,json=onlyIfCurrentName,proto3" json:"only_if_current_name,omitempty"`                                                       // if set, apply only while the pointer's name_to_key value still equals this
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *Recompute) Reset() {
@@ -1805,6 +1806,13 @@ func (x *Recompute) GetDemoteValue() []byte {
 func (x *Recompute) GetExcludeName() string {
 	if x != nil {
 		return x.ExcludeName
+	}
+	return ""
+}
+
+func (x *Recompute) GetOnlyIfCurrentName() string {
+	if x != nil {
+		return x.OnlyIfCurrentName
 	}
 	return ""
 }
@@ -7508,7 +7516,7 @@ const file_filer_proto_rawDesc = "" +
 	"\n" +
 	"\x06DELETE\x10\x01\x12\x12\n" +
 	"\x0ePATCH_EXTENDED\x10\x02\x12\x14\n" +
-	"\x10RECOMPUTE_LATEST\x10\x03\"\x9a\x03\n" +
+	"\x10RECOMPUTE_LATEST\x10\x03\"\xcb\x03\n" +
 	"\tRecompute\x12\x19\n" +
 	"\bscan_dir\x18\x01 \x01(\tR\ascanDir\x12\x1e\n" +
 	"\n" +
@@ -7522,7 +7530,9 @@ const file_filer_proto_rawDesc = "" +
 	"\n" +
 	"demote_key\x18\a \x01(\tR\tdemoteKey\x12!\n" +
 	"\fdemote_value\x18\b \x01(\fR\vdemoteValue\x12!\n" +
-	"\fexclude_name\x18\t \x01(\tR\vexcludeName\x1a?\n" +
+	"\fexclude_name\x18\t \x01(\tR\vexcludeName\x12/\n" +
+	"\x14only_if_current_name\x18\n" +
+	" \x01(\tR\x11onlyIfCurrentName\x1a?\n" +
 	"\x11CopyExtendedEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xa0\x03\n" +

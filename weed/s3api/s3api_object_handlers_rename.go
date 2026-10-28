@@ -106,7 +106,10 @@ func (s3a *S3ApiServer) RenameObjectHandler(w http.ResponseWriter, r *http.Reque
 	renameSource := r.Header.Get(s3_constants.AmzRenameSource)
 
 	errCode = s3a.withRenameWriteLocks(bucket, srcObject, dstObject, func() s3err.ErrorCode {
-		entry, err := s3a.resolveCopySourceEntry(bucket, srcObject, "", "")
+		// The move runs on the default filer, so the source is read there too —
+		// a routed read could miss an entry the rename can still reach.
+		srcDir, srcName := util.FullPath(s3a.toFilerPath(bucket, srcObject)).DirAndName()
+		entry, err := s3a.getEntry(srcDir, srcName)
 		srcIsPrefixObject := entry.IsPrefixObject()
 		entry = prefixObjectSource(entry)
 		srcErrCode := classifyCopySourceError(entry, err)
@@ -212,7 +215,9 @@ func (s3a *S3ApiServer) pickRenameSource(bucket string, candidates []string) str
 		if strings.HasSuffix(candidate, "/") {
 			continue
 		}
-		if !renameSourceAbsent(s3a.resolveCopySourceEntry(bucket, candidate, "", "")) {
+		srcDir, srcName := util.FullPath(s3a.toFilerPath(bucket, candidate)).DirAndName()
+		entry, err := s3a.getEntry(srcDir, srcName)
+		if !renameSourceAbsent(entry, err) {
 			return candidate
 		}
 	}
@@ -400,6 +405,9 @@ func (s3a *S3ApiServer) withRenameWriteLocks(bucket, srcObject, dstObject string
 func (s3a *S3ApiServer) lookupRenameDestination(bucket, dstObject string) (*filer_pb.Entry, s3err.ErrorCode) {
 	dstDir, dstName := util.FullPath(s3a.toFilerPath(bucket, dstObject)).DirAndName()
 
+	// AtomicRenameEntry and the retry token it carries land on the default
+	// filer, so the destination is read there too — a routed read can miss
+	// both until replication.
 	entry, err := s3a.getEntry(dstDir, dstName)
 	if err != nil {
 		if errors.Is(err, filer_pb.ErrNotFound) {

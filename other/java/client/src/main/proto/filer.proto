@@ -379,6 +379,7 @@ message Recompute {
     string demote_key = 7;                 // if set, stamp demote_value on the prior name_to_key target when it changes
     bytes demote_value = 8;                // value for demote_key
     string exclude_name = 9;               // if set, skip this child when scanning (e.g. a version about to be deleted)
+    string only_if_current_name = 10;      // if set, apply only while the pointer's name_to_key value still equals this
 }
 
 // ObjectTransactionRequest applies an ordered list of mutations atomically with
