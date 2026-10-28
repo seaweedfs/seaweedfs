@@ -34,7 +34,7 @@
         <protobuf.version>3.25.5</protobuf.version>
         <!-- follow https://github.com/grpc/grpc-java -->
         <grpc.version>1.77.0</grpc.version>
-        <guava.version>32.0.0-jre</guava.version>
+        <guava.version>33.7.2-jre</guava.version>
     </properties>
 
     <dependencies>
