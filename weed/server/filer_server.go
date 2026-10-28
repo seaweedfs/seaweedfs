@@ -97,10 +97,10 @@ type FilerOption struct {
 	AnnounceCh chan struct{}
 	// SkipEmptyMembershipConfirm announces after the startup peer scan
 	// without re-polling to disprove an empty result: the embedded filer of
-	// a single-master weed server or weed mini is the only member its fresh
-	// cluster can have yet, so the confirm window is dead time while routed
-	// traffic waits on the filer's master listing. A late external filer
-	// still joins and replays through the normal path.
+	// a single-master weed mini is the only member its dev cluster can have
+	// yet, so the confirm window is dead time while routed traffic waits on
+	// the filer's master listing. A late external filer still joins and
+	// replays through the normal path.
 	SkipEmptyMembershipConfirm bool
 	// AllowUntrustedRemoteEndpoints lets a read of a remote-only entry dial a
 	// mounted endpoint that resolves to a loopback / private / metadata host.

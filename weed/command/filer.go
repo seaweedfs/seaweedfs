@@ -108,9 +108,9 @@ type FilerOptions struct {
 	// gracefulStopTimeout caps how long startFiler waits for gRPC graceful
 	// stop before forcing the server to stop. Zero means the default of 15s.
 	gracefulStopTimeout time.Duration
-	// skipEmptyMembershipConfirm forwards to FilerOption: embedded-filer
-	// setups (single-master weed server / weed mini) announce on the startup
-	// scan instead of holding registration for the confirm window.
+	// skipEmptyMembershipConfirm forwards to FilerOption: a single-master
+	// weed mini's embedded filer announces on the startup scan instead of
+	// holding registration for the confirm window.
 	skipEmptyMembershipConfirm bool
 }
 
