@@ -9,6 +9,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/vector_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 )
@@ -90,12 +91,13 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
 // Auth authenticates the caller and puts the identity in the request context.
 func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		identity, _, errCode := s.authenticator.AuthenticateRequest(r)
+		identity, identityObj, errCode := s.authenticator.AuthenticateRequest(r)
 		if errCode != s3err.ErrNone {
 			writeError(w, http.StatusForbidden, "AccessDenied", "authentication failed")
 			return
 		}
-		r = r.WithContext(contextWithIdentity(r.Context(), identity))
+		r = r.WithContext(s3_constants.SetIdentityInContext(
+			contextWithIdentity(r.Context(), identity), identityObj))
 		handler(w, r)
 	}
 }
