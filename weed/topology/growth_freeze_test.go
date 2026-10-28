@@ -3,7 +3,22 @@ package topology
 import (
 	"testing"
 	"time"
+
+	"github.com/seaweedfs/raft"
 )
+
+// appliedRaftServer answers as leader and records each command Do applies.
+type appliedRaftServer struct {
+	raft.Server
+	applied chan raft.Command
+}
+
+func (appliedRaftServer) State() string { return raft.Leader }
+
+func (s appliedRaftServer) Do(c raft.Command) (interface{}, error) {
+	s.applied <- c
+	return nil, nil
+}
 
 func TestGrowthFreezeOnTopologyMismatch(t *testing.T) {
 	topo := NewTopology("topo", nil, 128, 3, false)
@@ -55,6 +70,51 @@ func TestGrowthFreezeAutoRecovery(t *testing.T) {
 	time.Sleep(60 * time.Millisecond)
 	if topo.IsGrowthFrozen() {
 		t.Fatal("growth should auto-resume past the recovery wait")
+	}
+}
+
+func TestGrowthFreezeAutoRecoveryReplicates(t *testing.T) {
+	applied := make(chan raft.Command, 2)
+	topo := NewTopology("topo", nil, 128, 3, false)
+	topo.RaftServer = appliedRaftServer{applied: applied}
+	topo.SetGrowthFreezeConfig(true, 50*time.Millisecond)
+	topo.SetTopologyId("cluster-a")
+
+	topo.CheckReportedTopologyId("cluster-b")
+	if !topo.IsGrowthFrozen() {
+		t.Fatal("mismatching topology id should freeze growth")
+	}
+	cmd := (<-applied).(*MaxVolumeIdCommand)
+	if cmd.GrowthFrozen == nil || !*cmd.GrowthFrozen {
+		t.Fatal("the freeze should be replicated")
+	}
+
+	time.Sleep(60 * time.Millisecond)
+	if topo.IsGrowthFrozen() {
+		t.Fatal("growth should auto-resume past the recovery wait")
+	}
+	select {
+	case c := <-applied:
+		lift := c.(*MaxVolumeIdCommand).GrowthFrozen
+		if lift == nil || *lift {
+			t.Fatal("the auto unfreeze should be replicated like volume.growth.resume")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("auto unfreeze was not replicated; a restart would re-apply the freeze")
+	}
+}
+
+func TestReplicateGrowthUnfreezeSkipsRefreeze(t *testing.T) {
+	applied := make(chan raft.Command, 1)
+	topo := NewTopology("topo", nil, 128, 3, false)
+	topo.RaftServer = appliedRaftServer{applied: applied}
+
+	topo.SetGrowthFrozen(true)
+	topo.replicateGrowthUnfreeze()
+	select {
+	case <-applied:
+		t.Fatal("a stale unfreeze must not lift a freeze that landed after it")
+	default:
 	}
 }
 
