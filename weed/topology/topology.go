@@ -1557,9 +1557,16 @@ func (t *Topology) checkReportedTopologyIdLocked(reported string) (freeze bool) 
 }
 
 func (t *Topology) IsGrowthFrozen() bool {
+	frozen, _ := t.GrowthFreezeState()
+	return frozen
+}
+
+// GrowthFreezeState returns the freeze flag and its generation from one
+// load, so snapshots persisting both cannot split the pair across a lift.
+func (t *Topology) GrowthFreezeState() (frozen bool, frozenAt int64) {
 	state := t.growthFrozenState.Load()
 	if state == 0 {
-		return false
+		return false, 0
 	}
 	if wait := t.stateLossRecoveryWait.Load(); wait > 0 {
 		// A legacy generation carries no instant; its window counts as
@@ -1569,12 +1576,12 @@ func (t *Topology) IsGrowthFrozen() bool {
 				stats.MasterVolumeGrowthFrozen.Set(0)
 				glog.V(0).Infof("volume growth unfrozen after %v", time.Duration(wait))
 				go t.replicateGrowthUnfreeze(state)
-				return false
+				return false, 0
 			}
-			return t.growthFrozenState.Load() != 0
+			state = t.growthFrozenState.Load()
 		}
 	}
-	return true
+	return state != 0, state
 }
 
 // replicateGrowthUnfreeze pushes the recovery-wait lift through raft like
@@ -1845,19 +1852,12 @@ func (t *Topology) SetMaxVolumeIdFile(file string) {
 	}
 }
 
-// GetGrowthFrozenAt reports the current freeze generation for state
-// snapshots: 0 unfrozen, -1 an ageless freeze with no recorded instant,
-// else the freeze instant.
-func (t *Topology) GetGrowthFrozenAt() int64 {
-	return t.growthFrozenState.Load()
-}
-
 // PersistMaxVolumeId writes the bound to the mirror file. Called by the
 // leader before a raft apply and by both raft implementations on apply and
 // recovery, so follower mirrors stay current too.
 func (t *Topology) PersistMaxVolumeId(vid needle.VolumeId) error {
 	topoId := t.GetTopologyId()
-	frozen := t.IsGrowthFrozen()
+	frozen, frozenAt := t.GrowthFreezeState()
 	mirrored := func() bool {
 		return t.lastPersistedMaxVolumeId.Load() >= uint32(vid) && t.lastPersistedTopologyId.Load() == topoId && t.lastPersistedGrowthFrozen.Load() == frozen
 	}
@@ -1878,7 +1878,7 @@ func (t *Topology) PersistMaxVolumeId(vid needle.VolumeId) error {
 	cmd := NewMaxVolumeIdCommand(vid, topoId)
 	cmd.GrowthFrozen = &frozen
 	if frozen {
-		cmd.GrowthFrozenAt = t.growthFrozenState.Load()
+		cmd.GrowthFrozenAt = frozenAt
 	}
 	b, err := json.Marshal(cmd)
 	if err != nil {

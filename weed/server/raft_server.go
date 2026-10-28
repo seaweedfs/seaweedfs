@@ -60,10 +60,10 @@ func (s StateMachine) Save() ([]byte, error) {
 		MaxVolumeId: s.topo.GetMaxVolumeId(),
 		TopologyId:  s.topo.GetTopologyId(),
 	}
-	if s.topo.IsGrowthFrozen() {
+	if frozen, frozenAt := s.topo.GrowthFreezeState(); frozen {
 		state.GrowthFrozen = new(bool)
 		*state.GrowthFrozen = true
-		state.GrowthFrozenAt = s.topo.GetGrowthFrozenAt()
+		state.GrowthFrozenAt = frozenAt
 	}
 	glog.V(1).Infof("Save raft state %+v", state)
 	return json.Marshal(state)
@@ -118,12 +118,12 @@ func (s *StateMachine) Apply(l *hashicorpRaft.Log) interface{} {
 }
 
 func (s *StateMachine) Snapshot() (hashicorpRaft.FSMSnapshot, error) {
-	frozen := s.topo.IsGrowthFrozen()
+	frozen, frozenAt := s.topo.GrowthFreezeState()
 	state := &topology.MaxVolumeIdCommand{
 		MaxVolumeId:    s.topo.GetMaxVolumeId(),
 		TopologyId:     s.topo.GetTopologyId(),
 		GrowthFrozen:   &frozen,
-		GrowthFrozenAt: s.topo.GetGrowthFrozenAt(),
+		GrowthFrozenAt: frozenAt,
 	}
 	return state, nil
 }

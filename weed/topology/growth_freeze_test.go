@@ -138,6 +138,24 @@ func TestRepeatMismatchKeepsFreezeGeneration(t *testing.T) {
 	}
 }
 
+// Snapshots persist the flag and the generation together, so the pair must
+// come from one read: a lifted freeze reports (false, 0) and an armed one
+// reports its generation.
+func TestGrowthFreezeStateConsistentPair(t *testing.T) {
+	topo := NewTopology("topo", nil, 128, 3, false)
+	topo.SetGrowthFreezeConfig(true, 0)
+
+	topo.SetGrowthFrozen(true, time.Now().UnixNano(), 0)
+	armed := topo.growthFrozenState.Load()
+	if frozen, at := topo.GrowthFreezeState(); !frozen || at != armed {
+		t.Fatalf("armed freeze should report (true, %d), got (%v, %d)", armed, frozen, at)
+	}
+	topo.ResumeVolumeGrowth()
+	if frozen, at := topo.GrowthFreezeState(); frozen || at != 0 {
+		t.Fatalf("lifted freeze should report (false, 0), got (%v, %d)", frozen, at)
+	}
+}
+
 func TestReplicateGrowthUnfreezeSkipsRefreeze(t *testing.T) {
 	applied := make(chan raft.Command, 1)
 	topo := NewTopology("topo", nil, 128, 3, false)
