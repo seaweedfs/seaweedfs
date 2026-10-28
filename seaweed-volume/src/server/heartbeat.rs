@@ -164,7 +164,7 @@ pub async fn run_heartbeat_with_state(
                     // adding to it.
                     let retry_at = tokio::time::Instant::now() + pulse;
                     refresh_leader_from_peers(&config, &state, pulse).await;
-                    let mut wait = retry_at - tokio::time::Instant::now();
+                    let mut wait = retry_at.saturating_duration_since(tokio::time::Instant::now());
                     if wait > Duration::from_secs(1)
                         && (!state.current_master().await.is_empty() || !confirmed_leader_once)
                     {
