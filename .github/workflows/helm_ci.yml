@@ -636,12 +636,47 @@ jobs:
             --set filer.secretExtraEnvironmentVars.WEED_MYSQL_PASSWORD.secretKeyRef.name=db \
             --set filer.secretExtraEnvironmentVars.WEED_MYSQL_PASSWORD.secretKeyRef.key=password > /tmp/filer-mysql-on-secret.yaml
           grep -A 4 -- "- name: WEED_MYSQL_PASSWORD$" /tmp/filer-mysql-on-secret.yaml | grep -q "name: db"
+          # It replaces the db secret's entry rather than adding a second one, which
+          # Helm 4's server-side apply rejects as a duplicate.
+          test "$(grep -c -- "- name: WEED_MYSQL_PASSWORD$" /tmp/filer-mysql-on-secret.yaml)" -eq 1
+          test "$(grep -c -- "- name: WEED_MYSQL_USERNAME$" /tmp/filer-mysql-on-secret.yaml)" -eq 1
+          helm template test $CHART_DIR \
+            --set-string filer.extraEnvironmentVars.WEED_MYSQL_ENABLED=true \
+            --set-string filer.extraEnvironmentVars.WEED_MYSQL_USERNAME=app > /tmp/filer-mysql-on-plain.yaml
+          test "$(grep -c -- "- name: WEED_MYSQL_USERNAME$" /tmp/filer-mysql-on-plain.yaml)" -eq 1
+          grep -A 1 -- "- name: WEED_MYSQL_USERNAME$" /tmp/filer-mysql-on-plain.yaml | grep -q 'value: "app"'
+          # Credentials render ahead of the merged vars so a $(...) reference resolves.
+          helm template test $CHART_DIR \
+            --set-string filer.extraEnvironmentVars.WEED_MYSQL_ENABLED=true \
+            --set-string filer.extraEnvironmentVars.WEED_MYSQL_USERNAME=app \
+            --set-string 'filer.extraEnvironmentVars.WEED_MYSQL_DSN=$(WEED_MYSQL_USERNAME)@tcp(h)/db' > /tmp/filer-mysql-dsn.yaml
+          test "$(grep -n -- "- name: WEED_MYSQL_USERNAME$" /tmp/filer-mysql-dsn.yaml | cut -d: -f1)" -lt "$(grep -n -- "- name: WEED_MYSQL_DSN$" /tmp/filer-mysql-dsn.yaml | cut -d: -f1)"
+          # Vars a credential's own $(...) references point at render before it.
+          helm template test $CHART_DIR \
+            --set-string filer.extraEnvironmentVars.WEED_MYSQL_ENABLED=true \
+            --set-string filer.extraEnvironmentVars.DB_USER=app \
+            --set-string 'filer.extraEnvironmentVars.WEED_MYSQL_USERNAME=$(DB_USER)' > /tmp/filer-mysql-ref.yaml
+          test "$(grep -n -- "- name: DB_USER$" /tmp/filer-mysql-ref.yaml | cut -d: -f1)" -lt "$(grep -n -- "- name: WEED_MYSQL_USERNAME$" /tmp/filer-mysql-ref.yaml | cut -d: -f1)"
+          helm template test $CHART_DIR \
+            --set-string filer.extraEnvironmentVars.WEED_MYSQL_ENABLED=true \
+            --set filer.secretExtraEnvironmentVars.DB_USER.secretKeyRef.name=db \
+            --set filer.secretExtraEnvironmentVars.DB_USER.secretKeyRef.key=user \
+            --set-string 'filer.extraEnvironmentVars.WEED_MYSQL_USERNAME=$(DB_USER)' > /tmp/filer-mysql-ref-secret.yaml
+          test "$(grep -c -- "- name: DB_USER$" /tmp/filer-mysql-ref-secret.yaml)" -eq 1
+          test "$(grep -n -- "- name: DB_USER$" /tmp/filer-mysql-ref-secret.yaml | cut -d: -f1)" -lt "$(grep -n -- "- name: WEED_MYSQL_USERNAME$" /tmp/filer-mysql-ref-secret.yaml | cut -d: -f1)"
           # A flag the chart cannot read counts as selected, not as off.
           helm template test $CHART_DIR \
             --set filer.secretExtraEnvironmentVars.WEED_MYSQL_ENABLED.secretKeyRef.name=store \
             --set filer.secretExtraEnvironmentVars.WEED_MYSQL_ENABLED.secretKeyRef.key=enabled > /tmp/filer-mysql-secret.yaml
           grep -q "name: test-seaweedfs-db-secret" /tmp/filer-mysql-secret.yaml
           grep -q "name: WEED_MYSQL_HOSTNAME" /tmp/filer-mysql-secret.yaml
+          # A secret-backed key also replaces the matching plain entry, not adds one.
+          test "$(grep -c -- "- name: WEED_MYSQL_ENABLED$" /tmp/filer-mysql-secret.yaml)" -eq 1
+          helm template test $CHART_DIR \
+            --set-string filer.extraEnvironmentVars.WEED_MYSQL_ENABLED=true \
+            --set filer.secretExtraEnvironmentVars.WEED_MYSQL_HOSTNAME.secretKeyRef.name=db \
+            --set filer.secretExtraEnvironmentVars.WEED_MYSQL_HOSTNAME.secretKeyRef.key=host > /tmp/filer-mysql-hostname-secret.yaml
+          test "$(grep -c -- "- name: WEED_MYSQL_HOSTNAME$" /tmp/filer-mysql-hostname-secret.yaml)" -eq 1
           helm template test $CHART_DIR \
             --set-string filer.extraEnvironmentVars.WEED_MYSQL2_HOSTNAME=other > /tmp/filer-mysql2.yaml
           grep -q "name: WEED_MYSQL2_HOSTNAME" /tmp/filer-mysql2.yaml
