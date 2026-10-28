@@ -715,6 +715,10 @@ func (fs *FilerServer) applyRecomputeLatest(ctx context.Context, m *filer_pb.Obj
 		return err
 	}
 
+	if rc.OnlyIfCurrentName != "" && string(pointer.Extended[rc.NameToKey]) != rc.OnlyIfCurrentName {
+		return nil
+	}
+
 	// Capture the pre-update image so the metadata notification carries a correct
 	// diff; pointer.Extended is mutated in place below.
 	oldPointer := pointer.ShallowClone()
