@@ -1022,6 +1022,9 @@ func retriedWriteFile(client remote_storage.RemoteStorageClient, filerSource fil
 	}, func() error {
 		reader, closeFn, readerErr := remoteUploadReader(filerSource, newEntry)
 		if readerErr != nil {
+			if isSuperseded(filerSource, dir, newEntry) {
+				return fmt.Errorf("%s %w: %w", util.NewFullPath(dir, newEntry.Name), errSuperseded, readerErr)
+			}
 			return readerErr
 		}
 		if closeFn != nil {
