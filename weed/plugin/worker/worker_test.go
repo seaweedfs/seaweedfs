@@ -39,6 +39,9 @@ func TestSkipDetectionByInterval(t *testing.T) {
 			if sender.complete.GetSkippedReason() == "" || !sender.complete.GetSuccess() || sender.proposals == nil {
 				t.Fatalf("missing skipped outcome: %v", sender.complete)
 			}
+			if len(sender.events) != 1 || sender.events[0].Stage != "skipped_by_interval" {
+				t.Fatal("older admins must still receive a cooldown activity")
+			}
 			if want := now.Add(10 * time.Hour); !sender.complete.EligibleAfter.AsTime().Equal(want) {
 				t.Fatalf("eligible after = %v, want %v", sender.complete.EligibleAfter, want)
 			}
