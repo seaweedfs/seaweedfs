@@ -148,6 +148,13 @@ func TestAdminLockManagerFairnessWindowForcesFullRelease(t *testing.T) {
 	case <-time.After(50 * time.Millisecond):
 	}
 
+	status := m.Status()
+	if status.Message != "long-hold" {
+		t.Errorf("waiter replaced the current holder's message: %q", status.Message)
+	}
+	if len(status.Waiters) != 1 || status.Waiters[0].Reason != "late-joiner" {
+		t.Errorf("missing fairness waiter: %+v", status.Waiters)
+	}
 	release1()
 
 	select {

@@ -93,12 +93,12 @@ func (m *AdminLockManager) Acquire(reason string) (func(), error) {
 		delete(m.waiters, waiter)
 		m.mu.Unlock()
 	}()
+	for m.acquiring || m.releasing || (m.holdCount > 0 && time.Since(m.heldSince) > m.fairnessWindow) {
+		m.cond.Wait()
+	}
 	if reason != "" {
 		m.locker.SetMessage(reason)
 		m.currentReason = reason
-	}
-	for m.acquiring || m.releasing || (m.holdCount > 0 && time.Since(m.heldSince) > m.fairnessWindow) {
-		m.cond.Wait()
 	}
 	if m.holdCount == 0 {
 		m.acquiring = true
