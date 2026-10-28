@@ -55,7 +55,6 @@ type S3Options struct {
 	portGrpc                  *int
 	portIceberg               *int
 	portLance                 *int
-	vectorsGrpc               *string
 	icebergCredentialRole     *string
 	icebergCredentialDuration *int
 	config                    *string
@@ -114,7 +113,6 @@ func init() {
 	s3StandaloneOptions.portGrpc = cmdS3.Flag.Int("port.grpc", 0, "s3 server grpc listen port")
 	s3StandaloneOptions.portIceberg = cmdS3.Flag.Int("port.iceberg", 8181, "Iceberg REST Catalog server listen port (0 to disable)")
 	s3StandaloneOptions.portLance = cmdS3.Flag.Int("port.lance", 9101, "Lance Namespace server listen port (0 to disable); credential vending uses -iceberg.credentialRole")
-	s3StandaloneOptions.vectorsGrpc = cmdS3.Flag.String("vectors.grpc", "", "weed-vector gRPC address for the S3 Vectors API; discovered via master when unset")
 	s3StandaloneOptions.icebergCredentialRole = cmdS3.Flag.String("iceberg.credentialRole", "", "IAM role ARN the Iceberg catalog assumes to vend table-scoped credentials (empty disables vending)")
 	s3StandaloneOptions.icebergCredentialDuration = cmdS3.Flag.Int("iceberg.credentialDurationSeconds", 3600, "lifetime of credentials vended by the Iceberg catalog")
 	s3StandaloneOptions.domainName = cmdS3.Flag.String("domainName", "", "suffix of the host name in comma separated list, {bucket}.{domainName}")
@@ -709,14 +707,12 @@ func (s3opt *S3Options) startLanceServer(s3ApiServer *s3api.S3ApiServer, listenO
 }
 
 // vectorsRouter builds the S3 Vectors API router when a weed-vector backend
-// is reachable — via -vectors.grpc or master discovery.
+// is reachable — workers register to master and the gateway discovers them
+// through ListClusterNodes.
 func (s3opt *S3Options) vectorsRouter(s3ApiServer *s3api.S3ApiServer, grpcDialOption grpc.DialOption, masterAddresses []pb.ServerAddress) *mux.Router {
-	worker := *s3opt.vectorsGrpc
+	worker := discoverVectorWorker(masterAddresses, grpcDialOption)
 	if worker == "" {
-		worker = discoverVectorWorker(masterAddresses, grpcDialOption)
-	}
-	if worker == "" {
-		glog.Warningf("S3 Vectors API disabled: no -vectors.grpc and no weed-vector registered on master")
+		glog.Warningf("S3 Vectors API disabled: no weed-vector registered on master")
 		return nil
 	}
 	conn, err := pb.GrpcDial(context.Background(), worker, false, grpcDialOption)
