@@ -792,7 +792,7 @@ func (p *filerVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []s
 				// surface its own DeadlineExceeded a tick before ctx.Err()
 				// becomes visible, so reinterpret only deadline errors this way
 				ctxErr := ctx.Err()
-				if ctxErr == nil && status.Code(err) == codes.DeadlineExceeded {
+				if ctxErr == nil && isDeadlineExceededErr(err) {
 					if dl, ok := ctx.Deadline(); ok && !dl.After(time.Now()) {
 						ctxErr = context.DeadlineExceeded
 					}
