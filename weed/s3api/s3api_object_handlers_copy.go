@@ -805,9 +805,9 @@ func (s3a *S3ApiServer) resolveCopySourceEntry(bucket, object, versionId, versio
 	case s3_constants.VersioningSuspended:
 		return s3a.resolveSuspendedCopySourceEntry(bucket, normalizedObject, "CopyObject")
 	default:
-		srcPath := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), normalizedObject))
-		dir, name := srcPath.DirAndName()
-		return s3a.getEntry(dir, name)
+		// PUT commits on the key's owner, which can differ from this gateway's
+		// current filer. Read there before peer metadata replication catches up.
+		return s3a.getObjectEntryRoutedByKey(bucket, normalizedObject)
 	}
 }
 
@@ -852,9 +852,7 @@ func isManagedCopyMetadataKey(key string) bool {
 }
 
 func (s3a *S3ApiServer) resolveSuspendedCopySourceEntry(bucket, normalizedObject, operation string) (*filer_pb.Entry, error) {
-	srcPath := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), normalizedObject))
-	dir, name := srcPath.DirAndName()
-	entry, err := s3a.getEntry(dir, name)
+	entry, err := s3a.getObjectEntryRoutedByKey(bucket, normalizedObject)
 	if err == nil {
 		return entry, nil
 	}
@@ -1065,24 +1063,8 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Get the source entry with version awareness based on versioning state
-	var entry *filer_pb.Entry
-	if srcVersionId != "" {
-		// Specific version requested - always use version-aware retrieval
-		entry, err = s3a.getSpecificObjectVersion(srcBucket, srcObject, srcVersionId)
-	} else if srcVersioningState == s3_constants.VersioningEnabled {
-		// Versioning enabled - get latest version from .versions directory
-		entry, err = s3a.getLatestObjectVersion(srcBucket, srcObject)
-	} else if srcVersioningState == s3_constants.VersioningSuspended {
-		// Versioning suspended - current object is stored as regular file ("null" version)
-		// Try regular file first, fall back to latest version if needed
-		entry, err = s3a.resolveSuspendedCopySourceEntry(srcBucket, s3_constants.NormalizeObjectKey(srcObject), "CopyObjectPart")
-	} else {
-		// No versioning configured - use regular retrieval
-		srcPath := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(srcBucket), srcObject))
-		dir, name := srcPath.DirAndName()
-		entry, err = s3a.getEntry(dir, name)
-	}
+	// Share CopyObject's source routing and version resolution.
+	entry, err := s3a.resolveCopySourceEntry(srcBucket, srcObject, srcVersionId, srcVersioningState)
 
 	if errCode := classifyCopySourceError(entry, err); errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
