@@ -1050,9 +1050,6 @@ func (s3a *S3ApiServer) PutBucketAclHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Get account information for ACL processing
-	amzAccountId := r.Header.Get(s3_constants.AmzAccountId)
-
 	// Without auth the request carries no account; resolve it as PutBucketHandler does.
 	aclAccountId := getAccountId(r)
 
@@ -1094,8 +1091,10 @@ func (s3a *S3ApiServer) PutBucketAclHandler(w http.ResponseWriter, r *http.Reque
 			config.ACL = nil
 			config.IsPublicRead = false
 		}
-		if amzAccountId != "" {
-			config.Owner = amzAccountId
+		// An ACL update never takes over ownership: an ownerless bucket adopts
+		// the ACL's owner so the stored owner and full-control grantee agree.
+		if config.Owner == "" {
+			config.Owner = ownerId
 		}
 		return nil
 	})
