@@ -16,6 +16,7 @@ import (
 	"github.com/parquet-go/parquet-go"
 	"github.com/seaweedfs/seaweedfs/weed/admin/plugin"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 )
@@ -106,6 +107,7 @@ func (s *AdminServer) GetIcebergTableDataPreview(ctx context.Context, catalogNam
 		s.applyWorkerPreview(ctx, &data, bucketArn, namespaceParts, tableName, rowLimit)
 		return data, nil
 	}
+	s.fillTableMetadata(ctx, &resp, bucketArn, namespace, tableName)
 	if resp.Metadata == nil || len(resp.Metadata.FullMetadata) == 0 {
 		data.PreviewError = "Table has no Iceberg metadata."
 		return data, nil
@@ -269,6 +271,33 @@ func (s *AdminServer) listIcebergDataFiles(ctx context.Context, bucketName, name
 		}
 	}
 	return files, hasDeletes, notes, nil
+}
+
+// fillTableMetadata reads the metadata file a location-only record points to:
+// a commit that outgrew the request-size limit stores no inline copy, and
+// without the file the page reports a healthy table as having no metadata.
+func (s *AdminServer) fillTableMetadata(ctx context.Context, resp *s3tables.GetTableResponse, bucketArn, namespaceDir, tableName string) {
+	if resp.MetadataLocation == "" || (resp.Metadata != nil && len(resp.Metadata.FullMetadata) > 0) {
+		return
+	}
+	bucketName, err := s3tables.ParseBucketNameFromARN(bucketArn)
+	if err != nil {
+		bucketName = ""
+	}
+	filerPath, err := icebergLocationToFilerPath(resp.MetadataLocation, bucketName, namespaceDir, tableName)
+	if err != nil {
+		glog.V(1).Infof("iceberg: cannot resolve metadata location %s: %v", resp.MetadataLocation, err)
+		return
+	}
+	content, err := s.readFilerFileContent(ctx, filerPath)
+	if err != nil {
+		glog.V(1).Infof("iceberg: cannot read metadata at %s: %v", resp.MetadataLocation, err)
+		return
+	}
+	if resp.Metadata == nil {
+		resp.Metadata = &s3tables.TableMetadata{}
+	}
+	resp.Metadata.FullMetadata = content
 }
 
 // icebergLocationToFilerPath maps an Iceberg file location (s3://bucket/...,

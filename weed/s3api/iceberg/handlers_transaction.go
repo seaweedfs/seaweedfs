@@ -148,23 +148,39 @@ func (s *Server) prepareTableCommit(ctx context.Context, bucketName, bucketARN, 
 	if location == "" {
 		location = fmt.Sprintf("s3://%s/%s", bucketName, path.Join(flattenNamespacePath(namespace), tableName))
 	}
+	locBucket, locPath, locErr := parseS3Location(location)
+	if locErr != nil {
+		return nil, &icebergRequestError{http.StatusInternalServerError, "InternalServerError", "Invalid table location: " + locErr.Error()}
+	}
+	if err := confineMetadataLocation(locBucket, locPath, bucketName); err != nil {
+		return nil, &icebergRequestError{http.StatusBadRequest, "BadRequestException", err.Error()}
+	}
 	tableUUID := uuid.Nil
 	if getResp.Metadata != nil && getResp.Metadata.Iceberg != nil && getResp.Metadata.Iceberg.TableUUID != "" {
 		if parsed, parseErr := uuid.Parse(getResp.Metadata.Iceberg.TableUUID); parseErr == nil {
 			tableUUID = parsed
 		}
 	}
-	if tableUUID == uuid.Nil {
-		tableUUID = uuid.New()
-	}
 
+	currentBytes, err := s.currentMetadataBytes(ctx, getResp, bucketName)
+	if err != nil {
+		glog.Errorf("Iceberg: CommitTransaction load current metadata for %s: %v", tableName, err)
+		return nil, &icebergRequestError{http.StatusInternalServerError, "InternalServerError", "Failed to load current metadata"}
+	}
 	var currentMetadata table.Metadata
-	if getResp.Metadata != nil && len(getResp.Metadata.FullMetadata) > 0 {
-		currentMetadata, err = table.ParseMetadataBytes(getResp.Metadata.FullMetadata)
+	if len(currentBytes) > 0 {
+		currentMetadata, err = table.ParseMetadataBytes(currentBytes)
 		if err != nil {
 			return nil, &icebergRequestError{http.StatusInternalServerError, "InternalServerError", "Failed to parse current metadata"}
 		}
-	} else {
+		if tableUUID == uuid.Nil {
+			tableUUID = currentMetadata.TableUUID()
+		}
+	}
+	if tableUUID == uuid.Nil {
+		tableUUID = uuid.New()
+	}
+	if currentMetadata == nil {
 		currentMetadata, err = newTableMetadata(tableUUID, location, nil, nil, nil, nil)
 		if err != nil {
 			glog.Errorf("Iceberg: CommitTransaction placeholder metadata for %s: %v", tableName, err)
@@ -204,6 +220,7 @@ func (s *Server) prepareTableCommit(ctx context.Context, bucketName, bucketARN, 
 	if err != nil {
 		return nil, &icebergRequestError{http.StatusBadRequest, "BadRequestException", "Failed to apply statistics updates: " + err.Error()}
 	}
+	metadataBytes = refreshDefaultNameMapping(metadataBytes, newMetadata)
 	metadataBytes = ensureMetadataSpecCompliance(metadataBytes)
 
 	metadataBucket, metadataPath, err := parseS3Location(location)
@@ -212,6 +229,17 @@ func (s *Server) prepareTableCommit(ctx context.Context, bucketName, bucketARN, 
 	}
 	if err := confineMetadataLocation(metadataBucket, metadataPath, bucketName); err != nil {
 		return nil, &icebergRequestError{http.StatusBadRequest, "BadRequestException", err.Error()}
+	}
+
+	prevMetadata := cloneTableMetadata(getResp.Metadata)
+	if len(currentBytes) > 0 && (getResp.Metadata == nil || len(getResp.Metadata.FullMetadata) == 0) {
+		// UpdateTable keeps the FullMetadata a flip stored when a restore sends
+		// none, so a record that held only a location gets back what loads
+		// served from its file rather than the transaction it is rolling back.
+		prevMetadata = cloneTableMetadata(&s3tables.TableMetadata{
+			Iceberg:      &s3tables.IcebergMetadata{TableUUID: tableUUID.String()},
+			FullMetadata: currentBytes,
+		})
 	}
 
 	return &preparedTableCommit{
@@ -228,7 +256,7 @@ func (s *Server) prepareTableCommit(ctx context.Context, bucketName, bucketARN, 
 		newMetadataLoc:      newMetadataLocation,
 		prevMetadataLoc:     getResp.MetadataLocation,
 		prevMetadataVersion: getResp.MetadataVersion,
-		prevMetadata:        cloneTableMetadata(getResp.Metadata),
+		prevMetadata:        prevMetadata,
 	}, nil
 }
 
@@ -285,6 +313,7 @@ func (s *Server) flipTablePointer(ctx context.Context, bucketARN, identityName s
 		MetadataVersion:  pc.metadataVersion,
 		MetadataLocation: pc.newMetadataLoc,
 	}
+	fitUpdateTableRequest(updateReq)
 	return s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		mgrClient := s3tables.NewManagerClient(client)
 		return s.tablesManager.Execute(ctx, mgrClient, "UpdateTable", updateReq, nil, identityName)
@@ -302,6 +331,7 @@ func (s *Server) rollbackTablePointers(ctx context.Context, bucketARN, identityN
 	for i := range flipped {
 		pc := &flipped[i]
 		updateReq := buildTableRestoreRequest(bucketARN, pc)
+		fitUpdateTableRequest(updateReq)
 		err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 			mgrClient := s3tables.NewManagerClient(client)
 			return s.tablesManager.Execute(ctx, mgrClient, "UpdateTable", updateReq, nil, identityName)

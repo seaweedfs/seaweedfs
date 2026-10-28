@@ -55,6 +55,9 @@ type tableMetadataEnvelope struct {
 type tableState struct {
 	Metadata         table.Metadata
 	MetadataFileName string
+	// MetadataLocation is the record's metadata file pointer, and the only
+	// copy for a commit that outgrew the request-size limit.
+	MetadataLocation string
 	// DataPath is the bucket-relative directory holding metadata/ and data/.
 	DataPath      string
 	PlanningIndex *planningIndex
@@ -91,13 +94,15 @@ func parseTableMetadataEnvelope(metadataBytes []byte, bucketName, tablePath stri
 	if envelope.Format != "" && envelope.Format != s3tables.FormatIceberg {
 		return nil, fmt.Errorf("%w: %s", errForeignFormat, envelope.Format)
 	}
-	if envelope.Metadata == nil || len(envelope.Metadata.FullMetadata) == 0 {
+	var meta table.Metadata
+	if envelope.Metadata != nil && len(envelope.Metadata.FullMetadata) > 0 {
+		parsed, err := table.ParseMetadataBytes(envelope.Metadata.FullMetadata)
+		if err != nil {
+			return nil, fmt.Errorf("parse iceberg metadata: %w", err)
+		}
+		meta = parsed
+	} else if envelope.MetadataLocation == "" {
 		return nil, fmt.Errorf("no fullMetadata in table xattr")
-	}
-
-	meta, err := table.ParseMetadataBytes(envelope.Metadata.FullMetadata)
-	if err != nil {
-		return nil, fmt.Errorf("parse iceberg metadata: %w", err)
 	}
 
 	var index *planningIndex
@@ -115,6 +120,7 @@ func parseTableMetadataEnvelope(metadataBytes []byte, bucketName, tablePath stri
 	return &tableState{
 		Metadata:         meta,
 		MetadataFileName: metadataFileName,
+		MetadataLocation: envelope.MetadataLocation,
 		DataPath:         tableDataPath(bucketName, tablePath, envelope.MetadataLocation),
 		PlanningIndex:    index,
 	}, nil

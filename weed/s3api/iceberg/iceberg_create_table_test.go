@@ -102,7 +102,9 @@ func TestBuildLoadTableResultNeverReturnsNilMetadata(t *testing.T) {
 	for name, getResp := range cases {
 		t.Run(name, func(t *testing.T) {
 			r := httptest.NewRequest(http.MethodGet, "/v1/namespaces/ns/tables/t", nil)
-			result, err := (&Server{}).buildLoadTableResult(r, getResp, "bkt", []string{"ns"}, "t")
+			// The filer is empty, so a record holding only a location has no
+			// file behind it to serve.
+			result, err := (&Server{filerClient: newMemFiler()}).buildLoadTableResult(r, getResp, "bkt", []string{"ns"}, "t")
 			if err != nil {
 				t.Fatalf("buildLoadTableResult() error = %v, want nil", err)
 			}

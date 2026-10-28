@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/apache/iceberg-go/table"
 	"github.com/parquet-go/parquet-go"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -154,6 +155,9 @@ func loadCurrentMetadata(ctx context.Context, client filer_pb.SeaweedFilerClient
 	if err != nil {
 		return nil, err
 	}
+	if err := state.loadMetadata(ctx, client, bucketName); err != nil {
+		return nil, err
+	}
 	// Refuse to rewrite an entry that only looks like an Iceberg table. Every
 	// operation here rewrites or deletes files under the table location, and a
 	// foreign format's files are unreferenced by Iceberg metadata by definition.
@@ -161,6 +165,41 @@ func loadCurrentMetadata(ctx context.Context, client filer_pb.SeaweedFilerClient
 		return nil, fmt.Errorf("entry %s/%s is not an iceberg table", dir, name)
 	}
 	return state, nil
+}
+
+// metadataFileMaxBytes bounds the chunked read a location-only record may
+// trigger: the location comes from the catalog record and can name any file
+// in the bucket, not only ones a commit wrote. Inline content is exempt —
+// the REST load path accepts it unbounded and the lookup already holds it in
+// memory, so refusing it would only strand a table that loads fine.
+var metadataFileMaxBytes int64 = 64 << 20
+
+// loadMetadata fills in Metadata for a record that keeps no inline copy: a
+// commit that outgrew the request-size limit stores only the metadata file's
+// location, so the bytes come from the file it points to.
+func (s *tableState) loadMetadata(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketName string) error {
+	if s.Metadata != nil {
+		return nil
+	}
+	entry, err := lookupFileByIcebergPath(ctx, client, bucketName, s.DataPath, s.MetadataLocation)
+	if err != nil {
+		return fmt.Errorf("load metadata file %s: %w", s.MetadataLocation, err)
+	}
+	if len(entry.Content) == 0 && len(entry.Chunks) > 0 {
+		if size := int64(filer.FileSize(entry)); size > metadataFileMaxBytes {
+			return fmt.Errorf("metadata file %s too large: %d bytes", s.MetadataLocation, size)
+		}
+	}
+	content, err := readEntryContent(ctx, client, entry, s.MetadataLocation)
+	if err != nil {
+		return fmt.Errorf("load metadata file %s: %w", s.MetadataLocation, err)
+	}
+	meta, err := table.ParseMetadataBytes(content)
+	if err != nil {
+		return fmt.Errorf("parse iceberg metadata at %s: %w", s.MetadataLocation, err)
+	}
+	s.Metadata = meta
+	return nil
 }
 
 func isFilerNotFound(err error) bool {
@@ -231,7 +270,12 @@ func loadFileByIcebergPath(ctx context.Context, client filer_pb.SeaweedFilerClie
 	if err != nil {
 		return nil, err
 	}
+	return readEntryContent(ctx, client, entry, icebergPath)
+}
 
+// readEntryContent returns an entry's bytes: its inline content, or a chunked
+// file read through the volume servers.
+func readEntryContent(ctx context.Context, client filer_pb.SeaweedFilerClient, entry *filer_pb.Entry, name string) ([]byte, error) {
 	if len(entry.Content) > 0 || len(entry.Chunks) == 0 {
 		return entry.Content, nil
 	}
@@ -243,7 +287,7 @@ func loadFileByIcebergPath(ctx context.Context, client filer_pb.SeaweedFilerClie
 	}
 	data, err := io.ReadAll(reader)
 	if err != nil {
-		return nil, fmt.Errorf("read chunked file %s: %w", icebergPath, err)
+		return nil, fmt.Errorf("read chunked file %s: %w", name, err)
 	}
 	return data, nil
 }

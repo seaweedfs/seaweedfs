@@ -269,6 +269,7 @@ func (h *S3TablesHandler) handleRegisterTable(w http.ResponseWriter, r *http.Req
 		VersionToken:     versionToken,
 		MetadataVersion:  metadataVersionFromLocation(req.MetadataLocation),
 		MetadataLocation: req.MetadataLocation,
+		Metadata:         req.Metadata,
 	}
 
 	metadataBytes, err := json.Marshal(metadata)
@@ -1757,6 +1758,9 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 		if len(req.Metadata.FullMetadata) > 0 {
 			metadata.Metadata.FullMetadata = req.Metadata.FullMetadata
 		}
+	}
+	if req.ClearFullMetadata && metadata.Metadata != nil {
+		metadata.Metadata.FullMetadata = nil
 	}
 	if req.MetadataLocation != "" {
 		metadata.MetadataLocation = req.MetadataLocation

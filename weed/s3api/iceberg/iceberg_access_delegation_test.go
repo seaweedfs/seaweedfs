@@ -64,7 +64,7 @@ func TestWriteLoadResultVariesOnTheDelegationHeader(t *testing.T) {
 }
 
 func TestLoadTableResultOmitsConfigForCredentialVendingClients(t *testing.T) {
-	s := &Server{s3Endpoint: "http://seaweed.example:8333"}
+	s := &Server{filerClient: newMemFiler(), s3Endpoint: "http://seaweed.example:8333"}
 	r := httptest.NewRequest(http.MethodGet, "/v1/namespaces/ns/tables/t", nil)
 	r.Header.Set(accessDelegationHeader, "vended-credentials")
 

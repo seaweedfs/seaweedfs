@@ -2,11 +2,23 @@ package iceberg
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"path"
+	"strings"
 	"testing"
 
+	"github.com/apache/iceberg-go"
+	"github.com/apache/iceberg-go/table"
 	"github.com/google/uuid"
+	"github.com/gorilla/mux"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
+	"google.golang.org/grpc"
 )
 
 func TestDecodeCommitTransactionRequest(t *testing.T) {
@@ -250,5 +262,243 @@ func (e *tableEntry) applyUpdate(req *s3tables.UpdateTableRequest) {
 	}
 	if req.MetadataVersion > 0 {
 		e.metadataVersion = req.MetadataVersion
+	}
+}
+
+// A transaction against a registration that kept only its metadata location
+// reads that file: the UUID assertion the client took from its load passes,
+// and the commit lands on the registered snapshots instead of a placeholder.
+func TestCommitTransactionReadsMetadataFileOfOlderRegistration(t *testing.T) {
+	fc := newMemFiler()
+	seedNamespace(fc, registerTestBucket, "finance", "alice")
+	s := NewServer(fc, nil)
+	location, registered := seedRegistrableMetadata(t, fc, "events")
+
+	err := fc.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return s.tablesManager.Execute(context.Background(), s3tables.NewManagerClient(client), "RegisterTable", &s3tables.RegisterTableRequest{
+			TableBucketARN:   buildTableBucketARN(registerTestBucket),
+			Namespace:        []string{"finance"},
+			Name:             "events",
+			MetadataLocation: location,
+		}, nil, "alice")
+	})
+	if err != nil {
+		t.Fatalf("seed older registration: %v", err)
+	}
+
+	commitTransaction := func(requirements, updates string) *httptest.ResponseRecorder {
+		body := `{"table-changes":[{"identifier":{"namespace":["finance"],"name":"events"},` +
+			`"requirements":[` + requirements + `],"updates":[` + updates + `]}]}`
+		r := httptest.NewRequest(http.MethodPost, "/v1/"+registerTestBucket+"/transactions/commit", strings.NewReader(body))
+		r = mux.SetURLVars(r, map[string]string{"prefix": registerTestBucket})
+		r = r.WithContext(s3_constants.SetIdentityNameInContext(r.Context(), "alice"))
+		w := httptest.NewRecorder()
+		s.handleCommitTransaction(w, r)
+		return w
+	}
+
+	w := commitTransaction(
+		`{"type":"assert-table-uuid","uuid":"`+registered.TableUUID().String()+`"}`,
+		`{"action":"set-properties","updates":{"committed":"true"}}`)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("uuid-asserting transaction: status = %d, want %d (body: %s)", w.Code, http.StatusNoContent, w.Body.String())
+	}
+
+	w = commitTransaction("", `{"action":"set-properties","updates":{"again":"true"}}`)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("requirement-free transaction: status = %d, want %d (body: %s)", w.Code, http.StatusNoContent, w.Body.String())
+	}
+
+	w = httptest.NewRecorder()
+	s.handleLoadTable(w, registeredTableRequest(http.MethodGet, "events", ""))
+	loaded := servedMetadata(t, "load after transactions", w)
+	checkServesRegistered(t, "load after transactions", loaded, registered)
+	if got := loaded.Properties()["committed"]; got != "true" {
+		t.Errorf("property committed = %q, want true", got)
+	}
+	if got := loaded.Properties()["again"]; got != "true" {
+		t.Errorf("property again = %q, want true", got)
+	}
+}
+
+// A transaction re-stamps the default name mapping the way a single-table
+// commit does, so readers of field-id-less files keep resolving columns even
+// when the table's record started without one.
+func TestCommitTransactionRefreshesNameMapping(t *testing.T) {
+	fc := newMemFiler()
+	seedNamespace(fc, registerTestBucket, "finance", "alice")
+	s := NewServer(fc, nil)
+
+	schema := iceberg.NewSchema(0,
+		iceberg.NestedField{ID: 1, Name: "id", Type: iceberg.PrimitiveTypes.Int64, Required: true},
+		iceberg.NestedField{ID: 2, Name: "label", Type: iceberg.PrimitiveTypes.String},
+	)
+	metadata, err := newTableMetadata(uuid.New(), "s3://"+registerTestBucket+"/finance/events", schema, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("newTableMetadata: %v", err)
+	}
+	raw, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatalf("marshal metadata: %v", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("decode metadata: %v", err)
+	}
+	if props, ok := doc["properties"].(map[string]any); ok {
+		delete(props, table.DefaultNameMappingKey)
+	}
+	if raw, err = json.Marshal(doc); err != nil {
+		t.Fatalf("re-marshal metadata: %v", err)
+	}
+	location := seedMetadataFile(fc, "events", "00001-7c1e2f4a.metadata.json", raw)
+
+	err = fc.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return s.tablesManager.Execute(context.Background(), s3tables.NewManagerClient(client), "RegisterTable", &s3tables.RegisterTableRequest{
+			TableBucketARN:   buildTableBucketARN(registerTestBucket),
+			Namespace:        []string{"finance"},
+			Name:             "events",
+			MetadataLocation: location,
+		}, nil, "alice")
+	})
+	if err != nil {
+		t.Fatalf("seed older registration: %v", err)
+	}
+
+	body := `{"table-changes":[{"identifier":{"namespace":["finance"],"name":"events"},` +
+		`"updates":[{"action":"set-properties","updates":{"committed":"true"}}]}]}`
+	r := httptest.NewRequest(http.MethodPost, "/v1/"+registerTestBucket+"/transactions/commit", strings.NewReader(body))
+	r = mux.SetURLVars(r, map[string]string{"prefix": registerTestBucket})
+	r = r.WithContext(s3_constants.SetIdentityNameInContext(r.Context(), "alice"))
+	w := httptest.NewRecorder()
+	s.handleCommitTransaction(w, r)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d (body: %s)", w.Code, http.StatusNoContent, w.Body.String())
+	}
+
+	w = httptest.NewRecorder()
+	s.handleLoadTable(w, registeredTableRequest(http.MethodGet, "events", ""))
+	loaded := servedMetadata(t, "load after transaction", w)
+	mappingJSON, ok := loaded.Properties()[table.DefaultNameMappingKey]
+	if !ok || mappingJSON == "" {
+		t.Fatalf("committed metadata lost %s: %v", table.DefaultNameMappingKey, loaded.Properties())
+	}
+}
+
+// failUpdateFiler fails entry updates on one path, so a transaction's flip of
+// that table fails after the tables before it in the request have flipped.
+type failUpdateFiler struct {
+	*memFiler
+	failPath string
+}
+
+func (f *failUpdateFiler) WithFilerClient(_ bool, fn func(client filer_pb.SeaweedFilerClient) error) error {
+	return fn(f)
+}
+
+func (f *failUpdateFiler) UpdateEntry(ctx context.Context, in *filer_pb.UpdateEntryRequest, opts ...grpc.CallOption) (*filer_pb.UpdateEntryResponse, error) {
+	if path.Join(in.Directory, in.Entry.Name) == f.failPath {
+		return nil, errors.New("injected update failure")
+	}
+	return f.memFiler.UpdateEntry(ctx, in, opts...)
+}
+
+// A transaction that fails after flipping a table rolls it back. UpdateTable
+// cannot clear the FullMetadata a flip stored, so for a registration that kept
+// only its metadata location the restore has to write back the file's
+// metadata: otherwise loads go on serving the change the client was told
+// failed, and a client retrying the transaction applies it twice.
+func TestCommitTransactionRollbackRestoresOlderRegistration(t *testing.T) {
+	fc := &failUpdateFiler{memFiler: newMemFiler()}
+	seedNamespace(fc.memFiler, registerTestBucket, "finance", "alice")
+	s := NewServer(fc, nil)
+	location, registered := seedRegistrableMetadata(t, fc.memFiler, "events")
+
+	err := fc.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return s.tablesManager.Execute(context.Background(), s3tables.NewManagerClient(client), "RegisterTable", &s3tables.RegisterTableRequest{
+			TableBucketARN:   buildTableBucketARN(registerTestBucket),
+			Namespace:        []string{"finance"},
+			Name:             "events",
+			MetadataLocation: location,
+		}, nil, "alice")
+	})
+	if err != nil {
+		t.Fatalf("seed older registration: %v", err)
+	}
+	otherLocation, _ := seedRegistrableMetadata(t, fc.memFiler, "other")
+	w := httptest.NewRecorder()
+	s.handleRegisterTable(w, registerTableRequest("other", otherLocation))
+	if w.Code != http.StatusOK {
+		t.Fatalf("register other: status = %d (body: %s)", w.Code, w.Body.String())
+	}
+
+	// events flips first; the flip of other then fails and rolls events back.
+	fc.failPath = s3tables.GetTablePath(registerTestBucket, "finance", "other")
+	change := func(name string) string {
+		return `{"identifier":{"namespace":["finance"],"name":"` + name + `"},` +
+			`"updates":[{"action":"set-properties","updates":{"committed":"true"}}]}`
+	}
+	body := `{"table-changes":[` + change("events") + `,` + change("other") + `]}`
+	r := httptest.NewRequest(http.MethodPost, "/v1/"+registerTestBucket+"/transactions/commit", strings.NewReader(body))
+	r = mux.SetURLVars(r, map[string]string{"prefix": registerTestBucket})
+	r = r.WithContext(s3_constants.SetIdentityNameInContext(r.Context(), "alice"))
+	w = httptest.NewRecorder()
+	s.handleCommitTransaction(w, r)
+	if w.Code == http.StatusNoContent {
+		t.Fatal("transaction succeeded although the flip of other failed")
+	}
+
+	w = httptest.NewRecorder()
+	s.handleLoadTable(w, registeredTableRequest(http.MethodGet, "events", ""))
+	loaded := servedMetadata(t, "load after rolled-back transaction", w)
+	checkServesRegistered(t, "load after rolled-back transaction", loaded, registered)
+	if got, ok := loaded.Properties()["committed"]; ok {
+		t.Errorf("load after rolled-back transaction serves its property committed = %q", got)
+	}
+}
+
+// A transaction on a registration kept by location alone — one whose metadata
+// is too large to ship — flips the pointer by location too, and the record
+// holds no stored copy that would shadow the staged file.
+func TestCommitTransactionOnOversizedRegistration(t *testing.T) {
+	fc := newMemFiler()
+	seedNamespace(fc, registerTestBucket, "finance", "alice")
+	s := NewServer(fc, nil)
+	location, registered := seedOversizedMetadata(t, fc, "events")
+
+	err := fc.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return s.tablesManager.Execute(context.Background(), s3tables.NewManagerClient(client), "RegisterTable", &s3tables.RegisterTableRequest{
+			TableBucketARN:   buildTableBucketARN(registerTestBucket),
+			Namespace:        []string{"finance"},
+			Name:             "events",
+			MetadataLocation: location,
+		}, nil, "alice")
+	})
+	if err != nil {
+		t.Fatalf("seed location-only registration: %v", err)
+	}
+
+	body := `{"table-changes":[{"identifier":{"namespace":["finance"],"name":"events"},` +
+		`"requirements":[{"type":"assert-table-uuid","uuid":"` + registered.TableUUID().String() + `"}],` +
+		`"updates":[{"action":"set-properties","updates":{"committed":"true"}}]}]}`
+	r := httptest.NewRequest(http.MethodPost, "/v1/"+registerTestBucket+"/transactions/commit", strings.NewReader(body))
+	r = mux.SetURLVars(r, map[string]string{"prefix": registerTestBucket})
+	r = r.WithContext(s3_constants.SetIdentityNameInContext(r.Context(), "alice"))
+	w := httptest.NewRecorder()
+	s.handleCommitTransaction(w, r)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("oversized transaction: status = %d, want %d (body: %s)", w.Code, http.StatusNoContent, w.Body.String())
+	}
+
+	if stored := storedMetadata(t, s, fc, "events"); stored != nil && len(stored.FullMetadata) != 0 {
+		t.Errorf("catalog record holds %d bytes of metadata, over the manager's request limit", len(stored.FullMetadata))
+	}
+
+	w = httptest.NewRecorder()
+	s.handleLoadTable(w, registeredTableRequest(http.MethodGet, "events", ""))
+	loaded := servedMetadata(t, "load after transaction", w)
+	checkServesRegistered(t, "load after transaction", loaded, registered)
+	if got := loaded.Properties()["committed"]; got != "true" {
+		t.Errorf("load after transaction: property committed = %q, want true", got)
 	}
 }

@@ -253,6 +253,21 @@ func (s *Server) finalizeCreateOnCommit(ctx context.Context, input createOnCommi
 	}, nil
 }
 
+// Manager requests are size-capped like registrations, so a commit whose new
+// metadata is too large to ride along flips the pointer by location alone —
+// the staged file already holds it. The record's stored copy must be cleared
+// with it, or loads would keep serving the pre-commit bytes.
+func fitUpdateTableRequest(req *s3tables.UpdateTableRequest) {
+	if req.Metadata == nil || len(req.Metadata.FullMetadata) == 0 {
+		return
+	}
+	if body, err := json.Marshal(req); err == nil && len(body) <= s3tables.MaxRequestBodySize {
+		return
+	}
+	req.Metadata = &s3tables.TableMetadata{Iceberg: req.Metadata.Iceberg}
+	req.ClearFullMetadata = true
+}
+
 // authorizeCommit asks the S3 Tables layer, before anything is written, whether
 // the caller may update the table. Both commit paths stage the new metadata
 // file in the table's directory before UpdateTable authorizes the pointer

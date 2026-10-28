@@ -266,19 +266,31 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 				tableUUID = parsed
 			}
 		}
-		if tableUUID == uuid.Nil {
-			tableUUID = generatedLegacyUUID
-		}
 
+		currentBytes, err := s.currentMetadataBytes(r.Context(), getResp, bucketName)
+		if err != nil {
+			glog.Errorf("Iceberg: CommitTable load current metadata for %s: %v", tableName, err)
+			writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to load current metadata")
+			return
+		}
 		var currentMetadata table.Metadata
-		if getResp.Metadata != nil && len(getResp.Metadata.FullMetadata) > 0 {
-			currentMetadata, err = table.ParseMetadataBytes(getResp.Metadata.FullMetadata)
+		if len(currentBytes) > 0 {
+			currentMetadata, err = table.ParseMetadataBytes(currentBytes)
 			if err != nil {
 				glog.Errorf("Iceberg: Failed to parse current metadata for %s: %v", tableName, err)
 				writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to parse current metadata")
 				return
 			}
-		} else {
+			// A record that kept only a metadata location carries no UUID of
+			// its own; the one in its metadata file is the table's.
+			if tableUUID == uuid.Nil {
+				tableUUID = currentMetadata.TableUUID()
+			}
+		}
+		if tableUUID == uuid.Nil {
+			tableUUID = generatedLegacyUUID
+		}
+		if currentMetadata == nil {
 			currentMetadata, err = newTableMetadata(tableUUID, location, nil, nil, nil, nil)
 			if err != nil {
 				glog.Errorf("Iceberg: CommitTable placeholder metadata for %s: %v", tableName, err)
@@ -371,6 +383,7 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 			MetadataVersion:  metadataVersion,
 			MetadataLocation: newMetadataLocation,
 		}
+		fitUpdateTableRequest(updateReq)
 
 		err = s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 			mgrClient := s3tables.NewManagerClient(client)
