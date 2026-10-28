@@ -1,13 +1,13 @@
 """Boto3 conformance subset for the S3 Vectors API gateway.
 
-Run via `make test` — a mini cluster, an s3 gateway with -port.vectors, and a
-weed-vector-server are up by then.
+Run via `make test` — a mini cluster, an s3 gateway serving the vectors API on its main port, and a
+weed-vector are up by then.
 """
 
 import boto3
 import pytest
 
-ENDPOINT = "http://127.0.0.1:9201"
+ENDPOINT = "http://127.0.0.1:8334"
 BUCKET = "vectors-bucket"
 INDEX = "idx"
 

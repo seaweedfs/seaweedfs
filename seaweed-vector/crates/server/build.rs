@@ -10,7 +10,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     tonic_prost_build::configure()
         .build_server(true)
         .build_client(true)
-        .compile_protos(&["../../../weed/pb/vector.proto"], &["../../../weed/pb/"])?;
+        .compile_protos(
+            &[
+                "../../../weed/pb/vector.proto",
+                "../../../weed/pb/master.proto",
+                "../../../weed/pb/volume_server.proto",
+                "../../../weed/pb/remote.proto",
+            ],
+            &["../../../weed/pb/"],
+        )?;
     println!("cargo:rerun-if-changed=../../../weed/pb/vector.proto");
     Ok(())
 }

@@ -120,5 +120,5 @@ jobs:
       - name: Run the s3vectors conformance subset
         working-directory: test/vectors
         run: |
-          cp ../../seaweed-vector/target/release/weed-vector-server weed-vector-server
+          cp ../../seaweed-vector/target/release/weed-vector weed-vector
           ./run_test.sh
