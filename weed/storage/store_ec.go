@@ -721,8 +721,10 @@ func (s *Store) rebuildEcShardNeedle(n *needle.Needle, needleId types.NeedleId, 
 			}
 		}
 		// A candidate whose header decodes a different id than was asked for is
-		// no proof the bytes are right, whatever the checksum said.
-		if n.ReadBytes(candidate, offset, size, ecVolume.Version) != nil || n.Id != needleId {
+		// no proof the bytes are right, whatever the checksum said. Parse into a
+		// scratch needle: a failed earlier parse can leave stale fields in n.
+		check := &needle.Needle{Id: needleId}
+		if check.ReadBytes(candidate, offset, size, ecVolume.Version) != nil || check.Id != needleId {
 			return nil, false
 		}
 		// The parse verdict makes every differing range a confirmed corruption.
@@ -733,6 +735,7 @@ func (s *Store) rebuildEcShardNeedle(n *needle.Needle, needleId types.NeedleId, 
 			}
 			pos += int(interval.Size)
 		}
+		*n = *check
 		return candidate, false
 	}
 
@@ -829,7 +832,8 @@ func (s *Store) rebuildEcNeedleFromDroppedInputs(n *needle.Needle, needleId type
 		if !ok {
 			continue
 		}
-		if n.ReadBytes(candidate, offset, size, ecVolume.Version) != nil || n.Id != needleId {
+		check := &needle.Needle{Id: needleId}
+		if check.ReadBytes(candidate, offset, size, ecVolume.Version) != nil || check.Id != needleId {
 			continue
 		}
 		// The verdict convicts every differing range — and the dropped input,
@@ -842,6 +846,7 @@ func (s *Store) rebuildEcNeedleFromDroppedInputs(n *needle.Needle, needleId type
 			pos += int(interval.Size)
 		}
 		forgetShardId(ecVolume, drop)
+		*n = *check
 		return candidate, false
 	}
 	return nil, false
