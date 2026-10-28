@@ -19,6 +19,7 @@ fn registration(client_addr: &str) -> KeepConnectedRequest {
         data_center: String::new(),
         rack: String::new(),
         leave_lock_ring: false,
+        ..Default::default()
     }
 }
 
