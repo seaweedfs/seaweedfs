@@ -45,6 +45,12 @@ impl Lease {
         untrack(&tag);
         release(&self.dataset, &tag).await
     }
+
+    /// Hand the tag name off and skip the drop-time release — a distributed
+    /// planner keeps the version pinned until an executor takes over.
+    pub fn forget(mut self) -> String {
+        std::mem::take(&mut self.tag)
+    }
 }
 
 impl Drop for Lease {
