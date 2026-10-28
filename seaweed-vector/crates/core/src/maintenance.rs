@@ -154,17 +154,18 @@ async fn reap_expired(dataset: &Dataset, now: u128) {
             .map(|live| live.contains(name))
             .unwrap_or(false);
         // {instance}-{ts}-{uuid} is the owned format; {ts}-{uuid} is a
-        // legacy foreign tag. Own leases use the short TTL; foreign ones
-        // only the long backstop.
+        // legacy foreign tag. Segment count picks the format — an all-digit
+        // owner parses as a number too. Own leases use the short TTL;
+        // foreign ones only the long backstop.
         let expired = name
             .strip_prefix(QUERY_TAG_PREFIX)
             .and_then(|rest| {
                 let mut it = rest.splitn(3, '-');
                 let a = it.next()?;
                 let b = it.next()?;
-                match a.parse::<u128>() {
-                    Ok(stamp) => Some((false, stamp)),
-                    Err(_) => Some((a == *INSTANCE, b.parse::<u128>().ok()?)),
+                match it.next() {
+                    Some(_) => Some((a == *INSTANCE, b.parse::<u128>().ok()?)),
+                    None => Some((false, a.parse::<u128>().ok()?)),
                 }
             })
             .is_some_and(|(own, stamp)| {
@@ -375,6 +376,31 @@ mod tests {
         let lease = pin(&dataset).await.unwrap();
         let tags = dataset.tags().list().await.unwrap();
         assert!(tags.contains_key(&foreign), "foreign lease was reaped");
+        lease.release().await.unwrap();
+    }
+
+    /// An all-digit foreign owner still gets the backstop TTL applied to its
+    /// own timestamp rather than being read as a far-future legacy stamp.
+    #[tokio::test]
+    async fn all_digit_foreign_owner_still_expires() {
+        let dir = TempDir::new().unwrap();
+        let dataset =
+            testing::write_dataset(&dir, &testing::vectors(4, 4), &["a", "b", "c", "d"]).await;
+        let stale = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+            - FOREIGN_TTL.as_nanos()
+            - 1;
+        let tag = format!("{QUERY_TAG_PREFIX}12345678901234567890123456789012-{stale}-deadbeef");
+        dataset
+            .tags()
+            .create(&tag, Ref::Version(None, Some(dataset.version().version)))
+            .await
+            .unwrap();
+        let lease = pin(&dataset).await.unwrap();
+        let tags = dataset.tags().list().await.unwrap();
+        assert!(!tags.contains_key(&tag), "all-digit foreign owner was kept");
         lease.release().await.unwrap();
     }
 
