@@ -128,6 +128,11 @@ func (vs *VolumeServer) heartbeat() {
 	vs.store.SetDataCenter(vs.dataCenter)
 	vs.store.SetRack(vs.rack)
 
+	if len(vs.SeedMasterNodes) == 0 {
+		glog.Warningf("Volume server has no master nodes to heartbeat to; heartbeats disabled")
+		return
+	}
+
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.volume")
 
 	var err error
