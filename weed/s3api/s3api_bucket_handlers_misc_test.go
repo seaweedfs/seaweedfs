@@ -419,6 +419,43 @@ func TestPutBucketAclXmlWithoutAuth(t *testing.T) {
 	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
 }
 
+// An ownerless bucket created before the admin fallback stored an anonymous
+// full-control grantee; GetBucketAcl reports it as the same admin owner. A
+// client-supplied account header with auth off cannot claim ownership either.
+func TestGetBucketAclAlignsAnonymousGrant(t *testing.T) {
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
+	const bucket = "acl-legacy-bucket"
+	filer := &fakeLookupFiler{entry: &filer_pb.Entry{Name: bucket, IsDirectory: true}}
+	s3a := newHeadBucketTestServer(t, filer)
+	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+	s3a.iam = NewIdentityAccessManagementWithStore(s3a.option, nil, "memory")
+	t.Cleanup(s3a.iam.Shutdown)
+	require.False(t, s3a.iam.isEnabled())
+
+	fullControl := s3_constants.PermissionFullControl
+	grants := []*s3.Grant{{
+		Grantee: &s3.Grantee{
+			Type: aws.String("CanonicalUser"),
+			ID:   aws.String(s3_constants.AccountAnonymousId),
+		},
+		Permission: &fullControl,
+	}}
+	raw, err := json.Marshal(grants)
+	require.NoError(t, err)
+	s3a.bucketConfigCache.Set(bucket, &BucketConfig{Name: bucket, ACL: raw})
+
+	req := httptest.NewRequest(http.MethodGet, "http://s3/"+bucket+"?acl", http.NoBody)
+	req = mux.SetURLVars(req, map[string]string{"bucket": bucket})
+	req.Header.Set(s3_constants.AmzAccountId, "spoofed-owner")
+	rr := httptest.NewRecorder()
+	s3a.iam.Auth(s3a.GetBucketAclHandler, s3_constants.ACTION_READ_ACP)(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+	require.Contains(t, rr.Body.String(), "<ID>"+s3_constants.AccountAdminId+"</ID>")
+	require.NotContains(t, rr.Body.String(), "spoofed-owner")
+	require.NotContains(t, rr.Body.String(), s3_constants.AccountAnonymousId)
+}
+
 // A bucket with a recorded owner keeps it through an ACL update: the stored
 // owner and the full-control grantee stay the same account, whether the
 // request carries an account or none.
