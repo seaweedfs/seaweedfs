@@ -25,14 +25,33 @@ fn registration(client_addr: &str) -> KeepConnectedRequest {
 
 /// Masters are configured by their HTTP address; gRPC lives +10000 like the
 /// weed conventions (server_address.ToGrpcAddress).
+// A master address may carry an explicit gRPC port as `host:http.grpc` —
+// use it directly; otherwise the gRPC port is http + 10000.
 fn grpc_addr(master: &str) -> String {
     let (scheme, rest) = master.split_once("://").unwrap_or(("http", master));
     if let Some((host, port)) = rest.rsplit_once(':') {
+        if let Some((_, grpc)) = port.split_once('.') {
+            if grpc.parse::<u16>().is_ok() {
+                return format!("{scheme}://{host}:{grpc}");
+            }
+        }
         if let Ok(port) = port.parse::<u16>() {
             return format!("{scheme}://{host}:{}", port + 10000);
         }
     }
     format!("{scheme}://{rest}")
+}
+
+// `host:http.grpc` normalizes to `host:http` so a leader hint naming the
+// dialed master does not read as a redirect.
+fn http_addr(master: &str) -> String {
+    let rest = master.rsplit_once("://").map(|(_, r)| r).unwrap_or(master);
+    match rest.rsplit_once(':') {
+        Some((host, port)) => {
+            format!("{host}:{}", port.split('.').next().unwrap_or(port))
+        }
+        None => rest.to_string(),
+    }
 }
 
 /// Retry forever: try each master until a stream opens, hold it until it
@@ -75,8 +94,14 @@ async fn stream_to(master: &str, client_addr: &str) -> Result<Option<String>> {
         tokio::select! {
             msg = stream.message() => match msg? {
                 Some(resp) => {
+                    // A volume_location appears on every response — only
+                    // follow it when the hint points at a different master,
+                    // otherwise the leader keeps identifying itself and we
+                    // would reconnect forever.
                     if let Some(loc) = resp.volume_location {
-                        if !loc.leader.is_empty() {
+                        if !loc.leader.is_empty()
+                            && http_addr(&loc.leader) != http_addr(master)
+                        {
                             return Ok(Some(loc.leader));
                         }
                     }
