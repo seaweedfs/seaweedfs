@@ -9,7 +9,7 @@ description = "VectorService gRPC server over SeaweedFS Lance table buckets"
 name = "weed_vector_server"
 
 [[bin]]
-name = "weed-vector-server"
+name = "weed-vector"
 path = "src/main.rs"
 
 [dependencies]

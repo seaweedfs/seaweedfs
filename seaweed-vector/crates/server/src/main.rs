@@ -49,7 +49,7 @@ async fn main() -> Result<()> {
     let fallback: FallbackOptions = args.storage_options.into_iter().collect();
     let client = NamespaceClient::new(args.namespace.clone()).with_fallback(&fallback);
     let service = VectorServer::new(client, fallback);
-    tracing::info!(namespace = %args.namespace, listen = %args.listen, "weed-vector-server");
+    tracing::info!(namespace = %args.namespace, listen = %args.listen, "weed-vector");
     Server::builder()
         .add_service(VectorServiceServer::new(service))
         .serve(args.listen.parse()?)

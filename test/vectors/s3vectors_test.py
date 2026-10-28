@@ -1,7 +1,7 @@
 """Boto3 conformance subset for the S3 Vectors API gateway.
 
 Run via `make test` — a mini cluster, an s3 gateway serving the vectors API on its main port, and a
-weed-vector-server are up by then.
+weed-vector are up by then.
 """
 
 import boto3

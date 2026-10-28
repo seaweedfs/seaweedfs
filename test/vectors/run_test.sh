@@ -26,7 +26,7 @@ PIDS+=($!)
   -port.lance 9102 &
 PIDS+=($!)
 
-./weed-vector-server \
+./weed-vector \
   --namespace http://127.0.0.1:9102 \
   --masters 127.0.0.1:9333 \
   --storage-option aws_access_key_id=test \

@@ -1,8 +1,8 @@
 # End-to-end S3 Vectors conformance run:
 # weed mini (cluster + lance catalog) + weed s3 (s3vectors port) +
-# weed-vector-server (VectorService gRPC), then boto3 s3vectors calls.
+# weed-vector (VectorService gRPC), then boto3 s3vectors calls.
 WEED := ./weed
-VEC := ./weed-vector-server
+VEC := ./weed-vector
 
 .PHONY: all test build clean FORCE
 
@@ -14,7 +14,7 @@ $(WEED): FORCE
 
 $(VEC): FORCE
 	cargo build --release --manifest-path ../../seaweed-vector/Cargo.toml -p weed-vector-server
-	cp ../../seaweed-vector/target/release/weed-vector-server $(VEC)
+	cp ../../seaweed-vector/target/release/weed-vector $(VEC)
 
 FORCE:
 
