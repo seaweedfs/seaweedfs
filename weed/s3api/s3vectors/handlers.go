@@ -951,6 +951,22 @@ func translateFilter(filter map[string]interface{}) (string, error) {
 	return filterExpr(filter)
 }
 
+// nonFilterableField returns the first blocked metadata key a filter
+// references, or "" when the filter is clean.
+func nonFilterableField(cfg *MetadataConfiguration, filter map[string]interface{}) string {
+	if cfg == nil {
+		return ""
+	}
+	fields := map[string]bool{}
+	filterFields(filter, fields)
+	for _, k := range cfg.NonFilterableMetadataKeys {
+		if fields[k] {
+			return k
+		}
+	}
+	return ""
+}
+
 // filterFields collects the field names a filter expression references —
 // $-operators recurse; every other key is a field.
 func filterFields(filter map[string]interface{}, out map[string]bool) {
@@ -1210,16 +1226,10 @@ func (s *Server) handleQueryVectors(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	idx := indexFromRecord(s, arns.bucket, arns.index, record)
-	if cfg := idx.MetadataConfiguration; cfg != nil && len(cfg.NonFilterableMetadataKeys) > 0 {
-		fields := map[string]bool{}
-		filterFields(req.Filter, fields)
-		for _, k := range cfg.NonFilterableMetadataKeys {
-			if fields[k] {
-				writeError(w, http.StatusBadRequest, "ValidationException",
-					fmt.Sprintf("metadata key %q is not filterable", k))
-				return
-			}
-		}
+	if key := nonFilterableField(idx.MetadataConfiguration, req.Filter); key != "" {
+		writeError(w, http.StatusBadRequest, "ValidationException",
+			fmt.Sprintf("metadata key %q is not filterable", key))
+		return
 	}
 	metric := idx.DistanceMetric
 	filter, err := translateFilter(req.Filter)

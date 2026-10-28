@@ -325,12 +325,16 @@ func TestFilterFieldsNestedOperators(t *testing.T) {
 		t.Fatalf("operators leaked into fields: %v", fields)
 	}
 
-	blocked := []string{"sku"}
-	hit := false
-	for _, k := range blocked {
-		hit = hit || fields[k]
+	// The rejection gate the handler applies to the extracted fields.
+	blocked := &MetadataConfiguration{NonFilterableMetadataKeys: []string{"sku"}}
+	if got := nonFilterableField(blocked, filter); got != "sku" {
+		t.Fatalf("blocked key inside nested filter not detected: %q", got)
 	}
-	if !hit {
-		t.Fatal("blocked key inside nested filter was not detected")
+	allowed := &MetadataConfiguration{NonFilterableMetadataKeys: []string{"secret"}}
+	if got := nonFilterableField(allowed, filter); got != "" {
+		t.Fatalf("unrelated non-filterable key should pass, got %q", got)
+	}
+	if got := nonFilterableField(nil, filter); got != "" {
+		t.Fatalf("no configuration should pass, got %q", got)
 	}
 }
