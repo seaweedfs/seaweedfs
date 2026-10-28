@@ -369,6 +369,8 @@ func TestAuthWithPublicReadHonorsPolicyDeny(t *testing.T) {
 // With auth off the request has no account, so the canned ACL's owner grant
 // named an empty account and PutBucketAcl answered InvalidRequest.
 func TestPutBucketAclWithoutAuth(t *testing.T) {
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
 	const bucket = "acl-bucket"
 	filer := &fakeLookupFiler{entry: &filer_pb.Entry{Name: bucket, IsDirectory: true}}
 	s3a := newHeadBucketTestServer(t, filer)
@@ -390,4 +392,57 @@ func TestPutBucketAclWithoutAuth(t *testing.T) {
 	require.NoError(t, json.Unmarshal(filer.txnSeen[0].Mutations[0].SetExtended[s3_constants.ExtAmzAclKey], &grants))
 	require.Len(t, grants, 2)
 	require.Equal(t, s3_constants.GranteeGroupAllUsers, aws.StringValue(grants[1].Grantee.URI))
+}
+
+// GetBucketAcl reports the anonymous account for an ownerless bucket without
+// auth, so an XML ACL written back with that owner must validate.
+func TestPutBucketAclXmlWithoutAuth(t *testing.T) {
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
+	const bucket = "acl-xml-bucket"
+	filer := &fakeLookupFiler{entry: &filer_pb.Entry{Name: bucket, IsDirectory: true}}
+	s3a := newHeadBucketTestServer(t, filer)
+	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+	s3a.bucketConfigCache.Set(bucket, &BucketConfig{Name: bucket})
+	s3a.iam = NewIdentityAccessManagementWithStore(s3a.option, nil, "memory")
+	t.Cleanup(s3a.iam.Shutdown)
+
+	body := `<AccessControlPolicy xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Owner><ID>anonymous</ID></Owner><AccessControlList>` +
+		`<Grant><Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="CanonicalUser"><ID>anonymous</ID></Grantee><Permission>FULL_CONTROL</Permission></Grant>` +
+		`</AccessControlList></AccessControlPolicy>`
+	req := httptest.NewRequest(http.MethodPut, "http://s3/"+bucket+"?acl", strings.NewReader(body))
+	req = mux.SetURLVars(req, map[string]string{"bucket": bucket})
+	rr := httptest.NewRecorder()
+	s3a.iam.Auth(s3a.PutBucketAclHandler, s3_constants.ACTION_WRITE_ACP)(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+}
+
+// A bucket with a recorded owner keeps it through an unauthenticated ACL
+// update: the request carries no account, so nothing may overwrite Owner.
+func TestPutBucketAclWithoutAuthKeepsOwner(t *testing.T) {
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
+	const bucket = "acl-owned-bucket"
+	filer := &fakeLookupFiler{entry: &filer_pb.Entry{
+		Name:        bucket,
+		IsDirectory: true,
+		Extended:    map[string][]byte{s3_constants.ExtAmzOwnerKey: []byte("team-a")},
+	}}
+	s3a := newHeadBucketTestServer(t, filer)
+	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+	s3a.iam = NewIdentityAccessManagementWithStore(s3a.option, nil, "memory")
+	t.Cleanup(s3a.iam.Shutdown)
+
+	req := httptest.NewRequest(http.MethodPut, "http://s3/"+bucket+"?acl", http.NoBody)
+	req = mux.SetURLVars(req, map[string]string{"bucket": bucket})
+	req.Header.Set(s3_constants.AmzCannedAcl, "public-read")
+	rr := httptest.NewRecorder()
+	s3a.iam.Auth(s3a.PutBucketAclHandler, s3_constants.ACTION_WRITE_ACP)(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+
+	require.Len(t, filer.txnSeen, 1)
+	require.NotContains(t, filer.txnSeen[0].Mutations[0].DeleteExtended, s3_constants.ExtAmzOwnerKey)
+	var grants []*s3.Grant
+	require.NoError(t, json.Unmarshal(filer.txnSeen[0].Mutations[0].SetExtended[s3_constants.ExtAmzAclKey], &grants))
+	require.Equal(t, "team-a", aws.StringValue(grants[0].Grantee.ID))
 }
