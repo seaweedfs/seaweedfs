@@ -2314,6 +2314,10 @@ func (s3a *S3ApiServer) healStaleLatestVersionPointer(bucket, normalizedObject s
 // the pointer on the owner the reads consult unchanged. The IF_ENTRY_EQUAL
 // clause keeps the CAS semantics; a precondition failure or a missing entry
 // both surface as FailedPrecondition, matching what the callers map.
+// The lock goes on the object path — the lock version writes and deletes
+// serialize on — while condition_key keeps the check on the .versions entry,
+// so the repair cannot pass its precondition and then apply over a pointer a
+// writer advanced in between.
 func (s3a *S3ApiServer) conditionalUpdateEntryRouted(bucket, object, directory string, entry, expected *filer_pb.Entry) error {
 	owner := s3a.routableWriteOwner(bucket, object)
 	if owner == "" {
@@ -2332,8 +2336,9 @@ func (s3a *S3ApiServer) conditionalUpdateEntryRouted(bucket, object, directory s
 		}
 	}
 	resp, err := s3a.objectTxnOnFiler(owner, &filer_pb.ObjectTransactionRequest{
-		LockKey:  string(util.NewFullPath(directory, entry.Name)),
-		RouteKey: s3a.objectRouteKey(bucket, object),
+		LockKey:      s3a.toFilerPath(bucket, object),
+		RouteKey:     s3a.objectRouteKey(bucket, object),
+		ConditionKey: string(util.NewFullPath(directory, entry.Name)),
 		Condition: &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{
 			Kind:          filer_pb.WriteCondition_IF_ENTRY_EQUAL,
 			ExpectedEntry: expected,
