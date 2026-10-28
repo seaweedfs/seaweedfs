@@ -525,13 +525,8 @@ func (fs *SftpServer) makeDir(absPath string) error {
 	if err := fs.requireParentDir(absPath); err != nil {
 		return err
 	}
-	if _, err := fs.getEntry(absPath); err == nil {
-		return os.ErrExist
-	} else if err != os.ErrNotExist {
-		return err
-	}
 	// default mode and ownership
-	err := filer_pb.Mkdir(context.Background(), fs, string(dir), name, func(entry *filer_pb.Entry) {
+	err := filer_pb.MkdirExclusive(context.Background(), fs, string(dir), name, func(entry *filer_pb.Entry) {
 		mode := uint32(0755 | os.ModeDir)
 		// Defensive check: all paths should be under HomeDir after toAbsolutePath translation
 		if absPath == fs.user.HomeDir || strings.HasPrefix(absPath, fs.user.HomeDir+"/") {
@@ -548,6 +543,9 @@ func (fs *SftpServer) makeDir(absPath string) error {
 		}
 		entry.Extended["creator"] = []byte(fs.user.Username)
 	})
+	if errors.Is(err, filer_pb.ErrEntryAlreadyExists) {
+		return os.ErrExist
+	}
 	return err
 }
 

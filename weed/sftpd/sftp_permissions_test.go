@@ -210,6 +210,51 @@ func TestRequireParentDirEnforced(t *testing.T) {
 	}
 }
 
+// mkdir of a taken name fails instead of replacing the entry, file or
+// directory alike: the create is exclusive, so a concurrent creator wins.
+func TestMakeDirExistingPath(t *testing.T) {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	filer := &permissionTestFiler{entries: map[string]*filer_pb.Entry{
+		"/":               {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{FileMode: 0755}},
+		"/home":           {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{FileMode: 0755}},
+		"/home/alice":     {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0755}},
+		"/home/alice/d":   {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0755}},
+		"/home/alice/a.t": {Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0644}},
+	}}
+	grpcServer := grpc.NewServer()
+	filer_pb.RegisterSeaweedFilerServer(grpcServer, filer)
+	go func() { _ = grpcServer.Serve(lis) }()
+	t.Cleanup(grpcServer.Stop)
+
+	_, port, _ := net.SplitHostPort(lis.Addr().String())
+	fs := &SftpServer{
+		filerAddr:      pb.ServerAddress("127.0.0.1:0." + port),
+		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		user: &user.User{
+			Username: "alice", Uid: 1000, Gid: 1000, HomeDir: "/home/alice",
+			Permissions: map[string][]string{
+				"/home/alice": {"*"},
+			},
+		},
+	}
+
+	if err := fs.makeDir("/home/alice/d"); err != os.ErrExist {
+		t.Fatalf("mkdir of an existing directory: got %v, want os.ErrExist", err)
+	}
+	if err := fs.makeDir("/home/alice/a.t"); err != os.ErrExist {
+		t.Fatalf("mkdir of an existing file: got %v, want os.ErrExist", err)
+	}
+	if got := filer.entries["/home/alice/d"].Attributes.FileMode; got != 0755 {
+		t.Errorf("existing directory was overwritten: mode %o", got)
+	}
+	if filer.entries["/home/alice/a.t"].IsDirectory {
+		t.Error("existing file was overwritten by a directory")
+	}
+}
+
 // renameEntry must honor a more specific ACL on an existing target: renaming
 // over a read-only file deletes it, so it requires delete permission on the
 // target file itself, not only write permission on the target directory.
@@ -363,7 +408,16 @@ func (f *permissionTestFiler) AtomicRenameEntry(_ context.Context, req *filer_pb
 }
 
 func (f *permissionTestFiler) CreateEntry(_ context.Context, req *filer_pb.CreateEntryRequest) (*filer_pb.CreateEntryResponse, error) {
-	f.entries[req.Directory+"/"+req.Entry.Name] = req.Entry
+	key := req.Directory + "/" + req.Entry.Name
+	if req.OExcl {
+		if _, ok := f.entries[key]; ok {
+			return &filer_pb.CreateEntryResponse{
+				Error:     "entry already exists",
+				ErrorCode: filer_pb.FilerError_ENTRY_ALREADY_EXISTS,
+			}, nil
+		}
+	}
+	f.entries[key] = req.Entry
 	return &filer_pb.CreateEntryResponse{}, nil
 }
 
