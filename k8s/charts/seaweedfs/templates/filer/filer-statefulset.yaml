@@ -104,18 +104,35 @@ spec:
             {{- $mergedExtraEnvironmentVars := dict }}
             {{- include "seaweedfs.mergeExtraEnvironmentVars" (dict "global" .Values.global.seaweedfs "component" .Values.filer "target" $mergedExtraEnvironmentVars) }}
             {{- $secretExtraEnvironmentVars := .Values.filer.secretExtraEnvironmentVars | default dict }}
+            {{- $renderedCredentials := dict }}
             {{- if $mysqlEnabled }}
-            {{- /* A credential set in extraEnvironmentVars or secretExtraEnvironmentVars
-                   replaces the db secret's, so the key is rendered once. */}}
+            {{- /* The selected credential renders ahead of the merged vars so a later
+                   entry such as WEED_MYSQL_DSN can reference it via $(...); Kubernetes
+                   only resolves names declared earlier. A credential the user sets
+                   wins over the db secret's, secret-backed over plain. */}}
             {{- range $credential := list (list "WEED_MYSQL_USERNAME" "user") (list "WEED_MYSQL_PASSWORD" "password") }}
             {{- $key := index $credential 0 }}
-            {{- $secretKey := index $credential 1 }}
-            {{- if not (or (hasKey $mergedExtraEnvironmentVars $key) (hasKey $secretExtraEnvironmentVars $key)) }}
+            {{- $mergedHas := hasKey $mergedExtraEnvironmentVars $key }}
+            {{- $mergedValue := index $mergedExtraEnvironmentVars $key }}
+            {{- $_ := unset $mergedExtraEnvironmentVars $key }}
+            {{- $_ := set $renderedCredentials $key true }}
+            {{- if hasKey $secretExtraEnvironmentVars $key }}
+            - name: {{ $key }}
+              valueFrom: {{ toYaml (index $secretExtraEnvironmentVars $key) | nindent 16 }}
+            {{- else if $mergedHas }}
+            - name: {{ $key }}
+            {{- if kindIs "string" $mergedValue }}
+              value: {{ tpl $mergedValue $ | quote }}
+            {{- else }}
+              valueFrom:
+                {{ toYaml $mergedValue | nindent 16 | trim }}
+            {{- end }}
+            {{- else }}
             - name: {{ $key }}
               valueFrom:
                 secretKeyRef:
                   name: {{ include "seaweedfs.fullname" $ }}-db-secret
-                  key: {{ $secretKey }}
+                  key: {{ index $credential 1 }}
                   optional: true
             {{- end }}
             {{- end }}
@@ -144,7 +161,7 @@ spec:
             {{- end }}
             {{- if .Values.filer.secretExtraEnvironmentVars }}
             {{- range $key, $value := .Values.filer.secretExtraEnvironmentVars }}
-            {{- if or $mysqlEnabled (not (hasPrefix "WEED_MYSQL_" $key)) }}
+            {{- if and (or $mysqlEnabled (not (hasPrefix "WEED_MYSQL_" $key))) (not (hasKey $renderedCredentials $key)) }}
             - name: {{ $key }}
               valueFrom: {{ toYaml $value | nindent 16 }}
             {{- end }}

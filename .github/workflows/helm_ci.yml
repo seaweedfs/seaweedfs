@@ -645,6 +645,12 @@ jobs:
             --set-string filer.extraEnvironmentVars.WEED_MYSQL_USERNAME=app > /tmp/filer-mysql-on-plain.yaml
           test "$(grep -c -- "- name: WEED_MYSQL_USERNAME$" /tmp/filer-mysql-on-plain.yaml)" -eq 1
           grep -A 1 -- "- name: WEED_MYSQL_USERNAME$" /tmp/filer-mysql-on-plain.yaml | grep -q 'value: "app"'
+          # Credentials render ahead of the merged vars so a $(...) reference resolves.
+          helm template test $CHART_DIR \
+            --set-string filer.extraEnvironmentVars.WEED_MYSQL_ENABLED=true \
+            --set-string filer.extraEnvironmentVars.WEED_MYSQL_USERNAME=app \
+            --set-string 'filer.extraEnvironmentVars.WEED_MYSQL_DSN=$(WEED_MYSQL_USERNAME)@tcp(h)/db' > /tmp/filer-mysql-dsn.yaml
+          test "$(grep -n -- "- name: WEED_MYSQL_USERNAME$" /tmp/filer-mysql-dsn.yaml | cut -d: -f1)" -lt "$(grep -n -- "- name: WEED_MYSQL_DSN$" /tmp/filer-mysql-dsn.yaml | cut -d: -f1)"
           # A flag the chart cannot read counts as selected, not as off.
           helm template test $CHART_DIR \
             --set filer.secretExtraEnvironmentVars.WEED_MYSQL_ENABLED.secretKeyRef.name=store \
