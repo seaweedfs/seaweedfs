@@ -523,9 +523,10 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, existing *Entry, 
 			return fmt.Errorf("%s: %w", entry.FullPath, filer_pb.ErrEntryAlreadyExists)
 		}
 		// An object landing on a directory (prefix object) replaces the object
-		// data only: the directory keeps its own mode and owner. Extended
-		// attributes are not merged — a marker's fields (encryption, version,
-		// etag) belong to the object it held, not to the directory.
+		// data only: the directory keeps its own mode, owner and xattrs. Only
+		// xattr- keys merge — FUSE stores them on the directory itself — while a
+		// marker's other fields (encryption, version, etag) belong to the
+		// object it held, not to the directory.
 		if oldEntry.IsDirectory() && entry.IsDirectory() {
 			if _, marked := entry.Extended[s3_constants.SeaweedFSPrefixObject]; marked {
 				entry.Attr.Mode = oldEntry.Attr.Mode
@@ -533,6 +534,11 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, existing *Entry, 
 				entry.Attr.Gid = oldEntry.Attr.Gid
 				entry.Attr.UserName = oldEntry.Attr.UserName
 				entry.Attr.GroupNames = oldEntry.Attr.GroupNames
+				for key, value := range oldEntry.Extended {
+					if _, ok := entry.Extended[key]; !ok && strings.HasPrefix(key, "xattr-") {
+						entry.Extended[key] = value
+					}
+				}
 			}
 		}
 		glog.V(4).InfofCtx(ctx, "UpdateEntry %s: old entry: %v", entry.FullPath, oldEntry.Name())
