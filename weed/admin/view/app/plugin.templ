@@ -1608,7 +1608,7 @@ templ Plugin(page string, initialJob string, lane string) {
             }
 
             function renderSchedulerStatus() {
-                window.renderPluginSchedulerStatus({scheduler: state.schedulerStatus, lock: state.schedulerLock});
+                window.renderPluginSchedulerStatus({scheduler: state.schedulerStatus, lock: state.schedulerLock, job_type: state.activeTopTab === 'overview' ? '' : state.selectedJobType});
                 var valueNodes = document.querySelectorAll('.plugin-scheduler-next-run');
                 if (!valueNodes.length) {
                     return;
@@ -2803,6 +2803,13 @@ templ Plugin(page string, initialJob string, lane string) {
 
                 var html = '';
                 html += '<div class="mb-2"><strong>Detection Run</strong></div>';
+                if (data.skipped_reason) {
+                    html += '<div class="alert alert-info">Skipped: ' + escapeHtml(String(data.skipped_reason));
+                    if (data.eligible_after) html += ' · Eligible after: ' + escapeHtml(parseTime(data.eligible_after) || data.eligible_after);
+                    html += '</div>';
+                } else if (!data.error && proposals.length === 0) {
+                    html += '<div class="text-muted">Scan completed: no eligible volumes or jobs.</div>';
+                }
                 if (requestID) {
                     html += '<div><small>request_id: ' + escapeHtml(String(requestID)) + '</small></div>';
                 }
@@ -2928,6 +2935,7 @@ templ Plugin(page string, initialJob string, lane string) {
                     document.getElementById('plugin-config-updated-at').textContent = 'Not saved yet';
                 }
                 state.loadedJobType = jobType;
+                renderSchedulerStatus();
 
                 await loadRunHistory(jobType);
 
