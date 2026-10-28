@@ -1187,10 +1187,12 @@ func (t *Topology) GetDataCenter(dcName string) (dc *DataCenter) {
 }
 
 // AvailableSpaceWithinLocation sums the free volume slots for the option's
-// disk type over the nodes matching the option's DataCenter/Rack/DataNode
-// constraint — the whole topology when the option names no location. Zero
-// means growth cannot place a volume there, so a constrained assign can fail
-// fast instead of waiting out growth that can never satisfy it.
+// disk type over the data nodes matching the option's DataCenter/Rack/DataNode
+// constraint — the whole topology when the option names no location. It sums
+// leaves rather than rolled-up counters so a data node in maintenance mode
+// reports its own zero and an overcommitted node cannot cancel a sibling's
+// slots. Zero means growth cannot place a volume there, so a constrained
+// assign can fail fast instead of waiting out growth that can never satisfy it.
 func (t *Topology) AvailableSpaceWithinLocation(option *VolumeGrowOption) (total int64) {
 	t.RLock()
 	defer t.RUnlock()
@@ -1198,22 +1200,15 @@ func (t *Topology) AvailableSpaceWithinLocation(option *VolumeGrowOption) (total
 		if option.DataCenter != "" && string(c.Id()) != option.DataCenter {
 			continue
 		}
-		if option.Rack == "" && option.DataNode == "" {
-			total += c.AvailableSpaceFor(option)
-			continue
-		}
 		for _, r := range c.Children() {
 			if option.Rack != "" && string(r.Id()) != option.Rack {
 				continue
 			}
-			if option.DataNode == "" {
-				total += r.AvailableSpaceFor(option)
-				continue
-			}
 			for _, dn := range r.Children() {
-				if string(dn.Id()) == option.DataNode {
-					total += dn.AvailableSpaceFor(option)
+				if option.DataNode != "" && string(dn.Id()) != option.DataNode {
+					continue
 				}
+				total += dn.AvailableSpaceFor(option)
 			}
 		}
 	}
