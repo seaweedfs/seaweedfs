@@ -604,6 +604,12 @@ func (s *AdminServer) TriggerPluginDetectionAPI(w http.ResponseWriter, r *http.R
 		"proposals":          proposalPayloads,
 		"activities":         filteredActivities,
 	}
+	if report != nil && report.Complete != nil {
+		response["skipped_reason"] = report.Complete.SkippedReason
+		if at := report.Complete.EligibleAfter; at != nil {
+			response["eligible_after"] = at.AsTime()
+		}
+	}
 
 	if err != nil {
 		response["error"] = err.Error()

@@ -1230,6 +1230,10 @@ func (r *Plugin) handleDetectionComplete(workerID string, message *plugin_pb.Det
 		if messageText == "" {
 			messageText = "detection failed"
 		}
+	} else if message.SkippedReason != "" {
+		stage = "skipped"
+		messageText = message.SkippedReason
+		r.recordSchedulerDetectionSkip(resolvedJobType, message.SkippedReason)
 	}
 	r.appendActivity(JobActivity{
 		JobType:    resolvedJobType,
@@ -1242,6 +1246,8 @@ func (r *Plugin) handleDetectionComplete(workerID string, message *plugin_pb.Det
 		Details: map[string]interface{}{
 			"success":         message.Success,
 			"total_proposals": message.TotalProposals,
+			"skipped_reason":  message.SkippedReason,
+			"eligible_after":  message.EligibleAfter,
 		},
 	})
 

@@ -6,7 +6,53 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
+	"github.com/stretchr/testify/require"
 )
+
+func TestScheduledDetectionDistinguishesSkipFromEmptyScan(t *testing.T) {
+	for _, reason := range []string{"", "Cooldown after successful job (10h0m0s)"} {
+		t.Run(reason, func(t *testing.T) {
+			p, err := New(Options{})
+			require.NoError(t, err)
+			defer p.Shutdown()
+			p.clusterContextProvider = func(context.Context) (*plugin_pb.ClusterContext, error) {
+				return &plugin_pb.ClusterContext{}, nil
+			}
+			p.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+				WorkerId: "worker-a", Capabilities: []*plugin_pb.JobTypeCapability{{JobType: "vacuum", CanDetect: true}},
+			})
+			session := &streamSession{workerID: "worker-a", outgoing: make(chan *plugin_pb.AdminToWorkerMessage, 1), done: make(chan struct{})}
+			p.putSession(session)
+			done := make(chan struct{})
+			go func() {
+				p.runJobTypeIteration("vacuum", schedulerPolicy{DetectionTimeout: time.Second, JobTypeMaxRuntime: time.Second})
+				close(done)
+			}()
+			select {
+			case request := <-session.outgoing:
+				p.handleDetectionComplete("worker-a", &plugin_pb.DetectionComplete{
+					RequestId: request.RequestId, JobType: "vacuum", Success: true, SkippedReason: reason,
+				})
+			case <-time.After(2 * time.Second):
+				t.Fatal("no detection request")
+			}
+			select {
+			case <-done:
+			case <-time.After(2 * time.Second):
+				t.Fatal("detection did not complete")
+			}
+			info := p.snapshotSchedulerDetection("vacuum")
+			if reason == "" {
+				require.False(t, info.lastDetectedAt.IsZero())
+				require.Equal(t, "success", p.snapshotSchedulerRun("vacuum").lastRunStatus)
+			} else {
+				require.True(t, info.lastDetectedAt.IsZero(), "a skipped scan must not count as an empty scan")
+				require.Equal(t, reason, info.lastSkippedReason)
+				require.Equal(t, "skipped", p.snapshotSchedulerRun("vacuum").lastRunStatus)
+			}
+		})
+	}
+}
 
 func TestRunDetectionIncludesLatestSuccessfulRun(t *testing.T) {
 	pluginSvc, err := New(Options{})

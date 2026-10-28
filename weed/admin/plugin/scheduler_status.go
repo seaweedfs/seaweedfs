@@ -1,9 +1,12 @@
 package plugin
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 )
 
 type SchedulerStatus struct {
@@ -52,6 +55,66 @@ type SchedulerJobTypeStatus struct {
 	LastDetectedCount        int        `json:"last_detected_count,omitempty"`
 	LastDetectionError       string     `json:"last_detection_error,omitempty"`
 	LastDetectionSkipped     string     `json:"last_detection_skipped,omitempty"`
+	CooldownSeconds          int64      `json:"cooldown_seconds,omitempty"`
+	LastSuccessfulRunAt      *time.Time `json:"last_successful_run_at,omitempty"`
+	DetectionEligibleAt      *time.Time `json:"detection_eligible_at,omitempty"`
+	CooldownError            string     `json:"cooldown_error,omitempty"`
+}
+
+func (r *Plugin) populateSchedulerCooldown(status *SchedulerJobTypeStatus) {
+	descriptor, err := r.store.LoadDescriptor(status.JobType)
+	if err != nil {
+		status.CooldownError = "Cannot load cooldown policy"
+		return
+	}
+	field := descriptor.GetDetectionCooldownConfigField()
+	if field == "" {
+		return
+	}
+	_, _, values, err := r.loadJobTypeConfigPayload(status.JobType)
+	if err != nil {
+		status.CooldownError = "Cannot load cooldown configuration"
+		return
+	}
+	value := values[field]
+	if value == nil {
+		value = descriptor.GetWorkerDefaultValues()[field]
+	}
+	if value == nil {
+		value = descriptor.GetWorkerConfigForm().GetDefaultValues()[field]
+	}
+	if value == nil {
+		status.CooldownError = "Cooldown configuration is missing"
+		return
+	}
+	if _, ok := value.Kind.(*plugin_pb.ConfigValue_Int64Value); !ok {
+		status.CooldownError = "Cooldown must be an integer number of seconds"
+		return
+	}
+	seconds := value.GetInt64Value()
+	if seconds < 0 || seconds > int64((1<<63-1)/time.Second) {
+		status.CooldownError = "Cooldown is outside the supported range"
+		return
+	}
+	status.CooldownSeconds = seconds
+	history, err := r.store.LoadRunHistory(status.JobType)
+	if err != nil {
+		status.CooldownError = "Cannot load successful job history"
+		return
+	}
+	if history == nil {
+		return
+	}
+	for _, run := range history.SuccessfulRuns {
+		if run.CompletedAt != nil && (status.LastSuccessfulRunAt == nil || run.CompletedAt.After(*status.LastSuccessfulRunAt)) {
+			at := *run.CompletedAt
+			status.LastSuccessfulRunAt = &at
+		}
+	}
+	if status.LastSuccessfulRunAt != nil && seconds > 0 {
+		at := status.LastSuccessfulRunAt.Add(time.Duration(seconds) * time.Second)
+		status.DetectionEligibleAt = &at
+	}
 }
 
 type schedulerDetectionInfo struct {
@@ -349,6 +412,7 @@ func (r *Plugin) GetLaneSchedulerStatus(lane SchedulerLane) SchedulerStatus {
 			NextDetectionAt:          state.NextDetectionAt,
 			DetectionIntervalMinutes: state.DetectionIntervalMinutes,
 		}
+		r.populateSchedulerCooldown(&jobStatus)
 		if !info.lastDetectedAt.IsZero() {
 			jobStatus.LastDetectedAt = timeToPtr(info.lastDetectedAt)
 			jobStatus.LastDetectedCount = info.lastDetectedCount
@@ -361,6 +425,12 @@ func (r *Plugin) GetLaneSchedulerStatus(lane SchedulerLane) SchedulerStatus {
 		}
 		jobTypes = append(jobTypes, jobStatus)
 
+		if jobStatus.Enabled && jobStatus.DetectionEligibleAt != nil && now.Before(*jobStatus.DetectionEligibleAt) {
+			waiting = append(waiting, SchedulerWaitingStatus{
+				Reason: "cooldown", JobType: jobType, Since: jobStatus.LastSuccessfulRunAt, Until: jobStatus.DetectionEligibleAt,
+				Details: map[string]interface{}{"message": fmt.Sprintf("Cooldown after successful job (%s)", time.Duration(jobStatus.CooldownSeconds)*time.Second)},
+			})
+		}
 		if state.DetectionInFlight {
 			waiting = append(waiting, SchedulerWaitingStatus{
 				Reason:  "detection_in_flight",
@@ -432,6 +502,7 @@ func (r *Plugin) GetSchedulerStatus() SchedulerStatus {
 			NextDetectionAt:          state.NextDetectionAt,
 			DetectionIntervalMinutes: state.DetectionIntervalMinutes,
 		}
+		r.populateSchedulerCooldown(&jobStatus)
 		if !info.lastDetectedAt.IsZero() {
 			jobStatus.LastDetectedAt = timeToPtr(info.lastDetectedAt)
 			jobStatus.LastDetectedCount = info.lastDetectedCount
@@ -444,6 +515,12 @@ func (r *Plugin) GetSchedulerStatus() SchedulerStatus {
 		}
 		jobTypes = append(jobTypes, jobStatus)
 
+		if jobStatus.Enabled && jobStatus.DetectionEligibleAt != nil && now.Before(*jobStatus.DetectionEligibleAt) {
+			waiting = append(waiting, SchedulerWaitingStatus{
+				Reason: "cooldown", JobType: jobType, Since: jobStatus.LastSuccessfulRunAt, Until: jobStatus.DetectionEligibleAt,
+				Details: map[string]interface{}{"message": fmt.Sprintf("Cooldown after successful job (%s)", time.Duration(jobStatus.CooldownSeconds)*time.Second)},
+			})
+		}
 		if state.DetectionInFlight {
 			waiting = append(waiting, SchedulerWaitingStatus{
 				Reason:  "detection_in_flight",
