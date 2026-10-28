@@ -37,6 +37,8 @@ import (
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 var (
@@ -739,15 +741,27 @@ type vectorDiscovery struct {
 }
 
 // reset drops the cached worker so the next call rediscovers — invoked on
-// transport errors so a replaced worker is found without a restart.
-func (d *vectorDiscovery) reset() {
+// transport errors only, and only when the failed client is still the
+// cached one (a concurrent request may have already re-resolved).
+func (d *vectorDiscovery) reset(c vector_pb.VectorServiceClient) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if c != d.client {
+		return
+	}
 	if d.conn != nil {
 		d.conn.Close()
 	}
 	d.worker, d.conn, d.client = "", nil, nil
 	d.nextResolve = time.Time{}
+}
+
+func isTransportError(err error) bool {
+	switch status.Code(err) {
+	case codes.Unavailable, codes.DeadlineExceeded, codes.Unknown:
+		return true
+	}
+	return false
 }
 
 func (d *vectorDiscovery) resolve() (vector_pb.VectorServiceClient, error) {
@@ -775,11 +789,14 @@ const vectorResolveInterval = 5 * time.Second
 
 func (d *vectorDiscovery) cli() (vector_pb.VectorServiceClient, error) {
 	d.mu.Lock()
-	if cli := d.client; cli != nil || time.Now().Before(d.nextResolve) {
+	cli := d.client
+	past := !time.Now().Before(d.nextResolve)
+	if cli != nil && !past {
 		d.mu.Unlock()
-		if cli != nil {
-			return cli, nil
-		}
+		return cli, nil
+	}
+	if !past && cli == nil {
+		d.mu.Unlock()
 		return nil, fmt.Errorf("no weed-vector registered on master")
 	}
 	d.nextResolve = time.Now().Add(vectorResolveInterval)
@@ -796,7 +813,10 @@ func (d *vectorDiscovery) CreateIndex(ctx context.Context, in *vector_pb.CreateI
 		if resp, err = c.CreateIndex(ctx, in, opts...); err == nil {
 			return resp, nil
 		}
-		d.reset()
+		if !isTransportError(err) {
+			return nil, err
+		}
+		d.reset(c)
 	}
 	return nil, err
 }
@@ -809,7 +829,10 @@ func (d *vectorDiscovery) DropIndex(ctx context.Context, in *vector_pb.DropIndex
 		if resp, err = c.DropIndex(ctx, in, opts...); err == nil {
 			return resp, nil
 		}
-		d.reset()
+		if !isTransportError(err) {
+			return nil, err
+		}
+		d.reset(c)
 	}
 	return nil, err
 }
@@ -822,7 +845,10 @@ func (d *vectorDiscovery) PutVectors(ctx context.Context, in *vector_pb.PutVecto
 		if resp, err = c.PutVectors(ctx, in, opts...); err == nil {
 			return resp, nil
 		}
-		d.reset()
+		if !isTransportError(err) {
+			return nil, err
+		}
+		d.reset(c)
 	}
 	return nil, err
 }
@@ -835,7 +861,10 @@ func (d *vectorDiscovery) GetVectors(ctx context.Context, in *vector_pb.GetVecto
 		if resp, err = c.GetVectors(ctx, in, opts...); err == nil {
 			return resp, nil
 		}
-		d.reset()
+		if !isTransportError(err) {
+			return nil, err
+		}
+		d.reset(c)
 	}
 	return nil, err
 }
@@ -848,7 +877,10 @@ func (d *vectorDiscovery) DeleteVectors(ctx context.Context, in *vector_pb.Delet
 		if resp, err = c.DeleteVectors(ctx, in, opts...); err == nil {
 			return resp, nil
 		}
-		d.reset()
+		if !isTransportError(err) {
+			return nil, err
+		}
+		d.reset(c)
 	}
 	return nil, err
 }
@@ -861,7 +893,10 @@ func (d *vectorDiscovery) ListVectors(ctx context.Context, in *vector_pb.ListVec
 		if resp, err = c.ListVectors(ctx, in, opts...); err == nil {
 			return resp, nil
 		}
-		d.reset()
+		if !isTransportError(err) {
+			return nil, err
+		}
+		d.reset(c)
 	}
 	return nil, err
 }
@@ -874,7 +909,10 @@ func (d *vectorDiscovery) QueryVectors(ctx context.Context, in *vector_pb.QueryV
 		if resp, err = c.QueryVectors(ctx, in, opts...); err == nil {
 			return resp, nil
 		}
-		d.reset()
+		if !isTransportError(err) {
+			return nil, err
+		}
+		d.reset(c)
 	}
 	return nil, err
 }
