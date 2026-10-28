@@ -1017,14 +1017,17 @@ func (s3a *S3ApiServer) GetBucketAclHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Report the bucket's owner (recorded at creation or by PutBucketAcl), not the
-	// caller; fall back to the caller only when no owner was persisted. Likewise
-	// return any stored ACL, defaulting to the owner's full-control grant.
+	// caller; an ownerless bucket reports the registry's default owner, the admin
+	// account, rather than the anonymous caller. Likewise return any stored ACL,
+	// defaulting to the owner's full-control grant.
 	ownerId := getAccountId(r)
 	var storedGrants []*s3.Grant
 	if bucketConfig, errCode := s3a.getBucketConfig(bucket); errCode == s3err.ErrNone {
 		storedGrants = parseAclGrants(bucketConfig.ACL)
 		if bucketConfig.Owner != "" {
 			ownerId = bucketConfig.Owner
+		} else if ownerId == AccountAnonymous.Id {
+			ownerId = AccountAdmin.Id
 		}
 	}
 	ownerDisplayName := s3a.iam.GetAccountNameById(ownerId)
@@ -1054,10 +1057,13 @@ func (s3a *S3ApiServer) PutBucketAclHandler(w http.ResponseWriter, r *http.Reque
 	aclAccountId := getAccountId(r)
 
 	// XML ACLs must name the owner GetBucketAcl reports: the stored owner when
-	// the bucket has one, else the request's account.
+	// the bucket has one, else the request's account — an anonymous request
+	// resolves to the admin account, the registry's default bucket owner.
 	ownerId := aclAccountId
 	if config, errCode := s3a.getBucketConfig(bucket); errCode == s3err.ErrNone && config.Owner != "" {
 		ownerId = config.Owner
+	} else if ownerId == AccountAnonymous.Id {
+		ownerId = AccountAdmin.Id
 	}
 
 	// Get bucket ownership settings (these would be used for ownership validation in a full implementation)

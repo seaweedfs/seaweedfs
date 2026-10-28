@@ -391,10 +391,12 @@ func TestPutBucketAclWithoutAuth(t *testing.T) {
 	var grants []*s3.Grant
 	require.NoError(t, json.Unmarshal(filer.txnSeen[0].Mutations[0].SetExtended[s3_constants.ExtAmzAclKey], &grants))
 	require.Len(t, grants, 2)
+	require.Equal(t, s3_constants.AccountAdminId, aws.StringValue(grants[0].Grantee.ID))
 	require.Equal(t, s3_constants.GranteeGroupAllUsers, aws.StringValue(grants[1].Grantee.URI))
+	require.Equal(t, s3_constants.AccountAdminId, string(filer.txnSeen[0].Mutations[0].SetExtended[s3_constants.ExtAmzOwnerKey]))
 }
 
-// GetBucketAcl reports the anonymous account for an ownerless bucket without
+// GetBucketAcl reports the admin account for an ownerless bucket without
 // auth, so an XML ACL written back with that owner must validate.
 func TestPutBucketAclXmlWithoutAuth(t *testing.T) {
 	t.Setenv("AWS_ACCESS_KEY_ID", "")
@@ -407,8 +409,8 @@ func TestPutBucketAclXmlWithoutAuth(t *testing.T) {
 	s3a.iam = NewIdentityAccessManagementWithStore(s3a.option, nil, "memory")
 	t.Cleanup(s3a.iam.Shutdown)
 
-	body := `<AccessControlPolicy xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Owner><ID>anonymous</ID></Owner><AccessControlList>` +
-		`<Grant><Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="CanonicalUser"><ID>anonymous</ID></Grantee><Permission>FULL_CONTROL</Permission></Grant>` +
+	body := `<AccessControlPolicy xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Owner><ID>admin</ID></Owner><AccessControlList>` +
+		`<Grant><Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="CanonicalUser"><ID>admin</ID></Grantee><Permission>FULL_CONTROL</Permission></Grant>` +
 		`</AccessControlList></AccessControlPolicy>`
 	req := httptest.NewRequest(http.MethodPut, "http://s3/"+bucket+"?acl", strings.NewReader(body))
 	req = mux.SetURLVars(req, map[string]string{"bucket": bucket})
