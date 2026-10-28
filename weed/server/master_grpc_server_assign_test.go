@@ -209,6 +209,37 @@ func TestAssignConstrainedShedsWhileGrowthPending(t *testing.T) {
 	assert.Len(t, ms.volumeGrowthRequestChan, 0)
 }
 
+// A constrained initiator whose growth concludes without yielding a writable
+// volume sheds retryably so its client's retry can re-trigger growth, instead
+// of returning the plain pick error that would stop the retries.
+func TestAssignConstrainedShedsWhenGrowthConcludesUnfulfilled(t *testing.T) {
+	ms := newLeaderMaster()
+	ms.Topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1").
+		GetOrCreateDataNode("127.0.0.1", 8080, 18080, "127.0.0.1", "dn1", map[string]uint32{"": 100})
+
+	req := &master_pb.AssignRequest{Count: 1, Replication: "000", DataCenter: "dc1"}
+	rp, err := super_block.NewReplicaPlacementFromString(req.Replication)
+	require.NoError(t, err)
+	vl := ms.Topo.GetVolumeLayout("", rp, needle.EMPTY_TTL, types.ToDiskType(""))
+
+	go func() {
+		<-ms.volumeGrowthRequestChan
+		vl.DoneGrowRequest()
+	}()
+
+	start := time.Now()
+	resp, err := ms.Assign(context.Background(), req)
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	require.Nil(t, resp)
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.ResourceExhausted, st.Code())
+	assert.Less(t, elapsed, 2*time.Second)
+	assert.Len(t, ms.volumeGrowthRequestChan, 0)
+}
+
 // A constrained assign fails fast only when no growth can satisfy the
 // constraint: the named location is full (even though another data center has
 // room), or volume growth is disabled outright.

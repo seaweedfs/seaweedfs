@@ -139,10 +139,11 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 			stats.MasterPickForWriteErrorCounter.Inc()
 			lastErr = err
 			if (req.DataCenter != "" || req.Rack != "") && strings.Contains(err.Error(), topology.NoWritableVolumes) &&
-				(ms.option.VolumeGrowthDisabled || !vl.HasGrowRequest() || ms.Topo.AvailableSpaceWithinLocation(option) <= 0) {
+				(ms.option.VolumeGrowthDisabled || (!initiatedGrow && !vl.HasGrowRequest()) || ms.Topo.AvailableSpaceWithinLocation(option) <= 0) {
 				// Fail fast only when no growth can produce a writable volume in
-				// the requested location; a location with room and a pending grow
-				// gets the same wait/shed path as an unconstrained assign.
+				// the requested location; a location with room and a pending or
+				// just-concluded grow gets the same wait/shed path as an
+				// unconstrained assign, so its client retry can re-trigger growth.
 				glog.V(0).Infof("assign %v %v: %v", req, option.String(), err)
 				return nil, err
 			}
