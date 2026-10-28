@@ -130,6 +130,8 @@ message JobTypeDescriptor {
 
   AdminRuntimeDefaults admin_runtime_defaults = 8;
   map<string, ConfigValue> worker_default_values = 9;
+  // Worker config field containing a cooldown in seconds after the latest successful job.
+  string detection_cooldown_config_field = 10;
 }
 
 message ConfigForm {
@@ -282,6 +284,8 @@ message DetectionComplete {
   bool success = 3;
   string error_message = 4;
   int32 total_proposals = 5;
+  string skipped_reason = 6;
+  google.protobuf.Timestamp eligible_after = 7;
 }
 
 message JobProposal {
