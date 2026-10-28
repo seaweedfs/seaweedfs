@@ -23,8 +23,7 @@ PIDS+=($!)
   -ip 127.0.0.1 \
   -ip.bind 127.0.0.1 \
   -port 8334 \
-  -port.lance 9102 \
-  -port.vectors 9201 &
+  -port.lance 9102 &
 PIDS+=($!)
 
 ./weed-vector-server \

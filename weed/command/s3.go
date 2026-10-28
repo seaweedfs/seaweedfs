@@ -441,9 +441,22 @@ func (s3opt *S3Options) startS3Server() bool {
 		}
 	}
 
-	// Start S3 Vectors API server if enabled
+	// The Vectors API rides the main -port listener whenever a weed-vector
+	// backend is reachable; -port.vectors stays for dedicated-port deployments.
+	vectorsRouter := s3opt.vectorsRouter(s3ApiServer, grpcDialOption, masterAddresses)
+	vectorsHandler := http.Handler(router)
+	if vectorsRouter != nil {
+		vr, mainRouter := vectorsRouter, router
+		vectorsHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if isVectorsRequest(r) {
+				vr.ServeHTTP(w, r)
+				return
+			}
+			mainRouter.ServeHTTP(w, r)
+		})
+	}
 	if s3opt.portVectors != nil && *s3opt.portVectors > 0 {
-		if httpS := s3opt.startVectorsServer(s3ApiServer, grpcDialOption, listenOnLocalhost, masterAddresses); httpS != nil {
+		if httpS := s3opt.startVectorsServer(s3ApiServer, grpcDialOption, listenOnLocalhost, masterAddresses, vectorsRouter); httpS != nil {
 			httpServers = append(httpServers, httpS)
 		}
 	}
@@ -456,7 +469,7 @@ func (s3opt *S3Options) startS3Server() bool {
 		}
 		if s3SocketListener := pb.ListenOnLocalSocket(localSocket); s3SocketListener != nil {
 			s3SocketListener = &util.Listener{Listener: s3SocketListener, Timeout: idleTimeoutSeconds(s3opt.idleTimeout)}
-			socketServer := newHttpServer(router, nil)
+			socketServer := newHttpServer(vectorsHandler, nil)
 			httpServers = append(httpServers, socketServer)
 			go func() {
 				if err := socketServer.Serve(s3SocketListener); err != nil && err != http.ErrServerClosed {
@@ -531,7 +544,7 @@ func (s3opt *S3Options) startS3Server() bool {
 		if *s3opt.portHttps == 0 {
 			glog.V(0).Infof("Start Seaweed S3 API Server %s at https port %d", version.Version(), *s3opt.port)
 			if s3ApiLocalListener != nil {
-				localServer := newHttpServer(router, tlsConfig)
+				localServer := newHttpServer(vectorsHandler, tlsConfig)
 				httpServers = append(httpServers, localServer)
 				go func() {
 					if err := localServer.ServeTLS(s3ApiLocalListener, "", ""); err != nil && err != http.ErrServerClosed {
@@ -539,7 +552,7 @@ func (s3opt *S3Options) startS3Server() bool {
 					}
 				}()
 			}
-			httpS := newHttpServer(router, tlsConfig)
+			httpS := newHttpServer(vectorsHandler, tlsConfig)
 			httpServers = append(httpServers, httpS)
 			shutdown := s3opt.newShutdown(stopGrpcServer, s3ApiServer, httpServers)
 			if err = httpS.ServeTLS(s3ApiListener, "", ""); err != nil && err != http.ErrServerClosed {
@@ -555,7 +568,7 @@ func (s3opt *S3Options) startS3Server() bool {
 				glog.Fatalf("S3 API HTTPS listener on %s:%d error: %v", *s3opt.bindIp, *s3opt.portHttps, err)
 			}
 			if s3ApiLocalListenerHttps != nil {
-				localHttpsServer := newHttpServer(router, tlsConfig)
+				localHttpsServer := newHttpServer(vectorsHandler, tlsConfig)
 				httpServers = append(httpServers, localHttpsServer)
 				go func() {
 					if err := localHttpsServer.ServeTLS(s3ApiLocalListenerHttps, "", ""); err != nil && err != http.ErrServerClosed {
@@ -563,7 +576,7 @@ func (s3opt *S3Options) startS3Server() bool {
 					}
 				}()
 			}
-			httpsServer := newHttpServer(router, tlsConfig)
+			httpsServer := newHttpServer(vectorsHandler, tlsConfig)
 			httpServers = append(httpServers, httpsServer)
 			go func() {
 				if err := httpsServer.ServeTLS(s3ApiListenerHttps, "", ""); err != nil && err != http.ErrServerClosed {
@@ -706,13 +719,15 @@ func (s3opt *S3Options) startLanceServer(s3ApiServer *s3api.S3ApiServer, listenO
 // startVectorsServer starts the S3 Vectors API server on a separate port. It
 // fans index and data calls out to the shared VectorService over gRPC; with no
 // -vectors.grpc the API is not served.
-func (s3opt *S3Options) startVectorsServer(s3ApiServer *s3api.S3ApiServer, grpcDialOption grpc.DialOption, listenOnLocalhost bool, masterAddresses []pb.ServerAddress) *http.Server {
+// vectorsRouter builds the S3 Vectors API router when a weed-vector backend
+// is reachable — via -vectors.grpc or master discovery.
+func (s3opt *S3Options) vectorsRouter(s3ApiServer *s3api.S3ApiServer, grpcDialOption grpc.DialOption, masterAddresses []pb.ServerAddress) *mux.Router {
 	worker := *s3opt.vectorsGrpc
 	if worker == "" {
 		worker = discoverVectorWorker(masterAddresses, grpcDialOption)
 	}
 	if worker == "" {
-		glog.Warningf("port.vectors set without -vectors.grpc and no weed-vector registered on master; S3 Vectors API disabled")
+		glog.Warningf("S3 Vectors API disabled: no -vectors.grpc and no weed-vector registered on master")
 		return nil
 	}
 	conn, err := pb.GrpcDial(context.Background(), worker, false, grpcDialOption)
@@ -726,6 +741,25 @@ func (s3opt *S3Options) startVectorsServer(s3ApiServer *s3api.S3ApiServer, grpcD
 	vectorsServer.SetRegion(s3tables.DefaultRegion)
 	vectorsServer.SetAccountID(s3tables.DefaultAccountID)
 	vectorsServer.RegisterRoutes(vectorsRouter)
+	return vectorsRouter
+}
+
+// isVectorsRequest routes by the SigV4 credential scope — the s3vectors
+// service name lives there, not in the path.
+func isVectorsRequest(r *http.Request) bool {
+	if v := r.Header.Get("Authorization"); v != "" {
+		return strings.Contains(v, "/s3vectors/")
+	}
+	return strings.Contains(r.URL.Query().Get("X-Amz-Credential"), "/s3vectors/")
+}
+
+// startVectorsServer serves the S3 Vectors API on a dedicated port; the main
+// -port listener already serves it whenever a backend is reachable, so this
+// stays only for explicit -port.vectors deployments.
+func (s3opt *S3Options) startVectorsServer(s3ApiServer *s3api.S3ApiServer, grpcDialOption grpc.DialOption, listenOnLocalhost bool, masterAddresses []pb.ServerAddress, vectorsRouter *mux.Router) *http.Server {
+	if vectorsRouter == nil {
+		return nil
+	}
 
 	// Mirror the main API: when TLS is configured the vectors port serves
 	// HTTPS, not a second plaintext endpoint. Build the TLS config before
@@ -737,13 +771,11 @@ func (s3opt *S3Options) startVectorsServer(s3ApiServer *s3api.S3ApiServer, grpcD
 		// than after the listeners bind an endpoint that cannot handshake.
 		if _, err := tls.LoadX509KeyPair(*s3opt.tlsCertificate, *s3opt.tlsPrivateKey); err != nil {
 			glog.Errorf("S3 Vectors: load HTTPS certificate: %v", err)
-			conn.Close()
 			return nil
 		}
 		getCert, _, err := security.NewReloadingServerCertificate(*s3opt.tlsCertificate, *s3opt.tlsPrivateKey)
 		if err != nil {
 			glog.Errorf("S3 Vectors: load HTTPS certificate: %v", err)
-			conn.Close()
 			return nil
 		}
 		clientAuth := tls.NoClientCert
@@ -753,7 +785,6 @@ func (s3opt *S3Options) startVectorsServer(s3ApiServer *s3api.S3ApiServer, grpcD
 			caCertPool, err = loadClientCAPool(*s3opt.tlsCACertificate)
 			if err != nil {
 				glog.Errorf("S3 Vectors: %v", err)
-				conn.Close()
 				return nil
 			}
 		}
@@ -764,7 +795,6 @@ func (s3opt *S3Options) startVectorsServer(s3ApiServer *s3api.S3ApiServer, grpcD
 		}
 		if err := security.FixTlsConfig(util.GetViper(), tlsConfig); err != nil {
 			glog.Errorf("S3 Vectors: tls config: %v", err)
-			conn.Close()
 			return nil
 		}
 	}
@@ -774,7 +804,6 @@ func (s3opt *S3Options) startVectorsServer(s3ApiServer *s3api.S3ApiServer, grpcD
 		*s3opt.bindIp, *s3opt.portVectors, idleTimeoutSeconds(s3opt.idleTimeout), listenOnLocalhost)
 	if err != nil {
 		glog.Errorf("S3 Vectors listener on %s error: %v", listenAddress, err)
-		conn.Close()
 		return nil
 	}
 
@@ -946,7 +975,6 @@ func discoverVectorWorker(masters []pb.ServerAddress, grpcDialOption grpc.DialOp
 		resp, err := master_pb.NewSeaweedClient(conn).ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
 			ClientType: "vector",
 		})
-		conn.Close()
 		if err != nil {
 			continue
 		}

@@ -7,7 +7,7 @@ weed-vector-server are up by then.
 import boto3
 import pytest
 
-ENDPOINT = "http://127.0.0.1:9201"
+ENDPOINT = "http://127.0.0.1:8334"
 BUCKET = "vectors-bucket"
 INDEX = "idx"
 
