@@ -92,8 +92,14 @@ type Topology struct {
 	lastPersistedTopologyId   atomic.Value
 	lastPersistedGrowthFrozen atomic.Bool
 
-	growthFrozen            atomic.Bool
-	growthFrozenAt          atomic.Int64
+	// growthFrozenState packs the freeze flag and its generation into one
+	// value: 0 = unfrozen, -1 = frozen without a recorded instant (entries
+	// written before the field existed), >0 = frozen at that instant. Every
+	// transition is a single atomic swap or compare-and-swap, so a lift can
+	// only clear the exact generation it was bound to — a stale unfreeze
+	// cannot erase a newer freeze, a resume cannot lift a generation it did
+	// not observe, and stamps need not be monotonic across masters.
+	growthFrozenState       atomic.Int64
 	metaReadOnly            atomic.Bool
 	freezeOnMismatch        atomic.Bool
 	stateLossRecoveryWait   atomic.Int64
@@ -1540,8 +1546,7 @@ func (t *Topology) checkReportedTopologyIdLocked(reported string) (freeze bool) 
 	if reported == own {
 		return false
 	}
-	t.growthFrozenAt.Store(time.Now().UnixNano())
-	if t.growthFrozen.CompareAndSwap(false, true) {
+	if t.growthFrozenState.Swap(time.Now().UnixNano()) == 0 {
 		stats.MasterVolumeGrowthFrozen.Set(1)
 		glog.Errorf("volume growth frozen: a volume server reports topology id %s but this cluster is %s; the master state was rebuilt. Verify the cluster inventory, then run: volume.growth.resume", reported, own)
 		return true
@@ -1550,18 +1555,21 @@ func (t *Topology) checkReportedTopologyIdLocked(reported string) (freeze bool) 
 }
 
 func (t *Topology) IsGrowthFrozen() bool {
-	if !t.growthFrozen.Load() {
+	state := t.growthFrozenState.Load()
+	if state == 0 {
 		return false
 	}
 	if wait := t.stateLossRecoveryWait.Load(); wait > 0 {
-		frozenAt := t.growthFrozenAt.Load()
-		if time.Duration(time.Now().UnixNano()-frozenAt) > time.Duration(wait) {
-			if t.growthFrozen.CompareAndSwap(true, false) {
+		// A legacy generation carries no instant; its window counts as
+		// already elapsed.
+		if state < 0 || time.Duration(time.Now().UnixNano()-state) > time.Duration(wait) {
+			if t.growthFrozenState.CompareAndSwap(state, 0) {
 				stats.MasterVolumeGrowthFrozen.Set(0)
 				glog.V(0).Infof("volume growth unfrozen after %v", time.Duration(wait))
-				go t.replicateGrowthUnfreeze(frozenAt)
+				go t.replicateGrowthUnfreeze(state)
+				return false
 			}
-			return false
+			return t.growthFrozenState.Load() != 0
 		}
 	}
 	return true
@@ -1569,65 +1577,77 @@ func (t *Topology) IsGrowthFrozen() bool {
 
 // replicateGrowthUnfreeze pushes the recovery-wait lift through raft like
 // ResumeVolumeGrowth, so a restart does not replay the freeze. The command
-// carries the freeze instant it lifts: a newer freeze — even one committed
-// but not yet applied when this node won an election — makes the apply a
-// no-op instead of being erased. If the write never lands, the flag is
+// carries the generation it lifts: a newer freeze — even one committed but
+// not yet applied when this node won an election — makes the apply a no-op
+// instead of being erased. If the write never lands, the generation is
 // re-armed so a later IsGrowthFrozen retries the lift.
 func (t *Topology) replicateGrowthUnfreeze(frozenAt int64) {
 	for attempt := 0; attempt < 3; attempt++ {
 		if attempt > 0 {
 			time.Sleep(time.Duration(attempt) * time.Second)
 		}
-		if t.growthFrozenAt.Load() != frozenAt {
-			// A newer freeze owns the flag now; falling through to the
-			// re-arm would undo a resume that followed it.
+		// The caller's lift already cleared the flag, so unfrozen is the
+		// state to expect; anything else armed is a newer generation this
+		// lift must not touch — and falling through to the re-arm would
+		// undo a resume that followed it.
+		if s := t.growthFrozenState.Load(); s != 0 && s != frozenAt {
 			return
 		}
 		if err := t.applyGrowthUnfreeze(frozenAt); err == nil {
 			return
 		}
 	}
-	if t.growthFrozen.CompareAndSwap(false, true) {
+	if frozenAt != 0 && t.growthFrozenState.CompareAndSwap(0, frozenAt) {
 		stats.MasterVolumeGrowthFrozen.Set(1)
 		glog.Warningf("volume growth unfreeze not replicated; freeze re-armed for retry")
 	}
 }
 
 func (t *Topology) ResumeVolumeGrowth() bool {
-	frozenAt := t.growthFrozenAt.Load()
-	if !t.growthFrozen.CompareAndSwap(true, false) {
-		return false
+	for {
+		// The compare binds the resume to the generation it observed: a
+		// freeze landing between the load and the swap just moves to the
+		// next iteration, which lifts the generation actually armed.
+		frozenAt := t.growthFrozenState.Load()
+		if frozenAt == 0 {
+			return false
+		}
+		if t.growthFrozenState.CompareAndSwap(frozenAt, 0) {
+			stats.MasterVolumeGrowthFrozen.Set(0)
+			glog.V(0).Infof("volume growth resumed by operator")
+			t.applyGrowthUnfreeze(frozenAt)
+			return true
+		}
 	}
-	stats.MasterVolumeGrowthFrozen.Set(0)
-	glog.V(0).Infof("volume growth resumed by operator")
-	t.applyGrowthUnfreeze(frozenAt)
-	return true
 }
 
 // SetGrowthFrozen applies a replicated freeze transition on every master. A
-// positive frozenAt pins the instant so all nodes share one recovery window;
-// a non-positive one — entries written before the field existed — stays zero
-// so the freeze is ageless: the recovery check reads its window as elapsed,
-// and a bound lift still applies. Substituting the replay time would shadow
-// every committed unfreeze and re-apply the freeze on each restart. An
-// unfreeze bound to unfreezeFor applies only while no strictly newer freeze
-// exists, so a stale lift cannot erase a freeze that committed first; zero
-// lifts unconditionally.
+// positive frozenAt pins the instant so all nodes share one recovery
+// window; a non-positive one — entries written before the field existed —
+// becomes the ageless generation, a stable identity a bound lift can still
+// match and the recovery check reads as already elapsed. An unfreeze bound
+// to unfreezeFor applies only while that exact generation is armed, so a
+// stale lift cannot erase a newer freeze; zero lifts unconditionally, for
+// entries written before the binding existed.
 func (t *Topology) SetGrowthFrozen(frozen bool, frozenAt int64, unfreezeFor int64) {
 	if frozen {
-		// The timestamp lands before the flag so a reader can never see
-		// frozen with a stale time and misjudge the auto-resume window.
-		t.growthFrozenAt.Store(frozenAt)
-		if t.growthFrozen.CompareAndSwap(false, true) {
+		gen := frozenAt
+		if gen == 0 {
+			gen = -1
+		}
+		if t.growthFrozenState.Swap(gen) == 0 {
 			stats.MasterVolumeGrowthFrozen.Set(1)
 			glog.V(0).Infof("volume growth freeze applied from raft")
 		}
 		return
 	}
-	if unfreezeFor > 0 && t.growthFrozenAt.Load() > unfreezeFor {
+	if unfreezeFor == 0 {
+		if t.growthFrozenState.Swap(0) != 0 {
+			stats.MasterVolumeGrowthFrozen.Set(0)
+		}
 		return
 	}
-	if t.growthFrozen.CompareAndSwap(true, false) {
+	if t.growthFrozenState.CompareAndSwap(unfreezeFor, 0) {
 		stats.MasterVolumeGrowthFrozen.Set(0)
 	}
 }
@@ -1640,7 +1660,7 @@ func (t *Topology) applyGrowthFreeze() error {
 	cmd := NewMaxVolumeIdCommand(t.GetMaxVolumeId(), t.GetTopologyId())
 	frozen := true
 	cmd.GrowthFrozen = &frozen
-	cmd.GrowthFrozenAt = t.growthFrozenAt.Load()
+	cmd.GrowthFrozenAt = t.growthFrozenState.Load()
 	return t.applyGrowthFreezeCommand(cmd)
 }
 
@@ -1823,10 +1843,11 @@ func (t *Topology) SetMaxVolumeIdFile(file string) {
 	}
 }
 
-// GetGrowthFrozenAt reports the instant the current freeze generation froze
-// growth, for state snapshots.
+// GetGrowthFrozenAt reports the current freeze generation for state
+// snapshots: 0 unfrozen, -1 an ageless freeze with no recorded instant,
+// else the freeze instant.
 func (t *Topology) GetGrowthFrozenAt() int64 {
-	return t.growthFrozenAt.Load()
+	return t.growthFrozenState.Load()
 }
 
 // PersistMaxVolumeId writes the bound to the mirror file. Called by the
@@ -1855,7 +1876,7 @@ func (t *Topology) PersistMaxVolumeId(vid needle.VolumeId) error {
 	cmd := NewMaxVolumeIdCommand(vid, topoId)
 	cmd.GrowthFrozen = &frozen
 	if frozen {
-		cmd.GrowthFrozenAt = t.growthFrozenAt.Load()
+		cmd.GrowthFrozenAt = t.growthFrozenState.Load()
 	}
 	b, err := json.Marshal(cmd)
 	if err != nil {

@@ -131,7 +131,7 @@ func TestReplicateGrowthUnfreezeSkipsRefreeze(t *testing.T) {
 		t.Fatal("a stale unfreeze must not lift a freeze that landed after it")
 	default:
 	}
-	if !topo.growthFrozen.Load() {
+	if topo.growthFrozenState.Load() != 2000 {
 		t.Fatal("the newer freeze must stay armed")
 	}
 }
@@ -140,8 +140,10 @@ func TestReplicateGrowthUnfreezeRearmsOnFailure(t *testing.T) {
 	topo := NewTopology("topo", nil, 128, 3, false)
 	topo.RaftServer = failingRaftServer{}
 
-	topo.replicateGrowthUnfreeze(topo.GetGrowthFrozenAt())
-	if !topo.growthFrozen.Load() {
+	topo.SetGrowthFrozen(true, 1000, 0)
+	topo.growthFrozenState.CompareAndSwap(1000, 0) // the local lift
+	topo.replicateGrowthUnfreeze(1000)
+	if topo.growthFrozenState.Load() != 1000 {
 		t.Fatal("a failed replication must re-arm the freeze so a later read retries the lift")
 	}
 }
@@ -153,7 +155,7 @@ func TestReplicateGrowthUnfreezeDoesNotRearmAfterResume(t *testing.T) {
 	topo.SetGrowthFrozen(true, 2000, 0)
 	topo.ResumeVolumeGrowth()
 	topo.replicateGrowthUnfreeze(1000)
-	if topo.growthFrozen.Load() {
+	if topo.growthFrozenState.Load() != 0 {
 		t.Fatal("a superseded lift must not re-arm the freeze an operator resumed")
 	}
 }
@@ -228,9 +230,10 @@ func TestGrowthFreezeCommandApply(t *testing.T) {
 	}
 }
 
-// Freeze entries written before the instant field existed replay as ageless:
-// a lift bound to a later instant still applies, and the recovery window
-// reads as already elapsed — a replay-time stamp would shadow every committed
+// Freeze entries written before the instant field existed replay as their
+// own stable generation: a lift bound to it still applies, a lift bound to a
+// different generation cannot clear it, and the recovery window reads as
+// already elapsed — a replay-time stamp would shadow every committed
 // unfreeze and re-apply the freeze on each restart.
 func TestLegacyFreezeReplayStaysAgeless(t *testing.T) {
 	topo := NewTopology("topo", nil, 128, 3, false)
@@ -238,8 +241,12 @@ func TestLegacyFreezeReplayStaysAgeless(t *testing.T) {
 
 	topo.SetGrowthFrozen(true, 0, 0)
 	topo.SetGrowthFrozen(false, 0, 1234)
-	if topo.IsGrowthFrozen() {
-		t.Fatal("a bound lift must apply to a freeze whose instant was never recorded")
+	if topo.growthFrozenState.Load() != -1 {
+		t.Fatal("a lift bound to a different generation must not clear the ageless freeze")
+	}
+	topo.SetGrowthFrozen(false, 0, -1)
+	if topo.growthFrozenState.Load() != 0 {
+		t.Fatal("a lift bound to the ageless generation should clear it")
 	}
 
 	topo.SetGrowthFrozen(true, 0, 0)

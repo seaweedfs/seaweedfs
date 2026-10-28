@@ -20,10 +20,12 @@ type MaxVolumeIdCommand struct {
 	// same recovery window and can tell one freeze generation from the next.
 	// Zero on entries written before the field existed.
 	GrowthFrozenAt int64 `json:"growthFrozenAt,omitempty"`
-	// GrowthUnfreezeFor binds GrowthFrozen=false to the freeze instant the
-	// submitter observed: the lift applies only while no strictly newer
-	// freeze exists, so a stale unfreeze cannot erase a freeze that reached
-	// the log first. Zero lifts unconditionally.
+	// GrowthUnfreezeFor binds GrowthFrozen=false to the freeze generation
+	// the submitter observed: the lift applies only while that exact
+	// generation is armed, so a stale unfreeze cannot erase a freeze that
+	// reached the log first. Zero lifts unconditionally, for entries
+	// written before the binding existed; -1 binds the ageless generation
+	// left by freeze entries written before instants existed.
 	GrowthUnfreezeFor int64 `json:"growthUnfreezeFor,omitempty"`
 }
 
