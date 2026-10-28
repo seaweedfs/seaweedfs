@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path"
+	"strings"
 	"testing"
 	"time"
 
@@ -78,5 +79,55 @@ func TestLoadCurrentMetadataFollowsMetadataLocation(t *testing.T) {
 	}
 	if state.DataPath != setup.tablePath() {
 		t.Fatalf("DataPath = %q, want %q", state.DataPath, setup.tablePath())
+	}
+}
+
+// A location-only record whose metadata file sits inline loads at any size:
+// the REST load path accepts inline content unbounded, so a bound here would
+// strand a table the catalog itself wrote. Only a chunked file — where the
+// location can name any object in the bucket — is capped.
+func TestLoadMetadataBoundsOnlyChunkedFiles(t *testing.T) {
+	fs, client := startFakeFiler(t)
+	ctx := context.Background()
+
+	original := metadataFileMaxBytes
+	metadataFileMaxBytes = 8
+	defer func() { metadataFileMaxBytes = original }()
+
+	setup := tableSetup{BucketName: "b", Namespace: "ns", TableName: "t"}
+	meta := buildTestMetadata(t, nil, nil, 0, nil, nil, nil)
+	metaJSON, err := json.Marshal(meta)
+	if err != nil {
+		t.Fatalf("marshal metadata: %v", err)
+	}
+	if int64(len(metaJSON)) <= metadataFileMaxBytes {
+		t.Fatal("test needs the inline metadata file to exceed the bound")
+	}
+	metadataDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.tablePath(), "metadata")
+
+	inlineLocation := fmt.Sprintf("s3://%s/%s/metadata/inline.metadata.json", setup.BucketName, setup.tablePath())
+	fs.putEntry(metadataDir, "inline.metadata.json", &filer_pb.Entry{
+		Name:       "inline.metadata.json",
+		Attributes: &filer_pb.FuseAttributes{Mtime: time.Now().Unix(), FileSize: uint64(len(metaJSON))},
+		Content:    metaJSON,
+	})
+
+	state := &tableState{DataPath: setup.tablePath(), MetadataLocation: inlineLocation}
+	if err := state.loadMetadata(ctx, client, setup.BucketName); err != nil {
+		t.Fatalf("loadMetadata on inline content: %v", err)
+	}
+	if state.Metadata == nil {
+		t.Fatal("inline metadata file over the bound was not loaded")
+	}
+
+	chunkedLocation := fmt.Sprintf("s3://%s/%s/metadata/chunked.metadata.json", setup.BucketName, setup.tablePath())
+	fs.putEntry(metadataDir, "chunked.metadata.json", &filer_pb.Entry{
+		Name:       "chunked.metadata.json",
+		Attributes: &filer_pb.FuseAttributes{Mtime: time.Now().Unix(), FileSize: uint64(metadataFileMaxBytes + 1)},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "1,0123456789ab"}},
+	})
+	state = &tableState{DataPath: setup.tablePath(), MetadataLocation: chunkedLocation}
+	if err := state.loadMetadata(ctx, client, setup.BucketName); err == nil || !strings.Contains(err.Error(), "too large") {
+		t.Fatalf("chunked file over the bound: err = %v, want too-large rejection", err)
 	}
 }

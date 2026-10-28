@@ -167,10 +167,12 @@ func loadCurrentMetadata(ctx context.Context, client filer_pb.SeaweedFilerClient
 	return state, nil
 }
 
-// metadataFileMaxBytes bounds the metadata file a location-only record may
-// pull into memory: the location comes from the catalog record and can name
-// any file in the bucket, not only ones a commit wrote.
-const metadataFileMaxBytes = 64 << 20
+// metadataFileMaxBytes bounds the chunked read a location-only record may
+// trigger: the location comes from the catalog record and can name any file
+// in the bucket, not only ones a commit wrote. Inline content is exempt —
+// the REST load path accepts it unbounded and the lookup already holds it in
+// memory, so refusing it would only strand a table that loads fine.
+var metadataFileMaxBytes int64 = 64 << 20
 
 // loadMetadata fills in Metadata for a record that keeps no inline copy: a
 // commit that outgrew the request-size limit stores only the metadata file's
@@ -183,8 +185,10 @@ func (s *tableState) loadMetadata(ctx context.Context, client filer_pb.SeaweedFi
 	if err != nil {
 		return fmt.Errorf("load metadata file %s: %w", s.MetadataLocation, err)
 	}
-	if size := int64(filer.FileSize(entry)); size > metadataFileMaxBytes {
-		return fmt.Errorf("metadata file %s too large: %d bytes", s.MetadataLocation, size)
+	if len(entry.Content) == 0 && len(entry.Chunks) > 0 {
+		if size := int64(filer.FileSize(entry)); size > metadataFileMaxBytes {
+			return fmt.Errorf("metadata file %s too large: %d bytes", s.MetadataLocation, size)
+		}
 	}
 	content, err := readEntryContent(ctx, client, entry, s.MetadataLocation)
 	if err != nil {
