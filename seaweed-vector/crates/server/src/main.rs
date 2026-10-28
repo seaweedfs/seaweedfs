@@ -46,8 +46,21 @@ fn advertised_addr(listen: &str, masters: &[String]) -> String {
     }
     let port = listen.rsplit_once(':').map(|(_, p)| p).unwrap_or_default();
     if let Some(master) = masters.first() {
+        // Masters may arrive as host:http.grpc or scheme://host:http —
+        // the UDP probe only needs a dialable host:port.
+        let probe = master
+            .rsplit_once("://")
+            .map(|(_, r)| r)
+            .unwrap_or(master);
+        let probe = match probe.rsplit_once(':') {
+            Some((h, p)) => match p.split_once('.') {
+                Some((_, g)) => format!("{h}:{g}"),
+                None => probe.to_string(),
+            },
+            None => probe.to_string(),
+        };
         if let Ok(sock) = std::net::UdpSocket::bind((host, 0u16)) {
-            if sock.connect(master).is_ok() {
+            if sock.connect(&probe).is_ok() {
                 if let Ok(local) = sock.local_addr() {
                     return format!("{}:{}", local.ip(), port);
                 }
