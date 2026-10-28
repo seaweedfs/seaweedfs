@@ -269,6 +269,7 @@ func (h *S3TablesHandler) handleRegisterTable(w http.ResponseWriter, r *http.Req
 		VersionToken:     versionToken,
 		MetadataVersion:  metadataVersionFromLocation(req.MetadataLocation),
 		MetadataLocation: req.MetadataLocation,
+		Metadata:         req.Metadata,
 	}
 
 	metadataBytes, err := json.Marshal(metadata)

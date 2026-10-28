@@ -2,6 +2,7 @@ package iceberg
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -168,4 +169,32 @@ func (s *Server) loadMetadataFile(ctx context.Context, bucketName, tablePath, me
 		return nil, err
 	}
 	return content, nil
+}
+
+// currentMetadataBytes returns the Iceberg metadata a table serves: the copy
+// kept in its catalog record or, for a record that holds only a metadata
+// location, the file at that location. Tables registered before the record
+// kept their metadata look like that, and serving an empty placeholder for
+// them hides every snapshot and fails every commit on a table UUID mismatch.
+// It returns nil, for the caller's placeholder, when the record has neither
+// or the file is gone.
+func (s *Server) currentMetadataBytes(ctx context.Context, getResp s3tables.GetTableResponse, bucketName string) ([]byte, error) {
+	if getResp.Metadata != nil && len(getResp.Metadata.FullMetadata) > 0 {
+		return getResp.Metadata.FullMetadata, nil
+	}
+	if getResp.MetadataLocation == "" {
+		return nil, nil
+	}
+	metadataBucket, tablePath, err := parseS3Location(tableLocationFromMetadataLocation(getResp.MetadataLocation))
+	if err != nil {
+		return nil, err
+	}
+	if err := confineMetadataLocation(metadataBucket, tablePath, bucketName); err != nil {
+		return nil, err
+	}
+	content, err := s.loadTableMetadataBlob(ctx, metadataBucket, tablePath, path.Base(getResp.MetadataLocation))
+	if errors.Is(err, filer_pb.ErrNotFound) {
+		return nil, nil
+	}
+	return content, err
 }

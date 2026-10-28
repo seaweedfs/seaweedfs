@@ -483,10 +483,17 @@ func (s *Server) handleRegisterTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	metadataFileName := path.Base(req.MetadataLocation)
-	metadataBytes, err := s.loadMetadataFile(r.Context(), metadataBucket, tablePath, metadataFileName)
+	// A table migrated in has its metadata uploaded through the S3 gateway,
+	// which stores it in chunks rather than inline, so follow the chunks.
+	metadataBytes, err := s.loadTableMetadataBlob(r.Context(), metadataBucket, tablePath, metadataFileName)
 	if err != nil {
 		glog.V(1).Infof("Iceberg: RegisterTable load metadata at %s: %v", req.MetadataLocation, err)
 		writeError(w, http.StatusBadRequest, "BadRequestException", "Cannot read metadata at "+req.MetadataLocation)
+		return
+	}
+	registered, err := table.ParseMetadataBytes(metadataBytes)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "BadRequestException", fmt.Sprintf("Invalid metadata at %s: %v", req.MetadataLocation, err))
 		return
 	}
 
@@ -495,6 +502,10 @@ func (s *Server) handleRegisterTable(w http.ResponseWriter, r *http.Request) {
 		Namespace:        namespace,
 		Name:             req.Name,
 		MetadataLocation: req.MetadataLocation,
+		Metadata: &s3tables.TableMetadata{
+			Iceberg:      &s3tables.IcebergMetadata{TableUUID: registered.TableUUID().String()},
+			FullMetadata: metadataBytes,
+		},
 	}
 	var registerResp s3tables.RegisterTableResponse
 	err = s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
@@ -520,7 +531,7 @@ func (s *Server) handleRegisterTable(w http.ResponseWriter, r *http.Request) {
 
 	getResp := s3tables.GetTableResponse{
 		MetadataLocation: req.MetadataLocation,
-		Metadata:         &s3tables.TableMetadata{FullMetadata: json.RawMessage(metadataBytes)},
+		Metadata:         registerReq.Metadata,
 	}
 	result, buildErr := s.buildLoadTableResult(r, getResp, bucketName, namespace, req.Name)
 	if buildErr != nil {
@@ -599,10 +610,13 @@ func (s *Server) buildLoadTableResult(r *http.Request, getResp s3tables.GetTable
 	// Use Nil UUID if not found in storage (legacy table)
 	// Stability is guaranteed by not generating random UUIDs on read
 
+	metadataBytes, err := s.currentMetadataBytes(r.Context(), getResp, bucketName)
+	if err != nil {
+		return LoadTableResult{}, fmt.Errorf("load metadata for %s: %w", tableName, err)
+	}
 	var metadata table.Metadata
-	var err error
-	if getResp.Metadata != nil && len(getResp.Metadata.FullMetadata) > 0 {
-		metadata, err = table.ParseMetadataBytes(getResp.Metadata.FullMetadata)
+	if len(metadataBytes) > 0 {
+		metadata, err = table.ParseMetadataBytes(metadataBytes)
 		if err != nil {
 			glog.Warningf("Iceberg: Failed to parse persisted metadata for %s: %v", tableName, err)
 			// Attempt to reconstruct from IcebergMetadata if available, otherwise synthetic

@@ -208,10 +208,11 @@ type CreateTableResponse struct {
 }
 
 type RegisterTableRequest struct {
-	TableBucketARN   string   `json:"tableBucketARN"`
-	Namespace        []string `json:"namespace"`
-	Name             string   `json:"name"`
-	MetadataLocation string   `json:"metadataLocation"`
+	TableBucketARN   string         `json:"tableBucketARN"`
+	Namespace        []string       `json:"namespace"`
+	Name             string         `json:"name"`
+	MetadataLocation string         `json:"metadataLocation"`
+	Metadata         *TableMetadata `json:"metadata,omitempty"`
 }
 
 type RegisterTableResponse struct {
