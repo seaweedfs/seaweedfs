@@ -2078,7 +2078,23 @@ func (s3a *S3ApiServer) doGetLatestObjectVersion(bucket, object string, maxRetri
 		return nil, fmt.Errorf("failed to get latest version file %s: %v", latestVersionPath, err)
 	}
 
-	return latestVersionEntry, nil
+	return attachResolvedVersionId(latestVersionEntry, latestVersionId), nil
+}
+
+// attachResolvedVersionId stamps the resolved id on a versioned child that
+// predates the version-id attribute, so readers see the id the pointer or the
+// rescan already recovered without re-deriving it from the file name.
+func attachResolvedVersionId(entry *filer_pb.Entry, versionId string) *filer_pb.Entry {
+	if entry == nil || versionId == "" {
+		return entry
+	}
+	if entry.Extended == nil {
+		entry.Extended = make(map[string][]byte)
+	}
+	if len(entry.Extended[s3_constants.ExtVersionIdKey]) == 0 {
+		entry.Extended[s3_constants.ExtVersionIdKey] = []byte(versionId)
+	}
+	return entry
 }
 
 // recoverLatestVersionWithoutPointer handles a .versions directory that exists
@@ -2248,6 +2264,8 @@ func (s3a *S3ApiServer) healStaleLatestVersionPointer(bucket, normalizedObject s
 		// (I/O errors during list) via errors.Is.
 		return nil, fmt.Errorf("%w: no remaining version in %s", filer_pb.ErrNotFound, versionsDir)
 	}
+
+	latestEntry = attachResolvedVersionId(latestEntry, latestVersionId)
 
 	// The persist is CAS-style (mirroring clearStaleLatestVersionPointer) so a
 	// stale repair cannot supersede a concurrent writer: the rescan takes time,
