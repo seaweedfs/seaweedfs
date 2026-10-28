@@ -765,9 +765,16 @@ func isTransportError(err error) bool {
 func (d *vectorDiscovery) resolve() (vector_pb.VectorServiceClient, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	worker := discoverVectorWorker(d.masters, d.grpcDialOption)
-	if worker == "" {
+	workers := discoverVectorWorkers(d.masters, d.grpcDialOption)
+	if len(workers) == 0 {
 		return nil, fmt.Errorf("no weed-vector registered on master")
+	}
+	worker := workers[0]
+	for _, w := range workers {
+		if w == d.worker {
+			worker = w
+			break
+		}
 	}
 	if worker != d.worker {
 		if d.conn != nil {
@@ -1053,22 +1060,35 @@ func (v lanceCredentialVendor) VendTableCredentials(ctx context.Context, princip
 // discoverVectorWorker resolves one registered weed-vector server through the
 // master's cluster-nodes list; OSS fans every vector call to that single
 // backend.
-func discoverVectorWorker(masters []pb.ServerAddress, grpcDialOption grpc.DialOption) string {
+// discoverVectorWorkers returns every registered weed-vector address —
+// callers keep their current worker when it is still listed so
+// membership-order changes cannot churn live connections.
+func discoverVectorWorkers(masters []pb.ServerAddress, grpcDialOption grpc.DialOption) []string {
 	for _, master := range masters {
-		conn, err := pb.GrpcDial(context.Background(), master.ToGrpcAddress(), false, grpcDialOption)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		conn, err := pb.GrpcDial(ctx, master.ToGrpcAddress(), false, grpcDialOption)
 		if err != nil {
+			cancel()
 			continue
 		}
-		resp, err := master_pb.NewSeaweedClient(conn).ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
+		resp, err := master_pb.NewSeaweedClient(conn).ListClusterNodes(ctx, &master_pb.ListClusterNodesRequest{
 			ClientType: "vector",
 		})
+		conn.Close()
+		cancel()
 		if err != nil {
 			continue
 		}
+		workers := make([]string, 0, len(resp.ClusterNodes))
 		for _, node := range resp.ClusterNodes {
 			glog.V(0).Infof("S3 Vectors: discovered weed-vector at %s via master %s", node.Address, master)
-			return node.Address
+			workers = append(workers, node.Address)
+		}
+		// A follower can answer with an empty list — workers register with
+		// the leader, so keep looking rather than accept "none."
+		if len(workers) > 0 {
+			return workers
 		}
 	}
-	return ""
+	return nil
 }
