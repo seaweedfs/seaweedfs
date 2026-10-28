@@ -148,23 +148,39 @@ func (s *Server) prepareTableCommit(ctx context.Context, bucketName, bucketARN, 
 	if location == "" {
 		location = fmt.Sprintf("s3://%s/%s", bucketName, path.Join(flattenNamespacePath(namespace), tableName))
 	}
+	locBucket, locPath, locErr := parseS3Location(location)
+	if locErr != nil {
+		return nil, &icebergRequestError{http.StatusInternalServerError, "InternalServerError", "Invalid table location: " + locErr.Error()}
+	}
+	if err := confineMetadataLocation(locBucket, locPath, bucketName); err != nil {
+		return nil, &icebergRequestError{http.StatusBadRequest, "BadRequestException", err.Error()}
+	}
 	tableUUID := uuid.Nil
 	if getResp.Metadata != nil && getResp.Metadata.Iceberg != nil && getResp.Metadata.Iceberg.TableUUID != "" {
 		if parsed, parseErr := uuid.Parse(getResp.Metadata.Iceberg.TableUUID); parseErr == nil {
 			tableUUID = parsed
 		}
 	}
-	if tableUUID == uuid.Nil {
-		tableUUID = uuid.New()
-	}
 
+	currentBytes, err := s.currentMetadataBytes(ctx, getResp, bucketName)
+	if err != nil {
+		glog.Errorf("Iceberg: CommitTransaction load current metadata for %s: %v", tableName, err)
+		return nil, &icebergRequestError{http.StatusInternalServerError, "InternalServerError", "Failed to load current metadata"}
+	}
 	var currentMetadata table.Metadata
-	if getResp.Metadata != nil && len(getResp.Metadata.FullMetadata) > 0 {
-		currentMetadata, err = table.ParseMetadataBytes(getResp.Metadata.FullMetadata)
+	if len(currentBytes) > 0 {
+		currentMetadata, err = table.ParseMetadataBytes(currentBytes)
 		if err != nil {
 			return nil, &icebergRequestError{http.StatusInternalServerError, "InternalServerError", "Failed to parse current metadata"}
 		}
-	} else {
+		if tableUUID == uuid.Nil {
+			tableUUID = currentMetadata.TableUUID()
+		}
+	}
+	if tableUUID == uuid.Nil {
+		tableUUID = uuid.New()
+	}
+	if currentMetadata == nil {
 		currentMetadata, err = newTableMetadata(tableUUID, location, nil, nil, nil, nil)
 		if err != nil {
 			glog.Errorf("Iceberg: CommitTransaction placeholder metadata for %s: %v", tableName, err)
