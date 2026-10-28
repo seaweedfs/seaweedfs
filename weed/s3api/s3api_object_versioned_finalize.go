@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strconv"
@@ -178,13 +179,20 @@ func wormDeleteCondition(worm, bypass bool) *filer_pb.WriteCondition {
 	}}
 }
 
-// routedDeleteSpecificVersion removes one version under the owner filer's object
-// lock, first repointing .versions while excluding the deleted version.
+// routedDeleteSpecificVersion removes one version under the owner filer's
+// object lock. The .versions pointer moves only while it still names the
+// deleted version: a noncurrent delete must leave it alone — it can point at
+// an older version than a re-derive would pick, or at nothing, as when a
+// suspended bucket's null write cleared it while the null object stays
+// current.
 func (s3a *S3ApiServer) routedDeleteSpecificVersion(owner pb.ServerAddress, bucket, object, versionId string, worm, bypass bool) s3err.ErrorCode {
 	if !isValidVersionID(versionId) {
 		return s3err.ErrInvalidRequest
 	}
 	versionFileName := s3a.getVersionFileName(versionId)
+	if code := s3a.repointLatestBeforeVersionDelete(owner, bucket, object, versionFileName, isNewFormatVersionId(versionId)); code != s3err.ErrNone {
+		return code
+	}
 	versionsPath := s3a.toFilerPath(bucket, object+s3_constants.VersionsFolder)
 	cond := wormDeleteCondition(worm, bypass)
 	req := &filer_pb.ObjectTransactionRequest{
@@ -193,7 +201,6 @@ func (s3a *S3ApiServer) routedDeleteSpecificVersion(owner pb.ServerAddress, buck
 		ConditionKey: versionsPath + "/" + versionFileName,
 		Condition:    cond,
 		Mutations: []*filer_pb.ObjectMutation{
-			s3a.latestPointerRecompute(bucket, object, isNewFormatVersionId(versionId), versionFileName, false),
 			{Type: filer_pb.ObjectMutation_DELETE, Directory: versionsPath, Name: versionFileName, IsDeleteData: true, RemoveEmptyParent: true},
 		},
 	}
@@ -211,6 +218,55 @@ func (s3a *S3ApiServer) routedDeleteSpecificVersion(owner pb.ServerAddress, buck
 	default:
 		return s3err.ErrNone
 	}
+}
+
+// repointLatestBeforeVersionDelete moves the .versions pointer off a version
+// about to be deleted, and only while it still names that version. The pointer
+// is read on the owner and carried back as an IF_ENTRY_EQUAL guard, so a
+// concurrent pointer update loses the race instead of being overwritten by a
+// stale scan; a contested pointer is left for the self-heal path rather than
+// repointed from an outdated read.
+func (s3a *S3ApiServer) repointLatestBeforeVersionDelete(owner pb.ServerAddress, bucket, object, versionFileName string, useInvertedFormat bool) s3err.ErrorCode {
+	versionsPath := s3a.toFilerPath(bucket, object+s3_constants.VersionsFolder)
+	dir, name := util.FullPath(versionsPath).DirAndName()
+	for attempt := 0; attempt < 2; attempt++ {
+		pointer, err := s3a.lookupEntryOnFiler(context.Background(), owner, dir, name)
+		if err != nil {
+			if errors.Is(err, filer_pb.ErrNotFound) {
+				return s3err.ErrNone
+			}
+			glog.Errorf("repointLatestBeforeVersionDelete: lookup %s on %s: %v", versionsPath, owner, err)
+			return s3err.ErrInternalError
+		}
+		if string(pointer.GetExtended()[s3_constants.ExtLatestVersionFileNameKey]) != versionFileName {
+			return s3err.ErrNone
+		}
+		resp, err := s3a.objectTxnOnFiler(owner, &filer_pb.ObjectTransactionRequest{
+			LockKey:      s3a.toFilerPath(bucket, object),
+			RouteKey:     s3a.objectRouteKey(bucket, object),
+			ConditionKey: versionsPath,
+			Condition: &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{
+				Kind:          filer_pb.WriteCondition_IF_ENTRY_EQUAL,
+				ExpectedEntry: pointer,
+			}}},
+			Mutations: []*filer_pb.ObjectMutation{
+				s3a.latestPointerRecompute(bucket, object, useInvertedFormat, versionFileName, false),
+			},
+		})
+		switch {
+		case err != nil:
+			glog.Errorf("repointLatestBeforeVersionDelete: %s on %s: %v", versionsPath, owner, err)
+			return s3err.ErrInternalError
+		case resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED:
+			continue
+		case resp.Error != "":
+			glog.Errorf("repointLatestBeforeVersionDelete: %s: %s", versionsPath, resp.Error)
+			return s3err.ErrInternalError
+		default:
+			return s3err.ErrNone
+		}
+	}
+	return s3err.ErrNone
 }
 
 // routedDeleteNullVersion deletes the null version (the regular object entry, not
