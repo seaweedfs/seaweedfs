@@ -16,6 +16,17 @@ type MaxVolumeIdCommand struct {
 	// GrowthFrozen replicates the volume-growth freeze through raft so a
 	// leader change does not silently lift it. nil means no change.
 	GrowthFrozen *bool `json:"growthFrozen,omitempty"`
+	// GrowthFrozenAt pins the freeze instant so every master measures the
+	// same recovery window and can tell one freeze generation from the next.
+	// Zero on entries written before the field existed.
+	GrowthFrozenAt int64 `json:"growthFrozenAt,omitempty"`
+	// GrowthUnfreezeFor binds GrowthFrozen=false to the freeze generation
+	// the submitter observed: the lift applies only while that exact
+	// generation is armed, so a stale unfreeze cannot erase a freeze that
+	// reached the log first. Zero lifts unconditionally, for entries
+	// written before the binding existed; -1 binds the ageless generation
+	// left by freeze entries written before instants existed.
+	GrowthUnfreezeFor int64 `json:"growthUnfreezeFor,omitempty"`
 }
 
 func NewMaxVolumeIdCommand(value needle.VolumeId, topologyId string) *MaxVolumeIdCommand {
@@ -47,7 +58,7 @@ func (c *MaxVolumeIdCommand) Apply(server raft.Server) (interface{}, error) {
 		}
 	}
 	if c.GrowthFrozen != nil {
-		topo.SetGrowthFrozen(*c.GrowthFrozen)
+		topo.SetGrowthFrozen(*c.GrowthFrozen, c.GrowthFrozenAt, c.GrowthUnfreezeFor)
 	}
 	if err := topo.PersistMaxVolumeId(c.MaxVolumeId); err != nil {
 		glog.Warningf("persist max volume id %d: %v", c.MaxVolumeId, err)
