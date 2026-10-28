@@ -46,6 +46,46 @@ func TestPromoteToPrefixObject(t *testing.T) {
 	assert.Zero(t, promoted.Attr.TtlSec)
 }
 
+// TestPrefixObjectKeepsDirectoryAttributes covers an object landing on a
+// directory that other keys nest under: the object's data replaces the object
+// slot while the directory keeps its own mode, owner, and attributes.
+func TestPrefixObjectKeepsDirectoryAttributes(t *testing.T) {
+	f, store := newTestFilerWithStubStore(t)
+	ctx := context.Background()
+
+	dirPath := util.FullPath("/buckets/bkt/a/foo")
+	require.NoError(t, store.InsertEntry(ctx, &Entry{
+		FullPath: dirPath,
+		Attr: Attr{
+			Mode: os.ModeDir | 0o700,
+			Uid:  1000,
+			Gid:  1001,
+		},
+		Extended: map[string][]byte{"dir-xattr": []byte("keep")},
+	}))
+
+	marked := &Entry{
+		FullPath: dirPath,
+		Attr: Attr{
+			Mode: os.ModeDir | 0o771,
+			Uid:  filer_pb.OS_UID,
+			Gid:  filer_pb.OS_GID,
+		},
+		Chunks:   []*filer_pb.FileChunk{{FileId: "1,02", Size: 3}},
+		Extended: map[string][]byte{s3_constants.SeaweedFSPrefixObject: []byte("true")},
+	}
+	require.NoError(t, f.CreateEntry(ctx, marked, nil, false, false, nil, false, f.MaxFilenameLength))
+
+	found, err := store.FindEntry(ctx, dirPath)
+	require.NoError(t, err)
+	require.NotNil(t, found)
+	assert.Equal(t, os.ModeDir|0o700, found.Attr.Mode, "the directory keeps its own mode")
+	assert.Equal(t, uint32(1000), found.Attr.Uid)
+	assert.Equal(t, uint32(1001), found.Attr.Gid)
+	assert.Equal(t, []byte("keep"), found.Extended["dir-xattr"], "directory attributes survive")
+	assert.Equal(t, marked.Chunks, found.Chunks, "the object's data still lands")
+}
+
 // TestExpiredDirectoryIsNotDeletedOnRead pins the other half: a TTL an older build
 // left on a promoted directory must not take the keys under it with it.
 func TestExpiredDirectoryIsNotDeletedOnRead(t *testing.T) {
@@ -123,4 +163,3 @@ func TestListDirectoryEntriesContextCanceled(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "context canceled")
 }
-
