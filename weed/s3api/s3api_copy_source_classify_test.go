@@ -122,6 +122,69 @@ func TestCopyAfterRoutedPut(t *testing.T) {
 	}
 }
 
+// A copy into a versioned bucket commits the version file and the .versions
+// pointer on the destination's write owner. Reads by versionId, latest-version
+// reads, and copy-by-versionId must resolve there before replication.
+func TestVersionedCopyDestinationReadsOnOwner(t *testing.T) {
+	util_http.InitGlobalHttpClient()
+	volume := startFakeVolumeServer(t)
+	owner := &ambiguousPutFiler{volume: volume, apply: true, entries: map[string]*filer_pb.Entry{}}
+	replica := &ambiguousPutFiler{volume: volume, apply: true, entries: map[string]*filer_pb.Entry{}}
+	ownerAddr := startFakeFiler(t, owner)
+	replicaAddr := startFakeFiler(t, replica)
+	s3a := newPutTestServer(t, replicaAddr)
+	s3a.iam = &IdentityAccessManagement{}
+	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+	s3a.bucketConfigCache.Set("source", &BucketConfig{Name: "source"})
+	s3a.bucketConfigCache.Set("destination", &BucketConfig{Name: "destination", Versioning: s3_constants.VersioningEnabled})
+	s3a.objectWriteLockClient = cluster.NewLockClient(s3a.option.GrpcDialOption, ownerAddr)
+	s3a.objectWriteLockClient.SetRing([]pb.ServerAddress{ownerAddr}, 1)
+
+	put := httptest.NewRequest(http.MethodPut, "/source/tmp/object", nil)
+	put = mux.SetURLVars(put, map[string]string{"bucket": "source", "object": "tmp/object"})
+	putResult := httptest.NewRecorder()
+	s3a.PutObjectHandler(putResult, put)
+	require.Equal(t, http.StatusOK, putResult.Code, putResult.Body.String())
+
+	copyRequest := httptest.NewRequest(http.MethodPut, "/destination/final/object", nil)
+	copyRequest = mux.SetURLVars(copyRequest, map[string]string{"bucket": "destination", "object": "final/object"})
+	copyRequest.Header.Set("X-Amz-Copy-Source", "/source/tmp/object")
+	copyResult := httptest.NewRecorder()
+	s3a.CopyObjectHandler(copyResult, copyRequest)
+	require.Equal(t, http.StatusOK, copyResult.Code, copyResult.Body.String())
+	versionId := copyResult.Header().Get("x-amz-version-id")
+	require.NotEmpty(t, versionId)
+
+	versionKey := "/buckets/destination/final/object.versions/v_" + versionId
+	owner.mu.Lock()
+	require.NotNil(t, owner.entries[versionKey], "version file must commit on the owner")
+	require.NotNil(t, owner.entries["/buckets/destination/final/object.versions"], "the owner must hold the .versions pointer")
+	owner.mu.Unlock()
+	replica.mu.Lock()
+	require.Nil(t, replica.entries[versionKey], "the replica must still be behind")
+	require.Nil(t, replica.entries["/buckets/destination/final/object.versions"], "the replica must not hold the pointer")
+	replica.mu.Unlock()
+
+	entry, err := s3a.getSpecificObjectVersion("destination", "final/object", versionId)
+	require.NoError(t, err)
+	require.NotNil(t, entry)
+
+	latest, err := s3a.getLatestObjectVersion("destination", "final/object")
+	require.NoError(t, err)
+	require.Equal(t, versionId, string(latest.Extended[s3_constants.ExtVersionIdKey]))
+
+	src, err := s3a.resolveCopySourceEntry("destination", "final/object", versionId, s3_constants.VersioningEnabled)
+	require.NoError(t, err)
+	require.NotNil(t, src)
+
+	second := httptest.NewRequest(http.MethodPut, "/destination/final/copy2", nil)
+	second = mux.SetURLVars(second, map[string]string{"bucket": "destination", "object": "final/copy2"})
+	second.Header.Set("X-Amz-Copy-Source", "/destination/final/object?versionId=" + versionId)
+	secondResult := httptest.NewRecorder()
+	s3a.CopyObjectHandler(secondResult, second)
+	require.Equal(t, http.StatusOK, secondResult.Code, secondResult.Body.String())
+}
+
 func TestCopySourcePrefersWriteOwner(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
