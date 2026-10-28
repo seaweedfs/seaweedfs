@@ -220,6 +220,7 @@ func (s *Server) prepareTableCommit(ctx context.Context, bucketName, bucketARN, 
 	if err != nil {
 		return nil, &icebergRequestError{http.StatusBadRequest, "BadRequestException", "Failed to apply statistics updates: " + err.Error()}
 	}
+	metadataBytes = refreshDefaultNameMapping(metadataBytes, newMetadata)
 	metadataBytes = ensureMetadataSpecCompliance(metadataBytes)
 
 	metadataBucket, metadataPath, err := parseS3Location(location)
