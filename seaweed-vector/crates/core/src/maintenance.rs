@@ -67,8 +67,7 @@ pub async fn pin(dataset: &Dataset) -> Result<Lease> {
     dataset
         .tags()
         .create(&tag, Ref::Version(None, Some(version)))
-        .await
-        .map_err(anyhow::Error::msg)?;
+        .await?;
     // A cleanup that listed tags before this create can still reclaim the
     // version; fail the read now rather than mid-query.
     if dataset.checkout_version(version).await.is_err() {
@@ -109,7 +108,7 @@ fn denied(err: &anyhow::Error) -> bool {
 }
 
 async fn release(dataset: &Dataset, tag: &str) -> Result<()> {
-    dataset.tags().delete(tag).await.map_err(anyhow::Error::msg)
+    Ok(dataset.tags().delete(tag).await?)
 }
 
 fn untrack(tag: &str) {
