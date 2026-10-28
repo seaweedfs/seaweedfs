@@ -523,21 +523,16 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, existing *Entry, 
 			return fmt.Errorf("%s: %w", entry.FullPath, filer_pb.ErrEntryAlreadyExists)
 		}
 		// An object landing on a directory (prefix object) replaces the object
-		// data only: the directory keeps its own mode and owner. A directory
-		// that never held an object also keeps the attributes it carried; a
-		// prior prefix object's attributes belong to the object slot and go.
+		// data only: the directory keeps its own mode and owner. Extended
+		// attributes are not merged — a marker's fields (encryption, version,
+		// etag) belong to the object it held, not to the directory.
 		if oldEntry.IsDirectory() && entry.IsDirectory() {
 			if _, marked := entry.Extended[s3_constants.SeaweedFSPrefixObject]; marked {
 				entry.Attr.Mode = oldEntry.Attr.Mode
 				entry.Attr.Uid = oldEntry.Attr.Uid
 				entry.Attr.Gid = oldEntry.Attr.Gid
-				if _, wasObject := oldEntry.Extended[s3_constants.SeaweedFSPrefixObject]; !wasObject {
-					for k, v := range oldEntry.Extended {
-						if _, ok := entry.Extended[k]; !ok {
-							entry.Extended[k] = v
-						}
-					}
-				}
+				entry.Attr.UserName = oldEntry.Attr.UserName
+				entry.Attr.GroupNames = oldEntry.Attr.GroupNames
 			}
 		}
 		glog.V(4).InfofCtx(ctx, "UpdateEntry %s: old entry: %v", entry.FullPath, oldEntry.Name())

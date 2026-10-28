@@ -48,7 +48,8 @@ func TestPromoteToPrefixObject(t *testing.T) {
 
 // TestPrefixObjectKeepsDirectoryAttributes covers an object landing on a
 // directory that other keys nest under: the object's data replaces the object
-// slot while the directory keeps its own mode, owner, and attributes.
+// slot while the directory keeps its own mode and owner — but not fields a
+// marker left behind, which belong to the object the marker held.
 func TestPrefixObjectKeepsDirectoryAttributes(t *testing.T) {
 	f, store := newTestFilerWithStubStore(t)
 	ctx := context.Background()
@@ -57,11 +58,12 @@ func TestPrefixObjectKeepsDirectoryAttributes(t *testing.T) {
 	require.NoError(t, store.InsertEntry(ctx, &Entry{
 		FullPath: dirPath,
 		Attr: Attr{
-			Mode: os.ModeDir | 0o700,
-			Uid:  1000,
-			Gid:  1001,
+			Mode:     os.ModeDir | 0o700,
+			Uid:      1000,
+			Gid:      1001,
+			UserName: "dirowner",
 		},
-		Extended: map[string][]byte{"dir-xattr": []byte("keep")},
+		Extended: map[string][]byte{s3_constants.SeaweedFSSSES3Key: []byte("stale")},
 	}))
 
 	marked := &Entry{
@@ -82,7 +84,9 @@ func TestPrefixObjectKeepsDirectoryAttributes(t *testing.T) {
 	assert.Equal(t, os.ModeDir|0o700, found.Attr.Mode, "the directory keeps its own mode")
 	assert.Equal(t, uint32(1000), found.Attr.Uid)
 	assert.Equal(t, uint32(1001), found.Attr.Gid)
-	assert.Equal(t, []byte("keep"), found.Extended["dir-xattr"], "directory attributes survive")
+	assert.Equal(t, "dirowner", found.Attr.UserName)
+	assert.NotContains(t, found.Extended, s3_constants.SeaweedFSSSES3Key,
+		"the marker's encryption fields must not leak onto the plaintext object")
 	assert.Equal(t, marked.Chunks, found.Chunks, "the object's data still lands")
 }
 
