@@ -1053,12 +1053,15 @@ func (s3a *S3ApiServer) PutBucketAclHandler(w http.ResponseWriter, r *http.Reque
 	// Get account information for ACL processing
 	amzAccountId := r.Header.Get(s3_constants.AmzAccountId)
 
+	// Without auth the request carries no account; resolve it as PutBucketHandler does.
+	aclAccountId := getAccountId(r)
+
 	// Get bucket ownership settings (these would be used for ownership validation in a full implementation)
 	bucketOwnership := ""         // Default/simplified for now - in a full implementation this would be retrieved from bucket config
-	bucketOwnerId := amzAccountId // Simplified - bucket owner is current account
+	bucketOwnerId := aclAccountId // Simplified - bucket owner is current account
 
 	// Use the existing ACL parsing logic to handle both canned ACLs and XML body
-	grants, errCode := ExtractAcl(r, s3a.iam, bucketOwnership, bucketOwnerId, amzAccountId, amzAccountId)
+	grants, errCode := ExtractAcl(r, s3a.iam, bucketOwnership, bucketOwnerId, aclAccountId, aclAccountId)
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return

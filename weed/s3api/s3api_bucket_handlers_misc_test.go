@@ -10,8 +10,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/gorilla/mux"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/stretchr/testify/require"
@@ -362,4 +364,30 @@ func TestAuthWithPublicReadHonorsPolicyDeny(t *testing.T) {
 	objectReq = mux.SetURLVars(objectReq, map[string]string{"bucket": bucket, "object": "secret/x"})
 	s3a.AuthWithPublicRead(func(w http.ResponseWriter, r *http.Request) { called = true }, s3_constants.ACTION_READ)(rr, objectReq)
 	require.True(t, called, "anonymous object request on a public bucket must reach the handler's tag-aware recheck")
+}
+
+// With auth off the request has no account, so the canned ACL's owner grant
+// named an empty account and PutBucketAcl answered InvalidRequest.
+func TestPutBucketAclWithoutAuth(t *testing.T) {
+	const bucket = "acl-bucket"
+	filer := &fakeLookupFiler{entry: &filer_pb.Entry{Name: bucket, IsDirectory: true}}
+	s3a := newHeadBucketTestServer(t, filer)
+	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+	s3a.bucketConfigCache.Set(bucket, &BucketConfig{Name: bucket})
+	s3a.iam = NewIdentityAccessManagementWithStore(s3a.option, nil, "memory")
+	t.Cleanup(s3a.iam.Shutdown)
+	require.False(t, s3a.iam.isEnabled())
+
+	req := httptest.NewRequest(http.MethodPut, "http://s3/"+bucket+"?acl", http.NoBody)
+	req = mux.SetURLVars(req, map[string]string{"bucket": bucket})
+	req.Header.Set(s3_constants.AmzCannedAcl, "public-read")
+	rr := httptest.NewRecorder()
+	s3a.iam.Auth(s3a.PutBucketAclHandler, s3_constants.ACTION_WRITE_ACP)(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+
+	require.Len(t, filer.txnSeen, 1)
+	var grants []*s3.Grant
+	require.NoError(t, json.Unmarshal(filer.txnSeen[0].Mutations[0].SetExtended[s3_constants.ExtAmzAclKey], &grants))
+	require.Len(t, grants, 2)
+	require.Equal(t, s3_constants.GranteeGroupAllUsers, aws.StringValue(grants[1].Grantee.URI))
 }
