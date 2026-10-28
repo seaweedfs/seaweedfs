@@ -151,6 +151,147 @@ func TestAssignInitiatorShedsWhenGrowthConcludesUnfulfilled(t *testing.T) {
 	assert.Len(t, ms.volumeGrowthRequestChan, 0)
 }
 
+// A location-constrained assign whose location still has room waits for the
+// growth it triggered, like an unconstrained one, instead of failing the first
+// pick outright.
+func TestAssignConstrainedInitiatorWaitsForGrowth(t *testing.T) {
+	ms := newLeaderMaster()
+	dn := ms.Topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1").
+		GetOrCreateDataNode("127.0.0.1", 8080, 18080, "127.0.0.1", "dn1", map[string]uint32{"": 100})
+
+	req := &master_pb.AssignRequest{Count: 1, Replication: "000", DataCenter: "dc1"}
+	rp, err := super_block.NewReplicaPlacementFromString(req.Replication)
+	require.NoError(t, err)
+
+	go func() {
+		req := <-ms.volumeGrowthRequestChan
+		v := storage.VolumeInfo{
+			Id:               needle.VolumeId(1),
+			Version:          needle.GetCurrentVersion(),
+			ReplicaPlacement: rp,
+			Ttl:              needle.EMPTY_TTL,
+		}
+		dn.UpdateVolumes([]storage.VolumeInfo{v})
+		ms.Topo.RegisterVolumeLayout(v, dn)
+		ms.Topo.GetVolumeLayout(req.Option.Collection, rp, needle.EMPTY_TTL, types.ToDiskType("")).DoneGrowRequest()
+	}()
+
+	start := time.Now()
+	resp, err := ms.Assign(context.Background(), req)
+	elapsed := time.Since(start)
+
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.NotEmpty(t, resp.Fid)
+	assert.Less(t, elapsed, 5*time.Second)
+}
+
+// A constrained assign joining a growth already in flight sheds retryably so
+// the client retry picks up the fresh volume, instead of failing outright.
+func TestAssignConstrainedShedsWhileGrowthPending(t *testing.T) {
+	ms := newLeaderMaster()
+	ms.Topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1").
+		GetOrCreateDataNode("127.0.0.1", 8080, 18080, "127.0.0.1", "dn1", map[string]uint32{"": 100})
+
+	req := &master_pb.AssignRequest{Count: 1, Replication: "000", DataCenter: "dc1"}
+	markGrowthInFlight(t, ms.Topo, req)
+
+	start := time.Now()
+	resp, err := ms.Assign(context.Background(), req)
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	require.Nil(t, resp)
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.ResourceExhausted, st.Code())
+	assert.Less(t, elapsed, 2*time.Second)
+	assert.Len(t, ms.volumeGrowthRequestChan, 0)
+}
+
+// A constrained initiator whose growth concludes without yielding a writable
+// volume sheds retryably so its client's retry can re-trigger growth, instead
+// of returning the plain pick error that would stop the retries.
+func TestAssignConstrainedShedsWhenGrowthConcludesUnfulfilled(t *testing.T) {
+	ms := newLeaderMaster()
+	ms.Topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1").
+		GetOrCreateDataNode("127.0.0.1", 8080, 18080, "127.0.0.1", "dn1", map[string]uint32{"": 100})
+
+	req := &master_pb.AssignRequest{Count: 1, Replication: "000", DataCenter: "dc1"}
+	rp, err := super_block.NewReplicaPlacementFromString(req.Replication)
+	require.NoError(t, err)
+	vl := ms.Topo.GetVolumeLayout("", rp, needle.EMPTY_TTL, types.ToDiskType(""))
+
+	go func() {
+		<-ms.volumeGrowthRequestChan
+		vl.DoneGrowRequest()
+	}()
+
+	start := time.Now()
+	resp, err := ms.Assign(context.Background(), req)
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	require.Nil(t, resp)
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.ResourceExhausted, st.Code())
+	assert.Less(t, elapsed, 2*time.Second)
+	assert.Len(t, ms.volumeGrowthRequestChan, 0)
+}
+
+// A constrained assign fails fast only when no growth can satisfy the
+// constraint: the named location is full (even though another data center has
+// room), or volume growth is disabled outright.
+func TestAssignConstrainedFailsFastWithoutRoom(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(t *testing.T, ms *MasterServer, req *master_pb.AssignRequest)
+	}{
+		{"location full", func(t *testing.T, ms *MasterServer, req *master_pb.AssignRequest) {
+			ms.Topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1").
+				GetOrCreateDataNode("127.0.0.1", 8080, 18080, "127.0.0.1", "dn1", map[string]uint32{"": 100})
+			dn2 := ms.Topo.GetOrCreateDataCenter("dc2").GetOrCreateRack("rack2").
+				GetOrCreateDataNode("127.0.0.2", 8080, 18080, "127.0.0.2", "dn2", map[string]uint32{"": 1})
+			rp, err := super_block.NewReplicaPlacementFromString(req.Replication)
+			require.NoError(t, err)
+			v := storage.VolumeInfo{
+				Id:               needle.VolumeId(1),
+				Version:          needle.GetCurrentVersion(),
+				ReplicaPlacement: rp,
+				Ttl:              needle.EMPTY_TTL,
+			}
+			dn2.UpdateVolumes([]storage.VolumeInfo{v})
+			ms.Topo.RegisterVolumeLayout(v, dn2)
+		}},
+		{"growth disabled", func(t *testing.T, ms *MasterServer, req *master_pb.AssignRequest) {
+			ms.Topo.GetOrCreateDataCenter("dc2").GetOrCreateRack("rack2").
+				GetOrCreateDataNode("127.0.0.2", 8080, 18080, "127.0.0.2", "dn2", map[string]uint32{"": 100})
+			ms.option.VolumeGrowthDisabled = true
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ms := newLeaderMaster()
+			req := &master_pb.AssignRequest{Count: 1, Replication: "000", Collection: "fresh", DataCenter: "dc2"}
+			tc.setup(t, ms, req)
+
+			start := time.Now()
+			resp, err := ms.Assign(context.Background(), req)
+			elapsed := time.Since(start)
+
+			require.Error(t, err)
+			require.Nil(t, resp)
+			if st, ok := status.FromError(err); ok {
+				assert.NotEqual(t, codes.Unavailable, st.Code())
+				assert.NotEqual(t, codes.ResourceExhausted, st.Code())
+			}
+			assert.Contains(t, err.Error(), topology.NoWritableVolumes)
+			assert.Less(t, elapsed, 2*time.Second)
+		})
+	}
+}
+
 // A cancelled request stops waiting instead of sleeping out the 10s budget.
 func TestAssignAbortsOnCancel(t *testing.T) {
 	ms := newLeaderMaster()

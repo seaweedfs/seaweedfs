@@ -329,3 +329,49 @@ func TestMaintenanceModeAfterVolumeLeftLayout(t *testing.T) {
 		}
 	}
 }
+
+// GrowthBlocker reads room as well as shape: a location whose racks are all
+// full cannot host the replica placement, and the rack or data node the
+// option names must have room for the first replica itself. The assign
+// layer, not this probe, makes the exception for a pending grow spending
+// those slots on the request's own volume.
+func TestGrowthBlockerNeedsRoom(t *testing.T) {
+	topo, dc1 := newMaintenanceTestTopology()
+	rack1 := NewRack("rack1")
+	dc1.LinkChildNode(rack1)
+	full1 := addMaintenanceTestNode(rack1, "s1", 5)
+	full1.getOrCreateDisk("").UpAdjustDiskUsageDelta("", &DiskUsageCounts{volumeCount: 8})
+	rack2 := NewRack("rack2")
+	dc1.LinkChildNode(rack2)
+	full2 := addMaintenanceTestNode(rack2, "s2", 3)
+	full2.getOrCreateDisk("").UpAdjustDiskUsageDelta("", &DiskUsageCounts{volumeCount: 3})
+
+	rp010, _ := super_block.NewReplicaPlacementFromString("010")
+	if err := topo.GrowthBlocker(&VolumeGrowOption{ReplicaPlacement: rp010, DataCenter: "dc1"}); err == nil {
+		t.Fatal("two full racks can never place 010")
+	}
+
+	// One freed slot per rack puts the placement back in reach.
+	full1.getOrCreateDisk("").UpAdjustDiskUsageDelta("", &DiskUsageCounts{volumeCount: -4})
+	full2.getOrCreateDisk("").UpAdjustDiskUsageDelta("", &DiskUsageCounts{volumeCount: -3})
+	if err := topo.GrowthBlocker(&VolumeGrowOption{ReplicaPlacement: rp010, DataCenter: "dc1"}); err != nil {
+		t.Fatalf("one free slot per rack fits 010: %v", err)
+	}
+	if err := topo.GrowthBlocker(&VolumeGrowOption{ReplicaPlacement: rp010, Rack: "rack1"}); err != nil {
+		t.Fatalf("rack1 hosts the first 010 replica, rack2 the second: %v", err)
+	}
+	if err := topo.GrowthBlocker(&VolumeGrowOption{ReplicaPlacement: rp010, Rack: "rack3"}); err == nil {
+		t.Fatal("no rack named rack3: 010 can never place its first replica")
+	}
+
+	topo2, dc2 := newMaintenanceTestTopology()
+	rack := NewRack("rack1")
+	dc2.LinkChildNode(rack)
+	addMaintenanceTestNode(rack, "s1", 10)
+	if err := topo2.GrowthBlocker(&VolumeGrowOption{ReplicaPlacement: rp010, DataCenter: "dc1"}); err == nil {
+		t.Fatal("a single rack can never place 010")
+	}
+	if err := topo2.GrowthBlocker(&VolumeGrowOption{ReplicaPlacement: rp010, DataCenter: "dc9"}); err == nil {
+		t.Fatal("a missing data center can never place 010")
+	}
+}

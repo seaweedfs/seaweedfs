@@ -1195,6 +1195,83 @@ func (t *Topology) GetDataCenter(dcName string) (dc *DataCenter) {
 	return dc
 }
 
+// GrowthBlocker reports why a volume grow under option could never place the
+// replica set it needs, mirroring findEmptySlotsForOneVolume's feasibility:
+// the option's location binds only the first replica's data center, rack, and
+// data node — later replicas land anywhere with room — so counting every
+// candidate against the named location condemns growth that can succeed. Nil
+// means a grow can still place. Free slots are leaf-summed and ignore
+// reservations, so an in-flight grow's own holds still read as room and its
+// delivery lands as a writable the assign re-picks.
+func (t *Topology) GrowthBlocker(option *VolumeGrowOption) error {
+	rp := option.ReplicaPlacement
+	needDCs := rp.DiffDataCenterCount + 1
+	needRacks := rp.DiffRackCount + 1
+	needNodes := rp.SameRackCount + 1
+	t.RLock()
+	defer t.RUnlock()
+	roomDCs := 0
+	mainFits := false
+	var errs []string
+	for _, c := range t.children {
+		var dcFree int64
+		okRacks := 0
+		mainRackFits := false
+		for _, r := range c.Children() {
+			var rackFree int64
+			nodesWithRoom := 0
+			namedNodeFits := option.DataNode == ""
+			for _, dn := range r.Children() {
+				free := dn.AvailableSpaceFor(option)
+				if free <= 0 {
+					continue
+				}
+				nodesWithRoom++
+				rackFree += free
+				if string(dn.Id()) == option.DataNode {
+					namedNodeFits = true
+				}
+			}
+			dcFree += rackFree
+			if nodesWithRoom >= needNodes {
+				okRacks++
+			}
+			if nodesWithRoom >= needNodes && namedNodeFits &&
+				(option.Rack == "" || string(r.Id()) == option.Rack) {
+				mainRackFits = true
+			}
+		}
+		if dcFree > 0 {
+			roomDCs++
+		}
+		if option.DataCenter != "" && string(c.Id()) != option.DataCenter {
+			continue
+		}
+		switch {
+		case len(c.Children()) < needRacks:
+			errs = append(errs, fmt.Sprintf("%s: %d racks, needs %d", c.Id(), len(c.Children()), needRacks))
+		case okRacks < needRacks:
+			errs = append(errs, fmt.Sprintf("%s: %d racks with %d data nodes with room, needs %d", c.Id(), okRacks, needNodes, needRacks))
+		case (option.Rack != "" || option.DataNode != "") && !mainRackFits:
+			errs = append(errs, fmt.Sprintf("%s: no rack fits the named placement", c.Id()))
+		case dcFree < int64(needRacks-1+needNodes):
+			errs = append(errs, fmt.Sprintf("%s: %d free volume slots, needs %d", c.Id(), dcFree, needRacks-1+needNodes))
+		default:
+			mainFits = true
+		}
+	}
+	if mainFits && roomDCs >= needDCs {
+		return nil
+	}
+	if mainFits {
+		return fmt.Errorf("%s can grow in %s: %d data centers with room, needs %d", NoWritableVolumes, option, roomDCs, needDCs)
+	}
+	if len(errs) == 0 {
+		return fmt.Errorf("%s: no data center matches %s", NoWritableVolumes, option)
+	}
+	return fmt.Errorf("%s can grow in %s: %s", NoWritableVolumes, option, strings.Join(errs, "; "))
+}
+
 func (t *Topology) GetOrCreateDataCenter(dcName string) *DataCenter {
 	t.Lock()
 	defer t.Unlock()

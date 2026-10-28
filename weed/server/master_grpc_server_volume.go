@@ -147,8 +147,16 @@ func (ms *MasterServer) ProcessGrowRequest() {
 				return !found
 			})
 
+			// A targeted request is judged by the location it names: the
+			// layout-wide check would discard it whenever another location's
+			// writables are healthy, leaving the assign that asked for it
+			// without a volume no matter how often it retries.
+			needsGrowth := vl.ShouldGrowVolumes()
+			if option.DataCenter != "" || option.Rack != "" || option.DataNode != "" {
+				needsGrowth = vl.ShouldGrowVolumesWithinLocation(option)
+			}
 			// not atomic but it's okay
-			if found || (!req.Force && !vl.ShouldGrowVolumes()) {
+			if found || (!req.Force && !needsGrowth) {
 				glog.V(4).Infoln("discard volume grow request")
 				time.Sleep(time.Millisecond * 211)
 				vl.DoneGrowRequest()
