@@ -325,6 +325,18 @@ func parquetSchemaByIcebergPath(ctx context.Context, client filer_pb.SeaweedFile
 	return f.Schema(), nil
 }
 
+// newParquetReader opens data as a parquet file. parquet.NewReader panics on
+// a file it cannot open (wrong magic, a truncated footer, zero bytes);
+// parquet.OpenFile returns the same failures as errors, and NewReader on the
+// opened file does not open it again.
+func newParquetReader(data []byte, name string) (*parquet.Reader, error) {
+	f, err := parquet.OpenFile(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return nil, fmt.Errorf("open parquet file %s: %w", name, err)
+	}
+	return parquet.NewReader(f), nil
+}
+
 // normalizeIcebergPath converts an Iceberg path (an S3 URL, an absolute filer
 // path, or a path relative to the table root) into a path relative to the
 // bucket root, e.g. "ns/table/metadata/snap-1.avro". Absolute references are

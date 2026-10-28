@@ -2,6 +2,7 @@ package iceberg
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path"
 	"strings"
@@ -602,28 +603,36 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 		var opErr error
 		var opMetrics map[string]int64
 
-		switch op {
-		case "compact":
-			opResult, opMetrics, opErr = h.compactDataFiles(ctx, filerClient, bucketName, tablePath, workerConfig, func(binIdx, totalBins int) {
-				binProgress := progress + float64(binIdx+1)/float64(totalBins)*(100.0/float64(totalOps))
-				_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
-					JobId:           request.Job.JobId,
-					JobType:         canonicalJobType,
-					State:           plugin_pb.JobState_JOB_STATE_RUNNING,
-					ProgressPercent: binProgress,
-					Stage:           fmt.Sprintf("compact bin %d/%d", binIdx+1, totalBins),
-					Message:         fmt.Sprintf("compacting bin %d of %d", binIdx+1, totalBins),
+		// A panic in an operation (a row decoder on a corrupt page) fails that
+		// operation for this table instead of ending the worker process.
+		opResult, opMetrics, opErr = func() (res string, metrics map[string]int64, err error) {
+			defer recoverRead(&err, fmt.Sprintf("%s on %s/%s", op, bucketName, tablePath))
+			switch op {
+			case "compact":
+				return h.compactDataFiles(ctx, filerClient, bucketName, tablePath, workerConfig, func(binIdx, totalBins int) {
+					binProgress := progress + float64(binIdx+1)/float64(totalBins)*(100.0/float64(totalOps))
+					_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
+						JobId:           request.Job.JobId,
+						JobType:         canonicalJobType,
+						State:           plugin_pb.JobState_JOB_STATE_RUNNING,
+						ProgressPercent: binProgress,
+						Stage:           fmt.Sprintf("compact bin %d/%d", binIdx+1, totalBins),
+						Message:         fmt.Sprintf("compacting bin %d of %d", binIdx+1, totalBins),
+					})
 				})
-			})
-		case "rewrite_position_delete_files":
-			opResult, opMetrics, opErr = h.rewritePositionDeleteFiles(ctx, filerClient, bucketName, tablePath, workerConfig)
-		case "expire_snapshots":
-			opResult, opMetrics, opErr = h.expireSnapshots(ctx, filerClient, bucketName, tablePath, workerConfig)
-		case "remove_orphans":
-			opResult, opMetrics, opErr = h.removeOrphans(ctx, filerClient, bucketName, tablePath, workerConfig)
-		case "rewrite_manifests":
-			opResult, opMetrics, opErr = h.rewriteManifests(ctx, filerClient, bucketName, tablePath, workerConfig)
-		default:
+			case "rewrite_position_delete_files":
+				return h.rewritePositionDeleteFiles(ctx, filerClient, bucketName, tablePath, workerConfig)
+			case "expire_snapshots":
+				return h.expireSnapshots(ctx, filerClient, bucketName, tablePath, workerConfig)
+			case "remove_orphans":
+				return h.removeOrphans(ctx, filerClient, bucketName, tablePath, workerConfig)
+			case "rewrite_manifests":
+				return h.rewriteManifests(ctx, filerClient, bucketName, tablePath, workerConfig)
+			default:
+				return "", nil, errUnknownOperation
+			}
+		}()
+		if errors.Is(opErr, errUnknownOperation) {
 			glog.Warningf("unknown maintenance operation: %s", op)
 			continue
 		}
@@ -737,3 +746,6 @@ func (h *Handler) connectToFiler(ctx context.Context, grpcAddresses []string) (s
 
 // Ensure Handler implements JobHandler.
 var _ pluginworker.JobHandler = (*Handler)(nil)
+
+// errUnknownOperation is returned for a maintenance operation Execute does not know.
+var errUnknownOperation = errors.New("unknown maintenance operation")
