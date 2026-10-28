@@ -1084,7 +1084,11 @@ func discoverVectorWorkers(masters []pb.ServerAddress, grpcDialOption grpc.DialO
 			glog.V(0).Infof("S3 Vectors: discovered weed-vector at %s via master %s", node.Address, master)
 			workers = append(workers, node.Address)
 		}
-		return workers
+		// A follower can answer with an empty list — workers register with
+		// the leader, so keep looking rather than accept "none."
+		if len(workers) > 0 {
+			return workers
+		}
 	}
 	return nil
 }

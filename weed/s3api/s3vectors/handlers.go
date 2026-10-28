@@ -665,12 +665,19 @@ func (s *Server) handleDeleteIndex(w http.ResponseWriter, r *http.Request) {
 	// A named table is an index only while it carries the Lance format —
 	// an Iceberg or format-less table under the same namespace is not an
 	// index and must not be deleted by this operation.
-	record, err := s.indexRecord(r.Context(), r, arns.bucket, arns.index)
-	if err != nil {
+	// The format check needs no read grant — the delete below is the
+	// authorization boundary — and only a Lance-formatted record is a
+	// vector index.
+	var record map[string]interface{}
+	if err := s.internalCatalog(r.Context(), "GetTable", &s3tables.GetTableRequest{
+		TableBucketARN: s.s3tablesArn(arns.bucket),
+		Namespace:      []string{indexNamespace},
+		Name:           arns.index,
+	}, &record); err != nil {
 		catalogErr(w, err)
 		return
 	}
-	if format, _ := record["format"].(string); format != "" && format != s3tables.FormatLance {
+	if format, _ := record["format"].(string); format != s3tables.FormatLance {
 		writeError(w, http.StatusBadRequest, "ValidationException",
 			fmt.Sprintf("index %q is not a vector index", arns.index))
 		return
