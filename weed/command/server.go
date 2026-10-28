@@ -311,6 +311,12 @@ func runServer(cmd *Command, args []string) bool {
 			// prior-state evidence, so a late veteran keeps the window.
 			masterOptions.expectedReporterAddr = util.JoinHostPort(*serverIp, *serverOptions.v.port)
 		}
+		if len(peerList) == 1 && *isStartingFiler {
+			// The embedded filer is the only member a single-master weed
+			// server starts with; an empty startup peer scan is final, so it
+			// can announce to the master without the confirm window.
+			filerOptions.skipEmptyMembershipConfirm = true
+		}
 	} else if *masterOptions.peers != "" {
 		if isSingleMasterMode(*masterOptions.peers) {
 			glog.Fatalf("'-master.peers=none' is only valid when starting a master server, but master is not starting.")

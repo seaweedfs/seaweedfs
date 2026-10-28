@@ -95,6 +95,13 @@ type FilerOption struct {
 	// master; it joins the filer list only once the gRPC port is serving and
 	// the metadata replay has caught up with the peers found at startup.
 	AnnounceCh chan struct{}
+	// SkipEmptyMembershipConfirm announces after the startup peer scan
+	// without re-polling to disprove an empty result: the embedded filer of
+	// a single-master weed server or weed mini is the only member its fresh
+	// cluster can have yet, so the confirm window is dead time while routed
+	// traffic waits on the filer's master listing. A late external filer
+	// still joins and replays through the normal path.
+	SkipEmptyMembershipConfirm bool
 	// AllowUntrustedRemoteEndpoints lets a read of a remote-only entry dial a
 	// mounted endpoint that resolves to a loopback / private / metadata host.
 	AllowUntrustedRemoteEndpoints bool
@@ -511,7 +518,7 @@ func (fs *FilerServer) AnnounceOnceCaughtUp(announce chan struct{}, waitStart ti
 	// late peer cannot stretch the registration hold past the cap.
 	deadline := time.Now().Add(announceCatchUpCap)
 	peers := fs.startupPeers
-	if fs.peerBootstrapPending {
+	if fs.peerBootstrapPending && !fs.option.SkipEmptyMembershipConfirm {
 		peers = append(peers, fs.awaitPeerBootstrap(deadline)...)
 	}
 	if len(peers) == 0 {

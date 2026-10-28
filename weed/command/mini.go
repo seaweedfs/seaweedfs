@@ -1579,6 +1579,7 @@ func runMini(cmd *Command, args []string) bool {
 	singleMaster := isSingleMasterMode(*miniMasterOptions.peers)
 	miniMasterOptions.releaseAllocOnFirstReport = singleMaster
 	miniMasterOptions.singleReporterAddr = ""
+	miniFilerOptions.skipEmptyMembershipConfirm = singleMaster
 	if singleMaster {
 		miniMasterOptions.singleReporterAddr = util.JoinHostPort(*miniIp, *miniOptions.v.port)
 	}
