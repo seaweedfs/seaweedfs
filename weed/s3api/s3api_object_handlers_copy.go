@@ -24,6 +24,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -728,24 +729,34 @@ func (s3a *S3ApiServer) finalizeCopyDestination(dstBucket, dstObject, dstVersion
 		versionFileName := s3a.getVersionFileName(versionId)
 		versionObjectPath := normalizedObject + s3_constants.VersionsFolder + "/" + versionFileName
 		bucketDir := s3a.bucketDir(dstBucket)
+		owner := s3a.objectWriteOwner(dstBucket, normalizedObject)
 
-		if err = s3a.mkFile(bucketDir, versionObjectPath, dstEntry.Chunks, func(entry *filer_pb.Entry) {
-			copyEntryToTarget(entry, dstEntry)
-		}); err != nil {
+		// The finalize recomputes the latest pointer by scanning .versions on
+		// the owner, so the version file must commit there too.
+		if owner != "" {
+			err = s3a.routedMkFile(owner, s3a.objectRouteKey(dstBucket, normalizedObject), bucketDir+"/"+normalizedObject+s3_constants.VersionsFolder, versionFileName, dstEntry.Chunks, func(entry *filer_pb.Entry) {
+				copyEntryToTarget(entry, dstEntry)
+			}, nil)
+		} else {
+			err = s3a.mkFile(bucketDir, versionObjectPath, dstEntry.Chunks, func(entry *filer_pb.Entry) {
+				copyEntryToTarget(entry, dstEntry)
+			})
+		}
+		if err != nil {
 			return "", "", err
 		}
 
 		// Route the pointer flip to the owner filer when known (off the
 		// distributed lock); RECOMPUTE_LATEST picks the just-written version.
-		if owner := s3a.objectWriteOwner(dstBucket, normalizedObject); owner != "" {
+		if owner != "" {
 			if code := s3a.routedVersionedFinalize(owner, dstBucket, normalizedObject, isNewFormatVersionId(versionId)); code != s3err.ErrNone {
-				if rollbackErr := s3a.rollbackCopyVersion(bucketDir, versionObjectPath); rollbackErr != nil {
+				if rollbackErr := s3a.rollbackCopyVersion(owner, dstBucket, normalizedObject, versionObjectPath); rollbackErr != nil {
 					glog.Errorf("CopyObjectHandler: failed to rollback version %s for %s/%s after routed finalize error: %v", versionId, dstBucket, normalizedObject, rollbackErr)
 				}
 				return "", "", fmt.Errorf("routed finalize for %s/%s: code %d", dstBucket, normalizedObject, code)
 			}
 		} else if err = s3a.updateLatestVersionInDirectory(dstBucket, normalizedObject, versionId, versionFileName, dstEntry); err != nil {
-			if rollbackErr := s3a.rollbackCopyVersion(bucketDir, versionObjectPath); rollbackErr != nil {
+			if rollbackErr := s3a.rollbackCopyVersion("", dstBucket, normalizedObject, versionObjectPath); rollbackErr != nil {
 				glog.Errorf("CopyObjectHandler: failed to rollback version %s for %s/%s after latest pointer update error: %v", versionId, dstBucket, normalizedObject, rollbackErr)
 			}
 			glog.Errorf("CopyObjectHandler: failed to update latest version in directory: %v", err)
@@ -759,14 +770,15 @@ func (s3a *S3ApiServer) finalizeCopyDestination(dstBucket, dstObject, dstVersion
 		dstEntry.Extended[s3_constants.ExtVersionIdKey] = []byte("null")
 		dstEntry.Extended[s3_constants.ExtETagKey] = []byte(etag)
 
-		if err = s3a.mkFile(dstDir, dstName, dstEntry.Chunks, func(entry *filer_pb.Entry) {
+		owner := s3a.objectWriteOwner(dstBucket, normalizedObject)
+		if err = s3a.writeMultipartObject(owner, s3a.objectRouteKey(dstBucket, normalizedObject), dstDir, dstName, dstEntry.Chunks, func(entry *filer_pb.Entry) {
 			copyEntryToTarget(entry, dstEntry)
-		}); err != nil {
+		}, nil); err != nil {
 			return "", "", err
 		}
 
-		// mkFile writes through the default filer, so the ownership check reads there too.
-		if err = s3a.finalizeSuspendedNullWrite("", dstBucket, normalizedObject, s3_constants.ExtETagKey, etag); err != nil {
+		// The ownership check reads the entry back where the write committed.
+		if err = s3a.finalizeSuspendedNullWrite(owner, dstBucket, normalizedObject, s3_constants.ExtETagKey, etag); err != nil {
 			glog.Warningf("CopyObjectHandler: failed to retire the null delete marker for %s/%s: %v", dstBucket, normalizedObject, err)
 		}
 
@@ -776,9 +788,12 @@ func (s3a *S3ApiServer) finalizeCopyDestination(dstBucket, dstObject, dstVersion
 		cleanupVersioningMetadata(dstEntry.Extended)
 		dstEntry.Extended[s3_constants.ExtETagKey] = []byte(etag)
 
-		if err = s3a.mkFile(dstDir, dstName, dstEntry.Chunks, func(entry *filer_pb.Entry) {
+		// Copy source reads resolve on the key's write owner, so a copy
+		// destination must commit there too — a destination written to the
+		// default filer is invisible to the next copy until replication.
+		if err = s3a.writeMultipartObject(s3a.objectWriteOwner(dstBucket, normalizedObject), s3a.objectRouteKey(dstBucket, normalizedObject), dstDir, dstName, dstEntry.Chunks, func(entry *filer_pb.Entry) {
 			copyEntryToTarget(entry, dstEntry)
-		}); err != nil {
+		}, nil); err != nil {
 			return "", "", err
 		}
 
@@ -786,10 +801,29 @@ func (s3a *S3ApiServer) finalizeCopyDestination(dstBucket, dstObject, dstVersion
 	}
 }
 
-func (s3a *S3ApiServer) rollbackCopyVersion(bucketDir, versionObjectPath string) error {
-	versionPath := util.FullPath(fmt.Sprintf("%s/%s", bucketDir, versionObjectPath))
+func (s3a *S3ApiServer) rollbackCopyVersion(owner pb.ServerAddress, bucket, normalizedObject, versionObjectPath string) error {
+	versionPath := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), versionObjectPath))
 	versionDir, versionName := versionPath.DirAndName()
-	return s3a.rmObject(context.Background(), versionDir, versionName, true, false)
+	if owner == "" {
+		return s3a.rmObject(context.Background(), versionDir, versionName, true, false)
+	}
+	resp, err := s3a.objectTxnOnFiler(owner, &filer_pb.ObjectTransactionRequest{
+		LockKey:  string(versionPath),
+		RouteKey: s3a.objectRouteKey(bucket, normalizedObject),
+		Mutations: []*filer_pb.ObjectMutation{{
+			Type:         filer_pb.ObjectMutation_DELETE,
+			Directory:    versionDir,
+			Name:         versionName,
+			IsDeleteData: true,
+		}},
+	})
+	if err != nil {
+		return err
+	}
+	if resp.Error != "" {
+		return errors.New(resp.Error)
+	}
+	return nil
 }
 
 func (s3a *S3ApiServer) resolveCopySourceEntry(bucket, object, versionId, versioningState string) (*filer_pb.Entry, error) {

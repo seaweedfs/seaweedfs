@@ -86,7 +86,6 @@ func TestCopyAfterRoutedPut(t *testing.T) {
 				require.Equal(t, replicaAddr, s3a.filerClient.GetCurrentFiler(), "a source read must not change the gateway's default filer")
 
 				replica.mu.Lock()
-				defer replica.mu.Unlock()
 				if multipart {
 					var part *filer_pb.Entry
 					for key, entry := range replica.entries {
@@ -96,11 +95,27 @@ func TestCopyAfterRoutedPut(t *testing.T) {
 					}
 					require.NotNil(t, part, "copy must persist the part")
 					require.Equal(t, stored.Attributes.Md5, part.Attributes.Md5)
+					replica.mu.Unlock()
 				} else {
-					copied := replica.entries["/buckets/destination/final/object"]
-					require.NotNil(t, copied, "copy must persist the destination")
+					// The destination commits on its write owner, the same filer a
+					// later copy resolves it from before replication.
+					require.Nil(t, replica.entries["/buckets/destination/final/object"], "the replica must still be behind")
+					replica.mu.Unlock()
+					owner.mu.Lock()
+					copied := owner.entries["/buckets/destination/final/object"]
+					owner.mu.Unlock()
+					require.NotNil(t, copied, "copy must persist the destination on the owner")
 					require.Equal(t, "fresh", string(copied.Extended["X-Amz-Meta-Revision"]))
 					require.Equal(t, stored.Attributes.Md5, copied.Attributes.Md5)
+
+					// The destination is immediately usable as a copy source even
+					// though the replica never saw it.
+					second := httptest.NewRequest(http.MethodPut, "/destination/final/copy2", nil)
+					second = mux.SetURLVars(second, map[string]string{"bucket": "destination", "object": "final/copy2"})
+					second.Header.Set("X-Amz-Copy-Source", "/destination/final/object")
+					secondResult := httptest.NewRecorder()
+					s3a.CopyObjectHandler(secondResult, second)
+					require.Equal(t, http.StatusOK, secondResult.Code, secondResult.Body.String())
 				}
 			})
 		}
