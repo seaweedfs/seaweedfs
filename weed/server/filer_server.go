@@ -572,6 +572,7 @@ const freshMembershipConfirmTimeout = 3 * time.Second
 func (fs *FilerServer) awaitPeerBootstrap(deadline time.Time) (peers []pb.ServerAddress) {
 	confirmBy := time.Now().Add(emptyMembershipConfirmTimeout)
 	var freshSince time.Time
+	peerSeen := false
 	for time.Now().Before(deadline) {
 		ctx, cancel := context.WithDeadline(context.Background(), deadline)
 		nodes, listErr := fs.filer.ListExistingPeerUpdates(ctx)
@@ -590,8 +591,10 @@ func (fs *FilerServer) awaitPeerBootstrap(deadline time.Time) (peers []pb.Server
 			exitBy := confirmBy
 			// The mint lands after raft election, which can postdate this
 			// wait's start, so the hint is re-evaluated each pass rather than
-			// once up front.
-			if fs.option.ClusterFreshHint != nil && fs.option.ClusterFreshHint() {
+			// once up front. An observed peer — even one that later
+			// disconnects — disables the shortened deadline: an empty scan
+			// afterward no longer proves a fresh cluster.
+			if !peerSeen && fs.option.ClusterFreshHint != nil && fs.option.ClusterFreshHint() {
 				if freshSince.IsZero() {
 					freshSince = time.Now()
 					glog.V(0).Infof("%s embedded master minted a fresh topology id; shortening the empty-scan confirm", fs.option.Host)
@@ -606,6 +609,7 @@ func (fs *FilerServer) awaitPeerBootstrap(deadline time.Time) (peers []pb.Server
 			time.Sleep(time.Second)
 			continue
 		}
+		peerSeen = true
 		bootstrapFrom := time.Now().Add(-filer.LogFlushInterval)
 		ctx, cancel = context.WithDeadline(context.Background(), deadline)
 		err := fs.filer.MaybeBootstrapFromOnePeer(ctx, fs.option.Host, remotes, bootstrapFrom)
