@@ -2,13 +2,12 @@ package command
 
 import (
 	"bytes"
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
-	"slices"
 	"strings"
 	"time"
 
@@ -22,6 +21,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/chunk_cache"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -975,42 +975,34 @@ func isSuperseded(filerClient filer_pb.FilerClient, dir string, entry *filer_pb.
 		len(filer.DoMinusChunks(current.GetChunks(), entry.GetChunks())) > 0
 }
 
-// hasReadHole reports an entry whose chunks do not cover its declared size: a
-// snapshot of a write still in progress, flushed while chunk uploads were
-// still running. The stream reader stops at the gap, so the upload fails on
-// every retry whether or not the filer ever moves past the entry — a write
-// that never finishes leaves the gap and wedges the event. Skipping is safe
-// either way: a finishing write logs its own event and uploads the full
-// content, and a dead one has nothing readable to lose.
-func hasReadHole(entry *filer_pb.Entry) bool {
-	size := int64(entry.GetAttributes().GetFileSize())
-	if size == 0 || len(entry.Content) > 0 {
-		return false
+// remoteUploadReader streams the entry's full declared size through
+// ChunkReadAt, which zero-fills any range no chunk view covers: a sparse
+// file, a mid-write snapshot flushed while its chunk uploads were still
+// running, and a chunkless entry all upload the bytes a read of the entry
+// returns. The chunk stream reader stops at the first gap instead, handing
+// the backend a short body on every retry — a hole that never fills wedges
+// the event, and a backend that does not verify the length publishes a
+// truncated object.
+func remoteUploadReader(filerClient filer_pb.FilerClient, entry *filer_pb.Entry) (reader io.Reader, closeFn func() error, err error) {
+	if len(entry.Content) > 0 {
+		return bytes.NewReader(entry.Content), nil, nil
 	}
-	chunks := slices.Clone(entry.GetChunks())
-	slices.SortFunc(chunks, func(a, b *filer_pb.FileChunk) int {
-		return cmp.Compare(a.GetOffset(), b.GetOffset())
-	})
-	var next int64
-	for _, chunk := range chunks {
-		if chunk.GetOffset() >= size {
-			break
-		}
-		if chunk.GetOffset() > next {
-			return true
-		}
-		if end := chunk.GetOffset() + int64(chunk.GetSize()); end > next {
-			next = end
-		}
+	size := int64(filer.FileSize(entry))
+	lookupFileIdFn := filer.LookupFn(filerClient)
+	chunkViews, err := filer.ViewFromChunks(context.Background(), lookupFileIdFn, entry.GetChunks(), 0, math.MaxInt64)
+	if err != nil {
+		return nil, nil, err
 	}
-	return next < size
+	readerAt := filer.NewChunkReaderAtFromClient(context.Background(),
+		filer.NewReaderCache(8, chunk_cache.NewChunkCacheInMemory(8), lookupFileIdFn, nil),
+		chunkViews, size, filer.DefaultPrefetchCount)
+	return io.NewSectionReader(readerAt, 0, size), readerAt.Close, nil
 }
 
 // errSuperseded marks an upload that cannot produce the entry an event
-// described: the filer moved past it (isSuperseded), or the entry is a
-// mid-write snapshot with a gap its chunks do not cover (hasReadHole). The
-// caller skips the event instead of failing it; a write completing logs a
-// later event that carries the full content.
+// described: the filer moved past it (isSuperseded). The caller skips the
+// event instead of failing it; the event carrying the entry's current chunks
+// follows in the log and uploads them.
 var errSuperseded = errors.New("superseded or incomplete since the event was logged")
 
 // retriedWriteFile uploads the entry, retrying transient failures. The filer is
@@ -1022,16 +1014,19 @@ var errSuperseded = errors.New("superseded or incomplete since the event was log
 // still holds is worth sending. After: a dead chunk reads as a transient
 // "RequestError" from the SDK, and waiting out the backoff on it buys nothing.
 func retriedWriteFile(client remote_storage.RemoteStorageClient, filerSource filer_pb.FilerClient, dir string, newEntry *filer_pb.Entry, dest *remote_pb.RemoteStorageLocation) (remoteEntry *filer_pb.RemoteEntry, err error) {
-	if hasReadHole(newEntry) {
-		return nil, fmt.Errorf("%s %w", util.NewFullPath(dir, newEntry.Name), errSuperseded)
-	}
 	if isSuperseded(filerSource, dir, newEntry) {
 		return nil, fmt.Errorf("%s %w", util.NewFullPath(dir, newEntry.Name), errSuperseded)
 	}
 	err = util.RetryOnError("writeFile", func(err error) bool {
 		return !errors.Is(err, errSuperseded) && util.IsTransientError(err)
 	}, func() error {
-		reader := filer.NewFileReader(filerSource, newEntry)
+		reader, closeFn, readerErr := remoteUploadReader(filerSource, newEntry)
+		if readerErr != nil {
+			return readerErr
+		}
+		if closeFn != nil {
+			defer closeFn()
+		}
 		glog.V(0).Infof("create %s", remote_storage.FormatLocation(dest))
 		var writeErr error
 		remoteEntry, writeErr = client.WriteFile(dest, newEntry, reader)
