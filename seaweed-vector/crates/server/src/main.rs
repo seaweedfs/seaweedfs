@@ -27,10 +27,6 @@ struct Args {
     /// gateway discovers it via ListClusterNodes(client_type=vector).
     #[arg(long, env = "WEED_VECTOR_MASTERS")]
     masters: Option<String>,
-    /// Address advertised to the master — defaults to --listen; set it when
-    /// listening on a wildcard or unreachable interface.
-    #[arg(long, env = "WEED_VECTOR_ADVERTISE")]
-    advertise: Option<String>,
 }
 
 fn parse_option(s: &str) -> Result<(String, String), String> {
@@ -39,13 +35,35 @@ fn parse_option(s: &str) -> Result<(String, String), String> {
         .ok_or_else(|| "expected key=value".to_string())
 }
 
+/// A wildcard listen address is not reachable for peers; derive the outbound
+/// IP toward the first master instead — the address the master sees anyway.
+fn advertised_addr(listen: &str, masters: &[String]) -> String {
+    let Some((host, _)) = listen.rsplit_once(':') else {
+        return listen.to_string();
+    };
+    if !matches!(host, "0.0.0.0" | "::" | "" | "[::]") {
+        return listen.to_string();
+    }
+    let port = listen.rsplit_once(':').map(|(_, p)| p).unwrap_or_default();
+    if let Some(master) = masters.first() {
+        if let Ok(sock) = std::net::UdpSocket::bind((host, 0u16)) {
+            if sock.connect(master).is_ok() {
+                if let Ok(local) = sock.local_addr() {
+                    return format!("{}:{}", local.ip(), port);
+                }
+            }
+        }
+    }
+    listen.to_string()
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     let args = Args::parse();
     if let Some(masters) = &args.masters {
         let masters: Vec<String> = masters.split(',').map(|s| s.trim().to_string()).collect();
-        let advertise = args.advertise.clone().unwrap_or_else(|| args.listen.clone());
+        let advertise = advertised_addr(&args.listen, &masters);
         tokio::spawn(weed_vector_server::master_client::keep_connected(
             masters,
             advertise,
