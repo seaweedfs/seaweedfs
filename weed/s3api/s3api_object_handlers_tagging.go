@@ -209,7 +209,7 @@ func (s3a *S3ApiServer) PutObjectTaggingHandler(w http.ResponseWriter, r *http.R
 			return
 		}
 
-		if err = s3a.setTags(dir, name, tags); err != nil {
+		if err = s3a.setTags(s3a.routableWriteOwner(bucket, object), dir, name, tags); err != nil {
 			if err == filer_pb.ErrNotFound {
 				glog.Errorf("PutObjectTaggingHandler setTags %s: %v", r.URL, err)
 				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
@@ -253,8 +253,8 @@ func (s3a *S3ApiServer) PutObjectTaggingHandler(w http.ResponseWriter, r *http.R
 		entry.Extended[S3TAG_PREFIX+k] = []byte(v)
 	}
 
-	// Update the entry with tags
-	err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	// Update the entry with tags, on the owner the read resolved it from
+	err = s3a.withWriteOwnerFilerClient(s3a.routableWriteOwner(bucket, object), func(client filer_pb.SeaweedFilerClient) error {
 		request := &filer_pb.UpdateEntryRequest{
 			Directory: updateDirectory,
 			Entry:     entry,
@@ -349,7 +349,7 @@ func (s3a *S3ApiServer) DeleteObjectTaggingHandler(w http.ResponseWriter, r *htt
 			return
 		}
 
-		err := s3a.rmTags(dir, name)
+		err := s3a.rmTags(s3a.routableWriteOwner(bucket, object), dir, name)
 		if err != nil {
 			if err == filer_pb.ErrNotFound {
 				glog.Errorf("DeleteObjectTaggingHandler %s: %v", r.URL, err)
@@ -396,8 +396,8 @@ func (s3a *S3ApiServer) DeleteObjectTaggingHandler(w http.ResponseWriter, r *htt
 		return
 	}
 
-	// Update the entry
-	err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	// Update the entry on the owner the read resolved it from
+	err = s3a.withWriteOwnerFilerClient(s3a.routableWriteOwner(bucket, object), func(client filer_pb.SeaweedFilerClient) error {
 		request := &filer_pb.UpdateEntryRequest{
 			Directory: updateDirectory,
 			Entry:     entry,

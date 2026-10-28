@@ -189,6 +189,18 @@ func (s3a *S3ApiServer) objectTxnOnFiler(owner pb.ServerAddress, req *filer_pb.O
 	return resp, err
 }
 
+// withWriteOwnerFilerClient runs fn on the object's write owner so a read
+// routed to the owner sees the change without waiting for replication; falls
+// back to the default filer when no owner resolves or the owner fails.
+func (s3a *S3ApiServer) withWriteOwnerFilerClient(owner pb.ServerAddress, fn func(client filer_pb.SeaweedFilerClient) error) error {
+	if owner != "" {
+		if err := pb.WithFilerClient(false, 0, owner, s3a.option.GrpcDialOption, fn); err == nil {
+			return nil
+		}
+	}
+	return s3a.WithFilerClient(false, fn)
+}
+
 // routedPut writes an entry as a PUT, optionally followed by finalize mutations,
 // as one ObjectTransaction applied in order under lockKey on the owner filer.
 // lockKey is normally the entry's own path; a versioned add instead passes the
