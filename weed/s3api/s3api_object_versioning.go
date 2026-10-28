@@ -1891,7 +1891,7 @@ func (s3a *S3ApiServer) clearStaleLatestVersionPointer(bucket, object, bucketDir
 	delete(updated.Extended, s3_constants.ExtLatestVersionFileNameKey)
 	clearCachedVersionMetadata(updated.Extended)
 	updated.Name = versionsObjectPath
-	if err := s3a.conditionalUpdateEntry(bucketDir, updated, expected); err != nil {
+	if err := s3a.conditionalUpdateEntryRouted(bucket, object, bucketDir, updated, expected); err != nil {
 		switch status.Code(err) {
 		case codes.FailedPrecondition:
 			// A writer moved the pointer after this heal's snapshot; its
@@ -2290,7 +2290,7 @@ func (s3a *S3ApiServer) healStaleLatestVersionPointer(bucket, normalizedObject s
 	updated.Extended[s3_constants.ExtLatestVersionFileNameKey] = []byte(latestVersionFileName)
 	setCachedListMetadata(updated, latestEntry)
 
-	updateErr := s3a.conditionalUpdateEntry(bucketDir, updated, expected)
+	updateErr := s3a.conditionalUpdateEntryRouted(bucket, normalizedObject, bucketDir, updated, expected)
 	switch {
 	case updateErr == nil:
 		versioningHealInfof("healed", "bucket=%s key=%s mode=pointer_repaired new_version=%s file=%s delete_marker=%v", bucket, normalizedObject, latestVersionId, latestVersionFileName, isDeleteMarker)
@@ -2305,6 +2305,57 @@ func (s3a *S3ApiServer) healStaleLatestVersionPointer(bucket, normalizedObject s
 		versioningHealWarningf("heal_persist_failed", "bucket=%s key=%s err=%v (returning rescanned entry)", bucket, normalizedObject, updateErr)
 	}
 	return latestEntry, nil
+}
+
+// conditionalUpdateEntryRouted persists the repair on the object's write
+// owner — the filer the heal read from — via an ObjectTransaction carrying
+// the object's route key. A conditioned UpdateEntry would instead route by
+// the .versions path's own key, which can hash to a different filer, leaving
+// the pointer on the owner the reads consult unchanged. The IF_ENTRY_EQUAL
+// clause keeps the CAS semantics; a precondition failure or a missing entry
+// both surface as FailedPrecondition, matching what the callers map.
+func (s3a *S3ApiServer) conditionalUpdateEntryRouted(bucket, object, directory string, entry, expected *filer_pb.Entry) error {
+	owner := s3a.routableWriteOwner(bucket, object)
+	if owner == "" {
+		return s3a.conditionalUpdateEntry(directory, entry, expected)
+	}
+	setExtended := make(map[string][]byte)
+	for k, v := range entry.Extended {
+		if ev, ok := expected.Extended[k]; !ok || !bytes.Equal(ev, v) {
+			setExtended[k] = v
+		}
+	}
+	var deleteExtended []string
+	for k := range expected.Extended {
+		if _, ok := entry.Extended[k]; !ok {
+			deleteExtended = append(deleteExtended, k)
+		}
+	}
+	resp, err := s3a.objectTxnOnFiler(owner, &filer_pb.ObjectTransactionRequest{
+		LockKey:  string(util.NewFullPath(directory, entry.Name)),
+		RouteKey: s3a.objectRouteKey(bucket, object),
+		Condition: &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{
+			Kind:          filer_pb.WriteCondition_IF_ENTRY_EQUAL,
+			ExpectedEntry: expected,
+		}}},
+		Mutations: []*filer_pb.ObjectMutation{{
+			Type:           filer_pb.ObjectMutation_PATCH_EXTENDED,
+			Directory:      directory,
+			Name:           entry.Name,
+			SetExtended:    setExtended,
+			DeleteExtended: deleteExtended,
+		}},
+	})
+	if err != nil {
+		return err
+	}
+	if resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED {
+		return status.Error(codes.FailedPrecondition, resp.Error)
+	}
+	if resp.Error != "" {
+		return errors.New(resp.Error)
+	}
+	return nil
 }
 
 // conditionalUpdateEntry persists entry only while the stored image still
