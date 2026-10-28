@@ -539,7 +539,10 @@ func (s *Store) ReadEcShardNeedle(vid needle.VolumeId, n *needle.Needle, onReadS
 			if len(intervals) > 1 {
 				glog.V(3).Infof("ReadEcShardNeedle needle id %s intervals:%+v", n.String(), intervals)
 			}
-			bytes, isDeleted, err := s.readEcShardIntervals(n.Id, localEcVolume, intervals)
+			// ReadBytes re-reads the id out of a possibly corrupt header, so the
+			// requested id is kept aside for the rebuild path to recover under.
+			needleId := n.Id
+			bytes, isDeleted, err := s.readEcShardIntervals(needleId, localEcVolume, intervals)
 			// A holder reporting the needle deleted is authoritative -- deletes are
 			// never invented and never undone -- so answer that ahead of whatever
 			// error the shards it could not gather produced.
@@ -552,7 +555,7 @@ func (s *Store) ReadEcShardNeedle(vid needle.VolumeId, n *needle.Needle, onReadS
 
 			err = n.ReadBytes(bytes, offset.ToActualOffset(), size, localEcVolume.Version)
 			if err != nil {
-				if rebuilt := s.rebuildEcShardNeedle(n, localEcVolume, intervals, offset.ToActualOffset(), size, bytes); rebuilt != nil {
+				if rebuilt := s.rebuildEcShardNeedle(n, needleId, localEcVolume, intervals, offset.ToActualOffset(), size, bytes); rebuilt != nil {
 					return len(rebuilt), nil
 				}
 				return 0, fmt.Errorf("ec volume %d needle %s offset %d size %d: %w", vid, n.String(), offset.ToActualOffset(), size, err)
@@ -681,7 +684,7 @@ func (s *Store) readOneEcShardInterval(needleId types.NeedleId, ecVolume *erasur
 // the parse has already hydrated n, every shard whose range changed is dropped
 // from the location cache, and the repaired bytes are returned. Nil when no
 // hypothesis parses (index or needle corrupt in all shards alike).
-func (s *Store) rebuildEcShardNeedle(n *needle.Needle, ecVolume *erasure_coding.EcVolume, intervals []erasure_coding.Interval, offset int64, size types.Size, corrupted []byte) []byte {
+func (s *Store) rebuildEcShardNeedle(n *needle.Needle, needleId types.NeedleId, ecVolume *erasure_coding.EcVolume, intervals []erasure_coding.Interval, offset int64, size types.Size, corrupted []byte) []byte {
 	ecCtx := ecVolume.ECContext
 	if ecCtx == nil {
 		ecCtx = erasure_coding.NewDefaultECContext(ecVolume.Collection, ecVolume.VolumeId)
@@ -705,11 +708,13 @@ func (s *Store) rebuildEcShardNeedle(n *needle.Needle, ecVolume *erasure_coding.
 				copy(buf, corrupted[pos-int(interval.Size):pos])
 				continue
 			}
-			if _, _, err := s.recoverEcShardInterval(n.Id, ecVolume, shardIds[i], buf, offsets[i], exclude); err != nil {
+			if _, _, err := s.recoverEcShardInterval(needleId, ecVolume, shardIds[i], buf, offsets[i], exclude); err != nil {
 				return nil
 			}
 		}
-		if n.ReadBytes(candidate, offset, size, ecVolume.Version) != nil {
+		// A candidate whose header decodes a different id than was asked for is
+		// no proof the bytes are right, whatever the checksum said.
+		if n.ReadBytes(candidate, offset, size, ecVolume.Version) != nil || n.Id != needleId {
 			return nil
 		}
 		// The parse verdict makes every differing range a confirmed corruption.
