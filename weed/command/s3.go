@@ -454,6 +454,7 @@ func (s3opt *S3Options) startS3Server() bool {
 			localSocket = fmt.Sprintf("/tmp/seaweedfs-s3-%d.sock", *s3opt.port)
 		}
 		if s3SocketListener := pb.ListenOnLocalSocket(localSocket); s3SocketListener != nil {
+			s3SocketListener = &util.Listener{Listener: s3SocketListener, Timeout: idleTimeoutSeconds(s3opt.idleTimeout)}
 			socketServer := newHttpServer(router, nil)
 			httpServers = append(httpServers, socketServer)
 			go func() {
@@ -466,7 +467,7 @@ func (s3opt *S3Options) startS3Server() bool {
 
 	listenAddress := fmt.Sprintf("%s:%d", *s3opt.bindIp, *s3opt.port)
 	s3ApiListener, s3ApiLocalListener, err := util.NewIpAndLocalListeners(
-		*s3opt.bindIp, *s3opt.port, time.Duration(*s3opt.idleTimeout)*time.Second, listenOnLocalhost)
+		*s3opt.bindIp, *s3opt.port, idleTimeoutSeconds(s3opt.idleTimeout), listenOnLocalhost)
 	if err != nil {
 		glog.Fatalf("S3 API Server listener on %s error: %v", listenAddress, err)
 	}
@@ -548,7 +549,7 @@ func (s3opt *S3Options) startS3Server() bool {
 		} else {
 			glog.V(0).Infof("Start Seaweed S3 API Server %s at https port %d", version.Version(), *s3opt.portHttps)
 			s3ApiListenerHttps, s3ApiLocalListenerHttps, err := util.NewIpAndLocalListeners(
-				*s3opt.bindIp, *s3opt.portHttps, time.Duration(*s3opt.idleTimeout)*time.Second, listenOnLocalhost)
+				*s3opt.bindIp, *s3opt.portHttps, idleTimeoutSeconds(s3opt.idleTimeout), listenOnLocalhost)
 			if err != nil {
 				glog.Fatalf("S3 API HTTPS listener on %s:%d error: %v", *s3opt.bindIp, *s3opt.portHttps, err)
 			}
@@ -630,7 +631,7 @@ func (s3opt *S3Options) startIcebergServer(s3ApiServer *s3api.S3ApiServer, liste
 
 	listenAddress := fmt.Sprintf("%s:%d", *s3opt.bindIp, *s3opt.portIceberg)
 	icebergListener, icebergLocalListener, err := util.NewIpAndLocalListeners(
-		*s3opt.bindIp, *s3opt.portIceberg, time.Duration(*s3opt.idleTimeout)*time.Second, listenOnLocalhost)
+		*s3opt.bindIp, *s3opt.portIceberg, idleTimeoutSeconds(s3opt.idleTimeout), listenOnLocalhost)
 	if err != nil {
 		// The catalog is auxiliary to the S3 gateway; a port conflict must not
 		// take the whole server down.
@@ -676,7 +677,7 @@ func (s3opt *S3Options) startLanceServer(s3ApiServer *s3api.S3ApiServer, listenO
 
 	listenAddress := fmt.Sprintf("%s:%d", *s3opt.bindIp, *s3opt.portLance)
 	lanceListener, lanceLocalListener, err := util.NewIpAndLocalListeners(
-		*s3opt.bindIp, *s3opt.portLance, time.Duration(*s3opt.idleTimeout)*time.Second, listenOnLocalhost)
+		*s3opt.bindIp, *s3opt.portLance, idleTimeoutSeconds(s3opt.idleTimeout), listenOnLocalhost)
 	if err != nil {
 		glog.Errorf("Lance Namespace listener on %s error: %v", listenAddress, err)
 		return nil
@@ -765,7 +766,7 @@ func (s3opt *S3Options) startVectorsServer(s3ApiServer *s3api.S3ApiServer, grpcD
 
 	listenAddress := fmt.Sprintf("%s:%d", *s3opt.bindIp, *s3opt.portVectors)
 	vectorsListener, vectorsLocalListener, err := util.NewIpAndLocalListeners(
-		*s3opt.bindIp, *s3opt.portVectors, time.Duration(*s3opt.idleTimeout)*time.Second, listenOnLocalhost)
+		*s3opt.bindIp, *s3opt.portVectors, idleTimeoutSeconds(s3opt.idleTimeout), listenOnLocalhost)
 	if err != nil {
 		glog.Errorf("S3 Vectors listener on %s error: %v", listenAddress, err)
 		conn.Close()

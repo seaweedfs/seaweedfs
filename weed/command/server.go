@@ -3,6 +3,7 @@ package command
 import (
 	"crypto/tls"
 	"fmt"
+	"math"
 	"net/http"
 	"os"
 	"strings"
@@ -138,6 +139,7 @@ func init() {
 	filerOptions.tusSessionExpiry = cmdServer.Flag.Duration("filer.tusSessionExpiry", 24*time.Hour, "incomplete TUS upload sessions are cleaned up after this duration, e.g. \"48h\", \"7h30m\"")
 	filerOptions.allowUntrustedRemoteEndpoints = cmdServer.Flag.Bool("filer.allowUntrustedRemoteEndpoints", false, allowUntrustedRemoteEndpointsUsage)
 	filerOptions.remoteCacheEvictThreshold = cmdServer.Flag.Float64("filer.remoteCacheEvictThreshold", 0.9, "evict remote-cached objects (oldest first) when any volume disk exceeds this usage fraction; 0 disables")
+	filerOptions.idleTimeout = cmdServer.Flag.Int("filer.idleTimeout", 10, "connection idle seconds")
 
 	serverOptions.v.port = cmdServer.Flag.Int("volume.port", 8080, "volume server http listen port")
 	serverOptions.v.portGrpc = cmdServer.Flag.Int("volume.port.grpc", 0, "volume server grpc listen port")
@@ -207,6 +209,7 @@ func init() {
 	s3Options.iamSelfServiceRequiresGrant = cmdServer.Flag.Bool("s3.iam.selfServiceRequiresGrant", false, iamSelfServiceRequiresGrantUsage)
 
 	sftpOptions.port = cmdServer.Flag.Int("sftp.port", 2022, "SFTP server listen port")
+	sftpOptions.idleTimeout = cmdServer.Flag.Int("sftp.idleTimeout", 10, "connection idle seconds")
 	sftpOptions.sshPrivateKey = cmdServer.Flag.String("sftp.sshPrivateKey", "", "path to the SSH private key file for host authentication")
 	sftpOptions.hostKeysFolder = cmdServer.Flag.String("sftp.hostKeysFolder", "", "path to folder containing SSH private key files for host authentication")
 	sftpOptions.authMethods = cmdServer.Flag.String("sftp.authMethods", "password,publickey", "comma-separated list of allowed auth methods: password, publickey, certificate")
@@ -220,6 +223,7 @@ func init() {
 	sftpOptions.dataCenter = cmdServer.Flag.String("sftp.dataCenter", "", "prefer to read and write to volumes in this data center")
 	sftpOptions.localSocket = cmdServer.Flag.String("sftp.localSocket", "", "default to /tmp/seaweedfs-sftp-<port>.sock")
 	iamOptions.port = cmdServer.Flag.Int("iam.port", 8111, "iam server http listen port")
+	iamOptions.idleTimeout = cmdServer.Flag.Int("iam.idleTimeout", 10, "connection idle seconds")
 	iamOptions.selfServiceRequiresGrant = s3Options.iamSelfServiceRequiresGrant
 
 	webdavOptions.port = cmdServer.Flag.Int("webdav.port", 7333, "webdav server http listen port")
@@ -232,6 +236,7 @@ func init() {
 	webdavOptions.cacheSizeMB = cmdServer.Flag.Int64("webdav.cacheCapacityMB", 0, "local cache capacity in MB")
 	webdavOptions.maxMB = cmdServer.Flag.Int("webdav.maxMB", 4, "split files larger than the limit")
 	webdavOptions.filerRootPath = cmdServer.Flag.String("webdav.filer.path", "/", "use this remote path from filer server")
+	webdavOptions.idleTimeout = cmdServer.Flag.Int("webdav.idleTimeout", 10, "connection idle seconds")
 
 	mqBrokerOptions.port = cmdServer.Flag.Int("mq.broker.port", 17777, "message queue broker gRPC listen port")
 	mqBrokerOptions.logFlushInterval = cmdServer.Flag.Int("mq.broker.logFlushInterval", 5, "log buffer flush interval in seconds")
@@ -506,6 +511,20 @@ func runServer(cmd *Command, args []string) bool {
 	}
 
 	select {}
+}
+
+// idleTimeoutSeconds converts a seconds flag to the listener activity timeout,
+// keeping the 10s default when the option was never set. The clamp keeps the
+// multiplication from overflowing time.Duration; non-positive values disable
+// the timeout, as before.
+func idleTimeoutSeconds(seconds *int) time.Duration {
+	if seconds == nil {
+		return 10 * time.Second
+	}
+	if *seconds <= 0 {
+		return 0
+	}
+	return time.Duration(min(int64(*seconds), math.MaxInt64/int64(time.Second))) * time.Second
 }
 
 func newHttpServer(h http.Handler, tlsConfig *tls.Config) *http.Server {

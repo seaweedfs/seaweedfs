@@ -487,6 +487,7 @@ func initMiniFilerFlags() {
 	miniFilerOptions.tusSessionExpiry = cmdMini.Flag.Duration("filer.tusSessionExpiry", 24*time.Hour, "incomplete TUS upload sessions are cleaned up after this duration")
 	miniFilerOptions.allowUntrustedRemoteEndpoints = cmdMini.Flag.Bool("filer.allowUntrustedRemoteEndpoints", false, allowUntrustedRemoteEndpointsUsage)
 	miniFilerOptions.remoteCacheEvictThreshold = cmdMini.Flag.Float64("filer.remoteCacheEvictThreshold", 0.9, "evict remote-cached objects (oldest first) when any volume disk exceeds this usage fraction; 0 disables")
+	miniFilerOptions.idleTimeout = cmdMini.Flag.Int("filer.idleTimeout", 10, "connection idle seconds")
 }
 
 // initMiniVolumeFlags initializes Volume server flag options
@@ -578,6 +579,7 @@ func initMiniWebDAVFlags() {
 	miniWebDavOptions.cacheSizeMB = cmdMini.Flag.Int64("webdav.cacheCapacityMB", 0, "local cache capacity in MB")
 	miniWebDavOptions.maxMB = cmdMini.Flag.Int("webdav.maxMB", 4, "split files larger than the limit")
 	miniWebDavOptions.filerRootPath = cmdMini.Flag.String("webdav.filer.path", "/", "use this remote path from filer server")
+	miniWebDavOptions.idleTimeout = cmdMini.Flag.Int("webdav.idleTimeout", 10, "connection idle seconds")
 }
 
 // initMiniAdminFlags initializes Admin server flag options

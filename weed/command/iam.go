@@ -34,6 +34,7 @@ type IamOptions struct {
 	ipBind                   *string
 	listenOnLocalhost        *bool
 	port                     *int
+	idleTimeout              *int
 	selfServiceRequiresGrant *bool
 }
 
@@ -44,6 +45,7 @@ func init() {
 	iamStandaloneOptions.ip = cmdIam.Flag.String("ip", util.DetectedHostAddress(), "iam server http listen ip address")
 	iamStandaloneOptions.ipBind = cmdIam.Flag.String("ip.bind", "", "ip address to bind to. If empty, default to same as -ip option.")
 	iamStandaloneOptions.port = cmdIam.Flag.Int("port", 8111, "iam server http listen port")
+	iamStandaloneOptions.idleTimeout = cmdIam.Flag.Int("idleTimeout", 10, "connection idle seconds")
 	iamStandaloneOptions.selfServiceRequiresGrant = cmdIam.Flag.Bool("selfServiceRequiresGrant", false, iamSelfServiceRequiresGrantUsage)
 }
 
@@ -133,9 +135,10 @@ func (iamopt *IamOptions) startIamServer() bool {
 	if iamopt.listenOnLocalhost != nil {
 		listenOnLocalhost = *iamopt.listenOnLocalhost
 	}
+	idleTimeout := idleTimeoutSeconds(iamopt.idleTimeout)
 
 	listenAddress := fmt.Sprintf(":%d", *iamopt.port)
-	iamApiListener, iamApiLocalListener, err := util.NewIpAndLocalListeners(bindIp, *iamopt.port, time.Duration(10)*time.Second, listenOnLocalhost)
+	iamApiListener, iamApiLocalListener, err := util.NewIpAndLocalListeners(bindIp, *iamopt.port, idleTimeout, listenOnLocalhost)
 	if err != nil {
 		glog.Fatalf("IAM API Server listener on %s error: %v", listenAddress, err)
 	}
