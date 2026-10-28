@@ -14,9 +14,16 @@ const QUERY_TAG_PREFIX: &str = "weed-vector-query-";
 /// A lease outliving this is treated as abandoned by a dead or cancelled
 /// request and reaped by the next [`pin`].
 const LEASE_TTL: Duration = Duration::from_secs(3600);
+/// Foreign leases — another server's live queries or a dead process's
+/// leftovers — get this much longer backstop; a live query on a different
+/// server keeps its pin.
+const FOREIGN_TTL: Duration = Duration::from_secs(24 * 3600);
 /// Expired-lease scans run at most once per interval per dataset, not per
 /// request.
 const REAP_INTERVAL: Duration = Duration::from_secs(60);
+/// A process-unique owner id embedded in lease tags so a reaper only applies
+/// the short TTL to its own leases.
+static INSTANCE: LazyLock<String> = LazyLock::new(|| Uuid::new_v4().simple().to_string());
 /// Nanos since the Unix epoch when each dataset last had its tags scanned,
 /// keyed by dataset uri.
 static LAST_REAP: LazyLock<Mutex<HashMap<String, u128>>> = LazyLock::new(Mutex::default);
@@ -62,7 +69,11 @@ impl Drop for Lease {
 pub async fn pin(dataset: &Dataset) -> Result<Lease> {
     let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
     reap_expired(dataset, now).await;
-    let tag = format!("{QUERY_TAG_PREFIX}{now}-{}", Uuid::new_v4().simple());
+    let tag = format!(
+        "{QUERY_TAG_PREFIX}{instance}-{now}-{}",
+        Uuid::new_v4().simple(),
+        instance = &*INSTANCE,
+    );
     let version = dataset.version().version;
     dataset
         .tags()
@@ -142,11 +153,24 @@ async fn reap_expired(dataset: &Dataset, now: u128) {
             .lock()
             .map(|live| live.contains(name))
             .unwrap_or(false);
+        // {instance}-{ts}-{uuid} is the owned format; {ts}-{uuid} is a
+        // legacy foreign tag. Own leases use the short TTL; foreign ones
+        // only the long backstop.
         let expired = name
             .strip_prefix(QUERY_TAG_PREFIX)
-            .and_then(|rest| rest.split('-').next())
-            .and_then(|stamp| stamp.parse::<u128>().ok())
-            .is_some_and(|stamp| now.saturating_sub(stamp) > LEASE_TTL.as_nanos());
+            .and_then(|rest| {
+                let mut it = rest.splitn(3, '-');
+                let a = it.next()?;
+                let b = it.next()?;
+                match a.parse::<u128>() {
+                    Ok(stamp) => Some((false, stamp)),
+                    Err(_) => Some((a == *INSTANCE, b.parse::<u128>().ok()?)),
+                }
+            })
+            .is_some_and(|(own, stamp)| {
+                now.saturating_sub(stamp)
+                    > if own { LEASE_TTL } else { FOREIGN_TTL }.as_nanos()
+            });
         if expired && !held {
             let _ = dataset.tags().delete(name).await;
         }
@@ -307,12 +331,12 @@ mod tests {
         dataset
             .tags()
             .create(
-                &format!("{QUERY_TAG_PREFIX}{stale}-deadbeef"),
+                &format!("{QUERY_TAG_PREFIX}{}-{stale}-deadbeef", &*INSTANCE),
                 Ref::Version(None, Some(dataset.version().version)),
             )
             .await
             .unwrap();
-        let held = format!("{QUERY_TAG_PREFIX}{stale}-livebeef");
+        let held = format!("{QUERY_TAG_PREFIX}{}-{stale}-livebeef", &*INSTANCE);
         dataset
             .tags()
             .create(&held, Ref::Version(None, Some(dataset.version().version)))
@@ -329,6 +353,31 @@ mod tests {
         lease.release().await.unwrap();
     }
 
+    /// A stale lease from another process is not reaped at the short TTL —
+    /// only the long foreign backstop applies.
+    #[tokio::test]
+    async fn foreign_leases_survive_local_reap() {
+        let dir = TempDir::new().unwrap();
+        let dataset =
+            testing::write_dataset(&dir, &testing::vectors(4, 4), &["a", "b", "c", "d"]).await;
+        let stale = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+            - LEASE_TTL.as_nanos()
+            - 1;
+        let foreign = format!("{QUERY_TAG_PREFIX}other-{stale}-foreign");
+        dataset
+            .tags()
+            .create(&foreign, Ref::Version(None, Some(dataset.version().version)))
+            .await
+            .unwrap();
+        let lease = pin(&dataset).await.unwrap();
+        let tags = dataset.tags().list().await.unwrap();
+        assert!(tags.contains_key(&foreign), "foreign lease was reaped");
+        lease.release().await.unwrap();
+    }
+
     /// Pins within one reap interval do not rescan the dataset's tags.
     #[tokio::test]
     async fn pin_throttles_reap_scans() {
@@ -342,7 +391,7 @@ mod tests {
             .as_nanos()
             - LEASE_TTL.as_nanos()
             - 1;
-        let tag = format!("{QUERY_TAG_PREFIX}{stale}-slowbeef");
+        let tag = format!("{QUERY_TAG_PREFIX}{}-{stale}-slowbeef", &*INSTANCE);
         dataset
             .tags()
             .create(&tag, Ref::Version(None, Some(dataset.version().version)))
