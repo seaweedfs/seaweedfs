@@ -105,19 +105,68 @@ spec:
             {{- include "seaweedfs.mergeExtraEnvironmentVars" (dict "global" .Values.global.seaweedfs "component" .Values.filer "target" $mergedExtraEnvironmentVars) }}
             {{- $secretExtraEnvironmentVars := .Values.filer.secretExtraEnvironmentVars | default dict }}
             {{- $renderedCredentials := dict }}
+            {{- $emittedEarly := dict }}
             {{- if $mysqlEnabled }}
             {{- /* The selected credential renders ahead of the merged vars so a later
                    entry such as WEED_MYSQL_DSN can reference it via $(...); Kubernetes
                    only resolves names declared earlier. A credential the user sets
-                   wins over the db secret's, secret-backed over plain. One whose value
-                   itself holds a $(...) reference keeps its sorted position instead,
-                   so its own references still resolve. */}}
+                   wins over the db secret's, secret-backed over plain. */}}
+            {{- /* Vars a selected credential references via $(...) must render even
+                   earlier: pull them out of the merged set first, dependencies before
+                   dependents, chained references included. */}}
+            {{- $front := dict }}
+            {{- range $round := until 8 }}
+            {{- $scan := dict }}
+            {{- range $key := list "WEED_MYSQL_USERNAME" "WEED_MYSQL_PASSWORD" }}
+            {{- $v := index $mergedExtraEnvironmentVars $key }}
+            {{- if and (not (hasKey $secretExtraEnvironmentVars $key)) (kindIs "string" $v) }}
+            {{- $_ := set $scan $key $v }}
+            {{- end }}
+            {{- end }}
+            {{- range $key := keys $front }}
+            {{- $v := index $mergedExtraEnvironmentVars $key }}
+            {{- if kindIs "string" $v }}{{- $_ := set $scan $key $v }}{{- end }}
+            {{- end }}
+            {{- range $value := values $scan }}
+            {{- range $ref := regexFindAll `\$\([A-Za-z_][A-Za-z0-9_]*\)` $value -1 }}
+            {{- $name := $ref | trimPrefix "$(" | trimSuffix ")" }}
+            {{- if and (or (hasKey $mergedExtraEnvironmentVars $name) (hasKey $secretExtraEnvironmentVars $name)) (not (hasKey $front $name)) (not (has $name (list "WEED_MYSQL_USERNAME" "WEED_MYSQL_PASSWORD"))) }}
+            {{- $_ := set $front $name true }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- range $round := until 8 }}
+            {{- range $key := keys $front | sortAlpha }}
+            {{- if not (hasKey $emittedEarly $key) }}
+            {{- $ready := true }}
+            {{- $v := index $mergedExtraEnvironmentVars $key }}
+            {{- if kindIs "string" $v }}
+            {{- range $ref := regexFindAll `\$\([A-Za-z_][A-Za-z0-9_]*\)` $v -1 }}
+            {{- $name := $ref | trimPrefix "$(" | trimSuffix ")" }}
+            {{- if and (hasKey $front $name) (not (hasKey $emittedEarly $name)) }}{{- $ready = false }}{{- end }}
+            {{- end }}
+            {{- end }}
+            {{- if $ready }}
+            - name: {{ $key }}
+            {{- if hasKey $secretExtraEnvironmentVars $key }}
+              valueFrom: {{ toYaml (index $secretExtraEnvironmentVars $key) | nindent 16 }}
+            {{- else if kindIs "string" $v }}
+              value: {{ tpl $v $ | quote }}
+            {{- else }}
+              valueFrom:
+                {{ toYaml $v | nindent 16 | trim }}
+            {{- end }}
+            {{- $_ := set $emittedEarly $key true }}
+            {{- $_ := unset $mergedExtraEnvironmentVars $key }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
             {{- range $credential := list (list "WEED_MYSQL_USERNAME" "user") (list "WEED_MYSQL_PASSWORD" "password") }}
             {{- $key := index $credential 0 }}
             {{- $mergedHas := hasKey $mergedExtraEnvironmentVars $key }}
             {{- $mergedValue := index $mergedExtraEnvironmentVars $key }}
-            {{- if and $mergedHas (not (hasKey $secretExtraEnvironmentVars $key)) (kindIs "string" $mergedValue) (regexMatch `\$\(` $mergedValue) }}
-            {{- else }}
             {{- $_ := unset $mergedExtraEnvironmentVars $key }}
             {{- $_ := set $renderedCredentials $key true }}
             {{- if hasKey $secretExtraEnvironmentVars $key }}
@@ -138,7 +187,6 @@ spec:
                   name: {{ include "seaweedfs.fullname" $ }}-db-secret
                   key: {{ index $credential 1 }}
                   optional: true
-            {{- end }}
             {{- end }}
             {{- end }}
             {{- end }}
@@ -171,7 +219,7 @@ spec:
             {{- end }}
             {{- if .Values.filer.secretExtraEnvironmentVars }}
             {{- range $key, $value := .Values.filer.secretExtraEnvironmentVars }}
-            {{- if and (or $mysqlEnabled (not (hasPrefix "WEED_MYSQL_" $key))) (not (hasKey $renderedCredentials $key)) (not (hasKey $mergedExtraEnvironmentVars $key)) }}
+            {{- if and (or $mysqlEnabled (not (hasPrefix "WEED_MYSQL_" $key))) (not (hasKey $renderedCredentials $key)) (not (hasKey $emittedEarly $key)) (not (hasKey $mergedExtraEnvironmentVars $key)) }}
             - name: {{ $key }}
               valueFrom: {{ toYaml $value | nindent 16 }}
             {{- end }}

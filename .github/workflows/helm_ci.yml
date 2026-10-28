@@ -651,12 +651,19 @@ jobs:
             --set-string filer.extraEnvironmentVars.WEED_MYSQL_USERNAME=app \
             --set-string 'filer.extraEnvironmentVars.WEED_MYSQL_DSN=$(WEED_MYSQL_USERNAME)@tcp(h)/db' > /tmp/filer-mysql-dsn.yaml
           test "$(grep -n -- "- name: WEED_MYSQL_USERNAME$" /tmp/filer-mysql-dsn.yaml | cut -d: -f1)" -lt "$(grep -n -- "- name: WEED_MYSQL_DSN$" /tmp/filer-mysql-dsn.yaml | cut -d: -f1)"
-          # A credential whose value holds a $(...) reference keeps its sorted position.
+          # Vars a credential's own $(...) references point at render before it.
           helm template test $CHART_DIR \
             --set-string filer.extraEnvironmentVars.WEED_MYSQL_ENABLED=true \
             --set-string filer.extraEnvironmentVars.DB_USER=app \
             --set-string 'filer.extraEnvironmentVars.WEED_MYSQL_USERNAME=$(DB_USER)' > /tmp/filer-mysql-ref.yaml
           test "$(grep -n -- "- name: DB_USER$" /tmp/filer-mysql-ref.yaml | cut -d: -f1)" -lt "$(grep -n -- "- name: WEED_MYSQL_USERNAME$" /tmp/filer-mysql-ref.yaml | cut -d: -f1)"
+          helm template test $CHART_DIR \
+            --set-string filer.extraEnvironmentVars.WEED_MYSQL_ENABLED=true \
+            --set filer.secretExtraEnvironmentVars.DB_USER.secretKeyRef.name=db \
+            --set filer.secretExtraEnvironmentVars.DB_USER.secretKeyRef.key=user \
+            --set-string 'filer.extraEnvironmentVars.WEED_MYSQL_USERNAME=$(DB_USER)' > /tmp/filer-mysql-ref-secret.yaml
+          test "$(grep -c -- "- name: DB_USER$" /tmp/filer-mysql-ref-secret.yaml)" -eq 1
+          test "$(grep -n -- "- name: DB_USER$" /tmp/filer-mysql-ref-secret.yaml | cut -d: -f1)" -lt "$(grep -n -- "- name: WEED_MYSQL_USERNAME$" /tmp/filer-mysql-ref-secret.yaml | cut -d: -f1)"
           # A flag the chart cannot read counts as selected, not as off.
           helm template test $CHART_DIR \
             --set filer.secretExtraEnvironmentVars.WEED_MYSQL_ENABLED.secretKeyRef.name=store \
