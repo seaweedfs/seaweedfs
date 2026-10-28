@@ -788,8 +788,16 @@ func (p *filerVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []s
 			}()
 
 			if err != nil {
-				// a caller that gave up says nothing about this filer
-				if ctxErr := ctx.Err(); ctxErr != nil {
+				// a caller that gave up says nothing about this filer; check the
+				// deadline too since gRPC can report its own DeadlineExceeded a
+				// tick before ctx.Err() becomes visible
+				ctxErr := ctx.Err()
+				if ctxErr == nil {
+					if dl, ok := ctx.Deadline(); ok && !dl.After(time.Now()) {
+						ctxErr = context.DeadlineExceeded
+					}
+				}
+				if ctxErr != nil {
 					if lastErr != nil {
 						return nil, fmt.Errorf("%w (earlier filer error: %v)", ctxErr, lastErr)
 					}
