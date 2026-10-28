@@ -117,7 +117,8 @@ spec:
                    declared earlier. A credential the user sets wins over the db
                    secret's, secret-backed over plain. */}}
             {{- $early := dict "WEED_MYSQL_USERNAME" true "WEED_MYSQL_PASSWORD" true }}
-            {{- range $round := until 8 }}
+            {{- $maxDiscover := int (add (len $mergedExtraEnvironmentVars) (len $secretExtraEnvironmentVars)) }}
+            {{- range $round := until $maxDiscover }}
             {{- range $key := keys $early }}
             {{- $v := index $mergedExtraEnvironmentVars $key }}
             {{- if and (not (hasKey $secretExtraEnvironmentVars $key)) (kindIs "string" $v) }}
@@ -134,7 +135,8 @@ spec:
             {{- range $key := keys $early | sortAlpha }}
             {{- if not (has $key $ordered) }}{{ $ordered = append $ordered $key }}{{ end }}
             {{- end }}
-            {{- range $round := until 8 }}
+            {{- $maxRounds := int (len $ordered) }}
+            {{- range $round := until $maxRounds }}
             {{- range $key := $ordered }}
             {{- if not (hasKey $emittedEarly $key) }}
             {{- $ready := true }}
@@ -145,7 +147,7 @@ spec:
             {{- if and (hasKey $early $name) (not (hasKey $emittedEarly $name)) }}{{- $ready = false }}{{- end }}
             {{- end }}
             {{- end }}
-            {{- if or $ready (eq $round 7) }}
+            {{- if or $ready (eq $round (sub $maxRounds 1)) }}
             - name: {{ $key }}
             {{- if hasKey $secretExtraEnvironmentVars $key }}
               valueFrom: {{ toYaml (index $secretExtraEnvironmentVars $key) | nindent 16 }}
