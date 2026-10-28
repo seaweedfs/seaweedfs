@@ -170,6 +170,15 @@ func S3CompatibleEndpoint(conf *remote_pb.RemoteConf) (string, bool) {
 	return opt.endpoint, true
 }
 
+// UsesDefaultCredentialChain reports whether a client of conf, of any
+// S3-compatible type, may take its credentials from the SDK's default chain
+// (an access key or a secret missing, after the type's own environment
+// fallbacks): the only case where they live outside the configuration.
+func UsesDefaultCredentialChain(conf *remote_pb.RemoteConf) bool {
+	opt, ok := s3CompatibleClientOptions(conf)
+	return ok && !(opt.accessKey != "" && opt.secretKey != "")
+}
+
 // awsCredentialSourceConfigured reports whether the environment names a source
 // for the AWS SDK default credential chain, such as static keys, a profile,
 // IRSA web identity or the ECS/EKS container credentials endpoint.

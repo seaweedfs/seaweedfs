@@ -35,6 +35,7 @@ type FilerRemoteStorage struct {
 	// guards rules and storageNameToConf, which are replaced wholesale
 	// whenever /etc/remote changes
 	mu                sync.RWMutex
+	reloadMu          sync.Mutex // serializes reloads, so an older listing never overwrites a newer one
 	rules             ptrie.Trie[*remote_pb.RemoteStorageLocation]
 	mountDirs         []util.FullPath
 	storageNameToConf map[string]*remote_pb.RemoteConf
@@ -74,11 +75,18 @@ func (rs *FilerRemoteStorage) SetConfValidator(v RemoteStorageConfValidator) {
 func (rs *FilerRemoteStorage) LoadRemoteStorageConfigurationsAndMapping(filer *Filer) (err error) {
 	// execute this on filer
 
+	// reloads run one at a time, so the listing a reload applies (and the cached
+	// clients it retains) is never older than one already applied
+	rs.reloadMu.Lock()
+	defer rs.reloadMu.Unlock()
+
 	limit := int64(math.MaxInt32)
 
 	entries, _, err := filer.ListDirectoryEntries(context.Background(), DirectoryEtcRemote, "", false, limit, "", "", "")
 	if err != nil {
 		if err == filer_pb.ErrNotFound {
+			// no /etc/remote: no remote is configured, so none keeps a client
+			remote_storage.RetainRemoteStorages(nil)
 			return nil
 		}
 		glog.Errorf("read remote storage %s: %v", DirectoryEtcRemote, err)
@@ -122,6 +130,13 @@ func (rs *FilerRemoteStorage) LoadRemoteStorageConfigurationsAndMapping(filer *F
 	rs.mu.Lock()
 	rs.rules, rs.mountDirs, rs.storageNameToConf = rules, mountDirs, storageNameToConf
 	rs.mu.Unlock()
+
+	// a remote removed from /etc/remote keeps no cached client and no open connections
+	names := make(map[string]bool, len(storageNameToConf))
+	for name := range storageNameToConf {
+		names[name] = true
+	}
+	remote_storage.RetainRemoteStorages(names)
 
 	return nil
 }

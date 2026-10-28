@@ -21,8 +21,11 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/proto"
+
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
+	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
 	s3remote "github.com/seaweedfs/seaweedfs/weed/remote_storage/s3"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
@@ -968,5 +971,145 @@ func TestGuardedPeerHTTPClientRejectsHTTPSDowngrade(t *testing.T) {
 	}
 	if !sawUpload.Load() {
 		t.Error("HTTPS peer never saw the original upload")
+	}
+}
+
+// guardedCacheTest empties the process-wide remote client cache before and
+// after a test and stubs DNS with a lookup counter.
+func guardedCacheTest(t *testing.T, ips map[string][]net.IP) *atomic.Int64 {
+	t.Helper()
+	remote_storage.ResetRemoteStorageClients()
+	t.Cleanup(remote_storage.ResetRemoteStorageClients)
+	original := lookupIPAddrFunc
+	t.Cleanup(func() { lookupIPAddrFunc = original })
+	var lookups atomic.Int64
+	stub := stubLookup(t, ips)
+	lookupIPAddrFunc = func(ctx context.Context, host string) ([]net.IPAddr, error) {
+		lookups.Add(1)
+		return stub(ctx, host)
+	}
+	return &lookups
+}
+
+// The same configuration gets the same client; a rotated key a new one; a loopback endpoint under a cached name is
+// still refused (it is another configuration: a miss, checked when it is built).
+func TestBuildGuardedRemoteStorageClientReusesOneClientPerConf(t *testing.T) {
+	guardedCacheTest(t, nil)
+	conf := &remote_pb.RemoteConf{
+		Name:        "reuse",
+		Type:        "s3",
+		S3Endpoint:  "https://93.184.216.34", // a public address literal: validated without DNS
+		S3AccessKey: "k",
+		S3SecretKey: "s",
+		S3Region:    "us-east-1",
+	}
+	first, err := BuildGuardedRemoteStorageClient(context.Background(), conf, false)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	for i := 0; i < 5; i++ {
+		again, err := BuildGuardedRemoteStorageClient(context.Background(), proto.Clone(conf).(*remote_pb.RemoteConf), false)
+		if err != nil {
+			t.Fatalf("build again: %v", err)
+		}
+		if again != first {
+			t.Fatalf("call %d built a new client for the same configuration", i)
+		}
+	}
+	rotated := proto.Clone(conf).(*remote_pb.RemoteConf)
+	rotated.S3SecretKey = "s2"
+	if next, err := BuildGuardedRemoteStorageClient(context.Background(), rotated, false); err != nil || next == first {
+		t.Errorf("a changed configuration (a rotated key) must get a new client (err %v)", err)
+	}
+	loop := proto.Clone(conf).(*remote_pb.RemoteConf)
+	loop.S3Endpoint = "http://127.0.0.1:8000"
+	if _, err := BuildGuardedRemoteStorageClient(context.Background(), loop, false); err == nil ||
+		!strings.Contains(err.Error(), "reject remote endpoint") {
+		t.Errorf("a loopback endpoint under a cached name must still be rejected, got %v", err)
+	}
+}
+
+// The endpoint's DNS is checked when a client is built (a cache miss), not on every call; the guarded dialer still
+// checks every new connection.
+func TestBuildGuardedRemoteStorageClientResolvesOnlyOnAMiss(t *testing.T) {
+	lookups := guardedCacheTest(t, map[string][]net.IP{"s3.example.test": {net.ParseIP("52.216.10.10")}})
+	conf := &remote_pb.RemoteConf{Name: "dns", Type: "s3", S3Endpoint: "https://s3.example.test",
+		S3AccessKey: "k", S3SecretKey: "s", S3Region: "us-east-1"}
+	for i := 0; i < 10; i++ {
+		if _, err := BuildGuardedRemoteStorageClient(context.Background(), conf, false); err != nil {
+			t.Fatalf("build: %v", err)
+		}
+	}
+	if n := lookups.Load(); n != 1 {
+		t.Fatalf("%d DNS lookups for 10 calls with one configuration, want 1", n)
+	}
+}
+
+// The shared transport keeps a burst's connections for reuse and caps them per host (WEED_REMOTE_MAX_CONNS_PER_HOST).
+func TestGuardedHTTPClientBoundsConnectionsPerHost(t *testing.T) {
+	tr := newGuardedHTTPClient("https://93.184.216.34").Transport.(*http.Transport)
+	if tr.MaxIdleConnsPerHost < 32 || tr.MaxConnsPerHost != 64 {
+		t.Fatalf("MaxIdleConnsPerHost %d (want >= 32), MaxConnsPerHost %d (want 64)", tr.MaxIdleConnsPerHost, tr.MaxConnsPerHost)
+	}
+	t.Setenv("WEED_REMOTE_MAX_CONNS_PER_HOST", "8")
+	if got := newGuardedHTTPClient("https://93.184.216.34").Transport.(*http.Transport).MaxConnsPerHost; got != 8 {
+		t.Fatalf("MaxConnsPerHost %d with WEED_REMOTE_MAX_CONNS_PER_HOST=8", got)
+	}
+}
+
+// A gcs credentials file is part of the key by its content: the same file shares one client, a changed file builds anew.
+func TestBuildGuardedRemoteStorageClientGcsFileCredentialsByContent(t *testing.T) {
+	guardedCacheTest(t, map[string][]net.IP{"oauth2.googleapis.com": {net.ParseIP("142.250.0.95")}})
+	credsFile := filepath.Join(t.TempDir(), "service-account.json")
+	write := func(email string) {
+		creds := `{"type":"service_account","token_uri":"https://oauth2.googleapis.com/token","client_email":"` + email + `","private_key":"-----BEGIN PRIVATE KEY-----\nMIIBVwIBADANBgkqhkiG9w0BAQEFAASCAUEwggE9AgEAAkEAxY\n-----END PRIVATE KEY-----\n","private_key_id":"key1"}`
+		if err := os.WriteFile(credsFile, []byte(creds), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("sa@example.iam.gserviceaccount.com")
+	conf := &remote_pb.RemoteConf{Name: "gcsfile", Type: "gcs", GcsGoogleApplicationCredentials: credsFile}
+	first, err := BuildGuardedRemoteStorageClient(context.Background(), conf, false)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	again, _ := BuildGuardedRemoteStorageClient(context.Background(), conf, false)
+	if again != first {
+		t.Fatal("the same credentials file must share one client")
+	}
+	write("other@example.iam.gserviceaccount.com")
+	if next, err := BuildGuardedRemoteStorageClient(context.Background(), conf, false); err != nil || next == first {
+		t.Fatalf("a changed credentials file must build a new client (err %v)", err)
+	}
+}
+
+// An s3-compatible remote without keys (the SDK's default chain) is keyed by the shared credentials file and the AWS_*
+// variables: unchanged, one client; changed, a new one.
+func TestBuildGuardedRemoteStorageClientS3DefaultChainByCredentials(t *testing.T) {
+	guardedCacheTest(t, nil)
+	shared := filepath.Join(t.TempDir(), "credentials")
+	if err := os.WriteFile(shared, []byte("[default]\naws_access_key_id = a\naws_secret_access_key = b\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", shared)
+	conf := &remote_pb.RemoteConf{Name: "chain", Type: "s3", S3Endpoint: "https://93.184.216.34", S3Region: "us-east-1"}
+	first, err := BuildGuardedRemoteStorageClient(context.Background(), conf, false)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if again, _ := BuildGuardedRemoteStorageClient(context.Background(), conf, false); again != first {
+		t.Fatal("unchanged credentials must share one client")
+	}
+	if err := os.WriteFile(shared, []byte("[default]\naws_access_key_id = c\naws_secret_access_key = d\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if next, err := BuildGuardedRemoteStorageClient(context.Background(), conf, false); err != nil || next == first {
+		t.Fatalf("a changed shared credentials file must build a new client (err %v)", err)
+	}
+	t.Setenv("AWS_PROFILE", "other")
+	prev, _ := BuildGuardedRemoteStorageClient(context.Background(), conf, false)
+	t.Setenv("AWS_PROFILE", "third")
+	if next, _ := BuildGuardedRemoteStorageClient(context.Background(), conf, false); next == prev {
+		t.Fatal("a changed AWS_PROFILE must build a new client")
 	}
 }
