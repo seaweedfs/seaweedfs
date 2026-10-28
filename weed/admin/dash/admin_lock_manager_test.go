@@ -4,6 +4,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 type fakeAdminLocker struct {
@@ -132,6 +134,8 @@ func TestAdminLockManagerFairnessWindowForcesFullRelease(t *testing.T) {
 	m := newTestLockManager(locker, 20*time.Millisecond, 50*time.Millisecond)
 
 	release1, _ := m.Acquire("long-hold")
+	releaseFirst := sync.OnceFunc(release1)
+	defer releaseFirst()
 	m.mu.Lock()
 	m.heldSince = time.Now().Add(-time.Second)
 	m.mu.Unlock()
@@ -142,10 +146,11 @@ func TestAdminLockManagerFairnessWindowForcesFullRelease(t *testing.T) {
 		acquired <- release2
 	}()
 
+	require.Eventually(t, func() bool { return len(m.Status().Waiters) == 1 }, time.Second, time.Millisecond)
 	select {
 	case <-acquired:
 		t.Fatalf("late acquire joined a hold older than the fairness window")
-	case <-time.After(50 * time.Millisecond):
+	default:
 	}
 
 	status := m.Status()
@@ -155,7 +160,7 @@ func TestAdminLockManagerFairnessWindowForcesFullRelease(t *testing.T) {
 	if len(status.Waiters) != 1 || status.Waiters[0].Reason != "late-joiner" {
 		t.Errorf("missing fairness waiter: %+v", status.Waiters)
 	}
-	release1()
+	releaseFirst()
 
 	select {
 	case release2 := <-acquired:
