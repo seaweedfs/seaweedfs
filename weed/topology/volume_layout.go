@@ -973,6 +973,36 @@ func (vl *VolumeLayout) ShouldGrowVolumesByDcAndRack(writables *[]needle.VolumeI
 	return true
 }
 
+// ShouldGrowVolumesWithinLocation reports whether the location the option
+// names still lacks a writable it can use: true when every writable volume
+// holding a replica inside the option's DataCenter/Rack/DataNode is crowded,
+// or none exists at all. The layout-wide ShouldGrowVolumes answers the same
+// question cluster-wide, so a targeted grow judged by it would be discarded
+// whenever another location's writables are healthy — leaving the requesting
+// location without a volume no matter how often the assign retries.
+func (vl *VolumeLayout) ShouldGrowVolumesWithinLocation(option *VolumeGrowOption) bool {
+	writables := vl.CloneWritableVolumes()
+	for _, v := range writables {
+		for _, dn := range vl.Lookup(v) {
+			if !dn.matchesLocation(option) {
+				continue
+			}
+			if _, err := dn.GetVolumesById(v); err == nil {
+				vl.accessLock.RLock()
+				var size uint64
+				if st := vl.sizeTracking[v]; st != nil {
+					size = st.effectiveSize
+				}
+				vl.accessLock.RUnlock()
+				if float64(size) <= float64(vl.volumeSizeLimit)*VolumeGrowStrategy.Threshold {
+					return false
+				}
+			}
+		}
+	}
+	return true
+}
+
 // listVolumeDataCenters returns the data centers hosting at least one volume
 // of this layout, stopping once limit distinct DCs are seen (0 = no limit).
 // The walk holds accessLock and a layout can span millions of volumes, so

@@ -784,3 +784,50 @@ func TestShouldGrowVolumesByDcAndRack_WithPendingSize(t *testing.T) {
 		t.Error("should grow after pending pushes volume past crowded threshold")
 	}
 }
+
+// A targeted grow asks whether the location it names still lacks a usable
+// writable, so healthy writables in other data centers must not mask the need.
+func TestShouldGrowVolumesWithinLocation(t *testing.T) {
+	layout := `
+{
+  "dc1":{
+    "rack1":{
+      "server1":{
+        "ip":"10.0.0.1",
+        "volumes":[
+          {"id":1, "size":2000, "replication":"000"},
+          {"id":2, "size":9500, "replication":"000"}
+        ],
+        "limit":10
+      }
+    }
+  },
+  "dc2":{
+    "rack2":{
+      "server2":{
+        "ip":"10.0.0.2",
+        "volumes":[],
+        "limit":10
+      }
+    }
+  }
+}
+`
+	_, vl := setupPickTest(t, layout, 10000)
+
+	if vl.ShouldGrowVolumesWithinLocation(&VolumeGrowOption{DataCenter: "dc1"}) {
+		t.Error("dc1 holds a non-crowded writable: a dc1 grow is not needed")
+	}
+	if !vl.ShouldGrowVolumesWithinLocation(&VolumeGrowOption{DataCenter: "dc1", Rack: "rack2"}) {
+		t.Error("no writable has a replica in dc1/rack2: a rack grow is needed")
+	}
+	if !vl.ShouldGrowVolumesWithinLocation(&VolumeGrowOption{DataCenter: "dc2"}) {
+		t.Error("dc2 has no writable at all: a dc2 grow is needed")
+	}
+	if vl.ShouldGrowVolumesWithinLocation(&VolumeGrowOption{DataCenter: "dc1", DataNode: "server1"}) {
+		t.Error("server1 holds a non-crowded writable: a datanode grow is not needed")
+	}
+	if vl.ShouldGrowVolumesWithinLocation(&VolumeGrowOption{}) {
+		t.Error("an unconstrained grow sees the non-crowded writable and is not needed")
+	}
+}
