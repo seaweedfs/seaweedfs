@@ -149,7 +149,7 @@
             <dependency>
                 <groupId>com.google.guava</groupId>
                 <artifactId>guava</artifactId>
-                <version>32.1.3-jre</version>
+                <version>33.7.1-jre</version>
             </dependency>
 
             <!-- SnakeYAML - Fix CVEs -->
