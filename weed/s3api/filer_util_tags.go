@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
@@ -34,9 +35,9 @@ func (s3a *S3ApiServer) getTags(parentDirectoryPath string, entryName string) (t
 	return
 }
 
-func (s3a *S3ApiServer) setTags(parentDirectoryPath string, entryName string, tags map[string]string) (err error) {
+func (s3a *S3ApiServer) setTags(owner pb.ServerAddress, parentDirectoryPath string, entryName string, tags map[string]string) (err error) {
 
-	return s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	return s3a.withWriteOwnerFilerClient(owner, func(client filer_pb.SeaweedFilerClient) error {
 
 		resp, err := filer_pb.LookupEntry(context.Background(), client, &filer_pb.LookupDirectoryEntryRequest{
 			Directory: parentDirectoryPath,
@@ -70,9 +71,9 @@ func (s3a *S3ApiServer) setTags(parentDirectoryPath string, entryName string, ta
 
 }
 
-func (s3a *S3ApiServer) rmTags(parentDirectoryPath string, entryName string) (err error) {
+func (s3a *S3ApiServer) rmTags(owner pb.ServerAddress, parentDirectoryPath string, entryName string) (err error) {
 
-	return s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	return s3a.withWriteOwnerFilerClient(owner, func(client filer_pb.SeaweedFilerClient) error {
 
 		resp, err := filer_pb.LookupEntry(context.Background(), client, &filer_pb.LookupDirectoryEntryRequest{
 			Directory: parentDirectoryPath,

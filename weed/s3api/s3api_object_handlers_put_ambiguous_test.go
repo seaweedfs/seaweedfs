@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"path"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -296,10 +297,16 @@ func (f *ambiguousPutFiler) ObjectTransaction(_ context.Context, req *filer_pb.O
 	}
 	if !f.txnNoApply {
 		for _, m := range req.Mutations {
-			if m.Type == filer_pb.ObjectMutation_PUT {
+			switch m.Type {
+			case filer_pb.ObjectMutation_PUT:
 				entry := proto.Clone(m.Entry).(*filer_pb.Entry)
 				filer_pb.BeforeEntrySerialization(entry.Chunks)
 				f.entries[m.Directory+"/"+m.Entry.Name] = entry
+				f.ensureParents(m.Directory)
+			case filer_pb.ObjectMutation_DELETE:
+				delete(f.entries, m.Directory+"/"+m.Name)
+			case filer_pb.ObjectMutation_RECOMPUTE_LATEST:
+				f.applyRecomputeLatest(m)
 			}
 		}
 	}
@@ -308,6 +315,99 @@ func (f *ambiguousPutFiler) ObjectTransaction(_ context.Context, req *filer_pb.O
 		f.supersede = nil
 	}
 	return &filer_pb.ObjectTransactionResponse{}, f.txnErr
+}
+
+// ensureParents mirrors the filer's InsertEntry, which creates missing parent
+// directory entries for a stored object (e.g. the .versions dir a version file
+// lands under).
+func (f *ambiguousPutFiler) ensureParents(dir string) {
+	for dir != "" && dir != "/" && dir != "." {
+		parent, name := path.Dir(dir), path.Base(dir)
+		if _, exists := f.entries[parent+"/"+name]; exists {
+			return
+		}
+		f.entries[parent+"/"+name] = &filer_pb.Entry{Name: name, IsDirectory: true}
+		dir = parent
+	}
+}
+
+// applyRecomputeLatest mirrors FilerServer.applyRecomputeLatest: re-derive the
+// pointer entry from the children of recompute.scan_dir, copying the mapped
+// extended keys off the chosen child.
+func (f *ambiguousPutFiler) applyRecomputeLatest(m *filer_pb.ObjectMutation) {
+	rc := m.Recompute
+	pointerKey := m.Directory + "/" + m.Name
+	pointer := f.entries[pointerKey]
+	if pointer == nil {
+		return
+	}
+	if pointer.Extended == nil {
+		pointer.Extended = make(map[string][]byte)
+	}
+	priorName := string(pointer.Extended[rc.NameToKey])
+
+	var names []string
+	for key := range f.entries {
+		if path.Dir(key) == rc.ScanDir {
+			names = append(names, path.Base(key))
+		}
+	}
+	slices.Sort(names)
+	var chosen *filer_pb.Entry
+	pick := func(i int) *filer_pb.Entry {
+		return f.entries[rc.ScanDir+"/"+names[i]]
+	}
+	if rc.Descending {
+		for i := len(names) - 1; i >= 0; i-- {
+			if names[i] != rc.ExcludeName {
+				chosen = pick(i)
+				break
+			}
+		}
+	} else {
+		for i := 0; i < len(names); i++ {
+			if names[i] != rc.ExcludeName {
+				chosen = pick(i)
+				break
+			}
+		}
+	}
+
+	if chosen == nil {
+		for pointerKey := range rc.CopyExtended {
+			delete(pointer.Extended, pointerKey)
+		}
+		for _, k := range []string{rc.NameToKey, rc.SizeToKey, rc.MtimeToKey} {
+			if k != "" {
+				delete(pointer.Extended, k)
+			}
+		}
+	} else {
+		for pointerKey, sourceKey := range rc.CopyExtended {
+			if v, ok := chosen.Extended[sourceKey]; ok {
+				pointer.Extended[pointerKey] = v
+			} else {
+				delete(pointer.Extended, pointerKey)
+			}
+		}
+		if rc.NameToKey != "" {
+			pointer.Extended[rc.NameToKey] = []byte(chosen.Name)
+		}
+		if rc.SizeToKey != "" && chosen.Attributes != nil {
+			pointer.Extended[rc.SizeToKey] = []byte(strconv.FormatUint(chosen.Attributes.FileSize, 10))
+		}
+		if rc.MtimeToKey != "" && chosen.Attributes != nil {
+			pointer.Extended[rc.MtimeToKey] = []byte(strconv.FormatInt(chosen.Attributes.Mtime, 10))
+		}
+		if rc.DemoteKey != "" && priorName != "" && priorName != chosen.Name {
+			if prior := f.entries[rc.ScanDir+"/"+priorName]; prior != nil {
+				if prior.Extended == nil {
+					prior.Extended = make(map[string][]byte)
+				}
+				prior.Extended[rc.DemoteKey] = rc.DemoteValue
+			}
+		}
+	}
 }
 
 func (f *ambiguousPutFiler) ListEntries(req *filer_pb.ListEntriesRequest, stream filer_pb.SeaweedFiler_ListEntriesServer) error {

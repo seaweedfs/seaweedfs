@@ -21,12 +21,18 @@ const unreachableOwnerTTL = 2 * time.Second
 // probes the key's prior owner once during a rebalance window; falls back to
 // getEntry when no owner is resolvable.
 func (s3a *S3ApiServer) getObjectEntryRoutedByKey(bucket, object string) (*filer_pb.Entry, error) {
-	fullPath := util.NewFullPath(s3a.bucketDir(bucket), object)
+	dir, name := util.NewFullPath(s3a.bucketDir(bucket), object).DirAndName()
+	return s3a.getObjectScopedEntryRoutedByKey(bucket, object, dir, name)
+}
 
+// getObjectScopedEntryRoutedByKey reads dir/name the way
+// getObjectEntryRoutedByKey reads the object itself, for the entries an
+// object's writes commit on its owner: its .versions directory and the version
+// files under it. bucket/object picks the owner; dir/name picks the entry.
+func (s3a *S3ApiServer) getObjectScopedEntryRoutedByKey(bucket, object, dir, name string) (*filer_pb.Entry, error) {
 	owner := s3a.routableWriteOwner(bucket, object)
 	if owner == "" || s3a.filerClient == nil {
-		entry, _, _, err := filer_pb.GetEntry(context.Background(), s3a, fullPath)
-		return entry, err
+		return s3a.getEntry(dir, name)
 	}
 
 	// Skip an owner whose recent read hit a transport error; read local-first until
@@ -36,7 +42,6 @@ func (s3a *S3ApiServer) getObjectEntryRoutedByKey(bucket, object string) (*filer
 		preferred = ""
 	}
 
-	dir, name := fullPath.DirAndName()
 	var entry *filer_pb.Entry
 	err := s3a.withFilerClientFailover(context.Background(), preferred, false, true, func(client filer_pb.SeaweedFilerClient) error {
 		resp, lookupErr := filer_pb.LookupEntry(context.Background(), client, &filer_pb.LookupDirectoryEntryRequest{
@@ -60,6 +65,37 @@ func (s3a *S3ApiServer) getObjectEntryRoutedByKey(bucket, object string) (*filer
 		}
 	}
 	return entry, err
+}
+
+// listObjectScopedEntriesRoutedByKey lists parentDirectoryPath preferring
+// bucket/object's write owner, for scans of directories that commit under the
+// object's owner (.versions). Mirrors s3a.list when no owner is resolvable.
+func (s3a *S3ApiServer) listObjectScopedEntriesRoutedByKey(bucket, object, parentDirectoryPath, prefix, startFrom string, inclusive bool, limit uint32) (entries []*filer_pb.Entry, isLast bool, err error) {
+	owner := s3a.routableWriteOwner(bucket, object)
+	if owner == "" || s3a.filerClient == nil {
+		return s3a.list(parentDirectoryPath, prefix, startFrom, inclusive, limit)
+	}
+	preferred := owner
+	if s3a.ownerRecentlyUnreachable(owner) {
+		preferred = ""
+	}
+	err = listRetry(parentDirectoryPath, func() error {
+		entries = entries[:0]
+		isLast = false
+		return s3a.withFilerClientFailover(context.Background(), preferred, false, true, func(client filer_pb.SeaweedFilerClient) error {
+			return filer_pb.SeaweedList(context.Background(), client, parentDirectoryPath, prefix, func(entry *filer_pb.Entry, isLastEntry bool) error {
+				entries = append(entries, entry)
+				if isLastEntry {
+					isLast = true
+				}
+				return nil
+			}, startFrom, inclusive, limit)
+		})
+	})
+	if len(entries) == 0 {
+		isLast = true
+	}
+	return entries, isLast, err
 }
 
 func (s3a *S3ApiServer) priorWriteOwner(bucket, object string) pb.ServerAddress {

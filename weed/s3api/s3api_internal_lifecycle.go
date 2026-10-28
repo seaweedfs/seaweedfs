@@ -80,10 +80,31 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 			}
 			return done(), nil
 		case s3_constants.VersioningSuspended:
-			// Best-effort null delete; NotFound is benign.
-			if err := s3a.deleteSpecificObjectVersion(ctx, req.Bucket, req.ObjectPath, "null", metadataOnly); err != nil {
-				if !errors.Is(err, filer_pb.ErrNotFound) && !errors.Is(err, ErrVersionNotFound) {
-					return retryLater("TRANSPORT_ERROR: deleteNullVersion: " + err.Error()), nil
+			// Best-effort null delete; NotFound is benign. Route it when an
+			// owner resolves — on the default filer an absent entry deletes as
+			// success, and a null version that only reached the owner would
+			// linger. Lifecycle never bypasses retention.
+			nullDeleted := false
+			if owner := s3a.routableWriteOwner(req.Bucket, req.ObjectPath); owner != "" {
+				worm, lockErr := s3a.isObjectLockEnabled(req.Bucket)
+				if lockErr == nil {
+					code, settled := s3a.routedDeleteNullVersion(owner, req.Bucket, req.ObjectPath, worm, false, metadataOnly)
+					if settled {
+						if code == s3err.ErrAccessDenied {
+							return retryLater("ACCESS_DENIED: deleteNullVersion: object lock"), nil
+						}
+						if code != s3err.ErrNone {
+							return retryLater("TRANSPORT_ERROR: routedDeleteNullVersion: " + s3err.GetAPIError(code).Code), nil
+						}
+						nullDeleted = true
+					}
+				}
+			}
+			if !nullDeleted {
+				if err := s3a.deleteSpecificObjectVersion(ctx, req.Bucket, req.ObjectPath, "null", metadataOnly); err != nil {
+					if !errors.Is(err, filer_pb.ErrNotFound) && !errors.Is(err, ErrVersionNotFound) {
+						return retryLater("TRANSPORT_ERROR: deleteNullVersion: " + err.Error()), nil
+					}
 				}
 			}
 			if _, err := s3a.createDeleteMarker(req.Bucket, req.ObjectPath); err != nil {
@@ -137,11 +158,46 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 				return outcome, err
 			}
 		}
-		if err := s3a.deleteSpecificObjectVersion(ctx, req.Bucket, req.ObjectPath, req.VersionId, metadataOnly); err != nil {
-			if errors.Is(err, filer_pb.ErrNotFound) || errors.Is(err, ErrVersionNotFound) || errors.Is(err, ErrObjectNotFound) {
-				return noopResolved("NOT_FOUND_AT_DELETE"), nil
+		// Route the version delete when an owner resolves: its recompute
+		// repoints .versions while the file is removed, all on the filer the
+		// routed reads consult. A routed failure retries rather than falling
+		// back, where an absent entry would delete as success while the owner
+		// still holds the version. Lifecycle never bypasses retention.
+		versionDeleted := false
+		if owner := s3a.routableWriteOwner(req.Bucket, req.ObjectPath); owner != "" {
+			worm, lockErr := s3a.isObjectLockEnabled(req.Bucket)
+			if lockErr == nil {
+				// The "null" version is the object entry, not a .versions file.
+				if req.VersionId == "null" {
+					code, settled := s3a.routedDeleteNullVersion(owner, req.Bucket, req.ObjectPath, worm, false, metadataOnly)
+					if settled {
+						if code == s3err.ErrAccessDenied {
+							return retryLater("ACCESS_DENIED: deleteSpecificVersion: object lock"), nil
+						}
+						if code != s3err.ErrNone {
+							return retryLater("TRANSPORT_ERROR: routedDeleteNullVersion: " + s3err.GetAPIError(code).Code), nil
+						}
+						versionDeleted = true
+					}
+				} else {
+					switch code := s3a.routedDeleteSpecificVersion(owner, req.Bucket, req.ObjectPath, req.VersionId, worm, false, metadataOnly); code {
+					case s3err.ErrNone:
+						versionDeleted = true
+					case s3err.ErrAccessDenied:
+						return retryLater("ACCESS_DENIED: deleteSpecificVersion: object lock"), nil
+					default:
+						return retryLater("TRANSPORT_ERROR: routedDeleteSpecificVersion: " + s3err.GetAPIError(code).Code), nil
+					}
+				}
 			}
-			return retryLater("TRANSPORT_ERROR: deleteSpecificVersion: " + err.Error()), nil
+		}
+		if !versionDeleted {
+			if err := s3a.deleteSpecificObjectVersion(ctx, req.Bucket, req.ObjectPath, req.VersionId, metadataOnly); err != nil {
+				if errors.Is(err, filer_pb.ErrNotFound) || errors.Is(err, ErrVersionNotFound) || errors.Is(err, ErrObjectNotFound) {
+					return noopResolved("NOT_FOUND_AT_DELETE"), nil
+				}
+				return retryLater("TRANSPORT_ERROR: deleteSpecificVersion: " + err.Error()), nil
+			}
 		}
 		recordMetadataOnlyIf(metadataOnly, req)
 		return done(), nil

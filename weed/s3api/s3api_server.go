@@ -364,7 +364,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		}
 		s3ApiServer.objectWriteLockClient = objectWriteLockClient
 		s3ApiServer.newObjectWriteLock = func(bucket, object string) (objectWriteLock, error) {
-			lockKey := objectWriteRouteKeyPrefix + s3ApiServer.toFilerPath(bucket, object)
+			lockKey := s3ApiServer.objectRouteKey(bucket, object)
 			owner := fmt.Sprintf("s3api-%d", s3ApiServer.randomClientId)
 			lock := objectWriteLockClient.NewShortLivedLock(lockKey, owner)
 			if lock == nil {

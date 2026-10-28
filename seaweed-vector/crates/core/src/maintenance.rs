@@ -45,6 +45,16 @@ impl Lease {
         untrack(&tag);
         release(&self.dataset, &tag).await
     }
+
+    /// Hand the tag name off and skip the drop-time release — a distributed
+    /// planner keeps the version pinned until an executor takes over. The
+    /// tag leaves LIVE_TAGS so an abandoned handoff still expires at the
+    /// lease TTL instead of surviving forever locally.
+    pub fn forget(mut self) -> String {
+        let tag = std::mem::take(&mut self.tag);
+        untrack(&tag);
+        tag
+    }
 }
 
 impl Drop for Lease {

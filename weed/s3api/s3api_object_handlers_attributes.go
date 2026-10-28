@@ -165,7 +165,7 @@ func (s3a *S3ApiServer) GetObjectAttributesHandler(w http.ResponseWriter, r *htt
 			normalizedObject := s3_constants.NormalizeObjectKey(object)
 			versionsDir := normalizedObject + s3_constants.VersionsFolder
 
-			versionsEntry, versionsErr := s3a.getEntry(bucketDir, versionsDir)
+			versionsEntry, versionsErr := s3a.getObjectScopedEntryRoutedByKey(bucket, normalizedObject, bucketDir, versionsDir)
 			if versionsErr == nil && versionsEntry != nil {
 				entry, err = s3a.getLatestObjectVersion(bucket, object)
 				if err != nil {
@@ -173,7 +173,7 @@ func (s3a *S3ApiServer) GetObjectAttributesHandler(w http.ResponseWriter, r *htt
 					return
 				}
 			} else if errors.Is(versionsErr, filer_pb.ErrNotFound) {
-				regularEntry, regularErr := s3a.getEntry(bucketDir, normalizedObject)
+				regularEntry, regularErr := s3a.getObjectEntryRoutedByKey(bucket, normalizedObject)
 				if regularErr == nil && regularEntry != nil {
 					entry = regularEntry
 					targetVersionId = "null"

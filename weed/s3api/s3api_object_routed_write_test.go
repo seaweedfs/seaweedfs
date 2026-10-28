@@ -258,6 +258,7 @@ type fakeTxnFiler struct {
 	filer_pb.UnimplementedSeaweedFilerServer
 	calls   int32
 	lastReq *filer_pb.ObjectTransactionRequest
+	reqs    []*filer_pb.ObjectTransactionRequest
 	resp    *filer_pb.ObjectTransactionResponse
 	err     error
 }
@@ -265,6 +266,7 @@ type fakeTxnFiler struct {
 func (f *fakeTxnFiler) ObjectTransaction(ctx context.Context, req *filer_pb.ObjectTransactionRequest) (*filer_pb.ObjectTransactionResponse, error) {
 	atomic.AddInt32(&f.calls, 1)
 	f.lastReq = req
+	f.reqs = append(f.reqs, req)
 	if f.resp != nil || f.err != nil {
 		return f.resp, f.err
 	}
@@ -304,7 +306,7 @@ func TestRoutedDeleteSpecificVersionUsesWormCondition(t *testing.T) {
 		},
 	}
 
-	if code := s3a.routedDeleteSpecificVersion(owner, "b", "obj", versionId, true, false); code != s3err.ErrAccessDenied {
+	if code := s3a.routedDeleteSpecificVersion(owner, "b", "obj", versionId, true, false, false); code != s3err.ErrAccessDenied {
 		t.Fatalf("locked version delete returned %v, want %v", code, s3err.ErrAccessDenied)
 	}
 
@@ -343,7 +345,8 @@ func TestRoutedDeleteSpecificVersionUsesWormCondition(t *testing.T) {
 	}
 	recompute := req.Mutations[0]
 	if recompute.Type != filer_pb.ObjectMutation_RECOMPUTE_LATEST ||
-		recompute.GetRecompute().GetExcludeName() != versionFile {
+		recompute.GetRecompute().GetExcludeName() != versionFile ||
+		recompute.GetRecompute().GetOnlyIfCurrentName() != versionFile {
 		t.Fatalf("recompute mutation = %+v", recompute)
 	}
 	deleteVersion := req.Mutations[1]
@@ -354,6 +357,54 @@ func TestRoutedDeleteSpecificVersionUsesWormCondition(t *testing.T) {
 		!deleteVersion.RemoveEmptyParent {
 		t.Fatalf("delete mutation = %+v", deleteVersion)
 	}
+}
+
+// TestRoutedDeleteSpecificVersionGuardsRepoint checks that the repoint rides in
+// the version's own delete transaction, so the WORM guards gate both, and that
+// the recompute carries an only-while-current guard — the filer applies it only
+// while the pointer still names the deleted version, so a noncurrent delete
+// leaves a cleared (suspended) or moved pointer alone.
+func TestRoutedDeleteSpecificVersionGuardsRepoint(t *testing.T) {
+	versionId := "672a75d526ef29c79fe6b5680cad4a0d"
+	versionFile := "v_" + versionId
+	newS3a := func() *S3ApiServer {
+		return &S3ApiServer{option: &S3ApiServerOption{
+			BucketsPath:    "/buckets",
+			GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		}}
+	}
+
+	t.Run("one transaction behind the version's lock checks", func(t *testing.T) {
+		filer := &fakeTxnFiler{}
+		owner := startFakeFiler(t, filer)
+		if code := newS3a().routedDeleteSpecificVersion(owner, "b", "obj", versionId, false, false, false); code != s3err.ErrNone {
+			t.Fatalf("delete returned %v, want %v", code, s3err.ErrNone)
+		}
+		if len(filer.reqs) != 1 {
+			t.Fatalf("transactions = %d, want 1", len(filer.reqs))
+		}
+		req := filer.reqs[0]
+		if req.ConditionKey != "/buckets/b/obj.versions/"+versionFile {
+			t.Fatalf("ConditionKey = %q", req.ConditionKey)
+		}
+		if len(req.Mutations) != 2 ||
+			req.Mutations[0].Type != filer_pb.ObjectMutation_RECOMPUTE_LATEST ||
+			req.Mutations[0].GetRecompute().GetOnlyIfCurrentName() != versionFile ||
+			req.Mutations[1].Type != filer_pb.ObjectMutation_DELETE {
+			t.Fatalf("mutations = %+v, want guarded recompute + delete", req.Mutations)
+		}
+	})
+
+	t.Run("metadata-only delete keeps the data", func(t *testing.T) {
+		filer := &fakeTxnFiler{}
+		owner := startFakeFiler(t, filer)
+		if code := newS3a().routedDeleteSpecificVersion(owner, "b", "obj", versionId, false, false, true); code != s3err.ErrNone {
+			t.Fatalf("delete returned %v, want %v", code, s3err.ErrNone)
+		}
+		if filer.lastReq.Mutations[1].IsDeleteData {
+			t.Fatal("metadata-only delete set IsDeleteData")
+		}
+	})
 }
 
 func TestWormDeleteConditionForGovernanceBypass(t *testing.T) {

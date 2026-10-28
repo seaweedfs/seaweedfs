@@ -138,3 +138,68 @@ func TestRecomputeLatestDemoteEmitsEvent(t *testing.T) {
 		t.Fatalf("missing demote event: %+v", queue.snapshot())
 	}
 }
+
+// OnlyIfCurrentName scopes a recompute to the case where the pointer still
+// names a given child — a version delete repoints only while the pointer names
+// the deleted version, so a noncurrent delete cannot resurrect an older
+// version over a cleared or moved pointer.
+func TestRecomputeLatestOnlyIfCurrentName(t *testing.T) {
+	newMutation := func() *filer_pb.ObjectMutation {
+		return &filer_pb.ObjectMutation{
+			Type:      filer_pb.ObjectMutation_RECOMPUTE_LATEST,
+			Directory: "/buckets/b",
+			Name:      "obj.versions",
+			Recompute: &filer_pb.Recompute{
+				ScanDir:           "/buckets/b/obj.versions",
+				Descending:        true,
+				NameToKey:         "latest-file",
+				CopyExtended:      map[string]string{"latest-vid": "vid"},
+				ExcludeName:       "v_200",
+				OnlyIfCurrentName: "v_200",
+			},
+		}
+	}
+	newStore := func(latestFile string) *renameTestStore {
+		store := newRenameTestStore()
+		pointer := newDirectoryEntry("/buckets/b/obj.versions", 10)
+		pointer.Extended = map[string][]byte{"latest-file": []byte(latestFile)}
+		store.entries["/buckets/b/obj.versions"] = pointer
+		v100 := newFileEntry("/buckets/b/obj.versions/v_100", 11)
+		v100.Extended = map[string][]byte{"vid": []byte("100")}
+		store.entries["/buckets/b/obj.versions/v_100"] = v100
+		return store
+	}
+
+	t.Run("pointer names the deleted version", func(t *testing.T) {
+		store := newStore("v_200")
+		server := &FilerServer{filer: newRenameTestFiler(t, store)}
+		if err := server.applyObjectMutation(context.Background(), newMutation(), false, nil); err != nil {
+			t.Fatalf("applyObjectMutation: %v", err)
+		}
+		ptr, err := store.FindEntry(context.Background(), "/buckets/b/obj.versions")
+		if err != nil {
+			t.Fatalf("find pointer: %v", err)
+		}
+		if got := string(ptr.Extended["latest-file"]); got != "v_100" {
+			t.Fatalf("pointer latest-file = %q, want repointed to v_100", got)
+		}
+	})
+
+	t.Run("pointer names another version", func(t *testing.T) {
+		store := newStore("v_other")
+		server := &FilerServer{filer: newRenameTestFiler(t, store)}
+		if err := server.applyObjectMutation(context.Background(), newMutation(), false, nil); err != nil {
+			t.Fatalf("applyObjectMutation: %v", err)
+		}
+		ptr, err := store.FindEntry(context.Background(), "/buckets/b/obj.versions")
+		if err != nil {
+			t.Fatalf("find pointer: %v", err)
+		}
+		if got := string(ptr.Extended["latest-file"]); got != "v_other" {
+			t.Fatalf("pointer latest-file = %q, want untouched v_other", got)
+		}
+		if _, copied := ptr.Extended["latest-vid"]; copied {
+			t.Fatalf("pointer latest-vid copied on a skipped recompute: %+v", ptr.Extended)
+		}
+	})
+}
