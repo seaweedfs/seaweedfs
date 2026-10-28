@@ -251,6 +251,48 @@ func TestLoadTableReadsMetadataFileOfOlderRegistration(t *testing.T) {
 	}
 }
 
+// A metadata file too large to travel in the manager request is registered by
+// its location and UUID alone, and loads read it from there. Sending it whole
+// failed every such registration on the manager's request size limit.
+func TestRegisterTableKeepsOversizedMetadataByLocation(t *testing.T) {
+	fc := newMemFiler()
+	seedNamespace(fc, registerTestBucket, "finance", "alice")
+	s := NewServer(fc, nil)
+
+	builder, err := table.MetadataBuilderFromBase(metadataWithSnapshots(t, []int64{1, 2}, 0), "")
+	if err != nil {
+		t.Fatalf("MetadataBuilderFromBase() error = %v", err)
+	}
+	if err := builder.SetProperties(map[string]string{"padding": strings.Repeat("x", s3tables.MaxRequestBodySize)}); err != nil {
+		t.Fatalf("SetProperties() error = %v", err)
+	}
+	registered, err := builder.Build()
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	content, err := json.Marshal(registered)
+	if err != nil {
+		t.Fatalf("marshal metadata: %v", err)
+	}
+	location := seedMetadataFile(fc, "events", "00001-7c1e2f4a.metadata.json", content)
+
+	w := httptest.NewRecorder()
+	s.handleRegisterTable(w, registerTableRequest("events", location))
+	checkServesRegistered(t, "register", servedMetadata(t, "register", w), registered)
+
+	stored := storedMetadata(t, s, fc, "events")
+	if stored == nil || stored.Iceberg == nil || stored.Iceberg.TableUUID != registered.TableUUID().String() {
+		t.Errorf("catalog record metadata = %+v, want the file's UUID %s", stored, registered.TableUUID())
+	}
+	if stored != nil && len(stored.FullMetadata) != 0 {
+		t.Errorf("catalog record holds %d bytes of metadata, over the manager's request limit", len(stored.FullMetadata))
+	}
+
+	w = httptest.NewRecorder()
+	s.handleLoadTable(w, registeredTableRequest(http.MethodGet, "events", ""))
+	checkServesRegistered(t, "load", servedMetadata(t, "load", w), registered)
+}
+
 // A file that is not Iceberg metadata is the client's error, and no catalog
 // record is left behind for it.
 func TestRegisterTableRejectsInvalidMetadata(t *testing.T) {

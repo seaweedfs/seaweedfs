@@ -497,15 +497,22 @@ func (s *Server) handleRegisterTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	registeredMetadata := &s3tables.TableMetadata{
+		Iceberg:      &s3tables.IcebergMetadata{TableUUID: registered.TableUUID().String()},
+		FullMetadata: metadataBytes,
+	}
 	registerReq := &s3tables.RegisterTableRequest{
 		TableBucketARN:   bucketARN,
 		Namespace:        namespace,
 		Name:             req.Name,
 		MetadataLocation: req.MetadataLocation,
-		Metadata: &s3tables.TableMetadata{
-			Iceberg:      &s3tables.IcebergMetadata{TableUUID: registered.TableUUID().String()},
-			FullMetadata: metadataBytes,
-		},
+		Metadata:         registeredMetadata,
+	}
+	// The manager refuses a request larger than s3tables.MaxRequestBodySize.
+	// A file too large to travel with the registration is registered by its
+	// location and UUID alone; loads and commits read it from that location.
+	if body, marshalErr := json.Marshal(registerReq); marshalErr == nil && len(body) > s3tables.MaxRequestBodySize {
+		registerReq.Metadata = &s3tables.TableMetadata{Iceberg: registeredMetadata.Iceberg}
 	}
 	var registerResp s3tables.RegisterTableResponse
 	err = s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
@@ -531,7 +538,7 @@ func (s *Server) handleRegisterTable(w http.ResponseWriter, r *http.Request) {
 
 	getResp := s3tables.GetTableResponse{
 		MetadataLocation: req.MetadataLocation,
-		Metadata:         registerReq.Metadata,
+		Metadata:         registeredMetadata,
 	}
 	result, buildErr := s.buildLoadTableResult(r, getResp, bucketName, namespace, req.Name)
 	if buildErr != nil {

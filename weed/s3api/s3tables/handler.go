@@ -42,8 +42,9 @@ const (
 	EntryTypeTable = "table"
 	EntryTypeView  = "view"
 
-	// Maximum request body size (10MB)
-	maxRequestBodySize = 10 * 1024 * 1024
+	// MaxRequestBodySize is the largest request body the handler reads (10MB).
+	// In-process callers that send a table's full metadata check against it.
+	MaxRequestBodySize = 10 * 1024 * 1024
 )
 
 var (
@@ -438,15 +439,15 @@ func (h *S3TablesHandler) readRequestBody(r *http.Request, v interface{}) error 
 	defer r.Body.Close()
 
 	// Limit request body size to prevent unbounded reads
-	limitedReader := io.LimitReader(r.Body, maxRequestBodySize+1)
+	limitedReader := io.LimitReader(r.Body, MaxRequestBodySize+1)
 	body, err := io.ReadAll(limitedReader)
 	if err != nil {
 		return fmt.Errorf("failed to read request body: %w", err)
 	}
 
 	// Check if body exceeds size limit
-	if len(body) > maxRequestBodySize {
-		return fmt.Errorf("request body too large: exceeds maximum size of %d bytes", maxRequestBodySize)
+	if len(body) > MaxRequestBodySize {
+		return fmt.Errorf("request body too large: exceeds maximum size of %d bytes", MaxRequestBodySize)
 	}
 
 	if len(body) == 0 {
