@@ -3821,8 +3821,10 @@ func (s3a *S3ApiServer) cacheRemoteObjectForCopy(ctx context.Context, src *filer
 	}
 
 	// A fallback filer can answer for an older generation of the key; only a
-	// fill of the resolved source may replace it.
-	if cachedEntryHasLocalData(cachedEntry) && sameRemoteObject(src, cachedEntry) {
+	// fill of the resolved source — same remote generation and size — may
+	// replace it.
+	if cachedEntryHasLocalData(cachedEntry) && sameRemoteObject(src, cachedEntry) &&
+		filer.FileSize(cachedEntry) == filer.FileSize(src) {
 		glog.V(1).Infof("cacheRemoteObjectForCopy: successfully cached %s/%s (chunks=%d, inline=%d)", dir, name, len(cachedEntry.GetChunks()), len(cachedEntry.Content))
 		return cachedEntry
 	}
