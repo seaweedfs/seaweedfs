@@ -369,3 +369,19 @@ func TestAvailableSpaceWithinLocationSkipsMaintenance(t *testing.T) {
 		t.Fatalf("missing dc9 = %d, want 0", got)
 	}
 }
+
+// An over-committed node reports negative free slots; summed plainly it would
+// cancel a sibling's room and wrongly report the location full.
+func TestAvailableSpaceWithinLocationSkipsOvercommitted(t *testing.T) {
+	topo, dc1 := newMaintenanceTestTopology()
+	rack1 := NewRack("rack1")
+	dc1.LinkChildNode(rack1)
+	over := addMaintenanceTestNode(rack1, "s1", 5)
+	over.getOrCreateDisk("").UpAdjustDiskUsageDelta("", &DiskUsageCounts{volumeCount: 8})
+	addMaintenanceTestNode(rack1, "s2", 7)
+
+	option := &VolumeGrowOption{DiskType: types.HardDriveType, DataCenter: "dc1"}
+	if got := topo.AvailableSpaceWithinLocation(option); got != 7 {
+		t.Fatalf("dc1 = %d, want 7", got)
+	}
+}

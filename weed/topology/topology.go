@@ -1208,7 +1208,9 @@ func (t *Topology) AvailableSpaceWithinLocation(option *VolumeGrowOption) (total
 				if option.DataNode != "" && string(dn.Id()) != option.DataNode {
 					continue
 				}
-				total += dn.AvailableSpaceFor(option)
+				if free := dn.AvailableSpaceFor(option); free > 0 {
+					total += free
+				}
 			}
 		}
 	}
