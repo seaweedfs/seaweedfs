@@ -657,6 +657,13 @@ jobs:
             --set filer.secretExtraEnvironmentVars.WEED_MYSQL_ENABLED.secretKeyRef.key=enabled > /tmp/filer-mysql-secret.yaml
           grep -q "name: test-seaweedfs-db-secret" /tmp/filer-mysql-secret.yaml
           grep -q "name: WEED_MYSQL_HOSTNAME" /tmp/filer-mysql-secret.yaml
+          # A secret-backed key also replaces the matching plain entry, not adds one.
+          test "$(grep -c -- "- name: WEED_MYSQL_ENABLED$" /tmp/filer-mysql-secret.yaml)" -eq 1
+          helm template test $CHART_DIR \
+            --set-string filer.extraEnvironmentVars.WEED_MYSQL_ENABLED=true \
+            --set filer.secretExtraEnvironmentVars.WEED_MYSQL_HOSTNAME.secretKeyRef.name=db \
+            --set filer.secretExtraEnvironmentVars.WEED_MYSQL_HOSTNAME.secretKeyRef.key=host > /tmp/filer-mysql-hostname-secret.yaml
+          test "$(grep -c -- "- name: WEED_MYSQL_HOSTNAME$" /tmp/filer-mysql-hostname-secret.yaml)" -eq 1
           helm template test $CHART_DIR \
             --set-string filer.extraEnvironmentVars.WEED_MYSQL2_HOSTNAME=other > /tmp/filer-mysql2.yaml
           grep -q "name: WEED_MYSQL2_HOSTNAME" /tmp/filer-mysql2.yaml

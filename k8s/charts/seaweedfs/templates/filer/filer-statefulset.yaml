@@ -150,6 +150,10 @@ spec:
             {{- end }}
             {{- end }}
             {{- range $key := keys $mergedExtraEnvironmentVars | sortAlpha }}
+            {{- if hasKey $secretExtraEnvironmentVars $key }}
+            - name: {{ $key }}
+              valueFrom: {{ toYaml (index $secretExtraEnvironmentVars $key) | nindent 16 }}
+            {{- else }}
             {{- $value := index $mergedExtraEnvironmentVars $key }}
             - name: {{ $key }}
             {{- if kindIs "string" $value }}
@@ -159,9 +163,10 @@ spec:
                 {{ toYaml $value | nindent 16 | trim }}
             {{- end -}}
             {{- end }}
+            {{- end }}
             {{- if .Values.filer.secretExtraEnvironmentVars }}
             {{- range $key, $value := .Values.filer.secretExtraEnvironmentVars }}
-            {{- if and (or $mysqlEnabled (not (hasPrefix "WEED_MYSQL_" $key))) (not (hasKey $renderedCredentials $key)) }}
+            {{- if and (or $mysqlEnabled (not (hasPrefix "WEED_MYSQL_" $key))) (not (hasKey $renderedCredentials $key)) (not (hasKey $mergedExtraEnvironmentVars $key)) }}
             - name: {{ $key }}
               valueFrom: {{ toYaml $value | nindent 16 }}
             {{- end }}
