@@ -1759,6 +1759,9 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 			metadata.Metadata.FullMetadata = req.Metadata.FullMetadata
 		}
 	}
+	if req.ClearFullMetadata && metadata.Metadata != nil {
+		metadata.Metadata.FullMetadata = nil
+	}
 	if req.MetadataLocation != "" {
 		metadata.MetadataLocation = req.MetadataLocation
 	}

@@ -313,6 +313,7 @@ func (s *Server) flipTablePointer(ctx context.Context, bucketARN, identityName s
 		MetadataVersion:  pc.metadataVersion,
 		MetadataLocation: pc.newMetadataLoc,
 	}
+	fitUpdateTableRequest(updateReq)
 	return s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		mgrClient := s3tables.NewManagerClient(client)
 		return s.tablesManager.Execute(ctx, mgrClient, "UpdateTable", updateReq, nil, identityName)
@@ -330,6 +331,7 @@ func (s *Server) rollbackTablePointers(ctx context.Context, bucketARN, identityN
 	for i := range flipped {
 		pc := &flipped[i]
 		updateReq := buildTableRestoreRequest(bucketARN, pc)
+		fitUpdateTableRequest(updateReq)
 		err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 			mgrClient := s3tables.NewManagerClient(client)
 			return s.tablesManager.Execute(ctx, mgrClient, "UpdateTable", updateReq, nil, identityName)

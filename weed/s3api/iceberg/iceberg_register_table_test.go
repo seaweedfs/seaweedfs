@@ -251,14 +251,10 @@ func TestLoadTableReadsMetadataFileOfOlderRegistration(t *testing.T) {
 	}
 }
 
-// A metadata file too large to travel in the manager request is registered by
-// its location and UUID alone, and loads read it from there. Sending it whole
-// failed every such registration on the manager's request size limit.
-func TestRegisterTableKeepsOversizedMetadataByLocation(t *testing.T) {
-	fc := newMemFiler()
-	seedNamespace(fc, registerTestBucket, "finance", "alice")
-	s := NewServer(fc, nil)
-
+// seedOversizedMetadata writes a metadata file larger than the manager's
+// request limit, so it can only be registered by location and UUID.
+func seedOversizedMetadata(t *testing.T, fc *memFiler, tableName string) (string, table.Metadata) {
+	t.Helper()
 	builder, err := table.MetadataBuilderFromBase(metadataWithSnapshots(t, []int64{1, 2}, 0), "")
 	if err != nil {
 		t.Fatalf("MetadataBuilderFromBase() error = %v", err)
@@ -274,7 +270,18 @@ func TestRegisterTableKeepsOversizedMetadataByLocation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal metadata: %v", err)
 	}
-	location := seedMetadataFile(fc, "events", "00001-7c1e2f4a.metadata.json", content)
+	return seedMetadataFile(fc, tableName, "00001-7c1e2f4a.metadata.json", content), registered
+}
+
+// A metadata file too large to travel in the manager request is registered by
+// its location and UUID alone, and loads read it from there. Sending it whole
+// failed every such registration on the manager's request size limit.
+func TestRegisterTableKeepsOversizedMetadataByLocation(t *testing.T) {
+	fc := newMemFiler()
+	seedNamespace(fc, registerTestBucket, "finance", "alice")
+	s := NewServer(fc, nil)
+
+	location, registered := seedOversizedMetadata(t, fc, "events")
 
 	w := httptest.NewRecorder()
 	s.handleRegisterTable(w, registerTableRequest("events", location))
@@ -291,6 +298,38 @@ func TestRegisterTableKeepsOversizedMetadataByLocation(t *testing.T) {
 	w = httptest.NewRecorder()
 	s.handleLoadTable(w, registeredTableRequest(http.MethodGet, "events", ""))
 	checkServesRegistered(t, "load", servedMetadata(t, "load", w), registered)
+}
+
+// A commit to a location-only record cannot ship the new metadata back either:
+// the pointer flips by location alone, and the record must not keep a stored
+// copy that would shadow the freshly staged file.
+func TestCommitTableOnOversizedRegistration(t *testing.T) {
+	fc := newMemFiler()
+	seedNamespace(fc, registerTestBucket, "finance", "alice")
+	s := NewServer(fc, nil)
+
+	location, registered := seedOversizedMetadata(t, fc, "events")
+	w := httptest.NewRecorder()
+	s.handleRegisterTable(w, registerTableRequest("events", location))
+	checkServesRegistered(t, "register", servedMetadata(t, "register", w), registered)
+
+	w = httptest.NewRecorder()
+	s.handleUpdateTable(w, registeredTableRequest(http.MethodPost, "events", commitWithUUIDAssertion(registered.TableUUID())))
+	committed := servedMetadata(t, "commit", w)
+	checkServesRegistered(t, "commit", committed, registered)
+	if got := committed.Properties()["committed"]; got != "true" {
+		t.Errorf("commit: property committed = %q, want true", got)
+	}
+
+	if stored := storedMetadata(t, s, fc, "events"); stored != nil && len(stored.FullMetadata) != 0 {
+		t.Errorf("catalog record holds %d bytes of metadata, over the manager's request limit", len(stored.FullMetadata))
+	}
+
+	w = httptest.NewRecorder()
+	s.handleLoadTable(w, registeredTableRequest(http.MethodGet, "events", ""))
+	if got := servedMetadata(t, "load", w).Properties()["committed"]; got != "true" {
+		t.Errorf("load: property committed = %q, want true", got)
+	}
 }
 
 // A file that is not Iceberg metadata is the client's error, and no catalog

@@ -456,3 +456,49 @@ func TestCommitTransactionRollbackRestoresOlderRegistration(t *testing.T) {
 		t.Errorf("load after rolled-back transaction serves its property committed = %q", got)
 	}
 }
+
+// A transaction on a registration kept by location alone — one whose metadata
+// is too large to ship — flips the pointer by location too, and the record
+// holds no stored copy that would shadow the staged file.
+func TestCommitTransactionOnOversizedRegistration(t *testing.T) {
+	fc := newMemFiler()
+	seedNamespace(fc, registerTestBucket, "finance", "alice")
+	s := NewServer(fc, nil)
+	location, registered := seedOversizedMetadata(t, fc, "events")
+
+	err := fc.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return s.tablesManager.Execute(context.Background(), s3tables.NewManagerClient(client), "RegisterTable", &s3tables.RegisterTableRequest{
+			TableBucketARN:   buildTableBucketARN(registerTestBucket),
+			Namespace:        []string{"finance"},
+			Name:             "events",
+			MetadataLocation: location,
+		}, nil, "alice")
+	})
+	if err != nil {
+		t.Fatalf("seed location-only registration: %v", err)
+	}
+
+	body := `{"table-changes":[{"identifier":{"namespace":["finance"],"name":"events"},` +
+		`"requirements":[{"type":"assert-table-uuid","uuid":"` + registered.TableUUID().String() + `"}],` +
+		`"updates":[{"action":"set-properties","updates":{"committed":"true"}}]}]}`
+	r := httptest.NewRequest(http.MethodPost, "/v1/"+registerTestBucket+"/transactions/commit", strings.NewReader(body))
+	r = mux.SetURLVars(r, map[string]string{"prefix": registerTestBucket})
+	r = r.WithContext(s3_constants.SetIdentityNameInContext(r.Context(), "alice"))
+	w := httptest.NewRecorder()
+	s.handleCommitTransaction(w, r)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("oversized transaction: status = %d, want %d (body: %s)", w.Code, http.StatusNoContent, w.Body.String())
+	}
+
+	if stored := storedMetadata(t, s, fc, "events"); stored != nil && len(stored.FullMetadata) != 0 {
+		t.Errorf("catalog record holds %d bytes of metadata, over the manager's request limit", len(stored.FullMetadata))
+	}
+
+	w = httptest.NewRecorder()
+	s.handleLoadTable(w, registeredTableRequest(http.MethodGet, "events", ""))
+	loaded := servedMetadata(t, "load after transaction", w)
+	checkServesRegistered(t, "load after transaction", loaded, registered)
+	if got := loaded.Properties()["committed"]; got != "true" {
+		t.Errorf("load after transaction: property committed = %q, want true", got)
+	}
+}

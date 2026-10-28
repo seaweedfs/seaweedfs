@@ -282,6 +282,9 @@ type UpdateTableRequest struct {
 	Metadata         *TableMetadata `json:"metadata,omitempty"`
 	MetadataVersion  int            `json:"metadataVersion,omitempty"`
 	MetadataLocation string         `json:"metadataLocation,omitempty"`
+	// ClearFullMetadata drops the record's stored metadata copy; a table whose
+	// metadata no longer fits in a request is tracked by location alone.
+	ClearFullMetadata bool `json:"clearFullMetadata,omitempty"`
 }
 
 type UpdateTableResponse struct {

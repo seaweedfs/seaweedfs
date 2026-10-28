@@ -383,6 +383,7 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 			MetadataVersion:  metadataVersion,
 			MetadataLocation: newMetadataLocation,
 		}
+		fitUpdateTableRequest(updateReq)
 
 		err = s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 			mgrClient := s3tables.NewManagerClient(client)
