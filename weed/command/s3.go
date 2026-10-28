@@ -756,12 +756,10 @@ func (d *vectorDiscovery) reset(c vector_pb.VectorServiceClient) {
 	d.nextResolve = time.Time{}
 }
 
+// Only Unavailable proves a transport failure — a request deadline or an
+// application-level error can fire on a healthy connection.
 func isTransportError(err error) bool {
-	switch status.Code(err) {
-	case codes.Unavailable, codes.DeadlineExceeded, codes.Unknown:
-		return true
-	}
-	return false
+	return status.Code(err) == codes.Unavailable
 }
 
 func (d *vectorDiscovery) resolve() (vector_pb.VectorServiceClient, error) {
