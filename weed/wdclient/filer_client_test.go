@@ -309,6 +309,14 @@ func startStallingFiler(t *testing.T) pb.ServerAddress {
 	return pb.ServerAddress(fmt.Sprintf("127.0.0.1:0.%s", port))
 }
 
+// lapsedDeadlineCtx mimics the moment after a caller's deadline has passed but
+// before the runtime marks the context done.
+type lapsedDeadlineCtx struct{ context.Context }
+
+func (lapsedDeadlineCtx) Deadline() (time.Time, bool) { return time.Now().Add(-time.Second), true }
+func (lapsedDeadlineCtx) Done() <-chan struct{}       { return nil }
+func (lapsedDeadlineCtx) Err() error                  { return nil }
+
 // A caller giving up must not count as a filer failure, the filer's own timeout must.
 func TestLookupVolumeIdsCountsOnlyFilerFailures(t *testing.T) {
 	tests := []struct {
@@ -333,6 +341,15 @@ func TestLookupVolumeIdsCountsOnlyFilerFailures(t *testing.T) {
 			name: "caller deadline",
 			callerCtx: func() (context.Context, context.CancelFunc) {
 				return context.WithTimeout(context.Background(), 50*time.Millisecond)
+			},
+			grpcTimeout:  5 * time.Second,
+			wantErr:      context.DeadlineExceeded,
+			wantFailures: 0,
+		},
+		{
+			name: "caller deadline already elapsed",
+			callerCtx: func() (context.Context, context.CancelFunc) {
+				return lapsedDeadlineCtx{context.Background()}, func() {}
 			},
 			grpcTimeout:  5 * time.Second,
 			wantErr:      context.DeadlineExceeded,
