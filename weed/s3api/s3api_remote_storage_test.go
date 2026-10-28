@@ -590,8 +590,9 @@ func TestCacheRemoteObjectForStreamingCached(t *testing.T) {
 		cache: func(ctx context.Context, req *filer_pb.CacheRemoteObjectToLocalClusterRequest) (*filer_pb.CacheRemoteObjectToLocalClusterResponse, error) {
 			return &filer_pb.CacheRemoteObjectToLocalClusterResponse{
 				Entry: &filer_pb.Entry{
-					Name:   req.Name,
-					Chunks: []*filer_pb.FileChunk{{FileId: "1,abc", Size: 100, Offset: 0}},
+					Name:        req.Name,
+					RemoteEntry: &filer_pb.RemoteEntry{RemoteSize: 100},
+					Chunks:      []*filer_pb.FileChunk{{FileId: "1,abc", Size: 100, Offset: 0}},
 				},
 			}, nil
 		},
@@ -603,6 +604,57 @@ func TestCacheRemoteObjectForStreamingCached(t *testing.T) {
 
 	require.NotNil(t, got)
 	assert.Len(t, got.GetChunks(), 1)
+}
+
+// TestCacheRemoteObjectForCopyStaleGeneration pins that a cache response for a
+// different generation of the key is rejected rather than swapped in as the
+// authorized copy source.
+func TestCacheRemoteObjectForCopyStaleGeneration(t *testing.T) {
+	filerAddr := startFakeCacheFiler(t, &fakeCacheFiler{
+		cache: func(ctx context.Context, req *filer_pb.CacheRemoteObjectToLocalClusterRequest) (*filer_pb.CacheRemoteObjectToLocalClusterResponse, error) {
+			return &filer_pb.CacheRemoteObjectToLocalClusterResponse{
+				Entry: &filer_pb.Entry{
+					Name:        req.Name,
+					RemoteEntry: &filer_pb.RemoteEntry{RemoteSize: 100, RemoteETag: "stale"},
+					Chunks:      []*filer_pb.FileChunk{{FileId: "1,abc", Size: 100, Offset: 0}},
+				},
+			}, nil
+		},
+	})
+	s3a := newRemoteCacheTestServer(filerAddr)
+
+	got := s3a.cacheRemoteObjectForCopy(context.Background(),
+		&filer_pb.Entry{Name: "obj.bin", RemoteEntry: &filer_pb.RemoteEntry{RemoteSize: 100, RemoteETag: "fresh"}},
+		"mybucket", "obj.bin", "")
+	assert.Nil(t, got, "a different generation must not replace the resolved source")
+}
+
+// TestS3VersionedReadRejectsStaleCacheFill pins that a versioned GET does not
+// stream a cached entry from a different generation of the object.
+func TestS3VersionedReadRejectsStaleCacheFill(t *testing.T) {
+	filerAddr := startFakeCacheFiler(t, &fakeCacheFiler{
+		cache: func(ctx context.Context, req *filer_pb.CacheRemoteObjectToLocalClusterRequest) (*filer_pb.CacheRemoteObjectToLocalClusterResponse, error) {
+			return &filer_pb.CacheRemoteObjectToLocalClusterResponse{
+				Entry: &filer_pb.Entry{
+					Name:        req.Name,
+					RemoteEntry: &filer_pb.RemoteEntry{RemoteSize: 100, RemoteETag: "stale"},
+					Chunks:      []*filer_pb.FileChunk{{FileId: "1,abc", Size: 100, Offset: 0}},
+				},
+			}, nil
+		},
+	})
+	s3a := newRemoteCacheTestServer(filerAddr)
+
+	entry := &filer_pb.Entry{
+		Name:        "obj.bin",
+		Attributes:  &filer_pb.FuseAttributes{FileSize: 100},
+		RemoteEntry: &filer_pb.RemoteEntry{RemoteSize: 100, RemoteETag: "fresh"},
+	}
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/mybucket/obj.bin", nil)
+	err := s3a.streamFromVolumeServers(w, r, entry, "", "mybucket", "obj.bin", "v123")
+	require.Error(t, err)
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code, w.Body.String())
 }
 
 // fakeStreamRemoteClient records the ReadFileAsStream call and serves from an

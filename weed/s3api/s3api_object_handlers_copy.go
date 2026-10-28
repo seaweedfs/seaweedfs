@@ -269,7 +269,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	// writes a destination with FileSize > 0 but no chunks/content.
 	if entry.IsInRemoteOnly() {
 		cacheVersionId := resolvedSourceVersionId(srcVersionId, entry)
-		cachedEntry := s3a.cacheRemoteObjectForCopy(r.Context(), srcBucket, srcObject, cacheVersionId)
+		cachedEntry := s3a.cacheRemoteObjectForCopy(r.Context(), entry, srcBucket, srcObject, cacheVersionId)
 		if cachedEntry == nil {
 			glog.Errorf("CopyObjectHandler: failed to cache remote-only source %s/%s (version %q)", srcBucket, srcObject, cacheVersionId)
 			w.Header().Set("Retry-After", "5")
@@ -1114,7 +1114,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	// iterate entry.GetChunks() and would otherwise produce an empty part.
 	if entry.IsInRemoteOnly() {
 		cacheVersionId := resolvedSourceVersionId(srcVersionId, entry)
-		cachedEntry := s3a.cacheRemoteObjectForCopy(r.Context(), srcBucket, srcObject, cacheVersionId)
+		cachedEntry := s3a.cacheRemoteObjectForCopy(r.Context(), entry, srcBucket, srcObject, cacheVersionId)
 		if cachedEntry == nil {
 			glog.Errorf("CopyObjectPartHandler: failed to cache remote-only source %s/%s (version %q)", srcBucket, srcObject, cacheVersionId)
 			w.Header().Set("Retry-After", "5")

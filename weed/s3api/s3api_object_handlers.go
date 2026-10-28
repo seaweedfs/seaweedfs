@@ -1250,7 +1250,10 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 					return newStreamErrorWithResponse(fmt.Errorf("cached entry authorization failed: %v", code))
 				}
 			}
-			if cacheErr == nil && cachedEntry != nil && len(cachedEntry.GetChunks()) > 0 {
+			// Swap only a fill of the resolved generation with matching size;
+			// totalSize, offset and size were computed from the first entry.
+			if cacheErr == nil && cachedEntry != nil && len(cachedEntry.GetChunks()) > 0 &&
+				sameRemoteObject(entry, cachedEntry) && int64(filer.FileSize(cachedEntry)) == totalSize {
 				// Cache completed, use cached chunks
 				chunks = cachedEntry.GetChunks()
 				entry = cachedEntry
@@ -3671,6 +3674,19 @@ func cachedEntryHasLocalData(entry *filer_pb.Entry) bool {
 	return entry != nil && (len(entry.GetChunks()) > 0 || len(entry.Content) > 0)
 }
 
+// sameRemoteObject reports whether two entries describe the same remote object
+// generation. A cache response can come back from a filer holding an older
+// generation of the key; it must not replace the resolved entry.
+func sameRemoteObject(src, cached *filer_pb.Entry) bool {
+	srcRemote, cachedRemote := src.GetRemoteEntry(), cached.GetRemoteEntry()
+	if srcRemote == nil || cachedRemote == nil {
+		return srcRemote == cachedRemote
+	}
+	return srcRemote.RemoteETag == cachedRemote.RemoteETag &&
+		srcRemote.RemoteMtime == cachedRemote.RemoteMtime &&
+		srcRemote.RemoteSize == cachedRemote.RemoteSize
+}
+
 // remoteCacheStreamingTimeoutNS bounds (nanoseconds) how long the streaming read
 // path waits for the filer to finish caching a remote-only object. Without a
 // bound a multi-GB download outlasts the client's read timeout, so the request
@@ -3767,7 +3783,7 @@ func (s3a *S3ApiServer) cacheRemoteObjectForStreaming(r *http.Request, entry *fi
 		return nil
 	}
 
-	if cachedEntry != nil && len(cachedEntry.GetChunks()) > 0 {
+	if cachedEntry != nil && len(cachedEntry.GetChunks()) > 0 && sameRemoteObject(entry, cachedEntry) {
 		glog.V(1).Infof("cacheRemoteObjectForStreaming: successfully cached %s/%s (%d chunks)", dir, name, len(cachedEntry.GetChunks()))
 		return cachedEntry
 	}
@@ -3778,8 +3794,9 @@ func (s3a *S3ApiServer) cacheRemoteObjectForStreaming(r *http.Request, entry *fi
 // cacheRemoteObjectForCopy caches a remote-only source before CopyObject /
 // CopyObjectPart reads it; otherwise the copy would write a destination with
 // FileSize > 0 but no chunks/content. Bounded so a stuck cache can't hang
-// the copy. Returns nil if caching failed or produced no local data.
-func (s3a *S3ApiServer) cacheRemoteObjectForCopy(ctx context.Context, bucket, object, versionId string) *filer_pb.Entry {
+// the copy. Returns nil if caching failed, produced no local data, or the
+// fill resolved a different generation than the authorized source.
+func (s3a *S3ApiServer) cacheRemoteObjectForCopy(ctx context.Context, src *filer_pb.Entry, bucket, object, versionId string) *filer_pb.Entry {
 	const cacheTimeout = 30 * time.Second
 	cacheCtx, cancel := context.WithTimeout(ctx, cacheTimeout)
 	defer cancel()
@@ -3803,7 +3820,9 @@ func (s3a *S3ApiServer) cacheRemoteObjectForCopy(ctx context.Context, bucket, ob
 		return nil
 	}
 
-	if cachedEntryHasLocalData(cachedEntry) {
+	// A fallback filer can answer for an older generation of the key; only a
+	// fill of the resolved source may replace it.
+	if cachedEntryHasLocalData(cachedEntry) && sameRemoteObject(src, cachedEntry) {
 		glog.V(1).Infof("cacheRemoteObjectForCopy: successfully cached %s/%s (chunks=%d, inline=%d)", dir, name, len(cachedEntry.GetChunks()), len(cachedEntry.Content))
 		return cachedEntry
 	}
