@@ -1233,7 +1233,6 @@ func (r *Plugin) handleDetectionComplete(workerID string, message *plugin_pb.Det
 	} else if message.SkippedReason != "" {
 		stage = "skipped"
 		messageText = message.SkippedReason
-		r.recordSchedulerDetectionSkip(resolvedJobType, message.SkippedReason)
 	}
 	r.appendActivity(JobActivity{
 		JobType:    resolvedJobType,

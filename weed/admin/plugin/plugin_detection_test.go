@@ -54,6 +54,24 @@ func TestScheduledDetectionDistinguishesSkipFromEmptyScan(t *testing.T) {
 	}
 }
 
+func TestManualDetectionSkipDoesNotChangeScheduledStatus(t *testing.T) {
+	p, err := New(Options{})
+	require.NoError(t, err)
+	defer p.Shutdown()
+	p.recordSchedulerDetectionSuccess("vacuum", 5)
+	p.pendingDetection["manual"] = &pendingDetectionState{
+		jobType: "vacuum", workerID: "worker-a", complete: make(chan *plugin_pb.DetectionComplete, 1),
+	}
+	p.handleDetectionComplete("worker-a", &plugin_pb.DetectionComplete{
+		RequestId: "manual", JobType: "vacuum", Success: true, SkippedReason: "Cooldown",
+	})
+	require.Empty(t, p.snapshotSchedulerDetection("vacuum").lastSkippedReason)
+	require.Equal(t, 5, p.snapshotSchedulerDetection("vacuum").lastDetectedCount)
+	activities := p.ListActivities("vacuum", 10)
+	require.Len(t, activities, 1)
+	require.Equal(t, "skipped", activities[0].Stage)
+}
+
 func TestRunDetectionIncludesLatestSuccessfulRun(t *testing.T) {
 	pluginSvc, err := New(Options{})
 	if err != nil {

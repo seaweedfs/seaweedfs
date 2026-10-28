@@ -366,6 +366,7 @@ func (r *Plugin) runJobTypeIteration(jobType string, policy schedulerPolicy) boo
 	}
 
 	if report.Complete.GetSkippedReason() != "" {
+		r.recordSchedulerDetectionSkip(jobType, report.Complete.GetSkippedReason())
 		r.recordSchedulerRunComplete(jobType, "skipped")
 		return false
 	}
