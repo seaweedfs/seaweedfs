@@ -360,7 +360,12 @@ func copyFileRows(ctx context.Context, reader *parquet.Reader, entry iceberg.Man
 		reader.Close()
 		return 0, err
 	}
-	return visitFilteredParquetRows(ctx, reader, entry.DataFile().FilePath(), bucketName, dataPath, positionDeletes, eqGroups, func(filtered []parquet.Row, positions []int64) error {
+	eqGroups, dataSeq, err := equalityDeletesFor(eqGroups, entry)
+	if err != nil {
+		reader.Close()
+		return 0, err
+	}
+	return visitFilteredParquetRows(ctx, reader, entry.DataFile().FilePath(), bucketName, dataPath, positionDeletes, eqGroups, dataSeq, func(filtered []parquet.Row, positions []int64) error {
 		if mapper != nil {
 			filtered = mapper.mapRows(filtered, positions)
 		}

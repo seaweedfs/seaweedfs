@@ -1229,9 +1229,9 @@ func TestCollectEqualityDeletes(t *testing.T) {
 	}
 	dfBuilder.EqualityFieldIDs([]int{1, 2}) // id + name
 	snapID := int64(1)
-	entry := iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, nil, nil, dfBuilder.Build())
+	entry := iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, &testDeleteSeq, &testDeleteSeq, dfBuilder.Build())
 
-	groups, err := collectEqualityDeletes(context.Background(), client, "test-bucket", "ns/tbl", []iceberg.ManifestEntry{entry}, schema)
+	groups, err := collectEqualityDeletes(context.Background(), client, "test-bucket", "ns/tbl", []iceberg.ManifestEntry{entry}, schema, testUnpartitionedSpecs)
 	if err != nil {
 		t.Fatalf("collectEqualityDeletes: %v", err)
 	}
@@ -1377,7 +1377,7 @@ func TestMergeParquetFilesWithEqualityDeletes(t *testing.T) {
 	}
 	snapID := int64(1)
 	entries := []iceberg.ManifestEntry{
-		iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, nil, nil, dfb.Build()),
+		iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, &testDataSeq, &testDataSeq, dfb.Build()),
 	}
 
 	// Build equality deletes via the collect pipeline so keys match the
@@ -1409,10 +1409,10 @@ func TestMergeParquetFilesWithEqualityDeletes(t *testing.T) {
 		t.Fatalf("build eq delete: %v", err)
 	}
 	eqDfb.EqualityFieldIDs([]int{2}) // field 2 = name
-	eqEntry := iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, nil, nil, eqDfb.Build())
+	eqEntry := iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, &testDeleteSeq, &testDeleteSeq, eqDfb.Build())
 
 	eqGroups, err := collectEqualityDeletes(context.Background(), client, "test-bucket", "ns/tbl",
-		[]iceberg.ManifestEntry{eqEntry}, schema)
+		[]iceberg.ManifestEntry{eqEntry}, schema, testUnpartitionedSpecs)
 	if err != nil {
 		t.Fatalf("collectEqualityDeletes: %v", err)
 	}
