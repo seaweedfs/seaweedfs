@@ -1606,17 +1606,17 @@ func (t *Topology) ResumeVolumeGrowth() bool {
 
 // SetGrowthFrozen applies a replicated freeze transition on every master. A
 // positive frozenAt pins the instant so all nodes share one recovery window;
-// a non-positive one falls back to now for entries written before the field
-// existed. An unfreeze bound to unfreezeFor applies only while no strictly
-// newer freeze exists, so a stale lift cannot erase a freeze that committed
-// first; zero lifts unconditionally.
+// a non-positive one — entries written before the field existed — stays zero
+// so the freeze is ageless: the recovery check reads its window as elapsed,
+// and a bound lift still applies. Substituting the replay time would shadow
+// every committed unfreeze and re-apply the freeze on each restart. An
+// unfreeze bound to unfreezeFor applies only while no strictly newer freeze
+// exists, so a stale lift cannot erase a freeze that committed first; zero
+// lifts unconditionally.
 func (t *Topology) SetGrowthFrozen(frozen bool, frozenAt int64, unfreezeFor int64) {
 	if frozen {
-		if frozenAt <= 0 {
-			frozenAt = time.Now().UnixNano()
-		}
 		// The timestamp lands before the flag so a reader can never see
-		// frozen with a zero time and misjudge the auto-resume window.
+		// frozen with a stale time and misjudge the auto-resume window.
 		t.growthFrozenAt.Store(frozenAt)
 		if t.growthFrozen.CompareAndSwap(false, true) {
 			stats.MasterVolumeGrowthFrozen.Set(1)

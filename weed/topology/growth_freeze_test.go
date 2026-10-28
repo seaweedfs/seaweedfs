@@ -228,6 +228,26 @@ func TestGrowthFreezeCommandApply(t *testing.T) {
 	}
 }
 
+// Freeze entries written before the instant field existed replay as ageless:
+// a lift bound to a later instant still applies, and the recovery window
+// reads as already elapsed — a replay-time stamp would shadow every committed
+// unfreeze and re-apply the freeze on each restart.
+func TestLegacyFreezeReplayStaysAgeless(t *testing.T) {
+	topo := NewTopology("topo", nil, 128, 3, false)
+	topo.SetGrowthFreezeConfig(true, time.Minute)
+
+	topo.SetGrowthFrozen(true, 0, 0)
+	topo.SetGrowthFrozen(false, 0, 1234)
+	if topo.IsGrowthFrozen() {
+		t.Fatal("a bound lift must apply to a freeze whose instant was never recorded")
+	}
+
+	topo.SetGrowthFrozen(true, 0, 0)
+	if topo.IsGrowthFrozen() {
+		t.Fatal("an ageless freeze should read its recovery window as elapsed")
+	}
+}
+
 // A lift bound to a freeze instant must not erase a newer freeze, so a stale
 // unfreeze cannot overwrite a freeze that committed first but applied later.
 func TestGrowthUnfreezeBoundToFreezeInstant(t *testing.T) {
