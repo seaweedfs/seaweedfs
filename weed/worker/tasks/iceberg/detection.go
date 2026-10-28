@@ -135,6 +135,10 @@ func (h *Handler) scanTablesForMaintenance(
 					}
 					continue
 				}
+				if err := state.loadMetadata(ctx, filerClient, bucketName); err != nil {
+					glog.V(2).Infof("iceberg maintenance: skipping %s/%s/%s: cannot load iceberg metadata: %v", bucketName, nsName, tblName, err)
+					continue
+				}
 				if !isIcebergTableEntry(tableEntry.Extended, state.Metadata) {
 					glog.V(2).Infof("iceberg maintenance: skipping %s/%s/%s: not an iceberg table", bucketName, nsName, tblName)
 					continue

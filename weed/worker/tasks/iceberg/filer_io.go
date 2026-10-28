@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/apache/iceberg-go/table"
 	"github.com/parquet-go/parquet-go"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -154,6 +155,9 @@ func loadCurrentMetadata(ctx context.Context, client filer_pb.SeaweedFilerClient
 	if err != nil {
 		return nil, err
 	}
+	if err := state.loadMetadata(ctx, client, bucketName); err != nil {
+		return nil, err
+	}
 	// Refuse to rewrite an entry that only looks like an Iceberg table. Every
 	// operation here rewrites or deletes files under the table location, and a
 	// foreign format's files are unreferenced by Iceberg metadata by definition.
@@ -161,6 +165,25 @@ func loadCurrentMetadata(ctx context.Context, client filer_pb.SeaweedFilerClient
 		return nil, fmt.Errorf("entry %s/%s is not an iceberg table", dir, name)
 	}
 	return state, nil
+}
+
+// loadMetadata fills in Metadata for a record that keeps no inline copy: a
+// commit that outgrew the request-size limit stores only the metadata file's
+// location, so the bytes come from the file it points to.
+func (s *tableState) loadMetadata(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketName string) error {
+	if s.Metadata != nil {
+		return nil
+	}
+	content, err := loadFileByIcebergPath(ctx, client, bucketName, s.DataPath, s.MetadataLocation)
+	if err != nil {
+		return fmt.Errorf("load metadata file %s: %w", s.MetadataLocation, err)
+	}
+	meta, err := table.ParseMetadataBytes(content)
+	if err != nil {
+		return fmt.Errorf("parse iceberg metadata at %s: %w", s.MetadataLocation, err)
+	}
+	s.Metadata = meta
+	return nil
 }
 
 func isFilerNotFound(err error) bool {
