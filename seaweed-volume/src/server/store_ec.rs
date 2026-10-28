@@ -272,7 +272,7 @@ pub async fn read_ec_shard_needle_or_miss(
         // A shard that served an interval can be silently corrupt: rebuild the
         // suspect ranges from the surviving shards and let a successful parse
         // arbitrate which copy was wrong. Mirrors Go's rebuildEcShardNeedle.
-        let Some(rebuilt) = rebuild_ec_shard_needle(
+        let (rebuilt, is_deleted) = rebuild_ec_shard_needle(
             state,
             &snapshot.metas,
             EcShardMap {
@@ -286,8 +286,13 @@ pub async fn read_ec_shard_needle_or_miss(
             snapshot.version,
             needle_id,
         )
-        .await
-        else {
+        .await;
+        // A holder reporting the needle deleted is authoritative -- deletes are
+        // never invented and never undone.
+        if is_deleted {
+            return Ok(Err(EcMiss::Deleted));
+        }
+        let Some(rebuilt) = rebuilt else {
             return Err(io::Error::new(io::ErrorKind::InvalidData, format!("{}", e)));
         };
         let mut n = Needle {
@@ -1704,7 +1709,9 @@ fn forget_shard_location(state: &Arc<VolumeServerState>, vid: VolumeId, shard_id
 /// Rebuild the `metas` ranges served by shards in `exclude`, keeping the
 /// original bytes elsewhere, and return the candidate only when it parses as
 /// the needle. On success every shard whose range changed is confirmed corrupt
-/// and dropped from the location cache.
+/// and dropped from the location cache. The flag is a holder's deleted report:
+/// deletes are never invented, so it ends the search whatever the local index
+/// says.
 async fn try_ec_shard_needle_candidate(
     state: &Arc<VolumeServerState>,
     metas: &[EcInterval],
@@ -1715,17 +1722,22 @@ async fn try_ec_shard_needle_candidate(
     size: Size,
     version: Version,
     needle_id: NeedleId,
-) -> Option<Vec<u8>> {
+) -> (Option<Vec<u8>>, bool) {
     let mut candidate = vec![0u8; corrupted.len()];
     let mut pos = 0usize;
     for iv in metas {
         let end = pos + iv.size;
         if exclude.contains(&iv.shard_id) {
-            let (buf, _) = recover_one_remote_ec_shard_interval(state, *iv, map, exclude)
-                .await
-                .ok()?;
+            let Ok((buf, is_deleted)) =
+                recover_one_remote_ec_shard_interval(state, *iv, map, exclude).await
+            else {
+                return (None, false);
+            };
+            if is_deleted {
+                return (None, true);
+            }
             if buf.len() != end - pos {
-                return None;
+                return (None, false);
             }
             candidate[pos..end].copy_from_slice(&buf);
         } else {
@@ -1740,7 +1752,7 @@ async fn try_ec_shard_needle_candidate(
     // A candidate whose header decodes a different id than was asked for is no
     // proof the bytes are right, whatever the checksum said.
     if check.read_bytes(&candidate, offset, size, version).is_err() || check.id != needle_id {
-        return None;
+        return (None, false);
     }
     let mut pos = 0usize;
     for iv in metas {
@@ -1750,14 +1762,15 @@ async fn try_ec_shard_needle_candidate(
         }
         pos = end;
     }
-    Some(candidate)
+    (Some(candidate), false)
 }
 
 /// Repair a needle whose reassembled bytes failed to parse — Go's
 /// `rebuildEcShardNeedle`. Every interval's source shard is a suspect: rebuild
 /// all suspect ranges at once while parity covers the suspect set, or one
 /// suspect at a time when the needle spans more shards than that, and let a
-/// successful parse arbitrate which copy was corrupt.
+/// successful parse arbitrate which copy was corrupt. A holder's deleted report
+/// stops the search: the needle is gone whatever the local index says.
 async fn rebuild_ec_shard_needle(
     state: &Arc<VolumeServerState>,
     metas: &[EcInterval],
@@ -1767,34 +1780,40 @@ async fn rebuild_ec_shard_needle(
     size: Size,
     version: Version,
     needle_id: NeedleId,
-) -> Option<Vec<u8>> {
+) -> (Option<Vec<u8>>, bool) {
     let suspects: HashSet<ShardId> = metas.iter().map(|iv| iv.shard_id).collect();
     if suspects.len() <= map.parity_shards {
-        if let Some(candidate) = try_ec_shard_needle_candidate(
+        let (candidate, is_deleted) = try_ec_shard_needle_candidate(
             state, metas, map, corrupted, &suspects, offset, size, version, needle_id,
         )
-        .await
-        {
-            return Some(candidate);
+        .await;
+        if is_deleted {
+            return (None, true);
+        }
+        if let Some(candidate) = candidate {
+            return (Some(candidate), false);
         }
         // The gather behind a failed candidate can itself have read a second
         // corrupt shard as reconstruction input. With slack left in the parity
         // budget, retry while dropping one gathered input at a time.
         if suspects.len() < map.parity_shards {
-            if let Some(candidate) = rebuild_ec_needle_from_dropped_inputs(
+            let (candidate, is_deleted) = rebuild_ec_needle_from_dropped_inputs(
                 state, metas, map, corrupted, &suspects, offset, size, version, needle_id,
             )
-            .await
-            {
-                return Some(candidate);
+            .await;
+            if is_deleted {
+                return (None, true);
+            }
+            if let Some(candidate) = candidate {
+                return (Some(candidate), false);
             }
         }
         if suspects.len() == 1 {
-            return None;
+            return (None, false);
         }
     }
     for shard_id in suspects {
-        if let Some(candidate) = try_ec_shard_needle_candidate(
+        let (candidate, is_deleted) = try_ec_shard_needle_candidate(
             state,
             metas,
             map,
@@ -1805,12 +1824,15 @@ async fn rebuild_ec_shard_needle(
             version,
             needle_id,
         )
-        .await
-        {
-            return Some(candidate);
+        .await;
+        if is_deleted {
+            return (None, true);
+        }
+        if let Some(candidate) = candidate {
+            return (Some(candidate), false);
         }
     }
-    None
+    (None, false)
 }
 
 /// Retry a rebuild whose every suspect range was recovered yet the candidate
@@ -1831,7 +1853,7 @@ async fn rebuild_ec_needle_from_dropped_inputs(
     size: Size,
     version: Version,
     needle_id: NeedleId,
-) -> Option<Vec<u8>> {
+) -> (Option<Vec<u8>>, bool) {
     let EcShardMap {
         data_shards,
         parity_shards,
@@ -1839,16 +1861,21 @@ async fn rebuild_ec_needle_from_dropped_inputs(
     } = map;
     let total_shards = data_shards + parity_shards;
     let total_size: usize = metas.iter().map(|iv| iv.size).sum();
-    let _permit = EC_RECOVER_SEM
+    let Ok(_permit) = EC_RECOVER_SEM
         .acquire_many((total_size * total_shards).min(EC_RECOVER_BUDGET) as u32)
         .await
-        .ok()?;
+    else {
+        return (None, false);
+    };
 
     let mut gathers: Vec<Vec<Option<Vec<u8>>>> = Vec::with_capacity(metas.len());
     let mut picked: HashSet<ShardId> = HashSet::new();
     for iv in metas {
-        let (bufs, _) =
+        let (bufs, is_deleted) =
             gather_ec_shard_intervals(state, *iv, map, suspects, total_shards).await;
+        if is_deleted {
+            return (None, true);
+        }
         let mut taken = 0;
         for (sid, slot) in bufs.iter().enumerate() {
             if taken >= data_shards {
@@ -1862,7 +1889,9 @@ async fn rebuild_ec_needle_from_dropped_inputs(
         gathers.push(bufs);
     }
 
-    let rs = ReedSolomon::new(data_shards, parity_shards).ok()?;
+    let Ok(rs) = ReedSolomon::new(data_shards, parity_shards) else {
+        return (None, false);
+    };
     for drop in 0..total_shards as ShardId {
         if !picked.contains(&drop) {
             continue;
@@ -1917,10 +1946,12 @@ async fn rebuild_ec_needle_from_dropped_inputs(
             }
             pos = end;
         }
-        forget_shard_location(state, metas[0].vid, drop);
-        return Some(candidate);
+        if let Some(first) = metas.first() {
+            forget_shard_location(state, first.vid, drop);
+        }
+        return (Some(candidate), false);
     }
-    None
+    (None, false)
 }
 
 // parse_grpc_address lives in `grpc_client.rs` and is re-exported
