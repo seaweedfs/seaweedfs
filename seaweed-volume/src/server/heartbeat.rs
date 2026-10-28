@@ -55,6 +55,12 @@ pub async fn run_heartbeat_with_state(
         config.master_addresses
     );
 
+    if config.master_addresses.is_empty() {
+        warn!("Volume server has no master addresses to heartbeat to; heartbeats disabled");
+        state.is_heartbeating.store(false, Ordering::Relaxed);
+        return;
+    }
+
     let pulse = Duration::from_secs(config.pulse_seconds.max(1));
     let mut new_leader: Option<String> = None;
     let mut duplicate_retry_count: u32 = 0;
