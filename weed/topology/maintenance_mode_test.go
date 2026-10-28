@@ -330,58 +330,34 @@ func TestMaintenanceModeAfterVolumeLeftLayout(t *testing.T) {
 	}
 }
 
-// AvailableSpaceWithinLocation sums leaf data nodes, so a location whose only
-// capacity sits on a maintenance-mode server reports no room for growth even
-// though its rack and data center counters still roll that capacity up.
-func TestAvailableSpaceWithinLocationSkipsMaintenance(t *testing.T) {
+// GrowthBlocker counts nodes, not free slots: a location whose racks are all
+// full still fits the replica placement, so a pending grow that is consuming
+// the last slots to mint the request's volume never masquerades as an
+// impossible placement.
+func TestGrowthBlockerCountsNodesNotSlots(t *testing.T) {
 	topo, dc1 := newMaintenanceTestTopology()
 	rack1 := NewRack("rack1")
 	dc1.LinkChildNode(rack1)
-	addMaintenanceTestNode(rack1, "s1", 10)
-	addMaintenanceTestNode(rack1, "s2", 5)
-	dc2 := NewDataCenter("dc2")
-	topo.LinkChildNode(dc2)
+	full1 := addMaintenanceTestNode(rack1, "s1", 5)
+	full1.getOrCreateDisk("").UpAdjustDiskUsageDelta("", &DiskUsageCounts{volumeCount: 8})
 	rack2 := NewRack("rack2")
-	dc2.LinkChildNode(rack2)
-	maint := addMaintenanceTestNode(rack2, "m1", 7)
+	dc1.LinkChildNode(rack2)
+	full2 := addMaintenanceTestNode(rack2, "s2", 3)
+	full2.getOrCreateDisk("").UpAdjustDiskUsageDelta("", &DiskUsageCounts{volumeCount: 3})
 
-	option := &VolumeGrowOption{DiskType: types.HardDriveType}
-	if got := topo.AvailableSpaceWithinLocation(option); got != 22 {
-		t.Fatalf("unconstrained = %d, want 22", got)
+	rp010, _ := super_block.NewReplicaPlacementFromString("010")
+	if err := topo.GrowthBlocker(&VolumeGrowOption{ReplicaPlacement: rp010, DataCenter: "dc1"}); err != nil {
+		t.Fatalf("two full racks still fit 010: %v", err)
 	}
-	option.DataCenter = "dc1"
-	if got := topo.AvailableSpaceWithinLocation(option); got != 15 {
-		t.Fatalf("dc1 = %d, want 15", got)
-	}
-	option.DataCenter, option.DataNode = "dc2", "m1"
-	if got := topo.AvailableSpaceWithinLocation(option); got != 7 {
-		t.Fatalf("dc2/m1 = %d, want 7", got)
-	}
-	option.DataNode = ""
-	maint.SetMaintenanceMode(true)
-	if got := topo.AvailableSpaceWithinLocation(option); got != 0 {
-		t.Fatalf("dc2 with node in maintenance = %d, want 0", got)
-	}
-	if got := topo.AvailableSpaceWithinLocation(&VolumeGrowOption{DiskType: types.HardDriveType}); got != 15 {
-		t.Fatalf("unconstrained after maintenance = %d, want 15", got)
-	}
-	if got := topo.AvailableSpaceWithinLocation(&VolumeGrowOption{DataCenter: "dc9", DiskType: types.HardDriveType}); got != 0 {
-		t.Fatalf("missing dc9 = %d, want 0", got)
-	}
-}
 
-// An over-committed node reports negative free slots; summed plainly it would
-// cancel a sibling's room and wrongly report the location full.
-func TestAvailableSpaceWithinLocationSkipsOvercommitted(t *testing.T) {
-	topo, dc1 := newMaintenanceTestTopology()
-	rack1 := NewRack("rack1")
-	dc1.LinkChildNode(rack1)
-	over := addMaintenanceTestNode(rack1, "s1", 5)
-	over.getOrCreateDisk("").UpAdjustDiskUsageDelta("", &DiskUsageCounts{volumeCount: 8})
-	addMaintenanceTestNode(rack1, "s2", 7)
-
-	option := &VolumeGrowOption{DiskType: types.HardDriveType, DataCenter: "dc1"}
-	if got := topo.AvailableSpaceWithinLocation(option); got != 7 {
-		t.Fatalf("dc1 = %d, want 7", got)
+	topo2, dc2 := newMaintenanceTestTopology()
+	rack := NewRack("rack1")
+	dc2.LinkChildNode(rack)
+	addMaintenanceTestNode(rack, "s1", 10)
+	if err := topo2.GrowthBlocker(&VolumeGrowOption{ReplicaPlacement: rp010, DataCenter: "dc1"}); err == nil {
+		t.Fatal("a single rack can never place 010")
+	}
+	if err := topo2.GrowthBlocker(&VolumeGrowOption{ReplicaPlacement: rp010, DataCenter: "dc9"}); err == nil {
+		t.Fatal("a missing data center can never place 010")
 	}
 }

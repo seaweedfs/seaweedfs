@@ -1186,35 +1186,51 @@ func (t *Topology) GetDataCenter(dcName string) (dc *DataCenter) {
 	return dc
 }
 
-// AvailableSpaceWithinLocation sums the free volume slots for the option's
-// disk type over the data nodes matching the option's DataCenter/Rack/DataNode
-// constraint — the whole topology when the option names no location. It sums
-// leaves rather than rolled-up counters so a data node in maintenance mode
-// reports its own zero and an overcommitted node cannot cancel a sibling's
-// slots. Zero means growth cannot place a volume there, so a constrained
-// assign can fail fast instead of waiting out growth that can never satisfy it.
-func (t *Topology) AvailableSpaceWithinLocation(option *VolumeGrowOption) (total int64) {
+// GrowthBlocker reports why a volume grow under option could never place
+// inside the location the option names — too few matching data centers, or
+// too few racks or data nodes inside them for the replica placement. It
+// counts nodes rather than free slots so a pending grow consuming slots to
+// mint the request's own volume does not masquerade as an impossible
+// placement. Nil means the layout fits; a grow may still starve for room,
+// but that is a wait worth making rather than an error worth returning.
+func (t *Topology) GrowthBlocker(option *VolumeGrowOption) error {
+	rp := option.ReplicaPlacement
 	t.RLock()
 	defer t.RUnlock()
+	matched := 0
+	var errs []string
 	for _, c := range t.children {
 		if option.DataCenter != "" && string(c.Id()) != option.DataCenter {
 			continue
 		}
+		okRacks := 0
 		for _, r := range c.Children() {
 			if option.Rack != "" && string(r.Id()) != option.Rack {
 				continue
 			}
+			nodes := 0
 			for _, dn := range r.Children() {
-				if option.DataNode != "" && string(dn.Id()) != option.DataNode {
-					continue
-				}
-				if free := dn.AvailableSpaceFor(option); free > 0 {
-					total += free
+				if option.DataNode == "" || string(dn.Id()) == option.DataNode {
+					nodes++
 				}
 			}
+			if nodes >= rp.SameRackCount+1 {
+				okRacks++
+			}
+		}
+		if okRacks >= rp.DiffRackCount+1 {
+			matched++
+		} else {
+			errs = append(errs, fmt.Sprintf("%s: %d racks with %d data nodes, needs %d racks", c.Id(), okRacks, rp.SameRackCount+1, rp.DiffRackCount+1))
 		}
 	}
-	return
+	if matched >= rp.DiffDataCenterCount+1 {
+		return nil
+	}
+	if len(errs) == 0 {
+		return fmt.Errorf("no writable volumes: no data center matches %s", option)
+	}
+	return fmt.Errorf("no writable volumes can grow in %s: %s", option, strings.Join(errs, "; "))
 }
 
 func (t *Topology) GetOrCreateDataCenter(dcName string) *DataCenter {

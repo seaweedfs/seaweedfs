@@ -158,18 +158,6 @@ func (vg *VolumeGrowth) GrowByCountAndType(grpcDialOption grpc.DialOption, targe
 	return
 }
 
-// GrowthBlocker runs the grow-time node search without reserving or
-// allocating, returning the placement error a grow under option would hit
-// now, or nil when the topology has slots for it. An assign can use it to
-// tell a wait worth making — growth pending and placement satisfiable —
-// from a placement the grow will never satisfy, like a location with fewer
-// racks than the replica placement needs, which would otherwise shed the
-// same doomed grow on every client retry.
-func (vg *VolumeGrowth) GrowthBlocker(topo *Topology, option *VolumeGrowOption) error {
-	_, _, err := vg.findEmptySlotsForOneVolume(topo, option, false)
-	return err
-}
-
 func (vg *VolumeGrowth) findAndGrow(grpcDialOption grpc.DialOption, topo *Topology, option *VolumeGrowOption) (result []*master_pb.VolumeLocation, err error) {
 	// Wait for warmup to complete before searching for slots so the
 	// topology has all volume servers registered.
