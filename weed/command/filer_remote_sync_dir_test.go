@@ -517,6 +517,10 @@ func chunk(fileId, etag string) *filer_pb.FileChunk {
 	return &filer_pb.FileChunk{FileId: fileId, Size: 1024, ETag: etag}
 }
 
+func chunkAt(fileId, etag string, offset int64) *filer_pb.FileChunk {
+	return &filer_pb.FileChunk{FileId: fileId, Offset: offset, Size: 1024, ETag: etag}
+}
+
 func entryWith(name string, remote *filer_pb.RemoteEntry, chunks ...*filer_pb.FileChunk) *filer_pb.Entry {
 	return &filer_pb.Entry{Name: name, Attributes: &filer_pb.FuseAttributes{Mtime: 1786096669}, RemoteEntry: remote, Chunks: chunks}
 }
@@ -532,6 +536,11 @@ func entryWith(name string, remote *filer_pb.RemoteEntry, chunks ...*filer_pb.Fi
 // by chunk identity, the way the filer itself decides which chunks an update
 // leaves for deletion. Content fingerprints would miss a delete-and-recreate
 // of identical bytes and fail the event forever on its dead chunks.
+//
+// Chunks the filer has added since count too. The event was then a snapshot
+// of a write in progress: a mount flushes metadata while chunk uploads are
+// still running, so the snapshot can have holes, and the stream reader stops
+// at the first one on every retry.
 func TestIsSuperseded(t *testing.T) {
 	const dir = "/buckets/ingest"
 	event := entryWith("tmpjt9req69__Alan_Doe_Resume-1.pdf", nil, chunk("3,01", "e1"), chunk("3,02", "e2"))
@@ -549,7 +558,7 @@ func TestIsSuperseded(t *testing.T) {
 		{name: "truncated since", filer: &stubFilerClient{entry: entryWith(event.Name, nil, chunk("3,01", "e1"))}, want: true},
 		{name: "still as described", filer: &stubFilerClient{entry: entryWith(event.Name, nil, chunk("3,01", "e1"), chunk("3,02", "e2"))}, want: false},
 		{name: "still as described, since replicated", filer: &stubFilerClient{entry: entryWith(event.Name, stamped, chunk("3,01", "e1"), chunk("3,02", "e2"))}, want: false},
-		{name: "appended since, chunks still live", filer: &stubFilerClient{entry: entryWith(event.Name, nil, chunk("3,01", "e1"), chunk("3,02", "e2"), chunk("3,03", "e3"))}, want: false},
+		{name: "appended since", filer: &stubFilerClient{entry: entryWith(event.Name, nil, chunk("3,01", "e1"), chunk("3,02", "e2"), chunk("3,03", "e3"))}, want: true},
 		{name: "filer lookup failed", filer: &stubFilerClient{err: errors.New("rpc error: code = Unavailable")}, want: false},
 	}
 	for _, tt := range tests {
@@ -577,6 +586,17 @@ func TestIsSuperseded(t *testing.T) {
 		}
 		if isSuperseded(&stubFilerClient{entry: &filer_pb.Entry{Name: "touch.txt"}}, dir, empty) {
 			t.Error("isSuperseded = true, want false: the file is still empty")
+		}
+	})
+
+	t.Run("mid-write snapshot with a hole, filled in since", func(t *testing.T) {
+		snapshot := entryWith("IMG_6526.mov", nil, chunkAt("222,01", "e1", 0), chunkAt("220,03", "e3", 2048))
+		filled := entryWith("IMG_6526.mov", nil, chunkAt("222,01", "e1", 0), chunkAt("216,02", "e2", 1024), chunkAt("220,03", "e3", 2048))
+		if !isSuperseded(&stubFilerClient{entry: filled}, dir, snapshot) {
+			t.Error("isSuperseded = false, want true: the filer holds the finished write, the snapshot can never be read past its hole")
+		}
+		if isSuperseded(&stubFilerClient{entry: filled}, dir, filled) {
+			t.Error("isSuperseded = true, want false for the event that describes the finished write")
 		}
 	})
 
@@ -649,6 +669,22 @@ func TestRetriedWriteFileStopsWhenSuperseded(t *testing.T) {
 		}
 		if filerClient.lookups != 2 {
 			t.Errorf("looked up the filer %d times, want one before the attempt and one after it failed", filerClient.lookups)
+		}
+	})
+
+	t.Run("mid-write snapshot filled in during the attempt, one write", func(t *testing.T) {
+		snapshot := entryWith("IMG_6526.mov", nil, chunkAt("222,01", "e1", 0), chunkAt("220,03", "e3", 2048))
+		filled := entryWith("IMG_6526.mov", nil, chunkAt("222,01", "e1", 0), chunkAt("216,02", "e2", 1024), chunkAt("220,03", "e3", 2048))
+		// What the S3 SDK reports when the stream reader stops at the hole.
+		shortBody := errors.New("RequestError: send request failed\ncaused by: Put \"https://s3.example.com/tier/IMG_6526.mov?partNumber=12\": net/http: HTTP/1.x transport connection broken: http: ContentLength=8388608 with Body length 4194304")
+		remote := &failingRemote{err: shortBody}
+		filerClient := &supersedingFilerClient{live: snapshot, then: filled}
+		_, err := retriedWriteFile(remote, filerClient, dir, snapshot, dest)
+		if !errors.Is(err, errSuperseded) {
+			t.Errorf("err = %v, want errSuperseded", err)
+		}
+		if remote.writes != 1 {
+			t.Errorf("wrote %d times, want 1: the snapshot reads short on every retry", remote.writes)
 		}
 	})
 
@@ -993,6 +1029,7 @@ func TestIsFailedPrecondition(t *testing.T) {
 type supersedingFilerClient struct {
 	filer_pb.SeaweedFilerClient
 	live    *filer_pb.Entry
+	then    *filer_pb.Entry // returned after the first lookup; nil means deleted
 	lookups int
 }
 
@@ -1000,6 +1037,9 @@ func (c *supersedingFilerClient) LookupDirectoryEntry(context.Context, *filer_pb
 	c.lookups++
 	if c.lookups == 1 {
 		return &filer_pb.LookupDirectoryEntryResponse{Entry: c.live}, nil
+	}
+	if c.then != nil {
+		return &filer_pb.LookupDirectoryEntryResponse{Entry: c.then}, nil
 	}
 	return nil, filer_pb.ErrNotFound
 }
