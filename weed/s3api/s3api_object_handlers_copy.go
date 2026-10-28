@@ -258,7 +258,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
-	copySourceVersionId := resolvedSourceVersionId(srcVersionId, entry)
+	copySourceVersionId := resolveCopySourceVersionId(srcVersionId, srcVersioningState, entry)
 
 	if errCode := s3a.recheckCopySourcePolicy(r, srcBucket, srcObject, srcVersionId, entry.Extended, "CopyObjectHandler"); errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
@@ -1096,7 +1096,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
-	copySourceVersionId := resolvedSourceVersionId(srcVersionId, entry)
+	copySourceVersionId := resolveCopySourceVersionId(srcVersionId, srcVersioningState, entry)
 
 	// Cache remote-only sources before copying; the part-copy paths below
 	// iterate entry.GetChunks() and would otherwise produce an empty part.
@@ -1288,10 +1288,24 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	writeSuccessResponseXML(w, r, buildCopyPartResult(etag, t, SSEResponseMetadata{}))
 }
 
-// setCopySourceVersionId reports which source version a copy read, as AWS does.
-// The null version is left out: AWS documents no value for it.
+// resolveCopySourceVersionId reports which source version a copy read: an
+// explicit versionId or the entry's recorded id, defaulting to "null" when the
+// source bucket is versioning-configured — a regular-path object there is the
+// null version, mirroring the GET path. Unversioned sources report no version.
+func resolveCopySourceVersionId(requested, versioningState string, entry *filer_pb.Entry) string {
+	if v := resolvedSourceVersionId(requested, entry); v != "" {
+		return v
+	}
+	if versioningState != "" {
+		return "null"
+	}
+	return ""
+}
+
+// setCopySourceVersionId reports which source version a copy read, as AWS does —
+// the null version is a real version id and is echoed like any other.
 func setCopySourceVersionId(w http.ResponseWriter, versionId string) {
-	if versionId != "" && versionId != "null" {
+	if versionId != "" {
 		w.Header().Set("x-amz-copy-source-version-id", versionId)
 	}
 }

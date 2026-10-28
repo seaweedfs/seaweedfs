@@ -114,3 +114,60 @@ func TestCopyObjectPartReportsSourceVersionId(t *testing.T) {
 		t.Fatalf("x-amz-copy-source-version-id = %q, want %q", got, versionId)
 	}
 }
+
+// A copy whose source is the null version — a regular-path object in a
+// versioning-configured bucket — reports it as AWS does: "null".
+func TestCopyObjectReportsNullSourceVersionId(t *testing.T) {
+	const src, dst, object = "suspended-src", "plain-dst", "object"
+	filer := &copyACLFiler{ambiguousPutFiler: &ambiguousPutFiler{apply: true, entries: map[string]*filer_pb.Entry{}}}
+	s3a := newPutTestServer(t, startFakeFiler(t, filer))
+	s3a.iam = &IdentityAccessManagement{}
+	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+	s3a.bucketConfigCache.Set(src, &BucketConfig{Name: src, Versioning: s3_constants.VersioningSuspended, Ownership: s3_constants.OwnershipObjectWriter})
+	s3a.bucketConfigCache.Set(dst, &BucketConfig{Name: dst, Ownership: s3_constants.OwnershipObjectWriter})
+	filer.entries["/buckets/"+src+"/"+object] = &filer_pb.Entry{
+		Name: object, Content: []byte("data"),
+		Attributes: &filer_pb.FuseAttributes{FileMode: defaultFileMode, FileSize: 4},
+	}
+
+	for _, copySource := range []string{"/" + src + "/" + object, "/" + src + "/" + object + "?versionId=null"} {
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPut, "/"+dst+"/"+object, nil)
+		req = mux.SetURLVars(req, map[string]string{"bucket": dst, "object": object})
+		req.Header.Set("X-Amz-Copy-Source", copySource)
+		s3a.CopyObjectHandler(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("copySource %q: status = %d; body: %s", copySource, rr.Code, rr.Body.String())
+		}
+		if got := rr.Header().Get("x-amz-copy-source-version-id"); got != "null" {
+			t.Fatalf("copySource %q: x-amz-copy-source-version-id = %q, want %q", copySource, got, "null")
+		}
+	}
+}
+
+// An unversioned source reports no copy-source version header at all.
+func TestCopyObjectOmitsSourceVersionIdWhenUnversioned(t *testing.T) {
+	const src, dst, object = "plain-src", "plain-dst", "object"
+	filer := &copyACLFiler{ambiguousPutFiler: &ambiguousPutFiler{apply: true, entries: map[string]*filer_pb.Entry{}}}
+	s3a := newPutTestServer(t, startFakeFiler(t, filer))
+	s3a.iam = &IdentityAccessManagement{}
+	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+	s3a.bucketConfigCache.Set(src, &BucketConfig{Name: src, Ownership: s3_constants.OwnershipObjectWriter})
+	s3a.bucketConfigCache.Set(dst, &BucketConfig{Name: dst, Ownership: s3_constants.OwnershipObjectWriter})
+	filer.entries["/buckets/"+src+"/"+object] = &filer_pb.Entry{
+		Name: object, Content: []byte("data"),
+		Attributes: &filer_pb.FuseAttributes{FileMode: defaultFileMode, FileSize: 4},
+	}
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/"+dst+"/"+object, nil)
+	req = mux.SetURLVars(req, map[string]string{"bucket": dst, "object": object})
+	req.Header.Set("X-Amz-Copy-Source", "/"+src+"/"+object)
+	s3a.CopyObjectHandler(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d; body: %s", rr.Code, rr.Body.String())
+	}
+	if got := rr.Header().Get("x-amz-copy-source-version-id"); got != "" {
+		t.Fatalf("x-amz-copy-source-version-id = %q, want empty", got)
+	}
+}
