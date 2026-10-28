@@ -87,6 +87,9 @@ struct Snapshot {
     offset: Offset,
     size_for_parse: Size,
     intervals: Vec<IntervalResult>,
+    /// Per-interval (shard_id, shard_offset, size) for the needle-rebuild
+    /// pass: a parse failure retries the suspect ranges through Reed-Solomon.
+    metas: Vec<EcInterval>,
     cached_locations: HashMap<ShardId, Vec<String>>,
     cache_refreshed_at: Option<Instant>,
     /// This volume's encode identity, carried to peers on remote shard reads so a
@@ -260,13 +263,51 @@ pub async fn read_ec_shard_needle_or_miss(
         id: needle_id,
         ..Needle::default()
     };
-    n.read_bytes(
+    if let Err(e) = n.read_bytes(
         &bytes,
         snapshot.offset.to_actual_offset(),
         snapshot.size_for_parse,
         snapshot.version,
-    )
-    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("{}", e)))?;
+    ) {
+        // A shard that served an interval can be silently corrupt: rebuild the
+        // suspect ranges from the surviving shards and let a successful parse
+        // arbitrate which copy was wrong. Mirrors Go's rebuildEcShardNeedle.
+        let (rebuilt, is_deleted) = rebuild_ec_shard_needle(
+            state,
+            &snapshot.metas,
+            EcShardMap {
+                locations: &shard_locations,
+                data_shards,
+                parity_shards,
+            },
+            &bytes,
+            snapshot.offset.to_actual_offset(),
+            snapshot.size_for_parse,
+            snapshot.version,
+            needle_id,
+        )
+        .await;
+        // A holder reporting the needle deleted is authoritative -- deletes are
+        // never invented and never undone.
+        if is_deleted {
+            return Ok(Err(EcMiss::Deleted));
+        }
+        let Some(rebuilt) = rebuilt else {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, format!("{}", e)));
+        };
+        let mut n = Needle {
+            id: needle_id,
+            ..Needle::default()
+        };
+        n.read_bytes(
+            &rebuilt,
+            snapshot.offset.to_actual_offset(),
+            snapshot.size_for_parse,
+            snapshot.version,
+        )
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("{}", e)))?;
+        return Ok(Ok(n));
+    }
     Ok(Ok(n))
 }
 
@@ -847,6 +888,7 @@ pub async fn scrub_ec_volume_distributed(
                                     data_shards,
                                     parity_shards: total_shards - data_shards,
                                 },
+                                &HashSet::from([iv.shard_id]),
                             )
                             .await
                             {
@@ -933,7 +975,7 @@ fn snapshot_under_lock(
             EcMiss::NotFound
         }));
     };
-    build_snapshot(ecv, offset, size, &intervals).map(Ok)
+    build_snapshot(ecv, vid, needle_id, offset, size, &intervals).map(Ok)
 }
 
 /// Like `snapshot_under_lock`, but locates intervals from the RAW .ecx
@@ -1046,6 +1088,8 @@ fn read_local_intervals(
 /// read path can drop the store lock before awaiting remote reads.
 fn build_snapshot(
     ecv: &crate::storage::erasure_coding::ec_volume::EcVolume,
+    vid: VolumeId,
+    needle_id: NeedleId,
     offset: Offset,
     size: Size,
     intervals: &[crate::storage::erasure_coding::ec_locate::Interval],
@@ -1058,6 +1102,20 @@ fn build_snapshot(
     }
     let actual = get_actual_size(size, ecv.version);
     let interval_results = read_local_intervals(ecv, intervals);
+    let metas = intervals
+        .iter()
+        .map(|iv| {
+            let (shard_id, shard_offset) = ecv.interval_to_shard_id_and_offset(iv);
+            EcInterval {
+                vid,
+                needle_id,
+                shard_id,
+                shard_offset,
+                size: iv.size as usize,
+                expected_encode_ts_ns: ecv.encode_ts_ns,
+            }
+        })
+        .collect();
     let (cached_locations, cache_refreshed_at) = ecv.shard_locations_snapshot();
 
     Ok(Snapshot {
@@ -1068,6 +1126,7 @@ fn build_snapshot(
         offset,
         size_for_parse: size,
         intervals: interval_results,
+        metas,
         cached_locations,
         cache_refreshed_at,
         encode_ts_ns: ecv.encode_ts_ns,
@@ -1297,7 +1356,7 @@ async fn fetch_one_interval(
 
     // Reconstruct: fan-out reads to every other shard at the same
     // (shard_offset, size). Mirrors `recoverOneRemoteEcShardInterval`.
-    recover_one_remote_ec_shard_interval(state, iv, map).await
+    recover_one_remote_ec_shard_interval(state, iv, map, &HashSet::from([iv.shard_id])).await
 }
 
 async fn read_remote_ec_shard_interval(
@@ -1422,18 +1481,26 @@ async fn do_read_remote_ec_shard_interval(
     Ok((out, false))
 }
 
-async fn recover_one_remote_ec_shard_interval(
+/// Gather `iv`'s interval from every shard outside `exclude`, returning one
+/// buffer per shard and `None` where the shard could not be read, plus whether
+/// any holder reported the needle deleted. Stops once `want` buffers are in
+/// hand: reconstruction consumes no more than `data_shards`, so callers pass
+/// that unless a retry needs the wider set.
+/// Mirrors Go's `gatherEcShardIntervals`.
+async fn gather_ec_shard_intervals(
     state: &Arc<VolumeServerState>,
     iv: EcInterval,
     map: EcShardMap<'_>,
-) -> io::Result<(Vec<u8>, bool)> {
+    exclude: &HashSet<ShardId>,
+    want: usize,
+) -> (Vec<Option<Vec<u8>>>, bool) {
     let EcInterval {
         vid,
         needle_id,
-        shard_id: shard_id_to_recover,
         shard_offset,
         size,
         expected_encode_ts_ns,
+        ..
     } = iv;
     let EcShardMap {
         locations: shard_locations,
@@ -1441,23 +1508,6 @@ async fn recover_one_remote_ec_shard_interval(
         parity_shards,
     } = map;
     let total_shards = data_shards + parity_shards;
-    let rs = ReedSolomon::new(data_shards, parity_shards)
-        .map_err(|e| io::Error::other(format!("reed-solomon init: {:?}", e)))?;
-
-    // Charge the buffers this recovery is about to hold against the budget, so a
-    // burst of them queues here rather than on the heap. An interval whose
-    // fan-out outgrows the whole budget takes all of it and so runs alone,
-    // rather than waiting on permits that can never be granted.
-    let _permit = EC_RECOVER_SEM
-        .acquire_many((size * data_shards).min(EC_RECOVER_BUDGET) as u32)
-        .await
-        .map_err(|e| {
-            io::Error::other(format!(
-                "ec recover budget for shard {}.{}: {}",
-                vid.0, shard_id_to_recover, e
-            ))
-        })?;
-
     let mut bufs: Vec<Option<Vec<u8>>> = vec![None; total_shards];
 
     // Phase 0: seed bufs from LOCALLY mounted shards. If this node
@@ -1469,11 +1519,8 @@ async fn recover_one_remote_ec_shard_interval(
     {
         let store = state.store.read().unwrap();
         for (sid, slot) in bufs.iter_mut().enumerate() {
-            if available >= data_shards {
+            if available >= want {
                 break;
-            }
-            if sid as ShardId == shard_id_to_recover {
-                continue;
             }
             // Resolve the shard together with the EcVolume on the disk that owns
             // it: a reconciled volume has its shards split across data dirs. A
@@ -1483,6 +1530,9 @@ async fn recover_one_remote_ec_shard_interval(
             let Ok(sid_shard) = ShardId::try_from(sid) else {
                 continue;
             };
+            if exclude.contains(&sid_shard) {
+                continue;
+            }
             let owner = match store.find_ec_volume_with_shard(vid, sid_shard) {
                 Some(ecv)
                     if expected_encode_ts_ns == 0 || ecv.encode_ts_ns == expected_encode_ts_ns =>
@@ -1513,7 +1563,7 @@ async fn recover_one_remote_ec_shard_interval(
     let mut candidates: Vec<(ShardId, Vec<String>)> = shard_locations
         .iter()
         .filter(|(sid, locs)| {
-            **sid != shard_id_to_recover
+            !exclude.contains(*sid)
                 && (**sid as usize) < total_shards
                 && !locs.is_empty()
                 && bufs[**sid as usize].is_none()
@@ -1522,8 +1572,8 @@ async fn recover_one_remote_ec_shard_interval(
         .collect();
 
     let mut any_deleted = false;
-    while available < data_shards && !candidates.is_empty() {
-        let rest = candidates.split_off((data_shards - available).min(candidates.len()));
+    while available < want && !candidates.is_empty() {
+        let rest = candidates.split_off((want - available).min(candidates.len()));
         let wave = std::mem::replace(&mut candidates, rest);
         let results = join_all(wave.into_iter().map(|(sid, locs)| {
             let state = state.clone();
@@ -1573,6 +1623,51 @@ async fn recover_one_remote_ec_shard_interval(
         }
     }
 
+    (bufs, any_deleted)
+}
+
+/// Rebuild `iv.shard_id`'s interval from the shards outside `exclude`, which
+/// always contains `iv.shard_id` itself. Go's `recoverEcShardInterval`: the
+/// needle-level rebuild passes the whole suspect set so a bad copy cannot
+/// poison the reconstruction it is being compared against.
+async fn recover_one_remote_ec_shard_interval(
+    state: &Arc<VolumeServerState>,
+    iv: EcInterval,
+    map: EcShardMap<'_>,
+    exclude: &HashSet<ShardId>,
+) -> io::Result<(Vec<u8>, bool)> {
+    let EcInterval {
+        vid,
+        shard_id: shard_id_to_recover,
+        size,
+        ..
+    } = iv;
+    let EcShardMap {
+        data_shards,
+        parity_shards,
+        ..
+    } = map;
+    let rs = ReedSolomon::new(data_shards, parity_shards)
+        .map_err(|e| io::Error::other(format!("reed-solomon init: {:?}", e)))?;
+
+    // Charge the buffers this recovery is about to hold against the budget, so a
+    // burst of them queues here rather than on the heap. An interval whose
+    // fan-out outgrows the whole budget takes all of it and so runs alone,
+    // rather than waiting on permits that can never be granted.
+    let _permit = EC_RECOVER_SEM
+        .acquire_many((size * data_shards).min(EC_RECOVER_BUDGET) as u32)
+        .await
+        .map_err(|e| {
+            io::Error::other(format!(
+                "ec recover budget for shard {}.{}: {}",
+                vid.0, shard_id_to_recover, e
+            ))
+        })?;
+
+    let (mut bufs, any_deleted) =
+        gather_ec_shard_intervals(state, iv, map, exclude, data_shards).await;
+    let available = bufs.iter().filter(|b| b.is_some()).count();
+
     if available < data_shards {
         // A holder reporting the needle deleted is authoritative -- deletes are
         // never invented and never undone -- so answer that rather than the
@@ -1600,6 +1695,263 @@ async fn recover_one_remote_ec_shard_interval(
             vid.0, shard_id_to_recover
         ))),
     }
+}
+
+/// Drop a confirmed-corrupt shard's cached location so later reads go straight
+/// to reconstruction — Go's `forgetShardId` reached through the volume.
+fn forget_shard_location(state: &Arc<VolumeServerState>, vid: VolumeId, shard_id: ShardId) {
+    let store = state.store.read().unwrap();
+    if let Some(ecv) = store.find_ec_volume(vid) {
+        ecv.forget_shard_location(shard_id);
+    }
+}
+
+/// Rebuild the `metas` ranges served by shards in `exclude`, keeping the
+/// original bytes elsewhere, and return the candidate only when it parses as
+/// the needle. On success every shard whose range changed is confirmed corrupt
+/// and dropped from the location cache. The flag is a holder's deleted report:
+/// deletes are never invented, so it ends the search whatever the local index
+/// says.
+async fn try_ec_shard_needle_candidate(
+    state: &Arc<VolumeServerState>,
+    metas: &[EcInterval],
+    map: EcShardMap<'_>,
+    corrupted: &[u8],
+    exclude: &HashSet<ShardId>,
+    offset: i64,
+    size: Size,
+    version: Version,
+    needle_id: NeedleId,
+) -> (Option<Vec<u8>>, bool) {
+    let mut candidate = vec![0u8; corrupted.len()];
+    let mut pos = 0usize;
+    for iv in metas {
+        let end = pos + iv.size;
+        if exclude.contains(&iv.shard_id) {
+            let Ok((buf, is_deleted)) =
+                recover_one_remote_ec_shard_interval(state, *iv, map, exclude).await
+            else {
+                return (None, false);
+            };
+            if is_deleted {
+                return (None, true);
+            }
+            if buf.len() != end - pos {
+                return (None, false);
+            }
+            candidate[pos..end].copy_from_slice(&buf);
+        } else {
+            candidate[pos..end].copy_from_slice(&corrupted[pos..end]);
+        }
+        pos = end;
+    }
+    let mut check = Needle {
+        id: needle_id,
+        ..Needle::default()
+    };
+    // A candidate whose header decodes a different id than was asked for is no
+    // proof the bytes are right, whatever the checksum said.
+    if check.read_bytes(&candidate, offset, size, version).is_err() || check.id != needle_id {
+        return (None, false);
+    }
+    let mut pos = 0usize;
+    for iv in metas {
+        let end = pos + iv.size;
+        if candidate[pos..end] != corrupted[pos..end] {
+            forget_shard_location(state, iv.vid, iv.shard_id);
+        }
+        pos = end;
+    }
+    (Some(candidate), false)
+}
+
+/// Repair a needle whose reassembled bytes failed to parse — Go's
+/// `rebuildEcShardNeedle`. Every interval's source shard is a suspect: rebuild
+/// all suspect ranges at once while parity covers the suspect set, or one
+/// suspect at a time when the needle spans more shards than that, and let a
+/// successful parse arbitrate which copy was corrupt. A holder's deleted report
+/// stops the search: the needle is gone whatever the local index says.
+async fn rebuild_ec_shard_needle(
+    state: &Arc<VolumeServerState>,
+    metas: &[EcInterval],
+    map: EcShardMap<'_>,
+    corrupted: &[u8],
+    offset: i64,
+    size: Size,
+    version: Version,
+    needle_id: NeedleId,
+) -> (Option<Vec<u8>>, bool) {
+    let suspects: HashSet<ShardId> = metas.iter().map(|iv| iv.shard_id).collect();
+    if suspects.len() <= map.parity_shards {
+        let (candidate, is_deleted) = try_ec_shard_needle_candidate(
+            state, metas, map, corrupted, &suspects, offset, size, version, needle_id,
+        )
+        .await;
+        if is_deleted {
+            return (None, true);
+        }
+        if let Some(candidate) = candidate {
+            return (Some(candidate), false);
+        }
+        // The gather behind a failed candidate can itself have read a second
+        // corrupt shard as reconstruction input. With slack left in the parity
+        // budget, retry while dropping one gathered input at a time.
+        if suspects.len() < map.parity_shards {
+            let (candidate, is_deleted) = rebuild_ec_needle_from_dropped_inputs(
+                state, metas, map, corrupted, &suspects, offset, size, version, needle_id,
+            )
+            .await;
+            if is_deleted {
+                return (None, true);
+            }
+            if let Some(candidate) = candidate {
+                return (Some(candidate), false);
+            }
+        }
+        if suspects.len() == 1 {
+            return (None, false);
+        }
+    }
+    for shard_id in suspects {
+        let (candidate, is_deleted) = try_ec_shard_needle_candidate(
+            state,
+            metas,
+            map,
+            corrupted,
+            &HashSet::from([shard_id]),
+            offset,
+            size,
+            version,
+            needle_id,
+        )
+        .await;
+        if is_deleted {
+            return (None, true);
+        }
+        if let Some(candidate) = candidate {
+            return (Some(candidate), false);
+        }
+    }
+    (None, false)
+}
+
+/// Retry a rebuild whose every suspect range was recovered yet the candidate
+/// still failed to parse: the gather behind it can itself have read a second
+/// corrupt shard as reconstruction input. Each interval is gathered once —
+/// every shard that answers, not just the `data_shards` a decode consumes —
+/// then the decode is retried with one gathered input dropped at a time and a
+/// needle parse arbitrates. The hypotheses tried are the inputs the first
+/// decode consumed, the only shards whose corruption can explain the failed
+/// candidate. Mirrors Go's `rebuildEcNeedleFromDroppedInputs`.
+async fn rebuild_ec_needle_from_dropped_inputs(
+    state: &Arc<VolumeServerState>,
+    metas: &[EcInterval],
+    map: EcShardMap<'_>,
+    corrupted: &[u8],
+    suspects: &HashSet<ShardId>,
+    offset: i64,
+    size: Size,
+    version: Version,
+    needle_id: NeedleId,
+) -> (Option<Vec<u8>>, bool) {
+    let EcShardMap {
+        data_shards,
+        parity_shards,
+        ..
+    } = map;
+    let total_shards = data_shards + parity_shards;
+    let total_size: usize = metas.iter().map(|iv| iv.size).sum();
+    let Ok(_permit) = EC_RECOVER_SEM
+        .acquire_many((total_size * total_shards).min(EC_RECOVER_BUDGET) as u32)
+        .await
+    else {
+        return (None, false);
+    };
+
+    let mut gathers: Vec<Vec<Option<Vec<u8>>>> = Vec::with_capacity(metas.len());
+    let mut picked: HashSet<ShardId> = HashSet::new();
+    for iv in metas {
+        let (bufs, is_deleted) =
+            gather_ec_shard_intervals(state, *iv, map, suspects, total_shards).await;
+        if is_deleted {
+            return (None, true);
+        }
+        let mut taken = 0;
+        for (sid, slot) in bufs.iter().enumerate() {
+            if taken >= data_shards {
+                break;
+            }
+            if slot.is_some() {
+                picked.insert(sid as ShardId);
+                taken += 1;
+            }
+        }
+        gathers.push(bufs);
+    }
+
+    let Ok(rs) = ReedSolomon::new(data_shards, parity_shards) else {
+        return (None, false);
+    };
+    for drop in 0..total_shards as ShardId {
+        if !picked.contains(&drop) {
+            continue;
+        }
+        let mut candidate = corrupted.to_vec();
+        let mut pos = 0usize;
+        let mut ok = true;
+        for (i, iv) in metas.iter().enumerate() {
+            let bufs = &mut gathers[i];
+            let saved = bufs[drop as usize].take();
+            let present: Vec<bool> = bufs.iter().map(|slot| slot.is_some()).collect();
+            let out = rs
+                .reconstruct(bufs)
+                .ok()
+                .and_then(|_| bufs[iv.shard_id as usize].take());
+            // reconstruct fills every missing slot; keep only what the gather
+            // produced so the next variant decodes from the same inputs.
+            for (sid, slot) in bufs.iter_mut().enumerate() {
+                if !present[sid] {
+                    *slot = None;
+                }
+            }
+            bufs[drop as usize] = saved;
+            let Some(buf) = out else {
+                ok = false;
+                break;
+            };
+            if buf.len() != iv.size {
+                ok = false;
+                break;
+            }
+            candidate[pos..pos + iv.size].copy_from_slice(&buf);
+            pos += iv.size;
+        }
+        if !ok {
+            continue;
+        }
+        let mut check = Needle {
+            id: needle_id,
+            ..Needle::default()
+        };
+        if check.read_bytes(&candidate, offset, size, version).is_err() || check.id != needle_id {
+            continue;
+        }
+        // The verdict convicts every differing range — and the dropped input,
+        // without which the same decode kept failing to parse.
+        let mut pos = 0usize;
+        for iv in metas {
+            let end = pos + iv.size;
+            if candidate[pos..end] != corrupted[pos..end] {
+                forget_shard_location(state, iv.vid, iv.shard_id);
+            }
+            pos = end;
+        }
+        if let Some(first) = metas.first() {
+            forget_shard_location(state, first.vid, drop);
+        }
+        return (Some(candidate), false);
+    }
+    (None, false)
 }
 
 // parse_grpc_address lives in `grpc_client.rs` and is re-exported
