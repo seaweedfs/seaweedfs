@@ -194,6 +194,33 @@ mod tests {
         assert_eq!(got, want);
     }
 
+    /// named_segment_fragments must carry the logical index name through —
+    /// a fanout planner groups tasks by name.
+    #[tokio::test]
+    async fn named_segment_fragments_returns_index_names() {
+        let dir = TempDir::new().unwrap();
+        let mut dataset = testing::write_dataset(
+            &dir,
+            &testing::vectors(8, 4),
+            &["a", "b", "c", "d", "e", "f", "g", "h"],
+        )
+        .await;
+        let params = VectorIndexParams::ivf_flat(4, DistanceType::L2);
+        dataset
+            .create_index(
+                &["vector"],
+                IndexType::Vector,
+                Some("shard-a".to_string()),
+                &params,
+                false,
+            )
+            .await
+            .unwrap();
+        let named = named_segment_fragments(&dataset, "vector").await.unwrap();
+        assert!(!named.is_empty());
+        assert!(named.iter().all(|(_, name, _)| name == "shard-a"));
+    }
+
     /// A scope of fragment ids that no longer exist, an empty list, or an
     /// empty-segment assignment must return no hits — never fall through to
     /// an unrestricted scan.
