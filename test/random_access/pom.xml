@@ -8,7 +8,7 @@
     <version>1.0-SNAPSHOT</version>
 
     <properties>
-        <guava.version>32.0.0-jre</guava.version>
+        <guava.version>33.7.2-jre</guava.version>
     </properties>
 
     <dependencies>
