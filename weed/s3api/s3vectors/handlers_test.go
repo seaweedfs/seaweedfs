@@ -260,3 +260,87 @@ func TestTranslateFilter(t *testing.T) {
 		t.Fatalf("empty filter: %q %v", got, err)
 	}
 }
+
+// The catalog stores nonFilterableMetadataKeys as a JSON string; an older
+// record may still carry the array form. Both must round-trip into the index.
+func TestIndexFromRecordNonFilterableKeys(t *testing.T) {
+	s := &Server{}
+	record := func(keys interface{}) map[string]interface{} {
+		return map[string]interface{}{
+			"metadata": map[string]interface{}{
+				"fullMetadata": map[string]interface{}{
+					"dimension":                 "128",
+					"distanceMetric":            "cosine",
+					"nonFilterableMetadataKeys": keys,
+				},
+			},
+		}
+	}
+
+	idx := indexFromRecord(s, "b", "i", record(`["sku","internal"]`))
+	if idx.MetadataConfiguration == nil ||
+		len(idx.MetadataConfiguration.NonFilterableMetadataKeys) != 2 ||
+		idx.MetadataConfiguration.NonFilterableMetadataKeys[0] != "sku" ||
+		idx.MetadataConfiguration.NonFilterableMetadataKeys[1] != "internal" {
+		t.Fatalf("JSON string form: %+v", idx.MetadataConfiguration)
+	}
+
+	idx = indexFromRecord(s, "b", "i", record([]interface{}{"sku"}))
+	if idx.MetadataConfiguration == nil ||
+		len(idx.MetadataConfiguration.NonFilterableMetadataKeys) != 1 ||
+		idx.MetadataConfiguration.NonFilterableMetadataKeys[0] != "sku" {
+		t.Fatalf("array form: %+v", idx.MetadataConfiguration)
+	}
+
+	for _, absent := range []interface{}{nil, "not-json", `{"a":1}`} {
+		idx = indexFromRecord(s, "b", "i", record(absent))
+		if idx.MetadataConfiguration != nil {
+			t.Fatalf("keys %v should leave configuration unset, got %+v", absent, idx.MetadataConfiguration)
+		}
+	}
+}
+
+// QueryVectors rejects filters touching non-filterable keys; the extraction
+// must see through nested boolean operators.
+func TestFilterFieldsNestedOperators(t *testing.T) {
+	filter := map[string]interface{}{
+		"$and": []interface{}{
+			map[string]interface{}{"color": "red"},
+			map[string]interface{}{"$or": []interface{}{
+				map[string]interface{}{"sku": map[string]interface{}{"$eq": "x"}},
+				map[string]interface{}{"$and": []interface{}{
+					map[string]interface{}{"size": map[string]interface{}{"$gt": 3}},
+				}},
+			}},
+		},
+	}
+	fields := map[string]bool{}
+	filterFields(filter, fields)
+	for _, want := range []string{"color", "sku", "size"} {
+		if !fields[want] {
+			t.Fatalf("missing field %q in %v", want, fields)
+		}
+	}
+	if fields["$and"] || fields["$or"] || fields["$eq"] {
+		t.Fatalf("operators leaked into fields: %v", fields)
+	}
+
+	// The rejection gate the handler applies to the extracted fields.
+	blocked := &MetadataConfiguration{NonFilterableMetadataKeys: []string{"sku"}}
+	if got, hit := nonFilterableField(blocked, filter); !hit || got != "sku" {
+		t.Fatalf("blocked key inside nested filter not detected: %q %v", got, hit)
+	}
+	allowed := &MetadataConfiguration{NonFilterableMetadataKeys: []string{"secret"}}
+	if got, hit := nonFilterableField(allowed, filter); hit {
+		t.Fatalf("unrelated non-filterable key should pass, got %q", got)
+	}
+	if got, hit := nonFilterableField(nil, filter); hit {
+		t.Fatalf("no configuration should pass, got %q", got)
+	}
+	emptyBlocked := &MetadataConfiguration{NonFilterableMetadataKeys: []string{""}}
+	if _, hit := nonFilterableField(emptyBlocked, map[string]interface{}{
+		"": map[string]interface{}{"$eq": "x"},
+	}); !hit {
+		t.Fatal("an empty blocked key should still reject")
+	}
+}
