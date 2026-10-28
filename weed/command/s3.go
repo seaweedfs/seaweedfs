@@ -717,7 +717,7 @@ func (s3opt *S3Options) vectorsRouter(s3ApiServer *s3api.S3ApiServer, grpcDialOp
 		glog.Warningf("S3 Vectors API disabled: no weed-vector registered on master")
 		return nil
 	}
-	backend := &vectorDiscovery{masters: masterAddresses, grpcDialOption: grpcDialOption}
+	backend := &vectorDiscovery{masters: masterAddresses, grpcDialOption: grpcDialOption, discover: discoverVectorWorkers}
 	vectorsRouter := mux.NewRouter().SkipClean(true)
 
 	vectorsServer := s3vectors.NewServer(s3ApiServer, s3ApiServer, backend)
@@ -733,6 +733,7 @@ func (s3opt *S3Options) vectorsRouter(s3ApiServer *s3api.S3ApiServer, grpcDialOp
 type vectorDiscovery struct {
 	masters        []pb.ServerAddress
 	grpcDialOption grpc.DialOption
+	discover       func([]pb.ServerAddress, grpc.DialOption) []string
 	mu             sync.Mutex
 	worker         string
 	conn           *grpc.ClientConn
@@ -765,9 +766,9 @@ func isTransportError(err error) bool {
 func (d *vectorDiscovery) resolve() (vector_pb.VectorServiceClient, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	workers := discoverVectorWorkers(d.masters, d.grpcDialOption)
+	workers := d.discover(d.masters, d.grpcDialOption)
 	if len(workers) == 0 {
-		return nil, fmt.Errorf("no weed-vector registered on master")
+		return nil, errNoVectorWorker
 	}
 	worker := workers[0]
 	for _, w := range workers {
@@ -786,27 +787,41 @@ func (d *vectorDiscovery) resolve() (vector_pb.VectorServiceClient, error) {
 		}
 		d.worker, d.conn = worker, conn
 		d.client = vector_pb.NewVectorServiceClient(conn)
+		// cli() scheduled this resolve on the short recheck window while no
+		// client existed; a live client only refreshes every resolve interval.
+		d.nextResolve = time.Now().Add(vectorResolveInterval)
 	}
 	return d.client, nil
 }
 
-const vectorResolveInterval = 5 * time.Second
+// A live client refreshes membership at most every vectorResolveInterval.
+// With no usable backend the recheck is much more frequent: a worker that
+// registers a moment after a lookup must surface inside a caller's retry
+// budget, while an absent one still cannot flood the master with lookups.
+const (
+	vectorResolveInterval = 5 * time.Second
+	vectorRecheckInterval = 500 * time.Millisecond
+)
+
+var errNoVectorWorker = status.Error(codes.Unavailable, "no weed-vector registered on master")
 
 func (d *vectorDiscovery) cli() (vector_pb.VectorServiceClient, error) {
 	d.mu.Lock()
 	cli := d.client
-	past := !time.Now().Before(d.nextResolve)
-	if cli != nil && !past {
+	if !time.Now().Before(d.nextResolve) {
+		interval := vectorRecheckInterval
+		if cli != nil {
+			interval = vectorResolveInterval
+		}
+		d.nextResolve = time.Now().Add(interval)
 		d.mu.Unlock()
+		return d.resolve()
+	}
+	d.mu.Unlock()
+	if cli != nil {
 		return cli, nil
 	}
-	if !past && cli == nil {
-		d.mu.Unlock()
-		return nil, fmt.Errorf("no weed-vector registered on master")
-	}
-	d.nextResolve = time.Now().Add(vectorResolveInterval)
-	d.mu.Unlock()
-	return d.resolve()
+	return nil, errNoVectorWorker
 }
 
 func (d *vectorDiscovery) CreateIndex(ctx context.Context, in *vector_pb.CreateIndexRequest, opts ...grpc.CallOption) (resp *vector_pb.CreateIndexResponse, err error) {

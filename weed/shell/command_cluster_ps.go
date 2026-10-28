@@ -75,6 +75,10 @@ func (c *commandClusterPs) Do(args []string, commandEnv *CommandEnv, writer io.W
 	if err != nil {
 		return
 	}
+	vectorNodes, err := listClusterNodes(cluster.VectorType)
+	if err != nil {
+		return
+	}
 
 	if len(mqBrokerNodes) > 0 {
 		fmt.Fprintf(writer, "* message queue brokers %d\n", len(mqBrokerNodes))
@@ -92,6 +96,19 @@ func (c *commandClusterPs) Do(args []string, commandEnv *CommandEnv, writer io.W
 	if len(s3Nodes) > 0 {
 		fmt.Fprintf(writer, "* s3 servers %d\n", len(s3Nodes))
 		for _, node := range s3Nodes {
+			fmt.Fprintf(writer, "  * %s (%v)\n", node.Address, node.Version)
+			if node.DataCenter != "" {
+				fmt.Fprintf(writer, "    DataCenter: %v\n", node.DataCenter)
+			}
+			if node.Rack != "" {
+				fmt.Fprintf(writer, "    Rack: %v\n", node.Rack)
+			}
+		}
+	}
+
+	if len(vectorNodes) > 0 {
+		fmt.Fprintf(writer, "* vector servers %d\n", len(vectorNodes))
+		for _, node := range vectorNodes {
 			fmt.Fprintf(writer, "  * %s (%v)\n", node.Address, node.Version)
 			if node.DataCenter != "" {
 				fmt.Fprintf(writer, "    DataCenter: %v\n", node.DataCenter)
