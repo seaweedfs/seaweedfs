@@ -231,6 +231,17 @@ func (s *Server) prepareTableCommit(ctx context.Context, bucketName, bucketARN, 
 		return nil, &icebergRequestError{http.StatusBadRequest, "BadRequestException", err.Error()}
 	}
 
+	prevMetadata := cloneTableMetadata(getResp.Metadata)
+	if len(currentBytes) > 0 && (getResp.Metadata == nil || len(getResp.Metadata.FullMetadata) == 0) {
+		// UpdateTable keeps the FullMetadata a flip stored when a restore sends
+		// none, so a record that held only a location gets back what loads
+		// served from its file rather than the transaction it is rolling back.
+		prevMetadata = cloneTableMetadata(&s3tables.TableMetadata{
+			Iceberg:      &s3tables.IcebergMetadata{TableUUID: tableUUID.String()},
+			FullMetadata: currentBytes,
+		})
+	}
+
 	return &preparedTableCommit{
 		namespace:           namespace,
 		tableName:           tableName,
@@ -245,7 +256,7 @@ func (s *Server) prepareTableCommit(ctx context.Context, bucketName, bucketARN, 
 		newMetadataLoc:      newMetadataLocation,
 		prevMetadataLoc:     getResp.MetadataLocation,
 		prevMetadataVersion: getResp.MetadataVersion,
-		prevMetadata:        cloneTableMetadata(getResp.Metadata),
+		prevMetadata:        prevMetadata,
 	}, nil
 }
 

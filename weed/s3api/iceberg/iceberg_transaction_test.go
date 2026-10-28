@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"path"
 	"strings"
 	"testing"
 
@@ -16,6 +18,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
+	"google.golang.org/grpc"
 )
 
 func TestDecodeCommitTransactionRequest(t *testing.T) {
@@ -379,5 +382,77 @@ func TestCommitTransactionRefreshesNameMapping(t *testing.T) {
 	mappingJSON, ok := loaded.Properties()[table.DefaultNameMappingKey]
 	if !ok || mappingJSON == "" {
 		t.Fatalf("committed metadata lost %s: %v", table.DefaultNameMappingKey, loaded.Properties())
+	}
+}
+
+// failUpdateFiler fails entry updates on one path, so a transaction's flip of
+// that table fails after the tables before it in the request have flipped.
+type failUpdateFiler struct {
+	*memFiler
+	failPath string
+}
+
+func (f *failUpdateFiler) WithFilerClient(_ bool, fn func(client filer_pb.SeaweedFilerClient) error) error {
+	return fn(f)
+}
+
+func (f *failUpdateFiler) UpdateEntry(ctx context.Context, in *filer_pb.UpdateEntryRequest, opts ...grpc.CallOption) (*filer_pb.UpdateEntryResponse, error) {
+	if path.Join(in.Directory, in.Entry.Name) == f.failPath {
+		return nil, errors.New("injected update failure")
+	}
+	return f.memFiler.UpdateEntry(ctx, in, opts...)
+}
+
+// A transaction that fails after flipping a table rolls it back. UpdateTable
+// cannot clear the FullMetadata a flip stored, so for a registration that kept
+// only its metadata location the restore has to write back the file's
+// metadata: otherwise loads go on serving the change the client was told
+// failed, and a client retrying the transaction applies it twice.
+func TestCommitTransactionRollbackRestoresOlderRegistration(t *testing.T) {
+	fc := &failUpdateFiler{memFiler: newMemFiler()}
+	seedNamespace(fc.memFiler, registerTestBucket, "finance", "alice")
+	s := NewServer(fc, nil)
+	location, registered := seedRegistrableMetadata(t, fc.memFiler, "events")
+
+	err := fc.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return s.tablesManager.Execute(context.Background(), s3tables.NewManagerClient(client), "RegisterTable", &s3tables.RegisterTableRequest{
+			TableBucketARN:   buildTableBucketARN(registerTestBucket),
+			Namespace:        []string{"finance"},
+			Name:             "events",
+			MetadataLocation: location,
+		}, nil, "alice")
+	})
+	if err != nil {
+		t.Fatalf("seed older registration: %v", err)
+	}
+	otherLocation, _ := seedRegistrableMetadata(t, fc.memFiler, "other")
+	w := httptest.NewRecorder()
+	s.handleRegisterTable(w, registerTableRequest("other", otherLocation))
+	if w.Code != http.StatusOK {
+		t.Fatalf("register other: status = %d (body: %s)", w.Code, w.Body.String())
+	}
+
+	// events flips first; the flip of other then fails and rolls events back.
+	fc.failPath = s3tables.GetTablePath(registerTestBucket, "finance", "other")
+	change := func(name string) string {
+		return `{"identifier":{"namespace":["finance"],"name":"` + name + `"},` +
+			`"updates":[{"action":"set-properties","updates":{"committed":"true"}}]}`
+	}
+	body := `{"table-changes":[` + change("events") + `,` + change("other") + `]}`
+	r := httptest.NewRequest(http.MethodPost, "/v1/"+registerTestBucket+"/transactions/commit", strings.NewReader(body))
+	r = mux.SetURLVars(r, map[string]string{"prefix": registerTestBucket})
+	r = r.WithContext(s3_constants.SetIdentityNameInContext(r.Context(), "alice"))
+	w = httptest.NewRecorder()
+	s.handleCommitTransaction(w, r)
+	if w.Code == http.StatusNoContent {
+		t.Fatal("transaction succeeded although the flip of other failed")
+	}
+
+	w = httptest.NewRecorder()
+	s.handleLoadTable(w, registeredTableRequest(http.MethodGet, "events", ""))
+	loaded := servedMetadata(t, "load after rolled-back transaction", w)
+	checkServesRegistered(t, "load after rolled-back transaction", loaded, registered)
+	if got, ok := loaded.Properties()["committed"]; ok {
+		t.Errorf("load after rolled-back transaction serves its property committed = %q", got)
 	}
 }
