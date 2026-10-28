@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/apache/iceberg-go"
+	"github.com/apache/iceberg-go/table"
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -313,5 +315,69 @@ func TestCommitTransactionReadsMetadataFileOfOlderRegistration(t *testing.T) {
 	}
 	if got := loaded.Properties()["again"]; got != "true" {
 		t.Errorf("property again = %q, want true", got)
+	}
+}
+
+// A transaction re-stamps the default name mapping the way a single-table
+// commit does, so readers of field-id-less files keep resolving columns even
+// when the table's record started without one.
+func TestCommitTransactionRefreshesNameMapping(t *testing.T) {
+	fc := newMemFiler()
+	seedNamespace(fc, registerTestBucket, "finance", "alice")
+	s := NewServer(fc, nil)
+
+	schema := iceberg.NewSchema(0,
+		iceberg.NestedField{ID: 1, Name: "id", Type: iceberg.PrimitiveTypes.Int64, Required: true},
+		iceberg.NestedField{ID: 2, Name: "label", Type: iceberg.PrimitiveTypes.String},
+	)
+	metadata, err := newTableMetadata(uuid.New(), "s3://"+registerTestBucket+"/finance/events", schema, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("newTableMetadata: %v", err)
+	}
+	raw, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatalf("marshal metadata: %v", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("decode metadata: %v", err)
+	}
+	if props, ok := doc["properties"].(map[string]any); ok {
+		delete(props, table.DefaultNameMappingKey)
+	}
+	if raw, err = json.Marshal(doc); err != nil {
+		t.Fatalf("re-marshal metadata: %v", err)
+	}
+	location := seedMetadataFile(fc, "events", "00001-7c1e2f4a.metadata.json", raw)
+
+	err = fc.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return s.tablesManager.Execute(context.Background(), s3tables.NewManagerClient(client), "RegisterTable", &s3tables.RegisterTableRequest{
+			TableBucketARN:   buildTableBucketARN(registerTestBucket),
+			Namespace:        []string{"finance"},
+			Name:             "events",
+			MetadataLocation: location,
+		}, nil, "alice")
+	})
+	if err != nil {
+		t.Fatalf("seed older registration: %v", err)
+	}
+
+	body := `{"table-changes":[{"identifier":{"namespace":["finance"],"name":"events"},` +
+		`"updates":[{"action":"set-properties","updates":{"committed":"true"}}]}]}`
+	r := httptest.NewRequest(http.MethodPost, "/v1/"+registerTestBucket+"/transactions/commit", strings.NewReader(body))
+	r = mux.SetURLVars(r, map[string]string{"prefix": registerTestBucket})
+	r = r.WithContext(s3_constants.SetIdentityNameInContext(r.Context(), "alice"))
+	w := httptest.NewRecorder()
+	s.handleCommitTransaction(w, r)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d (body: %s)", w.Code, http.StatusNoContent, w.Body.String())
+	}
+
+	w = httptest.NewRecorder()
+	s.handleLoadTable(w, registeredTableRequest(http.MethodGet, "events", ""))
+	loaded := servedMetadata(t, "load after transaction", w)
+	mappingJSON, ok := loaded.Properties()[table.DefaultNameMappingKey]
+	if !ok || mappingJSON == "" {
+		t.Fatalf("committed metadata lost %s: %v", table.DefaultNameMappingKey, loaded.Properties())
 	}
 }
