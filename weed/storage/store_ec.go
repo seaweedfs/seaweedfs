@@ -869,17 +869,17 @@ func (s *Store) doReadRemoteEcShardInterval(sourceDataNode pb.ServerAddress, nee
 	return
 }
 
-// gatherEcShardIntervals collects the same interval from every shard but shardIdToRecover,
+// gatherEcShardIntervals collects the same interval from every shard outside skip,
 // returning one buffer per shard and nil where the shard could not be gathered. It stops
 // once DataShards of them are in hand: reconstruction consumes no more than that.
-func (s *Store) gatherEcShardIntervals(needleId types.NeedleId, ecVolume *erasure_coding.EcVolume, ecCtx *erasure_coding.ECContext, shardIdToRecover erasure_coding.ShardId, size int, offset int64) (shardIntervals [][]byte, isDeleted bool) {
+func (s *Store) gatherEcShardIntervals(needleId types.NeedleId, ecVolume *erasure_coding.EcVolume, ecCtx *erasure_coding.ECContext, skip map[erasure_coding.ShardId]bool, size int, offset int64) (shardIntervals [][]byte, isDeleted bool) {
 	shardIntervals = make([][]byte, ecCtx.Total())
 
 	// A shard this server already holds costs no round trip and no peer buffer,
 	// so seed those before asking peers for the rest.
 	available := 0
 	for shardId := erasure_coding.ShardId(0); int(shardId) < ecCtx.Total() && available < ecCtx.DataShards; shardId++ {
-		if shardId == shardIdToRecover {
+		if skip[shardId] {
 			continue
 		}
 		if _, _, found := s.FindEcVolumeWithShard(ecVolume.VolumeId, shardId); !found {
@@ -899,8 +899,8 @@ func (s *Store) gatherEcShardIntervals(needleId types.NeedleId, ecVolume *erasur
 	ecVolume.ShardLocationsLock.RLock()
 	for shardId, locations := range ecVolume.ShardLocations {
 
-		// skip the shard being recovered, one already seeded locally, or an empty shard
-		if shardId == shardIdToRecover || int(shardId) >= ecCtx.Total() || shardIntervals[shardId] != nil {
+		// skip a shard being rebuilt, one already seeded locally, or an empty shard
+		if skip[shardId] || int(shardId) >= ecCtx.Total() || shardIntervals[shardId] != nil {
 			continue
 		}
 		if len(locations) == 0 {
@@ -1018,6 +1018,12 @@ func reconstructEcShardInterval(ecVolume *erasure_coding.EcVolume, ecCtx *erasur
 }
 
 func (s *Store) recoverOneRemoteEcShardInterval(needleId types.NeedleId, ecVolume *erasure_coding.EcVolume, shardIdToRecover erasure_coding.ShardId, buf []byte, offset int64) (n int, is_deleted bool, err error) {
+	return s.recoverEcShardInterval(needleId, ecVolume, shardIdToRecover, buf, offset, map[erasure_coding.ShardId]bool{shardIdToRecover: true})
+}
+
+// recoverEcShardInterval rebuilds shardIdToRecover's interval from the shards
+// outside exclude, which always contains shardIdToRecover itself.
+func (s *Store) recoverEcShardInterval(needleId types.NeedleId, ecVolume *erasure_coding.EcVolume, shardIdToRecover erasure_coding.ShardId, buf []byte, offset int64, exclude map[erasure_coding.ShardId]bool) (n int, is_deleted bool, err error) {
 	glog.V(3).Infof("recover ec shard %d.%d from other locations", ecVolume.VolumeId, shardIdToRecover)
 
 	// Reconstruct with the volume's OWN EC ratio (loaded from its .vif), not the
@@ -1049,7 +1055,7 @@ func (s *Store) recoverOneRemoteEcShardInterval(needleId types.NeedleId, ecVolum
 	}
 	defer ecRecoverSem.Release(weight)
 
-	shardIntervals, is_deleted := s.gatherEcShardIntervals(needleId, ecVolume, ecCtx, shardIdToRecover, len(buf), offset)
+	shardIntervals, is_deleted := s.gatherEcShardIntervals(needleId, ecVolume, ecCtx, exclude, len(buf), offset)
 	if err := reconstructEcShardInterval(ecVolume, ecCtx, shardIntervals, shardIdToRecover); err != nil {
 		return 0, is_deleted, err
 	}
