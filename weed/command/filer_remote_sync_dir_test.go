@@ -688,6 +688,23 @@ func TestRetriedWriteFileStopsWhenSuperseded(t *testing.T) {
 		}
 	})
 
+	t.Run("mid-write snapshot whose hole never fills, no write", func(t *testing.T) {
+		snapshot := entryWith("IMG_6526.mov", nil, chunkAt("222,01", "e1", 0), chunkAt("220,03", "e3", 2048))
+		snapshot.Attributes.FileSize = 3072
+		remote := &failingRemote{err: errors.New("RequestError: send request failed")}
+		filerClient := &stubFilerClient{entry: snapshot}
+		_, err := retriedWriteFile(remote, filerClient, dir, snapshot, dest)
+		if !errors.Is(err, errSuperseded) {
+			t.Errorf("err = %v, want errSuperseded", err)
+		}
+		if remote.writes != 0 {
+			t.Errorf("wrote %d times, want 0: a snapshot with a hole reads short on every retry", remote.writes)
+		}
+		if filerClient.lookups != 0 {
+			t.Errorf("looked up the filer %d times, want 0: no state makes this uploadable", filerClient.lookups)
+		}
+	})
+
 	t.Run("still as described, transient failure keeps retrying", func(t *testing.T) {
 		prev := util.RetryWaitTime
 		util.RetryWaitTime = 1600 * time.Millisecond // two attempts: 1s, then 1.5s

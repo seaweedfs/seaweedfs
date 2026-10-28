@@ -2,11 +2,13 @@ package command
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -973,9 +975,43 @@ func isSuperseded(filerClient filer_pb.FilerClient, dir string, entry *filer_pb.
 		len(filer.DoMinusChunks(current.GetChunks(), entry.GetChunks())) > 0
 }
 
-// errSuperseded marks an upload that failed for an entry the filer has since
-// moved past (isSuperseded). The caller skips the event instead of failing it.
-var errSuperseded = errors.New("deleted or rewritten since the event was logged")
+// hasReadHole reports an entry whose chunks do not cover its declared size: a
+// snapshot of a write still in progress, flushed while chunk uploads were
+// still running. The stream reader stops at the gap, so the upload fails on
+// every retry whether or not the filer ever moves past the entry — a write
+// that never finishes leaves the gap and wedges the event. Skipping is safe
+// either way: a finishing write logs its own event and uploads the full
+// content, and a dead one has nothing readable to lose.
+func hasReadHole(entry *filer_pb.Entry) bool {
+	size := int64(entry.GetAttributes().GetFileSize())
+	if size == 0 || len(entry.Content) > 0 {
+		return false
+	}
+	chunks := slices.Clone(entry.GetChunks())
+	slices.SortFunc(chunks, func(a, b *filer_pb.FileChunk) int {
+		return cmp.Compare(a.GetOffset(), b.GetOffset())
+	})
+	var next int64
+	for _, chunk := range chunks {
+		if chunk.GetOffset() >= size {
+			break
+		}
+		if chunk.GetOffset() > next {
+			return true
+		}
+		if end := chunk.GetOffset() + int64(chunk.GetSize()); end > next {
+			next = end
+		}
+	}
+	return next < size
+}
+
+// errSuperseded marks an upload that cannot produce the entry an event
+// described: the filer moved past it (isSuperseded), or the entry is a
+// mid-write snapshot with a gap its chunks do not cover (hasReadHole). The
+// caller skips the event instead of failing it; a write completing logs a
+// later event that carries the full content.
+var errSuperseded = errors.New("superseded or incomplete since the event was logged")
 
 // retriedWriteFile uploads the entry, retrying transient failures. The filer is
 // asked whether the entry is superseded before the first attempt and after
@@ -986,6 +1022,9 @@ var errSuperseded = errors.New("deleted or rewritten since the event was logged"
 // still holds is worth sending. After: a dead chunk reads as a transient
 // "RequestError" from the SDK, and waiting out the backoff on it buys nothing.
 func retriedWriteFile(client remote_storage.RemoteStorageClient, filerSource filer_pb.FilerClient, dir string, newEntry *filer_pb.Entry, dest *remote_pb.RemoteStorageLocation) (remoteEntry *filer_pb.RemoteEntry, err error) {
+	if hasReadHole(newEntry) {
+		return nil, fmt.Errorf("%s %w", util.NewFullPath(dir, newEntry.Name), errSuperseded)
+	}
 	if isSuperseded(filerSource, dir, newEntry) {
 		return nil, fmt.Errorf("%s %w", util.NewFullPath(dir, newEntry.Name), errSuperseded)
 	}
