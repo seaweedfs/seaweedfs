@@ -132,8 +132,81 @@ func TestNewFileWriterChecksTargetFile(t *testing.T) {
 	}
 	delete(filer.entries, "/home/alice/nested")
 	delete(filer.entries, "/home/alice/nested/ok.f")
-	if err := write("/gone/deeper.txt"); err != nil {
+	if err := fs.checkFilePermission("/home/alice/gone/deeper.txt", "write"); err != nil {
 		t.Errorf("expected write when ancestors resolve to the writable dir, got %v", err)
+	}
+	// The missing folder itself is not created on the way.
+	if err := write("/gone/deeper.txt"); err != os.ErrNotExist {
+		t.Errorf("expected os.ErrNotExist under a missing folder, got %v", err)
+	}
+}
+
+// makeDir and a committed upload must refuse a parent that is missing, and a
+// parent removed while an upload buffered must fail the close too.
+func TestRequireParentDirEnforced(t *testing.T) {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	filer := &permissionTestFiler{entries: map[string]*filer_pb.Entry{
+		"/":               {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{FileMode: 0755}},
+		"/home":           {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{FileMode: 0755}},
+		"/home/alice":     {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0755}},
+		"/home/alice/d":   {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0755}},
+		"/home/alice/a.t": {Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0644}},
+	}}
+	grpcServer := grpc.NewServer()
+	filer_pb.RegisterSeaweedFilerServer(grpcServer, filer)
+	go func() { _ = grpcServer.Serve(lis) }()
+	t.Cleanup(grpcServer.Stop)
+
+	_, port, _ := net.SplitHostPort(lis.Addr().String())
+	fs := &SftpServer{
+		filerAddr:      pb.ServerAddress("127.0.0.1:0." + port),
+		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		user: &user.User{
+			Username: "alice", Uid: 1000, Gid: 1000, HomeDir: "/home/alice",
+			Permissions: map[string][]string{
+				"/home/alice": {"*"},
+			},
+		},
+	}
+
+	if err := fs.makeDir("/home/alice/missing/new"); err != os.ErrNotExist {
+		t.Fatalf("mkdir under a missing parent: got %v, want os.ErrNotExist", err)
+	}
+	if _, ok := filer.entries["/home/alice/missing"]; ok {
+		t.Error("mkdir created the missing parent")
+	}
+	if _, ok := filer.entries["/home/alice/missing/new"]; ok {
+		t.Error("mkdir created a directory under a missing parent")
+	}
+
+	if err := fs.renameEntry("/home/alice/a.t", "/home/alice/missing/b.t"); err != os.ErrNotExist {
+		t.Fatalf("rename into a missing folder: got %v, want os.ErrNotExist", err)
+	}
+	if _, ok := filer.entries["/home/alice/missing/b.t"]; ok {
+		t.Error("rename moved a file into a missing folder")
+	}
+
+	if err := fs.makeDir("/home/alice/d/new"); err != nil {
+		t.Fatalf("mkdir under an existing parent: %v", err)
+	}
+	if _, ok := filer.entries["/home/alice/d/new"]; !ok {
+		t.Error("mkdir under an existing parent did not create the entry")
+	}
+
+	w, err := fs.newFileWriter(&sftp.Request{Filepath: "/d/f.txt"})
+	if err != nil {
+		t.Fatalf("open upload under an existing parent: %v", err)
+	}
+	writer, ok := w.(*SeaweedSftpFileWriter)
+	if !ok {
+		t.Fatalf("unexpected writer type %T", w)
+	}
+	delete(filer.entries, "/home/alice/d")
+	if err := writer.Close(); err != os.ErrNotExist {
+		t.Errorf("upload closing after its parent was removed: got %v, want os.ErrNotExist", err)
 	}
 }
 
@@ -287,6 +360,11 @@ func (f *permissionTestFiler) AtomicRenameEntry(_ context.Context, req *filer_pb
 	delete(f.entries, oldKey)
 	f.entries[newKey] = entry
 	return &filer_pb.AtomicRenameEntryResponse{}, nil
+}
+
+func (f *permissionTestFiler) CreateEntry(_ context.Context, req *filer_pb.CreateEntryRequest) (*filer_pb.CreateEntryResponse, error) {
+	f.entries[req.Directory+"/"+req.Entry.Name] = req.Entry
+	return &filer_pb.CreateEntryResponse{}, nil
 }
 
 // checkRenameKeepsAcl also compares the moved root (inherited restrictions) and
