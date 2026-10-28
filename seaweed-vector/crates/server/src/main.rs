@@ -23,6 +23,10 @@ struct Args {
     /// key=value, repeatable.
     #[arg(long = "storage-option", value_parser = parse_option)]
     storage_options: Vec<(String, String)>,
+    /// Comma-separated master addresses to register this server with; the
+    /// gateway discovers it via ListClusterNodes(client_type=vector).
+    #[arg(long, env = "WEED_VECTOR_MASTERS")]
+    masters: Option<String>,
 }
 
 fn parse_option(s: &str) -> Result<(String, String), String> {
@@ -35,6 +39,13 @@ fn parse_option(s: &str) -> Result<(String, String), String> {
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     let args = Args::parse();
+    if let Some(masters) = &args.masters {
+        let masters: Vec<String> = masters.split(',').map(|s| s.trim().to_string()).collect();
+        tokio::spawn(weed_vector_server::master_client::keep_connected(
+            masters,
+            args.listen.clone(),
+        ));
+    }
     let fallback: FallbackOptions = args.storage_options.into_iter().collect();
     let client = NamespaceClient::new(args.namespace.clone()).with_fallback(&fallback);
     let service = VectorServer::new(client, fallback);
