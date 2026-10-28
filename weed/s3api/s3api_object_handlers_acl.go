@@ -113,9 +113,13 @@ func (s3a *S3ApiServer) GetObjectAclHandler(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	// Fallback to current account if no owner stored
+	// Fallback to current account if no owner stored; with auth off there is
+	// no caller account, so ownerless objects read as admin-owned.
 	if objectOwner == "" {
 		objectOwner = amzAccountId
+		if objectOwner == "" && s3a.iam != nil && !s3a.iam.isEnabled() {
+			objectOwner = AccountAdmin.Id
+		}
 	}
 
 	objectOwnerDisplayName = s3a.iam.GetAccountNameById(objectOwner)
