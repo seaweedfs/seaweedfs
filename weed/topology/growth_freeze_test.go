@@ -1,6 +1,7 @@
 package topology
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -18,6 +19,16 @@ func (appliedRaftServer) State() string { return raft.Leader }
 func (s appliedRaftServer) Do(c raft.Command) (interface{}, error) {
 	s.applied <- c
 	return nil, nil
+}
+
+type failingRaftServer struct {
+	raft.Server
+}
+
+func (failingRaftServer) State() string { return raft.Leader }
+
+func (failingRaftServer) Do(raft.Command) (interface{}, error) {
+	return nil, errors.New("not the leader")
 }
 
 func TestGrowthFreezeOnTopologyMismatch(t *testing.T) {
@@ -115,6 +126,16 @@ func TestReplicateGrowthUnfreezeSkipsRefreeze(t *testing.T) {
 	case <-applied:
 		t.Fatal("a stale unfreeze must not lift a freeze that landed after it")
 	default:
+	}
+}
+
+func TestReplicateGrowthUnfreezeRearmsOnFailure(t *testing.T) {
+	topo := NewTopology("topo", nil, 128, 3, false)
+	topo.RaftServer = failingRaftServer{}
+
+	topo.replicateGrowthUnfreeze()
+	if !topo.growthFrozen.Load() {
+		t.Fatal("a failed replication must re-arm the freeze so a later read retries the lift")
 	}
 }
 

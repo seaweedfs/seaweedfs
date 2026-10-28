@@ -1556,14 +1556,28 @@ func (t *Topology) IsGrowthFrozen() bool {
 // replicateGrowthUnfreeze pushes the recovery-wait lift through raft like
 // ResumeVolumeGrowth, so a restart does not replay the freeze. A freeze that
 // landed after the lift owns the flag; skipping keeps its later command last
-// in the log.
+// in the log. If the write never lands, the flag is re-armed so a later
+// IsGrowthFrozen retries the lift instead of diverging from the log.
 func (t *Topology) replicateGrowthUnfreeze() {
-	t.reportedTopologyIdsLock.Lock()
-	defer t.reportedTopologyIdsLock.Unlock()
-	if t.growthFrozen.Load() {
-		return
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * time.Second)
+		}
+		t.reportedTopologyIdsLock.Lock()
+		if t.growthFrozen.Load() {
+			t.reportedTopologyIdsLock.Unlock()
+			return
+		}
+		err := t.applyGrowthFreeze(false)
+		t.reportedTopologyIdsLock.Unlock()
+		if err == nil {
+			return
+		}
 	}
-	t.applyGrowthFreeze(false)
+	if t.growthFrozen.CompareAndSwap(false, true) {
+		stats.MasterVolumeGrowthFrozen.Set(1)
+		glog.Warningf("volume growth unfreeze not replicated; freeze re-armed for retry")
+	}
 }
 
 func (t *Topology) ResumeVolumeGrowth() bool {
@@ -1595,7 +1609,7 @@ func (t *Topology) SetGrowthFrozen(frozen bool) {
 
 // applyGrowthFreeze replicates the freeze flag so followers keep it across a
 // leader change. No raft server (single-master test topologies) just sets it.
-func (t *Topology) applyGrowthFreeze(frozen bool) {
+func (t *Topology) applyGrowthFreeze(frozen bool) error {
 	cmd := NewMaxVolumeIdCommand(t.GetMaxVolumeId(), t.GetTopologyId())
 	cmd.GrowthFrozen = &frozen
 	t.RaftServerAccessLock.RLock()
@@ -1603,16 +1617,24 @@ func (t *Topology) applyGrowthFreeze(frozen bool) {
 	if t.RaftServer != nil {
 		if _, err := t.RaftServer.Do(cmd); err != nil {
 			glog.Warningf("apply growth freeze %v: %v", frozen, err)
+			return err
 		}
-	} else if t.HashicorpRaft != nil {
-		if b, err := json.Marshal(cmd); err != nil {
-			glog.Warningf("marshal growth freeze %v: %v", frozen, err)
-		} else if future := t.HashicorpRaft.Apply(b, time.Second); future.Error() != nil {
-			glog.Warningf("apply growth freeze %v: %v", frozen, future.Error())
-		}
-	} else {
-		t.SetGrowthFrozen(frozen)
+		return nil
 	}
+	if t.HashicorpRaft != nil {
+		b, err := json.Marshal(cmd)
+		if err != nil {
+			glog.Warningf("marshal growth freeze %v: %v", frozen, err)
+			return err
+		}
+		if future := t.HashicorpRaft.Apply(b, time.Second); future.Error() != nil {
+			glog.Warningf("apply growth freeze %v: %v", frozen, future.Error())
+			return future.Error()
+		}
+		return nil
+	}
+	t.SetGrowthFrozen(frozen)
+	return nil
 }
 
 // SetTopologyInitPending gates allocation while a topology id is being
