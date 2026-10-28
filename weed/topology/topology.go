@@ -103,13 +103,16 @@ type Topology struct {
 	topologyInitPending     atomic.Bool
 
 	// releaseAllocOnReport lifts a post-mint allocation hold as soon as a full
-	// volume-server inventory has been applied, for single-reporter setups
-	// (weed mini) whose embedded volume server is the only possible source of
-	// prior cluster state. inventoryApplied records that at least one full
-	// volume list has been synced into this topology.
+	// volume-server inventory has been applied, for setups with a known
+	// reporter (weed mini, single-master weed server) whose embedded volume
+	// server reports the full inventory in its first heartbeat. singleReporter
+	// additionally refuses every other reporter; expectedReporter only gates
+	// which report may lift the hold. inventoryApplied records that the
+	// expected report has been synced into this topology.
 	releaseAllocOnReport atomic.Bool
 	inventoryApplied     atomic.Bool
 	singleReporter       atomic.Value // string
+	expectedReporter     atomic.Value // string
 
 	reportedTopologyIdsLock    sync.Mutex
 	pendingReportedTopologyIds map[string]struct{}
@@ -1632,7 +1635,19 @@ func (t *Topology) SetTopologyInitPending(pending bool) {
 func (t *Topology) ReleaseAllocationOnFirstReport(onlyReporter ...string) {
 	if len(onlyReporter) > 0 {
 		t.singleReporter.Store(onlyReporter[0])
+		t.expectedReporter.Store(onlyReporter[0])
 	}
+	t.releaseAllocOnReport.Store(true)
+}
+
+// ReleaseAllocationOnReport lifts the post-mint allocation hold once the named
+// reporter's first clean full inventory has been applied. Unlike
+// ReleaseAllocationOnFirstReport it does not refuse other reporters: a
+// single-master weed server still admits outside volume servers, but its
+// embedded server reports quickly, and any report carrying prior cluster state
+// keeps the hold through the regular evidence and freeze checks.
+func (t *Topology) ReleaseAllocationOnReport(expected string) {
+	t.expectedReporter.Store(expected)
 	t.releaseAllocOnReport.Store(true)
 }
 
@@ -1648,10 +1663,14 @@ func (t *Topology) AdmitVolumeReporter(addr string) bool {
 }
 
 // NoteInventoryApplied marks a heartbeat's full volume list as applied to this
-// topology. Under ReleaseAllocationOnFirstReport it also lifts the post-mint
-// allocation hold: the bound raise and topology-id freeze checks run while the
-// heartbeat is processed, so nothing protected remains pending afterwards.
-func (t *Topology) NoteInventoryApplied() {
+// topology. Under releaseAllocOnReport it also lifts the post-mint allocation
+// hold once the report comes from the expected reporter: the bound raise and
+// topology-id freeze checks run while the heartbeat is processed, so nothing
+// protected remains pending afterwards.
+func (t *Topology) NoteInventoryApplied(reporter string) {
+	if expected, _ := t.expectedReporter.Load().(string); expected != "" && expected != reporter {
+		return
+	}
 	t.inventoryApplied.Store(true)
 	if t.releaseAllocOnReport.Load() {
 		t.allocationNotBefore.Store(0)

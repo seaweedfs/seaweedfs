@@ -302,6 +302,15 @@ func runServer(cmd *Command, args []string) bool {
 		// If we are starting a master, validate and complete the peer list
 		_, peerList := checkPeers(*serverIp, *masterOptions.port, *masterOptions.portGrpc, *masterOptions.peers)
 		actualPeersForComponents = strings.Join(pb.ToAddressStrings(peerList), ",")
+		if len(peerList) == 1 && *isStartingVolumeServer {
+			// A single-master weed server has one guaranteed reporter: its
+			// embedded volume server, whose first heartbeat already carries the
+			// full inventory. Its clean report ends the post-mint allocation
+			// hold instead of running the whole warmup window on every fresh
+			// start. Other volume servers stay admitted and still count as
+			// prior-state evidence, so a late veteran keeps the window.
+			masterOptions.expectedReporterAddr = util.JoinHostPort(*serverIp, *serverOptions.v.port)
+		}
 	} else if *masterOptions.peers != "" {
 		if isSingleMasterMode(*masterOptions.peers) {
 			glog.Fatalf("'-master.peers=none' is only valid when starting a master server, but master is not starting.")

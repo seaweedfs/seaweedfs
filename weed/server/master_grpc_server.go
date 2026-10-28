@@ -380,7 +380,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 		// such state is itself the evidence the hold exists for, so it keeps
 		// the window for other veterans still due.
 		if (len(heartbeat.Volumes) > 0 || heartbeat.HasNoVolumes) && !priorState {
-			ms.Topo.NoteInventoryApplied()
+			ms.Topo.NoteInventoryApplied(dn.Url())
 		}
 
 		if len(heartbeat.NewEcShards) > 0 || len(heartbeat.DeletedEcShards) > 0 {

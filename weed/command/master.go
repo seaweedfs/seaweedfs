@@ -90,10 +90,15 @@ type MasterOptions struct {
 	// single-master mode, with singleReporterAddr pinning the embedded volume
 	// server as the only admitted reporter: any other volume server is refused,
 	// so the warmup window after a fresh topology id is dead time.
-	// Standalone weed master / weed server can face late-arriving veterans and
-	// must keep the window.
+	// Standalone weed master can face late-arriving veterans and must keep
+	// the window; a single-master weed server releases on its embedded
+	// volume server's clean report through expectedReporterAddr instead.
 	releaseAllocOnFirstReport bool
 	singleReporterAddr        string
+	// expectedReporterAddr names the reporter whose first clean inventory
+	// lifts the post-mint allocation hold without refusing others: a
+	// single-master weed server points it at its embedded volume server.
+	expectedReporterAddr string
 }
 
 func init() {
@@ -595,5 +600,6 @@ func (m *MasterOptions) toMasterOption(whiteList []string) *weed_server.MasterOp
 		SingleMaster:              isSingleMasterMode(*m.peers),
 		ReleaseAllocOnFirstReport: m.releaseAllocOnFirstReport,
 		SingleVolumeReporter:      m.singleReporterAddr,
+		ExpectedReporterAddr:      m.expectedReporterAddr,
 	}
 }

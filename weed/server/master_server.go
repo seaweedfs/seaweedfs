@@ -77,6 +77,10 @@ type MasterOption struct {
 	// server trying to register is rejected.
 	ReleaseAllocOnFirstReport bool
 	SingleVolumeReporter      string
+	// ExpectedReporterAddr names the one volume server whose first clean full
+	// inventory lifts the post-mint allocation hold (a single-master weed
+	// server's embedded volume server). Other reporters are still admitted.
+	ExpectedReporterAddr string
 }
 
 type MasterServer struct {
@@ -191,6 +195,9 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 	}
 	if option.ReleaseAllocOnFirstReport {
 		ms.Topo.ReleaseAllocationOnFirstReport(option.SingleVolumeReporter)
+	}
+	if option.ExpectedReporterAddr != "" {
+		ms.Topo.ReleaseAllocationOnReport(option.ExpectedReporterAddr)
 	}
 	ms.Topo.QuarantineVolumeFn = func(dn *topology.DataNode, vid needle.VolumeId, readOnly bool) error {
 		err := operation.WithVolumeServerClient(false, dn.ServerAddress(), ms.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
