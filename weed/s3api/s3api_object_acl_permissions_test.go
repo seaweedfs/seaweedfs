@@ -189,10 +189,18 @@ func TestPutObjectAclPermissions(t *testing.T) {
 // account, so the owner check denied PutObjectAcl to every caller.
 func TestPutObjectAclWithoutAuth(t *testing.T) {
 	const bucket, object = "acl-bucket", "image.png"
-	for _, ownerless := range []bool{false, true} {
-		t.Run(fmt.Sprintf("ownerless=%v", ownerless), func(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		ownerless bool
+		forgedId  string
+	}{
+		{name: "stored owner"},
+		{name: "ownerless", ownerless: true},
+		{name: "forged account header", ownerless: true, forgedId: "forged-account"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
 			entry := &filer_pb.Entry{Name: object}
-			if !ownerless {
+			if !tt.ownerless {
 				entry.Extended = map[string][]byte{s3_constants.ExtAmzOwnerKey: []byte(AccountAdmin.Id)}
 			}
 			filer := &objectACLUpdateFiler{fakeLookupFiler: fakeLookupFiler{entry: entry}}
@@ -206,6 +214,9 @@ func TestPutObjectAclWithoutAuth(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPut, "http://s3/"+bucket+"/"+object+"?acl", http.NoBody)
 			req = mux.SetURLVars(req, map[string]string{"bucket": bucket, "object": object})
 			req.Header.Set(s3_constants.AmzCannedAcl, "public-read")
+			if tt.forgedId != "" {
+				req.Header.Set(s3_constants.AmzAccountId, tt.forgedId)
+			}
 			rr := httptest.NewRecorder()
 			s3a.iam.Auth(s3a.PutObjectAclHandler, s3_constants.ACTION_WRITE_ACP)(rr, req)
 			require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())

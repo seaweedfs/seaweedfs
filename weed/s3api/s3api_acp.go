@@ -16,6 +16,15 @@ func getAccountId(r *http.Request) string {
 	}
 }
 
+// requestAccountId returns the authenticated caller's account; with auth off
+// the header is client-supplied, so the admin account stands in instead.
+func (s3a *S3ApiServer) requestAccountId(r *http.Request) string {
+	if s3a.iam != nil && !s3a.iam.isEnabled() {
+		return AccountAdmin.Id
+	}
+	return r.Header.Get(s3_constants.AmzAccountId)
+}
+
 func (s3a *S3ApiServer) checkAccessByOwnership(r *http.Request, bucket string) s3err.ErrorCode {
 	metadata, errCode := s3a.bucketRegistry.GetBucketMetadata(bucket)
 	if errCode != s3err.ErrNone {

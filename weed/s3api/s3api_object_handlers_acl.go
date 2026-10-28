@@ -105,7 +105,7 @@ func (s3a *S3ApiServer) GetObjectAclHandler(w http.ResponseWriter, r *http.Reque
 	// Get object owner from metadata, fallback to request account
 	var objectOwner string
 	var objectOwnerDisplayName string
-	amzAccountId := r.Header.Get(s3_constants.AmzAccountId)
+	amzAccountId := s3a.requestAccountId(r)
 
 	if entry.Extended != nil {
 		if ownerBytes, exists := entry.Extended[s3_constants.ExtAmzOwnerKey]; exists {
@@ -113,13 +113,9 @@ func (s3a *S3ApiServer) GetObjectAclHandler(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	// Fallback to current account if no owner stored; with auth off there is
-	// no caller account, so ownerless objects read as admin-owned.
+	// Fallback to current account if no owner stored
 	if objectOwner == "" {
 		objectOwner = amzAccountId
-		if objectOwner == "" && s3a.iam != nil && !s3a.iam.isEnabled() {
-			objectOwner = AccountAdmin.Id
-		}
 	}
 
 	objectOwnerDisplayName = s3a.iam.GetAccountNameById(objectOwner)
@@ -228,7 +224,7 @@ func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Reque
 
 	// Get current object owner from metadata
 	var objectOwner string
-	amzAccountId := r.Header.Get(s3_constants.AmzAccountId)
+	amzAccountId := s3a.requestAccountId(r)
 
 	if entry.Extended != nil {
 		if ownerBytes, exists := entry.Extended[s3_constants.ExtAmzOwnerKey]; exists {
@@ -251,14 +247,9 @@ func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Fallback to current account if no owner stored; with auth off there is
-	// no caller account, so ownerless objects claim the admin account instead
-	// of failing ACL validation on an empty owner id.
+	// Fallback to current account if no owner stored
 	if objectOwner == "" {
 		objectOwner = amzAccountId
-		if objectOwner == "" && s3a.iam != nil && !s3a.iam.isEnabled() {
-			objectOwner = AccountAdmin.Id
-		}
 	}
 
 	// 1. Check if user is admin (admins can modify any ACL)

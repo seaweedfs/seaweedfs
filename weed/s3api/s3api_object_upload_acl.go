@@ -151,10 +151,8 @@ func (s3a *S3ApiServer) preparePutObjectACL(r *http.Request, bucket string) (*ht
 	}
 	aclRequest.Header.Set(s3_constants.AmzCannedAcl, canned)
 	explicit := canned != "" || custom
-	accountID := r.Header.Get(s3_constants.AmzAccountId)
-	if !s3a.iam.isEnabled() {
-		accountID = AccountAdmin.Id
-	} else if explicit {
+	accountID := s3a.requestAccountId(r)
+	if explicit && s3a.iam.isEnabled() {
 		// Setting an ACL during upload or copy also requires s3:PutObjectAcl. Use the
 		// unified authorization path so bucket-policy allows and explicit denies
 		// retain the same semantics as standalone ACL requests.
