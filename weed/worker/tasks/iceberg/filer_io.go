@@ -258,10 +258,43 @@ func addFilerPathSpellings(set map[string]struct{}, bucketName, dataPath, iceber
 }
 
 // lookupFileByIcebergPath returns the filer entry holding an Iceberg-style
-// path. dataPath is the bucket-relative directory the table's files live in.
+// path, ready to read. dataPath is the bucket-relative directory the table's
+// files live in. A file of a remote-mounted bucket that is not cached locally
+// is cached first, as the S3 gateway does on a read.
 func lookupFileByIcebergPath(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketName, dataPath, icebergPath string) (*filer_pb.Entry, error) {
-	entry, _, err := lookupResolvedEntry(ctx, client, bucketName, dataPath, icebergPath)
-	return entry, err
+	entry, fullPath, err := lookupResolvedEntry(ctx, client, bucketName, dataPath, icebergPath)
+	if err != nil || !isRemoteOnly(entry) {
+		return entry, err
+	}
+	dir, name := path.Dir(fullPath), path.Base(fullPath)
+	// One retry: a cache call can race an uncache of the same entry.
+	for attempt := 0; attempt < 2 && isRemoteOnly(entry); attempt++ {
+		var resp *filer_pb.CacheRemoteObjectToLocalClusterResponse
+		resp, err = client.CacheRemoteObjectToLocalCluster(ctx, &filer_pb.CacheRemoteObjectToLocalClusterRequest{
+			Directory: dir,
+			Name:      name,
+		})
+		switch {
+		case err != nil:
+		case resp == nil || resp.Entry == nil:
+			err = errors.New("no entry returned")
+		default:
+			entry = resp.Entry
+		}
+	}
+	if err != nil {
+		return nil, fmt.Errorf("cache remote file %s: %w", fullPath, err)
+	}
+	if isRemoteOnly(entry) {
+		return nil, fmt.Errorf("cache remote file %s: still remote-only after caching", fullPath)
+	}
+	return entry, nil
+}
+
+// isRemoteOnly reports whether an entry of a remote-mounted bucket holds no
+// bytes locally: no chunks and no inline content, only its RemoteEntry.
+func isRemoteOnly(entry *filer_pb.Entry) bool {
+	return entry.IsInRemoteOnly() && len(entry.Content) == 0
 }
 
 // loadFileByIcebergPath loads a file from the filer given an Iceberg-style path.
@@ -276,8 +309,13 @@ func loadFileByIcebergPath(ctx context.Context, client filer_pb.SeaweedFilerClie
 // readEntryContent returns an entry's bytes: its inline content, or a chunked
 // file read through the volume servers.
 func readEntryContent(ctx context.Context, client filer_pb.SeaweedFilerClient, entry *filer_pb.Entry, name string) ([]byte, error) {
-	if len(entry.Content) > 0 || len(entry.Chunks) == 0 {
+	if len(entry.Content) > 0 {
 		return entry.Content, nil
+	}
+	if len(entry.Chunks) == 0 {
+		// Everything read here is Iceberg metadata, a manifest or a data
+		// file, none of which can be empty.
+		return nil, fmt.Errorf("file %s is empty (%d bytes in its attributes, no content or chunks)", name, entry.GetAttributes().GetFileSize())
 	}
 
 	initGlobalHTTPClientOnce.Do(util_http.InitGlobalHttpClient)
