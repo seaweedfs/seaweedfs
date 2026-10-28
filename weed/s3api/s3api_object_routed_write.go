@@ -242,6 +242,15 @@ func (s3a *S3ApiServer) routedMkFile(owner pb.ServerAddress, routeKey, parentDir
 	if err != nil {
 		return err
 	}
+	if resp.ErrorCode == filer_pb.FilerError_EXISTING_IS_DIRECTORY && !isReservedDirectoryName(name) {
+		// Other keys are nested under this one, so the object goes onto the
+		// directory they live in — the same retry mkFile makes off the ring.
+		entry.MarkPrefixObject()
+		resp, err = s3a.routedPut(owner, routeKey, filePath, filePath, entry, cond, conditionKey, "", finalize)
+		if err != nil {
+			return err
+		}
+	}
 	if resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED {
 		return errUploadRemoved
 	}
