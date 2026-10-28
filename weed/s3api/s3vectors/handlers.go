@@ -557,7 +557,13 @@ func indexFromRecord(s *Server, bucket, name string, m map[string]interface{}) *
 			fmt.Sscan(fmt.Sprint(fm["dimension"]), &dim)
 			idx.Dimension = int32(dim)
 			idx.DistanceMetric = fmt.Sprint(fm["distanceMetric"])
-			if keys, ok := fm["nonFilterableMetadataKeys"].([]interface{}); ok {
+			switch keys := fm["nonFilterableMetadataKeys"].(type) {
+			case string:
+				var list []string
+				if err := json.Unmarshal([]byte(keys), &list); err == nil && list != nil {
+					idx.MetadataConfiguration = &MetadataConfiguration{NonFilterableMetadataKeys: list}
+				}
+			case []interface{}:
 				var list []string
 				for _, k := range keys {
 					list = append(list, fmt.Sprint(k))
@@ -945,6 +951,24 @@ func translateFilter(filter map[string]interface{}) (string, error) {
 	return filterExpr(filter)
 }
 
+// filterFields collects the field names a filter expression references —
+// $-operators recurse; every other key is a field.
+func filterFields(filter map[string]interface{}, out map[string]bool) {
+	for key, cond := range filter {
+		if strings.HasPrefix(key, "$") {
+			if sub, ok := cond.([]interface{}); ok {
+				for _, item := range sub {
+					if m, ok := item.(map[string]interface{}); ok {
+						filterFields(m, out)
+					}
+				}
+			}
+			continue
+		}
+		out[key] = true
+	}
+}
+
 func filterExpr(filter map[string]interface{}) (string, error) {
 	parts := make([]string, 0, len(filter))
 	for key, cond := range filter {
@@ -1185,7 +1209,19 @@ func (s *Server) handleQueryVectors(w http.ResponseWriter, r *http.Request) {
 		catalogErr(w, err)
 		return
 	}
-	metric := indexFromRecord(s, arns.bucket, arns.index, record).DistanceMetric
+	idx := indexFromRecord(s, arns.bucket, arns.index, record)
+	if cfg := idx.MetadataConfiguration; cfg != nil && len(cfg.NonFilterableMetadataKeys) > 0 {
+		fields := map[string]bool{}
+		filterFields(req.Filter, fields)
+		for _, k := range cfg.NonFilterableMetadataKeys {
+			if fields[k] {
+				writeError(w, http.StatusBadRequest, "ValidationException",
+					fmt.Sprintf("metadata key %q is not filterable", k))
+				return
+			}
+		}
+	}
+	metric := idx.DistanceMetric
 	filter, err := translateFilter(req.Filter)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
