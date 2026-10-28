@@ -56,7 +56,8 @@ func versionedCopyFixture(src, object, versionId string, filer *copyACLFiler) {
 }
 
 // A copy naming no version reads the latest one, resolved from the .versions
-// pointer, and still reports it in x-amz-copy-source-version-id.
+// pointer, and still reports it in x-amz-copy-source-version-id — even when the
+// version file predates the version-id attribute.
 func TestCopyObjectReportsLatestSourceVersionId(t *testing.T) {
 	const src, dst, object, versionId = "versioned-src", "plain-dst", "object", "3a8f2c1d9e7b4a6f"
 	filer := &copyACLFiler{ambiguousPutFiler: &ambiguousPutFiler{apply: true, entries: map[string]*filer_pb.Entry{}}}
@@ -66,6 +67,7 @@ func TestCopyObjectReportsLatestSourceVersionId(t *testing.T) {
 	s3a.bucketConfigCache.Set(src, &BucketConfig{Name: src, Versioning: s3_constants.VersioningEnabled, Ownership: s3_constants.OwnershipObjectWriter})
 	s3a.bucketConfigCache.Set(dst, &BucketConfig{Name: dst, Ownership: s3_constants.OwnershipObjectWriter})
 	versionedCopyFixture(src, object, versionId, filer)
+	delete(filer.entries["/buckets/"+src+"/"+object+s3_constants.VersionsFolder+"/v_"+versionId].Extended, s3_constants.ExtVersionIdKey)
 
 	req := httptest.NewRequest(http.MethodPut, "/"+dst+"/"+object, nil)
 	req = mux.SetURLVars(req, map[string]string{"bucket": dst, "object": object})
@@ -91,6 +93,7 @@ func TestCopyObjectPartReportsSourceVersionId(t *testing.T) {
 	s3a.bucketConfigCache.Set(dst, &BucketConfig{Name: dst, Ownership: s3_constants.OwnershipObjectWriter})
 	util_http.InitGlobalHttpClient()
 	versionedCopyFixture(src, object, versionId, filer)
+	delete(filer.entries["/buckets/"+src+"/"+object+s3_constants.VersionsFolder+"/v_"+versionId].Extended, s3_constants.ExtVersionIdKey)
 
 	uploadID := s3a.generateUploadID(object)
 	filer.entries["/buckets/"+dst+"/.uploads/"+uploadID] = &filer_pb.Entry{
