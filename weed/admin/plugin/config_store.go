@@ -110,10 +110,7 @@ func (s *ConfigStore) SaveDescriptor(jobType string, descriptor *plugin_pb.JobTy
 	defer s.mu.Unlock()
 
 	current, err := s.loadDescriptor(jobType)
-	if err != nil {
-		return err
-	}
-	if current != nil && current.DescriptorVersion > clone.DescriptorVersion {
+	if err == nil && current != nil && current.DescriptorVersion > clone.DescriptorVersion {
 		return nil
 	}
 	if !s.configured {
