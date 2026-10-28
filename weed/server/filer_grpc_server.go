@@ -292,21 +292,28 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 	} else {
 		glog.V(3).InfofCtx(ctx, "CreateEntry %s: %v", filepath.Join(req.Directory, req.Entry.Name), createErr)
 		resp.Error = createErr.Error()
-		switch {
-		case errors.Is(createErr, filer_pb.ErrEntryNameTooLong):
-			resp.ErrorCode = filer_pb.FilerError_ENTRY_NAME_TOO_LONG
-		case errors.Is(createErr, filer_pb.ErrParentIsFile):
-			resp.ErrorCode = filer_pb.FilerError_PARENT_IS_FILE
-		case errors.Is(createErr, filer_pb.ErrExistingIsDirectory):
-			resp.ErrorCode = filer_pb.FilerError_EXISTING_IS_DIRECTORY
-		case errors.Is(createErr, filer_pb.ErrExistingIsFile):
-			resp.ErrorCode = filer_pb.FilerError_EXISTING_IS_FILE
-		case errors.Is(createErr, filer_pb.ErrEntryAlreadyExists):
-			resp.ErrorCode = filer_pb.FilerError_ENTRY_ALREADY_EXISTS
-		}
+		resp.ErrorCode = filerErrorCode(createErr)
 	}
 
 	return
+}
+
+// filerErrorCode maps a filer error to its proto code so a client can match it
+// with errors.Is against the sentinels instead of parsing the message.
+func filerErrorCode(err error) filer_pb.FilerError {
+	switch {
+	case errors.Is(err, filer_pb.ErrEntryNameTooLong):
+		return filer_pb.FilerError_ENTRY_NAME_TOO_LONG
+	case errors.Is(err, filer_pb.ErrParentIsFile):
+		return filer_pb.FilerError_PARENT_IS_FILE
+	case errors.Is(err, filer_pb.ErrExistingIsDirectory):
+		return filer_pb.FilerError_EXISTING_IS_DIRECTORY
+	case errors.Is(err, filer_pb.ErrExistingIsFile):
+		return filer_pb.FilerError_EXISTING_IS_FILE
+	case errors.Is(err, filer_pb.ErrEntryAlreadyExists):
+		return filer_pb.FilerError_ENTRY_ALREADY_EXISTS
+	}
+	return filer_pb.FilerError_OK
 }
 
 // ObjectTransaction applies an ordered list of entry mutations atomically with
@@ -434,6 +441,7 @@ func (fs *FilerServer) ObjectTransaction(ctx context.Context, req *filer_pb.Obje
 		if err := fs.applyObjectMutation(ctx, m, req.IsFromOtherCluster, req.Signatures); err != nil {
 			glog.V(2).InfofCtx(ctx, "ObjectTransaction %s mutation %d (%v): %v", lockPath, i, m.Type, err)
 			resp.Error = fmt.Sprintf("mutation %d: %v", i, err)
+			resp.ErrorCode = filerErrorCode(err)
 			return resp, nil
 		}
 	}
