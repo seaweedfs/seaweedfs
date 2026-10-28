@@ -299,11 +299,13 @@ func TestReadEcShardNeedleFailsWhenCorruptionExceedsParity(t *testing.T) {
 	}
 	shardId, shardOffset := ecVolume.IntervalToShardIdAndOffset(intervals[0])
 	corruptEcShardRange(t, ecVolume, shardId, shardOffset, int64(intervals[0].Size))
-	for other := erasure_coding.ShardId(0); int(other) < ecVolume.ECContext.ParityShards; other++ {
+	corrupted := 0
+	for other := erasure_coding.ShardId(0); corrupted < ecVolume.ECContext.ParityShards; other++ {
 		if other == shardId {
 			continue
 		}
 		corruptEcShardRange(t, ecVolume, other, shardOffset, int64(intervals[0].Size))
+		corrupted++
 	}
 
 	got := new(needle.Needle)
