@@ -27,6 +27,10 @@ struct Args {
     /// gateway discovers it via ListClusterNodes(client_type=vector).
     #[arg(long, env = "WEED_VECTOR_MASTERS")]
     masters: Option<String>,
+    /// Address advertised to the master — defaults to --listen; set it when
+    /// listening on a wildcard or unreachable interface.
+    #[arg(long, env = "WEED_VECTOR_ADVERTISE")]
+    advertise: Option<String>,
 }
 
 fn parse_option(s: &str) -> Result<(String, String), String> {
@@ -41,9 +45,10 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     if let Some(masters) = &args.masters {
         let masters: Vec<String> = masters.split(',').map(|s| s.trim().to_string()).collect();
+        let advertise = args.advertise.clone().unwrap_or_else(|| args.listen.clone());
         tokio::spawn(weed_vector_server::master_client::keep_connected(
             masters,
-            args.listen.clone(),
+            advertise,
         ));
     }
     let fallback: FallbackOptions = args.storage_options.into_iter().collect();

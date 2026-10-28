@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -706,27 +707,115 @@ func (s3opt *S3Options) startLanceServer(s3ApiServer *s3api.S3ApiServer, listenO
 	return httpS
 }
 
-// vectorsRouter builds the S3 Vectors API router when a weed-vector backend
-// is reachable — workers register to master and the gateway discovers them
-// through ListClusterNodes.
+// vectorsRouter builds the S3 Vectors API router — workers register to the
+// master and the backend resolves them lazily, so a worker that comes up
+// after the gateway still gets picked up on first query.
 func (s3opt *S3Options) vectorsRouter(s3ApiServer *s3api.S3ApiServer, grpcDialOption grpc.DialOption, masterAddresses []pb.ServerAddress) *mux.Router {
-	worker := discoverVectorWorker(masterAddresses, grpcDialOption)
-	if worker == "" {
+	if len(masterAddresses) == 0 {
 		glog.Warningf("S3 Vectors API disabled: no weed-vector registered on master")
 		return nil
 	}
-	conn, err := pb.GrpcDial(context.Background(), worker, false, grpcDialOption)
-	if err != nil {
-		glog.Errorf("S3 Vectors: dial %s: %v", worker, err)
-		return nil
-	}
+	backend := &vectorDiscovery{masters: masterAddresses, grpcDialOption: grpcDialOption}
 	vectorsRouter := mux.NewRouter().SkipClean(true)
 
-	vectorsServer := s3vectors.NewServer(s3ApiServer, s3ApiServer, vector_pb.NewVectorServiceClient(conn))
+	vectorsServer := s3vectors.NewServer(s3ApiServer, s3ApiServer, backend)
 	vectorsServer.SetRegion(s3tables.DefaultRegion)
 	vectorsServer.SetAccountID(s3tables.DefaultAccountID)
 	vectorsServer.RegisterRoutes(vectorsRouter)
 	return vectorsRouter
+}
+
+// vectorDiscovery resolves the currently registered weed-vector through the
+// master and caches the connection; workers joining after gateway startup
+// are picked up on first query.
+type vectorDiscovery struct {
+	masters        []pb.ServerAddress
+	grpcDialOption grpc.DialOption
+	mu             sync.Mutex
+	worker         string
+	conn           *grpc.ClientConn
+	client         vector_pb.VectorServiceClient
+}
+
+func (d *vectorDiscovery) resolve() (vector_pb.VectorServiceClient, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	worker := discoverVectorWorker(d.masters, d.grpcDialOption)
+	if worker == "" {
+		return nil, fmt.Errorf("no weed-vector registered on master")
+	}
+	if worker != d.worker {
+		if d.conn != nil {
+			d.conn.Close()
+		}
+		conn, err := pb.GrpcDial(context.Background(), worker, false, d.grpcDialOption)
+		if err != nil {
+			return nil, err
+		}
+		d.worker, d.conn = worker, conn
+		d.client = vector_pb.NewVectorServiceClient(conn)
+	}
+	return d.client, nil
+}
+
+func (d *vectorDiscovery) cli() (vector_pb.VectorServiceClient, error) {
+	d.mu.Lock()
+	cli := d.client
+	d.mu.Unlock()
+	if cli != nil {
+		return cli, nil
+	}
+	return d.resolve()
+}
+
+func (d *vectorDiscovery) CreateIndex(ctx context.Context, in *vector_pb.CreateIndexRequest, opts ...grpc.CallOption) (*vector_pb.CreateIndexResponse, error) {
+	c, err := d.cli()
+	if err != nil {
+		return nil, err
+	}
+	return c.CreateIndex(ctx, in, opts...)
+}
+func (d *vectorDiscovery) DropIndex(ctx context.Context, in *vector_pb.DropIndexRequest, opts ...grpc.CallOption) (*vector_pb.DropIndexResponse, error) {
+	c, err := d.cli()
+	if err != nil {
+		return nil, err
+	}
+	return c.DropIndex(ctx, in, opts...)
+}
+func (d *vectorDiscovery) PutVectors(ctx context.Context, in *vector_pb.PutVectorsRequest, opts ...grpc.CallOption) (*vector_pb.PutVectorsResponse, error) {
+	c, err := d.cli()
+	if err != nil {
+		return nil, err
+	}
+	return c.PutVectors(ctx, in, opts...)
+}
+func (d *vectorDiscovery) GetVectors(ctx context.Context, in *vector_pb.GetVectorsRequest, opts ...grpc.CallOption) (*vector_pb.GetVectorsResponse, error) {
+	c, err := d.cli()
+	if err != nil {
+		return nil, err
+	}
+	return c.GetVectors(ctx, in, opts...)
+}
+func (d *vectorDiscovery) DeleteVectors(ctx context.Context, in *vector_pb.DeleteVectorsRequest, opts ...grpc.CallOption) (*vector_pb.DeleteVectorsResponse, error) {
+	c, err := d.cli()
+	if err != nil {
+		return nil, err
+	}
+	return c.DeleteVectors(ctx, in, opts...)
+}
+func (d *vectorDiscovery) ListVectors(ctx context.Context, in *vector_pb.ListVectorsRequest, opts ...grpc.CallOption) (*vector_pb.ListVectorsResponse, error) {
+	c, err := d.cli()
+	if err != nil {
+		return nil, err
+	}
+	return c.ListVectors(ctx, in, opts...)
+}
+func (d *vectorDiscovery) QueryVectors(ctx context.Context, in *vector_pb.QueryVectorsRequest, opts ...grpc.CallOption) (*vector_pb.QueryVectorsResponse, error) {
+	c, err := d.cli()
+	if err != nil {
+		return nil, err
+	}
+	return c.QueryVectors(ctx, in, opts...)
 }
 
 // isVectorsRequest routes by the SigV4 credential scope — the s3vectors
@@ -869,7 +958,7 @@ func (v lanceCredentialVendor) VendTableCredentials(ctx context.Context, princip
 // backend.
 func discoverVectorWorker(masters []pb.ServerAddress, grpcDialOption grpc.DialOption) string {
 	for _, master := range masters {
-		conn, err := pb.GrpcDial(context.Background(), string(master), false, grpcDialOption)
+		conn, err := pb.GrpcDial(context.Background(), master.ToGrpcAddress(), false, grpcDialOption)
 		if err != nil {
 			continue
 		}
