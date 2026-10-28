@@ -167,6 +167,11 @@ func loadCurrentMetadata(ctx context.Context, client filer_pb.SeaweedFilerClient
 	return state, nil
 }
 
+// metadataFileMaxBytes bounds the metadata file a location-only record may
+// pull into memory: the location comes from the catalog record and can name
+// any file in the bucket, not only ones a commit wrote.
+const metadataFileMaxBytes = 64 << 20
+
 // loadMetadata fills in Metadata for a record that keeps no inline copy: a
 // commit that outgrew the request-size limit stores only the metadata file's
 // location, so the bytes come from the file it points to.
@@ -174,7 +179,14 @@ func (s *tableState) loadMetadata(ctx context.Context, client filer_pb.SeaweedFi
 	if s.Metadata != nil {
 		return nil
 	}
-	content, err := loadFileByIcebergPath(ctx, client, bucketName, s.DataPath, s.MetadataLocation)
+	entry, err := lookupFileByIcebergPath(ctx, client, bucketName, s.DataPath, s.MetadataLocation)
+	if err != nil {
+		return fmt.Errorf("load metadata file %s: %w", s.MetadataLocation, err)
+	}
+	if size := int64(filer.FileSize(entry)); size > metadataFileMaxBytes {
+		return fmt.Errorf("metadata file %s too large: %d bytes", s.MetadataLocation, size)
+	}
+	content, err := readEntryContent(ctx, client, entry, s.MetadataLocation)
 	if err != nil {
 		return fmt.Errorf("load metadata file %s: %w", s.MetadataLocation, err)
 	}
@@ -254,7 +266,12 @@ func loadFileByIcebergPath(ctx context.Context, client filer_pb.SeaweedFilerClie
 	if err != nil {
 		return nil, err
 	}
+	return readEntryContent(ctx, client, entry, icebergPath)
+}
 
+// readEntryContent returns an entry's bytes: its inline content, or a chunked
+// file read through the volume servers.
+func readEntryContent(ctx context.Context, client filer_pb.SeaweedFilerClient, entry *filer_pb.Entry, name string) ([]byte, error) {
 	if len(entry.Content) > 0 || len(entry.Chunks) == 0 {
 		return entry.Content, nil
 	}
@@ -266,7 +283,7 @@ func loadFileByIcebergPath(ctx context.Context, client filer_pb.SeaweedFilerClie
 	}
 	data, err := io.ReadAll(reader)
 	if err != nil {
-		return nil, fmt.Errorf("read chunked file %s: %w", icebergPath, err)
+		return nil, fmt.Errorf("read chunked file %s: %w", name, err)
 	}
 	return data, nil
 }
