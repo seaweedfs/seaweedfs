@@ -29,7 +29,9 @@ const objectWriteRouteKeyPrefix = s3_constants.ObjectWriteRouteKeyPrefix
 // filer (reached because the gateway's ring view was stale) forwards the
 // transaction to the owner. All of an object's writes share this key.
 func (s3a *S3ApiServer) objectRouteKey(bucket, object string) string {
-	return objectWriteRouteKeyPrefix + s3a.toFilerPath(bucket, object)
+	// A trailing-slash marker key ("dir/") names the same entry as the object
+	// ("dir"), so both hash and lock to one owner.
+	return objectWriteRouteKeyPrefix + strings.TrimSuffix(s3a.toFilerPath(bucket, object), "/")
 }
 
 // routableWriteOwner returns the owner filer for an object's writes, or "" to
