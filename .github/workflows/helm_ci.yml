@@ -2034,6 +2034,38 @@ jobs:
           kubectl delete namespace "$NS"
           echo "SFTP host key lifecycle tests passed"
 
+      - name: Verify the filer db secret survives uninstall and install
+        run: |
+          set -e
+          CHART_DIR="k8s/charts/seaweedfs"
+          NS="filer-db-secret"
+          SECRET="db-seaweedfs-db-secret"
+          DB_ARGS="--set image.tag=$IMAGE_TAG --set-string filer.extraEnvironmentVars.WEED_MYSQL_ENABLED=true --set master.enabled=false --set volume.enabled=false"
+          kubectl create namespace "$NS"
+
+          echo "=== install generates the db credentials ==="
+          helm install db $CHART_DIR -n "$NS" $DB_ARGS
+          [ "$(kubectl get secret "$SECRET" -n "$NS" -o jsonpath='{.data.user}' | base64 -d)" = YourSWUser ] \
+            || { echo "FAIL: install did not create the default user"; exit 1; }
+          [ "$(kubectl get secret "$SECRET" -n "$NS" -o jsonpath='{.data.password}' | base64 -d | wc -c)" -eq 32 ] \
+            || { echo "FAIL: install did not generate a 32-character password"; exit 1; }
+
+          echo "=== credentials in the kept Secret survive uninstall and install ==="
+          PASSWORD='p"a\ss: #x {{ .Values }}'
+          kubectl patch secret "$SECRET" -n "$NS" --type merge \
+            -p "$(jq -n --arg p "$PASSWORD" '{stringData: {user: "seaweed_app", password: $p}}')"
+          helm uninstall db -n "$NS"
+          kubectl get secret "$SECRET" -n "$NS" >/dev/null || { echo "FAIL: uninstall removed the db secret"; exit 1; }
+          helm install db $CHART_DIR -n "$NS" $DB_ARGS
+          [ "$(kubectl get secret "$SECRET" -n "$NS" -o jsonpath='{.data.user}' | base64 -d)" = seaweed_app ] \
+            || { echo "FAIL: reinstall reset the db user"; exit 1; }
+          [ "$(kubectl get secret "$SECRET" -n "$NS" -o jsonpath='{.data.password}' | base64 -d)" = "$PASSWORD" ] \
+            || { echo "FAIL: reinstall replaced the db password"; exit 1; }
+
+          helm uninstall db -n "$NS"
+          kubectl delete namespace "$NS"
+          echo "Filer db secret reinstall test passed"
+
       - name: Verify JWT signing key persistence across upgrades
         run: |
           # chart-testing puts its pip-less venv first on PATH; use setup-python.
