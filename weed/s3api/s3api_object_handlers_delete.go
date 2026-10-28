@@ -62,13 +62,12 @@ func (s3a *S3ApiServer) resolveDeleteConditionalEntry(bucket, object, versionId,
 		return nil, errInvalidVersionID
 	}
 	normalizedObject := s3_constants.NormalizeObjectKey(object)
-	bucketDir := s3a.bucketDir(bucket)
 
 	if versionId != "" {
 		if versionId == "null" {
-			return s3a.getEntry(bucketDir, normalizedObject)
+			return s3a.getObjectEntryRoutedByKey(bucket, normalizedObject)
 		}
-		return s3a.getEntry(s3a.getVersionedObjectDir(bucket, normalizedObject), s3a.getVersionFileName(versionId))
+		return s3a.getObjectScopedEntryRoutedByKey(bucket, normalizedObject, s3a.getVersionedObjectDir(bucket, normalizedObject), s3a.getVersionFileName(versionId))
 	}
 
 	switch versioningState {

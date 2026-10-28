@@ -417,7 +417,6 @@ func (s3a *S3ApiServer) checkDirectoryObject(bucket, object string) (*filer_pb.E
 		return nil, false, nil // Not a directory object
 	}
 
-	bucketDir := s3a.bucketDir(bucket)
 	cleanObject := strings.TrimSuffix(object, "/")
 
 	if cleanObject == "" {
@@ -425,7 +424,7 @@ func (s3a *S3ApiServer) checkDirectoryObject(bucket, object string) (*filer_pb.E
 	}
 
 	// Check if directory exists
-	dirEntry, err := s3a.getEntry(bucketDir, cleanObject)
+	dirEntry, err := s3a.getObjectEntryRoutedByKey(bucket, cleanObject)
 	if err != nil {
 		if errors.Is(err, filer_pb.ErrNotFound) {
 			return nil, true, nil // Directory object requested but doesn't exist
@@ -463,8 +462,7 @@ func (s3a *S3ApiServer) resolveObjectEntry(bucket, object, versionId string) (*f
 	}
 
 	// For non-versioned buckets, verify directly
-	bucketDir := s3a.bucketDir(bucket)
-	return s3a.getEntry(bucketDir, object)
+	return s3a.getObjectEntryRoutedByKey(bucket, object)
 }
 
 // serveDirectoryContent serves the content of a directory object directly
@@ -962,7 +960,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 			versionsDir := normalizedObject + s3_constants.VersionsFolder
 
 			// Quick check (no retries) for .versions/ directory
-			versionsEntry, versionsErr := s3a.getEntry(bucketDir, versionsDir)
+			versionsEntry, versionsErr := s3a.getObjectScopedEntryRoutedByKey(bucket, normalizedObject, bucketDir, versionsDir)
 
 			if versionsErr == nil && versionsEntry != nil {
 				// .versions/ exists, meaning real versions are stored there
@@ -975,7 +973,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 				}
 			} else if errors.Is(versionsErr, filer_pb.ErrNotFound) {
 				// .versions/ doesn't exist (confirmed not found), check regular path for null version
-				regularEntry, regularErr := s3a.getEntry(bucketDir, normalizedObject)
+				regularEntry, regularErr := s3a.getObjectEntryRoutedByKey(bucket, normalizedObject)
 				// A physical parent or bare-key object is not a trailing-slash null marker.
 				if regularErr == nil && isNullVersionObject(regularEntry, normalizedObject) {
 					// Found object at regular path - this is the null version
@@ -2657,7 +2655,7 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 			versionsDir := normalizedObject + s3_constants.VersionsFolder
 
 			// Quick check (no retries) for .versions/ directory
-			versionsEntry, versionsErr := s3a.getEntry(bucketDir, versionsDir)
+			versionsEntry, versionsErr := s3a.getObjectScopedEntryRoutedByKey(bucket, normalizedObject, bucketDir, versionsDir)
 
 			if versionsErr == nil && versionsEntry != nil {
 				// .versions/ exists, meaning real versions are stored there
@@ -2670,7 +2668,7 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 				}
 			} else if errors.Is(versionsErr, filer_pb.ErrNotFound) {
 				// .versions/ doesn't exist (confirmed not found), check regular path for null version
-				regularEntry, regularErr := s3a.getEntry(bucketDir, normalizedObject)
+				regularEntry, regularErr := s3a.getObjectEntryRoutedByKey(bucket, normalizedObject)
 				// A physical parent or bare-key object is not a trailing-slash null marker.
 				if regularErr == nil && isNullVersionObject(regularEntry, normalizedObject) {
 					// Found object at regular path - this is the null version

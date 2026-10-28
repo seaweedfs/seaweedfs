@@ -75,10 +75,7 @@ func (s3a *S3ApiServer) GetObjectTaggingHandler(w http.ResponseWriter, r *http.R
 		}
 	} else {
 		// Handle regular (non-versioned) object tagging retrieval
-		target := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), object))
-		dir, name := target.DirAndName()
-
-		entry, err = s3a.getEntry(dir, name)
+		entry, err = s3a.getObjectEntryRoutedByKey(bucket, object)
 		if err != nil {
 			if err == filer_pb.ErrNotFound {
 				glog.Errorf("GetObjectTaggingHandler %s: %v", r.URL, err)

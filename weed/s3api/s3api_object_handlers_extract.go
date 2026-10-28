@@ -250,7 +250,7 @@ func (s3a *S3ApiServer) extractZipObject(w http.ResponseWriter, r *http.Request,
 			if !objectLockEnabled {
 				return s3err.ErrNone
 			}
-			existing, existErr := s3a.getEntry(dirName, entryName)
+			existing, existErr := s3a.getObjectEntryRoutedByKey(bucket, memberKey)
 			if existErr != nil {
 				return s3err.ErrNone
 			}

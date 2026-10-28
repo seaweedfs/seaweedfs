@@ -9,7 +9,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // An explicit directory marker - the key "dir/" created by PutObject on a
@@ -29,10 +28,10 @@ import (
 func (s3a *S3ApiServer) deleteDirectoryMarker(r *http.Request, bucket, object string) s3err.ErrorCode {
 	governanceBypassAllowed := s3a.evaluateGovernanceBypassRequest(r, bucket, object)
 
-	markerDir := s3a.bucketDir(bucket) + "/" + strings.TrimSuffix(strings.TrimPrefix(object, "/"), "/")
-	dir, name := util.FullPath(markerDir).DirAndName()
+	trimmedObject := strings.TrimSuffix(strings.TrimPrefix(object, "/"), "/")
+	markerDir := s3a.bucketDir(bucket) + "/" + trimmedObject
 
-	entry, err := s3a.getEntry(dir, name)
+	entry, err := s3a.getObjectEntryRoutedByKey(bucket, trimmedObject)
 	switch {
 	case errors.Is(err, filer_pb.ErrNotFound):
 		return s3err.ErrNone // deleting a key that is not there is a success
@@ -60,13 +59,13 @@ func (s3a *S3ApiServer) deleteDirectoryMarker(r *http.Request, bucket, object st
 	// Drop a history an older build recorded for this key. Nothing writes one now, and
 	// leaving it behind keeps reporting the key in ListObjectVersions, so a history we
 	// cannot read or remove fails the delete rather than half finishing it.
-	switch _, historyErr := s3a.getEntry(markerDir, s3_constants.VersionsFolder); {
+	switch _, historyErr := s3a.getObjectScopedEntryRoutedByKey(bucket, trimmedObject, markerDir, s3_constants.VersionsFolder); {
 	case historyErr == nil:
 		// The removal below takes every entry under the key, so each has to be clear
 		// of a lock of its own.
 		versionsDir := markerDir + "/" + s3_constants.VersionsFolder
 		for startFrom := ""; ; {
-			entries, isLast, listErr := s3a.list(versionsDir, "", startFrom, false, 1000)
+			entries, isLast, listErr := s3a.listObjectScopedEntriesRoutedByKey(bucket, trimmedObject, versionsDir, "", startFrom, false, 1000)
 			if listErr != nil {
 				glog.Errorf("deleteDirectoryMarker: cannot list history of %s/%s: %v", bucket, object, listErr)
 				return s3err.ErrInternalError

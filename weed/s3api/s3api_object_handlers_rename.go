@@ -398,9 +398,7 @@ func (s3a *S3ApiServer) withRenameWriteLocks(bucket, srcObject, dstObject string
 // object goes onto the directory they live in, the way a PutObject of that key
 // would put it there.
 func (s3a *S3ApiServer) lookupRenameDestination(bucket, dstObject string) (*filer_pb.Entry, s3err.ErrorCode) {
-	dstDir, dstName := util.FullPath(s3a.toFilerPath(bucket, dstObject)).DirAndName()
-
-	entry, err := s3a.getEntry(dstDir, dstName)
+	entry, err := s3a.getObjectEntryRoutedByKey(bucket, dstObject)
 	if err != nil {
 		if errors.Is(err, filer_pb.ErrNotFound) {
 			return nil, s3err.ErrNone

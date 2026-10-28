@@ -249,7 +249,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			if !objectLockEnabled {
 				return s3err.ErrNone
 			}
-			existing, existErr := s3a.getEntry(fullDirPath, entryName)
+			existing, existErr := s3a.getObjectEntryRoutedByKey(bucket, object)
 			if existErr != nil {
 				return s3err.ErrNone
 			}
