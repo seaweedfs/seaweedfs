@@ -247,9 +247,14 @@ func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Fallback to current account if no owner stored
+	// Fallback to current account if no owner stored; with auth off there is
+	// no caller account, so ownerless objects claim the admin account instead
+	// of failing ACL validation on an empty owner id.
 	if objectOwner == "" {
 		objectOwner = amzAccountId
+		if objectOwner == "" && s3a.iam != nil && !s3a.iam.isEnabled() {
+			objectOwner = AccountAdmin.Id
+		}
 	}
 
 	// 1. Check if user is admin (admins can modify any ACL)
