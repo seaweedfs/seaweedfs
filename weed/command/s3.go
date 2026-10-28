@@ -579,7 +579,7 @@ func (s3opt *S3Options) startS3Server() bool {
 	if *s3opt.tlsPrivateKey == "" || *s3opt.portHttps > 0 {
 		glog.V(0).Infof("Start Seaweed S3 API Server %s at http port %d", version.Version(), *s3opt.port)
 		if s3ApiLocalListener != nil {
-			localServer := newHttpServer(router, nil)
+			localServer := newHttpServer(vectorsHandler, nil)
 			httpServers = append(httpServers, localServer)
 			go func() {
 				if err := localServer.Serve(s3ApiLocalListener); err != nil && err != http.ErrServerClosed {
@@ -587,7 +587,7 @@ func (s3opt *S3Options) startS3Server() bool {
 				}
 			}()
 		}
-		httpS := newHttpServer(router, nil)
+		httpS := newHttpServer(vectorsHandler, nil)
 		httpServers = append(httpServers, httpS)
 		shutdown := s3opt.newShutdown(stopGrpcServer, s3ApiServer, httpServers)
 		if err = httpS.Serve(s3ApiListener); err != nil && err != http.ErrServerClosed {
@@ -735,6 +735,7 @@ type vectorDiscovery struct {
 	worker         string
 	conn           *grpc.ClientConn
 	client         vector_pb.VectorServiceClient
+	nextResolve    time.Time
 }
 
 func (d *vectorDiscovery) resolve() (vector_pb.VectorServiceClient, error) {
@@ -758,13 +759,19 @@ func (d *vectorDiscovery) resolve() (vector_pb.VectorServiceClient, error) {
 	return d.client, nil
 }
 
+const vectorResolveInterval = 5 * time.Second
+
 func (d *vectorDiscovery) cli() (vector_pb.VectorServiceClient, error) {
 	d.mu.Lock()
-	cli := d.client
-	d.mu.Unlock()
-	if cli != nil {
-		return cli, nil
+	if cli := d.client; cli != nil || time.Now().Before(d.nextResolve) {
+		d.mu.Unlock()
+		if cli != nil {
+			return cli, nil
+		}
+		return nil, fmt.Errorf("no weed-vector registered on master")
 	}
+	d.nextResolve = time.Now().Add(vectorResolveInterval)
+	d.mu.Unlock()
 	return d.resolve()
 }
 
