@@ -138,14 +138,24 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 			glog.V(1).Infof("assign %v %v: %v", req, option.String(), err)
 			stats.MasterPickForWriteErrorCounter.Inc()
 			lastErr = err
-			if (req.DataCenter != "" || req.Rack != "") && strings.Contains(err.Error(), topology.NoWritableVolumes) &&
-				(ms.option.VolumeGrowthDisabled || (!initiatedGrow && !vl.HasGrowRequest()) || ms.Topo.AvailableSpaceWithinLocation(option) <= 0) {
+			if (req.DataCenter != "" || req.Rack != "") && strings.Contains(err.Error(), topology.NoWritableVolumes) {
 				// Fail fast only when no growth can produce a writable volume in
 				// the requested location; a location with room and a pending or
 				// just-concluded grow gets the same wait/shed path as an
-				// unconstrained assign, so its client retry can re-trigger growth.
-				glog.V(0).Infof("assign %v %v: %v", req, option.String(), err)
-				return nil, err
+				// unconstrained assign, so its client retry can re-trigger
+				// growth. Free slots alone do not prove a grow can place — a
+				// location with fewer racks than the replica placement needs
+				// sheds the same growth on every retry — so ask the grow-time
+				// search itself and surface its placement error instead.
+				growBlocker := err
+				if !ms.option.VolumeGrowthDisabled && (initiatedGrow || vl.HasGrowRequest()) &&
+					ms.Topo.AvailableSpaceWithinLocation(option) > 0 {
+					growBlocker = ms.vg.GrowthBlocker(ms.Topo, option)
+				}
+				if growBlocker != nil {
+					glog.V(0).Infof("assign %v %v: %v", req, option.String(), err)
+					return nil, growBlocker
+				}
 			}
 			if shouldGrow {
 				if ms.Topo.AvailableSpaceFor(option) <= 0 {
