@@ -420,9 +420,10 @@ func TestPutBucketAclXmlWithoutAuth(t *testing.T) {
 }
 
 // An ownerless bucket created before the admin fallback stored an anonymous
-// full-control grantee; GetBucketAcl reports it as the same admin owner. A
-// client-supplied account header with auth off cannot claim ownership either.
-func TestGetBucketAclAlignsAnonymousGrant(t *testing.T) {
+// full-control grantee; GetBucketAcl reports it verbatim so a GET-to-PUT
+// round trip keeps the stored grant. A client-supplied account header with
+// auth off cannot claim ownership either.
+func TestGetBucketAclReportsAnonymousGrantVerbatim(t *testing.T) {
 	t.Setenv("AWS_ACCESS_KEY_ID", "")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
 	const bucket = "acl-legacy-bucket"
@@ -453,7 +454,7 @@ func TestGetBucketAclAlignsAnonymousGrant(t *testing.T) {
 	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
 	require.Contains(t, rr.Body.String(), "<ID>"+s3_constants.AccountAdminId+"</ID>")
 	require.NotContains(t, rr.Body.String(), "spoofed-owner")
-	require.NotContains(t, rr.Body.String(), s3_constants.AccountAnonymousId)
+	require.Contains(t, rr.Body.String(), s3_constants.AccountAnonymousId)
 }
 
 // A bucket with a recorded owner keeps it through an ACL update: the stored
