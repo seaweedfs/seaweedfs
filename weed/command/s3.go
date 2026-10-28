@@ -20,6 +20,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_lifecycle_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/vector_pb"
@@ -116,7 +117,7 @@ func init() {
 	s3StandaloneOptions.portIceberg = cmdS3.Flag.Int("port.iceberg", 8181, "Iceberg REST Catalog server listen port (0 to disable)")
 	s3StandaloneOptions.portLance = cmdS3.Flag.Int("port.lance", 9101, "Lance Namespace server listen port (0 to disable); credential vending uses -iceberg.credentialRole")
 	s3StandaloneOptions.portVectors = cmdS3.Flag.Int("port.vectors", 0, "S3 Vectors API server listen port (0 to disable); requires -vectors.grpc")
-	s3StandaloneOptions.vectorsGrpc = cmdS3.Flag.String("vectors.grpc", "", "weed-vector-server gRPC address for the S3 Vectors API")
+	s3StandaloneOptions.vectorsGrpc = cmdS3.Flag.String("vectors.grpc", "", "weed-vector gRPC address for the S3 Vectors API; discovered via master when unset")
 	s3StandaloneOptions.icebergCredentialRole = cmdS3.Flag.String("iceberg.credentialRole", "", "IAM role ARN the Iceberg catalog assumes to vend table-scoped credentials (empty disables vending)")
 	s3StandaloneOptions.icebergCredentialDuration = cmdS3.Flag.Int("iceberg.credentialDurationSeconds", 3600, "lifetime of credentials vended by the Iceberg catalog")
 	s3StandaloneOptions.domainName = cmdS3.Flag.String("domainName", "", "suffix of the host name in comma separated list, {bucket}.{domainName}")
@@ -442,7 +443,7 @@ func (s3opt *S3Options) startS3Server() bool {
 
 	// Start S3 Vectors API server if enabled
 	if s3opt.portVectors != nil && *s3opt.portVectors > 0 {
-		if httpS := s3opt.startVectorsServer(s3ApiServer, grpcDialOption, listenOnLocalhost); httpS != nil {
+		if httpS := s3opt.startVectorsServer(s3ApiServer, grpcDialOption, listenOnLocalhost, masterAddresses); httpS != nil {
 			httpServers = append(httpServers, httpS)
 		}
 	}
@@ -705,14 +706,18 @@ func (s3opt *S3Options) startLanceServer(s3ApiServer *s3api.S3ApiServer, listenO
 // startVectorsServer starts the S3 Vectors API server on a separate port. It
 // fans index and data calls out to the shared VectorService over gRPC; with no
 // -vectors.grpc the API is not served.
-func (s3opt *S3Options) startVectorsServer(s3ApiServer *s3api.S3ApiServer, grpcDialOption grpc.DialOption, listenOnLocalhost bool) *http.Server {
-	if *s3opt.vectorsGrpc == "" {
-		glog.Warningf("port.vectors set without -vectors.grpc; S3 Vectors API disabled")
+func (s3opt *S3Options) startVectorsServer(s3ApiServer *s3api.S3ApiServer, grpcDialOption grpc.DialOption, listenOnLocalhost bool, masterAddresses []pb.ServerAddress) *http.Server {
+	worker := *s3opt.vectorsGrpc
+	if worker == "" {
+		worker = discoverVectorWorker(masterAddresses, grpcDialOption)
+	}
+	if worker == "" {
+		glog.Warningf("port.vectors set without -vectors.grpc and no weed-vector registered on master; S3 Vectors API disabled")
 		return nil
 	}
-	conn, err := pb.GrpcDial(context.Background(), *s3opt.vectorsGrpc, false, grpcDialOption)
+	conn, err := pb.GrpcDial(context.Background(), worker, false, grpcDialOption)
 	if err != nil {
-		glog.Errorf("S3 Vectors: dial %s: %v", *s3opt.vectorsGrpc, err)
+		glog.Errorf("S3 Vectors: dial %s: %v", worker, err)
 		return nil
 	}
 	vectorsRouter := mux.NewRouter().SkipClean(true)
@@ -927,4 +932,28 @@ func (v lanceCredentialVendor) VendTableCredentials(ctx context.Context, princip
 		SessionToken:    credentials.SessionToken,
 		Expiration:      credentials.Expiration,
 	}, nil
+}
+
+// discoverVectorWorker resolves one registered weed-vector server through the
+// master's cluster-nodes list; OSS fans every vector call to that single
+// backend.
+func discoverVectorWorker(masters []pb.ServerAddress, grpcDialOption grpc.DialOption) string {
+	for _, master := range masters {
+		conn, err := pb.GrpcDial(context.Background(), string(master), false, grpcDialOption)
+		if err != nil {
+			continue
+		}
+		resp, err := master_pb.NewSeaweedClient(conn).ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
+			ClientType: "vector",
+		})
+		conn.Close()
+		if err != nil {
+			continue
+		}
+		for _, node := range resp.ClusterNodes {
+			glog.V(0).Infof("S3 Vectors: discovered weed-vector at %s via master %s", node.Address, master)
+			return node.Address
+		}
+	}
+	return ""
 }
