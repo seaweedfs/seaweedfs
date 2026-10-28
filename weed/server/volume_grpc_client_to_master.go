@@ -128,6 +128,11 @@ func (vs *VolumeServer) heartbeat() {
 	vs.store.SetDataCenter(vs.dataCenter)
 	vs.store.SetRack(vs.rack)
 
+	if len(vs.SeedMasterNodes) == 0 {
+		glog.Warningf("Volume server has no master nodes to heartbeat to; heartbeats disabled")
+		return
+	}
+
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.volume")
 
 	var err error
@@ -158,7 +163,16 @@ func (vs *VolumeServer) heartbeat() {
 					// adding to it.
 					retryAt := time.Now().Add(vs.pulsePeriod)
 					vs.refreshLeaderFromPeers(vs.pulsePeriod)
-					time.Sleep(time.Until(retryAt))
+					wait := time.Until(retryAt)
+					if wait > time.Second && (vs.getCurrentMaster() != "" || !vs.confirmedLeaderOnce.Load()) {
+						// A leader just named by the refresh usually accepts the
+						// next stream right away, and an unregistered server has
+						// nothing else to do, so reconnect promptly. Once the
+						// server was registered and no leader is known, keep the
+						// pulse backoff.
+						wait = time.Second
+					}
+					time.Sleep(wait)
 				}
 
 				stats.VolumeServerMasterDisconnections.WithLabelValues(master.String()).Inc()
@@ -235,6 +249,7 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 				// The leader answers every new heartbeat stream without naming a
 				// leader, so this peer is the one lookups should go to.
 				confirmedLeader = true
+				vs.confirmedLeaderOnce.Store(true)
 				vs.setCurrentMaster(masterAddress)
 			}
 			if len(in.DuplicatedUuids) > 0 {

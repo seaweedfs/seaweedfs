@@ -376,11 +376,11 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 
 		// A full volume list is the heartbeat section that settles what a
 		// reporter holds; once applied, a post-mint allocation hold kept for
-		// prior cluster state has nothing left to wait for. A report carrying
-		// such state is itself the evidence the hold exists for, so it keeps
-		// the window for other veterans still due.
+		// prior cluster state only owes other reporters a confirm pulse. A
+		// report carrying such state is itself the evidence the hold exists
+		// for, so it keeps the window for other veterans still due.
 		if (len(heartbeat.Volumes) > 0 || heartbeat.HasNoVolumes) && !priorState {
-			ms.Topo.NoteInventoryApplied()
+			ms.Topo.NoteInventoryApplied(dn.Url())
 		}
 
 		if len(heartbeat.NewEcShards) > 0 || len(heartbeat.DeletedEcShards) > 0 {

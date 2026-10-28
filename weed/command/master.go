@@ -21,6 +21,7 @@ import (
 	hashicorpRaft "github.com/hashicorp/raft"
 
 	"slices"
+	"sync/atomic"
 
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/raft/protobuf"
@@ -90,10 +91,16 @@ type MasterOptions struct {
 	// single-master mode, with singleReporterAddr pinning the embedded volume
 	// server as the only admitted reporter: any other volume server is refused,
 	// so the warmup window after a fresh topology id is dead time.
-	// Standalone weed master / weed server can face late-arriving veterans and
-	// must keep the window.
+	// Standalone weed master can face late-arriving veterans and must keep
+	// the window; a single-master weed server releases on its embedded
+	// volume server's clean report through expectedReporterAddr instead.
 	releaseAllocOnFirstReport bool
 	singleReporterAddr        string
+	// expectedReporterAddr names the reporter whose first clean inventory
+	// collapses the post-mint allocation hold to a confirm pulse without
+	// refusing others: a single-master weed server points it at its
+	// embedded volume server.
+	expectedReporterAddr string
 }
 
 func init() {
@@ -197,7 +204,7 @@ func runMaster(cmd *Command, args []string) bool {
 	return true
 }
 
-func startMaster(masterOption MasterOptions, masterWhiteList []string) {
+func startMaster(masterOption MasterOptions, masterWhiteList []string, masterOut ...*atomic.Pointer[weed_server.MasterServer]) {
 
 	backend.LoadConfiguration(util.GetViper())
 
@@ -225,6 +232,12 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 
 	r := mux.NewRouter()
 	ms := weed_server.NewMasterServer(r, masterOption.toMasterOption(masterWhiteList), masterPeers)
+	// Embedded setups (weed server) hand the instance back so sibling
+	// components can read cluster-state signals such as a fresh TopologyId
+	// mint.
+	if len(masterOut) > 0 && masterOut[0] != nil {
+		masterOut[0].Store(ms)
+	}
 	listeningAddress := util.JoinHostPort(*masterOption.ipBind, *masterOption.port)
 	glog.V(0).Infof("Start Seaweed Master %s at %s", version.Version(), listeningAddress)
 	masterListener, masterLocalListener, e := util.NewIpAndLocalListeners(*masterOption.ipBind, *masterOption.port, 0, listenOnLocalhost)
@@ -595,5 +608,6 @@ func (m *MasterOptions) toMasterOption(whiteList []string) *weed_server.MasterOp
 		SingleMaster:              isSingleMasterMode(*m.peers),
 		ReleaseAllocOnFirstReport: m.releaseAllocOnFirstReport,
 		SingleVolumeReporter:      m.singleReporterAddr,
+		ExpectedReporterAddr:      m.expectedReporterAddr,
 	}
 }

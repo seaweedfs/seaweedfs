@@ -108,6 +108,15 @@ type FilerOptions struct {
 	// gracefulStopTimeout caps how long startFiler waits for gRPC graceful
 	// stop before forcing the server to stop. Zero means the default of 15s.
 	gracefulStopTimeout time.Duration
+	// skipEmptyMembershipConfirm forwards to FilerOption: a single-master
+	// weed mini's embedded filer announces on the startup scan instead of
+	// holding registration for the confirm window.
+	skipEmptyMembershipConfirm bool
+	// clusterFreshHint, when non-nil, reports that the embedded master minted
+	// a fresh TopologyId this boot — proof the peer scan's empty result is
+	// final rather than a settling master, so the announce gate can end the
+	// empty-membership confirm early. Used by weed server; nil elsewhere.
+	clusterFreshHint func() bool
 }
 
 func init() {
@@ -410,32 +419,34 @@ func (fo *FilerOptions) startFiler() {
 
 	announce := make(chan struct{})
 	fs, nfs_err := weed_server.NewFilerServer(defaultMux, publicVolumeMux, &weed_server.FilerOption{
-		Masters:                   fo.masters,
-		AnnounceCh:                announce,
-		FilerGroup:                *fo.filerGroup,
-		Collection:                *fo.collection,
-		DefaultReplication:        *fo.defaultReplicaPlacement,
-		DisableDirListing:         *fo.disableDirListing,
-		MaxMB:                     *fo.maxMB,
-		DirListingLimit:           *fo.dirListingLimit,
-		DataCenter:                *fo.dataCenter,
-		Rack:                      *fo.rack,
-		DefaultLevelDbDir:         defaultLevelDbDirectory,
-		DisableHttp:               *fo.disableHttp,
-		Host:                      filerAddress,
-		Cipher:                    *fo.cipher,
-		SaveToFilerLimit:          int64(*fo.saveToFilerLimit),
-		ConcurrentUploadLimit:     int64(*fo.concurrentUploadLimitMB) * 1024 * 1024,
-		ConcurrentFileUploadLimit: int64(*fo.concurrentFileUploadLimit),
-		ShowUIDirectoryDelete:     *fo.showUIDirectoryDelete,
-		DownloadMaxBytesPs:        int64(*fo.downloadMaxMBps) * 1024 * 1024,
-		DiskType:                  *fo.diskType,
-		AllowedOrigins:            strings.Split(*fo.allowedOrigins, ","),
-		ExposeDirectoryData:       *fo.exposeDirectoryData,
-		TusBasePath:               *fo.tusBasePath,
-		TusMaxSize:                int64(*fo.tusMaxSizeMB) * 1024 * 1024,
-		TusSessionExpiry:          *fo.tusSessionExpiry,
-		CredentialManager:         credentialManager,
+		Masters:                    fo.masters,
+		AnnounceCh:                 announce,
+		SkipEmptyMembershipConfirm: fo.skipEmptyMembershipConfirm,
+		ClusterFreshHint:           fo.clusterFreshHint,
+		FilerGroup:                 *fo.filerGroup,
+		Collection:                 *fo.collection,
+		DefaultReplication:         *fo.defaultReplicaPlacement,
+		DisableDirListing:          *fo.disableDirListing,
+		MaxMB:                      *fo.maxMB,
+		DirListingLimit:            *fo.dirListingLimit,
+		DataCenter:                 *fo.dataCenter,
+		Rack:                       *fo.rack,
+		DefaultLevelDbDir:          defaultLevelDbDirectory,
+		DisableHttp:                *fo.disableHttp,
+		Host:                       filerAddress,
+		Cipher:                     *fo.cipher,
+		SaveToFilerLimit:           int64(*fo.saveToFilerLimit),
+		ConcurrentUploadLimit:      int64(*fo.concurrentUploadLimitMB) * 1024 * 1024,
+		ConcurrentFileUploadLimit:  int64(*fo.concurrentFileUploadLimit),
+		ShowUIDirectoryDelete:      *fo.showUIDirectoryDelete,
+		DownloadMaxBytesPs:         int64(*fo.downloadMaxMBps) * 1024 * 1024,
+		DiskType:                   *fo.diskType,
+		AllowedOrigins:             strings.Split(*fo.allowedOrigins, ","),
+		ExposeDirectoryData:        *fo.exposeDirectoryData,
+		TusBasePath:                *fo.tusBasePath,
+		TusMaxSize:                 int64(*fo.tusMaxSizeMB) * 1024 * 1024,
+		TusSessionExpiry:           *fo.tusSessionExpiry,
+		CredentialManager:          credentialManager,
 
 		AllowUntrustedRemoteEndpoints: *fo.allowUntrustedRemoteEndpoints,
 		RemoteCacheEvictThreshold:     *fo.remoteCacheEvictThreshold,

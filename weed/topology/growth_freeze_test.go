@@ -194,17 +194,17 @@ func TestAllocationDeferralDuration(t *testing.T) {
 
 func TestAllocationDeferralReleasedByInventory(t *testing.T) {
 	topo := NewTopology("topo", nil, 128, 3, false)
-	topo.ReleaseAllocationOnFirstReport()
+	topo.ReleaseAllocationOnFirstReport("10.0.0.1:8080")
 
 	topo.DeferAllocation(time.Minute)
-	topo.NoteInventoryApplied()
+	topo.NoteInventoryApplied("10.0.0.1:8080")
 	if wait := topo.allocationDelay(); wait > 0 {
 		t.Fatalf("applied inventory should lift the deferral, still waiting %v", wait)
 	}
 
 	fresh := NewTopology("topo", nil, 128, 3, false)
-	fresh.ReleaseAllocationOnFirstReport()
-	fresh.NoteInventoryApplied()
+	fresh.ReleaseAllocationOnFirstReport("10.0.0.1:8080")
+	fresh.NoteInventoryApplied("10.0.0.1:8080")
 	fresh.DeferAllocation(time.Minute)
 	if wait := fresh.allocationDelay(); wait > 0 {
 		t.Fatalf("a report applied before the mint should keep the hold unarmed, got %v", wait)
@@ -212,9 +212,46 @@ func TestAllocationDeferralReleasedByInventory(t *testing.T) {
 
 	walled := NewTopology("topo", nil, 128, 3, false)
 	walled.DeferAllocation(time.Minute)
-	walled.NoteInventoryApplied()
+	walled.NoteInventoryApplied("10.0.0.1:8080")
 	if wait := walled.allocationDelay(); wait <= 0 {
 		t.Fatal("without opt-in an applied inventory must not lift the deferral")
+	}
+}
+
+func TestAllocationDeferralReleasedByExpectedReporter(t *testing.T) {
+	topo := NewTopology("topo", nil, 128, 3, false)
+	topo.ReleaseAllocationOnReport("10.0.0.1:8080")
+
+	if !topo.AdmitVolumeReporter("10.0.0.2:8080") {
+		t.Fatal("a named expected reporter must not refuse other reporters")
+	}
+	topo.DeferAllocation(time.Minute)
+	topo.NoteInventoryApplied("10.0.0.2:8080")
+	if wait := topo.allocationDelay(); wait <= 0 {
+		t.Fatal("a foreign reporter's inventory must not lift the deferral")
+	}
+	topo.NoteInventoryApplied("10.0.0.1:8080")
+	wait := topo.allocationDelay()
+	if wait <= 0 || wait > 3*time.Second {
+		t.Fatalf("the expected reporter's inventory should collapse the deferral to a confirm pulse, got %v", wait)
+	}
+}
+
+func TestAllocationDeferralConfirmPulseAfterAppliedReport(t *testing.T) {
+	topo := NewTopology("topo", nil, 128, 3, false)
+	topo.ReleaseAllocationOnReport("10.0.0.1:8080")
+
+	topo.DeferAllocation(time.Minute)
+	topo.NoteInventoryApplied("10.0.0.1:8080")
+	if wait := topo.allocationDelay(); wait <= 0 || wait > 3*time.Second {
+		t.Fatalf("an unpinned release should leave a confirm pulse, got %v", wait)
+	}
+
+	// A later mint re-arms the confirm pulse rather than the full warmup or
+	// nothing at all: outside reporters may still carry prior cluster state.
+	topo.DeferAllocation(time.Minute)
+	if wait := topo.allocationDelay(); wait <= 0 || wait > 3*time.Second {
+		t.Fatalf("a re-mint after the applied report should arm the confirm pulse, got %v", wait)
 	}
 }
 

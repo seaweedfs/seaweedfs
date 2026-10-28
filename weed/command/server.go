@@ -7,10 +7,12 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	flag "github.com/seaweedfs/seaweedfs/weed/util/fla9"
@@ -298,10 +300,22 @@ func runServer(cmd *Command, args []string) bool {
 	}
 
 	var actualPeersForComponents string
+	var embeddedMaster atomic.Pointer[weed_server.MasterServer]
+	var peerList []pb.ServerAddress
 	if *isStartingMasterServer {
 		// If we are starting a master, validate and complete the peer list
-		_, peerList := checkPeers(*serverIp, *masterOptions.port, *masterOptions.portGrpc, *masterOptions.peers)
+		_, peerList = checkPeers(*serverIp, *masterOptions.port, *masterOptions.portGrpc, *masterOptions.peers)
 		actualPeersForComponents = strings.Join(pb.ToAddressStrings(peerList), ",")
+		if len(peerList) == 1 && *isStartingVolumeServer {
+			// A single-master weed server has one guaranteed reporter: its
+			// embedded volume server, whose first heartbeat already carries the
+			// full inventory. Its clean report collapses the post-mint
+			// allocation hold to a confirm pulse instead of running the whole
+			// warmup window on every fresh start. Other volume servers stay
+			// admitted, so a late veteran still lands its prior-state evidence
+			// inside that pulse.
+			masterOptions.expectedReporterAddr = util.JoinHostPort(*serverIp, *serverOptions.v.port)
+		}
 	} else if *masterOptions.peers != "" {
 		if isSingleMasterMode(*masterOptions.peers) {
 			glog.Fatalf("'-master.peers=none' is only valid when starting a master server, but master is not starting.")
@@ -442,6 +456,17 @@ func runServer(cmd *Command, args []string) bool {
 		if *filerOptions.diskType == "" && *serverOptions.v.diskType != "" {
 			filerOptions.diskType = serverOptions.v.diskType
 		}
+		if len(peerList) == 1 && *isStartingMasterServer {
+			// The embedded filer shares the master's process: when the master
+			// mints a fresh TopologyId its persisted state was empty, so the
+			// empty peer scan only has to survive a reconnecting peer's
+			// keepalive retries, not the full membership confirm. Prior state
+			// keeps the full window.
+			filerOptions.clusterFreshHint = func() bool {
+				ms := embeddedMaster.Load()
+				return ms != nil && ms.Topo.FreshMinted()
+			}
+		}
 		go func() {
 			time.Sleep(1 * time.Second)
 			filerOptions.startFiler()
@@ -507,7 +532,7 @@ func runServer(cmd *Command, args []string) bool {
 	}
 
 	if *isStartingMasterServer {
-		go startMaster(masterOptions, serverWhiteList)
+		go startMaster(masterOptions, serverWhiteList, &embeddedMaster)
 	}
 
 	select {}

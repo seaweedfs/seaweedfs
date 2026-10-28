@@ -55,9 +55,19 @@ pub async fn run_heartbeat_with_state(
         config.master_addresses
     );
 
+    if config.master_addresses.is_empty() {
+        warn!("Volume server has no master addresses to heartbeat to; heartbeats disabled");
+        state.is_heartbeating.store(false, Ordering::Relaxed);
+        return;
+    }
+
     let pulse = Duration::from_secs(config.pulse_seconds.max(1));
     let mut new_leader: Option<String> = None;
     let mut duplicate_retry_count: u32 = 0;
+    // Whether a heartbeat stream was ever answered by a leader; before first
+    // registration the retry loop reconnects promptly instead of pacing a
+    // full pulse. Mirrors Go's `confirmedLeaderOnce`.
+    let mut confirmed_leader_once = false;
 
     loop {
         for master_addr in &config.master_addresses {
@@ -100,6 +110,7 @@ pub async fn run_heartbeat_with_state(
                 &target_addr,
                 pulse,
                 &mut shutdown_rx,
+                &mut confirmed_leader_once,
             )
             .await
             {
@@ -159,7 +170,18 @@ pub async fn run_heartbeat_with_state(
                     // adding to it.
                     let retry_at = tokio::time::Instant::now() + pulse;
                     refresh_leader_from_peers(&config, &state, pulse).await;
-                    tokio::time::sleep_until(retry_at).await;
+                    let mut wait = retry_at.saturating_duration_since(tokio::time::Instant::now());
+                    if wait > Duration::from_secs(1)
+                        && (!state.current_master().await.is_empty() || !confirmed_leader_once)
+                    {
+                        // A leader just named by the refresh usually accepts
+                        // the next stream right away, and an unregistered
+                        // server has nothing else to do, so reconnect
+                        // promptly. Once the server was registered and no
+                        // leader is known, keep the pulse backoff.
+                        wait = Duration::from_secs(1);
+                    }
+                    tokio::time::sleep(wait).await;
                 }
             }
 
@@ -170,19 +192,9 @@ pub async fn run_heartbeat_with_state(
             }
         }
 
-        // If we have a leader redirect, skip the sleep and reconnect immediately
-        if new_leader.is_some() {
-            continue;
-        }
-
-        tokio::select! {
-            _ = tokio::time::sleep(pulse) => {}
-            _ = shutdown_rx.recv() => {
-                state.is_heartbeating.store(false, Ordering::Relaxed);
-                info!("Heartbeat shutting down");
-                return;
-            }
-        }
+        // Pacing lives in the per-attempt error path, as in Go: a failed try
+        // already slept its retry delay, so a round-losing pass over the seed
+        // list restarts right away.
     }
 }
 
@@ -447,6 +459,7 @@ async fn do_heartbeat(
     current_master: &str,
     pulse: Duration,
     shutdown_rx: &mut broadcast::Receiver<()>,
+    confirmed_leader_once: &mut bool,
 ) -> Result<Option<String>, Box<dyn std::error::Error>> {
     let channel = connect_channel(
         grpc_addr,
@@ -516,6 +529,7 @@ async fn do_heartbeat(
                             // naming a leader, so this peer is the one lookups
                             // go to.
                             confirmed_leader = true;
+                            *confirmed_leader_once = true;
                             publish_current_master(state, current_master).await;
                         }
                         if !hb_resp.duplicated_uuids.is_empty() {

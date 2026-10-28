@@ -95,6 +95,19 @@ type FilerOption struct {
 	// master; it joins the filer list only once the gRPC port is serving and
 	// the metadata replay has caught up with the peers found at startup.
 	AnnounceCh chan struct{}
+	// SkipEmptyMembershipConfirm announces after the startup peer scan
+	// without re-polling to disprove an empty result: the embedded filer of
+	// a single-master weed mini is the only member its dev cluster can have
+	// yet, so the confirm window is dead time while routed traffic waits on
+	// the filer's master listing. A late external filer still joins and
+	// replays through the normal path.
+	SkipEmptyMembershipConfirm bool
+	// ClusterFreshHint, when non-nil, reports that the co-located master
+	// minted its TopologyId this boot — its persisted state was empty, so the
+	// empty-scan confirm only needs to cover a reconnecting peer's keepalive
+	// retries rather than the full settling window. Restarted masters
+	// recovering a prior id keep the full window.
+	ClusterFreshHint func() bool
 	// AllowUntrustedRemoteEndpoints lets a read of a remote-only entry dial a
 	// mounted endpoint that resolves to a loopback / private / metadata host.
 	AllowUntrustedRemoteEndpoints bool
@@ -511,7 +524,7 @@ func (fs *FilerServer) AnnounceOnceCaughtUp(announce chan struct{}, waitStart ti
 	// late peer cannot stretch the registration hold past the cap.
 	deadline := time.Now().Add(announceCatchUpCap)
 	peers := fs.startupPeers
-	if fs.peerBootstrapPending {
+	if fs.peerBootstrapPending && !fs.option.SkipEmptyMembershipConfirm {
 		peers = append(peers, fs.awaitPeerBootstrap(deadline)...)
 	}
 	if len(peers) == 0 {
@@ -543,6 +556,13 @@ func (fs *FilerServer) AnnounceOnceCaughtUp(announce chan struct{}, waitStart ti
 // not a stalled startup.
 const emptyMembershipConfirmTimeout = 10 * time.Second
 
+// freshMembershipConfirmTimeout bounds the same hold when the co-located
+// master minted its TopologyId this boot: a fresh mint proves the master kept
+// no cluster state, but not that no external filer survived its loss — one
+// may still be mid-reconnect. A few keepalive cycles of empty scans cover the
+// reconnect while keeping a genuinely fresh cluster's announce prompt.
+const freshMembershipConfirmTimeout = 3 * time.Second
+
 // awaitPeerBootstrap re-polls membership while a fresh store's empty startup
 // scan can still be disproved: masters restarted or re-elected report no
 // filers until the existing ones reconnect. Peers found late are backfilled
@@ -551,6 +571,8 @@ const emptyMembershipConfirmTimeout = 10 * time.Second
 // metadata copy — is bounded by the shared announce deadline.
 func (fs *FilerServer) awaitPeerBootstrap(deadline time.Time) (peers []pb.ServerAddress) {
 	confirmBy := time.Now().Add(emptyMembershipConfirmTimeout)
+	var freshSince time.Time
+	peerSeen := false
 	for time.Now().Before(deadline) {
 		ctx, cancel := context.WithDeadline(context.Background(), deadline)
 		nodes, listErr := fs.filer.ListExistingPeerUpdates(ctx)
@@ -566,12 +588,28 @@ func (fs *FilerServer) awaitPeerBootstrap(deadline time.Time) (peers []pb.Server
 			}
 		}
 		if len(remotes) == 0 {
-			if !time.Now().Before(confirmBy) {
+			exitBy := confirmBy
+			// The mint lands after raft election, which can postdate this
+			// wait's start, so the hint is re-evaluated each pass rather than
+			// once up front. An observed peer — even one that later
+			// disconnects — disables the shortened deadline: an empty scan
+			// afterward no longer proves a fresh cluster.
+			if !peerSeen && fs.option.ClusterFreshHint != nil && fs.option.ClusterFreshHint() {
+				if freshSince.IsZero() {
+					freshSince = time.Now()
+					glog.V(0).Infof("%s embedded master minted a fresh topology id; shortening the empty-scan confirm", fs.option.Host)
+				}
+				if freshBy := freshSince.Add(freshMembershipConfirmTimeout); freshBy.Before(exitBy) {
+					exitBy = freshBy
+				}
+			}
+			if !time.Now().Before(exitBy) {
 				return nil
 			}
 			time.Sleep(time.Second)
 			continue
 		}
+		peerSeen = true
 		bootstrapFrom := time.Now().Add(-filer.LogFlushInterval)
 		ctx, cancel = context.WithDeadline(context.Background(), deadline)
 		err := fs.filer.MaybeBootstrapFromOnePeer(ctx, fs.option.Host, remotes, bootstrapFrom)

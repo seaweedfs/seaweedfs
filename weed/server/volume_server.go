@@ -42,6 +42,10 @@ type VolumeServer struct {
 	whiteList         []string
 	currentMaster     pb.ServerAddress
 	currentMasterLock sync.RWMutex
+	// confirmedLeaderOnce records that a heartbeat stream was ever answered
+	// by a leader; before first registration the retry loop reconnects
+	// promptly instead of pacing a full pulse.
+	confirmedLeaderOnce atomic.Bool
 	pulsePeriod       time.Duration
 	dataCenter        string
 	rack              string

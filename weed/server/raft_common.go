@@ -65,6 +65,11 @@ func EnsureTopologyId(topo *topology.Topology, checkLeaderFn func() bool, persis
 		} else {
 			glog.V(0).Infof("TopologyId generated: %s", topologyId)
 		}
+		// A recovered bound means cluster state survived without a
+		// TopologyId, so the mint is not proof of an empty cluster.
+		if topo.GetMaxVolumeId() == 0 {
+			topo.MarkFreshMint()
+		}
 		topo.DeferAllocation(topo.AllocationDeferralDuration())
 		break
 	}
