@@ -173,7 +173,7 @@ func (s3a *S3ApiServer) deleteVersionedObject(r *http.Request, bucket, object, v
 		if owner := s3a.routableWriteOwner(bucket, object); owner != "" {
 			worm, lockErr := s3a.isObjectLockEnabled(bucket)
 			if lockErr == nil {
-				code, settled := s3a.routedDeleteNullVersion(owner, bucket, object, worm, worm && governanceBypassAllowed)
+				code, settled := s3a.routedDeleteNullVersion(owner, bucket, object, worm, worm && governanceBypassAllowed, false)
 				if settled {
 					if code != s3err.ErrNone {
 						return result, code
@@ -335,9 +335,9 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 					}
 				}
 				if versionId == "null" {
-					deleteCode, deleteHandled = s3a.routedDeleteNullVersion(owner, bucket, object, worm, bypass)
+					deleteCode, deleteHandled = s3a.routedDeleteNullVersion(owner, bucket, object, worm, bypass, false)
 				} else {
-					deleteCode, deleteHandled = s3a.routedDeleteSpecificVersion(owner, bucket, object, versionId, worm, bypass), true
+					deleteCode, deleteHandled = s3a.routedDeleteSpecificVersion(owner, bucket, object, versionId, worm, bypass, false), true
 				}
 			}
 		}

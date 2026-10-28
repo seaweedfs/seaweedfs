@@ -88,7 +88,7 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 			if owner := s3a.routableWriteOwner(req.Bucket, req.ObjectPath); owner != "" {
 				worm, lockErr := s3a.isObjectLockEnabled(req.Bucket)
 				if lockErr == nil {
-					code, settled := s3a.routedDeleteNullVersion(owner, req.Bucket, req.ObjectPath, worm, false)
+					code, settled := s3a.routedDeleteNullVersion(owner, req.Bucket, req.ObjectPath, worm, false, metadataOnly)
 					if settled {
 						if code == s3err.ErrAccessDenied {
 							return retryLater("ACCESS_DENIED: deleteNullVersion: object lock"), nil
@@ -169,7 +169,7 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 			if lockErr == nil {
 				// The "null" version is the object entry, not a .versions file.
 				if req.VersionId == "null" {
-					code, settled := s3a.routedDeleteNullVersion(owner, req.Bucket, req.ObjectPath, worm, false)
+					code, settled := s3a.routedDeleteNullVersion(owner, req.Bucket, req.ObjectPath, worm, false, metadataOnly)
 					if settled {
 						if code == s3err.ErrAccessDenied {
 							return retryLater("ACCESS_DENIED: deleteSpecificVersion: object lock"), nil
@@ -180,7 +180,7 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 						versionDeleted = true
 					}
 				} else {
-					switch code := s3a.routedDeleteSpecificVersion(owner, req.Bucket, req.ObjectPath, req.VersionId, worm, false); code {
+					switch code := s3a.routedDeleteSpecificVersion(owner, req.Bucket, req.ObjectPath, req.VersionId, worm, false, metadataOnly); code {
 					case s3err.ErrNone:
 						versionDeleted = true
 					case s3err.ErrAccessDenied:

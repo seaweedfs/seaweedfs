@@ -185,7 +185,7 @@ func wormDeleteCondition(worm, bypass bool) *filer_pb.WriteCondition {
 // an older version than a re-derive would pick, or at nothing, as when a
 // suspended bucket's null write cleared it while the null object stays
 // current.
-func (s3a *S3ApiServer) routedDeleteSpecificVersion(owner pb.ServerAddress, bucket, object, versionId string, worm, bypass bool) s3err.ErrorCode {
+func (s3a *S3ApiServer) routedDeleteSpecificVersion(owner pb.ServerAddress, bucket, object, versionId string, worm, bypass, metadataOnly bool) s3err.ErrorCode {
 	if !isValidVersionID(versionId) {
 		return s3err.ErrInvalidRequest
 	}
@@ -201,7 +201,7 @@ func (s3a *S3ApiServer) routedDeleteSpecificVersion(owner pb.ServerAddress, buck
 		ConditionKey: versionsPath + "/" + versionFileName,
 		Condition:    cond,
 		Mutations: []*filer_pb.ObjectMutation{
-			{Type: filer_pb.ObjectMutation_DELETE, Directory: versionsPath, Name: versionFileName, IsDeleteData: true, RemoveEmptyParent: true},
+			{Type: filer_pb.ObjectMutation_DELETE, Directory: versionsPath, Name: versionFileName, IsDeleteData: !metadataOnly, RemoveEmptyParent: true},
 		},
 	}
 	resp, err := s3a.objectTxnOnFiler(owner, req)
@@ -275,7 +275,7 @@ func (s3a *S3ApiServer) repointLatestBeforeVersionDelete(owner pb.ServerAddress,
 // (condition defaults to lock_key). The second return reports whether the delete
 // was settled here: the raw delete cannot remove an entry other keys are nested
 // under, which the lock path handles by stripping the object off it instead.
-func (s3a *S3ApiServer) routedDeleteNullVersion(owner pb.ServerAddress, bucket, object string, worm, bypass bool) (s3err.ErrorCode, bool) {
+func (s3a *S3ApiServer) routedDeleteNullVersion(owner pb.ServerAddress, bucket, object string, worm, bypass, metadataOnly bool) (s3err.ErrorCode, bool) {
 	fullpath := util.NewFullPath(s3a.bucketDir(bucket), object)
 	dir, name := fullpath.DirAndName()
 	resp, err := s3a.objectTxnOnFiler(owner, &filer_pb.ObjectTransactionRequest{
@@ -283,7 +283,7 @@ func (s3a *S3ApiServer) routedDeleteNullVersion(owner pb.ServerAddress, bucket, 
 		RouteKey:  s3a.objectRouteKey(bucket, object),
 		Condition: wormDeleteCondition(worm, bypass),
 		Mutations: []*filer_pb.ObjectMutation{
-			{Type: filer_pb.ObjectMutation_DELETE, Directory: dir, Name: name, IsDeleteData: true},
+			{Type: filer_pb.ObjectMutation_DELETE, Directory: dir, Name: name, IsDeleteData: !metadataOnly},
 		},
 	})
 	switch {

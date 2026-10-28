@@ -311,7 +311,7 @@ func TestRoutedDeleteSpecificVersionUsesWormCondition(t *testing.T) {
 		},
 	}
 
-	if code := s3a.routedDeleteSpecificVersion(owner, "b", "obj", versionId, true, false); code != s3err.ErrAccessDenied {
+	if code := s3a.routedDeleteSpecificVersion(owner, "b", "obj", versionId, true, false, false); code != s3err.ErrAccessDenied {
 		t.Fatalf("locked version delete returned %v, want %v", code, s3err.ErrAccessDenied)
 	}
 
@@ -383,7 +383,7 @@ func TestRoutedDeleteSpecificVersionRepointsOnlyWhenLatest(t *testing.T) {
 	t.Run("pointer names the deleted version", func(t *testing.T) {
 		filer := &fakeTxnFiler{lookupEntry: pointer(versionFile)}
 		owner := startFakeFiler(t, filer)
-		if code := newS3a().routedDeleteSpecificVersion(owner, "b", "obj", versionId, false, false); code != s3err.ErrNone {
+		if code := newS3a().routedDeleteSpecificVersion(owner, "b", "obj", versionId, false, false, false); code != s3err.ErrNone {
 			t.Fatalf("delete returned %v, want %v", code, s3err.ErrNone)
 		}
 		if len(filer.reqs) != 2 {
@@ -403,11 +403,22 @@ func TestRoutedDeleteSpecificVersionRepointsOnlyWhenLatest(t *testing.T) {
 	t.Run("pointer names another version", func(t *testing.T) {
 		filer := &fakeTxnFiler{lookupEntry: pointer("v_other")}
 		owner := startFakeFiler(t, filer)
-		if code := newS3a().routedDeleteSpecificVersion(owner, "b", "obj", versionId, false, false); code != s3err.ErrNone {
+		if code := newS3a().routedDeleteSpecificVersion(owner, "b", "obj", versionId, false, false, false); code != s3err.ErrNone {
 			t.Fatalf("delete returned %v, want %v", code, s3err.ErrNone)
 		}
 		if len(filer.reqs) != 1 || filer.reqs[0].Mutations[0].Type != filer_pb.ObjectMutation_DELETE {
 			t.Fatalf("transactions = %+v, want the delete only", filer.reqs)
+		}
+	})
+
+	t.Run("metadata-only delete keeps the data", func(t *testing.T) {
+		filer := &fakeTxnFiler{}
+		owner := startFakeFiler(t, filer)
+		if code := newS3a().routedDeleteSpecificVersion(owner, "b", "obj", versionId, false, false, true); code != s3err.ErrNone {
+			t.Fatalf("delete returned %v, want %v", code, s3err.ErrNone)
+		}
+		if filer.lastReq.Mutations[0].IsDeleteData {
+			t.Fatal("metadata-only delete set IsDeleteData")
 		}
 	})
 }
