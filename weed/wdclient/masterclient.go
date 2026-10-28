@@ -44,6 +44,17 @@ func isCanceledErr(err error) bool {
 	return false
 }
 
+func isDeadlineExceededErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	statusErr, ok := status.FromError(err)
+	return ok && statusErr.Code() == codes.DeadlineExceeded
+}
+
 // LookupVolumeIds queries the master for volume locations (fallback when cache misses).
 // Returns partial results with aggregated errors for volumes that failed.
 // Retries on codes.Unavailable (e.g. master warming up after restart) with backoff.
