@@ -1711,12 +1711,14 @@ func (t *Topology) DeferAllocation(d time.Duration) {
 	// Under release-on-report a full hold is pointless once inventory has
 	// landed: the veteran heartbeat that mattered has already been applied.
 	// Outside reporters stay admitted without a pinned single reporter, so
-	// the hold collapses to the confirm pulse rather than disappearing.
+	// the hold caps at one confirm pulse rather than disappearing.
 	if t.releaseAllocOnReport.Load() && t.inventoryApplied.Load() {
 		if pinned, _ := t.singleReporter.Load().(string); pinned != "" {
 			return
 		}
-		d = time.Duration(t.pulse) * time.Second
+		if pulse := time.Duration(t.pulse) * time.Second; d > pulse {
+			d = pulse
+		}
 	}
 	now := time.Now()
 	t.allocationNotBefore.Store(now.Add(d).UnixNano())
