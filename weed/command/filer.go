@@ -112,6 +112,11 @@ type FilerOptions struct {
 	// weed mini's embedded filer announces on the startup scan instead of
 	// holding registration for the confirm window.
 	skipEmptyMembershipConfirm bool
+	// clusterFreshHint, when non-nil, reports that the embedded master minted
+	// a fresh TopologyId this boot — proof the peer scan's empty result is
+	// final rather than a settling master, so the announce gate can end the
+	// empty-membership confirm early. Used by weed server; nil elsewhere.
+	clusterFreshHint func() bool
 }
 
 func init() {
@@ -417,6 +422,7 @@ func (fo *FilerOptions) startFiler() {
 		Masters:                    fo.masters,
 		AnnounceCh:                 announce,
 		SkipEmptyMembershipConfirm: fo.skipEmptyMembershipConfirm,
+		ClusterFreshHint:           fo.clusterFreshHint,
 		FilerGroup:                 *fo.filerGroup,
 		Collection:                 *fo.collection,
 		DefaultReplication:         *fo.defaultReplicaPlacement,

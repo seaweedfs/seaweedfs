@@ -21,6 +21,7 @@ import (
 	hashicorpRaft "github.com/hashicorp/raft"
 
 	"slices"
+	"sync/atomic"
 
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/raft/protobuf"
@@ -203,7 +204,7 @@ func runMaster(cmd *Command, args []string) bool {
 	return true
 }
 
-func startMaster(masterOption MasterOptions, masterWhiteList []string) {
+func startMaster(masterOption MasterOptions, masterWhiteList []string, masterOut ...*atomic.Pointer[weed_server.MasterServer]) {
 
 	backend.LoadConfiguration(util.GetViper())
 
@@ -231,6 +232,12 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 
 	r := mux.NewRouter()
 	ms := weed_server.NewMasterServer(r, masterOption.toMasterOption(masterWhiteList), masterPeers)
+	// Embedded setups (weed server) hand the instance back so sibling
+	// components can read cluster-state signals such as a fresh TopologyId
+	// mint.
+	if len(masterOut) > 0 && masterOut[0] != nil {
+		masterOut[0].Store(ms)
+	}
 	listeningAddress := util.JoinHostPort(*masterOption.ipBind, *masterOption.port)
 	glog.V(0).Infof("Start Seaweed Master %s at %s", version.Version(), listeningAddress)
 	masterListener, masterLocalListener, e := util.NewIpAndLocalListeners(*masterOption.ipBind, *masterOption.port, 0, listenOnLocalhost)

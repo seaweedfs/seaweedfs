@@ -101,6 +101,10 @@ type Topology struct {
 	allocationEvidenceSince atomic.Int64
 	allocationDeferral      atomic.Int64
 	topologyInitPending     atomic.Bool
+	// freshMinted marks that this boot minted the TopologyId instead of
+	// recovering one: the master's persisted state was empty, so no cluster
+	// member registered under a prior control-plane instance.
+	freshMinted atomic.Bool
 
 	// releaseAllocOnReport lifts a post-mint allocation hold as soon as a full
 	// volume-server inventory has been applied, for setups with a known
@@ -1604,6 +1608,18 @@ func (t *Topology) applyGrowthFreeze(frozen bool) {
 	} else {
 		t.SetGrowthFrozen(frozen)
 	}
+}
+
+// MarkFreshMint records that this boot minted the TopologyId rather than
+// recovering a persisted one — the strongest in-process proof that the
+// control plane holds no prior cluster state.
+func (t *Topology) MarkFreshMint() {
+	t.freshMinted.Store(true)
+}
+
+// FreshMinted reports whether the current TopologyId was minted this boot.
+func (t *Topology) FreshMinted() bool {
+	return t.freshMinted.Load()
 }
 
 // SetTopologyInitPending gates allocation while a topology id is being

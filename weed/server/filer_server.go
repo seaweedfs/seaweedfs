@@ -102,6 +102,11 @@ type FilerOption struct {
 	// the filer's master listing. A late external filer still joins and
 	// replays through the normal path.
 	SkipEmptyMembershipConfirm bool
+	// ClusterFreshHint, when non-nil, reports that the co-located master
+	// minted its TopologyId this boot — its persisted state was empty, so an
+	// empty peer scan cannot be a settling master and the confirm window may
+	// end early. Restarted masters recovering a prior id keep the window.
+	ClusterFreshHint func() bool
 	// AllowUntrustedRemoteEndpoints lets a read of a remote-only entry dial a
 	// mounted endpoint that resolves to a loopback / private / metadata host.
 	AllowUntrustedRemoteEndpoints bool
@@ -574,6 +579,10 @@ func (fs *FilerServer) awaitPeerBootstrap(deadline time.Time) (peers []pb.Server
 		}
 		if len(remotes) == 0 {
 			if !time.Now().Before(confirmBy) {
+				return nil
+			}
+			if fs.option.ClusterFreshHint != nil && fs.option.ClusterFreshHint() {
+				glog.V(0).Infof("%s embedded master minted a fresh topology id; empty peer scan is final, announcing now", fs.option.Host)
 				return nil
 			}
 			time.Sleep(time.Second)
