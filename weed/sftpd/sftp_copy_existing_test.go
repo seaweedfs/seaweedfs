@@ -227,3 +227,27 @@ func TestRequireParentDir(t *testing.T) {
 		t.Fatalf("file as parent: got %v, want os.ErrNotExist", err)
 	}
 }
+
+// rm takes files and rmdir directories; a missing path is an error for both.
+func TestRequireEntry(t *testing.T) {
+	fs := newCopyTestServer(t, "", map[string]*filer_pb.Entry{
+		"/home/d":       {Name: "d", IsDirectory: true},
+		"/home/d/a.txt": {Name: "a.txt"},
+	})
+
+	if err := fs.requireEntry("/home/d/a.txt", false); err != nil {
+		t.Fatalf("rm of a file: %v", err)
+	}
+	if err := fs.requireEntry("/home/d", true); err != nil {
+		t.Fatalf("rmdir of a directory: %v", err)
+	}
+	if err := fs.requireEntry("/home/d/missing", false); err != os.ErrNotExist {
+		t.Fatalf("rm of a missing path: got %v, want os.ErrNotExist", err)
+	}
+	if err := fs.requireEntry("/home/d/a.txt", true); err != os.ErrNotExist {
+		t.Fatalf("rmdir of a file: got %v, want os.ErrNotExist", err)
+	}
+	if err := fs.requireEntry("/home/d", false); err == nil || err == os.ErrNotExist {
+		t.Fatalf("rm of a directory: got %v, want a failure", err)
+	}
+}

@@ -256,6 +256,9 @@ func writeZeros(w io.Writer, size int64) error {
 }
 
 func (fs *SftpServer) removeEntry(absPath string) error {
+	if err := fs.requireEntry(absPath, false); err != nil {
+		return err
+	}
 	return fs.deleteEntry(absPath, false)
 }
 
@@ -523,7 +526,7 @@ func (fs *SftpServer) makeDir(absPath string) error {
 		return err
 	}
 	// default mode and ownership
-	err := filer_pb.Mkdir(context.Background(), fs, string(dir), name, func(entry *filer_pb.Entry) {
+	err := filer_pb.MkdirExclusive(context.Background(), fs, string(dir), name, func(entry *filer_pb.Entry) {
 		mode := uint32(0755 | os.ModeDir)
 		// Defensive check: all paths should be under HomeDir after toAbsolutePath translation
 		if absPath == fs.user.HomeDir || strings.HasPrefix(absPath, fs.user.HomeDir+"/") {
@@ -540,6 +543,9 @@ func (fs *SftpServer) makeDir(absPath string) error {
 		}
 		entry.Extended["creator"] = []byte(fs.user.Username)
 	})
+	if errors.Is(err, filer_pb.ErrEntryAlreadyExists) {
+		return os.ErrExist
+	}
 	return err
 }
 
@@ -562,7 +568,27 @@ func (fs *SftpServer) requireParentDir(absPath string) error {
 
 // removeDir deletes a directory.
 func (fs *SftpServer) removeDir(absPath string) error {
+	if err := fs.requireEntry(absPath, true); err != nil {
+		return err
+	}
 	return fs.deleteEntry(absPath, false)
+}
+
+// requireEntry fails unless absPath exists and is a directory exactly when
+// isDir is set (rm takes files, rmdir directories), with the errors OpenSSH's
+// sftp-server gives: no such file for a missing path or rmdir of a file.
+func (fs *SftpServer) requireEntry(absPath string, isDir bool) error {
+	entry, err := fs.getEntry(absPath)
+	if err != nil {
+		return err
+	}
+	if isDir && !entry.IsDirectory {
+		return os.ErrNotExist
+	}
+	if !isDir && entry.IsDirectory {
+		return fmt.Errorf("%s is a directory", absPath)
+	}
+	return nil
 }
 
 func (fs *SftpServer) putFile(filepath string, reader io.Reader, user *user.User) error {
