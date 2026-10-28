@@ -24,7 +24,8 @@ templ PluginSchedulerStatus() {
             const since = new Date(waiter.since);
             const now = new Date((data.scheduler || {}).now || Date.now());
             const seconds = Math.max(0, Math.floor((now - since) / 1000));
-            line.textContent = waiter.reason + ' · waiting ' + Math.floor(seconds / 60) + 'm ' + (seconds % 60) + 's';
+            line.textContent = waiter.reason + ' · since ' + since.toLocaleString() +
+                ' (local time) · waiting ' + Math.floor(seconds / 60) + 'm ' + (seconds % 60) + 's';
             alert.appendChild(line);
         });
         const note = document.createElement('div');
