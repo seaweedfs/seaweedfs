@@ -305,10 +305,11 @@ func runServer(cmd *Command, args []string) bool {
 		if len(peerList) == 1 && *isStartingVolumeServer {
 			// A single-master weed server has one guaranteed reporter: its
 			// embedded volume server, whose first heartbeat already carries the
-			// full inventory. Its clean report ends the post-mint allocation
-			// hold instead of running the whole warmup window on every fresh
-			// start. Other volume servers stay admitted and still count as
-			// prior-state evidence, so a late veteran keeps the window.
+			// full inventory. Its clean report collapses the post-mint
+			// allocation hold to a confirm pulse instead of running the whole
+			// warmup window on every fresh start. Other volume servers stay
+			// admitted, so a late veteran still lands its prior-state evidence
+			// inside that pulse.
 			masterOptions.expectedReporterAddr = util.JoinHostPort(*serverIp, *serverOptions.v.port)
 		}
 		if len(peerList) == 1 && *isStartingFiler {

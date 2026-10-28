@@ -106,9 +106,11 @@ type Topology struct {
 	// volume-server inventory has been applied, for setups with a known
 	// reporter (weed mini, single-master weed server) whose embedded volume
 	// server reports the full inventory in its first heartbeat. singleReporter
-	// additionally refuses every other reporter; expectedReporter only gates
-	// which report may lift the hold. inventoryApplied records that the
-	// expected report has been synced into this topology.
+	// additionally refuses every other reporter, so its report drops the hold
+	// outright; expectedReporter only gates which report may lift the hold,
+	// and the lift leaves a confirm pulse for reporters still admitted.
+	// inventoryApplied records that the expected report has been synced into
+	// this topology.
 	releaseAllocOnReport atomic.Bool
 	inventoryApplied     atomic.Bool
 	singleReporter       atomic.Value // string
@@ -1643,15 +1645,16 @@ func (t *Topology) ReleaseAllocationOnFirstReport(onlyReporter ...string) {
 // ReleaseAllocationOnReport lifts the post-mint allocation hold once the named
 // reporter's first clean full inventory has been applied. Unlike
 // ReleaseAllocationOnFirstReport it does not refuse other reporters: a
-// single-master weed server still admits outside volume servers, but its
-// embedded server reports quickly, and any report carrying prior cluster state
-// keeps the hold through the regular evidence and freeze checks.
+// single-master weed server still admits outside volume servers, so the
+// release collapses the hold to a confirm pulse rather than clearing it —
+// outside reporters keep a heartbeat interval to land prior-state evidence
+// or a freeze before new ids issue.
 func (t *Topology) ReleaseAllocationOnReport(expected string) {
 	t.expectedReporter.Store(expected)
 	t.releaseAllocOnReport.Store(true)
 }
 
-// AdmitVolumeReporter enforces the single-reporter restriction the early
+// AdmitVolumeReporter enforces the single-reporter restriction the outright
 // release relies on: a late-arriving foreign server would carry cluster state
 // the dropped hold was meant to wait for.
 func (t *Topology) AdmitVolumeReporter(addr string) bool {
@@ -1673,7 +1676,31 @@ func (t *Topology) NoteInventoryApplied(reporter string) {
 	}
 	t.inventoryApplied.Store(true)
 	if t.releaseAllocOnReport.Load() {
+		t.releaseAllocationHold()
+	}
+}
+
+// releaseAllocationHold ends a post-mint allocation hold on the expected
+// reporter's clean inventory. A pinned single reporter is the only reporter
+// admitted, so its inventory settles prior cluster state outright and the
+// hold can drop. With outside reporters still admitted the release collapses
+// the hold to one heartbeat interval instead: the expected report cannot
+// prove no other reporter carries prior cluster state, so they keep a pulse
+// to land their evidence or a freeze before new ids issue.
+func (t *Topology) releaseAllocationHold() {
+	if pinned, _ := t.singleReporter.Load().(string); pinned != "" {
 		t.allocationNotBefore.Store(0)
+		return
+	}
+	confirm := time.Now().Add(time.Duration(t.pulse) * time.Second).UnixNano()
+	for {
+		cur := t.allocationNotBefore.Load()
+		if cur <= confirm {
+			return
+		}
+		if t.allocationNotBefore.CompareAndSwap(cur, confirm) {
+			return
+		}
 	}
 }
 
@@ -1681,10 +1708,15 @@ func (t *Topology) NoteInventoryApplied(reporter string) {
 // mints a fresh topology id: on a rebuilt master that window gives veteran
 // servers a pulse to raise the bound or trip the freeze.
 func (t *Topology) DeferAllocation(d time.Duration) {
-	// Under release-on-report a hold is pointless once inventory has landed:
-	// the veteran heartbeat that mattered has already been applied.
+	// Under release-on-report a full hold is pointless once inventory has
+	// landed: the veteran heartbeat that mattered has already been applied.
+	// Outside reporters stay admitted without a pinned single reporter, so
+	// the hold collapses to the confirm pulse rather than disappearing.
 	if t.releaseAllocOnReport.Load() && t.inventoryApplied.Load() {
-		return
+		if pinned, _ := t.singleReporter.Load().(string); pinned != "" {
+			return
+		}
+		d = time.Duration(t.pulse) * time.Second
 	}
 	now := time.Now()
 	t.allocationNotBefore.Store(now.Add(d).UnixNano())
@@ -1692,7 +1724,7 @@ func (t *Topology) DeferAllocation(d time.Duration) {
 	// Close the race with a report applied between the check above and the
 	// store, which would otherwise leave the full window armed.
 	if t.releaseAllocOnReport.Load() && t.inventoryApplied.Load() {
-		t.allocationNotBefore.Store(0)
+		t.releaseAllocationHold()
 	}
 }
 

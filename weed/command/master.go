@@ -96,8 +96,9 @@ type MasterOptions struct {
 	releaseAllocOnFirstReport bool
 	singleReporterAddr        string
 	// expectedReporterAddr names the reporter whose first clean inventory
-	// lifts the post-mint allocation hold without refusing others: a
-	// single-master weed server points it at its embedded volume server.
+	// collapses the post-mint allocation hold to a confirm pulse without
+	// refusing others: a single-master weed server points it at its
+	// embedded volume server.
 	expectedReporterAddr string
 }
 
