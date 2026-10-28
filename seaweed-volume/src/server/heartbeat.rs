@@ -58,6 +58,10 @@ pub async fn run_heartbeat_with_state(
     let pulse = Duration::from_secs(config.pulse_seconds.max(1));
     let mut new_leader: Option<String> = None;
     let mut duplicate_retry_count: u32 = 0;
+    // Whether a heartbeat stream was ever answered by a leader; before first
+    // registration the retry loop reconnects promptly instead of pacing a
+    // full pulse. Mirrors Go's `confirmedLeaderOnce`.
+    let mut confirmed_leader_once = false;
 
     loop {
         for master_addr in &config.master_addresses {
@@ -100,6 +104,7 @@ pub async fn run_heartbeat_with_state(
                 &target_addr,
                 pulse,
                 &mut shutdown_rx,
+                &mut confirmed_leader_once,
             )
             .await
             {
@@ -159,7 +164,18 @@ pub async fn run_heartbeat_with_state(
                     // adding to it.
                     let retry_at = tokio::time::Instant::now() + pulse;
                     refresh_leader_from_peers(&config, &state, pulse).await;
-                    tokio::time::sleep_until(retry_at).await;
+                    let mut wait = retry_at - tokio::time::Instant::now();
+                    if wait > Duration::from_secs(1)
+                        && (!state.current_master().await.is_empty() || !confirmed_leader_once)
+                    {
+                        // A leader just named by the refresh usually accepts
+                        // the next stream right away, and an unregistered
+                        // server has nothing else to do, so reconnect
+                        // promptly. Once the server was registered and no
+                        // leader is known, keep the pulse backoff.
+                        wait = Duration::from_secs(1);
+                    }
+                    tokio::time::sleep(wait).await;
                 }
             }
 
@@ -447,6 +463,7 @@ async fn do_heartbeat(
     current_master: &str,
     pulse: Duration,
     shutdown_rx: &mut broadcast::Receiver<()>,
+    confirmed_leader_once: &mut bool,
 ) -> Result<Option<String>, Box<dyn std::error::Error>> {
     let channel = connect_channel(
         grpc_addr,
@@ -516,6 +533,7 @@ async fn do_heartbeat(
                             // naming a leader, so this peer is the one lookups
                             // go to.
                             confirmed_leader = true;
+                            *confirmed_leader_once = true;
                             publish_current_master(state, current_master).await;
                         }
                         if !hb_resp.duplicated_uuids.is_empty() {
