@@ -74,7 +74,13 @@ async fn main() -> Result<()> {
     let service = VectorServer::new(client, fallback);
     tracing::info!(namespace = %args.namespace, listen = %args.listen, "weed-vector");
     Server::builder()
-        .add_service(VectorServiceServer::new(service))
+        // Match the gateway's 1 GiB cap — put batches over the tonic 4 MiB
+        // default otherwise get rejected before they reach the handler.
+        .add_service(
+            VectorServiceServer::new(service)
+                .max_decoding_message_size(1 << 30)
+                .max_encoding_message_size(1 << 30),
+        )
         .serve(args.listen.parse()?)
         .await?;
     Ok(())

@@ -9,7 +9,7 @@ description = "Vector query engine over SeaweedFS Lance table buckets"
 name = "weed_vector_core"
 
 [[bin]]
-name = "weed-vector"
+name = "weed-vector-cli"
 path = "src/main.rs"
 
 [dependencies]

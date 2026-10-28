@@ -738,6 +738,18 @@ type vectorDiscovery struct {
 	nextResolve    time.Time
 }
 
+// reset drops the cached worker so the next call rediscovers — invoked on
+// transport errors so a replaced worker is found without a restart.
+func (d *vectorDiscovery) reset() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.conn != nil {
+		d.conn.Close()
+	}
+	d.worker, d.conn, d.client = "", nil, nil
+	d.nextResolve = time.Time{}
+}
+
 func (d *vectorDiscovery) resolve() (vector_pb.VectorServiceClient, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -775,54 +787,96 @@ func (d *vectorDiscovery) cli() (vector_pb.VectorServiceClient, error) {
 	return d.resolve()
 }
 
-func (d *vectorDiscovery) CreateIndex(ctx context.Context, in *vector_pb.CreateIndexRequest, opts ...grpc.CallOption) (*vector_pb.CreateIndexResponse, error) {
-	c, err := d.cli()
-	if err != nil {
-		return nil, err
+func (d *vectorDiscovery) CreateIndex(ctx context.Context, in *vector_pb.CreateIndexRequest, opts ...grpc.CallOption) (resp *vector_pb.CreateIndexResponse, err error) {
+	for attempt := 0; attempt < 2; attempt++ {
+		var c vector_pb.VectorServiceClient
+		if c, err = d.cli(); err != nil {
+			return nil, err
+		}
+		if resp, err = c.CreateIndex(ctx, in, opts...); err == nil {
+			return resp, nil
+		}
+		d.reset()
 	}
-	return c.CreateIndex(ctx, in, opts...)
+	return nil, err
 }
-func (d *vectorDiscovery) DropIndex(ctx context.Context, in *vector_pb.DropIndexRequest, opts ...grpc.CallOption) (*vector_pb.DropIndexResponse, error) {
-	c, err := d.cli()
-	if err != nil {
-		return nil, err
+func (d *vectorDiscovery) DropIndex(ctx context.Context, in *vector_pb.DropIndexRequest, opts ...grpc.CallOption) (resp *vector_pb.DropIndexResponse, err error) {
+	for attempt := 0; attempt < 2; attempt++ {
+		var c vector_pb.VectorServiceClient
+		if c, err = d.cli(); err != nil {
+			return nil, err
+		}
+		if resp, err = c.DropIndex(ctx, in, opts...); err == nil {
+			return resp, nil
+		}
+		d.reset()
 	}
-	return c.DropIndex(ctx, in, opts...)
+	return nil, err
 }
-func (d *vectorDiscovery) PutVectors(ctx context.Context, in *vector_pb.PutVectorsRequest, opts ...grpc.CallOption) (*vector_pb.PutVectorsResponse, error) {
-	c, err := d.cli()
-	if err != nil {
-		return nil, err
+func (d *vectorDiscovery) PutVectors(ctx context.Context, in *vector_pb.PutVectorsRequest, opts ...grpc.CallOption) (resp *vector_pb.PutVectorsResponse, err error) {
+	for attempt := 0; attempt < 2; attempt++ {
+		var c vector_pb.VectorServiceClient
+		if c, err = d.cli(); err != nil {
+			return nil, err
+		}
+		if resp, err = c.PutVectors(ctx, in, opts...); err == nil {
+			return resp, nil
+		}
+		d.reset()
 	}
-	return c.PutVectors(ctx, in, opts...)
+	return nil, err
 }
-func (d *vectorDiscovery) GetVectors(ctx context.Context, in *vector_pb.GetVectorsRequest, opts ...grpc.CallOption) (*vector_pb.GetVectorsResponse, error) {
-	c, err := d.cli()
-	if err != nil {
-		return nil, err
+func (d *vectorDiscovery) GetVectors(ctx context.Context, in *vector_pb.GetVectorsRequest, opts ...grpc.CallOption) (resp *vector_pb.GetVectorsResponse, err error) {
+	for attempt := 0; attempt < 2; attempt++ {
+		var c vector_pb.VectorServiceClient
+		if c, err = d.cli(); err != nil {
+			return nil, err
+		}
+		if resp, err = c.GetVectors(ctx, in, opts...); err == nil {
+			return resp, nil
+		}
+		d.reset()
 	}
-	return c.GetVectors(ctx, in, opts...)
+	return nil, err
 }
-func (d *vectorDiscovery) DeleteVectors(ctx context.Context, in *vector_pb.DeleteVectorsRequest, opts ...grpc.CallOption) (*vector_pb.DeleteVectorsResponse, error) {
-	c, err := d.cli()
-	if err != nil {
-		return nil, err
+func (d *vectorDiscovery) DeleteVectors(ctx context.Context, in *vector_pb.DeleteVectorsRequest, opts ...grpc.CallOption) (resp *vector_pb.DeleteVectorsResponse, err error) {
+	for attempt := 0; attempt < 2; attempt++ {
+		var c vector_pb.VectorServiceClient
+		if c, err = d.cli(); err != nil {
+			return nil, err
+		}
+		if resp, err = c.DeleteVectors(ctx, in, opts...); err == nil {
+			return resp, nil
+		}
+		d.reset()
 	}
-	return c.DeleteVectors(ctx, in, opts...)
+	return nil, err
 }
-func (d *vectorDiscovery) ListVectors(ctx context.Context, in *vector_pb.ListVectorsRequest, opts ...grpc.CallOption) (*vector_pb.ListVectorsResponse, error) {
-	c, err := d.cli()
-	if err != nil {
-		return nil, err
+func (d *vectorDiscovery) ListVectors(ctx context.Context, in *vector_pb.ListVectorsRequest, opts ...grpc.CallOption) (resp *vector_pb.ListVectorsResponse, err error) {
+	for attempt := 0; attempt < 2; attempt++ {
+		var c vector_pb.VectorServiceClient
+		if c, err = d.cli(); err != nil {
+			return nil, err
+		}
+		if resp, err = c.ListVectors(ctx, in, opts...); err == nil {
+			return resp, nil
+		}
+		d.reset()
 	}
-	return c.ListVectors(ctx, in, opts...)
+	return nil, err
 }
-func (d *vectorDiscovery) QueryVectors(ctx context.Context, in *vector_pb.QueryVectorsRequest, opts ...grpc.CallOption) (*vector_pb.QueryVectorsResponse, error) {
-	c, err := d.cli()
-	if err != nil {
-		return nil, err
+func (d *vectorDiscovery) QueryVectors(ctx context.Context, in *vector_pb.QueryVectorsRequest, opts ...grpc.CallOption) (resp *vector_pb.QueryVectorsResponse, err error) {
+	for attempt := 0; attempt < 2; attempt++ {
+		var c vector_pb.VectorServiceClient
+		if c, err = d.cli(); err != nil {
+			return nil, err
+		}
+		if resp, err = c.QueryVectors(ctx, in, opts...); err == nil {
+			return resp, nil
+		}
+		d.reset()
 	}
-	return c.QueryVectors(ctx, in, opts...)
+	return nil, err
 }
 
 // isVectorsRequest routes by the SigV4 credential scope — the s3vectors
