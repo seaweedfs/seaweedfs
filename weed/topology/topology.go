@@ -1505,15 +1505,22 @@ func (t *Topology) CheckReportedTopologyId(reported string) {
 		return
 	}
 	t.reportedTopologyIdsLock.Lock()
-	defer t.reportedTopologyIdsLock.Unlock()
-	t.checkReportedTopologyIdLocked(reported)
+	freeze := t.checkReportedTopologyIdLocked(reported)
+	t.reportedTopologyIdsLock.Unlock()
+	if freeze {
+		// The decision landed under the lock; the raft wait must not, or a
+		// slow apply would stall every later report — including one that
+		// needs to trigger the next freeze.
+		t.applyGrowthFreeze(true)
+	}
 }
 
 // checkReportedTopologyIdLocked runs the mismatch check inside
 // reportedTopologyIdsLock, the same critical section the init gate drains
 // under: a report received before the gate opens is either stashed or frozen
-// before the gate can release.
-func (t *Topology) checkReportedTopologyIdLocked(reported string) {
+// before the gate can release. It returns whether the freeze must be
+// replicated, which the caller does after releasing the lock.
+func (t *Topology) checkReportedTopologyIdLocked(reported string) (freeze bool) {
 	own := t.GetTopologyId()
 	if own == "" {
 		// The local topology id is still being minted. Keep the report so a
@@ -1523,17 +1530,18 @@ func (t *Topology) checkReportedTopologyIdLocked(reported string) {
 			t.pendingReportedTopologyIds = make(map[string]struct{})
 		}
 		t.pendingReportedTopologyIds[reported] = struct{}{}
-		return
+		return false
 	}
 	if reported == own {
-		return
+		return false
 	}
 	t.growthFrozenAt.Store(time.Now().UnixNano())
 	if t.growthFrozen.CompareAndSwap(false, true) {
 		stats.MasterVolumeGrowthFrozen.Set(1)
 		glog.Errorf("volume growth frozen: a volume server reports topology id %s but this cluster is %s; the master state was rebuilt. Verify the cluster inventory, then run: volume.growth.resume", reported, own)
-		t.applyGrowthFreeze(true)
+		return true
 	}
+	return false
 }
 
 func (t *Topology) IsGrowthFrozen() bool {
@@ -1564,13 +1572,12 @@ func (t *Topology) replicateGrowthUnfreeze() {
 			time.Sleep(time.Duration(attempt) * time.Second)
 		}
 		t.reportedTopologyIdsLock.Lock()
-		if t.growthFrozen.Load() {
-			t.reportedTopologyIdsLock.Unlock()
+		frozen := t.growthFrozen.Load()
+		t.reportedTopologyIdsLock.Unlock()
+		if frozen {
 			return
 		}
-		err := t.applyGrowthFreeze(false)
-		t.reportedTopologyIdsLock.Unlock()
-		if err == nil {
+		if err := t.applyGrowthFreeze(false); err == nil {
 			return
 		}
 	}
@@ -1651,13 +1658,17 @@ func (t *Topology) SetTopologyInitPending(pending bool) {
 	// a mismatching report checked here, or still in flight under the same
 	// lock, lands its freeze before any allocation can observe the open gate.
 	t.reportedTopologyIdsLock.Lock()
-	defer t.reportedTopologyIdsLock.Unlock()
 	reported := t.pendingReportedTopologyIds
 	t.pendingReportedTopologyIds = nil
+	freeze := false
 	for id := range reported {
-		t.checkReportedTopologyIdLocked(id)
+		freeze = t.checkReportedTopologyIdLocked(id) || freeze
 	}
 	t.topologyInitPending.Store(false)
+	t.reportedTopologyIdsLock.Unlock()
+	if freeze {
+		t.applyGrowthFreeze(true)
+	}
 }
 
 // ReleaseAllocationOnFirstReport opts the topology into lifting the post-mint
