@@ -186,19 +186,9 @@ pub async fn run_heartbeat_with_state(
             }
         }
 
-        // If we have a leader redirect, skip the sleep and reconnect immediately
-        if new_leader.is_some() {
-            continue;
-        }
-
-        tokio::select! {
-            _ = tokio::time::sleep(pulse) => {}
-            _ = shutdown_rx.recv() => {
-                state.is_heartbeating.store(false, Ordering::Relaxed);
-                info!("Heartbeat shutting down");
-                return;
-            }
-        }
+        // Pacing lives in the per-attempt error path, as in Go: a failed try
+        // already slept its retry delay, so a round-losing pass over the seed
+        // list restarts right away.
     }
 }
 
