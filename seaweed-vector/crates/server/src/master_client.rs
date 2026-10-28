@@ -75,8 +75,12 @@ async fn stream_to(master: &str, client_addr: &str) -> Result<Option<String>> {
         tokio::select! {
             msg = stream.message() => match msg? {
                 Some(resp) => {
+                    // A volume_location appears on every response — only
+                    // follow it when the hint points at a different master,
+                    // otherwise the leader keeps identifying itself and we
+                    // would reconnect forever.
                     if let Some(loc) = resp.volume_location {
-                        if !loc.leader.is_empty() {
+                        if !loc.leader.is_empty() && loc.leader != master {
                             return Ok(Some(loc.leader));
                         }
                     }
