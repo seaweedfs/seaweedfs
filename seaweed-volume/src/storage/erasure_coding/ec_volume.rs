@@ -1472,6 +1472,16 @@ impl EcVolume {
         self.shard_locations.write().unwrap().stale = true;
     }
 
+    /// Drop one shard's cached locations and mark the map for a prompt
+    /// re-check — Go's `forgetShardId`. A read that disproved the entry (a
+    /// failed fetch, or a range the needle parse convicted as corrupt) must
+    /// not aim at it again until the map is re-learned.
+    pub(crate) fn forget_shard_location(&self, shard_id: ShardId) {
+        let mut cache = self.shard_locations.write().unwrap();
+        cache.locations.remove(&shard_id);
+        cache.stale = true;
+    }
+
     /// Put the stale mark to `decide`, and clear it only if `decide` says the
     /// master lookup is going ahead — both in one critical section, so the mark
     /// is consumed exactly once by the refresh that answers for it and a mark
