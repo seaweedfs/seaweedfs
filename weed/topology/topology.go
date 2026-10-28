@@ -113,6 +113,11 @@ type Topology struct {
 
 	reportedTopologyIdsLock    sync.Mutex
 	pendingReportedTopologyIds map[string]struct{}
+	// growthFreezeApplyLock serializes replicated freeze writes so the log
+	// order of concurrent mismatch reports cannot land an older freeze
+	// instant after a newer one. Unfreezes skip it: the state machine
+	// applies a lift only against the freeze generation it targeted.
+	growthFreezeApplyLock sync.Mutex
 
 	// quarantinedVolumeIds are (node, vid) pairs force-read-only because the
 	// vid collided across layouts. Kept separate from the reported flag so
@@ -1511,7 +1516,7 @@ func (t *Topology) CheckReportedTopologyId(reported string) {
 		// The decision landed under the lock; the raft wait must not, or a
 		// slow apply would stall every later report — including one that
 		// needs to trigger the next freeze.
-		t.applyGrowthFreeze(true)
+		t.applyGrowthFreeze()
 	}
 }
 
@@ -1549,11 +1554,12 @@ func (t *Topology) IsGrowthFrozen() bool {
 		return false
 	}
 	if wait := t.stateLossRecoveryWait.Load(); wait > 0 {
-		if time.Duration(time.Now().UnixNano()-t.growthFrozenAt.Load()) > time.Duration(wait) {
+		frozenAt := t.growthFrozenAt.Load()
+		if time.Duration(time.Now().UnixNano()-frozenAt) > time.Duration(wait) {
 			if t.growthFrozen.CompareAndSwap(true, false) {
 				stats.MasterVolumeGrowthFrozen.Set(0)
 				glog.V(0).Infof("volume growth unfrozen after %v", time.Duration(wait))
-				go t.replicateGrowthUnfreeze()
+				go t.replicateGrowthUnfreeze(frozenAt)
 			}
 			return false
 		}
@@ -1562,22 +1568,20 @@ func (t *Topology) IsGrowthFrozen() bool {
 }
 
 // replicateGrowthUnfreeze pushes the recovery-wait lift through raft like
-// ResumeVolumeGrowth, so a restart does not replay the freeze. A freeze that
-// landed after the lift owns the flag; skipping keeps its later command last
-// in the log. If the write never lands, the flag is re-armed so a later
-// IsGrowthFrozen retries the lift instead of diverging from the log.
-func (t *Topology) replicateGrowthUnfreeze() {
+// ResumeVolumeGrowth, so a restart does not replay the freeze. The command
+// carries the freeze instant it lifts: a newer freeze — even one committed
+// but not yet applied when this node won an election — makes the apply a
+// no-op instead of being erased. If the write never lands, the flag is
+// re-armed so a later IsGrowthFrozen retries the lift.
+func (t *Topology) replicateGrowthUnfreeze(frozenAt int64) {
 	for attempt := 0; attempt < 3; attempt++ {
 		if attempt > 0 {
 			time.Sleep(time.Duration(attempt) * time.Second)
 		}
-		t.reportedTopologyIdsLock.Lock()
-		frozen := t.growthFrozen.Load()
-		t.reportedTopologyIdsLock.Unlock()
-		if frozen {
-			return
+		if t.growthFrozenAt.Load() != frozenAt {
+			break // a newer freeze report superseded this lift
 		}
-		if err := t.applyGrowthFreeze(false); err == nil {
+		if err := t.applyGrowthUnfreeze(frozenAt); err == nil {
 			return
 		}
 	}
@@ -1588,25 +1592,37 @@ func (t *Topology) replicateGrowthUnfreeze() {
 }
 
 func (t *Topology) ResumeVolumeGrowth() bool {
+	frozenAt := t.growthFrozenAt.Load()
 	if !t.growthFrozen.CompareAndSwap(true, false) {
 		return false
 	}
 	stats.MasterVolumeGrowthFrozen.Set(0)
 	glog.V(0).Infof("volume growth resumed by operator")
-	t.applyGrowthFreeze(false)
+	t.applyGrowthUnfreeze(frozenAt)
 	return true
 }
 
-// SetGrowthFrozen applies a replicated freeze state on every master. The
-// timestamp lands before the flag so a reader can never see frozen with a
-// zero time and misjudge the auto-resume window.
-func (t *Topology) SetGrowthFrozen(frozen bool) {
+// SetGrowthFrozen applies a replicated freeze transition on every master. A
+// positive frozenAt pins the instant so all nodes share one recovery window;
+// a non-positive one falls back to now for entries written before the field
+// existed. An unfreeze bound to unfreezeFor applies only while no strictly
+// newer freeze exists, so a stale lift cannot erase a freeze that committed
+// first; zero lifts unconditionally.
+func (t *Topology) SetGrowthFrozen(frozen bool, frozenAt int64, unfreezeFor int64) {
 	if frozen {
-		t.growthFrozenAt.Store(time.Now().UnixNano())
+		if frozenAt <= 0 {
+			frozenAt = time.Now().UnixNano()
+		}
+		// The timestamp lands before the flag so a reader can never see
+		// frozen with a zero time and misjudge the auto-resume window.
+		t.growthFrozenAt.Store(frozenAt)
 		if t.growthFrozen.CompareAndSwap(false, true) {
 			stats.MasterVolumeGrowthFrozen.Set(1)
 			glog.V(0).Infof("volume growth freeze applied from raft")
 		}
+		return
+	}
+	if unfreezeFor > 0 && t.growthFrozenAt.Load() > unfreezeFor {
 		return
 	}
 	if t.growthFrozen.CompareAndSwap(true, false) {
@@ -1614,11 +1630,32 @@ func (t *Topology) SetGrowthFrozen(frozen bool) {
 	}
 }
 
-// applyGrowthFreeze replicates the freeze flag so followers keep it across a
-// leader change. No raft server (single-master test topologies) just sets it.
-func (t *Topology) applyGrowthFreeze(frozen bool) error {
+// applyGrowthFreeze replicates the current freeze flag and instant so
+// followers keep both across a leader change.
+func (t *Topology) applyGrowthFreeze() error {
+	t.growthFreezeApplyLock.Lock()
+	defer t.growthFreezeApplyLock.Unlock()
 	cmd := NewMaxVolumeIdCommand(t.GetMaxVolumeId(), t.GetTopologyId())
+	frozen := true
 	cmd.GrowthFrozen = &frozen
+	cmd.GrowthFrozenAt = t.growthFrozenAt.Load()
+	return t.applyGrowthFreezeCommand(cmd)
+}
+
+// applyGrowthUnfreeze replicates a lift bound to the freeze instant the
+// caller observed.
+func (t *Topology) applyGrowthUnfreeze(frozenAt int64) error {
+	cmd := NewMaxVolumeIdCommand(t.GetMaxVolumeId(), t.GetTopologyId())
+	frozen := false
+	cmd.GrowthFrozen = &frozen
+	cmd.GrowthUnfreezeFor = frozenAt
+	return t.applyGrowthFreezeCommand(cmd)
+}
+
+// applyGrowthFreezeCommand sends the transition through raft. With no raft
+// server (single-master test topologies) it applies locally.
+func (t *Topology) applyGrowthFreezeCommand(cmd *MaxVolumeIdCommand) error {
+	frozen := cmd.GrowthFrozen != nil && *cmd.GrowthFrozen
 	t.RaftServerAccessLock.RLock()
 	defer t.RaftServerAccessLock.RUnlock()
 	if t.RaftServer != nil {
@@ -1640,7 +1677,7 @@ func (t *Topology) applyGrowthFreeze(frozen bool) error {
 		}
 		return nil
 	}
-	t.SetGrowthFrozen(frozen)
+	t.SetGrowthFrozen(*cmd.GrowthFrozen, cmd.GrowthFrozenAt, cmd.GrowthUnfreezeFor)
 	return nil
 }
 
@@ -1667,7 +1704,7 @@ func (t *Topology) SetTopologyInitPending(pending bool) {
 	t.topologyInitPending.Store(false)
 	t.reportedTopologyIdsLock.Unlock()
 	if freeze {
-		t.applyGrowthFreeze(true)
+		t.applyGrowthFreeze()
 	}
 }
 
@@ -1780,8 +1817,14 @@ func (t *Topology) SetMaxVolumeIdFile(file string) {
 	}
 	if cmd.GrowthFrozen != nil {
 		t.lastPersistedGrowthFrozen.Store(*cmd.GrowthFrozen)
-		t.SetGrowthFrozen(*cmd.GrowthFrozen)
+		t.SetGrowthFrozen(*cmd.GrowthFrozen, cmd.GrowthFrozenAt, 0)
 	}
+}
+
+// GetGrowthFrozenAt reports the instant the current freeze generation froze
+// growth, for state snapshots.
+func (t *Topology) GetGrowthFrozenAt() int64 {
+	return t.growthFrozenAt.Load()
 }
 
 // PersistMaxVolumeId writes the bound to the mirror file. Called by the
@@ -1809,6 +1852,9 @@ func (t *Topology) PersistMaxVolumeId(vid needle.VolumeId) error {
 	}
 	cmd := NewMaxVolumeIdCommand(vid, topoId)
 	cmd.GrowthFrozen = &frozen
+	if frozen {
+		cmd.GrowthFrozenAt = t.growthFrozenAt.Load()
+	}
 	b, err := json.Marshal(cmd)
 	if err != nil {
 		return err

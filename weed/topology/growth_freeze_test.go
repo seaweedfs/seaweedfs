@@ -106,9 +106,12 @@ func TestGrowthFreezeAutoRecoveryReplicates(t *testing.T) {
 	}
 	select {
 	case c := <-applied:
-		lift := c.(*MaxVolumeIdCommand).GrowthFrozen
-		if lift == nil || *lift {
+		lift := c.(*MaxVolumeIdCommand)
+		if lift.GrowthFrozen == nil || *lift.GrowthFrozen {
 			t.Fatal("the auto unfreeze should be replicated like volume.growth.resume")
+		}
+		if lift.GrowthUnfreezeFor != cmd.GrowthFrozenAt {
+			t.Fatal("the unfreeze should be bound to the freeze instant it lifts")
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("auto unfreeze was not replicated; a restart would re-apply the freeze")
@@ -120,12 +123,16 @@ func TestReplicateGrowthUnfreezeSkipsRefreeze(t *testing.T) {
 	topo := NewTopology("topo", nil, 128, 3, false)
 	topo.RaftServer = appliedRaftServer{applied: applied}
 
-	topo.SetGrowthFrozen(true)
-	topo.replicateGrowthUnfreeze()
+	topo.SetGrowthFrozen(true, 1000, 0)
+	topo.SetGrowthFrozen(true, 2000, 0)
+	topo.replicateGrowthUnfreeze(1000)
 	select {
 	case <-applied:
 		t.Fatal("a stale unfreeze must not lift a freeze that landed after it")
 	default:
+	}
+	if !topo.growthFrozen.Load() {
+		t.Fatal("the newer freeze must stay armed")
 	}
 }
 
@@ -133,7 +140,7 @@ func TestReplicateGrowthUnfreezeRearmsOnFailure(t *testing.T) {
 	topo := NewTopology("topo", nil, 128, 3, false)
 	topo.RaftServer = failingRaftServer{}
 
-	topo.replicateGrowthUnfreeze()
+	topo.replicateGrowthUnfreeze(topo.GetGrowthFrozenAt())
 	if !topo.growthFrozen.Load() {
 		t.Fatal("a failed replication must re-arm the freeze so a later read retries the lift")
 	}
@@ -199,14 +206,29 @@ func TestGrowthFreezeCommandApply(t *testing.T) {
 	topo.SetGrowthFreezeConfig(true, 0)
 
 	frozen := true
-	topo.SetGrowthFrozen(frozen)
+	topo.SetGrowthFrozen(frozen, 0, 0)
 	if !topo.IsGrowthFrozen() {
 		t.Fatal("replicated freeze should set the flag")
 	}
-	unfrozen := false
-	topo.SetGrowthFrozen(unfrozen)
+	topo.SetGrowthFrozen(false, 0, 0)
 	if topo.IsGrowthFrozen() {
 		t.Fatal("replicated unfreeze should clear the flag")
+	}
+}
+
+// A lift bound to a freeze instant must not erase a newer freeze, so a stale
+// unfreeze cannot overwrite a freeze that committed first but applied later.
+func TestGrowthUnfreezeBoundToFreezeInstant(t *testing.T) {
+	topo := NewTopology("topo", nil, 128, 3, false)
+
+	topo.SetGrowthFrozen(true, 1000, 0)
+	topo.SetGrowthFrozen(false, 0, 999)
+	if !topo.IsGrowthFrozen() {
+		t.Fatal("a lift for an older freeze instant must not clear a newer freeze")
+	}
+	topo.SetGrowthFrozen(false, 0, 1000)
+	if topo.IsGrowthFrozen() {
+		t.Fatal("a lift bound to the current freeze instant should clear it")
 	}
 }
 
