@@ -278,6 +278,9 @@ func (fs *SftpServer) renameEntry(absPath, absTarget string) error {
 	if err := fs.checkRenameKeepsAcl(absPath, absTarget); err != nil {
 		return err
 	}
+	if err := fs.requireParentDir(absTarget); err != nil {
+		return err
+	}
 	oldDir, oldName := util.FullPath(absPath).DirAndName()
 	newDir, newName := util.FullPath(absTarget).DirAndName()
 	return fs.callWithClient(false, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {

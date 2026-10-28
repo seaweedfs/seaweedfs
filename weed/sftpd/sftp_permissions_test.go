@@ -149,10 +149,11 @@ func TestRequireParentDirEnforced(t *testing.T) {
 		t.Fatalf("listen: %v", err)
 	}
 	filer := &permissionTestFiler{entries: map[string]*filer_pb.Entry{
-		"/":             {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{FileMode: 0755}},
-		"/home":         {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{FileMode: 0755}},
-		"/home/alice":   {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0755}},
-		"/home/alice/d": {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0755}},
+		"/":               {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{FileMode: 0755}},
+		"/home":           {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{FileMode: 0755}},
+		"/home/alice":     {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0755}},
+		"/home/alice/d":   {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0755}},
+		"/home/alice/a.t": {Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0644}},
 	}}
 	grpcServer := grpc.NewServer()
 	filer_pb.RegisterSeaweedFilerServer(grpcServer, filer)
@@ -166,7 +167,7 @@ func TestRequireParentDirEnforced(t *testing.T) {
 		user: &user.User{
 			Username: "alice", Uid: 1000, Gid: 1000, HomeDir: "/home/alice",
 			Permissions: map[string][]string{
-				"/home/alice": {"readwrite"},
+				"/home/alice": {"*"},
 			},
 		},
 	}
@@ -179,6 +180,13 @@ func TestRequireParentDirEnforced(t *testing.T) {
 	}
 	if _, ok := filer.entries["/home/alice/missing/new"]; ok {
 		t.Error("mkdir created a directory under a missing parent")
+	}
+
+	if err := fs.renameEntry("/home/alice/a.t", "/home/alice/missing/b.t"); err != os.ErrNotExist {
+		t.Fatalf("rename into a missing folder: got %v, want os.ErrNotExist", err)
+	}
+	if _, ok := filer.entries["/home/alice/missing/b.t"]; ok {
+		t.Error("rename moved a file into a missing folder")
 	}
 
 	if err := fs.makeDir("/home/alice/d/new"); err != nil {
