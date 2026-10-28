@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -551,6 +552,9 @@ func (s *Store) ReadEcShardNeedle(vid needle.VolumeId, n *needle.Needle, onReadS
 
 			err = n.ReadBytes(bytes, offset.ToActualOffset(), size, localEcVolume.Version)
 			if err != nil {
+				if rebuilt := s.rebuildEcShardNeedle(n, localEcVolume, intervals, offset.ToActualOffset(), size, bytes); rebuilt != nil {
+					return len(rebuilt), nil
+				}
 				return 0, fmt.Errorf("ec volume %d needle %s offset %d size %d: %w", vid, n.String(), offset.ToActualOffset(), size, err)
 			}
 
@@ -666,6 +670,76 @@ func (s *Store) readOneEcShardInterval(needleId types.NeedleId, ecVolume *erasur
 	glog.V(0).Infof("recover ec shard %d.%d : %v", ecVolume.VolumeId, shardId, err)
 
 	return
+}
+
+// rebuildEcShardNeedle repairs a needle whose reassembled bytes failed to
+// parse: a shard that served an interval can be silently corrupt, so each
+// interval's source shard is a suspect. Rebuilding the suspect ranges from the
+// surviving shards — with the suspects excluded from the gather, so a bad copy
+// cannot poison its own reconstruction — produces the bytes Reed-Solomon says
+// are right, and a successful needle parse arbitrates them correct. On success
+// the parse has already hydrated n, every shard whose range changed is dropped
+// from the location cache, and the repaired bytes are returned. Nil when no
+// hypothesis parses (index or needle corrupt in all shards alike).
+func (s *Store) rebuildEcShardNeedle(n *needle.Needle, ecVolume *erasure_coding.EcVolume, intervals []erasure_coding.Interval, offset int64, size types.Size, corrupted []byte) []byte {
+	ecCtx := ecVolume.ECContext
+	if ecCtx == nil {
+		ecCtx = erasure_coding.NewDefaultECContext(ecVolume.Collection, ecVolume.VolumeId)
+	}
+
+	shardIds := make([]erasure_coding.ShardId, len(intervals))
+	offsets := make([]int64, len(intervals))
+	suspects := make(map[erasure_coding.ShardId]bool)
+	for i, interval := range intervals {
+		shardIds[i], offsets[i] = ecVolume.IntervalToShardIdAndOffset(interval)
+		suspects[shardIds[i]] = true
+	}
+
+	try := func(exclude map[erasure_coding.ShardId]bool) []byte {
+		candidate := make([]byte, len(corrupted))
+		pos := 0
+		for i, interval := range intervals {
+			buf := candidate[pos : pos+int(interval.Size)]
+			pos += int(interval.Size)
+			if !exclude[shardIds[i]] {
+				copy(buf, corrupted[pos-int(interval.Size):pos])
+				continue
+			}
+			if _, _, err := s.recoverEcShardInterval(n.Id, ecVolume, shardIds[i], buf, offsets[i], exclude); err != nil {
+				return nil
+			}
+		}
+		if n.ReadBytes(candidate, offset, size, ecVolume.Version) != nil {
+			return nil
+		}
+		// The parse verdict makes every differing range a confirmed corruption.
+		pos = 0
+		for i, interval := range intervals {
+			if !bytes.Equal(candidate[pos:pos+int(interval.Size)], corrupted[pos:pos+int(interval.Size)]) {
+				forgetShardId(ecVolume, shardIds[i])
+			}
+			pos += int(interval.Size)
+		}
+		return candidate
+	}
+
+	// When parity still covers every suspect, one pass excludes them all and
+	// repairs any subset of them being corrupt at once. Otherwise one suspect
+	// is rebuilt at a time, which fixes a single corrupt suspect.
+	if len(suspects) <= ecCtx.ParityShards {
+		if candidate := try(suspects); candidate != nil {
+			return candidate
+		}
+		if len(suspects) == 1 {
+			return nil
+		}
+	}
+	for shardId := range suspects {
+		if candidate := try(map[erasure_coding.ShardId]bool{shardId: true}); candidate != nil {
+			return candidate
+		}
+	}
+	return nil
 }
 
 func forgetShardId(ecVolume *erasure_coding.EcVolume, shardId erasure_coding.ShardId) {
