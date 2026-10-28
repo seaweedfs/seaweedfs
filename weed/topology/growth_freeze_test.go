@@ -118,6 +118,26 @@ func TestGrowthFreezeAutoRecoveryReplicates(t *testing.T) {
 	}
 }
 
+// A repeat mismatch while already frozen must keep the generation the
+// replicated freeze carries: re-stamping locally would bind every later
+// lift to a generation followers never saw, and the freeze would return on
+// replay.
+func TestRepeatMismatchKeepsFreezeGeneration(t *testing.T) {
+	topo := NewTopology("topo", nil, 128, 3, false)
+	topo.SetGrowthFreezeConfig(true, 0)
+	topo.SetTopologyId("cluster-a")
+
+	topo.CheckReportedTopologyId("cluster-b")
+	gen := topo.growthFrozenState.Load()
+	if gen == 0 {
+		t.Fatal("mismatching topology id should freeze growth")
+	}
+	topo.CheckReportedTopologyId("cluster-c")
+	if topo.growthFrozenState.Load() != gen {
+		t.Fatal("a repeat mismatch must not re-stamp the armed freeze")
+	}
+}
+
 func TestReplicateGrowthUnfreezeSkipsRefreeze(t *testing.T) {
 	applied := make(chan raft.Command, 1)
 	topo := NewTopology("topo", nil, 128, 3, false)

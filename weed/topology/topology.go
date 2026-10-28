@@ -1546,7 +1546,9 @@ func (t *Topology) checkReportedTopologyIdLocked(reported string) (freeze bool) 
 	if reported == own {
 		return false
 	}
-	if t.growthFrozenState.Swap(time.Now().UnixNano()) == 0 {
+	// Only the first mismatch stamps a generation: a re-stamp never reaches
+	// the log, so bound lifts would target a generation followers never saw.
+	if t.growthFrozenState.CompareAndSwap(0, time.Now().UnixNano()) {
 		stats.MasterVolumeGrowthFrozen.Set(1)
 		glog.Errorf("volume growth frozen: a volume server reports topology id %s but this cluster is %s; the master state was rebuilt. Verify the cluster inventory, then run: volume.growth.resume", reported, own)
 		return true
