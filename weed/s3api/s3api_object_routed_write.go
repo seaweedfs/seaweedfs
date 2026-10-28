@@ -190,15 +190,24 @@ func (s3a *S3ApiServer) objectTxnOnFiler(owner pb.ServerAddress, req *filer_pb.O
 }
 
 // withWriteOwnerFilerClient runs fn on the object's write owner so a read
-// routed to the owner sees the change without waiting for replication; falls
-// back to the default filer when no owner resolves or the owner fails.
+// routed to the owner sees the change without waiting for replication. An
+// error fn returns on the owner is authoritative and surfaces as-is: replaying
+// the mutation on a lagging replica could update a stale entry and still
+// report success. Only a channel that never came up — provably nothing sent —
+// lets the failover walk reach another filer; with no resolved owner the
+// default filer applies the mutation.
 func (s3a *S3ApiServer) withWriteOwnerFilerClient(owner pb.ServerAddress, fn func(client filer_pb.SeaweedFilerClient) error) error {
-	if owner != "" {
-		if err := pb.WithFilerClient(false, 0, owner, s3a.option.GrpcDialOption, fn); err == nil {
-			return nil
-		}
+	if owner == "" {
+		return s3a.WithFilerClient(false, fn)
 	}
-	return s3a.WithFilerClient(false, fn)
+	if s3a.filerClient == nil {
+		return pb.WithFilerClient(false, 0, owner, s3a.option.GrpcDialOption, fn)
+	}
+	preferred := owner
+	if s3a.ownerRecentlyUnreachable(owner) {
+		preferred = ""
+	}
+	return s3a.withFilerClientFailover(context.Background(), preferred, false, false, fn)
 }
 
 // routedPut writes an entry as a PUT, optionally followed by finalize mutations,
