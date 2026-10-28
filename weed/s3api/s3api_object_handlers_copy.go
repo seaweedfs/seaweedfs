@@ -346,6 +346,9 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 			if errCode := classifyCopySourceError(currentEntry, currentErr); errCode != s3err.ErrNone {
 				return errCode
 			}
+			// Report the snapshot this attempt actually read, not the first
+			// resolution — a retry may observe a different source entry.
+			copySourceVersionId = resolveCopySourceVersionId(srcVersionId, srcVersioningState, currentEntry)
 			if errCode := s3a.validateConditionalCopyHeaders(r, currentEntry); errCode != s3err.ErrNone {
 				return errCode
 			}
