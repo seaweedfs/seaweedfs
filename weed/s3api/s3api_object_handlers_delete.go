@@ -165,9 +165,28 @@ func (s3a *S3ApiServer) deleteVersionedObject(r *http.Request, bucket, object, v
 			glog.V(2).Infof("deleteVersionedObject: object lock check failed for %s/%s null version: %v", bucket, object, err)
 			return result, s3err.ErrAccessDenied
 		}
-		if err := s3a.deleteSpecificObjectVersion(r.Context(), bucket, object, "null", false); err != nil {
-			glog.Errorf("deleteVersionedObject: failed to delete null version for %s/%s: %v", bucket, object, err)
-			return result, s3err.ErrInternalError
+		// Delete the null version on the owner the routed reads consult: on
+		// the default filer an absent entry is a successful delete, so a null
+		// version that only reached the owner would survive a reported
+		// success. An unsettled routed attempt falls back to the lock path.
+		nullDeleted := false
+		if owner := s3a.routableWriteOwner(bucket, object); owner != "" {
+			worm, lockErr := s3a.isObjectLockEnabled(bucket)
+			if lockErr == nil {
+				code, settled := s3a.routedDeleteNullVersion(owner, bucket, object, worm, worm && governanceBypassAllowed)
+				if settled {
+					if code != s3err.ErrNone {
+						return result, code
+					}
+					nullDeleted = true
+				}
+			}
+		}
+		if !nullDeleted {
+			if err := s3a.deleteSpecificObjectVersion(r.Context(), bucket, object, "null", false); err != nil {
+				glog.Errorf("deleteVersionedObject: failed to delete null version for %s/%s: %v", bucket, object, err)
+				return result, s3err.ErrInternalError
+			}
 		}
 		// Suspended versioning overwrites the null version with a single null delete
 		// marker (S3 spec), so the marker replaces any prior one instead of piling up.
