@@ -1001,6 +1001,7 @@ const (
 	vectorsDefaultPage = 500
 	vectorsMaxPutBatch = 500
 	vectorsMaxPage     = 1000
+	vectorsMaxTopK     = 30
 )
 
 // listSegmentVectors scans the index from offset, keeping the rows that fall
@@ -1382,8 +1383,9 @@ func (s *Server) handleQueryVectors(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	if req.TopK <= 0 {
-		writeError(w, http.StatusBadRequest, "ValidationException", "topK must be positive")
+	if req.TopK <= 0 || req.TopK > vectorsMaxTopK {
+		writeError(w, http.StatusBadRequest, "ValidationException",
+			fmt.Sprintf("topK must be between 1 and %d", vectorsMaxTopK))
 		return
 	}
 	resp, err := s.vectors.QueryVectors(r.Context(), &vector_pb.QueryVectorsRequest{
