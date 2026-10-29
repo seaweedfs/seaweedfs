@@ -1361,6 +1361,11 @@ func (s *Server) handleQueryVectors(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", "queryVector is required")
 		return
 	}
+	if req.TopK <= 0 || req.TopK > vectorsMaxTopK {
+		writeError(w, http.StatusBadRequest, "ValidationException",
+			fmt.Sprintf("topK must be between 1 and %d", vectorsMaxTopK))
+		return
+	}
 	record, err := s.indexRecord(r.Context(), r, arns.bucket, arns.index)
 	if err != nil {
 		catalogErr(w, err)
@@ -1381,11 +1386,6 @@ func (s *Server) handleQueryVectors(w http.ResponseWriter, r *http.Request) {
 	filter, err := translateFilter(req.Filter)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
-		return
-	}
-	if req.TopK <= 0 || req.TopK > vectorsMaxTopK {
-		writeError(w, http.StatusBadRequest, "ValidationException",
-			fmt.Sprintf("topK must be between 1 and %d", vectorsMaxTopK))
 		return
 	}
 	resp, err := s.vectors.QueryVectors(r.Context(), &vector_pb.QueryVectorsRequest{
