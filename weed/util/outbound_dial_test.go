@@ -24,6 +24,10 @@ func TestSetOutboundLocalIP(t *testing.T) {
 		{"empty", "", ""},
 		{"wildcard v4", "0.0.0.0", ""},
 		{"wildcard v6", "::", ""},
+		// A loopback source cannot reach anything off the host, so binding to
+		// one would break every dial to a remote endpoint (S3, peers).
+		{"loopback v4", "127.0.0.1", ""},
+		{"loopback v6", "::1", ""},
 		{"garbage", "not-an-ip", ""},
 	}
 	for _, tc := range cases {

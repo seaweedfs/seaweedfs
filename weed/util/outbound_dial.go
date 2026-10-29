@@ -20,8 +20,10 @@ var (
 )
 
 // SetOutboundLocalIP records ip as the source address for outbound TCP
-// connections. An empty, wildcard (0.0.0.0 / ::), or unparseable value leaves
-// the source address to the OS.
+// connections. An empty, wildcard (0.0.0.0 / ::), loopback, or unparseable
+// value leaves the source address to the OS: a loopback source cannot reach
+// anything off the host, so `-ip.bind=127.0.0.1` (listen locally only) would
+// otherwise break every dial to a remote S3 endpoint or peer.
 //
 // The first call wins. `weed server` applies the top-level -ip.bind before its
 // embedded master/volume/filer/s3/... start, so a component's own (possibly
@@ -32,7 +34,7 @@ func SetOutboundLocalIP(ip string) {
 		return
 	}
 	parsed := net.ParseIP(ip)
-	if parsed == nil || parsed.IsUnspecified() {
+	if parsed == nil || parsed.IsUnspecified() || parsed.IsLoopback() {
 		return
 	}
 	outboundLocalAddr.Store(&net.TCPAddr{IP: parsed})
