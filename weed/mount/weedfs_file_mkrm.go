@@ -132,7 +132,20 @@ func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, o
 	// For deferred creates, bypass AcquireHandle (which calls maybeReadEntry
 	// and would fail since the entry is not yet on the filer or in the meta cache).
 	// We already have the entry from createRegularFile, so create the handle directly.
-	fileHandle, openFh, existed := wfs.fhMap.AcquireFileHandle(wfs, inode, newEntry, 0, 0)
+	var fileHandle *FileHandle
+	var openFh FileHandleId
+	var existed, draining bool
+	for {
+		fileHandle, openFh, existed, draining = wfs.fhMap.AcquireFileHandle(wfs, inode, newEntry, 0, 0)
+		if !draining {
+			break
+		}
+		// A prior incarnation's deferred flush is still draining on this
+		// inode; wait for it to release the handle before attaching ours.
+		if !wfs.waitForPendingAsyncFlush(ctx, inode) {
+			return fuse.EINTR
+		}
+	}
 	if existed {
 		// A create is authoritative for the entry it just made, so it takes
 		// effect even on a handle that outlived a previous incarnation.

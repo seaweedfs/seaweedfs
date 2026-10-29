@@ -9,69 +9,84 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // AcquireHandle returns the shared handle for inode plus this open's own fh
 // value — the id handed to the kernel and seen again at RELEASE.
 func (wfs *WFS) AcquireHandle(ctx context.Context, inode uint64, flags, uid, gid uint32) (fileHandle *FileHandle, openFh FileHandleId, status fuse.Status) {
-	// If there is an in-flight async flush for this inode, wait for it to
-	// complete before reopening.  Otherwise the new handle would be built
-	// from pre-close filer metadata and its next flush could overwrite the
-	// data that was just written asynchronously.
-	if !wfs.waitForPendingAsyncFlush(ctx, inode) {
-		return nil, 0, fuse.EINTR
-	}
+	var path util.FullPath
+	for {
+		// If there is an in-flight async flush for this inode, wait for it to
+		// complete before reopening.  Otherwise the new handle would be built
+		// from pre-close filer metadata and its next flush could overwrite the
+		// data that was just written asynchronously.
+		if !wfs.waitForPendingAsyncFlush(ctx, inode) {
+			return nil, 0, fuse.EINTR
+		}
 
-	path, pathStatus := wfs.inodeToPath.GetPath(inode)
-	if pathStatus != fuse.OK {
-		return nil, 0, pathStatus
-	}
+		var pathStatus fuse.Status
+		path, pathStatus = wfs.inodeToPath.GetPath(inode)
+		if pathStatus != fuse.OK {
+			return nil, 0, pathStatus
+		}
 
-	// A fresh lookup returns the entry with the filer log position it
-	// reflects; the handle takes that entry and version as one decision in
-	// AcquireFileHandle, so a slower concurrent opener cannot
-	// overwrite a newer install. An existing handle keeps its own entry and
-	// version — they did not come from this lookup.
-	var entry *filer_pb.Entry
-	var entryVersionTsNs entryVersion
-	freshLookup := false
-	if existingFh, found := wfs.fhMap.FindFileHandle(inode); found {
-		entry = existingFh.UpdateEntry(func(entry *filer_pb.Entry) {
-			if entry != nil && existingFh.entry.Attributes == nil {
-				entry.Attributes = &filer_pb.FuseAttributes{}
+		// A fresh lookup returns the entry with the filer log position it
+		// reflects; the handle takes that entry and version as one decision in
+		// AcquireFileHandle, so a slower concurrent opener cannot
+		// overwrite a newer install. An existing handle keeps its own entry and
+		// version — they did not come from this lookup.
+		var entry *filer_pb.Entry
+		var entryVersionTsNs entryVersion
+		freshLookup := false
+		if existingFh, found := wfs.fhMap.FindFileHandle(inode); found {
+			entry = existingFh.UpdateEntry(func(entry *filer_pb.Entry) {
+				if entry != nil && existingFh.entry.Attributes == nil {
+					entry.Attributes = &filer_pb.FuseAttributes{}
+				}
+			})
+			entryVersionTsNs = entryVersion{tsNs: existingFh.entryVersionTsNs.Load(), signature: existingFh.entryVersionSignature.Load()}
+		} else {
+			entry, entryVersionTsNs, status = wfs.maybeLoadEntry(ctx, path)
+			if status != fuse.OK {
+				return nil, 0, status
 			}
-		})
-		entryVersionTsNs = entryVersion{tsNs: existingFh.entryVersionTsNs.Load(), signature: existingFh.entryVersionSignature.Load()}
-	} else {
-		entry, entryVersionTsNs, status = wfs.maybeLoadEntry(ctx, path)
-		if status != fuse.OK {
-			return nil, 0, status
+			freshLookup = true
 		}
-		freshLookup = true
-	}
-	if wormEnforced, _ := wfs.wormEnforcedForEntry(path, entry); wormEnforced && flags&fuse.O_ANYWRITE != 0 {
-		return nil, 0, fuse.EPERM
-	}
-	// Check unix permission bits for the requested access mode. With
-	// default_permissions the kernel already enforced them before this
-	// open, so the check (and its supplementary-group lookup) is redundant.
-	if !wfs.option.DefaultPermissions && entry != nil && entry.Attributes != nil {
-		fileUid, fileGid := entry.Attributes.Uid, entry.Attributes.Gid
-		if wfs.option.UidGidMapper != nil {
-			fileUid, fileGid = wfs.option.UidGidMapper.FilerToLocal(fileUid, fileGid)
+		if wormEnforced, _ := wfs.wormEnforcedForEntry(path, entry); wormEnforced && flags&fuse.O_ANYWRITE != 0 {
+			return nil, 0, fuse.EPERM
 		}
-		if mask := openFlagsToAccessMask(flags); mask != 0 && !hasAccess(uid, gid, fileUid, fileGid, entry.Attributes.FileMode, mask) {
-			return nil, 0, fuse.EACCES
+		// Check unix permission bits for the requested access mode. With
+		// default_permissions the kernel already enforced them before this
+		// open, so the check (and its supplementary-group lookup) is redundant.
+		if !wfs.option.DefaultPermissions && entry != nil && entry.Attributes != nil {
+			fileUid, fileGid := entry.Attributes.Uid, entry.Attributes.Gid
+			if wfs.option.UidGidMapper != nil {
+				fileUid, fileGid = wfs.option.UidGidMapper.FilerToLocal(fileUid, fileGid)
+			}
+			if mask := openFlagsToAccessMask(flags); mask != 0 && !hasAccess(uid, gid, fileUid, fileGid, entry.Attributes.FileMode, mask) {
+				return nil, 0, fuse.EACCES
+			}
 		}
-	}
-	// need to AcquireFileHandle again to ensure correct handle counter
-	var existed bool
-	fileHandle, openFh, existed = wfs.fhMap.AcquireFileHandle(wfs, inode, entry, entryVersionTsNs.tsNs, entryVersionTsNs.signature)
-	fileHandle.RememberPath(path)
-	if existed && freshLookup {
-		// Another opener created the handle while our lookup was in flight;
-		// install only state that provably improves on what it holds.
-		fileHandle.installAckedEntry(entry, entryVersionTsNs.tsNs, entryVersionTsNs.signature)
+		// need to AcquireFileHandle again to ensure correct handle counter
+		var existed, draining bool
+		fileHandle, openFh, existed, draining = wfs.fhMap.AcquireFileHandle(wfs, inode, entry, entryVersionTsNs.tsNs, entryVersionTsNs.signature)
+		if draining {
+			// A RELEASE slipped between waitForPendingAsyncFlush and this
+			// attach: the handle's last open closed and its deferred flush
+			// is draining.  The pending-flush flag is registered under the
+			// same mutex that dropped the counter, so the next iteration
+			// blocks on the drain (or finds the handle already removed)
+			// and rebuilds state from post-flush metadata.
+			continue
+		}
+		fileHandle.RememberPath(path)
+		if existed && freshLookup {
+			// Another opener created the handle while our lookup was in flight;
+			// install only state that provably improves on what it holds.
+			fileHandle.installAckedEntry(entry, entryVersionTsNs.tsNs, entryVersionTsNs.signature)
+		}
+		break
 	}
 
 	// Acquire distributed lock for write opens. The lock is held with
@@ -86,7 +101,7 @@ func (wfs *WFS) AcquireHandle(ctx context.Context, inode uint64, flags, uid, gid
 		if fileHandle.dlmLock == nil {
 			// No lock server is reachable: proceeding would silently drop
 			// cross-mount write serialization, so fail the open instead.
-			wfs.fhMap.ReleaseByHandle(openFh)
+			wfs.ReleaseHandle(openFh)
 			return nil, 0, fuse.Status(syscall.EAGAIN)
 		}
 		glog.V(1).Infof("DLM lock acquired for %s", path)

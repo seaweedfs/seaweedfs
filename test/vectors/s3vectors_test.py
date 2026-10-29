@@ -79,7 +79,7 @@ def test_vector_bucket_policy(vectors):
                     {
                         "Effect": "Allow",
                         "Principal": {"AWS": "*"},
-                        "Action": "s3tables:*",
+                        "Action": "s3vectors:*",
                         "Resource": "*",
                     }
                 ],

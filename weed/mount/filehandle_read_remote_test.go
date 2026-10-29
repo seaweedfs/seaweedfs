@@ -118,7 +118,7 @@ func TestReadUncachedRemoteEntryDoesNotDeadlock(t *testing.T) {
 	t.Cleanup(func() { wfs.metaCache.Shutdown() })
 
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+	fh, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
 		Name:        "file",
 		Attributes:  &filer_pb.FuseAttributes{FileSize: uint64(len(testServer.content))},
 		RemoteEntry: &filer_pb.RemoteEntry{RemoteSize: int64(len(testServer.content))},

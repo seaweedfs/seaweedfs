@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util/request_id"
 	"github.com/stretchr/testify/assert"
@@ -159,4 +160,33 @@ func TestAuditTrackingFlag(t *testing.T) {
 
 	MarkAuditLogged(tracked)
 	assert.True(t, AuditAlreadyLogged(tracked), "flag flips after MarkAuditLogged")
+}
+
+// Bucket-level requests reach the audit with an empty object key: NormalizeObjectKey strips the
+// leading "/", so the old object == "/" test never matched and every bucket operation was labelled
+// as an object operation (ListObjectsV2 showed up as REST.GET.OBJECT with an empty key).
+func TestGetAccessLogLabelsBucketLevelOperations(t *testing.T) {
+	cases := []struct {
+		method, target, object, want string
+	}{
+		{http.MethodGet, "/bucket?list-type=2", "", "REST.GET.BUCKET"},
+		{http.MethodGet, "/bucket", "", "REST.GET.BUCKET"},
+		{http.MethodPost, "/bucket?delete", "", "BATCH.DELETE.OBJECT"},
+		// only the POST batch-delete route is a batch delete; other methods on ?delete are bucket requests
+		{http.MethodHead, "/bucket?delete", "", "REST.HEAD.BUCKET"},
+		{http.MethodGet, "/bucket?delete", "", "REST.GET.BUCKET"},
+		{http.MethodGet, "/bucket?lifecycle", "", "REST.GET.LIFECYCLECONFIGURATION"},
+		{http.MethodPut, "/bucket?policy", "", "REST.PUT.BUCKETPOLICY"},
+		{http.MethodGet, "/bucket/object", "object", "REST.GET.OBJECT"},
+		{http.MethodGet, "/bucket/object?tagging", "object", "REST.GET.OBJECTTAGGING"},
+	}
+	for _, c := range cases {
+		req := httptest.NewRequest(c.method, c.target, nil)
+		vars := map[string]string{"bucket": "bucket"}
+		if c.object != "" {
+			vars["object"] = c.object
+		}
+		req = mux.SetURLVars(req, vars)
+		assert.Equal(t, c.want, GetAccessLog(req, http.StatusOK, ErrNone).Operation, c.method+" "+c.target)
+	}
 }
