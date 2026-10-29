@@ -147,6 +147,40 @@ pub fn bitrot_sidecar_path(base: &str, generation: u32) -> String {
     }
 }
 
+/// Resolves the sidecar path for a generation, searching the data base, the
+/// index base, and any additional directories — mirroring Go's
+/// `findBitrotSidecar`, which handles split data/idx layouts and per-disk
+/// mirrors the same way shard/.vif lookups do. Returns "" when no candidate
+/// exists.
+pub fn find_bitrot_sidecar(
+    generation: u32,
+    data_base: &str,
+    index_base: &str,
+    additional_dirs: &[&str],
+) -> String {
+    let mut candidates = vec![
+        bitrot_sidecar_path(data_base, generation),
+        bitrot_sidecar_path(index_base, generation),
+    ];
+    let base = std::path::Path::new(data_base)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    for dir in additional_dirs {
+        if dir.is_empty() || base.is_empty() {
+            continue;
+        }
+        candidates.push(bitrot_sidecar_path(
+            &format!("{}/{}", dir, base),
+            generation,
+        ));
+    }
+    candidates
+        .into_iter()
+        .find(|c| !c.is_empty() && std::path::Path::new(c).exists())
+        .unwrap_or_default()
+}
+
 /// Remove the bitrot checksum sidecars for a base file name: the legacy
 /// `<base>.ecsum` (generation 0) and any versioned `<base>.ecsum.v<N>`.
 ///

@@ -16,6 +16,7 @@ use crate::pb::filer_pb;
 use crate::pb::master_pb;
 use crate::pb::volume_server_pb;
 use crate::pb::volume_server_pb::volume_server_server::VolumeServer;
+use crate::storage::erasure_coding::ec_bitrot;
 use crate::storage::erasure_coding::ec_shard::{ShardId, shard_id_try_from};
 use crate::storage::erasure_coding::ecj_merge::EcjIdDecoder;
 use crate::storage::needle::needle::{self, Needle};
@@ -59,6 +60,42 @@ fn needle_not_found(needle_id: NeedleId) -> Status {
 /// which arrives as an Unknown-status message.
 fn is_not_leader_status(e: &Status) -> bool {
     e.message().contains("Not current leader")
+}
+
+/// A gRPC error that still carries the ids of shards the rebuild wrote before
+/// failing. The Go shell pulls VolumeEcShardsRebuildResponse out of the status
+/// details so its deferred cleanup keeps the copies the rebuild regenerated
+/// in place instead of deleting them as orphans — a plain error drops the
+/// response holding them. `details` is the serialized google.rpc.Status that
+/// the grpc-status-details-bin trailer carries.
+fn status_internal_with_rebuild_ids(message: String, rebuilt_shard_ids: &[u32]) -> Status {
+    #[derive(Clone, PartialEq, prost::Message)]
+    struct RpcStatus {
+        #[prost(int32, tag = "1")]
+        code: i32,
+        #[prost(string, tag = "2")]
+        message: String,
+        #[prost(message, repeated, tag = "3")]
+        details: Vec<prost_types::Any>,
+    }
+    use prost::Message;
+    let resp = volume_server_pb::VolumeEcShardsRebuildResponse {
+        rebuilt_shard_ids: rebuilt_shard_ids.to_vec(),
+    };
+    let status = RpcStatus {
+        code: tonic::Code::Internal as i32,
+        message: message.clone(),
+        details: vec![prost_types::Any {
+            type_url: "type.googleapis.com/volume_server_pb.VolumeEcShardsRebuildResponse"
+                .to_string(),
+            value: resp.encode_to_vec(),
+        }],
+    };
+    Status::with_details(
+        tonic::Code::Internal,
+        message,
+        status.encode_to_vec().into(),
+    )
 }
 
 /// Deadline from the caller's `grpc-timeout` header (TimeoutValue +
@@ -3197,56 +3234,212 @@ impl VolumeServer for VolumeGrpcService {
             })?;
         let total_shards = data_shards + parity_shards;
 
-        // Check which shards are missing (check rebuild dir and all other dirs)
-        let mut missing: Vec<u32> = Vec::new();
-        for shard_id in 0..total_shards as u8 {
-            let shard = crate::storage::erasure_coding::ec_shard::EcVolumeShard::new(
-                &rebuild_dir,
-                collection,
-                vid,
-                shard_id,
-            );
-            let mut found = std::path::Path::new(&shard.file_name()).exists();
-            if !found {
-                for other_dir in &other_dirs {
-                    let other_shard = crate::storage::erasure_coding::ec_shard::EcVolumeShard::new(
-                        other_dir, collection, vid, shard_id,
-                    );
-                    if std::path::Path::new(&other_shard.file_name()).exists() {
-                        found = true;
-                        break;
+        // Discover shard files like Go's findShardFile: the rebuild's own data
+        // and index directories first, then every sibling directory. Track
+        // each present shard's path — a shard the sidecar reclassifies as
+        // corrupt is replaced at ITS discovered path, not at the rebuild dir.
+        let shard_file_path = |dir: &str, shard_id: ShardId| -> String {
+            crate::storage::erasure_coding::ec_shard::EcVolumeShard::new(
+                dir, collection, vid, shard_id,
+            )
+            .file_name()
+        };
+        let mut shard_dirs: Vec<String> = vec![rebuild_dir.clone()];
+        if !rebuild_idx_dir.is_empty() && rebuild_idx_dir != rebuild_dir {
+            shard_dirs.push(rebuild_idx_dir.clone());
+        }
+        shard_dirs.extend(other_dirs.iter().cloned());
+
+        let mut found: Vec<Option<String>> = vec![None; total_shards as usize];
+        for shard_id in 0..total_shards as ShardId {
+            found[shard_id as usize] = shard_dirs
+                .iter()
+                .map(|d| shard_file_path(d, shard_id))
+                .find(|p| std::path::Path::new(p).exists());
+        }
+
+        // Load the generation-0 checksum sidecar the way Go's
+        // loadRebuildSidecar does: absent, wrong-generation, or recording no
+        // geometry => Off; a self-integrity, geometry, or manifest failure =>
+        // Invalid; otherwise On.
+        let data_base = crate::storage::volume::volume_file_name(&rebuild_dir, collection, vid);
+        let idx_base = crate::storage::volume::volume_file_name(&rebuild_idx_dir, collection, vid);
+        let sidecar_dir_refs: Vec<&str> = other_dirs.iter().map(|s| s.as_str()).collect();
+        let sidecar_path =
+            ec_bitrot::find_bitrot_sidecar(0, &data_base, &idx_base, &sidecar_dir_refs);
+        let (prot, bitrot_status) = if sidecar_path.is_empty() {
+            (None, ec_bitrot::BitrotStatus::Off)
+        } else {
+            match ec_bitrot::load_bitrot_sidecar(&sidecar_path) {
+                Err(e) => {
+                    tracing::warn!(path = %sidecar_path, error = %e, "bitrot: sidecar self-integrity failed");
+                    (None, ec_bitrot::BitrotStatus::Invalid)
+                }
+                Ok(prot) => {
+                    if prot.generation != 0 || prot.ec_shard_config.is_none() {
+                        (None, ec_bitrot::BitrotStatus::Off)
+                    } else if !ec_bitrot::geometry_matches(
+                        &prot,
+                        data_shards as usize,
+                        parity_shards as usize,
+                        block_size,
+                    ) {
+                        tracing::warn!(path = %sidecar_path, "bitrot: sidecar records a different layout than the rebuild uses");
+                        (None, ec_bitrot::BitrotStatus::Invalid)
+                    } else if let Err(e) = ec_bitrot::validate_manifest(
+                        &prot,
+                        data_shards as usize,
+                        parity_shards as usize,
+                    ) {
+                        tracing::warn!(path = %sidecar_path, error = %e, "bitrot: sidecar manifest invalid");
+                        (None, ec_bitrot::BitrotStatus::Invalid)
+                    } else {
+                        (Some(prot), ec_bitrot::BitrotStatus::On)
                     }
                 }
             }
-            if !found {
-                missing.push(shard_id as u32);
+        };
+        let unsafe_ignore_sidecar = req.unsafe_ignore_sidecar;
+
+        // Present/missing/corrupt classification — mirrors pass 1 of Go's
+        // generateMissingEcFiles plus its bitrot verify-and-exclude.
+        let mut missing: Vec<u32> = Vec::new();
+        let mut corrupt_owned: Vec<(u32, String)> = Vec::new();
+        let mut present = vec![false; total_shards as usize];
+        let mut present_count = 0usize;
+        for shard_id in 0..total_shards as usize {
+            match &found[shard_id] {
+                None => missing.push(shard_id as u32),
+                Some(p) => {
+                    let size = std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
+                    if size == 0 {
+                        // Zero-sized residue is a failed operation's leftover,
+                        // not a shard: exclude it from inputs and regenerate
+                        // over it in place, like a reclassified-corrupt shard.
+                        tracing::warn!(shard = shard_id, path = %p, "zero-sized shard; excluding from rebuild inputs and regenerating");
+                        corrupt_owned.push((shard_id as u32, p.clone()));
+                    } else {
+                        present[shard_id] = true;
+                        present_count += 1;
+                    }
+                }
             }
         }
 
-        // Rebuild missing shards, searching all locations for input shards.
-        // Pass other_dirs so shards on sibling disks are found even when the
-        // primary rebuild dir doesn't hold them. This one takes a single flat
-        // list — the shape Go's RebuildEcFiles uses — so unlike the resolvers
-        // above it cannot be handed the rebuild's own index directory
-        // separately, and a split -dir/-dir.idx location keeps its .ecx and
-        // .vif there. Go's additionalDirs carries that directory for the same
-        // reason. Nothing missing skips only the regeneration: a retry after
-        // a failed earlier attempt still owes the .ecx rebuild and the
-        // mounted-handle repoint below.
+        match bitrot_status {
+            ec_bitrot::BitrotStatus::Invalid => {
+                if !unsafe_ignore_sidecar {
+                    return Err(Status::internal(format!(
+                        "bitrot sidecar for {} is malformed/unverifiable; refusing to rebuild (pass unsafe_ignore_sidecar to override)",
+                        base_name
+                    )));
+                }
+                tracing::warn!(base = %base_name, "bitrot sidecar is malformed/unverifiable; proceeding because unsafe_ignore_sidecar is set");
+            }
+            ec_bitrot::BitrotStatus::On if !unsafe_ignore_sidecar => {
+                let prot = prot.as_ref().unwrap();
+                let mut corrupt: Vec<u32> = Vec::new();
+                for shard_id in 0..total_shards as usize {
+                    if !present[shard_id] {
+                        continue;
+                    }
+                    let Some(entry) = ec_bitrot::shard_checksums(prot, shard_id as u32) else {
+                        continue;
+                    };
+                    let p = found[shard_id].as_ref().unwrap();
+                    match ec_bitrot::verify_shard_file_blocks(p, entry, prot.block_size as i64) {
+                        Err(e) => {
+                            // A read error means we cannot trust this shard as
+                            // a Reed-Solomon input: exclude it rather than
+                            // silently feeding possibly-corrupt bytes into
+                            // reconstruction.
+                            tracing::warn!(shard = shard_id, error = %e, "bitrot: failed to verify present shard; excluding it");
+                            corrupt.push(shard_id as u32);
+                        }
+                        Ok(mismatched) if !mismatched.is_empty() => {
+                            corrupt.push(shard_id as u32);
+                        }
+                        _ => {}
+                    }
+                }
+                if !corrupt.is_empty() {
+                    // Wholesale-mismatch guard (RS-arbiter conservative form):
+                    // localized bitrot touches a few shards; a stale/wrong
+                    // sidecar mismatches more than parity_shards.
+                    if corrupt.len() > parity_shards as usize {
+                        return Err(Status::internal(format!(
+                            "bitrot sidecar suspect for {}: {}/{} present shards mismatch (> parity {}); refusing to rebuild (pass unsafe_ignore_sidecar to override)",
+                            base_name,
+                            corrupt.len(),
+                            present_count,
+                            parity_shards
+                        )));
+                    }
+                    if present_count - corrupt.len() < data_shards as usize {
+                        return Err(Status::internal(format!(
+                            "bitrot: only {} verified-good shards for {}, need {} data shards; sidecar may be stale (pass unsafe_ignore_sidecar to override)",
+                            present_count - corrupt.len(),
+                            base_name,
+                            data_shards
+                        )));
+                    }
+                    for shard_id in corrupt {
+                        tracing::warn!(
+                            shard = shard_id,
+                            "bitrot: present shard fails checksum; excluding from rebuild inputs and regenerating"
+                        );
+                        let p = found[shard_id as usize].take().unwrap();
+                        present[shard_id as usize] = false;
+                        present_count -= 1;
+                        corrupt_owned.push((shard_id, p));
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        // Everything the rebuild (re)writes: genuinely missing plus
+        // reclassified-corrupt. The response — and any failure after this
+        // point — must report the whole set, since the caller keeps copies
+        // the rebuild regenerated in place.
+        let mut rebuilt: Vec<u32> = missing.clone();
+        rebuilt.extend(corrupt_owned.iter().map(|(id, _)| *id));
+        rebuilt.sort_unstable();
+
+        if !rebuilt.is_empty() && present_count < data_shards as usize {
+            return Err(Status::internal(format!(
+                "not enough shards to rebuild {}: found {} shards, need at least {} (data shards), missing shards: {:?}",
+                base_name, present_count, data_shards, rebuilt
+            )));
+        }
+
+        // Rebuild missing and corrupt shards, searching all locations for
+        // input shards. This takes a single flat list — the shape Go's
+        // RebuildEcFiles uses — so unlike the resolvers above it cannot be
+        // handed the rebuild's own index directory separately, and a split
+        // -dir/-dir.idx location keeps its .ecx and .vif there. Go's
+        // additionalDirs carries that directory for the same reason. Nothing
+        // missing skips only the regeneration: a retry after a failed earlier
+        // attempt still owes the .ecx rebuild and the mounted-handle repoint
+        // below.
         let mut rebuild_search_dirs: Vec<String> = other_dirs.clone();
         if !rebuild_idx_dir.is_empty() && rebuild_idx_dir != rebuild_dir {
             rebuild_search_dirs.push(rebuild_idx_dir.clone());
         }
         let other_dir_refs: Vec<&str> = rebuild_search_dirs.iter().map(|s| s.as_str()).collect();
-        if !missing.is_empty() {
+        if !rebuilt.is_empty() {
             crate::storage::erasure_coding::ec_encoder::rebuild_ec_files(
                 &rebuild_dir,
                 collection,
                 vid,
                 &missing,
+                &corrupt_owned,
                 data_shards as usize,
                 parity_shards as usize,
                 &other_dir_refs,
+                prot.as_ref().filter(|_| {
+                    bitrot_status == ec_bitrot::BitrotStatus::On && !unsafe_ignore_sidecar
+                }),
             )
             .map_err(|e| Status::internal(format!("RebuildEcFiles: {}", e)))?;
         }
@@ -3276,7 +3469,9 @@ impl VolumeServer for VolumeGrpcService {
         // the same path Go takes under LockDeletionJournal — so readers
         // searching the open index never watch it get truncated. Only an
         // unmounted index takes the full regen; nothing holds it open to
-        // interrupt.
+        // interrupt. Either failure still owes the caller the regenerated
+        // ids — the shards are already written and its deferred cleanup
+        // would delete the copies as strays without them.
         let mut folded = false;
         {
             let mut store = self.state.store.write().unwrap_or_else(|e| e.into_inner());
@@ -3286,8 +3481,12 @@ impl VolumeServer for VolumeGrpcService {
                 .find(|loc| loc.directory == rebuild_dir)
                 .and_then(|loc| loc.find_ec_volume_mut(vid))
             {
-                ev.rebuild_ecx_from_journal()
-                    .map_err(|e| Status::internal(format!("RebuildEcxFile: {}", e)))?;
+                ev.rebuild_ecx_from_journal().map_err(|e| {
+                    status_internal_with_rebuild_ids(
+                        format!("RebuildEcxFile: {}", e),
+                        &rebuilt,
+                    )
+                })?;
                 folded = true;
             }
         }
@@ -3301,7 +3500,9 @@ impl VolumeServer for VolumeGrpcService {
                 dat_file_size,
                 &ecx_dir_refs,
             )
-            .map_err(|e| Status::internal(format!("RebuildEcxFile: {}", e)))?;
+            .map_err(|e| {
+                status_internal_with_rebuild_ids(format!("RebuildEcxFile: {}", e), &rebuilt)
+            })?;
         }
 
         // Repoint every mounted handle of this volume at the file now on
@@ -3348,7 +3549,7 @@ impl VolumeServer for VolumeGrpcService {
 
         Ok(Response::new(
             volume_server_pb::VolumeEcShardsRebuildResponse {
-                rebuilt_shard_ids: missing,
+                rebuilt_shard_ids: rebuilt,
             },
         ))
     }

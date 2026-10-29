@@ -186,6 +186,19 @@ func recordEcRebuild(result string, d time.Duration) {
 	stats.VolumeServerECRebuildCounter.WithLabelValues(result).Inc()
 }
 
+// ecRebuildErrorWithIds reports a rebuild failure that happened after shards
+// were regenerated on disk. The error still carries their ids so the caller's
+// deferred cleanup keeps the copies it regenerated in place — to the shell an
+// unreported regenerated copy is just an orphan to delete, and a plain gRPC
+// error would drop the response holding them.
+func ecRebuildErrorWithIds(rebuiltShardIds []uint32, err error) error {
+	st := status.New(codes.Internal, err.Error())
+	if withIds, derr := st.WithDetails(&volume_server_pb.VolumeEcShardsRebuildResponse{RebuiltShardIds: rebuiltShardIds}); derr == nil {
+		st = withIds
+	}
+	return st.Err()
+}
+
 // VolumeEcShardsRebuild generates the any of the missing .ec00 ~ .ec13 files
 func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_server_pb.VolumeEcShardsRebuildRequest) (*volume_server_pb.VolumeEcShardsRebuildResponse, error) {
 	if err := vs.checkGrpcAdminAuth(ctx); err != nil {
@@ -282,11 +295,11 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 		unlockJournal()
 		if err != nil {
 			recordEcRebuild("failure", time.Since(start))
-			return nil, fmt.Errorf("RebuildEcxFile %s: %v", indexBaseFileName, err)
+			return nil, ecRebuildErrorWithIds(rebuiltShardIds, fmt.Errorf("RebuildEcxFile %s: %v", indexBaseFileName, err))
 		}
 	} else if err := erasure_coding.RebuildEcxFile(indexBaseFileName); err != nil {
 		recordEcRebuild("failure", time.Since(start))
-		return nil, fmt.Errorf("RebuildEcxFile %s: %v", indexBaseFileName, err)
+		return nil, ecRebuildErrorWithIds(rebuiltShardIds, fmt.Errorf("RebuildEcxFile %s: %v", indexBaseFileName, err))
 	}
 
 	// A regenerated shard that was mounted keeps serving its old file through
