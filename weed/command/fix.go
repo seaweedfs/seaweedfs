@@ -294,6 +294,11 @@ func (scanner *VolumeFileScanner4Fix) verifyNeedle(n *needle.Needle, offset int6
 func doFixOneVolume(basepath string, baseFileName string, collection string, volumeId int64, fixIncludeDeleted bool) {
 	indexFileName := path.Join(basepath, baseFileName+".idx")
 
+	if *fixVerify {
+		doFixOneVolumeVerified(basepath, baseFileName, volumeId, indexFileName)
+		return
+	}
+
 	nm := needle_map.NewMemDb()
 	nmDeleted := needle_map.NewMemDb()
 	defer nm.Close()
