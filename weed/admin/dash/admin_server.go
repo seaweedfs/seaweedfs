@@ -132,6 +132,13 @@ type AdminServer struct {
 	lastFilerUpdate      time.Time
 	filerCacheExpiration time.Duration
 
+	// Volume server version reporting: the heartbeat topology carries no
+	// version, so versions are collected per server over VolumeServerStatus
+	// and cached briefly (they only change when a server restarts).
+	volumeVersionCache map[string]string
+	lastVersionFetch   time.Time
+	volumeVersionMu    sync.Mutex
+
 	// Credential management
 	credentialManager *credential.CredentialManager
 

@@ -101,6 +101,7 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
                                     <th>Address</th>
                                     <th>Data Center</th>
                                     <th>Rack</th>
+                                    <th>Version</th>
                                     <th>Volumes</th>
                                     <th>Max Volumes</th>
                                     <th>EC Shards</th>
@@ -130,6 +131,9 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
                                         </td>
                                         <td>
                                             <span class="badge bg-light text-dark">{host.Rack}</span>
+                                        </td>
+                                        <td title={host.Version}>
+                                            {dash.ShortVersion(host.Version)}
                                         </td>
                                         <td>
                                             <div class="d-flex align-items-center">
