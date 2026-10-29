@@ -1104,6 +1104,104 @@ func TestSectionRefreshReplacesReusedNameOccupant(t *testing.T) {
 	}
 }
 
+// TestSectionRefreshKeepsOccupantGroupCounter covers a reused name whose
+// cached occupant's shared blob already reflects the filer-side unlink: a
+// sibling write folded the counter down while the occupant's entry stayed
+// cached. Replacing that occupant must not decrement the group again, or
+// the counter reaches zero and the shared blob live siblings read is lost.
+func TestSectionRefreshKeepsOccupantGroupCounter(t *testing.T) {
+	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{"/": true, "/dir": true})
+	defer mc.Shutdown()
+
+	buildSectionedDir(t, mc, util.FullPath("/dir"), 1000, []string{"m"})
+
+	oldGroup := filer.HardLinkId([]byte{5, 6, 7, 8})
+	for _, name := range []string{"b", "q"} {
+		if err := mc.InsertEntry(context.Background(), &filer.Entry{
+			FullPath:        util.FullPath("/dir/" + name),
+			Attr:            filer.Attr{Crtime: time.Unix(1, 0), Mtime: time.Unix(1, 0), Mode: 0100644, FileSize: 11},
+			HardLinkId:      oldGroup,
+			HardLinkCounter: 2,
+		}, 2000); err != nil {
+			t.Fatalf("seed %s: %v", name, err)
+		}
+	}
+	// A post-unlink write to the live sibling folds the occupant's removal
+	// into the shared counter while the occupant's entry is still cached.
+	if err := mc.InsertEntry(context.Background(), &filer.Entry{
+		FullPath:        util.FullPath("/dir/q"),
+		Attr:            filer.Attr{Crtime: time.Unix(1, 0), Mtime: time.Unix(3, 0), Mode: 0100644, FileSize: 22},
+		HardLinkId:      oldGroup,
+		HardLinkCounter: 1,
+	}, 3000); err != nil {
+		t.Fatalf("reseed q: %v", err)
+	}
+
+	hardLinkId := filer.HardLinkId([]byte{1, 2, 3, 4})
+	const writeTsNs = 6000
+	if err := mc.ApplyMetadataResponse(context.Background(), &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		EventNotification: &filer_pb.EventNotification{
+			NewEntry: &filer_pb.Entry{
+				Name:            "a",
+				HardLinkId:      hardLinkId,
+				HardLinkCounter: 2,
+				Attributes:      &filer_pb.FuseAttributes{Crtime: 1, Mtime: 9, FileMode: 0100644, FileSize: 99},
+			},
+		},
+		TsNs: writeTsNs,
+	}, SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("seed sibling at %d: %v", writeTsNs, err)
+	}
+
+	const snapshotTsNs = 5000
+	if err := mc.enqueueAndWait(context.Background(), metadataApplyRequest{
+		kind:      metadataSectionRefresh,
+		buildPath: util.FullPath("/dir"),
+		refresh: &sectionRefresh{
+			hi: "m",
+			entries: []*filer.Entry{
+				{
+					FullPath:        util.FullPath("/dir/b"),
+					Attr:            filer.Attr{Crtime: time.Unix(1, 0), Mtime: time.Unix(2, 0), Mode: 0100644, FileSize: 3},
+					HardLinkId:      hardLinkId,
+					HardLinkCounter: 2,
+				},
+			},
+			snapshotTsNs: snapshotTsNs,
+		},
+	}); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+
+	b, _, err := mc.FindEntry(context.Background(), util.FullPath("/dir/b"))
+	if err != nil || b == nil {
+		t.Fatalf("the live link is missing after the refresh: %v", err)
+	}
+	if string(b.HardLinkId) != string(hardLinkId) {
+		t.Errorf("the stale occupant was kept: HardLinkId=%x, want %x", b.HardLinkId, hardLinkId)
+	}
+
+	blob, err := mc.localStore.KvGet(context.Background(), oldGroup)
+	if err != nil {
+		t.Fatalf("the live sibling's shared blob was deleted: %v", err)
+	}
+	shared := &filer.Entry{}
+	if err := shared.DecodeAttributesAndChunks(blob); err != nil {
+		t.Fatalf("decode shared blob: %v", err)
+	}
+	if shared.HardLinkCounter != 1 {
+		t.Errorf("the occupant's old group was decremented again: counter=%d, want 1", shared.HardLinkCounter)
+	}
+	q, _, err := mc.FindEntry(context.Background(), util.FullPath("/dir/q"))
+	if err != nil || q == nil {
+		t.Fatalf("the live sibling is unreadable after the refresh: %v", err)
+	}
+	if q.FileSize != 22 {
+		t.Errorf("the live sibling's content was rolled back: FileSize=%d, want 22", q.FileSize)
+	}
+}
+
 // TestEnsureNameFreshRefreshesOnlyItsSection checks that a name-scoped
 // refresh re-lists just the section holding that name and leaves other stale
 // sections untouched.

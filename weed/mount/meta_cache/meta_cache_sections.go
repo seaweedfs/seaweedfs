@@ -408,9 +408,13 @@ func (mc *MetaCache) applySectionRefreshNow(ctx context.Context, dirPath util.Fu
 		// at the path is a stale occupant of a reused name, so the listed
 		// name still lands — carrying the group's parked content rather
 		// than the snapshot's.
+		staleOccupant := false
 		if mc.hardLinkVersionFloorLocked(ctx, entry.HardLinkId) > snapshotTsNs {
-			if existing, findErr := mc.localStore.FindEntry(ctx, entry.FullPath); findErr == nil && existing != nil && !isTtlExpired(existing) && string(existing.HardLinkId) == string(entry.HardLinkId) {
-				continue
+			if existing, findErr := mc.localStore.FindEntry(ctx, entry.FullPath); findErr == nil && existing != nil {
+				if !isTtlExpired(existing) && string(existing.HardLinkId) == string(entry.HardLinkId) {
+					continue
+				}
+				staleOccupant = len(existing.HardLinkId) != 0 && string(existing.HardLinkId) != string(entry.HardLinkId)
 			}
 			if rebased := mc.rebaseHardLinkEntryLocked(ctx, entry, ""); rebased != nil {
 				entry = rebased
@@ -423,6 +427,15 @@ func (mc *MetaCache) applySectionRefreshNow(ctx context.Context, dirPath util.Fu
 		if unversioned {
 			if existing, findErr := mc.localStore.FindEntry(ctx, entry.FullPath); findErr == nil && existing != nil && mc.pinnedChildFn != nil && mc.pinnedChildFn(existing) {
 				continue
+			}
+		}
+		if staleOccupant {
+			// The name already left the occupant's group on the filer, and a
+			// later write to a sibling can have folded that unlink into the
+			// shared blob's counter — vacate the path like a rename so the
+			// insert does not decrement a group that may no longer count it.
+			if err := mc.localStore.DeleteEntry(context.WithValue(ctx, "OP", "MV"), entry.FullPath); err != nil {
+				return err
 			}
 		}
 		// no per-entry version: the section floor set below covers the range
