@@ -37,7 +37,7 @@ templ PluginSchedulerStatus() {
         const scheduler = data.scheduler || {};
         const now = new Date(scheduler.now || Date.now());
         (scheduler.job_types || []).forEach(function(job) {
-            if (!job.enabled || (data.job_type && job.job_type !== data.job_type)) return;
+            if (data.job_type ? job.job_type !== data.job_type : !job.enabled) return;
             const until = job.detection_eligible_at ? new Date(job.detection_eligible_at) : null;
             const cooling = until && until > now;
             if (!job.cooldown_error && !cooling && !(data.job_type && job.cooldown_seconds)) return;
