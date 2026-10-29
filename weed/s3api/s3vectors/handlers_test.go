@@ -632,10 +632,20 @@ func TestValidateVectorPolicy(t *testing.T) {
 	if err := validateVectorPolicy("not-json"); err == nil {
 		t.Fatal("malformed policy should be rejected")
 	}
-	for _, field := range []string{"NotAction", "NotResource"} {
+	for _, field := range []string{"NotAction", "NotResource", "NotPrincipal", "Condition"} {
 		bad := fmt.Sprintf(`{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Principal":"*","%s":"s3vectors:GetIndex","Action":"s3vectors:PutVectors","Resource":"*"}]}`, field)
 		if err := validateVectorPolicy(bad); err == nil {
 			t.Fatalf("%s should be rejected", field)
+		}
+	}
+	for _, dead := range []string{
+		`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3tables:GetTable","Resource":"*"}]}`,
+		`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3vectors:GetVectors","Resource":"arn:aws:s3:r:a:bucket/b"}]}`,
+		`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3vectors:GetVectors","Resource":"arn:aws:s3tables:r:a:bucket/b"}]}`,
+		`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3vectors:GetVectors","Resource":"arn:aws-cn:s3tables:r:a:bucket/b"}]}`,
+	} {
+		if err := validateVectorPolicy(dead); err == nil {
+			t.Fatalf("unenforceable rule should be rejected: %s", dead)
 		}
 	}
 }

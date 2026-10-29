@@ -414,28 +414,56 @@ func tableID(bucket, index string) *vector_pb.Table {
 // evaluator only honors catalog actions, so vector operations evaluate it
 // themselves — against the s3vectors action and ARN the request names. A
 // separate key keeps a vector grant from ever authorizing a catalog call.
-const vectorPolicyKey = "s3vectors-policy"
+// The constant lives in s3tables so the catalog asserts it in the update
+// preconditions of its own whole-entry writes.
+const vectorPolicyKey = s3tables.ExtendedKeyVectorPolicy
 
 // errNoVectorPolicy reports a missing policy document; handlers map it to a
 // 404 the same way the catalog maps a missing resource policy.
 var errNoVectorPolicy = errors.New("vector bucket policy not found")
 
 // validateVectorPolicy rejects a document the evaluator cannot honor: the
-// shared Statement shape has no NotAction/NotResource, so a rule relying on
-// either would silently lose its exclusion.
+// shared Statement shape has no negated fields, so a rule relying on one would
+// silently lose its exclusion; conditions are unsupported since the vector
+// evaluation supplies no condition keys; and a rule naming another service is
+// a dead rule the writer believes is enforced. The document must decode into
+// the same typed form the evaluator uses.
 func validateVectorPolicy(raw string) error {
+	var typed s3tables.PolicyDocument
+	if err := json.Unmarshal([]byte(raw), &typed); err != nil {
+		return fmt.Errorf("invalid policy document: %w", err)
+	}
 	var doc map[string]interface{}
 	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
 		return fmt.Errorf("invalid policy document: %w", err)
 	}
 	for _, stmt := range policyStatements(doc) {
-		for _, field := range []string{"NotAction", "NotResource"} {
+		for _, field := range []string{"NotAction", "NotResource", "NotPrincipal", "Condition"} {
 			if _, ok := stmt[field]; ok {
 				return fmt.Errorf("invalid policy document: %s is not supported", field)
 			}
 		}
+		for _, action := range statementActions(stmt["Action"]) {
+			if service, _, found := strings.Cut(action, ":"); found && service != "s3vectors" {
+				return fmt.Errorf("invalid policy document: action %q is not enforceable in a vector bucket policy", action)
+			}
+		}
+		for _, resource := range statementActions(stmt["Resource"]) {
+			if service := arnService(resource); service != "" && service != "s3vectors" {
+				return fmt.Errorf("invalid policy document: resource %q is not enforceable in a vector bucket policy", resource)
+			}
+		}
 	}
 	return nil
+}
+
+// arnService returns the service field of an ARN in any partition.
+func arnService(resource string) string {
+	parts := strings.SplitN(resource, ":", 4)
+	if len(parts) == 4 && parts[0] == "arn" {
+		return parts[2]
+	}
+	return ""
 }
 
 func policyStatements(doc map[string]interface{}) []map[string]interface{} {
