@@ -290,15 +290,19 @@ func TestTranslateFilter(t *testing.T) {
 	}
 
 	for name, filter := range map[string]map[string]interface{}{
-		"unknown operator":  {"k": map[string]interface{}{"$bogus": "v"}},
-		"exists non-bool":   {"k": map[string]interface{}{"$exists": "yes"}},
-		"range non-number":  {"k": map[string]interface{}{"$gt": "v"}},
-		"in non-list":       {"k": map[string]interface{}{"$in": "v"}},
-		"top-level bad op":  {"$bogus": []interface{}{}},
-		"nested bad member": {"$and": []interface{}{"x"}},
-		"empty and list":    {"$and": []interface{}{}},
-		"empty or list":     {"$or": []interface{}{}},
-		"empty sub-object":  {"$and": []interface{}{map[string]interface{}{}}},
+		"unknown operator":   {"k": map[string]interface{}{"$bogus": "v"}},
+		"exists non-bool":    {"k": map[string]interface{}{"$exists": "yes"}},
+		"range non-number":   {"k": map[string]interface{}{"$gt": "v"}},
+		"in non-list":        {"k": map[string]interface{}{"$in": "v"}},
+		"top-level bad op":   {"$bogus": []interface{}{}},
+		"nested bad member":  {"$and": []interface{}{"x"}},
+		"empty and list":     {"$and": []interface{}{}},
+		"empty or list":      {"$or": []interface{}{}},
+		"empty sub-object":   {"$and": []interface{}{map[string]interface{}{}}},
+		"empty operators":    {"k": map[string]interface{}{}},
+		"empty among fields": {"k": map[string]interface{}{}, "j": "1"},
+		"empty under and": {"$and": []interface{}{map[string]interface{}{
+			"k": map[string]interface{}{}, "j": map[string]interface{}{}}}},
 	} {
 		if _, err := translateFilter(filter); err == nil {
 			t.Fatalf("%s should fail", name)

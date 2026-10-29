@@ -1673,6 +1673,9 @@ func fieldClause(field string, cond interface{}) (string, error) {
 				return "", fmt.Errorf("unsupported operator %s", op)
 			}
 		}
+		if len(parts) == 0 {
+			return "", fmt.Errorf("%s expects at least one operator", field)
+		}
 		return strings.Join(parts, " AND "), nil
 	default:
 		lit, err := sqlLiteral(cond)
