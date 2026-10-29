@@ -439,6 +439,97 @@ func tableID(bucket, index string) *vector_pb.Table {
 
 // Vector bucket policies are stored on the shared table bucket, the same
 // resource s3tables' PutTableBucketPolicy guards.
+// vectorPolicyActions maps each s3vectors action to the catalog operation a
+// vector request authorizes against; a rule the evaluator never sees is dead.
+var vectorPolicyActions = map[string]string{
+	"s3vectors:CreateVectorBucket":       "s3tables:CreateTableBucket",
+	"s3vectors:GetVectorBucket":          "s3tables:GetTableBucket",
+	"s3vectors:ListVectorBuckets":        "s3tables:ListTableBuckets",
+	"s3vectors:DeleteVectorBucket":       "s3tables:DeleteTableBucket",
+	"s3vectors:PutVectorBucketPolicy":    "s3tables:PutTableBucketPolicy",
+	"s3vectors:GetVectorBucketPolicy":    "s3tables:GetTableBucketPolicy",
+	"s3vectors:DeleteVectorBucketPolicy": "s3tables:DeleteTableBucketPolicy",
+	"s3vectors:CreateIndex":              "s3tables:CreateTable",
+	"s3vectors:GetIndex":                 "s3tables:GetTable",
+	"s3vectors:ListIndexes":              "s3tables:ListTables",
+	"s3vectors:DeleteIndex":              "s3tables:DeleteTable",
+	"s3vectors:PutVectors":               "s3tables:UpdateTable",
+	"s3vectors:DeleteVectors":            "s3tables:UpdateTable",
+	"s3vectors:GetVectors":               "s3tables:GetTable",
+	"s3vectors:ListVectors":              "s3tables:GetTable",
+	"s3vectors:QueryVectors":             "s3tables:GetTable",
+}
+
+// translateVectorPolicy rewrites the document to the form the catalog
+// evaluator matches: s3vectors actions become the catalog operations the
+// request authorizes against, and an s3vectors ARN becomes the table-bucket
+// ARN the index's catalog entry answers to.
+func translateVectorPolicy(raw string) (string, error) {
+	var doc map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
+		return "", fmt.Errorf("invalid policy document: %w", err)
+	}
+	translate := func(stmt map[string]interface{}) {
+		for _, field := range []string{"Action", "NotAction"} {
+			stmt[field] = translatePolicySpec(stmt[field], translateVectorAction)
+		}
+		for _, field := range []string{"Resource", "NotResource"} {
+			stmt[field] = translatePolicySpec(stmt[field], translateVectorResource)
+		}
+	}
+	switch stmts := doc["Statement"].(type) {
+	case []interface{}:
+		for _, s := range stmts {
+			if stmt, ok := s.(map[string]interface{}); ok {
+				translate(stmt)
+			}
+		}
+	case map[string]interface{}:
+		translate(stmts)
+	}
+	out, err := json.Marshal(doc)
+	if err != nil {
+		return "", fmt.Errorf("invalid policy document: %w", err)
+	}
+	return string(out), nil
+}
+
+func translatePolicySpec(spec interface{}, f func(string) string) interface{} {
+	switch s := spec.(type) {
+	case string:
+		return f(s)
+	case []interface{}:
+		out := make([]interface{}, 0, len(s))
+		for _, item := range s {
+			str, ok := item.(string)
+			if !ok {
+				return spec
+			}
+			out = append(out, f(str))
+		}
+		return out
+	}
+	return spec
+}
+
+func translateVectorAction(action string) string {
+	if action == "s3vectors:*" {
+		return "s3tables:*"
+	}
+	if mapped, ok := vectorPolicyActions[action]; ok {
+		return mapped
+	}
+	return action
+}
+
+func translateVectorResource(resource string) string {
+	rest, ok := strings.CutPrefix(resource, "arn:aws:s3vectors:")
+	if !ok {
+		return resource
+	}
+	return strings.Replace("arn:aws:s3tables:"+rest, "/index/", "/table/"+indexNamespace+"/", 1)
+}
+
 func (s *Server) handlePutVectorBucketPolicy(w http.ResponseWriter, r *http.Request) {
 	var req PutVectorBucketPolicyRequest
 	if err := readJSON(r, &req); err != nil {
@@ -454,10 +545,15 @@ func (s *Server) handlePutVectorBucketPolicy(w http.ResponseWriter, r *http.Requ
 		catalogErr(w, err)
 		return
 	}
+	policy, err := translateVectorPolicy(req.Policy)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		return
+	}
 	var resp map[string]interface{}
 	err = s.catalog(r.Context(), "PutTableBucketPolicy", &s3tables.PutTableBucketPolicyRequest{
 		TableBucketARN: s.s3tablesArn(arns.bucket),
-		ResourcePolicy: req.Policy,
+		ResourcePolicy: policy,
 	}, &resp, r)
 	if err != nil {
 		catalogErr(w, err)

@@ -615,5 +615,30 @@ func TestDeleteIndexRemovesDatasetDirectory(t *testing.T) {
 	}
 	if e := fs.Get("/buckets/vec-bucket/vector/idx/data", "part-0.lance"); e != nil {
 		t.Fatal("index dataset survived DeleteIndex")
+
+
+func TestTranslateVectorPolicy(t *testing.T) {
+	raw := `{"Version":"2012-10-17","Statement":[{"Sid":"x","Effect":"Deny","Principal":"*","Action":["s3vectors:PutVectors","s3vectors:GetVectors","s3vectors:*"],"Resource":["arn:aws:s3vectors:r:a:bucket/b","arn:aws:s3vectors:r:a:bucket/b/index/i"]}]}`
+	out, err := translateVectorPolicy(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Statement []struct {
+			Action   []string `json:"Action"`
+			Resource []string `json:"Resource"`
+		} `json:"Statement"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatal(err)
+	}
+	got := doc.Statement[0]
+	wantActions := []string{"s3tables:UpdateTable", "s3tables:GetTable", "s3tables:*"}
+	if fmt.Sprint(got.Action) != fmt.Sprint(wantActions) {
+		t.Fatalf("actions = %v, want %v", got.Action, wantActions)
+	}
+	wantResources := []string{"arn:aws:s3tables:r:a:bucket/b", "arn:aws:s3tables:r:a:bucket/b/table/vector/i"}
+	if fmt.Sprint(got.Resource) != fmt.Sprint(wantResources) {
+		t.Fatalf("resources = %v, want %v", got.Resource, wantResources)
 	}
 }
