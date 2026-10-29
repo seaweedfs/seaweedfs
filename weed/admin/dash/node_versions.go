@@ -80,8 +80,9 @@ func (s *AdminServer) fillVolumeServerVersions(servers map[string]*VolumeServer,
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
+			version := s.queryVolumeServerVersion(node)
 			mu.Lock()
-			versions[node.Id] = s.queryVolumeServerVersion(node)
+			versions[node.Id] = version
 			mu.Unlock()
 		}(node)
 	}
