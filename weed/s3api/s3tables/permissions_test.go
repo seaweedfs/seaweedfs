@@ -80,6 +80,11 @@ func TestMatchesPrincipal(t *testing.T) {
 		{"AWS map wildcard", map[string]interface{}{"AWS": "arn:aws:iam::*:user/admin"}, "arn:aws:iam::123:user/admin", true},
 		{"AWS map array", map[string]interface{}{"AWS": []interface{}{"user1", "user2"}}, "user1", true},
 
+		// ARN statements reach normalized-name callers
+		{"arn spec exact caller", "arn:aws:iam::123456789012:user/bob", "bob", true},
+		{"arn spec wildcard caller", "arn:aws:iam::*:user/alice", "alice", true},
+		{"arn spec no match", "arn:aws:iam::123456789012:user/carol", "dan", false},
+
 		// Nil/empty cases
 		{"nil principal", nil, "user123", false},
 	}

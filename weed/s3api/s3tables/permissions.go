@@ -396,23 +396,12 @@ func matchesPrincipal(principalSpec interface{}, principal string) bool {
 
 	switch p := principalSpec.(type) {
 	case string:
-		// Direct string match or wildcard
-		if p == "*" || p == principal {
-			return true
-		}
-		// Support wildcard matching for principals (e.g., "arn:aws:iam::*:user/admin")
-		return wildcard.MatchesWildcard(p, principal)
+		return matchesPrincipalString(p, principal)
 	case []interface{}:
 		// Array of principals
 		for _, item := range p {
-			if str, ok := item.(string); ok {
-				if str == "*" || str == principal {
-					return true
-				}
-				// Support wildcard matching
-				if wildcard.MatchesWildcard(str, principal) {
-					return true
-				}
+			if str, ok := item.(string); ok && matchesPrincipalString(str, principal) {
+				return true
 			}
 		}
 	case map[string]interface{}:
@@ -424,6 +413,21 @@ func matchesPrincipal(principalSpec interface{}, principal string) bool {
 	}
 
 	return false
+}
+
+// matchesPrincipalString reports whether a single principal spec matches the
+// caller. Caller principals are normalized ids, so a statement naming a full
+// IAM ARN still reaches the caller through the same normalization — without
+// it an ARN-scoped statement could never match.
+func matchesPrincipalString(spec, principal string) bool {
+	if spec == "*" || spec == principal {
+		return true
+	}
+	if wildcard.MatchesWildcard(spec, principal) {
+		return true
+	}
+	return strings.HasPrefix(spec, "arn:") && !strings.HasPrefix(principal, "arn:") &&
+		wildcard.MatchesWildcard(normalizePrincipalID(spec), principal)
 }
 
 // matchesAction checks if the action matches the statement's action
