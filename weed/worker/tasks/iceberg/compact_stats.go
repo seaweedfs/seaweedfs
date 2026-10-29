@@ -238,7 +238,7 @@ func boundLiteral(v parquet.Value, pt parquet.Type, t iceberg.Type, roundUp bool
 				return iceberg.TimestampLiteral(iceberg.Timestamp(us)), true
 			}
 		}
-	case iceberg.TimestampNsType:
+	case iceberg.TimestampNsType, iceberg.TimestampTzNsType:
 		if v.Kind() == parquet.Int64 {
 			if ns, ok := convertTimeUnit(v.Int64(), pt, time.Nanosecond, roundUp); ok {
 				return iceberg.TimestampNsLiteral(iceberg.TimestampNano(ns)), true

@@ -44,6 +44,8 @@ func TestBoundLiteralTypes(t *testing.T) {
 			iceberg.TimestampLiteral(-2)},
 		{"negative timestamp ns to us, upper rounds up", parquet.Int64Value(-1_500), parquet.Timestamp(parquet.Nanosecond).Type(), iceberg.PrimitiveTypes.TimestampTz, true,
 			iceberg.TimestampLiteral(-1)},
+		{"timestamptz ns us rescale", parquet.Int64Value(1_700_000_000_123), parquet.Timestamp(parquet.Microsecond).Type(), iceberg.TimestampTzNsType{}, false,
+			iceberg.TimestampNsLiteral(1_700_000_000_123_000)},
 		{"timestamp ms to us overflows: none", parquet.Int64Value(1 << 62), parquet.Timestamp(parquet.Millisecond).Type(), iceberg.PrimitiveTypes.Timestamp, false, nil},
 		{"uuid", parquet.FixedLenByteArrayValue(u[:]), parquet.UUID().Type(), iceberg.PrimitiveTypes.UUID, false, iceberg.UUIDLiteral(u)},
 		{"fixed[4]", parquet.FixedLenByteArrayValue([]byte{1, 2, 3, 4}), parquet.FixedLenByteArrayType(4), iceberg.FixedTypeOf(4), false,
