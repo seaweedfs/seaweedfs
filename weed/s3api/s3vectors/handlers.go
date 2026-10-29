@@ -633,21 +633,10 @@ func (s *Server) mutateVectorPolicy(ctx context.Context, bucket string, mutate f
 				return err
 			}
 			entry := resp.Entry
-			expected := make(map[string][]byte, len(entry.Extended)+4)
-			for k, v := range entry.Extended {
-				expected[k] = v
-			}
-			// Assert the keys this write reasons about stay absent too, so a
-			// concurrent policy or tag write trips the compare-and-swap instead
-			// of being silently reverted by the whole-entry update.
-			for _, k := range []string{
-				vectorPolicyKey, s3tables.ExtendedKeyPolicy,
-				s3tables.ExtendedKeyMetadata, s3tables.ExtendedKeyTags,
-			} {
-				if _, ok := expected[k]; !ok {
-					expected[k] = nil
-				}
-			}
+			// Assert the vector policy key stays absent too, so a concurrent
+			// policy write trips the compare-and-swap instead of being
+			// silently reverted by the whole-entry update.
+			expected := s3tables.SnapshotExtended(entry.Extended, vectorPolicyKey)
 			if entry.Extended == nil {
 				entry.Extended = make(map[string][]byte)
 			}
