@@ -290,16 +290,27 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 	}
 
 	// A regenerated shard that was mounted keeps serving its old file through
-	// the open descriptor — the atomic rename left the mounted handle on the
-	// detached inode. Reopen it so reads hit the repaired file. This is a
-	// descriptor swap, not an unmount+remount, so the master's registration
-	// never flips and no copy of the shard disappears from lookups.
-	for _, shardId := range generatedShardIds {
-		sid := erasure_coding.ShardId(shardId)
-		for _, location := range vs.store.Locations {
-			if _, rerr := location.ReopenEcShard(needle.VolumeId(req.VolumeId), sid); rerr != nil {
-				recordEcRebuild("failure", time.Since(start))
-				return nil, rerr
+	// the open descriptor — the rename left the mounted handle on the detached
+	// inode. Repoint every mounted handle of this volume at the file now on
+	// disk, not just this run's outputs: a shard an earlier rebuild wrote on
+	// another disk is "present" this run and would never re-enter
+	// generatedShardIds, yet its mounted handle is still stale.
+	for _, location := range vs.store.Locations {
+		for _, shardId := range location.MountedEcShardIds(needle.VolumeId(req.VolumeId)) {
+			if _, rerr := location.ReopenEcShard(needle.VolumeId(req.VolumeId), shardId); rerr == nil {
+				continue
+			}
+			// The mounted disk lost the file and the rebuild wrote it
+			// elsewhere — or the file is unreadable in place. Drop the stale
+			// handle and remount from whichever local disk holds the rebuilt
+			// file; both steps emit no heartbeat delta, so the master's
+			// registration never flips. A shard that cannot be remounted is
+			// left unmounted — the honest state — rather than serving
+			// replaced bytes. Reporting the rebuilt ids on this path keeps
+			// the caller's cleanup from deleting them as strays.
+			location.UnloadEcShard(needle.VolumeId(req.VolumeId), shardId)
+			if _, _, lerr := vs.store.LoadEcShardAcrossDisks(req.Collection, needle.VolumeId(req.VolumeId), shardId); lerr != nil {
+				glog.Warningf("rebuilt ec shard %d.%d left unmounted: %v", req.VolumeId, shardId, lerr)
 			}
 		}
 	}

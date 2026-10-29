@@ -297,6 +297,17 @@ func (l *DiskLocation) ReopenEcShard(vid needle.VolumeId, shardId erasure_coding
 	return true, nil
 }
 
+// MountedEcShardIds returns the ids of shards this disk currently serves for
+// the volume, or nil when the volume is not mounted here.
+func (l *DiskLocation) MountedEcShardIds(vid needle.VolumeId) []erasure_coding.ShardId {
+	l.ecVolumesLock.RLock()
+	defer l.ecVolumesLock.RUnlock()
+	if ecVolume, found := l.ecVolumes[vid]; found {
+		return ecVolume.ShardIdList()
+	}
+	return nil
+}
+
 func (l *DiskLocation) UnloadEcShard(vid needle.VolumeId, shardId erasure_coding.ShardId) bool {
 
 	l.ecVolumesLock.Lock()
