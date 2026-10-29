@@ -53,19 +53,6 @@ func (wfs *WFS) Read(cancel <-chan struct{}, in *fuse.ReadIn, buff []byte) (fuse
 	offset := int64(in.Offset)
 	totalRead, err := readDataByFileHandleWithContext(ctx, buff, fh, offset)
 	if err != nil {
-		// The chunk views a read resolves can name data a concurrent overwrite
-		// already replaced: the filer queues replaced file ids for deletion at
-		// commit while this handle only learns the new list when the metadata
-		// event lands. Refreshing the entry installs the chunks that exist;
-		// it takes the exclusive handle lock, so drop the shared one first.
-		fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
-		retry := fh.refreshEntryForRead(ctx)
-		fhActiveLock = fh.wfs.fhLockTable.AcquireLock("Read", fh.fh, util.SharedLock)
-		if retry {
-			totalRead, err = readDataByFileHandleWithContext(ctx, buff, fh, offset)
-		}
-	}
-	if err != nil {
 		glog.Warningf("file handle read %s %d: %v", fh.FullPath(), totalRead, err)
 		return nil, fuse.EIO
 	}

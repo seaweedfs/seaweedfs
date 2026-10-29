@@ -57,7 +57,15 @@ func (i *FileHandleToInode) MarkInodeRenamed(inode uint64) {
 // Every open gets its own fh value over the shared FileHandle so that
 // RELEASE — which identifies nothing else about the dying description — can
 // scope per-open state (e.g. OFD lock owners) to the open that is closing.
-func (i *FileHandleToInode) AcquireFileHandle(wfs *WFS, inode uint64, entry *filer_pb.Entry, versionTsNs int64, signature int32) (*FileHandle, FileHandleId, bool) {
+//
+// A handle whose counter already reached zero is draining its deferred flush:
+// it stays in the map only so rename/unlink can still find it, and
+// RemoveFileHandle will drop it (and every fh id minted for it) when the drain
+// completes. Attaching here would hand the kernel an fh id that vanishes mid-
+// open — reads on it return ENOENT, which the kernel reports to read() as EIO.
+// Callers must treat a draining report as "wait for the pending flush, then
+// retry the whole acquire", not as success.
+func (i *FileHandleToInode) AcquireFileHandle(wfs *WFS, inode uint64, entry *filer_pb.Entry, versionTsNs int64, signature int32) (*FileHandle, FileHandleId, bool, bool) {
 	i.Lock()
 	defer i.Unlock()
 	fh, found := i.inode2fh[inode]
@@ -67,13 +75,16 @@ func (i *FileHandleToInode) AcquireFileHandle(wfs *WFS, inode uint64, entry *fil
 		fh.entryVersionSignature.Store(signature)
 		i.inode2fh[inode] = fh
 		i.fh2inode[fh.fh] = inode
-		return fh, fh.fh, false
+		return fh, fh.fh, false, false
+	}
+	if fh.counter <= 0 {
+		return nil, 0, true, true
 	}
 	fh.counter++
 	openFh := FileHandleId(util.RandomUint64())
 	fh.fhs[openFh] = struct{}{}
 	i.fh2inode[openFh] = inode
-	return fh, openFh, true
+	return fh, openFh, true, false
 }
 
 func (i *FileHandleToInode) ReleaseByHandle(fh FileHandleId) *FileHandle {
