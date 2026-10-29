@@ -363,7 +363,7 @@ func (s *Server) handleListVectorBuckets(w http.ResponseWriter, r *http.Request)
 	}
 	// The catalog token continues the filtered page: ICEBERG buckets drop out
 	// of the listing, Lance and format-less legacy buckets stay.
-	out := &ListVectorBucketsResponse{NextToken: resp.ContinuationToken}
+	out := &ListVectorBucketsResponse{NextToken: resp.ContinuationToken, VectorBuckets: []*VectorBucket{}}
 	for _, b := range resp.TableBuckets {
 		if b.Format != "" && b.Format != s3tables.FormatLance {
 			continue
@@ -751,7 +751,7 @@ func (s *Server) handleListIndexes(w http.ResponseWriter, r *http.Request) {
 	}
 	// Summaries carry only what the catalog listing knows; a summary that
 	// asserted a dimension or metric without a record lookup would lie.
-	out := &ListIndexesResponse{NextToken: resp.ContinuationToken}
+	out := &ListIndexesResponse{NextToken: resp.ContinuationToken, Indexes: []*IndexSummary{}}
 	for _, t := range resp.TableSummaries {
 		// A non-Lance table in the index namespace is not an index.
 		if t.Format != "" && t.Format != s3tables.FormatLance {
@@ -1413,7 +1413,7 @@ func (s *Server) handleQueryVectors(w http.ResponseWriter, r *http.Request) {
 		vectorErr(w, err)
 		return
 	}
-	out := &QueryVectorsResponse{DistanceMetric: metric}
+	out := &QueryVectorsResponse{DistanceMetric: metric, Vectors: []*QueryOutputVector{}}
 	for _, v := range resp.Vectors {
 		o := &QueryOutputVector{Key: v.Key}
 		if req.ReturnDistance {
