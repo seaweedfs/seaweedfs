@@ -293,6 +293,24 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 			err = ev.ReopenDeletionJournal()
 		}
 		unlockJournal()
+		if err == nil {
+			// Mounts on sibling disks can journal into the same .ecj — the
+			// fold unlinked it, so repoint their handles too or their next
+			// append lands on the detached inode.
+			for _, location := range vs.store.Locations {
+				if location == rebuildLocation {
+					continue
+				}
+				if sibling, ok := location.FindEcVolume(needle.VolumeId(req.VolumeId)); ok && sibling.EcIndexBaseFileName() == indexBaseFileName {
+					unlockSibling := sibling.LockDeletionJournal()
+					serr := sibling.ReopenDeletionJournal()
+					unlockSibling()
+					if serr != nil {
+						glog.Warningf("reopen shared ec journal %s: %v", indexBaseFileName, serr)
+					}
+				}
+			}
+		}
 		if err != nil {
 			recordEcRebuild("failure", time.Since(start))
 			return nil, ecRebuildErrorWithIds(rebuiltShardIds, fmt.Errorf("RebuildEcxFile %s: %v", indexBaseFileName, err))
