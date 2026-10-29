@@ -78,9 +78,13 @@ func routeWriteCondition(r *http.Request, uniqueWritePath bool) (*filer_pb.Write
 }
 
 // buildWriteCondition reduces the request's conditional headers to a
-// WriteCondition. ok=false (combined headers, time conditions, ETag lists, weak
-// ETags) keeps gateway-side evaluation under the lock; a nil condition with
-// ok=true means unconditional.
+// WriteCondition evaluated under the owner's object-path lock. Every header
+// form reduces to clauses (ETag lists and weak ETags compare through the same
+// canonicalization the gateway applies; time conditions become unix bounds),
+// composed per RFC 7232 precedence: If-Unmodified-Since is ignored when
+// If-Match is present, If-Modified-Since when If-None-Match is. ok=false only
+// when the headers cannot even parse; a nil condition with ok=true means
+// unconditional.
 func buildWriteCondition(r *http.Request) (*filer_pb.WriteCondition, bool) {
 	headers, errCode := parseConditionalHeaders(r)
 	if errCode != s3err.ErrNone {
@@ -89,31 +93,24 @@ func buildWriteCondition(r *http.Request) (*filer_pb.WriteCondition, bool) {
 	if !headers.isSet {
 		return nil, true
 	}
-	if !headers.ifModifiedSince.IsZero() || !headers.ifUnmodifiedSince.IsZero() {
-		return nil, false
+	var clauses []*filer_pb.WriteCondition_Clause
+	if headers.ifMatch == "*" {
+		clauses = append(clauses, &filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_EXISTS})
+	} else if headers.ifMatch != "" {
+		clauses = append(clauses, &filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_ETAG_MATCH, Etags: etagList(headers.ifMatch)})
 	}
-	hasMatch := headers.ifMatch != ""
-	hasNoneMatch := headers.ifNoneMatch != ""
-	switch {
-	case hasMatch && !hasNoneMatch:
-		if headers.ifMatch == "*" {
-			return clause(filer_pb.WriteCondition_IF_EXISTS), true
-		}
-		if etag, single := singleStrongETag(headers.ifMatch); single {
-			return etagClause(filer_pb.WriteCondition_IF_ETAG_MATCH, etag), true
-		}
-		return nil, false
-	case hasNoneMatch && !hasMatch:
-		if headers.ifNoneMatch == "*" {
-			return clause(filer_pb.WriteCondition_IF_NOT_EXISTS), true
-		}
-		if etag, single := singleStrongETag(headers.ifNoneMatch); single {
-			return etagClause(filer_pb.WriteCondition_IF_ETAG_NOT_MATCH, etag), true
-		}
-		return nil, false
-	default:
-		return nil, false
+	if !headers.ifUnmodifiedSince.IsZero() && headers.ifMatch == "" {
+		clauses = append(clauses, &filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_UNMODIFIED_SINCE, UnixTime: headers.ifUnmodifiedSince.Unix()})
 	}
+	if headers.ifNoneMatch == "*" {
+		clauses = append(clauses, &filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_NOT_EXISTS})
+	} else if headers.ifNoneMatch != "" {
+		clauses = append(clauses, &filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_ETAG_NOT_MATCH, Etags: etagList(headers.ifNoneMatch)})
+	}
+	if !headers.ifModifiedSince.IsZero() && headers.ifNoneMatch == "" {
+		clauses = append(clauses, &filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_MODIFIED_SINCE, UnixTime: headers.ifModifiedSince.Unix()})
+	}
+	return &filer_pb.WriteCondition{Clauses: clauses}, true
 }
 
 // buildDeleteCondition reduces a DeleteObject's If-Match header to a condition;
@@ -152,6 +149,16 @@ func singleStrongETag(v string) (string, bool) {
 		return "", false
 	}
 	return strings.Trim(v, `"`), true
+}
+
+// etagList splits a conditional ETag header into its candidates, each kept
+// verbatim — the evaluator's canonicalization handles quotes and weak markers.
+func etagList(v string) []string {
+	parts := strings.Split(v, ",")
+	for i := range parts {
+		parts[i] = strings.TrimSpace(parts[i])
+	}
+	return parts
 }
 
 // objectTxnOnFiler applies a routed transaction, preferring the object's owner

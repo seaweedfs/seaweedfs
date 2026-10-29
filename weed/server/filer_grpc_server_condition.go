@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -159,15 +160,27 @@ func canonicalETag(etag string) (value string, weak bool) {
 	return strings.Trim(etag, `"`), false
 }
 
-// storedEntryETag mirrors the S3 gateway's ETag precedence (the stored
-// Seaweed ETag extended attribute, then the chunk/Md5 fallback) so conditional
-// comparisons match what the gateway computes, without coupling the filer to
-// S3 request handling.
+// storedEntryETag mirrors the S3 gateway's ETag precedence — the stored
+// Seaweed ETag extended attribute, then the remote ETag while the entry still
+// holds the remote bytes, then Md5, then the chunk hash (an empty object has
+// no ETag) — so conditional comparisons match what the gateway computes,
+// without coupling the filer to S3 request handling.
 func storedEntryETag(entry *filer.Entry) string {
 	if v, ok := entry.Extended[s3_constants.ExtETagKey]; ok && len(v) > 0 {
 		return normalizeETag(string(v))
 	}
-	return normalizeETag(filer.ETagEntry(entry))
+	if remote := entry.Remote; remote != nil && remote.RemoteETag != "" &&
+		entry.FileSize == uint64(remote.RemoteSize) &&
+		(remote.LastLocalSyncTsNs > 0 || (len(entry.GetChunks()) == 0 && len(entry.Content) == 0)) {
+		return normalizeETag(remote.RemoteETag)
+	}
+	if len(entry.Md5) > 0 {
+		return fmt.Sprintf("%x", entry.Md5)
+	}
+	if len(entry.GetChunks()) == 0 {
+		return ""
+	}
+	return normalizeETag(filer.ETagChunks(entry.GetChunks()))
 }
 
 func normalizeETag(etag string) string {

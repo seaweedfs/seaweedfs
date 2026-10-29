@@ -691,10 +691,9 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 	routeKey := s3a.objectRouteKey(*input.Bucket, *input.Key)
 	// The write condition rides the commit transaction so the owner filer
 	// evaluates it under the object's path lock — the gateway's earlier
-	// checkConditionalHeaders is only a fast-path. Conditions it cannot reduce
-	// (time-based, combined, ETag lists, weak ETags) keep the pre-change
-	// semantics: check and commit run under the distributed write lock, which
-	// routed writes still bypass.
+	// checkConditionalHeaders is only a fast-path. Every header form reduces
+	// to clauses, so reducible is false only when the headers cannot parse,
+	// where the lock path reports the same parse error.
 	cond, reducible := buildWriteCondition(r)
 	completionBody := func() s3err.ErrorCode {
 		var prepCode s3err.ErrorCode
