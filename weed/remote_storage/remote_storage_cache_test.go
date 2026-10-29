@@ -260,6 +260,60 @@ func TestRemoteClientCache_RetainKeepsOnlyTheNewestPerName(t *testing.T) {
 	}
 }
 
+// A build that finishes after a reload removed its remote must not put the client back: the caller still gets it, but
+// it never enters the cache, and the next use builds again.
+func TestRemoteClientCache_BuildSpanningRetainIsDropped(t *testing.T) {
+	useTestCache(t, 64)
+	var k counter
+	started := make(chan struct{})
+	release := make(chan struct{})
+	slow := func(conf *remote_pb.RemoteConf) (RemoteStorageClient, func(), error) {
+		close(started)
+		<-release
+		return k.build(conf)
+	}
+	built := make(chan RemoteStorageClient, 1)
+	go func() {
+		client, _ := GetRemoteStorageWith("guarded", s3conf("gone", "x"), "", slow)
+		built <- client
+	}()
+	<-started
+	RetainRemoteStorages(map[string]bool{"keep": true})
+	close(release)
+	if client := <-built; client == nil {
+		t.Fatal("the caller still gets its built client")
+	}
+	if k.closes(1) != 2 {
+		t.Fatalf("the dropped client must be retired: closes %d", k.closes(1))
+	}
+	_, _ = GetRemoteStorageWith("guarded", s3conf("gone", "x"), "", k.build)
+	if k.builds.Load() != 2 {
+		t.Fatalf("builds = %d, want 2: the dropped client was not cached", k.builds.Load())
+	}
+}
+
+// A get of a remote a reload already removed is served (the caller still holds the configuration) but not cached.
+func TestRemoteClientCache_RemovedNameIsNotCached(t *testing.T) {
+	useTestCache(t, 64)
+	var k counter
+	RetainRemoteStorages(map[string]bool{"keep": true})
+	first, _ := GetRemoteStorageWith("guarded", s3conf("gone", "x"), "", k.build)
+	again, _ := GetRemoteStorageWith("guarded", s3conf("gone", "x"), "", k.build)
+	if first == nil || again == nil {
+		t.Fatal("a get of a removed remote still builds its client")
+	}
+	if first == again || k.builds.Load() != 2 {
+		t.Fatal("a removed remote's client must not enter the cache")
+	}
+	if _, _ = GetRemoteStorageWith("guarded", s3conf("keep", "x"), "", k.build); k.builds.Load() != 3 {
+		t.Fatal("a retained remote's client is cached")
+	}
+	kept, _ := GetRemoteStorageWith("guarded", s3conf("keep", "x"), "", k.build)
+	if kept.(*cacheTestClient).id != 3 {
+		t.Fatal("a retained remote's client is cached")
+	}
+}
+
 // FileVersion reads "~/…" as the gcs client does (util.ResolvePath), so a rotated file under the home directory is seen.
 func TestFileVersionResolvesHome(t *testing.T) {
 	u, err := user.Current()
