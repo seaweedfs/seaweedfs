@@ -1106,6 +1106,21 @@ func TestBuildGuardedRemoteStorageClientS3DefaultChainByCredentials(t *testing.T
 	if next, err := BuildGuardedRemoteStorageClient(context.Background(), conf, false); err != nil || next == first {
 		t.Fatalf("a changed shared credentials file must build a new client (err %v)", err)
 	}
+	awsConfig := filepath.Join(t.TempDir(), "config")
+	if err := os.WriteFile(awsConfig, []byte("[default]\nregion = us-east-1\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AWS_CONFIG_FILE", awsConfig)
+	withConfig, err := BuildGuardedRemoteStorageClient(context.Background(), conf, false)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if err := os.WriteFile(awsConfig, []byte("[default]\nregion = us-west-2\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if next, _ := BuildGuardedRemoteStorageClient(context.Background(), conf, false); next == withConfig {
+		t.Fatal("a changed shared config file must build a new client")
+	}
 	t.Setenv("AWS_PROFILE", "other")
 	prev, _ := BuildGuardedRemoteStorageClient(context.Background(), conf, false)
 	t.Setenv("AWS_PROFILE", "third")

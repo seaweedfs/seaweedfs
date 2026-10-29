@@ -346,26 +346,37 @@ func guardedMaxConnsPerHost() int {
 // it is built that its configuration does not hold, so that a change of them
 // builds a new client: the content of a gcs credentials file, or, for an
 // s3-compatible remote of any type missing an access key or a secret (the SDK's
-// default chain), the shared credentials file and the AWS_* variables the chain
-// reads. "" otherwise: a remote with both keys reads nothing else.
+// default chain), the shared credentials and config files and the AWS_*
+// variables the chain reads. "" otherwise: a remote with both keys reads
+// nothing else.
 func guardedCredentialsVersion(conf *remote_pb.RemoteConf) string {
 	if conf.GetType() == "gcs" && gcsCredentialsArePath(conf.GetGcsGoogleApplicationCredentials()) {
 		return remote_storage.FileVersion(conf.GetGcsGoogleApplicationCredentials())
 	}
 	if s3remote.UsesDefaultCredentialChain(conf) {
-		shared := os.Getenv("AWS_SHARED_CREDENTIALS_FILE")
-		if shared == "" {
-			if home, err := os.UserHomeDir(); err == nil {
-				shared = filepath.Join(home, ".aws", "credentials")
-			}
-		}
+		shared := awsSharedFile("AWS_SHARED_CREDENTIALS_FILE", "credentials")
+		config := awsSharedFile("AWS_CONFIG_FILE", "config")
 		h := sha256.New()
 		h.Write([]byte(remote_storage.FileVersion(shared)))
-		for _, k := range []string{"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_PROFILE"} {
+		h.Write([]byte{0})
+		h.Write([]byte(remote_storage.FileVersion(config)))
+		for _, k := range []string{"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_PROFILE", "AWS_DEFAULT_PROFILE"} {
 			h.Write([]byte{0})
 			h.Write([]byte(os.Getenv(k)))
 		}
 		return hex.EncodeToString(h.Sum(nil)[:16])
+	}
+	return ""
+}
+
+// awsSharedFile is the SDK's effective path of a shared file: the environment
+// override or the default under ~/.aws.
+func awsSharedFile(env, name string) string {
+	if path := os.Getenv(env); path != "" {
+		return path
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, ".aws", name)
 	}
 	return ""
 }
