@@ -197,10 +197,11 @@ func GetTableObjectBucketPath(bucketName string) string {
 // Metadata structures
 
 type tableBucketMetadata struct {
-	Name           string    `json:"name"`
-	CreatedAt      time.Time `json:"createdAt"`
-	OwnerAccountID string    `json:"ownerAccountId"`
-	Format         string    `json:"format,omitempty"`
+	Name                    string                 `json:"name"`
+	CreatedAt               time.Time              `json:"createdAt"`
+	OwnerAccountID          string                 `json:"ownerAccountId"`
+	Format                  string                 `json:"format,omitempty"`
+	EncryptionConfiguration map[string]interface{} `json:"encryptionConfiguration,omitempty"`
 }
 
 // namespaceMetadata stores metadata for a namespace
