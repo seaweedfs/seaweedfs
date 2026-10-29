@@ -100,7 +100,7 @@ def cluster(request, tmp_path_factory):
 
         for name in ("master", "volume", "filer"):
             (directory / name).mkdir()
-        start("master", [weed, "master", "-ip=127.0.0.1", "-ip.bind=127.0.0.1",
+        start("master", [weed, "-v=1", "master", "-ip=127.0.0.1", "-ip.bind=127.0.0.1",
                          f"-port={master}", f"-port.grpc={master_grpc}",
                          f"-mdir={directory / 'master'}", "-peers=none", "-volumeSizeLimitMB=32"])
         wait_for(lambda: http_ready(f"http://127.0.0.1:{master}/dir/status"), processes, "master not ready")
@@ -127,17 +127,12 @@ def cluster(request, tmp_path_factory):
                          "--storage-option", "aws_secret_access_key=test"])
         wait_for(lambda: listening(vector), processes, "vector engine not ready")
 
-        # A listening engine still has to land its KeepConnected registration
-        # before the gateway's lazy discovery can find it.
-        def engine_registered():
-            try:
-                out = subprocess.run([weed, "shell", "-master", master_addr],
-                                     input="cluster.ps\n", capture_output=True,
-                                     text=True, timeout=10).stdout
-            except (OSError, subprocess.SubprocessError):
-                return False
-            return "vector servers" in out
-        wait_for(engine_registered, processes, "vector engine never registered with the master")
+        wait_for(
+            lambda: f"Cluster: vector node 127.0.0.1:{vector} added to group ''"
+            in (directory / "master.log").read_text(),
+            processes,
+            "vector engine never registered with the master",
+        )
 
         if worker:
             for i, port in enumerate((worker1, worker2)):
