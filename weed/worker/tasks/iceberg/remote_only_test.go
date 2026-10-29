@@ -56,6 +56,10 @@ func (f *remoteCachingFiler) CacheRemoteObjectToLocalCluster(_ context.Context, 
 	if !ok || entry == nil {
 		return nil, fmt.Errorf("no remote object %s/%s", req.Directory, req.Name)
 	}
+	if req.MaxSize > 0 && entry.GetRemoteEntry().GetRemoteSize() > req.MaxSize {
+		return nil, fmt.Errorf("remote object %s/%s is %d bytes, over the %d byte limit",
+			req.Directory, req.Name, entry.GetRemoteEntry().GetRemoteSize(), req.MaxSize)
+	}
 	if stay {
 		return &filer_pb.CacheRemoteObjectToLocalClusterResponse{Entry: entry}, nil
 	}
@@ -222,6 +226,47 @@ func TestARemoteOnlyMetadataFileOverTheBoundIsNotCached(t *testing.T) {
 	if srv.cacheCalls != 0 {
 		t.Fatalf("%d cache calls, want 0", srv.cacheCalls)
 	}
+}
+
+// A remote object that grew past the bound between the worker's check and the
+// filer's cache resolve is rejected before its bytes are downloaded: the
+// bound rides the cache request for the entry the filer resolves, not only
+// the one the worker saw.
+func TestAMetadataFileThatGrewPastTheBoundIsNotDownloaded(t *testing.T) {
+	srv, client := startRemoteCachingFiler(t)
+	original := metadataFileMaxBytes
+	metadataFileMaxBytes = 8
+	defer func() { metadataFileMaxBytes = original }()
+
+	setup := tableSetup{BucketName: "b", Namespace: "ns", TableName: "t"}
+	putRemoteOnly(t, srv, setup.BucketName, setup.tablePath(), "metadata/grew.metadata.json", []byte{1})
+	full, err := icebergFilerPath(setup.BucketName, setup.tablePath(), "metadata/grew.metadata.json")
+	if err != nil {
+		t.Fatalf("path: %v", err)
+	}
+	dir, name := path.Dir(full), path.Base(full)
+	client = swapEntryOnCacheClient{SeaweedFilerClient: client, swap: func() {
+		srv.putEntry(dir, name, &filer_pb.Entry{Name: name,
+			Attributes:  &filer_pb.FuseAttributes{FileSize: uint64(metadataFileMaxBytes) + 1, Mtime: time.Now().Unix()},
+			RemoteEntry: &filer_pb.RemoteEntry{StorageName: "r", RemoteSize: metadataFileMaxBytes + 1, RemoteMtime: time.Now().Unix()}})
+	}}
+	state := &tableState{DataPath: setup.tablePath(), MetadataLocation: fmt.Sprintf(
+		"s3://%s/%s/metadata/grew.metadata.json", setup.BucketName, setup.tablePath())}
+	if err := state.loadMetadata(context.Background(), client, setup.BucketName); err == nil || !strings.Contains(err.Error(), "over the") {
+		t.Fatalf("err = %v, want a bound rejection", err)
+	}
+}
+
+// swapEntryOnCacheClient runs swap inside the cache call, as a replacement
+// write landing between the worker's lookup and the filer's resolve would.
+type swapEntryOnCacheClient struct {
+	filer_pb.SeaweedFilerClient
+	swap func()
+}
+
+func (c swapEntryOnCacheClient) CacheRemoteObjectToLocalCluster(ctx context.Context, req *filer_pb.CacheRemoteObjectToLocalClusterRequest, opts ...grpc.CallOption) (*filer_pb.CacheRemoteObjectToLocalClusterResponse, error) {
+	c.swap()
+	return c.SeaweedFilerClient.CacheRemoteObjectToLocalCluster(ctx, req, opts...)
 }
 
 // The bound also applies to the entry the cache call returns: a replacement

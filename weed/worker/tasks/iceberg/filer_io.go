@@ -191,7 +191,7 @@ func (s *tableState) loadMetadata(ctx context.Context, client filer_pb.SeaweedFi
 	if size := metadataEntrySize(entry); size > metadataFileMaxBytes {
 		return fmt.Errorf("metadata file %s too large: %d bytes", s.MetadataLocation, size)
 	}
-	entry, err = cacheRemoteOnlyEntry(ctx, client, fullPath, entry)
+	entry, err = cacheRemoteOnlyEntry(ctx, client, fullPath, entry, metadataFileMaxBytes)
 	if err != nil {
 		return fmt.Errorf("load metadata file %s: %w", s.MetadataLocation, err)
 	}
@@ -293,14 +293,16 @@ func lookupFileByIcebergPath(ctx context.Context, client filer_pb.SeaweedFilerCl
 	if err != nil {
 		return nil, err
 	}
-	return cacheRemoteOnlyEntry(ctx, client, fullPath, entry)
+	return cacheRemoteOnlyEntry(ctx, client, fullPath, entry, 0)
 }
 
 // cacheRemoteOnlyEntry downloads a remote-only entry's object to the local
-// cluster and returns the cached entry. One retry covers a cache call racing
-// an uncache of the same entry; an entry still remote-only after caching is
-// an error.
-func cacheRemoteOnlyEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, fullPath string, entry *filer_pb.Entry) (*filer_pb.Entry, error) {
+// cluster and returns the cached entry. maxSize bounds what the filer will
+// download: the entry it resolves at cache time can differ from the one
+// checked here, and the download would run to its full remote size. One
+// retry covers a cache call racing an uncache of the same entry; an entry
+// still remote-only after caching is an error.
+func cacheRemoteOnlyEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, fullPath string, entry *filer_pb.Entry, maxSize int64) (*filer_pb.Entry, error) {
 	if !isRemoteOnly(entry) {
 		return entry, nil
 	}
@@ -311,6 +313,7 @@ func cacheRemoteOnlyEntry(ctx context.Context, client filer_pb.SeaweedFilerClien
 		resp, err = client.CacheRemoteObjectToLocalCluster(ctx, &filer_pb.CacheRemoteObjectToLocalClusterRequest{
 			Directory: dir,
 			Name:      name,
+			MaxSize:   maxSize,
 		})
 		switch {
 		case err != nil:

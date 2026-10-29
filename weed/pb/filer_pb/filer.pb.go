@@ -5447,6 +5447,7 @@ type CacheRemoteObjectToLocalClusterRequest struct {
 	Name                string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
 	ChunkConcurrency    int32                  `protobuf:"varint,3,opt,name=chunk_concurrency,json=chunkConcurrency,proto3" json:"chunk_concurrency,omitempty"`          // parallel chunk downloads per file, 0 = default (8)
 	DownloadConcurrency int32                  `protobuf:"varint,4,opt,name=download_concurrency,json=downloadConcurrency,proto3" json:"download_concurrency,omitempty"` // multipart download concurrency per chunk (if supported by remote storage), 0 = default (5 for S3)
+	MaxSize             int64                  `protobuf:"varint,5,opt,name=max_size,json=maxSize,proto3" json:"max_size,omitempty"`                                     // reject remote objects larger than this before downloading, 0 = no limit
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
@@ -5505,6 +5506,13 @@ func (x *CacheRemoteObjectToLocalClusterRequest) GetChunkConcurrency() int32 {
 func (x *CacheRemoteObjectToLocalClusterRequest) GetDownloadConcurrency() int32 {
 	if x != nil {
 		return x.DownloadConcurrency
+	}
+	return 0
+}
+
+func (x *CacheRemoteObjectToLocalClusterRequest) GetMaxSize() int64 {
+	if x != nil {
+		return x.MaxSize
 	}
 	return 0
 }
@@ -7872,12 +7880,13 @@ const file_filer_proto_rawDesc = "" +
 	"\x19worm_grace_period_seconds\x18\x0f \x01(\x04R\x16wormGracePeriodSeconds\x12=\n" +
 	"\x1bworm_retention_time_seconds\x18\x10 \x01(\x04R\x18wormRetentionTimeSecondsB\b\n" +
 	"\x06_fsyncB\a\n" +
-	"\x05_worm\"\xba\x01\n" +
+	"\x05_worm\"\xd5\x01\n" +
 	"&CacheRemoteObjectToLocalClusterRequest\x12\x1c\n" +
 	"\tdirectory\x18\x01 \x01(\tR\tdirectory\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12+\n" +
 	"\x11chunk_concurrency\x18\x03 \x01(\x05R\x10chunkConcurrency\x121\n" +
-	"\x14download_concurrency\x18\x04 \x01(\x05R\x13downloadConcurrency\"\xdd\x01\n" +
+	"\x14download_concurrency\x18\x04 \x01(\x05R\x13downloadConcurrency\x12\x19\n" +
+	"\bmax_size\x18\x05 \x01(\x03R\amaxSize\"\xdd\x01\n" +
 	"'CacheRemoteObjectToLocalClusterResponse\x12%\n" +
 	"\x05entry\x18\x01 \x01(\v2\x0f.filer_pb.EntryR\x05entry\x12J\n" +
 	"\x0emetadata_event\x18\x02 \x01(\v2#.filer_pb.SubscribeMetadataResponseR\rmetadataEvent\x12\x1a\n" +

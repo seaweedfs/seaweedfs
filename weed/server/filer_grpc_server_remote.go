@@ -94,6 +94,10 @@ func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, re
 		return resp, nil
 	}
 
+	if req.MaxSize > 0 && entry.Remote.RemoteSize > req.MaxSize {
+		return nil, fmt.Errorf("remote object %s/%s is %d bytes, over the %d byte limit", req.Directory, req.Name, entry.Remote.RemoteSize, req.MaxSize)
+	}
+
 	glog.V(1).Infof("CacheRemoteObjectToLocalCluster: caching %s/%s (remote size: %d)", req.Directory, req.Name, entry.Remote.RemoteSize)
 
 	readDir, readName := fs.filer.RemoteReadPath(entry, req.Directory, req.Name)
