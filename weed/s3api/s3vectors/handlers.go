@@ -20,19 +20,22 @@ import (
 )
 
 var handlers = map[string]func(*Server, http.ResponseWriter, *http.Request){
-	"CreateVectorBucket": (*Server).handleCreateVectorBucket,
-	"GetVectorBucket":    (*Server).handleGetVectorBucket,
-	"ListVectorBuckets":  (*Server).handleListVectorBuckets,
-	"DeleteVectorBucket": (*Server).handleDeleteVectorBucket,
-	"CreateIndex":        (*Server).handleCreateIndex,
-	"GetIndex":           (*Server).handleGetIndex,
-	"ListIndexes":        (*Server).handleListIndexes,
-	"DeleteIndex":        (*Server).handleDeleteIndex,
-	"PutVectors":         (*Server).handlePutVectors,
-	"GetVectors":         (*Server).handleGetVectors,
-	"ListVectors":        (*Server).handleListVectors,
-	"DeleteVectors":      (*Server).handleDeleteVectors,
-	"QueryVectors":       (*Server).handleQueryVectors,
+	"CreateVectorBucket":       (*Server).handleCreateVectorBucket,
+	"GetVectorBucket":          (*Server).handleGetVectorBucket,
+	"ListVectorBuckets":        (*Server).handleListVectorBuckets,
+	"DeleteVectorBucket":       (*Server).handleDeleteVectorBucket,
+	"PutVectorBucketPolicy":    (*Server).handlePutVectorBucketPolicy,
+	"GetVectorBucketPolicy":    (*Server).handleGetVectorBucketPolicy,
+	"DeleteVectorBucketPolicy": (*Server).handleDeleteVectorBucketPolicy,
+	"CreateIndex":              (*Server).handleCreateIndex,
+	"GetIndex":                 (*Server).handleGetIndex,
+	"ListIndexes":              (*Server).handleListIndexes,
+	"DeleteIndex":              (*Server).handleDeleteIndex,
+	"PutVectors":               (*Server).handlePutVectors,
+	"GetVectors":               (*Server).handleGetVectors,
+	"ListVectors":              (*Server).handleListVectors,
+	"DeleteVectors":            (*Server).handleDeleteVectors,
+	"QueryVectors":             (*Server).handleQueryVectors,
 }
 
 // lance table ids put indexes under a "vector" namespace inside their bucket.
@@ -400,6 +403,75 @@ func distanceMetric(metric string) (vector_pb.DistanceMetric, bool) {
 
 func tableID(bucket, index string) *vector_pb.Table {
 	return &vector_pb.Table{Id: []string{bucket, indexNamespace, index}}
+}
+
+// Vector bucket policies are stored on the shared table bucket, the same
+// resource s3tables' PutTableBucketPolicy guards.
+func (s *Server) handlePutVectorBucketPolicy(w http.ResponseWriter, r *http.Request) {
+	var req PutVectorBucketPolicyRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		return
+	}
+	var arns vectorBucketARNs
+	if err := arnParts(&arns, req.VectorBucketName, req.VectorBucketArn); err != nil {
+		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		return
+	}
+	var resp map[string]interface{}
+	err := s.catalog(r.Context(), "PutTableBucketPolicy", &s3tables.PutTableBucketPolicyRequest{
+		TableBucketARN: s.s3tablesArn(arns.bucket),
+		ResourcePolicy: req.Policy,
+	}, &resp, r)
+	if err != nil {
+		catalogErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, &PutVectorBucketPolicyResponse{})
+}
+
+func (s *Server) handleGetVectorBucketPolicy(w http.ResponseWriter, r *http.Request) {
+	var req GetVectorBucketPolicyRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		return
+	}
+	var arns vectorBucketARNs
+	if err := arnParts(&arns, req.VectorBucketName, req.VectorBucketArn); err != nil {
+		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		return
+	}
+	var resp s3tables.GetTableBucketPolicyResponse
+	err := s.catalog(r.Context(), "GetTableBucketPolicy", &s3tables.GetTableBucketPolicyRequest{
+		TableBucketARN: s.s3tablesArn(arns.bucket),
+	}, &resp, r)
+	if err != nil {
+		catalogErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, &GetVectorBucketPolicyResponse{Policy: resp.ResourcePolicy})
+}
+
+func (s *Server) handleDeleteVectorBucketPolicy(w http.ResponseWriter, r *http.Request) {
+	var req DeleteVectorBucketPolicyRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		return
+	}
+	var arns vectorBucketARNs
+	if err := arnParts(&arns, req.VectorBucketName, req.VectorBucketArn); err != nil {
+		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		return
+	}
+	var resp map[string]interface{}
+	err := s.catalog(r.Context(), "DeleteTableBucketPolicy", &s3tables.DeleteTableBucketPolicyRequest{
+		TableBucketARN: s.s3tablesArn(arns.bucket),
+	}, &resp, r)
+	if err != nil {
+		catalogErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, &DeleteVectorBucketPolicyResponse{})
 }
 
 func (s *Server) handleCreateIndex(w http.ResponseWriter, r *http.Request) {

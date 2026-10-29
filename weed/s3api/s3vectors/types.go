@@ -94,6 +94,30 @@ type DeleteVectorBucketRequest struct {
 
 type DeleteVectorBucketResponse struct{}
 
+type PutVectorBucketPolicyRequest struct {
+	VectorBucketName string `json:"vectorBucketName"`
+	VectorBucketArn  string `json:"vectorBucketArn"`
+	Policy           string `json:"policy"`
+}
+
+type PutVectorBucketPolicyResponse struct{}
+
+type GetVectorBucketPolicyRequest struct {
+	VectorBucketName string `json:"vectorBucketName"`
+	VectorBucketArn  string `json:"vectorBucketArn"`
+}
+
+type GetVectorBucketPolicyResponse struct {
+	Policy string `json:"policy"`
+}
+
+type DeleteVectorBucketPolicyRequest struct {
+	VectorBucketName string `json:"vectorBucketName"`
+	VectorBucketArn  string `json:"vectorBucketArn"`
+}
+
+type DeleteVectorBucketPolicyResponse struct{}
+
 type CreateIndexRequest struct {
 	DataType              string                 `json:"dataType"`
 	Dimension             int32                  `json:"dimension"`
