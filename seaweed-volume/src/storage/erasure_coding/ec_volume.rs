@@ -1939,8 +1939,7 @@ impl EcVolume {
     /// `deleted_needles` instead). The rebuild is atomic with respect to
     /// the journal: if any individual write fails the .ecj file is left
     /// in place and the error is propagated so tombstones are not lost.
-    #[expect(dead_code, reason = "no caller yet; see the doc comment")]
-    fn rebuild_ecx_from_journal(&mut self) -> io::Result<()> {
+    pub(crate) fn rebuild_ecx_from_journal(&mut self) -> io::Result<()> {
         let ecj_path = self.ecj_file_name();
         if !std::path::Path::new(&ecj_path).exists() {
             return Ok(());

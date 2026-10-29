@@ -3272,16 +3272,37 @@ impl VolumeServer for VolumeGrpcService {
         }
         ecx_dir_refs.extend(other_dir_refs.iter().copied());
 
-        crate::storage::erasure_coding::ec_encoder::rebuild_ecx_file(
-            &ecx_rebuild_dir,
-            collection,
-            vid,
-            data_shards as usize,
-            block_size,
-            dat_file_size,
-            &ecx_dir_refs,
-        )
-        .map_err(|e| Status::internal(format!("RebuildEcxFile: {}", e)))?;
+        // A mounted volume folds its .ecj into the live .ecx in place —
+        // the same path Go takes under LockDeletionJournal — so readers
+        // searching the open index never watch it get truncated. Only an
+        // unmounted index takes the full regen; nothing holds it open to
+        // interrupt.
+        let mut folded = false;
+        {
+            let mut store = self.state.store.write().unwrap_or_else(|e| e.into_inner());
+            if let Some(ev) = store
+                .locations
+                .iter_mut()
+                .find(|loc| loc.directory == rebuild_dir)
+                .and_then(|loc| loc.find_ec_volume_mut(vid))
+            {
+                ev.rebuild_ecx_from_journal()
+                    .map_err(|e| Status::internal(format!("RebuildEcxFile: {}", e)))?;
+                folded = true;
+            }
+        }
+        if !folded {
+            crate::storage::erasure_coding::ec_encoder::rebuild_ecx_file(
+                &ecx_rebuild_dir,
+                collection,
+                vid,
+                data_shards as usize,
+                block_size,
+                dat_file_size,
+                &ecx_dir_refs,
+            )
+            .map_err(|e| Status::internal(format!("RebuildEcxFile: {}", e)))?;
+        }
 
         // Repoint every mounted handle of this volume at the file now on
         // disk, not just this run's outputs — mirrors Go's repoint loop in
