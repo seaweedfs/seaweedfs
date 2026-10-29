@@ -2803,9 +2803,18 @@ templ Plugin(page string, initialJob string, lane string) {
 
                 var html = '';
                 html += '<div class="mb-2"><strong>Detection Run</strong></div>';
-                if (data.skipped_reason) {
-                    html += '<div class="alert alert-info">Skipped: ' + escapeHtml(String(data.skipped_reason));
-                    if (data.eligible_after) html += ' · Eligible after: ' + escapeHtml(parseTime(data.eligible_after) || data.eligible_after);
+                var skippedActivity = null;
+                for (var si = 0; si < activities.length; si++) {
+                    if (activities[si] && activities[si].stage === 'skipped_by_interval') skippedActivity = activities[si];
+                }
+                if (data.skipped_reason || skippedActivity) {
+                    var eligibleAfter = data.eligible_after;
+                    if (!eligibleAfter && skippedActivity && skippedActivity.details) {
+                        var detailAfter = skippedActivity.details.eligible_after;
+                        eligibleAfter = (detailAfter && detailAfter.string_value) || detailAfter;
+                    }
+                    html += '<div class="alert alert-info">Skipped: ' + escapeHtml(String(data.skipped_reason || skippedActivity.message || 'detection skipped'));
+                    if (eligibleAfter) html += ' · Eligible after: ' + escapeHtml(parseTime(eligibleAfter) || eligibleAfter);
                     html += '</div>';
                 } else if (!data.error && proposals.length === 0) {
                     html += '<div class="text-muted">Scan completed: no eligible volumes or jobs.</div>';
