@@ -203,7 +203,7 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 	// existing sibling link (other than the source we just wrote) returns
 	// the old nlink from the local metacache — pjdfstest link/00.t catches
 	// this after `link n1 n2` when it stats n0.
-	wfs.syncHardLinkSiblings(sourceInode, oldEntry, linkVersionTsNs, oldEntryPath, newEntryPath)
+	wfs.syncHardLinkSiblings(ctx, sourceInode, oldEntry, linkVersionTsNs, oldEntryPath, newEntryPath)
 
 	wfs.outputPbEntry(out, sourceInode, request.Entry)
 
@@ -218,7 +218,7 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 // recorded position is the higher of the two. `skipPaths` are the link paths
 // already updated by the caller (typically the source and/or the newly
 // created/removed link).
-func (wfs *WFS) syncHardLinkSiblings(inode uint64, authoritativeEntry *filer_pb.Entry, versionTsNs int64, skipPaths ...util.FullPath) {
+func (wfs *WFS) syncHardLinkSiblings(ctx context.Context, inode uint64, authoritativeEntry *filer_pb.Entry, versionTsNs int64, skipPaths ...util.FullPath) {
 	if authoritativeEntry == nil || len(authoritativeEntry.HardLinkId) == 0 {
 		return
 	}
@@ -230,7 +230,11 @@ func (wfs *WFS) syncHardLinkSiblings(inode uint64, authoritativeEntry *filer_pb.
 	for _, p := range skipPaths {
 		skip[p] = struct{}{}
 	}
-	ctx := context.Background()
+	// One overall deadline for the sequential sibling lookups: they run
+	// under the caller's exclusive hard-link lock, so a slow filer must not
+	// stall every other link operation on this group.
+	ctx, cancel := context.WithTimeout(ctx, metadataFlushTimeout)
+	defer cancel()
 	for _, p := range paths {
 		if _, skipped := skip[p]; skipped {
 			continue
