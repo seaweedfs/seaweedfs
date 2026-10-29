@@ -233,7 +233,6 @@ func (s *Server) ensureIndexNamespace(ctx context.Context, bucket string) error 
 	return nil
 }
 
-
 func (s *Server) handleCreateVectorBucket(w http.ResponseWriter, r *http.Request) {
 	var req CreateVectorBucketRequest
 	if err := readJSON(r, &req); err != nil {
@@ -316,19 +315,34 @@ func (s *Server) handleListVectorBuckets(w http.ResponseWriter, r *http.Request)
 		} `json:"tableBuckets"`
 		ContinuationToken string `json:"continuationToken"`
 	}
-	err := s.catalog(r.Context(), "ListTableBuckets",
+	// The listing runs internal and filters on the vector policy itself: a
+	// shared-slot check would hide buckets the caller was granted under
+	// s3vectors actions, while showing ones they were not.
+	err := s.internalCatalog(r.Context(), "ListTableBuckets",
 		&s3tables.ListTableBucketsRequest{
 			MaxBuckets: req.MaxResults, ContinuationToken: req.NextToken, Prefix: req.Prefix,
-		}, &resp, r)
+		}, &resp)
 	if err != nil {
 		catalogErr(w, err)
 		return
 	}
+	principal := s.tables.PrincipalFor(identityOf(r))
+	pctx := s.tables.PolicyContext(identityOf(r))
 	// The catalog token continues the filtered page: ICEBERG buckets drop out
 	// of the listing, Lance and format-less legacy buckets stay.
 	out := &ListVectorBucketsResponse{NextToken: resp.ContinuationToken}
 	for _, b := range resp.TableBuckets {
 		if b.Format != "" && b.Format != s3tables.FormatLance {
+			continue
+		}
+		owner, policy, err := s.vectorPolicyView(r.Context(), b.Name)
+		if err != nil {
+			catalogErr(w, err)
+			return
+		}
+		arn := s.vectorBucketArn(b.Name)
+		if !s3tables.CheckPermissionWithContext("s3vectors:ListVectorBuckets", principal, owner, policy, arn, pctx) &&
+			!s3tables.CheckPermissionWithContext("s3vectors:GetVectorBucket", principal, owner, policy, arn, pctx) {
 			continue
 		}
 		created, _ := time.Parse(time.RFC3339, b.CreatedAt)
@@ -487,6 +501,65 @@ func splitEntryPath(p string) (dir, name string) {
 	return p[:i], p[i+1:]
 }
 
+// vectorPolicyFromExt resolves the effective s3vectors policy from an entry's
+// attributes: the dedicated key wins, else a shared-slot document that still
+// names vector actions.
+func vectorPolicyFromExt(ext map[string][]byte) string {
+	if doc := ext[vectorPolicyKey]; len(doc) > 0 {
+		return string(doc)
+	}
+	if doc := string(ext[s3tables.ExtendedKeyPolicy]); policyHasVectorAction(doc) {
+		return doc
+	}
+	return ""
+}
+
+// stripVectorActions removes s3vectors statements from a shared-slot
+// document, keeping its catalog rules: a statement mixing both kinds keeps
+// its catalog actions, and a now-empty statement drops out. It reports the
+// document to write back — empty when nothing remains — and whether anything
+// changed.
+func stripVectorActions(raw string) (string, bool) {
+	var doc map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
+		return "", false
+	}
+	changed := false
+	var kept []map[string]interface{}
+	for _, stmt := range policyStatements(doc) {
+		var actions []string
+		dropped := false
+		for _, a := range statementActions(stmt["Action"]) {
+			if strings.HasPrefix(a, "s3vectors:") {
+				dropped = true
+				continue
+			}
+			actions = append(actions, a)
+		}
+		if len(actions) == 0 {
+			changed = true
+			continue
+		}
+		if dropped {
+			stmt["Action"] = actions
+			changed = true
+		}
+		kept = append(kept, stmt)
+	}
+	if !changed {
+		return "", false
+	}
+	if len(kept) == 0 {
+		return "", true
+	}
+	doc["Statement"] = kept
+	out, err := json.Marshal(doc)
+	if err != nil {
+		return "", false
+	}
+	return string(out), true
+}
+
 // vectorBucket fetches the bucket's catalog record under the trusted
 // identity for the authorization lookup; nothing reaches the caller until
 // the permission check below it passes.
@@ -501,7 +574,8 @@ func (s *Server) vectorBucket(ctx context.Context, bucket string) (*s3tables.Get
 
 // vectorPolicy reads the bucket's stored s3vectors policy. A bucket written
 // before the dedicated key carried the raw document in the shared policy
-// slot; one that still names vector actions keeps working.
+// slot; one that still names vector actions keeps working until the next
+// vector policy write migrates it out.
 func (s *Server) vectorPolicy(ctx context.Context, bucket string) (string, error) {
 	dir, name := splitEntryPath(s3tables.GetTableBucketPath(bucket))
 	var policy string
@@ -513,22 +587,35 @@ func (s *Server) vectorPolicy(ctx context.Context, bucket string) (string, error
 		if err != nil {
 			return err
 		}
-		policy = string(resp.Entry.Extended[vectorPolicyKey])
+		policy = vectorPolicyFromExt(resp.Entry.Extended)
 		return nil
 	})
-	if err != nil {
-		return "", err
-	}
-	if policy != "" {
-		return policy, nil
-	}
-	var shared s3tables.GetTableBucketPolicyResponse
-	if err := s.internalCatalog(ctx, "GetTableBucketPolicy",
-		&s3tables.GetTableBucketPolicyRequest{TableBucketARN: s.s3tablesArn(bucket)},
-		&shared); err == nil && policyHasVectorAction(shared.ResourcePolicy) {
-		return shared.ResourcePolicy, nil
-	}
-	return "", nil
+	return policy, err
+}
+
+// vectorPolicyView resolves a bucket's owner and stored s3vectors policy in
+// one filer lookup — the per-bucket check the vector listing runs.
+func (s *Server) vectorPolicyView(ctx context.Context, bucket string) (owner, policy string, err error) {
+	dir, name := splitEntryPath(s3tables.GetTableBucketPath(bucket))
+	err = s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
+			Directory: dir,
+			Name:      name,
+		})
+		if err != nil {
+			return err
+		}
+		var meta struct {
+			OwnerAccountID string `json:"ownerAccountId"`
+		}
+		if raw := resp.Entry.Extended[s3tables.ExtendedKeyMetadata]; len(raw) > 0 {
+			_ = json.Unmarshal(raw, &meta)
+		}
+		owner = meta.OwnerAccountID
+		policy = vectorPolicyFromExt(resp.Entry.Extended)
+		return nil
+	})
+	return owner, policy, err
 }
 
 // mutateVectorPolicy applies a change to the bucket's vector-policy
@@ -546,9 +633,20 @@ func (s *Server) mutateVectorPolicy(ctx context.Context, bucket string, mutate f
 				return err
 			}
 			entry := resp.Entry
-			expected := make(map[string][]byte, len(entry.Extended))
+			expected := make(map[string][]byte, len(entry.Extended)+4)
 			for k, v := range entry.Extended {
 				expected[k] = v
+			}
+			// Assert the keys this write reasons about stay absent too, so a
+			// concurrent policy or tag write trips the compare-and-swap instead
+			// of being silently reverted by the whole-entry update.
+			for _, k := range []string{
+				vectorPolicyKey, s3tables.ExtendedKeyPolicy,
+				s3tables.ExtendedKeyMetadata, s3tables.ExtendedKeyTags,
+			} {
+				if _, ok := expected[k]; !ok {
+					expected[k] = nil
+				}
 			}
 			if entry.Extended == nil {
 				entry.Extended = make(map[string][]byte)
@@ -578,6 +676,20 @@ func isVectorBucket(record *s3tables.GetTableBucketResponse) bool {
 	return record.Format == "" || record.Format == s3tables.FormatLance
 }
 
+// errVectorDenied marks a failed vector permission check inside a policy
+// mutation; catalogErr renders it as AccessDenied.
+var errVectorDenied = &s3tables.S3TablesError{Type: s3tables.ErrCodeAccessDenied, Message: "access denied"}
+
+// checkVectorPolicyDoc evaluates the caller's vector action against the
+// document the entry currently holds. Called inside a policy mutation's
+// compare-and-swap, so a grant revoked between reads never authorizes the
+// pending write.
+func (s *Server) checkVectorPolicyDoc(r *http.Request, action, bucket, owner string, ext map[string][]byte) bool {
+	principal := s.tables.PrincipalFor(identityOf(r))
+	return s3tables.CheckPermissionWithContext(action, principal, owner,
+		vectorPolicyFromExt(ext), s.vectorBucketArn(bucket), s.tables.PolicyContext(identityOf(r)))
+}
+
 // authorizeVector grants the request's own vector operation — not a catalog
 // stand-in — against the stored s3vectors policy and the ARN it actually
 // targets, so an index-scoped rule reaches the index it names and a read
@@ -598,7 +710,7 @@ func (s *Server) authorizeVector(ctx context.Context, r *http.Request, action, b
 		resourceARN = s.indexArn(bucket, index)
 	}
 	principal := s.tables.PrincipalFor(identityOf(r))
-	if !s3tables.CheckPermissionWithContext(action, principal, record.OwnerAccountID, policy, resourceARN, s.tables.PolicyContext(principal)) {
+	if !s3tables.CheckPermissionWithContext(action, principal, record.OwnerAccountID, policy, resourceARN, s.tables.PolicyContext(identityOf(r))) {
 		return nil, &s3tables.S3TablesError{Type: s3tables.ErrCodeAccessDenied, Message: "access denied"}
 	}
 	return record, nil
@@ -619,7 +731,7 @@ func (s *Server) handlePutVectorBucketPolicy(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	record, err := s.authorizeVector(r.Context(), r, "s3vectors:PutVectorBucketPolicy", arns.bucket, "")
+	record, err := s.vectorBucket(r.Context(), arns.bucket)
 	if err != nil {
 		catalogErr(w, err)
 		return
@@ -630,6 +742,18 @@ func (s *Server) handlePutVectorBucketPolicy(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	err = s.mutateVectorPolicy(r.Context(), arns.bucket, func(ext map[string][]byte) error {
+		if !s.checkVectorPolicyDoc(r, "s3vectors:PutVectorBucketPolicy", arns.bucket, record.OwnerAccountID, ext) {
+			return errVectorDenied
+		}
+		// A raw vector document still in the shared slot migrates out with
+		// this write; catalog rules in it stay untouched.
+		if stripped, changed := stripVectorActions(string(ext[s3tables.ExtendedKeyPolicy])); changed {
+			if stripped == "" {
+				delete(ext, s3tables.ExtendedKeyPolicy)
+			} else {
+				ext[s3tables.ExtendedKeyPolicy] = []byte(stripped)
+			}
+		}
 		ext[vectorPolicyKey] = []byte(req.Policy)
 		return nil
 	})
@@ -684,7 +808,7 @@ func (s *Server) handleDeleteVectorBucketPolicy(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	record, err := s.authorizeVector(r.Context(), r, "s3vectors:DeleteVectorBucketPolicy", arns.bucket, "")
+	record, err := s.vectorBucket(r.Context(), arns.bucket)
 	if err != nil {
 		catalogErr(w, err)
 		return
@@ -695,10 +819,27 @@ func (s *Server) handleDeleteVectorBucketPolicy(w http.ResponseWriter, r *http.R
 		return
 	}
 	err = s.mutateVectorPolicy(r.Context(), arns.bucket, func(ext map[string][]byte) error {
-		if _, ok := ext[vectorPolicyKey]; !ok {
+		if !s.checkVectorPolicyDoc(r, "s3vectors:DeleteVectorBucketPolicy", arns.bucket, record.OwnerAccountID, ext) {
+			return errVectorDenied
+		}
+		removed := false
+		if _, ok := ext[vectorPolicyKey]; ok {
+			delete(ext, vectorPolicyKey)
+			removed = true
+		}
+		// A legacy document in the shared slot loses its vector rules with
+		// the delete; catalog rules in it stay untouched.
+		if stripped, changed := stripVectorActions(string(ext[s3tables.ExtendedKeyPolicy])); changed {
+			removed = true
+			if stripped == "" {
+				delete(ext, s3tables.ExtendedKeyPolicy)
+			} else {
+				ext[s3tables.ExtendedKeyPolicy] = []byte(stripped)
+			}
+		}
+		if !removed {
 			return errNoVectorPolicy
 		}
-		delete(ext, vectorPolicyKey)
 		return nil
 	})
 	if errors.Is(err, errNoVectorPolicy) {
