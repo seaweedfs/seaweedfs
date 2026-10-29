@@ -235,6 +235,19 @@ func TestAnUnreadableDataFileSkipsItsBinAndTheOtherBinsCompact(t *testing.T) {
 	if !strings.Contains(result, "compacted 2 files into 1") {
 		t.Fatalf("result %q: want the readable bin compacted", result)
 	}
+	live := liveDataFiles(t, client, setup)
+	for _, name := range []string{"eu-1.parquet", "eu-2.parquet"} {
+		found := false
+		for _, df := range live {
+			if strings.HasSuffix(df.FilePath(), name) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("the skipped bin's %s is not in the current snapshot", name)
+		}
+	}
 }
 
 func TestMergeFailsOnACorruptPageNamingTheFile(t *testing.T) {
