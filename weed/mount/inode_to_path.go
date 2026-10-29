@@ -25,8 +25,11 @@ type InodeToPath struct {
 	// listing. Unlike the flags on dirState it survives invalidation, idle
 	// eviction, and the state drop on kernel Forget, so a lookup can rebuild
 	// a dropped listing instead of reading through per entry forever.
-	// MarkDirectoryReadThrough removes oversized directories from it.
-	wasCachedDirs map[util.FullPath]struct{}
+	// MarkDirectoryReadThrough removes oversized directories from it,
+	// RemovePath drops deleted ones, and wasCachedOrder bounds the retained
+	// history with FIFO eviction.
+	wasCachedDirs  map[util.FullPath]struct{}
+	wasCachedOrder []util.FullPath
 }
 
 // InodeEntry exists per inode the kernel references. Directory cache state is
@@ -325,9 +328,29 @@ func (i *InodeToPath) MarkChildrenCached(fullpath util.FullPath) {
 	d.lastAccess = now
 	d.lastRefresh = now
 	d.lastRebuildAttempt = time.Time{}
-	i.wasCachedDirs[fullpath] = struct{}{}
+	i.markWasCached(fullpath)
 	if i.cacheMetaTtlSec > 0 {
 		d.cachedExpiresTime = now.Add(i.cacheMetaTtlSec)
+	}
+}
+
+// maxWasCachedDirs bounds how many dropped listings a lookup may rebuild:
+// past it the oldest record is evicted and that directory reads through per
+// entry, the same end state as a never-cached one.
+const maxWasCachedDirs = 16384
+
+// markWasCached records a directory as once-cached, evicting the oldest
+// record past maxWasCachedDirs. Callers hold the write lock.
+func (i *InodeToPath) markWasCached(fullpath util.FullPath) {
+	if _, ok := i.wasCachedDirs[fullpath]; ok {
+		return
+	}
+	i.wasCachedDirs[fullpath] = struct{}{}
+	i.wasCachedOrder = append(i.wasCachedOrder, fullpath)
+	for len(i.wasCachedOrder) > maxWasCachedDirs {
+		oldest := i.wasCachedOrder[0]
+		i.wasCachedOrder = i.wasCachedOrder[1:]
+		delete(i.wasCachedDirs, oldest)
 	}
 }
 
@@ -547,6 +570,9 @@ func (i *InodeToPath) RemovePath(path util.FullPath, onStillReferenced func(inod
 			onStillReferenced(inode)
 		}
 	}
+	// A deleted name must never justify a listing rebuild; the record is
+	// keyed by path, so drop it even when the inode was already forgotten.
+	delete(i.wasCachedDirs, path)
 }
 
 func (i *InodeToPath) removePathFromInode2Path(inode uint64, path util.FullPath) {
@@ -575,6 +601,14 @@ func (i *InodeToPath) MovePath(sourcePath, targetPath util.FullPath) (sourceInod
 		i.removePathFromInode2Path(targetInode, targetPath)
 		delete(i.path2inode, targetPath)
 		i.dropDirPath(targetInode)
+	}
+	// The rebuild eligibility travels with the directory: the target keeps it
+	// when the source earned it, and an overwritten target loses its own.
+	_, sourceWasCached := i.wasCachedDirs[sourcePath]
+	delete(i.wasCachedDirs, sourcePath)
+	delete(i.wasCachedDirs, targetPath)
+	if sourceWasCached {
+		i.markWasCached(targetPath)
 	}
 	delete(i.path2inode, sourcePath)
 	i.path2inode[targetPath] = sourceInode
