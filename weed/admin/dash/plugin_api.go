@@ -304,6 +304,26 @@ func (s *AdminServer) GetPluginSchedulerStatusAPI(w http.ResponseWriter, r *http
 
 	laneFilter := strings.TrimSpace(r.URL.Query().Get("lane"))
 
+	var lockStatus LockStatus
+	if s.pluginLock != nil && (laneFilter == "" || plugin.LaneRequiresLock(plugin.SchedulerLane(laneFilter))) {
+		lockStatus = s.pluginLock.Status()
+		if len(lockStatus.Waiters) > 0 && s.masterClient != nil {
+			ctx, cancel := context.WithTimeout(r.Context(), time.Second)
+			err := s.masterClient.WithClient(ctx, false, func(client master_pb.SeaweedClient) error {
+				holder, err := client.GetAdminLockStatus(ctx, &master_pb.GetAdminLockStatusRequest{LockName: cluster.AdminShellLockName})
+				if err == nil && holder.GetIsLocked() {
+					lockStatus.Holder = holder.GetClientName()
+					lockStatus.HolderMessage = holder.GetMessage()
+				}
+				return err
+			})
+			cancel()
+			if err != nil {
+				lockStatus.HolderError = "Lock owner unavailable"
+			}
+		}
+	}
+
 	if laneFilter != "" {
 		lane := plugin.SchedulerLane(laneFilter)
 		response := map[string]interface{}{
@@ -311,7 +331,7 @@ func (s *AdminServer) GetPluginSchedulerStatusAPI(w http.ResponseWriter, r *http
 			"scheduler": pluginSvc.GetLaneSchedulerStatus(lane),
 		}
 		if s.pluginLock != nil {
-			response["lock"] = s.pluginLock.Status()
+			response["lock"] = lockStatus
 		}
 		writeJSON(w, http.StatusOK, response)
 		return
@@ -322,7 +342,7 @@ func (s *AdminServer) GetPluginSchedulerStatusAPI(w http.ResponseWriter, r *http
 		"scheduler": pluginSvc.GetSchedulerStatus(),
 	}
 	if s.pluginLock != nil {
-		response["lock"] = s.pluginLock.Status()
+		response["lock"] = lockStatus
 	}
 
 	writeJSON(w, http.StatusOK, response)
@@ -583,6 +603,12 @@ func (s *AdminServer) TriggerPluginDetectionAPI(w http.ResponseWriter, r *http.R
 		"count":              len(proposalPayloads),
 		"proposals":          proposalPayloads,
 		"activities":         filteredActivities,
+	}
+	if report != nil && report.Complete != nil {
+		response["skipped_reason"] = report.Complete.SkippedReason
+		if at := report.Complete.EligibleAfter; at != nil {
+			response["eligible_after"] = at.AsTime()
+		}
 	}
 
 	if err != nil {

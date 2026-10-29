@@ -204,3 +204,25 @@ func TestCreateMultipartUploadResultChecksumHeaders(t *testing.T) {
 		t.Fatalf("response %q carries checksum members in the XML body", encoded)
 	}
 }
+
+// A client may send the composite object checksum with or without the "-N"
+// part-count suffix (minio-go sends the bare form); both must match.
+func TestMatchesObjectChecksum(t *testing.T) {
+	for _, tc := range []struct {
+		provided string
+		computed string
+		want     bool
+	}{
+		{"hSEgHA==-1", "hSEgHA==-1", true},
+		{"hSEgHA==", "hSEgHA==-1", true},
+		{"hSEgHA==-2", "hSEgHA==-1", false},
+		{"AAAAAA==", "hSEgHA==-1", false},
+		{"fx4FQw==", "fx4FQw==", true},
+		{"fx4FQw==-1", "fx4FQw==", false},
+		{"", "hSEgHA==-1", false},
+	} {
+		if got := matchesObjectChecksum(tc.provided, tc.computed); got != tc.want {
+			t.Errorf("matchesObjectChecksum(%q, %q) = %v, want %v", tc.provided, tc.computed, got, tc.want)
+		}
+	}
+}

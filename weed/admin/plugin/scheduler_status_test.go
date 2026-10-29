@@ -6,8 +6,54 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
+	"github.com/stretchr/testify/require"
 )
 
+func TestSchedulerCooldownUsesSavedPolicyAndHistory(t *testing.T) {
+	p, err := New(Options{})
+	require.NoError(t, err)
+	defer p.Shutdown()
+	const jobType = "vacuum"
+	p.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: "worker-a", Capabilities: []*plugin_pb.JobTypeCapability{{JobType: jobType, CanDetect: true}},
+	})
+	require.NoError(t, p.store.SaveDescriptor(jobType, &plugin_pb.JobTypeDescriptor{
+		JobType: jobType, DetectionCooldownConfigField: "cooldown",
+		WorkerDefaultValues: map[string]*plugin_pb.ConfigValue{"cooldown": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 36000}}},
+	}))
+	last := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	require.NoError(t, p.store.AppendRunRecord(jobType, &JobRunRecord{Outcome: RunOutcomeSuccess, CompletedAt: &last}))
+	p.markJobTypeInFlight(jobType)
+	for _, seconds := range []int64{36000, 600, 0, 7200} {
+		require.NoError(t, p.SaveJobTypeConfig(&plugin_pb.PersistedJobTypeConfig{
+			JobType: jobType, AdminRuntime: &plugin_pb.AdminRuntimeConfig{Enabled: true, DetectionIntervalMinutes: 10},
+			WorkerConfigValues: map[string]*plugin_pb.ConfigValue{"cooldown": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: seconds}}},
+		}))
+		for _, status := range []SchedulerStatus{p.GetLaneSchedulerStatus(LaneDefault), p.GetSchedulerStatus()} {
+			require.Len(t, status.JobTypes, 1)
+			job := status.JobTypes[0]
+			require.Empty(t, job.CooldownError)
+			require.Equal(t, seconds, job.CooldownSeconds)
+			require.Equal(t, last, *job.LastSuccessfulRunAt)
+			if seconds == 0 {
+				require.Nil(t, job.DetectionEligibleAt)
+			} else {
+				require.Equal(t, last.Add(time.Duration(seconds)*time.Second), *job.DetectionEligibleAt)
+			}
+			var cooldown, inFlight bool
+			for _, wait := range status.Waiting {
+				cooldown = cooldown || wait.Reason == "cooldown"
+				inFlight = inFlight || wait.Reason == "detection_in_flight"
+			}
+			require.Equal(t, seconds > 3600, cooldown)
+			require.True(t, inFlight, "cooldown must not hide another blocker")
+		}
+	}
+	require.NoError(t, p.store.SaveJobTypeConfig(&plugin_pb.PersistedJobTypeConfig{JobType: jobType}))
+	job := SchedulerJobTypeStatus{JobType: jobType}
+	p.populateSchedulerCooldown(&job)
+	require.Equal(t, int64(36000), job.CooldownSeconds, "missing saved value uses descriptor default")
+}
 func TestGetSchedulerStatusIncludesInProcessJobs(t *testing.T) {
 	pluginSvc, err := New(Options{})
 	if err != nil {

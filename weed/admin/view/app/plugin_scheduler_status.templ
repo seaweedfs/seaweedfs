@@ -1,0 +1,65 @@
+package app
+
+templ PluginSchedulerStatus() {
+    <div id="plugin-scheduler-blockers" aria-live="polite"></div>
+    <script>
+    window.renderPluginSchedulerStatus = function(data) {
+        const root = document.getElementById('plugin-scheduler-blockers');
+        if (!root) return;
+        root.replaceChildren();
+        const lock = data.lock || {};
+        const waiters = lock.waiters || [];
+        if (waiters.length) {
+        const alert = document.createElement('div');
+        alert.className = 'alert alert-warning';
+        const title = document.createElement('strong');
+        title.textContent = 'Waiting for the maintenance lock';
+        alert.appendChild(title);
+        const owner = document.createElement('div');
+        owner.textContent = lock.holder ? 'Lock owner: ' + lock.holder : (lock.holder_error || 'Lock owner not reported');
+        if (lock.holder_message) owner.textContent += ' — ' + lock.holder_message;
+        alert.appendChild(owner);
+        waiters.forEach(function(waiter) {
+            const line = document.createElement('div');
+            const since = new Date(waiter.since);
+            const now = new Date((data.scheduler || {}).now || Date.now());
+            const seconds = Math.max(0, Math.floor((now - since) / 1000));
+            line.textContent = waiter.reason + ' · since ' + since.toLocaleString() +
+                ' (local time) · waiting ' + Math.floor(seconds / 60) + 'm ' + (seconds % 60) + 's';
+            alert.appendChild(line);
+        });
+        const note = document.createElement('div');
+        note.className = 'small mt-1';
+        note.textContent = 'This lane cannot advance until the lock becomes available. A scheduled check time is not a guaranteed start time.';
+        alert.appendChild(note);
+        root.appendChild(alert);
+        }
+        const scheduler = data.scheduler || {};
+        const now = new Date(scheduler.now || Date.now());
+        (scheduler.job_types || []).forEach(function(job) {
+            if (data.job_type ? job.job_type !== data.job_type : !job.enabled) return;
+            const until = job.detection_eligible_at ? new Date(job.detection_eligible_at) : null;
+            const cooling = until && until > now;
+            if (!job.cooldown_error && !cooling && !(data.job_type && job.cooldown_seconds)) return;
+            const box = document.createElement('div');
+            box.className = 'alert ' + (job.cooldown_error ? 'alert-warning' : 'alert-info');
+            const title = document.createElement('strong');
+            title.textContent = job.job_type + ': ' + (job.cooldown_error || (cooling ? 'Cooldown after successful job' : until ? 'Cooldown elapsed' : 'No successful job yet'));
+            box.appendChild(title);
+            const line = document.createElement('div');
+            const seconds = job.cooldown_seconds || 0;
+            const duration = seconds >= 3600 ? (seconds / 3600) + ' hours' : seconds >= 60 ? (seconds / 60) + ' minutes' : seconds + ' seconds';
+            line.textContent = 'Configured cooldown: ' + duration + ' (' + seconds + ' seconds).';
+            if (job.last_successful_run_at) line.textContent += ' Last success: ' + new Date(job.last_successful_run_at).toLocaleString() + '.';
+            if (until) line.textContent += ' Eligible after: ' + until.toLocaleString() + '.';
+            if (cooling) line.textContent += ' Remaining: ' + Math.ceil((until - now) / 60000) + ' minutes.';
+            box.appendChild(line);
+            const note = document.createElement('div');
+            note.className = 'small mt-1';
+            note.textContent = 'Applies across this job type. Locks and other jobs in the lane can delay the actual start.';
+            box.appendChild(note);
+            root.appendChild(box);
+        });
+    };
+    </script>
+}

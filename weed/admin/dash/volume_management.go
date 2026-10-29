@@ -477,6 +477,7 @@ func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, erro
 	publicUrls := s.fetchPublicUrlMap()
 
 	// Make only ONE VolumeList call and use it for both topology building AND EC shard processing
+	var dataNodes []*master_pb.DataNodeInfo
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
 		resp, err := pb.CollectVolumeList(context.Background(), client, &master_pb.VolumeListRequest{})
 		if err != nil {
@@ -497,6 +498,7 @@ func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, erro
 			for _, dc := range resp.TopologyInfo.DataCenterInfos {
 				for _, rack := range dc.RackInfos {
 					for _, node := range rack.DataNodeInfos {
+						dataNodes = append(dataNodes, node)
 						// Initialize volume server if not exists
 						if volumeServerMap[node.Id] == nil {
 							// Look up PublicUrl from master HTTP API
@@ -622,6 +624,9 @@ func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, erro
 	if err != nil {
 		return nil, err
 	}
+
+	// Versions are not in the heartbeat topology; ask each server directly.
+	s.fillVolumeServerVersions(volumeServerMap, dataNodes)
 
 	// Convert map back to slice
 	var volumeServers []VolumeServer

@@ -36,7 +36,9 @@ func (store *RedisCluster3Store) Initialize(configuration util.Configuration, pr
 
 	return store.initialize(
 		configuration.GetStringSlice(prefix+"addresses"),
+		configuration.GetString(prefix+"username"),
 		configuration.GetString(prefix+"password"),
+		configuration.GetString(prefix+"keyPrefix"),
 		configuration.GetBool(prefix+"useReadOnly"),
 		configuration.GetBool(prefix+"routeByLatency"),
 		tlsConfig,
@@ -44,9 +46,13 @@ func (store *RedisCluster3Store) Initialize(configuration util.Configuration, pr
 	)
 }
 
-func (store *RedisCluster3Store) initialize(addresses []string, password string, readOnly, routeByLatency bool, tlsConfig *tls.Config, settings redis_conf.Settings) (err error) {
+func (store *RedisCluster3Store) initialize(addresses []string, username string, password string, keyPrefix string, readOnly, routeByLatency bool, tlsConfig *tls.Config, settings redis_conf.Settings) (err error) {
+	if err := checkUserPassword(username, password); err != nil {
+		return err
+	}
 	options := &redis.ClusterOptions{
 		Addrs:          addresses,
+		Username:       username,
 		Password:       password,
 		ReadOnly:       readOnly,
 		RouteByLatency: routeByLatency,
@@ -55,5 +61,6 @@ func (store *RedisCluster3Store) initialize(addresses []string, password string,
 	settings.ApplyToCluster(options)
 	store.Client = redis.NewClusterClient(options)
 	store.redsync = redsync.New(goredis.NewPool(store.Client))
+	store.keyPrefix = keyPrefix
 	return
 }

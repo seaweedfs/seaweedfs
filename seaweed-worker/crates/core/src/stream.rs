@@ -388,6 +388,8 @@ fn spawn_detection(
                     success: false,
                     error_message: format!("{err:#}"),
                     total_proposals: 0,
+                    skipped_reason: String::new(),
+                    eligible_after: None,
                 },
             ));
             "failed"

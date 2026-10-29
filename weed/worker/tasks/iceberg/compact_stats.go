@@ -8,7 +8,9 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/apache/arrow-go/v18/arrow/decimal128"
 	"github.com/apache/iceberg-go"
+	"github.com/google/uuid"
 	"github.com/parquet-go/parquet-go"
 	"github.com/parquet-go/parquet-go/format"
 )
@@ -125,8 +127,8 @@ func collectColumnStats(data []byte, schema *iceberg.Schema) (*columnStats, erro
 		if b.invalid || !b.seen {
 			continue
 		}
-		lo, okLo := boundLiteral(b.min, b.typ, b.field.Type)
-		hi, okHi := boundLiteral(b.max, b.typ, b.field.Type)
+		lo, okLo := boundLiteral(b.min, b.typ, b.field.Type, false)
+		hi, okHi := boundLiteral(b.max, b.typ, b.field.Type, true)
 		if !okLo || !okHi {
 			continue
 		}
@@ -182,13 +184,16 @@ func rowGroupOffset(rg *format.RowGroup) int64 {
 }
 
 // boundLiteral converts a Parquet statistics value into a literal of the
-// column's Iceberg type, when the conversion is exact. Other types (decimal,
-// time, uuid, fixed, timestamps not in the type's unit) get no bound.
-func boundLiteral(v parquet.Value, pt parquet.Type, t iceberg.Type) (iceberg.Literal, bool) {
+// column's Iceberg type, when the conversion is exact or rounds towards the
+// safe side of the bound: roundUp is true for an upper bound, so a time value
+// rescaled to a coarser unit stays a bound. Values a reader could not order the
+// same way as the writer (NaN, invalid UTF-8, a decimal at another scale or
+// stored as bytes, an unknown time unit) get no bound.
+func boundLiteral(v parquet.Value, pt parquet.Type, t iceberg.Type, roundUp bool) (iceberg.Literal, bool) {
 	if v.IsNull() {
 		return nil, false
 	}
-	switch t.(type) {
+	switch t := t.(type) {
 	case iceberg.BooleanType:
 		return iceberg.BoolLiteral(v.Boolean()), v.Kind() == parquet.Boolean
 	case iceberg.Int32Type:
@@ -204,31 +209,126 @@ func boundLiteral(v parquet.Value, pt parquet.Type, t iceberg.Type) (iceberg.Lit
 		f := v.Float()
 		return iceberg.Float32Literal(f), v.Kind() == parquet.Float && !math.IsNaN(float64(f))
 	case iceberg.Float64Type:
-		f := v.Double()
-		return iceberg.Float64Literal(f), v.Kind() == parquet.Double && !math.IsNaN(f)
+		switch v.Kind() {
+		case parquet.Double:
+			f := v.Double()
+			return iceberg.Float64Literal(f), !math.IsNaN(f)
+		case parquet.Float:
+			f := v.Float()
+			return iceberg.Float64Literal(float64(f)), !math.IsNaN(float64(f))
+		}
 	case iceberg.DateType:
 		return iceberg.DateLiteral(iceberg.Date(v.Int32())), v.Kind() == parquet.Int32
+	case iceberg.TimeType:
+		var i64 int64
+		switch v.Kind() {
+		case parquet.Int64:
+			i64 = v.Int64()
+		case parquet.Int32: // TIME(MILLIS) is stored as INT32
+			i64 = int64(v.Int32())
+		default:
+			return nil, false
+		}
+		if us, ok := convertTimeUnit(i64, pt, time.Microsecond, roundUp); ok {
+			return iceberg.TimeLiteral(iceberg.Time(us)), true
+		}
 	case iceberg.TimestampType, iceberg.TimestampTzType:
-		return iceberg.TimestampLiteral(iceberg.Timestamp(v.Int64())), v.Kind() == parquet.Int64 && timeUnit(pt) == time.Microsecond
-	case iceberg.TimestampNsType:
-		return iceberg.TimestampNsLiteral(iceberg.TimestampNano(v.Int64())), v.Kind() == parquet.Int64 && timeUnit(pt) == time.Nanosecond
+		if v.Kind() == parquet.Int64 {
+			if us, ok := convertTimeUnit(v.Int64(), pt, time.Microsecond, roundUp); ok {
+				return iceberg.TimestampLiteral(iceberg.Timestamp(us)), true
+			}
+		}
+	case iceberg.TimestampNsType, iceberg.TimestampTzNsType:
+		if v.Kind() == parquet.Int64 {
+			if ns, ok := convertTimeUnit(v.Int64(), pt, time.Nanosecond, roundUp); ok {
+				return iceberg.TimestampNsLiteral(iceberg.TimestampNano(ns)), true
+			}
+		}
 	case iceberg.StringType:
 		b := v.ByteArray()
 		return iceberg.StringLiteral(string(b)), v.Kind() == parquet.ByteArray && utf8.Valid(b)
 	case iceberg.BinaryType:
 		return iceberg.BinaryLiteral(bytes.Clone(v.ByteArray())), v.Kind() == parquet.ByteArray
+	case iceberg.FixedType:
+		if v.Kind() == parquet.FixedLenByteArray && len(v.ByteArray()) == t.Len() {
+			return iceberg.FixedLiteral(bytes.Clone(v.ByteArray())), true
+		}
+	case iceberg.UUIDType:
+		if v.Kind() == parquet.FixedLenByteArray && len(v.ByteArray()) == 16 {
+			var u uuid.UUID
+			copy(u[:], v.ByteArray())
+			return iceberg.UUIDLiteral(u), true
+		}
+	case iceberg.DecimalType:
+		// Only the integer encodings (precision up to 18, what DuckDB writes for
+		// DECIMAL(18,s)): the statistics of a byte-array decimal are compared
+		// as bytes, which does not order negative two's-complement values.
+		if scale, ok := parquetDecimalScale(pt); !ok || scale != t.Scale() {
+			return nil, false
+		}
+		switch v.Kind() {
+		case parquet.Int32:
+			return iceberg.DecimalLiteral(iceberg.Decimal{Val: decimal128.FromI64(int64(v.Int32())), Scale: t.Scale()}), true
+		case parquet.Int64:
+			return iceberg.DecimalLiteral(iceberg.Decimal{Val: decimal128.FromI64(v.Int64()), Scale: t.Scale()}), true
+		}
 	}
 	return nil, false
+}
+
+// convertTimeUnit rescales a time value from the Parquet column's unit to the
+// unit the Iceberg type stores, rounding towards the safe side of a bound.
+func convertTimeUnit(v int64, pt parquet.Type, target time.Duration, roundUp bool) (int64, bool) {
+	unit := timeUnit(pt)
+	if unit == 0 {
+		return 0, false
+	}
+	if unit == target {
+		return v, true
+	}
+	if unit > target {
+		factor := int64(unit / target)
+		if v > math.MaxInt64/factor || v < math.MinInt64/factor {
+			return 0, false
+		}
+		return v * factor, true
+	}
+	factor := int64(target / unit)
+	q := v / factor
+	if roundUp && v%factor != 0 && v > 0 {
+		q++
+	}
+	if !roundUp && v%factor != 0 && v < 0 {
+		q--
+	}
+	return q, true
 }
 
 func timeUnit(pt parquet.Type) time.Duration {
 	if pt == nil || pt.LogicalType() == nil {
 		return 0
 	}
-	if ts, ok := pt.LogicalType().Value.(*format.TimestampType); ok && ts.Unit.Value != nil {
-		return ts.Unit.Value.Duration()
+	switch lt := pt.LogicalType().Value.(type) {
+	case *format.TimestampType:
+		if lt.Unit.Value != nil {
+			return lt.Unit.Value.Duration()
+		}
+	case *format.TimeType:
+		if lt.Unit.Value != nil {
+			return lt.Unit.Value.Duration()
+		}
 	}
 	return 0
+}
+
+func parquetDecimalScale(pt parquet.Type) (int, bool) {
+	if pt == nil || pt.LogicalType() == nil {
+		return 0, false
+	}
+	if d, ok := pt.LogicalType().Value.(*format.DecimalType); ok {
+		return int(d.Scale), true
+	}
+	return 0, false
 }
 
 // truncateBounds applies truncate(16) to string and binary bounds. A prefix is

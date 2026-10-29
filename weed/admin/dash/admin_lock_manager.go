@@ -1,6 +1,7 @@
 package dash
 
 import (
+	"sort"
 	"sync"
 	"time"
 
@@ -52,6 +53,7 @@ type AdminLockManager struct {
 	waitingSince   time.Time
 	waitingReason  string
 	currentReason  string
+	waiters        map[*LockWait]struct{}
 }
 
 func NewAdminLockManager(masterClient *wdclient.MasterClient, clientName string) *AdminLockManager {
@@ -81,12 +83,22 @@ func (m *AdminLockManager) Acquire(reason string) (func(), error) {
 	}
 
 	m.mu.Lock()
+	waiter := &LockWait{Reason: reason, Since: time.Now().UTC()}
+	if m.waiters == nil {
+		m.waiters = make(map[*LockWait]struct{})
+	}
+	m.waiters[waiter] = struct{}{}
+	defer func() {
+		m.mu.Lock()
+		delete(m.waiters, waiter)
+		m.mu.Unlock()
+	}()
+	for m.acquiring || m.releasing || (m.holdCount > 0 && time.Since(m.heldSince) > m.fairnessWindow) {
+		m.cond.Wait()
+	}
 	if reason != "" {
 		m.locker.SetMessage(reason)
 		m.currentReason = reason
-	}
-	for m.acquiring || m.releasing || (m.holdCount > 0 && time.Since(m.heldSince) > m.fairnessWindow) {
-		m.cond.Wait()
 	}
 	if m.holdCount == 0 {
 		m.acquiring = true
@@ -153,6 +165,11 @@ func (m *AdminLockManager) Release() {
 	}
 }
 
+type LockWait struct {
+	Reason string    `json:"reason"`
+	Since  time.Time `json:"since"`
+}
+
 type LockStatus struct {
 	Held           bool       `json:"held"`
 	HoldCount      int        `json:"hold_count"`
@@ -162,6 +179,10 @@ type LockStatus struct {
 	LastAcquiredAt *time.Time `json:"last_acquired_at,omitempty"`
 	LastReleasedAt *time.Time `json:"last_released_at,omitempty"`
 	WaitingSince   *time.Time `json:"waiting_since,omitempty"`
+	Waiters        []LockWait `json:"waiters,omitempty"`
+	Holder         string     `json:"holder,omitempty"`
+	HolderMessage  string     `json:"holder_message,omitempty"`
+	HolderError    string     `json:"holder_error,omitempty"`
 }
 
 func (m *AdminLockManager) Status() LockStatus {
@@ -191,5 +212,11 @@ func (m *AdminLockManager) Status() LockStatus {
 		at := m.waitingSince
 		status.WaitingSince = &at
 	}
+	for waiter := range m.waiters {
+		status.Waiters = append(status.Waiters, *waiter)
+	}
+	sort.Slice(status.Waiters, func(i, j int) bool {
+		return status.Waiters[i].Since.Before(status.Waiters[j].Since)
+	})
 	return status
 }

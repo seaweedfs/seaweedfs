@@ -361,7 +361,10 @@ func (r *Plugin) RequestConfigSchema(ctx context.Context, jobType string, forceR
 	if err != nil {
 		return nil, err
 	}
+	return r.requestConfigSchema(ctx, jobType, forceRefresh, provider.WorkerID)
+}
 
+func (r *Plugin) requestConfigSchema(ctx context.Context, jobType string, forceRefresh bool, workerID string) (*plugin_pb.JobTypeDescriptor, error) {
 	requestID, err := newRequestID("schema")
 	if err != nil {
 		return nil, err
@@ -388,7 +391,7 @@ func (r *Plugin) RequestConfigSchema(ctx context.Context, jobType string, forceR
 		},
 	}
 
-	if err := r.sendToWorker(provider.WorkerID, requestMessage); err != nil {
+	if err := r.sendToWorker(workerID, requestMessage); err != nil {
 		return nil, err
 	}
 
@@ -1230,6 +1233,19 @@ func (r *Plugin) handleDetectionComplete(workerID string, message *plugin_pb.Det
 		if messageText == "" {
 			messageText = "detection failed"
 		}
+	} else if message.SkippedReason != "" {
+		stage = "skipped"
+		messageText = message.SkippedReason
+	}
+	details := map[string]interface{}{
+		"success":         message.Success,
+		"total_proposals": message.TotalProposals,
+	}
+	if message.SkippedReason != "" {
+		details["skipped_reason"] = message.SkippedReason
+	}
+	if message.EligibleAfter != nil {
+		details["eligible_after"] = message.EligibleAfter.AsTime().UTC().Format(time.RFC3339)
 	}
 	r.appendActivity(JobActivity{
 		JobType:    resolvedJobType,
@@ -1239,10 +1255,7 @@ func (r *Plugin) handleDetectionComplete(workerID string, message *plugin_pb.Det
 		Stage:      stage,
 		Message:    messageText,
 		OccurredAt: timeToPtr(time.Now().UTC()),
-		Details: map[string]interface{}{
-			"success":         message.Success,
-			"total_proposals": message.TotalProposals,
-		},
+		Details:    details,
 	})
 
 	r.safeSendDetectionComplete(message.RequestId, message)

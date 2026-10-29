@@ -4,10 +4,14 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 type fakeAdminLocker struct {
-	releaseDelay time.Duration
+	releaseDelay   time.Duration
+	requestStarted chan struct{}
+	requestGate    <-chan struct{}
 
 	mu       sync.Mutex
 	requests []time.Time
@@ -15,9 +19,42 @@ type fakeAdminLocker struct {
 }
 
 func (f *fakeAdminLocker) RequestLock(clientName string) {
+	if f.requestStarted != nil {
+		close(f.requestStarted)
+	}
+	if f.requestGate != nil {
+		<-f.requestGate
+	}
 	f.mu.Lock()
 	f.requests = append(f.requests, time.Now())
 	f.mu.Unlock()
+}
+
+func TestAdminLockManagerStatusWhileWaiting(t *testing.T) {
+	for _, reason := range []string{"plugin scheduler vacuum detection", "plugin scheduler vacuum job vacuum-1"} {
+		t.Run(reason, func(t *testing.T) {
+			gate := make(chan struct{})
+			locker := &fakeAdminLocker{requestStarted: make(chan struct{}), requestGate: gate}
+			m := newTestLockManager(locker, 0, time.Minute)
+			done := make(chan func(), 1)
+			go func() {
+				release, _ := m.Acquire(reason)
+				done <- release
+			}()
+			<-locker.requestStarted
+			status := m.Status()
+			close(gate)
+			release := <-done
+			defer release()
+			if len(status.Waiters) != 1 || status.Waiters[0].Reason != reason || status.Waiters[0].Since.IsZero() {
+				t.Fatalf("missing lock wait: %+v", status)
+			}
+			status = m.Status()
+			if len(status.Waiters) != 0 || !status.Held {
+				t.Fatalf("an acquired lock must not be reported as blocked: %+v", status)
+			}
+		})
+	}
 }
 
 func (f *fakeAdminLocker) ReleaseLock() {
@@ -97,6 +134,8 @@ func TestAdminLockManagerFairnessWindowForcesFullRelease(t *testing.T) {
 	m := newTestLockManager(locker, 20*time.Millisecond, 50*time.Millisecond)
 
 	release1, _ := m.Acquire("long-hold")
+	releaseFirst := sync.OnceFunc(release1)
+	defer releaseFirst()
 	m.mu.Lock()
 	m.heldSince = time.Now().Add(-time.Second)
 	m.mu.Unlock()
@@ -107,13 +146,21 @@ func TestAdminLockManagerFairnessWindowForcesFullRelease(t *testing.T) {
 		acquired <- release2
 	}()
 
+	require.Eventually(t, func() bool { return len(m.Status().Waiters) == 1 }, time.Second, time.Millisecond)
 	select {
 	case <-acquired:
 		t.Fatalf("late acquire joined a hold older than the fairness window")
-	case <-time.After(50 * time.Millisecond):
+	default:
 	}
 
-	release1()
+	status := m.Status()
+	if status.Message != "long-hold" {
+		t.Errorf("waiter replaced the current holder's message: %q", status.Message)
+	}
+	if len(status.Waiters) != 1 || status.Waiters[0].Reason != "late-joiner" {
+		t.Errorf("missing fairness waiter: %+v", status.Waiters)
+	}
+	releaseFirst()
 
 	select {
 	case release2 := <-acquired:

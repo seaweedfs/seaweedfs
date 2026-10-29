@@ -101,6 +101,7 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
                                     <th>Address</th>
                                     <th>Data Center</th>
                                     <th>Rack</th>
+                                    <th>Version</th>
                                     <th>Volumes</th>
                                     <th>Max Volumes</th>
                                     <th>EC Shards</th>
@@ -130,6 +131,9 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
                                         </td>
                                         <td>
                                             <span class="badge bg-light text-dark">{host.Rack}</span>
+                                        </td>
+                                        <td title={host.Version}>
+                                            {dash.ShortVersion(host.Version)}
                                         </td>
                                         <td>
                                             <div class="d-flex align-items-center">
@@ -393,20 +397,20 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
             if (cells.length > 1) {
                 return {
                     id: cells[0].textContent.trim(),
-                    address: cells[1].textContent.trim(),
-                    datacenter: cells[2].textContent.trim(),
-                    rack: cells[3].textContent.trim(),
+                    datacenter: cells[1].textContent.trim(),
+                    rack: cells[2].textContent.trim(),
+                    version: cells[3].textContent.trim(),
                     volumes: cells[4].textContent.trim(),
-                    capacity: cells[5].textContent.trim(),
-                    usage: cells[6].textContent.trim()
+                    capacity: cells[7].textContent.trim(),
+                    usage: cells[8].textContent.trim()
                 };
             }
             return null;
         }).filter(row => row !== null);
         
         const csvContent = "data:text/csv;charset=utf-8," + 
-            "Server ID,Address,Data Center,Rack,Volumes,Capacity,Usage\n" +
-            rows.map(r => '"' + r.id + '","' + r.address + '","' + r.datacenter + '","' + r.rack + '","' + r.volumes + '","' + r.capacity + '","' + r.usage + '"').join("\n");
+            "Server ID,Data Center,Rack,Version,Volumes,Capacity,Usage\n" +
+            rows.map(r => '"' + r.id + '","' + r.datacenter + '","' + r.rack + '","' + r.version + '","' + r.volumes + '","' + r.capacity + '","' + r.usage + '"').join("\n");
         
         const encodedUri = encodeURI(csvContent);
         const link = document.createElement("a");

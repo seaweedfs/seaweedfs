@@ -69,7 +69,7 @@ func schemaFileEntry(t *testing.T, path string, recordCount int64) iceberg.Manif
 		t.Fatalf("build data file: %v", err)
 	}
 	snapID := int64(1)
-	return iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, nil, nil, dfb.Build())
+	return iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, &testDataSeq, &testDataSeq, dfb.Build())
 }
 
 func mergeNamedFiles(t *testing.T, client filer_pb.SeaweedFilerClient, names []string, counts map[string]int64,
@@ -356,10 +356,10 @@ func TestMergeParquetFilesEvolvedSchemaEqualityDelete(t *testing.T) {
 	}
 	eqDfb.EqualityFieldIDs([]int{2})
 	snapID := int64(1)
-	eqEntry := iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, nil, nil, eqDfb.Build())
+	eqEntry := iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, &testDeleteSeq, &testDeleteSeq, eqDfb.Build())
 
 	eqGroups, err := collectEqualityDeletes(context.Background(), client, "test-bucket", "ns/tbl",
-		[]iceberg.ManifestEntry{eqEntry}, newTestSchema())
+		[]iceberg.ManifestEntry{eqEntry}, newTestSchema(), testUnpartitionedSpecs)
 	if err != nil {
 		t.Fatalf("collectEqualityDeletes: %v", err)
 	}
@@ -478,11 +478,11 @@ func TestMergeParquetFilesEqualityDeleteAddedColumn(t *testing.T) {
 		return map[string]int64{"narrow.parquet": 3, "wide.parquet": 2}
 	}
 	eqGroups := func(keys ...parquet.Value) []equalityDeleteGroup {
-		set := make(map[string]struct{}, len(keys))
+		set := make(map[string]int64, len(keys))
 		for _, k := range keys {
-			set[buildEqualityKey(parquet.Row{k}, []int{0})] = struct{}{}
+			set[buildEqualityKey(parquet.Row{k}, []int{0})] = 2 // committed after the data files (sequence number 1)
 		}
-		return []equalityDeleteGroup{{FieldIDs: []int{3}, Keys: set}}
+		return []equalityDeleteGroup{{FieldIDs: []int{3}, Keys: set, Scope: deleteScope{global: true}}}
 	}
 	schema := newAddedColumnSchema()
 
@@ -568,10 +568,10 @@ func TestMergeParquetFilesEqualityDeleteRenamedColumn(t *testing.T) {
 	}
 	eqDfb.EqualityFieldIDs([]int{2})
 	snapID := int64(1)
-	eqEntry := iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, nil, nil, eqDfb.Build())
+	eqEntry := iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, &testDeleteSeq, &testDeleteSeq, eqDfb.Build())
 
 	eqGroups, err := collectEqualityDeletes(context.Background(), client, "test-bucket", "ns/tbl",
-		[]iceberg.ManifestEntry{eqEntry}, schema)
+		[]iceberg.ManifestEntry{eqEntry}, schema, testUnpartitionedSpecs)
 	if err != nil {
 		t.Fatalf("collectEqualityDeletes: %v", err)
 	}
@@ -619,10 +619,10 @@ func TestEqualityDeleteFileMissingColumn(t *testing.T) {
 	}
 	eqDfb.EqualityFieldIDs([]int{2})
 	snapID := int64(1)
-	eqEntry := iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, nil, nil, eqDfb.Build())
+	eqEntry := iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, &testDeleteSeq, &testDeleteSeq, eqDfb.Build())
 
 	_, err = collectEqualityDeletes(context.Background(), client, "test-bucket", "ns/tbl",
-		[]iceberg.ManifestEntry{eqEntry}, newAddedColumnSchema())
+		[]iceberg.ManifestEntry{eqEntry}, newAddedColumnSchema(), testUnpartitionedSpecs)
 	if err == nil {
 		t.Fatal("collectEqualityDeletes: want an error for a missing equality column")
 	}

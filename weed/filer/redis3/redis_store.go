@@ -31,16 +31,22 @@ func (store *Redis3Store) Initialize(configuration util.Configuration, prefix st
 	}
 	return store.initialize(
 		configuration.GetString(prefix+"address"),
+		configuration.GetString(prefix+"username"),
 		configuration.GetString(prefix+"password"),
 		configuration.GetInt(prefix+"database"),
+		configuration.GetString(prefix+"keyPrefix"),
 		tlsConfig,
 		redis_conf.Read(configuration, prefix),
 	)
 }
 
-func (store *Redis3Store) initialize(hostPort string, password string, database int, tlsConfig *tls.Config, settings redis_conf.Settings) (err error) {
+func (store *Redis3Store) initialize(hostPort string, username string, password string, database int, keyPrefix string, tlsConfig *tls.Config, settings redis_conf.Settings) (err error) {
+	if err := checkUserPassword(username, password); err != nil {
+		return err
+	}
 	options := &redis.Options{
 		Addr:      hostPort,
+		Username:  username,
 		Password:  password,
 		DB:        database,
 		TLSConfig: tlsConfig,
@@ -48,5 +54,6 @@ func (store *Redis3Store) initialize(hostPort string, password string, database 
 	settings.ApplyTo(options)
 	store.Client = redis.NewClient(options)
 	store.redsync = redsync.New(goredis.NewPool(store.Client))
+	store.keyPrefix = keyPrefix
 	return
 }

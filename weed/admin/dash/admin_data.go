@@ -48,6 +48,10 @@ type AdminData struct {
 	// TierStats breaks volumes and EC shards down by storage tier: local
 	// disk types plus one entry per remote storage holding tiered volumes.
 	TierStats []TierStats `json:"tier_stats"`
+
+	// VersionSummary reports whether all cluster nodes run the same binary
+	// version, so the dashboard can warn about partially upgraded clusters.
+	VersionSummary ClusterVersionSummary `json:"version_summary"`
 }
 
 // Object Store Users management structures
@@ -145,6 +149,7 @@ type FilerNode struct {
 	Address     string    `json:"address"`
 	DataCenter  string    `json:"datacenter"`
 	Rack        string    `json:"rack"`
+	Version     string    `json:"version"`
 	LastUpdated time.Time `json:"last_updated"`
 }
 
@@ -152,12 +157,14 @@ type MessageBrokerNode struct {
 	Address     string    `json:"address"`
 	DataCenter  string    `json:"datacenter"`
 	Rack        string    `json:"rack"`
+	Version     string    `json:"version"`
 	LastUpdated time.Time `json:"last_updated"`
 }
 
 type S3Node struct {
 	Address     string    `json:"address"`
 	DataCenter  string    `json:"datacenter"`
+	Version     string    `json:"version"`
 	LastUpdated time.Time `json:"last_updated"`
 }
 
@@ -246,6 +253,7 @@ func (s *AdminServer) GetAdminData(username string) (AdminData, error) {
 		TotalMountClients: totalMountClients,
 		Trends:            s.GetDashboardTrends(),
 		TierStats:         topology.TierStats,
+		VersionSummary:    buildClusterVersionSummary(volumeServersData.VolumeServers, filerNodes, s3Nodes, messageBrokers),
 	}
 
 	return adminData, nil
@@ -359,6 +367,7 @@ func (s *AdminServer) getFilerNodesStatus() []FilerNode {
 				Address:     pb.ServerAddress(node.Address).ToHttpAddress(),
 				DataCenter:  node.DataCenter,
 				Rack:        node.Rack,
+				Version:     node.Version,
 				LastUpdated: time.Now(),
 			})
 		}
@@ -398,6 +407,7 @@ func (s *AdminServer) getMessageBrokerNodesStatus() []MessageBrokerNode {
 				Address:     node.Address,
 				DataCenter:  node.DataCenter,
 				Rack:        node.Rack,
+				Version:     node.Version,
 				LastUpdated: time.Now(),
 			})
 		}
@@ -436,6 +446,7 @@ func (s *AdminServer) getS3NodesStatus() []S3Node {
 			s3Nodes = append(s3Nodes, S3Node{
 				Address:     pb.ServerAddress(node.Address).ToHttpAddress(),
 				DataCenter:  node.DataCenter,
+				Version:     node.Version,
 				LastUpdated: time.Now(),
 			})
 		}

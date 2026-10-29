@@ -69,6 +69,7 @@ templ Plugin(page string, initialJob string, lane string) {
             </div>
         </div>
 
+        @PluginSchedulerStatus()
         <div class="plugin-section plugin-section-overview">
             <div class="row mb-4">
                 <div class="col-md-3 mb-3">
@@ -98,7 +99,7 @@ templ Plugin(page string, initialJob string, lane string) {
                 <div class="col-md-3 mb-3">
                     <div class="card border-secondary h-100">
                         <div class="card-body text-center">
-                            <div class="text-uppercase text-muted small mb-1">Next Run</div>
+                            <div class="text-uppercase text-muted small mb-1">Next scheduled check</div>
                             <h4 class="mb-0 plugin-scheduler-next-run">-</h4>
                             <div class="text-muted small plugin-scheduler-next-run-meta"></div>
                         </div>
@@ -258,7 +259,7 @@ templ Plugin(page string, initialJob string, lane string) {
                                     </div>
                                 </div>
                                 <div class="col-12">
-                                    <label class="form-label" for="plugin-admin-detection-interval">Detection Interval (min)</label>
+                                    <label class="form-label" for="plugin-admin-detection-interval">Scheduled detection interval (min)</label>
                                     <input type="number" class="form-control" id="plugin-admin-detection-interval" min="0"/>
                                     <div class="form-text">How often to check for new work.</div>
                                 </div>
@@ -301,7 +302,7 @@ templ Plugin(page string, initialJob string, lane string) {
 
                     <div class="card shadow-sm mt-3">
                         <div class="card-header d-flex justify-content-between align-items-center">
-                            <h5 class="mb-0"><i class="bi bi-hourglass-split me-2"></i>Next Run</h5>
+                            <h5 class="mb-0"><i class="bi bi-hourglass-split me-2"></i>Next scheduled check</h5>
                             <small class="text-muted">Scheduler</small>
                         </div>
                         <div class="card-body">
@@ -616,6 +617,7 @@ templ Plugin(page string, initialJob string, lane string) {
                 activities: [],
                 schedulerStates: [],
                 schedulerStatus: null,
+                schedulerLock: null,
                 allJobs: [],
                 allActivities: [],
                 loadedJobType: '',
@@ -1606,6 +1608,7 @@ templ Plugin(page string, initialJob string, lane string) {
             }
 
             function renderSchedulerStatus() {
+                window.renderPluginSchedulerStatus({scheduler: state.schedulerStatus, lock: state.schedulerLock, job_type: state.activeTopTab === 'overview' ? '' : state.selectedJobType});
                 var valueNodes = document.querySelectorAll('.plugin-scheduler-next-run');
                 if (!valueNodes.length) {
                     return;
@@ -1617,7 +1620,7 @@ templ Plugin(page string, initialJob string, lane string) {
                 valueNodes.forEach(function(node) {
                     node.textContent = display;
                 });
-                var metaText = nextRun ? 'Local time' : 'Not scheduled';
+                var metaText = nextRun ? 'Next scheduled check (local time); locks and other jobs may delay detection.' : 'Not scheduled';
                 if (metaNodes.length) {
                     metaNodes.forEach(function(node) {
                         node.textContent = metaText;
@@ -2800,6 +2803,22 @@ templ Plugin(page string, initialJob string, lane string) {
 
                 var html = '';
                 html += '<div class="mb-2"><strong>Detection Run</strong></div>';
+                var skippedActivity = null;
+                for (var si = 0; si < activities.length; si++) {
+                    if (activities[si] && activities[si].stage === 'skipped_by_interval') skippedActivity = activities[si];
+                }
+                if (data.skipped_reason || skippedActivity) {
+                    var eligibleAfter = data.eligible_after;
+                    if (!eligibleAfter && skippedActivity && skippedActivity.details) {
+                        var detailAfter = skippedActivity.details.eligible_after;
+                        eligibleAfter = (detailAfter && detailAfter.string_value) || detailAfter;
+                    }
+                    html += '<div class="alert alert-info">Skipped: ' + escapeHtml(String(data.skipped_reason || skippedActivity.message || 'detection skipped'));
+                    if (eligibleAfter) html += ' · Eligible after: ' + escapeHtml(parseTime(eligibleAfter) || eligibleAfter);
+                    html += '</div>';
+                } else if (!data.error && proposals.length === 0) {
+                    html += '<div class="text-muted">Scan completed: no eligible volumes or jobs.</div>';
+                }
                 if (requestID) {
                     html += '<div><small>request_id: ' + escapeHtml(String(requestID)) + '</small></div>';
                 }
@@ -2925,6 +2944,7 @@ templ Plugin(page string, initialJob string, lane string) {
                     document.getElementById('plugin-config-updated-at').textContent = 'Not saved yet';
                 }
                 state.loadedJobType = jobType;
+                renderSchedulerStatus();
 
                 await loadRunHistory(jobType);
 
@@ -3076,6 +3096,7 @@ templ Plugin(page string, initialJob string, lane string) {
                 state.allActivities = state.activities;
                 state.schedulerStates = Array.isArray(schedulerStates) ? schedulerStates : [];
                 state.schedulerStatus = schedulerStatus && schedulerStatus.scheduler ? schedulerStatus.scheduler : null;
+                state.schedulerLock = schedulerStatus && schedulerStatus.lock ? schedulerStatus.lock : null;
                 renderQueueJobs();
                 renderDetectionJobs();
                 renderExecutionJobs();
