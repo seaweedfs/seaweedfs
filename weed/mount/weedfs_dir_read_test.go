@@ -146,7 +146,7 @@ func TestDirReadStatus(t *testing.T) {
 		{"ordinary failure", context.Background(), errors.New("filer broke"), fuse.EIO},
 	}
 	for _, tt := range tests {
-		if got := dirReadStatus(tt.ctx, tt.err); got != tt.want {
+		if got := dirReadStatus(tt.ctx, tt.err, "dir read: %v", tt.err); got != tt.want {
 			t.Errorf("%s: dirReadStatus = %v, want %v", tt.name, got, tt.want)
 		}
 	}

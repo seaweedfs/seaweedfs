@@ -305,8 +305,7 @@ func (wfs *WFS) doReadDirectory(ctx context.Context, input *fuse.ReadIn, out Dir
 				if errors.As(err, &tooLarge) {
 					return wfs.readDirectoryDirect(ctx, input, out, dh, dirPath, processEachEntryFn)
 				}
-				glog.Errorf("dir ReadDirAll %s: %v", dirPath, err)
-				return dirReadStatus(ctx, err)
+				return dirReadStatus(ctx, err, "dir ReadDirAll %s: %v", dirPath, err)
 			}
 
 			// Serve the maintained-but-unverified cache if the filer is unreachable.
@@ -326,8 +325,7 @@ func (wfs *WFS) doReadDirectory(ctx context.Context, input *fuse.ReadIn, out Dir
 			})
 			dh.lastListedName = storeLastName
 			if loadErr != nil {
-				glog.Errorf("list meta cache: %v", loadErr)
-				return dirReadStatus(ctx, loadErr)
+				return dirReadStatus(ctx, loadErr, "list meta cache: %v", loadErr)
 			}
 		}
 
@@ -364,8 +362,7 @@ func (wfs *WFS) doReadDirectory(ctx context.Context, input *fuse.ReadIn, out Dir
 				// carries on from wherever the cached walk reached.
 				return wfs.readDirectoryDirect(ctx, input, out, dh, dirPath, processEachEntryFn)
 			}
-			glog.Errorf("dir ReadDirAll %s: %v", dirPath, err)
-			return dirReadStatus(ctx, err)
+			return dirReadStatus(ctx, err, "dir ReadDirAll %s: %v", dirPath, err)
 		}
 
 		// Page from where the store itself reached, not from the last entry the
@@ -397,8 +394,7 @@ func (wfs *WFS) doReadDirectory(ctx context.Context, input *fuse.ReadIn, out Dir
 			return true, nil
 		})
 		if loadErr != nil {
-			glog.Errorf("list meta cache: %v", loadErr)
-			return dirReadStatus(ctx, loadErr)
+			return dirReadStatus(ctx, loadErr, "list meta cache: %v", loadErr)
 		}
 		dh.lastListedName = storeLastName
 
@@ -420,13 +416,15 @@ func (wfs *WFS) doReadDirectory(ctx context.Context, input *fuse.ReadIn, out Dir
 // applyFSGroup then fails the volume mount instead of retrying. A cancellation
 // that arrives with the local context still alive belongs to a shared build
 // that another requester abandoned — the read itself can still be retried, and
-// a gRPC cancellation of the listing classifies the same way.
-func dirReadStatus(ctx context.Context, err error) fuse.Status {
+// a gRPC cancellation of the listing classifies the same way. Only real
+// failures are worth an error log; interruptions are ordinary.
+func dirReadStatus(ctx context.Context, err error, format string, args ...any) fuse.Status {
 	if ctx.Err() != nil ||
 		errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
 		status.Code(err) == codes.Canceled || status.Code(err) == codes.DeadlineExceeded {
 		return fuse.EINTR
 	}
+	glog.Errorf(format, args...)
 	return fuse.EIO
 }
 
@@ -451,8 +449,7 @@ func (wfs *WFS) readDirectoryDirect(ctx context.Context, input *fuse.ReadIn, out
 			skipCount := uint32(input.Offset-dh.entryStreamOffset) + batchSize
 			entries, snapshotTs, err := loadDirectoryEntriesDirect(listingCtx, wfs, wfs.option.UidGidMapper, dirPath, "", false, skipCount, dh.snapshotTsNs, wfs.option.IncludeSystemEntries)
 			if err != nil {
-				glog.Errorf("list filer directory: %v", err)
-				return dirReadStatus(ctx, err)
+				return dirReadStatus(ctx, err, "list filer directory: %v", err)
 			}
 			dh.entryStream = append(dh.entryStream, entries...)
 			if dh.snapshotTsNs == 0 {
@@ -485,8 +482,7 @@ func (wfs *WFS) readDirectoryDirect(ctx context.Context, input *fuse.ReadIn, out
 
 		entries, snapshotTs, err := loadDirectoryEntriesDirect(listingCtx, wfs, wfs.option.UidGidMapper, dirPath, lastEntryName, false, batchSize, dh.snapshotTsNs, wfs.option.IncludeSystemEntries)
 		if err != nil {
-			glog.Errorf("list filer directory: %v", err)
-			return dirReadStatus(ctx, err)
+			return dirReadStatus(ctx, err, "list filer directory: %v", err)
 		}
 		if dh.snapshotTsNs == 0 {
 			dh.snapshotTsNs = snapshotTs
