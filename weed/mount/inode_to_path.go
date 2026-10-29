@@ -402,6 +402,19 @@ func (i *InodeToPath) MarkRebuildAttempt(fullpath util.FullPath, now time.Time) 
 	}
 }
 
+// ShouldRefreshStaleSection reports whether a lookup should re-list the stale
+// section of a still-cached directory, backing off for cooldown after a
+// failed attempt — the section-level analog of ShouldRebuildExpiredDir.
+func (i *InodeToPath) ShouldRefreshStaleSection(fullpath util.FullPath, cooldown time.Duration) bool {
+	i.RLock()
+	defer i.RUnlock()
+	d := i.dirStateOf(fullpath)
+	if d == nil || d.readDirDirect || !d.isChildrenCached {
+		return false
+	}
+	return d.lastRebuildAttempt.IsZero() || time.Since(d.lastRebuildAttempt) >= cooldown
+}
+
 func (i *InodeToPath) HasInode(inode uint64) bool {
 	if inode == 1 {
 		return true

@@ -648,14 +648,26 @@ func (wfs *WFS) lookupEntry(ctx context.Context, fullpath util.FullPath) (*filer
 			// entry until one did. Re-validate just that section here so the
 			// lookups after this one are served from the cache again. As with
 			// the rebuild above, let a pending flush land first so the section
-			// refresh cannot capture pre-flush metadata.
-			if inode, found := wfs.inodeToPath.GetInode(fullpath); found {
-				if !wfs.waitForPendingAsyncFlush(ctx, inode) {
-					return nil, entryVersion{}, fuse.EINTR
+			// refresh cannot capture pre-flush metadata. A failing refresh
+			// backs off under the same cooldown the rebuild gate uses rather
+			// than re-listing the range on every lookup.
+			if wfs.inodeToPath.ShouldRefreshStaleSection(dirPath, expiredDirRebuildCooldown) {
+				if inode, found := wfs.inodeToPath.GetInode(fullpath); found {
+					if !wfs.waitForPendingAsyncFlush(ctx, inode) {
+						return nil, entryVersion{}, fuse.EINTR
+					}
 				}
-			}
-			if err := meta_cache.EnsureNameFresh(ctx, wfs.metaCache, wfs, dirPath, name); err != nil {
-				glog.V(2).Infof("lookupEntry: refresh stale section of %s: %v", dirPath, err)
+				if err := meta_cache.EnsureNameFresh(ctx, wfs.metaCache, wfs, dirPath, name); err != nil {
+					if errors.Is(err, meta_cache.ErrRefreshRangeTooLarge) {
+						// The section outgrew one refresh: drop the cached
+						// listing so a later lookup rebuilds it re-tiled, the
+						// same way ReadDir falls back to read-through.
+						wfs.purgeDirectoryCache(dirPath)
+					} else {
+						wfs.inodeToPath.MarkRebuildAttempt(dirPath, time.Now())
+						glog.V(2).Infof("lookupEntry: refresh stale section of %s: %v", dirPath, err)
+					}
+				}
 			}
 		}
 		if wfs.metaCache.IsNameFresh(fullpath) {
