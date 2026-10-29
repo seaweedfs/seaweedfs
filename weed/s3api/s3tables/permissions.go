@@ -109,7 +109,7 @@ func CheckPermissionWithContext(operation, principal, owner, resourcePolicy, res
 	}
 
 	// Admin always has permission.
-	if principal == s3_constants.AccountAdminId {
+	if principal == s3_constants.AccountAdminId && adminCaller(operation, ctx) {
 		return true
 	}
 
@@ -125,7 +125,7 @@ func CheckTableOrBucketPermission(operation, principal, resourceOwner, resourceP
 	if principal == "" {
 		return false
 	}
-	if principal == s3_constants.AccountAdminId {
+	if principal == s3_constants.AccountAdminId && adminCaller(operation, ctx) {
 		return true
 	}
 	if matchesDenyStatement(operation, principal, resourcePolicy, resourceARN, ctx) ||
@@ -184,8 +184,16 @@ func statementActions(spec interface{}) []string {
 // deniedByPolicy reports whether another applicable resource policy vetoes the
 // request. The admin account is exempt, matching CheckPermissionWithContext.
 func deniedByPolicy(operation, principal, resourcePolicy, resourceARN string, ctx *PolicyContext) bool {
-	return principal != s3_constants.AccountAdminId &&
+	return (principal != s3_constants.AccountAdminId || !adminCaller(operation, ctx)) &&
 		matchesDenyStatement(operation, principal, resourcePolicy, resourceARN, ctx)
+}
+
+// adminCaller reports whether the admin principal bypass applies. Trusted
+// transports carry no action list, and an identified caller holds it only
+// when the identity administers the operation's service — a principal that
+// merely normalizes to the admin id does not bypass policy denies.
+func adminCaller(operation string, ctx *PolicyContext) bool {
+	return ctx == nil || len(ctx.IdentityActions) == 0 || hasAdminActionFor(operation, ctx.IdentityActions)
 }
 
 // matchesDenyStatement reports whether the JSON policy carries a statement
@@ -205,7 +213,7 @@ func matchesDenyStatement(operation, principal, resourcePolicy, resourceARN stri
 	}
 	for _, stmt := range policy.Statement {
 		if stmt.Effect != "Deny" ||
-			!matchesCaller(stmt.Principal, principal, ctx) ||
+			!matchesDenyCaller(stmt.Principal, principal, ctx) ||
 			!matchesAction(stmt.Action, fullAction) ||
 			(resourceARN != "" && !matchesResource(stmt.Resource, resourceARN)) ||
 			!matchesConditions(stmt.Condition, ctx) {
@@ -308,7 +316,7 @@ func hasIdentityPermission(operation string, ctx *PolicyContext) bool {
 	if !strings.Contains(operation, ":") {
 		fullAction = "s3tables:" + operation
 	}
-	if hasAdminAction(ctx.IdentityActions) {
+	if hasAdminActionFor(operation, ctx.IdentityActions) {
 		return true
 	}
 	candidates := []string{operation, fullAction}
@@ -340,11 +348,40 @@ func hasAdminAction(actions []string) bool {
 	return false
 }
 
+// hasAdminActionFor reports whether the action list administers the
+// operation's own service: the global admin markers always apply, while a
+// service wildcard covers only that service — s3tables:* never reaches an
+// s3vectors operation.
+func hasAdminActionFor(operation string, actions []string) bool {
+	if !strings.Contains(operation, ":") {
+		operation = "s3tables:" + operation
+	}
+	serviceWildcard := operation[:strings.Index(operation, ":")] + ":*"
+	for _, action := range actions {
+		if action == "*" || action == s3_constants.ACTION_ADMIN || action == "s3:*" || action == serviceWildcard {
+			return true
+		}
+	}
+	return false
+}
+
 // matchesCaller matches a statement's Principal against the caller's scoped
 // principal or, for policies written before issuer scoping, a bare subject
 // that resolves to it under the deployment's single trusted issuer.
 func matchesCaller(principalSpec interface{}, principal string, ctx *PolicyContext) bool {
-	if matchesPrincipal(principalSpec, principal) {
+	return matchCaller(principalSpec, principal, ctx, false)
+}
+
+// matchesDenyCaller is matchesCaller for deny evaluation: an ARN-scoped
+// statement also reaches a caller stored under the ARN's trailing name, so a
+// deny cannot be ducked through normalization the way an allow must not grant
+// through it.
+func matchesDenyCaller(principalSpec interface{}, principal string, ctx *PolicyContext) bool {
+	return matchCaller(principalSpec, principal, ctx, true)
+}
+
+func matchCaller(principalSpec interface{}, principal string, ctx *PolicyContext, forDeny bool) bool {
+	if matchPrincipal(principalSpec, principal, forDeny) {
 		return true
 	}
 	switch p := principalSpec.(type) {
@@ -358,7 +395,7 @@ func matchesCaller(principalSpec interface{}, principal string, ctx *PolicyConte
 		}
 	case map[string]interface{}:
 		if aws, ok := p["AWS"]; ok {
-			return matchesCaller(aws, principal, ctx)
+			return matchCaller(aws, principal, ctx, forDeny)
 		}
 	}
 	return false
@@ -390,40 +427,50 @@ func matchesLegacySubject(legacy, principal string, ctx *PolicyContext) bool {
 
 // matchesPrincipal checks if the principal matches the statement's principal
 func matchesPrincipal(principalSpec interface{}, principal string) bool {
+	return matchPrincipal(principalSpec, principal, false)
+}
+
+func matchPrincipal(principalSpec interface{}, principal string, forDeny bool) bool {
 	if principalSpec == nil {
 		return false
 	}
 
 	switch p := principalSpec.(type) {
 	case string:
-		// Direct string match or wildcard
-		if p == "*" || p == principal {
-			return true
-		}
-		// Support wildcard matching for principals (e.g., "arn:aws:iam::*:user/admin")
-		return wildcard.MatchesWildcard(p, principal)
+		return matchPrincipalString(p, principal, forDeny)
 	case []interface{}:
 		// Array of principals
 		for _, item := range p {
-			if str, ok := item.(string); ok {
-				if str == "*" || str == principal {
-					return true
-				}
-				// Support wildcard matching
-				if wildcard.MatchesWildcard(str, principal) {
-					return true
-				}
+			if str, ok := item.(string); ok && matchPrincipalString(str, principal, forDeny) {
+				return true
 			}
 		}
 	case map[string]interface{}:
 		// AWS-style principal with service prefix, e.g., {"AWS": "arn:aws:iam::..."}
 		// For S3 Tables, we primarily care about the AWS key
 		if aws, ok := p["AWS"]; ok {
-			return matchesPrincipal(aws, principal)
+			return matchPrincipal(aws, principal, forDeny)
 		}
 	}
 
 	return false
+}
+
+// matchPrincipalString reports whether a single principal spec matches the
+// caller. An ARN-scoped statement reaches a caller recorded under the ARN's
+// trailing name only for denies: normalization drops the ARN's account and
+// path, so an allow matched that way could grant a same-named caller the
+// statement never verified, while a deny must still land so it cannot be
+// ducked through the same collapse.
+func matchPrincipalString(spec, principal string, forDeny bool) bool {
+	if spec == "*" || spec == principal {
+		return true
+	}
+	if wildcard.MatchesWildcard(spec, principal) {
+		return true
+	}
+	return forDeny && strings.HasPrefix(spec, "arn:") && !strings.HasPrefix(principal, "arn:") &&
+		wildcard.MatchesWildcard(normalizePrincipalID(spec), principal)
 }
 
 // matchesAction checks if the action matches the statement's action

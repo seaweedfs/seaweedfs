@@ -37,6 +37,12 @@ const (
 	// or releases it.
 	ExtendedKeyDeleting = s3_constants.ExtS3TablesPrefix + "deleting"
 
+	// ExtendedKeyVectorPolicy is written by the S3 Vectors service on table
+	// buckets. It lives here rather than in the vectors package so the catalog
+	// can assert it in its update preconditions: a whole-entry write that does
+	// not know the key could silently erase a concurrently saved vector policy.
+	ExtendedKeyVectorPolicy = "s3vectors-policy"
+
 	// Entry-type marker values for ExtendedKeyEntryType. Absent or "table" means
 	// a table; views are stored like tables but tagged "view".
 	EntryTypeTable = "table"

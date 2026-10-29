@@ -26,6 +26,19 @@ func TestGetAccountIDHeaderBranchResolvesCaller(t *testing.T) {
 	assert.Equal(t, "alice", h.getAccountID(req))
 }
 
+func TestPrincipalForMirrorsGetAccountID(t *testing.T) {
+	m := NewManager()
+	m.SetAccountID("000000000000")
+
+	assert.Equal(t, "000000000000", m.PrincipalFor(""))
+	assert.Equal(t, "alice", m.PrincipalFor("alice"))
+	assert.Equal(t, s3_constants.AccountAdminId, m.PrincipalFor(s3_constants.AccountAdminId),
+		"the name branch of getAccountID keeps the admin name")
+	assert.Equal(t, "000000000000", m.PrincipalFor("   "))
+	assert.Equal(t, "bob", m.PrincipalFor("arn:aws:iam::123456789012:user/bob"),
+		"ARN identities collapse to the trailing segment like getAccountID")
+}
+
 func TestCheckPermissionDenyPolicyBindsNonAdmin(t *testing.T) {
 	denyAll := `{"Statement":[{"Effect":"Deny","Principal":"*","Action":"s3tables:DeleteTableBucket"}]}`
 	assert.False(t, CheckPermissionWithContext("s3tables:DeleteTableBucket", "mallory", "owner123", denyAll, "arn:aws:s3tables:us-east-1:000000000000:bucket/victim",

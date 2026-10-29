@@ -72,6 +72,10 @@ func (f *fakeVectors) CreateIndex(ctx context.Context, req *vector_pb.CreateInde
 	return &vector_pb.CreateIndexResponse{}, nil
 }
 
+func (f *fakeVectors) GetVectors(ctx context.Context, req *vector_pb.GetVectorsRequest, opts ...grpc.CallOption) (*vector_pb.GetVectorsResponse, error) {
+	return &vector_pb.GetVectorsResponse{}, nil
+}
+
 func (f *fakeVectors) PutVectors(ctx context.Context, req *vector_pb.PutVectorsRequest, opts ...grpc.CallOption) (*vector_pb.PutVectorsResponse, error) {
 	f.puts = append(f.puts, req)
 	return &vector_pb.PutVectorsResponse{}, nil
@@ -524,6 +528,7 @@ func TestQueryVectorsTopKBounds(t *testing.T) {
 	s := &Server{
 		vectors:     newFakeVectors(0),
 		tables:      s3tables.NewManager(),
+		internal:    s3tables.NewManager(),
 		filerClient: errFiler{},
 	}
 	for _, tc := range []struct {
@@ -572,6 +577,7 @@ func TestValidateEncryptionConfigurationRejectsCustomerKeys(t *testing.T) {
 		})
 	}
 }
+
 // A vector index is colocated: its catalog entry sits at the dataset root, so
 // the catalog delete removes entry and data together.
 func TestDeleteIndexRemovesDatasetDirectory(t *testing.T) {
@@ -615,5 +621,199 @@ func TestDeleteIndexRemovesDatasetDirectory(t *testing.T) {
 	}
 	if e := fs.Get("/buckets/vec-bucket/vector/idx/data", "part-0.lance"); e != nil {
 		t.Fatal("index dataset survived DeleteIndex")
+	}
+}
+
+func TestValidateVectorPolicy(t *testing.T) {
+	valid := `{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Principal":"*","Action":"s3vectors:PutVectors","Resource":"arn:aws:s3vectors:r:a:bucket/b"}]}`
+	if err := validateVectorPolicy(valid); err != nil {
+		t.Fatalf("valid policy rejected: %v", err)
+	}
+	if err := validateVectorPolicy("not-json"); err == nil {
+		t.Fatal("malformed policy should be rejected")
+	}
+	for _, field := range []string{"NotAction", "NotResource", "NotPrincipal", "Condition"} {
+		bad := fmt.Sprintf(`{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Principal":"*","%s":"s3vectors:GetIndex","Action":"s3vectors:PutVectors","Resource":"*"}]}`, field)
+		if err := validateVectorPolicy(bad); err == nil {
+			t.Fatalf("%s should be rejected", field)
+		}
+		lower := fmt.Sprintf(`{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Principal":"*","%s":"s3vectors:GetIndex","Action":"s3vectors:PutVectors","Resource":"*"}]}`, strings.ToLower(field))
+		if err := validateVectorPolicy(lower); err == nil {
+			t.Fatalf("case-variant %s should be rejected", strings.ToLower(field))
+		}
+	}
+	for _, dead := range []string{
+		`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3tables:GetTable","Resource":"*"}]}`,
+		`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","action":"s3tables:GetTable","Resource":"*"}]}`,
+		`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3vectors:GetVectors","Resource":"arn:aws:s3:r:a:bucket/b"}]}`,
+		`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3vectors:GetVectors","resource":"arn:aws:s3tables:r:a:bucket/b"}]}`,
+		`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3vectors:GetVectors","Resource":"arn:aws:s3tables:r:a:bucket/b"}]}`,
+		`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3vectors:GetVectors","Resource":"arn:aws-cn:s3tables:r:a:bucket/b"}]}`,
+	} {
+		if err := validateVectorPolicy(dead); err == nil {
+			t.Fatalf("unenforceable rule should be rejected: %s", dead)
+		}
+	}
+}
+
+// postJSONAs runs the handler under a named identity: empty resolves to the
+// account the catalog would charge, a name is a non-owner principal.
+func postJSONAs(t *testing.T, identity string, handler http.HandlerFunc, payload interface{}) *httptest.ResponseRecorder {
+	t.Helper()
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
+	handler(w, r.WithContext(contextWithIdentity(r.Context(), identity)))
+	return w
+}
+
+// A grant names the exact vector action and resource it allows: a put grant
+// carries no delete, an index-scoped rule reaches only that index, and a
+// read grant never authorizes a write.
+func TestVectorBucketPolicyGatesVectorActions(t *testing.T) {
+	fs := s3tablestest.Start(t)
+	s := NewServer(s3tables.NewManagerClient(fs.Client), allowAllAuth{}, newFakeVectors(0))
+
+	if w := postJSONAs(t, "", s.handleCreateVectorBucket, &CreateVectorBucketRequest{VectorBucketName: "vec-bucket"}); w.Code != http.StatusOK {
+		t.Fatalf("create bucket: %d %s", w.Code, w.Body.String())
+	}
+	newIndex := func(name string) {
+		t.Helper()
+		if w := postJSONAs(t, "", s.handleCreateIndex, &CreateIndexRequest{
+			VectorBucketName: "vec-bucket",
+			IndexName:        name,
+			DataType:         "float32",
+			Dimension:        3,
+			DistanceMetric:   "euclidean",
+		}); w.Code != http.StatusOK {
+			t.Fatalf("create index %s: %d %s", name, w.Code, w.Body.String())
+		}
+	}
+	newIndex("idx")
+	newIndex("other")
+
+	indexARN := s.indexArn("vec-bucket", "idx")
+	policy := fmt.Sprintf(`{"Version":"2012-10-17","Statement":[`+
+		`{"Sid":"put","Effect":"Allow","Principal":"*","Action":"s3vectors:PutVectors","Resource":"%s"},`+
+		`{"Sid":"reads","Effect":"Allow","Principal":"*","Action":"s3vectors:Get*","Resource":"%s"},`+
+		`{"Sid":"noDelete","Effect":"Deny","Principal":"*","Action":"s3vectors:DeleteVectors","Resource":"%s"}]}`,
+		indexARN, indexARN, indexARN)
+	if w := postJSONAs(t, "", s.handlePutVectorBucketPolicy, &PutVectorBucketPolicyRequest{
+		VectorBucketName: "vec-bucket",
+		Policy:           policy,
+	}); w.Code != http.StatusOK {
+		t.Fatalf("put policy: %d %s", w.Code, w.Body.String())
+	}
+	if w := postJSONAs(t, "", s.handleGetVectorBucketPolicy, &GetVectorBucketPolicyRequest{VectorBucketName: "vec-bucket"}); w.Code != http.StatusOK {
+		t.Fatalf("get policy: %d %s", w.Code, w.Body.String())
+	} else {
+		var resp GetVectorBucketPolicyResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decode policy response: %v", err)
+		}
+		if resp.Policy != policy {
+			t.Fatalf("policy round-trip changed the document:\nsaved: %s\ngot:   %s", policy, resp.Policy)
+		}
+	}
+
+	put := func(index string) *httptest.ResponseRecorder {
+		return postJSONAs(t, "alice", s.handlePutVectors, &PutVectorsRequest{
+			VectorBucketName: "vec-bucket",
+			IndexName:        index,
+			Vectors:          []*PutInputVector{{Key: "a", Data: &VectorData{Float32: []float32{1, 2, 3}}}},
+		})
+	}
+	if w := put("idx"); w.Code != http.StatusOK {
+		t.Fatalf("put on granted index: %d %s", w.Code, w.Body.String())
+	}
+	if w := put("other"); w.Code != http.StatusForbidden {
+		t.Fatalf("put on ungranted index: %d %s, want 403", w.Code, w.Body.String())
+	}
+	if w := postJSONAs(t, "alice", s.handleDeleteVectors, &DeleteVectorsRequest{
+		VectorBucketName: "vec-bucket", IndexName: "idx", Keys: []string{"a"},
+	}); w.Code != http.StatusForbidden {
+		t.Fatalf("delete under deny: %d %s, want 403", w.Code, w.Body.String())
+	}
+	if w := postJSONAs(t, "alice", s.handleGetVectors, &GetVectorsRequest{
+		VectorBucketName: "vec-bucket", IndexName: "idx", Keys: []string{"a"},
+	}); w.Code != http.StatusOK {
+		t.Fatalf("get under wildcard read grant: %d %s", w.Code, w.Body.String())
+	}
+	if w := postJSONAs(t, "alice", s.handleListIndexes, &ListIndexesRequest{VectorBucketName: "vec-bucket"}); w.Code != http.StatusForbidden {
+		t.Fatalf("bucket-scoped list under index grant: %d %s, want 403", w.Code, w.Body.String())
+	}
+}
+
+// A vector document still living in the shared policy slot is a legacy
+// policy: deleting through the vector API strips its s3vectors statements,
+// keeps catalog rules, and the stripped grant stops authorizing.
+func TestDeleteVectorBucketPolicyRemovesLegacyDoc(t *testing.T) {
+	fs := s3tablestest.Start(t)
+	s := NewServer(s3tables.NewManagerClient(fs.Client), allowAllAuth{}, newFakeVectors(0))
+
+	lookupEntry := func(bucket string) *filer_pb.Entry {
+		t.Helper()
+		dir, name := splitEntryPath(s3tables.GetTableBucketPath(bucket))
+		resp, err := filer_pb.LookupEntry(context.Background(), fs.Client, &filer_pb.LookupDirectoryEntryRequest{Directory: dir, Name: name})
+		if err != nil {
+			t.Fatalf("lookup bucket %s: %v", bucket, err)
+		}
+		return resp.Entry
+	}
+	writeSharedPolicy := func(bucket, doc string) {
+		t.Helper()
+		entry := lookupEntry(bucket)
+		if entry.Extended == nil {
+			entry.Extended = map[string][]byte{}
+		}
+		entry.Extended[s3tables.ExtendedKeyPolicy] = []byte(doc)
+		dir, _ := splitEntryPath(s3tables.GetTableBucketPath(bucket))
+		if _, err := fs.Client.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{Directory: dir, Entry: entry}); err != nil {
+			t.Fatalf("write shared policy on %s: %v", bucket, err)
+		}
+	}
+	create := func(bucket string) {
+		t.Helper()
+		if w := postJSONAs(t, "", s.handleCreateVectorBucket, &CreateVectorBucketRequest{VectorBucketName: bucket}); w.Code != http.StatusOK {
+			t.Fatalf("create bucket %s: %d %s", bucket, w.Code, w.Body.String())
+		}
+	}
+	deletePolicy := func(bucket string) *httptest.ResponseRecorder {
+		return postJSONAs(t, "", s.handleDeleteVectorBucketPolicy, &DeleteVectorBucketPolicyRequest{VectorBucketName: bucket})
+	}
+	getAsAlice := func(bucket string) *httptest.ResponseRecorder {
+		return postJSONAs(t, "alice", s.handleGetVectorBucket, &GetVectorBucketRequest{VectorBucketName: bucket})
+	}
+
+	create("vec-mixed")
+	writeSharedPolicy("vec-mixed", fmt.Sprintf(`{"Version":"2012-10-17","Statement":[`+
+		`{"Effect":"Allow","Principal":"*","Action":"s3tables:GetTableBucket","Resource":"%s"},`+
+		`{"Effect":"Allow","Principal":"*","Action":"s3vectors:GetVectorBucket","Resource":"%s"}]}`,
+		s.s3tablesArn("vec-mixed"), s.vectorBucketArn("vec-mixed")))
+	if w := getAsAlice("vec-mixed"); w.Code != http.StatusOK {
+		t.Fatalf("legacy grant should authorize: %d %s", w.Code, w.Body.String())
+	}
+	if w := deletePolicy("vec-mixed"); w.Code != http.StatusOK {
+		t.Fatalf("delete mixed policy: %d %s", w.Code, w.Body.String())
+	}
+	if w := getAsAlice("vec-mixed"); w.Code != http.StatusForbidden {
+		t.Fatalf("stripped grant should deny: %d %s, want 403", w.Code, w.Body.String())
+	}
+	if doc := string(lookupEntry("vec-mixed").Extended[s3tables.ExtendedKeyPolicy]); !strings.Contains(doc, "s3tables:") || strings.Contains(doc, "s3vectors:") {
+		t.Fatalf("catalog statements should survive the delete: %s", doc)
+	}
+
+	create("vec-only")
+	writeSharedPolicy("vec-only", fmt.Sprintf(`{"Version":"2012-10-17","Statement":[`+
+		`{"Effect":"Allow","Principal":"*","Action":"s3vectors:GetVectorBucket","Resource":"%s"}]}`,
+		s.vectorBucketArn("vec-only")))
+	if w := deletePolicy("vec-only"); w.Code != http.StatusOK {
+		t.Fatalf("delete vector-only policy: %d %s", w.Code, w.Body.String())
+	}
+	if doc := string(lookupEntry("vec-only").Extended[s3tables.ExtendedKeyPolicy]); doc != "" {
+		t.Fatalf("empty shared policy should be removed: %s", doc)
 	}
 }

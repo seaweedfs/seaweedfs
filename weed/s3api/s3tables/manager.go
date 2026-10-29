@@ -46,6 +46,30 @@ func (m *Manager) SetTrusted(trusted bool) {
 	m.handler.SetTrusted(trusted)
 }
 
+// PrincipalFor maps a forwarded identity name onto the account the catalog
+// would charge the request to: a synthesized request resolves its identity
+// name through getAccountID's name branch — normalized like any principal —
+// and an empty name falls back to the handler's account ID.
+func (m *Manager) PrincipalFor(identity string) string {
+	if principal := normalizePrincipalID(identity); principal != "" {
+		return principal
+	}
+	return m.handler.accountID
+}
+
+// PolicyContext builds the evaluation context a Manager call's synthesized
+// request produces: the configured local-account predicate, the caller's own
+// identity actions so admin and action grants resolve on privileges rather
+// than the forwarded name, plus the open-by-default fallback only for a
+// trusted caller or no resolved identity.
+func (m *Manager) PolicyContext(r *http.Request) *PolicyContext {
+	ctx := &PolicyContext{IsLocalAccountID: m.handler.localAccountIDs, IdentityActions: getIdentityActions(r)}
+	if m.handler.trusted || (m.handler.defaultAllow && s3_constants.GetIdentityNameFromContext(r) == "") {
+		ctx.DefaultAllow = true
+	}
+	return ctx
+}
+
 // Execute runs an S3 Tables operation and decodes the response into resp (if provided).
 func (m *Manager) Execute(ctx context.Context, filerClient FilerClient, operation string, req interface{}, resp interface{}, identity string) error {
 	body, err := json.Marshal(req)
