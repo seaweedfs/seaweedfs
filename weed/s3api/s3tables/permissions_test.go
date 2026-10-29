@@ -323,6 +323,10 @@ func TestCheckPermissionAdminRequiresAdminAction(t *testing.T) {
 	if !CheckPermissionWithContext("s3tables:DeleteTable", "admin", "admin", denyAll, arn, nil) {
 		t.Error("a caller with no action list keeps the trusted bypass")
 	}
+	empty := &PolicyContext{IdentityActions: []string{}}
+	if CheckPermissionWithContext("s3tables:DeleteTable", "admin", "admin", denyAll, arn, empty) {
+		t.Error("an identified admin with an empty action list must not bypass a deny")
+	}
 }
 
 func TestCheckTableOrBucketPermissionOwnerlessFailsClosed(t *testing.T) {
