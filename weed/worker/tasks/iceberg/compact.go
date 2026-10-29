@@ -922,7 +922,10 @@ func deleteInPredicateScope(entry iceberg.ManifestEntry, predicate *partitionPre
 		return true, nil
 	}
 	scope, err := deleteFileScope(entry.DataFile(), specs, schema)
-	if err != nil || scope.global {
+	if err != nil {
+		return true, nil
+	}
+	if scope.global {
 		return true, nil
 	}
 	return predicate.Matches(specs[int(entry.DataFile().SpecID())], entry.DataFile().Partition())
