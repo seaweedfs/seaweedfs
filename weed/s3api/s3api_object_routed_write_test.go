@@ -72,7 +72,7 @@ func TestBuildWriteCondition(t *testing.T) {
 			t.Fatal("want ok")
 		}
 		c := oneClause(t, cond)
-		if c.Kind != filer_pb.WriteCondition_IF_ETAG_MATCH || len(c.Etags) != 1 || c.Etags[0] != "abc123" {
+		if c.Kind != filer_pb.WriteCondition_IF_ETAG_MATCH || len(c.Etags) != 1 || c.Etags[0] != `"abc123"` {
 			t.Fatalf("clause = %+v", c)
 		}
 	})
@@ -82,33 +82,84 @@ func TestBuildWriteCondition(t *testing.T) {
 			t.Fatal("want ok")
 		}
 		c := oneClause(t, cond)
-		if c.Kind != filer_pb.WriteCondition_IF_ETAG_NOT_MATCH || len(c.Etags) != 1 || c.Etags[0] != "abc123" {
+		if c.Kind != filer_pb.WriteCondition_IF_ETAG_NOT_MATCH || len(c.Etags) != 1 || c.Etags[0] != `"abc123"` {
 			t.Fatalf("clause = %+v", c)
 		}
 	})
-	t.Run("weak etag falls back", func(t *testing.T) {
-		if _, ok := buildWriteCondition(reqWith(map[string]string{s3_constants.IfMatch: `W/"abc"`})); ok {
-			t.Fatal("weak etag must not take the fast path")
+	t.Run("weak etag reduces verbatim", func(t *testing.T) {
+		cond, ok := buildWriteCondition(reqWith(map[string]string{s3_constants.IfMatch: `W/"abc"`}))
+		if !ok {
+			t.Fatal("want ok")
+		}
+		c := oneClause(t, cond)
+		if c.Kind != filer_pb.WriteCondition_IF_ETAG_MATCH || len(c.Etags) != 1 || c.Etags[0] != `W/"abc"` || c.AllowWeak {
+			t.Fatalf("clause = %+v", c)
 		}
 	})
-	t.Run("etag list falls back", func(t *testing.T) {
-		if _, ok := buildWriteCondition(reqWith(map[string]string{s3_constants.IfMatch: `"a","b"`})); ok {
-			t.Fatal("etag list must not take the fast path")
+	t.Run("etag list reduces", func(t *testing.T) {
+		cond, ok := buildWriteCondition(reqWith(map[string]string{s3_constants.IfMatch: `"a", "b"`}))
+		if !ok {
+			t.Fatal("want ok")
+		}
+		c := oneClause(t, cond)
+		if c.Kind != filer_pb.WriteCondition_IF_ETAG_MATCH || len(c.Etags) != 2 || c.Etags[0] != `"a"` || c.Etags[1] != `"b"` {
+			t.Fatalf("clause = %+v", c)
 		}
 	})
-	t.Run("both match and none-match falls back", func(t *testing.T) {
-		if _, ok := buildWriteCondition(reqWith(map[string]string{
+	t.Run("both match and none-match reduce to clauses", func(t *testing.T) {
+		cond, ok := buildWriteCondition(reqWith(map[string]string{
 			s3_constants.IfMatch:     "*",
 			s3_constants.IfNoneMatch: "*",
-		})); ok {
-			t.Fatal("ambiguous combination must not take the fast path")
+		}))
+		if !ok {
+			t.Fatal("want ok")
+		}
+		if len(cond.Clauses) != 2 || cond.Clauses[0].Kind != filer_pb.WriteCondition_IF_EXISTS || cond.Clauses[1].Kind != filer_pb.WriteCondition_IF_NOT_EXISTS {
+			t.Fatalf("clauses = %+v", cond.Clauses)
 		}
 	})
-	t.Run("time-based falls back", func(t *testing.T) {
-		if _, ok := buildWriteCondition(reqWith(map[string]string{
+	t.Run("time-based reduces to a unix bound", func(t *testing.T) {
+		cond, ok := buildWriteCondition(reqWith(map[string]string{
 			"If-Unmodified-Since": "Wed, 21 Oct 2015 07:28:00 GMT",
+		}))
+		if !ok {
+			t.Fatal("want ok")
+		}
+		c := oneClause(t, cond)
+		want := time.Date(2015, 10, 21, 7, 28, 0, 0, time.UTC).Unix()
+		if c.Kind != filer_pb.WriteCondition_IF_UNMODIFIED_SINCE || c.UnixTime != want {
+			t.Fatalf("clause = %+v, want unix %d", c, want)
+		}
+	})
+	t.Run("If-Match hides If-Unmodified-Since", func(t *testing.T) {
+		cond, ok := buildWriteCondition(reqWith(map[string]string{
+			s3_constants.IfMatch:  `"abc"`,
+			"If-Unmodified-Since": "Wed, 21 Oct 2015 07:28:00 GMT",
+		}))
+		if !ok {
+			t.Fatal("want ok")
+		}
+		if c := oneClause(t, cond); c.Kind != filer_pb.WriteCondition_IF_ETAG_MATCH {
+			t.Fatalf("clause = %+v", c)
+		}
+	})
+	t.Run("If-None-Match hides If-Modified-Since", func(t *testing.T) {
+		cond, ok := buildWriteCondition(reqWith(map[string]string{
+			s3_constants.IfNoneMatch: `"abc"`,
+			"If-Modified-Since":      "Wed, 21 Oct 2015 07:28:00 GMT",
+		}))
+		if !ok {
+			t.Fatal("want ok")
+		}
+		if c := oneClause(t, cond); c.Kind != filer_pb.WriteCondition_IF_ETAG_NOT_MATCH {
+			t.Fatalf("clause = %+v", c)
+		}
+	})
+	t.Run("unparseable date falls back", func(t *testing.T) {
+		if _, ok := buildWriteCondition(reqWith(map[string]string{
+			"If-Modified-Since": "not a date",
 		})); ok {
-			t.Fatal("time condition must not take the fast path")
+			t.Fatal("unparseable headers must not reduce")
 		}
 	})
 }
@@ -637,8 +688,12 @@ func TestRouteWriteCondition(t *testing.T) {
 	if _, ok := routeWriteCondition(reqWith(map[string]string{s3_constants.IfMatch: `"e"`}), true); ok {
 		t.Fatal("conditional unique write must not route")
 	}
-	// A non-reducible condition bails regardless.
-	if _, ok := routeWriteCondition(reqWith(map[string]string{s3_constants.IfMatch: `W/"e"`}), false); ok {
-		t.Fatal("weak etag must not route")
+	// A weak ETag still routes — the clause carries it verbatim.
+	if _, ok := routeWriteCondition(reqWith(map[string]string{s3_constants.IfMatch: `W/"e"`}), false); !ok {
+		t.Fatal("weak etag should route")
+	}
+	// An unparseable condition bails regardless.
+	if _, ok := routeWriteCondition(reqWith(map[string]string{"If-Modified-Since": "not a date"}), false); ok {
+		t.Fatal("unparseable headers must not route")
 	}
 }

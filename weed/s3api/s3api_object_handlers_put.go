@@ -1067,7 +1067,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	}
 
 	// Route the create to the object's owner filer (its per-path lock serializes
-	// it); conditional/object-lock/non-reducible cases fall back to the lock.
+	// it); unparseable or unroutable conditions fall back to the lock.
 	var createCode s3err.ErrorCode
 	routed := false
 	routedAmbiguous := false

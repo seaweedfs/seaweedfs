@@ -287,9 +287,9 @@ func (f *ambiguousPutFiler) ObjectTransaction(_ context.Context, req *filer_pb.O
 		case filer_pb.WriteCondition_IF_EXISTS:
 			ok = current != nil
 		case filer_pb.WriteCondition_IF_ETAG_MATCH:
-			ok = current != nil && slices.Contains(clause.Etags, md5Hex)
+			ok = current != nil && etagCandidateMatch(clause.Etags, md5Hex)
 		case filer_pb.WriteCondition_IF_ETAG_NOT_MATCH:
-			ok = current == nil || !slices.Contains(clause.Etags, md5Hex)
+			ok = current == nil || !etagCandidateMatch(clause.Etags, md5Hex)
 		}
 		if !ok {
 			return &filer_pb.ObjectTransactionResponse{ErrorCode: filer_pb.FilerError_PRECONDITION_FAILED}, nil
@@ -315,6 +315,21 @@ func (f *ambiguousPutFiler) ObjectTransaction(_ context.Context, req *filer_pb.O
 		f.supersede = nil
 	}
 	return &filer_pb.ObjectTransactionResponse{}, f.txnErr
+}
+
+// etagCandidateMatch mirrors the filer's strong-comparison canonicalization:
+// quotes are stripped on both sides and a weak (W/) candidate never matches.
+func etagCandidateMatch(candidates []string, stored string) bool {
+	for _, c := range candidates {
+		c = strings.TrimSpace(c)
+		if strings.HasPrefix(c, "W/") || strings.HasPrefix(c, "w/") {
+			continue
+		}
+		if strings.Trim(c, `"`) == stored {
+			return true
+		}
+	}
+	return false
 }
 
 // ensureParents mirrors the filer's InsertEntry, which creates missing parent
