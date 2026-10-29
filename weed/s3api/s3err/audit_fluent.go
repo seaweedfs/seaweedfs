@@ -120,7 +120,10 @@ func getResourceType(object string, query_key string, method string) (string, bo
 	if object == "" || object == "/" {
 		switch query_key {
 		case "delete":
-			return "BATCH.DELETE.OBJECT", true
+			if method == http.MethodPost {
+				return "BATCH.DELETE.OBJECT", true
+			}
+			return getREST(method, "BUCKET"), false
 		case "tagging":
 			return getREST(method, "OBJECTTAGGING"), true
 		case "lifecycle":

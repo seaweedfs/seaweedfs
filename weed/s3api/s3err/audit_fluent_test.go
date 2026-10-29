@@ -172,6 +172,9 @@ func TestGetAccessLogLabelsBucketLevelOperations(t *testing.T) {
 		{http.MethodGet, "/bucket?list-type=2", "", "REST.GET.BUCKET"},
 		{http.MethodGet, "/bucket", "", "REST.GET.BUCKET"},
 		{http.MethodPost, "/bucket?delete", "", "BATCH.DELETE.OBJECT"},
+		// only the POST batch-delete route is a batch delete; other methods on ?delete are bucket requests
+		{http.MethodHead, "/bucket?delete", "", "REST.HEAD.BUCKET"},
+		{http.MethodGet, "/bucket?delete", "", "REST.GET.BUCKET"},
 		{http.MethodGet, "/bucket?lifecycle", "", "REST.GET.LIFECYCLECONFIGURATION"},
 		{http.MethodPut, "/bucket?policy", "", "REST.PUT.BUCKETPOLICY"},
 		{http.MethodGet, "/bucket/object", "object", "REST.GET.OBJECT"},
