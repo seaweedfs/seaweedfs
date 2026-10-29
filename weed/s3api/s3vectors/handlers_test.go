@@ -637,10 +637,16 @@ func TestValidateVectorPolicy(t *testing.T) {
 		if err := validateVectorPolicy(bad); err == nil {
 			t.Fatalf("%s should be rejected", field)
 		}
+		lower := fmt.Sprintf(`{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Principal":"*","%s":"s3vectors:GetIndex","Action":"s3vectors:PutVectors","Resource":"*"}]}`, strings.ToLower(field))
+		if err := validateVectorPolicy(lower); err == nil {
+			t.Fatalf("case-variant %s should be rejected", strings.ToLower(field))
+		}
 	}
 	for _, dead := range []string{
 		`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3tables:GetTable","Resource":"*"}]}`,
+		`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","action":"s3tables:GetTable","Resource":"*"}]}`,
 		`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3vectors:GetVectors","Resource":"arn:aws:s3:r:a:bucket/b"}]}`,
+		`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3vectors:GetVectors","resource":"arn:aws:s3tables:r:a:bucket/b"}]}`,
 		`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3vectors:GetVectors","Resource":"arn:aws:s3tables:r:a:bucket/b"}]}`,
 		`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3vectors:GetVectors","Resource":"arn:aws-cn:s3tables:r:a:bucket/b"}]}`,
 	} {

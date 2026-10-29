@@ -438,17 +438,21 @@ func validateVectorPolicy(raw string) error {
 		return fmt.Errorf("invalid policy document: %w", err)
 	}
 	for _, stmt := range policyStatements(doc) {
-		for _, field := range []string{"NotAction", "NotResource", "NotPrincipal", "Condition"} {
-			if _, ok := stmt[field]; ok {
-				return fmt.Errorf("invalid policy document: %s is not supported", field)
+		for key := range stmt {
+			for _, field := range []string{"NotAction", "NotResource", "NotPrincipal", "Condition"} {
+				if strings.EqualFold(key, field) {
+					return fmt.Errorf("invalid policy document: %s is not supported", field)
+				}
 			}
 		}
-		for _, action := range statementActions(stmt["Action"]) {
+	}
+	for _, stmt := range typed.Statement {
+		for _, action := range statementActions(stmt.Action) {
 			if service, _, found := strings.Cut(action, ":"); found && service != "s3vectors" {
 				return fmt.Errorf("invalid policy document: action %q is not enforceable in a vector bucket policy", action)
 			}
 		}
-		for _, resource := range statementActions(stmt["Resource"]) {
+		for _, resource := range statementActions(stmt.Resource) {
 			if service := arnService(resource); service != "" && service != "s3vectors" {
 				return fmt.Errorf("invalid policy document: resource %q is not enforceable in a vector bucket policy", resource)
 			}
@@ -483,13 +487,14 @@ func policyStatements(doc map[string]interface{}) []map[string]interface{} {
 
 // policyHasVectorAction reports whether any statement names an s3vectors
 // action — how a raw vector document in the shared policy slot is recognized.
+// It reads the typed document so detection matches what the evaluator sees.
 func policyHasVectorAction(raw string) bool {
-	var doc map[string]interface{}
+	var doc s3tables.PolicyDocument
 	if json.Unmarshal([]byte(raw), &doc) != nil {
 		return false
 	}
-	for _, stmt := range policyStatements(doc) {
-		for _, action := range statementActions(stmt["Action"]) {
+	for _, stmt := range doc.Statement {
+		for _, action := range statementActions(stmt.Action) {
 			if strings.HasPrefix(action, "s3vectors:") {
 				return true
 			}
@@ -545,24 +550,41 @@ func stripVectorActions(raw string) (string, bool) {
 	changed := false
 	var kept []map[string]interface{}
 	for _, stmt := range policyStatements(doc) {
-		var actions []string
 		dropped := false
-		for _, a := range statementActions(stmt["Action"]) {
-			if strings.HasPrefix(a, "s3vectors:") {
-				dropped = true
+		for key, value := range stmt {
+			if !strings.EqualFold(key, "Action") {
 				continue
 			}
-			actions = append(actions, a)
+			var actions []string
+			keyDropped := false
+			for _, a := range statementActions(value) {
+				if strings.HasPrefix(a, "s3vectors:") {
+					keyDropped = true
+					continue
+				}
+				actions = append(actions, a)
+			}
+			if !keyDropped {
+				continue
+			}
+			dropped = true
+			if len(actions) > 0 {
+				stmt[key] = actions
+			} else {
+				delete(stmt, key)
+			}
 		}
-		if len(actions) == 0 {
-			changed = true
+		if !dropped {
+			kept = append(kept, stmt)
 			continue
 		}
-		if dropped {
-			stmt["Action"] = actions
-			changed = true
+		changed = true
+		for key := range stmt {
+			if strings.EqualFold(key, "Action") {
+				kept = append(kept, stmt)
+				break
+			}
 		}
-		kept = append(kept, stmt)
 	}
 	if !changed {
 		return "", false
