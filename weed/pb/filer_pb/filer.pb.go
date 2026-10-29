@@ -1846,11 +1846,12 @@ type ObjectTransactionRequest struct {
 	Mutations          []*ObjectMutation      `protobuf:"bytes,3,rep,name=mutations,proto3" json:"mutations,omitempty"`
 	IsFromOtherCluster bool                   `protobuf:"varint,4,opt,name=is_from_other_cluster,json=isFromOtherCluster,proto3" json:"is_from_other_cluster,omitempty"`
 	Signatures         []int32                `protobuf:"varint,5,rep,packed,name=signatures,proto3" json:"signatures,omitempty"`
-	ConditionKey       string                 `protobuf:"bytes,6,opt,name=condition_key,json=conditionKey,proto3" json:"condition_key,omitempty"`             // if set, evaluate the condition against this entry instead of lock_key (still locking lock_key)
-	RouteKey           string                 `protobuf:"bytes,7,opt,name=route_key,json=routeKey,proto3" json:"route_key,omitempty"`                         // ring key identifying the owner filer; a non-owner forwards the whole transaction to it
-	IsMoved            bool                   `protobuf:"varint,8,opt,name=is_moved,json=isMoved,proto3" json:"is_moved,omitempty"`                           // set on a forwarded transaction so the receiver applies it locally instead of forwarding again
-	RequestId          string                 `protobuf:"bytes,9,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`                      // idempotency token: the owner records the outcome and replays it on a retried request instead of re-applying
-	ConditionAltKey    string                 `protobuf:"bytes,10,opt,name=condition_alt_key,json=conditionAltKey,proto3" json:"condition_alt_key,omitempty"` // if the condition's entry is absent, evaluate it against this entry instead (e.g. null slot, else latest version)
+	ConditionKey       string                 `protobuf:"bytes,6,opt,name=condition_key,json=conditionKey,proto3" json:"condition_key,omitempty"`                       // if set, evaluate the condition against this entry instead of lock_key (still locking lock_key)
+	RouteKey           string                 `protobuf:"bytes,7,opt,name=route_key,json=routeKey,proto3" json:"route_key,omitempty"`                                   // ring key identifying the owner filer; a non-owner forwards the whole transaction to it
+	IsMoved            bool                   `protobuf:"varint,8,opt,name=is_moved,json=isMoved,proto3" json:"is_moved,omitempty"`                                     // set on a forwarded transaction so the receiver applies it locally instead of forwarding again
+	RequestId          string                 `protobuf:"bytes,9,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`                                // idempotency token: the owner records the outcome and replays it on a retried request instead of re-applying
+	ConditionAltKey    string                 `protobuf:"bytes,10,opt,name=condition_alt_key,json=conditionAltKey,proto3" json:"condition_alt_key,omitempty"`           // if the condition's entry is absent, evaluate it against this entry instead (e.g. null slot, else latest version)
+	ConditionPreferAlt bool                   `protobuf:"varint,11,opt,name=condition_prefer_alt,json=conditionPreferAlt,proto3" json:"condition_prefer_alt,omitempty"` // evaluate condition_alt_key (the latest version) first; fall back to the primary entry only when the alt path cannot resolve
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -1953,6 +1954,13 @@ func (x *ObjectTransactionRequest) GetConditionAltKey() string {
 		return x.ConditionAltKey
 	}
 	return ""
+}
+
+func (x *ObjectTransactionRequest) GetConditionPreferAlt() bool {
+	if x != nil {
+		return x.ConditionPreferAlt
+	}
+	return false
 }
 
 type ObjectTransactionResponse struct {
@@ -7561,7 +7569,7 @@ const file_filer_proto_rawDesc = "" +
 	" \x01(\tR\x11onlyIfCurrentName\x1a?\n" +
 	"\x11CopyExtendedEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xa0\x03\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xd2\x03\n" +
 	"\x18ObjectTransactionRequest\x12\x19\n" +
 	"\block_key\x18\x01 \x01(\tR\alockKey\x126\n" +
 	"\tcondition\x18\x02 \x01(\v2\x18.filer_pb.WriteConditionR\tcondition\x126\n" +
@@ -7576,7 +7584,8 @@ const file_filer_proto_rawDesc = "" +
 	"\n" +
 	"request_id\x18\t \x01(\tR\trequestId\x12*\n" +
 	"\x11condition_alt_key\x18\n" +
-	" \x01(\tR\x0fconditionAltKey\"\xa8\x01\n" +
+	" \x01(\tR\x0fconditionAltKey\x120\n" +
+	"\x14condition_prefer_alt\x18\v \x01(\bR\x12conditionPreferAlt\"\xa8\x01\n" +
 	"\x19ObjectTransactionResponse\x12\x14\n" +
 	"\x05error\x18\x01 \x01(\tR\x05error\x123\n" +
 	"\n" +

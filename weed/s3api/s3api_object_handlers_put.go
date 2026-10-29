@@ -1084,7 +1084,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 				lockKey, finalizeMutations = finalize.lockKey, finalize.mutations
 			}
 			routeKey := s3a.objectRouteKey(bucket, object)
-			resp, err := s3a.routedPut(owner, routeKey, lockKey, filePath, entry, cond, "", condAltKey, nil, "", finalizeMutations)
+			resp, err := s3a.routedPut(owner, routeKey, lockKey, filePath, entry, cond, "", condAltKey, false, nil, "", finalizeMutations)
 			if err == nil && resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED && condAltKey != "" {
 				// A filer that ignores condition_alt_key evaluated the empty
 				// null slot alone; resend the transaction against the entry the
@@ -1097,7 +1097,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 					conditionKey = condAltKey + "/" + resolved.Name
 				}
 				glog.Warningf("putToFiler: routed PUT to %s precondition-failed for %s; resending against %s", owner, filePath, conditionKey)
-				resp, err = s3a.routedPut(owner, routeKey, lockKey, filePath, entry, cond, conditionKey, condAltKey, nil, "", finalizeMutations)
+				resp, err = s3a.routedPut(owner, routeKey, lockKey, filePath, entry, cond, conditionKey, condAltKey, false, nil, "", finalizeMutations)
 			}
 			switch {
 			case err != nil:

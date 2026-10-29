@@ -219,7 +219,7 @@ func (s3a *S3ApiServer) withWriteOwnerFilerClient(owner pb.ServerAddress, fn fun
 // putCondition, when set, guards the PUT mutation itself against putConditionKey
 // (e.g. the upload directory a multipart commit must still find); the request
 // condition keeps guarding the object the transaction is about.
-func (s3a *S3ApiServer) routedPut(owner pb.ServerAddress, routeKey, lockKey, filePath string, entry *filer_pb.Entry, cond *filer_pb.WriteCondition, conditionKey, conditionAltKey string, putCondition *filer_pb.WriteCondition, putConditionKey string, finalize []*filer_pb.ObjectMutation) (*filer_pb.ObjectTransactionResponse, error) {
+func (s3a *S3ApiServer) routedPut(owner pb.ServerAddress, routeKey, lockKey, filePath string, entry *filer_pb.Entry, cond *filer_pb.WriteCondition, conditionKey, conditionAltKey string, conditionPreferAlt bool, putCondition *filer_pb.WriteCondition, putConditionKey string, finalize []*filer_pb.ObjectMutation) (*filer_pb.ObjectTransactionResponse, error) {
 	mutations := make([]*filer_pb.ObjectMutation, 0, 1+len(finalize))
 	mutations = append(mutations, &filer_pb.ObjectMutation{
 		Type:         filer_pb.ObjectMutation_PUT,
@@ -230,12 +230,13 @@ func (s3a *S3ApiServer) routedPut(owner pb.ServerAddress, routeKey, lockKey, fil
 	})
 	mutations = append(mutations, finalize...)
 	return s3a.objectTxnOnFiler(owner, &filer_pb.ObjectTransactionRequest{
-		LockKey:         lockKey,
-		RouteKey:        routeKey,
-		Condition:       cond,
-		ConditionKey:    conditionKey,
-		ConditionAltKey: conditionAltKey,
-		Mutations:       mutations,
+		LockKey:            lockKey,
+		RouteKey:           routeKey,
+		Condition:          cond,
+		ConditionKey:       conditionKey,
+		ConditionAltKey:    conditionAltKey,
+		ConditionPreferAlt: conditionPreferAlt,
+		Mutations:          mutations,
 	})
 }
 
@@ -269,7 +270,7 @@ func (s3a *S3ApiServer) routedMkFile(owner pb.ServerAddress, routeKey, parentDir
 		putCondition, putConditionKey = removal.putCondition, removal.putConditionKey
 		finalize = []*filer_pb.ObjectMutation{removal.mutation}
 	}
-	resp, err := s3a.routedPut(owner, routeKey, filePath, filePath, entry, cond, "", condAltKey, putCondition, putConditionKey, finalize)
+	resp, err := s3a.routedPut(owner, routeKey, filePath, filePath, entry, cond, "", condAltKey, false, putCondition, putConditionKey, finalize)
 	if err != nil {
 		return err
 	}
@@ -277,7 +278,7 @@ func (s3a *S3ApiServer) routedMkFile(owner pb.ServerAddress, routeKey, parentDir
 		// Other keys are nested under this one, so the object goes onto the
 		// directory they live in — the same retry mkFile makes off the ring.
 		entry.MarkPrefixObject()
-		resp, err = s3a.routedPut(owner, routeKey, filePath, filePath, entry, cond, "", condAltKey, putCondition, putConditionKey, finalize)
+		resp, err = s3a.routedPut(owner, routeKey, filePath, filePath, entry, cond, "", condAltKey, false, putCondition, putConditionKey, finalize)
 		if err != nil {
 			return err
 		}

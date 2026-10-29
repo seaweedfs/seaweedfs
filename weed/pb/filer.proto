@@ -401,6 +401,7 @@ message ObjectTransactionRequest {
     bool is_moved = 8;                 // set on a forwarded transaction so the receiver applies it locally instead of forwarding again
     string request_id = 9;             // idempotency token: the owner records the outcome and replays it on a retried request instead of re-applying
     string condition_alt_key = 10;     // if the condition's entry is absent, evaluate it against this entry instead (e.g. null slot, else latest version)
+    bool condition_prefer_alt = 11;    // evaluate condition_alt_key (the latest version) first; fall back to the primary entry only when the alt path cannot resolve
 }
 
 message ObjectTransactionResponse {

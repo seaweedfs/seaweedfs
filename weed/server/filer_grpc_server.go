@@ -353,6 +353,7 @@ func (fs *FilerServer) ObjectTransaction(ctx context.Context, req *filer_pb.Obje
 			IsMoved:            true,
 			RequestId:          req.RequestId,
 			ConditionAltKey:    req.ConditionAltKey,
+			ConditionPreferAlt: req.ConditionPreferAlt,
 		}
 		var resp *filer_pb.ObjectTransactionResponse
 		handled, err := fs.forwardToWriteOwner(ctx, req.RouteKey, func(owner pb.ServerAddress) error {
@@ -419,8 +420,24 @@ func (fs *FilerServer) ObjectTransaction(ctx context.Context, req *filer_pb.Obje
 		// the object's .versions directory, and the latest it resolves to is
 		// read from the pointer maintained by the same lock, so a concurrent
 		// version delete cannot move which entry the condition sees.
-		if findErr == filer_pb.ErrNotFound && req.ConditionAltKey != "" {
-			current, conditionPath, findErr = fs.latestVersionedConditionEntry(ctx, util.FullPath(req.ConditionAltKey))
+		if req.ConditionAltKey != "" {
+			altEntry, altPath, altErr := fs.latestVersionedConditionEntry(ctx, util.FullPath(req.ConditionAltKey))
+			if req.ConditionPreferAlt {
+				// The versioned path resolves "current" through the latest
+				// pointer, so a stale null-version entry or a tombstoned
+				// latest decides correctly. When the alt path cannot resolve
+				// (no .versions at all), the primary entry stands.
+				switch {
+				case altErr == nil:
+					current, conditionPath, findErr = altEntry, altPath, nil
+				case errors.Is(altErr, filer_pb.ErrNotFound):
+				default:
+					record = false
+					return nil, fmt.Errorf("ObjectTransaction condition %s: %w", conditionPath, altErr)
+				}
+			} else if findErr == filer_pb.ErrNotFound {
+				current, conditionPath, findErr = altEntry, altPath, altErr
+			}
 		}
 		if findErr != nil && findErr != filer_pb.ErrNotFound {
 			record = false // a lookup error decides nothing; a retry must re-run, not replay
@@ -595,7 +612,7 @@ func (fs *FilerServer) latestVersionedConditionEntry(ctx context.Context, versio
 		return nil, latestPath, err
 	}
 	if string(entry.Extended[s3_constants.ExtDeleteMarkerKey]) == "true" {
-		return nil, latestPath, filer_pb.ErrNotFound
+		return nil, latestPath, nil
 	}
 	return entry, latestPath, nil
 }
