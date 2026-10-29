@@ -117,6 +117,7 @@ require (
 	github.com/Jille/raft-grpc-transport v1.6.1
 	github.com/ThreeDotsLabs/watermill v1.5.3
 	github.com/a-h/templ v0.3.1100
+	github.com/apache/arrow-go/v18 v18.8.0
 	github.com/apache/cassandra-gocql-driver/v2 v2.1.2
 	github.com/apache/iceberg-go v0.7.0
 	github.com/apple/foundationdb/bindings/go v0.0.0-20250911184653-27f7192f47c3
@@ -181,7 +182,6 @@ require (
 	github.com/adrg/xdg v0.5.3 // indirect
 	github.com/anchore/go-lzo v0.1.1 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
-	github.com/apache/arrow-go/v18 v18.8.0 // indirect
 	github.com/apache/thrift v0.24.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/signin v1.10.1 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
