@@ -302,7 +302,7 @@ func (s *Server) handleListVectorBuckets(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if req.MaxResults < 0 || req.MaxResults > vectorsMaxListPage {
-		writeError(w, http.StatusBadRequest, "ValidationException", "maxResults must be between 1 and 100")
+		writeError(w, http.StatusBadRequest, "ValidationException", fmt.Sprintf("maxResults must be between 1 and %d", vectorsMaxListPage))
 		return
 	}
 	var resp struct {
@@ -1090,7 +1090,7 @@ func (s *Server) handleListIndexes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.MaxResults < 0 || req.MaxResults > vectorsMaxListPage {
-		writeError(w, http.StatusBadRequest, "ValidationException", "maxResults must be between 1 and 100")
+		writeError(w, http.StatusBadRequest, "ValidationException", fmt.Sprintf("maxResults must be between 1 and %d", vectorsMaxListPage))
 		return
 	}
 	if _, err := s.authorizeVector(r.Context(), r, "s3vectors:ListIndexes", arns.bucket, ""); err != nil {
@@ -1390,7 +1390,7 @@ const (
 	vectorsDefaultPage = 500
 	vectorsMaxPutBatch = 500
 	vectorsMaxPage     = 1000
-	vectorsMaxListPage = 100
+	vectorsMaxListPage = 500
 	vectorsMaxTopK     = 10000
 )
 
