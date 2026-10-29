@@ -189,11 +189,12 @@ func deniedByPolicy(operation, principal, resourcePolicy, resourceARN string, ct
 }
 
 // adminCaller reports whether the admin principal bypass applies. Trusted
-// transports carry no action list, and an identified caller holds it only
-// when the identity administers the operation's service — a principal that
-// merely normalizes to the admin id does not bypass policy denies.
+// transports carry no action list, while an identified caller always has one
+// — possibly empty — and holds the bypass only when the identity administers
+// the operation's service: a principal that merely normalizes to the admin
+// id does not bypass policy denies.
 func adminCaller(operation string, ctx *PolicyContext) bool {
-	return ctx == nil || len(ctx.IdentityActions) == 0 || hasAdminActionFor(operation, ctx.IdentityActions)
+	return ctx == nil || ctx.IdentityActions == nil || hasAdminActionFor(operation, ctx.IdentityActions)
 }
 
 // matchesDenyStatement reports whether the JSON policy carries a statement
