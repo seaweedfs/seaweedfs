@@ -16,17 +16,66 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	flag "github.com/seaweedfs/seaweedfs/weed/util/fla9"
 )
 
 var (
-	fixVerify          = cmdFix.Flag.Bool("verify", false, "read every needle in .dat, verify its structure and CRC32, and resynchronise past damaged regions instead of stopping at the first bad header. Needles that do not verify are left out of the rebuilt .idx and every damaged region is reported.")
-	fixDryRun          = cmdFix.Flag.Bool("dryRun", false, "with -verify: only report anomalies, do not touch .idx or .dat")
-	fixTruncateTail    = cmdFix.Flag.Bool("truncateTail", false, "with -verify: cut garbage after the last valid needle off the .dat (non-zero tails are saved to <dat>.tail.<offset>.bak first), so the load-time integrity check passes")
-	fixReport          = cmdFix.Flag.String("report", "", "with -verify: also append the anomaly report (tab separated) to this file")
-	fixMaxNeedleSizeMB = cmdFix.Flag.Int("maxNeedleSizeMB", 64, "with -verify: largest needle payload accepted while searching for the next valid needle after damage; a needle with a corrupted header larger than this cannot be recovered")
-	fixWindowMB        = cmdFix.Flag.Int("windowMB", 8, "with -verify: read window used for sequential scanning")
-	fixZeroWindow      = cmdFix.Flag.Int("zeroWindow", 4096, "with -verify: granularity in bytes used to report all-zero windows inside damaged regions")
+	fixVerify       = cmdFix.Flag.Bool("verify", false, "read every needle in .dat, verify its structure and CRC32, and resynchronise past damaged regions instead of stopping at the first bad header. Needles that do not verify are left out of the rebuilt .idx and every damaged region is reported.")
+	fixDryRun       = cmdFix.Flag.Bool("dryRun", false, "with -verify: only report anomalies, do not touch .idx or .dat")
+	fixTruncateTail = cmdFix.Flag.Bool("truncateTail", false, "with -verify: cut garbage after the last valid needle off the .dat (non-zero tails are saved to <dat>.tail.<offset>.bak first), so the load-time integrity check passes")
+	fixVerifyFlags  = bindDatVerifyFlags(&cmdFix.Flag, "with -verify: ")
 )
+
+// datVerifyFlags are the scan options shared by `weed fix -verify` and `weed fix.verify`.
+type datVerifyFlags struct {
+	report          *string
+	maxNeedleSizeMB *int
+	windowMB        *int
+	zeroWindow      *int
+}
+
+func bindDatVerifyFlags(fs *flag.FlagSet, prefix string) *datVerifyFlags {
+	return &datVerifyFlags{
+		report:          fs.String("report", "", prefix+"also append the anomaly report (tab separated) to this file"),
+		maxNeedleSizeMB: fs.Int("maxNeedleSizeMB", 64, prefix+"largest needle payload accepted while searching for the next valid needle after damage; a needle with a corrupted header larger than this cannot be recovered"),
+		windowMB:        fs.Int("windowMB", 8, prefix+"read window used for sequential scanning"),
+		zeroWindow:      fs.Int("zeroWindow", 4096, prefix+"granularity in bytes used to report all-zero windows inside damaged regions"),
+	}
+}
+
+func (f *datVerifyFlags) options() datVerifyOptions {
+	return datVerifyOptions{
+		maxNeedleSize: int64(*f.maxNeedleSizeMB) << 20,
+		window:        *f.windowMB << 20,
+		zeroWindow:    *f.zeroWindow,
+	}
+}
+
+// printAnomalies writes the anomaly lines to stdout and, when -report is set, appends them to that file.
+func (f *datVerifyFlags) printAnomalies(volumeId int64, anomalies []datAnomaly) error {
+	var reportFile *os.File
+	if *f.report != "" {
+		var err error
+		if reportFile, err = os.OpenFile(*f.report, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644); err != nil {
+			return fmt.Errorf("open report %s: %w", *f.report, err)
+		}
+		defer reportFile.Close()
+	}
+	for _, a := range anomalies {
+		line := fmt.Sprintf("volume=%d\tkind=%s\toffset=%d\tlength=%d\t%s", volumeId, a.Kind, a.Offset, a.Length, a.Detail)
+		fmt.Println(line)
+		if reportFile != nil {
+			fmt.Fprintln(reportFile, line)
+		}
+	}
+	return nil
+}
+
+func printVerifySummary(volumeId int64, sum *datVerifySummary, took time.Duration) {
+	fmt.Printf("volume %d: %d needles + %d tombstones verified in %v; %d damaged regions (%d bytes, %d of them zero), %d warnings; clean end %d of %d\n",
+		volumeId, sum.Needles, sum.Tombstones, took.Round(time.Millisecond),
+		sum.BadRegions, sum.BadBytes, sum.ZeroBytes, sum.Warnings, sum.CleanEnd, sum.FileSize)
+}
 
 // maxNonDataLen bounds the v2/v3 needle section that follows the payload:
 // flags, name, mime, last-modified, ttl and pairs.
@@ -469,11 +518,7 @@ func doFixOneVolumeVerified(basepath string, baseFileName string, volumeId int64
 	defer nmDeleted.Close()
 	scanner := &VolumeFileScanner4Fix{nm: nm, nmDeleted: nmDeleted, includeDeleted: *fixIncludeDeleted}
 
-	opts := datVerifyOptions{
-		maxNeedleSize: int64(*fixMaxNeedleSizeMB) << 20,
-		window:        *fixWindowMB << 20,
-		zeroWindow:    *fixZeroWindow,
-	}
+	opts := fixVerifyFlags.options()
 	started := time.Now()
 	var visitErr error
 	sum, anomalies, err := verifyDatFile(datName, vid, opts, func(n *needle.Needle, offset int64) {
@@ -489,23 +534,10 @@ func doFixOneVolumeVerified(basepath string, baseFileName string, volumeId int64
 		glog.Fatalf("verify %s: %v", datName, visitErr)
 	}
 
-	var reportFile *os.File
-	if *fixReport != "" {
-		if reportFile, err = os.OpenFile(*fixReport, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644); err != nil {
-			glog.Fatalf("open report %s: %v", *fixReport, err)
-		}
-		defer reportFile.Close()
+	if err := fixVerifyFlags.printAnomalies(volumeId, anomalies); err != nil {
+		glog.Fatalf("%v", err)
 	}
-	for _, a := range anomalies {
-		line := fmt.Sprintf("volume=%d\tkind=%s\toffset=%d\tlength=%d\t%s", volumeId, a.Kind, a.Offset, a.Length, a.Detail)
-		fmt.Println(line)
-		if reportFile != nil {
-			fmt.Fprintln(reportFile, line)
-		}
-	}
-	fmt.Printf("volume %d: %d needles + %d tombstones verified in %v; %d damaged regions (%d bytes, %d of them zero), %d warnings; clean end %d of %d\n",
-		volumeId, sum.Needles, sum.Tombstones, time.Since(started).Round(time.Millisecond),
-		sum.BadRegions, sum.BadBytes, sum.ZeroBytes, sum.Warnings, sum.CleanEnd, sum.FileSize)
+	printVerifySummary(volumeId, sum, time.Since(started))
 
 	if *fixDryRun {
 		return

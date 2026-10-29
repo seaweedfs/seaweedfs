@@ -312,3 +312,43 @@ func TestVerifyDatFileLegitimateZeroPayload(t *testing.T) {
 		t.Fatalf("zero-payload neighbours must survive: seen=%v", seen)
 	}
 }
+
+func TestFixVerifyCommandIsReadOnlyAndCountsDamage(t *testing.T) {
+	cleanDat, _ := buildVerifyFixture(t, 10)
+	badDat, layout := buildVerifyFixture(t, 10)
+	patchDat(t, badDat, layout[4].offset+types.NeedleHeaderSize+50, []byte{1, 2, 3, 4})
+	badIdx := filepath.Join(filepath.Dir(badDat), "1.idx")
+	if err := os.WriteFile(badIdx, []byte("stale index"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	before := map[string][]byte{}
+	for _, p := range []string{cleanDat, badDat, badIdx} {
+		b, _ := os.ReadFile(p)
+		before[p] = b
+	}
+	report := filepath.Join(t.TempDir(), "report.tsv")
+	flags := &datVerifyFlags{report: &report, maxNeedleSizeMB: new(int), windowMB: new(int), zeroWindow: new(int)}
+	*flags.maxNeedleSizeMB, *flags.windowMB, *flags.zeroWindow = 64, 1, 4096
+
+	// one file argument and one folder argument
+	damaged, failed, err := fixVerifyPaths([]string{cleanDat, filepath.Dir(badDat)}, "", 0, flags)
+	if err != nil || damaged != 1 || failed != 0 {
+		t.Fatalf("damaged=%d failed=%d err=%v", damaged, failed, err)
+	}
+	for p, want := range before {
+		if got, _ := os.ReadFile(p); string(got) != string(want) {
+			t.Errorf("%s was modified by a verify-only command", p)
+		}
+	}
+	if matches, _ := filepath.Glob(filepath.Join(filepath.Dir(badDat), "*")); len(matches) != 2 {
+		t.Errorf("verify-only command left extra files: %v", matches)
+	}
+	if b, _ := os.ReadFile(report); !strings.Contains(string(b), "invalid CRC") {
+		t.Errorf("report file should describe the CRC failure, got %q", b)
+	}
+
+	if _, _, err := fixVerifyPaths([]string{cleanDat}, "", 99, flags); err == nil {
+		t.Error("a volume id filter matching nothing should be an error")
+	}
+}
