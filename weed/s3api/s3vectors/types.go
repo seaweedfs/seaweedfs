@@ -1,6 +1,7 @@
 package s3vectors
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -8,6 +9,10 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
+
+func contextWithIdentity(ctx context.Context, identity string) context.Context {
+	return s3_constants.SetIdentityNameInContext(ctx, identity)
+}
 
 func identityOf(r *http.Request) string {
 	return s3_constants.GetIdentityNameFromContext(r)
