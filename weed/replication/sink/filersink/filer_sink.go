@@ -296,10 +296,16 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures [
 
 		// A version the source already moved past is superseded by a later
 		// event, so fetching its chunks only feeds a write that is obsolete on
-		// arrival — skip before any read.
-		if fs.sourceMovedOn(key, entry) {
-			glog.Warningf("skip stale entry %s, source superseded before replicate", key)
-			return nil
+		// arrival — skip before any read. When the source holds a newer live
+		// version, replicate it directly: the superseding event may never be
+		// delivered to this sink.
+		if live, movedOn := fs.sourceVersion(key, entry); movedOn {
+			if live == nil {
+				glog.Warningf("skip stale entry %s, source superseded before replicate", key)
+				return nil
+			}
+			glog.Warningf("entry %s superseded before replicate; syncing live version", key)
+			entry = live
 		}
 
 		replicatedChunks, err := fs.replicateChunks(context.Background(), entry.GetChunks(), key, getEntryMtimeNs(entry), "")
@@ -375,9 +381,16 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 	targetKey := updatedEntryKey(key, newParentPath, newEntry)
 
 	action := chooseUpdateAction(existingEntry, oldEntry, newEntry)
-	if action != updateSkip && fs.sourceMovedOn(targetKey, newEntry) {
-		glog.Warningf("skip stale entry %s, source superseded before replicate", targetKey)
-		return true, nil
+	if action != updateSkip {
+		if live, movedOn := fs.sourceVersion(targetKey, newEntry); movedOn {
+			if live == nil {
+				glog.Warningf("skip stale entry %s, source superseded before replicate", targetKey)
+				return true, nil
+			}
+			glog.Warningf("entry %s superseded before replicate; syncing live version", targetKey)
+			newEntry = live
+			action = chooseUpdateAction(existingEntry, oldEntry, newEntry)
+		}
 	}
 
 	switch action {
@@ -520,34 +533,43 @@ func (fs *FilerSink) onReplicateChunkError(key string, entry *filer_pb.Entry, er
 	return fmt.Errorf("replicate entry chunks %s: %w", key, err)
 }
 
-// sourceMovedOn reports whether the live source entry moved past the replayed
-// version: gone, strictly newer, or rewritten in place so it no longer
-// references the same chunks — the last is invisible to the mtime check. A live
-// entry older than the replayed version proves nothing about it.
-func (fs *FilerSink) sourceMovedOn(targetPath string, entry *filer_pb.Entry) bool {
+// sourceVersion returns the source's live entry for targetPath and whether it
+// moved past the replayed version: gone (live == nil), strictly newer, or
+// rewritten in place so it no longer references the same chunks — the last is
+// invisible to the mtime check. A live entry older than the replayed version
+// proves nothing about it, and neither does a failed lookup.
+func (fs *FilerSink) sourceVersion(targetPath string, entry *filer_pb.Entry) (live *filer_pb.Entry, movedOn bool) {
 	sourcePath, ok := fs.targetPathToSourcePath(targetPath)
 	if !ok {
-		return false
+		return nil, false
 	}
 	replayedMtimeNs := getEntryMtimeNs(entry)
 	live, lookupErr := fs.sourceEntry(sourcePath)
 	if sourceSupersedes(sourcePath, live, lookupErr, replayedMtimeNs) {
-		return true
+		return live, true
 	}
 	if lookupErr != nil || live == nil || replayedMtimeNs <= 0 || getEntryMtimeNs(live) < replayedMtimeNs {
-		return false
+		return nil, false
 	}
 	liveIds := chunkFileIds(live.GetChunks())
 	replayedIds := chunkFileIds(entry.GetChunks())
 	if len(liveIds) != len(replayedIds) {
-		return true
+		return live, true
 	}
 	for id := range replayedIds {
 		if !liveIds[id] {
-			return true
+			return live, true
 		}
 	}
-	return false
+	return nil, false
+}
+
+// sourceMovedOn reports whether the live source entry moved past the replayed
+// version: gone, strictly newer, or rewritten in place so it no longer
+// references the same chunks — the last is invisible to the mtime check.
+func (fs *FilerSink) sourceMovedOn(targetPath string, entry *filer_pb.Entry) bool {
+	_, movedOn := fs.sourceVersion(targetPath, entry)
+	return movedOn
 }
 
 // updateAction decides how UpdateEntry reconciles an incoming source version with

@@ -543,9 +543,12 @@ func startSourceFilerServer(t *testing.T, impl *sourceFilerServer) *source.Filer
 // UpdateEntry calls and answers entry lookups from a fixed entry.
 type recordingFilerServer struct {
 	filer_pb.UnimplementedSeaweedFilerServer
-	existing *filer_pb.Entry
-	creates  atomic.Int32
-	updates  atomic.Int32
+	existing   *filer_pb.Entry
+	creates    atomic.Int32
+	updates    atomic.Int32
+	renames    atomic.Int32
+	lastCreate atomic.Pointer[filer_pb.Entry]
+	lastUpdate atomic.Pointer[filer_pb.Entry]
 }
 
 func (s *recordingFilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
@@ -557,12 +560,19 @@ func (s *recordingFilerServer) LookupDirectoryEntry(ctx context.Context, req *fi
 
 func (s *recordingFilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntryRequest) (*filer_pb.CreateEntryResponse, error) {
 	s.creates.Add(1)
+	s.lastCreate.Store(req.Entry)
 	return &filer_pb.CreateEntryResponse{}, nil
 }
 
 func (s *recordingFilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
 	s.updates.Add(1)
+	s.lastUpdate.Store(req.Entry)
 	return &filer_pb.UpdateEntryResponse{}, nil
+}
+
+func (s *recordingFilerServer) AtomicRenameEntry(ctx context.Context, req *filer_pb.AtomicRenameEntryRequest) (*filer_pb.AtomicRenameEntryResponse, error) {
+	s.renames.Add(1)
+	return &filer_pb.AtomicRenameEntryResponse{}, nil
 }
 
 func startRecordingFiler(t *testing.T, existing *filer_pb.Entry) (*recordingFilerServer, string) {
@@ -973,16 +983,17 @@ func TestFetchAndWriteManifestChildKeepsRetrying(t *testing.T) {
 	}
 }
 
-// A replayed version the source already moved past must not cost a single
-// chunk read or destination write: on a busy directory every skipped fetch is
-// one that would have 404'd or, worse, uploaded bytes a later event replaces.
+// A replayed version whose source entry is gone must not cost a single chunk
+// read or destination write: on a busy directory every skipped fetch is one
+// that would have 404'd or, worse, uploaded bytes a later event replaces.
 func TestCreateEntrySkipsSupersededVersion(t *testing.T) {
 	var volumeLookups atomic.Int32
-	live := &filer_pb.Entry{
-		Attributes: &filer_pb.FuseAttributes{Mtime: 6},
-		Chunks:     []*filer_pb.FileChunk{{FileId: "5617,02def", Size: 10}},
-	}
-	filerSrc := startSourceFilerServer(t, &sourceFilerServer{entry: live, volumeLookups: &volumeLookups})
+	filerSrc := startSourceFilerServer(t, &sourceFilerServer{
+		lookupFn: func(dir, name string) (*filer_pb.Entry, error) {
+			return nil, filer_pb.ErrNotFound
+		},
+		volumeLookups: &volumeLookups,
+	})
 	dst, dstAddr := startRecordingFiler(t, nil)
 
 	fs := &FilerSink{
@@ -1049,8 +1060,8 @@ func TestCreateEntryReplicatesCurrentVersion(t *testing.T) {
 	}
 }
 
-// UpdateEntry takes the same pre-flight skip: a replayed version the source
-// superseded must not re-replicate or update the destination.
+// UpdateEntry takes the same pre-flight skip: a replayed version whose source
+// entry is gone must not re-replicate or update the destination.
 func TestUpdateEntrySkipsSupersededVersion(t *testing.T) {
 	var volumeLookups atomic.Int32
 	existing := &filer_pb.Entry{
@@ -1058,11 +1069,12 @@ func TestUpdateEntrySkipsSupersededVersion(t *testing.T) {
 		Attributes: &filer_pb.FuseAttributes{Mtime: 4},
 		Chunks:     []*filer_pb.FileChunk{{FileId: "5617,00aaa", Size: 10}},
 	}
-	live := &filer_pb.Entry{
-		Attributes: &filer_pb.FuseAttributes{Mtime: 6},
-		Chunks:     []*filer_pb.FileChunk{{FileId: "5617,02def", Size: 10}},
-	}
-	filerSrc := startSourceFilerServer(t, &sourceFilerServer{entry: live, volumeLookups: &volumeLookups})
+	filerSrc := startSourceFilerServer(t, &sourceFilerServer{
+		lookupFn: func(dir, name string) (*filer_pb.Entry, error) {
+			return nil, filer_pb.ErrNotFound
+		},
+		volumeLookups: &volumeLookups,
+	})
 	dst, dstAddr := startRecordingFiler(t, existing)
 
 	fs := &FilerSink{
@@ -1091,5 +1103,98 @@ func TestUpdateEntrySkipsSupersededVersion(t *testing.T) {
 	}
 	if volumeLookups.Load() != 0 {
 		t.Fatal("a superseded version must not fetch any chunks")
+	}
+}
+
+// A superseded replay is replaced by the live version the source reports: the
+// superseding event may never be delivered to this sink, so the live content
+// must be committed now — still without fetching the replayed chunks.
+func TestCreateEntrySyncsLiveVersion(t *testing.T) {
+	var volumeLookups atomic.Int32
+	live := &filer_pb.Entry{
+		Name:       "x.bin",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 6},
+		Content:    []byte("live"),
+	}
+	filerSrc := startSourceFilerServer(t, &sourceFilerServer{entry: live, volumeLookups: &volumeLookups})
+	dst, dstAddr := startRecordingFiler(t, nil)
+
+	fs := &FilerSink{
+		filerSource:    filerSrc,
+		dir:            "/dst",
+		grpcAddress:    dstAddr,
+		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		executor:       util.NewLimitedConcurrentExecutor(1),
+	}
+	fs.SetUploader(operation.NewUploaderWithHttpClient(http.DefaultClient))
+
+	replayed := &filer_pb.Entry{
+		Name:       "x.bin",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 5},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "5617,01abc", Size: 10}},
+	}
+	if err := fs.CreateEntry("/dst/x.bin", replayed, nil); err != nil {
+		t.Fatalf("syncing the live version should succeed: %v", err)
+	}
+	if dst.creates.Load() != 1 {
+		t.Fatal("the live version must be committed to the destination")
+	}
+	created := dst.lastCreate.Load()
+	if created == nil || string(created.GetContent()) != "live" || created.GetAttributes().GetMtime() != 6 {
+		t.Fatalf("the destination must get the live version, got %+v", created)
+	}
+	if volumeLookups.Load() != 0 {
+		t.Fatal("the superseded version's chunks must not be fetched")
+	}
+}
+
+// UpdateEntry applies the same substitution: a superseded replay commits the
+// live source version through the normal update path.
+func TestUpdateEntrySyncsLiveVersion(t *testing.T) {
+	existing := &filer_pb.Entry{
+		Name:       "x.bin",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 4},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "4,00aaa", SourceFileId: "5617,00aaa", Size: 10}},
+	}
+	oldEntry := &filer_pb.Entry{
+		Name:       "x.bin",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 4},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "5617,00aaa", Size: 10}},
+	}
+	live := &filer_pb.Entry{
+		Name:       "x.bin",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 6},
+		Content:    []byte("live"),
+	}
+	filerSrc := startSourceFilerServer(t, &sourceFilerServer{entry: live})
+	dst, dstAddr := startRecordingFiler(t, existing)
+
+	fs := &FilerSink{
+		filerSource:    filerSrc,
+		dir:            "/dst",
+		grpcAddress:    dstAddr,
+		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		executor:       util.NewLimitedConcurrentExecutor(1),
+	}
+	fs.SetUploader(operation.NewUploaderWithHttpClient(http.DefaultClient))
+
+	replayed := &filer_pb.Entry{
+		Name:       "x.bin",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 5},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "5617,01abc", Size: 10}},
+	}
+	found, err := fs.UpdateEntry("/dst/x.bin", oldEntry, "", replayed, true, nil)
+	if err != nil {
+		t.Fatalf("syncing the live version should succeed: %v", err)
+	}
+	if !found {
+		t.Fatal("the existing entry was looked up; foundExistingEntry must report it")
+	}
+	if dst.updates.Load() != 1 {
+		t.Fatal("the live version must be committed to the destination")
+	}
+	updated := dst.lastUpdate.Load()
+	if updated == nil || string(updated.GetContent()) != "live" || updated.GetAttributes().GetMtime() != 6 {
+		t.Fatalf("the destination must get the live version, got %+v", updated)
 	}
 }
