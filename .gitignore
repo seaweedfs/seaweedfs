@@ -149,3 +149,4 @@ __pycache__/
 /test/vectors/weed-vector
 /test/vectors/weed-vector-worker
 /test/vectors/weed-volume
+.pytest_cache/

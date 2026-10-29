@@ -126,6 +126,19 @@ def cluster(request, tmp_path_factory):
                          "--storage-option", "aws_access_key_id=test",
                          "--storage-option", "aws_secret_access_key=test"])
         wait_for(lambda: listening(vector), processes, "vector engine not ready")
+
+        # A listening engine still has to land its KeepConnected registration
+        # before the gateway's lazy discovery can find it.
+        def engine_registered():
+            try:
+                out = subprocess.run([weed, "shell", "-master", master_addr],
+                                     input="cluster.ps\n", capture_output=True,
+                                     text=True, timeout=10).stdout
+            except (OSError, subprocess.SubprocessError):
+                return False
+            return "vector servers" in out
+        wait_for(engine_registered, processes, "vector engine never registered with the master")
+
         if worker:
             for i, port in enumerate((worker1, worker2)):
                 start(f"worker-{i}", [worker, "--masters", master_addr, "--listen", f"127.0.0.1:{port}"])
