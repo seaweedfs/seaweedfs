@@ -282,11 +282,6 @@ func (s *Server) handleGetVectorBucket(w http.ResponseWriter, r *http.Request) {
 		catalogErr(w, err)
 		return
 	}
-	if !isVectorBucket(record) {
-		writeError(w, http.StatusNotFound, "NotFoundException",
-			fmt.Sprintf("vector bucket %s not found", arns.bucket))
-		return
-	}
 	bucket := &VectorBucket{
 		VectorBucketArn:  s.vectorBucketArn(arns.bucket),
 		VectorBucketName: arns.bucket,
@@ -367,14 +362,8 @@ func (s *Server) handleDeleteVectorBucket(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	record, err := s.authorizeVector(r.Context(), r, "s3vectors:DeleteVectorBucket", arns.bucket, "")
-	if err != nil {
+	if _, err := s.authorizeVector(r.Context(), r, "s3vectors:DeleteVectorBucket", arns.bucket, ""); err != nil {
 		catalogErr(w, err)
-		return
-	}
-	if !isVectorBucket(record) {
-		writeError(w, http.StatusNotFound, "NotFoundException",
-			fmt.Sprintf("vector bucket %s not found", arns.bucket))
 		return
 	}
 	var resp map[string]interface{}
@@ -691,6 +680,10 @@ func (s *Server) authorizeVector(ctx context.Context, r *http.Request, action, b
 	if err != nil {
 		return nil, err
 	}
+	if !isVectorBucket(record) {
+		return nil, &s3tables.S3TablesError{Type: s3tables.ErrCodeNoSuchBucket,
+			Message: fmt.Sprintf("vector bucket %s not found", bucket)}
+	}
 	policy, err := s.vectorPolicy(ctx, bucket)
 	if err != nil {
 		return nil, err
@@ -765,14 +758,8 @@ func (s *Server) handleGetVectorBucketPolicy(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	record, err := s.authorizeVector(r.Context(), r, "s3vectors:GetVectorBucketPolicy", arns.bucket, "")
-	if err != nil {
+	if _, err := s.authorizeVector(r.Context(), r, "s3vectors:GetVectorBucketPolicy", arns.bucket, ""); err != nil {
 		catalogErr(w, err)
-		return
-	}
-	if !isVectorBucket(record) {
-		writeError(w, http.StatusNotFound, "NotFoundException",
-			fmt.Sprintf("vector bucket %s not found", arns.bucket))
 		return
 	}
 	policy, err := s.vectorPolicy(r.Context(), arns.bucket)
@@ -869,14 +856,8 @@ func (s *Server) handleCreateIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	// The create grant is exercised before any write: a denied caller must not
 	// leave even the implicit namespace behind.
-	record, err := s.authorizeVector(r.Context(), r, "s3vectors:CreateIndex", arns.bucket, arns.index)
-	if err != nil {
+	if _, err := s.authorizeVector(r.Context(), r, "s3vectors:CreateIndex", arns.bucket, arns.index); err != nil {
 		catalogErr(w, err)
-		return
-	}
-	if !isVectorBucket(record) {
-		writeError(w, http.StatusNotFound, "NotFoundException",
-			fmt.Sprintf("vector bucket %s not found", arns.bucket))
 		return
 	}
 	// The namespace is implicit on AWS and internal bookkeeping here.
