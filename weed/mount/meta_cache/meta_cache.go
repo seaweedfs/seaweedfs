@@ -1064,7 +1064,13 @@ func (mc *MetaCache) applyMetadataResponseLocked(ctx context.Context, resp *file
 				// stale copy must not overwrite it, but a rename's new name
 				// still lands: rebase the group's current content onto the
 				// new path when a cached sibling carries it.
+				droppedPath := newEntry.FullPath
 				newEntry = mc.rebaseHardLinkEntryLocked(ctx, newEntry, oldPath)
+				if newEntry == nil {
+					// No donor carries the group, so the name cannot land:
+					// stale its section and let the next lookup refresh it in.
+					mc.noteSectionChangeLocked(droppedPath, time.Now())
+				}
 			}
 		}
 	}
