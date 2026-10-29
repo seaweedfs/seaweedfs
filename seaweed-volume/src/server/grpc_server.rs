@@ -4988,9 +4988,11 @@ impl VolumeServer for VolumeGrpcService {
                 .map_err(|e| Status::invalid_argument(format!("reject remote endpoint: {}", e)))?;
         }
 
-        // Create remote storage client
+        // One client per configuration: a client built per request kept its
+        // connector's idle connections and never reused them. Mirrors the Go
+        // volume server.
         let client =
-            crate::remote_storage::make_remote_storage_client(remote_conf).map_err(|e| {
+            crate::remote_storage::get_remote_storage_client(remote_conf).map_err(|e| {
                 Status::internal(format!(
                     "get remote client: make remote storage client {}: {}",
                     remote_conf.name, e,

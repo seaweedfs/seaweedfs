@@ -2,13 +2,17 @@ package weed_server
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +21,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
@@ -284,10 +289,130 @@ func (vs *VolumeServer) guardedGrpcDialOption(endpoint string) grpc.DialOption {
 }
 
 // newGuardedHTTPClient returns an *http.Client whose transport refuses to
-// dial addresses that fail checkBlockedIP at connect time. It is meant for
-// per-request use; do not share across remote configs.
+// dial addresses that fail checkBlockedIP at connect time. One client serves
+// one remote configuration (BuildGuardedRemoteStorageClient caches it per
+// configuration); never share it across remote configs.
 func newGuardedHTTPClient(endpoint string) *http.Client {
-	return newGuardedHTTPClientPolicy(endpoint, false)
+	client := newGuardedHTTPClientPolicy(endpoint, false)
+	if t, ok := client.Transport.(*http.Transport); ok {
+		tuneSharedTransport(t)
+	}
+	return client
+}
+
+// The shared transport's timeouts: with one client per remote and a cap per
+// host, a request that never finishes would hold a slot forever, and enough of
+// them stall every later lazy stat, cold read and remote delete of that remote.
+// A dial, a TLS handshake and a response's headers each have a deadline, and a
+// stalled body an idle one.
+const (
+	guardedDialTimeout           = 10 * time.Second
+	guardedTLSHandshakeTimeout   = 10 * time.Second
+	guardedResponseHeaderTimeout = 60 * time.Second
+)
+
+// guardedIOIdleTimeout bounds the stall of one exchange: a body that stops
+// mid-transfer frees its connection slot while a slow but progressing transfer
+// is never cut off. A var so tests can shorten it.
+var guardedIOIdleTimeout = 2 * time.Minute
+
+// idleTimeoutConn refreshes a deadline on every read and write: a peer that
+// stops sending or receiving is cut off after idle has passed without
+// progress.
+type idleTimeoutConn struct {
+	net.Conn
+	idle time.Duration
+}
+
+func (c *idleTimeoutConn) Read(b []byte) (int, error) {
+	_ = c.SetReadDeadline(time.Now().Add(c.idle))
+	return c.Conn.Read(b)
+}
+
+func (c *idleTimeoutConn) Write(b []byte) (int, error) {
+	_ = c.SetWriteDeadline(time.Now().Add(c.idle))
+	return c.Conn.Write(b)
+}
+
+// tuneSharedTransport sets what a transport shared by every request to one
+// remote needs: enough idle connections for a burst to reuse (Go's default is
+// 2 per host), a cap on connections per host (a burst of cold reads queues
+// instead of opening hundreds, which an endpoint limiting connections per
+// source would refuse), and deadlines, so a hung request frees its slot.
+func tuneSharedTransport(t *http.Transport) {
+	t.MaxIdleConns = 64
+	t.MaxIdleConnsPerHost = 32
+	t.MaxConnsPerHost = guardedMaxConnsPerHost()
+	t.TLSHandshakeTimeout = guardedTLSHandshakeTimeout
+	t.ResponseHeaderTimeout = guardedResponseHeaderTimeout
+	if dial := t.DialContext; dial != nil {
+		t.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			ctx, cancel := context.WithTimeout(ctx, guardedDialTimeout)
+			defer cancel() // an established connection outlives the dial's context
+			conn, err := dial(ctx, network, addr)
+			if err != nil {
+				return nil, err
+			}
+			return &idleTimeoutConn{Conn: conn, idle: guardedIOIdleTimeout}, nil
+		}
+	}
+}
+
+// guardedMaxConnsPerHost is WEED_REMOTE_MAX_CONNS_PER_HOST, default 64.
+func guardedMaxConnsPerHost() int {
+	if v := os.Getenv("WEED_REMOTE_MAX_CONNS_PER_HOST"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+		glog.Warningf("WEED_REMOTE_MAX_CONNS_PER_HOST=%q is not a positive number; using 64", v)
+	}
+	return 64
+}
+
+// guardedCredentialsVersion names the credentials a guarded client reads when
+// it is built that its configuration does not hold, so that a change of them
+// builds a new client: the gcs credentials sources of CredentialsVersion, or,
+// for an s3-compatible remote, the resolved keys (which a type's environment
+// fallback may supply), plus — with a key or secret still missing (the SDK's
+// default chain) — the shared credentials and config files and the AWS_*
+// variables the chain reads. "" for a remote of another kind.
+func guardedCredentialsVersion(conf *remote_pb.RemoteConf) string {
+	if conf.GetType() == "gcs" {
+		return remote_storage.CredentialsVersion(conf)
+	}
+	accessKey, secretKey, ok := s3remote.ResolvedCredentials(conf)
+	if !ok {
+		return ""
+	}
+	h := sha256.New()
+	h.Write([]byte(accessKey))
+	h.Write([]byte{0})
+	h.Write([]byte(secretKey))
+	if s3remote.UsesDefaultCredentialChain(conf) {
+		shared := awsSharedFile("AWS_SHARED_CREDENTIALS_FILE", "credentials")
+		config := awsSharedFile("AWS_CONFIG_FILE", "config")
+		h.Write([]byte{0})
+		h.Write([]byte(remote_storage.FileVersion(shared)))
+		h.Write([]byte{0})
+		h.Write([]byte(remote_storage.FileVersion(config)))
+		for _, k := range []string{"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_PROFILE", "AWS_DEFAULT_PROFILE"} {
+			h.Write([]byte{0})
+			h.Write([]byte(os.Getenv(k)))
+		}
+	}
+	return hex.EncodeToString(h.Sum(nil)[:16])
+}
+
+// awsSharedFile is the SDK's effective path of a shared file: the environment
+// override or the default under ~/.aws.
+func awsSharedFile(env, name string) string {
+	if path := os.Getenv(env); path != "" {
+		return path
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, ".aws", name)
+	}
+	return ""
 }
 
 // newGuardedHTTPClientPolicy is newGuardedHTTPClient with the allowPrivate knob
@@ -363,12 +488,6 @@ func guardedRemoteClient(remoteConf *remote_pb.RemoteConf) (endpoint string, mak
 	return "", nil, false
 }
 
-// gcsCredentialsArePath reports whether a gcs credentials value is a filesystem
-// path rather than inline JSON, matching the gcs client's own inline detection.
-func gcsCredentialsArePath(creds string) bool {
-	return creds != "" && !strings.HasPrefix(creds, "{")
-}
-
 var errGcsCredentialsUnreadable = errors.New("gcs credentials file is not readable or does not contain valid credentials")
 
 // loadGcsCredentialsContent returns the credential JSON for a gcs credentials
@@ -424,18 +543,38 @@ func BuildGuardedRemoteStorageClient(ctx context.Context, remoteConf *remote_pb.
 				return nil, fmt.Errorf("reject remote credentials: %w", credsErr)
 			}
 		}
-		if endpoint, makeClient, ok := guardedRemoteClient(remoteConf); ok {
-			if validateErr := validateRemoteEndpoint(ctx, endpoint); validateErr != nil {
-				return nil, fmt.Errorf("reject remote endpoint: %w", validateErr)
-			}
-			// Build a one-shot client whose dial path re-validates the resolved
-			// IP every time. This pins the validated endpoint against DNS
-			// rebinding (a hostname that resolves to a public IP for
-			// validateRemoteEndpoint and then flips to 127.0.0.1 / 169.254.x.x
-			// when the SDK dials).
-			client, err := makeClient(newGuardedHTTPClient(endpoint))
+		if _, _, ok := guardedRemoteClient(remoteConf); ok {
+			// One client per configuration and credentials version:
+			// a client built per call kept its transport's connection open for
+			// IdleConnTimeout and never reused it, one open connection per lazy
+			// stat, cold read or remote delete. The endpoint is resolved and
+			// checked against the deny-list when a client is built (a cache
+			// miss); every new connection of a cached client still dials through
+			// the guarded dialer, which checks the address it actually connects to.
+			buildCtx := context.WithoutCancel(ctx)
+			client, err := remote_storage.GetRemoteStorageWith("guarded", remoteConf, guardedCredentialsVersion(remoteConf),
+				func(conf *remote_pb.RemoteConf) (remote_storage.RemoteStorageClient, func(), error) {
+					endpoint, makeClient, ok := guardedRemoteClient(conf)
+					if !ok {
+						return nil, nil, fmt.Errorf("remote %s: no guarded client", conf.GetName())
+					}
+					if validateErr := validateRemoteEndpoint(buildCtx, endpoint); validateErr != nil {
+						return nil, nil, fmt.Errorf("reject remote endpoint: %w", validateErr)
+					}
+					// A client whose dial path re-validates the resolved IP every
+					// time. This pins the validated endpoint against DNS rebinding
+					// (a hostname that resolves to a public IP for
+					// validateRemoteEndpoint and then flips to 127.0.0.1 /
+					// 169.254.x.x when the SDK dials).
+					httpClient := newGuardedHTTPClient(endpoint)
+					client, err := makeClient(httpClient)
+					if err != nil {
+						return nil, nil, fmt.Errorf("get remote client: %w", err)
+					}
+					return client, httpClient.CloseIdleConnections, nil
+				})
 			if err != nil {
-				return nil, fmt.Errorf("get remote client: %w", err)
+				return nil, err
 			}
 			return client, nil
 		}

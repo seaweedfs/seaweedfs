@@ -4,7 +4,9 @@ import (
 	"context"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
+	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -129,3 +131,49 @@ func TestLoadRemoteStorageConfigurationsAndMapping_RejectsBlockedEndpoint(t *tes
 type assertError string
 
 func (e assertError) Error() string { return string(e) }
+
+// Every reload drops the cached clients of remotes that are no longer
+// configured, also when /etc/remote is gone entirely, so a removed remote keeps
+// no client and no open connections.
+func TestLoadRemoteStorageConfigurationsAndMapping_DropsClientsOfRemovedRemotes(t *testing.T) {
+	remote_storage.ResetRemoteStorageClients()
+	t.Cleanup(remote_storage.ResetRemoteStorageClients)
+	closed := map[string]int{}
+	cache := func(name string) {
+		conf := &remote_pb.RemoteConf{Name: name, Type: "s3", S3Endpoint: "https://s3.example.com", S3Region: "us-east-1"}
+		_, err := remote_storage.GetRemoteStorageWith("guarded", conf, "", func(*remote_pb.RemoteConf) (remote_storage.RemoteStorageClient, func(), error) {
+			return &stubRemoteClient{}, func() { closed[name]++ }, nil
+		})
+		require.NoError(t, err)
+	}
+
+	// /etc/remote holds "good" only: the client of "gone" is dropped and closed, "good"'s kept
+	goodBytes, _ := proto.Marshal(&remote_pb.RemoteConf{Name: "good", Type: "s3", S3Endpoint: "https://s3.example.com", S3Region: "us-east-1"})
+	store := newStubFilerStore()
+	store.entries[string(DirectoryEtcRemote)+"/good.conf"] = &Entry{
+		FullPath: util.FullPath(string(DirectoryEtcRemote) + "/good.conf"), Attr: Attr{Mode: 0644}, Content: goodBytes,
+	}
+	cache("good")
+	cache("gone")
+	f := newTestFiler(t, store, NewFilerRemoteStorage())
+	require.NoError(t, f.RemoteStorage.LoadRemoteStorageConfigurationsAndMapping(f))
+	assert.Zero(t, closed["good"], "a configured remote keeps its client")
+	assert.Positive(t, closed["gone"], "a removed remote's client is closed")
+
+	// no /etc/remote at all (the listing answers ErrNotFound): every remote is gone
+	empty := newTestFiler(t, newStubFilerStore(), NewFilerRemoteStorage())
+	empty.Store = NewFilerStoreWrapper(etcRemoteNotFoundStore{newStubFilerStore()})
+	require.NoError(t, empty.RemoteStorage.LoadRemoteStorageConfigurationsAndMapping(empty))
+	assert.Positive(t, closed["good"], "with no /etc/remote, no remote keeps a client")
+}
+
+// a store in which /etc/remote does not exist: its listing answers filer_pb.ErrNotFound
+type etcRemoteNotFoundStore struct{ *stubFilerStore }
+
+func (s etcRemoteNotFoundStore) ListDirectoryEntries(context.Context, util.FullPath, string, bool, int64, ListEachEntryFunc) (string, error) {
+	return "", filer_pb.ErrNotFound
+}
+
+func (s etcRemoteNotFoundStore) ListDirectoryPrefixedEntries(context.Context, util.FullPath, string, bool, int64, string, ListEachEntryFunc) (string, error) {
+	return "", filer_pb.ErrNotFound
+}
