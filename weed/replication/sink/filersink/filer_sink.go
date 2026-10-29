@@ -294,6 +294,14 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures [
 				key, len(resp.Entry.GetChunks()), len(entry.GetChunks()))
 		}
 
+		// A version the source already moved past is superseded by a later
+		// event, so fetching its chunks only feeds a write that is obsolete on
+		// arrival — skip before any read.
+		if fs.sourceMovedOn(key, entry) {
+			glog.Warningf("skip stale entry %s, source superseded before replicate", key)
+			return nil
+		}
+
 		replicatedChunks, err := fs.replicateChunks(context.Background(), entry.GetChunks(), key, getEntryMtimeNs(entry), "")
 
 		if err != nil {
@@ -366,7 +374,13 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 	// now, which for a rename is newParentPath/newEntry.Name, not the old key.
 	targetKey := updatedEntryKey(key, newParentPath, newEntry)
 
-	switch chooseUpdateAction(existingEntry, oldEntry, newEntry) {
+	action := chooseUpdateAction(existingEntry, oldEntry, newEntry)
+	if action != updateSkip && fs.sourceMovedOn(targetKey, newEntry) {
+		glog.Warningf("skip stale entry %s, source superseded before replicate", targetKey)
+		return true, nil
+	}
+
+	switch action {
 	case updateSkip:
 		// a newer, complete version already landed (out-of-order); leave it
 		glog.V(2).Infof("late updates %s", key)
