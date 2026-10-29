@@ -453,4 +453,12 @@ func TestValidatePolicyDocument(t *testing.T) {
 	if err := validatePolicyDocument(deadPartition); err == nil {
 		t.Fatal("s3vectors resource in another partition should be rejected")
 	}
+	deadWildcard := `{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Principal":"*","Action":"s3tables:*","Resource":"arn:*:s3vectors:r:a:bucket/b"}]}`
+	if err := validatePolicyDocument(deadWildcard); err == nil {
+		t.Fatal("s3vectors resource in a wildcard partition should be rejected")
+	}
+	deadMixed := `{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Principal":"*","Action":"s3tables:*","Resource":["arn:aws:s3tables:r:a:bucket/b","arn:aws:s3vectors:r:a:bucket/b"]}]}`
+	if err := validatePolicyDocument(deadMixed); err == nil {
+		t.Fatal("resource list containing s3vectors should be rejected")
+	}
 }
