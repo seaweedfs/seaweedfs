@@ -265,10 +265,6 @@ func (s *Server) authorizeIndexWrite(ctx context.Context, r *http.Request, bucke
 	}, identityOf(r))
 }
 
-func validateEncryptionConfiguration(cfg map[string]interface{}) error {
-	return s3tables.ValidateEncryptionConfiguration(cfg)
-}
-
 func (s *Server) handleCreateVectorBucket(w http.ResponseWriter, r *http.Request) {
 	var req CreateVectorBucketRequest
 	if err := readJSON(r, &req); err != nil {
@@ -279,7 +275,7 @@ func (s *Server) handleCreateVectorBucket(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "ValidationException", "vectorBucketName is required")
 		return
 	}
-	if err := validateEncryptionConfiguration(req.EncryptionConfiguration); err != nil {
+	if err := s3tables.ValidateEncryptionConfiguration(req.EncryptionConfiguration); err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}

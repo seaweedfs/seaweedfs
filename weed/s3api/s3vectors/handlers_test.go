@@ -564,7 +564,7 @@ func TestValidateEncryptionConfigurationRejectsCustomerKeys(t *testing.T) {
 		{"key on default sse", map[string]interface{}{"sseType": "AES256", "kmsKeyArn": "arn:aws:kms:us-east-1:123456789012:key/x"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := validateEncryptionConfiguration(tc.cfg) == nil; got != tc.want {
+			if got := s3tables.ValidateEncryptionConfiguration(tc.cfg) == nil; got != tc.want {
 				t.Fatalf("cfg %v: accepted=%v, want %v", tc.cfg, got, tc.want)
 			}
 		})
