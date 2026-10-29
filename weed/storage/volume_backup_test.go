@@ -114,4 +114,13 @@ func TestResumeByLastEntry(t *testing.T) {
 	if _, _, err = v.ResumeByLastEntry(5, key, cookie, size, prefixHash(5)+1); err != ErrIncrementalCopyDiverged {
 		t.Fatalf("prefix hash mismatch: %v", err)
 	}
+
+	// a remote-tier tombstone has no .dat record; a boundary at offset zero diverges
+	deletedKey, _, _ := entryAt(3)
+	if err := v.nm.Delete(deletedKey, types.ToOffset(0)); err != nil {
+		t.Fatalf("zero-offset tombstone: %v", err)
+	}
+	if _, _, err = v.ResumeByLastEntry(6, deletedKey, 0, types.TombstoneFileSize, prefixHash(6)); err != ErrIncrementalCopyDiverged {
+		t.Fatalf("zero-offset boundary: %v", err)
+	}
 }

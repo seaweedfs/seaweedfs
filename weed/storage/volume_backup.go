@@ -284,6 +284,11 @@ func (v *Volume) ResumeByLastEntry(entryCount uint64, key NeedleId, cookie uint3
 		err = ErrIncrementalCopyDiverged
 		return
 	}
+	// a remote-tier tombstone sits in the index with no .dat record to verify
+	if lastOffset.IsZero() {
+		err = ErrIncrementalCopyDiverged
+		return
+	}
 	n, e := v.readNeedleAt(lastOffset)
 	if e != nil {
 		err = e
