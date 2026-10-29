@@ -408,11 +408,16 @@ func (fs *FilerServer) ObjectTransaction(ctx context.Context, req *filer_pb.Obje
 		}
 		current, findErr := fs.filer.FindEntry(ctx, conditionPath)
 		if findErr == nil && current != nil && current.IsDirectory() && req.ConditionAltKey != "" {
-			// A directory is not the object: implicit directories can share a
-			// path with an S3 key, so treat it as an absent slot. Only the
-			// alt-key callers want object-slot semantics; an explicit
-			// condition_key may legitimately name a directory.
-			current, findErr = nil, filer_pb.ErrNotFound
+			// A bare directory is not the object: implicit directories can
+			// share a path with an S3 key, so treat it as an absent slot. A
+			// directory entry holding content or the prefix-object marker is
+			// an object and stays. Only the alt-key callers want object-slot
+			// semantics; an explicit condition_key may legitimately name a
+			// directory.
+			_, isPrefixObject := current.Extended[s3_constants.SeaweedFSPrefixObject]
+			if current.Mime == "" && len(current.GetChunks()) == 0 && len(current.Content) == 0 && !current.IsInRemoteOnly() && !isPrefixObject {
+				current, findErr = nil, filer_pb.ErrNotFound
+			}
 		}
 		// The caller can name a fallback evaluated when the primary is absent —
 		// a suspended-versioning write checks "the null slot if present, else
