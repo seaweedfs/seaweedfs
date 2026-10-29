@@ -1972,8 +1972,11 @@ impl EcVolume {
 
         // Fold successful — drop and recreate the journal, clear the
         // in-memory deleted set (all of its contents are now materialized
-        // in .ecx), and reset the cached size.
+        // in .ecx), and reset the cached size. The old handle goes first:
+        // if the recreate fails, deletes must error rather than keep
+        // appending to the removed inode.
         fs::remove_file(&ecj_path)?;
+        self.ecj_file = None;
         self.ecj_file = Some(open_ecj_append(&ecj_path)?);
         self.ecj_file_size = 0;
         if let Ok(mut set) = self.deleted_needles.write() {
@@ -1990,6 +1993,10 @@ impl EcVolume {
     /// land on the removed inode and the deletes vanish at restart.
     pub(crate) fn adopt_folded_journal(&mut self) -> io::Result<()> {
         let ecj_path = self.ecj_file_name();
+        // The old handle points at the replaced file: drop it before the
+        // reopen so a failure leaves deletes erroring, not appending to a
+        // detached inode. Mirrors Go's ReopenDeletionJournal.
+        self.ecj_file = None;
         let reopened = open_ecj_append(&ecj_path)?;
         self.ecj_file_size = reopened.metadata()?.len() as i64;
         self.ecj_file = Some(reopened);
