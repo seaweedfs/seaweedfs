@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"os"
 
@@ -89,6 +90,7 @@ func (v *Volume) IncrementalBackup(volumeServer pb.ServerAddress, grpcDialOption
 			LastNeedleKey:    uint64(cursor.key),
 			LastNeedleCookie: cursor.cookie,
 			LastNeedleSize:   int32(cursor.size),
+			EntriesHash:      cursor.entriesHash,
 		})
 		if err != nil {
 			return err
@@ -132,11 +134,12 @@ func (v *Volume) IncrementalBackup(volumeServer pb.ServerAddress, grpcDialOption
 // same position and resume from there, which stays correct when a different
 // replica answers, because appendAtNs stamps differ across replicas.
 type backupCursor struct {
-	entryCount uint64
-	key        NeedleId
-	size       Size
-	cookie     uint32
-	appendAtNs uint64
+	entryCount  uint64
+	key         NeedleId
+	size        Size
+	cookie      uint32
+	appendAtNs  uint64
+	entriesHash uint64
 }
 
 func (v *Volume) backupCursor() (backupCursor, error) {
@@ -144,17 +147,53 @@ func (v *Volume) backupCursor() (backupCursor, error) {
 	if err != nil || offset.IsZero() {
 		return backupCursor{entryCount: entryCount}, err
 	}
+	entriesHash, err := v.hashIndexEntries(entryCount)
+	if err != nil {
+		return backupCursor{}, err
+	}
 	n, err := v.readNeedleAt(offset)
 	if err != nil {
 		return backupCursor{}, err
 	}
 	return backupCursor{
-		entryCount: entryCount,
-		key:        key,
-		size:       size,
-		cookie:     uint32(n.Cookie),
-		appendAtNs: n.AppendAtNs,
+		entryCount:  entryCount,
+		key:         key,
+		size:        size,
+		cookie:      uint32(n.Cookie),
+		appendAtNs:  n.AppendAtNs,
+		entriesHash: entriesHash,
 	}, nil
+}
+
+// hashIndexEntries folds the (key, size) of the first entryCount index entries
+// into one FNV-1a checksum. The offset field is skipped because the same
+// record sits at different offsets on different replicas.
+func (v *Volume) hashIndexEntries(entryCount uint64) (uint64, error) {
+	indexFile, err := os.OpenFile(v.FileName(".idx"), os.O_RDONLY, 0644)
+	if err != nil {
+		return 0, fmt.Errorf("cannot read %s: %v", v.FileName(".idx"), err)
+	}
+	defer indexFile.Close()
+
+	h := fnv.New64a()
+	buf := make([]byte, 1<<20)
+	remaining := int64(entryCount) * NeedleMapEntrySize
+	for remaining > 0 {
+		want := int64(len(buf))
+		if remaining < want {
+			want = remaining
+		}
+		read, err := io.ReadFull(indexFile, buf[:want])
+		if err != nil {
+			return 0, fmt.Errorf("file %s read error: %v", indexFile.Name(), err)
+		}
+		for i := 0; i+NeedleMapEntrySize <= read; i += NeedleMapEntrySize {
+			h.Write(buf[i : i+8])
+			h.Write(buf[i+12 : i+NeedleMapEntrySize])
+		}
+		remaining -= int64(read)
+	}
+	return h.Sum64(), nil
 }
 
 func (v *Volume) locateLastAppendEntry() (key NeedleId, offset Offset, size Size, entryCount uint64, err error) {
@@ -218,9 +257,12 @@ var ErrIncrementalCopyDiverged = fmt.Errorf("local copy diverged from the replic
 // ResumeByLastEntry resumes an incremental copy by index position instead of
 // by appendAtNs, whose stamps differ across replicas for the same needle.
 // The replica's entry at position entryCount-1 must match the backup's last
-// entry in key, size and cookie; the copy then continues from the replica's
-// entry at position entryCount, so nothing is skipped or appended twice.
-func (v *Volume) ResumeByLastEntry(entryCount uint64, key NeedleId, cookie uint32, size Size) (offset Offset, upToDate bool, err error) {
+// entry in key, size and cookie, and its first entryCount entries must hash
+// the same — a boundary match alone is not proof, since replicated writes can
+// land in a different order on this replica. The copy then continues from the
+// replica's entry at position entryCount, so nothing is skipped or appended
+// twice.
+func (v *Volume) ResumeByLastEntry(entryCount uint64, key NeedleId, cookie uint32, size Size, entriesHash uint64) (offset Offset, upToDate bool, err error) {
 
 	fileSize := int64(v.IndexFileSize())
 	if fileSize%NeedleMapEntrySize != 0 {
@@ -248,6 +290,16 @@ func (v *Volume) ResumeByLastEntry(entryCount uint64, key NeedleId, cookie uint3
 		return
 	}
 	if uint32(n.Cookie) != cookie {
+		err = ErrIncrementalCopyDiverged
+		return
+	}
+
+	prefixHash, e := v.hashIndexEntries(entryCount)
+	if e != nil {
+		err = e
+		return
+	}
+	if prefixHash != entriesHash {
 		err = ErrIncrementalCopyDiverged
 		return
 	}

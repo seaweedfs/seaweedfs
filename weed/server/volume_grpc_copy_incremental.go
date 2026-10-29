@@ -34,6 +34,7 @@ func (vs *VolumeServer) VolumeIncrementalCopy(req *volume_server_pb.VolumeIncrem
 			types.NeedleId(req.LastNeedleKey),
 			req.LastNeedleCookie,
 			types.Size(req.LastNeedleSize),
+			req.EntriesHash,
 		)
 		if err != nil {
 			if errors.Is(err, storage.ErrIncrementalCopyDiverged) {

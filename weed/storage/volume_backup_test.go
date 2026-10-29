@@ -71,15 +71,23 @@ func TestResumeByLastEntry(t *testing.T) {
 		return key, uint32(n.Cookie), size
 	}
 
+	prefixHash := func(count uint64) uint64 {
+		h, err := v.hashIndexEntries(count)
+		if err != nil {
+			t.Fatalf("hashIndexEntries %d: %v", count, err)
+		}
+		return h
+	}
+
 	// a copy whose tail is the replica's tail is already up to date
 	key, cookie, size := entryAt(4)
-	if _, upToDate, err := v.ResumeByLastEntry(5, key, cookie, size); err != nil || !upToDate {
+	if _, upToDate, err := v.ResumeByLastEntry(5, key, cookie, size, prefixHash(5)); err != nil || !upToDate {
 		t.Fatalf("tail cursor: upToDate=%v err=%v", upToDate, err)
 	}
 
 	// a copy ending at an earlier record resumes from the next entry
 	key, cookie, size = entryAt(2)
-	offset, upToDate, err := v.ResumeByLastEntry(3, key, cookie, size)
+	offset, upToDate, err := v.ResumeByLastEntry(3, key, cookie, size, prefixHash(3))
 	if err != nil || upToDate {
 		t.Fatalf("mid cursor: upToDate=%v err=%v", upToDate, err)
 	}
@@ -87,17 +95,23 @@ func TestResumeByLastEntry(t *testing.T) {
 		t.Fatalf("resume offset %v, want %v", offset, want)
 	}
 
-	// a copy ahead of the replica, or with a different tail record, diverged
-	if _, _, err = v.ResumeByLastEntry(6, key, cookie, size); err != ErrIncrementalCopyDiverged {
+	// a copy ahead of the replica diverged
+	if _, _, err = v.ResumeByLastEntry(6, key, cookie, size, prefixHash(3)); err != ErrIncrementalCopyDiverged {
 		t.Fatalf("ahead cursor: %v", err)
 	}
-	if _, _, err = v.ResumeByLastEntry(5, key+1, cookie, size); err != ErrIncrementalCopyDiverged {
+
+	// a copy whose tail record or earlier records differ diverged
+	key, cookie, size = entryAt(4)
+	if _, _, err = v.ResumeByLastEntry(5, key+1, cookie, size, prefixHash(5)); err != ErrIncrementalCopyDiverged {
 		t.Fatalf("key mismatch: %v", err)
 	}
-	if _, _, err = v.ResumeByLastEntry(5, key, cookie+1, size); err != ErrIncrementalCopyDiverged {
+	if _, _, err = v.ResumeByLastEntry(5, key, cookie+1, size, prefixHash(5)); err != ErrIncrementalCopyDiverged {
 		t.Fatalf("cookie mismatch: %v", err)
 	}
-	if _, _, err = v.ResumeByLastEntry(5, key, cookie, size+1); err != ErrIncrementalCopyDiverged {
+	if _, _, err = v.ResumeByLastEntry(5, key, cookie, size+1, prefixHash(5)); err != ErrIncrementalCopyDiverged {
 		t.Fatalf("size mismatch: %v", err)
+	}
+	if _, _, err = v.ResumeByLastEntry(5, key, cookie, size, prefixHash(5)+1); err != ErrIncrementalCopyDiverged {
+		t.Fatalf("prefix hash mismatch: %v", err)
 	}
 }
