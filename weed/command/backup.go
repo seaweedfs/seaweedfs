@@ -160,7 +160,8 @@ func backupFromLocation(volumeServer pb.ServerAddress, grpcDialOption grpc.DialO
 			v.Close()
 			return fmt.Errorf("destroying volume: %w", err), false
 		}
-		v.Close() // Close the destroyed volume
+		// Destroy already closed v. Closing it again hangs, because Destroy
+		// leaves the compaction flag set.
 		// recreate an empty volume
 		v, err = storage.NewVolume(*s.dir, *s.dir, *s.collection, vid, storage.NeedleMapInMemory, replication, ttl, 0, ver, 0, 0)
 		if err != nil {
