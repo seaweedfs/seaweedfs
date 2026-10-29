@@ -1,0 +1,38 @@
+package app
+
+templ PluginSchedulerStatus() {
+    <div id="plugin-scheduler-blockers" aria-live="polite"></div>
+    <script>
+    window.renderPluginSchedulerStatus = function(data) {
+        const root = document.getElementById('plugin-scheduler-blockers');
+        if (!root) return;
+        root.replaceChildren();
+        const lock = data.lock || {};
+        const waiters = lock.waiters || [];
+        if (!waiters.length) return;
+        const alert = document.createElement('div');
+        alert.className = 'alert alert-warning';
+        const title = document.createElement('strong');
+        title.textContent = 'Waiting for the maintenance lock';
+        alert.appendChild(title);
+        const owner = document.createElement('div');
+        owner.textContent = lock.holder ? 'Lock owner: ' + lock.holder : (lock.holder_error || 'Lock owner not reported');
+        if (lock.holder_message) owner.textContent += ' — ' + lock.holder_message;
+        alert.appendChild(owner);
+        waiters.forEach(function(waiter) {
+            const line = document.createElement('div');
+            const since = new Date(waiter.since);
+            const now = new Date((data.scheduler || {}).now || Date.now());
+            const seconds = Math.max(0, Math.floor((now - since) / 1000));
+            line.textContent = waiter.reason + ' · since ' + since.toLocaleString() +
+                ' (local time) · waiting ' + Math.floor(seconds / 60) + 'm ' + (seconds % 60) + 's';
+            alert.appendChild(line);
+        });
+        const note = document.createElement('div');
+        note.className = 'small mt-1';
+        note.textContent = 'This lane cannot advance until the lock becomes available. A scheduled check time is not a guaranteed start time.';
+        alert.appendChild(note);
+        root.appendChild(alert);
+    };
+    </script>
+}

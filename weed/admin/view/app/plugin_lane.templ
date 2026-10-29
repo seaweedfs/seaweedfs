@@ -31,6 +31,7 @@ templ PluginLane(page string, lane string) {
             </div>
         </div>
 
+        @PluginSchedulerStatus()
         <div class="row mb-3">
             <div class="col-12">
                 <div class="card">
@@ -102,16 +103,17 @@ templ PluginLane(page string, lane string) {
         }
 
         function renderSchedulerStatus(data) {
+            window.renderPluginSchedulerStatus(data || {});
             if (!data || !data.scheduler) return '<div class="text-muted">No scheduler data</div>';
             const s = data.scheduler;
             let html = '<div class="row">';
             html += '<div class="col-md-3"><strong>Phase:</strong> ' + (s.current_phase || 'idle') + '</div>';
             html += '<div class="col-md-3"><strong>Idle Sleep:</strong> ' + (s.idle_sleep_seconds || 0) + 's</div>';
             html += '<div class="col-md-3"><strong>Current Job Type:</strong> ' + (s.current_job_type || '-') + '</div>';
-            html += '<div class="col-md-3"><strong>Next Detection:</strong> ' + (s.next_detection_at ? new Date(s.next_detection_at).toLocaleTimeString() : '-') + '</div>';
+            html += '<div class="col-md-3"><strong>Next scheduled check:</strong> ' + (s.next_detection_at ? new Date(s.next_detection_at).toLocaleString() : '-') + '</div>';
             html += '</div>';
             if (s.job_types && s.job_types.length > 0) {
-                html += '<hr><table class="table table-sm table-hover mb-0"><thead><tr><th>Job Type</th><th>Enabled</th><th>Interval</th><th>In Flight</th><th>Next Detection</th></tr></thead><tbody>';
+                html += '<hr><table class="table table-sm table-hover mb-0"><thead><tr><th>Job Type</th><th>Enabled</th><th>Interval</th><th>In Flight</th><th>Next scheduled check</th></tr></thead><tbody>';
                 s.job_types.forEach(jt => {
                     html += '<tr>';
                     html += '<td>' + jt.job_type + '</td>';
@@ -168,6 +170,8 @@ templ PluginLane(page string, lane string) {
         }
 
         refresh();
+        const timer = setInterval(refresh, 10000);
+        window.addEventListener('beforeunload', function() { clearInterval(timer); });
         const btn = document.getElementById('plugin-lane-refresh-btn');
         if (btn) btn.addEventListener('click', refresh);
     })();
