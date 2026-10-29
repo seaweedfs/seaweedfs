@@ -28,10 +28,18 @@ import (
 
 func (fs *FilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req *filer_pb.CacheRemoteObjectToLocalClusterRequest) (*filer_pb.CacheRemoteObjectToLocalClusterResponse, error) {
 	// Use singleflight to deduplicate concurrent caching requests for the same object.
-	// This benefits all clients: S3 API, filer HTTP, Hadoop, etc. The size
-	// limit joins the key: a bounded caller's rejection must not be shared
-	// with callers that allow the download.
-	cacheKey := fmt.Sprintf("%s/%s:%d", req.Directory, req.Name, req.MaxSize)
+	// This benefits all clients: S3 API, filer HTTP, Hadoop, etc.
+	cacheKey := req.Directory + "/" + req.Name
+
+	// A caller's size bound is enforced on the entry it resolves, before it
+	// joins the shared download: the rejection stays with the bounded caller
+	// while allowed downloads still dedupe by path across all callers.
+	if req.MaxSize > 0 {
+		if entry, _, err := fs.fencedFindEntry(ctx, util.JoinPath(req.Directory, req.Name)); err == nil &&
+			entry.IsInRemoteOnly() && entry.Remote.RemoteSize > req.MaxSize {
+			return nil, fmt.Errorf("remote object %s/%s is %d bytes, over the %d byte limit", req.Directory, req.Name, entry.Remote.RemoteSize, req.MaxSize)
+		}
+	}
 
 	// Detach from caller ctx: on failure the error path deletes every chunk
 	// already written, so cancelling mid-download loses all progress. For
@@ -94,10 +102,6 @@ func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, re
 		glog.V(2).Infof("CacheRemoteObjectToLocalCluster: %s/%s already cached (%d chunks)", req.Directory, req.Name, len(entry.GetChunks()))
 		resp.Entry = entry.ToProtoEntry()
 		return resp, nil
-	}
-
-	if req.MaxSize > 0 && entry.Remote.RemoteSize > req.MaxSize {
-		return nil, fmt.Errorf("remote object %s/%s is %d bytes, over the %d byte limit", req.Directory, req.Name, entry.Remote.RemoteSize, req.MaxSize)
 	}
 
 	glog.V(1).Infof("CacheRemoteObjectToLocalCluster: caching %s/%s (remote size: %d)", req.Directory, req.Name, entry.Remote.RemoteSize)
