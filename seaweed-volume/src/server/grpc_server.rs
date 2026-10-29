@@ -3223,14 +3223,6 @@ impl VolumeServer for VolumeGrpcService {
             }
         }
 
-        if missing.is_empty() {
-            return Ok(Response::new(
-                volume_server_pb::VolumeEcShardsRebuildResponse {
-                    rebuilt_shard_ids: vec![],
-                },
-            ));
-        }
-
         // Rebuild missing shards, searching all locations for input shards.
         // Pass other_dirs so shards on sibling disks are found even when the
         // primary rebuild dir doesn't hold them. This one takes a single flat
@@ -3238,22 +3230,26 @@ impl VolumeServer for VolumeGrpcService {
         // above it cannot be handed the rebuild's own index directory
         // separately, and a split -dir/-dir.idx location keeps its .ecx and
         // .vif there. Go's additionalDirs carries that directory for the same
-        // reason.
+        // reason. Nothing missing skips only the regeneration: a retry after
+        // a failed earlier attempt still owes the .ecx rebuild and the
+        // mounted-handle repoint below.
         let mut rebuild_search_dirs: Vec<String> = other_dirs.clone();
         if !rebuild_idx_dir.is_empty() && rebuild_idx_dir != rebuild_dir {
             rebuild_search_dirs.push(rebuild_idx_dir.clone());
         }
         let other_dir_refs: Vec<&str> = rebuild_search_dirs.iter().map(|s| s.as_str()).collect();
-        crate::storage::erasure_coding::ec_encoder::rebuild_ec_files(
-            &rebuild_dir,
-            collection,
-            vid,
-            &missing,
-            data_shards as usize,
-            parity_shards as usize,
-            &other_dir_refs,
-        )
-        .map_err(|e| Status::internal(format!("RebuildEcFiles: {}", e)))?;
+        if !missing.is_empty() {
+            crate::storage::erasure_coding::ec_encoder::rebuild_ec_files(
+                &rebuild_dir,
+                collection,
+                vid,
+                &missing,
+                data_shards as usize,
+                parity_shards as usize,
+                &other_dir_refs,
+            )
+            .map_err(|e| Status::internal(format!("RebuildEcFiles: {}", e)))?;
+        }
 
         // Rebuild .ecx; use idx_directory with fallback to data directory
         let ecx_base = format!("{}/{}", rebuild_idx_dir, base_name);
