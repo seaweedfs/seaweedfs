@@ -371,14 +371,15 @@ func guardedMaxConnsPerHost() int {
 
 // guardedCredentialsVersion names the credentials a guarded client reads when
 // it is built that its configuration does not hold, so that a change of them
-// builds a new client: the content of a gcs credentials file, or, for an
+// builds a new client: the gcs credentials sources of CredentialsVersion, or,
+// for an
 // s3-compatible remote of any type missing an access key or a secret (the SDK's
 // default chain), the shared credentials and config files and the AWS_*
 // variables the chain reads. "" otherwise: a remote with both keys reads
 // nothing else.
 func guardedCredentialsVersion(conf *remote_pb.RemoteConf) string {
-	if conf.GetType() == "gcs" && gcsCredentialsArePath(conf.GetGcsGoogleApplicationCredentials()) {
-		return remote_storage.FileVersion(conf.GetGcsGoogleApplicationCredentials())
+	if conf.GetType() == "gcs" {
+		return remote_storage.CredentialsVersion(conf)
 	}
 	if s3remote.UsesDefaultCredentialChain(conf) {
 		shared := awsSharedFile("AWS_SHARED_CREDENTIALS_FILE", "credentials")
@@ -479,12 +480,6 @@ func guardedRemoteClient(remoteConf *remote_pb.RemoteConf) (endpoint string, mak
 		}
 	}
 	return "", nil, false
-}
-
-// gcsCredentialsArePath reports whether a gcs credentials value is a filesystem
-// path rather than inline JSON, matching the gcs client's own inline detection.
-func gcsCredentialsArePath(creds string) bool {
-	return creds != "" && !strings.HasPrefix(creds, "{")
 }
 
 var errGcsCredentialsUnreadable = errors.New("gcs credentials file is not readable or does not contain valid credentials")

@@ -213,7 +213,7 @@ func (c *clientCache) len() int {
 
 // GetRemoteStorage returns the plain client of a configuration (one per configuration).
 func GetRemoteStorage(remoteConf *remote_pb.RemoteConf) (RemoteStorageClient, error) {
-	return GetRemoteStorageWith("", remoteConf, credentialsVersion(remoteConf), func(conf *remote_pb.RemoteConf) (RemoteStorageClient, func(), error) {
+	return GetRemoteStorageWith("", remoteConf, CredentialsVersion(remoteConf), func(conf *remote_pb.RemoteConf) (RemoteStorageClient, func(), error) {
 		client, err := makeRemoteStorageClient(conf)
 		if err != nil {
 			return nil, nil, fmt.Errorf("make remote storage client %s: %w", conf.GetName(), err)
@@ -229,12 +229,13 @@ func GetRemoteStorageWith(kind string, remoteConf *remote_pb.RemoteConf, version
 	return remoteClients.get(kind, remoteConf, version, build)
 }
 
-// credentialsVersion names what a plain client reads at build time that its
-// configuration does not hold: a gcs credentials file's content, inline JSON
-// from GOOGLE_APPLICATION_CREDENTIALS, or the well-known application default
-// credentials file when neither names one. The configuration's own inline
-// JSON needs none; it is already inside the configuration's hash.
-func credentialsVersion(remoteConf *remote_pb.RemoteConf) string {
+// CredentialsVersion names what a gcs client, plain or guarded, reads at
+// build time that its configuration does not hold: a credentials file's
+// content, inline JSON from GOOGLE_APPLICATION_CREDENTIALS, or the well-known
+// application default credentials file when neither names one. The
+// configuration's own inline JSON needs none; it is already inside the
+// configuration's hash. "" for a non-gcs remote.
+func CredentialsVersion(remoteConf *remote_pb.RemoteConf) string {
 	if remoteConf.GetType() != "gcs" {
 		return ""
 	}

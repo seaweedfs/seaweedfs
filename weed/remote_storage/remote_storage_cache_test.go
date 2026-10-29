@@ -315,33 +315,33 @@ func TestPlainClientGcsCredentialsVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	conf := &remote_pb.RemoteConf{Name: "g", Type: "gcs", GcsGoogleApplicationCredentials: creds}
-	v1 := credentialsVersion(conf)
+	v1 := CredentialsVersion(conf)
 	if v1 == "" {
 		t.Fatal("a credentials path must produce a version")
 	}
 	if err := os.WriteFile(creds, []byte("two"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if credentialsVersion(conf) == v1 {
+	if CredentialsVersion(conf) == v1 {
 		t.Fatal("a rotated credentials file must change the version")
 	}
-	if credentialsVersion(&remote_pb.RemoteConf{Type: "gcs", GcsGoogleApplicationCredentials: "{}"}) != "" {
+	if CredentialsVersion(&remote_pb.RemoteConf{Type: "gcs", GcsGoogleApplicationCredentials: "{}"}) != "" {
 		t.Fatal("inline JSON credentials need no version")
 	}
 	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", creds)
-	if credentialsVersion(&remote_pb.RemoteConf{Type: "gcs"}) == "" {
+	if CredentialsVersion(&remote_pb.RemoteConf{Type: "gcs"}) == "" {
 		t.Fatal("the environment's credentials path must produce a version")
 	}
 	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", `{"type":"one"}`)
-	vEnvJSON := credentialsVersion(&remote_pb.RemoteConf{Type: "gcs"})
+	vEnvJSON := CredentialsVersion(&remote_pb.RemoteConf{Type: "gcs"})
 	if vEnvJSON == "" {
 		t.Fatal("the environment's inline JSON must produce a version")
 	}
 	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", `{"type":"two"}`)
-	if credentialsVersion(&remote_pb.RemoteConf{Type: "gcs"}) == vEnvJSON {
+	if CredentialsVersion(&remote_pb.RemoteConf{Type: "gcs"}) == vEnvJSON {
 		t.Fatal("rotated inline JSON credentials must change the version")
 	}
-	if credentialsVersion(&remote_pb.RemoteConf{Type: "s3"}) != "" {
+	if CredentialsVersion(&remote_pb.RemoteConf{Type: "s3"}) != "" {
 		t.Fatal("a non-gcs remote has no credentials file version")
 	}
 }
@@ -364,14 +364,14 @@ func TestPlainClientGcsWellKnownCredentialsVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	conf := &remote_pb.RemoteConf{Type: "gcs"}
-	v1 := credentialsVersion(conf)
+	v1 := CredentialsVersion(conf)
 	if v1 == "" {
 		t.Fatal("the well-known credentials file must produce a version")
 	}
 	if err := os.WriteFile(adc, []byte("two"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if credentialsVersion(conf) == v1 {
+	if CredentialsVersion(conf) == v1 {
 		t.Fatal("a rotated well-known credentials file must change the version")
 	}
 }
