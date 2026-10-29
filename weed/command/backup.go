@@ -157,6 +157,7 @@ func backupFromLocation(volumeServer pb.ServerAddress, grpcDialOption grpc.DialO
 	datSize, _, _ := v.FileStat()
 
 	// If local volume is larger than remote, recreate it
+	rebuilt := false
 	if datSize > stats.TailOffset {
 		if err := v.Destroy(false, false, false); err != nil {
 			v.Close()
@@ -168,6 +169,7 @@ func backupFromLocation(volumeServer pb.ServerAddress, grpcDialOption grpc.DialO
 		if err != nil {
 			return fmt.Errorf("recreating volume: %w", err), false
 		}
+		rebuilt = true
 	}
 
 	// Perform the incremental backup
@@ -183,10 +185,21 @@ func backupFromLocation(volumeServer pb.ServerAddress, grpcDialOption grpc.DialO
 			return fmt.Errorf("recreating volume: %w", err), false
 		}
 		err = v.IncrementalBackup(volumeServer, grpcDialOption)
+		rebuilt = true
 	}
 	if err != nil {
 		v.Close()
 		return fmt.Errorf("incremental backup: %w", err), false
+	}
+
+	// A rebuilt copy starts at compaction revision zero; adopt the source's
+	// revision or the next run compacts it in key order and diverges again.
+	if rebuilt {
+		v.SuperBlock.CompactionRevision = uint16(stats.CompactRevision)
+		if _, err = v.DataBackend.WriteAt(v.SuperBlock.Bytes(), 0); err != nil {
+			v.Close()
+			return fmt.Errorf("writing superblock: %w", err), false
+		}
 	}
 
 	v.Close()
