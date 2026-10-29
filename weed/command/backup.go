@@ -5,6 +5,8 @@ import (
 	"fmt"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 
@@ -169,7 +171,20 @@ func backupFromLocation(volumeServer pb.ServerAddress, grpcDialOption grpc.DialO
 	}
 
 	// Perform the incremental backup
-	if err := v.IncrementalBackup(volumeServer, grpcDialOption); err != nil {
+	err = v.IncrementalBackup(volumeServer, grpcDialOption)
+	if err != nil && status.Code(err) == codes.FailedPrecondition {
+		// The local copy is not a prefix of this replica's records; rebuild it.
+		if err := v.Destroy(false, false, false); err != nil {
+			v.Close()
+			return fmt.Errorf("destroying volume: %w", err), false
+		}
+		v, err = storage.NewVolume(*s.dir, *s.dir, *s.collection, vid, storage.NeedleMapInMemory, replication, ttl, 0, ver, 0, 0)
+		if err != nil {
+			return fmt.Errorf("recreating volume: %w", err), false
+		}
+		err = v.IncrementalBackup(volumeServer, grpcDialOption)
+	}
+	if err != nil {
 		v.Close()
 		return fmt.Errorf("incremental backup: %w", err), false
 	}
