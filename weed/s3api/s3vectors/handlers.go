@@ -1263,6 +1263,11 @@ func (s *Server) handleQueryVectors(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	idx := indexFromRecord(s, arns.bucket, arns.index, record)
+	if int32(len(queryVector)) != idx.Dimension {
+		writeError(w, http.StatusBadRequest, "ValidationException",
+			fmt.Sprintf("queryVector has %d dimensions, the index declares %d", len(queryVector), idx.Dimension))
+		return
+	}
 	if key, blocked := nonFilterableField(idx.MetadataConfiguration, req.Filter); blocked {
 		writeError(w, http.StatusBadRequest, "ValidationException",
 			fmt.Sprintf("metadata key %q is not filterable", key))
