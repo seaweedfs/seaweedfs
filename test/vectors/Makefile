@@ -1,28 +1,42 @@
-# End-to-end S3 Vectors conformance run:
-# weed mini (cluster + lance catalog) + weed s3 (s3vectors port) +
-# weed-vector (VectorService gRPC), then boto3 s3vectors calls.
 WEED := ./weed
 VEC := ./weed-vector
+WORKER_MANIFEST := ../../rust/sw-vector-distributed/Cargo.toml
+ifneq ($(wildcard $(WORKER_MANIFEST)),)
+WORKER := ./weed-vector-worker
+endif
+VOLUME := ./weed-volume
+CARGO_PROFILE ?= release
+CARGO_TARGET_DIR ?= $(abspath ../../seaweed-vector/target)
+CARGO_OUTPUT := $(CARGO_TARGET_DIR)/$(if $(filter dev,$(CARGO_PROFILE)),debug,$(CARGO_PROFILE))
+export CARGO_TARGET_DIR
 
 .PHONY: all test build clean FORCE
 
 all: test
 
-# No prerequisites: go/cargo decide for themselves whether a rebuild is needed.
 $(WEED): FORCE
 	go build -o $(WEED) ../../weed
 
 $(VEC): FORCE
-	cargo build --release --manifest-path ../../seaweed-vector/Cargo.toml -p weed-vector-server
-	cp ../../seaweed-vector/target/release/weed-vector $(VEC)
+	cargo build --locked --profile $(CARGO_PROFILE) --manifest-path ../../seaweed-vector/Cargo.toml -p weed-vector-server
+	cp $(CARGO_OUTPUT)/weed-vector $(VEC)
+
+ifneq ($(WORKER),)
+$(WORKER): $(VEC) FORCE
+	cargo build --locked --profile $(CARGO_PROFILE) --manifest-path ../../rust/Cargo.toml -p sw-vector-distributed --bin weed-vector
+	cp $(CARGO_OUTPUT)/weed-vector $(WORKER)
+endif
+
+$(VOLUME): $(VEC) $(WORKER) FORCE
+	cargo build --locked --profile $(CARGO_PROFILE) --manifest-path ../../seaweed-volume/Cargo.toml --bin weed-volume
+	cp $(CARGO_OUTPUT)/weed-volume $(VOLUME)
 
 FORCE:
 
-build: $(WEED) $(VEC)
+build: $(WEED) $(VEC) $(WORKER) $(VOLUME)
 
 test: build
 	./run_test.sh
 
 clean:
-	rm -f $(WEED) $(VEC)
-	rm -rf mini-data
+	rm -f $(WEED) $(VEC) ./weed-vector-worker $(VOLUME)

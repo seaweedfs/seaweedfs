@@ -145,3 +145,7 @@ telemetry/server/telemetry-server
 .aider*
 /seaweed-volume/docs
 __pycache__/
+/test/vectors/weed
+/test/vectors/weed-vector
+/test/vectors/weed-vector-worker
+/test/vectors/weed-volume
