@@ -97,7 +97,7 @@ func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		r = r.WithContext(s3_constants.SetIdentityInContext(
-			contextWithIdentity(r.Context(), identity), identityObj))
+			s3_constants.SetIdentityNameInContext(r.Context(), identity), identityObj))
 		handler(w, r)
 	}
 }
