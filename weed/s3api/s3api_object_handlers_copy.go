@@ -742,7 +742,7 @@ func (s3a *S3ApiServer) finalizeCopyDestination(dstBucket, dstObject, dstVersion
 		if owner != "" {
 			err = s3a.routedMkFile(owner, s3a.objectRouteKey(dstBucket, normalizedObject), bucketDir+"/"+normalizedObject+s3_constants.VersionsFolder, versionFileName, dstEntry.Chunks, func(entry *filer_pb.Entry) {
 				copyEntryToTarget(entry, dstEntry)
-			}, nil)
+			}, nil, nil, "")
 		} else {
 			err = s3a.mkFile(bucketDir, versionObjectPath, dstEntry.Chunks, func(entry *filer_pb.Entry) {
 				copyEntryToTarget(entry, dstEntry)
@@ -779,7 +779,7 @@ func (s3a *S3ApiServer) finalizeCopyDestination(dstBucket, dstObject, dstVersion
 		owner := s3a.objectWriteOwner(dstBucket, normalizedObject)
 		if err = s3a.writeMultipartObject(owner, s3a.objectRouteKey(dstBucket, normalizedObject), dstDir, dstName, dstEntry.Chunks, func(entry *filer_pb.Entry) {
 			copyEntryToTarget(entry, dstEntry)
-		}, nil); err != nil {
+		}, nil, nil, ""); err != nil {
 			return "", "", err
 		}
 
@@ -799,7 +799,7 @@ func (s3a *S3ApiServer) finalizeCopyDestination(dstBucket, dstObject, dstVersion
 		// default filer is invisible to the next copy until replication.
 		if err = s3a.writeMultipartObject(s3a.objectWriteOwner(dstBucket, normalizedObject), s3a.objectRouteKey(dstBucket, normalizedObject), dstDir, dstName, dstEntry.Chunks, func(entry *filer_pb.Entry) {
 			copyEntryToTarget(entry, dstEntry)
-		}, nil); err != nil {
+		}, nil, nil, ""); err != nil {
 			return "", "", err
 		}
 

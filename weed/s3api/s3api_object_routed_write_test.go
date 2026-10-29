@@ -514,7 +514,7 @@ func TestRoutedMultipartFinalize(t *testing.T) {
 	chunks := []*filer_pb.FileChunk{{FileId: "1,01637037d6"}}
 	code := s3a.routedMultipartFinalize(owner, "b", "obj", false, "/buckets/b/obj.versions", "v_1", chunks, func(entry *filer_pb.Entry) {
 		entry.Extended = map[string][]byte{s3_constants.SeaweedFSUploadId: []byte("up1")}
-	}, "up1")
+	}, "up1", clause(filer_pb.WriteCondition_IF_NOT_EXISTS))
 	if code != s3err.ErrNone {
 		t.Fatalf("routedMultipartFinalize = %v", code)
 	}
@@ -529,10 +529,15 @@ func TestRoutedMultipartFinalize(t *testing.T) {
 	if req.RouteKey != "s3.object.write:/buckets/b/obj" {
 		t.Fatalf("RouteKey = %q", req.RouteKey)
 	}
-	if req.ConditionKey != "/buckets/b/.uploads/up1" {
+	// The request condition guards the object (at lock_key, falling back to
+	// .versions); the upload directory rides the PUT as a mutation guard.
+	if req.ConditionKey != "" {
 		t.Fatalf("ConditionKey = %q", req.ConditionKey)
 	}
-	if req.Condition == nil || len(req.Condition.Clauses) != 1 || req.Condition.Clauses[0].Kind != filer_pb.WriteCondition_IF_EXISTS {
+	if req.ConditionAltKey != "/buckets/b/obj.versions" {
+		t.Fatalf("ConditionAltKey = %q", req.ConditionAltKey)
+	}
+	if req.Condition == nil || len(req.Condition.Clauses) != 1 || req.Condition.Clauses[0].Kind != filer_pb.WriteCondition_IF_NOT_EXISTS {
 		t.Fatalf("Condition = %+v", req.Condition)
 	}
 	if len(req.Mutations) != 3 {
@@ -547,6 +552,10 @@ func TestRoutedMultipartFinalize(t *testing.T) {
 		len(put.Entry.Chunks) != 1 ||
 		string(put.Entry.Extended[s3_constants.SeaweedFSUploadId]) != "up1" {
 		t.Fatalf("put mutation = %+v", put)
+	}
+	if put.ConditionKey != "/buckets/b/.uploads/up1" ||
+		put.Condition == nil || len(put.Condition.Clauses) != 1 || put.Condition.Clauses[0].Kind != filer_pb.WriteCondition_IF_EXISTS {
+		t.Fatalf("put condition = %+v key %q", put.Condition, put.ConditionKey)
 	}
 	removeUpload := req.Mutations[1]
 	if removeUpload.Type != filer_pb.ObjectMutation_DELETE ||
@@ -580,7 +589,7 @@ func TestWriteMultipartObjectRemovesUploadDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("routedUploadRemoval: %v", err)
 	}
-	if err := s3a.writeMultipartObject(owner, "s3.object.write:/buckets/b/o", "/buckets/b", "o", nil, nil, removal); err != nil {
+	if err := s3a.writeMultipartObject(owner, "s3.object.write:/buckets/b/o", "/buckets/b", "o", nil, nil, removal, nil, ""); err != nil {
 		t.Fatalf("writeMultipartObject: %v", err)
 	}
 
@@ -591,18 +600,16 @@ func TestWriteMultipartObjectRemovesUploadDir(t *testing.T) {
 	if req.LockKey != "/buckets/b/o" {
 		t.Fatalf("LockKey = %q", req.LockKey)
 	}
-	if req.ConditionKey != "/buckets/b/.uploads/up1" {
-		t.Fatalf("ConditionKey = %q", req.ConditionKey)
-	}
-	if req.Condition == nil || len(req.Condition.Clauses) != 1 || req.Condition.Clauses[0].Kind != filer_pb.WriteCondition_IF_EXISTS {
-		t.Fatalf("Condition = %+v", req.Condition)
-	}
 	if len(req.Mutations) != 2 {
 		t.Fatalf("mutations = %d, want 2", len(req.Mutations))
 	}
 	put := req.Mutations[0]
 	if put.Type != filer_pb.ObjectMutation_PUT || put.Directory != "/buckets/b" || put.Entry == nil || put.Entry.Name != "o" {
 		t.Fatalf("put mutation = %+v", put)
+	}
+	if put.ConditionKey != "/buckets/b/.uploads/up1" ||
+		put.Condition == nil || len(put.Condition.Clauses) != 1 || put.Condition.Clauses[0].Kind != filer_pb.WriteCondition_IF_EXISTS {
+		t.Fatalf("put condition = %+v key %q", put.Condition, put.ConditionKey)
 	}
 	removeUpload := req.Mutations[1]
 	if removeUpload.Type != filer_pb.ObjectMutation_DELETE ||

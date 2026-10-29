@@ -689,6 +689,13 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 	// retries. With no owner yet (no ring), keep the lock as the bootstrap path.
 	owner := s3a.objectWriteOwner(*input.Bucket, *input.Key)
 	routeKey := s3a.objectRouteKey(*input.Bucket, *input.Key)
+	// The write condition rides the commit transaction so the owner filer
+	// evaluates it under the object's path lock — the gateway's earlier
+	// checkConditionalHeaders is only a fast-path. Conditions it cannot reduce
+	// (time-based, combined, ETag lists, weak ETags) keep the pre-change
+	// semantics: check and commit run under the distributed write lock, which
+	// routed writes still bypass.
+	cond, reducible := buildWriteCondition(r)
 	completionBody := func() s3err.ErrorCode {
 		var prepCode s3err.ErrorCode
 		completionState, output, prepCode = s3a.prepareMultipartCompletionState(r, input, parts, uploadDirectory, entryName, dirName, completedPartNumbers, completedPartMap, maxPartNo)
@@ -796,7 +803,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 					glog.Errorf("completeMultipartUpload %s upload %s unused part cleanup: %v", *input.Bucket, *input.UploadId, err)
 					return s3err.ErrInternalError
 				}
-				if code := s3a.routedMultipartFinalize(owner, *input.Bucket, *input.Key, useInvertedFormat, versionDir, versionFileName, completionState.finalParts, decorateVersionEntry, *input.UploadId); code != s3err.ErrNone {
+				if code := s3a.routedMultipartFinalize(owner, *input.Bucket, *input.Key, useInvertedFormat, versionDir, versionFileName, completionState.finalParts, decorateVersionEntry, *input.UploadId, cond); code != s3err.ErrNone {
 					if code == s3err.ErrNoSuchUpload {
 						return code
 					}
@@ -850,6 +857,9 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				glog.Errorf("completeMultipartUpload %s upload %s unused part cleanup: %v", *input.Bucket, *input.UploadId, err)
 				return s3err.ErrInternalError
 			}
+			// The condition checks the null slot first, then the latest version,
+			// same resolution the gateway's conditional check performs.
+			versionsDir := dirName + "/" + entryName + s3_constants.VersionsFolder
 			if err := s3a.writeMultipartObject(owner, routeKey, dirName, entryName, completionState.finalParts, func(entry *filer_pb.Entry) {
 				if entry.Extended == nil {
 					entry.Extended = make(map[string][]byte)
@@ -898,9 +908,12 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 					entry.Attributes.Mime = completionState.mime
 				}
 				entry.Attributes.FileSize = uint64(completionState.offset)
-			}, removal); err != nil {
+			}, removal, cond, versionsDir); err != nil {
 				if errors.Is(err, errUploadRemoved) {
 					return s3err.ErrNoSuchUpload
+				}
+				if errors.Is(err, errObjectPrecondition) {
+					return s3err.ErrPreconditionFailed
 				}
 				// The transaction may have committed the object before failing on
 				// the upload removal; a surviving entry references the manifests.
@@ -991,9 +1004,12 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			if completionState.entityWithTtl {
 				entry.Extended[s3_constants.SeaweedFSExpiresS3] = []byte("true")
 			}
-		}, removal); err != nil {
+		}, removal, cond, ""); err != nil {
 			if errors.Is(err, errUploadRemoved) {
 				return s3err.ErrNoSuchUpload
+			}
+			if errors.Is(err, errObjectPrecondition) {
+				return s3err.ErrPreconditionFailed
 			}
 			// The transaction may have committed the object before failing on
 			// the upload removal; a surviving entry references the manifests.
@@ -1017,7 +1033,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 		return s3err.ErrNone
 	}
 	var finalizeCode s3err.ErrorCode
-	if owner != "" {
+	if owner != "" && reducible {
 		if code := s3a.checkConditionalHeaders(r, *input.Bucket, *input.Key); code != s3err.ErrNone {
 			finalizeCode = code
 		} else {
