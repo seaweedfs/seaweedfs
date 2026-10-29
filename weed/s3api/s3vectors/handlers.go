@@ -82,6 +82,25 @@ func arnParts(v *vectorBucketARNs, name, arn string) error {
 	return nil
 }
 
+// bucketARNs resolves the bucket a bucket-level request names and rejects
+// forms that point at a different resource: an index ARN names a table, and an
+// ARN minted for another service names that service's bucket.
+func bucketARNs(name, arn string) (vectorBucketARNs, error) {
+	var v vectorBucketARNs
+	if err := arnParts(&v, name, arn); err != nil {
+		return v, err
+	}
+	if v.index != "" {
+		return v, fmt.Errorf("vectorBucketArn %q names an index, not a bucket", arn)
+	}
+	if strings.HasPrefix(arn, "arn:") {
+		if p := strings.SplitN(arn, ":", 6); len(p) > 2 && p[2] != "s3vectors" {
+			return v, fmt.Errorf("vectorBucketArn %q is not an s3vectors ARN", arn)
+		}
+	}
+	return v, nil
+}
+
 // resolveIndexARNs fills bucket and index from any combination of plain names,
 // a bucket ARN, and a full index ARN — callers may supply only an indexArn.
 func resolveIndexARNs(bucketName, bucketArn, indexName, indexArn string) (vectorBucketARNs, error) {
@@ -279,13 +298,13 @@ func (s *Server) handleGetVectorBucket(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	var arns vectorBucketARNs
-	if err := arnParts(&arns, req.VectorBucketName, req.VectorBucketArn); err != nil {
+	arns, err := bucketARNs(req.VectorBucketName, req.VectorBucketArn)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
 	var resp map[string]interface{}
-	err := s.catalog(r.Context(), "GetTableBucket",
+	err = s.catalog(r.Context(), "GetTableBucket",
 		&s3tables.GetTableBucketRequest{TableBucketARN: s.s3tablesArn(arns.bucket)}, &resp, r)
 	if err != nil {
 		catalogErr(w, err)
