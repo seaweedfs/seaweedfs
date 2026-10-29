@@ -973,6 +973,71 @@ func TestSectionRefreshSweepsANameRecordedAtTheSnapshot(t *testing.T) {
 	}
 }
 
+// TestSectionRefreshParksHardLinkBlobContent checks that a stale snapshot
+// install of an uncached hard-link sibling keeps the name but parks the
+// group's shared blob content, rather than rolling every sibling back to
+// the snapshot's content.
+func TestSectionRefreshParksHardLinkBlobContent(t *testing.T) {
+	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{"/": true, "/dir": true})
+	defer mc.Shutdown()
+
+	buildSectionedDir(t, mc, util.FullPath("/dir"), 1000, []string{"m"})
+
+	hardLinkId := filer.HardLinkId([]byte{1, 2, 3, 4})
+	const writeTsNs = 6000
+	if err := mc.ApplyMetadataResponse(context.Background(), &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		EventNotification: &filer_pb.EventNotification{
+			NewEntry: &filer_pb.Entry{
+				Name:            "a",
+				HardLinkId:      hardLinkId,
+				HardLinkCounter: 2,
+				Attributes:      &filer_pb.FuseAttributes{Crtime: 1, Mtime: 9, FileMode: 0100644, FileSize: 99},
+			},
+		},
+		TsNs: writeTsNs,
+	}, SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("seed sibling at %d: %v", writeTsNs, err)
+	}
+
+	// The refresh's snapshot predates the write: sibling "b" is live on the
+	// filer but its listed content is older than the group's shared blob.
+	const snapshotTsNs = 5000
+	if err := mc.enqueueAndWait(context.Background(), metadataApplyRequest{
+		kind:      metadataSectionRefresh,
+		buildPath: util.FullPath("/dir"),
+		refresh: &sectionRefresh{
+			hi: "m",
+			entries: []*filer.Entry{
+				{
+					FullPath:        util.FullPath("/dir/b"),
+					Attr:            filer.Attr{Crtime: time.Unix(1, 0), Mtime: time.Unix(2, 0), Mode: 0100644, FileSize: 3},
+					HardLinkId:      hardLinkId,
+					HardLinkCounter: 2,
+				},
+			},
+			snapshotTsNs: snapshotTsNs,
+		},
+	}); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+
+	b, _, err := mc.FindEntry(context.Background(), util.FullPath("/dir/b"))
+	if err != nil || b == nil {
+		t.Fatalf("the live link is missing after the refresh: %v", err)
+	}
+	if b.FileSize != 99 {
+		t.Errorf("sibling installed the snapshot's stale content: FileSize=%d, want 99", b.FileSize)
+	}
+	a, _, err := mc.FindEntry(context.Background(), util.FullPath("/dir/a"))
+	if err != nil || a == nil {
+		t.Fatalf("seeded sibling missing: %v", err)
+	}
+	if a.FileSize != 99 {
+		t.Errorf("the shared blob was rolled back: FileSize=%d, want 99", a.FileSize)
+	}
+}
+
 // TestEnsureNameFreshRefreshesOnlyItsSection checks that a name-scoped
 // refresh re-lists just the section holding that name and leaves other stale
 // sections untouched.
