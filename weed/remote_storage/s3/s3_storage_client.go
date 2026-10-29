@@ -179,6 +179,15 @@ func UsesDefaultCredentialChain(conf *remote_pb.RemoteConf) bool {
 	return ok && !(opt.accessKey != "" && opt.secretKey != "")
 }
 
+// ResolvedCredentials returns the static credentials a client of conf carries
+// — the configuration's own keys, or the type's environment fallback for an
+// unset field — and whether conf is S3-compatible at all. An environment
+// fallback's change shows up here where the configuration's hash would not.
+func ResolvedCredentials(conf *remote_pb.RemoteConf) (accessKey, secretKey string, ok bool) {
+	opt, ok := s3CompatibleClientOptions(conf)
+	return opt.accessKey, opt.secretKey, ok
+}
+
 // awsCredentialSourceConfigured reports whether the environment names a source
 // for the AWS SDK default credential chain, such as static keys, a profile,
 // IRSA web identity or the ECS/EKS container credentials endpoint.

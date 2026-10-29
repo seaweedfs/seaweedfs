@@ -372,19 +372,26 @@ func guardedMaxConnsPerHost() int {
 // guardedCredentialsVersion names the credentials a guarded client reads when
 // it is built that its configuration does not hold, so that a change of them
 // builds a new client: the gcs credentials sources of CredentialsVersion, or,
-// for an
-// s3-compatible remote of any type missing an access key or a secret (the SDK's
-// default chain), the shared credentials and config files and the AWS_*
-// variables the chain reads. "" otherwise: a remote with both keys reads
-// nothing else.
+// for an s3-compatible remote, the resolved keys (which a type's environment
+// fallback may supply), plus — with a key or secret still missing (the SDK's
+// default chain) — the shared credentials and config files and the AWS_*
+// variables the chain reads. "" for a remote of another kind.
 func guardedCredentialsVersion(conf *remote_pb.RemoteConf) string {
 	if conf.GetType() == "gcs" {
 		return remote_storage.CredentialsVersion(conf)
 	}
+	accessKey, secretKey, ok := s3remote.ResolvedCredentials(conf)
+	if !ok {
+		return ""
+	}
+	h := sha256.New()
+	h.Write([]byte(accessKey))
+	h.Write([]byte{0})
+	h.Write([]byte(secretKey))
 	if s3remote.UsesDefaultCredentialChain(conf) {
 		shared := awsSharedFile("AWS_SHARED_CREDENTIALS_FILE", "credentials")
 		config := awsSharedFile("AWS_CONFIG_FILE", "config")
-		h := sha256.New()
+		h.Write([]byte{0})
 		h.Write([]byte(remote_storage.FileVersion(shared)))
 		h.Write([]byte{0})
 		h.Write([]byte(remote_storage.FileVersion(config)))
@@ -392,9 +399,8 @@ func guardedCredentialsVersion(conf *remote_pb.RemoteConf) string {
 			h.Write([]byte{0})
 			h.Write([]byte(os.Getenv(k)))
 		}
-		return hex.EncodeToString(h.Sum(nil)[:16])
 	}
-	return ""
+	return hex.EncodeToString(h.Sum(nil)[:16])
 }
 
 // awsSharedFile is the SDK's effective path of a shared file: the environment

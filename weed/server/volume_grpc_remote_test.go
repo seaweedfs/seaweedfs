@@ -1100,3 +1100,23 @@ func TestBuildGuardedRemoteStorageClientS3DefaultChainByCredentials(t *testing.T
 		t.Fatal("a changed AWS_PROFILE must build a new client")
 	}
 }
+
+// An s3-compatible remote whose keys come from its type's environment fallback is keyed by them too: a changed variable
+// builds a new client even though nothing in the configuration changed.
+func TestBuildGuardedRemoteStorageClientS3EnvironmentCredentials(t *testing.T) {
+	guardedCacheTest(t, nil)
+	t.Setenv("ALICLOUD_ACCESS_KEY_ID", "a")
+	t.Setenv("ALICLOUD_ACCESS_KEY_SECRET", "b")
+	conf := &remote_pb.RemoteConf{Name: "env", Type: "aliyun", AliyunEndpoint: "https://93.184.216.34"}
+	first, err := BuildGuardedRemoteStorageClient(context.Background(), conf, false)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if again, _ := BuildGuardedRemoteStorageClient(context.Background(), conf, false); again != first {
+		t.Fatal("unchanged environment credentials must share one client")
+	}
+	t.Setenv("ALICLOUD_ACCESS_KEY_SECRET", "c")
+	if next, err := BuildGuardedRemoteStorageClient(context.Background(), conf, false); err != nil || next == first {
+		t.Fatalf("a changed environment credential must build a new client (err %v)", err)
+	}
+}
