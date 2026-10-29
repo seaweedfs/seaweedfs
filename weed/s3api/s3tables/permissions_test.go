@@ -80,9 +80,11 @@ func TestMatchesPrincipal(t *testing.T) {
 		{"AWS map wildcard", map[string]interface{}{"AWS": "arn:aws:iam::*:user/admin"}, "arn:aws:iam::123:user/admin", true},
 		{"AWS map array", map[string]interface{}{"AWS": []interface{}{"user1", "user2"}}, "user1", true},
 
-		// ARN statements reach normalized-name callers
-		{"arn spec exact caller", "arn:aws:iam::123456789012:user/bob", "bob", true},
-		{"arn spec wildcard caller", "arn:aws:iam::*:user/alice", "alice", true},
+		// ARN statements do not reach normalized-name callers on the allow
+		// path: normalization drops the ARN's account and path, so the grant
+		// could land on a same-named caller the statement never verified.
+		{"arn spec exact caller", "arn:aws:iam::123456789012:user/bob", "bob", false},
+		{"arn spec wildcard caller", "arn:aws:iam::*:user/alice", "alice", false},
 		{"arn spec no match", "arn:aws:iam::123456789012:user/carol", "dan", false},
 
 		// Nil/empty cases
@@ -473,5 +475,22 @@ func TestValidatePolicyDocument(t *testing.T) {
 	deadResource := `{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Principal":"*","Action":"s3tables:*","Resource":"arn:aws:s3vectors:r:a:bucket/b"}]}`
 	if err := validatePolicyDocument(deadResource); err == nil {
 		t.Fatal("s3vectors resource should be rejected")
+	}
+}
+
+// An ARN-scoped statement reaches a caller recorded under the ARN's trailing
+// name only for denies: normalization drops the account and path, so an allow
+// matched that way could grant a same-named caller the statement never
+// verified, while a deny that missed would let the caller duck the rule.
+func TestArnScopedPrincipalMatchesOnlyForDeny(t *testing.T) {
+	arn := "arn:aws:s3vectors:us-east-1:acct:bucket/b"
+	denyPolicy := `{"Statement":[{"Effect":"Deny","Principal":"arn:aws:iam::111:user/bob","Action":"s3vectors:DeleteVectors","Resource":"*"}]}`
+	allowPolicy := `{"Statement":[{"Effect":"Allow","Principal":"arn:aws:iam::111:user/bob","Action":"s3vectors:DeleteVectors","Resource":"*"}]}`
+
+	if CheckPermissionWithContext("s3vectors:DeleteVectors", "bob", "owner", denyPolicy, arn, &PolicyContext{}) {
+		t.Error("an ARN-scoped deny must still reach the normalized caller")
+	}
+	if CheckPermissionWithContext("s3vectors:DeleteVectors", "bob", "owner", allowPolicy, arn, &PolicyContext{}) {
+		t.Error("an ARN-scoped allow must not grant on the normalized name alone")
 	}
 }

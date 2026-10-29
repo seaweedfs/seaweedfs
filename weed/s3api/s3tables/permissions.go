@@ -213,7 +213,7 @@ func matchesDenyStatement(operation, principal, resourcePolicy, resourceARN stri
 	}
 	for _, stmt := range policy.Statement {
 		if stmt.Effect != "Deny" ||
-			!matchesCaller(stmt.Principal, principal, ctx) ||
+			!matchesDenyCaller(stmt.Principal, principal, ctx) ||
 			!matchesAction(stmt.Action, fullAction) ||
 			(resourceARN != "" && !matchesResource(stmt.Resource, resourceARN)) ||
 			!matchesConditions(stmt.Condition, ctx) {
@@ -352,7 +352,19 @@ func hasAdminAction(actions []string) bool {
 // principal or, for policies written before issuer scoping, a bare subject
 // that resolves to it under the deployment's single trusted issuer.
 func matchesCaller(principalSpec interface{}, principal string, ctx *PolicyContext) bool {
-	if matchesPrincipal(principalSpec, principal) {
+	return matchCaller(principalSpec, principal, ctx, false)
+}
+
+// matchesDenyCaller is matchesCaller for deny evaluation: an ARN-scoped
+// statement also reaches a caller stored under the ARN's trailing name, so a
+// deny cannot be ducked through normalization the way an allow must not grant
+// through it.
+func matchesDenyCaller(principalSpec interface{}, principal string, ctx *PolicyContext) bool {
+	return matchCaller(principalSpec, principal, ctx, true)
+}
+
+func matchCaller(principalSpec interface{}, principal string, ctx *PolicyContext, forDeny bool) bool {
+	if matchPrincipal(principalSpec, principal, forDeny) {
 		return true
 	}
 	switch p := principalSpec.(type) {
@@ -366,7 +378,7 @@ func matchesCaller(principalSpec interface{}, principal string, ctx *PolicyConte
 		}
 	case map[string]interface{}:
 		if aws, ok := p["AWS"]; ok {
-			return matchesCaller(aws, principal, ctx)
+			return matchCaller(aws, principal, ctx, forDeny)
 		}
 	}
 	return false
@@ -398,17 +410,21 @@ func matchesLegacySubject(legacy, principal string, ctx *PolicyContext) bool {
 
 // matchesPrincipal checks if the principal matches the statement's principal
 func matchesPrincipal(principalSpec interface{}, principal string) bool {
+	return matchPrincipal(principalSpec, principal, false)
+}
+
+func matchPrincipal(principalSpec interface{}, principal string, forDeny bool) bool {
 	if principalSpec == nil {
 		return false
 	}
 
 	switch p := principalSpec.(type) {
 	case string:
-		return matchesPrincipalString(p, principal)
+		return matchPrincipalString(p, principal, forDeny)
 	case []interface{}:
 		// Array of principals
 		for _, item := range p {
-			if str, ok := item.(string); ok && matchesPrincipalString(str, principal) {
+			if str, ok := item.(string); ok && matchPrincipalString(str, principal, forDeny) {
 				return true
 			}
 		}
@@ -416,25 +432,27 @@ func matchesPrincipal(principalSpec interface{}, principal string) bool {
 		// AWS-style principal with service prefix, e.g., {"AWS": "arn:aws:iam::..."}
 		// For S3 Tables, we primarily care about the AWS key
 		if aws, ok := p["AWS"]; ok {
-			return matchesPrincipal(aws, principal)
+			return matchPrincipal(aws, principal, forDeny)
 		}
 	}
 
 	return false
 }
 
-// matchesPrincipalString reports whether a single principal spec matches the
-// caller. Caller principals are normalized ids, so a statement naming a full
-// IAM ARN still reaches the caller through the same normalization — without
-// it an ARN-scoped statement could never match.
-func matchesPrincipalString(spec, principal string) bool {
+// matchPrincipalString reports whether a single principal spec matches the
+// caller. An ARN-scoped statement reaches a caller recorded under the ARN's
+// trailing name only for denies: normalization drops the ARN's account and
+// path, so an allow matched that way could grant a same-named caller the
+// statement never verified, while a deny must still land so it cannot be
+// ducked through the same collapse.
+func matchPrincipalString(spec, principal string, forDeny bool) bool {
 	if spec == "*" || spec == principal {
 		return true
 	}
 	if wildcard.MatchesWildcard(spec, principal) {
 		return true
 	}
-	return strings.HasPrefix(spec, "arn:") && !strings.HasPrefix(principal, "arn:") &&
+	return forDeny && strings.HasPrefix(spec, "arn:") && !strings.HasPrefix(principal, "arn:") &&
 		wildcard.MatchesWildcard(normalizePrincipalID(spec), principal)
 }
 
