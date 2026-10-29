@@ -301,6 +301,14 @@ func (s *Server) handleListVectorBuckets(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
+	maxResults := 0
+	if req.MaxResults != nil {
+		if *req.MaxResults < 1 || *req.MaxResults > vectorsMaxListPage {
+			writeError(w, http.StatusBadRequest, "ValidationException", fmt.Sprintf("maxResults must be between 1 and %d", vectorsMaxListPage))
+			return
+		}
+		maxResults = *req.MaxResults
+	}
 	var resp struct {
 		TableBuckets []struct {
 			Arn       string `json:"arn"`
@@ -315,7 +323,7 @@ func (s *Server) handleListVectorBuckets(w http.ResponseWriter, r *http.Request)
 	// s3vectors actions, while showing ones they were not.
 	err := s.internalCatalog(r.Context(), "ListTableBuckets",
 		&s3tables.ListTableBucketsRequest{
-			MaxBuckets: req.MaxResults, ContinuationToken: req.NextToken, Prefix: req.Prefix,
+			MaxBuckets: maxResults, ContinuationToken: req.NextToken, Prefix: req.Prefix,
 		}, &resp)
 	if err != nil {
 		catalogErr(w, err)
@@ -1085,6 +1093,14 @@ func (s *Server) handleListIndexes(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
+	maxResults := 0
+	if req.MaxResults != nil {
+		if *req.MaxResults < 1 || *req.MaxResults > vectorsMaxListPage {
+			writeError(w, http.StatusBadRequest, "ValidationException", fmt.Sprintf("maxResults must be between 1 and %d", vectorsMaxListPage))
+			return
+		}
+		maxResults = *req.MaxResults
+	}
 	if _, err := s.authorizeVector(r.Context(), r, "s3vectors:ListIndexes", arns.bucket, ""); err != nil {
 		catalogErr(w, err)
 		return
@@ -1100,7 +1116,7 @@ func (s *Server) handleListIndexes(w http.ResponseWriter, r *http.Request) {
 	err = s.internalCatalog(r.Context(), "ListTables", &s3tables.ListTablesRequest{
 		TableBucketARN:    s.s3tablesArn(arns.bucket),
 		Namespace:         []string{indexNamespace},
-		MaxTables:         req.MaxResults,
+		MaxTables:         maxResults,
 		ContinuationToken: req.NextToken,
 		Prefix:            req.Prefix,
 	}, &resp)
@@ -1382,6 +1398,7 @@ const (
 	vectorsDefaultPage = 500
 	vectorsMaxPutBatch = 500
 	vectorsMaxPage     = 1000
+	vectorsMaxListPage = 500
 	vectorsMaxTopK     = 10000
 )
 

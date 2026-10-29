@@ -183,6 +183,52 @@ func TestListSegmentVectorsPageLimits(t *testing.T) {
 	}
 }
 
+// An explicit maxResults of zero is rejected like any out-of-range value;
+// an omitted field still reaches the catalog as 0 and pages by default.
+func TestListRequestMaxResultsBounds(t *testing.T) {
+	fs := s3tablestest.Start(t)
+	s := NewServer(s3tables.NewManagerClient(fs.Client), allowAllAuth{}, newFakeVectors(0))
+
+	zero, over, max := 0, vectorsMaxListPage+1, vectorsMaxListPage
+	for name, req := range map[string]*ListVectorBucketsRequest{
+		"zero": {MaxResults: &zero},
+		"over": {MaxResults: &over},
+	} {
+		if w := postJSONAs(t, "", s.handleListVectorBuckets, req); w.Code != http.StatusBadRequest {
+			t.Fatalf("ListVectorBuckets %s: %d %s, want 400", name, w.Code, w.Body.String())
+		}
+	}
+	for name, req := range map[string]*ListIndexesRequest{
+		"zero": {VectorBucketName: "vec-bucket", MaxResults: &zero},
+		"over": {VectorBucketName: "vec-bucket", MaxResults: &over},
+	} {
+		if w := postJSONAs(t, "", s.handleListIndexes, req); w.Code != http.StatusBadRequest {
+			t.Fatalf("ListIndexes %s: %d %s, want 400", name, w.Code, w.Body.String())
+		}
+	}
+	if w := postJSONAs(t, "", s.handleListVectorBuckets, &ListVectorBucketsRequest{}); w.Code != http.StatusOK {
+		t.Fatalf("ListVectorBuckets omitted maxResults: %d %s", w.Code, w.Body.String())
+	}
+	if w := postJSONAs(t, "", s.handleListVectorBuckets, &ListVectorBucketsRequest{MaxResults: &max}); w.Code != http.StatusOK {
+		t.Fatalf("ListVectorBuckets maxResults=%d: %d %s", max, w.Code, w.Body.String())
+	}
+	if w := postJSONAs(t, "", s.handleCreateVectorBucket, &CreateVectorBucketRequest{VectorBucketName: "vec-bucket"}); w.Code != http.StatusOK {
+		t.Fatalf("create bucket: %d %s", w.Code, w.Body.String())
+	}
+	if w := postJSONAs(t, "", s.handleCreateIndex, &CreateIndexRequest{
+		VectorBucketName: "vec-bucket",
+		IndexName:        "idx",
+		DataType:         "float32",
+		Dimension:        3,
+		DistanceMetric:   "euclidean",
+	}); w.Code != http.StatusOK {
+		t.Fatalf("create index: %d %s", w.Code, w.Body.String())
+	}
+	if w := postJSONAs(t, "", s.handleListIndexes, &ListIndexesRequest{VectorBucketName: "vec-bucket", MaxResults: &max}); w.Code != http.StatusOK {
+		t.Fatalf("ListIndexes maxResults=%d: %d %s", max, w.Code, w.Body.String())
+	}
+}
+
 func TestArnParts(t *testing.T) {
 	var v vectorBucketARNs
 
