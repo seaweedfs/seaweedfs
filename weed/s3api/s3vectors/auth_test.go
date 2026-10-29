@@ -20,15 +20,15 @@ func (f *fakeAuthenticator) AuthenticateRequest(r *http.Request) (string, interf
 
 func (f *fakeAuthenticator) DefaultAllow() bool { return true }
 
-// The authenticated identity object must ride the request context — only the
-// name survives otherwise, and downstream authorization loses actions,
-// account, and claims.
 func TestAuthKeepsIdentityObject(t *testing.T) {
 	want := &s3api.Identity{Name: "alice", Actions: []s3api.Action{"Admin"}}
 	s := &Server{authenticator: &fakeAuthenticator{identity: want}}
 	var got interface{}
 	h := s.Auth(func(w http.ResponseWriter, r *http.Request) {
 		got = s3_constants.GetIdentityFromContext(r)
+		if name := s3_constants.GetIdentityNameFromContext(r); name != want.Name {
+			t.Errorf("identity name = %q, want %q", name, want.Name)
+		}
 	})
 	h(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/", nil))
 	if got != interface{}(want) {

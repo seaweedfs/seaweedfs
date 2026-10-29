@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/vector_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -145,7 +146,7 @@ func (s *Server) indexRecord(ctx context.Context, r *http.Request, bucket, index
 }
 
 func (s *Server) catalog(ctx context.Context, operation string, req, resp interface{}, r *http.Request) error {
-	return s.tables.Execute(ctx, s.filerClient, operation, req, resp, identityOf(r))
+	return s.tables.Execute(ctx, s.filerClient, operation, req, resp, s3_constants.GetIdentityNameFromContext(r))
 }
 
 // internalCatalog runs catalog bookkeeping under the trusted identity. It is
@@ -262,7 +263,7 @@ func (s *Server) authorizeIndexWrite(ctx context.Context, r *http.Request, bucke
 		TableBucketARN: s.s3tablesArn(bucket),
 		Namespace:      []string{indexNamespace},
 		Name:           index,
-	}, identityOf(r))
+	}, s3_constants.GetIdentityNameFromContext(r))
 }
 
 func (s *Server) handleCreateVectorBucket(w http.ResponseWriter, r *http.Request) {
@@ -554,7 +555,7 @@ func (s *Server) handleCreateIndex(w http.ResponseWriter, r *http.Request) {
 		Namespace:             []string{indexNamespace},
 		Name:                  arns.index,
 		AllowMissingNamespace: true,
-	}, identityOf(r)); err != nil {
+	}, s3_constants.GetIdentityNameFromContext(r)); err != nil {
 		catalogErr(w, err)
 		return
 	}

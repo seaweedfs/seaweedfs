@@ -1,25 +1,11 @@
 package s3vectors
 
 import (
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"time"
 )
-
-type contextKey string
-
-const identityKey contextKey = "s3vectors-identity"
-
-func contextWithIdentity(ctx context.Context, identity string) context.Context {
-	return context.WithValue(ctx, identityKey, identity)
-}
-
-func identityOf(r *http.Request) string {
-	v, _ := r.Context().Value(identityKey).(string)
-	return v
-}
 
 func writeJSON(w http.ResponseWriter, status int, payload interface{}) {
 	w.Header().Set("Content-Type", "application/x-amz-json-1.1")
