@@ -98,6 +98,9 @@ func (s *Server) bucketARNs(name, arn string) (vectorBucketARNs, error) {
 	if v.index != "" {
 		return v, fmt.Errorf("vectorBucketArn %q names an index, not a bucket", arn)
 	}
+	if name != "" && name != v.bucket {
+		return v, fmt.Errorf("vectorBucketName and vectorBucketArn name different buckets")
+	}
 	return v, nil
 }
 
@@ -129,9 +132,13 @@ func (s *Server) resolveIndexARNs(bucketName, bucketArn, indexName, indexArn str
 	}
 	if v.bucket == "" {
 		v.bucket = bucketName
+	} else if bucketName != "" && bucketName != v.bucket {
+		return v, fmt.Errorf("vectorBucketName and ARN bucket name different buckets")
 	}
 	if v.index == "" {
 		v.index = indexName
+	} else if indexName != "" && indexName != v.index {
+		return v, fmt.Errorf("indexName and indexArn name different indexes")
 	}
 	if v.bucket == "" || v.index == "" {
 		return v, fmt.Errorf("vectorBucketName and indexName (or indexArn) are required")

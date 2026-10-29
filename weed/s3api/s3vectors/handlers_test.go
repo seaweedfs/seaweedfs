@@ -281,6 +281,9 @@ func TestBucketARNs(t *testing.T) {
 			t.Fatalf("ARN %q should be rejected for a bucket operation", bad)
 		}
 	}
+	if _, err := s.bucketARNs("a", "arn:aws:s3vectors:r:a:bucket/b"); err == nil {
+		t.Fatal("conflicting vectorBucketName and vectorBucketArn should be rejected")
+	}
 }
 
 func TestResolveIndexARNs(t *testing.T) {
@@ -308,6 +311,12 @@ func TestResolveIndexARNs(t *testing.T) {
 		if _, err := s.resolveIndexARNs("", tc.bucketARN, tc.indexName, tc.indexARN); err == nil {
 			t.Errorf("accepted incompatible ARNs: %+v", tc)
 		}
+	}
+	if _, err := s.resolveIndexARNs("other", "", "", "arn:aws:s3vectors:r:a:bucket/b/index/i"); err == nil {
+		t.Fatal("conflicting vectorBucketName should be rejected")
+	}
+	if _, err := s.resolveIndexARNs("", "", "other", "arn:aws:s3vectors:r:a:bucket/b/index/i"); err == nil {
+		t.Fatal("conflicting indexName should be rejected")
 	}
 	if _, err := s.resolveIndexARNs("", "not-an-arn", "i", ""); err == nil {
 		t.Fatal("non-ARN vectorBucketArn should be rejected")
