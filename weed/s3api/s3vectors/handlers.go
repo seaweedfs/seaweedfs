@@ -337,8 +337,9 @@ func (s *Server) handleListVectorBuckets(w http.ResponseWriter, r *http.Request)
 		}
 		owner, policy, err := s.vectorPolicyView(r.Context(), b.Name)
 		if err != nil {
-			catalogErr(w, err)
-			return
+			// A bucket that vanished mid-list drops out of the page rather
+			// than failing the whole listing.
+			continue
 		}
 		arn := s.vectorBucketArn(b.Name)
 		if !s3tables.CheckPermissionWithContext("s3vectors:ListVectorBuckets", principal, owner, policy, arn, pctx) &&
