@@ -851,12 +851,16 @@ func readPositionDeleteFile(
 	ctx context.Context,
 	filerClient filer_pb.SeaweedFilerClient,
 	bucketName, dataPath, filePath string,
-) (map[string][]int64, error) {
+) (_ map[string][]int64, err error) {
+	defer recoverRead(&err, filePath)
 	data, err := loadFileByIcebergPath(ctx, filerClient, bucketName, dataPath, filePath)
 	if err != nil {
 		return nil, err
 	}
-	reader := parquet.NewReader(bytes.NewReader(data))
+	reader, err := newParquetReader(data, filePath)
+	if err != nil {
+		return nil, err
+	}
 	defer reader.Close()
 
 	pqSchema := reader.Schema()
@@ -1000,12 +1004,16 @@ func readEqualityDeleteFile(
 	bucketName, dataPath, filePath string,
 	fieldIDs []int,
 	icebergSchema *iceberg.Schema,
-) (map[string]struct{}, error) {
+) (_ map[string]struct{}, err error) {
+	defer recoverRead(&err, filePath)
 	data, err := loadFileByIcebergPath(ctx, filerClient, bucketName, dataPath, filePath)
 	if err != nil {
 		return nil, err
 	}
-	reader := parquet.NewReader(bytes.NewReader(data))
+	reader, err := newParquetReader(data, filePath)
+	if err != nil {
+		return nil, err
+	}
 	defer reader.Close()
 
 	colIndices, err := resolveEqualityColIndices(reader.Schema(), fieldIDs, icebergSchema, false)
@@ -1255,7 +1263,10 @@ func mergeParquetFilesInto(
 	if err != nil {
 		return nil, 0, fmt.Errorf("read parquet file %s: %w", entries[0].DataFile().FilePath(), err)
 	}
-	firstReader := parquet.NewReader(bytes.NewReader(firstData))
+	firstReader, err := newParquetReader(firstData, entries[0].DataFile().FilePath())
+	if err != nil {
+		return nil, 0, err
+	}
 	parquetSchema := firstReader.Schema()
 	if parquetSchema == nil {
 		firstReader.Close()
@@ -1307,8 +1318,9 @@ func mergeParquetFilesInto(
 	var outputBuf bytes.Buffer
 	writer := parquet.NewWriter(&outputBuf, outputSchema, parquet.MaxRowsPerRowGroup(rowGroupRows))
 
-	drainReader := func(reader *parquet.Reader, entry iceberg.ManifestEntry) (int64, error) {
+	drainReader := func(reader *parquet.Reader, entry iceberg.ManifestEntry) (_ int64, err error) {
 		source := entry.DataFile().FilePath()
+		defer recoverRead(&err, source)
 		conv, groups, err := joins(reader, entry)
 		if err != nil {
 			reader.Close()
@@ -1350,7 +1362,11 @@ func mergeParquetFilesInto(
 			return nil, 0, fmt.Errorf("read parquet file %s: %w", entry.DataFile().FilePath(), err)
 		}
 
-		reader := parquet.NewReader(bytes.NewReader(data))
+		reader, err := newParquetReader(data, entry.DataFile().FilePath())
+		if err != nil {
+			writer.Close()
+			return nil, 0, err
+		}
 		rowsWritten, err := drainReader(reader, entry)
 		if err != nil {
 			writer.Close()
@@ -1506,7 +1522,10 @@ func mergeParquetFilesSorted(
 	if err != nil {
 		return nil, 0, fmt.Errorf("read parquet file %s: %w", entries[0].DataFile().FilePath(), err)
 	}
-	firstReader := parquet.NewReader(bytes.NewReader(firstData))
+	firstReader, err := newParquetReader(firstData, entries[0].DataFile().FilePath())
+	if err != nil {
+		return nil, 0, err
+	}
 	parquetSchema := firstReader.Schema()
 	if parquetSchema == nil {
 		firstReader.Close()
@@ -1568,7 +1587,8 @@ func mergeParquetFilesSorted(
 		}
 	}()
 
-	writeRows := func(reader *parquet.Reader, entry iceberg.ManifestEntry) (int64, error) {
+	writeRows := func(reader *parquet.Reader, entry iceberg.ManifestEntry) (_ int64, err error) {
+		defer recoverRead(&err, entry.DataFile().FilePath())
 		return copyFileRows(ctx, reader, entry, layout, bucketName, dataPath, positionDeletes, resolvedEqGroups, eqDeleteGroups, icebergSchema, func(filtered []parquet.Row) error {
 			// The writer's row buffer copies the values it is handed, so these
 			// rows need no cloning out of the reader's own buffer first.
@@ -1594,7 +1614,10 @@ func mergeParquetFilesSorted(
 			return nil, 0, fmt.Errorf("read parquet file %s: %w", entry.DataFile().FilePath(), err)
 		}
 
-		reader := parquet.NewReader(bytes.NewReader(data))
+		reader, err := newParquetReader(data, entry.DataFile().FilePath())
+		if err != nil {
+			return nil, 0, err
+		}
 		if layout == nil && !schemasEqual(parquetSchema, reader.Schema()) {
 			reader.Close()
 			return nil, 0, fmt.Errorf("schema mismatch in %s: cannot merge files with different schemas", entry.DataFile().FilePath())
