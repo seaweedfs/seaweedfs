@@ -298,7 +298,8 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 		sid := erasure_coding.ShardId(shardId)
 		for _, location := range vs.store.Locations {
 			if _, rerr := location.ReopenEcShard(needle.VolumeId(req.VolumeId), sid); rerr != nil {
-				glog.Warningf("reopen regenerated ec shard %d.%d: %v", req.VolumeId, sid, rerr)
+				recordEcRebuild("failure", time.Since(start))
+				return nil, rerr
 			}
 		}
 	}
