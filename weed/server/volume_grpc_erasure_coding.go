@@ -186,6 +186,19 @@ func recordEcRebuild(result string, d time.Duration) {
 	stats.VolumeServerECRebuildCounter.WithLabelValues(result).Inc()
 }
 
+// ecRebuildErrorWithIds reports a rebuild failure that happened after shards
+// were regenerated on disk. The error still carries their ids so the caller's
+// deferred cleanup keeps the copies it regenerated in place — to the shell an
+// unreported regenerated copy is just an orphan to delete, and a plain gRPC
+// error would drop the response holding them.
+func ecRebuildErrorWithIds(rebuiltShardIds []uint32, err error) error {
+	st := status.New(codes.Internal, err.Error())
+	if withIds, derr := st.WithDetails(&volume_server_pb.VolumeEcShardsRebuildResponse{RebuiltShardIds: rebuiltShardIds}); derr == nil {
+		st = withIds
+	}
+	return st.Err()
+}
+
 // VolumeEcShardsRebuild generates the any of the missing .ec00 ~ .ec13 files
 func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_server_pb.VolumeEcShardsRebuildRequest) (*volume_server_pb.VolumeEcShardsRebuildResponse, error) {
 	if err := vs.checkGrpcAdminAuth(ctx); err != nil {
@@ -280,13 +293,58 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 			err = ev.ReopenDeletionJournal()
 		}
 		unlockJournal()
+		if err == nil {
+			// Mounts on sibling disks can journal into the same .ecj — the
+			// fold unlinked it, so repoint their handles too or their next
+			// append lands on the detached inode.
+			for _, location := range vs.store.Locations {
+				if location == rebuildLocation {
+					continue
+				}
+				if sibling, ok := location.FindEcVolume(needle.VolumeId(req.VolumeId)); ok && sibling.EcIndexBaseFileName() == indexBaseFileName {
+					unlockSibling := sibling.LockDeletionJournal()
+					serr := sibling.ReopenDeletionJournal()
+					unlockSibling()
+					if serr != nil {
+						err = fmt.Errorf("reopen shared ec journal on %s: %v", location.Directory, serr)
+						break
+					}
+				}
+			}
+		}
 		if err != nil {
 			recordEcRebuild("failure", time.Since(start))
-			return nil, fmt.Errorf("RebuildEcxFile %s: %v", indexBaseFileName, err)
+			return nil, ecRebuildErrorWithIds(rebuiltShardIds, fmt.Errorf("RebuildEcxFile %s: %v", indexBaseFileName, err))
 		}
 	} else if err := erasure_coding.RebuildEcxFile(indexBaseFileName); err != nil {
 		recordEcRebuild("failure", time.Since(start))
-		return nil, fmt.Errorf("RebuildEcxFile %s: %v", indexBaseFileName, err)
+		return nil, ecRebuildErrorWithIds(rebuiltShardIds, fmt.Errorf("RebuildEcxFile %s: %v", indexBaseFileName, err))
+	}
+
+	// A regenerated shard that was mounted keeps serving its old file through
+	// the open descriptor — the rename left the mounted handle on the detached
+	// inode. Repoint every mounted handle of this volume at the file now on
+	// disk, not just this run's outputs: a shard an earlier rebuild wrote on
+	// another disk is "present" this run and would never re-enter
+	// generatedShardIds, yet its mounted handle is still stale.
+	for _, location := range vs.store.Locations {
+		for _, shardId := range location.MountedEcShardIds(needle.VolumeId(req.VolumeId)) {
+			if _, rerr := location.ReopenEcShard(needle.VolumeId(req.VolumeId), shardId); rerr == nil {
+				continue
+			}
+			// The mounted disk lost the file and the rebuild wrote it
+			// elsewhere — or the file is unreadable in place. Drop the stale
+			// handle and remount from whichever local disk holds the rebuilt
+			// file; both steps emit no heartbeat delta, so the master's
+			// registration never flips. A shard that cannot be remounted is
+			// left unmounted — the honest state — rather than serving
+			// replaced bytes. Reporting the rebuilt ids on this path keeps
+			// the caller's cleanup from deleting them as strays.
+			location.UnloadEcShard(needle.VolumeId(req.VolumeId), shardId)
+			if _, _, lerr := vs.store.LoadEcShardAcrossDisks(req.Collection, needle.VolumeId(req.VolumeId), shardId); lerr != nil {
+				glog.Warningf("rebuilt ec shard %d.%d left unmounted: %v", req.VolumeId, shardId, lerr)
+			}
+		}
 	}
 
 	recordEcRebuild("success", time.Since(start))

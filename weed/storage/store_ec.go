@@ -253,6 +253,41 @@ func (s *Store) CollectErasureCodingHeartbeat() *master_pb.Heartbeat {
 }
 
 func (s *Store) MountEcShards(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, sourceDiskType string) error {
+	ecVolume, diskId, err := s.LoadEcShardAcrossDisks(collection, vid, shardId)
+	if err != nil {
+		return err
+	}
+	glog.V(0).Infof("MountEcShards %d.%d on disk ID %d", vid, shardId, diskId)
+
+	// Apply the orchestrator-supplied source disk type so the EC
+	// volume reports under it instead of the location's. Empty means
+	// "fall back to location's disk type" (#9423).
+	if sourceDiskType != "" {
+		ecVolume.SetDiskType(types.ToDiskType(sourceDiskType))
+	}
+
+	si := erasure_coding.NewShardsInfo()
+	si.Set(erasure_coding.NewShardInfo(shardId, erasure_coding.ShardSize(ecVolume.ShardSize())))
+	s.NewEcShardsChan <- &master_pb.VolumeEcShardInformationMessage{
+		Id:          uint32(vid),
+		Collection:  collection,
+		EcIndexBits: uint32(si.Bitmap()),
+		ShardSizes:  si.SizesInt64(),
+		DiskType:    string(ecVolume.DiskType()),
+		ExpireAtSec: ecVolume.ExpireAtSec,
+		DiskId:      uint32(diskId),
+		EncodeTsNs:  ecVolume.EncodeTsNs,
+	}
+	s.UpdateMaxVolumeIdSeen(vid)
+	return nil
+}
+
+// LoadEcShardAcrossDisks mounts shardId on whichever local disk holds its
+// file and returns the mounted volume plus the disk it landed on. It emits
+// no heartbeat delta — callers that change the master's view do that
+// themselves (MountEcShards), while same-server repoints that must not flip
+// the master's registration use it directly.
+func (s *Store) LoadEcShardAcrossDisks(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId) (*erasure_coding.EcVolume, uint32, error) {
 	// The .ecx index file may live on a different disk than the one
 	// holding the .ec?? shard being mounted: ec.balance / ec.rebuild can
 	// place the .ecx on one local disk while later distributing shards
@@ -292,29 +327,7 @@ func (s *Store) MountEcShards(collection string, vid needle.VolumeId, shardId er
 		}
 		ecVolume, err := location.loadEcShardWithIdxDir(collection, vid, shardId, idxDir)
 		if err == nil {
-			glog.V(0).Infof("MountEcShards %d.%d on disk ID %d", vid, shardId, diskId)
-
-			// Apply the orchestrator-supplied source disk type so the EC
-			// volume reports under it instead of the location's. Empty means
-			// "fall back to location's disk type" (#9423).
-			if sourceDiskType != "" {
-				ecVolume.SetDiskType(types.ToDiskType(sourceDiskType))
-			}
-
-			si := erasure_coding.NewShardsInfo()
-			si.Set(erasure_coding.NewShardInfo(shardId, erasure_coding.ShardSize(ecVolume.ShardSize())))
-			s.NewEcShardsChan <- &master_pb.VolumeEcShardInformationMessage{
-				Id:          uint32(vid),
-				Collection:  collection,
-				EcIndexBits: uint32(si.Bitmap()),
-				ShardSizes:  si.SizesInt64(),
-				DiskType:    string(ecVolume.DiskType()),
-				ExpireAtSec: ecVolume.ExpireAtSec,
-				DiskId:      uint32(diskId),
-				EncodeTsNs:  ecVolume.EncodeTsNs,
-			}
-			s.UpdateMaxVolumeIdSeen(vid)
-			return nil
+			return ecVolume, uint32(diskId), nil
 		}
 		if errors.Is(err, os.ErrNotExist) {
 			// Shard or index not on this disk; another disk may own it.
@@ -329,9 +342,9 @@ func (s *Store) MountEcShards(collection string, vid needle.VolumeId, shardId er
 		// scanned for so the operator can tell "no .ecx anywhere" apart
 		// from "shard not on this server".
 		if !ecxFound {
-			return fmt.Errorf("MountEcShards %d.%d: no .ecx index found on any local disk", vid, shardId)
+			return nil, 0, fmt.Errorf("MountEcShards %d.%d: no .ecx index found on any local disk", vid, shardId)
 		}
-		return fmt.Errorf("MountEcShards %d.%d not found on disk", vid, shardId)
+		return nil, 0, fmt.Errorf("MountEcShards %d.%d not found on disk", vid, shardId)
 	}
 	// Some disks returned a real (non-ENOENT) error. Report them all so
 	// the caller can see whether the failures cluster around one disk
@@ -343,7 +356,7 @@ func (s *Store) MountEcShards(collection string, vid needle.VolumeId, shardId er
 		}
 		b = append(b, fmt.Sprintf("%s: %v", f.dir, f.err)...)
 	}
-	return fmt.Errorf("MountEcShards %d.%d load failures: %s", vid, shardId, string(b))
+	return nil, 0, fmt.Errorf("MountEcShards %d.%d load failures: %s", vid, shardId, string(b))
 }
 
 func (s *Store) UnmountEcShards(vid needle.VolumeId, shardId erasure_coding.ShardId, reqEncodeTsNs int64) error {

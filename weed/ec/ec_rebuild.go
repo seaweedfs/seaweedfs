@@ -14,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/grpc/status"
 )
 
 type ecRebuilder struct {
@@ -265,8 +266,19 @@ func (erb *ecRebuilder) rebuildOneEcVolume(collection string, volumeId needle.Vo
 		if !erb.applyChanges || len(copiedShardIds) == 0 {
 			return
 		}
-		if derr := SourceServerDeleteEcShards(erb.env.GrpcDialOption, collection, volumeId, pb.NewServerAddressFromDataNode(rebuilder.Info), copiedShardIds); derr != nil {
-			erb.write("%s delete copied ec shards %s %d.%v: %v\n", rebuilder.Info.Id, collection, volumeId, copiedShardIds, derr)
+		var orphaned []erasure_coding.ShardId
+		for _, shardId := range copiedShardIds {
+			// A copy the rebuild regenerated in place is mounted output, not a
+			// working file: deleting it strands the only good replica.
+			if !slices.Contains(generatedShardIds, shardId) {
+				orphaned = append(orphaned, shardId)
+			}
+		}
+		if len(orphaned) == 0 {
+			return
+		}
+		if derr := SourceServerDeleteEcShards(erb.env.GrpcDialOption, collection, volumeId, pb.NewServerAddressFromDataNode(rebuilder.Info), orphaned); derr != nil {
+			erb.write("%s delete copied ec shards %s %d.%v: %v\n", rebuilder.Info.Id, collection, volumeId, orphaned, derr)
 		}
 	}()
 	if err != nil {
@@ -306,6 +318,18 @@ func (erb *ecRebuilder) generateMissingShards(collection string, volumeId needle
 		})
 		if rebuildErr == nil {
 			rebuiltShardIds = erasure_coding.Uint32ToShardIds(resp.RebuiltShardIds)
+			return nil
+		}
+		// A rebuild that fails after regenerating shards still reports their
+		// ids in the status details: without them the deferred cleanup treats
+		// every copied shard — including ones the rebuild regenerated in
+		// place — as an orphan and deletes the repaired files.
+		if st, ok := status.FromError(rebuildErr); ok {
+			for _, detail := range st.Details() {
+				if r, ok := detail.(*volume_server_pb.VolumeEcShardsRebuildResponse); ok {
+					rebuiltShardIds = erasure_coding.Uint32ToShardIds(r.RebuiltShardIds)
+				}
+			}
 		}
 		return rebuildErr
 	})

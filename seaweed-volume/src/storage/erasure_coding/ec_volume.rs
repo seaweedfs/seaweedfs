@@ -1939,8 +1939,7 @@ impl EcVolume {
     /// `deleted_needles` instead). The rebuild is atomic with respect to
     /// the journal: if any individual write fails the .ecj file is left
     /// in place and the error is propagated so tombstones are not lost.
-    #[expect(dead_code, reason = "no caller yet; see the doc comment")]
-    fn rebuild_ecx_from_journal(&mut self) -> io::Result<()> {
+    pub(crate) fn rebuild_ecx_from_journal(&mut self) -> io::Result<()> {
         let ecj_path = self.ecj_file_name();
         if !std::path::Path::new(&ecj_path).exists() {
             return Ok(());
@@ -1973,14 +1972,37 @@ impl EcVolume {
 
         // Fold successful — drop and recreate the journal, clear the
         // in-memory deleted set (all of its contents are now materialized
-        // in .ecx), and reset the cached size.
+        // in .ecx), and reset the cached size. The old handle goes first:
+        // if the recreate fails, deletes must error rather than keep
+        // appending to the removed inode.
         fs::remove_file(&ecj_path)?;
+        self.ecj_file = None;
         self.ecj_file = Some(open_ecj_append(&ecj_path)?);
         self.ecj_file_size = 0;
         if let Ok(mut set) = self.deleted_needles.write() {
             set.clear();
         }
 
+        Ok(())
+    }
+
+    /// Adopt a journal another runtime sharing this `.ecj` path folded under
+    /// the store lock: the file was replaced, so swap the detached handle for
+    /// a fresh one, reset the cached size, and drop the in-memory set — every
+    /// id it held is now an `.ecx` tombstone. Without this, later appends
+    /// land on the removed inode and the deletes vanish at restart.
+    pub(crate) fn adopt_folded_journal(&mut self) -> io::Result<()> {
+        let ecj_path = self.ecj_file_name();
+        // The old handle points at the replaced file: drop it before the
+        // reopen so a failure leaves deletes erroring, not appending to a
+        // detached inode. Mirrors Go's ReopenDeletionJournal.
+        self.ecj_file = None;
+        let reopened = open_ecj_append(&ecj_path)?;
+        self.ecj_file_size = reopened.metadata()?.len() as i64;
+        self.ecj_file = Some(reopened);
+        if let Ok(mut set) = self.deleted_needles.write() {
+            set.clear();
+        }
         Ok(())
     }
 

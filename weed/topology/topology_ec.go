@@ -159,6 +159,9 @@ func (t *Topology) UnRegisterEcShards(ecvi *erasure_coding.EcVolumeInfo, dn *Dat
 		return
 	}
 	for _, shardId := range ecvi.ShardsInfo.Ids() {
+		if dn.HasEcShard(ecvi.VolumeId, shardId) {
+			continue
+		}
 		locations.DeleteShard(shardId, dn)
 	}
 }

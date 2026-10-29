@@ -255,6 +255,59 @@ func (l *DiskLocation) loadEcShardWithIdxDir(collection string, vid needle.Volum
 	return ecVolume, nil
 }
 
+// ReopenEcShard swaps the mounted shard's descriptor for a fresh open of its
+// on-disk file while leaving the volume's registration — and therefore the
+// master's view — untouched. It exists for the in-place rebuild path:
+// RebuildEcFiles renames a regenerated shard over the file a mounted handle is
+// still serving, and reopening repoints reads at the repaired file without
+// the delete/add heartbeat flip-flop an unmount+remount would send.
+func (l *DiskLocation) ReopenEcShard(vid needle.VolumeId, shardId erasure_coding.ShardId) (bool, error) {
+	l.ecVolumesLock.Lock()
+	defer l.ecVolumesLock.Unlock()
+
+	ecVolume, found := l.ecVolumes[vid]
+	if !found {
+		return false, nil
+	}
+	var oldShard *erasure_coding.EcVolumeShard
+	position := -1
+	for i, s := range ecVolume.Shards {
+		if s.ShardId == shardId {
+			position = i
+			oldShard = s
+			break
+		}
+	}
+	if oldShard == nil {
+		return false, nil
+	}
+
+	newShard, err := erasure_coding.NewEcVolumeShard(oldShard.DiskType, l.Directory, oldShard.Collection, vid, shardId)
+	if err != nil {
+		return true, fmt.Errorf("reopen ec shard %d.%d: %w", vid, shardId, err)
+	}
+	ecVolume.Shards[position] = newShard
+
+	// Readers that already resolved the old shard keep their object; its Close
+	// turns their next ReadAt into a clean error recovered via parity, the same
+	// contract eviction relies on. Mount/Unmount balance out, so the shard
+	// gauge does not move.
+	oldShard.Unmount()
+	oldShard.Close()
+	return true, nil
+}
+
+// MountedEcShardIds returns the ids of shards this disk currently serves for
+// the volume, or nil when the volume is not mounted here.
+func (l *DiskLocation) MountedEcShardIds(vid needle.VolumeId) []erasure_coding.ShardId {
+	l.ecVolumesLock.RLock()
+	defer l.ecVolumesLock.RUnlock()
+	if ecVolume, found := l.ecVolumes[vid]; found {
+		return ecVolume.ShardIdList()
+	}
+	return nil
+}
+
 func (l *DiskLocation) UnloadEcShard(vid needle.VolumeId, shardId erasure_coding.ShardId) bool {
 
 	l.ecVolumesLock.Lock()

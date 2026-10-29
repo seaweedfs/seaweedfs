@@ -451,6 +451,7 @@ message VolumeEcShardsGenerateResponse {
 message VolumeEcShardsRebuildRequest {
     uint32 volume_id = 1;
     string collection = 2;
+    bool unsafe_ignore_sidecar = 3; // bypass the bitrot-sidecar fail-closed guard (operator override; distinct from ec.rebuild -force)
 }
 message VolumeEcShardsRebuildResponse {
     repeated uint32 rebuilt_shard_ids = 1;

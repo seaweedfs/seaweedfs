@@ -5,6 +5,7 @@
 
 use std::fs::File;
 use std::io;
+use std::io::Write;
 
 use reed_solomon_erasure::galois_8::ReedSolomon;
 
@@ -146,16 +147,33 @@ pub fn uniform_block_size(dat_file_size: i64, data_shards: usize) -> i64 {
 /// `additional_dirs` lists sibling disk locations to search for existing shards when
 /// they are not found in `dir`. This is required on multi-disk volume servers where
 /// shards for the same volume may be spread across disks.
+/// Rebuild EC shard files from the surviving shards.
+///
+/// `missing_shard_ids` are shards absent everywhere: each is written at
+/// `dir/<base>.ecNN`. `corrupt_shard_paths` are present shards the caller
+/// reclassified as corrupt (a bitrot sidecar mismatch or zero-size residue):
+/// each is written to `<discovered path>.rebuilding` and atomically renamed
+/// over the corrupt original only after every output verifies, so a failed
+/// rebuild leaves the untouched original rather than a half-written file —
+/// mirrors Go's `generateMissingEcFiles`. When `protection` is the volume's
+/// generation-0 sidecar, every regenerated shard is verified against it
+/// before publish: a mismatch means the sidecar is stale, and the rebuild
+/// fails closed by removing its outputs instead of blessing wrong bytes.
+///
+/// Shards absent from `dir` are read from `additional_dirs` (sibling disks on
+/// the same server), mirroring Go's findShardFile.
 pub fn rebuild_ec_files(
     dir: &str,
     collection: &str,
     volume_id: VolumeId,
     missing_shard_ids: &[u32],
+    corrupt_shard_paths: &[(u32, String)],
     data_shards: usize,
     parity_shards: usize,
     additional_dirs: &[&str],
+    protection: Option<&EcBitrotProtection>,
 ) -> io::Result<()> {
-    if missing_shard_ids.is_empty() {
+    if missing_shard_ids.is_empty() && corrupt_shard_paths.is_empty() {
         return Ok(());
     }
 
@@ -163,6 +181,21 @@ pub fn rebuild_ec_files(
         .map_err(|e| io::Error::other(format!("reed-solomon init: {:?}", e)))?;
 
     let total_shards = data_shards + parity_shards;
+
+    // The rebuild set: genuinely-missing shards plus reclassified-corrupt
+    // ones. Everything else is a Reed-Solomon input.
+    let mut is_rebuild = vec![false; total_shards];
+    for &i in missing_shard_ids {
+        if (i as usize) < total_shards {
+            is_rebuild[i as usize] = true;
+        }
+    }
+    for &(i, _) in corrupt_shard_paths {
+        if (i as usize) < total_shards {
+            is_rebuild[i as usize] = true;
+        }
+    }
+
     let mut shards: Vec<EcVolumeShard> = (0..total_shards as u8)
         .map(|i| EcVolumeShard::new(dir, collection, volume_id, i))
         .collect();
@@ -172,7 +205,7 @@ pub fn rebuild_ec_files(
     // on the same volume server) before failing — mirrors Go's findShardFile logic.
     let mut shard_size = 0;
     for (i, shard) in shards.iter_mut().enumerate() {
-        if !missing_shard_ids.contains(&(i as u32)) {
+        if !is_rebuild[i] {
             if shard.open().is_ok() {
                 let size = shard.file_size();
                 if size > shard_size {
@@ -210,12 +243,72 @@ pub fn rebuild_ec_files(
         ));
     }
 
-    // Create the missing shards for writing
-    for i in missing_shard_ids {
-        if let Some(shard) = shards.get_mut(*i as usize) {
-            shard.create()?;
+    // Create output files: a genuinely-absent shard is written at its final
+    // path; a reclassified-corrupt shard goes to a temp file beside its
+    // discovered path and is renamed over the original after verification.
+    // (final_path, write_path, file) — write_path differs only for corrupt.
+    let mut outputs: Vec<Option<(String, String, Option<File>)>> =
+        (0..total_shards).map(|_| None).collect();
+    let create_output = |path: &str| -> io::Result<File> {
+        crate::storage::volume_open::open_volume_file(
+            std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(true),
+            path,
+        )
+    };
+    for &i in missing_shard_ids {
+        let idx = i as usize;
+        if idx >= total_shards {
+            continue;
         }
+        let final_path = format!(
+            "{}.ec{:02}",
+            volume_file_name(dir, collection, volume_id),
+            i
+        );
+        outputs[idx] = Some((
+            final_path.clone(),
+            final_path.clone(),
+            Some(create_output(&final_path)?),
+        ));
     }
+    for &(i, ref corrupt_path) in corrupt_shard_paths {
+        let idx = i as usize;
+        if idx >= total_shards {
+            continue;
+        }
+        let write_path = format!("{}.rebuilding", corrupt_path);
+        outputs[idx] = Some((
+            corrupt_path.clone(),
+            write_path.clone(),
+            Some(create_output(&write_path)?),
+        ));
+    }
+
+    // Removes every generated output on a failed fail-closed rebuild: temp
+    // replacements AND genuinely-missing shards written at their final path,
+    // so no unverified bytes are published. A reclassified-corrupt shard's
+    // untouched original (at final_path, distinct from its write_path) is left
+    // in place. Mirrors Go's cleanupRebuildOutputs.
+    let cleanup_outputs = |mut outputs: Vec<Option<(String, String, Option<File>)>>| {
+        let write_paths: Vec<String> = outputs
+            .iter_mut()
+            .flatten()
+            .map(|slot| {
+                // Take the handle so it closes before the unlink — Windows
+                // refuses to remove an open file.
+                let _ = slot.2.take();
+                slot.1.clone()
+            })
+            .collect();
+        drop(outputs);
+        for p in write_paths {
+            let _ = std::fs::remove_file(p);
+        }
+    };
 
     let block_size = ERASURE_CODING_SMALL_BLOCK_SIZE;
     let mut remaining = shard_size;
@@ -232,10 +325,11 @@ pub fn rebuild_ec_files(
         // shard; treat it as an error rather than reconstructing over a
         // zero-padded tail and publishing the result as restored redundancy.
         for (i, shard) in shards.iter().enumerate() {
-            if !missing_shard_ids.contains(&(i as u32)) {
+            if !is_rebuild[i] {
                 let mut buf = vec![0u8; to_process];
                 let n = shard.read_at(&mut buf, offset)?;
                 if n != to_process {
+                    cleanup_outputs(std::mem::take(&mut outputs));
                     return Err(io::Error::new(
                         io::ErrorKind::UnexpectedEof,
                         format!(
@@ -249,14 +343,25 @@ pub fn rebuild_ec_files(
         }
 
         // Reconstruct missing shards
-        rs.reconstruct(&mut buffers)
-            .map_err(|e| io::Error::other(format!("reed-solomon reconstruct: {:?}", e)))?;
+        if let Err(e) = rs.reconstruct(&mut buffers) {
+            cleanup_outputs(std::mem::take(&mut outputs));
+            return Err(io::Error::other(format!(
+                "reed-solomon reconstruct: {:?}",
+                e
+            )));
+        }
 
-        // Write recovered data into the missing shards
-        for i in missing_shard_ids {
-            let idx = *i as usize;
-            if let Some(buf) = buffers[idx].take() {
-                shards[idx].write_all(&buf)?;
+        // Write recovered data into the rebuilt shards
+        for i in 0..total_shards {
+            if is_rebuild[i] {
+                if let Some(buf) = buffers[i].take() {
+                    if let Some(f) = outputs[i].as_mut().and_then(|slot| slot.2.as_mut()) {
+                        if let Err(e) = f.write_all(&buf) {
+                            cleanup_outputs(std::mem::take(&mut outputs));
+                            return Err(e);
+                        }
+                    }
+                }
             }
         }
 
@@ -264,7 +369,80 @@ pub fn rebuild_ec_files(
         remaining -= to_process as i64;
     }
 
-    // Close all shards
+    // Verify regenerated shards against the sidecar. Reed-Solomon is
+    // deterministic, so a regenerated shard that does NOT match the sidecar
+    // means the sidecar is wrong/stale (not the shard) — fail closed rather
+    // than publishing bytes we cannot trust. Mirrors Go's post-rebuild
+    // verification pass.
+    if let Some(prot) = protection {
+        for slot in outputs.iter_mut().flatten() {
+            if let Some(f) = slot.2.as_mut() {
+                if let Err(e) = f.sync_all() {
+                    cleanup_outputs(std::mem::take(&mut outputs));
+                    return Err(e);
+                }
+            }
+        }
+        for i in 0..total_shards {
+            let Some((_, ref write_path, _)) = outputs[i] else {
+                continue;
+            };
+            let Some(entry) = ec_bitrot::shard_checksums(prot, i as u32) else {
+                continue;
+            };
+            match ec_bitrot::verify_shard_file_blocks(write_path, entry, prot.block_size as i64) {
+                Err(e) => {
+                    cleanup_outputs(std::mem::take(&mut outputs));
+                    return Err(io::Error::new(
+                        e.kind(),
+                        format!("bitrot: verify regenerated shard {}: {}", i, e),
+                    ));
+                }
+                Ok(mismatched) if !mismatched.is_empty() => {
+                    cleanup_outputs(std::mem::take(&mut outputs));
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!(
+                            "bitrot: regenerated shard {} does not match sidecar ({} blocks differ); sidecar likely stale — aborting",
+                            i,
+                            mismatched.len()
+                        ),
+                    ));
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // Flush and close every output, then atomically move reclassified-corrupt
+    // rebuilds over their originals — the rename lands only after all writes
+    // and the sidecar verification above have succeeded.
+    for slot in outputs.iter_mut().flatten() {
+        if let Some(f) = slot.2.as_mut() {
+            if let Err(e) = f.sync_all() {
+                cleanup_outputs(std::mem::take(&mut outputs));
+                return Err(e);
+            }
+        }
+    }
+    drop(outputs);
+    for &(i, ref corrupt_path) in corrupt_shard_paths {
+        if (i as usize) >= total_shards {
+            continue;
+        }
+        let write_path = format!("{}.rebuilding", corrupt_path);
+        if let Err(e) = std::fs::rename(&write_path, corrupt_path) {
+            return Err(io::Error::new(
+                e.kind(),
+                format!(
+                    "bitrot: replace corrupt shard {} ({} -> {}): {}",
+                    i, write_path, corrupt_path, e
+                ),
+            ));
+        }
+    }
+
+    // Close input shards
     for shard in &mut shards {
         shard.close();
     }
@@ -1016,7 +1194,7 @@ mod tests {
 
         // Rebuild a different (genuinely missing) shard.
         std::fs::remove_file(format!("{}/1.ec07", dir)).unwrap();
-        let res = rebuild_ec_files(&dir, "", VolumeId(1), &[7], 10, 4, &[]);
+        let res = rebuild_ec_files(&dir, "", VolumeId(1), &[7], &[], 10, 4, &[], None);
         assert!(res.is_err(), "truncated input shard must abort the rebuild");
     }
 
@@ -1029,7 +1207,7 @@ mod tests {
 
         let dropped = format!("{}/1.ec07", dir);
         std::fs::remove_file(&dropped).unwrap();
-        rebuild_ec_files(&dir, "", VolumeId(1), &[7], 10, 4, &[]).unwrap();
+        rebuild_ec_files(&dir, "", VolumeId(1), &[7], &[], 10, 4, &[], None).unwrap();
         assert!(
             std::path::Path::new(&dropped).exists(),
             "rebuilt shard .ec07 should exist"
@@ -1072,7 +1250,7 @@ mod tests {
 
         // Without additional_dirs the rebuild must fail: shards 0, 4, 8 are
         // not in primary and shard 7 cannot be reconstructed without them.
-        let res = rebuild_ec_files(&primary, "", VolumeId(1), &[7], 10, 4, &[]);
+        let res = rebuild_ec_files(&primary, "", VolumeId(1), &[7], &[], 10, 4, &[], None);
         assert!(
             res.is_err(),
             "rebuild without additional_dirs must fail when input shards are on another disk"
@@ -1088,9 +1266,11 @@ mod tests {
             "",
             VolumeId(1),
             &[7],
+            &[],
             10,
             4,
             &[secondary.as_str()],
+            None,
         )
         .unwrap();
 
