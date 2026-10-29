@@ -418,6 +418,10 @@ func (s *Server) handlePutVectorBucketPolicy(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
+	if err := s.lanceBucket(r.Context(), arns.bucket); err != nil {
+		catalogErr(w, err)
+		return
+	}
 	var resp map[string]interface{}
 	err := s.catalog(r.Context(), "PutTableBucketPolicy", &s3tables.PutTableBucketPolicyRequest{
 		TableBucketARN: s.s3tablesArn(arns.bucket),
@@ -441,6 +445,10 @@ func (s *Server) handleGetVectorBucketPolicy(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
+	if err := s.lanceBucket(r.Context(), arns.bucket); err != nil {
+		catalogErr(w, err)
+		return
+	}
 	var resp s3tables.GetTableBucketPolicyResponse
 	err := s.catalog(r.Context(), "GetTableBucketPolicy", &s3tables.GetTableBucketPolicyRequest{
 		TableBucketARN: s.s3tablesArn(arns.bucket),
@@ -461,6 +469,10 @@ func (s *Server) handleDeleteVectorBucketPolicy(w http.ResponseWriter, r *http.R
 	var arns vectorBucketARNs
 	if err := arnParts(&arns, req.VectorBucketName, req.VectorBucketArn); err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		return
+	}
+	if err := s.lanceBucket(r.Context(), arns.bucket); err != nil {
+		catalogErr(w, err)
 		return
 	}
 	var resp map[string]interface{}
