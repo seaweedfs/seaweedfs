@@ -121,9 +121,9 @@ func (fh *FileHandle) readFromChunksWithContext(ctx context.Context, buff []byte
 // unchanged version means the failure is genuine and a retry would repeat it.
 func (fh *FileHandle) refreshEntryForRead(ctx context.Context) bool {
 	// An in-flight async flush is mid-commit: wait it out before judging what
-	// the committed entry is. A dirty handle keeps its own state either way —
-	// its chunks are local truth the filer may not have caught up with yet.
-	if !fh.wfs.waitForPendingAsyncFlush(ctx, fh.inode) || fh.dirtyMetadata {
+	// the committed entry is. Dirty and deleted handles are fenced inside
+	// installAckedEntry, under the exclusive handle lock that owns those flags.
+	if !fh.wfs.waitForPendingAsyncFlush(ctx, fh.inode) {
 		return false
 	}
 	fileFullPath := fh.FullPath()
@@ -143,6 +143,17 @@ func (fh *FileHandle) refreshEntryForRead(ctx context.Context) bool {
 		return nil
 	})
 	if err != nil || fetched == nil || versionTsNs == 0 {
+		return false
+	}
+	// The saved path may name a different file by now — an unlinked handle
+	// keeps answering under the reused name. Only an entry that still carries
+	// the handle's inode is its own content; zero means unverifiable, not
+	// different.
+	fh.entry.RLock()
+	curInode := fh.entry.Entry.GetAttributes().GetInode()
+	fh.entry.RUnlock()
+	newInode := fetched.GetAttributes().GetInode()
+	if curInode != 0 && newInode != 0 && curInode != newInode {
 		return false
 	}
 	fetched = proto.Clone(fetched).(*filer_pb.Entry)
