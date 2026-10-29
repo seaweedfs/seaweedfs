@@ -285,21 +285,33 @@ func (mc *MetaCache) staleRangeOf(dirPath util.FullPath, name string) (nameRange
 }
 
 func (mc *MetaCache) refreshSection(ctx context.Context, client filer_pb.FilerClient, dirPath util.FullPath, lo, hi string) error {
-	_, err, _ := mc.visitGroup.Do(string(dirPath)+"\x00section\x00"+lo, func() (interface{}, error) {
+	// DoChan so a requester that leaves mid-refresh stops waiting on its own
+	// context while the shared refresh continues for the remaining waiters.
+	resultCh := mc.visitGroup.DoChan(string(dirPath)+"\x00section\x00"+lo, func() (interface{}, error) {
 		if !mc.rangeStale(dirPath, lo) {
 			return nil, nil
 		}
-		entries, snapshotTsNs, err := mc.listFilerRange(ctx, client, dirPath, lo, hi)
+		// Shared like the directory build: the requester that started this
+		// flight can leave mid-refresh, so re-apply the bound on a context it
+		// cannot cancel rather than failing every waiter on its cancellation.
+		flightCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sectionRefreshTimeout)
+		defer cancel()
+		entries, snapshotTsNs, err := mc.listFilerRange(flightCtx, client, dirPath, lo, hi)
 		if err != nil {
 			return nil, err
 		}
-		return nil, mc.enqueueAndWait(ctx, metadataApplyRequest{
+		return nil, mc.enqueueAndWait(flightCtx, metadataApplyRequest{
 			kind:      metadataSectionRefresh,
 			buildPath: dirPath,
 			refresh:   &sectionRefresh{lo: lo, hi: hi, entries: entries, snapshotTsNs: snapshotTsNs},
 		})
 	})
-	return err
+	select {
+	case result := <-resultCh:
+		return result.Err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // listFilerRange reads [lo, hi) from the filer at one snapshot, paging by

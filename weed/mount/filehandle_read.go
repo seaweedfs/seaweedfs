@@ -111,6 +111,60 @@ func (fh *FileHandle) readFromChunksWithContext(ctx context.Context, buff []byte
 	return int64(totalRead), ts, err
 }
 
+// refreshEntryForRead re-reads the entry from the filer and installs it when it
+// outranks what the handle holds. A read can resolve chunk views a concurrent
+// overwrite already replaced — the filer queues the replaced file ids for
+// deletion at commit, while the handle only learns the new list when the
+// metadata event lands — so a fetch can name data that is already gone. The
+// filer is authoritative once the commit lands; installing its entry lets a
+// retry reach data that exists. Reports whether the handle advanced: an
+// unchanged version means the failure is genuine and a retry would repeat it.
+func (fh *FileHandle) refreshEntryForRead(ctx context.Context) bool {
+	// An in-flight async flush is mid-commit: wait it out before judging what
+	// the committed entry is. Dirty and deleted handles are fenced inside
+	// installAckedEntry, under the exclusive handle lock that owns those flags.
+	if !fh.wfs.waitForPendingAsyncFlush(ctx, fh.inode) {
+		return false
+	}
+	fileFullPath := fh.FullPath()
+	dir, name := fileFullPath.DirAndName()
+	var fetched *filer_pb.Entry
+	var versionTsNs int64
+	var signature int32
+	err := fh.wfs.withFilerClient(ctx, false, fh.wfs.filerRPCWait(), func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
+		resp, lookupErr := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
+			Directory: dir,
+			Name:      name,
+		})
+		if lookupErr != nil {
+			return lookupErr
+		}
+		fetched, versionTsNs, signature = resp.Entry, resp.LogTsNs, resp.GetLogSignature()
+		return nil
+	})
+	if err != nil || fetched == nil || versionTsNs == 0 {
+		return false
+	}
+	// The saved path may name a different file by now — an unlinked handle
+	// keeps answering under the reused name. Only an entry that still carries
+	// the handle's inode is its own content; zero means unverifiable, not
+	// different.
+	fh.entry.RLock()
+	curInode := fh.entry.Entry.GetAttributes().GetInode()
+	fh.entry.RUnlock()
+	newInode := fetched.GetAttributes().GetInode()
+	if curInode != 0 && newInode != 0 && curInode != newInode {
+		return false
+	}
+	fetched = proto.Clone(fetched).(*filer_pb.Entry)
+	if fh.wfs.option.UidGidMapper != nil {
+		fh.wfs.mapPbIdFromFilerToLocal(fetched)
+	}
+	before := fh.entryVersionTsNs.Load()
+	fh.installAckedEntry(fetched, versionTsNs, signature)
+	return fh.entryVersionTsNs.Load() != before
+}
+
 func (fh *FileHandle) downloadRemoteEntry(ctx context.Context, entry *LockedEntry) error {
 
 	fileFullPath := fh.FullPath()
