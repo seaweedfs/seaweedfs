@@ -504,6 +504,22 @@ func (f *stubDavFs) Stat(_ context.Context, name string) (os.FileInfo, error) {
 }
 
 // A PUT onto a folder must not delete the folder to make room for the file.
+func TestCopyMoveGuardHandler_PutStatus(t *testing.T) {
+	fs := webdav.NewMemFS()
+	h := copyMoveGuardHandler{
+		fs:   fs,
+		next: &webdav.Handler{FileSystem: fs, LockSystem: webdav.NewMemLS()},
+	}
+	put := func(body string) int {
+		req := httptest.NewRequest("PUT", "http://x/a.txt", strings.NewReader(body))
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		return w.Code
+	}
+	assert.Equal(t, http.StatusCreated, put("one"))
+	assert.Equal(t, http.StatusNoContent, put("two"))
+}
+
 func TestWebDavFileSystem_OpenFile_DoesNotReplaceFolder(t *testing.T) {
 	filer := &deleteRecordingFiler{existing: &filer_pb.Entry{
 		Name:        "sub",

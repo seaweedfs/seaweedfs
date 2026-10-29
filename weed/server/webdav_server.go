@@ -88,6 +88,18 @@ func NewWebDavServer(option *WebDavOption) (ws *WebDavServer, err error) {
 	return ws, nil
 }
 
+// replacedStatusWriter turns the 201 of a PUT onto an existing file into 204
+type replacedStatusWriter struct {
+	http.ResponseWriter
+}
+
+func (w replacedStatusWriter) WriteHeader(code int) {
+	if code == http.StatusCreated {
+		code = http.StatusNoContent
+	}
+	w.ResponseWriter.WriteHeader(code)
+}
+
 // an overwriting MOVE or COPY removes the destination before reading the
 // source, so a destination that contains the source removes it too; a
 // destination under the source copies itself unless the copy is shallow
@@ -97,6 +109,13 @@ type copyMoveGuardHandler struct {
 }
 
 func (h copyMoveGuardHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// a PUT that replaces a file answers 204 (RFC 9110 9.3.4); webdav.Handler
+	// always answers 201
+	if r.Method == "PUT" {
+		if fi, err := h.fs.Stat(r.Context(), r.URL.Path); err == nil && !fi.IsDir() {
+			w = replacedStatusWriter{ResponseWriter: w}
+		}
+	}
 	if r.Method == "MOVE" || r.Method == "COPY" {
 		// a foreign-host Destination is another server's problem: the webdav
 		// handler answers 502, so the local checks below do not apply
