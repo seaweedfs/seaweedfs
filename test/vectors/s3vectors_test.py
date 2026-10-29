@@ -4,8 +4,11 @@ Run via `make test` — a mini cluster, an s3 gateway serving the vectors API on
 weed-vector are up by then.
 """
 
+import json
+
 import boto3
 import pytest
+from botocore.exceptions import ClientError
 
 ENDPOINT = "http://127.0.0.1:8334"
 BUCKET = "vectors-bucket"
@@ -79,3 +82,31 @@ def test_vector_lifecycle(vectors):
 
     vectors.delete_index(vectorBucketName=BUCKET, indexName=INDEX)
     vectors.delete_vector_bucket(vectorBucketName=BUCKET)
+
+
+def test_vector_bucket_policy(vectors):
+    vectors.create_vector_bucket(vectorBucketName=BUCKET)
+    try:
+        policy = json.dumps(
+            {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Effect": "Allow",
+                        "Principal": {"AWS": "*"},
+                        "Action": "s3vectors:*",
+                        "Resource": "*",
+                    }
+                ],
+            }
+        )
+        vectors.put_vector_bucket_policy(vectorBucketName=BUCKET, policy=policy)
+        got = vectors.get_vector_bucket_policy(vectorBucketName=BUCKET)["policy"]
+        assert json.loads(got) == json.loads(policy)
+
+        vectors.delete_vector_bucket_policy(vectorBucketName=BUCKET)
+        with pytest.raises(ClientError) as exc:
+            vectors.get_vector_bucket_policy(vectorBucketName=BUCKET)
+        assert exc.value.response["Error"]["Code"] == "NotFoundException"
+    finally:
+        vectors.delete_vector_bucket(vectorBucketName=BUCKET)
