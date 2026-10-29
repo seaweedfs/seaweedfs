@@ -17,8 +17,9 @@ type TableBucket struct {
 }
 
 type CreateTableBucketRequest struct {
-	Name string            `json:"name"`
-	Tags map[string]string `json:"tags,omitempty"`
+	Name                    string                 `json:"name"`
+	Tags                    map[string]string      `json:"tags,omitempty"`
+	EncryptionConfiguration map[string]interface{} `json:"encryptionConfiguration,omitempty"`
 	// Format is the table format this bucket holds. A bucket is a catalog and a
 	// catalog serves one protocol, so declaring it here is what lets a caller be
 	// told where to connect. Empty means ICEBERG, which is what AWS S3 Tables
@@ -41,7 +42,8 @@ type GetTableBucketResponse struct {
 	CreatedAt      time.Time `json:"createdAt"`
 	// Format is empty for a bucket created before formats were declared. Such a
 	// bucket accepts any format, which is what it did when it was made.
-	Format string `json:"format,omitempty"`
+	Format                  string                 `json:"format,omitempty"`
+	EncryptionConfiguration map[string]interface{} `json:"encryptionConfiguration,omitempty"`
 }
 
 type ListTableBucketsRequest struct {

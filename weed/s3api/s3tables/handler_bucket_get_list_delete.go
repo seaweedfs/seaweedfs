@@ -81,11 +81,12 @@ func (h *S3TablesHandler) handleGetTableBucket(w http.ResponseWriter, r *http.Re
 	}
 
 	resp := &GetTableBucketResponse{
-		ARN:            h.generateTableBucketARN(metadata.OwnerAccountID, bucketName),
-		Name:           metadata.Name,
-		OwnerAccountID: metadata.OwnerAccountID,
-		CreatedAt:      metadata.CreatedAt,
-		Format:         metadata.Format,
+		ARN:                     h.generateTableBucketARN(metadata.OwnerAccountID, bucketName),
+		Name:                    metadata.Name,
+		OwnerAccountID:          metadata.OwnerAccountID,
+		CreatedAt:               metadata.CreatedAt,
+		Format:                  metadata.Format,
+		EncryptionConfiguration: metadata.EncryptionConfiguration,
 	}
 
 	h.writeJSON(w, http.StatusOK, resp)

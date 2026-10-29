@@ -275,16 +275,22 @@ func (s *Server) handleCreateVectorBucket(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "ValidationException", "vectorBucketName is required")
 		return
 	}
-	// The catalog has no encryption boundary to honor the configuration
-	// against; accepting it would silently promise semantics we do not keep.
-	if len(req.EncryptionConfiguration) > 0 {
-		writeError(w, http.StatusBadRequest, "ValidationException",
-			"encryptionConfiguration is not supported")
+	if err := s3tables.ValidateEncryptionConfiguration(req.EncryptionConfiguration, "sseType"); err != nil {
+		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
+	}
+	// The catalog keeps the s3tables field name; GetVectorBucket renames it back.
+	enc := req.EncryptionConfiguration
+	if len(enc) != 0 {
+		enc = map[string]interface{}{"sseAlgorithm": enc["sseType"]}
 	}
 	var resp map[string]interface{}
 	err := s.catalog(r.Context(), "CreateTableBucket",
-		&s3tables.CreateTableBucketRequest{Name: req.VectorBucketName, Format: s3tables.FormatLance}, &resp, r)
+		&s3tables.CreateTableBucketRequest{
+			Name:                    req.VectorBucketName,
+			Format:                  s3tables.FormatLance,
+			EncryptionConfiguration: enc,
+		}, &resp, r)
 	if err != nil {
 		catalogErr(w, err)
 		return
@@ -317,11 +323,18 @@ func (s *Server) handleGetVectorBucket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	created, _ := time.Parse(time.RFC3339, fmt.Sprint(resp["createdAt"]))
-	writeJSON(w, http.StatusOK, &GetVectorBucketResponse{VectorBucket: &VectorBucket{
+	bucket := &VectorBucket{
 		VectorBucketArn:  s.vectorBucketArn(arns.bucket),
 		VectorBucketName: arns.bucket,
 		CreationTime:     created,
-	}})
+	}
+	if cfg, ok := resp["encryptionConfiguration"].(map[string]interface{}); ok {
+		if v, ok := cfg["sseAlgorithm"]; ok {
+			cfg = map[string]interface{}{"sseType": v}
+		}
+		bucket.EncryptionConfiguration = cfg
+	}
+	writeJSON(w, http.StatusOK, &GetVectorBucketResponse{VectorBucket: bucket})
 }
 
 func (s *Server) handleListVectorBuckets(w http.ResponseWriter, r *http.Request) {

@@ -71,9 +71,10 @@ type GetVectorBucketResponse struct {
 }
 
 type VectorBucket struct {
-	VectorBucketArn  string    `json:"vectorBucketArn"`
-	VectorBucketName string    `json:"vectorBucketName"`
-	CreationTime     time.Time `json:"creationTime"`
+	VectorBucketArn         string                 `json:"vectorBucketArn"`
+	VectorBucketName        string                 `json:"vectorBucketName"`
+	CreationTime            time.Time              `json:"creationTime"`
+	EncryptionConfiguration map[string]interface{} `json:"encryptionConfiguration,omitempty"`
 }
 
 type ListVectorBucketsRequest struct {
