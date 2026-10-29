@@ -3287,19 +3287,43 @@ impl VolumeServer for VolumeGrpcService {
         )
         .map_err(|e| Status::internal(format!("RebuildEcxFile: {}", e)))?;
 
-        // A rebuilt shard that was mounted (e.g. its file was deleted under
-        // the mount) keeps serving the detached inode through the open
-        // descriptor. Reopen it in place so reads hit the regenerated file —
-        // mirrors Go's ReopenEcShard loop in VolumeEcShardsRebuild.
+        // Repoint every mounted handle of this volume at the file now on
+        // disk, not just this run's outputs — mirrors Go's repoint loop in
+        // VolumeEcShardsRebuild: a shard an earlier rebuild wrote on another
+        // disk is "present" this run and never re-enters `missing`, yet its
+        // mounted handle still serves the detached inode.
         {
             let mut store = self.state.store.write().unwrap_or_else(|e| e.into_inner());
-            for &shard_id in &missing {
-                for loc in store.locations.iter_mut() {
-                    if let Err(e) = loc.reopen_ec_shard(vid, shard_id as ShardId) {
-                        return Err(Status::internal(format!(
-                            "reopen ec shard {}.{}: {}",
-                            vid.0, shard_id, e
-                        )));
+            for loc_idx in 0..store.locations.len() {
+                let mounted: Vec<ShardId> = match store.locations[loc_idx].find_ec_volume(vid) {
+                    Some(ev) => ev
+                        .shards
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, s)| s.as_ref().map(|_| i as ShardId))
+                        .collect(),
+                    None => continue,
+                };
+                for shard_id in mounted {
+                    if store.locations[loc_idx]
+                        .reopen_ec_shard(vid, shard_id)
+                        .is_ok()
+                    {
+                        continue;
+                    }
+                    // The mounted disk lost the file and the rebuild wrote it
+                    // elsewhere — or it is unreadable in place. Drop the stale
+                    // handle and remount from whichever local disk holds the
+                    // rebuilt file; a shard that cannot be remounted stays
+                    // unmounted rather than serving replaced bytes.
+                    store.locations[loc_idx].unmount_ec_shards(vid, &[shard_id]);
+                    if let Err(e) = store.mount_ec_shard(vid, collection, shard_id, "") {
+                        tracing::warn!(
+                            "rebuilt ec shard {}.{} left unmounted: {}",
+                            vid.0,
+                            shard_id,
+                            e
+                        );
                     }
                 }
             }
