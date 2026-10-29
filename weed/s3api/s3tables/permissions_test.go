@@ -445,4 +445,8 @@ func TestValidatePolicyDocument(t *testing.T) {
 	if err := validatePolicyDocument(deadList); err == nil {
 		t.Fatal("action list containing s3vectors should be rejected")
 	}
+	deadResource := `{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Principal":"*","Action":"s3tables:*","Resource":"arn:aws:s3vectors:r:a:bucket/b"}]}`
+	if err := validatePolicyDocument(deadResource); err == nil {
+		t.Fatal("s3vectors resource should be rejected")
+	}
 }
