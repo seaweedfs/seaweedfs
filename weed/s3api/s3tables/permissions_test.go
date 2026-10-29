@@ -428,3 +428,21 @@ func TestCheckPermissionLegacyPolicyPrincipalShapes(t *testing.T) {
 		t.Error("legacy Allow with array principal must still match the scoped caller")
 	}
 }
+
+func TestValidatePolicyDocument(t *testing.T) {
+	valid := `{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Principal":"*","Action":"s3tables:GetTable","Resource":"*"}]}`
+	if err := validatePolicyDocument(valid); err != nil {
+		t.Fatalf("valid policy rejected: %v", err)
+	}
+	if err := validatePolicyDocument("not-json"); err == nil {
+		t.Fatal("malformed policy should be rejected")
+	}
+	dead := `{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Principal":"*","Action":"s3vectors:PutVectors","Resource":"*"}]}`
+	if err := validatePolicyDocument(dead); err == nil {
+		t.Fatal("s3vectors action should be rejected")
+	}
+	deadList := `{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Principal":"*","Action":["s3tables:*","s3vectors:*"],"Resource":"*"}]}`
+	if err := validatePolicyDocument(deadList); err == nil {
+		t.Fatal("action list containing s3vectors should be rejected")
+	}
+}
