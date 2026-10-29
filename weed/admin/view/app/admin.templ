@@ -23,7 +23,7 @@ templ Admin(data dash.AdminData) {
     <div id="dashboard-content">
         <!-- Version mismatch warning: nodes reporting different binary versions
              usually means an upgrade did not reach every server. -->
-        if !data.VersionSummary.Uniform {
+        if data.VersionSummary.Mixed() {
             <div class="alert alert-warning d-flex align-items-start" role="alert">
                 <i class="bi bi-exclamation-triangle-fill me-2 mt-1"></i>
                 <div>
@@ -418,17 +418,20 @@ templ Admin(data dash.AdminData) {
                                         if data.VersionSummary.Uniform {
                                             <h5 class="text-truncate" title={data.VersionSummary.Version}>{data.VersionSummary.Version}</h5>
                                             <small class="text-muted">Version</small>
-                                        } else {
+                                        } else if data.VersionSummary.Mixed() {
                                             <h5 class="text-warning">
                                                 <i class="bi bi-exclamation-triangle-fill"></i>
                                             </h5>
                                             <small class="text-muted">Mixed Versions</small>
+                                        } else {
+                                            <h5 class="text-truncate">—</h5>
+                                            <small class="text-muted">Version</small>
                                         }
                                     </div>
                                 </div>
                             </div>
                         </div>
-                        if !data.VersionSummary.Uniform {
+                        if data.VersionSummary.Mixed() {
                             <div class="row mt-3">
                                 <div class="col-12 text-start">
                                     <small class="text-muted text-uppercase fw-bold">Node Versions</small>

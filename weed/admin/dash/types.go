@@ -822,3 +822,9 @@ type ClusterVersionSummary struct {
 	Version   string             `json:"version,omitempty"` // set when Uniform
 	NodeTypes []NodeTypeVersions `json:"node_types"`
 }
+
+// Mixed reports a real version split: non-uniform with nodes on record,
+// unlike an empty cluster that reports no versions at all.
+func (v ClusterVersionSummary) Mixed() bool {
+	return !v.Uniform && len(v.NodeTypes) > 0
+}
