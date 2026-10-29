@@ -116,7 +116,7 @@ func (r *Replicator) Replicate(ctx context.Context, key string, message *filer_p
 		// A real move: the path changed. UpdateEntry cannot move an entry.
 		if mover, ok := r.sink.(sink.EntryMover); ok {
 			glog.V(4).Infof("moving %v => %v", oldSinkKey, newSinkKey)
-			return mover.MoveEntry(oldSinkKey, newSinkKey, newEntry, message.Signatures)
+			return mover.MoveEntry(oldSinkKey, newSinkKey, oldEntry, newEntry, message.Signatures)
 		}
 		// Sinks without a native move: create at the new key first, then delete the
 		// old, so a crash between the two leaves the entry visible under both names

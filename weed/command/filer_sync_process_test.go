@@ -91,7 +91,7 @@ type movingSyncSink struct {
 
 var _ sink.EntryMover = (*movingSyncSink)(nil)
 
-func (s *movingSyncSink) MoveEntry(oldKey, newKey string, newEntry *filer_pb.Entry, signatures []int32) error {
+func (s *movingSyncSink) MoveEntry(oldKey, newKey string, oldEntry, newEntry *filer_pb.Entry, signatures []int32) error {
 	s.moveOldKeys = append(s.moveOldKeys, oldKey)
 	s.moveNewKeys = append(s.moveNewKeys, newKey)
 	s.ordered = append(s.ordered, "move")

@@ -223,7 +223,7 @@ var _ sink.EntryMover = (*FilerSink)(nil)
 // is re-checked with a direct lookup rather than inferred from the rename error,
 // so a rolled-back move that left the old entry intact propagates for retry
 // instead of being mistaken for "gone".
-func (fs *FilerSink) MoveEntry(oldKey, newKey string, newEntry *filer_pb.Entry, signatures []int32) error {
+func (fs *FilerSink) MoveEntry(oldKey, newKey string, oldEntry, newEntry *filer_pb.Entry, signatures []int32) error {
 	oldDir, oldName := util.FullPath(oldKey).DirAndName()
 	newDir, newName := util.FullPath(newKey).DirAndName()
 
@@ -238,7 +238,15 @@ func (fs *FilerSink) MoveEntry(oldKey, newKey string, newEntry *filer_pb.Entry, 
 		return err
 	})
 	if err == nil {
-		return nil
+		// The rename relocates whatever version the destination held, which can
+		// predate the event's snapshot — e.g. a queued update skipped after the
+		// source already moved to the new name. Reconcile content the same way
+		// an in-place update does.
+		if oldEntry == nil {
+			return nil
+		}
+		_, uerr := fs.UpdateEntry(newKey, oldEntry, newDir, newEntry, true, signatures)
+		return uerr
 	}
 	if missing, lookupErr := fs.entryMissing(oldKey); lookupErr == nil && missing {
 		glog.V(2).Infof("move %s => %s: old path gone, creating %s", oldKey, newKey, newKey)
@@ -292,6 +300,20 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures [
 			}
 			glog.Warningf("re-replicating %s: destination not current (dst %d chunks, src %d chunks)",
 				key, len(resp.Entry.GetChunks()), len(entry.GetChunks()))
+		}
+
+		// A version the source already moved past is superseded by a later
+		// event, so fetching its chunks only feeds a write that is obsolete on
+		// arrival — skip before any read. When the source holds a newer live
+		// version, replicate it directly: the superseding event may never be
+		// delivered to this sink.
+		if live, movedOn := fs.sourceVersion(key, entry); movedOn {
+			if live == nil {
+				glog.Warningf("skip stale entry %s, source superseded before replicate", key)
+				return nil
+			}
+			glog.Warningf("entry %s superseded before replicate; syncing live version", key)
+			entry = live
 		}
 
 		replicatedChunks, err := fs.replicateChunks(context.Background(), entry.GetChunks(), key, getEntryMtimeNs(entry), "")
@@ -366,7 +388,25 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 	// now, which for a rename is newParentPath/newEntry.Name, not the old key.
 	targetKey := updatedEntryKey(key, newParentPath, newEntry)
 
-	switch chooseUpdateAction(existingEntry, oldEntry, newEntry) {
+	action := chooseUpdateAction(existingEntry, oldEntry, newEntry)
+	if action != updateSkip {
+		if live, movedOn := fs.sourceVersion(targetKey, newEntry); movedOn {
+			if live == nil {
+				glog.Warningf("skip stale entry %s, source superseded before replicate", targetKey)
+				return true, nil
+			}
+			glog.Warningf("entry %s superseded before replicate; syncing live version", targetKey)
+			newEntry = live
+			// The replayed oldEntry predates the live version, so an
+			// incremental diff could resolve manifests the overwrite already
+			// vacuumed; repair from the live snapshot instead.
+			if action = chooseUpdateAction(existingEntry, oldEntry, newEntry); action == updateNormal {
+				action = updateRepair
+			}
+		}
+	}
+
+	switch action {
 	case updateSkip:
 		// a newer, complete version already landed (out-of-order); leave it
 		glog.V(2).Infof("late updates %s", key)
@@ -506,34 +546,43 @@ func (fs *FilerSink) onReplicateChunkError(key string, entry *filer_pb.Entry, er
 	return fmt.Errorf("replicate entry chunks %s: %w", key, err)
 }
 
-// sourceMovedOn reports whether the live source entry moved past the replayed
-// version: gone, strictly newer, or rewritten in place so it no longer
-// references the same chunks — the last is invisible to the mtime check. A live
-// entry older than the replayed version proves nothing about it.
-func (fs *FilerSink) sourceMovedOn(targetPath string, entry *filer_pb.Entry) bool {
+// sourceVersion returns the source's live entry for targetPath and whether it
+// moved past the replayed version: gone (live == nil), strictly newer, or
+// rewritten in place so it no longer references the same chunks — the last is
+// invisible to the mtime check. A live entry older than the replayed version
+// proves nothing about it, and neither does a failed lookup.
+func (fs *FilerSink) sourceVersion(targetPath string, entry *filer_pb.Entry) (live *filer_pb.Entry, movedOn bool) {
 	sourcePath, ok := fs.targetPathToSourcePath(targetPath)
 	if !ok {
-		return false
+		return nil, false
 	}
 	replayedMtimeNs := getEntryMtimeNs(entry)
-	live, _, _, lookupErr := filer_pb.GetEntry(context.Background(), fs.filerSource, sourcePath)
+	live, lookupErr := fs.sourceEntry(sourcePath)
 	if sourceSupersedes(sourcePath, live, lookupErr, replayedMtimeNs) {
-		return true
+		return live, true
 	}
 	if lookupErr != nil || live == nil || replayedMtimeNs <= 0 || getEntryMtimeNs(live) < replayedMtimeNs {
-		return false
+		return nil, false
 	}
 	liveIds := chunkFileIds(live.GetChunks())
 	replayedIds := chunkFileIds(entry.GetChunks())
 	if len(liveIds) != len(replayedIds) {
-		return true
+		return live, true
 	}
 	for id := range replayedIds {
 		if !liveIds[id] {
-			return true
+			return live, true
 		}
 	}
-	return false
+	return nil, false
+}
+
+// sourceMovedOn reports whether the live source entry moved past the replayed
+// version: gone, strictly newer, or rewritten in place so it no longer
+// references the same chunks — the last is invisible to the mtime check.
+func (fs *FilerSink) sourceMovedOn(targetPath string, entry *filer_pb.Entry) bool {
+	_, movedOn := fs.sourceVersion(targetPath, entry)
+	return movedOn
 }
 
 // updateAction decides how UpdateEntry reconciles an incoming source version with
