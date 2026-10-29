@@ -438,15 +438,61 @@ func (fs *FilerServer) ObjectTransaction(ctx context.Context, req *filer_pb.Obje
 	}
 
 	for i, m := range req.Mutations {
+		if code, err := fs.checkMutationCondition(ctx, m); err != nil {
+			glog.V(2).InfofCtx(ctx, "ObjectTransaction %s mutation %d condition lookup: %v", lockPath, i, err)
+			resp.Error = fmt.Sprintf("mutation %d: %v", i, err)
+			failed := int32(i)
+			resp.FailedMutation = &failed
+			return resp, nil
+		} else if code != filer_pb.FilerError_OK {
+			glog.V(3).InfofCtx(ctx, "ObjectTransaction %s mutation %d precondition failed", lockPath, i)
+			resp.Error = fmt.Sprintf("mutation %d: precondition failed", i)
+			resp.ErrorCode = code
+			failed := int32(i)
+			resp.FailedMutation = &failed
+			return resp, nil
+		}
 		if err := fs.applyObjectMutation(ctx, m, req.IsFromOtherCluster, req.Signatures); err != nil {
 			glog.V(2).InfofCtx(ctx, "ObjectTransaction %s mutation %d (%v): %v", lockPath, i, m.Type, err)
 			resp.Error = fmt.Sprintf("mutation %d: %v", i, err)
 			resp.ErrorCode = filerErrorCode(err)
+			failed := int32(i)
+			resp.FailedMutation = &failed
 			return resp, nil
 		}
 	}
 
 	return resp, nil
+}
+
+// checkMutationCondition evaluates a mutation's optional precondition under the
+// transaction's lock, against condition_key when set or the mutation's target
+// (the PUT's entry path, else directory/name). Unlike the request-level
+// condition there is no alt-key fallback: a mutation guard names the exact entry
+// it guards.
+func (fs *FilerServer) checkMutationCondition(ctx context.Context, m *filer_pb.ObjectMutation) (filer_pb.FilerError, error) {
+	if !conditionIsSet(m.Condition) {
+		return filer_pb.FilerError_OK, nil
+	}
+	target := util.FullPath(m.ConditionKey)
+	if target == "" {
+		name := m.Name
+		if m.Type == filer_pb.ObjectMutation_PUT && m.Entry != nil {
+			name = m.Entry.Name
+		}
+		target = util.JoinPath(m.Directory, name)
+	}
+	current, err := fs.filer.FindEntry(ctx, target)
+	if err != nil && err != filer_pb.ErrNotFound {
+		return filer_pb.FilerError_OK, fmt.Errorf("condition check %s: %w", target, err)
+	}
+	if err == filer_pb.ErrNotFound {
+		current = nil
+	}
+	if !writeConditionSatisfied(m.Condition, current) {
+		return filer_pb.FilerError_PRECONDITION_FAILED, nil
+	}
+	return filer_pb.FilerError_OK, nil
 }
 
 const (

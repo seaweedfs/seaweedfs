@@ -229,6 +229,90 @@ func TestObjectTransactionPreconditionAborts(t *testing.T) {
 	}
 }
 
+// A mutation's own precondition is checked under the same lock just before the
+// mutation applies; a failure aborts the transaction at that mutation and is
+// reported through failed_mutation, leaving earlier mutations' work visible.
+func TestObjectTransactionMutationCondition(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	fs, store := newTxnTestServer(t, map[string]*filer.Entry{
+		"/buckets/bkt/obj": {
+			Attr: filer.Attr{Inode: 1, Mtime: now, Crtime: now, Mode: 0644},
+		},
+	})
+
+	mkReq := func() *filer_pb.ObjectTransactionRequest {
+		return &filer_pb.ObjectTransactionRequest{
+			LockKey: "/buckets/bkt/obj",
+			Mutations: []*filer_pb.ObjectMutation{
+				{Type: filer_pb.ObjectMutation_PUT, Directory: "/buckets/bkt", Entry: &filer_pb.Entry{
+					Name:       "other",
+					Attributes: &filer_pb.FuseAttributes{Mtime: now.Unix(), FileMode: 0644, Inode: 2},
+				}, Condition: &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{
+					{Kind: filer_pb.WriteCondition_IF_NOT_EXISTS},
+				}}, ConditionKey: "/buckets/bkt/obj"},
+				{Type: filer_pb.ObjectMutation_DELETE, Directory: "/buckets/bkt", Name: "obj"},
+			},
+		}
+	}
+
+	resp, err := fs.ObjectTransaction(context.Background(), mkReq())
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if resp.ErrorCode != filer_pb.FilerError_PRECONDITION_FAILED {
+		t.Fatalf("want PRECONDITION_FAILED, got %v (%q)", resp.ErrorCode, resp.Error)
+	}
+	if resp.FailedMutation == nil || *resp.FailedMutation != 0 {
+		t.Fatalf("want failed_mutation=0, got %v", resp.FailedMutation)
+	}
+	if _, ok := store.entries["/buckets/bkt/other"]; ok {
+		t.Errorf("PUT whose condition failed must not store an entry")
+	}
+	if _, ok := store.entries["/buckets/bkt/obj"]; !ok {
+		t.Errorf("a failed mutation condition must abort before later mutations run")
+	}
+
+	// With the slot absent the same transaction applies both mutations.
+	delete(store.entries, "/buckets/bkt/obj")
+	resp, err = fs.ObjectTransaction(context.Background(), mkReq())
+	if err != nil || resp.Error != "" {
+		t.Fatalf("txn failed: err=%v resp=%q", err, resp.Error)
+	}
+	if _, ok := store.entries["/buckets/bkt/other"]; !ok {
+		t.Errorf("condition satisfied: PUT entry missing")
+	}
+}
+
+// The request-level condition keeps reporting no failed_mutation, so callers
+// can tell it apart from a mutation's own guard.
+func TestObjectTransactionMutationConditionVsRequest(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	fs, _ := newTxnTestServer(t, map[string]*filer.Entry{
+		"/buckets/bkt/obj": {
+			Attr: filer.Attr{Inode: 1, Mtime: now, Crtime: now, Mode: 0644},
+		},
+	})
+
+	resp, err := fs.ObjectTransaction(context.Background(), &filer_pb.ObjectTransactionRequest{
+		LockKey: "/buckets/bkt/obj",
+		Condition: &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{
+			{Kind: filer_pb.WriteCondition_IF_NOT_EXISTS},
+		}},
+		Mutations: []*filer_pb.ObjectMutation{
+			{Type: filer_pb.ObjectMutation_DELETE, Directory: "/buckets/bkt", Name: "obj"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if resp.ErrorCode != filer_pb.FilerError_PRECONDITION_FAILED {
+		t.Fatalf("want PRECONDITION_FAILED, got %v (%q)", resp.ErrorCode, resp.Error)
+	}
+	if resp.FailedMutation != nil {
+		t.Fatalf("request-level failure must not set failed_mutation, got %d", *resp.FailedMutation)
+	}
+}
+
 // Deleting the latest version and recomputing re-points the pointer at the new
 // highest-named remaining version; the scan runs under the transaction lock.
 func TestObjectTransactionRecomputeLatest(t *testing.T) {
