@@ -355,13 +355,17 @@ func (mc *MetaCache) PurgeDirectoryChildren(dirPath util.FullPath, resetFn func(
 	})
 }
 
-func (mc *MetaCache) UpdateEntry(ctx context.Context, entry *filer.Entry) error {
+// UpdateEntry stores a local write against the entry. versionTsNs is the
+// filer log position the write restates — a section refresh listed before it
+// must not roll the content back — or zero when no position describes it,
+// which marks the content unversioned.
+func (mc *MetaCache) UpdateEntry(ctx context.Context, entry *filer.Entry, versionTsNs int64) error {
 	mc.Lock()
 	defer mc.Unlock()
 	if err := mc.localStore.UpdateEntry(ctx, entry); err != nil {
 		return err
 	}
-	mc.markEntryUnversionedLocked(ctx, entry.FullPath)
+	mc.setEntryVersionLocked(ctx, entry.FullPath, versionTsNs)
 	return nil
 }
 

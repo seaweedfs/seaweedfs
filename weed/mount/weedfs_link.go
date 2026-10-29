@@ -144,12 +144,16 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 		updateEvent := updateResp.GetMetadataEvent()
 		if updateEvent == nil {
 			updateEvent = metadataUpdateEvent(oldParentPath, updateOldEntryRequest.Entry)
+			if updateEvent != nil {
+				updateEvent.TsNs = ackVersionTsNs(updateResp)
+			}
 		}
 		if applyErr := wfs.applyLocalMetadataEvent(context.Background(), updateEvent); applyErr != nil {
 			glog.Warningf("link %s: best-effort metadata apply failed: %v", oldEntryPath, applyErr)
 			wfs.inodeToPath.InvalidateChildrenCache(util.FullPath(oldParentPath))
 		}
 	}
+	var linkVersionTsNs int64
 	if err == nil {
 		var createResp *filer_pb.CreateEntryResponse
 		createResp, err = wfs.streamCreateEntry(context.Background(), request)
@@ -166,9 +170,13 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 				glog.Warningf("link rollback %s: %v", oldEntryPath, rollbackErr)
 			}
 		} else {
+			linkVersionTsNs = ackVersionTsNs(createResp)
 			createEvent := createResp.GetMetadataEvent()
 			if createEvent == nil {
 				createEvent = metadataCreateEvent(string(newParentPath), request.Entry)
+				if createEvent != nil {
+					createEvent.TsNs = linkVersionTsNs
+				}
 			}
 			if applyErr := wfs.applyLocalMetadataEvent(context.Background(), createEvent); applyErr != nil {
 				glog.Warningf("link %s: best-effort metadata apply failed: %v", newParentPath.Child(name), applyErr)
@@ -195,7 +203,7 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 	// existing sibling link (other than the source we just wrote) returns
 	// the old nlink from the local metacache — pjdfstest link/00.t catches
 	// this after `link n1 n2` when it stats n0.
-	wfs.syncHardLinkSiblings(sourceInode, oldEntry, oldEntryPath, newEntryPath)
+	wfs.syncHardLinkSiblings(sourceInode, oldEntry, linkVersionTsNs, oldEntryPath, newEntryPath)
 
 	wfs.outputPbEntry(out, sourceInode, request.Entry)
 
@@ -205,9 +213,12 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 // syncHardLinkSiblings rewrites the cached HardLinkCounter (and ctime) on
 // every sibling link of the given inode, and invalidates the kernel's inode
 // attr cache. `authoritativeEntry` carries the counter/ctime that should be
-// propagated. `skipPaths` are the link paths already updated by the caller
-// (typically the source and/or the newly created/removed link).
-func (wfs *WFS) syncHardLinkSiblings(inode uint64, authoritativeEntry *filer_pb.Entry, skipPaths ...util.FullPath) {
+// propagated; `versionTsNs` is the log position the mutation committed at, so
+// a section refresh listed before it cannot roll the counter back to the
+// older value the filer snapshot still holds. `skipPaths` are the link paths
+// already updated by the caller (typically the source and/or the newly
+// created/removed link).
+func (wfs *WFS) syncHardLinkSiblings(inode uint64, authoritativeEntry *filer_pb.Entry, versionTsNs int64, skipPaths ...util.FullPath) {
 	if authoritativeEntry == nil || len(authoritativeEntry.HardLinkId) == 0 {
 		return
 	}
@@ -240,7 +251,7 @@ func (wfs *WFS) syncHardLinkSiblings(inode uint64, authoritativeEntry *filer_pb.
 		if authoritativeEntry.Attributes != nil {
 			sibling.Attr.Ctime = time.Unix(authoritativeEntry.Attributes.Ctime, int64(authoritativeEntry.Attributes.CtimeNs))
 		}
-		if err := wfs.metaCache.UpdateEntry(ctx, sibling); err != nil {
+		if err := wfs.metaCache.UpdateEntry(ctx, sibling, versionTsNs); err != nil {
 			glog.V(4).Infof("syncHardLinkSiblings update %s: %v", p, err)
 		}
 	}

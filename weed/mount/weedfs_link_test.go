@@ -239,7 +239,7 @@ func TestLinkSyncsHardLinkSiblingsOnThirdLink(t *testing.T) {
 	}
 	authoritative.HardLinkCounter = 4
 
-	wfs.syncHardLinkSiblings(authoritative.Attributes.Inode, authoritative, skippedSource, secondLinkPath)
+	wfs.syncHardLinkSiblings(authoritative.Attributes.Inode, authoritative, 0, skippedSource, secondLinkPath)
 	for _, p := range siblings {
 		if counter := cachedLink(t, wfs, p).HardLinkCounter; counter != 3 {
 			t.Errorf("keyed by the persisted inode the sync reached %s (counter %d), which it cannot: "+
@@ -247,7 +247,7 @@ func TestLinkSyncsHardLinkSiblingsOnThirdLink(t *testing.T) {
 		}
 	}
 
-	wfs.syncHardLinkSiblings(sourceInode, authoritative, skippedSource, secondLinkPath)
+	wfs.syncHardLinkSiblings(sourceInode, authoritative, 0, skippedSource, secondLinkPath)
 	for _, p := range siblings {
 		if counter := cachedLink(t, wfs, p).HardLinkCounter; counter != 4 {
 			t.Errorf("%s HardLinkCounter = %d after the sibling sync, want 4", p, counter)

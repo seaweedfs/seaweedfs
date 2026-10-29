@@ -338,7 +338,7 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 		now := time.Now()
 		decremented.Attributes.Ctime = now.Unix()
 		decremented.Attributes.CtimeNs = int32(now.Nanosecond())
-		wfs.syncHardLinkSiblings(sharedInode, decremented, entryFullPath)
+		wfs.syncHardLinkSiblings(sharedInode, decremented, event.GetTsNs(), entryFullPath)
 	}
 
 	return fuse.OK
