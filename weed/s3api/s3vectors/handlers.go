@@ -271,13 +271,18 @@ func validateEncryptionConfiguration(cfg map[string]interface{}) error {
 	}
 	sseType, _ := cfg["sseType"].(string)
 	switch sseType {
-	case "AES256", "aws:kms":
-		return nil
+	case "AES256":
 	case "":
 		return fmt.Errorf("encryptionConfiguration requires sseType")
 	default:
 		return fmt.Errorf("unsupported sseType %q", sseType)
 	}
+	// Nothing on the storage path reads a caller-chosen key; recording one
+	// would claim protection the data does not get.
+	if _, ok := cfg["kmsKeyArn"]; ok {
+		return fmt.Errorf("kmsKeyArn is not supported")
+	}
+	return nil
 }
 
 func (s *Server) handleCreateVectorBucket(w http.ResponseWriter, r *http.Request) {
