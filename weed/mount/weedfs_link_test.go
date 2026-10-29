@@ -259,11 +259,12 @@ func TestLinkSyncsHardLinkSiblingsOnThirdLink(t *testing.T) {
 
 // When the sibling refresh cannot reach the filer, the fallback patches the
 // cached counter without proving the content reflects the mutation — so it
-// must claim no log position, or an event that was still in flight for the
-// sibling is fenced out at the version gate and its newer content is lost.
+// keeps the version the sibling already held: claiming the mutation's
+// position would fence an event still in flight for the sibling, while
+// claiming nothing would let a replayed older delete remove the live link.
 // The test filer answers every LookupDirectoryEntry with Unimplemented, so
 // the sync always lands on that fallback.
-func TestSyncHardLinkSiblingFetchFailureClaimsNoVersion(t *testing.T) {
+func TestSyncHardLinkSiblingFetchFailureKeepsVersion(t *testing.T) {
 	wfs, _ := newCreateTestWFS(t)
 
 	hardLinkId := filer.HardLinkId([]byte{9, 9, 9, 9})
@@ -290,6 +291,22 @@ func TestSyncHardLinkSiblingFetchFailureClaimsNoVersion(t *testing.T) {
 
 	if counter := cachedLink(t, wfs, sibPath).HardLinkCounter; counter != 4 {
 		t.Fatalf("sibling HardLinkCounter = %d after the fallback patch, want 4", counter)
+	}
+
+	// The patch claimed only the version the sibling already held (7000), so
+	// a delayed delete replayed from before that point is fenced out instead
+	// of removing the live link.
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), &filer_pb.SubscribeMetadataResponse{
+		Directory: "/",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: &filer_pb.Entry{Name: "sib.txt"},
+		},
+		TsNs: 6000,
+	}, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply delayed delete: %v", err)
+	}
+	if sib := cachedLink(t, wfs, sibPath); sib == nil {
+		t.Fatal("replayed older delete removed the live link")
 	}
 
 	// The mutation committed at 9000 but the patch proves nothing about the

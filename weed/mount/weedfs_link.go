@@ -239,7 +239,7 @@ func (wfs *WFS) syncHardLinkSiblings(ctx context.Context, inode uint64, authorit
 		if _, skipped := skip[p]; skipped {
 			continue
 		}
-		sibling, _, err := wfs.metaCache.FindEntry(ctx, p)
+		sibling, siblingTsNs, err := wfs.metaCache.FindEntry(ctx, p)
 		if err != nil || sibling == nil {
 			continue
 		}
@@ -268,9 +268,10 @@ func (wfs *WFS) syncHardLinkSiblings(ctx context.Context, inode uint64, authorit
 			continue
 		}
 		// The fetch failed: patch the counter in place so the sibling is
-		// not left stale, but claim no log position for it — the cached
-		// content may predate a still-pending event, which an unversioned
-		// mark lets land and correct.
+		// not left stale, but claim only the version its content already
+		// holds — a newer in-flight event still lands and corrects it,
+		// while a replayed older delete stays fenced instead of removing
+		// a live link.
 		if !bytes.Equal(sibling.HardLinkId, authoritativeEntry.HardLinkId) {
 			continue
 		}
@@ -278,7 +279,7 @@ func (wfs *WFS) syncHardLinkSiblings(ctx context.Context, inode uint64, authorit
 		if authoritativeEntry.Attributes != nil {
 			sibling.Attr.Ctime = time.Unix(authoritativeEntry.Attributes.Ctime, int64(authoritativeEntry.Attributes.CtimeNs))
 		}
-		if err := wfs.metaCache.UpdateEntry(ctx, sibling, 0); err != nil {
+		if err := wfs.metaCache.UpdateEntry(ctx, sibling, siblingTsNs); err != nil {
 			glog.V(4).Infof("syncHardLinkSiblings update %s: %v", p, err)
 		}
 	}
