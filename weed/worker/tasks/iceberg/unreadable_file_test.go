@@ -236,3 +236,23 @@ func TestAnUnreadableDataFileSkipsItsBinAndTheOtherBinsCompact(t *testing.T) {
 		t.Fatalf("result %q: want the readable bin compacted", result)
 	}
 }
+
+func TestMergeFailsOnACorruptPageNamingTheFile(t *testing.T) {
+	fs, client := startFakeFiler(t)
+	fs.putEntry("/buckets/test-bucket/ns/tbl/data", "corrupt.parquet", &filer_pb.Entry{
+		Name:    "corrupt.parquet",
+		Content: corruptPageFile(t),
+	})
+
+	// Its footer reads fine, so the panic comes from its pages inside the
+	// merge's row decoder.
+	var err error
+	noPanic(t, func() {
+		_, _, err = mergeParquetFilesInto(context.Background(), client, "test-bucket", "ns/tbl",
+			[]iceberg.ManifestEntry{schemaFileEntry(t, "data/corrupt.parquet", 1)},
+			nil, nil, newTestSchema(), 0, false, nil)
+	})
+	if err == nil || !strings.Contains(err.Error(), "corrupt.parquet") || !strings.Contains(err.Error(), "panic") {
+		t.Fatalf("err = %v, want an error naming corrupt.parquet", err)
+	}
+}
