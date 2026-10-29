@@ -426,3 +426,62 @@ func TestForgetKeepsDirRebuildable(t *testing.T) {
 		t.Fatal("re-looked-up directory that once held a listing should rebuild")
 	}
 }
+
+// TestLookupRefreshesStaleSection covers a directory still cached but with an
+// invalidated section: without a refresh on lookup, every lookup in that
+// range reads through until a listing re-validates it.
+func TestLookupRefreshesStaleSection(t *testing.T) {
+	wfs := newLookupCacheTestWFS(t, 60)
+	dir := util.FullPath("/dir")
+	wfs.inodeToPath.Lookup(dir, time.Now().Unix(), true, false, 0, true)
+
+	fake := &lookupCacheTestFiler{
+		entries: []*filer_pb.Entry{
+			{Name: "a", Attributes: &filer_pb.FuseAttributes{FileSize: 1, FileMode: 0100644}},
+			{Name: "b", Attributes: &filer_pb.FuseAttributes{FileSize: 2, FileMode: 0100644}},
+			{Name: "c", Attributes: &filer_pb.FuseAttributes{FileSize: 3, FileMode: 0100644}},
+		},
+		snapshotTsNs: 5000,
+	}
+	startFakeFiler(t, wfs, fake)
+
+	if err := meta_cache.EnsureVisited(context.Background(), wfs.metaCache, wfs, dir, 0); err != nil {
+		t.Fatalf("EnsureVisited: %v", err)
+	}
+
+	// A burst of remote changes in the only section invalidates it.
+	for i := 0; i < 64; i++ {
+		resp := &filer_pb.SubscribeMetadataResponse{
+			Directory: string(dir),
+			TsNs:      6000 + int64(i),
+			EventNotification: &filer_pb.EventNotification{
+				NewEntry: &filer_pb.Entry{
+					Name:       fmt.Sprintf("x-%03d", i),
+					Attributes: &filer_pb.FuseAttributes{Crtime: 1, Mtime: 1, FileMode: 0100644, FileSize: 1},
+				},
+			},
+		}
+		if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), resp, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+			t.Fatalf("apply churn %d: %v", i, err)
+		}
+	}
+	if wfs.metaCache.IsNameFresh(dir.Child("a")) {
+		t.Fatal("section should be stale after the change burst")
+	}
+
+	listCallsBefore := fake.listCalls.Load()
+	lookupCallsBefore := fake.lookupCalls.Load()
+
+	for _, name := range []string{"a", "b", "c"} {
+		if entry, _, status := wfs.lookupEntry(context.Background(), dir.Child(name)); status != fuse.OK || entry == nil {
+			t.Fatalf("lookupEntry %s: status=%v entry=%v", name, status, entry)
+		}
+	}
+
+	if got := fake.lookupCalls.Load() - lookupCallsBefore; got != 0 {
+		t.Errorf("LookupDirectoryEntry RPCs = %d, want 0 (stale section should be refreshed, not read per-entry)", got)
+	}
+	if got := fake.listCalls.Load() - listCallsBefore; got != 1 {
+		t.Errorf("ListEntries RPCs = %d, want 1 (one section refresh)", got)
+	}
+}

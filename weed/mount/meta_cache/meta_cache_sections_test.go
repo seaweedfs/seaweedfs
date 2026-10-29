@@ -972,3 +972,51 @@ func TestSectionRefreshSweepsANameRecordedAtTheSnapshot(t *testing.T) {
 		t.Error("a name the refresh did not list is still cached")
 	}
 }
+
+// TestEnsureNameFreshRefreshesOnlyItsSection checks that a name-scoped
+// refresh re-lists just the section holding that name and leaves other stale
+// sections untouched.
+func TestEnsureNameFreshRefreshesOnlyItsSection(t *testing.T) {
+	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
+		"/":    true,
+		"/dir": true,
+	})
+	defer mc.Shutdown()
+
+	server := &sectionFilerServer{snapshot: 5000}
+	server.names = append(server.names, "a-000", "b-000", "m", "z-000")
+	client := startSectionFilerServer(t, server)
+
+	buildSectionedDir(t, mc, util.FullPath("/dir"), 1000, []string{"m"})
+	applyChurn(t, mc, "/dir", "a-", sectionHotThreshold, 2000, SubscriberMetadataResponseApplyOptions)
+	applyChurn(t, mc, "/dir", "z-", sectionHotThreshold, 3000, SubscriberMetadataResponseApplyOptions)
+	if mc.IsNameFresh(util.FullPath("/dir/a-000")) || mc.IsNameFresh(util.FullPath("/dir/z-000")) {
+		t.Fatal("both sections should be stale before the refresh")
+	}
+
+	if err := EnsureNameFresh(context.Background(), mc, client, util.FullPath("/dir"), "a-000"); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if !mc.IsNameFresh(util.FullPath("/dir/a-000")) {
+		t.Fatal("the section holding the name should be fresh after the refresh")
+	}
+	if mc.IsNameFresh(util.FullPath("/dir/z-000")) {
+		t.Fatal("the other stale section must not be refreshed by a name outside it")
+	}
+
+	requests := server.listRequests()
+	if len(requests) != 1 {
+		t.Fatalf("name refresh made %d list requests, want 1", len(requests))
+	}
+	if requests[0].StartFromFileName != "" || requests[0].InclusiveStartFrom {
+		t.Fatalf("refresh should list the section from its start: StartFromFileName=%q inclusive=%v",
+			requests[0].StartFromFileName, requests[0].InclusiveStartFrom)
+	}
+
+	if err := EnsureNameFresh(context.Background(), mc, client, util.FullPath("/dir"), "z-000"); err != nil {
+		t.Fatalf("second refresh: %v", err)
+	}
+	if !mc.IsNameFresh(util.FullPath("/dir/z-000")) {
+		t.Fatal("the second section should be fresh after its own refresh")
+	}
+}

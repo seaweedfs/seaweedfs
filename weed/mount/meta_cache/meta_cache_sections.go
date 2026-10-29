@@ -248,6 +248,34 @@ func EnsureListingFresh(ctx context.Context, mc *MetaCache, client filer_pb.File
 	return nil
 }
 
+// EnsureNameFresh re-validates only the section covering name. A lookup into
+// an invalidated range re-establishes it here rather than every later lookup
+// in that range reading through until the next listing.
+func EnsureNameFresh(ctx context.Context, mc *MetaCache, client filer_pb.FilerClient, dirPath util.FullPath, name string) error {
+	r, stale := mc.staleRangeOf(dirPath, name)
+	if !stale {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, sectionRefreshTimeout)
+	defer cancel()
+	return mc.refreshSection(ctx, client, dirPath, r.lo, r.hi)
+}
+
+func (mc *MetaCache) staleRangeOf(dirPath util.FullPath, name string) (nameRange, bool) {
+	mc.RLock()
+	defer mc.RUnlock()
+	sl := mc.dirSections[dirPath]
+	if sl == nil {
+		return nameRange{}, false
+	}
+	idx := sl.sectionOf(name)
+	if s := sl.sections[idx]; !s.stale || s.unverifiable {
+		return nameRange{}, false
+	}
+	lo, hi := sl.sectionRange(idx)
+	return nameRange{lo: lo, hi: hi}, true
+}
+
 func (mc *MetaCache) refreshSection(ctx context.Context, client filer_pb.FilerClient, dirPath util.FullPath, lo, hi string) error {
 	_, err, _ := mc.visitGroup.Do(string(dirPath)+"\x00section\x00"+lo, func() (interface{}, error) {
 		if !mc.rangeStale(dirPath, lo) {
