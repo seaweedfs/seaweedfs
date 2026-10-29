@@ -266,23 +266,7 @@ func (s *Server) authorizeIndexWrite(ctx context.Context, r *http.Request, bucke
 }
 
 func validateEncryptionConfiguration(cfg map[string]interface{}) error {
-	if len(cfg) == 0 {
-		return nil
-	}
-	sseType, _ := cfg["sseType"].(string)
-	switch sseType {
-	case "AES256":
-	case "":
-		return fmt.Errorf("encryptionConfiguration requires sseType")
-	default:
-		return fmt.Errorf("unsupported sseType %q", sseType)
-	}
-	// Nothing on the storage path reads a caller-chosen key; recording one
-	// would claim protection the data does not get.
-	if _, ok := cfg["kmsKeyArn"]; ok {
-		return fmt.Errorf("kmsKeyArn is not supported")
-	}
-	return nil
+	return s3tables.ValidateEncryptionConfiguration(cfg)
 }
 
 func (s *Server) handleCreateVectorBucket(w http.ResponseWriter, r *http.Request) {
