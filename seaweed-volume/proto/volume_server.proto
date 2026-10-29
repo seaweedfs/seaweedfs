@@ -237,6 +237,9 @@ message VolumeIncrementalCopyRequest {
     uint64 last_needle_key = 4;
     uint32 last_needle_cookie = 5;
     int32 last_needle_size = 6;
+    // FNV-1a checksum of the (key, size) of every local index entry,
+    // verifying the whole prefix since replica record order can differ.
+    uint64 entries_hash = 7;
 }
 message VolumeIncrementalCopyResponse {
     bytes file_content = 1;
