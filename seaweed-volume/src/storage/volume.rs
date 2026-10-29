@@ -4923,6 +4923,10 @@ impl Volume {
         if last_key != key || last_size != size {
             return Err(VolumeError::IncrementalCopyDiverged);
         }
+        // a remote-tier tombstone sits in the index with no .dat record to verify
+        if last_offset.is_zero() {
+            return Err(VolumeError::IncrementalCopyDiverged);
+        }
         let mut header_buf = [0u8; NEEDLE_HEADER_SIZE];
         self.read_exact_at_backend(&io, &mut header_buf, last_offset.to_actual_offset() as u64)?;
         let (last_cookie, _id, _s) = Needle::parse_header(&header_buf);
