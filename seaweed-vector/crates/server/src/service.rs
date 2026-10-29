@@ -325,10 +325,16 @@ impl VectorService for VectorServer {
 
     async fn drop_index(
         &self,
-        _request: Request<pb::DropIndexRequest>,
+        request: Request<pb::DropIndexRequest>,
     ) -> Result<Response<pb::DropIndexResponse>, Status> {
-        // Dropping is a catalog decision; the gateway deletes the table record.
-        Err(Status::unimplemented("drop through the catalog"))
+        let req = request.into_inner();
+        let table = req
+            .table
+            .ok_or_else(|| Status::invalid_argument("missing table"))?;
+        dataset::drop(&self.client, &table.id, &self.fallback)
+            .await
+            .map_err(internal)?;
+        Ok(Response::new(pb::DropIndexResponse {}))
     }
 
     async fn put_vectors(

@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/vector_pb"
@@ -569,5 +570,50 @@ func TestValidateEncryptionConfigurationRejectsCustomerKeys(t *testing.T) {
 				t.Fatalf("cfg %v: accepted=%v, want %v", tc.cfg, got, tc.want)
 			}
 		})
+	}
+}
+// A vector index is colocated: its catalog entry sits at the dataset root, so
+// the catalog delete removes entry and data together.
+func TestDeleteIndexRemovesDatasetDirectory(t *testing.T) {
+	fs := s3tablestest.Start(t)
+	internal := s3tables.NewManager()
+	internal.SetTrusted(true)
+	tables := s3tables.NewManager()
+	tables.SetDefaultAllow(true)
+	s := &Server{
+		filerClient: s3tables.NewManagerClient(fs.Client),
+		tables:      tables,
+		internal:    internal,
+	}
+	ctx := context.Background()
+	bucketArn := s.s3tablesArn("vec-bucket")
+
+	var resp map[string]interface{}
+	if err := s.internalCatalog(ctx, "CreateTableBucket",
+		&s3tables.CreateTableBucketRequest{Name: "vec-bucket", Format: s3tables.FormatLance}, &resp); err != nil {
+		t.Fatalf("create bucket: %v", err)
+	}
+	if err := s.internalCatalog(ctx, "CreateNamespace", &s3tables.CreateNamespaceRequest{
+		TableBucketARN: bucketArn, Namespace: []string{indexNamespace}}, &resp); err != nil {
+		t.Fatalf("create namespace: %v", err)
+	}
+	if err := s.internalCatalog(ctx, "CreateTable", &s3tables.CreateTableRequest{
+		TableBucketARN: bucketArn, Namespace: []string{indexNamespace}, Name: "idx",
+		Format: s3tables.FormatLance}, &resp); err != nil {
+		t.Fatalf("create index record: %v", err)
+	}
+	fs.PutFile("/buckets/vec-bucket/vector/idx/data", "part-0.lance", time.Now())
+
+	body, _ := json.Marshal(&DeleteIndexRequest{VectorBucketName: "vec-bucket", IndexName: "idx"})
+	w := httptest.NewRecorder()
+	s.handleDeleteIndex(w, httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("delete index: %d %s", w.Code, w.Body.String())
+	}
+	if e := fs.Get("/buckets/vec-bucket/vector", "idx"); e != nil {
+		t.Fatal("index catalog entry survived DeleteIndex")
+	}
+	if e := fs.Get("/buckets/vec-bucket/vector/idx/data", "part-0.lance"); e != nil {
+		t.Fatal("index dataset survived DeleteIndex")
 	}
 }
