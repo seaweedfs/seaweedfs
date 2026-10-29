@@ -6,7 +6,6 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -151,15 +150,15 @@ func collectVerifyTargets(arg string) ([]verifyTarget, error) {
 		if sep := strings.LastIndex(base, "_"); sep > 0 {
 			collection, idStr = base[:sep], base[sep+1:]
 		}
-		vid, err := strconv.ParseInt(idStr, 10, 64)
-		if err != nil || vid < 0 || vid > 0xFFFFFFFF {
+		vid, err := needle.NewVolumeId(idStr)
+		if err != nil {
 			if isDir {
 				fmt.Fprintf(os.Stderr, "skipping %s: cannot parse a volume id from the file name\n", datName)
 				continue
 			}
 			return nil, fmt.Errorf("cannot parse volume id from %s", datName)
 		}
-		targets = append(targets, verifyTarget{datName: datName, collection: collection, volumeId: vid})
+		targets = append(targets, verifyTarget{datName: datName, collection: collection, volumeId: int64(vid)})
 	}
 	return targets, nil
 }

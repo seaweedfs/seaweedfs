@@ -2,12 +2,10 @@ package command
 
 import (
 	"bufio"
-	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 
@@ -62,15 +60,15 @@ const (
 	compactRewritten                    // a new .dat was written
 )
 
-// backendWriter appends sequentially to a backend file, so bufio can batch the small needle writes.
-type backendWriter struct {
-	f   backend.BackendStorageFile
-	off int64
+// throttledWriter slows the writes down to the -compactionMBps limit.
+type throttledWriter struct {
+	w io.Writer
+	t *util.WriteThrottler
 }
 
-func (w *backendWriter) Write(p []byte) (int, error) {
-	n, err := w.f.WriteAt(p, w.off)
-	w.off += int64(n)
+func (tw throttledWriter) Write(p []byte) (int, error) {
+	n, err := tw.w.Write(p)
+	tw.t.MaybeSlowdown(int64(n))
 	return n, err
 }
 
@@ -124,9 +122,7 @@ func (c *datCompactor) needle(n *needle.Needle, off int64, hdr, body []byte) err
 		if _, err := c.cpdW.Write(body); err != nil {
 			return err
 		}
-		written := int64(len(hdr) + len(body))
-		c.outEnd += written
-		c.throttle.MaybeSlowdown(written)
+		c.outEnd += int64(len(hdr) + len(body))
 	}
 	return nil
 }
@@ -158,22 +154,10 @@ func (c *datCompactor) startCopy(prefixEnd, gapEnd int64) error {
 	}
 	fmt.Printf("first damage at offset %d: copying the %d byte intact prefix, then streaming the rest\n", prefixEnd, prefixEnd)
 
-	dst := &backendWriter{f: c.cpd}
-	buf := make([]byte, 8<<20)
-	for off := int64(0); off < prefixEnd; {
-		n := int64(len(buf))
-		if prefixEnd-off < n {
-			n = prefixEnd - off
-		}
-		read, rerr := c.src.ReadAt(buf[:n], off)
-		if rerr != nil && !(errors.Is(rerr, io.EOF) && int64(read) == n) {
-			return fmt.Errorf("copy prefix: %w", rerr)
-		}
-		if _, err = dst.Write(buf[:n]); err != nil {
-			return fmt.Errorf("copy prefix: %w", err)
-		}
-		off += n
-		c.throttle.MaybeSlowdown(n)
+	// WriterAt -> Writer; hiding any ReadFrom keeps io.CopyBuffer on its large buffer
+	dst := throttledWriter{w: io.NewOffsetWriter(c.cpd, 0), t: c.throttle}
+	if _, err = io.CopyBuffer(dst, io.NewSectionReader(c.src, 0, prefixEnd), make([]byte, 8<<20)); err != nil {
+		return fmt.Errorf("copy prefix: %w", err)
 	}
 	// like a vacuum, bump the compaction revision: offsets in this .dat changed
 	sb := c.superBlock
@@ -181,7 +165,8 @@ func (c *datCompactor) startCopy(prefixEnd, gapEnd int64) error {
 	if _, err = c.cpd.WriteAt(sb.Bytes(), 0); err != nil {
 		return fmt.Errorf("write super block: %w", err)
 	}
-	c.cpdW = bufio.NewWriterSize(dst, 8<<20)
+	// continue right after the prefix; the bufio batches the small needle writes
+	c.cpdW = bufio.NewWriterSize(throttledWriter{w: io.NewOffsetWriter(c.cpd, prefixEnd), t: c.throttle}, 8<<20)
 	c.outEnd = prefixEnd
 	c.started = true
 	return nil
@@ -243,23 +228,6 @@ func (c *datCompactor) abort() {
 	os.Remove(c.cpdName)
 }
 
-// fsyncDir makes renames and creations inside dir durable. Platforms that
-// cannot sync a directory are not an error.
-func fsyncDir(dir string) error {
-	if runtime.GOOS == "windows" {
-		return nil
-	}
-	d, err := os.Open(dir)
-	if err != nil {
-		return nil
-	}
-	defer d.Close()
-	if err = d.Sync(); err != nil && !errors.Is(err, os.ErrInvalid) {
-		return fmt.Errorf("sync dir %s: %w", dir, err)
-	}
-	return nil
-}
-
 // backupName returns path.bak, or path.bak.<unix time> when that already exists.
 func backupName(path string) string {
 	bak := path + ".bak"
@@ -276,7 +244,7 @@ func backupName(path string) string {
 // so the swap itself survives a crash.
 func (c *datCompactor) commit(rewritten, deleteOriginal bool) (idxBak, datBak string, err error) {
 	dir := filepath.Dir(c.datName)
-	if err = fsyncDir(dir); err != nil {
+	if err = util.FsyncDir(dir); err != nil {
 		return
 	}
 	var undo []func()
@@ -292,7 +260,7 @@ func (c *datCompactor) commit(rewritten, deleteOriginal bool) (idxBak, datBak st
 			for i := len(undo) - 1; i >= 0; i-- {
 				undo[i]()
 			}
-			fsyncDir(dir)
+			util.FsyncDir(dir)
 		}
 	}()
 
@@ -315,7 +283,7 @@ func (c *datCompactor) commit(rewritten, deleteOriginal bool) (idxBak, datBak st
 		return
 	}
 	// the swap is decided; a failing sync is reported but must not undo it
-	if serr := fsyncDir(dir); serr != nil {
+	if serr := util.FsyncDir(dir); serr != nil {
 		fmt.Fprintf(os.Stderr, "warning: the files are swapped, but syncing the directory failed: %v\n", serr)
 	}
 	if rewritten && deleteOriginal {
@@ -323,7 +291,7 @@ func (c *datCompactor) commit(rewritten, deleteOriginal bool) (idxBak, datBak st
 			fmt.Fprintf(os.Stderr, "could not delete the original %s: %v\n", datBak, rerr)
 		} else {
 			datBak = ""
-			fsyncDir(dir)
+			util.FsyncDir(dir)
 		}
 	}
 	return
