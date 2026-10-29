@@ -5,7 +5,13 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
+
+func identityOf(r *http.Request) string {
+	return s3_constants.GetIdentityNameFromContext(r)
+}
 
 func writeJSON(w http.ResponseWriter, status int, payload interface{}) {
 	w.Header().Set("Content-Type", "application/x-amz-json-1.1")
