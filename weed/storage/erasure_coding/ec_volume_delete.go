@@ -132,6 +132,7 @@ func (ev *EcVolume) ReopenDeletionJournal() error {
 	}
 	ecjFile, err := backend.OpenVolumeFile(ev.FileName(".ecj"), os.O_RDWR|os.O_CREATE)
 	if err != nil {
+		ev.ecjFileSize = 0
 		return fmt.Errorf("reopen ec volume journal %s: %w", ev.FileName(".ecj"), err)
 	}
 	ev.ecjFile = ecjFile
