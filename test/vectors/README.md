@@ -3,10 +3,12 @@
 Run `python3 -m pip install -r requirements.txt`, then `make test`.
 
 The suite starts a master, volume, filer, authenticated S3/Lance gateway, and
-vector engine on temporary ports. The same 12 API tests run with both Go and
+vector engine on temporary ports. The same 17 API tests run with both Go and
 Rust volume servers. Coverage includes bucket/index lifecycle, bucket policies,
-empty results, ARN addressing, metadata, filters, cosine distance, atomic upserts,
-pagination, segmented listing, authentication, and writer loss.
+signed policy grants and denies, encryption settings, empty results, ARN validation,
+metadata, filters, cosine distance, atomic upserts,
+catalog/vector pagination, index deletion and recreation, segmented listing,
+authentication, and writer loss.
 
 Server logs and data stay in pytest's temporary directory for diagnosis. Every
 child process stops on exit. To select a volume server, set

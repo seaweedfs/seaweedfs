@@ -155,3 +155,13 @@ def vectors(cluster):
     return boto3.client("s3vectors", endpoint_url=cluster["endpoint"],
                         aws_access_key_id="test", aws_secret_access_key="test", region_name="us-east-1",
                         config=Config(connect_timeout=3, read_timeout=20, retries={"max_attempts": 0}))
+
+
+@pytest.fixture(scope="module")
+def vector_clients(vectors):
+    return {
+        name: boto3.client("s3vectors", endpoint_url=vectors.meta.endpoint_url,
+                           aws_access_key_id=name, aws_secret_access_key=name + "-secret",
+                           region_name="us-east-1", config=vectors.meta.config)
+        for name in ("reader", "writer")
+    }
