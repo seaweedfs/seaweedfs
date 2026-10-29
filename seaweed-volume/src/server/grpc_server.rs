@@ -3296,7 +3296,10 @@ impl VolumeServer for VolumeGrpcService {
             for &shard_id in &missing {
                 for loc in store.locations.iter_mut() {
                     if let Err(e) = loc.reopen_ec_shard(vid, shard_id as ShardId) {
-                        tracing::warn!("reopen rebuilt ec shard {}.{}: {}", vid.0, shard_id, e);
+                        return Err(Status::internal(format!(
+                            "reopen ec shard {}.{}: {}",
+                            vid.0, shard_id, e
+                        )));
                     }
                 }
             }
