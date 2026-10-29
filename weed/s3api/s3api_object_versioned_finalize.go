@@ -140,8 +140,14 @@ func (s3a *S3ApiServer) routedMultipartFinalize(owner pb.ServerAddress, bucket, 
 	if owner != "" {
 		routeKey = s3a.objectRouteKey(bucket, object)
 	}
+	// A filer older than the mutation-condition support silently ignores
+	// putCondition, so on upgrade the guard degrades to this gateway-side
+	// check — the same window the pre-transaction code had.
+	if exists, err := s3a.exists(s3a.genUploadsFolder(bucket), uploadID, true); err == nil && !exists {
+		return s3err.ErrNoSuchUpload
+	}
 	putConditionKey, putCondition := uploadExistsCondition(s3a.genUploadsFolder(bucket) + "/" + uploadID)
-	resp, err := s3a.routedPut(owner, routeKey, s3a.toFilerPath(bucket, object), versionDir+"/"+versionFileName, versionEntry, cond, "", versionDir, putCondition, putConditionKey, []*filer_pb.ObjectMutation{
+	resp, err := s3a.routedPut(owner, routeKey, s3a.toFilerPath(bucket, object), versionDir+"/"+versionFileName, versionEntry, cond, "", versionDir, true, putCondition, putConditionKey, []*filer_pb.ObjectMutation{
 		s3a.removeUploadDirMutation(bucket, uploadID),
 		s3a.latestPointerRecompute(bucket, object, useInvertedFormat, "", true),
 	})

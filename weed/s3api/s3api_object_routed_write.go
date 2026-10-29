@@ -339,6 +339,12 @@ func (s3a *S3ApiServer) routedUploadRemoval(ctx context.Context, owner pb.Server
 	if owner == "" {
 		return nil, nil
 	}
+	// Older filers ignore the mutation's upload-exists condition, so during an
+	// upgrade this gateway-side check keeps the same guard window the
+	// pre-transaction code had.
+	if exists, err := s3a.exists(s3a.genUploadsFolder(bucket), uploadId, true); err == nil && !exists {
+		return nil, errUploadRemoved
+	}
 	if err := s3a.deleteUnusedPartEntries(ctx, uploadDirectory, bucket, uploadId, completionState); err != nil {
 		return nil, err
 	}
