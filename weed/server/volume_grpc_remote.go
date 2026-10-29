@@ -303,13 +303,36 @@ func newGuardedHTTPClient(endpoint string) *http.Client {
 // The shared transport's timeouts: with one client per remote and a cap per
 // host, a request that never finishes would hold a slot forever, and enough of
 // them stall every later lazy stat, cold read and remote delete of that remote.
-// A dial, a TLS handshake and a response's headers each have a deadline; a body
-// being read is not cut off.
+// A dial, a TLS handshake and a response's headers each have a deadline, and a
+// stalled body an idle one.
 const (
 	guardedDialTimeout           = 10 * time.Second
 	guardedTLSHandshakeTimeout   = 10 * time.Second
 	guardedResponseHeaderTimeout = 60 * time.Second
 )
+
+// guardedIOIdleTimeout bounds the stall of one exchange: a body that stops
+// mid-transfer frees its connection slot while a slow but progressing transfer
+// is never cut off. A var so tests can shorten it.
+var guardedIOIdleTimeout = 2 * time.Minute
+
+// idleTimeoutConn refreshes a deadline on every read and write: a peer that
+// stops sending or receiving is cut off after idle has passed without
+// progress.
+type idleTimeoutConn struct {
+	net.Conn
+	idle time.Duration
+}
+
+func (c *idleTimeoutConn) Read(b []byte) (int, error) {
+	_ = c.SetReadDeadline(time.Now().Add(c.idle))
+	return c.Conn.Read(b)
+}
+
+func (c *idleTimeoutConn) Write(b []byte) (int, error) {
+	_ = c.SetWriteDeadline(time.Now().Add(c.idle))
+	return c.Conn.Write(b)
+}
 
 // tuneSharedTransport sets what a transport shared by every request to one
 // remote needs: enough idle connections for a burst to reuse (Go's default is
@@ -326,7 +349,11 @@ func tuneSharedTransport(t *http.Transport) {
 		t.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 			ctx, cancel := context.WithTimeout(ctx, guardedDialTimeout)
 			defer cancel() // an established connection outlives the dial's context
-			return dial(ctx, network, addr)
+			conn, err := dial(ctx, network, addr)
+			if err != nil {
+				return nil, err
+			}
+			return &idleTimeoutConn{Conn: conn, idle: guardedIOIdleTimeout}, nil
 		}
 	}
 }
