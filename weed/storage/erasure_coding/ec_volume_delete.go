@@ -126,12 +126,13 @@ func (ev *EcVolume) LockDeletionJournal() func() {
 // invisible to every path-based reader. Caller must hold the journal lock
 // (see LockDeletionJournal).
 func (ev *EcVolume) ReopenDeletionJournal() error {
+	if ev.ecjFile != nil {
+		_ = ev.ecjFile.Close()
+		ev.ecjFile = nil
+	}
 	ecjFile, err := backend.OpenVolumeFile(ev.FileName(".ecj"), os.O_RDWR|os.O_CREATE)
 	if err != nil {
 		return fmt.Errorf("reopen ec volume journal %s: %w", ev.FileName(".ecj"), err)
-	}
-	if ev.ecjFile != nil {
-		_ = ev.ecjFile.Close()
 	}
 	ev.ecjFile = ecjFile
 	// A successful RebuildEcxFile leaves the path unlinked, so this is a
