@@ -47,13 +47,14 @@ func (m *Manager) SetTrusted(trusted bool) {
 }
 
 // PrincipalFor maps a forwarded identity name onto the account the catalog
-// would charge the request to: an empty identity resolves the same way
-// getAccountID falls back to the handler's account ID.
+// would charge the request to: a synthesized request resolves its identity
+// name through getAccountID's name branch — normalized like any principal —
+// and an empty name falls back to the handler's account ID.
 func (m *Manager) PrincipalFor(identity string) string {
-	if identity == "" {
-		return m.handler.accountID
+	if principal := normalizePrincipalID(identity); principal != "" {
+		return principal
 	}
-	return identity
+	return m.handler.accountID
 }
 
 // PolicyContext builds the evaluation context a Manager call's synthesized
