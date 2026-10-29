@@ -21,6 +21,12 @@ type InodeToPath struct {
 	// dirPaths indexes the same states by path, so a directory lookup never
 	// goes through the map that holds one full path per inode.
 	dirPaths map[util.FullPath]*dirState
+	// wasCachedDirs remembers directories that once held a fully cached
+	// listing. Unlike the flags on dirState it survives invalidation, idle
+	// eviction, and the state drop on kernel Forget, so a lookup can rebuild
+	// a dropped listing instead of reading through per entry forever.
+	// MarkDirectoryReadThrough removes oversized directories from it.
+	wasCachedDirs map[util.FullPath]struct{}
 }
 
 // InodeEntry exists per inode the kernel references. Directory cache state is
@@ -133,6 +139,7 @@ func NewInodeToPath(root util.FullPath, ttlSec int) *InodeToPath {
 		path2inode:      make(map[util.FullPath]uint64),
 		dirStates:       make(map[uint64]*dirState),
 		dirPaths:        make(map[util.FullPath]*dirState),
+		wasCachedDirs:   make(map[util.FullPath]struct{}),
 		cacheMetaTtlSec: time.Second * time.Duration(ttlSec),
 	}
 	t.inode2path[1] = &InodeEntry{
@@ -318,6 +325,7 @@ func (i *InodeToPath) MarkChildrenCached(fullpath util.FullPath) {
 	d.lastAccess = now
 	d.lastRefresh = now
 	d.lastRebuildAttempt = time.Time{}
+	i.wasCachedDirs[fullpath] = struct{}{}
 	if i.cacheMetaTtlSec > 0 {
 		d.cachedExpiresTime = now.Add(i.cacheMetaTtlSec)
 	}
@@ -336,19 +344,26 @@ func (i *InodeToPath) IsChildrenCached(fullpath util.FullPath) bool {
 	return false
 }
 
-// ShouldRebuildExpiredDir reports whether a directory was fully cached, its
-// TTL has elapsed, and enough time has passed since the last failed rebuild
-// attempt to retry. Distinct from IsChildrenCached returning false for a
-// never-cached, invalidated, evicted, or read-through directory: those leave
-// isChildrenCached clear, while a plain TTL expiry keeps it set.
+// ShouldRebuildExpiredDir reports whether a lookup should re-list the
+// directory into the cache, backing off for cooldown after a failed attempt.
+// It covers a fully cached directory whose TTL elapsed — a plain expiry keeps
+// isChildrenCached set, unlike invalidation or eviction — and a directory
+// whose previously cached listing was dropped by invalidation, idle eviction,
+// or a kernel Forget. A never-cached or read-through directory keeps reading
+// through: caching one on a single lookup is how oversized listings get
+// pinned, so only a directory that proved cacheable earns the rebuild.
 func (i *InodeToPath) ShouldRebuildExpiredDir(fullpath util.FullPath, cooldown time.Duration) bool {
 	i.RLock()
 	defer i.RUnlock()
 	d := i.dirStateOf(fullpath)
-	if d == nil || !d.isChildrenCached {
+	if d == nil || d.readDirDirect {
 		return false
 	}
-	if d.cachedExpiresTime.IsZero() || time.Now().Before(d.cachedExpiresTime) {
+	if d.isChildrenCached {
+		if d.cachedExpiresTime.IsZero() || time.Now().Before(d.cachedExpiresTime) {
+			return false
+		}
+	} else if _, was := i.wasCachedDirs[fullpath]; !was {
 		return false
 	}
 	return d.lastRebuildAttempt.IsZero() || time.Since(d.lastRebuildAttempt) >= cooldown
@@ -447,6 +462,7 @@ func (i *InodeToPath) MarkDirectoryReadThrough(fullpath util.FullPath, now time.
 	d.cachedExpiresTime = time.Time{}
 	d.lastAccess = now
 	d.lastRefresh = time.Time{}
+	delete(i.wasCachedDirs, fullpath)
 	return true
 }
 

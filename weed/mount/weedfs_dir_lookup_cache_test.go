@@ -331,3 +331,98 @@ func advanceRebuildAttempt(t *testing.T, itp *InodeToPath, dir util.FullPath, d 
 	}
 	state.lastRebuildAttempt = time.Now().Add(-d)
 }
+
+// TestLookupRebuildsInvalidatedDirectoryCache covers a dropped listing rather
+// than an expired one: invalidation, idle eviction, or the purge on kernel
+// Forget all clear the directory's cached flag, and without a rebuild path a
+// lookup-only workload (e.g. git object reads) reads through per entry until
+// a ReadDir happened to run.
+func TestLookupRebuildsInvalidatedDirectoryCache(t *testing.T) {
+	wfs := newLookupCacheTestWFS(t, 60)
+	dir := util.FullPath("/dir")
+	wfs.inodeToPath.Lookup(dir, time.Now().Unix(), true, false, 0, true)
+
+	fake := &lookupCacheTestFiler{
+		entries: []*filer_pb.Entry{
+			{Name: "a", Attributes: &filer_pb.FuseAttributes{FileSize: 1, FileMode: 0100644}},
+			{Name: "b", Attributes: &filer_pb.FuseAttributes{FileSize: 2, FileMode: 0100644}},
+			{Name: "c", Attributes: &filer_pb.FuseAttributes{FileSize: 3, FileMode: 0100644}},
+		},
+		snapshotTsNs: 5000,
+	}
+	startFakeFiler(t, wfs, fake)
+
+	if err := meta_cache.EnsureVisited(context.Background(), wfs.metaCache, wfs, dir, 0); err != nil {
+		t.Fatalf("EnsureVisited: %v", err)
+	}
+	wfs.inodeToPath.InvalidateChildrenCache(dir)
+	if wfs.inodeToPath.IsChildrenCached(dir) {
+		t.Fatal("directory cache should be dropped")
+	}
+
+	listCallsBefore := fake.listCalls.Load()
+	lookupCallsBefore := fake.lookupCalls.Load()
+
+	for _, name := range []string{"a", "b", "c"} {
+		entry, _, status := wfs.lookupEntry(context.Background(), dir.Child(name))
+		if status != fuse.OK {
+			t.Fatalf("lookupEntry %s: %v", name, status)
+		}
+		if entry == nil || entry.Name() != name {
+			t.Fatalf("lookupEntry %s: got %v", name, entry)
+		}
+	}
+
+	if got := fake.listCalls.Load() - listCallsBefore; got != 1 {
+		t.Errorf("ListEntries RPCs = %d, want 1 (dropped dir cache should be rebuilt once)", got)
+	}
+	if got := fake.lookupCalls.Load() - lookupCallsBefore; got != 0 {
+		t.Errorf("LookupDirectoryEntry RPCs = %d, want 0", got)
+	}
+}
+
+// TestLookupNeverCachedDirReadsThrough guards the other side: a directory
+// that never held a cached listing must not be rebuilt on a single lookup,
+// or one stat could pin an arbitrarily large listing.
+func TestLookupNeverCachedDirReadsThrough(t *testing.T) {
+	wfs := newLookupCacheTestWFS(t, 60)
+	dir := util.FullPath("/dir")
+	wfs.inodeToPath.Lookup(dir, time.Now().Unix(), true, false, 0, true)
+
+	fake := &lookupCacheTestFiler{snapshotTsNs: 5000}
+	startFakeFiler(t, wfs, fake)
+
+	if _, _, status := wfs.lookupEntry(context.Background(), dir.Child("a")); status != fuse.OK {
+		t.Fatalf("lookupEntry a: %v", status)
+	}
+	if got := fake.listCalls.Load(); got != 0 {
+		t.Errorf("ListEntries RPCs = %d, want 0 (never-cached dir stays read-through)", got)
+	}
+	if got := fake.lookupCalls.Load(); got != 1 {
+		t.Errorf("LookupDirectoryEntry RPCs = %d, want 1", got)
+	}
+}
+
+// TestForgetKeepsDirRebuildable exercises the kernel Forget path: the dropped
+// dirState must not lose the record that the directory once held a listing,
+// or a re-looked-up directory would read through forever.
+func TestForgetKeepsDirRebuildable(t *testing.T) {
+	itp := NewInodeToPath("/", 60)
+	dir := util.FullPath("/dir")
+
+	inode := itp.Lookup(dir, time.Now().Unix(), true, false, 0, true)
+	itp.MarkChildrenCached(dir)
+	itp.Forget(inode, 1, nil, func(util.FullPath) {})
+	if itp.dirStateOf(dir) != nil {
+		t.Fatal("Forget should drop the dirState")
+	}
+
+	if itp.ShouldRebuildExpiredDir(dir, expiredDirRebuildCooldown) {
+		t.Fatal("a forgotten directory has no state to mark cached; lookup must re-track it first")
+	}
+
+	itp.Lookup(dir, time.Now().Unix(), true, false, 0, true)
+	if !itp.ShouldRebuildExpiredDir(dir, expiredDirRebuildCooldown) {
+		t.Fatal("re-looked-up directory that once held a listing should rebuild")
+	}
+}

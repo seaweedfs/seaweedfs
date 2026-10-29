@@ -617,8 +617,10 @@ func (wfs *WFS) lookupEntry(ctx context.Context, fullpath util.FullPath) (*filer
 
 	// The kernel can serve a directory listing from its page cache past
 	// cacheMetaTtlSec, so ReadDir never runs and EnsureVisited is not called.
-	// Rebuild the expired directory once here so the cache hit below serves
-	// metadata lookups instead of issuing one LookupEntry RPC per entry.
+	// Invalidation, idle eviction, and a kernel Forget also drop a cached
+	// listing without scheduling a rebuild. Rebuild here — once — so the
+	// cache hit below serves metadata lookups instead of issuing one
+	// LookupEntry RPC per entry.
 	if !wfs.metaCache.IsDirectoryCached(dirPath) && wfs.inodeToPath.ShouldRebuildExpiredDir(dirPath, expiredDirRebuildCooldown) {
 		// The rebuild lists the parent from the filer; let any pending async
 		// flush of the target entry land first so the rebuilt cache does not
