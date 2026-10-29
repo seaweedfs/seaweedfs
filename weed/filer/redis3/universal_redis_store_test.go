@@ -134,7 +134,8 @@ func TestRemovingTheLastChildDropsTheListing(t *testing.T) {
 // writes both dropped the prefix, so they check the actual key space.
 func TestKeyPrefixScopesAllKeys(t *testing.T) {
 	store, dir := newTestStore(t)
-	store.keyPrefix = "pfx_"
+	store.keyPrefix = string(dir) + "_"
+	kvKey := string(dir) + "_k"
 	ctx := context.Background()
 
 	now := time.Now()
@@ -156,27 +157,27 @@ func TestKeyPrefixScopesAllKeys(t *testing.T) {
 		if n, err := store.Client.Exists(ctx, raw).Result(); err != nil || n != 0 {
 			t.Fatalf("key %q should not exist unprefixed: n=%d err=%v", raw, n, err)
 		}
-		if n, err := store.Client.Exists(ctx, "pfx_"+raw).Result(); err != nil || n != 1 {
+		if n, err := store.Client.Exists(ctx, store.keyPrefix+raw).Result(); err != nil || n != 1 {
 			t.Fatalf("key %q should exist under the prefix: n=%d err=%v", raw, n, err)
 		}
 	}
 
-	if err := store.KvPut(ctx, []byte("k"), []byte("v")); err != nil {
+	if err := store.KvPut(ctx, []byte(kvKey), []byte("v")); err != nil {
 		t.Fatalf("KvPut: %v", err)
 	}
-	if v, err := store.KvGet(ctx, []byte("k")); err != nil || string(v) != "v" {
+	if v, err := store.KvGet(ctx, []byte(kvKey)); err != nil || string(v) != "v" {
 		t.Fatalf("KvGet: v=%q err=%v", v, err)
 	}
-	if _, err := store.Client.Get(ctx, "k").Result(); err != redis.Nil {
+	if _, err := store.Client.Get(ctx, kvKey).Result(); err != redis.Nil {
 		t.Fatalf("kv key should not exist unprefixed: err=%v", err)
 	}
-	if v, err := store.Client.Get(ctx, "pfx_k").Result(); err != nil || v != "v" {
+	if v, err := store.Client.Get(ctx, store.keyPrefix+kvKey).Result(); err != nil || v != "v" {
 		t.Fatalf("kv key should exist under the prefix: v=%q err=%v", v, err)
 	}
-	if err := store.KvDelete(ctx, []byte("k")); err != nil {
+	if err := store.KvDelete(ctx, []byte(kvKey)); err != nil {
 		t.Fatalf("KvDelete: %v", err)
 	}
-	if _, err := store.KvGet(ctx, []byte("k")); err != filer.ErrKvNotFound {
+	if _, err := store.KvGet(ctx, []byte(kvKey)); err != filer.ErrKvNotFound {
 		t.Fatalf("KvGet after delete: err=%v", err)
 	}
 
@@ -189,7 +190,7 @@ func TestKeyPrefixScopesAllKeys(t *testing.T) {
 	if err := store.DeleteEntry(ctx, dir); err != nil {
 		t.Fatalf("DeleteEntry %s: %v", dir, err)
 	}
-	if keys, err := store.Client.Keys(ctx, "pfx_*").Result(); err != nil || len(keys) != 0 {
+	if keys, err := store.Client.Keys(ctx, store.keyPrefix+"*").Result(); err != nil || len(keys) != 0 {
 		t.Fatalf("no prefixed keys should remain after cleanup: keys=%v err=%v", keys, err)
 	}
 }
