@@ -265,6 +265,21 @@ func (s *Server) authorizeIndexWrite(ctx context.Context, r *http.Request, bucke
 	}, identityOf(r))
 }
 
+func validateEncryptionConfiguration(cfg map[string]interface{}) error {
+	if len(cfg) == 0 {
+		return nil
+	}
+	sseType, _ := cfg["sseType"].(string)
+	switch sseType {
+	case "AES256", "aws:kms":
+		return nil
+	case "":
+		return fmt.Errorf("encryptionConfiguration requires sseType")
+	default:
+		return fmt.Errorf("unsupported sseType %q", sseType)
+	}
+}
+
 func (s *Server) handleCreateVectorBucket(w http.ResponseWriter, r *http.Request) {
 	var req CreateVectorBucketRequest
 	if err := readJSON(r, &req); err != nil {
@@ -275,16 +290,17 @@ func (s *Server) handleCreateVectorBucket(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "ValidationException", "vectorBucketName is required")
 		return
 	}
-	// The catalog has no encryption boundary to honor the configuration
-	// against; accepting it would silently promise semantics we do not keep.
-	if len(req.EncryptionConfiguration) > 0 {
-		writeError(w, http.StatusBadRequest, "ValidationException",
-			"encryptionConfiguration is not supported")
+	if err := validateEncryptionConfiguration(req.EncryptionConfiguration); err != nil {
+		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
 	var resp map[string]interface{}
 	err := s.catalog(r.Context(), "CreateTableBucket",
-		&s3tables.CreateTableBucketRequest{Name: req.VectorBucketName, Format: s3tables.FormatLance}, &resp, r)
+		&s3tables.CreateTableBucketRequest{
+			Name:                    req.VectorBucketName,
+			Format:                  s3tables.FormatLance,
+			EncryptionConfiguration: req.EncryptionConfiguration,
+		}, &resp, r)
 	if err != nil {
 		catalogErr(w, err)
 		return
@@ -317,11 +333,15 @@ func (s *Server) handleGetVectorBucket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	created, _ := time.Parse(time.RFC3339, fmt.Sprint(resp["createdAt"]))
-	writeJSON(w, http.StatusOK, &GetVectorBucketResponse{VectorBucket: &VectorBucket{
+	bucket := &VectorBucket{
 		VectorBucketArn:  s.vectorBucketArn(arns.bucket),
 		VectorBucketName: arns.bucket,
 		CreationTime:     created,
-	}})
+	}
+	if cfg, ok := resp["encryptionConfiguration"].(map[string]interface{}); ok {
+		bucket.EncryptionConfiguration = cfg
+	}
+	writeJSON(w, http.StatusOK, &GetVectorBucketResponse{VectorBucket: bucket})
 }
 
 func (s *Server) handleListVectorBuckets(w http.ResponseWriter, r *http.Request) {
