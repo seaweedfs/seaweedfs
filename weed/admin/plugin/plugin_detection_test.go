@@ -6,7 +6,111 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
+	"github.com/stretchr/testify/require"
 )
+
+func TestScheduledDetectionDistinguishesSkipFromEmptyScan(t *testing.T) {
+	for _, reason := range []string{"", "Cooldown after successful job (10h0m0s)"} {
+		t.Run(reason, func(t *testing.T) {
+			p, err := New(Options{})
+			require.NoError(t, err)
+			defer p.Shutdown()
+			p.clusterContextProvider = func(context.Context) (*plugin_pb.ClusterContext, error) {
+				return &plugin_pb.ClusterContext{}, nil
+			}
+			p.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+				WorkerId: "worker-a", Capabilities: []*plugin_pb.JobTypeCapability{{JobType: "vacuum", CanDetect: true}},
+			})
+			session := &streamSession{workerID: "worker-a", outgoing: make(chan *plugin_pb.AdminToWorkerMessage, 1), done: make(chan struct{})}
+			p.putSession(session)
+			done := make(chan struct{})
+			go func() {
+				p.runJobTypeIteration("vacuum", schedulerPolicy{DetectionTimeout: time.Second, JobTypeMaxRuntime: time.Second})
+				close(done)
+			}()
+			select {
+			case request := <-session.outgoing:
+				p.handleDetectionComplete("worker-a", &plugin_pb.DetectionComplete{
+					RequestId: request.RequestId, JobType: "vacuum", Success: true, SkippedReason: reason,
+				})
+			case <-time.After(2 * time.Second):
+				t.Fatal("no detection request")
+			}
+			select {
+			case <-done:
+			case <-time.After(2 * time.Second):
+				t.Fatal("detection did not complete")
+			}
+			info := p.snapshotSchedulerDetection("vacuum")
+			if reason == "" {
+				require.False(t, info.lastDetectedAt.IsZero())
+				require.Equal(t, "success", p.snapshotSchedulerRun("vacuum").lastRunStatus)
+			} else {
+				require.True(t, info.lastDetectedAt.IsZero(), "a skipped scan must not count as an empty scan")
+				require.Equal(t, reason, info.lastSkippedReason)
+				require.Equal(t, "skipped", p.snapshotSchedulerRun("vacuum").lastRunStatus)
+			}
+		})
+	}
+}
+
+func TestManualDetectionSkipDoesNotChangeScheduledStatus(t *testing.T) {
+	p, err := New(Options{})
+	require.NoError(t, err)
+	defer p.Shutdown()
+	p.recordSchedulerDetectionSuccess("vacuum", 5)
+	p.pendingDetection["manual"] = &pendingDetectionState{
+		jobType: "vacuum", workerID: "worker-a", complete: make(chan *plugin_pb.DetectionComplete, 1),
+	}
+	p.handleDetectionComplete("worker-a", &plugin_pb.DetectionComplete{
+		RequestId: "manual", JobType: "vacuum", Success: true, SkippedReason: "Cooldown",
+	})
+	require.Empty(t, p.snapshotSchedulerDetection("vacuum").lastSkippedReason)
+	require.Equal(t, 5, p.snapshotSchedulerDetection("vacuum").lastDetectedCount)
+	activities := p.ListActivities("vacuum", 10)
+	require.Len(t, activities, 1)
+	require.Equal(t, "skipped", activities[0].Stage)
+}
+
+func TestPrefetchRefreshesSavedDescriptorFromReconnectingWorker(t *testing.T) {
+	p, err := New(Options{})
+	require.NoError(t, err)
+	defer p.Shutdown()
+	require.NoError(t, p.store.SaveDescriptor("vacuum", &plugin_pb.JobTypeDescriptor{JobType: "vacuum", DescriptorVersion: 1}))
+	require.NoError(t, p.SaveJobTypeConfig(&plugin_pb.PersistedJobTypeConfig{
+		JobType: "vacuum", WorkerConfigValues: map[string]*plugin_pb.ConfigValue{"cooldown": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 600}}},
+	}))
+	session := &streamSession{workerID: "upgraded", outgoing: make(chan *plugin_pb.AdminToWorkerMessage, 1), done: make(chan struct{})}
+	p.putSession(session)
+	done := make(chan struct{})
+	go func() {
+		p.prefetchDescriptorsFromHello(&plugin_pb.WorkerHello{
+			WorkerId: "upgraded", Capabilities: []*plugin_pb.JobTypeCapability{{JobType: "vacuum", CanDetect: true}},
+		})
+		close(done)
+	}()
+	select {
+	case request := <-session.outgoing:
+		require.True(t, request.GetRequestConfigSchema().GetForceRefresh())
+		p.handleConfigSchemaResponse(&plugin_pb.ConfigSchemaResponse{
+			RequestId: request.RequestId, JobType: "vacuum", Success: true,
+			JobTypeDescriptor: &plugin_pb.JobTypeDescriptor{JobType: "vacuum", DescriptorVersion: 2, DetectionCooldownConfigField: "cooldown"},
+		})
+	case <-time.After(time.Second):
+		t.Fatal("saved descriptor was not refreshed")
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("prefetch did not finish")
+	}
+	got, err := p.store.LoadDescriptor("vacuum")
+	require.NoError(t, err)
+	require.Equal(t, "cooldown", got.DetectionCooldownConfigField)
+	cfg, err := p.LoadJobTypeConfig("vacuum")
+	require.NoError(t, err)
+	require.Equal(t, int64(600), cfg.WorkerConfigValues["cooldown"].GetInt64Value())
+}
 
 func TestRunDetectionIncludesLatestSuccessfulRun(t *testing.T) {
 	pluginSvc, err := New(Options{})

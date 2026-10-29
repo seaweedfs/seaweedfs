@@ -92,11 +92,14 @@ func TestAdminScriptDetectSkipsByRunInterval(t *testing.T) {
 	if sender.complete == nil || !sender.complete.Success {
 		t.Fatalf("expected successful completion message")
 	}
+	if sender.complete.SkippedReason == "" || sender.complete.EligibleAfter == nil {
+		t.Fatalf("expected skipped completion metadata, got %+v", sender.complete)
+	}
 	if len(sender.events) == 0 {
 		t.Fatalf("expected detector activity events")
 	}
-	if !strings.Contains(sender.events[0].Message, "run interval") {
-		t.Fatalf("unexpected skip message: %q", sender.events[0].Message)
+	if sender.events[0].Stage != "skipped_by_interval" {
+		t.Fatalf("unexpected skip stage: %q", sender.events[0].Stage)
 	}
 }
 

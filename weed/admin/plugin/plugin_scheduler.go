@@ -343,7 +343,7 @@ func (r *Plugin) runJobTypeIteration(jobType string, policy schedulerPolicy) boo
 	}
 
 	detectCtx, cancelDetect := context.WithTimeout(jobCtx, detectionTimeout)
-	proposals, err := r.RunDetection(detectCtx, jobType, clusterContext, policy.MaxResults)
+	report, err := r.RunDetectionWithReport(detectCtx, jobType, clusterContext, policy.MaxResults)
 	cancelDetect()
 	releaseDetectionLock()
 	if err != nil {
@@ -365,6 +365,12 @@ func (r *Plugin) runJobTypeIteration(jobType string, policy schedulerPolicy) boo
 		return false
 	}
 
+	if report.Complete.GetSkippedReason() != "" {
+		r.recordSchedulerDetectionSkip(jobType, report.Complete.GetSkippedReason())
+		r.recordSchedulerRunComplete(jobType, "skipped")
+		return false
+	}
+	proposals := report.Proposals
 	r.appendActivity(JobActivity{
 		JobType:    jobType,
 		Source:     "admin_scheduler",

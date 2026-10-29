@@ -109,6 +109,10 @@ func (s *ConfigStore) SaveDescriptor(jobType string, descriptor *plugin_pb.JobTy
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	current, err := s.loadDescriptor(jobType)
+	if err == nil && current != nil && current.DescriptorVersion > clone.DescriptorVersion {
+		return nil
+	}
 	if !s.configured {
 		s.memDescriptors[jobType] = clone
 		return nil
@@ -135,15 +139,18 @@ func (s *ConfigStore) LoadDescriptor(jobType string) (*plugin_pb.JobTypeDescript
 	}
 
 	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.loadDescriptor(jobType)
+}
+
+func (s *ConfigStore) loadDescriptor(jobType string) (*plugin_pb.JobTypeDescriptor, error) {
 	if !s.configured {
 		d := s.memDescriptors[jobType]
-		s.mu.RUnlock()
 		if d == nil {
 			return nil, nil
 		}
 		return proto.Clone(d).(*plugin_pb.JobTypeDescriptor), nil
 	}
-	s.mu.RUnlock()
 
 	pbPath := filepath.Join(s.baseDir, jobTypesDirName, jobType, descriptorPBFileName)
 	data, err := os.ReadFile(pbPath)

@@ -8,7 +8,46 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
+
+func TestSkipDetectionByInterval(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	for _, tc := range []struct {
+		name    string
+		last    *timestamppb.Timestamp
+		seconds int
+		skip    bool
+	}{
+		{"no history", nil, 36000, false},
+		{"disabled", timestamppb.New(now), 0, false},
+		{"cooldown", timestamppb.New(now), 36000, true},
+		{"expired", timestamppb.New(now.Add(-11 * time.Hour)), 36000, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sender := &recordingDetectionSender{}
+			skipped, err := SkipDetectionByInterval(&plugin_pb.RunDetectionRequest{JobType: "vacuum", LastSuccessfulRun: tc.last}, sender, tc.seconds)
+			if err != nil || skipped != tc.skip {
+				t.Fatalf("skip=%v err=%v", skipped, err)
+			}
+			if !skipped {
+				if sender.complete != nil {
+					t.Fatal("unexpected completion for eligible detection")
+				}
+				return
+			}
+			if sender.complete.GetSkippedReason() == "" || !sender.complete.GetSuccess() || sender.proposals == nil {
+				t.Fatalf("missing skipped outcome: %v", sender.complete)
+			}
+			if len(sender.events) != 1 || sender.events[0].Stage != "skipped_by_interval" {
+				t.Fatal("older admins must still receive a cooldown activity")
+			}
+			if want := now.Add(10 * time.Hour); !sender.complete.EligibleAfter.AsTime().Equal(want) {
+				t.Fatalf("eligible after = %v, want %v", sender.complete.EligibleAfter, want)
+			}
+		})
+	}
+}
 
 func TestWorkerBuildHelloUsesConfiguredConcurrency(t *testing.T) {
 	handler := &testJobHandler{

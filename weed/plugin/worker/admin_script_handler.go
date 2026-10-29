@@ -142,28 +142,8 @@ func (h *AdminScriptHandler) Detect(ctx context.Context, request *plugin_pb.RunD
 	script := normalizeAdminScript(ReadStringConfig(request.GetAdminConfigValues(), "script", ""))
 	scriptName := strings.TrimSpace(ReadStringConfig(request.GetAdminConfigValues(), "script_name", ""))
 	runIntervalMinutes := readAdminScriptRunIntervalMinutes(request.GetAdminConfigValues())
-	if ShouldSkipDetectionByInterval(request.GetLastSuccessfulRun(), runIntervalMinutes*60) {
-		_ = sender.SendActivity(BuildDetectorActivity(
-			"skipped_by_interval",
-			fmt.Sprintf("ADMIN SCRIPT: Detection skipped due to run interval (%dm)", runIntervalMinutes),
-			map[string]*plugin_pb.ConfigValue{
-				"run_interval_minutes": {
-					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(runIntervalMinutes)},
-				},
-			},
-		))
-		if err := sender.SendProposals(&plugin_pb.DetectionProposals{
-			JobType:   adminScriptJobType,
-			Proposals: []*plugin_pb.JobProposal{},
-			HasMore:   false,
-		}); err != nil {
-			return err
-		}
-		return sender.SendComplete(&plugin_pb.DetectionComplete{
-			JobType:        adminScriptJobType,
-			Success:        true,
-			TotalProposals: 0,
-		})
+	if skipped, err := SkipDetectionByInterval(request, sender, runIntervalMinutes*60); skipped || err != nil {
+		return err
 	}
 
 	commands := parseAdminScriptCommands(script)

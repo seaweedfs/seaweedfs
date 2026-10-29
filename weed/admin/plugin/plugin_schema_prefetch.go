@@ -12,7 +12,7 @@ import (
 const descriptorPrefetchTimeout = 20 * time.Second
 
 func (r *Plugin) prefetchDescriptorsFromHello(hello *plugin_pb.WorkerHello) {
-	if hello == nil || len(hello.Capabilities) == 0 {
+	if hello == nil || hello.WorkerId == "" || len(hello.Capabilities) == 0 {
 		return
 	}
 
@@ -44,17 +44,8 @@ func (r *Plugin) prefetchDescriptorsFromHello(hello *plugin_pb.WorkerHello) {
 		default:
 		}
 
-		descriptor, err := r.store.LoadDescriptor(jobType)
-		if err != nil {
-			glog.Warningf("Plugin descriptor prefetch check failed for %s: %v", jobType, err)
-			continue
-		}
-		if descriptor != nil {
-			continue
-		}
-
 		ctx, cancel := context.WithTimeout(r.ctx, descriptorPrefetchTimeout)
-		_, err = r.RequestConfigSchema(ctx, jobType, false)
+		_, err := r.requestConfigSchema(ctx, jobType, true, hello.WorkerId)
 		cancel()
 		if err != nil {
 			glog.V(1).Infof("Plugin descriptor prefetch skipped for %s: %v", jobType, err)

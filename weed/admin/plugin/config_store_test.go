@@ -1,13 +1,46 @@
 package plugin
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
+	"github.com/stretchr/testify/require"
 )
 
+func TestConfigStoreRefreshRepairsCorruptDescriptor(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewConfigStore(dir)
+	require.NoError(t, err)
+	descriptor := &plugin_pb.JobTypeDescriptor{JobType: "vacuum", DescriptorVersion: 2, DetectionCooldownConfigField: "cooldown"}
+	require.NoError(t, store.SaveDescriptor("vacuum", descriptor))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "plugin", "job_types", "vacuum", "descriptor.pb"), []byte{0xff}, 0600))
+	require.NoError(t, store.SaveDescriptor("vacuum", descriptor))
+	got, err := store.LoadDescriptor("vacuum")
+	require.NoError(t, err)
+	require.Equal(t, descriptor.DescriptorVersion, got.DescriptorVersion)
+	require.Equal(t, "cooldown", got.DetectionCooldownConfigField)
+}
+
+func TestConfigStoreDoesNotDowngradeDescriptors(t *testing.T) {
+	for _, dir := range []string{"", t.TempDir()} {
+		store, err := NewConfigStore(dir)
+		require.NoError(t, err)
+		require.NoError(t, store.SaveDescriptor("vacuum", &plugin_pb.JobTypeDescriptor{
+			JobType: "vacuum", DescriptorVersion: 2, DetectionCooldownConfigField: "cooldown",
+		}))
+		require.NoError(t, store.SaveDescriptor("vacuum", &plugin_pb.JobTypeDescriptor{
+			JobType: "vacuum", DescriptorVersion: 1,
+		}))
+		got, err := store.LoadDescriptor("vacuum")
+		require.NoError(t, err)
+		require.Equal(t, uint32(2), got.DescriptorVersion)
+		require.Equal(t, "cooldown", got.DetectionCooldownConfigField)
+	}
+}
 func TestConfigStoreDescriptorRoundTrip(t *testing.T) {
 	t.Parallel()
 
