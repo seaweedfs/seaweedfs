@@ -230,16 +230,17 @@ func TestListRequestMaxResultsBounds(t *testing.T) {
 }
 
 func TestArnParts(t *testing.T) {
+	s := &Server{region: "r", accountID: "a"}
 	var v vectorBucketARNs
 
-	if err := arnParts(&v, "plain", ""); err != nil || v.bucket != "plain" {
+	if err := s.arnParts(&v, "plain", ""); err != nil || v.bucket != "plain" {
 		t.Fatalf("plain name: bucket=%q err=%v", v.bucket, err)
 	}
-	if err := arnParts(&v, "", "arn:aws:s3vectors:r:a:bucket/mybucket"); err != nil || v.bucket != "mybucket" || v.index != "" {
+	if err := s.arnParts(&v, "", "arn:aws:s3vectors:r:a:bucket/mybucket"); err != nil || v.bucket != "mybucket" || v.index != "" {
 		t.Fatalf("bucket ARN: %+v err=%v", v, err)
 	}
 	v = vectorBucketARNs{}
-	if err := arnParts(&v, "", "arn:aws:s3vectors:r:a:bucket/mybucket/index/myindex"); err != nil || v.bucket != "mybucket" || v.index != "myindex" {
+	if err := s.arnParts(&v, "", "arn:aws:s3vectors:r:a:bucket/mybucket/index/myindex"); err != nil || v.bucket != "mybucket" || v.index != "myindex" {
 		t.Fatalf("index ARN: %+v err=%v", v, err)
 	}
 	for _, bad := range []string{
@@ -252,19 +253,23 @@ func TestArnParts(t *testing.T) {
 		"arn:aws:s3vectors:r:a:bucket/b/index/",
 		"arn:aws:s3vectors:r:a:bucket/b/index/i/index/j",
 		"arn:aws:s3vectors:r:a:bucket/b/index/i/",
+		"arn:aws-cn:s3vectors:r:a:bucket/b/index/i",
+		"arn:aws:s3vectors:other:a:bucket/b/index/i",
+		"arn:aws:s3vectors:r:other:bucket/b/index/i",
 	} {
 		v = vectorBucketARNs{}
-		if err := arnParts(&v, "", bad); err == nil {
+		if err := s.arnParts(&v, "", bad); err == nil {
 			t.Fatalf("ARN %q should be rejected", bad)
 		}
 	}
 }
 
 func TestBucketARNs(t *testing.T) {
-	if v, err := bucketARNs("plain", ""); err != nil || v.bucket != "plain" {
+	s := &Server{region: "r", accountID: "a"}
+	if v, err := s.bucketARNs("plain", ""); err != nil || v.bucket != "plain" {
 		t.Fatalf("plain name: %+v err=%v", v, err)
 	}
-	if v, err := bucketARNs("", "arn:aws:s3vectors:r:a:bucket/mybucket"); err != nil || v.bucket != "mybucket" {
+	if v, err := s.bucketARNs("", "arn:aws:s3vectors:r:a:bucket/mybucket"); err != nil || v.bucket != "mybucket" {
 		t.Fatalf("bucket ARN: %+v err=%v", v, err)
 	}
 	for _, bad := range []string{
@@ -272,22 +277,23 @@ func TestBucketARNs(t *testing.T) {
 		"arn:aws:s3tables:r:a:bucket/b",
 		"arn:aws:s3:r:a:bucket/b",
 	} {
-		if _, err := bucketARNs("", bad); err == nil {
+		if _, err := s.bucketARNs("", bad); err == nil {
 			t.Fatalf("ARN %q should be rejected for a bucket operation", bad)
 		}
 	}
 }
 
 func TestResolveIndexARNs(t *testing.T) {
-	arns, err := resolveIndexARNs("", "", "", "arn:aws:s3vectors:r:a:bucket/b/index/i")
+	s := &Server{region: "r", accountID: "a"}
+	arns, err := s.resolveIndexARNs("", "", "", "arn:aws:s3vectors:r:a:bucket/b/index/i")
 	if err != nil || arns.bucket != "b" || arns.index != "i" {
 		t.Fatalf("indexArn only: %+v err=%v", arns, err)
 	}
-	arns, err = resolveIndexARNs("b", "", "i", "")
+	arns, err = s.resolveIndexARNs("b", "", "i", "")
 	if err != nil || arns.bucket != "b" || arns.index != "i" {
 		t.Fatalf("names only: %+v err=%v", arns, err)
 	}
-	arns, err = resolveIndexARNs("", "arn:aws-cn:s3vectors:r:a:bucket/b", "", "arn:aws-cn:s3vectors:r:a:bucket/b/index/i")
+	arns, err = s.resolveIndexARNs("", "arn:aws:s3vectors:r:a:bucket/b", "", "arn:aws:s3vectors:r:a:bucket/b/index/i")
 	if err != nil || arns.bucket != "b" || arns.index != "i" {
 		t.Fatalf("bucket and index ARNs: %+v err=%v", arns, err)
 	}
@@ -295,18 +301,21 @@ func TestResolveIndexARNs(t *testing.T) {
 		{"", "arn:aws:s3vectors:r:a:bucket/b", "i"},
 		{"arn:aws:s3vectors:r:a:bucket/b/index/i", "", "i"},
 		{"arn:aws:s3vectors:r:a:bucket/other", "arn:aws:s3vectors:r:a:bucket/b/index/i", ""},
+		{"arn:aws-cn:s3vectors:r:a:bucket/b", "arn:aws:s3vectors:r:a:bucket/b/index/i", ""},
+		{"arn:aws:s3vectors:other:a:bucket/b", "arn:aws:s3vectors:r:a:bucket/b/index/i", ""},
+		{"arn:aws:s3vectors:r:other:bucket/b", "arn:aws:s3vectors:r:a:bucket/b/index/i", ""},
 	} {
-		if _, err := resolveIndexARNs("", tc.bucketARN, tc.indexName, tc.indexARN); err == nil {
+		if _, err := s.resolveIndexARNs("", tc.bucketARN, tc.indexName, tc.indexARN); err == nil {
 			t.Errorf("accepted incompatible ARNs: %+v", tc)
 		}
 	}
-	if _, err := resolveIndexARNs("", "not-an-arn", "i", ""); err == nil {
+	if _, err := s.resolveIndexARNs("", "not-an-arn", "i", ""); err == nil {
 		t.Fatal("non-ARN vectorBucketArn should be rejected")
 	}
-	if _, err := resolveIndexARNs("", "", "", ""); err == nil {
+	if _, err := s.resolveIndexARNs("", "", "", ""); err == nil {
 		t.Fatal("missing identifiers should be rejected")
 	}
-	if _, err := resolveIndexARNs("b", "", "", ""); err == nil {
+	if _, err := s.resolveIndexARNs("b", "", "", ""); err == nil {
 		t.Fatal("missing indexName should be rejected")
 	}
 }

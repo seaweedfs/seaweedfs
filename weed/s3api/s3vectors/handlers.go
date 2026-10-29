@@ -59,7 +59,7 @@ func (s *Server) s3tablesArn(bucket string) string {
 	return fmt.Sprintf("arn:aws:s3tables:%s:%s:bucket/%s", s.region, s.accountID, bucket)
 }
 
-func arnParts(v *vectorBucketARNs, name, arn string) error {
+func (s *Server) arnParts(v *vectorBucketARNs, name, arn string) error {
 	if arn == "" {
 		v.bucket = name
 		return nil
@@ -69,8 +69,11 @@ func arnParts(v *vectorBucketARNs, name, arn string) error {
 		return nil
 	}
 	parsed, err := awsarn.Parse(arn)
-	if err != nil || parsed.Service != "s3vectors" {
+	if err != nil {
 		return fmt.Errorf("malformed ARN %q", arn)
+	}
+	if !strings.HasPrefix(arn, s.vectorBucketArn("")) {
+		return fmt.Errorf("ARN %q does not belong to this vector namespace", arn)
 	}
 	parts := strings.Split(parsed.Resource, "/")
 	if (len(parts) != 2 && len(parts) != 4) || parts[0] != "bucket" || parts[1] == "" {
@@ -86,12 +89,10 @@ func arnParts(v *vectorBucketARNs, name, arn string) error {
 	return nil
 }
 
-// bucketARNs resolves the bucket a bucket-level request names and rejects
-// forms that point at a different resource: an index ARN names a table, and an
-// ARN minted for another service names that service's bucket.
-func bucketARNs(name, arn string) (vectorBucketARNs, error) {
+// bucketARNs resolves bucket selectors and rejects index ARNs.
+func (s *Server) bucketARNs(name, arn string) (vectorBucketARNs, error) {
 	var v vectorBucketARNs
-	if err := arnParts(&v, name, arn); err != nil {
+	if err := s.arnParts(&v, name, arn); err != nil {
 		return v, err
 	}
 	if v.index != "" {
@@ -100,12 +101,11 @@ func bucketARNs(name, arn string) (vectorBucketARNs, error) {
 	return v, nil
 }
 
-// resolveIndexARNs fills bucket and index from any combination of plain names,
-// a bucket ARN, and a full index ARN — callers may supply only an indexArn.
-func resolveIndexARNs(bucketName, bucketArn, indexName, indexArn string) (vectorBucketARNs, error) {
+// resolveIndexARNs resolves names, a bucket ARN, or an index ARN.
+func (s *Server) resolveIndexARNs(bucketName, bucketArn, indexName, indexArn string) (vectorBucketARNs, error) {
 	var v vectorBucketARNs
 	if strings.HasPrefix(indexArn, "arn:") {
-		if err := arnParts(&v, "", indexArn); err != nil {
+		if err := s.arnParts(&v, "", indexArn); err != nil {
 			return v, err
 		}
 		if v.index == "" {
@@ -118,7 +118,7 @@ func resolveIndexARNs(bucketName, bucketArn, indexName, indexArn string) (vector
 		if !strings.HasPrefix(bucketArn, "arn:") {
 			return v, fmt.Errorf("vectorBucketArn must be an ARN, got %q", bucketArn)
 		}
-		bucket, err := bucketARNs("", bucketArn)
+		bucket, err := s.bucketARNs("", bucketArn)
 		if err != nil {
 			return v, err
 		}
@@ -278,7 +278,7 @@ func (s *Server) handleGetVectorBucket(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	arns, err := bucketARNs(req.VectorBucketName, req.VectorBucketArn)
+	arns, err := s.bucketARNs(req.VectorBucketName, req.VectorBucketArn)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
@@ -371,7 +371,7 @@ func (s *Server) handleDeleteVectorBucket(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	arns, err := bucketARNs(req.VectorBucketName, req.VectorBucketArn)
+	arns, err := s.bucketARNs(req.VectorBucketName, req.VectorBucketArn)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
@@ -769,7 +769,7 @@ func (s *Server) handlePutVectorBucketPolicy(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	arns, err := bucketARNs(req.VectorBucketName, req.VectorBucketArn)
+	arns, err := s.bucketARNs(req.VectorBucketName, req.VectorBucketArn)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
@@ -817,7 +817,7 @@ func (s *Server) handleGetVectorBucketPolicy(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	arns, err := bucketARNs(req.VectorBucketName, req.VectorBucketArn)
+	arns, err := s.bucketARNs(req.VectorBucketName, req.VectorBucketArn)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
@@ -844,7 +844,7 @@ func (s *Server) handleDeleteVectorBucketPolicy(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	arns, err := bucketARNs(req.VectorBucketName, req.VectorBucketArn)
+	arns, err := s.bucketARNs(req.VectorBucketName, req.VectorBucketArn)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
@@ -909,7 +909,7 @@ func (s *Server) handleCreateIndex(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", "unknown distanceMetric "+req.DistanceMetric)
 		return
 	}
-	arns, err := resolveIndexARNs(req.VectorBucketName, req.VectorBucketArn, req.IndexName, req.IndexArn)
+	arns, err := s.resolveIndexARNs(req.VectorBucketName, req.VectorBucketArn, req.IndexName, req.IndexArn)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
@@ -1066,7 +1066,7 @@ func (s *Server) handleGetIndex(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	arns, err := resolveIndexARNs(req.VectorBucketName, req.VectorBucketArn, req.IndexName, req.IndexArn)
+	arns, err := s.resolveIndexARNs(req.VectorBucketName, req.VectorBucketArn, req.IndexName, req.IndexArn)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
@@ -1094,7 +1094,7 @@ func (s *Server) handleListIndexes(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	arns, err := bucketARNs(req.VectorBucketName, req.VectorBucketArn)
+	arns, err := s.bucketARNs(req.VectorBucketName, req.VectorBucketArn)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
@@ -1155,7 +1155,7 @@ func (s *Server) handleDeleteIndex(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	arns, err := resolveIndexARNs(req.VectorBucketName, req.VectorBucketArn, req.IndexName, req.IndexArn)
+	arns, err := s.resolveIndexARNs(req.VectorBucketName, req.VectorBucketArn, req.IndexName, req.IndexArn)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
@@ -1216,7 +1216,7 @@ func (s *Server) handlePutVectors(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	arns, err := resolveIndexARNs(req.VectorBucketName, req.VectorBucketArn, req.IndexName, req.IndexArn)
+	arns, err := s.resolveIndexARNs(req.VectorBucketName, req.VectorBucketArn, req.IndexName, req.IndexArn)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
@@ -1300,7 +1300,7 @@ func (s *Server) handleGetVectors(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	arns, err := resolveIndexARNs(req.VectorBucketName, req.VectorBucketArn, req.IndexName, req.IndexArn)
+	arns, err := s.resolveIndexARNs(req.VectorBucketName, req.VectorBucketArn, req.IndexName, req.IndexArn)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
@@ -1334,7 +1334,7 @@ func (s *Server) handleListVectors(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	arns, err := resolveIndexARNs(req.VectorBucketName, req.VectorBucketArn, req.IndexName, req.IndexArn)
+	arns, err := s.resolveIndexARNs(req.VectorBucketName, req.VectorBucketArn, req.IndexName, req.IndexArn)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
@@ -1462,7 +1462,7 @@ func (s *Server) handleDeleteVectors(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	arns, err := resolveIndexARNs(req.VectorBucketName, req.VectorBucketArn, req.IndexName, req.IndexArn)
+	arns, err := s.resolveIndexARNs(req.VectorBucketName, req.VectorBucketArn, req.IndexName, req.IndexArn)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
@@ -1752,7 +1752,7 @@ func (s *Server) handleQueryVectors(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	arns, err := resolveIndexARNs(req.VectorBucketName, req.VectorBucketArn, req.IndexName, req.IndexArn)
+	arns, err := s.resolveIndexARNs(req.VectorBucketName, req.VectorBucketArn, req.IndexName, req.IndexArn)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return

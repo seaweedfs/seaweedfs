@@ -323,7 +323,14 @@ def test_delete_and_recreate_index(vectors, index):
 
 def test_index_arn_validation(vectors, index):
     arn = vectors.get_index(**index)["index"]["indexArn"]
+    foreign = []
+    for field, value in ((1, "aws-cn"), (3, "eu-west-1"), (4, "999999999999")):
+        parts = arn.split(":", 5)
+        assert parts[field] != value
+        parts[field] = value
+        foreign.append(":".join(parts))
     for invalid in (
+        *foreign,
         arn.replace(":s3vectors:", ":s3tables:"),
         arn.replace(":s3vectors:", ":s3:"),
         arn + "/index/extra",
