@@ -164,27 +164,27 @@ func ValidateMetadataLocation(metadataLocation, bucketName, namespace string) er
 	return nil
 }
 
-// ValidateEncryptionConfiguration admits only the AES256 declaration, under
-// either wire name — s3tables sends sseAlgorithm, s3vectors sends sseType. A
+// ValidateEncryptionConfiguration admits only the AES256 declaration, under the
+// caller's wire name — s3tables sends sseAlgorithm, s3vectors sends sseType. A
 // caller-chosen key is never read back by the storage path, so recording one
 // would claim protection the data does not get.
-func ValidateEncryptionConfiguration(cfg map[string]interface{}) error {
+func ValidateEncryptionConfiguration(cfg map[string]interface{}, sseField string) error {
 	if len(cfg) == 0 {
 		return nil
 	}
-	declared := false
-	for _, field := range []string{"sseAlgorithm", "sseType"} {
-		value, ok := cfg[field].(string)
-		if !ok {
-			continue
-		}
-		declared = true
-		if value != "AES256" {
-			return fmt.Errorf("unsupported %s %q", field, value)
-		}
+	otherField := "sseAlgorithm"
+	if sseField == otherField {
+		otherField = "sseType"
 	}
-	if !declared {
-		return fmt.Errorf("encryptionConfiguration requires an algorithm")
+	if _, ok := cfg[otherField]; ok {
+		return fmt.Errorf("encryptionConfiguration field is %s", sseField)
+	}
+	value, ok := cfg[sseField].(string)
+	if !ok {
+		return fmt.Errorf("encryptionConfiguration requires %s", sseField)
+	}
+	if value != "AES256" {
+		return fmt.Errorf("unsupported %s %q", sseField, value)
 	}
 	if _, ok := cfg["kmsKeyArn"]; ok {
 		return fmt.Errorf("kmsKeyArn is not supported")

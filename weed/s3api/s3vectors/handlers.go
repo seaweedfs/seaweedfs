@@ -275,16 +275,21 @@ func (s *Server) handleCreateVectorBucket(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "ValidationException", "vectorBucketName is required")
 		return
 	}
-	if err := s3tables.ValidateEncryptionConfiguration(req.EncryptionConfiguration); err != nil {
+	if err := s3tables.ValidateEncryptionConfiguration(req.EncryptionConfiguration, "sseType"); err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
+	}
+	// The catalog keeps the s3tables field name; GetVectorBucket renames it back.
+	enc := req.EncryptionConfiguration
+	if len(enc) != 0 {
+		enc = map[string]interface{}{"sseAlgorithm": enc["sseType"]}
 	}
 	var resp map[string]interface{}
 	err := s.catalog(r.Context(), "CreateTableBucket",
 		&s3tables.CreateTableBucketRequest{
 			Name:                    req.VectorBucketName,
 			Format:                  s3tables.FormatLance,
-			EncryptionConfiguration: req.EncryptionConfiguration,
+			EncryptionConfiguration: enc,
 		}, &resp, r)
 	if err != nil {
 		catalogErr(w, err)
@@ -324,6 +329,9 @@ func (s *Server) handleGetVectorBucket(w http.ResponseWriter, r *http.Request) {
 		CreationTime:     created,
 	}
 	if cfg, ok := resp["encryptionConfiguration"].(map[string]interface{}); ok {
+		if v, ok := cfg["sseAlgorithm"]; ok {
+			cfg = map[string]interface{}{"sseType": v}
+		}
 		bucket.EncryptionConfiguration = cfg
 	}
 	writeJSON(w, http.StatusOK, &GetVectorBucketResponse{VectorBucket: bucket})

@@ -107,8 +107,8 @@ func TestManagerCreateTableBucketRejectsCustomerKeys(t *testing.T) {
 		reaches bool
 	}{
 		{"no configuration", nil, true},
-		{"default sse", map[string]interface{}{"sseType": "AES256"}, true},
 		{"tables default sse", map[string]interface{}{"sseAlgorithm": "AES256"}, true},
+		{"vector wire name", map[string]interface{}{"sseType": "AES256"}, false},
 		{"unknown sse", map[string]interface{}{"sseType": "aws:fsx"}, false},
 		{"tables kms", map[string]interface{}{"sseAlgorithm": "aws:kms"}, false},
 		{"conflicting types", map[string]interface{}{"sseAlgorithm": "AES256", "sseType": "aws:kms"}, false},

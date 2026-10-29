@@ -39,7 +39,7 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 		bucketFormat = normalized
 	}
 
-	if err := ValidateEncryptionConfiguration(req.EncryptionConfiguration); err != nil {
+	if err := ValidateEncryptionConfiguration(req.EncryptionConfiguration, "sseAlgorithm"); err != nil {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
 		return err
 	}

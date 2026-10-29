@@ -555,7 +555,8 @@ func TestValidateEncryptionConfigurationRejectsCustomerKeys(t *testing.T) {
 	}{
 		{"empty", nil, true},
 		{"default sse", map[string]interface{}{"sseType": "AES256"}, true},
-		{"tables default sse", map[string]interface{}{"sseAlgorithm": "AES256"}, true},
+		{"tables wire name", map[string]interface{}{"sseAlgorithm": "AES256"}, false},
+		{"both wire names", map[string]interface{}{"sseType": "AES256", "sseAlgorithm": "AES256"}, false},
 		{"customer key", map[string]interface{}{"sseType": "aws:kms"}, false},
 		{"tables kms", map[string]interface{}{"sseAlgorithm": "aws:kms"}, false},
 		{"unknown sse", map[string]interface{}{"sseType": "aws:fsx"}, false},
@@ -564,7 +565,7 @@ func TestValidateEncryptionConfigurationRejectsCustomerKeys(t *testing.T) {
 		{"key on default sse", map[string]interface{}{"sseType": "AES256", "kmsKeyArn": "arn:aws:kms:us-east-1:123456789012:key/x"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := s3tables.ValidateEncryptionConfiguration(tc.cfg) == nil; got != tc.want {
+			if got := s3tables.ValidateEncryptionConfiguration(tc.cfg, "sseType") == nil; got != tc.want {
 				t.Fatalf("cfg %v: accepted=%v, want %v", tc.cfg, got, tc.want)
 			}
 		})
