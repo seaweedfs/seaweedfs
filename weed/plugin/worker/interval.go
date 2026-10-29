@@ -26,7 +26,7 @@ func SkipDetectionByInterval(request *plugin_pb.RunDetectionRequest, sender Dete
 		return false, nil
 	}
 	until := request.GetLastSuccessfulRun().AsTime().Add(time.Duration(minIntervalSeconds) * time.Second)
-	reason := fmt.Sprintf("Cooldown after successful job (%s)", time.Duration(minIntervalSeconds)*time.Second)
+	reason := fmt.Sprintf("Cooldown after last completed job (%s)", time.Duration(minIntervalSeconds)*time.Second)
 	if err := sender.SendActivity(BuildDetectorActivity("skipped_by_interval", reason, map[string]*plugin_pb.ConfigValue{
 		"eligible_after": {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: until.UTC().Format(time.RFC3339)}},
 	})); err != nil {
