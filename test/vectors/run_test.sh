@@ -48,4 +48,18 @@ for _ in $(seq 1 60); do
 done
 (exec 3<>/dev/tcp/127.0.0.1/9301) 2>/dev/null || { echo "vector server on :9301 never came up" >&2; exit 1; }
 
+# A listening engine still has to land its KeepConnected registration before
+# the gateway's lazy discovery can find it — poll the cluster list for the
+# vector node rather than race the first request against it.
+vector_registered() {
+  # grep -q would close the pipe on first match and SIGPIPE the shell mid-write
+  # under `set -o pipefail`; a full read lets cluster.ps finish.
+  printf 'cluster.ps\n' | ./weed shell -master 127.0.0.1:9333 2>/dev/null | grep "vector servers" >/dev/null
+}
+for _ in $(seq 1 60); do
+  vector_registered && break
+  sleep 1
+done
+vector_registered || { echo "vector server never registered with the master" >&2; exit 1; }
+
 python3 -m pytest -xvs s3vectors_test.py
