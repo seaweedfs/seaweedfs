@@ -13,6 +13,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/mount/meta_cache"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type DirectoryHandleId uint64
@@ -417,12 +419,12 @@ func (wfs *WFS) doReadDirectory(ctx context.Context, input *fuse.ReadIn, out Dir
 // the kernel hands EIO from readdirent straight to the caller, and kubelet's
 // applyFSGroup then fails the volume mount instead of retrying. A cancellation
 // that arrives with the local context still alive belongs to a shared build
-// that another requester abandoned — the read itself can still be retried.
+// that another requester abandoned — the read itself can still be retried, and
+// a gRPC cancellation of the listing classifies the same way.
 func dirReadStatus(ctx context.Context, err error) fuse.Status {
-	if ctx.Err() != nil {
-		return fuse.EINTR
-	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if ctx.Err() != nil ||
+		errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
+		status.Code(err) == codes.Canceled || status.Code(err) == codes.DeadlineExceeded {
 		return fuse.EINTR
 	}
 	return fuse.EIO
