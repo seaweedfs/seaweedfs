@@ -292,25 +292,16 @@ func TestRemoteClientCache_BuildSpanningRetainIsDropped(t *testing.T) {
 	}
 }
 
-// A get of a remote a reload already removed is served (the caller still holds the configuration) but not cached.
-func TestRemoteClientCache_RemovedNameIsNotCached(t *testing.T) {
+// A remote the local filer never named — another filer's, proxied through this volume server — keeps connection reuse:
+// retention only ever drops what was built, never what a later get is for.
+func TestRemoteClientCache_UnknownNameStillCaches(t *testing.T) {
 	useTestCache(t, 64)
 	var k counter
 	RetainRemoteStorages(map[string]bool{"keep": true})
-	first, _ := GetRemoteStorageWith("guarded", s3conf("gone", "x"), "", k.build)
-	again, _ := GetRemoteStorageWith("guarded", s3conf("gone", "x"), "", k.build)
-	if first == nil || again == nil {
-		t.Fatal("a get of a removed remote still builds its client")
-	}
-	if first == again || k.builds.Load() != 2 {
-		t.Fatal("a removed remote's client must not enter the cache")
-	}
-	if _, _ = GetRemoteStorageWith("guarded", s3conf("keep", "x"), "", k.build); k.builds.Load() != 3 {
-		t.Fatal("a retained remote's client is cached")
-	}
-	kept, _ := GetRemoteStorageWith("guarded", s3conf("keep", "x"), "", k.build)
-	if kept.(*cacheTestClient).id != 3 {
-		t.Fatal("a retained remote's client is cached")
+	first, _ := GetRemoteStorageWith("guarded", s3conf("peer", "x"), "", k.build)
+	again, _ := GetRemoteStorageWith("guarded", s3conf("peer", "x"), "", k.build)
+	if first == nil || first != again || k.builds.Load() != 1 {
+		t.Fatal("a remote the local filer does not name must still be cached")
 	}
 }
 

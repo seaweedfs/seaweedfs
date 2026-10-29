@@ -44,7 +44,7 @@ import (
 //     name, every entry but the newest: a key rotation, a new endpoint or a new
 //     credentials file leaves no client of the old configuration behind. A
 //     build finishing after a reload never enters the cache either: it is
-//     dropped when its name is gone or a reload passed while it was running.
+//     retired instead when a reload passed while it was running.
 //   - the cached client is built from a copy of the configuration, so a caller
 //     changing its value later changes nothing.
 
@@ -68,8 +68,7 @@ type clientCache struct {
 	entries    map[string]*list.Element
 	building   singleflight.Group
 	births     uint64
-	generation uint64          // bumped by every retain: a build started under an older one is stale
-	retained   map[string]bool // the names of the last retain; nil until the first
+	generation uint64 // bumped by every retain: a build started under an older one is stale
 	grace      time.Duration
 	afterFunc  func(time.Duration, func()) // tests
 }
@@ -144,9 +143,9 @@ func (c *clientCache) insert(e *cachedClient) {
 	if el, ok := c.entries[e.key]; ok { // cannot happen under singleflight; keep the first, retire the newcomer
 		c.order.MoveToFront(el)
 		evicted = append(evicted, e)
-	} else if e.generation < c.generation || (c.retained != nil && !c.retained[e.name]) {
-		// a reload ran while the build was in flight, or the remote is already
-		// gone: the caller keeps the client but it never enters the cache
+	} else if e.generation < c.generation {
+		// a reload ran while the build was in flight: the caller keeps the
+		// client but it never enters the cache
 		evicted = append(evicted, e)
 	} else {
 		c.births++
@@ -180,14 +179,6 @@ func (c *clientCache) retain(names map[string]bool) {
 	var dropped []*cachedClient
 	c.mu.Lock()
 	c.generation++
-	if names == nil {
-		c.retained = nil
-	} else {
-		c.retained = make(map[string]bool, len(names))
-		for name := range names {
-			c.retained[name] = true
-		}
-	}
 	newest := map[string]uint64{} // kind and name -> the newest entry's birth
 	for _, el := range c.entries {
 		e := el.Value.(*cachedClient)
