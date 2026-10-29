@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/stats"
-	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"google.golang.org/grpc"
 
@@ -123,9 +122,15 @@ func (t *Topology) UnRegisterDataNode(dn *DataNode) {
 		defer t.releaseResolvedQuarantine(v.Id)
 	}
 
-	// unregister ec shards when volume server disconnected
+	// unregister ec shards when volume server disconnected. The node's own
+	// records clear first so the still-held check cannot skip the drop, and
+	// each unregister gets a copy — DeleteEcShard drains the shared
+	// ShardsInfo.
 	for _, s := range dn.GetEcShards() {
-		t.UnRegisterEcShards(s, dn)
+		held := *s
+		held.ShardsInfo = s.ShardsInfo.Copy()
+		dn.DeleteEcShard(s)
+		t.UnRegisterEcShards(&held, dn)
 	}
 
 	negativeUsages := dn.GetDiskUsages().negative()
@@ -133,7 +138,6 @@ func (t *Topology) UnRegisterDataNode(dn *DataNode) {
 		dn.UpAdjustDiskUsageDelta(dt, du)
 	}
 	dn.DeltaUpdateVolumes([]storage.VolumeInfo{}, dn.GetVolumes())
-	dn.DeltaUpdateEcShards([]*erasure_coding.EcVolumeInfo{}, dn.GetEcShards())
 	t.unregisterDataNodeAddress(dn.ServerAddress(), dn)
 	if dn.Parent() != nil {
 		dn.Parent().UnlinkChildNode(dn.Id())

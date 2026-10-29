@@ -161,6 +161,76 @@ func TestEcShardsAfterRestartHeartbeat(t *testing.T) {
 	}
 }
 
+// TestEcShardRelocationAcrossDisksKeepsLookup covers a rebuild relocating a
+// mounted shard between a node's disks: the source disk reports a delete and
+// the destination an add, but lookups key on the node — registering first is
+// a no-op, so the unregister must not drop a node that still holds the shard
+// on another of its disks.
+func TestEcShardRelocationAcrossDisksKeepsLookup(t *testing.T) {
+	topo := NewTopology("weedfs", sequence.NewMemorySequencer(), 32*1024, 5, false)
+	dc := topo.GetOrCreateDataCenter("dc1")
+	rack := dc.GetOrCreateRack("rack1")
+	dn := rack.GetOrCreateDataNode("127.0.0.1", 34534, 0, "127.0.0.1", "", map[string]uint32{"": 100})
+
+	const vid = uint32(15)
+	listed := func(shardId erasure_coding.ShardId) bool {
+		locs, ok := topo.LookupEcShards(needle.VolumeId(vid))
+		if !ok {
+			return false
+		}
+		for _, n := range locs.Locations[shardId] {
+			if n.Id() == dn.Id() {
+				return true
+			}
+		}
+		return false
+	}
+
+	// shard 3 sits on disk 0, then ec.rebuild relocates it to disk 1.
+	topo.SyncDataNodeEcShards([]*master_pb.VolumeEcShardInformationMessage{
+		buildEcShardMessage(vid, "c", "", 0, []erasure_coding.ShardId{3}),
+	}, dn)
+	topo.SyncDataNodeEcShards([]*master_pb.VolumeEcShardInformationMessage{
+		buildEcShardMessage(vid, "c", "", 1, []erasure_coding.ShardId{3}),
+	}, dn)
+	if !listed(3) {
+		t.Fatalf("shard 3 moved disk0->disk1 dropped node %s from lookup", dn.Id())
+	}
+
+	// The same move reported as an incremental delta keeps the lookup too.
+	topo.IncrementalSyncDataNodeEcShards(
+		[]*master_pb.VolumeEcShardInformationMessage{buildEcShardMessage(vid, "c", "", 0, []erasure_coding.ShardId{5})},
+		[]*master_pb.VolumeEcShardInformationMessage{buildEcShardMessage(vid, "c", "", 1, []erasure_coding.ShardId{5})},
+		dn)
+	if !listed(5) {
+		t.Fatalf("shard 5 moved incrementally dropped node %s from lookup", dn.Id())
+	}
+
+	// A shard duplicated across two disks keeps the node listed when one
+	// copy goes away.
+	topo.SyncDataNodeEcShards([]*master_pb.VolumeEcShardInformationMessage{
+		buildEcShardMessage(vid, "c", "", 0, []erasure_coding.ShardId{7}),
+		buildEcShardMessage(vid, "c", "", 1, []erasure_coding.ShardId{3, 5, 7}),
+	}, dn)
+	topo.SyncDataNodeEcShards([]*master_pb.VolumeEcShardInformationMessage{
+		buildEcShardMessage(vid, "c", "", 1, []erasure_coding.ShardId{3, 5, 7}),
+	}, dn)
+	if !listed(7) {
+		t.Fatalf("shard 7 still held on disk 1 dropped node %s from lookup", dn.Id())
+	}
+
+	// A shard gone from every disk does leave the lookup.
+	topo.SyncDataNodeEcShards([]*master_pb.VolumeEcShardInformationMessage{
+		buildEcShardMessage(vid, "c", "", 1, []erasure_coding.ShardId{3, 5}),
+	}, dn)
+	if listed(7) {
+		t.Fatalf("shard 7 deleted on all disks still lists node %s", dn.Id())
+	}
+	if !listed(3) || !listed(5) {
+		t.Fatalf("shards 3 and 5 on disk 1 lost node %s", dn.Id())
+	}
+}
+
 func buildEcShardMessage(vid uint32, collection, diskType string, diskId uint32, shardIds []erasure_coding.ShardId) *master_pb.VolumeEcShardInformationMessage {
 	si := erasure_coding.NewShardsInfo()
 	for _, sid := range shardIds {
