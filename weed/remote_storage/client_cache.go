@@ -247,6 +247,7 @@ func FileVersion(path string) string {
 	if path == "" {
 		return ""
 	}
+	// codeql[go/path-injection] the path is the credentials file the operator configured; the client reads the same file
 	data, err := os.ReadFile(util.ResolvePath(path)) // "~/…" as the gcs client reads it
 	if err != nil {
 		return ""
