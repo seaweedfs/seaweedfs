@@ -75,7 +75,7 @@ type VectorBucket struct {
 }
 
 type ListVectorBucketsRequest struct {
-	MaxResults int    `json:"maxResults"`
+	MaxResults *int   `json:"maxResults"`
 	NextToken  string `json:"nextToken"`
 	Prefix     string `json:"prefix"`
 }
@@ -158,7 +158,7 @@ type GetIndexResponse struct {
 }
 
 type ListIndexesRequest struct {
-	MaxResults       int    `json:"maxResults"`
+	MaxResults       *int   `json:"maxResults"`
 	NextToken        string `json:"nextToken"`
 	Prefix           string `json:"prefix"`
 	VectorBucketName string `json:"vectorBucketName"`
