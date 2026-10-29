@@ -340,6 +340,19 @@ def test_index_arn_validation(vectors, index):
         expect_error("ValidationException", vectors.delete_index, indexArn=invalid)
     expect_error("ValidationException", vectors.get_vector_bucket, vectorBucketArn=arn)
     expect_error("ValidationException", vectors.list_indexes, vectorBucketArn=arn)
+    bucket_arn = arn.rsplit("/index/", 1)[0]
+    for request in (
+        {"vectorBucketName": "other-" + index["vectorBucketName"], "indexArn": arn},
+        {"indexName": "other-" + index["indexName"], "indexArn": arn},
+    ):
+        expect_error("ValidationException", vectors.get_index, **request)
+        expect_error("ValidationException", vectors.delete_index, **request)
+    for operation in (vectors.get_vector_bucket, vectors.list_indexes, vectors.delete_vector_bucket):
+        expect_error("ValidationException", operation, vectorBucketName="other-" + index["vectorBucketName"],
+                     vectorBucketArn=bucket_arn)
+    assert vectors.get_index(**index, indexArn=arn)["index"]["indexArn"] == arn
+    assert vectors.get_vector_bucket(vectorBucketName=index["vectorBucketName"],
+                                     vectorBucketArn=bucket_arn)["vectorBucket"]["vectorBucketArn"] == bucket_arn
     assert vectors.get_index(**index)["index"]["indexArn"] == arn
 
 
