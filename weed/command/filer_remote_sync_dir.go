@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strings"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/chunk_cache"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -973,9 +975,35 @@ func isSuperseded(filerClient filer_pb.FilerClient, dir string, entry *filer_pb.
 		len(filer.DoMinusChunks(current.GetChunks(), entry.GetChunks())) > 0
 }
 
-// errSuperseded marks an upload that failed for an entry the filer has since
-// moved past (isSuperseded). The caller skips the event instead of failing it.
-var errSuperseded = errors.New("deleted or rewritten since the event was logged")
+// remoteUploadReader streams the entry's full declared size through
+// ChunkReadAt, which zero-fills any range no chunk view covers: a sparse
+// file, a mid-write snapshot flushed while its chunk uploads were still
+// running, and a chunkless entry all upload the bytes a read of the entry
+// returns. The chunk stream reader stops at the first gap instead, handing
+// the backend a short body on every retry — a hole that never fills wedges
+// the event, and a backend that does not verify the length publishes a
+// truncated object.
+func remoteUploadReader(filerClient filer_pb.FilerClient, entry *filer_pb.Entry) (reader io.Reader, closeFn func() error, err error) {
+	if len(entry.Content) > 0 {
+		return bytes.NewReader(entry.Content), nil, nil
+	}
+	size := int64(filer.FileSize(entry))
+	lookupFileIdFn := filer.LookupFn(filerClient)
+	chunkViews, err := filer.ViewFromChunks(context.Background(), lookupFileIdFn, entry.GetChunks(), 0, math.MaxInt64)
+	if err != nil {
+		return nil, nil, err
+	}
+	readerAt := filer.NewChunkReaderAtFromClient(context.Background(),
+		filer.NewReaderCache(8, chunk_cache.NewChunkCacheInMemory(8), lookupFileIdFn, nil),
+		chunkViews, size, filer.DefaultPrefetchCount)
+	return io.NewSectionReader(readerAt, 0, size), readerAt.Close, nil
+}
+
+// errSuperseded marks an upload that cannot produce the entry an event
+// described: the filer moved past it (isSuperseded). The caller skips the
+// event instead of failing it; the event carrying the entry's current chunks
+// follows in the log and uploads them.
+var errSuperseded = errors.New("superseded or incomplete since the event was logged")
 
 // retriedWriteFile uploads the entry, retrying transient failures. The filer is
 // asked whether the entry is superseded before the first attempt and after
@@ -992,7 +1020,16 @@ func retriedWriteFile(client remote_storage.RemoteStorageClient, filerSource fil
 	err = util.RetryOnError("writeFile", func(err error) bool {
 		return !errors.Is(err, errSuperseded) && util.IsTransientError(err)
 	}, func() error {
-		reader := filer.NewFileReader(filerSource, newEntry)
+		reader, closeFn, readerErr := remoteUploadReader(filerSource, newEntry)
+		if readerErr != nil {
+			if isSuperseded(filerSource, dir, newEntry) {
+				return fmt.Errorf("%s %w: %w", util.NewFullPath(dir, newEntry.Name), errSuperseded, readerErr)
+			}
+			return readerErr
+		}
+		if closeFn != nil {
+			defer closeFn()
+		}
 		glog.V(0).Infof("create %s", remote_storage.FormatLocation(dest))
 		var writeErr error
 		remoteEntry, writeErr = client.WriteFile(dest, newEntry, reader)
