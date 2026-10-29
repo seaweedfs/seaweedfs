@@ -593,9 +593,11 @@ func (fs *FilerServer) rememberObjectTxn(requestID string, lockPath util.FullPat
 // latestVersionedConditionEntry resolves the object a conditional write should
 // be checked against inside a .versions directory: the entry the latest-version
 // pointer names, or nothing when the pointer names a delete marker — a
-// tombstone is not a current version. A missing pointer or a pointer to a file
-// that is gone means the metadata cannot answer the question, which reports an
-// error rather than guessing at either branch.
+// tombstone is not a current version. A suspended-versioning write clears the
+// pointer and stamps null-version-is-latest instead, which reports not-found so
+// the regular path's null object decides. Any other missing pointer, or a
+// pointer to a file that is gone, means the metadata cannot answer the
+// question, which reports an error rather than guessing at either branch.
 func (fs *FilerServer) latestVersionedConditionEntry(ctx context.Context, versionsDir util.FullPath) (*filer.Entry, util.FullPath, error) {
 	versionsEntry, err := fs.filer.FindEntry(ctx, versionsDir)
 	if err != nil {
@@ -606,6 +608,9 @@ func (fs *FilerServer) latestVersionedConditionEntry(ctx context.Context, versio
 	}
 	latestName := string(versionsEntry.Extended[s3_constants.ExtLatestVersionFileNameKey])
 	if latestName == "" {
+		if string(versionsEntry.Extended[s3_constants.ExtNullVersionIsLatestKey]) == "true" {
+			return nil, versionsDir, filer_pb.ErrNotFound
+		}
 		return nil, versionsDir, fmt.Errorf("%s has no latest-version pointer", versionsDir)
 	}
 	latestPath := util.NewFullPath(string(versionsDir), latestName)

@@ -1179,3 +1179,42 @@ func TestObjectTransactionConditionIgnoresDirectory(t *testing.T) {
 		t.Fatalf("directory at key with live latest: err=%v code=%v, want precondition failed", err, resp.GetErrorCode())
 	}
 }
+
+// A suspended-versioning write clears the latest-version pointer and leaves
+// the null object at the regular path as current. The prefer-alt condition
+// must keep resolving against that object, not reject on the empty pointer.
+func TestObjectTransactionConditionPreferAltHonorsNullIsLatest(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	seed := map[string]*filer.Entry{
+		"/buckets/bkt/obj": {
+			Attr:     filer.Attr{Inode: 1, Mtime: now, Crtime: now, Mode: 0644},
+			Extended: map[string][]byte{s3_constants.ExtETagKey: []byte("nulletag")},
+		},
+		"/buckets/bkt/obj/.versions": {
+			Attr:     filer.Attr{Inode: 2, Mtime: now, Crtime: now, Mode: 0755},
+			Extended: map[string][]byte{s3_constants.ExtNullVersionIsLatestKey: []byte("true")},
+		},
+	}
+	req := &filer_pb.ObjectTransactionRequest{
+		LockKey:            "/buckets/bkt/obj",
+		ConditionAltKey:    "/buckets/bkt/obj/.versions",
+		ConditionPreferAlt: true,
+		Condition: &filer_pb.WriteCondition{
+			Clauses: []*filer_pb.WriteCondition_Clause{{Kind: filer_pb.WriteCondition_IF_ETAG_MATCH, Etags: []string{`"nulletag"`}}},
+		},
+		Mutations: []*filer_pb.ObjectMutation{{
+			Type:      filer_pb.ObjectMutation_PUT,
+			Directory: "/buckets/bkt",
+			Entry:     &filer_pb.Entry{Name: "obj", Attributes: &filer_pb.FuseAttributes{Mtime: now.Unix(), FileMode: 0644, Inode: 9}},
+		}},
+	}
+
+	fs, store := newTxnTestServer(t, seed)
+	resp, err := fs.ObjectTransaction(context.Background(), req)
+	if err != nil || resp.Error != "" {
+		t.Fatalf("null-is-latest: err=%v resp=%q, want applied", err, resp.Error)
+	}
+	if store.entries["/buckets/bkt/obj"] == nil {
+		t.Fatal("mutation did not apply over a null-is-latest .versions")
+	}
+}
