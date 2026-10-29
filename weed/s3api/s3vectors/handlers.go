@@ -995,13 +995,13 @@ func (s *Server) handleListVectors(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Mirrors the engine's page sizing so a segmented listing pages like a plain
-// one does.
+// The page constants mirror the engine's page sizing so a segmented listing
+// pages like a plain one does; vectorsMaxTopK is the AWS QueryVectors limit.
 const (
 	vectorsDefaultPage = 500
 	vectorsMaxPutBatch = 500
 	vectorsMaxPage     = 1000
-	vectorsMaxTopK     = 30
+	vectorsMaxTopK     = 10000
 )
 
 // listSegmentVectors scans the index from offset, keeping the rows that fall
