@@ -29,7 +29,7 @@ type ReplicationSink interface {
 // committed destination, a directory move never deletes descendants before they
 // are recreated, and the entry's chunks are neither re-copied nor leaked.
 type EntryMover interface {
-	MoveEntry(oldKey, newKey string, newEntry *filer_pb.Entry, signatures []int32) error
+	MoveEntry(oldKey, newKey string, oldEntry, newEntry *filer_pb.Entry, signatures []int32) error
 }
 
 // MetadataOnlyDeleter is an optional capability for sinks whose own delete

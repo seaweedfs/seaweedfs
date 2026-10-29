@@ -1198,3 +1198,63 @@ func TestUpdateEntrySyncsLiveVersion(t *testing.T) {
 		t.Fatalf("the destination must get the live version, got %+v", updated)
 	}
 }
+
+// A rename carries whatever version the destination happened to hold. When the
+// preceding content update was skipped — the source had already moved to the
+// new name — the moved entry keeps the old bytes. MoveEntry must reconcile the
+// moved entry with the event's snapshot, like an in-place update.
+func TestMoveEntryReconcilesMovedContent(t *testing.T) {
+	existing := &filer_pb.Entry{
+		Name:       "x.bin",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 4},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "4,0v1d", SourceFileId: "5617,0v1", Size: 10}},
+	}
+	dst, dstAddr := startRecordingFiler(t, existing)
+
+	live := &filer_pb.Entry{
+		Name:       "y.bin",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 6},
+		Content:    []byte("v2"),
+	}
+	filerSrc := startSourceFilerServer(t, &sourceFilerServer{
+		lookupFn: func(dir, name string) (*filer_pb.Entry, error) {
+			if name == "y.bin" {
+				return live, nil
+			}
+			return nil, filer_pb.ErrNotFound
+		},
+	})
+
+	fs := &FilerSink{
+		filerSource:    filerSrc,
+		dir:            "/dst",
+		grpcAddress:    dstAddr,
+		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		executor:       util.NewLimitedConcurrentExecutor(1),
+	}
+	fs.SetUploader(operation.NewUploaderWithHttpClient(http.DefaultClient))
+
+	oldEntry := &filer_pb.Entry{
+		Name:       "x.bin",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 6},
+		Content:    []byte("v2"),
+	}
+	newEntry := &filer_pb.Entry{
+		Name:       "y.bin",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 6},
+		Content:    []byte("v2"),
+	}
+	if err := fs.MoveEntry("/dst/x.bin", "/dst/y.bin", oldEntry, newEntry, nil); err != nil {
+		t.Fatalf("move with reconcile should succeed: %v", err)
+	}
+	if dst.renames.Load() != 1 {
+		t.Fatal("the entry must be relocated with the native rename")
+	}
+	if dst.updates.Load() != 1 {
+		t.Fatal("the moved entry must be reconciled with the event's snapshot")
+	}
+	updated := dst.lastUpdate.Load()
+	if updated == nil || string(updated.GetContent()) != "v2" || updated.GetAttributes().GetMtime() != 6 {
+		t.Fatalf("the moved entry must carry the rename's content, got %+v", updated)
+	}
+}

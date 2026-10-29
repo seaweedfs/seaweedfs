@@ -223,7 +223,7 @@ var _ sink.EntryMover = (*FilerSink)(nil)
 // is re-checked with a direct lookup rather than inferred from the rename error,
 // so a rolled-back move that left the old entry intact propagates for retry
 // instead of being mistaken for "gone".
-func (fs *FilerSink) MoveEntry(oldKey, newKey string, newEntry *filer_pb.Entry, signatures []int32) error {
+func (fs *FilerSink) MoveEntry(oldKey, newKey string, oldEntry, newEntry *filer_pb.Entry, signatures []int32) error {
 	oldDir, oldName := util.FullPath(oldKey).DirAndName()
 	newDir, newName := util.FullPath(newKey).DirAndName()
 
@@ -238,7 +238,15 @@ func (fs *FilerSink) MoveEntry(oldKey, newKey string, newEntry *filer_pb.Entry, 
 		return err
 	})
 	if err == nil {
-		return nil
+		// The rename relocates whatever version the destination held, which can
+		// predate the event's snapshot — e.g. a queued update skipped after the
+		// source already moved to the new name. Reconcile content the same way
+		// an in-place update does.
+		if oldEntry == nil {
+			return nil
+		}
+		_, uerr := fs.UpdateEntry(newKey, oldEntry, newDir, newEntry, true, signatures)
+		return uerr
 	}
 	if missing, lookupErr := fs.entryMissing(oldKey); lookupErr == nil && missing {
 		glog.V(2).Infof("move %s => %s: old path gone, creating %s", oldKey, newKey, newKey)
