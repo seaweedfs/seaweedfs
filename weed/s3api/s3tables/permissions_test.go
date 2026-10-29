@@ -449,4 +449,8 @@ func TestValidatePolicyDocument(t *testing.T) {
 	if err := validatePolicyDocument(deadResource); err == nil {
 		t.Fatal("s3vectors resource should be rejected")
 	}
+	deadPartition := `{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Principal":"*","Action":"s3tables:*","Resource":"arn:aws-cn:s3vectors:cn-1:a:bucket/b"}]}`
+	if err := validatePolicyDocument(deadPartition); err == nil {
+		t.Fatal("s3vectors resource in another partition should be rejected")
+	}
 }

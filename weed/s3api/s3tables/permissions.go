@@ -157,12 +157,23 @@ func validatePolicyDocument(raw string) error {
 			}
 		}
 		for _, resource := range statementActions(stmt.Resource) {
-			if strings.HasPrefix(resource, "arn:aws:s3vectors:") {
+			if arnService(resource) == "s3vectors" {
 				return fmt.Errorf("resource %q is not enforceable in a resource policy", resource)
 			}
 		}
 	}
 	return nil
+}
+
+// arnService returns the service field of an ARN in any partition, so a
+// resource naming s3vectors is caught for aws-cn, aws-us-gov, and friends —
+// not just the commercial partition.
+func arnService(resource string) string {
+	parts := strings.SplitN(resource, ":", 4)
+	if len(parts) == 4 && parts[0] == "arn" {
+		return parts[2]
+	}
+	return ""
 }
 
 func statementActions(spec interface{}) []string {
