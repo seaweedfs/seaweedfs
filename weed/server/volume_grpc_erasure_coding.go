@@ -306,7 +306,8 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 					serr := sibling.ReopenDeletionJournal()
 					unlockSibling()
 					if serr != nil {
-						glog.Warningf("reopen shared ec journal %s: %v", indexBaseFileName, serr)
+						err = fmt.Errorf("reopen shared ec journal on %s: %v", location.Directory, serr)
+						break
 					}
 				}
 			}
