@@ -1,8 +1,12 @@
 package s3vectors
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"testing"
 
@@ -365,5 +369,26 @@ func TestToPutVectorDimensionCheck(t *testing.T) {
 				t.Fatalf("toPutVector err = %v, want ok %v", err, tc.ok)
 			}
 		})
+	}
+}
+
+func TestPutVectorsRejectsBadBatchSizes(t *testing.T) {
+	s := &Server{}
+	for _, n := range []int{0, vectorsMaxPutBatch + 1} {
+		vectors := make([]*PutInputVector, n)
+		for i := range vectors {
+			vectors[i] = &PutInputVector{}
+		}
+		body, _ := json.Marshal(&PutVectorsRequest{
+			VectorBucketName: "bucket",
+			IndexName:        "index",
+			Vectors:          vectors,
+		})
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodPost, "/PutVectors", bytes.NewReader(body))
+		s.handlePutVectors(w, r)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("batch of %d: status %d, want %d", n, w.Code, http.StatusBadRequest)
+		}
 	}
 }
