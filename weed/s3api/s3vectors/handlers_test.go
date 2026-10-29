@@ -72,6 +72,10 @@ func (f *fakeVectors) CreateIndex(ctx context.Context, req *vector_pb.CreateInde
 	return &vector_pb.CreateIndexResponse{}, nil
 }
 
+func (f *fakeVectors) GetVectors(ctx context.Context, req *vector_pb.GetVectorsRequest, opts ...grpc.CallOption) (*vector_pb.GetVectorsResponse, error) {
+	return &vector_pb.GetVectorsResponse{}, nil
+}
+
 func (f *fakeVectors) PutVectors(ctx context.Context, req *vector_pb.PutVectorsRequest, opts ...grpc.CallOption) (*vector_pb.PutVectorsResponse, error) {
 	f.puts = append(f.puts, req)
 	return &vector_pb.PutVectorsResponse{}, nil
@@ -524,6 +528,7 @@ func TestQueryVectorsTopKBounds(t *testing.T) {
 	s := &Server{
 		vectors:     newFakeVectors(0),
 		tables:      s3tables.NewManager(),
+		internal:    s3tables.NewManager(),
 		filerClient: errFiler{},
 	}
 	for _, tc := range []struct {
@@ -572,6 +577,7 @@ func TestValidateEncryptionConfigurationRejectsCustomerKeys(t *testing.T) {
 		})
 	}
 }
+
 // A vector index is colocated: its catalog entry sits at the dataset root, so
 // the catalog delete removes entry and data together.
 func TestDeleteIndexRemovesDatasetDirectory(t *testing.T) {
@@ -615,30 +621,112 @@ func TestDeleteIndexRemovesDatasetDirectory(t *testing.T) {
 	}
 	if e := fs.Get("/buckets/vec-bucket/vector/idx/data", "part-0.lance"); e != nil {
 		t.Fatal("index dataset survived DeleteIndex")
+	}
+}
 
+func TestValidateVectorPolicy(t *testing.T) {
+	valid := `{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Principal":"*","Action":"s3vectors:PutVectors","Resource":"arn:aws:s3vectors:r:a:bucket/b"}]}`
+	if err := validateVectorPolicy(valid); err != nil {
+		t.Fatalf("valid policy rejected: %v", err)
+	}
+	if err := validateVectorPolicy("not-json"); err == nil {
+		t.Fatal("malformed policy should be rejected")
+	}
+	for _, field := range []string{"NotAction", "NotResource"} {
+		bad := fmt.Sprintf(`{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Principal":"*","%s":"s3vectors:GetIndex","Action":"s3vectors:PutVectors","Resource":"*"}]}`, field)
+		if err := validateVectorPolicy(bad); err == nil {
+			t.Fatalf("%s should be rejected", field)
+		}
+	}
+}
 
-func TestTranslateVectorPolicy(t *testing.T) {
-	raw := `{"Version":"2012-10-17","Statement":[{"Sid":"x","Effect":"Deny","Principal":"*","Action":["s3vectors:PutVectors","s3vectors:GetVectors","s3vectors:*"],"Resource":["arn:aws:s3vectors:r:a:bucket/b","arn:aws:s3vectors:r:a:bucket/b/index/i"]}]}`
-	out, err := translateVectorPolicy(raw)
+// postJSONAs runs the handler under a named identity: empty resolves to the
+// account the catalog would charge, a name is a non-owner principal.
+func postJSONAs(t *testing.T, identity string, handler http.HandlerFunc, payload interface{}) *httptest.ResponseRecorder {
+	t.Helper()
+	body, err := json.Marshal(payload)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("marshal request: %v", err)
 	}
-	var doc struct {
-		Statement []struct {
-			Action   []string `json:"Action"`
-			Resource []string `json:"Resource"`
-		} `json:"Statement"`
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
+	handler(w, r.WithContext(contextWithIdentity(r.Context(), identity)))
+	return w
+}
+
+// A grant names the exact vector action and resource it allows: a put grant
+// carries no delete, an index-scoped rule reaches only that index, and a
+// read grant never authorizes a write.
+func TestVectorBucketPolicyGatesVectorActions(t *testing.T) {
+	fs := s3tablestest.Start(t)
+	s := NewServer(s3tables.NewManagerClient(fs.Client), allowAllAuth{}, newFakeVectors(0))
+
+	if w := postJSONAs(t, "", s.handleCreateVectorBucket, &CreateVectorBucketRequest{VectorBucketName: "vec-bucket"}); w.Code != http.StatusOK {
+		t.Fatalf("create bucket: %d %s", w.Code, w.Body.String())
 	}
-	if err := json.Unmarshal([]byte(out), &doc); err != nil {
-		t.Fatal(err)
+	newIndex := func(name string) {
+		t.Helper()
+		if w := postJSONAs(t, "", s.handleCreateIndex, &CreateIndexRequest{
+			VectorBucketName: "vec-bucket",
+			IndexName:        name,
+			DataType:         "float32",
+			Dimension:        3,
+			DistanceMetric:   "euclidean",
+		}); w.Code != http.StatusOK {
+			t.Fatalf("create index %s: %d %s", name, w.Code, w.Body.String())
+		}
 	}
-	got := doc.Statement[0]
-	wantActions := []string{"s3tables:UpdateTable", "s3tables:GetTable", "s3tables:*"}
-	if fmt.Sprint(got.Action) != fmt.Sprint(wantActions) {
-		t.Fatalf("actions = %v, want %v", got.Action, wantActions)
+	newIndex("idx")
+	newIndex("other")
+
+	indexARN := s.indexArn("vec-bucket", "idx")
+	policy := fmt.Sprintf(`{"Version":"2012-10-17","Statement":[`+
+		`{"Sid":"put","Effect":"Allow","Principal":"*","Action":"s3vectors:PutVectors","Resource":"%s"},`+
+		`{"Sid":"reads","Effect":"Allow","Principal":"*","Action":"s3vectors:Get*","Resource":"%s"},`+
+		`{"Sid":"noDelete","Effect":"Deny","Principal":"*","Action":"s3vectors:DeleteVectors","Resource":"%s"}]}`,
+		indexARN, indexARN, indexARN)
+	if w := postJSONAs(t, "", s.handlePutVectorBucketPolicy, &PutVectorBucketPolicyRequest{
+		VectorBucketName: "vec-bucket",
+		Policy:           policy,
+	}); w.Code != http.StatusOK {
+		t.Fatalf("put policy: %d %s", w.Code, w.Body.String())
 	}
-	wantResources := []string{"arn:aws:s3tables:r:a:bucket/b", "arn:aws:s3tables:r:a:bucket/b/table/vector/i"}
-	if fmt.Sprint(got.Resource) != fmt.Sprint(wantResources) {
-		t.Fatalf("resources = %v, want %v", got.Resource, wantResources)
+	if w := postJSONAs(t, "", s.handleGetVectorBucketPolicy, &GetVectorBucketPolicyRequest{VectorBucketName: "vec-bucket"}); w.Code != http.StatusOK {
+		t.Fatalf("get policy: %d %s", w.Code, w.Body.String())
+	} else {
+		var resp GetVectorBucketPolicyResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decode policy response: %v", err)
+		}
+		if resp.Policy != policy {
+			t.Fatalf("policy round-trip changed the document:\nsaved: %s\ngot:   %s", policy, resp.Policy)
+		}
+	}
+
+	put := func(index string) *httptest.ResponseRecorder {
+		return postJSONAs(t, "alice", s.handlePutVectors, &PutVectorsRequest{
+			VectorBucketName: "vec-bucket",
+			IndexName:        index,
+			Vectors:          []*PutInputVector{{Key: "a", Data: &VectorData{Float32: []float32{1, 2, 3}}}},
+		})
+	}
+	if w := put("idx"); w.Code != http.StatusOK {
+		t.Fatalf("put on granted index: %d %s", w.Code, w.Body.String())
+	}
+	if w := put("other"); w.Code != http.StatusForbidden {
+		t.Fatalf("put on ungranted index: %d %s, want 403", w.Code, w.Body.String())
+	}
+	if w := postJSONAs(t, "alice", s.handleDeleteVectors, &DeleteVectorsRequest{
+		VectorBucketName: "vec-bucket", IndexName: "idx", Keys: []string{"a"},
+	}); w.Code != http.StatusForbidden {
+		t.Fatalf("delete under deny: %d %s, want 403", w.Code, w.Body.String())
+	}
+	if w := postJSONAs(t, "alice", s.handleGetVectors, &GetVectorsRequest{
+		VectorBucketName: "vec-bucket", IndexName: "idx", Keys: []string{"a"},
+	}); w.Code != http.StatusOK {
+		t.Fatalf("get under wildcard read grant: %d %s", w.Code, w.Body.String())
+	}
+	if w := postJSONAs(t, "alice", s.handleListIndexes, &ListIndexesRequest{VectorBucketName: "vec-bucket"}); w.Code != http.StatusForbidden {
+		t.Fatalf("bucket-scoped list under index grant: %d %s, want 403", w.Code, w.Body.String())
 	}
 }
