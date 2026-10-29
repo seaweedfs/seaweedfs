@@ -79,12 +79,16 @@ def test_vector_bucket_policy(vectors):
                     {
                         "Effect": "Allow",
                         "Principal": {"AWS": "*"},
-                        "Action": "s3tables:*",
+                        "Action": "s3vectors:*",
                         "Resource": "*",
                     }
                 ],
             }
         )
+        invalid = json.loads(policy)
+        invalid["Statement"][0]["Action"] = "s3tables:*"
+        expect_error("ValidationException", vectors.put_vector_bucket_policy,
+                     vectorBucketName=BUCKET, policy=json.dumps(invalid))
         vectors.put_vector_bucket_policy(vectorBucketName=BUCKET, policy=policy)
         got = vectors.get_vector_bucket_policy(vectorBucketName=BUCKET)["policy"]
         assert json.loads(got) == json.loads(policy)
