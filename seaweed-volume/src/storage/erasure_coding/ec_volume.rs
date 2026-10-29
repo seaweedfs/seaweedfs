@@ -1983,6 +1983,22 @@ impl EcVolume {
         Ok(())
     }
 
+    /// Adopt a journal another runtime sharing this `.ecj` path folded under
+    /// the store lock: the file was replaced, so swap the detached handle for
+    /// a fresh one, reset the cached size, and drop the in-memory set — every
+    /// id it held is now an `.ecx` tombstone. Without this, later appends
+    /// land on the removed inode and the deletes vanish at restart.
+    pub(crate) fn adopt_folded_journal(&mut self) -> io::Result<()> {
+        let ecj_path = self.ecj_file_name();
+        let reopened = open_ecj_append(&ecj_path)?;
+        self.ecj_file_size = reopened.metadata()?.len() as i64;
+        self.ecj_file = Some(reopened);
+        if let Ok(mut set) = self.deleted_needles.write() {
+            set.clear();
+        }
+        Ok(())
+    }
+
     // ---- Deletion journal ----
 
     /// Record a needle delete: append the id to the .ecj deletion journal

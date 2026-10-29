@@ -3475,19 +3475,41 @@ impl VolumeServer for VolumeGrpcService {
         let mut folded = false;
         {
             let mut store = self.state.store.write().unwrap_or_else(|e| e.into_inner());
-            if let Some(ev) = store
+            let loc_idx = store
                 .locations
-                .iter_mut()
-                .find(|loc| loc.directory == rebuild_dir)
-                .and_then(|loc| loc.find_ec_volume_mut(vid))
-            {
-                ev.rebuild_ecx_from_journal().map_err(|e| {
-                    status_internal_with_rebuild_ids(
-                        format!("RebuildEcxFile: {}", e),
-                        &rebuilt,
-                    )
-                })?;
-                folded = true;
+                .iter()
+                .position(|loc| loc.directory == rebuild_dir);
+            if let Some(loc_idx) = loc_idx {
+                if let Some(ev) = store.locations[loc_idx].find_ec_volume_mut(vid) {
+                    let journal_path = ev.ecj_file_name();
+                    ev.rebuild_ecx_from_journal().map_err(|e| {
+                        status_internal_with_rebuild_ids(
+                            format!("RebuildEcxFile: {}", e),
+                            &rebuilt,
+                        )
+                    })?;
+                    folded = true;
+                    // The fold replaced a journal other disks may share:
+                    // repoint their handles before dropping the store lock,
+                    // or their next delete lands on the detached inode.
+                    for (i, loc) in store.locations.iter_mut().enumerate() {
+                        if i == loc_idx {
+                            continue;
+                        }
+                        if let Some(other) = loc.find_ec_volume_mut(vid) {
+                            if std::path::Path::new(&other.ecj_file_name())
+                                == std::path::Path::new(&journal_path)
+                            {
+                                other.adopt_folded_journal().map_err(|e| {
+                                    status_internal_with_rebuild_ids(
+                                        format!("RebuildEcxFile: {}", e),
+                                        &rebuilt,
+                                    )
+                                })?;
+                            }
+                        }
+                    }
+                }
             }
         }
         if !folded {
