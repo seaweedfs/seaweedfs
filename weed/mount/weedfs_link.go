@@ -210,12 +210,12 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 	return fuse.OK
 }
 
-// syncHardLinkSiblings rewrites the cached HardLinkCounter (and ctime) on
-// every sibling link of the given inode, and invalidates the kernel's inode
-// attr cache. `authoritativeEntry` carries the counter/ctime that should be
-// propagated; `versionTsNs` is the log position the mutation committed at, so
-// a section refresh listed before it cannot roll the counter back to the
-// older value the filer snapshot still holds. `skipPaths` are the link paths
+// syncHardLinkSiblings refreshes every sibling link of the given inode from
+// the filer, so their cached HardLinkCounter (and any other fields) reflect
+// the mutation. `authoritativeEntry` identifies the hard-link group;
+// `versionTsNs` is the log position the mutation committed at — the fetch
+// runs after the commit, so the fetched state already covers it, and the
+// recorded position is the higher of the two. `skipPaths` are the link paths
 // already updated by the caller (typically the source and/or the newly
 // created/removed link).
 func (wfs *WFS) syncHardLinkSiblings(inode uint64, authoritativeEntry *filer_pb.Entry, versionTsNs int64, skipPaths ...util.FullPath) {
@@ -239,11 +239,33 @@ func (wfs *WFS) syncHardLinkSiblings(inode uint64, authoritativeEntry *filer_pb.
 		if err != nil || sibling == nil {
 			continue
 		}
-		// Only touch siblings that genuinely share the same hard-link id.
-		// inodeToPath's shared-inode invariant should already guarantee
-		// this, but a mismatch can occur transiently (e.g. a rename
-		// replaced one of the paths), and blindly stamping an unrelated
-		// entry's counter would corrupt it.
+		// Refresh the sibling from the filer rather than stamping the cached
+		// copy: the cache may predate an in-flight event of its own, and
+		// claiming this mutation's version for that stale content would
+		// fence the pending event out at the version gate, leaving old
+		// chunks and attributes until a refresh.
+		pbEntry, entryTsNs, _, fetchErr := filer_pb.GetEntry(ctx, wfs, p)
+		if fetchErr == nil {
+			// A path the filer no longer knows is on its way out — leave the
+			// cache alone. Only touch entries that genuinely share the same
+			// hard-link id: inodeToPath's shared-inode invariant should
+			// already guarantee this, but a mismatch can occur transiently
+			// (e.g. a rename replaced one of the paths).
+			if pbEntry == nil || !bytes.Equal(pbEntry.HardLinkId, authoritativeEntry.HardLinkId) {
+				continue
+			}
+			if entryTsNs < versionTsNs {
+				entryTsNs = versionTsNs
+			}
+			dir, _ := p.DirAndName()
+			if err := wfs.metaCache.UpdateEntry(ctx, filer.FromPbEntry(dir, pbEntry), entryTsNs); err != nil {
+				glog.V(4).Infof("syncHardLinkSiblings update %s: %v", p, err)
+			}
+			continue
+		}
+		// The fetch failed: patch the counter in place so the sibling is
+		// not left stale, accepting that this mutation's version is claimed
+		// for content that may predate it.
 		if !bytes.Equal(sibling.HardLinkId, authoritativeEntry.HardLinkId) {
 			continue
 		}
