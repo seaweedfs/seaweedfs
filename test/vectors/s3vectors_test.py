@@ -331,6 +331,8 @@ def test_index_arn_validation(vectors, index):
     ):
         expect_error("ValidationException", vectors.get_index, indexArn=invalid)
         expect_error("ValidationException", vectors.delete_index, indexArn=invalid)
+    expect_error("ValidationException", vectors.get_vector_bucket, vectorBucketArn=arn)
+    expect_error("ValidationException", vectors.list_indexes, vectorBucketArn=arn)
     assert vectors.get_index(**index)["index"]["indexArn"] == arn
 
 
