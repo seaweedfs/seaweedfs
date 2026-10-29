@@ -1594,8 +1594,35 @@ impl VolumeServer for VolumeGrpcService {
             return Ok(Response::new(Box::pin(stream)));
         }
 
-        // Use binary search to find the starting offset
-        let start_offset = if req.since_ns == 0 {
+        // Resume by index position when the backup identified its last entry;
+        // append_at_ns stamps differ across replicas, so a since_ns resume can
+        // duplicate or skip needles after the source replica changes.
+        let start_offset = if req.entry_count > 0 {
+            match v.resume_by_last_entry(
+                req.entry_count,
+                NeedleId(req.last_needle_key),
+                Cookie(req.last_needle_cookie),
+                Size(req.last_needle_size),
+            ) {
+                Ok((_offset, true)) => {
+                    drop(store);
+                    let stream = tokio_stream::iter(Vec::new());
+                    return Ok(Response::new(Box::pin(stream)));
+                }
+                Ok((offset, false)) => offset.to_actual_offset() as u64,
+                Err(crate::storage::volume::VolumeError::IncrementalCopyDiverged) => {
+                    return Err(Status::failed_precondition(
+                        crate::storage::volume::VolumeError::IncrementalCopyDiverged.to_string(),
+                    ));
+                }
+                Err(e) => {
+                    return Err(Status::internal(format!(
+                        "fail to locate by entry {}: {}",
+                        req.entry_count, e
+                    )));
+                }
+            }
+        } else if req.since_ns == 0 {
             super_block_size
         } else {
             match v.binary_search_by_append_at_ns(req.since_ns) {

@@ -56,6 +56,9 @@ pub enum VolumeError {
     #[error("cookie mismatch: {0:#x}")]
     CookieMismatch(u32),
 
+    #[error("local copy diverged from the replica")]
+    IncrementalCopyDiverged,
+
     #[error("volume not empty")]
     NotEmpty,
 
@@ -4701,8 +4704,8 @@ impl Volume {
 
     // ---- Binary search for incremental copy ----
 
-    /// Read a single index entry's offset from the .idx file by entry index.
-    fn read_offset_from_index(&self, m: i64) -> Result<Offset, VolumeError> {
+    /// Read a single index entry from the .idx file by entry index.
+    fn read_index_entry(&self, m: i64) -> Result<(NeedleId, Offset, Size), VolumeError> {
         let idx_path = self.file_name(".idx");
         let idx_file = File::open(&idx_path)?;
         let mut buf = [0u8; NEEDLE_MAP_ENTRY_SIZE];
@@ -4718,7 +4721,12 @@ impl Volume {
             f.seek(SeekFrom::Start(file_offset))?;
             std::io::Read::read_exact(&mut f, &mut buf)?;
         }
-        let (_key, offset, _size) = idx_entry_from_bytes(&buf);
+        Ok(idx_entry_from_bytes(&buf))
+    }
+
+    /// Read a single index entry's offset from the .idx file by entry index.
+    fn read_offset_from_index(&self, m: i64) -> Result<Offset, VolumeError> {
+        let (_key, offset, _size) = self.read_index_entry(m)?;
         Ok(offset)
     }
 
@@ -4847,6 +4855,55 @@ impl Volume {
         }
 
         let offset = self.read_offset_from_index(l)?;
+        Ok((offset, false))
+    }
+
+    /// Resume an incremental copy by index position instead of by append_at_ns,
+    /// whose stamps differ across replicas for the same needle. The replica's
+    /// entry at position entry_count-1 must match the backup's last entry in
+    /// key, size and cookie; the copy then continues from the replica's entry
+    /// at position entry_count, so nothing is skipped or appended twice.
+    /// Mirrors Go's ResumeByLastEntry in weed/storage/volume_backup.go.
+    /// Returns (offset, up_to_date).
+    pub fn resume_by_last_entry(
+        &self,
+        entry_count: u64,
+        key: NeedleId,
+        cookie: Cookie,
+        size: Size,
+    ) -> Result<(Offset, bool), VolumeError> {
+        let io = self.io.read().unwrap();
+        let file_size = io.nm.as_ref().map_or(0, |nm| nm.index_file_size()) as i64;
+        if file_size % NEEDLE_MAP_ENTRY_SIZE as i64 != 0 {
+            return Err(VolumeError::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("unexpected idx file size: {}", file_size),
+            )));
+        }
+        let server_count = (file_size / NEEDLE_MAP_ENTRY_SIZE as i64) as u64;
+        if server_count < entry_count {
+            return Err(VolumeError::IncrementalCopyDiverged);
+        }
+
+        let (last_key, last_offset, last_size) =
+            self.read_index_entry(entry_count as i64 - 1)?;
+        if last_key != key || last_size != size {
+            return Err(VolumeError::IncrementalCopyDiverged);
+        }
+        let mut header_buf = [0u8; NEEDLE_HEADER_SIZE];
+        self.read_exact_at_backend(&io, &mut header_buf, last_offset.to_actual_offset() as u64)?;
+        let (last_cookie, _id, _s) = Needle::parse_header(&header_buf);
+        if last_cookie != cookie {
+            return Err(VolumeError::IncrementalCopyDiverged);
+        }
+
+        if server_count == entry_count {
+            return Ok((Offset::default(), true));
+        }
+        let (_k, offset, _s) = self.read_index_entry(entry_count as i64)?;
+        if offset.to_actual_offset() <= 0 {
+            return Err(VolumeError::IncrementalCopyDiverged);
+        }
         Ok((offset, false))
     }
 
