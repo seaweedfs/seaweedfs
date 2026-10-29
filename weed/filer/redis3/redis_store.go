@@ -41,6 +41,9 @@ func (store *Redis3Store) Initialize(configuration util.Configuration, prefix st
 }
 
 func (store *Redis3Store) initialize(hostPort string, username string, password string, database int, keyPrefix string, tlsConfig *tls.Config, settings redis_conf.Settings) (err error) {
+	if err := checkUserPassword(username, password); err != nil {
+		return err
+	}
 	options := &redis.Options{
 		Addr:      hostPort,
 		Username:  username,

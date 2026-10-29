@@ -31,6 +31,16 @@ func (store *UniversalRedis3Store) getKey(key string) string {
 	return store.keyPrefix + key
 }
 
+// checkUserPassword rejects a username with an empty password: go-redis only
+// sends AUTH when a password is set, so the connection would silently run as
+// the default user instead of the configured ACL user.
+func checkUserPassword(username, password string) error {
+	if username != "" && password == "" {
+		return fmt.Errorf("username %q requires a password: with an empty password no AUTH is sent and the connection uses the default user", username)
+	}
+	return nil
+}
+
 func (store *UniversalRedis3Store) BeginTransaction(ctx context.Context) (context.Context, error) {
 	return ctx, nil
 }

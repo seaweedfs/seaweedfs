@@ -44,6 +44,12 @@ func (store *Redis3SentinelStore) Initialize(configuration util.Configuration, p
 }
 
 func (store *Redis3SentinelStore) initialize(addresses []string, masterName string, username string, password string, sentinelUsername string, sentinelPassword string, database int, keyPrefix string, tlsConfig *tls.Config, settings redis_conf.Settings) (err error) {
+	if err := checkUserPassword(username, password); err != nil {
+		return err
+	}
+	if err := checkUserPassword(sentinelUsername, sentinelPassword); err != nil {
+		return err
+	}
 	options := &redis.FailoverOptions{
 		MasterName:       masterName,
 		SentinelAddrs:    addresses,

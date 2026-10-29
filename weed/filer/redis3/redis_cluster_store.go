@@ -47,6 +47,9 @@ func (store *RedisCluster3Store) Initialize(configuration util.Configuration, pr
 }
 
 func (store *RedisCluster3Store) initialize(addresses []string, username string, password string, keyPrefix string, readOnly, routeByLatency bool, tlsConfig *tls.Config, settings redis_conf.Settings) (err error) {
+	if err := checkUserPassword(username, password); err != nil {
+		return err
+	}
 	options := &redis.ClusterOptions{
 		Addrs:          addresses,
 		Username:       username,
