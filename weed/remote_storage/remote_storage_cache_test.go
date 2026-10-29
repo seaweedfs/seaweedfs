@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -342,6 +343,36 @@ func TestPlainClientGcsCredentialsVersion(t *testing.T) {
 	}
 	if credentialsVersion(&remote_pb.RemoteConf{Type: "s3"}) != "" {
 		t.Fatal("a non-gcs remote has no credentials file version")
+	}
+}
+
+// With neither the configuration nor GOOGLE_APPLICATION_CREDENTIALS naming credentials, the version follows the
+// well-known application default credentials file the SDK reads.
+func TestPlainClientGcsWellKnownCredentialsVersion(t *testing.T) {
+	dir := t.TempDir()
+	if runtime.GOOS == "windows" {
+		t.Setenv("APPDATA", dir)
+	} else {
+		t.Setenv("HOME", dir)
+	}
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "")
+	adc := wellKnownCredentialsFile()
+	if err := os.MkdirAll(filepath.Dir(adc), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(adc, []byte("one"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	conf := &remote_pb.RemoteConf{Type: "gcs"}
+	v1 := credentialsVersion(conf)
+	if v1 == "" {
+		t.Fatal("the well-known credentials file must produce a version")
+	}
+	if err := os.WriteFile(adc, []byte("two"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if credentialsVersion(conf) == v1 {
+		t.Fatal("a rotated well-known credentials file must change the version")
 	}
 }
 

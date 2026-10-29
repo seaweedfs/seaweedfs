@@ -6,6 +6,9 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"os/user"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -227,8 +230,9 @@ func GetRemoteStorageWith(kind string, remoteConf *remote_pb.RemoteConf, version
 }
 
 // credentialsVersion names what a plain client reads at build time that its
-// configuration does not hold: a gcs credentials file's content, or inline
-// JSON from GOOGLE_APPLICATION_CREDENTIALS. The configuration's own inline
+// configuration does not hold: a gcs credentials file's content, inline JSON
+// from GOOGLE_APPLICATION_CREDENTIALS, or the well-known application default
+// credentials file when neither names one. The configuration's own inline
 // JSON needs none; it is already inside the configuration's hash.
 func credentialsVersion(remoteConf *remote_pb.RemoteConf) string {
 	if remoteConf.GetType() != "gcs" {
@@ -247,9 +251,26 @@ func credentialsVersion(remoteConf *remote_pb.RemoteConf) string {
 		return hex.EncodeToString(sum[:16])
 	}
 	if path == "" {
-		return ""
+		path = wellKnownCredentialsFile()
 	}
 	return FileVersion(path)
+}
+
+// wellKnownCredentialsFile is the application default credentials file the
+// gcs SDK reads when neither the configuration nor
+// GOOGLE_APPLICATION_CREDENTIALS names one.
+func wellKnownCredentialsFile() string {
+	const f = "application_default_credentials.json"
+	if runtime.GOOS == "windows" {
+		return filepath.Join(os.Getenv("APPDATA"), "gcloud", f)
+	}
+	home := os.Getenv("HOME")
+	if home == "" {
+		if u, err := user.Current(); err == nil {
+			home = u.HomeDir
+		}
+	}
+	return filepath.Join(home, ".config", "gcloud", f)
 }
 
 // RetainRemoteStorages drops, and closes the idle connections of, every cached client whose configuration name is not in
