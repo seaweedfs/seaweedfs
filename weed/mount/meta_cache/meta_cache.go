@@ -509,6 +509,15 @@ func (mc *MetaCache) rebaseHardLinkEntryLocked(ctx context.Context, newEntry *fi
 			return &rebased
 		}
 	}
+	// No sibling path is cached: the shared blob itself holds the group's
+	// current content, so park it under the new name.
+	if blob, err := mc.localStore.KvGet(ctx, newEntry.HardLinkId); err == nil && len(blob) > 0 {
+		rebased := *newEntry
+		if err := rebased.DecodeAttributesAndChunks(blob); err == nil {
+			rebased.FullPath = newEntry.FullPath
+			return &rebased
+		}
+	}
 	return nil
 }
 
