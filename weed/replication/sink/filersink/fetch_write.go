@@ -35,6 +35,20 @@ import (
 // still exists is registered again.
 var missingSourceChunkGrace = 30 * time.Minute
 
+// sourceLookupTimeout bounds a best-effort source entry probe: a source that
+// accepts the call but whose metadata store never answers must stall
+// replication only this long, not forever. A variable so tests can shorten it.
+var sourceLookupTimeout = 30 * time.Second
+
+// sourceEntry returns the source's live entry at sourcePath within
+// sourceLookupTimeout.
+func (fs *FilerSink) sourceEntry(sourcePath util.FullPath) (*filer_pb.Entry, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), sourceLookupTimeout)
+	defer cancel()
+	entry, _, _, err := filer_pb.GetEntry(ctx, fs.filerSource, sourcePath)
+	return entry, err
+}
+
 // errSourceChunkMissing is a permanent replication failure: the source cluster
 // no longer holds the chunk's data, so no later attempt can fetch it.
 var errSourceChunkMissing = errors.New("source chunk missing")
@@ -648,7 +662,9 @@ func (fs *FilerSink) hasSourceNewerVersion(targetPath string, sourceMtimeNs int6
 	if !ok {
 		return false
 	}
-	return SourceSupersedes(context.Background(), fs.filerSource, sourcePath, sourceMtimeNs)
+	ctx, cancel := context.WithTimeout(context.Background(), sourceLookupTimeout)
+	defer cancel()
+	return SourceSupersedes(ctx, fs.filerSource, sourcePath, sourceMtimeNs)
 }
 
 // sourceDroppedChunk reports whether the live source entry still exists but no
@@ -661,7 +677,7 @@ func (fs *FilerSink) sourceDroppedChunk(targetPath string, fileId string, source
 	if !ok {
 		return false
 	}
-	live, _, _, err := filer_pb.GetEntry(context.Background(), fs.filerSource, sourcePath)
+	live, err := fs.sourceEntry(sourcePath)
 	if err != nil || live == nil || sourceMtimeNs <= 0 || getEntryMtimeNs(live) < sourceMtimeNs {
 		return false
 	}

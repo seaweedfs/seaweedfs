@@ -530,7 +530,7 @@ func (fs *FilerSink) sourceMovedOn(targetPath string, entry *filer_pb.Entry) boo
 		return false
 	}
 	replayedMtimeNs := getEntryMtimeNs(entry)
-	live, _, _, lookupErr := filer_pb.GetEntry(context.Background(), fs.filerSource, sourcePath)
+	live, lookupErr := fs.sourceEntry(sourcePath)
 	if sourceSupersedes(sourcePath, live, lookupErr, replayedMtimeNs) {
 		return true
 	}

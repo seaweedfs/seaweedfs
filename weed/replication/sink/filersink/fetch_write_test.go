@@ -442,6 +442,8 @@ type sourceFilerServer struct {
 	volumeUrl     string
 	resolvable    []string
 	entry         *filer_pb.Entry
+	lookupDelay   time.Duration
+	lookupFn      func(dir, name string) (*filer_pb.Entry, error)
 	volumeLookups *atomic.Int32
 }
 
@@ -461,6 +463,17 @@ func (s *sourceFilerServer) LookupVolume(ctx context.Context, req *filer_pb.Look
 }
 
 func (s *sourceFilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	if s.lookupDelay > 0 {
+		select {
+		case <-time.After(s.lookupDelay):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	if s.lookupFn != nil {
+		entry, err := s.lookupFn(req.Directory, req.Name)
+		return &filer_pb.LookupDirectoryEntryResponse{Entry: entry}, err
+	}
 	if s.entry != nil {
 		return &filer_pb.LookupDirectoryEntryResponse{Entry: s.entry}, nil
 	}
@@ -839,6 +852,30 @@ func TestSourceMovedOn(t *testing.T) {
 	replayed.Chunks = []*filer_pb.FileChunk{{FileId: "5617,01abc", Size: 10}}
 	if fs.sourceMovedOn("/dst/x.bin", replayed) {
 		t.Fatal("an older live entry cannot supersede the replayed version")
+	}
+}
+
+// A source that accepts the lookup but never answers must not hang the
+// supersession probe: the bounded context gives up and replication continues.
+func TestSourceMovedOnStalledLookupContinues(t *testing.T) {
+	prev := sourceLookupTimeout
+	sourceLookupTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { sourceLookupTimeout = prev })
+
+	replayed := &filer_pb.Entry{
+		Attributes: &filer_pb.FuseAttributes{Mtime: 5},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "5617,01abc", Size: 10}},
+	}
+	fs := &FilerSink{
+		filerSource: startSourceFilerServer(t, &sourceFilerServer{lookupDelay: 30 * time.Second}),
+		dir:         "/dst",
+	}
+	start := time.Now()
+	if fs.sourceMovedOn("/dst/x.bin", replayed) {
+		t.Fatal("an unanswered lookup cannot prove supersession")
+	}
+	if time.Since(start) > 10*time.Second {
+		t.Fatal("the supersession probe must give up at sourceLookupTimeout")
 	}
 }
 
