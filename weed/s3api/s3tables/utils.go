@@ -164,6 +164,27 @@ func ValidateMetadataLocation(metadataLocation, bucketName, namespace string) er
 	return nil
 }
 
+// ValidateEncryptionConfiguration admits only the AES256 declaration. A
+// caller-chosen key is never read back by the storage path, so recording one
+// would claim protection the data does not get.
+func ValidateEncryptionConfiguration(cfg map[string]interface{}) error {
+	if len(cfg) == 0 {
+		return nil
+	}
+	sseType, _ := cfg["sseType"].(string)
+	switch sseType {
+	case "AES256":
+	case "":
+		return fmt.Errorf("encryptionConfiguration requires sseType")
+	default:
+		return fmt.Errorf("unsupported sseType %q", sseType)
+	}
+	if _, ok := cfg["kmsKeyArn"]; ok {
+		return fmt.Errorf("kmsKeyArn is not supported")
+	}
+	return nil
+}
+
 func parseS3Location(location string) (bucket, tablePath string, err error) {
 	if !strings.HasPrefix(location, "s3://") {
 		return "", "", fmt.Errorf("unsupported location: %s", location)

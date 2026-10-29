@@ -39,15 +39,9 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 		bucketFormat = normalized
 	}
 
-	// A caller-chosen key is never read back by the storage path, so it cannot
-	// be recorded — reporting it later would claim protection the data lacks.
-	if t, _ := req.EncryptionConfiguration["sseType"].(string); t == "aws:kms" {
-		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "aws:kms encryption is not supported")
-		return fmt.Errorf("unsupported encryptionConfiguration")
-	}
-	if _, ok := req.EncryptionConfiguration["kmsKeyArn"]; ok {
-		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "kmsKeyArn is not supported")
-		return fmt.Errorf("unsupported encryptionConfiguration")
+	if err := ValidateEncryptionConfiguration(req.EncryptionConfiguration); err != nil {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
+		return err
 	}
 
 	principal := h.getAccountID(r)
