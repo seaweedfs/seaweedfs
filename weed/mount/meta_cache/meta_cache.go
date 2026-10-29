@@ -2,6 +2,7 @@ package meta_cache
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"math"
 	"os"
@@ -176,6 +177,7 @@ func (mc *MetaCache) doInsertEntry(ctx context.Context, entry *filer.Entry, vers
 		return err
 	}
 	mc.setEntryVersionLocked(ctx, entry.FullPath, versionTsNs)
+	mc.noteHardLinkVersionLocked(ctx, entry.HardLinkId, versionTsNs)
 	return nil
 }
 
@@ -228,6 +230,7 @@ func (mc *MetaCache) atomicUpdateEntryFromFilerLocked(ctx context.Context, oldPa
 				return err
 			}
 			mc.setEntryVersionLocked(ctx, newEntry.FullPath, versionTsNs)
+			mc.noteHardLinkVersionLocked(ctx, newEntry.HardLinkId, versionTsNs)
 		}
 	}
 	return nil
@@ -366,6 +369,7 @@ func (mc *MetaCache) UpdateEntry(ctx context.Context, entry *filer.Entry, versio
 		return err
 	}
 	mc.setEntryVersionLocked(ctx, entry.FullPath, versionTsNs)
+	mc.noteHardLinkVersionLocked(ctx, entry.HardLinkId, versionTsNs)
 	return nil
 }
 
@@ -431,6 +435,43 @@ func entryVersionKey(fp util.FullPath) []byte {
 
 func entryVersionChildPrefix(dirPath util.FullPath) []byte {
 	return []byte(entryVersionKeyPrefix + string(dirPath) + "\x00")
+}
+
+// entryVersionHardLinkPrefix namespaces per-group version records: every
+// path of a hard-link group reads the same content blob, so the newest write
+// position any sibling produced fences writes to them all — including
+// cached siblings inodeToPath no longer tracks.
+const entryVersionHardLinkPrefix = "\x00mount.entry.hlver\x00"
+
+func entryVersionHardLinkKey(hardLinkId []byte) []byte {
+	return []byte(entryVersionHardLinkPrefix + hex.EncodeToString(hardLinkId))
+}
+
+// hardLinkVersionFloorLocked returns the newest log position recorded for a
+// hard-link group's shared content, or zero when none is known.
+func (mc *MetaCache) hardLinkVersionFloorLocked(ctx context.Context, hardLinkId filer.HardLinkId) int64 {
+	if len(hardLinkId) == 0 {
+		return 0
+	}
+	value, err := mc.localStore.KvGet(ctx, entryVersionHardLinkKey(hardLinkId))
+	if err != nil || len(value) < 8 {
+		return 0
+	}
+	return int64(util.BytesToUint64(value[:8]))
+}
+
+// noteHardLinkVersionLocked raises a hard-link group's version floor to
+// tsNs. It never lowers the floor, so a slow event cannot drag the fence
+// backwards, and a write with no position claims nothing.
+func (mc *MetaCache) noteHardLinkVersionLocked(ctx context.Context, hardLinkId filer.HardLinkId, tsNs int64) {
+	if len(hardLinkId) == 0 || tsNs <= mc.hardLinkVersionFloorLocked(ctx, hardLinkId) {
+		return
+	}
+	value := make([]byte, 8)
+	util.Uint64toBytes(value, uint64(tsNs))
+	if err := mc.localStore.KvPut(ctx, entryVersionHardLinkKey(hardLinkId), value); err != nil {
+		glog.V(1).Infof("set hardlink version %x: %v", []byte(hardLinkId), err)
+	}
 }
 
 // setEntryVersionLocked records the log position an entry write reflects.
@@ -968,7 +1009,8 @@ func (mc *MetaCache) applyMetadataResponseLocked(ctx context.Context, resp *file
 		if oldPath != "" && mc.entryVersionBlocksLocked(ctx, oldPath, resp.TsNs, true) {
 			oldPath = ""
 		}
-		if newEntry != nil && mc.entryVersionBlocksLocked(ctx, newEntry.FullPath, resp.TsNs, false) {
+		if newEntry != nil && (mc.entryVersionBlocksLocked(ctx, newEntry.FullPath, resp.TsNs, false) ||
+			mc.hardLinkVersionFloorLocked(ctx, newEntry.HardLinkId) > resp.TsNs) {
 			newEntry = nil
 		}
 	}

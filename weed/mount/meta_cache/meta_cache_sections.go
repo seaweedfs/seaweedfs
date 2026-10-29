@@ -401,6 +401,12 @@ func (mc *MetaCache) applySectionRefreshNow(ctx context.Context, dirPath util.Fu
 		if mc.entryVersionBlocksLocked(ctx, entry.FullPath, snapshotTsNs, false) {
 			continue
 		}
+		// A hard-linked entry shares one content blob with its siblings: a
+		// snapshot older than the group's newest write would roll that
+		// content back for every path reading through this entry.
+		if mc.hardLinkVersionFloorLocked(ctx, entry.HardLinkId) > snapshotTsNs {
+			continue
+		}
 		// An unversioned marker would bypass the section floor, so it cannot
 		// outlive the snapshot write that replaces its content — but pinned
 		// local-only state stays authoritative and is not replaced at all.
@@ -414,6 +420,7 @@ func (mc *MetaCache) applySectionRefreshNow(ctx context.Context, dirPath util.Fu
 		if err := mc.localStore.InsertEntry(ctx, entry); err != nil {
 			return err
 		}
+		mc.noteHardLinkVersionLocked(ctx, entry.HardLinkId, snapshotTsNs)
 		if unversioned {
 			// only once the write landed: if it fails, the old content keeps
 			// the marker, and with it the right to be corrected by any event
