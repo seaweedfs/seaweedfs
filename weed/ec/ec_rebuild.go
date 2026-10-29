@@ -265,8 +265,19 @@ func (erb *ecRebuilder) rebuildOneEcVolume(collection string, volumeId needle.Vo
 		if !erb.applyChanges || len(copiedShardIds) == 0 {
 			return
 		}
-		if derr := SourceServerDeleteEcShards(erb.env.GrpcDialOption, collection, volumeId, pb.NewServerAddressFromDataNode(rebuilder.Info), copiedShardIds); derr != nil {
-			erb.write("%s delete copied ec shards %s %d.%v: %v\n", rebuilder.Info.Id, collection, volumeId, copiedShardIds, derr)
+		var orphaned []erasure_coding.ShardId
+		for _, shardId := range copiedShardIds {
+			// A copy the rebuild regenerated in place is mounted output, not a
+			// working file: deleting it strands the only good replica.
+			if !slices.Contains(generatedShardIds, shardId) {
+				orphaned = append(orphaned, shardId)
+			}
+		}
+		if len(orphaned) == 0 {
+			return
+		}
+		if derr := SourceServerDeleteEcShards(erb.env.GrpcDialOption, collection, volumeId, pb.NewServerAddressFromDataNode(rebuilder.Info), orphaned); derr != nil {
+			erb.write("%s delete copied ec shards %s %d.%v: %v\n", rebuilder.Info.Id, collection, volumeId, orphaned, derr)
 		}
 	}()
 	if err != nil {
