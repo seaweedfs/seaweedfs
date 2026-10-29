@@ -370,8 +370,8 @@ func (s *Server) handleDeleteVectorBucket(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	var arns vectorBucketARNs
-	if err := arnParts(&arns, req.VectorBucketName, req.VectorBucketArn); err != nil {
+	arns, err := bucketARNs(req.VectorBucketName, req.VectorBucketArn)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
@@ -382,7 +382,7 @@ func (s *Server) handleDeleteVectorBucket(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var resp map[string]interface{}
-	err := s.catalog(r.Context(), "DeleteTableBucket",
+	err = s.catalog(r.Context(), "DeleteTableBucket",
 		&s3tables.DeleteTableBucketRequest{TableBucketARN: s.s3tablesArn(arns.bucket)}, &resp, r)
 	if err != nil && catalogErrCode(err) == s3tables.ErrCodeBucketNotEmpty {
 		// The implicit index namespace counts as bucket content even when it
@@ -432,8 +432,8 @@ func (s *Server) handlePutVectorBucketPolicy(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	var arns vectorBucketARNs
-	if err := arnParts(&arns, req.VectorBucketName, req.VectorBucketArn); err != nil {
+	arns, err := bucketARNs(req.VectorBucketName, req.VectorBucketArn)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
@@ -442,7 +442,7 @@ func (s *Server) handlePutVectorBucketPolicy(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	var resp map[string]interface{}
-	err := s.catalog(r.Context(), "PutTableBucketPolicy", &s3tables.PutTableBucketPolicyRequest{
+	err = s.catalog(r.Context(), "PutTableBucketPolicy", &s3tables.PutTableBucketPolicyRequest{
 		TableBucketARN: s.s3tablesArn(arns.bucket),
 		ResourcePolicy: req.Policy,
 	}, &resp, r)
@@ -459,8 +459,8 @@ func (s *Server) handleGetVectorBucketPolicy(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	var arns vectorBucketARNs
-	if err := arnParts(&arns, req.VectorBucketName, req.VectorBucketArn); err != nil {
+	arns, err := bucketARNs(req.VectorBucketName, req.VectorBucketArn)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
@@ -469,7 +469,7 @@ func (s *Server) handleGetVectorBucketPolicy(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	var resp s3tables.GetTableBucketPolicyResponse
-	err := s.catalog(r.Context(), "GetTableBucketPolicy", &s3tables.GetTableBucketPolicyRequest{
+	err = s.catalog(r.Context(), "GetTableBucketPolicy", &s3tables.GetTableBucketPolicyRequest{
 		TableBucketARN: s.s3tablesArn(arns.bucket),
 	}, &resp, r)
 	if err != nil {
@@ -485,8 +485,8 @@ func (s *Server) handleDeleteVectorBucketPolicy(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	var arns vectorBucketARNs
-	if err := arnParts(&arns, req.VectorBucketName, req.VectorBucketArn); err != nil {
+	arns, err := bucketARNs(req.VectorBucketName, req.VectorBucketArn)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
@@ -495,7 +495,7 @@ func (s *Server) handleDeleteVectorBucketPolicy(w http.ResponseWriter, r *http.R
 		return
 	}
 	var resp map[string]interface{}
-	err := s.catalog(r.Context(), "DeleteTableBucketPolicy", &s3tables.DeleteTableBucketPolicyRequest{
+	err = s.catalog(r.Context(), "DeleteTableBucketPolicy", &s3tables.DeleteTableBucketPolicyRequest{
 		TableBucketARN: s.s3tablesArn(arns.bucket),
 	}, &resp, r)
 	if err != nil {
@@ -711,8 +711,8 @@ func (s *Server) handleListIndexes(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	var arns vectorBucketARNs
-	if err := arnParts(&arns, req.VectorBucketName, req.VectorBucketArn); err != nil {
+	arns, err := bucketARNs(req.VectorBucketName, req.VectorBucketArn)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
@@ -724,7 +724,7 @@ func (s *Server) handleListIndexes(w http.ResponseWriter, r *http.Request) {
 		} `json:"tables"`
 		ContinuationToken string `json:"continuationToken"`
 	}
-	err := s.catalog(r.Context(), "ListTables", &s3tables.ListTablesRequest{
+	err = s.catalog(r.Context(), "ListTables", &s3tables.ListTablesRequest{
 		TableBucketARN:    s.s3tablesArn(arns.bucket),
 		Namespace:         []string{indexNamespace},
 		MaxTables:         req.MaxResults,
