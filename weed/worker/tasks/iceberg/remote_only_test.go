@@ -1,6 +1,7 @@
 package iceberg
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net"
@@ -192,6 +193,28 @@ func TestAFailedCacheCallIsRetriedOnce(t *testing.T) {
 	srv.failFirst = 2
 	if _, err := readPositionDeleteFile(context.Background(), client, bucket, dataPath, file); err == nil || !strings.Contains(err.Error(), "remote read timed out") {
 		t.Fatalf("two failed cache calls: err = %v, want the cache error", err)
+	}
+}
+
+// A location-only record pointing at a remote object over the metadata bound
+// is rejected on the remote entry's size, without downloading the object: the
+// bound exists because the catalog pointer may name any file in the bucket.
+func TestARemoteOnlyMetadataFileOverTheBoundIsNotCached(t *testing.T) {
+	srv, client := startRemoteCachingFiler(t)
+	original := metadataFileMaxBytes
+	metadataFileMaxBytes = 8
+	defer func() { metadataFileMaxBytes = original }()
+
+	setup := tableSetup{BucketName: "b", Namespace: "ns", TableName: "t"}
+	putRemoteOnly(t, srv, setup.BucketName, setup.tablePath(), "metadata/big.metadata.json",
+		bytes.Repeat([]byte{1}, int(metadataFileMaxBytes)+1))
+	state := &tableState{DataPath: setup.tablePath(), MetadataLocation: fmt.Sprintf(
+		"s3://%s/%s/metadata/big.metadata.json", setup.BucketName, setup.tablePath())}
+	if err := state.loadMetadata(context.Background(), client, setup.BucketName); err == nil || !strings.Contains(err.Error(), "too large") {
+		t.Fatalf("err = %v, want a too-large rejection", err)
+	}
+	if srv.cacheCalls != 0 {
+		t.Fatalf("%d cache calls, want 0", srv.cacheCalls)
 	}
 }
 

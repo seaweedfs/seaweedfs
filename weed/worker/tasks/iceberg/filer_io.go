@@ -181,14 +181,27 @@ func (s *tableState) loadMetadata(ctx context.Context, client filer_pb.SeaweedFi
 	if s.Metadata != nil {
 		return nil
 	}
-	entry, err := lookupFileByIcebergPath(ctx, client, bucketName, s.DataPath, s.MetadataLocation)
+	entry, fullPath, err := lookupResolvedEntry(ctx, client, bucketName, s.DataPath, s.MetadataLocation)
 	if err != nil {
 		return fmt.Errorf("load metadata file %s: %w", s.MetadataLocation, err)
 	}
-	if len(entry.Content) == 0 && len(entry.Chunks) > 0 {
-		if size := int64(filer.FileSize(entry)); size > metadataFileMaxBytes {
+	if len(entry.Content) == 0 {
+		// Bound what the location would pull before it is pulled: a remote
+		// entry's object is downloaded whole by the cache call, a chunked
+		// file's read is bounded by FileSize.
+		var size int64
+		if isRemoteOnly(entry) {
+			size = entry.GetRemoteEntry().GetRemoteSize()
+		} else if len(entry.Chunks) > 0 {
+			size = int64(filer.FileSize(entry))
+		}
+		if size > metadataFileMaxBytes {
 			return fmt.Errorf("metadata file %s too large: %d bytes", s.MetadataLocation, size)
 		}
+	}
+	entry, err = cacheRemoteOnlyEntry(ctx, client, fullPath, entry)
+	if err != nil {
+		return fmt.Errorf("load metadata file %s: %w", s.MetadataLocation, err)
 	}
 	content, err := readEntryContent(ctx, client, entry, s.MetadataLocation)
 	if err != nil {
@@ -263,11 +276,22 @@ func addFilerPathSpellings(set map[string]struct{}, bucketName, dataPath, iceber
 // is cached first, as the S3 gateway does on a read.
 func lookupFileByIcebergPath(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketName, dataPath, icebergPath string) (*filer_pb.Entry, error) {
 	entry, fullPath, err := lookupResolvedEntry(ctx, client, bucketName, dataPath, icebergPath)
-	if err != nil || !isRemoteOnly(entry) {
-		return entry, err
+	if err != nil {
+		return nil, err
+	}
+	return cacheRemoteOnlyEntry(ctx, client, fullPath, entry)
+}
+
+// cacheRemoteOnlyEntry downloads a remote-only entry's object to the local
+// cluster and returns the cached entry. One retry covers a cache call racing
+// an uncache of the same entry; an entry still remote-only after caching is
+// an error.
+func cacheRemoteOnlyEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, fullPath string, entry *filer_pb.Entry) (*filer_pb.Entry, error) {
+	if !isRemoteOnly(entry) {
+		return entry, nil
 	}
 	dir, name := path.Dir(fullPath), path.Base(fullPath)
-	// One retry: a cache call can race an uncache of the same entry.
+	var err error
 	for attempt := 0; attempt < 2 && isRemoteOnly(entry); attempt++ {
 		var resp *filer_pb.CacheRemoteObjectToLocalClusterResponse
 		resp, err = client.CacheRemoteObjectToLocalCluster(ctx, &filer_pb.CacheRemoteObjectToLocalClusterRequest{
