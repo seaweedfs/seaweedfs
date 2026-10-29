@@ -19,8 +19,26 @@ const (
 )
 
 type UniversalRedis3Store struct {
-	Client  redis.UniversalClient
-	redsync *redsync.Redsync
+	Client    redis.UniversalClient
+	redsync   *redsync.Redsync
+	keyPrefix string
+}
+
+func (store *UniversalRedis3Store) getKey(key string) string {
+	if store.keyPrefix == "" {
+		return key
+	}
+	return store.keyPrefix + key
+}
+
+// checkUserPassword rejects a username with an empty password: go-redis only
+// sends AUTH when a password is set, so the connection would silently run as
+// the default user instead of the configured ACL user.
+func checkUserPassword(username, password string) error {
+	if username != "" && password == "" {
+		return fmt.Errorf("username %q requires a password: with an empty password no AUTH is sent and the connection uses the default user", username)
+	}
+	return nil
 }
 
 func (store *UniversalRedis3Store) BeginTransaction(ctx context.Context) (context.Context, error) {
@@ -42,7 +60,7 @@ func (store *UniversalRedis3Store) InsertEntry(ctx context.Context, entry *filer
 	dir, name := entry.FullPath.DirAndName()
 
 	if name != "" {
-		if err = insertChild(ctx, store, genDirectoryListKey(dir), name); err != nil {
+		if err = insertChild(ctx, store, store.getKey(genDirectoryListKey(dir)), name); err != nil {
 			return fmt.Errorf("persisting %s in parent dir: %v", entry.FullPath, err)
 		}
 	}
@@ -60,7 +78,7 @@ func (store *UniversalRedis3Store) doInsertEntry(ctx context.Context, entry *fil
 		value = util.MaybeGzipData(value)
 	}
 
-	if err = store.Client.Set(ctx, string(entry.FullPath), value, time.Duration(entry.TtlSec)*time.Second).Err(); err != nil {
+	if err = store.Client.Set(ctx, store.getKey(string(entry.FullPath)), value, time.Duration(entry.TtlSec)*time.Second).Err(); err != nil {
 		return fmt.Errorf("persisting %s : %v", entry.FullPath, err)
 	}
 	return nil
@@ -73,7 +91,7 @@ func (store *UniversalRedis3Store) UpdateEntry(ctx context.Context, entry *filer
 
 func (store *UniversalRedis3Store) FindEntry(ctx context.Context, fullpath util.FullPath) (entry *filer.Entry, err error) {
 
-	data, err := store.Client.Get(ctx, string(fullpath)).Result()
+	data, err := store.Client.Get(ctx, store.getKey(string(fullpath))).Result()
 	if err == redis.Nil {
 		return nil, filer_pb.ErrNotFound
 	}
@@ -99,7 +117,7 @@ func (store *UniversalRedis3Store) DeleteEntry(ctx context.Context, fullpath uti
 	// children it describes. Dropping it here would also discard an entry that
 	// arrived after the caller judged this directory empty, and nothing else
 	// records that the entry is there.
-	_, err = store.Client.Del(ctx, string(fullpath)).Result()
+	_, err = store.Client.Del(ctx, store.getKey(string(fullpath))).Result()
 	if err != nil {
 		return fmt.Errorf("delete %s : %v", fullpath, err)
 	}
@@ -107,7 +125,7 @@ func (store *UniversalRedis3Store) DeleteEntry(ctx context.Context, fullpath uti
 	dir, name := fullpath.DirAndName()
 
 	if name != "" {
-		if err = removeChild(ctx, store, genDirectoryListKey(dir), name); err != nil {
+		if err = removeChild(ctx, store, store.getKey(genDirectoryListKey(dir)), name); err != nil {
 			return fmt.Errorf("DeleteEntry %s in parent dir: %v", fullpath, err)
 		}
 	}
@@ -117,15 +135,15 @@ func (store *UniversalRedis3Store) DeleteEntry(ctx context.Context, fullpath uti
 
 func (store *UniversalRedis3Store) DeleteFolderChildren(ctx context.Context, fullpath util.FullPath) (err error) {
 
-	dirListKey := genDirectoryListKey(string(fullpath))
+	dirListKey := store.getKey(genDirectoryListKey(string(fullpath)))
 	if err = removeChildren(ctx, store, dirListKey, func(name string) error {
 		path := util.NewFullPath(string(fullpath), name)
-		_, err = store.Client.Del(ctx, string(path)).Result()
+		_, err = store.Client.Del(ctx, store.getKey(string(path))).Result()
 		if err != nil {
 			return fmt.Errorf("DeleteFolderChildren %s in parent dir: %v", fullpath, err)
 		}
 		// not efficient, but need to remove if it is a directory
-		store.Client.Del(ctx, genDirectoryListKey(string(path)))
+		store.Client.Del(ctx, store.getKey(genDirectoryListKey(string(path))))
 		return nil
 	}); err != nil {
 		return err
@@ -145,7 +163,7 @@ func (store *UniversalRedis3Store) ListDirectoryPrefixedEntries(ctx context.Cont
 
 func (store *UniversalRedis3Store) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
 
-	dirListKey := genDirectoryListKey(string(dirPath))
+	dirListKey := store.getKey(genDirectoryListKey(string(dirPath)))
 	counter := int64(0)
 
 	var callbackErr error
@@ -167,7 +185,7 @@ func (store *UniversalRedis3Store) ListDirectoryEntries(ctx context.Context, dir
 		} else {
 			if entry.TtlSec > 0 {
 				if entry.Attr.Crtime.Add(time.Duration(entry.TtlSec) * time.Second).Before(time.Now()) {
-					store.Client.Del(ctx, string(path)).Result()
+					store.Client.Del(ctx, store.getKey(string(path))).Result()
 					store.Client.ZRem(ctx, dirListKey, fileName).Result()
 					return true
 				}

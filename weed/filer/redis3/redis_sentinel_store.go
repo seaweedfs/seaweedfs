@@ -37,12 +37,19 @@ func (store *Redis3SentinelStore) Initialize(configuration util.Configuration, p
 		configuration.GetString(prefix+"sentinel_username"),
 		configuration.GetString(prefix+"sentinel_password"),
 		configuration.GetInt(prefix+"database"),
+		configuration.GetString(prefix+"keyPrefix"),
 		tlsConfig,
 		redis_conf.Read(configuration, prefix),
 	)
 }
 
-func (store *Redis3SentinelStore) initialize(addresses []string, masterName string, username string, password string, sentinelUsername string, sentinelPassword string, database int, tlsConfig *tls.Config, settings redis_conf.Settings) (err error) {
+func (store *Redis3SentinelStore) initialize(addresses []string, masterName string, username string, password string, sentinelUsername string, sentinelPassword string, database int, keyPrefix string, tlsConfig *tls.Config, settings redis_conf.Settings) (err error) {
+	if err := checkUserPassword(username, password); err != nil {
+		return err
+	}
+	if err := checkUserPassword(sentinelUsername, sentinelPassword); err != nil {
+		return err
+	}
 	options := &redis.FailoverOptions{
 		MasterName:       masterName,
 		SentinelAddrs:    addresses,
@@ -56,5 +63,6 @@ func (store *Redis3SentinelStore) initialize(addresses []string, masterName stri
 	settings.ApplyToFailover(options)
 	store.Client = redis.NewFailoverClient(options)
 	store.redsync = redsync.New(goredis.NewPool(store.Client))
+	store.keyPrefix = keyPrefix
 	return
 }
