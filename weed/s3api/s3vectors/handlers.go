@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	awsarn "github.com/aws/aws-sdk-go-v2/aws/arn"
 	"github.com/google/uuid"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -67,18 +68,20 @@ func arnParts(v *vectorBucketARNs, name, arn string) error {
 		v.bucket = arn
 		return nil
 	}
-	i := strings.Index(arn, "bucket/")
-	if i < 0 {
+	parsed, err := awsarn.Parse(arn)
+	if err != nil || parsed.Service != "s3vectors" {
 		return fmt.Errorf("malformed ARN %q", arn)
 	}
-	rest := arn[i+len("bucket/"):]
-	parts := strings.Split(rest, "/index/")
-	v.bucket = parts[0]
-	if v.bucket == "" {
+	parts := strings.Split(parsed.Resource, "/")
+	if (len(parts) != 2 && len(parts) != 4) || parts[0] != "bucket" || parts[1] == "" {
 		return fmt.Errorf("malformed ARN %q", arn)
 	}
-	if len(parts) == 2 {
-		v.index = parts[1]
+	if len(parts) == 4 && (parts[2] != "index" || parts[3] == "") {
+		return fmt.Errorf("malformed ARN %q", arn)
+	}
+	v.bucket, v.index = parts[1], ""
+	if len(parts) == 4 {
+		v.index = parts[3]
 	}
 	return nil
 }
@@ -94,11 +97,6 @@ func bucketARNs(name, arn string) (vectorBucketARNs, error) {
 	if v.index != "" {
 		return v, fmt.Errorf("vectorBucketArn %q names an index, not a bucket", arn)
 	}
-	if strings.HasPrefix(arn, "arn:") {
-		if p := strings.SplitN(arn, ":", 6); len(p) > 2 && p[2] != "s3vectors" {
-			return v, fmt.Errorf("vectorBucketArn %q is not an s3vectors ARN", arn)
-		}
-	}
 	return v, nil
 }
 
@@ -110,6 +108,9 @@ func resolveIndexARNs(bucketName, bucketArn, indexName, indexArn string) (vector
 		if err := arnParts(&v, "", indexArn); err != nil {
 			return v, err
 		}
+		if v.index == "" {
+			return v, fmt.Errorf("indexArn %q does not name an index", indexArn)
+		}
 	} else if indexArn != "" {
 		return v, fmt.Errorf("indexArn must be an ARN, got %q", indexArn)
 	}
@@ -117,9 +118,14 @@ func resolveIndexARNs(bucketName, bucketArn, indexName, indexArn string) (vector
 		if !strings.HasPrefix(bucketArn, "arn:") {
 			return v, fmt.Errorf("vectorBucketArn must be an ARN, got %q", bucketArn)
 		}
-		if err := arnParts(&v, "", bucketArn); err != nil {
+		bucket, err := bucketARNs("", bucketArn)
+		if err != nil {
 			return v, err
 		}
+		if v.bucket != "" && v.bucket != bucket.bucket {
+			return v, fmt.Errorf("vectorBucketArn and indexArn name different buckets")
+		}
+		v.bucket = bucket.bucket
 	}
 	if v.bucket == "" {
 		v.bucket = bucketName

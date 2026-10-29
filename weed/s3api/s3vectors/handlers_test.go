@@ -246,6 +246,12 @@ func TestArnParts(t *testing.T) {
 		"arn:aws:s3vectors:r:a:bucket/",
 		"arn:aws:s3vectors:r:a:bucket//index/i",
 		"arn:aws:s3vectors:r:a:bucket",
+		"arn:aws:s3tables:r:a:bucket/b/index/i",
+		"arn:aws:s3:r:a:bucket/b/index/i",
+		"arn:aws:s3vectors:r:a:prefix/bucket/b/index/i",
+		"arn:aws:s3vectors:r:a:bucket/b/index/",
+		"arn:aws:s3vectors:r:a:bucket/b/index/i/index/j",
+		"arn:aws:s3vectors:r:a:bucket/b/index/i/",
 	} {
 		v = vectorBucketARNs{}
 		if err := arnParts(&v, "", bad); err == nil {
@@ -280,6 +286,19 @@ func TestResolveIndexARNs(t *testing.T) {
 	arns, err = resolveIndexARNs("b", "", "i", "")
 	if err != nil || arns.bucket != "b" || arns.index != "i" {
 		t.Fatalf("names only: %+v err=%v", arns, err)
+	}
+	arns, err = resolveIndexARNs("", "arn:aws-cn:s3vectors:r:a:bucket/b", "", "arn:aws-cn:s3vectors:r:a:bucket/b/index/i")
+	if err != nil || arns.bucket != "b" || arns.index != "i" {
+		t.Fatalf("bucket and index ARNs: %+v err=%v", arns, err)
+	}
+	for _, tc := range []struct{ bucketARN, indexARN, indexName string }{
+		{"", "arn:aws:s3vectors:r:a:bucket/b", "i"},
+		{"arn:aws:s3vectors:r:a:bucket/b/index/i", "", "i"},
+		{"arn:aws:s3vectors:r:a:bucket/other", "arn:aws:s3vectors:r:a:bucket/b/index/i", ""},
+	} {
+		if _, err := resolveIndexARNs("", tc.bucketARN, tc.indexName, tc.indexARN); err == nil {
+			t.Errorf("accepted incompatible ARNs: %+v", tc)
+		}
 	}
 	if _, err := resolveIndexARNs("", "not-an-arn", "i", ""); err == nil {
 		t.Fatal("non-ARN vectorBucketArn should be rejected")
