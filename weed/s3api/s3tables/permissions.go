@@ -142,9 +142,9 @@ func CheckTableOrBucketPermission(operation, principal, resourceOwner, resourceP
 }
 
 // validatePolicyDocument rejects a policy the evaluator could not honor: one
-// that does not parse, or whose actions live in a namespace that never
-// matches. An s3vectors action stored here would be a dead rule the writer
-// believes is enforced — vector requests authorize their s3tables action.
+// that does not parse, or whose actions and resources name the vector service.
+// Either stored here would be a dead rule the writer believes is enforced —
+// vector requests authorize their s3tables action on a s3tables ARN.
 func validatePolicyDocument(raw string) error {
 	var doc PolicyDocument
 	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
@@ -154,6 +154,11 @@ func validatePolicyDocument(raw string) error {
 		for _, action := range statementActions(stmt.Action) {
 			if strings.HasPrefix(action, "s3vectors:") {
 				return fmt.Errorf("action %q is not enforceable in a resource policy", action)
+			}
+		}
+		for _, resource := range statementActions(stmt.Resource) {
+			if strings.HasPrefix(resource, "arn:aws:s3vectors:") {
+				return fmt.Errorf("resource %q is not enforceable in a resource policy", resource)
 			}
 		}
 	}
