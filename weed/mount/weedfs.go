@@ -646,7 +646,14 @@ func (wfs *WFS) lookupEntry(ctx context.Context, fullpath util.FullPath) (*filer
 			// A burst of remote changes invalidated this name's section, and a
 			// workload that never reads the directory would read through per
 			// entry until one did. Re-validate just that section here so the
-			// lookups after this one are served from the cache again.
+			// lookups after this one are served from the cache again. As with
+			// the rebuild above, let a pending flush land first so the section
+			// refresh cannot capture pre-flush metadata.
+			if inode, found := wfs.inodeToPath.GetInode(fullpath); found {
+				if !wfs.waitForPendingAsyncFlush(ctx, inode) {
+					return nil, entryVersion{}, fuse.EINTR
+				}
+			}
 			if err := meta_cache.EnsureNameFresh(ctx, wfs.metaCache, wfs, dirPath, name); err != nil {
 				glog.V(2).Infof("lookupEntry: refresh stale section of %s: %v", dirPath, err)
 			}
