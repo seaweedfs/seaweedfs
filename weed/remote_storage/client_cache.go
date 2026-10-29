@@ -227,17 +227,26 @@ func GetRemoteStorageWith(kind string, remoteConf *remote_pb.RemoteConf, version
 }
 
 // credentialsVersion names what a plain client reads at build time that its
-// configuration does not hold: a gcs credentials file's content. Inline JSON
-// needs none; it is already inside the configuration's hash.
+// configuration does not hold: a gcs credentials file's content, or inline
+// JSON from GOOGLE_APPLICATION_CREDENTIALS. The configuration's own inline
+// JSON needs none; it is already inside the configuration's hash.
 func credentialsVersion(remoteConf *remote_pb.RemoteConf) string {
 	if remoteConf.GetType() != "gcs" {
 		return ""
 	}
 	path := remoteConf.GetGcsGoogleApplicationCredentials()
+	fromEnv := false
 	if path == "" {
-		path = os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
+		path, fromEnv = os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"), true
 	}
-	if path == "" || strings.HasPrefix(path, "{") {
+	if strings.HasPrefix(path, "{") {
+		if !fromEnv {
+			return ""
+		}
+		sum := sha256.Sum256([]byte(path))
+		return hex.EncodeToString(sum[:16])
+	}
+	if path == "" {
 		return ""
 	}
 	return FileVersion(path)

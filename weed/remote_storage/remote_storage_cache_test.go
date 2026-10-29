@@ -331,6 +331,15 @@ func TestPlainClientGcsCredentialsVersion(t *testing.T) {
 	if credentialsVersion(&remote_pb.RemoteConf{Type: "gcs"}) == "" {
 		t.Fatal("the environment's credentials path must produce a version")
 	}
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", `{"type":"one"}`)
+	vEnvJSON := credentialsVersion(&remote_pb.RemoteConf{Type: "gcs"})
+	if vEnvJSON == "" {
+		t.Fatal("the environment's inline JSON must produce a version")
+	}
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", `{"type":"two"}`)
+	if credentialsVersion(&remote_pb.RemoteConf{Type: "gcs"}) == vEnvJSON {
+		t.Fatal("rotated inline JSON credentials must change the version")
+	}
 	if credentialsVersion(&remote_pb.RemoteConf{Type: "s3"}) != "" {
 		t.Fatal("a non-gcs remote has no credentials file version")
 	}
