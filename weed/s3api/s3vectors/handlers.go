@@ -301,6 +301,10 @@ func (s *Server) handleListVectorBuckets(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
+	if req.MaxResults < 0 || req.MaxResults > vectorsMaxListPage {
+		writeError(w, http.StatusBadRequest, "ValidationException", "maxResults must be between 1 and 100")
+		return
+	}
 	var resp struct {
 		TableBuckets []struct {
 			Arn       string `json:"arn"`
@@ -1085,6 +1089,10 @@ func (s *Server) handleListIndexes(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
+	if req.MaxResults < 0 || req.MaxResults > vectorsMaxListPage {
+		writeError(w, http.StatusBadRequest, "ValidationException", "maxResults must be between 1 and 100")
+		return
+	}
 	if _, err := s.authorizeVector(r.Context(), r, "s3vectors:ListIndexes", arns.bucket, ""); err != nil {
 		catalogErr(w, err)
 		return
@@ -1382,6 +1390,7 @@ const (
 	vectorsDefaultPage = 500
 	vectorsMaxPutBatch = 500
 	vectorsMaxPage     = 1000
+	vectorsMaxListPage = 100
 	vectorsMaxTopK     = 10000
 )
 
