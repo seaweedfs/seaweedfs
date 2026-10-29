@@ -282,6 +282,7 @@ var s3tablesExtendedKeys = []string{
 	ExtendedKeyMaintenanceStatus,
 	ExtendedKeyEntryType,
 	ExtendedKeyDeleting,
+	ExtendedKeyVectorPolicy,
 }
 
 // SnapshotExtended captures an entry's attributes as an UpdateEntry
