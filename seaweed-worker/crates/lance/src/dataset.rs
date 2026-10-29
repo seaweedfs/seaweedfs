@@ -6,10 +6,12 @@
 //! their lifetime re-describes rather than carrying one set throughout.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use lance::dataset::Dataset;
 use lance::dataset::builder::DatasetBuilder;
+use lance::io::{ObjectStore, ObjectStoreParams, ObjectStoreRegistry, StorageOptionsAccessor};
 
 use crate::catalog::{NamespaceClient, TableDescription};
 
@@ -62,6 +64,44 @@ async fn open_at(description: &TableDescription, fallback: &FallbackOptions) -> 
         .load()
         .await
         .with_context(|| format!("open lance dataset at {}", description.location))
+}
+
+/// Remove every object under a table's location. A table the catalog can no
+/// longer describe is already dropped, so the call stays idempotent.
+pub async fn drop(
+    client: &NamespaceClient,
+    id: &[String],
+    fallback: &FallbackOptions,
+) -> Result<()> {
+    let description = match client.describe_table(id).await {
+        Ok(description) => description,
+        Err(err) if describe_not_found(&err) => return Ok(()),
+        Err(err) => return Err(err),
+    };
+    let mut options: HashMap<String, String> = fallback.clone();
+    options.extend(description.storage_options.clone());
+    let (store, path) = ObjectStore::from_uri_and_params(
+        Arc::new(ObjectStoreRegistry::default()),
+        &description.location,
+        &ObjectStoreParams {
+            storage_options_accessor: Some(Arc::new(StorageOptionsAccessor::with_static_options(
+                options,
+            ))),
+            ..Default::default()
+        },
+    )
+    .await?;
+    store.remove_dir_all(path).await?;
+    Ok(())
+}
+
+fn describe_not_found(err: &anyhow::Error) -> bool {
+    err.chain().any(|cause| {
+        cause
+            .downcast_ref::<reqwest::Error>()
+            .and_then(|e| e.status())
+            == Some(reqwest::StatusCode::NOT_FOUND)
+    })
 }
 
 impl OpenTable {

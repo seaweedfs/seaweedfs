@@ -91,13 +91,26 @@ const (
 )
 
 func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerClient, path util.FullPath, maxCacheableEntries int) error {
+	// The shared build must not run on the requester's context. A FUSE request
+	// that returns — or that the kernel interrupts — cancels that context, and
+	// every other requester waiting on the same build would inherit the
+	// cancellation. weed/mount/weedfs_dir_read.go only reports EINTR when the
+	// *local* context is done, so such a waiter falls through to fuse.EIO and
+	// the kernel hands EIO to readdirent: kubelet's applyFSGroup fails and the
+	// volume never mounts.
+	//
+	// Build on a context that keeps the request's values but not its
+	// cancellation. Waiters still abandon on their own context below, so a
+	// canceled request stops waiting immediately.
+	buildCtx := context.WithoutCancel(ctx)
+
 	// Use singleflight to deduplicate concurrent requests for the same path.
 	// DoChan so a canceled request stops waiting even when another request
 	// owns the in-flight build.
 	resultCh := mc.visitGroup.DoChan(string(path), func() (interface{}, error) {
 		// Check for cancellation before starting
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
+		if buildCtx.Err() != nil {
+			return nil, buildCtx.Err()
 		}
 
 		// Double-check if already cached (another goroutine may have completed)
@@ -128,7 +141,7 @@ func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerCl
 			}
 		}
 		defer func() {
-			if !cleanupDone && ctx.Err() != nil {
+			if !cleanupDone && buildCtx.Err() != nil {
 				cleanupBuild("canceled")
 			}
 		}()
@@ -139,11 +152,11 @@ func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerCl
 				entryCount = 0
 				sections = sectionBoundsCollector{}
 				var batch []*filer.Entry // reset on retry, allow GC of previous entries
-				if err := mc.deleteFolderChildrenForRebuild(ctx, path); err != nil {
+				if err := mc.deleteFolderChildrenForRebuild(buildCtx, path); err != nil {
 					return fmt.Errorf("clear existing entries for %s: %w", path, err)
 				}
 				var listErr error
-				snapshotTsNs, listErr = filer_pb.ReadDirAllEntriesWithSnapshot(ctx, client, path, "", func(pbEntry *filer_pb.Entry, isLast bool) error {
+				snapshotTsNs, listErr = filer_pb.ReadDirAllEntriesWithSnapshot(buildCtx, client, path, "", func(pbEntry *filer_pb.Entry, isLast bool) error {
 					entry := filer.FromPbEntry(string(path), pbEntry)
 					if !mc.includeSystemEntries && IsHiddenSystemEntry(string(path), entry.Name()) {
 						return nil
@@ -158,7 +171,7 @@ func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerCl
 
 					// flush by size, not isLast: hidden entries can return early
 					if len(batch) >= batchInsertSize {
-						if err := mc.doBatchInsertEntries(ctx, batch); err != nil {
+						if err := mc.doBatchInsertEntries(buildCtx, batch); err != nil {
 							return fmt.Errorf("batch insert for %s: %w", path, err)
 						}
 						batch = make([]*filer.Entry, 0, batchInsertSize)
@@ -169,7 +182,7 @@ func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerCl
 					return listErr
 				}
 				if len(batch) > 0 {
-					if err := mc.doBatchInsertEntries(ctx, batch); err != nil {
+					if err := mc.doBatchInsertEntries(buildCtx, batch); err != nil {
 						return fmt.Errorf("batch insert remaining for %s: %w", path, err)
 					}
 				}
@@ -198,14 +211,14 @@ func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerCl
 		// immediate (a clean-EOF stream glitch clears at once), later ones space out.
 		// On cancellation the deferred cleanup aborts the build.
 		for attempt := 0; entryCount == 0 && attempt < emptyRebuildConfirmations; attempt++ {
-			if ctx.Err() != nil {
-				return nil, ctx.Err()
+			if buildCtx.Err() != nil {
+				return nil, buildCtx.Err()
 			}
 			if attempt > 0 {
 				select {
 				case <-time.After(emptyRebuildConfirmDelay):
-				case <-ctx.Done():
-					return nil, ctx.Err()
+				case <-buildCtx.Done():
+					return nil, buildCtx.Err()
 				}
 			}
 			if entryCount, snapshotTsNs, sections, fetchErr = reloadFromFiler(); fetchErr != nil {

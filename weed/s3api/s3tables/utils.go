@@ -164,6 +164,34 @@ func ValidateMetadataLocation(metadataLocation, bucketName, namespace string) er
 	return nil
 }
 
+// ValidateEncryptionConfiguration admits only the AES256 declaration, under the
+// caller's wire name — s3tables sends sseAlgorithm, s3vectors sends sseType. A
+// caller-chosen key is never read back by the storage path, so recording one
+// would claim protection the data does not get.
+func ValidateEncryptionConfiguration(cfg map[string]interface{}, sseField string) error {
+	if len(cfg) == 0 {
+		return nil
+	}
+	otherField := "sseAlgorithm"
+	if sseField == otherField {
+		otherField = "sseType"
+	}
+	if _, ok := cfg[otherField]; ok {
+		return fmt.Errorf("encryptionConfiguration field is %s", sseField)
+	}
+	value, ok := cfg[sseField].(string)
+	if !ok {
+		return fmt.Errorf("encryptionConfiguration requires %s", sseField)
+	}
+	if value != "AES256" {
+		return fmt.Errorf("unsupported %s %q", sseField, value)
+	}
+	if _, ok := cfg["kmsKeyArn"]; ok {
+		return fmt.Errorf("kmsKeyArn is not supported")
+	}
+	return nil
+}
+
 func parseS3Location(location string) (bucket, tablePath string, err error) {
 	if !strings.HasPrefix(location, "s3://") {
 		return "", "", fmt.Errorf("unsupported location: %s", location)
@@ -197,10 +225,11 @@ func GetTableObjectBucketPath(bucketName string) string {
 // Metadata structures
 
 type tableBucketMetadata struct {
-	Name           string    `json:"name"`
-	CreatedAt      time.Time `json:"createdAt"`
-	OwnerAccountID string    `json:"ownerAccountId"`
-	Format         string    `json:"format,omitempty"`
+	Name                    string                 `json:"name"`
+	CreatedAt               time.Time              `json:"createdAt"`
+	OwnerAccountID          string                 `json:"ownerAccountId"`
+	Format                  string                 `json:"format,omitempty"`
+	EncryptionConfiguration map[string]interface{} `json:"encryptionConfiguration,omitempty"`
 }
 
 // namespaceMetadata stores metadata for a namespace

@@ -97,3 +97,40 @@ func TestManagerCreateTableBucketAuthorization(t *testing.T) {
 		})
 	}
 }
+
+// The bucket stores the declared configuration, but nothing downstream reads a
+// caller-chosen key — accepting one records a promise the data never gets.
+func TestManagerCreateTableBucketRejectsCustomerKeys(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		cfg     map[string]interface{}
+		reaches bool
+	}{
+		{"no configuration", nil, true},
+		{"tables default sse", map[string]interface{}{"sseAlgorithm": "AES256"}, true},
+		{"vector wire name", map[string]interface{}{"sseType": "AES256"}, false},
+		{"unknown sse", map[string]interface{}{"sseType": "aws:fsx"}, false},
+		{"tables kms", map[string]interface{}{"sseAlgorithm": "aws:kms"}, false},
+		{"conflicting types", map[string]interface{}{"sseAlgorithm": "AES256", "sseType": "aws:kms"}, false},
+		{"missing algorithm", map[string]interface{}{"other": "x"}, false},
+		{"customer key", map[string]interface{}{"sseType": "aws:kms", "kmsKeyArn": "arn:aws:kms:us-east-1:123456789012:key/x"}, false},
+		{"key without a type", map[string]interface{}{"kmsKeyArn": "arn:aws:kms:us-east-1:123456789012:key/x"}, false},
+		{"key on default sse", map[string]interface{}{"sseType": "AES256", "kmsKeyArn": "arn:aws:kms:us-east-1:123456789012:key/x"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := NewManager()
+			fc := &recordingFilerClient{}
+			err := m.Execute(context.Background(), fc, "CreateTableBucket", &CreateTableBucketRequest{
+				Name:                    "testbucket",
+				EncryptionConfiguration: tc.cfg,
+			}, nil, s3_constants.AccountAdminId)
+			require.Error(t, err)
+			assert.Equal(t, tc.reaches, fc.called)
+			if !tc.reaches {
+				var s3Err *S3TablesError
+				require.ErrorAs(t, err, &s3Err)
+				assert.Equal(t, ErrCodeInvalidRequest, s3Err.Type)
+			}
+		})
+	}
+}

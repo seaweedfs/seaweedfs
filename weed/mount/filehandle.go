@@ -147,11 +147,13 @@ func (fh *FileHandle) SetEntry(entry *filer_pb.Entry) {
 // installAckedEntry installs filer-acknowledged state under the handle lock
 // when it outranks the handle. A version never advances without its value:
 // stamping alone would fence out the events carrying what the handle lacks.
-// Dirty handles are skipped — local writes supersede the ack.
+// Dirty handles are skipped — local writes supersede the ack. Deleted ones
+// too: their path may already name a different file, and no acknowledged
+// state belongs to this handle anymore.
 func (fh *FileHandle) installAckedEntry(entry *filer_pb.Entry, versionTsNs int64, signature int32) {
 	fhActiveLock := fh.wfs.fhLockTable.AcquireLock("installAckedEntry", fh.fh, util.ExclusiveLock)
 	defer fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
-	if versionTsNs == 0 || fh.dirtyMetadata || entry == fh.GetEntry().GetEntry() {
+	if versionTsNs == 0 || fh.dirtyMetadata || fh.isDeleted || entry == fh.GetEntry().GetEntry() {
 		return
 	}
 	// Refuse only what is provably older. Two known, differing filer

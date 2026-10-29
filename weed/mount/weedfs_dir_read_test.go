@@ -2,14 +2,20 @@ package mount
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"testing"
+
+	"github.com/seaweedfs/go-fuse/v2/fuse"
 
 	"github.com/seaweedfs/seaweedfs/weed/mount/meta_cache"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 )
 
 type directoryListStream struct {
@@ -118,5 +124,30 @@ func TestLoadDirectoryEntriesDirectShowsSystemEntriesWhenEnabled(t *testing.T) {
 	}
 	if entries[0].Name() != "topics" || entries[1].Name() != "visible" {
 		t.Fatalf("entry names = %q, %q, want topics, visible", entries[0].Name(), entries[1].Name())
+	}
+}
+
+func TestDirReadStatus(t *testing.T) {
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	tests := []struct {
+		name string
+		ctx  context.Context
+		err  error
+		want fuse.Status
+	}{
+		{"local context canceled", canceledCtx, io.EOF, fuse.EINTR},
+		{"context canceled error", context.Background(), context.Canceled, fuse.EINTR},
+		{"context deadline error", context.Background(), context.DeadlineExceeded, fuse.EINTR},
+		{"grpc canceled", context.Background(), status.Error(codes.Canceled, "stream canceled"), fuse.EINTR},
+		{"grpc deadline exceeded", context.Background(), status.Error(codes.DeadlineExceeded, "deadline exceeded"), fuse.EINTR},
+		{"wrapped grpc canceled", context.Background(), fmt.Errorf("list: %w", status.Error(codes.Canceled, "stream canceled")), fuse.EINTR},
+		{"ordinary failure", context.Background(), errors.New("filer broke"), fuse.EIO},
+	}
+	for _, tt := range tests {
+		if got := dirReadStatus(tt.ctx, tt.err, "dir read: %v", tt.err); got != tt.want {
+			t.Errorf("%s: dirReadStatus = %v, want %v", tt.name, got, tt.want)
+		}
 	}
 }

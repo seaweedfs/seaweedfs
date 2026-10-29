@@ -257,6 +257,23 @@ func TestStoredEntryETag(t *testing.T) {
 	if got := storedEntryETag(md5Only); got != "abcd" {
 		t.Errorf("md5 fallback: got %q", got)
 	}
+	remoteOnly := &filer.Entry{
+		Attr:   filer.Attr{FileSize: 10},
+		Remote: &filer_pb.RemoteEntry{RemoteETag: `"remote-etag"`, RemoteSize: 10},
+	}
+	if got := storedEntryETag(remoteOnly); got != "remote-etag" {
+		t.Errorf("remote etag: got %q", got)
+	}
+	remoteStale := &filer.Entry{
+		Attr:   filer.Attr{FileSize: 10, Md5: []byte{0xab}},
+		Remote: &filer_pb.RemoteEntry{RemoteETag: `"remote-etag"`, RemoteSize: 99},
+	}
+	if got := storedEntryETag(remoteStale); got != "ab" {
+		t.Errorf("stale remote size falls to md5: got %q", got)
+	}
+	if got := storedEntryETag(&filer.Entry{}); got != "" {
+		t.Errorf("empty entry: got %q", got)
+	}
 }
 
 // The CreateEntry handler enforces the precondition atomically: a matching

@@ -39,6 +39,11 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 		bucketFormat = normalized
 	}
 
+	if err := ValidateEncryptionConfiguration(req.EncryptionConfiguration, "sseAlgorithm"); err != nil {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
+		return err
+	}
+
 	principal := h.getAccountID(r)
 	identityActions := getIdentityActions(r)
 	identityPolicyNames := getIdentityPolicyNames(r)
@@ -127,10 +132,11 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 	// Create the bucket directory and set metadata as extended attributes
 	now := time.Now()
 	metadata := &tableBucketMetadata{
-		Name:           req.Name,
-		CreatedAt:      now,
-		OwnerAccountID: principal,
-		Format:         bucketFormat,
+		Name:                    req.Name,
+		CreatedAt:               now,
+		OwnerAccountID:          principal,
+		Format:                  bucketFormat,
+		EncryptionConfiguration: req.EncryptionConfiguration,
 	}
 
 	metadataBytes, err := json.Marshal(metadata)
