@@ -723,7 +723,13 @@ func (s *Server) handlePutVectors(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	if _, err := s.indexRecord(r.Context(), r, arns.bucket, arns.index); err != nil {
+	if len(req.Vectors) == 0 || len(req.Vectors) > vectorsMaxPutBatch {
+		writeError(w, http.StatusBadRequest, "ValidationException",
+			fmt.Sprintf("vectors must contain between 1 and %d items", vectorsMaxPutBatch))
+		return
+	}
+	record, err := s.indexRecord(r.Context(), r, arns.bucket, arns.index)
+	if err != nil {
 		catalogErr(w, err)
 		return
 	}
@@ -733,6 +739,7 @@ func (s *Server) handlePutVectors(w http.ResponseWriter, r *http.Request) {
 		catalogErr(w, err)
 		return
 	}
+	dimension := indexFromRecord(s, arns.bucket, arns.index, record).Dimension
 	vectors := make([]*vector_pb.Vector, 0, len(req.Vectors))
 	for _, v := range req.Vectors {
 		if v == nil {
@@ -751,6 +758,11 @@ func (s *Server) handlePutVectors(w http.ResponseWriter, r *http.Request) {
 		var data []float32
 		if v.Data != nil {
 			data = v.Data.Float32
+		}
+		if int32(len(data)) != dimension {
+			writeError(w, http.StatusBadRequest, "ValidationException",
+				fmt.Sprintf("vector %q has %d dimensions, the index declares %d", v.Key, len(data), dimension))
+			return
 		}
 		vectors = append(vectors, &vector_pb.Vector{Key: v.Key, Data: data, Metadata: metadata})
 	}
@@ -880,6 +892,7 @@ func (s *Server) handleListVectors(w http.ResponseWriter, r *http.Request) {
 // one does.
 const (
 	vectorsDefaultPage = 500
+	vectorsMaxPutBatch = 500
 	vectorsMaxPage     = 1000
 )
 
