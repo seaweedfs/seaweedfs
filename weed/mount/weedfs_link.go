@@ -268,8 +268,9 @@ func (wfs *WFS) syncHardLinkSiblings(ctx context.Context, inode uint64, authorit
 			continue
 		}
 		// The fetch failed: patch the counter in place so the sibling is
-		// not left stale, accepting that this mutation's version is claimed
-		// for content that may predate it.
+		// not left stale, but claim no log position for it — the cached
+		// content may predate a still-pending event, which an unversioned
+		// mark lets land and correct.
 		if !bytes.Equal(sibling.HardLinkId, authoritativeEntry.HardLinkId) {
 			continue
 		}
@@ -277,7 +278,7 @@ func (wfs *WFS) syncHardLinkSiblings(ctx context.Context, inode uint64, authorit
 		if authoritativeEntry.Attributes != nil {
 			sibling.Attr.Ctime = time.Unix(authoritativeEntry.Attributes.Ctime, int64(authoritativeEntry.Attributes.CtimeNs))
 		}
-		if err := wfs.metaCache.UpdateEntry(ctx, sibling, versionTsNs); err != nil {
+		if err := wfs.metaCache.UpdateEntry(ctx, sibling, 0); err != nil {
 			glog.V(4).Infof("syncHardLinkSiblings update %s: %v", p, err)
 		}
 	}

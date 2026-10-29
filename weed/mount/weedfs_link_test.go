@@ -3,9 +3,11 @@ package mount
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/mount/meta_cache"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -252,5 +254,61 @@ func TestLinkSyncsHardLinkSiblingsOnThirdLink(t *testing.T) {
 		if counter := cachedLink(t, wfs, p).HardLinkCounter; counter != 4 {
 			t.Errorf("%s HardLinkCounter = %d after the sibling sync, want 4", p, counter)
 		}
+	}
+}
+
+// When the sibling refresh cannot reach the filer, the fallback patches the
+// cached counter without proving the content reflects the mutation — so it
+// must claim no log position, or an event that was still in flight for the
+// sibling is fenced out at the version gate and its newer content is lost.
+// The test filer answers every LookupDirectoryEntry with Unimplemented, so
+// the sync always lands on that fallback.
+func TestSyncHardLinkSiblingFetchFailureClaimsNoVersion(t *testing.T) {
+	wfs, _ := newCreateTestWFS(t)
+
+	hardLinkId := filer.HardLinkId([]byte{9, 9, 9, 9})
+	sibPath := util.FullPath("/sib.txt")
+	if err := wfs.metaCache.InsertEntry(context.Background(), &filer.Entry{
+		FullPath:        sibPath,
+		Attr:            filer.Attr{Crtime: time.Unix(1, 0), Mtime: time.Unix(1, 0), Mode: 0o644, FileSize: 12, Uid: 99, Gid: 100},
+		HardLinkId:      hardLinkId,
+		HardLinkCounter: 2,
+	}, 7000); err != nil {
+		t.Fatalf("seed sibling: %v", err)
+	}
+	inode := wfs.inodeToPath.Lookup(sibPath, 1, false, false, 77, true)
+	if inode == 0 {
+		t.Fatal("Lookup handed out node id 0")
+	}
+
+	authoritative := &filer_pb.Entry{
+		HardLinkId:      hardLinkId,
+		HardLinkCounter: 4,
+		Attributes:      &filer_pb.FuseAttributes{Ctime: 8},
+	}
+	wfs.syncHardLinkSiblings(context.Background(), inode, authoritative, 9000)
+
+	if counter := cachedLink(t, wfs, sibPath).HardLinkCounter; counter != 4 {
+		t.Fatalf("sibling HardLinkCounter = %d after the fallback patch, want 4", counter)
+	}
+
+	// The mutation committed at 9000 but the patch proves nothing about the
+	// sibling's content: an event at 8000 still in flight must land.
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), &filer_pb.SubscribeMetadataResponse{
+		Directory: "/",
+		EventNotification: &filer_pb.EventNotification{
+			NewEntry: &filer_pb.Entry{
+				Name:            "sib.txt",
+				HardLinkId:      hardLinkId,
+				HardLinkCounter: 2,
+				Attributes:      &filer_pb.FuseAttributes{Crtime: 1, Mtime: 5, FileMode: 0o644, FileSize: 99, Uid: 99, Gid: 100},
+			},
+		},
+		TsNs: 8000,
+	}, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply pending event: %v", err)
+	}
+	if sib := cachedLink(t, wfs, sibPath); sib.FileSize != 99 {
+		t.Errorf("pending event was fenced by the patched version: FileSize = %d, want 99", sib.FileSize)
 	}
 }
