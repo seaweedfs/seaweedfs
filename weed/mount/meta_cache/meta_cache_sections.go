@@ -403,8 +403,11 @@ func (mc *MetaCache) applySectionRefreshNow(ctx context.Context, dirPath util.Fu
 		}
 		// A hard-linked entry shares one content blob with its siblings: a
 		// snapshot older than the group's newest write would roll that
-		// content back for every path reading through this entry.
-		if mc.hardLinkVersionFloorLocked(ctx, entry.HardLinkId) > snapshotTsNs {
+		// content back for every path reading through this entry. Only a
+		// cached entry is skipped — an uncached name still installs, or the
+		// refresh would report a live link missing.
+		if mc.hardLinkVersionFloorLocked(ctx, entry.HardLinkId) > snapshotTsNs &&
+			mc.entryExistsLocked(ctx, entry.FullPath) {
 			continue
 		}
 		// An unversioned marker would bypass the section floor, so it cannot

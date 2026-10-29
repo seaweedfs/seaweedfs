@@ -373,6 +373,25 @@ func (mc *MetaCache) UpdateEntry(ctx context.Context, entry *filer.Entry, versio
 	return nil
 }
 
+// UpdateEntryChecked is UpdateEntry gated under the cache lock: when the
+// path or its hard-link group already reflects a newer change — a
+// subscription event or delete that raced the writer's read — the stale
+// write is skipped instead of restoring old contents or a removed name.
+func (mc *MetaCache) UpdateEntryChecked(ctx context.Context, entry *filer.Entry, versionTsNs int64) error {
+	mc.Lock()
+	defer mc.Unlock()
+	if mc.entryVersionBlocksLocked(ctx, entry.FullPath, versionTsNs, false) ||
+		mc.hardLinkVersionFloorLocked(ctx, entry.HardLinkId) > versionTsNs {
+		return nil
+	}
+	if err := mc.localStore.UpdateEntry(ctx, entry); err != nil {
+		return err
+	}
+	mc.setEntryVersionLocked(ctx, entry.FullPath, versionTsNs)
+	mc.noteHardLinkVersionLocked(ctx, entry.HardLinkId, versionTsNs)
+	return nil
+}
+
 // TouchDirMtimeCtime updates the mtime and ctime of a directory entry
 // directly in the local metadata cache store. This avoids a filer RPC
 // round-trip and the associated metadata event that would invalidate
@@ -472,6 +491,25 @@ func (mc *MetaCache) noteHardLinkVersionLocked(ctx context.Context, hardLinkId f
 	if err := mc.localStore.KvPut(ctx, entryVersionHardLinkKey(hardLinkId), value); err != nil {
 		glog.V(1).Infof("set hardlink version %x: %v", []byte(hardLinkId), err)
 	}
+}
+
+// rebaseHardLinkEntryLocked returns the hard-link group's current cached
+// content parked at the event's new path — a rename or delayed write whose
+// shared blob is newer than the event must not roll that content back, but
+// the name still lands. Returns nil when no cached sibling carries the
+// group.
+func (mc *MetaCache) rebaseHardLinkEntryLocked(ctx context.Context, newEntry *filer.Entry, oldPath util.FullPath) *filer.Entry {
+	for _, p := range []util.FullPath{newEntry.FullPath, oldPath} {
+		if p == "" {
+			continue
+		}
+		if donor, err := mc.localStore.FindEntry(ctx, p); err == nil && donor != nil && string(donor.HardLinkId) == string(newEntry.HardLinkId) {
+			rebased := *donor
+			rebased.FullPath = newEntry.FullPath
+			return &rebased
+		}
+	}
+	return nil
 }
 
 // setEntryVersionLocked records the log position an entry write reflects.
@@ -1009,9 +1047,16 @@ func (mc *MetaCache) applyMetadataResponseLocked(ctx context.Context, resp *file
 		if oldPath != "" && mc.entryVersionBlocksLocked(ctx, oldPath, resp.TsNs, true) {
 			oldPath = ""
 		}
-		if newEntry != nil && (mc.entryVersionBlocksLocked(ctx, newEntry.FullPath, resp.TsNs, false) ||
-			mc.hardLinkVersionFloorLocked(ctx, newEntry.HardLinkId) > resp.TsNs) {
-			newEntry = nil
+		if newEntry != nil {
+			if mc.entryVersionBlocksLocked(ctx, newEntry.FullPath, resp.TsNs, false) {
+				newEntry = nil
+			} else if mc.hardLinkVersionFloorLocked(ctx, newEntry.HardLinkId) > resp.TsNs {
+				// The group's shared content is newer than this event — the
+				// stale copy must not overwrite it, but a rename's new name
+				// still lands: rebase the group's current content onto the
+				// new path when a cached sibling carries it.
+				newEntry = mc.rebaseHardLinkEntryLocked(ctx, newEntry, oldPath)
+			}
 		}
 	}
 	// Only foreign churn counts toward section invalidation: this mount's own

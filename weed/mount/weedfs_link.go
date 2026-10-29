@@ -258,7 +258,7 @@ func (wfs *WFS) syncHardLinkSiblings(inode uint64, authoritativeEntry *filer_pb.
 				entryTsNs = versionTsNs
 			}
 			dir, _ := p.DirAndName()
-			if err := wfs.metaCache.UpdateEntry(ctx, filer.FromPbEntry(dir, pbEntry), entryTsNs); err != nil {
+			if err := wfs.metaCache.UpdateEntryChecked(ctx, filer.FromPbEntry(dir, pbEntry), entryTsNs); err != nil {
 				glog.V(4).Infof("syncHardLinkSiblings update %s: %v", p, err)
 			}
 			continue
