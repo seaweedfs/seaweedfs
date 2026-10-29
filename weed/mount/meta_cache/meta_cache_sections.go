@@ -404,11 +404,12 @@ func (mc *MetaCache) applySectionRefreshNow(ctx context.Context, dirPath util.Fu
 		// A hard-linked entry shares one content blob with its siblings: a
 		// snapshot older than the group's newest write would roll that
 		// content back for every path reading through this entry. A cached
-		// entry is skipped outright; an uncached name still installs (the
-		// refresh would report a live link missing otherwise) but parks the
-		// group's current content rather than the snapshot's.
+		// member of the same group is skipped outright; any other live entry
+		// at the path is a stale occupant of a reused name, so the listed
+		// name still lands — carrying the group's parked content rather
+		// than the snapshot's.
 		if mc.hardLinkVersionFloorLocked(ctx, entry.HardLinkId) > snapshotTsNs {
-			if mc.entryExistsLocked(ctx, entry.FullPath) {
+			if existing, findErr := mc.localStore.FindEntry(ctx, entry.FullPath); findErr == nil && existing != nil && !isTtlExpired(existing) && string(existing.HardLinkId) == string(entry.HardLinkId) {
 				continue
 			}
 			if rebased := mc.rebaseHardLinkEntryLocked(ctx, entry, ""); rebased != nil {

@@ -1038,6 +1038,72 @@ func TestSectionRefreshParksHardLinkBlobContent(t *testing.T) {
 	}
 }
 
+// TestSectionRefreshReplacesReusedNameOccupant checks that a cached entry
+// sharing only the listed name — a path since recreated as a hard-link
+// member — is replaced by the group's parked content rather than kept,
+// which would serve the stale occupant under a fresh section.
+func TestSectionRefreshReplacesReusedNameOccupant(t *testing.T) {
+	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{"/": true, "/dir": true})
+	defer mc.Shutdown()
+
+	buildSectionedDir(t, mc, util.FullPath("/dir"), 1000, []string{"m"})
+
+	if err := mc.InsertEntry(context.Background(), &filer.Entry{
+		FullPath: util.FullPath("/dir/b"),
+		Attr:     filer.Attr{Crtime: time.Unix(1, 0), Mtime: time.Unix(1, 0), Mode: 0100644, FileSize: 7},
+	}, 4000); err != nil {
+		t.Fatalf("seed occupant: %v", err)
+	}
+
+	hardLinkId := filer.HardLinkId([]byte{1, 2, 3, 4})
+	const writeTsNs = 6000
+	if err := mc.ApplyMetadataResponse(context.Background(), &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		EventNotification: &filer_pb.EventNotification{
+			NewEntry: &filer_pb.Entry{
+				Name:            "a",
+				HardLinkId:      hardLinkId,
+				HardLinkCounter: 2,
+				Attributes:      &filer_pb.FuseAttributes{Crtime: 1, Mtime: 9, FileMode: 0100644, FileSize: 99},
+			},
+		},
+		TsNs: writeTsNs,
+	}, SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("seed sibling at %d: %v", writeTsNs, err)
+	}
+
+	const snapshotTsNs = 5000
+	if err := mc.enqueueAndWait(context.Background(), metadataApplyRequest{
+		kind:      metadataSectionRefresh,
+		buildPath: util.FullPath("/dir"),
+		refresh: &sectionRefresh{
+			hi: "m",
+			entries: []*filer.Entry{
+				{
+					FullPath:        util.FullPath("/dir/b"),
+					Attr:            filer.Attr{Crtime: time.Unix(1, 0), Mtime: time.Unix(2, 0), Mode: 0100644, FileSize: 3},
+					HardLinkId:      hardLinkId,
+					HardLinkCounter: 2,
+				},
+			},
+			snapshotTsNs: snapshotTsNs,
+		},
+	}); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+
+	b, _, err := mc.FindEntry(context.Background(), util.FullPath("/dir/b"))
+	if err != nil || b == nil {
+		t.Fatalf("the live link is missing after the refresh: %v", err)
+	}
+	if string(b.HardLinkId) != string(hardLinkId) {
+		t.Errorf("the stale occupant was kept: HardLinkId=%x, want %x", b.HardLinkId, hardLinkId)
+	}
+	if b.FileSize != 99 {
+		t.Errorf("reused name did not get the parked content: FileSize=%d, want 99", b.FileSize)
+	}
+}
+
 // TestEnsureNameFreshRefreshesOnlyItsSection checks that a name-scoped
 // refresh re-lists just the section holding that name and leaves other stale
 // sections untouched.
