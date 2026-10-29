@@ -28,8 +28,10 @@ import (
 
 func (fs *FilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req *filer_pb.CacheRemoteObjectToLocalClusterRequest) (*filer_pb.CacheRemoteObjectToLocalClusterResponse, error) {
 	// Use singleflight to deduplicate concurrent caching requests for the same object.
-	// This benefits all clients: S3 API, filer HTTP, Hadoop, etc.
-	cacheKey := req.Directory + "/" + req.Name
+	// This benefits all clients: S3 API, filer HTTP, Hadoop, etc. The size
+	// limit joins the key: a bounded caller's rejection must not be shared
+	// with callers that allow the download.
+	cacheKey := fmt.Sprintf("%s/%s:%d", req.Directory, req.Name, req.MaxSize)
 
 	// Detach from caller ctx: on failure the error path deletes every chunk
 	// already written, so cancelling mid-download loses all progress. For
