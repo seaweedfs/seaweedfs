@@ -995,12 +995,13 @@ func (s *Server) handleListVectors(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Mirrors the engine's page sizing so a segmented listing pages like a plain
-// one does.
+// The page constants mirror the engine's page sizing so a segmented listing
+// pages like a plain one does; vectorsMaxTopK is the AWS QueryVectors limit.
 const (
 	vectorsDefaultPage = 500
 	vectorsMaxPutBatch = 500
 	vectorsMaxPage     = 1000
+	vectorsMaxTopK     = 10000
 )
 
 // listSegmentVectors scans the index from offset, keeping the rows that fall
@@ -1360,6 +1361,11 @@ func (s *Server) handleQueryVectors(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", "queryVector is required")
 		return
 	}
+	if req.TopK <= 0 || req.TopK > vectorsMaxTopK {
+		writeError(w, http.StatusBadRequest, "ValidationException",
+			fmt.Sprintf("topK must be between 1 and %d", vectorsMaxTopK))
+		return
+	}
 	record, err := s.indexRecord(r.Context(), r, arns.bucket, arns.index)
 	if err != nil {
 		catalogErr(w, err)
@@ -1380,10 +1386,6 @@ func (s *Server) handleQueryVectors(w http.ResponseWriter, r *http.Request) {
 	filter, err := translateFilter(req.Filter)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
-		return
-	}
-	if req.TopK <= 0 {
-		writeError(w, http.StatusBadRequest, "ValidationException", "topK must be positive")
 		return
 	}
 	resp, err := s.vectors.QueryVectors(r.Context(), &vector_pb.QueryVectorsRequest{

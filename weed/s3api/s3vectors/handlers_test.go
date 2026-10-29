@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/vector_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
@@ -505,5 +506,44 @@ func TestPutVectorsUsesCatalogDimension(t *testing.T) {
 	}
 	if len(engine.puts) != 2 || len(engine.puts[1].Vectors) != vectorsMaxPutBatch {
 		t.Fatalf("engine PutVectors calls = %d, want a second call of %d vectors", len(engine.puts), vectorsMaxPutBatch)
+	}
+}
+
+// errFiler fails any catalog access, so a request that passes request-shape
+// validation dies in the catalog rather than reaching the engine.
+type errFiler struct{}
+
+func (errFiler) WithFilerClient(_ bool, _ func(filer_pb.SeaweedFilerClient) error) error {
+	return fmt.Errorf("no filer")
+}
+
+// Rejected topK values fail before the catalog and the engine; valid ones get
+// past the gate (here: into the catalog, which the errFiler fails).
+func TestQueryVectorsTopKBounds(t *testing.T) {
+	s := &Server{
+		vectors:     newFakeVectors(0),
+		tables:      s3tables.NewManager(),
+		filerClient: errFiler{},
+	}
+	for _, tc := range []struct {
+		name     string
+		topK     int
+		rejected bool
+	}{
+		{"zero", 0, true},
+		{"negative", -3, true},
+		{"over the limit", vectorsMaxTopK + 1, true},
+		{"one", 1, false},
+		{"at the limit", vectorsMaxTopK, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := fmt.Sprintf(`{"vectorBucketName":"b","indexName":"i","queryVector":{"float32":[0.1]},"topK":%d}`, tc.topK)
+			w := httptest.NewRecorder()
+			s.handleQueryVectors(w, httptest.NewRequest(http.MethodPost, "/QueryVectors", strings.NewReader(body)))
+			rejected := w.Code == http.StatusBadRequest && strings.Contains(w.Body.String(), "topK must be between")
+			if rejected != tc.rejected {
+				t.Fatalf("topK %d: rejected=%v (%d %s), want %v", tc.topK, rejected, w.Code, w.Body.String(), tc.rejected)
+			}
+		})
 	}
 }
