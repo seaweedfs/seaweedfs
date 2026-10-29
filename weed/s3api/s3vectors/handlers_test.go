@@ -1,19 +1,31 @@
 package s3vectors
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/vector_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables/s3tablestest"
 	"google.golang.org/grpc"
 )
 
-// fakeVectors serves a fixed row set with the engine's offset-token paging.
+// fakeVectors serves a fixed row set with the engine's offset-token paging
+// and records the mutating calls a handler test asserts on.
 type fakeVectors struct {
 	vector_pb.VectorServiceClient
-	rows []*vector_pb.Vector
+	rows    []*vector_pb.Vector
+	created []*vector_pb.CreateIndexRequest
+	puts    []*vector_pb.PutVectorsRequest
 }
 
 func newFakeVectors(n int) *fakeVectors {
@@ -52,6 +64,16 @@ func (f *fakeVectors) ListVectors(ctx context.Context, req *vector_pb.ListVector
 		resp.NextToken = strconv.Itoa(end)
 	}
 	return resp, nil
+}
+
+func (f *fakeVectors) CreateIndex(ctx context.Context, req *vector_pb.CreateIndexRequest, opts ...grpc.CallOption) (*vector_pb.CreateIndexResponse, error) {
+	f.created = append(f.created, req)
+	return &vector_pb.CreateIndexResponse{}, nil
+}
+
+func (f *fakeVectors) PutVectors(ctx context.Context, req *vector_pb.PutVectorsRequest, opts ...grpc.CallOption) (*vector_pb.PutVectorsResponse, error) {
+	f.puts = append(f.puts, req)
+	return &vector_pb.PutVectorsResponse{}, nil
 }
 
 // Following every segment's tokens must visit each vector exactly once.
@@ -177,6 +199,24 @@ func TestArnParts(t *testing.T) {
 		v = vectorBucketARNs{}
 		if err := arnParts(&v, "", bad); err == nil {
 			t.Fatalf("ARN %q should be rejected", bad)
+		}
+	}
+}
+
+func TestBucketARNs(t *testing.T) {
+	if v, err := bucketARNs("plain", ""); err != nil || v.bucket != "plain" {
+		t.Fatalf("plain name: %+v err=%v", v, err)
+	}
+	if v, err := bucketARNs("", "arn:aws:s3vectors:r:a:bucket/mybucket"); err != nil || v.bucket != "mybucket" {
+		t.Fatalf("bucket ARN: %+v err=%v", v, err)
+	}
+	for _, bad := range []string{
+		"arn:aws:s3vectors:r:a:bucket/b/index/i",
+		"arn:aws:s3tables:r:a:bucket/b",
+		"arn:aws:s3:r:a:bucket/b",
+	} {
+		if _, err := bucketARNs("", bad); err == nil {
+			t.Fatalf("ARN %q should be rejected for a bucket operation", bad)
 		}
 	}
 }
@@ -342,5 +382,192 @@ func TestFilterFieldsNestedOperators(t *testing.T) {
 		"": map[string]interface{}{"$eq": "x"},
 	}); !hit {
 		t.Fatal("an empty blocked key should still reject")
+	}
+}
+
+func TestToPutVectorDimensionCheck(t *testing.T) {
+	good := &PutInputVector{Key: "a", Data: &VectorData{Float32: []float32{1, 2, 3}}}
+	for _, tc := range []struct {
+		name string
+		v    *PutInputVector
+		dim  int32
+		ok   bool
+	}{
+		{"matching", good, 3, true},
+		{"mismatched", good, 4, false},
+		{"missing data", &PutInputVector{Key: "a"}, 3, false},
+		{"empty data", &PutInputVector{Key: "a", Data: &VectorData{}}, 3, false},
+		{"null element", nil, 3, false},
+		{"empty key", &PutInputVector{Data: &VectorData{Float32: []float32{1, 2, 3}}}, 3, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := toPutVector(tc.v, tc.dim); (err == nil) != tc.ok {
+				t.Fatalf("toPutVector err = %v, want ok %v", err, tc.ok)
+			}
+		})
+	}
+}
+
+func TestPutVectorsRejectsBadBatchSizes(t *testing.T) {
+	s := &Server{}
+	for _, n := range []int{0, vectorsMaxPutBatch + 1} {
+		vectors := make([]*PutInputVector, n)
+		for i := range vectors {
+			vectors[i] = &PutInputVector{}
+		}
+		body, _ := json.Marshal(&PutVectorsRequest{
+			VectorBucketName: "bucket",
+			IndexName:        "index",
+			Vectors:          vectors,
+		})
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodPost, "/PutVectors", bytes.NewReader(body))
+		s.handlePutVectors(w, r)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("batch of %d: status %d, want %d", n, w.Code, http.StatusBadRequest)
+		}
+	}
+}
+
+// allowAllAuth stands in for the zero-config deployment NewServer wires
+// DefaultAllow from.
+type allowAllAuth struct{}
+
+func (allowAllAuth) AuthenticateRequest(r *http.Request) (string, interface{}, s3err.ErrorCode) {
+	return "", nil, s3err.ErrNone
+}
+func (allowAllAuth) DefaultAllow() bool { return true }
+
+func postJSON(t *testing.T, handler http.HandlerFunc, payload interface{}) *httptest.ResponseRecorder {
+	t.Helper()
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	w := httptest.NewRecorder()
+	handler(w, httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body)))
+	return w
+}
+
+// The handler must take the declared dimension from the catalog record: a
+// matching vector reaches the engine, a mismatching one is rejected without a
+// PutVectors call, and a full vectorsMaxPutBatch batch is accepted.
+func TestPutVectorsUsesCatalogDimension(t *testing.T) {
+	fs := s3tablestest.Start(t)
+	engine := &fakeVectors{}
+	s := NewServer(s3tables.NewManagerClient(fs.Client), allowAllAuth{}, engine)
+
+	if w := postJSON(t, s.handleCreateVectorBucket, &CreateVectorBucketRequest{VectorBucketName: "vec-bucket"}); w.Code != http.StatusOK {
+		t.Fatalf("create bucket: %d %s", w.Code, w.Body.String())
+	}
+	if w := postJSON(t, s.handleCreateIndex, &CreateIndexRequest{
+		VectorBucketName: "vec-bucket",
+		IndexName:        "idx",
+		DataType:         "float32",
+		Dimension:        3,
+		DistanceMetric:   "euclidean",
+	}); w.Code != http.StatusOK {
+		t.Fatalf("create index: %d %s", w.Code, w.Body.String())
+	}
+	if len(engine.created) != 1 || engine.created[0].Dimension != 3 {
+		t.Fatalf("engine CreateIndex calls = %v, want one dimension-3 index", engine.created)
+	}
+
+	put := func(vectors ...*PutInputVector) *httptest.ResponseRecorder {
+		return postJSON(t, s.handlePutVectors, &PutVectorsRequest{
+			VectorBucketName: "vec-bucket",
+			IndexName:        "idx",
+			Vectors:          vectors,
+		})
+	}
+
+	matching := &PutInputVector{Key: "a", Data: &VectorData{Float32: []float32{1, 2, 3}}}
+	if w := put(matching); w.Code != http.StatusOK {
+		t.Fatalf("matching vector: %d %s", w.Code, w.Body.String())
+	}
+	if len(engine.puts) != 1 || len(engine.puts[0].Vectors) != 1 {
+		t.Fatalf("engine PutVectors calls = %v, want one call of one vector", engine.puts)
+	}
+
+	mismatched := &PutInputVector{Key: "b", Data: &VectorData{Float32: []float32{1, 2, 3, 4}}}
+	if w := put(mismatched); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "ValidationException") {
+		t.Fatalf("mismatched vector: %d %s, want 400 ValidationException", w.Code, w.Body.String())
+	}
+	if len(engine.puts) != 1 {
+		t.Fatalf("rejected vector reached the engine: %d calls", len(engine.puts))
+	}
+
+	batch := make([]*PutInputVector, vectorsMaxPutBatch)
+	for i := range batch {
+		batch[i] = &PutInputVector{Key: fmt.Sprintf("k%d", i), Data: &VectorData{Float32: []float32{1, 2, 3}}}
+	}
+	if w := put(batch...); w.Code != http.StatusOK {
+		t.Fatalf("%d-vector batch: %d %s", vectorsMaxPutBatch, w.Code, w.Body.String())
+	}
+	if len(engine.puts) != 2 || len(engine.puts[1].Vectors) != vectorsMaxPutBatch {
+		t.Fatalf("engine PutVectors calls = %d, want a second call of %d vectors", len(engine.puts), vectorsMaxPutBatch)
+	}
+}
+
+// errFiler fails any catalog access, so a request that passes request-shape
+// validation dies in the catalog rather than reaching the engine.
+type errFiler struct{}
+
+func (errFiler) WithFilerClient(_ bool, _ func(filer_pb.SeaweedFilerClient) error) error {
+	return fmt.Errorf("no filer")
+}
+
+// Rejected topK values fail before the catalog and the engine; valid ones get
+// past the gate (here: into the catalog, which the errFiler fails).
+func TestQueryVectorsTopKBounds(t *testing.T) {
+	s := &Server{
+		vectors:     newFakeVectors(0),
+		tables:      s3tables.NewManager(),
+		filerClient: errFiler{},
+	}
+	for _, tc := range []struct {
+		name     string
+		topK     int
+		rejected bool
+	}{
+		{"zero", 0, true},
+		{"negative", -3, true},
+		{"over the limit", vectorsMaxTopK + 1, true},
+		{"one", 1, false},
+		{"at the limit", vectorsMaxTopK, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := fmt.Sprintf(`{"vectorBucketName":"b","indexName":"i","queryVector":{"float32":[0.1]},"topK":%d}`, tc.topK)
+			w := httptest.NewRecorder()
+			s.handleQueryVectors(w, httptest.NewRequest(http.MethodPost, "/QueryVectors", strings.NewReader(body)))
+			rejected := w.Code == http.StatusBadRequest && strings.Contains(w.Body.String(), "topK must be between")
+			if rejected != tc.rejected {
+				t.Fatalf("topK %d: rejected=%v (%d %s), want %v", tc.topK, rejected, w.Code, w.Body.String(), tc.rejected)
+			}
+		})
+	}
+}
+func TestValidateEncryptionConfigurationRejectsCustomerKeys(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cfg  map[string]interface{}
+		want bool
+	}{
+		{"empty", nil, true},
+		{"default sse", map[string]interface{}{"sseType": "AES256"}, true},
+		{"tables wire name", map[string]interface{}{"sseAlgorithm": "AES256"}, false},
+		{"both wire names", map[string]interface{}{"sseType": "AES256", "sseAlgorithm": "AES256"}, false},
+		{"customer key", map[string]interface{}{"sseType": "aws:kms"}, false},
+		{"tables kms", map[string]interface{}{"sseAlgorithm": "aws:kms"}, false},
+		{"unknown sse", map[string]interface{}{"sseType": "aws:fsx"}, false},
+		{"missing algorithm", map[string]interface{}{"other": "x"}, false},
+		{"key without a type", map[string]interface{}{"kmsKeyArn": "arn:aws:kms:us-east-1:123456789012:key/x"}, false},
+		{"key on default sse", map[string]interface{}{"sseType": "AES256", "kmsKeyArn": "arn:aws:kms:us-east-1:123456789012:key/x"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := s3tables.ValidateEncryptionConfiguration(tc.cfg, "sseType") == nil; got != tc.want {
+				t.Fatalf("cfg %v: accepted=%v, want %v", tc.cfg, got, tc.want)
+			}
+		})
 	}
 }

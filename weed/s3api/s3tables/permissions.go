@@ -141,6 +141,41 @@ func CheckTableOrBucketPermission(operation, principal, resourceOwner, resourceP
 	return resourceOK || bucketOK
 }
 
+// validatePolicyDocument rejects a policy the evaluator could not honor: one
+// that does not parse, or whose actions live in a namespace that never
+// matches. An s3vectors action stored here would be a dead rule the writer
+// believes is enforced — vector requests authorize their s3tables action.
+func validatePolicyDocument(raw string) error {
+	var doc PolicyDocument
+	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
+		return fmt.Errorf("invalid policy document: %w", err)
+	}
+	for _, stmt := range doc.Statement {
+		for _, action := range statementActions(stmt.Action) {
+			if strings.HasPrefix(action, "s3vectors:") {
+				return fmt.Errorf("action %q is not enforceable in a resource policy", action)
+			}
+		}
+	}
+	return nil
+}
+
+func statementActions(spec interface{}) []string {
+	switch a := spec.(type) {
+	case string:
+		return []string{a}
+	case []interface{}:
+		var actions []string
+		for _, item := range a {
+			if str, ok := item.(string); ok {
+				actions = append(actions, str)
+			}
+		}
+		return actions
+	}
+	return nil
+}
+
 // deniedByPolicy reports whether another applicable resource policy vetoes the
 // request. The admin account is exempt, matching CheckPermissionWithContext.
 func deniedByPolicy(operation, principal, resourcePolicy, resourceARN string, ctx *PolicyContext) bool {

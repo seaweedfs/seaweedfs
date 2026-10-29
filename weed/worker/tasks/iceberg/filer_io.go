@@ -181,14 +181,24 @@ func (s *tableState) loadMetadata(ctx context.Context, client filer_pb.SeaweedFi
 	if s.Metadata != nil {
 		return nil
 	}
-	entry, err := lookupFileByIcebergPath(ctx, client, bucketName, s.DataPath, s.MetadataLocation)
+	entry, fullPath, err := lookupResolvedEntry(ctx, client, bucketName, s.DataPath, s.MetadataLocation)
 	if err != nil {
 		return fmt.Errorf("load metadata file %s: %w", s.MetadataLocation, err)
 	}
-	if len(entry.Content) == 0 && len(entry.Chunks) > 0 {
-		if size := int64(filer.FileSize(entry)); size > metadataFileMaxBytes {
-			return fmt.Errorf("metadata file %s too large: %d bytes", s.MetadataLocation, size)
-		}
+	// Bound what the location would pull before it is pulled: a remote
+	// entry's object is downloaded whole by the cache call, a chunked
+	// file's read is bounded by FileSize.
+	if size := metadataEntrySize(entry); size > metadataFileMaxBytes {
+		return fmt.Errorf("metadata file %s too large: %d bytes", s.MetadataLocation, size)
+	}
+	entry, err = cacheRemoteOnlyEntry(ctx, client, fullPath, entry, metadataFileMaxBytes)
+	if err != nil {
+		return fmt.Errorf("load metadata file %s: %w", s.MetadataLocation, err)
+	}
+	// The cache call returns the entry the filer then held; a replacement
+	// written during the download keeps the name but not the checked size.
+	if size := metadataEntrySize(entry); size > metadataFileMaxBytes {
+		return fmt.Errorf("metadata file %s too large: %d bytes", s.MetadataLocation, size)
 	}
 	content, err := readEntryContent(ctx, client, entry, s.MetadataLocation)
 	if err != nil {
@@ -200,6 +210,23 @@ func (s *tableState) loadMetadata(ctx context.Context, client filer_pb.SeaweedFi
 	}
 	s.Metadata = meta
 	return nil
+}
+
+// metadataEntrySize is the bytes an entry's content would pull into memory:
+// a remote object's size or a chunked file's FileSize. Inline content is
+// exempt — the REST load path accepts it unbounded and the lookup already
+// holds it.
+func metadataEntrySize(entry *filer_pb.Entry) int64 {
+	if len(entry.Content) > 0 {
+		return 0
+	}
+	if isRemoteOnly(entry) {
+		return entry.GetRemoteEntry().GetRemoteSize()
+	}
+	if len(entry.Chunks) > 0 {
+		return int64(filer.FileSize(entry))
+	}
+	return 0
 }
 
 func isFilerNotFound(err error) bool {
@@ -258,10 +285,57 @@ func addFilerPathSpellings(set map[string]struct{}, bucketName, dataPath, iceber
 }
 
 // lookupFileByIcebergPath returns the filer entry holding an Iceberg-style
-// path. dataPath is the bucket-relative directory the table's files live in.
+// path, ready to read. dataPath is the bucket-relative directory the table's
+// files live in. A file of a remote-mounted bucket that is not cached locally
+// is cached first, as the S3 gateway does on a read.
 func lookupFileByIcebergPath(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketName, dataPath, icebergPath string) (*filer_pb.Entry, error) {
-	entry, _, err := lookupResolvedEntry(ctx, client, bucketName, dataPath, icebergPath)
-	return entry, err
+	entry, fullPath, err := lookupResolvedEntry(ctx, client, bucketName, dataPath, icebergPath)
+	if err != nil {
+		return nil, err
+	}
+	return cacheRemoteOnlyEntry(ctx, client, fullPath, entry, 0)
+}
+
+// cacheRemoteOnlyEntry downloads a remote-only entry's object to the local
+// cluster and returns the cached entry. maxSize bounds what the filer will
+// download: the entry it resolves at cache time can differ from the one
+// checked here, and the download would run to its full remote size. One
+// retry covers a cache call racing an uncache of the same entry; an entry
+// still remote-only after caching is an error.
+func cacheRemoteOnlyEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, fullPath string, entry *filer_pb.Entry, maxSize int64) (*filer_pb.Entry, error) {
+	if !isRemoteOnly(entry) {
+		return entry, nil
+	}
+	dir, name := path.Dir(fullPath), path.Base(fullPath)
+	var err error
+	for attempt := 0; attempt < 2 && isRemoteOnly(entry); attempt++ {
+		var resp *filer_pb.CacheRemoteObjectToLocalClusterResponse
+		resp, err = client.CacheRemoteObjectToLocalCluster(ctx, &filer_pb.CacheRemoteObjectToLocalClusterRequest{
+			Directory: dir,
+			Name:      name,
+			MaxSize:   maxSize,
+		})
+		switch {
+		case err != nil:
+		case resp == nil || resp.Entry == nil:
+			err = errors.New("no entry returned")
+		default:
+			entry = resp.Entry
+		}
+	}
+	if err != nil {
+		return nil, fmt.Errorf("cache remote file %s: %w", fullPath, err)
+	}
+	if isRemoteOnly(entry) {
+		return nil, fmt.Errorf("cache remote file %s: still remote-only after caching", fullPath)
+	}
+	return entry, nil
+}
+
+// isRemoteOnly reports whether an entry of a remote-mounted bucket holds no
+// bytes locally: no chunks and no inline content, only its RemoteEntry.
+func isRemoteOnly(entry *filer_pb.Entry) bool {
+	return entry.IsInRemoteOnly() && len(entry.Content) == 0
 }
 
 // loadFileByIcebergPath loads a file from the filer given an Iceberg-style path.
@@ -276,8 +350,13 @@ func loadFileByIcebergPath(ctx context.Context, client filer_pb.SeaweedFilerClie
 // readEntryContent returns an entry's bytes: its inline content, or a chunked
 // file read through the volume servers.
 func readEntryContent(ctx context.Context, client filer_pb.SeaweedFilerClient, entry *filer_pb.Entry, name string) ([]byte, error) {
-	if len(entry.Content) > 0 || len(entry.Chunks) == 0 {
+	if len(entry.Content) > 0 {
 		return entry.Content, nil
+	}
+	if len(entry.Chunks) == 0 {
+		// Everything read here is Iceberg metadata, a manifest or a data
+		// file, none of which can be empty.
+		return nil, fmt.Errorf("file %s is empty (%d bytes in its attributes, no content or chunks)", name, entry.GetAttributes().GetFileSize())
 	}
 
 	initGlobalHTTPClientOnce.Do(util_http.InitGlobalHttpClient)

@@ -20,19 +20,22 @@ import (
 )
 
 var handlers = map[string]func(*Server, http.ResponseWriter, *http.Request){
-	"CreateVectorBucket": (*Server).handleCreateVectorBucket,
-	"GetVectorBucket":    (*Server).handleGetVectorBucket,
-	"ListVectorBuckets":  (*Server).handleListVectorBuckets,
-	"DeleteVectorBucket": (*Server).handleDeleteVectorBucket,
-	"CreateIndex":        (*Server).handleCreateIndex,
-	"GetIndex":           (*Server).handleGetIndex,
-	"ListIndexes":        (*Server).handleListIndexes,
-	"DeleteIndex":        (*Server).handleDeleteIndex,
-	"PutVectors":         (*Server).handlePutVectors,
-	"GetVectors":         (*Server).handleGetVectors,
-	"ListVectors":        (*Server).handleListVectors,
-	"DeleteVectors":      (*Server).handleDeleteVectors,
-	"QueryVectors":       (*Server).handleQueryVectors,
+	"CreateVectorBucket":       (*Server).handleCreateVectorBucket,
+	"GetVectorBucket":          (*Server).handleGetVectorBucket,
+	"ListVectorBuckets":        (*Server).handleListVectorBuckets,
+	"DeleteVectorBucket":       (*Server).handleDeleteVectorBucket,
+	"PutVectorBucketPolicy":    (*Server).handlePutVectorBucketPolicy,
+	"GetVectorBucketPolicy":    (*Server).handleGetVectorBucketPolicy,
+	"DeleteVectorBucketPolicy": (*Server).handleDeleteVectorBucketPolicy,
+	"CreateIndex":              (*Server).handleCreateIndex,
+	"GetIndex":                 (*Server).handleGetIndex,
+	"ListIndexes":              (*Server).handleListIndexes,
+	"DeleteIndex":              (*Server).handleDeleteIndex,
+	"PutVectors":               (*Server).handlePutVectors,
+	"GetVectors":               (*Server).handleGetVectors,
+	"ListVectors":              (*Server).handleListVectors,
+	"DeleteVectors":            (*Server).handleDeleteVectors,
+	"QueryVectors":             (*Server).handleQueryVectors,
 }
 
 // lance table ids put indexes under a "vector" namespace inside their bucket.
@@ -77,6 +80,25 @@ func arnParts(v *vectorBucketARNs, name, arn string) error {
 		v.index = parts[1]
 	}
 	return nil
+}
+
+// bucketARNs resolves the bucket a bucket-level request names and rejects
+// forms that point at a different resource: an index ARN names a table, and an
+// ARN minted for another service names that service's bucket.
+func bucketARNs(name, arn string) (vectorBucketARNs, error) {
+	var v vectorBucketARNs
+	if err := arnParts(&v, name, arn); err != nil {
+		return v, err
+	}
+	if v.index != "" {
+		return v, fmt.Errorf("vectorBucketArn %q names an index, not a bucket", arn)
+	}
+	if strings.HasPrefix(arn, "arn:") {
+		if p := strings.SplitN(arn, ":", 6); len(p) > 2 && p[2] != "s3vectors" {
+			return v, fmt.Errorf("vectorBucketArn %q is not an s3vectors ARN", arn)
+		}
+	}
+	return v, nil
 }
 
 // resolveIndexARNs fills bucket and index from any combination of plain names,
@@ -253,16 +275,22 @@ func (s *Server) handleCreateVectorBucket(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "ValidationException", "vectorBucketName is required")
 		return
 	}
-	// The catalog has no encryption boundary to honor the configuration
-	// against; accepting it would silently promise semantics we do not keep.
-	if len(req.EncryptionConfiguration) > 0 {
-		writeError(w, http.StatusBadRequest, "ValidationException",
-			"encryptionConfiguration is not supported")
+	if err := s3tables.ValidateEncryptionConfiguration(req.EncryptionConfiguration, "sseType"); err != nil {
+		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
+	}
+	// The catalog keeps the s3tables field name; GetVectorBucket renames it back.
+	enc := req.EncryptionConfiguration
+	if len(enc) != 0 {
+		enc = map[string]interface{}{"sseAlgorithm": enc["sseType"]}
 	}
 	var resp map[string]interface{}
 	err := s.catalog(r.Context(), "CreateTableBucket",
-		&s3tables.CreateTableBucketRequest{Name: req.VectorBucketName, Format: s3tables.FormatLance}, &resp, r)
+		&s3tables.CreateTableBucketRequest{
+			Name:                    req.VectorBucketName,
+			Format:                  s3tables.FormatLance,
+			EncryptionConfiguration: enc,
+		}, &resp, r)
 	if err != nil {
 		catalogErr(w, err)
 		return
@@ -276,13 +304,13 @@ func (s *Server) handleGetVectorBucket(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	var arns vectorBucketARNs
-	if err := arnParts(&arns, req.VectorBucketName, req.VectorBucketArn); err != nil {
+	arns, err := bucketARNs(req.VectorBucketName, req.VectorBucketArn)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
 	var resp map[string]interface{}
-	err := s.catalog(r.Context(), "GetTableBucket",
+	err = s.catalog(r.Context(), "GetTableBucket",
 		&s3tables.GetTableBucketRequest{TableBucketARN: s.s3tablesArn(arns.bucket)}, &resp, r)
 	if err != nil {
 		catalogErr(w, err)
@@ -295,11 +323,18 @@ func (s *Server) handleGetVectorBucket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	created, _ := time.Parse(time.RFC3339, fmt.Sprint(resp["createdAt"]))
-	writeJSON(w, http.StatusOK, &GetVectorBucketResponse{VectorBucket: &VectorBucket{
+	bucket := &VectorBucket{
 		VectorBucketArn:  s.vectorBucketArn(arns.bucket),
 		VectorBucketName: arns.bucket,
 		CreationTime:     created,
-	}})
+	}
+	if cfg, ok := resp["encryptionConfiguration"].(map[string]interface{}); ok {
+		if v, ok := cfg["sseAlgorithm"]; ok {
+			cfg = map[string]interface{}{"sseType": v}
+		}
+		bucket.EncryptionConfiguration = cfg
+	}
+	writeJSON(w, http.StatusOK, &GetVectorBucketResponse{VectorBucket: bucket})
 }
 
 func (s *Server) handleListVectorBuckets(w http.ResponseWriter, r *http.Request) {
@@ -348,8 +383,8 @@ func (s *Server) handleDeleteVectorBucket(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	var arns vectorBucketARNs
-	if err := arnParts(&arns, req.VectorBucketName, req.VectorBucketArn); err != nil {
+	arns, err := bucketARNs(req.VectorBucketName, req.VectorBucketArn)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
@@ -360,7 +395,7 @@ func (s *Server) handleDeleteVectorBucket(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var resp map[string]interface{}
-	err := s.catalog(r.Context(), "DeleteTableBucket",
+	err = s.catalog(r.Context(), "DeleteTableBucket",
 		&s3tables.DeleteTableBucketRequest{TableBucketARN: s.s3tablesArn(arns.bucket)}, &resp, r)
 	if err != nil && catalogErrCode(err) == s3tables.ErrCodeBucketNotEmpty {
 		// The implicit index namespace counts as bucket content even when it
@@ -400,6 +435,87 @@ func distanceMetric(metric string) (vector_pb.DistanceMetric, bool) {
 
 func tableID(bucket, index string) *vector_pb.Table {
 	return &vector_pb.Table{Id: []string{bucket, indexNamespace, index}}
+}
+
+// Vector bucket policies are stored on the shared table bucket, the same
+// resource s3tables' PutTableBucketPolicy guards.
+func (s *Server) handlePutVectorBucketPolicy(w http.ResponseWriter, r *http.Request) {
+	var req PutVectorBucketPolicyRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		return
+	}
+	arns, err := bucketARNs(req.VectorBucketName, req.VectorBucketArn)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		return
+	}
+	if err := s.lanceBucket(r.Context(), arns.bucket); err != nil {
+		catalogErr(w, err)
+		return
+	}
+	var resp map[string]interface{}
+	err = s.catalog(r.Context(), "PutTableBucketPolicy", &s3tables.PutTableBucketPolicyRequest{
+		TableBucketARN: s.s3tablesArn(arns.bucket),
+		ResourcePolicy: req.Policy,
+	}, &resp, r)
+	if err != nil {
+		catalogErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, &PutVectorBucketPolicyResponse{})
+}
+
+func (s *Server) handleGetVectorBucketPolicy(w http.ResponseWriter, r *http.Request) {
+	var req GetVectorBucketPolicyRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		return
+	}
+	arns, err := bucketARNs(req.VectorBucketName, req.VectorBucketArn)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		return
+	}
+	if err := s.lanceBucket(r.Context(), arns.bucket); err != nil {
+		catalogErr(w, err)
+		return
+	}
+	var resp s3tables.GetTableBucketPolicyResponse
+	err = s.catalog(r.Context(), "GetTableBucketPolicy", &s3tables.GetTableBucketPolicyRequest{
+		TableBucketARN: s.s3tablesArn(arns.bucket),
+	}, &resp, r)
+	if err != nil {
+		catalogErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, &GetVectorBucketPolicyResponse{Policy: resp.ResourcePolicy})
+}
+
+func (s *Server) handleDeleteVectorBucketPolicy(w http.ResponseWriter, r *http.Request) {
+	var req DeleteVectorBucketPolicyRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		return
+	}
+	arns, err := bucketARNs(req.VectorBucketName, req.VectorBucketArn)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		return
+	}
+	if err := s.lanceBucket(r.Context(), arns.bucket); err != nil {
+		catalogErr(w, err)
+		return
+	}
+	var resp map[string]interface{}
+	err = s.catalog(r.Context(), "DeleteTableBucketPolicy", &s3tables.DeleteTableBucketPolicyRequest{
+		TableBucketARN: s.s3tablesArn(arns.bucket),
+	}, &resp, r)
+	if err != nil {
+		catalogErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, &DeleteVectorBucketPolicyResponse{})
 }
 
 func (s *Server) handleCreateIndex(w http.ResponseWriter, r *http.Request) {
@@ -608,8 +724,8 @@ func (s *Server) handleListIndexes(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	var arns vectorBucketARNs
-	if err := arnParts(&arns, req.VectorBucketName, req.VectorBucketArn); err != nil {
+	arns, err := bucketARNs(req.VectorBucketName, req.VectorBucketArn)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
@@ -621,7 +737,7 @@ func (s *Server) handleListIndexes(w http.ResponseWriter, r *http.Request) {
 		} `json:"tables"`
 		ContinuationToken string `json:"continuationToken"`
 	}
-	err := s.catalog(r.Context(), "ListTables", &s3tables.ListTablesRequest{
+	err = s.catalog(r.Context(), "ListTables", &s3tables.ListTablesRequest{
 		TableBucketARN:    s.s3tablesArn(arns.bucket),
 		Namespace:         []string{indexNamespace},
 		MaxTables:         req.MaxResults,
@@ -723,7 +839,13 @@ func (s *Server) handlePutVectors(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	if _, err := s.indexRecord(r.Context(), r, arns.bucket, arns.index); err != nil {
+	if len(req.Vectors) == 0 || len(req.Vectors) > vectorsMaxPutBatch {
+		writeError(w, http.StatusBadRequest, "ValidationException",
+			fmt.Sprintf("vectors must contain between 1 and %d items", vectorsMaxPutBatch))
+		return
+	}
+	record, err := s.indexRecord(r.Context(), r, arns.bucket, arns.index)
+	if err != nil {
 		catalogErr(w, err)
 		return
 	}
@@ -733,26 +855,15 @@ func (s *Server) handlePutVectors(w http.ResponseWriter, r *http.Request) {
 		catalogErr(w, err)
 		return
 	}
+	dimension := indexFromRecord(s, arns.bucket, arns.index, record).Dimension
 	vectors := make([]*vector_pb.Vector, 0, len(req.Vectors))
 	for _, v := range req.Vectors {
-		if v == nil {
-			writeError(w, http.StatusBadRequest, "ValidationException", "vectors contains a null element")
-			return
-		}
-		if v.Key == "" {
-			writeError(w, http.StatusBadRequest, "ValidationException", "vector key must not be empty")
-			return
-		}
-		metadata, err := metadataStruct(v.Metadata)
+		pbVector, err := toPutVector(v, dimension)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 			return
 		}
-		var data []float32
-		if v.Data != nil {
-			data = v.Data.Float32
-		}
-		vectors = append(vectors, &vector_pb.Vector{Key: v.Key, Data: data, Metadata: metadata})
+		vectors = append(vectors, pbVector)
 	}
 	_, err = s.vectors.PutVectors(r.Context(), &vector_pb.PutVectorsRequest{
 		Table:   tableID(arns.bucket, arns.index),
@@ -763,6 +874,27 @@ func (s *Server) handlePutVectors(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, &PutVectorsResponse{})
+}
+
+func toPutVector(v *PutInputVector, dimension int32) (*vector_pb.Vector, error) {
+	if v == nil {
+		return nil, fmt.Errorf("vectors contains a null element")
+	}
+	if v.Key == "" {
+		return nil, fmt.Errorf("vector key must not be empty")
+	}
+	metadata, err := metadataStruct(v.Metadata)
+	if err != nil {
+		return nil, err
+	}
+	var data []float32
+	if v.Data != nil {
+		data = v.Data.Float32
+	}
+	if int32(len(data)) != dimension {
+		return nil, fmt.Errorf("vector %q has %d dimensions, the index declares %d", v.Key, len(data), dimension)
+	}
+	return &vector_pb.Vector{Key: v.Key, Data: data, Metadata: metadata}, nil
 }
 
 func toOutputVectors(vectors []*vector_pb.Vector, returnData, returnMetadata bool) []*OutputVector {
@@ -876,11 +1008,13 @@ func (s *Server) handleListVectors(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Mirrors the engine's page sizing so a segmented listing pages like a plain
-// one does.
+// The page constants mirror the engine's page sizing so a segmented listing
+// pages like a plain one does; vectorsMaxTopK is the AWS QueryVectors limit.
 const (
 	vectorsDefaultPage = 500
+	vectorsMaxPutBatch = 500
 	vectorsMaxPage     = 1000
+	vectorsMaxTopK     = 10000
 )
 
 // listSegmentVectors scans the index from offset, keeping the rows that fall
@@ -1240,12 +1374,22 @@ func (s *Server) handleQueryVectors(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", "queryVector is required")
 		return
 	}
+	if req.TopK <= 0 || req.TopK > vectorsMaxTopK {
+		writeError(w, http.StatusBadRequest, "ValidationException",
+			fmt.Sprintf("topK must be between 1 and %d", vectorsMaxTopK))
+		return
+	}
 	record, err := s.indexRecord(r.Context(), r, arns.bucket, arns.index)
 	if err != nil {
 		catalogErr(w, err)
 		return
 	}
 	idx := indexFromRecord(s, arns.bucket, arns.index, record)
+	if int32(len(queryVector)) != idx.Dimension {
+		writeError(w, http.StatusBadRequest, "ValidationException",
+			fmt.Sprintf("queryVector has %d dimensions, the index declares %d", len(queryVector), idx.Dimension))
+		return
+	}
 	if key, blocked := nonFilterableField(idx.MetadataConfiguration, req.Filter); blocked {
 		writeError(w, http.StatusBadRequest, "ValidationException",
 			fmt.Sprintf("metadata key %q is not filterable", key))
@@ -1255,10 +1399,6 @@ func (s *Server) handleQueryVectors(w http.ResponseWriter, r *http.Request) {
 	filter, err := translateFilter(req.Filter)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
-		return
-	}
-	if req.TopK <= 0 {
-		writeError(w, http.StatusBadRequest, "ValidationException", "topK must be positive")
 		return
 	}
 	resp, err := s.vectors.QueryVectors(r.Context(), &vector_pb.QueryVectorsRequest{

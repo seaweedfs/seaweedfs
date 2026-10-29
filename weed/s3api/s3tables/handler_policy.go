@@ -60,6 +60,11 @@ func (h *S3TablesHandler) handlePutTableBucketPolicy(w http.ResponseWriter, r *h
 		return fmt.Errorf("resourcePolicy is required")
 	}
 
+	if err := validatePolicyDocument(req.ResourcePolicy); err != nil {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
+		return err
+	}
+
 	bucketName, err := parseBucketNameFromARN(req.TableBucketARN)
 	if err != nil {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
@@ -318,6 +323,11 @@ func (h *S3TablesHandler) handlePutTablePolicy(w http.ResponseWriter, r *http.Re
 	if req.ResourcePolicy == "" {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "resourcePolicy is required")
 		return fmt.Errorf("resourcePolicy is required")
+	}
+
+	if err := validatePolicyDocument(req.ResourcePolicy); err != nil {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
+		return err
 	}
 
 	bucketName, err := parseBucketNameFromARN(req.TableBucketARN)

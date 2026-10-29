@@ -71,9 +71,10 @@ type GetVectorBucketResponse struct {
 }
 
 type VectorBucket struct {
-	VectorBucketArn  string    `json:"vectorBucketArn"`
-	VectorBucketName string    `json:"vectorBucketName"`
-	CreationTime     time.Time `json:"creationTime"`
+	VectorBucketArn         string                 `json:"vectorBucketArn"`
+	VectorBucketName        string                 `json:"vectorBucketName"`
+	CreationTime            time.Time              `json:"creationTime"`
+	EncryptionConfiguration map[string]interface{} `json:"encryptionConfiguration,omitempty"`
 }
 
 type ListVectorBucketsRequest struct {
@@ -93,6 +94,30 @@ type DeleteVectorBucketRequest struct {
 }
 
 type DeleteVectorBucketResponse struct{}
+
+type PutVectorBucketPolicyRequest struct {
+	VectorBucketName string `json:"vectorBucketName"`
+	VectorBucketArn  string `json:"vectorBucketArn"`
+	Policy           string `json:"policy"`
+}
+
+type PutVectorBucketPolicyResponse struct{}
+
+type GetVectorBucketPolicyRequest struct {
+	VectorBucketName string `json:"vectorBucketName"`
+	VectorBucketArn  string `json:"vectorBucketArn"`
+}
+
+type GetVectorBucketPolicyResponse struct {
+	Policy string `json:"policy"`
+}
+
+type DeleteVectorBucketPolicyRequest struct {
+	VectorBucketName string `json:"vectorBucketName"`
+	VectorBucketArn  string `json:"vectorBucketArn"`
+}
+
+type DeleteVectorBucketPolicyResponse struct{}
 
 type CreateIndexRequest struct {
 	DataType              string                 `json:"dataType"`
