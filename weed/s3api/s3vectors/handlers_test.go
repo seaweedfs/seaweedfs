@@ -212,8 +212,20 @@ func TestListRequestMaxResultsBounds(t *testing.T) {
 	if w := postJSONAs(t, "", s.handleListVectorBuckets, &ListVectorBucketsRequest{MaxResults: &max}); w.Code != http.StatusOK {
 		t.Fatalf("ListVectorBuckets maxResults=%d: %d %s", max, w.Code, w.Body.String())
 	}
-	if w := postJSONAs(t, "", s.handleListIndexes, &ListIndexesRequest{VectorBucketName: "vec-bucket", MaxResults: &max}); w.Code == http.StatusBadRequest {
-		t.Fatalf("ListIndexes maxResults=%d rejected: %d %s", max, w.Code, w.Body.String())
+	if w := postJSONAs(t, "", s.handleCreateVectorBucket, &CreateVectorBucketRequest{VectorBucketName: "vec-bucket"}); w.Code != http.StatusOK {
+		t.Fatalf("create bucket: %d %s", w.Code, w.Body.String())
+	}
+	if w := postJSONAs(t, "", s.handleCreateIndex, &CreateIndexRequest{
+		VectorBucketName: "vec-bucket",
+		IndexName:        "idx",
+		DataType:         "float32",
+		Dimension:        3,
+		DistanceMetric:   "euclidean",
+	}); w.Code != http.StatusOK {
+		t.Fatalf("create index: %d %s", w.Code, w.Body.String())
+	}
+	if w := postJSONAs(t, "", s.handleListIndexes, &ListIndexesRequest{VectorBucketName: "vec-bucket", MaxResults: &max}); w.Code != http.StatusOK {
+		t.Fatalf("ListIndexes maxResults=%d: %d %s", max, w.Code, w.Body.String())
 	}
 }
 
