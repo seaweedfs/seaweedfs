@@ -21,6 +21,25 @@ type InodeToPath struct {
 	// dirPaths indexes the same states by path, so a directory lookup never
 	// goes through the map that holds one full path per inode.
 	dirPaths map[util.FullPath]*dirState
+	// wasCachedDirs remembers directories that once held a fully cached
+	// listing. Unlike the flags on dirState it survives invalidation, idle
+	// eviction, and the state drop on kernel Forget, so a lookup can rebuild
+	// a dropped listing instead of reading through per entry forever.
+	// MarkDirectoryReadThrough removes oversized directories from it,
+	// RemovePath drops deleted ones, and wasCachedOrder bounds the retained
+	// history with FIFO eviction. Records are tagged with an insertion
+	// generation so a stale queue slot can never evict a path's newer record.
+	wasCachedDirs  map[util.FullPath]uint64
+	wasCachedOrder []wasCachedEntry
+	wasCachedGen   uint64
+}
+
+// wasCachedEntry pairs a queued path with the insertion generation that put
+// it there; removals leave the slot behind, and only a matching generation
+// may evict the live record.
+type wasCachedEntry struct {
+	path util.FullPath
+	gen  uint64
 }
 
 // InodeEntry exists per inode the kernel references. Directory cache state is
@@ -41,7 +60,11 @@ type dirState struct {
 	lastAccess         time.Time
 	lastRefresh        time.Time
 	lastRebuildAttempt time.Time
-	subdirCount        int32 // tracked in-memory for POSIX directory nlink
+	// lastSectionAttempts backs off section refreshes per section (keyed by
+	// the section's lower bound) so one failing range does not stall the
+	// rest of the directory.
+	lastSectionAttempts map[string]time.Time
+	subdirCount         int32 // tracked in-memory for POSIX directory nlink
 }
 
 func (d *dirState) resetCacheState() {
@@ -49,6 +72,7 @@ func (d *dirState) resetCacheState() {
 	d.readDirDirect = false
 	d.cachedExpiresTime = time.Time{}
 	d.lastRebuildAttempt = time.Time{}
+	d.lastSectionAttempts = nil
 }
 
 // appendPaths appends every path the inode is reachable by, primary first.
@@ -133,6 +157,7 @@ func NewInodeToPath(root util.FullPath, ttlSec int) *InodeToPath {
 		path2inode:      make(map[util.FullPath]uint64),
 		dirStates:       make(map[uint64]*dirState),
 		dirPaths:        make(map[util.FullPath]*dirState),
+		wasCachedDirs:   make(map[util.FullPath]uint64),
 		cacheMetaTtlSec: time.Second * time.Duration(ttlSec),
 	}
 	t.inode2path[1] = &InodeEntry{
@@ -318,8 +343,33 @@ func (i *InodeToPath) MarkChildrenCached(fullpath util.FullPath) {
 	d.lastAccess = now
 	d.lastRefresh = now
 	d.lastRebuildAttempt = time.Time{}
+	d.lastSectionAttempts = nil
+	i.markWasCached(fullpath)
 	if i.cacheMetaTtlSec > 0 {
 		d.cachedExpiresTime = now.Add(i.cacheMetaTtlSec)
+	}
+}
+
+// maxWasCachedDirs bounds how many dropped listings a lookup may rebuild:
+// past it the oldest record is evicted and that directory reads through per
+// entry, the same end state as a never-cached one.
+const maxWasCachedDirs = 16384
+
+// markWasCached records a directory as once-cached, evicting the oldest
+// record past maxWasCachedDirs. Callers hold the write lock.
+func (i *InodeToPath) markWasCached(fullpath util.FullPath) {
+	if _, ok := i.wasCachedDirs[fullpath]; ok {
+		return
+	}
+	i.wasCachedGen++
+	i.wasCachedDirs[fullpath] = i.wasCachedGen
+	i.wasCachedOrder = append(i.wasCachedOrder, wasCachedEntry{path: fullpath, gen: i.wasCachedGen})
+	for len(i.wasCachedOrder) > maxWasCachedDirs {
+		oldest := i.wasCachedOrder[0]
+		i.wasCachedOrder = i.wasCachedOrder[1:]
+		if gen, ok := i.wasCachedDirs[oldest.path]; ok && gen == oldest.gen {
+			delete(i.wasCachedDirs, oldest.path)
+		}
 	}
 }
 
@@ -336,19 +386,26 @@ func (i *InodeToPath) IsChildrenCached(fullpath util.FullPath) bool {
 	return false
 }
 
-// ShouldRebuildExpiredDir reports whether a directory was fully cached, its
-// TTL has elapsed, and enough time has passed since the last failed rebuild
-// attempt to retry. Distinct from IsChildrenCached returning false for a
-// never-cached, invalidated, evicted, or read-through directory: those leave
-// isChildrenCached clear, while a plain TTL expiry keeps it set.
+// ShouldRebuildExpiredDir reports whether a lookup should re-list the
+// directory into the cache, backing off for cooldown after a failed attempt.
+// It covers a fully cached directory whose TTL elapsed — a plain expiry keeps
+// isChildrenCached set, unlike invalidation or eviction — and a directory
+// whose previously cached listing was dropped by invalidation, idle eviction,
+// or a kernel Forget. A never-cached or read-through directory keeps reading
+// through: caching one on a single lookup is how oversized listings get
+// pinned, so only a directory that proved cacheable earns the rebuild.
 func (i *InodeToPath) ShouldRebuildExpiredDir(fullpath util.FullPath, cooldown time.Duration) bool {
 	i.RLock()
 	defer i.RUnlock()
 	d := i.dirStateOf(fullpath)
-	if d == nil || !d.isChildrenCached {
+	if d == nil || d.readDirDirect {
 		return false
 	}
-	if d.cachedExpiresTime.IsZero() || time.Now().Before(d.cachedExpiresTime) {
+	if d.isChildrenCached {
+		if d.cachedExpiresTime.IsZero() || time.Now().Before(d.cachedExpiresTime) {
+			return false
+		}
+	} else if _, was := i.wasCachedDirs[fullpath]; !was {
 		return false
 	}
 	return d.lastRebuildAttempt.IsZero() || time.Since(d.lastRebuildAttempt) >= cooldown
@@ -362,6 +419,37 @@ func (i *InodeToPath) MarkRebuildAttempt(fullpath util.FullPath, now time.Time) 
 	if d := i.dirStateOf(fullpath); d != nil {
 		d.lastRebuildAttempt = now
 	}
+}
+
+// ShouldRefreshStaleSection reports whether a lookup should re-list the
+// stale section of a still-cached directory, backing off for cooldown after
+// a failed attempt on that same section — a neighbouring range's failure
+// does not stall this one. sectionKey is the section's lower bound.
+func (i *InodeToPath) ShouldRefreshStaleSection(fullpath util.FullPath, sectionKey string, cooldown time.Duration) bool {
+	i.RLock()
+	defer i.RUnlock()
+	d := i.dirStateOf(fullpath)
+	if d == nil || d.readDirDirect || !d.isChildrenCached {
+		return false
+	}
+	last, ok := d.lastSectionAttempts[sectionKey]
+	return !ok || time.Since(last) >= cooldown
+}
+
+// MarkSectionRefreshAttempt records that a refresh of the section keyed by
+// sectionKey was attempted at now — the section-level analog of
+// MarkRebuildAttempt.
+func (i *InodeToPath) MarkSectionRefreshAttempt(fullpath util.FullPath, sectionKey string, now time.Time) {
+	i.Lock()
+	defer i.Unlock()
+	d := i.dirStateOf(fullpath)
+	if d == nil {
+		return
+	}
+	if d.lastSectionAttempts == nil {
+		d.lastSectionAttempts = make(map[string]time.Time)
+	}
+	d.lastSectionAttempts[sectionKey] = now
 }
 
 func (i *InodeToPath) HasInode(inode uint64) bool {
@@ -447,6 +535,7 @@ func (i *InodeToPath) MarkDirectoryReadThrough(fullpath util.FullPath, now time.
 	d.cachedExpiresTime = time.Time{}
 	d.lastAccess = now
 	d.lastRefresh = time.Time{}
+	delete(i.wasCachedDirs, fullpath)
 	return true
 }
 
@@ -531,6 +620,9 @@ func (i *InodeToPath) RemovePath(path util.FullPath, onStillReferenced func(inod
 			onStillReferenced(inode)
 		}
 	}
+	// A deleted name must never justify a listing rebuild; the record is
+	// keyed by path, so drop it even when the inode was already forgotten.
+	delete(i.wasCachedDirs, path)
 }
 
 func (i *InodeToPath) removePathFromInode2Path(inode uint64, path util.FullPath) {
@@ -559,6 +651,14 @@ func (i *InodeToPath) MovePath(sourcePath, targetPath util.FullPath) (sourceInod
 		i.removePathFromInode2Path(targetInode, targetPath)
 		delete(i.path2inode, targetPath)
 		i.dropDirPath(targetInode)
+	}
+	// The rebuild eligibility travels with the directory: the target keeps it
+	// when the source earned it, and an overwritten target loses its own.
+	_, sourceWasCached := i.wasCachedDirs[sourcePath]
+	delete(i.wasCachedDirs, sourcePath)
+	delete(i.wasCachedDirs, targetPath)
+	if sourceWasCached {
+		i.markWasCached(targetPath)
 	}
 	delete(i.path2inode, sourcePath)
 	i.path2inode[targetPath] = sourceInode

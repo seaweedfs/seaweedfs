@@ -248,6 +248,42 @@ func EnsureListingFresh(ctx context.Context, mc *MetaCache, client filer_pb.File
 	return nil
 }
 
+// EnsureNameFresh re-validates only the section covering name. A lookup into
+// an invalidated range re-establishes it here rather than every later lookup
+// in that range reading through until the next listing.
+func EnsureNameFresh(ctx context.Context, mc *MetaCache, client filer_pb.FilerClient, dirPath util.FullPath, name string) error {
+	r, stale := mc.staleRangeOf(dirPath, name)
+	if !stale {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, sectionRefreshTimeout)
+	defer cancel()
+	return mc.refreshSection(ctx, client, dirPath, r.lo, r.hi)
+}
+
+// StaleRangeOf returns the lower bound of the section covering name when it
+// needs re-validation — the key a caller may use to scope refresh backoff
+// per section.
+func StaleRangeOf(mc *MetaCache, dirPath util.FullPath, name string) (string, bool) {
+	r, stale := mc.staleRangeOf(dirPath, name)
+	return r.lo, stale
+}
+
+func (mc *MetaCache) staleRangeOf(dirPath util.FullPath, name string) (nameRange, bool) {
+	mc.RLock()
+	defer mc.RUnlock()
+	sl := mc.dirSections[dirPath]
+	if sl == nil {
+		return nameRange{}, false
+	}
+	idx := sl.sectionOf(name)
+	if s := sl.sections[idx]; !s.stale || s.unverifiable {
+		return nameRange{}, false
+	}
+	lo, hi := sl.sectionRange(idx)
+	return nameRange{lo: lo, hi: hi}, true
+}
+
 func (mc *MetaCache) refreshSection(ctx context.Context, client filer_pb.FilerClient, dirPath util.FullPath, lo, hi string) error {
 	_, err, _ := mc.visitGroup.Do(string(dirPath)+"\x00section\x00"+lo, func() (interface{}, error) {
 		if !mc.rangeStale(dirPath, lo) {
@@ -365,6 +401,25 @@ func (mc *MetaCache) applySectionRefreshNow(ctx context.Context, dirPath util.Fu
 		if mc.entryVersionBlocksLocked(ctx, entry.FullPath, snapshotTsNs, false) {
 			continue
 		}
+		// A hard-linked entry shares one content blob with its siblings: a
+		// snapshot older than the group's newest write would roll that
+		// content back for every path reading through this entry. A cached
+		// member of the same group is skipped outright; any other live entry
+		// at the path is a stale occupant of a reused name, so the listed
+		// name still lands — carrying the group's parked content rather
+		// than the snapshot's.
+		staleOccupant := false
+		if mc.hardLinkVersionFloorLocked(ctx, entry.HardLinkId) > snapshotTsNs {
+			if existing, findErr := mc.localStore.FindEntry(ctx, entry.FullPath); findErr == nil && existing != nil {
+				if !isTtlExpired(existing) && string(existing.HardLinkId) == string(entry.HardLinkId) {
+					continue
+				}
+				staleOccupant = len(existing.HardLinkId) != 0 && string(existing.HardLinkId) != string(entry.HardLinkId)
+			}
+			if rebased := mc.rebaseHardLinkEntryLocked(ctx, entry, ""); rebased != nil {
+				entry = rebased
+			}
+		}
 		// An unversioned marker would bypass the section floor, so it cannot
 		// outlive the snapshot write that replaces its content — but pinned
 		// local-only state stays authoritative and is not replaced at all.
@@ -374,10 +429,20 @@ func (mc *MetaCache) applySectionRefreshNow(ctx context.Context, dirPath util.Fu
 				continue
 			}
 		}
+		if staleOccupant {
+			// The name already left the occupant's group on the filer, and a
+			// later write to a sibling can have folded that unlink into the
+			// shared blob's counter — vacate the path like a rename so the
+			// insert does not decrement a group that may no longer count it.
+			if err := mc.localStore.DeleteEntry(context.WithValue(ctx, "OP", "MV"), entry.FullPath); err != nil {
+				return err
+			}
+		}
 		// no per-entry version: the section floor set below covers the range
 		if err := mc.localStore.InsertEntry(ctx, entry); err != nil {
 			return err
 		}
+		mc.noteHardLinkVersionLocked(ctx, entry.HardLinkId, snapshotTsNs)
 		if unversioned {
 			// only once the write landed: if it fails, the old content keeps
 			// the marker, and with it the right to be corrected by any event

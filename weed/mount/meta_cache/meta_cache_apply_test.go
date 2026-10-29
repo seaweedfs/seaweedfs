@@ -573,7 +573,7 @@ func TestUnversionedWriteClearsEntryVersion(t *testing.T) {
 			Mode:     0100644,
 			FileSize: 22,
 		},
-	}); err != nil {
+	}, 0); err != nil {
 		t.Fatalf("local update: %v", err)
 	}
 	if _, versionTsNs, err := mc.FindEntry(context.Background(), util.FullPath("/dir/file.txt")); err != nil || versionTsNs != 0 {

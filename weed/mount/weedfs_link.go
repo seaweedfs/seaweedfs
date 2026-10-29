@@ -144,12 +144,16 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 		updateEvent := updateResp.GetMetadataEvent()
 		if updateEvent == nil {
 			updateEvent = metadataUpdateEvent(oldParentPath, updateOldEntryRequest.Entry)
+			if updateEvent != nil {
+				updateEvent.TsNs = ackVersionTsNs(updateResp)
+			}
 		}
 		if applyErr := wfs.applyLocalMetadataEvent(context.Background(), updateEvent); applyErr != nil {
 			glog.Warningf("link %s: best-effort metadata apply failed: %v", oldEntryPath, applyErr)
 			wfs.inodeToPath.InvalidateChildrenCache(util.FullPath(oldParentPath))
 		}
 	}
+	var linkVersionTsNs int64
 	if err == nil {
 		var createResp *filer_pb.CreateEntryResponse
 		createResp, err = wfs.streamCreateEntry(context.Background(), request)
@@ -166,9 +170,13 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 				glog.Warningf("link rollback %s: %v", oldEntryPath, rollbackErr)
 			}
 		} else {
+			linkVersionTsNs = ackVersionTsNs(createResp)
 			createEvent := createResp.GetMetadataEvent()
 			if createEvent == nil {
 				createEvent = metadataCreateEvent(string(newParentPath), request.Entry)
+				if createEvent != nil {
+					createEvent.TsNs = linkVersionTsNs
+				}
 			}
 			if applyErr := wfs.applyLocalMetadataEvent(context.Background(), createEvent); applyErr != nil {
 				glog.Warningf("link %s: best-effort metadata apply failed: %v", newParentPath.Child(name), applyErr)
@@ -195,19 +203,22 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 	// existing sibling link (other than the source we just wrote) returns
 	// the old nlink from the local metacache — pjdfstest link/00.t catches
 	// this after `link n1 n2` when it stats n0.
-	wfs.syncHardLinkSiblings(sourceInode, oldEntry, oldEntryPath, newEntryPath)
+	wfs.syncHardLinkSiblings(ctx, sourceInode, oldEntry, linkVersionTsNs, oldEntryPath, newEntryPath)
 
 	wfs.outputPbEntry(out, sourceInode, request.Entry)
 
 	return fuse.OK
 }
 
-// syncHardLinkSiblings rewrites the cached HardLinkCounter (and ctime) on
-// every sibling link of the given inode, and invalidates the kernel's inode
-// attr cache. `authoritativeEntry` carries the counter/ctime that should be
-// propagated. `skipPaths` are the link paths already updated by the caller
-// (typically the source and/or the newly created/removed link).
-func (wfs *WFS) syncHardLinkSiblings(inode uint64, authoritativeEntry *filer_pb.Entry, skipPaths ...util.FullPath) {
+// syncHardLinkSiblings refreshes every sibling link of the given inode from
+// the filer, so their cached HardLinkCounter (and any other fields) reflect
+// the mutation. `authoritativeEntry` identifies the hard-link group;
+// `versionTsNs` is the log position the mutation committed at — the fetch
+// runs after the commit, so the fetched state already covers it, and the
+// recorded position is the higher of the two. `skipPaths` are the link paths
+// already updated by the caller (typically the source and/or the newly
+// created/removed link).
+func (wfs *WFS) syncHardLinkSiblings(ctx context.Context, inode uint64, authoritativeEntry *filer_pb.Entry, versionTsNs int64, skipPaths ...util.FullPath) {
 	if authoritativeEntry == nil || len(authoritativeEntry.HardLinkId) == 0 {
 		return
 	}
@@ -219,20 +230,48 @@ func (wfs *WFS) syncHardLinkSiblings(inode uint64, authoritativeEntry *filer_pb.
 	for _, p := range skipPaths {
 		skip[p] = struct{}{}
 	}
-	ctx := context.Background()
+	// One overall deadline for the sequential sibling lookups: they run
+	// under the caller's exclusive hard-link lock, so a slow filer must not
+	// stall every other link operation on this group.
+	ctx, cancel := context.WithTimeout(ctx, metadataFlushTimeout)
+	defer cancel()
 	for _, p := range paths {
 		if _, skipped := skip[p]; skipped {
 			continue
 		}
-		sibling, _, err := wfs.metaCache.FindEntry(ctx, p)
+		sibling, siblingTsNs, err := wfs.metaCache.FindEntry(ctx, p)
 		if err != nil || sibling == nil {
 			continue
 		}
-		// Only touch siblings that genuinely share the same hard-link id.
-		// inodeToPath's shared-inode invariant should already guarantee
-		// this, but a mismatch can occur transiently (e.g. a rename
-		// replaced one of the paths), and blindly stamping an unrelated
-		// entry's counter would corrupt it.
+		// Refresh the sibling from the filer rather than stamping the cached
+		// copy: the cache may predate an in-flight event of its own, and
+		// claiming this mutation's version for that stale content would
+		// fence the pending event out at the version gate, leaving old
+		// chunks and attributes until a refresh.
+		pbEntry, entryTsNs, _, fetchErr := filer_pb.GetEntry(ctx, wfs, p)
+		if fetchErr == nil {
+			// A path the filer no longer knows is on its way out — leave the
+			// cache alone. Only touch entries that genuinely share the same
+			// hard-link id: inodeToPath's shared-inode invariant should
+			// already guarantee this, but a mismatch can occur transiently
+			// (e.g. a rename replaced one of the paths).
+			if pbEntry == nil || !bytes.Equal(pbEntry.HardLinkId, authoritativeEntry.HardLinkId) {
+				continue
+			}
+			if entryTsNs < versionTsNs {
+				entryTsNs = versionTsNs
+			}
+			dir, _ := p.DirAndName()
+			if err := wfs.metaCache.UpdateEntryChecked(ctx, filer.FromPbEntry(dir, pbEntry), entryTsNs); err != nil {
+				glog.V(4).Infof("syncHardLinkSiblings update %s: %v", p, err)
+			}
+			continue
+		}
+		// The fetch failed: patch the counter in place so the sibling is
+		// not left stale, but claim only the version its content already
+		// holds — a newer in-flight event still lands and corrects it,
+		// while a replayed older delete stays fenced instead of removing
+		// a live link.
 		if !bytes.Equal(sibling.HardLinkId, authoritativeEntry.HardLinkId) {
 			continue
 		}
@@ -240,7 +279,7 @@ func (wfs *WFS) syncHardLinkSiblings(inode uint64, authoritativeEntry *filer_pb.
 		if authoritativeEntry.Attributes != nil {
 			sibling.Attr.Ctime = time.Unix(authoritativeEntry.Attributes.Ctime, int64(authoritativeEntry.Attributes.CtimeNs))
 		}
-		if err := wfs.metaCache.UpdateEntry(ctx, sibling); err != nil {
+		if err := wfs.metaCache.UpdateEntry(ctx, sibling, siblingTsNs); err != nil {
 			glog.V(4).Infof("syncHardLinkSiblings update %s: %v", p, err)
 		}
 	}

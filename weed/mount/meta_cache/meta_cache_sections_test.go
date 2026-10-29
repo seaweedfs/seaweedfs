@@ -972,3 +972,280 @@ func TestSectionRefreshSweepsANameRecordedAtTheSnapshot(t *testing.T) {
 		t.Error("a name the refresh did not list is still cached")
 	}
 }
+
+// TestSectionRefreshParksHardLinkBlobContent checks that a stale snapshot
+// install of an uncached hard-link sibling keeps the name but parks the
+// group's shared blob content, rather than rolling every sibling back to
+// the snapshot's content.
+func TestSectionRefreshParksHardLinkBlobContent(t *testing.T) {
+	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{"/": true, "/dir": true})
+	defer mc.Shutdown()
+
+	buildSectionedDir(t, mc, util.FullPath("/dir"), 1000, []string{"m"})
+
+	hardLinkId := filer.HardLinkId([]byte{1, 2, 3, 4})
+	const writeTsNs = 6000
+	if err := mc.ApplyMetadataResponse(context.Background(), &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		EventNotification: &filer_pb.EventNotification{
+			NewEntry: &filer_pb.Entry{
+				Name:            "a",
+				HardLinkId:      hardLinkId,
+				HardLinkCounter: 2,
+				Attributes:      &filer_pb.FuseAttributes{Crtime: 1, Mtime: 9, FileMode: 0100644, FileSize: 99},
+			},
+		},
+		TsNs: writeTsNs,
+	}, SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("seed sibling at %d: %v", writeTsNs, err)
+	}
+
+	// The refresh's snapshot predates the write: sibling "b" is live on the
+	// filer but its listed content is older than the group's shared blob.
+	const snapshotTsNs = 5000
+	if err := mc.enqueueAndWait(context.Background(), metadataApplyRequest{
+		kind:      metadataSectionRefresh,
+		buildPath: util.FullPath("/dir"),
+		refresh: &sectionRefresh{
+			hi: "m",
+			entries: []*filer.Entry{
+				{
+					FullPath:        util.FullPath("/dir/b"),
+					Attr:            filer.Attr{Crtime: time.Unix(1, 0), Mtime: time.Unix(2, 0), Mode: 0100644, FileSize: 3},
+					HardLinkId:      hardLinkId,
+					HardLinkCounter: 2,
+				},
+			},
+			snapshotTsNs: snapshotTsNs,
+		},
+	}); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+
+	b, _, err := mc.FindEntry(context.Background(), util.FullPath("/dir/b"))
+	if err != nil || b == nil {
+		t.Fatalf("the live link is missing after the refresh: %v", err)
+	}
+	if b.FileSize != 99 {
+		t.Errorf("sibling installed the snapshot's stale content: FileSize=%d, want 99", b.FileSize)
+	}
+	a, _, err := mc.FindEntry(context.Background(), util.FullPath("/dir/a"))
+	if err != nil || a == nil {
+		t.Fatalf("seeded sibling missing: %v", err)
+	}
+	if a.FileSize != 99 {
+		t.Errorf("the shared blob was rolled back: FileSize=%d, want 99", a.FileSize)
+	}
+}
+
+// TestSectionRefreshReplacesReusedNameOccupant checks that a cached entry
+// sharing only the listed name — a path since recreated as a hard-link
+// member — is replaced by the group's parked content rather than kept,
+// which would serve the stale occupant under a fresh section.
+func TestSectionRefreshReplacesReusedNameOccupant(t *testing.T) {
+	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{"/": true, "/dir": true})
+	defer mc.Shutdown()
+
+	buildSectionedDir(t, mc, util.FullPath("/dir"), 1000, []string{"m"})
+
+	if err := mc.InsertEntry(context.Background(), &filer.Entry{
+		FullPath: util.FullPath("/dir/b"),
+		Attr:     filer.Attr{Crtime: time.Unix(1, 0), Mtime: time.Unix(1, 0), Mode: 0100644, FileSize: 7},
+	}, 4000); err != nil {
+		t.Fatalf("seed occupant: %v", err)
+	}
+
+	hardLinkId := filer.HardLinkId([]byte{1, 2, 3, 4})
+	const writeTsNs = 6000
+	if err := mc.ApplyMetadataResponse(context.Background(), &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		EventNotification: &filer_pb.EventNotification{
+			NewEntry: &filer_pb.Entry{
+				Name:            "a",
+				HardLinkId:      hardLinkId,
+				HardLinkCounter: 2,
+				Attributes:      &filer_pb.FuseAttributes{Crtime: 1, Mtime: 9, FileMode: 0100644, FileSize: 99},
+			},
+		},
+		TsNs: writeTsNs,
+	}, SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("seed sibling at %d: %v", writeTsNs, err)
+	}
+
+	const snapshotTsNs = 5000
+	if err := mc.enqueueAndWait(context.Background(), metadataApplyRequest{
+		kind:      metadataSectionRefresh,
+		buildPath: util.FullPath("/dir"),
+		refresh: &sectionRefresh{
+			hi: "m",
+			entries: []*filer.Entry{
+				{
+					FullPath:        util.FullPath("/dir/b"),
+					Attr:            filer.Attr{Crtime: time.Unix(1, 0), Mtime: time.Unix(2, 0), Mode: 0100644, FileSize: 3},
+					HardLinkId:      hardLinkId,
+					HardLinkCounter: 2,
+				},
+			},
+			snapshotTsNs: snapshotTsNs,
+		},
+	}); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+
+	b, _, err := mc.FindEntry(context.Background(), util.FullPath("/dir/b"))
+	if err != nil || b == nil {
+		t.Fatalf("the live link is missing after the refresh: %v", err)
+	}
+	if string(b.HardLinkId) != string(hardLinkId) {
+		t.Errorf("the stale occupant was kept: HardLinkId=%x, want %x", b.HardLinkId, hardLinkId)
+	}
+	if b.FileSize != 99 {
+		t.Errorf("reused name did not get the parked content: FileSize=%d, want 99", b.FileSize)
+	}
+}
+
+// TestSectionRefreshKeepsOccupantGroupCounter covers a reused name whose
+// cached occupant's shared blob already reflects the filer-side unlink: a
+// sibling write folded the counter down while the occupant's entry stayed
+// cached. Replacing that occupant must not decrement the group again, or
+// the counter reaches zero and the shared blob live siblings read is lost.
+func TestSectionRefreshKeepsOccupantGroupCounter(t *testing.T) {
+	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{"/": true, "/dir": true})
+	defer mc.Shutdown()
+
+	buildSectionedDir(t, mc, util.FullPath("/dir"), 1000, []string{"m"})
+
+	oldGroup := filer.HardLinkId([]byte{5, 6, 7, 8})
+	for _, name := range []string{"b", "q"} {
+		if err := mc.InsertEntry(context.Background(), &filer.Entry{
+			FullPath:        util.FullPath("/dir/" + name),
+			Attr:            filer.Attr{Crtime: time.Unix(1, 0), Mtime: time.Unix(1, 0), Mode: 0100644, FileSize: 11},
+			HardLinkId:      oldGroup,
+			HardLinkCounter: 2,
+		}, 2000); err != nil {
+			t.Fatalf("seed %s: %v", name, err)
+		}
+	}
+	// A post-unlink write to the live sibling folds the occupant's removal
+	// into the shared counter while the occupant's entry is still cached.
+	if err := mc.InsertEntry(context.Background(), &filer.Entry{
+		FullPath:        util.FullPath("/dir/q"),
+		Attr:            filer.Attr{Crtime: time.Unix(1, 0), Mtime: time.Unix(3, 0), Mode: 0100644, FileSize: 22},
+		HardLinkId:      oldGroup,
+		HardLinkCounter: 1,
+	}, 3000); err != nil {
+		t.Fatalf("reseed q: %v", err)
+	}
+
+	hardLinkId := filer.HardLinkId([]byte{1, 2, 3, 4})
+	const writeTsNs = 6000
+	if err := mc.ApplyMetadataResponse(context.Background(), &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		EventNotification: &filer_pb.EventNotification{
+			NewEntry: &filer_pb.Entry{
+				Name:            "a",
+				HardLinkId:      hardLinkId,
+				HardLinkCounter: 2,
+				Attributes:      &filer_pb.FuseAttributes{Crtime: 1, Mtime: 9, FileMode: 0100644, FileSize: 99},
+			},
+		},
+		TsNs: writeTsNs,
+	}, SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("seed sibling at %d: %v", writeTsNs, err)
+	}
+
+	const snapshotTsNs = 5000
+	if err := mc.enqueueAndWait(context.Background(), metadataApplyRequest{
+		kind:      metadataSectionRefresh,
+		buildPath: util.FullPath("/dir"),
+		refresh: &sectionRefresh{
+			hi: "m",
+			entries: []*filer.Entry{
+				{
+					FullPath:        util.FullPath("/dir/b"),
+					Attr:            filer.Attr{Crtime: time.Unix(1, 0), Mtime: time.Unix(2, 0), Mode: 0100644, FileSize: 3},
+					HardLinkId:      hardLinkId,
+					HardLinkCounter: 2,
+				},
+			},
+			snapshotTsNs: snapshotTsNs,
+		},
+	}); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+
+	b, _, err := mc.FindEntry(context.Background(), util.FullPath("/dir/b"))
+	if err != nil || b == nil {
+		t.Fatalf("the live link is missing after the refresh: %v", err)
+	}
+	if string(b.HardLinkId) != string(hardLinkId) {
+		t.Errorf("the stale occupant was kept: HardLinkId=%x, want %x", b.HardLinkId, hardLinkId)
+	}
+
+	blob, err := mc.localStore.KvGet(context.Background(), oldGroup)
+	if err != nil {
+		t.Fatalf("the live sibling's shared blob was deleted: %v", err)
+	}
+	shared := &filer.Entry{}
+	if err := shared.DecodeAttributesAndChunks(blob); err != nil {
+		t.Fatalf("decode shared blob: %v", err)
+	}
+	if shared.HardLinkCounter != 1 {
+		t.Errorf("the occupant's old group was decremented again: counter=%d, want 1", shared.HardLinkCounter)
+	}
+	q, _, err := mc.FindEntry(context.Background(), util.FullPath("/dir/q"))
+	if err != nil || q == nil {
+		t.Fatalf("the live sibling is unreadable after the refresh: %v", err)
+	}
+	if q.FileSize != 22 {
+		t.Errorf("the live sibling's content was rolled back: FileSize=%d, want 22", q.FileSize)
+	}
+}
+
+// TestEnsureNameFreshRefreshesOnlyItsSection checks that a name-scoped
+// refresh re-lists just the section holding that name and leaves other stale
+// sections untouched.
+func TestEnsureNameFreshRefreshesOnlyItsSection(t *testing.T) {
+	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
+		"/":    true,
+		"/dir": true,
+	})
+	defer mc.Shutdown()
+
+	server := &sectionFilerServer{snapshot: 5000}
+	server.names = append(server.names, "a-000", "b-000", "m", "z-000")
+	client := startSectionFilerServer(t, server)
+
+	buildSectionedDir(t, mc, util.FullPath("/dir"), 1000, []string{"m"})
+	applyChurn(t, mc, "/dir", "a-", sectionHotThreshold, 2000, SubscriberMetadataResponseApplyOptions)
+	applyChurn(t, mc, "/dir", "z-", sectionHotThreshold, 3000, SubscriberMetadataResponseApplyOptions)
+	if mc.IsNameFresh(util.FullPath("/dir/a-000")) || mc.IsNameFresh(util.FullPath("/dir/z-000")) {
+		t.Fatal("both sections should be stale before the refresh")
+	}
+
+	if err := EnsureNameFresh(context.Background(), mc, client, util.FullPath("/dir"), "a-000"); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if !mc.IsNameFresh(util.FullPath("/dir/a-000")) {
+		t.Fatal("the section holding the name should be fresh after the refresh")
+	}
+	if mc.IsNameFresh(util.FullPath("/dir/z-000")) {
+		t.Fatal("the other stale section must not be refreshed by a name outside it")
+	}
+
+	requests := server.listRequests()
+	if len(requests) != 1 {
+		t.Fatalf("name refresh made %d list requests, want 1", len(requests))
+	}
+	if requests[0].StartFromFileName != "" || requests[0].InclusiveStartFrom {
+		t.Fatalf("refresh should list the section from its start: StartFromFileName=%q inclusive=%v",
+			requests[0].StartFromFileName, requests[0].InclusiveStartFrom)
+	}
+
+	if err := EnsureNameFresh(context.Background(), mc, client, util.FullPath("/dir"), "z-000"); err != nil {
+		t.Fatalf("second refresh: %v", err)
+	}
+	if !mc.IsNameFresh(util.FullPath("/dir/z-000")) {
+		t.Fatal("the second section should be fresh after its own refresh")
+	}
+}
