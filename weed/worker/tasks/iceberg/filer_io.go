@@ -185,23 +185,20 @@ func (s *tableState) loadMetadata(ctx context.Context, client filer_pb.SeaweedFi
 	if err != nil {
 		return fmt.Errorf("load metadata file %s: %w", s.MetadataLocation, err)
 	}
-	if len(entry.Content) == 0 {
-		// Bound what the location would pull before it is pulled: a remote
-		// entry's object is downloaded whole by the cache call, a chunked
-		// file's read is bounded by FileSize.
-		var size int64
-		if isRemoteOnly(entry) {
-			size = entry.GetRemoteEntry().GetRemoteSize()
-		} else if len(entry.Chunks) > 0 {
-			size = int64(filer.FileSize(entry))
-		}
-		if size > metadataFileMaxBytes {
-			return fmt.Errorf("metadata file %s too large: %d bytes", s.MetadataLocation, size)
-		}
+	// Bound what the location would pull before it is pulled: a remote
+	// entry's object is downloaded whole by the cache call, a chunked
+	// file's read is bounded by FileSize.
+	if size := metadataEntrySize(entry); size > metadataFileMaxBytes {
+		return fmt.Errorf("metadata file %s too large: %d bytes", s.MetadataLocation, size)
 	}
 	entry, err = cacheRemoteOnlyEntry(ctx, client, fullPath, entry)
 	if err != nil {
 		return fmt.Errorf("load metadata file %s: %w", s.MetadataLocation, err)
+	}
+	// The cache call returns the entry the filer then held; a replacement
+	// written during the download keeps the name but not the checked size.
+	if size := metadataEntrySize(entry); size > metadataFileMaxBytes {
+		return fmt.Errorf("metadata file %s too large: %d bytes", s.MetadataLocation, size)
 	}
 	content, err := readEntryContent(ctx, client, entry, s.MetadataLocation)
 	if err != nil {
@@ -213,6 +210,23 @@ func (s *tableState) loadMetadata(ctx context.Context, client filer_pb.SeaweedFi
 	}
 	s.Metadata = meta
 	return nil
+}
+
+// metadataEntrySize is the bytes an entry's content would pull into memory:
+// a remote object's size or a chunked file's FileSize. Inline content is
+// exempt — the REST load path accepts it unbounded and the lookup already
+// holds it.
+func metadataEntrySize(entry *filer_pb.Entry) int64 {
+	if len(entry.Content) > 0 {
+		return 0
+	}
+	if isRemoteOnly(entry) {
+		return entry.GetRemoteEntry().GetRemoteSize()
+	}
+	if len(entry.Chunks) > 0 {
+		return int64(filer.FileSize(entry))
+	}
+	return 0
 }
 
 func isFilerNotFound(err error) bool {

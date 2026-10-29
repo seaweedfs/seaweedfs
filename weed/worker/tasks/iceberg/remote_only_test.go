@@ -32,6 +32,9 @@ type remoteCachingFiler struct {
 	nextFid    int
 	stayRemote bool // answer without caching, as on a racing uncache
 	failFirst  int  // fail the first N cache calls
+	// cacheEntry swaps the stored entry at cache time, as a replacement
+	// written during the download would.
+	cacheEntry func(dir, name string, entry *filer_pb.Entry) *filer_pb.Entry
 }
 
 func (f *remoteCachingFiler) CacheRemoteObjectToLocalCluster(_ context.Context, req *filer_pb.CacheRemoteObjectToLocalClusterRequest) (*filer_pb.CacheRemoteObjectToLocalClusterResponse, error) {
@@ -55,6 +58,9 @@ func (f *remoteCachingFiler) CacheRemoteObjectToLocalCluster(_ context.Context, 
 	}
 	if stay {
 		return &filer_pb.CacheRemoteObjectToLocalClusterResponse{Entry: entry}, nil
+	}
+	if f.cacheEntry != nil {
+		entry = f.cacheEntry(req.Directory, req.Name, entry)
 	}
 	f.volume.put(fid, body)
 	cached := &filer_pb.Entry{Name: entry.Name, Attributes: entry.Attributes, RemoteEntry: entry.RemoteEntry,
@@ -215,6 +221,29 @@ func TestARemoteOnlyMetadataFileOverTheBoundIsNotCached(t *testing.T) {
 	}
 	if srv.cacheCalls != 0 {
 		t.Fatalf("%d cache calls, want 0", srv.cacheCalls)
+	}
+}
+
+// The bound also applies to the entry the cache call returns: a replacement
+// written during the download can be larger than the remote entry that was
+// checked.
+func TestAReplacedMetadataFileOverTheBoundIsNotRead(t *testing.T) {
+	srv, client := startRemoteCachingFiler(t)
+	original := metadataFileMaxBytes
+	metadataFileMaxBytes = 8
+	defer func() { metadataFileMaxBytes = original }()
+
+	setup := tableSetup{BucketName: "b", Namespace: "ns", TableName: "t"}
+	putRemoteOnly(t, srv, setup.BucketName, setup.tablePath(), "metadata/swapped.metadata.json",
+		bytes.Repeat([]byte{1}, 4))
+	srv.cacheEntry = func(_, _ string, entry *filer_pb.Entry) *filer_pb.Entry {
+		return &filer_pb.Entry{Name: entry.Name, RemoteEntry: entry.RemoteEntry,
+			Attributes: &filer_pb.FuseAttributes{FileSize: uint64(metadataFileMaxBytes) + 1, Mtime: time.Now().Unix()}}
+	}
+	state := &tableState{DataPath: setup.tablePath(), MetadataLocation: fmt.Sprintf(
+		"s3://%s/%s/metadata/swapped.metadata.json", setup.BucketName, setup.tablePath())}
+	if err := state.loadMetadata(context.Background(), client, setup.BucketName); err == nil || !strings.Contains(err.Error(), "too large") {
+		t.Fatalf("err = %v, want a too-large rejection", err)
 	}
 }
 
