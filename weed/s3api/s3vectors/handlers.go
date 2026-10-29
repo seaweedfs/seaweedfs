@@ -20,19 +20,22 @@ import (
 )
 
 var handlers = map[string]func(*Server, http.ResponseWriter, *http.Request){
-	"CreateVectorBucket": (*Server).handleCreateVectorBucket,
-	"GetVectorBucket":    (*Server).handleGetVectorBucket,
-	"ListVectorBuckets":  (*Server).handleListVectorBuckets,
-	"DeleteVectorBucket": (*Server).handleDeleteVectorBucket,
-	"CreateIndex":        (*Server).handleCreateIndex,
-	"GetIndex":           (*Server).handleGetIndex,
-	"ListIndexes":        (*Server).handleListIndexes,
-	"DeleteIndex":        (*Server).handleDeleteIndex,
-	"PutVectors":         (*Server).handlePutVectors,
-	"GetVectors":         (*Server).handleGetVectors,
-	"ListVectors":        (*Server).handleListVectors,
-	"DeleteVectors":      (*Server).handleDeleteVectors,
-	"QueryVectors":       (*Server).handleQueryVectors,
+	"CreateVectorBucket":       (*Server).handleCreateVectorBucket,
+	"GetVectorBucket":          (*Server).handleGetVectorBucket,
+	"ListVectorBuckets":        (*Server).handleListVectorBuckets,
+	"DeleteVectorBucket":       (*Server).handleDeleteVectorBucket,
+	"PutVectorBucketPolicy":    (*Server).handlePutVectorBucketPolicy,
+	"GetVectorBucketPolicy":    (*Server).handleGetVectorBucketPolicy,
+	"DeleteVectorBucketPolicy": (*Server).handleDeleteVectorBucketPolicy,
+	"CreateIndex":              (*Server).handleCreateIndex,
+	"GetIndex":                 (*Server).handleGetIndex,
+	"ListIndexes":              (*Server).handleListIndexes,
+	"DeleteIndex":              (*Server).handleDeleteIndex,
+	"PutVectors":               (*Server).handlePutVectors,
+	"GetVectors":               (*Server).handleGetVectors,
+	"ListVectors":              (*Server).handleListVectors,
+	"DeleteVectors":            (*Server).handleDeleteVectors,
+	"QueryVectors":             (*Server).handleQueryVectors,
 }
 
 // lance table ids put indexes under a "vector" namespace inside their bucket.
@@ -77,6 +80,25 @@ func arnParts(v *vectorBucketARNs, name, arn string) error {
 		v.index = parts[1]
 	}
 	return nil
+}
+
+// bucketARNs resolves the bucket a bucket-level request names and rejects
+// forms that point at a different resource: an index ARN names a table, and an
+// ARN minted for another service names that service's bucket.
+func bucketARNs(name, arn string) (vectorBucketARNs, error) {
+	var v vectorBucketARNs
+	if err := arnParts(&v, name, arn); err != nil {
+		return v, err
+	}
+	if v.index != "" {
+		return v, fmt.Errorf("vectorBucketArn %q names an index, not a bucket", arn)
+	}
+	if strings.HasPrefix(arn, "arn:") {
+		if p := strings.SplitN(arn, ":", 6); len(p) > 2 && p[2] != "s3vectors" {
+			return v, fmt.Errorf("vectorBucketArn %q is not an s3vectors ARN", arn)
+		}
+	}
+	return v, nil
 }
 
 // resolveIndexARNs fills bucket and index from any combination of plain names,
@@ -276,13 +298,13 @@ func (s *Server) handleGetVectorBucket(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	var arns vectorBucketARNs
-	if err := arnParts(&arns, req.VectorBucketName, req.VectorBucketArn); err != nil {
+	arns, err := bucketARNs(req.VectorBucketName, req.VectorBucketArn)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
 	var resp map[string]interface{}
-	err := s.catalog(r.Context(), "GetTableBucket",
+	err = s.catalog(r.Context(), "GetTableBucket",
 		&s3tables.GetTableBucketRequest{TableBucketARN: s.s3tablesArn(arns.bucket)}, &resp, r)
 	if err != nil {
 		catalogErr(w, err)
@@ -348,8 +370,8 @@ func (s *Server) handleDeleteVectorBucket(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	var arns vectorBucketARNs
-	if err := arnParts(&arns, req.VectorBucketName, req.VectorBucketArn); err != nil {
+	arns, err := bucketARNs(req.VectorBucketName, req.VectorBucketArn)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
@@ -360,7 +382,7 @@ func (s *Server) handleDeleteVectorBucket(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var resp map[string]interface{}
-	err := s.catalog(r.Context(), "DeleteTableBucket",
+	err = s.catalog(r.Context(), "DeleteTableBucket",
 		&s3tables.DeleteTableBucketRequest{TableBucketARN: s.s3tablesArn(arns.bucket)}, &resp, r)
 	if err != nil && catalogErrCode(err) == s3tables.ErrCodeBucketNotEmpty {
 		// The implicit index namespace counts as bucket content even when it
@@ -400,6 +422,87 @@ func distanceMetric(metric string) (vector_pb.DistanceMetric, bool) {
 
 func tableID(bucket, index string) *vector_pb.Table {
 	return &vector_pb.Table{Id: []string{bucket, indexNamespace, index}}
+}
+
+// Vector bucket policies are stored on the shared table bucket, the same
+// resource s3tables' PutTableBucketPolicy guards.
+func (s *Server) handlePutVectorBucketPolicy(w http.ResponseWriter, r *http.Request) {
+	var req PutVectorBucketPolicyRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		return
+	}
+	arns, err := bucketARNs(req.VectorBucketName, req.VectorBucketArn)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		return
+	}
+	if err := s.lanceBucket(r.Context(), arns.bucket); err != nil {
+		catalogErr(w, err)
+		return
+	}
+	var resp map[string]interface{}
+	err = s.catalog(r.Context(), "PutTableBucketPolicy", &s3tables.PutTableBucketPolicyRequest{
+		TableBucketARN: s.s3tablesArn(arns.bucket),
+		ResourcePolicy: req.Policy,
+	}, &resp, r)
+	if err != nil {
+		catalogErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, &PutVectorBucketPolicyResponse{})
+}
+
+func (s *Server) handleGetVectorBucketPolicy(w http.ResponseWriter, r *http.Request) {
+	var req GetVectorBucketPolicyRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		return
+	}
+	arns, err := bucketARNs(req.VectorBucketName, req.VectorBucketArn)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		return
+	}
+	if err := s.lanceBucket(r.Context(), arns.bucket); err != nil {
+		catalogErr(w, err)
+		return
+	}
+	var resp s3tables.GetTableBucketPolicyResponse
+	err = s.catalog(r.Context(), "GetTableBucketPolicy", &s3tables.GetTableBucketPolicyRequest{
+		TableBucketARN: s.s3tablesArn(arns.bucket),
+	}, &resp, r)
+	if err != nil {
+		catalogErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, &GetVectorBucketPolicyResponse{Policy: resp.ResourcePolicy})
+}
+
+func (s *Server) handleDeleteVectorBucketPolicy(w http.ResponseWriter, r *http.Request) {
+	var req DeleteVectorBucketPolicyRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		return
+	}
+	arns, err := bucketARNs(req.VectorBucketName, req.VectorBucketArn)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		return
+	}
+	if err := s.lanceBucket(r.Context(), arns.bucket); err != nil {
+		catalogErr(w, err)
+		return
+	}
+	var resp map[string]interface{}
+	err = s.catalog(r.Context(), "DeleteTableBucketPolicy", &s3tables.DeleteTableBucketPolicyRequest{
+		TableBucketARN: s.s3tablesArn(arns.bucket),
+	}, &resp, r)
+	if err != nil {
+		catalogErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, &DeleteVectorBucketPolicyResponse{})
 }
 
 func (s *Server) handleCreateIndex(w http.ResponseWriter, r *http.Request) {
@@ -608,8 +711,8 @@ func (s *Server) handleListIndexes(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	var arns vectorBucketARNs
-	if err := arnParts(&arns, req.VectorBucketName, req.VectorBucketArn); err != nil {
+	arns, err := bucketARNs(req.VectorBucketName, req.VectorBucketArn)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
@@ -621,7 +724,7 @@ func (s *Server) handleListIndexes(w http.ResponseWriter, r *http.Request) {
 		} `json:"tables"`
 		ContinuationToken string `json:"continuationToken"`
 	}
-	err := s.catalog(r.Context(), "ListTables", &s3tables.ListTablesRequest{
+	err = s.catalog(r.Context(), "ListTables", &s3tables.ListTablesRequest{
 		TableBucketARN:    s.s3tablesArn(arns.bucket),
 		Namespace:         []string{indexNamespace},
 		MaxTables:         req.MaxResults,

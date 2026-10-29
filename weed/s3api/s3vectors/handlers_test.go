@@ -202,6 +202,24 @@ func TestArnParts(t *testing.T) {
 	}
 }
 
+func TestBucketARNs(t *testing.T) {
+	if v, err := bucketARNs("plain", ""); err != nil || v.bucket != "plain" {
+		t.Fatalf("plain name: %+v err=%v", v, err)
+	}
+	if v, err := bucketARNs("", "arn:aws:s3vectors:r:a:bucket/mybucket"); err != nil || v.bucket != "mybucket" {
+		t.Fatalf("bucket ARN: %+v err=%v", v, err)
+	}
+	for _, bad := range []string{
+		"arn:aws:s3vectors:r:a:bucket/b/index/i",
+		"arn:aws:s3tables:r:a:bucket/b",
+		"arn:aws:s3:r:a:bucket/b",
+	} {
+		if _, err := bucketARNs("", bad); err == nil {
+			t.Fatalf("ARN %q should be rejected for a bucket operation", bad)
+		}
+	}
+}
+
 func TestResolveIndexARNs(t *testing.T) {
 	arns, err := resolveIndexARNs("", "", "", "arn:aws:s3vectors:r:a:bucket/b/index/i")
 	if err != nil || arns.bucket != "b" || arns.index != "i" {
