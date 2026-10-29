@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -209,7 +210,7 @@ func (c *clientCache) len() int {
 
 // GetRemoteStorage returns the plain client of a configuration (one per configuration).
 func GetRemoteStorage(remoteConf *remote_pb.RemoteConf) (RemoteStorageClient, error) {
-	return GetRemoteStorageWith("", remoteConf, "", func(conf *remote_pb.RemoteConf) (RemoteStorageClient, func(), error) {
+	return GetRemoteStorageWith("", remoteConf, credentialsVersion(remoteConf), func(conf *remote_pb.RemoteConf) (RemoteStorageClient, func(), error) {
 		client, err := makeRemoteStorageClient(conf)
 		if err != nil {
 			return nil, nil, fmt.Errorf("make remote storage client %s: %w", conf.GetName(), err)
@@ -223,6 +224,23 @@ func GetRemoteStorage(remoteConf *remote_pb.RemoteConf) (RemoteStorageClient, er
 // that the configuration does not hold (a credentials file's content hash); "" when nothing.
 func GetRemoteStorageWith(kind string, remoteConf *remote_pb.RemoteConf, version string, build ClientBuild) (RemoteStorageClient, error) {
 	return remoteClients.get(kind, remoteConf, version, build)
+}
+
+// credentialsVersion names what a plain client reads at build time that its
+// configuration does not hold: a gcs credentials file's content. Inline JSON
+// needs none; it is already inside the configuration's hash.
+func credentialsVersion(remoteConf *remote_pb.RemoteConf) string {
+	if remoteConf.GetType() != "gcs" {
+		return ""
+	}
+	path := remoteConf.GetGcsGoogleApplicationCredentials()
+	if path == "" {
+		path = os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
+	}
+	if path == "" || strings.HasPrefix(path, "{") {
+		return ""
+	}
+	return FileVersion(path)
 }
 
 // RetainRemoteStorages drops, and closes the idle connections of, every cached client whose configuration name is not in

@@ -305,6 +305,37 @@ func TestRemoteClientCache_UnknownNameStillCaches(t *testing.T) {
 	}
 }
 
+// The plain gcs client's version follows its credentials file: a conf path or GOOGLE_APPLICATION_CREDENTIALS, while
+// inline JSON needs none (it is inside the configuration's hash already).
+func TestPlainClientGcsCredentialsVersion(t *testing.T) {
+	dir := t.TempDir()
+	creds := filepath.Join(dir, "creds.json")
+	if err := os.WriteFile(creds, []byte("one"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	conf := &remote_pb.RemoteConf{Name: "g", Type: "gcs", GcsGoogleApplicationCredentials: creds}
+	v1 := credentialsVersion(conf)
+	if v1 == "" {
+		t.Fatal("a credentials path must produce a version")
+	}
+	if err := os.WriteFile(creds, []byte("two"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if credentialsVersion(conf) == v1 {
+		t.Fatal("a rotated credentials file must change the version")
+	}
+	if credentialsVersion(&remote_pb.RemoteConf{Type: "gcs", GcsGoogleApplicationCredentials: "{}"}) != "" {
+		t.Fatal("inline JSON credentials need no version")
+	}
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", creds)
+	if credentialsVersion(&remote_pb.RemoteConf{Type: "gcs"}) == "" {
+		t.Fatal("the environment's credentials path must produce a version")
+	}
+	if credentialsVersion(&remote_pb.RemoteConf{Type: "s3"}) != "" {
+		t.Fatal("a non-gcs remote has no credentials file version")
+	}
+}
+
 // FileVersion reads "~/…" as the gcs client does (util.ResolvePath), so a rotated file under the home directory is seen.
 func TestFileVersionResolvesHome(t *testing.T) {
 	u, err := user.Current()
