@@ -306,6 +306,11 @@ type tableSetup struct {
 	// table does not fit.
 	Schema *iceberg.Schema
 	Spec   *iceberg.PartitionSpec
+	// DataSequenceNumbers gives populateTableWithDeleteFiles' data files, by
+	// name, a data sequence number other than 1: a file written in the same
+	// commit as the delete files (sequence number 2) is one they must not
+	// delete from.
+	DataSequenceNumbers map[string]int64
 }
 
 func (ts tableSetup) tablePath() string {
@@ -2701,8 +2706,17 @@ func populateTableWithDeleteFilesAndSortOrder(
 			t.Fatalf("build data file %s: %v", df.Name, err)
 		}
 		snapID := int64(1)
-		dataManifestEntries = append(dataManifestEntries, iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, nil, nil, dfb.Build()))
+		dataSeq := int64(1)
+		if seq, ok := setup.DataSequenceNumbers[df.Name]; ok {
+			dataSeq = seq
+		}
+		dataManifestEntries = append(dataManifestEntries, iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, &dataSeq, &dataSeq, dfb.Build()))
 	}
+
+	// The delete files are committed after the data, as a writer commits
+	// them: a delete applies only to data files with a lower data sequence
+	// number (equality) or one no higher (position).
+	deleteSeq := int64(2)
 
 	// Write data manifest
 	var dataManifestBuf bytes.Buffer
@@ -2745,7 +2759,7 @@ func populateTableWithDeleteFilesAndSortOrder(
 				t.Fatalf("build pos delete file: %v", err)
 			}
 			snapID := int64(1)
-			posDeleteEntries = append(posDeleteEntries, iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, nil, nil, dfb.Build()))
+			posDeleteEntries = append(posDeleteEntries, iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, &deleteSeq, &deleteSeq, dfb.Build()))
 		}
 
 		posManifestName := "pos-delete-manifest-1.avro"
@@ -2786,7 +2800,7 @@ func populateTableWithDeleteFilesAndSortOrder(
 			}
 			dfb.EqualityFieldIDs(edf.FieldIDs)
 			snapID := int64(1)
-			eqDeleteEntries = append(eqDeleteEntries, iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, nil, nil, dfb.Build()))
+			eqDeleteEntries = append(eqDeleteEntries, iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, &deleteSeq, &deleteSeq, dfb.Build()))
 		}
 
 		eqManifestName := "eq-delete-manifest-1.avro"
@@ -2801,7 +2815,12 @@ func populateTableWithDeleteFilesAndSortOrder(
 
 	// Write manifest list
 	var mlBuf bytes.Buffer
-	seqNum := int64(1)
+	seqNum := deleteSeq // the table's head: the commit that wrote the deletes, or a later data file's
+	for _, seq := range setup.DataSequenceNumbers {
+		if seq > seqNum {
+			seqNum = seq
+		}
+	}
 	if err := iceberg.WriteManifestList(version, &mlBuf, 1, nil, &seqNum, 0, allManifests); err != nil {
 		t.Fatalf("write manifest list: %v", err)
 	}
@@ -2812,7 +2831,7 @@ func populateTableWithDeleteFilesAndSortOrder(
 
 	// Build final metadata with snapshot
 	now := time.Now().UnixMilli()
-	snap := table.Snapshot{SnapshotID: 1, TimestampMs: now, ManifestList: setup.fileRef("metadata", "snap-1.avro")}
+	snap := table.Snapshot{SnapshotID: 1, SequenceNumber: seqNum, TimestampMs: now, ManifestList: setup.fileRef("metadata", "snap-1.avro")}
 	if setup.SnapshotSummary != nil {
 		snap.Summary = &table.Summary{Operation: table.OpAppend, Properties: setup.SnapshotSummary}
 	}
