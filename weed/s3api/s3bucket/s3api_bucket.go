@@ -15,7 +15,7 @@ const reservedBucketName = "filemeta"
 // https://docs.aws.amazon.com/AmazonS3/latest/userguide/bucketnamingrules.html
 func VerifyS3BucketName(name string) (err error) {
 	if len(name) < 3 || len(name) > 63 {
-		return fmt.Errorf("bucket name must between [3, 63] characters")
+		return fmt.Errorf("bucket name must be between 3 and 63 characters")
 	}
 	if name == reservedBucketName {
 		return fmt.Errorf("bucket name %q is reserved", name)
