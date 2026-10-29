@@ -20,7 +20,7 @@ func TestReleaseDropsFlockWhileFlushBlocked(t *testing.T) {
 	startFakeFiler(t, wfs, &fakeFilerServer{})
 
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/f"), time.Now().Unix(), false, false, 0, false)
-	fh, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+	fh, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
 		Name:       "f",
 		Attributes: &filer_pb.FuseAttributes{},
 	}, 0, 0)
@@ -91,8 +91,8 @@ func TestReleaseDropsOfdLocks(t *testing.T) {
 		Name:       "f",
 		Attributes: &filer_pb.FuseAttributes{},
 	}
-	_, openFh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, entry, 0, 0)
-	_, siblingFh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, entry, 0, 0)
+	_, openFh, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, entry, 0, 0)
+	_, siblingFh, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, entry, 0, 0)
 	if siblingFh == openFh {
 		t.Fatal("sibling open must get its own fh value")
 	}
