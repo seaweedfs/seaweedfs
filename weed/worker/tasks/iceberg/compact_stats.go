@@ -220,10 +220,17 @@ func boundLiteral(v parquet.Value, pt parquet.Type, t iceberg.Type, roundUp bool
 	case iceberg.DateType:
 		return iceberg.DateLiteral(iceberg.Date(v.Int32())), v.Kind() == parquet.Int32
 	case iceberg.TimeType:
-		if v.Kind() == parquet.Int64 {
-			if us, ok := convertTimeUnit(v.Int64(), pt, time.Microsecond, roundUp); ok {
-				return iceberg.TimeLiteral(iceberg.Time(us)), true
-			}
+		var i64 int64
+		switch v.Kind() {
+		case parquet.Int64:
+			i64 = v.Int64()
+		case parquet.Int32: // TIME(MILLIS) is stored as INT32
+			i64 = int64(v.Int32())
+		default:
+			return nil, false
+		}
+		if us, ok := convertTimeUnit(i64, pt, time.Microsecond, roundUp); ok {
+			return iceberg.TimeLiteral(iceberg.Time(us)), true
 		}
 	case iceberg.TimestampType, iceberg.TimestampTzType:
 		if v.Kind() == parquet.Int64 {

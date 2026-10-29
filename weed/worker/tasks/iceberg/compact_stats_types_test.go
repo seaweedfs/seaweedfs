@@ -32,6 +32,8 @@ func TestBoundLiteralTypes(t *testing.T) {
 		{"decimal(38,2) as bytes: none", parquet.FixedLenByteArrayValue(make([]byte, 16)), parquet.Decimal(2, 38, parquet.FixedLenByteArrayType(16)).Type(), iceberg.DecimalTypeOf(38, 2), false, nil},
 		{"time (us)", parquet.Int64Value(3_600_000_000), parquet.Time(parquet.Microsecond).Type(), iceberg.PrimitiveTypes.Time, false,
 			iceberg.TimeLiteral(3_600_000_000)},
+		{"time (ms) is INT32", parquet.Int32Value(3_600_000), parquet.Time(parquet.Millisecond).Type(), iceberg.PrimitiveTypes.Time, false,
+			iceberg.TimeLiteral(3_600_000_000)},
 		{"timestamp ms, lower", parquet.Int64Value(1_700_000_000_123), parquet.Timestamp(parquet.Millisecond).Type(), iceberg.PrimitiveTypes.Timestamp, false,
 			iceberg.TimestampLiteral(1_700_000_000_123_000)},
 		{"timestamp ns to us, upper rounds up", parquet.Int64Value(1_700_000_000_000_000_001), parquet.Timestamp(parquet.Nanosecond).Type(), iceberg.PrimitiveTypes.TimestampTz, true,
