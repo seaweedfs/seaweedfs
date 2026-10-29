@@ -344,3 +344,26 @@ func TestFilterFieldsNestedOperators(t *testing.T) {
 		t.Fatal("an empty blocked key should still reject")
 	}
 }
+
+func TestToPutVectorDimensionCheck(t *testing.T) {
+	good := &PutInputVector{Key: "a", Data: &VectorData{Float32: []float32{1, 2, 3}}}
+	for _, tc := range []struct {
+		name string
+		v    *PutInputVector
+		dim  int32
+		ok   bool
+	}{
+		{"matching", good, 3, true},
+		{"mismatched", good, 4, false},
+		{"missing data", &PutInputVector{Key: "a"}, 3, false},
+		{"empty data", &PutInputVector{Key: "a", Data: &VectorData{}}, 3, false},
+		{"null element", nil, 3, false},
+		{"empty key", &PutInputVector{Data: &VectorData{Float32: []float32{1, 2, 3}}}, 3, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := toPutVector(tc.v, tc.dim); (err == nil) != tc.ok {
+				t.Fatalf("toPutVector err = %v, want ok %v", err, tc.ok)
+			}
+		})
+	}
+}

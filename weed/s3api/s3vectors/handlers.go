@@ -742,29 +742,12 @@ func (s *Server) handlePutVectors(w http.ResponseWriter, r *http.Request) {
 	dimension := indexFromRecord(s, arns.bucket, arns.index, record).Dimension
 	vectors := make([]*vector_pb.Vector, 0, len(req.Vectors))
 	for _, v := range req.Vectors {
-		if v == nil {
-			writeError(w, http.StatusBadRequest, "ValidationException", "vectors contains a null element")
-			return
-		}
-		if v.Key == "" {
-			writeError(w, http.StatusBadRequest, "ValidationException", "vector key must not be empty")
-			return
-		}
-		metadata, err := metadataStruct(v.Metadata)
+		pbVector, err := toPutVector(v, dimension)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 			return
 		}
-		var data []float32
-		if v.Data != nil {
-			data = v.Data.Float32
-		}
-		if int32(len(data)) != dimension {
-			writeError(w, http.StatusBadRequest, "ValidationException",
-				fmt.Sprintf("vector %q has %d dimensions, the index declares %d", v.Key, len(data), dimension))
-			return
-		}
-		vectors = append(vectors, &vector_pb.Vector{Key: v.Key, Data: data, Metadata: metadata})
+		vectors = append(vectors, pbVector)
 	}
 	_, err = s.vectors.PutVectors(r.Context(), &vector_pb.PutVectorsRequest{
 		Table:   tableID(arns.bucket, arns.index),
@@ -775,6 +758,27 @@ func (s *Server) handlePutVectors(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, &PutVectorsResponse{})
+}
+
+func toPutVector(v *PutInputVector, dimension int32) (*vector_pb.Vector, error) {
+	if v == nil {
+		return nil, fmt.Errorf("vectors contains a null element")
+	}
+	if v.Key == "" {
+		return nil, fmt.Errorf("vector key must not be empty")
+	}
+	metadata, err := metadataStruct(v.Metadata)
+	if err != nil {
+		return nil, err
+	}
+	var data []float32
+	if v.Data != nil {
+		data = v.Data.Float32
+	}
+	if int32(len(data)) != dimension {
+		return nil, fmt.Errorf("vector %q has %d dimensions, the index declares %d", v.Key, len(data), dimension)
+	}
+	return &vector_pb.Vector{Key: v.Key, Data: data, Metadata: metadata}, nil
 }
 
 func toOutputVectors(vectors []*vector_pb.Vector, returnData, returnMetadata bool) []*OutputVector {
