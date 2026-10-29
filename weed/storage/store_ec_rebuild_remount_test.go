@@ -11,8 +11,9 @@ import (
 )
 
 // A shard file the rebuild replaced under its mount keeps serving the old
-// inode through the open descriptor. Unmount+mount must reopen the new file.
-func TestRemountRegeneratedShardReadsNewFile(t *testing.T) {
+// inode through the open descriptor. ReopenEcShard must repoint the mounted
+// shard at the new file without dropping its registration.
+func TestReopenEcShardReadsReplacedFile(t *testing.T) {
 	store := newEcTargetTestStore(t, 1)
 	collection := "col"
 	vid := needle.VolumeId(42)
@@ -51,8 +52,13 @@ func TestRemountRegeneratedShardReadsNewFile(t *testing.T) {
 	stale := readShard()
 	require.False(t, bytes.Equal(content, stale), "mounted shard should still read the replaced inode")
 
-	require.NoError(t, store.UnmountEcShards(vid, 0, 0))
-	require.NoError(t, store.MountEcShards(collection, vid, 0, ""))
+	reopened, err := store.Locations[0].ReopenEcShard(vid, 0)
+	require.NoError(t, err)
+	require.True(t, reopened, "shard is mounted; reopen should find it")
 
-	require.True(t, bytes.Equal(content, readShard()), "remounted shard should read the regenerated file")
+	require.True(t, bytes.Equal(content, readShard()), "reopened shard should read the regenerated file")
+
+	reopened, err = store.Locations[0].ReopenEcShard(vid, 7)
+	require.NoError(t, err)
+	require.False(t, reopened, "a shard that is not mounted should report false")
 }

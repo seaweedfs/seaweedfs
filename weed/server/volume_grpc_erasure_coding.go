@@ -291,27 +291,15 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 
 	// A regenerated shard that was mounted keeps serving its old file through
 	// the open descriptor — the atomic rename left the mounted handle on the
-	// detached inode. Remount it so reads hit the repaired file.
+	// detached inode. Reopen it so reads hit the repaired file. This is a
+	// descriptor swap, not an unmount+remount, so the master's registration
+	// never flips and no copy of the shard disappears from lookups.
 	for _, shardId := range generatedShardIds {
 		sid := erasure_coding.ShardId(shardId)
-		diskType := ""
-		mounted := false
 		for _, location := range vs.store.Locations {
-			if shard, found := location.FindEcShard(needle.VolumeId(req.VolumeId), sid); found {
-				diskType = string(shard.DiskType)
-				mounted = true
-				break
+			if _, rerr := location.ReopenEcShard(needle.VolumeId(req.VolumeId), sid); rerr != nil {
+				glog.Warningf("reopen regenerated ec shard %d.%d: %v", req.VolumeId, sid, rerr)
 			}
-		}
-		if !mounted {
-			continue
-		}
-		if uerr := vs.store.UnmountEcShards(needle.VolumeId(req.VolumeId), sid, 0); uerr != nil {
-			glog.Warningf("unmount regenerated ec shard %d.%d: %v", req.VolumeId, sid, uerr)
-			continue
-		}
-		if merr := vs.store.MountEcShards(req.Collection, needle.VolumeId(req.VolumeId), sid, diskType); merr != nil {
-			glog.Warningf("remount regenerated ec shard %d.%d: %v", req.VolumeId, sid, merr)
 		}
 	}
 
