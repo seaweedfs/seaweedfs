@@ -798,9 +798,8 @@ func (s *Server) handleDeleteIndex(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("index %q is not a vector index", arns.index))
 		return
 	}
-	// Deleting the catalog record is the delete: the engine derives an index's
-	// existence from its table, and DropIndex is unimplemented on the shared
-	// service.
+	// The catalog delete carries the authorization and runs first; the engine
+	// drop afterwards removes the data under the index's location.
 	var resp map[string]interface{}
 	err = s.catalog(r.Context(), "DeleteTable", &s3tables.DeleteTableRequest{
 		TableBucketARN: s.s3tablesArn(arns.bucket),
@@ -809,6 +808,12 @@ func (s *Server) handleDeleteIndex(w http.ResponseWriter, r *http.Request) {
 	}, &resp, r)
 	if err != nil {
 		catalogErr(w, err)
+		return
+	}
+	if _, err := s.vectors.DropIndex(r.Context(), &vector_pb.DropIndexRequest{
+		Table: tableID(arns.bucket, arns.index),
+	}); err != nil && status.Code(err) != codes.NotFound && status.Code(err) != codes.Unimplemented {
+		vectorErr(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, &DeleteIndexResponse{})
