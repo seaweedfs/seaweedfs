@@ -209,6 +209,8 @@ impl JobHandler for OptimizeIndicesHandler {
             success: true,
             error_message: String::new(),
             total_proposals: total,
+            skipped_reason: String::new(),
+            eligible_after: None,
         })?;
         Ok(())
     }
