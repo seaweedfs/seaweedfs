@@ -625,7 +625,7 @@ func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *
 			glog.Errorf("completeMultipartUpload: %s checksum computation failed: %v", checksumType, checksumErr)
 			return nil, nil, s3err.ErrInvalidPart
 		}
-		if objectChecksum := lookupHeaderOrQuery(r, query, checksumHeaderName); objectChecksum != "" && objectChecksum != checksumValue {
+		if objectChecksum := lookupHeaderOrQuery(r, query, checksumHeaderName); objectChecksum != "" && !matchesObjectChecksum(objectChecksum, checksumValue) {
 			return nil, nil, s3err.ErrBadDigest
 		}
 	}
@@ -1856,6 +1856,18 @@ func decodePartChecksum(partNumber int, entries []*filer_pb.Entry, checksumHeade
 		return nil, nil, fmt.Errorf("part %d has invalid checksum encoding: %w", partNumber, err)
 	}
 	return raw, entry, nil
+}
+
+// matchesObjectChecksum accepts the computed checksum verbatim or, for a
+// composite checksum, its bare base64 form without the "-N" part-count suffix.
+func matchesObjectChecksum(provided, computed string) bool {
+	if provided == computed {
+		return true
+	}
+	if i := strings.LastIndexByte(computed, '-'); i > 0 {
+		return provided == computed[:i]
+	}
+	return false
 }
 
 // computeCompositeChecksum computes a composite checksum from per-part checksums.
