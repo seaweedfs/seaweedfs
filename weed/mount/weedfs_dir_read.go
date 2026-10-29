@@ -303,11 +303,8 @@ func (wfs *WFS) doReadDirectory(ctx context.Context, input *fuse.ReadIn, out Dir
 				if errors.As(err, &tooLarge) {
 					return wfs.readDirectoryDirect(ctx, input, out, dh, dirPath, processEachEntryFn)
 				}
-				if ctx.Err() != nil {
-					return fuse.EINTR
-				}
 				glog.Errorf("dir ReadDirAll %s: %v", dirPath, err)
-				return fuse.EIO
+				return dirReadStatus(ctx, err)
 			}
 
 			// Serve the maintained-but-unverified cache if the filer is unreachable.
@@ -327,11 +324,8 @@ func (wfs *WFS) doReadDirectory(ctx context.Context, input *fuse.ReadIn, out Dir
 			})
 			dh.lastListedName = storeLastName
 			if loadErr != nil {
-				if ctx.Err() != nil {
-					return fuse.EINTR
-				}
 				glog.Errorf("list meta cache: %v", loadErr)
-				return fuse.EIO
+				return dirReadStatus(ctx, loadErr)
 			}
 		}
 
@@ -368,11 +362,8 @@ func (wfs *WFS) doReadDirectory(ctx context.Context, input *fuse.ReadIn, out Dir
 				// carries on from wherever the cached walk reached.
 				return wfs.readDirectoryDirect(ctx, input, out, dh, dirPath, processEachEntryFn)
 			}
-			if ctx.Err() != nil {
-				return fuse.EINTR
-			}
 			glog.Errorf("dir ReadDirAll %s: %v", dirPath, err)
-			return fuse.EIO
+			return dirReadStatus(ctx, err)
 		}
 
 		// Page from where the store itself reached, not from the last entry the
@@ -404,11 +395,8 @@ func (wfs *WFS) doReadDirectory(ctx context.Context, input *fuse.ReadIn, out Dir
 			return true, nil
 		})
 		if loadErr != nil {
-			if ctx.Err() != nil {
-				return fuse.EINTR
-			}
 			glog.Errorf("list meta cache: %v", loadErr)
-			return fuse.EIO
+			return dirReadStatus(ctx, loadErr)
 		}
 		dh.lastListedName = storeLastName
 
@@ -421,6 +409,23 @@ func (wfs *WFS) doReadDirectory(ctx context.Context, input *fuse.ReadIn, out Dir
 	}
 
 	return fuse.OK
+}
+
+// dirReadStatus maps a failed directory read to a FUSE status.
+//
+// A canceled read is retryable and must be reported as EINTR, never as EIO:
+// the kernel hands EIO from readdirent straight to the caller, and kubelet's
+// applyFSGroup then fails the volume mount instead of retrying. A cancellation
+// that arrives with the local context still alive belongs to a shared build
+// that another requester abandoned — the read itself can still be retried.
+func dirReadStatus(ctx context.Context, err error) fuse.Status {
+	if ctx.Err() != nil {
+		return fuse.EINTR
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return fuse.EINTR
+	}
+	return fuse.EIO
 }
 
 // ensureDirectoryVisited pulls the directory into the local cache, unless it is
@@ -444,11 +449,8 @@ func (wfs *WFS) readDirectoryDirect(ctx context.Context, input *fuse.ReadIn, out
 			skipCount := uint32(input.Offset-dh.entryStreamOffset) + batchSize
 			entries, snapshotTs, err := loadDirectoryEntriesDirect(listingCtx, wfs, wfs.option.UidGidMapper, dirPath, "", false, skipCount, dh.snapshotTsNs, wfs.option.IncludeSystemEntries)
 			if err != nil {
-				if ctx.Err() != nil {
-					return fuse.EINTR
-				}
 				glog.Errorf("list filer directory: %v", err)
-				return fuse.EIO
+				return dirReadStatus(ctx, err)
 			}
 			dh.entryStream = append(dh.entryStream, entries...)
 			if dh.snapshotTsNs == 0 {
@@ -481,11 +483,8 @@ func (wfs *WFS) readDirectoryDirect(ctx context.Context, input *fuse.ReadIn, out
 
 		entries, snapshotTs, err := loadDirectoryEntriesDirect(listingCtx, wfs, wfs.option.UidGidMapper, dirPath, lastEntryName, false, batchSize, dh.snapshotTsNs, wfs.option.IncludeSystemEntries)
 		if err != nil {
-			if ctx.Err() != nil {
-				return fuse.EINTR
-			}
 			glog.Errorf("list filer directory: %v", err)
-			return fuse.EIO
+			return dirReadStatus(ctx, err)
 		}
 		if dh.snapshotTsNs == 0 {
 			dh.snapshotTsNs = snapshotTs
