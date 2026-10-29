@@ -995,6 +995,32 @@ impl DiskLocation {
         Ok(())
     }
 
+    /// Swap the mounted shard's descriptor for a fresh open of its on-disk
+    /// file, keeping the registration — and therefore the master's view —
+    /// untouched. Mirrors Go's `DiskLocation.ReopenEcShard`: the rebuild
+    /// recreates a shard file under a handle that still serves the detached
+    /// inode, and reopening repoints reads at the repaired file without an
+    /// unmount/remount heartbeat flip-flop. Readers holding a cloned fd keep
+    /// the old inode until they finish — the same contract eviction relies on.
+    pub fn reopen_ec_shard(&mut self, vid: VolumeId, shard_id: ShardId) -> Result<bool, VolumeError> {
+        let dir = self.directory.clone();
+        let Some(ec_vol) = self.ec_volumes.get_mut(&vid) else {
+            return Ok(false);
+        };
+        let Some(existing) = ec_vol
+            .shards
+            .get_mut(shard_id as usize)
+            .and_then(|s| s.as_mut())
+        else {
+            return Ok(false);
+        };
+        let mut new_shard = EcVolumeShard::new(&dir, &existing.collection, vid, shard_id);
+        new_shard.disk_type = existing.disk_type.clone();
+        new_shard.open().map_err(VolumeError::Io)?;
+        *existing = new_shard;
+        Ok(true)
+    }
+
     /// Unmount EC shards for a volume on this location.
     ///
     /// Only shards that are actually mounted decrement the per-shard
@@ -2358,5 +2384,54 @@ mod tests {
                 p,
             );
         }
+    }
+
+    /// Mirrors Go's TestReopenEcShardReadsReplacedFile: a shard file the
+    /// rebuild replaced under its mount keeps serving the old inode through
+    /// the open descriptor; reopen_ec_shard must repoint the mounted shard at
+    /// the new file without dropping its registration.
+    #[test]
+    fn test_reopen_ec_shard_reads_replaced_file() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut loc = DiskLocation::new(
+            dir,
+            dir,
+            10,
+            DiskType::HardDrive,
+            MinFreeSpace::Percent(0.0),
+            Vec::new(),
+        )
+        .unwrap();
+
+        std::fs::write(format!("{}/pics_5.ecx", dir), [0u8; 16]).unwrap();
+        let shard_path = format!("{}/pics_5.ec00", dir);
+        std::fs::write(&shard_path, b"old bytes").unwrap();
+        loc.mount_ec_shards(VolumeId(5), "pics", &[0], "").unwrap();
+
+        let read_shard = |loc: &DiskLocation| -> Vec<u8> {
+            let ec_vol = loc.find_ec_volume(VolumeId(5)).expect("ec volume mounted");
+            let shard = ec_vol.shards[0].as_ref().expect("shard 0 mounted");
+            let mut buf = vec![0u8; shard.file_size() as usize];
+            let n = shard.read_at(&mut buf, 0).unwrap();
+            buf.truncate(n);
+            buf
+        };
+        assert_eq!(read_shard(&loc), b"old bytes");
+
+        // The rebuild writes a fresh file and renames it over the original:
+        // the mounted descriptor is now on the detached inode.
+        let rebuilt = format!("{}.rebuilding", shard_path);
+        std::fs::write(&rebuilt, b"new bytes").unwrap();
+        std::fs::rename(&rebuilt, &shard_path).unwrap();
+        assert_eq!(read_shard(&loc), b"old bytes", "mounted shard still reads the replaced inode");
+
+        assert!(loc.reopen_ec_shard(VolumeId(5), 0).unwrap());
+        assert_eq!(read_shard(&loc), b"new bytes", "reopened shard should read the regenerated file");
+
+        assert!(
+            !loc.reopen_ec_shard(VolumeId(5), 7).unwrap(),
+            "a shard that is not mounted should report false"
+        );
     }
 }

@@ -3287,6 +3287,21 @@ impl VolumeServer for VolumeGrpcService {
         )
         .map_err(|e| Status::internal(format!("RebuildEcxFile: {}", e)))?;
 
+        // A rebuilt shard that was mounted (e.g. its file was deleted under
+        // the mount) keeps serving the detached inode through the open
+        // descriptor. Reopen it in place so reads hit the regenerated file —
+        // mirrors Go's ReopenEcShard loop in VolumeEcShardsRebuild.
+        {
+            let mut store = self.state.store.write().unwrap_or_else(|e| e.into_inner());
+            for &shard_id in &missing {
+                for loc in store.locations.iter_mut() {
+                    if let Err(e) = loc.reopen_ec_shard(vid, shard_id as ShardId) {
+                        tracing::warn!("reopen rebuilt ec shard {}.{}: {}", vid.0, shard_id, e);
+                    }
+                }
+            }
+        }
+
         Ok(Response::new(
             volume_server_pb::VolumeEcShardsRebuildResponse {
                 rebuilt_shard_ids: missing,
