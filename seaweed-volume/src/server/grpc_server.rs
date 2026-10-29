@@ -1603,6 +1603,7 @@ impl VolumeServer for VolumeGrpcService {
                 NeedleId(req.last_needle_key),
                 Cookie(req.last_needle_cookie),
                 Size(req.last_needle_size),
+                req.entries_hash,
             ) {
                 Ok((_offset, true)) => {
                     drop(store);

@@ -4858,11 +4858,43 @@ impl Volume {
         Ok((offset, false))
     }
 
+    /// FNV-1a 64 over the (key, size) of the first entry_count index entries.
+    /// The offset field is skipped because the same record sits at different
+    /// offsets on different replicas. Mirrors hashIndexEntries in
+    /// weed/storage/volume_backup.go.
+    fn hash_index_entries(&self, entry_count: u64) -> Result<u64, VolumeError> {
+        const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+        const FNV_PRIME: u64 = 0x100000001b3;
+
+        let idx_path = self.file_name(".idx");
+        let mut idx_file = File::open(&idx_path)?;
+        let mut h: u64 = FNV_OFFSET;
+        let mut buf = vec![0u8; 1 << 20];
+        let mut remaining = entry_count * NEEDLE_MAP_ENTRY_SIZE as u64;
+        while remaining > 0 {
+            let want = remaining.min(buf.len() as u64) as usize;
+            std::io::Read::read_exact(&mut idx_file, &mut buf[..want])?;
+            for i in (0..want).step_by(NEEDLE_MAP_ENTRY_SIZE) {
+                for &b in &buf[i..i + 8] {
+                    h = (h ^ b as u64).wrapping_mul(FNV_PRIME);
+                }
+                for &b in &buf[i + 12..i + NEEDLE_MAP_ENTRY_SIZE] {
+                    h = (h ^ b as u64).wrapping_mul(FNV_PRIME);
+                }
+            }
+            remaining -= want as u64;
+        }
+        Ok(h)
+    }
+
     /// Resume an incremental copy by index position instead of by append_at_ns,
     /// whose stamps differ across replicas for the same needle. The replica's
     /// entry at position entry_count-1 must match the backup's last entry in
-    /// key, size and cookie; the copy then continues from the replica's entry
-    /// at position entry_count, so nothing is skipped or appended twice.
+    /// key, size and cookie, and its first entry_count entries must hash the
+    /// same — a boundary match alone is not proof, since replicated writes can
+    /// land in a different order on this replica. The copy then continues from
+    /// the replica's entry at position entry_count, so nothing is skipped or
+    /// appended twice.
     /// Mirrors Go's ResumeByLastEntry in weed/storage/volume_backup.go.
     /// Returns (offset, up_to_date).
     pub fn resume_by_last_entry(
@@ -4871,6 +4903,7 @@ impl Volume {
         key: NeedleId,
         cookie: Cookie,
         size: Size,
+        entries_hash: u64,
     ) -> Result<(Offset, bool), VolumeError> {
         let io = self.io.read().unwrap();
         let file_size = io.nm.as_ref().map_or(0, |nm| nm.index_file_size()) as i64;
@@ -4894,6 +4927,10 @@ impl Volume {
         self.read_exact_at_backend(&io, &mut header_buf, last_offset.to_actual_offset() as u64)?;
         let (last_cookie, _id, _s) = Needle::parse_header(&header_buf);
         if last_cookie != cookie {
+            return Err(VolumeError::IncrementalCopyDiverged);
+        }
+
+        if self.hash_index_entries(entry_count)? != entries_hash {
             return Err(VolumeError::IncrementalCopyDiverged);
         }
 
