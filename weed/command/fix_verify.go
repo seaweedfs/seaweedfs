@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
@@ -413,18 +414,16 @@ func verifyDatFileWith(datName string, vid needle.VolumeId, opts datVerifyOption
 		return nil, nil, err
 	}
 
-	var sbBytes [super_block.SuperBlockSize]byte
-	if _, err = f.ReadAt(sbBytes[:], 0); err != nil {
-		return nil, nil, fmt.Errorf("read super block of %s: %w", datName, err)
+	// the DiskFile wrapper only reads the super block; f stays ours and is closed above
+	sb, err := super_block.ReadSuperBlock(backend.NewDiskFile(f))
+	if err != nil {
+		return nil, nil, err
 	}
-	version := needle.Version(sbBytes[0])
+	version := sb.Version
 	if version < needle.Version1 || version > needle.Version3 {
 		return nil, nil, fmt.Errorf("%s: unsupported needle version %d in super block", datName, version)
 	}
-	base := int64(super_block.SuperBlockSize)
-	if version != needle.Version1 {
-		base += int64(binary.BigEndian.Uint16(sbBytes[6:8]))
-	}
+	base := int64(sb.BlockSize())
 
 	s := &datVerifier{
 		f: f, vid: vid, version: version, base: base, size: st.Size(), opts: opts,

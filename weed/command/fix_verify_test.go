@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -505,4 +506,25 @@ func TestFixCompactDeleteOriginalAndDryRun(t *testing.T) {
 		t.Error("-deleteOriginal should have removed .dat.bak")
 	}
 	scrubVolume(t, dir)
+}
+
+// super_block.ReadSuperBlock cannot read a super block with extra data (it parses
+// zeros as protobuf), so the volume server cannot load such a volume either. The
+// tools must reject it cleanly instead of guessing at the layout.
+func TestSuperBlockExtraIsRejectedCleanly(t *testing.T) {
+	datName, _ := buildVerifyFixture(t, 5)
+	orig, err := os.ReadFile(datName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sb := super_block.SuperBlock{
+		Version: needle.GetCurrentVersion(), ReplicaPlacement: &super_block.ReplicaPlacement{}, Ttl: &needle.TTL{},
+		Extra: &master_pb.SuperBlockExtra{ErasureCoding: &master_pb.SuperBlockExtra_ErasureCoding{Data: 10, Parity: 4}},
+	}
+	if err := os.WriteFile(datName, append(sb.Bytes(), orig[8:]...), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := verifyDatFile(datName, 1, datVerifyOptions{}, func(*needle.Needle, int64) {}); err == nil || !strings.Contains(err.Error(), "super block extra") {
+		t.Fatalf("want a clear super block error, got %v", err)
+	}
 }
