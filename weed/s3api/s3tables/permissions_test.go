@@ -494,3 +494,31 @@ func TestArnScopedPrincipalMatchesOnlyForDeny(t *testing.T) {
 		t.Error("an ARN-scoped allow must not grant on the normalized name alone")
 	}
 }
+
+// A service wildcard administers only its own service: s3tables:* satisfies
+// the admin and identity grants for table operations but must not reach an
+// s3vectors operation.
+func TestServiceWildcardScopesToOwnService(t *testing.T) {
+	vectorOp := "s3vectors:DeleteVectors"
+	vectorArn := "arn:aws:s3vectors:us-east-1:acct:bucket/b"
+	tableOnly := &PolicyContext{IdentityActions: []string{"s3tables:*"}}
+
+	if CheckPermissionWithContext(vectorOp, "bob", "owner", "", vectorArn, tableOnly) {
+		t.Error("s3tables:* must not grant a vector operation")
+	}
+	if CheckPermissionWithContext(vectorOp, "admin", "owner", "", vectorArn, tableOnly) {
+		t.Error("s3tables:* must not fire the admin bypass for a vector operation")
+	}
+	if !CheckPermissionWithContext("GetTable", "bob", "owner", "", "arn:aws:s3tables:b", tableOnly) {
+		t.Error("s3tables:* keeps administering table operations")
+	}
+
+	vectorAdmin := &PolicyContext{IdentityActions: []string{"s3vectors:*"}}
+	if !CheckPermissionWithContext(vectorOp, "bob", "owner", "", vectorArn, vectorAdmin) {
+		t.Error("s3vectors:* administers vector operations")
+	}
+	global := &PolicyContext{IdentityActions: []string{"Admin"}}
+	if !CheckPermissionWithContext(vectorOp, "admin", "owner", "", vectorArn, global) {
+		t.Error("the global admin action keeps the bypass on vector operations")
+	}
+}

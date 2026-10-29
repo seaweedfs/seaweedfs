@@ -109,7 +109,7 @@ func CheckPermissionWithContext(operation, principal, owner, resourcePolicy, res
 	}
 
 	// Admin always has permission.
-	if principal == s3_constants.AccountAdminId && adminCaller(ctx) {
+	if principal == s3_constants.AccountAdminId && adminCaller(operation, ctx) {
 		return true
 	}
 
@@ -125,7 +125,7 @@ func CheckTableOrBucketPermission(operation, principal, resourceOwner, resourceP
 	if principal == "" {
 		return false
 	}
-	if principal == s3_constants.AccountAdminId && adminCaller(ctx) {
+	if principal == s3_constants.AccountAdminId && adminCaller(operation, ctx) {
 		return true
 	}
 	if matchesDenyStatement(operation, principal, resourcePolicy, resourceARN, ctx) ||
@@ -184,16 +184,16 @@ func statementActions(spec interface{}) []string {
 // deniedByPolicy reports whether another applicable resource policy vetoes the
 // request. The admin account is exempt, matching CheckPermissionWithContext.
 func deniedByPolicy(operation, principal, resourcePolicy, resourceARN string, ctx *PolicyContext) bool {
-	return (principal != s3_constants.AccountAdminId || !adminCaller(ctx)) &&
+	return (principal != s3_constants.AccountAdminId || !adminCaller(operation, ctx)) &&
 		matchesDenyStatement(operation, principal, resourcePolicy, resourceARN, ctx)
 }
 
 // adminCaller reports whether the admin principal bypass applies. Trusted
 // transports carry no action list, and an identified caller holds it only
-// when the identity grants an admin action — a principal that merely
-// normalizes to the admin id does not bypass policy denies.
-func adminCaller(ctx *PolicyContext) bool {
-	return ctx == nil || len(ctx.IdentityActions) == 0 || hasAdminAction(ctx.IdentityActions)
+// when the identity administers the operation's service — a principal that
+// merely normalizes to the admin id does not bypass policy denies.
+func adminCaller(operation string, ctx *PolicyContext) bool {
+	return ctx == nil || len(ctx.IdentityActions) == 0 || hasAdminActionFor(operation, ctx.IdentityActions)
 }
 
 // matchesDenyStatement reports whether the JSON policy carries a statement
@@ -316,7 +316,7 @@ func hasIdentityPermission(operation string, ctx *PolicyContext) bool {
 	if !strings.Contains(operation, ":") {
 		fullAction = "s3tables:" + operation
 	}
-	if hasAdminAction(ctx.IdentityActions) {
+	if hasAdminActionFor(operation, ctx.IdentityActions) {
 		return true
 	}
 	candidates := []string{operation, fullAction}
@@ -342,6 +342,23 @@ func hasIdentityPermission(operation string, ctx *PolicyContext) bool {
 func hasAdminAction(actions []string) bool {
 	for _, action := range actions {
 		if action == "*" || action == s3_constants.ACTION_ADMIN || action == "s3:*" || action == "s3tables:*" {
+			return true
+		}
+	}
+	return false
+}
+
+// hasAdminActionFor reports whether the action list administers the
+// operation's own service: the global admin markers always apply, while a
+// service wildcard covers only that service — s3tables:* never reaches an
+// s3vectors operation.
+func hasAdminActionFor(operation string, actions []string) bool {
+	if !strings.Contains(operation, ":") {
+		operation = "s3tables:" + operation
+	}
+	serviceWildcard := operation[:strings.Index(operation, ":")] + ":*"
+	for _, action := range actions {
+		if action == "*" || action == s3_constants.ACTION_ADMIN || action == "s3:*" || action == serviceWildcard {
 			return true
 		}
 	}
