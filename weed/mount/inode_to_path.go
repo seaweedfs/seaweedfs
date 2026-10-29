@@ -60,7 +60,11 @@ type dirState struct {
 	lastAccess         time.Time
 	lastRefresh        time.Time
 	lastRebuildAttempt time.Time
-	subdirCount        int32 // tracked in-memory for POSIX directory nlink
+	// lastSectionAttempts backs off section refreshes per section (keyed by
+	// the section's lower bound) so one failing range does not stall the
+	// rest of the directory.
+	lastSectionAttempts map[string]time.Time
+	subdirCount         int32 // tracked in-memory for POSIX directory nlink
 }
 
 func (d *dirState) resetCacheState() {
@@ -68,6 +72,7 @@ func (d *dirState) resetCacheState() {
 	d.readDirDirect = false
 	d.cachedExpiresTime = time.Time{}
 	d.lastRebuildAttempt = time.Time{}
+	d.lastSectionAttempts = nil
 }
 
 // appendPaths appends every path the inode is reachable by, primary first.
@@ -338,6 +343,7 @@ func (i *InodeToPath) MarkChildrenCached(fullpath util.FullPath) {
 	d.lastAccess = now
 	d.lastRefresh = now
 	d.lastRebuildAttempt = time.Time{}
+	d.lastSectionAttempts = nil
 	i.markWasCached(fullpath)
 	if i.cacheMetaTtlSec > 0 {
 		d.cachedExpiresTime = now.Add(i.cacheMetaTtlSec)
@@ -415,17 +421,35 @@ func (i *InodeToPath) MarkRebuildAttempt(fullpath util.FullPath, now time.Time) 
 	}
 }
 
-// ShouldRefreshStaleSection reports whether a lookup should re-list the stale
-// section of a still-cached directory, backing off for cooldown after a
-// failed attempt — the section-level analog of ShouldRebuildExpiredDir.
-func (i *InodeToPath) ShouldRefreshStaleSection(fullpath util.FullPath, cooldown time.Duration) bool {
+// ShouldRefreshStaleSection reports whether a lookup should re-list the
+// stale section of a still-cached directory, backing off for cooldown after
+// a failed attempt on that same section — a neighbouring range's failure
+// does not stall this one. sectionKey is the section's lower bound.
+func (i *InodeToPath) ShouldRefreshStaleSection(fullpath util.FullPath, sectionKey string, cooldown time.Duration) bool {
 	i.RLock()
 	defer i.RUnlock()
 	d := i.dirStateOf(fullpath)
 	if d == nil || d.readDirDirect || !d.isChildrenCached {
 		return false
 	}
-	return d.lastRebuildAttempt.IsZero() || time.Since(d.lastRebuildAttempt) >= cooldown
+	last, ok := d.lastSectionAttempts[sectionKey]
+	return !ok || time.Since(last) >= cooldown
+}
+
+// MarkSectionRefreshAttempt records that a refresh of the section keyed by
+// sectionKey was attempted at now — the section-level analog of
+// MarkRebuildAttempt.
+func (i *InodeToPath) MarkSectionRefreshAttempt(fullpath util.FullPath, sectionKey string, now time.Time) {
+	i.Lock()
+	defer i.Unlock()
+	d := i.dirStateOf(fullpath)
+	if d == nil {
+		return
+	}
+	if d.lastSectionAttempts == nil {
+		d.lastSectionAttempts = make(map[string]time.Time)
+	}
+	d.lastSectionAttempts[sectionKey] = now
 }
 
 func (i *InodeToPath) HasInode(inode uint64) bool {

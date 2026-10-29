@@ -651,7 +651,7 @@ func (wfs *WFS) lookupEntry(ctx context.Context, fullpath util.FullPath) (*filer
 			// refresh cannot capture pre-flush metadata. A failing refresh
 			// backs off under the same cooldown the rebuild gate uses rather
 			// than re-listing the range on every lookup.
-			if wfs.inodeToPath.ShouldRefreshStaleSection(dirPath, expiredDirRebuildCooldown) {
+			if sectionLo, stale := meta_cache.StaleRangeOf(wfs.metaCache, dirPath, name); stale && wfs.inodeToPath.ShouldRefreshStaleSection(dirPath, sectionLo, expiredDirRebuildCooldown) {
 				if inode, found := wfs.inodeToPath.GetInode(fullpath); found {
 					if !wfs.waitForPendingAsyncFlush(ctx, inode) {
 						return nil, entryVersion{}, fuse.EINTR
@@ -664,7 +664,7 @@ func (wfs *WFS) lookupEntry(ctx context.Context, fullpath util.FullPath) (*filer
 						// same way ReadDir falls back to read-through.
 						wfs.purgeDirectoryCache(dirPath)
 					} else {
-						wfs.inodeToPath.MarkRebuildAttempt(dirPath, time.Now())
+						wfs.inodeToPath.MarkSectionRefreshAttempt(dirPath, sectionLo, time.Now())
 						glog.V(2).Infof("lookupEntry: refresh stale section of %s: %v", dirPath, err)
 					}
 				}

@@ -261,6 +261,14 @@ func EnsureNameFresh(ctx context.Context, mc *MetaCache, client filer_pb.FilerCl
 	return mc.refreshSection(ctx, client, dirPath, r.lo, r.hi)
 }
 
+// StaleRangeOf returns the lower bound of the section covering name when it
+// needs re-validation — the key a caller may use to scope refresh backoff
+// per section.
+func StaleRangeOf(mc *MetaCache, dirPath util.FullPath, name string) (string, bool) {
+	r, stale := mc.staleRangeOf(dirPath, name)
+	return r.lo, stale
+}
+
 func (mc *MetaCache) staleRangeOf(dirPath util.FullPath, name string) (nameRange, bool) {
 	mc.RLock()
 	defer mc.RUnlock()
