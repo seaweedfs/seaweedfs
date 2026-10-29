@@ -86,16 +86,17 @@ func TestVectorBucketPolicyEndToEnd(t *testing.T) {
 	want("writer", "PutVectors", put, http.StatusOK)
 	want("reader", "GetVectors", get, http.StatusOK)
 
-	// Deny vetoes an Allow on the same action; the read grant survives.
+	// Deny vetoes an Allow that also covers the action; the read grant survives.
 	putPolicy(`{"Version":"2012-10-17","Statement":[` +
-		`{"Effect":"Allow","Principal":"*","Action":"s3vectors:Get*","Resource":"` + bucketArn + `/*"},` +
+		`{"Effect":"Allow","Principal":"*","Action":"s3vectors:*","Resource":"` + bucketArn + `/*"},` +
 		`{"Effect":"Deny","Principal":"*","Action":"s3vectors:PutVectors","Resource":"` + bucketArn + `/*"}]}`)
 	want("writer", "PutVectors", put, http.StatusForbidden)
 	want("reader", "GetVectors", get, http.StatusOK)
 
-	// Removing the policy restores owner-only access: the writer loses its
-	// grant while the owner keeps full control.
+	// Removing the policy restores owner-only access: both identities lose
+	// their grants while the owner keeps full control.
 	want("", "DeleteVectorBucketPolicy", &DeleteVectorBucketPolicyRequest{VectorBucketName: "vec-bucket"}, http.StatusOK)
 	want("writer", "PutVectors", put, http.StatusForbidden)
+	want("reader", "GetVectors", get, http.StatusForbidden)
 	want("", "PutVectors", put, http.StatusOK)
 }
