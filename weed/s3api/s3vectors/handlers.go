@@ -322,7 +322,7 @@ func (s *Server) handleListVectorBuckets(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	principal := s.tables.PrincipalFor(identityOf(r))
-	pctx := s.tables.PolicyContext(identityOf(r))
+	pctx := s.tables.PolicyContext(r)
 	// The catalog token continues the filtered page: ICEBERG buckets drop out
 	// of the listing, Lance and format-less legacy buckets stay.
 	out := &ListVectorBucketsResponse{NextToken: resp.ContinuationToken}
@@ -716,7 +716,7 @@ var errVectorDenied = &s3tables.S3TablesError{Type: s3tables.ErrCodeAccessDenied
 func (s *Server) checkVectorPolicyDoc(r *http.Request, action, bucket, owner string, ext map[string][]byte) bool {
 	principal := s.tables.PrincipalFor(identityOf(r))
 	return s3tables.CheckPermissionWithContext(action, principal, owner,
-		vectorPolicyFromExt(ext), s.vectorBucketArn(bucket), s.tables.PolicyContext(identityOf(r)))
+		vectorPolicyFromExt(ext), s.vectorBucketArn(bucket), s.tables.PolicyContext(r))
 }
 
 // authorizeVector grants the request's own vector operation — not a catalog
@@ -739,7 +739,7 @@ func (s *Server) authorizeVector(ctx context.Context, r *http.Request, action, b
 		resourceARN = s.indexArn(bucket, index)
 	}
 	principal := s.tables.PrincipalFor(identityOf(r))
-	if !s3tables.CheckPermissionWithContext(action, principal, record.OwnerAccountID, policy, resourceARN, s.tables.PolicyContext(identityOf(r))) {
+	if !s3tables.CheckPermissionWithContext(action, principal, record.OwnerAccountID, policy, resourceARN, s.tables.PolicyContext(r)) {
 		return nil, &s3tables.S3TablesError{Type: s3tables.ErrCodeAccessDenied, Message: "access denied"}
 	}
 	if !isVectorBucket(record) {

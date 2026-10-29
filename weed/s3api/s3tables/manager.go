@@ -58,11 +58,13 @@ func (m *Manager) PrincipalFor(identity string) string {
 }
 
 // PolicyContext builds the evaluation context a Manager call's synthesized
-// request produces: the configured local-account predicate, plus the
-// open-by-default fallback only for a trusted caller or no resolved identity.
-func (m *Manager) PolicyContext(identity string) *PolicyContext {
-	ctx := &PolicyContext{IsLocalAccountID: m.handler.localAccountIDs}
-	if m.handler.trusted || (m.handler.defaultAllow && identity == "") {
+// request produces: the configured local-account predicate, the caller's own
+// identity actions so admin and action grants resolve on privileges rather
+// than the forwarded name, plus the open-by-default fallback only for a
+// trusted caller or no resolved identity.
+func (m *Manager) PolicyContext(r *http.Request) *PolicyContext {
+	ctx := &PolicyContext{IsLocalAccountID: m.handler.localAccountIDs, IdentityActions: getIdentityActions(r)}
+	if m.handler.trusted || (m.handler.defaultAllow && s3_constants.GetIdentityNameFromContext(r) == "") {
 		ctx.DefaultAllow = true
 	}
 	return ctx

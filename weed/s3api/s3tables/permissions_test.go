@@ -303,6 +303,26 @@ func TestCheckTableOrBucketPermissionDenyVeto(t *testing.T) {
 	}
 }
 
+// A principal that merely normalizes to the admin id must not bypass policy
+// denies: when the caller's actions are known, the admin bypass requires an
+// admin action; transports carrying no action list keep it.
+func TestCheckPermissionAdminRequiresAdminAction(t *testing.T) {
+	denyAll := `{"Statement":[{"Effect":"Deny","Principal":"*","Action":"s3tables:DeleteTable","Resource":"*"}]}`
+	arn := "arn:aws:s3tables:us-east-1:acct:bucket/b/table/ns/t"
+
+	reader := &PolicyContext{IdentityActions: []string{"Read"}}
+	if CheckPermissionWithContext("s3tables:DeleteTable", "admin", "admin", denyAll, arn, reader) {
+		t.Error("a name-only admin must not bypass an explicit deny")
+	}
+	admin := &PolicyContext{IdentityActions: []string{"Admin"}}
+	if !CheckPermissionWithContext("s3tables:DeleteTable", "admin", "admin", denyAll, arn, admin) {
+		t.Error("an identity holding the admin action keeps the bypass")
+	}
+	if !CheckPermissionWithContext("s3tables:DeleteTable", "admin", "admin", denyAll, arn, nil) {
+		t.Error("a caller with no action list keeps the trusted bypass")
+	}
+}
+
 func TestCheckTableOrBucketPermissionOwnerlessFailsClosed(t *testing.T) {
 	ctx := &PolicyContext{
 		IdentityActions: []string{"s3tables:*"},

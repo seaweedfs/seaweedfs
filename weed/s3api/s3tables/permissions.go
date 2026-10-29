@@ -109,7 +109,7 @@ func CheckPermissionWithContext(operation, principal, owner, resourcePolicy, res
 	}
 
 	// Admin always has permission.
-	if principal == s3_constants.AccountAdminId {
+	if principal == s3_constants.AccountAdminId && adminCaller(ctx) {
 		return true
 	}
 
@@ -125,7 +125,7 @@ func CheckTableOrBucketPermission(operation, principal, resourceOwner, resourceP
 	if principal == "" {
 		return false
 	}
-	if principal == s3_constants.AccountAdminId {
+	if principal == s3_constants.AccountAdminId && adminCaller(ctx) {
 		return true
 	}
 	if matchesDenyStatement(operation, principal, resourcePolicy, resourceARN, ctx) ||
@@ -184,8 +184,16 @@ func statementActions(spec interface{}) []string {
 // deniedByPolicy reports whether another applicable resource policy vetoes the
 // request. The admin account is exempt, matching CheckPermissionWithContext.
 func deniedByPolicy(operation, principal, resourcePolicy, resourceARN string, ctx *PolicyContext) bool {
-	return principal != s3_constants.AccountAdminId &&
+	return (principal != s3_constants.AccountAdminId || !adminCaller(ctx)) &&
 		matchesDenyStatement(operation, principal, resourcePolicy, resourceARN, ctx)
+}
+
+// adminCaller reports whether the admin principal bypass applies. Trusted
+// transports carry no action list, and an identified caller holds it only
+// when the identity grants an admin action — a principal that merely
+// normalizes to the admin id does not bypass policy denies.
+func adminCaller(ctx *PolicyContext) bool {
+	return ctx == nil || len(ctx.IdentityActions) == 0 || hasAdminAction(ctx.IdentityActions)
 }
 
 // matchesDenyStatement reports whether the JSON policy carries a statement

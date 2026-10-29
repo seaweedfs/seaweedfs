@@ -6,19 +6,16 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
-type contextKey string
-
-const identityKey contextKey = "s3vectors-identity"
-
 func contextWithIdentity(ctx context.Context, identity string) context.Context {
-	return context.WithValue(ctx, identityKey, identity)
+	return s3_constants.SetIdentityNameInContext(ctx, identity)
 }
 
 func identityOf(r *http.Request) string {
-	v, _ := r.Context().Value(identityKey).(string)
-	return v
+	return s3_constants.GetIdentityNameFromContext(r)
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload interface{}) {
