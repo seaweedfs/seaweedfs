@@ -680,10 +680,6 @@ func (s *Server) authorizeVector(ctx context.Context, r *http.Request, action, b
 	if err != nil {
 		return nil, err
 	}
-	if !isVectorBucket(record) {
-		return nil, &s3tables.S3TablesError{Type: s3tables.ErrCodeNoSuchBucket,
-			Message: fmt.Sprintf("vector bucket %s not found", bucket)}
-	}
 	policy, err := s.vectorPolicy(ctx, bucket)
 	if err != nil {
 		return nil, err
@@ -695,6 +691,10 @@ func (s *Server) authorizeVector(ctx context.Context, r *http.Request, action, b
 	principal := s.tables.PrincipalFor(identityOf(r))
 	if !s3tables.CheckPermissionWithContext(action, principal, record.OwnerAccountID, policy, resourceARN, s.tables.PolicyContext(identityOf(r))) {
 		return nil, &s3tables.S3TablesError{Type: s3tables.ErrCodeAccessDenied, Message: "access denied"}
+	}
+	if !isVectorBucket(record) {
+		return nil, &s3tables.S3TablesError{Type: s3tables.ErrCodeNoSuchBucket,
+			Message: fmt.Sprintf("vector bucket %s not found", bucket)}
 	}
 	return record, nil
 }
