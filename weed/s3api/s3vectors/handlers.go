@@ -1515,6 +1515,9 @@ func filterExpr(filter map[string]interface{}) (string, error) {
 			if !ok {
 				return "", fmt.Errorf("%s expects a list", key)
 			}
+			if len(sub) == 0 {
+				return "", fmt.Errorf("%s expects a non-empty list", key)
+			}
 			exprs := make([]string, 0, len(sub))
 			for _, item := range sub {
 				m, ok := item.(map[string]interface{})
@@ -1524,6 +1527,9 @@ func filterExpr(filter map[string]interface{}) (string, error) {
 				e, err := filterExpr(m)
 				if err != nil {
 					return "", err
+				}
+				if e == "" {
+					return "", fmt.Errorf("%s expects non-empty objects", key)
 				}
 				exprs = append(exprs, e)
 			}

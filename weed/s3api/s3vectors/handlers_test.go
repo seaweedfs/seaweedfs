@@ -296,6 +296,9 @@ func TestTranslateFilter(t *testing.T) {
 		"in non-list":       {"k": map[string]interface{}{"$in": "v"}},
 		"top-level bad op":  {"$bogus": []interface{}{}},
 		"nested bad member": {"$and": []interface{}{"x"}},
+		"empty and list":    {"$and": []interface{}{}},
+		"empty or list":     {"$or": []interface{}{}},
+		"empty sub-object":  {"$and": []interface{}{map[string]interface{}{}}},
 	} {
 		if _, err := translateFilter(filter); err == nil {
 			t.Fatalf("%s should fail", name)
