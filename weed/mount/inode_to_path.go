@@ -27,9 +27,19 @@ type InodeToPath struct {
 	// a dropped listing instead of reading through per entry forever.
 	// MarkDirectoryReadThrough removes oversized directories from it,
 	// RemovePath drops deleted ones, and wasCachedOrder bounds the retained
-	// history with FIFO eviction.
-	wasCachedDirs  map[util.FullPath]struct{}
-	wasCachedOrder []util.FullPath
+	// history with FIFO eviction. Records are tagged with an insertion
+	// generation so a stale queue slot can never evict a path's newer record.
+	wasCachedDirs  map[util.FullPath]uint64
+	wasCachedOrder []wasCachedEntry
+	wasCachedGen   uint64
+}
+
+// wasCachedEntry pairs a queued path with the insertion generation that put
+// it there; removals leave the slot behind, and only a matching generation
+// may evict the live record.
+type wasCachedEntry struct {
+	path util.FullPath
+	gen  uint64
 }
 
 // InodeEntry exists per inode the kernel references. Directory cache state is
@@ -142,7 +152,7 @@ func NewInodeToPath(root util.FullPath, ttlSec int) *InodeToPath {
 		path2inode:      make(map[util.FullPath]uint64),
 		dirStates:       make(map[uint64]*dirState),
 		dirPaths:        make(map[util.FullPath]*dirState),
-		wasCachedDirs:   make(map[util.FullPath]struct{}),
+		wasCachedDirs:   make(map[util.FullPath]uint64),
 		cacheMetaTtlSec: time.Second * time.Duration(ttlSec),
 	}
 	t.inode2path[1] = &InodeEntry{
@@ -345,12 +355,15 @@ func (i *InodeToPath) markWasCached(fullpath util.FullPath) {
 	if _, ok := i.wasCachedDirs[fullpath]; ok {
 		return
 	}
-	i.wasCachedDirs[fullpath] = struct{}{}
-	i.wasCachedOrder = append(i.wasCachedOrder, fullpath)
+	i.wasCachedGen++
+	i.wasCachedDirs[fullpath] = i.wasCachedGen
+	i.wasCachedOrder = append(i.wasCachedOrder, wasCachedEntry{path: fullpath, gen: i.wasCachedGen})
 	for len(i.wasCachedOrder) > maxWasCachedDirs {
 		oldest := i.wasCachedOrder[0]
 		i.wasCachedOrder = i.wasCachedOrder[1:]
-		delete(i.wasCachedDirs, oldest)
+		if gen, ok := i.wasCachedDirs[oldest.path]; ok && gen == oldest.gen {
+			delete(i.wasCachedDirs, oldest.path)
+		}
 	}
 }
 

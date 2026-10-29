@@ -427,6 +427,33 @@ func TestForgetKeepsDirRebuildable(t *testing.T) {
 	}
 }
 
+// TestReusedPathKeepsRebuildRecord covers a directory deleted and re-cached
+// while its first queue slot is still pending: eviction reaching the stale
+// slot must not delete the newer record, or the directory reads through per
+// lookup until the next listing.
+func TestReusedPathKeepsRebuildRecord(t *testing.T) {
+	itp := NewInodeToPath("/", 60)
+	dir := util.FullPath("/hot")
+	now := time.Now().Unix()
+
+	itp.Lookup(dir, now, true, false, 0, true)
+	itp.MarkChildrenCached(dir)
+	itp.RemovePath(dir, nil)
+
+	inode := itp.Lookup(dir, now+1, true, false, 0, true)
+	itp.MarkChildrenCached(dir)
+
+	for n := 0; n < maxWasCachedDirs-1; n++ {
+		itp.markWasCached(util.FullPath(fmt.Sprintf("/filler%d", n)))
+	}
+
+	itp.Forget(inode, 1, nil, nil)
+	itp.Lookup(dir, now+2, true, false, 0, true)
+	if !itp.ShouldRebuildExpiredDir(dir, expiredDirRebuildCooldown) {
+		t.Fatal("re-cached directory lost its rebuild record to a stale queue entry")
+	}
+}
+
 // TestLookupRefreshesStaleSection covers a directory still cached but with an
 // invalidated section: without a refresh on lookup, every lookup in that
 // range reads through until a listing re-validates it.
