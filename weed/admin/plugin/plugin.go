@@ -1237,6 +1237,16 @@ func (r *Plugin) handleDetectionComplete(workerID string, message *plugin_pb.Det
 		stage = "skipped"
 		messageText = message.SkippedReason
 	}
+	details := map[string]interface{}{
+		"success":         message.Success,
+		"total_proposals": message.TotalProposals,
+	}
+	if message.SkippedReason != "" {
+		details["skipped_reason"] = message.SkippedReason
+	}
+	if message.EligibleAfter != nil {
+		details["eligible_after"] = message.EligibleAfter.AsTime().UTC().Format(time.RFC3339)
+	}
 	r.appendActivity(JobActivity{
 		JobType:    resolvedJobType,
 		RequestID:  message.RequestId,
@@ -1245,12 +1255,7 @@ func (r *Plugin) handleDetectionComplete(workerID string, message *plugin_pb.Det
 		Stage:      stage,
 		Message:    messageText,
 		OccurredAt: timeToPtr(time.Now().UTC()),
-		Details: map[string]interface{}{
-			"success":         message.Success,
-			"total_proposals": message.TotalProposals,
-			"skipped_reason":  message.SkippedReason,
-			"eligible_after":  message.EligibleAfter,
-		},
+		Details:    details,
 	})
 
 	r.safeSendDetectionComplete(message.RequestId, message)
