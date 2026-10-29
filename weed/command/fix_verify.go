@@ -87,6 +87,15 @@ type datVerifyOptions struct {
 	maxNeedleSize int64
 	window        int
 	zeroWindow    int
+	// Progress, when set, is called every few thousand needles with the current offset.
+	Progress func(pos, total int64)
+}
+
+// datVisitor receives the events of one scan. raw header and body are only valid during the call.
+type datVisitor struct {
+	needle func(n *needle.Needle, offset int64, header, body []byte) error
+	// damage is called for every skipped region [start, end); tail is true when nothing valid follows.
+	damage func(start, end int64, tail bool) error
 }
 
 func (o *datVerifyOptions) normalize() {
@@ -386,6 +395,13 @@ func (s *datVerifier) recordBad(start, end int64, tail bool, cause error, hit *n
 // every needle that verifies. Damage never aborts the walk: the scanner looks
 // for the next verifiable needle and records the skipped bytes as an anomaly.
 func verifyDatFile(datName string, vid needle.VolumeId, opts datVerifyOptions, visit func(n *needle.Needle, offset int64)) (*datVerifySummary, []datAnomaly, error) {
+	return verifyDatFileWith(datName, vid, opts, &datVisitor{needle: func(n *needle.Needle, offset int64, _, _ []byte) error {
+		visit(n, offset)
+		return nil
+	}})
+}
+
+func verifyDatFileWith(datName string, vid needle.VolumeId, opts datVerifyOptions, v *datVisitor) (*datVerifySummary, []datAnomaly, error) {
 	opts.normalize()
 	f, err := os.Open(datName)
 	if err != nil {
@@ -416,11 +432,24 @@ func verifyDatFile(datName string, vid needle.VolumeId, opts datVerifyOptions, v
 	}
 	s.sum.FileSize = s.size
 
+	damage := func(start, end int64, tail bool) error {
+		if v.damage == nil {
+			return nil
+		}
+		return v.damage(start, end, tail)
+	}
+
 	pos := base
-	for pos < s.size {
+	for count := 0; pos < s.size; count++ {
+		if opts.Progress != nil && count&0xfff == 0 {
+			opts.Progress(pos, s.size)
+		}
 		if s.size-pos < types.NeedleHeaderSize {
 			s.recordBad(pos, s.size, true, errors.New("partial header at end of file"), nil)
 			s.sum.TailGarbage = true
+			if err := damage(pos, s.size, true); err != nil {
+				return nil, nil, err
+			}
 			break
 		}
 		n, disk, err := s.readNeedleAt(pos)
@@ -438,7 +467,11 @@ func verifyDatFile(datName string, vid needle.VolumeId, opts datVerifyOptions, v
 				}
 				s.lastAppendAtNs = n.AppendAtNs
 			}
-			visit(n, pos)
+			if v.needle != nil {
+				if err := v.needle(n, pos, s.hdr[:], s.body[:disk-types.NeedleHeaderSize]); err != nil {
+					return nil, nil, err
+				}
+			}
 			pos += disk
 			continue
 		}
@@ -446,13 +479,57 @@ func verifyDatFile(datName string, vid needle.VolumeId, opts datVerifyOptions, v
 		if next < 0 {
 			s.recordBad(pos, s.size, true, err, n)
 			s.sum.TailGarbage = true
+			if derr := damage(pos, s.size, true); derr != nil {
+				return nil, nil, derr
+			}
 			break
 		}
 		s.recordBad(pos, next, false, err, n)
+		if derr := damage(pos, next, false); derr != nil {
+			return nil, nil, derr
+		}
 		pos = next
 	}
 	s.sum.CleanEnd = pos
 	return &s.sum, s.anomalies, nil
+}
+
+func finishCompaction(comp *datCompactor, sum *datVerifySummary, datName string, volumeId int64) {
+	mode, err := comp.finish(sum)
+	if err != nil {
+		comp.abort()
+		glog.Fatalf("volume %d: compaction failed, the original files are untouched: %v", volumeId, err)
+	}
+	if *fixTruncateTail {
+		fmt.Printf("volume %d: -truncateTail is implied by -compact\n", volumeId)
+	}
+	switch mode {
+	case compactNothing:
+		fmt.Printf("volume %d: no damage found, nothing to compact\n", volumeId)
+		return
+	case compactTailOnly:
+		// only the tail is bad: cutting it off in place is all the .dat needs
+		if err := truncateDatTail(datName, sum.CleanEnd); err != nil {
+			comp.abort()
+			glog.Fatalf("truncate %s: %v", datName, err)
+		}
+		fmt.Printf("volume %d: only the tail was damaged, truncated %s to %d bytes\n", volumeId, datName, sum.CleanEnd)
+	}
+	idxBak, datBak, err := comp.commit(mode == compactRewritten, *fixDeleteOriginal)
+	if err != nil {
+		comp.abort()
+		glog.Fatalf("volume %d: could not swap in the new files, the originals were restored: %v", volumeId, err)
+	}
+	if mode == compactRewritten {
+		fmt.Printf("volume %d: new .dat is %d bytes (was %d), %d bytes of damage removed\n", volumeId, sum.CleanEnd-comp.removed, sum.FileSize, comp.removed+(sum.FileSize-sum.CleanEnd))
+	}
+	if idxBak != "" {
+		fmt.Printf("volume %d: previous index saved as %s\n", volumeId, idxBak)
+	}
+	if datBak != "" {
+		fmt.Printf("volume %d: previous .dat saved as %s; delete it once the volume checks out\n", volumeId, datBak)
+	}
+	fmt.Printf("volume %d: if the volume server uses a leveldb index (-index=leveldb), delete the volume's .ldb folder before starting it\n", volumeId)
 }
 
 func truncateDatTail(datName string, cleanEnd int64) error {
@@ -512,26 +589,41 @@ func doFixOneVolumeVerified(basepath string, baseFileName string, volumeId int64
 	vid := needle.VolumeId(volumeId)
 	datName := path.Join(basepath, baseFileName+".dat")
 
+	// -compact writes the index itself, so the in-memory key map is only needed for the plain rebuild
+	compacting := *fixCompact && !*fixDryRun
 	nm := needle_map.NewMemDb()
 	nmDeleted := needle_map.NewMemDb()
 	defer nm.Close()
 	defer nmDeleted.Close()
 	scanner := &VolumeFileScanner4Fix{nm: nm, nmDeleted: nmDeleted, includeDeleted: *fixIncludeDeleted}
 
-	opts := fixVerifyFlags.options()
-	started := time.Now()
-	var visitErr error
-	sum, anomalies, err := verifyDatFile(datName, vid, opts, func(n *needle.Needle, offset int64) {
-		if visitErr == nil {
-			// the version only matters for DiskSize in a debug log line
-			visitErr = scanner.VisitNeedle(n, offset, nil, nil)
+	var comp *datCompactor
+	if compacting {
+		var cerr error
+		if comp, cerr = newDatCompactor(datName, indexFileName); cerr != nil {
+			glog.Fatalf("prepare compaction of %s: %v", datName, cerr)
 		}
-	})
-	if err != nil {
-		glog.Fatalf("verify %s: %v", datName, err)
 	}
-	if visitErr != nil {
-		glog.Fatalf("verify %s: %v", datName, visitErr)
+
+	opts := fixVerifyFlags.options()
+	opts.Progress = newProgressPrinter(volumeId)
+	visitor := &datVisitor{needle: func(n *needle.Needle, offset int64, header, body []byte) error {
+		if comp != nil {
+			return comp.needle(n, offset, header, body)
+		}
+		// the version only matters for DiskSize in a debug log line
+		return scanner.VisitNeedle(n, offset, nil, nil)
+	}}
+	if comp != nil {
+		visitor.damage = comp.damage
+	}
+	started := time.Now()
+	sum, anomalies, err := verifyDatFileWith(datName, vid, opts, visitor)
+	if err != nil {
+		if comp != nil {
+			comp.abort()
+		}
+		glog.Fatalf("verify %s: %v", datName, err)
 	}
 
 	if err := fixVerifyFlags.printAnomalies(volumeId, anomalies); err != nil {
@@ -540,6 +632,10 @@ func doFixOneVolumeVerified(basepath string, baseFileName string, volumeId int64
 	printVerifySummary(volumeId, sum, time.Since(started))
 
 	if *fixDryRun {
+		return
+	}
+	if comp != nil {
+		finishCompaction(comp, sum, datName, volumeId)
 		return
 	}
 	if sum.TailGarbage {
@@ -556,10 +652,7 @@ func doFixOneVolumeVerified(basepath string, baseFileName string, volumeId int64
 
 	// keep the old index around: a rebuilt index only knows what survived in .dat
 	if _, statErr := os.Stat(indexFileName); statErr == nil {
-		bak := indexFileName + ".bak"
-		if _, statErr := os.Stat(bak); statErr == nil {
-			bak = fmt.Sprintf("%s.bak.%d", indexFileName, time.Now().Unix())
-		}
+		bak := backupName(indexFileName)
 		if err := os.Rename(indexFileName, bak); err != nil {
 			glog.Fatalf("back up %s: %v", indexFileName, err)
 		}
