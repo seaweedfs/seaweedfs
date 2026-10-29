@@ -21,6 +21,23 @@ templ Admin(data dash.AdminData) {
     </div>
 
     <div id="dashboard-content">
+        <!-- Version mismatch warning: nodes reporting different binary versions
+             usually means an upgrade did not reach every server. -->
+        if data.VersionSummary.Mixed() {
+            <div class="alert alert-warning d-flex align-items-start" role="alert">
+                <i class="bi bi-exclamation-triangle-fill me-2 mt-1"></i>
+                <div>
+                    <strong>Mixed cluster versions detected.</strong>
+                    Not all servers are running the same SeaweedFS version — some servers may not have been upgraded.
+                    <ul class="mb-0 mt-1">
+                        for _, nt := range data.VersionSummary.NodeTypes {
+                            <li>{nt.Type}: {nt.Spread()}</li>
+                        }
+                    </ul>
+                </div>
+            </div>
+        }
+
         <!-- Summary Cards — each carries an inline sparkline of recent history
              from the admin's own snapshots (no Prometheus required). -->
         <div class="row mb-4">
@@ -395,7 +412,38 @@ templ Admin(data dash.AdminData) {
                                     </div>
                                 </div>
                             </div>
+                            <div class="col">
+                                <div class="card bg-light">
+                                    <div class="card-body">
+                                        if data.VersionSummary.Uniform {
+                                            <h5 class="text-truncate" title={data.VersionSummary.Version}>{data.VersionSummary.Version}</h5>
+                                            <small class="text-muted">Version</small>
+                                        } else if data.VersionSummary.Mixed() {
+                                            <h5 class="text-warning">
+                                                <i class="bi bi-exclamation-triangle-fill"></i>
+                                            </h5>
+                                            <small class="text-muted">Mixed Versions</small>
+                                        } else {
+                                            <h5 class="text-truncate">—</h5>
+                                            <small class="text-muted">Version</small>
+                                        }
+                                    </div>
+                                </div>
+                            </div>
                         </div>
+                        if data.VersionSummary.Mixed() {
+                            <div class="row mt-3">
+                                <div class="col-12 text-start">
+                                    <small class="text-muted text-uppercase fw-bold">Node Versions</small>
+                                    for _, nt := range data.VersionSummary.NodeTypes {
+                                        <div class="d-flex justify-content-between border-bottom py-1">
+                                            <span>{nt.Type}</span>
+                                            <span>{nt.Spread()}</span>
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                        }
                     </div>
                 </div>
             </div>
@@ -429,6 +477,7 @@ templ Admin(data dash.AdminData) {
                                         <th>Address</th>
                                         <th>Data Center</th>
                                         <th>Rack</th>
+                                        <th>Version</th>
                                         <th>Volumes</th>
                                         <th>EC Shards</th>
                                         <th>Usage / Capacity</th>
@@ -446,6 +495,7 @@ templ Admin(data dash.AdminData) {
                                             </td>
                                             <td>{vs.DataCenter}</td>
                                             <td>{vs.Rack}</td>
+                                            <td title={vs.Version}>{dash.ShortVersion(vs.Version)}</td>
                                             <td>
                                                 <div class="d-flex align-items-center">
                                                     <div class="progress flex-grow-1" style="height: 20px; min-width: 48px;">
@@ -477,7 +527,7 @@ templ Admin(data dash.AdminData) {
                                     }
                                     if len(data.VolumeServers) == 0 {
                                         <tr>
-                                            <td colspan="7" class="text-center text-muted py-4">
+                                            <td colspan="8" class="text-center text-muted py-4">
                                                 <i class="bi bi-info-circle me-2"></i>
                                                 No volume servers found
                                             </td>
@@ -518,6 +568,7 @@ templ Admin(data dash.AdminData) {
                                         <th>Address</th>
                                         <th>Data Center</th>
                                         <th>Rack</th>
+                                        <th>Version</th>
                                         <th>Last Updated</th>
                                     </tr>
                                 </thead>
@@ -532,12 +583,13 @@ templ Admin(data dash.AdminData) {
                                             </td>
                                             <td>{filer.DataCenter}</td>
                                             <td>{filer.Rack}</td>
+                                            <td title={filer.Version}>{dash.ShortVersion(filer.Version)}</td>
                                             <td>{filer.LastUpdated.Format("2006-01-02 15:04:05")}</td>
                                         </tr>
                                     }
                                     if len(data.FilerNodes) == 0 {
                                         <tr>
-                                            <td colspan="4" class="text-center text-muted py-4">
+                                            <td colspan="5" class="text-center text-muted py-4">
                                                 <i class="bi bi-info-circle me-2"></i>
                                                 No filer nodes found
                                             </td>
@@ -576,6 +628,7 @@ templ Admin(data dash.AdminData) {
                                     <tr>
                                         <th>Address</th>
                                         <th>Data Center</th>
+                                        <th>Version</th>
                                         <th>Last Updated</th>
                                     </tr>
                                 </thead>
@@ -584,12 +637,13 @@ templ Admin(data dash.AdminData) {
                                         <tr>
                                             <td>{s3Node.Address}</td>
                                             <td>{s3Node.DataCenter}</td>
+                                            <td title={s3Node.Version}>{dash.ShortVersion(s3Node.Version)}</td>
                                             <td>{s3Node.LastUpdated.Format("2006-01-02 15:04:05")}</td>
                                         </tr>
                                     }
                                     if len(data.S3Nodes) == 0 {
                                         <tr>
-                                            <td colspan="3" class="text-center text-muted py-4">
+                                            <td colspan="4" class="text-center text-muted py-4">
                                                 <i class="bi bi-info-circle me-2"></i>
                                                 No S3 servers found
                                             </td>
