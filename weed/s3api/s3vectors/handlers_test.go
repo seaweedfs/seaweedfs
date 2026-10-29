@@ -555,9 +555,11 @@ func TestValidateEncryptionConfigurationRejectsCustomerKeys(t *testing.T) {
 	}{
 		{"empty", nil, true},
 		{"default sse", map[string]interface{}{"sseType": "AES256"}, true},
+		{"tables default sse", map[string]interface{}{"sseAlgorithm": "AES256"}, true},
 		{"customer key", map[string]interface{}{"sseType": "aws:kms"}, false},
+		{"tables kms", map[string]interface{}{"sseAlgorithm": "aws:kms"}, false},
 		{"unknown sse", map[string]interface{}{"sseType": "aws:fsx"}, false},
-		{"missing sseType", map[string]interface{}{"other": "x"}, false},
+		{"missing algorithm", map[string]interface{}{"other": "x"}, false},
 		{"key without a type", map[string]interface{}{"kmsKeyArn": "arn:aws:kms:us-east-1:123456789012:key/x"}, false},
 		{"key on default sse", map[string]interface{}{"sseType": "AES256", "kmsKeyArn": "arn:aws:kms:us-east-1:123456789012:key/x"}, false},
 	} {

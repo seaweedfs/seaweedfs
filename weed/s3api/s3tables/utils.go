@@ -164,20 +164,27 @@ func ValidateMetadataLocation(metadataLocation, bucketName, namespace string) er
 	return nil
 }
 
-// ValidateEncryptionConfiguration admits only the AES256 declaration. A
+// ValidateEncryptionConfiguration admits only the AES256 declaration, under
+// either wire name — s3tables sends sseAlgorithm, s3vectors sends sseType. A
 // caller-chosen key is never read back by the storage path, so recording one
 // would claim protection the data does not get.
 func ValidateEncryptionConfiguration(cfg map[string]interface{}) error {
 	if len(cfg) == 0 {
 		return nil
 	}
-	sseType, _ := cfg["sseType"].(string)
-	switch sseType {
-	case "AES256":
-	case "":
-		return fmt.Errorf("encryptionConfiguration requires sseType")
-	default:
-		return fmt.Errorf("unsupported sseType %q", sseType)
+	declared := false
+	for _, field := range []string{"sseAlgorithm", "sseType"} {
+		value, ok := cfg[field].(string)
+		if !ok {
+			continue
+		}
+		declared = true
+		if value != "AES256" {
+			return fmt.Errorf("unsupported %s %q", field, value)
+		}
+	}
+	if !declared {
+		return fmt.Errorf("encryptionConfiguration requires an algorithm")
 	}
 	if _, ok := cfg["kmsKeyArn"]; ok {
 		return fmt.Errorf("kmsKeyArn is not supported")
