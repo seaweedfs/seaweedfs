@@ -289,6 +289,11 @@ func (mc *MetaCache) refreshSection(ctx context.Context, client filer_pb.FilerCl
 		if !mc.rangeStale(dirPath, lo) {
 			return nil, nil
 		}
+		// Shared like the directory build: the requester that started this
+		// flight can leave mid-refresh, so re-apply the bound on a context it
+		// cannot cancel rather than failing every waiter on its cancellation.
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sectionRefreshTimeout)
+		defer cancel()
 		entries, snapshotTsNs, err := mc.listFilerRange(ctx, client, dirPath, lo, hi)
 		if err != nil {
 			return nil, err
