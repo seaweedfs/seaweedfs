@@ -363,6 +363,7 @@ func TestResolveCompactionOrderSkipsUncoveredSortField(t *testing.T) {
 		t.Fatalf("uncovered sort field: got %+v, want nil", order)
 	}
 }
+
 // A full-bin repack that produces nothing must not discard the ordered runs
 // it was meant to replace — they are still valid compaction work.
 func TestCompactDataFilesKeepsRunsWhenRepackFails(t *testing.T) {

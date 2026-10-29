@@ -1,6 +1,7 @@
 package iceberg
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -10,12 +11,14 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 // fakeVolumeServer accepts chunk uploads and records what it received, so a
-// test can check the bytes actually left the filer entry.
+// test can check the bytes actually left the filer entry. It also serves
+// chunk reads of what it holds.
 type fakeVolumeServer struct {
 	mu     sync.Mutex
 	server *httptest.Server
@@ -29,6 +32,18 @@ func startFakeVolumeServer(t *testing.T) *fakeVolumeServer {
 	v := &fakeVolumeServer{parts: make(map[string][]byte)}
 	v.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fid := strings.TrimPrefix(r.URL.Path, "/")
+		if r.Method == http.MethodGet || r.Method == http.MethodHead {
+			// A chunk read, answered as a volume server does (ranges included).
+			v.mu.Lock()
+			data, ok := v.parts[fid]
+			v.mu.Unlock()
+			if !ok {
+				http.NotFound(w, r)
+				return
+			}
+			http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(data))
+			return
+		}
 		// The uploader sends the payload as a single form-data part named
 		// "file" with an empty filename, which FormFile will not match.
 		reader, err := r.MultipartReader()
@@ -56,6 +71,12 @@ func startFakeVolumeServer(t *testing.T) *fakeVolumeServer {
 	}))
 	t.Cleanup(v.server.Close)
 	return v
+}
+
+func (v *fakeVolumeServer) put(fid string, data []byte) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.parts[fid] = data
 }
 
 func (v *fakeVolumeServer) hostPort(t *testing.T) string {

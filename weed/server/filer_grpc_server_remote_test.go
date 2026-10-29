@@ -227,3 +227,69 @@ func TestPruneOnANonOwnerLeavesTheDeleteToTheOwner(t *testing.T) {
 	assert.False(t, fs.pruneEntryMissingFromRemote(context.Background(), entry.FullPath, entry, remote_storage.ErrRemoteObjectNotFound))
 	assert.Contains(t, store.entries, string(entry.FullPath), "only the write owner may delete the entry")
 }
+
+func pollFindCalls(store *renameTestStore, path string, n int) bool {
+	for i := 0; i < 4000; i++ {
+		store.mu.Lock()
+		calls := store.findCalls[path]
+		store.mu.Unlock()
+		if calls >= n {
+			return true
+		}
+		time.Sleep(time.Millisecond)
+	}
+	return false
+}
+
+func awaitFindCalls(t *testing.T, store *renameTestStore, path string, n int) {
+	t.Helper()
+	require.True(t, pollFindCalls(store, path, n), "entry %s saw fewer than %d finds", path, n)
+}
+
+// A remote metadata refresh can swap the entry between a caller's pre-flight
+// check and the lookup the shared download resolves: the bound must apply to
+// the latter, and a co-tenant sharing the flight must not inherit a rejection
+// its own bound does not call for.
+func TestCacheBoundAppliesToTheDownloadedEntry(t *testing.T) {
+	fs, store, _ := newRemoteMountTestServer(t)
+	store.findDelay = 500 * time.Millisecond
+
+	small := remoteOnlyFileEntry("/other/obj.bin")
+	small.Remote.RemoteSize = 4
+	store.entries[string(small.FullPath)] = small
+
+	big := small.ShallowClone()
+	big.Remote = proto.Clone(small.Remote).(*filer_pb.RemoteEntry)
+	big.Remote.RemoteSize = 100
+	go func() {
+		if !pollFindCalls(store, string(small.FullPath), 1) {
+			return
+		}
+		store.mu.Lock()
+		store.entries[string(small.FullPath)] = big
+		store.mu.Unlock()
+	}()
+
+	bounded := make(chan error, 1)
+	go func() {
+		_, err := fs.CacheRemoteObjectToLocalCluster(context.Background(), &filer_pb.CacheRemoteObjectToLocalClusterRequest{
+			Directory: "/other", Name: "obj.bin", MaxSize: 5,
+		})
+		bounded <- err
+	}()
+
+	awaitFindCalls(t, store, string(small.FullPath), 1)
+	time.Sleep(80 * time.Millisecond) // let the bounded flight reach its own find
+	_, joinErr := fs.CacheRemoteObjectToLocalCluster(context.Background(), &filer_pb.CacheRemoteObjectToLocalClusterRequest{
+		Directory: "/other", Name: "obj.bin",
+	})
+
+	err := <-bounded
+	var tooLarge *remoteObjectTooLargeError
+	require.ErrorAs(t, err, &tooLarge)
+	assert.Equal(t, int64(100), tooLarge.size)
+	assert.Equal(t, int64(5), tooLarge.limit)
+
+	require.Error(t, joinErr)
+	assert.False(t, errors.As(joinErr, &tooLarge), "unbounded joiner retries rather than sharing the rejection")
+}

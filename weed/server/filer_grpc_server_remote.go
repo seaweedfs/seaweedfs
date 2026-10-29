@@ -31,40 +31,72 @@ func (fs *FilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req 
 	// This benefits all clients: S3 API, filer HTTP, Hadoop, etc.
 	cacheKey := req.Directory + "/" + req.Name
 
+	// A caller's size bound is enforced on the entry it resolves, before it
+	// joins the shared download: the rejection stays with the bounded caller
+	// while allowed downloads still dedupe by path across all callers.
+	if req.MaxSize > 0 {
+		if entry, _, err := fs.fencedFindEntry(ctx, util.JoinPath(req.Directory, req.Name)); err == nil &&
+			entry.IsInRemoteOnly() && entry.Remote.RemoteSize > req.MaxSize {
+			return nil, &remoteObjectTooLargeError{path: cacheKey, size: entry.Remote.RemoteSize, limit: req.MaxSize}
+		}
+	}
+
 	// Detach from caller ctx: on failure the error path deletes every chunk
 	// already written, so cancelling mid-download loses all progress. For
 	// blobs large enough that the download outlasts the caller's timeout
 	// the retry loop never converges.
 	bgCtx := context.WithoutCancel(ctx)
 
-	// DoChan (vs Do) so the caller can bail out on ctx.Done() while the
-	// singleflight goroutine keeps caching on bgCtx; otherwise this handler
-	// goroutine stays blocked for the full download after the client is gone.
-	ch := fs.remoteCacheGroup.DoChan(cacheKey, func() (interface{}, error) {
-		return fs.doCacheRemoteObjectToLocalCluster(bgCtx, req)
-	})
+	for {
+		// DoChan (vs Do) so the caller can bail out on ctx.Done() while the
+		// singleflight goroutine keeps caching on bgCtx; otherwise this handler
+		// goroutine stays blocked for the full download after the client is gone.
+		ch := fs.remoteCacheGroup.DoChan(cacheKey, func() (interface{}, error) {
+			return fs.doCacheRemoteObjectToLocalCluster(bgCtx, req)
+		})
 
-	select {
-	case <-ctx.Done():
-		// Caller gave up; the detached cache keeps running and a later
-		// request will find the entry cached (or join the same singleflight).
-		return nil, ctx.Err()
-	case res := <-ch:
-		if res.Shared {
-			glog.V(2).Infof("CacheRemoteObjectToLocalCluster: shared result for %s", cacheKey)
+		select {
+		case <-ctx.Done():
+			// Caller gave up; the detached cache keeps running and a later
+			// request will find the entry cached (or join the same singleflight).
+			return nil, ctx.Err()
+		case res := <-ch:
+			if res.Shared {
+				glog.V(2).Infof("CacheRemoteObjectToLocalCluster: shared result for %s", cacheKey)
+			}
+			if res.Err != nil {
+				var tooLarge *remoteObjectTooLargeError
+				if errors.As(res.Err, &tooLarge) && (req.MaxSize == 0 || tooLarge.size <= req.MaxSize) {
+					// The shared flight ran under a co-tenant's tighter bound; this
+					// caller's own bound allows the object, so it starts a fresh
+					// flight rather than share that rejection.
+					continue
+				}
+				return nil, cacheRemoteObjectError(res.Err)
+			}
+			if res.Val == nil {
+				return nil, fmt.Errorf("unexpected nil result from singleflight")
+			}
+			resp, ok := res.Val.(*filer_pb.CacheRemoteObjectToLocalClusterResponse)
+			if !ok {
+				return nil, fmt.Errorf("unexpected result type from singleflight")
+			}
+			return resp, nil
 		}
-		if res.Err != nil {
-			return nil, cacheRemoteObjectError(res.Err)
-		}
-		if res.Val == nil {
-			return nil, fmt.Errorf("unexpected nil result from singleflight")
-		}
-		resp, ok := res.Val.(*filer_pb.CacheRemoteObjectToLocalClusterResponse)
-		if !ok {
-			return nil, fmt.Errorf("unexpected result type from singleflight")
-		}
-		return resp, nil
 	}
+}
+
+// remoteObjectTooLargeError reports that the entry a shared download resolved
+// exceeds a bound. It travels through the singleflight result, so callers
+// whose own bound permits the size retry instead of inheriting the rejection.
+type remoteObjectTooLargeError struct {
+	path  string
+	size  int64
+	limit int64
+}
+
+func (e *remoteObjectTooLargeError) Error() string {
+	return fmt.Sprintf("remote object %s is %d bytes, over the %d byte limit", e.path, e.size, e.limit)
 }
 
 // doCacheRemoteObjectToLocalCluster performs the actual caching operation.
@@ -92,6 +124,12 @@ func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, re
 		glog.V(2).Infof("CacheRemoteObjectToLocalCluster: %s/%s already cached (%d chunks)", req.Directory, req.Name, len(entry.GetChunks()))
 		resp.Entry = entry.ToProtoEntry()
 		return resp, nil
+	}
+
+	// Enforce the bound on the entry this flight downloads: the caller's
+	// pre-flight check read an entry a remote metadata refresh can replace.
+	if req.MaxSize > 0 && entry.Remote.RemoteSize > req.MaxSize {
+		return nil, &remoteObjectTooLargeError{path: string(lockPath), size: entry.Remote.RemoteSize, limit: req.MaxSize}
 	}
 
 	glog.V(1).Infof("CacheRemoteObjectToLocalCluster: caching %s/%s (remote size: %d)", req.Directory, req.Name, entry.Remote.RemoteSize)
