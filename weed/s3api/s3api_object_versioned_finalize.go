@@ -116,8 +116,10 @@ func uploadExistsCondition(uploadDirectory string) (string, *filer_pb.WriteCondi
 // reachable: PUT first keeps the chunks referenced at all times, and removing
 // the upload directory before the recompute means a published object never
 // coexists with a leftover .uploads directory that s3.clean.uploads would purge
-// with data.
-func (s3a *S3ApiServer) routedMultipartFinalize(owner pb.ServerAddress, bucket, object string, useInvertedFormat bool, versionDir, versionFileName string, chunks []*filer_pb.FileChunk, decorate func(*filer_pb.Entry), uploadID string) s3err.ErrorCode {
+// with data. cond is the request's write condition, checked against the object
+// (its latest version when the slot at the object path is empty) under the same
+// lock; the upload directory rides the PUT as a mutation precondition.
+func (s3a *S3ApiServer) routedMultipartFinalize(owner pb.ServerAddress, bucket, object string, useInvertedFormat bool, versionDir, versionFileName string, chunks []*filer_pb.FileChunk, decorate func(*filer_pb.Entry), uploadID string, cond *filer_pb.WriteCondition) s3err.ErrorCode {
 	now := time.Now().Unix()
 	versionEntry := &filer_pb.Entry{
 		Name: versionFileName,
@@ -138,8 +140,8 @@ func (s3a *S3ApiServer) routedMultipartFinalize(owner pb.ServerAddress, bucket, 
 	if owner != "" {
 		routeKey = s3a.objectRouteKey(bucket, object)
 	}
-	conditionKey, condition := uploadExistsCondition(s3a.genUploadsFolder(bucket) + "/" + uploadID)
-	resp, err := s3a.routedPut(owner, routeKey, s3a.toFilerPath(bucket, object), versionDir+"/"+versionFileName, versionEntry, condition, conditionKey, "", []*filer_pb.ObjectMutation{
+	putConditionKey, putCondition := uploadExistsCondition(s3a.genUploadsFolder(bucket) + "/" + uploadID)
+	resp, err := s3a.routedPut(owner, routeKey, s3a.toFilerPath(bucket, object), versionDir+"/"+versionFileName, versionEntry, cond, "", versionDir, putCondition, putConditionKey, []*filer_pb.ObjectMutation{
 		s3a.removeUploadDirMutation(bucket, uploadID),
 		s3a.latestPointerRecompute(bucket, object, useInvertedFormat, "", true),
 	})
@@ -148,6 +150,9 @@ func (s3a *S3ApiServer) routedMultipartFinalize(owner pb.ServerAddress, bucket, 
 		glog.Errorf("routedMultipartFinalize: %s/%s upload %s on %s: %v", bucket, object, uploadID, owner, err)
 		return s3err.ErrInternalError
 	case resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED:
+		if resp.FailedMutation == nil {
+			return s3err.ErrPreconditionFailed
+		}
 		return s3err.ErrNoSuchUpload
 	case resp.Error != "":
 		glog.Errorf("routedMultipartFinalize: %s/%s upload %s: %s", bucket, object, uploadID, resp.Error)
