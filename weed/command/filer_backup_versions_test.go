@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"sort"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -36,6 +37,17 @@ func (c *lookupEntrySeaweedClient) LookupDirectoryEntry(ctx context.Context, in 
 		return nil, filer_pb.ErrNotFound
 	}
 	return &filer_pb.LookupDirectoryEntryResponse{Entry: entry}, nil
+}
+
+func (c *lookupEntrySeaweedClient) ListEntries(_ context.Context, in *filer_pb.ListEntriesRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[filer_pb.ListEntriesResponse], error) {
+	var entries []*filer_pb.Entry
+	for fullPath, entry := range c.entries {
+		if dir, _ := util.FullPath(fullPath).DirAndName(); dir == in.Directory {
+			entries = append(entries, entry)
+		}
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
+	return &verifyTestStream{entries: entries}, nil
 }
 
 type recordSink struct {
@@ -220,6 +232,63 @@ func TestFlattenNullVersionIsLatest(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, handled)
 	require.Same(t, nullObject, rs.created["/b/k"])
+}
+
+func TestFlattenNullVersionDeletedRescansNewestVersion(t *testing.T) {
+	// deleting ?versionId=null removes the regular object without touching the
+	// null-is-latest pointer: the flattened key must fall back to the newest
+	// remaining version, the same rescan the S3 read path does
+	older := &filer_pb.Entry{Name: "v_00000000000000010000000000000000", Chunks: []*filer_pb.FileChunk{{FileId: "1,01"}}}
+	newer := &filer_pb.Entry{Name: "v_00000000000000020000000000000000", Chunks: []*filer_pb.FileChunk{{FileId: "1,02"}}}
+	f, rs := newFlattener(map[string]*filer_pb.Entry{
+		"/buckets/b/k.versions/" + older.Name: older,
+		"/buckets/b/k.versions/" + newer.Name: newer,
+	})
+	dir := &filer_pb.Entry{
+		Name:        "k.versions",
+		IsDirectory: true,
+		Extended:    map[string][]byte{s3_constants.ExtNullVersionIsLatestKey: []byte("true")},
+	}
+	handled, err := f.process(event("/buckets/b", "/buckets/b", nil, dir))
+	require.NoError(t, err)
+	require.True(t, handled)
+	require.Same(t, newer, rs.created["/b/k"])
+	require.Empty(t, rs.deleted)
+}
+
+func TestFlattenNullVersionDeletedNewestIsDeleteMarker(t *testing.T) {
+	marker := &filer_pb.Entry{
+		Name:     "v_00000000000000020000000000000000",
+		Extended: map[string][]byte{s3_constants.ExtDeleteMarkerKey: []byte("true")},
+	}
+	older := &filer_pb.Entry{Name: "v_00000000000000010000000000000000", Chunks: []*filer_pb.FileChunk{{FileId: "1,01"}}}
+	f, rs := newFlattener(map[string]*filer_pb.Entry{
+		"/buckets/b/k.versions/" + older.Name:  older,
+		"/buckets/b/k.versions/" + marker.Name: marker,
+	})
+	dir := &filer_pb.Entry{
+		Name:        "k.versions",
+		IsDirectory: true,
+		Extended:    map[string][]byte{s3_constants.ExtNullVersionIsLatestKey: []byte("true")},
+	}
+	handled, err := f.process(event("/buckets/b", "/buckets/b", nil, dir))
+	require.NoError(t, err)
+	require.True(t, handled)
+	require.Equal(t, []string{"/b/k"}, rs.deleted)
+	require.Empty(t, rs.created)
+}
+
+func TestFlattenNullVersionDeletedNoVersionsLeftDeletes(t *testing.T) {
+	f, rs := newFlattener(map[string]*filer_pb.Entry{})
+	dir := &filer_pb.Entry{
+		Name:        "k.versions",
+		IsDirectory: true,
+		Extended:    map[string][]byte{s3_constants.ExtNullVersionIsLatestKey: []byte("true")},
+	}
+	handled, err := f.process(event("/buckets/b", "/buckets/b", nil, dir))
+	require.NoError(t, err)
+	require.True(t, handled)
+	require.Equal(t, []string{"/b/k"}, rs.deleted)
 }
 
 func TestFlattenVersionFileEventRefreshesCurrentVersion(t *testing.T) {

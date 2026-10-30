@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/replication/sink"
+	"github.com/seaweedfs/seaweedfs/weed/s3api"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
@@ -240,7 +241,7 @@ func (f *s3VersionFlattener) applyLatest(versionsDir util.FullPath, dirEntry *fi
 	case string(extended[s3_constants.ExtLatestVersionIsDeleteMarker]) == "true":
 		return f.deleteObject(objectKey, signatures)
 	case string(extended[s3_constants.ExtNullVersionIsLatestKey]) == "true":
-		return f.uploadLatest(objectKey, objectKey, signatures)
+		return f.uploadNullLatest(objectKey, versionsDir, signatures)
 	default:
 		if latestName := string(extended[s3_constants.ExtLatestVersionFileNameKey]); latestName != "" {
 			return f.uploadLatest(objectKey, versionsDir.Child(latestName), signatures)
@@ -252,6 +253,44 @@ func (f *s3VersionFlattener) applyLatest(versionsDir util.FullPath, dirEntry *fi
 		}
 		return f.deleteObject(objectKey, signatures)
 	}
+}
+
+// uploadNullLatest flattens the regular-path null object while the pointer
+// names it latest. A ?versionId=null delete removes that object without
+// touching the pointer, so on a miss the newest remaining version wins (or a
+// flat delete when none survives) — the same rescan the S3 read path falls
+// back to.
+func (f *s3VersionFlattener) uploadNullLatest(objectKey, versionsDir util.FullPath, signatures []int32) error {
+	if _, _, _, err := filer_pb.GetEntry(context.Background(), f.filerSource, objectKey); err == nil {
+		return f.uploadLatest(objectKey, objectKey, signatures)
+	} else if !errors.Is(err, filer_pb.ErrNotFound) {
+		return err
+	}
+	latestName, err := f.latestVersionFileName(versionsDir)
+	if err != nil {
+		return err
+	}
+	if latestName == "" {
+		return f.deleteObject(objectKey, signatures)
+	}
+	return f.uploadLatest(objectKey, versionsDir.Child(latestName), signatures)
+}
+
+// latestVersionFileName returns the name of the newest version file under
+// versionsDir by version-id order — delete markers included, the upload
+// resolves them to a flat delete — or "" when no version entry remains.
+func (f *s3VersionFlattener) latestVersionFileName(versionsDir util.FullPath) (string, error) {
+	var latestName, latestId string
+	err := f.filerSource.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return filer_pb.SeaweedList(context.Background(), client, string(versionsDir), "", func(entry *filer_pb.Entry, _ bool) error {
+			versionId := s3api.VersionIdFromEntry(entry)
+			if versionId != "" && (latestId == "" || s3api.CompareVersionIds(versionId, latestId) < 0) {
+				latestId, latestName = versionId, entry.Name
+			}
+			return nil
+		}, "", false, 0)
+	})
+	return latestName, err
 }
 
 func (f *s3VersionFlattener) uploadLatest(objectKey, sourceKey util.FullPath, signatures []int32) error {
