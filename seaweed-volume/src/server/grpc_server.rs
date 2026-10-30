@@ -1677,8 +1677,8 @@ impl VolumeServer for VolumeGrpcService {
         // Bound the .dat tail by the records the streamed rows cover: a
         // record staged but not yet indexed would reach the backup without
         // its row and be appended again on the next run.
-        let dat_size = if idx_end > idx_start {
-            let covered = v.dat_size_covered_by_index(idx_end);
+        let dat_size = if req.entry_count > 0 || req.since_ns == 0 {
+            let covered = v.dat_size_covered_by_index(idx_size);
             if covered > 0 && covered < dat_size {
                 covered
             } else {
