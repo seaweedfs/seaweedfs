@@ -325,8 +325,11 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 				}
 				// A failed mount leaves the needle-map backends it built;
 				// drop them so the next load does not trust a stale index.
-				// A replica still standing keeps its files.
-				if vs.store.GetVolume(needle.VolumeId(req.VolumeId)) == nil {
+				// Only after the renames could those be this copy's — before
+				// them the basenames belong to a replica still on disk, and
+				// an unmounted one reports no store volume. A replica still
+				// standing keeps its files either way.
+				if len(movedFiles) > 0 && vs.store.GetVolume(needle.VolumeId(req.VolumeId)) == nil {
 					removeStaleIndexFiles(indexBaseFileName, dataBaseFileName)
 				}
 				if dataBaseFileName != "" {
