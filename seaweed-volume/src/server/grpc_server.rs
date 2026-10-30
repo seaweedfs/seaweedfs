@@ -6268,14 +6268,26 @@ impl CopyDestination {
         Ok(())
     }
 
-    /// Put displaced files back after a failed copy: each backup returns to
-    /// its basename when the copy did not land a replacement there, and is
-    /// removed either way.
+    /// Put displaced files back after a failed copy. A leftover at the
+    /// basename is a surviving partial of this copy — it comes off first so
+    /// the restored set stays one generation. The backup is kept whenever it
+    /// cannot go back: an existing path does not mean the copy's write
+    /// succeeded, and dropping the old file under it would mix generations
+    /// into a corrupt replica.
     fn restore_displaced_files(&mut self) {
         for (backup, base) in std::mem::take(&mut self.displaced_files) {
-            if std::path::Path::new(&base).exists() {
-                let _ = std::fs::remove_file(&backup);
-            } else if let Err(e) = std::fs::rename(&backup, &base) {
+            if std::path::Path::new(&base).exists()
+                && let Err(e) = std::fs::remove_file(&base)
+            {
+                tracing::warn!(
+                    "restore displaced file {}: cannot remove leftover {}: {}",
+                    backup,
+                    base,
+                    e
+                );
+                continue;
+            }
+            if let Err(e) = std::fs::rename(&backup, &base) {
                 tracing::warn!("restore displaced file {}: {}", backup, e);
             }
         }
@@ -9985,6 +9997,46 @@ mod tests {
             b"stale marker",
             "the .note the restored set arrived with goes back with it"
         );
+        assert!(
+            std::fs::read_dir(tmp.path().join("copying"))
+                .map(|mut d| d.next().is_none())
+                .unwrap_or(true),
+            "no backups may survive the restore"
+        );
+    }
+
+    // When the partial cleanup cannot take every file the copy landed, the
+    // restore still puts the displaced set back whole: a surviving partial is
+    // removed for the backup, not the other way around.
+    #[test]
+    fn test_failed_copy_restore_replaces_a_surviving_partial() {
+        let tmp = TempDir::new().unwrap();
+        let base = tmp.path().join("1").to_str().unwrap().to_string();
+        for ext in [".dat", ".idx"] {
+            std::fs::write(format!("{base}{ext}"), b"replica").unwrap();
+        }
+
+        let mut dest = CopyDestination {
+            data_base_name: base.clone(),
+            idx_base_name: base.clone(),
+            disk_type: DiskType::HardDrive,
+            has_remote_dat: false,
+            loc_idx: 0,
+            reserved_space: std::sync::atomic::AtomicU64::new(0),
+            displaced_files: Vec::new(),
+        };
+        dest.displace_existing_files().unwrap();
+
+        std::fs::write(format!("{base}.idx"), b"copy").unwrap();
+        dest.restore_displaced_files();
+
+        for ext in [".dat", ".idx"] {
+            assert_eq!(
+                std::fs::read(format!("{base}{ext}")).unwrap(),
+                b"replica",
+                "a surviving partial {ext} replaced the restored file"
+            );
+        }
         assert!(
             std::fs::read_dir(tmp.path().join("copying"))
                 .map(|mut d| d.next().is_none())
