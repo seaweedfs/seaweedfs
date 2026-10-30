@@ -503,14 +503,18 @@ func (h *S3TablesHandler) openParent(ctx context.Context, client filer_pb.Seawee
 
 // parentStillOpen reports whether parentPath still holds the record parent
 // captured. A delete claims, removes, or replaces the parent between the two
-// reads; the metadata bytes identify the record, so a delete+recreate that
-// answers open fails the compare all the same.
+// reads; createdAt identifies the record since an update preserves it while a
+// delete+recreate mints a new one, so an editable property changing in
+// between does not read as a removal.
 func (h *S3TablesHandler) parentStillOpen(ctx context.Context, client filer_pb.SeaweedFilerClient, parentPath string, isParent func(*filer_pb.Entry) bool, parent *filer_pb.Entry) error {
 	current, err := h.openParent(ctx, client, parentPath, isParent)
 	if err != nil {
 		return err
 	}
-	if !bytes.Equal(current.Extended[ExtendedKeyMetadata], parent.Extended[ExtendedKeyMetadata]) {
+	var before, now namespaceMetadata
+	if json.Unmarshal(parent.Extended[ExtendedKeyMetadata], &before) != nil ||
+		json.Unmarshal(current.Extended[ExtendedKeyMetadata], &now) != nil ||
+		!now.CreatedAt.Equal(before.CreatedAt) {
 		return errParentGone
 	}
 	return nil

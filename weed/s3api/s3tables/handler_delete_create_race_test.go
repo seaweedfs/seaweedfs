@@ -334,6 +334,43 @@ func TestCreateConfirmingUnderANamespaceClaimBacksOut(t *testing.T) {
 	}
 }
 
+// A namespace update inside the confirm window edits the same record — its
+// createdAt survives — so the create still confirms: reading the edit as a
+// delete+recreate would back a live entry out and report 404 for a namespace
+// that never went away.
+func TestCreateConfirmingAcrossANamespaceUpdateSucceeds(t *testing.T) {
+	for _, op := range createOps(t) {
+		t.Run(op.operation, func(t *testing.T) {
+			fs, m := startRenameManager(t)
+			dropSeedTable(t, m, fs)
+			bucketPath := GetTableBucketPath(renameTestBucket)
+			nsPath := GetNamespacePath(renameTestBucket, "ns")
+			client := newPausedConfirmClient(fs.Client, GetTablePath(renameTestBucket, "ns", lateEntry))
+			created := startHandler(t, m, client, op.operation, op.input)
+			waitForPause(t, client.reached, created)
+
+			// Rewrite the namespace metadata the way UpdateNamespace does —
+			// same record, new properties — while the create's record waits.
+			extended := map[string][]byte{}
+			for key, value := range fs.Get(bucketPath, "ns").Extended {
+				extended[key] = value
+			}
+			var nsMeta namespaceMetadata
+			require.NoError(t, json.Unmarshal(extended[ExtendedKeyMetadata], &nsMeta))
+			nsMeta.Properties = map[string]string{"edited": "true"}
+			data, err := json.Marshal(&nsMeta)
+			require.NoError(t, err)
+			extended[ExtendedKeyMetadata] = data
+			fs.Put(bucketPath, "ns", extended)
+
+			close(client.release)
+			create := <-created
+			assert.Equal(t, http.StatusOK, create.status, "a namespace update must not read as a delete: %+v", create.resp)
+			assert.NotNil(t, fs.Get(nsPath, lateEntry), "the create's record must survive an unchanged namespace")
+		})
+	}
+}
+
 // A create that passed its checks writes after the delete finished. The filer
 // makes the missing namespace directory for it, without the namespace record,
 // so the create answers 404 and removes that directory too.
