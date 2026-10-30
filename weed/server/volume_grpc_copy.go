@@ -378,13 +378,15 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 				// outlive it; a later copy of the same volume would trust the
 				// stale index. A mount that found an .idx beside the .dat builds
 				// them under the data base instead.
-				os.RemoveAll(indexBaseFileName + ".ldb")
-				os.Remove(indexBaseFileName + ".sdx")
-				os.Remove(indexBaseFileName + ".rdb")
-				if indexBaseFileName != dataBaseFileName {
-					os.RemoveAll(dataBaseFileName + ".ldb")
-					os.Remove(dataBaseFileName + ".sdx")
-					os.Remove(dataBaseFileName + ".rdb")
+				if indexBaseFileName != "" {
+					os.RemoveAll(indexBaseFileName + ".ldb")
+					os.Remove(indexBaseFileName + ".sdx")
+					os.Remove(indexBaseFileName + ".rdb")
+					if indexBaseFileName != dataBaseFileName {
+						os.RemoveAll(dataBaseFileName + ".ldb")
+						os.Remove(dataBaseFileName + ".sdx")
+						os.Remove(dataBaseFileName + ".rdb")
+					}
 				}
 			}
 			vs.store.ReleaseFreeLocation(copyLocation, copyReservedSpace)
