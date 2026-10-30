@@ -31,3 +31,20 @@ func TestVolumeConfigureRefusesAVolumeBeingCopied(t *testing.T) {
 	_, err := vs.VolumeConfigure(context.Background(), &volume_server_pb.VolumeConfigureRequest{VolumeId: 17, Replication: "000"})
 	assert.Equal(t, codes.Unavailable, status.Code(err), err)
 }
+
+func TestAllocateVolumeRefusesAVolumeBeingCopied(t *testing.T) {
+	vs := &VolumeServer{store: newTraversalTestStore(t.TempDir())}
+	vs.volumeCopyGuard(17).copying = true
+
+	_, err := vs.AllocateVolume(context.Background(), &volume_server_pb.AllocateVolumeRequest{VolumeId: 17})
+	assert.Equal(t, codes.Unavailable, status.Code(err), err)
+}
+
+func TestAdoptStagedVolumeRefusesAVolumeBeingCopied(t *testing.T) {
+	vs := &VolumeServer{store: newTraversalTestStore(t.TempDir())}
+	vs.volumeCopyGuard(17).copying = true
+
+	_, err := vs.adoptStagedVolume(&volume_server_pb.VolumeEcShardsToVolumeRequest{VolumeId: 17})
+	assert.Equal(t, codes.Unavailable, status.Code(err), err)
+}
+

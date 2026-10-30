@@ -101,6 +101,15 @@ func (vs *VolumeServer) AllocateVolume(ctx context.Context, req *volume_server_p
 		return resp, err
 	}
 
+	// Same window as VolumeMount: allocation registers the volume, and a
+	// copy in flight clears or rewrites the files it would open.
+	guard := vs.volumeCopyGuard(req.VolumeId)
+	guard.Lock()
+	defer guard.Unlock()
+	if guard.copying {
+		return resp, status.Errorf(codes.Unavailable, "volume %d is being copied", req.VolumeId)
+	}
+
 	err := vs.store.AddVolume(
 		needle.VolumeId(req.VolumeId),
 		req.Collection,
