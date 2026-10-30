@@ -336,7 +336,16 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 				if replacedRemoved && len(replacedLinks) > 0 {
 					// The swap failed after the previous replica was deleted;
 					// put its preserved files back and remount it. The .note
-					// is already gone so the restored set loads.
+					// is already gone so the restored set loads. An incoming
+					// .vif kept for a coexisting EC volume can occupy the path
+					// the replica's own .vif restores to — drop it so the
+					// original settings come back.
+					for _, link := range replacedLinks {
+						if replacedBaseOf(link) == vifFileName {
+							os.Remove(vifFileName)
+							break
+						}
+					}
 					restoreReplacedVolumeFiles(replacedLinks)
 					replacedLinks = nil
 					if remountErr := vs.store.MountVolume(needle.VolumeId(req.VolumeId), &req.Collection); remountErr != nil {
