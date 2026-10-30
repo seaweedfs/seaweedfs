@@ -72,6 +72,8 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 	var stagedDataBaseFileName, stagedIndexBaseFileName string
 	var stagedIdxFileName, stagedDatFileName, stagedVifFileName string
 	var movedFiles []string
+	var replacedLinks []string
+	var replacedRemoved bool
 	var hasRemoteDatFile bool
 	var copyLocation *storage.DiskLocation
 	var copyReservedSpace uint64
@@ -306,8 +308,24 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 			if dataBaseFileName != "" {
 				os.Remove(dataBaseFileName + ".note")
 			}
+			if replacedRemoved && len(replacedLinks) > 0 {
+				// The swap failed after the previous replica was deleted;
+				// put its preserved files back and remount it. The .note is
+				// already gone so the restored set loads.
+				restoreReplacedVolumeFiles(replacedLinks)
+				if remountErr := vs.store.MountVolume(needle.VolumeId(req.VolumeId), &req.Collection); remountErr != nil {
+					glog.Warningf("remount replaced replica of volume %d: %v", req.VolumeId, remountErr)
+				}
+			} else {
+				for _, link := range replacedLinks {
+					os.Remove(link)
+				}
+			}
 			vs.store.ReleaseFreeLocation(copyLocation, copyReservedSpace)
 		} else {
+			for _, link := range replacedLinks {
+				os.Remove(link)
+			}
 			vs.store.CommitFreeLocation(copyLocation, copyReservedSpace)
 		}
 		os.Remove(filepath.Dir(stagedDataBaseFileName))
@@ -354,12 +372,23 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 
 	if hasExistingVolume {
 		glog.V(0).Infof("volume %d already exists. deleting before copying from %s...", req.VolumeId, req.SourceDataNode)
+		// Hard-link the outgoing replica's files into copying/ first: the
+		// inodes survive the delete, so a failed swap can put the previous
+		// replica back instead of leaving the node with none. Best-effort —
+		// the swap proceeds with whatever links succeed.
+		replacedLinks = linkReplacedVolumeFiles(
+			dataBaseFileName+".dat",
+			indexBaseFileName+".idx",
+			dataBaseFileName+".vif",
+			dataBaseFileName+".idx",
+		)
 		// keep remote data: the inbound copy carries a .vif that may point at
 		// the same cloud-tier object the existing volume references.
 		if delErr := vs.store.DeleteVolume(needle.VolumeId(req.VolumeId), false, false, true); delErr != nil {
 			err = fmt.Errorf("failed to delete existing volume %d: %v", req.VolumeId, delErr)
 			return err
 		}
+		replacedRemoved = true
 		glog.V(0).Infof("deleted existing volume %d before copying.", req.VolumeId)
 	}
 
@@ -417,6 +446,39 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 	}
 
 	return err
+}
+
+// linkReplacedVolumeFiles hard-links each file into a copying/ sibling so
+// the inodes survive the replacement's delete and a failed swap can put the
+// previous replica's files back. The loader never scans copying/.
+func linkReplacedVolumeFiles(baseFileNames ...string) (links []string) {
+	for _, base := range baseFileNames {
+		link := filepath.Join(filepath.Dir(base), "copying", "replaced_"+filepath.Base(base))
+		os.Remove(link)
+		if err := os.Link(base, link); err != nil {
+			if !os.IsNotExist(err) {
+				glog.Warningf("preserve replaced file %s: %v", base, err)
+			}
+			continue
+		}
+		links = append(links, link)
+	}
+	return links
+}
+
+// restoreReplacedVolumeFiles puts linkReplacedVolumeFiles' links back at
+// their base names after a failed swap; each link is removed either way.
+func restoreReplacedVolumeFiles(links []string) {
+	for _, link := range links {
+		base := filepath.Join(filepath.Dir(filepath.Dir(link)), strings.TrimPrefix(filepath.Base(link), "replaced_"))
+		if _, err := os.Stat(base); os.IsNotExist(err) {
+			if err := os.Rename(link, base); err != nil {
+				glog.Warningf("restore replaced file %s: %v", link, err)
+			}
+		} else {
+			os.Remove(link)
+		}
+	}
 }
 
 func (vs *VolumeServer) doCopyFile(client volume_server_pb.VolumeServerClient, isEcVolume bool, collection string, vid, compactRevision uint32, stopOffset uint64, baseFileName, ext string, isAppend, ignoreSourceFileNotFound bool, progressFn storage.ProgressFunc) (modifiedTsNs int64, err error) {
