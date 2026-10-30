@@ -1659,6 +1659,16 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 						return fmt.Errorf("%w: %s changed on %s", ErrConcurrentUpdate, key, srcPath)
 					}
 				}
+				// A create that reused the name since the clear owns it now:
+				// restoring over its attributes would clobber a live table.
+				for _, key := range renamedTableAttributes {
+					if _, ok := extended[key]; ok {
+						return fmt.Errorf("%w: %s recreated on %s", ErrConcurrentUpdate, key, srcPath)
+					}
+				}
+				if _, ok := extended[ExtendedKeyDeleting]; ok {
+					return fmt.Errorf("%w: %s recreated on %s", ErrConcurrentUpdate, ExtendedKeyDeleting, srcPath)
+				}
 				for key, data := range srcExtended {
 					if key != ExtendedKeyDeleting {
 						extended[key] = data
@@ -1667,6 +1677,18 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 				return nil
 			}); rErr != nil {
 				glog.Warningf("rename %s: restore source record: %v", srcPath, rErr)
+			}
+			// Drop the unfinished destination too: a create-marked record reads
+			// as absent but still refuses its name to later creates. The compare
+			// keeps a record that moved on since the failed publish.
+			keys := make([]string, 0, len(written))
+			for key := range written {
+				keys = append(keys, key)
+			}
+			if backErr := h.removeExtendedAttributesIf(commitCtx, client, destPath, written, keys...); backErr != nil && !errors.Is(backErr, filer_pb.ErrNotFound) {
+				glog.Warningf("rename %s: remove unfinished destination: %v", destPath, backErr)
+			} else {
+				h.removeLeftoverDirectory(commitCtx, client, destPath)
 			}
 			return err
 		}
