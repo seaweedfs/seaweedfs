@@ -410,6 +410,20 @@ func TestAutoCreateBucketAttachedPolicy(t *testing.T) {
 	}
 }
 
+// An identity authenticated outside the middleware (IAM integration, policy
+// signature) records no request-context identity and no internal account
+// header; the verified identity still supplies the bucket owner.
+func TestSetBucketOwnerVerifiedIdentityFallback(t *testing.T) {
+	s3a := newHeadBucketTestServer(t, &autoCreateBucketFiler{})
+	req := newBucketRequest(http.MethodPut, "app-uploads", "", "")
+	entry := &filer_pb.Entry{}
+
+	s3a.setBucketOwner(req, &Identity{Name: "app", Account: &Account{Id: "acct-app"}})(entry)
+
+	require.Equal(t, []byte("app"), entry.Extended[s3_constants.AmzIdentityId])
+	require.Equal(t, []byte("acct-app"), entry.Extended[s3_constants.ExtAmzOwnerKey])
+}
+
 func TestUploadMissingBucketAutoCreateDisabled(t *testing.T) {
 	cases := []struct {
 		name    string
