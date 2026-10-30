@@ -240,6 +240,10 @@ func (uploader *Uploader) uploadWithRetryData(assignFn func() (fileId string, ho
 	if uploadOption.RetryForever {
 		util.RetryUntil("uploadWithRetryForever", doUploadFunc, func(err error) (shouldContinue bool) {
 			glog.V(0).Infof("upload content: %v", err)
+			var statusErr *uploadStatusError
+			if errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusConflict {
+				return ShouldReassignUpload(err)
+			}
 			return true
 		})
 	} else {

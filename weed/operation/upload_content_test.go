@@ -85,29 +85,48 @@ func TestShouldReassignUpload(t *testing.T) {
 }
 
 func TestUploadWithRetryDataReassignsOnProvenConflict(t *testing.T) {
-	for _, outcome := range []string{"refused-before-append", "", "unknown"} {
-		t.Run(outcome, func(t *testing.T) {
-			httpClient := &scriptedHTTPClient{responses: map[string][]scriptedHTTPResponse{
-				"http://volume-a/1,first":  {{status: http.StatusConflict, body: `{}`, header: http.Header{"X-Seaweed-Write-Outcome": {outcome}}}},
-				"http://volume-b/2,second": {{status: http.StatusCreated, body: `{"name":"test.bin","size":3}`}},
-			}}
-			uploader := newUploader(httpClient)
-			assignments := 0
-			fid, _, err := uploader.uploadWithRetryData(func() (string, string, security.EncodedJwt, bool, error) {
-				assignments++
-				if assignments == 1 {
-					return "1,first", "volume-a", "", false, nil
+	for _, retryForever := range []bool{false, true} {
+		for _, outcome := range []string{"refused-before-append", "", "unknown"} {
+			t.Run(fmt.Sprintf("retryForever=%t/outcome=%s", retryForever, outcome), func(t *testing.T) {
+				httpClient := &scriptedHTTPClient{responses: map[string][]scriptedHTTPResponse{
+					"http://volume-a/1,first":  {{status: http.StatusConflict, body: `{}`, header: http.Header{"X-Seaweed-Write-Outcome": {outcome}}}},
+					"http://volume-b/2,second": {{status: http.StatusCreated, body: `{"name":"test.bin","size":3}`}},
+				}}
+				uploader := newUploader(httpClient)
+				assignments := 0
+				fid, _, err := uploader.uploadWithRetryData(func() (string, string, security.EncodedJwt, bool, error) {
+					assignments++
+					if assignments == 1 {
+						return "1,first", "volume-a", "", false, nil
+					}
+					return "2,second", "volume-b", "", false, nil
+				}, &UploadOption{Filename: "test.bin", RetryForever: retryForever}, []byte("abc"))
+				if outcome == "refused-before-append" {
+					if err != nil || fid != "2,second" || assignments != 2 || len(httpClient.calls) != 2 {
+						t.Fatalf("reassignment: fid=%s, assignments=%d, error=%v", fid, assignments, err)
+					}
+				} else if err == nil || fid != "1,first" || assignments != 1 || len(httpClient.calls) != 1 {
+					t.Fatalf("unproven conflict retried or acknowledged: assignments=%d, error=%v", assignments, err)
 				}
-				return "2,second", "volume-b", "", false, nil
-			}, &UploadOption{Filename: "test.bin"}, []byte("abc"))
-			if outcome == "refused-before-append" {
-				if err != nil || fid != "2,second" || assignments != 2 || len(httpClient.calls) != 2 {
-					t.Fatalf("reassignment: fid=%s, assignments=%d, error=%v", fid, assignments, err)
-				}
-			} else if err == nil || assignments != 1 || len(httpClient.calls) != 1 {
-				t.Fatalf("unproven conflict retried or acknowledged: assignments=%d, error=%v", assignments, err)
-			}
-		})
+			})
+		}
+	}
+}
+
+func TestUploadWithRetryDataRetryForeverPreservesAssignmentRetries(t *testing.T) {
+	httpClient := &scriptedHTTPClient{responses: map[string][]scriptedHTTPResponse{
+		"http://volume/1,first": {{status: http.StatusCreated, body: `{"name":"test.bin","size":3}`}},
+	}}
+	assignments := 0
+	fileID, _, err := newUploader(httpClient).uploadWithRetryData(func() (string, string, security.EncodedJwt, bool, error) {
+		assignments++
+		if assignments < 3 {
+			return "", "", "", false, errors.New("no writable volumes")
+		}
+		return "1,first", "volume", "", false, nil
+	}, &UploadOption{Filename: "test.bin", RetryForever: true}, []byte("abc"))
+	if err != nil || fileID != "1,first" || assignments != 3 || len(httpClient.calls) != 1 {
+		t.Fatalf("assignment retries: fid=%s, assignments=%d, uploads=%d, error=%v", fileID, assignments, len(httpClient.calls), err)
 	}
 }
 
