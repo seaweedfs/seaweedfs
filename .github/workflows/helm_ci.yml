@@ -1979,7 +1979,12 @@ jobs:
                   "app.kubernetes.io/component": "hijack",
                   "app.kubernetes.io/instance": "hijack",
               }}, f)
-          EXPECTED = {"example.com/team": "storage", "example.com/release": "test"}
+          EXPECTED = {
+              "example.com/team": "storage",
+              "example.com/release": "test",
+              "team": "common",
+              "release": "common",
+          }
 
           def render(extra):
               out = subprocess.check_output(["helm", "template", "test", chart] + BASE + extra, text=True)
@@ -2006,6 +2011,8 @@ jobs:
               before = plain[key]["metadata"].get("labels") or {}
               labels = d["metadata"].get("labels") or {}
               for k, v in EXPECTED.items():
+                  if k in before:
+                      continue
                   if labels.get(k) != v:
                       failed.append(f"{key}: {k}={labels.get(k)!r}, want {v!r}")
               # labels the chart or an object-specific value sets are never overridden
