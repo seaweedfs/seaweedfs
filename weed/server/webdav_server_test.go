@@ -541,6 +541,42 @@ func TestCopyMoveGuardHandler_MoveWithoutOverwriteHeader(t *testing.T) {
 	assert.True(t, os.IsNotExist(err))
 }
 
+// An Overwrite header with an empty first value is present, not missing, so
+// the default must not overwrite it — a later explicit F forbids the move.
+func TestCopyMoveGuardHandler_MoveEmptyOverwriteValue(t *testing.T) {
+	ctx := context.Background()
+	fs := webdav.NewMemFS()
+	for name, data := range map[string]string{"/a.txt": "a", "/b.txt": "b"} {
+		f, err := fs.OpenFile(ctx, name, os.O_RDWR|os.O_CREATE, 0644)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.Write([]byte(data)); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := copyMoveGuardHandler{
+		fs:   fs,
+		next: &webdav.Handler{FileSystem: fs, LockSystem: webdav.NewMemLS()},
+	}
+	req := httptest.NewRequest("MOVE", "http://x/a.txt", nil)
+	req.Header.Set("Destination", "http://x/b.txt")
+	req.Header["Overwrite"] = []string{"", "F"}
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
+	r, err := fs.OpenFile(ctx, "/b.txt", os.O_RDONLY, 0)
+	if assert.NoError(t, err) {
+		data, err := io.ReadAll(r)
+		assert.NoError(t, err)
+		assert.Equal(t, "b", string(data))
+	}
+}
+
 type failRenameFS struct {
 	webdav.FileSystem
 }

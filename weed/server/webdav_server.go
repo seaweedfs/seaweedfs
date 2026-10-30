@@ -148,7 +148,7 @@ func (h copyMoveGuardHandler) moveHandler(r *http.Request) http.Handler {
 func (h copyMoveGuardHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// RFC 4918 10.6: a missing Overwrite header means T, but webdav.Handler
 	// only overwrites on MOVE when it is set (golang/go#66059)
-	if r.Method == "MOVE" && r.Header.Get("Overwrite") == "" {
+	if r.Method == "MOVE" && len(r.Header.Values("Overwrite")) == 0 {
 		r.Header.Set("Overwrite", "T")
 	}
 	next := h.next
