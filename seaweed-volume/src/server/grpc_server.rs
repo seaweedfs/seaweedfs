@@ -7033,17 +7033,16 @@ fn check_copy_counts(
     Ok(())
 }
 
-/// A writable source may take writes or deletes while its files are copied;
-/// then the before/after counts do not describe one snapshot and a strict
-/// count check would report a false mismatch.
+/// A writable source may take writes while its files are copied; then the
+/// before/after file counts do not describe one snapshot and a strict count
+/// check would report a false mismatch. Deletes do not move the file count —
+/// they append tombstone rows the deleted counter records — so drift there
+/// leaves the strict check exact, and check_copy_counts warns on it instead.
 fn copy_counts_stable(
     before: Option<&volume_server_pb::VolumeStatusResponse>,
     after: &volume_server_pb::VolumeStatusResponse,
 ) -> bool {
-    before.is_some_and(|before| {
-        before.file_count == after.file_count
-            && before.file_deleted_count == after.file_deleted_count
-    })
+    before.is_some_and(|before| before.file_count == after.file_count)
 }
 
 /// Verify that a copied file has the expected size.
@@ -9991,6 +9990,30 @@ mod tests {
             0,
             "the target's own count is kept; the drift is only logged"
         );
+    }
+
+    // Writes move the file count; deletes move only the deleted count. The
+    // strict check still applies when only the latter drifts: the copied
+    // file count remains exact, and check_copy_counts warns on the drift.
+    #[test]
+    fn test_copy_counts_stable_gates_on_file_count() {
+        let before = volume_server_pb::VolumeStatusResponse {
+            file_count: 10,
+            file_deleted_count: 3,
+            ..Default::default()
+        };
+        let mut after = before.clone();
+        assert!(copy_counts_stable(Some(&before), &after));
+
+        after.file_deleted_count = 5;
+        assert!(
+            copy_counts_stable(Some(&before), &after),
+            "deleted-count drift alone must not disable the strict check"
+        );
+
+        after.file_count = 9;
+        assert!(!copy_counts_stable(Some(&before), &after));
+        assert!(!copy_counts_stable(None, &after));
     }
 
     // A copy whose record counts disagree with a stable source must be
