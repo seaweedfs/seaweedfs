@@ -5200,21 +5200,17 @@ impl Volume {
     }
 
     /// .dat end of the last record the index rows before `index_size`
-    /// cover, the superblock size when no row inside the bound names a
-    /// record, or 0 when the index cannot be read. Rows are not always in
-    /// .dat order — rebuilds can write the .idx sorted by key — so the
-    /// bound comes from the maximum offset: records do not overlap, so the
-    /// highest offset names the highest end. Records appended after the
-    /// bound — including staged writes whose rows are not published yet —
-    /// lie past it, so a copy must not stream them.
+    /// cover, or the superblock size when no row inside the bound names a
+    /// record. Rows are not always in .dat order — rebuilds can write the
+    /// .idx sorted by key — so the bound comes from the maximum offset:
+    /// records do not overlap, so the highest offset names the highest end.
+    /// Records appended after the bound — including staged writes whose rows
+    /// are not published yet — lie past it, so a copy must not stream them.
     /// Mirrors Go's DatSizeCoveredByIndex in weed/storage/volume_backup.go.
-    pub(crate) fn dat_size_covered_by_index(&self, index_size: u64) -> u64 {
+    pub(crate) fn dat_size_covered_by_index(&self, index_size: u64) -> Result<u64, VolumeError> {
         let bound_rows = index_size / NEEDLE_MAP_ENTRY_SIZE as u64;
         let idx_path = self.file_name(".idx");
-        let idx_file = match File::open(&idx_path) {
-            Ok(file) => file,
-            Err(_) => return 0,
-        };
+        let idx_file = File::open(&idx_path)?;
         let mut max_actual_offset: i64 = -1;
         let mut buf = [0u8; NEEDLE_MAP_ENTRY_SIZE];
         let mut reader = io::BufReader::new(idx_file);
@@ -5222,7 +5218,7 @@ impl Volume {
             match reader.read_exact(&mut buf) {
                 Ok(()) => {}
                 Err(ref e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
-                Err(_) => return 0,
+                Err(e) => return Err(e.into()),
             }
             let (_key, offset, _size) = idx_entry_from_bytes(&buf);
             if !offset.is_zero() {
@@ -5233,18 +5229,13 @@ impl Volume {
             }
         }
         if max_actual_offset < 0 {
-            return self.super_block().block_size() as u64;
+            return Ok(self.super_block().block_size() as u64);
         }
         let io = self.io.read().unwrap();
         let mut header = [0u8; NEEDLE_HEADER_SIZE];
-        if self
-            .read_exact_at_backend(&io, &mut header, max_actual_offset as u64)
-            .is_err()
-        {
-            return 0;
-        }
+        self.read_exact_at_backend(&io, &mut header, max_actual_offset as u64)?;
         let (_cookie, _id, size) = Needle::parse_header(&header);
-        max_actual_offset as u64 + get_actual_size(size, self.version()) as u64
+        Ok(max_actual_offset as u64 + get_actual_size(size, self.version()) as u64)
     }
 
     /// Disk space held by the local .dat file, or 0 when it is unknown. It
@@ -6818,12 +6809,13 @@ mod tests {
         }
         let dat_size = v.dat_file_size().unwrap();
         let idx_size = v.index_file_size();
-        assert_eq!(v.dat_size_covered_by_index(idx_size), dat_size);
+        assert_eq!(v.dat_size_covered_by_index(idx_size).unwrap(), dat_size);
 
         // a bound partway through ends where the next record begins
         let (_k, next, _s) = v.read_index_entry(2).unwrap();
         assert_eq!(
-            v.dat_size_covered_by_index(2 * NEEDLE_MAP_ENTRY_SIZE as u64),
+            v.dat_size_covered_by_index(2 * NEEDLE_MAP_ENTRY_SIZE as u64)
+                .unwrap(),
             next.to_actual_offset() as u64
         );
 
@@ -6835,7 +6827,10 @@ mod tests {
             .unwrap()
             .delete(NeedleId(3), Offset::default())
             .unwrap();
-        assert_eq!(v.dat_size_covered_by_index(v.index_file_size()), dat_size);
+        assert_eq!(
+            v.dat_size_covered_by_index(v.index_file_size()).unwrap(),
+            dat_size
+        );
     }
 
     #[test]
@@ -6861,7 +6856,7 @@ mod tests {
         let sorted: Vec<u8> = rows.concat();
         fs::write(&idx_path, sorted).unwrap();
 
-        assert_eq!(v.dat_size_covered_by_index(idx_size), dat_size);
+        assert_eq!(v.dat_size_covered_by_index(idx_size).unwrap(), dat_size);
     }
 
     #[test]

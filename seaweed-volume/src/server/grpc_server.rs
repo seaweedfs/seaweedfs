@@ -1678,7 +1678,15 @@ impl VolumeServer for VolumeGrpcService {
         // record staged but not yet indexed would reach the backup without
         // its row and be appended again on the next run.
         let dat_size = if req.entry_count > 0 || req.since_ns == 0 {
-            let covered = v.dat_size_covered_by_index(idx_size);
+            let covered = match v.dat_size_covered_by_index(idx_size) {
+                Ok(covered) => covered,
+                Err(e) => {
+                    return Err(Status::internal(format!(
+                        "fail to bound data by covered index: {}",
+                        e
+                    )));
+                }
+            };
             if covered > 0 && covered < dat_size {
                 covered
             } else {
