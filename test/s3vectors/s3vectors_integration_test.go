@@ -194,6 +194,8 @@ func (e *TestEnvironment) startVectorEngine(t *testing.T, bin string) {
 	if err := e.vectorProcess.Start(); err != nil {
 		t.Fatalf("start weed-vector: %v", err)
 	}
+	exited := make(chan error, 1)
+	go func() { exited <- e.vectorProcess.Wait() }()
 
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
@@ -202,8 +204,10 @@ func (e *TestEnvironment) startVectorEngine(t *testing.T, bin string) {
 			conn.Close()
 			return
 		}
-		if e.vectorProcess.ProcessState != nil && e.vectorProcess.ProcessState.Exited() {
-			t.Fatalf("weed-vector exited before listening on %d", e.vectorPort)
+		select {
+		case err := <-exited:
+			t.Fatalf("weed-vector exited before listening on %d: %v", e.vectorPort, err)
+		default:
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
