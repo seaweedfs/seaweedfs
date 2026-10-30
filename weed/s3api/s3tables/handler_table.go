@@ -1088,12 +1088,12 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 				claimed := snapshotExtended(tableEntry.Extended)
 				claimed[ExtendedKeyDeleting] = []byte("delete")
 				if err := h.deleteDirectory(r.Context(), client, dataPath); err != nil {
-					if relErr := h.releaseCatalogRecord(r.Context(), client, tablePath, claimed); relErr != nil {
+					if relErr := h.releaseCatalogRecord(context.WithoutCancel(r.Context()), client, tablePath, claimed); relErr != nil {
 						glog.Warningf("delete table %s: release claim: %v", tablePath, relErr)
 					}
 					return err
 				}
-				err := h.removeExtendedAttributesIf(r.Context(), client, tablePath, claimed,
+				err := h.removeExtendedAttributesIf(context.WithoutCancel(r.Context()), client, tablePath, claimed,
 					ExtendedKeyMetadata, ExtendedKeyMetadataVersion, ExtendedKeyPolicy, ExtendedKeyTags, ExtendedKeyEntryType,
 					ExtendedKeyMaintenance, ExtendedKeyMaintenanceStatus, ExtendedKeyDeleting)
 				if err != nil {
@@ -1118,12 +1118,12 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 			claimed := snapshotExtended(entry.Extended)
 			claimed[ExtendedKeyDeleting] = []byte("delete")
 			if err := h.deleteDirectory(r.Context(), client, dataPath); err != nil {
-				if relErr := h.releaseCatalogRecord(r.Context(), client, tablePath, claimed); relErr != nil {
+				if relErr := h.releaseCatalogRecord(context.WithoutCancel(r.Context()), client, tablePath, claimed); relErr != nil {
 					glog.Warningf("delete table %s: release claim: %v", tablePath, relErr)
 				}
 				return err
 			}
-			return h.removeExtendedAttributesIf(r.Context(), client, tablePath, claimed,
+			return h.removeExtendedAttributesIf(context.WithoutCancel(r.Context()), client, tablePath, claimed,
 				ExtendedKeyMetadata, ExtendedKeyMetadataVersion, ExtendedKeyPolicy, ExtendedKeyTags, ExtendedKeyEntryType,
 				ExtendedKeyMaintenance, ExtendedKeyMaintenanceStatus, ExtendedKeyDeleting)
 		}
@@ -1156,7 +1156,7 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 			return err
 		}
 		if err := h.deleteDirectoryIfMatches(r.Context(), client, tablePath, &filer_pb.Entry{Extended: claimed}); err != nil {
-			if relErr := h.releaseCatalogRecord(r.Context(), client, tablePath, claimed); relErr != nil {
+			if relErr := h.releaseCatalogRecord(context.WithoutCancel(r.Context()), client, tablePath, claimed); relErr != nil {
 				glog.Warningf("delete table %s: release claim: %v", tablePath, relErr)
 			}
 			return err
@@ -1588,7 +1588,7 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 		claimed := snapshotExtended(srcExtended)
 		claimed[ExtendedKeyDeleting] = []byte("rename")
 		releaseClaim := func(err error) error {
-			if relErr := h.releaseCatalogRecord(r.Context(), client, srcPath, claimed); relErr != nil {
+			if relErr := h.releaseCatalogRecord(context.WithoutCancel(r.Context()), client, srcPath, claimed); relErr != nil {
 				glog.Warningf("rename %s: release claim: %v", srcPath, relErr)
 			}
 			return err

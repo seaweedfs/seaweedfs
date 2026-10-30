@@ -1,6 +1,7 @@
 package s3tables
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -650,7 +651,7 @@ func (h *S3TablesHandler) handleDeleteView(w http.ResponseWriter, r *http.Reques
 			return err
 		}
 		if err := h.deleteDirectoryIfMatches(r.Context(), client, viewPath, &filer_pb.Entry{Extended: claimed}); err != nil {
-			if relErr := h.releaseCatalogRecord(r.Context(), client, viewPath, claimed); relErr != nil {
+			if relErr := h.releaseCatalogRecord(context.WithoutCancel(r.Context()), client, viewPath, claimed); relErr != nil {
 				glog.Warningf("delete view %s: release claim: %v", viewPath, relErr)
 			}
 			return err
