@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -34,9 +35,15 @@ type TestEnvironment struct {
 	volumePort int
 	filerPort  int
 	s3Port     int
+	lancePort  int
+	vectorPort int
 	process    *exec.Cmd
 	cancel     context.CancelFunc
 	endpoint   string
+
+	vectorProcess *exec.Cmd
+	vectorExited  chan struct{}
+	vectorExitErr error
 }
 
 func newTestEnvironment(t *testing.T) *TestEnvironment {
@@ -67,7 +74,7 @@ func newTestEnvironment(t *testing.T) *TestEnvironment {
 
 	// weed server derives each service's gRPC port as HTTP+10000, so the
 	// pairs must be allocated together.
-	ports := testutil.MustFreeMiniPorts(t, []string{"master", "volume", "filer", "s3"})
+	ports := testutil.MustFreeMiniPorts(t, []string{"master", "volume", "filer", "s3", "lance", "vector"})
 	env := &TestEnvironment{
 		seaweedDir: seaweedDir,
 		weedBinary: weedBinary,
@@ -79,6 +86,8 @@ func newTestEnvironment(t *testing.T) *TestEnvironment {
 		volumePort: ports[1],
 		filerPort:  ports[2],
 		s3Port:     ports[3],
+		lancePort:  ports[4],
+		vectorPort: ports[5],
 	}
 	env.endpoint = fmt.Sprintf("http://%s:%d", env.bindIP, env.s3Port)
 	return env
@@ -111,7 +120,7 @@ func (e *TestEnvironment) start(t *testing.T) {
 		fmt.Sprintf("-s3.port=%d", e.s3Port),
 		"-s3.config="+iamConfigPath,
 		"-s3.port.iceberg=0",
-		"-s3.port.lance=0",
+		fmt.Sprintf("-s3.port.lance=%d", e.lancePort),
 	)
 	e.process.Dir = e.dataDir
 	e.process.Stdout = os.Stdout
@@ -129,6 +138,10 @@ func (e *TestEnvironment) start(t *testing.T) {
 
 func (e *TestEnvironment) cleanup(t *testing.T) {
 	t.Helper()
+	if e.vectorProcess != nil {
+		_ = e.vectorProcess.Process.Kill()
+		<-e.vectorExited
+	}
 	if e.cancel != nil {
 		e.cancel()
 	}
@@ -136,6 +149,99 @@ func (e *TestEnvironment) cleanup(t *testing.T) {
 		_ = e.process.Wait()
 	}
 	_ = os.RemoveAll(e.dataDir)
+}
+
+// vectorEngineBinary resolves the engine binary the way the pytest suite
+// does: VECTOR_BINARY env, a Makefile-built ./weed-vector, then PATH. The
+// engine runs with its working directory set to the data dir, so the path is
+// made absolute here.
+func vectorEngineBinary(t *testing.T) string {
+	t.Helper()
+	bin := os.Getenv("VECTOR_BINARY")
+	if bin == "" {
+		if _, err := os.Stat("./weed-vector"); err == nil {
+			bin = "./weed-vector"
+		} else if b, err := exec.LookPath("weed-vector"); err == nil {
+			bin = b
+		} else {
+			t.Skip("weed-vector binary not found, skipping engine-dependent test")
+		}
+	}
+	if abs, err := filepath.Abs(bin); err == nil {
+		return abs
+	}
+	return bin
+}
+
+// startVectorEngine spawns weed-vector against the environment's lance
+// namespace endpoint and waits for its listener to come up — mirroring the
+// cluster the pytest suite builds in conftest.py.
+func (e *TestEnvironment) startVectorEngine(t *testing.T, bin string) {
+	t.Helper()
+	masters := fmt.Sprintf("%s:%d.%d", e.bindIP, e.masterPort, e.masterPort+testutil.GrpcPortOffset)
+	cmd := exec.Command(bin,
+		"--namespace", fmt.Sprintf("http://%s:%d", e.bindIP, e.lancePort),
+		"--masters", masters,
+		"--listen", fmt.Sprintf("%s:%d", e.bindIP, e.vectorPort),
+		"--storage-option", "aws_access_key_id="+e.accessKey,
+		"--storage-option", "aws_secret_access_key="+e.secretKey,
+	)
+	cmd.Dir = e.dataDir
+	log, err := os.Create(filepath.Join(e.dataDir, "weed-vector.log"))
+	if err != nil {
+		t.Fatalf("vector log: %v", err)
+	}
+	defer log.Close()
+	cmd.Stdout = log
+	cmd.Stderr = log
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start weed-vector: %v", err)
+	}
+	// Assign only after Start succeeded: cleanup kills Process unconditionally.
+	e.vectorProcess = cmd
+	e.vectorExited = make(chan struct{})
+	go func() {
+		e.vectorExitErr = cmd.Wait()
+		close(e.vectorExited)
+	}()
+
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", e.bindIP, e.vectorPort), 500*time.Millisecond)
+		if err == nil {
+			conn.Close()
+			return
+		}
+		select {
+		case <-e.vectorExited:
+			t.Fatalf("weed-vector exited before listening on %d: %v", e.vectorPort, e.vectorExitErr)
+		default:
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	t.Fatalf("weed-vector did not listen on %d within 30s", e.vectorPort)
+}
+
+// waitForEngineDiscovery polls a data-plane op until the gateway reports the
+// engine instead of 503 — master registration and discovery lag the process
+// itself coming up.
+func (e *TestEnvironment) waitForEngineDiscovery(t *testing.T, c *vectorsClient) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		code, body := c.call(t, "CreateIndex", map[string]interface{}{
+			"vectorBucketName": "vec-bucket", "indexName": "idx",
+			"dataType": "float32", "dimension": 3, "distanceMetric": "euclidean",
+		})
+		if code == http.StatusOK {
+			return
+		}
+		if code != http.StatusServiceUnavailable {
+			t.Fatalf("CreateIndex = %d %v, want 200 or a retryable 503", code, body)
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+	t.Fatalf("engine never registered with the gateway within 30s")
 }
 
 // vectorsClient posts a JSON operation with an X-Amz-Target header, the way
@@ -270,40 +376,95 @@ func TestVectorBucketCatalogSurface(t *testing.T) {
 	}, http.StatusOK)
 }
 
-// Engine-dependent ops skip cleanly when no vector backend is reachable so
-// the suite runs on hosts that can't build the Rust workspace.
-func TestVectorDataPlaneRequiresEngine(t *testing.T) {
+// The data plane needs the Rust engine: weed-vector registers on the master,
+// the gateway discovers it there, and every index/vector op crosses the gRPC
+// boundary. The suite skips when the binary is not on the host.
+func TestVectorDataPlaneLifecycle(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
+	bin := vectorEngineBinary(t)
+
 	env := newTestEnvironment(t)
 	defer env.cleanup(t)
 	env.start(t)
+	env.startVectorEngine(t, bin)
 
 	c := env.client()
-
-	// The bucket resolves through the catalog without an engine; CreateIndex
-	// is the call that crosses the engine boundary.
 	c.want(t, "CreateVectorBucket", map[string]interface{}{
 		"vectorBucketName": "vec-bucket",
 	}, http.StatusOK)
-	code, body := c.call(t, "CreateIndex", map[string]interface{}{
-		"vectorBucketName": "vec-bucket", "indexName": "idx",
-		"dataType": "float32", "dimension": 3, "distanceMetric": "euclidean",
-	})
-	if code == http.StatusServiceUnavailable {
-		t.Skipf("no vector engine reachable (CreateIndex = %d %v); data-plane tests skipped", code, body)
-	}
-	if code != http.StatusOK {
-		t.Fatalf("CreateIndex = %d %v, want 200 or 503", code, body)
-	}
+	env.waitForEngineDiscovery(t, c)
 	indexes := c.want(t, "ListIndexes", map[string]interface{}{
 		"vectorBucketName": "vec-bucket",
 	}, http.StatusOK)
 	if n := len(indexes["indexes"].([]interface{})); n != 1 {
 		t.Fatalf("ListIndexes returned %d indexes, want 1", n)
 	}
+
+	// Write and read the first vectors.
+	c.want(t, "PutVectors", map[string]interface{}{
+		"vectorBucketName": "vec-bucket", "indexName": "idx",
+		"vectors": []map[string]interface{}{
+			{"key": "a", "data": map[string]interface{}{"float32": []float64{1, 0, 0}}, "metadata": map[string]interface{}{"color": "red"}},
+			{"key": "b", "data": map[string]interface{}{"float32": []float64{0.9, 0.1, 0}}, "metadata": map[string]interface{}{"color": "blue"}},
+			{"key": "c", "data": map[string]interface{}{"float32": []float64{0, 0, 1}}, "metadata": map[string]interface{}{"color": "red"}},
+		},
+	}, http.StatusOK)
+	got := c.want(t, "GetVectors", map[string]interface{}{
+		"vectorBucketName": "vec-bucket", "indexName": "idx",
+		"keys": []string{"a"}, "returnData": true, "returnMetadata": true,
+	}, http.StatusOK)
+	vec := got["vectors"].([]interface{})[0].(map[string]interface{})
+	if vec["key"] != "a" || vec["metadata"].(map[string]interface{})["color"] != "red" {
+		t.Fatalf("GetVectors returned %v, want key a with color red", vec)
+	}
+	data, _ := vec["data"].(map[string]interface{})["float32"].([]interface{})
+	if len(data) != 3 || data[0] != 1.0 || data[1] != 0.0 || data[2] != 0.0 {
+		t.Fatalf("GetVectors returned data %v, want float32 [1 0 0]", vec["data"])
+	}
+	listed := c.want(t, "ListVectors", map[string]interface{}{
+		"vectorBucketName": "vec-bucket", "indexName": "idx",
+	}, http.StatusOK)
+	if n := len(listed["vectors"].([]interface{})); n != 3 {
+		t.Fatalf("ListVectors returned %d vectors, want 3", n)
+	}
+
+	// A filtered query excludes the nearest non-matching vector: b is closer
+	// than c but fails the filter.
+	hits := c.want(t, "QueryVectors", map[string]interface{}{
+		"vectorBucketName": "vec-bucket", "indexName": "idx",
+		"queryVector":    map[string]interface{}{"float32": []float64{1, 0, 0}},
+		"topK":           2,
+		"filter":         map[string]interface{}{"color": map[string]interface{}{"$eq": "red"}},
+		"returnDistance": true,
+	}, http.StatusOK)
+	keys := map[string]bool{}
+	for _, h := range hits["vectors"].([]interface{}) {
+		keys[h.(map[string]interface{})["key"].(string)] = true
+	}
+	if !keys["a"] || !keys["c"] || keys["b"] {
+		t.Fatalf("filtered query returned %v, want a and c", hits["vectors"])
+	}
+
+	c.want(t, "DeleteVectors", map[string]interface{}{
+		"vectorBucketName": "vec-bucket", "indexName": "idx", "keys": []string{"b"},
+	}, http.StatusOK)
+	listed = c.want(t, "ListVectors", map[string]interface{}{
+		"vectorBucketName": "vec-bucket", "indexName": "idx",
+	}, http.StatusOK)
+	remaining := map[string]bool{}
+	for _, v := range listed["vectors"].([]interface{}) {
+		remaining[v.(map[string]interface{})["key"].(string)] = true
+	}
+	if len(remaining) != 2 || !remaining["a"] || !remaining["c"] {
+		t.Fatalf("ListVectors after delete returned %v, want keys a and c", listed["vectors"])
+	}
+
 	c.want(t, "DeleteIndex", map[string]interface{}{
 		"vectorBucketName": "vec-bucket", "indexName": "idx",
+	}, http.StatusOK)
+	c.want(t, "DeleteVectorBucket", map[string]interface{}{
+		"vectorBucketName": "vec-bucket",
 	}, http.StatusOK)
 }
