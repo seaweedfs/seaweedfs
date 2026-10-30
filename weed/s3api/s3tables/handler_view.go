@@ -559,6 +559,10 @@ func (h *S3TablesHandler) handleUpdateView(w http.ResponseWriter, r *http.Reques
 		})
 	})
 	if err != nil {
+		if errors.Is(err, ErrConcurrentUpdate) {
+			h.writeError(w, http.StatusConflict, ErrCodeConflict, "view changed concurrently, retry the request")
+			return err
+		}
 		if errors.Is(err, filer_pb.ErrNotFound) {
 			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchView, fmt.Sprintf("view %s not found", target.viewName))
 			return err

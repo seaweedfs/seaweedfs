@@ -783,6 +783,10 @@ func (h *S3TablesHandler) handleTagResource(w http.ResponseWriter, r *http.Reque
 			h.writeError(w, http.StatusNotFound, errorCode, "resource not found")
 			return err
 		}
+		if errors.Is(err, ErrConcurrentUpdate) {
+			h.writeError(w, http.StatusConflict, ErrCodeConflict, "resource tags changed concurrently, retry the request")
+			return err
+		}
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to tag resource")
 		return err
 	}
@@ -1050,6 +1054,10 @@ func (h *S3TablesHandler) handleUntagResource(w http.ResponseWriter, r *http.Req
 				errorCode = ErrCodeNoSuchTable
 			}
 			h.writeError(w, http.StatusNotFound, errorCode, "resource not found")
+			return err
+		}
+		if errors.Is(err, ErrConcurrentUpdate) {
+			h.writeError(w, http.StatusConflict, ErrCodeConflict, "resource tags changed concurrently, retry the request")
 			return err
 		}
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to untag resource")
