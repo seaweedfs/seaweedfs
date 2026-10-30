@@ -4,7 +4,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "seaweedfs.fullname" . }}-s3
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ include "seaweedfs.namespace" . | quote }}
   labels:
     app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
     helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
@@ -41,7 +41,7 @@ spec:
       {{- end }}
       {{- $podAnnotations := mergeOverwrite (deepCopy (.Values.podAnnotations | default dict)) (.Values.s3.podAnnotations | default dict) }}
       {{- if .Values.s3.existingConfigSecret }}
-      {{- $configSecret := (lookup "v1" "Secret" .Release.Namespace .Values.s3.existingConfigSecret) | default dict }}
+      {{- $configSecret := (lookup "v1" "Secret" (include "seaweedfs.namespace" .) .Values.s3.existingConfigSecret) | default dict }}
       {{- $_ := set $podAnnotations "checksum/s3config" ($configSecret | toYaml | sha256sum) }}
       {{- else }}
       {{- $_ := set $podAnnotations "checksum/s3config" (include "seaweedfs.s3.configChecksum" .) }}
@@ -153,7 +153,7 @@ spec:
               {{- if .Values.s3.auditLogConfig }}
               -auditLogConfig=/etc/sw/s3_auditLogConfig.json \
               {{- end }}
-              -filer={{ include "seaweedfs.componentName" (list . "filer-client") }}.{{ .Release.Namespace }}:{{ .Values.filer.port }} \
+              -filer={{ include "seaweedfs.componentName" (list . "filer-client") }}.{{ include "seaweedfs.namespace" . }}:{{ .Values.filer.port }} \
               {{- if .Values.s3.icebergPort }}
               -port.iceberg={{ .Values.s3.icebergPort }} \
               {{- end }}

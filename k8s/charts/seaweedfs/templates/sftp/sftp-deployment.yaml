@@ -4,7 +4,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "seaweedfs.fullname" . }}-sftp
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ include "seaweedfs.namespace" . | quote }}
   labels:
     app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
     helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
@@ -170,7 +170,7 @@ spec:
               -key.file=/usr/local/share/ca-certificates/client/tls.key \
               {{- end }}
               -userStoreFile=/etc/sw/seaweedfs_sftp_config \
-              -filer={{ include "seaweedfs.componentName" (list . "filer-client") }}.{{ .Release.Namespace }}:{{ .Values.filer.port }}
+              -filer={{ include "seaweedfs.componentName" (list . "filer-client") }}.{{ include "seaweedfs.namespace" . }}:{{ .Values.filer.port }}
           volumeMounts:
             {{- include "seaweedfs.tmpDirVolumeMount" (list . .Values.sftp.containerSecurityContext (tpl (.Values.sftp.extraVolumeMounts | default "") .) (tpl (.Values.sftp.extraVolumes | default "") .)) | nindent 12 }}
             {{- if or (eq .Values.sftp.logs.type "hostPath") (eq .Values.sftp.logs.type "emptyDir") }}

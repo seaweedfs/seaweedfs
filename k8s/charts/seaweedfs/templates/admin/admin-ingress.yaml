@@ -9,7 +9,7 @@ apiVersion: extensions/v1beta1
 kind: Ingress
 metadata:
   name: ingress-{{ include "seaweedfs.fullname" . }}-admin
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ include "seaweedfs.namespace" . | quote }}
   annotations:
   {{- if and (not (semverCompare ">=1.18-0" .Capabilities.KubeVersion.GitVersion)) .Values.admin.ingress.className }}
     kubernetes.io/ingress.class: {{ .Values.admin.ingress.className }}

@@ -4,7 +4,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: {{ include "seaweedfs.fullname" . }}-security-config
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ include "seaweedfs.namespace" . | quote }}
   labels:
     app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
     helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
@@ -13,10 +13,10 @@ metadata:
 data:
   {{- $fullname := include "seaweedfs.fullname" . }}
   {{- $securityConfigName := printf "%s-security-config" $fullname }}
-  {{- $existing := lookup "v1" "ConfigMap" .Release.Namespace $securityConfigName }}
+  {{- $existing := lookup "v1" "ConfigMap" (include "seaweedfs.namespace" .) $securityConfigName }}
   {{- if not $existing }}
   {{- $legacyName := printf "%s-%s" (include "seaweedfs.name" .) "security-config" }}
-  {{- $existing = lookup "v1" "ConfigMap" .Release.Namespace $legacyName }}
+  {{- $existing = lookup "v1" "ConfigMap" (include "seaweedfs.namespace" .) $legacyName }}
   {{- end }}
   {{- $existingToml := dig "data" "security.toml" "" $existing }}
   {{- $securityConfigValues := .Values.global.seaweedfs.securityConfig | default dict }}

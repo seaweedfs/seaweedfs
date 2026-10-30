@@ -30,7 +30,7 @@ apiVersion: extensions/v1beta1
 kind: Ingress
 metadata:
   name: ingress-{{ include "seaweedfs.fullname" . }}-s3-lance
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ include "seaweedfs.namespace" . | quote }}
   {{- with .Values.s3.lanceIngress.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}

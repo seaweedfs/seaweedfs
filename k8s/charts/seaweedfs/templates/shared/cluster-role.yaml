@@ -28,7 +28,7 @@ metadata:
 subjects:
   - kind: ServiceAccount
     name: {{ include "seaweedfs.serviceAccountName" . }}
-    namespace: {{ .Release.Namespace }}
+    namespace: {{ include "seaweedfs.namespace" . | quote }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole

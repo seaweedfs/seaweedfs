@@ -4,7 +4,7 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: {{ include "seaweedfs.componentName" (list . "master") }}
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ include "seaweedfs.namespace" . | quote }}
   labels:
     app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
     helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
@@ -175,14 +175,14 @@ spec:
               {{- if .Values.master.garbageThreshold }}
               -garbageThreshold={{ .Values.master.garbageThreshold }} \
               {{- end }}
-              -ip=${POD_NAME}.{{ include "seaweedfs.componentName" (list . "master") }}.{{ .Release.Namespace }} \
+              -ip=${POD_NAME}.{{ include "seaweedfs.componentName" (list . "master") }}.{{ include "seaweedfs.namespace" . }} \
               -peers={{ include "seaweedfs.masterServers" . }} \
               {{- range .Values.master.extraArgs }}
               {{ . }} \
               {{- end }}
           volumeMounts:
             {{- include "seaweedfs.tmpDirVolumeMount" (list . .Values.master.containerSecurityContext (tpl (.Values.master.extraVolumeMounts | default "") .) (tpl (.Values.master.extraVolumes | default "") .)) | nindent 12 }}
-            - name : data-{{ .Release.Namespace }}
+            - name : {{ printf "data-%s" (include "seaweedfs.namespace" .) | trunc 63 | trimSuffix "-" }}
               mountPath: /data
             {{- if or (eq .Values.master.logs.type "hostPath") (eq .Values.master.logs.type "persistentVolumeClaim") (eq .Values.master.logs.type "emptyDir") (eq .Values.master.logs.type "existingClaim") }}
             - name: seaweedfs-master-log-volume
@@ -279,18 +279,18 @@ spec:
           emptyDir: {}
         {{- end }}
         {{- if eq .Values.master.data.type "hostPath" }}
-        - name: data-{{ .Release.Namespace }}
+        - name: {{ printf "data-%s" (include "seaweedfs.namespace" .) | trunc 63 | trimSuffix "-" }}
           hostPath:
             path: {{ .Values.master.data.hostPathPrefix }}/seaweed-master/
             type: DirectoryOrCreate
         {{- end }}
         {{- if eq .Values.master.data.type "existingClaim" }}
-        - name: data-{{ .Release.Namespace }}
+        - name: {{ printf "data-%s" (include "seaweedfs.namespace" .) | trunc 63 | trimSuffix "-" }}
           persistentVolumeClaim:
             claimName: {{ .Values.master.data.claimName }}
         {{- end }}
         {{- if eq .Values.master.data.type "emptyDir" }}
-        - name: data-{{ .Release.Namespace }}
+        - name: {{ printf "data-%s" (include "seaweedfs.namespace" .) | trunc 63 | trimSuffix "-" }}
           emptyDir: {}
         {{- end }}
         - name: master-config
@@ -330,7 +330,7 @@ spec:
     - apiVersion: v1
       kind: PersistentVolumeClaim
       metadata:
-        name: data-{{ .Release.Namespace }}
+        name: {{ printf "data-%s" (include "seaweedfs.namespace" .) | trunc 63 | trimSuffix "-" }}
         {{- with .Values.master.data.annotations }}
         annotations:
           {{- toYaml . | nindent 10 }}
