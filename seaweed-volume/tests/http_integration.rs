@@ -521,6 +521,13 @@ async fn write_and_delete_on_read_only_volume_say_is_read_only() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        response
+            .headers()
+            .get("x-seaweed-write-outcome")
+            .and_then(|value| value.to_str().ok()),
+        Some("refused-before-append")
+    );
     let error = error_of(body_bytes(response).await);
     assert!(error.contains("volume 1 is read only"), "{error}");
 
