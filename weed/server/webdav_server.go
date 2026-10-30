@@ -547,7 +547,7 @@ func (fs *WebDavFileSystem) removeAll(ctx context.Context, fullFilePath string, 
 	}
 	dir, name := fullpath.DirAndName()
 
-	return filer_pb.Remove(context.Background(), fs, dir, name, true, recursive, false, false, []int32{fs.signature})
+	return filer_pb.Remove(ctx, fs, dir, name, true, recursive, false, false, []int32{fs.signature})
 
 }
 
