@@ -4875,10 +4875,10 @@ impl Volume {
             let want = remaining.min(buf.len() as u64) as usize;
             std::io::Read::read_exact(&mut idx_file, &mut buf[..want])?;
             for i in (0..want).step_by(NEEDLE_MAP_ENTRY_SIZE) {
-                for &b in &buf[i..i + 8] {
+                for &b in &buf[i..i + NEEDLE_ID_SIZE] {
                     h = (h ^ b as u64).wrapping_mul(FNV_PRIME);
                 }
-                for &b in &buf[i + 12..i + NEEDLE_MAP_ENTRY_SIZE] {
+                for &b in &buf[i + NEEDLE_ID_SIZE + OFFSET_SIZE..i + NEEDLE_MAP_ENTRY_SIZE] {
                     h = (h ^ b as u64).wrapping_mul(FNV_PRIME);
                 }
             }
