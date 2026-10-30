@@ -561,6 +561,9 @@ func (h *S3TablesHandler) mutateCatalogRecord(
 ) error {
 	return h.mutateEntryExtended(ctx, client, path, func(extended map[string][]byte) error {
 		if _, claimed := extended[ExtendedKeyDeleting]; !claimed {
+			if _, ok := extended[ExtendedKeyMetadata]; !ok {
+				return filer_pb.ErrNotFound
+			}
 			return mutate(extended)
 		}
 		if isUnfinishedCreate(extended) {

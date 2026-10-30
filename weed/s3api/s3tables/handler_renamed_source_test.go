@@ -1,9 +1,12 @@
 package s3tables
 
 import (
+	"context"
 	"net/http"
+	"path"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables/s3tablestest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -160,4 +163,18 @@ func TestViewRecordWithoutMetadataIsNoSuchView(t *testing.T) {
 	}
 }
 
+// A write landing after the record lost its metadata — a rename cleared it
+// between the handler's read and the mutation — must not write the leftover
+// directory.
+func TestMutateCatalogRecordRefusesClearedRecord(t *testing.T) {
+	fs, m := startRenameManager(t)
+	nsPath := GetNamespacePath(renameTestBucket, "ns")
+	fs.Put(nsPath, "gone", map[string][]byte{})
 
+	err := m.handler.mutateCatalogRecord(context.Background(), fs.Client, path.Join(nsPath, "gone"), func(extended map[string][]byte) error {
+		extended[ExtendedKeyPolicy] = []byte("x")
+		return nil
+	})
+	assert.ErrorIs(t, err, filer_pb.ErrNotFound)
+	assert.Empty(t, fs.Get(nsPath, "gone").Extended)
+}
