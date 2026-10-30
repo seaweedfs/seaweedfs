@@ -298,6 +298,10 @@ spec:
             failureThreshold: 3
             timeoutSeconds: 10
           {{- end }}
+          {{- with (default .Values.worker.resources .Values.worker.lanceResources) }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           {{- if .Values.worker.containerSecurityContext.enabled }}
           securityContext: {{- omit .Values.worker.containerSecurityContext "enabled" | toYaml | nindent 12 }}
           {{- end }}
