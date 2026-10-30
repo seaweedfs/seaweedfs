@@ -2254,7 +2254,7 @@ impl VolumeServer for VolumeGrpcService {
         // index next to the .idx that this mount would trust. Clear leftovers
         // before writing anything; a removal failure must abort rather than
         // risk a mount reusing a poisoned .rdb.
-        if false && let Err(e) = dest.remove_partial_files() {
+        if let Err(e) = dest.remove_partial_files() {
             dest.release_reservation(&self.state.store.read().unwrap());
             return Err(Status::internal(format!(
                 "clear leftover files before copying volume {}: {}",
