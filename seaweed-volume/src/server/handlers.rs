@@ -3193,7 +3193,12 @@ pub async fn post_handler(
         None
     };
 
-    let write_result = write_upload_needle(&state, vid, n, fsync).await;
+    let (write_result, refused_before_append) =
+        match write_upload_needle(&state, vid, n, fsync).await {
+            Ok(Ok(written)) => (Ok(written), false),
+            Ok(Err(refused)) => (Err(refused), true),
+            Err(error) => (Err(error), false),
+        };
 
     // No leader-known gate: when the lookup cannot run, the write must fail
     // rather than be acknowledged on fewer copies than required. The local
@@ -3255,11 +3260,21 @@ pub async fn post_handler(
             metrics::HANDLER_COUNTER
                 .with_label_values(&[metrics::ERROR_WRITE_TO_LOCAL_DISK])
                 .inc();
-            json_error_with_query(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("{}", e),
-                Some(&query),
-            )
+            let read_only = matches!(e, crate::storage::volume::VolumeError::ReadOnly(_));
+            let status = if read_only {
+                StatusCode::CONFLICT
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            let mut response = json_error_with_query(status, format!("{}", e), Some(&query));
+            // Replication or a failed append can leave another copy written.
+            if read_only && refused_before_append && !fsync && !needs_replication && !is_replicate {
+                response.headers_mut().insert(
+                    "x-seaweed-write-outcome",
+                    header::HeaderValue::from_static("refused-before-append"),
+                );
+            }
+            response
         }
     };
 
@@ -3267,26 +3282,34 @@ pub async fn post_handler(
     resp
 }
 
-/// Append an uploaded needle the way Go's `writeNeedle2` does: a durable
-/// write goes to the volume's batching worker, which group-commits the
-/// batch's .dat/.idx syncs, while anything else — a non-durable write, or a
-/// durable one landing while the server is stopping and the workers are
-/// winding down — takes the synchronous path and fsyncs inline.
+/// Durable uploads use the batching worker unless the server is stopping.
+/// Only an inner error proves refusal before append.
 async fn write_upload_needle(
     state: &Arc<VolumeServerState>,
     vid: VolumeId,
     mut n: Needle,
     fsync: bool,
-) -> Result<(u64, Size, bool), crate::storage::volume::VolumeError> {
+) -> Result<
+    Result<(u64, Size, bool), crate::storage::volume::VolumeError>,
+    crate::storage::volume::VolumeError,
+> {
     let queued = fsync && !*state.is_stopping.read().unwrap();
     if queued && let Some(wq) = state.write_queue.get() {
-        return wq.submit(vid, n, fsync).await;
+        return wq.submit(vid, n, fsync).await.map(Ok);
     }
     let vol = {
         let store = state.store.read().unwrap();
         store.writable_volume(vid)
     };
-    vol.and_then(|vol| vol.write_needle(&mut n, true, fsync))
+    let vol = match vol {
+        Ok(vol) => vol,
+        Err(refused) => return Ok(Err(refused)),
+    };
+    if fsync {
+        vol.write_needle(&mut n, true, fsync).map(Ok)
+    } else {
+        vol.write_needle_unsynced_or_refused(&mut n)
+    }
 }
 
 // ============================================================================
@@ -7902,6 +7925,88 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn http_sealed_volume_reports_refused_before_append_without_changing_data() {
+        use tower::ServiceExt;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let volume = state
+            .store
+            .read()
+            .unwrap()
+            .find_volume(VolumeId(1))
+            .unwrap()
+            .1;
+        volume.set_read_only().unwrap();
+        let before = volume.dat_file_size().unwrap();
+        let response = super::super::volume_server::build_admin_router(state)
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/1,{:x}{TEST_COOKIE:08x}", 0x6e7a_0c01u64))
+                    .body(Body::from("kv-http-bytes"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            response
+                .headers()
+                .get("x-seaweed-write-outcome")
+                .map(|value| value.to_str().unwrap()),
+            Some("refused-before-append")
+        );
+        assert_eq!(volume.dat_file_size().unwrap(), before);
+    }
+
+    #[tokio::test]
+    async fn http_write_errors_without_no_append_proof_are_not_marked() {
+        use tower::ServiceExt;
+        for query in ["", "?fsync=true", "?type=replicate"] {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let state = volume_test_state(&tmp);
+            let volume = state
+                .store
+                .read()
+                .unwrap()
+                .find_volume(VolumeId(1))
+                .unwrap()
+                .1;
+            let id = 0x6e7a_0c02u64;
+            if query.is_empty() {
+                // This error is injected after the append. Its error variant
+                // cannot prove a safe retry, even if rollback later succeeds.
+                volume.fail_append_for_test(&[NeedleId(id)]);
+            } else {
+                volume.set_read_only().unwrap();
+            }
+            let response = super::super::volume_server::build_admin_router(state)
+                .oneshot(
+                    Request::builder()
+                        .method(Method::POST)
+                        .uri(format!("/1,{id:x}{TEST_COOKIE:08x}{query}"))
+                        .body(Body::from("kv-http-bytes"))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                if query.is_empty() {
+                    StatusCode::INTERNAL_SERVER_ERROR
+                } else {
+                    StatusCode::CONFLICT
+                },
+                "{query}"
+            );
+            assert!(
+                response.headers().get("x-seaweed-write-outcome").is_none(),
+                "{query}"
+            );
+        }
+    }
+
     /// Issue #801: an fsync upload takes the per-volume worker so its sync is
     /// shared across the batch (Go's `writeNeedle2` split); a non-fsync write,
     /// or an fsync write landing while the server is stopping, takes the
@@ -7936,17 +8041,20 @@ mod tests {
 
         write_upload_needle(&state, VolumeId(1), needle(0x6e7a_0b01), true)
             .await
+            .unwrap()
             .unwrap();
         assert_eq!(queue.submits_for_test(), 1);
 
         write_upload_needle(&state, VolumeId(1), needle(0x6e7a_0b02), false)
             .await
+            .unwrap()
             .unwrap();
         assert_eq!(queue.submits_for_test(), 1);
 
         *state.is_stopping.write().unwrap() = true;
         write_upload_needle(&state, VolumeId(1), needle(0x6e7a_0b03), true)
             .await
+            .unwrap()
             .unwrap();
         assert_eq!(queue.submits_for_test(), 1);
     }

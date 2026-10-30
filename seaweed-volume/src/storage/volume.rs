@@ -2631,6 +2631,20 @@ impl Volume {
         results.pop().unwrap_or(Err(VolumeError::NotFound))
     }
 
+    /// The inner error proves that no append was attempted.
+    pub fn write_needle_unsynced_or_refused(
+        &self,
+        n: &mut Needle,
+    ) -> Result<Result<(u64, Size, bool), VolumeError>, VolumeError> {
+        let _sync_guard = self.data_file_sync_lock.lock().unwrap();
+        let _guard = self.data_file_access_control.write_lock();
+        let mut io = self.io.write().unwrap();
+        if let Err(refused) = self.check_writable() {
+            return Ok(Err(refused));
+        }
+        self.do_write_request(&mut io, n, true, false).map(Ok)
+    }
+
     /// Write a batch of needles the way Go's processBatch does: one .dat
     /// sync and one .idx sync per run of distinct needle ids that holds a
     /// durable write, instead of two per durable needle. Nothing in such a
@@ -6368,6 +6382,49 @@ mod tests {
         // Wait for the server thread to be ready before returning.
         ready_rx.recv().unwrap();
         (format!("http://{}", addr), shutdown_tx)
+    }
+
+    #[test]
+    fn a_sealed_volume_refuses_before_append_and_a_write_error_does_not() {
+        let tmp = TempDir::new().unwrap();
+        let v = make_test_volume(tmp.path().to_str().unwrap());
+        let needle = |id: u64, cookie: u32| Needle {
+            id: NeedleId(id),
+            cookie: Cookie(cookie),
+            data: b"uploaded bytes".to_vec(),
+            data_size: 14,
+            ..Needle::default()
+        };
+
+        let mut n = needle(1, 7);
+        assert!(matches!(
+            v.write_needle_unsynced_or_refused(&mut n),
+            Ok(Ok(_))
+        ));
+
+        let mut wrong = needle(1, 8);
+        assert!(v.write_needle_unsynced_or_refused(&mut wrong).is_err());
+
+        v.fail_append_for_test(&[NeedleId(3)]);
+        let mut torn = needle(3, 10);
+        assert!(matches!(
+            v.write_needle_unsynced_or_refused(&mut torn),
+            Err(VolumeError::Io(_))
+        ));
+        v.fail_append_for_test(&[]);
+
+        v.set_read_only().unwrap();
+        let before = v.dat_file_size().unwrap();
+        let mut late = needle(2, 9);
+        assert!(matches!(
+            v.write_needle_unsynced_or_refused(&mut late),
+            Ok(Err(VolumeError::ReadOnly(_)))
+        ));
+        assert_eq!(
+            v.dat_file_size().unwrap(),
+            before,
+            "a refused write appended bytes"
+        );
     }
 
     fn make_test_volume(dir: &str) -> Volume {
