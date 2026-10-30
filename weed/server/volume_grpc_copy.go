@@ -373,7 +373,9 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 				// an unmounted one reports no store volume. A replica still
 				// standing keeps its files either way.
 				if len(movedFiles) > 0 && vs.store.GetVolume(needle.VolumeId(req.VolumeId)) == nil {
-					removeStaleIndexFiles(indexBaseFileName, dataBaseFileName)
+					if cleanErr := removeStaleIndexFiles(indexBaseFileName, dataBaseFileName); cleanErr != nil {
+						glog.Warningf("clear stale index files of failed copy of volume %d: %v", req.VolumeId, cleanErr)
+					}
 				}
 				if dataBaseFileName != "" {
 					os.Remove(dataBaseFileName + ".note")
@@ -519,7 +521,10 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 	// live replica landed mid-copy and still owns it.
 	os.Remove(dataBaseFileName + ".note")
 	if vs.store.GetVolume(needle.VolumeId(req.VolumeId)) == nil {
-		removeStaleIndexFiles(indexBaseFileName, dataBaseFileName)
+		if cleanErr := removeStaleIndexFiles(indexBaseFileName, dataBaseFileName); cleanErr != nil {
+			err = fmt.Errorf("clear stale index files before copying volume %d: %w", req.VolumeId, cleanErr)
+			return err
+		}
 	}
 
 	// The .note marks the copy as in-progress through the renames: a crash
@@ -652,14 +657,19 @@ func replacedBaseOf(link string) string {
 // removeStaleIndexFiles drops the needle-map files a mount would trust over
 // a fresh copy. A load prefers an .idx beside the .dat over one in the idx
 // dir, so a leftover .idx is cleared along with the backends a mount builds
-// (.ldb/.sdx/.rdb); both bases are covered.
-func removeStaleIndexFiles(indexBaseFileName, dataBaseFileName string) {
+// (.ldb/.sdx/.rdb); both bases are covered. The first removal error is
+// returned: a surviving index would be trusted over the copied .idx, so a
+// caller that can still abort must know the removal failed.
+func removeStaleIndexFiles(indexBaseFileName, dataBaseFileName string) error {
+	var firstErr error
 	for _, base := range []string{indexBaseFileName, dataBaseFileName} {
-		os.RemoveAll(base + ".ldb")
-		os.Remove(base + ".sdx")
-		os.Remove(base + ".rdb")
-		os.Remove(base + ".idx")
+		for _, name := range []string{base + ".ldb", base + ".sdx", base + ".rdb", base + ".idx"} {
+			if rmErr := os.RemoveAll(name); rmErr != nil && firstErr == nil {
+				firstErr = rmErr
+			}
+		}
 	}
+	return firstErr
 }
 
 func (vs *VolumeServer) doCopyFile(client volume_server_pb.VolumeServerClient, isEcVolume bool, collection string, vid, compactRevision uint32, stopOffset uint64, baseFileName, ext string, isAppend, ignoreSourceFileNotFound bool, progressFn storage.ProgressFunc) (modifiedTsNs int64, err error) {
