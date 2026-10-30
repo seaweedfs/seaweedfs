@@ -335,10 +335,10 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 				if dataBaseFileName != "" {
 					os.Remove(dataBaseFileName + ".note")
 				}
-				if replacedRemoved && len(replacedLinks) > 0 {
-					// The swap failed after the previous replica was deleted;
-					// put its preserved files back and remount it. The .note
-					// is already gone so the restored set loads. An incoming
+				if len(replacedLinks) > 0 {
+					// The swap failed after the previous replica's files were
+					// displaced; put the preserved files back. The .note is
+					// already gone so the restored set loads. An incoming
 					// .vif kept for a coexisting EC volume can occupy the path
 					// the replica's own .vif restores to — drop it so the
 					// original settings come back.
@@ -350,8 +350,12 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 					}
 					restoreReplacedVolumeFiles(replacedLinks)
 					replacedLinks = nil
-					if remountErr := vs.store.MountVolume(needle.VolumeId(req.VolumeId), &req.Collection); remountErr != nil {
-						glog.Warningf("remount replaced replica of volume %d: %v", req.VolumeId, remountErr)
+					// Only a replica the store deleted gets remounted; an
+					// unmounted one goes back to files on disk, as found.
+					if replacedRemoved {
+						if remountErr := vs.store.MountVolume(needle.VolumeId(req.VolumeId), &req.Collection); remountErr != nil {
+							glog.Warningf("remount replaced replica of volume %d: %v", req.VolumeId, remountErr)
+						}
 					}
 				}
 			}
@@ -443,6 +447,27 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 		}
 		replacedRemoved = true
 		glog.V(0).Infof("deleted existing volume %d before copying.", req.VolumeId)
+	} else {
+		// An unmounted replica at the final basenames gets no store delete:
+		// the stale-index cleanup and the renames displace it silently, and a
+		// copy without a staged .dat would leave the old one orphaned. Link
+		// its files the same way so a failed swap restores them (no remount —
+		// it was not mounted), then take them off; refuse the copy when they
+		// cannot be preserved.
+		var backupComplete bool
+		replacedLinks, backupComplete = linkReplacedVolumeFiles(
+			datFileName,
+			idxFileName,
+			vifFileName,
+			dataBaseFileName+".idx",
+		)
+		if !backupComplete {
+			err = fmt.Errorf("preserve files of existing volume %d for rollback", req.VolumeId)
+			return err
+		}
+		for _, replacedFile := range []string{datFileName, idxFileName, vifFileName, dataBaseFileName + ".idx"} {
+			os.Remove(replacedFile)
+		}
 	}
 
 	// A stale .note at the final basename fails the next load; the staged
