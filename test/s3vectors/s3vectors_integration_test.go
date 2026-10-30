@@ -42,6 +42,8 @@ type TestEnvironment struct {
 	endpoint   string
 
 	vectorProcess *exec.Cmd
+	vectorExited  chan struct{}
+	vectorExitErr error
 }
 
 func newTestEnvironment(t *testing.T) *TestEnvironment {
@@ -138,7 +140,7 @@ func (e *TestEnvironment) cleanup(t *testing.T) {
 	t.Helper()
 	if e.vectorProcess != nil {
 		_ = e.vectorProcess.Process.Kill()
-		_ = e.vectorProcess.Wait()
+		<-e.vectorExited
 	}
 	if e.cancel != nil {
 		e.cancel()
@@ -197,8 +199,11 @@ func (e *TestEnvironment) startVectorEngine(t *testing.T, bin string) {
 	}
 	// Assign only after Start succeeded: cleanup kills Process unconditionally.
 	e.vectorProcess = cmd
-	exited := make(chan error, 1)
-	go func() { exited <- cmd.Wait() }()
+	e.vectorExited = make(chan struct{})
+	go func() {
+		e.vectorExitErr = cmd.Wait()
+		close(e.vectorExited)
+	}()
 
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
@@ -208,8 +213,8 @@ func (e *TestEnvironment) startVectorEngine(t *testing.T, bin string) {
 			return
 		}
 		select {
-		case err := <-exited:
-			t.Fatalf("weed-vector exited before listening on %d: %v", e.vectorPort, err)
+		case <-e.vectorExited:
+			t.Fatalf("weed-vector exited before listening on %d: %v", e.vectorPort, e.vectorExitErr)
 		default:
 		}
 		time.Sleep(250 * time.Millisecond)
