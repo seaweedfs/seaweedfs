@@ -303,7 +303,18 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 			// renames the final basenames can still be the replica being
 			// replaced, and a rejected copy must leave it intact.
 			for _, moved := range movedFiles {
+				// A regular volume and an EC volume for the same id share
+				// <base>.vif; keep it while the EC index is here.
+				if moved == vifFileName && copyLocation.HasEcxFileOnDisk(volFileInfoResp.Collection, needle.VolumeId(req.VolumeId)) {
+					continue
+				}
 				os.Remove(moved)
+			}
+			// A failed mount leaves the needle-map backends it built; drop
+			// them so the next load does not trust a stale index. A replica
+			// still standing keeps its files.
+			if vs.store.GetVolume(needle.VolumeId(req.VolumeId)) == nil {
+				removeStaleIndexFiles(indexBaseFileName, dataBaseFileName)
 			}
 			if dataBaseFileName != "" {
 				os.Remove(dataBaseFileName + ".note")
@@ -393,8 +404,13 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 	}
 
 	// A stale .note at the final basename fails the next load; the staged
-	// copy carries none, so clear leftovers before the files land.
+	// copy carries none, so clear leftovers before the files land. A stale
+	// derived index would likewise be trusted over the fresh .idx, unless a
+	// live replica landed mid-copy and still owns it.
 	os.Remove(dataBaseFileName + ".note")
+	if vs.store.GetVolume(needle.VolumeId(req.VolumeId)) == nil {
+		removeStaleIndexFiles(indexBaseFileName, dataBaseFileName)
+	}
 
 	// The .note marks the copy as in-progress through the renames: a crash
 	// mid-rename leaves the note and the load scan sweeps the partial set.
@@ -478,6 +494,17 @@ func restoreReplacedVolumeFiles(links []string) {
 		} else {
 			os.Remove(link)
 		}
+	}
+}
+
+// removeStaleIndexFiles drops the needle-map backends a mount builds next
+// to the index. A mount that saw an .idx beside the .dat builds them under
+// the data base instead, so both bases are cleared.
+func removeStaleIndexFiles(indexBaseFileName, dataBaseFileName string) {
+	for _, base := range []string{indexBaseFileName, dataBaseFileName} {
+		os.RemoveAll(base + ".ldb")
+		os.Remove(base + ".sdx")
+		os.Remove(base + ".rdb")
 	}
 }
 
