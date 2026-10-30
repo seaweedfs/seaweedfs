@@ -525,6 +525,10 @@ func linkReplacedVolumeFiles(baseFileNames ...string) (links []string, complete 
 	complete = true
 	for _, base := range baseFileNames {
 		if _, err := os.Stat(base); err != nil {
+			if !os.IsNotExist(err) {
+				glog.Warningf("preserve replaced file %s: %v", base, err)
+				complete = false
+			}
 			continue
 		}
 		link := filepath.Join(filepath.Dir(base), "copying", "replaced_"+filepath.Base(base))
