@@ -751,12 +751,16 @@ async fn do_replicated_request(
         return Ok(());
     }
 
-    let mut query_fields: Vec<(String, String)> = serde_urlencoded::from_str(query)
-        .map_err(|e| format!("parse replication query: {e}"))?;
-    query_fields.retain(|(name, _)| name != "type");
-    query_fields.push(("type".to_string(), "replicate".to_string()));
-    let new_query = serde_urlencoded::to_string(&query_fields)
-        .map_err(|e| format!("encode replication query: {e}"))?;
+    let mut query_fields = Vec::new();
+    for field in query.split('&').filter(|field| !field.is_empty()) {
+        let decoded: Vec<(String, String)> = serde_urlencoded::from_str(field)
+            .map_err(|e| format!("parse replication query: {e}"))?;
+        if !decoded.iter().any(|(name, _)| name == "type") {
+            query_fields.push(field);
+        }
+    }
+    query_fields.push("type=replicate");
+    let new_query = query_fields.join("&");
 
     let mut futures = Vec::new();
     for loc in remote_locations {
@@ -8070,6 +8074,118 @@ mod tests {
             master_server.abort();
             peer_server.abort();
         }
+    }
+
+    #[tokio::test]
+    async fn http_replication_preserves_query_authentication() {
+        use crate::security::{SigningKey, gen_jwt};
+        use crate::storage::super_block::ReplicaPlacement;
+        use axum::{Json, Router, middleware, routing::get};
+        use tower::ServiceExt;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut state = volume_test_state(&tmp);
+        Arc::get_mut(&mut state).unwrap().self_url = "127.0.0.1:8080".to_string();
+        let volume = state
+            .store
+            .read()
+            .unwrap()
+            .find_volume(VolumeId(1))
+            .unwrap()
+            .1;
+        volume
+            .set_replica_placement(ReplicaPlacement::from_string("001").unwrap())
+            .unwrap();
+        let peer_tmp = tempfile::TempDir::new().unwrap();
+        let peer = volume_test_state(&peer_tmp);
+        let peer_volume = peer
+            .store
+            .read()
+            .unwrap()
+            .find_volume(VolumeId(1))
+            .unwrap()
+            .1;
+        let key = SigningKey(b"replication-secret".to_vec());
+        state.guard.write().unwrap().signing_key = key.clone();
+        peer.guard.write().unwrap().signing_key = key.clone();
+
+        let queries = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let received = queries.clone();
+        let app = super::super::volume_server::build_admin_router(peer).layer(middleware::from_fn(
+            move |request: Request<Body>, next: middleware::Next| {
+                received
+                    .lock()
+                    .unwrap()
+                    .push(request.uri().query().unwrap().to_string());
+                async move { next.run(request).await }
+            },
+        ));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let peer_addr = listener.local_addr().unwrap();
+        let peer_server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let master = Router::new().route(
+            "/dir/lookup",
+            get(move || async move {
+                Json(serde_json::json!({"locations": [
+                    {"url": "127.0.0.1:8080"},
+                    {"url": peer_addr.to_string()}
+                ]}))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        *state.current_master_url.write().await = listener.local_addr().unwrap().to_string();
+        let master_server = tokio::spawn(async move { axum::serve(listener, master).await.unwrap() });
+        let id = 0x6e7a_0c05u64;
+        let fid = format!("1,{id:x}{TEST_COOKIE:08x}");
+        let token = gen_jwt(&key, 60, &fid).unwrap();
+        let query = "%6Awt=expired&tag=a%2Fb+%2B&tag=x%20y&bare&%74ype=client&type=old";
+        let expected_query = "%6Awt=expired&tag=a%2Fb+%2B&tag=x%20y&bare&type=replicate";
+        let payload = b"authenticated replica bytes";
+        for method in [Method::POST, Method::DELETE] {
+            let response = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                super::super::volume_server::build_admin_router(state.clone()).oneshot(
+                    Request::builder()
+                        .method(method.clone())
+                        .uri(format!("/{fid}?{query}"))
+                        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                        .body(Body::from(if method == Method::POST {
+                            payload.as_slice()
+                        } else {
+                            &[]
+                        }))
+                        .unwrap(),
+                ),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            assert_eq!(
+                response.status(),
+                if method == Method::POST {
+                    StatusCode::CREATED
+                } else {
+                    StatusCode::ACCEPTED
+                }
+            );
+            for stored_volume in [&volume, &peer_volume] {
+                let mut stored = Needle {
+                    id: NeedleId(id),
+                    cookie: Cookie(TEST_COOKIE),
+                    ..Needle::default()
+                };
+                let result = stored_volume.read_needle(&mut stored);
+                if method == Method::POST {
+                    result.unwrap();
+                    assert_eq!(stored.data, payload);
+                } else {
+                    assert!(result.is_err());
+                }
+            }
+        }
+        assert_eq!(*queries.lock().unwrap(), [expected_query, expected_query]);
+        master_server.abort();
+        peer_server.abort();
     }
 
     #[tokio::test]
