@@ -143,9 +143,11 @@ pub struct VolumeServerState {
     /// Volumes with a VolumeCopy in flight on this server. The claim spans
     /// reservation, transfer, mount and cleanup, so a second copy of the
     /// same volume fails fast instead of clearing or overwriting files the
-    /// first copy still owns. Mirrors Go's volumeCopiesInFlight.
-    pub volume_copies_in_flight:
+    /// first copy still owns. Mirrors Go's volumeCopiesInFlight. Shared with
+    /// the disk locations' load scans — Go's loadGuard.
+    pub volume_copies_in_flight: std::sync::Arc<
         std::sync::Mutex<std::collections::HashSet<crate::storage::types::VolumeId>>,
+    >,
 }
 
 impl VolumeServerState {

@@ -119,6 +119,9 @@ pub struct Store {
     /// field so a test can exercise the guard off Linux. Go:
     /// createVolumeFilePreallocates.
     preallocate_supported: bool,
+    /// The copy-claim set installed on every location by
+    /// set_volume_load_guard, kept here so a later add_location gets it too.
+    load_guard: Option<Arc<Mutex<HashSet<VolumeId>>>>,
 }
 
 impl Store {
@@ -143,6 +146,7 @@ impl Store {
             vid_stamp_lock: Mutex::new(()),
             vid_stamp_dirty: std::sync::atomic::AtomicBool::new(false),
             disk_stats_of: super::disk_location::get_disk_stats,
+            load_guard: None,
             preallocate_supported: PREALLOCATE_SUPPORTED,
         }
     }
@@ -165,6 +169,7 @@ impl Store {
             min_free_space,
             tags,
         )?;
+        loc.load_guard = self.load_guard.clone();
         loc.load_existing_volumes(self.needle_map_kind)?;
 
         // Check for duplicate volume IDs across existing locations
@@ -212,6 +217,17 @@ impl Store {
         self.save_vid_stamps();
 
         Ok(())
+    }
+
+    /// Mirrors Go's `Store.SetVolumeLoadGuard`: installs the copy-claim set
+    /// every location consults before scanning a volume from disk, so a
+    /// reload cannot sweep or register files out from under an in-flight
+    /// VolumeCopy.
+    pub fn set_volume_load_guard(&mut self, claims: Arc<Mutex<HashSet<VolumeId>>>) {
+        self.load_guard = Some(claims);
+        for loc in &mut self.locations {
+            loc.load_guard = self.load_guard.clone();
+        }
     }
 
     /// Scan disk locations for new volume files and load them.

@@ -54,6 +54,27 @@ pub struct DiskLocation {
     pub disk_total_bytes: AtomicU64,
     pub disk_free_bytes: AtomicU64,
     pub min_free_space: MinFreeSpace,
+    /// Go's `DiskLocation.loadGuard`: the server's copy-claim set. A scan
+    /// skips a claimed vid outright and claims any other through its load,
+    /// so a VolumeCopy's .note sweep cannot unlink files it still writes.
+    pub(crate) load_guard: Option<Arc<Mutex<HashSet<VolumeId>>>>,
+}
+
+/// Keeps `vid` in the copy-claim set through one scan load so a VolumeCopy
+/// arriving mid-load sees the claim and backs off — the release half of
+/// Go's loadGuard hook.
+struct LoadClaim {
+    claims: Arc<Mutex<HashSet<VolumeId>>>,
+    vid: VolumeId,
+}
+
+impl Drop for LoadClaim {
+    fn drop(&mut self) {
+        self.claims
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.vid);
+    }
 }
 
 impl DiskLocation {
@@ -101,6 +122,7 @@ impl DiskLocation {
             disk_total_bytes: AtomicU64::new(0),
             disk_free_bytes: AtomicU64::new(0),
             min_free_space,
+            load_guard: None,
         })
     }
 
@@ -147,6 +169,27 @@ impl DiskLocation {
 
     // ---- Volume management ----
 
+    /// Go's loadGuard consult: `Ok(_)` lets the load proceed (holding the
+    /// vid's claim through it when the gate is installed), `Err` means a
+    /// VolumeCopy owns the vid and the scan skips it this pass.
+    fn claim_for_load(&self, vid: VolumeId) -> Result<Option<LoadClaim>, ()> {
+        match &self.load_guard {
+            None => Ok(None),
+            Some(claims) => {
+                let mut set = claims.lock().unwrap_or_else(|e| e.into_inner());
+                if set.contains(&vid) {
+                    Err(())
+                } else {
+                    set.insert(vid);
+                    Ok(Some(LoadClaim {
+                        claims: claims.clone(),
+                        vid,
+                    }))
+                }
+            }
+        }
+    }
+
     /// Load existing volumes from the directory.
     ///
     /// Matches Go's `loadExistingVolume`: checks for incomplete volumes (.note file),
@@ -187,6 +230,15 @@ impl DiskLocation {
         for (collection, vid) in dat_files {
             let volume_name = volume_file_name(&self.directory, &collection, vid);
             let idx_name = volume_file_name(&self.idx_directory, &collection, vid);
+
+            // A copy of this volume may be mid-flight: the sweeps below
+            // would unlink files it is still writing, and a register here
+            // could slip past its own recheck. Skip while a copy owns the
+            // vid and claim it through the load — Go's loadGuard.
+            let _load_claim = match self.claim_for_load(vid) {
+                Ok(claim) => claim,
+                Err(()) => continue,
+            };
 
             // Sweep a leftover empty `.dat` stub (a phantom from the pre-fix
             // loader) before it loads as a phantom volume or blocks startup.
@@ -398,6 +450,13 @@ impl DiskLocation {
             if self.volumes.contains_key(&vid) {
                 continue;
             }
+            // A copy of this id can be mid-flight at the same basenames:
+            // rolling a leftover commit forward would rename compaction
+            // temps over the files it is writing. Same skip the load takes.
+            let _load_claim = match self.claim_for_load(vid) {
+                Ok(claim) => claim,
+                Err(()) => continue,
+            };
             let v = Volume::new_unloaded(&self.directory, &self.idx_directory, &collection, vid);
             if let Err(e) = v.reconcile_compact_state() {
                 warn!(volume_id = vid.0, error = %e, "reconcile interrupted compaction failed");
@@ -1803,6 +1862,62 @@ mod tests {
         );
         assert_eq!(parse_volume_filename("notadat.idx"), None);
         assert_eq!(parse_volume_filename("bad.dat"), None);
+    }
+
+    // A volume mid-copy must not be swept or loaded by a reload: a claimed
+    // vid is skipped outright — .note files and all — and an unclaimed vid
+    // is claimed through its load, released when the pass ends. Mirrors
+    // Go's TestLoadExistingVolumeSkipsACopyInFlight.
+    #[test]
+    fn test_load_existing_volumes_skips_a_copy_in_flight() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        {
+            let mut loc = DiskLocation::new(
+                dir,
+                dir,
+                10,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(1.0),
+                Vec::new(),
+            )
+            .unwrap();
+            loc.create_volume(VolumeId(9), NeedleMapKind::InMemory, &VolumeSpec::default())
+                .unwrap();
+            loc.close();
+        }
+        // The copy's in-progress marker: unclaimed, the sweep unlinks the files.
+        fs::write(format!("{dir}/9.note"), "copying from test").unwrap();
+
+        let claims = Arc::new(Mutex::new(HashSet::new()));
+        let mut loc = DiskLocation::new(
+            dir,
+            dir,
+            10,
+            DiskType::HardDrive,
+            MinFreeSpace::Percent(1.0),
+            Vec::new(),
+        )
+        .unwrap();
+        loc.load_guard = Some(claims.clone());
+
+        claims.lock().unwrap().insert(VolumeId(9));
+        loc.load_existing_volumes(NeedleMapKind::InMemory).unwrap();
+        assert!(loc.find_volume(VolumeId(9)).is_none());
+        assert!(
+            std::path::Path::new(&format!("{dir}/9.dat")).exists(),
+            "the sweep must not unlink files a VolumeCopy still owns"
+        );
+        assert!(std::path::Path::new(&format!("{dir}/9.note")).exists());
+
+        claims.lock().unwrap().remove(&VolumeId(9));
+        fs::remove_file(format!("{dir}/9.note")).unwrap();
+        loc.load_existing_volumes(NeedleMapKind::InMemory).unwrap();
+        assert!(loc.find_volume(VolumeId(9)).is_some());
+        assert!(
+            claims.lock().unwrap().is_empty(),
+            "the load's claim must release when the pass ends"
+        );
     }
 
     #[test]

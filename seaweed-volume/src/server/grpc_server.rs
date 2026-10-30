@@ -8337,7 +8337,7 @@ mod tests {
             cli_white_list: vec![],
             state_file_path: String::new(),
             ec_decodes_in_flight: std::sync::Mutex::new(std::collections::HashSet::new()),
-            volume_copies_in_flight: std::sync::Mutex::new(std::collections::HashSet::new()),
+            volume_copies_in_flight: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             ec_decode_tail: std::sync::Mutex::new(std::collections::HashSet::new()),
             ec_decode_tail_notify: tokio::sync::Notify::new(),
         });
@@ -8455,7 +8455,7 @@ mod tests {
             cli_white_list: vec![],
             state_file_path: String::new(),
             ec_decodes_in_flight: std::sync::Mutex::new(std::collections::HashSet::new()),
-            volume_copies_in_flight: std::sync::Mutex::new(std::collections::HashSet::new()),
+            volume_copies_in_flight: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             ec_decode_tail: std::sync::Mutex::new(std::collections::HashSet::new()),
             ec_decode_tail_notify: tokio::sync::Notify::new(),
         });
@@ -11284,7 +11284,7 @@ mod tests {
             cli_white_list: vec![],
             state_file_path: String::new(),
             ec_decodes_in_flight: std::sync::Mutex::new(std::collections::HashSet::new()),
-            volume_copies_in_flight: std::sync::Mutex::new(std::collections::HashSet::new()),
+            volume_copies_in_flight: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             ec_decode_tail: std::sync::Mutex::new(std::collections::HashSet::new()),
             ec_decode_tail_notify: tokio::sync::Notify::new(),
         });
@@ -13219,7 +13219,7 @@ mod tests {
             cli_white_list: vec![],
             state_file_path: String::new(),
             ec_decodes_in_flight: std::sync::Mutex::new(std::collections::HashSet::new()),
-            volume_copies_in_flight: std::sync::Mutex::new(std::collections::HashSet::new()),
+            volume_copies_in_flight: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             ec_decode_tail: std::sync::Mutex::new(std::collections::HashSet::new()),
             ec_decode_tail_notify: tokio::sync::Notify::new(),
         });
