@@ -490,13 +490,16 @@ mod tests {
 
     #[test]
     fn test_load_outgoing_grpc_tls_rejects_partial_client_pair() {
+        let dir = tempfile::TempDir::new().unwrap();
         let mut config = sample_config();
-        config.grpc_cert_file = "/tmp/server.pem".to_string();
-        config.grpc_key_file = "/tmp/server.key".to_string();
-        config.grpc_ca_file = "/tmp/ca.pem".to_string();
+        write_pem_files(&dir, &mut config);
         config.grpc_client_cert_file = "/tmp/client.pem".to_string();
 
-        assert!(load_outgoing_grpc_tls(&config).is_err());
+        let err = load_outgoing_grpc_tls(&config).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "grpc.volume.client_cert and grpc.volume.client_key must both be set"
+        );
     }
 
     #[test]
