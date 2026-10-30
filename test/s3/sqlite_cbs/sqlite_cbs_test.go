@@ -402,7 +402,11 @@ func TestCBSConcurrentPutIfAbsent(t *testing.T) {
 	key := "mydb/block-contended"
 
 	start := make(chan struct{})
-	results := make(chan error, writers)
+	type putResult struct {
+		writer int
+		err    error
+	}
+	results := make(chan putResult, writers)
 	var wg sync.WaitGroup
 	for i := 0; i < writers; i++ {
 		wg.Add(1)
@@ -419,26 +423,31 @@ func TestCBSConcurrentPutIfAbsent(t *testing.T) {
 				IfNoneMatch: aws.String("*"),
 				Body:        bytes.NewReader([]byte(fmt.Sprintf("writer-%d", i))),
 			})
-			results <- err
+			results <- putResult{i, err}
 		}(i)
 	}
 	close(start)
 	wg.Wait()
 	close(results)
 
-	successes, preconditionFailures := 0, 0
-	for err := range results {
+	successes, preconditionFailures, winner := 0, 0, -1
+	for res := range results {
 		switch {
-		case err == nil:
+		case res.err == nil:
 			successes++
-		case isPreconditionFailed(err):
+			winner = res.writer
+		case isPreconditionFailed(res.err):
 			preconditionFailures++
 		default:
-			t.Fatalf("unexpected race error: %v", err)
+			t.Fatalf("unexpected race error: %v", res.err)
 		}
 	}
 	require.Equal(t, 1, successes, "exactly one put-if-absent may commit")
 	require.Equal(t, writers-1, preconditionFailures, "every losing write must see 412")
+
+	// A losing write must not have committed over the winner's data.
+	_, body := getCBSTestObject(t, adminClient, bucket, key)
+	assert.Equal(t, fmt.Sprintf("writer-%d", winner), string(body))
 }
 
 // cbsManifest mirrors the state a CBS daemon keeps in cloud storage: a single
@@ -653,13 +662,17 @@ func TestCBSConcurrentConditionalMultipartCommit(t *testing.T) {
 	}
 
 	start := make(chan struct{})
-	results := make(chan error, racers)
+	type raceResult struct {
+		racer int
+		err   error
+	}
+	results := make(chan raceResult, racers)
 	var wg sync.WaitGroup
 	for i := 0; i < racers; i++ {
 		wg.Add(1)
 		racerClient := cluster.newS3Client(t)
 		uploadID, partETag := uploadIDs[i], partETags[i]
-		go func() {
+		go func(i int) {
 			defer wg.Done()
 			<-start
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -673,26 +686,32 @@ func TestCBSConcurrentConditionalMultipartCommit(t *testing.T) {
 				}},
 				IfNoneMatch: aws.String("*"),
 			})
-			results <- err
-		}()
+			results <- raceResult{i, err}
+		}(i)
 	}
 	close(start)
 	wg.Wait()
 	close(results)
 
-	successes, preconditionFailures := 0, 0
-	for err := range results {
+	successes, preconditionFailures, winner := 0, 0, -1
+	for res := range results {
 		switch {
-		case err == nil:
+		case res.err == nil:
 			successes++
-		case isPreconditionFailed(err):
+			winner = res.racer
+		case isPreconditionFailed(res.err):
 			preconditionFailures++
 		default:
-			t.Fatalf("unexpected race error: %v", err)
+			t.Fatalf("unexpected race error: %v", res.err)
 		}
 	}
 	require.Equal(t, 1, successes, "exactly one conditional multipart completion may commit")
 	require.Equal(t, racers-1, preconditionFailures, "every losing completion must see 412")
+
+	// A losing completion must not have published over the winner's data.
+	_, body := getCBSTestObject(t, adminClient, bucket, key)
+	assert.Equal(t, fmt.Sprintf("racer-%d", winner), string(body))
+
 	for _, uploadID := range uploadIDs {
 		abortMultipartUpload(adminClient, bucket, key, uploadID)
 	}
