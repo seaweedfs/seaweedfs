@@ -27,6 +27,7 @@ import (
 type scriptedHTTPResponse struct {
 	status int
 	body   string
+	header http.Header
 }
 
 type scriptedHTTPClient struct {
@@ -51,7 +52,7 @@ func (c *scriptedHTTPClient) Do(req *http.Request) (*http.Response, error) {
 
 	return &http.Response{
 		StatusCode: plan.status,
-		Header:     make(http.Header),
+		Header:     plan.header.Clone(),
 		Body:       io.NopCloser(strings.NewReader(plan.body)),
 	}, nil
 }
@@ -66,6 +67,8 @@ func TestShouldReassignUpload(t *testing.T) {
 		{name: "no response (transport)", err: &uploadStatusError{StatusCode: 0, err: fmt.Errorf("dial tcp: no such host")}, want: true},
 		{name: "500 replica write failed", err: &uploadStatusError{StatusCode: 500, err: fmt.Errorf("failed to write to replicas")}, want: true},
 		{name: "503 service unavailable", err: &uploadStatusError{StatusCode: 503, err: fmt.Errorf("busy")}, want: true},
+		{name: "proven conflict", err: &uploadStatusError{StatusCode: http.StatusConflict, refusedBeforeAppend: true, err: errors.New("read only")}, want: true},
+		{name: "unmarked conflict", err: &uploadStatusError{StatusCode: http.StatusConflict, err: errors.New("read only")}, want: false},
 		{name: "400 bad request", err: &uploadStatusError{StatusCode: 400, err: fmt.Errorf("bad needle")}, want: false},
 		{name: "401 unauthorized", err: &uploadStatusError{StatusCode: 401, err: fmt.Errorf("wrong jwt")}, want: false},
 		{name: "assign rpc transport", err: fmt.Errorf("assign volume: transport is closing"), want: true},
@@ -78,6 +81,52 @@ func TestShouldReassignUpload(t *testing.T) {
 				t.Fatalf("ShouldReassignUpload(%v) = %v, want %v", tc.err, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestUploadWithRetryDataReassignsOnProvenConflict(t *testing.T) {
+	for _, retryForever := range []bool{false, true} {
+		for _, outcome := range []string{"refused-before-append", "", "unknown"} {
+			t.Run(fmt.Sprintf("retryForever=%t/outcome=%s", retryForever, outcome), func(t *testing.T) {
+				httpClient := &scriptedHTTPClient{responses: map[string][]scriptedHTTPResponse{
+					"http://volume-a/1,first":  {{status: http.StatusConflict, body: `{}`, header: http.Header{"X-Seaweed-Write-Outcome": {outcome}}}},
+					"http://volume-b/2,second": {{status: http.StatusCreated, body: `{"name":"test.bin","size":3}`}},
+				}}
+				uploader := newUploader(httpClient)
+				assignments := 0
+				fid, _, err := uploader.uploadWithRetryData(func() (string, string, security.EncodedJwt, bool, error) {
+					assignments++
+					if assignments == 1 {
+						return "1,first", "volume-a", "", false, nil
+					}
+					return "2,second", "volume-b", "", false, nil
+				}, &UploadOption{Filename: "test.bin", RetryForever: retryForever}, []byte("abc"))
+				if outcome == "refused-before-append" {
+					if err != nil || fid != "2,second" || assignments != 2 || len(httpClient.calls) != 2 {
+						t.Fatalf("reassignment: fid=%s, assignments=%d, error=%v", fid, assignments, err)
+					}
+				} else if err == nil || fid != "1,first" || assignments != 1 || len(httpClient.calls) != 1 {
+					t.Fatalf("unproven conflict retried or acknowledged: assignments=%d, error=%v", assignments, err)
+				}
+			})
+		}
+	}
+}
+
+func TestUploadWithRetryDataRetryForeverPreservesAssignmentRetries(t *testing.T) {
+	httpClient := &scriptedHTTPClient{responses: map[string][]scriptedHTTPResponse{
+		"http://volume/1,first": {{status: http.StatusCreated, body: `{"name":"test.bin","size":3}`}},
+	}}
+	assignments := 0
+	fileID, _, err := newUploader(httpClient).uploadWithRetryData(func() (string, string, security.EncodedJwt, bool, error) {
+		assignments++
+		if assignments < 3 {
+			return "", "", "", false, errors.New("no writable volumes")
+		}
+		return "1,first", "volume", "", false, nil
+	}, &UploadOption{Filename: "test.bin", RetryForever: true}, []byte("abc"))
+	if err != nil || fileID != "1,first" || assignments != 3 || len(httpClient.calls) != 1 {
+		t.Fatalf("assignment retries: fid=%s, assignments=%d, uploads=%d, error=%v", fileID, assignments, len(httpClient.calls), err)
 	}
 }
 

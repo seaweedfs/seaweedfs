@@ -43,7 +43,6 @@ func TestReplicatedUploadSucceedsImmediatelyAfterAllocate(t *testing.T) {
 	}
 
 	client := framework.NewHTTPClient()
-	fid := framework.NewFileID(volumeID, 881001, 0x0B0C0D0E)
 	payload := []byte("replicated-upload-after-allocate")
 
 	// The master only learns about replica locations through volume-server
@@ -57,21 +56,24 @@ func TestReplicatedUploadSucceedsImmediatelyAfterAllocate(t *testing.T) {
 		t.Fatalf("master did not report 2 replica locations for volume %d within deadline", volumeID)
 	}
 
-	uploadResp := framework.UploadBytes(t, client, clusterHarness.VolumeAdminURL(0), fid, payload)
-	_ = framework.ReadAllAndClose(t, uploadResp)
-	if uploadResp.StatusCode != http.StatusCreated {
-		t.Fatalf("replicated upload expected 201, got %d", uploadResp.StatusCode)
-	}
+	for i, query := range []string{"", "?type=client", "?type=", "?%74ype=client", "?type=client&type=old", "?type=client&fsync=%74rue"} {
+		fid := framework.NewFileID(volumeID, 881001+uint64(i), 0x0B0C0D0E)
+		uploadResp := framework.UploadBytes(t, client, clusterHarness.VolumeAdminURL(0), fid+query, payload)
+		_ = framework.ReadAllAndClose(t, uploadResp)
+		if uploadResp.StatusCode != http.StatusCreated {
+			t.Fatalf("replicated upload expected 201, got %d", uploadResp.StatusCode)
+		}
 
-	replicaReadURL := clusterHarness.VolumeAdminURL(1) + "/" + fid
-	var replicaBody []byte
-	if !waitForHTTPStatus(t, client, replicaReadURL, http.StatusOK, 10*time.Second, func(resp *http.Response) {
-		replicaBody = framework.ReadAllAndClose(t, resp)
-	}) {
-		t.Fatalf("replica did not become readable within deadline")
-	}
-	if string(replicaBody) != string(payload) {
-		t.Fatalf("replica body mismatch: got %q want %q", string(replicaBody), string(payload))
+		replicaReadURL := clusterHarness.VolumeAdminURL(1) + "/" + fid
+		var replicaBody []byte
+		if !waitForHTTPStatus(t, client, replicaReadURL, http.StatusOK, 10*time.Second, func(resp *http.Response) {
+			replicaBody = framework.ReadAllAndClose(t, resp)
+		}) {
+			t.Fatalf("replica did not become readable within deadline")
+		}
+		if string(replicaBody) != string(payload) {
+			t.Fatalf("replica body mismatch: got %q want %q", string(replicaBody), string(payload))
+		}
 	}
 }
 

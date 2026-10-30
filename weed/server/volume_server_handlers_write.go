@@ -55,7 +55,14 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	isUnchanged, writeError := topology.ReplicatedWrite(context.WithoutCancel(ctx), vs.GetMaster, vs.grpcDialOption, vs.store, volumeId, reqNeedle, r, contentMd5)
 	if writeError != nil {
 		stats.VolumeServerFileWriteFailures.Inc()
-		writeJsonError(w, r, http.StatusInternalServerError, writeError)
+		status := http.StatusInternalServerError
+		if errors.Is(writeError, storage.ErrorReadOnly) {
+			status = http.StatusConflict
+		}
+		if errors.Is(writeError, topology.ErrorWriteRefused) {
+			w.Header().Set("X-Seaweed-Write-Outcome", "refused-before-append")
+		}
+		writeJsonError(w, r, status, writeError)
 		return
 	}
 

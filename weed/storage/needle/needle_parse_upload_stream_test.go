@@ -167,3 +167,53 @@ func buildGzipReq(t *testing.T, body []byte, md5OnPart, md5OnReq string) *http.R
 	}
 	return req
 }
+
+func TestParseUploadRetainsReplicaControls(t *testing.T) {
+	for _, fieldFirst := range []bool{true, false} {
+		for _, query := range []string{"", "?type=client&fsync=false", "?type=&fsync="} {
+			var body bytes.Buffer
+			writer := multipart.NewWriter(&body)
+			fields := func() {
+				if err := writer.WriteField("type", "replicate"); err != nil {
+					t.Fatal(err)
+				}
+				if err := writer.WriteField("fsync", "true"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if fieldFirst {
+				fields()
+			}
+			file, err := writer.CreateFormFile("file", "data.bin")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := file.Write([]byte("payload")); err != nil {
+				t.Fatal(err)
+			}
+			if !fieldFirst {
+				fields()
+			}
+			if err := writer.Close(); err != nil {
+				t.Fatal(err)
+			}
+			request := httptest.NewRequest(http.MethodPost, "/1,12345678"+query, &body)
+			request.Header.Set("Content-Type", writer.FormDataContentType())
+			upload, err := ParseUpload(request, 1024, &bytes.Buffer{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(upload.Data) != "payload" {
+				t.Fatalf("file data = %q", upload.Data)
+			}
+			for name, want := range map[string]string{"type": "replicate", "fsync": "true"} {
+				if request.URL.Query().Has(name) {
+					want = request.URL.Query().Get(name)
+				}
+				if got := request.FormValue(name); got != want {
+					t.Fatalf("field-first=%v query=%q %s=%q, want %q", fieldFirst, query, name, got, want)
+				}
+			}
+		}
+	}
+}

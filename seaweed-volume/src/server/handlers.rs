@@ -751,11 +751,16 @@ async fn do_replicated_request(
         return Ok(());
     }
 
-    let new_query = if query.is_empty() {
-        String::from("type=replicate")
-    } else {
-        format!("{}&type=replicate", query)
-    };
+    let mut query_fields = Vec::new();
+    for field in query.split('&').filter(|field| !field.is_empty()) {
+        let decoded: Vec<(String, String)> = serde_urlencoded::from_str(field)
+            .map_err(|e| format!("parse replication query: {e}"))?;
+        if !decoded.iter().any(|(name, _)| name == "type") {
+            query_fields.push(field);
+        }
+    }
+    query_fields.push("type=replicate");
+    let new_query = query_fields.join("&");
 
     let mut futures = Vec::new();
     for loc in remote_locations {
@@ -2684,7 +2689,10 @@ pub async fn post_handler(
     }
 
     // Upload throttling: check inflight bytes against limit
-    let is_replicate = query.split('&').any(|p| p == "type=replicate");
+    let is_replicate = query_fields
+        .iter()
+        .find(|(name, _)| name == "type")
+        .is_some_and(|(_, value)| value == "replicate");
     let content_length = headers
         .get(header::CONTENT_LENGTH)
         .and_then(|v| v.to_str().ok())
@@ -2895,6 +2903,8 @@ pub async fn post_handler(
             .find_map(|(k, v)| if k == name { Some(v.clone()) } else { None })
             .or_else(|| multipart_form_fields.get(name).cloned())
     };
+
+    let is_replicate = form_value("type").as_deref() == Some("replicate");
 
     // Check for chunk manifest flag.
     // Go uses r.FormValue("cm"), which falls back to multipart fields when present.
@@ -3193,7 +3203,12 @@ pub async fn post_handler(
         None
     };
 
-    let write_result = write_upload_needle(&state, vid, n, fsync).await;
+    let (write_result, refused_before_append) =
+        match write_upload_needle(&state, vid, n, fsync).await {
+            Ok(Ok(written)) => (Ok(written), false),
+            Ok(Err(refused)) => (Err(refused), true),
+            Err(error) => (Err(error), false),
+        };
 
     // No leader-known gate: when the lookup cannot run, the write must fail
     // rather than be acknowledged on fewer copies than required. The local
@@ -3255,11 +3270,21 @@ pub async fn post_handler(
             metrics::HANDLER_COUNTER
                 .with_label_values(&[metrics::ERROR_WRITE_TO_LOCAL_DISK])
                 .inc();
-            json_error_with_query(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("{}", e),
-                Some(&query),
-            )
+            let read_only = matches!(e, crate::storage::volume::VolumeError::ReadOnly(_));
+            let status = if read_only {
+                StatusCode::CONFLICT
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            let mut response = json_error_with_query(status, format!("{}", e), Some(&query));
+            // Replication or a failed append can leave another copy written.
+            if read_only && refused_before_append && !fsync && !needs_replication && !is_replicate {
+                response.headers_mut().insert(
+                    "x-seaweed-write-outcome",
+                    header::HeaderValue::from_static("refused-before-append"),
+                );
+            }
+            response
         }
     };
 
@@ -3267,26 +3292,34 @@ pub async fn post_handler(
     resp
 }
 
-/// Append an uploaded needle the way Go's `writeNeedle2` does: a durable
-/// write goes to the volume's batching worker, which group-commits the
-/// batch's .dat/.idx syncs, while anything else — a non-durable write, or a
-/// durable one landing while the server is stopping and the workers are
-/// winding down — takes the synchronous path and fsyncs inline.
+/// Durable uploads use the batching worker unless the server is stopping.
+/// Only an inner error proves refusal before append.
 async fn write_upload_needle(
     state: &Arc<VolumeServerState>,
     vid: VolumeId,
     mut n: Needle,
     fsync: bool,
-) -> Result<(u64, Size, bool), crate::storage::volume::VolumeError> {
+) -> Result<
+    Result<(u64, Size, bool), crate::storage::volume::VolumeError>,
+    crate::storage::volume::VolumeError,
+> {
     let queued = fsync && !*state.is_stopping.read().unwrap();
     if queued && let Some(wq) = state.write_queue.get() {
-        return wq.submit(vid, n, fsync).await;
+        return wq.submit(vid, n, fsync).await.map(Ok);
     }
     let vol = {
         let store = state.store.read().unwrap();
         store.writable_volume(vid)
     };
-    vol.and_then(|vol| vol.write_needle(&mut n, true, fsync))
+    let vol = match vol {
+        Ok(vol) => vol,
+        Err(refused) => return Ok(Err(refused)),
+    };
+    if fsync {
+        vol.write_needle(&mut n, true, fsync).map(Ok)
+    } else {
+        vol.write_needle_unsynced_or_refused(&mut n)
+    }
 }
 
 // ============================================================================
@@ -7902,6 +7935,355 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn http_sealed_volume_reports_refused_before_append_without_changing_data() {
+        use tower::ServiceExt;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let volume = state
+            .store
+            .read()
+            .unwrap()
+            .find_volume(VolumeId(1))
+            .unwrap()
+            .1;
+        volume.set_read_only().unwrap();
+        let before = volume.dat_file_size().unwrap();
+        let response = super::super::volume_server::build_admin_router(state)
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/1,{:x}{TEST_COOKIE:08x}", 0x6e7a_0c01u64))
+                    .body(Body::from("kv-http-bytes"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            response
+                .headers()
+                .get("x-seaweed-write-outcome")
+                .map(|value| value.to_str().unwrap()),
+            Some("refused-before-append")
+        );
+        assert_eq!(volume.dat_file_size().unwrap(), before);
+    }
+
+    #[tokio::test]
+    async fn http_local_refusal_after_replica_append_is_not_marked() {
+        for local_read_only in [true, false] {
+            use crate::storage::super_block::ReplicaPlacement;
+            use axum::{Json, Router, routing::get};
+            use tower::ServiceExt;
+
+            let tmp = tempfile::TempDir::new().unwrap();
+            let mut state = volume_test_state(&tmp);
+            Arc::get_mut(&mut state).unwrap().self_url = "127.0.0.1:8080".to_string();
+            let volume = state
+                .store
+                .read()
+                .unwrap()
+                .find_volume(VolumeId(1))
+                .unwrap()
+                .1;
+            volume
+                .set_replica_placement(ReplicaPlacement::from_string("001").unwrap())
+                .unwrap();
+            if local_read_only {
+                volume.set_read_only().unwrap();
+            }
+            let before = volume.dat_file_size().unwrap();
+
+            let peer_tmp = tempfile::TempDir::new().unwrap();
+            let peer = volume_test_state(&peer_tmp);
+            let peer_volume = peer
+                .store
+                .read()
+                .unwrap()
+                .find_volume(VolumeId(1))
+                .unwrap()
+                .1;
+            if !local_read_only {
+                peer_volume.set_read_only().unwrap();
+            }
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let peer_addr = listener.local_addr().unwrap();
+            let peer_server = tokio::spawn(async move {
+                axum::serve(
+                    listener,
+                    super::super::volume_server::build_admin_router(peer),
+                )
+                .await
+                .unwrap();
+            });
+
+            // The master's writable view can lag behind the local seal.
+            let master = Router::new().route(
+                "/dir/lookup",
+                get(move || async move {
+                    Json(serde_json::json!({"locations": [
+                        {"url": "127.0.0.1:8080"},
+                        {"url": peer_addr.to_string()}
+                    ]}))
+                }),
+            );
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            *state.current_master_url.write().await = listener.local_addr().unwrap().to_string();
+            let master_server = tokio::spawn(async move {
+                axum::serve(listener, master).await.unwrap();
+            });
+
+            let id = 0x6e7a_0c03u64;
+            let payload = b"replicated bytes";
+            let response = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                super::super::volume_server::build_admin_router(state).oneshot(
+                    Request::builder()
+                        .method(Method::POST)
+                        .uri(format!("/1,{id:x}{TEST_COOKIE:08x}"))
+                        .body(Body::from(payload.as_slice()))
+                        .unwrap(),
+                ),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            assert_eq!(
+                response.status(),
+                if local_read_only {
+                    StatusCode::CONFLICT
+                } else {
+                    StatusCode::INTERNAL_SERVER_ERROR
+                }
+            );
+            assert!(response.headers().get("x-seaweed-write-outcome").is_none());
+            let (refused, written) = if local_read_only {
+                (&volume, &peer_volume)
+            } else {
+                (&peer_volume, &volume)
+            };
+            assert_eq!(refused.dat_file_size().unwrap(), before);
+            let mut stored = Needle {
+                id: NeedleId(id),
+                cookie: Cookie(TEST_COOKIE),
+                ..Needle::default()
+            };
+            written.read_needle(&mut stored).unwrap();
+            assert_eq!(stored.data, payload);
+            master_server.abort();
+            peer_server.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn http_replication_preserves_query_authentication() {
+        use crate::security::{SigningKey, gen_jwt};
+        use crate::storage::super_block::ReplicaPlacement;
+        use axum::{Json, Router, middleware, routing::get};
+        use tower::ServiceExt;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut state = volume_test_state(&tmp);
+        Arc::get_mut(&mut state).unwrap().self_url = "127.0.0.1:8080".to_string();
+        let volume = state
+            .store
+            .read()
+            .unwrap()
+            .find_volume(VolumeId(1))
+            .unwrap()
+            .1;
+        volume
+            .set_replica_placement(ReplicaPlacement::from_string("001").unwrap())
+            .unwrap();
+        let peer_tmp = tempfile::TempDir::new().unwrap();
+        let peer = volume_test_state(&peer_tmp);
+        let peer_volume = peer
+            .store
+            .read()
+            .unwrap()
+            .find_volume(VolumeId(1))
+            .unwrap()
+            .1;
+        let key = SigningKey(b"replication-secret".to_vec());
+        state.guard.write().unwrap().signing_key = key.clone();
+        peer.guard.write().unwrap().signing_key = key.clone();
+
+        let queries = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let received = queries.clone();
+        let app = super::super::volume_server::build_admin_router(peer).layer(middleware::from_fn(
+            move |request: Request<Body>, next: middleware::Next| {
+                received
+                    .lock()
+                    .unwrap()
+                    .push(request.uri().query().unwrap().to_string());
+                async move { next.run(request).await }
+            },
+        ));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let peer_addr = listener.local_addr().unwrap();
+        let peer_server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let master = Router::new().route(
+            "/dir/lookup",
+            get(move || async move {
+                Json(serde_json::json!({"locations": [
+                    {"url": "127.0.0.1:8080"},
+                    {"url": peer_addr.to_string()}
+                ]}))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        *state.current_master_url.write().await = listener.local_addr().unwrap().to_string();
+        let master_server = tokio::spawn(async move { axum::serve(listener, master).await.unwrap() });
+        let id = 0x6e7a_0c05u64;
+        let fid = format!("1,{id:x}{TEST_COOKIE:08x}");
+        let token = gen_jwt(&key, 60, &fid).unwrap();
+        let query = "%6Awt=expired&tag=a%2Fb+%2B&tag=x%20y&bare&%74ype=client&type=old";
+        let expected_query = "%6Awt=expired&tag=a%2Fb+%2B&tag=x%20y&bare&type=replicate";
+        let payload = b"authenticated replica bytes";
+        for method in [Method::POST, Method::DELETE] {
+            let response = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                super::super::volume_server::build_admin_router(state.clone()).oneshot(
+                    Request::builder()
+                        .method(method.clone())
+                        .uri(format!("/{fid}?{query}"))
+                        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                        .body(Body::from(if method == Method::POST {
+                            payload.as_slice()
+                        } else {
+                            &[]
+                        }))
+                        .unwrap(),
+                ),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            assert_eq!(
+                response.status(),
+                if method == Method::POST {
+                    StatusCode::CREATED
+                } else {
+                    StatusCode::ACCEPTED
+                }
+            );
+            for stored_volume in [&volume, &peer_volume] {
+                let mut stored = Needle {
+                    id: NeedleId(id),
+                    cookie: Cookie(TEST_COOKIE),
+                    ..Needle::default()
+                };
+                let result = stored_volume.read_needle(&mut stored);
+                if method == Method::POST {
+                    result.unwrap();
+                    assert_eq!(stored.data, payload);
+                } else {
+                    assert!(result.is_err());
+                }
+            }
+        }
+        assert_eq!(*queries.lock().unwrap(), [expected_query, expected_query]);
+        master_server.abort();
+        peer_server.abort();
+    }
+
+    #[tokio::test]
+    async fn http_multipart_replica_refusal_is_not_marked() {
+        use tower::ServiceExt;
+        for field_first in [true, false] {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let state = volume_test_state(&tmp);
+            let volume = state
+                .store
+                .read()
+                .unwrap()
+                .find_volume(VolumeId(1))
+                .unwrap()
+                .1;
+            volume.set_read_only().unwrap();
+            let before = volume.dat_file_size().unwrap();
+            let field =
+                "--boundary\r\nContent-Disposition: form-data; name=\"type\"\r\n\r\nreplicate\r\n";
+            let file = "--boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"data.bin\"\r\nContent-Type: application/octet-stream\r\n\r\nreplica bytes\r\n";
+            let body = if field_first {
+                format!("{field}{file}--boundary--\r\n")
+            } else {
+                format!("{file}{field}--boundary--\r\n")
+            };
+            let response = super::super::volume_server::build_admin_router(state)
+                .oneshot(
+                    Request::builder()
+                        .method(Method::POST)
+                        .uri(format!("/1,{:x}{TEST_COOKIE:08x}", 0x6e7a_0c04u64))
+                        .header(
+                            header::CONTENT_TYPE,
+                            "multipart/form-data; boundary=boundary",
+                        )
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::CONFLICT);
+            assert!(response.headers().get("x-seaweed-write-outcome").is_none());
+            assert_eq!(volume.dat_file_size().unwrap(), before);
+        }
+    }
+
+    #[tokio::test]
+    async fn http_write_errors_without_no_append_proof_are_not_marked() {
+        use tower::ServiceExt;
+        for query in [
+            "",
+            "?fsync=true",
+            "?type=replicate",
+            "?type=%72eplicate",
+            "?%74ype=replicate",
+        ] {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let state = volume_test_state(&tmp);
+            let volume = state
+                .store
+                .read()
+                .unwrap()
+                .find_volume(VolumeId(1))
+                .unwrap()
+                .1;
+            let id = 0x6e7a_0c02u64;
+            if query.is_empty() {
+                // This error is injected after the append. Its error variant
+                // cannot prove a safe retry, even if rollback later succeeds.
+                volume.fail_append_for_test(&[NeedleId(id)]);
+            } else {
+                volume.set_read_only().unwrap();
+            }
+            let response = super::super::volume_server::build_admin_router(state)
+                .oneshot(
+                    Request::builder()
+                        .method(Method::POST)
+                        .uri(format!("/1,{id:x}{TEST_COOKIE:08x}{query}"))
+                        .body(Body::from("kv-http-bytes"))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                if query.is_empty() {
+                    StatusCode::INTERNAL_SERVER_ERROR
+                } else {
+                    StatusCode::CONFLICT
+                },
+                "{query}"
+            );
+            assert!(
+                response.headers().get("x-seaweed-write-outcome").is_none(),
+                "{query}"
+            );
+        }
+    }
+
     /// Issue #801: an fsync upload takes the per-volume worker so its sync is
     /// shared across the batch (Go's `writeNeedle2` split); a non-fsync write,
     /// or an fsync write landing while the server is stopping, takes the
@@ -7936,17 +8318,20 @@ mod tests {
 
         write_upload_needle(&state, VolumeId(1), needle(0x6e7a_0b01), true)
             .await
+            .unwrap()
             .unwrap();
         assert_eq!(queue.submits_for_test(), 1);
 
         write_upload_needle(&state, VolumeId(1), needle(0x6e7a_0b02), false)
             .await
+            .unwrap()
             .unwrap();
         assert_eq!(queue.submits_for_test(), 1);
 
         *state.is_stopping.write().unwrap() = true;
         write_upload_needle(&state, VolumeId(1), needle(0x6e7a_0b03), true)
             .await
+            .unwrap()
             .unwrap();
         assert_eq!(queue.submits_for_test(), 1);
     }

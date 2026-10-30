@@ -25,6 +25,8 @@ import (
 	"google.golang.org/grpc"
 )
 
+var ErrorWriteRefused = errors.New("write refused before append")
+
 // ReplicatedWrite writes a needle to the local volume and fans it out to all
 // remote replica locations. When type=replicate is set, the request is itself
 // a forwarded replication and no further remote lookups are performed.
@@ -198,6 +200,9 @@ func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDi
 	wg.Wait()
 
 	if localErr != nil {
+		if errors.Is(localErr, storage.ErrorReadOnly) && replicaCount == 0 && !fsync && r.FormValue("type") != "replicate" {
+			localErr = fmt.Errorf("%w: %w", ErrorWriteRefused, localErr)
+		}
 		return false, localErr
 	}
 	if remoteErr != nil {

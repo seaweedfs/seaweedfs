@@ -361,6 +361,7 @@ func TestReplicatedWriteFailsWhenEitherLegFails(t *testing.T) {
 	}{
 		{name: "local write fails", volumeId: 8, readonlyLocal: true, replicaStatus: http.StatusCreated},
 		{name: "replica write fails", volumeId: 9, replicaStatus: http.StatusInternalServerError},
+		{name: "replica read only", volumeId: 10, replicaStatus: http.StatusConflict},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			replica := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -396,8 +397,12 @@ func TestReplicatedWriteFailsWhenEitherLegFails(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if _, err := ReplicatedWrite(context.Background(), masterFn, dialOption, store, tc.volumeId, n, r, ""); err == nil {
+			_, err := ReplicatedWrite(context.Background(), masterFn, dialOption, store, tc.volumeId, n, r, "")
+			if err == nil {
 				t.Fatal("ReplicatedWrite succeeded despite a failed leg")
+			}
+			if errors.Is(err, ErrorWriteRefused) {
+				t.Fatalf("replicated write incorrectly proves no append: %v", err)
 			}
 		})
 	}
