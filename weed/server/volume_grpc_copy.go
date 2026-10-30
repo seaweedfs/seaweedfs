@@ -457,6 +457,18 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 		movedFiles = append(movedFiles, pair[1])
 	}
 
+	// With a separate index directory the .idx lands outside the data dir, so
+	// a copy whose source has no .vif leaves nothing the volume scan can find.
+	// An empty .vif marks the basename for discovery; the loader treats it as
+	// absent and writes a real one on mount.
+	if filepath.Dir(indexBaseFileName) != filepath.Dir(dataBaseFileName) && !util.FileExists(vifFileName) {
+		if writeErr := util.WriteFile(vifFileName, nil, 0644); writeErr != nil {
+			err = fmt.Errorf("write .vif marker for volume %d: %w", req.VolumeId, writeErr)
+			return err
+		}
+		movedFiles = append(movedFiles, vifFileName)
+	}
+
 	// A leftover .note fails the load on the next restart, so a removal
 	// failure must fail the copy rather than be silently swallowed.
 	if noteErr := os.Remove(dataBaseFileName + ".note"); noteErr != nil && !os.IsNotExist(noteErr) {
