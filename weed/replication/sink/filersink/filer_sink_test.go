@@ -305,6 +305,11 @@ func TestDestinationHoldsContent(t *testing.T) {
 		{"same chunks, renamed empty tag -> write", extEntry(dstEntry(200, "A", "B"), "a", ""), extEntry(srcEntry(200, "A", "B"), "b", ""), false},
 		{"same chunks, same empty tag -> skip", extEntry(dstEntry(200, "A", "B"), "a", ""), extEntry(srcEntry(200, "A", "B"), "a", ""), true},
 		{"same chunks, stale uid -> write", func() *filer_pb.Entry { e := dstEntry(200, "A", "B"); e.Attributes.Uid = 1; return e }(), srcEntry(200, "A", "B"), false},
+		// a TTL-less write inherits the destination's storage-rule TTL, so a
+		// stored rule TTL is one a rewrite reproduces — only an explicit TTL
+		// mismatch forces it
+		{"same chunks, rule ttl -> skip", func() *filer_pb.Entry { e := dstEntry(200, "A", "B"); e.Attributes.TtlSec = 60; return e }(), srcEntry(200, "A", "B"), true},
+		{"same chunks, ttl mismatch -> write", func() *filer_pb.Entry { e := dstEntry(200, "A", "B"); e.Attributes.TtlSec = 60; return e }(), func() *filer_pb.Entry { e := srcEntry(200, "A", "B"); e.Attributes.TtlSec = 30; return e }(), false},
 		// fields a rewrite cannot change must not block the skip: inode/crtime are
 		// filer-assigned or preserved, and a stored atime/ctime defaults to mtime
 		{"assigned fields differ -> skip", func() *filer_pb.Entry {

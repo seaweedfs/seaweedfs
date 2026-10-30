@@ -697,7 +697,13 @@ func destinationHoldsContent(existing, reference *filer_pb.Entry) bool {
 // preserved across rewrites — comparing them would re-replicate forever on fields
 // a write can never change — so only the writable fields decide.
 func sameWritableMetadata(existing, reference *filer_pb.Entry) bool {
-	if !proto.Equal(normalizedAttributes(existing.GetAttributes()), normalizedAttributes(reference.GetAttributes())) {
+	exAttr, refAttr := normalizedAttributes(existing.GetAttributes()), normalizedAttributes(reference.GetAttributes())
+	if exAttr != nil && refAttr.GetTtlSec() == 0 {
+		// a TTL-less write inherits the destination's storage-rule TTL, so the
+		// stored value is one a rewrite reproduces, not one it would change
+		exAttr.TtlSec = 0
+	}
+	if !proto.Equal(exAttr, refAttr) {
 		return false
 	}
 	ex, ref := existing.GetExtended(), reference.GetExtended()
