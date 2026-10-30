@@ -146,19 +146,30 @@ func renameOverTarget(ctx context.Context, fs webdav.FileSystem, oldName, newNam
 	if err := fs.Rename(ctx, newName, spare); err != nil {
 		return err
 	}
-	// a client disconnect cancels ctx mid-move; the parked target's restore
-	// and removal run under a detached deadline so it is never left hidden
-	parkedCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Minute)
-	defer cancel()
 	if err := fs.Rename(ctx, oldName, newName); err != nil {
-		if backErr := fs.Rename(parkedCtx, spare, newName); backErr != nil {
-			glog.WarningfCtx(parkedCtx, "restore moved-aside %s: %v", newName, backErr)
+		// a client disconnect cancels ctx mid-move; restoration gets its
+		// own deadline, started after the move so its duration is not eaten
+		restoreCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Minute)
+		defer cancel()
+		if backErr := fs.Rename(restoreCtx, spare, newName); backErr != nil {
+			glog.WarningfCtx(restoreCtx, "restore moved-aside %s to %s: %v", spare, newName, backErr)
 		}
 		return err
 	}
-	if err := fs.RemoveAll(parkedCtx, spare); err != nil {
-		glog.WarningfCtx(parkedCtx, "remove moved-aside %s: %v", spare, err)
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Minute)
+	defer cancel()
+	var removeErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			time.Sleep(2 * time.Second)
+		}
+		if removeErr = fs.RemoveAll(cleanupCtx, spare); removeErr == nil {
+			return nil
+		}
 	}
+	// the move is done, so it still reports success; the warning names the
+	// parked sibling for recovery instead of leaving it hidden
+	glog.WarningfCtx(cleanupCtx, "moved-aside %s remains parked after failed removes: %v", spare, removeErr)
 	return nil
 }
 
