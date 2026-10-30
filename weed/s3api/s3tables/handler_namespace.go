@@ -734,23 +734,35 @@ func (h *S3TablesHandler) handleDeleteNamespace(w http.ResponseWriter, r *http.R
 	// Check if namespace is empty
 	hasChildren := false
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		resp, err := client.ListEntries(r.Context(), &filer_pb.ListEntriesRequest{
-			Directory: namespacePath,
-			Limit:     10,
-		})
-		if err != nil {
-			return err
-		}
-
-		for {
-			entry, err := resp.Recv()
+		lastFileName := ""
+		for !hasChildren {
+			resp, err := client.ListEntries(r.Context(), &filer_pb.ListEntriesRequest{
+				Directory:          namespacePath,
+				Limit:              10,
+				StartFromFileName:  lastFileName,
+				InclusiveStartFrom: lastFileName == "",
+			})
 			if err != nil {
-				if err == io.EOF {
-					break
-				}
 				return err
 			}
-			if entry.Entry != nil && !strings.HasPrefix(entry.Entry.Name, ".") {
+
+			hasMore := false
+			for {
+				entry, err := resp.Recv()
+				if err != nil {
+					if err == io.EOF {
+						break
+					}
+					return err
+				}
+				if entry.Entry == nil {
+					continue
+				}
+				hasMore = true
+				lastFileName = entry.Entry.Name
+				if strings.HasPrefix(entry.Entry.Name, ".") {
+					continue
+				}
 				// A record still marked by its create is absent to readers and
 				// cannot confirm under the claim this delete holds, so it is no
 				// child — the delete removes it with the namespace.
@@ -769,6 +781,9 @@ func (h *S3TablesHandler) handleDeleteNamespace(w http.ResponseWriter, r *http.R
 					hasChildren = true
 					break
 				}
+			}
+			if !hasMore {
+				break
 			}
 		}
 

@@ -3,6 +3,7 @@ package s3tables
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"path"
 	"sync"
@@ -720,6 +721,45 @@ func TestDeleteNamespaceSkipsAnUnfinishedCreate(t *testing.T) {
 	fs, m := startRenameManager(t)
 	dropSeedTable(t, m, fs)
 	orphanMarkedRecord(fs, GetNamespacePath(renameTestBucket, "ns"), "late")
+
+	status, resp := runHandler(t, m, fs.Client, "DeleteNamespace", deleteNamespaceRequest(t))
+	require.Equal(t, http.StatusOK, status, "%+v", resp)
+	assert.Nil(t, fs.Get(GetTableBucketPath(renameTestBucket), "ns"))
+}
+
+// A namespace whose first page of entries is all skippable — bare directories
+// a dropped table left behind — can still hold a table on a later page: the
+// scan must keep listing instead of deleting the namespace out from under it.
+func TestDeleteNamespaceScansPastASkippedPage(t *testing.T) {
+	fs, m := startRenameManager(t)
+	dropSeedTable(t, m, fs)
+	nsPath := GetNamespacePath(renameTestBucket, "ns")
+	for i := 0; i < 12; i++ {
+		fs.Put(nsPath, fmt.Sprintf("a%02d", i), nil)
+	}
+	tableMeta, _ := json.Marshal(tableMetadataInternal{
+		Name:           "zz",
+		Namespace:      "ns",
+		Format:         "ICEBERG",
+		OwnerAccountID: DefaultAccountID,
+	})
+	fs.Put(nsPath, "zz", map[string][]byte{ExtendedKeyMetadata: tableMeta})
+
+	status, resp := runHandler(t, m, fs.Client, "DeleteNamespace", deleteNamespaceRequest(t))
+	assert.Equal(t, http.StatusConflict, status)
+	assert.Equal(t, ErrCodeNamespaceNotEmpty, resp.Type)
+	assert.NotNil(t, fs.Get(GetTableBucketPath(renameTestBucket), "ns"))
+}
+
+// A first page of skippables and nothing after it is still an empty
+// namespace: the scan must page to the end of the listing, not stop early.
+func TestDeleteNamespacePagesToTheEnd(t *testing.T) {
+	fs, m := startRenameManager(t)
+	dropSeedTable(t, m, fs)
+	nsPath := GetNamespacePath(renameTestBucket, "ns")
+	for i := 0; i < 12; i++ {
+		fs.Put(nsPath, fmt.Sprintf("a%02d", i), nil)
+	}
 
 	status, resp := runHandler(t, m, fs.Client, "DeleteNamespace", deleteNamespaceRequest(t))
 	require.Equal(t, http.StatusOK, status, "%+v", resp)
