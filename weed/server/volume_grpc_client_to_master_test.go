@@ -63,8 +63,15 @@ func startFakeMasterServerForLeaderLookup(t *testing.T, srv master_pb.SeaweedSer
 	go func() { _ = grpcServer.Serve(lis) }()
 	t.Cleanup(grpcServer.GracefulStop)
 
-	_, port, _ := net.SplitHostPort(lis.Addr().String())
-	return pb.ServerAddress(fmt.Sprintf("127.0.0.1:0.%s", port))
+	return fakeMasterAddress(lis.Addr())
+}
+
+// fakeMasterAddress names a fake master by its listener port. The port doubles
+// as the HTTP port so that ServerAddress.Equals, which compares HTTP
+// addresses, tells two fake masters apart.
+func fakeMasterAddress(addr net.Addr) pb.ServerAddress {
+	_, port, _ := net.SplitHostPort(addr.String())
+	return pb.ServerAddress(fmt.Sprintf("127.0.0.1:%s.%s", port, port))
 }
 
 // fakeHeartbeatMaster answers SendHeartbeat the way a master does: a follower
@@ -311,8 +318,9 @@ func TestRefreshLeaderFromPeersPublishesReportedLeader(t *testing.T) {
 	vs.store.MasterFn = vs.getCurrentMaster
 	vs.setCurrentMaster("lost.example.com:9333.19333")
 
-	vs.refreshLeaderFromPeers(5 * time.Second)
-
+	if got := vs.refreshLeaderFromPeers("lost.example.com:9333.19333", 5*time.Second); got != leader {
+		t.Fatalf("refresh returned %q, want reported leader %q", string(got), string(leader))
+	}
 	if got := vs.getCurrentMaster(); got != leader {
 		t.Fatalf("currentMaster = %q, want reported leader %q", string(got), string(leader))
 	}
@@ -333,12 +341,158 @@ func TestRefreshLeaderFromPeersClearsLeaderWithoutAnswer(t *testing.T) {
 	vs.store.MasterFn = vs.getCurrentMaster
 	vs.setCurrentMaster("lost.example.com:9333.19333")
 
-	vs.refreshLeaderFromPeers(5 * time.Second)
-
+	if got := vs.refreshLeaderFromPeers("lost.example.com:9333.19333", 5*time.Second); got != "" {
+		t.Fatalf("refresh returned %q, want none", string(got))
+	}
 	if got := vs.getCurrentMaster(); got != "" {
 		t.Fatalf("currentMaster = %q, want none", string(got))
 	}
 	if got := vs.store.MasterFn(); got != "" {
 		t.Fatalf("store master = %q, want none", string(got))
+	}
+}
+
+// startUnresponsiveMaster listens without ever answering, the way a master
+// behind a partition or on a powered-off host looks to a dialer: no refusal,
+// just a connection that never becomes usable.
+func startUnresponsiveMaster(t *testing.T) pb.ServerAddress {
+	t.Helper()
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { _ = lis.Close() })
+	return fakeMasterAddress(lis.Addr())
+}
+
+// An unreachable lost master listed first must not use up the refresh before
+// a live peer is asked who leads now.
+func TestRefreshLeaderFromPeersAsksLostMasterLast(t *testing.T) {
+	const leader = pb.ServerAddress("leader.example.com:9333.19333")
+	lost := startUnresponsiveMaster(t)
+	peer := startFakeMasterServerForLeaderLookup(t, &fakeLeaderConfigServer{leader: string(leader)})
+	vs := &VolumeServer{
+		SeedMasterNodes: []pb.ServerAddress{lost, peer},
+		grpcDialOption:  grpc.WithTransportCredentials(insecure.NewCredentials()),
+		store:           &storage.Store{Ip: "127.0.0.1", Port: 8080},
+	}
+	vs.setCurrentMaster(lost)
+
+	if got := vs.refreshLeaderFromPeers(lost, 2*time.Second); got != leader {
+		t.Fatalf("refresh returned %q, want %q from the live peer", string(got), string(leader))
+	}
+	if got := vs.getCurrentMaster(); got != leader {
+		t.Fatalf("currentMaster = %q, want %q", string(got), string(leader))
+	}
+}
+
+func TestMastersAskingLast(t *testing.T) {
+	a, b, c := pb.ServerAddress("a:9333"), pb.ServerAddress("b:9333"), pb.ServerAddress("c:9333")
+	got := mastersAskingLast([]pb.ServerAddress{a, b, c}, "a:9333.19333")
+	want := []pb.ServerAddress{b, c, a}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	if got := mastersAskingLast([]pb.ServerAddress{a, b}, ""); fmt.Sprint(got) != fmt.Sprint([]pb.ServerAddress{a, b}) {
+		t.Fatalf("no lost master: got %v", got)
+	}
+}
+
+// switchableFollower names whichever master it currently believes leads, on
+// heartbeat streams and in its configuration alike.
+type switchableFollower struct {
+	master_pb.UnimplementedSeaweedServer
+	mu     sync.Mutex
+	leader pb.ServerAddress
+}
+
+func (f *switchableFollower) setLeader(leader pb.ServerAddress) {
+	f.mu.Lock()
+	f.leader = leader
+	f.mu.Unlock()
+}
+
+func (f *switchableFollower) currentLeader() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return string(f.leader)
+}
+
+func (f *switchableFollower) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServer) error {
+	for {
+		if _, err := stream.Recv(); err != nil {
+			return err
+		}
+		if err := stream.Send(&master_pb.HeartbeatResponse{Leader: f.currentLeader()}); err != nil {
+			return err
+		}
+	}
+}
+
+func (f *switchableFollower) GetMasterConfiguration(_ context.Context, _ *master_pb.GetMasterConfigurationRequest) (*master_pb.GetMasterConfigurationResponse, error) {
+	return &master_pb.GetMasterConfigurationResponse{Leader: f.currentLeader()}, nil
+}
+
+// When the leader's stream breaks and the leader stays unreachable, the next
+// stream goes to the leader the other masters name, not to the next seed. The
+// seeds are ordered so that the next seed is the lost leader itself, which is
+// how a volume server that reached the old leader through a redirect finds
+// its seed list after the failure.
+func TestHeartbeatAfterLosingLeaderDialsTheNewLeader(t *testing.T) {
+	oldLeader := &fakeHeartbeatMaster{heartbeats: make(chan *master_pb.Heartbeat, 8)}
+	oldLis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	oldServer := grpc.NewServer()
+	master_pb.RegisterSeaweedServer(oldServer, oldLeader)
+	go func() { _ = oldServer.Serve(oldLis) }()
+	t.Cleanup(oldServer.Stop)
+	oldAddr := fakeMasterAddress(oldLis.Addr())
+
+	newLeader := &fakeHeartbeatMaster{heartbeats: make(chan *master_pb.Heartbeat, 8)}
+	newAddr := startFakeMasterServerForLeaderLookup(t, newLeader)
+	follower := &switchableFollower{leader: oldAddr}
+	followerAddr := startFakeMasterServerForLeaderLookup(t, follower)
+
+	vs := newHeartbeatTestVolumeServer(t)
+	vs.SeedMasterNodes = []pb.ServerAddress{followerAddr, newAddr, oldAddr}
+	vs.pulsePeriod = time.Second
+	exited := make(chan struct{})
+	go func() {
+		defer close(exited)
+		vs.heartbeat()
+	}()
+	t.Cleanup(func() {
+		vs.StopHeartbeat()
+		select {
+		case <-exited:
+		case <-time.After(10 * time.Second):
+			t.Error("heartbeat loop did not stop")
+		}
+	})
+
+	select {
+	case <-oldLeader.heartbeats:
+	case <-time.After(10 * time.Second):
+		t.Fatal("old leader got no heartbeat")
+	}
+
+	// The old leader becomes unreachable: its streams break, and its port
+	// accepts connections that never answer.
+	follower.setLeader(newAddr)
+	oldServer.Stop()
+	blackHole, err := net.Listen("tcp", oldLis.Addr().String())
+	if err != nil {
+		t.Fatalf("reopen %s: %v", oldLis.Addr(), err)
+	}
+	t.Cleanup(func() { _ = blackHole.Close() })
+
+	// A dial to the unreachable old leader alone would take the gRPC connect
+	// timeout (20s).
+	select {
+	case <-newLeader.heartbeats:
+	case <-time.After(10 * time.Second):
+		t.Fatalf("new leader got no heartbeat within 10s of losing the old one; currentMaster = %q", vs.getCurrentMaster())
 	}
 }

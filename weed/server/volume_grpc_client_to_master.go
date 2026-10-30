@@ -35,10 +35,14 @@ func (vs *VolumeServer) GetMaster(ctx context.Context) pb.ServerAddress {
 // the heartbeat loop owns that field and reconnects when the stream reports a
 // different leader than the connected peer.
 func (vs *VolumeServer) lookupRaftLeaderMaster(ctx context.Context) (pb.ServerAddress, error) {
+	return vs.lookupRaftLeaderMasterAmong(ctx, vs.SeedMasterNodes)
+}
+
+func (vs *VolumeServer) lookupRaftLeaderMasterAmong(ctx context.Context, masters []pb.ServerAddress) (pb.ServerAddress, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	leader, err := operation.LookupRaftLeaderMaster(ctx, vs.SeedMasterNodes, vs.grpcDialOption)
+	leader, err := operation.LookupRaftLeaderMaster(ctx, masters, vs.grpcDialOption)
 	if err != nil {
 		if isContextDoneErr(err) {
 			glog.V(1).Infof("volume server %s:%d: raft leader lookup: %v", vs.store.Ip, vs.store.Port, err)
@@ -56,18 +60,40 @@ func (vs *VolumeServer) lookupRaftLeaderMaster(ctx context.Context) (pb.ServerAd
 
 // refreshLeaderFromPeers publishes the leader the configured masters report,
 // so lookups stop going to a master the heartbeat just lost while the loop
-// retries. Without an answer within timeout no leader is published: the lost
-// master is dead or no longer leader, and a follower answers lookups from its
-// own cache rather than refusing them, so failing fast is the safer answer.
-func (vs *VolumeServer) refreshLeaderFromPeers(timeout time.Duration) {
+// retries, and returns it so the loop can dial it next. Without an answer
+// within timeout no leader is published: the lost master is dead or no longer
+// leader, and a follower answers lookups from its own cache rather than
+// refusing them, so failing fast is the safer answer.
+//
+// The lost master is asked last. Each peer gets up to 5s, so when the lost
+// master is unreachable rather than refusing connections (a partition or a
+// powered-off host) asking it first spends the whole timeout and the live
+// peers that know the new leader are never asked.
+func (vs *VolumeServer) refreshLeaderFromPeers(lost pb.ServerAddress, timeout time.Duration) pb.ServerAddress {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	leader, err := vs.lookupRaftLeaderMaster(ctx)
+	leader, err := vs.lookupRaftLeaderMasterAmong(ctx, mastersAskingLast(vs.SeedMasterNodes, lost))
 	if err != nil {
 		vs.setCurrentMaster("")
-		return
+		return ""
 	}
 	vs.setCurrentMaster(leader)
+	return leader
+}
+
+// mastersAskingLast returns masters with every entry equal to last moved to
+// the end, keeping the order of the rest.
+func mastersAskingLast(masters []pb.ServerAddress, last pb.ServerAddress) []pb.ServerAddress {
+	ordered := make([]pb.ServerAddress, 0, len(masters))
+	var tail []pb.ServerAddress
+	for _, m := range masters {
+		if last != "" && m.Equals(last) {
+			tail = append(tail, m)
+			continue
+		}
+		ordered = append(ordered, m)
+	}
+	return append(ordered, tail...)
 }
 
 func isContextDoneErr(err error) bool {
@@ -150,6 +176,7 @@ func (vs *VolumeServer) heartbeat() {
 			if err != nil {
 				glog.V(0).Infof("heartbeat to %s error: %v", master, err)
 
+				var leader pb.ServerAddress
 				// Check if this is a duplicate UUID retry error
 				if strings.Contains(err.Error(), "duplicate UUIDs detected, retrying connection") {
 					duplicateRetryCount++
@@ -162,7 +189,7 @@ func (vs *VolumeServer) heartbeat() {
 					// The lookup spends part of the retry delay rather than
 					// adding to it.
 					retryAt := time.Now().Add(vs.pulsePeriod)
-					vs.refreshLeaderFromPeers(vs.pulsePeriod)
+					leader = vs.refreshLeaderFromPeers(master, vs.pulsePeriod)
 					wait := time.Until(retryAt)
 					if wait > time.Second && (vs.getCurrentMaster() != "" || !vs.confirmedLeaderOnce.Load()) {
 						// A leader just named by the refresh usually accepts the
@@ -177,6 +204,13 @@ func (vs *VolumeServer) heartbeat() {
 
 				stats.VolumeServerMasterDisconnections.WithLabelValues(master.String()).Inc()
 				newLeader = ""
+				if leader != "" && !leader.Equals(master) {
+					// Dial the leader the other masters just named rather than
+					// the next seed, which can be the master this stream just
+					// lost: an unreachable master holds each dial for the gRPC
+					// connect timeout before the loop moves on.
+					newLeader = leader
+				}
 			} else {
 				// Successful connection, reset retry count
 				duplicateRetryCount = 0
