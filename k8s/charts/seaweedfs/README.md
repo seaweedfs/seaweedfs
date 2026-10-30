@@ -545,6 +545,10 @@ helm install seaweedfs-worker-vacuum seaweedfs/seaweedfs -f values-worker-vacuum
 helm install seaweedfs-worker-balance seaweedfs/seaweedfs -f values-worker-balance.yaml
 ```
 
+## Deploying into another namespace
+
+`namespaceOverride` deploys every object into an existing namespace other than the release namespace, for instance when the chart is a subchart. In-cluster addresses follow it.
+
 ## Gateway API
 
 Every component with an `ingress` block (master, volume, filer, s3 and admin) can also be exposed through a [Gateway API](https://gateway-api.sigs.k8s.io/) `HTTPRoute`, for clusters that route through a Gateway instead of an Ingress controller. `<component>.httpRoute` sits next to `<component>.ingress` and is disabled by default. The chart does not create the Gateway, so point `parentRefs` at one that already exists, and the `gateway.networking.k8s.io/v1` CRDs must be installed.

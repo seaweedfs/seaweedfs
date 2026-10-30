@@ -74,6 +74,9 @@ global:
       #     name: seaweedfs-signing-key
       #     key: signingKey
 
+# Deploy every object into this existing namespace instead of the release one
+namespaceOverride: ""
+
 image:
   registry: ""
   repository: ""
