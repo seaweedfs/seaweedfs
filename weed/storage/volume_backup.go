@@ -183,6 +183,7 @@ func (v *Volume) hashIndexEntries(entryCount uint64) (uint64, error) {
 		if remaining < want {
 			want = remaining
 		}
+		want -= want % int64(NeedleMapEntrySize)
 		read, err := io.ReadFull(indexFile, buf[:want])
 		if err != nil {
 			return 0, fmt.Errorf("file %s read error: %v", indexFile.Name(), err)
