@@ -532,6 +532,11 @@ func (h *S3TablesHandler) confirmParent(ctx context.Context, client filer_pb.Sea
 	}
 	if backOutErr := h.removeExtendedAttributesIf(ctx, client, childPath, written, keys...); backOutErr != nil && !errors.Is(backOutErr, filer_pb.ErrNotFound) {
 		glog.Warningf("back out %s: %v", childPath, backOutErr)
+		if errors.Is(backOutErr, ErrConcurrentUpdate) {
+			// The record moved past this create — adopted or rewritten — so
+			// there is nothing of its own left to remove.
+			return fmt.Errorf("%w: %s changed during create", ErrConcurrentUpdate, childPath)
+		}
 		return fmt.Errorf("%w: %s: %v (%v)", errBackOutFailed, childPath, backOutErr, err)
 	}
 	for _, dir := range emptyDirs {

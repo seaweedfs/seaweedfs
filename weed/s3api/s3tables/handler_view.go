@@ -176,6 +176,10 @@ func (h *S3TablesHandler) handleCreateView(w http.ResponseWriter, r *http.Reques
 			h.writeError(w, http.StatusConflict, ErrCodeViewAlreadyExists, fmt.Sprintf("view %s already exists", viewName))
 			return err
 		}
+		if errors.Is(err, ErrConcurrentUpdate) {
+			h.writeError(w, http.StatusConflict, ErrCodeConflict, "view changed during create, retry the request")
+			return err
+		}
 		if h.writeNamespaceClosedError(w, err, namespaceName) {
 			return err
 		}
