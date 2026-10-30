@@ -544,18 +544,18 @@ func (v *Volume) readOffsetFromIndex(m int64) (Offset, error) {
 }
 
 // DatSizeCoveredByIndex returns the .dat end of the last record the index
-// rows before indexSize cover, the superblock size when no row inside the
-// bound names a record, or 0 when the index cannot be read. Rows are not
-// always in .dat order — rebuilds can write the .idx sorted by key — so the
-// bound comes from the maximum offset: records do not overlap, so the
-// highest offset names the highest end. Records appended after the index
-// bound — including staged writes whose rows are not published yet — lie
-// past it, so a copy must not stream them: they would reach the backup
-// without their row and be appended again on the next run.
-func (v *Volume) DatSizeCoveredByIndex(indexSize int64) int64 {
+// rows before indexSize cover, or the superblock size when no row inside the
+// bound names a record. Rows are not always in .dat order — rebuilds can
+// write the .idx sorted by key — so the bound comes from the maximum offset:
+// records do not overlap, so the highest offset names the highest end.
+// Records appended after the index bound — including staged writes whose
+// rows are not published yet — lie past it, so a copy must not stream them:
+// they would reach the backup without their row and be appended again on the
+// next run.
+func (v *Volume) DatSizeCoveredByIndex(indexSize int64) (int64, error) {
 	indexFile, err := os.OpenFile(v.FileName(".idx"), os.O_RDONLY, 0644)
 	if err != nil {
-		return 0
+		return 0, err
 	}
 	defer indexFile.Close()
 
@@ -575,16 +575,16 @@ func (v *Volume) DatSizeCoveredByIndex(indexSize int64) int64 {
 		return nil
 	})
 	if err != nil && !errors.Is(err, errStopIdxWalk) {
-		return 0
+		return 0, err
 	}
 	if maxActualOffset < 0 {
-		return int64(v.SuperBlock.BlockSize())
+		return int64(v.SuperBlock.BlockSize()), nil
 	}
 	_, _, bodyLength, err := needle.ReadNeedleHeader(v.DataBackend, v.SuperBlock.Version, maxActualOffset)
 	if err != nil {
-		return 0
+		return 0, err
 	}
-	return maxActualOffset + NeedleHeaderSize + bodyLength
+	return maxActualOffset + NeedleHeaderSize + bodyLength, nil
 }
 
 // generate the volume idx

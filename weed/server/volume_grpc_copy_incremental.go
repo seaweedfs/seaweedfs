@@ -38,7 +38,11 @@ func (vs *VolumeServer) VolumeIncrementalCopy(req *volume_server_pb.VolumeIncrem
 		// bound the .dat tail by the records the streamed rows cover: a
 		// record staged but not yet indexed would reach the backup without
 		// its row and be appended again on the next run
-		if end := v.DatSizeCoveredByIndex(int64(stopIndex)); end > 0 && end < int64(stopOffset) {
+		end, err := v.DatSizeCoveredByIndex(int64(stopIndex))
+		if err != nil {
+			return fmt.Errorf("fail to bound data by covered index: %v", err)
+		}
+		if end > 0 && end < int64(stopOffset) {
 			stopOffset = uint64(end)
 		}
 	}

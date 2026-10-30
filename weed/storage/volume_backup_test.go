@@ -171,8 +171,9 @@ func TestDatSizeCoveredByIndex(t *testing.T) {
 	}
 	datSize, idxSize, _ := v.FileStat()
 
-	if covered := v.DatSizeCoveredByIndex(int64(idxSize)); covered != int64(datSize) {
-		t.Fatalf("covered %d, want %d", covered, datSize)
+	covered, err := v.DatSizeCoveredByIndex(int64(idxSize))
+	if err != nil || covered != int64(datSize) {
+		t.Fatalf("covered %d, want %d, err %v", covered, datSize, err)
 	}
 
 	// a bound partway through covers only up to that row's record end,
@@ -181,8 +182,9 @@ func TestDatSizeCoveredByIndex(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read row 2: %v", err)
 	}
-	if covered := v.DatSizeCoveredByIndex(2 * types.NeedleMapEntrySize); covered != next.ToActualOffset() {
-		t.Fatalf("mid bound covered %d, want %d", covered, next.ToActualOffset())
+	covered, err = v.DatSizeCoveredByIndex(2 * types.NeedleMapEntrySize)
+	if err != nil || covered != next.ToActualOffset() {
+		t.Fatalf("mid bound covered %d, want %d, err %v", covered, next.ToActualOffset(), err)
 	}
 
 	// index-only tombstones past the bound still resolve to the last record
@@ -193,8 +195,9 @@ func TestDatSizeCoveredByIndex(t *testing.T) {
 	if err := v.nm.Delete(key, types.ToOffset(0)); err != nil {
 		t.Fatalf("zero-offset tombstone: %v", err)
 	}
-	if covered := v.DatSizeCoveredByIndex(int64(v.IndexFileSize())); covered != int64(datSize) {
-		t.Fatalf("covered %d after tombstone, want %d", covered, datSize)
+	covered, err = v.DatSizeCoveredByIndex(int64(v.IndexFileSize()))
+	if err != nil || covered != int64(datSize) {
+		t.Fatalf("covered %d after tombstone, want %d, err %v", covered, datSize, err)
 	}
 }
 
@@ -238,7 +241,8 @@ func TestDatSizeCoveredByIndexKeySorted(t *testing.T) {
 		t.Fatalf("rewrite idx: %v", err)
 	}
 
-	if covered := v.DatSizeCoveredByIndex(int64(idxSize)); covered != int64(datSize) {
-		t.Fatalf("key-sorted covered %d, want %d", covered, datSize)
+	covered, err := v.DatSizeCoveredByIndex(int64(idxSize))
+	if err != nil || covered != int64(datSize) {
+		t.Fatalf("key-sorted covered %d, want %d, err %v", covered, datSize, err)
 	}
 }
