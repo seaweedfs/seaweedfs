@@ -1104,10 +1104,26 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 				}
 				return nil
 			}
-			if err := h.deleteDirectory(r.Context(), client, dataPath); err != nil {
+			// A no-token decoupled delete claims the record like the token path
+			// above: a rename holding the record turns the delete away instead
+			// of losing its data to the purge.
+			entry, err := h.lookupEntry(r.Context(), client, tablePath)
+			if err != nil {
 				return err
 			}
-			return h.removeExtendedAttributes(r.Context(), client, tablePath,
+			snapshot := snapshotExtended(entry.Extended)
+			if err := h.claimCatalogRecord(r.Context(), client, tablePath, snapshot, "delete"); err != nil {
+				return err
+			}
+			claimed := snapshotExtended(entry.Extended)
+			claimed[ExtendedKeyDeleting] = []byte("delete")
+			if err := h.deleteDirectory(r.Context(), client, dataPath); err != nil {
+				if relErr := h.releaseCatalogRecord(r.Context(), client, tablePath, claimed); relErr != nil {
+					glog.Warningf("delete table %s: release claim: %v", tablePath, relErr)
+				}
+				return err
+			}
+			return h.removeExtendedAttributesIf(r.Context(), client, tablePath, claimed,
 				ExtendedKeyMetadata, ExtendedKeyMetadataVersion, ExtendedKeyPolicy, ExtendedKeyTags, ExtendedKeyEntryType,
 				ExtendedKeyMaintenance, ExtendedKeyMaintenanceStatus, ExtendedKeyDeleting)
 		}
@@ -1116,6 +1132,9 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 		// compare and removal are one operation under the path lock: an xattr
 		// write that keeps Mtime, or a delete+recreate in between, refuses it.
 		if req.VersionToken != "" && tableEntry != nil {
+			if claim := string(tableEntry.Extended[ExtendedKeyDeleting]); claim != "" && claim != "delete" {
+				return ErrVersionTokenMismatch
+			}
 			if err := h.deleteDirectoryIfMatches(r.Context(), client, tablePath, tableEntry); err != nil {
 				if errors.Is(err, ErrConcurrentUpdate) {
 					return ErrVersionTokenMismatch
@@ -1124,12 +1143,34 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 			}
 			return nil
 		}
-		return h.deleteDirectory(r.Context(), client, tablePath)
+		// The no-token delete claims the record before removing it, so a
+		// rename or another delete holding the claim loses the record instead
+		// of the directory under it.
+		entry, err := h.lookupEntry(r.Context(), client, tablePath)
+		if err != nil {
+			return err
+		}
+		claimed := snapshotExtended(entry.Extended)
+		claimed[ExtendedKeyDeleting] = []byte("delete")
+		if err := h.claimCatalogRecord(r.Context(), client, tablePath, snapshotExtended(entry.Extended), "delete"); err != nil {
+			return err
+		}
+		if err := h.deleteDirectoryIfMatches(r.Context(), client, tablePath, &filer_pb.Entry{Extended: claimed}); err != nil {
+			if relErr := h.releaseCatalogRecord(r.Context(), client, tablePath, claimed); relErr != nil {
+				glog.Warningf("delete table %s: release claim: %v", tablePath, relErr)
+			}
+			return err
+		}
+		return nil
 	})
 
 	if err != nil {
 		if errors.Is(err, ErrVersionTokenMismatch) {
 			h.writeError(w, http.StatusConflict, ErrCodeConflict, "version token mismatch")
+			return err
+		}
+		if errors.Is(err, ErrConcurrentUpdate) {
+			h.writeError(w, http.StatusConflict, ErrCodeConflict, "table changed during delete, retry the request")
 			return err
 		}
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to delete table")

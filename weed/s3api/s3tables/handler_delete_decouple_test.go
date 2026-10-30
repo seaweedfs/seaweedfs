@@ -361,3 +361,66 @@ func TestRenameTableLosesToDeleteClaim(t *testing.T) {
 	assert.NotNil(t, src.Extended[ExtendedKeyMetadata], "the claimed source record must survive")
 	assert.NotNil(t, fs.Get(GetTablePath(renameTestBucket, "ns", "t"), "data"))
 }
+
+// A no-token delete that meets a record claimed by a rename loses to it: the
+// claim is what keeps the rename's destination from pointing at purged data.
+func TestDeleteTableLosesToRenameClaim(t *testing.T) {
+	fs, m := startRenameManager(t)
+
+	nsPath := GetNamespacePath(renameTestBucket, "ns")
+	e := fs.Get(nsPath, "t")
+	claimed := map[string][]byte{}
+	for k, v := range e.Extended {
+		claimed[k] = v
+	}
+	claimed[ExtendedKeyDeleting] = []byte("rename")
+	fs.Put(nsPath, "t", claimed)
+
+	status, resp := runHandler(t, m, fs.Client, "DeleteTable", &DeleteTableRequest{
+		TableBucketARN: mustBucketARN(t),
+		Namespace:      []string{"ns"},
+		Name:           "t",
+	})
+	assert.Equal(t, http.StatusConflict, status)
+	assert.Equal(t, ErrCodeConflict, resp.Type)
+
+	src := fs.Get(nsPath, "t")
+	require.NotNil(t, src)
+	assert.NotNil(t, src.Extended[ExtendedKeyMetadata], "the claimed record must survive")
+	assert.NotNil(t, fs.Get(GetTablePath(renameTestBucket, "ns", "t"), "data"))
+}
+
+// The token delete takes its snapshot after the rename's claim landed; it must
+// still refuse the claimed record rather than deleting it.
+func TestDeleteTableTokenLosesToRenameClaim(t *testing.T) {
+	fs, m := startRenameManager(t)
+
+	nsPath := GetNamespacePath(renameTestBucket, "ns")
+	e := fs.Get(nsPath, "t")
+	claimed := map[string][]byte{}
+	for k, v := range e.Extended {
+		claimed[k] = v
+	}
+	var meta tableMetadataInternal
+	require.NoError(t, json.Unmarshal(claimed[ExtendedKeyMetadata], &meta))
+	meta.VersionToken = "tok"
+	metaBytes, err := json.Marshal(&meta)
+	require.NoError(t, err)
+	claimed[ExtendedKeyMetadata] = metaBytes
+	claimed[ExtendedKeyDeleting] = []byte("rename")
+	fs.Put(nsPath, "t", claimed)
+
+	status, resp := runHandler(t, m, fs.Client, "DeleteTable", &DeleteTableRequest{
+		TableBucketARN: mustBucketARN(t),
+		Namespace:      []string{"ns"},
+		Name:           "t",
+		VersionToken:   "tok",
+	})
+	assert.Equal(t, http.StatusConflict, status)
+	assert.Equal(t, ErrCodeConflict, resp.Type)
+
+	src := fs.Get(nsPath, "t")
+	require.NotNil(t, src)
+	assert.NotNil(t, src.Extended[ExtendedKeyMetadata], "the claimed record must survive")
+	assert.NotNil(t, fs.Get(GetTablePath(renameTestBucket, "ns", "t"), "data"))
+}
