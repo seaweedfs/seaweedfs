@@ -362,8 +362,9 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 			}
 			vs.store.CommitFreeLocation(copyLocation, copyReservedSpace)
 		}
-		os.Remove(filepath.Dir(stagedDataBaseFileName))
-		os.Remove(filepath.Dir(stagedIndexBaseFileName))
+		// copying/ is shared by copies of other volumes on the disk, so it
+		// stays behind; a leftover staged file is rewritten or removed by the
+		// next copy of its volume.
 	}()
 
 	if err = checkCopyFiles(volFileInfoResp, hasRemoteDatFile, stagedIdxFileName, stagedDatFileName); err != nil { // added by panyc16
