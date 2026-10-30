@@ -554,6 +554,31 @@ func TestCopyMoveGuardHandler_PutStatus(t *testing.T) {
 	assert.Equal(t, http.StatusNoContent, put("two"))
 }
 
+// The 204 comes from OpenFile's own bookkeeping: creating over an existing
+// entry flags the request context, a fresh create does not.
+func TestWebDavFileSystem_OpenFile_PutOutcomeFlag(t *testing.T) {
+	filer := &createRecordingFiler{files: map[string]bool{"/old.txt": true}}
+	filerAddr := startFakeWebDavFiler(t, filer)
+	fs := &WebDavFileSystem{option: &WebDavOption{
+		Filer:          filerAddr,
+		GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+	}}
+
+	open := func(name string) bool {
+		replaced := new(bool)
+		ctx := context.WithValue(context.Background(), putOutcomeKey{}, replaced)
+		f, err := fs.OpenFile(ctx, name, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+		assert.NoError(t, err)
+		if f != nil {
+			assert.NoError(t, f.Close())
+		}
+		return *replaced
+	}
+
+	assert.True(t, open("/old.txt"))
+	assert.False(t, open("/new.txt"))
+}
+
 type renameRecordingFiler struct {
 	filer_pb.UnimplementedSeaweedFilerServer
 	req  *filer_pb.AtomicRenameEntryRequest
