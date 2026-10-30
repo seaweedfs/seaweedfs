@@ -352,6 +352,29 @@ func TestLoadClientTLSMatchesServerWildcardDomain(t *testing.T) {
 	}
 }
 
+// A URI SAN whose path happens to end in the wildcard domain must not pass:
+// URI identities are exact-match only.
+func TestLoadClientTLSURIPathDoesNotMatchWildcardDomain(t *testing.T) {
+	dir := t.TempDir()
+	ca := newTestCA(t, dir)
+	serverCert, serverKey := ca.issueWithSANs(t, dir, "server",
+		[]x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, nil, []string{"spiffe://other.invalid/workload.example.com"})
+	clientCert, clientKey := ca.issue(t, dir, "client", []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
+
+	v := util.NewViperProxy(viper.New())
+	v.Set("grpc.ca", ca.file)
+	v.Set("grpc.master.cert", serverCert)
+	v.Set("grpc.master.key", serverKey)
+	v.Set("grpc.master.client_cert", clientCert)
+	v.Set("grpc.master.client_key", clientKey)
+	v.Set("grpc.allowed_server_wildcard_domain", ".example.com")
+
+	addr := startTestGrpcServer(t, v, "grpc.master")
+	if err := healthCheck(t, addr, LoadClientTLS(v, "grpc.master")); err == nil {
+		t.Fatal("expected handshake failure: URI SAN path must not match the wildcard domain")
+	}
+}
+
 func TestLoadClientTLSGlobalServerNamesFallback(t *testing.T) {
 	dir := t.TempDir()
 	ca := newTestCA(t, dir)
