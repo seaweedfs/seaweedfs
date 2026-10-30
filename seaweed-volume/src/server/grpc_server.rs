@@ -1733,7 +1733,7 @@ impl VolumeServer for VolumeGrpcService {
         let state = self.state.clone();
         drop(store);
 
-        let total = start_offset.map_or(0, |s| dat_size - s);
+        let total = start_offset.map_or(0, |s| dat_size.saturating_sub(s));
         let (tx, rx) = tokio::sync::mpsc::channel::<
             Result<volume_server_pb::VolumeIncrementalCopyResponse, Status>,
         >(8);
