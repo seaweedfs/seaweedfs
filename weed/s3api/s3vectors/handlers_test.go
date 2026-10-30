@@ -908,22 +908,29 @@ func TestDeleteVectorBucketPolicyRemovesLegacyDoc(t *testing.T) {
 	}
 }
 
-func TestVectorKeysBounds(t *testing.T) {
-	full := make([]string, vectorsMaxPutBatch)
-	for i := range full {
-		full[i] = "k"
+func keys(n int) []string {
+	out := make([]string, n)
+	for i := range out {
+		out[i] = "k"
 	}
+	return out
+}
+
+func TestVectorKeysBounds(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		keys []string
+		max  int
 		ok   bool
 	}{
-		{"empty", nil, false},
-		{"one", []string{"a"}, true},
-		{"full", full, true},
-		{"over", append(append([]string{}, full...), "extra"), false},
+		{"empty", nil, vectorsMaxGetKeys, false},
+		{"one", []string{"a"}, vectorsMaxGetKeys, true},
+		{"get full", keys(vectorsMaxGetKeys), vectorsMaxGetKeys, true},
+		{"get over", keys(vectorsMaxGetKeys + 1), vectorsMaxGetKeys, false},
+		{"delete full", keys(vectorsMaxPutBatch), vectorsMaxPutBatch, true},
+		{"delete over", keys(vectorsMaxPutBatch + 1), vectorsMaxPutBatch, false},
 	} {
-		if err := vectorKeysBounds(tc.keys); (err == nil) != tc.ok {
+		if err := vectorKeysBounds(tc.keys, tc.max); (err == nil) != tc.ok {
 			t.Fatalf("%s: accepted=%v, want %v", tc.name, err == nil, tc.ok)
 		}
 	}
