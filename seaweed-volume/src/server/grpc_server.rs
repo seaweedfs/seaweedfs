@@ -2328,13 +2328,26 @@ impl VolumeServer for VolumeGrpcService {
             fetch_source_status_before(&mut client, req.volume_id, vid).await;
         let source = SourceVolumeStatus::fetch(&mut client, req.volume_id).await?;
         let preallocate_size = self.copy_preallocate_size(&source).await;
-        let dest =
+        let mut dest =
             self.plan_copy_destination(&req, vid, &source, had_existing_volume, preallocate_size)?;
+        // Files of a replica the store never mounted get no delete to
+        // displace them, and a crashed copy's leftovers have no owner —
+        // move both aside first so a failed copy can restore the state it
+        // found, the same preserve-before-clear the Go swap does.
+        if let Err(e) = dest.displace_existing_files() {
+            dest.restore_displaced_files();
+            dest.release_reservation(&self.state.store.read().unwrap());
+            return Err(Status::internal(format!(
+                "preserve existing files before copying volume {}: {}",
+                vid, e
+            )));
+        }
         // A crashed copy, or one whose cleanup failed, can leave a stale
         // index next to the .idx that this mount would trust. Clear leftovers
         // before writing anything; a removal failure must abort rather than
         // risk a mount reusing a poisoned .rdb.
         if let Err(e) = dest.remove_partial_files() {
+            dest.restore_displaced_files();
             dest.release_reservation(&self.state.store.read().unwrap());
             return Err(Status::internal(format!(
                 "clear leftover files before copying volume {}: {}",
@@ -2342,6 +2355,7 @@ impl VolumeServer for VolumeGrpcService {
             )));
         }
         if let Err(e) = dest.write_note(vid, &req.source_data_node) {
+            dest.restore_displaced_files();
             dest.release_reservation(&self.state.store.read().unwrap());
             return Err(e);
         }
@@ -2361,15 +2375,18 @@ impl VolumeServer for VolumeGrpcService {
         };
 
         tokio::spawn(async move {
+            let mut job = job;
             // Tracks whether mount_volume succeeded so the error branch can
             // unmount (not just unlink) an orphaned replica. A mount that
             // races a departing caller is the one case where the existing
             // file-only cleanup leaves the volume loaded in memory.
             let mut mounted = false;
             match job.run(&mut client, &mut mounted).await {
-                Ok(()) => job
-                    .dest
-                    .commit_reservation(&job.state.store.read().unwrap()),
+                Ok(()) => {
+                    job.dest.drop_displaced_files();
+                    job.dest
+                        .commit_reservation(&job.state.store.read().unwrap());
+                }
                 Err(e) => job.cleanup_failed_copy(e, mounted).await,
             }
         });
@@ -6168,6 +6185,10 @@ struct CopyDestination {
     /// what is still promised.
     loc_idx: usize,
     reserved_space: std::sync::atomic::AtomicU64,
+    /// Files the copy displaced from the final basenames, kept as
+    /// `copying/replaced_<name>` siblings so a failed copy can put an
+    /// unmounted replica back the way it found it (Go's swap rollback).
+    displaced_files: Vec<(String, String)>,
 }
 
 impl CopyDestination {
@@ -6197,11 +6218,14 @@ impl CopyDestination {
     /// The first error other than NotFound is returned: a surviving index is
     /// trusted by the next mount, so a caller that can still abort must know
     /// the removal failed. Missing files are fine — they were never written.
-    fn remove_partial_files(&self) -> std::io::Result<()> {
-        let mut paths = vec![
-            format!("{}.dat", self.data_base_name),
-            format!("{}.note", self.data_base_name),
-        ];
+    /// The files remove_partial_files clears at the final basenames, minus
+    /// the .note a caller chooses to skip: a stale in-progress marker is not
+    /// something a failed copy should put back.
+    fn partial_file_paths(&self, include_note: bool) -> Vec<String> {
+        let mut paths = vec![format!("{}.dat", self.data_base_name)];
+        if include_note {
+            paths.push(format!("{}.note", self.data_base_name));
+        }
         if !self.shares_vif_with_ec() {
             paths.push(format!("{}.vif", self.data_base_name));
         }
@@ -6215,6 +6239,59 @@ impl CopyDestination {
                 paths.push(format!("{base}{ext}"));
             }
         }
+        paths
+    }
+
+    /// Move whatever sits at the final basenames into `copying/replaced_`
+    /// siblings before the copy clears them. The store delete only covers a
+    /// mounted replica, so files of an unmounted one (or a crashed copy's
+    /// leftovers) would otherwise be unlinked with no way back. A failure
+    /// refuses the copy: removing what could not be displaced risks losing
+    /// the replica.
+    fn displace_existing_files(&mut self) -> std::io::Result<()> {
+        for path in self.partial_file_paths(false) {
+            let p = std::path::Path::new(&path);
+            if !p.exists() {
+                continue;
+            }
+            let dir = p.parent().unwrap_or_else(|| std::path::Path::new(".")).join("copying");
+            std::fs::create_dir_all(&dir)?;
+            let backup = dir.join(format!(
+                "replaced_{}",
+                p.file_name().unwrap_or_default().to_string_lossy()
+            ));
+            if backup.exists() {
+                std::fs::remove_file(&backup)?;
+            }
+            std::fs::rename(p, &backup)?;
+            self.displaced_files
+                .push((backup.to_string_lossy().into_owned(), path));
+        }
+        Ok(())
+    }
+
+    /// Put displaced files back after a failed copy: each backup returns to
+    /// its basename when the copy did not land a replacement there, and is
+    /// removed either way.
+    fn restore_displaced_files(&mut self) {
+        for (backup, base) in std::mem::take(&mut self.displaced_files) {
+            if std::path::Path::new(&base).exists() {
+                let _ = std::fs::remove_file(&backup);
+            } else if let Err(e) = std::fs::rename(&backup, &base) {
+                tracing::warn!("restore displaced file {}: {}", backup, e);
+            }
+        }
+    }
+
+    /// The copy landed: the displaced files it replaced are gone for good.
+    fn drop_displaced_files(&mut self) {
+        for (backup, _) in std::mem::take(&mut self.displaced_files) {
+            let _ = std::fs::remove_file(&backup);
+        }
+    }
+
+    fn remove_partial_files(&self) -> std::io::Result<()> {
+        let paths = self.partial_file_paths(true);
         let mut first_err = None;
         for path in paths {
             if let Err(e) = std::fs::remove_file(&path)
@@ -6416,6 +6493,7 @@ impl VolumeGrpcService {
             has_remote_dat,
             loc_idx,
             reserved_space: std::sync::atomic::AtomicU64::new(needed_space),
+            displaced_files: Vec::new(),
         })
     }
 }
@@ -6723,7 +6801,7 @@ impl VolumeCopyJob {
         Ok(())
     }
 
-    async fn cleanup_failed_copy(&self, e: Status, mounted: bool) {
+    async fn cleanup_failed_copy(&mut self, e: Status, mounted: bool) {
         let (state, req, vid, tx) = (&self.state, &self.req, self.vid, &self.tx);
         // An abandoned copy is otherwise invisible here: the error goes
         // to a channel nobody is reading. Logging it gives the operator
@@ -6768,14 +6846,19 @@ impl VolumeCopyJob {
                 }
             }
         }
-        if !keep_files
-            && let Err(e) = self.dest.remove_partial_files()
-        {
-            tracing::warn!(
-                "volume {} copy cleanup could not remove all partial files: {} (a surviving index may poison the next copy)",
-                vid,
-                e
-            );
+        if keep_files {
+            // The mounted copy's files stay; the replica it displaced is
+            // replaced for good.
+            self.dest.drop_displaced_files();
+        } else {
+            if let Err(e) = self.dest.remove_partial_files() {
+                tracing::warn!(
+                    "volume {} copy cleanup could not remove all partial files: {} (a surviving index may poison the next copy)",
+                    vid,
+                    e
+                );
+            }
+            self.dest.restore_displaced_files();
         }
         self.dest
             .release_reservation(&state.store.read().unwrap());
@@ -9758,6 +9841,7 @@ mod tests {
             has_remote_dat: false,
             loc_idx: 0,
             reserved_space: std::sync::atomic::AtomicU64::new(0),
+            displaced_files: Vec::new(),
         };
         dest.remove_partial_files().unwrap();
 
@@ -9788,6 +9872,7 @@ mod tests {
             has_remote_dat: false,
             loc_idx: 0,
             reserved_space: std::sync::atomic::AtomicU64::new(0),
+            displaced_files: Vec::new(),
         };
         dest.remove_partial_files().unwrap();
 
@@ -9831,6 +9916,7 @@ mod tests {
             has_remote_dat: false,
             loc_idx: 0,
             reserved_space: std::sync::atomic::AtomicU64::new(0),
+            displaced_files: Vec::new(),
         };
         dest.remove_partial_files().unwrap();
 
@@ -9852,6 +9938,60 @@ mod tests {
             "a .dat in the index directory belongs to another location"
         );
         assert!(std::path::Path::new(&format!("{idx}.note")).exists());
+    }
+
+    // The store delete only covers a mounted replica, so files of an
+    // unmounted one at the destination basenames are displaced before the
+    // pre-copy clear; a failed copy must put them back.
+    #[test]
+    fn test_failed_copy_restores_displaced_files() {
+        let tmp = TempDir::new().unwrap();
+        let base = tmp.path().join("1").to_str().unwrap().to_string();
+        for ext in [".dat", ".idx", ".vif", ".rdb", ".sdx"] {
+            std::fs::write(format!("{base}{ext}"), b"replica").unwrap();
+        }
+        std::fs::write(format!("{base}.note"), b"stale marker").unwrap();
+
+        let mut dest = CopyDestination {
+            data_base_name: base.clone(),
+            idx_base_name: base.clone(),
+            disk_type: DiskType::HardDrive,
+            has_remote_dat: false,
+            loc_idx: 0,
+            reserved_space: std::sync::atomic::AtomicU64::new(0),
+            displaced_files: Vec::new(),
+        };
+        dest.displace_existing_files().unwrap();
+
+        for ext in [".dat", ".idx", ".vif", ".rdb", ".sdx"] {
+            assert!(
+                !std::path::Path::new(&format!("{base}{ext}")).exists(),
+                "displacement left {base}{ext} behind"
+            );
+        }
+        // The copy lands its own file, then fails before the swap.
+        std::fs::write(format!("{base}.dat"), b"copy").unwrap();
+        dest.remove_partial_files().unwrap();
+        dest.restore_displaced_files();
+
+        for ext in [".dat", ".idx", ".vif", ".rdb", ".sdx"] {
+            let path = format!("{base}{ext}");
+            assert_eq!(
+                std::fs::read(&path).unwrap(),
+                b"replica",
+                "the displaced {ext} was not restored"
+            );
+        }
+        assert!(
+            !std::path::Path::new(&format!("{base}.note")).exists(),
+            "a stale .note is not restored"
+        );
+        assert!(
+            std::fs::read_dir(tmp.path().join("copying"))
+                .map(|mut d| d.next().is_none())
+                .unwrap_or(true),
+            "no backups may survive the restore"
+        );
     }
 
     // A .rdb that survives an earlier copy attempt was built against a
