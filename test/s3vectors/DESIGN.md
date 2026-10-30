@@ -52,11 +52,14 @@ so the suite stays green on hosts that can't build the Rust workspace.
 
 ## Harness
 
-- `NewTestEnvironment` mirrors `sts_integration`: locate or build the `weed`
-  binary, allocate ports with `testutil`, spawn `weed server -dir=<tmp>
-  -master.port -volume.port -filer -s3.port` with `-s3.vectors` enabled
-  (the flag name from `weed s3 -h`), wait for the S3 port to accept
-  connections, then run requests.
+- `NewTestEnvironment` mirrors `sts_integration`: locate the `weed` binary
+  (built `weed/weed` first, then PATH), allocate ports with `testutil`
+  (`MustFreeMiniPorts`, since `weed server` derives each gRPC port as
+  HTTP+10000), spawn `weed server -dir=<tmp> -master.port -volume.port
+  -filer -s3.port` against a written `-s3.config` identity file, disable
+  the unused Iceberg/Lance listeners, wait for the S3 port to serve
+  `/status`, then run requests. The vectors router rides the S3 port
+  automatically once the gateway can reach a master — no extra flag.
 - Requests are signed SigV4 with the `s3vectors` service name — the gateway
   routes vectors traffic on the service name in the credential scope, so an
   unsigned or `s3`-signed request never reaches the vectors router. A small

@@ -66,7 +66,9 @@ func newTestEnvironment(t *testing.T) *TestEnvironment {
 		t.Fatalf("mktemp: %v", err)
 	}
 
-	ports := testutil.MustAllocatePorts(t, 4)
+	// weed server derives each service's gRPC port as HTTP+10000, so the
+	// pairs must be allocated together.
+	ports := testutil.MustFreeMiniPorts(t, []string{"master", "volume", "filer", "s3"})
 	env := &TestEnvironment{
 		seaweedDir: seaweedDir,
 		weedBinary: weedBinary,
@@ -99,6 +101,8 @@ func (e *TestEnvironment) start(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	e.cancel = cancel
 	e.process = exec.CommandContext(ctx, e.weedBinary, "server",
+		"-ip="+e.bindIP,
+		"-ip.bind=0.0.0.0",
 		"-dir="+e.dataDir,
 		fmt.Sprintf("-master.port=%d", e.masterPort),
 		fmt.Sprintf("-volume.port=%d", e.volumePort),
@@ -107,6 +111,8 @@ func (e *TestEnvironment) start(t *testing.T) {
 		"-s3",
 		fmt.Sprintf("-s3.port=%d", e.s3Port),
 		"-s3.config="+iamConfigPath,
+		"-s3.port.iceberg=0",
+		"-s3.port.lance=0",
 	)
 	e.process.Dir = e.dataDir
 	e.process.Stdout = os.Stdout
@@ -115,16 +121,11 @@ func (e *TestEnvironment) start(t *testing.T) {
 		t.Fatalf("start weed: %v", err)
 	}
 
-	// Wait for the S3 listener — the vectors router shares it.
-	deadline := time.Now().Add(30 * time.Second)
-	for time.Now().Before(deadline) {
-		if conn, err := http.Get(e.endpoint + "/"); err == nil {
-			conn.Body.Close()
-			return
-		}
-		time.Sleep(200 * time.Millisecond)
+	// Wait for the S3 listener — the vectors router shares it. The client is
+	// bounded so a hung server cannot stall past the deadline.
+	if !testutil.WaitForService(e.endpoint+"/status", testutil.SeaweedMiniStartupTimeout) {
+		t.Fatalf("weed server did not come up on %s", e.endpoint)
 	}
-	t.Fatalf("weed server did not come up on %s", e.endpoint)
 }
 
 func (e *TestEnvironment) cleanup(t *testing.T) {
@@ -153,7 +154,7 @@ type vectorsClient struct {
 func (e *TestEnvironment) client() *vectorsClient {
 	return &vectorsClient{
 		endpoint: e.endpoint,
-		client:   http.DefaultClient,
+		client:   &http.Client{Timeout: 10 * time.Second},
 		signer:   v4.NewSigner(),
 		creds:    aws.Credentials{AccessKeyID: e.accessKey, SecretAccessKey: e.secretKey},
 		region:   "us-east-1",
