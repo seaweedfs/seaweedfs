@@ -292,6 +292,9 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 			for _, moved := range movedFiles {
 				os.Remove(moved)
 			}
+			if dataBaseFileName != "" {
+				os.Remove(dataBaseFileName + ".note")
+			}
 			vs.store.ReleaseFreeLocation(copyLocation, copyReservedSpace)
 		} else {
 			vs.store.CommitFreeLocation(copyLocation, copyReservedSpace)
@@ -353,10 +356,18 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 	// copy carries none, so clear leftovers before the files land.
 	os.Remove(dataBaseFileName + ".note")
 
+	// The .note marks the copy as in-progress through the renames: a crash
+	// mid-rename leaves the note and the load scan sweeps the partial set.
+	// The .vif lands first so the scan always has a basename to find.
+	if noteErr := util.WriteFile(dataBaseFileName+".note", []byte(fmt.Sprintf("copying from %s", req.SourceDataNode)), 0755); noteErr != nil {
+		err = noteErr
+		return fmt.Errorf("write .note for volume %d: %w", req.VolumeId, noteErr)
+	}
+
 	for _, pair := range [][2]string{
+		{stagedVifFileName, vifFileName},
 		{stagedDatFileName, datFileName},
 		{stagedIdxFileName, idxFileName},
-		{stagedVifFileName, vifFileName},
 	} {
 		if renameErr := os.Rename(pair[0], pair[1]); renameErr != nil {
 			if os.IsNotExist(renameErr) {
@@ -366,6 +377,13 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 			return err
 		}
 		movedFiles = append(movedFiles, pair[1])
+	}
+
+	// A leftover .note fails the load on the next restart, so a removal
+	// failure must fail the copy rather than be silently swallowed.
+	if noteErr := os.Remove(dataBaseFileName + ".note"); noteErr != nil && !os.IsNotExist(noteErr) {
+		err = noteErr
+		return fmt.Errorf("remove .note for volume %d: %w", req.VolumeId, noteErr)
 	}
 
 	// Load and validate the volume before announcing it to the master. A failed
