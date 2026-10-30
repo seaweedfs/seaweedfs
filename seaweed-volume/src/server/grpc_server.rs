@@ -8419,6 +8419,7 @@ mod tests {
                 volume_server_pb::VolumeIncrementalCopyRequest {
                     volume_id: 1,
                     since_ns: 0,
+                    ..Default::default()
                 },
             ))
             .await
@@ -10397,6 +10398,7 @@ mod tests {
                 volume_server_pb::VolumeIncrementalCopyRequest {
                     volume_id: 1,
                     since_ns: 0,
+                    ..Default::default()
                 },
             ))
             .await
