@@ -80,14 +80,18 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 		}
 	}
 
-	// Verify policy signature.
-	identity, errCode := s3a.iam.doesPolicySignatureMatch(r.Context(), formValues)
-	if errCode != s3err.ErrNone {
-		s3err.WriteErrorResponse(w, r, refineDenialForBucketName(r, identity, errCode))
-		return
-	}
-	if identity != nil {
-		r = r.WithContext(recordIdentityInContext(r, identity))
+	// Verify policy signature. With auth off there are no keys to check it against, as on the other handlers.
+	var identity *Identity
+	errCode := s3err.ErrNone
+	if s3a.iam.isEnabled() {
+		identity, errCode = s3a.iam.doesPolicySignatureMatch(r.Context(), formValues)
+		if errCode != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, refineDenialForBucketName(r, identity, errCode))
+			return
+		}
+		if identity != nil {
+			r = r.WithContext(recordIdentityInContext(r, identity))
+		}
 	}
 
 	policyBytes, err := base64.StdEncoding.DecodeString(formValues.Get("Policy"))
