@@ -81,7 +81,11 @@ with "context" and "exclude" (labels the object already sets).
 {{-   $rendered := dict -}}
 {{-   range $key, $value := $labels -}}
 {{-     if not (kindIs "invalid" $value) -}}
-{{-       $_ := set $rendered $key (toString $value) -}}
+{{-       $s := toString $value -}}
+{{-       if and (kindIs "float64" $value) (eq $value (floor $value)) (lt $value 9.2e18) (gt $value -9.2e18) -}}
+{{-         $s = toString (int64 $value) -}}
+{{-       end -}}
+{{-       $_ := set $rendered $key $s -}}
 {{-     end -}}
 {{-   end -}}
 {{-   if $rendered -}}
