@@ -305,7 +305,14 @@ func (fs *FilerSink) createEntry(key string, entry *filer_pb.Entry, signatures [
 		}
 		// glog.V(1).Infof("lookup: %v", lookupRequest)
 		if resp, err := filer_pb.LookupEntry(context.Background(), client, lookupRequest); err == nil {
-			if destinationSatisfiesSource(resp.Entry, entry) {
+			// A resolved-latest write carries the caller's pick of the current
+			// version, which can be older than the destination copy it replaces
+			// (the deleted latest) — only provably identical content skips it.
+			skip := destinationHoldsContent(resp.Entry, entry)
+			if checkSourceVersion {
+				skip = destinationSatisfiesSource(resp.Entry, entry)
+			}
+			if skip {
 				glog.V(3).Infof("skip overwriting %s", key)
 				return nil
 			}
@@ -657,6 +664,21 @@ func chooseUpdateAction(existing, oldEntry, incoming *filer_pb.Entry) updateActi
 		}
 	}
 	return updateNormal
+}
+
+// destinationHoldsContent reports whether the destination already holds exactly
+// the resolved entry's content for a CreateEntryLatest write, where a newer
+// destination mtime proves nothing: the resolved version may be older than the
+// copy it replaces. Skip only on identical chunk provenance, or an equal ETag
+// over full byte coverage.
+func destinationHoldsContent(existing, reference *filer_pb.Entry) bool {
+	if existing == nil {
+		return false
+	}
+	if destinationMatchesReference(existing, reference) {
+		return true
+	}
+	return coversReference(existing, reference) && filer.ETag(existing) == filer.ETag(reference)
 }
 
 // destinationSatisfiesSource reports whether an existing destination entry already

@@ -253,6 +253,38 @@ func TestDestinationSatisfiesSource(t *testing.T) {
 	}
 }
 
+// destinationHoldsContent gates CreateEntryLatest's skip: the resolved entry is
+// the picked current version, so a newer destination mtime must not keep the
+// replaced copy — only provably identical content skips.
+func TestDestinationHoldsContent(t *testing.T) {
+	md5A := []byte("0123456789abcdef")
+	md5B := []byte("fedcba9876543210")
+	cases := []struct {
+		name               string
+		existing, incoming *filer_pb.Entry
+		want               bool
+	}{
+		{"nil existing", nil, entryChunks(200, 4), false},
+		{"identical -> skip", entryChunks(200, 4), entryChunks(200, 4), true},
+		{"in-sync (fast path) -> skip", dstEntry(200, "A", "B"), srcEntry(200, "A", "B"), true},
+		{"md5 equal and complete -> skip", entryMd5(200, 4, md5A), entryMd5(200, 4, md5A), true},
+		{"truncated (no md5) -> write", entryChunks(200, 2), entryChunks(200, 4), false},
+		{"md5-backed truncated -> write", entryMd5(200, 2, md5A), entryMd5(200, 4, md5A), false},
+		// the resolved write installs an older version over the deleted latest's
+		// newer copy: different content must be replaced regardless of mtime
+		{"complete, dest newer, different -> write", entryMd5(300, 4, md5A), entryMd5(200, 4, md5B), false},
+		{"newer smaller dest -> write", ivEntry(300, [2]int64{0, 5}), ivEntry(100, [2]int64{0, 10}), false},
+		{"equal-mtime different -> write", entryMd5(200, 4, md5A), entryMd5(200, 4, md5B), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := destinationHoldsContent(tc.existing, tc.incoming); got != tc.want {
+				t.Fatalf("destinationHoldsContent = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 // destinationMatchesReference is the allocation-free fast path: true only when the
 // destination holds exactly the reference's chunks in order (by SourceFileId). It
 // must be conservative — never a false positive — so reorders, count mismatches,
