@@ -31,6 +31,18 @@ func (vs *VolumeServer) VolumeIncrementalCopy(req *volume_server_pb.VolumeIncrem
 	revision := v.SuperBlock.CompactionRevision
 	stopOffset, stopIndex, _ := v.FileStat()
 
+	// a since_ns resume from an old client has no verified prefix, so the
+	// index rows are only safe to replay when the whole file is sent
+	streamIndex := req.EntryCount > 0 || req.SinceNs == 0
+	if streamIndex {
+		// bound the .dat tail by the records the streamed rows cover: a
+		// record staged but not yet indexed would reach the backup without
+		// its row and be appended again on the next run
+		if end := v.DatSizeCoveredByIndex(int64(stopIndex)); end > 0 && end < int64(stopOffset) {
+			stopOffset = uint64(end)
+		}
+	}
+
 	var startOffset int64
 	var hasData bool
 	if req.EntryCount > 0 {
@@ -65,10 +77,8 @@ func (vs *VolumeServer) VolumeIncrementalCopy(req *volume_server_pb.VolumeIncrem
 		startOffset = foundOffset.ToActualOffset()
 	}
 
-	// a since_ns resume from an old client has no verified prefix, so the
-	// index rows are only safe to replay when the whole file is sent
 	var indexFile *os.File
-	if (req.EntryCount > 0 || req.SinceNs == 0) && int64(stopIndex) > int64(req.EntryCount)*types.NeedleMapEntrySize {
+	if streamIndex && int64(stopIndex) > int64(req.EntryCount)*types.NeedleMapEntrySize {
 		var err error
 		if indexFile, err = os.Open(v.FileName(".idx")); err != nil {
 			return fmt.Errorf("cannot read %s: %v", v.FileName(".idx"), err)

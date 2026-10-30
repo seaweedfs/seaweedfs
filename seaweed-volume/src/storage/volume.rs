@@ -5199,6 +5199,37 @@ impl Volume {
         Ok((dat_size, idx_size))
     }
 
+    /// .dat end of the last index row before `index_size` that names a
+    /// record, or 0 when none does within the scan bound. Records appended
+    /// after the bound — including staged writes whose rows are not
+    /// published yet — lie past it, so a copy must not stream them.
+    /// Mirrors Go's DatSizeCoveredByIndex in weed/storage/volume_backup.go.
+    pub(crate) fn dat_size_covered_by_index(&self, index_size: u64) -> u64 {
+        let last = index_size / NEEDLE_MAP_ENTRY_SIZE as u64;
+        let first = last.saturating_sub(1024);
+        let io = self.io.read().unwrap();
+        for i in (first..last).rev() {
+            let (_key, offset, _size) = match self.read_index_entry(i as i64) {
+                Ok(entry) => entry,
+                Err(_) => return 0,
+            };
+            if offset.is_zero() {
+                continue;
+            }
+            let mut header = [0u8; NEEDLE_HEADER_SIZE];
+            if self
+                .read_exact_at_backend(&io, &mut header, offset.to_actual_offset() as u64)
+                .is_err()
+            {
+                return 0;
+            }
+            let (_cookie, _id, size) = Needle::parse_header(&header);
+            return offset.to_actual_offset() as u64
+                + get_actual_size(size, self.version()) as u64;
+        }
+        0
+    }
+
     /// Disk space held by the local .dat file, or 0 when it is unknown. It
     /// exceeds the file size when the file was preallocated with
     /// `FALLOC_FL_KEEP_SIZE`.
@@ -6755,6 +6786,39 @@ mod tests {
             .unwrap();
         assert!(!up_to_date);
         assert!(offset.is_zero());
+    }
+
+    #[test]
+    fn dat_size_covered_by_index_ends_at_last_record() {
+        // A copy must not stream past the last record the index rows cover:
+        // bytes appended after the bound have no row to carry them.
+        // Mirrors Go's TestDatSizeCoveredByIndex.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+        for id in 1..=3u64 {
+            write_test_needle(&mut v, id, &[id as u8; 64]);
+        }
+        let dat_size = v.dat_file_size().unwrap();
+        let idx_size = v.index_file_size();
+        assert_eq!(v.dat_size_covered_by_index(idx_size), dat_size);
+
+        // a bound partway through ends where the next record begins
+        let (_k, next, _s) = v.read_index_entry(2).unwrap();
+        assert_eq!(
+            v.dat_size_covered_by_index(2 * NEEDLE_MAP_ENTRY_SIZE as u64),
+            next.to_actual_offset() as u64
+        );
+
+        // index-only tombstones past the bound still resolve to the last record
+        v.io.write()
+            .unwrap()
+            .nm
+            .as_mut()
+            .unwrap()
+            .delete(NeedleId(3), Offset::default())
+            .unwrap();
+        assert_eq!(v.dat_size_covered_by_index(v.index_file_size()), dat_size);
     }
 
     #[test]

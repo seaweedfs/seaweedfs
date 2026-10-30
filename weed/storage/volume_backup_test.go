@@ -151,3 +151,46 @@ func TestResumeByLastEntry(t *testing.T) {
 		t.Fatalf("resume offset %v, want zero", offset)
 	}
 }
+
+func TestDatSizeCoveredByIndex(t *testing.T) {
+	dir := t.TempDir()
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+
+	for i := 1; i <= 3; i++ {
+		if _, _, _, err := v.writeNeedle2(newRandomNeedle(uint64(i)), true, false, false); err != nil {
+			t.Fatalf("write needle %d: %v", i, err)
+		}
+	}
+	datSize, idxSize, _ := v.FileStat()
+
+	if covered := v.DatSizeCoveredByIndex(int64(idxSize)); covered != int64(datSize) {
+		t.Fatalf("covered %d, want %d", covered, datSize)
+	}
+
+	// a bound partway through covers only up to that row's record end,
+	// which is where the next record begins
+	next, err := v.readOffsetFromIndex(2)
+	if err != nil {
+		t.Fatalf("read row 2: %v", err)
+	}
+	if covered := v.DatSizeCoveredByIndex(2 * types.NeedleMapEntrySize); covered != next.ToActualOffset() {
+		t.Fatalf("mid bound covered %d, want %d", covered, next.ToActualOffset())
+	}
+
+	// index-only tombstones past the bound still resolve to the last record
+	key, _, _, _, err := v.locateLastAppendEntry()
+	if err != nil {
+		t.Fatalf("locate last entry: %v", err)
+	}
+	if err := v.nm.Delete(key, types.ToOffset(0)); err != nil {
+		t.Fatalf("zero-offset tombstone: %v", err)
+	}
+	if covered := v.DatSizeCoveredByIndex(int64(v.IndexFileSize())); covered != int64(datSize) {
+		t.Fatalf("covered %d after tombstone, want %d", covered, datSize)
+	}
+}

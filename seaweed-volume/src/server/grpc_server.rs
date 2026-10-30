@@ -1674,6 +1674,19 @@ impl VolumeServer for VolumeGrpcService {
         } else {
             idx_start
         };
+        // Bound the .dat tail by the records the streamed rows cover: a
+        // record staged but not yet indexed would reach the backup without
+        // its row and be appended again on the next run.
+        let dat_size = if idx_end > idx_start {
+            let covered = v.dat_size_covered_by_index(idx_end);
+            if covered > 0 && covered < dat_size {
+                covered
+            } else {
+                dat_size
+            }
+        } else {
+            dat_size
+        };
         // A corrupt index could place the located offset past the captured
         // `.dat` size; nothing to send, and it would underflow `total` below.
         let has_data = start_offset.is_some_and(|s| s < dat_size);

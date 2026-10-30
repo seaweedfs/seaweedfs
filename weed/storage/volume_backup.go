@@ -501,6 +501,31 @@ func (v *Volume) readOffsetFromIndex(m int64) (Offset, error) {
 	return offset, err
 }
 
+// DatSizeCoveredByIndex returns the .dat end of the last index row before
+// indexSize that names a record, or 0 when none does within the scan bound.
+// Records appended after the index bound — including staged writes whose
+// rows are not published yet — lie past it, so a copy must not stream them:
+// they would reach the backup without their row and be appended again on
+// the next run.
+func (v *Volume) DatSizeCoveredByIndex(indexSize int64) int64 {
+	last := indexSize/NeedleMapEntrySize - 1
+	for i := last; i >= 0 && i > last-1024; i-- {
+		_, offset, _, err := v.readIndexEntry(i)
+		if err != nil {
+			return 0
+		}
+		if offset.IsZero() {
+			continue
+		}
+		_, _, bodyLength, err := needle.ReadNeedleHeader(v.DataBackend, v.SuperBlock.Version, offset.ToActualOffset())
+		if err != nil {
+			return 0
+		}
+		return offset.ToActualOffset() + NeedleHeaderSize + bodyLength
+	}
+	return 0
+}
+
 // generate the volume idx
 type VolumeFileScanner4GenIdx struct {
 	v *Volume
