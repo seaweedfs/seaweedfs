@@ -568,7 +568,18 @@ func runInitialSnapshot(
 			if entry.IsDirectory && isVersionsDirName(entry.Name) {
 				// Seed only the version the pointer names; every other version
 				// file is skipped by the check above.
-				return flattener.applyLatest(parentPath.Child(entry.Name), entry, true, nil)
+				err := flattener.applyLatest(parentPath.Child(entry.Name), entry, true, nil)
+				if err != nil && ignore404Error {
+					if isIgnorable404(err) {
+						glog.V(0).Infof("initialSnapshot: versions dir %s moved on, ignore it: %s", sourceKey, err.Error())
+						return nil
+					}
+					if isSourceLookupError(err) && filersink.SourceSupersedes(ctx, filerSource, sourceKey, filersink.EntryMtimeNs(entry)) {
+						glog.V(0).Infof("initialSnapshot: source superseded %s mid-walk, skip it: %s", sourceKey, err.Error())
+						return nil
+					}
+				}
+				return err
 			}
 		}
 

@@ -8,6 +8,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 )
@@ -86,7 +87,7 @@ func event(dir, parent string, oldEntry, newEntry *filer_pb.Entry) *filer_pb.Sub
 }
 
 func TestFlattenDropsVersionFileEvents(t *testing.T) {
-	f, rs := newFlattener(nil)
+	f, rs := newFlattener(map[string]*filer_pb.Entry{})
 	v := &filer_pb.Entry{Name: "v_abc", Chunks: []*filer_pb.FileChunk{{FileId: "1,01"}}}
 
 	for _, resp := range []*filer_pb.SubscribeMetadataResponse{
@@ -219,6 +220,47 @@ func TestFlattenNullVersionIsLatest(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, handled)
 	require.Same(t, nullObject, rs.created["/b/k"])
+}
+
+func TestFlattenVersionFileEventRefreshesCurrentVersion(t *testing.T) {
+	// a tag-only update touches the version file, not the pointer: re-resolving
+	// the pointer must still upload the current version to the flat key
+	version := &filer_pb.Entry{Name: "v_2", Chunks: []*filer_pb.FileChunk{{FileId: "1,02"}}}
+	dir := &filer_pb.Entry{
+		Name:        "k.versions",
+		IsDirectory: true,
+		Extended:    map[string][]byte{s3_constants.ExtLatestVersionFileNameKey: []byte("v_2")},
+	}
+	f, rs := newFlattener(map[string]*filer_pb.Entry{
+		"/buckets/b/k.versions":     dir,
+		"/buckets/b/k.versions/v_2": version,
+	})
+
+	tagUpdate := &filer_pb.Entry{Name: "v_2", Extended: map[string][]byte{"X-Amz-Tagging-env": []byte("prod")}}
+	handled, err := f.process(event("/buckets/b/k.versions", "/buckets/b/k.versions", tagUpdate, tagUpdate))
+	require.NoError(t, err)
+	require.True(t, handled)
+	require.Same(t, version, rs.created["/b/k"])
+}
+
+func TestFlattenExcludedObjectNameIsNotCopiedOrDeleted(t *testing.T) {
+	f, rs := newFlattener(nil)
+	f.excludeFileNames = wildcard.CompileWildcardMatchers("*.tmp")
+
+	dir := &filer_pb.Entry{
+		Name:        "notes.tmp.versions",
+		IsDirectory: true,
+		Extended:    map[string][]byte{s3_constants.ExtLatestVersionIsDeleteMarker: []byte("true")},
+	}
+	handled, err := f.process(event("/buckets/b", "/buckets/b", dir, dir))
+	require.NoError(t, err)
+	require.True(t, handled)
+	require.Empty(t, rs.deleted, "delete on the excluded flat key must be skipped")
+
+	handled, err = f.process(event("/buckets/b", "", dir, nil))
+	require.NoError(t, err)
+	require.True(t, handled)
+	require.Empty(t, rs.deleted)
 }
 
 func TestFlattenDeleteMarkerVersionEntry(t *testing.T) {
