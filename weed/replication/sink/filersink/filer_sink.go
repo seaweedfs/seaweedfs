@@ -282,6 +282,17 @@ func (fs *FilerSink) entryMissing(key string) (bool, error) {
 }
 
 func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []int32) error {
+	return fs.createEntry(key, entry, signatures, true)
+}
+
+// CreateEntryLatest writes an entry the caller already resolved as the current
+// source state, so the stale-replay check against the key's own source path
+// does not apply.
+func (fs *FilerSink) CreateEntryLatest(key string, entry *filer_pb.Entry, signatures []int32) error {
+	return fs.createEntry(key, entry, signatures, false)
+}
+
+func (fs *FilerSink) createEntry(key string, entry *filer_pb.Entry, signatures []int32, checkSourceVersion bool) error {
 
 	return fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
@@ -307,13 +318,15 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures [
 		// arrival — skip before any read. When the source holds a newer live
 		// version, replicate it directly: the superseding event may never be
 		// delivered to this sink.
-		if live, movedOn := fs.sourceVersion(key, entry); movedOn {
-			if live == nil {
-				glog.Warningf("skip stale entry %s, source superseded before replicate", key)
-				return nil
+		if checkSourceVersion {
+			if live, movedOn := fs.sourceVersion(key, entry); movedOn {
+				if live == nil {
+					glog.Warningf("skip stale entry %s, source superseded before replicate", key)
+					return nil
+				}
+				glog.Warningf("entry %s superseded before replicate; syncing live version", key)
+				entry = live
 			}
-			glog.Warningf("entry %s superseded before replicate; syncing live version", key)
-			entry = live
 		}
 
 		replicatedChunks, err := fs.replicateChunks(context.Background(), entry.GetChunks(), key, getEntryMtimeNs(entry), "")

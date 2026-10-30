@@ -219,7 +219,7 @@ func (f *s3VersionFlattener) uploadLatest(objectKey, sourceKey util.FullPath, si
 	if entry.Attributes != nil {
 		mTime = entry.Attributes.Mtime
 	}
-	return f.dataSink.CreateEntry(destKey(f.dataSink, f.targetPath, f.sourcePath, objectKey, mTime), entry, signatures)
+	return sink.CreateEntryLatest(f.dataSink, destKey(f.dataSink, f.targetPath, f.sourcePath, objectKey, mTime), entry, signatures)
 }
 
 // isExcludedObject applies the source scope and exclusion rules to the
