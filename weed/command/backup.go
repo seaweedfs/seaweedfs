@@ -5,6 +5,8 @@ import (
 	"fmt"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 
@@ -155,6 +157,7 @@ func backupFromLocation(volumeServer pb.ServerAddress, grpcDialOption grpc.DialO
 	datSize, _, _ := v.FileStat()
 
 	// If local volume is larger than remote, recreate it
+	rebuilt := false
 	if datSize > stats.TailOffset {
 		if err := v.Destroy(false, false, false); err != nil {
 			v.Close()
@@ -166,12 +169,37 @@ func backupFromLocation(volumeServer pb.ServerAddress, grpcDialOption grpc.DialO
 		if err != nil {
 			return fmt.Errorf("recreating volume: %w", err), false
 		}
+		rebuilt = true
 	}
 
 	// Perform the incremental backup
-	if err := v.IncrementalBackup(volumeServer, grpcDialOption); err != nil {
+	err = v.IncrementalBackup(volumeServer, grpcDialOption)
+	if err != nil && status.Code(err) == codes.FailedPrecondition {
+		// The local copy is not a prefix of this replica's records; rebuild it.
+		if err := v.Destroy(false, false, false); err != nil {
+			v.Close()
+			return fmt.Errorf("destroying volume: %w", err), false
+		}
+		v, err = storage.NewVolume(*s.dir, *s.dir, *s.collection, vid, storage.NeedleMapInMemory, replication, ttl, 0, ver, 0, 0)
+		if err != nil {
+			return fmt.Errorf("recreating volume: %w", err), false
+		}
+		err = v.IncrementalBackup(volumeServer, grpcDialOption)
+		rebuilt = true
+	}
+	if err != nil {
 		v.Close()
 		return fmt.Errorf("incremental backup: %w", err), false
+	}
+
+	// A rebuilt copy starts at compaction revision zero; adopt the source's
+	// revision or the next run compacts it in key order and diverges again.
+	if rebuilt {
+		v.SuperBlock.CompactionRevision = uint16(stats.CompactRevision)
+		if _, err = v.DataBackend.WriteAt(v.SuperBlock.Bytes(), 0); err != nil {
+			v.Close()
+			return fmt.Errorf("writing superblock: %w", err), false
+		}
 	}
 
 	v.Close()

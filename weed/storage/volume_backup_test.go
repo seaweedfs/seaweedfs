@@ -1,6 +1,12 @@
 package storage
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+)
 
 func TestBinarySearch(t *testing.T) {
 	var testInput []int
@@ -36,4 +42,85 @@ func binarySearchForLargerThanTarget(nums []int, target int) int {
 		}
 	}
 	return l
+}
+
+func TestResumeByLastEntry(t *testing.T) {
+	dir := t.TempDir()
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+
+	for i := 1; i <= 5; i++ {
+		if _, _, _, err := v.writeNeedle2(newRandomNeedle(uint64(i)), true, false, false); err != nil {
+			t.Fatalf("write needle %d: %v", i, err)
+		}
+	}
+
+	entryAt := func(m int64) (key types.NeedleId, cookie uint32, size types.Size) {
+		key, offset, size, err := v.readIndexEntry(m)
+		if err != nil {
+			t.Fatalf("readIndexEntry %d: %v", m, err)
+		}
+		n, err := v.readNeedleAt(offset)
+		if err != nil {
+			t.Fatalf("readNeedleAt %d: %v", m, err)
+		}
+		return key, uint32(n.Cookie), size
+	}
+
+	prefixHash := func(count uint64) uint64 {
+		h, err := v.hashIndexEntries(count)
+		if err != nil {
+			t.Fatalf("hashIndexEntries %d: %v", count, err)
+		}
+		return h
+	}
+
+	// a copy whose tail is the replica's tail is already up to date
+	key, cookie, size := entryAt(4)
+	if _, upToDate, err := v.ResumeByLastEntry(5, key, cookie, size, prefixHash(5)); err != nil || !upToDate {
+		t.Fatalf("tail cursor: upToDate=%v err=%v", upToDate, err)
+	}
+
+	// a copy ending at an earlier record resumes from the next entry
+	key, cookie, size = entryAt(2)
+	offset, upToDate, err := v.ResumeByLastEntry(3, key, cookie, size, prefixHash(3))
+	if err != nil || upToDate {
+		t.Fatalf("mid cursor: upToDate=%v err=%v", upToDate, err)
+	}
+	if want, _ := v.readOffsetFromIndex(3); offset != want {
+		t.Fatalf("resume offset %v, want %v", offset, want)
+	}
+
+	// a copy ahead of the replica diverged
+	if _, _, err = v.ResumeByLastEntry(6, key, cookie, size, prefixHash(3)); err != ErrIncrementalCopyDiverged {
+		t.Fatalf("ahead cursor: %v", err)
+	}
+
+	// a copy whose tail record or earlier records differ diverged
+	key, cookie, size = entryAt(4)
+	if _, _, err = v.ResumeByLastEntry(5, key+1, cookie, size, prefixHash(5)); err != ErrIncrementalCopyDiverged {
+		t.Fatalf("key mismatch: %v", err)
+	}
+	if _, _, err = v.ResumeByLastEntry(5, key, cookie+1, size, prefixHash(5)); err != ErrIncrementalCopyDiverged {
+		t.Fatalf("cookie mismatch: %v", err)
+	}
+	if _, _, err = v.ResumeByLastEntry(5, key, cookie, size+1, prefixHash(5)); err != ErrIncrementalCopyDiverged {
+		t.Fatalf("size mismatch: %v", err)
+	}
+	if _, _, err = v.ResumeByLastEntry(5, key, cookie, size, prefixHash(5)+1); err != ErrIncrementalCopyDiverged {
+		t.Fatalf("prefix hash mismatch: %v", err)
+	}
+
+	// a remote-tier tombstone has no .dat record; a boundary at offset zero diverges
+	deletedKey, _, _ := entryAt(3)
+	if err := v.nm.Delete(deletedKey, types.ToOffset(0)); err != nil {
+		t.Fatalf("zero-offset tombstone: %v", err)
+	}
+	if _, _, err = v.ResumeByLastEntry(6, deletedKey, 0, types.TombstoneFileSize, prefixHash(6)); err != ErrIncrementalCopyDiverged {
+		t.Fatalf("zero-offset boundary: %v", err)
+	}
 }

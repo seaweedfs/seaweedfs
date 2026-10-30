@@ -2,12 +2,17 @@ package weed_server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
 func (vs *VolumeServer) VolumeIncrementalCopy(req *volume_server_pb.VolumeIncrementalCopyRequest, stream volume_server_pb.VolumeServer_VolumeIncrementalCopyServer) error {
@@ -21,16 +26,36 @@ func (vs *VolumeServer) VolumeIncrementalCopy(req *volume_server_pb.VolumeIncrem
 	}
 
 	stopOffset, _, _ := v.FileStat()
-	foundOffset, isLastOne, err := v.BinarySearchByAppendAtNs(req.SinceNs)
-	if err != nil {
-		return fmt.Errorf("fail to locate by appendAtNs %d: %s", req.SinceNs, err)
-	}
 
-	if isLastOne {
-		return nil
+	var startOffset int64
+	if req.EntryCount > 0 {
+		foundOffset, upToDate, err := v.ResumeByLastEntry(
+			req.EntryCount,
+			types.NeedleId(req.LastNeedleKey),
+			req.LastNeedleCookie,
+			types.Size(req.LastNeedleSize),
+			req.EntriesHash,
+		)
+		if err != nil {
+			if errors.Is(err, storage.ErrIncrementalCopyDiverged) {
+				return status.Error(codes.FailedPrecondition, err.Error())
+			}
+			return fmt.Errorf("fail to locate by entry %d: %s", req.EntryCount, err)
+		}
+		if upToDate {
+			return nil
+		}
+		startOffset = foundOffset.ToActualOffset()
+	} else {
+		foundOffset, isLastOne, err := v.BinarySearchByAppendAtNs(req.SinceNs)
+		if err != nil {
+			return fmt.Errorf("fail to locate by appendAtNs %d: %s", req.SinceNs, err)
+		}
+		if isLastOne {
+			return nil
+		}
+		startOffset = foundOffset.ToActualOffset()
 	}
-
-	startOffset := foundOffset.ToActualOffset()
 
 	buf := make([]byte, 1024*1024*2)
 	return sendFileContent(v, buf, startOffset, int64(stopOffset), stream)

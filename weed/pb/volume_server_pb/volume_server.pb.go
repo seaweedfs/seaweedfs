@@ -1126,9 +1126,19 @@ func (x *VolumeSyncStatusResponse) GetVersion() uint32 {
 }
 
 type VolumeIncrementalCopyRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	VolumeId      uint32                 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
-	SinceNs       uint64                 `protobuf:"varint,2,opt,name=since_ns,json=sinceNs,proto3" json:"since_ns,omitempty"`
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	VolumeId uint32                 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
+	SinceNs  uint64                 `protobuf:"varint,2,opt,name=since_ns,json=sinceNs,proto3" json:"since_ns,omitempty"`
+	// The backup's index position and last entry. When set, the replica
+	// resumes by entry position instead of by its own append_at_ns stamp,
+	// which differs across replicas for the same needle.
+	EntryCount       uint64 `protobuf:"varint,3,opt,name=entry_count,json=entryCount,proto3" json:"entry_count,omitempty"`
+	LastNeedleKey    uint64 `protobuf:"varint,4,opt,name=last_needle_key,json=lastNeedleKey,proto3" json:"last_needle_key,omitempty"`
+	LastNeedleCookie uint32 `protobuf:"varint,5,opt,name=last_needle_cookie,json=lastNeedleCookie,proto3" json:"last_needle_cookie,omitempty"`
+	LastNeedleSize   int32  `protobuf:"varint,6,opt,name=last_needle_size,json=lastNeedleSize,proto3" json:"last_needle_size,omitempty"`
+	// FNV-1a checksum of the (key, size) of every local index entry,
+	// verifying the whole prefix since replica record order can differ.
+	EntriesHash   uint64 `protobuf:"varint,7,opt,name=entries_hash,json=entriesHash,proto3" json:"entries_hash,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1173,6 +1183,41 @@ func (x *VolumeIncrementalCopyRequest) GetVolumeId() uint32 {
 func (x *VolumeIncrementalCopyRequest) GetSinceNs() uint64 {
 	if x != nil {
 		return x.SinceNs
+	}
+	return 0
+}
+
+func (x *VolumeIncrementalCopyRequest) GetEntryCount() uint64 {
+	if x != nil {
+		return x.EntryCount
+	}
+	return 0
+}
+
+func (x *VolumeIncrementalCopyRequest) GetLastNeedleKey() uint64 {
+	if x != nil {
+		return x.LastNeedleKey
+	}
+	return 0
+}
+
+func (x *VolumeIncrementalCopyRequest) GetLastNeedleCookie() uint32 {
+	if x != nil {
+		return x.LastNeedleCookie
+	}
+	return 0
+}
+
+func (x *VolumeIncrementalCopyRequest) GetLastNeedleSize() int32 {
+	if x != nil {
+		return x.LastNeedleSize
+	}
+	return 0
+}
+
+func (x *VolumeIncrementalCopyRequest) GetEntriesHash() uint64 {
+	if x != nil {
+		return x.EntriesHash
 	}
 	return 0
 }
@@ -7342,10 +7387,16 @@ const file_volume_server_proto_rawDesc = "" +
 	"tailOffset\x12)\n" +
 	"\x10compact_revision\x18\a \x01(\rR\x0fcompactRevision\x12\"\n" +
 	"\ridx_file_size\x18\b \x01(\x04R\vidxFileSize\x12\x18\n" +
-	"\aversion\x18\t \x01(\rR\aversion\"V\n" +
+	"\aversion\x18\t \x01(\rR\aversion\"\x9a\x02\n" +
 	"\x1cVolumeIncrementalCopyRequest\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12\x19\n" +
-	"\bsince_ns\x18\x02 \x01(\x04R\asinceNs\"B\n" +
+	"\bsince_ns\x18\x02 \x01(\x04R\asinceNs\x12\x1f\n" +
+	"\ventry_count\x18\x03 \x01(\x04R\n" +
+	"entryCount\x12&\n" +
+	"\x0flast_needle_key\x18\x04 \x01(\x04R\rlastNeedleKey\x12,\n" +
+	"\x12last_needle_cookie\x18\x05 \x01(\rR\x10lastNeedleCookie\x12(\n" +
+	"\x10last_needle_size\x18\x06 \x01(\x05R\x0elastNeedleSize\x12!\n" +
+	"\fentries_hash\x18\a \x01(\x04R\ventriesHash\"B\n" +
 	"\x1dVolumeIncrementalCopyResponse\x12!\n" +
 	"\ffile_content\x18\x01 \x01(\fR\vfileContent\"e\n" +
 	"\x12VolumeMountRequest\x12\x1b\n" +

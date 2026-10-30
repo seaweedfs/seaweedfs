@@ -1587,15 +1587,45 @@ impl VolumeServer for VolumeGrpcService {
         let dat_size = v.dat_file_size().unwrap_or(0);
         let super_block_size = v.super_block().block_size() as u64;
 
-        // If since_ns is very large (after all data), return empty
-        if req.since_ns == u64::MAX || dat_size <= super_block_size {
+        // If since_ns is very large (after all data), return empty. A
+        // positional resume must still reach resume_by_last_entry so an empty
+        // replica reports divergence instead of a clean empty stream.
+        if req.entry_count == 0 && (req.since_ns == u64::MAX || dat_size <= super_block_size) {
             drop(store);
             let stream = tokio_stream::iter(Vec::new());
             return Ok(Response::new(Box::pin(stream)));
         }
 
-        // Use binary search to find the starting offset
-        let start_offset = if req.since_ns == 0 {
+        // Resume by index position when the backup identified its last entry;
+        // append_at_ns stamps differ across replicas, so a since_ns resume can
+        // duplicate or skip needles after the source replica changes.
+        let start_offset = if req.entry_count > 0 {
+            match v.resume_by_last_entry(
+                req.entry_count,
+                NeedleId(req.last_needle_key),
+                Cookie(req.last_needle_cookie),
+                Size(req.last_needle_size),
+                req.entries_hash,
+            ) {
+                Ok((_offset, true)) => {
+                    drop(store);
+                    let stream = tokio_stream::iter(Vec::new());
+                    return Ok(Response::new(Box::pin(stream)));
+                }
+                Ok((offset, false)) => offset.to_actual_offset() as u64,
+                Err(crate::storage::volume::VolumeError::IncrementalCopyDiverged) => {
+                    return Err(Status::failed_precondition(
+                        crate::storage::volume::VolumeError::IncrementalCopyDiverged.to_string(),
+                    ));
+                }
+                Err(e) => {
+                    return Err(Status::internal(format!(
+                        "fail to locate by entry {}: {}",
+                        req.entry_count, e
+                    )));
+                }
+            }
+        } else if req.since_ns == 0 {
             super_block_size
         } else {
             match v.binary_search_by_append_at_ns(req.since_ns) {
@@ -8389,6 +8419,7 @@ mod tests {
                 volume_server_pb::VolumeIncrementalCopyRequest {
                     volume_id: 1,
                     since_ns: 0,
+                    ..Default::default()
                 },
             ))
             .await
@@ -10367,6 +10398,7 @@ mod tests {
                 volume_server_pb::VolumeIncrementalCopyRequest {
                     volume_id: 1,
                     since_ns: 0,
+                    ..Default::default()
                 },
             ))
             .await
