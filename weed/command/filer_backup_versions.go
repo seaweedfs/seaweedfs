@@ -120,7 +120,11 @@ func (f *s3VersionFlattener) process(resp *filer_pb.SubscribeMetadataResponse) (
 	// The versions directory is gone (deleted outright or renamed away):
 	// whatever the flattened key held is no longer current.
 	if oldVersionsDir != "" && oldVersionsDir != newVersionsDir {
-		if err := f.deleteObject(objectKeyOf(util.FullPath(oldVersionsDir)), message.Signatures); err != nil {
+		objectKey := objectKeyOf(util.FullPath(oldVersionsDir))
+		if f.isExcludedObject(objectKey, util.FullPath(oldVersionsDir), message.OldEntry) {
+			return true, nil
+		}
+		if err := f.deleteObject(objectKey, message.Signatures); err != nil {
 			return true, err
 		}
 	}
@@ -138,10 +142,7 @@ func objectKeyOf(versionsDir util.FullPath) util.FullPath {
 // pointer is cleared — nothing.
 func (f *s3VersionFlattener) applyLatest(versionsDir util.FullPath, dirEntry *filer_pb.Entry, isCreate bool, signatures []int32) error {
 	objectKey := objectKeyOf(versionsDir)
-	if !util.IsEqualOrUnder(string(objectKey), f.sourcePath) ||
-		matchesExcludePath(string(objectKey), f.excludePaths) ||
-		matchesExcludePath(string(versionsDir), f.excludePaths) ||
-		isEntryExcluded(path.Dir(string(objectKey)), dirEntry, f.reExcludeFileName, f.excludeFileNames, f.excludePathPatterns) {
+	if f.isExcludedObject(objectKey, versionsDir, dirEntry) {
 		return nil
 	}
 
@@ -184,6 +185,19 @@ func (f *s3VersionFlattener) uploadLatest(objectKey, sourceKey util.FullPath, si
 		mTime = entry.Attributes.Mtime
 	}
 	return f.dataSink.CreateEntry(destKey(f.dataSink, f.targetPath, f.sourcePath, objectKey, mTime), entry, signatures)
+}
+
+// isExcludedObject applies the source scope and exclusion rules to the
+// flattened object key — including its own name, so a file-name pattern that
+// excludes "k" also excludes the flattened "k" even though the event names
+// "k.versions".
+func (f *s3VersionFlattener) isExcludedObject(objectKey, versionsDir util.FullPath, dirEntry *filer_pb.Entry) bool {
+	dir, name := objectKey.DirAndName()
+	return !util.IsEqualOrUnder(string(objectKey), f.sourcePath) ||
+		matchesExcludePath(string(objectKey), f.excludePaths) ||
+		matchesExcludePath(string(versionsDir), f.excludePaths) ||
+		isEntryExcluded(dir, dirEntry, f.reExcludeFileName, f.excludeFileNames, f.excludePathPatterns) ||
+		isEntryExcluded(dir, &filer_pb.Entry{Name: name}, f.reExcludeFileName, f.excludeFileNames, f.excludePathPatterns)
 }
 
 func (f *s3VersionFlattener) deleteObject(objectKey util.FullPath, signatures []int32) error {
