@@ -46,12 +46,12 @@ type VolumeServer struct {
 	// by a leader; before first registration the retry loop reconnects
 	// promptly instead of pacing a full pulse.
 	confirmedLeaderOnce atomic.Bool
-	pulsePeriod       time.Duration
-	dataCenter        string
-	rack              string
-	store             *storage.Store
-	guard             *security.Guard
-	grpcDialOption    grpc.DialOption
+	pulsePeriod         time.Duration
+	dataCenter          string
+	rack                string
+	store               *storage.Store
+	guard               *security.Guard
+	grpcDialOption      grpc.DialOption
 
 	needleMapKind                 storage.NeedleMapKind
 	ldbTimout                     int64

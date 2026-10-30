@@ -73,7 +73,7 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 	var stagedIdxFileName, stagedDatFileName, stagedVifFileName string
 	var movedFiles []string
 	var replacedLinks []string
-	var replacedRemoved bool
+	var replacedRemoved, mounted bool
 	var hasRemoteDatFile bool
 	var copyLocation *storage.DiskLocation
 	var copyReservedSpace uint64
@@ -295,42 +295,57 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 			return
 		}
 		if err != nil {
+			keepFiles := false
+			if mounted {
+				// A mounted copy was already announced to the master; delete
+				// through the store so the announcement is withdrawn before
+				// the files go away. keepRemoteData: the .vif may point at
+				// the same cloud-tier object the source still references.
+				if delErr := vs.store.DeleteVolume(needle.VolumeId(req.VolumeId), false, false, true); delErr != nil {
+					glog.Warningf("discard mounted copy of volume %d: %v", req.VolumeId, delErr)
+					// A refused delete leaves it registered; unlinking its
+					// files now would strand a live replica.
+					keepFiles = vs.store.GetVolume(needle.VolumeId(req.VolumeId)) != nil
+				}
+			}
 			os.Remove(stagedIdxFileName)
 			os.Remove(stagedDatFileName)
 			os.Remove(stagedVifFileName)
 			os.Remove(stagedVifFileName + ".copying")
-			// Only files this copy moved into place come off; before the
-			// renames the final basenames can still be the replica being
-			// replaced, and a rejected copy must leave it intact.
-			for _, moved := range movedFiles {
-				// A regular volume and an EC volume for the same id share
-				// <base>.vif; keep it while the EC index is here.
-				if moved == vifFileName && copyLocation.HasEcxFileOnDisk(volFileInfoResp.Collection, needle.VolumeId(req.VolumeId)) {
-					continue
+			if !keepFiles {
+				// Only files this copy moved into place come off; before the
+				// renames the final basenames can still be the replica being
+				// replaced, and a rejected copy must leave it intact.
+				for _, moved := range movedFiles {
+					// A regular volume and an EC volume for the same id share
+					// <base>.vif; keep it while the EC index is here.
+					if moved == vifFileName && copyLocation.HasEcxFileOnDisk(volFileInfoResp.Collection, needle.VolumeId(req.VolumeId)) {
+						continue
+					}
+					os.Remove(moved)
 				}
-				os.Remove(moved)
-			}
-			// A failed mount leaves the needle-map backends it built; drop
-			// them so the next load does not trust a stale index. A replica
-			// still standing keeps its files.
-			if vs.store.GetVolume(needle.VolumeId(req.VolumeId)) == nil {
-				removeStaleIndexFiles(indexBaseFileName, dataBaseFileName)
-			}
-			if dataBaseFileName != "" {
-				os.Remove(dataBaseFileName + ".note")
-			}
-			if replacedRemoved && len(replacedLinks) > 0 {
-				// The swap failed after the previous replica was deleted;
-				// put its preserved files back and remount it. The .note is
-				// already gone so the restored set loads.
-				restoreReplacedVolumeFiles(replacedLinks)
-				if remountErr := vs.store.MountVolume(needle.VolumeId(req.VolumeId), &req.Collection); remountErr != nil {
-					glog.Warningf("remount replaced replica of volume %d: %v", req.VolumeId, remountErr)
+				// A failed mount leaves the needle-map backends it built;
+				// drop them so the next load does not trust a stale index.
+				// A replica still standing keeps its files.
+				if vs.store.GetVolume(needle.VolumeId(req.VolumeId)) == nil {
+					removeStaleIndexFiles(indexBaseFileName, dataBaseFileName)
 				}
-			} else {
-				for _, link := range replacedLinks {
-					os.Remove(link)
+				if dataBaseFileName != "" {
+					os.Remove(dataBaseFileName + ".note")
 				}
+				if replacedRemoved && len(replacedLinks) > 0 {
+					// The swap failed after the previous replica was deleted;
+					// put its preserved files back and remount it. The .note
+					// is already gone so the restored set loads.
+					restoreReplacedVolumeFiles(replacedLinks)
+					replacedLinks = nil
+					if remountErr := vs.store.MountVolume(needle.VolumeId(req.VolumeId), &req.Collection); remountErr != nil {
+						glog.Warningf("remount replaced replica of volume %d: %v", req.VolumeId, remountErr)
+					}
+				}
+			}
+			for _, link := range replacedLinks {
+				os.Remove(link)
 			}
 			vs.store.ReleaseFreeLocation(copyLocation, copyReservedSpace)
 		} else {
@@ -461,6 +476,7 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 	if err != nil {
 		return fmt.Errorf("failed to mount or validate volume %d: %w", req.VolumeId, err)
 	}
+	mounted = true
 
 	if err = stream.Send(&volume_server_pb.VolumeCopyResponse{
 		LastAppendAtNs: lastAppendAtNs,
