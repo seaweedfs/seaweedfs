@@ -45,37 +45,55 @@ func insideVersionsDir(dir string) bool {
 // lockFor serializes the handling of one event by the key the flattened mirror
 // writes to: versions-related events lock their object key, everything else its
 // own path, so a pointer update and a regular-path write to the same object
-// cannot overlap. Non-barrier dir updates run concurrently in the metadata
-// processor, which would otherwise let an older flattened upload finish last.
+// cannot overlap. Both sides of the event are locked, since a rename or delete
+// can retire one flattened key while writing another. Non-barrier dir updates
+// run concurrently in the metadata processor, which would otherwise let an
+// older flattened upload finish last.
 func (f *s3VersionFlattener) lockFor(resp *filer_pb.SubscribeMetadataResponse) func() {
-	key := eventFlatKey(resp)
-	mu := &f.flatLocks[util.HashStringToLong(key)&int64(len(f.flatLocks)-1)]
-	mu.Lock()
-	return mu.Unlock
+	oldKey, newKey := eventFlatKeys(resp)
+	if oldKey == "" {
+		oldKey = newKey
+	}
+	if newKey == "" {
+		newKey = oldKey
+	}
+	if newKey == "" {
+		oldKey, newKey = resp.Directory, resp.Directory
+	}
+	a := util.HashStringToLong(oldKey) & int64(len(f.flatLocks)-1)
+	b := util.HashStringToLong(newKey) & int64(len(f.flatLocks)-1)
+	if a == b {
+		f.flatLocks[a].Lock()
+		return f.flatLocks[a].Unlock
+	}
+	if b < a {
+		a, b = b, a
+	}
+	f.flatLocks[a].Lock()
+	f.flatLocks[b].Lock()
+	return func() {
+		f.flatLocks[b].Unlock()
+		f.flatLocks[a].Unlock()
+	}
 }
 
-func eventFlatKey(resp *filer_pb.SubscribeMetadataResponse) string {
+func eventFlatKeys(resp *filer_pb.SubscribeMetadataResponse) (string, string) {
 	message := resp.EventNotification
-	targetDir := filer_pb.MetadataEventTargetDirectory(resp)
-	if message.NewEntry != nil {
-		if insideVersionsDir(targetDir) && strings.HasPrefix(message.NewEntry.Name, "v_") {
-			return string(objectKeyOf(util.FullPath(targetDir)))
-		}
-		if message.NewEntry.IsDirectory && isVersionsDirName(message.NewEntry.Name) {
-			return string(objectKeyOf(util.FullPath(targetDir).Child(message.NewEntry.Name)))
-		}
-		return string(util.FullPath(targetDir).Child(message.NewEntry.Name))
+	return flatKeyOf(resp.Directory, message.OldEntry),
+		flatKeyOf(filer_pb.MetadataEventTargetDirectory(resp), message.NewEntry)
+}
+
+func flatKeyOf(dir string, entry *filer_pb.Entry) string {
+	if entry == nil {
+		return ""
 	}
-	if message.OldEntry != nil {
-		if insideVersionsDir(resp.Directory) && strings.HasPrefix(message.OldEntry.Name, "v_") {
-			return string(objectKeyOf(util.FullPath(resp.Directory)))
-		}
-		if message.OldEntry.IsDirectory && isVersionsDirName(message.OldEntry.Name) {
-			return string(objectKeyOf(util.FullPath(resp.Directory).Child(message.OldEntry.Name)))
-		}
-		return string(util.FullPath(resp.Directory).Child(message.OldEntry.Name))
+	if insideVersionsDir(dir) && strings.HasPrefix(entry.Name, "v_") {
+		return string(objectKeyOf(util.FullPath(dir)))
 	}
-	return resp.Directory
+	if entry.IsDirectory && isVersionsDirName(entry.Name) {
+		return string(objectKeyOf(util.FullPath(dir).Child(entry.Name)))
+	}
+	return string(util.FullPath(dir).Child(entry.Name))
 }
 
 // process handles the versions-related part of one metadata event and reports
