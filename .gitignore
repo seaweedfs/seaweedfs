@@ -145,8 +145,8 @@ telemetry/server/telemetry-server
 .aider*
 /seaweed-volume/docs
 __pycache__/
-/test/vectors/weed
-/test/vectors/weed-vector
-/test/vectors/weed-vector-worker
-/test/vectors/weed-volume
+/test/s3vectors/weed
+/test/s3vectors/weed-vector
+/test/s3vectors/weed-vector-worker
+/test/s3vectors/weed-volume
 .pytest_cache/
