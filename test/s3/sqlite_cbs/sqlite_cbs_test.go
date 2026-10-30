@@ -738,7 +738,7 @@ func TestCBSDatabaseUploadDownloadRoundtrip(t *testing.T) {
 	manifestKey := prefix + "manifest"
 
 	const blockCount = 6
-	blockBody := func(gen, i int) []byte {
+	blockBody := func(i int) []byte {
 		return bytes.Repeat([]byte{byte('a' + i)}, 1024) // deterministic content per block
 	}
 	blockKey := func(i int) string {
@@ -753,7 +753,7 @@ func TestCBSDatabaseUploadDownloadRoundtrip(t *testing.T) {
 			Bucket:      aws.String(bucket),
 			Key:         aws.String(blockKey(i)),
 			IfNoneMatch: aws.String("*"),
-			Body:        bytes.NewReader(blockBody(1, i)),
+			Body:        bytes.NewReader(blockBody(i)),
 		})
 		require.NoError(t, err, "upload block %d", i)
 		manifest.Updates = append(manifest.Updates, blockKey(i))
@@ -794,7 +794,7 @@ func TestCBSDatabaseUploadDownloadRoundtrip(t *testing.T) {
 	require.Len(t, fetched.Updates, blockCount)
 	for i, key := range fetched.Updates {
 		_, body := getCBSTestObject(t, client, bucket, key)
-		assert.Equal(t, sha256.Sum256(blockBody(1, i)), sha256.Sum256(body), "block %s checksum", key)
+		assert.Equal(t, sha256.Sum256(blockBody(i)), sha256.Sum256(body), "block %s checksum", key)
 	}
 
 	// Checkpoint: append a new block, rewrite the manifest by CAS on the
@@ -804,7 +804,7 @@ func TestCBSDatabaseUploadDownloadRoundtrip(t *testing.T) {
 		Bucket:      aws.String(bucket),
 		Key:         aws.String(newBlock),
 		IfNoneMatch: aws.String("*"),
-		Body:        bytes.NewReader(blockBody(2, blockCount)),
+		Body:        bytes.NewReader(blockBody(blockCount)),
 	})
 	require.NoError(t, err)
 
@@ -841,10 +841,10 @@ func TestCBSDatabaseUploadDownloadRoundtrip(t *testing.T) {
 	require.Len(t, fetched.Updates, blockCount+1)
 	for i, key := range fetched.Updates[:blockCount] {
 		_, body := getCBSTestObject(t, client, bucket, key)
-		assert.Equal(t, sha256.Sum256(blockBody(1, i)), sha256.Sum256(body))
+		assert.Equal(t, sha256.Sum256(blockBody(i)), sha256.Sum256(body))
 	}
 	_, body := getCBSTestObject(t, client, bucket, newBlock)
-	assert.Equal(t, sha256.Sum256(blockBody(2, blockCount)), sha256.Sum256(body))
+	assert.Equal(t, sha256.Sum256(blockBody(blockCount)), sha256.Sum256(body))
 
 	// Tear the database down the way bcv destroy does.
 	_, err = client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(bucket), Key: aws.String(manifestKey)})
