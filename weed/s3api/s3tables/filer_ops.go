@@ -476,18 +476,40 @@ func isNamespaceEntry(entry *filer_pb.Entry) bool {
 // checkParentOpen returns errParentGone if parentPath is missing or not a
 // catalog entry, and errParentDeleting if a delete has claimed it.
 func (h *S3TablesHandler) checkParentOpen(ctx context.Context, client filer_pb.SeaweedFilerClient, parentPath string, isParent func(*filer_pb.Entry) bool) error {
+	_, err := h.openParent(ctx, client, parentPath, isParent)
+	return err
+}
+
+// openParent is checkParentOpen returning the entry it accepted, so a caller
+// can later ask whether the parent is still that same record.
+func (h *S3TablesHandler) openParent(ctx context.Context, client filer_pb.SeaweedFilerClient, parentPath string, isParent func(*filer_pb.Entry) bool) (*filer_pb.Entry, error) {
 	entry, err := h.lookupEntry(ctx, client, parentPath)
 	if errors.Is(err, filer_pb.ErrNotFound) {
-		return errParentGone
+		return nil, errParentGone
 	}
+	if err != nil {
+		return nil, err
+	}
+	if !isParent(entry) {
+		return nil, errParentGone
+	}
+	if _, claimed := entry.Extended[ExtendedKeyDeleting]; claimed {
+		return nil, errParentDeleting
+	}
+	return entry, nil
+}
+
+// parentStillOpen reports whether parentPath still holds the record parent
+// captured. A delete claims, removes, or replaces the parent between the two
+// reads; the metadata bytes identify the record, so a delete+recreate that
+// answers open fails the compare all the same.
+func (h *S3TablesHandler) parentStillOpen(ctx context.Context, client filer_pb.SeaweedFilerClient, parentPath string, isParent func(*filer_pb.Entry) bool, parent *filer_pb.Entry) error {
+	current, err := h.openParent(ctx, client, parentPath, isParent)
 	if err != nil {
 		return err
 	}
-	if !isParent(entry) {
+	if !bytes.Equal(current.Extended[ExtendedKeyMetadata], parent.Extended[ExtendedKeyMetadata]) {
 		return errParentGone
-	}
-	if _, claimed := entry.Extended[ExtendedKeyDeleting]; claimed {
-		return errParentDeleting
 	}
 	return nil
 }
@@ -524,24 +546,45 @@ func (h *S3TablesHandler) mutateCatalogRecord(
 }
 
 // confirmParent re-checks the parent after a create wrote written onto
-// childPath. If the parent is open, it clears the record's unfinished mark.
-// If the parent is gone or claimed, it removes what the create wrote and
-// returns why, or errBackOutFailed if the record stays.
+// childPath. If the parent is open, it clears the record's unfinished mark —
+// then checks the parent once more, since a delete claiming it in between
+// scans the still-marked record, skips it, and removes it under a create that
+// already answered success. If the parent is gone or claimed at either check,
+// it removes what the create wrote and returns why, or errBackOutFailed if
+// the record stays.
 func (h *S3TablesHandler) confirmParent(ctx context.Context, client filer_pb.SeaweedFilerClient, parentPath string, isParent func(*filer_pb.Entry) bool, childPath string, written map[string][]byte, emptyDirs ...string) error {
-	err := h.checkParentOpen(ctx, client, parentPath, isParent)
+	parent, err := h.openParent(ctx, client, parentPath, isParent)
+	confirmed := false
 	if err == nil {
 		// The mark comes off only while the record still holds what this
 		// create wrote; a failed write backs the record out like a closed parent.
 		if err = h.removeExtendedAttributesIf(ctx, client, childPath, written, ExtendedKeyDeleting); err == nil {
-			return nil
+			confirmed = true
+			err = h.parentStillOpen(ctx, client, parentPath, isParent, parent)
 		}
 	}
-	ctx = context.WithoutCancel(ctx)
-	keys := make([]string, 0, len(written))
-	for key := range written {
-		keys = append(keys, key)
+	if err == nil {
+		return nil
 	}
-	if backOutErr := h.removeExtendedAttributesIf(ctx, client, childPath, written, keys...); backOutErr != nil && !errors.Is(backOutErr, filer_pb.ErrNotFound) {
+	ctx = context.WithoutCancel(ctx)
+	expected := written
+	keys := make([]string, 0, len(written))
+	if confirmed {
+		// The confirmed record no longer carries the mark written expected.
+		expected = make(map[string][]byte, len(written))
+		for key, data := range written {
+			if key == ExtendedKeyDeleting {
+				continue
+			}
+			expected[key] = data
+			keys = append(keys, key)
+		}
+	} else {
+		for key := range written {
+			keys = append(keys, key)
+		}
+	}
+	if backOutErr := h.removeExtendedAttributesIf(ctx, client, childPath, expected, keys...); backOutErr != nil && !errors.Is(backOutErr, filer_pb.ErrNotFound) {
 		glog.Warningf("back out %s: %v", childPath, backOutErr)
 		if errors.Is(backOutErr, ErrConcurrentUpdate) {
 			// The record moved past this create — adopted or rewritten — so

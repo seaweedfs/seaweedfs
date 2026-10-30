@@ -80,6 +80,37 @@ func (c *pausedAfterWriteClient) UpdateEntry(ctx context.Context, req *filer_pb.
 	return resp, err
 }
 
+// pausedConfirmClient holds the update that lifts a create's mark on target —
+// the write that publishes the record — until release is closed, so a test
+// can land a namespace claim after the create's parent check and before the
+// record goes live.
+type pausedConfirmClient struct {
+	filer_pb.SeaweedFilerClient
+	target  string
+	reached chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func newPausedConfirmClient(client filer_pb.SeaweedFilerClient, target string) *pausedConfirmClient {
+	return &pausedConfirmClient{
+		SeaweedFilerClient: client,
+		target:             target,
+		reached:            make(chan struct{}),
+		release:            make(chan struct{}),
+	}
+}
+
+func (c *pausedConfirmClient) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntryRequest, opts ...grpc.CallOption) (*filer_pb.UpdateEntryResponse, error) {
+	if req.Entry != nil && path.Join(req.Directory, req.Entry.Name) == c.target && req.Entry.Extended[ExtendedKeyDeleting] == nil {
+		c.once.Do(func() {
+			close(c.reached)
+			<-c.release
+		})
+	}
+	return c.SeaweedFilerClient.UpdateEntry(ctx, req, opts...)
+}
+
 type handlerResult struct {
 	status int
 	resp   S3TablesError
@@ -264,6 +295,40 @@ func TestCreateBetweenNamespaceScanAndDeleteBacksOut(t *testing.T) {
 			assert.Equal(t, http.StatusConflict, got.create.status, "an entry the delete removes must not be reported created: %+v", got.create.resp)
 			assert.Equal(t, ErrCodeConflict, got.create.resp.Type)
 			assert.Nil(t, got.leftover, "the create must remove what it wrote before the delete runs")
+			assert.Nil(t, fs.Get(GetTableBucketPath(renameTestBucket), "ns"))
+		})
+	}
+}
+
+// A create that passed its parent check publishes the record while the delete
+// holds the namespace claim: the delete already scanned the marked record and
+// skipped it, so the create must re-check the parent after lifting the mark —
+// reporting success here leaves the delete to remove a record its caller was
+// told exists.
+func TestCreateConfirmingUnderANamespaceClaimBacksOut(t *testing.T) {
+	for _, op := range createOps(t) {
+		t.Run(op.operation, func(t *testing.T) {
+			fs, m := startRenameManager(t)
+			dropSeedTable(t, m, fs)
+			nsPath := GetNamespacePath(renameTestBucket, "ns")
+			client := newPausedConfirmClient(fs.Client, GetTablePath(renameTestBucket, "ns", lateEntry))
+			created := startHandler(t, m, client, op.operation, op.input)
+			waitForPause(t, client.reached, created)
+
+			// The delete claims the namespace and scans the still-marked
+			// record before the create's publishing write lands.
+			inGap := make(chan handlerResult, 1)
+			fs.BeforeDelete = func() {
+				close(client.release)
+				inGap <- <-created
+			}
+			status, resp := runHandler(t, m, fs.Client, "DeleteNamespace", deleteNamespaceRequest(t))
+			require.Equal(t, http.StatusOK, status, "%+v", resp)
+
+			create := <-inGap
+			assert.Equal(t, http.StatusConflict, create.status, "a create confirmed under the claim must not report success: %+v", create.resp)
+			assert.Equal(t, ErrCodeConflict, create.resp.Type)
+			assert.Nil(t, fs.Get(nsPath, lateEntry))
 			assert.Nil(t, fs.Get(GetTableBucketPath(renameTestBucket), "ns"))
 		})
 	}
