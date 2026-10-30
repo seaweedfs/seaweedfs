@@ -90,13 +90,8 @@ func loadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption
 	if serverOptions.CertFile == "" || serverOptions.KeyFile == "" {
 		return nil, nil, fmt.Errorf("%s.cert and %s.key must both be set", component, component)
 	}
-	for _, p := range []string{serverOptions.CertFile, serverOptions.KeyFile, config.GetString("grpc.ca")} {
-		if p == "" {
-			continue
-		}
-		if _, err := os.Stat(p); err != nil {
-			return nil, nil, fmt.Errorf("stat TLS file %s: %w", p, err)
-		}
+	if err := checkTLSFiles(serverOptions.CertFile, serverOptions.KeyFile, config.GetString("grpc.ca")); err != nil {
+		return nil, nil, err
 	}
 
 	serverIdentityProvider, err := pemfile.NewProvider(serverOptions)
@@ -186,13 +181,17 @@ func loadClientTLS(config *util.ViperProxy, component string) (grpc.DialOption, 
 
 	// prefer a dedicated client certificate: CAs may issue certs with only one of the serverAuth/clientAuth EKUs
 	certFileName, keyFileName := config.GetString(component+".client_cert"), config.GetString(component+".client_key")
+	partialClientPair := (certFileName == "") != (keyFileName == "")
 	if certFileName == "" || keyFileName == "" {
-		if certFileName != "" || keyFileName != "" {
+		if partialClientPair {
 			glog.Warningf("%s.client_cert and %s.client_key must both be set, falling back to %s.cert and %s.key", component, component, component, component)
 		}
 		certFileName, keyFileName = config.GetString(component+".cert"), config.GetString(component+".key")
 	}
 	if certFileName == "" && keyFileName == "" {
+		if partialClientPair {
+			return nil, fmt.Errorf("%s.client_cert and %s.client_key must both be set", component, component)
+		}
 		return grpc.WithTransportCredentials(insecure.NewCredentials()), nil
 	}
 	if certFileName == "" || keyFileName == "" {
@@ -202,10 +201,8 @@ func loadClientTLS(config *util.ViperProxy, component string) (grpc.DialOption, 
 	if caFileName == "" {
 		return nil, fmt.Errorf("%s cert and key are set but grpc.ca is not", component)
 	}
-	for _, p := range []string{certFileName, keyFileName, caFileName} {
-		if _, err := os.Stat(p); err != nil {
-			return nil, fmt.Errorf("stat TLS file %s: %w", p, err)
-		}
+	if err := checkTLSFiles(certFileName, keyFileName, caFileName); err != nil {
+		return nil, err
 	}
 
 	clientOptions := pemfile.Options{
@@ -307,6 +304,26 @@ func LoadClientTLSHTTP(clientCertFile string) *tls.Config {
 	}
 }
 
+// checkTLSFiles validates configured TLS material up front: the pemfile
+// providers read lazily, so without this a typo'd or unparseable file would
+// only surface at handshake time instead of at startup.
+func checkTLSFiles(certFile, keyFile, caFile string) error {
+	if _, err := tls.LoadX509KeyPair(certFile, keyFile); err != nil {
+		return err
+	}
+	if caFile == "" {
+		return nil
+	}
+	caPem, err := os.ReadFile(caFile)
+	if err != nil {
+		return err
+	}
+	if !x509.NewCertPool().AppendCertsFromPEM(caPem) {
+		return fmt.Errorf("no CA certificates found in %s", caFile)
+	}
+	return nil
+}
+
 func parseAllowedCommonNames(commonNames string) map[string]bool {
 	allowed := make(map[string]bool)
 	for _, s := range strings.Split(commonNames, ",") {
@@ -334,13 +351,18 @@ func (a Authenticator) AuthenticateServer(params *advancedtls.HandshakeVerificat
 	names := make([]string, 0, len(leaf.DNSNames)+len(leaf.URIs)+1)
 	names = append(names, leaf.Subject.CommonName)
 	names = append(names, leaf.DNSNames...)
-	for _, u := range leaf.URIs {
-		names = append(names, u.String())
-	}
 	for _, name := range names {
 		if a.AllowedCommonNames[name] || (a.AllowedWildcardDomain != "" && strings.HasSuffix(name, a.AllowedWildcardDomain)) {
 			return &advancedtls.PostHandshakeVerificationResults{}, nil
 		}
+	}
+	for _, u := range leaf.URIs {
+		// URI identities match exactly: a path that happens to end in the
+		// wildcard domain must not pass the DNS suffix check.
+		if a.AllowedCommonNames[u.String()] {
+			return &advancedtls.PostHandshakeVerificationResults{}, nil
+		}
+		names = append(names, u.String())
 	}
 	err := fmt.Errorf("AuthenticateServer: untrusted server identity %v", names)
 	glog.Error(err)
