@@ -155,7 +155,6 @@ pub async fn run_heartbeat_with_state(
             match action {
                 PostAction::LeaderRedirect(leader) => {
                     new_leader = Some(leader);
-                    break;
                 }
                 PostAction::Done => {
                     new_leader = None;
@@ -196,11 +195,10 @@ pub async fn run_heartbeat_with_state(
                 }
             }
 
-            // If we connected to a leader (not seed list), break out after one attempt
-            // so we either reconnect to the new leader or fall back to seed list
-            if new_leader.is_some() {
-                break;
-            }
+            // A named leader overrides the next seed slot rather than
+            // restarting the scan: restarting would let an earlier seed that
+            // keeps reporting the dead leader starve every seed after it.
+            // Mirrors Go, where the redirect consumes the next range value.
         }
 
         // Pacing lives in the per-attempt error path, as in Go: a failed try
