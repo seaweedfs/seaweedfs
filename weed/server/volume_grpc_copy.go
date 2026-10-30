@@ -232,6 +232,15 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 			}
 		}()
 
+		// The staging names are fixed per volume, so a crashed copy can
+		// leave files behind; an optional file the new source lacks (.vif,
+		// or .dat on a remote volume) must not inherit the previous run's.
+		for _, leftover := range []string{stagedDatFileName, stagedIdxFileName, stagedVifFileName, stagedDatFileName + ".copying", stagedVifFileName + ".copying"} {
+			if rmErr := os.Remove(leftover); rmErr != nil && !os.IsNotExist(rmErr) {
+				return fmt.Errorf("clear staged %s for volume %d: %w", leftover, req.VolumeId, rmErr)
+			}
+		}
+
 		var copyDatAllocated uint64
 		if preallocateSize > 0 && !hasRemoteDatFile {
 			volumeFile := stagedDataBaseFileName + ".dat"
