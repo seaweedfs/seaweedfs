@@ -263,6 +263,27 @@ func TestFlattenExcludedObjectNameIsNotCopiedOrDeleted(t *testing.T) {
 	require.Empty(t, rs.deleted)
 }
 
+func TestFlattenRegularPathFollowsVersionsPointer(t *testing.T) {
+	// deleting the null object must not remove the flattened key while the
+	// .versions pointer names a live version
+	version := &filer_pb.Entry{Name: "v_2", Chunks: []*filer_pb.FileChunk{{FileId: "1,02"}}}
+	dir := &filer_pb.Entry{
+		Name:        "k.versions",
+		IsDirectory: true,
+		Extended:    map[string][]byte{s3_constants.ExtLatestVersionFileNameKey: []byte("v_2")},
+	}
+	f, rs := newFlattener(map[string]*filer_pb.Entry{
+		"/buckets/b/k.versions":     dir,
+		"/buckets/b/k.versions/v_2": version,
+	})
+
+	handled, err := f.process(event("/buckets/b", "", &filer_pb.Entry{Name: "k"}, nil))
+	require.NoError(t, err)
+	require.True(t, handled)
+	require.Same(t, version, rs.created["/b/k"])
+	require.Empty(t, rs.deleted)
+}
+
 func TestFlattenDeleteMarkerVersionEntry(t *testing.T) {
 	marker := &filer_pb.Entry{
 		Name:     "v_3",

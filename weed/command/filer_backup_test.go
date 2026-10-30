@@ -333,6 +333,17 @@ func TestBackupCheckpointIds_NoAliasing(t *testing.T) {
 	}
 }
 
+// Toggling -s3FlattenVersions must not resume the other mode's checkpoint:
+// switching modes needs a fresh snapshot, not a mid-stream resume.
+func TestBackupCheckpointIds_FlattenModeDistinct(t *testing.T) {
+	s := &stubSink{name: "s3", dir: "/", destination: "endpoint|bucket|/"}
+	idFlat, legacyFlat := backupCheckpointIds("/buckets/a", s, true)
+	idPlain, legacyPlain := backupCheckpointIds("/buckets/a", s, false)
+	if idFlat == idPlain || legacyFlat == legacyPlain {
+		t.Errorf("flatten mode shares checkpoint ids: (%d,%d) vs (%d,%d)", idFlat, legacyFlat, idPlain, legacyPlain)
+	}
+}
+
 // Restarting the same configuration must derive the same key, or every
 // restart would orphan its checkpoint.
 func TestBackupCheckpointIds_Stable(t *testing.T) {
