@@ -195,6 +195,13 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 		dataBaseFileName = storage.VolumeFileName(location.Directory, volFileInfoResp.Collection, int(req.VolumeId))
 		indexBaseFileName = storage.VolumeFileName(location.IdxDirectory, volFileInfoResp.Collection, int(req.VolumeId))
 
+		// The existing-volume check ran before the source RPCs; a mount that
+		// landed since would lose its index files to the clear below, which can
+		// share the index directory with this copy's bases. Abort instead.
+		if vs.store.GetVolume(needle.VolumeId(req.VolumeId)) != nil {
+			return fmt.Errorf("volume %d mounted during copy; aborting before clearing files", req.VolumeId)
+		}
+
 		// A crashed copy, or one whose cleanup failed, can leave a stale index
 		// next to the .idx that this copy's mount would trust
 		// (generateLevelDbFile replays only past the stored watermark). The
