@@ -466,3 +466,68 @@ func TestLoadClientTLSGlobalServerNamesFallback(t *testing.T) {
 		t.Fatalf("health check with global allowlist failed: %v", err)
 	}
 }
+
+// A per-target allowlist lives under the dialing component: the filer reads
+// grpc.filer.volume_allowed_server_commonNames for volume calls, never
+// grpc.volume.allowed_server_commonNames, which is the volume's own outbound
+// allowlist (e.g. naming only the master).
+func TestLoadClientTLSForTargetUsesClientScopedAllowlist(t *testing.T) {
+	dir := t.TempDir()
+	ca := newTestCA(t, dir)
+	serverCert, serverKey := ca.issue(t, dir, "seaweed-volume", []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth})
+	clientCert, clientKey := ca.issue(t, dir, "client", []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
+
+	v := util.NewViperProxy(viper.New())
+	v.Set("grpc.ca", ca.file)
+	v.Set("grpc.volume.cert", serverCert)
+	v.Set("grpc.volume.key", serverKey)
+	v.Set("grpc.volume.allowed_server_commonNames", "seaweed-master")
+	v.Set("grpc.filer.client_cert", clientCert)
+	v.Set("grpc.filer.client_key", clientKey)
+	v.Set("grpc.filer.volume_allowed_server_commonNames", "seaweed-volume")
+
+	addr := startTestGrpcServer(t, v, "grpc.volume")
+	if err := healthCheck(t, addr, LoadClientTLSForTarget(v, "grpc.filer", "grpc.volume")); err != nil {
+		t.Fatalf("health check with client-scoped target allowlist failed: %v", err)
+	}
+}
+
+func TestLoadClientTLSForTargetIgnoresTargetOutboundAllowlist(t *testing.T) {
+	dir := t.TempDir()
+	ca := newTestCA(t, dir)
+	serverCert, serverKey := ca.issue(t, dir, "seaweed-volume", []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth})
+	clientCert, clientKey := ca.issue(t, dir, "client", []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
+
+	v := util.NewViperProxy(viper.New())
+	v.Set("grpc.ca", ca.file)
+	v.Set("grpc.volume.cert", serverCert)
+	v.Set("grpc.volume.key", serverKey)
+	v.Set("grpc.volume.allowed_server_commonNames", "seaweed-master")
+	v.Set("grpc.filer.client_cert", clientCert)
+	v.Set("grpc.filer.client_key", clientKey)
+
+	addr := startTestGrpcServer(t, v, "grpc.volume")
+	if err := healthCheck(t, addr, LoadClientTLSForTarget(v, "grpc.filer", "grpc.volume")); err != nil {
+		t.Fatalf("health check must not apply the target's outbound allowlist: %v", err)
+	}
+}
+
+func TestLoadClientTLSForTargetFallsBackToClientAllowlist(t *testing.T) {
+	dir := t.TempDir()
+	ca := newTestCA(t, dir)
+	serverCert, serverKey := ca.issue(t, dir, "seaweed-volume", []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth})
+	clientCert, clientKey := ca.issue(t, dir, "client", []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
+
+	v := util.NewViperProxy(viper.New())
+	v.Set("grpc.ca", ca.file)
+	v.Set("grpc.volume.cert", serverCert)
+	v.Set("grpc.volume.key", serverKey)
+	v.Set("grpc.filer.client_cert", clientCert)
+	v.Set("grpc.filer.client_key", clientKey)
+	v.Set("grpc.filer.allowed_server_commonNames", "seaweed-volume")
+
+	addr := startTestGrpcServer(t, v, "grpc.volume")
+	if err := healthCheck(t, addr, LoadClientTLSForTarget(v, "grpc.filer", "grpc.volume")); err != nil {
+		t.Fatalf("health check with client component allowlist failed: %v", err)
+	}
+}

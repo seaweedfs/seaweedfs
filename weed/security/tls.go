@@ -176,11 +176,13 @@ func LoadClientTLS(config *util.ViperProxy, component string) grpc.DialOption {
 
 // LoadClientTLSForTarget builds the component's client dial option while
 // selecting the server-identity allowlist for a specific target kind: a filer
-// dialing a master keeps presenting its grpc.filer client certificate but
-// verifies the peer against grpc.master.allowed_server_commonNames. The
-// server-name and wildcard keys fall back from the target component to the
-// client component to grpc.*, so a deployment without per-target keys verifies
-// exactly as before.
+// dialing a volume keeps presenting its grpc.filer client certificate but
+// verifies the peer against grpc.filer.volume_allowed_server_commonNames. The
+// server-name and wildcard keys fall back from the client's per-target key to
+// the component key to grpc.*, so a deployment without per-target keys
+// verifies exactly as before. The per-target key lives under the client
+// component because grpc.<component>.allowed_server_commonNames denotes that
+// component's own outbound allowlist.
 func LoadClientTLSForTarget(config *util.ViperProxy, clientComponent, targetComponent string) grpc.DialOption {
 	option, err := loadClientTLS(config, clientComponent, targetComponent)
 	if err != nil {
@@ -243,20 +245,18 @@ func loadClientTLS(config *util.ViperProxy, component, targetComponent string) (
 		},
 		VerificationType: advancedtls.CertVerification,
 	}
-	allowedServerNames := config.GetString(targetComponent + ".allowed_server_commonNames")
-	if allowedServerNames == "" && targetComponent != component {
-		allowedServerNames = config.GetString(component + ".allowed_server_commonNames")
+	targetPrefix := ""
+	if targetComponent != component {
+		targetPrefix = strings.TrimPrefix(targetComponent, "grpc.") + "_"
 	}
-	if allowedServerNames == "" {
-		allowedServerNames = config.GetString("grpc.allowed_server_commonNames")
-	}
-	allowedWildcardDomain := config.GetString(targetComponent + ".allowed_server_wildcard_domain")
-	if allowedWildcardDomain == "" && targetComponent != component {
-		allowedWildcardDomain = config.GetString(component + ".allowed_server_wildcard_domain")
-	}
-	if allowedWildcardDomain == "" {
-		allowedWildcardDomain = config.GetString("grpc.allowed_server_wildcard_domain")
-	}
+	allowedServerNames := firstConfigString(config,
+		component+"."+targetPrefix+"allowed_server_commonNames",
+		component+".allowed_server_commonNames",
+		"grpc.allowed_server_commonNames")
+	allowedWildcardDomain := firstConfigString(config,
+		component+"."+targetPrefix+"allowed_server_wildcard_domain",
+		component+".allowed_server_wildcard_domain",
+		"grpc.allowed_server_wildcard_domain")
 	auther := Authenticator{
 		AllowedCommonNames:    parseAllowedCommonNames(allowedServerNames),
 		AllowedWildcardDomain: allowedWildcardDomain,
@@ -354,6 +354,15 @@ func parseAllowedCommonNames(commonNames string) map[string]bool {
 		}
 	}
 	return allowed
+}
+
+func firstConfigString(config *util.ViperProxy, keys ...string) string {
+	for _, key := range keys {
+		if v := config.GetString(key); v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // matchesWildcardDomain requires a real subdomain of the wildcard: the name

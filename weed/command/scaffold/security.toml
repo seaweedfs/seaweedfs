@@ -95,7 +95,9 @@ allowed_wildcard_domain = "" # .mycompany.com
 # With a per-workload CA, list the identities each server may present so one
 # workload cannot impersonate another component. Unset accepts any CA-signed
 # server certificate, as before. Any [grpc.<component>] section may set its own
-# allowed_server_commonNames to override this list.
+# allowed_server_commonNames to override this list, and scope it further per
+# dialed target, e.g. the filer reads [grpc.filer]
+# volume_allowed_server_commonNames for volume server calls.
 allowed_server_commonNames = ""      # comma-separated server identities
 allowed_server_wildcard_domain = ""  # .mycompany.com
 
