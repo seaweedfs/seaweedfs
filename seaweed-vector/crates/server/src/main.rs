@@ -21,11 +21,11 @@ struct Args {
     listen: String,
     /// object_store option fallback for deployments that vend no credentials:
     /// key=value, repeatable.
-    #[arg(long = "storage-option", value_parser = parse_option)]
+    #[arg(long = "storage-option", alias = "storage.option", value_parser = parse_option)]
     storage_options: Vec<(String, String)>,
     /// Comma-separated master addresses to register this server with; the
     /// gateway discovers it via ListClusterNodes(client_type=vector).
-    #[arg(long, env = "WEED_VECTOR_MASTERS")]
+    #[arg(long, alias = "master", env = "WEED_VECTOR_MASTERS")]
     masters: Option<String>,
 }
 
@@ -33,6 +33,31 @@ fn parse_option(s: &str) -> Result<(String, String), String> {
     s.split_once('=')
         .map(|(k, v)| (k.to_string(), v.to_string()))
         .ok_or_else(|| "expected key=value".to_string())
+}
+
+// weed tools take Go-style single-dash long flags; normalize_args converts
+// any -flag to --flag — the same normalization weed-volume's config.rs does —
+// so -master and --masters parse the same. The masters field carries the
+// singular alias clap-side.
+fn normalize_args(args: Vec<String>) -> Vec<String> {
+    let mut args = args;
+    let mut i = 1; // skip args[0] (binary name)
+    while i < args.len() {
+        let arg = &args[i];
+        if arg == "--" {
+            break;
+        }
+        if arg.starts_with("--") || !arg.starts_with('-') {
+            i += 1;
+            continue;
+        }
+        let without_dash = &arg[1..];
+        if without_dash.len() > 1 && !without_dash.starts_with(|c: char| c.is_ascii_digit()) {
+            args[i] = format!("-{}", arg);
+        }
+        i += 1;
+    }
+    args
 }
 
 /// A wildcard listen address is not reachable for peers; derive the outbound
@@ -73,7 +98,7 @@ fn advertised_addr(listen: &str, masters: &[String]) -> String {
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
-    let args = Args::parse();
+    let args = Args::parse_from(normalize_args(std::env::args().collect()));
     if let Some(masters) = &args.masters {
         let masters: Vec<String> = masters.split(',').map(|s| s.trim().to_string()).collect();
         let advertise = advertised_addr(&args.listen, &masters);
