@@ -903,11 +903,11 @@ func (s3a *S3ApiServer) isUserAdmin(r *http.Request) bool {
 // userCanAdminBucket securely checks if the authenticated identity may
 // administer the named bucket: a global Admin, or a bucket-scoped grant such
 // as "Admin:prefix*" matching the bucket name — the same rule explicit
-// CreateBucket already enforces.
+// CreateBucket already enforces, including attached IAM policy denies.
 func (s3a *S3ApiServer) userCanAdminBucket(r *http.Request, bucket string) bool {
 	if identityObj := s3_constants.GetIdentityFromContext(r); identityObj != nil {
 		if identity, ok := identityObj.(*Identity); ok {
-			return identity != nil && identity.CanDo(s3_constants.ACTION_ADMIN, bucket, "")
+			return s3a.verifyBucketAdmin(r, identity, bucket)
 		}
 	}
 	if s3a.iam == nil {
@@ -917,7 +917,22 @@ func (s3a *S3ApiServer) userCanAdminBucket(r *http.Request, bucket string) bool 
 	if errCode != s3err.ErrNone {
 		return false
 	}
-	return identity != nil && identity.CanDo(s3_constants.ACTION_ADMIN, bucket, "")
+	return s3a.verifyBucketAdmin(r, identity, bucket)
+}
+
+// verifyBucketAdmin evaluates bucket administration as s3:CreateBucket through
+// the same policy-aware path explicit creation uses: a synthesized PUT
+// /bucket request makes attached IAM policies resolve (and deny) against the
+// bucket ARN regardless of the real request's method or query.
+func (s3a *S3ApiServer) verifyBucketAdmin(r *http.Request, identity *Identity, bucket string) bool {
+	if identity == nil {
+		return false
+	}
+	if s3a.iam == nil {
+		return identity.CanDo(s3_constants.ACTION_ADMIN, bucket, "")
+	}
+	createReq := objectKeyPolicyRequest(r, http.MethodPut, bucket, "", "")
+	return s3a.iam.VerifyActionPermission(createReq, identity, s3_constants.ACTION_ADMIN, bucket, "") == s3err.ErrNone
 }
 
 // isBucketPublicRead checks if a bucket allows anonymous read access based on its cached ACL status
