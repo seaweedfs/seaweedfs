@@ -5200,12 +5200,13 @@ impl Volume {
     }
 
     /// .dat end of the last record the index rows before `index_size`
-    /// cover, or 0 when none does. Rows are not always in .dat order —
-    /// rebuilds can write the .idx sorted by key — so the bound comes from
-    /// the maximum offset: records do not overlap, so the highest offset
-    /// names the highest end. Records appended after the bound — including
-    /// staged writes whose rows are not published yet — lie past it, so a
-    /// copy must not stream them.
+    /// cover, the superblock size when no row inside the bound names a
+    /// record, or 0 when the index cannot be read. Rows are not always in
+    /// .dat order — rebuilds can write the .idx sorted by key — so the
+    /// bound comes from the maximum offset: records do not overlap, so the
+    /// highest offset names the highest end. Records appended after the
+    /// bound — including staged writes whose rows are not published yet —
+    /// lie past it, so a copy must not stream them.
     /// Mirrors Go's DatSizeCoveredByIndex in weed/storage/volume_backup.go.
     pub(crate) fn dat_size_covered_by_index(&self, index_size: u64) -> u64 {
         let bound_rows = index_size / NEEDLE_MAP_ENTRY_SIZE as u64;
@@ -5232,7 +5233,7 @@ impl Volume {
             }
         }
         if max_actual_offset < 0 {
-            return 0;
+            return self.super_block().block_size() as u64;
         }
         let io = self.io.read().unwrap();
         let mut header = [0u8; NEEDLE_HEADER_SIZE];

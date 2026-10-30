@@ -544,13 +544,14 @@ func (v *Volume) readOffsetFromIndex(m int64) (Offset, error) {
 }
 
 // DatSizeCoveredByIndex returns the .dat end of the last record the index
-// rows before indexSize cover, or 0 when none does. Rows are not always in
-// .dat order — rebuilds can write the .idx sorted by key — so the bound
-// comes from the maximum offset: records do not overlap, so the highest
-// offset names the highest end. Records appended after the index bound —
-// including staged writes whose rows are not published yet — lie past it,
-// so a copy must not stream them: they would reach the backup without their
-// row and be appended again on the next run.
+// rows before indexSize cover, the superblock size when no row inside the
+// bound names a record, or 0 when the index cannot be read. Rows are not
+// always in .dat order — rebuilds can write the .idx sorted by key — so the
+// bound comes from the maximum offset: records do not overlap, so the
+// highest offset names the highest end. Records appended after the index
+// bound — including staged writes whose rows are not published yet — lie
+// past it, so a copy must not stream them: they would reach the backup
+// without their row and be appended again on the next run.
 func (v *Volume) DatSizeCoveredByIndex(indexSize int64) int64 {
 	indexFile, err := os.OpenFile(v.FileName(".idx"), os.O_RDONLY, 0644)
 	if err != nil {
@@ -577,7 +578,7 @@ func (v *Volume) DatSizeCoveredByIndex(indexSize int64) int64 {
 		return 0
 	}
 	if maxActualOffset < 0 {
-		return 0
+		return int64(v.SuperBlock.BlockSize())
 	}
 	_, _, bodyLength, err := needle.ReadNeedleHeader(v.DataBackend, v.SuperBlock.Version, maxActualOffset)
 	if err != nil {
