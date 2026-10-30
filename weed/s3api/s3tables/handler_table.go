@@ -1315,23 +1315,6 @@ func markSourceGone(err error) error {
 	return err
 }
 
-// backOutConfirmedEntry removes a confirmed catalog record whose operation
-// failed after confirmation, then drops the empty directory. The compare is on
-// the record's post-confirmation state, so a write that landed since keeps it.
-func (h *S3TablesHandler) backOutConfirmedEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, path string, written map[string][]byte) {
-	confirmed := snapshotExtended(written)
-	delete(confirmed, ExtendedKeyDeleting)
-	keys := make([]string, 0, len(written))
-	for key := range written {
-		keys = append(keys, key)
-	}
-	if err := h.removeExtendedAttributesIf(ctx, client, path, confirmed, keys...); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
-		glog.Warningf("back out confirmed %s: %v", path, err)
-		return
-	}
-	h.removeLeftoverDirectory(ctx, client, path)
-}
-
 func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Request, filerClient FilerClient, kind catalogEntryKind) error {
 	var req RenameTableRequest
 	if err := h.readRequestBody(r, &req); err != nil {
@@ -1631,8 +1614,24 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 		if err := h.claimCatalogEntry(r.Context(), client, destPath, written); err != nil {
 			return releaseClaim(err)
 		}
-		if err := h.confirmParent(r.Context(), client, destNamespacePath, isNamespaceEntry, destPath, written, destPath); err != nil {
+		// The destination stays create-marked — and so invisible to every other
+		// operation — until the source clears. Confirming it first would publish
+		// a record that a failed source clear would then remove from under
+		// callers that already saw it.
+		backOutDest := func(err error) error {
+			ctx := context.WithoutCancel(r.Context())
+			keys := make([]string, 0, len(written))
+			for key := range written {
+				keys = append(keys, key)
+			}
+			if backErr := h.removeExtendedAttributesIf(ctx, client, destPath, written, keys...); backErr != nil && !errors.Is(backErr, filer_pb.ErrNotFound) {
+				glog.Warningf("rename %s: back out destination: %v", destPath, backErr)
+			}
+			h.removeLeftoverDirectory(ctx, client, destPath)
 			return releaseClaim(err)
+		}
+		if err := h.checkParentOpen(r.Context(), client, destNamespacePath, isNamespaceEntry); err != nil {
+			return backOutDest(err)
 		}
 		// Soft-delete the source catalog identity in place: drop its catalog xattrs
 		// so the name stops resolving while the metadata/ and data/ children stay put
@@ -1640,11 +1639,36 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 		err := h.removeExtendedAttributesIf(r.Context(), client, srcPath, claimed,
 			append(append([]string{}, renamedTableAttributes...), ExtendedKeyDeleting)...)
 		if err != nil {
-			// The destination was already confirmed above; without this the
-			// failed rename would leave it published — and pointing at data a
-			// delete may already have taken — while the source stays behind.
-			h.backOutConfirmedEntry(context.WithoutCancel(r.Context()), client, destPath, written)
-			return releaseClaim(markSourceGone(err))
+			return backOutDest(markSourceGone(err))
+		}
+		// Commit on an uncanceled context so a client cancel cannot wedge the
+		// record half-published. Only this rename can touch a create-marked
+		// record, so the compare cannot lose; on a filer error the source's
+		// cleared attributes go back rather than dropping the table's catalog
+		// identity entirely.
+		commitCtx := context.WithoutCancel(r.Context())
+		if err := h.removeExtendedAttributesIf(commitCtx, client, destPath, written, ExtendedKeyDeleting); err != nil {
+			cleared := snapshotExtended(claimed)
+			for _, key := range renamedTableAttributes {
+				delete(cleared, key)
+			}
+			delete(cleared, ExtendedKeyDeleting)
+			if rErr := h.mutateEntryExtended(commitCtx, client, srcPath, func(extended map[string][]byte) error {
+				for key, want := range cleared {
+					if !bytes.Equal(extended[key], want) {
+						return fmt.Errorf("%w: %s changed on %s", ErrConcurrentUpdate, key, srcPath)
+					}
+				}
+				for key, data := range srcExtended {
+					if key != ExtendedKeyDeleting {
+						extended[key] = data
+					}
+				}
+				return nil
+			}); rErr != nil {
+				glog.Warningf("rename %s: restore source record: %v", srcPath, rErr)
+			}
+			return err
 		}
 		return nil
 	})
