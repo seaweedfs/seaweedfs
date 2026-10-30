@@ -2,7 +2,6 @@ package s3api
 
 import (
 	"bytes"
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -400,37 +399,10 @@ func TestPostPolicyAttachedPolicyDeny(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), "AccessDenied")
 }
 
-// postAutoCreateFiler stores every created entry and serves directory lookups
-// from that store, so the POST upload's lazy bucket creation can be observed
-// without a running filer. Every other RPC stays Unimplemented and fails.
-type postAutoCreateFiler struct {
-	filer_pb.UnimplementedSeaweedFilerServer
-	mu      sync.Mutex
-	entries map[string]*filer_pb.Entry
-	created []string
-}
-
-func (f *postAutoCreateFiler) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if entry, ok := f.entries[req.Directory+"/"+req.Name]; ok {
-		return &filer_pb.LookupDirectoryEntryResponse{Entry: entry}, nil
-	}
-	return nil, filer_pb.ErrNotFound
-}
-
-func (f *postAutoCreateFiler) CreateEntry(ctx context.Context, req *filer_pb.CreateEntryRequest) (*filer_pb.CreateEntryResponse, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.created = append(f.created, req.Directory+"/"+req.Entry.Name)
-	f.entries[req.Directory+"/"+req.Entry.Name] = req.Entry
-	return &filer_pb.CreateEntryResponse{}, nil
-}
-
 // newPostAutoCreateServer builds an S3ApiServer on the fake filer with
 // auto-create enabled, an "admin" identity allowed to create buckets, and the
 // non-admin "tester" writer.
-func newPostAutoCreateServer(t *testing.T, filer *postAutoCreateFiler) *S3ApiServer {
+func newPostAutoCreateServer(t *testing.T, filer *ambiguousPutFiler) *S3ApiServer {
 	t.Helper()
 
 	iam := &IdentityAccessManagement{
@@ -462,27 +434,52 @@ func newPostAutoCreateServer(t *testing.T, filer *postAutoCreateFiler) *S3ApiSer
 
 // A signed POST Object upload to a bucket that does not exist must lazy-create
 // it the way PutObject does: an admin signer is allowed to create the bucket
-// and the upload proceeds against it instead of answering NoSuchBucket.
+// and the upload proceeds against it, landing the object entry and its chunk
+// instead of answering NoSuchBucket.
 func TestPostPolicyBucketHandlerAutoCreatesMissingBucket(t *testing.T) {
-	filer := &postAutoCreateFiler{entries: map[string]*filer_pb.Entry{}}
+	volume := startFakeVolumeServer(t)
+	filer := &ambiguousPutFiler{
+		volume:  volume,
+		entries: map[string]*filer_pb.Entry{},
+		apply:   true,
+	}
 	s3a := newPostAutoCreateServer(t, filer)
 
 	rec := httptest.NewRecorder()
-	s3a.PostPolicyBucketHandler(rec, newSignedPostRequestFor(t, "uploads/pic.png", postAdminAccessKey, postAdminSecretKey, nil))
+	s3a.PostPolicyBucketHandler(rec, newSignedPostRequestFor(t, "uploads/pic.png",
+		postAdminAccessKey, postAdminSecretKey, map[string]string{"success_action_status": "201"}))
+
+	assert.Equal(t, http.StatusCreated, rec.Code,
+		"POST to a missing bucket must complete the upload after creating it, body: %s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "<Key>uploads/pic.png</Key>")
 
 	filer.mu.Lock()
 	defer filer.mu.Unlock()
-	assert.Contains(t, filer.created, "/buckets/"+postAuthzBucket,
-		"POST to a missing bucket must create it like PUT, got status %d body %s", rec.Code, rec.Body.String())
-	assert.NotEqual(t, http.StatusNotFound, rec.Code,
-		"missing-bucket POST must no longer be a 404, body: %s", rec.Body.String())
+	bucketEntry := filer.entries["/buckets/"+postAuthzBucket]
+	require.NotNil(t, bucketEntry, "POST to a missing bucket must create it like PUT")
+	assert.True(t, bucketEntry.IsDirectory)
+	objectEntry := filer.entries["/buckets/"+postAuthzBucket+"/uploads/pic.png"]
+	require.NotNil(t, objectEntry, "the upload must land its object entry on the new bucket")
+	assert.NotEmpty(t, objectEntry.Chunks)
+
+	volume.mu.Lock()
+	defer volume.mu.Unlock()
+	var stored []byte
+	for _, data := range volume.stored {
+		stored = append(stored, data...)
+	}
+	assert.Contains(t, string(stored), "payload", "the file body must reach the assigned volume")
 }
 
 // A non-admin signer keeps the PUT semantics: the upload itself is authorized
 // but the lazy create is refused, surfacing AccessDenied rather than creating
 // the bucket or answering NoSuchBucket.
 func TestPostPolicyBucketHandlerAutoCreateDeniedForNonAdmin(t *testing.T) {
-	filer := &postAutoCreateFiler{entries: map[string]*filer_pb.Entry{}}
+	volume := startFakeVolumeServer(t)
+	filer := &ambiguousPutFiler{
+		volume:  volume,
+		entries: map[string]*filer_pb.Entry{},
+	}
 	s3a := newPostAutoCreateServer(t, filer)
 
 	rec := httptest.NewRecorder()
@@ -493,5 +490,5 @@ func TestPostPolicyBucketHandlerAutoCreateDeniedForNonAdmin(t *testing.T) {
 
 	filer.mu.Lock()
 	defer filer.mu.Unlock()
-	assert.Empty(t, filer.created, "a non-admin POST must not create the bucket")
+	assert.Empty(t, filer.entries, "a non-admin POST must not create the bucket")
 }
