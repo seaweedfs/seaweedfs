@@ -6104,7 +6104,10 @@ impl CopyDestination {
     ///
     /// When the index directory differs from the data directory, a leftover
     /// `.idx` beside the `.dat` makes load switch to that directory and trust
-    /// the `.rdb` next to it, so both bases are cleared.
+    /// the `.rdb` next to it, so those index artifacts are cleared on both
+    /// bases. `.dat` and `.note` come off the data base only: another
+    /// location can use this index directory as its data directory, and
+    /// deleting `<idx base>.dat` would destroy that replica.
     ///
     /// A regular volume and an EC volume for the same id share `<base>.vif`.
     /// `Volume::destroy` keeps that file while a non-empty `.ecx` is present;
@@ -6114,25 +6117,30 @@ impl CopyDestination {
     /// trusted by the next mount, so a caller that can still abort must know
     /// the removal failed. Missing files are fine — they were never written.
     fn remove_partial_files(&self) -> std::io::Result<()> {
-        let keep_vif = self.shares_vif_with_ec();
-        let bases = if self.data_base_name == self.idx_base_name {
+        let mut paths = vec![
+            format!("{}.dat", self.data_base_name),
+            format!("{}.note", self.data_base_name),
+        ];
+        if !self.shares_vif_with_ec() {
+            paths.push(format!("{}.vif", self.data_base_name));
+        }
+        let index_bases = if self.data_base_name == self.idx_base_name {
             vec![self.data_base_name.as_str()]
         } else {
             vec![self.data_base_name.as_str(), self.idx_base_name.as_str()]
         };
+        for base in index_bases {
+            for ext in [".idx", ".rdb", ".sdx"] {
+                paths.push(format!("{base}{ext}"));
+            }
+        }
         let mut first_err = None;
-        for base in bases {
-            for ext in [".dat", ".idx", ".rdb", ".sdx", ".vif", ".note"] {
-                if ext == ".vif" && keep_vif {
-                    continue;
-                }
-                let path = format!("{base}{ext}");
-                if let Err(e) = std::fs::remove_file(&path)
-                    && e.kind() != std::io::ErrorKind::NotFound
-                    && first_err.is_none()
-                {
-                    first_err = Some(e);
-                }
+        for path in paths {
+            if let Err(e) = std::fs::remove_file(&path)
+                && e.kind() != std::io::ErrorKind::NotFound
+                && first_err.is_none()
+            {
+                first_err = Some(e);
             }
         }
         match first_err {
@@ -9709,6 +9717,11 @@ mod tests {
                 std::fs::write(format!("{base}{ext}"), b"stale").unwrap();
             }
         }
+        // The index directory may be another location's data directory.
+        std::fs::write(format!("{data}.dat"), b"this-copy").unwrap();
+        std::fs::write(format!("{data}.note"), b"copying").unwrap();
+        std::fs::write(format!("{idx}.dat"), b"other-location").unwrap();
+        std::fs::write(format!("{idx}.note"), b"other-note").unwrap();
 
         let dest = CopyDestination {
             data_base_name: data.clone(),
@@ -9728,6 +9741,16 @@ mod tests {
                 );
             }
         }
+        assert!(
+            !std::path::Path::new(&format!("{data}.dat")).exists(),
+            "the copy's own .dat must be removed"
+        );
+        assert!(!std::path::Path::new(&format!("{data}.note")).exists());
+        assert!(
+            std::path::Path::new(&format!("{idx}.dat")).exists(),
+            "a .dat in the index directory belongs to another location"
+        );
+        assert!(std::path::Path::new(&format!("{idx}.note")).exists());
     }
 
     // A .rdb that survives an earlier copy attempt was built against a
