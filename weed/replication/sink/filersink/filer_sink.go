@@ -16,6 +16,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/seaweedfs/seaweedfs/weed/security"
 
@@ -668,12 +669,19 @@ func chooseUpdateAction(existing, oldEntry, incoming *filer_pb.Entry) updateActi
 }
 
 // destinationHoldsContent reports whether the destination already holds exactly
-// the resolved entry's content for a CreateEntryLatest write, where a newer
-// destination mtime proves nothing: the resolved version may be older than the
-// copy it replaces. Skip only on identical chunk provenance, or an equal ETag
-// over full byte coverage.
+// the resolved entry for a CreateEntryLatest write, where a newer destination
+// mtime proves nothing: the resolved version may be older than the copy it
+// replaces. Skip only when the writable metadata already matches and the content
+// is identical — chunk provenance, or an equal ETag over full byte coverage.
 func destinationHoldsContent(existing, reference *filer_pb.Entry) bool {
 	if existing == nil {
+		return false
+	}
+	// A skip keeps the destination's stored metadata, so identical bytes are not
+	// enough: the resolved version's writable attributes and extended entries
+	// must already match what the write would install, or a stale tag/version id
+	// survives under equal content.
+	if !sameWritableMetadata(existing, reference) {
 		return false
 	}
 	if destinationMatchesReference(existing, reference) {
@@ -682,6 +690,46 @@ func destinationHoldsContent(existing, reference *filer_pb.Entry) bool {
 	return sameInlineContent(existing, reference) &&
 		coversReference(existing, reference) &&
 		filer.ETag(existing) == filer.ETag(reference)
+}
+
+// sameWritableMetadata reports whether the destination already stores the metadata
+// the resolved write would install. Inode and creation time are filer-assigned or
+// preserved across rewrites — comparing them would re-replicate forever on fields
+// a write can never change — so only the writable fields decide.
+func sameWritableMetadata(existing, reference *filer_pb.Entry) bool {
+	if !proto.Equal(normalizedAttributes(existing.GetAttributes()), normalizedAttributes(reference.GetAttributes())) {
+		return false
+	}
+	ex, ref := existing.GetExtended(), reference.GetExtended()
+	if len(ex) != len(ref) {
+		return false
+	}
+	for k, v := range ex {
+		if !bytes.Equal(v, ref[k]) {
+			return false
+		}
+	}
+	return true
+}
+
+// normalizedAttributes masks the fields the destination filer assigns or preserves
+// on write and applies the store's zero-value defaults (access/change time fall
+// back to mtime), so the comparison covers only fields a rewrite controls.
+func normalizedAttributes(attr *filer_pb.FuseAttributes) *filer_pb.FuseAttributes {
+	if attr == nil {
+		return nil
+	}
+	a := proto.Clone(attr).(*filer_pb.FuseAttributes)
+	a.Inode = 0
+	a.Crtime = 0
+	a.CrtimeNs = 0
+	if a.Atime == 0 && a.AtimeNs == 0 {
+		a.Atime, a.AtimeNs = a.Mtime, a.MtimeNs
+	}
+	if a.Ctime == 0 {
+		a.Ctime, a.CtimeNs = a.Mtime, a.MtimeNs
+	}
+	return a
 }
 
 // destinationSatisfiesSource reports whether an existing destination entry already

@@ -67,6 +67,11 @@ func inlineEntry(mtime int64, content string) *filer_pb.Entry {
 	return &filer_pb.Entry{Attributes: &filer_pb.FuseAttributes{Mtime: mtime}, Content: []byte(content)}
 }
 
+func extEntry(e *filer_pb.Entry, k, v string) *filer_pb.Entry {
+	e.Extended = map[string][]byte{k: []byte(v)}
+	return e
+}
+
 // ivEntry builds an entry at mtime with chunks at the given [offset,end) byte
 // ranges — for coverage/containment tests where exact ranges matter.
 func ivEntry(mtime int64, ivs ...[2]int64) *filer_pb.Entry {
@@ -292,6 +297,22 @@ func TestDestinationHoldsContent(t *testing.T) {
 		{"inline different -> write", inlineEntry(200, "x"), inlineEntry(200, "y"), false},
 		{"inline different, dest newer -> write", inlineEntry(300, "x"), inlineEntry(200, "y"), false},
 		{"inline vs empty -> write", inlineEntry(200, "x"), entry(200, 0), false},
+		// identical content is not enough: a skip keeps the stored metadata, so a
+		// stale writable attribute or extended entry must force the rewrite
+		{"same chunks, different mtime -> write", dstEntry(300, "A", "B"), srcEntry(200, "A", "B"), false},
+		{"same chunks, stale tag -> write", extEntry(dstEntry(200, "A", "B"), "k", "v1"), extEntry(srcEntry(200, "A", "B"), "k", "v2"), false},
+		{"same chunks, same tag -> skip", extEntry(dstEntry(200, "A", "B"), "k", "v"), extEntry(srcEntry(200, "A", "B"), "k", "v"), true},
+		{"same chunks, stale uid -> write", func() *filer_pb.Entry { e := dstEntry(200, "A", "B"); e.Attributes.Uid = 1; return e }(), srcEntry(200, "A", "B"), false},
+		// fields a rewrite cannot change must not block the skip: inode/crtime are
+		// filer-assigned or preserved, and a stored atime/ctime defaults to mtime
+		{"assigned fields differ -> skip", func() *filer_pb.Entry {
+			e := dstEntry(200, "A", "B")
+			e.Attributes.Inode = 42
+			e.Attributes.Crtime = 999
+			e.Attributes.Atime = 200
+			e.Attributes.Ctime = 200
+			return e
+		}(), srcEntry(200, "A", "B"), true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
