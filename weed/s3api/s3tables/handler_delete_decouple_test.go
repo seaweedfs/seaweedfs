@@ -142,6 +142,44 @@ func TestDeleteTableDecoupledKeepsReusedNamePath(t *testing.T) {
 	}
 }
 
+// A decoupled record still carrying a claim its operation never lifted — a
+// delete or rename that ended between the claim and the marker clear — must go
+// with the rest of the marker, or the leftover claim blocks every create of
+// the name from then on.
+func TestDeleteTableDecoupledClearsLeftoverClaim(t *testing.T) {
+	fs, m := startRenameManager(t)
+
+	newtMeta, _ := json.Marshal(tableMetadataInternal{
+		Name:             "newt",
+		Namespace:        "ns",
+		Format:           "ICEBERG",
+		OwnerAccountID:   DefaultAccountID,
+		MetadataLocation: "s3://" + renameTestBucket + "/ns/newt-x/metadata/v1.metadata.json",
+	})
+	nsPath := GetNamespacePath(renameTestBucket, "ns")
+	fs.Put(nsPath, "newt", map[string][]byte{
+		ExtendedKeyMetadata:  newtMeta,
+		ExtendedKeyEntryType: []byte(EntryTypeTable),
+		ExtendedKeyDeleting:  []byte("delete"),
+	})
+	fs.Put(nsPath, "newt-x", nil)
+	fs.Put(GetTablePath(renameTestBucket, "ns", "newt-x"), "metadata", nil)
+
+	require.NoError(t, runDeleteTable(t, m, fs, "ns", "newt"))
+
+	marker := fs.Get(nsPath, "newt")
+	require.NotNil(t, marker)
+	assert.NotContains(t, marker.Extended, ExtendedKeyDeleting, "a leftover claim must not survive the delete")
+
+	status, resp := runHandler(t, m, fs.Client, "CreateTable", &CreateTableRequest{
+		TableBucketARN: mustBucketARN(t),
+		Namespace:      []string{"ns"},
+		Name:           "newt",
+		Format:         FormatIceberg,
+	})
+	assert.Equal(t, http.StatusOK, status, "the name must take a create once the claim is gone: %+v", resp)
+}
+
 // A table whose MetadataLocation resolves to an ancestor of its own name path
 // (here the namespace root, e.g. from corrupt metadata) must not be deleted: a
 // recursive purge of that data path would wipe sibling tables. The delete is
