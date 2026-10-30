@@ -131,7 +131,9 @@ jobs:
           test -x "$protoc" || { echo "no vendored protoc $version in the registry" >&2; exit 1; }
           echo "PROTOC=$protoc" >> "$GITHUB_ENV"
       - name: Test Go vector gateway
-        run: go test ./weed/s3api/s3vectors ./weed/command -run 'Vector|Vectors' -count=1
+        run: |
+          go test ./weed/s3api/s3vectors -count=1
+          go test ./weed/command -run 'Vector|Vectors' -count=1
       - name: Build integration binaries
         working-directory: test/vectors
         run: make build CARGO_PROFILE=dev
@@ -149,10 +151,10 @@ jobs:
           from pathlib import Path
           import xml.etree.ElementTree as ET
           cases = ET.parse(Path(os.environ["RUNNER_TEMP"]) / "vector-results.xml").findall(".//testcase")
-          assert len(cases) >= 24, f"expected at least 24 cases, got {len(cases)}"
+          assert len(cases) >= 34, f"expected at least 34 cases, got {len(cases)}"
           assert not any(case.find("skipped") is not None for case in cases), "integration cases were skipped"
           for volume in ("go", "rust"):
-              assert sum(case.get("name", "").endswith(f"[{volume}-single]") for case in cases) >= 12, volume
+              assert sum(case.get("name", "").endswith(f"[{volume}-single]") for case in cases) >= 17, volume
           PYTHON
       - name: Upload integration diagnostics
         if: always()

@@ -15,6 +15,30 @@
         "Tagging",
         "Write"
       ]
+    },
+    {
+      "name": "reader",
+      "credentials": [
+        {
+          "accessKey": "reader",
+          "secretKey": "reader-secret"
+        }
+      ],
+      "actions": [
+        "Read"
+      ]
+    },
+    {
+      "name": "writer",
+      "credentials": [
+        {
+          "accessKey": "writer",
+          "secretKey": "writer-secret"
+        }
+      ],
+      "actions": [
+        "Write"
+      ]
     }
   ]
 }
