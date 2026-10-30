@@ -115,12 +115,39 @@ func TestResumeByLastEntry(t *testing.T) {
 		t.Fatalf("prefix hash mismatch: %v", err)
 	}
 
-	// a remote-tier tombstone has no .dat record; a boundary at offset zero diverges
+	// a remote-tier tombstone has no .dat record; a copy ending on it is a
+	// valid boundary identified by key and size alone
 	deletedKey, _, _ := entryAt(3)
 	if err := v.nm.Delete(deletedKey, types.ToOffset(0)); err != nil {
 		t.Fatalf("zero-offset tombstone: %v", err)
 	}
-	if _, _, err = v.ResumeByLastEntry(6, deletedKey, 0, types.TombstoneFileSize, prefixHash(6)); err != ErrIncrementalCopyDiverged {
-		t.Fatalf("zero-offset boundary: %v", err)
+	if _, upToDate, err := v.ResumeByLastEntry(6, deletedKey, 0, types.TombstoneFileSize, prefixHash(6)); err != nil || !upToDate {
+		t.Fatalf("tombstone tail cursor: upToDate=%v err=%v", upToDate, err)
+	}
+
+	// index-only rows are skipped when locating the .dat resume offset
+	if _, _, _, err := v.writeNeedle2(newRandomNeedle(6), true, false, false); err != nil {
+		t.Fatalf("write needle 6: %v", err)
+	}
+	key, cookie, size = entryAt(4)
+	offset, upToDate, err = v.ResumeByLastEntry(5, key, cookie, size, prefixHash(5))
+	if err != nil || upToDate {
+		t.Fatalf("cursor before tombstone: upToDate=%v err=%v", upToDate, err)
+	}
+	if want, _ := v.readOffsetFromIndex(6); offset != want {
+		t.Fatalf("resume offset %v, want %v", offset, want)
+	}
+
+	// a copy ahead of only tombstones resumes with no .dat left to send
+	if err := v.nm.Delete(deletedKey+1, types.ToOffset(0)); err != nil {
+		t.Fatalf("second zero-offset tombstone: %v", err)
+	}
+	key, cookie, size = entryAt(6)
+	offset, upToDate, err = v.ResumeByLastEntry(7, key, cookie, size, prefixHash(7))
+	if err != nil || upToDate {
+		t.Fatalf("cursor before trailing tombstone: upToDate=%v err=%v", upToDate, err)
+	}
+	if !offset.IsZero() {
+		t.Fatalf("resume offset %v, want zero", offset)
 	}
 }

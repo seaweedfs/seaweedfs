@@ -80,6 +80,9 @@ func (v *Volume) IncrementalBackup(volumeServer pb.ServerAddress, grpcDialOption
 	}
 
 	writeOffset := int64(startFromOffset)
+	indexOffset := int64(cursor.entryCount) * NeedleMapEntrySize
+	cnm, isCompactMap := v.nm.(*NeedleMap)
+	receivedIndex := false
 
 	err = operation.WithVolumeServerClient(false, volumeServer, grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
 
@@ -109,6 +112,18 @@ func (v *Volume) IncrementalBackup(volumeServer pb.ServerAddress, grpcDialOption
 			if err := v.UnavailableError(); err != nil {
 				return err
 			}
+			if len(resp.IdxContent) > 0 {
+				receivedIndex = true
+				if !isCompactMap {
+					continue
+				}
+				n, writeErr := cnm.indexFile.WriteAt(resp.IdxContent, indexOffset)
+				if writeErr != nil {
+					return writeErr
+				}
+				indexOffset += int64(n)
+				continue
+			}
 			n, writeErr := v.DataBackend.WriteAt(resp.FileContent, writeOffset)
 			if writeErr != nil {
 				return writeErr
@@ -122,6 +137,13 @@ func (v *Volume) IncrementalBackup(volumeServer pb.ServerAddress, grpcDialOption
 
 	if err != nil {
 		return err
+	}
+
+	if receivedIndex && isCompactMap {
+		if err := cnm.truncateIndex(indexOffset); err != nil {
+			return err
+		}
+		return cnm.DoOffsetLoading(v, cnm.indexFile, uint64(cursor.entryCount))
 	}
 
 	// add to needle map
@@ -144,12 +166,16 @@ type backupCursor struct {
 
 func (v *Volume) backupCursor() (backupCursor, error) {
 	key, offset, size, entryCount, err := v.locateLastAppendEntry()
-	if err != nil || offset.IsZero() {
+	if err != nil {
 		return backupCursor{entryCount: entryCount}, err
 	}
 	entriesHash, err := v.hashIndexEntries(entryCount)
 	if err != nil {
 		return backupCursor{}, err
+	}
+	if offset.IsZero() {
+		// an index-only tombstone has no needle to read; key and size carry it
+		return backupCursor{entryCount: entryCount, key: key, size: size, entriesHash: entriesHash}, nil
 	}
 	n, err := v.readNeedleAt(offset)
 	if err != nil {
@@ -258,11 +284,13 @@ var ErrIncrementalCopyDiverged = fmt.Errorf("local copy diverged from the replic
 // ResumeByLastEntry resumes an incremental copy by index position instead of
 // by appendAtNs, whose stamps differ across replicas for the same needle.
 // The replica's entry at position entryCount-1 must match the backup's last
-// entry in key, size and cookie, and its first entryCount entries must hash
-// the same — a boundary match alone is not proof, since replicated writes can
-// land in a different order on this replica. The copy then continues from the
-// replica's entry at position entryCount, so nothing is skipped or appended
-// twice.
+// entry in key and size — and cookie, unless it is an index-only tombstone
+// (a remote-tier delete), which has no .dat record to read a cookie from —
+// and its first entryCount entries must hash the same — a boundary match
+// alone is not proof, since replicated writes can land in a different order
+// on this replica. The copy then continues from the replica's next entry
+// with a .dat record; index-only rows ride the index stream, so nothing is
+// skipped or appended twice.
 func (v *Volume) ResumeByLastEntry(entryCount uint64, key NeedleId, cookie uint32, size Size, entriesHash uint64) (offset Offset, upToDate bool, err error) {
 
 	fileSize := int64(v.IndexFileSize())
@@ -285,19 +313,17 @@ func (v *Volume) ResumeByLastEntry(entryCount uint64, key NeedleId, cookie uint3
 		err = ErrIncrementalCopyDiverged
 		return
 	}
-	// a remote-tier tombstone sits in the index with no .dat record to verify
-	if lastOffset.IsZero() {
-		err = ErrIncrementalCopyDiverged
-		return
-	}
-	n, e := v.readNeedleAt(lastOffset)
-	if e != nil {
-		err = e
-		return
-	}
-	if uint32(n.Cookie) != cookie {
-		err = ErrIncrementalCopyDiverged
-		return
+	if !lastOffset.IsZero() {
+		var n *needle.Needle
+		n, e = v.readNeedleAt(lastOffset)
+		if e != nil {
+			err = e
+			return
+		}
+		if uint32(n.Cookie) != cookie {
+			err = ErrIncrementalCopyDiverged
+			return
+		}
 	}
 
 	prefixHash, e := v.hashIndexEntries(entryCount)
@@ -314,9 +340,13 @@ func (v *Volume) ResumeByLastEntry(entryCount uint64, key NeedleId, cookie uint3
 		upToDate = true
 		return
 	}
-	offset, err = v.readOffsetFromIndex(int64(entryCount))
-	if err == nil && offset.ToActualOffset() <= 0 {
-		err = ErrIncrementalCopyDiverged
+	for i := int64(entryCount); i < int64(serverCount); i++ {
+		if offset, err = v.readOffsetFromIndex(i); err != nil {
+			return
+		}
+		if !offset.IsZero() {
+			return
+		}
 	}
 	return
 }
