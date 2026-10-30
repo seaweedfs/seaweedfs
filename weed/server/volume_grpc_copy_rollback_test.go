@@ -72,3 +72,33 @@ func TestRestoreReplacedVolumeFilesPutsLinksBack(t *testing.T) {
 		t.Fatalf("link %s should be consumed by the restore", links[0])
 	}
 }
+
+func TestRestoreReplacedVolumeFilesReplacesSurvivingPartial(t *testing.T) {
+	dir := t.TempDir()
+	dat := filepath.Join(dir, "vol_1.dat")
+	if err := os.WriteFile(dat, []byte("replica"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	links, complete := linkReplacedVolumeFiles(dat)
+	if !complete || len(links) != 1 {
+		t.Fatalf("link setup failed: links=%v complete=%v", links, complete)
+	}
+	if err := os.Remove(dat); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dat, []byte("copy"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	restoreReplacedVolumeFiles(links)
+	got, err := os.ReadFile(dat)
+	if err != nil {
+		t.Fatalf("restored file %s missing: %v", dat, err)
+	}
+	if string(got) != "replica" {
+		t.Fatalf("a surviving partial replaced the restored file: %q", got)
+	}
+	if _, err := os.Stat(links[0]); !os.IsNotExist(err) {
+		t.Fatalf("link %s should be consumed by the restore", links[0])
+	}
+}

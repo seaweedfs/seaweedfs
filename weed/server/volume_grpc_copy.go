@@ -337,17 +337,9 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 				}
 				if len(replacedLinks) > 0 {
 					// The swap failed after the previous replica's files were
-					// displaced; put the preserved files back. The .note is
-					// already gone so the restored set loads. An incoming
-					// .vif kept for a coexisting EC volume can occupy the path
-					// the replica's own .vif restores to — drop it so the
-					// original settings come back.
-					for _, link := range replacedLinks {
-						if replacedBaseOf(link) == vifFileName {
-							os.Remove(vifFileName)
-							break
-						}
-					}
+					// displaced; put the preserved files back. A surviving
+					// partial — like an incoming .vif kept for a coexisting
+					// EC volume — is dropped so the original comes back.
 					restoreReplacedVolumeFiles(replacedLinks)
 					replacedLinks = nil
 					// Only a replica the store deleted gets remounted; an
@@ -460,6 +452,7 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 			idxFileName,
 			vifFileName,
 			dataBaseFileName+".idx",
+			dataBaseFileName+".note",
 		)
 		if !backupComplete {
 			err = fmt.Errorf("preserve files of existing volume %d for rollback", req.VolumeId)
@@ -584,16 +577,21 @@ func linkReplacedVolumeFiles(baseFileNames ...string) (links []string, complete 
 }
 
 // restoreReplacedVolumeFiles puts linkReplacedVolumeFiles' links back at
-// their base names after a failed swap; each link is removed either way.
+// their base names after a failed swap. A leftover at the basename is a
+// surviving partial of the copy — it comes off first so the restored set
+// stays one generation. The link is kept whenever it cannot go back: an
+// existing path does not mean the copy's write succeeded.
 func restoreReplacedVolumeFiles(links []string) {
 	for _, link := range links {
 		base := replacedBaseOf(link)
-		if _, err := os.Stat(base); os.IsNotExist(err) {
-			if err := os.Rename(link, base); err != nil {
-				glog.Warningf("restore replaced file %s: %v", link, err)
+		if _, err := os.Stat(base); err == nil {
+			if rmErr := os.Remove(base); rmErr != nil {
+				glog.Warningf("restore replaced file %s: cannot remove leftover %s: %v", link, base, rmErr)
+				continue
 			}
-		} else {
-			os.Remove(link)
+		}
+		if err := os.Rename(link, base); err != nil {
+			glog.Warningf("restore replaced file %s: %v", link, err)
 		}
 	}
 }
