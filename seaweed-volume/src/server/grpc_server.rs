@@ -992,6 +992,47 @@ impl Drop for EcDecodeTailGuard<'_> {
     }
 }
 
+/// Keeps `vid` in `volume_copies_in_flight` for the life of one VolumeCopy,
+/// including the spawned transfer the handler hands off. A second copy of
+/// the same volume can pass the existing-volume snapshot before this one
+/// mounts and then clear or overwrite files this copy still owns, so it
+/// fails fast instead. Dropping — including on panic — releases the claim.
+struct VolumeCopyClaim {
+    state: Arc<VolumeServerState>,
+    vid: VolumeId,
+}
+
+impl VolumeCopyClaim {
+    fn try_new(state: &Arc<VolumeServerState>, vid: VolumeId) -> Result<Self, Status> {
+        if state
+            .volume_copies_in_flight
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(vid)
+        {
+            Ok(Self {
+                state: state.clone(),
+                vid,
+            })
+        } else {
+            Err(Status::unavailable(format!(
+                "volume {} copy already in progress",
+                vid
+            )))
+        }
+    }
+}
+
+impl Drop for VolumeCopyClaim {
+    fn drop(&mut self) {
+        self.state
+            .volume_copies_in_flight
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.vid);
+    }
+}
+
 /// Whether `vid`'s .ecj appends must wait for the decode publishing tail.
 /// Only meaningful read under the store write lock: a decode can claim the
 /// tail while a caller waits for the decoder's read lock, so membership
@@ -2234,6 +2275,11 @@ impl VolumeServer for VolumeGrpcService {
                 })?;
         }
 
+        // One copy of a volume at a time: the claim outlives the handler,
+        // so a racing second copy cannot reach remove_partial_files or the
+        // mount while this copy still owns the destination files.
+        let copy_claim = VolumeCopyClaim::try_new(&self.state, vid)?;
+
         // A pre-existing local replica is NOT deleted up front; see
         // delete_existing_replica for why and when.
         let had_existing_volume = {
@@ -2277,6 +2323,7 @@ impl VolumeServer for VolumeGrpcService {
             dest,
             preallocate_size,
             tx,
+            _copy_claim: copy_claim,
         };
 
         tokio::spawn(async move {
@@ -6349,6 +6396,7 @@ struct VolumeCopyJob {
     dest: CopyDestination,
     preallocate_size: i64,
     tx: tokio::sync::mpsc::Sender<Result<volume_server_pb::VolumeCopyResponse, Status>>,
+    _copy_claim: VolumeCopyClaim,
 }
 
 impl VolumeCopyJob {
@@ -8131,6 +8179,7 @@ mod tests {
             cli_white_list: vec![],
             state_file_path: String::new(),
             ec_decodes_in_flight: std::sync::Mutex::new(std::collections::HashSet::new()),
+            volume_copies_in_flight: std::sync::Mutex::new(std::collections::HashSet::new()),
             ec_decode_tail: std::sync::Mutex::new(std::collections::HashSet::new()),
             ec_decode_tail_notify: tokio::sync::Notify::new(),
         });
@@ -8248,6 +8297,7 @@ mod tests {
             cli_white_list: vec![],
             state_file_path: String::new(),
             ec_decodes_in_flight: std::sync::Mutex::new(std::collections::HashSet::new()),
+            volume_copies_in_flight: std::sync::Mutex::new(std::collections::HashSet::new()),
             ec_decode_tail: std::sync::Mutex::new(std::collections::HashSet::new()),
             ec_decode_tail_notify: tokio::sync::Notify::new(),
         });
@@ -10934,6 +10984,7 @@ mod tests {
             cli_white_list: vec![],
             state_file_path: String::new(),
             ec_decodes_in_flight: std::sync::Mutex::new(std::collections::HashSet::new()),
+            volume_copies_in_flight: std::sync::Mutex::new(std::collections::HashSet::new()),
             ec_decode_tail: std::sync::Mutex::new(std::collections::HashSet::new()),
             ec_decode_tail_notify: tokio::sync::Notify::new(),
         });
@@ -12819,6 +12870,7 @@ mod tests {
             cli_white_list: vec![],
             state_file_path: String::new(),
             ec_decodes_in_flight: std::sync::Mutex::new(std::collections::HashSet::new()),
+            volume_copies_in_flight: std::sync::Mutex::new(std::collections::HashSet::new()),
             ec_decode_tail: std::sync::Mutex::new(std::collections::HashSet::new()),
             ec_decode_tail_notify: tokio::sync::Notify::new(),
         });
