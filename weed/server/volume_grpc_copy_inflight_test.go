@@ -48,3 +48,24 @@ func TestAdoptStagedVolumeRefusesAVolumeBeingCopied(t *testing.T) {
 	assert.Equal(t, codes.Unavailable, status.Code(err), err)
 }
 
+
+func TestVolumeLoadGuardSkipsACopyInFlight(t *testing.T) {
+	vs := &VolumeServer{store: newTraversalTestStore(t.TempDir())}
+	guard := vs.volumeCopyGuard(17)
+	guard.copying = true
+
+	release, skip := vs.volumeLoadGuard(17)
+	release()
+	assert.True(t, skip)
+
+	guard.copying = false
+	release, skip = vs.volumeLoadGuard(17)
+	assert.False(t, skip)
+	release()
+
+	// A copy's own recheck holds the guard; the load must not slip inside.
+	guard.Lock()
+	_, skip = vs.volumeLoadGuard(17)
+	guard.Unlock()
+	assert.True(t, skip)
+}

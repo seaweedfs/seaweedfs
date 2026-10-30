@@ -41,6 +41,22 @@ func (vs *VolumeServer) volumeCopyGuard(volumeId uint32) *volumeCopyGuard {
 	return guard.(*volumeCopyGuard)
 }
 
+// volumeLoadGuard is the storage-layer hook for volume loads: a vid with a
+// copy in flight is skipped, otherwise the returned release keeps the load's
+// registration ordered against the copy's own recheck. A copy holding the
+// guard means the same skip.
+func (vs *VolumeServer) volumeLoadGuard(vid needle.VolumeId) (func(), bool) {
+	guard := vs.volumeCopyGuard(uint32(vid))
+	if !guard.TryLock() {
+		return func() {}, true
+	}
+	if guard.copying {
+		guard.Unlock()
+		return func() {}, true
+	}
+	return guard.Unlock, false
+}
+
 // VolumeCopy copy the .idx .dat .vif files, and mount the volume
 func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stream volume_server_pb.VolumeServer_VolumeCopyServer) error {
 	if err := vs.checkGrpcAdminAuth(stream.Context()); err != nil {

@@ -40,3 +40,36 @@ func TestScanOrderDoesNotDecideWhetherAVolumeLoads(t *testing.T) {
 		t.Error("a volume with an .idx beside its .vif did not load")
 	}
 }
+
+// A volume mid-copy must not be picked up by a reload: the copy clears and
+// rewrites its files, so registering now pairs a mounted volume with data
+// that is still changing, and the .note cleanup would unlink the copy's
+// own output.
+func TestLoadExistingVolumeSkipsACopyInFlight(t *testing.T) {
+	store := newTestStore(t, 1)
+	location := store.Locations[0]
+	mountTestVolume(t, location, 9, "")
+	location.UnloadVolume(needle.VolumeId(9))
+
+	location.loadGuard = func(vid needle.VolumeId) (func(), bool) {
+		return func() {}, true
+	}
+	location.loadExistingVolume("9.idx", NeedleMapInMemory, true, 0, 0)
+	if _, found := location.FindVolume(needle.VolumeId(9)); found {
+		t.Fatal("a volume the guard skips was loaded")
+	}
+
+	// A release the guard hands out is held through the whole load and only
+	// dropped on return.
+	releaseRan := false
+	location.loadGuard = func(vid needle.VolumeId) (func(), bool) {
+		return func() { releaseRan = true }, false
+	}
+	location.loadExistingVolume("9.idx", NeedleMapInMemory, true, 0, 0)
+	if _, found := location.FindVolume(needle.VolumeId(9)); !found {
+		t.Fatal("a clear guard pass did not load the volume")
+	}
+	if !releaseRan {
+		t.Fatal("the guard release was not called when the load returned")
+	}
+}
