@@ -546,7 +546,7 @@ func (s3a *S3ApiServer) checkUploadStillOpen(w http.ResponseWriter, r *http.Requ
 		Bucket:   aws.String(bucket),
 		Key:      objectKey(aws.String(object)),
 		UploadId: aws.String(uploadID),
-	}); code != s3err.ErrNone {
+	}); code != s3err.ErrNone && code != s3err.ErrNoSuchUpload {
 		glog.Warningf("checkUploadStillOpen %s/%s: part left behind, cleanup failed", bucket, uploadID)
 	}
 	s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchUpload)

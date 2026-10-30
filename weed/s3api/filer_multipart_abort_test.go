@@ -189,14 +189,36 @@ func TestAbortUndecidableCheckRefuses(t *testing.T) {
 	}
 }
 
-// No upload directory at all answers success, the same as before.
-func TestAbortGoneUploadAnswersSuccess(t *testing.T) {
-	s3a := newAbortTestServer(t, &fakeAbortFiler{})
+// No upload directory at all is an upload that does not exist: NoSuchUpload
+// (404), as on AWS, not a successful abort.
+func TestAbortGoneUploadAnswersNoSuchUpload(t *testing.T) {
+	f := &fakeAbortFiler{}
+	s3a := newAbortTestServer(t, f)
 
 	_, code := s3a.abortMultipartUpload(abortInput("gone"))
 
-	if code != s3err.ErrNone {
-		t.Fatalf("code = %v, want ErrNone", code)
+	if code != s3err.ErrNoSuchUpload {
+		t.Fatalf("code = %v, want ErrNoSuchUpload", code)
+	}
+	if f.deleteReq != nil {
+		t.Fatalf("delete issued for a missing upload: %+v", f.deleteReq)
+	}
+}
+
+// Completion removes .uploads/<id>; aborting the completed upload afterwards
+// must say NoSuchUpload, not 204, so the client cannot read it as the object
+// being discarded, and must not touch the object.
+func TestAbortAfterCompleteAnswersNoSuchUpload(t *testing.T) {
+	f := &fakeAbortFiler{objectEntry: versionEntry("a.bin", "up1")}
+	s3a := newAbortTestServer(t, f)
+
+	_, code := s3a.abortMultipartUpload(abortInput("up1"))
+
+	if code != s3err.ErrNoSuchUpload {
+		t.Fatalf("code = %v, want ErrNoSuchUpload", code)
+	}
+	if f.deleteReq != nil {
+		t.Fatalf("delete issued after completion: %+v", f.deleteReq)
 	}
 }
 

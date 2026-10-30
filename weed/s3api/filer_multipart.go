@@ -1156,15 +1156,17 @@ func (s3a *S3ApiServer) abortMultipartUpload(input *s3.AbortMultipartUploadInput
 
 	uploadsFolder := s3a.genUploadsFolder(*input.Bucket)
 	uploadEntry, err := s3a.getEntry(uploadsFolder, *input.UploadId)
+	// complete and abort both remove .uploads/<id>; a missing record is an upload
+	// that does not exist (NoSuchUpload on AWS), not one this call discarded
 	if err != nil {
 		if isFilerNotFound(err) {
-			return &s3.AbortMultipartUploadOutput{}, s3err.ErrNone
+			return nil, s3err.ErrNoSuchUpload
 		}
 		glog.Errorf("bucket %s abort upload %s: %v", *input.Bucket, *input.UploadId, err)
 		return nil, s3err.ErrInternalError
 	}
 	if uploadEntry == nil {
-		return &s3.AbortMultipartUploadOutput{}, s3err.ErrNone
+		return nil, s3err.ErrNoSuchUpload
 	}
 
 	object := string(uploadEntry.Extended[s3_constants.ExtMultipartObjectKey])
