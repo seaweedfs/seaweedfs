@@ -599,6 +599,22 @@ jobs:
             --set master.data.storageClass=standard > /tmp/pvc.yaml
           grep -q "PersistentVolumeClaim" /tmp/pvc.yaml
           echo "PVC configuration renders correctly"
+
+          echo "=== Testing existingClaim volumes are mounted ==="
+          # The filer's data and logs and the master's logs declared an existingClaim
+          # volume but mounted only hostPath, persistentVolumeClaim and emptyDir, so
+          # the filer kept its metadata store on the container's own filesystem.
+          helm template test $CHART_DIR --show-only templates/filer/filer-statefulset.yaml \
+            --set filer.data.type=existingClaim --set filer.data.claimName=filer-data \
+            --set filer.logs.type=existingClaim --set filer.logs.claimName=filer-logs > /tmp/filer-existing-claim.yaml
+          grep -A 1 -- '- name: data-filer$' /tmp/filer-existing-claim.yaml | grep -q 'mountPath: /data$'
+          grep -A 1 -- '- name: seaweedfs-filer-log-volume$' /tmp/filer-existing-claim.yaml | grep -q 'mountPath: "/logs/"$'
+          grep -q -- '-logdir=/logs' /tmp/filer-existing-claim.yaml
+          helm template test $CHART_DIR --show-only templates/master/master-statefulset.yaml \
+            --set master.logs.type=existingClaim --set master.logs.claimName=master-logs > /tmp/master-existing-claim.yaml
+          grep -A 1 -- '- name: seaweedfs-master-log-volume$' /tmp/master-existing-claim.yaml | grep -q 'mountPath: "/logs/"$'
+          grep -q -- '-logdir=/logs' /tmp/master-existing-claim.yaml
+          echo "existingClaim volumes are mounted"
           
           echo "=== Testing with custom replicas ==="
           helm template test $CHART_DIR \

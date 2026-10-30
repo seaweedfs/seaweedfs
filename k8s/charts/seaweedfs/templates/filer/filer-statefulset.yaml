@@ -209,7 +209,7 @@ spec:
             - "-ec"
             - |
               exec /usr/bin/weed \
-              {{- if or (eq .Values.filer.logs.type "hostPath") (eq .Values.filer.logs.type "persistentVolumeClaim") (eq .Values.filer.logs.type "emptyDir") }}
+              {{- if or (eq .Values.filer.logs.type "hostPath") (eq .Values.filer.logs.type "persistentVolumeClaim") (eq .Values.filer.logs.type "emptyDir") (eq .Values.filer.logs.type "existingClaim") }}
               -logdir=/logs \
               {{- else }}
               -logtostderr=true \
@@ -284,7 +284,7 @@ spec:
               {{- end }}
           volumeMounts:
             {{- include "seaweedfs.tmpDirVolumeMount" (list . .Values.filer.containerSecurityContext (tpl (.Values.filer.extraVolumeMounts | default "") .) (tpl (.Values.filer.extraVolumes | default "") .)) | nindent 12 }}
-            {{- if (or (eq .Values.filer.logs.type "hostPath") (eq .Values.filer.logs.type "persistentVolumeClaim") (eq .Values.filer.logs.type "emptyDir")) }}
+            {{- if (or (eq .Values.filer.logs.type "hostPath") (eq .Values.filer.logs.type "persistentVolumeClaim") (eq .Values.filer.logs.type "emptyDir") (eq .Values.filer.logs.type "existingClaim")) }}
             - name: seaweedfs-filer-log-volume
               mountPath: "/logs/"
             {{- end }}
@@ -293,7 +293,7 @@ spec:
               mountPath: /etc/sw
               readOnly: true
             {{- end }}
-            {{- if (or .Values.filer.enablePVC (or (eq .Values.filer.data.type "hostPath") (eq .Values.filer.data.type "persistentVolumeClaim") (eq .Values.filer.data.type "emptyDir"))) }}
+            {{- if (or .Values.filer.enablePVC (or (eq .Values.filer.data.type "hostPath") (eq .Values.filer.data.type "persistentVolumeClaim") (eq .Values.filer.data.type "emptyDir") (eq .Values.filer.data.type "existingClaim"))) }}
             - name: data-filer
               mountPath: /data
             {{- end }}
