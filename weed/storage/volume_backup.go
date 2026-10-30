@@ -150,10 +150,17 @@ func (v *Volume) IncrementalBackup(volumeServer pb.ServerAddress, grpcDialOption
 	}
 
 	if receivedIndex && canReplayIndex {
+		baseOffset := int64(cursor.entryCount) * NeedleMapEntrySize
 		if err := cnm.truncateIndex(indexOffset); err != nil {
+			_ = cnm.truncateIndex(baseOffset)
 			return err
 		}
-		return cnm.DoOffsetLoading(v, cnm.IndexFile(), uint64(cursor.entryCount))
+		if err := cnm.DoOffsetLoading(v, cnm.IndexFile(), uint64(cursor.entryCount)); err != nil {
+			// a half-replayed tail cannot be trusted as the next cursor
+			_ = cnm.truncateIndex(baseOffset)
+			return err
+		}
+		return nil
 	}
 
 	// add to needle map

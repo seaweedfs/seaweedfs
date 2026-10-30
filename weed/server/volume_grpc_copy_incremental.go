@@ -151,7 +151,11 @@ func sendFileContent(v *storage.Volume, buf []byte, startOffset, stopOffset int6
 		if err := v.UnavailableError(); err != nil {
 			return err
 		}
-		n, readErr := v.DataBackend.ReadAt(buf, startOffset+i)
+		read := stopOffset - startOffset - i
+		if read > blockSizeLimit {
+			read = blockSizeLimit
+		}
+		n, readErr := v.DataBackend.ReadAt(buf[:read], startOffset+i)
 		if readErr == nil || readErr == io.EOF {
 			resp := &volume_server_pb.VolumeIncrementalCopyResponse{}
 			resp.FileContent = buf[:int64(n)]
