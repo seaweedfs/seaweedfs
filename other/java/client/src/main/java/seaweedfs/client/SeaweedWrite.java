@@ -2,6 +2,7 @@ package seaweedfs.client;
 
 import com.google.common.base.Strings;
 import com.google.protobuf.ByteString;
+import org.apache.http.Header;
 import org.apache.http.HttpEntity;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpPost;
@@ -35,6 +36,7 @@ public class SeaweedWrite {
             final String path) throws IOException {
 
         IOException lastException = null;
+        boolean reassigned = false;
         for (long waitTime = 1000L; waitTime < 10 * 1000; waitTime += waitTime / 2) {
             try {
                 FilerProto.FileChunk.Builder chunkBuilder = writeChunk(
@@ -47,6 +49,16 @@ public class SeaweedWrite {
             } catch (IOException ioe) {
                 LOG.debug("writeData:{}", ioe);
                 lastException = ioe;
+                if (ioe instanceof UploadException) {
+                    UploadException error = (UploadException) ioe;
+                    if (error.status == 409) {
+                        if (!error.refusedBeforeAppend || reassigned) {
+                            throw error;
+                        }
+                        reassigned = true;
+                        continue;
+                    }
+                }
             }
             try {
                 Thread.sleep(waitTime);
@@ -195,17 +207,24 @@ public class SeaweedWrite {
                 .addBinaryBody("upload", inputStream)
                 .build());
 
-        CloseableHttpResponse response = SeaweedUtil.getClosableHttpClient().execute(post);
-
-        try {
-            if (response.getStatusLine().getStatusCode() / 100 != 2) {
+        try (CloseableHttpResponse response = SeaweedUtil.getClosableHttpClient().execute(post)) {
+            int status = response.getStatusLine().getStatusCode();
+            if (status / 100 != 2) {
+                Header outcome = response.getFirstHeader("X-Seaweed-Write-Outcome");
+                boolean refusedBeforeAppend = status == 409 && outcome != null
+                        && "refused-before-append".equals(outcome.getValue());
+                String message = response.getStatusLine().getReasonPhrase();
+                IOException cause = null;
                 HttpEntity entity = response.getEntity();
-                if (entity != null && entity.getContentType() != null
-                        && entity.getContentType().getValue().equals("application/json")) {
-                    throw new IOException(EntityUtils.toString(entity, "UTF-8"));
-                } else {
-                    throw new IOException(response.getStatusLine().getReasonPhrase());
+                try {
+                    if (entity != null && entity.getContentType() != null
+                            && entity.getContentType().getValue().equals("application/json")) {
+                        message = EntityUtils.toString(entity, "UTF-8");
+                    }
+                } catch (IOException e) {
+                    cause = e;
                 }
+                throw new UploadException(status, refusedBeforeAppend, message, cause);
             }
 
             String etag = response.getLastHeader("ETag").getValue();
@@ -218,10 +237,20 @@ public class SeaweedWrite {
 
             return etag;
         } finally {
-            response.close();
             post.releaseConnection();
         }
 
+    }
+
+    private static final class UploadException extends IOException {
+        private final int status;
+        private final boolean refusedBeforeAppend;
+
+        private UploadException(int status, boolean refusedBeforeAppend, String message, IOException cause) {
+            super(message, cause);
+            this.status = status;
+            this.refusedBeforeAppend = refusedBeforeAppend;
+        }
     }
 
     private static byte[] genCipherKey() {
