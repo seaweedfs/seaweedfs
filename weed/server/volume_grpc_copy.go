@@ -323,13 +323,7 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 		if !shouldValidateCopyCounts {
 			return nil
 		}
-		// Counter drift (bloom-filter estimates, rows appended between the
-		// status snapshots) is not proof of a bad copy; the byte sizes
-		// already match. Warn instead of rejecting the copy.
-		if countErr := checkCopyCounts(sourceVolumeStatusAfterCopy, targetVolume.FileCount(), targetVolume.DeletedCount()); countErr != nil {
-			glog.Warningf("copied volume %d counts differ from source in-memory counters (counter drift): %v", req.VolumeId, countErr)
-		}
-		return nil
+		return checkCopyCounts(req.VolumeId, sourceVolumeStatusAfterCopy, targetVolume.FileCount(), targetVolume.DeletedCount())
 	})
 	if err != nil {
 		return fmt.Errorf("failed to mount or validate volume %d: %w", req.VolumeId, err)
@@ -403,12 +397,17 @@ func checkCopyFiles(originFileInf *volume_server_pb.ReadVolumeFileStatusResponse
 	return nil
 }
 
-func checkCopyCounts(origin *volume_server_pb.VolumeStatusResponse, targetFileCount, targetDeletedCount uint64) error {
+func checkCopyCounts(vid uint32, origin *volume_server_pb.VolumeStatusResponse, targetFileCount, targetDeletedCount uint64) error {
+	// The file count is exact on both sides, so a mismatch on a stable source
+	// means the copy is genuinely bad and rejects. The deleted count is a
+	// rebuild-time estimate (bloom-filter dedup on some needle-map backends,
+	// rows appended between the status snapshots), so it legitimately drifts
+	// and only warns. The .dat/.idx size checks already gate integrity.
 	if origin.FileCount != targetFileCount {
 		return fmt.Errorf("target file count [%d] is not same as origin file count [%d]", targetFileCount, origin.FileCount)
 	}
 	if origin.FileDeletedCount != targetDeletedCount {
-		return fmt.Errorf("target deleted count [%d] is not same as origin deleted count [%d]", targetDeletedCount, origin.FileDeletedCount)
+		glog.Warningf("copied volume %d deleted count [%d] differs from origin deleted count [%d] (counter drift, copy kept)", vid, targetDeletedCount, origin.FileDeletedCount)
 	}
 	return nil
 }
