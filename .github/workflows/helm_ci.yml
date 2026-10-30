@@ -1965,7 +1965,8 @@ jobs:
               "--set", "admin.enabled=true", "--set", "admin.secret.adminPassword=ci",
               "--set", "cosi.enabled=true", "--set", "networkPolicy.enabled=true",
               "--set", "volumes.dc2.replicas=1",
-              # generated per render; drop it so the security ConfigMap stays comparable
+              # render the security ConfigMap without its generated jwt key
+              "--set", "global.seaweedfs.enableSecurity=true",
               "--set", "global.seaweedfs.securityConfig.jwtSigning.volumeWrite=false",
           ]
           LABELS = "/tmp/common-labels-values.yaml"
