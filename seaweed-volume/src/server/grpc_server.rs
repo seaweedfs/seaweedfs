@@ -6218,14 +6218,11 @@ impl CopyDestination {
     /// The first error other than NotFound is returned: a surviving index is
     /// trusted by the next mount, so a caller that can still abort must know
     /// the removal failed. Missing files are fine — they were never written.
-    /// The files remove_partial_files clears at the final basenames, minus
-    /// the .note a caller chooses to skip: a stale in-progress marker is not
-    /// something a failed copy should put back.
-    fn partial_file_paths(&self, include_note: bool) -> Vec<String> {
-        let mut paths = vec![format!("{}.dat", self.data_base_name)];
-        if include_note {
-            paths.push(format!("{}.note", self.data_base_name));
-        }
+    fn partial_file_paths(&self) -> Vec<String> {
+        let mut paths = vec![
+            format!("{}.dat", self.data_base_name),
+            format!("{}.note", self.data_base_name),
+        ];
         if !self.shares_vif_with_ec() {
             paths.push(format!("{}.vif", self.data_base_name));
         }
@@ -6245,11 +6242,12 @@ impl CopyDestination {
     /// Move whatever sits at the final basenames into `copying/replaced_`
     /// siblings before the copy clears them. The store delete only covers a
     /// mounted replica, so files of an unmounted one (or a crashed copy's
-    /// leftovers) would otherwise be unlinked with no way back. A failure
-    /// refuses the copy: removing what could not be displaced risks losing
-    /// the replica.
+    /// leftovers) would otherwise be unlinked with no way back. The `.note`
+    /// comes along so a restored crashed copy keeps the marker the load scan
+    /// rejects it by. A failure refuses the copy: removing what could not be
+    /// displaced risks losing the replica.
     fn displace_existing_files(&mut self) -> std::io::Result<()> {
-        for path in self.partial_file_paths(false) {
+        for path in self.partial_file_paths() {
             let p = std::path::Path::new(&path);
             if !p.exists() {
                 continue;
@@ -6291,7 +6289,7 @@ impl CopyDestination {
     }
 
     fn remove_partial_files(&self) -> std::io::Result<()> {
-        let paths = self.partial_file_paths(true);
+        let paths = self.partial_file_paths();
         let mut first_err = None;
         for path in paths {
             if let Err(e) = std::fs::remove_file(&path)
@@ -9963,7 +9961,7 @@ mod tests {
         };
         dest.displace_existing_files().unwrap();
 
-        for ext in [".dat", ".idx", ".vif", ".rdb", ".sdx"] {
+        for ext in [".dat", ".idx", ".vif", ".rdb", ".sdx", ".note"] {
             assert!(
                 !std::path::Path::new(&format!("{base}{ext}")).exists(),
                 "displacement left {base}{ext} behind"
@@ -9982,9 +9980,10 @@ mod tests {
                 "the displaced {ext} was not restored"
             );
         }
-        assert!(
-            !std::path::Path::new(&format!("{base}.note")).exists(),
-            "a stale .note is not restored"
+        assert_eq!(
+            std::fs::read(format!("{base}.note")).unwrap(),
+            b"stale marker",
+            "the .note the restored set arrived with goes back with it"
         );
         assert!(
             std::fs::read_dir(tmp.path().join("copying"))
