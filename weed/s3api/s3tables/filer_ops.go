@@ -191,11 +191,13 @@ func (h *S3TablesHandler) removeExtendedAttributesIf(
 // delete's restore or a competing create that landed since the caller's check
 // is a name conflict, not a record this write may overwrite — an overwrite
 // would leave the loser's tags, policy, and maintenance settings on the new
-// record. A record still marked by its unfinished create is the exception:
-// invisible to every reader, it is adopted rather than refused.
+// record. A record still marked by an unfinished create is the exception:
+// invisible to every reader, it is adopted rather than refused. A rename
+// destination is not adoptable — its writer still owes the record a publish
+// or a keep, and adopting it strands the renamed record with neither name.
 func (h *S3TablesHandler) claimCatalogEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, path string, attrs map[string][]byte) error {
 	return h.mutateEntryExtended(ctx, client, path, func(extended map[string][]byte) error {
-		if isUnfinishedCreate(extended) {
+		if string(extended[ExtendedKeyDeleting]) == createClaim {
 			// A marked record is absent to every reader, so it holds nothing a
 			// caller could have seen: the create that left it confirmed or lost
 			// the name already. Take the record over, dropping whatever the
@@ -515,13 +517,22 @@ func (h *S3TablesHandler) parentStillOpen(ctx context.Context, client filer_pb.S
 }
 
 // createClaim is the ExtendedKeyDeleting value of a catalog record whose
-// create has written it but not yet confirmed its parent.
-const createClaim = "create"
+// create has written it but not yet confirmed its parent. renameDestClaim is
+// the same not-yet-published mark on a rename's destination, with a value of
+// its own so a create refuses it instead of adopting the record.
+const (
+	createClaim     = "create"
+	renameDestClaim = "rename-dest"
+)
 
 // isUnfinishedCreate reports whether extended belongs to a record still
-// marked by the create that wrote it.
+// marked by the operation that wrote it — invisible to every reader.
 func isUnfinishedCreate(extended map[string][]byte) bool {
-	return string(extended[ExtendedKeyDeleting]) == createClaim
+	switch string(extended[ExtendedKeyDeleting]) {
+	case createClaim, renameDestClaim:
+		return true
+	}
+	return false
 }
 
 // mutateCatalogRecord applies mutate to a catalog record, refusing a record

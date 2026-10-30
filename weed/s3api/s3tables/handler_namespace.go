@@ -757,11 +757,15 @@ func (h *S3TablesHandler) handleDeleteNamespace(w http.ResponseWriter, r *http.R
 				if isUnfinishedCreate(entry.Entry.Extended) {
 					continue
 				}
-				// Only consider it a child if it's a table (has metadata) or a file.
-				// Empty directories left by dropped tables or S3 clients should not
-				// prevent the namespace from being deleted.
+				// Only consider it a child if it's a table (has metadata), a file,
+				// or a record an in-flight operation claimed — a rename's cleared
+				// source still holds its claim, and removing its directory takes
+				// the data the destination keeps pointing at. Bare directories
+				// left by dropped tables or S3 clients should not prevent the
+				// namespace from being deleted.
 				_, hasMetadata := entry.Entry.Extended[ExtendedKeyMetadata]
-				if hasMetadata || !entry.Entry.IsDirectory {
+				_, claimed := entry.Entry.Extended[ExtendedKeyDeleting]
+				if hasMetadata || claimed || !entry.Entry.IsDirectory {
 					hasChildren = true
 					break
 				}

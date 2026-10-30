@@ -1668,7 +1668,7 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 		written := map[string][]byte{
 			ExtendedKeyMetadata:  metadataBytes,
 			ExtendedKeyEntryType: []byte(kind.entryType),
-			ExtendedKeyDeleting:  []byte(createClaim),
+			ExtendedKeyDeleting:  []byte(renameDestClaim),
 		}
 		if len(metadataVersionXattr) > 0 {
 			written[ExtendedKeyMetadataVersion] = metadataVersionXattr
@@ -1689,14 +1689,16 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 		if len(maintenanceStatusXattr) > 0 {
 			written[ExtendedKeyMaintenanceStatus] = maintenanceStatusXattr
 		}
-		// The destination goes up marked like any create and is confirmed only
-		// while its namespace stays open: a delete that claims the namespace
-		// during the rename must find this record refused, not take a renamed
-		// table whose source the soft-delete below already released.
+		// The destination goes up marked like a create, but under the rename's
+		// own claim so a create cannot adopt a record the rename still owes a
+		// publish or a keep. It is confirmed only while its namespace stays
+		// open: a delete that claims the namespace during the rename must find
+		// this record refused, not take a renamed table whose source the
+		// soft-delete below already released.
 		if err := h.claimCatalogEntry(r.Context(), client, destPath, written); err != nil {
 			return releaseClaim(err)
 		}
-		// The destination stays create-marked — and so invisible to every other
+		// The destination stays marked — and so invisible to every other
 		// operation — until the source clears. Confirming it first would publish
 		// a record that a failed source clear would then remove from under
 		// callers that already saw it.
@@ -1712,29 +1714,57 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 			h.removeLeftoverDirectory(ctx, client, destPath)
 			return releaseClaim(err)
 		}
-		if err := h.checkParentOpen(r.Context(), client, destNamespacePath, isNamespaceEntry); err != nil {
+		destParent, err := h.openParent(r.Context(), client, destNamespacePath, isNamespaceEntry)
+		if err != nil {
 			return backOutDest(err)
 		}
 		// Soft-delete the source catalog identity in place: drop its catalog xattrs
 		// so the name stops resolving while the metadata/ and data/ children stay put
-		// (manifests embed absolute paths, so the data must not move).
-		err := h.removeExtendedAttributesIf(r.Context(), client, srcPath, claimed,
-			append(append([]string{}, renamedTableAttributes...), ExtendedKeyDeleting)...)
+		// (manifests embed absolute paths, so the data must not move). The rename's
+		// claim stays on the cleared record until the commit lands: a namespace
+		// delete scanning it in between must still refuse, or it removes the
+		// directory the destination keeps pointing at.
+		err = h.removeExtendedAttributesIf(r.Context(), client, srcPath, claimed, renamedTableAttributes...)
 		if err != nil {
 			return backOutDest(markSourceGone(err))
 		}
 		// Commit on an uncanceled context so a client cancel cannot wedge the
-		// record half-published. Only this rename can touch a create-marked
-		// record, so the compare cannot lose; on a filer error the source's
-		// cleared attributes go back rather than dropping the table's catalog
-		// identity entirely.
+		// record half-published. Only this rename can touch its marked record,
+		// so the compare cannot lose; the namespace check then runs once more,
+		// since a delete claiming it after the first check scans the still-
+		// marked destination, skips it, and removes it under a rename that
+		// already answered success. On a filer error the source's cleared
+		// attributes go back rather than dropping the table's catalog identity
+		// entirely.
 		commitCtx := context.WithoutCancel(r.Context())
-		if err := h.removeExtendedAttributesIf(commitCtx, client, destPath, written, ExtendedKeyDeleting); err != nil {
+		destConfirmed := false
+		if err = h.removeExtendedAttributesIf(commitCtx, client, destPath, written, ExtendedKeyDeleting); err == nil {
+			destConfirmed = true
+			err = h.parentStillOpen(commitCtx, client, destNamespacePath, isNamespaceEntry, destParent)
+		}
+		if err != nil {
+			if destConfirmed {
+				// The recheck failed after the record went live: strip it, so
+				// the failed rename leaves no confirmed destination behind.
+				confirmed := make(map[string][]byte, len(written))
+				keys := make([]string, 0, len(written))
+				for key, data := range written {
+					if key == ExtendedKeyDeleting {
+						continue
+					}
+					confirmed[key] = data
+					keys = append(keys, key)
+				}
+				if backErr := h.removeExtendedAttributesIf(commitCtx, client, destPath, confirmed, keys...); backErr != nil && !errors.Is(backErr, filer_pb.ErrNotFound) {
+					glog.Warningf("rename %s: remove confirmed destination: %v", destPath, backErr)
+				} else {
+					h.removeLeftoverDirectory(commitCtx, client, destPath)
+				}
+			}
 			cleared := snapshotExtended(claimed)
 			for _, key := range renamedTableAttributes {
 				delete(cleared, key)
 			}
-			delete(cleared, ExtendedKeyDeleting)
 			if rErr := h.mutateEntryExtended(commitCtx, client, srcPath, func(extended map[string][]byte) error {
 				for key, want := range cleared {
 					if !bytes.Equal(extended[key], want) {
@@ -1748,24 +1778,21 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 						return fmt.Errorf("%w: %s recreated on %s", ErrConcurrentUpdate, key, srcPath)
 					}
 				}
-				if _, ok := extended[ExtendedKeyDeleting]; ok {
-					return fmt.Errorf("%w: %s recreated on %s", ErrConcurrentUpdate, ExtendedKeyDeleting, srcPath)
-				}
 				for key, data := range srcExtended {
 					if key != ExtendedKeyDeleting {
 						extended[key] = data
 					}
 				}
+				delete(extended, ExtendedKeyDeleting)
 				return nil
 			}); rErr != nil {
 				glog.Warningf("rename %s: restore source record: %v", srcPath, rErr)
-			} else {
+			} else if !destConfirmed {
 				// Source restored: drop the unfinished destination too, since a
-				// create-marked record reads as absent but still refuses its
-				// name to later creates. When the restore fails the marked
-				// record is the only catalog identity left — keep it for
-				// recovery. The compare keeps a record that moved on since the
-				// failed publish.
+				// marked record reads as absent but still refuses its name to
+				// later creates. When the restore fails the marked record is
+				// the only catalog identity left — keep it for recovery. The
+				// compare keeps a record that moved on since the failed publish.
 				keys := make([]string, 0, len(written))
 				for key := range written {
 					keys = append(keys, key)
@@ -1777,6 +1804,12 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 				}
 			}
 			return err
+		}
+		// The record is published: lift the source claim so the cleared source
+		// directory stops refusing its namespace's delete.
+		if relErr := h.removeExtendedAttributesIf(commitCtx, client, srcPath,
+			map[string][]byte{ExtendedKeyDeleting: []byte("rename")}, ExtendedKeyDeleting); relErr != nil {
+			glog.Warningf("rename %s: release source claim: %v", srcPath, relErr)
 		}
 		return nil
 	})

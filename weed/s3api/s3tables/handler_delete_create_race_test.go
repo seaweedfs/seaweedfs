@@ -514,6 +514,78 @@ func TestRenameClearsTheDestinationMark(t *testing.T) {
 	assert.NotContains(t, dest.Extended, ExtendedKeyDeleting, "a finished rename must lift its unfinished mark")
 }
 
+// A rename destination is marked like a create but still owed a publish by the
+// rename that wrote it: a create that adopted it the way it adopts an orphaned
+// mark would strand the renamed record once its source is cleared.
+func TestCreateCannotAdoptARenameDestination(t *testing.T) {
+	for _, op := range createOps(t) {
+		t.Run(op.operation, func(t *testing.T) {
+			fs, m := startRenameManager(t)
+			dropSeedTable(t, m, fs)
+			nsPath := GetNamespacePath(renameTestBucket, "ns")
+			marked, _ := json.Marshal(tableMetadataInternal{
+				Name:             lateEntry,
+				Namespace:        "ns",
+				Format:           "ICEBERG",
+				OwnerAccountID:   DefaultAccountID,
+				MetadataLocation: "s3://" + renameTestBucket + "/ns/" + lateEntry + "/metadata/v1.metadata.json",
+			})
+			fs.Put(nsPath, lateEntry, map[string][]byte{
+				ExtendedKeyMetadata:  marked,
+				ExtendedKeyEntryType: []byte(EntryTypeTable),
+				ExtendedKeyDeleting:  []byte(renameDestClaim),
+			})
+
+			status, resp := runHandler(t, m, fs.Client, op.operation, op.input)
+			assert.Equal(t, http.StatusConflict, status, "a rename destination must refuse a create: %+v", resp)
+			entry := fs.Get(nsPath, lateEntry)
+			require.NotNil(t, entry)
+			assert.Equal(t, []byte(renameDestClaim), entry.Extended[ExtendedKeyDeleting], "the rename's record must be untouched")
+		})
+	}
+}
+
+// A rename that commits while a delete claims the destination namespace has
+// the same shape as a confirming create: the delete scanned the still-marked
+// destination and skipped it, so the commit must re-check the namespace after
+// the record goes live and restore the source instead of losing it.
+func TestRenameCommittingUnderAClaimedNamespaceRestoresSource(t *testing.T) {
+	fs, m := startRenameManager(t)
+	ns2Meta, _ := json.Marshal(namespaceMetadata{Namespace: []string{"ns2"}, OwnerAccountID: DefaultAccountID})
+	fs.Put(GetTableBucketPath(renameTestBucket), "ns2", map[string][]byte{ExtendedKeyMetadata: ns2Meta})
+
+	client := newPausedConfirmClient(fs.Client, GetTablePath(renameTestBucket, "ns2", "t2"))
+	renamed := startHandler(t, m, client, "RenameTable", &RenameTableRequest{
+		TableBucketARN:  mustBucketARN(t),
+		SourceNamespace: []string{"ns"},
+		SourceName:      "t",
+		DestNamespace:   []string{"ns2"},
+		DestName:        "t2",
+	})
+	waitForPause(t, client.reached, renamed)
+
+	// The delete claims ns2 and scans the still-marked destination before the
+	// rename's publishing write lands.
+	inGap := make(chan handlerResult, 1)
+	fs.BeforeDelete = func() {
+		close(client.release)
+		inGap <- <-renamed
+	}
+	status, resp := runHandler(t, m, fs.Client, "DeleteNamespace", &DeleteNamespaceRequest{
+		TableBucketARN: mustBucketARN(t),
+		Namespace:      []string{"ns2"},
+	})
+	require.Equal(t, http.StatusOK, status, "%+v", resp)
+
+	rename := <-inGap
+	assert.Equal(t, http.StatusConflict, rename.status, "a rename committed under the claim must not report success: %+v", rename.resp)
+	src := fs.Get(GetNamespacePath(renameTestBucket, "ns"), "t")
+	require.NotNil(t, src)
+	assert.Contains(t, src.Extended, ExtendedKeyMetadata, "the failed rename must restore its source record")
+	assert.NotContains(t, src.Extended, ExtendedKeyDeleting)
+	assert.Nil(t, fs.Get(GetTableBucketPath(renameTestBucket), "ns2"))
+}
+
 // A delete refused because the namespace still holds a table lifts its claim
 // again, so the namespace takes creates as before.
 func TestDeleteNamespaceWithTableLiftsItsClaim(t *testing.T) {
