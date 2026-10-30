@@ -1953,9 +1953,10 @@ jobs:
           helm template test $CHART_DIR --namespace release-ns \
             --set allInOne.enabled=true --set allInOne.s3.enabled=true \
             --set master.enabled=false --set volume.enabled=false --set filer.enabled=false \
-            --set 's3.createBuckets[0].name=data' \
+            --set 'allInOne.s3.createBuckets[0].name=data' \
             --set global.seaweedfs.enableSecurity=true \
             --set namespaceOverride=other-ns > /tmp/ns-override-aio.yaml
+          grep -q 'kind: Job' /tmp/ns-override-aio.yaml
           python3 - /tmp/ns-override.yaml /tmp/ns-override-aio.yaml <<'PYEOF'
           import sys, yaml
           CLUSTER_SCOPED = {"ClusterRole", "ClusterRoleBinding", "BucketClass", "BucketAccessClass"}
