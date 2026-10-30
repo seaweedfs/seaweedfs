@@ -1988,7 +1988,9 @@ jobs:
                   if not d:
                       continue
                   # generated credentials differ between renders
-                  if d["kind"] == "Secret":
+                  if d["kind"] == "Secret" and d["metadata"]["name"].endswith(
+                      ("-s3-secret", "-sftp-secret", "-sftp-ssh-secret")
+                  ):
                       d.pop("data", None)
                       d.pop("stringData", None)
                   docs[(d["kind"], d["metadata"]["name"])] = d
