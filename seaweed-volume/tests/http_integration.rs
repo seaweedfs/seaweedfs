@@ -482,8 +482,8 @@ async fn delete_then_get_returns_404() {
     );
 }
 
-// Go answers both with 500 and an error containing "volume N is read only"
-// (the write behind "failed to write to local disk: ").
+// Go and Rust return 409 for read-only upload refusals;
+// the delete still returns 500.
 #[tokio::test]
 async fn write_and_delete_on_read_only_volume_say_is_read_only() {
     let (state, _tmp) = test_state();
@@ -520,7 +520,7 @@ async fn write_and_delete_on_read_only_volume_say_is_read_only() {
         .oneshot(request("POST", b"refused"))
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(response.status(), StatusCode::CONFLICT);
     let error = error_of(body_bytes(response).await);
     assert!(error.contains("volume 1 is read only"), "{error}");
 
