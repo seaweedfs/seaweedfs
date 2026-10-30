@@ -751,11 +751,12 @@ async fn do_replicated_request(
         return Ok(());
     }
 
-    let new_query = if query.is_empty() {
-        String::from("type=replicate")
-    } else {
-        format!("{}&type=replicate", query)
-    };
+    let mut query_fields: Vec<(String, String)> = serde_urlencoded::from_str(query)
+        .map_err(|e| format!("parse replication query: {e}"))?;
+    query_fields.retain(|(name, _)| name != "type");
+    query_fields.push(("type".to_string(), "replicate".to_string()));
+    let new_query = serde_urlencoded::to_string(&query_fields)
+        .map_err(|e| format!("encode replication query: {e}"))?;
 
     let mut futures = Vec::new();
     for loc in remote_locations {
