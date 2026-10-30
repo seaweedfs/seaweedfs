@@ -60,6 +60,12 @@ type DiskLocation struct {
 
 	ecShardNotifyHandler func(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, ecVolume *erasure_coding.EcVolume)
 
+	// loadGuard serializes a volume's load-and-register against an in-flight
+	// VolumeCopy of the same id on the server. When set, the hook runs before
+	// any file cleanup in loadExistingVolume and its release is held through
+	// SetVolume; a skipped vid is left for the next pass.
+	loadGuard func(vid needle.VolumeId) (release func(), skip bool)
+
 	isDiskSpaceLow    atomic.Bool
 	isDiskUnavailable atomic.Bool
 	// readOnlyMount: dir or idxDir is on a read-only filesystem. Volumes load
@@ -250,6 +256,19 @@ func (l *DiskLocation) loadExistingVolume(basename string, needleMapKind NeedleM
 	if err != nil {
 		glog.Warningf("get volume id failed, %s, err : %s", volumeName, err)
 		return false
+	}
+
+	// A copy of this volume may be mid-flight: the .note cleanup below would
+	// unlink files it is still writing, and a register here could slip past
+	// its own recheck. Skip the volume while a copy owns it and hold the
+	// guard through registration so the copy's recheck either sees the
+	// volume (and aborts) or runs first.
+	if l.loadGuard != nil {
+		release, skip := l.loadGuard(vid)
+		if skip {
+			return false
+		}
+		defer release()
 	}
 
 	// Sweep a leftover empty .dat stub before any EC presence checks below.

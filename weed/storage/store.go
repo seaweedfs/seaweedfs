@@ -945,6 +945,15 @@ func (s *Store) LoadNewVolumes() {
 	}
 }
 
+// SetVolumeLoadGuard installs the server-side hook every location consults
+// before loading a volume from disk, so a reload cannot register or clean
+// files out from under an in-flight VolumeCopy.
+func (s *Store) SetVolumeLoadGuard(guard func(vid needle.VolumeId) (release func(), skip bool)) {
+	for _, location := range s.Locations {
+		location.loadGuard = guard
+	}
+}
+
 func (s *Store) Close() {
 	for _, location := range s.Locations {
 		location.Close()

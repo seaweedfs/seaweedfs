@@ -30,6 +30,18 @@ import (
 
 const BufferSizeLimit = 1024 * 1024 * 2
 
+// volumeLoadGuard is the storage-layer hook for volume loads: a vid whose
+// claim any registration already holds is skipped this pass, otherwise the
+// claim is taken and the returned release drops it after the load registers
+// — whichever side claims the id first owns the volume's files for the
+// operation.
+func (vs *VolumeServer) volumeLoadGuard(vid needle.VolumeId) (func(), bool) {
+	if _, loaded := vs.volumeCopiesInFlight.LoadOrStore(uint32(vid), struct{}{}); loaded {
+		return func() {}, true
+	}
+	return func() { vs.volumeCopiesInFlight.Delete(uint32(vid)) }, false
+}
+
 // VolumeCopy copy the .idx .dat .vif files, and mount the volume
 func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stream volume_server_pb.VolumeServer_VolumeCopyServer) error {
 	if err := vs.checkGrpcAdminAuth(stream.Context()); err != nil {
