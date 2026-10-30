@@ -6714,12 +6714,29 @@ impl VolumeCopyJob {
         // its files in one step; remove_partial_files covers the
         // never-mounted and mounted-then-unmounted cases and is a
         // harmless no-op when delete_volume already removed the files.
+        let mut keep_files = false;
         if mounted {
             let mut store = state.store.write().unwrap();
-            let _ = delete_replica_keep_remote(&mut store, vid);
-            state.volume_state_notify.notify_one();
+            match delete_replica_keep_remote(&mut store, vid) {
+                Ok(()) => {
+                    state.volume_state_notify.notify_one();
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "volume {} copy cleanup could not delete the mounted replica: {}",
+                        vid,
+                        e
+                    );
+                    // A refused delete (e.g. the volume is compacting)
+                    // leaves it registered; unlinking its files now would
+                    // strand a live replica.
+                    keep_files = store.find_volume(vid).is_some();
+                }
+            }
         }
-        if let Err(e) = self.dest.remove_partial_files() {
+        if !keep_files
+            && let Err(e) = self.dest.remove_partial_files()
+        {
             tracing::warn!(
                 "volume {} copy cleanup could not remove all partial files: {} (a surviving index may poison the next copy)",
                 vid,
