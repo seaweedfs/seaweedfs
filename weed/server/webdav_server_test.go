@@ -504,22 +504,6 @@ func (f *stubDavFs) Stat(_ context.Context, name string) (os.FileInfo, error) {
 }
 
 // A PUT onto a folder must not delete the folder to make room for the file.
-func TestCopyMoveGuardHandler_PutStatus(t *testing.T) {
-	fs := webdav.NewMemFS()
-	h := copyMoveGuardHandler{
-		fs:   fs,
-		next: &webdav.Handler{FileSystem: fs, LockSystem: webdav.NewMemLS()},
-	}
-	put := func(body string) int {
-		req := httptest.NewRequest("PUT", "http://x/a.txt", strings.NewReader(body))
-		w := httptest.NewRecorder()
-		h.ServeHTTP(w, req)
-		return w.Code
-	}
-	assert.Equal(t, http.StatusCreated, put("one"))
-	assert.Equal(t, http.StatusNoContent, put("two"))
-}
-
 func TestWebDavFileSystem_OpenFile_DoesNotReplaceFolder(t *testing.T) {
 	filer := &deleteRecordingFiler{existing: &filer_pb.Entry{
 		Name:        "sub",
@@ -535,6 +519,39 @@ func TestWebDavFileSystem_OpenFile_DoesNotReplaceFolder(t *testing.T) {
 	_, err := fs.OpenFile(context.Background(), "/dir/sub", os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
 	assert.Equal(t, os.ErrExist, err)
 	assert.Nil(t, filer.req)
+}
+
+// putOutcomeFS mimics the filer-backed fs: creating over an existing name
+// marks the request's PUT outcome as a replace.
+type putOutcomeFS struct {
+	webdav.FileSystem
+}
+
+func (f putOutcomeFS) OpenFile(ctx context.Context, name string, flag int, perm os.FileMode) (webdav.File, error) {
+	if flag&os.O_CREATE != 0 {
+		if _, err := f.FileSystem.Stat(ctx, name); err == nil {
+			if replaced, ok := ctx.Value(putOutcomeKey{}).(*bool); ok {
+				*replaced = true
+			}
+		}
+	}
+	return f.FileSystem.OpenFile(ctx, name, flag, perm)
+}
+
+func TestCopyMoveGuardHandler_PutStatus(t *testing.T) {
+	fs := putOutcomeFS{FileSystem: webdav.NewMemFS()}
+	h := copyMoveGuardHandler{
+		fs:   fs,
+		next: &webdav.Handler{FileSystem: fs, LockSystem: webdav.NewMemLS()},
+	}
+	put := func(body string) int {
+		req := httptest.NewRequest("PUT", "http://x/a.txt", strings.NewReader(body))
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		return w.Code
+	}
+	assert.Equal(t, http.StatusCreated, put("one"))
+	assert.Equal(t, http.StatusNoContent, put("two"))
 }
 
 type renameRecordingFiler struct {

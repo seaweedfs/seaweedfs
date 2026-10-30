@@ -88,13 +88,18 @@ func NewWebDavServer(option *WebDavOption) (ws *WebDavServer, err error) {
 	return ws, nil
 }
 
-// replacedStatusWriter turns the 201 of a PUT onto an existing file into 204
-type replacedStatusWriter struct {
+// putOutcomeKey carries the flag WebDavFileSystem.OpenFile sets when a PUT
+// removed an existing entry, so the PUT can answer 204 instead of 201
+type putOutcomeKey struct{}
+
+// putOutcomeWriter turns the 201 of a PUT that replaced a file into 204
+type putOutcomeWriter struct {
 	http.ResponseWriter
+	replaced *bool
 }
 
-func (w replacedStatusWriter) WriteHeader(code int) {
-	if code == http.StatusCreated {
+func (w putOutcomeWriter) WriteHeader(code int) {
+	if code == http.StatusCreated && *w.replaced {
 		code = http.StatusNoContent
 	}
 	w.ResponseWriter.WriteHeader(code)
@@ -110,11 +115,12 @@ type copyMoveGuardHandler struct {
 
 func (h copyMoveGuardHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// a PUT that replaces a file answers 204 (RFC 9110 9.3.4); webdav.Handler
-	// always answers 201
+	// always answers 201, so OpenFile reports a replace on the request
+	// context and the writer rewrites the status it sends
 	if r.Method == "PUT" {
-		if fi, err := h.fs.Stat(r.Context(), r.URL.Path); err == nil && !fi.IsDir() {
-			w = replacedStatusWriter{ResponseWriter: w}
-		}
+		replaced := new(bool)
+		w = putOutcomeWriter{ResponseWriter: w, replaced: replaced}
+		r = r.WithContext(context.WithValue(r.Context(), putOutcomeKey{}, replaced))
 	}
 	if r.Method == "MOVE" || r.Method == "COPY" {
 		// a foreign-host Destination is another server's problem: the webdav
@@ -366,6 +372,9 @@ func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, f
 				return nil, os.ErrExist
 			}
 			fs.removeAll(ctx, fullFilePath, false)
+			if replaced, ok := ctx.Value(putOutcomeKey{}).(*bool); ok {
+				*replaced = true
+			}
 		} else if err != os.ErrNotExist {
 			return nil, err
 		}
