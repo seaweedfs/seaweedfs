@@ -197,6 +197,41 @@ func TestRenameTableSourceDeletedMidRename(t *testing.T) {
 	assert.Nil(t, fs.Get(nsPath, "t2"), "a failed rename must not publish the destination")
 }
 
+// A source that vanishes after the destination is confirmed must not leave the
+// destination published: the failed rename removes it on the way out.
+func TestRenameTableBacksOutConfirmedDest(t *testing.T) {
+	fs, m := startRenameManager(t)
+
+	nsPath := GetNamespacePath(renameTestBucket, "ns")
+	destSeen := 0
+	fs.OnUpdate = func(dir, name string) {
+		if dir == nsPath && name == "t2" {
+			destSeen++
+			if destSeen == 2 {
+				_, _ = fs.Client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
+					Directory:    nsPath,
+					Name:         "t",
+					IsRecursive:  true,
+					IsDeleteData: true,
+				})
+			}
+		}
+	}
+
+	err := runRename(t, m, fs, &RenameTableRequest{
+		TableBucketARN:  mustBucketARN(t),
+		SourceNamespace: []string{"ns"},
+		SourceName:      "t",
+		DestNamespace:   []string{"ns"},
+		DestName:        "t2",
+	})
+	require.Error(t, err)
+	var s3Err *S3TablesError
+	require.ErrorAs(t, err, &s3Err)
+	assert.Equal(t, ErrCodeNoSuchTable, s3Err.Type)
+	assert.Nil(t, fs.Get(nsPath, "t2"), "a failed rename must not leave the confirmed destination published")
+}
+
 // A principal allowed to rename the source must still be denied when it cannot
 // create a table in the destination namespace. The denial reports the same
 // not-found as a missing destination namespace so the caller cannot probe for

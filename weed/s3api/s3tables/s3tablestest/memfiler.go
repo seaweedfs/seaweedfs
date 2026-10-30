@@ -37,6 +37,10 @@ type MemFiler struct {
 	// BeforeDelete runs once before the next DeleteEntry, so a test can land a
 	// competing write in a handler's check-to-delete window.
 	BeforeDelete func()
+	// OnUpdate runs at the start of every UpdateEntry with the target path, so
+	// a test can land a competing write at a chosen step of a multi-update
+	// operation.
+	OnUpdate func(dir, name string)
 	// RejectDelete returns the reason DeleteEntry refuses a path, answered the
 	// way the filer answers one: no transport error, the reason in the response.
 	RejectDelete func(dir, name string) string
@@ -144,8 +148,11 @@ func (f *MemFiler) CreateEntry(_ context.Context, req *filer_pb.CreateEntryReque
 }
 
 func (f *MemFiler) UpdateEntry(_ context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
-	// The hook runs before the lock is taken: its whole purpose is to land a
+	// The hooks run before the lock is taken: their whole purpose is to land a
 	// competing write in the read-to-write window, and that write needs the lock.
+	if hook := f.OnUpdate; hook != nil {
+		hook(req.Directory, req.Entry.Name)
+	}
 	if hook := f.BeforeUpdate; hook != nil {
 		f.BeforeUpdate = nil
 		hook()

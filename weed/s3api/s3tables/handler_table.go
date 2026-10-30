@@ -1270,6 +1270,23 @@ func markSourceGone(err error) error {
 	return err
 }
 
+// backOutConfirmedEntry removes a confirmed catalog record whose operation
+// failed after confirmation, then drops the empty directory. The compare is on
+// the record's post-confirmation state, so a write that landed since keeps it.
+func (h *S3TablesHandler) backOutConfirmedEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, path string, written map[string][]byte) {
+	confirmed := snapshotExtended(written)
+	delete(confirmed, ExtendedKeyDeleting)
+	keys := make([]string, 0, len(written))
+	for key := range written {
+		keys = append(keys, key)
+	}
+	if err := h.removeExtendedAttributesIf(ctx, client, path, confirmed, keys...); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+		glog.Warningf("back out confirmed %s: %v", path, err)
+		return
+	}
+	h.removeLeftoverDirectory(ctx, client, path)
+}
+
 func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Request, filerClient FilerClient, kind catalogEntryKind) error {
 	var req RenameTableRequest
 	if err := h.readRequestBody(r, &req); err != nil {
@@ -1578,6 +1595,10 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 		err := h.removeExtendedAttributesIf(r.Context(), client, srcPath, claimed,
 			append(append([]string{}, renamedTableAttributes...), ExtendedKeyDeleting)...)
 		if err != nil {
+			// The destination was already confirmed above; without this the
+			// failed rename would leave it published — and pointing at data a
+			// delete may already have taken — while the source stays behind.
+			h.backOutConfirmedEntry(context.WithoutCancel(r.Context()), client, destPath, written)
 			return releaseClaim(markSourceGone(err))
 		}
 		return nil
