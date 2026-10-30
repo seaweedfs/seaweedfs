@@ -1677,18 +1677,22 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 				return nil
 			}); rErr != nil {
 				glog.Warningf("rename %s: restore source record: %v", srcPath, rErr)
-			}
-			// Drop the unfinished destination too: a create-marked record reads
-			// as absent but still refuses its name to later creates. The compare
-			// keeps a record that moved on since the failed publish.
-			keys := make([]string, 0, len(written))
-			for key := range written {
-				keys = append(keys, key)
-			}
-			if backErr := h.removeExtendedAttributesIf(commitCtx, client, destPath, written, keys...); backErr != nil && !errors.Is(backErr, filer_pb.ErrNotFound) {
-				glog.Warningf("rename %s: remove unfinished destination: %v", destPath, backErr)
 			} else {
-				h.removeLeftoverDirectory(commitCtx, client, destPath)
+				// Source restored: drop the unfinished destination too, since a
+				// create-marked record reads as absent but still refuses its
+				// name to later creates. When the restore fails the marked
+				// record is the only catalog identity left — keep it for
+				// recovery. The compare keeps a record that moved on since the
+				// failed publish.
+				keys := make([]string, 0, len(written))
+				for key := range written {
+					keys = append(keys, key)
+				}
+				if backErr := h.removeExtendedAttributesIf(commitCtx, client, destPath, written, keys...); backErr != nil && !errors.Is(backErr, filer_pb.ErrNotFound) {
+					glog.Warningf("rename %s: remove unfinished destination: %v", destPath, backErr)
+				} else {
+					h.removeLeftoverDirectory(commitCtx, client, destPath)
+				}
 			}
 			return err
 		}
