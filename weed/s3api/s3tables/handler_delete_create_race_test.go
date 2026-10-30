@@ -2,6 +2,7 @@ package s3tables
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"path"
 	"sync"
@@ -118,6 +119,17 @@ func plantDeleteClaim(fs *s3tablestest.MemFiler, dir, name string) {
 		extended[key] = value
 	}
 	extended[ExtendedKeyDeleting] = []byte("planted-token")
+	fs.Put(dir, name, extended)
+}
+
+// plantCreateMark puts an unfinished create's mark on an entry, the way a
+// create still confirming its parent leaves it.
+func plantCreateMark(fs *s3tablestest.MemFiler, dir, name string) {
+	extended := map[string][]byte{}
+	for key, value := range fs.Get(dir, name).Extended {
+		extended[key] = value
+	}
+	extended[ExtendedKeyDeleting] = []byte(createClaim)
 	fs.Put(dir, name, extended)
 }
 
@@ -338,6 +350,102 @@ func TestDeniedCreatesDoNotSeeADeleteClaim(t *testing.T) {
 			assert.NotEqual(t, http.StatusConflict, claimed.status)
 		})
 	}
+}
+
+// A record still marked by its create is absent to readers, so listings skip
+// it the way the point reads do.
+func TestListingsSkipAnUnfinishedCreate(t *testing.T) {
+	for _, op := range createOps(t) {
+		t.Run(op.operation, func(t *testing.T) {
+			fs, m := startRenameManager(t)
+			dropSeedTable(t, m, fs)
+			client := newPausedAfterWriteClient(fs.Client, GetTablePath(renameTestBucket, "ns", lateEntry))
+			created := startHandler(t, m, client, op.operation, op.input)
+			waitForPause(t, client.reached, created)
+
+			var names []string
+			if op.operation == "CreateView" {
+				list := &ListViewsResponse{}
+				require.NoError(t, m.Execute(context.Background(), NewManagerClient(fs.Client), "ListViews", &ListViewsRequest{
+					TableBucketARN: mustBucketARN(t),
+					Namespace:      []string{"ns"},
+				}, list, ""))
+				for _, v := range list.Views {
+					names = append(names, v.Name)
+				}
+			} else {
+				list := &ListTablesResponse{}
+				require.NoError(t, m.Execute(context.Background(), NewManagerClient(fs.Client), "ListTables", &ListTablesRequest{
+					TableBucketARN: mustBucketARN(t),
+					Namespace:      []string{"ns"},
+				}, list, ""))
+				for _, tb := range list.Tables {
+					names = append(names, tb.Name)
+				}
+			}
+			assert.NotContains(t, names, lateEntry, "an unfinished create must not be listed")
+
+			close(client.release)
+			require.Equal(t, http.StatusOK, (<-created).status)
+		})
+	}
+}
+
+// A write that lands on a record a create marked refuses instead of updating
+// an entry every reader reports absent and breaking the create's back-out.
+func TestUpdateRefusedOnAMarkedRecord(t *testing.T) {
+	fs, m := startRenameManager(t)
+	fs.BeforeUpdate = func() {
+		plantCreateMark(fs, GetNamespacePath(renameTestBucket, "ns"), "t")
+	}
+	status, resp := runHandler(t, m, fs.Client, "UpdateTable", &UpdateTableRequest{
+		TableBucketARN:   mustBucketARN(t),
+		Namespace:        []string{"ns"},
+		Name:             "t",
+		MetadataLocation: "s3://" + renameTestBucket + "/ns/t/metadata/v4.metadata.json",
+	})
+	assert.Equal(t, http.StatusNotFound, status, "%+v", resp)
+	assert.Equal(t, ErrCodeNoSuchTable, resp.Type)
+}
+
+// A rename into a namespace a delete claimed is refused before it touches the
+// source: the destination cannot be confirmed, so the name must stay where it
+// was.
+func TestRenameIntoClaimedNamespaceIsRefused(t *testing.T) {
+	fs, m := startRenameManager(t)
+	ns2Meta, _ := json.Marshal(namespaceMetadata{Namespace: []string{"ns2"}, OwnerAccountID: DefaultAccountID})
+	fs.Put(GetTableBucketPath(renameTestBucket), "ns2", map[string][]byte{ExtendedKeyMetadata: ns2Meta})
+	plantDeleteClaim(fs, GetTableBucketPath(renameTestBucket), "ns2")
+
+	status, resp := runHandler(t, m, fs.Client, "RenameTable", &RenameTableRequest{
+		TableBucketARN:  mustBucketARN(t),
+		SourceNamespace: []string{"ns"},
+		SourceName:      "t",
+		DestNamespace:   []string{"ns2"},
+		DestName:        "t2",
+	})
+	assert.Equal(t, http.StatusConflict, status, "%+v", resp)
+
+	src := fs.Get(GetNamespacePath(renameTestBucket, "ns"), "t")
+	require.NotNil(t, src)
+	assert.Contains(t, src.Extended, ExtendedKeyMetadata, "the refused rename must leave the source record")
+	assert.Nil(t, fs.Get(GetNamespacePath(renameTestBucket, "ns2"), "t2"))
+}
+
+// The rename's destination goes up with the same unfinished mark a create
+// leaves and ends without it once the namespace is confirmed.
+func TestRenameClearsTheDestinationMark(t *testing.T) {
+	fs, m := startRenameManager(t)
+	require.NoError(t, runRename(t, m, fs, &RenameTableRequest{
+		TableBucketARN:  mustBucketARN(t),
+		SourceNamespace: []string{"ns"},
+		SourceName:      "t",
+		DestNamespace:   []string{"ns"},
+		DestName:        "t2",
+	}))
+	dest := fs.Get(GetNamespacePath(renameTestBucket, "ns"), "t2")
+	require.NotNil(t, dest)
+	assert.NotContains(t, dest.Extended, ExtendedKeyDeleting, "a finished rename must lift its unfinished mark")
 }
 
 // A delete refused because the namespace still holds a table lifts its claim
