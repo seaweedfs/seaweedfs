@@ -300,11 +300,21 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 	idxFileName = indexBaseFileName + ".idx"
 	datFileName = dataBaseFileName + ".dat"
 
+	mounted := false
 	defer func() {
 		if copyLocation == nil {
 			return
 		}
 		if err != nil {
+			// A mounted copy was already announced to the master; deleting
+			// through the store unmounts it and withdraws the announcement
+			// before the files go away. keepRemoteData: the .vif may point at
+			// the same cloud-tier object the source still references.
+			if mounted {
+				if delErr := vs.store.DeleteVolume(needle.VolumeId(req.VolumeId), false, false, true); delErr != nil {
+					glog.Warningf("discard mounted copy of volume %d: %v", req.VolumeId, delErr)
+				}
+			}
 			os.Remove(idxFileName)
 			os.Remove(datFileName)
 			os.Remove(dataBaseFileName + ".vif")
@@ -339,6 +349,15 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 		glog.V(1).Infof("source volume %d changed during copy; skip record count validation", req.VolumeId)
 	}
 
+	// A caller that left during the copy cannot use the result; bail before the
+	// mount announces a replica nobody asked for. The window between this check
+	// and the send below cannot be closed, so the cleanup also drops a mounted
+	// copy when the send fails.
+	if ctxErr := stream.Context().Err(); ctxErr != nil {
+		err = ctxErr
+		return ctxErr
+	}
+
 	// Load and validate the volume before announcing it to the master. A failed
 	// validation is unloaded by the store without ever making the replica
 	// routable.
@@ -357,15 +376,12 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 	if err != nil {
 		return fmt.Errorf("failed to mount or validate volume %d: %w", req.VolumeId, err)
 	}
+	mounted = true
 
-	// Keep the mounted replica when only the final response fails: the volume
-	// is already announced to the master, so the cleanup above must not
-	// delete files out from under it.
-	if sendErr := stream.Send(&volume_server_pb.VolumeCopyResponse{
+	if err = stream.Send(&volume_server_pb.VolumeCopyResponse{
 		LastAppendAtNs: lastAppendAtNs,
-	}); sendErr != nil {
-		glog.Errorf("send response: %v", sendErr)
-		return sendErr
+	}); err != nil {
+		glog.Errorf("send response: %v", err)
 	}
 
 	return err
