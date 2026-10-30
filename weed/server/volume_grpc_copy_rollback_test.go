@@ -73,6 +73,34 @@ func TestRestoreReplacedVolumeFilesPutsLinksBack(t *testing.T) {
 	}
 }
 
+func TestRestoreReplacedVolumeFilesRestoresRepeatedPathOnce(t *testing.T) {
+	dir := t.TempDir()
+	idx := filepath.Join(dir, "vol_1.idx")
+	if err := os.WriteFile(idx, []byte("replica"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	links, complete := linkReplacedVolumeFiles(idx, idx)
+	if !complete || len(links) != 1 {
+		t.Fatalf("a repeated path should link once: links=%v complete=%v", links, complete)
+	}
+	if err := os.Remove(idx); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(idx, []byte("copy"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	restoreReplacedVolumeFiles(links)
+	got, err := os.ReadFile(idx)
+	if err != nil {
+		t.Fatalf("restored file %s missing: %v", idx, err)
+	}
+	if string(got) != "replica" {
+		t.Fatalf("the second pass deleted the restored file: %q", got)
+	}
+}
+
 func TestRestoreReplacedVolumeFilesReplacesSurvivingPartial(t *testing.T) {
 	dir := t.TempDir()
 	dat := filepath.Join(dir, "vol_1.dat")

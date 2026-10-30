@@ -546,12 +546,18 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 
 // linkReplacedVolumeFiles hard-links each file into a copying/ sibling so
 // the inodes survive the replacement's delete and a failed swap can put the
-// previous replica's files back. The loader never scans copying/. It reports
-// false when a file that exists could not be preserved — deleting the replica
-// then would leave nothing to roll back to.
+// previous replica's files back. The loader never scans copying/. A repeated
+// path links once: data and index can share a directory and so a basename.
+// It reports false when a file that exists could not be preserved — deleting
+// the replica then would leave nothing to roll back to.
 func linkReplacedVolumeFiles(baseFileNames ...string) (links []string, complete bool) {
 	complete = true
+	seen := make(map[string]bool)
 	for _, base := range baseFileNames {
+		if seen[base] {
+			continue
+		}
+		seen[base] = true
 		if _, err := os.Stat(base); err != nil {
 			if !os.IsNotExist(err) {
 				glog.Warningf("preserve replaced file %s: %v", base, err)
