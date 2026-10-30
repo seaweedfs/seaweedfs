@@ -2140,6 +2140,24 @@ impl VolumeServer for VolumeGrpcService {
 
         let mut store = self.state.store.write().unwrap();
 
+        // Same window as volume_mount: the copy has snapshotted "no volume"
+        // and is waiting on the source. Configure unmounts and remounts, so
+        // it can load the replica whose files the copy is about to delete.
+        // The check sits under this write lock so it cannot lose to the
+        // claim and the snapshot.
+        if self
+            .state
+            .volume_copies_in_flight
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains(&vid)
+        {
+            return Err(Status::unavailable(format!(
+                "volume {} is being copied",
+                req.volume_id
+            )));
+        }
+
         // Unmount the volume (Go propagates unmount errors via resp.Error;
         // not-found falls through to configure_volume)
         if let Err(e) = store.unmount_volume(vid) {
@@ -11330,6 +11348,55 @@ mod tests {
         }
 
         job.run(|_| true).unwrap();
+        let resp = service
+            .volume_configure(Request::new(volume_server_pb::VolumeConfigureRequest {
+                volume_id: vid.0,
+                replication: "001".to_string(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(resp.error, "");
+        let store = service.state.store.read().unwrap();
+        let (_, v) = store.find_volume(vid).unwrap();
+        assert_eq!(v.super_block().replica_placement.to_string(), "001");
+    }
+
+    /// Configure remounts an on-disk replica. During a copy that already
+    /// snapshotted the volume as absent, that remount loads files the copy
+    /// then unlinks.
+    #[tokio::test]
+    async fn test_volume_configure_refuses_a_volume_being_copied() {
+        let (service, _tmp) = make_local_service_with_volume("configure_during_copy", None);
+        let vid = VolumeId(1);
+        service
+            .state
+            .volume_copies_in_flight
+            .lock()
+            .unwrap()
+            .insert(vid);
+
+        let err = service
+            .volume_configure(Request::new(volume_server_pb::VolumeConfigureRequest {
+                volume_id: vid.0,
+                replication: "001".to_string(),
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::Unavailable);
+        assert!(err.message().contains("is being copied"), "{}", err.message());
+        {
+            let store = service.state.store.read().unwrap();
+            let (_, v) = store.find_volume(vid).expect("still mounted");
+            assert_eq!(v.super_block().replica_placement.to_string(), "000");
+        }
+
+        service
+            .state
+            .volume_copies_in_flight
+            .lock()
+            .unwrap()
+            .remove(&vid);
         let resp = service
             .volume_configure(Request::new(volume_server_pb::VolumeConfigureRequest {
                 volume_id: vid.0,
