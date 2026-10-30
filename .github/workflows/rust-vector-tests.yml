@@ -89,14 +89,18 @@ jobs:
 
 
   vectors-e2e:
-    name: S3 Vectors Go/Rust Volume Parity
+    name: S3 Vectors Integration (${{ matrix.volume }} volume)
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        volume: [go, rust]
     env:
       CARGO_PROFILE_DEV_DEBUG: "0"
       CARGO_BUILD_JOBS: "2"
       CARGO_TARGET_DIR: ${{ github.workspace }}/seaweed-vector/target
-      VOLUME_SERVER_IMPL: go,rust
+      VOLUME_SERVER_IMPL: ${{ matrix.volume }}
       VECTOR_QUERY_MODE: single
     steps:
       - uses: actions/checkout@v7
@@ -136,7 +140,12 @@ jobs:
           go test ./weed/command -run 'Vector|Vectors' -count=1
       - name: Build integration binaries
         working-directory: test/s3vectors
-        run: make build CARGO_PROFILE=dev
+        # dev profile: correctness suite, no release codegen needed. weed-volume
+        # (the heaviest crate) only builds on the rust leg.
+        run: |
+          set -e
+          make ./weed ./weed-vector CARGO_PROFILE=dev
+          if [ "${{ matrix.volume }}" = "rust" ]; then make ./weed-volume CARGO_PROFILE=dev; fi
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -151,16 +160,16 @@ jobs:
           from pathlib import Path
           import xml.etree.ElementTree as ET
           cases = ET.parse(Path(os.environ["RUNNER_TEMP"]) / "vector-results.xml").findall(".//testcase")
-          assert len(cases) >= 34, f"expected at least 34 cases, got {len(cases)}"
+          assert len(cases) >= 17, f"expected at least 17 cases, got {len(cases)}"
           assert not any(case.find("skipped") is not None for case in cases), "integration cases were skipped"
-          for volume in ("go", "rust"):
-              assert sum(case.get("name", "").endswith(f"[{volume}-single]") for case in cases) >= 17, volume
+          volume = os.environ["VOLUME_SERVER_IMPL"]
+          assert all(case.get("name", "").endswith(f"[{volume}-single]") for case in cases), volume
           PYTHON
       - name: Upload integration diagnostics
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: vectors-e2e-diagnostics
+          name: vectors-e2e-diagnostics-${{ matrix.volume }}
           path: |
             ${{ runner.temp }}/vector-tests
             ${{ runner.temp }}/vector-results.xml
