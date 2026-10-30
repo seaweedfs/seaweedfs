@@ -5181,6 +5181,17 @@ impl Volume {
             .map_or(0, |nm| nm.index_file_size())
     }
 
+    /// The .dat and .idx sizes read while excluding writes, so a row inside
+    /// the index bound always has its record inside the data bound.
+    /// Mirrors Go's Volume.FileStat.
+    pub(crate) fn file_stat(&self) -> io::Result<(u64, u64)> {
+        let _guard = self.data_file_access_control.read_lock();
+        let io = self.io.read().unwrap();
+        let dat_size = self.current_dat_file_size_io(&io)?;
+        let idx_size = io.nm.as_ref().map_or(0, |nm| nm.index_file_size());
+        Ok((dat_size, idx_size))
+    }
+
     /// Disk space held by the local .dat file, or 0 when it is unknown. It
     /// exceeds the file size when the file was preallocated with
     /// `FALLOC_FL_KEEP_SIZE`.

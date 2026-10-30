@@ -1584,26 +1584,20 @@ impl VolumeServer for VolumeGrpcService {
             return Err(Status::unavailable(e.to_string()));
         }
 
-        // Capture the .idx bound before the .dat one: an index row is
-        // published only after its .dat bytes, so a row inside this bound
-        // always has its record inside the bound captured below.
-        let idx_start = req.entry_count * NEEDLE_MAP_ENTRY_SIZE as u64;
-        let idx_end = if req.entry_count > 0 || req.since_ns == 0 {
-            v.index_file_size()
-        } else {
-            idx_start
-        };
-        let dat_size = v.dat_file_size().unwrap_or(0);
         let super_block_size = v.super_block().block_size() as u64;
 
         // If since_ns is very large (after all data), return empty. A
         // positional resume must still reach resume_by_last_entry so an empty
         // replica reports divergence instead of a clean empty stream.
-        if req.entry_count == 0 && (req.since_ns == u64::MAX || dat_size <= super_block_size) {
+        if req.entry_count == 0
+            && (req.since_ns == u64::MAX || v.dat_file_size().unwrap_or(0) <= super_block_size)
+        {
             drop(store);
             let stream = tokio_stream::iter(Vec::new());
             return Ok(Response::new(Box::pin(stream)));
         }
+
+        let revision = v.super_block().compaction_revision;
 
         // Resume by index position when the backup identified its last entry;
         // append_at_ns stamps differ across replicas, so a since_ns resume can
@@ -1668,6 +1662,18 @@ impl VolumeServer for VolumeGrpcService {
                 }
             }
         };
+        // Capture the .dat and .idx bounds together after the resume reads,
+        // so every row resume saw is inside the index bound and has its
+        // record inside the data bound (a row publishes only after its bytes).
+        let (dat_size, idx_size) = v
+            .file_stat()
+            .map_err(|e| Status::internal(format!("stat volume {}: {}", vid, e)))?;
+        let idx_start = req.entry_count * NEEDLE_MAP_ENTRY_SIZE as u64;
+        let idx_end = if req.entry_count > 0 || req.since_ns == 0 {
+            idx_size
+        } else {
+            idx_start
+        };
         // A corrupt index could place the located offset past the captured
         // `.dat` size; nothing to send, and it would underflow `total` below.
         let has_data = start_offset.is_some_and(|s| s < dat_size);
@@ -1716,6 +1722,14 @@ impl VolumeServer for VolumeGrpcService {
         } else {
             None
         };
+        // A compaction swap between the bound capture and these opens would
+        // mix a new file with bounds from the old revision; the backup must
+        // rebuild instead of copying a mismatched pair.
+        if v.super_block().compaction_revision != revision {
+            return Err(Status::failed_precondition(
+                crate::storage::volume::VolumeError::IncrementalCopyDiverged.to_string(),
+            ));
+        }
         let state = self.state.clone();
         drop(store);
 
@@ -1821,7 +1835,15 @@ impl VolumeServer for VolumeGrpcService {
                     let chunk = std::cmp::min(bytes_to_read, buffer_size) as usize;
                     let mut buf = vec![0u8; chunk];
                     match reader.read(&mut buf) {
-                        Ok(0) => break, // EOF
+                        Ok(0) => {
+                            // a shortened .idx cannot deliver the captured
+                            // tail; the copy must restart rather than install
+                            // a partial index
+                            let _ = tx.blocking_send(Err(Status::internal(
+                                "index file ended before the captured tail",
+                            )));
+                            return;
+                        }
                         Ok(n) => {
                             buf.truncate(n);
                             let msg = volume_server_pb::VolumeIncrementalCopyResponse {

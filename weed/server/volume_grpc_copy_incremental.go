@@ -26,7 +26,7 @@ func (vs *VolumeServer) VolumeIncrementalCopy(req *volume_server_pb.VolumeIncrem
 		return err
 	}
 
-	stopOffset, stopIndex, _ := v.FileStat()
+	revision := v.SuperBlock.CompactionRevision
 
 	var startOffset int64
 	var hasData bool
@@ -61,17 +61,38 @@ func (vs *VolumeServer) VolumeIncrementalCopy(req *volume_server_pb.VolumeIncrem
 		startOffset = foundOffset.ToActualOffset()
 	}
 
+	// capture the .dat and .idx bounds after the resume reads, so every row
+	// resume saw is inside the index bound and has its bytes inside the
+	// data bound (a row is published only after its record)
+	stopOffset, stopIndex, _ := v.FileStat()
+
+	// a since_ns resume from an old client has no verified prefix, so the
+	// index rows are only safe to replay when the whole file is sent
+	var indexFile *os.File
+	if (req.EntryCount > 0 || req.SinceNs == 0) && int64(stopIndex) > int64(req.EntryCount)*types.NeedleMapEntrySize {
+		var err error
+		if indexFile, err = os.Open(v.FileName(".idx")); err != nil {
+			return fmt.Errorf("cannot read %s: %v", v.FileName(".idx"), err)
+		}
+		defer indexFile.Close()
+		if v.SuperBlock.CompactionRevision != revision {
+			return status.Error(codes.FailedPrecondition, storage.ErrIncrementalCopyDiverged.Error())
+		}
+	}
+
 	buf := make([]byte, 1024*1024*2)
 	if hasData {
 		if err := sendFileContent(v, buf, startOffset, int64(stopOffset), stream); err != nil {
 			return err
 		}
 	}
-
-	// a since_ns resume from an old client has no verified prefix, so the
-	// index rows are only safe to replay when the whole file is sent
-	if req.EntryCount > 0 || req.SinceNs == 0 {
-		return sendIndexContent(v, buf, int64(req.EntryCount)*types.NeedleMapEntrySize, int64(stopIndex), stream)
+	if indexFile != nil {
+		if err := sendIndexContent(v, indexFile, buf, int64(req.EntryCount)*types.NeedleMapEntrySize, int64(stopIndex), stream); err != nil {
+			return err
+		}
+	}
+	if v.SuperBlock.CompactionRevision != revision {
+		return status.Error(codes.FailedPrecondition, storage.ErrIncrementalCopyDiverged.Error())
 	}
 	return nil
 
@@ -90,16 +111,7 @@ func (vs *VolumeServer) VolumeSyncStatus(ctx context.Context, req *volume_server
 
 }
 
-func sendIndexContent(v *storage.Volume, buf []byte, startOffset, stopOffset int64, stream volume_server_pb.VolumeServer_VolumeIncrementalCopyServer) error {
-	if startOffset >= stopOffset {
-		return nil
-	}
-	indexFile, err := os.Open(v.FileName(".idx"))
-	if err != nil {
-		return fmt.Errorf("cannot read %s: %v", v.FileName(".idx"), err)
-	}
-	defer indexFile.Close()
-
+func sendIndexContent(v *storage.Volume, indexFile *os.File, buf []byte, startOffset, stopOffset int64, stream volume_server_pb.VolumeServer_VolumeIncrementalCopyServer) error {
 	var blockSizeLimit = int64(len(buf))
 	for i := int64(0); i < stopOffset-startOffset; i += blockSizeLimit {
 		if err := v.UnavailableError(); err != nil {
@@ -118,9 +130,6 @@ func sendIndexContent(v *storage.Volume, buf []byte, startOffset, stopOffset int
 			}
 		}
 		if readErr != nil {
-			if readErr == io.EOF {
-				return nil
-			}
 			return readErr
 		}
 	}

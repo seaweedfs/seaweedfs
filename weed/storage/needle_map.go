@@ -68,6 +68,10 @@ type TempNeedleMapper interface {
 	UpdateNeedleMap(v *Volume, indexFile *os.File, opts *opt.Options, ldbTimeout int64) error
 }
 
+func (nm *baseNeedleMapper) IndexFile() *os.File {
+	return nm.indexFile
+}
+
 func (nm *baseNeedleMapper) IndexFileSize() uint64 {
 	stat, err := nm.indexFile.Stat()
 	if err == nil {
