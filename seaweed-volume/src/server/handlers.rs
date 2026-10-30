@@ -7961,6 +7961,93 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn http_local_refusal_after_replica_append_is_not_marked() {
+        use crate::storage::super_block::ReplicaPlacement;
+        use axum::{Json, Router, routing::get};
+        use tower::ServiceExt;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut state = volume_test_state(&tmp);
+        Arc::get_mut(&mut state).unwrap().self_url = "127.0.0.1:8080".to_string();
+        let volume = state
+            .store
+            .read()
+            .unwrap()
+            .find_volume(VolumeId(1))
+            .unwrap()
+            .1;
+        volume
+            .set_replica_placement(ReplicaPlacement::from_string("001").unwrap())
+            .unwrap();
+        volume.set_read_only().unwrap();
+        let before = volume.dat_file_size().unwrap();
+
+        let peer_tmp = tempfile::TempDir::new().unwrap();
+        let peer = volume_test_state(&peer_tmp);
+        let peer_volume = peer
+            .store
+            .read()
+            .unwrap()
+            .find_volume(VolumeId(1))
+            .unwrap()
+            .1;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let peer_addr = listener.local_addr().unwrap();
+        let peer_server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                super::super::volume_server::build_admin_router(peer),
+            )
+            .await
+            .unwrap();
+        });
+
+        // The master's writable view can lag behind the local seal.
+        let master = Router::new().route(
+            "/dir/lookup",
+            get(move || async move {
+                Json(serde_json::json!({"locations": [
+                    {"url": "127.0.0.1:8080"},
+                    {"url": peer_addr.to_string()}
+                ]}))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        *state.current_master_url.write().await = listener.local_addr().unwrap().to_string();
+        let master_server = tokio::spawn(async move {
+            axum::serve(listener, master).await.unwrap();
+        });
+
+        let id = 0x6e7a_0c03u64;
+        let payload = b"replicated bytes";
+        let response = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            super::super::volume_server::build_admin_router(state).oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(format!("/1,{id:x}{TEST_COOKIE:08x}"))
+                    .body(Body::from(payload.as_slice()))
+                    .unwrap(),
+            ),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert!(response.headers().get("x-seaweed-write-outcome").is_none());
+        assert_eq!(volume.dat_file_size().unwrap(), before);
+        let mut stored = Needle {
+            id: NeedleId(id),
+            cookie: Cookie(TEST_COOKIE),
+            ..Needle::default()
+        };
+        peer_volume.read_needle(&mut stored).unwrap();
+        assert_eq!(stored.data, payload);
+        master_server.abort();
+        peer_server.abort();
+    }
+
+    #[tokio::test]
     async fn http_write_errors_without_no_append_proof_are_not_marked() {
         use tower::ServiceExt;
         for query in ["", "?fsync=true", "?type=replicate"] {
