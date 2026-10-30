@@ -28,8 +28,7 @@ import (
 // other's manifest update: put-if-absent (If-None-Match: *) for new objects
 // and compare-and-swap (If-Match: "<etag>") for manifest rewrites. A failed
 // precondition must return 412 and must not commit, even when conditional
-// writes to the same key race. See sqlite.org/cloudsqlite/doc/trunk/www/module.wiki
-// and https://github.com/seaweedfs/seaweedfs/issues/12235.
+// writes to the same key race. See sqlite.org/cloudsqlite/doc/trunk/www/module.wiki.
 
 func cbsTestContext() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), 30*time.Second)
@@ -332,7 +331,7 @@ func TestCBSCompareAndSwap(t *testing.T) {
 
 // TestCBSCompareAndSwapVersionedBucket runs the same CAS sequence on a
 // versioned bucket. Conditional writes must validate against the latest
-// version rather than a stale entry (regression coverage for issue #8073).
+// version rather than a stale entry.
 func TestCBSCompareAndSwapVersionedBucket(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping sqlite cbs integration test in short mode")
