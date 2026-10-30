@@ -6,6 +6,7 @@ import (
 	"path"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables/s3tablestest"
 
 	"github.com/stretchr/testify/assert"
@@ -69,6 +70,30 @@ func TestRenameViewMovesCatalogPointer(t *testing.T) {
 	assert.False(t, stillListed, "source name must stop resolving")
 	assert.NotNil(t, fs.Get(path.Join(GetTablePath(renameTestBucket, "ns", "v"), "metadata"), "v1.metadata.json"),
 		"the view's metadata file must survive")
+}
+
+// A delete that purges the source view between the rename's read and its claim
+// loses the source, so the answer must name the view.
+func TestRenameViewSourceDeletedMidRename(t *testing.T) {
+	fs, m := startRenameManager(t)
+	seedView(t, fs, "v")
+
+	nsPath := GetNamespacePath(renameTestBucket, "ns")
+	fs.BeforeUpdate = func() {
+		_, _ = fs.Client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
+			Directory:    nsPath,
+			Name:         "v",
+			IsRecursive:  true,
+			IsDeleteData: true,
+		})
+	}
+
+	err := runRenameView(t, m, fs, "v", "v2")
+	require.Error(t, err)
+	var s3Err *S3TablesError
+	require.ErrorAs(t, err, &s3Err)
+	assert.Equal(t, ErrCodeNoSuchView, s3Err.Type)
+	assert.Nil(t, fs.Get(nsPath, "v2"), "a failed rename must not publish the destination")
 }
 
 // Tables and views share one namespace directory, so each rename must refuse

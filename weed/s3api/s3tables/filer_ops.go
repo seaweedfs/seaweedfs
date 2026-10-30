@@ -119,6 +119,11 @@ func (h *S3TablesHandler) mutateEntryExtended(
 		if err == nil {
 			return nil
 		}
+		// The filer answers an entry removed since the lookup with
+		// codes.NotFound; report it as the lookup's own miss.
+		if status.Code(err) == codes.NotFound {
+			return fmt.Errorf("%w: %s", filer_pb.ErrNotFound, path)
+		}
 		if status.Code(err) != codes.FailedPrecondition {
 			return err
 		}

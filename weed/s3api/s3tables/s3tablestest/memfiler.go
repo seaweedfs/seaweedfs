@@ -152,15 +152,16 @@ func (f *MemFiler) UpdateEntry(_ context.Context, req *filer_pb.UpdateEntryReque
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	// The real filer looks the entry up before anything else and answers a
+	// missing one with codes.NotFound, not a failed precondition.
+	existing := f.entries[req.Directory][req.Entry.Name]
+	if existing == nil {
+		return nil, status.Errorf(codes.NotFound, "not found %s: %v", path.Join(req.Directory, req.Entry.Name), filer_pb.ErrNotFound)
+	}
 	// The real filer validates ExpectedExtended under the per-path lock; without
 	// it here a lost update would look like a success.
 	for key, expected := range req.ExpectedExtended {
-		var actual []byte
-		if d, ok := f.entries[req.Directory]; ok {
-			if existing := d[req.Entry.Name]; existing != nil {
-				actual = existing.Extended[key]
-			}
-		}
+		actual := existing.Extended[key]
 		if !bytes.Equal(actual, expected) {
 			return nil, status.Errorf(codes.FailedPrecondition, "extended attribute %q changed", key)
 		}
