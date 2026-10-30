@@ -349,7 +349,7 @@ func (h *S3TablesHandler) handlePutTablePolicy(w http.ResponseWriter, r *http.Re
 	var bucketPolicy, tablePolicy string
 	var bucketTags, tableTags map[string]string
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		data, err := h.getExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyMetadata)
+		data, err := h.readTableMetadataAttr(r.Context(), client, tablePath)
 		if err != nil {
 			return err
 		}
@@ -464,7 +464,7 @@ func (h *S3TablesHandler) handleGetTablePolicy(w http.ResponseWriter, r *http.Re
 
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		// Get metadata for ownership check
-		data, err := h.getExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyMetadata)
+		data, err := h.readTableMetadataAttr(r.Context(), client, tablePath)
 		if err != nil {
 			return err
 		}
@@ -568,7 +568,7 @@ func (h *S3TablesHandler) handleDeleteTablePolicy(w http.ResponseWriter, r *http
 	var bucketPolicy, tablePolicy string
 	var bucketTags, tableTags map[string]string
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		data, err := h.getExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyMetadata)
+		data, err := h.readTableMetadataAttr(r.Context(), client, tablePath)
 		if err != nil {
 			return err
 		}

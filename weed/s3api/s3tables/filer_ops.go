@@ -378,6 +378,16 @@ func (h *S3TablesHandler) loadNamespaceMetadata(ctx context.Context, filerClient
 	return &metadata, nil
 }
 
+// readTableMetadataAttr returns the table-metadata xattr at tablePath. A
+// directory without it is not a table, so its absence reads as a missing entry.
+func (h *S3TablesHandler) readTableMetadataAttr(ctx context.Context, client filer_pb.SeaweedFilerClient, tablePath string) ([]byte, error) {
+	data, err := h.getExtendedAttribute(ctx, client, tablePath, ExtendedKeyMetadata)
+	if errors.Is(err, ErrAttributeNotFound) {
+		return nil, fmt.Errorf("%w: %s", filer_pb.ErrNotFound, tablePath)
+	}
+	return data, err
+}
+
 // lookupEntry returns the filer entry at the given path.
 func (h *S3TablesHandler) lookupEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, path string) (*filer_pb.Entry, error) {
 	dir, name := splitPath(path)
