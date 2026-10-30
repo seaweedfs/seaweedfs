@@ -132,6 +132,12 @@ func (vs *VolumeServer) VolumeMount(ctx context.Context, req *volume_server_pb.V
 		return resp, err
 	}
 
+	// A copy claims the volume, then waits on the source. A mount in that
+	// window loads files the copy is about to clear or overwrite.
+	if _, copying := vs.volumeCopiesInFlight.Load(req.VolumeId); copying {
+		return resp, status.Errorf(codes.Unavailable, "volume %d is being copied", req.VolumeId)
+	}
+
 	err := vs.store.MountVolume(needle.VolumeId(req.VolumeId), req.Collection)
 
 	if err != nil {
@@ -243,6 +249,12 @@ func (vs *VolumeServer) VolumeConfigure(ctx context.Context, req *volume_server_
 	if _, err := super_block.NewReplicaPlacementFromString(req.Replication); err != nil {
 		resp.Error = fmt.Sprintf("volume configure replication %v: %v", req, err)
 		return resp, nil
+	}
+
+	// Same window as VolumeMount: configure unmounts and remounts, so it can
+	// load the replica whose files an in-flight copy is about to delete.
+	if _, copying := vs.volumeCopiesInFlight.Load(req.VolumeId); copying {
+		return resp, status.Errorf(codes.Unavailable, "volume %d is being copied", req.VolumeId)
 	}
 
 	// unmount
