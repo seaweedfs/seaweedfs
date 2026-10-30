@@ -465,8 +465,15 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 			err = fmt.Errorf("preserve files of existing volume %d for rollback", req.VolumeId)
 			return err
 		}
-		for _, replacedFile := range []string{datFileName, idxFileName, vifFileName, dataBaseFileName + ".idx"} {
+		for _, replacedFile := range []string{datFileName, idxFileName, dataBaseFileName + ".idx"} {
 			os.Remove(replacedFile)
+		}
+		// The .vif may be shared with an EC volume for the same id: while a
+		// sealed .ecx is here it must stay — an incoming .vif overwrites it
+		// on rename, but with no incoming one the EC volume would lose the
+		// settings it only stores there.
+		if !copyLocation.HasEcxFileOnDisk(volFileInfoResp.Collection, needle.VolumeId(req.VolumeId)) {
+			os.Remove(vifFileName)
 		}
 	}
 
