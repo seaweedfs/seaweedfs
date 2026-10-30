@@ -353,17 +353,16 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 			// through the store unmounts it and withdraws the announcement
 			// before the files go away. keepRemoteData: the .vif may point at
 			// the same cloud-tier object the source still references.
-			keepFiles := false
 			if mounted {
 				if delErr := vs.store.DeleteVolume(needle.VolumeId(req.VolumeId), false, false, true); delErr != nil {
 					glog.Warningf("discard mounted copy of volume %d: %v", req.VolumeId, delErr)
-					// A refused delete (e.g. the volume is compacting)
-					// leaves it registered; unlinking its files now would
-					// strand a live replica.
-					keepFiles = vs.store.GetVolume(needle.VolumeId(req.VolumeId)) != nil
 				}
 			}
-			if !keepFiles {
+			// A still-registered replica — a refused delete (e.g. the volume
+			// is compacting), or one a racing mount loaded — can share the
+			// index directory with the bases below; unlinking its files now
+			// would strand a live replica.
+			if vs.store.GetVolume(needle.VolumeId(req.VolumeId)) == nil {
 				if copyOwnsFiles {
 					os.Remove(idxFileName)
 					if indexBaseFileName != dataBaseFileName {
