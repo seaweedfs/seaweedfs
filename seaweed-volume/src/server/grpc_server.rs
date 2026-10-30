@@ -6247,7 +6247,17 @@ impl CopyDestination {
     /// rejects it by. A failure refuses the copy: removing what could not be
     /// displaced risks losing the replica.
     fn displace_existing_files(&mut self) -> std::io::Result<()> {
-        for path in self.partial_file_paths() {
+        // A sealed .ecx keeps the .vif where it is, but the incoming copy
+        // truncates that shared file in place — a hard link would not save
+        // it. Back its content up so a failed copy can restore it.
+        let shared_vif = self
+            .shares_vif_with_ec()
+            .then(|| format!("{}.vif", self.data_base_name));
+        let mut paths = self.partial_file_paths();
+        if let Some(vif) = &shared_vif {
+            paths.push(vif.clone());
+        }
+        for path in paths {
             let p = std::path::Path::new(&path);
             if !p.exists() {
                 continue;
@@ -6261,7 +6271,11 @@ impl CopyDestination {
             if backup.exists() {
                 std::fs::remove_file(&backup)?;
             }
-            std::fs::rename(p, &backup)?;
+            if shared_vif.as_deref() == Some(path.as_str()) {
+                std::fs::copy(p, &backup)?;
+            } else {
+                std::fs::rename(p, &backup)?;
+            }
             self.displaced_files
                 .push((backup.to_string_lossy().into_owned(), path));
         }
@@ -10037,6 +10051,50 @@ mod tests {
                 "a surviving partial {ext} replaced the restored file"
             );
         }
+        assert!(
+            std::fs::read_dir(tmp.path().join("copying"))
+                .map(|mut d| d.next().is_none())
+                .unwrap_or(true),
+            "no backups may survive the restore"
+        );
+    }
+
+    // A .vif shared with a sealed .ecx stays in place for the EC volume, but
+    // the copy truncates it in place — so its content is still backed up and
+    // a failed copy puts the original back.
+    #[test]
+    fn test_failed_copy_restores_vif_shared_with_ec_shards() {
+        let tmp = TempDir::new().unwrap();
+        let base = tmp.path().join("1").to_str().unwrap().to_string();
+        std::fs::write(format!("{base}.vif"), b"shared-settings").unwrap();
+        std::fs::write(format!("{base}.ecx"), b"ec-index").unwrap();
+
+        let mut dest = CopyDestination {
+            data_base_name: base.clone(),
+            idx_base_name: base.clone(),
+            disk_type: DiskType::HardDrive,
+            has_remote_dat: false,
+            loc_idx: 0,
+            reserved_space: std::sync::atomic::AtomicU64::new(0),
+            displaced_files: Vec::new(),
+        };
+        dest.displace_existing_files().unwrap();
+
+        assert_eq!(
+            std::fs::read(format!("{base}.vif")).unwrap(),
+            b"shared-settings",
+            "the EC volume keeps its .vif during the copy"
+        );
+        // The incoming copy truncates the shared .vif, then fails.
+        std::fs::write(format!("{base}.vif"), b"incoming").unwrap();
+        dest.remove_partial_files().unwrap();
+        dest.restore_displaced_files();
+
+        assert_eq!(
+            std::fs::read(format!("{base}.vif")).unwrap(),
+            b"shared-settings",
+            "the shared .vif must come back with its original content"
+        );
         assert!(
             std::fs::read_dir(tmp.path().join("copying"))
                 .map(|mut d| d.next().is_none())
