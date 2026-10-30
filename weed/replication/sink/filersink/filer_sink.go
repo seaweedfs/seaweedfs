@@ -1,6 +1,7 @@
 package filersink
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -678,7 +679,9 @@ func destinationHoldsContent(existing, reference *filer_pb.Entry) bool {
 	if destinationMatchesReference(existing, reference) {
 		return true
 	}
-	return coversReference(existing, reference) && filer.ETag(existing) == filer.ETag(reference)
+	return sameInlineContent(existing, reference) &&
+		coversReference(existing, reference) &&
+		filer.ETag(existing) == filer.ETag(reference)
 }
 
 // destinationSatisfiesSource reports whether an existing destination entry already
@@ -697,6 +700,9 @@ func destinationSatisfiesSource(existing, incoming *filer_pb.Entry) bool {
 		return true // destination strictly newer: incoming is older → keep destination
 	}
 	if !destinationMatchesReference(existing, incoming) {
+		if !sameInlineContent(existing, incoming) {
+			return false // equal chunk lists hide nothing: the inline bytes differ
+		}
 		if !coversReference(existing, incoming) {
 			return false // missing a byte range the source covers (truncated/gapped)
 		}
@@ -736,7 +742,27 @@ func destinationMatchesReference(existing, reference *filer_pb.Entry) bool {
 			return false
 		}
 	}
-	return true
+	// Identical chunk lists say nothing about content stored outside them:
+	// a chunk-less entry keeps its bytes in Content, a remote-only entry in the
+	// object RemoteEntry points at. Both must compare equal to claim a match.
+	return sameInlineContent(existing, reference)
+}
+
+// sameInlineContent reports whether two entries carry the same out-of-chunk
+// content — inline bytes, or the same remote object — so a destination can be
+// trusted to hold the reference's bytes when the chunk comparison is done.
+func sameInlineContent(a, b *filer_pb.Entry) bool {
+	ra, rb := a.GetRemoteEntry(), b.GetRemoteEntry()
+	if (ra == nil) != (rb == nil) {
+		return false
+	}
+	if ra != nil && (ra.StorageName != rb.StorageName ||
+		ra.RemoteETag != rb.RemoteETag ||
+		ra.RemoteMtime != rb.RemoteMtime ||
+		ra.RemoteSize != rb.RemoteSize) {
+		return false
+	}
+	return bytes.Equal(a.GetContent(), b.GetContent())
 }
 
 // hasStaleBackupChunk reports whether existing holds a chunk that this backup

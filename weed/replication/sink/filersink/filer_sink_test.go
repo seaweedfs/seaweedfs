@@ -61,6 +61,12 @@ func dstEntry(mtime int64, srcFids ...string) *filer_pb.Entry {
 	return e
 }
 
+// inlineEntry builds a chunk-less entry at mtime holding its bytes in Content —
+// the small-file layout, where chunk comparisons alone cannot tell versions apart.
+func inlineEntry(mtime int64, content string) *filer_pb.Entry {
+	return &filer_pb.Entry{Attributes: &filer_pb.FuseAttributes{Mtime: mtime}, Content: []byte(content)}
+}
+
 // ivEntry builds an entry at mtime with chunks at the given [offset,end) byte
 // ranges — for coverage/containment tests where exact ranges matter.
 func ivEntry(mtime int64, ivs ...[2]int64) *filer_pb.Entry {
@@ -243,6 +249,11 @@ func TestDestinationSatisfiesSource(t *testing.T) {
 		// out-of-order: newer (smaller) destination must not be rolled back by an
 		// older, larger source replay.
 		{"newer smaller dest, older larger source -> skip", ivEntry(300, [2]int64{0, 5}), ivEntry(100, [2]int64{0, 10}), true},
+		// chunk-less inline files: identical chunk lists must not hide changed bytes
+		{"inline same -> skip", inlineEntry(200, "x"), inlineEntry(200, "x"), true},
+		{"inline different, dest older -> replicate", inlineEntry(200, "x"), inlineEntry(300, "y"), false},
+		{"inline different, equal mtime -> replicate", inlineEntry(200, "x"), inlineEntry(200, "y"), false},
+		{"inline different, dest newer -> skip", inlineEntry(300, "x"), inlineEntry(200, "y"), true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -275,6 +286,12 @@ func TestDestinationHoldsContent(t *testing.T) {
 		{"complete, dest newer, different -> write", entryMd5(300, 4, md5A), entryMd5(200, 4, md5B), false},
 		{"newer smaller dest -> write", ivEntry(300, [2]int64{0, 5}), ivEntry(100, [2]int64{0, 10}), false},
 		{"equal-mtime different -> write", entryMd5(200, 4, md5A), entryMd5(200, 4, md5B), false},
+		// chunk-less inline files: matching on the empty chunk lists would keep
+		// the previous version's bytes — only identical inline content may skip
+		{"inline same -> skip", inlineEntry(200, "x"), inlineEntry(200, "x"), true},
+		{"inline different -> write", inlineEntry(200, "x"), inlineEntry(200, "y"), false},
+		{"inline different, dest newer -> write", inlineEntry(300, "x"), inlineEntry(200, "y"), false},
+		{"inline vs empty -> write", inlineEntry(200, "x"), entry(200, 0), false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -312,6 +329,10 @@ func TestDestinationMatchesReference(t *testing.T) {
 			&filer_pb.Entry{Attributes: &filer_pb.FuseAttributes{Mtime: 0}, Chunks: []*filer_pb.FileChunk{
 				{FileId: "dst", SourceFileId: "A", Offset: 0, Size: 2},
 			}}, srcEntry(0, "A"), false},
+		// equal chunk lists are not enough when content lives outside chunks
+		{"inline same", inlineEntry(0, "x"), inlineEntry(0, "x"), true},
+		{"inline different", inlineEntry(0, "x"), inlineEntry(0, "y"), false},
+		{"inline vs none", inlineEntry(0, "x"), srcEntry(0), false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
