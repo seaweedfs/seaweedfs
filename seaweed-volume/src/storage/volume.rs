@@ -4897,7 +4897,9 @@ impl Volume {
     /// boundary match alone is not proof, since replicated writes can land
     /// in a different order on this replica. The copy then continues from the
     /// replica's next entry with a .dat record; index-only rows ride the
-    /// index stream, so nothing is skipped or appended twice.
+    /// index stream, so nothing is skipped or appended twice. index_bound
+    /// caps the scan to the index size the caller captured, so rows appended
+    /// after that point stay out of this copy.
     /// Mirrors Go's ResumeByLastEntry in weed/storage/volume_backup.go.
     /// Returns (offset, up_to_date).
     pub fn resume_by_last_entry(
@@ -4907,6 +4909,7 @@ impl Volume {
         cookie: Cookie,
         size: Size,
         entries_hash: u64,
+        index_bound: u64,
     ) -> Result<(Offset, bool), VolumeError> {
         let io = self.io.read().unwrap();
         let file_size = io.nm.as_ref().map_or(0, |nm| nm.index_file_size()) as i64;
@@ -4942,7 +4945,11 @@ impl Volume {
         if server_count == entry_count {
             return Ok((Offset::default(), true));
         }
-        for i in entry_count as i64..server_count as i64 {
+        let scan_end = std::cmp::min(
+            server_count as i64,
+            (index_bound / NEEDLE_MAP_ENTRY_SIZE as u64) as i64,
+        );
+        for i in entry_count as i64..scan_end {
             let (_k, offset, _s) = self.read_index_entry(i)?;
             if !offset.is_zero() {
                 return Ok((offset, false));
@@ -6679,7 +6686,14 @@ mod tests {
         // a copy whose tail is the replica's tail is already up to date
         let (key, cookie, size) = entry_at(&v, 4);
         let (_offset, up_to_date) = v
-            .resume_by_last_entry(5, key, cookie, size, v.hash_index_entries(5).unwrap())
+            .resume_by_last_entry(
+                5,
+                key,
+                cookie,
+                size,
+                v.hash_index_entries(5).unwrap(),
+                v.index_file_size(),
+            )
             .unwrap();
         assert!(up_to_date);
 
@@ -6698,6 +6712,7 @@ mod tests {
                 Cookie(0),
                 TOMBSTONE_FILE_SIZE,
                 v.hash_index_entries(6).unwrap(),
+                v.index_file_size(),
             )
             .unwrap();
         assert!(up_to_date);
@@ -6706,7 +6721,14 @@ mod tests {
         write_test_needle(&mut v, 6, b"x");
         let (key, cookie, size) = entry_at(&v, 4);
         let (offset, up_to_date) = v
-            .resume_by_last_entry(5, key, cookie, size, v.hash_index_entries(5).unwrap())
+            .resume_by_last_entry(
+                5,
+                key,
+                cookie,
+                size,
+                v.hash_index_entries(5).unwrap(),
+                v.index_file_size(),
+            )
             .unwrap();
         assert!(!up_to_date);
         let (_k, want, _s) = v.read_index_entry(6).unwrap();
@@ -6722,7 +6744,14 @@ mod tests {
             .unwrap();
         let (key, cookie, size) = entry_at(&v, 6);
         let (offset, up_to_date) = v
-            .resume_by_last_entry(7, key, cookie, size, v.hash_index_entries(7).unwrap())
+            .resume_by_last_entry(
+                7,
+                key,
+                cookie,
+                size,
+                v.hash_index_entries(7).unwrap(),
+                v.index_file_size(),
+            )
             .unwrap();
         assert!(!up_to_date);
         assert!(offset.is_zero());

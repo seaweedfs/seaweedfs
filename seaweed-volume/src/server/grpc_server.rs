@@ -1586,18 +1586,23 @@ impl VolumeServer for VolumeGrpcService {
 
         let super_block_size = v.super_block().block_size() as u64;
 
+        // Capture the revision and the .dat/.idx bounds before the resume
+        // reads, so the resume scans only rows the streams can actually carry:
+        // a row inside the index bound always has its record inside the data
+        // bound (a row publishes only after its bytes).
+        let revision = v.super_block().compaction_revision;
+        let (dat_size, idx_size) = v
+            .file_stat()
+            .map_err(|e| Status::internal(format!("stat volume {}: {}", vid, e)))?;
+
         // If since_ns is very large (after all data), return empty. A
         // positional resume must still reach resume_by_last_entry so an empty
         // replica reports divergence instead of a clean empty stream.
-        if req.entry_count == 0
-            && (req.since_ns == u64::MAX || v.dat_file_size().unwrap_or(0) <= super_block_size)
-        {
+        if req.entry_count == 0 && (req.since_ns == u64::MAX || dat_size <= super_block_size) {
             drop(store);
             let stream = tokio_stream::iter(Vec::new());
             return Ok(Response::new(Box::pin(stream)));
         }
-
-        let revision = v.super_block().compaction_revision;
 
         // Resume by index position when the backup identified its last entry;
         // append_at_ns stamps differ across replicas, so a since_ns resume can
@@ -1609,6 +1614,7 @@ impl VolumeServer for VolumeGrpcService {
                 Cookie(req.last_needle_cookie),
                 Size(req.last_needle_size),
                 req.entries_hash,
+                idx_size,
             ) {
                 Ok((_offset, true)) => {
                     drop(store);
@@ -1662,12 +1668,6 @@ impl VolumeServer for VolumeGrpcService {
                 }
             }
         };
-        // Capture the .dat and .idx bounds together after the resume reads,
-        // so every row resume saw is inside the index bound and has its
-        // record inside the data bound (a row publishes only after its bytes).
-        let (dat_size, idx_size) = v
-            .file_stat()
-            .map_err(|e| Status::internal(format!("stat volume {}: {}", vid, e)))?;
         let idx_start = req.entry_count * NEEDLE_MAP_ENTRY_SIZE as u64;
         let idx_end = if req.entry_count > 0 || req.since_ns == 0 {
             idx_size

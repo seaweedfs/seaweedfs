@@ -81,7 +81,9 @@ func (v *Volume) IncrementalBackup(volumeServer pb.ServerAddress, grpcDialOption
 
 	writeOffset := int64(startFromOffset)
 	indexOffset := int64(cursor.entryCount) * NeedleMapEntrySize
-	rnm, canReplayIndex := v.nm.(indexTailReceiver)
+	// only the in-memory map can reload rows it just wrote to the index
+	// file; other maps fall back to regenerating the index from .dat
+	cnm, canReplayIndex := v.nm.(*NeedleMap)
 	receivedIndex := false
 
 	err = operation.WithVolumeServerClient(false, volumeServer, grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
@@ -117,7 +119,7 @@ func (v *Volume) IncrementalBackup(volumeServer pb.ServerAddress, grpcDialOption
 				if !canReplayIndex {
 					continue
 				}
-				n, writeErr := rnm.IndexFile().WriteAt(resp.IdxContent, indexOffset)
+				n, writeErr := cnm.IndexFile().WriteAt(resp.IdxContent, indexOffset)
 				if writeErr != nil {
 					return writeErr
 				}
@@ -139,7 +141,7 @@ func (v *Volume) IncrementalBackup(volumeServer pb.ServerAddress, grpcDialOption
 		// Roll the files back to the pre-copy boundary: leftover bytes could
 		// split a row or be mistaken for applied ones on the next run.
 		if receivedIndex && canReplayIndex {
-			_ = rnm.truncateIndex(int64(cursor.entryCount) * NeedleMapEntrySize)
+			_ = cnm.truncateIndex(int64(cursor.entryCount) * NeedleMapEntrySize)
 		}
 		if writeOffset > int64(startFromOffset) {
 			_ = v.DataBackend.Truncate(int64(startFromOffset))
@@ -148,24 +150,15 @@ func (v *Volume) IncrementalBackup(volumeServer pb.ServerAddress, grpcDialOption
 	}
 
 	if receivedIndex && canReplayIndex {
-		if err := rnm.truncateIndex(indexOffset); err != nil {
+		if err := cnm.truncateIndex(indexOffset); err != nil {
 			return err
 		}
-		return rnm.DoOffsetLoading(v, rnm.IndexFile(), uint64(cursor.entryCount))
+		return cnm.DoOffsetLoading(v, cnm.IndexFile(), uint64(cursor.entryCount))
 	}
 
 	// add to needle map
 	return ScanVolumeFileFrom(v.Version(), v.DataBackend, int64(startFromOffset), &VolumeFileScanner4GenIdx{v: v})
 
-}
-
-// indexTailReceiver is a needle map whose index file can take verbatim
-// index rows and reload them: the in-memory compact map and the leveldb
-// maps qualify; the sorted-file map is read-only and does not.
-type indexTailReceiver interface {
-	IndexFile() *os.File
-	truncateIndex(offset int64) error
-	DoOffsetLoading(v *Volume, indexFile *os.File, startFrom uint64) error
 }
 
 // backupCursor identifies the last record of the local copy: its index
@@ -307,8 +300,9 @@ var ErrIncrementalCopyDiverged = fmt.Errorf("local copy diverged from the replic
 // alone is not proof, since replicated writes can land in a different order
 // on this replica. The copy then continues from the replica's next entry
 // with a .dat record; index-only rows ride the index stream, so nothing is
-// skipped or appended twice.
-func (v *Volume) ResumeByLastEntry(entryCount uint64, key NeedleId, cookie uint32, size Size, entriesHash uint64) (offset Offset, upToDate bool, err error) {
+// skipped or appended twice. indexBound caps the scan to the index size the
+// caller captured, so rows appended after that point stay out of this copy.
+func (v *Volume) ResumeByLastEntry(entryCount uint64, key NeedleId, cookie uint32, size Size, entriesHash uint64, indexBound uint64) (offset Offset, upToDate bool, err error) {
 
 	fileSize := int64(v.IndexFileSize())
 	if fileSize%NeedleMapEntrySize != 0 {
@@ -357,7 +351,11 @@ func (v *Volume) ResumeByLastEntry(entryCount uint64, key NeedleId, cookie uint3
 		upToDate = true
 		return
 	}
-	for i := int64(entryCount); i < int64(serverCount); i++ {
+	scanEnd := int64(serverCount)
+	if boundRows := int64(indexBound / uint64(NeedleMapEntrySize)); boundRows < scanEnd {
+		scanEnd = boundRows
+	}
+	for i := int64(entryCount); i < scanEnd; i++ {
 		if offset, err = v.readOffsetFromIndex(i); err != nil {
 			return
 		}

@@ -26,7 +26,10 @@ func (vs *VolumeServer) VolumeIncrementalCopy(req *volume_server_pb.VolumeIncrem
 		return err
 	}
 
+	// capture the revision and the .dat/.idx bounds before the resume reads,
+	// so the resume scans only rows the streams below can actually carry
 	revision := v.SuperBlock.CompactionRevision
+	stopOffset, stopIndex, _ := v.FileStat()
 
 	var startOffset int64
 	var hasData bool
@@ -37,6 +40,7 @@ func (vs *VolumeServer) VolumeIncrementalCopy(req *volume_server_pb.VolumeIncrem
 			req.LastNeedleCookie,
 			types.Size(req.LastNeedleSize),
 			req.EntriesHash,
+			stopIndex,
 		)
 		if err != nil {
 			if errors.Is(err, storage.ErrIncrementalCopyDiverged) {
@@ -60,11 +64,6 @@ func (vs *VolumeServer) VolumeIncrementalCopy(req *volume_server_pb.VolumeIncrem
 		hasData = true
 		startOffset = foundOffset.ToActualOffset()
 	}
-
-	// capture the .dat and .idx bounds after the resume reads, so every row
-	// resume saw is inside the index bound and has its bytes inside the
-	// data bound (a row is published only after its record)
-	stopOffset, stopIndex, _ := v.FileStat()
 
 	// a since_ns resume from an old client has no verified prefix, so the
 	// index rows are only safe to replay when the whole file is sent

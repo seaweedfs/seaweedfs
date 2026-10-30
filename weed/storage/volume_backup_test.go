@@ -81,13 +81,13 @@ func TestResumeByLastEntry(t *testing.T) {
 
 	// a copy whose tail is the replica's tail is already up to date
 	key, cookie, size := entryAt(4)
-	if _, upToDate, err := v.ResumeByLastEntry(5, key, cookie, size, prefixHash(5)); err != nil || !upToDate {
+	if _, upToDate, err := v.ResumeByLastEntry(5, key, cookie, size, prefixHash(5), v.IndexFileSize()); err != nil || !upToDate {
 		t.Fatalf("tail cursor: upToDate=%v err=%v", upToDate, err)
 	}
 
 	// a copy ending at an earlier record resumes from the next entry
 	key, cookie, size = entryAt(2)
-	offset, upToDate, err := v.ResumeByLastEntry(3, key, cookie, size, prefixHash(3))
+	offset, upToDate, err := v.ResumeByLastEntry(3, key, cookie, size, prefixHash(3), v.IndexFileSize())
 	if err != nil || upToDate {
 		t.Fatalf("mid cursor: upToDate=%v err=%v", upToDate, err)
 	}
@@ -96,22 +96,22 @@ func TestResumeByLastEntry(t *testing.T) {
 	}
 
 	// a copy ahead of the replica diverged
-	if _, _, err = v.ResumeByLastEntry(6, key, cookie, size, prefixHash(3)); err != ErrIncrementalCopyDiverged {
+	if _, _, err = v.ResumeByLastEntry(6, key, cookie, size, prefixHash(3), v.IndexFileSize()); err != ErrIncrementalCopyDiverged {
 		t.Fatalf("ahead cursor: %v", err)
 	}
 
 	// a copy whose tail record or earlier records differ diverged
 	key, cookie, size = entryAt(4)
-	if _, _, err = v.ResumeByLastEntry(5, key+1, cookie, size, prefixHash(5)); err != ErrIncrementalCopyDiverged {
+	if _, _, err = v.ResumeByLastEntry(5, key+1, cookie, size, prefixHash(5), v.IndexFileSize()); err != ErrIncrementalCopyDiverged {
 		t.Fatalf("key mismatch: %v", err)
 	}
-	if _, _, err = v.ResumeByLastEntry(5, key, cookie+1, size, prefixHash(5)); err != ErrIncrementalCopyDiverged {
+	if _, _, err = v.ResumeByLastEntry(5, key, cookie+1, size, prefixHash(5), v.IndexFileSize()); err != ErrIncrementalCopyDiverged {
 		t.Fatalf("cookie mismatch: %v", err)
 	}
-	if _, _, err = v.ResumeByLastEntry(5, key, cookie, size+1, prefixHash(5)); err != ErrIncrementalCopyDiverged {
+	if _, _, err = v.ResumeByLastEntry(5, key, cookie, size+1, prefixHash(5), v.IndexFileSize()); err != ErrIncrementalCopyDiverged {
 		t.Fatalf("size mismatch: %v", err)
 	}
-	if _, _, err = v.ResumeByLastEntry(5, key, cookie, size, prefixHash(5)+1); err != ErrIncrementalCopyDiverged {
+	if _, _, err = v.ResumeByLastEntry(5, key, cookie, size, prefixHash(5)+1, v.IndexFileSize()); err != ErrIncrementalCopyDiverged {
 		t.Fatalf("prefix hash mismatch: %v", err)
 	}
 
@@ -121,7 +121,7 @@ func TestResumeByLastEntry(t *testing.T) {
 	if err := v.nm.Delete(deletedKey, types.ToOffset(0)); err != nil {
 		t.Fatalf("zero-offset tombstone: %v", err)
 	}
-	if _, upToDate, err := v.ResumeByLastEntry(6, deletedKey, 0, types.TombstoneFileSize, prefixHash(6)); err != nil || !upToDate {
+	if _, upToDate, err := v.ResumeByLastEntry(6, deletedKey, 0, types.TombstoneFileSize, prefixHash(6), v.IndexFileSize()); err != nil || !upToDate {
 		t.Fatalf("tombstone tail cursor: upToDate=%v err=%v", upToDate, err)
 	}
 
@@ -130,7 +130,7 @@ func TestResumeByLastEntry(t *testing.T) {
 		t.Fatalf("write needle 6: %v", err)
 	}
 	key, cookie, size = entryAt(4)
-	offset, upToDate, err = v.ResumeByLastEntry(5, key, cookie, size, prefixHash(5))
+	offset, upToDate, err = v.ResumeByLastEntry(5, key, cookie, size, prefixHash(5), v.IndexFileSize())
 	if err != nil || upToDate {
 		t.Fatalf("cursor before tombstone: upToDate=%v err=%v", upToDate, err)
 	}
@@ -143,7 +143,7 @@ func TestResumeByLastEntry(t *testing.T) {
 		t.Fatalf("second zero-offset tombstone: %v", err)
 	}
 	key, cookie, size = entryAt(6)
-	offset, upToDate, err = v.ResumeByLastEntry(7, key, cookie, size, prefixHash(7))
+	offset, upToDate, err = v.ResumeByLastEntry(7, key, cookie, size, prefixHash(7), v.IndexFileSize())
 	if err != nil || upToDate {
 		t.Fatalf("cursor before trailing tombstone: upToDate=%v err=%v", upToDate, err)
 	}
