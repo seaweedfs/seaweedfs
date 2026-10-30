@@ -72,6 +72,10 @@ type VolumeServer struct {
 	// stop the handler; this keeps a retry from racing it on the same
 	// volume files.
 	ecDecodesInFlight sync.Map
+	// Volumes with a VolumeCopy in flight. A second copy of the same volume
+	// can pass the existing-volume check before the first one mounts and
+	// then clear or overwrite files the first copy still owns.
+	volumeCopiesInFlight sync.Map
 }
 
 func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
