@@ -60,6 +60,7 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 	var dataBaseFileName, indexBaseFileName, idxFileName, datFileName, vifFileName string
 	var stagedDataBaseFileName, stagedIndexBaseFileName string
 	var stagedIdxFileName, stagedDatFileName, stagedVifFileName string
+	var movedFiles []string
 	var hasRemoteDatFile bool
 	var copyLocation *storage.DiskLocation
 	var copyReservedSpace uint64
@@ -285,9 +286,12 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 			os.Remove(stagedDatFileName)
 			os.Remove(stagedVifFileName)
 			os.Remove(stagedVifFileName + ".copying")
-			os.Remove(idxFileName)
-			os.Remove(datFileName)
-			os.Remove(vifFileName)
+			// Only files this copy moved into place come off; before the
+			// renames the final basenames can still be the replica being
+			// replaced, and a rejected copy must leave it intact.
+			for _, moved := range movedFiles {
+				os.Remove(moved)
+			}
 			vs.store.ReleaseFreeLocation(copyLocation, copyReservedSpace)
 		} else {
 			vs.store.CommitFreeLocation(copyLocation, copyReservedSpace)
@@ -361,6 +365,7 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 			err = fmt.Errorf("move copied %s into place for volume %d: %w", pair[0], req.VolumeId, renameErr)
 			return err
 		}
+		movedFiles = append(movedFiles, pair[1])
 	}
 
 	// Load and validate the volume before announcing it to the master. A failed
