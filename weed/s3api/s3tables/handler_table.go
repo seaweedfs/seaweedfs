@@ -1806,9 +1806,22 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 			return err
 		}
 		// The record is published: lift the source claim so the cleared source
-		// directory stops refusing its namespace's delete.
-		if relErr := h.removeExtendedAttributesIf(commitCtx, client, srcPath,
-			map[string][]byte{ExtendedKeyDeleting: []byte("rename")}, ExtendedKeyDeleting); relErr != nil {
+		// directory stops refusing its namespace's delete and the old name
+		// frees for reuse. Nothing else writes the cleared record, so a loss
+		// here is a transient filer error; retry before letting a leftover
+		// claim wedge the name and its namespace.
+		var relErr error
+		for attempt := 0; attempt < extendedAttributeUpdateAttempts; attempt++ {
+			if relErr = h.removeExtendedAttributesIf(commitCtx, client, srcPath,
+				map[string][]byte{ExtendedKeyDeleting: []byte("rename")}, ExtendedKeyDeleting); relErr == nil {
+				break
+			}
+			if errors.Is(relErr, filer_pb.ErrNotFound) || errors.Is(relErr, ErrConcurrentUpdate) {
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		if relErr != nil && !errors.Is(relErr, filer_pb.ErrNotFound) {
 			glog.Warningf("rename %s: release source claim: %v", srcPath, relErr)
 		}
 		return nil
