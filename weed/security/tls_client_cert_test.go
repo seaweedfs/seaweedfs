@@ -181,3 +181,77 @@ func TestLoadClientTLSServerOnlyEkuRejected(t *testing.T) {
 		t.Fatal("expected handshake failure when presenting a serverAuth-only cert as client identity")
 	}
 }
+
+func TestLoadServerTLSUnconfiguredIsPlaintext(t *testing.T) {
+	v := util.NewViperProxy(viper.New())
+	creds, _, err := loadServerTLS(v, "grpc.master")
+	if err != nil || creds != nil {
+		t.Fatalf("expected no TLS and no error, got creds=%v err=%v", creds, err)
+	}
+}
+
+func TestLoadServerTLSPartialCertKeyFails(t *testing.T) {
+	dir := t.TempDir()
+	ca := newTestCA(t, dir)
+	certFile, _ := ca.issue(t, dir, "server", []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth})
+
+	v := util.NewViperProxy(viper.New())
+	v.Set("grpc.ca", ca.file)
+	v.Set("grpc.master.cert", certFile)
+
+	if _, _, err := loadServerTLS(v, "grpc.master"); err == nil {
+		t.Fatal("expected error when only cert is set")
+	}
+}
+
+func TestLoadServerTLSBadVersionNameFails(t *testing.T) {
+	dir := t.TempDir()
+	ca := newTestCA(t, dir)
+	certFile, keyFile := ca.issue(t, dir, "server", []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth})
+
+	v := util.NewViperProxy(viper.New())
+	v.Set("grpc.ca", ca.file)
+	v.Set("grpc.master.cert", certFile)
+	v.Set("grpc.master.key", keyFile)
+	v.Set("tls.min_version", "bogus")
+
+	if _, _, err := loadServerTLS(v, "grpc.master"); err == nil {
+		t.Fatal("expected error for unparseable tls.min_version")
+	}
+}
+
+func TestLoadClientTLSUnconfiguredIsPlaintext(t *testing.T) {
+	v := util.NewViperProxy(viper.New())
+	if _, err := loadClientTLS(v, "grpc.client"); err != nil {
+		t.Fatalf("expected insecure dial option, got err=%v", err)
+	}
+}
+
+func TestLoadClientTLSMissingCaFails(t *testing.T) {
+	dir := t.TempDir()
+	ca := newTestCA(t, dir)
+	certFile, keyFile := ca.issue(t, dir, "client", []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
+
+	v := util.NewViperProxy(viper.New())
+	v.Set("grpc.client.cert", certFile)
+	v.Set("grpc.client.key", keyFile)
+
+	if _, err := loadClientTLS(v, "grpc.client"); err == nil {
+		t.Fatal("expected error when cert and key are set without grpc.ca")
+	}
+}
+
+func TestLoadClientTLSBadCaPathFails(t *testing.T) {
+	dir := t.TempDir()
+	ca := newTestCA(t, dir)
+	certFile, keyFile := ca.issue(t, dir, "client", []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
+
+	v := util.NewViperProxy(viper.New())
+	v.Set("grpc.ca", filepath.Join(dir, "missing-ca.pem"))
+	v.Set("grpc.client.cert", certFile)
+	v.Set("grpc.client.key", keyFile)
+
+	if _, err := loadClientTLS(v, "grpc.client"); err == nil {
+		t.Fatal("expected error for unreadable grpc.ca")
+	}
+}

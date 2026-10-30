@@ -67,8 +67,16 @@ func (s *SNIStrippingTransportCredentials) OverrideServerName(serverNameOverride
 }
 
 func LoadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption, grpc.ServerOption) {
+	creds, verify, err := loadServerTLS(config, component)
+	if err != nil {
+		glog.Fatalf("gRPC server TLS for %s: %v", component, err)
+	}
+	return creds, verify
+}
+
+func loadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption, grpc.ServerOption, error) {
 	if config == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	serverOptions := pemfile.Options{
@@ -76,14 +84,24 @@ func LoadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption
 		KeyFile:         config.GetString(component + ".key"),
 		RefreshDuration: CredRefreshingInterval,
 	}
+	if serverOptions.CertFile == "" && serverOptions.KeyFile == "" {
+		return nil, nil, nil
+	}
 	if serverOptions.CertFile == "" || serverOptions.KeyFile == "" {
-		return nil, nil
+		return nil, nil, fmt.Errorf("%s.cert and %s.key must both be set", component, component)
+	}
+	for _, p := range []string{serverOptions.CertFile, serverOptions.KeyFile, config.GetString("grpc.ca")} {
+		if p == "" {
+			continue
+		}
+		if _, err := os.Stat(p); err != nil {
+			return nil, nil, fmt.Errorf("stat TLS file %s: %w", p, err)
+		}
 	}
 
 	serverIdentityProvider, err := pemfile.NewProvider(serverOptions)
 	if err != nil {
-		glog.Warningf("pemfile.NewProvider(%v) %v failed: %v", serverOptions, component, err)
-		return nil, nil
+		return nil, nil, fmt.Errorf("pemfile.NewProvider(%v) failed: %w", serverOptions, err)
 	}
 
 	serverRootOptions := pemfile.Options{
@@ -92,8 +110,7 @@ func LoadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption
 	}
 	serverRootProvider, err := pemfile.NewProvider(serverRootOptions)
 	if err != nil {
-		glog.Warningf("pemfile.NewProvider(%v) failed: %v", serverRootOptions, err)
-		return nil, nil
+		return nil, nil, fmt.Errorf("pemfile.NewProvider(%v) failed: %w", serverRootOptions, err)
 	}
 
 	// Start a server and create a client using advancedtls API with Provider.
@@ -109,30 +126,21 @@ func LoadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption
 	}
 	options.MinTLSVersion, err = TlsVersionByName(config.GetString("tls.min_version"))
 	if err != nil {
-		glog.Warningf("tls min version parse failed, %v", err)
-		return nil, nil
+		return nil, nil, err
 	}
 	options.MaxTLSVersion, err = TlsVersionByName(config.GetString("tls.max_version"))
 	if err != nil {
-		glog.Warningf("tls max version parse failed, %v", err)
-		return nil, nil
+		return nil, nil, err
 	}
 	options.CipherSuites, err = TlsCipherSuiteByNames(config.GetString("tls.cipher_suites"))
 	if err != nil {
-		glog.Warningf("tls cipher suite parse failed, %v", err)
-		return nil, nil
+		return nil, nil, err
 	}
-	allowedCommonNames := config.GetString(component + ".allowed_commonNames")
-	allowedWildcardDomain := config.GetString("grpc.allowed_wildcard_domain")
-	if allowedCommonNames != "" || allowedWildcardDomain != "" {
-		allowedCommonNamesMap := make(map[string]bool)
-		for _, s := range strings.Split(allowedCommonNames, ",") {
-			allowedCommonNamesMap[s] = true
-		}
-		auther := Authenticator{
-			AllowedCommonNames:    allowedCommonNamesMap,
-			AllowedWildcardDomain: allowedWildcardDomain,
-		}
+	auther := Authenticator{
+		AllowedCommonNames:    parseAllowedCommonNames(config.GetString(component + ".allowed_commonNames")),
+		AllowedWildcardDomain: config.GetString("grpc.allowed_wildcard_domain"),
+	}
+	if len(auther.AllowedCommonNames) != 0 || auther.AllowedWildcardDomain != "" {
 		options.AdditionalPeerVerification = auther.Authenticate
 	} else {
 		options.AdditionalPeerVerification = func(params *advancedtls.HandshakeVerificationInfo) (*advancedtls.PostHandshakeVerificationResults, error) {
@@ -141,10 +149,9 @@ func LoadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption
 	}
 	ta, err := advancedtls.NewServerCreds(options)
 	if err != nil {
-		glog.Warningf("advancedtls.NewServerCreds(%v) failed: %v", options, err)
-		return nil, nil
+		return nil, nil, fmt.Errorf("advancedtls.NewServerCreds failed: %w", err)
 	}
-	return grpc.Creds(ta), nil
+	return grpc.Creds(ta), nil, nil
 }
 
 func LoadClientTLSFromFile(configFile string, component string) (grpc.DialOption, error) {
@@ -165,8 +172,16 @@ func LoadClientTLSFromFile(configFile string, component string) (grpc.DialOption
 }
 
 func LoadClientTLS(config *util.ViperProxy, component string) grpc.DialOption {
+	option, err := loadClientTLS(config, component)
+	if err != nil {
+		glog.Fatalf("gRPC client TLS for %s: %v", component, err)
+	}
+	return option
+}
+
+func loadClientTLS(config *util.ViperProxy, component string) (grpc.DialOption, error) {
 	if config == nil {
-		return grpc.WithTransportCredentials(insecure.NewCredentials())
+		return grpc.WithTransportCredentials(insecure.NewCredentials()), nil
 	}
 
 	// prefer a dedicated client certificate: CAs may issue certs with only one of the serverAuth/clientAuth EKUs
@@ -177,9 +192,20 @@ func LoadClientTLS(config *util.ViperProxy, component string) grpc.DialOption {
 		}
 		certFileName, keyFileName = config.GetString(component+".cert"), config.GetString(component+".key")
 	}
+	if certFileName == "" && keyFileName == "" {
+		return grpc.WithTransportCredentials(insecure.NewCredentials()), nil
+	}
+	if certFileName == "" || keyFileName == "" {
+		return nil, fmt.Errorf("%s.cert and %s.key must both be set", component, component)
+	}
 	caFileName := config.GetString("grpc.ca")
-	if certFileName == "" || keyFileName == "" || caFileName == "" {
-		return grpc.WithTransportCredentials(insecure.NewCredentials())
+	if caFileName == "" {
+		return nil, fmt.Errorf("%s cert and key are set but grpc.ca is not", component)
+	}
+	for _, p := range []string{certFileName, keyFileName, caFileName} {
+		if _, err := os.Stat(p); err != nil {
+			return nil, fmt.Errorf("stat TLS file %s: %w", p, err)
+		}
 	}
 
 	clientOptions := pemfile.Options{
@@ -189,17 +215,15 @@ func LoadClientTLS(config *util.ViperProxy, component string) grpc.DialOption {
 	}
 	clientProvider, err := pemfile.NewProvider(clientOptions)
 	if err != nil {
-		glog.Warningf("pemfile.NewProvider(%v) failed %v", clientOptions, err)
-		return grpc.WithTransportCredentials(insecure.NewCredentials())
+		return nil, fmt.Errorf("pemfile.NewProvider(%v) failed: %w", clientOptions, err)
 	}
 	clientRootOptions := pemfile.Options{
-		RootFile:        config.GetString("grpc.ca"),
+		RootFile:        caFileName,
 		RefreshDuration: CredRefreshingInterval,
 	}
 	clientRootProvider, err := pemfile.NewProvider(clientRootOptions)
 	if err != nil {
-		glog.Warningf("pemfile.NewProvider(%v) failed: %v", clientRootOptions, err)
-		return grpc.WithTransportCredentials(insecure.NewCredentials())
+		return nil, fmt.Errorf("pemfile.NewProvider(%v) failed: %w", clientRootOptions, err)
 	}
 	options := &advancedtls.Options{
 		IdentityOptions: advancedtls.IdentityCertificateOptions{
@@ -215,11 +239,10 @@ func LoadClientTLS(config *util.ViperProxy, component string) grpc.DialOption {
 	}
 	ta, err := advancedtls.NewClientCreds(options)
 	if err != nil {
-		glog.Warningf("advancedtls.NewClientCreds(%v) failed: %v", options, err)
-		return grpc.WithTransportCredentials(insecure.NewCredentials())
+		return nil, fmt.Errorf("advancedtls.NewClientCreds failed: %w", err)
 	}
 	wrapped := &SNIStrippingTransportCredentials{creds: ta}
-	return grpc.WithTransportCredentials(wrapped)
+	return grpc.WithTransportCredentials(wrapped), nil
 }
 
 // LoadHTTPClientFromFile creates an HTTP client using the https.client TLS
@@ -270,6 +293,16 @@ func LoadClientTLSHTTP(clientCertFile string) *tls.Config {
 		ClientCAs:  certPool,
 		ClientAuth: tls.RequireAndVerifyClientCert,
 	}
+}
+
+func parseAllowedCommonNames(commonNames string) map[string]bool {
+	allowed := make(map[string]bool)
+	for _, s := range strings.Split(commonNames, ",") {
+		if s = strings.TrimSpace(s); s != "" {
+			allowed[s] = true
+		}
+	}
+	return allowed
 }
 
 func (a Authenticator) Authenticate(params *advancedtls.HandshakeVerificationInfo) (*advancedtls.PostHandshakeVerificationResults, error) {

@@ -217,29 +217,29 @@ fn build_grpc_server_tls_acceptor(
     tls_policy: &TlsPolicy,
     allowed_wildcard_domain: &str,
     allowed_common_names: &[String],
-) -> Option<TlsAcceptor> {
-    if cert_path.is_empty() || key_path.is_empty() || ca_path.is_empty() {
-        return None;
+) -> Result<Option<TlsAcceptor>, Box<dyn std::error::Error>> {
+    if cert_path.is_empty() && key_path.is_empty() {
+        return Ok(None);
+    }
+    if cert_path.is_empty() || key_path.is_empty() {
+        return Err("grpc.volume.cert and grpc.volume.key must both be set".into());
+    }
+    if ca_path.is_empty() {
+        return Err("grpc.volume cert and key are set but grpc.ca is not".into());
     }
     let client_auth_policy = GrpcClientAuthPolicy {
         allowed_common_names: allowed_common_names.to_vec(),
         allowed_wildcard_domain: allowed_wildcard_domain.to_string(),
     };
-    let mut server_config = match build_rustls_server_config_with_grpc_client_auth(
+    let mut server_config = build_rustls_server_config_with_grpc_client_auth(
         cert_path,
         key_path,
         ca_path,
         tls_policy,
         &client_auth_policy,
-    ) {
-        Ok(server_config) => server_config,
-        Err(e) => {
-            warn!("Failed to build gRPC TLS config: {}", e);
-            return None;
-        }
-    };
+    )?;
     server_config.alpn_protocols = vec![b"h2".to_vec()];
-    Some(TlsAcceptor::from(Arc::new(server_config)))
+    Ok(Some(TlsAcceptor::from(Arc::new(server_config))))
 }
 
 fn build_http_server_tls_acceptor(
@@ -540,7 +540,7 @@ async fn run(
         &config.tls_policy,
         &config.grpc_allowed_wildcard_domain,
         &config.grpc_volume_allowed_common_names,
-    );
+    )?;
 
     info!("Starting HTTP server on {}", admin_addr);
     info!("Starting gRPC server on {}", grpc_addr);
@@ -1100,12 +1100,12 @@ mod tests {
 
         assert!(
             build_grpc_server_tls_acceptor(&cert, &key, "", &TlsPolicy::default(), "", &[])
-                .is_none()
+                .is_err()
         );
     }
 
     #[test]
-    fn test_grpc_server_tls_returns_none_when_files_are_missing() {
+    fn test_grpc_server_tls_errors_when_files_are_missing() {
         assert!(
             build_grpc_server_tls_acceptor(
                 "/missing/server.crt",
@@ -1115,12 +1115,12 @@ mod tests {
                 "",
                 &[],
             )
-            .is_none()
+            .is_err()
         );
     }
 
     #[test]
-    fn test_grpc_server_tls_disables_on_unsupported_tls_policy() {
+    fn test_grpc_server_tls_errors_on_unsupported_tls_policy() {
         let dir = tempfile::tempdir().unwrap();
         let cert = write_pem(
             &dir,
@@ -1151,7 +1151,7 @@ mod tests {
                 "",
                 &[],
             )
-            .is_none()
+            .is_err()
         );
     }
 
