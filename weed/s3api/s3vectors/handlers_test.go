@@ -27,6 +27,8 @@ type fakeVectors struct {
 	rows    []*vector_pb.Vector
 	created []*vector_pb.CreateIndexRequest
 	puts    []*vector_pb.PutVectorsRequest
+	gets    []*vector_pb.GetVectorsRequest
+	deletes []*vector_pb.DeleteVectorsRequest
 }
 
 func newFakeVectors(n int) *fakeVectors {
@@ -73,7 +75,13 @@ func (f *fakeVectors) CreateIndex(ctx context.Context, req *vector_pb.CreateInde
 }
 
 func (f *fakeVectors) GetVectors(ctx context.Context, req *vector_pb.GetVectorsRequest, opts ...grpc.CallOption) (*vector_pb.GetVectorsResponse, error) {
+	f.gets = append(f.gets, req)
 	return &vector_pb.GetVectorsResponse{}, nil
+}
+
+func (f *fakeVectors) DeleteVectors(ctx context.Context, req *vector_pb.DeleteVectorsRequest, opts ...grpc.CallOption) (*vector_pb.DeleteVectorsResponse, error) {
+	f.deletes = append(f.deletes, req)
+	return &vector_pb.DeleteVectorsResponse{}, nil
 }
 
 func (f *fakeVectors) PutVectors(ctx context.Context, req *vector_pb.PutVectorsRequest, opts ...grpc.CallOption) (*vector_pb.PutVectorsResponse, error) {
@@ -905,5 +913,57 @@ func TestDeleteVectorBucketPolicyRemovesLegacyDoc(t *testing.T) {
 	}
 	if doc := string(lookupEntry("vec-only").Extended[s3tables.ExtendedKeyPolicy]); doc != "" {
 		t.Fatalf("empty shared policy should be removed: %s", doc)
+	}
+}
+
+func keys(n int) []string {
+	out := make([]string, n)
+	for i := range out {
+		out[i] = "k"
+	}
+	return out
+}
+
+func TestVectorKeysBounds(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		keys []string
+		max  int
+		ok   bool
+	}{
+		{"empty", nil, vectorsMaxGetKeys, false},
+		{"one", []string{"a"}, vectorsMaxGetKeys, true},
+		{"get full", keys(vectorsMaxGetKeys), vectorsMaxGetKeys, true},
+		{"get over", keys(vectorsMaxGetKeys + 1), vectorsMaxGetKeys, false},
+		{"delete full", keys(vectorsMaxPutBatch), vectorsMaxPutBatch, true},
+		{"delete over", keys(vectorsMaxPutBatch + 1), vectorsMaxPutBatch, false},
+	} {
+		if err := vectorKeysBounds(tc.keys, tc.max); (err == nil) != tc.ok {
+			t.Fatalf("%s: accepted=%v, want %v", tc.name, err == nil, tc.ok)
+		}
+	}
+}
+
+// An out-of-window key list is rejected before the engine sees it.
+func TestVectorKeysBoundsRejectsBeforeEngine(t *testing.T) {
+	f := newFakeVectors(0)
+	s := &Server{vectors: f}
+	for _, tc := range []struct {
+		name    string
+		handler http.HandlerFunc
+		payload interface{}
+	}{
+		{"get empty", s.handleGetVectors, &GetVectorsRequest{}},
+		{"get over", s.handleGetVectors, &GetVectorsRequest{Keys: keys(vectorsMaxGetKeys + 1)}},
+		{"delete empty", s.handleDeleteVectors, &DeleteVectorsRequest{}},
+		{"delete over", s.handleDeleteVectors, &DeleteVectorsRequest{Keys: keys(vectorsMaxPutBatch + 1)}},
+	} {
+		w := postJSONAs(t, "", tc.handler, tc.payload)
+		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "ValidationException") {
+			t.Fatalf("%s: %d %s, want 400 ValidationException", tc.name, w.Code, w.Body.String())
+		}
+	}
+	if len(f.gets)+len(f.deletes) != 0 {
+		t.Fatalf("engine saw %d get/%d delete calls, want none", len(f.gets), len(f.deletes))
 	}
 }

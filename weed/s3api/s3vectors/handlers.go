@@ -1301,9 +1301,22 @@ func toOutputVectors(vectors []*vector_pb.Vector, returnData, returnMetadata boo
 	return out
 }
 
+// vectorKeysBounds enforces the AWS 1..max key list window; GetVectors is
+// capped lower than a PutVectors or DeleteVectors batch.
+func vectorKeysBounds(keys []string, max int) error {
+	if len(keys) == 0 || len(keys) > max {
+		return fmt.Errorf("keys must be between 1 and %d", max)
+	}
+	return nil
+}
+
 func (s *Server) handleGetVectors(w http.ResponseWriter, r *http.Request) {
 	var req GetVectorsRequest
 	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		return
+	}
+	if err := vectorKeysBounds(req.Keys, vectorsMaxGetKeys); err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
@@ -1409,6 +1422,7 @@ func (s *Server) handleListVectors(w http.ResponseWriter, r *http.Request) {
 // pages like a plain one does; vectorsMaxTopK is the AWS QueryVectors limit.
 const (
 	vectorsDefaultPage = 500
+	vectorsMaxGetKeys  = 100
 	vectorsMaxPutBatch = 500
 	vectorsMaxPage     = 1000
 	vectorsMaxListPage = 500
@@ -1466,6 +1480,10 @@ func (s *Server) listSegmentVectors(ctx context.Context, table *vector_pb.Table,
 func (s *Server) handleDeleteVectors(w http.ResponseWriter, r *http.Request) {
 	var req DeleteVectorsRequest
 	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		return
+	}
+	if err := vectorKeysBounds(req.Keys, vectorsMaxPutBatch); err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
