@@ -538,3 +538,16 @@ func TestRenameAdoptsAMarkedDestination(t *testing.T) {
 	require.NoError(t, json.Unmarshal(dest.Extended[ExtendedKeyMetadata], &metadata))
 	assert.Equal(t, "t2", metadata.Name)
 }
+
+// A marked record is no child either: its create cannot confirm under the
+// claim the delete holds, and an abandoned one would refuse the delete
+// forever. The delete removes it with the namespace.
+func TestDeleteNamespaceSkipsAnUnfinishedCreate(t *testing.T) {
+	fs, m := startRenameManager(t)
+	dropSeedTable(t, m, fs)
+	orphanMarkedRecord(fs, GetNamespacePath(renameTestBucket, "ns"), "late")
+
+	status, resp := runHandler(t, m, fs.Client, "DeleteNamespace", deleteNamespaceRequest(t))
+	require.Equal(t, http.StatusOK, status, "%+v", resp)
+	assert.Nil(t, fs.Get(GetTableBucketPath(renameTestBucket), "ns"))
+}

@@ -751,6 +751,12 @@ func (h *S3TablesHandler) handleDeleteNamespace(w http.ResponseWriter, r *http.R
 				return err
 			}
 			if entry.Entry != nil && !strings.HasPrefix(entry.Entry.Name, ".") {
+				// A record still marked by its create is absent to readers and
+				// cannot confirm under the claim this delete holds, so it is no
+				// child — the delete removes it with the namespace.
+				if isUnfinishedCreate(entry.Entry.Extended) {
+					continue
+				}
 				// Only consider it a child if it's a table (has metadata) or a file.
 				// Empty directories left by dropped tables or S3 clients should not
 				// prevent the namespace from being deleted.
