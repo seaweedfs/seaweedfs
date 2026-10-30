@@ -907,3 +907,24 @@ func TestDeleteVectorBucketPolicyRemovesLegacyDoc(t *testing.T) {
 		t.Fatalf("empty shared policy should be removed: %s", doc)
 	}
 }
+
+func TestVectorKeysBounds(t *testing.T) {
+	full := make([]string, vectorsMaxPutBatch)
+	for i := range full {
+		full[i] = "k"
+	}
+	for _, tc := range []struct {
+		name string
+		keys []string
+		ok   bool
+	}{
+		{"empty", nil, false},
+		{"one", []string{"a"}, true},
+		{"full", full, true},
+		{"over", append(append([]string{}, full...), "extra"), false},
+	} {
+		if err := vectorKeysBounds(tc.keys); (err == nil) != tc.ok {
+			t.Fatalf("%s: accepted=%v, want %v", tc.name, err == nil, tc.ok)
+		}
+	}
+}

@@ -1301,9 +1301,22 @@ func toOutputVectors(vectors []*vector_pb.Vector, returnData, returnMetadata boo
 	return out
 }
 
+// vectorKeysBounds enforces the AWS 1..vectorsMaxPutBatch key list window
+// GetVectors and DeleteVectors share with a PutVectors batch.
+func vectorKeysBounds(keys []string) error {
+	if len(keys) == 0 || len(keys) > vectorsMaxPutBatch {
+		return fmt.Errorf("keys must be between 1 and %d", vectorsMaxPutBatch)
+	}
+	return nil
+}
+
 func (s *Server) handleGetVectors(w http.ResponseWriter, r *http.Request) {
 	var req GetVectorsRequest
 	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		return
+	}
+	if err := vectorKeysBounds(req.Keys); err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
@@ -1466,6 +1479,10 @@ func (s *Server) listSegmentVectors(ctx context.Context, table *vector_pb.Table,
 func (s *Server) handleDeleteVectors(w http.ResponseWriter, r *http.Request) {
 	var req DeleteVectorsRequest
 	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		return
+	}
+	if err := vectorKeysBounds(req.Keys); err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
