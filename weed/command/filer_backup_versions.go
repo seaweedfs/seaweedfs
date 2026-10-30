@@ -175,17 +175,46 @@ func objectKeyOf(versionsDir util.FullPath) util.FullPath {
 // .versions directory: a regular-path entry (the null object, or its delete)
 // can coexist with a pointer that names a live version, and only the pointer
 // decides the flattened key — e.g. deleting the null object must not remove a
-// flattened key whose current version is live. Keys with no .versions sibling
-// are left to the generic path.
+// flattened key whose current version is live. A rename touches two keys, so
+// each side is resolved on its own; when exactly one side is versioned the
+// other is handed to the generic path as a lone delete or create. Keys with
+// no .versions sibling are left to the generic path entirely.
 func (f *s3VersionFlattener) processRegularPath(resp *filer_pb.SubscribeMetadataResponse, targetDir string, message *filer_pb.EventNotification) (bool, error) {
-	dir, entry := targetDir, message.NewEntry
-	if entry == nil {
-		dir, entry = resp.Directory, message.OldEntry
+	oldHandled, err := f.refreshIfVersioned(util.FullPath(resp.Directory), message.OldEntry, message.Signatures)
+	if err != nil {
+		return true, err
 	}
+	newHandled := oldHandled
+	if !filer_pb.IsUpdate(resp) {
+		newHandled, err = f.refreshIfVersioned(util.FullPath(targetDir), message.NewEntry, message.Signatures)
+		if err != nil {
+			return true, err
+		}
+	}
+	if !filer_pb.IsRename(resp) || oldHandled == newHandled {
+		return oldHandled || newHandled, nil
+	}
+	if oldHandled {
+		// The flattened old key keeps whatever its pointer still names; the
+		// generic path only needs to create the moved entry.
+		message.OldEntry = nil
+	} else {
+		// The flattened old key held the moved file; the generic path only
+		// needs to delete it.
+		message.NewEntry = nil
+	}
+	return false, nil
+}
+
+// refreshIfVersioned re-resolves the flattened key of dir/entry.Name when a
+// .versions directory sits next to it, reporting whether that sibling exists.
+// The pointer decides what the flattened key holds, so a regular-path event
+// only refreshes through it and never writes the flattened key directly.
+func (f *s3VersionFlattener) refreshIfVersioned(dir util.FullPath, entry *filer_pb.Entry, signatures []int32) (bool, error) {
 	if entry == nil || entry.IsDirectory {
 		return false, nil
 	}
-	versionsDir := util.FullPath(dir).Child(entry.Name + s3_constants.VersionsFolder)
+	versionsDir := dir.Child(entry.Name + s3_constants.VersionsFolder)
 	dirEntry, _, _, err := filer_pb.GetEntry(context.Background(), f.filerSource, versionsDir)
 	if err != nil {
 		if errors.Is(err, filer_pb.ErrNotFound) {
@@ -193,7 +222,7 @@ func (f *s3VersionFlattener) processRegularPath(resp *filer_pb.SubscribeMetadata
 		}
 		return true, err
 	}
-	return true, f.applyLatest(versionsDir, dirEntry, false, message.Signatures)
+	return true, f.applyLatest(versionsDir, dirEntry, false, signatures)
 }
 
 // applyLatest writes the object a .versions pointer currently names to the
