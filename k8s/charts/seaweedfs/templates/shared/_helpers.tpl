@@ -49,7 +49,12 @@ Expand the name of the chart.
 
 {{/* namespaceOverride, or the release namespace */}}
 {{- define "seaweedfs.namespace" -}}
-{{- default .Release.Namespace .Values.namespaceOverride | trunc 63 | trimSuffix "-" -}}
+{{- if .Values.namespaceOverride -}}
+{{-   if or (gt (len .Values.namespaceOverride) 63) (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" .Values.namespaceOverride)) -}}
+{{-     fail (printf "namespaceOverride %q is not a valid namespace name" .Values.namespaceOverride) -}}
+{{-   end -}}
+{{- end -}}
+{{- default .Release.Namespace .Values.namespaceOverride -}}
 {{- end -}}
 
 {{/*
