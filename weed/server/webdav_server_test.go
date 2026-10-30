@@ -577,9 +577,9 @@ func TestCopyMoveGuardHandler_MoveEmptyOverwriteValue(t *testing.T) {
 	}
 }
 
-// An overwriting MOVE of a collection onto a non-empty collection deletes the
-// destination first: the deferred rename only merges over an empty one, so
-// this case takes the depth-infinity delete the suppressed RemoveAll ran.
+// An overwriting MOVE of a collection onto a non-empty collection removes the
+// destination: the deferred rename only merges over an empty one, so this
+// case parks the target aside and deletes it once the move has landed.
 func TestCopyMoveGuardHandler_MoveDirOntoNonEmptyDir(t *testing.T) {
 	ctx := context.Background()
 	fs := webdav.NewMemFS()
@@ -658,6 +658,77 @@ type failRenameFS struct {
 
 func (f failRenameFS) Rename(context.Context, string, string) error {
 	return fmt.Errorf("rename refused")
+}
+
+type failPairRenameFS struct {
+	webdav.FileSystem
+	oldName, newName string
+}
+
+func (f failPairRenameFS) Rename(ctx context.Context, oldName, newName string) error {
+	if oldName == f.oldName && newName == f.newName {
+		return fmt.Errorf("rename refused")
+	}
+	return f.FileSystem.Rename(ctx, oldName, newName)
+}
+
+// A MOVE of a collection onto a non-empty collection whose rename is refused
+// (cross-collection moves, bucket targets) must bring the destination back:
+// it is only parked aside while the winning rename runs.
+func TestCopyMoveGuardHandler_MoveDirOntoNonEmptyDirRestoresOnRenameFailure(t *testing.T) {
+	ctx := context.Background()
+	mem := webdav.NewMemFS()
+	put := func(name, data string) {
+		f, err := mem.OpenFile(ctx, name, os.O_RDWR|os.O_CREATE, 0644)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.Write([]byte(data)); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := mem.Mkdir(ctx, "/src", 0755); err != nil {
+		t.Fatal(err)
+	}
+	put("/src/s.txt", "s")
+	if err := mem.Mkdir(ctx, "/dst", 0755); err != nil {
+		t.Fatal(err)
+	}
+	put("/dst/d.txt", "d")
+
+	fs := failPairRenameFS{mem, "/src", "/dst"}
+	h := copyMoveGuardHandler{
+		fs:   fs,
+		next: &webdav.Handler{FileSystem: fs, LockSystem: webdav.NewMemLS()},
+	}
+	req := httptest.NewRequest("MOVE", "http://x/src", nil)
+	req.Header.Set("Destination", "http://x/dst")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	if r, err := mem.OpenFile(ctx, "/dst/d.txt", os.O_RDONLY, 0); assert.NoError(t, err) {
+		data, err := io.ReadAll(r)
+		assert.NoError(t, err)
+		assert.Equal(t, "d", string(data))
+		r.Close()
+	}
+	if r, err := mem.OpenFile(ctx, "/src/s.txt", os.O_RDONLY, 0); assert.NoError(t, err) {
+		r.Close()
+	}
+	root, err := mem.OpenFile(ctx, "/", os.O_RDONLY, 0)
+	if assert.NoError(t, err) {
+		entries, err := root.Readdir(-1)
+		assert.NoError(t, err)
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		assert.ElementsMatch(t, []string{"src", "dst"}, names)
+	}
 }
 
 // A MOVE whose rename fails must leave the existing destination in place:

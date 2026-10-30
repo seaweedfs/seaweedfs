@@ -100,7 +100,8 @@ type copyMoveGuardHandler struct {
 // it: x/net removes an existing MOVE destination before Rename, leaving it
 // lost when the rename cannot complete. The filer's rename replaces the
 // target in one transaction, so the delete is skipped here; a file vs.
-// collection clash cannot merge in place and takes the delete + rename path.
+// collection clash cannot merge in place and moves the target aside, which
+// the refused rename then restores.
 type deferredDeleteFS struct {
 	webdav.FileSystem
 	dst string
@@ -115,8 +116,9 @@ func (f deferredDeleteFS) RemoveAll(ctx context.Context, name string) error {
 
 func (f deferredDeleteFS) Rename(ctx context.Context, oldName, newName string) error {
 	// a file vs. collection clash cannot merge in place, and a collection
-	// only replaces an empty one — delete those targets first, as moveFiles
-	// would have done itself
+	// only replaces an empty one — those targets are moved aside rather
+	// than deleted outright, as moveFiles would have done, so a refused
+	// rename leaves the destination's contents to restore
 	src, srcErr := f.FileSystem.Stat(ctx, oldName)
 	dst, dstErr := f.FileSystem.Stat(ctx, newName)
 	if srcErr == nil && dstErr == nil {
@@ -129,12 +131,31 @@ func (f deferredDeleteFS) Rename(ctx context.Context, oldName, newName string) e
 			clashing = nonEmpty
 		}
 		if clashing {
-			if err := f.FileSystem.RemoveAll(ctx, newName); err != nil {
-				return err
-			}
+			return renameOverTarget(ctx, f.FileSystem, oldName, newName)
 		}
 	}
 	return f.FileSystem.Rename(ctx, oldName, newName)
+}
+
+// renameOverTarget parks a clashing rename target under a hidden sibling
+// name so a refused rename can put it back; the parked entry is only
+// removed once the move has landed.
+func renameOverTarget(ctx context.Context, fs webdav.FileSystem, oldName, newName string) error {
+	dir, base := path.Split(strings.TrimRight(newName, "/"))
+	spare := fmt.Sprintf("%s.%s.webdav-moved-%x", dir, base, uint32(util.RandomInt32()))
+	if err := fs.Rename(ctx, newName, spare); err != nil {
+		return err
+	}
+	if err := fs.Rename(ctx, oldName, newName); err != nil {
+		if backErr := fs.Rename(ctx, spare, newName); backErr != nil {
+			glog.WarningfCtx(ctx, "restore moved-aside %s: %v", newName, backErr)
+		}
+		return err
+	}
+	if err := fs.RemoveAll(ctx, spare); err != nil {
+		glog.WarningfCtx(ctx, "remove moved-aside %s: %v", spare, err)
+	}
+	return nil
 }
 
 // nonEmptyDir reports whether a collection holds entries: the rename below
