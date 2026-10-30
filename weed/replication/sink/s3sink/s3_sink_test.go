@@ -94,6 +94,48 @@ func newCapturingS3Sink(t *testing.T) (*S3Sink, *capturePutRoundTripper) {
 	return s, rt
 }
 
+func TestS3SinkEntryReaderSupportsConcurrentParts(t *testing.T) {
+	sink := &S3Sink{uploaderConcurrency: 8}
+	entry := &filer_pb.Entry{
+		Attributes: &filer_pb.FuseAttributes{FileSize: 100},
+		Chunks: []*filer_pb.FileChunk{
+			{FileId: "1,01637037d6", Size: 100},
+		},
+	}
+
+	reader, closeFn, err := sink.entryReader(entry)
+	require.NoError(t, err)
+	defer closeFn()
+
+	// s3manager only splits a body into parallel part readers when it is both
+	// an io.ReaderAt and an io.Seeker; the reader must be safe for concurrent
+	// ReadAt so parts do not evict one another's buffered chunk.
+	_, isReaderAt := reader.(io.ReaderAt)
+	seeker, isSeeker := reader.(io.Seeker)
+	require.True(t, isReaderAt, "upload body should support concurrent ReadAt")
+	require.True(t, isSeeker, "upload body should be seekable")
+
+	size, err := seeker.Seek(0, io.SeekEnd)
+	require.NoError(t, err)
+	require.Equal(t, int64(100), size)
+}
+
+func TestS3SinkEntryReaderForInlineContent(t *testing.T) {
+	sink := &S3Sink{uploaderConcurrency: 8}
+	entry := &filer_pb.Entry{
+		Attributes: &filer_pb.FuseAttributes{FileSize: 4},
+		Content:    []byte("data"),
+	}
+
+	reader, closeFn, err := sink.entryReader(entry)
+	require.NoError(t, err)
+	defer closeFn()
+
+	content, err := io.ReadAll(reader)
+	require.NoError(t, err)
+	require.Equal(t, []byte("data"), content)
+}
+
 func TestS3SinkCreateEntryPassesMimeAsContentType(t *testing.T) {
 	sink, rt := newCapturingS3Sink(t)
 	entry := &filer_pb.Entry{

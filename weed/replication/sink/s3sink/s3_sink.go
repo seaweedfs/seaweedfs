@@ -1,8 +1,12 @@
 package S3Sink
 
 import (
+	"bytes"
+	"context"
 	"encoding/base64"
 	"fmt"
+	"io"
+	"math"
 	"net/url"
 	"strconv"
 	"strings"
@@ -22,6 +26,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/replication/sink"
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/chunk_cache"
 )
 
 type S3Sink struct {
@@ -164,15 +169,21 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures 
 		return nil
 	}
 
-	reader := filer.NewFileReader(s3sink.filerSource, entry)
+	reader, closeReader, err := s3sink.entryReader(entry)
+	if err != nil {
+		return err
+	}
 
 	// Decrypt SSE-encrypted objects so the destination receives plaintext
 	decryptedReader, err := repl_util.MaybeDecryptReader(reader, entry)
 	if err != nil {
-		repl_util.CloseReader(reader)
+		closeReader()
 		return fmt.Errorf("decrypt SSE object: %w", err)
 	}
-	defer repl_util.CloseMaybeDecryptedReader(reader, decryptedReader)
+	defer func() {
+		repl_util.CloseMaybeDecryptedReader(reader, decryptedReader)
+		closeReader()
+	}()
 
 	// Create an uploader with the session and custom options
 	uploader := s3manager.NewUploaderWithClient(s3sink.conn, func(u *s3manager.Uploader) {
@@ -220,14 +231,33 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures 
 		uploadInput.ContentMD5 = aws.String(base64.StdEncoding.EncodeToString([]byte(entry.Attributes.Md5)))
 	}
 	_, err = uploader.Upload(&uploadInput)
-	if err != nil {
-		if sourceErr := filer.ReaderSourceError(reader); sourceErr != nil {
-			return fmt.Errorf("read source %s: %w", key, sourceErr)
-		}
-	}
 
 	return err
 
+}
+
+// entryReader returns a reader over the entry's content for the uploader.
+// Chunked entries are read through a concurrent-safe ReaderAt with its own
+// chunk cache, so parallel part readers each fetch the ranges they need; a
+// single stream reader buffers only one chunk and concurrent parts would keep
+// evicting it and refetching from the volume servers.
+func (s3sink *S3Sink) entryReader(entry *filer_pb.Entry) (reader io.Reader, closeFn func(), err error) {
+	if len(entry.Content) > 0 {
+		return bytes.NewReader(entry.Content), func() {}, nil
+	}
+
+	lookupFileIdFn := filer.LookupFn(s3sink.filerSource)
+	fileSize := int64(filer.FileSize(entry))
+	chunkViews, err := filer.ViewFromChunks(context.Background(), lookupFileIdFn, entry.GetChunks(), 0, math.MaxInt64)
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolve chunks: %w", err)
+	}
+
+	concurrency := max(s3sink.uploaderConcurrency, 1) + filer.DefaultPrefetchCount
+	readerAt := filer.NewChunkReaderAtFromClient(context.Background(),
+		filer.NewReaderCache(concurrency, chunk_cache.NewChunkCacheInMemory(int64(concurrency)), lookupFileIdFn, nil),
+		chunkViews, fileSize, filer.DefaultPrefetchCount)
+	return io.NewSectionReader(readerAt, 0, fileSize), func() { readerAt.Close() }, nil
 }
 
 func (s3sink *S3Sink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool, signatures []int32) (foundExistingEntry bool, err error) {
