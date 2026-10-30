@@ -1111,6 +1111,14 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 			if err != nil {
 				return err
 			}
+			// dataPath was resolved on the earlier read, but the claim and the
+			// purge run on this one: an update that moved the location in
+			// between must send the delete back instead of purging a stale dir.
+			if purge, err := tablePurgeDir(entry, tablePath, bucketName); err != nil {
+				return err
+			} else if purge != dataPath {
+				return ErrConcurrentUpdate
+			}
 			snapshot := snapshotExtended(entry.Extended)
 			if err := h.claimCatalogRecord(r.Context(), client, tablePath, snapshot, "delete"); err != nil {
 				return err
@@ -1149,6 +1157,14 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 		entry, err := h.lookupEntry(r.Context(), client, tablePath)
 		if err != nil {
 			return err
+		}
+		// Same staleness check as the decoupled path: a location update that
+		// landed since the authorized read turns this delete away, or it would
+		// remove the name path the record no longer stores its data under.
+		if purge, err := tablePurgeDir(entry, tablePath, bucketName); err != nil {
+			return err
+		} else if purge != tablePath {
+			return ErrConcurrentUpdate
 		}
 		claimed := snapshotExtended(entry.Extended)
 		claimed[ExtendedKeyDeleting] = []byte("delete")
@@ -1269,6 +1285,26 @@ func tableMetadata(entry *filer_pb.Entry) ([]byte, error) {
 		return nil, fmt.Errorf("%w: %s", ErrAttributeNotFound, ExtendedKeyMetadata)
 	}
 	return data, nil
+}
+
+// tablePurgeDir resolves where a delete must purge from the metadata stored on
+// entry, the way handleDeleteTable resolved dataPath on its authorized read: a
+// location inside the bucket and off the name path is decoupled, anything else
+// leaves the data under the name path.
+func tablePurgeDir(entry *filer_pb.Entry, tablePath, bucketName string) (string, error) {
+	data, ok := entry.Extended[ExtendedKeyMetadata]
+	if !ok {
+		return "", filer_pb.ErrNotFound
+	}
+	var metadata tableMetadataInternal
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		return "", fmt.Errorf("failed to unmarshal table metadata: %w", err)
+	}
+	dataPath := TableDataDirFromMetadataLocation(metadata.MetadataLocation)
+	if dataPath != "" && dataPath != tablePath && strings.HasPrefix(dataPath+"/", GetTableBucketPath(bucketName)+"/") {
+		return dataPath, nil
+	}
+	return tablePath, nil
 }
 
 // canReadEntry reports whether the principal may read the catalog entry a
