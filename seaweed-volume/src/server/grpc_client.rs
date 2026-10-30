@@ -60,12 +60,14 @@ pub fn load_outgoing_grpc_tls(
     config: &VolumeServerConfig,
 ) -> Result<Option<OutgoingGrpcTlsConfig>, GrpcClientError> {
     // prefer a dedicated client certificate: CAs may issue certs with only one of the serverAuth/clientAuth EKUs
+    let partial_client_pair =
+        config.grpc_client_cert_file.is_empty() != config.grpc_client_key_file.is_empty();
     let (cert_file, key_file) = if !config.grpc_client_cert_file.is_empty()
         && !config.grpc_client_key_file.is_empty()
     {
         (&config.grpc_client_cert_file, &config.grpc_client_key_file)
     } else {
-        if !config.grpc_client_cert_file.is_empty() || !config.grpc_client_key_file.is_empty() {
+        if partial_client_pair {
             tracing::warn!(
                 "grpc.volume.client_cert and grpc.volume.client_key must both be set, falling back to grpc.volume.cert and grpc.volume.key"
             );
@@ -73,6 +75,11 @@ pub fn load_outgoing_grpc_tls(
         (&config.grpc_cert_file, &config.grpc_key_file)
     };
     if cert_file.is_empty() && key_file.is_empty() {
+        if partial_client_pair {
+            return Err(GrpcClientError(
+                "grpc.volume.client_cert and grpc.volume.client_key must both be set".to_string(),
+            ));
+        }
         return Ok(None);
     }
     if cert_file.is_empty() || key_file.is_empty() {
