@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"io"
@@ -80,6 +81,11 @@ func (v *Volume) IncrementalBackup(volumeServer pb.ServerAddress, grpcDialOption
 	}
 
 	writeOffset := int64(startFromOffset)
+	indexOffset := int64(cursor.entryCount) * NeedleMapEntrySize
+	// only the in-memory map can reload rows it just wrote to the index
+	// file; other maps fall back to regenerating the index from .dat
+	cnm, canReplayIndex := v.nm.(*NeedleMap)
+	receivedIndex := false
 
 	err = operation.WithVolumeServerClient(false, volumeServer, grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
 
@@ -109,6 +115,18 @@ func (v *Volume) IncrementalBackup(volumeServer pb.ServerAddress, grpcDialOption
 			if err := v.UnavailableError(); err != nil {
 				return err
 			}
+			if len(resp.IdxContent) > 0 {
+				receivedIndex = true
+				if !canReplayIndex {
+					continue
+				}
+				n, writeErr := cnm.IndexFile().WriteAt(resp.IdxContent, indexOffset)
+				if writeErr != nil {
+					return writeErr
+				}
+				indexOffset += int64(n)
+				continue
+			}
 			n, writeErr := v.DataBackend.WriteAt(resp.FileContent, writeOffset)
 			if writeErr != nil {
 				return writeErr
@@ -121,7 +139,37 @@ func (v *Volume) IncrementalBackup(volumeServer pb.ServerAddress, grpcDialOption
 	})
 
 	if err != nil {
+		// Roll the files back to the pre-copy boundary: leftover bytes could
+		// split a row or be mistaken for applied ones on the next run.
+		if receivedIndex && canReplayIndex {
+			_ = cnm.truncateIndex(int64(cursor.entryCount) * NeedleMapEntrySize)
+		}
+		if writeOffset > int64(startFromOffset) {
+			_ = v.DataBackend.Truncate(int64(startFromOffset))
+		}
 		return err
+	}
+
+	if receivedIndex && canReplayIndex {
+		baseOffset := int64(cursor.entryCount) * NeedleMapEntrySize
+		// a failed replay is rolled back to the pre-copy boundary and the
+		// map rebuilt from the truncated index, so nothing keyed by the
+		// half-replayed tail is left behind
+		rollback := func() {
+			_ = cnm.truncateIndex(baseOffset)
+			_ = v.DataBackend.Truncate(int64(startFromOffset))
+			cnm.reset()
+			_ = cnm.DoOffsetLoading(v, cnm.IndexFile(), 0)
+		}
+		if err := cnm.truncateIndex(indexOffset); err != nil {
+			rollback()
+			return err
+		}
+		if err := cnm.DoOffsetLoading(v, cnm.IndexFile(), uint64(cursor.entryCount)); err != nil {
+			rollback()
+			return err
+		}
+		return nil
 	}
 
 	// add to needle map
@@ -144,12 +192,16 @@ type backupCursor struct {
 
 func (v *Volume) backupCursor() (backupCursor, error) {
 	key, offset, size, entryCount, err := v.locateLastAppendEntry()
-	if err != nil || offset.IsZero() {
+	if err != nil {
 		return backupCursor{entryCount: entryCount}, err
 	}
 	entriesHash, err := v.hashIndexEntries(entryCount)
 	if err != nil {
 		return backupCursor{}, err
+	}
+	if offset.IsZero() {
+		// an index-only tombstone has no needle to read; key and size carry it
+		return backupCursor{entryCount: entryCount, key: key, size: size, entriesHash: entriesHash}, nil
 	}
 	n, err := v.readNeedleAt(offset)
 	if err != nil {
@@ -258,12 +310,15 @@ var ErrIncrementalCopyDiverged = fmt.Errorf("local copy diverged from the replic
 // ResumeByLastEntry resumes an incremental copy by index position instead of
 // by appendAtNs, whose stamps differ across replicas for the same needle.
 // The replica's entry at position entryCount-1 must match the backup's last
-// entry in key, size and cookie, and its first entryCount entries must hash
-// the same — a boundary match alone is not proof, since replicated writes can
-// land in a different order on this replica. The copy then continues from the
-// replica's entry at position entryCount, so nothing is skipped or appended
-// twice.
-func (v *Volume) ResumeByLastEntry(entryCount uint64, key NeedleId, cookie uint32, size Size, entriesHash uint64) (offset Offset, upToDate bool, err error) {
+// entry in key and size — and cookie, unless it is an index-only tombstone
+// (a remote-tier delete), which has no .dat record to read a cookie from —
+// and its first entryCount entries must hash the same — a boundary match
+// alone is not proof, since replicated writes can land in a different order
+// on this replica. The copy then continues from the replica's next entry
+// with a .dat record; index-only rows ride the index stream, so nothing is
+// skipped or appended twice. indexBound caps the scan to the index size the
+// caller captured, so rows appended after that point stay out of this copy.
+func (v *Volume) ResumeByLastEntry(entryCount uint64, key NeedleId, cookie uint32, size Size, entriesHash uint64, indexBound uint64) (offset Offset, upToDate bool, err error) {
 
 	fileSize := int64(v.IndexFileSize())
 	if fileSize%NeedleMapEntrySize != 0 {
@@ -285,19 +340,17 @@ func (v *Volume) ResumeByLastEntry(entryCount uint64, key NeedleId, cookie uint3
 		err = ErrIncrementalCopyDiverged
 		return
 	}
-	// a remote-tier tombstone sits in the index with no .dat record to verify
-	if lastOffset.IsZero() {
-		err = ErrIncrementalCopyDiverged
-		return
-	}
-	n, e := v.readNeedleAt(lastOffset)
-	if e != nil {
-		err = e
-		return
-	}
-	if uint32(n.Cookie) != cookie {
-		err = ErrIncrementalCopyDiverged
-		return
+	if !lastOffset.IsZero() {
+		var n *needle.Needle
+		n, e = v.readNeedleAt(lastOffset)
+		if e != nil {
+			err = e
+			return
+		}
+		if uint32(n.Cookie) != cookie {
+			err = ErrIncrementalCopyDiverged
+			return
+		}
 	}
 
 	prefixHash, e := v.hashIndexEntries(entryCount)
@@ -314,9 +367,17 @@ func (v *Volume) ResumeByLastEntry(entryCount uint64, key NeedleId, cookie uint3
 		upToDate = true
 		return
 	}
-	offset, err = v.readOffsetFromIndex(int64(entryCount))
-	if err == nil && offset.ToActualOffset() <= 0 {
-		err = ErrIncrementalCopyDiverged
+	scanEnd := int64(serverCount)
+	if boundRows := int64(indexBound / uint64(NeedleMapEntrySize)); boundRows < scanEnd {
+		scanEnd = boundRows
+	}
+	for i := int64(entryCount); i < scanEnd; i++ {
+		if offset, err = v.readOffsetFromIndex(i); err != nil {
+			return
+		}
+		if !offset.IsZero() {
+			return
+		}
 	}
 	return
 }
@@ -454,6 +515,50 @@ func (v *Volume) readIndexEntry(m int64) (key NeedleId, offset Offset, size Size
 func (v *Volume) readOffsetFromIndex(m int64) (Offset, error) {
 	_, offset, _, err := v.readIndexEntry(m)
 	return offset, err
+}
+
+// DatSizeCoveredByIndex returns the .dat end of the last record the index
+// rows before indexSize cover, or the superblock size when no row inside the
+// bound names a record. Rows are not always in .dat order — rebuilds can
+// write the .idx sorted by key — so the bound comes from the maximum offset:
+// records do not overlap, so the highest offset names the highest end.
+// Records appended after the index bound — including staged writes whose
+// rows are not published yet — lie past it, so a copy must not stream them:
+// they would reach the backup without their row and be appended again on the
+// next run.
+func (v *Volume) DatSizeCoveredByIndex(indexSize int64) (int64, error) {
+	indexFile, err := os.OpenFile(v.FileName(".idx"), os.O_RDONLY, 0644)
+	if err != nil {
+		return 0, err
+	}
+	defer indexFile.Close()
+
+	boundRows := indexSize / NeedleMapEntrySize
+	row := int64(0)
+	maxActualOffset := int64(-1)
+	err = idx.WalkIndexFile(indexFile, 0, func(_ NeedleId, offset Offset, _ Size) error {
+		if row >= boundRows {
+			return errStopIdxWalk
+		}
+		row++
+		if !offset.IsZero() {
+			if actualOffset := offset.ToActualOffset(); actualOffset > maxActualOffset {
+				maxActualOffset = actualOffset
+			}
+		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, errStopIdxWalk) {
+		return 0, err
+	}
+	if maxActualOffset < 0 {
+		return int64(v.SuperBlock.BlockSize()), nil
+	}
+	_, _, bodyLength, err := needle.ReadNeedleHeader(v.DataBackend, v.SuperBlock.Version, maxActualOffset)
+	if err != nil {
+		return 0, err
+	}
+	return maxActualOffset + NeedleHeaderSize + bodyLength, nil
 }
 
 // generate the volume idx

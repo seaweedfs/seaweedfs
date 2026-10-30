@@ -4891,11 +4891,15 @@ impl Volume {
     /// Resume an incremental copy by index position instead of by append_at_ns,
     /// whose stamps differ across replicas for the same needle. The replica's
     /// entry at position entry_count-1 must match the backup's last entry in
-    /// key, size and cookie, and its first entry_count entries must hash the
-    /// same — a boundary match alone is not proof, since replicated writes can
-    /// land in a different order on this replica. The copy then continues from
-    /// the replica's entry at position entry_count, so nothing is skipped or
-    /// appended twice.
+    /// key and size — and cookie, unless it is an index-only tombstone
+    /// (a remote-tier delete), which has no .dat record to read a cookie
+    /// from — and its first entry_count entries must hash the same — a
+    /// boundary match alone is not proof, since replicated writes can land
+    /// in a different order on this replica. The copy then continues from the
+    /// replica's next entry with a .dat record; index-only rows ride the
+    /// index stream, so nothing is skipped or appended twice. index_bound
+    /// caps the scan to the index size the caller captured, so rows appended
+    /// after that point stay out of this copy.
     /// Mirrors Go's ResumeByLastEntry in weed/storage/volume_backup.go.
     /// Returns (offset, up_to_date).
     pub fn resume_by_last_entry(
@@ -4905,6 +4909,7 @@ impl Volume {
         cookie: Cookie,
         size: Size,
         entries_hash: u64,
+        index_bound: u64,
     ) -> Result<(Offset, bool), VolumeError> {
         let io = self.io.read().unwrap();
         let file_size = io.nm.as_ref().map_or(0, |nm| nm.index_file_size()) as i64;
@@ -4924,15 +4929,13 @@ impl Volume {
         if last_key != key || last_size != size {
             return Err(VolumeError::IncrementalCopyDiverged);
         }
-        // a remote-tier tombstone sits in the index with no .dat record to verify
-        if last_offset.is_zero() {
-            return Err(VolumeError::IncrementalCopyDiverged);
-        }
-        let mut header_buf = [0u8; NEEDLE_HEADER_SIZE];
-        self.read_exact_at_backend(&io, &mut header_buf, last_offset.to_actual_offset() as u64)?;
-        let (last_cookie, _id, _s) = Needle::parse_header(&header_buf);
-        if last_cookie != cookie {
-            return Err(VolumeError::IncrementalCopyDiverged);
+        if !last_offset.is_zero() {
+            let mut header_buf = [0u8; NEEDLE_HEADER_SIZE];
+            self.read_exact_at_backend(&io, &mut header_buf, last_offset.to_actual_offset() as u64)?;
+            let (last_cookie, _id, _s) = Needle::parse_header(&header_buf);
+            if last_cookie != cookie {
+                return Err(VolumeError::IncrementalCopyDiverged);
+            }
         }
 
         if self.hash_index_entries(entry_count)? != entries_hash {
@@ -4942,11 +4945,17 @@ impl Volume {
         if server_count == entry_count {
             return Ok((Offset::default(), true));
         }
-        let (_k, offset, _s) = self.read_index_entry(entry_count as i64)?;
-        if offset.to_actual_offset() <= 0 {
-            return Err(VolumeError::IncrementalCopyDiverged);
+        let scan_end = std::cmp::min(
+            server_count as i64,
+            (index_bound / NEEDLE_MAP_ENTRY_SIZE as u64) as i64,
+        );
+        for i in entry_count as i64..scan_end {
+            let (_k, offset, _s) = self.read_index_entry(i)?;
+            if !offset.is_zero() {
+                return Ok((offset, false));
+            }
         }
-        Ok((offset, false))
+        Ok((Offset::default(), false))
     }
 
     /// Write a raw needle blob at a specific offset in the .dat file.
@@ -5166,6 +5175,67 @@ impl Volume {
 
     pub fn dat_file_size(&self) -> io::Result<u64> {
         self.current_dat_file_size()
+    }
+
+    /// Size of the .idx file in bytes, from the needle map's append offset.
+    /// Mirrors Go's Volume.IndexFileSize.
+    pub fn index_file_size(&self) -> u64 {
+        self.io
+            .read()
+            .unwrap()
+            .nm
+            .as_ref()
+            .map_or(0, |nm| nm.index_file_size())
+    }
+
+    /// The .dat and .idx sizes read while excluding writes, so a row inside
+    /// the index bound always has its record inside the data bound.
+    /// Mirrors Go's Volume.FileStat.
+    pub(crate) fn file_stat(&self) -> io::Result<(u64, u64)> {
+        let _guard = self.data_file_access_control.read_lock();
+        let io = self.io.read().unwrap();
+        let dat_size = self.current_dat_file_size_io(&io)?;
+        let idx_size = io.nm.as_ref().map_or(0, |nm| nm.index_file_size());
+        Ok((dat_size, idx_size))
+    }
+
+    /// .dat end of the last record the index rows before `index_size`
+    /// cover, or the superblock size when no row inside the bound names a
+    /// record. Rows are not always in .dat order — rebuilds can write the
+    /// .idx sorted by key — so the bound comes from the maximum offset:
+    /// records do not overlap, so the highest offset names the highest end.
+    /// Records appended after the bound — including staged writes whose rows
+    /// are not published yet — lie past it, so a copy must not stream them.
+    /// Mirrors Go's DatSizeCoveredByIndex in weed/storage/volume_backup.go.
+    pub(crate) fn dat_size_covered_by_index(&self, index_size: u64) -> Result<u64, VolumeError> {
+        let bound_rows = index_size / NEEDLE_MAP_ENTRY_SIZE as u64;
+        let idx_path = self.file_name(".idx");
+        let idx_file = File::open(&idx_path)?;
+        let mut max_actual_offset: i64 = -1;
+        let mut buf = [0u8; NEEDLE_MAP_ENTRY_SIZE];
+        let mut reader = io::BufReader::new(idx_file);
+        for _ in 0..bound_rows {
+            match reader.read_exact(&mut buf) {
+                Ok(()) => {}
+                Err(ref e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
+                Err(e) => return Err(e.into()),
+            }
+            let (_key, offset, _size) = idx_entry_from_bytes(&buf);
+            if !offset.is_zero() {
+                let actual_offset = offset.to_actual_offset();
+                if actual_offset > max_actual_offset {
+                    max_actual_offset = actual_offset;
+                }
+            }
+        }
+        if max_actual_offset < 0 {
+            return Ok(self.super_block().block_size() as u64);
+        }
+        let io = self.io.read().unwrap();
+        let mut header = [0u8; NEEDLE_HEADER_SIZE];
+        self.read_exact_at_backend(&io, &mut header, max_actual_offset as u64)?;
+        let (_cookie, _id, size) = Needle::parse_header(&header);
+        Ok(max_actual_offset as u64 + get_actual_size(size, self.version()) as u64)
     }
 
     /// Disk space held by the local .dat file, or 0 when it is unknown. It
@@ -6628,6 +6698,165 @@ mod tests {
             shipped.contains(&key3_ns),
             "the tail must ship the write made after compaction"
         );
+    }
+
+    #[test]
+    fn resume_by_last_entry_carries_index_only_tombstones() {
+        // A remote-tier delete leaves an offset-0 tombstone in .idx with no
+        // .dat record: the row still names a position a copy can end on or
+        // resume past, so it is matched by key and size rather than diverging.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+        for id in 1..=5u64 {
+            write_test_needle(&mut v, id, &[id as u8; 64]);
+        }
+
+        let entry_at = |v: &Volume, m: i64| {
+            let (key, offset, size) = v.read_index_entry(m).unwrap();
+            let io = v.io.read().unwrap();
+            let mut header = [0u8; NEEDLE_HEADER_SIZE];
+            v.read_exact_at_backend(&io, &mut header, offset.to_actual_offset() as u64)
+                .unwrap();
+            let (cookie, _id, _s) = Needle::parse_header(&header);
+            (key, cookie, size)
+        };
+
+        // a copy whose tail is the replica's tail is already up to date
+        let (key, cookie, size) = entry_at(&v, 4);
+        let (_offset, up_to_date) = v
+            .resume_by_last_entry(
+                5,
+                key,
+                cookie,
+                size,
+                v.hash_index_entries(5).unwrap(),
+                v.index_file_size(),
+            )
+            .unwrap();
+        assert!(up_to_date);
+
+        // a remote-tier tombstone is a valid boundary matched on key and size
+        v.io.write()
+            .unwrap()
+            .nm
+            .as_mut()
+            .unwrap()
+            .delete(NeedleId(4), Offset::default())
+            .unwrap();
+        let (_offset, up_to_date) = v
+            .resume_by_last_entry(
+                6,
+                NeedleId(4),
+                Cookie(0),
+                TOMBSTONE_FILE_SIZE,
+                v.hash_index_entries(6).unwrap(),
+                v.index_file_size(),
+            )
+            .unwrap();
+        assert!(up_to_date);
+
+        // a resume past it keeps going to the next record with .dat bytes
+        write_test_needle(&mut v, 6, b"x");
+        let (key, cookie, size) = entry_at(&v, 4);
+        let (offset, up_to_date) = v
+            .resume_by_last_entry(
+                5,
+                key,
+                cookie,
+                size,
+                v.hash_index_entries(5).unwrap(),
+                v.index_file_size(),
+            )
+            .unwrap();
+        assert!(!up_to_date);
+        let (_k, want, _s) = v.read_index_entry(6).unwrap();
+        assert_eq!(offset, want);
+
+        // a copy ahead of only tombstones resumes with no .dat left to send
+        v.io.write()
+            .unwrap()
+            .nm
+            .as_mut()
+            .unwrap()
+            .delete(NeedleId(5), Offset::default())
+            .unwrap();
+        let (key, cookie, size) = entry_at(&v, 6);
+        let (offset, up_to_date) = v
+            .resume_by_last_entry(
+                7,
+                key,
+                cookie,
+                size,
+                v.hash_index_entries(7).unwrap(),
+                v.index_file_size(),
+            )
+            .unwrap();
+        assert!(!up_to_date);
+        assert!(offset.is_zero());
+    }
+
+    #[test]
+    fn dat_size_covered_by_index_ends_at_last_record() {
+        // A copy must not stream past the last record the index rows cover:
+        // bytes appended after the bound have no row to carry them.
+        // Mirrors Go's TestDatSizeCoveredByIndex.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+        for id in 1..=3u64 {
+            write_test_needle(&mut v, id, &[id as u8; 64]);
+        }
+        let dat_size = v.dat_file_size().unwrap();
+        let idx_size = v.index_file_size();
+        assert_eq!(v.dat_size_covered_by_index(idx_size).unwrap(), dat_size);
+
+        // a bound partway through ends where the next record begins
+        let (_k, next, _s) = v.read_index_entry(2).unwrap();
+        assert_eq!(
+            v.dat_size_covered_by_index(2 * NEEDLE_MAP_ENTRY_SIZE as u64)
+                .unwrap(),
+            next.to_actual_offset() as u64
+        );
+
+        // index-only tombstones past the bound still resolve to the last record
+        v.io.write()
+            .unwrap()
+            .nm
+            .as_mut()
+            .unwrap()
+            .delete(NeedleId(3), Offset::default())
+            .unwrap();
+        assert_eq!(
+            v.dat_size_covered_by_index(v.index_file_size()).unwrap(),
+            dat_size
+        );
+    }
+
+    #[test]
+    fn dat_size_covered_by_index_key_sorted() {
+        // A key-sorted .idx ends on the highest-key row, which need not be
+        // the record physically last in .dat — the bound must still cover
+        // the whole covered tail. Mirrors Go's
+        // TestDatSizeCoveredByIndexKeySorted.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+        for id in [2u64, 3, 1] {
+            write_test_needle(&mut v, id, &[id as u8; 64]);
+        }
+        let dat_size = v.dat_file_size().unwrap();
+        let idx_size = v.index_file_size();
+
+        // rewrite the .idx sorted by key, as rebuilds do
+        let idx_path = v.file_name(".idx");
+        let content = fs::read(&idx_path).unwrap();
+        let mut rows: Vec<&[u8]> = content.chunks(NEEDLE_MAP_ENTRY_SIZE).collect();
+        rows.sort_by_key(|row| idx_entry_from_bytes(row).0);
+        let sorted: Vec<u8> = rows.concat();
+        fs::write(&idx_path, sorted).unwrap();
+
+        assert_eq!(v.dat_size_covered_by_index(idx_size).unwrap(), dat_size);
     }
 
     #[test]

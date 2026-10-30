@@ -41,19 +41,6 @@ type batchIndexRollbacker interface {
 	truncateIndex(offset int64) error
 }
 
-// batchMapRollbacker restores the in-memory/durable needle mapping without
-// touching the index file: a rolled-back batch rewrites the index wholesale
-// via truncateIndex, so replay-correcting entries are not needed here.
-type batchMapRollbacker interface {
-	removeMapping(key NeedleId) error
-	restoreMapping(key NeedleId, offset Offset, size Size) error
-}
-
-type batchMetricRollbacker interface {
-	snapshotBatchMetrics() batchMapMetricSnapshot
-	restoreBatchMetrics(snapshot batchMapMetricSnapshot)
-}
-
 type baseNeedleMapper struct {
 	mapMetric
 
@@ -66,6 +53,10 @@ type TempNeedleMapper interface {
 	NeedleMapper
 	DoOffsetLoading(v *Volume, indexFile *os.File, startFrom uint64) error
 	UpdateNeedleMap(v *Volume, indexFile *os.File, opts *opt.Options, ldbTimeout int64) error
+}
+
+func (nm *baseNeedleMapper) IndexFile() *os.File {
+	return nm.indexFile
 }
 
 func (nm *baseNeedleMapper) IndexFileSize() uint64 {
