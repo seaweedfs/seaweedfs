@@ -14,7 +14,7 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: {{ include "seaweedfs.componentName" (list $ $volumeName) }}
-  namespace: {{ include "seaweedfs.namespace" $ }}
+  namespace: {{ include "seaweedfs.namespace" $ | quote }}
   labels:
     app.kubernetes.io/name: {{ template "seaweedfs.name" $ }}
     helm.sh/chart: {{ $.Chart.Name }}-{{ $.Chart.Version | replace "+" "_" }}

@@ -9,7 +9,7 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: "{{ $seaweedfsName }}-volume-resize-hook"
-  namespace: {{ include "seaweedfs.namespace" . }}
+  namespace: {{ include "seaweedfs.namespace" . | quote }}
   labels:
     app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
     helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
@@ -76,7 +76,7 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: {{ $seaweedfsName }}-volume-resize-hook
-  namespace: {{ include "seaweedfs.namespace" . }}
+  namespace: {{ include "seaweedfs.namespace" . | quote }}
   annotations:
     helm.sh/hook: pre-install,pre-upgrade
     helm.sh/hook-weight: "-5"
@@ -86,7 +86,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: {{ $seaweedfsName }}-volume-resize-hook
-  namespace: {{ include "seaweedfs.namespace" . }}
+  namespace: {{ include "seaweedfs.namespace" . | quote }}
   annotations:
     helm.sh/hook: pre-install,pre-upgrade
     helm.sh/hook-weight: "-5"
@@ -103,7 +103,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: {{ $seaweedfsName }}-volume-resize-hook
-  namespace: {{ include "seaweedfs.namespace" . }}
+  namespace: {{ include "seaweedfs.namespace" . | quote }}
   annotations:
     helm.sh/hook: pre-install,pre-upgrade
     helm.sh/hook-weight: "-5"

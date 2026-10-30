@@ -5,7 +5,7 @@ apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
   name: {{ include "seaweedfs.componentName" (list . "filer") }}
-  namespace: {{ include "seaweedfs.namespace" . }}
+  namespace: {{ include "seaweedfs.namespace" . | quote }}
   {{- with .Values.filer.httpRoute.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
@@ -37,7 +37,7 @@ spec:
         - group: ""
           kind: Service
           name: {{ $serviceName }}
-          namespace: {{ include "seaweedfs.namespace" $ }}
+          namespace: {{ include "seaweedfs.namespace" $ | quote }}
           port: {{ $.Values.filer.port }}
           weight: 1
         {{- end }}
