@@ -358,10 +358,14 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 		return fmt.Errorf("failed to mount or validate volume %d: %w", req.VolumeId, err)
 	}
 
-	if err = stream.Send(&volume_server_pb.VolumeCopyResponse{
+	// Keep the mounted replica when only the final response fails: the volume
+	// is already announced to the master, so the cleanup above must not
+	// delete files out from under it.
+	if sendErr := stream.Send(&volume_server_pb.VolumeCopyResponse{
 		LastAppendAtNs: lastAppendAtNs,
-	}); err != nil {
-		glog.Errorf("send response: %v", err)
+	}); sendErr != nil {
+		glog.Errorf("send response: %v", sendErr)
+		return sendErr
 	}
 
 	return err
