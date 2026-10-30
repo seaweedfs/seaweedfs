@@ -482,8 +482,8 @@ async fn delete_then_get_returns_404() {
     );
 }
 
-// Go answers both with 500; the write carries the refusal as a 409 per the
-// read-only upload-refusal contract, the delete still surfaces a 500.
+// Go and Rust return 409 for read-only upload refusals;
+// the delete still returns 500.
 #[tokio::test]
 async fn write_and_delete_on_read_only_volume_say_is_read_only() {
     let (state, _tmp) = test_state();
