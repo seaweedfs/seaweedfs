@@ -6102,30 +6102,56 @@ impl CopyDestination {
     /// keeps an .rdb whose recorded idx size is not larger than the new .idx),
     /// which is wrong once the source has been compacted in between.
     ///
+    /// When the index directory differs from the data directory, a leftover
+    /// `.idx` beside the `.dat` makes load switch to that directory and trust
+    /// the `.rdb` next to it, so both bases are cleared.
+    ///
+    /// A regular volume and an EC volume for the same id share `<base>.vif`.
+    /// `Volume::destroy` keeps that file while a non-empty `.ecx` is present;
+    /// this does the same, or the pre-copy clear would undo that.
+    ///
     /// The first error other than NotFound is returned: a surviving index is
     /// trusted by the next mount, so a caller that can still abort must know
     /// the removal failed. Missing files are fine — they were never written.
     fn remove_partial_files(&self) -> std::io::Result<()> {
+        let keep_vif = self.shares_vif_with_ec();
+        let bases = if self.data_base_name == self.idx_base_name {
+            vec![self.data_base_name.as_str()]
+        } else {
+            vec![self.data_base_name.as_str(), self.idx_base_name.as_str()]
+        };
         let mut first_err = None;
-        for path in [
-            format!("{}.dat", self.data_base_name),
-            format!("{}.idx", self.idx_base_name),
-            format!("{}.rdb", self.idx_base_name),
-            format!("{}.sdx", self.idx_base_name),
-            format!("{}.vif", self.data_base_name),
-            self.note_path(),
-        ] {
-            if let Err(e) = std::fs::remove_file(&path)
-                && e.kind() != std::io::ErrorKind::NotFound
-                && first_err.is_none()
-            {
-                first_err = Some(e);
+        for base in bases {
+            for ext in [".dat", ".idx", ".rdb", ".sdx", ".vif", ".note"] {
+                if ext == ".vif" && keep_vif {
+                    continue;
+                }
+                let path = format!("{base}{ext}");
+                if let Err(e) = std::fs::remove_file(&path)
+                    && e.kind() != std::io::ErrorKind::NotFound
+                    && first_err.is_none()
+                {
+                    first_err = Some(e);
+                }
             }
         }
         match first_err {
             Some(e) => Err(e),
             None => Ok(()),
         }
+    }
+
+    /// True when a sealed `.ecx` for this id sits on the data or index base,
+    /// matching `Volume::shares_vif_with_ec_volume`: the shared `.vif` must
+    /// outlive the regular volume's files.
+    fn shares_vif_with_ec(&self) -> bool {
+        let sealed_ecx = |base: &str| {
+            std::fs::metadata(format!("{base}.ecx"))
+                .map(|m| !m.is_dir() && m.len() > 0)
+                .unwrap_or(false)
+        };
+        sealed_ecx(&self.idx_base_name)
+            || (self.data_base_name != self.idx_base_name && sealed_ecx(&self.data_base_name))
     }
 
     /// Write a .note file to indicate copy in progress. A leftover note
@@ -9633,6 +9659,74 @@ mod tests {
                 base,
                 ext
             );
+        }
+    }
+
+    // destroy() keeps <base>.vif while a sealed .ecx shares it. The copy
+    // cleanup runs after that delete and must not take the file back.
+    #[test]
+    fn test_copy_cleanup_keeps_vif_shared_with_ec_shards() {
+        let tmp = TempDir::new().unwrap();
+        let base = tmp.path().join("1").to_str().unwrap().to_string();
+        std::fs::write(format!("{base}.vif"), b"volume-info").unwrap();
+        std::fs::write(format!("{base}.ecx"), b"ec-index").unwrap();
+        std::fs::write(format!("{base}.rdb"), b"stale").unwrap();
+
+        let dest = CopyDestination {
+            data_base_name: base.clone(),
+            idx_base_name: base.clone(),
+            disk_type: DiskType::HardDrive,
+            has_remote_dat: false,
+            loc_idx: 0,
+            reserved_space: std::sync::atomic::AtomicU64::new(0),
+        };
+        dest.remove_partial_files().unwrap();
+
+        assert!(
+            std::path::Path::new(&format!("{base}.vif")).exists(),
+            "a sealed .ecx still needs the shared .vif"
+        );
+        assert!(std::path::Path::new(&format!("{base}.ecx")).exists());
+        assert!(
+            !std::path::Path::new(&format!("{base}.rdb")).exists(),
+            "the stale index is still removed"
+        );
+    }
+
+    // load() switches to an .idx that still sits beside the .dat, even when
+    // --dir.idx names another directory, and then trusts the .rdb next to it.
+    #[test]
+    fn test_copy_cleanup_removes_index_left_beside_the_dat() {
+        let tmp = TempDir::new().unwrap();
+        let data_dir = tmp.path().join("data");
+        let idx_dir = tmp.path().join("idx");
+        std::fs::create_dir(&data_dir).unwrap();
+        std::fs::create_dir(&idx_dir).unwrap();
+        let data = data_dir.join("1").to_str().unwrap().to_string();
+        let idx = idx_dir.join("1").to_str().unwrap().to_string();
+        for base in [&data, &idx] {
+            for ext in [".idx", ".rdb", ".sdx"] {
+                std::fs::write(format!("{base}{ext}"), b"stale").unwrap();
+            }
+        }
+
+        let dest = CopyDestination {
+            data_base_name: data.clone(),
+            idx_base_name: idx.clone(),
+            disk_type: DiskType::HardDrive,
+            has_remote_dat: false,
+            loc_idx: 0,
+            reserved_space: std::sync::atomic::AtomicU64::new(0),
+        };
+        dest.remove_partial_files().unwrap();
+
+        for base in [&data, &idx] {
+            for ext in [".idx", ".rdb", ".sdx"] {
+                assert!(
+                    !std::path::Path::new(&format!("{base}{ext}")).exists(),
+                    "cleanup left {base}{ext} behind"
+                );
+            }
         }
     }
 
