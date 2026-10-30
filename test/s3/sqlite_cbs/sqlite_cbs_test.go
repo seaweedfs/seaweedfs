@@ -591,6 +591,7 @@ func TestCBSConditionalMultipartCommit(t *testing.T) {
 		IfNoneMatch: aws.String("*"),
 	})
 	require.NoError(t, err)
+	require.NotNil(t, completeOut.ETag, "CompleteMultipartUpload must return the ETag the If-Match checks feed back")
 
 	// A second conditional completion on the now-existing key must fail
 	// instead of silently replacing the object.
