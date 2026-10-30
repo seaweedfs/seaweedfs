@@ -81,7 +81,7 @@ func TestBackupOffset_HistoricalFallbackThenIndependence(t *testing.T) {
 	filerAddr, dial := startKvFiler(t)
 
 	s := &stubSink{name: "s3", dir: "/", destination: "endpoint-a|bucket-a|/"}
-	sinkId, legacySinkId := backupCheckpointIds("/", s)
+	sinkId, legacySinkId := backupCheckpointIds("/", s, false)
 
 	// pre-upgrade state: only the shared historical checkpoint exists
 	if err := setOffset(dial, filerAddr, BackupKeyPrefix, legacySinkId, 111); err != nil {
@@ -117,8 +117,8 @@ func TestBackupOffset_HistoricalFallbackThenIndependence(t *testing.T) {
 func TestBackupOffset_DistinctDestinationsDoNotShare(t *testing.T) {
 	filerAddr, dial := startKvFiler(t)
 
-	idA, legacyA := backupCheckpointIds("/", &stubSink{name: "s3", dir: "/", destination: "s3.us-west-004.backblazeb2.com|seaweed-backup-a|/"})
-	idB, legacyB := backupCheckpointIds("/", &stubSink{name: "s3", dir: "/", destination: "s3.us-east-005.backblazeb2.com|seaweed-backup-b|/"})
+	idA, legacyA := backupCheckpointIds("/", &stubSink{name: "s3", dir: "/", destination: "s3.us-west-004.backblazeb2.com|seaweed-backup-a|/"}, false)
+	idB, legacyB := backupCheckpointIds("/", &stubSink{name: "s3", dir: "/", destination: "s3.us-east-005.backblazeb2.com|seaweed-backup-b|/"}, false)
 
 	if err := setOffset(dial, filerAddr, BackupKeyPrefix, idA, 1000); err != nil {
 		t.Fatalf("write A: %v", err)
