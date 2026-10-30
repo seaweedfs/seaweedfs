@@ -243,6 +243,10 @@ message VolumeIncrementalCopyRequest {
 }
 message VolumeIncrementalCopyResponse {
     bytes file_content = 1;
+    // Index rows after the copy's entry_count, verbatim. A remote-tier
+    // tombstone is an index-only row with no .dat record, so it can only
+    // reach the backup through this stream.
+    bytes idx_content = 2;
 }
 
 message VolumeMountRequest {
