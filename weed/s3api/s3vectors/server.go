@@ -4,7 +4,9 @@ package s3vectors
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -12,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
+	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 )
 
 // FilerClient provides access to the filer for storage operations.
@@ -63,15 +66,16 @@ func (s *Server) SetRegion(region string) { s.region = region }
 func (s *Server) SetAccountID(id string) { s.accountID = id }
 
 // RegisterRoutes mounts POST / dispatching on the X-Amz-Target header and
-// POST /{Operation} for clients that route per-path.
+// POST /{Operation} for clients that route per-path. Metrics wrap Auth like the
+// S3 track middleware so rejected requests still count toward the operation.
 func (s *Server) RegisterRoutes(router *mux.Router) {
-	router.HandleFunc("/", s.Auth(s.dispatch)).Methods(http.MethodPost)
-	router.HandleFunc("/{op}", s.Auth(s.dispatch)).Methods(http.MethodPost)
+	router.HandleFunc("/", s.instrument(s.Auth(s.dispatch))).Methods(http.MethodPost)
+	router.HandleFunc("/{op}", s.instrument(s.Auth(s.dispatch))).Methods(http.MethodPost)
 }
 
-func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
-	// Clients carry the operation in the X-Amz-Target header or in the path —
-	// POST /QueryVectors and POST / with a target mean the same call here.
+// operationFromRequest resolves the operation the way dispatch does: the last
+// path segment, or the X-Amz-Target suffix when the path is bare.
+func operationFromRequest(r *http.Request) string {
 	op := strings.Trim(r.URL.Path, "/")
 	if i := strings.LastIndex(op, "/"); i >= 0 {
 		op = op[i+1:]
@@ -80,6 +84,36 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
 		target := r.Header.Get("X-Amz-Target")
 		op = target[strings.LastIndex(target, ".")+1:]
 	}
+	return op
+}
+
+// instrument records in-flight, latency, and status for a known operation;
+// unknown operations stay out of the metric labels.
+func (s *Server) instrument(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		op := operationFromRequest(r)
+		if _, ok := handlers[op]; !ok {
+			next(w, r)
+			return
+		}
+		label := "s3vectors." + op
+		inFlight := stats_collect.S3InFlightRequestsGauge.WithLabelValues(label)
+		inFlight.Inc()
+		defer inFlight.Dec()
+		recorder := stats_collect.NewStatusResponseWriter(w)
+		start := time.Now()
+		next(recorder, r)
+		elapsed := time.Since(start)
+		stats_collect.S3RequestHistogram.WithLabelValues(label, "").Observe(elapsed.Seconds())
+		stats_collect.S3RequestCounter.WithLabelValues(label, strconv.Itoa(recorder.Status), "").Inc()
+		stats_collect.RecordBucketActiveTime("")
+	}
+}
+
+func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
+	// Clients carry the operation in the X-Amz-Target header or in the path —
+	// POST /QueryVectors and POST / with a target mean the same call here.
+	op := operationFromRequest(r)
 	handler, ok := handlers[op]
 	if !ok {
 		writeError(w, http.StatusBadRequest, "ValidationException", "unknown operation "+op)
