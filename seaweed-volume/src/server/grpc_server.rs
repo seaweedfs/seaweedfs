@@ -1033,6 +1033,17 @@ impl Drop for VolumeCopyClaim {
     }
 }
 
+/// Claims `vid` for a handler that registers or remounts a volume, refusing
+/// while a copy holds the destination files (Go's "volume %d is being
+/// copied" on AllocateVolume and adoptStagedVolume).
+fn claim_volume_against_copy(
+    state: &Arc<VolumeServerState>,
+    vid: VolumeId,
+) -> Result<VolumeCopyClaim, Status> {
+    VolumeCopyClaim::try_new(state, vid)
+        .map_err(|_| Status::unavailable(format!("volume {} is being copied", vid)))
+}
+
 /// Whether `vid`'s .ecj appends must wait for the decode publishing tail.
 /// Only meaningful read under the store write lock: a decode can claim the
 /// tail while a caller waits for the decoder's read lock, so membership
@@ -1555,6 +1566,10 @@ impl VolumeServer for VolumeGrpcService {
         } else {
             crate::storage::types::Version::current()
         };
+
+        // Same window as volume_mount: add_volume registers the volume, and a
+        // copy in flight clears or rewrites the files it would open.
+        let _copy_claim = claim_volume_against_copy(&self.state, vid)?;
 
         let mut store = self.state.store.write().unwrap();
         store
@@ -11658,6 +11673,30 @@ mod tests {
         let store = service.state.store.read().unwrap();
         let (_, v) = store.find_volume(vid).unwrap();
         assert_eq!(v.super_block().replica_placement.to_string(), "001");
+    }
+
+    /// Allocate registers the volume under the same claim a mount takes: a
+    /// copy in flight owns the destination files the new replica would open.
+    #[tokio::test]
+    async fn test_allocate_volume_refuses_a_volume_being_copied() {
+        let (service, _tmp) = make_local_service_with_volume("allocate_during_copy", None);
+        let vid = VolumeId(7);
+        service
+            .state
+            .volume_copies_in_flight
+            .lock()
+            .unwrap()
+            .insert(vid);
+
+        let err = service
+            .allocate_volume(Request::new(volume_server_pb::AllocateVolumeRequest {
+                volume_id: vid.0,
+                ..Default::default()
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::Unavailable);
+        assert!(err.message().contains("is being copied"), "{}", err.message());
     }
 
     // Regression test for comparing the wrong compaction-revision field.
