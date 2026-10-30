@@ -723,7 +723,7 @@ func TestLoadExistingVolumeSkipsVifWhenEcxPresent(t *testing.T) {
 				t.Fatalf("write .ecx: %v", err)
 			}
 
-			loaded := diskLocation.loadExistingVolume(filepath.Base(vifPath), NeedleMapInMemory, false, 0, 0)
+			loaded := diskLocation.loadExistingVolume(filepath.Base(vifPath), NeedleMapInMemory, false, 0, 0, false)
 			if loaded {
 				t.Fatalf("loadExistingVolume should refuse to load a .vif-only entry when .ecx is present (volume %d)", vid)
 			}

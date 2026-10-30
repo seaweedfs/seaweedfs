@@ -101,6 +101,15 @@ func (vs *VolumeServer) AllocateVolume(ctx context.Context, req *volume_server_p
 		return resp, err
 	}
 
+	// Same window as VolumeMount: allocation registers the volume, and a
+	// copy in flight clears or rewrites the files it would open.
+	guard := vs.volumeCopyGuard(req.VolumeId)
+	guard.Lock()
+	defer guard.Unlock()
+	if guard.copying {
+		return resp, status.Errorf(codes.Unavailable, "volume %d is being copied", req.VolumeId)
+	}
+
 	err := vs.store.AddVolume(
 		needle.VolumeId(req.VolumeId),
 		req.Collection,
@@ -132,7 +141,19 @@ func (vs *VolumeServer) VolumeMount(ctx context.Context, req *volume_server_pb.V
 		return resp, err
 	}
 
-	err := vs.store.MountVolume(needle.VolumeId(req.VolumeId), req.Collection)
+	// A copy claims the volume, then waits on the source. A mount in that
+	// window loads files the copy is about to clear or overwrite, so the
+	// check and the registration share the copy's guard: a mount either
+	// registers before the copy's recheck (and makes it abort) or sees the
+	// claim and refuses.
+	guard := vs.volumeCopyGuard(req.VolumeId)
+	guard.Lock()
+	if guard.copying {
+		guard.Unlock()
+		return resp, status.Errorf(codes.Unavailable, "volume %d is being copied", req.VolumeId)
+	}
+	err := vs.store.MountVolumeClaimed(needle.VolumeId(req.VolumeId), req.Collection)
+	guard.Unlock()
 
 	if err != nil {
 		glog.Errorf("volume mount %v: %v", req, err)
@@ -150,6 +171,16 @@ func (vs *VolumeServer) VolumeUnmount(ctx context.Context, req *volume_server_pb
 
 	if err := vs.checkGrpcAdminAuth(ctx); err != nil {
 		return resp, err
+	}
+
+	// Same window as VolumeMount: the copy announces its replica before the
+	// claim drops, and an unmount inside that window unregisters a volume the
+	// master was just told is here.
+	guard := vs.volumeCopyGuard(req.VolumeId)
+	guard.Lock()
+	defer guard.Unlock()
+	if guard.copying {
+		return resp, status.Errorf(codes.Unavailable, "volume %d is being copied", req.VolumeId)
 	}
 
 	err := vs.store.UnmountVolume(needle.VolumeId(req.VolumeId))
@@ -196,6 +227,15 @@ func (vs *VolumeServer) VolumeDelete(ctx context.Context, req *volume_server_pb.
 
 	if err := vs.checkGrpcAdminAuth(ctx); err != nil {
 		return resp, err
+	}
+
+	// Same window as VolumeMount: a delete inside the copy's post-mount
+	// window removes a replica the master was just told is here.
+	guard := vs.volumeCopyGuard(req.VolumeId)
+	guard.Lock()
+	defer guard.Unlock()
+	if guard.copying {
+		return resp, status.Errorf(codes.Unavailable, "volume %d is being copied", req.VolumeId)
 	}
 
 	err := vs.store.DeleteVolume(needle.VolumeId(req.VolumeId), req.OnlyEmpty, req.OnlyGarbage, req.KeepRemoteData)
@@ -245,6 +285,16 @@ func (vs *VolumeServer) VolumeConfigure(ctx context.Context, req *volume_server_
 		return resp, nil
 	}
 
+	// Same window as VolumeMount, and wider: configure unmounts, rewrites
+	// the .vif, and remounts, so the whole sequence shares the copy's guard
+	// rather than only the entry check.
+	guard := vs.volumeCopyGuard(req.VolumeId)
+	guard.Lock()
+	defer guard.Unlock()
+	if guard.copying {
+		return resp, status.Errorf(codes.Unavailable, "volume %d is being copied", req.VolumeId)
+	}
+
 	// unmount
 	if err := vs.store.UnmountVolume(needle.VolumeId(req.VolumeId)); err != nil {
 		glog.Errorf("volume configure unmount %v: %v", req, err)
@@ -257,7 +307,7 @@ func (vs *VolumeServer) VolumeConfigure(ctx context.Context, req *volume_server_
 		glog.Errorf("volume configure %v: %v", req, err)
 		resp.Error = fmt.Sprintf("volume configure %v: %v", req, err)
 		// Try to re-mount to restore the volume state
-		if mountErr := vs.store.MountVolume(needle.VolumeId(req.VolumeId), nil); mountErr != nil {
+		if mountErr := vs.store.MountVolumeClaimed(needle.VolumeId(req.VolumeId), nil); mountErr != nil {
 			glog.Errorf("volume configure failed to restore mount %v: %v", req, mountErr)
 			resp.Error += fmt.Sprintf(". Also failed to restore mount: %v", mountErr)
 		}
@@ -265,7 +315,7 @@ func (vs *VolumeServer) VolumeConfigure(ctx context.Context, req *volume_server_
 	}
 
 	// mount
-	if err := vs.store.MountVolume(needle.VolumeId(req.VolumeId), nil); err != nil {
+	if err := vs.store.MountVolumeClaimed(needle.VolumeId(req.VolumeId), nil); err != nil {
 		glog.Errorf("volume configure mount %v: %v", req, err)
 		resp.Error = fmt.Sprintf("volume configure mount %v: %v", req, err)
 		return resp, nil
