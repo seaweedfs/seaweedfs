@@ -292,6 +292,13 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 			os.Remove(idxFileName)
 			os.Remove(datFileName)
 			os.Remove(dataBaseFileName + ".vif")
+			// A copy that mounted and then failed validation is only unloaded,
+			// so the needle-map backends mount built (.ldb, .sdx, .rdb) can
+			// outlive it; a later copy of the same volume would trust the
+			// stale index.
+			os.RemoveAll(indexBaseFileName + ".ldb")
+			os.Remove(indexBaseFileName + ".sdx")
+			os.Remove(indexBaseFileName + ".rdb")
 			vs.store.ReleaseFreeLocation(copyLocation, copyReservedSpace)
 		} else {
 			vs.store.CommitFreeLocation(copyLocation, copyReservedSpace)
