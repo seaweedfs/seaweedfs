@@ -374,8 +374,8 @@ func TestCBSCompareAndSwapVersionedBucket(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// The CAS also works fed from a GET's ETag, matching how CBS re-reads the
-	// manifest before rewriting it.
+	// The CAS also works fed from the ETag a GET returned, matching how CBS
+	// re-reads the manifest before rewriting it.
 	etag3, body := getCBSTestObject(t, client, bucket, key)
 	assert.Equal(t, "generation=3", string(body))
 	_, err = client.PutObject(ctx, &s3.PutObjectInput{
