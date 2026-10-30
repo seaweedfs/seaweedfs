@@ -6068,6 +6068,13 @@ impl Volume {
             nm.add_file_count_for_test(delta);
         }
     }
+
+    #[cfg(test)]
+    pub(crate) fn add_deletion_count_for_test(&self, delta: i64) {
+        if let Some(nm) = self.io.read().unwrap().nm.as_ref() {
+            nm.add_deletion_count_for_test(delta);
+        }
+    }
 }
 
 // ============================================================================

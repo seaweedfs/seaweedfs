@@ -6523,6 +6523,7 @@ impl VolumeCopyJob {
             if validate_counts
                 && let Some((_, v)) = store.find_volume(vid)
                 && let Err(e) = check_copy_counts(
+                    vid,
                     source_status_after,
                     v.file_count() as u64,
                     v.deleted_count() as u64,
@@ -6999,7 +7000,18 @@ where
 }
 
 /// Compare a copied replica's record counts with the source's.
+///
+/// The file count is exact on both sides (every non-tombstone .idx row is one
+/// file, at load and at runtime), so a mismatch rejects the copy. The deleted
+/// count is not: a redb needle map rebuilds it at load from the .idx through
+/// a bloom filter (`metrics_from_idx`, 0.1% false positives per entry, each
+/// one counted as an overwrite), and the source's figure is that estimate from
+/// its own last load plus exact runtime updates. A source written since its
+/// load and the target's fresh load of the same files therefore disagree by a
+/// few for identical data. Go warns instead of rejecting on this drift since
+/// #11701 (issue #11678); the .dat/.idx size checks already gate integrity.
 fn check_copy_counts(
+    vid: VolumeId,
     origin: &volume_server_pb::VolumeStatusResponse,
     target_file_count: u64,
     target_deleted_count: u64,
@@ -7011,10 +7023,12 @@ fn check_copy_counts(
         ));
     }
     if origin.file_deleted_count != target_deleted_count {
-        return Err(format!(
-            "target deleted count [{}] is not same as origin deleted count [{}]",
-            target_deleted_count, origin.file_deleted_count
-        ));
+        tracing::warn!(
+            "copied volume {} deleted count [{}] differs from origin deleted count [{}] (counter drift, copy kept)",
+            vid,
+            target_deleted_count,
+            origin.file_deleted_count
+        );
     }
     Ok(())
 }
@@ -9931,6 +9945,51 @@ mod tests {
             vol.file_count(),
             2,
             "the replica must hold the source's needles"
+        );
+    }
+
+    // A deleted-count difference alone is counter drift, not a bad copy: the
+    // count is a bloom-filter estimate on redb needle maps, so a source written
+    // since its last load and a fresh load of the same files can disagree.
+    // The copy must be kept and mounted, as Go does since #11701.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_volume_copy_keeps_replica_on_deleted_count_drift() {
+        let (source_service, _source_tmp, _dat_bytes) = make_local_service_with_large_volume();
+        {
+            let store = source_service.state.store.read().unwrap();
+            let (_, vol) = store.find_volume(VolumeId(1)).unwrap();
+            vol.add_deletion_count_for_test(1);
+        }
+        let (port, _shutdown) = serve_source(source_service).await;
+
+        let (dest_service, _dest_tmp) = make_local_service_with_volume("", None);
+        {
+            let mut store = dest_service.state.store.write().unwrap();
+            store
+                .delete_volume(VolumeId(1), false, false, false)
+                .unwrap();
+            for loc in &store.locations {
+                loc.check_disk_space();
+            }
+        }
+
+        run_volume_copy(&dest_service, port)
+            .await
+            .expect("a deleted-count difference alone must not fail the copy");
+
+        let store = dest_service.state.store.read().unwrap();
+        let (_, vol) = store
+            .find_volume(VolumeId(1))
+            .expect("the copied replica must stay mounted");
+        assert_eq!(
+            vol.file_count(),
+            2,
+            "the replica must hold the source's needles"
+        );
+        assert_eq!(
+            vol.deleted_count(),
+            0,
+            "the target's own count is kept; the drift is only logged"
         );
     }
 

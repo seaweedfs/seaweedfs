@@ -156,4 +156,35 @@ mod tests {
             .count();
         assert!(false_positives < 500, "false positives: {false_positives}");
     }
+
+    // The deleted count rebuilt from an .idx is an estimate: an index of
+    // unique keys, with no overwrite and no tombstone, still reports a
+    // deletion once the bloom filter yields a false positive. VolumeCopy
+    // therefore cannot demand that a fresh load's deleted count equal the
+    // source's (check_copy_counts in server/grpc_server.rs).
+    #[test]
+    fn test_unique_keys_can_still_report_a_deletion() {
+        let mut idx = Vec::new();
+        let mut first_drift = None;
+        for n in 1u64..=2000 {
+            let mut entry = [0u8; NEEDLE_MAP_ENTRY_SIZE];
+            idx_entry_to_bytes(
+                &mut entry,
+                NeedleId(n),
+                Offset::from_actual_offset(n as i64 * 128),
+                Size(100),
+            );
+            idx.extend_from_slice(&entry);
+            let metric = metrics_from_idx(&mut std::io::Cursor::new(&idx), Version(3)).unwrap();
+            assert_eq!(metric.file_count.load(Ordering::Relaxed), n as i64);
+            if metric.deletion_count.load(Ordering::Relaxed) > 0 {
+                first_drift = Some(n);
+                break;
+            }
+        }
+        assert!(
+            first_drift.is_some(),
+            "expected a bloom false positive to count a deletion among 2000 unique keys"
+        );
+    }
 }
