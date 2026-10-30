@@ -154,11 +154,45 @@ func (v *Volume) IncrementalBackup(volumeServer pb.ServerAddress, grpcDialOption
 		baseOffset := int64(cursor.entryCount) * NeedleMapEntrySize
 		if err := cnm.truncateIndex(indexOffset); err != nil {
 			_ = cnm.truncateIndex(baseOffset)
+			_ = v.DataBackend.Truncate(int64(startFromOffset))
 			return err
 		}
+		// a failed replay is rolled back to the pre-copy boundary, so
+		// snapshot the map entries the received tail is about to touch
+		var replayKeys []NeedleId
+		seen := make(map[NeedleId]bool)
+		_ = idx.WalkIndexFile(cnm.IndexFile(), uint64(cursor.entryCount), func(key NeedleId, _ Offset, _ Size) error {
+			if !seen[key] {
+				seen[key] = true
+				replayKeys = append(replayKeys, key)
+			}
+			return nil
+		})
+		type priorMapping struct {
+			offset Offset
+			size   Size
+			exists bool
+		}
+		prior := make([]priorMapping, len(replayKeys))
+		for i, key := range replayKeys {
+			if nv, ok := cnm.Get(key); ok {
+				prior[i] = priorMapping{offset: nv.Offset, size: nv.Size, exists: true}
+			}
+		}
+		metrics := cnm.snapshotBatchMetrics()
+
 		if err := cnm.DoOffsetLoading(v, cnm.IndexFile(), uint64(cursor.entryCount)); err != nil {
 			// a half-replayed tail cannot be trusted as the next cursor
 			_ = cnm.truncateIndex(baseOffset)
+			_ = v.DataBackend.Truncate(int64(startFromOffset))
+			for i, key := range replayKeys {
+				if prior[i].exists {
+					_ = cnm.restoreMapping(key, prior[i].offset, prior[i].size)
+				} else {
+					_ = cnm.removeMapping(key)
+				}
+			}
+			cnm.restoreBatchMetrics(metrics)
 			return err
 		}
 		return nil
