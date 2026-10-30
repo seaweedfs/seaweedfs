@@ -1,8 +1,11 @@
 package storage
 
 import (
+	"os"
+	"sort"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/storage/idx"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -192,5 +195,50 @@ func TestDatSizeCoveredByIndex(t *testing.T) {
 	}
 	if covered := v.DatSizeCoveredByIndex(int64(v.IndexFileSize())); covered != int64(datSize) {
 		t.Fatalf("covered %d after tombstone, want %d", covered, datSize)
+	}
+}
+
+func TestDatSizeCoveredByIndexKeySorted(t *testing.T) {
+	dir := t.TempDir()
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+
+	// write keys out of order so a key-sorted .idx ends on a mid-file row
+	for _, id := range []uint64{2, 3, 1} {
+		if _, _, _, err := v.writeNeedle2(newRandomNeedle(id), true, false, false); err != nil {
+			t.Fatalf("write needle %d: %v", id, err)
+		}
+	}
+	datSize, idxSize, _ := v.FileStat()
+
+	// rewrite the .idx sorted by key, as rebuilds do
+	indexFile := v.FileName(".idx")
+	content, err := os.ReadFile(indexFile)
+	if err != nil {
+		t.Fatalf("read idx: %v", err)
+	}
+	var rows [][]byte
+	for i := 0; i+types.NeedleMapEntrySize <= len(content); i += types.NeedleMapEntrySize {
+		rows = append(rows, content[i:i+types.NeedleMapEntrySize])
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		keyI, _, _ := idx.IdxFileEntry(rows[i])
+		keyJ, _, _ := idx.IdxFileEntry(rows[j])
+		return keyI < keyJ
+	})
+	var sorted []byte
+	for _, row := range rows {
+		sorted = append(sorted, row...)
+	}
+	if err := os.WriteFile(indexFile, sorted, 0644); err != nil {
+		t.Fatalf("rewrite idx: %v", err)
+	}
+
+	if covered := v.DatSizeCoveredByIndex(int64(idxSize)); covered != int64(datSize) {
+		t.Fatalf("key-sorted covered %d, want %d", covered, datSize)
 	}
 }

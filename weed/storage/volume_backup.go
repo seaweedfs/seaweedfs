@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"io"
@@ -508,29 +509,47 @@ func (v *Volume) readOffsetFromIndex(m int64) (Offset, error) {
 	return offset, err
 }
 
-// DatSizeCoveredByIndex returns the .dat end of the last index row before
-// indexSize that names a record, or 0 when none does within the scan bound.
-// Records appended after the index bound — including staged writes whose
-// rows are not published yet — lie past it, so a copy must not stream them:
-// they would reach the backup without their row and be appended again on
-// the next run.
+// DatSizeCoveredByIndex returns the .dat end of the last record the index
+// rows before indexSize cover, or 0 when none does. Rows are not always in
+// .dat order — rebuilds can write the .idx sorted by key — so the bound
+// comes from the maximum offset: records do not overlap, so the highest
+// offset names the highest end. Records appended after the index bound —
+// including staged writes whose rows are not published yet — lie past it,
+// so a copy must not stream them: they would reach the backup without their
+// row and be appended again on the next run.
 func (v *Volume) DatSizeCoveredByIndex(indexSize int64) int64 {
-	last := indexSize/NeedleMapEntrySize - 1
-	for i := last; i >= 0 && i > last-1024; i-- {
-		_, offset, _, err := v.readIndexEntry(i)
-		if err != nil {
-			return 0
-		}
-		if offset.IsZero() {
-			continue
-		}
-		_, _, bodyLength, err := needle.ReadNeedleHeader(v.DataBackend, v.SuperBlock.Version, offset.ToActualOffset())
-		if err != nil {
-			return 0
-		}
-		return offset.ToActualOffset() + NeedleHeaderSize + bodyLength
+	indexFile, err := os.OpenFile(v.FileName(".idx"), os.O_RDONLY, 0644)
+	if err != nil {
+		return 0
 	}
-	return 0
+	defer indexFile.Close()
+
+	boundRows := indexSize / NeedleMapEntrySize
+	row := int64(0)
+	maxActualOffset := int64(-1)
+	err = idx.WalkIndexFile(indexFile, 0, func(_ NeedleId, offset Offset, _ Size) error {
+		if row >= boundRows {
+			return errStopIdxWalk
+		}
+		row++
+		if !offset.IsZero() {
+			if actualOffset := offset.ToActualOffset(); actualOffset > maxActualOffset {
+				maxActualOffset = actualOffset
+			}
+		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, errStopIdxWalk) {
+		return 0
+	}
+	if maxActualOffset < 0 {
+		return 0
+	}
+	_, _, bodyLength, err := needle.ReadNeedleHeader(v.DataBackend, v.SuperBlock.Version, maxActualOffset)
+	if err != nil {
+		return 0
+	}
+	return maxActualOffset + NeedleHeaderSize + bodyLength
 }
 
 // generate the volume idx

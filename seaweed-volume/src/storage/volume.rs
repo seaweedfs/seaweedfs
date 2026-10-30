@@ -5199,35 +5199,51 @@ impl Volume {
         Ok((dat_size, idx_size))
     }
 
-    /// .dat end of the last index row before `index_size` that names a
-    /// record, or 0 when none does within the scan bound. Records appended
-    /// after the bound — including staged writes whose rows are not
-    /// published yet — lie past it, so a copy must not stream them.
+    /// .dat end of the last record the index rows before `index_size`
+    /// cover, or 0 when none does. Rows are not always in .dat order —
+    /// rebuilds can write the .idx sorted by key — so the bound comes from
+    /// the maximum offset: records do not overlap, so the highest offset
+    /// names the highest end. Records appended after the bound — including
+    /// staged writes whose rows are not published yet — lie past it, so a
+    /// copy must not stream them.
     /// Mirrors Go's DatSizeCoveredByIndex in weed/storage/volume_backup.go.
     pub(crate) fn dat_size_covered_by_index(&self, index_size: u64) -> u64 {
-        let last = index_size / NEEDLE_MAP_ENTRY_SIZE as u64;
-        let first = last.saturating_sub(1024);
-        let io = self.io.read().unwrap();
-        for i in (first..last).rev() {
-            let (_key, offset, _size) = match self.read_index_entry(i as i64) {
-                Ok(entry) => entry,
+        let bound_rows = index_size / NEEDLE_MAP_ENTRY_SIZE as u64;
+        let idx_path = self.file_name(".idx");
+        let idx_file = match File::open(&idx_path) {
+            Ok(file) => file,
+            Err(_) => return 0,
+        };
+        let mut max_actual_offset: i64 = -1;
+        let mut buf = [0u8; NEEDLE_MAP_ENTRY_SIZE];
+        let mut reader = io::BufReader::new(idx_file);
+        for _ in 0..bound_rows {
+            match reader.read_exact(&mut buf) {
+                Ok(()) => {}
+                Err(ref e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
                 Err(_) => return 0,
-            };
-            if offset.is_zero() {
-                continue;
             }
-            let mut header = [0u8; NEEDLE_HEADER_SIZE];
-            if self
-                .read_exact_at_backend(&io, &mut header, offset.to_actual_offset() as u64)
-                .is_err()
-            {
-                return 0;
+            let (_key, offset, _size) = idx_entry_from_bytes(&buf);
+            if !offset.is_zero() {
+                let actual_offset = offset.to_actual_offset();
+                if actual_offset > max_actual_offset {
+                    max_actual_offset = actual_offset;
+                }
             }
-            let (_cookie, _id, size) = Needle::parse_header(&header);
-            return offset.to_actual_offset() as u64
-                + get_actual_size(size, self.version()) as u64;
         }
-        0
+        if max_actual_offset < 0 {
+            return 0;
+        }
+        let io = self.io.read().unwrap();
+        let mut header = [0u8; NEEDLE_HEADER_SIZE];
+        if self
+            .read_exact_at_backend(&io, &mut header, max_actual_offset as u64)
+            .is_err()
+        {
+            return 0;
+        }
+        let (_cookie, _id, size) = Needle::parse_header(&header);
+        max_actual_offset as u64 + get_actual_size(size, self.version()) as u64
     }
 
     /// Disk space held by the local .dat file, or 0 when it is unknown. It
@@ -6819,6 +6835,32 @@ mod tests {
             .delete(NeedleId(3), Offset::default())
             .unwrap();
         assert_eq!(v.dat_size_covered_by_index(v.index_file_size()), dat_size);
+    }
+
+    #[test]
+    fn dat_size_covered_by_index_key_sorted() {
+        // A key-sorted .idx ends on the highest-key row, which need not be
+        // the record physically last in .dat — the bound must still cover
+        // the whole covered tail. Mirrors Go's
+        // TestDatSizeCoveredByIndexKeySorted.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+        for id in [2u64, 3, 1] {
+            write_test_needle(&mut v, id, &[id as u8; 64]);
+        }
+        let dat_size = v.dat_file_size().unwrap();
+        let idx_size = v.index_file_size();
+
+        // rewrite the .idx sorted by key, as rebuilds do
+        let idx_path = v.file_name(".idx");
+        let content = fs::read(&idx_path).unwrap();
+        let mut rows: Vec<&[u8]> = content.chunks(NEEDLE_MAP_ENTRY_SIZE).collect();
+        rows.sort_by_key(|row| idx_entry_from_bytes(row).0);
+        let sorted: Vec<u8> = rows.concat();
+        fs::write(&idx_path, sorted).unwrap();
+
+        assert_eq!(v.dat_size_covered_by_index(idx_size), dat_size);
     }
 
     #[test]
