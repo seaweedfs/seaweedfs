@@ -229,13 +229,25 @@ func loadClientTLS(config *util.ViperProxy, component string) (grpc.DialOption, 
 		IdentityOptions: advancedtls.IdentityCertificateOptions{
 			IdentityProvider: clientProvider,
 		},
-		AdditionalPeerVerification: func(params *advancedtls.HandshakeVerificationInfo) (*advancedtls.PostHandshakeVerificationResults, error) {
-			return &advancedtls.PostHandshakeVerificationResults{}, nil
-		},
 		RootOptions: advancedtls.RootCertificateOptions{
 			RootProvider: clientRootProvider,
 		},
 		VerificationType: advancedtls.CertVerification,
+	}
+	allowedServerNames := config.GetString(component + ".allowed_server_commonNames")
+	if allowedServerNames == "" {
+		allowedServerNames = config.GetString("grpc.allowed_server_commonNames")
+	}
+	auther := Authenticator{
+		AllowedCommonNames:    parseAllowedCommonNames(allowedServerNames),
+		AllowedWildcardDomain: config.GetString("grpc.allowed_server_wildcard_domain"),
+	}
+	if len(auther.AllowedCommonNames) != 0 || auther.AllowedWildcardDomain != "" {
+		options.AdditionalPeerVerification = auther.AuthenticateServer
+	} else {
+		options.AdditionalPeerVerification = func(params *advancedtls.HandshakeVerificationInfo) (*advancedtls.PostHandshakeVerificationResults, error) {
+			return &advancedtls.PostHandshakeVerificationResults{}, nil
+		}
 	}
 	ta, err := advancedtls.NewClientCreds(options)
 	if err != nil {
@@ -313,6 +325,24 @@ func (a Authenticator) Authenticate(params *advancedtls.HandshakeVerificationInf
 		return &advancedtls.PostHandshakeVerificationResults{}, nil
 	}
 	err := fmt.Errorf("Authenticate: invalid subject client common name: %s", params.Leaf.Subject.CommonName)
+	glog.Error(err)
+	return nil, err
+}
+
+func (a Authenticator) AuthenticateServer(params *advancedtls.HandshakeVerificationInfo) (*advancedtls.PostHandshakeVerificationResults, error) {
+	leaf := params.Leaf
+	names := make([]string, 0, len(leaf.DNSNames)+len(leaf.URIs)+1)
+	names = append(names, leaf.Subject.CommonName)
+	names = append(names, leaf.DNSNames...)
+	for _, u := range leaf.URIs {
+		names = append(names, u.String())
+	}
+	for _, name := range names {
+		if a.AllowedCommonNames[name] || (a.AllowedWildcardDomain != "" && strings.HasSuffix(name, a.AllowedWildcardDomain)) {
+			return &advancedtls.PostHandshakeVerificationResults{}, nil
+		}
+	}
+	err := fmt.Errorf("AuthenticateServer: untrusted server identity %v", names)
 	glog.Error(err)
 	return nil, err
 }

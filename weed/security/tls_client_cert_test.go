@@ -10,6 +10,7 @@ import (
 	"encoding/pem"
 	"math/big"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -59,6 +60,10 @@ func newTestCA(t *testing.T, dir string) *testCA {
 
 // issue creates a leaf certificate restricted to the given extended key usages.
 func (ca *testCA) issue(t *testing.T, dir, name string, ekus []x509.ExtKeyUsage) (certFile, keyFile string) {
+	return ca.issueWithSANs(t, dir, name, ekus, []string{"localhost"}, nil)
+}
+
+func (ca *testCA) issueWithSANs(t *testing.T, dir, name string, ekus []x509.ExtKeyUsage, dnsNames []string, uris []string) (certFile, keyFile string) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -72,7 +77,14 @@ func (ca *testCA) issue(t *testing.T, dir, name string, ekus []x509.ExtKeyUsage)
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  ekus,
 		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
-		DNSNames:     []string{"localhost"},
+		DNSNames:     dnsNames,
+	}
+	for _, u := range uris {
+		parsed, err := url.Parse(u)
+		if err != nil {
+			t.Fatal(err)
+		}
+		template.URIs = append(template.URIs, parsed)
 	}
 	der, err := x509.CreateCertificate(rand.Reader, template, ca.cert, &key.PublicKey, ca.key)
 	if err != nil {
@@ -253,5 +265,109 @@ func TestLoadClientTLSBadCaPathFails(t *testing.T) {
 
 	if _, err := loadClientTLS(v, "grpc.client"); err == nil {
 		t.Fatal("expected error for unreadable grpc.ca")
+	}
+}
+
+func TestLoadClientTLSAllowsListedServerName(t *testing.T) {
+	dir := t.TempDir()
+	ca := newTestCA(t, dir)
+	serverCert, serverKey := ca.issue(t, dir, "seaweed-filer", []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth})
+	clientCert, clientKey := ca.issue(t, dir, "client", []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
+
+	v := util.NewViperProxy(viper.New())
+	v.Set("grpc.ca", ca.file)
+	v.Set("grpc.master.cert", serverCert)
+	v.Set("grpc.master.key", serverKey)
+	v.Set("grpc.master.client_cert", clientCert)
+	v.Set("grpc.master.client_key", clientKey)
+	v.Set("grpc.master.allowed_server_commonNames", "seaweed-filer,seaweed-volume")
+
+	addr := startTestGrpcServer(t, v, "grpc.master")
+	if err := healthCheck(t, addr, LoadClientTLS(v, "grpc.master")); err != nil {
+		t.Fatalf("health check with listed server name failed: %v", err)
+	}
+}
+
+// Any CA-signed cert must not be able to stand in for another component:
+// a filer's identity dialing as "the master" has to fail the allowlist.
+func TestLoadClientTLSRejectsUnlistedServerName(t *testing.T) {
+	dir := t.TempDir()
+	ca := newTestCA(t, dir)
+	serverCert, serverKey := ca.issue(t, dir, "seaweed-filer", []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth})
+	clientCert, clientKey := ca.issue(t, dir, "client", []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
+
+	v := util.NewViperProxy(viper.New())
+	v.Set("grpc.ca", ca.file)
+	v.Set("grpc.master.cert", serverCert)
+	v.Set("grpc.master.key", serverKey)
+	v.Set("grpc.master.client_cert", clientCert)
+	v.Set("grpc.master.client_key", clientKey)
+	v.Set("grpc.master.allowed_server_commonNames", "seaweed-master")
+
+	addr := startTestGrpcServer(t, v, "grpc.master")
+	if err := healthCheck(t, addr, LoadClientTLS(v, "grpc.master")); err == nil {
+		t.Fatal("expected handshake failure for a server identity outside the allowlist")
+	}
+}
+
+func TestLoadClientTLSMatchesServerURISAN(t *testing.T) {
+	dir := t.TempDir()
+	ca := newTestCA(t, dir)
+	serverCert, serverKey := ca.issueWithSANs(t, dir, "server",
+		[]x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, nil, []string{"spiffe://cluster.local/ns/seaweedfs/master"})
+	clientCert, clientKey := ca.issue(t, dir, "client", []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
+
+	v := util.NewViperProxy(viper.New())
+	v.Set("grpc.ca", ca.file)
+	v.Set("grpc.master.cert", serverCert)
+	v.Set("grpc.master.key", serverKey)
+	v.Set("grpc.master.client_cert", clientCert)
+	v.Set("grpc.master.client_key", clientKey)
+	v.Set("grpc.master.allowed_server_commonNames", "spiffe://cluster.local/ns/seaweedfs/master")
+
+	addr := startTestGrpcServer(t, v, "grpc.master")
+	if err := healthCheck(t, addr, LoadClientTLS(v, "grpc.master")); err != nil {
+		t.Fatalf("health check with URI SAN allowlist failed: %v", err)
+	}
+}
+
+func TestLoadClientTLSMatchesServerWildcardDomain(t *testing.T) {
+	dir := t.TempDir()
+	ca := newTestCA(t, dir)
+	serverCert, serverKey := ca.issueWithSANs(t, dir, "server",
+		[]x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, []string{"master.example.com"}, nil)
+	clientCert, clientKey := ca.issue(t, dir, "client", []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
+
+	v := util.NewViperProxy(viper.New())
+	v.Set("grpc.ca", ca.file)
+	v.Set("grpc.master.cert", serverCert)
+	v.Set("grpc.master.key", serverKey)
+	v.Set("grpc.master.client_cert", clientCert)
+	v.Set("grpc.master.client_key", clientKey)
+	v.Set("grpc.allowed_server_wildcard_domain", ".example.com")
+
+	addr := startTestGrpcServer(t, v, "grpc.master")
+	if err := healthCheck(t, addr, LoadClientTLS(v, "grpc.master")); err != nil {
+		t.Fatalf("health check with wildcard domain failed: %v", err)
+	}
+}
+
+func TestLoadClientTLSGlobalServerNamesFallback(t *testing.T) {
+	dir := t.TempDir()
+	ca := newTestCA(t, dir)
+	serverCert, serverKey := ca.issue(t, dir, "seaweed-filer", []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth})
+	clientCert, clientKey := ca.issue(t, dir, "client", []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
+
+	v := util.NewViperProxy(viper.New())
+	v.Set("grpc.ca", ca.file)
+	v.Set("grpc.master.cert", serverCert)
+	v.Set("grpc.master.key", serverKey)
+	v.Set("grpc.master.client_cert", clientCert)
+	v.Set("grpc.master.client_key", clientKey)
+	v.Set("grpc.allowed_server_commonNames", "seaweed-filer")
+
+	addr := startTestGrpcServer(t, v, "grpc.master")
+	if err := healthCheck(t, addr, LoadClientTLS(v, "grpc.master")); err != nil {
+		t.Fatalf("health check with global allowlist failed: %v", err)
 	}
 }
