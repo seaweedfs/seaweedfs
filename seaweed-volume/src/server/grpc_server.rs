@@ -4604,6 +4604,10 @@ impl VolumeServer for VolumeGrpcService {
                 )));
             }
             let _claim = EcDecodeClaim(&self.state, vid);
+            // Same window as volume_mount: the renames and the mount below
+            // register the volume, and an in-flight copy of it rewrites the
+            // destination files. The claim covers the whole adoption.
+            let _copy_claim = claim_volume_against_copy(&self.state, vid)?;
             let want = DiskType::from_string(&req.disk_type);
             let base = {
                 let store = self.state.store.read().unwrap();
@@ -11693,6 +11697,28 @@ mod tests {
                 volume_id: vid.0,
                 ..Default::default()
             }))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::Unavailable);
+        assert!(err.message().contains("is being copied"), "{}", err.message());
+    }
+
+    /// The staged adoption renames .copying files into place and mounts, so
+    /// it holds the copy claim for the whole span — Go's adoptStagedVolume.
+    #[tokio::test]
+    async fn test_staged_adoption_refuses_a_volume_being_copied() {
+        let (service, _tmp) = make_local_service_with_volume("adopt_during_copy", None);
+        service
+            .state
+            .volume_copies_in_flight
+            .lock()
+            .unwrap()
+            .insert(VolumeId(1));
+
+        let mut request = ec_shards_to_volume_request();
+        request.get_mut().from_staged = true;
+        let err = service
+            .volume_ec_shards_to_volume(request)
             .await
             .unwrap_err();
         assert_eq!(err.code(), tonic::Code::Unavailable);
