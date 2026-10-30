@@ -396,8 +396,12 @@ func TestReplicatedWriteFailsWhenEitherLegFails(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if _, err := ReplicatedWrite(context.Background(), masterFn, dialOption, store, tc.volumeId, n, r, ""); err == nil {
+			_, err := ReplicatedWrite(context.Background(), masterFn, dialOption, store, tc.volumeId, n, r, "")
+			if err == nil {
 				t.Fatal("ReplicatedWrite succeeded despite a failed leg")
+			}
+			if errors.Is(err, ErrorWriteRefused) {
+				t.Fatalf("replicated write incorrectly proves no append: %v", err)
 			}
 		})
 	}

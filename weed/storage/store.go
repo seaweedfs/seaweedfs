@@ -954,7 +954,7 @@ func (s *Store) Close() {
 func (s *Store) WriteVolumeNeedle(i needle.VolumeId, n *needle.Needle, checkCookie bool, fsync bool) (isUnchanged bool, err error) {
 	if v := s.findVolume(i); v != nil {
 		if v.IsReadOnly() {
-			err = fmt.Errorf("volume %d is read only", i)
+			err = fmt.Errorf("volume %d is %w", i, ErrorReadOnly)
 			return
 		}
 		_, _, isUnchanged, err = v.writeNeedle2(n, checkCookie, fsync, s.isStopping.Load())

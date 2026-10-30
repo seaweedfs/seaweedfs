@@ -17,6 +17,7 @@ import (
 var ErrorNotFound = errors.New("not found")
 var ErrorDeleted = errors.New("already deleted")
 var ErrorSizeMismatch = errors.New("size mismatch")
+var ErrorReadOnly = errors.New("read only")
 
 // isFileUnchanged checks whether this needle to write is same as last one.
 // It requires serialized access in the same volume.
@@ -182,7 +183,7 @@ func (v *Volume) syncWrite(n *needle.Needle, checkCookie bool, fsync bool) (offs
 		return 0, 0, false, err
 	}
 	if v.IsReadOnly() {
-		return 0, 0, false, fmt.Errorf("volume %d is read only", v.Id)
+		return 0, 0, false, fmt.Errorf("volume %d is %w", v.Id, ErrorReadOnly)
 	}
 
 	// A caller can still hold the volume after it was closed or destroyed, which
@@ -314,7 +315,7 @@ func (v *Volume) appendWriteRequest(n *needle.Needle, checkCookie bool, fsync bo
 	// Re-check under the write lock: the outer checks run before the needle
 	// is assembled, and VolumeMarkReadonly can land in between.
 	if v.IsReadOnly() {
-		return 0, 0, false, fmt.Errorf("volume %d is read only", v.Id)
+		return 0, 0, false, fmt.Errorf("volume %d is %w", v.Id, ErrorReadOnly)
 	}
 	if v.isFileUnchanged(n) {
 		size = Size(n.DataSize)
@@ -564,7 +565,7 @@ func (v *Volume) processBatchRun(run []*needle.AsyncRequest) {
 			if unavailableErr := v.UnavailableError(); unavailableErr != nil {
 				run[i].UpdateResult(0, 0, false, unavailableErr)
 			} else if v.IsReadOnly() {
-				run[i].UpdateResult(0, 0, false, fmt.Errorf("volume %d is read only", v.Id))
+				run[i].UpdateResult(0, 0, false, fmt.Errorf("volume %d is %w", v.Id, ErrorReadOnly))
 			} else {
 				offset, size, isUnchanged, err := v.appendWriteRequest(run[i].N, true, true)
 				if err == nil {
