@@ -143,7 +143,7 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 
 	// get start time for the data sink
 	startFrom := time.Unix(0, 0)
-	sinkId, legacySinkId := backupCheckpointIds(sourcePath, dataSink)
+	sinkId, legacySinkId := backupCheckpointIds(sourcePath, dataSink, *backupOption.s3FlattenVersions)
 	runSnapshot := *backupOption.initialSnapshot && timeAgo == 0
 	if resumeTsNs > 0 {
 		// The previous attempt pinned where it stopped — a failed event's
@@ -397,9 +397,16 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 //
 // NUL joins the fields because it cannot occur in a path or a configuration
 // value, so distinct field tuples cannot concatenate to the same hash input.
-func backupCheckpointIds(sourcePath string, dataSink sink.ReplicationSink) (sinkId, legacySinkId int32) {
-	sinkId = int32(util.HashStringToLong(sourcePath + "\x00" + dataSink.GetName() + "\x00" + dataSink.GetDestinationIdentity()))
-	legacySinkId = int32(util.HashStringToLong(dataSink.GetName() + dataSink.GetSinkToDirectory()))
+// The flattening mode is part of the identity too: resuming a checkpoint taken
+// in the other mode would skip the flattened re-seed and leave mirrored
+// version files behind, so a mode change must restart the snapshot.
+func backupCheckpointIds(sourcePath string, dataSink sink.ReplicationSink, flattenVersions bool) (sinkId, legacySinkId int32) {
+	mode := ""
+	if flattenVersions {
+		mode = "\x00flatten"
+	}
+	sinkId = int32(util.HashStringToLong(sourcePath + "\x00" + dataSink.GetName() + "\x00" + dataSink.GetDestinationIdentity() + mode))
+	legacySinkId = int32(util.HashStringToLong(dataSink.GetName() + dataSink.GetSinkToDirectory() + mode))
 	return
 }
 
