@@ -150,22 +150,23 @@ func (e *TestEnvironment) cleanup(t *testing.T) {
 }
 
 // vectorEngineBinary resolves the engine binary the way the pytest suite
-// does: VECTOR_BINARY env, a Makefile-built ./weed-vector, then PATH.
+// does: VECTOR_BINARY env, a Makefile-built ./weed-vector, then PATH. The
+// engine runs with its working directory set to the data dir, so the path is
+// made absolute here.
 func vectorEngineBinary(t *testing.T) string {
 	t.Helper()
-	if bin := os.Getenv("VECTOR_BINARY"); bin != "" {
-		return bin
-	}
-	if _, err := os.Stat("./weed-vector"); err == nil {
-		abs, err := filepath.Abs("./weed-vector")
-		if err == nil {
-			return abs
+	bin := os.Getenv("VECTOR_BINARY")
+	if bin == "" {
+		if _, err := os.Stat("./weed-vector"); err == nil {
+			bin = "./weed-vector"
+		} else if b, err := exec.LookPath("weed-vector"); err == nil {
+			bin = b
+		} else {
+			t.Skip("weed-vector binary not found, skipping engine-dependent test")
 		}
-		return "./weed-vector"
 	}
-	bin, err := exec.LookPath("weed-vector")
-	if err != nil {
-		t.Skip("weed-vector binary not found, skipping engine-dependent test")
+	if abs, err := filepath.Abs(bin); err == nil {
+		return abs
 	}
 	return bin
 }
@@ -176,26 +177,28 @@ func vectorEngineBinary(t *testing.T) string {
 func (e *TestEnvironment) startVectorEngine(t *testing.T, bin string) {
 	t.Helper()
 	masters := fmt.Sprintf("%s:%d.%d", e.bindIP, e.masterPort, e.masterPort+testutil.GrpcPortOffset)
-	e.vectorProcess = exec.Command(bin,
+	cmd := exec.Command(bin,
 		"--namespace", fmt.Sprintf("http://%s:%d", e.bindIP, e.lancePort),
 		"--masters", masters,
 		"--listen", fmt.Sprintf("%s:%d", e.bindIP, e.vectorPort),
 		"--storage-option", "aws_access_key_id="+e.accessKey,
 		"--storage-option", "aws_secret_access_key="+e.secretKey,
 	)
-	e.vectorProcess.Dir = e.dataDir
+	cmd.Dir = e.dataDir
 	log, err := os.Create(filepath.Join(e.dataDir, "weed-vector.log"))
 	if err != nil {
 		t.Fatalf("vector log: %v", err)
 	}
 	defer log.Close()
-	e.vectorProcess.Stdout = log
-	e.vectorProcess.Stderr = log
-	if err := e.vectorProcess.Start(); err != nil {
+	cmd.Stdout = log
+	cmd.Stderr = log
+	if err := cmd.Start(); err != nil {
 		t.Fatalf("start weed-vector: %v", err)
 	}
+	// Assign only after Start succeeded: cleanup kills Process unconditionally.
+	e.vectorProcess = cmd
 	exited := make(chan error, 1)
-	go func() { exited <- e.vectorProcess.Wait() }()
+	go func() { exited <- cmd.Wait() }()
 
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
@@ -387,6 +390,12 @@ func TestVectorDataPlaneLifecycle(t *testing.T) {
 		"vectorBucketName": "vec-bucket",
 	}, http.StatusOK)
 	env.waitForEngineDiscovery(t, c)
+	indexes := c.want(t, "ListIndexes", map[string]interface{}{
+		"vectorBucketName": "vec-bucket",
+	}, http.StatusOK)
+	if n := len(indexes["indexes"].([]interface{})); n != 1 {
+		t.Fatalf("ListIndexes returned %d indexes, want 1", n)
+	}
 
 	// Write and read the first vectors.
 	c.want(t, "PutVectors", map[string]interface{}{
@@ -404,6 +413,10 @@ func TestVectorDataPlaneLifecycle(t *testing.T) {
 	vec := got["vectors"].([]interface{})[0].(map[string]interface{})
 	if vec["key"] != "a" || vec["metadata"].(map[string]interface{})["color"] != "red" {
 		t.Fatalf("GetVectors returned %v, want key a with color red", vec)
+	}
+	data, _ := vec["data"].(map[string]interface{})["float32"].([]interface{})
+	if len(data) != 3 || data[0] != 1.0 || data[1] != 0.0 || data[2] != 0.0 {
+		t.Fatalf("GetVectors returned data %v, want float32 [1 0 0]", vec["data"])
 	}
 	listed := c.want(t, "ListVectors", map[string]interface{}{
 		"vectorBucketName": "vec-bucket", "indexName": "idx",
@@ -435,8 +448,12 @@ func TestVectorDataPlaneLifecycle(t *testing.T) {
 	listed = c.want(t, "ListVectors", map[string]interface{}{
 		"vectorBucketName": "vec-bucket", "indexName": "idx",
 	}, http.StatusOK)
-	if n := len(listed["vectors"].([]interface{})); n != 2 {
-		t.Fatalf("ListVectors after delete returned %d vectors, want 2", n)
+	remaining := map[string]bool{}
+	for _, v := range listed["vectors"].([]interface{}) {
+		remaining[v.(map[string]interface{})["key"].(string)] = true
+	}
+	if len(remaining) != 2 || !remaining["a"] || !remaining["c"] {
+		t.Fatalf("ListVectors after delete returned %v, want keys a and c", listed["vectors"])
 	}
 
 	c.want(t, "DeleteIndex", map[string]interface{}{
