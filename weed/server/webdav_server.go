@@ -96,12 +96,142 @@ type copyMoveGuardHandler struct {
 	next http.Handler
 }
 
+// deferredDeleteFS defers a destination's delete to the rename that follows
+// it: x/net removes an existing MOVE destination before Rename, leaving it
+// lost when the rename cannot complete. The filer's rename replaces the
+// target in one transaction, so the delete is skipped here; a file vs.
+// collection clash cannot merge in place and moves the target aside, which
+// the refused rename then restores.
+type deferredDeleteFS struct {
+	webdav.FileSystem
+	dst string
+}
+
+func (f deferredDeleteFS) RemoveAll(ctx context.Context, name string) error {
+	if strings.TrimRight(name, "/") == strings.TrimRight(f.dst, "/") {
+		return nil
+	}
+	return f.FileSystem.RemoveAll(ctx, name)
+}
+
+func (f deferredDeleteFS) Rename(ctx context.Context, oldName, newName string) error {
+	// a file vs. collection clash cannot merge in place, and a collection
+	// only replaces an empty one — those targets are moved aside rather
+	// than deleted outright, as moveFiles would have done, so a refused
+	// rename leaves the destination's contents to restore
+	src, srcErr := f.FileSystem.Stat(ctx, oldName)
+	dst, dstErr := f.FileSystem.Stat(ctx, newName)
+	if srcErr == nil && dstErr == nil {
+		clashing := src.IsDir() != dst.IsDir()
+		if !clashing && dst.IsDir() {
+			nonEmpty, err := nonEmptyDir(ctx, f.FileSystem, newName)
+			if err != nil {
+				return err
+			}
+			clashing = nonEmpty
+		}
+		if clashing {
+			return renameOverTarget(ctx, f.FileSystem, oldName, newName)
+		}
+	}
+	return f.FileSystem.Rename(ctx, oldName, newName)
+}
+
+// renameOverTarget parks a clashing rename target under a hidden sibling
+// name so a refused rename can put it back; the parked entry is only
+// removed once the move has landed.
+func renameOverTarget(ctx context.Context, fs webdav.FileSystem, oldName, newName string) error {
+	dir, base := path.Split(strings.TrimRight(newName, "/"))
+	spare := fmt.Sprintf("%s.%s.webdav-moved-%x", dir, base, uint32(util.RandomInt32()))
+	if err := fs.Rename(ctx, newName, spare); err != nil {
+		return err
+	}
+	if err := fs.Rename(ctx, oldName, newName); err != nil {
+		// a client disconnect cancels ctx mid-move; restoration gets its
+		// own deadline, started after the move so its duration is not eaten
+		restoreCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Minute)
+		defer cancel()
+		// newName may have been claimed while the target was parked; the
+		// restore must refuse to replace it rather than clobber new data
+		var backErr error
+		if nrf, ok := fs.(interface {
+			rename(context.Context, string, string, bool) error
+		}); ok {
+			backErr = nrf.rename(restoreCtx, spare, newName, true)
+		} else {
+			backErr = fs.Rename(restoreCtx, spare, newName)
+		}
+		if backErr != nil {
+			glog.WarningfCtx(restoreCtx, "restore moved-aside %s to %s: %v", spare, newName, backErr)
+		}
+		return err
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Minute)
+	defer cancel()
+	var removeErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			time.Sleep(2 * time.Second)
+		}
+		if removeErr = fs.RemoveAll(cleanupCtx, spare); removeErr == nil {
+			return nil
+		}
+	}
+	// the move is done, so it still reports success; the warning names the
+	// parked sibling for recovery instead of leaving it hidden
+	glog.WarningfCtx(cleanupCtx, "moved-aside %s remains parked after failed removes: %v", spare, removeErr)
+	return nil
+}
+
+// nonEmptyDir reports whether a collection holds entries: the rename below
+// replaces the target's own entry, which a non-empty collection refuses.
+func nonEmptyDir(ctx context.Context, fs webdav.FileSystem, name string) (bool, error) {
+	dir, err := fs.OpenFile(ctx, name, os.O_RDONLY, 0)
+	if err != nil {
+		return false, err
+	}
+	defer dir.Close()
+	entries, err := dir.Readdir(1)
+	if err == io.EOF {
+		return false, nil
+	}
+	return len(entries) > 0, err
+}
+
+// moveHandler runs an overwriting MOVE onto an existing destination against
+// deferredDeleteFS, so the target survives a refused or failed rename.
+func (h copyMoveGuardHandler) moveHandler(r *http.Request) http.Handler {
+	next, ok := h.next.(*webdav.Handler)
+	if !ok || r.Header.Get("Overwrite") == "F" {
+		return h.next
+	}
+	u, err := url.Parse(r.Header.Get("Destination"))
+	if err != nil || u.Host != "" && u.Host != r.Host {
+		return h.next
+	}
+	if _, err := h.fs.Stat(r.Context(), u.Path); err != nil {
+		return h.next
+	}
+	inner := *next
+	inner.FileSystem = deferredDeleteFS{FileSystem: inner.FileSystem, dst: u.Path}
+	return &inner
+}
+
 func (h copyMoveGuardHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// RFC 4918 10.6: a missing Overwrite header means T, but webdav.Handler
+	// only overwrites on MOVE when it is set (golang/go#66059)
+	if r.Method == "MOVE" && len(r.Header.Values("Overwrite")) == 0 {
+		r.Header.Set("Overwrite", "T")
+	}
+	next := h.next
+	if r.Method == "MOVE" {
+		next = h.moveHandler(r)
+	}
 	if r.Method == "MOVE" || r.Method == "COPY" {
 		// a foreign-host Destination is another server's problem: the webdav
 		// handler answers 502, so the local checks below do not apply
 		if u, err := url.Parse(r.Header.Get("Destination")); err == nil && u.Host != "" && u.Host != r.Host {
-			h.next.ServeHTTP(w, r)
+			next.ServeHTTP(w, r)
 			return
 		}
 		if u, err := url.Parse(r.Header.Get("Destination")); err == nil {
@@ -155,7 +285,7 @@ func (h copyMoveGuardHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 	}
-	h.next.ServeHTTP(w, r)
+	next.ServeHTTP(w, r)
 }
 
 // adapted from https://github.com/mattn/davfs/blob/master/plugin/mysql/mysql.go
@@ -417,7 +547,7 @@ func (fs *WebDavFileSystem) removeAll(ctx context.Context, fullFilePath string, 
 	}
 	dir, name := fullpath.DirAndName()
 
-	return filer_pb.Remove(context.Background(), fs, dir, name, true, recursive, false, false, []int32{fs.signature})
+	return filer_pb.Remove(ctx, fs, dir, name, true, recursive, false, false, []int32{fs.signature})
 
 }
 
@@ -429,6 +559,10 @@ func (fs *WebDavFileSystem) RemoveAll(ctx context.Context, name string) error {
 }
 
 func (fs *WebDavFileSystem) Rename(ctx context.Context, oldName, newName string) error {
+	return fs.rename(ctx, oldName, newName, false)
+}
+
+func (fs *WebDavFileSystem) rename(ctx context.Context, oldName, newName string, failIfExists bool) error {
 
 	glog.V(2).Infof("WebDavFileSystem.Rename %v to %v", oldName, newName)
 
@@ -449,11 +583,9 @@ func (fs *WebDavFileSystem) Rename(ctx context.Context, oldName, newName string)
 		return os.ErrInvalid
 	}
 
-	_, err = fs.stat(ctx, newName)
-	if err == nil {
-		return os.ErrExist
-	}
-	if err != os.ErrNotExist {
+	// an existing target is replaced inside the rename's transaction; a
+	// failed lookup aborts the move here
+	if _, err = fs.stat(ctx, newName); err != nil && err != os.ErrNotExist {
 		return err
 	}
 
@@ -467,10 +599,11 @@ func (fs *WebDavFileSystem) Rename(ctx context.Context, oldName, newName string)
 	return fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.AtomicRenameEntryRequest{
-			OldDirectory: oldDir,
-			OldName:      oldBaseName,
-			NewDirectory: newDir,
-			NewName:      newBaseName,
+			OldDirectory:       oldDir,
+			OldName:            oldBaseName,
+			NewDirectory:       newDir,
+			NewName:            newBaseName,
+			FailIfTargetExists: failIfExists,
 		}
 
 		_, err := client.AtomicRenameEntry(ctx, request)
