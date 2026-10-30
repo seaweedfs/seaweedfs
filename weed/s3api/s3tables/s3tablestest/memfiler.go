@@ -37,6 +37,9 @@ type MemFiler struct {
 	// BeforeDelete runs once before the next DeleteEntry, so a test can land a
 	// competing write in a handler's check-to-delete window.
 	BeforeDelete func()
+	// OnLookup runs at the start of every LookupDirectoryEntry with the target
+	// path, so a test can land a competing write between two reads.
+	OnLookup func(dir, name string)
 	// OnUpdate runs at the start of every UpdateEntry with the target path, so
 	// a test can land a competing write at a chosen step of a multi-update
 	// operation.
@@ -83,6 +86,9 @@ func (f *MemFiler) PutFile(dir, name string, mtime time.Time) {
 }
 
 func (f *MemFiler) LookupDirectoryEntry(_ context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	if hook := f.OnLookup; hook != nil {
+		hook(req.Directory, req.Name)
+	}
 	if e := f.Get(req.Directory, req.Name); e != nil {
 		return &filer_pb.LookupDirectoryEntryResponse{Entry: e}, nil
 	}

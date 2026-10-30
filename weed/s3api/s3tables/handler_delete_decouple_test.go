@@ -180,6 +180,70 @@ func TestDeleteTableDecoupledClearsLeftoverClaim(t *testing.T) {
 	assert.Equal(t, http.StatusOK, status, "the name must take a create once the claim is gone: %+v", resp)
 }
 
+// An update that moves a decoupled table's MetadataLocation between the
+// delete's authorized read and the read its claim and purge run on must turn
+// the delete into a conflict: the purge otherwise empties the stale directory
+// and unmarks a record whose data lives somewhere else entirely.
+func TestDeleteTableDecoupledLosesToMovedLocation(t *testing.T) {
+	fs, m := startRenameManager(t)
+
+	nsPath := GetNamespacePath(renameTestBucket, "ns")
+	metaA, _ := json.Marshal(tableMetadataInternal{
+		Name:             "mv",
+		Namespace:        "ns",
+		Format:           "ICEBERG",
+		OwnerAccountID:   DefaultAccountID,
+		MetadataLocation: "s3://" + renameTestBucket + "/ns/mv-a/metadata/v1.metadata.json",
+	})
+	metaB, _ := json.Marshal(tableMetadataInternal{
+		Name:             "mv",
+		Namespace:        "ns",
+		Format:           "ICEBERG",
+		OwnerAccountID:   DefaultAccountID,
+		MetadataLocation: "s3://" + renameTestBucket + "/ns/mv-b/metadata/v1.metadata.json",
+	})
+	fs.Put(nsPath, "mv", map[string][]byte{
+		ExtendedKeyMetadata:  metaA,
+		ExtendedKeyEntryType: []byte(EntryTypeTable),
+	})
+	fs.Put(GetTablePath(renameTestBucket, "ns", "mv-a"), "data", nil)
+	fs.Put(GetTablePath(renameTestBucket, "ns", "mv-b"), "data", nil)
+
+	// The first read of the marker is the authorized one; land the update's
+	// write in front of the read the claim and purge run on.
+	lookups := 0
+	fs.OnLookup = func(dir, name string) {
+		if dir != nsPath || name != "mv" {
+			return
+		}
+		lookups++
+		if lookups > 1 {
+			fs.OnLookup = nil
+			fs.Put(nsPath, "mv", map[string][]byte{
+				ExtendedKeyMetadata:  metaB,
+				ExtendedKeyEntryType: []byte(EntryTypeTable),
+			})
+		}
+	}
+
+	status, resp := runHandler(t, m, fs.Client, "DeleteTable", &DeleteTableRequest{
+		TableBucketARN: mustBucketARN(t),
+		Namespace:      []string{"ns"},
+		Name:           "mv",
+	})
+	assert.Equal(t, http.StatusConflict, status)
+	assert.Equal(t, ErrCodeConflict, resp.Type)
+
+	assert.NotNil(t, fs.Get(GetTablePath(renameTestBucket, "ns", "mv-a"), "data"),
+		"the stale location's data must survive")
+	assert.NotNil(t, fs.Get(GetTablePath(renameTestBucket, "ns", "mv-b"), "data"),
+		"the live location's data must survive")
+	rec := fs.Get(nsPath, "mv")
+	require.NotNil(t, rec)
+	assert.Equal(t, metaB, rec.Extended[ExtendedKeyMetadata])
+	assert.NotContains(t, rec.Extended, ExtendedKeyDeleting, "a refused delete must not leave a claim")
+}
+
 // A table whose MetadataLocation resolves to an ancestor of its own name path
 // (here the namespace root, e.g. from corrupt metadata) must not be deleted: a
 // recursive purge of that data path would wipe sibling tables. The delete is
