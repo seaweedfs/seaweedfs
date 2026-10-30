@@ -334,8 +334,46 @@ func parseAllowedCommonNames(commonNames string) map[string]bool {
 	return allowed
 }
 
+// matchesWildcardDomain requires a real subdomain of the wildcard: the name
+// must end with the domain, carry a non-empty label in front of it, and be a
+// valid DNS name, so a CA-signed name like ".example.com" cannot satisfy the
+// suffix check. A leading "*." label is allowed so wildcard certs keep
+// matching.
+func matchesWildcardDomain(name, wildcardDomain string) bool {
+	if wildcardDomain == "" || len(name) <= len(wildcardDomain) || !strings.HasSuffix(name, wildcardDomain) {
+		return false
+	}
+	if wildcardDomain[0] != '.' && name[len(name)-len(wildcardDomain)-1] != '.' {
+		return false
+	}
+	return isDomainName(strings.TrimPrefix(name, "*."))
+}
+
+// isDomainName mirrors the Rust volume's check: non-empty labels of letters,
+// digits, '-', '_', each up to 63 chars and not '-'-edged, with at least one
+// non-digit so a bare IP cannot pass a domain wildcard.
+func isDomainName(name string) bool {
+	if len(name) == 0 || len(name) > 253 {
+		return false
+	}
+	nonNumeric := false
+	for _, label := range strings.Split(name, ".") {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for i := 0; i < len(label); i++ {
+			c := label[i]
+			if c != '-' && c != '_' && !(c >= '0' && c <= '9') && !(c >= 'a' && c <= 'z') && !(c >= 'A' && c <= 'Z') {
+				return false
+			}
+			nonNumeric = nonNumeric || c < '0' || c > '9'
+		}
+	}
+	return nonNumeric
+}
+
 func (a Authenticator) Authenticate(params *advancedtls.HandshakeVerificationInfo) (*advancedtls.PostHandshakeVerificationResults, error) {
-	if a.AllowedWildcardDomain != "" && strings.HasSuffix(params.Leaf.Subject.CommonName, a.AllowedWildcardDomain) {
+	if matchesWildcardDomain(params.Leaf.Subject.CommonName, a.AllowedWildcardDomain) {
 		return &advancedtls.PostHandshakeVerificationResults{}, nil
 	}
 	if _, ok := a.AllowedCommonNames[params.Leaf.Subject.CommonName]; ok {
@@ -352,7 +390,7 @@ func (a Authenticator) AuthenticateServer(params *advancedtls.HandshakeVerificat
 	names = append(names, leaf.Subject.CommonName)
 	names = append(names, leaf.DNSNames...)
 	for _, name := range names {
-		if a.AllowedCommonNames[name] || (a.AllowedWildcardDomain != "" && strings.HasSuffix(name, a.AllowedWildcardDomain)) {
+		if a.AllowedCommonNames[name] || matchesWildcardDomain(name, a.AllowedWildcardDomain) {
 			return &advancedtls.PostHandshakeVerificationResults{}, nil
 		}
 	}

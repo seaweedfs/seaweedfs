@@ -352,6 +352,55 @@ func TestLoadClientTLSMatchesServerWildcardDomain(t *testing.T) {
 	}
 }
 
+func TestMatchesWildcardDomain(t *testing.T) {
+	cases := []struct {
+		name   string
+		domain string
+		want   bool
+	}{
+		{"node.prod.example.com", ".example.com", true},
+		{"example.com", ".example.com", false},
+		{".example.com", ".example.com", false},
+		{"node..example.com", ".example.com", false},
+		{"node-.example.com", ".example.com", false},
+		{"-node.example.com", ".example.com", false},
+		{"node.example.com", "", false},
+		{"node.example.com", ".other.net", false},
+		{"badexample.com", "example.com", false},
+		{"good.example.com", "example.com", true},
+		{"*.example.com", ".example.com", true},
+		{"1.2.3.4", ".3.4", false},
+	}
+	for _, c := range cases {
+		if got := matchesWildcardDomain(c.name, c.domain); got != c.want {
+			t.Errorf("matchesWildcardDomain(%q, %q) = %v, want %v", c.name, c.domain, got, c.want)
+		}
+	}
+}
+
+// A CA-signed name that is not a valid hostname must not satisfy the wildcard
+// suffix check: ".example.com" equals the wildcard and has no hostname label.
+func TestLoadClientTLSRejectsInvalidWildcardName(t *testing.T) {
+	dir := t.TempDir()
+	ca := newTestCA(t, dir)
+	serverCert, serverKey := ca.issueWithSANs(t, dir, ".example.com",
+		[]x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, []string{".example.com"}, nil)
+	clientCert, clientKey := ca.issue(t, dir, "client", []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
+
+	v := util.NewViperProxy(viper.New())
+	v.Set("grpc.ca", ca.file)
+	v.Set("grpc.master.cert", serverCert)
+	v.Set("grpc.master.key", serverKey)
+	v.Set("grpc.master.client_cert", clientCert)
+	v.Set("grpc.master.client_key", clientKey)
+	v.Set("grpc.allowed_server_wildcard_domain", ".example.com")
+
+	addr := startTestGrpcServer(t, v, "grpc.master")
+	if err := healthCheck(t, addr, LoadClientTLS(v, "grpc.master")); err == nil {
+		t.Fatal("expected handshake failure: a non-hostname identity must not match the wildcard domain")
+	}
+}
+
 // A URI SAN whose path happens to end in the wildcard domain must not pass:
 // URI identities are exact-match only.
 func TestLoadClientTLSURIPathDoesNotMatchWildcardDomain(t *testing.T) {

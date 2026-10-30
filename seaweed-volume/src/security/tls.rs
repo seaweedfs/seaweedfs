@@ -363,8 +363,48 @@ fn common_name_is_allowed(
     allowed_common_names: &HashSet<String>,
     allowed_wildcard_domain: &str,
 ) -> bool {
-    (!allowed_wildcard_domain.is_empty() && common_name.ends_with(allowed_wildcard_domain))
-        || allowed_common_names.contains(common_name)
+    allowed_common_names.contains(common_name)
+        || wildcard_domain_matches(common_name, allowed_wildcard_domain)
+}
+
+// Mirrors the Go wildcard check: the name must end with the domain, carry a
+// non-empty label in front of it, and be a valid DNS name so a CA-signed name
+// like ".example.com" cannot satisfy the suffix check. A leading "*." label
+// is allowed so wildcard certs keep matching.
+fn wildcard_domain_matches(name: &str, wildcard_domain: &str) -> bool {
+    if wildcard_domain.is_empty()
+        || name.len() <= wildcard_domain.len()
+        || !name.ends_with(wildcard_domain)
+    {
+        return false;
+    }
+    if !wildcard_domain.starts_with('.')
+        && name.as_bytes()[name.len() - wildcard_domain.len() - 1] != b'.'
+    {
+        return false;
+    }
+    is_domain_name(name.strip_prefix("*.").unwrap_or(name))
+}
+
+// Mirrors Go's net.IsDomainName: non-empty labels of letters, digits, '-',
+// '_', each up to 63 chars and not '-'-edged, with at least one non-digit so
+// a bare IP cannot pass a domain wildcard.
+fn is_domain_name(name: &str) -> bool {
+    if name.is_empty() || name.len() > 253 {
+        return false;
+    }
+    let mut non_numeric = false;
+    let valid = name.split('.').all(|label| {
+        non_numeric |= label.bytes().any(|c| !c.is_ascii_digit());
+        !label.is_empty()
+            && label.len() <= 63
+            && !label.starts_with('-')
+            && !label.ends_with('-')
+            && label
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
+    });
+    valid && non_numeric
 }
 
 fn go_tls_version_for_supported(version: &SupportedProtocolVersion) -> GoTlsVersion {
@@ -438,6 +478,26 @@ mod tests {
         ));
         assert!(!common_name_is_allowed(
             "node.prod.other.net",
+            &allowed_common_names,
+            ".example.com",
+        ));
+        assert!(!common_name_is_allowed(
+            ".example.com",
+            &allowed_common_names,
+            ".example.com",
+        ));
+        assert!(!common_name_is_allowed(
+            "node..example.com",
+            &allowed_common_names,
+            ".example.com",
+        ));
+        assert!(!common_name_is_allowed(
+            "badexample.com",
+            &allowed_common_names,
+            "example.com",
+        ));
+        assert!(common_name_is_allowed(
+            "*.example.com",
             &allowed_common_names,
             ".example.com",
         ));
