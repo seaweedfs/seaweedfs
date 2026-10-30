@@ -577,6 +577,81 @@ func TestCopyMoveGuardHandler_MoveEmptyOverwriteValue(t *testing.T) {
 	}
 }
 
+// An overwriting MOVE of a collection onto a non-empty collection deletes the
+// destination first: the deferred rename only merges over an empty one, so
+// this case takes the depth-infinity delete the suppressed RemoveAll ran.
+func TestCopyMoveGuardHandler_MoveDirOntoNonEmptyDir(t *testing.T) {
+	ctx := context.Background()
+	fs := webdav.NewMemFS()
+	put := func(name, data string) {
+		f, err := fs.OpenFile(ctx, name, os.O_RDWR|os.O_CREATE, 0644)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.Write([]byte(data)); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := fs.Mkdir(ctx, "/src", 0755); err != nil {
+		t.Fatal(err)
+	}
+	put("/src/s.txt", "s")
+	if err := fs.Mkdir(ctx, "/dst", 0755); err != nil {
+		t.Fatal(err)
+	}
+	put("/dst/d.txt", "d")
+
+	h := copyMoveGuardHandler{
+		fs:   fs,
+		next: &webdav.Handler{FileSystem: fs, LockSystem: webdav.NewMemLS()},
+	}
+	req := httptest.NewRequest("MOVE", "http://x/src", nil)
+	req.Header.Set("Destination", "http://x/dst")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNoContent, w.Code)
+	_, err := fs.Stat(ctx, "/dst/d.txt")
+	assert.True(t, os.IsNotExist(err))
+	if r, err := fs.OpenFile(ctx, "/dst/s.txt", os.O_RDONLY, 0); assert.NoError(t, err) {
+		data, err := io.ReadAll(r)
+		assert.NoError(t, err)
+		assert.Equal(t, "s", string(data))
+	}
+	_, err = fs.Stat(ctx, "/src")
+	assert.True(t, os.IsNotExist(err))
+}
+
+// An overwriting MOVE of a collection onto an empty collection keeps the
+// deferred path: the destination survives if the rename itself fails.
+func TestCopyMoveGuardHandler_MoveDirOntoEmptyDirKeepsDestinationOnFailure(t *testing.T) {
+	ctx := context.Background()
+	mem := webdav.NewMemFS()
+	if err := mem.Mkdir(ctx, "/src", 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := mem.Mkdir(ctx, "/dst", 0755); err != nil {
+		t.Fatal(err)
+	}
+	fs := failRenameFS{mem}
+	h := copyMoveGuardHandler{
+		fs:   fs,
+		next: &webdav.Handler{FileSystem: fs, LockSystem: webdav.NewMemLS()},
+	}
+	req := httptest.NewRequest("MOVE", "http://x/src", nil)
+	req.Header.Set("Destination", "http://x/dst")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	if fi, err := mem.Stat(ctx, "/dst"); assert.NoError(t, err) {
+		assert.True(t, fi.IsDir())
+	}
+}
+
 type failRenameFS struct {
 	webdav.FileSystem
 }

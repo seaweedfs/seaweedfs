@@ -114,16 +114,42 @@ func (f deferredDeleteFS) RemoveAll(ctx context.Context, name string) error {
 }
 
 func (f deferredDeleteFS) Rename(ctx context.Context, oldName, newName string) error {
-	// a file vs. collection clash cannot merge in place — delete the target
-	// first, as moveFiles would have done itself
+	// a file vs. collection clash cannot merge in place, and a collection
+	// only replaces an empty one — delete those targets first, as moveFiles
+	// would have done itself
 	src, srcErr := f.FileSystem.Stat(ctx, oldName)
 	dst, dstErr := f.FileSystem.Stat(ctx, newName)
-	if srcErr == nil && dstErr == nil && src.IsDir() != dst.IsDir() {
-		if err := f.FileSystem.RemoveAll(ctx, newName); err != nil {
-			return err
+	if srcErr == nil && dstErr == nil {
+		clashing := src.IsDir() != dst.IsDir()
+		if !clashing && dst.IsDir() {
+			nonEmpty, err := nonEmptyDir(ctx, f.FileSystem, newName)
+			if err != nil {
+				return err
+			}
+			clashing = nonEmpty
+		}
+		if clashing {
+			if err := f.FileSystem.RemoveAll(ctx, newName); err != nil {
+				return err
+			}
 		}
 	}
 	return f.FileSystem.Rename(ctx, oldName, newName)
+}
+
+// nonEmptyDir reports whether a collection holds entries: the rename below
+// replaces the target's own entry, which a non-empty collection refuses.
+func nonEmptyDir(ctx context.Context, fs webdav.FileSystem, name string) (bool, error) {
+	dir, err := fs.OpenFile(ctx, name, os.O_RDONLY, 0)
+	if err != nil {
+		return false, err
+	}
+	defer dir.Close()
+	entries, err := dir.Readdir(1)
+	if err == io.EOF {
+		return false, nil
+	}
+	return len(entries) > 0, err
 }
 
 // moveHandler runs an overwriting MOVE onto an existing destination against
