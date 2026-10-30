@@ -1584,6 +1584,15 @@ impl VolumeServer for VolumeGrpcService {
             return Err(Status::unavailable(e.to_string()));
         }
 
+        // Capture the .idx bound before the .dat one: an index row is
+        // published only after its .dat bytes, so a row inside this bound
+        // always has its record inside the bound captured below.
+        let idx_start = req.entry_count * NEEDLE_MAP_ENTRY_SIZE as u64;
+        let idx_end = if req.entry_count > 0 || req.since_ns == 0 {
+            v.index_file_size()
+        } else {
+            idx_start
+        };
         let dat_size = v.dat_file_size().unwrap_or(0);
         let super_block_size = v.super_block().block_size() as u64;
 
@@ -1599,7 +1608,7 @@ impl VolumeServer for VolumeGrpcService {
         // Resume by index position when the backup identified its last entry;
         // append_at_ns stamps differ across replicas, so a since_ns resume can
         // duplicate or skip needles after the source replica changes.
-        let start_offset = if req.entry_count > 0 {
+        let start_offset: Option<u64> = if req.entry_count > 0 {
             match v.resume_by_last_entry(
                 req.entry_count,
                 NeedleId(req.last_needle_key),
@@ -1612,7 +1621,15 @@ impl VolumeServer for VolumeGrpcService {
                     let stream = tokio_stream::iter(Vec::new());
                     return Ok(Response::new(Box::pin(stream)));
                 }
-                Ok((offset, false)) => offset.to_actual_offset() as u64,
+                Ok((offset, false)) => {
+                    // index-only rows like remote-tier tombstones have no .dat
+                    // record; they ride the index stream instead
+                    if offset.is_zero() {
+                        None
+                    } else {
+                        Some(offset.to_actual_offset() as u64)
+                    }
+                }
                 Err(crate::storage::volume::VolumeError::IncrementalCopyDiverged) => {
                     return Err(Status::failed_precondition(
                         crate::storage::volume::VolumeError::IncrementalCopyDiverged.to_string(),
@@ -1626,7 +1643,7 @@ impl VolumeServer for VolumeGrpcService {
                 }
             }
         } else if req.since_ns == 0 {
-            super_block_size
+            Some(super_block_size)
         } else {
             match v.binary_search_by_append_at_ns(req.since_ns) {
                 Ok((_offset, true)) => {
@@ -1637,11 +1654,11 @@ impl VolumeServer for VolumeGrpcService {
                 }
                 Ok((offset, false)) => {
                     let actual = offset.to_actual_offset();
-                    if actual <= 0 {
+                    Some(if actual <= 0 {
                         super_block_size
                     } else {
                         actual as u64
-                    }
+                    })
                 }
                 Err(e) => {
                     return Err(Status::internal(format!(
@@ -1653,7 +1670,8 @@ impl VolumeServer for VolumeGrpcService {
         };
         // A corrupt index could place the located offset past the captured
         // `.dat` size; nothing to send, and it would underflow `total` below.
-        if start_offset >= dat_size {
+        let has_data = start_offset.is_some_and(|s| s < dat_size);
+        if !has_data && idx_end <= idx_start {
             drop(store);
             let stream = tokio_stream::iter(Vec::new());
             return Ok(Response::new(Box::pin(stream)));
@@ -1670,26 +1688,38 @@ impl VolumeServer for VolumeGrpcService {
             Local(std::fs::File),
             Remote(crate::storage::volume::RemoteDatFile),
         }
-        let reader = if v.has_remote_file() {
-            match v.remote_dat_file() {
-                Some(r) => DatReader::Remote(r),
-                None => {
-                    return Err(Status::not_found(format!(
-                        "remote dat not loaded for volume id {}",
-                        vid
-                    )));
+        let reader = if has_data {
+            if v.has_remote_file() {
+                match v.remote_dat_file() {
+                    Some(r) => Some(DatReader::Remote(r)),
+                    None => {
+                        return Err(Status::not_found(format!(
+                            "remote dat not loaded for volume id {}",
+                            vid
+                        )));
+                    }
                 }
+            } else {
+                let path = v.file_name(".dat");
+                let file = std::fs::File::open(&path)
+                    .map_err(|e| Status::internal(format!("open {}: {}", path, e)))?;
+                Some(DatReader::Local(file))
             }
         } else {
-            let path = v.file_name(".dat");
+            None
+        };
+        let idx_file = if idx_end > idx_start {
+            let path = v.file_name(".idx");
             let file = std::fs::File::open(&path)
                 .map_err(|e| Status::internal(format!("open {}: {}", path, e)))?;
-            DatReader::Local(file)
+            Some(file)
+        } else {
+            None
         };
         let state = self.state.clone();
         drop(store);
 
-        let total = dat_size - start_offset;
+        let total = start_offset.map_or(0, |s| dat_size - s);
         let (tx, rx) = tokio::sync::mpsc::channel::<
             Result<volume_server_pb::VolumeIncrementalCopyResponse, Status>,
         >(8);
@@ -1710,10 +1740,10 @@ impl VolumeServer for VolumeGrpcService {
             }
             let buffer_size = 2 * 1024 * 1024u64; // 2MB chunks
             let mut bytes_to_read = total;
-            let mut offset = start_offset;
+            let mut offset = start_offset.unwrap_or(0);
 
             match reader {
-                DatReader::Local(file) => {
+                Some(DatReader::Local(file)) => {
                     // Local volume: stream directly from the .dat, no lock held.
                     use std::io::{Read, Seek, SeekFrom};
                     let mut reader = std::io::BufReader::new(file);
@@ -1731,6 +1761,7 @@ impl VolumeServer for VolumeGrpcService {
                                 buf.truncate(n);
                                 let msg = volume_server_pb::VolumeIncrementalCopyResponse {
                                     file_content: buf,
+                                    ..Default::default()
                                 };
                                 if tx.blocking_send(Ok(msg)).is_err() {
                                     return; // receiver dropped
@@ -1744,7 +1775,7 @@ impl VolumeServer for VolumeGrpcService {
                         }
                     }
                 }
-                DatReader::Remote(remote) => {
+                Some(DatReader::Remote(remote)) => {
                     // Remote/tiered volume: read through the cloned backend
                     // handle. No store lock is held while the (potentially slow)
                     // S3 fetch runs, so it never blocks store writers.
@@ -1757,6 +1788,7 @@ impl VolumeServer for VolumeGrpcService {
                                 let read_len = buf.len() as u64;
                                 let msg = volume_server_pb::VolumeIncrementalCopyResponse {
                                     file_content: buf,
+                                    ..Default::default()
                                 };
                                 if tx.blocking_send(Ok(msg)).is_err() {
                                     return; // receiver dropped
@@ -1768,6 +1800,42 @@ impl VolumeServer for VolumeGrpcService {
                                 let _ = tx.blocking_send(Err(Status::internal(e.to_string())));
                                 return;
                             }
+                        }
+                    }
+                }
+                None => {}
+            }
+
+            // the .idx tail after the .dat: index-only rows like remote-tier
+            // tombstones have no .dat record and reach the copy only here
+            if let Some(file) = idx_file {
+                use std::io::{Read, Seek, SeekFrom};
+                let mut reader = std::io::BufReader::new(file);
+                if let Err(e) = reader.seek(SeekFrom::Start(idx_start)) {
+                    let _ = tx.blocking_send(Err(Status::internal(e.to_string())));
+                    return;
+                }
+                let mut bytes_to_read = idx_end - idx_start;
+                while bytes_to_read > 0 {
+                    bail_if_unavailable!();
+                    let chunk = std::cmp::min(bytes_to_read, buffer_size) as usize;
+                    let mut buf = vec![0u8; chunk];
+                    match reader.read(&mut buf) {
+                        Ok(0) => break, // EOF
+                        Ok(n) => {
+                            buf.truncate(n);
+                            let msg = volume_server_pb::VolumeIncrementalCopyResponse {
+                                idx_content: buf,
+                                ..Default::default()
+                            };
+                            if tx.blocking_send(Ok(msg)).is_err() {
+                                return; // receiver dropped
+                            }
+                            bytes_to_read -= n as u64;
+                        }
+                        Err(e) => {
+                            let _ = tx.blocking_send(Err(Status::internal(e.to_string())));
+                            return;
                         }
                     }
                 }
@@ -8438,6 +8506,51 @@ mod tests {
             .write()
             .unwrap()
             .remove("s3.incr_copy_test");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_volume_incremental_copy_streams_index_tail_with_tombstones() {
+        let (service, tmp, shutdown_tx, _dat_bytes, _super_block_size, _delete_count) =
+            make_remote_only_service("incr_copy_idx");
+
+        // a delete on a tiered volume leaves an index-only tombstone row
+        {
+            let store = service.state.store.read().unwrap();
+            store
+                .delete_volume_needle(
+                    VolumeId(1),
+                    &mut Needle {
+                        id: NeedleId(7),
+                        ..Needle::default()
+                    },
+                )
+                .unwrap();
+        }
+        let idx_bytes = std::fs::read(format!("{}/1.idx", tmp.path().to_str().unwrap())).unwrap();
+
+        let response = service
+            .volume_incremental_copy(Request::new(
+                volume_server_pb::VolumeIncrementalCopyRequest {
+                    volume_id: 1,
+                    since_ns: 0,
+                    ..Default::default()
+                },
+            ))
+            .await
+            .unwrap();
+
+        let mut stream = response.into_inner();
+        let mut copied_idx = Vec::new();
+        while let Some(message) = stream.next().await {
+            copied_idx.extend_from_slice(&message.unwrap().idx_content);
+        }
+        assert_eq!(copied_idx, idx_bytes);
+
+        let _ = shutdown_tx.send(());
+        global_s3_tier_registry()
+            .write()
+            .unwrap()
+            .remove("s3.incr_copy_idx");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
