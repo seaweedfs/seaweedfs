@@ -252,6 +252,12 @@ func (vs *VolumeServer) VolumeConfigure(ctx context.Context, req *volume_server_
 		return resp, nil
 	}
 
+	// Same window as VolumeMount: configure unmounts and remounts, so it can
+	// load the replica whose files the in-flight copy's swap then clears.
+	if _, ok := vs.volumeCopiesInFlight.Load(req.VolumeId); ok {
+		return resp, status.Errorf(codes.Unavailable, "volume %d is being copied", req.VolumeId)
+	}
+
 	// unmount
 	if err := vs.store.UnmountVolume(needle.VolumeId(req.VolumeId)); err != nil {
 		glog.Errorf("volume configure unmount %v: %v", req, err)
