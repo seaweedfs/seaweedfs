@@ -13,7 +13,7 @@ use tokio::sync::broadcast;
 use tracing::{error, info, warn};
 
 use super::grpc_client::{GrpcDialOptions, connect_channel, master_client};
-use super::volume_server::VolumeServerState;
+use super::volume_server::{VolumeServerState, to_http_address};
 use crate::pb::master_pb;
 use crate::pb::volume_server_pb;
 use crate::remote_storage::s3_tier::{S3TierBackend, S3TierConfig};
@@ -169,7 +169,8 @@ pub async fn run_heartbeat_with_state(
                     // The lookup spends part of the retry delay rather than
                     // adding to it.
                     let retry_at = tokio::time::Instant::now() + pulse;
-                    refresh_leader_from_peers(&config, &state, pulse).await;
+                    let leader =
+                        refresh_leader_from_peers(&config, &state, &target_addr, pulse).await;
                     let mut wait = retry_at.saturating_duration_since(tokio::time::Instant::now());
                     if wait > Duration::from_secs(1)
                         && (!state.current_master().await.is_empty() || !confirmed_leader_once)
@@ -182,6 +183,16 @@ pub async fn run_heartbeat_with_state(
                         wait = Duration::from_secs(1);
                     }
                     tokio::time::sleep(wait).await;
+                    if let Some(leader) = leader
+                        && to_http_address(&leader) != to_http_address(&target_addr)
+                    {
+                        // Dial the leader the other masters just named rather
+                        // than the next seed, which can be the master this
+                        // stream just lost: an unreachable master holds each
+                        // dial for the connect timeout before the loop moves
+                        // on.
+                        new_leader = Some(leader);
+                    }
                 }
             }
 
@@ -274,20 +285,45 @@ pub async fn try_get_master_configuration(
 /// to the master the heartbeat just lost while the loop retries. Without an
 /// answer inside `timeout` the published master is cleared: the lost master
 /// is dead or no longer leader, and a follower answers lookups from its own
-/// cache rather than refusing them. Mirrors Go's refreshLeaderFromPeers.
+/// cache rather than refusing them, and returns it so the loop can dial it
+/// next. The lost master is asked last: an unreachable one holds its lookup
+/// open long enough to starve the peers that know the new leader. Mirrors
+/// Go's refreshLeaderFromPeers.
 async fn refresh_leader_from_peers(
     config: &HeartbeatConfig,
     state: &Arc<VolumeServerState>,
+    lost: &str,
     timeout: Duration,
-) {
-    let lookup = lookup_leader_from_peers(
-        &config.master_addresses,
-        state.outgoing_grpc_tls.as_ref(),
-    );
+) -> Option<String> {
+    let ordered = masters_asking_last(&config.master_addresses, lost);
+    let lookup = lookup_leader_from_peers(&ordered, state.outgoing_grpc_tls.as_ref());
     match tokio::time::timeout(timeout, lookup).await {
-        Ok(Some(leader)) => publish_current_master(state, &leader).await,
-        _ => state.current_master_url.write().await.clear(),
+        Ok(Some(leader)) => {
+            publish_current_master(state, &leader).await;
+            Some(leader)
+        }
+        _ => {
+            state.current_master_url.write().await.clear();
+            None
+        }
     }
+}
+
+/// Return masters with every entry equal to `lost` (same HTTP address) moved
+/// to the end, keeping the order of the rest. Mirrors Go's mastersAskingLast.
+fn masters_asking_last(masters: &[String], lost: &str) -> Vec<String> {
+    let lost_http = to_http_address(lost);
+    let mut ordered = Vec::with_capacity(masters.len());
+    let mut tail = Vec::new();
+    for m in masters {
+        if !lost.is_empty() && to_http_address(m) == lost_http {
+            tail.push(m.clone());
+        } else {
+            ordered.push(m.clone());
+        }
+    }
+    ordered.extend(tail);
+    ordered
 }
 
 /// Ask each seed master for the raft leader and return the first answer, or
@@ -1617,6 +1653,26 @@ mod tests {
         assert_eq!(to_grpc_address(""), "");
         assert_eq!(to_grpc_address("no-port"), "no-port");
         assert_eq!(to_grpc_address("host:not-a-port"), "host:not-a-port");
+    }
+
+    // Mirrors Go's TestMastersAskingLast: the just-lost master is asked last
+    // so an unreachable one cannot spend the whole refresh budget.
+    #[test]
+    fn test_masters_asking_last() {
+        let seeds = vec![
+            "a:9333".to_string(),
+            "b:9333".to_string(),
+            "c:9333".to_string(),
+        ];
+        assert_eq!(
+            masters_asking_last(&seeds, "a:9333.19333"),
+            vec![
+                "b:9333".to_string(),
+                "c:9333".to_string(),
+                "a:9333".to_string()
+            ]
+        );
+        assert_eq!(masters_asking_last(&seeds[..2], ""), seeds[..2]);
     }
 
     #[test]
