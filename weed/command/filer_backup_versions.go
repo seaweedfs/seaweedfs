@@ -144,7 +144,7 @@ func (f *s3VersionFlattener) process(resp *filer_pb.SubscribeMetadataResponse) (
 		newVersionsDir = string(util.FullPath(targetDir).Child(message.NewEntry.Name))
 	}
 	if oldVersionsDir == "" && newVersionsDir == "" {
-		return false, nil
+		return f.processRegularPath(resp, targetDir, message)
 	}
 
 	if newVersionsDir != "" {
@@ -169,6 +169,31 @@ func (f *s3VersionFlattener) process(resp *filer_pb.SubscribeMetadataResponse) (
 func objectKeyOf(versionsDir util.FullPath) util.FullPath {
 	dir, name := versionsDir.DirAndName()
 	return util.FullPath(dir).Child(strings.TrimSuffix(name, s3_constants.VersionsFolder))
+}
+
+// processRegularPath guards the generic event path for keys that carry a
+// .versions directory: a regular-path entry (the null object, or its delete)
+// can coexist with a pointer that names a live version, and only the pointer
+// decides the flattened key — e.g. deleting the null object must not remove a
+// flattened key whose current version is live. Keys with no .versions sibling
+// are left to the generic path.
+func (f *s3VersionFlattener) processRegularPath(resp *filer_pb.SubscribeMetadataResponse, targetDir string, message *filer_pb.EventNotification) (bool, error) {
+	dir, entry := targetDir, message.NewEntry
+	if entry == nil {
+		dir, entry = resp.Directory, message.OldEntry
+	}
+	if entry == nil || entry.IsDirectory {
+		return false, nil
+	}
+	versionsDir := util.FullPath(dir).Child(entry.Name + s3_constants.VersionsFolder)
+	dirEntry, _, _, err := filer_pb.GetEntry(context.Background(), f.filerSource, versionsDir)
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			return false, nil
+		}
+		return true, err
+	}
+	return true, f.applyLatest(versionsDir, dirEntry, false, message.Signatures)
 }
 
 // applyLatest writes the object a .versions pointer currently names to the
