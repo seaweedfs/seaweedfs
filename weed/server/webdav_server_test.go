@@ -98,7 +98,30 @@ func (f *createRecordingFiler) LookupDirectoryEntry(_ context.Context, req *file
 
 func (f *createRecordingFiler) CreateEntry(_ context.Context, req *filer_pb.CreateEntryRequest) (*filer_pb.CreateEntryResponse, error) {
 	f.req = req
-	return &filer_pb.CreateEntryResponse{}, nil
+	p := string(util.NewFullPath(req.Directory, req.Entry.Name))
+	resp := &filer_pb.CreateEntryResponse{}
+	if f.dirs[p] && !req.Entry.IsDirectory {
+		resp.Error = "existing entry is a directory"
+		resp.ErrorCode = filer_pb.FilerError_EXISTING_IS_DIRECTORY
+		return resp, nil
+	}
+	if req.OExcl && (f.files[p] || f.dirs[p]) {
+		resp.Error = "entry already exists"
+		resp.ErrorCode = filer_pb.FilerError_ENTRY_ALREADY_EXISTS
+		return resp, nil
+	}
+	if f.files[p] {
+		resp.MetadataEvent = &filer_pb.SubscribeMetadataResponse{
+			EventNotification: &filer_pb.EventNotification{
+				OldEntry: &filer_pb.Entry{Name: req.Entry.Name},
+			},
+		}
+	}
+	if f.files == nil {
+		f.files = map[string]bool{}
+	}
+	f.files[p] = true
+	return resp, nil
 }
 
 func (f *createRecordingFiler) DeleteEntry(_ context.Context, req *filer_pb.DeleteEntryRequest) (*filer_pb.DeleteEntryResponse, error) {
@@ -122,6 +145,16 @@ func (f *deleteRecordingFiler) LookupDirectoryEntry(_ context.Context, _ *filer_
 func (f *deleteRecordingFiler) DeleteEntry(_ context.Context, req *filer_pb.DeleteEntryRequest) (*filer_pb.DeleteEntryResponse, error) {
 	f.req = req
 	return &filer_pb.DeleteEntryResponse{}, nil
+}
+
+func (f *deleteRecordingFiler) CreateEntry(_ context.Context, req *filer_pb.CreateEntryRequest) (*filer_pb.CreateEntryResponse, error) {
+	if f.existing != nil && f.existing.IsDirectory && !req.Entry.IsDirectory {
+		return &filer_pb.CreateEntryResponse{
+			Error:     "existing entry is a directory",
+			ErrorCode: filer_pb.FilerError_EXISTING_IS_DIRECTORY,
+		}, nil
+	}
+	return &filer_pb.CreateEntryResponse{}, nil
 }
 
 func startFakeWebDavFiler(t *testing.T, impl filer_pb.SeaweedFilerServer) pb.ServerAddress {
@@ -577,6 +610,7 @@ func TestWebDavFileSystem_OpenFile_PutOutcomeFlag(t *testing.T) {
 
 	assert.True(t, open("/old.txt"))
 	assert.False(t, open("/new.txt"))
+	assert.True(t, open("/new.txt"), "a PUT over the entry the first create made is a replace")
 }
 
 type renameRecordingFiler struct {

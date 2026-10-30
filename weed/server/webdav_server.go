@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -89,7 +90,7 @@ func NewWebDavServer(option *WebDavOption) (ws *WebDavServer, err error) {
 }
 
 // putOutcomeKey carries the flag WebDavFileSystem.OpenFile sets when a PUT
-// removed an existing entry, so the PUT can answer 204 instead of 201
+// replaced an existing entry, so the PUT can answer 204 instead of 201
 type putOutcomeKey struct{}
 
 // putOutcomeWriter turns the 201 of a PUT that replaced a file into 204
@@ -366,21 +367,11 @@ func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, f
 		if err := fs.checkParentDir(ctx, dir); err != nil {
 			return nil, err
 		}
-		fi, err := fs.stat(ctx, fullFilePath)
-		if err == nil {
-			if flag&os.O_EXCL != 0 || fi.IsDir() {
-				return nil, os.ErrExist
-			}
-			fs.removeAll(ctx, fullFilePath, false)
-			if replaced, ok := ctx.Value(putOutcomeKey{}).(*bool); ok {
-				*replaced = true
-			}
-		} else if err != os.ErrNotExist {
-			return nil, err
-		}
 
+		var resp *filer_pb.CreateEntryResponse
 		err = fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-			if err := filer_pb.CreateEntry(context.Background(), client, &filer_pb.CreateEntryRequest{
+			var err error
+			resp, err = filer_pb.CreateEntryWithResponse(context.Background(), client, &filer_pb.CreateEntryRequest{
 				Directory: dir,
 				Entry: &filer_pb.Entry{
 					Name:        name,
@@ -394,14 +385,26 @@ func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, f
 						TtlSec:   0,
 					},
 				},
+				OExcl:      flag&os.O_EXCL != 0,
 				Signatures: []int32{fs.signature},
-			}); err != nil {
-				return fmt.Errorf("create %s: %v", fullFilePath, err)
-			}
-			return nil
+			})
+			return err
 		})
 		if err != nil {
-			return nil, err
+			// a taken name — an exclusive create, or a file landing on a
+			// directory — is the os.ErrExist x/net/webdav answers 405 for
+			if errors.Is(err, filer_pb.ErrEntryAlreadyExists) || errors.Is(err, filer_pb.ErrExistingIsDirectory) {
+				return nil, os.ErrExist
+			}
+			return nil, fmt.Errorf("create %s: %w", fullFilePath, err)
+		}
+		// the filer fills OldEntry under its path lock while writing, so the
+		// outcome matches what the write did even against racing writers: a
+		// PUT that landed on an entry answers 204, a fresh create answers 201
+		if resp.GetMetadataEvent().GetEventNotification().GetOldEntry() != nil {
+			if replaced, ok := ctx.Value(putOutcomeKey{}).(*bool); ok {
+				*replaced = true
+			}
 		}
 		return &WebDavFile{
 			fs:          fs,
