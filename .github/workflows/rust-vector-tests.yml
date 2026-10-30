@@ -13,7 +13,7 @@ on:
       - 'weed/pb/vector_pb/**'
       - 'weed/s3api/**'
       - 'weed/command/**'
-      - 'test/vectors/**'
+      - 'test/s3vectors/**'
       - '.github/workflows/rust-vector-tests.yml'
   push:
     branches: [ master, main ]
@@ -27,7 +27,7 @@ on:
       - 'weed/pb/vector_pb/**'
       - 'weed/s3api/**'
       - 'weed/command/**'
-      - 'test/vectors/**'
+      - 'test/s3vectors/**'
       - '.github/workflows/rust-vector-tests.yml'
 
 concurrency:
@@ -135,15 +135,15 @@ jobs:
           go test ./weed/s3api/s3vectors -count=1
           go test ./weed/command -run 'Vector|Vectors' -count=1
       - name: Build integration binaries
-        working-directory: test/vectors
+        working-directory: test/s3vectors
         run: make build CARGO_PROFILE=dev
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - name: Install test dependencies
-        run: python -m pip install -r test/vectors/requirements.txt
+        run: python -m pip install -r test/s3vectors/requirements.txt
       - name: Run the S3 Vectors integration matrix
-        working-directory: test/vectors
+        working-directory: test/s3vectors
         run: |
           ./run_test.sh --basetemp="$RUNNER_TEMP/vector-tests" --junitxml="$RUNNER_TEMP/vector-results.xml"
           python - <<'PYTHON'
