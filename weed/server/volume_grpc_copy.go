@@ -170,6 +170,22 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 		dataBaseFileName = storage.VolumeFileName(location.Directory, volFileInfoResp.Collection, int(req.VolumeId))
 		indexBaseFileName = storage.VolumeFileName(location.IdxDirectory, volFileInfoResp.Collection, int(req.VolumeId))
 
+		// A crashed copy, or one whose cleanup failed, can leave a stale index
+		// next to the .idx that this copy's mount would trust
+		// (generateLevelDbFile replays only past the stored watermark). Clear
+		// the leftovers before writing anything; a removal failure must abort
+		// rather than risk a mount reusing a poisoned index.
+		if removeErr := os.RemoveAll(indexBaseFileName + ".ldb"); removeErr != nil {
+			err = removeErr
+			return fmt.Errorf("clear leftover index before copying volume %d: %w", req.VolumeId, removeErr)
+		}
+		for _, staleIndexFile := range []string{indexBaseFileName + ".sdx", indexBaseFileName + ".rdb"} {
+			if removeErr := os.Remove(staleIndexFile); removeErr != nil && !os.IsNotExist(removeErr) {
+				err = removeErr
+				return fmt.Errorf("clear leftover index before copying volume %d: %w", req.VolumeId, removeErr)
+			}
+		}
+
 		// The .note marks the copy as in-progress; a leftover note fails the
 		// volume load on restart, so a write failure must abort the copy.
 		if noteErr := util.WriteFile(dataBaseFileName+".note", []byte(fmt.Sprintf("copying from %s", req.SourceDataNode)), 0755); noteErr != nil {
