@@ -547,7 +547,7 @@ helm install seaweedfs-worker-balance seaweedfs/seaweedfs -f values-worker-balan
 
 ## Deploying into another namespace
 
-`namespaceOverride` deploys every namespaced object into an existing namespace other than the release namespace, for instance when the chart is a subchart. In-cluster addresses follow it. Set it before the first install: changing it later moves every namespaced object, and claims plus the data behind them do not move with them.
+`namespaceOverride` deploys every namespaced object into an existing namespace other than the release namespace, for instance when the chart is a subchart. In-cluster addresses follow it. Set it before the first install: changing it later moves regular namespaced objects only — claims and their data do not move, hook resources such as the resize hook's ServiceAccount, Role, RoleBinding, and NetworkPolicy stay behind in the old namespace, and generated Secrets are not recreated in the new one. Migrate claims by hand and clean up the old hook resources. If the release uses generated S3 credentials, copy `<fullname>-s3-secret`, including its key fields, into the new namespace before the upgrade — otherwise the chart generates new keys and clients on the old ones fail authentication (explicit `s3.credentials` and `credentials.*.existingSecret` values do not use this generation path). With the default MySQL setup, also copy `<fullname>-db-secret` — a `pre-install` hook only, so it never reaches the new namespace — or pass `WEED_MYSQL_USERNAME` and `WEED_MYSQL_PASSWORD` through `filer.extraEnvironmentVars`.
 
 ## Gateway API
 
