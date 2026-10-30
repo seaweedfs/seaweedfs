@@ -898,14 +898,16 @@ func TestCopyMoveGuardHandler_PutStatus(t *testing.T) {
 		fs:   fs,
 		next: &webdav.Handler{FileSystem: fs, LockSystem: webdav.NewMemLS()},
 	}
-	put := func(body string) int {
+	put := func(body string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest("PUT", "http://x/a.txt", strings.NewReader(body))
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, req)
-		return w.Code
+		return w
 	}
-	assert.Equal(t, http.StatusCreated, put("one"))
-	assert.Equal(t, http.StatusNoContent, put("two"))
+	assert.Equal(t, http.StatusCreated, put("one").Code)
+	w := put("two")
+	assert.Equal(t, http.StatusNoContent, w.Code)
+	assert.Empty(t, w.Body.String(), "a 204 carries no body")
 }
 
 // The 204 comes from OpenFile's own bookkeeping: creating over an existing

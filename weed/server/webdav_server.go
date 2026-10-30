@@ -94,16 +94,26 @@ func NewWebDavServer(option *WebDavOption) (ws *WebDavServer, err error) {
 type putOutcomeKey struct{}
 
 // putOutcomeWriter turns the 201 of a PUT that replaced a file into 204
+// and swallows the status text webdav.Handler writes after it
 type putOutcomeWriter struct {
 	http.ResponseWriter
-	replaced *bool
+	replaced  *bool
+	noContent bool
 }
 
-func (w putOutcomeWriter) WriteHeader(code int) {
+func (w *putOutcomeWriter) WriteHeader(code int) {
 	if code == http.StatusCreated && *w.replaced {
 		code = http.StatusNoContent
+		w.noContent = true
 	}
 	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *putOutcomeWriter) Write(b []byte) (int, error) {
+	if w.noContent {
+		return len(b), nil
+	}
+	return w.ResponseWriter.Write(b)
 }
 
 // an overwriting MOVE or COPY removes the destination before reading the
@@ -241,7 +251,7 @@ func (h copyMoveGuardHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	// context and the writer rewrites the status it sends
 	if r.Method == "PUT" {
 		replaced := new(bool)
-		w = putOutcomeWriter{ResponseWriter: w, replaced: replaced}
+		w = &putOutcomeWriter{ResponseWriter: w, replaced: replaced}
 		r = r.WithContext(context.WithValue(r.Context(), putOutcomeKey{}, replaced))
 	}
 	// RFC 4918 10.6: a missing Overwrite header means T, but webdav.Handler
