@@ -381,6 +381,13 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 		}
 	}
 
+	// A caller that left during the copy cannot use the result; bail before
+	// the swap deletes the replica it would replace.
+	if ctxErr := stream.Context().Err(); ctxErr != nil {
+		err = ctxErr
+		return ctxErr
+	}
+
 	if hasExistingVolume {
 		glog.V(0).Infof("volume %d already exists. deleting before copying from %s...", req.VolumeId, req.SourceDataNode)
 		// Hard-link the outgoing replica's files into copying/ first: the
