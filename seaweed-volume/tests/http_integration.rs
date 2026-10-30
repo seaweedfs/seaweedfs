@@ -111,6 +111,7 @@ fn build_test_state(
         vacuum_commits_waiting: std::sync::atomic::AtomicU32::new(0),
         is_heartbeating: std::sync::atomic::AtomicBool::new(true),
         ec_decodes_in_flight: std::sync::Mutex::new(std::collections::HashSet::new()),
+        volume_copies_in_flight: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
         ec_decode_tail: std::sync::Mutex::new(std::collections::HashSet::new()),
         ec_decode_tail_notify: tokio::sync::Notify::new(),
         has_master: false,
