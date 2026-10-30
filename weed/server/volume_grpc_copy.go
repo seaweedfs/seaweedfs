@@ -706,12 +706,14 @@ func checkCopyCounts(vid uint32, origin *volume_server_pb.VolumeStatusResponse, 
 }
 
 func copyCountsStable(before, after *volume_server_pb.VolumeStatusResponse) bool {
-	// A writable source may receive writes or deletions while its files are
-	// copied. In that case the before/after counts do not describe one stable
-	// snapshot, so strict target-count validation would report a false error.
+	// A writable source may receive writes while its files are copied; then
+	// the before/after file counts do not describe one stable snapshot and
+	// strict target-count validation would report a false error. Deletes do
+	// not move the file count — they append tombstone rows the deleted
+	// counter records — so drift there leaves the strict check exact, and
+	// checkCopyCounts warns on it instead.
 	return before != nil && after != nil &&
-		before.FileCount == after.FileCount &&
-		before.FileDeletedCount == after.FileDeletedCount
+		before.FileCount == after.FileCount
 }
 
 func findLastAppendAtNsFromCopiedFiles(idxFileName, datFileName string, version needle.Version) (uint64, error) {

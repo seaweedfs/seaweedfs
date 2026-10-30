@@ -127,7 +127,9 @@ func TestCopyCountsStable(t *testing.T) {
 			},
 		},
 		{
-			name: "changed deleted count is not stable",
+			// deletes append tombstone rows without moving the file count,
+			// so the strict check still applies and only warns on the drift
+			name: "changed deleted count alone is stable",
 			before: &volume_server_pb.VolumeStatusResponse{
 				FileCount:        10,
 				FileDeletedCount: 3,
@@ -136,6 +138,7 @@ func TestCopyCountsStable(t *testing.T) {
 				FileCount:        10,
 				FileDeletedCount: 2,
 			},
+			want: true,
 		},
 		{
 			name:  "missing before status is not stable",
