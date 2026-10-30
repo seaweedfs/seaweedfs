@@ -47,6 +47,16 @@ Expand the name of the chart.
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
+{{/* namespaceOverride, or the release namespace */}}
+{{- define "seaweedfs.namespace" -}}
+{{- if .Values.namespaceOverride -}}
+{{-   if or (gt (len .Values.namespaceOverride) 63) (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" .Values.namespaceOverride)) -}}
+{{-     fail (printf "namespaceOverride %q is not a valid namespace name" .Values.namespaceOverride) -}}
+{{-   end -}}
+{{- end -}}
+{{- default .Release.Namespace .Values.namespaceOverride -}}
+{{- end -}}
+
 {{/*
 commonLabels without the chart's own keys. Takes the root context, or a dict
 with "context" and "exclude" (labels the object already sets).
@@ -260,7 +270,7 @@ true
 {{- if .Values.worker.namespaceUrl -}}
 {{- .Values.worker.namespaceUrl -}}
 {{- else if and .Values.s3.enabled .Values.s3.lancePort -}}
-{{- printf "http://%s.%s:%d" (include "seaweedfs.componentName" (list . "s3")) .Release.Namespace (int .Values.s3.lancePort) -}}
+{{- printf "http://%s.%s:%d" (include "seaweedfs.componentName" (list . "s3")) (include "seaweedfs.namespace" .) (int .Values.s3.lancePort) -}}
 {{- end -}}
 {{- end -}}
 
@@ -421,7 +431,7 @@ If allInOne is enabled, point to the all-in-one service; otherwise, point to the
 */}}
 {{- define "seaweedfs.cluster.masterAddress" -}}
 {{- $component := ternary "all-in-one" "master" .Values.allInOne.enabled -}}
-{{- printf "%s.%s:%d" (include "seaweedfs.componentName" (list . $component)) .Release.Namespace (int .Values.master.port) -}}
+{{- printf "%s.%s:%d" (include "seaweedfs.componentName" (list . $component)) (include "seaweedfs.namespace" .) (int .Values.master.port) -}}
 {{- end -}}
 
 {{/*
@@ -430,7 +440,7 @@ If allInOne is enabled, point to the all-in-one service; otherwise, point to the
 */}}
 {{- define "seaweedfs.cluster.filerAddress" -}}
 {{- $component := ternary "all-in-one" "filer-client" .Values.allInOne.enabled -}}
-{{- printf "%s.%s:%d" (include "seaweedfs.componentName" (list . $component)) .Release.Namespace (int .Values.filer.port) -}}
+{{- printf "%s.%s:%d" (include "seaweedfs.componentName" (list . $component)) (include "seaweedfs.namespace" .) (int .Values.filer.port) -}}
 {{- end -}}
 
 {{/*
@@ -442,7 +452,7 @@ Output example: my-release-master-0.my-release-master.namespace:9333,my-release-
 {{- $masterName := include "seaweedfs.componentName" (list . "master") -}}
 {{- range $index := until (.Values.master.replicas | int) -}}
 {{- if $index }},{{ end -}}
-{{ $masterName }}-{{ $index }}.{{ $masterName }}.{{ $.Release.Namespace }}:{{ $.Values.master.port }}
+{{ $masterName }}-{{ $index }}.{{ $masterName }}.{{ include "seaweedfs.namespace" $ }}:{{ $.Values.master.port }}
 {{- end -}}
 {{- end -}}
 
@@ -555,7 +565,7 @@ true
 {{-     if $volume.enabled }}
 {{-       $replicas := int $volume.replicas }}
 {{-       $statefulsetName := printf "%s-%s" $seaweedfsName $volumeName }}
-{{-       $statefulset := (lookup "apps/v1" "StatefulSet" $.Release.Namespace $statefulsetName) }}
+{{-       $statefulset := (lookup "apps/v1" "StatefulSet" (include "seaweedfs.namespace" $) $statefulsetName) }}
 {{- /* Check for changes in volumeClaimTemplates */}}
 {{-       if $statefulset }}
 {{-         range $dir := $volume.dataDirs }}
@@ -575,7 +585,7 @@ true
 {{-           $desiredSize := .size }}
 {{-           range $i, $e := until $replicas }}
 {{-             $pvcName := printf "%s-%s-%s-%d" $dir.name $seaweedfsName $volumeName $e }}
-{{-             $currentPVC := (lookup "v1" "PersistentVolumeClaim" $.Release.Namespace $pvcName) }}
+{{-             $currentPVC := (lookup "v1" "PersistentVolumeClaim" (include "seaweedfs.namespace" $) $pvcName) }}
 {{-             if $currentPVC }}
 {{- /* include returns a string such as "6.442450944e+10"; convert back to a number, or gt compares lexically */}}
 {{-               $oldSize := include "seaweedfs.resource-quantity" $currentPVC.spec.resources.requests.storage | float64 }}

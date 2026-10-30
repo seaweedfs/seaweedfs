@@ -2049,6 +2049,61 @@ jobs:
           fi
           echo "commonLabels tests passed"
 
+          echo ""
+          echo "=== Testing namespaceOverride ==="
+          NS_ARGS=(
+            --set s3.enabled=true --set s3.enableAuth=true
+            --set 's3.createBuckets[0].name=data'
+            --set sftp.enabled=true --set sftp.enableAuth=true
+            --set admin.enabled=true --set admin.secret.adminPassword=ci
+            --set worker.enabled=true
+            --set cosi.enabled=true --set cosi.bucketClassName=seaweedfs
+            --set global.seaweedfs.enableSecurity=true
+            --set global.seaweedfs.monitoring.enabled=true
+            --set networkPolicy.enabled=true
+            --set volumes.extra.replicas=1
+          )
+          helm template test $CHART_DIR --namespace release-ns "${NS_ARGS[@]}" \
+            --set namespaceOverride=other-ns > /tmp/ns-override.yaml
+          helm template test $CHART_DIR --namespace release-ns \
+            --set allInOne.enabled=true --set allInOne.s3.enabled=true \
+            --set master.enabled=false --set volume.enabled=false --set filer.enabled=false \
+            --set 'allInOne.s3.createBuckets[0].name=data' \
+            --set global.seaweedfs.enableSecurity=true \
+            --set namespaceOverride=other-ns > /tmp/ns-override-aio.yaml
+          grep -q 'kind: Job' /tmp/ns-override-aio.yaml
+          python3 - /tmp/ns-override.yaml /tmp/ns-override-aio.yaml <<'PYEOF'
+          import sys, yaml
+          CLUSTER_SCOPED = {"ClusterRole", "ClusterRoleBinding", "BucketClass", "BucketAccessClass"}
+          failed = []
+          for path in sys.argv[1:]:
+              text = open(path).read()
+              if "release-ns" in text:
+                  failed.append(f"{path}: release namespace still rendered")
+              for d in yaml.safe_load_all(text):
+                  if not d:
+                      continue
+                  kind, md = d["kind"], d["metadata"]
+                  if kind in CLUSTER_SCOPED:
+                      for s in d.get("subjects") or []:
+                          if s.get("namespace") != "other-ns":
+                              failed.append(f"{path}: {kind}/{md['name']} subject in {s.get('namespace')!r}")
+                  elif md.get("namespace") != "other-ns":
+                      failed.append(f"{path}: {kind}/{md['name']} in {md.get('namespace')!r}")
+          if failed:
+              print("\n".join(failed), file=sys.stderr)
+              sys.exit(1)
+          PYEOF
+          grep -q -- '-filer=test-seaweedfs-filer-client.other-ns:' /tmp/ns-override.yaml
+          grep -q 'test-seaweedfs-master-0.test-seaweedfs-master.other-ns:' /tmp/ns-override.yaml
+          grep -qF "'*.other-ns.svc.cluster.local'" /tmp/ns-override.yaml
+          # Setting it to the release namespace changes nothing.
+          helm template test $CHART_DIR --namespace release-ns > /tmp/ns-default.yaml
+          helm template test $CHART_DIR --namespace release-ns \
+            --set namespaceOverride=release-ns > /tmp/ns-same.yaml
+          diff /tmp/ns-default.yaml /tmp/ns-same.yaml
+          echo "namespaceOverride moves every namespaced object and address"
+
           echo "All template rendering tests passed!"
 
       - name: Resolve an image tag that is published

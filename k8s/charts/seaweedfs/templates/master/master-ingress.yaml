@@ -10,7 +10,7 @@ apiVersion: extensions/v1beta1
 kind: Ingress
 metadata:
   name: ingress-{{ include "seaweedfs.fullname" . }}-master
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ include "seaweedfs.namespace" . | quote }}
   {{- with .Values.master.ingress.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}

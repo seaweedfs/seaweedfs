@@ -71,7 +71,7 @@ metadata:
 subjects:
   - kind: ServiceAccount
     name: {{ include "seaweedfs.serviceAccountName" . }}-objectstorage-provisioner
-    namespace: {{ .Release.Namespace }}
+    namespace: {{ include "seaweedfs.namespace" . | quote }}
 roleRef:
   kind: ClusterRole
   name: {{ include "seaweedfs.fullname" . }}-objectstorage-provisioner

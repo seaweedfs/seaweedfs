@@ -6,8 +6,13 @@ import (
 	"io"
 	"math"
 	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"time"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
@@ -26,6 +31,34 @@ import (
 
 const BufferSizeLimit = 1024 * 1024 * 2
 
+// volumeCopyGuard serializes a copy's registration recheck and file
+// clearing against mounts and configures of the same volume.
+type volumeCopyGuard struct {
+	sync.Mutex
+	copying bool
+}
+
+func (vs *VolumeServer) volumeCopyGuard(volumeId uint32) *volumeCopyGuard {
+	guard, _ := vs.volumeCopyGuards.LoadOrStore(volumeId, &volumeCopyGuard{})
+	return guard.(*volumeCopyGuard)
+}
+
+// volumeLoadGuard is the storage-layer hook for volume loads: a vid with a
+// copy in flight is skipped, otherwise the returned release keeps the load's
+// registration ordered against the copy's own recheck. A copy holding the
+// guard means the same skip.
+func (vs *VolumeServer) volumeLoadGuard(vid needle.VolumeId) (func(), bool) {
+	guard := vs.volumeCopyGuard(uint32(vid))
+	if !guard.TryLock() {
+		return func() {}, true
+	}
+	if guard.copying {
+		guard.Unlock()
+		return func() {}, true
+	}
+	return guard.Unlock, false
+}
+
 // VolumeCopy copy the .idx .dat .vif files, and mount the volume
 func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stream volume_server_pb.VolumeServer_VolumeCopyServer) error {
 	if err := vs.checkGrpcAdminAuth(stream.Context()); err != nil {
@@ -40,13 +73,28 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 		}
 	}
 
+	// One copy of a volume at a time: the staged file names are fixed per
+	// volume, so a racing second copy would overwrite the files this copy
+	// still owns. Retryable once the in-flight copy settles.
+	guard := vs.volumeCopyGuard(req.VolumeId)
+	guard.Lock()
+	if guard.copying {
+		guard.Unlock()
+		return status.Errorf(codes.Unavailable, "volume %d is already being copied", req.VolumeId)
+	}
+	guard.copying = true
+	guard.Unlock()
+	defer func() {
+		guard.Lock()
+		guard.copying = false
+		guard.Unlock()
+	}()
+
 	// A pre-existing local replica is NOT deleted up front. Deleting before the
 	// source is confirmed reachable destroys a healthy copy on a transient
-	// source outage (and, on retry, can lose the volume entirely). The delete is
-	// deferred until ReadVolumeFileStatus below proves the source holds the
-	// volume; readability alone is the gate (size/count comparisons invert after
-	// divergent vacuum/compaction and would block valid re-replication).
-	hasExistingVolume := vs.store.GetVolume(needle.VolumeId(req.VolumeId)) != nil
+	// source outage (and, on retry, can lose the volume entirely). The copy is
+	// staged next to it and validated first; the delete only runs once the
+	// replacement is known good (validation details below).
 
 	// the master will not start compaction for read-only volumes, so it is safe to just copy files directly
 	// copy .dat and .idx files
@@ -57,7 +105,12 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 	var volFileInfoResp *volume_server_pb.ReadVolumeFileStatusResponse
 	var sourceVolumeStatus *volume_server_pb.VolumeStatusResponse
 	var sourceVolumeStatusAfterCopy *volume_server_pb.VolumeStatusResponse
-	var dataBaseFileName, indexBaseFileName, idxFileName, datFileName string
+	var dataBaseFileName, indexBaseFileName, idxFileName, datFileName, vifFileName string
+	var stagedDataBaseFileName, stagedIndexBaseFileName string
+	var stagedIdxFileName, stagedDatFileName, stagedVifFileName string
+	var movedFiles []string
+	var replacedLinks []string
+	var replacedRemoved, mounted bool
 	var hasRemoteDatFile bool
 	var copyLocation *storage.DiskLocation
 	var copyReservedSpace uint64
@@ -140,12 +193,36 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 			}
 		}
 
+		dataBaseFileName = storage.VolumeFileName(location.Directory, volFileInfoResp.Collection, int(req.VolumeId))
+		indexBaseFileName = storage.VolumeFileName(location.IdxDirectory, volFileInfoResp.Collection, int(req.VolumeId))
+
+		// The copy writes into a copying/ staging dir the volume loader never
+		// scans: every staged byte is this copy's own, a live replica at the
+		// final basename is never touched by the copy, and a failed copy can
+		// always clean up after itself.
+		stagedDataBaseFileName = filepath.Join(location.Directory, "copying", filepath.Base(dataBaseFileName))
+		stagedIndexBaseFileName = filepath.Join(location.IdxDirectory, "copying", filepath.Base(indexBaseFileName))
+		if mkErr := os.MkdirAll(filepath.Dir(stagedDataBaseFileName), 0755); mkErr != nil {
+			err = mkErr
+			return fmt.Errorf("create copying dir for volume %d: %w", req.VolumeId, mkErr)
+		}
+		if mkErr := os.MkdirAll(filepath.Dir(stagedIndexBaseFileName), 0755); mkErr != nil {
+			err = mkErr
+			return fmt.Errorf("create copying dir for volume %d: %w", req.VolumeId, mkErr)
+		}
+		stagedIdxFileName = stagedIndexBaseFileName + ".idx"
+		stagedDatFileName = stagedDataBaseFileName + ".dat"
+		stagedVifFileName = stagedDataBaseFileName + ".vif"
+
 		defer func() {
 			if err != nil {
+				os.Remove(stagedDatFileName)
+				os.Remove(stagedIdxFileName)
+				os.Remove(stagedVifFileName)
+				os.Remove(stagedVifFileName + ".copying")
 				if dataBaseFileName != "" {
-					os.Remove(dataBaseFileName + ".dat")
-					os.Remove(indexBaseFileName + ".idx")
-					os.Remove(dataBaseFileName + ".vif")
+					// A .note only marks an in-flight copy; a partial write
+					// must not be left to fail the next volume load.
 					os.Remove(dataBaseFileName + ".note")
 				}
 				// Zero before the outer defer sees the same error, or the
@@ -155,31 +232,18 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 			}
 		}()
 
-		// Source is reachable and a destination is reserved: only now is it
-		// safe to drop an existing local replica before overwriting its files.
-		if hasExistingVolume {
-			glog.V(0).Infof("volume %d already exists. deleting before copying from %s...", req.VolumeId, req.SourceDataNode)
-			// keep remote data: the inbound copy carries a .vif that may point at
-			// the same cloud-tier object the existing volume references.
-			if delErr := vs.store.DeleteVolume(needle.VolumeId(req.VolumeId), false, false, true); delErr != nil {
-				return fmt.Errorf("failed to delete existing volume %d: %v", req.VolumeId, delErr)
+		// The staging names are fixed per volume, so a crashed copy can
+		// leave files behind; an optional file the new source lacks (.vif,
+		// or .dat on a remote volume) must not inherit the previous run's.
+		for _, leftover := range []string{stagedDatFileName, stagedIdxFileName, stagedVifFileName, stagedDatFileName + ".copying", stagedVifFileName + ".copying"} {
+			if rmErr := os.Remove(leftover); rmErr != nil && !os.IsNotExist(rmErr) {
+				return fmt.Errorf("clear staged %s for volume %d: %w", leftover, req.VolumeId, rmErr)
 			}
-			glog.V(0).Infof("deleted existing volume %d before copying.", req.VolumeId)
-		}
-
-		dataBaseFileName = storage.VolumeFileName(location.Directory, volFileInfoResp.Collection, int(req.VolumeId))
-		indexBaseFileName = storage.VolumeFileName(location.IdxDirectory, volFileInfoResp.Collection, int(req.VolumeId))
-
-		// The .note marks the copy as in-progress; a leftover note fails the
-		// volume load on restart, so a write failure must abort the copy.
-		if noteErr := util.WriteFile(dataBaseFileName+".note", []byte(fmt.Sprintf("copying from %s", req.SourceDataNode)), 0755); noteErr != nil {
-			err = noteErr
-			return fmt.Errorf("write .note for volume %d: %w", req.VolumeId, noteErr)
 		}
 
 		var copyDatAllocated uint64
 		if preallocateSize > 0 && !hasRemoteDatFile {
-			volumeFile := dataBaseFileName + ".dat"
+			volumeFile := stagedDataBaseFileName + ".dat"
 			_, err := backend.CreateVolumeFile(volumeFile, preallocateSize, 0)
 			if err != nil {
 				return fmt.Errorf("create volume file %s: %v", volumeFile, err)
@@ -209,10 +273,9 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 
 		if !hasRemoteDatFile {
 			datProgress := newCopyProgress(copyDatAllocated)
-			// Write into the .dat CreateVolumeFile just made: the staged
-			// .copying file would peak at preallocate+dat on disk and then
-			// discard the fallocated blocks at rename.
-			if modifiedTsNs, err = vs.doCopyFileWithThrottler(client, false, req.Collection, req.VolumeId, volFileInfoResp.CompactionRevision, volFileInfoResp.DatFileSize, dataBaseFileName, ".dat", preallocateSize > 0, true, func(processed int64) bool {
+			// Write into the .dat CreateVolumeFile just made so the
+			// fallocated blocks carry over to the final name at rename.
+			if modifiedTsNs, err = vs.doCopyFileWithThrottler(client, false, req.Collection, req.VolumeId, volFileInfoResp.CompactionRevision, volFileInfoResp.DatFileSize, stagedDataBaseFileName, ".dat", preallocateSize > 0, true, func(processed int64) bool {
 				datProgress(processed)
 				if processed > nextReportTarget {
 					copyResponse.ProcessedBytes = processed
@@ -229,37 +292,30 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 				return sendErr
 			}
 			if modifiedTsNs > 0 {
-				os.Chtimes(dataBaseFileName+".dat", time.Unix(0, modifiedTsNs), time.Unix(0, modifiedTsNs))
+				os.Chtimes(stagedDataBaseFileName+".dat", time.Unix(0, modifiedTsNs), time.Unix(0, modifiedTsNs))
 			}
 		}
 
 		idxProgress := newCopyProgress(0)
-		if modifiedTsNs, err = vs.doCopyFileWithThrottler(client, false, req.Collection, req.VolumeId, volFileInfoResp.CompactionRevision, volFileInfoResp.IdxFileSize, indexBaseFileName, ".idx", false, false, func(processed int64) bool {
+		if modifiedTsNs, err = vs.doCopyFileWithThrottler(client, false, req.Collection, req.VolumeId, volFileInfoResp.CompactionRevision, volFileInfoResp.IdxFileSize, stagedIndexBaseFileName, ".idx", false, false, func(processed int64) bool {
 			idxProgress(processed)
 			return true
 		}, throttler); err != nil {
 			return err
 		}
 		if modifiedTsNs > 0 {
-			os.Chtimes(indexBaseFileName+".idx", time.Unix(0, modifiedTsNs), time.Unix(0, modifiedTsNs))
+			os.Chtimes(stagedIndexBaseFileName+".idx", time.Unix(0, modifiedTsNs), time.Unix(0, modifiedTsNs))
 		}
 
 		vifProgress := newCopyProgress(0)
-		if modifiedTsNs, err = vs.doCopyFileWithThrottler(client, false, req.Collection, req.VolumeId, volFileInfoResp.CompactionRevision, 1024*1024, dataBaseFileName, ".vif", false, true, func(processed int64) bool {
+		if modifiedTsNs, err = vs.doCopyFileWithThrottler(client, false, req.Collection, req.VolumeId, volFileInfoResp.CompactionRevision, 1024*1024, stagedDataBaseFileName, ".vif", false, true, func(processed int64) bool {
 			vifProgress(processed)
 			return true
 		}, throttler); err != nil {
 			return err
 		}
 		if modifiedTsNs > 0 {
-			os.Chtimes(dataBaseFileName+".vif", time.Unix(0, modifiedTsNs), time.Unix(0, modifiedTsNs))
-		}
-
-		// A leftover .note fails the load on the next restart, so a removal
-		// failure must fail the copy rather than be silently swallowed.
-		if noteErr := os.Remove(dataBaseFileName + ".note"); noteErr != nil && !os.IsNotExist(noteErr) {
-			err = noteErr
-			return fmt.Errorf("remove .note for volume %d: %w", req.VolumeId, noteErr)
+			os.Chtimes(stagedDataBaseFileName+".vif", time.Unix(0, modifiedTsNs), time.Unix(0, modifiedTsNs))
 		}
 
 		var statusErr error
@@ -283,28 +339,94 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 
 	idxFileName = indexBaseFileName + ".idx"
 	datFileName = dataBaseFileName + ".dat"
+	vifFileName = dataBaseFileName + ".vif"
 
 	defer func() {
 		if copyLocation == nil {
 			return
 		}
 		if err != nil {
-			os.Remove(idxFileName)
-			os.Remove(datFileName)
-			os.Remove(dataBaseFileName + ".vif")
+			keepFiles := false
+			if mounted {
+				// A mounted copy was already announced to the master; delete
+				// through the store so the announcement is withdrawn before
+				// the files go away. keepRemoteData: the .vif may point at
+				// the same cloud-tier object the source still references.
+				if delErr := vs.store.DeleteVolume(needle.VolumeId(req.VolumeId), false, false, true); delErr != nil {
+					glog.Warningf("discard mounted copy of volume %d: %v", req.VolumeId, delErr)
+					// A refused delete leaves it registered; unlinking its
+					// files now would strand a live replica.
+					keepFiles = vs.store.GetVolume(needle.VolumeId(req.VolumeId)) != nil
+				}
+			}
+			os.Remove(stagedIdxFileName)
+			os.Remove(stagedDatFileName)
+			os.Remove(stagedVifFileName)
+			os.Remove(stagedVifFileName + ".copying")
+			if !keepFiles {
+				// Only files this copy moved into place come off; before the
+				// renames the final basenames can still be the replica being
+				// replaced, and a rejected copy must leave it intact.
+				for _, moved := range movedFiles {
+					// A regular volume and an EC volume for the same id share
+					// <base>.vif; keep it while the EC index is here.
+					if moved == vifFileName && copyLocation.HasEcxFileOnDisk(volFileInfoResp.Collection, needle.VolumeId(req.VolumeId)) {
+						continue
+					}
+					os.Remove(moved)
+				}
+				// A failed mount leaves the needle-map backends it built;
+				// drop them so the next load does not trust a stale index.
+				// Only after the renames could those be this copy's — before
+				// them the basenames belong to a replica still on disk, and
+				// an unmounted one reports no store volume. A replica still
+				// standing keeps its files either way.
+				if len(movedFiles) > 0 && vs.store.GetVolume(needle.VolumeId(req.VolumeId)) == nil {
+					if cleanErr := removeStaleIndexFiles(indexBaseFileName, dataBaseFileName); cleanErr != nil {
+						glog.Warningf("clear stale index files of failed copy of volume %d: %v", req.VolumeId, cleanErr)
+					}
+				}
+				if dataBaseFileName != "" {
+					os.Remove(dataBaseFileName + ".note")
+				}
+				if len(replacedLinks) > 0 {
+					// The swap failed after the previous replica's files were
+					// displaced; put the preserved files back. A surviving
+					// partial — like an incoming .vif kept for a coexisting
+					// EC volume — is dropped so the original comes back.
+					restoreReplacedVolumeFiles(replacedLinks)
+					replacedLinks = nil
+					// Only a replica the store deleted gets remounted; an
+					// unmounted one goes back to files on disk, as found.
+					if replacedRemoved {
+						if remountErr := vs.store.MountVolumeClaimed(needle.VolumeId(req.VolumeId), &req.Collection); remountErr != nil {
+							glog.Warningf("remount replaced replica of volume %d: %v", req.VolumeId, remountErr)
+						}
+					}
+				}
+			}
+			for _, link := range replacedLinks {
+				os.Remove(link)
+			}
 			vs.store.ReleaseFreeLocation(copyLocation, copyReservedSpace)
 		} else {
+			for _, link := range replacedLinks {
+				os.Remove(link)
+			}
 			vs.store.CommitFreeLocation(copyLocation, copyReservedSpace)
 		}
+		// copying/ is shared by copies of other volumes on the disk, so it
+		// stays behind; a leftover staged file is rewritten or removed by the
+		// next copy of its volume.
 	}()
 
-	if err = checkCopyFiles(volFileInfoResp, hasRemoteDatFile, idxFileName, datFileName); err != nil { // added by panyc16
+	if err = checkCopyFiles(volFileInfoResp, hasRemoteDatFile, stagedIdxFileName, stagedDatFileName); err != nil { // added by panyc16
 		return err
 	}
 
 	var lastAppendAtNs = volFileInfoResp.DatFileTimestampSeconds * uint64(time.Second)
 	if !hasRemoteDatFile {
-		if appendAtNs, appendErr := findLastAppendAtNsFromCopiedFiles(idxFileName, datFileName, needle.Version(volFileInfoResp.Version)); appendErr == nil && appendAtNs > 0 {
+		if appendAtNs, appendErr := findLastAppendAtNsFromCopiedFiles(stagedIdxFileName, stagedDatFileName, needle.Version(volFileInfoResp.Version)); appendErr == nil && appendAtNs > 0 {
 			lastAppendAtNs = appendAtNs
 		} else if appendErr != nil {
 			glog.V(1).Infof("failed to find last append timestamp for volume %d: %v", req.VolumeId, appendErr)
@@ -316,24 +438,159 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 		glog.V(1).Infof("source volume %d changed during copy; skip record count validation", req.VolumeId)
 	}
 
+	// The staged copy is checked before the existing replica is dropped, so
+	// a rejected copy leaves the replica it was meant to replace in place.
+	if shouldValidateCopyCounts {
+		stagedIdx, openErr := os.Open(stagedIdxFileName)
+		if openErr != nil {
+			err = fmt.Errorf("open copied index of volume %d for validation: %w", req.VolumeId, openErr)
+			return err
+		}
+		copiedNeedleMap, mapErr := storage.LoadCompactNeedleMap(stagedIdx, needle.Version(volFileInfoResp.Version))
+		stagedIdx.Close()
+		if mapErr != nil {
+			err = fmt.Errorf("load copied index of volume %d for validation: %w", req.VolumeId, mapErr)
+			return err
+		}
+		if countErr := checkCopyCounts(req.VolumeId, sourceVolumeStatusAfterCopy, uint64(copiedNeedleMap.FileCount()), uint64(copiedNeedleMap.DeletedCount())); countErr != nil {
+			err = countErr
+			return countErr
+		}
+	}
+
+	// A caller that left during the copy cannot use the result; bail before
+	// the swap deletes the replica it would replace.
+	if ctxErr := stream.Context().Err(); ctxErr != nil {
+		err = ctxErr
+		return ctxErr
+	}
+
+	// A replica that mounted mid-copy must leave before the swap too, so check
+	// the store again rather than the stale pre-copy snapshot.
+	if replaced := vs.store.GetVolume(needle.VolumeId(req.VolumeId)); replaced != nil {
+		glog.V(0).Infof("volume %d already exists. deleting before copying from %s...", req.VolumeId, req.SourceDataNode)
+		// Hard-link the outgoing replica's files into copying/ first: the
+		// inodes survive the delete, so a failed swap can put the previous
+		// replica back instead of leaving the node with none. The paths come
+		// from the mounted volume — it can sit on another disk, with its .idx
+		// beside the .dat. A partial backup cannot restore the replica.
+		var backupComplete bool
+		replacedLinks, backupComplete = linkReplacedVolumeFiles(
+			replaced.DataFileName()+".dat",
+			replaced.IndexFileName()+".idx",
+			replaced.DataFileName()+".vif",
+			replaced.DataFileName()+".idx",
+		)
+		if !backupComplete {
+			err = fmt.Errorf("preserve files of existing volume %d for rollback", req.VolumeId)
+			return err
+		}
+		// keep remote data: the inbound copy carries a .vif that may point at
+		// the same cloud-tier object the existing volume references.
+		if delErr := vs.store.DeleteVolume(needle.VolumeId(req.VolumeId), false, false, true); delErr != nil {
+			err = fmt.Errorf("failed to delete existing volume %d: %v", req.VolumeId, delErr)
+			return err
+		}
+		replacedRemoved = true
+		glog.V(0).Infof("deleted existing volume %d before copying.", req.VolumeId)
+	} else {
+		// An unmounted replica at the final basenames gets no store delete:
+		// the stale-index cleanup and the renames displace it silently, and a
+		// copy without a staged .dat would leave the old one orphaned. Link
+		// its files the same way so a failed swap restores them (no remount —
+		// it was not mounted), then take them off; refuse the copy when they
+		// cannot be preserved.
+		var backupComplete bool
+		replacedLinks, backupComplete = linkReplacedVolumeFiles(
+			datFileName,
+			idxFileName,
+			vifFileName,
+			dataBaseFileName+".idx",
+			dataBaseFileName+".note",
+		)
+		if !backupComplete {
+			err = fmt.Errorf("preserve files of existing volume %d for rollback", req.VolumeId)
+			return err
+		}
+		for _, replacedFile := range []string{datFileName, idxFileName, dataBaseFileName + ".idx"} {
+			os.Remove(replacedFile)
+		}
+		// The .vif may be shared with an EC volume for the same id: while a
+		// sealed .ecx is here it must stay — an incoming .vif overwrites it
+		// on rename, but with no incoming one the EC volume would lose the
+		// settings it only stores there.
+		if !copyLocation.HasEcxFileOnDisk(volFileInfoResp.Collection, needle.VolumeId(req.VolumeId)) {
+			os.Remove(vifFileName)
+		}
+	}
+
+	// A stale .note at the final basename fails the next load; the staged
+	// copy carries none, so clear leftovers before the files land. A stale
+	// derived index would likewise be trusted over the fresh .idx, unless a
+	// live replica landed mid-copy and still owns it.
+	os.Remove(dataBaseFileName + ".note")
+	if vs.store.GetVolume(needle.VolumeId(req.VolumeId)) == nil {
+		if cleanErr := removeStaleIndexFiles(indexBaseFileName, dataBaseFileName); cleanErr != nil {
+			err = fmt.Errorf("clear stale index files before copying volume %d: %w", req.VolumeId, cleanErr)
+			return err
+		}
+	}
+
+	// The .note marks the copy as in-progress through the renames: a crash
+	// mid-rename leaves the note and the load scan sweeps the partial set.
+	// The .vif lands first so the scan always has a basename to find.
+	if noteErr := util.WriteFile(dataBaseFileName+".note", []byte(fmt.Sprintf("copying from %s", req.SourceDataNode)), 0755); noteErr != nil {
+		err = noteErr
+		return fmt.Errorf("write .note for volume %d: %w", req.VolumeId, noteErr)
+	}
+
+	for _, pair := range [][2]string{
+		{stagedVifFileName, vifFileName},
+		{stagedDatFileName, datFileName},
+		{stagedIdxFileName, idxFileName},
+	} {
+		if renameErr := os.Rename(pair[0], pair[1]); renameErr != nil {
+			if os.IsNotExist(renameErr) {
+				continue
+			}
+			err = fmt.Errorf("move copied %s into place for volume %d: %w", pair[0], req.VolumeId, renameErr)
+			return err
+		}
+		movedFiles = append(movedFiles, pair[1])
+	}
+
+	// With a separate index directory the .idx lands outside the data dir, so
+	// a copy whose source has no .vif leaves nothing the volume scan can find.
+	// An empty .vif marks the basename for discovery; the loader treats it as
+	// absent and writes a real one on mount.
+	if filepath.Dir(indexBaseFileName) != filepath.Dir(dataBaseFileName) && !util.FileExists(vifFileName) {
+		if writeErr := util.WriteFile(vifFileName, nil, 0644); writeErr != nil {
+			err = fmt.Errorf("write .vif marker for volume %d: %w", req.VolumeId, writeErr)
+			return err
+		}
+		movedFiles = append(movedFiles, vifFileName)
+	}
+
+	// A leftover .note fails the load on the next restart, so a removal
+	// failure must fail the copy rather than be silently swallowed.
+	if noteErr := os.Remove(dataBaseFileName + ".note"); noteErr != nil && !os.IsNotExist(noteErr) {
+		err = noteErr
+		return fmt.Errorf("remove .note for volume %d: %w", req.VolumeId, noteErr)
+	}
+
 	// Load and validate the volume before announcing it to the master. A failed
 	// validation is unloaded by the store without ever making the replica
 	// routable.
-	err = vs.store.MountVolume(needle.VolumeId(req.VolumeId), &req.Collection, func(targetVolume *storage.Volume) error {
+	err = vs.store.MountVolumeClaimed(needle.VolumeId(req.VolumeId), &req.Collection, func(targetVolume *storage.Volume) error {
 		if !shouldValidateCopyCounts {
 			return nil
 		}
-		// Counter drift (bloom-filter estimates, rows appended between the
-		// status snapshots) is not proof of a bad copy; the byte sizes
-		// already match. Warn instead of rejecting the copy.
-		if countErr := checkCopyCounts(sourceVolumeStatusAfterCopy, targetVolume.FileCount(), targetVolume.DeletedCount()); countErr != nil {
-			glog.Warningf("copied volume %d counts differ from source in-memory counters (counter drift): %v", req.VolumeId, countErr)
-		}
-		return nil
+		return checkCopyCounts(req.VolumeId, sourceVolumeStatusAfterCopy, targetVolume.FileCount(), targetVolume.DeletedCount())
 	})
 	if err != nil {
 		return fmt.Errorf("failed to mount or validate volume %d: %w", req.VolumeId, err)
 	}
+	mounted = true
 
 	if err = stream.Send(&volume_server_pb.VolumeCopyResponse{
 		LastAppendAtNs: lastAppendAtNs,
@@ -342,6 +599,86 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 	}
 
 	return err
+}
+
+// linkReplacedVolumeFiles hard-links each file into a copying/ sibling so
+// the inodes survive the replacement's delete and a failed swap can put the
+// previous replica's files back. The loader never scans copying/. A repeated
+// path links once: data and index can share a directory and so a basename.
+// It reports false when a file that exists could not be preserved — deleting
+// the replica then would leave nothing to roll back to.
+func linkReplacedVolumeFiles(baseFileNames ...string) (links []string, complete bool) {
+	complete = true
+	seen := make(map[string]bool)
+	for _, base := range baseFileNames {
+		if seen[base] {
+			continue
+		}
+		seen[base] = true
+		if _, err := os.Stat(base); err != nil {
+			if !os.IsNotExist(err) {
+				glog.Warningf("preserve replaced file %s: %v", base, err)
+				complete = false
+			}
+			continue
+		}
+		link := filepath.Join(filepath.Dir(base), "copying", "replaced_"+filepath.Base(base))
+		if err := os.MkdirAll(filepath.Dir(link), 0755); err != nil {
+			glog.Warningf("preserve replaced file %s: %v", base, err)
+			complete = false
+			continue
+		}
+		os.Remove(link)
+		if err := os.Link(base, link); err != nil {
+			glog.Warningf("preserve replaced file %s: %v", base, err)
+			complete = false
+			continue
+		}
+		links = append(links, link)
+	}
+	return links, complete
+}
+
+// restoreReplacedVolumeFiles puts linkReplacedVolumeFiles' links back at
+// their base names after a failed swap. A leftover at the basename is a
+// surviving partial of the copy — it comes off first so the restored set
+// stays one generation. The link is kept whenever it cannot go back: an
+// existing path does not mean the copy's write succeeded.
+func restoreReplacedVolumeFiles(links []string) {
+	for _, link := range links {
+		base := replacedBaseOf(link)
+		if _, err := os.Stat(base); err == nil {
+			if rmErr := os.Remove(base); rmErr != nil {
+				glog.Warningf("restore replaced file %s: cannot remove leftover %s: %v", link, base, rmErr)
+				continue
+			}
+		}
+		if err := os.Rename(link, base); err != nil {
+			glog.Warningf("restore replaced file %s: %v", link, err)
+		}
+	}
+}
+
+func replacedBaseOf(link string) string {
+	return filepath.Join(filepath.Dir(filepath.Dir(link)), strings.TrimPrefix(filepath.Base(link), "replaced_"))
+}
+
+// removeStaleIndexFiles drops the needle-map files a mount would trust over
+// a fresh copy. A load prefers an .idx beside the .dat over one in the idx
+// dir, so a leftover .idx is cleared along with the backends a mount builds
+// (.ldb/.sdx/.rdb); both bases are covered. The first removal error is
+// returned: a surviving index would be trusted over the copied .idx, so a
+// caller that can still abort must know the removal failed.
+func removeStaleIndexFiles(indexBaseFileName, dataBaseFileName string) error {
+	var firstErr error
+	for _, base := range []string{indexBaseFileName, dataBaseFileName} {
+		for _, name := range []string{base + ".ldb", base + ".sdx", base + ".rdb", base + ".idx"} {
+			if rmErr := os.RemoveAll(name); rmErr != nil && firstErr == nil {
+				firstErr = rmErr
+			}
+		}
+	}
+	return firstErr
 }
 
 func (vs *VolumeServer) doCopyFile(client volume_server_pb.VolumeServerClient, isEcVolume bool, collection string, vid, compactRevision uint32, stopOffset uint64, baseFileName, ext string, isAppend, ignoreSourceFileNotFound bool, progressFn storage.ProgressFunc) (modifiedTsNs int64, err error) {
@@ -403,23 +740,30 @@ func checkCopyFiles(originFileInf *volume_server_pb.ReadVolumeFileStatusResponse
 	return nil
 }
 
-func checkCopyCounts(origin *volume_server_pb.VolumeStatusResponse, targetFileCount, targetDeletedCount uint64) error {
+func checkCopyCounts(vid uint32, origin *volume_server_pb.VolumeStatusResponse, targetFileCount, targetDeletedCount uint64) error {
+	// The file count is exact on both sides, so a mismatch on a stable source
+	// means the copy is genuinely bad and rejects. The deleted count is a
+	// rebuild-time estimate (bloom-filter dedup on some needle-map backends,
+	// rows appended between the status snapshots), so it legitimately drifts
+	// and only warns. The .dat/.idx size checks already gate integrity.
 	if origin.FileCount != targetFileCount {
 		return fmt.Errorf("target file count [%d] is not same as origin file count [%d]", targetFileCount, origin.FileCount)
 	}
 	if origin.FileDeletedCount != targetDeletedCount {
-		return fmt.Errorf("target deleted count [%d] is not same as origin deleted count [%d]", targetDeletedCount, origin.FileDeletedCount)
+		glog.Warningf("copied volume %d deleted count [%d] differs from origin deleted count [%d] (counter drift, copy kept)", vid, targetDeletedCount, origin.FileDeletedCount)
 	}
 	return nil
 }
 
 func copyCountsStable(before, after *volume_server_pb.VolumeStatusResponse) bool {
-	// A writable source may receive writes or deletions while its files are
-	// copied. In that case the before/after counts do not describe one stable
-	// snapshot, so strict target-count validation would report a false error.
+	// A writable source may receive writes while its files are copied; then
+	// the before/after file counts do not describe one stable snapshot and
+	// strict target-count validation would report a false error. Deletes do
+	// not move the file count — they append tombstone rows the deleted
+	// counter records — so drift there leaves the strict check exact, and
+	// checkCopyCounts warns on it instead.
 	return before != nil && after != nil &&
-		before.FileCount == after.FileCount &&
-		before.FileDeletedCount == after.FileDeletedCount
+		before.FileCount == after.FileCount
 }
 
 func findLastAppendAtNsFromCopiedFiles(idxFileName, datFileName string, version needle.Version) (uint64, error) {

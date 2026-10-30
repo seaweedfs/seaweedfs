@@ -99,6 +99,12 @@ func getVersionTimestamp(versionId string) int64 {
 	return int64(timestampPart)
 }
 
+// CompareVersionIds exposes compareVersionIds to callers outside this package
+// that must pick the newest version the same way (e.g. filer.backup's flattener).
+func CompareVersionIds(a, b string) int {
+	return compareVersionIds(a, b)
+}
+
 // compareVersionIds compares two version IDs for sorting (newest first)
 // Returns: negative if a is newer, positive if b is newer, 0 if equal
 // Handles both old and new format version IDs

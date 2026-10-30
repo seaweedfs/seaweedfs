@@ -74,6 +74,17 @@ global:
       #     name: seaweedfs-signing-key
       #     key: signingKey
 
+# Deploy every namespaced object into this existing namespace instead of the
+# release one. Changing it on an installed release moves regular namespaced
+# objects only: claims and the data behind them are left behind or deleted,
+# hook resources stay in the old namespace, and the generated S3 and DB
+# Secrets are not recreated — migrate claims, copy the Secrets, and clean up
+# the old hook resources by hand first. The default hostPath storage is
+# node-local as well: stop the old workloads and plan the hostPath data
+# migration, or the new pods can come up empty on other nodes or share the
+# same directories concurrently.
+namespaceOverride: ""
+
 image:
   registry: ""
   repository: ""

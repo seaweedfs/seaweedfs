@@ -4,7 +4,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "seaweedfs.fullname" . }}-all-in-one
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ include "seaweedfs.namespace" . | quote }}
   labels:
     app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
     helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
@@ -41,7 +41,7 @@ spec:
       {{- $podAnnotations := mergeOverwrite (deepCopy (.Values.podAnnotations | default dict)) (.Values.allInOne.podAnnotations | default dict) }}
       {{- $existingS3ConfigSecret := or .Values.allInOne.s3.existingConfigSecret .Values.s3.existingConfigSecret .Values.filer.s3.existingConfigSecret }}
       {{- if $existingS3ConfigSecret }}
-      {{- $configSecret := (lookup "v1" "Secret" .Release.Namespace $existingS3ConfigSecret) | default dict }}
+      {{- $configSecret := (lookup "v1" "Secret" (include "seaweedfs.namespace" .) $existingS3ConfigSecret) | default dict }}
       {{- $_ := set $podAnnotations "checksum/s3config" ($configSecret | toYaml | sha256sum) }}
       {{- else }}
       {{- $_ := set $podAnnotations "checksum/s3config" (include "seaweedfs.s3.configChecksum" .) }}

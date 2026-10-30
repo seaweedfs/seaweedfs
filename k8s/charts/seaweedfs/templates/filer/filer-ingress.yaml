@@ -15,7 +15,7 @@ apiVersion: extensions/v1beta1
 kind: Ingress
 metadata:
   name: ingress-{{ include "seaweedfs.fullname" . }}-filer-http
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ include "seaweedfs.namespace" . | quote }}
   annotations:
   {{- if and (not (semverCompare ">=1.18-0" .Capabilities.KubeVersion.GitVersion)) .Values.filer.ingresses.http.className }}
     kubernetes.io/ingress.class: {{ .Values.filer.ingresses.http.className }}
@@ -77,7 +77,7 @@ apiVersion: extensions/v1beta1
 kind: Ingress
 metadata:
   name: ingress-{{ include "seaweedfs.fullname" . }}-filer-grpc
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ include "seaweedfs.namespace" . | quote }}
   annotations:
   {{- if and (not (semverCompare ">=1.18-0" .Capabilities.KubeVersion.GitVersion)) .Values.filer.ingresses.grpc.className }}
     kubernetes.io/ingress.class: {{ .Values.filer.ingresses.grpc.className }}

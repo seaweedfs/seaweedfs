@@ -14,7 +14,7 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: {{ include "seaweedfs.componentName" (list $ $volumeName) }}
-  namespace: {{ $.Release.Namespace }}
+  namespace: {{ include "seaweedfs.namespace" $ | quote }}
   labels:
     app.kubernetes.io/name: {{ template "seaweedfs.name" $ }}
     helm.sh/chart: {{ $.Chart.Name }}-{{ $.Chart.Version | replace "+" "_" }}
@@ -221,7 +221,7 @@ spec:
                 -fileSizeLimitMB={{ $volume.fileSizeLimitMB }} \
                 {{- end }}
                 -minFreeSpacePercent={{ $volume.minFreeSpacePercent }} \
-                -ip=${POD_NAME}.{{ include "seaweedfs.componentName" (list $ $volumeName) }}.{{ $.Release.Namespace }} \
+                -ip=${POD_NAME}.{{ include "seaweedfs.componentName" (list $ $volumeName) }}.{{ include "seaweedfs.namespace" $ }} \
                 -compactionMBps={{ $volume.compactionMBps }} \
                 -master={{ include "seaweedfs.masterServerArg" $ }} \
                 {{- range $volume.extraArgs }}

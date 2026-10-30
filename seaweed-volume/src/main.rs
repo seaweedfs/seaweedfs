@@ -324,6 +324,12 @@ async fn run(
     store.data_center = config.data_center.clone();
     store.rack = config.rack.clone();
 
+    // Shared between the gRPC claims and the disk locations' load scans so
+    // a reload cannot sweep files an in-flight VolumeCopy still writes.
+    let volume_copies_in_flight =
+        std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()));
+    store.set_volume_load_guard(volume_copies_in_flight.clone());
+
     // Build shared state
     let guard = Guard::new(
         &config.white_list,
@@ -402,6 +408,7 @@ async fn run(
                 .into_owned()
         },
         ec_decodes_in_flight: std::sync::Mutex::new(std::collections::HashSet::new()),
+        volume_copies_in_flight,
         ec_decode_tail: std::sync::Mutex::new(std::collections::HashSet::new()),
         ec_decode_tail_notify: tokio::sync::Notify::new(),
     });

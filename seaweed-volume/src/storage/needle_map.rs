@@ -1486,6 +1486,16 @@ impl NeedleMap {
         metric.file_count.fetch_add(delta, Ordering::Relaxed);
     }
 
+    #[cfg(test)]
+    pub(crate) fn add_deletion_count_for_test(&self, delta: i64) {
+        let metric = match self {
+            NeedleMap::InMemory(nm) => &nm.metric,
+            NeedleMap::Redb(nm) => &nm.metric,
+            NeedleMap::SortedFile(_) => panic!("sorted-file needle maps are read-only"),
+        };
+        metric.deletion_count.fetch_add(delta, Ordering::Relaxed);
+    }
+
     /// Largest (offset + actual size) seen during the load walk; 0 if the
     /// map is empty. Used at volume load to detect .idx entries that
     /// reference past the end of .dat (issue #8928) without a second scan.

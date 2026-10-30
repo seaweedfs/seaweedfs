@@ -4,7 +4,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "seaweedfs.fullname" . }}-objectstorage-provisioner
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ include "seaweedfs.namespace" . | quote }}
   labels:
     app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
     helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
@@ -83,9 +83,9 @@ spec:
               {{- else if .Values.s3.ingress.enabled }}
               value: "{{ printf "https://%s" .Values.s3.ingress.host }}"
               {{- else if .Values.s3.enabled }}
-              value: "{{ printf "https://%s.%s.svc" (include "seaweedfs.componentName" (list . "s3")) .Release.Namespace }}"
+              value: "{{ printf "https://%s.%s.svc" (include "seaweedfs.componentName" (list . "s3")) (include "seaweedfs.namespace" .) }}"
               {{- else }}
-              value: "{{ printf "https://%s.%s.svc" (include "seaweedfs.componentName" (list . "filer")) .Release.Namespace }}"
+              value: "{{ printf "https://%s.%s.svc" (include "seaweedfs.componentName" (list . "filer")) (include "seaweedfs.namespace" .) }}"
               {{- end }}
             {{- with .Values.cosi.region }}
             - name: REGION

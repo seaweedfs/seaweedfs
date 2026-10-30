@@ -1389,6 +1389,17 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 // as an EC/normal twin in one directory.
 func (vs *VolumeServer) adoptStagedVolume(req *volume_server_pb.VolumeEcShardsToVolumeRequest) (*volume_server_pb.VolumeEcShardsToVolumeResponse, error) {
 	vid := needle.VolumeId(req.VolumeId)
+
+	// Same window as VolumeMount: the renames and the mount below register
+	// the volume, and an in-flight copy of it rewrites the destination
+	// files. The check shares the copy's guard through the mount.
+	guard := vs.volumeCopyGuard(req.VolumeId)
+	guard.Lock()
+	defer guard.Unlock()
+	if guard.copying {
+		return nil, status.Errorf(codes.Unavailable, "volume %d is being copied", req.VolumeId)
+	}
+
 	if vs.store.GetVolume(vid) != nil {
 		return nil, fmt.Errorf("staged volume %d already exists on this server", req.VolumeId)
 	}
@@ -1433,7 +1444,7 @@ func (vs *VolumeServer) adoptStagedVolume(req *volume_server_pb.VolumeEcShardsTo
 	}
 	os.Remove(noteFile)
 
-	if err := vs.store.MountVolume(vid, &req.Collection); err != nil {
+	if err := vs.store.MountVolumeClaimed(vid, &req.Collection); err != nil {
 		return nil, fmt.Errorf("mount staged volume %d: %w", req.VolumeId, err)
 	}
 	glog.V(0).Infof("VolumeEcShardsToVolume: adopted decoded volume %d from staging (%s)", req.VolumeId, base)

@@ -7,7 +7,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "seaweedfs.fullname" . }}-worker
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ include "seaweedfs.namespace" . | quote }}
   labels:
     app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
     helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
@@ -131,7 +131,7 @@ spec:
               {{- if .Values.worker.adminServer }}
               -admin={{ .Values.worker.adminServer }} \
               {{- else }}
-              -admin={{ template "seaweedfs.fullname" . }}-admin.{{ .Release.Namespace }}:{{ .Values.admin.port }}{{ if .Values.admin.grpcPort }}.{{ .Values.admin.grpcPort }}{{ end }} \
+              -admin={{ template "seaweedfs.fullname" . }}-admin.{{ include "seaweedfs.namespace" . }}:{{ .Values.admin.port }}{{ if .Values.admin.grpcPort }}.{{ .Values.admin.grpcPort }}{{ end }} \
               {{- end }}
               -jobType={{ .Values.worker.jobType }} \
               -maxDetect={{ .Values.worker.maxDetect }} \
@@ -253,7 +253,7 @@ spec:
               {{- if .Values.worker.adminServer }}
               --admin={{ .Values.worker.adminServer }} \
               {{- else }}
-              --admin={{ template "seaweedfs.fullname" . }}-admin.{{ .Release.Namespace }}:{{ .Values.admin.port }}{{ if .Values.admin.grpcPort }}.{{ .Values.admin.grpcPort }}{{ end }} \
+              --admin={{ template "seaweedfs.fullname" . }}-admin.{{ include "seaweedfs.namespace" . }}:{{ .Values.admin.port }}{{ if .Values.admin.grpcPort }}.{{ .Values.admin.grpcPort }}{{ end }} \
               {{- end }}
               --namespace="$LANCE_NAMESPACE_URL" \
               {{- if .Values.global.seaweedfs.enableSecurity }}

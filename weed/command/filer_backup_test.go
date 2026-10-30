@@ -287,8 +287,8 @@ func TestBackupCheckpointIds_DistinctDestinations(t *testing.T) {
 	backupA := &stubSink{name: "s3", dir: "/", destination: "s3.us-west-004.backblazeb2.com|seaweed-backup-a|/"}
 	backupB := &stubSink{name: "s3", dir: "/", destination: "s3.us-east-005.backblazeb2.com|seaweed-backup-b|/"}
 
-	idA, legacyA := backupCheckpointIds("/", backupA)
-	idB, legacyB := backupCheckpointIds("/", backupB)
+	idA, legacyA := backupCheckpointIds("/", backupA, false)
+	idB, legacyB := backupCheckpointIds("/", backupB, false)
 
 	if idA == idB {
 		t.Errorf("backups to different destinations share checkpoint id %d", idA)
@@ -305,8 +305,8 @@ func TestBackupCheckpointIds_DistinctDestinations(t *testing.T) {
 // shared offset lets the faster one push the slower one past unseen events.
 func TestBackupCheckpointIds_DistinctSourcePaths(t *testing.T) {
 	s := &stubSink{name: "s3", dir: "/", destination: "endpoint|bucket|/"}
-	idA, _ := backupCheckpointIds("/buckets/a", s)
-	idB, _ := backupCheckpointIds("/buckets/b", s)
+	idA, _ := backupCheckpointIds("/buckets/a", s, false)
+	idB, _ := backupCheckpointIds("/buckets/b", s, false)
 	if idA == idB {
 		t.Errorf("backups of different source paths share checkpoint id %d", idA)
 	}
@@ -317,7 +317,7 @@ func TestBackupCheckpointIds_DistinctSourcePaths(t *testing.T) {
 // backups lose their checkpoint on upgrade and replay from zero.
 func TestBackupCheckpointIds_LegacyFormulaUnchanged(t *testing.T) {
 	s := &stubSink{name: "s3", dir: "/data", destination: "endpoint|bucket|/data"}
-	_, legacy := backupCheckpointIds("/", s)
+	_, legacy := backupCheckpointIds("/", s, false)
 	if want := int32(util.HashStringToLong("s3" + "/data")); legacy != want {
 		t.Errorf("legacy id = %d, want historical formula value %d", legacy, want)
 	}
@@ -326,10 +326,21 @@ func TestBackupCheckpointIds_LegacyFormulaUnchanged(t *testing.T) {
 // The NUL joins keep the hash input injective: field values spelling out
 // other fields' content must not concatenate to the same input.
 func TestBackupCheckpointIds_NoAliasing(t *testing.T) {
-	idA, _ := backupCheckpointIds("/src", &stubSink{name: "s3", dir: "/", destination: "/d=>s3|/other"})
-	idB, _ := backupCheckpointIds("/src=>s3|/d", &stubSink{name: "s3", dir: "/", destination: "/other"})
+	idA, _ := backupCheckpointIds("/src", &stubSink{name: "s3", dir: "/", destination: "/d=>s3|/other"}, false)
+	idB, _ := backupCheckpointIds("/src=>s3|/d", &stubSink{name: "s3", dir: "/", destination: "/other"}, false)
 	if idA == idB {
 		t.Errorf("field content spelling a separator aliases checkpoint id %d", idA)
+	}
+}
+
+// Toggling -s3.flattenVersions must not resume the other mode's checkpoint:
+// switching modes needs a fresh snapshot, not a mid-stream resume.
+func TestBackupCheckpointIds_FlattenModeDistinct(t *testing.T) {
+	s := &stubSink{name: "s3", dir: "/", destination: "endpoint|bucket|/"}
+	idFlat, legacyFlat := backupCheckpointIds("/buckets/a", s, true)
+	idPlain, legacyPlain := backupCheckpointIds("/buckets/a", s, false)
+	if idFlat == idPlain || legacyFlat == legacyPlain {
+		t.Errorf("flatten mode shares checkpoint ids: (%d,%d) vs (%d,%d)", idFlat, legacyFlat, idPlain, legacyPlain)
 	}
 }
 
@@ -337,8 +348,8 @@ func TestBackupCheckpointIds_NoAliasing(t *testing.T) {
 // restart would orphan its checkpoint.
 func TestBackupCheckpointIds_Stable(t *testing.T) {
 	s := &stubSink{name: "s3", dir: "/", destination: "endpoint|bucket|/"}
-	id1, legacy1 := backupCheckpointIds("/buckets/a", s)
-	id2, legacy2 := backupCheckpointIds("/buckets/a", s)
+	id1, legacy1 := backupCheckpointIds("/buckets/a", s, false)
+	id2, legacy2 := backupCheckpointIds("/buckets/a", s, false)
 	if id1 != id2 || legacy1 != legacy2 {
 		t.Errorf("ids not stable: (%d,%d) vs (%d,%d)", id1, legacy1, id2, legacy2)
 	}

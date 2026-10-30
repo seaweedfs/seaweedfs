@@ -140,6 +140,14 @@ pub struct VolumeServerState {
     /// Wakes .ecj appenders waiting on `ec_decode_tail` when a decode's
     /// publishing tail ends.
     pub ec_decode_tail_notify: tokio::sync::Notify,
+    /// Volumes with a VolumeCopy in flight on this server. The claim spans
+    /// reservation, transfer, mount and cleanup, so a second copy of the
+    /// same volume fails fast instead of clearing or overwriting files the
+    /// first copy still owns. Mirrors Go's volumeCopiesInFlight. Shared with
+    /// the disk locations' load scans — Go's loadGuard.
+    pub volume_copies_in_flight: std::sync::Arc<
+        std::sync::Mutex<std::collections::HashSet<crate::storage::types::VolumeId>>,
+    >,
 }
 
 impl VolumeServerState {

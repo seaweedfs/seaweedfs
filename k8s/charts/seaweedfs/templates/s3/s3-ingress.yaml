@@ -21,7 +21,7 @@ apiVersion: extensions/v1beta1
 kind: Ingress
 metadata:
   name: ingress-{{ include "seaweedfs.fullname" . }}-s3
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ include "seaweedfs.namespace" . | quote }}
   {{- with .Values.s3.ingress.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
