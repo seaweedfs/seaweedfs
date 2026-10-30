@@ -1965,6 +1965,8 @@ jobs:
               "--set", "admin.enabled=true", "--set", "admin.secret.adminPassword=ci",
               "--set", "cosi.enabled=true", "--set", "networkPolicy.enabled=true",
               "--set", "volumes.dc2.replicas=1",
+              # generated per render; drop it so the security ConfigMap stays comparable
+              "--set", "global.seaweedfs.securityConfig.jwtSigning.volumeWrite=false",
           ]
           LABELS = "/tmp/common-labels-values.yaml"
           with open(LABELS, "w") as f:
@@ -1985,7 +1987,7 @@ jobs:
                   if not d:
                       continue
                   # generated credentials differ between renders
-                  if d["kind"] in ("Secret", "ConfigMap"):
+                  if d["kind"] == "Secret":
                       d.pop("data", None)
                       d.pop("stringData", None)
                   docs[(d["kind"], d["metadata"]["name"])] = d
