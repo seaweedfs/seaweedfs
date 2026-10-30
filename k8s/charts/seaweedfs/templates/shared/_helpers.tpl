@@ -60,7 +60,7 @@ with "context" and "exclude" (labels the object already sets).
 {{- end -}}
 {{- with $context.Values.commonLabels -}}
 {{-   $labels := include "seaweedfs.tplvalues.render" (dict "value" . "context" $context) | fromYaml -}}
-{{-   if hasKey $labels "Error" -}}
+{{-   if and (hasKey $labels "Error") (not (kindIs "map" .)) -}}
 {{-     fail (printf "commonLabels must render to a map of labels: %s" (get $labels "Error")) -}}
 {{-   end -}}
 {{-   $labels = omit $labels "app.kubernetes.io/name" "app.kubernetes.io/instance" "app.kubernetes.io/component" "app.kubernetes.io/managed-by" "helm.sh/chart" -}}
