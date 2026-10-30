@@ -489,9 +489,24 @@ func (l *DiskLocation) reconcileCompactStates() {
 		if loaded {
 			continue
 		}
+		// A VolumeCopy of this id can be mid-flight at the same basenames:
+		// rolling a leftover commit forward would rename compaction temps
+		// over the files it is writing. Same skip the load path takes; a
+		// later pass reconciles the leftover.
+		var release func()
+		if l.loadGuard != nil {
+			var skip bool
+			release, skip = l.loadGuard(k.vid)
+			if skip {
+				continue
+			}
+		}
 		v := &Volume{dir: l.Directory, dirIdx: l.IdxDirectory, Collection: k.collection, Id: k.vid}
 		if err := v.reconcileCompactState(); err != nil {
 			glog.Errorf("volume %d: reconcile interrupted compaction failed: %v", k.vid, err)
+		}
+		if release != nil {
+			release()
 		}
 	}
 }
