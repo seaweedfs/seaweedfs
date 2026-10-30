@@ -227,6 +227,11 @@ impl DiskLocation {
             }
         }
 
+        // Claims for the queued volumes: held until open_volumes has read
+        // their indexes, so a VolumeCopy cannot take the vid between this
+        // sweep pass and the actual load — the span Go's loadGuard covers.
+        let mut held_claims: Vec<LoadClaim> = Vec::new();
+
         for (collection, vid) in dat_files {
             let volume_name = volume_file_name(&self.directory, &collection, vid);
             let idx_name = volume_file_name(&self.idx_directory, &collection, vid);
@@ -234,10 +239,16 @@ impl DiskLocation {
             // A copy of this volume may be mid-flight: the sweeps below
             // would unlink files it is still writing, and a register here
             // could slip past its own recheck. Skip while a copy owns the
-            // vid and claim it through the load — Go's loadGuard.
-            let _load_claim = match self.claim_for_load(vid) {
-                Ok(claim) => claim,
-                Err(()) => continue,
+            // vid and claim it through the load — Go's loadGuard. A vid this
+            // scan already queued is claimed by us: run this collection's
+            // sweeps without re-claiming and merge it into the entry below.
+            let load_claim = if queued.contains_key(&vid) {
+                None
+            } else {
+                match self.claim_for_load(vid) {
+                    Ok(claim) => claim,
+                    Err(()) => continue,
+                }
             };
 
             // Sweep a leftover empty `.dat` stub (a phantom from the pre-fix
@@ -328,6 +339,7 @@ impl DiskLocation {
                 None => {
                     queued.insert(vid, to_load.len());
                     to_load.push((vid, vec![collection]));
+                    held_claims.extend(load_claim);
                 }
             }
         }
