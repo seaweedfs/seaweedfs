@@ -88,6 +88,9 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 	}
 	if identity != nil {
 		r = r.WithContext(recordIdentityInContext(r, identity))
+		if identity.Account != nil {
+			r.Header.Set(s3_constants.AmzAccountId, identity.Account.Id)
+		}
 	}
 
 	policyBytes, err := base64.StdEncoding.DecodeString(formValues.Get("Policy"))
