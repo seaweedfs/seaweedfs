@@ -28,7 +28,7 @@ func TestScanOrderDoesNotDecideWhetherAVolumeLoads(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		location.loadExistingVolume("9"+ext, NeedleMapInMemory, true, 0, 0)
+		location.loadExistingVolume("9"+ext, NeedleMapInMemory, true, 0, 0, false)
 		_, found := location.FindVolume(needle.VolumeId(9))
 		loaded[ext] = found
 	}
@@ -54,7 +54,7 @@ func TestLoadExistingVolumeSkipsACopyInFlight(t *testing.T) {
 	location.loadGuard = func(vid needle.VolumeId) (func(), bool) {
 		return func() {}, true
 	}
-	location.loadExistingVolume("9.idx", NeedleMapInMemory, true, 0, 0)
+	location.loadExistingVolume("9.idx", NeedleMapInMemory, true, 0, 0, false)
 	if _, found := location.FindVolume(needle.VolumeId(9)); found {
 		t.Fatal("a volume the guard skips was loaded")
 	}
@@ -65,11 +65,32 @@ func TestLoadExistingVolumeSkipsACopyInFlight(t *testing.T) {
 	location.loadGuard = func(vid needle.VolumeId) (func(), bool) {
 		return func() { releaseRan = true }, false
 	}
-	location.loadExistingVolume("9.idx", NeedleMapInMemory, true, 0, 0)
+	location.loadExistingVolume("9.idx", NeedleMapInMemory, true, 0, 0, false)
 	if _, found := location.FindVolume(needle.VolumeId(9)); !found {
 		t.Fatal("a clear guard pass did not load the volume")
 	}
 	if !releaseRan {
 		t.Fatal("the guard release was not called when the load returned")
+	}
+}
+
+// The claim holder's own mount must not consult the guard: VolumeCopy mounts
+// while its claim still stands, and VolumeMount/VolumeConfigure hold the
+// guard's lock through the mount. The skip is for scan-driven loads; an
+// explicit LoadVolume is serialized by the caller's own hold.
+func TestLoadVolumeIgnoresTheGuardForTheHoldersOwnMount(t *testing.T) {
+	store := newTestStore(t, 1)
+	location := store.Locations[0]
+	mountTestVolume(t, location, 9, "")
+	location.UnloadVolume(needle.VolumeId(9))
+
+	location.loadGuard = func(vid needle.VolumeId) (func(), bool) {
+		return func() {}, true
+	}
+	if !location.LoadVolume(0, needle.VolumeId(9), NeedleMapInMemory, nil) {
+		t.Fatal("the claim holder's own mount was skipped by its own guard")
+	}
+	if _, found := location.FindVolume(needle.VolumeId(9)); !found {
+		t.Fatal("explicit mount did not register the volume")
 	}
 }
