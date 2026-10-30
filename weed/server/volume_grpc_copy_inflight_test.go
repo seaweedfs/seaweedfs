@@ -44,6 +44,22 @@ func TestAllocateVolumeRefusesAVolumeBeingCopied(t *testing.T) {
 	assert.Equal(t, codes.Unavailable, status.Code(err), err)
 }
 
+func TestVolumeUnmountRefusesAVolumeBeingCopied(t *testing.T) {
+	vs := &VolumeServer{store: newTraversalTestStore(t.TempDir())}
+	vs.volumeCopyGuard(17).copying = true
+
+	_, err := vs.VolumeUnmount(context.Background(), &volume_server_pb.VolumeUnmountRequest{VolumeId: 17})
+	assert.Equal(t, codes.Unavailable, status.Code(err), err)
+}
+
+func TestVolumeDeleteRefusesAVolumeBeingCopied(t *testing.T) {
+	vs := &VolumeServer{store: newTraversalTestStore(t.TempDir())}
+	vs.volumeCopyGuard(17).copying = true
+
+	_, err := vs.VolumeDelete(context.Background(), &volume_server_pb.VolumeDeleteRequest{VolumeId: 17})
+	assert.Equal(t, codes.Unavailable, status.Code(err), err)
+}
+
 func TestAdoptStagedVolumeRefusesAVolumeBeingCopied(t *testing.T) {
 	vs := &VolumeServer{store: newTraversalTestStore(t.TempDir())}
 	vs.volumeCopyGuard(17).copying = true

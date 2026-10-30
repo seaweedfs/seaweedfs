@@ -173,6 +173,16 @@ func (vs *VolumeServer) VolumeUnmount(ctx context.Context, req *volume_server_pb
 		return resp, err
 	}
 
+	// Same window as VolumeMount: the copy announces its replica before the
+	// claim drops, and an unmount inside that window unregisters a volume the
+	// master was just told is here.
+	guard := vs.volumeCopyGuard(req.VolumeId)
+	guard.Lock()
+	defer guard.Unlock()
+	if guard.copying {
+		return resp, status.Errorf(codes.Unavailable, "volume %d is being copied", req.VolumeId)
+	}
+
 	err := vs.store.UnmountVolume(needle.VolumeId(req.VolumeId))
 
 	if err != nil {
@@ -217,6 +227,15 @@ func (vs *VolumeServer) VolumeDelete(ctx context.Context, req *volume_server_pb.
 
 	if err := vs.checkGrpcAdminAuth(ctx); err != nil {
 		return resp, err
+	}
+
+	// Same window as VolumeMount: a delete inside the copy's post-mount
+	// window removes a replica the master was just told is here.
+	guard := vs.volumeCopyGuard(req.VolumeId)
+	guard.Lock()
+	defer guard.Unlock()
+	if guard.copying {
+		return resp, status.Errorf(codes.Unavailable, "volume %d is being copied", req.VolumeId)
 	}
 
 	err := vs.store.DeleteVolume(needle.VolumeId(req.VolumeId), req.OnlyEmpty, req.OnlyGarbage, req.KeepRemoteData)
