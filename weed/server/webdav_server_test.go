@@ -731,6 +731,64 @@ func TestCopyMoveGuardHandler_MoveDirOntoNonEmptyDirRestoresOnRenameFailure(t *t
 	}
 }
 
+type cancelingRenameFS struct {
+	webdav.FileSystem
+	cancel           context.CancelFunc
+	oldName, newName string
+}
+
+func (f cancelingRenameFS) Rename(ctx context.Context, oldName, newName string) error {
+	if oldName == f.oldName && newName == f.newName {
+		f.cancel()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return f.FileSystem.Rename(ctx, oldName, newName)
+}
+
+// A client disconnect cancels the request context mid-move; restoring the
+// parked destination runs under a detached context, so the destination is
+// not left under its hidden name.
+func TestDeferredDeleteFS_RestoreSurvivesCanceledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	mem := webdav.NewMemFS()
+	put := func(name, data string) {
+		f, err := mem.OpenFile(ctx, name, os.O_RDWR|os.O_CREATE, 0644)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.Write([]byte(data)); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := mem.Mkdir(ctx, "/src", 0755); err != nil {
+		t.Fatal(err)
+	}
+	put("/src/s.txt", "s")
+	if err := mem.Mkdir(ctx, "/dst", 0755); err != nil {
+		t.Fatal(err)
+	}
+	put("/dst/d.txt", "d")
+
+	fs := deferredDeleteFS{
+		FileSystem: cancelingRenameFS{mem, cancel, "/src", "/dst"},
+		dst:        "/dst",
+	}
+	err := fs.Rename(ctx, "/src", "/dst")
+	assert.ErrorIs(t, err, context.Canceled)
+	if r, err := mem.OpenFile(context.Background(), "/dst/d.txt", os.O_RDONLY, 0); assert.NoError(t, err) {
+		data, err := io.ReadAll(r)
+		assert.NoError(t, err)
+		assert.Equal(t, "d", string(data))
+		r.Close()
+	}
+}
+
 // A MOVE whose rename fails must leave the existing destination in place:
 // the delete is deferred into the rename, which replaces atomically.
 func TestCopyMoveGuardHandler_MoveKeepsDestinationOnRenameFailure(t *testing.T) {

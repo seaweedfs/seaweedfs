@@ -146,14 +146,18 @@ func renameOverTarget(ctx context.Context, fs webdav.FileSystem, oldName, newNam
 	if err := fs.Rename(ctx, newName, spare); err != nil {
 		return err
 	}
+	// a client disconnect cancels ctx mid-move; the parked target's restore
+	// and removal run under a detached deadline so it is never left hidden
+	parkedCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Minute)
+	defer cancel()
 	if err := fs.Rename(ctx, oldName, newName); err != nil {
-		if backErr := fs.Rename(ctx, spare, newName); backErr != nil {
-			glog.WarningfCtx(ctx, "restore moved-aside %s: %v", newName, backErr)
+		if backErr := fs.Rename(parkedCtx, spare, newName); backErr != nil {
+			glog.WarningfCtx(parkedCtx, "restore moved-aside %s: %v", newName, backErr)
 		}
 		return err
 	}
-	if err := fs.RemoveAll(ctx, spare); err != nil {
-		glog.WarningfCtx(ctx, "remove moved-aside %s: %v", spare, err)
+	if err := fs.RemoveAll(parkedCtx, spare); err != nil {
+		glog.WarningfCtx(parkedCtx, "remove moved-aside %s: %v", spare, err)
 	}
 	return nil
 }
