@@ -387,8 +387,9 @@ func (h *S3TablesHandler) listViewsInNamespace(r *http.Request, client filer_pb.
 			if prefix != "" && !strings.HasPrefix(entry.Entry.Name, prefix) {
 				continue
 			}
-			// Only include view entries; skip tables and untagged entries.
-			if EntryType(entry.Entry.Extended) != EntryTypeView {
+			// Only include view entries; skip tables, untagged entries, and a
+			// record its create has not confirmed.
+			if EntryType(entry.Entry.Extended) != EntryTypeView || isUnfinishedCreate(entry.Entry.Extended) {
 				continue
 			}
 			data, ok := entry.Entry.Extended[ExtendedKeyMetadata]
@@ -458,7 +459,7 @@ func (h *S3TablesHandler) authorizeUpdateView(w http.ResponseWriter, r *http.Req
 		if err != nil {
 			return err
 		}
-		if EntryType(entry.Extended) != EntryTypeView {
+		if EntryType(entry.Extended) != EntryTypeView || isUnfinishedCreate(entry.Extended) {
 			return filer_pb.ErrNotFound
 		}
 		data, ok := entry.Extended[ExtendedKeyMetadata]
@@ -588,7 +589,7 @@ func (h *S3TablesHandler) handleDeleteView(w http.ResponseWriter, r *http.Reques
 		if err != nil {
 			return err
 		}
-		if EntryType(entry.Extended) != EntryTypeView {
+		if EntryType(entry.Extended) != EntryTypeView || isUnfinishedCreate(entry.Extended) {
 			return filer_pb.ErrNotFound
 		}
 		data, ok := entry.Extended[ExtendedKeyMetadata]

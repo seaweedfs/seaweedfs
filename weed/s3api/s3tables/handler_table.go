@@ -749,8 +749,9 @@ func (h *S3TablesHandler) listTablesWithClient(r *http.Request, client filer_pb.
 				continue
 			}
 
-			// Views share the table layout; exclude them from table listings.
-			if EntryType(entry.Entry.Extended) == EntryTypeView {
+			// Views share the table layout; exclude them from table listings,
+			// and a record its create has not confirmed is not a table yet.
+			if EntryType(entry.Entry.Extended) == EntryTypeView || isUnfinishedCreate(entry.Entry.Extended) {
 				continue
 			}
 
@@ -1207,19 +1208,15 @@ func (h *S3TablesHandler) readTableMetadata(ctx context.Context, client filer_pb
 	if err != nil {
 		return nil, err
 	}
-	// A table whose create has not confirmed its namespace may still be backed
-	// out, so nothing reads it or commits to it yet.
-	if isUnfinishedCreate(entry.Extended) {
-		return nil, filer_pb.ErrNotFound
-	}
 	return tableMetadata(entry)
 }
 
 // tableMetadata extracts the table-metadata xattr from an entry. A view stored
 // at the same name is reported absent, the way GetTable and the renamer's
-// entry-type check already treat kind mismatches.
+// entry-type check already treat kind mismatches, and so is a record its
+// create has not finished writing.
 func tableMetadata(entry *filer_pb.Entry) ([]byte, error) {
-	if EntryType(entry.Extended) == EntryTypeView {
+	if EntryType(entry.Extended) == EntryTypeView || isUnfinishedCreate(entry.Extended) {
 		return nil, filer_pb.ErrNotFound
 	}
 	data, ok := entry.Extended[ExtendedKeyMetadata]
@@ -1400,8 +1397,9 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Tables and views share the namespace directory, so a rename must not pick
-	// up the other kind under the same name.
-	if EntryType(srcExtended) != kind.entryType {
+	// up the other kind under the same name, nor a record its create may still
+	// back out.
+	if EntryType(srcExtended) != kind.entryType || isUnfinishedCreate(srcExtended) {
 		h.writeError(w, http.StatusNotFound, kind.notFoundCode, fmt.Sprintf("%s %s not found", kind.noun, srcName))
 		return fmt.Errorf("%s %s not found", kind.noun, srcName)
 	}
