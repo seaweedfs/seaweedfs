@@ -4,7 +4,9 @@ package s3vectors
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -12,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
+	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 )
 
 // FilerClient provides access to the filer for storage operations.
@@ -85,7 +88,15 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", "unknown operation "+op)
 		return
 	}
-	handler(s, w, r)
+	inFlight := stats_collect.S3InFlightRequestsGauge.WithLabelValues("s3vectors." + op)
+	inFlight.Inc()
+	defer inFlight.Dec()
+	recorder := stats_collect.NewStatusResponseWriter(w)
+	start := time.Now()
+	handler(s, recorder, r)
+	elapsed := time.Since(start)
+	stats_collect.S3RequestHistogram.WithLabelValues("s3vectors."+op, "").Observe(elapsed.Seconds())
+	stats_collect.S3RequestCounter.WithLabelValues("s3vectors."+op, strconv.Itoa(recorder.Status), "").Inc()
 }
 
 // Auth authenticates the caller and puts the identity in the request context.
