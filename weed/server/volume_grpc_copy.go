@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -28,6 +29,18 @@ import (
 
 const BufferSizeLimit = 1024 * 1024 * 2
 
+// volumeCopyGuard serializes a copy's registration recheck and file
+// clearing against mounts and configures of the same volume.
+type volumeCopyGuard struct {
+	sync.Mutex
+	copying bool
+}
+
+func (vs *VolumeServer) volumeCopyGuard(volumeId uint32) *volumeCopyGuard {
+	guard, _ := vs.volumeCopyGuards.LoadOrStore(volumeId, &volumeCopyGuard{})
+	return guard.(*volumeCopyGuard)
+}
+
 // VolumeCopy copy the .idx .dat .vif files, and mount the volume
 func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stream volume_server_pb.VolumeServer_VolumeCopyServer) error {
 	if err := vs.checkGrpcAdminAuth(stream.Context()); err != nil {
@@ -45,10 +58,19 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 	// One copy of a volume at a time: a racing second copy can pass the
 	// existing-volume check before this one mounts and then clear or
 	// overwrite the files this copy still owns. Retryable once it settles.
-	if _, loaded := vs.volumeCopiesInFlight.LoadOrStore(req.VolumeId, struct{}{}); loaded {
+	guard := vs.volumeCopyGuard(req.VolumeId)
+	guard.Lock()
+	if guard.copying {
+		guard.Unlock()
 		return status.Errorf(codes.Unavailable, "volume %d is already being copied", req.VolumeId)
 	}
-	defer vs.volumeCopiesInFlight.Delete(req.VolumeId)
+	guard.copying = true
+	guard.Unlock()
+	defer func() {
+		guard.Lock()
+		guard.copying = false
+		guard.Unlock()
+	}()
 
 	// A pre-existing local replica is NOT deleted up front. Deleting before the
 	// source is confirmed reachable destroys a healthy copy on a transient
@@ -197,40 +219,49 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 
 		// The existing-volume check ran before the source RPCs; a mount that
 		// landed since would lose its index files to the clear below, which can
-		// share the index directory with this copy's bases. Abort instead.
-		if vs.store.GetVolume(needle.VolumeId(req.VolumeId)) != nil {
-			return fmt.Errorf("volume %d mounted during copy; aborting before clearing files", req.VolumeId)
-		}
-
-		// A crashed copy, or one whose cleanup failed, can leave a stale index
-		// next to the .idx that this copy's mount would trust
-		// (generateLevelDbFile replays only past the stored watermark). The
-		// same leftovers can sit beside the .dat when the dirs differ: the
-		// mount loads a data-dir .idx in preference to the idx-dir one. Clear
-		// them all before writing anything; a removal failure must abort
-		// rather than risk a mount reusing a poisoned index.
-		indexBases := []string{indexBaseFileName}
-		if indexBaseFileName != dataBaseFileName {
-			indexBases = append(indexBases, dataBaseFileName)
-		}
-		for _, indexBase := range indexBases {
-			if removeErr := os.RemoveAll(indexBase + ".ldb"); removeErr != nil {
-				err = removeErr
-				return fmt.Errorf("clear leftover index before copying volume %d: %w", req.VolumeId, removeErr)
+		// share the index directory with this copy's bases. Rechecking under
+		// the volume's guard keeps a mount that passed the in-flight check
+		// first from registering between the recheck and the clearing: it
+		// either registered already (and this aborts) or sees the claim.
+		guard.Lock()
+		clearErr := func() error {
+			if vs.store.GetVolume(needle.VolumeId(req.VolumeId)) != nil {
+				return fmt.Errorf("volume %d mounted during copy; aborting before clearing files", req.VolumeId)
 			}
-			for _, ext := range []string{".idx", ".sdx", ".rdb"} {
-				if removeErr := os.Remove(indexBase + ext); removeErr != nil && !os.IsNotExist(removeErr) {
-					err = removeErr
+
+			// A crashed copy, or one whose cleanup failed, can leave a stale index
+			// next to the .idx that this copy's mount would trust
+			// (generateLevelDbFile replays only past the stored watermark). The
+			// same leftovers can sit beside the .dat when the dirs differ: the
+			// mount loads a data-dir .idx in preference to the idx-dir one. Clear
+			// them all before writing anything; a removal failure must abort
+			// rather than risk a mount reusing a poisoned index.
+			indexBases := []string{indexBaseFileName}
+			if indexBaseFileName != dataBaseFileName {
+				indexBases = append(indexBases, dataBaseFileName)
+			}
+			for _, indexBase := range indexBases {
+				if removeErr := os.RemoveAll(indexBase + ".ldb"); removeErr != nil {
 					return fmt.Errorf("clear leftover index before copying volume %d: %w", req.VolumeId, removeErr)
 				}
+				for _, ext := range []string{".idx", ".sdx", ".rdb"} {
+					if removeErr := os.Remove(indexBase + ext); removeErr != nil && !os.IsNotExist(removeErr) {
+						return fmt.Errorf("clear leftover index before copying volume %d: %w", req.VolumeId, removeErr)
+					}
+				}
 			}
-		}
 
-		// The .note marks the copy as in-progress; a leftover note fails the
-		// volume load on restart, so a write failure must abort the copy.
-		if noteErr := util.WriteFile(dataBaseFileName+".note", []byte(fmt.Sprintf("copying from %s", req.SourceDataNode)), 0755); noteErr != nil {
-			err = noteErr
-			return fmt.Errorf("write .note for volume %d: %w", req.VolumeId, noteErr)
+			// The .note marks the copy as in-progress; a leftover note fails the
+			// volume load on restart, so a write failure must abort the copy.
+			if noteErr := util.WriteFile(dataBaseFileName+".note", []byte(fmt.Sprintf("copying from %s", req.SourceDataNode)), 0755); noteErr != nil {
+				return fmt.Errorf("write .note for volume %d: %w", req.VolumeId, noteErr)
+			}
+			return nil
+		}()
+		guard.Unlock()
+		if clearErr != nil {
+			err = clearErr
+			return clearErr
 		}
 		// From here on the destination files are this copy's own writes.
 		copyOwnsFiles = true

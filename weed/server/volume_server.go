@@ -46,12 +46,12 @@ type VolumeServer struct {
 	// by a leader; before first registration the retry loop reconnects
 	// promptly instead of pacing a full pulse.
 	confirmedLeaderOnce atomic.Bool
-	pulsePeriod       time.Duration
-	dataCenter        string
-	rack              string
-	store             *storage.Store
-	guard             *security.Guard
-	grpcDialOption    grpc.DialOption
+	pulsePeriod         time.Duration
+	dataCenter          string
+	rack                string
+	store               *storage.Store
+	guard               *security.Guard
+	grpcDialOption      grpc.DialOption
 
 	needleMapKind                 storage.NeedleMapKind
 	ldbTimout                     int64
@@ -72,10 +72,11 @@ type VolumeServer struct {
 	// stop the handler; this keeps a retry from racing it on the same
 	// volume files.
 	ecDecodesInFlight sync.Map
-	// Volumes with a VolumeCopy in flight. A second copy of the same volume
-	// can pass the existing-volume check before the first one mounts and
-	// then clear or overwrite files the first copy still owns.
-	volumeCopiesInFlight sync.Map
+	// A copy claims its volume's guard, so mounts and configures either
+	// register before the copy's registration recheck (and abort it) or see
+	// the claim and refuse. Entries are never removed: a guard handed out
+	// while one side waits must stay the same mutex.
+	volumeCopyGuards sync.Map
 }
 
 func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,

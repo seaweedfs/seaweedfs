@@ -133,12 +133,18 @@ func (vs *VolumeServer) VolumeMount(ctx context.Context, req *volume_server_pb.V
 	}
 
 	// A copy claims the volume, then waits on the source. A mount in that
-	// window loads files the copy is about to clear or overwrite.
-	if _, copying := vs.volumeCopiesInFlight.Load(req.VolumeId); copying {
+	// window loads files the copy is about to clear or overwrite, so the
+	// check and the registration share the copy's guard: a mount either
+	// registers before the copy's recheck (and makes it abort) or sees the
+	// claim and refuses.
+	guard := vs.volumeCopyGuard(req.VolumeId)
+	guard.Lock()
+	if guard.copying {
+		guard.Unlock()
 		return resp, status.Errorf(codes.Unavailable, "volume %d is being copied", req.VolumeId)
 	}
-
 	err := vs.store.MountVolume(needle.VolumeId(req.VolumeId), req.Collection)
+	guard.Unlock()
 
 	if err != nil {
 		glog.Errorf("volume mount %v: %v", req, err)
@@ -251,9 +257,13 @@ func (vs *VolumeServer) VolumeConfigure(ctx context.Context, req *volume_server_
 		return resp, nil
 	}
 
-	// Same window as VolumeMount: configure unmounts and remounts, so it can
-	// load the replica whose files an in-flight copy is about to delete.
-	if _, copying := vs.volumeCopiesInFlight.Load(req.VolumeId); copying {
+	// Same window as VolumeMount, and wider: configure unmounts, rewrites
+	// the .vif, and remounts, so the whole sequence shares the copy's guard
+	// rather than only the entry check.
+	guard := vs.volumeCopyGuard(req.VolumeId)
+	guard.Lock()
+	defer guard.Unlock()
+	if guard.copying {
 		return resp, status.Errorf(codes.Unavailable, "volume %d is being copied", req.VolumeId)
 	}
 

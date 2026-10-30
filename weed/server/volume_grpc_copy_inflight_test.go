@@ -13,19 +13,20 @@ import (
 
 func TestVolumeMountRefusesAVolumeBeingCopied(t *testing.T) {
 	vs := &VolumeServer{store: newTraversalTestStore(t.TempDir())}
-	vs.volumeCopiesInFlight.Store(uint32(17), struct{}{})
+	guard := vs.volumeCopyGuard(17)
+	guard.copying = true
 
 	_, err := vs.VolumeMount(context.Background(), &volume_server_pb.VolumeMountRequest{VolumeId: 17})
 	assert.Equal(t, codes.Unavailable, status.Code(err), err)
 
-	vs.volumeCopiesInFlight.Delete(uint32(17))
+	guard.copying = false
 	_, err = vs.VolumeMount(context.Background(), &volume_server_pb.VolumeMountRequest{VolumeId: 17})
 	assert.NotEqual(t, codes.Unavailable, status.Code(err), err)
 }
 
 func TestVolumeConfigureRefusesAVolumeBeingCopied(t *testing.T) {
 	vs := &VolumeServer{store: newTraversalTestStore(t.TempDir())}
-	vs.volumeCopiesInFlight.Store(uint32(17), struct{}{})
+	vs.volumeCopyGuard(17).copying = true
 
 	_, err := vs.VolumeConfigure(context.Background(), &volume_server_pb.VolumeConfigureRequest{VolumeId: 17, Replication: "000"})
 	assert.Equal(t, codes.Unavailable, status.Code(err), err)
