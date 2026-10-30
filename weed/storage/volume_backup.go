@@ -188,8 +188,8 @@ func (v *Volume) hashIndexEntries(entryCount uint64) (uint64, error) {
 			return 0, fmt.Errorf("file %s read error: %v", indexFile.Name(), err)
 		}
 		for i := 0; i+NeedleMapEntrySize <= read; i += NeedleMapEntrySize {
-			h.Write(buf[i : i+8])
-			h.Write(buf[i+12 : i+NeedleMapEntrySize])
+			h.Write(buf[i : i+NeedleIdSize])
+			h.Write(buf[i+NeedleIdSize+OffsetSize : i+NeedleMapEntrySize])
 		}
 		remaining -= int64(read)
 	}
