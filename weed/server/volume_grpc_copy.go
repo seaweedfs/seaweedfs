@@ -67,10 +67,14 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 	var volFileInfoResp *volume_server_pb.ReadVolumeFileStatusResponse
 	var sourceVolumeStatus *volume_server_pb.VolumeStatusResponse
 	var sourceVolumeStatusAfterCopy *volume_server_pb.VolumeStatusResponse
-	var dataBaseFileName, indexBaseFileName, idxFileName, datFileName string
+	var dataBaseFileName, indexBaseFileName, idxFileName, datFileName, vifFileName string
 	var hasRemoteDatFile bool
 	var copyLocation *storage.DiskLocation
 	var copyReservedSpace uint64
+	// Files this copy has (re)written itself. Until the first write the
+	// destination can still hold a previous replica's files, and an
+	// aborted copy must not destroy them.
+	var copyOwnsFiles bool
 	err := operation.WithVolumeServerClientOptions(true, pb.ServerAddress(req.SourceDataNode), func(client volume_server_pb.VolumeServerClient) (err error) {
 		sourceVolumeStatus, err = client.VolumeStatus(stream.Context(), &volume_server_pb.VolumeStatusRequest{
 			VolumeId: req.VolumeId,
@@ -150,12 +154,13 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 			}
 		}
 
-		// Files this copy has (re)written itself. Until the first write the
-		// destination can still hold a previous replica's files, and an
-		// aborted copy must not destroy them.
-		copyOwnsFiles := false
 		defer func() {
 			if err != nil {
+				if dataBaseFileName != "" {
+					// A .note only marks an in-flight copy; a partial write
+					// must not be left to fail the next volume load.
+					os.Remove(dataBaseFileName + ".note")
+				}
 				if copyOwnsFiles {
 					os.Remove(dataBaseFileName + ".dat")
 					os.Remove(indexBaseFileName + ".idx")
@@ -167,7 +172,6 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 					if !location.HasEcxFileOnDisk(volFileInfoResp.Collection, needle.VolumeId(req.VolumeId)) {
 						os.Remove(dataBaseFileName + ".vif")
 					}
-					os.Remove(dataBaseFileName + ".note")
 				}
 				// Zero before the outer defer sees the same error, or the
 				// charge would be released twice.
@@ -330,6 +334,7 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 
 	idxFileName = indexBaseFileName + ".idx"
 	datFileName = dataBaseFileName + ".dat"
+	vifFileName = dataBaseFileName + ".vif"
 
 	mounted := false
 	defer func() {
@@ -352,13 +357,15 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 				}
 			}
 			if !keepFiles {
-				os.Remove(idxFileName)
-				if indexBaseFileName != dataBaseFileName {
-					os.Remove(dataBaseFileName + ".idx")
-				}
-				os.Remove(datFileName)
-				if !copyLocation.HasEcxFileOnDisk(volFileInfoResp.Collection, needle.VolumeId(req.VolumeId)) {
-					os.Remove(dataBaseFileName + ".vif")
+				if copyOwnsFiles {
+					os.Remove(idxFileName)
+					if indexBaseFileName != dataBaseFileName {
+						os.Remove(dataBaseFileName + ".idx")
+					}
+					os.Remove(datFileName)
+					if !copyLocation.HasEcxFileOnDisk(volFileInfoResp.Collection, needle.VolumeId(req.VolumeId)) {
+						os.Remove(vifFileName)
+					}
 				}
 				// A copy that mounted and then failed validation is only unloaded,
 				// so the needle-map backends mount built (.ldb, .sdx, .rdb) can
