@@ -1496,6 +1496,9 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 		h.writeError(w, http.StatusConflict, kind.existsCode, fmt.Sprintf("%s %s already exists", kind.noun, destName))
 		return ErrTableAlreadyExists
 	}
+	if err := h.refuseClaimedNamespace(w, r, filerClient, destNamespacePath, destNamespace); err != nil {
+		return err
+	}
 
 	metadata.Name = destName
 	metadata.Namespace = destNamespace
@@ -1523,43 +1526,42 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 			}
 			return err
 		}
-		if err := h.createDirectory(r.Context(), client, destPath); err != nil {
+		if err := h.ensureDirectory(r.Context(), client, destPath); err != nil {
 			return releaseClaim(err)
 		}
-		if err := h.setExtendedAttribute(r.Context(), client, destPath, ExtendedKeyMetadata, metadataBytes); err != nil {
-			return releaseClaim(err)
-		}
-		if err := h.setExtendedAttribute(r.Context(), client, destPath, ExtendedKeyEntryType, []byte(kind.entryType)); err != nil {
-			return releaseClaim(err)
+		written := map[string][]byte{
+			ExtendedKeyMetadata:  metadataBytes,
+			ExtendedKeyEntryType: []byte(kind.entryType),
+			ExtendedKeyDeleting:  []byte(createClaim),
 		}
 		if len(metadataVersionXattr) > 0 {
-			if err := h.setExtendedAttribute(r.Context(), client, destPath, ExtendedKeyMetadataVersion, metadataVersionXattr); err != nil {
-				return releaseClaim(err)
-			}
+			written[ExtendedKeyMetadataVersion] = metadataVersionXattr
 		}
 		if len(tableTags) > 0 {
 			tagsBytes, err := json.Marshal(tableTags)
 			if err != nil {
 				return releaseClaim(fmt.Errorf("failed to marshal tags: %w", err))
 			}
-			if err := h.setExtendedAttribute(r.Context(), client, destPath, ExtendedKeyTags, tagsBytes); err != nil {
-				return releaseClaim(err)
-			}
+			written[ExtendedKeyTags] = tagsBytes
 		}
 		if tablePolicy != "" {
-			if err := h.setExtendedAttribute(r.Context(), client, destPath, ExtendedKeyPolicy, []byte(tablePolicy)); err != nil {
-				return releaseClaim(err)
-			}
+			written[ExtendedKeyPolicy] = []byte(tablePolicy)
 		}
 		if len(maintenanceXattr) > 0 {
-			if err := h.setExtendedAttribute(r.Context(), client, destPath, ExtendedKeyMaintenance, maintenanceXattr); err != nil {
-				return releaseClaim(err)
-			}
+			written[ExtendedKeyMaintenance] = maintenanceXattr
 		}
 		if len(maintenanceStatusXattr) > 0 {
-			if err := h.setExtendedAttribute(r.Context(), client, destPath, ExtendedKeyMaintenanceStatus, maintenanceStatusXattr); err != nil {
-				return releaseClaim(err)
-			}
+			written[ExtendedKeyMaintenanceStatus] = maintenanceStatusXattr
+		}
+		// The destination goes up marked like any create and is confirmed only
+		// while its namespace stays open: a delete that claims the namespace
+		// during the rename must find this record refused, not take a renamed
+		// table whose source the soft-delete below already released.
+		if err := h.claimCatalogEntry(r.Context(), client, destPath, written); err != nil {
+			return releaseClaim(err)
+		}
+		if err := h.confirmParent(r.Context(), client, destNamespacePath, isNamespaceEntry, destPath, written, destPath); err != nil {
+			return releaseClaim(err)
 		}
 		// Soft-delete the source catalog identity in place: drop its catalog xattrs
 		// so the name stops resolving while the metadata/ and data/ children stay put
@@ -1575,6 +1577,13 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 	if err != nil {
 		if errors.Is(err, ErrConcurrentUpdate) {
 			h.writeError(w, http.StatusConflict, ErrCodeConflict, kind.noun+" changed during rename, retry the request")
+			return err
+		}
+		if errors.Is(err, ErrNameTaken) {
+			h.writeError(w, http.StatusConflict, kind.existsCode, fmt.Sprintf("%s %s already exists", kind.noun, destName))
+			return ErrTableAlreadyExists
+		}
+		if h.writeNamespaceClosedError(w, err, destNamespace) {
 			return err
 		}
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to rename "+kind.noun)
