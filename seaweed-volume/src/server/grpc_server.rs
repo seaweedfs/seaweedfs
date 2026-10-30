@@ -2370,6 +2370,10 @@ impl VolumeServer for VolumeGrpcService {
             )));
         }
         if let Err(e) = dest.write_note(vid, &req.source_data_node) {
+            // A partially written marker must not outlive the restore: the
+            // load scan would take the restored replica for an unfinished
+            // copy and delete it.
+            let _ = std::fs::remove_file(dest.note_path());
             dest.restore_displaced_files();
             dest.release_reservation(&self.state.store.read().unwrap());
             return Err(e);
@@ -10076,6 +10080,45 @@ mod tests {
                 .unwrap_or(true),
             "no backups may survive the restore"
         );
+    }
+
+    // A write_note that dies mid-write leaves a marker behind; the restore
+    // must take it off or the load scan deletes the restored replica as an
+    // unfinished copy.
+    #[test]
+    fn test_failed_note_write_leaves_no_marker_on_restore() {
+        let tmp = TempDir::new().unwrap();
+        let base = tmp.path().join("1").to_str().unwrap().to_string();
+        for ext in [".dat", ".idx"] {
+            std::fs::write(format!("{base}{ext}"), b"replica").unwrap();
+        }
+
+        let mut dest = CopyDestination {
+            data_base_name: base.clone(),
+            idx_base_name: base.clone(),
+            disk_type: DiskType::HardDrive,
+            has_remote_dat: false,
+            loc_idx: 0,
+            reserved_space: std::sync::atomic::AtomicU64::new(0),
+            displaced_files: Vec::new(),
+        };
+        dest.displace_existing_files().unwrap();
+
+        std::fs::write(dest.note_path(), b"").unwrap();
+        let _ = std::fs::remove_file(dest.note_path());
+        dest.restore_displaced_files();
+
+        assert!(
+            !std::path::Path::new(&format!("{base}.note")).exists(),
+            "the failed copy's .note must not outlive the restore"
+        );
+        for ext in [".dat", ".idx"] {
+            assert_eq!(
+                std::fs::read(format!("{base}{ext}")).unwrap(),
+                b"replica",
+                "the displaced {ext} was not restored"
+            );
+        }
     }
 
     // A .vif shared with a sealed .ecx stays in place for the EC volume, but
