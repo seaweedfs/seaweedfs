@@ -10,6 +10,7 @@ metadata:
     app.kubernetes.io/component: sftp
     helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
     app.kubernetes.io/managed-by: {{ .Release.Service }}
+    {{- with include "seaweedfs.commonLabels" $ }}{{ . | nindent 4 }}{{ end }}
 {{- if .Values.sftp.annotations }}
   annotations:
     {{- toYaml .Values.sftp.annotations | nindent 4 }}

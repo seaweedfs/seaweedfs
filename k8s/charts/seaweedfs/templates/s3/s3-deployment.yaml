@@ -11,6 +11,7 @@ metadata:
     app.kubernetes.io/managed-by: {{ .Release.Service }}
     app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/component: s3
+    {{- with include "seaweedfs.commonLabels" $ }}{{ . | nindent 4 }}{{ end }}
 {{- if .Values.s3.annotations }}
   annotations:
     {{- toYaml .Values.s3.annotations | nindent 4 }}

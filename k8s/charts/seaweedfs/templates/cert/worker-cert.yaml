@@ -11,6 +11,7 @@ metadata:
     app.kubernetes.io/managed-by: {{ .Release.Service }}
     app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/component: worker
+    {{- with include "seaweedfs.commonLabels" $ }}{{ . | nindent 4 }}{{ end }}
   {{- if .Values.worker.annotations }}
   annotations:
     {{- toYaml .Values.worker.annotations | nindent 4 }}

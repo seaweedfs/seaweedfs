@@ -11,6 +11,7 @@ metadata:
     helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
     app.kubernetes.io/managed-by: {{ .Release.Service }}
     app.kubernetes.io/instance: {{ .Release.Name }}
+    {{- with include "seaweedfs.commonLabels" $ }}{{ . | nindent 4 }}{{ end }}
 rules:
   - apiGroups: [""]
     resources: ["pods"]
@@ -25,6 +26,7 @@ metadata:
     helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
     app.kubernetes.io/managed-by: {{ .Release.Service }}
     app.kubernetes.io/instance: {{ .Release.Name }}
+    {{- with include "seaweedfs.commonLabels" $ }}{{ . | nindent 4 }}{{ end }}
 subjects:
   - kind: ServiceAccount
     name: {{ include "seaweedfs.serviceAccountName" . }}

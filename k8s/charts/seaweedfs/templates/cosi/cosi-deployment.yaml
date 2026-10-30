@@ -11,6 +11,7 @@ metadata:
     app.kubernetes.io/managed-by: {{ .Release.Service }}
     app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/component: objectstorage-provisioner
+    {{- with include "seaweedfs.commonLabels" $ }}{{ . | nindent 4 }}{{ end }}
 spec:
   replicas: {{ .Values.cosi.replicas }}
   selector:

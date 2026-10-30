@@ -10,6 +10,7 @@ metadata:
     app.kubernetes.io/managed-by: {{ .Release.Service }}
     app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/component: worker
+    {{- with include "seaweedfs.commonLabels" $ }}{{ . | nindent 4 }}{{ end }}
 spec:
   clusterIP: None  # Headless service
   {{- $lanceMetrics := and .Values.worker.lanceMetricsPort (include "seaweedfs.worker.lanceNamespaceUrl" .) }}

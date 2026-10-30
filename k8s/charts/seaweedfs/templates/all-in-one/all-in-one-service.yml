@@ -10,6 +10,7 @@ metadata:
     app.kubernetes.io/managed-by: {{ .Release.Service }}
     app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/component: seaweedfs-all-in-one
+    {{- with include "seaweedfs.commonLabels" $ }}{{ . | nindent 4 }}{{ end }}
   {{- if .Values.allInOne.service.annotations }}
   annotations:
     {{- toYaml .Values.allInOne.service.annotations | nindent 4 }}

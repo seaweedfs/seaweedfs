@@ -19,6 +19,7 @@ metadata:
     {{- with .Values.global.seaweedfs.monitoring.additionalLabels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
+    {{- with include "seaweedfs.commonLabels" (dict "context" $ "exclude" $.Values.global.seaweedfs.monitoring.additionalLabels) }}{{ . | nindent 4 }}{{ end }}
 {{- if .Values.s3.annotations }}
   annotations:
     {{- toYaml .Values.s3.annotations | nindent 4 }}

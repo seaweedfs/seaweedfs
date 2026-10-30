@@ -35,6 +35,7 @@ metadata:
     {{- with .Values.s3.ingress.labels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
+    {{- with include "seaweedfs.commonLabels" (dict "context" $ "exclude" $.Values.s3.ingress.labels) }}{{ . | nindent 4 }}{{ end }}
 spec:
   ingressClassName: {{ .Values.s3.ingress.className | quote }}
   tls:

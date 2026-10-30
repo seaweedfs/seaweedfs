@@ -11,6 +11,7 @@ metadata:
     app.kubernetes.io/managed-by: {{ .Release.Service }}
     app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/component: master
+    {{- with include "seaweedfs.commonLabels" $ }}{{ . | nindent 4 }}{{ end }}
 {{- if .Values.master.annotations }}
   annotations:
     {{- toYaml .Values.master.annotations | nindent 4 }}
@@ -44,7 +45,7 @@ spec:
       {{- toYaml . | nindent 8 }}
       {{- end }}
       {{- $podAnnotations := mergeOverwrite (deepCopy (.Values.podAnnotations | default dict)) (.Values.master.podAnnotations | default dict) }}
-      {{- $_ := set $podAnnotations "checksum/master-config" (include (print .Template.BasePath "/master/master-configmap.yaml") . | sha256sum) }}
+      {{- $_ := set $podAnnotations "checksum/master-config" (include "seaweedfs.master.configChecksum" .) }}
       annotations:
         {{- toYaml $podAnnotations | nindent 8 }}
     spec:

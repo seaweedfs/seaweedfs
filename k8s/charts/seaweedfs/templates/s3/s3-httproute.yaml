@@ -26,6 +26,7 @@ metadata:
     {{- with .Values.s3.httpRoute.labels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
+    {{- with include "seaweedfs.commonLabels" (dict "context" $ "exclude" $.Values.s3.httpRoute.labels) }}{{ . | nindent 4 }}{{ end }}
 spec:
   {{- with .Values.s3.httpRoute.parentRefs }}
   parentRefs:
