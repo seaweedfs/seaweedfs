@@ -413,6 +413,7 @@ var (
 	errParentGone     = errors.New("parent was deleted")
 	errNoDeleteClaim  = errors.New("claim not held")
 	errBackOutFailed  = errors.New("backing out the create failed")
+	errSourceGone     = errors.New("rename source was deleted")
 )
 
 // claimForDelete writes a fresh token into ExtendedKeyDeleting, replacing any

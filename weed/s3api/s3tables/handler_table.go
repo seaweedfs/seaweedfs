@@ -1261,6 +1261,15 @@ func (h *S3TablesHandler) handleRenameView(w http.ResponseWriter, r *http.Reques
 	return h.renameCatalogEntry(w, r, filerClient, viewEntryKind)
 }
 
+// markSourceGone tags a missing source path so the rename reports it under the
+// source name instead of the closed-parent mapping naming the destination.
+func markSourceGone(err error) error {
+	if errors.Is(err, filer_pb.ErrNotFound) {
+		return fmt.Errorf("%w: %w", errSourceGone, err)
+	}
+	return err
+}
+
 func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Request, filerClient FilerClient, kind catalogEntryKind) error {
 	var req RenameTableRequest
 	if err := h.readRequestBody(r, &req); err != nil {
@@ -1516,7 +1525,7 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 	// data a delete already removed.
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		if err := h.claimCatalogRecord(r.Context(), client, srcPath, snapshotExtended(srcExtended), "rename"); err != nil {
-			return err
+			return markSourceGone(err)
 		}
 		claimed := snapshotExtended(srcExtended)
 		claimed[ExtendedKeyDeleting] = []byte("rename")
@@ -1569,7 +1578,7 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 		err := h.removeExtendedAttributesIf(r.Context(), client, srcPath, claimed,
 			append(append([]string{}, renamedTableAttributes...), ExtendedKeyDeleting)...)
 		if err != nil {
-			return releaseClaim(err)
+			return releaseClaim(markSourceGone(err))
 		}
 		return nil
 	})
@@ -1582,6 +1591,10 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 		if errors.Is(err, ErrNameTaken) {
 			h.writeError(w, http.StatusConflict, kind.existsCode, fmt.Sprintf("%s %s already exists", kind.noun, destName))
 			return ErrTableAlreadyExists
+		}
+		if errors.Is(err, errSourceGone) {
+			h.writeError(w, http.StatusNotFound, kind.notFoundCode, fmt.Sprintf("%s %s not found", kind.noun, srcName))
+			return err
 		}
 		if h.writeNamespaceClosedError(w, err, destNamespace) {
 			return err
