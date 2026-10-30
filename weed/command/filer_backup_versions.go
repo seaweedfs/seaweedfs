@@ -239,5 +239,5 @@ func (f *s3VersionFlattener) deleteObject(objectKey util.FullPath, signatures []
 	if !f.doDeleteFiles || f.dataSink.IsIncremental() {
 		return nil
 	}
-	return sink.DeleteEntry(f.dataSink, destKey(f.dataSink, f.targetPath, f.sourcePath, objectKey, 0), false, false, false, signatures)
+	return sink.DeleteEntry(f.dataSink, destKey(f.dataSink, f.targetPath, f.sourcePath, objectKey, 0), false, true, false, signatures)
 }
