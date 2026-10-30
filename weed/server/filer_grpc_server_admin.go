@@ -121,7 +121,7 @@ func (fs *FilerServer) Ping(ctx context.Context, req *filer_pb.PingRequest) (res
 		})
 	}
 	if req.TargetType == cluster.VolumeServerType {
-		pingErr = pb.WithVolumeServerClient(false, pb.ServerAddress(req.Target), fs.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+		pingErr = pb.WithVolumeServerClient(false, pb.ServerAddress(req.Target), fs.volumeGrpcDialOption(), func(client volume_server_pb.VolumeServerClient) error {
 			pingResp, err := client.Ping(ctx, &volume_server_pb.PingRequest{})
 			if pingResp != nil {
 				resp.RemoteTimeNs = pingResp.StartTimeNs
@@ -130,7 +130,7 @@ func (fs *FilerServer) Ping(ctx context.Context, req *filer_pb.PingRequest) (res
 		})
 	}
 	if req.TargetType == cluster.MasterType {
-		pingErr = pb.WithMasterClient(context.Background(), false, pb.ServerAddress(req.Target), fs.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
+		pingErr = pb.WithMasterClient(context.Background(), false, pb.ServerAddress(req.Target), fs.masterGrpcDialOption(), false, func(client master_pb.SeaweedClient) error {
 			pingResp, err := client.Ping(ctx, &master_pb.PingRequest{})
 			if pingResp != nil {
 				resp.RemoteTimeNs = pingResp.StartTimeNs

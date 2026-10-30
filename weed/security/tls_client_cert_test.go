@@ -234,7 +234,7 @@ func TestLoadServerTLSBadVersionNameFails(t *testing.T) {
 
 func TestLoadClientTLSUnconfiguredIsPlaintext(t *testing.T) {
 	v := util.NewViperProxy(viper.New())
-	if _, err := loadClientTLS(v, "grpc.client"); err != nil {
+	if _, err := loadClientTLS(v, "grpc.client", "grpc.client"); err != nil {
 		t.Fatalf("expected insecure dial option, got err=%v", err)
 	}
 }
@@ -253,7 +253,7 @@ func TestLoadClientTLSPartialClientPairFails(t *testing.T) {
 	v.Set("grpc.client.key", keyFile)
 	v.Set("grpc.client.client_cert", clientCert)
 
-	if _, err := loadClientTLS(v, "grpc.client"); err == nil {
+	if _, err := loadClientTLS(v, "grpc.client", "grpc.client"); err == nil {
 		t.Fatal("expected error for a partial client_cert/client_key pair with a valid fallback")
 	}
 }
@@ -267,7 +267,7 @@ func TestLoadClientTLSMissingCaFails(t *testing.T) {
 	v.Set("grpc.client.cert", certFile)
 	v.Set("grpc.client.key", keyFile)
 
-	if _, err := loadClientTLS(v, "grpc.client"); err == nil {
+	if _, err := loadClientTLS(v, "grpc.client", "grpc.client"); err == nil {
 		t.Fatal("expected error when cert and key are set without grpc.ca")
 	}
 }
@@ -282,7 +282,7 @@ func TestLoadClientTLSBadCaPathFails(t *testing.T) {
 	v.Set("grpc.client.cert", certFile)
 	v.Set("grpc.client.key", keyFile)
 
-	if _, err := loadClientTLS(v, "grpc.client"); err == nil {
+	if _, err := loadClientTLS(v, "grpc.client", "grpc.client"); err == nil {
 		t.Fatal("expected error for unreadable grpc.ca")
 	}
 }

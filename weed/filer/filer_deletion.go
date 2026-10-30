@@ -362,7 +362,7 @@ func (f *Filer) processDeletionBatch(ctx context.Context, toDeleteFileIds []stri
 	}
 
 	// Delete files and classify outcomes
-	outcomes := deleteFilesAndClassify(ctx, f.GrpcDialOption, uniqueFileIdsSlice, lookupFunc)
+	outcomes := deleteFilesAndClassify(ctx, f.volumeGrpcDialOption(), uniqueFileIdsSlice, lookupFunc)
 
 	// Process outcomes
 	var successCount, notFoundCount, retryableErrorCount, permanentErrorCount int
@@ -582,7 +582,7 @@ func (f *Filer) processRetryBatch(readyItems []*DeletionRetryItem, lookupFunc fu
 	}
 
 	// Delete files and classify outcomes
-	outcomes := deleteFilesAndClassify(context.Background(), f.GrpcDialOption, fileIds, lookupFunc)
+	outcomes := deleteFilesAndClassify(context.Background(), f.volumeGrpcDialOption(), fileIds, lookupFunc)
 
 	// Process outcomes - iterate over readyItems to ensure all items are accounted for
 	var successCount, notFoundCount, retryCount, permanentErrorCount int

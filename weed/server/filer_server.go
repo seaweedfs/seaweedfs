@@ -123,11 +123,14 @@ type FilerServer struct {
 	inFlightDataLimitCond *sync.Cond
 
 	filer_pb.UnimplementedSeaweedFilerServer
-	option         *FilerOption
-	filer          *filer.Filer
-	filerGuard     *security.Guard
-	volumeGuard    *security.Guard
-	grpcDialOption grpc.DialOption
+	option               *FilerOption
+	filer                *filer.Filer
+	filerGuard           *security.Guard
+	volumeGuard          *security.Guard
+	grpcDialOption       grpc.DialOption
+	grpcDialOptionMaster grpc.DialOption
+	grpcDialOptionVolume grpc.DialOption
+	grpcDialOptionS3     grpc.DialOption
 
 	// metrics read from the master
 	metricsAddress     string
@@ -258,6 +261,9 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	fs = &FilerServer{
 		option:                option,
 		grpcDialOption:        security.LoadClientTLS(util.GetViper(), "grpc.filer"),
+		grpcDialOptionMaster:  security.LoadClientTLSForTarget(util.GetViper(), "grpc.filer", "grpc.master"),
+		grpcDialOptionVolume:  security.LoadClientTLSForTarget(util.GetViper(), "grpc.filer", "grpc.volume"),
+		grpcDialOptionS3:      security.LoadClientTLSForTarget(util.GetViper(), "grpc.filer", "grpc.s3"),
 		knownListeners:        make(map[int32]int32),
 		subscribers:           make(map[int32]*metadataSubscriber),
 		inFlightDataLimitCond: sync.NewCond(new(sync.Mutex)),
@@ -294,7 +300,11 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	v.SetDefault("filer.options.max_file_name_length", 255)
 	maxFilenameLength := v.GetUint32("filer.options.max_file_name_length")
 	glog.V(0).Infof("max_file_name_length %d", maxFilenameLength)
-	fs.filer = filer.NewFiler(*option.Masters, fs.grpcDialOption, option.Host, option.FilerGroup, option.Collection, option.DefaultReplication, option.DataCenter, maxFilenameLength, nil)
+	fs.filer = filer.NewFiler(*option.Masters, &filer.DialOptions{
+		Filer:  fs.grpcDialOption,
+		Master: fs.masterGrpcDialOption(),
+		Volume: fs.volumeGrpcDialOption(),
+	}, option.Host, option.FilerGroup, option.Collection, option.DefaultReplication, option.DataCenter, maxFilenameLength, nil)
 	// Peer metadata replay takes the same per-path locks, so a replayed change
 	// cannot split a local mutation's read-modify-write.
 	fs.entryLockTable = fs.filer.EntryLockTable
@@ -423,10 +433,33 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		fs.CredentialManager.SetFilerAddressFunc(func() pb.ServerAddress {
 			return fs.option.Host
 		}, fs.grpcDialOption)
-		fs.CredentialManager.SetMasterClient(fs.filer.MasterClient, fs.grpcDialOption)
+		fs.CredentialManager.SetMasterClient(fs.filer.MasterClient, fs.s3GrpcDialOption())
 	}
 
 	return fs, nil
+}
+
+// Target-specific dial options fall back to the shared filer option, which is
+// what FilerServer literals in tests set up.
+func (fs *FilerServer) masterGrpcDialOption() grpc.DialOption {
+	if fs.grpcDialOptionMaster != nil {
+		return fs.grpcDialOptionMaster
+	}
+	return fs.grpcDialOption
+}
+
+func (fs *FilerServer) volumeGrpcDialOption() grpc.DialOption {
+	if fs.grpcDialOptionVolume != nil {
+		return fs.grpcDialOptionVolume
+	}
+	return fs.grpcDialOption
+}
+
+func (fs *FilerServer) s3GrpcDialOption() grpc.DialOption {
+	if fs.grpcDialOptionS3 != nil {
+		return fs.grpcDialOptionS3
+	}
+	return fs.grpcDialOption
 }
 
 func (fs *FilerServer) checkWithMaster() {
@@ -435,7 +468,7 @@ func (fs *FilerServer) checkWithMaster() {
 	for !isConnected {
 		fs.option.Masters.RefreshBySrvIfAvailable()
 		for _, master := range fs.option.Masters.GetInstances() {
-			readErr := operation.WithMasterServerClient(context.Background(), false, master, fs.grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
+			readErr := operation.WithMasterServerClient(context.Background(), false, master, fs.masterGrpcDialOption(), func(masterClient master_pb.SeaweedClient) error {
 				resp, err := masterClient.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
 				if err != nil {
 					return fmt.Errorf("get master %s configuration: %v", master, err)
@@ -655,7 +688,7 @@ func (fs *FilerServer) waitForClusterRemoval() {
 			// The per-query timeout shares the overall deadline, so a stalled
 			// master cannot stretch the wait past the budget.
 			queryCtx, queryCancel := context.WithTimeout(ctx, 2*time.Second)
-			nodes, err := cluster.ListExistingPeerUpdates(queryCtx, master, fs.grpcDialOption, fs.filer.MasterClient.FilerGroup, cluster.FilerType)
+			nodes, err := cluster.ListExistingPeerUpdates(queryCtx, master, fs.masterGrpcDialOption(), fs.filer.MasterClient.FilerGroup, cluster.FilerType)
 			queryCancel()
 			if err != nil {
 				// A failed query is not confirmed removal; retry until the

@@ -167,14 +167,29 @@ func LoadClientTLSFromFile(configFile string, component string) (grpc.DialOption
 }
 
 func LoadClientTLS(config *util.ViperProxy, component string) grpc.DialOption {
-	option, err := loadClientTLS(config, component)
+	option, err := loadClientTLS(config, component, component)
 	if err != nil {
 		glog.Fatalf("gRPC client TLS for %s: %v", component, err)
 	}
 	return option
 }
 
-func loadClientTLS(config *util.ViperProxy, component string) (grpc.DialOption, error) {
+// LoadClientTLSForTarget builds the component's client dial option while
+// selecting the server-identity allowlist for a specific target kind: a filer
+// dialing a master keeps presenting its grpc.filer client certificate but
+// verifies the peer against grpc.master.allowed_server_commonNames. The
+// server-name and wildcard keys fall back from the target component to the
+// client component to grpc.*, so a deployment without per-target keys verifies
+// exactly as before.
+func LoadClientTLSForTarget(config *util.ViperProxy, clientComponent, targetComponent string) grpc.DialOption {
+	option, err := loadClientTLS(config, clientComponent, targetComponent)
+	if err != nil {
+		glog.Fatalf("gRPC client TLS for %s: %v", clientComponent, err)
+	}
+	return option
+}
+
+func loadClientTLS(config *util.ViperProxy, component, targetComponent string) (grpc.DialOption, error) {
 	if config == nil {
 		return grpc.WithTransportCredentials(insecure.NewCredentials()), nil
 	}
@@ -228,13 +243,23 @@ func loadClientTLS(config *util.ViperProxy, component string) (grpc.DialOption, 
 		},
 		VerificationType: advancedtls.CertVerification,
 	}
-	allowedServerNames := config.GetString(component + ".allowed_server_commonNames")
+	allowedServerNames := config.GetString(targetComponent + ".allowed_server_commonNames")
+	if allowedServerNames == "" && targetComponent != component {
+		allowedServerNames = config.GetString(component + ".allowed_server_commonNames")
+	}
 	if allowedServerNames == "" {
 		allowedServerNames = config.GetString("grpc.allowed_server_commonNames")
 	}
+	allowedWildcardDomain := config.GetString(targetComponent + ".allowed_server_wildcard_domain")
+	if allowedWildcardDomain == "" && targetComponent != component {
+		allowedWildcardDomain = config.GetString(component + ".allowed_server_wildcard_domain")
+	}
+	if allowedWildcardDomain == "" {
+		allowedWildcardDomain = config.GetString("grpc.allowed_server_wildcard_domain")
+	}
 	auther := Authenticator{
 		AllowedCommonNames:    parseAllowedCommonNames(allowedServerNames),
-		AllowedWildcardDomain: config.GetString("grpc.allowed_server_wildcard_domain"),
+		AllowedWildcardDomain: allowedWildcardDomain,
 	}
 	if len(auther.AllowedCommonNames) != 0 || auther.AllowedWildcardDomain != "" {
 		options.AdditionalPeerVerification = auther.AuthenticateServer

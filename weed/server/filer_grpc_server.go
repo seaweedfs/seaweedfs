@@ -1237,7 +1237,7 @@ func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVol
 		altRequest.ExpectedDataSize = req.ExpectedDataSize
 	}
 
-	assignResult, err := operation.Assign(ctx, fs.filer.GetMaster, fs.grpcDialOption, assignRequest, altRequest)
+	assignResult, err := operation.Assign(ctx, fs.filer.GetMaster, fs.masterGrpcDialOption(), assignRequest, altRequest)
 	if err != nil {
 		glog.V(3).InfofCtx(ctx, "AssignVolume: %v", err)
 		return &filer_pb.AssignVolumeResponse{Error: fmt.Sprintf("assign volume: %v", err)}, nil
