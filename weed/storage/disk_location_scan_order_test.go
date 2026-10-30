@@ -28,7 +28,7 @@ func TestScanOrderDoesNotDecideWhetherAVolumeLoads(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		location.loadExistingVolume("9"+ext, NeedleMapInMemory, true, 0, 0)
+		location.loadExistingVolume("9"+ext, NeedleMapInMemory, true, 0, 0, false)
 		_, found := location.FindVolume(needle.VolumeId(9))
 		loaded[ext] = found
 	}
@@ -54,7 +54,7 @@ func TestLoadExistingVolumeSkipsACopyInFlight(t *testing.T) {
 	location.loadGuard = func(vid needle.VolumeId) (func(), bool) {
 		return func() {}, true
 	}
-	location.loadExistingVolume("9.idx", NeedleMapInMemory, true, 0, 0)
+	location.loadExistingVolume("9.idx", NeedleMapInMemory, true, 0, 0, false)
 	if _, found := location.FindVolume(needle.VolumeId(9)); found {
 		t.Fatal("a volume the guard skips was loaded")
 	}
@@ -65,7 +65,7 @@ func TestLoadExistingVolumeSkipsACopyInFlight(t *testing.T) {
 	location.loadGuard = func(vid needle.VolumeId) (func(), bool) {
 		return func() { releaseRan = true }, false
 	}
-	location.loadExistingVolume("9.idx", NeedleMapInMemory, true, 0, 0)
+	location.loadExistingVolume("9.idx", NeedleMapInMemory, true, 0, 0, false)
 	if _, found := location.FindVolume(needle.VolumeId(9)); !found {
 		t.Fatal("a clear guard pass did not load the volume")
 	}

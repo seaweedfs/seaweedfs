@@ -1118,12 +1118,18 @@ func (s *Store) MarkVolumeWritable(i needle.VolumeId) error {
 // succeed. A validator failure unloads the volume before returning the error,
 // so an invalid newly copied replica is never announced to the master.
 func (s *Store) MountVolume(i needle.VolumeId, collection *string, validators ...func(*Volume) error) error {
-	return s.mountVolume(i, collection, validators...)
+	return s.mountVolume(i, collection, false, validators...)
 }
 
-func (s *Store) mountVolume(i needle.VolumeId, collection *string, validators ...func(*Volume) error) error {
+// MountVolumeClaimed mounts a volume whose copy claim the caller already
+// holds, so the load guard does not skip the owner's own load.
+func (s *Store) MountVolumeClaimed(i needle.VolumeId, collection *string, validators ...func(*Volume) error) error {
+	return s.mountVolume(i, collection, true, validators...)
+}
+
+func (s *Store) mountVolume(i needle.VolumeId, collection *string, claimHeld bool, validators ...func(*Volume) error) error {
 	for diskId, location := range s.Locations {
-		if found := location.LoadVolume(uint32(diskId), i, s.NeedleMapKind, collection); found == true {
+		if found := location.LoadVolume(uint32(diskId), i, s.NeedleMapKind, collection, claimHeld); found == true {
 			glog.V(0).Infof("mount volume %d", i)
 			v := s.findVolume(i)
 			v.diskId = uint32(diskId) // Set disk ID when mounting

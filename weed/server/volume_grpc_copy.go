@@ -357,7 +357,7 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 					// Only a replica the store deleted gets remounted; an
 					// unmounted one goes back to files on disk, as found.
 					if replacedRemoved {
-						if remountErr := vs.store.MountVolume(needle.VolumeId(req.VolumeId), &req.Collection); remountErr != nil {
+						if remountErr := vs.store.MountVolumeClaimed(needle.VolumeId(req.VolumeId), &req.Collection); remountErr != nil {
 							glog.Warningf("remount replaced replica of volume %d: %v", req.VolumeId, remountErr)
 						}
 					}
@@ -536,7 +536,7 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 	// Load and validate the volume before announcing it to the master. A failed
 	// validation is unloaded by the store without ever making the replica
 	// routable.
-	err = vs.store.MountVolume(needle.VolumeId(req.VolumeId), &req.Collection, func(targetVolume *storage.Volume) error {
+	err = vs.store.MountVolumeClaimed(needle.VolumeId(req.VolumeId), &req.Collection, func(targetVolume *storage.Volume) error {
 		if !shouldValidateCopyCounts {
 			return nil
 		}

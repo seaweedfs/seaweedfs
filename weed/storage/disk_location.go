@@ -245,7 +245,7 @@ func vifIsEcVolume(vifPath string) bool {
 	return err == nil && vi.GetEcShardConfig() != nil
 }
 
-func (l *DiskLocation) loadExistingVolume(basename string, needleMapKind NeedleMapKind, skipIfEcVolumesExists bool, ldbTimeout int64, diskId uint32) bool {
+func (l *DiskLocation) loadExistingVolume(basename string, needleMapKind NeedleMapKind, skipIfEcVolumesExists bool, ldbTimeout int64, diskId uint32, claimHeld bool) bool {
 	volumeName := getValidVolumeName(basename)
 	if volumeName == "" {
 		return false
@@ -262,8 +262,9 @@ func (l *DiskLocation) loadExistingVolume(basename string, needleMapKind NeedleM
 	// unlink files it is still writing, and a register here could slip past
 	// its own recheck. Skip the volume while a copy owns it and hold the
 	// guard through registration so the copy's recheck either sees the
-	// volume (and aborts) or runs first.
-	if l.loadGuard != nil {
+	// volume (and aborts) or runs first. A caller already holding the claim
+	// (claimHeld) is the owner itself and must not skip its own load.
+	if l.loadGuard != nil && !claimHeld {
 		release, skip := l.loadGuard(vid)
 		if skip {
 			return false
@@ -399,7 +400,7 @@ func (l *DiskLocation) concurrentLoadingVolumes(needleMapKind NeedleMapKind, con
 		go func() {
 			defer wg.Done()
 			for basename := range task_queue {
-				_ = l.loadExistingVolume(basename, needleMapKind, true, ldbTimeout, diskId)
+				_ = l.loadExistingVolume(basename, needleMapKind, true, ldbTimeout, diskId, false)
 			}
 		}()
 	}
@@ -568,17 +569,17 @@ func (l *DiskLocation) deleteVolumeById(vid needle.VolumeId, onlyEmpty bool, onl
 	return
 }
 
-func (l *DiskLocation) LoadVolume(diskId uint32, vid needle.VolumeId, needleMapKind NeedleMapKind, collection *string) bool {
+func (l *DiskLocation) LoadVolume(diskId uint32, vid needle.VolumeId, needleMapKind NeedleMapKind, collection *string, claimHeld bool) bool {
 	if collection != nil {
 		for _, ext := range []string{".vif", ".idx"} {
 			filename := VolumeFileName(l.Directory, *collection, int(vid)) + ext
 			if fi, err := os.Stat(filename); err == nil && !fi.IsDir() {
-				return l.loadExistingVolume(fi.Name(), needleMapKind, false, 0, diskId)
+				return l.loadExistingVolume(fi.Name(), needleMapKind, false, 0, diskId, claimHeld)
 			}
 		}
 	}
 	if fileInfo, found := l.LocateVolume(vid); found {
-		return l.loadExistingVolume(fileInfo.Name(), needleMapKind, false, 0, diskId)
+		return l.loadExistingVolume(fileInfo.Name(), needleMapKind, false, 0, diskId, claimHeld)
 	}
 	return false
 }
