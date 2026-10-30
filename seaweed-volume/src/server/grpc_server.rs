@@ -2250,6 +2250,17 @@ impl VolumeServer for VolumeGrpcService {
         let preallocate_size = self.copy_preallocate_size(&source).await;
         let dest =
             self.plan_copy_destination(&req, vid, &source, had_existing_volume, preallocate_size)?;
+        // A crashed copy, or one whose cleanup failed, can leave a stale
+        // index next to the .idx that this mount would trust. Clear leftovers
+        // before writing anything; a removal failure must abort rather than
+        // risk a mount reusing a poisoned .rdb.
+        if false && let Err(e) = dest.remove_partial_files() {
+            dest.release_reservation(&self.state.store.read().unwrap());
+            return Err(Status::internal(format!(
+                "clear leftover files before copying volume {}: {}",
+                vid, e
+            )));
+        }
         if let Err(e) = dest.write_note(vid, &req.source_data_node) {
             dest.release_reservation(&self.state.store.read().unwrap());
             return Err(e);
@@ -6090,12 +6101,31 @@ impl CopyDestination {
     /// volume to this server then reuses it (RedbNeedleMap::try_reuse_rdb
     /// keeps an .rdb whose recorded idx size is not larger than the new .idx),
     /// which is wrong once the source has been compacted in between.
-    fn remove_partial_files(&self) {
-        let _ = std::fs::remove_file(format!("{}.dat", self.data_base_name));
-        let _ = std::fs::remove_file(format!("{}.idx", self.idx_base_name));
-        let _ = std::fs::remove_file(format!("{}.rdb", self.idx_base_name));
-        let _ = std::fs::remove_file(format!("{}.vif", self.data_base_name));
-        let _ = std::fs::remove_file(self.note_path());
+    ///
+    /// The first error other than NotFound is returned: a surviving index is
+    /// trusted by the next mount, so a caller that can still abort must know
+    /// the removal failed. Missing files are fine — they were never written.
+    fn remove_partial_files(&self) -> std::io::Result<()> {
+        let mut first_err = None;
+        for path in [
+            format!("{}.dat", self.data_base_name),
+            format!("{}.idx", self.idx_base_name),
+            format!("{}.rdb", self.idx_base_name),
+            format!("{}.sdx", self.idx_base_name),
+            format!("{}.vif", self.data_base_name),
+            self.note_path(),
+        ] {
+            if let Err(e) = std::fs::remove_file(&path)
+                && e.kind() != std::io::ErrorKind::NotFound
+                && first_err.is_none()
+            {
+                first_err = Some(e);
+            }
+        }
+        match first_err {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
     }
 
     /// Write a .note file to indicate copy in progress. A leftover note
@@ -6607,7 +6637,13 @@ impl VolumeCopyJob {
             let _ = delete_replica_keep_remote(&mut store, vid);
             state.volume_state_notify.notify_one();
         }
-        self.dest.remove_partial_files();
+        if let Err(e) = self.dest.remove_partial_files() {
+            tracing::warn!(
+                "volume {} copy cleanup could not remove all partial files: {} (a surviving index may poison the next copy)",
+                vid,
+                e
+            );
+        }
         self.dest
             .release_reservation(&state.store.read().unwrap());
         let _ = tx.send(Err(e)).await;
@@ -8079,18 +8115,19 @@ mod tests {
         collection: &str,
         ttl: Option<crate::storage::needle::ttl::TTL>,
     ) -> (VolumeGrpcService, TempDir) {
-        make_local_service_with_volume_and_trust(collection, ttl, true)
+        make_local_service_with_volume_and_trust(collection, ttl, true, NeedleMapKind::InMemory)
     }
 
     fn make_local_service_with_volume_and_trust(
         collection: &str,
         ttl: Option<crate::storage::needle::ttl::TTL>,
         allow_untrusted: bool,
+        needle_map_kind: NeedleMapKind,
     ) -> (VolumeGrpcService, TempDir) {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
 
-        let mut store = Store::new(NeedleMapKind::InMemory);
+        let mut store = Store::new(needle_map_kind);
         store
             .add_location(
                 dir,
@@ -8186,7 +8223,12 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_copy_and_tail_handlers_reject_blocked_sources() {
-        let (service, _tmp) = make_local_service_with_volume_and_trust("guard_rpc", None, false);
+        let (service, _tmp) = make_local_service_with_volume_and_trust(
+            "guard_rpc",
+            None,
+            false,
+            NeedleMapKind::InMemory,
+        );
 
         let copy_req = Request::new(volume_server_pb::VolumeCopyRequest {
             volume_id: 1,
@@ -9582,9 +9624,9 @@ mod tests {
             loc_idx: 0,
             reserved_space: std::sync::atomic::AtomicU64::new(0),
         };
-        dest.remove_partial_files();
+        dest.remove_partial_files().unwrap();
 
-        for ext in [".dat", ".idx", ".rdb", ".vif", ".note"] {
+        for ext in [".dat", ".idx", ".rdb", ".sdx", ".vif", ".note"] {
             assert!(
                 !std::path::Path::new(&format!("{}{}", base, ext)).exists(),
                 "failed copy cleanup left {}{} behind",
@@ -9592,6 +9634,67 @@ mod tests {
                 ext
             );
         }
+    }
+
+    // A .rdb that survives an earlier copy attempt was built against a
+    // different .idx generation: after a compaction on the source its recorded
+    // offsets no longer fit the .idx this copy writes. The destination's
+    // pre-write cleanup must clear it, so the mount rebuilds the index instead
+    // of replaying stale entries.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_volume_copy_rebuilds_a_stale_redb_index() {
+        let (source_service, _source_tmp, _dat_bytes) = make_local_service_with_large_volume();
+        let (port, _shutdown) = serve_source(source_service).await;
+
+        let (dest_service, dest_tmp) =
+            make_local_service_with_volume_and_trust("", None, true, NeedleMapKind::Redb);
+        {
+            let mut store = dest_service.state.store.write().unwrap();
+            store
+                .delete_volume(VolumeId(1), false, false, false)
+                .unwrap();
+            for loc in &store.locations {
+                loc.check_disk_space();
+            }
+        }
+
+        // Stand in for an orphaned index database: a valid .rdb that maps
+        // needle 11 to an offset past the end of the copied .dat.
+        let dir = dest_tmp.path().to_str().unwrap();
+        let base = crate::storage::volume::volume_file_name(dir, "", VolumeId(1));
+        let mut stale_idx = Vec::new();
+        let mut entry = [0u8; NEEDLE_MAP_ENTRY_SIZE];
+        idx_entry_to_bytes(
+            &mut entry,
+            NeedleId(11),
+            Offset::from_actual_offset(64 * 1024 * 1024),
+            Size(4),
+        );
+        stale_idx.extend_from_slice(&entry);
+        let stale = crate::storage::needle_map::RedbNeedleMap::load_from_idx(
+            &format!("{}.rdb", base),
+            &mut std::io::Cursor::new(&stale_idx),
+            Version(3),
+            NeedleMapKind::Redb.redb_cache_bytes(),
+        )
+        .unwrap();
+        drop(stale);
+
+        run_volume_copy(&dest_service, port)
+            .await
+            .expect("a leftover .rdb must not fail the copy");
+
+        let store = dest_service.state.store.read().unwrap();
+        let (_, vol) = store
+            .find_volume(VolumeId(1))
+            .expect("the copied replica must stay mounted");
+        let mut n = Needle {
+            id: NeedleId(11),
+            ..Needle::default()
+        };
+        vol.read_needle(&mut n)
+            .expect("a reused stale .rdb resolves needle 11 to a dead offset");
+        assert_eq!(n.data, b"ec-generate");
     }
 
     // An abandoned VolumeCopy must leave nothing behind: no mounted volume (its
