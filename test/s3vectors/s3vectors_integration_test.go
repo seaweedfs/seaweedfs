@@ -12,7 +12,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -246,13 +245,15 @@ func TestVectorBucketCatalogSurface(t *testing.T) {
 	stored := c.want(t, "GetVectorBucketPolicy", map[string]interface{}{
 		"vectorBucketName": "vec-bucket",
 	}, http.StatusOK)
-	var doc map[string]interface{}
-	if err := json.Unmarshal([]byte(fmt.Sprint(stored["policy"])), &doc); err != nil {
-		t.Fatalf("stored policy is not JSON: %v", stored)
+	if stored["policy"] != policy {
+		t.Fatalf("stored policy does not round-trip verbatim: %v", stored)
 	}
 	c.want(t, "DeleteVectorBucketPolicy", map[string]interface{}{
 		"vectorBucketName": "vec-bucket",
 	}, http.StatusOK)
+	c.want(t, "GetVectorBucketPolicy", map[string]interface{}{
+		"vectorBucketName": "vec-bucket",
+	}, http.StatusNotFound)
 
 	// Rejected shapes fail as ValidationException before any engine work.
 	c.want(t, "PutVectorBucketPolicy", map[string]interface{}{
@@ -281,12 +282,28 @@ func TestVectorDataPlaneRequiresEngine(t *testing.T) {
 
 	c := env.client()
 
+	// The bucket resolves through the catalog without an engine; CreateIndex
+	// is the call that crosses the engine boundary.
+	c.want(t, "CreateVectorBucket", map[string]interface{}{
+		"vectorBucketName": "vec-bucket",
+	}, http.StatusOK)
 	code, body := c.call(t, "CreateIndex", map[string]interface{}{
 		"vectorBucketName": "vec-bucket", "indexName": "idx",
 		"dataType": "float32", "dimension": 3, "distanceMetric": "euclidean",
 	})
-	if code == http.StatusOK || code == http.StatusBadRequest && !strings.Contains(fmt.Sprint(body), "vector") {
-		return // engine reachable or bucket rejected before engine use
+	if code == http.StatusServiceUnavailable {
+		t.Skipf("no vector engine reachable (CreateIndex = %d %v); data-plane tests skipped", code, body)
 	}
-	t.Skipf("no vector engine reachable (CreateIndex = %d %v); data-plane tests skipped", code, body)
+	if code != http.StatusOK {
+		t.Fatalf("CreateIndex = %d %v, want 200 or 503", code, body)
+	}
+	indexes := c.want(t, "ListIndexes", map[string]interface{}{
+		"vectorBucketName": "vec-bucket",
+	}, http.StatusOK)
+	if n := len(indexes["indexes"].([]interface{})); n != 1 {
+		t.Fatalf("ListIndexes returned %d indexes, want 1", n)
+	}
+	c.want(t, "DeleteIndex", map[string]interface{}{
+		"vectorBucketName": "vec-bucket", "indexName": "idx",
+	}, http.StatusOK)
 }
