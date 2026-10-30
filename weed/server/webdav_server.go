@@ -151,7 +151,17 @@ func renameOverTarget(ctx context.Context, fs webdav.FileSystem, oldName, newNam
 		// own deadline, started after the move so its duration is not eaten
 		restoreCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Minute)
 		defer cancel()
-		if backErr := fs.Rename(restoreCtx, spare, newName); backErr != nil {
+		// newName may have been claimed while the target was parked; the
+		// restore must refuse to replace it rather than clobber new data
+		var backErr error
+		if nrf, ok := fs.(interface {
+			rename(context.Context, string, string, bool) error
+		}); ok {
+			backErr = nrf.rename(restoreCtx, spare, newName, true)
+		} else {
+			backErr = fs.Rename(restoreCtx, spare, newName)
+		}
+		if backErr != nil {
 			glog.WarningfCtx(restoreCtx, "restore moved-aside %s to %s: %v", spare, newName, backErr)
 		}
 		return err
@@ -549,6 +559,10 @@ func (fs *WebDavFileSystem) RemoveAll(ctx context.Context, name string) error {
 }
 
 func (fs *WebDavFileSystem) Rename(ctx context.Context, oldName, newName string) error {
+	return fs.rename(ctx, oldName, newName, false)
+}
+
+func (fs *WebDavFileSystem) rename(ctx context.Context, oldName, newName string, failIfExists bool) error {
 
 	glog.V(2).Infof("WebDavFileSystem.Rename %v to %v", oldName, newName)
 
@@ -585,10 +599,11 @@ func (fs *WebDavFileSystem) Rename(ctx context.Context, oldName, newName string)
 	return fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.AtomicRenameEntryRequest{
-			OldDirectory: oldDir,
-			OldName:      oldBaseName,
-			NewDirectory: newDir,
-			NewName:      newBaseName,
+			OldDirectory:       oldDir,
+			OldName:            oldBaseName,
+			NewDirectory:       newDir,
+			NewName:            newBaseName,
+			FailIfTargetExists: failIfExists,
 		}
 
 		_, err := client.AtomicRenameEntry(ctx, request)
