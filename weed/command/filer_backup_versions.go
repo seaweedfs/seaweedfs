@@ -97,7 +97,21 @@ func (f *s3VersionFlattener) process(resp *filer_pb.SubscribeMetadataResponse) (
 		name = message.OldEntry.Name
 	}
 	if strings.HasPrefix(name, "v_") && (insideVersionsDir(resp.Directory) || insideVersionsDir(targetDir)) {
-		return true, nil
+		// A version file changed but only the directory pointer decides the
+		// flattened key — re-resolve it so tag/attribute updates on the current
+		// version still reach the mirror while noncurrent versions stay out.
+		versionsDir := resp.Directory
+		if !insideVersionsDir(versionsDir) {
+			versionsDir = targetDir
+		}
+		dirEntry, _, _, err := filer_pb.GetEntry(context.Background(), f.filerSource, util.FullPath(versionsDir))
+		if err != nil {
+			if errors.Is(err, filer_pb.ErrNotFound) {
+				return true, nil
+			}
+			return true, err
+		}
+		return true, f.applyLatest(util.FullPath(versionsDir), dirEntry, false, message.Signatures)
 	}
 
 	oldVersionsDir := ""
