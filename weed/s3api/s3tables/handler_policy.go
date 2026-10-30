@@ -400,7 +400,7 @@ func (h *S3TablesHandler) handlePutTablePolicy(w http.ResponseWriter, r *http.Re
 	}
 
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return h.mutateEntryExtended(r.Context(), client, tablePath, func(extended map[string][]byte) error {
+		return h.mutateCatalogRecord(r.Context(), client, tablePath, func(extended map[string][]byte) error {
 			if !bytes.Equal(extended[ExtendedKeyPolicy], []byte(tablePolicy)) {
 				return fmt.Errorf("%w: %s", ErrConcurrentUpdate, ExtendedKeyPolicy)
 			}
@@ -412,6 +412,8 @@ func (h *S3TablesHandler) handlePutTablePolicy(w http.ResponseWriter, r *http.Re
 	if err != nil {
 		if errors.Is(err, ErrConcurrentUpdate) {
 			h.writeError(w, http.StatusConflict, ErrCodeConflict, "table policy changed concurrently, retry the request")
+		} else if errors.Is(err, filer_pb.ErrNotFound) {
+			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchTable, fmt.Sprintf("table %s not found", tableName))
 		} else {
 			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to put table policy")
 		}
@@ -766,10 +768,21 @@ func (h *S3TablesHandler) handleTagResource(w http.ResponseWriter, r *http.Reque
 		return fmt.Errorf("failed to marshal tags: %w", err)
 	}
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return h.setExtendedAttribute(r.Context(), client, resourcePath, extendedKey, tagsBytes)
+		return h.mutateCatalogRecord(r.Context(), client, resourcePath, func(extended map[string][]byte) error {
+			extended[extendedKey] = tagsBytes
+			return nil
+		})
 	})
 
 	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			errorCode := ErrCodeNoSuchBucket
+			if rType == ResourceTypeTable {
+				errorCode = ErrCodeNoSuchTable
+			}
+			h.writeError(w, http.StatusNotFound, errorCode, "resource not found")
+			return err
+		}
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to tag resource")
 		return err
 	}
@@ -1024,10 +1037,21 @@ func (h *S3TablesHandler) handleUntagResource(w http.ResponseWriter, r *http.Req
 		return fmt.Errorf("failed to marshal tags: %w", err)
 	}
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return h.setExtendedAttribute(r.Context(), client, resourcePath, extendedKey, tagsBytes)
+		return h.mutateCatalogRecord(r.Context(), client, resourcePath, func(extended map[string][]byte) error {
+			extended[extendedKey] = tagsBytes
+			return nil
+		})
 	})
 
 	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			errorCode := ErrCodeNoSuchBucket
+			if rType == ResourceTypeTable {
+				errorCode = ErrCodeNoSuchTable
+			}
+			h.writeError(w, http.StatusNotFound, errorCode, "resource not found")
+			return err
+		}
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to untag resource")
 		return err
 	}

@@ -261,7 +261,7 @@ func (h *S3TablesHandler) putMaintenanceConfiguration(
 	value *MaintenanceConfigurationValue,
 ) error {
 	return filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return h.mutateEntryExtended(r.Context(), client, resourcePath, func(extended map[string][]byte) error {
+		return h.mutateCatalogRecord(r.Context(), client, resourcePath, func(extended map[string][]byte) error {
 			if len(extended[ExtendedKeyMetadata]) == 0 {
 				return fmt.Errorf("%w: %s", filer_pb.ErrNotFound, resourcePath)
 			}

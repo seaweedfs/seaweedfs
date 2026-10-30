@@ -553,9 +553,16 @@ func (h *S3TablesHandler) handleUpdateView(w http.ResponseWriter, r *http.Reques
 	}
 
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return h.setExtendedAttribute(r.Context(), client, viewPath, ExtendedKeyMetadata, metadataBytes)
+		return h.mutateCatalogRecord(r.Context(), client, viewPath, func(extended map[string][]byte) error {
+			extended[ExtendedKeyMetadata] = metadataBytes
+			return nil
+		})
 	})
 	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchView, fmt.Sprintf("view %s not found", target.viewName))
+			return err
+		}
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to update metadata")
 		return err
 	}

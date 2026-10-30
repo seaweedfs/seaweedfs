@@ -485,6 +485,27 @@ func isUnfinishedCreate(extended map[string][]byte) bool {
 	return string(extended[ExtendedKeyDeleting]) == createClaim
 }
 
+// mutateCatalogRecord applies mutate to a catalog record, refusing a record
+// an in-flight operation claimed: a create's unfinished record is absent to
+// every reader, and a record claimed by a delete or rename must not take a
+// write the operation's compare then trips over.
+func (h *S3TablesHandler) mutateCatalogRecord(
+	ctx context.Context,
+	client filer_pb.SeaweedFilerClient,
+	path string,
+	mutate func(extended map[string][]byte) error,
+) error {
+	return h.mutateEntryExtended(ctx, client, path, func(extended map[string][]byte) error {
+		if _, claimed := extended[ExtendedKeyDeleting]; !claimed {
+			return mutate(extended)
+		}
+		if isUnfinishedCreate(extended) {
+			return filer_pb.ErrNotFound
+		}
+		return fmt.Errorf("%w: %s claimed on %s", ErrConcurrentUpdate, ExtendedKeyDeleting, path)
+	})
+}
+
 // confirmParent re-checks the parent after a create wrote written onto
 // childPath. If the parent is open, it clears the record's unfinished mark.
 // If the parent is gone or claimed, it removes what the create wrote and
