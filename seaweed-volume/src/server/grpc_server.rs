@@ -1959,6 +1959,22 @@ impl VolumeServer for VolumeGrpcService {
         let _claim = EcDecodeClaim(&self.state, vid);
 
         let mut store = self.state.store.write().unwrap();
+        // The copy claims the vid, snapshots the store, then waits on the
+        // source. A mount in that window loads files the copy is about to
+        // delete. The check has to sit under this write lock: one taken
+        // earlier still loses to the claim and the snapshot.
+        if self
+            .state
+            .volume_copies_in_flight
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains(&vid)
+        {
+            return Err(Status::unavailable(format!(
+                "volume {} is being copied",
+                req.volume_id
+            )));
+        }
         store
             .mount_volume_by_id(vid, req.collection.as_deref())
             .map_err(|e| Status::internal(e.to_string()))?;
@@ -14273,6 +14289,52 @@ mod tests {
                 .unwrap()
                 .is_empty(),
             "the mount claim must not outlive the call"
+        );
+    }
+
+    /// A copy claims the vid before it snapshots the store. A mount that
+    /// gets in afterwards would load files the copy's cleanup then unlinks.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_volume_mount_refuses_a_volume_being_copied() {
+        let (service, _tmp) = make_local_service_with_volume("mount_during_copy", None);
+        service
+            .state
+            .volume_copies_in_flight
+            .lock()
+            .unwrap()
+            .insert(VolumeId(2));
+
+        let err = service
+            .volume_mount(Request::new(volume_server_pb::VolumeMountRequest {
+                volume_id: 2,
+                collection: Some(String::new()),
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::Unavailable);
+        assert!(
+            err.message().contains("is being copied"),
+            "{}",
+            err.message()
+        );
+
+        service
+            .state
+            .volume_copies_in_flight
+            .lock()
+            .unwrap()
+            .remove(&VolumeId(2));
+        let err = service
+            .volume_mount(Request::new(volume_server_pb::VolumeMountRequest {
+                volume_id: 2,
+                collection: Some(String::new()),
+            }))
+            .await
+            .unwrap_err();
+        assert_ne!(
+            err.code(),
+            tonic::Code::Unavailable,
+            "a released claim must not keep refusing the mount: {err}"
         );
     }
 
