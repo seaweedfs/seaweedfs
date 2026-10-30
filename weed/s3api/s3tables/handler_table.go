@@ -2006,7 +2006,7 @@ func (h *S3TablesHandler) writeNamespaceClosedError(w http.ResponseWriter, err e
 	switch {
 	case errors.Is(err, errParentDeleting):
 		h.writeError(w, http.StatusConflict, ErrCodeConflict, fmt.Sprintf("namespace %s is being deleted", namespaceName))
-	case errors.Is(err, errParentGone):
+	case errors.Is(err, errParentGone), errors.Is(err, filer_pb.ErrNotFound):
 		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, fmt.Sprintf("namespace %s not found", namespaceName))
 	case errors.Is(err, errBackOutFailed):
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("namespace %s was deleted during the request and the new entry may remain", namespaceName))
