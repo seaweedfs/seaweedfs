@@ -6083,6 +6083,21 @@ impl CopyDestination {
         format!("{}.note", self.data_base_name)
     }
 
+    /// Remove everything a failed copy may have put on disk. The .rdb is the
+    /// redb needle map that mount_volume builds next to the .idx: a copy that
+    /// mounts and then fails validation is unmounted, not deleted, so without
+    /// this the index database outlives the copy. A later copy of the same
+    /// volume to this server then reuses it (RedbNeedleMap::try_reuse_rdb
+    /// keeps an .rdb whose recorded idx size is not larger than the new .idx),
+    /// which is wrong once the source has been compacted in between.
+    fn remove_partial_files(&self) {
+        let _ = std::fs::remove_file(format!("{}.dat", self.data_base_name));
+        let _ = std::fs::remove_file(format!("{}.idx", self.idx_base_name));
+        let _ = std::fs::remove_file(format!("{}.rdb", self.idx_base_name));
+        let _ = std::fs::remove_file(format!("{}.vif", self.data_base_name));
+        let _ = std::fs::remove_file(self.note_path());
+    }
+
     /// Write a .note file to indicate copy in progress. A leftover note
     /// fails the volume load on restart, so a write failure must abort.
     fn write_note(&self, vid: VolumeId, source: &str) -> Result<(), Status> {
@@ -6564,11 +6579,6 @@ impl VolumeCopyJob {
 
     async fn cleanup_failed_copy(&self, e: Status, mounted: bool) {
         let (state, req, vid, tx) = (&self.state, &self.req, self.vid, &self.tx);
-        let (data_base_name, idx_base_name, note_path) = (
-            &self.dest.data_base_name,
-            &self.dest.idx_base_name,
-            self.dest.note_path(),
-        );
         // An abandoned copy is otherwise invisible here: the error goes
         // to a channel nobody is reading. Logging it gives the operator
         // the cause behind the balancer's "delete that copy, then re-run
@@ -6589,18 +6599,15 @@ impl VolumeCopyJob {
         }
         // Clean up on error. If the volume was mounted (the after-mount
         // race), delete_volume unmounts it from the store AND removes
-        // the .dat/.idx/.vif in one step; the remove_file calls below
-        // cover the never-mounted partial-file case and are harmless
-        // no-ops when delete_volume already removed the files.
+        // its files in one step; remove_partial_files covers the
+        // never-mounted and mounted-then-unmounted cases and is a
+        // harmless no-op when delete_volume already removed the files.
         if mounted {
             let mut store = state.store.write().unwrap();
             let _ = delete_replica_keep_remote(&mut store, vid);
             state.volume_state_notify.notify_one();
         }
-        let _ = std::fs::remove_file(format!("{}.dat", data_base_name));
-        let _ = std::fs::remove_file(format!("{}.idx", idx_base_name));
-        let _ = std::fs::remove_file(format!("{}.vif", data_base_name));
-        let _ = std::fs::remove_file(&note_path);
+        self.dest.remove_partial_files();
         self.dest
             .release_reservation(&state.store.read().unwrap());
         let _ = tx.send(Err(e)).await;
@@ -9531,6 +9538,60 @@ mod tests {
             copied,
             dat_bytes.len()
         );
+    }
+
+    // A copy that mounts and then fails validation (check_copy_counts) is
+    // unmounted, not deleted. With a redb needle map the mount has already
+    // built <idx base>.rdb; the failure cleanup must remove it with the other
+    // partial files, or the next copy of the same volume to this server reuses
+    // that stale index database.
+    #[test]
+    fn test_failed_copy_cleanup_removes_redb_index_left_by_mount() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut store = Store::new(NeedleMapKind::Redb);
+        store
+            .add_location(
+                dir,
+                dir,
+                10,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(1.0),
+                Vec::new(),
+            )
+            .unwrap();
+        store
+            .add_volume(VolumeId(1), DiskType::HardDrive, &VolumeSpec::default())
+            .unwrap();
+        // What the validation-failure branch does after mount_volume.
+        store.unmount_volume(VolumeId(1)).unwrap();
+
+        let base = crate::storage::volume::volume_file_name(dir, "", VolumeId(1));
+        assert!(
+            std::path::Path::new(&format!("{}.rdb", base)).exists(),
+            "a redb mount must have created {}.rdb for this test to mean anything",
+            base
+        );
+        std::fs::write(format!("{}.note", base), "copying from test").unwrap();
+
+        let dest = CopyDestination {
+            data_base_name: base.clone(),
+            idx_base_name: base.clone(),
+            disk_type: DiskType::HardDrive,
+            has_remote_dat: false,
+            loc_idx: 0,
+            reserved_space: std::sync::atomic::AtomicU64::new(0),
+        };
+        dest.remove_partial_files();
+
+        for ext in [".dat", ".idx", ".rdb", ".vif", ".note"] {
+            assert!(
+                !std::path::Path::new(&format!("{}{}", base, ext)).exists(),
+                "failed copy cleanup left {}{} behind",
+                base,
+                ext
+            );
+        }
     }
 
     // An abandoned VolumeCopy must leave nothing behind: no mounted volume (its
