@@ -94,7 +94,7 @@ impl IoErrorTracker {
         let mut updated = None;
         let _ = self
             .streak
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |streak| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |streak| {
                 updated = f(streak);
                 updated
             });
