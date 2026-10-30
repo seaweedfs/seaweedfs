@@ -10,6 +10,9 @@ import (
 	"strings"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 
@@ -40,6 +43,14 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 			return fmt.Errorf("invalid source data node %s: %w", req.SourceDataNode, err)
 		}
 	}
+
+	// One copy of a volume at a time: the staged file names are fixed per
+	// volume, so a racing second copy would overwrite the files this copy
+	// still owns. Retryable once the in-flight copy settles.
+	if _, loaded := vs.volumeCopiesInFlight.LoadOrStore(req.VolumeId, struct{}{}); loaded {
+		return status.Errorf(codes.Unavailable, "volume %d is already being copied", req.VolumeId)
+	}
+	defer vs.volumeCopiesInFlight.Delete(req.VolumeId)
 
 	// A pre-existing local replica is NOT deleted up front. Deleting before the
 	// source is confirmed reachable destroys a healthy copy on a transient
