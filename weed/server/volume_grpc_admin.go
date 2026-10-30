@@ -132,6 +132,13 @@ func (vs *VolumeServer) VolumeMount(ctx context.Context, req *volume_server_pb.V
 		return resp, err
 	}
 
+	// A copy claims the volume id, then stages the replacement; a mount in
+	// that window loads files the swap is about to clear. Retryable once the
+	// copy settles.
+	if _, ok := vs.volumeCopiesInFlight.Load(req.VolumeId); ok {
+		return resp, status.Errorf(codes.Unavailable, "volume %d is being copied", req.VolumeId)
+	}
+
 	err := vs.store.MountVolume(needle.VolumeId(req.VolumeId), req.Collection)
 
 	if err != nil {
