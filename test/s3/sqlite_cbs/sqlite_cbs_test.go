@@ -693,10 +693,7 @@ func TestCBSConcurrentConditionalMultipartCommit(t *testing.T) {
 	}
 	require.Equal(t, 1, successes, "exactly one conditional multipart completion may commit")
 	require.Equal(t, racers-1, preconditionFailures, "every losing completion must see 412")
-	for i, uploadID := range uploadIDs {
-		if i == 0 {
-			continue
-		}
+	for _, uploadID := range uploadIDs {
 		abortMultipartUpload(adminClient, bucket, key, uploadID)
 	}
 }
