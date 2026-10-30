@@ -44,11 +44,17 @@ engine RPC, so they work against a plain `weed server`:
 
 ### Tier 2 — vector engine required (skipped when absent)
 
-Set `S3VECTORS_ENGINE_ADDR` (or drop in a `weed-vector` binary on PATH) to
-enable the data plane: `CreateIndex`, `GetIndex`, `ListIndexes`,
-`DeleteIndex`, `PutVectors`, `GetVectors`, `ListVectors`, `DeleteVectors`,
-`QueryVectors`. Each Tier-2 test skips itself when the engine isn't reachable
-so the suite stays green on hosts that can't build the Rust workspace.
+`TestVectorDataPlaneLifecycle` spawns a real `weed-vector` against the
+environment's lance listener (`-s3.port.lance`), mirroring the cluster the
+pytest suite builds in `conftest.py`: `--namespace` points at the lance
+HTTP port, `--masters` at `master.http.grpc`, and the storage options carry
+the same test credentials the IAM config writes. The binary resolves as
+`VECTOR_BINARY` env → `./weed-vector` (the Makefile's output) → PATH; the
+test skips when none is found, and `waitForEngineDiscovery` polls a
+data-plane op until the gateway routes to the registered engine instead of
+503. The test then walks the full lifecycle: `CreateVectorBucket` →
+`CreateIndex` → `PutVectors` → `GetVectors` → `ListVectors` → filtered
+`QueryVectors` → `DeleteVectors` → `DeleteIndex` → `DeleteVectorBucket`.
 
 ## Harness
 
