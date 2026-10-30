@@ -3,6 +3,7 @@ package volume_server_http_test
 import (
 	"bytes"
 	"context"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -103,9 +104,39 @@ func TestWriteReadOnlyReportsConflictAndSafeRefusal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, query := range []string{"", "?fsync=true", "?type=replicate"} {
+	for _, query := range []string{"", "?fsync=true", "?fsync=%74rue", "?type=replicate", "?type=%72eplicate", "?%74ype=replicate", "multipart:first", "multipart:last"} {
 		t.Run(query, func(t *testing.T) {
-			response := framework.DoRequest(t, client, newUploadRequest(t, cluster.VolumeAdminURL()+"/"+fid+query, []byte("refused replacement")))
+			request := newUploadRequest(t, cluster.VolumeAdminURL()+"/"+fid+query, []byte("refused replacement"))
+			if strings.HasPrefix(query, "multipart:") {
+				var multipartBody bytes.Buffer
+				writer := multipart.NewWriter(&multipartBody)
+				if query == "multipart:first" {
+					if err := writer.WriteField("type", "replicate"); err != nil {
+						t.Fatal(err)
+					}
+				}
+				file, err := writer.CreateFormFile("file", "data.bin")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := file.Write([]byte("refused replacement")); err != nil {
+					t.Fatal(err)
+				}
+				if query == "multipart:last" {
+					if err := writer.WriteField("type", "replicate"); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := writer.Close(); err != nil {
+					t.Fatal(err)
+				}
+				request, err = http.NewRequest(http.MethodPost, cluster.VolumeAdminURL()+"/"+fid, &multipartBody)
+				if err != nil {
+					t.Fatal(err)
+				}
+				request.Header.Set("Content-Type", writer.FormDataContentType())
+			}
+			response := framework.DoRequest(t, client, request)
 			body := framework.ReadAllAndClose(t, response)
 			if response.StatusCode != http.StatusConflict {
 				t.Fatalf("read-only upload: %d %s", response.StatusCode, body)

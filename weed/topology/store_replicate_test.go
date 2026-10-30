@@ -361,6 +361,7 @@ func TestReplicatedWriteFailsWhenEitherLegFails(t *testing.T) {
 	}{
 		{name: "local write fails", volumeId: 8, readonlyLocal: true, replicaStatus: http.StatusCreated},
 		{name: "replica write fails", volumeId: 9, replicaStatus: http.StatusInternalServerError},
+		{name: "replica read only", volumeId: 10, replicaStatus: http.StatusConflict},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			replica := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

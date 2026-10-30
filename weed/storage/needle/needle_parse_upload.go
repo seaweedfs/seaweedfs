@@ -94,7 +94,7 @@ func ParseUpload(r *http.Request, sizeLimit int64, bytesBuffer *bytes.Buffer) (p
 		} else if n, err := util.GunzipStream(io.Discard, bytes.NewReader(pu.Data)); err == nil {
 			pu.OriginalDataSize = int(n)
 		}
-	} else if r.URL.Query().Get("type") != "replicate" {
+	} else if r.FormValue("type") != "replicate" {
 		// replica writes must keep the source needle's compression state, not re-derive it
 		ext := filepath.Base(pu.FileName)
 		mimeType := pu.MimeType
@@ -148,12 +148,28 @@ func parseUpload(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error) {
 	var dataSize int64
 
 	if r.Method == http.MethodPost && (contentType == "" || strings.Contains(contentType, "form-data")) {
+		if r.Form == nil {
+			_ = r.ParseForm()
+		}
 		form, fe := r.MultipartReader()
 
 		if fe != nil {
 			glog.V(0).Infoln("MultipartReader [ERROR]", fe)
 			e = fe
 			return
+		}
+
+		saveControlField := func(name string, data []byte) {
+			if name != "type" && name != "fsync" {
+				return
+			}
+			if len(r.Form[name]) == 0 {
+				// Longer values cannot match either control marker.
+				if len(data) > len("replicate")+1 {
+					data = data[:len("replicate")+1]
+				}
+				r.Form[name] = []string{string(data)}
+			}
 		}
 
 		// first multi-part item
@@ -180,11 +196,15 @@ func parseUpload(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error) {
 		}
 		pu.Data = pu.bytesBuffer.Bytes()
 
+		if part.FileName() == "" {
+			saveControlField(part.FormName(), pu.Data)
+		}
+
 		contentType = part.Header.Get("Content-Type")
 		pu.ContentMd5 = part.Header.Get("Content-MD5")
 
-		// if the filename is empty string, do a search on the other multi-part items
-		for pu.FileName == "" {
+		// Find the first file and retain control fields before or after it.
+		for {
 			part2, fe := form.NextPart()
 			if fe != nil {
 				break // no more or on error, just safely break
@@ -193,7 +213,7 @@ func parseUpload(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error) {
 			fName := part2.FileName()
 
 			// found the first <file type> multi-part has filename
-			if fName != "" {
+			if pu.FileName == "" && fName != "" {
 				pu.bytesBuffer.Reset()
 				dataSize2, fe2 := pu.bytesBuffer.ReadFrom(io.LimitReader(part2, sizeLimit+1))
 				if fe2 != nil {
@@ -212,7 +232,14 @@ func parseUpload(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error) {
 				contentType = part2.Header.Get("Content-Type")
 				pu.ContentMd5 = part2.Header.Get("Content-MD5")
 				part = part2
-				break
+				continue
+			}
+			if fName == "" && (part2.FormName() == "type" || part2.FormName() == "fsync") {
+				value, err := io.ReadAll(io.LimitReader(part2, int64(len("replicate")+1)))
+				if err != nil {
+					return err
+				}
+				saveControlField(part2.FormName(), value)
 			}
 		}
 
