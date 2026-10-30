@@ -1815,7 +1815,7 @@ worker:
 
   # Resources for the worker-lance sidecar. Falls back to worker.resources if unset.
   lanceResources: {}
-  
+
   tolerations: ""
   nodeSelector: ""
   priorityClassName: ""
