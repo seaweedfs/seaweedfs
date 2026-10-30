@@ -705,7 +705,8 @@ func sameWritableMetadata(existing, reference *filer_pb.Entry) bool {
 		return false
 	}
 	for k, v := range ex {
-		if !bytes.Equal(v, ref[k]) {
+		refValue, found := ref[k]
+		if !found || !bytes.Equal(v, refValue) {
 			return false
 		}
 	}

@@ -302,6 +302,8 @@ func TestDestinationHoldsContent(t *testing.T) {
 		{"same chunks, different mtime -> write", dstEntry(300, "A", "B"), srcEntry(200, "A", "B"), false},
 		{"same chunks, stale tag -> write", extEntry(dstEntry(200, "A", "B"), "k", "v1"), extEntry(srcEntry(200, "A", "B"), "k", "v2"), false},
 		{"same chunks, same tag -> skip", extEntry(dstEntry(200, "A", "B"), "k", "v"), extEntry(srcEntry(200, "A", "B"), "k", "v"), true},
+		{"same chunks, renamed empty tag -> write", extEntry(dstEntry(200, "A", "B"), "a", ""), extEntry(srcEntry(200, "A", "B"), "b", ""), false},
+		{"same chunks, same empty tag -> skip", extEntry(dstEntry(200, "A", "B"), "a", ""), extEntry(srcEntry(200, "A", "B"), "a", ""), true},
 		{"same chunks, stale uid -> write", func() *filer_pb.Entry { e := dstEntry(200, "A", "B"); e.Attributes.Uid = 1; return e }(), srcEntry(200, "A", "B"), false},
 		// fields a rewrite cannot change must not block the skip: inode/crtime are
 		// filer-assigned or preserved, and a stored atime/ctime defaults to mtime
