@@ -562,14 +562,16 @@ func replacedBaseOf(link string) string {
 	return filepath.Join(filepath.Dir(filepath.Dir(link)), strings.TrimPrefix(filepath.Base(link), "replaced_"))
 }
 
-// removeStaleIndexFiles drops the needle-map backends a mount builds next
-// to the index. A mount that saw an .idx beside the .dat builds them under
-// the data base instead, so both bases are cleared.
+// removeStaleIndexFiles drops the needle-map files a mount would trust over
+// a fresh copy. A load prefers an .idx beside the .dat over one in the idx
+// dir, so a leftover .idx is cleared along with the backends a mount builds
+// (.ldb/.sdx/.rdb); both bases are covered.
 func removeStaleIndexFiles(indexBaseFileName, dataBaseFileName string) {
 	for _, base := range []string{indexBaseFileName, dataBaseFileName} {
 		os.RemoveAll(base + ".ldb")
 		os.Remove(base + ".sdx")
 		os.Remove(base + ".rdb")
+		os.Remove(base + ".idx")
 	}
 }
 
