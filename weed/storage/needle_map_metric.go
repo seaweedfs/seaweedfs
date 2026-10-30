@@ -36,17 +36,6 @@ type batchMapMetricSnapshot struct {
 	maximumNeedleEnd    int64
 }
 
-func (mm *mapMetric) snapshotBatchMetrics() batchMapMetricSnapshot {
-	return batchMapMetricSnapshot{
-		deletionCounter:     atomic.LoadUint32(&mm.DeletionCounter),
-		fileCounter:         atomic.LoadUint32(&mm.FileCounter),
-		deletionByteCounter: atomic.LoadUint64(&mm.DeletionByteCounter),
-		fileByteCounter:     atomic.LoadUint64(&mm.FileByteCounter),
-		maximumFileKey:      atomic.LoadUint64(&mm.MaximumFileKey),
-		maximumNeedleEnd:    atomic.LoadInt64(&mm.MaximumNeedleEnd),
-	}
-}
-
 func (mm *mapMetric) restoreBatchMetrics(snapshot batchMapMetricSnapshot) {
 	atomic.StoreUint32(&mm.DeletionCounter, snapshot.deletionCounter)
 	atomic.StoreUint32(&mm.FileCounter, snapshot.fileCounter)
