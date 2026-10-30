@@ -87,10 +87,15 @@ func TestLoadVolumeIgnoresTheGuardForTheHoldersOwnMount(t *testing.T) {
 	location.loadGuard = func(vid needle.VolumeId) (func(), bool) {
 		return func() {}, true
 	}
-	if !location.LoadVolume(0, needle.VolumeId(9), NeedleMapInMemory, nil) {
+	if !location.LoadVolume(0, needle.VolumeId(9), NeedleMapInMemory, nil, true) {
 		t.Fatal("the claim holder's own mount was skipped by its own guard")
 	}
 	if _, found := location.FindVolume(needle.VolumeId(9)); !found {
 		t.Fatal("explicit mount did not register the volume")
+	}
+
+	location.UnloadVolume(needle.VolumeId(9))
+	if location.LoadVolume(0, needle.VolumeId(9), NeedleMapInMemory, nil, false) {
+		t.Fatal("an unguarded mount slipped past the claim's skip")
 	}
 }
