@@ -3,6 +3,8 @@ package s3vectors
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,6 +16,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
+
 	"github.com/seaweedfs/seaweedfs/test/testutil"
 )
 
@@ -24,6 +29,8 @@ type TestEnvironment struct {
 	weedBinary string
 	dataDir    string
 	bindIP     string
+	accessKey  string
+	secretKey  string
 	masterPort int
 	volumePort int
 	filerPort  int
@@ -65,6 +72,8 @@ func newTestEnvironment(t *testing.T) *TestEnvironment {
 		weedBinary: weedBinary,
 		dataDir:    dataDir,
 		bindIP:     testutil.FindBindIP(),
+		accessKey:  "admin",
+		secretKey:  "adminadmin",
 		masterPort: ports[0],
 		volumePort: ports[1],
 		filerPort:  ports[2],
@@ -76,6 +85,17 @@ func newTestEnvironment(t *testing.T) *TestEnvironment {
 
 func (e *TestEnvironment) start(t *testing.T) {
 	t.Helper()
+
+	iamConfigPath, err := testutil.WriteIAMConfig(e.dataDir, e.accessKey, e.secretKey)
+	if err != nil {
+		t.Fatalf("iam config: %v", err)
+	}
+	// An empty security.toml in the working dir shadows any host-level one so
+	// the spawned server is hermetic.
+	if err := os.WriteFile(filepath.Join(e.dataDir, "security.toml"), nil, 0644); err != nil {
+		t.Fatalf("security.toml: %v", err)
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	e.cancel = cancel
 	e.process = exec.CommandContext(ctx, e.weedBinary, "server",
@@ -86,7 +106,9 @@ func (e *TestEnvironment) start(t *testing.T) {
 		fmt.Sprintf("-filer.port=%d", e.filerPort),
 		"-s3",
 		fmt.Sprintf("-s3.port=%d", e.s3Port),
+		"-s3.config="+iamConfigPath,
 	)
+	e.process.Dir = e.dataDir
 	e.process.Stdout = os.Stdout
 	e.process.Stderr = os.Stderr
 	if err := e.process.Start(); err != nil {
@@ -117,10 +139,25 @@ func (e *TestEnvironment) cleanup(t *testing.T) {
 }
 
 // vectorsClient posts a JSON operation with an X-Amz-Target header, the way
-// the AWS SDK for S3 Vectors calls the API.
+// the AWS SDK for S3 Vectors calls the API. Requests are SigV4-signed with
+// the s3vectors service name — the gateway picks the vectors router off the
+// credential scope, so an s3-signed or unsigned request never reaches it.
 type vectorsClient struct {
 	endpoint string
 	client   *http.Client
+	signer   *v4.Signer
+	creds    aws.Credentials
+	region   string
+}
+
+func (e *TestEnvironment) client() *vectorsClient {
+	return &vectorsClient{
+		endpoint: e.endpoint,
+		client:   http.DefaultClient,
+		signer:   v4.NewSigner(),
+		creds:    aws.Credentials{AccessKeyID: e.accessKey, SecretAccessKey: e.secretKey},
+		region:   "us-east-1",
+	}
 }
 
 func (c *vectorsClient) call(t *testing.T, op string, payload interface{}) (int, map[string]interface{}) {
@@ -135,6 +172,11 @@ func (c *vectorsClient) call(t *testing.T, op string, payload interface{}) (int,
 	}
 	req.Header.Set("Content-Type", "application/x-amz-json-1.0")
 	req.Header.Set("X-Amz-Target", "AmazonS3Vectors."+op)
+	payloadHash := sha256.Sum256(body)
+	if err := c.signer.SignHTTP(context.Background(), c.creds, req,
+		hex.EncodeToString(payloadHash[:]), "s3vectors", c.region, time.Now()); err != nil {
+		t.Fatalf("sign %s: %v", op, err)
+	}
 	resp, err := c.client.Do(req)
 	if err != nil {
 		t.Fatalf("post %s: %v", op, err)
@@ -173,7 +215,7 @@ func TestVectorBucketCatalogSurface(t *testing.T) {
 	defer env.cleanup(t)
 	env.start(t)
 
-	c := &vectorsClient{endpoint: env.endpoint, client: http.DefaultClient}
+	c := env.client()
 
 	// Bucket lifecycle.
 	c.want(t, "CreateVectorBucket", map[string]interface{}{
@@ -236,7 +278,7 @@ func TestVectorDataPlaneRequiresEngine(t *testing.T) {
 	defer env.cleanup(t)
 	env.start(t)
 
-	c := &vectorsClient{endpoint: env.endpoint, client: http.DefaultClient}
+	c := env.client()
 
 	code, body := c.call(t, "CreateIndex", map[string]interface{}{
 		"vectorBucketName": "vec-bucket", "indexName": "idx",
