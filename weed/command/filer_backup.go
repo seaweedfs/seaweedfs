@@ -227,6 +227,7 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 	if flattener != nil {
 		inner := generated
 		generated = func(resp *filer_pb.SubscribeMetadataResponse) error {
+			defer flattener.lockFor(resp)()
 			if handled, err := flattener.process(resp); handled {
 				return err
 			}

@@ -6,6 +6,7 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -30,6 +31,7 @@ type s3VersionFlattener struct {
 	reExcludeFileName   *regexp.Regexp
 	excludeFileNames    []*wildcard.WildcardMatcher
 	excludePathPatterns []*wildcard.WildcardMatcher
+	flatLocks           [256]sync.Mutex
 }
 
 func isVersionsDirName(name string) bool {
@@ -38,6 +40,42 @@ func isVersionsDirName(name string) bool {
 
 func insideVersionsDir(dir string) bool {
 	return isVersionsDirName(path.Base(dir))
+}
+
+// lockFor serializes the handling of one event by the key the flattened mirror
+// writes to: versions-related events lock their object key, everything else its
+// own path, so a pointer update and a regular-path write to the same object
+// cannot overlap. Non-barrier dir updates run concurrently in the metadata
+// processor, which would otherwise let an older flattened upload finish last.
+func (f *s3VersionFlattener) lockFor(resp *filer_pb.SubscribeMetadataResponse) func() {
+	key := eventFlatKey(resp)
+	mu := &f.flatLocks[util.HashStringToLong(key)&int64(len(f.flatLocks)-1)]
+	mu.Lock()
+	return mu.Unlock
+}
+
+func eventFlatKey(resp *filer_pb.SubscribeMetadataResponse) string {
+	message := resp.EventNotification
+	targetDir := filer_pb.MetadataEventTargetDirectory(resp)
+	if message.NewEntry != nil {
+		if insideVersionsDir(targetDir) && strings.HasPrefix(message.NewEntry.Name, "v_") {
+			return string(objectKeyOf(util.FullPath(targetDir)))
+		}
+		if message.NewEntry.IsDirectory && isVersionsDirName(message.NewEntry.Name) {
+			return string(objectKeyOf(util.FullPath(targetDir).Child(message.NewEntry.Name)))
+		}
+		return string(util.FullPath(targetDir).Child(message.NewEntry.Name))
+	}
+	if message.OldEntry != nil {
+		if insideVersionsDir(resp.Directory) && strings.HasPrefix(message.OldEntry.Name, "v_") {
+			return string(objectKeyOf(util.FullPath(resp.Directory)))
+		}
+		if message.OldEntry.IsDirectory && isVersionsDirName(message.OldEntry.Name) {
+			return string(objectKeyOf(util.FullPath(resp.Directory).Child(message.OldEntry.Name)))
+		}
+		return string(util.FullPath(resp.Directory).Child(message.OldEntry.Name))
+	}
+	return resp.Directory
 }
 
 // process handles the versions-related part of one metadata event and reports
