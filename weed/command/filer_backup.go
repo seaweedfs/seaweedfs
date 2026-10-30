@@ -43,6 +43,7 @@ type FilerBackupOptions struct {
 	retentionDays       *int
 	initialSnapshot     *bool
 	concurrency         *int
+	s3FlattenVersions   *bool
 }
 
 var (
@@ -67,6 +68,7 @@ func init() {
 	filerBackupOptions.ignore404Error = cmdFilerBackup.Flag.Bool("ignore404Error", true, "ignore 404 errors from filer")
 	filerBackupOptions.initialSnapshot = cmdFilerBackup.Flag.Bool("initialSnapshot", false, "before subscribing to metadata updates, walk the live filer tree under -filerPath and seed the destination, then subscribe from the walk-start timestamp so concurrent changes are still captured. Runs on every start when -timeAgo is 0 and overwrites the saved checkpoint, so it also re-seeds a reinitialized destination. Remove it once the backup is caught up, otherwise it re-walks the whole tree on each restart.")
 	filerBackupOptions.concurrency = cmdFilerBackup.Flag.Int("concurrency", DefaultConcurrencyLimit, "the maximum number of files that will be backed up concurrently.")
+	filerBackupOptions.s3FlattenVersions = cmdFilerBackup.Flag.Bool("s3FlattenVersions", false, "mirror the current S3 view of versioned buckets: under each <key>.versions directory only the latest version is written to <key>, a latest delete marker or the removal of the last version deletes <key> when -doDeleteFiles is set, and version files are not mirrored individually")
 }
 
 var cmdFilerBackup = &Command{
@@ -184,12 +186,27 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 	}
 	dataSink.SetSourceFiler(filerSource)
 
+	var flattener *s3VersionFlattener
+	if *backupOption.s3FlattenVersions {
+		flattener = &s3VersionFlattener{
+			filerSource:         filerSource,
+			dataSink:            dataSink,
+			sourcePath:          sourcePath,
+			targetPath:          targetPath,
+			doDeleteFiles:       *backupOption.doDeleteFiles,
+			excludePaths:        excludePaths,
+			reExcludeFileName:   reExcludeFileName,
+			excludeFileNames:    excludeFileNames,
+			excludePathPatterns: excludePathPatterns,
+		}
+	}
+
 	// Walk and seed the live tree, then subscribe from the walk-start watermark:
 	// replaying the event log alone misses entries created-then-deleted before
 	// the walk. The watermark overwrites any stale checkpoint, re-seeding a wiped
 	// destination.
 	if runSnapshot {
-		snapshotTsNs, err := runInitialSnapshot(sourceFiler.ToGrpcAddress(), filerSource, sourcePath, targetPath, excludePaths, reExcludeFileName, excludeFileNames, excludePathPatterns, dataSink, *backupOption.ignore404Error)
+		snapshotTsNs, err := runInitialSnapshot(sourceFiler.ToGrpcAddress(), filerSource, sourcePath, targetPath, excludePaths, reExcludeFileName, excludeFileNames, excludePathPatterns, dataSink, *backupOption.ignore404Error, flattener)
 		if err != nil {
 			return 0, fmt.Errorf("initial snapshot: %w", err)
 		}
@@ -206,11 +223,21 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 		glog.V(0).Infof("initialSnapshot done; subscribing from %v", startFrom)
 	}
 
+	generated := genProcessFunction(sourcePath, targetPath, excludePaths, reExcludeFileName, excludeFileNames, excludePathPatterns, dataSink, *backupOption.doDeleteFiles, debug)
+	if flattener != nil {
+		inner := generated
+		generated = func(resp *filer_pb.SubscribeMetadataResponse) error {
+			if handled, err := flattener.process(resp); handled {
+				return err
+			}
+			return inner(resp)
+		}
+	}
+
 	var processEventFn func(*filer_pb.SubscribeMetadataResponse) error
 	if *backupOption.ignore404Error {
-		processEventFnGenerated := genProcessFunction(sourcePath, targetPath, excludePaths, reExcludeFileName, excludeFileNames, excludePathPatterns, dataSink, *backupOption.doDeleteFiles, debug)
 		processEventFn = func(resp *filer_pb.SubscribeMetadataResponse) error {
-			err := processEventFnGenerated(resp)
+			err := generated(resp)
 			if err == nil {
 				return nil
 			}
@@ -225,7 +252,7 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 			return err
 		}
 	} else {
-		processEventFn = genProcessFunction(sourcePath, targetPath, excludePaths, reExcludeFileName, excludeFileNames, excludePathPatterns, dataSink, *backupOption.doDeleteFiles, debug)
+		processEventFn = generated
 	}
 
 	if *backupOption.disableErrorRetry {
@@ -490,6 +517,7 @@ func runInitialSnapshot(
 	excludePathPatterns []*wildcard.WildcardMatcher,
 	dataSink sink.ReplicationSink,
 	ignore404Error bool,
+	flattener *s3VersionFlattener,
 ) (int64, error) {
 	// Metadata events are stamped server-side, so the backup host clock may be
 	// ahead of the filer's. Take `now - 1min` as the subscription watermark so
@@ -530,6 +558,17 @@ func runInitialSnapshot(
 
 		if !util.IsEqualOrUnder(source, sourcePath) {
 			return nil
+		}
+
+		if flattener != nil {
+			if insideVersionsDir(parent) && strings.HasPrefix(entry.Name, "v_") {
+				return nil
+			}
+			if entry.IsDirectory && isVersionsDirName(entry.Name) {
+				// Seed only the version the pointer names; every other version
+				// file is skipped by the check above.
+				return flattener.applyLatest(parentPath.Child(entry.Name), entry, true, nil)
+			}
 		}
 
 		targetKey := initialSnapshotTargetKey(dataSink, targetPath, sourcePath, sourceKey, entry)
