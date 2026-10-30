@@ -359,6 +359,10 @@ func TestMatchesWildcardDomain(t *testing.T) {
 		want   bool
 	}{
 		{"node.prod.example.com", ".example.com", true},
+		{"node.example.com.", ".example.com", true},
+		{"node.example.com.", ".example.com.", true},
+		{"node.example.com..", ".example.com", false},
+		{"node..example.com.", ".example.com", false},
 		{"example.com", ".example.com", false},
 		{".example.com", ".example.com", false},
 		{"node..example.com", ".example.com", false},

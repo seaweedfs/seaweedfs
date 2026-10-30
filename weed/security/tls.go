@@ -338,8 +338,11 @@ func parseAllowedCommonNames(commonNames string) map[string]bool {
 // must end with the domain, carry a non-empty label in front of it, and be a
 // valid DNS name, so a CA-signed name like ".example.com" cannot satisfy the
 // suffix check. A leading "*." label is allowed so wildcard certs keep
-// matching.
+// matching. One trailing root dot is ignored on both sides so absolute DNS
+// names still match.
 func matchesWildcardDomain(name, wildcardDomain string) bool {
+	name = strings.TrimSuffix(name, ".")
+	wildcardDomain = strings.TrimSuffix(wildcardDomain, ".")
 	if wildcardDomain == "" || len(name) <= len(wildcardDomain) || !strings.HasSuffix(name, wildcardDomain) {
 		return false
 	}

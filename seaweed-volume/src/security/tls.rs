@@ -370,8 +370,11 @@ fn common_name_is_allowed(
 // Mirrors the Go wildcard check: the name must end with the domain, carry a
 // non-empty label in front of it, and be a valid DNS name so a CA-signed name
 // like ".example.com" cannot satisfy the suffix check. A leading "*." label
-// is allowed so wildcard certs keep matching.
+// is allowed so wildcard certs keep matching. One trailing root dot is
+// ignored on both sides so absolute DNS names still match.
 fn wildcard_domain_matches(name: &str, wildcard_domain: &str) -> bool {
+    let name = name.strip_suffix('.').unwrap_or(name);
+    let wildcard_domain = wildcard_domain.strip_suffix('.').unwrap_or(wildcard_domain);
     if wildcard_domain.is_empty()
         || name.len() <= wildcard_domain.len()
         || !name.ends_with(wildcard_domain)
@@ -473,6 +476,26 @@ mod tests {
         ));
         assert!(common_name_is_allowed(
             "node.prod.example.com",
+            &allowed_common_names,
+            ".example.com",
+        ));
+        assert!(common_name_is_allowed(
+            "node.example.com.",
+            &allowed_common_names,
+            ".example.com",
+        ));
+        assert!(common_name_is_allowed(
+            "node.example.com.",
+            &allowed_common_names,
+            ".example.com.",
+        ));
+        assert!(!common_name_is_allowed(
+            "node.example.com..",
+            &allowed_common_names,
+            ".example.com",
+        ));
+        assert!(!common_name_is_allowed(
+            "node..example.com.",
             &allowed_common_names,
             ".example.com",
         ));
