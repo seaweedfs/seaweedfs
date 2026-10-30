@@ -99,12 +99,12 @@ func TestUploadWithRetryDataReassignsOnProvenConflict(t *testing.T) {
 					return "1,first", "volume-a", "", false, nil
 				}
 				return "2,second", "volume-b", "", false, nil
-			}, &UploadOption{Filename: "test.bin", MaxAttempts: 1}, []byte("abc"))
+			}, &UploadOption{Filename: "test.bin"}, []byte("abc"))
 			if outcome == "refused-before-append" {
-				if err != nil || fid != "2,second" || assignments != 2 {
+				if err != nil || fid != "2,second" || assignments != 2 || len(httpClient.calls) != 2 {
 					t.Fatalf("reassignment: fid=%s, assignments=%d, error=%v", fid, assignments, err)
 				}
-			} else if err == nil || assignments != 1 {
+			} else if err == nil || assignments != 1 || len(httpClient.calls) != 1 {
 				t.Fatalf("unproven conflict retried or acknowledged: assignments=%d, error=%v", assignments, err)
 			}
 		})

@@ -362,8 +362,13 @@ func (uploader *Uploader) retriedUploadData(ctx context.Context, data []byte, op
 			return nil, ctx.Err()
 		}
 		var statusErr *uploadStatusError
-		if errors.As(err, &statusErr) && statusErr.stalled {
-			option.stallWatchdogDisarmed = true
+		if errors.As(err, &statusErr) {
+			if statusErr.StatusCode == http.StatusConflict {
+				return nil, err
+			}
+			if statusErr.stalled {
+				option.stallWatchdogDisarmed = true
+			}
 		}
 		glog.WarningfCtx(ctx, "uploading %d to %s: %v", i, option.UploadUrl, err)
 	}
