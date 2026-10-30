@@ -133,11 +133,13 @@ func (vs *VolumeServer) VolumeMount(ctx context.Context, req *volume_server_pb.V
 	}
 
 	// A copy claims the volume id, then stages the replacement; a mount in
-	// that window loads files the swap is about to clear. Retryable once the
-	// copy settles.
-	if _, ok := vs.volumeCopiesInFlight.Load(req.VolumeId); ok {
+	// that window loads files the swap is about to clear. Claim the id so a
+	// mount cannot slip between the check and a copy's own claim. Retryable
+	// once the copy settles.
+	if _, loaded := vs.volumeCopiesInFlight.LoadOrStore(req.VolumeId, struct{}{}); loaded {
 		return resp, status.Errorf(codes.Unavailable, "volume %d is being copied", req.VolumeId)
 	}
+	defer vs.volumeCopiesInFlight.Delete(req.VolumeId)
 
 	err := vs.store.MountVolume(needle.VolumeId(req.VolumeId), req.Collection)
 
@@ -254,9 +256,11 @@ func (vs *VolumeServer) VolumeConfigure(ctx context.Context, req *volume_server_
 
 	// Same window as VolumeMount: configure unmounts and remounts, so it can
 	// load the replica whose files the in-flight copy's swap then clears.
-	if _, ok := vs.volumeCopiesInFlight.Load(req.VolumeId); ok {
+	// Claim the id so either configure or the copy wins, never both.
+	if _, loaded := vs.volumeCopiesInFlight.LoadOrStore(req.VolumeId, struct{}{}); loaded {
 		return resp, status.Errorf(codes.Unavailable, "volume %d is being copied", req.VolumeId)
 	}
+	defer vs.volumeCopiesInFlight.Delete(req.VolumeId)
 
 	// unmount
 	if err := vs.store.UnmountVolume(needle.VolumeId(req.VolumeId)); err != nil {
