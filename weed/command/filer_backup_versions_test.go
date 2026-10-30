@@ -2,9 +2,11 @@ package command
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -47,6 +49,22 @@ func (c *lookupEntrySeaweedClient) ListEntries(_ context.Context, in *filer_pb.L
 		}
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
+	if in.StartFromFileName != "" {
+		idx := sort.Search(len(entries), func(i int) bool { return entries[i].Name >= in.StartFromFileName })
+		if !in.InclusiveStartFrom {
+			for idx < len(entries) && entries[idx].Name == in.StartFromFileName {
+				idx++
+			}
+		}
+		entries = entries[idx:]
+	}
+	limit := in.Limit
+	if limit == 0 {
+		limit = filer.PaginationSize // the filer substitutes DirListingLimit for 0
+	}
+	if uint64(len(entries)) > uint64(limit) {
+		entries = entries[:limit]
+	}
 	return &verifyTestStream{entries: entries}, nil
 }
 
@@ -289,6 +307,32 @@ func TestFlattenNullVersionDeletedNoVersionsLeftDeletes(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, handled)
 	require.Equal(t, []string{"/b/k"}, rs.deleted)
+}
+
+func TestFlattenNullVersionDeletedScansPastOnePage(t *testing.T) {
+	// old-format version names sort oldest-first and the filer caps one
+	// listing at DirListingLimit, so with a long history the newest version
+	// sits beyond the first page — the rescan must read every page
+	entries := map[string]*filer_pb.Entry{}
+	var newest *filer_pb.Entry
+	for i := 1; i <= filer.PaginationSize+1; i++ {
+		v := &filer_pb.Entry{
+			Name:   fmt.Sprintf("v_%032x", i),
+			Chunks: []*filer_pb.FileChunk{{FileId: fmt.Sprintf("1,%02x", i)}},
+		}
+		entries["/buckets/b/k.versions/"+v.Name] = v
+		newest = v
+	}
+	f, rs := newFlattener(entries)
+	dir := &filer_pb.Entry{
+		Name:        "k.versions",
+		IsDirectory: true,
+		Extended:    map[string][]byte{s3_constants.ExtNullVersionIsLatestKey: []byte("true")},
+	}
+	handled, err := f.process(event("/buckets/b", "/buckets/b", nil, dir))
+	require.NoError(t, err)
+	require.True(t, handled)
+	require.Same(t, newest, rs.created["/b/k"])
 }
 
 func TestFlattenVersionFileEventRefreshesCurrentVersion(t *testing.T) {

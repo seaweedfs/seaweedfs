@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/replication/sink"
@@ -278,17 +279,35 @@ func (f *s3VersionFlattener) uploadNullLatest(objectKey, versionsDir util.FullPa
 
 // latestVersionFileName returns the name of the newest version file under
 // versionsDir by version-id order — delete markers included, the upload
-// resolves them to a flat delete — or "" when no version entry remains.
+// resolves them to a flat delete — or "" when no version entry remains. It
+// paginates: the filer caps one request at DirListingLimit, and old-format
+// version names sort oldest-first, so a single page can miss the true latest.
 func (f *s3VersionFlattener) latestVersionFileName(versionsDir util.FullPath) (string, error) {
 	var latestName, latestId string
 	err := f.filerSource.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return filer_pb.SeaweedList(context.Background(), client, string(versionsDir), "", func(entry *filer_pb.Entry, _ bool) error {
-			versionId := s3api.VersionIdFromEntry(entry)
-			if versionId != "" && (latestId == "" || s3api.CompareVersionIds(versionId, latestId) < 0) {
-				latestId, latestName = versionId, entry.Name
+		startFrom := ""
+		for {
+			var lastName string
+			var pageCount uint32
+			if err := filer_pb.SeaweedList(context.Background(), client, string(versionsDir), "", func(entry *filer_pb.Entry, _ bool) error {
+				pageCount++
+				if entry == nil {
+					return nil
+				}
+				lastName = entry.Name
+				versionId := s3api.VersionIdFromEntry(entry)
+				if versionId != "" && (latestId == "" || s3api.CompareVersionIds(versionId, latestId) < 0) {
+					latestId, latestName = versionId, entry.Name
+				}
+				return nil
+			}, startFrom, false, filer.PaginationSize); err != nil {
+				return err
 			}
-			return nil
-		}, "", false, 0)
+			if pageCount < filer.PaginationSize || lastName == "" {
+				return nil
+			}
+			startFrom = lastName
+		}
 	})
 	return latestName, err
 }
