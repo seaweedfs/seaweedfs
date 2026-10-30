@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -86,6 +87,33 @@ func NewWebDavServer(option *WebDavOption) (ws *WebDavServer, err error) {
 	}
 
 	return ws, nil
+}
+
+// putOutcomeKey carries the flag WebDavFileSystem.OpenFile sets when a PUT
+// replaced an existing entry, so the PUT can answer 204 instead of 201
+type putOutcomeKey struct{}
+
+// putOutcomeWriter turns the 201 of a PUT that replaced a file into 204
+// and swallows the status text webdav.Handler writes after it
+type putOutcomeWriter struct {
+	http.ResponseWriter
+	replaced  *bool
+	noContent bool
+}
+
+func (w *putOutcomeWriter) WriteHeader(code int) {
+	if code == http.StatusCreated && *w.replaced {
+		code = http.StatusNoContent
+		w.noContent = true
+	}
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *putOutcomeWriter) Write(b []byte) (int, error) {
+	if w.noContent {
+		return len(b), nil
+	}
+	return w.ResponseWriter.Write(b)
 }
 
 // an overwriting MOVE or COPY removes the destination before reading the
@@ -218,6 +246,14 @@ func (h copyMoveGuardHandler) moveHandler(r *http.Request) http.Handler {
 }
 
 func (h copyMoveGuardHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// a PUT that replaces a file answers 204 (RFC 9110 9.3.4); webdav.Handler
+	// always answers 201, so OpenFile reports a replace on the request
+	// context and the writer rewrites the status it sends
+	if r.Method == "PUT" {
+		replaced := new(bool)
+		w = &putOutcomeWriter{ResponseWriter: w, replaced: replaced}
+		r = r.WithContext(context.WithValue(r.Context(), putOutcomeKey{}, replaced))
+	}
 	// RFC 4918 10.6: a missing Overwrite header means T, but webdav.Handler
 	// only overwrites on MOVE when it is set (golang/go#66059)
 	if r.Method == "MOVE" && len(r.Header.Values("Overwrite")) == 0 {
@@ -471,18 +507,11 @@ func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, f
 		if err := fs.checkParentDir(ctx, dir); err != nil {
 			return nil, err
 		}
-		fi, err := fs.stat(ctx, fullFilePath)
-		if err == nil {
-			if flag&os.O_EXCL != 0 || fi.IsDir() {
-				return nil, os.ErrExist
-			}
-			fs.removeAll(ctx, fullFilePath, false)
-		} else if err != os.ErrNotExist {
-			return nil, err
-		}
 
+		var resp *filer_pb.CreateEntryResponse
 		err = fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-			if err := filer_pb.CreateEntry(context.Background(), client, &filer_pb.CreateEntryRequest{
+			var err error
+			resp, err = filer_pb.CreateEntryWithResponse(context.Background(), client, &filer_pb.CreateEntryRequest{
 				Directory: dir,
 				Entry: &filer_pb.Entry{
 					Name:        name,
@@ -496,14 +525,26 @@ func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, f
 						TtlSec:   0,
 					},
 				},
+				OExcl:      flag&os.O_EXCL != 0,
 				Signatures: []int32{fs.signature},
-			}); err != nil {
-				return fmt.Errorf("create %s: %v", fullFilePath, err)
-			}
-			return nil
+			})
+			return err
 		})
 		if err != nil {
-			return nil, err
+			// a taken name — an exclusive create, or a file landing on a
+			// directory — is the os.ErrExist x/net/webdav answers 405 for
+			if errors.Is(err, filer_pb.ErrEntryAlreadyExists) || errors.Is(err, filer_pb.ErrExistingIsDirectory) {
+				return nil, os.ErrExist
+			}
+			return nil, fmt.Errorf("create %s: %w", fullFilePath, err)
+		}
+		// the filer fills OldEntry under its path lock while writing, so the
+		// outcome matches what the write did even against racing writers: a
+		// PUT that landed on an entry answers 204, a fresh create answers 201
+		if resp.GetMetadataEvent().GetEventNotification().GetOldEntry() != nil {
+			if replaced, ok := ctx.Value(putOutcomeKey{}).(*bool); ok {
+				*replaced = true
+			}
 		}
 		return &WebDavFile{
 			fs:          fs,

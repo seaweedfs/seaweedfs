@@ -98,7 +98,30 @@ func (f *createRecordingFiler) LookupDirectoryEntry(_ context.Context, req *file
 
 func (f *createRecordingFiler) CreateEntry(_ context.Context, req *filer_pb.CreateEntryRequest) (*filer_pb.CreateEntryResponse, error) {
 	f.req = req
-	return &filer_pb.CreateEntryResponse{}, nil
+	p := string(util.NewFullPath(req.Directory, req.Entry.Name))
+	resp := &filer_pb.CreateEntryResponse{}
+	if f.dirs[p] && !req.Entry.IsDirectory {
+		resp.Error = "existing entry is a directory"
+		resp.ErrorCode = filer_pb.FilerError_EXISTING_IS_DIRECTORY
+		return resp, nil
+	}
+	if req.OExcl && (f.files[p] || f.dirs[p]) {
+		resp.Error = "entry already exists"
+		resp.ErrorCode = filer_pb.FilerError_ENTRY_ALREADY_EXISTS
+		return resp, nil
+	}
+	if f.files[p] {
+		resp.MetadataEvent = &filer_pb.SubscribeMetadataResponse{
+			EventNotification: &filer_pb.EventNotification{
+				OldEntry: &filer_pb.Entry{Name: req.Entry.Name},
+			},
+		}
+	}
+	if f.files == nil {
+		f.files = map[string]bool{}
+	}
+	f.files[p] = true
+	return resp, nil
 }
 
 func (f *createRecordingFiler) DeleteEntry(_ context.Context, req *filer_pb.DeleteEntryRequest) (*filer_pb.DeleteEntryResponse, error) {
@@ -122,6 +145,16 @@ func (f *deleteRecordingFiler) LookupDirectoryEntry(_ context.Context, _ *filer_
 func (f *deleteRecordingFiler) DeleteEntry(_ context.Context, req *filer_pb.DeleteEntryRequest) (*filer_pb.DeleteEntryResponse, error) {
 	f.req = req
 	return &filer_pb.DeleteEntryResponse{}, nil
+}
+
+func (f *deleteRecordingFiler) CreateEntry(_ context.Context, req *filer_pb.CreateEntryRequest) (*filer_pb.CreateEntryResponse, error) {
+	if f.existing != nil && f.existing.IsDirectory && !req.Entry.IsDirectory {
+		return &filer_pb.CreateEntryResponse{
+			Error:     "existing entry is a directory",
+			ErrorCode: filer_pb.FilerError_EXISTING_IS_DIRECTORY,
+		}, nil
+	}
+	return &filer_pb.CreateEntryResponse{}, nil
 }
 
 func startFakeWebDavFiler(t *testing.T, impl filer_pb.SeaweedFilerServer) pb.ServerAddress {
@@ -840,6 +873,67 @@ func TestWebDavFileSystem_OpenFile_DoesNotReplaceFolder(t *testing.T) {
 	_, err := fs.OpenFile(context.Background(), "/dir/sub", os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
 	assert.Equal(t, os.ErrExist, err)
 	assert.Nil(t, filer.req)
+}
+
+// putOutcomeFS mimics the filer-backed fs: creating over an existing name
+// marks the request's PUT outcome as a replace.
+type putOutcomeFS struct {
+	webdav.FileSystem
+}
+
+func (f putOutcomeFS) OpenFile(ctx context.Context, name string, flag int, perm os.FileMode) (webdav.File, error) {
+	if flag&os.O_CREATE != 0 {
+		if _, err := f.FileSystem.Stat(ctx, name); err == nil {
+			if replaced, ok := ctx.Value(putOutcomeKey{}).(*bool); ok {
+				*replaced = true
+			}
+		}
+	}
+	return f.FileSystem.OpenFile(ctx, name, flag, perm)
+}
+
+func TestCopyMoveGuardHandler_PutStatus(t *testing.T) {
+	fs := putOutcomeFS{FileSystem: webdav.NewMemFS()}
+	h := copyMoveGuardHandler{
+		fs:   fs,
+		next: &webdav.Handler{FileSystem: fs, LockSystem: webdav.NewMemLS()},
+	}
+	put := func(body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("PUT", "http://x/a.txt", strings.NewReader(body))
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		return w
+	}
+	assert.Equal(t, http.StatusCreated, put("one").Code)
+	w := put("two")
+	assert.Equal(t, http.StatusNoContent, w.Code)
+	assert.Empty(t, w.Body.String(), "a 204 carries no body")
+}
+
+// The 204 comes from OpenFile's own bookkeeping: creating over an existing
+// entry flags the request context, a fresh create does not.
+func TestWebDavFileSystem_OpenFile_PutOutcomeFlag(t *testing.T) {
+	filer := &createRecordingFiler{files: map[string]bool{"/old.txt": true}}
+	filerAddr := startFakeWebDavFiler(t, filer)
+	fs := &WebDavFileSystem{option: &WebDavOption{
+		Filer:          filerAddr,
+		GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+	}}
+
+	open := func(name string) bool {
+		replaced := new(bool)
+		ctx := context.WithValue(context.Background(), putOutcomeKey{}, replaced)
+		f, err := fs.OpenFile(ctx, name, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+		assert.NoError(t, err)
+		if f != nil {
+			assert.NoError(t, f.Close())
+		}
+		return *replaced
+	}
+
+	assert.True(t, open("/old.txt"))
+	assert.False(t, open("/new.txt"))
+	assert.True(t, open("/new.txt"), "a PUT over the entry the first create made is a replace")
 }
 
 type renameRecordingFiler struct {
