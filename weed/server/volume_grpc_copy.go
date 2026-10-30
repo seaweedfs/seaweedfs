@@ -405,24 +405,33 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 
 	if hasExistingVolume {
 		glog.V(0).Infof("volume %d already exists. deleting before copying from %s...", req.VolumeId, req.SourceDataNode)
-		// Hard-link the outgoing replica's files into copying/ first: the
-		// inodes survive the delete, so a failed swap can put the previous
-		// replica back instead of leaving the node with none. Best-effort —
-		// the swap proceeds with whatever links succeed.
-		replacedLinks = linkReplacedVolumeFiles(
-			dataBaseFileName+".dat",
-			indexBaseFileName+".idx",
-			dataBaseFileName+".vif",
-			dataBaseFileName+".idx",
-		)
-		// keep remote data: the inbound copy carries a .vif that may point at
-		// the same cloud-tier object the existing volume references.
-		if delErr := vs.store.DeleteVolume(needle.VolumeId(req.VolumeId), false, false, true); delErr != nil {
-			err = fmt.Errorf("failed to delete existing volume %d: %v", req.VolumeId, delErr)
-			return err
+		if replaced := vs.store.GetVolume(needle.VolumeId(req.VolumeId)); replaced != nil {
+			// Hard-link the outgoing replica's files into copying/ first: the
+			// inodes survive the delete, so a failed swap can put the previous
+			// replica back instead of leaving the node with none. The paths
+			// come from the mounted volume — the incoming copy can sit on a
+			// different disk. Require every present file to link; a partial
+			// backup cannot restore the replica.
+			var backupComplete bool
+			replacedLinks, backupComplete = linkReplacedVolumeFiles(
+				replaced.DataFileName()+".dat",
+				replaced.IndexFileName()+".idx",
+				replaced.DataFileName()+".vif",
+				replaced.DataFileName()+".idx",
+			)
+			if !backupComplete {
+				err = fmt.Errorf("preserve files of existing volume %d for rollback", req.VolumeId)
+				return err
+			}
+			// keep remote data: the inbound copy carries a .vif that may point at
+			// the same cloud-tier object the existing volume references.
+			if delErr := vs.store.DeleteVolume(needle.VolumeId(req.VolumeId), false, false, true); delErr != nil {
+				err = fmt.Errorf("failed to delete existing volume %d: %v", req.VolumeId, delErr)
+				return err
+			}
+			replacedRemoved = true
+			glog.V(0).Infof("deleted existing volume %d before copying.", req.VolumeId)
 		}
-		replacedRemoved = true
-		glog.V(0).Infof("deleted existing volume %d before copying.", req.VolumeId)
 	}
 
 	// A stale .note at the final basename fails the next load; the staged
@@ -501,27 +510,37 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 
 // linkReplacedVolumeFiles hard-links each file into a copying/ sibling so
 // the inodes survive the replacement's delete and a failed swap can put the
-// previous replica's files back. The loader never scans copying/.
-func linkReplacedVolumeFiles(baseFileNames ...string) (links []string) {
+// previous replica's files back. The loader never scans copying/. It reports
+// false when a file that exists could not be preserved — deleting the replica
+// then would leave nothing to roll back to.
+func linkReplacedVolumeFiles(baseFileNames ...string) (links []string, complete bool) {
+	complete = true
 	for _, base := range baseFileNames {
+		if _, err := os.Stat(base); err != nil {
+			continue
+		}
 		link := filepath.Join(filepath.Dir(base), "copying", "replaced_"+filepath.Base(base))
+		if err := os.MkdirAll(filepath.Dir(link), 0755); err != nil {
+			glog.Warningf("preserve replaced file %s: %v", base, err)
+			complete = false
+			continue
+		}
 		os.Remove(link)
 		if err := os.Link(base, link); err != nil {
-			if !os.IsNotExist(err) {
-				glog.Warningf("preserve replaced file %s: %v", base, err)
-			}
+			glog.Warningf("preserve replaced file %s: %v", base, err)
+			complete = false
 			continue
 		}
 		links = append(links, link)
 	}
-	return links
+	return links, complete
 }
 
 // restoreReplacedVolumeFiles puts linkReplacedVolumeFiles' links back at
 // their base names after a failed swap; each link is removed either way.
 func restoreReplacedVolumeFiles(links []string) {
 	for _, link := range links {
-		base := filepath.Join(filepath.Dir(filepath.Dir(link)), strings.TrimPrefix(filepath.Base(link), "replaced_"))
+		base := replacedBaseOf(link)
 		if _, err := os.Stat(base); os.IsNotExist(err) {
 			if err := os.Rename(link, base); err != nil {
 				glog.Warningf("restore replaced file %s: %v", link, err)
@@ -530,6 +549,10 @@ func restoreReplacedVolumeFiles(links []string) {
 			os.Remove(link)
 		}
 	}
+}
+
+func replacedBaseOf(link string) string {
+	return filepath.Join(filepath.Dir(filepath.Dir(link)), strings.TrimPrefix(filepath.Base(link), "replaced_"))
 }
 
 // removeStaleIndexFiles drops the needle-map backends a mount builds next
