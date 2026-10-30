@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -37,6 +39,9 @@ const (
 	postPolicySecretKey = "secret-key-for-policy-only"
 	postReadAccessKey   = "AKIAPOLICYREAD0000"
 	postReadSecretKey   = "secret-key-for-policy-read"
+
+	postAdminAccessKey = "AKIAADMINTEST000"
+	postAdminSecretKey = "secret-key-for-admin-tests"
 )
 
 // newPostAuthzServer builds an S3ApiServer whose non-admin "tester" identity
@@ -393,4 +398,100 @@ func TestPostPolicyAttachedPolicyDeny(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, rec.Code,
 		"POST from a read-only identity must stay AccessDenied, body: %s", rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "AccessDenied")
+}
+
+// postAutoCreateFiler stores every created entry and serves directory lookups
+// from that store, so the POST upload's lazy bucket creation can be observed
+// without a running filer. Every other RPC stays Unimplemented and fails.
+type postAutoCreateFiler struct {
+	filer_pb.UnimplementedSeaweedFilerServer
+	mu      sync.Mutex
+	entries map[string]*filer_pb.Entry
+	created []string
+}
+
+func (f *postAutoCreateFiler) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if entry, ok := f.entries[req.Directory+"/"+req.Name]; ok {
+		return &filer_pb.LookupDirectoryEntryResponse{Entry: entry}, nil
+	}
+	return nil, filer_pb.ErrNotFound
+}
+
+func (f *postAutoCreateFiler) CreateEntry(ctx context.Context, req *filer_pb.CreateEntryRequest) (*filer_pb.CreateEntryResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.created = append(f.created, req.Directory+"/"+req.Entry.Name)
+	f.entries[req.Directory+"/"+req.Entry.Name] = req.Entry
+	return &filer_pb.CreateEntryResponse{}, nil
+}
+
+// newPostAutoCreateServer builds an S3ApiServer on the fake filer with
+// auto-create enabled, an "admin" identity allowed to create buckets, and the
+// non-admin "tester" writer.
+func newPostAutoCreateServer(t *testing.T, filer *postAutoCreateFiler) *S3ApiServer {
+	t.Helper()
+
+	iam := &IdentityAccessManagement{
+		hashes:       make(map[string]*sync.Pool),
+		hashCounters: make(map[string]*int32),
+	}
+	err := iam.loadS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{{
+			Name:        "admin",
+			Account:     &iam_pb.Account{Id: "000000000000", DisplayName: "admin"},
+			Credentials: []*iam_pb.Credential{{AccessKey: postAdminAccessKey, SecretKey: postAdminSecretKey}},
+			Actions:     []string{"Admin"},
+		}, {
+			Name:        "tester",
+			Account:     &iam_pb.Account{Id: "000000000000", DisplayName: "tester"},
+			Credentials: []*iam_pb.Credential{{AccessKey: postAuthzAccessKey, SecretKey: postAuthzSecretKey}},
+			Actions:     []string{"Read:" + postAuthzBucket, "Write:" + postAuthzBucket, "List:" + postAuthzBucket},
+		}},
+	})
+	require.NoError(t, err)
+
+	s3a := newFailoverTestServer(t, startFakeFiler(t, filer))
+	s3a.iam = iam
+	s3a.option.BucketsPath = "/buckets"
+	s3a.option.AutoCreateBucket = true
+	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+	return s3a
+}
+
+// A signed POST Object upload to a bucket that does not exist must lazy-create
+// it the way PutObject does: an admin signer is allowed to create the bucket
+// and the upload proceeds against it instead of answering NoSuchBucket.
+func TestPostPolicyBucketHandlerAutoCreatesMissingBucket(t *testing.T) {
+	filer := &postAutoCreateFiler{entries: map[string]*filer_pb.Entry{}}
+	s3a := newPostAutoCreateServer(t, filer)
+
+	rec := httptest.NewRecorder()
+	s3a.PostPolicyBucketHandler(rec, newSignedPostRequestFor(t, "uploads/pic.png", postAdminAccessKey, postAdminSecretKey, nil))
+
+	filer.mu.Lock()
+	defer filer.mu.Unlock()
+	assert.Contains(t, filer.created, "/buckets/"+postAuthzBucket,
+		"POST to a missing bucket must create it like PUT, got status %d body %s", rec.Code, rec.Body.String())
+	assert.NotEqual(t, http.StatusNotFound, rec.Code,
+		"missing-bucket POST must no longer be a 404, body: %s", rec.Body.String())
+}
+
+// A non-admin signer keeps the PUT semantics: the upload itself is authorized
+// but the lazy create is refused, surfacing AccessDenied rather than creating
+// the bucket or answering NoSuchBucket.
+func TestPostPolicyBucketHandlerAutoCreateDeniedForNonAdmin(t *testing.T) {
+	filer := &postAutoCreateFiler{entries: map[string]*filer_pb.Entry{}}
+	s3a := newPostAutoCreateServer(t, filer)
+
+	rec := httptest.NewRecorder()
+	s3a.PostPolicyBucketHandler(rec, newSignedPostRequestFor(t, "uploads/pic.png", postAuthzAccessKey, postAuthzSecretKey, nil))
+
+	assert.Equal(t, http.StatusForbidden, rec.Code, "body: %s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "AccessDenied")
+
+	filer.mu.Lock()
+	defer filer.mu.Unlock()
+	assert.Empty(t, filer.created, "a non-admin POST must not create the bucket")
 }
