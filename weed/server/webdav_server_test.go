@@ -541,6 +541,50 @@ func TestCopyMoveGuardHandler_MoveWithoutOverwriteHeader(t *testing.T) {
 	assert.True(t, os.IsNotExist(err))
 }
 
+type failRenameFS struct {
+	webdav.FileSystem
+}
+
+func (f failRenameFS) Rename(context.Context, string, string) error {
+	return fmt.Errorf("rename refused")
+}
+
+// A MOVE whose rename fails must leave the existing destination in place:
+// the delete is deferred into the rename, which replaces atomically.
+func TestCopyMoveGuardHandler_MoveKeepsDestinationOnRenameFailure(t *testing.T) {
+	ctx := context.Background()
+	mem := webdav.NewMemFS()
+	for name, data := range map[string]string{"/a.txt": "a", "/b.txt": "b"} {
+		f, err := mem.OpenFile(ctx, name, os.O_RDWR|os.O_CREATE, 0644)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.Write([]byte(data)); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fs := failRenameFS{mem}
+	h := copyMoveGuardHandler{
+		fs:   fs,
+		next: &webdav.Handler{FileSystem: fs, LockSystem: webdav.NewMemLS()},
+	}
+	req := httptest.NewRequest("MOVE", "http://x/a.txt", nil)
+	req.Header.Set("Destination", "http://x/b.txt")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	r, err := mem.OpenFile(ctx, "/b.txt", os.O_RDONLY, 0)
+	if assert.NoError(t, err) {
+		data, err := io.ReadAll(r)
+		assert.NoError(t, err)
+		assert.Equal(t, "b", string(data))
+	}
+}
+
 func TestWebDavFileSystem_OpenFile_DoesNotReplaceFolder(t *testing.T) {
 	filer := &deleteRecordingFiler{existing: &filer_pb.Entry{
 		Name:        "sub",

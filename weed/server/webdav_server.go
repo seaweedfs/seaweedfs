@@ -96,17 +96,70 @@ type copyMoveGuardHandler struct {
 	next http.Handler
 }
 
+// deferredDeleteFS defers a destination's delete to the rename that follows
+// it: x/net removes an existing MOVE destination before Rename, leaving it
+// lost when the rename cannot complete. The filer's rename replaces the
+// target in one transaction, so the delete is skipped here; a file vs.
+// collection clash cannot merge in place and takes the delete + rename path.
+type deferredDeleteFS struct {
+	webdav.FileSystem
+	dst string
+}
+
+func (f deferredDeleteFS) RemoveAll(ctx context.Context, name string) error {
+	if strings.TrimRight(name, "/") == strings.TrimRight(f.dst, "/") {
+		return nil
+	}
+	return f.FileSystem.RemoveAll(ctx, name)
+}
+
+func (f deferredDeleteFS) Rename(ctx context.Context, oldName, newName string) error {
+	// a file vs. collection clash cannot merge in place — delete the target
+	// first, as moveFiles would have done itself
+	src, srcErr := f.FileSystem.Stat(ctx, oldName)
+	dst, dstErr := f.FileSystem.Stat(ctx, newName)
+	if srcErr == nil && dstErr == nil && src.IsDir() != dst.IsDir() {
+		if err := f.FileSystem.RemoveAll(ctx, newName); err != nil {
+			return err
+		}
+	}
+	return f.FileSystem.Rename(ctx, oldName, newName)
+}
+
+// moveHandler runs an overwriting MOVE onto an existing destination against
+// deferredDeleteFS, so the target survives a refused or failed rename.
+func (h copyMoveGuardHandler) moveHandler(r *http.Request) http.Handler {
+	next, ok := h.next.(*webdav.Handler)
+	if !ok || r.Header.Get("Overwrite") == "F" {
+		return h.next
+	}
+	u, err := url.Parse(r.Header.Get("Destination"))
+	if err != nil || u.Host != "" && u.Host != r.Host {
+		return h.next
+	}
+	if _, err := h.fs.Stat(r.Context(), u.Path); err != nil {
+		return h.next
+	}
+	inner := *next
+	inner.FileSystem = deferredDeleteFS{FileSystem: inner.FileSystem, dst: u.Path}
+	return &inner
+}
+
 func (h copyMoveGuardHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// RFC 4918 10.6: a missing Overwrite header means T, but webdav.Handler
 	// only overwrites on MOVE when it is set (golang/go#66059)
 	if r.Method == "MOVE" && r.Header.Get("Overwrite") == "" {
 		r.Header.Set("Overwrite", "T")
 	}
+	next := h.next
+	if r.Method == "MOVE" {
+		next = h.moveHandler(r)
+	}
 	if r.Method == "MOVE" || r.Method == "COPY" {
 		// a foreign-host Destination is another server's problem: the webdav
 		// handler answers 502, so the local checks below do not apply
 		if u, err := url.Parse(r.Header.Get("Destination")); err == nil && u.Host != "" && u.Host != r.Host {
-			h.next.ServeHTTP(w, r)
+			next.ServeHTTP(w, r)
 			return
 		}
 		if u, err := url.Parse(r.Header.Get("Destination")); err == nil {
@@ -160,7 +213,7 @@ func (h copyMoveGuardHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 	}
-	h.next.ServeHTTP(w, r)
+	next.ServeHTTP(w, r)
 }
 
 // adapted from https://github.com/mattn/davfs/blob/master/plugin/mysql/mysql.go
@@ -454,11 +507,9 @@ func (fs *WebDavFileSystem) Rename(ctx context.Context, oldName, newName string)
 		return os.ErrInvalid
 	}
 
-	_, err = fs.stat(ctx, newName)
-	if err == nil {
-		return os.ErrExist
-	}
-	if err != os.ErrNotExist {
+	// an existing target is replaced inside the rename's transaction; a
+	// failed lookup aborts the move here
+	if _, err = fs.stat(ctx, newName); err != nil && err != os.ErrNotExist {
 		return err
 	}
 
