@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -118,6 +119,11 @@ func (h *S3TablesHandler) mutateEntryExtended(
 		if err == nil {
 			return nil
 		}
+		// The filer answers an entry removed since the lookup with
+		// codes.NotFound; report it as the lookup's own miss.
+		if status.Code(err) == codes.NotFound {
+			return fmt.Errorf("%w: %s", filer_pb.ErrNotFound, path)
+		}
 		if status.Code(err) != codes.FailedPrecondition {
 			return err
 		}
@@ -185,12 +191,25 @@ func (h *S3TablesHandler) removeExtendedAttributesIf(
 // delete's restore or a competing create that landed since the caller's check
 // is a name conflict, not a record this write may overwrite — an overwrite
 // would leave the loser's tags, policy, and maintenance settings on the new
-// record.
+// record. A record still marked by an unfinished create is the exception:
+// invisible to every reader, it is adopted rather than refused. A rename
+// destination is not adoptable — its writer still owes the record a publish
+// or a keep, and adopting it strands the renamed record with neither name.
 func (h *S3TablesHandler) claimCatalogEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, path string, attrs map[string][]byte) error {
 	return h.mutateEntryExtended(ctx, client, path, func(extended map[string][]byte) error {
-		for _, key := range s3tablesExtendedKeys {
-			if _, ok := extended[key]; ok {
-				return fmt.Errorf("%w: %s set on %s", ErrNameTaken, key, path)
+		if string(extended[ExtendedKeyDeleting]) == createClaim {
+			// A marked record is absent to every reader, so it holds nothing a
+			// caller could have seen: the create that left it confirmed or lost
+			// the name already. Take the record over, dropping whatever the
+			// earlier write left, or an abandoned mark wedges the name forever.
+			for _, key := range s3tablesExtendedKeys {
+				delete(extended, key)
+			}
+		} else {
+			for _, key := range s3tablesExtendedKeys {
+				if _, ok := extended[key]; ok {
+					return fmt.Errorf("%w: %s set on %s", ErrNameTaken, key, path)
+				}
 			}
 		}
 		for key, data := range attrs {
@@ -405,6 +424,215 @@ func (h *S3TablesHandler) deleteDirectoryIfMatches(ctx context.Context, client f
 		return fmt.Errorf("%w: %s", ErrConcurrentUpdate, path)
 	}
 	return err
+}
+
+var (
+	errParentDeleting = errors.New("parent is being deleted")
+	errParentGone     = errors.New("parent was deleted")
+	errNoDeleteClaim  = errors.New("claim not held")
+	errBackOutFailed  = errors.New("backing out the create failed")
+	errSourceGone     = errors.New("rename source was deleted")
+)
+
+// claimForDelete writes a fresh token into ExtendedKeyDeleting, replacing any
+// earlier claim, and returns it with the attributes the delete must still find
+// when it removes the entry. The token makes a stale delete's removal fail.
+func (h *S3TablesHandler) claimForDelete(ctx context.Context, client filer_pb.SeaweedFilerClient, path string, isParent func(*filer_pb.Entry) bool) (string, map[string][]byte, error) {
+	claim := generateVersionToken()
+	var claimed map[string][]byte
+	err := h.mutateEntryExtended(ctx, client, path, func(extended map[string][]byte) error {
+		if !isParent(&filer_pb.Entry{Extended: extended}) {
+			return filer_pb.ErrNotFound
+		}
+		extended[ExtendedKeyDeleting] = []byte(claim)
+		claimed = snapshotExtended(extended)
+		return nil
+	})
+	if err != nil {
+		return "", nil, err
+	}
+	return claim, claimed, nil
+}
+
+// releaseDeleteClaim removes claim from path while path still holds it, even
+// after the request was cancelled.
+func (h *S3TablesHandler) releaseDeleteClaim(ctx context.Context, client filer_pb.SeaweedFilerClient, path, claim string) {
+	err := h.mutateEntryExtended(context.WithoutCancel(ctx), client, path, func(extended map[string][]byte) error {
+		if string(extended[ExtendedKeyDeleting]) != claim {
+			return errNoDeleteClaim
+		}
+		delete(extended, ExtendedKeyDeleting)
+		return nil
+	})
+	if err != nil && !errors.Is(err, errNoDeleteClaim) && !errors.Is(err, filer_pb.ErrNotFound) {
+		glog.Warningf("release delete claim on %s: %v", path, err)
+	}
+}
+
+// isNamespaceEntry reports whether entry carries a namespace's catalog record.
+func isNamespaceEntry(entry *filer_pb.Entry) bool {
+	_, ok := entry.Extended[ExtendedKeyMetadata]
+	return ok
+}
+
+// checkParentOpen returns errParentGone if parentPath is missing or not a
+// catalog entry, and errParentDeleting if a delete has claimed it.
+func (h *S3TablesHandler) checkParentOpen(ctx context.Context, client filer_pb.SeaweedFilerClient, parentPath string, isParent func(*filer_pb.Entry) bool) error {
+	_, err := h.openParent(ctx, client, parentPath, isParent)
+	return err
+}
+
+// openParent is checkParentOpen returning the entry it accepted, so a caller
+// can later ask whether the parent is still that same record.
+func (h *S3TablesHandler) openParent(ctx context.Context, client filer_pb.SeaweedFilerClient, parentPath string, isParent func(*filer_pb.Entry) bool) (*filer_pb.Entry, error) {
+	entry, err := h.lookupEntry(ctx, client, parentPath)
+	if errors.Is(err, filer_pb.ErrNotFound) {
+		return nil, errParentGone
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !isParent(entry) {
+		return nil, errParentGone
+	}
+	if _, claimed := entry.Extended[ExtendedKeyDeleting]; claimed {
+		return nil, errParentDeleting
+	}
+	return entry, nil
+}
+
+// parentStillOpen reports whether parentPath still holds the record parent
+// captured. A delete claims, removes, or replaces the parent between the two
+// reads; createdAt identifies the record since an update preserves it while a
+// delete+recreate mints a new one, so an editable property changing in
+// between does not read as a removal.
+func (h *S3TablesHandler) parentStillOpen(ctx context.Context, client filer_pb.SeaweedFilerClient, parentPath string, isParent func(*filer_pb.Entry) bool, parent *filer_pb.Entry) error {
+	current, err := h.openParent(ctx, client, parentPath, isParent)
+	if err != nil {
+		return err
+	}
+	var before, now namespaceMetadata
+	if json.Unmarshal(parent.Extended[ExtendedKeyMetadata], &before) != nil ||
+		json.Unmarshal(current.Extended[ExtendedKeyMetadata], &now) != nil ||
+		!now.CreatedAt.Equal(before.CreatedAt) {
+		return errParentGone
+	}
+	return nil
+}
+
+// createClaim is the ExtendedKeyDeleting value of a catalog record whose
+// create has written it but not yet confirmed its parent. renameDestClaim is
+// the same not-yet-published mark on a rename's destination, with a value of
+// its own so a create refuses it instead of adopting the record.
+const (
+	createClaim     = "create"
+	renameDestClaim = "rename-dest"
+)
+
+// isUnfinishedCreate reports whether extended belongs to a record still
+// marked by the operation that wrote it — invisible to every reader.
+func isUnfinishedCreate(extended map[string][]byte) bool {
+	switch string(extended[ExtendedKeyDeleting]) {
+	case createClaim, renameDestClaim:
+		return true
+	}
+	return false
+}
+
+// mutateCatalogRecord applies mutate to a catalog record, refusing a record
+// an in-flight operation claimed: a create's unfinished record is absent to
+// every reader, and a record claimed by a delete or rename must not take a
+// write the operation's compare then trips over.
+func (h *S3TablesHandler) mutateCatalogRecord(
+	ctx context.Context,
+	client filer_pb.SeaweedFilerClient,
+	path string,
+	mutate func(extended map[string][]byte) error,
+) error {
+	return h.mutateEntryExtended(ctx, client, path, func(extended map[string][]byte) error {
+		if _, claimed := extended[ExtendedKeyDeleting]; !claimed {
+			return mutate(extended)
+		}
+		if isUnfinishedCreate(extended) {
+			return filer_pb.ErrNotFound
+		}
+		return fmt.Errorf("%w: %s claimed on %s", ErrConcurrentUpdate, ExtendedKeyDeleting, path)
+	})
+}
+
+// confirmParent re-checks the parent after a create wrote written onto
+// childPath. If the parent is open, it clears the record's unfinished mark —
+// then checks the parent once more, since a delete claiming it in between
+// scans the still-marked record, skips it, and removes it under a create that
+// already answered success. If the parent is gone or claimed at either check,
+// it removes what the create wrote and returns why, or errBackOutFailed if
+// the record stays.
+func (h *S3TablesHandler) confirmParent(ctx context.Context, client filer_pb.SeaweedFilerClient, parentPath string, isParent func(*filer_pb.Entry) bool, childPath string, written map[string][]byte, emptyDirs ...string) error {
+	parent, err := h.openParent(ctx, client, parentPath, isParent)
+	confirmed := false
+	if err == nil {
+		// The mark comes off only while the record still holds what this
+		// create wrote; a failed write backs the record out like a closed parent.
+		if err = h.removeExtendedAttributesIf(ctx, client, childPath, written, ExtendedKeyDeleting); err == nil {
+			confirmed = true
+			err = h.parentStillOpen(ctx, client, parentPath, isParent, parent)
+		}
+	}
+	if err == nil {
+		return nil
+	}
+	ctx = context.WithoutCancel(ctx)
+	expected := written
+	keys := make([]string, 0, len(written))
+	if confirmed {
+		// The confirmed record no longer carries the mark written expected.
+		expected = make(map[string][]byte, len(written))
+		for key, data := range written {
+			if key == ExtendedKeyDeleting {
+				continue
+			}
+			expected[key] = data
+			keys = append(keys, key)
+		}
+	} else {
+		for key := range written {
+			keys = append(keys, key)
+		}
+	}
+	if backOutErr := h.removeExtendedAttributesIf(ctx, client, childPath, expected, keys...); backOutErr != nil && !errors.Is(backOutErr, filer_pb.ErrNotFound) {
+		glog.Warningf("back out %s: %v", childPath, backOutErr)
+		if errors.Is(backOutErr, ErrConcurrentUpdate) {
+			// The record moved past this create — adopted or rewritten — so
+			// there is nothing of its own left to remove.
+			return fmt.Errorf("%w: %s changed during create", ErrConcurrentUpdate, childPath)
+		}
+		return fmt.Errorf("%w: %s: %v (%v)", errBackOutFailed, childPath, backOutErr, err)
+	}
+	for _, dir := range emptyDirs {
+		h.removeLeftoverDirectory(ctx, client, dir)
+	}
+	if errors.Is(err, errParentGone) {
+		h.removeLeftoverDirectory(ctx, client, parentPath)
+	}
+	return err
+}
+
+// removeLeftoverDirectory deletes path if it is an empty directory without
+// attributes; the filer refuses the non-recursive delete otherwise.
+func (h *S3TablesHandler) removeLeftoverDirectory(ctx context.Context, client filer_pb.SeaweedFilerClient, path string) {
+	entry, err := h.lookupEntry(ctx, client, path)
+	if err != nil || !entry.IsDirectory || len(entry.Extended) > 0 {
+		return
+	}
+	dir, name := splitPath(path)
+	if _, err := filer_pb.DoRemoveRequest(ctx, client, &filer_pb.DeleteEntryRequest{
+		Directory:        dir,
+		Name:             name,
+		IsDeleteData:     true,
+		ExpectedExtended: snapshotExtended(entry.Extended),
+	}); err != nil {
+		glog.V(1).Infof("keep %s: %v", path, err)
+	}
 }
 
 // entryExists checks if an entry exists at the given path

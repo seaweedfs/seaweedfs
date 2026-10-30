@@ -142,6 +142,108 @@ func TestDeleteTableDecoupledKeepsReusedNamePath(t *testing.T) {
 	}
 }
 
+// A decoupled record still carrying a claim its operation never lifted — a
+// delete or rename that ended between the claim and the marker clear — must go
+// with the rest of the marker, or the leftover claim blocks every create of
+// the name from then on.
+func TestDeleteTableDecoupledClearsLeftoverClaim(t *testing.T) {
+	fs, m := startRenameManager(t)
+
+	newtMeta, _ := json.Marshal(tableMetadataInternal{
+		Name:             "newt",
+		Namespace:        "ns",
+		Format:           "ICEBERG",
+		OwnerAccountID:   DefaultAccountID,
+		MetadataLocation: "s3://" + renameTestBucket + "/ns/newt-x/metadata/v1.metadata.json",
+	})
+	nsPath := GetNamespacePath(renameTestBucket, "ns")
+	fs.Put(nsPath, "newt", map[string][]byte{
+		ExtendedKeyMetadata:  newtMeta,
+		ExtendedKeyEntryType: []byte(EntryTypeTable),
+		ExtendedKeyDeleting:  []byte("delete"),
+	})
+	fs.Put(nsPath, "newt-x", nil)
+	fs.Put(GetTablePath(renameTestBucket, "ns", "newt-x"), "metadata", nil)
+
+	require.NoError(t, runDeleteTable(t, m, fs, "ns", "newt"))
+
+	marker := fs.Get(nsPath, "newt")
+	require.NotNil(t, marker)
+	assert.NotContains(t, marker.Extended, ExtendedKeyDeleting, "a leftover claim must not survive the delete")
+
+	status, resp := runHandler(t, m, fs.Client, "CreateTable", &CreateTableRequest{
+		TableBucketARN: mustBucketARN(t),
+		Namespace:      []string{"ns"},
+		Name:           "newt",
+		Format:         FormatIceberg,
+	})
+	assert.Equal(t, http.StatusOK, status, "the name must take a create once the claim is gone: %+v", resp)
+}
+
+// An update that moves a decoupled table's MetadataLocation between the
+// delete's authorized read and the read its claim and purge run on must turn
+// the delete into a conflict: the purge otherwise empties the stale directory
+// and unmarks a record whose data lives somewhere else entirely.
+func TestDeleteTableDecoupledLosesToMovedLocation(t *testing.T) {
+	fs, m := startRenameManager(t)
+
+	nsPath := GetNamespacePath(renameTestBucket, "ns")
+	metaA, _ := json.Marshal(tableMetadataInternal{
+		Name:             "mv",
+		Namespace:        "ns",
+		Format:           "ICEBERG",
+		OwnerAccountID:   DefaultAccountID,
+		MetadataLocation: "s3://" + renameTestBucket + "/ns/mv-a/metadata/v1.metadata.json",
+	})
+	metaB, _ := json.Marshal(tableMetadataInternal{
+		Name:             "mv",
+		Namespace:        "ns",
+		Format:           "ICEBERG",
+		OwnerAccountID:   DefaultAccountID,
+		MetadataLocation: "s3://" + renameTestBucket + "/ns/mv-b/metadata/v1.metadata.json",
+	})
+	fs.Put(nsPath, "mv", map[string][]byte{
+		ExtendedKeyMetadata:  metaA,
+		ExtendedKeyEntryType: []byte(EntryTypeTable),
+	})
+	fs.Put(GetTablePath(renameTestBucket, "ns", "mv-a"), "data", nil)
+	fs.Put(GetTablePath(renameTestBucket, "ns", "mv-b"), "data", nil)
+
+	// The first read of the marker is the authorized one; land the update's
+	// write in front of the read the claim and purge run on.
+	lookups := 0
+	fs.OnLookup = func(dir, name string) {
+		if dir != nsPath || name != "mv" {
+			return
+		}
+		lookups++
+		if lookups > 1 {
+			fs.OnLookup = nil
+			fs.Put(nsPath, "mv", map[string][]byte{
+				ExtendedKeyMetadata:  metaB,
+				ExtendedKeyEntryType: []byte(EntryTypeTable),
+			})
+		}
+	}
+
+	status, resp := runHandler(t, m, fs.Client, "DeleteTable", &DeleteTableRequest{
+		TableBucketARN: mustBucketARN(t),
+		Namespace:      []string{"ns"},
+		Name:           "mv",
+	})
+	assert.Equal(t, http.StatusConflict, status)
+	assert.Equal(t, ErrCodeConflict, resp.Type)
+
+	assert.NotNil(t, fs.Get(GetTablePath(renameTestBucket, "ns", "mv-a"), "data"),
+		"the stale location's data must survive")
+	assert.NotNil(t, fs.Get(GetTablePath(renameTestBucket, "ns", "mv-b"), "data"),
+		"the live location's data must survive")
+	rec := fs.Get(nsPath, "mv")
+	require.NotNil(t, rec)
+	assert.Equal(t, metaB, rec.Extended[ExtendedKeyMetadata])
+	assert.NotContains(t, rec.Extended, ExtendedKeyDeleting, "a refused delete must not leave a claim")
+}
+
 // A table whose MetadataLocation resolves to an ancestor of its own name path
 // (here the namespace root, e.g. from corrupt metadata) must not be deleted: a
 // recursive purge of that data path would wipe sibling tables. The delete is
@@ -321,5 +423,68 @@ func TestRenameTableLosesToDeleteClaim(t *testing.T) {
 	src := fs.Get(nsPath, "t")
 	require.NotNil(t, src)
 	assert.NotNil(t, src.Extended[ExtendedKeyMetadata], "the claimed source record must survive")
+	assert.NotNil(t, fs.Get(GetTablePath(renameTestBucket, "ns", "t"), "data"))
+}
+
+// A no-token delete that meets a record claimed by a rename loses to it: the
+// claim is what keeps the rename's destination from pointing at purged data.
+func TestDeleteTableLosesToRenameClaim(t *testing.T) {
+	fs, m := startRenameManager(t)
+
+	nsPath := GetNamespacePath(renameTestBucket, "ns")
+	e := fs.Get(nsPath, "t")
+	claimed := map[string][]byte{}
+	for k, v := range e.Extended {
+		claimed[k] = v
+	}
+	claimed[ExtendedKeyDeleting] = []byte("rename")
+	fs.Put(nsPath, "t", claimed)
+
+	status, resp := runHandler(t, m, fs.Client, "DeleteTable", &DeleteTableRequest{
+		TableBucketARN: mustBucketARN(t),
+		Namespace:      []string{"ns"},
+		Name:           "t",
+	})
+	assert.Equal(t, http.StatusConflict, status)
+	assert.Equal(t, ErrCodeConflict, resp.Type)
+
+	src := fs.Get(nsPath, "t")
+	require.NotNil(t, src)
+	assert.NotNil(t, src.Extended[ExtendedKeyMetadata], "the claimed record must survive")
+	assert.NotNil(t, fs.Get(GetTablePath(renameTestBucket, "ns", "t"), "data"))
+}
+
+// The token delete takes its snapshot after the rename's claim landed; it must
+// still refuse the claimed record rather than deleting it.
+func TestDeleteTableTokenLosesToRenameClaim(t *testing.T) {
+	fs, m := startRenameManager(t)
+
+	nsPath := GetNamespacePath(renameTestBucket, "ns")
+	e := fs.Get(nsPath, "t")
+	claimed := map[string][]byte{}
+	for k, v := range e.Extended {
+		claimed[k] = v
+	}
+	var meta tableMetadataInternal
+	require.NoError(t, json.Unmarshal(claimed[ExtendedKeyMetadata], &meta))
+	meta.VersionToken = "tok"
+	metaBytes, err := json.Marshal(&meta)
+	require.NoError(t, err)
+	claimed[ExtendedKeyMetadata] = metaBytes
+	claimed[ExtendedKeyDeleting] = []byte("rename")
+	fs.Put(nsPath, "t", claimed)
+
+	status, resp := runHandler(t, m, fs.Client, "DeleteTable", &DeleteTableRequest{
+		TableBucketARN: mustBucketARN(t),
+		Namespace:      []string{"ns"},
+		Name:           "t",
+		VersionToken:   "tok",
+	})
+	assert.Equal(t, http.StatusConflict, status)
+	assert.Equal(t, ErrCodeConflict, resp.Type)
+
+	src := fs.Get(nsPath, "t")
+	require.NotNil(t, src)
+	assert.NotNil(t, src.Extended[ExtendedKeyMetadata], "the claimed record must survive")
 	assert.NotNil(t, fs.Get(GetTablePath(renameTestBucket, "ns", "t"), "data"))
 }

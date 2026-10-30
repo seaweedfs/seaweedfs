@@ -1,6 +1,7 @@
 package s3tables
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
@@ -83,6 +85,9 @@ func (h *S3TablesHandler) handleCreateView(w http.ResponseWriter, r *http.Reques
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create view in this namespace")
 		return ErrAccessDenied
 	}
+	if err := h.refuseClaimedNamespace(w, r, filerClient, namespacePath, namespaceName); err != nil {
+		return err
+	}
 
 	viewPath := GetTablePath(bucketName, namespaceName, viewName)
 
@@ -93,6 +98,11 @@ func (h *S3TablesHandler) handleCreateView(w http.ResponseWriter, r *http.Reques
 		entry, err := h.lookupEntry(r.Context(), client, viewPath)
 		if err != nil {
 			return err
+		}
+		if isUnfinishedCreate(entry.Extended) {
+			// Another create wrote this record and may still back it out, so
+			// it is not an existing view; the claim below refuses the name.
+			return filer_pb.ErrNotFound
 		}
 		if EntryType(entry.Extended) != EntryTypeView {
 			existingIsTable = true
@@ -151,14 +161,26 @@ func (h *S3TablesHandler) handleCreateView(w http.ResponseWriter, r *http.Reques
 		if err := h.ensureDirectory(r.Context(), client, viewPath); err != nil {
 			return err
 		}
-		return h.claimCatalogEntry(r.Context(), client, viewPath, map[string][]byte{
+		attrs := map[string][]byte{
 			ExtendedKeyMetadata:  metadataBytes,
 			ExtendedKeyEntryType: []byte(EntryTypeView),
-		})
+			ExtendedKeyDeleting:  []byte(createClaim),
+		}
+		if err := h.claimCatalogEntry(r.Context(), client, viewPath, attrs); err != nil {
+			return err
+		}
+		return h.confirmParent(r.Context(), client, namespacePath, isNamespaceEntry, viewPath, attrs, viewPath)
 	})
 	if err != nil {
 		if errors.Is(err, ErrNameTaken) {
 			h.writeError(w, http.StatusConflict, ErrCodeViewAlreadyExists, fmt.Sprintf("view %s already exists", viewName))
+			return err
+		}
+		if errors.Is(err, ErrConcurrentUpdate) {
+			h.writeError(w, http.StatusConflict, ErrCodeConflict, "view changed during create, retry the request")
+			return err
+		}
+		if h.writeNamespaceClosedError(w, err, namespaceName) {
 			return err
 		}
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to create view")
@@ -195,7 +217,9 @@ func (h *S3TablesHandler) handleGetView(w http.ResponseWriter, r *http.Request, 
 		if err != nil {
 			return err
 		}
-		if EntryType(entry.Extended) != EntryTypeView {
+		// A view whose create has not confirmed its namespace may still be
+		// backed out, so it is reported absent.
+		if EntryType(entry.Extended) != EntryTypeView || isUnfinishedCreate(entry.Extended) {
 			return filer_pb.ErrNotFound
 		}
 		data, ok := entry.Extended[ExtendedKeyMetadata]
@@ -369,8 +393,9 @@ func (h *S3TablesHandler) listViewsInNamespace(r *http.Request, client filer_pb.
 			if prefix != "" && !strings.HasPrefix(entry.Entry.Name, prefix) {
 				continue
 			}
-			// Only include view entries; skip tables and untagged entries.
-			if EntryType(entry.Entry.Extended) != EntryTypeView {
+			// Only include view entries; skip tables, untagged entries, and a
+			// record its create has not confirmed.
+			if EntryType(entry.Entry.Extended) != EntryTypeView || isUnfinishedCreate(entry.Entry.Extended) {
 				continue
 			}
 			data, ok := entry.Entry.Extended[ExtendedKeyMetadata]
@@ -440,7 +465,7 @@ func (h *S3TablesHandler) authorizeUpdateView(w http.ResponseWriter, r *http.Req
 		if err != nil {
 			return err
 		}
-		if EntryType(entry.Extended) != EntryTypeView {
+		if EntryType(entry.Extended) != EntryTypeView || isUnfinishedCreate(entry.Extended) {
 			return filer_pb.ErrNotFound
 		}
 		data, ok := entry.Extended[ExtendedKeyMetadata]
@@ -534,9 +559,20 @@ func (h *S3TablesHandler) handleUpdateView(w http.ResponseWriter, r *http.Reques
 	}
 
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return h.setExtendedAttribute(r.Context(), client, viewPath, ExtendedKeyMetadata, metadataBytes)
+		return h.mutateCatalogRecord(r.Context(), client, viewPath, func(extended map[string][]byte) error {
+			extended[ExtendedKeyMetadata] = metadataBytes
+			return nil
+		})
 	})
 	if err != nil {
+		if errors.Is(err, ErrConcurrentUpdate) {
+			h.writeError(w, http.StatusConflict, ErrCodeConflict, "view changed concurrently, retry the request")
+			return err
+		}
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchView, fmt.Sprintf("view %s not found", target.viewName))
+			return err
+		}
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to update metadata")
 		return err
 	}
@@ -547,6 +583,26 @@ func (h *S3TablesHandler) handleUpdateView(w http.ResponseWriter, r *http.Reques
 		VersionToken:     metadata.VersionToken,
 	})
 	return nil
+}
+
+// completedViewMetadata returns entry's metadata if it is a view whose create
+// has finished, checking token against it when token is set.
+func completedViewMetadata(entry *filer_pb.Entry, token string) (tableMetadataInternal, error) {
+	var metadata tableMetadataInternal
+	if EntryType(entry.Extended) != EntryTypeView || isUnfinishedCreate(entry.Extended) {
+		return metadata, filer_pb.ErrNotFound
+	}
+	data, ok := entry.Extended[ExtendedKeyMetadata]
+	if !ok {
+		return metadata, fmt.Errorf("%w: %s", ErrAttributeNotFound, ExtendedKeyMetadata)
+	}
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		return metadata, err
+	}
+	if token != "" && metadata.VersionToken != token {
+		return metadata, ErrVersionTokenMismatch
+	}
+	return metadata, nil
 }
 
 // handleDeleteView deletes a view.
@@ -570,20 +626,8 @@ func (h *S3TablesHandler) handleDeleteView(w http.ResponseWriter, r *http.Reques
 		if err != nil {
 			return err
 		}
-		if EntryType(entry.Extended) != EntryTypeView {
-			return filer_pb.ErrNotFound
-		}
-		data, ok := entry.Extended[ExtendedKeyMetadata]
-		if !ok {
-			return fmt.Errorf("%w: %s", ErrAttributeNotFound, ExtendedKeyMetadata)
-		}
-		if err := json.Unmarshal(data, &metadata); err != nil {
-			return err
-		}
-		if req.VersionToken != "" && metadata.VersionToken != req.VersionToken {
-			return ErrVersionTokenMismatch
-		}
-		return nil
+		metadata, err = completedViewMetadata(entry, req.VersionToken)
+		return err
 	})
 	if err != nil {
 		if errors.Is(err, filer_pb.ErrNotFound) {
@@ -609,9 +653,44 @@ func (h *S3TablesHandler) handleDeleteView(w http.ResponseWriter, r *http.Reques
 	}
 
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return h.deleteDirectory(r.Context(), client, viewPath)
+		entry, err := h.lookupEntry(r.Context(), client, viewPath)
+		if err != nil {
+			return err
+		}
+		current, err := completedViewMetadata(entry, req.VersionToken)
+		if err != nil {
+			return err
+		}
+		// Authorization ran on the first read; only that same record may be deleted.
+		if current.VersionToken != metadata.VersionToken {
+			return ErrConcurrentUpdate
+		}
+		claimed := snapshotExtended(entry.Extended)
+		claimed[ExtendedKeyDeleting] = []byte("delete")
+		if err := h.claimCatalogRecord(r.Context(), client, viewPath, snapshotExtended(entry.Extended), "delete"); err != nil {
+			return err
+		}
+		if err := h.deleteDirectoryIfMatches(r.Context(), client, viewPath, &filer_pb.Entry{Extended: claimed}); err != nil {
+			if relErr := h.releaseCatalogRecord(context.WithoutCancel(r.Context()), client, viewPath, claimed); relErr != nil {
+				glog.Warningf("delete view %s: release claim: %v", viewPath, relErr)
+			}
+			return err
+		}
+		return nil
 	})
 	if err != nil {
+		if errors.Is(err, ErrConcurrentUpdate) {
+			h.writeError(w, http.StatusConflict, ErrCodeConflict, "view changed during delete, retry the request")
+			return err
+		}
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchView, fmt.Sprintf("view %s not found", viewName))
+			return err
+		}
+		if errors.Is(err, ErrVersionTokenMismatch) {
+			h.writeError(w, http.StatusConflict, ErrCodeConflict, "version token mismatch")
+			return err
+		}
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to delete view")
 		return err
 	}

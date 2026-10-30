@@ -168,6 +168,67 @@ func TestRenameTableDestNamespaceMissing(t *testing.T) {
 	assert.NotNil(t, fs.Get(GetNamespacePath(renameTestBucket, "ns"), "t"), "source must be untouched")
 }
 
+// A delete that purges the source between the rename's read and its claim loses
+// the source, not the destination namespace — the answer must name the table.
+func TestRenameTableSourceDeletedMidRename(t *testing.T) {
+	fs, m := startRenameManager(t)
+
+	nsPath := GetNamespacePath(renameTestBucket, "ns")
+	fs.BeforeUpdate = func() {
+		_, _ = fs.Client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
+			Directory:    nsPath,
+			Name:         "t",
+			IsRecursive:  true,
+			IsDeleteData: true,
+		})
+	}
+
+	err := runRename(t, m, fs, &RenameTableRequest{
+		TableBucketARN:  mustBucketARN(t),
+		SourceNamespace: []string{"ns"},
+		SourceName:      "t",
+		DestNamespace:   []string{"ns"},
+		DestName:        "t2",
+	})
+	require.Error(t, err)
+	var s3Err *S3TablesError
+	require.ErrorAs(t, err, &s3Err)
+	assert.Equal(t, ErrCodeNoSuchTable, s3Err.Type)
+	assert.Nil(t, fs.Get(nsPath, "t2"), "a failed rename must not publish the destination")
+}
+
+// A source that vanishes after the destination is claimed must not leave the
+// destination behind: the failed rename removes the marked record on the way
+// out, before it is ever published.
+func TestRenameTableBacksOutConfirmedDest(t *testing.T) {
+	fs, m := startRenameManager(t)
+
+	nsPath := GetNamespacePath(renameTestBucket, "ns")
+	fs.OnUpdate = func(dir, name string) {
+		if dir == nsPath && name == "t2" {
+			_, _ = fs.Client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
+				Directory:    nsPath,
+				Name:         "t",
+				IsRecursive:  true,
+				IsDeleteData: true,
+			})
+		}
+	}
+
+	err := runRename(t, m, fs, &RenameTableRequest{
+		TableBucketARN:  mustBucketARN(t),
+		SourceNamespace: []string{"ns"},
+		SourceName:      "t",
+		DestNamespace:   []string{"ns"},
+		DestName:        "t2",
+	})
+	require.Error(t, err)
+	var s3Err *S3TablesError
+	require.ErrorAs(t, err, &s3Err)
+	assert.Equal(t, ErrCodeNoSuchTable, s3Err.Type)
+	assert.Nil(t, fs.Get(nsPath, "t2"), "a failed rename must not leave the claimed destination behind")
+}
+
 // A principal allowed to rename the source must still be denied when it cannot
 // create a table in the destination namespace. The denial reports the same
 // not-found as a missing destination namespace so the caller cannot probe for
