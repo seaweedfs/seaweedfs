@@ -74,9 +74,10 @@ global:
       #     name: seaweedfs-signing-key
       #     key: signingKey
 
-# Deploy every object into this existing namespace instead of the release one.
-# Changing it on an installed release moves every object, so claims and the
-# data behind them are left behind or deleted; migrate them by hand first.
+# Deploy every namespaced object into this existing namespace instead of the
+# release one. Changing it on an installed release moves every namespaced
+# object, so claims and the data behind them are left behind or deleted;
+# migrate them by hand first.
 namespaceOverride: ""
 
 image:

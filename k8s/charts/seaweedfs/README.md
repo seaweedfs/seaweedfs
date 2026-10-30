@@ -547,7 +547,7 @@ helm install seaweedfs-worker-balance seaweedfs/seaweedfs -f values-worker-balan
 
 ## Deploying into another namespace
 
-`namespaceOverride` deploys every object into an existing namespace other than the release namespace, for instance when the chart is a subchart. In-cluster addresses follow it. Set it before the first install: changing it later moves every object, and claims plus the data behind them do not move with them.
+`namespaceOverride` deploys every namespaced object into an existing namespace other than the release namespace, for instance when the chart is a subchart. In-cluster addresses follow it. Set it before the first install: changing it later moves every namespaced object, and claims plus the data behind them do not move with them.
 
 ## Gateway API
 
