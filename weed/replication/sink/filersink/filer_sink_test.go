@@ -61,6 +61,17 @@ func dstEntry(mtime int64, srcFids ...string) *filer_pb.Entry {
 	return e
 }
 
+// inlineEntry builds a chunk-less entry at mtime holding its bytes in Content —
+// the small-file layout, where chunk comparisons alone cannot tell versions apart.
+func inlineEntry(mtime int64, content string) *filer_pb.Entry {
+	return &filer_pb.Entry{Attributes: &filer_pb.FuseAttributes{Mtime: mtime}, Content: []byte(content)}
+}
+
+func extEntry(e *filer_pb.Entry, k, v string) *filer_pb.Entry {
+	e.Extended = map[string][]byte{k: []byte(v)}
+	return e
+}
+
 // ivEntry builds an entry at mtime with chunks at the given [offset,end) byte
 // ranges — for coverage/containment tests where exact ranges matter.
 func ivEntry(mtime int64, ivs ...[2]int64) *filer_pb.Entry {
@@ -243,11 +254,77 @@ func TestDestinationSatisfiesSource(t *testing.T) {
 		// out-of-order: newer (smaller) destination must not be rolled back by an
 		// older, larger source replay.
 		{"newer smaller dest, older larger source -> skip", ivEntry(300, [2]int64{0, 5}), ivEntry(100, [2]int64{0, 10}), true},
+		// chunk-less inline files: identical chunk lists must not hide changed bytes
+		{"inline same -> skip", inlineEntry(200, "x"), inlineEntry(200, "x"), true},
+		{"inline different, dest older -> replicate", inlineEntry(200, "x"), inlineEntry(300, "y"), false},
+		{"inline different, equal mtime -> replicate", inlineEntry(200, "x"), inlineEntry(200, "y"), false},
+		{"inline different, dest newer -> skip", inlineEntry(300, "x"), inlineEntry(200, "y"), true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := destinationSatisfiesSource(tc.existing, tc.incoming); got != tc.want {
 				t.Fatalf("destinationSatisfiesSource = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// destinationHoldsContent gates CreateEntryLatest's skip: the resolved entry is
+// the picked current version, so a newer destination mtime must not keep the
+// replaced copy — only provably identical content skips.
+func TestDestinationHoldsContent(t *testing.T) {
+	md5A := []byte("0123456789abcdef")
+	md5B := []byte("fedcba9876543210")
+	cases := []struct {
+		name               string
+		existing, incoming *filer_pb.Entry
+		want               bool
+	}{
+		{"nil existing", nil, entryChunks(200, 4), false},
+		{"identical -> skip", entryChunks(200, 4), entryChunks(200, 4), true},
+		{"in-sync (fast path) -> skip", dstEntry(200, "A", "B"), srcEntry(200, "A", "B"), true},
+		{"md5 equal and complete -> skip", entryMd5(200, 4, md5A), entryMd5(200, 4, md5A), true},
+		{"truncated (no md5) -> write", entryChunks(200, 2), entryChunks(200, 4), false},
+		{"md5-backed truncated -> write", entryMd5(200, 2, md5A), entryMd5(200, 4, md5A), false},
+		// the resolved write installs an older version over the deleted latest's
+		// newer copy: different content must be replaced regardless of mtime
+		{"complete, dest newer, different -> write", entryMd5(300, 4, md5A), entryMd5(200, 4, md5B), false},
+		{"newer smaller dest -> write", ivEntry(300, [2]int64{0, 5}), ivEntry(100, [2]int64{0, 10}), false},
+		{"equal-mtime different -> write", entryMd5(200, 4, md5A), entryMd5(200, 4, md5B), false},
+		// chunk-less inline files: matching on the empty chunk lists would keep
+		// the previous version's bytes — only identical inline content may skip
+		{"inline same -> skip", inlineEntry(200, "x"), inlineEntry(200, "x"), true},
+		{"inline different -> write", inlineEntry(200, "x"), inlineEntry(200, "y"), false},
+		{"inline different, dest newer -> write", inlineEntry(300, "x"), inlineEntry(200, "y"), false},
+		{"inline vs empty -> write", inlineEntry(200, "x"), entry(200, 0), false},
+		// identical content is not enough: a skip keeps the stored metadata, so a
+		// stale writable attribute or extended entry must force the rewrite
+		{"same chunks, different mtime -> write", dstEntry(300, "A", "B"), srcEntry(200, "A", "B"), false},
+		{"same chunks, stale tag -> write", extEntry(dstEntry(200, "A", "B"), "k", "v1"), extEntry(srcEntry(200, "A", "B"), "k", "v2"), false},
+		{"same chunks, same tag -> skip", extEntry(dstEntry(200, "A", "B"), "k", "v"), extEntry(srcEntry(200, "A", "B"), "k", "v"), true},
+		{"same chunks, renamed empty tag -> write", extEntry(dstEntry(200, "A", "B"), "a", ""), extEntry(srcEntry(200, "A", "B"), "b", ""), false},
+		{"same chunks, same empty tag -> skip", extEntry(dstEntry(200, "A", "B"), "a", ""), extEntry(srcEntry(200, "A", "B"), "a", ""), true},
+		{"same chunks, stale uid -> write", func() *filer_pb.Entry { e := dstEntry(200, "A", "B"); e.Attributes.Uid = 1; return e }(), srcEntry(200, "A", "B"), false},
+		// a TTL-less write inherits the destination's storage-rule TTL, so a
+		// stored rule TTL is one a rewrite reproduces — only an explicit TTL
+		// mismatch forces it
+		{"same chunks, rule ttl -> skip", func() *filer_pb.Entry { e := dstEntry(200, "A", "B"); e.Attributes.TtlSec = 60; return e }(), srcEntry(200, "A", "B"), true},
+		{"same chunks, ttl mismatch -> write", func() *filer_pb.Entry { e := dstEntry(200, "A", "B"); e.Attributes.TtlSec = 60; return e }(), func() *filer_pb.Entry { e := srcEntry(200, "A", "B"); e.Attributes.TtlSec = 30; return e }(), false},
+		// fields a rewrite cannot change must not block the skip: inode/crtime are
+		// filer-assigned or preserved, and a stored atime/ctime defaults to mtime
+		{"assigned fields differ -> skip", func() *filer_pb.Entry {
+			e := dstEntry(200, "A", "B")
+			e.Attributes.Inode = 42
+			e.Attributes.Crtime = 999
+			e.Attributes.Atime = 200
+			e.Attributes.Ctime = 200
+			return e
+		}(), srcEntry(200, "A", "B"), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := destinationHoldsContent(tc.existing, tc.incoming); got != tc.want {
+				t.Fatalf("destinationHoldsContent = %v, want %v", got, tc.want)
 			}
 		})
 	}
@@ -280,6 +357,10 @@ func TestDestinationMatchesReference(t *testing.T) {
 			&filer_pb.Entry{Attributes: &filer_pb.FuseAttributes{Mtime: 0}, Chunks: []*filer_pb.FileChunk{
 				{FileId: "dst", SourceFileId: "A", Offset: 0, Size: 2},
 			}}, srcEntry(0, "A"), false},
+		// equal chunk lists are not enough when content lives outside chunks
+		{"inline same", inlineEntry(0, "x"), inlineEntry(0, "x"), true},
+		{"inline different", inlineEntry(0, "x"), inlineEntry(0, "y"), false},
+		{"inline vs none", inlineEntry(0, "x"), srcEntry(0), false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

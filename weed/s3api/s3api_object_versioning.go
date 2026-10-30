@@ -2121,6 +2121,13 @@ func (s3a *S3ApiServer) recoverLatestVersionWithoutPointer(bucket, normalizedObj
 	return nil, fmt.Errorf("no version metadata in .versions directory and no regular object found for %s/%s: %w", bucket, normalizedObject, filer_pb.ErrNotFound)
 }
 
+// VersionIdFromEntry exposes versionIdFromEntry to callers outside this
+// package that resolve version files the same way (e.g. filer.backup's
+// flattener rescanning .versions).
+func VersionIdFromEntry(entry *filer_pb.Entry) string {
+	return versionIdFromEntry(entry)
+}
+
 // versionIdFromEntry returns a .versions child entry's version id, preferring
 // the Seaweed-X-Amz-Version-Id attribute and falling back to the v_<versionId>
 // file name so entries written outside the normal PUT path still self-heal.

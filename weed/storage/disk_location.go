@@ -63,7 +63,9 @@ type DiskLocation struct {
 	// loadGuard serializes a volume's load-and-register against an in-flight
 	// VolumeCopy of the same id on the server. When set, the hook runs before
 	// any file cleanup in loadExistingVolume and its release is held through
-	// SetVolume; a skipped vid is left for the next pass.
+	// SetVolume; a skipped vid is left for the next pass. An explicit mount
+	// is the claim holder's own load and passes ownLoad instead: its hold on
+	// the guard already serializes it, and consulting the hook would skip it.
 	loadGuard func(vid needle.VolumeId) (release func(), skip bool)
 
 	isDiskSpaceLow    atomic.Bool
@@ -245,7 +247,7 @@ func vifIsEcVolume(vifPath string) bool {
 	return err == nil && vi.GetEcShardConfig() != nil
 }
 
-func (l *DiskLocation) loadExistingVolume(basename string, needleMapKind NeedleMapKind, skipIfEcVolumesExists bool, ldbTimeout int64, diskId uint32, claimHeld bool) bool {
+func (l *DiskLocation) loadExistingVolume(basename string, needleMapKind NeedleMapKind, skipIfEcVolumesExists bool, ldbTimeout int64, diskId uint32, ownLoad bool) bool {
 	volumeName := getValidVolumeName(basename)
 	if volumeName == "" {
 		return false
@@ -262,9 +264,9 @@ func (l *DiskLocation) loadExistingVolume(basename string, needleMapKind NeedleM
 	// unlink files it is still writing, and a register here could slip past
 	// its own recheck. Skip the volume while a copy owns it and hold the
 	// guard through registration so the copy's recheck either sees the
-	// volume (and aborts) or runs first. A caller already holding the claim
-	// (claimHeld) is the owner itself and must not skip its own load.
-	if l.loadGuard != nil && !claimHeld {
+	// volume (and aborts) or runs first. The claim holder's own load skips
+	// the consult; its hold on the guard is the serialization.
+	if l.loadGuard != nil && !ownLoad {
 		release, skip := l.loadGuard(vid)
 		if skip {
 			return false
@@ -490,9 +492,24 @@ func (l *DiskLocation) reconcileCompactStates() {
 		if loaded {
 			continue
 		}
+		// A VolumeCopy of this id can be mid-flight at the same basenames:
+		// rolling a leftover commit forward would rename compaction temps
+		// over the files it is writing. Same skip the load path takes; a
+		// later pass reconciles the leftover.
+		var release func()
+		if l.loadGuard != nil {
+			var skip bool
+			release, skip = l.loadGuard(k.vid)
+			if skip {
+				continue
+			}
+		}
 		v := &Volume{dir: l.Directory, dirIdx: l.IdxDirectory, Collection: k.collection, Id: k.vid}
 		if err := v.reconcileCompactState(); err != nil {
 			glog.Errorf("volume %d: reconcile interrupted compaction failed: %v", k.vid, err)
+		}
+		if release != nil {
+			release()
 		}
 	}
 }
@@ -569,17 +586,17 @@ func (l *DiskLocation) deleteVolumeById(vid needle.VolumeId, onlyEmpty bool, onl
 	return
 }
 
-func (l *DiskLocation) LoadVolume(diskId uint32, vid needle.VolumeId, needleMapKind NeedleMapKind, collection *string, claimHeld bool) bool {
+func (l *DiskLocation) LoadVolume(diskId uint32, vid needle.VolumeId, needleMapKind NeedleMapKind, collection *string, ownLoad bool) bool {
 	if collection != nil {
 		for _, ext := range []string{".vif", ".idx"} {
 			filename := VolumeFileName(l.Directory, *collection, int(vid)) + ext
 			if fi, err := os.Stat(filename); err == nil && !fi.IsDir() {
-				return l.loadExistingVolume(fi.Name(), needleMapKind, false, 0, diskId, claimHeld)
+				return l.loadExistingVolume(fi.Name(), needleMapKind, false, 0, diskId, ownLoad)
 			}
 		}
 	}
 	if fileInfo, found := l.LocateVolume(vid); found {
-		return l.loadExistingVolume(fileInfo.Name(), needleMapKind, false, 0, diskId, claimHeld)
+		return l.loadExistingVolume(fileInfo.Name(), needleMapKind, false, 0, diskId, ownLoad)
 	}
 	return false
 }

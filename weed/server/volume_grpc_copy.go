@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -30,16 +31,32 @@ import (
 
 const BufferSizeLimit = 1024 * 1024 * 2
 
-// volumeLoadGuard is the storage-layer hook for volume loads: a vid whose
-// claim any registration already holds is skipped this pass, otherwise the
-// claim is taken and the returned release drops it after the load registers
-// — whichever side claims the id first owns the volume's files for the
-// operation.
+// volumeCopyGuard serializes a copy's registration recheck and file
+// clearing against mounts and configures of the same volume.
+type volumeCopyGuard struct {
+	sync.Mutex
+	copying bool
+}
+
+func (vs *VolumeServer) volumeCopyGuard(volumeId uint32) *volumeCopyGuard {
+	guard, _ := vs.volumeCopyGuards.LoadOrStore(volumeId, &volumeCopyGuard{})
+	return guard.(*volumeCopyGuard)
+}
+
+// volumeLoadGuard is the storage-layer hook for volume loads: a vid with a
+// copy in flight is skipped, otherwise the returned release keeps the load's
+// registration ordered against the copy's own recheck. A copy holding the
+// guard means the same skip.
 func (vs *VolumeServer) volumeLoadGuard(vid needle.VolumeId) (func(), bool) {
-	if _, loaded := vs.volumeCopiesInFlight.LoadOrStore(uint32(vid), struct{}{}); loaded {
+	guard := vs.volumeCopyGuard(uint32(vid))
+	if !guard.TryLock() {
 		return func() {}, true
 	}
-	return func() { vs.volumeCopiesInFlight.Delete(uint32(vid)) }, false
+	if guard.copying {
+		guard.Unlock()
+		return func() {}, true
+	}
+	return guard.Unlock, false
 }
 
 // VolumeCopy copy the .idx .dat .vif files, and mount the volume
@@ -59,10 +76,19 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 	// One copy of a volume at a time: the staged file names are fixed per
 	// volume, so a racing second copy would overwrite the files this copy
 	// still owns. Retryable once the in-flight copy settles.
-	if _, loaded := vs.volumeCopiesInFlight.LoadOrStore(req.VolumeId, struct{}{}); loaded {
+	guard := vs.volumeCopyGuard(req.VolumeId)
+	guard.Lock()
+	if guard.copying {
+		guard.Unlock()
 		return status.Errorf(codes.Unavailable, "volume %d is already being copied", req.VolumeId)
 	}
-	defer vs.volumeCopiesInFlight.Delete(req.VolumeId)
+	guard.copying = true
+	guard.Unlock()
+	defer func() {
+		guard.Lock()
+		guard.copying = false
+		guard.Unlock()
+	}()
 
 	// A pre-existing local replica is NOT deleted up front. Deleting before the
 	// source is confirmed reachable destroys a healthy copy on a transient
@@ -194,6 +220,11 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 				os.Remove(stagedIdxFileName)
 				os.Remove(stagedVifFileName)
 				os.Remove(stagedVifFileName + ".copying")
+				if dataBaseFileName != "" {
+					// A .note only marks an in-flight copy; a partial write
+					// must not be left to fail the next volume load.
+					os.Remove(dataBaseFileName + ".note")
+				}
 				// Zero before the outer defer sees the same error, or the
 				// charge would be released twice.
 				vs.store.ReleaseFreeLocation(location, copyReservedSpace)

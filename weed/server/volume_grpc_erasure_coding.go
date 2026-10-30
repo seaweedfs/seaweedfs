@@ -1392,11 +1392,13 @@ func (vs *VolumeServer) adoptStagedVolume(req *volume_server_pb.VolumeEcShardsTo
 
 	// Same window as VolumeMount: the renames and the mount below register
 	// the volume, and an in-flight copy of it rewrites the destination
-	// files. The claim covers the whole adoption.
-	if _, loaded := vs.volumeCopiesInFlight.LoadOrStore(req.VolumeId, struct{}{}); loaded {
+	// files. The check shares the copy's guard through the mount.
+	guard := vs.volumeCopyGuard(req.VolumeId)
+	guard.Lock()
+	defer guard.Unlock()
+	if guard.copying {
 		return nil, status.Errorf(codes.Unavailable, "volume %d is being copied", req.VolumeId)
 	}
-	defer vs.volumeCopiesInFlight.Delete(req.VolumeId)
 
 	if vs.store.GetVolume(vid) != nil {
 		return nil, fmt.Errorf("staged volume %d already exists on this server", req.VolumeId)
