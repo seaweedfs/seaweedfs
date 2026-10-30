@@ -333,7 +333,7 @@ func TestBackupCheckpointIds_NoAliasing(t *testing.T) {
 	}
 }
 
-// Toggling -s3FlattenVersions must not resume the other mode's checkpoint:
+// Toggling -s3.flattenVersions must not resume the other mode's checkpoint:
 // switching modes needs a fresh snapshot, not a mid-stream resume.
 func TestBackupCheckpointIds_FlattenModeDistinct(t *testing.T) {
 	s := &stubSink{name: "s3", dir: "/", destination: "endpoint|bucket|/"}

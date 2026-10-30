@@ -68,7 +68,7 @@ func init() {
 	filerBackupOptions.ignore404Error = cmdFilerBackup.Flag.Bool("ignore404Error", true, "ignore 404 errors from filer")
 	filerBackupOptions.initialSnapshot = cmdFilerBackup.Flag.Bool("initialSnapshot", false, "before subscribing to metadata updates, walk the live filer tree under -filerPath and seed the destination, then subscribe from the walk-start timestamp so concurrent changes are still captured. Runs on every start when -timeAgo is 0 and overwrites the saved checkpoint, so it also re-seeds a reinitialized destination. Remove it once the backup is caught up, otherwise it re-walks the whole tree on each restart.")
 	filerBackupOptions.concurrency = cmdFilerBackup.Flag.Int("concurrency", DefaultConcurrencyLimit, "the maximum number of files that will be backed up concurrently.")
-	filerBackupOptions.s3FlattenVersions = cmdFilerBackup.Flag.Bool("s3FlattenVersions", false, "mirror the current S3 view of versioned buckets: under each <key>.versions directory only the latest version is written to <key>, a latest delete marker or the removal of the last version deletes <key> when -doDeleteFiles is set, and version files are not mirrored individually")
+	filerBackupOptions.s3FlattenVersions = cmdFilerBackup.Flag.Bool("s3.flattenVersions", false, "mirror the current S3 view of versioned buckets: under each <key>.versions directory only the latest version is written to <key>, a latest delete marker or the removal of the last version deletes <key> when -doDeleteFiles is set, and version files are not mirrored individually")
 }
 
 var cmdFilerBackup = &Command{
