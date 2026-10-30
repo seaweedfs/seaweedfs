@@ -33,8 +33,10 @@ const (
 	ExtendedKeyMaintenanceStatus = s3_constants.ExtS3TablesPrefix + "maintenanceStatus"
 	ExtendedKeyEntryType         = s3_constants.ExtS3TablesPrefix + "entryType"
 	// ExtendedKeyDeleting marks a catalog record claimed by an in-flight
-	// delete or rename, so the claim survives until the operation finishes
-	// or releases it.
+	// create, delete or rename, so the claim survives until the operation
+	// finishes or releases it. A table carries "create", "delete" or "rename";
+	// a namespace being deleted carries the random claim token written by
+	// claimForDelete.
 	ExtendedKeyDeleting = s3_constants.ExtS3TablesPrefix + "deleting"
 
 	// ExtendedKeyVectorPolicy is written by the S3 Vectors service on table

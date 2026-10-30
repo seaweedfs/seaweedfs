@@ -83,6 +83,9 @@ func (h *S3TablesHandler) handleCreateView(w http.ResponseWriter, r *http.Reques
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create view in this namespace")
 		return ErrAccessDenied
 	}
+	if err := h.refuseClaimedNamespace(w, r, filerClient, namespacePath, namespaceName); err != nil {
+		return err
+	}
 
 	viewPath := GetTablePath(bucketName, namespaceName, viewName)
 
@@ -93,6 +96,11 @@ func (h *S3TablesHandler) handleCreateView(w http.ResponseWriter, r *http.Reques
 		entry, err := h.lookupEntry(r.Context(), client, viewPath)
 		if err != nil {
 			return err
+		}
+		if isUnfinishedCreate(entry.Extended) {
+			// Another create wrote this record and may still back it out, so
+			// it is not an existing view; the claim below refuses the name.
+			return filer_pb.ErrNotFound
 		}
 		if EntryType(entry.Extended) != EntryTypeView {
 			existingIsTable = true
@@ -151,14 +159,22 @@ func (h *S3TablesHandler) handleCreateView(w http.ResponseWriter, r *http.Reques
 		if err := h.ensureDirectory(r.Context(), client, viewPath); err != nil {
 			return err
 		}
-		return h.claimCatalogEntry(r.Context(), client, viewPath, map[string][]byte{
+		attrs := map[string][]byte{
 			ExtendedKeyMetadata:  metadataBytes,
 			ExtendedKeyEntryType: []byte(EntryTypeView),
-		})
+			ExtendedKeyDeleting:  []byte(createClaim),
+		}
+		if err := h.claimCatalogEntry(r.Context(), client, viewPath, attrs); err != nil {
+			return err
+		}
+		return h.confirmParent(r.Context(), client, namespacePath, isNamespaceEntry, viewPath, attrs, viewPath)
 	})
 	if err != nil {
 		if errors.Is(err, ErrNameTaken) {
 			h.writeError(w, http.StatusConflict, ErrCodeViewAlreadyExists, fmt.Sprintf("view %s already exists", viewName))
+			return err
+		}
+		if h.writeNamespaceClosedError(w, err, namespaceName) {
 			return err
 		}
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to create view")
@@ -195,7 +211,9 @@ func (h *S3TablesHandler) handleGetView(w http.ResponseWriter, r *http.Request, 
 		if err != nil {
 			return err
 		}
-		if EntryType(entry.Extended) != EntryTypeView {
+		// A view whose create has not confirmed its namespace may still be
+		// backed out, so it is reported absent.
+		if EntryType(entry.Extended) != EntryTypeView || isUnfinishedCreate(entry.Extended) {
 			return filer_pb.ErrNotFound
 		}
 		data, ok := entry.Extended[ExtendedKeyMetadata]

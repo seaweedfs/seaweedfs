@@ -63,6 +63,11 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 		if err != nil {
 			return err
 		}
+		if isUnfinishedCreate(entry.Extended) {
+			// Another create wrote this record and may still back it out, so
+			// it is not an existing table; the claim below refuses the name.
+			return filer_pb.ErrNotFound
+		}
 		if EntryType(entry.Extended) == EntryTypeView {
 			existingIsView = true
 			return nil
@@ -153,16 +158,23 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 		attrs := map[string][]byte{
 			ExtendedKeyMetadata:  metadataBytes,
 			ExtendedKeyEntryType: []byte(EntryTypeTable),
+			ExtendedKeyDeleting:  []byte(createClaim),
 		}
 		if len(tagsBytes) > 0 {
 			attrs[ExtendedKeyTags] = tagsBytes
 		}
-		return h.claimCatalogEntry(r.Context(), client, tablePath, attrs)
+		if err := h.claimCatalogEntry(r.Context(), client, tablePath, attrs); err != nil {
+			return err
+		}
+		return h.confirmParent(r.Context(), client, GetNamespacePath(bucketName, namespaceName), isNamespaceEntry, tablePath, attrs, dataPath, tablePath)
 	})
 
 	if err != nil {
 		if errors.Is(err, ErrNameTaken) {
 			h.writeError(w, http.StatusConflict, ErrCodeTableAlreadyExists, fmt.Sprintf("table %s already exists", tableName))
+			return err
+		}
+		if h.writeNamespaceClosedError(w, err, namespaceName) {
 			return err
 		}
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to create table")
@@ -278,17 +290,25 @@ func (h *S3TablesHandler) handleRegisterTable(w http.ResponseWriter, r *http.Req
 		return fmt.Errorf("failed to marshal metadata: %w", err)
 	}
 
+	attrs := map[string][]byte{
+		ExtendedKeyMetadata: metadataBytes,
+		ExtendedKeyDeleting: []byte(createClaim),
+	}
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		if err := h.ensureDirectory(r.Context(), client, tablePath); err != nil {
 			return err
 		}
-		return h.claimCatalogEntry(r.Context(), client, tablePath, map[string][]byte{
-			ExtendedKeyMetadata: metadataBytes,
-		})
+		if err := h.claimCatalogEntry(r.Context(), client, tablePath, attrs); err != nil {
+			return err
+		}
+		return h.confirmParent(r.Context(), client, GetNamespacePath(bucketName, namespaceName), isNamespaceEntry, tablePath, attrs, tablePath)
 	})
 	if err != nil {
 		if errors.Is(err, ErrNameTaken) {
 			h.writeError(w, http.StatusConflict, ErrCodeTableAlreadyExists, fmt.Sprintf("table %s already exists", tableName))
+			return err
+		}
+		if h.writeNamespaceClosedError(w, err, namespaceName) {
 			return err
 		}
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to register table")
@@ -1187,6 +1207,11 @@ func (h *S3TablesHandler) readTableMetadata(ctx context.Context, client filer_pb
 	if err != nil {
 		return nil, err
 	}
+	// A table whose create has not confirmed its namespace may still be backed
+	// out, so nothing reads it or commits to it yet.
+	if isUnfinishedCreate(entry.Extended) {
+		return nil, filer_pb.ErrNotFound
+	}
 	return tableMetadata(entry)
 }
 
@@ -1958,6 +1983,12 @@ func (h *S3TablesHandler) authorizeCreateTable(w http.ResponseWriter, r *http.Re
 		return nil, ErrAccessDenied
 	}
 
+	if namespaceExists {
+		if err := h.refuseClaimedNamespace(w, r, filerClient, namespacePath, namespaceName); err != nil {
+			return nil, err
+		}
+	}
+
 	return &createTableTarget{
 		bucketName:     bucketName,
 		namespaceName:  namespaceName,
@@ -1965,4 +1996,33 @@ func (h *S3TablesHandler) authorizeCreateTable(w http.ResponseWriter, r *http.Re
 		bucketFormat:   bucketMetadata.Format,
 		ownerAccountID: nsMetadata.OwnerAccountID,
 	}, nil
+}
+
+// writeNamespaceClosedError answers a create refused because its namespace is
+// being deleted or was deleted, and reports whether err was one of those.
+func (h *S3TablesHandler) writeNamespaceClosedError(w http.ResponseWriter, err error, namespaceName string) bool {
+	switch {
+	case errors.Is(err, errParentDeleting):
+		h.writeError(w, http.StatusConflict, ErrCodeConflict, fmt.Sprintf("namespace %s is being deleted", namespaceName))
+	case errors.Is(err, errParentGone):
+		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, fmt.Sprintf("namespace %s not found", namespaceName))
+	case errors.Is(err, errBackOutFailed):
+		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("namespace %s was deleted during the request and the new entry may remain", namespaceName))
+	default:
+		return false
+	}
+	return true
+}
+
+// refuseClaimedNamespace answers 409 when a delete has claimed the namespace.
+// Call it after the authorization check, so denied callers never see the delete.
+func (h *S3TablesHandler) refuseClaimedNamespace(w http.ResponseWriter, r *http.Request, filerClient FilerClient, namespacePath, namespaceName string) error {
+	err := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return h.checkParentOpen(r.Context(), client, namespacePath, isNamespaceEntry)
+	})
+	if errors.Is(err, errParentDeleting) {
+		h.writeNamespaceClosedError(w, err, namespaceName)
+		return err
+	}
+	return nil
 }
