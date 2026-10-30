@@ -2114,7 +2114,14 @@ fn parse_range_header(s: &str, size: i64) -> Result<Vec<HttpRange>, &'static str
             length: 0,
         };
         if start_str.is_empty() {
+            // suffix-length must be a non-negative integer (RFC 7233 Section 2.1)
+            if end_str.is_empty() || end_str.starts_with('-') {
+                return Err("invalid range");
+            }
             let mut i = end_str.parse::<i64>().map_err(|_| "invalid range")?;
+            if i < 0 {
+                return Err("invalid range");
+            }
             if i > size {
                 i = size;
             }
@@ -5087,6 +5094,17 @@ mod tests {
         // an end past the size is clamped, still satisfiable
         let ranges = parse_range_header("bytes=5-100", 10).unwrap();
         assert_eq!((ranges[0].start, ranges[0].length), (5, 5));
+    }
+
+    #[test]
+    fn test_parse_range_header_rejects_negative_suffix() {
+        // a suffix-length is a non-negative integer; "--5" must not become
+        // the range {start: 15, length: -5}
+        for spec in ["bytes=--5", "bytes=--0", "bytes=-"] {
+            assert_eq!(parse_range_header(spec, 10).unwrap_err(), "invalid range");
+        }
+        let ranges = parse_range_header("bytes=-3", 10).unwrap();
+        assert_eq!((ranges[0].start, ranges[0].length), (7, 3));
     }
 
     #[test]

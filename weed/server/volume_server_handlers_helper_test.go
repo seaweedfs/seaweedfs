@@ -19,7 +19,11 @@ func TestParseRange(t *testing.T) {
 		{name: "start with explicit end within bounds", rangeSpec: "bytes=2-5", wantStart: 2, wantLen: 4},
 		{name: "end clamped to the last byte", rangeSpec: "bytes=2-100", wantStart: 2, wantLen: 8},
 		{name: "suffix range within bounds", rangeSpec: "bytes=-3", wantStart: 7, wantLen: 3},
+		{name: "zero-length suffix range is valid", rangeSpec: "bytes=-0", wantStart: 10, wantLen: 0},
 		{name: "suffix range larger than size is clamped, not rejected", rangeSpec: "bytes=-100", wantStart: 0, wantLen: 10},
+		{name: "negative suffix length is invalid", rangeSpec: "bytes=--5", wantErr: true},
+		{name: "negative zero suffix length is invalid", rangeSpec: "bytes=--0", wantErr: true},
+		{name: "empty suffix length is invalid", rangeSpec: "bytes=-", wantErr: true},
 	}
 
 	for _, tt := range tests {
