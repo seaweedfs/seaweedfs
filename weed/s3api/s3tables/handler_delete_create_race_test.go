@@ -315,8 +315,10 @@ func TestUnfinishedCreateIsNotReportedAsExisting(t *testing.T) {
 			status, resp := runHandler(t, m, fs.Client, op.read, op.readInput)
 			assert.Equal(t, http.StatusNotFound, status, "an unfinished entry must not load: %+v", resp)
 			assert.Equal(t, op.readMissing, resp.Type)
+			// A second create is not told the entry exists; it takes the marked
+			// record over, since nothing a reader can see lives there.
 			status, resp = runHandler(t, m, fs.Client, op.operation, op.input)
-			assert.Equal(t, http.StatusConflict, status, "a second create must not be told the entry exists: %+v", resp)
+			assert.Equal(t, http.StatusOK, status, "%+v", resp)
 
 			plantDeleteClaim(fs, bucketPath, "ns")
 			close(client.release)
@@ -324,9 +326,8 @@ func TestUnfinishedCreateIsNotReportedAsExisting(t *testing.T) {
 			create := <-created
 			assert.Equal(t, http.StatusConflict, create.status, "%+v", create.resp)
 			assert.Equal(t, ErrCodeConflict, create.resp.Type)
-			status, resp = runHandler(t, m, fs.Client, "DeleteNamespace", deleteNamespaceRequest(t))
-			require.Equal(t, http.StatusOK, status, "%+v", resp)
-			assert.Nil(t, fs.Get(bucketPath, "ns"))
+			status, resp = runHandler(t, m, fs.Client, op.read, op.readInput)
+			assert.Equal(t, http.StatusOK, status, "the adopted record survives the loser's back-out: %+v", resp)
 		})
 	}
 }
@@ -469,4 +470,71 @@ func TestDeleteNamespaceWithTableLiftsItsClaim(t *testing.T) {
 			assert.NotContains(t, created.Extended, ExtendedKeyDeleting, "a finished create must lift its unfinished mark")
 		})
 	}
+}
+
+// orphanMarkedRecord plants what a create that crashed after writing its
+// record leaves behind: catalog attributes under the unfinished mark.
+func orphanMarkedRecord(fs *s3tablestest.MemFiler, dir, name string) {
+	meta, _ := json.Marshal(tableMetadataInternal{
+		Name:             name,
+		Namespace:        "ns",
+		Format:           "ICEBERG",
+		OwnerAccountID:   DefaultAccountID,
+		MetadataVersion:  1,
+		MetadataLocation: "s3://" + renameTestBucket + "/ns/" + name + "/metadata/v1.metadata.json",
+	})
+	fs.Put(dir, name, map[string][]byte{
+		ExtendedKeyMetadata:  meta,
+		ExtendedKeyEntryType: []byte(EntryTypeTable),
+		ExtendedKeyPolicy:    []byte("stale"),
+		ExtendedKeyDeleting:  []byte(createClaim),
+	})
+}
+
+// A record whose create never lifted its mark — the request died after the
+// write — must not wedge the name: the marked record is absent to every
+// reader, so a create takes it over instead of refusing the name forever.
+func TestCreateAdoptsAnOrphanedMark(t *testing.T) {
+	for _, op := range createOps(t) {
+		t.Run(op.operation, func(t *testing.T) {
+			fs, m := startRenameManager(t)
+			nsPath := GetNamespacePath(renameTestBucket, "ns")
+			orphanMarkedRecord(fs, nsPath, lateEntry)
+
+			status, resp := runHandler(t, m, fs.Client, op.operation, op.input)
+			require.Equal(t, http.StatusOK, status, "%+v", resp)
+
+			entry := fs.Get(nsPath, lateEntry)
+			require.NotNil(t, entry)
+			assert.NotContains(t, entry.Extended, ExtendedKeyDeleting, "the adopted record must end confirmed")
+			assert.NotContains(t, entry.Extended, ExtendedKeyPolicy, "the stale record's keys must not survive")
+
+			status, resp = runHandler(t, m, fs.Client, op.read, op.readInput)
+			assert.Equal(t, http.StatusOK, status, "%+v", resp)
+		})
+	}
+}
+
+// A marked record is no destination a rename must refuse: the rename takes
+// the record over like a create does.
+func TestRenameAdoptsAMarkedDestination(t *testing.T) {
+	fs, m := startRenameManager(t)
+	nsPath := GetNamespacePath(renameTestBucket, "ns")
+	orphanMarkedRecord(fs, nsPath, "t2")
+
+	require.NoError(t, runRename(t, m, fs, &RenameTableRequest{
+		TableBucketARN:  mustBucketARN(t),
+		SourceNamespace: []string{"ns"},
+		SourceName:      "t",
+		DestNamespace:   []string{"ns"},
+		DestName:        "t2",
+	}))
+
+	dest := fs.Get(nsPath, "t2")
+	require.NotNil(t, dest)
+	assert.NotContains(t, dest.Extended, ExtendedKeyDeleting)
+	assert.NotContains(t, dest.Extended, ExtendedKeyPolicy, "the stale record's keys must not survive")
+	var metadata tableMetadataInternal
+	require.NoError(t, json.Unmarshal(dest.Extended[ExtendedKeyMetadata], &metadata))
+	assert.Equal(t, "t2", metadata.Name)
 }

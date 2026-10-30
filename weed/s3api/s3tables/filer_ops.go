@@ -191,12 +191,23 @@ func (h *S3TablesHandler) removeExtendedAttributesIf(
 // delete's restore or a competing create that landed since the caller's check
 // is a name conflict, not a record this write may overwrite — an overwrite
 // would leave the loser's tags, policy, and maintenance settings on the new
-// record.
+// record. A record still marked by its unfinished create is the exception:
+// invisible to every reader, it is adopted rather than refused.
 func (h *S3TablesHandler) claimCatalogEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, path string, attrs map[string][]byte) error {
 	return h.mutateEntryExtended(ctx, client, path, func(extended map[string][]byte) error {
-		for _, key := range s3tablesExtendedKeys {
-			if _, ok := extended[key]; ok {
-				return fmt.Errorf("%w: %s set on %s", ErrNameTaken, key, path)
+		if isUnfinishedCreate(extended) {
+			// A marked record is absent to every reader, so it holds nothing a
+			// caller could have seen: the create that left it confirmed or lost
+			// the name already. Take the record over, dropping whatever the
+			// earlier write left, or an abandoned mark wedges the name forever.
+			for _, key := range s3tablesExtendedKeys {
+				delete(extended, key)
+			}
+		} else {
+			for _, key := range s3tablesExtendedKeys {
+				if _, ok := extended[key]; ok {
+					return fmt.Errorf("%w: %s set on %s", ErrNameTaken, key, path)
+				}
 			}
 		}
 		for key, data := range attrs {

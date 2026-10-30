@@ -256,12 +256,19 @@ func (h *S3TablesHandler) handleRegisterTable(w http.ResponseWriter, r *http.Req
 
 	tablePath := GetTablePath(bucketName, namespaceName, tableName)
 
-	// Table must be absent.
+	// Table must be absent; a record still marked by its unfinished create is.
 	var existingMetadata tableMetadataInternal
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		data, err := h.getExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyMetadata)
+		entry, err := h.lookupEntry(r.Context(), client, tablePath)
 		if err != nil {
 			return err
+		}
+		if isUnfinishedCreate(entry.Extended) {
+			return filer_pb.ErrNotFound
+		}
+		data, ok := entry.Extended[ExtendedKeyMetadata]
+		if !ok {
+			return ErrAttributeNotFound
 		}
 		return json.Unmarshal(data, &existingMetadata)
 	})
@@ -1553,9 +1560,10 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 		} else if !errors.Is(err, ErrAttributeNotFound) {
 			return fmt.Errorf("failed to fetch destination namespace policy: %w", err)
 		}
-		if _, err := h.getExtendedAttribute(r.Context(), client, destPath, ExtendedKeyMetadata); err == nil {
-			destExists = true
-		} else if !errors.Is(err, filer_pb.ErrNotFound) && !errors.Is(err, ErrAttributeNotFound) {
+		if destEntry, err := h.lookupEntry(r.Context(), client, destPath); err == nil {
+			_, hasMetadata := destEntry.Extended[ExtendedKeyMetadata]
+			destExists = hasMetadata && !isUnfinishedCreate(destEntry.Extended)
+		} else if !errors.Is(err, filer_pb.ErrNotFound) {
 			return err
 		}
 		return nil
