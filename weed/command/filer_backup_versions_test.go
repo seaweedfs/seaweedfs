@@ -284,6 +284,83 @@ func TestFlattenRegularPathFollowsVersionsPointer(t *testing.T) {
 	require.Empty(t, rs.deleted)
 }
 
+func TestFlattenRenameLeavesDeleteForGenericPath(t *testing.T) {
+	// rename a -> b where only b carries a .versions directory: the flattener
+	// refreshes b through the pointer but the old flattened key held the moved
+	// file, so the event must reach the generic path as a lone delete of a
+	version := &filer_pb.Entry{Name: "v_9", Chunks: []*filer_pb.FileChunk{{FileId: "1,09"}}}
+	dir := &filer_pb.Entry{
+		Name:        "b.versions",
+		IsDirectory: true,
+		Extended:    map[string][]byte{s3_constants.ExtLatestVersionFileNameKey: []byte("v_9")},
+	}
+	f, rs := newFlattener(map[string]*filer_pb.Entry{
+		"/buckets/b/b.versions":     dir,
+		"/buckets/b/b.versions/v_9": version,
+	})
+
+	resp := event("/buckets/b", "/buckets/b", &filer_pb.Entry{Name: "a"}, &filer_pb.Entry{Name: "b"})
+	handled, err := f.process(resp)
+	require.NoError(t, err)
+	require.False(t, handled, "old side has no .versions sibling — generic path must delete a")
+	require.NotNil(t, resp.EventNotification.OldEntry)
+	require.Nil(t, resp.EventNotification.NewEntry)
+	require.Same(t, version, rs.created["/b/b"])
+}
+
+func TestFlattenRenameLeavesCreateForGenericPath(t *testing.T) {
+	// rename a -> b where only a carries a .versions directory: the pointer
+	// still decides flattened a, so the generic path must see a lone create
+	// of b and never delete the flattened old key
+	version := &filer_pb.Entry{Name: "v_2", Chunks: []*filer_pb.FileChunk{{FileId: "1,02"}}}
+	dir := &filer_pb.Entry{
+		Name:        "a.versions",
+		IsDirectory: true,
+		Extended:    map[string][]byte{s3_constants.ExtLatestVersionFileNameKey: []byte("v_2")},
+	}
+	f, rs := newFlattener(map[string]*filer_pb.Entry{
+		"/buckets/b/a.versions":     dir,
+		"/buckets/b/a.versions/v_2": version,
+	})
+
+	resp := event("/buckets/b", "/buckets/b", &filer_pb.Entry{Name: "a"}, &filer_pb.Entry{Name: "b"})
+	handled, err := f.process(resp)
+	require.NoError(t, err)
+	require.False(t, handled)
+	require.Nil(t, resp.EventNotification.OldEntry)
+	require.NotNil(t, resp.EventNotification.NewEntry)
+	require.Same(t, version, rs.created["/b/a"])
+	require.Empty(t, rs.deleted)
+}
+
+func TestFlattenRenameBothSidesVersioned(t *testing.T) {
+	versionA := &filer_pb.Entry{Name: "v_2", Chunks: []*filer_pb.FileChunk{{FileId: "1,02"}}}
+	versionB := &filer_pb.Entry{Name: "v_9", Chunks: []*filer_pb.FileChunk{{FileId: "1,09"}}}
+	f, rs := newFlattener(map[string]*filer_pb.Entry{
+		"/buckets/b/a.versions": {
+			Name:        "a.versions",
+			IsDirectory: true,
+			Extended:    map[string][]byte{s3_constants.ExtLatestVersionFileNameKey: []byte("v_2")},
+		},
+		"/buckets/b/a.versions/v_2": versionA,
+		"/buckets/b/b.versions": {
+			Name:        "b.versions",
+			IsDirectory: true,
+			Extended:    map[string][]byte{s3_constants.ExtLatestVersionFileNameKey: []byte("v_9")},
+		},
+		"/buckets/b/b.versions/v_9": versionB,
+	})
+
+	resp := event("/buckets/b", "/buckets/b", &filer_pb.Entry{Name: "a"}, &filer_pb.Entry{Name: "b"})
+	handled, err := f.process(resp)
+	require.NoError(t, err)
+	require.True(t, handled)
+	require.NotNil(t, resp.EventNotification.OldEntry)
+	require.NotNil(t, resp.EventNotification.NewEntry)
+	require.Same(t, versionA, rs.created["/b/a"])
+	require.Same(t, versionB, rs.created["/b/b"])
+}
+
 func TestFlattenDeleteMarkerVersionEntry(t *testing.T) {
 	marker := &filer_pb.Entry{
 		Name:     "v_3",
