@@ -1126,6 +1126,11 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 			if err != nil {
 				return err
 			}
+			// Authorization ran on the first read; only that same record may be
+			// purged.
+			if err := ensureAuthorizedTable(entry, metadata); err != nil {
+				return err
+			}
 			// dataPath was resolved on the earlier read, but the claim and the
 			// purge run on this one: an update that moved the location in
 			// between must send the delete back instead of purging a stale dir.
@@ -1171,6 +1176,9 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 		// of the directory under it.
 		entry, err := h.lookupEntry(r.Context(), client, tablePath)
 		if err != nil {
+			return err
+		}
+		if err := ensureAuthorizedTable(entry, metadata); err != nil {
 			return err
 		}
 		// Same staleness check as the decoupled path: a location update that
@@ -1300,6 +1308,28 @@ func tableMetadata(entry *filer_pb.Entry) ([]byte, error) {
 		return nil, fmt.Errorf("%w: %s", ErrAttributeNotFound, ExtendedKeyMetadata)
 	}
 	return data, nil
+}
+
+// ensureAuthorizedTable reports whether entry is still the table record a
+// delete authorized on its first read. A view, an unfinished create or a record
+// whose metadata is gone is absent; a record with another version token took
+// the name since, and the authorization does not cover it.
+func ensureAuthorizedTable(entry *filer_pb.Entry, authorized tableMetadataInternal) error {
+	data, err := tableMetadata(entry)
+	if err != nil {
+		if errors.Is(err, ErrAttributeNotFound) {
+			return filer_pb.ErrNotFound
+		}
+		return err
+	}
+	var current tableMetadataInternal
+	if err := json.Unmarshal(data, &current); err != nil {
+		return fmt.Errorf("failed to unmarshal table metadata: %w", err)
+	}
+	if current.VersionToken != authorized.VersionToken {
+		return ErrConcurrentUpdate
+	}
+	return nil
 }
 
 // tablePurgeDir resolves where a delete must purge from the metadata stored on

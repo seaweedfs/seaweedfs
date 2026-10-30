@@ -585,6 +585,26 @@ func (h *S3TablesHandler) handleUpdateView(w http.ResponseWriter, r *http.Reques
 	return nil
 }
 
+// completedViewMetadata returns entry's metadata if it is a view whose create
+// has finished, checking token against it when token is set.
+func completedViewMetadata(entry *filer_pb.Entry, token string) (tableMetadataInternal, error) {
+	var metadata tableMetadataInternal
+	if EntryType(entry.Extended) != EntryTypeView || isUnfinishedCreate(entry.Extended) {
+		return metadata, filer_pb.ErrNotFound
+	}
+	data, ok := entry.Extended[ExtendedKeyMetadata]
+	if !ok {
+		return metadata, fmt.Errorf("%w: %s", ErrAttributeNotFound, ExtendedKeyMetadata)
+	}
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		return metadata, err
+	}
+	if token != "" && metadata.VersionToken != token {
+		return metadata, ErrVersionTokenMismatch
+	}
+	return metadata, nil
+}
+
 // handleDeleteView deletes a view.
 func (h *S3TablesHandler) handleDeleteView(w http.ResponseWriter, r *http.Request, filerClient FilerClient) error {
 	var req DeleteViewRequest
@@ -606,20 +626,8 @@ func (h *S3TablesHandler) handleDeleteView(w http.ResponseWriter, r *http.Reques
 		if err != nil {
 			return err
 		}
-		if EntryType(entry.Extended) != EntryTypeView || isUnfinishedCreate(entry.Extended) {
-			return filer_pb.ErrNotFound
-		}
-		data, ok := entry.Extended[ExtendedKeyMetadata]
-		if !ok {
-			return fmt.Errorf("%w: %s", ErrAttributeNotFound, ExtendedKeyMetadata)
-		}
-		if err := json.Unmarshal(data, &metadata); err != nil {
-			return err
-		}
-		if req.VersionToken != "" && metadata.VersionToken != req.VersionToken {
-			return ErrVersionTokenMismatch
-		}
-		return nil
+		metadata, err = completedViewMetadata(entry, req.VersionToken)
+		return err
 	})
 	if err != nil {
 		if errors.Is(err, filer_pb.ErrNotFound) {
@@ -649,6 +657,14 @@ func (h *S3TablesHandler) handleDeleteView(w http.ResponseWriter, r *http.Reques
 		if err != nil {
 			return err
 		}
+		current, err := completedViewMetadata(entry, req.VersionToken)
+		if err != nil {
+			return err
+		}
+		// Authorization ran on the first read; only that same record may be deleted.
+		if current.VersionToken != metadata.VersionToken {
+			return ErrConcurrentUpdate
+		}
 		claimed := snapshotExtended(entry.Extended)
 		claimed[ExtendedKeyDeleting] = []byte("delete")
 		if err := h.claimCatalogRecord(r.Context(), client, viewPath, snapshotExtended(entry.Extended), "delete"); err != nil {
@@ -669,6 +685,10 @@ func (h *S3TablesHandler) handleDeleteView(w http.ResponseWriter, r *http.Reques
 		}
 		if errors.Is(err, filer_pb.ErrNotFound) {
 			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchView, fmt.Sprintf("view %s not found", viewName))
+			return err
+		}
+		if errors.Is(err, ErrVersionTokenMismatch) {
+			h.writeError(w, http.StatusConflict, ErrCodeConflict, "version token mismatch")
 			return err
 		}
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to delete view")
