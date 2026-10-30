@@ -239,6 +239,25 @@ func TestLoadClientTLSUnconfiguredIsPlaintext(t *testing.T) {
 	}
 }
 
+// A dedicated client pair missing one half is a misconfiguration: the dialer
+// must fail rather than silently dial with the fallback serving identity.
+func TestLoadClientTLSPartialClientPairFails(t *testing.T) {
+	dir := t.TempDir()
+	ca := newTestCA(t, dir)
+	certFile, keyFile := ca.issue(t, dir, "dual", []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth})
+	clientCert, _ := ca.issue(t, dir, "client", []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
+
+	v := util.NewViperProxy(viper.New())
+	v.Set("grpc.ca", ca.file)
+	v.Set("grpc.client.cert", certFile)
+	v.Set("grpc.client.key", keyFile)
+	v.Set("grpc.client.client_cert", clientCert)
+
+	if _, err := loadClientTLS(v, "grpc.client"); err == nil {
+		t.Fatal("expected error for a partial client_cert/client_key pair with a valid fallback")
+	}
+}
+
 func TestLoadClientTLSMissingCaFails(t *testing.T) {
 	dir := t.TempDir()
 	ca := newTestCA(t, dir)

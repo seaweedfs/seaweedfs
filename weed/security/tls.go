@@ -182,16 +182,13 @@ func loadClientTLS(config *util.ViperProxy, component string) (grpc.DialOption, 
 	// prefer a dedicated client certificate: CAs may issue certs with only one of the serverAuth/clientAuth EKUs
 	certFileName, keyFileName := config.GetString(component+".client_cert"), config.GetString(component+".client_key")
 	partialClientPair := (certFileName == "") != (keyFileName == "")
+	if partialClientPair {
+		return nil, fmt.Errorf("%s.client_cert and %s.client_key must both be set", component, component)
+	}
 	if certFileName == "" || keyFileName == "" {
-		if partialClientPair {
-			glog.Warningf("%s.client_cert and %s.client_key must both be set, falling back to %s.cert and %s.key", component, component, component, component)
-		}
 		certFileName, keyFileName = config.GetString(component+".cert"), config.GetString(component+".key")
 	}
 	if certFileName == "" && keyFileName == "" {
-		if partialClientPair {
-			return nil, fmt.Errorf("%s.client_cert and %s.client_key must both be set", component, component)
-		}
 		return grpc.WithTransportCredentials(insecure.NewCredentials()), nil
 	}
 	if certFileName == "" || keyFileName == "" {
