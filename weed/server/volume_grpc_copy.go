@@ -150,12 +150,23 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 			}
 		}
 
+		// Files this copy has (re)written itself. Until the first write the
+		// destination can still hold a previous replica's files, and an
+		// aborted copy must not destroy them.
+		copyOwnsFiles := false
 		defer func() {
 			if err != nil {
-				if dataBaseFileName != "" {
+				if copyOwnsFiles {
 					os.Remove(dataBaseFileName + ".dat")
 					os.Remove(indexBaseFileName + ".idx")
-					os.Remove(dataBaseFileName + ".vif")
+					if indexBaseFileName != dataBaseFileName {
+						os.Remove(dataBaseFileName + ".idx")
+					}
+					// A regular volume and an EC volume for the same id
+					// share <base>.vif; keep it while the EC index is here.
+					if !location.HasEcxFileOnDisk(volFileInfoResp.Collection, needle.VolumeId(req.VolumeId)) {
+						os.Remove(dataBaseFileName + ".vif")
+					}
 					os.Remove(dataBaseFileName + ".note")
 				}
 				// Zero before the outer defer sees the same error, or the
@@ -182,17 +193,25 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 
 		// A crashed copy, or one whose cleanup failed, can leave a stale index
 		// next to the .idx that this copy's mount would trust
-		// (generateLevelDbFile replays only past the stored watermark). Clear
-		// the leftovers before writing anything; a removal failure must abort
+		// (generateLevelDbFile replays only past the stored watermark). The
+		// same leftovers can sit beside the .dat when the dirs differ: the
+		// mount loads a data-dir .idx in preference to the idx-dir one. Clear
+		// them all before writing anything; a removal failure must abort
 		// rather than risk a mount reusing a poisoned index.
-		if removeErr := os.RemoveAll(indexBaseFileName + ".ldb"); removeErr != nil {
-			err = removeErr
-			return fmt.Errorf("clear leftover index before copying volume %d: %w", req.VolumeId, removeErr)
+		indexBases := []string{indexBaseFileName}
+		if indexBaseFileName != dataBaseFileName {
+			indexBases = append(indexBases, dataBaseFileName)
 		}
-		for _, staleIndexFile := range []string{indexBaseFileName + ".sdx", indexBaseFileName + ".rdb"} {
-			if removeErr := os.Remove(staleIndexFile); removeErr != nil && !os.IsNotExist(removeErr) {
+		for _, indexBase := range indexBases {
+			if removeErr := os.RemoveAll(indexBase + ".ldb"); removeErr != nil {
 				err = removeErr
 				return fmt.Errorf("clear leftover index before copying volume %d: %w", req.VolumeId, removeErr)
+			}
+			for _, ext := range []string{".idx", ".sdx", ".rdb"} {
+				if removeErr := os.Remove(indexBase + ext); removeErr != nil && !os.IsNotExist(removeErr) {
+					err = removeErr
+					return fmt.Errorf("clear leftover index before copying volume %d: %w", req.VolumeId, removeErr)
+				}
 			}
 		}
 
@@ -202,6 +221,8 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 			err = noteErr
 			return fmt.Errorf("write .note for volume %d: %w", req.VolumeId, noteErr)
 		}
+		// From here on the destination files are this copy's own writes.
+		copyOwnsFiles = true
 
 		var copyDatAllocated uint64
 		if preallocateSize > 0 && !hasRemoteDatFile {
@@ -320,21 +341,39 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 			// through the store unmounts it and withdraws the announcement
 			// before the files go away. keepRemoteData: the .vif may point at
 			// the same cloud-tier object the source still references.
+			keepFiles := false
 			if mounted {
 				if delErr := vs.store.DeleteVolume(needle.VolumeId(req.VolumeId), false, false, true); delErr != nil {
 					glog.Warningf("discard mounted copy of volume %d: %v", req.VolumeId, delErr)
+					// A refused delete (e.g. the volume is compacting)
+					// leaves it registered; unlinking its files now would
+					// strand a live replica.
+					keepFiles = vs.store.GetVolume(needle.VolumeId(req.VolumeId)) != nil
 				}
 			}
-			os.Remove(idxFileName)
-			os.Remove(datFileName)
-			os.Remove(dataBaseFileName + ".vif")
-			// A copy that mounted and then failed validation is only unloaded,
-			// so the needle-map backends mount built (.ldb, .sdx, .rdb) can
-			// outlive it; a later copy of the same volume would trust the
-			// stale index.
-			os.RemoveAll(indexBaseFileName + ".ldb")
-			os.Remove(indexBaseFileName + ".sdx")
-			os.Remove(indexBaseFileName + ".rdb")
+			if !keepFiles {
+				os.Remove(idxFileName)
+				if indexBaseFileName != dataBaseFileName {
+					os.Remove(dataBaseFileName + ".idx")
+				}
+				os.Remove(datFileName)
+				if !copyLocation.HasEcxFileOnDisk(volFileInfoResp.Collection, needle.VolumeId(req.VolumeId)) {
+					os.Remove(dataBaseFileName + ".vif")
+				}
+				// A copy that mounted and then failed validation is only unloaded,
+				// so the needle-map backends mount built (.ldb, .sdx, .rdb) can
+				// outlive it; a later copy of the same volume would trust the
+				// stale index. A mount that found an .idx beside the .dat builds
+				// them under the data base instead.
+				os.RemoveAll(indexBaseFileName + ".ldb")
+				os.Remove(indexBaseFileName + ".sdx")
+				os.Remove(indexBaseFileName + ".rdb")
+				if indexBaseFileName != dataBaseFileName {
+					os.RemoveAll(dataBaseFileName + ".ldb")
+					os.Remove(dataBaseFileName + ".sdx")
+					os.Remove(dataBaseFileName + ".rdb")
+				}
+			}
 			vs.store.ReleaseFreeLocation(copyLocation, copyReservedSpace)
 		} else {
 			vs.store.CommitFreeLocation(copyLocation, copyReservedSpace)
