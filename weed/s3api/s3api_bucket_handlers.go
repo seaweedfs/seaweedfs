@@ -753,7 +753,7 @@ func (s3a *S3ApiServer) setBucketOwner(r *http.Request) func(entry *filer_pb.Ent
 }
 
 // autoCreateBucket creates a bucket if it doesn't exist, setting the owner from the request context
-// Only users with admin permissions are allowed to auto-create buckets
+// Only identities that may administer the named bucket are allowed to auto-create it
 func (s3a *S3ApiServer) autoCreateBucket(r *http.Request, bucket string) error {
 	// Validate the bucket name before auto-creating
 	if err := s3bucket.VerifyS3BucketName(bucket); err != nil {
@@ -764,8 +764,8 @@ func (s3a *S3ApiServer) autoCreateBucket(r *http.Request, bucket string) error {
 		return fmt.Errorf("auto-create bucket %s: %w", bucket, ErrAutoCreateDisabled)
 	}
 
-	// Check if user has admin permissions
-	if !s3a.isUserAdmin(r) {
+	// Check if user may administer this bucket
+	if !s3a.userCanAdminBucket(r, bucket) {
 		return fmt.Errorf("auto-create bucket %s: %w", bucket, ErrAutoCreatePermissionDenied)
 	}
 
@@ -898,6 +898,26 @@ func (s3a *S3ApiServer) isUserAdmin(r *http.Request) bool {
 
 	// Check if the authenticated identity has admin privileges
 	return identity != nil && identity.isAdmin()
+}
+
+// userCanAdminBucket securely checks if the authenticated identity may
+// administer the named bucket: a global Admin, or a bucket-scoped grant such
+// as "Admin:prefix*" matching the bucket name — the same rule explicit
+// CreateBucket already enforces.
+func (s3a *S3ApiServer) userCanAdminBucket(r *http.Request, bucket string) bool {
+	if identityObj := s3_constants.GetIdentityFromContext(r); identityObj != nil {
+		if identity, ok := identityObj.(*Identity); ok {
+			return identity != nil && identity.CanDo(s3_constants.ACTION_ADMIN, bucket, "")
+		}
+	}
+	if s3a.iam == nil {
+		return false
+	}
+	identity, errCode := s3a.iam.authRequest(r, s3_constants.ACTION_ADMIN)
+	if errCode != s3err.ErrNone {
+		return false
+	}
+	return identity != nil && identity.CanDo(s3_constants.ACTION_ADMIN, bucket, "")
 }
 
 // isBucketPublicRead checks if a bucket allows anonymous read access based on its cached ACL status

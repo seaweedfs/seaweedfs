@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -275,6 +276,62 @@ func TestHandleAutoCreateBucketNonAdmin(t *testing.T) {
 	}
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
+	}
+}
+
+// autoCreateBucketFiler records every entry a bucket auto-create writes.
+type autoCreateBucketFiler struct {
+	filer_pb.UnimplementedSeaweedFilerServer
+	created []*filer_pb.Entry
+}
+
+func (f *autoCreateBucketFiler) CreateEntry(_ context.Context, req *filer_pb.CreateEntryRequest) (*filer_pb.CreateEntryResponse, error) {
+	f.created = append(f.created, req.Entry)
+	return &filer_pb.CreateEntryResponse{}, nil
+}
+
+// A bucket-scoped admin grant ("Admin:prefix*") authorizes auto-create for the
+// buckets it matches — the same rule explicit CreateBucket enforces — and no
+// others.
+func TestAutoCreateBucketScopedAdmin(t *testing.T) {
+	cases := []struct {
+		name    string
+		actions []Action
+		bucket  string
+		allowed bool
+	}{
+		{"global admin", []Action{"Admin"}, "app-uploads", true},
+		{"matching prefix", []Action{"Admin:app-*"}, "app-uploads", true},
+		{"exact bucket", []Action{"Admin:app-uploads"}, "app-uploads", true},
+		{"non-matching prefix", []Action{"Admin:app-*"}, "other-bucket", false},
+		{"write-scoped grant is not admin", []Action{"Write:app-*"}, "app-uploads", false},
+		{"unscoped write", []Action{"Write"}, "app-uploads", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			filer := &autoCreateBucketFiler{}
+			s3a := newHeadBucketTestServer(t, filer)
+			s3a.option.AutoCreateBucket = true
+			req := newBucketRequest(http.MethodPut, tc.bucket, "", "")
+			req = req.WithContext(recordIdentityInContext(req, &Identity{
+				Name:    "app",
+				Actions: tc.actions,
+			}))
+			rec := httptest.NewRecorder()
+
+			if got := s3a.handleAutoCreateBucket(rec, req, tc.bucket, "PutObjectHandler"); got != tc.allowed {
+				t.Fatalf("handleAutoCreateBucket = %v, want %v (status %d, body %s)", got, tc.allowed, rec.Code, rec.Body.String())
+			}
+			if !tc.allowed {
+				if rec.Code != http.StatusForbidden {
+					t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
+				}
+				return
+			}
+			require.NotEmpty(t, filer.created)
+			require.Equal(t, tc.bucket, filer.created[0].Name)
+			require.Equal(t, []byte("app"), filer.created[0].Extended[s3_constants.AmzIdentityId])
+		})
 	}
 }
 
