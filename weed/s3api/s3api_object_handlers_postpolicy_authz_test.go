@@ -458,6 +458,8 @@ func TestPostPolicyBucketHandlerAutoCreatesMissingBucket(t *testing.T) {
 	bucketEntry := filer.entries["/buckets/"+postAuthzBucket]
 	require.NotNil(t, bucketEntry, "POST to a missing bucket must create it like PUT")
 	assert.True(t, bucketEntry.IsDirectory)
+	assert.Equal(t, []byte("admin"), bucketEntry.Extended[s3_constants.AmzIdentityId])
+	assert.Equal(t, []byte("000000000000"), bucketEntry.Extended[s3_constants.ExtAmzOwnerKey])
 	objectEntry := filer.entries["/buckets/"+postAuthzBucket+"/uploads/pic.png"]
 	require.NotNil(t, objectEntry, "the upload must land its object entry on the new bucket")
 	assert.NotEmpty(t, objectEntry.Chunks)
@@ -479,6 +481,7 @@ func TestPostPolicyBucketHandlerAutoCreateDeniedForNonAdmin(t *testing.T) {
 	filer := &ambiguousPutFiler{
 		volume:  volume,
 		entries: map[string]*filer_pb.Entry{},
+		apply:   true,
 	}
 	s3a := newPostAutoCreateServer(t, filer)
 
