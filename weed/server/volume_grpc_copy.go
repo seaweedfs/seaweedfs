@@ -57,7 +57,6 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 	// source outage (and, on retry, can lose the volume entirely). The copy is
 	// staged next to it and validated first; the delete only runs once the
 	// replacement is known good (validation details below).
-	hasExistingVolume := vs.store.GetVolume(needle.VolumeId(req.VolumeId)) != nil
 
 	// the master will not start compaction for read-only volumes, so it is safe to just copy files directly
 	// copy .dat and .idx files
@@ -412,35 +411,34 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 		return ctxErr
 	}
 
-	if hasExistingVolume {
+	// A replica that mounted mid-copy must leave before the swap too, so check
+	// the store again rather than the stale pre-copy snapshot.
+	if replaced := vs.store.GetVolume(needle.VolumeId(req.VolumeId)); replaced != nil {
 		glog.V(0).Infof("volume %d already exists. deleting before copying from %s...", req.VolumeId, req.SourceDataNode)
-		if replaced := vs.store.GetVolume(needle.VolumeId(req.VolumeId)); replaced != nil {
-			// Hard-link the outgoing replica's files into copying/ first: the
-			// inodes survive the delete, so a failed swap can put the previous
-			// replica back instead of leaving the node with none. The paths
-			// come from the mounted volume — the incoming copy can sit on a
-			// different disk. Require every present file to link; a partial
-			// backup cannot restore the replica.
-			var backupComplete bool
-			replacedLinks, backupComplete = linkReplacedVolumeFiles(
-				replaced.DataFileName()+".dat",
-				replaced.IndexFileName()+".idx",
-				replaced.DataFileName()+".vif",
-				replaced.DataFileName()+".idx",
-			)
-			if !backupComplete {
-				err = fmt.Errorf("preserve files of existing volume %d for rollback", req.VolumeId)
-				return err
-			}
-			// keep remote data: the inbound copy carries a .vif that may point at
-			// the same cloud-tier object the existing volume references.
-			if delErr := vs.store.DeleteVolume(needle.VolumeId(req.VolumeId), false, false, true); delErr != nil {
-				err = fmt.Errorf("failed to delete existing volume %d: %v", req.VolumeId, delErr)
-				return err
-			}
-			replacedRemoved = true
-			glog.V(0).Infof("deleted existing volume %d before copying.", req.VolumeId)
+		// Hard-link the outgoing replica's files into copying/ first: the
+		// inodes survive the delete, so a failed swap can put the previous
+		// replica back instead of leaving the node with none. The paths come
+		// from the mounted volume — it can sit on another disk, with its .idx
+		// beside the .dat. A partial backup cannot restore the replica.
+		var backupComplete bool
+		replacedLinks, backupComplete = linkReplacedVolumeFiles(
+			replaced.DataFileName()+".dat",
+			replaced.IndexFileName()+".idx",
+			replaced.DataFileName()+".vif",
+			replaced.DataFileName()+".idx",
+		)
+		if !backupComplete {
+			err = fmt.Errorf("preserve files of existing volume %d for rollback", req.VolumeId)
+			return err
 		}
+		// keep remote data: the inbound copy carries a .vif that may point at
+		// the same cloud-tier object the existing volume references.
+		if delErr := vs.store.DeleteVolume(needle.VolumeId(req.VolumeId), false, false, true); delErr != nil {
+			err = fmt.Errorf("failed to delete existing volume %d: %v", req.VolumeId, delErr)
+			return err
+		}
+		replacedRemoved = true
+		glog.V(0).Infof("deleted existing volume %d before copying.", req.VolumeId)
 	}
 
 	// A stale .note at the final basename fails the next load; the staged
