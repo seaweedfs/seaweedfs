@@ -4872,7 +4872,8 @@ impl Volume {
         let mut buf = vec![0u8; 1 << 20];
         let mut remaining = entry_count * NEEDLE_MAP_ENTRY_SIZE as u64;
         while remaining > 0 {
-            let want = remaining.min(buf.len() as u64) as usize;
+            let mut want = remaining.min(buf.len() as u64) as usize;
+            want -= want % NEEDLE_MAP_ENTRY_SIZE;
             std::io::Read::read_exact(&mut idx_file, &mut buf[..want])?;
             for i in (0..want).step_by(NEEDLE_MAP_ENTRY_SIZE) {
                 for &b in &buf[i..i + NEEDLE_ID_SIZE] {
