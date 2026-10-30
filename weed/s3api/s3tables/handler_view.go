@@ -224,7 +224,7 @@ func (h *S3TablesHandler) handleGetView(w http.ResponseWriter, r *http.Request, 
 		}
 		data, ok := entry.Extended[ExtendedKeyMetadata]
 		if !ok {
-			return fmt.Errorf("%w: %s", ErrAttributeNotFound, ExtendedKeyMetadata)
+			return fmt.Errorf("%w: %w: %s", filer_pb.ErrNotFound, ErrAttributeNotFound, ExtendedKeyMetadata)
 		}
 		return json.Unmarshal(data, &metadata)
 	})
@@ -470,7 +470,7 @@ func (h *S3TablesHandler) authorizeUpdateView(w http.ResponseWriter, r *http.Req
 		}
 		data, ok := entry.Extended[ExtendedKeyMetadata]
 		if !ok {
-			return fmt.Errorf("%w: %s", ErrAttributeNotFound, ExtendedKeyMetadata)
+			return fmt.Errorf("%w: %w: %s", filer_pb.ErrNotFound, ErrAttributeNotFound, ExtendedKeyMetadata)
 		}
 		return json.Unmarshal(data, &metadata)
 	})
@@ -594,7 +594,7 @@ func completedViewMetadata(entry *filer_pb.Entry, token string) (tableMetadataIn
 	}
 	data, ok := entry.Extended[ExtendedKeyMetadata]
 	if !ok {
-		return metadata, fmt.Errorf("%w: %s", ErrAttributeNotFound, ExtendedKeyMetadata)
+		return metadata, fmt.Errorf("%w: %w: %s", filer_pb.ErrNotFound, ErrAttributeNotFound, ExtendedKeyMetadata)
 	}
 	if err := json.Unmarshal(data, &metadata); err != nil {
 		return metadata, err

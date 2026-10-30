@@ -88,3 +88,76 @@ func TestRenamedAwayNameIsNoSuchTable(t *testing.T) {
 	})
 	assert.Equal(t, http.StatusOK, status, "the renamed table must still resolve: %+v", resp)
 }
+
+// Views share the renamer, so a renamed-away view name answers NoSuchView the
+// same way, and the leftover view record still takes no writes.
+func TestRenamedAwayViewNameIsNoSuchView(t *testing.T) {
+	fs, m := startRenameManager(t)
+	seedView(t, fs, "v")
+	requireOK(t, m, fs, "RenameView", &RenameTableRequest{
+		TableBucketARN:  mustBucketARN(t),
+		SourceNamespace: []string{"ns"},
+		SourceName:      "v",
+		DestNamespace:   []string{"ns"},
+		DestName:        "v2",
+	})
+	nsPath := GetNamespacePath(renameTestBucket, "ns")
+	before := extendedOf(t, fs, nsPath, "v")
+
+	bucketARN := mustBucketARN(t)
+	ops := []struct {
+		operation string
+		input     interface{}
+	}{
+		{"GetView", &GetViewRequest{TableBucketARN: bucketARN, Namespace: []string{"ns"}, Name: "v"}},
+		{"UpdateView", &UpdateViewRequest{
+			TableBucketARN:   bucketARN,
+			Namespace:        []string{"ns"},
+			Name:             "v",
+			MetadataLocation: "s3://" + renameTestBucket + "/ns/v/metadata/v2.metadata.json",
+		}},
+		{"DeleteView", &DeleteViewRequest{TableBucketARN: bucketARN, Namespace: []string{"ns"}, Name: "v"}},
+	}
+	for _, op := range ops {
+		t.Run(op.operation, func(t *testing.T) {
+			status, resp := runHandler(t, m, fs.Client, op.operation, op.input)
+			assert.Equal(t, http.StatusNotFound, status, "%+v", resp)
+			assert.Equal(t, ErrCodeNoSuchView, resp.Type, "%+v", resp)
+		})
+	}
+
+	assert.Equal(t, before, extendedOf(t, fs, nsPath, "v"), "the renamed-away directory must not be written to")
+}
+
+// A record that keeps its view marker but lost the metadata — the state a
+// rename leaves behind while its clear is in flight — is not a view to its
+// readers either.
+func TestViewRecordWithoutMetadataIsNoSuchView(t *testing.T) {
+	fs, m := startRenameManager(t)
+	nsPath := GetNamespacePath(renameTestBucket, "ns")
+	fs.Put(nsPath, "half", map[string][]byte{ExtendedKeyEntryType: []byte(EntryTypeView)})
+
+	bucketARN := mustBucketARN(t)
+	ops := []struct {
+		operation string
+		input     interface{}
+	}{
+		{"GetView", &GetViewRequest{TableBucketARN: bucketARN, Namespace: []string{"ns"}, Name: "half"}},
+		{"UpdateView", &UpdateViewRequest{
+			TableBucketARN:   bucketARN,
+			Namespace:        []string{"ns"},
+			Name:             "half",
+			MetadataLocation: "s3://" + renameTestBucket + "/ns/half/metadata/v2.metadata.json",
+		}},
+		{"DeleteView", &DeleteViewRequest{TableBucketARN: bucketARN, Namespace: []string{"ns"}, Name: "half"}},
+	}
+	for _, op := range ops {
+		t.Run(op.operation, func(t *testing.T) {
+			status, resp := runHandler(t, m, fs.Client, op.operation, op.input)
+			assert.Equal(t, http.StatusNotFound, status, "%+v", resp)
+			assert.Equal(t, ErrCodeNoSuchView, resp.Type, "%+v", resp)
+		})
+	}
+}
+
+
