@@ -108,19 +108,79 @@ func TestListObjectsV2ContinuationTokenWithXMLUnsafeKeys(t *testing.T) {
 	}
 }
 
-// The StartAfter echo is the wire encoding of the decoded key, so a client
-// that feeds the echo back lands on the same resume point instead of
-// drifting to the literal escape text.
-func TestListObjectsV2StartAfterEchoStable(t *testing.T) {
-	s3a := newListTokenTestServer(t, []string{"a b", "c"})
-	for _, sent := range []string{"a%20b", "a b"} {
-		result := listV2Page(t, s3a, url.Values{
-			"list-type": {"2"}, "encoding-type": {"url"}, "start-after": {sent},
-		})
-		assert.Equal(t, "a%20b", result.StartAfter, "start-after %q", sent)
-		require.Len(t, result.Contents, 1)
-		assert.Equal(t, "c", result.Contents[0].Key)
+// A paginating client decodes the url-encoded marker fields and hands the
+// raw keys back, so a marker or key that is itself a valid escape must stay
+// literal: decoding it again would list from a key the client never named.
+func TestListObjectsV1UrlPaginationKeepsPercentEscapesLiteral(t *testing.T) {
+	keys := []string{"a%2Bb", "a+b", "c d", "c%20d", "z"}
+	s3a := newListTokenTestServer(t, keys)
+
+	var got []string
+	marker := ""
+	for page := 0; ; page++ {
+		require.Less(t, page, len(keys), "pagination repeated a marker")
+		query := url.Values{"encoding-type": {"url"}, "max-keys": {"1"}}
+		if marker != "" {
+			query.Set("marker", marker)
+		}
+		result := listV1Page(t, s3a, query)
+		for _, content := range result.Contents {
+			key, err := url.QueryUnescape(content.Key)
+			require.NoError(t, err)
+			got = append(got, key)
+		}
+		if !result.IsTruncated {
+			break
+		}
+		decoded, err := url.QueryUnescape(result.NextMarker)
+		require.NoError(t, err)
+		marker = decoded
 	}
+	assert.Equal(t, keys, got)
+}
+
+// The StartAfter echo is the wire encoding of the raw request key: a client
+// decodes it before sending it back, and a key that is itself a valid escape
+// stays literal.
+func TestListObjectsV2StartAfterEchoStable(t *testing.T) {
+	s3a := newListTokenTestServer(t, []string{"a b", "a%20b", "c"})
+	for _, tc := range []struct {
+		sent string
+		echo string
+		rest []string
+	}{
+		{"a b", "a%20b", []string{"a%20b", "c"}},
+		{"a%20b", "a%2520b", []string{"c"}},
+	} {
+		result := listV2Page(t, s3a, url.Values{
+			"list-type": {"2"}, "encoding-type": {"url"}, "start-after": {tc.sent},
+		})
+		assert.Equal(t, tc.echo, result.StartAfter, "start-after %q", tc.sent)
+		var got []string
+		for _, content := range result.Contents {
+			key, err := url.QueryUnescape(content.Key)
+			require.NoError(t, err)
+			got = append(got, key)
+		}
+		assert.Equal(t, tc.rest, got, "start-after %q", tc.sent)
+	}
+}
+
+// start-after names a raw key even when it looks like an escape: listing
+// after "a%2Bb" must start after that literal key, not after "a+b".
+func TestListObjectsV2UrlStartAfterKeepsPercentEscapesLiteral(t *testing.T) {
+	s3a := newListTokenTestServer(t, []string{"a%2Bb", "a+b", "c d", "c%20d", "z"})
+
+	result := listV2Page(t, s3a, url.Values{
+		"list-type": {"2"}, "encoding-type": {"url"}, "start-after": {"a%2Bb"},
+	})
+	var got []string
+	for _, content := range result.Contents {
+		key, err := url.QueryUnescape(content.Key)
+		require.NoError(t, err)
+		got = append(got, key)
+	}
+	assert.Equal(t, []string{"a+b", "c d", "c%20d", "z"}, got)
 }
 
 // A token for a key that XML carries unchanged stays the bare key.
@@ -216,24 +276,15 @@ func TestListObjectsV1MarkerWithXMLUnsafeKeys(t *testing.T) {
 			break
 		}
 		require.NotEmpty(t, result.NextMarker)
-		marker = result.NextMarker
+		decoded, err := url.QueryUnescape(result.NextMarker)
+		require.NoError(t, err)
+		marker = decoded
 	}
 	require.Equal(t, keys, got)
 }
 
-// A url-encoded marker is only a wire echo when re-escaping its unescaped
-// form reproduces it: a real echo decodes, a raw key merely containing '%'
-// or a malformed escape passes through untouched.
-func TestDecodeMarkerEchoKeepsNonCanonicalRawKey(t *testing.T) {
-	assert.Equal(t, "a b", decodeMarkerEcho("a%20b", true))
-	assert.Equal(t, "a%41", decodeMarkerEcho("a%2541", true))
-	assert.Equal(t, "a%41", decodeMarkerEcho("a%41", true))
-	assert.Equal(t, "a%2G", decodeMarkerEcho("a%2G", true))
-	assert.Equal(t, "a%20b", decodeMarkerEcho("a%20b", false))
-}
-
 // Under encoding-type=url AWS encodes the StartAfter echo the same as the
-// listed keys; a client resuming from the emitted form lands on the raw key.
+// listed keys; a client decodes the echo and resumes at the raw key.
 func TestListObjectsV2UrlStartAfterEchoAndResume(t *testing.T) {
 	s3a := newListTokenTestServer(t, []string{"a b", "a b0", "a c", "b"})
 
@@ -248,8 +299,10 @@ func TestListObjectsV2UrlStartAfterEchoAndResume(t *testing.T) {
 	}
 	assert.Equal(t, []string{"a b0", "a c", "b"}, got)
 
-	// Echoing the emitted form back resumes at the same raw key.
-	result = listV2Page(t, s3a, url.Values{"list-type": {"2"}, "encoding-type": {"url"}, "start-after": {result.StartAfter}})
+	// Resuming from the decoded echo lands on the same raw key.
+	decoded, err := url.QueryUnescape(result.StartAfter)
+	require.NoError(t, err)
+	result = listV2Page(t, s3a, url.Values{"list-type": {"2"}, "encoding-type": {"url"}, "start-after": {decoded}})
 	got = nil
 	for _, content := range result.Contents {
 		key, err := url.QueryUnescape(content.Key)
