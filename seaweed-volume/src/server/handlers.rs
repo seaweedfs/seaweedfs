@@ -2114,11 +2114,23 @@ fn parse_range_header(s: &str, size: i64) -> Result<Vec<HttpRange>, &'static str
             length: 0,
         };
         if start_str.is_empty() {
+            // suffix-length must be a non-negative integer (RFC 7233 Section 2.1)
+            if end_str.is_empty() || end_str.starts_with('-') {
+                return Err("invalid range");
+            }
             let mut i = end_str.parse::<i64>().map_err(|_| "invalid range")?;
+            if i < 0 {
+                return Err("invalid range");
+            }
             if i > size {
                 i = size;
             }
             r.start = size - i;
+            if r.start >= size {
+                // a zero-length suffix selects no bytes, so it does not overlap
+                no_overlap = true;
+                continue;
+            }
             r.length = size - r.start;
         } else {
             let i = start_str.parse::<i64>().map_err(|_| "invalid range")?;
@@ -5080,13 +5092,32 @@ mod tests {
             parse_range_header("bytes=100-", 10).unwrap_err(),
             RANGE_NO_OVERLAP
         );
+        // a zero-length suffix selects no bytes; same unsatisfiable class
+        assert_eq!(
+            parse_range_header("bytes=-0", 10).unwrap_err(),
+            RANGE_NO_OVERLAP
+        );
         // 416 only when every range fails to overlap
         let ranges = parse_range_header("bytes=10-,0-1", 10).unwrap();
+        assert_eq!(ranges.len(), 1);
+        assert_eq!((ranges[0].start, ranges[0].length), (0, 2));
+        let ranges = parse_range_header("bytes=-0,0-1", 10).unwrap();
         assert_eq!(ranges.len(), 1);
         assert_eq!((ranges[0].start, ranges[0].length), (0, 2));
         // an end past the size is clamped, still satisfiable
         let ranges = parse_range_header("bytes=5-100", 10).unwrap();
         assert_eq!((ranges[0].start, ranges[0].length), (5, 5));
+    }
+
+    #[test]
+    fn test_parse_range_header_rejects_negative_suffix() {
+        // a suffix-length is a non-negative integer; "--5" must not become
+        // the range {start: 15, length: -5}
+        for spec in ["bytes=--5", "bytes=--0", "bytes=-"] {
+            assert_eq!(parse_range_header(spec, 10).unwrap_err(), "invalid range");
+        }
+        let ranges = parse_range_header("bytes=-3", 10).unwrap();
+        assert_eq!((ranges[0].start, ranges[0].length), (7, 3));
     }
 
     #[test]
@@ -5135,6 +5166,8 @@ mod tests {
         let data = b"hello";
         let headers = HeaderMap::new();
         let resp = handle_range_request("bytes=999-1000", data, headers, None);
+        assert_eq!(resp.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+        let resp = handle_range_request("bytes=-0", data, HeaderMap::new(), None);
         assert_eq!(resp.status(), StatusCode::RANGE_NOT_SATISFIABLE);
     }
 
@@ -7135,10 +7168,10 @@ mod tests {
         assert_eq!(taken(&reads), vec![0]);
     }
 
-    /// A negative suffix must not shrink the covered length under the sum.
-    /// Duplicate ranges stay an empty 200 and read nothing.
+    /// A negative suffix makes the whole header invalid, so the read is
+    /// rejected before any chunk is fetched.
     #[tokio::test]
-    async fn test_chunk_manifest_negative_suffix_stays_empty() {
+    async fn test_chunk_manifest_negative_suffix_is_rejected() {
         let tmp = tempfile::TempDir::new().unwrap();
         let state = volume_test_state(&tmp);
         let ten = put_test_needle(&state, 0x6e7a_0c41, b"0123456789");
@@ -7148,16 +7181,14 @@ mod tests {
             &ten[1..]
         );
         let path = put_manifest(&state, 0x6e7a_0c42, &json);
-        let (status, headers, body) = send_read(
+        let (status, _, _) = send_read(
             &state,
             Method::GET,
             &path,
             Some(b"bytes=0-7,0-7,--1073741824"),
         )
         .await;
-        assert_eq!(status, StatusCode::OK);
-        assert!(body.is_empty());
-        assert_eq!(headers[header::ACCEPT_RANGES], "bytes");
+        assert_eq!(status, StatusCode::RANGE_NOT_SATISFIABLE);
         assert_eq!(taken(&reads), vec![0]);
     }
 

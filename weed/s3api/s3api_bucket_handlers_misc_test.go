@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -276,6 +277,151 @@ func TestHandleAutoCreateBucketNonAdmin(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
 	}
+}
+
+// autoCreateBucketFiler records every entry a bucket auto-create writes.
+type autoCreateBucketFiler struct {
+	filer_pb.UnimplementedSeaweedFilerServer
+	created []*filer_pb.Entry
+}
+
+func (f *autoCreateBucketFiler) CreateEntry(_ context.Context, req *filer_pb.CreateEntryRequest) (*filer_pb.CreateEntryResponse, error) {
+	f.created = append(f.created, req.Entry)
+	return &filer_pb.CreateEntryResponse{}, nil
+}
+
+// A bucket-scoped admin grant ("Admin:prefix*") authorizes auto-create for the
+// buckets it matches — the same rule explicit CreateBucket enforces — and no
+// others.
+func TestAutoCreateBucketScopedAdmin(t *testing.T) {
+	cases := []struct {
+		name    string
+		actions []Action
+		bucket  string
+		allowed bool
+	}{
+		{"global admin", []Action{"Admin"}, "app-uploads", true},
+		{"matching prefix", []Action{"Admin:app-*"}, "app-uploads", true},
+		{"exact bucket", []Action{"Admin:app-uploads"}, "app-uploads", true},
+		{"non-matching prefix", []Action{"Admin:app-*"}, "other-bucket", false},
+		{"write-scoped grant is not admin", []Action{"Write:app-*"}, "app-uploads", false},
+		{"unscoped write", []Action{"Write"}, "app-uploads", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			filer := &autoCreateBucketFiler{}
+			s3a := newHeadBucketTestServer(t, filer)
+			s3a.option.AutoCreateBucket = true
+			req := newBucketRequest(http.MethodPut, tc.bucket, "", "")
+			req = req.WithContext(recordIdentityInContext(req, &Identity{
+				Name:    "app",
+				Actions: tc.actions,
+			}))
+			rec := httptest.NewRecorder()
+
+			if got := s3a.handleAutoCreateBucket(rec, req, tc.bucket, "PutObjectHandler"); got != tc.allowed {
+				t.Fatalf("handleAutoCreateBucket = %v, want %v (status %d, body %s)", got, tc.allowed, rec.Code, rec.Body.String())
+			}
+			if !tc.allowed {
+				if rec.Code != http.StatusForbidden {
+					t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
+				}
+				return
+			}
+			require.NotEmpty(t, filer.created)
+			require.Equal(t, tc.bucket, filer.created[0].Name)
+			require.Equal(t, []byte("app"), filer.created[0].Extended[s3_constants.AmzIdentityId])
+		})
+	}
+}
+
+// An attached IAM policy governs auto-create the same way it governs explicit
+// CreateBucket: a Deny on s3:CreateBucket blocks creation even when a scoped
+// Admin grant matches, an Allow for it succeeds, and a policy that says
+// nothing about it leaves only the bare-Admin floor (scoped grants are not
+// consulted once policies attach).
+func TestAutoCreateBucketAttachedPolicy(t *testing.T) {
+	const bucket = "app-uploads"
+	arn := fmt.Sprintf("arn:aws:s3:::%s", bucket)
+	cases := []struct {
+		name    string
+		actions []Action
+		policy  string
+		allowed bool
+	}{
+		{
+			name:    "deny beats scoped admin",
+			actions: []Action{"Admin:app-*"},
+			policy: fmt.Sprintf(`{"Version":"2012-10-17","Statement":[`+
+				`{"Effect":"Allow","Action":"s3:PutObject","Resource":"%s/*"},`+
+				`{"Effect":"Deny","Action":"s3:CreateBucket","Resource":"%s"}]}`, arn, arn),
+			allowed: false,
+		},
+		{
+			name:    "allow without scoped grant",
+			actions: []Action{"Write:app-*"},
+			policy: fmt.Sprintf(`{"Version":"2012-10-17","Statement":[`+
+				`{"Effect":"Allow","Action":"s3:CreateBucket","Resource":"%s"}]}`, arn),
+			allowed: true,
+		},
+		{
+			name:    "scoped admin with unrelated policy is denied",
+			actions: []Action{"Admin:app-*"},
+			policy: fmt.Sprintf(`{"Version":"2012-10-17","Statement":[`+
+				`{"Effect":"Allow","Action":"s3:PutObject","Resource":"%s/*"}]}`, arn),
+			allowed: false,
+		},
+		{
+			name:    "bare admin survives unrelated policy",
+			actions: []Action{"Admin"},
+			policy: fmt.Sprintf(`{"Version":"2012-10-17","Statement":[`+
+				`{"Effect":"Allow","Action":"s3:PutObject","Resource":"%s/*"}]}`, arn),
+			allowed: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			filer := &autoCreateBucketFiler{}
+			s3a := newHeadBucketTestServer(t, filer)
+			s3a.option.AutoCreateBucket = true
+			s3a.iam = &IdentityAccessManagement{}
+			require.NoError(t, s3a.iam.PutPolicy("auto-create-test", tc.policy))
+			req := newBucketRequest(http.MethodPut, bucket, "", "")
+			req = req.WithContext(recordIdentityInContext(req, &Identity{
+				Name:        "app",
+				Actions:     tc.actions,
+				PolicyNames: []string{"auto-create-test"},
+			}))
+			rec := httptest.NewRecorder()
+
+			if got := s3a.handleAutoCreateBucket(rec, req, bucket, "PutObjectHandler"); got != tc.allowed {
+				t.Fatalf("handleAutoCreateBucket = %v, want %v (status %d, body %s)", got, tc.allowed, rec.Code, rec.Body.String())
+			}
+			if !tc.allowed {
+				if rec.Code != http.StatusForbidden {
+					t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
+				}
+				require.Empty(t, filer.created)
+				return
+			}
+			require.NotEmpty(t, filer.created)
+			require.Equal(t, bucket, filer.created[0].Name)
+		})
+	}
+}
+
+// An identity authenticated outside the middleware (IAM integration, policy
+// signature) records no request-context identity and no internal account
+// header; the verified identity still supplies the bucket owner.
+func TestSetBucketOwnerVerifiedIdentityFallback(t *testing.T) {
+	s3a := newHeadBucketTestServer(t, &autoCreateBucketFiler{})
+	req := newBucketRequest(http.MethodPut, "app-uploads", "", "")
+	entry := &filer_pb.Entry{}
+
+	s3a.setBucketOwner(req, &Identity{Name: "app", Account: &Account{Id: "acct-app"}})(entry)
+
+	require.Equal(t, []byte("app"), entry.Extended[s3_constants.AmzIdentityId])
+	require.Equal(t, []byte("acct-app"), entry.Extended[s3_constants.ExtAmzOwnerKey])
 }
 
 func TestUploadMissingBucketAutoCreateDisabled(t *testing.T) {

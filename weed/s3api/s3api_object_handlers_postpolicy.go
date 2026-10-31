@@ -91,6 +91,9 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 		}
 		if identity != nil {
 			r = r.WithContext(recordIdentityInContext(r, identity))
+			if identity.Account != nil {
+				r.Header.Set(s3_constants.AmzAccountId, identity.Account.Id)
+			}
 		}
 	}
 
@@ -160,12 +163,19 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 	versioningState, err := s3a.getVersioningState(bucket)
 	if err != nil {
 		if errors.Is(err, filer_pb.ErrNotFound) {
-			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
+			// Auto-create bucket if it doesn't exist (requires Admin permission)
+			if !s3a.handleAutoCreateBucket(w, r, bucket, "PostPolicyBucketHandler") {
+				return
+			}
+			// Re-fetch versioning state to handle race conditions where
+			// another process might have created the bucket with versioning enabled.
+			versioningState, err = s3a.getVersioningState(bucket)
+		}
+		if err != nil {
+			glog.Errorf("PostPolicyBucketHandler: versioning state for bucket %s: %v", bucket, err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 			return
 		}
-		glog.Errorf("PostPolicyBucketHandler: versioning state for bucket %s: %v", bucket, err)
-		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-		return
 	}
 	objectLockEnabled, err := s3a.isObjectLockEnabled(bucket)
 	if err != nil && !errors.Is(err, filer_pb.ErrNotFound) {

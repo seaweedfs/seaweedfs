@@ -340,7 +340,7 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 		bucketCrtime = entry.Attributes.Crtime
 
 		// Set bucket owner
-		s3a.setBucketOwner(r)(entry)
+		s3a.setBucketOwner(r, nil)(entry)
 
 		// Persist a requested non-default ACL so GetBucketAcl and idempotent
 		// recreation observe it (private is the default and is not stored).
@@ -719,8 +719,10 @@ func hasExplicitBucketACL(r *http.Request) bool {
 	return false
 }
 
-// setBucketOwner creates a function that sets the bucket owner from the request context
-func (s3a *S3ApiServer) setBucketOwner(r *http.Request) func(entry *filer_pb.Entry) {
+// setBucketOwner creates a function that sets the bucket owner from the request
+// context, falling back to an already-verified identity when authentication did
+// not go through the middleware that records it there.
+func (s3a *S3ApiServer) setBucketOwner(r *http.Request, verified *Identity) func(entry *filer_pb.Entry) {
 	currentIdentityId := s3_constants.GetIdentityNameFromContext(r)
 	if identityObj := s3_constants.GetIdentityFromContext(r); identityObj != nil {
 		if identity, ok := identityObj.(*Identity); ok && s3a.iam != nil &&
@@ -733,6 +735,16 @@ func (s3a *S3ApiServer) setBucketOwner(r *http.Request) func(entry *filer_pb.Ent
 	// Nothing is recorded when auth is off (client-supplied header, untrusted)
 	// or for the anonymous account: those buckets report the admin fallback.
 	accountId := r.Header.Get(s3_constants.AmzAccountId)
+	if verified != nil && s3a.iam != nil && s3a.iam.identityAnonymous != nil &&
+		verified.Name == s3a.iam.identityAnonymous.Name {
+		verified = nil
+	}
+	if currentIdentityId == "" && verified != nil {
+		currentIdentityId = verified.Name
+	}
+	if accountId == "" && verified != nil && verified.Account != nil {
+		accountId = verified.Account.Id
+	}
 	if accountId == AccountAnonymous.Id || (s3a.iam != nil && !s3a.iam.isEnabled()) {
 		accountId = ""
 	}
@@ -753,7 +765,7 @@ func (s3a *S3ApiServer) setBucketOwner(r *http.Request) func(entry *filer_pb.Ent
 }
 
 // autoCreateBucket creates a bucket if it doesn't exist, setting the owner from the request context
-// Only users with admin permissions are allowed to auto-create buckets
+// Only identities that may administer the named bucket are allowed to auto-create it
 func (s3a *S3ApiServer) autoCreateBucket(r *http.Request, bucket string) error {
 	// Validate the bucket name before auto-creating
 	if err := s3bucket.VerifyS3BucketName(bucket); err != nil {
@@ -764,16 +776,18 @@ func (s3a *S3ApiServer) autoCreateBucket(r *http.Request, bucket string) error {
 		return fmt.Errorf("auto-create bucket %s: %w", bucket, ErrAutoCreateDisabled)
 	}
 
-	// Check if user has admin permissions
-	if !s3a.isUserAdmin(r) {
+	// Check if user may administer this bucket
+	adminIdentity, allowed := s3a.userCanAdminBucket(r, bucket)
+	if !allowed {
 		return fmt.Errorf("auto-create bucket %s: %w", bucket, ErrAutoCreatePermissionDenied)
 	}
 
-	identityId := s3_constants.GetIdentityNameFromContext(r)
 	var bucketCrtime int64
+	var ownerId string
 	if err := s3a.mkdirExclusive(s3a.option.BucketsPath, bucket, func(entry *filer_pb.Entry) {
 		bucketCrtime = entry.Attributes.Crtime
-		s3a.setBucketOwner(r)(entry)
+		s3a.setBucketOwner(r, adminIdentity)(entry)
+		ownerId = bucketEntryOwner(entry)
 	}); err != nil {
 		// In case of a race condition where another request created the bucket
 		// in the meantime, check for existence before returning an error.
@@ -799,7 +813,7 @@ func (s3a *S3ApiServer) autoCreateBucket(r *http.Request, bucket string) error {
 			// we'll set it here to ensure consistency.
 			if entry.Extended == nil || len(entry.Extended[s3_constants.AmzIdentityId]) == 0 {
 				// No owner set, assign current admin as owner
-				s3a.setBucketOwner(r)(entry)
+				s3a.setBucketOwner(r, adminIdentity)(entry)
 				if updateErr := s3a.updateEntry(s3a.option.BucketsPath, entry); updateErr != nil {
 					glog.Warningf("autoCreateBucket: failed to set owner for existing bucket %s: %v", bucket, updateErr)
 				} else {
@@ -825,9 +839,9 @@ func (s3a *S3ApiServer) autoCreateBucket(r *http.Request, bucket string) error {
 		s3a.bucketConfigCache.RemoveNegativeCache(bucket)
 	}
 
-	if identityId != "" {
-		if err := s3a.addBucketToOwnerIndex(identityId, bucket, bucketCrtime); err != nil {
-			glog.Warningf("autoCreateBucket: owner index add %s/%s: %v", identityId, bucket, err)
+	if ownerId != "" {
+		if err := s3a.addBucketToOwnerIndex(ownerId, bucket, bucketCrtime); err != nil {
+			glog.Warningf("autoCreateBucket: owner index add %s/%s: %v", ownerId, bucket, err)
 		}
 	}
 
@@ -898,6 +912,43 @@ func (s3a *S3ApiServer) isUserAdmin(r *http.Request) bool {
 
 	// Check if the authenticated identity has admin privileges
 	return identity != nil && identity.isAdmin()
+}
+
+// userCanAdminBucket securely checks if the authenticated identity may
+// administer the named bucket: a global Admin, or a bucket-scoped grant such
+// as "Admin:prefix*" matching the bucket name — the same rule explicit
+// CreateBucket already enforces, including attached IAM policy denies.
+// The verified identity is returned so callers can attribute ownership even
+// when no middleware recorded it in the request context.
+func (s3a *S3ApiServer) userCanAdminBucket(r *http.Request, bucket string) (*Identity, bool) {
+	if identityObj := s3_constants.GetIdentityFromContext(r); identityObj != nil {
+		if identity, ok := identityObj.(*Identity); ok {
+			return identity, s3a.verifyBucketAdmin(r, identity, bucket)
+		}
+	}
+	if s3a.iam == nil {
+		return nil, false
+	}
+	identity, errCode := s3a.iam.authRequest(r, s3_constants.ACTION_ADMIN)
+	if errCode != s3err.ErrNone {
+		return nil, false
+	}
+	return identity, s3a.verifyBucketAdmin(r, identity, bucket)
+}
+
+// verifyBucketAdmin evaluates bucket administration as s3:CreateBucket through
+// the same policy-aware path explicit creation uses: a synthesized PUT
+// /bucket request makes attached IAM policies resolve (and deny) against the
+// bucket ARN regardless of the real request's method or query.
+func (s3a *S3ApiServer) verifyBucketAdmin(r *http.Request, identity *Identity, bucket string) bool {
+	if identity == nil {
+		return false
+	}
+	if s3a.iam == nil {
+		return identity.CanDo(s3_constants.ACTION_ADMIN, bucket, "")
+	}
+	createReq := objectKeyPolicyRequest(r, http.MethodPut, bucket, "", "")
+	return s3a.iam.VerifyActionPermission(createReq, identity, s3_constants.ACTION_ADMIN, bucket, "") == s3err.ErrNone
 }
 
 // isBucketPublicRead checks if a bucket allows anonymous read access based on its cached ACL status
