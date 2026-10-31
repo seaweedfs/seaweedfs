@@ -78,7 +78,7 @@ func TestPeerResumeStartFromSurvivesRemoval(t *testing.T) {
 	ma := NewMetaAggregator(nil, pb.ServerAddress("127.0.0.1:2"), nil)
 	defer ma.Shutdown()
 
-	subscribeStarts := make(chan int64, 2)
+	subscribeStarts := make(chan int64, 3)
 	ma.peerSubscribeLoop = func(_ *Filer, _ pb.ServerAddress, _ pb.ServerAddress, startFrom time.Time, stopChan chan struct{}) {
 		subscribeStarts <- startFrom.UnixNano()
 		<-stopChan
@@ -116,6 +116,22 @@ func TestPeerResumeStartFromSurvivesRemoval(t *testing.T) {
 	ma.OnPeerUpdate(add, time.Now())
 	if got := nextSubscribeStart(); got != deliveredThrough {
 		t.Fatalf("expecting re-added peer to resume at %d, got %d", deliveredThrough, got)
+	}
+
+	// A peer gone past the retention is forgotten and starts afresh.
+	ma.OnPeerUpdate(&master_pb.ClusterNodeUpdate{Address: string(peer)}, time.Now())
+	ma.peerWatermarksLock.Lock()
+	ma.peerRemovedAtNs[peer] = time.Now().Add(-2 * peerResumeRetention).UnixNano()
+	ma.dropExpiredRemovedPeersLocked()
+	_, retained := ma.peerResumeTsNs[peer]
+	ma.peerWatermarksLock.Unlock()
+	if retained {
+		t.Fatal("expecting the resume point to be forgotten past the retention")
+	}
+	freshStart := time.Now()
+	ma.OnPeerUpdate(add, freshStart)
+	if got := nextSubscribeStart(); got != freshStart.UnixNano() {
+		t.Fatalf("expecting forgotten peer to start at %d, got %d", freshStart.UnixNano(), got)
 	}
 
 	// A first-seen peer, or a caller start already behind the recorded

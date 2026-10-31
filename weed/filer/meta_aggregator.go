@@ -49,6 +49,7 @@ type MetaAggregator struct {
 	// whose unflushed events still exist, and de-accounting it at once would
 	// let subscribers advance past them. A re-add clears the mark; a peer
 	// gone past the grace is dropped so it cannot pin the low-watermarks.
+	// The mark itself stays until the peer's resume point is forgotten.
 	peerRemovedAtNs map[pb.ServerAddress]int64
 	// lowWatermarkTsNs and lowFlushWatermarkTsNs are the last minima signalled
 	// on deliveryAdvanced and flushAdvanced, each closed and replaced when its
@@ -64,7 +65,9 @@ type MetaAggregator struct {
 	remotePeerArrived     chan struct{}
 	// peerResumeTsNs keeps each peer's delivered-through position across
 	// subscription restarts; the watermark maps forget a removed peer past
-	// the grace, but a rejoining peer still needs it to resume.
+	// the grace, but a rejoining peer still needs it to resume. Forgotten
+	// peerResumeRetention after the removal so addresses that never return,
+	// such as restarted pods' IPs, do not accumulate.
 	peerResumeTsNs     map[pb.ServerAddress]int64
 	peerWatermarksLock sync.Mutex
 	peerWg             sync.WaitGroup
@@ -149,6 +152,11 @@ func (ma *MetaAggregator) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, star
 // already bounds a stale watermark's influence within it.
 const peerWatermarkRemovalGrace = 2 * LogFlushInterval
 
+// peerResumeRetention is how long a removed peer's resume point outlives the
+// watermark grace, so a slow restart or a partition still rejoins at its old
+// position.
+const peerResumeRetention = time.Hour
+
 // initPeerWatermark adds the peer with a zero (unknown) watermark; a re-added
 // peer keeps its prior values and stops being considered removed.
 func (ma *MetaAggregator) initPeerWatermark(peer pb.ServerAddress) {
@@ -176,18 +184,24 @@ func (ma *MetaAggregator) markPeerWatermarkRemoved(peer pb.ServerAddress) {
 	}
 }
 
-// dropExpiredRemovedPeersLocked drops peers whose removal outlived the grace.
-// Caller must hold peerWatermarksLock.
+// dropExpiredRemovedPeersLocked drops the watermarks of peers whose removal
+// outlived the grace, and the mark with the resume point once it outlived
+// peerResumeRetention. Caller must hold peerWatermarksLock.
 func (ma *MetaAggregator) dropExpiredRemovedPeersLocked() {
 	if len(ma.peerRemovedAtNs) == 0 {
 		return
 	}
-	cutoff := time.Now().UnixNano() - int64(peerWatermarkRemovalGrace)
+	now := time.Now().UnixNano()
+	graceCutoff := now - int64(peerWatermarkRemovalGrace)
+	resumeCutoff := now - int64(peerResumeRetention)
 	for peer, removedAt := range ma.peerRemovedAtNs {
-		if removedAt < cutoff {
-			delete(ma.peerRemovedAtNs, peer)
+		if removedAt < graceCutoff {
 			delete(ma.peerWatermarks, peer)
 			delete(ma.peerFlushWatermarks, peer)
+		}
+		if removedAt < resumeCutoff {
+			delete(ma.peerRemovedAtNs, peer)
+			delete(ma.peerResumeTsNs, peer)
 		}
 	}
 	// Dropping the peer that pinned a minimum raises it, same as it reporting.
