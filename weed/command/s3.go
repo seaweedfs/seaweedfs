@@ -790,13 +790,13 @@ func (d *vectorDiscovery) resolve() {
 		}
 	}
 	if worker != d.worker {
-		if d.conn != nil {
-			d.conn.Close()
-		}
 		conn, err := pb.GrpcDial(context.Background(), worker, false, d.grpcDialOption)
 		if err != nil {
 			glog.Warningf("S3 Vectors: dial weed-vector %s: %v", worker, err)
 			return
+		}
+		if d.conn != nil {
+			d.conn.Close()
 		}
 		d.worker, d.conn = worker, conn
 		d.client = vector_pb.NewVectorServiceClient(conn)

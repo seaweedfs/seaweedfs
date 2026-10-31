@@ -9,6 +9,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 )
@@ -207,5 +208,38 @@ func TestVectorDiscoveryUncachedCallersShareLookup(t *testing.T) {
 	}
 	if n := atomic.LoadInt32(&calls); n != 1 {
 		t.Fatalf("concurrent callers ran %d lookups, want 1", n)
+	}
+}
+
+// A failed dial to a new worker must leave the cached connection open.
+func TestVectorDiscoveryKeepsConnOnDialError(t *testing.T) {
+	d := &vectorDiscovery{
+		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		discover: func(masters []pb.ServerAddress, opt grpc.DialOption) []string {
+			return []string{"127.0.0.1:9301"}
+		},
+	}
+	cached, err := d.cli()
+	if err != nil {
+		t.Fatalf("worker registered: expected a client, got %v", err)
+	}
+
+	// Without transport credentials the dial fails synchronously.
+	d.grpcDialOption = nil
+	d.discover = func(masters []pb.ServerAddress, opt grpc.DialOption) []string {
+		return []string{"127.0.0.1:9302"}
+	}
+	d.mu.Lock()
+	d.nextResolve = time.Time{}
+	d.mu.Unlock()
+	if c, err := d.cli(); err != nil || c != cached {
+		t.Fatalf("cached client: got %v, %v", c, err)
+	}
+	waitResolved(d)
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.client != cached || d.conn.GetState() == connectivity.Shutdown {
+		t.Fatalf("failed dial dropped the cached connection")
 	}
 }
