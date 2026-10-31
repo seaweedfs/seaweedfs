@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables/s3tablestest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -241,4 +242,24 @@ func TestVectorNamespaceDenialHidesBucketFormat(t *testing.T) {
 			assert.NotEqual(t, vectorNamespaceReadOnly, got.body.Message)
 		})
 	}
+}
+
+// A deferred create writes into the bucket before it registers anything, so
+// its gate refuses the vector namespace as the create itself would.
+func TestAuthorizeCreateTableRefusesVectorNamespace(t *testing.T) {
+	identity := &testIdentity{Name: "reader", Account: &testIdentityAccount{Id: "reader"}, Actions: []string{"s3tables:*"}}
+	ctx := s3_constants.SetIdentityInContext(context.Background(), identity)
+	req := &CreateTableRequest{TableBucketARN: vectorTestARN(t), Namespace: []string{VectorIndexNamespace}, Name: "fresh"}
+
+	lanceFS := s3tablestest.Start(t)
+	seedVectorBucket(t, lanceFS, FormatLance)
+	err := untrustedManager().AuthorizeCreateTable(ctx, NewManagerClient(lanceFS.Client), req, "reader")
+	var apiErr *S3TablesError
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, ErrCodeAccessDenied, apiErr.Type)
+	assert.Equal(t, vectorNamespaceReadOnly, apiErr.Message)
+
+	icebergFS := s3tablestest.Start(t)
+	seedVectorBucket(t, icebergFS, FormatIceberg)
+	assert.NoError(t, untrustedManager().AuthorizeCreateTable(ctx, NewManagerClient(icebergFS.Client), req, "reader"))
 }
