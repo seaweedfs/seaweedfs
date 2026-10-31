@@ -1106,8 +1106,8 @@ github.com/seaweedfs/go-fuse/v2 v2.9.4 h1:ACyloiuopdhRSjdLLeSWbsVaemMPskORaRF01T
 github.com/seaweedfs/go-fuse/v2 v2.9.4/go.mod h1:zABdmWEa6A0bwaBeEOBUeUkGIZlxUhcdv+V1Dcc/U/I=
 github.com/seaweedfs/goexif v1.0.3 h1:ve/OjI7dxPW8X9YQsv3JuVMaxEyF9Rvfd04ouL+Bz30=
 github.com/seaweedfs/goexif v1.0.3/go.mod h1:Oni780Z236sXpIQzk1XoJlTwqrJ02smEin9zQeff7Fk=
-github.com/seaweedfs/raft v1.2.2 h1:5OiCQbia7J83WE0whlRGj5oBCEfixqfoOTOeY1IQDXM=
-github.com/seaweedfs/raft v1.2.2/go.mod h1:fgs/rAVEzjQ7e04XMzG3eJhwZZRmBW+2uRtjakeCGeU=
+github.com/seaweedfs/raft v1.2.3 h1:/NMrdhztjx8ojeu+aAPa2GmuVShQXp8YwmNmsMPU63E=
+github.com/seaweedfs/raft v1.2.3/go.mod h1:fgs/rAVEzjQ7e04XMzG3eJhwZZRmBW+2uRtjakeCGeU=
 github.com/secure-systems-lab/go-securesystemslib v0.11.0 h1:iuCR9kcMFD4QurdKrGvPLoKZLv9YvwPYVr0473BdtFs=
 github.com/secure-systems-lab/go-securesystemslib v0.11.0/go.mod h1:+PMOTjUGwHj2vcZ+TFKlb1tXRbrdWE1LYDT5i9JC80Q=
 github.com/sergi/go-diff v1.0.0/go.mod h1:0CfEIISq7TuYL3j771MWULgwwjU+GofnZX9QAmXWZgo=
