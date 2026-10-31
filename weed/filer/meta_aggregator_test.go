@@ -76,6 +76,7 @@ func TestMetaAggregatorShutdownStopsPeerLoops(t *testing.T) {
 func TestPeerResumeStartFromSurvivesRemoval(t *testing.T) {
 	peer := pb.ServerAddress("127.0.0.1:1")
 	ma := NewMetaAggregator(nil, pb.ServerAddress("127.0.0.1:2"), nil)
+	defer ma.Shutdown()
 
 	add := &master_pb.ClusterNodeUpdate{Address: string(peer), IsAdd: true}
 	ma.OnPeerUpdate(add, time.Now())
@@ -114,6 +115,7 @@ func TestPeerResumeStartFromSurvivesRemoval(t *testing.T) {
 func TestPeerResumeStartFromStaysBehindReplayFloor(t *testing.T) {
 	peer := pb.ServerAddress("127.0.0.1:1")
 	ma := NewMetaAggregator(nil, pb.ServerAddress("127.0.0.1:2"), nil)
+	defer ma.Shutdown()
 
 	failed := time.Now().Add(-time.Hour).UnixNano()
 	ma.advancePeerWatermark(peer, failed)
