@@ -194,3 +194,24 @@ func TestS3SinkCreateEntryEncodesNonASCIIMetadata(t *testing.T) {
 	require.Equal(t, "=?utf-8?q?line1=0Aline2?=", rt.uploadReq.Header.Get("X-Amz-Meta-Note"))
 	require.Equal(t, "=?utf-8?q?caf=C3=A9?=", rt.uploadReq.Header.Get("X-Amz-Meta-Plain"))
 }
+
+func TestS3SinkCreateEntrySkipsOversizedMetadata(t *testing.T) {
+	sink, rt := newCapturingS3Sink(t)
+	entry := &filer_pb.Entry{
+		Attributes: &filer_pb.FuseAttributes{Mtime: 1700000000},
+		Content:    []byte("data"),
+		Extended: map[string][]byte{
+			"X-Amz-Meta-Big": []byte(strings.Repeat("x", maxMetadataSize)),
+			s3_constants.AmzObjectTaggingPrefix + "env": []byte("prod"),
+		},
+	}
+	require.NoError(t, sink.CreateEntry("/dir/big.bin", entry, nil))
+	require.Equal(t, "", rt.uploadReq.Header.Get("X-Amz-Meta-Big"))
+	require.Equal(t, "", rt.uploadReq.Header.Get("X-Amz-Meta-Mtime"))
+	require.Equal(t, "env=prod", rt.uploadReq.Header.Get("X-Amz-Tagging"))
+
+	entry.Extended["X-Amz-Meta-Big"] = []byte(strings.Repeat("x", maxMetadataSize-len("big")-len("mtime")-len("1700000000")))
+	require.NoError(t, sink.CreateEntry("/dir/fits.bin", entry, nil))
+	require.Equal(t, string(entry.Extended["X-Amz-Meta-Big"]), rt.uploadReq.Header.Get("X-Amz-Meta-Big"))
+	require.Equal(t, "1700000000", rt.uploadReq.Header.Get("X-Amz-Meta-Mtime"))
+}

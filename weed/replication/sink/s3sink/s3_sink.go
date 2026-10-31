@@ -25,6 +25,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
+// maxMetadataSize is the S3 limit on user metadata, counted over keys and values.
+const maxMetadataSize = 2 * 1024
+
 type S3Sink struct {
 	conn                          s3iface.S3API
 	filerSource                   *source.FilerSource
@@ -209,7 +212,11 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures 
 	if _, found := metadata["mtime"]; !found {
 		metadata["mtime"] = aws.String(strconv.FormatInt(entry.Attributes.Mtime, 10))
 	}
-	uploadInput.Metadata = metadata
+	if size := metadataSize(metadata); size <= maxMetadataSize {
+		uploadInput.Metadata = metadata
+	} else {
+		glog.Warningf("[%s] %s: %d bytes of user metadata exceed the S3 limit of %d, uploading without it", s3sink.bucket, key, size, maxMetadataSize)
+	}
 	if entry.Attributes.Mime != "" {
 		uploadInput.ContentType = aws.String(entry.Attributes.Mime)
 	}
@@ -266,4 +273,11 @@ func toMetadata(extended map[string][]byte) map[string]*string {
 		}
 	}
 	return metadata
+}
+
+func metadataSize(metadata map[string]*string) (size int) {
+	for k, v := range metadata {
+		size += len(k) + len(*v)
+	}
+	return size
 }
