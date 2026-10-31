@@ -3,6 +3,7 @@ package S3Sink
 import (
 	"encoding/base64"
 	"fmt"
+	"mime"
 	"net/url"
 	"strconv"
 	"strings"
@@ -22,7 +23,11 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/replication/sink"
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"golang.org/x/net/http/httpguts"
 )
+
+// maxMetadataSize is the S3 limit on user metadata, counted over keys and values.
+const maxMetadataSize = 2 * 1024
 
 type S3Sink struct {
 	conn                          s3iface.S3API
@@ -192,15 +197,6 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures 
 		}
 	}
 
-	doSaveMtime := true
-	if entry.Extended == nil {
-		entry.Extended = make(map[string][]byte)
-	} else if _, ok := entry.Extended[s3_constants.AmzUserMetaMtime]; ok {
-		doSaveMtime = false
-	}
-	if doSaveMtime {
-		entry.Extended[s3_constants.AmzUserMetaMtime] = []byte(strconv.FormatInt(entry.Attributes.Mtime, 10))
-	}
 	// process tagging
 	tags := buildTaggingString(entry.Extended)
 
@@ -212,6 +208,15 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures 
 	}
 	if tags != "" {
 		uploadInput.Tagging = aws.String(tags)
+	}
+	metadata := toMetadata(entry.Extended)
+	if _, found := metadata["mtime"]; !found {
+		metadata["mtime"] = aws.String(strconv.FormatInt(entry.Attributes.Mtime, 10))
+	}
+	if size := metadataSize(metadata); size <= maxMetadataSize {
+		uploadInput.Metadata = metadata
+	} else {
+		glog.Warningf("[%s] %s: %d bytes of user metadata exceed the S3 limit of %d, uploading without it", s3sink.bucket, key, size, maxMetadataSize)
 	}
 	if entry.Attributes.Mime != "" {
 		uploadInput.ContentType = aws.String(entry.Attributes.Mime)
@@ -255,4 +260,38 @@ func buildTaggingString(extended map[string][]byte) string {
 		}
 	}
 	return tagValues.Encode()
+}
+
+// toMetadata maps the X-Amz-Meta- attributes, matched case-insensitively for
+// entries written before the S3 gateway canonicalized them, to S3 user metadata.
+// Of keys that differ only in case the lowest wins, so X-Amz-Meta-Foo beats the
+// legacy x-amz-meta-foo. Values that are not printable ASCII are RFC 2047
+// encoded, which S3 decodes.
+func toMetadata(extended map[string][]byte) map[string]*string {
+	prefix := s3_constants.AmzUserMetaPrefix
+	metadata := make(map[string]*string)
+	sourceKeys := make(map[string]string)
+	for k, v := range extended {
+		if len(k) <= len(prefix) || !strings.EqualFold(k[:len(prefix)], prefix) {
+			continue
+		}
+		if !httpguts.ValidHeaderFieldName(k) {
+			glog.Warningf("skip metadata %q: not a valid header name", k)
+			continue
+		}
+		name := strings.ToLower(k[len(prefix):])
+		if seen, found := sourceKeys[name]; found && seen < k {
+			continue
+		}
+		sourceKeys[name] = k
+		metadata[name] = aws.String(mime.QEncoding.Encode("utf-8", string(v)))
+	}
+	return metadata
+}
+
+func metadataSize(metadata map[string]*string) (size int) {
+	for k, v := range metadata {
+		size += len(k) + len(*v)
+	}
+	return size
 }
