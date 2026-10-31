@@ -739,6 +739,7 @@ type vectorDiscovery struct {
 	conn           *grpc.ClientConn
 	client         vector_pb.VectorServiceClient
 	nextResolve    time.Time
+	resolving      chan struct{} // closed when the in-flight resolve lands
 }
 
 // reset drops the cached worker so the next call rediscovers — invoked on
@@ -763,7 +764,9 @@ func isTransportError(err error) bool {
 	return status.Code(err) == codes.Unavailable
 }
 
-func (d *vectorDiscovery) resolve() (vector_pb.VectorServiceClient, error) {
+// resolve runs without d.mu held so a slow master cannot stall cached-client callers.
+func (d *vectorDiscovery) resolve() {
+	workers := d.discover(d.masters, d.grpcDialOption)
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	// Measured from lookup end so a slow lookup cannot leave the next one already due.
@@ -773,10 +776,11 @@ func (d *vectorDiscovery) resolve() (vector_pb.VectorServiceClient, error) {
 			interval = vectorResolveInterval
 		}
 		d.nextResolve = time.Now().Add(interval)
+		close(d.resolving)
+		d.resolving = nil
 	}()
-	workers := d.discover(d.masters, d.grpcDialOption)
 	if len(workers) == 0 {
-		return nil, errNoVectorWorker
+		return
 	}
 	worker := workers[0]
 	for _, w := range workers {
@@ -791,12 +795,12 @@ func (d *vectorDiscovery) resolve() (vector_pb.VectorServiceClient, error) {
 		}
 		conn, err := pb.GrpcDial(context.Background(), worker, false, d.grpcDialOption)
 		if err != nil {
-			return nil, err
+			glog.Warningf("S3 Vectors: dial weed-vector %s: %v", worker, err)
+			return
 		}
 		d.worker, d.conn = worker, conn
 		d.client = vector_pb.NewVectorServiceClient(conn)
 	}
-	return d.client, nil
 }
 
 // A live client refreshes membership at most every vectorResolveInterval.
@@ -812,19 +816,24 @@ var errNoVectorWorker = status.Error(codes.Unavailable, "no weed-vector register
 
 func (d *vectorDiscovery) cli() (vector_pb.VectorServiceClient, error) {
 	d.mu.Lock()
-	cli := d.client
-	if !time.Now().Before(d.nextResolve) {
-		interval := vectorRecheckInterval
-		if cli != nil {
-			interval = vectorResolveInterval
-		}
-		d.nextResolve = time.Now().Add(interval)
-		d.mu.Unlock()
-		return d.resolve()
+	if d.resolving == nil && !time.Now().Before(d.nextResolve) {
+		d.resolving = make(chan struct{})
+		go d.resolve()
 	}
+	cli, resolving := d.client, d.resolving
 	d.mu.Unlock()
 	if cli != nil {
 		return cli, nil
+	}
+	// No cached client: wait for the in-flight lookup instead of failing.
+	if resolving != nil {
+		<-resolving
+		d.mu.Lock()
+		cli = d.client
+		d.mu.Unlock()
+		if cli != nil {
+			return cli, nil
+		}
 	}
 	return nil, errNoVectorWorker
 }
