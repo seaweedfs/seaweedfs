@@ -31,17 +31,22 @@ pub fn grpc_addr(master: &str) -> Result<String> {
     let (scheme, rest) = master.split_once("://").unwrap_or(("http", master));
     if let Some((host, port)) = rest.rsplit_once(':') {
         if let Some((_, grpc)) = port.split_once('.') {
-            if grpc.parse::<u16>().is_ok() {
+            if let Ok(grpc) = grpc.parse::<u64>() {
+                let grpc = u16::try_from(grpc)
+                    .with_context(|| format!("master {master}: gRPC port {grpc} is past 65535"))?;
                 return Ok(format!("{scheme}://{host}:{grpc}"));
             }
         }
-        if let Ok(port) = port.parse::<u16>() {
-            let grpc = port.checked_add(10000).with_context(|| {
-                format!(
-                    "master {master}: gRPC port {port}+10000 is past 65535; \
-                     give it explicitly as {host}:{port}.<grpc port>"
-                )
-            })?;
+        if let Ok(port) = port.parse::<u64>() {
+            let grpc = port
+                .checked_add(10000)
+                .and_then(|grpc| u16::try_from(grpc).ok())
+                .with_context(|| {
+                    format!(
+                        "master {master}: gRPC port {port}+10000 is past 65535; \
+                         give it explicitly as {host}:{port}.<grpc port>"
+                    )
+                })?;
             return Ok(format!("{scheme}://{host}:{grpc}"));
         }
     }
@@ -163,5 +168,7 @@ mod tests {
         assert_eq!(grpc_addr("m1:60000.7000").unwrap(), "http://m1:7000");
         assert!(grpc_addr("m1:55536").is_err());
         assert!(grpc_addr("https://m1:60000").is_err());
+        assert!(grpc_addr("m1:65536").is_err());
+        assert!(grpc_addr("m1:9333.65536").is_err());
     }
 }
