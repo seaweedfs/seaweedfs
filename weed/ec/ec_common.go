@@ -1268,7 +1268,7 @@ func (ecb *ecBalancer) executePhase(byID map[string]*EcNode, moves []ecbalancer.
 // its shared .ecx/.ecj/.vif sidecar files. A move waits for the earlier moves of
 // its volume that carry the same shard or leave its target node: the planner
 // counts the slot such a move frees as room for the later one, and the receiver
-// refuses a shard it has no slot for. Otherwise a free worker takes, among the
+// may refuse a shard it has no slot for. Otherwise a free worker takes, among the
 // volumes not already moving, the pending move whose target node receives the
 // fewest moves right now.
 //

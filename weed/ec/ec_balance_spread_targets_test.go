@@ -35,6 +35,8 @@ type moveRecorder struct {
 	hold      int
 	held      []string
 	gate      chan struct{}
+	gateTimed bool
+	sequence  []string
 	receiving map[string]int
 	moving    map[uint32]int
 	running   int
@@ -66,6 +68,7 @@ func (r *moveRecorder) run(m ecbalancer.Move) error {
 	r.running++
 	r.ran[fmt.Sprintf("%d.%d->%s", m.VolumeID, m.ShardID, m.TargetNode)]++
 	r.order[m.VolumeID] = append(r.order[m.VolumeID], m.ShardID)
+	r.sequence = append(r.sequence, fmt.Sprintf("%d.%d", m.VolumeID, m.ShardID))
 	sameVolume := r.moving[m.VolumeID]
 	holding := len(r.held) < r.hold
 	if holding {
@@ -80,6 +83,9 @@ func (r *moveRecorder) run(m ecbalancer.Move) error {
 		select {
 		case <-r.gate:
 		case <-time.After(5 * time.Second):
+			r.mu.Lock()
+			r.gateTimed = true
+			r.mu.Unlock()
 		}
 	}
 	time.Sleep(10 * time.Millisecond)
@@ -111,8 +117,8 @@ func TestRunMovesSpreadsConcurrentCopiesOverTargets(t *testing.T) {
 			t.Fatalf("move %s ran %d times", k, n)
 		}
 	}
-	if len(r.held) != 4 {
-		t.Fatalf("%d moves started together, want 4", len(r.held))
+	if r.gateTimed {
+		t.Fatalf("the first four moves %v did not run at the same time", r.held)
 	}
 	if first := map[string]bool{r.held[0]: true, r.held[1]: true, r.held[2]: true, r.held[3]: true}; len(first) != 4 {
 		t.Fatalf("the first four moves went to %v, want four different nodes", r.held)
@@ -127,16 +133,20 @@ func TestRunMovesSpreadsConcurrentCopiesOverTargets(t *testing.T) {
 }
 
 func TestRunMovesKeepsPlanOrderWithoutParallelism(t *testing.T) {
-	moves := lockstepMoves(3, 4)
-	r := newMoveRecorder(0)
+	for _, parallelization := range []int{1, 0} {
+		moves := lockstepMoves(3, 4)
+		r := newMoveRecorder(0)
 
-	if err := runMovesSpreadingTargets(1, moves, r.run); err != nil {
-		t.Fatal(err)
-	}
+		if err := runMovesSpreadingTargets(parallelization, moves, r.run); err != nil {
+			t.Fatal(err)
+		}
 
-	for v := uint32(100); v < 103; v++ {
-		if got := fmt.Sprint(r.order[v]); got != "[0 1 2 3]" {
-			t.Fatalf("volume %d ran shards %s, want [0 1 2 3]", v, got)
+		var want []string
+		for _, m := range moves {
+			want = append(want, fmt.Sprintf("%d.%d", m.VolumeID, m.ShardID))
+		}
+		if fmt.Sprint(r.sequence) != fmt.Sprint(want) {
+			t.Fatalf("maxParallelization %d ran %v, want plan order %v", parallelization, r.sequence, want)
 		}
 	}
 }
