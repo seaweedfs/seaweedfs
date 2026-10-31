@@ -3,6 +3,7 @@ package ec
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -31,17 +32,23 @@ func lockstepMoves(volumes, shards int) []ecbalancer.Move {
 
 type moveRecorder struct {
 	mu        sync.Mutex
+	hold      int
+	held      []string
+	gate      chan struct{}
 	receiving map[string]int
 	moving    map[uint32]int
 	running   int
-	peak      int
 	crowded   int
 	ran       map[string]int
 	order     map[uint32][]int
 }
 
-func newMoveRecorder() *moveRecorder {
+// newMoveRecorder holds the first hold moves until all of them have started,
+// so the moves an executor starts together are known without relying on timing.
+func newMoveRecorder(hold int) *moveRecorder {
 	return &moveRecorder{
+		hold:      hold,
+		gate:      make(chan struct{}),
 		receiving: map[string]int{},
 		moving:    map[uint32]int{},
 		ran:       map[string]int{},
@@ -57,12 +64,24 @@ func (r *moveRecorder) run(m ecbalancer.Move) error {
 	r.receiving[m.TargetNode]++
 	r.moving[m.VolumeID]++
 	r.running++
-	r.peak = max(r.peak, r.running)
 	r.ran[fmt.Sprintf("%d.%d->%s", m.VolumeID, m.ShardID, m.TargetNode)]++
 	r.order[m.VolumeID] = append(r.order[m.VolumeID], m.ShardID)
 	sameVolume := r.moving[m.VolumeID]
+	holding := len(r.held) < r.hold
+	if holding {
+		r.held = append(r.held, m.TargetNode)
+		if len(r.held) == r.hold {
+			close(r.gate)
+		}
+	}
 	r.mu.Unlock()
 
+	if holding {
+		select {
+		case <-r.gate:
+		case <-time.After(5 * time.Second):
+		}
+	}
 	time.Sleep(10 * time.Millisecond)
 
 	r.mu.Lock()
@@ -78,7 +97,7 @@ func (r *moveRecorder) run(m ecbalancer.Move) error {
 
 func TestRunMovesSpreadsConcurrentCopiesOverTargets(t *testing.T) {
 	moves := lockstepMoves(4, 13)
-	r := newMoveRecorder()
+	r := newMoveRecorder(4)
 
 	if err := runMovesSpreadingTargets(4, moves, r.run); err != nil {
 		t.Fatal(err)
@@ -92,8 +111,11 @@ func TestRunMovesSpreadsConcurrentCopiesOverTargets(t *testing.T) {
 			t.Fatalf("move %s ran %d times", k, n)
 		}
 	}
-	if r.peak != 4 {
-		t.Fatalf("peak concurrency %d, want 4", r.peak)
+	if len(r.held) != 4 {
+		t.Fatalf("%d moves started together, want 4", len(r.held))
+	}
+	if first := map[string]bool{r.held[0]: true, r.held[1]: true, r.held[2]: true, r.held[3]: true}; len(first) != 4 {
+		t.Fatalf("the first four moves went to %v, want four different nodes", r.held)
 	}
 	// Plan order sends the four first copies to node-0 together, and so on:
 	// 39 of 52 moves start while another copy lands on the same node. Spreading
@@ -106,7 +128,7 @@ func TestRunMovesSpreadsConcurrentCopiesOverTargets(t *testing.T) {
 
 func TestRunMovesKeepsPlanOrderWithoutParallelism(t *testing.T) {
 	moves := lockstepMoves(3, 4)
-	r := newMoveRecorder()
+	r := newMoveRecorder(0)
 
 	if err := runMovesSpreadingTargets(1, moves, r.run); err != nil {
 		t.Fatal(err)
@@ -178,5 +200,50 @@ func TestRunMovesStopsOnlyTheFailedVolume(t *testing.T) {
 	}
 	if len(ran[101]) != 3 {
 		t.Fatalf("volume 101 ran shards %v, want all three", ran[101])
+	}
+}
+
+func TestRunMovesLetsAMoveIntoANodeWaitForTheMoveLeavingIt(t *testing.T) {
+	moves := []ecbalancer.Move{
+		{VolumeID: 8, ShardID: 0, SourceNode: "a", TargetNode: "busy"},
+		{VolumeID: 7, ShardID: 0, SourceNode: "full", TargetNode: "busy"},
+		{VolumeID: 7, ShardID: 5, SourceNode: "b", TargetNode: "full"},
+	}
+	var mu sync.Mutex
+	var seen []string
+	run := func(m ecbalancer.Move) error {
+		mu.Lock()
+		seen = append(seen, fmt.Sprintf("%d.%d->%s", m.VolumeID, m.ShardID, m.TargetNode))
+		mu.Unlock()
+		time.Sleep(5 * time.Millisecond)
+		return nil
+	}
+
+	if err := runMovesSpreadingTargets(2, moves, run); err != nil {
+		t.Fatal(err)
+	}
+
+	if slices.Index(seen, "7.0->busy") > slices.Index(seen, "7.5->full") {
+		t.Fatalf("moves ran as %v, want 7.0 to leave node full before 7.5 lands on it", seen)
+	}
+}
+
+func TestRunMovesJoinsTheErrorsOfEveryFailedVolume(t *testing.T) {
+	moves := lockstepMoves(3, 2)
+	first, second := errors.New("volume 100 failed"), errors.New("volume 102 failed")
+	run := func(m ecbalancer.Move) error {
+		switch {
+		case m.VolumeID == 100 && m.ShardID == 1:
+			return first
+		case m.VolumeID == 102 && m.ShardID == 0:
+			return second
+		}
+		return nil
+	}
+
+	err := runMovesSpreadingTargets(3, moves, run)
+
+	if !errors.Is(err, first) || !errors.Is(err, second) {
+		t.Fatalf("error %v, want both %v and %v", err, first, second)
 	}
 }

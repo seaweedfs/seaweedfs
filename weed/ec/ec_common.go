@@ -1265,9 +1265,12 @@ func (ecb *ecBalancer) executePhase(byID map[string]*EcNode, moves []ecbalancer.
 
 // runMovesSpreadingTargets runs up to maxParallelization moves at once, never
 // two of the same volume: concurrent moves of one volume to a node can race on
-// its shared .ecx/.ecj/.vif sidecar files. Moves of one shard keep their plan
-// order. Otherwise a free worker takes, among the volumes not already moving,
-// the pending move whose target node receives the fewest moves right now.
+// its shared .ecx/.ecj/.vif sidecar files. A move waits for the earlier moves of
+// its volume that carry the same shard or leave its target node: the planner
+// counts the slot such a move frees as room for the later one, and the receiver
+// refuses a shard it has no slot for. Otherwise a free worker takes, among the
+// volumes not already moving, the pending move whose target node receives the
+// fewest moves right now.
 //
 // The planner gives every volume the same target order (each fresh volume's
 // shard k goes to the same node), so running each volume's moves in plan order
@@ -1335,7 +1338,9 @@ func pickSpreadMove(order []uint32, pending map[uint32][]ecbalancer.Move, moving
 			continue
 		}
 		for i, m := range pending[v] {
-			if slices.ContainsFunc(pending[v][:i], func(e ecbalancer.Move) bool { return e.ShardID == m.ShardID }) {
+			if slices.ContainsFunc(pending[v][:i], func(e ecbalancer.Move) bool {
+				return e.ShardID == m.ShardID || e.SourceNode == m.TargetNode
+			}) {
 				continue
 			}
 			if n := receiving[m.TargetNode]; !ok || n < best {
