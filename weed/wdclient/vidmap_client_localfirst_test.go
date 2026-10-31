@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 )
 
 type testLocationProvider struct {
@@ -109,5 +110,87 @@ func TestLookupFileIdWithFallbackKeepsDataCenterFirst(t *testing.T) {
 		if !strings.Contains(urls[i], host) {
 			t.Fatalf("position %d should be %s, got %v", i, host, urls)
 		}
+	}
+}
+
+// resetOnLookupProvider answers after clearing the cache, as a provider
+// response landing on the far side of a master reconnect would.
+type resetOnLookupProvider struct {
+	vc *vidMapClient
+}
+
+func (p *resetOnLookupProvider) LookupVolumeIds(ctx context.Context, volumeIds []string) (map[string][]Location, error) {
+	p.vc.clearVidMap()
+	return map[string][]Location{"5": {{Url: "stale:8080"}}}, nil
+}
+
+func TestProviderFillServesWithoutCachingAcrossReset(t *testing.T) {
+	provider := &resetOnLookupProvider{}
+	vc := newVidMapClient(provider, "", 5)
+	provider.vc = vc
+
+	locations, err := vc.LookupVolumeIdsWithFallback(context.Background(), []string{"5"})
+	if err != nil || len(locations["5"]) != 1 {
+		t.Fatalf("lookup crossing a cache reset returned %v, err %v", locations["5"], err)
+	}
+	if cached, found := vc.GetLocations(5); found && len(cached) > 0 {
+		t.Fatalf("lookup crossed a cache reset but cached %v", cached)
+	}
+}
+
+func TestProviderFillSkipsTombstonedLocation(t *testing.T) {
+	retired := Location{Url: "retired:8080"}
+	live := Location{Url: "live:8080"}
+	vc := newVidMapClient(&testLocationProvider{
+		locations: map[string][]Location{"5": {retired, live}},
+	}, "", 5)
+
+	vc.tombstone(5, retired)
+
+	locations, err := vc.LookupVolumeIdsWithFallback(context.Background(), []string{"5"})
+	if err != nil {
+		t.Fatalf("lookup failed: %v", err)
+	}
+	if got := locations["5"]; len(got) != 1 || got[0].Url != live.Url {
+		t.Fatalf("lookup returned %v, want only the surviving location", got)
+	}
+	if cached, found := vc.GetLocations(5); !found || len(cached) != 1 || cached[0].Url != live.Url {
+		t.Errorf("cache holds %v, want only the surviving location", cached)
+	}
+}
+
+func TestTombstoneExpires(t *testing.T) {
+	retired := Location{Url: "retired:8080"}
+	vc := newVidMapClient(&testLocationProvider{
+		locations: map[string][]Location{"5": {retired}},
+	}, "", 5)
+	vc.tombstone(5, retired)
+	e := vc.recentDeletes[vidLocationKey{vid: 5, url: retired.Url}]
+	e.Value = recentDelete{key: vidLocationKey{vid: 5, url: retired.Url}, at: time.Now().Add(-recentDeleteTTL)}
+
+	locations, err := vc.LookupVolumeIdsWithFallback(context.Background(), []string{"5"})
+	if err != nil || len(locations["5"]) != 1 {
+		t.Fatalf("expired mark still fenced the location: %v, err %v", locations["5"], err)
+	}
+	if len(vc.recentDeletes) != 0 || vc.recentDeleteOrder.Len() != 0 {
+		t.Errorf("expired mark kept: %d marks, %d ordered", len(vc.recentDeletes), vc.recentDeleteOrder.Len())
+	}
+}
+
+func TestTombstoneEvictsOldestAtCap(t *testing.T) {
+	vc := newVidMapClient(nil, "", 5)
+	for vid := uint32(0); vid <= recentDeleteCap; vid++ {
+		vc.tombstone(vid, Location{Url: "a:8080"})
+	}
+	vc.tombstone(recentDeleteCap, Location{Url: "a:8080"})
+
+	if len(vc.recentDeletes) != recentDeleteCap || vc.recentDeleteOrder.Len() != recentDeleteCap {
+		t.Fatalf("fence holds %d marks (%d ordered), want %d", len(vc.recentDeletes), vc.recentDeleteOrder.Len(), recentDeleteCap)
+	}
+	if _, found := vc.recentDeletes[vidLocationKey{vid: 0, url: "a:8080"}]; found {
+		t.Errorf("oldest mark survived eviction")
+	}
+	if _, found := vc.recentDeletes[vidLocationKey{vid: 1, url: "a:8080"}]; !found {
+		t.Errorf("a repeated mark evicted another one")
 	}
 }

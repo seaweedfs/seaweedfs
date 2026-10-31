@@ -527,6 +527,25 @@ func (fc *FilerClient) applyDiscoveredFilersLocked(discoveredFilers map[pb.Serve
 	}
 }
 
+// OnVolumeLocationChange applies master-pushed changes to the lookup-fed cache,
+// so a retired server stops being tried before a read against it fails. Adds
+// only lift the removal fence; locations are still learned by lookup.
+func (fc *FilerClient) OnVolumeLocationChange(loc Location, addedVids, deletedVids []uint32) {
+	for _, vid := range deletedVids {
+		fc.tombstone(vid, loc)
+		fc.deleteLocation(vid, loc)
+	}
+	for _, vid := range addedVids {
+		fc.untombstone(vid, loc)
+	}
+}
+
+// OnVidMapReset drops the cache, since removals made while the master link
+// was down are never pushed.
+func (fc *FilerClient) OnVidMapReset() {
+	fc.clearVidMap()
+}
+
 // GetLookupFileIdFunction returns a lookup function with URL preference handling
 func (fc *FilerClient) GetLookupFileIdFunction() LookupFileIdFunctionType {
 	if fc.urlPreference == PreferUrl {
