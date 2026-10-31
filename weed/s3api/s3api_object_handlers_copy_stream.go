@@ -102,6 +102,9 @@ func (s3a *S3ApiServer) streamCopyChunkRange(
 	streamCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	dstUrl := fmt.Sprintf("http://%s/%s", assignResult.Location.Url, assignResult.FileId)
+	if assignResult.Fsync {
+		dstUrl += "?fsync=true"
+	}
 	dstJwt := security.EncodedJwt(assignResult.Auth)
 	srcJwt := filer.JwtForVolumeServer(srcFileId)
 
