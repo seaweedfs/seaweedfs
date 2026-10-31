@@ -171,6 +171,12 @@ func (f *MemFiler) UpdateEntry(_ context.Context, req *filer_pb.UpdateEntryReque
 	if existing == nil {
 		return nil, status.Errorf(codes.NotFound, "not found %s: %v", path.Join(req.Directory, req.Entry.Name), filer_pb.ErrNotFound)
 	}
+	// The real filer will not write a directory entry over a file or the
+	// reverse; without it here a write that raced a replacement would turn the
+	// replacement into the entry it never was.
+	if existing.IsDirectory != req.Entry.IsDirectory {
+		return nil, status.Errorf(codes.Unknown, "%s: existing entry type differs", path.Join(req.Directory, req.Entry.Name))
+	}
 	// The real filer validates ExpectedExtended under the per-path lock; without
 	// it here a lost update would look like a success.
 	for key, expected := range req.ExpectedExtended {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path"
 	"strings"
 	"time"
 
@@ -172,7 +173,7 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 
 	// Check if namespace already exists
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		_, err := h.getExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyMetadata)
+		_, err := h.readNamespaceMetadataAttr(r.Context(), client, namespacePath)
 		return err
 	})
 
@@ -200,12 +201,19 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 		return fmt.Errorf("failed to marshal metadata: %w", err)
 	}
 
+	attrs := map[string][]byte{ExtendedKeyMetadata: metadataBytes}
 	var taken error
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		err := h.createDirectoryExclusive(r.Context(), client, namespacePath, map[string][]byte{ExtendedKeyMetadata: metadataBytes})
+		err := h.createDirectoryExclusive(r.Context(), client, namespacePath, attrs)
 		if errors.Is(err, filer_pb.ErrEntryAlreadyExists) {
-			taken = err // an answer, not a filer failure
-			return nil
+			// A directory is already there. If it is a leftover — a delete kept
+			// it for the data under it and cleared its catalog attributes —
+			// take it back; claimCatalogEntry refuses a real namespace.
+			err = h.retakeDirectory(r.Context(), client, namespacePath, attrs)
+			if errors.Is(err, ErrNameTaken) {
+				taken = filer_pb.ErrEntryAlreadyExists // an answer, not a filer failure
+				return nil
+			}
 		}
 		return err
 	})
@@ -214,6 +222,10 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 	}
 	if errors.Is(err, filer_pb.ErrEntryAlreadyExists) {
 		h.writeError(w, http.StatusConflict, ErrCodeNamespaceAlreadyExists, fmt.Sprintf("namespace %s already exists", namespaceName))
+		return err
+	}
+	if errors.Is(err, ErrConcurrentUpdate) || errors.Is(err, filer_pb.ErrNotFound) {
+		h.writeError(w, http.StatusConflict, ErrCodeConflict, "namespace changed during create, retry the request")
 		return err
 	}
 	if err != nil {
@@ -264,7 +276,7 @@ func (h *S3TablesHandler) handleGetNamespace(w http.ResponseWriter, r *http.Requ
 	var bucketPolicy string
 	var bucketTags map[string]string
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		data, err := h.getExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyMetadata)
+		data, err := h.readNamespaceMetadataAttr(r.Context(), client, namespacePath)
 		if err != nil {
 			return err
 		}
@@ -357,7 +369,7 @@ func (h *S3TablesHandler) handleUpdateNamespace(w http.ResponseWriter, r *http.R
 	var bucketPolicy string
 	var bucketTags map[string]string
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		data, err := h.getExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyMetadata)
+		data, err := h.readNamespaceMetadataAttr(r.Context(), client, namespacePath)
 		if err != nil {
 			return err
 		}
@@ -657,7 +669,7 @@ func (h *S3TablesHandler) handleDeleteNamespace(w http.ResponseWriter, r *http.R
 	var bucketPolicy string
 	var bucketTags map[string]string
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		data, err := h.getExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyMetadata)
+		data, err := h.readNamespaceMetadataAttr(r.Context(), client, namespacePath)
 		if err != nil {
 			return err
 		}
@@ -733,6 +745,7 @@ func (h *S3TablesHandler) handleDeleteNamespace(w http.ResponseWriter, r *http.R
 
 	// Check if namespace is empty
 	hasChildren := false
+	keepDir := false
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		lastFileName := ""
 		for !hasChildren {
@@ -781,6 +794,17 @@ func (h *S3TablesHandler) handleDeleteNamespace(w http.ResponseWriter, r *http.R
 					hasChildren = true
 					break
 				}
+				// A bare directory with files under it is a renamed-away
+				// table's data, which the destination still points at: the
+				// namespace directory stays, minus its catalog record. One
+				// such directory settles it, so the rest are not walked.
+				if !keepDir {
+					holdsFiles, err := h.dirHoldsFiles(r.Context(), client, path.Join(namespacePath, entry.Entry.Name))
+					if err != nil {
+						return err
+					}
+					keepDir = holdsFiles
+				}
 			}
 			if !hasMore {
 				break
@@ -806,8 +830,11 @@ func (h *S3TablesHandler) handleDeleteNamespace(w http.ResponseWriter, r *http.R
 		return fmt.Errorf("namespace not empty")
 	}
 
-	// Delete the namespace
+	// Delete the namespace, or stop it being one while the data under it stays.
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		if keepDir {
+			return h.keepAsLeftover(r.Context(), client, namespacePath, claimed)
+		}
 		return h.deleteDirectoryIfMatches(r.Context(), client, namespacePath, &filer_pb.Entry{Extended: claimed})
 	})
 

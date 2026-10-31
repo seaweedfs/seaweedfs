@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"path"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -91,6 +93,21 @@ func (h *S3TablesHandler) mutateEntryExtended(
 	path string,
 	mutate func(extended map[string][]byte) error,
 ) error {
+	return h.mutateEntry(ctx, client, path, func(entry *filer_pb.Entry) error {
+		return mutate(entry.Extended)
+	})
+}
+
+// mutateEntry is mutateEntryExtended for a mutation that also needs the entry
+// itself, such as its type. The entry mutate inspects is the one written back,
+// and the filer refuses to write a directory entry over a file, so a check on
+// the entry's type holds at the write too.
+func (h *S3TablesHandler) mutateEntry(
+	ctx context.Context,
+	client filer_pb.SeaweedFilerClient,
+	path string,
+	mutate func(entry *filer_pb.Entry) error,
+) error {
 	dir, name := splitPath(path)
 
 	for attempt := 0; attempt < extendedAttributeUpdateAttempts; attempt++ {
@@ -107,7 +124,7 @@ func (h *S3TablesHandler) mutateEntryExtended(
 		if entry.Extended == nil {
 			entry.Extended = make(map[string][]byte)
 		}
-		if err := mutate(entry.Extended); err != nil {
+		if err := mutate(entry); err != nil {
 			return err
 		}
 
@@ -197,25 +214,45 @@ func (h *S3TablesHandler) removeExtendedAttributesIf(
 // or a keep, and adopting it strands the renamed record with neither name.
 func (h *S3TablesHandler) claimCatalogEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, path string, attrs map[string][]byte) error {
 	return h.mutateEntryExtended(ctx, client, path, func(extended map[string][]byte) error {
-		if string(extended[ExtendedKeyDeleting]) == createClaim {
-			// A marked record is absent to every reader, so it holds nothing a
-			// caller could have seen: the create that left it confirmed or lost
-			// the name already. Take the record over, dropping whatever the
-			// earlier write left, or an abandoned mark wedges the name forever.
-			for _, key := range s3tablesExtendedKeys {
-				delete(extended, key)
-			}
-		} else {
-			for _, key := range s3tablesExtendedKeys {
-				if _, ok := extended[key]; ok {
-					return fmt.Errorf("%w: %s set on %s", ErrNameTaken, key, path)
-				}
+		return claimExtended(extended, path, attrs)
+	})
+}
+
+// claimExtended is claimCatalogEntry's change to the attributes it read.
+func claimExtended(extended map[string][]byte, path string, attrs map[string][]byte) error {
+	if string(extended[ExtendedKeyDeleting]) == createClaim {
+		// A marked record is absent to every reader, so it holds nothing a
+		// caller could have seen: the create that left it confirmed or lost
+		// the name already. Take the record over, dropping whatever the
+		// earlier write left, or an abandoned mark wedges the name forever.
+		for _, key := range s3tablesExtendedKeys {
+			delete(extended, key)
+		}
+	} else {
+		for _, key := range s3tablesExtendedKeys {
+			if _, ok := extended[key]; ok {
+				return fmt.Errorf("%w: %s set on %s", ErrNameTaken, key, path)
 			}
 		}
-		for key, data := range attrs {
-			extended[key] = data
+	}
+	for key, data := range attrs {
+		extended[key] = data
+	}
+	return nil
+}
+
+// retakeDirectory writes a create's attributes onto a directory that is already
+// at path, the way an exclusive create would have: a leftover that holds no
+// catalog attribute is taken over, and anything else — a file, or a directory
+// that carries a record — is a taken name. The type is checked on the entry the
+// write carries, so a file that replaces the directory cannot be tagged: the
+// filer refuses to write the directory entry over it.
+func (h *S3TablesHandler) retakeDirectory(ctx context.Context, client filer_pb.SeaweedFilerClient, path string, attrs map[string][]byte) error {
+	return h.mutateEntry(ctx, client, path, func(entry *filer_pb.Entry) error {
+		if !entry.IsDirectory {
+			return fmt.Errorf("%w: %s is not a directory", ErrNameTaken, path)
 		}
-		return nil
+		return claimExtended(entry.Extended, path, attrs)
 	})
 }
 
@@ -353,6 +390,17 @@ func (h *S3TablesHandler) getExtendedAttribute(ctx context.Context, client filer
 	return data, nil
 }
 
+// readNamespaceMetadataAttr returns the namespace-metadata xattr at
+// namespacePath. A directory without it is not a namespace — a delete that kept
+// the data under it leaves one — so its absence reads as a missing entry.
+func (h *S3TablesHandler) readNamespaceMetadataAttr(ctx context.Context, client filer_pb.SeaweedFilerClient, namespacePath string) ([]byte, error) {
+	data, err := h.getExtendedAttribute(ctx, client, namespacePath, ExtendedKeyMetadata)
+	if errors.Is(err, ErrAttributeNotFound) {
+		return nil, fmt.Errorf("%w: %s", filer_pb.ErrNotFound, namespacePath)
+	}
+	return data, err
+}
+
 // loadNamespaceMetadata resolves a namespace to its metadata. A directory that
 // carries no namespace metadata is not a namespace, so a missing attribute
 // reports the same absence as a missing entry and every caller tests one
@@ -360,11 +408,8 @@ func (h *S3TablesHandler) getExtendedAttribute(ctx context.Context, client filer
 func (h *S3TablesHandler) loadNamespaceMetadata(ctx context.Context, filerClient FilerClient, bucketName, namespaceName string) (*namespaceMetadata, error) {
 	var metadata namespaceMetadata
 	err := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		data, err := h.getExtendedAttribute(ctx, client, GetNamespacePath(bucketName, namespaceName), ExtendedKeyMetadata)
+		data, err := h.readNamespaceMetadataAttr(ctx, client, GetNamespacePath(bucketName, namespaceName))
 		if err != nil {
-			if errors.Is(err, ErrAttributeNotFound) {
-				return filer_pb.ErrNotFound
-			}
 			return err
 		}
 		if err := json.Unmarshal(data, &metadata); err != nil {
@@ -628,6 +673,77 @@ func (h *S3TablesHandler) confirmParent(ctx context.Context, client filer_pb.Sea
 		h.removeLeftoverDirectory(ctx, client, parentPath)
 	}
 	return err
+}
+
+// dirListPageSize is how many entries dirHoldsFiles reads per ListEntries call.
+const dirListPageSize = 1024
+
+// dirHoldsFiles reports whether any file sits under dirPath, at any depth. It
+// walks breadth-first, pages through each directory, and stops at the first
+// file it sees. Returning at that file abandons the page being read, so the
+// listings run on a context of their own that ends with the call: otherwise
+// the filer keeps producing that page until the whole request is over.
+func (h *S3TablesHandler) dirHoldsFiles(ctx context.Context, client filer_pb.SeaweedFilerClient, dirPath string) (bool, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	pending := []string{dirPath}
+	for len(pending) > 0 {
+		dir := pending[0]
+		pending = pending[1:]
+
+		lastFileName := ""
+		for {
+			resp, err := client.ListEntries(ctx, &filer_pb.ListEntriesRequest{
+				Directory:          dir,
+				Limit:              dirListPageSize,
+				StartFromFileName:  lastFileName,
+				InclusiveStartFrom: lastFileName == "",
+			})
+			if err != nil {
+				return false, err
+			}
+
+			received := false
+			for {
+				entry, err := resp.Recv()
+				if err != nil {
+					if err == io.EOF {
+						break
+					}
+					return false, err
+				}
+				if entry.Entry == nil {
+					continue
+				}
+				received = true
+				lastFileName = entry.Entry.Name
+				if !entry.Entry.IsDirectory {
+					return true, nil
+				}
+				pending = append(pending, path.Join(dir, entry.Entry.Name))
+			}
+			if !received {
+				break
+			}
+		}
+	}
+	return false, nil
+}
+
+// keepAsLeftover clears a namespace's catalog attributes and the delete's
+// claim in one write, while the entry still holds claimed, keeping the
+// directory and the data under it. The write compares against claimed so the
+// delete's token still fails an ABA, and it drops the claim itself: a kept
+// directory that carried it could never be claimed again.
+func (h *S3TablesHandler) keepAsLeftover(ctx context.Context, client filer_pb.SeaweedFilerClient, path string, claimed map[string][]byte) error {
+	keys := make([]string, 0, len(s3tablesExtendedKeys))
+	for _, key := range s3tablesExtendedKeys {
+		if _, ok := claimed[key]; ok {
+			keys = append(keys, key)
+		}
+	}
+	return h.removeExtendedAttributesIf(ctx, client, path, claimed, keys...)
 }
 
 // removeLeftoverDirectory deletes path if it is an empty directory without
