@@ -210,11 +210,15 @@ func (ma *MetaAggregator) dropExpiredRemovedPeersLocked() {
 
 // advancePeerWatermark records the peer as received-through tsNs. Monotonic,
 // and only for tracked peers: a dropped peer's straggler must not recreate
-// its entry and pin the low-watermark.
+// its entry and pin the low-watermark, nor revive a forgotten resume point.
 func (ma *MetaAggregator) advancePeerWatermark(peer pb.ServerAddress, tsNs int64) {
 	ma.peerWatermarksLock.Lock()
 	defer ma.peerWatermarksLock.Unlock()
-	if cur, found := ma.peerWatermarks[peer]; found && tsNs > cur {
+	cur, found := ma.peerWatermarks[peer]
+	if !found {
+		return
+	}
+	if tsNs > cur {
 		ma.peerWatermarks[peer] = tsNs
 		ma.noteLowWatermarksLocked()
 	}

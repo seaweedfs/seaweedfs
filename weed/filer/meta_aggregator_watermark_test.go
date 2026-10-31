@@ -117,6 +117,9 @@ func TestPeerWatermarkRemovalGrace(t *testing.T) {
 	if got := ma.PeerLowWatermarkTsNs(); got != 100 {
 		t.Fatalf("after straggler: low=%d want 100", got)
 	}
+	if got := ma.peerResumeTsNs[b]; got != 60 {
+		t.Fatalf("after straggler: resume=%d want 60", got)
+	}
 	if _, found := ma.peerWatermarks[b]; found {
 		t.Fatalf("dropped peer resurrected in delivery watermark set")
 	}
