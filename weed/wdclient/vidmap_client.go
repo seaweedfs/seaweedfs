@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"golang.org/x/sync/singleflight"
 
@@ -33,13 +34,12 @@ type vidMapClient struct {
 	vidLookupGroup singleflight.Group
 	// recentDeletesMu guards the deletion fence and the cache epoch.
 	// recentDeletes tombstones (vid,url) pairs a pushed delete removed; a mark
-	// lasts until the master confirms the location back or the oldest marks are
-	// evicted at the cap, so provider answers still naming a retired server
-	// cannot re-cache it just because time passed. recentDeleteSeq records
-	// insertion order for that eviction.
+	// lasts until the master confirms the location back or, once the fence
+	// reaches recentDeleteCap, the oldest mark is evicted — so provider answers
+	// still naming a retired server cannot re-cache it just because time
+	// passed.
 	recentDeletesMu sync.Mutex
-	recentDeletes   map[vidLocationKey]struct{}
-	recentDeleteSeq []vidLocationKey
+	recentDeletes   map[vidLocationKey]time.Time
 	// vidMapEpoch bumps each time the cache view is re-told (reset or clear),
 	// so a provider answer fetched under the old view is dropped rather than
 	// refilling the map.
@@ -52,8 +52,8 @@ type vidLocationKey struct {
 	url string
 }
 
-// recentDeleteCap bounds the fence's memory. Evicting the oldest marks only
-// weakens suppression for removals churned long ago.
+// recentDeleteCap bounds the fence's memory. Evicting the oldest mark only
+// weakens suppression for a removal churned longest ago.
 const recentDeleteCap = 1 << 16
 
 const (
@@ -68,7 +68,7 @@ func newVidMapClient(provider VolumeLocationProvider, dataCenter string, cacheSi
 	return &vidMapClient{
 		vidMap:        newVidMap(dataCenter, cacheSize),
 		provider:      provider,
-		recentDeletes: make(map[vidLocationKey]struct{}),
+		recentDeletes: make(map[vidLocationKey]time.Time),
 	}
 }
 
@@ -376,33 +376,19 @@ func (vc *vidMapClient) mapEpoch() uint64 {
 // re-cache it until the master reports it back. Marks are evicted
 // oldest-first only once the fence reaches recentDeleteCap.
 func (vc *vidMapClient) tombstone(vid uint32, loc Location) {
-	key := vidLocationKey{vid: vid, url: loc.Url}
 	vc.recentDeletesMu.Lock()
 	defer vc.recentDeletesMu.Unlock()
-	if _, found := vc.recentDeletes[key]; found {
-		return
-	}
-	for len(vc.recentDeletes) >= recentDeleteCap {
-		oldest := vc.recentDeleteSeq[0]
-		vc.recentDeleteSeq = vc.recentDeleteSeq[1:]
-		if _, live := vc.recentDeletes[oldest]; live {
-			delete(vc.recentDeletes, oldest)
-			break
-		}
-	}
-	vc.recentDeleteSeq = append(vc.recentDeleteSeq, key)
-	vc.recentDeletes[key] = struct{}{}
-	// Marks dropped by untombstone leave dead sequence entries; rebuild the
-	// order once the slack outgrows the live set by the cap.
-	if len(vc.recentDeleteSeq) > len(vc.recentDeletes)+recentDeleteCap {
-		seq := vc.recentDeleteSeq[:0]
-		for _, k := range vc.recentDeleteSeq {
-			if _, live := vc.recentDeletes[k]; live {
-				seq = append(seq, k)
+	if len(vc.recentDeletes) >= recentDeleteCap {
+		var oldestKey vidLocationKey
+		var oldestAt time.Time
+		for key, at := range vc.recentDeletes {
+			if oldestAt.IsZero() || at.Before(oldestAt) {
+				oldestKey, oldestAt = key, at
 			}
 		}
-		vc.recentDeleteSeq = seq
+		delete(vc.recentDeletes, oldestKey)
 	}
+	vc.recentDeletes[vidLocationKey{vid: vid, url: loc.Url}] = time.Now()
 }
 
 // untombstone clears a removal mark when loc is confirmed serving vid again.
