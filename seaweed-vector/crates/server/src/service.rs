@@ -333,7 +333,13 @@ impl VectorService for VectorServer {
             .ok_or_else(|| Status::invalid_argument("missing table"))?;
         dataset::drop(&self.client, &table.id, &self.fallback)
             .await
-            .map_err(internal)?;
+            .map_err(|err| {
+                if err.is::<dataset::DropRefused>() {
+                    Status::failed_precondition(format!("{err:#}"))
+                } else {
+                    internal(err)
+                }
+            })?;
         Ok(Response::new(pb::DropIndexResponse {}))
     }
 
@@ -643,5 +649,47 @@ mod tests {
             },
         ];
         assert!(batch_of(&vectors, 4, schema).is_err());
+    }
+
+    /// A catalog that answers one describe with `location`.
+    async fn catalog_describing(location: &str) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let body = serde_json::json!({ "location": location }).to_string();
+        tokio::spawn(async move {
+            let (mut conn, _) = listener.accept().await.unwrap();
+            let mut request = [0u8; 8192];
+            let _ = conn.read(&mut request).await;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            conn.write_all(response.as_bytes()).await.unwrap();
+            let _ = conn.shutdown().await;
+            let _ = tokio::io::copy(&mut conn, &mut tokio::io::sink()).await;
+        });
+        url
+    }
+
+    #[tokio::test]
+    async fn drop_index_refuses_a_location_outside_the_table() {
+        for location in ["s3://bkt/vector", "s3://bkt/vector/prod"] {
+            let server = VectorServer::new(
+                NamespaceClient::new(catalog_describing(location).await),
+                FallbackOptions::new(),
+            );
+            let request = pb::DropIndexRequest {
+                table: Some(pb::Table {
+                    id: vec!["bkt".into(), "vector".into(), "x".into()],
+                    version: 0,
+                }),
+            };
+            let err = server
+                .drop_index(Request::new(request))
+                .await
+                .expect_err(location);
+            assert_eq!(err.code(), tonic::Code::FailedPrecondition, "{location}");
+        }
     }
 }
