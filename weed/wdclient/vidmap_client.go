@@ -376,19 +376,20 @@ func (vc *vidMapClient) mapEpoch() uint64 {
 // re-cache it until the master reports it back. Marks are evicted
 // oldest-first only once the fence reaches recentDeleteCap.
 func (vc *vidMapClient) tombstone(vid uint32, loc Location) {
+	key := vidLocationKey{vid: vid, url: loc.Url}
 	vc.recentDeletesMu.Lock()
 	defer vc.recentDeletesMu.Unlock()
-	if len(vc.recentDeletes) >= recentDeleteCap {
+	if _, found := vc.recentDeletes[key]; !found && len(vc.recentDeletes) >= recentDeleteCap {
 		var oldestKey vidLocationKey
 		var oldestAt time.Time
-		for key, at := range vc.recentDeletes {
+		for k, at := range vc.recentDeletes {
 			if oldestAt.IsZero() || at.Before(oldestAt) {
-				oldestKey, oldestAt = key, at
+				oldestKey, oldestAt = k, at
 			}
 		}
 		delete(vc.recentDeletes, oldestKey)
 	}
-	vc.recentDeletes[vidLocationKey{vid: vid, url: loc.Url}] = time.Now()
+	vc.recentDeletes[key] = time.Now()
 }
 
 // untombstone clears a removal mark when loc is confirmed serving vid again.
