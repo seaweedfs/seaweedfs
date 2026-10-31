@@ -152,12 +152,12 @@ func validatePolicyDocument(raw string) error {
 	}
 	for _, stmt := range doc.Statement {
 		for _, action := range statementActions(stmt.Action) {
-			if strings.HasPrefix(action, "s3vectors:") {
+			if strings.HasPrefix(strings.ToLower(action), "s3vectors:") {
 				return fmt.Errorf("action %q is not enforceable in a resource policy", action)
 			}
 		}
 		for _, resource := range statementActions(stmt.Resource) {
-			if arnService(resource) == "s3vectors" {
+			if strings.EqualFold(arnService(resource), "s3vectors") {
 				return fmt.Errorf("resource %q is not enforceable in a resource policy", resource)
 			}
 		}

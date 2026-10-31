@@ -159,10 +159,6 @@ func (s *Server) indexRecord(ctx context.Context, bucket, index string) (map[str
 	return resp, err
 }
 
-func (s *Server) catalog(ctx context.Context, operation string, req, resp interface{}, r *http.Request) error {
-	return s.tables.Execute(ctx, s.filerClient, operation, req, resp, identityOf(r))
-}
-
 // internalCatalog runs catalog bookkeeping under the trusted identity. It is
 // for reads and writes that accompany — never replace — the operation's own
 // permission check: bucket format lookups, the implicit index namespace, and
@@ -265,13 +261,21 @@ func (s *Server) handleCreateVectorBucket(w http.ResponseWriter, r *http.Request
 	if len(enc) != 0 {
 		enc = map[string]interface{}{"sseAlgorithm": enc["sseType"]}
 	}
+	// No bucket exists yet, so check against the handler account as the
+	// catalog does for CreateTableBucket.
+	principal := s.tables.PrincipalFor(identityOf(r))
+	if !s3tables.CheckPermissionWithContext("s3vectors:CreateVectorBucket", principal, s.tables.PrincipalFor(""), "", "", s.tables.PolicyContext(r)) {
+		catalogErr(w, errVectorDenied)
+		return
+	}
+	// The caller's name still makes it the owner of the record.
 	var resp map[string]interface{}
-	err := s.catalog(r.Context(), "CreateTableBucket",
+	err := s.internal.Execute(r.Context(), s.filerClient, "CreateTableBucket",
 		&s3tables.CreateTableBucketRequest{
 			Name:                    req.VectorBucketName,
 			Format:                  s3tables.FormatLance,
 			EncryptionConfiguration: enc,
-		}, &resp, r)
+		}, &resp, identityOf(r))
 	if err != nil {
 		catalogErr(w, err)
 		return
@@ -1015,7 +1019,7 @@ func (s *Server) handleCreateIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 // recordNonce and recordVersionToken read the catalog record's internal
-// bookkeeping for the create-index rollback.
+// bookkeeping for the create-index rollback and DeleteIndex.
 func recordNonce(record map[string]interface{}) string {
 	if meta, ok := record["metadata"].(map[string]interface{}); ok {
 		if fm, ok := meta["fullMetadata"].(map[string]interface{}); ok {
@@ -1191,10 +1195,12 @@ func (s *Server) handleDeleteIndex(w http.ResponseWriter, r *http.Request) {
 	// Deleting the catalog record is the delete: the catalog purges the
 	// dataset under the index's location along with the entry.
 	var resp map[string]interface{}
+	// The token limits the delete to the record checked above.
 	err = s.internalCatalog(r.Context(), "DeleteTable", &s3tables.DeleteTableRequest{
 		TableBucketARN: s.s3tablesArn(arns.bucket),
 		Namespace:      []string{indexNamespace},
 		Name:           arns.index,
+		VersionToken:   recordVersionToken(record),
 	}, &resp)
 	if err != nil {
 		catalogErr(w, err)
