@@ -59,3 +59,48 @@ func TestVectorDiscoveryRechecksRegistration(t *testing.T) {
 		t.Fatalf("live client rediscovered inside the refresh window: %d lookups", got)
 	}
 }
+
+// A lookup slower than the throttle interval (an unreachable first master
+// costs the full dial timeout) must not leave the next lookup already due,
+// or every request queues behind back-to-back lookups.
+func TestVectorDiscoveryThrottlesFromLookupEnd(t *testing.T) {
+	const lookup = 600 * time.Millisecond
+	var calls int32
+	d := &vectorDiscovery{
+		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		discover: func(masters []pb.ServerAddress, opt grpc.DialOption) []string {
+			atomic.AddInt32(&calls, 1)
+			time.Sleep(lookup)
+			return nil
+		},
+	}
+
+	if _, err := d.cli(); status.Code(err) != codes.Unavailable {
+		t.Fatalf("no registered worker: expected Unavailable, got %v", err)
+	}
+	if _, err := d.cli(); status.Code(err) != codes.Unavailable {
+		t.Fatalf("no registered worker: expected Unavailable, got %v", err)
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("slow lookup was repeated right away: %d lookups", got)
+	}
+
+	d.discover = func(masters []pb.ServerAddress, opt grpc.DialOption) []string {
+		time.Sleep(lookup)
+		return []string{"127.0.0.1:9301"}
+	}
+	for i := 0; i < 2; i++ {
+		d.mu.Lock()
+		d.nextResolve = time.Time{}
+		d.mu.Unlock()
+		if _, err := d.cli(); err != nil {
+			t.Fatalf("worker registered: expected a client, got %v", err)
+		}
+	}
+	d.mu.Lock()
+	left := time.Until(d.nextResolve)
+	d.mu.Unlock()
+	if left < vectorResolveInterval-lookup/2 {
+		t.Fatalf("refresh of a live worker is due in %v, want ~%v", left, vectorResolveInterval)
+	}
+}

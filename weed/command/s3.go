@@ -766,6 +766,14 @@ func isTransportError(err error) bool {
 func (d *vectorDiscovery) resolve() (vector_pb.VectorServiceClient, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	// Measured from lookup end so a slow lookup cannot leave the next one already due.
+	defer func() {
+		interval := vectorRecheckInterval
+		if d.client != nil {
+			interval = vectorResolveInterval
+		}
+		d.nextResolve = time.Now().Add(interval)
+	}()
 	workers := d.discover(d.masters, d.grpcDialOption)
 	if len(workers) == 0 {
 		return nil, errNoVectorWorker
@@ -787,9 +795,6 @@ func (d *vectorDiscovery) resolve() (vector_pb.VectorServiceClient, error) {
 		}
 		d.worker, d.conn = worker, conn
 		d.client = vector_pb.NewVectorServiceClient(conn)
-		// cli() scheduled this resolve on the short recheck window while no
-		// client existed; a live client only refreshes every resolve interval.
-		d.nextResolve = time.Now().Add(vectorResolveInterval)
 	}
 	return d.client, nil
 }
