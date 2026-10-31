@@ -107,10 +107,9 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	startAfterKey := decodeMarkerEcho(startAfter, encodingTypeUrl)
 	marker := decodeListContinuationToken(continuationToken.string)
 	if !continuationToken.set {
-		marker = startAfterKey
+		marker = startAfter
 	}
 
 	// Adjust marker if it ends with delimiter to skip all entries with that prefix
@@ -155,7 +154,7 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 	}
 	if encodingTypeUrl {
 		responseV2.EncodingType = s3.EncodingTypeUrl
-		responseV2.StartAfter = urlPathEscape(startAfterKey)
+		responseV2.StartAfter = urlPathEscape(startAfter)
 	}
 
 	glog.V(3).Infof("ListObjectsV2Handler response: %+v", responseV2)
@@ -195,15 +194,6 @@ func encodeMarkerEcho(marker string, encodingTypeUrl bool) string {
 		marker = urlPathEscape(marker)
 	}
 	return marker
-}
-
-// decodeMarkerEcho reverses the wire encoding on a marker the client echoes
-// back: under encoding-type=url the emitted echo was urlPathEscape'd. Only a
-// value that is the canonical escaped form of its unescape could have come
-// from that encoder — "a%2541" round-trips to itself, "a%41" does not — so
-// anything else stays the raw key the client sent.
-func decodeMarkerEcho(marker string, encodingTypeUrl bool) string {
-	return decodeEscapedEcho(marker, encodingTypeUrl, urlPathEscape)
 }
 
 func decodeEscapedEcho(marker string, encodingTypeUrl bool, escape func(string) string) string {
@@ -297,7 +287,7 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Adjust marker if it ends with delimiter to skip all entries with that prefix
-	requestMarker := decodeListContinuationToken(decodeMarkerEcho(listMarker, encodingTypeUrl))
+	requestMarker := decodeListContinuationToken(listMarker)
 	marker := adjustMarkerForDelimiter(requestMarker, originalPrefix, delimiter)
 
 	response, err := s3a.listFilerEntries(r.Context(), listObjectsRequest{
@@ -333,26 +323,31 @@ func sanitizeV1MarkerEcho(response *ListBucketResult, marker string, encodingTyp
 		return
 	}
 
-	markerCandidates := map[string]struct{}{
+	// Content keys travel in the response wire encoding while NextMarker stays
+	// the raw key, so each compares against the marker in its own form.
+	rawCandidates := map[string]struct{}{
 		marker:                          {},
 		strings.TrimPrefix(marker, "/"): {},
 	}
+	keyCandidates := rawCandidates
 	if encodingTypeUrl {
-		escapedMarker := urlPathEscape(strings.TrimPrefix(marker, "/"))
-		markerCandidates[escapedMarker] = struct{}{}
+		keyCandidates = make(map[string]struct{}, len(rawCandidates))
+		for m := range rawCandidates {
+			keyCandidates[urlPathEscape(m)] = struct{}{}
+		}
 	}
-	matchesMarker := func(v string) bool {
-		if _, ok := markerCandidates[v]; ok {
+	matchesMarker := func(candidates map[string]struct{}, v string) bool {
+		if _, ok := candidates[v]; ok {
 			return true
 		}
-		_, ok := markerCandidates[strings.TrimPrefix(v, "/")]
+		_, ok := candidates[strings.TrimPrefix(v, "/")]
 		return ok
 	}
 
 	if len(response.Contents) > 0 {
 		filtered := response.Contents[:0]
 		for _, content := range response.Contents {
-			if matchesMarker(content.Key) {
+			if matchesMarker(keyCandidates, content.Key) {
 				continue
 			}
 			filtered = append(filtered, content)
@@ -362,7 +357,7 @@ func sanitizeV1MarkerEcho(response *ListBucketResult, marker string, encodingTyp
 
 	// doListFilerEntries advances nextMarker to the last emitted entry and skips
 	// the marker in exclusive mode. So NextMarker==marker indicates no progress.
-	if matchesMarker(response.NextMarker) && len(response.Contents) == 0 && len(response.CommonPrefixes) == 0 {
+	if matchesMarker(rawCandidates, response.NextMarker) && len(response.Contents) == 0 && len(response.CommonPrefixes) == 0 {
 		response.NextMarker = ""
 		response.IsTruncated = false
 	}

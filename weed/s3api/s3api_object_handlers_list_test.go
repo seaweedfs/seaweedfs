@@ -686,7 +686,7 @@ func TestSanitizeV1MarkerEcho_NoProgressGuard(t *testing.T) {
 
 	response2 := ListBucketResult{
 		Marker:      "test file.txt",
-		NextMarker:  "test%20file.txt",
+		NextMarker:  "test file.txt",
 		IsTruncated: true,
 		Contents: []ListEntry{
 			{Key: "test%20file.txt"},
