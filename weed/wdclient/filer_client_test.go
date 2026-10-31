@@ -394,7 +394,7 @@ func TestLookupVolumeIdsCountsOnlyFilerFailures(t *testing.T) {
 // A volume server retired from the cluster is pushed to the FilerClient's own
 // vidMap through the master hook, so cached lookups stop naming it before a
 // read against the dead address has to fail first.
-func TestOnVolumeLocationDeleteDropsRetiredServer(t *testing.T) {
+func TestOnVolumeLocationChangeDropsRetiredServer(t *testing.T) {
 	fc := newTestFilerClient()
 	retired := Location{Url: "retired:8080"}
 	live := Location{Url: "live:8080"}
@@ -402,7 +402,7 @@ func TestOnVolumeLocationDeleteDropsRetiredServer(t *testing.T) {
 	fc.addLocation(7, live)
 	fc.addLocation(8, retired)
 
-	fc.OnVolumeLocationDelete(retired, []uint32{7, 8}, nil)
+	fc.OnVolumeLocationChange(retired, nil, []uint32{7, 8}, nil, nil)
 
 	locations, found := fc.GetLocations(7)
 	if !found || len(locations) != 1 || locations[0].Url != live.Url {
@@ -413,11 +413,11 @@ func TestOnVolumeLocationDeleteDropsRetiredServer(t *testing.T) {
 	}
 }
 
-func TestOnVolumeLocationDeleteIgnoresUncachedEntries(t *testing.T) {
+func TestOnVolumeLocationChangeIgnoresUncachedEntries(t *testing.T) {
 	fc := newTestFilerClient()
 	fc.addLocation(7, Location{Url: "live:8080"})
 
-	fc.OnVolumeLocationDelete(Location{Url: "retired:8080"}, []uint32{7, 9}, []uint32{7})
+	fc.OnVolumeLocationChange(Location{Url: "retired:8080"}, nil, []uint32{7, 9}, nil, []uint32{7})
 
 	locations, found := fc.GetLocations(7)
 	if !found || len(locations) != 1 || locations[0].Url != "live:8080" {
@@ -440,17 +440,41 @@ func TestOnVidMapResetClearsCachedLocations(t *testing.T) {
 
 // Filer lookups cache EC locations through addLocation into the regular map,
 // so an EC removal has to drop the retired server there too.
-func TestOnVolumeLocationDeleteDropsRetiredEcServer(t *testing.T) {
+func TestOnVolumeLocationChangeDropsRetiredEcServer(t *testing.T) {
 	fc := newTestFilerClient()
 	retired := Location{Url: "retired:8080"}
 	live := Location{Url: "live:8080"}
 	fc.addLocation(9, retired)
 	fc.addLocation(9, live)
 
-	fc.OnVolumeLocationDelete(retired, nil, []uint32{9})
+	fc.OnVolumeLocationChange(retired, nil, nil, nil, []uint32{9})
 
 	locations, found := fc.GetLocations(9)
 	if !found || len(locations) != 1 || locations[0].Url != live.Url {
 		t.Errorf("vid 9 kept only the surviving location: found=%v %v", found, locations)
+	}
+}
+
+// A location the master reports back at the same URL clears the deletion
+// mark, so a provider fill can cache it again without caching it eagerly.
+func TestOnVolumeLocationChangeReaddClearsTombstone(t *testing.T) {
+	retired := Location{Url: "retired:8080"}
+	fc := newTestFilerClient()
+	fc.vidMapClient = newVidMapClient(&testLocationProvider{
+		locations: map[string][]Location{
+			"5": {retired},
+		},
+	}, "", 0)
+	ctx := context.Background()
+
+	fc.OnVolumeLocationChange(retired, nil, []uint32{5}, nil, nil)
+	if locations, _ := fc.LookupVolumeIdsWithFallback(ctx, []string{"5"}); len(locations["5"]) > 0 {
+		t.Fatalf("removed location still served: %v", locations)
+	}
+
+	fc.OnVolumeLocationChange(retired, []uint32{5}, nil, nil, nil)
+	locations, err := fc.LookupVolumeIdsWithFallback(ctx, []string{"5"})
+	if err != nil || len(locations["5"]) != 1 || locations["5"][0].Url != retired.Url {
+		t.Fatalf("re-added location not served again: %v, err %v", locations, err)
 	}
 }

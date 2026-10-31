@@ -176,12 +176,13 @@ type MasterClient struct {
 	OnLockRingUpdateLock sync.RWMutex
 	OnMasterChange       func(previous, current pb.ServerAddress)
 	OnMasterChangeLock   sync.RWMutex
-	// OnVolumeLocationDelete receives the deletions updateVidMap applied: loc
-	// is the reporting server and the vids are the ones it stopped hosting.
-	// Clients keeping a second location cache (e.g. FilerClient) register
-	// here to drop the same entries instead of learning by a failed read.
-	OnVolumeLocationDelete     func(loc Location, deletedVids []uint32, deletedEcVids []uint32)
-	OnVolumeLocationDeleteLock sync.RWMutex
+	// OnVolumeLocationChange receives the volume changes updateVidMap
+	// applied: loc is the reporting server and the lists are the vids it
+	// started or stopped hosting. Clients keeping a second location cache
+	// (e.g. FilerClient) register here to drop removed entries instead of
+	// learning by a failed read, and to clear deletion marks on a re-add.
+	OnVolumeLocationChange     func(loc Location, addedVids []uint32, deletedVids []uint32, addedEcVids []uint32, deletedEcVids []uint32)
+	OnVolumeLocationChangeLock sync.RWMutex
 	// OnVidMapReset fires when a (re)connect makes the master re-tell its
 	// volume locations. Clients keeping a second location cache get no replay
 	// of the removals that may have happened while disconnected, so theirs
@@ -282,10 +283,10 @@ func (mc *MasterClient) SetOnMasterChangeFn(fn func(previous, current pb.ServerA
 	mc.OnMasterChangeLock.Unlock()
 }
 
-func (mc *MasterClient) SetOnVolumeLocationDeleteFn(fn func(loc Location, deletedVids []uint32, deletedEcVids []uint32)) {
-	mc.OnVolumeLocationDeleteLock.Lock()
-	mc.OnVolumeLocationDelete = fn
-	mc.OnVolumeLocationDeleteLock.Unlock()
+func (mc *MasterClient) SetOnVolumeLocationChangeFn(fn func(loc Location, addedVids []uint32, deletedVids []uint32, addedEcVids []uint32, deletedEcVids []uint32)) {
+	mc.OnVolumeLocationChangeLock.Lock()
+	mc.OnVolumeLocationChange = fn
+	mc.OnVolumeLocationChangeLock.Unlock()
 }
 
 func (mc *MasterClient) SetOnVidMapResetFn(fn func()) {
@@ -579,6 +580,7 @@ func (mc *MasterClient) updateVidMap(resp *master_pb.KeepConnectedResponse) {
 			readOnlyCanDeleteVids[vid] = struct{}{}
 		}
 	}
+	var added []uint32
 	for _, newVid := range resp.VolumeLocation.NewVids {
 		if _, isRemote := remoteVids[newVid]; isRemote {
 			continue
@@ -592,6 +594,7 @@ func (mc *MasterClient) updateVidMap(resp *master_pb.KeepConnectedResponse) {
 		}
 		glog.V(2).Infof("%s.%s: %s masterClient adds volume %d", mc.FilerGroup, mc.clientType, newLoc.Url, newVid)
 		mc.addLocation(newVid, newLoc)
+		added = append(added, newVid)
 	}
 	for _, remoteVid := range resp.VolumeLocation.RemoteVids {
 		remoteLoc := loc
@@ -604,6 +607,7 @@ func (mc *MasterClient) updateVidMap(resp *master_pb.KeepConnectedResponse) {
 		}
 		glog.V(2).Infof("%s.%s: %s masterClient adds remote volume %d", mc.FilerGroup, mc.clientType, remoteLoc.Url, remoteVid)
 		mc.addLocation(remoteVid, remoteLoc)
+		added = append(added, remoteVid)
 	}
 	var deletedVids []uint32
 	for _, deletedVid := range resp.VolumeLocation.DeletedVids {
@@ -614,10 +618,12 @@ func (mc *MasterClient) updateVidMap(resp *master_pb.KeepConnectedResponse) {
 		mc.deleteLocation(deletedVid, loc)
 		deletedVids = append(deletedVids, deletedVid)
 	}
+	var addedEc []uint32
 	stillOnServerEc := addedVids(resp.VolumeLocation.NewEcVids, resp.VolumeLocation.DeletedEcVids)
 	for _, newEcVid := range resp.VolumeLocation.NewEcVids {
 		glog.V(2).Infof("%s.%s: %s masterClient adds ec volume %d", mc.FilerGroup, mc.clientType, loc.Url, newEcVid)
 		mc.addEcLocation(newEcVid, loc)
+		addedEc = append(addedEc, newEcVid)
 	}
 	var deletedEcVids []uint32
 	for _, deletedEcVid := range resp.VolumeLocation.DeletedEcVids {
@@ -628,12 +634,12 @@ func (mc *MasterClient) updateVidMap(resp *master_pb.KeepConnectedResponse) {
 		mc.deleteEcLocation(deletedEcVid, loc)
 		deletedEcVids = append(deletedEcVids, deletedEcVid)
 	}
-	if len(deletedVids) > 0 || len(deletedEcVids) > 0 {
-		mc.OnVolumeLocationDeleteLock.RLock()
-		onDelete := mc.OnVolumeLocationDelete
-		mc.OnVolumeLocationDeleteLock.RUnlock()
-		if onDelete != nil {
-			onDelete(loc, deletedVids, deletedEcVids)
+	if len(added) > 0 || len(deletedVids) > 0 || len(addedEc) > 0 || len(deletedEcVids) > 0 {
+		mc.OnVolumeLocationChangeLock.RLock()
+		onChange := mc.OnVolumeLocationChange
+		mc.OnVolumeLocationChangeLock.RUnlock()
+		if onChange != nil {
+			onChange(loc, added, deletedVids, addedEc, deletedEcVids)
 		}
 	}
 	glog.V(1).Infof("updateVidMap(%s) %s.%s: %s volume add local: %d, remote: %d, del: %d, add ec: %d del ec: %d",

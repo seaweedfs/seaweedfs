@@ -327,6 +327,7 @@ func (vc *vidMapClient) GetDataCenter() string {
 
 // addLocation adds a volume location
 func (vc *vidMapClient) addLocation(vid uint32, location Location) {
+	vc.untombstone(vid, location)
 	vc.vidMap.addLocation(vid, location)
 }
 
@@ -338,6 +339,7 @@ func (vc *vidMapClient) deleteLocation(vid uint32, location Location) {
 
 // addEcLocation adds an EC volume location
 func (vc *vidMapClient) addEcLocation(vid uint32, location Location) {
+	vc.untombstone(vid, location)
 	vc.vidMap.addEcLocation(vid, location)
 }
 
@@ -365,6 +367,13 @@ func (vc *vidMapClient) tombstone(vid uint32, loc Location) {
 		}
 	}
 	vc.recentDeletes[vidLocationKey{vid: vid, url: loc.Url}] = now.Add(recentDeleteTTL)
+}
+
+// untombstone clears a removal mark when loc is confirmed serving vid again.
+func (vc *vidMapClient) untombstone(vid uint32, loc Location) {
+	vc.recentDeletesMu.Lock()
+	delete(vc.recentDeletes, vidLocationKey{vid: vid, url: loc.Url})
+	vc.recentDeletesMu.Unlock()
 }
 
 // isTombstoned reports whether a pushed delete removed loc from vid recently

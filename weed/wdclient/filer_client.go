@@ -182,7 +182,7 @@ func NewFilerClient(filerAddresses []pb.ServerAddress, grpcDialOption grpc.DialO
 	// Start filer discovery if master client is configured
 	// Empty filerGroup is valid (represents default group)
 	if masterClient != nil {
-		masterClient.SetOnVolumeLocationDeleteFn(fc.OnVolumeLocationDelete)
+		masterClient.SetOnVolumeLocationChangeFn(fc.OnVolumeLocationChange)
 		masterClient.SetOnVidMapResetFn(fc.OnVidMapReset)
 		fc.stopDiscovery = make(chan struct{})
 		go fc.discoverFilers()
@@ -529,10 +529,12 @@ func (fc *FilerClient) applyDiscoveredFilersLocked(discoveredFilers map[pb.Serve
 	}
 }
 
-// OnVolumeLocationDelete applies the volume-server removals the master pushed
+// OnVolumeLocationChange applies the volume-server changes the master pushed
 // to this client's own vidMap, so a retired server stops being tried before a
 // read against it has to fail first. Vids the cache never learned are ignored.
-func (fc *FilerClient) OnVolumeLocationDelete(loc Location, deletedVids []uint32, deletedEcVids []uint32) {
+// Confirmed additions only clear any deletion mark the removal left behind;
+// locations are still learned by lookup rather than cached eagerly.
+func (fc *FilerClient) OnVolumeLocationChange(loc Location, addedVids []uint32, deletedVids []uint32, addedEcVids []uint32, deletedEcVids []uint32) {
 	for _, vid := range deletedVids {
 		fc.deleteLocation(vid, loc)
 	}
@@ -540,6 +542,12 @@ func (fc *FilerClient) OnVolumeLocationDelete(loc Location, deletedVids []uint32
 		// Filer lookups cache EC locations in the regular map, so both need it.
 		fc.deleteLocation(vid, loc)
 		fc.deleteEcLocation(vid, loc)
+	}
+	for _, vid := range addedVids {
+		fc.untombstone(vid, loc)
+	}
+	for _, vid := range addedEcVids {
+		fc.untombstone(vid, loc)
 	}
 }
 

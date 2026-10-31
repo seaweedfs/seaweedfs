@@ -92,18 +92,23 @@ func TestEcVolumeRemovedLosesItsLocation(t *testing.T) {
 	}
 }
 
-// The delete listener hears only the removals updateVidMap applied: a volume
-// moved between the server's disks is reported both ways and stays put.
-func TestDeleteListenerHearsOnlyRealRemovals(t *testing.T) {
+// The change listener hears only the changes updateVidMap applied: a volume
+// moved between the server's disks is reported both ways and stays put, so
+// it arrives as an add, never a removal.
+func TestChangeListenerHearsAppliedChanges(t *testing.T) {
 	mc := moveClient()
-	var heard []uint32
-	mc.SetOnVolumeLocationDeleteFn(func(_ Location, deletedVids []uint32, _ []uint32) {
-		heard = append(heard, deletedVids...)
+	var heardAdds, heardDels []uint32
+	mc.SetOnVolumeLocationChangeFn(func(_ Location, addedVids []uint32, deletedVids []uint32, _ []uint32, _ []uint32) {
+		heardAdds = append(heardAdds, addedVids...)
+		heardDels = append(heardDels, deletedVids...)
 	})
 
 	mc.updateVidMap(moveResponse([]uint32{1}, []uint32{1, 2}))
 
-	if len(heard) != 1 || heard[0] != 2 {
-		t.Errorf("listener heard %v, want [2]", heard)
+	if len(heardAdds) != 1 || heardAdds[0] != 1 {
+		t.Errorf("listener heard adds %v, want [1]", heardAdds)
+	}
+	if len(heardDels) != 1 || heardDels[0] != 2 {
+		t.Errorf("listener heard removals %v, want [2]", heardDels)
 	}
 }
