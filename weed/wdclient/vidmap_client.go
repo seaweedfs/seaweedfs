@@ -37,6 +37,9 @@ type vidMapClient struct {
 	// while the lookup source still names the retired server.
 	recentDeletesMu sync.Mutex
 	recentDeletes   map[vidLocationKey]time.Time
+	// recentDeleteSweep is when expired tombstones were last pruned, so a
+	// batch of deletes pays the scan once per interval instead of per vid.
+	recentDeleteSweep time.Time
 }
 
 // vidLocationKey indexes a tombstoned (volume, server url) pair.
@@ -356,14 +359,19 @@ func (vc *vidMapClient) resetVidMap() {
 }
 
 // tombstone marks loc as having stopped serving vid so provider fills cannot
-// re-cache it while the lookup source still carries the removal.
+// re-cache it while the lookup source still carries the removal. Expired
+// entries are pruned lazily on reads and at most once per half TTL here, so a
+// server going away in one large batch does not scan the map per volume.
 func (vc *vidMapClient) tombstone(vid uint32, loc Location) {
 	now := time.Now()
 	vc.recentDeletesMu.Lock()
 	defer vc.recentDeletesMu.Unlock()
-	for key, deadline := range vc.recentDeletes {
-		if now.After(deadline) {
-			delete(vc.recentDeletes, key)
+	if now.Sub(vc.recentDeleteSweep) > recentDeleteTTL/2 {
+		vc.recentDeleteSweep = now
+		for key, deadline := range vc.recentDeletes {
+			if now.After(deadline) {
+				delete(vc.recentDeletes, key)
+			}
 		}
 	}
 	vc.recentDeletes[vidLocationKey{vid: vid, url: loc.Url}] = now.Add(recentDeleteTTL)
