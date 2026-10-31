@@ -860,10 +860,10 @@ func corsConfigFromProto(protoConfig *s3_pb.CORSConfiguration) *cors.CORSConfigu
 	}
 }
 
-// getMaxAgeSecondsValue safely extracts max age seconds value
+// getMaxAgeSecondsValue safely extracts max age seconds value; -1 stores an unset MaxAgeSeconds
 func getMaxAgeSecondsValue(maxAge *int) int {
 	if maxAge == nil {
-		return 0
+		return -1
 	}
 	return *maxAge
 }
