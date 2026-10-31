@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables/s3tablestest"
 	"github.com/stretchr/testify/assert"
@@ -264,24 +265,26 @@ func TestAuthorizeCreateTableRefusesVectorNamespace(t *testing.T) {
 	assert.NoError(t, untrustedManager().AuthorizeCreateTable(ctx, NewManagerClient(icebergFS.Client), req, "reader"))
 }
 
-// Only a CreateTable that finds a finished index passes unfenced, so the
-// declare keeps working even where the idempotent path writes.
-func TestVectorNamespaceFenceSparesOnlyExistingIndexCreate(t *testing.T) {
+// Behind the fence a rewrite that leaves the entry as stored, as an
+// idempotent repair does, passes without writing; any real change is refused.
+func TestVectorNamespaceFencePassesOnlyNoOpUpdates(t *testing.T) {
 	fs := s3tablestest.Start(t)
 	seedVectorBucket(t, fs, FormatLance)
-	fs.Put(GetNamespacePath(vectorTestBucket, VectorIndexNamespace), "pending", map[string][]byte{
-		ExtendedKeyMetadata: []byte(`{"name":"pending","format":"LANCE"}`),
-		ExtendedKeyDeleting: []byte(createClaim),
-	})
 	h := untrustedManager().handler
+	fence := &vectorNamespaceFence{h: h, filer: NewManagerClient(fs.Client)}
+	idxPath := GetTablePath(vectorTestBucket, VectorIndexNamespace, "idx")
+	stored := fs.Get(GetNamespacePath(vectorTestBucket, VectorIndexNamespace), "idx").Extended[ExtendedKeyMetadata]
 
-	for name, fenced := range map[string]bool{"idx": false, "fresh": true, "pending": true} {
-		t.Run(name, func(t *testing.T) {
-			body := `{"tableBucketARN":"` + vectorTestARN(t) + `","namespace":["vector"],"name":"` + name + `","format":"LANCE"}`
-			req, err := newManagerRequest(context.Background(), "CreateTable", []byte(body), "reader")
-			require.NoError(t, err)
-			got := h.fenceVectorNamespace(nil, req, NewManagerClient(fs.Client), "CreateTable")
-			assert.Equal(t, fenced, got != nil)
-		})
-	}
+	err := fence.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return h.setExtendedAttribute(context.Background(), client, idxPath, ExtendedKeyMetadata, stored)
+	})
+	require.NoError(t, err)
+	assert.False(t, fence.tripped.Load())
+
+	err = fence.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return h.setExtendedAttribute(context.Background(), client, idxPath, ExtendedKeyMetadata, []byte(`{}`))
+	})
+	assert.ErrorIs(t, err, errVectorNamespaceReadOnly)
+	assert.True(t, fence.tripped.Load())
+	assert.Equal(t, stored, fs.Get(GetNamespacePath(vectorTestBucket, VectorIndexNamespace), "idx").Extended[ExtendedKeyMetadata])
 }
