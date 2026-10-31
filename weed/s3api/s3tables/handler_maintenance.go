@@ -371,7 +371,7 @@ func (h *S3TablesHandler) authorizeMaintenanceTable(r *http.Request, filerClient
 	var bucketPolicy, tablePolicy string
 	var bucketTags, tableTags map[string]string
 	err := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		data, err := h.getExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyMetadata)
+		data, err := h.readTableMetadataAttr(r.Context(), client, tablePath)
 		if err != nil {
 			return err
 		}
