@@ -176,6 +176,12 @@ type MasterClient struct {
 	OnLockRingUpdateLock sync.RWMutex
 	OnMasterChange       func(previous, current pb.ServerAddress)
 	OnMasterChangeLock   sync.RWMutex
+	// OnVolumeLocationDelete receives the deletions updateVidMap applied: loc
+	// is the reporting server and the vids are the ones it stopped hosting.
+	// Clients keeping a second location cache (e.g. FilerClient) register
+	// here to drop the same entries instead of learning by a failed read.
+	OnVolumeLocationDelete     func(loc Location, deletedVids []uint32, deletedEcVids []uint32)
+	OnVolumeLocationDeleteLock sync.RWMutex
 
 	// streamLock publishes the stream only after its registration send, so a
 	// leave sent afterwards never races that send.
@@ -269,6 +275,12 @@ func (mc *MasterClient) SetOnMasterChangeFn(fn func(previous, current pb.ServerA
 	mc.OnMasterChangeLock.Lock()
 	mc.OnMasterChange = fn
 	mc.OnMasterChangeLock.Unlock()
+}
+
+func (mc *MasterClient) SetOnVolumeLocationDeleteFn(fn func(loc Location, deletedVids []uint32, deletedEcVids []uint32)) {
+	mc.OnVolumeLocationDeleteLock.Lock()
+	mc.OnVolumeLocationDelete = fn
+	mc.OnVolumeLocationDeleteLock.Unlock()
 }
 
 func (mc *MasterClient) tryAllMasters(ctx context.Context) {
@@ -570,24 +582,35 @@ func (mc *MasterClient) updateVidMap(resp *master_pb.KeepConnectedResponse) {
 		glog.V(2).Infof("%s.%s: %s masterClient adds remote volume %d", mc.FilerGroup, mc.clientType, remoteLoc.Url, remoteVid)
 		mc.addLocation(remoteVid, remoteLoc)
 	}
+	var deletedVids []uint32
 	for _, deletedVid := range resp.VolumeLocation.DeletedVids {
 		if _, moved := stillOnServer[deletedVid]; moved {
 			continue
 		}
 		glog.V(2).Infof("%s.%s: %s masterClient removes volume %d", mc.FilerGroup, mc.clientType, loc.Url, deletedVid)
 		mc.deleteLocation(deletedVid, loc)
+		deletedVids = append(deletedVids, deletedVid)
 	}
 	stillOnServerEc := addedVids(resp.VolumeLocation.NewEcVids, resp.VolumeLocation.DeletedEcVids)
 	for _, newEcVid := range resp.VolumeLocation.NewEcVids {
 		glog.V(2).Infof("%s.%s: %s masterClient adds ec volume %d", mc.FilerGroup, mc.clientType, loc.Url, newEcVid)
 		mc.addEcLocation(newEcVid, loc)
 	}
+	var deletedEcVids []uint32
 	for _, deletedEcVid := range resp.VolumeLocation.DeletedEcVids {
 		if _, moved := stillOnServerEc[deletedEcVid]; moved {
 			continue
 		}
 		glog.V(2).Infof("%s.%s: %s masterClient removes ec volume %d", mc.FilerGroup, mc.clientType, loc.Url, deletedEcVid)
 		mc.deleteEcLocation(deletedEcVid, loc)
+		deletedEcVids = append(deletedEcVids, deletedEcVid)
+	}
+	if len(deletedVids) > 0 || len(deletedEcVids) > 0 {
+		mc.OnVolumeLocationDeleteLock.RLock()
+		if mc.OnVolumeLocationDelete != nil {
+			mc.OnVolumeLocationDelete(loc, deletedVids, deletedEcVids)
+		}
+		mc.OnVolumeLocationDeleteLock.RUnlock()
 	}
 	glog.V(1).Infof("updateVidMap(%s) %s.%s: %s volume add local: %d, remote: %d, del: %d, add ec: %d del ec: %d",
 		resp.VolumeLocation.DataCenter, mc.FilerGroup, mc.clientType, loc.Url,

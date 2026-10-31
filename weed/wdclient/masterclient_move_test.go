@@ -91,3 +91,19 @@ func TestEcVolumeRemovedLosesItsLocation(t *testing.T) {
 		t.Errorf("an ec volume that left the server kept its location: %v", locations)
 	}
 }
+
+// The delete listener hears only the removals updateVidMap applied: a volume
+// moved between the server's disks is reported both ways and stays put.
+func TestDeleteListenerHearsOnlyRealRemovals(t *testing.T) {
+	mc := moveClient()
+	var heard []uint32
+	mc.SetOnVolumeLocationDeleteFn(func(_ Location, deletedVids []uint32, _ []uint32) {
+		heard = append(heard, deletedVids...)
+	})
+
+	mc.updateVidMap(moveResponse([]uint32{1}, []uint32{1, 2}))
+
+	if len(heard) != 1 || heard[0] != 2 {
+		t.Errorf("listener heard %v, want [2]", heard)
+	}
+}
