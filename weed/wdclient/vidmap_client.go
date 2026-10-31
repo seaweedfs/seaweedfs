@@ -1,6 +1,7 @@
 package wdclient
 
 import (
+	"container/list"
 	"context"
 	"errors"
 	"fmt"
@@ -9,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"golang.org/x/sync/singleflight"
 
@@ -39,7 +39,10 @@ type vidMapClient struct {
 	// still naming a retired server cannot re-cache it just because time
 	// passed.
 	recentDeletesMu sync.Mutex
-	recentDeletes   map[vidLocationKey]time.Time
+	recentDeletes   map[vidLocationKey]*list.Element
+	// recentDeleteOrder keeps tombstones in recency order so eviction at the
+	// cap removes the oldest mark in constant time.
+	recentDeleteOrder *list.List
 	// vidMapEpoch bumps each time the cache view is re-told (reset or clear),
 	// so a provider answer fetched under the old view is dropped rather than
 	// refilling the map.
@@ -66,9 +69,10 @@ const (
 // newVidMapClient creates a new client with the given provider and data center
 func newVidMapClient(provider VolumeLocationProvider, dataCenter string, cacheSize int) *vidMapClient {
 	return &vidMapClient{
-		vidMap:        newVidMap(dataCenter, cacheSize),
-		provider:      provider,
-		recentDeletes: make(map[vidLocationKey]time.Time),
+		vidMap:            newVidMap(dataCenter, cacheSize),
+		provider:          provider,
+		recentDeletes:     make(map[vidLocationKey]*list.Element),
+		recentDeleteOrder: list.New(),
 	}
 }
 
@@ -379,23 +383,26 @@ func (vc *vidMapClient) tombstone(vid uint32, loc Location) {
 	key := vidLocationKey{vid: vid, url: loc.Url}
 	vc.recentDeletesMu.Lock()
 	defer vc.recentDeletesMu.Unlock()
-	if _, found := vc.recentDeletes[key]; !found && len(vc.recentDeletes) >= recentDeleteCap {
-		var oldestKey vidLocationKey
-		var oldestAt time.Time
-		for k, at := range vc.recentDeletes {
-			if oldestAt.IsZero() || at.Before(oldestAt) {
-				oldestKey, oldestAt = k, at
-			}
-		}
-		delete(vc.recentDeletes, oldestKey)
+	if e, found := vc.recentDeletes[key]; found {
+		vc.recentDeleteOrder.MoveToBack(e)
+		return
 	}
-	vc.recentDeletes[key] = time.Now()
+	vc.recentDeletes[key] = vc.recentDeleteOrder.PushBack(key)
+	if len(vc.recentDeletes) > recentDeleteCap {
+		front := vc.recentDeleteOrder.Front()
+		delete(vc.recentDeletes, front.Value.(vidLocationKey))
+		vc.recentDeleteOrder.Remove(front)
+	}
 }
 
 // untombstone clears a removal mark when loc is confirmed serving vid again.
 func (vc *vidMapClient) untombstone(vid uint32, loc Location) {
+	key := vidLocationKey{vid: vid, url: loc.Url}
 	vc.recentDeletesMu.Lock()
-	delete(vc.recentDeletes, vidLocationKey{vid: vid, url: loc.Url})
+	if e, found := vc.recentDeletes[key]; found {
+		delete(vc.recentDeletes, key)
+		vc.recentDeleteOrder.Remove(e)
+	}
 	vc.recentDeletesMu.Unlock()
 }
 
