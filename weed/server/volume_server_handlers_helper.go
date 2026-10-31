@@ -55,15 +55,28 @@ func parseRange(s string, size int64) ([]httpRange, error) {
 		var r httpRange
 		if start == "" {
 			// If no start is specified, end specifies the
-			// range start relative to the end of the file.
+			// range start relative to the end of the file,
+			// and we are dealing with <suffix-length>
+			// which has to be a non-negative integer as per
+			// RFC 7233 Section 2.1 "Byte-Ranges".
+			if end == "" || end[0] == '-' {
+				return nil, errors.New("invalid range")
+			}
 			i, err := strconv.ParseInt(end, 10, 64)
-			if err != nil {
+			if i < 0 || err != nil {
 				return nil, errors.New("invalid range")
 			}
 			if i > size {
 				i = size
 			}
 			r.start = size - i
+			if r.start >= size {
+				// a zero-length suffix starts at the content size, so it
+				// cannot overlap (RFC 9110 14.1.2: a suffix-range needs a
+				// non-zero suffix-length to be satisfiable)
+				noOverlap = true
+				continue
+			}
 			r.length = size - r.start
 		} else {
 			i, err := strconv.ParseInt(start, 10, 64)
