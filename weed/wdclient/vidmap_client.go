@@ -237,11 +237,9 @@ func (vc *vidMapClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 
 			var live []Location
 			for _, loc := range locations {
-				if vc.isTombstoned(uint32(vid), loc) {
-					continue
+				if vc.fillLocation(uint32(vid), loc) {
+					live = append(live, loc)
 				}
-				live = append(live, loc)
-				vc.addLocation(uint32(vid), loc)
 			}
 
 			if len(live) > 0 {
@@ -397,12 +395,17 @@ func (vc *vidMapClient) untombstone(vid uint32, loc Location) {
 	vc.recentDeletesMu.Unlock()
 }
 
-// isTombstoned reports whether a pushed delete fenced loc off vid.
-func (vc *vidMapClient) isTombstoned(vid uint32, loc Location) bool {
+// fillLocation caches a provider-answered location unless the (vid,url) pair
+// is tombstoned. The check and the add share recentDeletesMu so a pushed
+// delete cannot slip between them and leave a retired server cached.
+func (vc *vidMapClient) fillLocation(vid uint32, loc Location) bool {
 	vc.recentDeletesMu.Lock()
 	defer vc.recentDeletesMu.Unlock()
-	_, found := vc.recentDeletes[vidLocationKey{vid: vid, url: loc.Url}]
-	return found
+	if _, found := vc.recentDeletes[vidLocationKey{vid: vid, url: loc.Url}]; found {
+		return false
+	}
+	vc.vidMap.addLocation(vid, loc)
+	return true
 }
 
 // clearVidMap drops every cached location. Unlike resetVidMap, used when the
