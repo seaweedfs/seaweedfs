@@ -106,8 +106,7 @@ func (p *masterVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []
 					// Parse volume ID from response
 					parts := strings.Split(vidLoc.VolumeOrFileId, ",")
 					vidOnly := parts[0]
-					vid, err := strconv.ParseUint(vidOnly, 10, 32)
-					if err != nil {
+					if _, err := strconv.ParseUint(vidOnly, 10, 32); err != nil {
 						lookupErrors = append(lookupErrors, fmt.Errorf("volume %s: invalid volume ID format: %w", vidLoc.VolumeOrFileId, err))
 						glog.Warningf("Failed to parse volume id '%s' from master response '%s': %v", vidOnly, vidLoc.VolumeOrFileId, err)
 						continue
@@ -124,8 +123,6 @@ func (p *masterVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []
 							ReadOnly:          masterLoc.ReadOnly,
 							ReadOnlyCanDelete: masterLoc.ReadOnlyCanDelete,
 						}
-						// Update cache with the location
-						p.masterClient.addLocation(uint32(vid), loc)
 						locations = append(locations, loc)
 					}
 
