@@ -1,0 +1,77 @@
+package lance
+
+import (
+	"net/http"
+	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
+)
+
+// seedVectorIndex creates bucket/vector/idx through the trusted path, the way
+// the S3 Vectors gateway does before it asks the engine to build the index.
+func (h *testHarness) seedVectorIndex(t *testing.T, bucket, format string) {
+	t.Helper()
+	h.createBucket(t, bucket, format)
+	client := s3tables.NewManagerClient(h.filer.Client)
+	for _, op := range []struct {
+		name string
+		req  interface{}
+	}{
+		{"CreateNamespace", &s3tables.CreateNamespaceRequest{TableBucketARN: h.bucketARN(t, bucket), Namespace: []string{s3tables.VectorIndexNamespace}}},
+		{"CreateNamespace", &s3tables.CreateNamespaceRequest{TableBucketARN: h.bucketARN(t, bucket), Namespace: []string{"other"}}},
+		{"CreateTable", &s3tables.CreateTableRequest{TableBucketARN: h.bucketARN(t, bucket), Namespace: []string{s3tables.VectorIndexNamespace},
+			Name: "idx", Format: s3tables.FormatLance}},
+	} {
+		if err := h.admin.Execute(t.Context(), client, op.name, op.req, nil, ""); err != nil {
+			t.Fatalf("%s: %v", op.name, err)
+		}
+	}
+}
+
+// Through the Lance namespace the vector namespace of a vector bucket is
+// read-only too, while the engine's declare of an index the gateway already
+// created keeps working.
+func TestVectorNamespaceIsReadOnlyOverLance(t *testing.T) {
+	h := newTestHarness(t)
+	h.seedVectorIndex(t, "vec", s3tables.FormatLance)
+	idx := "/v1/table/vec$vector$idx"
+
+	h.mustDo(t, http.MethodPost, idx+"/declare", `{"id":["vec","vector","idx"]}`, http.StatusOK)
+	h.mustDo(t, http.MethodPost, idx+"/describe", `{}`, http.StatusOK)
+
+	for _, tc := range []struct{ name, target, body string }{
+		{"declare a new index", "/v1/table/vec$vector$fresh/declare", `{}`},
+		{"register a new index", "/v1/table/vec$vector$fresh/register", `{"location":"s3://vec/vector/fresh"}`},
+		{"register over the index", idx + "/register", `{"location":"s3://vec/vector/idx","mode":"overwrite"}`},
+		{"repoint the index", idx + "/register", `{"location":"s3://vec/vector/elsewhere","mode":"overwrite"}`},
+		{"deregister", idx + "/deregister", `{}`},
+		{"drop", idx + "/drop", `{}`},
+		{"rename out", idx + "/rename", `{"new_id":["vec","other","moved"]}`},
+		{"drop the namespace", "/v1/namespace/vec$vector/drop", `{}`},
+		{"overwrite the namespace", "/v1/namespace/vec$vector/create", `{"mode":"overwrite"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h.mustDo(t, http.MethodPost, tc.target, tc.body, http.StatusForbidden)
+		})
+	}
+
+	if h.filer.Get("/buckets/vec/vector/idx", deregisteredMarker) != nil {
+		t.Fatal("a refused deregister left its marker")
+	}
+	h.mustDo(t, http.MethodPost, idx+"/exists", `{}`, http.StatusOK)
+
+	h.createBucket(t, "fresh", s3tables.FormatLance)
+	h.mustDo(t, http.MethodPost, "/v1/namespace/fresh$vector/create", `{}`, http.StatusForbidden)
+}
+
+// A bucket from before formats existed is not a vector bucket here, so its
+// namespace named vector keeps the ordinary Lance lifecycle.
+func TestVectorNamespaceOfUndeclaredBucketIsWritableOverLance(t *testing.T) {
+	h := newTestHarness(t)
+	h.seedVectorIndex(t, "old", "")
+	idx := "/v1/table/old$vector$idx"
+
+	h.mustDo(t, http.MethodPost, idx+"/deregister", `{}`, http.StatusOK)
+	h.mustDo(t, http.MethodPost, idx+"/register", `{"location":"s3://old/vector/idx"}`, http.StatusOK)
+	h.mustDo(t, http.MethodPost, idx+"/drop", `{}`, http.StatusOK)
+}

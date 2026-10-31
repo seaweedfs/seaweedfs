@@ -95,9 +95,9 @@ func (m *Manager) AuthorizeCreateTable(ctx context.Context, filerClient FilerCli
 		return err
 	}
 	recorder := httptest.NewRecorder()
-	_, authErr := m.handler.authorizeCreateTable(recorder, httpReq, filerClient, req.TableBucketARN, req.Namespace, req.Name, req.Tags, req.AllowMissingNamespace)
+	target, authErr := m.handler.authorizeCreateTable(recorder, httpReq, filerClient, req.TableBucketARN, req.Namespace, req.Name, req.Tags, req.AllowMissingNamespace)
 	if authErr == nil {
-		return nil
+		return m.handler.checkVectorNamespaceWrite(ctx, filerClient, target.bucketName, req.Namespace)
 	}
 	if decoded := decodeS3TablesHTTPResponse(recorder, nil); decoded != nil {
 		return decoded

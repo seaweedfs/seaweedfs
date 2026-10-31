@@ -143,6 +143,10 @@ func (h *S3TablesHandler) HandleRequest(w http.ResponseWriter, r *http.Request, 
 	// the status the handler answers decides how its error is logged (logRequestError)
 	sw := &statusRecorder{ResponseWriter: w}
 	w = sw
+	fence := h.fenceVectorNamespace(w, r, filerClient, operation)
+	if fence != nil {
+		w, filerClient = fence, fence
+	}
 
 	var err error
 	switch operation {
@@ -239,6 +243,9 @@ func (h *S3TablesHandler) HandleRequest(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
+	if fence != nil {
+		fence.settle()
+	}
 	if err != nil {
 		logRequestError(operation, sw.status, err)
 	}
