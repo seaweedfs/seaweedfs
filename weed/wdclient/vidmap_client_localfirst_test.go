@@ -164,3 +164,67 @@ func TestProviderFillSkipsTombstonedLocation(t *testing.T) {
 		t.Errorf("cache holds %v, want only the surviving location", cached)
 	}
 }
+
+// A lookup answer for an EC volume caches the shard server as a regular
+// entry, but that hearsay must not keep the server alive once the master
+// says the shard is gone.
+func TestEcRemovalFencesLookupCachedShardServer(t *testing.T) {
+	retired := Location{Url: "retired:8080"}
+	vc := newVidMapClient(&testLocationProvider{
+		locations: map[string][]Location{"7": {retired}},
+	}, "", 5)
+
+	if _, err := vc.LookupVolumeIdsWithFallback(context.Background(), []string{"7"}); err != nil {
+		t.Fatalf("lookup failed: %v", err)
+	}
+
+	vc.deleteEcLocation(7, retired)
+
+	locations, err := vc.LookupVolumeIdsWithFallback(context.Background(), []string{"7"})
+	if len(locations["7"]) != 0 {
+		t.Fatalf("retired shard server still served: %v", locations["7"])
+	}
+	if err == nil {
+		t.Fatalf("expected a not-found error once every answer is fenced")
+	}
+	if cached, found := vc.GetLocations(7); found && len(cached) > 0 {
+		t.Fatalf("retired shard server still cached: %v", cached)
+	}
+}
+
+// A regular copy the master pushed this generation survives the shard
+// removal at the same server: a decoded volume keeps answering from the copy
+// that replaced its shards.
+func TestEcRemovalKeepsPushedRegularCopy(t *testing.T) {
+	vm := newVidMap("", 5)
+	loc := Location{Url: "server:8080"}
+	vm.addLocation(7, loc)
+	vm.addEcLocation(7, loc)
+
+	vm.deleteEcLocation(7, loc)
+
+	if regular, _ := vm.hasServingLocation(7, loc.Url); !regular {
+		t.Fatalf("pushed regular copy must survive the shard removal")
+	}
+	if locs, found := vm.GetLocations(7); !found || len(locs) != 1 {
+		t.Fatalf("pushed regular copy was dropped with the shard: %v", locs)
+	}
+}
+
+// A location only an earlier generation knew does not suppress a removal:
+// the new master re-tells what still holds, so what it has not re-told is
+// history.
+func TestRemovalIgnoresEarlierGenerationLocation(t *testing.T) {
+	vm := newVidMap("", 5)
+	loc := Location{Url: "retired:8080"}
+	vm.addLocation(7, loc)
+	vm.reset()
+
+	if regular, _ := vm.hasServingLocation(7, loc.Url); regular {
+		t.Fatalf("a location the new master has not re-told must not count as a regular copy")
+	}
+	vm.addLocation(7, loc)
+	if regular, _ := vm.hasServingLocation(7, loc.Url); !regular {
+		t.Fatalf("a location the master pushed this generation must count")
+	}
+}
