@@ -55,7 +55,7 @@ func (fs *FilerServer) assignNewFileInfo(ctx context.Context, so *operation.Stor
 	// Use a context that ignores cancellation from the request context
 	assignCtx := context.WithoutCancel(ctx)
 
-	assignResult, ae := operation.Assign(assignCtx, fs.filer.GetMaster, fs.grpcDialOption, ar, altRequest)
+	assignResult, ae := operation.Assign(assignCtx, fs.filer.GetMaster, fs.masterGrpcDialOption(), ar, altRequest)
 	if ae != nil {
 		glog.ErrorfCtx(ctx, "failing to assign a file id: %v", ae)
 		err = ae

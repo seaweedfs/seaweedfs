@@ -86,7 +86,7 @@ func (f *Filer) assignAndUpload(ctx context.Context, targetFile string, data []b
 		ExpectedDataSize:    uint64(len(data)),
 	}
 
-	assignResult, err := operation.Assign(ctx, f.GetMaster, f.GrpcDialOption, assignRequest)
+	assignResult, err := operation.Assign(ctx, f.GetMaster, f.masterGrpcDialOption(), assignRequest)
 	if err != nil {
 		return nil, nil, fmt.Errorf("AssignVolume: %w", err)
 	}

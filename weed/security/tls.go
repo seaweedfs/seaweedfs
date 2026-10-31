@@ -67,8 +67,16 @@ func (s *SNIStrippingTransportCredentials) OverrideServerName(serverNameOverride
 }
 
 func LoadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption, grpc.ServerOption) {
+	creds, verify, err := loadServerTLS(config, component)
+	if err != nil {
+		glog.Fatalf("gRPC server TLS for %s: %v", component, err)
+	}
+	return creds, verify
+}
+
+func loadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption, grpc.ServerOption, error) {
 	if config == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	serverOptions := pemfile.Options{
@@ -76,14 +84,19 @@ func LoadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption
 		KeyFile:         config.GetString(component + ".key"),
 		RefreshDuration: CredRefreshingInterval,
 	}
+	if serverOptions.CertFile == "" && serverOptions.KeyFile == "" {
+		return nil, nil, nil
+	}
 	if serverOptions.CertFile == "" || serverOptions.KeyFile == "" {
-		return nil, nil
+		return nil, nil, fmt.Errorf("%s.cert and %s.key must both be set", component, component)
+	}
+	if err := checkTLSFiles(serverOptions.CertFile, serverOptions.KeyFile, config.GetString("grpc.ca")); err != nil {
+		return nil, nil, err
 	}
 
 	serverIdentityProvider, err := pemfile.NewProvider(serverOptions)
 	if err != nil {
-		glog.Warningf("pemfile.NewProvider(%v) %v failed: %v", serverOptions, component, err)
-		return nil, nil
+		return nil, nil, fmt.Errorf("pemfile.NewProvider(%v) failed: %w", serverOptions, err)
 	}
 
 	serverRootOptions := pemfile.Options{
@@ -92,8 +105,7 @@ func LoadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption
 	}
 	serverRootProvider, err := pemfile.NewProvider(serverRootOptions)
 	if err != nil {
-		glog.Warningf("pemfile.NewProvider(%v) failed: %v", serverRootOptions, err)
-		return nil, nil
+		return nil, nil, fmt.Errorf("pemfile.NewProvider(%v) failed: %w", serverRootOptions, err)
 	}
 
 	// Start a server and create a client using advancedtls API with Provider.
@@ -109,30 +121,21 @@ func LoadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption
 	}
 	options.MinTLSVersion, err = TlsVersionByName(config.GetString("tls.min_version"))
 	if err != nil {
-		glog.Warningf("tls min version parse failed, %v", err)
-		return nil, nil
+		return nil, nil, err
 	}
 	options.MaxTLSVersion, err = TlsVersionByName(config.GetString("tls.max_version"))
 	if err != nil {
-		glog.Warningf("tls max version parse failed, %v", err)
-		return nil, nil
+		return nil, nil, err
 	}
 	options.CipherSuites, err = TlsCipherSuiteByNames(config.GetString("tls.cipher_suites"))
 	if err != nil {
-		glog.Warningf("tls cipher suite parse failed, %v", err)
-		return nil, nil
+		return nil, nil, err
 	}
-	allowedCommonNames := config.GetString(component + ".allowed_commonNames")
-	allowedWildcardDomain := config.GetString("grpc.allowed_wildcard_domain")
-	if allowedCommonNames != "" || allowedWildcardDomain != "" {
-		allowedCommonNamesMap := make(map[string]bool)
-		for _, s := range strings.Split(allowedCommonNames, ",") {
-			allowedCommonNamesMap[s] = true
-		}
-		auther := Authenticator{
-			AllowedCommonNames:    allowedCommonNamesMap,
-			AllowedWildcardDomain: allowedWildcardDomain,
-		}
+	auther := Authenticator{
+		AllowedCommonNames:    parseAllowedCommonNames(config.GetString(component + ".allowed_commonNames")),
+		AllowedWildcardDomain: config.GetString("grpc.allowed_wildcard_domain"),
+	}
+	if len(auther.AllowedCommonNames) != 0 || auther.AllowedWildcardDomain != "" {
 		options.AdditionalPeerVerification = auther.Authenticate
 	} else {
 		options.AdditionalPeerVerification = func(params *advancedtls.HandshakeVerificationInfo) (*advancedtls.PostHandshakeVerificationResults, error) {
@@ -141,10 +144,9 @@ func LoadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption
 	}
 	ta, err := advancedtls.NewServerCreds(options)
 	if err != nil {
-		glog.Warningf("advancedtls.NewServerCreds(%v) failed: %v", options, err)
-		return nil, nil
+		return nil, nil, fmt.Errorf("advancedtls.NewServerCreds failed: %w", err)
 	}
-	return grpc.Creds(ta), nil
+	return grpc.Creds(ta), nil, nil
 }
 
 func LoadClientTLSFromFile(configFile string, component string) (grpc.DialOption, error) {
@@ -165,21 +167,56 @@ func LoadClientTLSFromFile(configFile string, component string) (grpc.DialOption
 }
 
 func LoadClientTLS(config *util.ViperProxy, component string) grpc.DialOption {
+	option, err := loadClientTLS(config, component, component)
+	if err != nil {
+		glog.Fatalf("gRPC client TLS for %s: %v", component, err)
+	}
+	return option
+}
+
+// LoadClientTLSForTarget builds the component's client dial option while
+// selecting the server-identity allowlist for a specific target kind: a filer
+// dialing a volume keeps presenting its grpc.filer client certificate but
+// verifies the peer against grpc.filer.volume_allowed_server_commonNames. The
+// server-name and wildcard keys fall back from the client's per-target key to
+// the component key to grpc.*, so a deployment without per-target keys
+// verifies exactly as before. The per-target key lives under the client
+// component because grpc.<component>.allowed_server_commonNames denotes that
+// component's own outbound allowlist.
+func LoadClientTLSForTarget(config *util.ViperProxy, clientComponent, targetComponent string) grpc.DialOption {
+	option, err := loadClientTLS(config, clientComponent, targetComponent)
+	if err != nil {
+		glog.Fatalf("gRPC client TLS for %s: %v", clientComponent, err)
+	}
+	return option
+}
+
+func loadClientTLS(config *util.ViperProxy, component, targetComponent string) (grpc.DialOption, error) {
 	if config == nil {
-		return grpc.WithTransportCredentials(insecure.NewCredentials())
+		return grpc.WithTransportCredentials(insecure.NewCredentials()), nil
 	}
 
 	// prefer a dedicated client certificate: CAs may issue certs with only one of the serverAuth/clientAuth EKUs
 	certFileName, keyFileName := config.GetString(component+".client_cert"), config.GetString(component+".client_key")
+	partialClientPair := (certFileName == "") != (keyFileName == "")
+	if partialClientPair {
+		return nil, fmt.Errorf("%s.client_cert and %s.client_key must both be set", component, component)
+	}
 	if certFileName == "" || keyFileName == "" {
-		if certFileName != "" || keyFileName != "" {
-			glog.Warningf("%s.client_cert and %s.client_key must both be set, falling back to %s.cert and %s.key", component, component, component, component)
-		}
 		certFileName, keyFileName = config.GetString(component+".cert"), config.GetString(component+".key")
 	}
+	if certFileName == "" && keyFileName == "" {
+		return grpc.WithTransportCredentials(insecure.NewCredentials()), nil
+	}
+	if certFileName == "" || keyFileName == "" {
+		return nil, fmt.Errorf("%s.cert and %s.key must both be set", component, component)
+	}
 	caFileName := config.GetString("grpc.ca")
-	if certFileName == "" || keyFileName == "" || caFileName == "" {
-		return grpc.WithTransportCredentials(insecure.NewCredentials())
+	if caFileName == "" {
+		return nil, fmt.Errorf("%s cert and key are set but grpc.ca is not", component)
+	}
+	if err := checkTLSFiles(certFileName, keyFileName, caFileName); err != nil {
+		return nil, err
 	}
 
 	clientOptions := pemfile.Options{
@@ -189,37 +226,54 @@ func LoadClientTLS(config *util.ViperProxy, component string) grpc.DialOption {
 	}
 	clientProvider, err := pemfile.NewProvider(clientOptions)
 	if err != nil {
-		glog.Warningf("pemfile.NewProvider(%v) failed %v", clientOptions, err)
-		return grpc.WithTransportCredentials(insecure.NewCredentials())
+		return nil, fmt.Errorf("pemfile.NewProvider(%v) failed: %w", clientOptions, err)
 	}
 	clientRootOptions := pemfile.Options{
-		RootFile:        config.GetString("grpc.ca"),
+		RootFile:        caFileName,
 		RefreshDuration: CredRefreshingInterval,
 	}
 	clientRootProvider, err := pemfile.NewProvider(clientRootOptions)
 	if err != nil {
-		glog.Warningf("pemfile.NewProvider(%v) failed: %v", clientRootOptions, err)
-		return grpc.WithTransportCredentials(insecure.NewCredentials())
+		return nil, fmt.Errorf("pemfile.NewProvider(%v) failed: %w", clientRootOptions, err)
 	}
 	options := &advancedtls.Options{
 		IdentityOptions: advancedtls.IdentityCertificateOptions{
 			IdentityProvider: clientProvider,
-		},
-		AdditionalPeerVerification: func(params *advancedtls.HandshakeVerificationInfo) (*advancedtls.PostHandshakeVerificationResults, error) {
-			return &advancedtls.PostHandshakeVerificationResults{}, nil
 		},
 		RootOptions: advancedtls.RootCertificateOptions{
 			RootProvider: clientRootProvider,
 		},
 		VerificationType: advancedtls.CertVerification,
 	}
+	targetPrefix := ""
+	if targetComponent != component {
+		targetPrefix = strings.TrimPrefix(targetComponent, "grpc.") + "_"
+	}
+	allowedServerNames := firstConfigString(config,
+		component+"."+targetPrefix+"allowed_server_commonNames",
+		component+".allowed_server_commonNames",
+		"grpc.allowed_server_commonNames")
+	allowedWildcardDomain := firstConfigString(config,
+		component+"."+targetPrefix+"allowed_server_wildcard_domain",
+		component+".allowed_server_wildcard_domain",
+		"grpc.allowed_server_wildcard_domain")
+	auther := Authenticator{
+		AllowedCommonNames:    parseAllowedCommonNames(allowedServerNames),
+		AllowedWildcardDomain: allowedWildcardDomain,
+	}
+	if len(auther.AllowedCommonNames) != 0 || auther.AllowedWildcardDomain != "" {
+		options.AdditionalPeerVerification = auther.AuthenticateServer
+	} else {
+		options.AdditionalPeerVerification = func(params *advancedtls.HandshakeVerificationInfo) (*advancedtls.PostHandshakeVerificationResults, error) {
+			return &advancedtls.PostHandshakeVerificationResults{}, nil
+		}
+	}
 	ta, err := advancedtls.NewClientCreds(options)
 	if err != nil {
-		glog.Warningf("advancedtls.NewClientCreds(%v) failed: %v", options, err)
-		return grpc.WithTransportCredentials(insecure.NewCredentials())
+		return nil, fmt.Errorf("advancedtls.NewClientCreds failed: %w", err)
 	}
 	wrapped := &SNIStrippingTransportCredentials{creds: ta}
-	return grpc.WithTransportCredentials(wrapped)
+	return grpc.WithTransportCredentials(wrapped), nil
 }
 
 // LoadHTTPClientFromFile creates an HTTP client using the https.client TLS
@@ -272,14 +326,117 @@ func LoadClientTLSHTTP(clientCertFile string) *tls.Config {
 	}
 }
 
+// checkTLSFiles validates configured TLS material up front: the pemfile
+// providers read lazily, so without this a typo'd or unparseable file would
+// only surface at handshake time instead of at startup.
+func checkTLSFiles(certFile, keyFile, caFile string) error {
+	if _, err := tls.LoadX509KeyPair(certFile, keyFile); err != nil {
+		return err
+	}
+	if caFile == "" {
+		return nil
+	}
+	caPem, err := os.ReadFile(caFile)
+	if err != nil {
+		return err
+	}
+	if !x509.NewCertPool().AppendCertsFromPEM(caPem) {
+		return fmt.Errorf("no CA certificates found in %s", caFile)
+	}
+	return nil
+}
+
+func parseAllowedCommonNames(commonNames string) map[string]bool {
+	allowed := make(map[string]bool)
+	for _, s := range strings.Split(commonNames, ",") {
+		if s = strings.TrimSpace(s); s != "" {
+			allowed[s] = true
+		}
+	}
+	return allowed
+}
+
+func firstConfigString(config *util.ViperProxy, keys ...string) string {
+	for _, key := range keys {
+		if v := config.GetString(key); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// matchesWildcardDomain requires a real subdomain of the wildcard: the name
+// must end with the domain, carry a non-empty label in front of it, and be a
+// valid DNS name, so a CA-signed name like ".example.com" cannot satisfy the
+// suffix check. A leading "*." label is allowed so wildcard certs keep
+// matching. One trailing root dot is ignored on both sides so absolute DNS
+// names still match.
+func matchesWildcardDomain(name, wildcardDomain string) bool {
+	name = strings.TrimSuffix(name, ".")
+	wildcardDomain = strings.TrimSuffix(wildcardDomain, ".")
+	if wildcardDomain == "" || len(name) <= len(wildcardDomain) || !strings.HasSuffix(name, wildcardDomain) {
+		return false
+	}
+	if wildcardDomain[0] != '.' && name[len(name)-len(wildcardDomain)-1] != '.' {
+		return false
+	}
+	return isDomainName(strings.TrimPrefix(name, "*."))
+}
+
+// isDomainName mirrors the Rust volume's check: non-empty labels of letters,
+// digits, '-', '_', each up to 63 chars and not '-'-edged, with at least one
+// non-digit so a bare IP cannot pass a domain wildcard.
+func isDomainName(name string) bool {
+	if len(name) == 0 || len(name) > 253 {
+		return false
+	}
+	nonNumeric := false
+	for _, label := range strings.Split(name, ".") {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for i := 0; i < len(label); i++ {
+			c := label[i]
+			if c != '-' && c != '_' && !(c >= '0' && c <= '9') && !(c >= 'a' && c <= 'z') && !(c >= 'A' && c <= 'Z') {
+				return false
+			}
+			nonNumeric = nonNumeric || c < '0' || c > '9'
+		}
+	}
+	return nonNumeric
+}
+
 func (a Authenticator) Authenticate(params *advancedtls.HandshakeVerificationInfo) (*advancedtls.PostHandshakeVerificationResults, error) {
-	if a.AllowedWildcardDomain != "" && strings.HasSuffix(params.Leaf.Subject.CommonName, a.AllowedWildcardDomain) {
+	if matchesWildcardDomain(params.Leaf.Subject.CommonName, a.AllowedWildcardDomain) {
 		return &advancedtls.PostHandshakeVerificationResults{}, nil
 	}
 	if _, ok := a.AllowedCommonNames[params.Leaf.Subject.CommonName]; ok {
 		return &advancedtls.PostHandshakeVerificationResults{}, nil
 	}
 	err := fmt.Errorf("Authenticate: invalid subject client common name: %s", params.Leaf.Subject.CommonName)
+	glog.Error(err)
+	return nil, err
+}
+
+func (a Authenticator) AuthenticateServer(params *advancedtls.HandshakeVerificationInfo) (*advancedtls.PostHandshakeVerificationResults, error) {
+	leaf := params.Leaf
+	names := make([]string, 0, len(leaf.DNSNames)+len(leaf.URIs)+1)
+	names = append(names, leaf.Subject.CommonName)
+	names = append(names, leaf.DNSNames...)
+	for _, name := range names {
+		if a.AllowedCommonNames[name] || matchesWildcardDomain(name, a.AllowedWildcardDomain) {
+			return &advancedtls.PostHandshakeVerificationResults{}, nil
+		}
+	}
+	for _, u := range leaf.URIs {
+		// URI identities match exactly: a path that happens to end in the
+		// wildcard domain must not pass the DNS suffix check.
+		if a.AllowedCommonNames[u.String()] {
+			return &advancedtls.PostHandshakeVerificationResults{}, nil
+		}
+		names = append(names, u.String())
+	}
+	err := fmt.Errorf("AuthenticateServer: untrusted server identity %v", names)
 	glog.Error(err)
 	return nil, err
 }

@@ -60,20 +60,28 @@ pub fn load_outgoing_grpc_tls(
     config: &VolumeServerConfig,
 ) -> Result<Option<OutgoingGrpcTlsConfig>, GrpcClientError> {
     // prefer a dedicated client certificate: CAs may issue certs with only one of the serverAuth/clientAuth EKUs
-    let (cert_file, key_file) = if !config.grpc_client_cert_file.is_empty()
-        && !config.grpc_client_key_file.is_empty()
-    {
+    if config.grpc_client_cert_file.is_empty() != config.grpc_client_key_file.is_empty() {
+        return Err(GrpcClientError(
+            "grpc.volume.client_cert and grpc.volume.client_key must both be set".to_string(),
+        ));
+    }
+    let (cert_file, key_file) = if !config.grpc_client_cert_file.is_empty() {
         (&config.grpc_client_cert_file, &config.grpc_client_key_file)
     } else {
-        if !config.grpc_client_cert_file.is_empty() || !config.grpc_client_key_file.is_empty() {
-            tracing::warn!(
-                "grpc.volume.client_cert and grpc.volume.client_key must both be set, falling back to grpc.volume.cert and grpc.volume.key"
-            );
-        }
         (&config.grpc_cert_file, &config.grpc_key_file)
     };
-    if cert_file.is_empty() || key_file.is_empty() || config.grpc_ca_file.is_empty() {
+    if cert_file.is_empty() && key_file.is_empty() {
         return Ok(None);
+    }
+    if cert_file.is_empty() || key_file.is_empty() {
+        return Err(GrpcClientError(
+            "grpc.volume.cert and grpc.volume.key must both be set".to_string(),
+        ));
+    }
+    if config.grpc_ca_file.is_empty() {
+        return Err(GrpcClientError(
+            "grpc.volume cert and key are set but grpc.ca is not".to_string(),
+        ));
     }
 
     let cert_pem = std::fs::read_to_string(cert_file).map_err(|e| {
@@ -452,10 +460,21 @@ mod tests {
     }
 
     #[test]
-    fn test_load_outgoing_grpc_tls_requires_cert_key_and_ca() {
+    fn test_load_outgoing_grpc_tls_unconfigured_is_plaintext() {
+        let config = sample_config();
+        assert!(load_outgoing_grpc_tls(&config).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_load_outgoing_grpc_tls_rejects_partial_config() {
         let mut config = sample_config();
         config.grpc_cert_file = "/tmp/client.pem".to_string();
-        assert!(load_outgoing_grpc_tls(&config).unwrap().is_none());
+        assert!(load_outgoing_grpc_tls(&config).is_err());
+
+        let mut config = sample_config();
+        config.grpc_cert_file = "/tmp/client.pem".to_string();
+        config.grpc_key_file = "/tmp/client.key".to_string();
+        assert!(load_outgoing_grpc_tls(&config).is_err());
     }
 
     fn write_pem_files(dir: &tempfile::TempDir, config: &mut VolumeServerConfig) {
@@ -467,6 +486,20 @@ mod tests {
         config.grpc_cert_file = write("server.pem", "server-cert");
         config.grpc_key_file = write("server.key", "server-key");
         config.grpc_ca_file = write("ca.pem", "ca");
+    }
+
+    #[test]
+    fn test_load_outgoing_grpc_tls_rejects_partial_client_pair() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut config = sample_config();
+        write_pem_files(&dir, &mut config);
+        config.grpc_client_cert_file = "/tmp/client.pem".to_string();
+
+        let err = load_outgoing_grpc_tls(&config).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "grpc.volume.client_cert and grpc.volume.client_key must both be set"
+        );
     }
 
     #[test]

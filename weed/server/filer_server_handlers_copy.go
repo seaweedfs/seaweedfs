@@ -732,7 +732,7 @@ func (fs *FilerServer) batchLookupVolumeLocations(ctx context.Context, chunks []
 	}
 
 	// Perform single batched lookup
-	lookupResult, err := operation.LookupVolumeIds(fs.filer.GetMaster, fs.grpcDialOption, volumeIdStrs)
+	lookupResult, err := operation.LookupVolumeIds(fs.filer.GetMaster, fs.masterGrpcDialOption(), volumeIdStrs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to lookup volumes: %w", err)
 	}

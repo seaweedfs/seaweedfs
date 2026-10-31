@@ -83,10 +83,23 @@ expires_after_seconds = 10           # seconds
 # the component reuses cert/key for both directions.
 # If client and server certificates come from different issuing CAs, put both
 # CA certificates in the ca PEM file.
+# Once a component's cert/key are set, any error loading them or grpc.ca is
+# fatal: the component never falls back to plaintext.
 [grpc]
 ca = ""
 # Set wildcard domain for enable TLS authentication by common names
 allowed_wildcard_domain = "" # .mycompany.com
+# Optional allowlist a client checks the dialed server's certificate against:
+# the subject common name, a DNS SAN, or a URI SAN (e.g. a SPIFFE id) must be
+# listed, or match allowed_server_wildcard_domain, else the handshake fails.
+# With a per-workload CA, list the identities each server may present so one
+# workload cannot impersonate another component. Unset accepts any CA-signed
+# server certificate, as before. Any [grpc.<component>] section may set its own
+# allowed_server_commonNames to override this list, and scope it further per
+# dialed target, e.g. the filer reads [grpc.filer]
+# volume_allowed_server_commonNames for volume server calls.
+allowed_server_commonNames = ""      # comma-separated server identities
+allowed_server_wildcard_domain = ""  # .mycompany.com
 
 # Volume server gRPC options (server-side)
 # Enables mTLS for incoming gRPC connections to volume server

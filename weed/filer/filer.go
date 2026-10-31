@@ -46,6 +46,14 @@ var (
 	OS_GID = uint32(os.Getgid())
 )
 
+// DialOptions selects the outbound dial option per target kind. Empty fields
+// fall back to the filer option, so sharing one option keeps past behavior.
+type DialOptions struct {
+	Filer  grpc.DialOption
+	Master grpc.DialOption
+	Volume grpc.DialOption
+}
+
 type Filer struct {
 	UniqueFilerId       int32
 	UniqueFilerEpoch    int32
@@ -53,6 +61,7 @@ type Filer struct {
 	MasterClient        *wdclient.MasterClient
 	FileIdDeletionQueue *util.UnboundedQueue
 	GrpcDialOption      grpc.DialOption
+	dialOptions         *DialOptions
 	DirBucketsPath      string
 	Cipher              bool
 	LocalMetaLogBuffer  *log_buffer.LogBuffer
@@ -123,11 +132,12 @@ type Filer struct {
 	flushCancel context.CancelFunc
 }
 
-func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerHost pb.ServerAddress, filerGroup string, collection string, replication string, dataCenter string, maxFilenameLength uint32, notifyFn func()) *Filer {
+func NewFiler(masters pb.ServerDiscovery, dialOptions *DialOptions, filerHost pb.ServerAddress, filerGroup string, collection string, replication string, dataCenter string, maxFilenameLength uint32, notifyFn func()) *Filer {
 	f := &Filer{
-		MasterClient:        wdclient.NewMasterClient(grpcDialOption, filerGroup, cluster.FilerType, filerHost, dataCenter, "", masters),
+		MasterClient:        wdclient.NewMasterClient(dialOptions.master(), filerGroup, cluster.FilerType, filerHost, dataCenter, "", masters),
 		FileIdDeletionQueue: util.NewUnboundedQueue(),
-		GrpcDialOption:      grpcDialOption,
+		GrpcDialOption:      dialOptions.filer(),
+		dialOptions:         dialOptions,
 		FilerConf:           NewFilerConf(),
 		RemoteStorage:       NewFilerRemoteStorage(),
 		UniqueFilerId:       util.RandomInt32(),
@@ -175,6 +185,47 @@ func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerH
 	go f.loopProcessingDeletion()
 
 	return f
+}
+
+func (o *DialOptions) filer() grpc.DialOption {
+	if o == nil {
+		return nil
+	}
+	return o.Filer
+}
+
+func (o *DialOptions) master() grpc.DialOption {
+	if o == nil {
+		return nil
+	}
+	if o.Master != nil {
+		return o.Master
+	}
+	return o.Filer
+}
+
+func (o *DialOptions) volume() grpc.DialOption {
+	if o == nil {
+		return nil
+	}
+	if o.Volume != nil {
+		return o.Volume
+	}
+	return o.Filer
+}
+
+func (f *Filer) masterGrpcDialOption() grpc.DialOption {
+	if f.dialOptions != nil && f.dialOptions.Master != nil {
+		return f.dialOptions.Master
+	}
+	return f.GrpcDialOption
+}
+
+func (f *Filer) volumeGrpcDialOption() grpc.DialOption {
+	if f.dialOptions != nil && f.dialOptions.Volume != nil {
+		return f.dialOptions.Volume
+	}
+	return f.GrpcDialOption
 }
 
 func (f *Filer) buildRemoteStorageClient(ctx context.Context, remoteConf *remote_pb.RemoteConf) (remote_storage.RemoteStorageClient, error) {
@@ -294,7 +345,7 @@ func (f *Filer) ListExistingPeerUpdates(ctx context.Context) (existingNodes []*m
 			break
 		}
 		lookupCtx, cancel := context.WithTimeout(ctx, peerLookupTimeout)
-		l, lookErr := cluster.LookupClusterLeader(lookupCtx, master, f.GrpcDialOption)
+		l, lookErr := cluster.LookupClusterLeader(lookupCtx, master, f.masterGrpcDialOption())
 		cancel()
 		if lookErr != nil {
 			queryErrs = append(queryErrs, lookErr)
@@ -309,7 +360,7 @@ func (f *Filer) ListExistingPeerUpdates(ctx context.Context) (existingNodes []*m
 		settleDeadline := time.Now().Add(leaderSettleTimeout)
 		for {
 			lookupCtx, cancel := context.WithTimeout(ctx, peerLookupTimeout)
-			nodes, listErr := cluster.ListExistingPeerUpdates(lookupCtx, leader, f.GrpcDialOption, f.MasterClient.FilerGroup, cluster.FilerType)
+			nodes, listErr := cluster.ListExistingPeerUpdates(lookupCtx, leader, f.masterGrpcDialOption(), f.MasterClient.FilerGroup, cluster.FilerType)
 			cancel()
 			if listErr != nil {
 				queryErrs = append(queryErrs, fmt.Errorf("list peers from leader %s: %w", leader, listErr))
@@ -334,7 +385,7 @@ func (f *Filer) ListExistingPeerUpdates(ctx context.Context) (existingNodes []*m
 			break
 		}
 		lookupCtx, cancel := context.WithTimeout(ctx, peerLookupTimeout)
-		nodes, listErr := cluster.ListExistingPeerUpdates(lookupCtx, master, f.GrpcDialOption, f.MasterClient.FilerGroup, cluster.FilerType)
+		nodes, listErr := cluster.ListExistingPeerUpdates(lookupCtx, master, f.masterGrpcDialOption(), f.MasterClient.FilerGroup, cluster.FilerType)
 		cancel()
 		if listErr != nil {
 			queryErrs = append(queryErrs, listErr)

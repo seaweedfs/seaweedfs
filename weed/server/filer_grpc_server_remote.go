@@ -205,7 +205,7 @@ func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, re
 			}
 
 			// assign one volume server
-			assignResult, err := operation.Assign(ctx, fs.filer.GetMaster, fs.grpcDialOption, assignRequest, altRequest)
+			assignResult, err := operation.Assign(ctx, fs.filer.GetMaster, fs.masterGrpcDialOption(), assignRequest, altRequest)
 			if err != nil {
 				chunksMu.Lock()
 				if fetchAndWriteErr == nil {
@@ -244,7 +244,7 @@ func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, re
 			// tell filer to tell volume server to download into needles
 			assignedServerAddress := pb.NewServerAddressWithGrpcPort(assignResult.Url, assignResult.GrpcPort)
 			var etag string
-			err = operation.WithVolumeServerClient(false, assignedServerAddress, fs.grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+			err = operation.WithVolumeServerClient(false, assignedServerAddress, fs.volumeGrpcDialOption(), func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 				resp, fetchErr := volumeServerClient.FetchAndWriteNeedle(context.Background(), &volume_server_pb.FetchAndWriteNeedleRequest{
 					VolumeId:            uint32(fileId.VolumeId),
 					NeedleId:            uint64(fileId.Key),
