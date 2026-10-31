@@ -2,11 +2,15 @@ package s3api
 
 import (
 	"encoding/xml"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -73,4 +77,56 @@ func TestSelectMultipartUploadsKeepsKeysRawWithoutEncodingType(t *testing.T) {
 		got = append(got, *upload.Key)
 	}
 	assert.Equal(t, []string{"m\x01p b+.bin", "plain/key.txt"}, got)
+}
+
+type listUploadsTestPage struct {
+	XMLName   xml.Name `xml:"ListMultipartUploadsResult"`
+	KeyMarker string   `xml:"KeyMarker"`
+	Uploads   []struct {
+		Key string `xml:"Key"`
+	} `xml:"Upload"`
+}
+
+// The request key-marker is a raw key even under encoding-type=url: SDKs
+// decode the escaped response fields and send the key itself back, so a
+// marker like "a%2Bb" is that literal key, not the escape of "a+b".
+func TestListMultipartUploadsUrlKeyMarkerIsRawKey(t *testing.T) {
+	filer := &fakeBucketDeleteFiler{entriesByDir: map[string][]*filer_pb.Entry{
+		"/buckets/test/.uploads": {
+			uploadEntry("1", "c d", 10),
+			uploadEntry("2", "a+b", 10),
+			uploadEntry("3", "a%2Bb", 10),
+			uploadEntry("4", "z", 10),
+			uploadEntry("5", "c%20d", 10),
+		},
+	}}
+	s3a := newFailoverTestServer(t, startFakeFiler(t, filer))
+	s3a.option.BucketsPath = "/buckets"
+	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+	s3a.bucketConfigCache.Set("test", &BucketConfig{Name: "test"})
+	s3a.iam = &IdentityAccessManagement{}
+
+	r := httptest.NewRequest(http.MethodGet, "/test?uploads&"+url.Values{
+		"encoding-type": {"url"},
+		"key-marker":    {"a%2Bb"},
+	}.Encode(), nil)
+	r = mux.SetURLVars(r, map[string]string{"bucket": "test"})
+	w := httptest.NewRecorder()
+	s3a.ListMultipartUploadsHandler(w, r)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var page listUploadsTestPage
+	require.NoError(t, xml.Unmarshal(w.Body.Bytes(), &page), w.Body.String())
+
+	var got []string
+	for _, upload := range page.Uploads {
+		key, err := url.QueryUnescape(upload.Key)
+		require.NoError(t, err)
+		got = append(got, key)
+	}
+	assert.Equal(t, []string{"a+b", "c d", "c%20d", "z"}, got)
+
+	decoded, err := url.QueryUnescape(page.KeyMarker)
+	require.NoError(t, err)
+	assert.Equal(t, "a%2Bb", decoded)
 }
