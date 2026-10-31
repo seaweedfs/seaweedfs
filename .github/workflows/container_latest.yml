@@ -80,8 +80,10 @@ jobs:
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.source_ref || github.ref }}
 
+      # The checkout above is the source ref, which may predate these
+      # actions; take them from master, the ref this fallback runs from.
       - name: Set up the musl target
-        uses: ./.github/actions/rust-musl-target
+        uses: seaweedfs/seaweedfs/.github/actions/rust-musl-target@master
         with:
           target: ${{ matrix.target }}
 
@@ -158,7 +160,7 @@ jobs:
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.source_ref || github.ref }}
       - name: Clean up stale FUSE mounts
-        uses: ./.github/actions/cleanup-stale-fuse-mounts
+        uses: seaweedfs/seaweedfs/.github/actions/cleanup-stale-fuse-mounts@master
 
       - name: Free Disk Space
         run: |
