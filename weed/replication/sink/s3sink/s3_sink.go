@@ -3,6 +3,7 @@ package S3Sink
 import (
 	"encoding/base64"
 	"fmt"
+	"mime"
 	"net/url"
 	"strconv"
 	"strings"
@@ -255,12 +256,13 @@ func buildTaggingString(extended map[string][]byte) string {
 
 // toMetadata maps the X-Amz-Meta- attributes, matched case-insensitively for
 // entries written before the S3 gateway canonicalized them, to S3 user metadata.
+// Values that are not printable ASCII are RFC 2047 encoded, which S3 decodes.
 func toMetadata(extended map[string][]byte) map[string]*string {
 	prefix := s3_constants.AmzUserMetaPrefix
 	metadata := make(map[string]*string)
 	for k, v := range extended {
 		if len(k) > len(prefix) && strings.EqualFold(k[:len(prefix)], prefix) {
-			metadata[strings.ToLower(k[len(prefix):])] = aws.String(string(v))
+			metadata[strings.ToLower(k[len(prefix):])] = aws.String(mime.QEncoding.Encode("utf-8", string(v)))
 		}
 	}
 	return metadata

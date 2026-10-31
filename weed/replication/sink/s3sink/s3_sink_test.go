@@ -176,3 +176,21 @@ func TestS3SinkCreateEntryLeavesEntryExtendedUnchanged(t *testing.T) {
 	require.Equal(t, map[string][]byte{"X-Amz-Meta-Mtime": []byte("1600000000")}, entry.Extended)
 	require.Equal(t, "1600000000", rt.uploadReq.Header.Get("X-Amz-Meta-Mtime"))
 }
+
+func TestS3SinkCreateEntryEncodesNonASCIIMetadata(t *testing.T) {
+	sink, rt := newCapturingS3Sink(t)
+	entry := &filer_pb.Entry{
+		Attributes: &filer_pb.FuseAttributes{},
+		Content:    []byte("data"),
+		Extended: map[string][]byte{
+			"X-Amz-Meta-City":  []byte("Zürich"),
+			"X-Amz-Meta-Note":  []byte("line1\nline2"),
+			"X-Amz-Meta-Plain": []byte("=?utf-8?q?caf=C3=A9?="),
+		},
+	}
+	require.NoError(t, sink.CreateEntry("/dir/test.bin", entry, nil))
+
+	require.Equal(t, "=?utf-8?q?Z=C3=BCrich?=", rt.uploadReq.Header.Get("X-Amz-Meta-City"))
+	require.Equal(t, "=?utf-8?q?line1=0Aline2?=", rt.uploadReq.Header.Get("X-Amz-Meta-Note"))
+	require.Equal(t, "=?utf-8?q?caf=C3=A9?=", rt.uploadReq.Header.Get("X-Amz-Meta-Plain"))
+}
