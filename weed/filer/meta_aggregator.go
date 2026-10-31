@@ -215,6 +215,14 @@ func (ma *MetaAggregator) advancePeerWatermark(peer pb.ServerAddress, tsNs int64
 // timestamp domain, so anything at or below it was already received; starting
 // from the caller's "now" instead would drop what the peer logged while its
 // stream was down. A peer seen for the first time keeps the given start.
+//
+// An in-session reconnect resumes from the last real event, but this may
+// trust an idle heartbeat too: on the peer's local stream it is a
+// delivered-through claim capped by the in-flight floor and fenced against
+// later stamps, so no event can land at or below it afterwards. The claim
+// came from the peer's previous process, so it holds as long as the
+// restarted peer's clock does not run backwards.
+//
 // A replay floor never has to cap this: only a peer with its own store can
 // floor an event, and such a peer starts from its persisted offset instead.
 func (ma *MetaAggregator) peerResumeStartFrom(peer pb.ServerAddress, startFrom time.Time) time.Time {
@@ -728,8 +736,10 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 					return err
 				}
 			}
-			// Idle heartbeat: advance only the watermark, not lastTsNs, so a
-			// reconnect still resumes from the last real event.
+			// Idle heartbeat: a delivery claim. It advances the watermark and
+			// the re-add resume point (see peerResumeStartFrom) but not
+			// lastTsNs, so this loop's own reconnect still resumes from the
+			// last real event.
 			if resp.EventNotification == nil && len(resp.Events) == 0 && resp.TsNs > 0 {
 				ma.advancePeerWatermark(peer, resp.TsNs)
 			}
