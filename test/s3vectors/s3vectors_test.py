@@ -186,6 +186,8 @@ def test_list_pagination_and_segments(vectors, index):
     segmented = [row for segment in range(4) for row in collect(segmentCount=4, segmentIndex=segment)]
     assert sorted(segmented, key=lambda r: r["key"]) == rows
     expect_error("ValidationException", vectors.list_vectors, **index, nextToken="invalid")
+    for bad in ({"maxResults": 1001}, {"segmentCount": 17, "segmentIndex": 0}, {"segmentIndex": 0}):
+        expect_error("ValidationException", vectors.list_vectors, **index, **bad)
 
 
 def test_filter_types(vectors, index):

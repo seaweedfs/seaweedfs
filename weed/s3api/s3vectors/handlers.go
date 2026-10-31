@@ -1354,6 +1354,10 @@ func (s *Server) handleListVectors(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
+	if err := listVectorsBounds(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		return
+	}
 	arns, err := s.resolveIndexARNs(req.VectorBucketName, req.VectorBucketArn, req.IndexName, req.IndexArn)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
@@ -1367,20 +1371,16 @@ func (s *Server) handleListVectors(w http.ResponseWriter, r *http.Request) {
 		catalogErr(w, err)
 		return
 	}
-	if req.MaxResults < 0 {
-		writeError(w, http.StatusBadRequest, "ValidationException", "maxResults must be non-negative")
-		return
+	maxResults := 0
+	if req.MaxResults != nil {
+		maxResults = *req.MaxResults
 	}
 	// AWS exposes a static split: segmentIndex/segmentCount divides the full
 	// listing. The engine service does not know AWS segments, so page through
-	// the index here and keep only the caller's share — O(index) per call,
-	// acceptable for the MVP. The engine's next_token is a row offset, so the
-	// caller's token is the offset to resume scanning from.
-	if req.SegmentCount > 0 {
-		if req.SegmentIndex < 0 || req.SegmentIndex >= req.SegmentCount {
-			writeError(w, http.StatusBadRequest, "ValidationException", "segmentIndex must be in [0, segmentCount)")
-			return
-		}
+	// the index here and keep only the caller's share; a call scans about
+	// segmentCount × maxResults rows. The engine's next_token is a row offset,
+	// so the caller's token is the offset to resume scanning from.
+	if req.SegmentCount != nil {
 		var offset uint64
 		if req.NextToken != "" {
 			var err error
@@ -1390,7 +1390,7 @@ func (s *Server) handleListVectors(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		out, nextToken, err := s.listSegmentVectors(r.Context(), tableID(arns.bucket, arns.index),
-			offset, req.MaxResults, uint64(req.SegmentCount), uint64(req.SegmentIndex), req.ReturnData, req.ReturnMetadata)
+			offset, maxResults, uint64(*req.SegmentCount), uint64(*req.SegmentIndex), req.ReturnData, req.ReturnMetadata)
 		if err != nil {
 			vectorErr(w, err)
 			return
@@ -1403,7 +1403,7 @@ func (s *Server) handleListVectors(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, err := s.vectors.ListVectors(r.Context(), &vector_pb.ListVectorsRequest{
 		Table:          tableID(arns.bucket, arns.index),
-		MaxResults:     uint32(req.MaxResults),
+		MaxResults:     uint32(maxResults),
 		NextToken:      req.NextToken,
 		ReturnData:     req.ReturnData,
 		ReturnMetadata: req.ReturnMetadata,
@@ -1419,7 +1419,8 @@ func (s *Server) handleListVectors(w http.ResponseWriter, r *http.Request) {
 }
 
 // The page constants mirror the engine's page sizing so a segmented listing
-// pages like a plain one does; vectorsMaxTopK is the AWS QueryVectors limit.
+// pages like a plain one does; vectorsMaxPage is also the AWS ListVectors
+// maxResults cap, and vectorsMaxTopK the AWS QueryVectors limit.
 const (
 	vectorsDefaultPage = 500
 	vectorsMaxGetKeys  = 100
@@ -1427,7 +1428,29 @@ const (
 	vectorsMaxPage     = 1000
 	vectorsMaxListPage = 500
 	vectorsMaxTopK     = 10000
+	vectorsMaxSegments = 16
 )
+
+// listVectorsBounds enforces the AWS ListVectors windows: maxResults 1..1000,
+// segmentCount 1..16, and segmentIndex below it, the two given together.
+func listVectorsBounds(req *ListVectorsRequest) error {
+	if req.MaxResults != nil && (*req.MaxResults < 1 || *req.MaxResults > vectorsMaxPage) {
+		return fmt.Errorf("maxResults must be between 1 and %d", vectorsMaxPage)
+	}
+	if (req.SegmentCount == nil) != (req.SegmentIndex == nil) {
+		return fmt.Errorf("segmentCount and segmentIndex must be specified together")
+	}
+	if req.SegmentCount == nil {
+		return nil
+	}
+	if *req.SegmentCount < 1 || *req.SegmentCount > vectorsMaxSegments {
+		return fmt.Errorf("segmentCount must be between 1 and %d", vectorsMaxSegments)
+	}
+	if *req.SegmentIndex < 0 || *req.SegmentIndex >= *req.SegmentCount {
+		return fmt.Errorf("segmentIndex must be in [0, segmentCount)")
+	}
+	return nil
+}
 
 // listSegmentVectors scans the index from offset, keeping the rows that fall
 // in the caller's segment until limit are collected or the index runs out.
