@@ -235,9 +235,9 @@ func (vc *vidMapClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 			return batchResult, fmt.Errorf("provider lookup failed: %w", err)
 		}
 
-		// Cache and return only locations the fence still permits: entries a
-		// pushed delete tombstoned, or answers fetched before a reset re-told
-		// the cache view, are dropped rather than re-cached.
+		// Return only locations the fence permits: a tombstoned entry is
+		// dropped, and an answer fetched before a reset re-told the cache view
+		// is served once but not cached.
 		for vidString, locations := range providerResults {
 			vid, err := strconv.ParseUint(vidString, 10, 32)
 			if err != nil {
@@ -414,20 +414,21 @@ func (vc *vidMapClient) untombstone(vid uint32, loc Location) {
 	vc.recentDeletesMu.Unlock()
 }
 
-// fillLocation caches a provider-answered location unless the (vid,url) pair
-// is tombstoned or the answer was fetched before the latest reset. The check
-// and the add share recentDeletesMu so a pushed delete or reset cannot slip
-// between them and leave a retired server cached.
+// fillLocation reports whether a provider-answered location may be served
+// and caches it unless the answer was fetched before the latest reset: that
+// answer is as fresh as the provider's, but the view it would land in has
+// been re-told. A tombstoned (vid,url) pair is neither cached nor served.
+// The check and the add share recentDeletesMu so a pushed delete or reset
+// cannot slip between them and leave a retired server cached.
 func (vc *vidMapClient) fillLocation(vid uint32, loc Location, epoch uint64) bool {
 	vc.recentDeletesMu.Lock()
 	defer vc.recentDeletesMu.Unlock()
-	if vc.vidMapEpoch != epoch {
-		return false
-	}
 	if _, found := vc.recentDeletes[vidLocationKey{vid: vid, url: loc.Url}]; found {
 		return false
 	}
-	vc.vidMap.addLocation(vid, loc)
+	if vc.vidMapEpoch == epoch {
+		vc.vidMap.addLocation(vid, loc)
+	}
 	return true
 }
 

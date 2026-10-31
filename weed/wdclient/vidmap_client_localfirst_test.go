@@ -123,19 +123,16 @@ func (p *resetOnLookupProvider) LookupVolumeIds(ctx context.Context, volumeIds [
 	return map[string][]Location{"5": {{Url: "stale:8080"}}}, nil
 }
 
-// A provider answer fetched before a reset re-told the cache view must be
-// dropped entirely: it can carry locations retired while the feed was down.
-func TestProviderFillDiscardsStaleEpoch(t *testing.T) {
+// A provider answer fetched before a reset re-told the cache view is served,
+// since it is as fresh as the provider's, but not cached into the new view.
+func TestProviderFillServesWithoutCachingAcrossReset(t *testing.T) {
 	provider := &resetOnLookupProvider{}
 	vc := newVidMapClient(provider, "", 5)
 	provider.vc = vc
 
 	locations, err := vc.LookupVolumeIdsWithFallback(context.Background(), []string{"5"})
-	if len(locations["5"]) > 0 {
-		t.Fatalf("lookup crossed a cache reset but still served %v", locations["5"])
-	}
-	if err == nil {
-		t.Fatalf("expected a not-found error after the reset dropped the answer")
+	if err != nil || len(locations["5"]) != 1 {
+		t.Fatalf("lookup crossing a cache reset returned %v, err %v", locations["5"], err)
 	}
 	if cached, found := vc.GetLocations(5); found && len(cached) > 0 {
 		t.Fatalf("lookup crossed a cache reset but cached %v", cached)
