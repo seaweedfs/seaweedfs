@@ -169,7 +169,7 @@ func (s3a *S3ApiServer) CompleteMultipartUploadHandler(w http.ResponseWriter, r 
 	}
 
 	// Get upload id.
-	uploadID, _, _, _ := getObjectResources(r.URL.Query())
+	uploadID, _, _, _, _ := getObjectResources(r.URL.Query())
 	err := s3a.checkUploadId(object, uploadID)
 	if err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchUpload)
@@ -224,7 +224,7 @@ func (s3a *S3ApiServer) AbortMultipartUploadHandler(w http.ResponseWriter, r *ht
 	}
 
 	// Get upload id.
-	uploadID, _, _, _ := getObjectResources(r.URL.Query())
+	uploadID, _, _, _, _ := getObjectResources(r.URL.Query())
 	err := s3a.checkUploadId(object, uploadID)
 	if err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchUpload)
@@ -260,7 +260,11 @@ func (s3a *S3ApiServer) ListMultipartUploadsHandler(w http.ResponseWriter, r *ht
 		return
 	}
 
-	prefix, multipartKeyMarker, uploadIDMarker, delimiter, maxUploads, encodingType := getBucketMultipartResources(r.URL.Query())
+	prefix, multipartKeyMarker, uploadIDMarker, delimiter, maxUploads, encodingType, errCode := getBucketMultipartResources(r.URL.Query())
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
 	if maxUploads < 0 {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidMaxUploads)
 		return
@@ -309,7 +313,11 @@ func (s3a *S3ApiServer) ListObjectPartsHandler(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	uploadID, partNumberMarker, maxParts, _ := getObjectResources(r.URL.Query())
+	uploadID, partNumberMarker, maxParts, _, errCode := getObjectResources(r.URL.Query())
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
 	if partNumberMarker < 0 {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidPartNumberMarker)
 		return
@@ -620,13 +628,17 @@ func isLowerHex(value string) bool {
 }
 
 // Parse bucket url queries for ?uploads
-func getBucketMultipartResources(values url.Values) (prefix, keyMarker, uploadIDMarker, delimiter string, maxUploads int, encodingType string) {
+func getBucketMultipartResources(values url.Values) (prefix, keyMarker, uploadIDMarker, delimiter string, maxUploads int, encodingType string, errCode s3err.ErrorCode) {
 	prefix = values.Get("prefix")
 	keyMarker = values.Get("key-marker")
 	uploadIDMarker = values.Get("upload-id-marker")
 	delimiter = values.Get("delimiter")
 	if values.Get("max-uploads") != "" {
-		maxUploads, _ = strconv.Atoi(values.Get("max-uploads"))
+		parsed, err := strconv.ParseInt(values.Get("max-uploads"), 10, 32)
+		if err != nil {
+			errCode = s3err.ErrInvalidMaxUploads
+		}
+		maxUploads = int(parsed)
 	} else {
 		maxUploads = maxUploadsList
 	}
@@ -635,11 +647,21 @@ func getBucketMultipartResources(values url.Values) (prefix, keyMarker, uploadID
 }
 
 // Parse object url queries
-func getObjectResources(values url.Values) (uploadID string, partNumberMarker, maxParts int, encodingType string) {
+func getObjectResources(values url.Values) (uploadID string, partNumberMarker, maxParts int, encodingType string, errCode s3err.ErrorCode) {
 	uploadID = values.Get("uploadId")
-	partNumberMarker, _ = strconv.Atoi(values.Get("part-number-marker"))
+	if values.Get("part-number-marker") != "" {
+		parsed, err := strconv.ParseInt(values.Get("part-number-marker"), 10, 32)
+		if err != nil {
+			errCode = s3err.ErrInvalidPartNumberMarker
+		}
+		partNumberMarker = int(parsed)
+	}
 	if values.Get("max-parts") != "" {
-		maxParts, _ = strconv.Atoi(values.Get("max-parts"))
+		parsed, err := strconv.ParseInt(values.Get("max-parts"), 10, 32)
+		if err != nil {
+			errCode = s3err.ErrInvalidMaxParts
+		}
+		maxParts = int(parsed)
 	} else {
 		maxParts = maxPartsList
 	}
