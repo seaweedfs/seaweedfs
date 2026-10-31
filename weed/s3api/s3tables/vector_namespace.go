@@ -178,3 +178,9 @@ func (c readOnlyFilerClient) ObjectTransaction(context.Context, *filer_pb.Object
 func (c readOnlyFilerClient) ObjectTransactionBatch(context.Context, *filer_pb.ObjectTransactionBatchRequest, ...grpc.CallOption) (*filer_pb.ObjectTransactionBatchResponse, error) {
 	return nil, c.refuse()
 }
+
+// CheckVectorNamespaceWrite refuses an untrusted write into the vector
+// namespace of a LANCE bucket, for callers that write the filer directly.
+func (m *Manager) CheckVectorNamespaceWrite(ctx context.Context, filerClient FilerClient, bucketName string, namespace []string) error {
+	return m.handler.checkVectorNamespaceWrite(ctx, filerClient, bucketName, namespace)
+}

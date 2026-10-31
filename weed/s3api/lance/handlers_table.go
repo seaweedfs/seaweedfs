@@ -339,6 +339,10 @@ func (s *Server) handleRegisterTable(w http.ResponseWriter, r *http.Request) {
 			writeError(w, r, http.StatusConflict, codeTableAlreadyExists, "table already exists")
 			return
 		}
+		if err := s.tablesManager.CheckVectorNamespaceWrite(r.Context(), s.filerClient, bucket, ns); err != nil {
+			writeStorageError(w, r, err)
+			return
+		}
 		if existing.location != location {
 			// Repointing the name at another dataset is an update. Dropping and
 			// recreating the entry would take the old dataset's files with it,
@@ -391,6 +395,10 @@ func (s *Server) handleDeregisterTable(w http.ResponseWriter, r *http.Request) {
 
 	table, err := s.loadLanceTable(r, bucket, ns, name)
 	if err != nil {
+		writeStorageError(w, r, err)
+		return
+	}
+	if err := s.tablesManager.CheckVectorNamespaceWrite(r.Context(), s.filerClient, bucket, ns); err != nil {
 		writeStorageError(w, r, err)
 		return
 	}
