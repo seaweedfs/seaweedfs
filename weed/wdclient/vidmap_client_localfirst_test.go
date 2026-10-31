@@ -112,8 +112,8 @@ func TestLookupFileIdWithFallbackKeepsDataCenterFirst(t *testing.T) {
 	}
 }
 
-// resetOnLookupProvider answers after forcing a cache reset, mimicking a
-// provider response that lands on the far side of a master reconnect.
+// resetOnLookupProvider answers after clearing the cache, as a provider
+// response landing on the far side of a master reconnect would.
 type resetOnLookupProvider struct {
 	vc *vidMapClient
 }
@@ -123,8 +123,6 @@ func (p *resetOnLookupProvider) LookupVolumeIds(ctx context.Context, volumeIds [
 	return map[string][]Location{"5": {{Url: "stale:8080"}}}, nil
 }
 
-// A provider answer fetched before a reset re-told the cache view is served,
-// since it is as fresh as the provider's, but not cached into the new view.
 func TestProviderFillServesWithoutCachingAcrossReset(t *testing.T) {
 	provider := &resetOnLookupProvider{}
 	vc := newVidMapClient(provider, "", 5)
@@ -139,25 +137,20 @@ func TestProviderFillServesWithoutCachingAcrossReset(t *testing.T) {
 	}
 }
 
-// A provider answer that still names a just-removed location must neither
-// re-cache it nor hand it back, while the removals are still settling.
 func TestProviderFillSkipsTombstonedLocation(t *testing.T) {
 	retired := Location{Url: "retired:8080"}
 	live := Location{Url: "live:8080"}
 	vc := newVidMapClient(&testLocationProvider{
-		locations: map[string][]Location{
-			"5": {retired, live},
-		},
+		locations: map[string][]Location{"5": {retired, live}},
 	}, "", 5)
 
-	vc.deleteLocation(5, retired)
+	vc.tombstone(5, retired)
 
 	locations, err := vc.LookupVolumeIdsWithFallback(context.Background(), []string{"5"})
 	if err != nil {
 		t.Fatalf("lookup failed: %v", err)
 	}
-	got := locations["5"]
-	if len(got) != 1 || got[0].Url != live.Url {
+	if got := locations["5"]; len(got) != 1 || got[0].Url != live.Url {
 		t.Fatalf("lookup returned %v, want only the surviving location", got)
 	}
 	if cached, found := vc.GetLocations(5); !found || len(cached) != 1 || cached[0].Url != live.Url {
@@ -165,66 +158,20 @@ func TestProviderFillSkipsTombstonedLocation(t *testing.T) {
 	}
 }
 
-// A lookup answer for an EC volume caches the shard server as a regular
-// entry, but that hearsay must not keep the server alive once the master
-// says the shard is gone.
-func TestEcRemovalFencesLookupCachedShardServer(t *testing.T) {
-	retired := Location{Url: "retired:8080"}
-	vc := newVidMapClient(&testLocationProvider{
-		locations: map[string][]Location{"7": {retired}},
-	}, "", 5)
-
-	if _, err := vc.LookupVolumeIdsWithFallback(context.Background(), []string{"7"}); err != nil {
-		t.Fatalf("lookup failed: %v", err)
+func TestTombstoneEvictsOldestAtCap(t *testing.T) {
+	vc := newVidMapClient(nil, "", 5)
+	for vid := uint32(0); vid <= recentDeleteCap; vid++ {
+		vc.tombstone(vid, Location{Url: "a:8080"})
 	}
+	vc.tombstone(recentDeleteCap, Location{Url: "a:8080"})
 
-	vc.deleteEcLocation(7, retired)
-
-	locations, err := vc.LookupVolumeIdsWithFallback(context.Background(), []string{"7"})
-	if len(locations["7"]) != 0 {
-		t.Fatalf("retired shard server still served: %v", locations["7"])
+	if len(vc.recentDeletes) != recentDeleteCap || vc.recentDeleteOrder.Len() != recentDeleteCap {
+		t.Fatalf("fence holds %d marks (%d ordered), want %d", len(vc.recentDeletes), vc.recentDeleteOrder.Len(), recentDeleteCap)
 	}
-	if err == nil {
-		t.Fatalf("expected a not-found error once every answer is fenced")
+	if _, found := vc.recentDeletes[vidLocationKey{vid: 0, url: "a:8080"}]; found {
+		t.Errorf("oldest mark survived eviction")
 	}
-	if cached, found := vc.GetLocations(7); found && len(cached) > 0 {
-		t.Fatalf("retired shard server still cached: %v", cached)
-	}
-}
-
-// A regular copy the master pushed this generation survives the shard
-// removal at the same server: a decoded volume keeps answering from the copy
-// that replaced its shards.
-func TestEcRemovalKeepsPushedRegularCopy(t *testing.T) {
-	vm := newVidMap("", 5)
-	loc := Location{Url: "server:8080"}
-	vm.addLocation(7, loc)
-	vm.addEcLocation(7, loc)
-
-	vm.deleteEcLocation(7, loc)
-
-	if regular, _ := vm.hasServingLocation(7, loc.Url); !regular {
-		t.Fatalf("pushed regular copy must survive the shard removal")
-	}
-	if locs, found := vm.GetLocations(7); !found || len(locs) != 1 {
-		t.Fatalf("pushed regular copy was dropped with the shard: %v", locs)
-	}
-}
-
-// A location only an earlier generation knew does not suppress a removal:
-// the new master re-tells what still holds, so what it has not re-told is
-// history.
-func TestRemovalIgnoresEarlierGenerationLocation(t *testing.T) {
-	vm := newVidMap("", 5)
-	loc := Location{Url: "retired:8080"}
-	vm.addLocation(7, loc)
-	vm.reset()
-
-	if regular, _ := vm.hasServingLocation(7, loc.Url); regular {
-		t.Fatalf("a location the new master has not re-told must not count as a regular copy")
-	}
-	vm.addLocation(7, loc)
-	if regular, _ := vm.hasServingLocation(7, loc.Url); !regular {
-		t.Fatalf("a location the master pushed this generation must count")
+	if _, found := vc.recentDeletes[vidLocationKey{vid: 1, url: "a:8080"}]; !found {
+		t.Errorf("a repeated mark evicted another one")
 	}
 }

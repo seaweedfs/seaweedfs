@@ -32,31 +32,22 @@ type vidMapClient struct {
 	vidMap         *vidMap
 	provider       VolumeLocationProvider
 	vidLookupGroup singleflight.Group
-	// recentDeletesMu guards the deletion fence and the cache epoch.
-	// recentDeletes tombstones (vid,url) pairs a pushed delete removed; a mark
-	// lasts until the master confirms the location back or, once the fence
-	// reaches recentDeleteCap, the oldest mark is evicted — so provider answers
-	// still naming a retired server cannot re-cache it just because time
-	// passed.
-	recentDeletesMu sync.Mutex
-	recentDeletes   map[vidLocationKey]*list.Element
-	// recentDeleteOrder keeps tombstones in recency order so eviction at the
-	// cap removes the oldest mark in constant time.
+	// recentDeletes fences (vid, url) pairs a pushed removal dropped, so a
+	// provider answer still naming them is neither cached nor served until the
+	// master reports the pair back. vidMapEpoch keeps answers fetched before a
+	// reset or clear out of the cache.
+	recentDeletesMu   sync.Mutex
+	recentDeletes     map[vidLocationKey]*list.Element
 	recentDeleteOrder *list.List
-	// vidMapEpoch bumps each time the cache view is re-told (reset or clear),
-	// so a provider answer fetched under the old view is dropped rather than
-	// refilling the map.
-	vidMapEpoch uint64
+	vidMapEpoch       uint64
 }
 
-// vidLocationKey indexes a tombstoned (volume, server url) pair.
 type vidLocationKey struct {
 	vid uint32
 	url string
 }
 
-// recentDeleteCap bounds the fence's memory. Evicting the oldest mark only
-// weakens suppression for a removal churned longest ago.
+// recentDeleteCap bounds the fence; past it the oldest mark is evicted.
 const recentDeleteCap = 1 << 16
 
 const (
@@ -69,10 +60,8 @@ const (
 // newVidMapClient creates a new client with the given provider and data center
 func newVidMapClient(provider VolumeLocationProvider, dataCenter string, cacheSize int) *vidMapClient {
 	return &vidMapClient{
-		vidMap:            newVidMap(dataCenter, cacheSize),
-		provider:          provider,
-		recentDeletes:     make(map[vidLocationKey]*list.Element),
-		recentDeleteOrder: list.New(),
+		vidMap:   newVidMap(dataCenter, cacheSize),
+		provider: provider,
 	}
 }
 
@@ -235,9 +224,6 @@ func (vc *vidMapClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 			return batchResult, fmt.Errorf("provider lookup failed: %w", err)
 		}
 
-		// Return only locations the fence permits: a tombstoned entry is
-		// dropped, and an answer fetched before a reset re-told the cache view
-		// is served once but not cached.
 		for vidString, locations := range providerResults {
 			vid, err := strconv.ParseUint(vidString, 10, 32)
 			if err != nil {
@@ -337,33 +323,21 @@ func (vc *vidMapClient) GetDataCenter() string {
 
 // addLocation adds a volume location
 func (vc *vidMapClient) addLocation(vid uint32, location Location) {
-	vc.untombstone(vid, location)
 	vc.vidMap.addLocation(vid, location)
 }
 
-// deleteLocation removes a volume location. The pair is fenced only once the
-// server serves the volume in no form: ec shards that outlive the regular copy,
-// or a decoded copy that outlives the shards, arrive add-first and must stay
-// servable.
+// deleteLocation removes a volume location
 func (vc *vidMapClient) deleteLocation(vid uint32, location Location) {
-	if _, ec := vc.vidMap.hasServingLocation(vid, location.Url); !ec {
-		vc.tombstone(vid, location)
-	}
 	vc.vidMap.deleteLocation(vid, location)
 }
 
 // addEcLocation adds an EC volume location
 func (vc *vidMapClient) addEcLocation(vid uint32, location Location) {
-	vc.untombstone(vid, location)
 	vc.vidMap.addEcLocation(vid, location)
 }
 
-// deleteEcLocation removes an EC volume location, fencing the pair under the
-// same rule as deleteLocation.
+// deleteEcLocation removes an EC volume location
 func (vc *vidMapClient) deleteEcLocation(vid uint32, location Location) {
-	if regular, _ := vc.vidMap.hasServingLocation(vid, location.Url); !regular {
-		vc.tombstone(vid, location)
-	}
 	vc.vidMap.deleteEcLocation(vid, location)
 }
 
@@ -376,17 +350,21 @@ func (vc *vidMapClient) resetVidMap() {
 	vc.vidMap.reset()
 }
 
-// mapEpoch returns the cache-view generation a provider fill is checked
-// against in fillLocation.
+// clearVidMap drops every location, for a cache whose feed restarted without
+// replaying the removals it missed.
+func (vc *vidMapClient) clearVidMap() {
+	vc.recentDeletesMu.Lock()
+	vc.vidMapEpoch++
+	vc.recentDeletesMu.Unlock()
+	vc.vidMap.clear()
+}
+
 func (vc *vidMapClient) mapEpoch() uint64 {
 	vc.recentDeletesMu.Lock()
 	defer vc.recentDeletesMu.Unlock()
 	return vc.vidMapEpoch
 }
 
-// tombstone marks loc as having stopped serving vid so provider fills cannot
-// re-cache it until the master reports it back. Marks are evicted
-// oldest-first only once the fence reaches recentDeleteCap.
 func (vc *vidMapClient) tombstone(vid uint32, loc Location) {
 	key := vidLocationKey{vid: vid, url: loc.Url}
 	vc.recentDeletesMu.Lock()
@@ -394,6 +372,10 @@ func (vc *vidMapClient) tombstone(vid uint32, loc Location) {
 	if e, found := vc.recentDeletes[key]; found {
 		vc.recentDeleteOrder.MoveToBack(e)
 		return
+	}
+	if vc.recentDeletes == nil {
+		vc.recentDeletes = make(map[vidLocationKey]*list.Element)
+		vc.recentDeleteOrder = list.New()
 	}
 	vc.recentDeletes[key] = vc.recentDeleteOrder.PushBack(key)
 	if len(vc.recentDeletes) > recentDeleteCap {
@@ -403,23 +385,19 @@ func (vc *vidMapClient) tombstone(vid uint32, loc Location) {
 	}
 }
 
-// untombstone clears a removal mark when loc is confirmed serving vid again.
 func (vc *vidMapClient) untombstone(vid uint32, loc Location) {
 	key := vidLocationKey{vid: vid, url: loc.Url}
 	vc.recentDeletesMu.Lock()
+	defer vc.recentDeletesMu.Unlock()
 	if e, found := vc.recentDeletes[key]; found {
 		delete(vc.recentDeletes, key)
 		vc.recentDeleteOrder.Remove(e)
 	}
-	vc.recentDeletesMu.Unlock()
 }
 
-// fillLocation reports whether a provider-answered location may be served
-// and caches it unless the answer was fetched before the latest reset: that
-// answer is as fresh as the provider's, but the view it would land in has
-// been re-told. A tombstoned (vid,url) pair is neither cached nor served.
-// The check and the add share recentDeletesMu so a pushed delete or reset
-// cannot slip between them and leave a retired server cached.
+// fillLocation reports whether a provider answer may be served, and caches it
+// unless a reset or clear happened since epoch. Holding recentDeletesMu across
+// the check and the add keeps a concurrent removal from being undone.
 func (vc *vidMapClient) fillLocation(vid uint32, loc Location, epoch uint64) bool {
 	vc.recentDeletesMu.Lock()
 	defer vc.recentDeletesMu.Unlock()
@@ -427,19 +405,9 @@ func (vc *vidMapClient) fillLocation(vid uint32, loc Location, epoch uint64) boo
 		return false
 	}
 	if vc.vidMapEpoch == epoch {
-		vc.vidMap.fillLookupLocation(vid, loc)
+		vc.vidMap.addLocation(vid, loc)
 	}
 	return true
-}
-
-// clearVidMap drops every cached location. Unlike resetVidMap, used when the
-// feed that fills the map restarts without replaying its contents, so nothing
-// previously learned can still be trusted.
-func (vc *vidMapClient) clearVidMap() {
-	vc.recentDeletesMu.Lock()
-	vc.vidMapEpoch++
-	vc.recentDeletesMu.Unlock()
-	vc.vidMap.clear()
 }
 
 // InvalidateCache removes all cached locations for a volume ID

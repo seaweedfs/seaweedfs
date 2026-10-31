@@ -106,7 +106,8 @@ func (p *masterVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []
 					// Parse volume ID from response
 					parts := strings.Split(vidLoc.VolumeOrFileId, ",")
 					vidOnly := parts[0]
-					if _, err := strconv.ParseUint(vidOnly, 10, 32); err != nil {
+					vid, err := strconv.ParseUint(vidOnly, 10, 32)
+					if err != nil {
 						lookupErrors = append(lookupErrors, fmt.Errorf("volume %s: invalid volume ID format: %w", vidLoc.VolumeOrFileId, err))
 						glog.Warningf("Failed to parse volume id '%s' from master response '%s': %v", vidOnly, vidLoc.VolumeOrFileId, err)
 						continue
@@ -123,6 +124,8 @@ func (p *masterVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []
 							ReadOnly:          masterLoc.ReadOnly,
 							ReadOnlyCanDelete: masterLoc.ReadOnlyCanDelete,
 						}
+						// Update cache with the location
+						p.masterClient.addLocation(uint32(vid), loc)
 						locations = append(locations, loc)
 					}
 
@@ -173,22 +176,15 @@ type MasterClient struct {
 	OnLockRingUpdateLock sync.RWMutex
 	OnMasterChange       func(previous, current pb.ServerAddress)
 	OnMasterChangeLock   sync.RWMutex
-	// volumeLocationChangeHooks receive the volume changes updateVidMap
-	// applied: loc is the reporting server and the lists are the vids it
-	// started hosting or stopped hosting in every form (a shard removal that
-	// leaves the regular copy behind is not reported). Clients keeping a
-	// second location cache (e.g. FilerClient) register here to drop removed
-	// entries instead of
-	// learning by a failed read, and to clear deletion marks on a re-add.
-	// vidMapResetHooks fire when a (re)connect makes the master re-tell its
-	// volume locations; such clients get no replay of removals that happened
-	// while disconnected, so theirs must be dropped rather than reset
-	// generation-wise. Both are sets: several clients may share one
-	// MasterClient, and each unregisters when it closes.
-	hooksMu                   sync.Mutex
-	nextHookId                int
-	volumeLocationChangeHooks map[int]func(loc Location, addedVids []uint32, deletedVids []uint32, addedEcVids []uint32, deletedEcVids []uint32)
-	vidMapResetHooks          map[int]func()
+	// OnVolumeLocationChange hears, per pushed message, the vids loc added and
+	// the vids loc no longer serves in any form.
+	OnVolumeLocationChange     func(loc Location, addedVids, deletedVids []uint32)
+	OnVolumeLocationChangeLock sync.RWMutex
+	// OnVidMapReset fires when a (re)connect makes the master re-tell its view;
+	// removals made while disconnected are never pushed.
+	OnVidMapReset     func()
+	OnVidMapResetLock sync.RWMutex
+
 	// streamLock publishes the stream only after its registration send, so a
 	// leave sent afterwards never races that send.
 	streamLock      sync.Mutex
@@ -283,51 +279,25 @@ func (mc *MasterClient) SetOnMasterChangeFn(fn func(previous, current pb.ServerA
 	mc.OnMasterChangeLock.Unlock()
 }
 
-// AddOnVolumeLocationChangeFn registers fn for the volume changes updateVidMap
-// applies and returns a func that unregisters it.
-func (mc *MasterClient) AddOnVolumeLocationChangeFn(fn func(loc Location, addedVids []uint32, deletedVids []uint32, addedEcVids []uint32, deletedEcVids []uint32)) func() {
-	mc.hooksMu.Lock()
-	id := mc.nextHookId
-	mc.nextHookId++
-	if mc.volumeLocationChangeHooks == nil {
-		mc.volumeLocationChangeHooks = make(map[int]func(Location, []uint32, []uint32, []uint32, []uint32))
-	}
-	mc.volumeLocationChangeHooks[id] = fn
-	mc.hooksMu.Unlock()
-	return func() {
-		mc.hooksMu.Lock()
-		delete(mc.volumeLocationChangeHooks, id)
-		mc.hooksMu.Unlock()
-	}
+func (mc *MasterClient) SetOnVolumeLocationChangeFn(fn func(loc Location, addedVids, deletedVids []uint32)) {
+	mc.OnVolumeLocationChangeLock.Lock()
+	mc.OnVolumeLocationChange = fn
+	mc.OnVolumeLocationChangeLock.Unlock()
 }
 
-// AddOnVidMapResetFn registers fn for master reconnects and returns a func
-// that unregisters it.
-func (mc *MasterClient) AddOnVidMapResetFn(fn func()) func() {
-	mc.hooksMu.Lock()
-	id := mc.nextHookId
-	mc.nextHookId++
-	if mc.vidMapResetHooks == nil {
-		mc.vidMapResetHooks = make(map[int]func())
-	}
-	mc.vidMapResetHooks[id] = fn
-	mc.hooksMu.Unlock()
-	return func() {
-		mc.hooksMu.Lock()
-		delete(mc.vidMapResetHooks, id)
-		mc.hooksMu.Unlock()
-	}
+func (mc *MasterClient) SetOnVidMapResetFn(fn func()) {
+	mc.OnVidMapResetLock.Lock()
+	mc.OnVidMapReset = fn
+	mc.OnVidMapResetLock.Unlock()
 }
 
-// notifyVidMapReset tells registered listeners the master's view was re-told.
-func (mc *MasterClient) notifyVidMapReset() {
-	mc.hooksMu.Lock()
-	hooks := make([]func(), 0, len(mc.vidMapResetHooks))
-	for _, fn := range mc.vidMapResetHooks {
-		hooks = append(hooks, fn)
-	}
-	mc.hooksMu.Unlock()
-	for _, fn := range hooks {
+// resetVidMap starts a new vid map generation and tells OnVidMapReset.
+func (mc *MasterClient) resetVidMap() {
+	mc.vidMapClient.resetVidMap()
+	mc.OnVidMapResetLock.RLock()
+	fn := mc.OnVidMapReset
+	mc.OnVidMapResetLock.RUnlock()
+	if fn != nil {
 		fn()
 	}
 }
@@ -447,13 +417,11 @@ func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.Server
 				return nil
 			}
 			mc.resetVidMap()
-			mc.notifyVidMapReset()
 			mc.updateVidMap(resp)
 		} else {
 			// First message from master is not VolumeLocation (e.g., ClusterNodeUpdate)
 			// Still need to reset cache to ensure we don't use stale data from previous master
 			mc.resetVidMap()
-			mc.notifyVidMapReset()
 		}
 		if previous := mc.markServingMaster(master); previous != "" {
 			mc.OnMasterChangeLock.RLock()
@@ -607,7 +575,6 @@ func (mc *MasterClient) updateVidMap(resp *master_pb.KeepConnectedResponse) {
 			readOnlyCanDeleteVids[vid] = struct{}{}
 		}
 	}
-	var added []uint32
 	for _, newVid := range resp.VolumeLocation.NewVids {
 		if _, isRemote := remoteVids[newVid]; isRemote {
 			continue
@@ -621,7 +588,6 @@ func (mc *MasterClient) updateVidMap(resp *master_pb.KeepConnectedResponse) {
 		}
 		glog.V(2).Infof("%s.%s: %s masterClient adds volume %d", mc.FilerGroup, mc.clientType, newLoc.Url, newVid)
 		mc.addLocation(newVid, newLoc)
-		added = append(added, newVid)
 	}
 	for _, remoteVid := range resp.VolumeLocation.RemoteVids {
 		remoteLoc := loc
@@ -634,56 +600,59 @@ func (mc *MasterClient) updateVidMap(resp *master_pb.KeepConnectedResponse) {
 		}
 		glog.V(2).Infof("%s.%s: %s masterClient adds remote volume %d", mc.FilerGroup, mc.clientType, remoteLoc.Url, remoteVid)
 		mc.addLocation(remoteVid, remoteLoc)
-		added = append(added, remoteVid)
 	}
-	var deletedVids []uint32
 	for _, deletedVid := range resp.VolumeLocation.DeletedVids {
 		if _, moved := stillOnServer[deletedVid]; moved {
 			continue
 		}
 		glog.V(2).Infof("%s.%s: %s masterClient removes volume %d", mc.FilerGroup, mc.clientType, loc.Url, deletedVid)
 		mc.deleteLocation(deletedVid, loc)
-		if _, ec := mc.vidMap.hasServingLocation(deletedVid, loc.Url); ec {
-			continue
-		}
-		deletedVids = append(deletedVids, deletedVid)
 	}
-	var addedEc []uint32
 	stillOnServerEc := addedVids(resp.VolumeLocation.NewEcVids, resp.VolumeLocation.DeletedEcVids)
 	for _, newEcVid := range resp.VolumeLocation.NewEcVids {
 		glog.V(2).Infof("%s.%s: %s masterClient adds ec volume %d", mc.FilerGroup, mc.clientType, loc.Url, newEcVid)
 		mc.addEcLocation(newEcVid, loc)
-		addedEc = append(addedEc, newEcVid)
 	}
-	var deletedEcVids []uint32
 	for _, deletedEcVid := range resp.VolumeLocation.DeletedEcVids {
 		if _, moved := stillOnServerEc[deletedEcVid]; moved {
 			continue
 		}
 		glog.V(2).Infof("%s.%s: %s masterClient removes ec volume %d", mc.FilerGroup, mc.clientType, loc.Url, deletedEcVid)
 		mc.deleteEcLocation(deletedEcVid, loc)
-		if regular, _ := mc.vidMap.hasServingLocation(deletedEcVid, loc.Url); regular {
-			continue
-		}
-		deletedEcVids = append(deletedEcVids, deletedEcVid)
 	}
-	if len(added) > 0 || len(deletedVids) > 0 || len(addedEc) > 0 || len(deletedEcVids) > 0 {
-		mc.hooksMu.Lock()
-		hooks := make([]func(Location, []uint32, []uint32, []uint32, []uint32), 0, len(mc.volumeLocationChangeHooks))
-		for _, fn := range mc.volumeLocationChangeHooks {
-			hooks = append(hooks, fn)
-		}
-		mc.hooksMu.Unlock()
-		for _, fn := range hooks {
-			fn(loc, added, deletedVids, addedEc, deletedEcVids)
-		}
-	}
+	mc.notifyVolumeLocationChange(loc, resp.VolumeLocation)
 	glog.V(1).Infof("updateVidMap(%s) %s.%s: %s volume add local: %d, remote: %d, del: %d, add ec: %d del ec: %d",
 		resp.VolumeLocation.DataCenter, mc.FilerGroup, mc.clientType, loc.Url,
 		len(resp.VolumeLocation.NewVids)-len(resp.VolumeLocation.RemoteVids),
 		len(resp.VolumeLocation.RemoteVids),
 		len(resp.VolumeLocation.DeletedVids), len(resp.VolumeLocation.NewEcVids),
 		len(resp.VolumeLocation.DeletedEcVids))
+}
+
+// notifyVolumeLocationChange reports a removal only once loc serves the vid in
+// no form, since ec.encode and ec.decode add the new form before removing the
+// old one from the same server.
+func (mc *MasterClient) notifyVolumeLocationChange(loc Location, vl *master_pb.VolumeLocation) {
+	mc.OnVolumeLocationChangeLock.RLock()
+	fn := mc.OnVolumeLocationChange
+	mc.OnVolumeLocationChangeLock.RUnlock()
+	if fn == nil {
+		return
+	}
+	var added, deleted []uint32
+	for _, vids := range [][]uint32{vl.NewVids, vl.RemoteVids, vl.NewEcVids} {
+		added = append(added, vids...)
+	}
+	for _, vids := range [][]uint32{vl.DeletedVids, vl.DeletedEcVids} {
+		for _, vid := range vids {
+			if !mc.vidMap.hasLocation(vid, loc.Url) {
+				deleted = append(deleted, vid)
+			}
+		}
+	}
+	if len(added) > 0 || len(deleted) > 0 {
+		fn(loc, added, deleted)
+	}
 }
 
 func (mc *MasterClient) WithClient(ctx context.Context, streamingMode bool, fn func(client master_pb.SeaweedClient) error) error {

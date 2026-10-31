@@ -61,7 +61,6 @@ type FilerClient struct {
 
 	// Filer discovery fields
 	masterClient       *MasterClient // Optional: for discovering filers in the same group
-	masterUnhooks      []func()      // pushed-location subscriptions to release on Close
 	filerGroup         string        // Optional: filer group for discovery
 	discoveryInterval  time.Duration // How often to refresh filer list from master
 	stopDiscovery      chan struct{} // Signal to stop discovery goroutine
@@ -173,21 +172,20 @@ func NewFilerClient(filerAddresses []pb.ServerAddress, grpcDialOption grpc.DialO
 		discoveryInterval:  discoveryInterval,
 	}
 
+	// Start filer discovery if master client is configured
+	// Empty filerGroup is valid (represents default group)
+	if masterClient != nil {
+		fc.stopDiscovery = make(chan struct{})
+		go fc.discoverFilers()
+		glog.V(0).Infof("FilerClient: started filer discovery for group '%s' (refresh interval: %v)", filerGroup, discoveryInterval)
+	}
+
 	// Create provider that references this FilerClient for failover support
 	provider := &filerVolumeProvider{
 		filerClient: fc,
 	}
 
 	fc.vidMapClient = newVidMapClient(provider, dataCenter, cacheSize)
-
-	// Start filer discovery if master client is configured
-	// Empty filerGroup is valid (represents default group)
-	if masterClient != nil {
-		fc.masterUnhooks = append(fc.masterUnhooks, masterClient.AddOnVolumeLocationChangeFn(fc.OnVolumeLocationChange), masterClient.AddOnVidMapResetFn(fc.OnVidMapReset))
-		fc.stopDiscovery = make(chan struct{})
-		go fc.discoverFilers()
-		glog.V(0).Infof("FilerClient: started filer discovery for group '%s' (refresh interval: %v)", filerGroup, discoveryInterval)
-	}
 
 	return fc
 }
@@ -299,10 +297,6 @@ func (fc *FilerClient) Close() {
 			close(fc.stopDiscovery)
 		})
 	}
-	for _, unhook := range fc.masterUnhooks {
-		unhook()
-	}
-	fc.masterUnhooks = nil
 }
 
 // discoverFilers periodically queries the master to discover filers in the same group
@@ -533,31 +527,21 @@ func (fc *FilerClient) applyDiscoveredFilersLocked(discoveredFilers map[pb.Serve
 	}
 }
 
-// OnVolumeLocationChange applies the volume-server changes the master pushed
-// to this client's own vidMap, so a retired server stops being tried before a
-// read against it has to fail first. Vids the cache never learned are ignored.
-// Confirmed additions only clear any deletion mark the removal left behind;
-// locations are still learned by lookup rather than cached eagerly.
-func (fc *FilerClient) OnVolumeLocationChange(loc Location, addedVids []uint32, deletedVids []uint32, addedEcVids []uint32, deletedEcVids []uint32) {
+// OnVolumeLocationChange applies master-pushed changes to the lookup-fed cache,
+// so a retired server stops being tried before a read against it fails. Adds
+// only lift the removal fence; locations are still learned by lookup.
+func (fc *FilerClient) OnVolumeLocationChange(loc Location, addedVids, deletedVids []uint32) {
 	for _, vid := range deletedVids {
+		fc.tombstone(vid, loc)
 		fc.deleteLocation(vid, loc)
-	}
-	for _, vid := range deletedEcVids {
-		// Filer lookups cache EC locations in the regular map, so both need it.
-		fc.deleteLocation(vid, loc)
-		fc.deleteEcLocation(vid, loc)
 	}
 	for _, vid := range addedVids {
 		fc.untombstone(vid, loc)
 	}
-	for _, vid := range addedEcVids {
-		fc.untombstone(vid, loc)
-	}
 }
 
-// OnVidMapReset drops every cached location when the master re-tells its view:
-// removals that happened while the master link was down never arrive as
-// deletes, and this cache is refilled by lookup anyway.
+// OnVidMapReset drops the cache, since removals made while the master link
+// was down are never pushed.
 func (fc *FilerClient) OnVidMapReset() {
 	fc.clearVidMap()
 }

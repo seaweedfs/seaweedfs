@@ -61,11 +61,6 @@ type vidMap struct {
 	// retainGenerations is how many resets an entry survives without being
 	// refreshed before reset drops it.
 	retainGenerations uint64
-	// pushedLocations records the generation at which the master pushed each
-	// (vid, url) regular location. Lookup fills stay absent: the master
-	// answers an EC volume with its shard servers, so an entry the lookup
-	// cached must not later read as a confirmed regular copy.
-	pushedLocations map[vidLocationKey]uint64
 }
 
 func newVidMap(dataCenter string, retainGenerations int) *vidMap {
@@ -76,7 +71,6 @@ func newVidMap(dataCenter string, retainGenerations int) *vidMap {
 		vid2Locations:     make(map[uint32]*locationsEntry),
 		ecVid2Locations:   make(map[uint32]*locationsEntry),
 		serverRefCount:    make(map[string]int),
-		pushedLocations:   make(map[vidLocationKey]uint64),
 		DataCenter:        dataCenter,
 		retainGenerations: uint64(retainGenerations),
 	}
@@ -212,25 +206,23 @@ func (vc *vidMap) GetLocations(vid uint32) (locations []Location, found bool) {
 	return nil, false
 }
 
-// hasServingLocation reports whether url still serves vid per what the
-// master told this generation: a pushed regular copy, or pushed ec shards.
-// Lookup fills and entries an earlier generation learned do not count, so a
-// removal is never suppressed by the very staleness it retires.
-func (vc *vidMap) hasServingLocation(vid uint32, url string) (regular bool, ec bool) {
+// hasLocation reports whether url serves vid, as a regular copy or ec shards,
+// in an entry learned since the last reset.
+func (vc *vidMap) hasLocation(vid uint32, url string) bool {
 	vc.RLock()
 	defer vc.RUnlock()
-
-	gen, pushed := vc.pushedLocations[vidLocationKey{vid: vid, url: url}]
-	regular = pushed && gen == vc.generation
-	if entry, found := vc.ecVid2Locations[vid]; found && entry.generation == vc.generation {
+	for _, vid2Locations := range []map[uint32]*locationsEntry{vc.vid2Locations, vc.ecVid2Locations} {
+		entry, found := vid2Locations[vid]
+		if !found || entry.generation != vc.generation {
+			continue
+		}
 		for _, loc := range entry.locations {
 			if loc.Url == url {
-				ec = true
-				break
+				return true
 			}
 		}
 	}
-	return
+	return false
 }
 
 // lookupEntry returns vid's entry when it still holds locations. Callers must
@@ -275,32 +267,7 @@ func (vc *vidMap) addLocation(vid uint32, location Location) {
 
 	glog.V(4).Infof("+ volume id %d: %+v", vid, location)
 
-	vc.clearStalePushed(vid)
-	vc.pushedLocations[vidLocationKey{vid: vid, url: location.Url}] = vc.generation
 	vc.addLocationToMap(vc.vid2Locations, vid, location)
-}
-
-// fillLookupLocation caches a location a lookup answered. It is not marked
-// pushed: the master answers an EC volume with its shard servers, so what the
-// fill cached may be a shard location rather than a regular copy.
-func (vc *vidMap) fillLookupLocation(vid uint32, location Location) {
-	vc.Lock()
-	defer vc.Unlock()
-
-	vc.clearStalePushed(vid)
-	vc.addLocationToMap(vc.vid2Locations, vid, location)
-}
-
-// clearStalePushed drops the pushed marks a new generation's replacement of
-// vid's regular entry would strand. Callers must hold the write lock.
-func (vc *vidMap) clearStalePushed(vid uint32) {
-	entry, found := vc.vid2Locations[vid]
-	if !found || entry.generation == vc.generation {
-		return
-	}
-	for _, loc := range entry.locations {
-		delete(vc.pushedLocations, vidLocationKey{vid: vid, url: loc.Url})
-	}
 }
 
 func (vc *vidMap) addEcLocation(vid uint32, location Location) {
@@ -368,7 +335,6 @@ func (vc *vidMap) deleteLocation(vid uint32, location Location) {
 	glog.V(4).Infof("- volume id %d: %+v", vid, location)
 
 	vc.deleteLocationFromMap(vc.vid2Locations, vid, location)
-	delete(vc.pushedLocations, vidLocationKey{vid: vid, url: location.Url})
 }
 
 func (vc *vidMap) deleteEcLocation(vid uint32, location Location) {
@@ -378,13 +344,6 @@ func (vc *vidMap) deleteEcLocation(vid uint32, location Location) {
 	glog.V(4).Infof("- ec volume id %d: %+v", vid, location)
 
 	vc.deleteLocationFromMap(vc.ecVid2Locations, vid, location)
-
-	// A regular entry at this url that no push confirmed was a lookup-cached
-	// view of the shard just removed, not a copy: retire it with the shard.
-	key := vidLocationKey{vid: vid, url: location.Url}
-	if gen, pushed := vc.pushedLocations[key]; !pushed || gen != vc.generation {
-		vc.deleteLocationFromMap(vc.vid2Locations, vid, location)
-	}
 }
 
 // deleteLocationFromMap drops one location from vid's entry, and the entry
@@ -419,9 +378,6 @@ func (vc *vidMap) deleteVid(vid uint32) {
 	defer vc.Unlock()
 
 	if entry, found := vc.vid2Locations[vid]; found {
-		for _, loc := range entry.locations {
-			delete(vc.pushedLocations, vidLocationKey{vid: vid, url: loc.Url})
-		}
 		vc.releaseEntry(entry)
 		delete(vc.vid2Locations, vid)
 	}
@@ -431,9 +387,7 @@ func (vc *vidMap) deleteVid(vid uint32) {
 	}
 }
 
-// clear drops every tracked location outright, as when the feed behind the
-// map restarted without replaying its contents and nothing it reported can
-// still be trusted.
+// clear drops every location, keeping no history to fall back to.
 func (vc *vidMap) clear() {
 	vc.Lock()
 	defer vc.Unlock()
@@ -441,7 +395,6 @@ func (vc *vidMap) clear() {
 	vc.vid2Locations = make(map[uint32]*locationsEntry)
 	vc.ecVid2Locations = make(map[uint32]*locationsEntry)
 	vc.serverRefCount = make(map[string]int)
-	vc.pushedLocations = make(map[vidLocationKey]uint64)
 }
 
 // reset starts a new generation, as when the master changes and everything it
@@ -456,23 +409,18 @@ func (vc *vidMap) reset() {
 		return
 	}
 	oldest := vc.generation - vc.retainGenerations
-	vc.expire(vc.vid2Locations, oldest, true)
-	vc.expire(vc.ecVid2Locations, oldest, false)
+	vc.expire(vc.vid2Locations, oldest)
+	vc.expire(vc.ecVid2Locations, oldest)
 }
 
-// expire drops entries last refreshed before oldest, and for the regular map
-// the pushed marks that die with them. Callers must hold the write lock.
-func (vc *vidMap) expire(vid2Locations map[uint32]*locationsEntry, oldest uint64, dropPushed bool) {
+// expire drops entries last refreshed before oldest. Callers must hold the
+// write lock.
+func (vc *vidMap) expire(vid2Locations map[uint32]*locationsEntry, oldest uint64) {
 	for vid, entry := range vid2Locations {
 		if entry.generation >= oldest {
 			continue
 		}
 		vc.releaseEntry(entry)
-		if dropPushed {
-			for _, loc := range entry.locations {
-				delete(vc.pushedLocations, vidLocationKey{vid: vid, url: loc.Url})
-			}
-		}
 		delete(vid2Locations, vid)
 	}
 }

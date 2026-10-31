@@ -92,70 +92,89 @@ func TestEcVolumeRemovedLosesItsLocation(t *testing.T) {
 	}
 }
 
-// The change listener hears only the changes updateVidMap applied: a volume
-// moved between the server's disks is reported both ways and stays put, so
-// it arrives as an add, never a removal.
+func listenForChanges(mc *MasterClient) (adds, dels *[]uint32) {
+	adds, dels = new([]uint32), new([]uint32)
+	mc.SetOnVolumeLocationChangeFn(func(_ Location, addedVids, deletedVids []uint32) {
+		*adds = append(*adds, addedVids...)
+		*dels = append(*dels, deletedVids...)
+	})
+	return adds, dels
+}
+
+func pushVolumeLocation(mc *MasterClient, url string, newVids, deletedVids, newEcVids, deletedEcVids []uint32) {
+	mc.updateVidMap(&master_pb.KeepConnectedResponse{VolumeLocation: &master_pb.VolumeLocation{
+		Url: url, PublicUrl: url, NewVids: newVids, DeletedVids: deletedVids, NewEcVids: newEcVids, DeletedEcVids: deletedEcVids,
+	}})
+}
+
+// A volume moved between the server's disks arrives as an add, never a removal.
 func TestChangeListenerHearsAppliedChanges(t *testing.T) {
 	mc := moveClient()
-	var heardAdds, heardDels []uint32
-	mc.AddOnVolumeLocationChangeFn(func(_ Location, addedVids []uint32, deletedVids []uint32, _ []uint32, _ []uint32) {
-		heardAdds = append(heardAdds, addedVids...)
-		heardDels = append(heardDels, deletedVids...)
-	})
+	adds, dels := listenForChanges(mc)
 
 	mc.updateVidMap(moveResponse([]uint32{1}, []uint32{1, 2}))
 
-	if len(heardAdds) != 1 || heardAdds[0] != 1 {
-		t.Errorf("listener heard adds %v, want [1]", heardAdds)
+	if len(*adds) != 1 || (*adds)[0] != 1 {
+		t.Errorf("listener heard adds %v, want [1]", *adds)
 	}
-	if len(heardDels) != 1 || heardDels[0] != 2 {
-		t.Errorf("listener heard removals %v, want [2]", heardDels)
-	}
-}
-
-// Several caches may share one MasterClient: every registered listener hears
-// the applied changes, and unregistering stops the delivery.
-func TestMultipleListenersHearAndUnregister(t *testing.T) {
-	mc := moveClient()
-	var heard1, heard2 int
-	mc.AddOnVolumeLocationChangeFn(func(_ Location, _ []uint32, _ []uint32, _ []uint32, _ []uint32) {
-		heard1++
-	})
-	unhook := mc.AddOnVolumeLocationChangeFn(func(_ Location, _ []uint32, _ []uint32, _ []uint32, _ []uint32) {
-		heard2++
-	})
-
-	mc.updateVidMap(moveResponse(nil, []uint32{1}))
-	if heard1 != 1 || heard2 != 1 {
-		t.Fatalf("listeners heard %d, %d, want 1, 1", heard1, heard2)
-	}
-
-	unhook()
-	mc.updateVidMap(moveResponse(nil, []uint32{2}))
-	if heard1 != 2 || heard2 != 1 {
-		t.Errorf("after unhook listeners heard %d, %d, want 2, 1", heard1, heard2)
+	if len(*dels) != 1 || (*dels)[0] != 2 {
+		t.Errorf("listener heard removals %v, want [2]", *dels)
 	}
 }
 
-// A removal is reported only once the server serves the volume in no form:
-// shards deleted after the decoded copy was mounted, or the regular copy
-// deleted after its shards were registered, are not retirements.
 func TestChangeListenerSkipsRemovalWhileOtherFormServes(t *testing.T) {
 	mc := moveClient()
-	var heardDels, heardEcDels []uint32
-	mc.AddOnVolumeLocationChangeFn(func(_ Location, _ []uint32, deletedVids []uint32, _ []uint32, deletedEcVids []uint32) {
-		heardDels = append(heardDels, deletedVids...)
-		heardEcDels = append(heardEcDels, deletedEcVids...)
-	})
-	loc := &master_pb.VolumeLocation{Url: "server:8080", PublicUrl: "server:8080"}
+	_, dels := listenForChanges(mc)
 
-	mc.updateVidMap(&master_pb.KeepConnectedResponse{VolumeLocation: &master_pb.VolumeLocation{Url: loc.Url, PublicUrl: loc.PublicUrl, NewVids: []uint32{1}, NewEcVids: []uint32{1}}})
-	mc.updateVidMap(&master_pb.KeepConnectedResponse{VolumeLocation: &master_pb.VolumeLocation{Url: loc.Url, PublicUrl: loc.PublicUrl, DeletedEcVids: []uint32{1}}})
-	if len(heardEcDels) != 0 {
-		t.Errorf("shard removal reported while the regular copy stays: %v", heardEcDels)
+	pushVolumeLocation(mc, "server:8080", []uint32{1}, nil, []uint32{1}, nil)
+	pushVolumeLocation(mc, "server:8080", nil, nil, nil, []uint32{1})
+	if len(*dels) != 0 {
+		t.Fatalf("shard removal reported while the regular copy stays: %v", *dels)
 	}
-	mc.updateVidMap(&master_pb.KeepConnectedResponse{VolumeLocation: &master_pb.VolumeLocation{Url: loc.Url, PublicUrl: loc.PublicUrl, DeletedVids: []uint32{1}}})
-	if len(heardDels) != 1 || heardDels[0] != 1 {
-		t.Errorf("last form removed but listener heard %v, want [1]", heardDels)
+	pushVolumeLocation(mc, "server:8080", nil, []uint32{1}, nil, nil)
+	if len(*dels) != 1 || (*dels)[0] != 1 {
+		t.Errorf("last form removed but listener heard %v, want [1]", *dels)
+	}
+}
+
+// The shards and the regular copy's removal can share one message, where
+// the removal is applied before the shards are added.
+func TestChangeListenerSkipsRemovalReplacedInSameMessage(t *testing.T) {
+	mc := moveClient()
+	pushVolumeLocation(mc, "server:8080", []uint32{1}, nil, nil, nil)
+	_, dels := listenForChanges(mc)
+
+	pushVolumeLocation(mc, "server:8080", nil, []uint32{1}, []uint32{1}, nil)
+
+	if len(*dels) != 0 {
+		t.Errorf("regular copy replaced by shards in one message reported removed: %v", *dels)
+	}
+}
+
+// Shards only an earlier master generation reported do not keep a server
+// alive once the regular copy goes.
+func TestChangeListenerIgnoresStaleGenerationWhenSuppressing(t *testing.T) {
+	mc := moveClient()
+	pushVolumeLocation(mc, "server:8080", []uint32{1}, nil, []uint32{1}, nil)
+	mc.resetVidMap()
+	pushVolumeLocation(mc, "server:8080", []uint32{1}, nil, nil, nil)
+	_, dels := listenForChanges(mc)
+
+	pushVolumeLocation(mc, "server:8080", nil, []uint32{1}, nil, nil)
+
+	if len(*dels) != 1 || (*dels)[0] != 1 {
+		t.Errorf("listener heard removals %v, want [1]", *dels)
+	}
+}
+
+func TestResetVidMapNotifiesListener(t *testing.T) {
+	mc := moveClient()
+	resets := 0
+	mc.SetOnVidMapResetFn(func() { resets++ })
+
+	mc.resetVidMap()
+
+	if resets != 1 {
+		t.Errorf("reset listener heard %d resets, want 1", resets)
 	}
 }
