@@ -954,7 +954,7 @@ func (s *Server) handleCreateIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	metadata := map[string]string{
 		"dimension":      fmt.Sprint(req.Dimension),
-		"distanceMetric": req.DistanceMetric,
+		"distanceMetric": strings.ToLower(req.DistanceMetric),
 		// The nonce marks the record this request created, so a rollback after
 		// an engine failure can never erase a pre-existing index.
 		"createNonce": uuid.NewString(),
@@ -1045,7 +1045,7 @@ func indexFromRecord(s *Server, bucket, name string, m map[string]interface{}) *
 			var dim float64
 			fmt.Sscan(fmt.Sprint(fm["dimension"]), &dim)
 			idx.Dimension = int32(dim)
-			idx.DistanceMetric = fmt.Sprint(fm["distanceMetric"])
+			idx.DistanceMetric = strings.ToLower(fmt.Sprint(fm["distanceMetric"]))
 			switch keys := fm["nonFilterableMetadataKeys"].(type) {
 			case string:
 				var list []string
