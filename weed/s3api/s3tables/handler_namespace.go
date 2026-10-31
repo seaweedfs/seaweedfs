@@ -773,32 +773,33 @@ func (h *S3TablesHandler) handleDeleteNamespace(w http.ResponseWriter, r *http.R
 				}
 				hasMore = true
 				lastFileName = entry.Entry.Name
-				if strings.HasPrefix(entry.Entry.Name, ".") {
-					continue
+				// Hidden entries are never children.
+				if !strings.HasPrefix(entry.Entry.Name, ".") {
+					// A record still marked by its create is absent to readers and
+					// cannot confirm under the claim this delete holds, so it is no
+					// child — the delete removes it with the namespace.
+					if isUnfinishedCreate(entry.Entry.Extended) {
+						continue
+					}
+					// Only consider it a child if it's a table (has metadata), a file,
+					// or a record an in-flight operation claimed — a rename's cleared
+					// source still holds its claim, and removing its directory takes
+					// the data the destination keeps pointing at. Bare directories
+					// left by dropped tables or S3 clients should not prevent the
+					// namespace from being deleted.
+					_, hasMetadata := entry.Entry.Extended[ExtendedKeyMetadata]
+					_, claimed := entry.Entry.Extended[ExtendedKeyDeleting]
+					if hasMetadata || claimed || !entry.Entry.IsDirectory {
+						hasChildren = true
+						break
+					}
 				}
-				// A record still marked by its create is absent to readers and
-				// cannot confirm under the claim this delete holds, so it is no
-				// child — the delete removes it with the namespace.
-				if isUnfinishedCreate(entry.Entry.Extended) {
-					continue
-				}
-				// Only consider it a child if it's a table (has metadata), a file,
-				// or a record an in-flight operation claimed — a rename's cleared
-				// source still holds its claim, and removing its directory takes
-				// the data the destination keeps pointing at. Bare directories
-				// left by dropped tables or S3 clients should not prevent the
-				// namespace from being deleted.
-				_, hasMetadata := entry.Entry.Extended[ExtendedKeyMetadata]
-				_, claimed := entry.Entry.Extended[ExtendedKeyDeleting]
-				if hasMetadata || claimed || !entry.Entry.IsDirectory {
-					hasChildren = true
-					break
-				}
-				// A bare directory with files under it is a renamed-away
-				// table's data, which the destination still points at: the
-				// namespace directory stays, minus its catalog record. One
-				// such directory settles it, so the rest are not walked.
-				if !keepDir {
+				// A bare directory with files under it, hidden or not, is a
+				// renamed-away table's data, which the destination still points
+				// at — a table's location may sit under any directory of the
+				// namespace: the namespace directory stays, minus its catalog
+				// record. One such directory settles it, so the rest are not walked.
+				if entry.Entry.IsDirectory && !keepDir {
 					holdsFiles, err := h.dirHoldsFiles(r.Context(), client, path.Join(namespacePath, entry.Entry.Name))
 					if err != nil {
 						return err

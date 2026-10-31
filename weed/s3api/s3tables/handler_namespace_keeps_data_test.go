@@ -173,6 +173,48 @@ func TestDeleteNamespaceKeepsDeeplyNestedData(t *testing.T) {
 	assert.Equal(t, []string{"ns2"}, listedNamespaces(t, m, fs))
 }
 
+// A table's location may sit under a hidden directory of its namespace. Hidden
+// entries are never children, but the files under a hidden directory are data
+// the renamed table still reads, so they keep the namespace directory too.
+func TestDeleteNamespaceKeepsDataUnderAHiddenDirectory(t *testing.T) {
+	nsPath := GetNamespacePath(renameTestBucket, "ns")
+	hidden := path.Join(nsPath, ".hidden")
+	cases := []struct {
+		name string
+		seed func(fs *s3tablestest.MemFiler)
+		kept bool
+	}{
+		{"files under a hidden directory", func(fs *s3tablestest.MemFiler) {
+			fs.Put(nsPath, ".hidden", nil)
+			fs.Put(hidden, "data", nil)
+			fs.PutFile(path.Join(hidden, "data"), keptDataFile, time.Now())
+		}, true},
+		{"only empty hidden directories", func(fs *s3tablestest.MemFiler) {
+			fs.Put(nsPath, ".hidden", nil)
+			fs.Put(hidden, "data", nil)
+		}, false},
+		{"a hidden file", func(fs *s3tablestest.MemFiler) {
+			fs.PutFile(nsPath, ".DS_Store", time.Now())
+		}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fs, m := startRenameManager(t)
+			renameTableToNs2(t, m, fs)
+			tc.seed(fs)
+
+			requireOK(t, m, fs, "DeleteNamespace", deleteNamespaceRequest(t))
+
+			kept := fs.Get(GetTableBucketPath(renameTestBucket), "ns") != nil
+			assert.Equal(t, tc.kept, kept, "namespace directory kept")
+			if tc.kept {
+				assert.NotNil(t, fs.Get(path.Join(hidden, "data"), keptDataFile), "the hidden directory's data must survive")
+			}
+			assert.Equal(t, []string{"ns2"}, listedNamespaces(t, m, fs))
+		})
+	}
+}
+
 // The walk follows a directory's later pages. With more children than one page
 // holds, the only file sits past the first page — directly in the leftover, or
 // under a directory listed on the second page — and missing it would let the
@@ -291,6 +333,7 @@ func TestCreateNamespaceTakesBackAKeptDirectory(t *testing.T) {
 // A file that replaces the leftover directory while the create is taking it
 // over must not end up tagged as a namespace: the create checks the type on the
 // entry it writes, and the filer refuses to write a directory over the file.
+// The name is the file's now, so the create answers a name conflict.
 func TestCreateNamespaceDoesNotTagAFileThatReplacesTheDirectory(t *testing.T) {
 	fs, m := startDeletedNamespaceWithRenamedData(t)
 	bucketPath := GetTableBucketPath(renameTestBucket)
@@ -304,7 +347,8 @@ func TestCreateNamespaceDoesNotTagAFileThatReplacesTheDirectory(t *testing.T) {
 	})
 
 	require.GreaterOrEqual(t, client.lookups, 2, "the replacement has to land after the create's second read")
-	assert.NotEqual(t, http.StatusOK, status, "%+v", resp)
+	assert.Equal(t, http.StatusConflict, status, "%+v", resp)
+	assert.Equal(t, ErrCodeNamespaceAlreadyExists, resp.Type, "%+v", resp)
 	file := fs.Get(bucketPath, "ns")
 	require.NotNil(t, file)
 	assert.False(t, file.IsDirectory)

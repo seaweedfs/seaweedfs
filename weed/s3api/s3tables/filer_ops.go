@@ -246,14 +246,23 @@ func claimExtended(extended map[string][]byte, path string, attrs map[string][]b
 // catalog attribute is taken over, and anything else — a file, or a directory
 // that carries a record — is a taken name. The type is checked on the entry the
 // write carries, so a file that replaces the directory cannot be tagged: the
-// filer refuses to write the directory entry over it.
+// filer refuses to write the directory entry over it. It reports that refusal
+// only as an opaque failure, so a failed write is followed by a look at what
+// holds the name now: a file there is a taken name, not a server error.
 func (h *S3TablesHandler) retakeDirectory(ctx context.Context, client filer_pb.SeaweedFilerClient, path string, attrs map[string][]byte) error {
-	return h.mutateEntry(ctx, client, path, func(entry *filer_pb.Entry) error {
+	err := h.mutateEntry(ctx, client, path, func(entry *filer_pb.Entry) error {
 		if !entry.IsDirectory {
 			return fmt.Errorf("%w: %s is not a directory", ErrNameTaken, path)
 		}
 		return claimExtended(entry.Extended, path, attrs)
 	})
+	if err == nil || errors.Is(err, ErrNameTaken) {
+		return err
+	}
+	if current, lookupErr := h.lookupEntry(ctx, client, path); lookupErr == nil && !current.IsDirectory {
+		return fmt.Errorf("%w: %s is not a directory", ErrNameTaken, path)
+	}
+	return err
 }
 
 // claimCatalogRecord reserves a catalog record for an in-flight delete or
