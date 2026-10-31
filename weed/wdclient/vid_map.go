@@ -206,6 +206,28 @@ func (vc *vidMap) GetLocations(vid uint32) (locations []Location, found bool) {
 	return nil, false
 }
 
+// hasLocation reports whether url still serves vid as a regular copy and as
+// ec shards.
+func (vc *vidMap) hasLocation(vid uint32, url string) (regular bool, ec bool) {
+	vc.RLock()
+	defer vc.RUnlock()
+
+	return entryHasUrl(vc.vid2Locations, vid, url), entryHasUrl(vc.ecVid2Locations, vid, url)
+}
+
+func entryHasUrl(vid2Locations map[uint32]*locationsEntry, vid uint32, url string) bool {
+	entry, found := vid2Locations[vid]
+	if !found {
+		return false
+	}
+	for _, loc := range entry.locations {
+		if loc.Url == url {
+			return true
+		}
+	}
+	return false
+}
+
 // lookupEntry returns vid's entry when it still holds locations. Callers must
 // hold the lock.
 func lookupEntry(vid2Locations map[uint32]*locationsEntry, vid uint32) (*locationsEntry, bool) {

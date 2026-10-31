@@ -136,3 +136,26 @@ func TestMultipleListenersHearAndUnregister(t *testing.T) {
 		t.Errorf("after unhook listeners heard %d, %d, want 2, 1", heard1, heard2)
 	}
 }
+
+// A removal is reported only once the server serves the volume in no form:
+// shards deleted after the decoded copy was mounted, or the regular copy
+// deleted after its shards were registered, are not retirements.
+func TestChangeListenerSkipsRemovalWhileOtherFormServes(t *testing.T) {
+	mc := moveClient()
+	var heardDels, heardEcDels []uint32
+	mc.AddOnVolumeLocationChangeFn(func(_ Location, _ []uint32, deletedVids []uint32, _ []uint32, deletedEcVids []uint32) {
+		heardDels = append(heardDels, deletedVids...)
+		heardEcDels = append(heardEcDels, deletedEcVids...)
+	})
+	loc := &master_pb.VolumeLocation{Url: "server:8080", PublicUrl: "server:8080"}
+
+	mc.updateVidMap(&master_pb.KeepConnectedResponse{VolumeLocation: &master_pb.VolumeLocation{Url: loc.Url, PublicUrl: loc.PublicUrl, NewVids: []uint32{1}, NewEcVids: []uint32{1}}})
+	mc.updateVidMap(&master_pb.KeepConnectedResponse{VolumeLocation: &master_pb.VolumeLocation{Url: loc.Url, PublicUrl: loc.PublicUrl, DeletedEcVids: []uint32{1}}})
+	if len(heardEcDels) != 0 {
+		t.Errorf("shard removal reported while the regular copy stays: %v", heardEcDels)
+	}
+	mc.updateVidMap(&master_pb.KeepConnectedResponse{VolumeLocation: &master_pb.VolumeLocation{Url: loc.Url, PublicUrl: loc.PublicUrl, DeletedVids: []uint32{1}}})
+	if len(heardDels) != 1 || heardDels[0] != 1 {
+		t.Errorf("last form removed but listener heard %v, want [1]", heardDels)
+	}
+}

@@ -341,9 +341,14 @@ func (vc *vidMapClient) addLocation(vid uint32, location Location) {
 	vc.vidMap.addLocation(vid, location)
 }
 
-// deleteLocation removes a volume location
+// deleteLocation removes a volume location. The pair is fenced only once the
+// server serves the volume in no form: ec shards that outlive the regular copy,
+// or a decoded copy that outlives the shards, arrive add-first and must stay
+// servable.
 func (vc *vidMapClient) deleteLocation(vid uint32, location Location) {
-	vc.tombstone(vid, location)
+	if _, ec := vc.vidMap.hasLocation(vid, location.Url); !ec {
+		vc.tombstone(vid, location)
+	}
 	vc.vidMap.deleteLocation(vid, location)
 }
 
@@ -353,9 +358,12 @@ func (vc *vidMapClient) addEcLocation(vid uint32, location Location) {
 	vc.vidMap.addEcLocation(vid, location)
 }
 
-// deleteEcLocation removes an EC volume location
+// deleteEcLocation removes an EC volume location, fencing the pair under the
+// same rule as deleteLocation.
 func (vc *vidMapClient) deleteEcLocation(vid uint32, location Location) {
-	vc.tombstone(vid, location)
+	if regular, _ := vc.vidMap.hasLocation(vid, location.Url); !regular {
+		vc.tombstone(vid, location)
+	}
 	vc.vidMap.deleteEcLocation(vid, location)
 }
 

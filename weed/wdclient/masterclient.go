@@ -178,8 +178,10 @@ type MasterClient struct {
 	OnMasterChangeLock   sync.RWMutex
 	// volumeLocationChangeHooks receive the volume changes updateVidMap
 	// applied: loc is the reporting server and the lists are the vids it
-	// started or stopped hosting. Clients keeping a second location cache
-	// (e.g. FilerClient) register here to drop removed entries instead of
+	// started hosting or stopped hosting in every form (a shard removal that
+	// leaves the regular copy behind is not reported). Clients keeping a
+	// second location cache (e.g. FilerClient) register here to drop removed
+	// entries instead of
 	// learning by a failed read, and to clear deletion marks on a re-add.
 	// vidMapResetHooks fire when a (re)connect makes the master re-tell its
 	// volume locations; such clients get no replay of removals that happened
@@ -644,6 +646,9 @@ func (mc *MasterClient) updateVidMap(resp *master_pb.KeepConnectedResponse) {
 		}
 		glog.V(2).Infof("%s.%s: %s masterClient removes volume %d", mc.FilerGroup, mc.clientType, loc.Url, deletedVid)
 		mc.deleteLocation(deletedVid, loc)
+		if _, ec := mc.vidMap.hasLocation(deletedVid, loc.Url); ec {
+			continue
+		}
 		deletedVids = append(deletedVids, deletedVid)
 	}
 	var addedEc []uint32
@@ -660,6 +665,9 @@ func (mc *MasterClient) updateVidMap(resp *master_pb.KeepConnectedResponse) {
 		}
 		glog.V(2).Infof("%s.%s: %s masterClient removes ec volume %d", mc.FilerGroup, mc.clientType, loc.Url, deletedEcVid)
 		mc.deleteEcLocation(deletedEcVid, loc)
+		if regular, _ := mc.vidMap.hasLocation(deletedEcVid, loc.Url); regular {
+			continue
+		}
 		deletedEcVids = append(deletedEcVids, deletedEcVid)
 	}
 	if len(added) > 0 || len(deletedVids) > 0 || len(addedEc) > 0 || len(deletedEcVids) > 0 {

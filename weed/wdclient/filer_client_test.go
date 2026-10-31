@@ -478,3 +478,66 @@ func TestOnVolumeLocationChangeReaddClearsTombstone(t *testing.T) {
 		t.Fatalf("re-added location not served again: %v, err %v", locations, err)
 	}
 }
+
+// hookedFilerClient returns a FilerClient fed by provider and subscribed to
+// mc's pushed changes, as NewFilerClient wires it.
+func hookedFilerClient(mc *MasterClient, provider VolumeLocationProvider) *FilerClient {
+	fc := newTestFilerClient()
+	fc.vidMapClient = newVidMapClient(provider, "", 0)
+	mc.AddOnVolumeLocationChangeFn(fc.OnVolumeLocationChange)
+	return fc
+}
+
+func pushVolumeLocation(mc *MasterClient, url string, newVids, deletedVids, newEcVids, deletedEcVids []uint32) {
+	mc.updateVidMap(&master_pb.KeepConnectedResponse{VolumeLocation: &master_pb.VolumeLocation{
+		Url: url, PublicUrl: url, NewVids: newVids, DeletedVids: deletedVids, NewEcVids: newEcVids, DeletedEcVids: deletedEcVids,
+	}})
+}
+
+// ec.decode mounts the regular copy on a shard server before the shards come
+// off it, so the later shard removal must leave that copy servable.
+func TestDecodedCopyOutlivesShardRemoval(t *testing.T) {
+	a := Location{Url: "a:8080"}
+	b := Location{Url: "b:8080"}
+	provider := &testLocationProvider{locations: map[string][]Location{"5": {a, b}}}
+	mc := moveClient()
+	fc := hookedFilerClient(mc, provider)
+	ctx := context.Background()
+	pushVolumeLocation(mc, a.Url, nil, nil, []uint32{5}, nil)
+	pushVolumeLocation(mc, b.Url, nil, nil, []uint32{5}, nil)
+	if _, err := fc.LookupVolumeIdsWithFallback(ctx, []string{"5"}); err != nil {
+		t.Fatal(err)
+	}
+
+	pushVolumeLocation(mc, a.Url, []uint32{5}, nil, nil, nil)
+	pushVolumeLocation(mc, b.Url, nil, nil, nil, []uint32{5})
+	pushVolumeLocation(mc, a.Url, nil, nil, nil, []uint32{5})
+
+	provider.locations["5"] = []Location{a}
+	locations, err := fc.LookupVolumeIdsWithFallback(ctx, []string{"5"})
+	if err != nil || len(locations["5"]) != 1 || locations["5"][0].Url != a.Url {
+		t.Fatalf("decoded copy unreadable: %v, err %v", locations, err)
+	}
+}
+
+// ec.encode registers the shards before the regular copy is deleted from the
+// same server, so the server stays a read candidate for the ec volume.
+func TestShardServerOutlivesRegularRemoval(t *testing.T) {
+	a := Location{Url: "a:8080"}
+	provider := &testLocationProvider{locations: map[string][]Location{"5": {a}}}
+	mc := moveClient()
+	fc := hookedFilerClient(mc, provider)
+	ctx := context.Background()
+	pushVolumeLocation(mc, a.Url, []uint32{5}, nil, nil, nil)
+	if _, err := fc.LookupVolumeIdsWithFallback(ctx, []string{"5"}); err != nil {
+		t.Fatal(err)
+	}
+
+	pushVolumeLocation(mc, a.Url, nil, nil, []uint32{5}, nil)
+	pushVolumeLocation(mc, a.Url, nil, []uint32{5}, nil, nil)
+
+	locations, err := fc.LookupVolumeIdsWithFallback(ctx, []string{"5"})
+	if err != nil || len(locations["5"]) != 1 || locations["5"][0].Url != a.Url {
+		t.Fatalf("shard server unreadable: %v, err %v", locations, err)
+	}
+}
