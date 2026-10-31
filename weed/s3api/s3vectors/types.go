@@ -233,12 +233,12 @@ type ListVectorsRequest struct {
 	IndexName        string `json:"indexName"`
 	VectorBucketName string `json:"vectorBucketName"`
 	VectorBucketArn  string `json:"vectorBucketArn"`
-	MaxResults       int    `json:"maxResults"`
+	MaxResults       *int   `json:"maxResults"`
 	NextToken        string `json:"nextToken"`
 	ReturnData       bool   `json:"returnData"`
 	ReturnMetadata   bool   `json:"returnMetadata"`
-	SegmentCount     int    `json:"segmentCount"`
-	SegmentIndex     int    `json:"segmentIndex"`
+	SegmentCount     *int   `json:"segmentCount"`
+	SegmentIndex     *int   `json:"segmentIndex"`
 }
 
 type ListVectorsResponse struct {
