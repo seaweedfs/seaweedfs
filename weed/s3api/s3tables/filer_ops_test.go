@@ -73,6 +73,32 @@ func TestDeleteDirectoryDeletesTheSubtree(t *testing.T) {
 	assert.True(t, stub.req.IgnoreRecursiveError)
 }
 
+// The filer answers a precondition delete on an entry that is already gone
+// with FailedPrecondition carrying the not-found text. DoRemoveRequest reads
+// any error containing that text as a completed delete, so the conditional
+// delete must keep the conflict itself: a name that changed under the delete
+// is a concurrent update, not a success.
+func TestDeleteDirectoryIfMatchesReportsAVanishedEntry(t *testing.T) {
+	stub := &deleteEntryStub{err: status.Error(codes.FailedPrecondition,
+		"extended attribute precondition /buckets/b/ns: "+filer_pb.ErrNotFound.Error())}
+
+	err := (&S3TablesHandler{}).deleteDirectoryIfMatches(context.Background(), stub, "/buckets/b/ns",
+		&filer_pb.Entry{Extended: map[string][]byte{ExtendedKeyMetadata: []byte("{}")}})
+
+	assert.ErrorIs(t, err, ErrConcurrentUpdate)
+}
+
+// A precondition delete the filer refuses inside the response is not a
+// success either.
+func TestDeleteDirectoryIfMatchesReportsResponseError(t *testing.T) {
+	stub := &deleteEntryStub{resp: &filer_pb.DeleteEntryResponse{Error: "fail to delete non-empty folder"}}
+
+	err := (&S3TablesHandler{}).deleteDirectoryIfMatches(context.Background(), stub, "/buckets/b/ns", &filer_pb.Entry{})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "fail to delete non-empty folder")
+}
+
 // The bucket is the directory, so DeleteTableBucket must not answer success
 // when the filer refused to remove it.
 func TestDeleteTableBucketReportsRejectedDirectoryDelete(t *testing.T) {

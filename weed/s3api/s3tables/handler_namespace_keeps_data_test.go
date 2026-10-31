@@ -355,6 +355,62 @@ func TestCreateNamespaceDoesNotTagAFileThatReplacesTheDirectory(t *testing.T) {
 	assert.NotContains(t, file.Extended, ExtendedKeyMetadata, "the file must not be tagged as a namespace")
 }
 
+// Removing the claimed namespace between the scan and the keep is a
+// concurrent change: the delete answers a conflict the caller can retry, not
+// an internal error.
+func TestDeleteNamespaceConflictsWhenTheKeptDirectoryVanishes(t *testing.T) {
+	fs, m := startRenameManager(t)
+	fs.PutFile(keptDataDir(), keptDataFile, time.Now())
+	renameTableToNs2(t, m, fs)
+
+	bucketPath := GetTableBucketPath(renameTestBucket)
+	// The delete claims the namespace before it scans, so the next lookup of
+	// the claimed directory is the keep's own read — remove it there.
+	fs.OnLookup = func(dir, name string) {
+		if dir != bucketPath || name != "ns" {
+			return
+		}
+		if entry := fs.Get(dir, name); entry == nil || entry.Extended[ExtendedKeyDeleting] == nil {
+			return
+		}
+		fs.OnLookup = nil
+		_, _ = fs.Client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
+			Directory:    bucketPath,
+			Name:         "ns",
+			IsRecursive:  true,
+			IsDeleteData: true,
+		})
+	}
+
+	status, resp := runHandler(t, m, fs.Client, "DeleteNamespace", deleteNamespaceRequest(t))
+
+	assert.Equal(t, http.StatusConflict, status, "%+v", resp)
+	assert.Equal(t, ErrCodeConflict, resp.Type, "%+v", resp)
+	assert.Nil(t, fs.Get(bucketPath, "ns"), "the competing removal keeps the directory it took")
+}
+
+// A namespace removed between the claim and the conditional delete is a
+// concurrent change too, not a delete this call completed.
+func TestDeleteNamespaceConflictsWhenItVanishesBeforeTheDelete(t *testing.T) {
+	fs, m := startRenameManager(t)
+	renameTableToNs2(t, m, fs)
+
+	bucketPath := GetTableBucketPath(renameTestBucket)
+	fs.BeforeDelete = func() {
+		_, _ = fs.Client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
+			Directory:    bucketPath,
+			Name:         "ns",
+			IsRecursive:  true,
+			IsDeleteData: true,
+		})
+	}
+
+	status, resp := runHandler(t, m, fs.Client, "DeleteNamespace", deleteNamespaceRequest(t))
+
+	assert.Equal(t, http.StatusConflict, status, "%+v", resp)
+	assert.Equal(t, ErrCodeConflict, resp.Type, "%+v", resp)
+}
+
 // A file is not a leftover directory to take over: the create keeps refusing a
 // name a file already holds.
 func TestCreateNamespaceRefusesAFileInTheWay(t *testing.T) {

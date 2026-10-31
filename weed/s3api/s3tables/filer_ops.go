@@ -473,10 +473,13 @@ func (h *S3TablesHandler) deleteDirectory(ctx context.Context, client filer_pb.S
 // while the entry still carries the extended attributes the caller captured:
 // the filer compares and removes in one operation under the path lock, so an
 // attribute write that keeps Mtime or a delete+recreate in between refuses the
-// delete with ErrConcurrentUpdate instead of losing the replacement.
+// delete with ErrConcurrentUpdate instead of losing the replacement. The raw
+// RPC, not DoRemoveRequest: the filer answers a precondition delete on an
+// entry that is already gone with FailedPrecondition carrying the not-found
+// text, which that helper reads as a completed delete.
 func (h *S3TablesHandler) deleteDirectoryIfMatches(ctx context.Context, client filer_pb.SeaweedFilerClient, path string, expected *filer_pb.Entry) error {
 	dir, name := splitPath(path)
-	_, err := filer_pb.DoRemoveRequest(ctx, client, &filer_pb.DeleteEntryRequest{
+	resp, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{
 		Directory:            dir,
 		Name:                 name,
 		IsDeleteData:         true,
@@ -487,7 +490,13 @@ func (h *S3TablesHandler) deleteDirectoryIfMatches(ctx context.Context, client f
 	if status.Code(err) == codes.FailedPrecondition {
 		return fmt.Errorf("%w: %s", ErrConcurrentUpdate, path)
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	if resp != nil && resp.Error != "" {
+		return errors.New(resp.Error)
+	}
+	return nil
 }
 
 var (
@@ -748,7 +757,10 @@ func (h *S3TablesHandler) dirHoldsFiles(ctx context.Context, client filer_pb.Sea
 // claim in one write, while the entry still holds claimed, keeping the
 // directory and the data under it. The write compares against claimed so the
 // delete's token still fails an ABA, and it drops the claim itself: a kept
-// directory that carried it could never be claimed again.
+// directory that carried it could never be claimed again. A directory removed
+// since the scan is a concurrent change like any other the compare would
+// catch, so its not-found answers ErrConcurrentUpdate rather than a filer
+// failure.
 func (h *S3TablesHandler) keepAsLeftover(ctx context.Context, client filer_pb.SeaweedFilerClient, path string, claimed map[string][]byte) error {
 	keys := make([]string, 0, len(s3tablesExtendedKeys))
 	for _, key := range s3tablesExtendedKeys {
@@ -756,7 +768,11 @@ func (h *S3TablesHandler) keepAsLeftover(ctx context.Context, client filer_pb.Se
 			keys = append(keys, key)
 		}
 	}
-	return h.removeExtendedAttributesIf(ctx, client, path, claimed, keys...)
+	err := h.removeExtendedAttributesIf(ctx, client, path, claimed, keys...)
+	if errors.Is(err, filer_pb.ErrNotFound) {
+		return fmt.Errorf("%w: %s", ErrConcurrentUpdate, path)
+	}
+	return err
 }
 
 // removeLeftoverDirectory deletes path if it is an empty directory without
