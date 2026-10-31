@@ -23,6 +23,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/replication/sink"
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"golang.org/x/net/http/httpguts"
 )
 
 // maxMetadataSize is the S3 limit on user metadata, counted over keys and values.
@@ -268,9 +269,14 @@ func toMetadata(extended map[string][]byte) map[string]*string {
 	prefix := s3_constants.AmzUserMetaPrefix
 	metadata := make(map[string]*string)
 	for k, v := range extended {
-		if len(k) > len(prefix) && strings.EqualFold(k[:len(prefix)], prefix) {
-			metadata[strings.ToLower(k[len(prefix):])] = aws.String(mime.QEncoding.Encode("utf-8", string(v)))
+		if len(k) <= len(prefix) || !strings.EqualFold(k[:len(prefix)], prefix) {
+			continue
 		}
+		if !httpguts.ValidHeaderFieldName(k) {
+			glog.Warningf("skip metadata %q: not a valid header name", k)
+			continue
+		}
+		metadata[strings.ToLower(k[len(prefix):])] = aws.String(mime.QEncoding.Encode("utf-8", string(v)))
 	}
 	return metadata
 }

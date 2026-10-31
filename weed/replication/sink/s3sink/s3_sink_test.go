@@ -215,3 +215,13 @@ func TestS3SinkCreateEntrySkipsOversizedMetadata(t *testing.T) {
 	require.Equal(t, string(entry.Extended["X-Amz-Meta-Big"]), rt.uploadReq.Header.Get("X-Amz-Meta-Big"))
 	require.Equal(t, "1700000000", rt.uploadReq.Header.Get("X-Amz-Meta-Mtime"))
 }
+
+func TestToMetadataSkipsInvalidHeaderNames(t *testing.T) {
+	metadata := toMetadata(map[string][]byte{
+		"X-Amz-Meta-Good":     []byte("yes"),
+		"X-Amz-Meta-bad key":  []byte("space"),
+		"X-Amz-Meta-bad\nkey": []byte("newline"),
+	})
+	require.Len(t, metadata, 1)
+	require.Equal(t, "yes", *metadata["good"])
+}
