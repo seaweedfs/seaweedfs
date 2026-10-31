@@ -112,6 +112,36 @@ func TestLookupFileIdWithFallbackKeepsDataCenterFirst(t *testing.T) {
 	}
 }
 
+// resetOnLookupProvider answers after forcing a cache reset, mimicking a
+// provider response that lands on the far side of a master reconnect.
+type resetOnLookupProvider struct {
+	vc *vidMapClient
+}
+
+func (p *resetOnLookupProvider) LookupVolumeIds(ctx context.Context, volumeIds []string) (map[string][]Location, error) {
+	p.vc.clearVidMap()
+	return map[string][]Location{"5": {{Url: "stale:8080"}}}, nil
+}
+
+// A provider answer fetched before a reset re-told the cache view must be
+// dropped entirely: it can carry locations retired while the feed was down.
+func TestProviderFillDiscardsStaleEpoch(t *testing.T) {
+	provider := &resetOnLookupProvider{}
+	vc := newVidMapClient(provider, "", 5)
+	provider.vc = vc
+
+	locations, err := vc.LookupVolumeIdsWithFallback(context.Background(), []string{"5"})
+	if len(locations["5"]) > 0 {
+		t.Fatalf("lookup crossed a cache reset but still served %v", locations["5"])
+	}
+	if err == nil {
+		t.Fatalf("expected a not-found error after the reset dropped the answer")
+	}
+	if cached, found := vc.GetLocations(5); found && len(cached) > 0 {
+		t.Fatalf("lookup crossed a cache reset but cached %v", cached)
+	}
+}
+
 // A provider answer that still names a just-removed location must neither
 // re-cache it nor hand it back, while the removals are still settling.
 func TestProviderFillSkipsTombstonedLocation(t *testing.T) {
