@@ -4,7 +4,7 @@
 
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use tokio::time::sleep;
 use tonic::transport::Endpoint;
 
@@ -27,19 +27,25 @@ fn registration(client_addr: &str) -> KeepConnectedRequest {
 /// weed conventions (server_address.ToGrpcAddress).
 // A master address may carry an explicit gRPC port as `host:http.grpc` —
 // use it directly; otherwise the gRPC port is http + 10000.
-fn grpc_addr(master: &str) -> String {
+pub fn grpc_addr(master: &str) -> Result<String> {
     let (scheme, rest) = master.split_once("://").unwrap_or(("http", master));
     if let Some((host, port)) = rest.rsplit_once(':') {
         if let Some((_, grpc)) = port.split_once('.') {
             if grpc.parse::<u16>().is_ok() {
-                return format!("{scheme}://{host}:{grpc}");
+                return Ok(format!("{scheme}://{host}:{grpc}"));
             }
         }
         if let Ok(port) = port.parse::<u16>() {
-            return format!("{scheme}://{host}:{}", port + 10000);
+            let grpc = port.checked_add(10000).with_context(|| {
+                format!(
+                    "master {master}: gRPC port {port}+10000 is past 65535; \
+                     give it explicitly as {host}:{port}.<grpc port>"
+                )
+            })?;
+            return Ok(format!("{scheme}://{host}:{grpc}"));
         }
     }
-    format!("{scheme}://{rest}")
+    Ok(format!("{scheme}://{rest}"))
 }
 
 // `host:http.grpc` normalizes to `host:http` so a leader hint naming the
@@ -89,7 +95,7 @@ fn seeds(leader: &mut Option<String>, masters: &[String]) -> Vec<String> {
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 async fn stream_to(master: &str, client_addr: &str) -> Result<Option<String>> {
-    let channel = Endpoint::new(grpc_addr(master))?
+    let channel = Endpoint::new(grpc_addr(master)?)?
         .connect_timeout(CONNECT_TIMEOUT)
         .connect()
         .await?;
@@ -148,5 +154,14 @@ mod tests {
         let dial = stream_to("192.0.2.1:9333", "127.0.0.1:8080");
         let result = tokio::time::timeout(CONNECT_TIMEOUT * 3, dial).await;
         assert!(matches!(result, Ok(Err(_))), "dial was not bounded");
+    }
+
+    #[test]
+    fn grpc_addr_refuses_a_port_past_65535() {
+        assert_eq!(grpc_addr("m1:9333").unwrap(), "http://m1:19333");
+        assert_eq!(grpc_addr("m1:55535").unwrap(), "http://m1:65535");
+        assert_eq!(grpc_addr("m1:60000.7000").unwrap(), "http://m1:7000");
+        assert!(grpc_addr("m1:55536").is_err());
+        assert!(grpc_addr("https://m1:60000").is_err());
     }
 }
