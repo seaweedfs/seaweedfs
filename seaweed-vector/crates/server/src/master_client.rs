@@ -8,7 +8,7 @@ use anyhow::Result;
 use tokio::time::sleep;
 use tonic::transport::Endpoint;
 
-use crate::master_pb::{seaweed_client::SeaweedClient, KeepConnectedRequest};
+use crate::master_pb::{KeepConnectedRequest, seaweed_client::SeaweedClient};
 
 fn registration(client_addr: &str) -> KeepConnectedRequest {
     KeepConnectedRequest {
@@ -60,12 +60,7 @@ fn http_addr(master: &str) -> String {
 pub async fn keep_connected(masters: Vec<String>, client_addr: String) {
     let mut leader: Option<String> = None;
     loop {
-        let mut seeds: Vec<String> = Vec::new();
-        if let Some(l) = &leader {
-            seeds.push(l.clone());
-        }
-        seeds.extend(masters.iter().cloned());
-        for master in &seeds {
+        for master in &seeds(&mut leader, &masters) {
             match stream_to(master, &client_addr).await {
                 Ok(Some(l)) => {
                     leader = Some(l);
@@ -79,8 +74,25 @@ pub async fn keep_connected(masters: Vec<String>, client_addr: String) {
     }
 }
 
+/// A hint is tried once, as wdclient.tryAllMasters keeps it for one cycle, so
+/// a former leader that went away does not delay every later pass.
+fn seeds(leader: &mut Option<String>, masters: &[String]) -> Vec<String> {
+    leader
+        .take()
+        .into_iter()
+        .chain(masters.iter().cloned())
+        .collect()
+}
+
+/// Bounds the TCP connect, the 5s wdclient gives a master call; a black-holed
+/// master otherwise costs the kernel's SYN timeout.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+
 async fn stream_to(master: &str, client_addr: &str) -> Result<Option<String>> {
-    let channel = Endpoint::new(grpc_addr(master))?.connect().await?;
+    let channel = Endpoint::new(grpc_addr(master))?
+        .connect_timeout(CONNECT_TIMEOUT)
+        .connect()
+        .await?;
     let mut client = SeaweedClient::new(channel);
     let (tx, rx) = tokio::sync::mpsc::channel(8);
     tx.send(registration(client_addr)).await?;
@@ -112,5 +124,29 @@ async fn stream_to(master: &str, client_addr: &str) -> Result<Option<String>> {
                 tx.send(registration(client_addr)).await?;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn leader_hint_is_tried_once() {
+        let masters = vec!["m1:9333".to_string(), "m2:9333".to_string()];
+        let mut leader = Some("m3:9333".to_string());
+        assert_eq!(
+            seeds(&mut leader, &masters),
+            ["m3:9333", "m1:9333", "m2:9333"]
+        );
+        assert_eq!(seeds(&mut leader, &masters), ["m1:9333", "m2:9333"]);
+    }
+
+    #[tokio::test]
+    async fn dial_to_a_black_holed_master_is_bounded() {
+        // TEST-NET-1 (RFC 5737) is reserved, so nothing answers the SYN.
+        let dial = stream_to("192.0.2.1:9333", "127.0.0.1:8080");
+        let result = tokio::time::timeout(CONNECT_TIMEOUT * 3, dial).await;
+        assert!(matches!(result, Ok(Err(_))), "dial was not bounded");
     }
 }
