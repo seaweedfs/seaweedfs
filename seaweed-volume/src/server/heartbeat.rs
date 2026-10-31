@@ -3,7 +3,7 @@
 //! Implements the bidirectional streaming `SendHeartbeat` RPC to the master,
 //! matching Go's `server/volume_grpc_client_to_master.go`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -70,6 +70,7 @@ pub async fn run_heartbeat_with_state(
     let mut confirmed_leader_once = false;
 
     loop {
+        let mut tried_hints: HashSet<String> = HashSet::new();
         for master_addr in &config.master_addresses {
             if is_stopping(&state) {
                 state.is_heartbeating.store(false, Ordering::Relaxed);
@@ -86,16 +87,19 @@ pub async fn run_heartbeat_with_state(
             // the next seed's place: a peer that keeps naming a dead leader
             // would otherwise eat that seed's slot on every pass and starve
             // it. A fresh name is followed right away — the pending seed may
-            // be the master the stream just lost — until a name repeats or
-            // every seed was tried. A hint naming the upcoming seed is
-            // covered by the seed dial itself. Mirrors Go's heartbeat loop.
+            // be the master the stream just lost — and a name already dialed
+            // this pass is not dialed again. A hint naming the upcoming seed
+            // is covered by the seed dial itself. Mirrors Go's heartbeat loop.
             let mut hints = 0;
             while let Some(leader) = new_leader.clone() {
-                if to_http_address(&leader) == to_http_address(master_addr)
+                let leader_http = to_http_address(&leader).into_owned();
+                if leader_http == to_http_address(master_addr).as_ref()
+                    || tried_hints.contains(&leader_http)
                     || hints >= config.master_addresses.len()
                 {
                     break;
                 }
+                tried_hints.insert(leader_http);
                 hints += 1;
                 // the new leader may actually is the same master
                 // need to wait a bit before adding itself
@@ -110,13 +114,7 @@ pub async fn run_heartbeat_with_state(
                     &mut duplicate_retry_count,
                 )
                 .await;
-                if is_stopping(&state)
-                    || new_leader
-                        .as_ref()
-                        .is_some_and(|named| to_http_address(named) == to_http_address(&leader))
-                {
-                    // the refresh renamed the master just tried: nothing
-                    // fresh to follow, it stays pending for the next pass
+                if is_stopping(&state) {
                     break;
                 }
             }
@@ -129,6 +127,7 @@ pub async fn run_heartbeat_with_state(
                 // the seed dial covers a hint that names the seed itself
                 new_leader = None;
             }
+            tried_hints.insert(to_http_address(master_addr).into_owned());
             if let Some(named) = heartbeat_once(
                 &config,
                 &state,
