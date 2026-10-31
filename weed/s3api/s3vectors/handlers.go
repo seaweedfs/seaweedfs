@@ -1019,7 +1019,7 @@ func (s *Server) handleCreateIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 // recordNonce and recordVersionToken read the catalog record's internal
-// bookkeeping for the create-index rollback.
+// bookkeeping for the create-index rollback and DeleteIndex.
 func recordNonce(record map[string]interface{}) string {
 	if meta, ok := record["metadata"].(map[string]interface{}); ok {
 		if fm, ok := meta["fullMetadata"].(map[string]interface{}); ok {
@@ -1195,10 +1195,12 @@ func (s *Server) handleDeleteIndex(w http.ResponseWriter, r *http.Request) {
 	// Deleting the catalog record is the delete: the catalog purges the
 	// dataset under the index's location along with the entry.
 	var resp map[string]interface{}
+	// The token limits the delete to the record checked above.
 	err = s.internalCatalog(r.Context(), "DeleteTable", &s3tables.DeleteTableRequest{
 		TableBucketARN: s.s3tablesArn(arns.bucket),
 		Namespace:      []string{indexNamespace},
 		Name:           arns.index,
+		VersionToken:   recordVersionToken(record),
 	}, &resp)
 	if err != nil {
 		catalogErr(w, err)
