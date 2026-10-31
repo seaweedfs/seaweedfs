@@ -165,18 +165,29 @@ func (vs *VolumeServer) heartbeat() {
 	duplicateRetryCount := 0
 	for vs.isHeartbeating {
 		for _, master := range vs.SeedMasterNodes {
-			if newLeader != "" && !newLeader.Equals(master) {
+			// Named leaders are tried on top of the seed scan rather than in
+			// the next seed's place: a peer that keeps naming a dead leader
+			// would otherwise eat that seed's slot on every pass and starve
+			// it. A fresh name is followed right away — the pending seed may
+			// be the master the stream just lost — until a name repeats or
+			// every seed was tried.
+			for hints := 0; newLeader != "" && !newLeader.Equals(master) && hints < len(vs.SeedMasterNodes); hints++ {
 				// the new leader may actually is the same master
 				// need to wait a bit before adding itself
 				time.Sleep(3 * time.Second)
-				// A named leader is tried once on top of the seed scan rather
-				// than in the next seed's place: a peer that keeps naming a
-				// dead leader would otherwise eat that seed's slot on every
-				// pass and starve it.
-				newLeader, duplicateRetryCount = vs.heartbeatOnce(newLeader, grpcDialOption, duplicateRetryCount)
+				tried := newLeader
+				newLeader, duplicateRetryCount = vs.heartbeatOnce(tried, grpcDialOption, duplicateRetryCount)
 				if !vs.isHeartbeating {
 					break
 				}
+				if newLeader.Equals(tried) {
+					// the refresh renamed the master just tried: nothing
+					// fresh to follow, it stays pending for the next pass
+					break
+				}
+			}
+			if !vs.isHeartbeating {
+				break
 			}
 			if newLeader.Equals(master) {
 				// the seed dial covers a hint that names the seed itself
