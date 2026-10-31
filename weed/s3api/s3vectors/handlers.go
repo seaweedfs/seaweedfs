@@ -41,7 +41,7 @@ var handlers = map[string]func(*Server, http.ResponseWriter, *http.Request){
 }
 
 // lance table ids put indexes under a "vector" namespace inside their bucket.
-const indexNamespace = "vector"
+const indexNamespace = s3tables.VectorIndexNamespace
 
 // Vector bucket records are s3tables table buckets; the S3 Vectors ARN form is
 // arn:aws:s3vectors:{region}:{account}:bucket/{name}[/index/{name}].
