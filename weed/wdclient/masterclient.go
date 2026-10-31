@@ -176,19 +176,20 @@ type MasterClient struct {
 	OnLockRingUpdateLock sync.RWMutex
 	OnMasterChange       func(previous, current pb.ServerAddress)
 	OnMasterChangeLock   sync.RWMutex
-	// OnVolumeLocationChange receives the volume changes updateVidMap
+	// volumeLocationChangeHooks receive the volume changes updateVidMap
 	// applied: loc is the reporting server and the lists are the vids it
 	// started or stopped hosting. Clients keeping a second location cache
 	// (e.g. FilerClient) register here to drop removed entries instead of
 	// learning by a failed read, and to clear deletion marks on a re-add.
-	OnVolumeLocationChange     func(loc Location, addedVids []uint32, deletedVids []uint32, addedEcVids []uint32, deletedEcVids []uint32)
-	OnVolumeLocationChangeLock sync.RWMutex
-	// OnVidMapReset fires when a (re)connect makes the master re-tell its
-	// volume locations. Clients keeping a second location cache get no replay
-	// of the removals that may have happened while disconnected, so theirs
-	// must be dropped rather than reset generation-wise.
-	OnVidMapReset     func()
-	OnVidMapResetLock sync.RWMutex
+	// vidMapResetHooks fire when a (re)connect makes the master re-tell its
+	// volume locations; such clients get no replay of removals that happened
+	// while disconnected, so theirs must be dropped rather than reset
+	// generation-wise. Both are sets: several clients may share one
+	// MasterClient, and each unregisters when it closes.
+	hooksMu                   sync.Mutex
+	nextHookId                int
+	volumeLocationChangeHooks map[int]func(loc Location, addedVids []uint32, deletedVids []uint32, addedEcVids []uint32, deletedEcVids []uint32)
+	vidMapResetHooks          map[int]func()
 	// streamLock publishes the stream only after its registration send, so a
 	// leave sent afterwards never races that send.
 	streamLock      sync.Mutex
@@ -283,25 +284,52 @@ func (mc *MasterClient) SetOnMasterChangeFn(fn func(previous, current pb.ServerA
 	mc.OnMasterChangeLock.Unlock()
 }
 
-func (mc *MasterClient) SetOnVolumeLocationChangeFn(fn func(loc Location, addedVids []uint32, deletedVids []uint32, addedEcVids []uint32, deletedEcVids []uint32)) {
-	mc.OnVolumeLocationChangeLock.Lock()
-	mc.OnVolumeLocationChange = fn
-	mc.OnVolumeLocationChangeLock.Unlock()
+// AddOnVolumeLocationChangeFn registers fn for the volume changes updateVidMap
+// applies and returns a func that unregisters it.
+func (mc *MasterClient) AddOnVolumeLocationChangeFn(fn func(loc Location, addedVids []uint32, deletedVids []uint32, addedEcVids []uint32, deletedEcVids []uint32)) func() {
+	mc.hooksMu.Lock()
+	id := mc.nextHookId
+	mc.nextHookId++
+	if mc.volumeLocationChangeHooks == nil {
+		mc.volumeLocationChangeHooks = make(map[int]func(Location, []uint32, []uint32, []uint32, []uint32))
+	}
+	mc.volumeLocationChangeHooks[id] = fn
+	mc.hooksMu.Unlock()
+	return func() {
+		mc.hooksMu.Lock()
+		delete(mc.volumeLocationChangeHooks, id)
+		mc.hooksMu.Unlock()
+	}
 }
 
-func (mc *MasterClient) SetOnVidMapResetFn(fn func()) {
-	mc.OnVidMapResetLock.Lock()
-	mc.OnVidMapReset = fn
-	mc.OnVidMapResetLock.Unlock()
+// AddOnVidMapResetFn registers fn for master reconnects and returns a func
+// that unregisters it.
+func (mc *MasterClient) AddOnVidMapResetFn(fn func()) func() {
+	mc.hooksMu.Lock()
+	id := mc.nextHookId
+	mc.nextHookId++
+	if mc.vidMapResetHooks == nil {
+		mc.vidMapResetHooks = make(map[int]func())
+	}
+	mc.vidMapResetHooks[id] = fn
+	mc.hooksMu.Unlock()
+	return func() {
+		mc.hooksMu.Lock()
+		delete(mc.vidMapResetHooks, id)
+		mc.hooksMu.Unlock()
+	}
 }
 
 // notifyVidMapReset tells registered listeners the master's view was re-told.
 func (mc *MasterClient) notifyVidMapReset() {
-	mc.OnVidMapResetLock.RLock()
-	onReset := mc.OnVidMapReset
-	mc.OnVidMapResetLock.RUnlock()
-	if onReset != nil {
-		onReset()
+	mc.hooksMu.Lock()
+	hooks := make([]func(), 0, len(mc.vidMapResetHooks))
+	for _, fn := range mc.vidMapResetHooks {
+		hooks = append(hooks, fn)
+	}
+	mc.hooksMu.Unlock()
+	for _, fn := range hooks {
+		fn()
 	}
 }
 
@@ -635,11 +663,14 @@ func (mc *MasterClient) updateVidMap(resp *master_pb.KeepConnectedResponse) {
 		deletedEcVids = append(deletedEcVids, deletedEcVid)
 	}
 	if len(added) > 0 || len(deletedVids) > 0 || len(addedEc) > 0 || len(deletedEcVids) > 0 {
-		mc.OnVolumeLocationChangeLock.RLock()
-		onChange := mc.OnVolumeLocationChange
-		mc.OnVolumeLocationChangeLock.RUnlock()
-		if onChange != nil {
-			onChange(loc, added, deletedVids, addedEc, deletedEcVids)
+		mc.hooksMu.Lock()
+		hooks := make([]func(Location, []uint32, []uint32, []uint32, []uint32), 0, len(mc.volumeLocationChangeHooks))
+		for _, fn := range mc.volumeLocationChangeHooks {
+			hooks = append(hooks, fn)
+		}
+		mc.hooksMu.Unlock()
+		for _, fn := range hooks {
+			fn(loc, added, deletedVids, addedEc, deletedEcVids)
 		}
 	}
 	glog.V(1).Infof("updateVidMap(%s) %s.%s: %s volume add local: %d, remote: %d, del: %d, add ec: %d del ec: %d",

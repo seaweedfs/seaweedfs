@@ -98,7 +98,7 @@ func TestEcVolumeRemovedLosesItsLocation(t *testing.T) {
 func TestChangeListenerHearsAppliedChanges(t *testing.T) {
 	mc := moveClient()
 	var heardAdds, heardDels []uint32
-	mc.SetOnVolumeLocationChangeFn(func(_ Location, addedVids []uint32, deletedVids []uint32, _ []uint32, _ []uint32) {
+	mc.AddOnVolumeLocationChangeFn(func(_ Location, addedVids []uint32, deletedVids []uint32, _ []uint32, _ []uint32) {
 		heardAdds = append(heardAdds, addedVids...)
 		heardDels = append(heardDels, deletedVids...)
 	})
@@ -110,5 +110,29 @@ func TestChangeListenerHearsAppliedChanges(t *testing.T) {
 	}
 	if len(heardDels) != 1 || heardDels[0] != 2 {
 		t.Errorf("listener heard removals %v, want [2]", heardDels)
+	}
+}
+
+// Several caches may share one MasterClient: every registered listener hears
+// the applied changes, and unregistering stops the delivery.
+func TestMultipleListenersHearAndUnregister(t *testing.T) {
+	mc := moveClient()
+	var heard1, heard2 int
+	mc.AddOnVolumeLocationChangeFn(func(_ Location, _ []uint32, _ []uint32, _ []uint32, _ []uint32) {
+		heard1++
+	})
+	unhook := mc.AddOnVolumeLocationChangeFn(func(_ Location, _ []uint32, _ []uint32, _ []uint32, _ []uint32) {
+		heard2++
+	})
+
+	mc.updateVidMap(moveResponse(nil, []uint32{1}))
+	if heard1 != 1 || heard2 != 1 {
+		t.Fatalf("listeners heard %d, %d, want 1, 1", heard1, heard2)
+	}
+
+	unhook()
+	mc.updateVidMap(moveResponse(nil, []uint32{2}))
+	if heard1 != 2 || heard2 != 1 {
+		t.Errorf("after unhook listeners heard %d, %d, want 2, 1", heard1, heard2)
 	}
 }

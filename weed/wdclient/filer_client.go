@@ -61,6 +61,7 @@ type FilerClient struct {
 
 	// Filer discovery fields
 	masterClient       *MasterClient // Optional: for discovering filers in the same group
+	masterUnhooks      []func()      // pushed-location subscriptions to release on Close
 	filerGroup         string        // Optional: filer group for discovery
 	discoveryInterval  time.Duration // How often to refresh filer list from master
 	stopDiscovery      chan struct{} // Signal to stop discovery goroutine
@@ -182,8 +183,7 @@ func NewFilerClient(filerAddresses []pb.ServerAddress, grpcDialOption grpc.DialO
 	// Start filer discovery if master client is configured
 	// Empty filerGroup is valid (represents default group)
 	if masterClient != nil {
-		masterClient.SetOnVolumeLocationChangeFn(fc.OnVolumeLocationChange)
-		masterClient.SetOnVidMapResetFn(fc.OnVidMapReset)
+		fc.masterUnhooks = append(fc.masterUnhooks, masterClient.AddOnVolumeLocationChangeFn(fc.OnVolumeLocationChange), masterClient.AddOnVidMapResetFn(fc.OnVidMapReset))
 		fc.stopDiscovery = make(chan struct{})
 		go fc.discoverFilers()
 		glog.V(0).Infof("FilerClient: started filer discovery for group '%s' (refresh interval: %v)", filerGroup, discoveryInterval)
@@ -299,6 +299,10 @@ func (fc *FilerClient) Close() {
 			close(fc.stopDiscovery)
 		})
 	}
+	for _, unhook := range fc.masterUnhooks {
+		unhook()
+	}
+	fc.masterUnhooks = nil
 }
 
 // discoverFilers periodically queries the master to discover filers in the same group
