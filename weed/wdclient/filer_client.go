@@ -536,6 +536,8 @@ func (fc *FilerClient) OnVolumeLocationDelete(loc Location, deletedVids []uint32
 		fc.deleteLocation(vid, loc)
 	}
 	for _, vid := range deletedEcVids {
+		// Filer lookups cache EC locations in the regular map, so both need it.
+		fc.deleteLocation(vid, loc)
 		fc.deleteEcLocation(vid, loc)
 	}
 }

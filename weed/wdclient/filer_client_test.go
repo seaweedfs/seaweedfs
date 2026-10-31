@@ -424,3 +424,20 @@ func TestOnVolumeLocationDeleteIgnoresUncachedEntries(t *testing.T) {
 		t.Errorf("vid 7 lost a location it still has: found=%v %v", found, locations)
 	}
 }
+
+// Filer lookups cache EC locations through addLocation into the regular map,
+// so an EC removal has to drop the retired server there too.
+func TestOnVolumeLocationDeleteDropsRetiredEcServer(t *testing.T) {
+	fc := newTestFilerClient()
+	retired := Location{Url: "retired:8080"}
+	live := Location{Url: "live:8080"}
+	fc.addLocation(9, retired)
+	fc.addLocation(9, live)
+
+	fc.OnVolumeLocationDelete(retired, nil, []uint32{9})
+
+	locations, found := fc.GetLocations(9)
+	if !found || len(locations) != 1 || locations[0].Url != live.Url {
+		t.Errorf("vid 9 kept only the surviving location: found=%v %v", found, locations)
+	}
+}
