@@ -8,11 +8,14 @@ import (
 )
 
 func newTestAggregator() *MetaAggregator {
-	return &MetaAggregator{
+	ma := &MetaAggregator{
 		peerWatermarks:      make(map[pb.ServerAddress]int64),
 		peerFlushWatermarks: make(map[pb.ServerAddress]int64),
 		peerRemovedAtNs:     make(map[pb.ServerAddress]int64),
+		peerResumeTsNs:      make(map[pb.ServerAddress]int64),
 	}
+	ma.peerSubscribeLoop = ma.loopSubscribeToOneFiler
+	return ma
 }
 
 // TestPeerWatermarkBookkeeping pins the per-peer delivery watermark semantics
@@ -115,6 +118,9 @@ func TestPeerWatermarkRemovalGrace(t *testing.T) {
 	ma.advancePeerFlushWatermark(b, 999)
 	if got := ma.PeerLowWatermarkTsNs(); got != 100 {
 		t.Fatalf("after straggler: low=%d want 100", got)
+	}
+	if got := ma.peerResumeTsNs[b]; got != 60 {
+		t.Fatalf("after straggler: resume=%d want 60", got)
 	}
 	if _, found := ma.peerWatermarks[b]; found {
 		t.Fatalf("dropped peer resurrected in delivery watermark set")

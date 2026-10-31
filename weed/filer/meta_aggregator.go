@@ -49,6 +49,7 @@ type MetaAggregator struct {
 	// whose unflushed events still exist, and de-accounting it at once would
 	// let subscribers advance past them. A re-add clears the mark; a peer
 	// gone past the grace is dropped so it cannot pin the low-watermarks.
+	// The mark itself stays until the peer's resume point is forgotten.
 	peerRemovedAtNs map[pb.ServerAddress]int64
 	// lowWatermarkTsNs and lowFlushWatermarkTsNs are the last minima signalled
 	// on deliveryAdvanced and flushAdvanced, each closed and replaced when its
@@ -62,8 +63,17 @@ type MetaAggregator struct {
 	deliveryAdvanced      chan struct{}
 	flushAdvanced         chan struct{}
 	remotePeerArrived     chan struct{}
-	peerWatermarksLock    sync.Mutex
-	peerWg                sync.WaitGroup
+	// peerResumeTsNs keeps each peer's delivered-through position across
+	// subscription restarts; the watermark maps forget a removed peer past
+	// the grace, but a rejoining peer still needs it to resume. Forgotten
+	// peerResumeRetention after the removal so addresses that never return,
+	// such as restarted pods' IPs, do not accumulate.
+	peerResumeTsNs     map[pb.ServerAddress]int64
+	peerWatermarksLock sync.Mutex
+	peerWg             sync.WaitGroup
+	// peerSubscribeLoop is replaceable so a test can observe the subscribe
+	// start without a live peer.
+	peerSubscribeLoop func(f *Filer, self, peer pb.ServerAddress, startFrom time.Time, stopChan chan struct{})
 	// stopped is set under peerChansLock by Shutdown; OnPeerUpdate then
 	// rejects adds so no subscription can outlive the shutdown wait and run
 	// against a store Filer.Shutdown has already closed.
@@ -81,7 +91,9 @@ func NewMetaAggregator(filer *Filer, self pb.ServerAddress, grpcDialOption grpc.
 		peerWatermarks:      make(map[pb.ServerAddress]int64),
 		peerFlushWatermarks: make(map[pb.ServerAddress]int64),
 		peerRemovedAtNs:     make(map[pb.ServerAddress]int64),
+		peerResumeTsNs:      make(map[pb.ServerAddress]int64),
 	}
+	t.peerSubscribeLoop = t.loopSubscribeToOneFiler
 	// nil notifyFn: aggregated subscribers wake through the buffer's
 	// subscriber channels, not a cond.
 	t.MetaLogBuffer = log_buffer.NewLogBuffer("aggr", LogFlushInterval, nil, nil, nil)
@@ -114,10 +126,11 @@ func (ma *MetaAggregator) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, star
 		// Account for the peer before its stream signals; keep prior values
 		// on reconnect.
 		ma.initPeerWatermark(address)
+		startFrom = ma.peerResumeStartFrom(address, startFrom)
 		ma.peerWg.Add(1)
 		go func() {
 			defer ma.peerWg.Done()
-			ma.loopSubscribeToOneFiler(ma.filer, ma.self, address, startFrom, stopChan)
+			ma.peerSubscribeLoop(ma.filer, ma.self, address, startFrom, stopChan)
 		}()
 	} else {
 		if prevChan, found := ma.peerChans[address]; found {
@@ -134,6 +147,11 @@ func (ma *MetaAggregator) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, star
 // in the low-watermarks. Matches the subscribe loops' settled horizon, which
 // already bounds a stale watermark's influence within it.
 const peerWatermarkRemovalGrace = 2 * LogFlushInterval
+
+// peerResumeRetention is how long a removed peer's resume point outlives the
+// watermark grace, so a slow restart or a partition still rejoins at its old
+// position.
+const peerResumeRetention = time.Hour
 
 // initPeerWatermark adds the peer with a zero (unknown) watermark; a re-added
 // peer keeps its prior values and stops being considered removed.
@@ -162,18 +180,24 @@ func (ma *MetaAggregator) markPeerWatermarkRemoved(peer pb.ServerAddress) {
 	}
 }
 
-// dropExpiredRemovedPeersLocked drops peers whose removal outlived the grace.
-// Caller must hold peerWatermarksLock.
+// dropExpiredRemovedPeersLocked drops the watermarks of peers whose removal
+// outlived the grace, and the mark with the resume point once it outlived
+// peerResumeRetention. Caller must hold peerWatermarksLock.
 func (ma *MetaAggregator) dropExpiredRemovedPeersLocked() {
 	if len(ma.peerRemovedAtNs) == 0 {
 		return
 	}
-	cutoff := time.Now().UnixNano() - int64(peerWatermarkRemovalGrace)
+	now := time.Now().UnixNano()
+	graceCutoff := now - int64(peerWatermarkRemovalGrace)
+	resumeCutoff := now - int64(peerResumeRetention)
 	for peer, removedAt := range ma.peerRemovedAtNs {
-		if removedAt < cutoff {
-			delete(ma.peerRemovedAtNs, peer)
+		if removedAt < graceCutoff {
 			delete(ma.peerWatermarks, peer)
 			delete(ma.peerFlushWatermarks, peer)
+		}
+		if removedAt < resumeCutoff {
+			delete(ma.peerRemovedAtNs, peer)
+			delete(ma.peerResumeTsNs, peer)
 		}
 	}
 	// Dropping the peer that pinned a minimum raises it, same as it reporting.
@@ -182,14 +206,46 @@ func (ma *MetaAggregator) dropExpiredRemovedPeersLocked() {
 
 // advancePeerWatermark records the peer as received-through tsNs. Monotonic,
 // and only for tracked peers: a dropped peer's straggler must not recreate
-// its entry and pin the low-watermark.
+// its entry and pin the low-watermark, nor revive a forgotten resume point.
 func (ma *MetaAggregator) advancePeerWatermark(peer pb.ServerAddress, tsNs int64) {
 	ma.peerWatermarksLock.Lock()
 	defer ma.peerWatermarksLock.Unlock()
-	if cur, found := ma.peerWatermarks[peer]; found && tsNs > cur {
+	cur, found := ma.peerWatermarks[peer]
+	if !found {
+		return
+	}
+	if tsNs > cur {
 		ma.peerWatermarks[peer] = tsNs
 		ma.noteLowWatermarksLocked()
 	}
+	if tsNs > ma.peerResumeTsNs[peer] {
+		ma.peerResumeTsNs[peer] = tsNs
+	}
+}
+
+// peerResumeStartFrom rewinds a (re)joining peer's subscribe start to the
+// position the previous subscription was delivered through. The peer's own
+// stream carries delivery claims (idle heartbeats and events alike) in this
+// timestamp domain, so anything at or below it was already received; starting
+// from the caller's "now" instead would drop what the peer logged while its
+// stream was down. A peer seen for the first time keeps the given start.
+//
+// An in-session reconnect resumes from the last real event, but this may
+// trust an idle heartbeat too: on the peer's local stream it is a
+// delivered-through claim capped by the in-flight floor and fenced against
+// later stamps, so no event can land at or below it afterwards. The claim
+// came from the peer's previous process, so it holds as long as the
+// restarted peer's clock does not run backwards.
+//
+// A replay floor never has to cap this: only a peer with its own store can
+// floor an event, and such a peer starts from its persisted offset instead.
+func (ma *MetaAggregator) peerResumeStartFrom(peer pb.ServerAddress, startFrom time.Time) time.Time {
+	ma.peerWatermarksLock.Lock()
+	defer ma.peerWatermarksLock.Unlock()
+	if prev := ma.peerResumeTsNs[peer]; prev > 0 && prev < startFrom.UnixNano() {
+		return time.Unix(0, prev)
+	}
+	return startFrom
 }
 
 // advancePeerFlushWatermark records the peer's reported flush watermark.
@@ -694,8 +750,10 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 					return err
 				}
 			}
-			// Idle heartbeat: advance only the watermark, not lastTsNs, so a
-			// reconnect still resumes from the last real event.
+			// Idle heartbeat: a delivery claim. It advances the watermark and
+			// the re-add resume point (see peerResumeStartFrom) but not
+			// lastTsNs, so this loop's own reconnect still resumes from the
+			// last real event.
 			if resp.EventNotification == nil && len(resp.Events) == 0 && resp.TsNs > 0 {
 				ma.advancePeerWatermark(peer, resp.TsNs)
 			}

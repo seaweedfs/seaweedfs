@@ -1385,7 +1385,9 @@ func (fs *FilerServer) maybeSendFlushReport(req *filer_pb.SubscribeMetadataReque
 // maybeSendIdleHeartbeat emits an empty response carrying the current time when
 // the subscriber has consumed everything up to the buffer head. The client uses
 // it to advance freshness signals (e.g. filer.sync's sync_offset) without moving
-// its resume checkpoint, so a restart still re-reads from the last real event.
+// its persisted resume checkpoint, so a restart still re-reads from the last
+// real event. The fenced local-stream claim is the one exception: a peer
+// aggregator resumes a re-added peer from it (MetaAggregator.peerResumeStartFrom).
 //
 // The catch-up floor is the max of two read-progress markers:
 //   - readPositionTsNs: how far the read cursor has advanced. It starts at
