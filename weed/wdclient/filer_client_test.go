@@ -25,6 +25,7 @@ func newTestFilerClient(addrs ...pb.ServerAddress) *FilerClient {
 	return &FilerClient{
 		filerAddresses: addrs,
 		filerHealth:    health,
+		vidMapClient:   newVidMapClient(nil, "", 0),
 	}
 }
 
@@ -387,5 +388,39 @@ func TestLookupVolumeIdsCountsOnlyFilerFailures(t *testing.T) {
 				t.Errorf("failureCount = %d, want %d", got, tt.wantFailures)
 			}
 		})
+	}
+}
+
+// A volume server retired from the cluster is pushed to the FilerClient's own
+// vidMap through the master hook, so cached lookups stop naming it before a
+// read against the dead address has to fail first.
+func TestOnVolumeLocationDeleteDropsRetiredServer(t *testing.T) {
+	fc := newTestFilerClient()
+	retired := Location{Url: "retired:8080"}
+	live := Location{Url: "live:8080"}
+	fc.addLocation(7, retired)
+	fc.addLocation(7, live)
+	fc.addLocation(8, retired)
+
+	fc.OnVolumeLocationDelete(retired, []uint32{7, 8}, nil)
+
+	locations, found := fc.GetLocations(7)
+	if !found || len(locations) != 1 || locations[0].Url != live.Url {
+		t.Errorf("vid 7 kept only the surviving location: found=%v %v", found, locations)
+	}
+	if locations, found := fc.GetLocations(8); found && len(locations) > 0 {
+		t.Errorf("vid 8 lost its last location but stayed cached: %v", locations)
+	}
+}
+
+func TestOnVolumeLocationDeleteIgnoresUncachedEntries(t *testing.T) {
+	fc := newTestFilerClient()
+	fc.addLocation(7, Location{Url: "live:8080"})
+
+	fc.OnVolumeLocationDelete(Location{Url: "retired:8080"}, []uint32{7, 9}, []uint32{7})
+
+	locations, found := fc.GetLocations(7)
+	if !found || len(locations) != 1 || locations[0].Url != "live:8080" {
+		t.Errorf("vid 7 lost a location it still has: found=%v %v", found, locations)
 	}
 }

@@ -172,20 +172,21 @@ func NewFilerClient(filerAddresses []pb.ServerAddress, grpcDialOption grpc.DialO
 		discoveryInterval:  discoveryInterval,
 	}
 
-	// Start filer discovery if master client is configured
-	// Empty filerGroup is valid (represents default group)
-	if masterClient != nil {
-		fc.stopDiscovery = make(chan struct{})
-		go fc.discoverFilers()
-		glog.V(0).Infof("FilerClient: started filer discovery for group '%s' (refresh interval: %v)", filerGroup, discoveryInterval)
-	}
-
 	// Create provider that references this FilerClient for failover support
 	provider := &filerVolumeProvider{
 		filerClient: fc,
 	}
 
 	fc.vidMapClient = newVidMapClient(provider, dataCenter, cacheSize)
+
+	// Start filer discovery if master client is configured
+	// Empty filerGroup is valid (represents default group)
+	if masterClient != nil {
+		masterClient.SetOnVolumeLocationDeleteFn(fc.OnVolumeLocationDelete)
+		fc.stopDiscovery = make(chan struct{})
+		go fc.discoverFilers()
+		glog.V(0).Infof("FilerClient: started filer discovery for group '%s' (refresh interval: %v)", filerGroup, discoveryInterval)
+	}
 
 	return fc
 }
@@ -524,6 +525,18 @@ func (fc *FilerClient) applyDiscoveredFilersLocked(discoveredFilers map[pb.Serve
 	}
 	if len(newFilers) > 0 {
 		glog.V(0).Infof("FilerClient: discovered %d new filer(s) in group '%s': %v", len(newFilers), fc.filerGroup, newFilers)
+	}
+}
+
+// OnVolumeLocationDelete applies the volume-server removals the master pushed
+// to this client's own vidMap, so a retired server stops being tried before a
+// read against it has to fail first. Vids the cache never learned are ignored.
+func (fc *FilerClient) OnVolumeLocationDelete(loc Location, deletedVids []uint32, deletedEcVids []uint32) {
+	for _, vid := range deletedVids {
+		fc.deleteLocation(vid, loc)
+	}
+	for _, vid := range deletedEcVids {
+		fc.deleteEcLocation(vid, loc)
 	}
 }
 
