@@ -53,9 +53,9 @@ func (h *S3TablesHandler) checkVectorNamespaceWrite(ctx context.Context, filerCl
 
 // fenceVectorNamespace returns a fence for an untrusted write naming the
 // vector namespace of a LANCE bucket. The request still runs, so the
-// operation's own checks answer everything short of a write: an ungranted
-// caller gets its usual denial, and a CreateTable that finds the index
-// already there (the vector engine's declare) succeeds.
+// operation's own checks answer everything short of a write and an ungranted
+// caller gets its usual denial. A CreateTable of an index that already exists
+// is the vector engine's declare and passes unfenced.
 func (h *S3TablesHandler) fenceVectorNamespace(w http.ResponseWriter, r *http.Request, filerClient FilerClient, operation string) *vectorNamespaceFence {
 	if h.trusted || strings.HasPrefix(operation, "Get") || strings.HasPrefix(operation, "List") {
 		return nil
@@ -69,6 +69,7 @@ func (h *S3TablesHandler) fenceVectorNamespace(w http.ResponseWriter, r *http.Re
 		SourceNamespace []string `json:"sourceNamespace"`
 		DestNamespace   []string `json:"destNamespace"`
 		ResourceARN     string   `json:"resourceArn"`
+		Name            string   `json:"name"`
 	}
 	// Like the handler's own decode, this keeps going past a mistyped field.
 	_ = json.Unmarshal(body, &req)
@@ -82,11 +83,32 @@ func (h *S3TablesHandler) fenceVectorNamespace(w http.ResponseWriter, r *http.Re
 		targets = append(targets, target{bucket, []string{namespace}})
 	}
 	for _, t := range targets {
-		if t.bucket != "" && h.checkVectorNamespaceWrite(r.Context(), filerClient, t.bucket, t.namespace) != nil {
-			return &vectorNamespaceFence{ResponseWriter: w, h: h, filer: filerClient}
+		if t.bucket == "" || h.checkVectorNamespaceWrite(r.Context(), filerClient, t.bucket, t.namespace) == nil {
+			continue
 		}
+		if operation == "CreateTable" && isVectorIndexNamespace(req.Namespace) && h.vectorIndexExists(r.Context(), filerClient, bucketName, req.Name) {
+			return nil
+		}
+		return &vectorNamespaceFence{ResponseWriter: w, h: h, filer: filerClient}
 	}
 	return nil
+}
+
+func (h *S3TablesHandler) vectorIndexExists(ctx context.Context, filerClient FilerClient, bucketName, name string) bool {
+	if _, err := validateTableName(name); err != nil {
+		return false
+	}
+	exists := false
+	_ = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		entry, err := h.lookupEntry(ctx, client, GetTablePath(bucketName, VectorIndexNamespace, name))
+		if err != nil {
+			return err
+		}
+		_, hasMetadata := entry.Extended[ExtendedKeyMetadata]
+		exists = hasMetadata && !isUnfinishedCreate(entry.Extended) && EntryType(entry.Extended) == EntryTypeTable
+		return nil
+	})
+	return exists
 }
 
 // vectorNamespaceFence passes reads, refuses filer writes, and answers the

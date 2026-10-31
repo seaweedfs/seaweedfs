@@ -263,3 +263,25 @@ func TestAuthorizeCreateTableRefusesVectorNamespace(t *testing.T) {
 	seedVectorBucket(t, icebergFS, FormatIceberg)
 	assert.NoError(t, untrustedManager().AuthorizeCreateTable(ctx, NewManagerClient(icebergFS.Client), req, "reader"))
 }
+
+// Only a CreateTable that finds a finished index passes unfenced, so the
+// declare keeps working even where the idempotent path writes.
+func TestVectorNamespaceFenceSparesOnlyExistingIndexCreate(t *testing.T) {
+	fs := s3tablestest.Start(t)
+	seedVectorBucket(t, fs, FormatLance)
+	fs.Put(GetNamespacePath(vectorTestBucket, VectorIndexNamespace), "pending", map[string][]byte{
+		ExtendedKeyMetadata: []byte(`{"name":"pending","format":"LANCE"}`),
+		ExtendedKeyDeleting: []byte(createClaim),
+	})
+	h := untrustedManager().handler
+
+	for name, fenced := range map[string]bool{"idx": false, "fresh": true, "pending": true} {
+		t.Run(name, func(t *testing.T) {
+			body := `{"tableBucketARN":"` + vectorTestARN(t) + `","namespace":["vector"],"name":"` + name + `","format":"LANCE"}`
+			req, err := newManagerRequest(context.Background(), "CreateTable", []byte(body), "reader")
+			require.NoError(t, err)
+			got := h.fenceVectorNamespace(nil, req, NewManagerClient(fs.Client), "CreateTable")
+			assert.Equal(t, fenced, got != nil)
+		})
+	}
+}
