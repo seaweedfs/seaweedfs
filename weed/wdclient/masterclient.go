@@ -643,7 +643,7 @@ func (mc *MasterClient) updateVidMap(resp *master_pb.KeepConnectedResponse) {
 		}
 		glog.V(2).Infof("%s.%s: %s masterClient removes volume %d", mc.FilerGroup, mc.clientType, loc.Url, deletedVid)
 		mc.deleteLocation(deletedVid, loc)
-		if _, ec := mc.vidMap.hasLocation(deletedVid, loc.Url); ec {
+		if _, ec := mc.vidMap.hasServingLocation(deletedVid, loc.Url); ec {
 			continue
 		}
 		deletedVids = append(deletedVids, deletedVid)
@@ -662,7 +662,7 @@ func (mc *MasterClient) updateVidMap(resp *master_pb.KeepConnectedResponse) {
 		}
 		glog.V(2).Infof("%s.%s: %s masterClient removes ec volume %d", mc.FilerGroup, mc.clientType, loc.Url, deletedEcVid)
 		mc.deleteEcLocation(deletedEcVid, loc)
-		if regular, _ := mc.vidMap.hasLocation(deletedEcVid, loc.Url); regular {
+		if regular, _ := mc.vidMap.hasServingLocation(deletedEcVid, loc.Url); regular {
 			continue
 		}
 		deletedEcVids = append(deletedEcVids, deletedEcVid)

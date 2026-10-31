@@ -346,7 +346,7 @@ func (vc *vidMapClient) addLocation(vid uint32, location Location) {
 // or a decoded copy that outlives the shards, arrive add-first and must stay
 // servable.
 func (vc *vidMapClient) deleteLocation(vid uint32, location Location) {
-	if _, ec := vc.vidMap.hasLocation(vid, location.Url); !ec {
+	if _, ec := vc.vidMap.hasServingLocation(vid, location.Url); !ec {
 		vc.tombstone(vid, location)
 	}
 	vc.vidMap.deleteLocation(vid, location)
@@ -361,7 +361,7 @@ func (vc *vidMapClient) addEcLocation(vid uint32, location Location) {
 // deleteEcLocation removes an EC volume location, fencing the pair under the
 // same rule as deleteLocation.
 func (vc *vidMapClient) deleteEcLocation(vid uint32, location Location) {
-	if regular, _ := vc.vidMap.hasLocation(vid, location.Url); !regular {
+	if regular, _ := vc.vidMap.hasServingLocation(vid, location.Url); !regular {
 		vc.tombstone(vid, location)
 	}
 	vc.vidMap.deleteEcLocation(vid, location)
@@ -427,7 +427,7 @@ func (vc *vidMapClient) fillLocation(vid uint32, loc Location, epoch uint64) boo
 		return false
 	}
 	if vc.vidMapEpoch == epoch {
-		vc.vidMap.addLocation(vid, loc)
+		vc.vidMap.fillLookupLocation(vid, loc)
 	}
 	return true
 }
