@@ -160,3 +160,19 @@ func TestS3SinkCreateEntryForwardsUserMetadata(t *testing.T) {
 	require.Equal(t, "1700000000", rt.uploadReq.Header.Get("X-Amz-Meta-Mtime"))
 	require.Equal(t, "env=prod", rt.uploadReq.Header.Get("X-Amz-Tagging"))
 }
+
+func TestS3SinkCreateEntryLeavesEntryExtendedUnchanged(t *testing.T) {
+	sink, rt := newCapturingS3Sink(t)
+	entry := &filer_pb.Entry{
+		Attributes: &filer_pb.FuseAttributes{Mtime: 1700000000},
+		Content:    []byte("data"),
+	}
+	require.NoError(t, sink.CreateEntry("/dir/a.bin", entry, nil))
+	require.Nil(t, entry.Extended)
+	require.Equal(t, "1700000000", rt.uploadReq.Header.Get("X-Amz-Meta-Mtime"))
+
+	entry.Extended = map[string][]byte{"X-Amz-Meta-Mtime": []byte("1600000000")}
+	require.NoError(t, sink.CreateEntry("/dir/b.bin", entry, nil))
+	require.Equal(t, map[string][]byte{"X-Amz-Meta-Mtime": []byte("1600000000")}, entry.Extended)
+	require.Equal(t, "1600000000", rt.uploadReq.Header.Get("X-Amz-Meta-Mtime"))
+}

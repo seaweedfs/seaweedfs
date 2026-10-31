@@ -192,15 +192,6 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures 
 		}
 	}
 
-	doSaveMtime := true
-	if entry.Extended == nil {
-		entry.Extended = make(map[string][]byte)
-	} else if _, ok := entry.Extended[s3_constants.AmzUserMetaMtime]; ok {
-		doSaveMtime = false
-	}
-	if doSaveMtime {
-		entry.Extended[s3_constants.AmzUserMetaMtime] = []byte(strconv.FormatInt(entry.Attributes.Mtime, 10))
-	}
 	// process tagging
 	tags := buildTaggingString(entry.Extended)
 
@@ -213,9 +204,11 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures 
 	if tags != "" {
 		uploadInput.Tagging = aws.String(tags)
 	}
-	if metadata := toMetadata(entry.Extended); len(metadata) > 0 {
-		uploadInput.Metadata = metadata
+	metadata := toMetadata(entry.Extended)
+	if _, found := metadata["mtime"]; !found {
+		metadata["mtime"] = aws.String(strconv.FormatInt(entry.Attributes.Mtime, 10))
 	}
+	uploadInput.Metadata = metadata
 	if entry.Attributes.Mime != "" {
 		uploadInput.ContentType = aws.String(entry.Attributes.Mime)
 	}
