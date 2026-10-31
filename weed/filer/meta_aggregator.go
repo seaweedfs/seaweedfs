@@ -127,14 +127,10 @@ func (ma *MetaAggregator) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, star
 		// on reconnect.
 		ma.initPeerWatermark(address)
 		startFrom = ma.peerResumeStartFrom(address, startFrom)
-		subscribeLoop := ma.peerSubscribeLoop
-		if subscribeLoop == nil {
-			subscribeLoop = ma.loopSubscribeToOneFiler
-		}
 		ma.peerWg.Add(1)
 		go func() {
 			defer ma.peerWg.Done()
-			subscribeLoop(ma.filer, ma.self, address, startFrom, stopChan)
+			ma.peerSubscribeLoop(ma.filer, ma.self, address, startFrom, stopChan)
 		}()
 	} else {
 		if prevChan, found := ma.peerChans[address]; found {
