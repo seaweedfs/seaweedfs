@@ -496,3 +496,38 @@ func TestHeartbeatAfterLosingLeaderDialsTheNewLeader(t *testing.T) {
 		t.Fatalf("new leader got no heartbeat within 10s of losing the old one; currentMaster = %q", vs.getCurrentMaster())
 	}
 }
+
+// With a single seed the hint budget is one try per pass. A seed stuck on a
+// stale name spends it every pass, so its answer must not drop the live name
+// that answer-chain reached before it was tried.
+func TestHeartbeatKeepsUntriedHintOverStaleSeedAnswer(t *testing.T) {
+	live := &fakeHeartbeatMaster{heartbeats: make(chan *master_pb.Heartbeat, 8)}
+	liveAddr := startFakeMasterServerForLeaderLookup(t, live)
+	redirects := &fakeHeartbeatMaster{leader: string(liveAddr)}
+	redirectAddr := startFakeMasterServerForLeaderLookup(t, redirects)
+	stale := &fakeHeartbeatMaster{leader: string(redirectAddr)}
+	staleAddr := startFakeMasterServerForLeaderLookup(t, stale)
+
+	vs := newHeartbeatTestVolumeServer(t)
+	vs.SeedMasterNodes = []pb.ServerAddress{staleAddr}
+	vs.pulsePeriod = time.Second
+	exited := make(chan struct{})
+	go func() {
+		defer close(exited)
+		vs.heartbeat()
+	}()
+	t.Cleanup(func() {
+		vs.StopHeartbeat()
+		select {
+		case <-exited:
+		case <-time.After(10 * time.Second):
+			t.Error("heartbeat loop did not stop")
+		}
+	})
+
+	select {
+	case <-live.heartbeats:
+	case <-time.After(15 * time.Second):
+		t.Fatalf("live leader got no heartbeat; currentMaster = %q", vs.getCurrentMaster())
+	}
+}

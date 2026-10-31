@@ -192,7 +192,10 @@ func (vs *VolumeServer) heartbeat() {
 			triedHints[master.ToHttpAddress()] = true
 			named, retryCount := vs.heartbeatOnce(master, grpcDialOption, duplicateRetryCount)
 			duplicateRetryCount = retryCount
-			if named != "" {
+			// A hint the cap left untried stays pending: the seed's answer
+			// replaces it only once it was dialed, so a stale name cannot
+			// keep a live leader from ever being tried.
+			if named != "" && (newLeader == "" || triedHints[newLeader.ToHttpAddress()]) {
 				newLeader = named
 			}
 			if !vs.isHeartbeating {

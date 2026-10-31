@@ -139,7 +139,14 @@ pub async fn run_heartbeat_with_state(
             )
             .await
             {
-                new_leader = Some(named);
+                // A hint the cap left untried stays pending: the seed's
+                // answer replaces it only once it was dialed.
+                let tried = new_leader
+                    .as_ref()
+                    .is_none_or(|p| tried_hints.contains(to_http_address(p).as_ref()));
+                if tried {
+                    new_leader = Some(named);
+                }
             }
             if is_stopping(&state) {
                 break;
