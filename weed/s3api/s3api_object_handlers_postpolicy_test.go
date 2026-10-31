@@ -683,3 +683,53 @@ func TestPostPolicyBucketHandler_PolicyViolationReturns403(t *testing.T) {
 	assert.NotContains(t, rec.Body.String(), "InvalidAccessKeyId",
 		"access key must be known so the handler reaches the policy-check branch")
 }
+
+// With auth off there are no keys, so a POST Object form must not be rejected
+// for its signature; the policy conditions still apply.
+func TestPostPolicyBucketHandler_AuthDisabledSkipsSignature(t *testing.T) {
+	const testBucket = "test-bucket"
+
+	iam := &IdentityAccessManagement{
+		hashes:       make(map[string]*sync.Pool),
+		hashCounters: make(map[string]*int32),
+	}
+	assert.NoError(t, iam.loadS3ApiConfiguration(&iam_pb.S3ApiConfiguration{}))
+	assert.False(t, iam.isEnabled())
+
+	s3a := &S3ApiServer{
+		option: &S3ApiServerOption{BucketsPath: "/buckets"},
+		iam:    iam,
+	}
+	s3a.bucketRegistry = NewBucketRegistry(s3a)
+	s3a.bucketRegistry.setMetadataCache(&BucketMetaData{Name: testBucket, IsTableBucket: false})
+
+	now := time.Now().UTC()
+	credential := fmt.Sprintf("ANYKEY/%s/us-east-1/s3/aws4_request", now.Format(yyyymmdd))
+	policyJSON := fmt.Sprintf(`{"expiration":"%s","conditions":[["eq","$key","required.txt"]]}`,
+		now.Add(time.Hour).Format("2006-01-02T15:04:05.000Z"))
+
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	assert.NoError(t, writer.WriteField("key", "wrong.txt"))
+	assert.NoError(t, writer.WriteField("x-amz-credential", credential))
+	assert.NoError(t, writer.WriteField("x-amz-algorithm", "AWS4-HMAC-SHA256"))
+	assert.NoError(t, writer.WriteField("x-amz-date", now.Format(iso8601Format)))
+	assert.NoError(t, writer.WriteField("policy", base64.StdEncoding.EncodeToString([]byte(policyJSON))))
+	assert.NoError(t, writer.WriteField("x-amz-signature", "00"))
+	filePart, err := writer.CreateFormFile("file", "payload.txt")
+	assert.NoError(t, err)
+	_, err = filePart.Write([]byte("contents"))
+	assert.NoError(t, err)
+	assert.NoError(t, writer.Close())
+
+	req := httptest.NewRequest(http.MethodPost, "/"+testBucket, &buf)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req = mux.SetURLVars(req, map[string]string{"bucket": testBucket})
+	rec := httptest.NewRecorder()
+
+	s3a.PostPolicyBucketHandler(rec, req)
+
+	assert.NotContains(t, rec.Body.String(), "InvalidAccessKeyId")
+	assert.Contains(t, rec.Body.String(), "Policy Condition failed",
+		"the policy check must still run, body: %s", rec.Body.String())
+}

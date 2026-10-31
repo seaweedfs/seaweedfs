@@ -1698,10 +1698,9 @@ func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) htt
 
 // AuthPostPolicy is a specialized authentication wrapper for PostPolicy requests.
 // It allows requests with multipart/form-data to proceed even if classified as Anonymous,
-// because the actual authentication (signature verification) for ALL PostPolicy requests is
-// performed unconditionally in PostPolicyBucketHandler.doesPolicySignatureMatch().
-// This delegation only defers the initial authentication classification; it does NOT bypass
-// signature verification, which is mandatory for all PostPolicy uploads.
+// because PostPolicy signature verification happens in PostPolicyBucketHandler when auth
+// is enabled. This delegation only defers the initial authentication classification; it
+// does NOT bypass signature verification for authenticated uploads.
 func (iam *IdentityAccessManagement) AuthPostPolicy(f http.HandlerFunc, action Action) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		scrubInternalHeaders(r)
