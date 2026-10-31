@@ -2,6 +2,7 @@ package ec
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"slices"
@@ -23,7 +24,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/topology/balancer"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -1258,30 +1258,100 @@ func (ecb *ecBalancer) executePhase(byID map[string]*EcNode, moves []ecbalancer.
 		}
 		return nil
 	}
-	// Apply mode: parallelize across volumes, but run one volume's moves within a
-	// phase sequentially. Concurrent moves of the same volume to a node can race
-	// on its shared .ecx/.ecj/.vif sidecar files.
+	return runMovesSpreadingTargets(ecb.maxParallelization, moves, func(m ecbalancer.Move) error {
+		return ecb.executeMove(byID, m)
+	})
+}
+
+// runMovesSpreadingTargets runs up to maxParallelization moves at once, never
+// two of the same volume: concurrent moves of one volume to a node can race on
+// its shared .ecx/.ecj/.vif sidecar files. A move waits for the earlier moves of
+// its volume that carry the same shard or leave its target node: the planner
+// counts the slot such a move frees as room for the later one, and the receiver
+// may refuse a shard it has no slot for. Otherwise a free worker takes, among the
+// volumes not already moving, the pending move whose target node receives the
+// fewest moves right now.
+//
+// The planner gives every volume the same target order (each fresh volume's
+// shard k goes to the same node), so running each volume's moves in plan order
+// sends all concurrent copies to one node while the others sit idle.
+//
+// Like util.ExecuteParallelTaskGroups, a failed move stops the rest of its
+// volume and the other volumes go on; the errors are joined.
+func runMovesSpreadingTargets(maxParallelization int, moves []ecbalancer.Move, run func(ecbalancer.Move) error) error {
+	if maxParallelization < 1 {
+		maxParallelization = 1
+	}
 	var order []uint32
-	byVol := make(map[uint32][]ecbalancer.Move)
+	pending := make(map[uint32][]ecbalancer.Move)
 	for _, m := range moves {
-		if _, ok := byVol[m.VolumeID]; !ok {
+		if _, ok := pending[m.VolumeID]; !ok {
 			order = append(order, m.VolumeID)
 		}
-		byVol[m.VolumeID] = append(byVol[m.VolumeID], m)
+		pending[m.VolumeID] = append(pending[m.VolumeID], m)
 	}
-	taskGroups := make([][]util.ErrorWaitGroupTask, 0, len(order))
-	for _, vid := range order {
-		movesForVolume := byVol[vid]
-		taskGroup := make([]util.ErrorWaitGroupTask, 0, len(movesForVolume))
-		for _, move := range movesForVolume {
-			move := move
-			taskGroup = append(taskGroup, func() error {
-				return ecb.executeMove(byID, move)
-			})
+
+	type result struct {
+		move ecbalancer.Move
+		err  error
+	}
+	results := make(chan result)
+	moving := make(map[uint32]bool)
+	receiving := make(map[string]int)
+	running := 0
+	var errs []error
+	for {
+		for running < maxParallelization {
+			vid, at, ok := pickSpreadMove(order, pending, moving, receiving)
+			if !ok {
+				break
+			}
+			m := pending[vid][at]
+			pending[vid] = slices.Delete(pending[vid], at, at+1)
+			moving[vid] = true
+			receiving[m.TargetNode]++
+			running++
+			go func() {
+				results <- result{m, run(m)}
+			}()
 		}
-		taskGroups = append(taskGroups, taskGroup)
+		if running == 0 {
+			return errors.Join(errs...)
+		}
+		r := <-results
+		running--
+		moving[r.move.VolumeID] = false
+		receiving[r.move.TargetNode]--
+		if r.err != nil {
+			errs = append(errs, r.err)
+			delete(pending, r.move.VolumeID)
+		}
 	}
-	return util.ExecuteParallelTaskGroups(ecb.maxParallelization, taskGroups)
+}
+
+// pickSpreadMove returns the volume and index of the next move to start, ties
+// going to plan order.
+func pickSpreadMove(order []uint32, pending map[uint32][]ecbalancer.Move, moving map[uint32]bool, receiving map[string]int) (vid uint32, at int, ok bool) {
+	best := 0
+	for _, v := range order {
+		if moving[v] {
+			continue
+		}
+		for i, m := range pending[v] {
+			if slices.ContainsFunc(pending[v][:i], func(e ecbalancer.Move) bool {
+				return e.ShardID == m.ShardID || e.SourceNode == m.TargetNode
+			}) {
+				continue
+			}
+			if n := receiving[m.TargetNode]; !ok || n < best {
+				vid, at, ok, best = v, i, true, n
+				if n == 0 {
+					return vid, at, ok
+				}
+			}
+		}
+	}
+	return vid, at, ok
 }
 
 // verifyEcShardOnKeepNode confirms the node a dedup move chose to keep actually
