@@ -185,14 +185,14 @@ func TestS3SinkCreateEntryEncodesNonASCIIMetadata(t *testing.T) {
 		Extended: map[string][]byte{
 			"X-Amz-Meta-City":  []byte("Zürich"),
 			"X-Amz-Meta-Note":  []byte("line1\nline2"),
-			"X-Amz-Meta-Plain": []byte("=?utf-8?q?caf=C3=A9?="),
+			"X-Amz-Meta-Plain": []byte("=?utf-8?q?Gen=C3=A8ve?="),
 		},
 	}
 	require.NoError(t, sink.CreateEntry("/dir/test.bin", entry, nil))
 
 	require.Equal(t, "=?utf-8?q?Z=C3=BCrich?=", rt.uploadReq.Header.Get("X-Amz-Meta-City"))
 	require.Equal(t, "=?utf-8?q?line1=0Aline2?=", rt.uploadReq.Header.Get("X-Amz-Meta-Note"))
-	require.Equal(t, "=?utf-8?q?caf=C3=A9?=", rt.uploadReq.Header.Get("X-Amz-Meta-Plain"))
+	require.Equal(t, "=?utf-8?q?Gen=C3=A8ve?=", rt.uploadReq.Header.Get("X-Amz-Meta-Plain"))
 }
 
 func TestS3SinkCreateEntrySkipsOversizedMetadata(t *testing.T) {
