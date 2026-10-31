@@ -111,3 +111,29 @@ func TestLookupFileIdWithFallbackKeepsDataCenterFirst(t *testing.T) {
 		}
 	}
 }
+
+// A provider answer that still names a just-removed location must neither
+// re-cache it nor hand it back, while the removals are still settling.
+func TestProviderFillSkipsTombstonedLocation(t *testing.T) {
+	retired := Location{Url: "retired:8080"}
+	live := Location{Url: "live:8080"}
+	vc := newVidMapClient(&testLocationProvider{
+		locations: map[string][]Location{
+			"5": {retired, live},
+		},
+	}, "", 5)
+
+	vc.deleteLocation(5, retired)
+
+	locations, err := vc.LookupVolumeIdsWithFallback(context.Background(), []string{"5"})
+	if err != nil {
+		t.Fatalf("lookup failed: %v", err)
+	}
+	got := locations["5"]
+	if len(got) != 1 || got[0].Url != live.Url {
+		t.Fatalf("lookup returned %v, want only the surviving location", got)
+	}
+	if cached, found := vc.GetLocations(5); !found || len(cached) != 1 || cached[0].Url != live.Url {
+		t.Errorf("cache holds %v, want only the surviving location", cached)
+	}
+}

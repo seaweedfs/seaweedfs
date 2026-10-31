@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"golang.org/x/sync/singleflight"
 
@@ -30,7 +32,23 @@ type vidMapClient struct {
 	vidMap         *vidMap
 	provider       VolumeLocationProvider
 	vidLookupGroup singleflight.Group
+	// recentDeletes tombstones (vid,url) pairs a pushed delete just removed,
+	// so a provider lookup started before the removal cannot re-cache them
+	// while the lookup source still names the retired server.
+	recentDeletesMu sync.Mutex
+	recentDeletes   map[vidLocationKey]time.Time
 }
+
+// vidLocationKey indexes a tombstoned (volume, server url) pair.
+type vidLocationKey struct {
+	vid uint32
+	url string
+}
+
+// recentDeleteTTL bounds how long a pushed delete suppresses provider fills of
+// the same location: long enough for the lookup source to apply the removal
+// itself, short enough not to hide a location that legitimately came back.
+const recentDeleteTTL = 15 * time.Second
 
 const (
 	// DefaultVidMapCacheSize is the default number of resets a volume location
@@ -42,8 +60,9 @@ const (
 // newVidMapClient creates a new client with the given provider and data center
 func newVidMapClient(provider VolumeLocationProvider, dataCenter string, cacheSize int) *vidMapClient {
 	return &vidMapClient{
-		vidMap:   newVidMap(dataCenter, cacheSize),
-		provider: provider,
+		vidMap:        newVidMap(dataCenter, cacheSize),
+		provider:      provider,
+		recentDeletes: make(map[vidLocationKey]time.Time),
 	}
 }
 
@@ -205,7 +224,8 @@ func (vc *vidMapClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 			return batchResult, fmt.Errorf("provider lookup failed: %w", err)
 		}
 
-		// Update cache with results
+		// Update cache with results, minus locations a pushed delete just
+		// removed: the lookup source may not have applied the removal yet.
 		for vidString, locations := range providerResults {
 			vid, err := strconv.ParseUint(vidString, 10, 32)
 			if err != nil {
@@ -213,12 +233,17 @@ func (vc *vidMapClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 				continue
 			}
 
+			var live []Location
 			for _, loc := range locations {
+				if vc.isTombstoned(uint32(vid), loc) {
+					continue
+				}
+				live = append(live, loc)
 				vc.addLocation(uint32(vid), loc)
 			}
 
-			if len(locations) > 0 {
-				batchResult[vidString] = locations
+			if len(live) > 0 {
+				batchResult[vidString] = live
 			}
 		}
 
@@ -307,6 +332,7 @@ func (vc *vidMapClient) addLocation(vid uint32, location Location) {
 
 // deleteLocation removes a volume location
 func (vc *vidMapClient) deleteLocation(vid uint32, location Location) {
+	vc.tombstone(vid, location)
 	vc.vidMap.deleteLocation(vid, location)
 }
 
@@ -317,6 +343,7 @@ func (vc *vidMapClient) addEcLocation(vid uint32, location Location) {
 
 // deleteEcLocation removes an EC volume location
 func (vc *vidMapClient) deleteEcLocation(vid uint32, location Location) {
+	vc.tombstone(vid, location)
 	vc.vidMap.deleteEcLocation(vid, location)
 }
 
@@ -324,6 +351,36 @@ func (vc *vidMapClient) deleteEcLocation(vid uint32, location Location) {
 // previous one told us stays readable until it is relearned or expires.
 func (vc *vidMapClient) resetVidMap() {
 	vc.vidMap.reset()
+}
+
+// tombstone marks loc as having stopped serving vid so provider fills cannot
+// re-cache it while the lookup source still carries the removal.
+func (vc *vidMapClient) tombstone(vid uint32, loc Location) {
+	now := time.Now()
+	vc.recentDeletesMu.Lock()
+	defer vc.recentDeletesMu.Unlock()
+	for key, deadline := range vc.recentDeletes {
+		if now.After(deadline) {
+			delete(vc.recentDeletes, key)
+		}
+	}
+	vc.recentDeletes[vidLocationKey{vid: vid, url: loc.Url}] = now.Add(recentDeleteTTL)
+}
+
+// isTombstoned reports whether a pushed delete removed loc from vid recently
+// enough that a provider answer may still be carrying it.
+func (vc *vidMapClient) isTombstoned(vid uint32, loc Location) bool {
+	vc.recentDeletesMu.Lock()
+	defer vc.recentDeletesMu.Unlock()
+	deadline, found := vc.recentDeletes[vidLocationKey{vid: vid, url: loc.Url}]
+	if !found {
+		return false
+	}
+	if time.Now().After(deadline) {
+		delete(vc.recentDeletes, vidLocationKey{vid: vid, url: loc.Url})
+		return false
+	}
+	return true
 }
 
 // InvalidateCache removes all cached locations for a volume ID
