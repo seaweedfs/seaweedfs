@@ -16,6 +16,7 @@ metadata:
     app.kubernetes.io/component: {{ $volumeName }}
     helm.sh/chart: {{ $.Chart.Name }}-{{ $.Chart.Version | replace "+" "_" }}
     app.kubernetes.io/managed-by: {{ $.Release.Service }}
+    {{- with include "seaweedfs.commonLabels" $ }}{{ . | nindent 4 }}{{ end }}
 {{- if $volume.annotations }}
   annotations:
     {{- toYaml $volume.annotations | nindent 4 }}

@@ -58,6 +58,43 @@ Expand the name of the chart.
 {{- end -}}
 
 {{/*
+commonLabels without the chart's own keys. Takes the root context, or a dict
+with "context" and "exclude" (labels the object already sets).
+*/}}
+{{- define "seaweedfs.commonLabels" -}}
+{{- $context := . -}}
+{{- $exclude := dict -}}
+{{- if hasKey . "context" -}}
+{{-   $context = .context -}}
+{{-   $exclude = .exclude | default dict -}}
+{{- end -}}
+{{- with $context.Values.commonLabels -}}
+{{-   $labels := include "seaweedfs.tplvalues.render" (dict "value" . "context" $context) | fromYaml -}}
+{{-   $err := get $labels "Error" -}}
+{{-   if and (not (kindIs "map" .)) (eq (len $labels) 1) (kindIs "string" $err) (hasPrefix "error " $err) -}}
+{{-     fail (printf "commonLabels must render to a map of labels: %s" $err) -}}
+{{-   end -}}
+{{-   $labels = omit $labels "app.kubernetes.io/name" "app.kubernetes.io/instance" "app.kubernetes.io/component" "app.kubernetes.io/managed-by" "helm.sh/chart" -}}
+{{-   range $key, $_ := $exclude -}}
+{{-     $_ := unset $labels $key -}}
+{{-   end -}}
+{{-   $rendered := dict -}}
+{{-   range $key, $value := $labels -}}
+{{-     if not (kindIs "invalid" $value) -}}
+{{-       $s := toString $value -}}
+{{-       if and (kindIs "float64" $value) (eq $value (floor $value)) (lt $value 9.2e18) (gt $value -9.2e18) -}}
+{{-         $s = toString (int64 $value) -}}
+{{-       end -}}
+{{-       $_ := set $rendered $key $s -}}
+{{-     end -}}
+{{-   end -}}
+{{-   if $rendered -}}
+{{-     toYaml $rendered | trim -}}
+{{-   end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 Inject extra environment vars in the format key:value, if populated
 */}}
 {{- define "seaweedfs.extraEnvironmentVars" -}}
@@ -726,4 +763,10 @@ on install.
   "legacySecret" (list .Values.s3.reuseLegacySecret .Values.s3.legacySecretName)
   "auditLogConfig" (list .Values.s3.auditLogConfig .Values.filer.s3.auditLogConfig)
   | toJson | sha256sum -}}
+{{- end -}}
+
+{{/* Master ConfigMap checksum, ignoring commonLabels so labels do not roll the pods */}}
+{{- define "seaweedfs.master.configChecksum" -}}
+{{- $context := merge (dict "Values" (omit .Values "commonLabels")) (omit . "Values") -}}
+{{- include (print .Template.BasePath "/master/master-configmap.yaml") $context | sha256sum -}}
 {{- end -}}

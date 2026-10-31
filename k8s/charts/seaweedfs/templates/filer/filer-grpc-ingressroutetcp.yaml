@@ -27,6 +27,7 @@ metadata:
     {{- with .Values.filer.ingresses.grpc.labels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
+    {{- with include "seaweedfs.commonLabels" (dict "context" $ "exclude" $.Values.filer.ingresses.grpc.labels) }}{{ . | nindent 4 }}{{ end }}
 spec:
   {{- if $securityEnabled }}
   tls:

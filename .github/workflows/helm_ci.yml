@@ -1935,6 +1935,121 @@ jobs:
           echo "License + master persistence tests passed"
 
           echo ""
+          echo "=== Testing commonLabels ==="
+          python3 - "$CHART_DIR" <<'PYEOF'
+          import copy, subprocess, sys, yaml
+          chart = sys.argv[1]
+
+          class NoDuplicates(yaml.SafeLoader):
+              pass
+          def mapping(loader, node, deep=False):
+              keys = [loader.construct_object(k, deep=deep) for k, _ in node.value]
+              dups = {k for k in keys if keys.count(k) > 1}
+              if dups:
+                  raise ValueError(f"duplicate keys {dups} at line {node.start_mark.line + 1}")
+              return yaml.SafeLoader.construct_mapping(loader, node, deep)
+          NoDuplicates.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, mapping)
+
+          BASE = [
+              "--set", "global.seaweedfs.enableSecurity=true",
+              "--set", "global.seaweedfs.monitoring.enabled=true",
+              "--set", "global.seaweedfs.monitoring.additionalLabels.release=prometheus",
+              "--set", "master.data.type=persistentVolumeClaim",
+              "--set", "master.ingress.enabled=true",
+              "--set", "master.ingress.labels.team=ingress",
+              "--set", "filer.data.type=persistentVolumeClaim",
+              "--set", "filer.ingresses.http.enabled=true",
+              "--set", "s3.enabled=true", "--set", "s3.enableAuth=true",
+              "--set", "s3.httpRoute.enabled=true",
+              "--set", "sftp.enabled=true", "--set", "worker.enabled=true",
+              "--set", "admin.enabled=true", "--set", "admin.secret.adminPassword=ci",
+              "--set", "cosi.enabled=true", "--set", "networkPolicy.enabled=true",
+              "--set", "volumes.dc2.replicas=1",
+              # render the security ConfigMap without its generated jwt key
+              "--set", "global.seaweedfs.enableSecurity=true",
+              "--set", "global.seaweedfs.securityConfig.jwtSigning.volumeWrite=false",
+          ]
+          LABELS = "/tmp/common-labels-values.yaml"
+          with open(LABELS, "w") as f:
+              yaml.safe_dump({"commonLabels": {
+                  "example.com/team": "storage",
+                  "example.com/release": "{{ .Release.Name }}",
+                  "team": "common",     # also set by master.ingress.labels
+                  "release": "common",  # also set by monitoring.additionalLabels
+                  "app.kubernetes.io/component": "hijack",
+                  "app.kubernetes.io/instance": "hijack",
+              }}, f)
+          EXPECTED = {
+              "example.com/team": "storage",
+              "example.com/release": "test",
+              "team": "common",
+              "release": "common",
+          }
+
+          def render(extra):
+              out = subprocess.check_output(["helm", "template", "test", chart] + BASE + extra, text=True)
+              docs = {}
+              for d in yaml.load_all(out, Loader=NoDuplicates):
+                  if not d:
+                      continue
+                  # generated credentials differ between renders
+                  if d["kind"] == "Secret" and d["metadata"]["name"].endswith(
+                      ("-s3-secret", "-sftp-secret", "-sftp-ssh-secret")
+                  ):
+                      d.pop("data", None)
+                      d.pop("stringData", None)
+                  docs[(d["kind"], d["metadata"]["name"])] = d
+              return docs
+
+          plain, labelled = render([]), render(["-f", LABELS])
+          failed = []
+          if set(plain) != set(labelled):
+              failed.append(f"commonLabels changed the set of objects: {set(plain) ^ set(labelled)}")
+          for key, d in labelled.items():
+              if key not in plain:
+                  continue
+              before = plain[key]["metadata"].get("labels") or {}
+              labels = d["metadata"].get("labels") or {}
+              for k, v in EXPECTED.items():
+                  if k in before:
+                      continue
+                  if labels.get(k) != v:
+                      failed.append(f"{key}: {k}={labels.get(k)!r}, want {v!r}")
+              # labels the chart or an object-specific value sets are never overridden
+              for k, v in before.items():
+                  if labels.get(k) != v:
+                      failed.append(f"{key}: {k} changed from {v!r} to {labels.get(k)!r}")
+              # nothing else changes: selectors, pod templates, volumeClaimTemplates, checksums
+              stripped = copy.deepcopy(d)
+              rest = {k: v for k, v in labels.items() if k in before}
+              if rest or "labels" in plain[key]["metadata"]:
+                  stripped["metadata"]["labels"] = rest
+              else:
+                  stripped["metadata"].pop("labels", None)
+              if stripped != plain[key]:
+                  failed.append(f"{key}: commonLabels changed more than metadata.labels")
+
+          if failed:
+              print("\nFAIL:", file=sys.stderr)
+              for f in failed:
+                  print(f"  - {f}", file=sys.stderr)
+              sys.exit(1)
+          print(f"{len(labelled)} objects carry commonLabels and are otherwise unchanged")
+          PYEOF
+          # an empty value renders exactly like the default
+          helm template test $CHART_DIR --set-string 'commonLabels=' > /tmp/common-labels-empty.yaml
+          cmp /tmp/default.yaml /tmp/common-labels-empty.yaml
+          # the whole value may be a template rendering to a map, e.g. a parent chart's labels
+          echo "commonLabels: 'example.com/owner: {{ .Release.Name }}'" > /tmp/common-labels-string-values.yaml
+          helm template test $CHART_DIR --show-only templates/master/master-service.yaml \
+            -f /tmp/common-labels-string-values.yaml > /tmp/common-labels-string.yaml
+          grep -q "^    example.com/owner: test$" /tmp/common-labels-string.yaml
+          if helm template test $CHART_DIR --set-json 'commonLabels=["a"]' > /dev/null 2>&1; then
+            echo "a commonLabels that is not a map must fail the render"; exit 1
+          fi
+          echo "commonLabels tests passed"
+
+          echo ""
           echo "=== Testing namespaceOverride ==="
           NS_ARGS=(
             --set s3.enabled=true --set s3.enableAuth=true

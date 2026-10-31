@@ -168,6 +168,7 @@ metadata:
     app.kubernetes.io/managed-by: {{ $.Release.Service | quote }}
     app.kubernetes.io/instance: {{ $.Release.Name | quote }}
     app.kubernetes.io/component: {{ $component | quote }}
+    {{- with include "seaweedfs.commonLabels" $ }}{{ . | nindent 4 }}{{ end }}
 {{- if $target.hook }}
   annotations:
     {{- /* Only before-hook-creation: the policy has to outlive the Job it

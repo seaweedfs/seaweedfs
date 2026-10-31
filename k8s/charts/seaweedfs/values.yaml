@@ -2239,6 +2239,9 @@ certificates:
     # seaweedfs-master-cert, seaweedfs-filer-cert, etc. Can see any statefulset definition to see secret names
     enabled: false
 
+# Labels added to the metadata of every object, except pods and volumeClaimTemplates.
+# A map, or a template string rendering to one.
+commonLabels: {}
 # Labels to be added to all the created pods
 podLabels: {}
 # Annotations to be added to all the created pods

@@ -12,6 +12,7 @@ metadata:
   namespace: {{ include "seaweedfs.namespace" $ | quote }}
   labels:
     grafana_dashboard: "1"
+    {{- with include "seaweedfs.commonLabels" (dict "context" $ "exclude" (dict "grafana_dashboard" "1")) }}{{ . | nindent 4 }}{{ end }}
 data:
   {{ $dashboardName }}.json: |-
 {{ toString $file | indent 4 }}

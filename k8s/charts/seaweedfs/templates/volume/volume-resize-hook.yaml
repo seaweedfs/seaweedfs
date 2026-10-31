@@ -16,6 +16,7 @@ metadata:
     app.kubernetes.io/managed-by: {{ .Release.Service | quote }}
     app.kubernetes.io/instance: {{ .Release.Name | quote }}
     app.kubernetes.io/component: volume-resize-hook
+    {{- with include "seaweedfs.commonLabels" $ }}{{ . | nindent 4 }}{{ end }}
   annotations:
     helm.sh/hook: pre-install,pre-upgrade
     helm.sh/hook-weight: "0"
@@ -77,6 +78,10 @@ kind: ServiceAccount
 metadata:
   name: {{ $seaweedfsName }}-volume-resize-hook
   namespace: {{ include "seaweedfs.namespace" . | quote }}
+  {{- with include "seaweedfs.commonLabels" $ }}
+  labels:
+    {{- . | nindent 4 }}
+  {{- end }}
   annotations:
     helm.sh/hook: pre-install,pre-upgrade
     helm.sh/hook-weight: "-5"
@@ -87,6 +92,10 @@ kind: Role
 metadata:
   name: {{ $seaweedfsName }}-volume-resize-hook
   namespace: {{ include "seaweedfs.namespace" . | quote }}
+  {{- with include "seaweedfs.commonLabels" $ }}
+  labels:
+    {{- . | nindent 4 }}
+  {{- end }}
   annotations:
     helm.sh/hook: pre-install,pre-upgrade
     helm.sh/hook-weight: "-5"
@@ -104,6 +113,10 @@ kind: RoleBinding
 metadata:
   name: {{ $seaweedfsName }}-volume-resize-hook
   namespace: {{ include "seaweedfs.namespace" . | quote }}
+  {{- with include "seaweedfs.commonLabels" $ }}
+  labels:
+    {{- . | nindent 4 }}
+  {{- end }}
   annotations:
     helm.sh/hook: pre-install,pre-upgrade
     helm.sh/hook-weight: "-5"

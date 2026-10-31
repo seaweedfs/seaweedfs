@@ -610,6 +610,10 @@ Two things worth knowing before you turn this on:
 
 The DNS selectors default to CoreDNS as kubeadm, kind and the managed offerings from AWS, Google and Azure install it. On OpenShift, override `egress.dnsNamespaceSelector` and `egress.dnsPodSelector` to match `openshift-dns`; see the comment in `values.yaml`.
 
+## Common labels
+
+`commonLabels` adds labels to the metadata of every object the chart creates. It may be a map or a template string rendering to one. The chart's own labels cannot be overridden, and pods (see `podLabels`) and `volumeClaimTemplates` are left unchanged.
+
 ## Pod and container security contexts
 
 Pod and container security contexts are configurable independently for every built-in workload and remain empty by default for backwards compatibility. The examples in `values.yaml` show how to enable a `RuntimeDefault` seccomp profile, disable privilege escalation and privileged mode, drop all Linux capabilities, and use a read-only root filesystem.
