@@ -225,3 +225,15 @@ func TestToMetadataSkipsInvalidHeaderNames(t *testing.T) {
 	require.Len(t, metadata, 1)
 	require.Equal(t, "yes", *metadata["good"])
 }
+
+func TestToMetadataPrefersCanonicalKeyOnCaseCollision(t *testing.T) {
+	for i := 0; i < 20; i++ {
+		metadata := toMetadata(map[string][]byte{
+			"x-amz-meta-project": []byte("legacy"),
+			"X-Amz-Meta-Project": []byte("canonical"),
+			"X-Amz-Meta-project": []byte("mixed"),
+		})
+		require.Len(t, metadata, 1)
+		require.Equal(t, "canonical", *metadata["project"])
+	}
+}

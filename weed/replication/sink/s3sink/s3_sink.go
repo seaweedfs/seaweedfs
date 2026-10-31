@@ -264,10 +264,13 @@ func buildTaggingString(extended map[string][]byte) string {
 
 // toMetadata maps the X-Amz-Meta- attributes, matched case-insensitively for
 // entries written before the S3 gateway canonicalized them, to S3 user metadata.
-// Values that are not printable ASCII are RFC 2047 encoded, which S3 decodes.
+// Of keys that differ only in case the lowest wins, so X-Amz-Meta-Foo beats the
+// legacy x-amz-meta-foo. Values that are not printable ASCII are RFC 2047
+// encoded, which S3 decodes.
 func toMetadata(extended map[string][]byte) map[string]*string {
 	prefix := s3_constants.AmzUserMetaPrefix
 	metadata := make(map[string]*string)
+	sourceKeys := make(map[string]string)
 	for k, v := range extended {
 		if len(k) <= len(prefix) || !strings.EqualFold(k[:len(prefix)], prefix) {
 			continue
@@ -276,7 +279,12 @@ func toMetadata(extended map[string][]byte) map[string]*string {
 			glog.Warningf("skip metadata %q: not a valid header name", k)
 			continue
 		}
-		metadata[strings.ToLower(k[len(prefix):])] = aws.String(mime.QEncoding.Encode("utf-8", string(v)))
+		name := strings.ToLower(k[len(prefix):])
+		if seen, found := sourceKeys[name]; found && seen < k {
+			continue
+		}
+		sourceKeys[name] = k
+		metadata[name] = aws.String(mime.QEncoding.Encode("utf-8", string(v)))
 	}
 	return metadata
 }
