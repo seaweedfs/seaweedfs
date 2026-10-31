@@ -62,8 +62,12 @@ type MetaAggregator struct {
 	deliveryAdvanced      chan struct{}
 	flushAdvanced         chan struct{}
 	remotePeerArrived     chan struct{}
-	peerWatermarksLock    sync.Mutex
-	peerWg                sync.WaitGroup
+	// peerResumeTsNs keeps each peer's delivered-through position across
+	// subscription restarts; the watermark maps forget a removed peer past
+	// the grace, but a rejoining peer still needs it to resume.
+	peerResumeTsNs     map[pb.ServerAddress]int64
+	peerWatermarksLock sync.Mutex
+	peerWg             sync.WaitGroup
 	// stopped is set under peerChansLock by Shutdown; OnPeerUpdate then
 	// rejects adds so no subscription can outlive the shutdown wait and run
 	// against a store Filer.Shutdown has already closed.
@@ -81,6 +85,7 @@ func NewMetaAggregator(filer *Filer, self pb.ServerAddress, grpcDialOption grpc.
 		peerWatermarks:      make(map[pb.ServerAddress]int64),
 		peerFlushWatermarks: make(map[pb.ServerAddress]int64),
 		peerRemovedAtNs:     make(map[pb.ServerAddress]int64),
+		peerResumeTsNs:      make(map[pb.ServerAddress]int64),
 	}
 	// nil notifyFn: aggregated subscribers wake through the buffer's
 	// subscriber channels, not a cond.
@@ -114,6 +119,7 @@ func (ma *MetaAggregator) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, star
 		// Account for the peer before its stream signals; keep prior values
 		// on reconnect.
 		ma.initPeerWatermark(address)
+		startFrom = ma.peerResumeStartFrom(address, startFrom)
 		ma.peerWg.Add(1)
 		go func() {
 			defer ma.peerWg.Done()
@@ -190,6 +196,24 @@ func (ma *MetaAggregator) advancePeerWatermark(peer pb.ServerAddress, tsNs int64
 		ma.peerWatermarks[peer] = tsNs
 		ma.noteLowWatermarksLocked()
 	}
+	if tsNs > ma.peerResumeTsNs[peer] {
+		ma.peerResumeTsNs[peer] = tsNs
+	}
+}
+
+// peerResumeStartFrom rewinds a (re)joining peer's subscribe start to the
+// position the previous subscription was delivered through. The peer's own
+// stream carries delivery claims (idle heartbeats and events alike) in this
+// timestamp domain, so anything at or below it was already received; starting
+// from the caller's "now" instead would drop what the peer logged while its
+// stream was down. A peer seen for the first time keeps the given start.
+func (ma *MetaAggregator) peerResumeStartFrom(peer pb.ServerAddress, startFrom time.Time) time.Time {
+	ma.peerWatermarksLock.Lock()
+	defer ma.peerWatermarksLock.Unlock()
+	if prev := ma.peerResumeTsNs[peer]; prev > 0 && prev < startFrom.UnixNano() {
+		return time.Unix(0, prev)
+	}
+	return startFrom
 }
 
 // advancePeerFlushWatermark records the peer's reported flush watermark.

@@ -12,6 +12,7 @@ func newTestAggregator() *MetaAggregator {
 		peerWatermarks:      make(map[pb.ServerAddress]int64),
 		peerFlushWatermarks: make(map[pb.ServerAddress]int64),
 		peerRemovedAtNs:     make(map[pb.ServerAddress]int64),
+		peerResumeTsNs:      make(map[pb.ServerAddress]int64),
 	}
 }
 
