@@ -326,6 +326,8 @@ func TestProcessRangeRequestRanges(t *testing.T) {
 		{"bytes=100-", http.StatusRequestedRangeNotSatisfiable, "bytes */10", ""},
 		{"bytes=10-,0-1", http.StatusPartialContent, "bytes 0-1/10", "01"},
 		{"bytes=--5", http.StatusRequestedRangeNotSatisfiable, "", ""},
+		{"bytes=-0", http.StatusRequestedRangeNotSatisfiable, "bytes */10", ""},
+		{"bytes=-0,0-1", http.StatusPartialContent, "bytes 0-1/10", "01"},
 	}
 	for _, tt := range tests {
 		w, err := serve(tt.rangeHeader)

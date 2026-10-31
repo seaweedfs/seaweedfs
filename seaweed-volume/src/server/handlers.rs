@@ -2126,6 +2126,11 @@ fn parse_range_header(s: &str, size: i64) -> Result<Vec<HttpRange>, &'static str
                 i = size;
             }
             r.start = size - i;
+            if r.start >= size {
+                // a zero-length suffix selects no bytes, so it does not overlap
+                no_overlap = true;
+                continue;
+            }
             r.length = size - r.start;
         } else {
             let i = start_str.parse::<i64>().map_err(|_| "invalid range")?;
@@ -5087,8 +5092,16 @@ mod tests {
             parse_range_header("bytes=100-", 10).unwrap_err(),
             RANGE_NO_OVERLAP
         );
+        // a zero-length suffix selects no bytes; same unsatisfiable class
+        assert_eq!(
+            parse_range_header("bytes=-0", 10).unwrap_err(),
+            RANGE_NO_OVERLAP
+        );
         // 416 only when every range fails to overlap
         let ranges = parse_range_header("bytes=10-,0-1", 10).unwrap();
+        assert_eq!(ranges.len(), 1);
+        assert_eq!((ranges[0].start, ranges[0].length), (0, 2));
+        let ranges = parse_range_header("bytes=-0,0-1", 10).unwrap();
         assert_eq!(ranges.len(), 1);
         assert_eq!((ranges[0].start, ranges[0].length), (0, 2));
         // an end past the size is clamped, still satisfiable
@@ -5153,6 +5166,8 @@ mod tests {
         let data = b"hello";
         let headers = HeaderMap::new();
         let resp = handle_range_request("bytes=999-1000", data, headers, None);
+        assert_eq!(resp.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+        let resp = handle_range_request("bytes=-0", data, HeaderMap::new(), None);
         assert_eq!(resp.status(), StatusCode::RANGE_NOT_SATISFIABLE);
     }
 
