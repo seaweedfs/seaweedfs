@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"golang.org/x/sync/singleflight"
 
@@ -34,12 +35,17 @@ type vidMapClient struct {
 	vidLookupGroup singleflight.Group
 	// recentDeletes fences (vid, url) pairs a pushed removal dropped, so a
 	// provider answer still naming them is neither cached nor served until the
-	// master reports the pair back. vidMapEpoch keeps answers fetched before a
-	// reset or clear out of the cache.
+	// master reports the pair back or recentDeleteTTL passes. vidMapEpoch
+	// keeps answers fetched before a reset or clear out of the cache.
 	recentDeletesMu   sync.Mutex
 	recentDeletes     map[vidLocationKey]*list.Element
-	recentDeleteOrder *list.List
+	recentDeleteOrder *list.List // of recentDelete, oldest first
 	vidMapEpoch       uint64
+}
+
+type recentDelete struct {
+	key vidLocationKey
+	at  time.Time
 }
 
 type vidLocationKey struct {
@@ -47,8 +53,14 @@ type vidLocationKey struct {
 	url string
 }
 
-// recentDeleteCap bounds the fence; past it the oldest mark is evicted.
-const recentDeleteCap = 1 << 16
+const (
+	// recentDeleteTTL outlasts a lookup in flight when the removal landed.
+	// Expiring only falls back to learning by a failed read, while a mark kept
+	// until the re-add would hide a live server whose re-add the master
+	// dropped on a full client channel.
+	recentDeleteTTL = time.Minute
+	recentDeleteCap = 1 << 16
+)
 
 const (
 	// DefaultVidMapCacheSize is the default number of resets a volume location
@@ -367,22 +379,39 @@ func (vc *vidMapClient) mapEpoch() uint64 {
 
 func (vc *vidMapClient) tombstone(vid uint32, loc Location) {
 	key := vidLocationKey{vid: vid, url: loc.Url}
+	now := time.Now()
 	vc.recentDeletesMu.Lock()
 	defer vc.recentDeletesMu.Unlock()
-	if e, found := vc.recentDeletes[key]; found {
-		vc.recentDeleteOrder.MoveToBack(e)
-		return
-	}
 	if vc.recentDeletes == nil {
 		vc.recentDeletes = make(map[vidLocationKey]*list.Element)
 		vc.recentDeleteOrder = list.New()
 	}
-	vc.recentDeletes[key] = vc.recentDeleteOrder.PushBack(key)
-	if len(vc.recentDeletes) > recentDeleteCap {
-		front := vc.recentDeleteOrder.Front()
-		delete(vc.recentDeletes, front.Value.(vidLocationKey))
-		vc.recentDeleteOrder.Remove(front)
+	vc.expireRecentDeletes(now)
+	if e, found := vc.recentDeletes[key]; found {
+		e.Value = recentDelete{key: key, at: now}
+		vc.recentDeleteOrder.MoveToBack(e)
+		return
 	}
+	vc.recentDeletes[key] = vc.recentDeleteOrder.PushBack(recentDelete{key: key, at: now})
+	if len(vc.recentDeletes) > recentDeleteCap {
+		vc.removeRecentDelete(vc.recentDeleteOrder.Front())
+	}
+}
+
+// expireRecentDeletes drops marks older than recentDeleteTTL. Callers must
+// hold recentDeletesMu.
+func (vc *vidMapClient) expireRecentDeletes(now time.Time) {
+	if vc.recentDeleteOrder == nil {
+		return
+	}
+	for e := vc.recentDeleteOrder.Front(); e != nil && now.Sub(e.Value.(recentDelete).at) >= recentDeleteTTL; e = vc.recentDeleteOrder.Front() {
+		vc.removeRecentDelete(e)
+	}
+}
+
+func (vc *vidMapClient) removeRecentDelete(e *list.Element) {
+	delete(vc.recentDeletes, e.Value.(recentDelete).key)
+	vc.recentDeleteOrder.Remove(e)
 }
 
 func (vc *vidMapClient) untombstone(vid uint32, loc Location) {
@@ -390,8 +419,7 @@ func (vc *vidMapClient) untombstone(vid uint32, loc Location) {
 	vc.recentDeletesMu.Lock()
 	defer vc.recentDeletesMu.Unlock()
 	if e, found := vc.recentDeletes[key]; found {
-		delete(vc.recentDeletes, key)
-		vc.recentDeleteOrder.Remove(e)
+		vc.removeRecentDelete(e)
 	}
 }
 
@@ -401,6 +429,7 @@ func (vc *vidMapClient) untombstone(vid uint32, loc Location) {
 func (vc *vidMapClient) fillLocation(vid uint32, loc Location, epoch uint64) bool {
 	vc.recentDeletesMu.Lock()
 	defer vc.recentDeletesMu.Unlock()
+	vc.expireRecentDeletes(time.Now())
 	if _, found := vc.recentDeletes[vidLocationKey{vid: vid, url: loc.Url}]; found {
 		return false
 	}

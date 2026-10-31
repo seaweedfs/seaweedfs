@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 )
 
 type testLocationProvider struct {
@@ -155,6 +156,24 @@ func TestProviderFillSkipsTombstonedLocation(t *testing.T) {
 	}
 	if cached, found := vc.GetLocations(5); !found || len(cached) != 1 || cached[0].Url != live.Url {
 		t.Errorf("cache holds %v, want only the surviving location", cached)
+	}
+}
+
+func TestTombstoneExpires(t *testing.T) {
+	retired := Location{Url: "retired:8080"}
+	vc := newVidMapClient(&testLocationProvider{
+		locations: map[string][]Location{"5": {retired}},
+	}, "", 5)
+	vc.tombstone(5, retired)
+	e := vc.recentDeletes[vidLocationKey{vid: 5, url: retired.Url}]
+	e.Value = recentDelete{key: vidLocationKey{vid: 5, url: retired.Url}, at: time.Now().Add(-recentDeleteTTL)}
+
+	locations, err := vc.LookupVolumeIdsWithFallback(context.Background(), []string{"5"})
+	if err != nil || len(locations["5"]) != 1 {
+		t.Fatalf("expired mark still fenced the location: %v, err %v", locations["5"], err)
+	}
+	if len(vc.recentDeletes) != 0 || vc.recentDeleteOrder.Len() != 0 {
+		t.Errorf("expired mark kept: %d marks, %d ordered", len(vc.recentDeletes), vc.recentDeleteOrder.Len())
 	}
 }
 
