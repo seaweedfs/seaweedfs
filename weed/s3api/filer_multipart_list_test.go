@@ -182,8 +182,8 @@ func TestSelectMultipartUploadsUrlEncodesMarkersAndKeys(t *testing.T) {
 
 // A raw key that already carries the token prefix must survive an
 // encoding-type=url round trip: under url mode the wire form is the url escape
-// alone, so the request decode only unescapes — running the token decode on
-// "base64:..." would misread the raw key as an encoded token.
+// alone, so the client unescapes and hands the raw key back — running the
+// token decode on "base64:..." would misread the raw key as an encoded token.
 func TestSelectMultipartUploadsUrlTokenPrefixedKeyRoundTrip(t *testing.T) {
 	entries := []*filer_pb.Entry{
 		uploadEntry("1", "base64:AQ", 10),
@@ -193,7 +193,10 @@ func TestSelectMultipartUploadsUrlTokenPrefixedKeyRoundTrip(t *testing.T) {
 	input.EncodingType = aws.String(s3.EncodingTypeUrl)
 
 	out := selectMultipartUploads(input, entries)
-	resume := decodeEscapedEcho(*out.NextKeyMarker, true, urlQueryEscape)
+	resume, err := url.QueryUnescape(*out.NextKeyMarker)
+	if err != nil {
+		t.Fatalf("next key marker %q does not unescape: %v", *out.NextKeyMarker, err)
+	}
 	if resume != "base64:AQ" {
 		t.Fatalf("next key marker %q resumes at %q, want %q", *out.NextKeyMarker, resume, "base64:AQ")
 	}

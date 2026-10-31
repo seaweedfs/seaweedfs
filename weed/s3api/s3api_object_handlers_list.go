@@ -196,16 +196,6 @@ func encodeMarkerEcho(marker string, encodingTypeUrl bool) string {
 	return marker
 }
 
-func decodeEscapedEcho(marker string, encodingTypeUrl bool, escape func(string) string) string {
-	if !encodingTypeUrl {
-		return marker
-	}
-	if unescaped, err := url.QueryUnescape(marker); err == nil && escape(unescaped) == marker {
-		return unescaped
-	}
-	return marker
-}
-
 func decodeListContinuationToken(token string) string {
 	key, ok := strings.CutPrefix(token, continuationTokenEncodingPrefix)
 	if !ok {
