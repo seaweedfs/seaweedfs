@@ -297,10 +297,11 @@ func (mc *MasterClient) SetOnVidMapResetFn(fn func()) {
 // notifyVidMapReset tells registered listeners the master's view was re-told.
 func (mc *MasterClient) notifyVidMapReset() {
 	mc.OnVidMapResetLock.RLock()
-	if mc.OnVidMapReset != nil {
-		mc.OnVidMapReset()
-	}
+	onReset := mc.OnVidMapReset
 	mc.OnVidMapResetLock.RUnlock()
+	if onReset != nil {
+		onReset()
+	}
 }
 
 func (mc *MasterClient) tryAllMasters(ctx context.Context) {
@@ -629,10 +630,11 @@ func (mc *MasterClient) updateVidMap(resp *master_pb.KeepConnectedResponse) {
 	}
 	if len(deletedVids) > 0 || len(deletedEcVids) > 0 {
 		mc.OnVolumeLocationDeleteLock.RLock()
-		if mc.OnVolumeLocationDelete != nil {
-			mc.OnVolumeLocationDelete(loc, deletedVids, deletedEcVids)
-		}
+		onDelete := mc.OnVolumeLocationDelete
 		mc.OnVolumeLocationDeleteLock.RUnlock()
+		if onDelete != nil {
+			onDelete(loc, deletedVids, deletedEcVids)
+		}
 	}
 	glog.V(1).Infof("updateVidMap(%s) %s.%s: %s volume add local: %d, remote: %d, del: %d, add ec: %d del ec: %d",
 		resp.VolumeLocation.DataCenter, mc.FilerGroup, mc.clientType, loc.Url,
