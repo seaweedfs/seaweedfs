@@ -7153,10 +7153,10 @@ mod tests {
         assert_eq!(taken(&reads), vec![0]);
     }
 
-    /// A negative suffix must not shrink the covered length under the sum.
-    /// Duplicate ranges stay an empty 200 and read nothing.
+    /// A negative suffix makes the whole header invalid, so the read is
+    /// rejected before any chunk is fetched.
     #[tokio::test]
-    async fn test_chunk_manifest_negative_suffix_stays_empty() {
+    async fn test_chunk_manifest_negative_suffix_is_rejected() {
         let tmp = tempfile::TempDir::new().unwrap();
         let state = volume_test_state(&tmp);
         let ten = put_test_needle(&state, 0x6e7a_0c41, b"0123456789");
@@ -7166,16 +7166,14 @@ mod tests {
             &ten[1..]
         );
         let path = put_manifest(&state, 0x6e7a_0c42, &json);
-        let (status, headers, body) = send_read(
+        let (status, _, _) = send_read(
             &state,
             Method::GET,
             &path,
             Some(b"bytes=0-7,0-7,--1073741824"),
         )
         .await;
-        assert_eq!(status, StatusCode::OK);
-        assert!(body.is_empty());
-        assert_eq!(headers[header::ACCEPT_RANGES], "bytes");
+        assert_eq!(status, StatusCode::RANGE_NOT_SATISFIABLE);
         assert_eq!(taken(&reads), vec![0]);
     }
 
