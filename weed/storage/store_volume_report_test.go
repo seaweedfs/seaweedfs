@@ -178,6 +178,34 @@ func TestDepartedVolumeIsNamedInTheDelta(t *testing.T) {
 	}
 }
 
+// The master undoes what it counted for the volume, so a delete has to say
+// whether the volume was still counted as writable.
+func TestDeleteReportsCarryTheReadOnlyState(t *testing.T) {
+	store := reportingStore(t, 1, 2)
+	store.ResetVolumeReporting()
+	store.AcceptVolumeChanges()
+	store.CollectHeartbeat()
+	for _, vid := range []needle.VolumeId{1, 2} {
+		if err := store.MarkVolumeReadonly(vid, false, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	store.CollectHeartbeat()
+
+	store.Locations[0].UnloadVolume(needle.VolumeId(1))
+	heartbeat := store.CollectHeartbeat()
+	if len(heartbeat.DeletedVolumes) != 1 || !heartbeat.DeletedVolumes[0].ReadOnly {
+		t.Fatalf("departed volume 1 not reported read-only: %v", heartbeat.DeletedVolumes)
+	}
+
+	if err := store.DeleteVolume(needle.VolumeId(2), false, false, false); err != nil {
+		t.Fatal(err)
+	}
+	if m := <-store.DeletedVolumesChan; m.Id != 2 || !m.ReadOnly {
+		t.Fatalf("deleted volume 2 not reported read-only: %v", m)
+	}
+}
+
 // A full list is already the whole truth; naming departures beside it would
 // tell the master to remove what the list already excludes.
 func TestFullListCarriesNoDepartures(t *testing.T) {

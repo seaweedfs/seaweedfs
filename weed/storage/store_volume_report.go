@@ -26,11 +26,13 @@ type volumeReportKey struct {
 // internVolumeString warns against, would have the next volume make a second
 // copy.
 type reportedIdentity struct {
-	collection       string
-	diskType         string
-	replicaPlacement uint32
-	version          uint32
-	ttl              uint32
+	collection        string
+	diskType          string
+	replicaPlacement  uint32
+	version           uint32
+	ttl               uint32
+	readOnly          bool
+	readOnlyCanDelete bool
 }
 
 // reportedVolume is what the master was told about one volume copy: the hash
@@ -123,24 +125,28 @@ func (s *volumeReportState) record(m *master_pb.VolumeInformationMessage, hash u
 
 func identityOf(m *master_pb.VolumeInformationMessage) unique.Handle[reportedIdentity] {
 	return unique.Make(reportedIdentity{
-		collection:       m.Collection,
-		diskType:         m.DiskType,
-		replicaPlacement: m.ReplicaPlacement,
-		version:          m.Version,
-		ttl:              m.Ttl,
+		collection:        m.Collection,
+		diskType:          m.DiskType,
+		replicaPlacement:  m.ReplicaPlacement,
+		version:           m.Version,
+		ttl:               m.Ttl,
+		readOnly:          m.ReadOnly,
+		readOnlyCanDelete: m.ReadOnlyCanDelete,
 	})
 }
 
 func (held reportedVolume) toShortInformation(key volumeReportKey) *master_pb.VolumeShortInformationMessage {
 	identity := held.identity.Value()
 	return &master_pb.VolumeShortInformationMessage{
-		Id:               key.volumeId,
-		Collection:       identity.collection,
-		ReplicaPlacement: identity.replicaPlacement,
-		Version:          identity.version,
-		Ttl:              identity.ttl,
-		DiskType:         identity.diskType,
-		DiskId:           key.diskId,
+		Id:                key.volumeId,
+		Collection:        identity.collection,
+		ReplicaPlacement:  identity.replicaPlacement,
+		Version:           identity.version,
+		Ttl:               identity.ttl,
+		DiskType:          identity.diskType,
+		DiskId:            key.diskId,
+		ReadOnly:          identity.readOnly,
+		ReadOnlyCanDelete: identity.readOnlyCanDelete,
 	}
 }
 

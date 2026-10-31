@@ -287,14 +287,17 @@ func (s *Store) DeleteCollection(collection string) (e error) {
 		// volume grown and destroyed between two of them was never reported at
 		// all, so nothing else would ever tell the master its slot came free.
 		for _, v := range deleted {
+			readOnly, _, readOnlyCanDelete, _ := v.ReadOnlyReasons()
 			s.DeletedVolumesChan <- &master_pb.VolumeShortInformationMessage{
-				Id:               uint32(v.Id),
-				Collection:       v.Collection,
-				ReplicaPlacement: uint32(v.ReplicaPlacement.Byte()),
-				Version:          uint32(v.Version()),
-				Ttl:              v.Ttl.ToUint32(),
-				DiskType:         string(location.DiskType),
-				DiskId:           v.diskId,
+				Id:                uint32(v.Id),
+				Collection:        v.Collection,
+				ReplicaPlacement:  uint32(v.ReplicaPlacement.Byte()),
+				Version:           uint32(v.Version()),
+				Ttl:               v.Ttl.ToUint32(),
+				DiskType:          string(location.DiskType),
+				DiskId:            v.diskId,
+				ReadOnly:          readOnly,
+				ReadOnlyCanDelete: readOnlyCanDelete,
 			}
 		}
 		if err != nil {
@@ -1176,14 +1179,17 @@ func (s *Store) UnmountVolume(i needle.VolumeId) error {
 		if !found {
 			continue
 		}
+		readOnly, _, readOnlyCanDelete, _ := v.ReadOnlyReasons()
 		message := master_pb.VolumeShortInformationMessage{
-			Id:               uint32(v.Id),
-			Collection:       v.Collection,
-			ReplicaPlacement: uint32(v.ReplicaPlacement.Byte()),
-			Version:          uint32(v.Version()),
-			Ttl:              v.Ttl.ToUint32(),
-			DiskType:         string(location.DiskType),
-			DiskId:           v.diskId,
+			Id:                uint32(v.Id),
+			Collection:        v.Collection,
+			ReplicaPlacement:  uint32(v.ReplicaPlacement.Byte()),
+			Version:           uint32(v.Version()),
+			Ttl:               v.Ttl.ToUint32(),
+			DiskType:          string(location.DiskType),
+			DiskId:            v.diskId,
+			ReadOnly:          readOnly,
+			ReadOnlyCanDelete: readOnlyCanDelete,
 		}
 		if err := location.UnloadVolume(i); err != nil {
 			if err == ErrVolumeNotFound {
@@ -1279,14 +1285,17 @@ func (s *Store) DeleteVolume(i needle.VolumeId, onlyEmpty bool, onlyGarbage bool
 		if !found {
 			continue
 		}
+		readOnly, _, readOnlyCanDelete, _ := v.ReadOnlyReasons()
 		message := master_pb.VolumeShortInformationMessage{
-			Id:               uint32(v.Id),
-			Collection:       v.Collection,
-			ReplicaPlacement: uint32(v.ReplicaPlacement.Byte()),
-			Version:          uint32(v.Version()),
-			Ttl:              v.Ttl.ToUint32(),
-			DiskType:         string(location.DiskType),
-			DiskId:           v.diskId,
+			Id:                uint32(v.Id),
+			Collection:        v.Collection,
+			ReplicaPlacement:  uint32(v.ReplicaPlacement.Byte()),
+			Version:           uint32(v.Version()),
+			Ttl:               v.Ttl.ToUint32(),
+			DiskType:          string(location.DiskType),
+			DiskId:            v.diskId,
+			ReadOnly:          readOnly,
+			ReadOnlyCanDelete: readOnlyCanDelete,
 		}
 		err := location.DeleteVolume(i, onlyEmpty, onlyGarbage, keepRemoteData)
 		if err == nil {
@@ -1356,14 +1365,17 @@ func (s *Store) deleteVolumeGuarded(i needle.VolumeId, onlyEmpty bool, onlyGarba
 	var deletedMessages []*master_pb.VolumeShortInformationMessage
 	for _, location := range lockedLocations {
 		v := location.volumes[i]
+		readOnly, _, readOnlyCanDelete, _ := v.ReadOnlyReasons()
 		message := &master_pb.VolumeShortInformationMessage{
-			Id:               uint32(v.Id),
-			Collection:       v.Collection,
-			ReplicaPlacement: uint32(v.ReplicaPlacement.Byte()),
-			Version:          uint32(v.Version()),
-			Ttl:              v.Ttl.ToUint32(),
-			DiskType:         string(location.DiskType),
-			DiskId:           v.diskId,
+			Id:                uint32(v.Id),
+			Collection:        v.Collection,
+			ReplicaPlacement:  uint32(v.ReplicaPlacement.Byte()),
+			Version:           uint32(v.Version()),
+			Ttl:               v.Ttl.ToUint32(),
+			DiskType:          string(location.DiskType),
+			DiskId:            v.diskId,
+			ReadOnly:          readOnly,
+			ReadOnlyCanDelete: readOnlyCanDelete,
 		}
 		if err := v.destroyLocked(onlyEmpty, onlyGarbage, keepRemoteData); err != nil {
 			// A real failure on one disk must not be masked by another copy's
