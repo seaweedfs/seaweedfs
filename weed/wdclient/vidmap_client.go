@@ -1,6 +1,7 @@
 package wdclient
 
 import (
+	"container/list"
 	"context"
 	"errors"
 	"fmt"
@@ -8,6 +9,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"golang.org/x/sync/singleflight"
 
@@ -30,7 +33,34 @@ type vidMapClient struct {
 	vidMap         *vidMap
 	provider       VolumeLocationProvider
 	vidLookupGroup singleflight.Group
+	// recentDeletes fences (vid, url) pairs a pushed removal dropped, so a
+	// provider answer still naming them is neither cached nor served until the
+	// master reports the pair back or recentDeleteTTL passes. vidMapEpoch
+	// keeps answers fetched before a reset or clear out of the cache.
+	recentDeletesMu   sync.Mutex
+	recentDeletes     map[vidLocationKey]*list.Element
+	recentDeleteOrder *list.List // of recentDelete, oldest first
+	vidMapEpoch       uint64
 }
+
+type recentDelete struct {
+	key vidLocationKey
+	at  time.Time
+}
+
+type vidLocationKey struct {
+	vid uint32
+	url string
+}
+
+const (
+	// recentDeleteTTL outlasts a lookup in flight when the removal landed.
+	// Expiring only falls back to learning by a failed read, while a mark kept
+	// until the re-add would hide a live server whose re-add the master
+	// dropped on a full client channel.
+	recentDeleteTTL = time.Minute
+	recentDeleteCap = 1 << 16
+)
 
 const (
 	// DefaultVidMapCacheSize is the default number of resets a volume location
@@ -200,12 +230,12 @@ func (vc *vidMapClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 		// Query provider with batched volume IDs
 		glog.V(2).Infof("Looking up %d volumes from provider: %v", len(stillNeedLookup), stillNeedLookup)
 
+		fillEpoch := vc.mapEpoch()
 		providerResults, err := vc.provider.LookupVolumeIds(ctx, stillNeedLookup)
 		if err != nil {
 			return batchResult, fmt.Errorf("provider lookup failed: %w", err)
 		}
 
-		// Update cache with results
 		for vidString, locations := range providerResults {
 			vid, err := strconv.ParseUint(vidString, 10, 32)
 			if err != nil {
@@ -213,12 +243,15 @@ func (vc *vidMapClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 				continue
 			}
 
+			var live []Location
 			for _, loc := range locations {
-				vc.addLocation(uint32(vid), loc)
+				if vc.fillLocation(uint32(vid), loc, fillEpoch) {
+					live = append(live, loc)
+				}
 			}
 
-			if len(locations) > 0 {
-				batchResult[vidString] = locations
+			if len(live) > 0 {
+				batchResult[vidString] = live
 			}
 		}
 
@@ -323,7 +356,87 @@ func (vc *vidMapClient) deleteEcLocation(vid uint32, location Location) {
 // resetVidMap starts a new generation, as when the master changes: what the
 // previous one told us stays readable until it is relearned or expires.
 func (vc *vidMapClient) resetVidMap() {
+	vc.recentDeletesMu.Lock()
+	vc.vidMapEpoch++
+	vc.recentDeletesMu.Unlock()
 	vc.vidMap.reset()
+}
+
+// clearVidMap drops every location, for a cache whose feed restarted without
+// replaying the removals it missed.
+func (vc *vidMapClient) clearVidMap() {
+	vc.recentDeletesMu.Lock()
+	vc.vidMapEpoch++
+	vc.recentDeletesMu.Unlock()
+	vc.vidMap.clear()
+}
+
+func (vc *vidMapClient) mapEpoch() uint64 {
+	vc.recentDeletesMu.Lock()
+	defer vc.recentDeletesMu.Unlock()
+	return vc.vidMapEpoch
+}
+
+func (vc *vidMapClient) tombstone(vid uint32, loc Location) {
+	key := vidLocationKey{vid: vid, url: loc.Url}
+	now := time.Now()
+	vc.recentDeletesMu.Lock()
+	defer vc.recentDeletesMu.Unlock()
+	if vc.recentDeletes == nil {
+		vc.recentDeletes = make(map[vidLocationKey]*list.Element)
+		vc.recentDeleteOrder = list.New()
+	}
+	vc.expireRecentDeletes(now)
+	if e, found := vc.recentDeletes[key]; found {
+		e.Value = recentDelete{key: key, at: now}
+		vc.recentDeleteOrder.MoveToBack(e)
+		return
+	}
+	vc.recentDeletes[key] = vc.recentDeleteOrder.PushBack(recentDelete{key: key, at: now})
+	if len(vc.recentDeletes) > recentDeleteCap {
+		vc.removeRecentDelete(vc.recentDeleteOrder.Front())
+	}
+}
+
+// expireRecentDeletes drops marks older than recentDeleteTTL. Callers must
+// hold recentDeletesMu.
+func (vc *vidMapClient) expireRecentDeletes(now time.Time) {
+	if vc.recentDeleteOrder == nil {
+		return
+	}
+	for e := vc.recentDeleteOrder.Front(); e != nil && now.Sub(e.Value.(recentDelete).at) >= recentDeleteTTL; e = vc.recentDeleteOrder.Front() {
+		vc.removeRecentDelete(e)
+	}
+}
+
+func (vc *vidMapClient) removeRecentDelete(e *list.Element) {
+	delete(vc.recentDeletes, e.Value.(recentDelete).key)
+	vc.recentDeleteOrder.Remove(e)
+}
+
+func (vc *vidMapClient) untombstone(vid uint32, loc Location) {
+	key := vidLocationKey{vid: vid, url: loc.Url}
+	vc.recentDeletesMu.Lock()
+	defer vc.recentDeletesMu.Unlock()
+	if e, found := vc.recentDeletes[key]; found {
+		vc.removeRecentDelete(e)
+	}
+}
+
+// fillLocation reports whether a provider answer may be served, and caches it
+// unless a reset or clear happened since epoch. Holding recentDeletesMu across
+// the check and the add keeps a concurrent removal from being undone.
+func (vc *vidMapClient) fillLocation(vid uint32, loc Location, epoch uint64) bool {
+	vc.recentDeletesMu.Lock()
+	defer vc.recentDeletesMu.Unlock()
+	vc.expireRecentDeletes(time.Now())
+	if _, found := vc.recentDeletes[vidLocationKey{vid: vid, url: loc.Url}]; found {
+		return false
+	}
+	if vc.vidMapEpoch == epoch {
+		vc.vidMap.addLocation(vid, loc)
+	}
+	return true
 }
 
 // InvalidateCache removes all cached locations for a volume ID

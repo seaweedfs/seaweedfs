@@ -206,6 +206,25 @@ func (vc *vidMap) GetLocations(vid uint32) (locations []Location, found bool) {
 	return nil, false
 }
 
+// hasLocation reports whether url serves vid, as a regular copy or ec shards,
+// in an entry learned since the last reset.
+func (vc *vidMap) hasLocation(vid uint32, url string) bool {
+	vc.RLock()
+	defer vc.RUnlock()
+	for _, vid2Locations := range []map[uint32]*locationsEntry{vc.vid2Locations, vc.ecVid2Locations} {
+		entry, found := vid2Locations[vid]
+		if !found || entry.generation != vc.generation {
+			continue
+		}
+		for _, loc := range entry.locations {
+			if loc.Url == url {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // lookupEntry returns vid's entry when it still holds locations. Callers must
 // hold the lock.
 func lookupEntry(vid2Locations map[uint32]*locationsEntry, vid uint32) (*locationsEntry, bool) {
@@ -366,6 +385,16 @@ func (vc *vidMap) deleteVid(vid uint32) {
 		vc.releaseEntry(entry)
 		delete(vc.ecVid2Locations, vid)
 	}
+}
+
+// clear drops every location, keeping no history to fall back to.
+func (vc *vidMap) clear() {
+	vc.Lock()
+	defer vc.Unlock()
+
+	vc.vid2Locations = make(map[uint32]*locationsEntry)
+	vc.ecVid2Locations = make(map[uint32]*locationsEntry)
+	vc.serverRefCount = make(map[string]int)
 }
 
 // reset starts a new generation, as when the master changes and everything it

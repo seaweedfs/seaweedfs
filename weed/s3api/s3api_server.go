@@ -248,6 +248,8 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 			DiscoveryInterval: 5 * time.Minute,
 		})
 		masterClient.SetOnPeerUpdateFn(filerClient.OnPeerUpdate)
+		masterClient.SetOnVolumeLocationChangeFn(filerClient.OnVolumeLocationChange)
+		masterClient.SetOnVidMapResetFn(filerClient.OnVidMapReset)
 
 		// Start the master client connection loop - required for GetMaster() to work
 		go masterClient.KeepConnectedToMaster(context.Background())
