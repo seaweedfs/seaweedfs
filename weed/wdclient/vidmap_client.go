@@ -383,6 +383,13 @@ func (vc *vidMapClient) isTombstoned(vid uint32, loc Location) bool {
 	return true
 }
 
+// clearVidMap drops every cached location. Unlike resetVidMap, used when the
+// feed that fills the map restarts without replaying its contents, so nothing
+// previously learned can still be trusted.
+func (vc *vidMapClient) clearVidMap() {
+	vc.vidMap.clear()
+}
+
 // InvalidateCache removes all cached locations for a volume ID
 func (vc *vidMapClient) InvalidateCache(fileId string) {
 	parts := strings.Split(fileId, ",")

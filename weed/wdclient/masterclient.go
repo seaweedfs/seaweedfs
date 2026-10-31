@@ -182,7 +182,12 @@ type MasterClient struct {
 	// here to drop the same entries instead of learning by a failed read.
 	OnVolumeLocationDelete     func(loc Location, deletedVids []uint32, deletedEcVids []uint32)
 	OnVolumeLocationDeleteLock sync.RWMutex
-
+	// OnVidMapReset fires when a (re)connect makes the master re-tell its
+	// volume locations. Clients keeping a second location cache get no replay
+	// of the removals that may have happened while disconnected, so theirs
+	// must be dropped rather than reset generation-wise.
+	OnVidMapReset     func()
+	OnVidMapResetLock sync.RWMutex
 	// streamLock publishes the stream only after its registration send, so a
 	// leave sent afterwards never races that send.
 	streamLock      sync.Mutex
@@ -281,6 +286,21 @@ func (mc *MasterClient) SetOnVolumeLocationDeleteFn(fn func(loc Location, delete
 	mc.OnVolumeLocationDeleteLock.Lock()
 	mc.OnVolumeLocationDelete = fn
 	mc.OnVolumeLocationDeleteLock.Unlock()
+}
+
+func (mc *MasterClient) SetOnVidMapResetFn(fn func()) {
+	mc.OnVidMapResetLock.Lock()
+	mc.OnVidMapReset = fn
+	mc.OnVidMapResetLock.Unlock()
+}
+
+// notifyVidMapReset tells registered listeners the master's view was re-told.
+func (mc *MasterClient) notifyVidMapReset() {
+	mc.OnVidMapResetLock.RLock()
+	if mc.OnVidMapReset != nil {
+		mc.OnVidMapReset()
+	}
+	mc.OnVidMapResetLock.RUnlock()
 }
 
 func (mc *MasterClient) tryAllMasters(ctx context.Context) {
@@ -398,11 +418,13 @@ func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.Server
 				return nil
 			}
 			mc.resetVidMap()
+			mc.notifyVidMapReset()
 			mc.updateVidMap(resp)
 		} else {
 			// First message from master is not VolumeLocation (e.g., ClusterNodeUpdate)
 			// Still need to reset cache to ensure we don't use stale data from previous master
 			mc.resetVidMap()
+			mc.notifyVidMapReset()
 		}
 		if previous := mc.markServingMaster(master); previous != "" {
 			mc.OnMasterChangeLock.RLock()

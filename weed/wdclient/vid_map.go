@@ -368,6 +368,18 @@ func (vc *vidMap) deleteVid(vid uint32) {
 	}
 }
 
+// clear drops every tracked location outright, as when the feed behind the
+// map restarted without replaying its contents and nothing it reported can
+// still be trusted.
+func (vc *vidMap) clear() {
+	vc.Lock()
+	defer vc.Unlock()
+
+	vc.vid2Locations = make(map[uint32]*locationsEntry)
+	vc.ecVid2Locations = make(map[uint32]*locationsEntry)
+	vc.serverRefCount = make(map[string]int)
+}
+
 // reset starts a new generation, as when the master changes and everything it
 // told us has to be relearned. Entries stay readable while they are relearned
 // and are dropped once they fall out of the retained window.

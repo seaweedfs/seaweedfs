@@ -183,6 +183,7 @@ func NewFilerClient(filerAddresses []pb.ServerAddress, grpcDialOption grpc.DialO
 	// Empty filerGroup is valid (represents default group)
 	if masterClient != nil {
 		masterClient.SetOnVolumeLocationDeleteFn(fc.OnVolumeLocationDelete)
+		masterClient.SetOnVidMapResetFn(fc.OnVidMapReset)
 		fc.stopDiscovery = make(chan struct{})
 		go fc.discoverFilers()
 		glog.V(0).Infof("FilerClient: started filer discovery for group '%s' (refresh interval: %v)", filerGroup, discoveryInterval)
@@ -540,6 +541,13 @@ func (fc *FilerClient) OnVolumeLocationDelete(loc Location, deletedVids []uint32
 		fc.deleteLocation(vid, loc)
 		fc.deleteEcLocation(vid, loc)
 	}
+}
+
+// OnVidMapReset drops every cached location when the master re-tells its view:
+// removals that happened while the master link was down never arrive as
+// deletes, and this cache is refilled by lookup anyway.
+func (fc *FilerClient) OnVidMapReset() {
+	fc.clearVidMap()
 }
 
 // GetLookupFileIdFunction returns a lookup function with URL preference handling

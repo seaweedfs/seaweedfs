@@ -425,6 +425,19 @@ func TestOnVolumeLocationDeleteIgnoresUncachedEntries(t *testing.T) {
 	}
 }
 
+// The master re-telling its view (reconnect) means removals it pushed while
+// the link was down never arrive, so the lookup-fed cache is dropped entirely.
+func TestOnVidMapResetClearsCachedLocations(t *testing.T) {
+	fc := newTestFilerClient()
+	fc.addLocation(7, Location{Url: "live:8080"})
+
+	fc.OnVidMapReset()
+
+	if locations, found := fc.GetLocations(7); found && len(locations) > 0 {
+		t.Errorf("vid 7 survived the reset: %v", locations)
+	}
+}
+
 // Filer lookups cache EC locations through addLocation into the regular map,
 // so an EC removal has to drop the retired server there too.
 func TestOnVolumeLocationDeleteDropsRetiredEcServer(t *testing.T) {
