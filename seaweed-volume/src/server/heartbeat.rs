@@ -82,123 +82,138 @@ pub async fn run_heartbeat_with_state(
                 return;
             }
 
-            // If we have a leader redirect, sleep 3s then connect to the leader
-            // instead of iterating through the seed list
-            let target_addr = if let Some(ref leader) = new_leader {
-                tokio::time::sleep(Duration::from_secs(3)).await;
-                leader.clone()
-            } else {
-                master_addr.clone()
-            };
-
-            let grpc_addr = to_grpc_address(&target_addr);
-            info!("Connecting heartbeat to master {}", grpc_addr);
-
-            // Determine what action to take after the heartbeat attempt.
-            // We convert the error to a string immediately so the non-Send
-            // Box<dyn Error> is dropped before any .await point.
-            enum PostAction {
-                LeaderRedirect(String),
-                Done,
-                SleepDuplicate(Duration),
-                SleepPulse,
-            }
-            let action = match do_heartbeat(
-                &config,
-                &state,
-                &grpc_addr,
-                &target_addr,
-                pulse,
-                &mut shutdown_rx,
-                &mut confirmed_leader_once,
-            )
-            .await
+            // A named leader is tried once on top of the seed scan rather
+            // than in the next seed's place: a peer that keeps naming a dead
+            // leader would otherwise eat that seed's slot on every pass and
+            // starve it. A hint naming the upcoming seed is covered by the
+            // seed dial itself. Mirrors Go's heartbeat loop.
+            let mut attempts = Vec::with_capacity(2);
+            if let Some(leader) = new_leader.take()
+                && to_http_address(&leader) != to_http_address(master_addr)
             {
-                Ok(Some(leader)) => {
-                    info!("Master leader changed to {}", leader);
-                    PostAction::LeaderRedirect(leader)
-                }
-                Ok(None) => {
-                    duplicate_retry_count = 0;
-                    PostAction::Done
-                }
-                Err(e) => {
-                    let err_msg = e.to_string();
-                    // Drop `e` (non-Send) before any .await
-                    drop(e);
-                    warn!("Heartbeat to {} error: {}", grpc_addr, err_msg);
+                // the new leader may actually is the same master
+                // need to wait a bit before adding itself
+                tokio::time::sleep(Duration::from_secs(3)).await;
+                attempts.push(leader);
+            }
+            attempts.push(master_addr.clone());
 
-                    if err_msg.contains(DUPLICATE_UUID_RETRY_MESSAGE) {
-                        if duplicate_retry_count >= MAX_DUPLICATE_UUID_RETRIES {
-                            error!(
-                                "Shut down Volume Server due to persistent duplicate volume directories after 3 retries"
-                            );
-                            error!(
-                                "Please check if another volume server is using the same directory"
-                            );
-                            std::process::exit(1);
-                        }
-                        let retry_delay = duplicate_uuid_retry_delay(duplicate_retry_count);
-                        duplicate_retry_count += 1;
-                        warn!(
-                            "Waiting {:?} before retrying due to duplicate UUID detection (attempt {}/3)...",
-                            retry_delay, duplicate_retry_count
-                        );
-                        PostAction::SleepDuplicate(retry_delay)
-                    } else {
+            for target_addr in attempts {
+                if let Some(ref leader) = new_leader
+                    && to_http_address(leader) == to_http_address(&target_addr)
+                {
+                    // the dial covers a hint that names the same target
+                    new_leader = None;
+                }
+                let grpc_addr = to_grpc_address(&target_addr);
+                info!("Connecting heartbeat to master {}", grpc_addr);
+
+                // Determine what action to take after the heartbeat attempt.
+                // We convert the error to a string immediately so the non-Send
+                // Box<dyn Error> is dropped before any .await point.
+                enum PostAction {
+                    LeaderRedirect(String),
+                    Done,
+                    SleepDuplicate(Duration),
+                    SleepPulse,
+                }
+                let action = match do_heartbeat(
+                    &config,
+                    &state,
+                    &grpc_addr,
+                    &target_addr,
+                    pulse,
+                    &mut shutdown_rx,
+                    &mut confirmed_leader_once,
+                )
+                .await
+                {
+                    Ok(Some(leader)) => {
+                        info!("Master leader changed to {}", leader);
+                        PostAction::LeaderRedirect(leader)
+                    }
+                    Ok(None) => {
                         duplicate_retry_count = 0;
-                        PostAction::SleepPulse
+                        PostAction::Done
                     }
-                }
-            };
+                    Err(e) => {
+                        let err_msg = e.to_string();
+                        // Drop `e` (non-Send) before any .await
+                        drop(e);
+                        warn!("Heartbeat to {} error: {}", grpc_addr, err_msg);
 
-            match action {
-                PostAction::LeaderRedirect(leader) => {
-                    new_leader = Some(leader);
-                }
-                PostAction::Done => {
-                    new_leader = None;
-                }
-                PostAction::SleepDuplicate(delay) => {
-                    new_leader = None;
-                    tokio::time::sleep(delay).await;
-                }
-                PostAction::SleepPulse => {
-                    new_leader = None;
-                    // The lookup spends part of the retry delay rather than
-                    // adding to it.
-                    let retry_at = tokio::time::Instant::now() + pulse;
-                    let leader =
-                        refresh_leader_from_peers(&config, &state, &target_addr, pulse).await;
-                    let mut wait = retry_at.saturating_duration_since(tokio::time::Instant::now());
-                    if wait > Duration::from_secs(1)
-                        && (!state.current_master().await.is_empty() || !confirmed_leader_once)
-                    {
-                        // A leader just named by the refresh usually accepts
-                        // the next stream right away, and an unregistered
-                        // server has nothing else to do, so reconnect
-                        // promptly. Once the server was registered and no
-                        // leader is known, keep the pulse backoff.
-                        wait = Duration::from_secs(1);
+                        if err_msg.contains(DUPLICATE_UUID_RETRY_MESSAGE) {
+                            if duplicate_retry_count >= MAX_DUPLICATE_UUID_RETRIES {
+                                error!(
+                                    "Shut down Volume Server due to persistent duplicate volume directories after 3 retries"
+                                );
+                                error!(
+                                    "Please check if another volume server is using the same directory"
+                                );
+                                std::process::exit(1);
+                            }
+                            let retry_delay = duplicate_uuid_retry_delay(duplicate_retry_count);
+                            duplicate_retry_count += 1;
+                            warn!(
+                                "Waiting {:?} before retrying due to duplicate UUID detection (attempt {}/3)...",
+                                retry_delay, duplicate_retry_count
+                            );
+                            PostAction::SleepDuplicate(retry_delay)
+                        } else {
+                            duplicate_retry_count = 0;
+                            PostAction::SleepPulse
+                        }
                     }
-                    tokio::time::sleep(wait).await;
-                    if let Some(leader) = leader
-                        && to_http_address(&leader) != to_http_address(&target_addr)
-                    {
-                        // Dial the leader the other masters just named rather
-                        // than the next seed, which can be the master this
-                        // stream just lost: an unreachable master holds each
-                        // dial for the connect timeout before the loop moves
-                        // on.
-                        new_leader = Some(leader);
+                };
+
+                match action {
+                    PostAction::LeaderRedirect(leader) => {
+                        if new_leader.is_none() {
+                            new_leader = Some(leader);
+                        }
                     }
+                    PostAction::Done => {}
+                    PostAction::SleepDuplicate(delay) => {
+                        tokio::time::sleep(delay).await;
+                    }
+                    PostAction::SleepPulse => {
+                        // The lookup spends part of the retry delay rather
+                        // than adding to it.
+                        let retry_at = tokio::time::Instant::now() + pulse;
+                        let leader =
+                            refresh_leader_from_peers(&config, &state, &target_addr, pulse).await;
+                        let mut wait =
+                            retry_at.saturating_duration_since(tokio::time::Instant::now());
+                        if wait > Duration::from_secs(1)
+                            && (!state.current_master().await.is_empty() || !confirmed_leader_once)
+                        {
+                            // A leader just named by the refresh usually
+                            // accepts the next stream right away, and an
+                            // unregistered server has nothing else to do, so
+                            // reconnect promptly. Once the server was
+                            // registered and no leader is known, keep the
+                            // pulse backoff.
+                            wait = Duration::from_secs(1);
+                        }
+                        tokio::time::sleep(wait).await;
+                        if let Some(leader) = leader
+                            && new_leader.is_none()
+                            && to_http_address(&leader) != to_http_address(&target_addr)
+                        {
+                            // Dial the leader the other masters just named
+                            // rather than the next seed, which can be the
+                            // master this stream just lost: an unreachable
+                            // master holds each dial for the connect timeout
+                            // before the loop moves on.
+                            new_leader = Some(leader);
+                        }
+                    }
+                }
+
+                if is_stopping(&state) {
+                    break;
                 }
             }
-
-            // A named leader overrides the next seed slot rather than
-            // restarting the scan: restarting would let an earlier seed that
-            // keeps reporting the dead leader starve every seed after it.
-            // Mirrors Go, where the redirect consumes the next range value.
         }
 
         // Pacing lives in the per-attempt error path, as in Go: a failed try

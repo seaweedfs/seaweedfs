@@ -161,65 +161,87 @@ func (vs *VolumeServer) heartbeat() {
 
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.volume")
 
-	var err error
 	var newLeader pb.ServerAddress
 	duplicateRetryCount := 0
 	for vs.isHeartbeating {
 		for _, master := range vs.SeedMasterNodes {
-			if newLeader != "" {
+			if newLeader != "" && !newLeader.Equals(master) {
 				// the new leader may actually is the same master
 				// need to wait a bit before adding itself
 				time.Sleep(3 * time.Second)
-				master = newLeader
+				// A named leader is tried once on top of the seed scan rather
+				// than in the next seed's place: a peer that keeps naming a
+				// dead leader would otherwise eat that seed's slot on every
+				// pass and starve it.
+				newLeader, duplicateRetryCount = vs.heartbeatOnce(newLeader, grpcDialOption, duplicateRetryCount)
+				if !vs.isHeartbeating {
+					break
+				}
 			}
-			newLeader, err = vs.doHeartbeatWithRetry(master, grpcDialOption, vs.pulsePeriod, duplicateRetryCount)
-			if err != nil {
-				glog.V(0).Infof("heartbeat to %s error: %v", master, err)
-
-				var leader pb.ServerAddress
-				// Check if this is a duplicate UUID retry error
-				if strings.Contains(err.Error(), "duplicate UUIDs detected, retrying connection") {
-					duplicateRetryCount++
-					retryDelay := time.Duration(1<<(duplicateRetryCount-1)) * 2 * time.Second // exponential backoff: 2s, 4s, 8s
-					glog.V(0).Infof("Waiting %v before retrying due to duplicate UUID detection...", retryDelay)
-					time.Sleep(retryDelay)
-				} else {
-					// Regular error, reset duplicate retry count
-					duplicateRetryCount = 0
-					// The lookup spends part of the retry delay rather than
-					// adding to it.
-					retryAt := time.Now().Add(vs.pulsePeriod)
-					leader = vs.refreshLeaderFromPeers(master, vs.pulsePeriod)
-					wait := time.Until(retryAt)
-					if wait > time.Second && (vs.getCurrentMaster() != "" || !vs.confirmedLeaderOnce.Load()) {
-						// A leader just named by the refresh usually accepts the
-						// next stream right away, and an unregistered server has
-						// nothing else to do, so reconnect promptly. Once the
-						// server was registered and no leader is known, keep the
-						// pulse backoff.
-						wait = time.Second
-					}
-					time.Sleep(wait)
-				}
-
-				stats.VolumeServerMasterDisconnections.WithLabelValues(master.String()).Inc()
+			if newLeader.Equals(master) {
+				// the seed dial covers a hint that names the seed itself
 				newLeader = ""
-				if leader != "" && !leader.Equals(master) {
-					// Dial the leader the other masters just named rather than
-					// the next seed, which can be the master this stream just
-					// lost: an unreachable master holds each dial for the gRPC
-					// connect timeout before the loop moves on.
-					newLeader = leader
-				}
-			} else {
-				// Successful connection, reset retry count
-				duplicateRetryCount = 0
+			}
+			named, retryCount := vs.heartbeatOnce(master, grpcDialOption, duplicateRetryCount)
+			duplicateRetryCount = retryCount
+			if named != "" && newLeader == "" {
+				newLeader = named
 			}
 			if !vs.isHeartbeating {
 				break
 			}
 		}
 	}
+}
+
+// heartbeatOnce makes one heartbeat attempt on target and returns the leader
+// the stream or the peer refresh named — "" when neither did — with the
+// running duplicate-UUID retry count.
+func (vs *VolumeServer) heartbeatOnce(target pb.ServerAddress, grpcDialOption grpc.DialOption, duplicateRetryCount int) (named pb.ServerAddress, retryCount int) {
+	newLeader, err := vs.doHeartbeatWithRetry(target, grpcDialOption, vs.pulsePeriod, duplicateRetryCount)
+	if err == nil {
+		// Successful connection, reset retry count
+		return newLeader, 0
+	}
+
+	glog.V(0).Infof("heartbeat to %s error: %v", target, err)
+
+	var leader pb.ServerAddress
+	retryCount = duplicateRetryCount
+	// Check if this is a duplicate UUID retry error
+	if strings.Contains(err.Error(), "duplicate UUIDs detected, retrying connection") {
+		retryCount++
+		retryDelay := time.Duration(1<<(retryCount-1)) * 2 * time.Second // exponential backoff: 2s, 4s, 8s
+		glog.V(0).Infof("Waiting %v before retrying due to duplicate UUID detection...", retryDelay)
+		time.Sleep(retryDelay)
+	} else {
+		// Regular error, reset duplicate retry count
+		retryCount = 0
+		// The lookup spends part of the retry delay rather than
+		// adding to it.
+		retryAt := time.Now().Add(vs.pulsePeriod)
+		leader = vs.refreshLeaderFromPeers(target, vs.pulsePeriod)
+		wait := time.Until(retryAt)
+		if wait > time.Second && (vs.getCurrentMaster() != "" || !vs.confirmedLeaderOnce.Load()) {
+			// A leader just named by the refresh usually accepts the
+			// next stream right away, and an unregistered server has
+			// nothing else to do, so reconnect promptly. Once the
+			// server was registered and no leader is known, keep the
+			// pulse backoff.
+			wait = time.Second
+		}
+		time.Sleep(wait)
+	}
+
+	stats.VolumeServerMasterDisconnections.WithLabelValues(target.String()).Inc()
+	if leader != "" && !leader.Equals(target) {
+		// Dial the leader the other masters just named rather than
+		// the next seed, which can be the master this stream just
+		// lost: an unreachable master holds each dial for the gRPC
+		// connect timeout before the loop moves on.
+		return leader, retryCount
+	}
+	return "", retryCount
 }
 
 func (vs *VolumeServer) StopHeartbeat() (isAlreadyStopping bool) {
