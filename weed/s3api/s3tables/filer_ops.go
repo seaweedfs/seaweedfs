@@ -710,6 +710,10 @@ func (h *S3TablesHandler) dirHoldsFiles(ctx context.Context, client filer_pb.Sea
 				InclusiveStartFrom: lastFileName == "",
 			})
 			if err != nil {
+				if status.Code(err) == codes.NotFound {
+					// the directory is gone, so there is nothing under it to keep
+					break
+				}
 				return false, err
 			}
 
@@ -717,7 +721,7 @@ func (h *S3TablesHandler) dirHoldsFiles(ctx context.Context, client filer_pb.Sea
 			for {
 				entry, err := resp.Recv()
 				if err != nil {
-					if err == io.EOF {
+					if err == io.EOF || status.Code(err) == codes.NotFound {
 						break
 					}
 					return false, err
