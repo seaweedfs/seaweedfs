@@ -213,6 +213,9 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures 
 	if tags != "" {
 		uploadInput.Tagging = aws.String(tags)
 	}
+	if metadata := toMetadata(entry.Extended); len(metadata) > 0 {
+		uploadInput.Metadata = metadata
+	}
 	if entry.Attributes.Mime != "" {
 		uploadInput.ContentType = aws.String(entry.Attributes.Mime)
 	}
@@ -255,4 +258,17 @@ func buildTaggingString(extended map[string][]byte) string {
 		}
 	}
 	return tagValues.Encode()
+}
+
+// toMetadata maps the X-Amz-Meta- attributes, matched case-insensitively for
+// entries written before the S3 gateway canonicalized them, to S3 user metadata.
+func toMetadata(extended map[string][]byte) map[string]*string {
+	prefix := s3_constants.AmzUserMetaPrefix
+	metadata := make(map[string]*string)
+	for k, v := range extended {
+		if len(k) > len(prefix) && strings.EqualFold(k[:len(prefix)], prefix) {
+			metadata[strings.ToLower(k[len(prefix):])] = aws.String(string(v))
+		}
+	}
+	return metadata
 }

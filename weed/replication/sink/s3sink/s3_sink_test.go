@@ -131,3 +131,32 @@ func TestBuildTaggingString_EmptyWhenNoTags(t *testing.T) {
 		t.Errorf("expected empty tagging when no tag keys present, got %q", tagging)
 	}
 }
+
+func TestS3SinkCreateEntryForwardsUserMetadata(t *testing.T) {
+	sink, rt := newCapturingS3Sink(t)
+	entry := &filer_pb.Entry{
+		Attributes: &filer_pb.FuseAttributes{Mtime: 1700000000},
+		Content:    []byte("data"),
+		Extended: map[string][]byte{
+			"X-Amz-Meta-Project":                        []byte("alpha"),
+			"x-amz-meta-legacy-Key":                     []byte("old"),
+			s3_constants.AmzObjectTaggingPrefix + "env": []byte("prod"),
+			s3_constants.AmzStorageClass:                []byte("STANDARD_IA"),
+			"Content-Encoding":                          []byte("gzip"),
+		},
+	}
+	require.NoError(t, sink.CreateEntry("/dir/test.bin", entry, nil))
+
+	require.NotNil(t, rt.uploadReq, "uploader should have issued a PUT")
+	var metadata []string
+	for k := range rt.uploadReq.Header {
+		if strings.HasPrefix(k, s3_constants.AmzUserMetaPrefix) {
+			metadata = append(metadata, k)
+		}
+	}
+	require.ElementsMatch(t, []string{"X-Amz-Meta-Project", "X-Amz-Meta-Legacy-Key", "X-Amz-Meta-Mtime"}, metadata)
+	require.Equal(t, "alpha", rt.uploadReq.Header.Get("X-Amz-Meta-Project"))
+	require.Equal(t, "old", rt.uploadReq.Header.Get("X-Amz-Meta-Legacy-Key"))
+	require.Equal(t, "1700000000", rt.uploadReq.Header.Get("X-Amz-Meta-Mtime"))
+	require.Equal(t, "env=prod", rt.uploadReq.Header.Get("X-Amz-Tagging"))
+}
