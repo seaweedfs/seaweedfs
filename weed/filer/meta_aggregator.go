@@ -201,6 +201,17 @@ func (ma *MetaAggregator) advancePeerWatermark(peer pb.ServerAddress, tsNs int64
 	}
 }
 
+// capPeerResumeTsNs lowers a peer's re-add resume point to maxTsNs.
+// advancePeerWatermark only raises it, so a session that floored a failed
+// event clamps it here to keep the event redeliverable.
+func (ma *MetaAggregator) capPeerResumeTsNs(peer pb.ServerAddress, maxTsNs int64) {
+	ma.peerWatermarksLock.Lock()
+	defer ma.peerWatermarksLock.Unlock()
+	if ma.peerResumeTsNs[peer] > maxTsNs {
+		ma.peerResumeTsNs[peer] = maxTsNs
+	}
+}
+
 // peerResumeStartFrom rewinds a (re)joining peer's subscribe start to the
 // position the previous subscription was delivered through. The peer's own
 // stream carries delivery claims (idle heartbeats and events alike) in this
@@ -486,6 +497,11 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 		}
 		return tsNs
 	}
+	defer func() {
+		if replayFloorTsNs > 0 {
+			ma.capPeerResumeTsNs(peer, persistableTsNs(lastTsNs))
+		}
+	}()
 
 	// Everything below derives from ctx, cancelled when the peer is removed
 	// or the aggregator shuts down, so no stage can block past its stop.

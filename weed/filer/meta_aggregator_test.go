@@ -109,6 +109,27 @@ func TestPeerResumeStartFromSurvivesRemoval(t *testing.T) {
 	}
 }
 
+// An event a session gave up replaying stays ahead of the resume point so a
+// re-added peer's resubscribe redelivers it, matching the persisted offset.
+func TestPeerResumeStartFromStaysBehindReplayFloor(t *testing.T) {
+	peer := pb.ServerAddress("127.0.0.1:1")
+	ma := NewMetaAggregator(nil, pb.ServerAddress("127.0.0.1:2"), nil)
+
+	failed := time.Now().Add(-time.Hour).UnixNano()
+	ma.advancePeerWatermark(peer, failed)
+	ma.advancePeerWatermark(peer, failed+100)
+
+	ma.capPeerResumeTsNs(peer, failed-1)
+	if got := ma.peerResumeStartFrom(peer, time.Now()); got.UnixNano() != failed-1 {
+		t.Fatalf("expecting resume capped at %d, got %d", failed-1, got.UnixNano())
+	}
+
+	ma.capPeerResumeTsNs(peer, failed-2)
+	if got := ma.peerResumeStartFrom(peer, time.Now()); got.UnixNano() != failed-2 {
+		t.Fatalf("expecting resume capped at %d, got %d", failed-2, got.UnixNano())
+	}
+}
+
 // After Shutdown begins, a peer-add update arriving on the still-connected
 // master watch must not start a subscription: it would have no stop signal
 // and could run past the store close.
