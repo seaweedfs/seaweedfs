@@ -78,8 +78,27 @@ func TestPeerResumeStartFromSurvivesRemoval(t *testing.T) {
 	ma := NewMetaAggregator(nil, pb.ServerAddress("127.0.0.1:2"), nil)
 	defer ma.Shutdown()
 
+	subscribeStarts := make(chan int64, 2)
+	ma.peerSubscribeLoop = func(_ *Filer, _ pb.ServerAddress, _ pb.ServerAddress, startFrom time.Time, stopChan chan struct{}) {
+		subscribeStarts <- startFrom.UnixNano()
+		<-stopChan
+	}
+	nextSubscribeStart := func() int64 {
+		select {
+		case tsNs := <-subscribeStarts:
+			return tsNs
+		case <-time.After(3 * time.Second):
+			t.Fatal("no peer subscription started")
+			return 0
+		}
+	}
+
 	add := &master_pb.ClusterNodeUpdate{Address: string(peer), IsAdd: true}
-	ma.OnPeerUpdate(add, time.Now())
+	firstStart := time.Now()
+	ma.OnPeerUpdate(add, firstStart)
+	if got := nextSubscribeStart(); got != firstStart.UnixNano() {
+		t.Fatalf("expecting first subscribe at %d, got %d", firstStart.UnixNano(), got)
+	}
 
 	deliveredThrough := time.Now().Add(-time.Hour).UnixNano()
 	ma.advancePeerWatermark(peer, deliveredThrough)
@@ -90,11 +109,13 @@ func TestPeerResumeStartFromSurvivesRemoval(t *testing.T) {
 	// Removal and even the watermark-grace expiry keep the resume position.
 	ma.OnPeerUpdate(&master_pb.ClusterNodeUpdate{Address: string(peer)}, time.Now())
 	ma.peerWatermarksLock.Lock()
-	delete(ma.peerWatermarks, peer)
-	delete(ma.peerRemovedAtNs, peer)
+	ma.peerRemovedAtNs[peer] = time.Now().Add(-2 * peerWatermarkRemovalGrace).UnixNano()
+	ma.dropExpiredRemovedPeersLocked()
 	ma.peerWatermarksLock.Unlock()
-	if got := ma.peerResumeStartFrom(peer, time.Now()); got.UnixNano() != deliveredThrough {
-		t.Fatalf("expecting resume at %d after removal, got %d", deliveredThrough, got.UnixNano())
+
+	ma.OnPeerUpdate(add, time.Now())
+	if got := nextSubscribeStart(); got != deliveredThrough {
+		t.Fatalf("expecting re-added peer to resume at %d, got %d", deliveredThrough, got)
 	}
 
 	// A first-seen peer, or a caller start already behind the recorded

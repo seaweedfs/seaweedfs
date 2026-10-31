@@ -68,6 +68,9 @@ type MetaAggregator struct {
 	peerResumeTsNs     map[pb.ServerAddress]int64
 	peerWatermarksLock sync.Mutex
 	peerWg             sync.WaitGroup
+	// peerSubscribeLoop is replaceable so a test can observe the subscribe
+	// start without a live peer.
+	peerSubscribeLoop func(f *Filer, self, peer pb.ServerAddress, startFrom time.Time, stopChan chan struct{})
 	// stopped is set under peerChansLock by Shutdown; OnPeerUpdate then
 	// rejects adds so no subscription can outlive the shutdown wait and run
 	// against a store Filer.Shutdown has already closed.
@@ -87,6 +90,7 @@ func NewMetaAggregator(filer *Filer, self pb.ServerAddress, grpcDialOption grpc.
 		peerRemovedAtNs:     make(map[pb.ServerAddress]int64),
 		peerResumeTsNs:      make(map[pb.ServerAddress]int64),
 	}
+	t.peerSubscribeLoop = t.loopSubscribeToOneFiler
 	// nil notifyFn: aggregated subscribers wake through the buffer's
 	// subscriber channels, not a cond.
 	t.MetaLogBuffer = log_buffer.NewLogBuffer("aggr", LogFlushInterval, nil, nil, nil)
@@ -120,10 +124,14 @@ func (ma *MetaAggregator) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, star
 		// on reconnect.
 		ma.initPeerWatermark(address)
 		startFrom = ma.peerResumeStartFrom(address, startFrom)
+		subscribeLoop := ma.peerSubscribeLoop
+		if subscribeLoop == nil {
+			subscribeLoop = ma.loopSubscribeToOneFiler
+		}
 		ma.peerWg.Add(1)
 		go func() {
 			defer ma.peerWg.Done()
-			ma.loopSubscribeToOneFiler(ma.filer, ma.self, address, startFrom, stopChan)
+			subscribeLoop(ma.filer, ma.self, address, startFrom, stopChan)
 		}()
 	} else {
 		if prevChan, found := ma.peerChans[address]; found {
