@@ -187,7 +187,9 @@ func (dn *DataNode) DeltaUpdateVolumes(newVolumes, deletedVolumes []storage.Volu
 	for _, v := range deletedVolumes {
 		disk := dn.getOrCreateDisk(v.DiskType)
 
-		_, err := disk.GetVolumesById(v.Id)
+		// Undo what was counted for the stored record: the delete report does
+		// not carry the read-only state the master has since learned.
+		held, err := disk.GetVolumesById(v.Id)
 		if err != nil {
 			continue
 		}
@@ -195,10 +197,10 @@ func (dn *DataNode) DeltaUpdateVolumes(newVolumes, deletedVolumes []storage.Volu
 
 		deltaDiskUsage := &DiskUsageCounts{}
 		deltaDiskUsage.volumeCount = -1
-		if v.IsRemote() {
+		if held.IsRemote() {
 			deltaDiskUsage.remoteVolumeCount = -1
 		}
-		if !v.ReadOnly {
+		if !held.ReadOnly {
 			deltaDiskUsage.activeVolumeCount = -1
 		}
 		disk.UpAdjustDiskUsageDelta(types.ToDiskType(v.DiskType), deltaDiskUsage)
