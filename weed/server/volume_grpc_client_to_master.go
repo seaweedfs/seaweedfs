@@ -192,7 +192,7 @@ func (vs *VolumeServer) heartbeat() {
 			triedHints[master.ToHttpAddress()] = true
 			named, retryCount := vs.heartbeatOnce(master, grpcDialOption, duplicateRetryCount)
 			duplicateRetryCount = retryCount
-			if named != "" && newLeader == "" {
+			if named != "" {
 				newLeader = named
 			}
 			if !vs.isHeartbeating {

@@ -138,7 +138,6 @@ pub async fn run_heartbeat_with_state(
                 &mut duplicate_retry_count,
             )
             .await
-                && new_leader.is_none()
             {
                 new_leader = Some(named);
             }
