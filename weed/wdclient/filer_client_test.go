@@ -541,3 +541,28 @@ func TestShardServerOutlivesRegularRemoval(t *testing.T) {
 		t.Fatalf("shard server unreadable: %v, err %v", locations, err)
 	}
 }
+
+// A volume moved to another server while the old one stays up: the old
+// server would proxy the read and succeed, so no failed read would ever
+// evict it. The pushed removal has to.
+func TestMovedVolumeLeavesOldServer(t *testing.T) {
+	old := Location{Url: "old:8080"}
+	moved := Location{Url: "new:8080"}
+	provider := &testLocationProvider{locations: map[string][]Location{"5": {old}}}
+	mc := moveClient()
+	fc := hookedFilerClient(mc, provider)
+	ctx := context.Background()
+	pushVolumeLocation(mc, old.Url, []uint32{5}, nil, nil, nil)
+	if _, err := fc.LookupVolumeIdsWithFallback(ctx, []string{"5"}); err != nil {
+		t.Fatal(err)
+	}
+
+	pushVolumeLocation(mc, moved.Url, []uint32{5}, nil, nil, nil)
+	pushVolumeLocation(mc, old.Url, nil, []uint32{5}, nil, nil)
+
+	provider.locations["5"] = []Location{moved}
+	locations, err := fc.LookupVolumeIdsWithFallback(ctx, []string{"5"})
+	if err != nil || len(locations["5"]) != 1 || locations["5"][0].Url != moved.Url {
+		t.Fatalf("moved volume still read through the old server: %v, err %v", locations, err)
+	}
+}
