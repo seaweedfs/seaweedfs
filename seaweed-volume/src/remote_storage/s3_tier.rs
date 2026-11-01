@@ -24,7 +24,8 @@ const CONCURRENCY: usize = 5;
 
 /// A tier endpoint that drops packets or accepts connections without answering
 /// must not hold a read, or a volume server's startup, for minutes per request.
-/// Matches Go's s3ConnectTimeout and s3ResponseHeaderTimeout.
+/// Matches Go's s3ConnectTimeout and s3ReadTimeout. The SDK's stalled-stream
+/// protection already fails a body that stops arriving.
 const S3_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const S3_READ_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -947,6 +948,45 @@ mod tests {
             .unwrap();
         assert!(got.is_none());
         assert!(start.elapsed() < Duration::from_secs(5));
+    }
+
+    #[tokio::test]
+    async fn read_range_gives_up_when_the_body_stalls() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            let mut held = Vec::new();
+            for mut conn in listener.incoming().flatten() {
+                let mut request = Vec::new();
+                let mut byte = [0u8; 1];
+                while !request.ends_with(b"\r\n\r\n") {
+                    match std::io::Read::read(&mut conn, &mut byte) {
+                        Ok(1) => request.push(byte[0]),
+                        _ => break,
+                    }
+                }
+                let _ = std::io::Write::write_all(
+                    &mut conn,
+                    b"HTTP/1.1 206 Partial Content\r\nContent-Length: 8\r\nContent-Range: bytes 0-7/1024\r\n\r\n",
+                );
+                held.push(conn);
+            }
+        });
+        let backend = S3TierBackend::new(&S3TierConfig {
+            access_key: "access".to_string(),
+            secret_key: "secret".to_string(),
+            region: "us-east-1".to_string(),
+            bucket: "bucket".to_string(),
+            endpoint,
+            storage_class: String::new(),
+            force_path_style: true,
+        });
+
+        let read = tokio::time::timeout(Duration::from_secs(30), backend.read_range("key", 0, 8))
+            .await
+            .expect("a read whose body stalls did not give up");
+        let err = read.unwrap_err();
+        assert!(matches!(err, TierError::Io(_)), "{err:?}");
     }
 
     fn silent_backend() -> (std::net::TcpListener, Arc<S3TierBackend>) {
