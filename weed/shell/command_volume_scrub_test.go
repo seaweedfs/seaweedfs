@@ -21,6 +21,7 @@ func TestVolumeServerAddressesUseRegisteredGrpcPort(t *testing.T) {
 		{"10.0.0.2:7000", []string{"10.0.0.2:7500"}},
 		{" 10.0.0.2:7000 ,,10.0.0.1:8080", []string{"10.0.0.2:7500", "10.0.0.1:18080"}},
 		{"10.0.0.9:7000.7600", []string{"10.0.0.9:7600"}},
+		{"10.0.0.2:7000.7600", []string{"10.0.0.2:7600"}},
 	}
 	for _, tt := range tests {
 		var gotGrpc []string

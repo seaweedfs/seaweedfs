@@ -126,7 +126,8 @@ func collectDataNodes(commandEnv *CommandEnv, delayBeforeCollecting time.Duratio
 }
 
 // volumeServerAddresses returns the comma-separated nodes, or every data node
-// when nodes is empty, dialing each registered server on its gRPC port.
+// when nodes is empty, dialing each registered server on its gRPC port unless
+// the node names one.
 func volumeServerAddresses(dataNodes []*master_pb.DataNodeInfo, nodes string) []pb.ServerAddress {
 	registered := make(map[string]pb.ServerAddress, len(dataNodes))
 	all := make([]pb.ServerAddress, 0, len(dataNodes))
@@ -144,7 +145,7 @@ func volumeServerAddresses(dataNodes []*master_pb.DataNodeInfo, nodes string) []
 		if node == "" {
 			continue
 		}
-		if addr, found := registered[pb.ServerAddress(node).ToHttpAddress()]; found {
+		if addr, found := registered[node]; found {
 			addrs = append(addrs, addr)
 		} else {
 			addrs = append(addrs, pb.ServerAddress(node))
