@@ -36,13 +36,14 @@ func isExtractZip(r *http.Request) bool {
 }
 
 // extractZipRoot is the directory members land under: the request path when it
-// ends in "/", otherwise its parent, so the path can name the archive.
+// ends in "/", otherwise its parent, so the path can name the archive. It is
+// cleaned so the JWT scope check and the writes agree on dot segments.
 func extractZipRoot(r *http.Request) string {
 	root := r.URL.Path
 	if !strings.HasSuffix(root, "/") {
 		root = path.Dir(root)
 	}
-	return strings.TrimSuffix(root, "/")
+	return strings.TrimSuffix(path.Clean(root), "/")
 }
 
 // extractZipArchive writes a posted archive's members as individual entries

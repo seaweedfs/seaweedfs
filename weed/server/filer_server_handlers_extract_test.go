@@ -253,6 +253,28 @@ func TestExtractZipArchiveRawPost(t *testing.T) {
 	}
 }
 
+func TestExtractZipArchiveCleansDotSegments(t *testing.T) {
+	fs, f := newExtractTestServer(t)
+	zipBytes := buildTestZip(t, map[string]string{"raw.txt": "raw"}, nil, nil)
+
+	// A percent-encoded ".." survives path cleaning in front of the mux, so the
+	// handler sees it decoded and must land members under the cleaned root.
+	r := httptest.NewRequest(http.MethodPost, "/other/%2e%2e/dst/?extract=zip", bytes.NewReader(zipBytes))
+	r.Header.Set("Content-Type", "application/zip")
+	w := httptest.NewRecorder()
+	fs.PostHandler(w, r, int64(len(zipBytes)))
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body: %s", w.Code, w.Body.String())
+	}
+	if _, err := f.FindEntry(r.Context(), util.FullPath("/dst/raw.txt")); err != nil {
+		t.Fatalf("member missing under the cleaned root: %v", err)
+	}
+	if _, err := f.FindEntry(r.Context(), util.FullPath("/other/../dst/raw.txt")); err == nil {
+		t.Fatal("member written under the raw root")
+	}
+}
+
 func TestExtractZipArchiveMultipartPost(t *testing.T) {
 	fs, f := newExtractTestServer(t)
 	zipBytes := buildTestZip(t, map[string]string{"img/1.png": "png-bytes"}, nil, nil)
