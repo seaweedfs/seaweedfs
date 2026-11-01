@@ -159,7 +159,7 @@ func (fs *FilerServer) extractZipArchive(ctx context.Context, w http.ResponseWri
 		}
 	}
 
-	if query.Get("extract.keep") == "true" && archiveName != "." && archiveName != "/" {
+	if query.Get("extract.keep") == "true" && archiveName != "." && archiveName != ".." && archiveName != "/" {
 		mode := os.FileMode(0660)
 		if modeStr := query.Get("mode"); modeStr != "" {
 			if parsed, parseErr := strconv.ParseUint(modeStr, 8, 32); parseErr == nil {

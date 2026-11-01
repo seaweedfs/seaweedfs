@@ -168,6 +168,28 @@ func TestExtractZipArchiveKeep(t *testing.T) {
 	}
 }
 
+func TestExtractZipArchiveKeepSkipsParentName(t *testing.T) {
+	fs, f := newExtractTestServer(t)
+	zipBytes := buildTestZip(t, map[string]string{"x.txt": "data"}, nil, nil)
+
+	var body bytes.Buffer
+	mw := multipartWriter(t, &body, "..", zipBytes)
+	r := httptest.NewRequest(http.MethodPost, "/a/b/?extract=zip&extract.keep=true", &body)
+	r.Header.Set("Content-Type", mw)
+	w := httptest.NewRecorder()
+	fs.PostHandler(w, r, int64(body.Len()))
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body: %s", w.Code, w.Body.String())
+	}
+	if _, err := f.FindEntry(r.Context(), util.FullPath("/a/b/..")); err == nil {
+		t.Fatal("archive kept under a parent-directory name")
+	}
+	if _, err := f.FindEntry(r.Context(), util.FullPath("/a/b/x.txt")); err != nil {
+		t.Fatalf("member missing: %v", err)
+	}
+}
+
 func TestExtractZipArchiveNotAZip(t *testing.T) {
 	fs, _ := newExtractTestServer(t)
 	r := httptest.NewRequest(http.MethodPut, "/dst/notzip.bin?extract=zip", bytes.NewReader([]byte("not a zip")))
