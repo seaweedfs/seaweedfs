@@ -168,10 +168,7 @@ func (store *LevelDB3Store) findDB(fullpath weed_util.FullPath, isForChildren bo
 		shortPath = weed_util.FullPath(bucketAndObjectKey[t:])
 	}
 
-	// Dot-prefixed entries directly under /buckets (e.g. .system) are internal
-	// folders, not S3 buckets; keep them in the default DB by full path. The
-	// bucket also names a folder under store.dir, so it must stay a local name.
-	if strings.HasPrefix(bucket, ".") || !filepath.IsLocal(bucket) {
+	if !isBucketFolder(bucket) {
 		store.dbsLock.RUnlock()
 		return defaultDB, DEFAULT, fullpath, nil
 	}
@@ -207,6 +204,13 @@ func (store *LevelDB3Store) emptyBucketDB() (*leveldb.DB, error) {
 		store.emptyDB = db
 	}
 	return store.emptyDB, nil
+}
+
+// Dot-prefixed entries directly under /buckets (e.g. .system) are internal
+// folders, not S3 buckets; they stay in the default DB by full path. A bucket
+// also names a folder under store.dir, so it must stay a local name.
+func isBucketFolder(bucket string) bool {
+	return !strings.HasPrefix(bucket, ".") && filepath.IsLocal(bucket)
 }
 
 func (store *LevelDB3Store) createDB(bucket string) (*leveldb.DB, error) {

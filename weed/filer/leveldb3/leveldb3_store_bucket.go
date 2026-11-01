@@ -9,14 +9,18 @@ import (
 var _ filer.BucketAware = (*LevelDB3Store)(nil)
 
 func (store *LevelDB3Store) OnBucketCreation(bucket string) {
+	if !isBucketFolder(bucket) {
+		return
+	}
 	store.createDB(bucket)
 }
 
 func (store *LevelDB3Store) OnBucketDeletion(bucket string) {
-	store.closeDB(bucket)
-	if bucket != "" { // just to make sure
-		os.RemoveAll(store.dir + "/" + bucket)
+	if !isBucketFolder(bucket) {
+		return
 	}
+	store.closeDB(bucket)
+	os.RemoveAll(store.dir + "/" + bucket)
 }
 
 func (store *LevelDB3Store) CanDropWholeBucket() bool {

@@ -3,6 +3,8 @@ package leveldb
 import (
 	"context"
 	"math"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -205,5 +207,36 @@ func TestListDirectoryPrefixedEntries_StartBelowPrefix(t *testing.T) {
 	}
 	if len(names) != 1 || names[0] != "item-b.versions" {
 		t.Fatalf("want [item-b.versions], got %v", names)
+	}
+}
+
+func TestBucketEventsStayInsideStoreDir(t *testing.T) {
+	parent := t.TempDir()
+	dir := filepath.Join(parent, "store")
+	store := &LevelDB3Store{}
+	if err := store.initialize(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer store.Shutdown()
+
+	sentinel := filepath.Join(parent, "keep")
+	if err := os.WriteFile(sentinel, []byte("keep"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	for _, bucket := range []string{"..", ".", "../outside", ""} {
+		store.OnBucketCreation(bucket)
+		store.OnBucketDeletion(bucket)
+	}
+	if _, err := os.Stat(sentinel); err != nil {
+		t.Fatalf("bucket events removed %s: %v", sentinel, err)
+	}
+	if _, err := os.Stat(filepath.Join(parent, "outside")); !os.IsNotExist(err) {
+		t.Fatalf("bucket event created a folder outside %s: %v", dir, err)
+	}
+	if _, err := os.Stat(filepath.Join(parent, "CURRENT")); !os.IsNotExist(err) {
+		t.Fatalf("bucket event opened a db in %s: %v", parent, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, DEFAULT)); err != nil {
+		t.Fatalf("default db folder missing: %v", err)
 	}
 }
