@@ -135,24 +135,30 @@ func (s *Server) handleDeclareTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.createTable(r, bucket, ns, name, location); err != nil {
+	location, err = s.createTable(r, bucket, ns, name, location)
+	if err != nil {
 		writeStorageError(w, r, err)
 		return
 	}
-	if err := s.writeMarker(r, location, reservedMarker); err != nil {
-		// The catalog entry is the authority; the marker only mirrors it for
-		// clients that read the storage prefix directly.
-		glog.V(1).Infof("lance: could not write %s for %s: %v", reservedMarker, location, err)
-	}
-	// Declaring a name that was deregistered brings it back, the same way
-	// registering it does.
-	if err := s.removeMarker(r, location, deregisteredMarker); err != nil {
-		glog.V(2).Infof("lance: could not clear %s for %s: %v", deregisteredMarker, location, err)
+	// A declare that only finds an existing index in the vector namespace of a
+	// vector bucket answers read-only.
+	writable := s.mayWriteNamespace(r, bucket, ns)
+	if writable {
+		if err := s.writeMarker(r, location, reservedMarker); err != nil {
+			// The catalog entry is the authority; the marker only mirrors it for
+			// clients that read the storage prefix directly.
+			glog.V(1).Infof("lance: could not write %s for %s: %v", reservedMarker, location, err)
+		}
+		// Declaring a name that was deregistered brings it back, the same way
+		// registering it does.
+		if err := s.removeMarker(r, location, deregisteredMarker); err != nil {
+			glog.V(2).Infof("lance: could not clear %s for %s: %v", deregisteredMarker, location, err)
+		}
 	}
 
 	// A Lance commit is a direct S3 write that never revisits the catalog, so
 	// the create authorization above is the write evidence for the dataset.
-	options, err := s.storageOptions(r, bucket, location, wants(r, "vend_credentials", req.VendCredentials), func() bool { return true })
+	options, err := s.storageOptions(r, bucket, location, wants(r, "vend_credentials", req.VendCredentials), func() bool { return writable })
 	if err != nil {
 		writeError(w, r, http.StatusInternalServerError, codeInternal, err.Error())
 		return
@@ -353,7 +359,7 @@ func (s *Server) handleRegisterTable(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	default:
-		if err := s.createTable(r, bucket, ns, name, location); err != nil {
+		if location, err = s.createTable(r, bucket, ns, name, location); err != nil {
 			writeStorageError(w, r, err)
 			return
 		}
@@ -545,7 +551,9 @@ func (s *Server) loadLanceTable(r *http.Request, bucket string, ns []string, nam
 	return &lanceTable{location: location, versionToken: resp.VersionToken}, nil
 }
 
-func (s *Server) createTable(r *http.Request, bucket string, ns []string, name, location string) error {
+// createTable returns the location the catalog holds for the table. When the
+// name already exists that is its own location, not the one asked for.
+func (s *Server) createTable(r *http.Request, bucket string, ns []string, name, location string) (string, error) {
 	req := &s3tables.CreateTableRequest{
 		TableBucketARN: bucketARN(bucket),
 		Namespace:      ns,
@@ -556,7 +564,13 @@ func (s *Server) createTable(r *http.Request, bucket string, ns []string, name, 
 		MetadataLocation: location,
 	}
 	var resp s3tables.CreateTableResponse
-	return s.execute(r, "CreateTable", req, &resp)
+	if err := s.execute(r, "CreateTable", req, &resp); err != nil {
+		return "", err
+	}
+	if resp.MetadataLocation == "" {
+		return tableLocation(bucket, ns, name), nil
+	}
+	return resp.MetadataLocation, nil
 }
 
 // repointTable moves an existing entry to another dataset location without

@@ -95,6 +95,11 @@ gateway without STS configured vends no credentials at all, so `--access-key`
 and `--secret-key` supply a fallback; anything the namespace does vend wins over
 them.
 
+In a vector bucket's `vector` namespace the gateway vends write credentials only
+to a caller that proves it holds `jwt.filer_signing.key`. Pass that key with
+`--filer-signing-key` so compaction, cleanup and index builds can rewrite
+vector indexes.
+
 ## State
 
 All three jobs are implemented and tested end to end against a live gateway:
