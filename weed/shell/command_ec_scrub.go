@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/ec"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 )
 
@@ -53,23 +52,9 @@ func (c *commandEcVolumeScrub) Do(args []string, commandEnv *CommandEnv, writer 
 		return
 	}
 
-	volumeServerAddrs := []pb.ServerAddress{}
-	if *nodesStr != "" {
-		for _, addr := range strings.Split(*nodesStr, ",") {
-			addr = strings.TrimSpace(addr)
-			if addr == "" {
-				continue
-			}
-			volumeServerAddrs = append(volumeServerAddrs, pb.ServerAddress(addr))
-		}
-	} else {
-		dns, err := collectDataNodes(commandEnv, 0)
-		if err != nil {
-			return err
-		}
-		for _, dn := range dns {
-			volumeServerAddrs = append(volumeServerAddrs, pb.ServerAddress(dn.Address))
-		}
+	volumeServerAddrs, err := collectVolumeServerAddresses(commandEnv, *nodesStr)
+	if err != nil {
+		return err
 	}
 
 	volumeIDs := []uint32{}
