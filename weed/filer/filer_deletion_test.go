@@ -192,6 +192,7 @@ func TestIsRetryableError(t *testing.T) {
 		{"service unavailable", true, "service unavailable"},
 		{"i/o timeout", true, "I/O timeout"},
 		{"broken pipe", true, "broken pipe"},
+		{"replication locations [1] is less than volume 9 replication copy count [2]", true, "replica offline"},
 		{"not found", false, "not found (not retryable)"},
 		{"invalid file id", false, "invalid input (not retryable)"},
 		{"", false, "empty error"},

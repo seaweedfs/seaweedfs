@@ -58,6 +58,7 @@ var retryablePatterns = []string{
 	"lookup failed",             // Volume server discovery issues
 	"too many requests",         // Rate limiting / backpressure
 	"try again",                 // Explicit retry suggestion
+	"replication copy count",    // A replica is offline; deletes wait for it to return
 }
 
 // DeletionRetryItem represents a file deletion that failed and needs to be retried
