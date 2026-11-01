@@ -177,6 +177,9 @@ func (s *Server) storageOptions(r *http.Request, bucket, location string, vend b
 // credentials would cover, the same gate the Iceberg catalog applies so a
 // read-only caller never gets write-capable storage_options.
 func (s *Server) mayUpdateTable(r *http.Request, bucket string, ns []string, name string) bool {
+	if !s.mayWriteNamespace(r, bucket, ns) {
+		return false
+	}
 	req := &s3tables.UpdateTableRequest{
 		TableBucketARN: bucketARN(bucket),
 		Namespace:      ns,
@@ -188,6 +191,20 @@ func (s *Server) mayUpdateTable(r *http.Request, bucket string, ns []string, nam
 	})
 	if err != nil {
 		glog.V(1).Infof("lance: UpdateTable check for %s/%s failed, vending read-only: %v", bucket, name, err)
+	}
+	return err == nil
+}
+
+// mayWriteNamespace keeps the vector namespace of a vector bucket out of reach
+// of s3tables grants: its index data is written only by trusted callers, and
+// the vector bucket policy gates everyone else through S3 Vectors.
+func (s *Server) mayWriteNamespace(r *http.Request, bucket string, ns []string) bool {
+	if isTrustedCaller(r.Context()) {
+		return true
+	}
+	err := s.tablesManager.CheckVectorNamespaceWrite(r.Context(), s.filerClient, bucket, ns)
+	if err != nil {
+		glog.V(1).Infof("lance: %s/%s is read-only to this caller: %v", bucket, strings.Join(ns, "."), err)
 	}
 	return err == nil
 }
