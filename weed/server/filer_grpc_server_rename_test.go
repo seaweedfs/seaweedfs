@@ -567,7 +567,9 @@ func TestAtomicRenameEntryRejectsDotSegmentTarget(t *testing.T) {
 	} {
 		store := newRenameTestStore()
 		store.entries["/src.txt"] = newFileEntry("/src.txt", 101)
-		server := &FilerServer{filer: newRenameTestFiler(t, store), entryLockTable: util.NewLockTable[util.FullPath]()}
+		f := newRenameTestFiler(t, store)
+		f.DirBucketsPath = "/buckets"
+		server := &FilerServer{filer: f, entryLockTable: util.NewLockTable[util.FullPath]()}
 
 		_, err := server.AtomicRenameEntry(context.Background(), &filer_pb.AtomicRenameEntryRequest{
 			OldDirectory: "/",
