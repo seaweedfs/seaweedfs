@@ -457,6 +457,44 @@ func TestReadNeedleHasRange(t *testing.T) {
 	}
 }
 
+// A range streams from the record its metadata read resolved, not from a
+// replacement written in between, whatever the replacement's size.
+func TestReadNeedleDataIntoKeepsTheMetaRecord(t *testing.T) {
+	dir := t.TempDir()
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+
+	write := func(data []byte) {
+		t.Helper()
+		n := &needle.Needle{Id: 1, Cookie: 0x1234, Data: data}
+		n.Checksum = needle.NewCRC(n.Data)
+		if _, _, _, err := v.writeNeedle2(n, true, false, false); err != nil {
+			t.Fatalf("write needle: %v", err)
+		}
+	}
+	old := bytes.Repeat([]byte("old-"), 1000)
+	for _, replacement := range [][]byte{bytes.Repeat([]byte("new-"), 1000), bytes.Repeat([]byte("short"), 10)} {
+		write(old)
+		option := &ReadOption{AttemptMetaOnly: true, HasRange: true, ReadBufferSize: 1024}
+		got := &needle.Needle{Id: 1}
+		if _, err := v.readNeedle(got, option, nil); err != nil || !option.IsMetaOnly {
+			t.Fatalf("metadata read: IsMetaOnly %v, %v", option.IsMetaOnly, err)
+		}
+		write(replacement)
+		var buf bytes.Buffer
+		if err := v.readNeedleDataInto(got, option, &buf, 100, 2000); err != nil {
+			t.Fatalf("range read after a %d-byte replacement: %v", len(replacement), err)
+		}
+		if !bytes.Equal(buf.Bytes(), old[100:2100]) {
+			t.Errorf("range read after a %d-byte replacement returned bytes of another record", len(replacement))
+		}
+	}
+}
+
 // A version 1 needle has no data size field and no metadata after its data,
 // so the metadata-only reader cannot parse it. A metadata-only read of a
 // version 1 volume must fall back to a full read instead of failing.

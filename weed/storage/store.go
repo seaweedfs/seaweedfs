@@ -49,7 +49,8 @@ type ReadOption struct {
 	// response
 	IsMetaOnly     bool // read status
 	VolumeRevision uint16
-	IsOutOfRange   bool // whether read over MaxPossibleVolumeSize
+	metaOffset     Offset // the record a metadata-only read resolved
+	IsOutOfRange   bool   // whether read over MaxPossibleVolumeSize
 
 	// If HasSlowRead is set to true:
 	//  * read requests and write requests compete for the lock.

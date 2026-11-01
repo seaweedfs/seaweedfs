@@ -66,6 +66,7 @@ func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption, onReadSize
 		}
 		if !n.IsCompressed() && !n.IsChunkedManifest() {
 			readOption.IsMetaOnly = true
+			readOption.metaOffset = nv.Offset
 			// A must-meta-only read ends here, so its success may reset the
 			// streak. For a streamed GET the meta read precedes the payload read,
 			// which reports the outcome itself.
@@ -172,6 +173,11 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 	if readSize == 0 {
 		return nil
 	}
+	// Stream the record the metadata came from: the index may already point
+	// at a replacement, whose bytes must not go out under the old headers.
+	if !readOption.metaOffset.IsZero() {
+		nv.Offset, nv.Size = readOption.metaOffset, n.Size
+	}
 
 	actualOffset := nv.Offset.ToActualOffset()
 	if readOption.IsOutOfRange {
@@ -201,7 +207,7 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 				return ErrorNotFound
 			}
 			refreshed, found := v.nm.Get(n.Id)
-			if !found || refreshed.Offset.IsZero() {
+			if !found || refreshed.Offset.IsZero() || refreshed.Size != n.Size {
 				return ErrorNotFound
 			}
 			nv = refreshed
@@ -263,7 +269,7 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 			}
 			// the volume is compacted
 			nv, ok = v.nm.Get(n.Id)
-			if !ok || nv.Offset.IsZero() {
+			if !ok || nv.Offset.IsZero() || nv.Size != n.Size {
 				if readOption.HasSlowRead {
 					v.dataFileAccessLock.RUnlock()
 				}
