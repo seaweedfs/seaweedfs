@@ -129,6 +129,17 @@ func (v *Volume) readNeedleMetaAt(n *needle.Needle, offset int64, size int32) (e
 	return nil
 }
 
+// sameRecord reports whether the record a compaction moved to offset is the
+// one n's metadata came from, not a replacement of the same size.
+func (v *Volume) sameRecord(n *needle.Needle, offset Offset, size Size) bool {
+	if offset.IsZero() || size != n.Size {
+		return false
+	}
+	moved := new(needle.Needle)
+	err := moved.ReadNeedleMeta(v.DataBackend, offset.ToActualOffset(), size, v.Version())
+	return err == nil && moved.Checksum == n.Checksum && moved.AppendAtNs == n.AppendAtNs
+}
+
 // read fills in Needle content by looking up n.Id from NeedleMapper
 func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, writer io.Writer, offset int64, size int64) (err error) {
 
@@ -207,7 +218,7 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 				return ErrorNotFound
 			}
 			refreshed, found := v.nm.Get(n.Id)
-			if !found || refreshed.Offset.IsZero() || refreshed.Size != n.Size {
+			if !found || !v.sameRecord(n, refreshed.Offset, refreshed.Size) {
 				return ErrorNotFound
 			}
 			nv = refreshed
@@ -270,7 +281,7 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 			}
 			// the volume is compacted
 			nv, ok = v.nm.Get(n.Id)
-			if !ok || nv.Offset.IsZero() || nv.Size != n.Size {
+			if !ok || !v.sameRecord(n, nv.Offset, nv.Size) {
 				if readOption.HasSlowRead {
 					v.dataFileAccessLock.RUnlock()
 				}

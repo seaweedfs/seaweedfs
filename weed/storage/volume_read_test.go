@@ -543,6 +543,46 @@ func TestReadNeedleDataIntoFollowsACompaction(t *testing.T) {
 	}
 }
 
+// A compaction that drops the record the metadata came from leaves only its
+// replacement; a range then fails rather than send the replacement's bytes,
+// even when the sizes match.
+func TestReadNeedleDataIntoRefusesAReplacementAfterCompaction(t *testing.T) {
+	dir := t.TempDir()
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+
+	write := func(data []byte) {
+		t.Helper()
+		n := &needle.Needle{Id: 1, Cookie: 0x1234, Data: data}
+		n.Checksum = needle.NewCRC(n.Data)
+		if _, _, _, err := v.writeNeedle2(n, true, false, false); err != nil {
+			t.Fatalf("write needle: %v", err)
+		}
+	}
+	write(bytes.Repeat([]byte("old-"), 1000))
+	option := &ReadOption{AttemptMetaOnly: true, HasRange: true, ReadBufferSize: 1024}
+	got := &needle.Needle{Id: 1}
+	if _, err := v.readNeedle(got, option, nil); err != nil || !option.IsMetaOnly {
+		t.Fatalf("metadata read: IsMetaOnly %v, %v", option.IsMetaOnly, err)
+	}
+	write(bytes.Repeat([]byte("new-"), 1000))
+	if err := v.CompactByIndex(nil); err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+	if err := v.CommitCompact(); err != nil {
+		t.Fatalf("commit compact: %v", err)
+	}
+
+	var buf bytes.Buffer
+	if err := v.readNeedleDataInto(got, option, &buf, 100, 2000); err != ErrorNotFound || buf.Len() != 0 {
+		t.Errorf("range read after the record was replaced and compacted: %d bytes, %v; want %v", buf.Len(), err, ErrorNotFound)
+	}
+}
+
 // A version 1 needle has no data size field and no metadata after its data,
 // so the metadata-only reader cannot parse it. A metadata-only read of a
 // version 1 volume must fall back to a full read instead of failing.
