@@ -495,6 +495,54 @@ func TestReadNeedleDataIntoKeepsTheMetaRecord(t *testing.T) {
 	}
 }
 
+// A compaction moves the record between the parts of a multi-range reply;
+// every later part follows it, not only the first.
+func TestReadNeedleDataIntoFollowsACompaction(t *testing.T) {
+	dir := t.TempDir()
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+
+	gone := &needle.Needle{Id: 1, Cookie: 0x1234, Data: bytes.Repeat([]byte("gone"), 1000)}
+	gone.Checksum = needle.NewCRC(gone.Data)
+	data := bytes.Repeat([]byte("0123456789"), 400)
+	kept := &needle.Needle{Id: 2, Cookie: 0x1234, Data: data}
+	kept.Checksum = needle.NewCRC(kept.Data)
+	for _, n := range []*needle.Needle{gone, kept} {
+		if _, _, _, err := v.writeNeedle2(n, true, false, false); err != nil {
+			t.Fatalf("write needle %d: %v", n.Id, err)
+		}
+	}
+	if _, err := v.deleteNeedle2(newEmptyNeedle(1)); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+
+	option := &ReadOption{AttemptMetaOnly: true, HasRange: true, ReadBufferSize: 1024}
+	got := &needle.Needle{Id: kept.Id}
+	if _, err := v.readNeedle(got, option, nil); err != nil || !option.IsMetaOnly {
+		t.Fatalf("metadata read: IsMetaOnly %v, %v", option.IsMetaOnly, err)
+	}
+	if err := v.CompactByIndex(nil); err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+	if err := v.CommitCompact(); err != nil {
+		t.Fatalf("commit compact: %v", err)
+	}
+
+	for _, part := range [][2]int64{{0, 100}, {2000, 500}} {
+		var buf bytes.Buffer
+		if err := v.readNeedleDataInto(got, option, &buf, part[0], part[1]); err != nil {
+			t.Fatalf("part at %d: %v", part[0], err)
+		}
+		if !bytes.Equal(buf.Bytes(), data[part[0]:part[0]+part[1]]) {
+			t.Errorf("part at %d returned bytes of another record", part[0])
+		}
+	}
+}
+
 // A version 1 needle has no data size field and no metadata after its data,
 // so the metadata-only reader cannot parse it. A metadata-only read of a
 // version 1 volume must fall back to a full read instead of failing.

@@ -213,6 +213,7 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 			nv = refreshed
 			actualOffset = nv.Offset.ToActualOffset()
 			readOption.VolumeRevision = v.SuperBlock.CompactionRevision
+			readOption.metaOffset = nv.Offset
 		}
 		header := make([]byte, NeedleHeaderSize)
 		headerCount, headerErr := v.DataBackend.ReadAt(header, actualOffset)
@@ -277,6 +278,7 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 			}
 			actualOffset = nv.Offset.ToActualOffset()
 			readOption.VolumeRevision = v.SuperBlock.CompactionRevision
+			readOption.metaOffset = nv.Offset
 		}
 		count, err := n.ReadNeedleData(v.DataBackend, actualOffset, buf, x)
 		if readOption.HasSlowRead {
