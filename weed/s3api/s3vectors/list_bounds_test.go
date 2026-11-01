@@ -164,6 +164,17 @@ func TestListVectorsSegmentsFromTheEngine(t *testing.T) {
 		if !engine.legacy && engine.lists != pages {
 			t.Fatalf("modern engine took %d calls for %d pages", engine.lists, pages)
 		}
+		// The fallback starts from the page the engine already returned.
+		engine.lists = 0
+		body := json.RawMessage(`{"vectorBucketName":"` + bucket + `","indexName":"idx","segmentCount":2,"segmentIndex":0,"maxResults":1}`)
+		w := postJSON(t, s.handleListVectors, body)
+		var out ListVectorsResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil || len(out.Vectors) != 1 || out.Vectors[0].Key != "k0" || out.NextToken != "1" {
+			t.Fatalf("legacy=%v: one-row segment page %d %s", engine.legacy, w.Code, w.Body.String())
+		}
+		if engine.lists != 1 {
+			t.Fatalf("legacy=%v: one-row segment page took %d engine calls", engine.legacy, engine.lists)
+		}
 	}
 	if strings.Join(segments[false], ",") != strings.Join(segments[true], ",") {
 		t.Fatal("legacy fallback and engine segments disagree")

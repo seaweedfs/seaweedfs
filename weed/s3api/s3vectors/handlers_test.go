@@ -117,7 +117,7 @@ func TestListSegmentVectorsCoversEveryRowOnce(t *testing.T) {
 			} else if err != nil {
 				t.Fatalf("bad token %q: %v", token, err)
 			}
-			out, next, err := s.listSegmentVectors(context.Background(), nil, offset, 7, 3, segmentIndex, false, false)
+			out, next, err := s.listSegmentVectors(context.Background(), nil, offset, 7, 3, segmentIndex, false, false, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -145,7 +145,7 @@ func TestListSegmentVectorsCoversEveryRowOnce(t *testing.T) {
 func TestListSegmentVectorsStopsInsideEnginePage(t *testing.T) {
 	f := newFakeVectors(100)
 	s := &Server{vectors: f}
-	out, next, err := s.listSegmentVectors(context.Background(), nil, 0, 5, 2, 0, false, false)
+	out, next, err := s.listSegmentVectors(context.Background(), nil, 0, 5, 2, 0, false, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,7 @@ func TestListSegmentVectorsStopsInsideEnginePage(t *testing.T) {
 		t.Fatalf("token %q, want 9", next)
 	}
 	offset, _ := strconv.ParseUint(next, 10, 64)
-	out, next, err = s.listSegmentVectors(context.Background(), nil, offset, 5, 2, 0, false, false)
+	out, next, err = s.listSegmentVectors(context.Background(), nil, offset, 5, 2, 0, false, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +173,7 @@ func TestListSegmentVectorsStopsInsideEnginePage(t *testing.T) {
 func TestListSegmentVectorsEndsOnLastRow(t *testing.T) {
 	f := newFakeVectors(10)
 	s := &Server{vectors: f}
-	out, next, err := s.listSegmentVectors(context.Background(), nil, 0, 10, 1, 0, false, false)
+	out, next, err := s.listSegmentVectors(context.Background(), nil, 0, 10, 1, 0, false, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,14 +189,14 @@ func TestListSegmentVectorsEndsOnLastRow(t *testing.T) {
 func TestListSegmentVectorsPageLimits(t *testing.T) {
 	f := newFakeVectors(1500)
 	s := &Server{vectors: f}
-	out, next, err := s.listSegmentVectors(context.Background(), nil, 0, 0, 1, 0, false, false)
+	out, next, err := s.listSegmentVectors(context.Background(), nil, 0, 0, 1, 0, false, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(out) != vectorsDefaultPage || next != strconv.Itoa(vectorsDefaultPage) {
 		t.Fatalf("default page: %d rows token %q", len(out), next)
 	}
-	out, next, err = s.listSegmentVectors(context.Background(), nil, 0, 5000, 1, 0, false, false)
+	out, next, err = s.listSegmentVectors(context.Background(), nil, 0, 5000, 1, 0, false, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
