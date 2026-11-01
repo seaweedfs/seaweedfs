@@ -9,9 +9,9 @@ import (
 	"io"
 	"os"
 	"path"
-	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -532,11 +532,6 @@ func (h *S3TablesHandler) deleteDirectoryIfMatches(ctx context.Context, client f
 // it was asked to delete without its contents.
 var errDirNotEmpty = errors.New("directory is not empty")
 
-// msgFailDelNonEmptyFolder is how the filer's answer to a non-recursive delete
-// of a non-empty directory begins, as filer.MsgFailDelNonEmptyFolder, without
-// importing that package for it.
-const msgFailDelNonEmptyFolder = "fail to delete non-empty folder"
-
 // deleteEmptyDirectoryIfMatches deletes a directory without its contents, only
 // while it still carries the extended attributes the caller captured. The
 // filer checks both under the path lock, in the one delete: a changed
@@ -560,10 +555,10 @@ func (h *S3TablesHandler) deleteEmptyDirectoryIfMatches(ctx context.Context, cli
 		return err
 	}
 	if resp != nil && resp.Error != "" {
-		if strings.HasPrefix(resp.Error, msgFailDelNonEmptyFolder) {
-			return fmt.Errorf("%w: %s", errDirNotEmpty, path)
+		if err := filer.DeleteEntryError(resp.Error); !errors.Is(err, filer.ErrNonEmptyFolder) {
+			return err
 		}
-		return errors.New(resp.Error)
+		return fmt.Errorf("%w: %s", errDirNotEmpty, path)
 	}
 	return nil
 }
