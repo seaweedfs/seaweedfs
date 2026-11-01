@@ -80,14 +80,15 @@ func TestVectorNamespaceOfUndeclaredBucketIsWritableOverLance(t *testing.T) {
 	h.mustDo(t, http.MethodPost, idx+"/drop", `{}`, http.StatusOK)
 }
 
-// recordingVendor vends a credential whose key says whether it may write.
+// recordingVendor vends a credential whose key says whether it may write and
+// whose secret is the prefix it covers.
 type recordingVendor struct{}
 
-func (recordingVendor) VendTableCredentials(_ context.Context, _, _, _ string, readOnly bool) (*VendedCredentials, error) {
+func (recordingVendor) VendTableCredentials(_ context.Context, _, _, prefix string, readOnly bool) (*VendedCredentials, error) {
 	if readOnly {
-		return &VendedCredentials{AccessKeyID: "read-only", SecretAccessKey: "secret"}, nil
+		return &VendedCredentials{AccessKeyID: "read-only", SecretAccessKey: prefix}, nil
 	}
-	return &VendedCredentials{AccessKeyID: "read-write", SecretAccessKey: "secret"}, nil
+	return &VendedCredentials{AccessKeyID: "read-write", SecretAccessKey: prefix}, nil
 }
 
 func (h *testHarness) vendedKey(t *testing.T, target, token string) string {
@@ -138,5 +139,27 @@ func TestVectorNamespaceVendsWriteCredentialsOnlyToTrustedCallers(t *testing.T) 
 				t.Errorf("vended %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// Declaring a name that already exists answers for that table, so naming the
+// index's location on another table gets no credentials to the index.
+func TestDeclareOfAnExistingTableKeepsItsLocation(t *testing.T) {
+	h := newTestHarness(t)
+	h.server.SetCredentialVendor(recordingVendor{})
+	h.seedVectorIndex(t, "vec", s3tables.FormatLance)
+	h.mustDo(t, http.MethodPost, "/v1/table/vec$other$tbl/declare", `{}`, http.StatusOK)
+
+	rec := h.mustDo(t, http.MethodPost, "/v1/table/vec$other$tbl/declare",
+		`{"location":"s3://vec/vector/idx","vend_credentials":true}`, http.StatusOK)
+	resp := decode[DeclareTableResponse](t, rec)
+	if resp.Location != "s3://vec/other/tbl" {
+		t.Errorf("location = %q, want the table's own s3://vec/other/tbl", resp.Location)
+	}
+	if got := resp.StorageOptions["aws_secret_access_key"]; got != "other/tbl" {
+		t.Errorf("credentials cover %q, want other/tbl", got)
+	}
+	if h.filer.Get("/buckets/vec/vector/idx", reservedMarker) != nil {
+		t.Error("the declare wrote into the index")
 	}
 }

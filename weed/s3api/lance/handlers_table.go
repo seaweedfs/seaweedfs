@@ -135,7 +135,8 @@ func (s *Server) handleDeclareTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.createTable(r, bucket, ns, name, location); err != nil {
+	location, err = s.createTable(r, bucket, ns, name, location)
+	if err != nil {
 		writeStorageError(w, r, err)
 		return
 	}
@@ -358,7 +359,7 @@ func (s *Server) handleRegisterTable(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	default:
-		if err := s.createTable(r, bucket, ns, name, location); err != nil {
+		if location, err = s.createTable(r, bucket, ns, name, location); err != nil {
 			writeStorageError(w, r, err)
 			return
 		}
@@ -550,7 +551,9 @@ func (s *Server) loadLanceTable(r *http.Request, bucket string, ns []string, nam
 	return &lanceTable{location: location, versionToken: resp.VersionToken}, nil
 }
 
-func (s *Server) createTable(r *http.Request, bucket string, ns []string, name, location string) error {
+// createTable returns the location the catalog holds for the table. When the
+// name already exists that is its own location, not the one asked for.
+func (s *Server) createTable(r *http.Request, bucket string, ns []string, name, location string) (string, error) {
 	req := &s3tables.CreateTableRequest{
 		TableBucketARN: bucketARN(bucket),
 		Namespace:      ns,
@@ -561,7 +564,13 @@ func (s *Server) createTable(r *http.Request, bucket string, ns []string, name, 
 		MetadataLocation: location,
 	}
 	var resp s3tables.CreateTableResponse
-	return s.execute(r, "CreateTable", req, &resp)
+	if err := s.execute(r, "CreateTable", req, &resp); err != nil {
+		return "", err
+	}
+	if resp.MetadataLocation == "" {
+		return tableLocation(bucket, ns, name), nil
+	}
+	return resp.MetadataLocation, nil
 }
 
 // repointTable moves an existing entry to another dataset location without
