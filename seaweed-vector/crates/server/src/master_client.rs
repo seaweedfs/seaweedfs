@@ -189,6 +189,16 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_hint_naming_a_failed_master_in_grpc_form_is_skipped() {
+        let tried = pass(&["m1:9333", "m2:9333"], |master| match master {
+            "m1:9333" => anyhow::bail!("unreachable"),
+            _ => Ok(Some("m1:9333.19333".to_string())),
+        })
+        .await;
+        assert_eq!(tried, ["m1:9333", "m2:9333"]);
+    }
+
+    #[tokio::test]
     async fn masters_naming_each_other_do_not_spin() {
         let tried = pass(&["m1:9333", "m2:9333"], |master| {
             let other = if master == "m1:9333" {
