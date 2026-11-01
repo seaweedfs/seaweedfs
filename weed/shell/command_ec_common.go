@@ -93,13 +93,13 @@ func collectTopologyInfo(commandEnv *CommandEnv, delayBeforeCollecting time.Dura
 	if delayBeforeCollecting > 0 {
 		time.Sleep(delayBeforeCollecting)
 	}
-	return fetchTopologyInfo(context.Background(), commandEnv)
+	return fetchTopologyInfo(context.Background(), commandEnv, &master_pb.VolumeListRequest{})
 }
 
-func fetchTopologyInfo(ctx context.Context, commandEnv *CommandEnv) (topoInfo *master_pb.TopologyInfo, volumeSizeLimitMb uint64, err error) {
+func fetchTopologyInfo(ctx context.Context, commandEnv *CommandEnv, request *master_pb.VolumeListRequest) (topoInfo *master_pb.TopologyInfo, volumeSizeLimitMb uint64, err error) {
 	var resp *master_pb.VolumeListResponse
 	err = commandEnv.MasterClient.WithClient(ctx, false, func(client master_pb.SeaweedClient) error {
-		resp, err = pb.CollectVolumeList(ctx, client, &master_pb.VolumeListRequest{})
+		resp, err = pb.CollectVolumeList(ctx, client, request)
 		return err
 	})
 	if err != nil {
@@ -127,21 +127,22 @@ func topologyDataNodes(topo *master_pb.TopologyInfo) []*master_pb.DataNodeInfo {
 	return dataNodes
 }
 
-// collectVolumeServerAddresses resolves nodes with volumeServerAddresses. An
-// explicit node list bounds the topology lookup and is used as given when the
-// topology is unavailable, so it still works while the master is down.
+// collectVolumeServerAddresses resolves nodes with volumeServerAddresses from
+// a topology-only listing. An explicit node list bounds the lookup and is used
+// as given when the topology is unavailable, so it still works while the
+// master is down.
 func collectVolumeServerAddresses(commandEnv *CommandEnv, nodes string) ([]pb.ServerAddress, error) {
-	if nodes == "" {
-		dataNodes, err := collectDataNodes(commandEnv, 0)
-		if err != nil {
+	ctx := context.Background()
+	if nodes != "" {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+	}
+	topo, _, err := fetchTopologyInfo(ctx, commandEnv, &master_pb.VolumeListRequest{TopologyOnly: true})
+	if err != nil {
+		if nodes == "" {
 			return nil, err
 		}
-		return volumeServerAddresses(dataNodes, ""), nil
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	topo, _, err := fetchTopologyInfo(ctx, commandEnv)
-	if err != nil {
 		glog.V(0).Infof("dialing volume servers as given, topology unavailable: %v", err)
 	}
 	return volumeServerAddresses(topologyDataNodes(topo), nodes), nil
