@@ -360,9 +360,11 @@ func TestTranslateFilter(t *testing.T) {
 		{"range", map[string]interface{}{"k": map[string]interface{}{"$gt": float64(1)}},
 			"TRY_CAST(json_extract(`metadata`, '$[\"k\"]') AS DOUBLE) > 1"},
 		{"in strings", map[string]interface{}{"k": map[string]interface{}{"$in": []interface{}{"a", "b"}}},
-			"(COALESCE(json_extract(`metadata`, '$[\"k\"]') in ('\"a\"'), false) OR COALESCE(json_extract(`metadata`, '$[\"k\"]') in ('\"b\"'), false))"},
+			"(COALESCE(json_extract(`metadata`, '$[\"k\"]') in ('\"a\"', '\"b\"'), false))"},
 		{"nin numbers", map[string]interface{}{"k": map[string]interface{}{"$nin": []interface{}{float64(1)}}},
 			"NOT (COALESCE(TRY_CAST(json_extract(`metadata`, '$[\"k\"]') AS DOUBLE) in (1), false))"},
+		{"in mixed types", map[string]interface{}{"k": map[string]interface{}{"$in": []interface{}{"a", float64(1), true, float64(2)}}},
+			"(COALESCE(json_extract(`metadata`, '$[\"k\"]') in ('\"a\"', 'true'), false) OR COALESCE(TRY_CAST(json_extract(`metadata`, '$[\"k\"]') AS DOUBLE) in (1, 2), false))"},
 		{"and", map[string]interface{}{"$and": []interface{}{
 			map[string]interface{}{"a": "1"}, map[string]interface{}{"b": float64(2)},
 		}},

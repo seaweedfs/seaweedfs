@@ -277,6 +277,9 @@ mod tests {
                 r#"(COALESCE(json_extract({k}) in ('"a"'), false) OR COALESCE(json_extract({k}) in ('"b"'), false))"#
             ),
             format!("NOT (COALESCE(TRY_CAST(json_extract({k}) AS DOUBLE) in (1), false))"),
+            format!(
+                r#"(COALESCE(json_extract({k}) in ('"a"', 'true'), false) OR COALESCE(TRY_CAST(json_extract({k}) AS DOUBLE) in (1, 2.5), false))"#
+            ),
             r#"(json_extract(`metadata`, '$["a"]') = '"1"' AND TRY_CAST(json_extract(`metadata`, '$["b"]') AS DOUBLE) = 2)"#.to_string(),
             r#"json_extract(`metadata`, '$["a''b"]') = '"v''1"'"#.to_string(),
             format!(r#"json_extract({k}) = '"line\nbreak"'"#),
