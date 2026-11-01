@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -499,9 +500,49 @@ func (h *S3TablesHandler) deleteDirectoryIfMatches(ctx context.Context, client f
 	return nil
 }
 
+// errDirNotEmpty is a directory that holds something the caller meant to leave
+// alone: a file in a leftover tree, or an entry the filer found in a directory
+// it was asked to delete without its contents.
+var errDirNotEmpty = errors.New("directory is not empty")
+
+// msgFailDelNonEmptyFolder is how the filer's answer to a non-recursive delete
+// of a non-empty directory begins, as filer.MsgFailDelNonEmptyFolder, without
+// importing that package for it.
+const msgFailDelNonEmptyFolder = "fail to delete non-empty folder"
+
+// deleteEmptyDirectoryIfMatches deletes a directory without its contents, only
+// while it still carries the extended attributes the caller captured. The
+// filer checks both under the path lock, in the one delete: a changed
+// attribute is ErrConcurrentUpdate, and an entry that appeared in the
+// directory is errDirNotEmpty, so neither a directory taken back since the
+// caller looked at it nor a file written into it since is lost.
+func (h *S3TablesHandler) deleteEmptyDirectoryIfMatches(ctx context.Context, client filer_pb.SeaweedFilerClient, path string, expected *filer_pb.Entry) error {
+	dir, name := splitPath(path)
+	resp, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{
+		Directory:        dir,
+		Name:             name,
+		IsDeleteData:     true,
+		ExpectedExtended: snapshotExtended(expected.Extended),
+	})
+	if status.Code(err) == codes.FailedPrecondition {
+		return fmt.Errorf("%w: %s", ErrConcurrentUpdate, path)
+	}
+	if err != nil {
+		return err
+	}
+	if resp != nil && resp.Error != "" {
+		if strings.HasPrefix(resp.Error, msgFailDelNonEmptyFolder) {
+			return fmt.Errorf("%w: %s", errDirNotEmpty, path)
+		}
+		return errors.New(resp.Error)
+	}
+	return nil
+}
+
 var (
 	errParentDeleting = errors.New("parent is being deleted")
 	errParentGone     = errors.New("parent was deleted")
+	errParentCreating = errors.New("parent is still being created")
 	errNoDeleteClaim  = errors.New("claim not held")
 	errBackOutFailed  = errors.New("backing out the create failed")
 	errSourceGone     = errors.New("rename source was deleted")
@@ -527,18 +568,64 @@ func (h *S3TablesHandler) claimForDelete(ctx context.Context, client filer_pb.Se
 	return claim, claimed, nil
 }
 
-// releaseDeleteClaim removes claim from path while path still holds it, even
-// after the request was cancelled.
-func (h *S3TablesHandler) releaseDeleteClaim(ctx context.Context, client filer_pb.SeaweedFilerClient, path, claim string) {
-	err := h.mutateEntryExtended(context.WithoutCancel(ctx), client, path, func(extended map[string][]byte) error {
+// tryReleaseDeleteClaim removes claim from path once, while path still holds
+// it. A claim another delete replaced or lifted, or an entry that is gone,
+// leaves nothing to release and is not an error.
+func (h *S3TablesHandler) tryReleaseDeleteClaim(ctx context.Context, client filer_pb.SeaweedFilerClient, path, claim string) error {
+	err := h.mutateEntryExtended(ctx, client, path, func(extended map[string][]byte) error {
 		if string(extended[ExtendedKeyDeleting]) != claim {
 			return errNoDeleteClaim
 		}
 		delete(extended, ExtendedKeyDeleting)
 		return nil
 	})
-	if err != nil && !errors.Is(err, errNoDeleteClaim) && !errors.Is(err, filer_pb.ErrNotFound) {
+	if errors.Is(err, errNoDeleteClaim) || errors.Is(err, filer_pb.ErrNotFound) {
+		return nil
+	}
+	return err
+}
+
+// releaseDeleteClaim removes claim from path while path still holds it, even
+// after the request was cancelled.
+func (h *S3TablesHandler) releaseDeleteClaim(ctx context.Context, client filer_pb.SeaweedFilerClient, path, claim string) {
+	if err := h.tryReleaseDeleteClaim(context.WithoutCancel(ctx), client, path, claim); err != nil {
 		glog.Warningf("release delete claim on %s: %v", path, err)
+	}
+}
+
+// releaseDeleteClaimRetrying is releaseDeleteClaim for a claim that refuses
+// every create while it stays, such as a bucket's. It retries a failed release
+// the way a rename retries lifting its source claim. Unlike there, a release
+// that lost to a write landing in between is retried too: the bucket entry
+// takes other writes, such as PutTableBucketPolicy, where nothing else writes a
+// renamed source.
+func (h *S3TablesHandler) releaseDeleteClaimRetrying(ctx context.Context, client filer_pb.SeaweedFilerClient, path, claim string) {
+	ctx = context.WithoutCancel(ctx)
+	var err error
+	for attempt := 0; attempt < extendedAttributeUpdateAttempts; attempt++ {
+		if attempt > 0 {
+			time.Sleep(100 * time.Millisecond)
+		}
+		if err = h.tryReleaseDeleteClaim(ctx, client, path, claim); err == nil {
+			return
+		}
+	}
+	glog.Warningf("release delete claim on %s: %v", path, err)
+}
+
+// isTableBucketCreatedAt accepts only the table bucket created at createdAt. A
+// bucket deleted and created again under the same name has a CreatedAt of its
+// own, so a create authorized against the first reads the second as gone.
+func isTableBucketCreatedAt(createdAt time.Time) func(*filer_pb.Entry) bool {
+	return func(entry *filer_pb.Entry) bool {
+		if !IsTableBucketEntry(entry) {
+			return false
+		}
+		var metadata tableBucketMetadata
+		if json.Unmarshal(entry.Extended[ExtendedKeyMetadata], &metadata) != nil {
+			return false
+		}
+		return metadata.CreatedAt.Equal(createdAt)
 	}
 }
 
@@ -549,7 +636,8 @@ func isNamespaceEntry(entry *filer_pb.Entry) bool {
 }
 
 // checkParentOpen returns errParentGone if parentPath is missing or not a
-// catalog entry, and errParentDeleting if a delete has claimed it.
+// catalog entry, errParentCreating if the create that wrote it has not
+// confirmed it yet, and errParentDeleting if a delete has claimed it.
 func (h *S3TablesHandler) checkParentOpen(ctx context.Context, client filer_pb.SeaweedFilerClient, parentPath string, isParent func(*filer_pb.Entry) bool) error {
 	_, err := h.openParent(ctx, client, parentPath, isParent)
 	return err
@@ -567,6 +655,9 @@ func (h *S3TablesHandler) openParent(ctx context.Context, client filer_pb.Seawee
 	}
 	if !isParent(entry) {
 		return nil, errParentGone
+	}
+	if isUnfinishedCreate(entry.Extended) {
+		return nil, errParentCreating
 	}
 	if _, claimed := entry.Extended[ExtendedKeyDeleting]; claimed {
 		return nil, errParentDeleting
@@ -644,6 +735,20 @@ func (h *S3TablesHandler) mutateCatalogRecord(
 // it removes what the create wrote and returns why, or errBackOutFailed if
 // the record stays.
 func (h *S3TablesHandler) confirmParent(ctx context.Context, client filer_pb.SeaweedFilerClient, parentPath string, isParent func(*filer_pb.Entry) bool, childPath string, written map[string][]byte, emptyDirs ...string) error {
+	return h.confirmChild(ctx, client, parentPath, isParent, true, childPath, written, emptyDirs)
+}
+
+// confirmParentOnce is confirmParent for a record that other creates build on,
+// a namespace. Checking the parent again after the mark comes off would leave a
+// window in which a child is created in the record and the check then removes
+// the record under it, so the parent is checked once, before the mark comes
+// off. That is enough while a delete of the parent counts the marked record: one
+// claiming the parent after the check scans the record and is refused.
+func (h *S3TablesHandler) confirmParentOnce(ctx context.Context, client filer_pb.SeaweedFilerClient, parentPath string, isParent func(*filer_pb.Entry) bool, childPath string, written map[string][]byte, emptyDirs ...string) error {
+	return h.confirmChild(ctx, client, parentPath, isParent, false, childPath, written, emptyDirs)
+}
+
+func (h *S3TablesHandler) confirmChild(ctx context.Context, client filer_pb.SeaweedFilerClient, parentPath string, isParent func(*filer_pb.Entry) bool, recheck bool, childPath string, written map[string][]byte, emptyDirs []string) error {
 	parent, err := h.openParent(ctx, client, parentPath, isParent)
 	confirmed := false
 	if err == nil {
@@ -651,7 +756,9 @@ func (h *S3TablesHandler) confirmParent(ctx context.Context, client filer_pb.Sea
 		// create wrote; a failed write backs the record out like a closed parent.
 		if err = h.removeExtendedAttributesIf(ctx, client, childPath, written, ExtendedKeyDeleting); err == nil {
 			confirmed = true
-			err = h.parentStillOpen(ctx, client, parentPath, isParent, parent)
+			if recheck {
+				err = h.parentStillOpen(ctx, client, parentPath, isParent, parent)
+			}
 		}
 	}
 	if err == nil {
@@ -751,6 +858,115 @@ func (h *S3TablesHandler) dirHoldsFiles(ctx context.Context, client filer_pb.Sea
 		}
 	}
 	return false, nil
+}
+
+// removeEmptyTree removes dirPath and every directory under it, provided no
+// file and no catalog record sits anywhere in the tree. dirEntry is dirPath as
+// the caller saw it.
+//
+// dirPath is claimed first, in a write that requires the attributes the caller
+// saw: a directory taken back as a namespace since then fails it, before
+// anything under it is touched, and the claim keeps it from being taken back
+// while the tree goes. With dirPath no namespace, nothing under it can become a
+// catalog record either, so a record the walk meets was there before and is
+// refused, not removed.
+//
+// The walk lists the tree a page at a time and stops at the first file or record
+// with errDirNotEmpty, before anything is removed. Directories then go deepest
+// first, each in a delete that checks the attributes it had when listed and
+// refuses a directory that holds an entry by now, so a file written since the
+// walk is kept. dirPath goes last, still under this claim; any other way out
+// lifts the claim.
+func (h *S3TablesHandler) removeEmptyTree(ctx context.Context, client filer_pb.SeaweedFilerClient, dirPath string, dirEntry *filer_pb.Entry) (err error) {
+	// A claim seen by the caller, one a delete that died left, is replaced like
+	// any other attribute the caller saw; one written since fails the compare.
+	claim := generateVersionToken()
+	expected := snapshotExtended(dirEntry.Extended)
+	var claimed map[string][]byte
+	err = h.mutateEntryExtended(ctx, client, dirPath, func(extended map[string][]byte) error {
+		for key, want := range expected {
+			if !bytes.Equal(extended[key], want) {
+				return fmt.Errorf("%w: %s changed on %s", ErrConcurrentUpdate, key, dirPath)
+			}
+		}
+		extended[ExtendedKeyDeleting] = []byte(claim)
+		claimed = snapshotExtended(extended)
+		return nil
+	})
+	if errors.Is(err, filer_pb.ErrNotFound) {
+		return fmt.Errorf("%w: %s", ErrConcurrentUpdate, dirPath)
+	}
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			h.releaseDeleteClaim(ctx, client, dirPath, claim)
+		}
+	}()
+
+	type listedDir struct {
+		path  string
+		entry *filer_pb.Entry
+	}
+	listed := []listedDir{{dirPath, &filer_pb.Entry{Extended: claimed}}}
+
+	walkCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	// A directory is listed after its parent, so removing in reverse order
+	// removes every directory after the ones under it.
+	for next := 0; next < len(listed); next++ {
+		dir := listed[next].path
+		lastFileName := ""
+		for {
+			resp, err := client.ListEntries(walkCtx, &filer_pb.ListEntriesRequest{
+				Directory:          dir,
+				Limit:              dirListPageSize,
+				StartFromFileName:  lastFileName,
+				InclusiveStartFrom: lastFileName == "",
+			})
+			if err != nil {
+				if status.Code(err) == codes.NotFound {
+					break // gone, so its delete below reports the change
+				}
+				return err
+			}
+
+			received := false
+			for {
+				entry, err := resp.Recv()
+				if err != nil {
+					if err == io.EOF || status.Code(err) == codes.NotFound {
+						break
+					}
+					return err
+				}
+				if entry.Entry == nil {
+					continue
+				}
+				received = true
+				lastFileName = entry.Entry.Name
+				child := path.Join(dir, entry.Entry.Name)
+				if !entry.Entry.IsDirectory {
+					return fmt.Errorf("%w: %s holds a file", errDirNotEmpty, child)
+				}
+				if _, isRecord := entry.Entry.Extended[ExtendedKeyMetadata]; isRecord {
+					return fmt.Errorf("%w: %s is a catalog record", errDirNotEmpty, child)
+				}
+				listed = append(listed, listedDir{child, entry.Entry})
+			}
+			if !received {
+				break
+			}
+		}
+	}
+
+	for i := len(listed) - 1; i >= 0; i-- {
+		if err := h.deleteEmptyDirectoryIfMatches(ctx, client, listed[i].path, listed[i].entry); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // keepAsLeftover clears a namespace's catalog attributes and the delete's

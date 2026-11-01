@@ -170,19 +170,45 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 	}
 
 	namespacePath := GetNamespacePath(bucketName, namespaceName)
+	// The authorization above holds for this bucket only. One deleted and
+	// created again under the same name since then is another bucket, and is
+	// treated as gone by both checks below.
+	isAuthorizedBucket := isTableBucketCreatedAt(bucketMetadata.CreatedAt)
 
-	// Check if namespace already exists
+	// A delete that has claimed the bucket is scanning it for namespaces, so
+	// refuse before writing anything. Checked after the authorization above, so
+	// denied callers never see the delete.
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		_, err := h.readNamespaceMetadataAttr(r.Context(), client, namespacePath)
+		return h.checkParentOpen(r.Context(), client, bucketPath, isAuthorizedBucket)
+	})
+	if h.writeBucketClosedError(w, err, bucketName) {
 		return err
+	}
+
+	// Check if namespace already exists. One still marked unfinished does not:
+	// its create either confirmed it or lost it, and the mark left behind would
+	// wedge the name, so this create takes it over the way a table's does.
+	exists := false
+	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		entry, err := h.lookupEntry(r.Context(), client, namespacePath)
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		_, hasMetadata := entry.Extended[ExtendedKeyMetadata]
+		exists = hasMetadata && !isUnfinishedCreate(entry.Extended)
+		return nil
 	})
 
-	if err == nil {
-		h.writeError(w, http.StatusConflict, ErrCodeNamespaceAlreadyExists, fmt.Sprintf("namespace %s already exists", namespaceName))
-		return fmt.Errorf("namespace already exists")
-	} else if !errors.Is(err, filer_pb.ErrNotFound) {
+	if err != nil {
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to check namespace: %v", err))
 		return err
+	}
+	if exists {
+		h.writeError(w, http.StatusConflict, ErrCodeNamespaceAlreadyExists, fmt.Sprintf("namespace %s already exists", namespaceName))
+		return fmt.Errorf("namespace already exists")
 	}
 
 	// Create the namespace with bucket owner to maintain consistency
@@ -201,7 +227,13 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 		return fmt.Errorf("failed to marshal metadata: %w", err)
 	}
 
-	attrs := map[string][]byte{ExtendedKeyMetadata: metadataBytes}
+	// The unfinished mark keeps a table or view from being created in the
+	// namespace until the bucket check below has passed: one created before it
+	// would be left under a namespace that check then backs out.
+	attrs := map[string][]byte{
+		ExtendedKeyMetadata: metadataBytes,
+		ExtendedKeyDeleting: []byte(createClaim),
+	}
 	var taken error
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		err := h.createDirectoryExclusive(r.Context(), client, namespacePath, attrs)
@@ -215,7 +247,19 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 				return nil
 			}
 		}
-		return err
+		if err != nil {
+			return err
+		}
+		// A delete may have claimed the bucket since the check above, after it
+		// scanned for namespaces and before this write. Confirm the bucket once
+		// more now that the namespace is there: a delete claiming it later scans
+		// the namespace, marked or not, and one that claimed it already makes
+		// this back out what it wrote. The mark comes off only after that check
+		// and the bucket is not checked again: a table created in the window
+		// between the two would be left under a namespace the second check backs out.
+		// A bucket recreated since the authorization fails the check as gone, so
+		// the namespace is backed out of it rather than left with this owner.
+		return h.confirmParentOnce(r.Context(), client, bucketPath, isAuthorizedBucket, namespacePath, attrs, namespacePath)
 	})
 	if err == nil && taken != nil {
 		err = taken
@@ -226,6 +270,9 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 	}
 	if errors.Is(err, ErrConcurrentUpdate) || errors.Is(err, filer_pb.ErrNotFound) {
 		h.writeError(w, http.StatusConflict, ErrCodeConflict, "namespace changed during create, retry the request")
+		return err
+	}
+	if h.writeBucketClosedError(w, err, bucketName) {
 		return err
 	}
 	if err != nil {
@@ -241,6 +288,22 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 
 	h.writeJSON(w, http.StatusOK, resp)
 	return nil
+}
+
+// writeBucketClosedError answers a create refused because its bucket is being
+// deleted or was deleted, and reports whether err was one of those.
+func (h *S3TablesHandler) writeBucketClosedError(w http.ResponseWriter, err error, bucketName string) bool {
+	switch {
+	case errors.Is(err, errParentDeleting):
+		h.writeError(w, http.StatusConflict, ErrCodeConflict, fmt.Sprintf("table bucket %s is being deleted", bucketName))
+	case errors.Is(err, errParentGone):
+		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, fmt.Sprintf("table bucket %s not found", bucketName))
+	case errors.Is(err, errBackOutFailed):
+		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("table bucket %s was deleted during the request and the new namespace may remain", bucketName))
+	default:
+		return false
+	}
+	return true
 }
 
 // handleGetNamespace gets details of a namespace
