@@ -1093,6 +1093,8 @@ impl VolumeServer for VolumeGrpcService {
         self.state.check_maintenance()?;
         let req = request.into_inner();
         let mut results = Vec::new();
+        let mut replica_errs: std::collections::HashMap<u32, Result<(), String>> =
+            std::collections::HashMap::new();
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -1113,6 +1115,23 @@ impl VolumeServer for VolumeGrpcService {
                     continue;
                 }
             };
+
+            let vid = file_id.volume_id.0;
+            if !replica_errs.contains_key(&vid) {
+                let checked =
+                    crate::server::handlers::check_delete_replicas(&self.state, vid).await;
+                replica_errs.insert(vid, checked);
+            }
+            if let Some(Err(e)) = replica_errs.get(&vid) {
+                results.push(volume_server_pb::DeleteResult {
+                    file_id: fid_str.clone(),
+                    status: 503,
+                    error: e.clone(),
+                    size: 0,
+                    version: 0,
+                });
+                continue;
+            }
 
             let mut n = Needle {
                 id: file_id.key,
@@ -12963,6 +12982,99 @@ mod tests {
             "a batch delete must not read the needle's payload ({} bytes): {reads:?}",
             data.len()
         );
+    }
+
+    /// Go's TestBatchDelete_WaitsForEveryReplica: a replica the master no
+    /// longer lists would miss the delete, so the delete waits for it.
+    #[tokio::test]
+    async fn test_batch_delete_waits_for_every_replica() {
+        use axum::routing::get;
+
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        {
+            let mut store = service.state.store.write().unwrap();
+            store
+                .add_volume(
+                    VolumeId(2),
+                    DiskType::HardDrive,
+                    &VolumeSpec {
+                        replica_placement: Some(
+                            crate::storage::super_block::ReplicaPlacement::from_string("001")
+                                .unwrap(),
+                        ),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            let mut n = Needle {
+                id: NeedleId(1),
+                cookie: Cookie(0x3344),
+                data: b"hello".to_vec(),
+                data_size: 5,
+                ..Needle::default()
+            };
+            store
+                .write_volume_needle(VolumeId(2), &mut n, false)
+                .unwrap();
+        }
+
+        let urls = Arc::new(std::sync::Mutex::new(vec!["127.0.0.1:1"]));
+        let app = axum::Router::new().route(
+            "/dir/lookup",
+            get({
+                let urls = urls.clone();
+                move || {
+                    let locations: Vec<_> = urls
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .map(|url| serde_json::json!({ "url": url }))
+                        .collect();
+                    async move {
+                        axum::Json(serde_json::json!({
+                            "volumeOrFileId": "2",
+                            "locations": locations
+                        }))
+                    }
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        *service.state.current_master_url.write().await = format!("127.0.0.1:{port}");
+
+        let fid = needle::FileId::new(VolumeId(2), NeedleId(1), Cookie(0x3344)).to_string();
+        let delete = || async {
+            let resp = service
+                .batch_delete(Request::new(volume_server_pb::BatchDeleteRequest {
+                    file_ids: vec![fid.clone()],
+                    skip_cookie_check: true,
+                }))
+                .await
+                .unwrap()
+                .into_inner();
+            assert_eq!(resp.results.len(), 1, "{:?}", resp.results);
+            (resp.results[0].status, resp.results[0].error.clone())
+        };
+
+        let (status, error) = delete().await;
+        assert_eq!(status, 503, "{error}");
+        assert!(error.contains("replication copy count"), "{error}");
+        {
+            let store = service.state.store.read().unwrap();
+            let (_, v) = store.find_volume(VolumeId(2)).unwrap();
+            let mut n = Needle {
+                id: NeedleId(1),
+                ..Needle::default()
+            };
+            v.read_needle(&mut n)
+                .expect("needle deleted while a replica was offline");
+        }
+
+        urls.lock().unwrap().push("127.0.0.2:8080");
+        let (status, error) = delete().await;
+        assert_eq!(status, 202, "{error}");
     }
 
     const GO_EC_NEEDLE_NOT_FOUND: &str =
