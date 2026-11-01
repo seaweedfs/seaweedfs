@@ -6,6 +6,7 @@
 //! it does not, always covering the fragments no index has reached yet.
 
 pub mod coverage;
+mod filter;
 pub mod maintenance;
 pub mod query;
 pub mod segments;

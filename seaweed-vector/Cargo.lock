@@ -6461,6 +6461,7 @@ dependencies = [
  "arrow-schema",
  "clap",
  "futures",
+ "jsonb",
  "lance",
  "lance-index",
  "lance-linalg",
