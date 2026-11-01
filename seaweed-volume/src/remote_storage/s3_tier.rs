@@ -6,9 +6,11 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::{Arc, OnceLock, RwLock};
+use std::time::Duration;
 
 use aws_sdk_s3::Client;
 use aws_sdk_s3::config::http::HttpResponse;
+use aws_sdk_s3::config::timeout::TimeoutConfig;
 use aws_sdk_s3::config::{BehaviorVersion, Credentials, Region};
 use aws_sdk_s3::error::{DisplayErrorContext, SdkError};
 use aws_sdk_s3::operation::get_object::GetObjectError;
@@ -19,6 +21,12 @@ use tokio::sync::Semaphore;
 
 /// Concurrency limit for multipart upload/download (matches Go's s3manager).
 const CONCURRENCY: usize = 5;
+
+/// A tier endpoint that drops packets or accepts connections without answering
+/// must not hold a read, or a volume server's startup, for minutes per request.
+/// Matches Go's s3ConnectTimeout and s3ResponseHeaderTimeout.
+const S3_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const S3_READ_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// A tier transfer failure. The variant is what callers match on; the
 /// message is the operator-facing text.
@@ -107,7 +115,13 @@ impl S3TierBackend {
             .behavior_version(BehaviorVersion::latest())
             .region(Region::new(region.to_string()))
             .credentials_provider(credentials)
-            .force_path_style(config.force_path_style);
+            .force_path_style(config.force_path_style)
+            .timeout_config(
+                TimeoutConfig::builder()
+                    .connect_timeout(S3_CONNECT_TIMEOUT)
+                    .read_timeout(S3_READ_TIMEOUT)
+                    .build(),
+            );
 
         if !config.endpoint.is_empty() {
             s3_config = s3_config.endpoint_url(&config.endpoint);
@@ -895,6 +909,28 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, TierError::Io(_)), "{err:?}");
+    }
+
+    #[test]
+    fn backend_bounds_connect_and_read_waits() {
+        let (_listener, backend) = silent_backend();
+        let timeouts = backend.client.config().timeout_config().unwrap();
+        assert_eq!(timeouts.connect_timeout(), Some(S3_CONNECT_TIMEOUT));
+        assert_eq!(timeouts.read_timeout(), Some(S3_READ_TIMEOUT));
+    }
+
+    fn silent_backend() -> (std::net::TcpListener, Arc<S3TierBackend>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let backend = S3TierBackend::new(&S3TierConfig {
+            access_key: "access".to_string(),
+            secret_key: "secret".to_string(),
+            region: "us-east-1".to_string(),
+            bucket: "bucket".to_string(),
+            endpoint: format!("http://{}", listener.local_addr().unwrap()),
+            storage_class: String::new(),
+            force_path_style: true,
+        });
+        (listener, Arc::new(backend))
     }
 
     #[test]
