@@ -175,24 +175,54 @@ func (cf *ChunkedFileReader) WriteTo(w io.Writer) (n int64, err error) {
 		return n, ErrInvalidRange
 	}
 	for ; chunkIndex < len(cf.chunkList); chunkIndex++ {
-		ci := cf.chunkList[chunkIndex]
-		// if we need read date from local volume server first?
-		fileUrl, jwt, lookupError := LookupFileId(func(_ context.Context) pb.ServerAddress {
-			return cf.master
-		}, cf.grpcDialOption, ci.Fid)
-		if lookupError != nil {
-			return n, lookupError
-		}
-		if wn, e := readChunkNeedle(fileUrl, w, chunkStartOffset, jwt); e != nil {
+		wn, e := cf.readChunk(cf.chunkList[chunkIndex].Fid, w, chunkStartOffset)
+		n += wn
+		cf.pos += wn
+		if e != nil {
 			return n, e
-		} else {
-			n += wn
-			cf.pos += wn
 		}
-
 		chunkStartOffset = 0
 	}
 	return n, nil
+}
+
+// readChunk reads the chunk from one replica after another, each one resuming
+// where the previous stopped.
+func (cf *ChunkedFileReader) readChunk(fileId string, w io.Writer, offset int64) (written int64, err error) {
+	masterFn := func(_ context.Context) pb.ServerAddress {
+		return cf.master
+	}
+	fileUrls, jwt, err := lookupFileIdUrls(masterFn, cf.grpcDialOption, fileId)
+	if err != nil {
+		return 0, err
+	}
+	dst := &writeErrorRecorder{Writer: w}
+	for _, fileUrl := range fileUrls {
+		wn, e := readChunkNeedle(fileUrl, dst, offset+written, jwt)
+		written += wn
+		if e == nil {
+			return written, nil
+		}
+		if dst.err != nil {
+			return written, dst.err
+		}
+		glog.V(0).Infof("read chunk %s from %s: %v", fileId, fileUrl, e)
+		err = e
+	}
+	return written, err
+}
+
+type writeErrorRecorder struct {
+	io.Writer
+	err error
+}
+
+func (r *writeErrorRecorder) Write(p []byte) (int, error) {
+	n, err := r.Writer.Write(p)
+	if err != nil {
+		r.err = err
+	}
+	return n, err
 }
 
 func (cf *ChunkedFileReader) ReadAt(p []byte, off int64) (n int, err error) {
