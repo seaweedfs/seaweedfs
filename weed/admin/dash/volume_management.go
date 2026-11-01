@@ -533,33 +533,31 @@ func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, erro
 						// Process disk information
 						for _, diskInfo := range node.DiskInfos {
 							vs.MaxVolumes += int(diskInfo.MaxVolumeCount)
-							// Prefer the real physical disk capacity the volume server
-							// reports; the slot-based estimate overstates capacity when
-							// maxVolumeCount is configured higher than the disk holds.
-							if diskInfo.DiskTotalBytes > 0 {
-								vs.DiskCapacity += int64(diskInfo.DiskTotalBytes)
-							} else {
-								vs.DiskCapacity += int64(diskInfo.MaxVolumeCount) * int64(volumeSizeLimitMB) * 1024 * 1024
-							}
 
-							// Count regular volumes and calculate disk usage.
-							// A remote-tiered volume reports its cloud object's
-							// size; keep those bytes out of the local disk usage
-							// that is compared against DiskCapacity.
+							// Count regular volumes. A remote-tiered volume
+							// reports its cloud object's size; keep those bytes
+							// out of the local disk usage that is compared
+							// against DiskCapacity.
+							var diskLocalSize int64
 							for _, volInfo := range diskInfo.VolumeInfos {
 								vs.Volumes++
 								if volInfo.RemoteStorageName != "" {
 									vs.RemoteSize += int64(volInfo.Size)
 								} else {
-									vs.DiskUsage += int64(volInfo.Size)
+									diskLocalSize += int64(volInfo.Size)
 								}
 							}
 
 							// Accumulate EC shard information across all disks for this volume server
 							for _, ecShardInfo := range diskInfo.EcShardInfos {
+								diskLocalSize += erasure_coding.EcShardsTotalSize(ecShardInfo)
 								volumeId := ecShardInfo.Id
 								ecShardAccumulator[volumeId] = append(ecShardAccumulator[volumeId], ecShardInfo)
 							}
+
+							capacity, usage := diskCapacityAndUsage(diskInfo, volumeSizeLimitMB, diskLocalSize)
+							vs.DiskCapacity += capacity
+							vs.DiskUsage += usage
 						}
 
 						// Process accumulated EC shard information per volume
@@ -601,7 +599,6 @@ func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, erro
 								if shardSize, exists := allShardSizes[shardId]; exists {
 									ecInfo.ShardSizes[int(shardId)] = shardSize
 									ecInfo.TotalSize += shardSize
-									vs.DiskUsage += shardSize // Add EC shard size to total disk usage
 								}
 							}
 

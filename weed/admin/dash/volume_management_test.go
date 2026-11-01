@@ -3,6 +3,8 @@ package dash
 import (
 	"context"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -156,4 +158,127 @@ func TestVolumeReplicaAddress(t *testing.T) {
 	require.Error(t, err, "EC shards must not be treated as regular volumes")
 	_, err = volumeReplicaAddress(nil, 7, "node-b")
 	require.Error(t, err)
+}
+
+// newVolumeServersTestAdmin wires an AdminServer to a fake master that returns
+// topology, so the cluster volume server views can be built without a real
+// cluster.
+func newVolumeServersTestAdmin(t *testing.T, topology *master_pb.TopologyInfo) *AdminServer {
+	t.Helper()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	grpcServer := grpc.NewServer()
+	master_pb.RegisterSeaweedServer(grpcServer, &volumeAccessTestMaster{topology: topology})
+	go grpcServer.Serve(listener)
+	t.Cleanup(grpcServer.Stop)
+
+	// The master HTTP API only supplies PublicUrl, which disk accounting does
+	// not use; answer it locally so the test never leaves the machine.
+	httpServer := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"Topology":{"DataCenters":[]}}`))
+	}))
+	httpServer.Start()
+	t.Cleanup(httpServer.Close)
+
+	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+	address := pb.NewServerAddress(
+		"127.0.0.1",
+		httpServer.Listener.Addr().(*net.TCPAddr).Port,
+		listener.Addr().(*net.TCPAddr).Port,
+	)
+	discovery := pb.NewServiceDiscoveryFromMap(map[string]pb.ServerAddress{"master": address})
+	masterClient := wdclient.NewMasterClient(dialOption, "", "admin", "", "", "", *discovery)
+	go masterClient.KeepConnectedToMaster(t.Context())
+
+	admin := &AdminServer{masterClient: masterClient, grpcDialOption: dialOption}
+	// Versions come from the VolumeServerStatus fan-out, which is unrelated to
+	// disk accounting. A fresh cache keeps the test from dialing volume servers.
+	admin.volumeVersionCache = map[string]string{"node-a": "4.51"}
+	admin.lastVersionFetch = time.Now()
+	return admin
+}
+
+// TestGetClusterVolumeServersDiskAccounting pins the volume server usage to the
+// same measurement as the capacity it is shown against. Usage used to sum the
+// logical volume sizes, which on a compressing filesystem exceeds the physical
+// capacity; the admin UI then derived a negative available space and rendered
+// it as "NaN undefined".
+func TestGetClusterVolumeServersDiskAccounting(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		disk         *master_pb.DiskInfo
+		wantCapacity int64
+		wantUsage    int64
+	}{
+		{
+			name: "compressed filesystem reports statfs usage",
+			disk: &master_pb.DiskInfo{
+				MaxVolumeCount: 100,
+				DiskTotalBytes: 5_700_000_000_000,
+				DiskFreeBytes:  1_500_000_000_000,
+				VolumeInfos: []*master_pb.VolumeInformationMessage{
+					{Id: 1, Size: 3_000_000_000_000},
+					{Id: 2, Size: 3_020_000_000_000},
+				},
+			},
+			wantCapacity: 5_700_000_000_000,
+			wantUsage:    4_200_000_000_000,
+		},
+		{
+			name: "plain filesystem reports statfs usage",
+			disk: &master_pb.DiskInfo{
+				MaxVolumeCount: 100,
+				DiskTotalBytes: 1_000_000_000_000,
+				DiskFreeBytes:  400_000_000_000,
+				VolumeInfos:    []*master_pb.VolumeInformationMessage{{Id: 1, Size: 590_000_000_000}},
+			},
+			wantCapacity: 1_000_000_000_000,
+			wantUsage:    600_000_000_000,
+		},
+		{
+			name: "ec shards are not added on top of statfs usage",
+			disk: &master_pb.DiskInfo{
+				MaxVolumeCount: 100,
+				DiskTotalBytes: 1_000_000_000_000,
+				DiskFreeBytes:  300_000_000_000,
+				EcShardInfos: []*master_pb.VolumeEcShardInformationMessage{
+					{Id: 3, EcIndexBits: 0b11, ShardSizes: []int64{100, 200}},
+				},
+			},
+			wantCapacity: 1_000_000_000_000,
+			wantUsage:    700_000_000_000,
+		},
+		{
+			name: "without statfs numbers falls back to logical size",
+			disk: &master_pb.DiskInfo{
+				MaxVolumeCount: 10,
+				VolumeInfos:    []*master_pb.VolumeInformationMessage{{Id: 4, Size: 30_000_000_000}},
+				EcShardInfos: []*master_pb.VolumeEcShardInformationMessage{
+					{Id: 5, EcIndexBits: 0b1, ShardSizes: []int64{300}},
+				},
+			},
+			// 10 slots at the 30000 MiB default volume size limit.
+			wantCapacity: 10 * 30000 * 1024 * 1024,
+			wantUsage:    30_000_000_000 + 300,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			admin := newVolumeServersTestAdmin(t, volumeAccessTestTopology(&master_pb.DataNodeInfo{
+				Id:        "node-a",
+				Address:   "127.0.0.1:8080",
+				GrpcPort:  18080,
+				DiskInfos: map[string]*master_pb.DiskInfo{"hdd": tc.disk},
+			}))
+
+			data, err := admin.GetClusterVolumeServers()
+			require.NoError(t, err)
+			require.Len(t, data.VolumeServers, 1)
+			server := data.VolumeServers[0]
+			require.Equal(t, tc.wantCapacity, server.DiskCapacity)
+			require.Equal(t, tc.wantUsage, server.DiskUsage)
+			require.LessOrEqual(t, server.DiskUsage, server.DiskCapacity,
+				"usage above capacity makes the advertised available space negative")
+		})
+	}
 }

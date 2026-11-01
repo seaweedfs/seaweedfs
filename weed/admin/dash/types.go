@@ -50,8 +50,8 @@ type VolumeServer struct {
 	Version       string    `json:"version"`
 	Volumes       int       `json:"volumes"`
 	MaxVolumes    int       `json:"max_volumes"`
-	DiskUsage     int64     `json:"disk_usage"`
-	DiskCapacity  int64     `json:"disk_capacity"`
+	DiskUsage     int64     `json:"disk_usage"`    // statfs bytes in use, comparable with DiskCapacity
+	DiskCapacity  int64     `json:"disk_capacity"` // statfs capacity, or the slot-based estimate without statfs
 	LastHeartbeat time.Time `json:"last_heartbeat"`
 
 	// EC shard information
