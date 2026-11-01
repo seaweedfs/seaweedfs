@@ -191,7 +191,7 @@ async fn main() -> Result<()> {
             let dataset = open_dataset(&client, &id, &fallback).await?;
             let vector =
                 VectorTable::resolve(&dataset, vector_column.as_deref(), key_column.as_deref())?;
-            for batch in query::get(&dataset, &vector, &keys).await? {
+            for batch in query::get(&dataset, &vector, &keys, None).await? {
                 println!("{}", arrow_cast::pretty::pretty_format_batches(&[batch])?);
             }
         }

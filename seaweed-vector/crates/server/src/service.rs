@@ -217,6 +217,18 @@ fn key_list(keys: &[String]) -> String {
     )
 }
 
+/// The columns a GetVectors or ListVectors response carries.
+fn projection(return_data: bool, return_metadata: bool) -> Vec<String> {
+    let mut columns = vec![KEY_COLUMN.to_string()];
+    if return_data {
+        columns.push(VECTOR_COLUMN.to_string());
+    }
+    if return_metadata {
+        columns.push(METADATA_COLUMN.to_string());
+    }
+    columns
+}
+
 /// The fragments holding live rows `offset..offset + rows` in scan order, and
 /// where `offset` falls in the first of them. A scan reads every listed
 /// fragment's deletion file, so a page names only its own. None when the
@@ -500,7 +512,8 @@ impl VectorService for VectorServer {
             .await
             .map_err(internal)?;
         let resolved = VectorTable::resolve(&dataset, None, Some(KEY_COLUMN)).map_err(invalid)?;
-        let batches = query::get(&dataset, &resolved, &req.keys)
+        let columns = projection(req.return_data, req.return_metadata);
+        let batches = query::get(&dataset, &resolved, &req.keys, Some(&columns))
             .await
             .map_err(internal)?;
         Ok(Response::new(pb::GetVectorsResponse {
@@ -550,13 +563,7 @@ impl VectorService for VectorServer {
                 .parse()
                 .map_err(|_| Status::invalid_argument("invalid next_token"))?
         };
-        let mut columns = vec![KEY_COLUMN.to_string()];
-        if req.return_data {
-            columns.push(VECTOR_COLUMN.to_string());
-        }
-        if req.return_metadata {
-            columns.push(METADATA_COLUMN.to_string());
-        }
+        let columns = projection(req.return_data, req.return_metadata);
         // An unset max_results arrives as 0; page it like S3 Vectors does.
         const DEFAULT_PAGE: u32 = 500;
         const MAX_PAGE: u32 = 1000;

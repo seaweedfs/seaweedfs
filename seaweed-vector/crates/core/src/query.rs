@@ -5,7 +5,7 @@ use anyhow::{Context, Result, bail};
 use arrow_array::{Array, Float32Array, RecordBatch, StringArray, UInt64Array};
 use futures::TryStreamExt;
 use lance::Dataset;
-use lance::dataset::scanner::Scanner;
+use lance::dataset::scanner::{MaterializationStyle, Scanner};
 use lance_linalg::distance::DistanceType;
 use lance_table::format::Fragment;
 
@@ -63,11 +63,13 @@ pub async fn ann(dataset: &Dataset, table: &VectorTable, query: &Query) -> Resul
     run(scanner(dataset, table, query, true).await?, table).await
 }
 
-/// Fetch rows by key.
+/// Fetch rows by key, projected to `columns` (all of them when None). Only
+/// the key column is read across the table; the rest is taken for matches.
 pub async fn get(
     dataset: &Dataset,
     table: &VectorTable,
     keys: &[String],
+    columns: Option<&[String]>,
 ) -> Result<Vec<RecordBatch>> {
     let Some(key_column) = &table.key_column else {
         bail!("the table has no key column to look up");
@@ -83,7 +85,11 @@ pub async fn get(
     let mut scanner = dataset.scan();
     scanner
         .filter(&format!("`{}` in ({list})", key_column.replace('`', "``")))?
+        .materialization_style(MaterializationStyle::AllLate)
         .with_row_id();
+    if let Some(columns) = columns {
+        scanner.project(columns)?;
+    }
     scanner
         .try_into_stream()
         .await?
@@ -425,11 +431,24 @@ mod tests {
         let dataset = write_dataset(&dir, &vectors, &["a", "b", "c"]).await;
         let table = VectorTable::resolve(&dataset, None, None).unwrap();
 
-        let batches = get(&dataset, &table, &["k0".to_string(), "k2".to_string()])
-            .await
-            .unwrap();
+        let keys = ["k0".to_string(), "k2".to_string()];
+        let batches = get(&dataset, &table, &keys, None).await.unwrap();
         let rows: usize = batches.iter().map(|b| b.num_rows()).sum();
         assert_eq!(rows, 2);
+        assert!(batches.iter().all(|b| b.column_by_name("vector").is_some()));
+
+        let projected = get(&dataset, &table, &keys, Some(&["key".to_string()]))
+            .await
+            .unwrap();
+        let mut got: Vec<String> = Vec::new();
+        for batch in &projected {
+            assert!(batch.column_by_name("vector").is_none());
+            let column = batch.column_by_name("key").unwrap();
+            let column = column.as_any().downcast_ref::<StringArray>().unwrap();
+            got.extend(column.iter().flatten().map(String::from));
+        }
+        got.sort();
+        assert_eq!(got, keys);
     }
 
     #[tokio::test]
