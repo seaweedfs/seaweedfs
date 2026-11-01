@@ -84,13 +84,17 @@ def exact_top_k(data, query, k, keep=None):
 
 
 def list_all(s3v, args, **extra):
-    count, token = 0, None
+    keys, token = [], None
     while True:
         page = s3v.list_vectors(**args, maxResults=500, **extra, **({"nextToken": token} if token else {}))
-        count += len(page["vectors"])
+        keys.extend(vector["key"] for vector in page["vectors"])
         token = page.get("nextToken")
         if not token:
-            return count
+            return keys
+
+
+def assert_complete(keys):
+    assert len(keys) == VECTORS and set(keys) == {f"v{i}" for i in range(VECTORS)}
 
 
 def recall(expected, hits):
@@ -152,7 +156,7 @@ def test_upsert_existing(perf):
               "metadata": {"category": f"c{i % CATEGORIES}", "n": i}} for i in keys]
     latencies = [timed(lambda: s3v.put_vectors(**args, vectors=batch))[0] for _ in range(5)]
     perf["report"]["upsert_existing"] = summarize(latencies)
-    assert list_all(s3v, args) == VECTORS
+    assert_complete(list_all(s3v, args))
 
 
 def run_queries(perf, name, **extra):
@@ -231,9 +235,9 @@ def test_list_vectors(perf):
 
         start = time.perf_counter()
         with concurrent.futures.ThreadPoolExecutor(segments) as pool:
-            counted = sum(pool.map(scan, range(segments)))
+            listed = [key for keys in pool.map(scan, range(segments)) for key in keys]
         elapsed = time.perf_counter() - start
-        assert counted == VECTORS
+        assert_complete(listed)
         results[str(segments)] = {"seconds": elapsed, "vectors_per_s": VECTORS / elapsed}
     perf["report"]["list_vectors_segments"] = results
 
