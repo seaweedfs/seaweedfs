@@ -214,11 +214,11 @@ def test_get_vectors(perf):
     s3v.get_vectors(**args, keys=["v0"])
     latencies = []
     for _ in range(max(1, QUERIES // 2)):
-        keys = [f"v{i}" for i in rng.sample(range(VECTORS), 100)]
+        keys = [f"v{i}" for i in rng.sample(range(VECTORS), min(100, VECTORS))]
         seconds, response = timed(lambda: s3v.get_vectors(
             **args, keys=keys, returnData=True, returnMetadata=True))
         latencies.append(seconds)
-        assert len(response["vectors"]) == 100
+        assert len(response["vectors"]) == len(keys)
     perf["report"]["get_vectors_100_keys"] = summarize(latencies)
 
 
@@ -244,7 +244,7 @@ def test_list_vectors(perf):
 
 def test_delete_vectors(perf):
     s3v, args = perf["client"], perf["args"]
-    keys = [f"v{i}" for i in random.Random(4).sample(range(VECTORS), 500)]
+    keys = [f"v{i}" for i in random.Random(4).sample(range(VECTORS), min(500, VECTORS))]
     latencies = [timed(lambda: s3v.delete_vectors(**args, keys=keys[n:n + 100]))[0]
                  for n in range(0, len(keys), 100)]
     perf["report"]["delete_vectors_100_keys"] = summarize(latencies)
