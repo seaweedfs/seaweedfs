@@ -187,9 +187,11 @@ func (cf *ChunkedFileReader) WriteTo(w io.Writer) (n int64, err error) {
 	return n, nil
 }
 
-// readChunk reads the chunk from one replica after another, each one resuming
-// where the previous stopped. A failure drops the volume's cached locations,
-// and once every cached replica has failed the master is asked again.
+// readChunk reads the chunk from the first replica that serves it. A failure
+// drops the volume's cached locations, and once every cached replica has
+// failed the master is asked again. A replica that already sent part of the
+// chunk is not continued elsewhere: a volume server streams a needle before
+// its checksum is verified, so those bytes may be the corrupt ones.
 func (cf *ChunkedFileReader) readChunk(fileId string, w io.Writer, offset int64) (written int64, err error) {
 	masterFn := func(_ context.Context) pb.ServerAddress {
 		return cf.master
@@ -203,27 +205,25 @@ func (cf *ChunkedFileReader) readChunk(fileId string, w io.Writer, offset int64)
 			if err == nil {
 				err = lookupError
 			}
-			return written, err
+			return 0, err
 		}
 		for _, fileUrl := range fileUrls {
 			if tried[fileUrl] {
 				continue
 			}
 			tried[fileUrl] = true
-			wn, e := readChunkNeedle(fileUrl, dst, offset+written, jwt)
-			written += wn
-			if e == nil {
-				return written, nil
+			written, err = readChunkNeedle(fileUrl, dst, offset, jwt)
+			if err == nil || dst.err != nil {
+				return written, err
 			}
-			if dst.err != nil {
-				return written, dst.err
-			}
-			glog.V(0).Infof("read chunk %s from %s: %v", fileId, fileUrl, e)
-			err = e
+			glog.V(0).Infof("read chunk %s from %s: %v", fileId, fileUrl, err)
 			InvalidateVolumeIdLocationCache(vid)
+			if written > 0 {
+				return written, err
+			}
 		}
 	}
-	return written, err
+	return 0, err
 }
 
 type writeErrorRecorder struct {

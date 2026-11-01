@@ -110,8 +110,41 @@ func testChunkData(size int) []byte {
 	return data
 }
 
-func TestChunkedFileReaderResumesOnAnotherReplica(t *testing.T) {
+func TestChunkedFileReaderTriesTheNextReplica(t *testing.T) {
 	const vid = "91201"
+	data := testChunkData(4096)
+	healthy := newChunkReplica(t, data, -1)
+	fake := &fakeVolumeLocationServer{urls: []string{healthy.host()}}
+	master := startFakeMasterServer(t, fake)
+	dial := grpc.WithTransportCredentials(insecure.NewCredentials())
+
+	vc.Set(vid, []Location{{Url: deadAddress(t)}, {Url: healthy.host(), DataInRemote: true}}, time.Minute)
+	t.Cleanup(func() { InvalidateVolumeIdLocationCache(vid) })
+
+	chunks := []*ChunkInfo{{Fid: vid + ",01637037d6", Offset: 0, Size: int64(len(data))}}
+	reader := NewChunkedFileReader(chunks, master, dial)
+	reader.Seek(1000, io.SeekStart)
+	got, err := io.ReadAll(reader)
+	reader.Close()
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if !bytes.Equal(got, data[1000:]) {
+		t.Fatalf("read %d bytes, want the last %d bytes of the chunk", len(got), len(data)-1000)
+	}
+	if r := healthy.requests(); len(r) != 1 || r[0] != "bytes=1000-" {
+		t.Fatalf("healthy replica requests = %q, want one from byte 1000", r)
+	}
+	if _, err := vc.Get(vid); err == nil {
+		t.Fatalf("cached locations kept after a replica failed")
+	}
+	if fake.lookups() != 0 {
+		t.Fatalf("master lookups = %d, want 0", fake.lookups())
+	}
+}
+
+func TestChunkedFileReaderDoesNotContinueAPartlySentChunk(t *testing.T) {
+	const vid = "91205"
 	data := testChunkData(4096)
 	broken := newChunkReplica(t, data, 1000)
 	healthy := newChunkReplica(t, data, -1)
@@ -124,23 +157,17 @@ func TestChunkedFileReaderResumesOnAnotherReplica(t *testing.T) {
 
 	chunks := []*ChunkInfo{{Fid: vid + ",01637037d6", Offset: 0, Size: int64(len(data))}}
 	reader := NewChunkedFileReader(chunks, master, dial)
-	got, err := io.ReadAll(reader)
+	_, err := io.ReadAll(reader)
 	reader.Close()
-	if err != nil {
-		t.Fatalf("read: %v", err)
+	if err == nil {
+		t.Fatalf("read of a chunk cut off mid-body succeeded")
 	}
-	if !bytes.Equal(got, data) {
-		t.Fatalf("read %d bytes, want the %d bytes of the chunk", len(got), len(data))
-	}
-	if r := healthy.requests(); len(r) != 1 || r[0] != "bytes=1000-" {
-		t.Fatalf("healthy replica requests = %q, want one resuming at byte 1000", r)
-	}
-	if _, err := vc.Get(vid); err == nil {
-		t.Fatalf("cached locations kept after a replica failed")
+	if r := healthy.requests(); len(r) != 0 {
+		t.Fatalf("healthy replica requests = %q, want none", r)
 	}
 
 	reader = NewChunkedFileReader(chunks, master, dial)
-	got, err = io.ReadAll(reader)
+	got, err := io.ReadAll(reader)
 	reader.Close()
 	if err != nil || !bytes.Equal(got, data) {
 		t.Fatalf("second read: %d bytes, err %v", len(got), err)
