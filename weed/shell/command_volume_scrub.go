@@ -62,20 +62,11 @@ func (c *commandVolumeScrub) Do(args []string, commandEnv *CommandEnv, writer io
 		return
 	}
 
-	c.volumeServerAddrs = []pb.ServerAddress{}
-	if *nodesStr != "" {
-		for _, addr := range strings.Split(*nodesStr, ",") {
-			c.volumeServerAddrs = append(c.volumeServerAddrs, pb.ServerAddress(addr))
-		}
-	} else {
-		dns, err := collectDataNodes(commandEnv, 0)
-		if err != nil {
-			return err
-		}
-		for _, dn := range dns {
-			c.volumeServerAddrs = append(c.volumeServerAddrs, pb.NewServerAddressFromDataNode(dn))
-		}
+	dns, err := collectDataNodes(commandEnv, 0)
+	if err != nil {
+		return err
 	}
+	c.volumeServerAddrs = volumeServerAddresses(dns, *nodesStr)
 
 	c.volumeIDs = []uint32{}
 	if *volumeIDsStr != "" {

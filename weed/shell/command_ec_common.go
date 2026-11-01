@@ -125,6 +125,34 @@ func collectDataNodes(commandEnv *CommandEnv, delayBeforeCollecting time.Duratio
 	return dataNodes, nil
 }
 
+// volumeServerAddresses returns the comma-separated nodes, or every data node
+// when nodes is empty, dialing each registered server on its gRPC port.
+func volumeServerAddresses(dataNodes []*master_pb.DataNodeInfo, nodes string) []pb.ServerAddress {
+	registered := make(map[string]pb.ServerAddress, len(dataNodes))
+	all := make([]pb.ServerAddress, 0, len(dataNodes))
+	for _, dn := range dataNodes {
+		addr := pb.NewServerAddressFromDataNode(dn)
+		registered[addr.ToHttpAddress()] = addr
+		all = append(all, addr)
+	}
+	if nodes == "" {
+		return all
+	}
+	addrs := []pb.ServerAddress{}
+	for _, node := range strings.Split(nodes, ",") {
+		node = strings.TrimSpace(node)
+		if node == "" {
+			continue
+		}
+		if addr, found := registered[pb.ServerAddress(node).ToHttpAddress()]; found {
+			addrs = append(addrs, addr)
+		} else {
+			addrs = append(addrs, pb.ServerAddress(node))
+		}
+	}
+	return addrs
+}
+
 func collectEcNodesForDC(commandEnv *CommandEnv, selectedDataCenter string, diskType types.DiskType) (ecNodes []*EcNode, totalFreeEcSlots int, err error) {
 	return ec.CollectEcNodesForDC(commandEnv.ecEnv(), selectedDataCenter, diskType)
 }

@@ -86,20 +86,11 @@ func (c *commandVolumeServerState) Do(args []string, commandEnv *CommandEnv, wri
 		return fmt.Errorf("--maintenanceOn and --maintenanceOff are mutually exclusive")
 	}
 
-	volumeServerAddrs := []pb.ServerAddress{}
-	if *nodesStr != "" {
-		for _, addr := range strings.Split(*nodesStr, ",") {
-			volumeServerAddrs = append(volumeServerAddrs, pb.ServerAddress(addr))
-		}
-	} else {
-		dns, err := collectDataNodes(commandEnv, 0)
-		if err != nil {
-			return err
-		}
-		for _, dn := range dns {
-			volumeServerAddrs = append(volumeServerAddrs, pb.NewServerAddressFromDataNode(dn))
-		}
+	dns, err := collectDataNodes(commandEnv, 0)
+	if err != nil {
+		return err
 	}
+	volumeServerAddrs := volumeServerAddresses(dns, *nodesStr)
 	slices.Sort(volumeServerAddrs)
 	if len(volumeServerAddrs) == 0 {
 		return fmt.Errorf("no volume servers specified")
