@@ -11,7 +11,10 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use lance::dataset::Dataset;
 use lance::dataset::builder::DatasetBuilder;
-use lance::io::{ObjectStore, ObjectStoreParams, ObjectStoreRegistry, StorageOptionsAccessor};
+use lance::io::{
+    ObjectStore, ObjectStoreParams, ObjectStoreRegistry, StorageOptionsAccessor,
+    WrappingObjectStore,
+};
 
 use crate::catalog::{NamespaceClient, TableDescription};
 
@@ -43,8 +46,18 @@ pub async fn open(
     id: &[String],
     fallback: &FallbackOptions,
 ) -> Result<OpenTable> {
+    open_with(client, id, fallback, None).await
+}
+
+/// [`open`] with the dataset's object store wrapped, e.g. by a read cache.
+pub async fn open_with(
+    client: &NamespaceClient,
+    id: &[String],
+    fallback: &FallbackOptions,
+    wrapper: Option<Arc<dyn WrappingObjectStore>>,
+) -> Result<OpenTable> {
     let description = client.describe_table(id).await?;
-    let dataset = open_at(&description, fallback).await?;
+    let dataset = open_at(&description, fallback, wrapper).await?;
     Ok(OpenTable {
         id: id.to_vec(),
         location: description.location,
@@ -56,11 +69,21 @@ pub async fn open(
 /// through. What it vends always wins: the fallback exists because a deployment
 /// without STS vends no credentials at all, and then the worker has no other way
 /// to reach the data.
-async fn open_at(description: &TableDescription, fallback: &FallbackOptions) -> Result<Dataset> {
+async fn open_at(
+    description: &TableDescription,
+    fallback: &FallbackOptions,
+    wrapper: Option<Arc<dyn WrappingObjectStore>>,
+) -> Result<Dataset> {
     let mut options: HashMap<String, String> = fallback.clone();
     options.extend(description.storage_options.clone());
     DatasetBuilder::from_uri(&description.location)
-        .with_storage_options(options)
+        .with_store_params(ObjectStoreParams {
+            storage_options_accessor: Some(Arc::new(StorageOptionsAccessor::with_static_options(
+                options,
+            ))),
+            object_store_wrapper: wrapper,
+            ..Default::default()
+        })
         .load()
         .await
         .with_context(|| format!("open lance dataset at {}", description.location))
