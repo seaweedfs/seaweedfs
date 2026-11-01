@@ -10,6 +10,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/topology"
 )
 
 func (vs *VolumeServer) BatchDelete(ctx context.Context, req *volume_server_pb.BatchDeleteRequest) (*volume_server_pb.BatchDeleteResponse, error) {
@@ -24,6 +25,7 @@ func (vs *VolumeServer) BatchDelete(ctx context.Context, req *volume_server_pb.B
 	}
 
 	now := uint64(time.Now().Unix())
+	replicaErrs := make(map[needle.VolumeId]error)
 
 	for _, fid := range req.FileIds {
 		vid, id_cookie, err := operation.ParseFileId(fid)
@@ -56,6 +58,14 @@ func (vs *VolumeServer) BatchDelete(ctx context.Context, req *volume_server_pb.B
 			}
 		}
 
+		if err := vs.checkDeleteReplicas(volumeId, replicaErrs); err != nil {
+			resp.Results = append(resp.Results, &volume_server_pb.DeleteResult{
+				FileId: fid,
+				Status: http.StatusServiceUnavailable,
+				Error:  err.Error(),
+			})
+			continue
+		}
 		ecVolume, isEcVolume := vs.store.FindEcVolume(volumeId)
 		if !req.SkipCookieCheck {
 			cookie := n.Cookie
@@ -144,4 +154,19 @@ func (vs *VolumeServer) BatchDelete(ctx context.Context, req *volume_server_pb.B
 
 	return resp, nil
 
+}
+
+// checkDeleteReplicas refuses a delete the master cannot route to every
+// replica, as the HTTP delete path does, so an offline replica does not keep
+// the needle once it returns.
+func (vs *VolumeServer) checkDeleteReplicas(volumeId needle.VolumeId, checked map[needle.VolumeId]error) error {
+	if err, found := checked[volumeId]; found {
+		return err
+	}
+	var err error
+	if v := vs.store.GetVolume(volumeId); v != nil && v.ReplicaPlacement.GetCopyCount() > 1 {
+		_, err = topology.GetRemoteReplications(vs.store, vs.grpcDialOption, volumeId, vs.GetMaster)
+	}
+	checked[volumeId] = err
+	return err
 }
