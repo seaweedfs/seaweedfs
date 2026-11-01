@@ -8,6 +8,7 @@ use lance::dataset::WriteParams;
 use lance::dataset::{MergeInsertBuilder, WhenMatched, WhenNotMatched};
 use lance::io::ObjectStoreParams;
 use lance::io::StorageOptionsAccessor;
+use lance::table::format::Fragment;
 use lance_linalg::distance::DistanceType;
 use prost_types::{ListValue, Struct, Value, value::Kind};
 use std::collections::{BTreeMap, HashMap};
@@ -211,6 +212,49 @@ fn key_list(keys: &[String]) -> String {
             .collect::<Vec<_>>()
             .join(", ")
     )
+}
+
+/// The fragments holding live rows `offset..offset + rows` in scan order, and
+/// where `offset` falls in the first of them. A scan reads every listed
+/// fragment's deletion file, so a page names only its own. None when the
+/// manifest lacks a fragment's live row count.
+fn page_fragments(dataset: &Dataset, offset: u64, rows: u64) -> Option<(Vec<Fragment>, u64)> {
+    dataset.manifest().writer_version.as_ref()?;
+    let (mut start, mut skip, mut out) = (0u64, 0u64, Vec::new());
+    for fragment in dataset.fragments().iter() {
+        if start >= offset.saturating_add(rows) {
+            break;
+        }
+        let live = fragment.num_rows()? as u64;
+        if start + live > offset {
+            if out.is_empty() {
+                skip = offset - start;
+            }
+            out.push(fragment.clone());
+        }
+        start += live;
+    }
+    Some((out, skip))
+}
+
+/// Live rows `offset..offset + rows` in scan order, projected to `columns`.
+async fn list_page(
+    dataset: &Dataset,
+    columns: &[String],
+    offset: u64,
+    rows: u64,
+) -> Result<Vec<RecordBatch>> {
+    let mut scanner = dataset.scan();
+    scanner.project(columns)?;
+    let skip = match page_fragments(dataset, offset, rows) {
+        Some((fragments, skip)) => {
+            scanner.with_fragments(fragments);
+            skip
+        }
+        None => offset,
+    };
+    scanner.limit(Some(rows as i64), Some(skip as i64))?;
+    Ok(scanner.try_into_stream().await?.try_collect().await?)
 }
 
 fn rows_as_vectors(
@@ -458,17 +502,7 @@ impl VectorService for VectorServer {
             0 => DEFAULT_PAGE,
             n => n.min(MAX_PAGE),
         };
-        let mut scanner = dataset.scan();
-        scanner
-            .project(&columns)
-            .map_err(internal)?
-            .limit(Some(page as i64), Some(offset as i64))
-            .map_err(internal)?;
-        let batches: Vec<RecordBatch> = scanner
-            .try_into_stream()
-            .await
-            .map_err(internal)?
-            .try_collect()
+        let batches = list_page(&dataset, &columns, offset, page as u64)
             .await
             .map_err(internal)?;
         let rows = batches.iter().map(|b| b.num_rows()).sum::<usize>();
@@ -649,6 +683,84 @@ mod tests {
             },
         ];
         assert!(batch_of(&vectors, 4, schema).is_err());
+    }
+
+    fn vectors(keys: std::ops::Range<usize>) -> Vec<pb::Vector> {
+        keys.map(|i| pb::Vector {
+            key: format!("k{i:03}"),
+            data: vec![i as f32, 1.0],
+            metadata: None,
+        })
+        .collect()
+    }
+
+    /// One fragment per range, then the given keys deleted.
+    async fn fragmented(
+        dir: &tempfile::TempDir,
+        ranges: &[std::ops::Range<usize>],
+        deleted: &[String],
+    ) -> Dataset {
+        let uri = dir.path().to_str().unwrap();
+        let schema = schema_for(2, pb::DistanceMetric::L2, &[]);
+        let mut dataset: Option<Dataset> = None;
+        for range in ranges {
+            let batch = batch_of(&vectors(range.clone()), 2, schema.clone()).unwrap();
+            let reader = arrow_array::RecordBatchIterator::new(vec![Ok(batch)], schema.clone());
+            dataset = Some(match dataset {
+                None => Dataset::write(reader, uri, None).await.unwrap(),
+                Some(mut d) => {
+                    d.append(reader, None).await.unwrap();
+                    d
+                }
+            });
+        }
+        let mut dataset = dataset.unwrap();
+        if !deleted.is_empty() {
+            dataset.delete(&key_list(deleted)).await.unwrap();
+        }
+        dataset
+    }
+
+    fn keys_of(batches: &[RecordBatch]) -> Vec<String> {
+        rows_as_vectors(batches, false, false)
+            .into_iter()
+            .map(|v| v.key)
+            .collect()
+    }
+
+    /// Every page names only its fragments yet matches the same window of
+    /// the full scan, across deletions and a fully deleted fragment.
+    #[tokio::test]
+    async fn list_page_matches_a_full_scan() {
+        let dir = tempfile::tempdir().unwrap();
+        let deleted: Vec<String> = ["k001", "k004", "k005", "k006", "k007", "k010"]
+            .map(String::from)
+            .to_vec();
+        let dataset = fragmented(&dir, &[0..4, 4..8, 8..12, 12..13], &deleted).await;
+        let columns = vec![KEY_COLUMN.to_string()];
+        let all = keys_of(
+            &dataset
+                .scan()
+                .project(&columns)
+                .unwrap()
+                .try_into_stream()
+                .await
+                .unwrap()
+                .try_collect::<Vec<_>>()
+                .await
+                .unwrap(),
+        );
+        assert_eq!(all.len(), 7);
+        let total = all.len() as u64;
+        assert!(page_fragments(&dataset, 0, total).is_some());
+        for offset in 0..=total + 1 {
+            for rows in [1, 2, 3, 5, total + 2] {
+                let got = keys_of(&list_page(&dataset, &columns, offset, rows).await.unwrap());
+                let end = (offset + rows).min(total) as usize;
+                let want = &all[(offset.min(total) as usize)..end];
+                assert_eq!(got, want, "offset {offset} rows {rows}");
+            }
+        }
     }
 
     /// A catalog that answers one describe with `location`.
