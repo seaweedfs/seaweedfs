@@ -35,6 +35,16 @@ func isExtractZip(r *http.Request) bool {
 		r.Header.Get(s3_constants.SeaweedFSExtract) == "zip"
 }
 
+// extractZipRoot is the directory members land under: the request path when it
+// ends in "/", otherwise its parent, so the path can name the archive.
+func extractZipRoot(r *http.Request) string {
+	root := r.URL.Path
+	if !strings.HasSuffix(root, "/") {
+		root = path.Dir(root)
+	}
+	return strings.TrimSuffix(root, "/")
+}
+
 // extractZipArchive writes a posted archive's members as individual entries
 // under the target directory, like AWS Snowball's auto-extract. The archive
 // itself is only stored when ?extract.keep=true.
@@ -81,11 +91,7 @@ func (fs *FilerServer) extractZipArchive(ctx context.Context, w http.ResponseWri
 		return
 	}
 
-	root := r.URL.Path
-	if !strings.HasSuffix(root, "/") {
-		root = path.Dir(root)
-	}
-	root = strings.TrimSuffix(root, "/")
+	root := extractZipRoot(r)
 
 	query := r.URL.Query()
 	chunkSize := fs.requestChunkSize(query)
