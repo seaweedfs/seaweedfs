@@ -131,13 +131,20 @@ func (v *Volume) readNeedleMetaAt(n *needle.Needle, offset int64, size int32) (e
 }
 
 // verifyMovedRecord checks that the record a compaction moved is the one n's
-// metadata came from, not a replacement of the same size.
-func (v *Volume) verifyMovedRecord(n *needle.Needle, moved *needle_map.NeedleValue, found bool) error {
+// metadata came from, not a replacement of the same size, and sets
+// IsOutOfRange for where it now lies.
+func (v *Volume) verifyMovedRecord(n *needle.Needle, moved *needle_map.NeedleValue, found bool, readOption *ReadOption) error {
 	if !found || moved.Offset.IsZero() || moved.Size != n.Size {
 		return ErrorNotFound
 	}
 	m := new(needle.Needle)
-	if err := m.ReadNeedleMeta(v.DataBackend, moved.Offset.ToActualOffset(), moved.Size, v.Version()); err != nil {
+	readOption.IsOutOfRange = false
+	err := m.ReadNeedleMeta(v.DataBackend, moved.Offset.ToActualOffset(), moved.Size, v.Version())
+	if err == needle.ErrorSizeMismatch && OffsetSize == 4 {
+		readOption.IsOutOfRange = true
+		err = m.ReadNeedleMeta(v.DataBackend, moved.Offset.ToActualOffset()+int64(MaxPossibleVolumeSize), moved.Size, v.Version())
+	}
+	if err != nil {
 		v.checkReadWriteError(err)
 		return fmt.Errorf("ReadNeedleMeta of moved needle: %w", err)
 	}
@@ -226,11 +233,14 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 				return ErrorNotFound
 			}
 			refreshed, found := v.nm.Get(n.Id)
-			if err := v.verifyMovedRecord(n, refreshed, found); err != nil {
+			if err := v.verifyMovedRecord(n, refreshed, found, readOption); err != nil {
 				return err
 			}
 			nv = refreshed
 			actualOffset = nv.Offset.ToActualOffset()
+			if readOption.IsOutOfRange {
+				actualOffset += int64(MaxPossibleVolumeSize)
+			}
 			readOption.VolumeRevision = v.SuperBlock.CompactionRevision
 			readOption.metaOffset = nv.Offset
 		}
@@ -289,13 +299,16 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 			}
 			// the volume is compacted
 			nv, ok = v.nm.Get(n.Id)
-			if err := v.verifyMovedRecord(n, nv, ok); err != nil {
+			if err := v.verifyMovedRecord(n, nv, ok, readOption); err != nil {
 				if readOption.HasSlowRead {
 					v.dataFileAccessLock.RUnlock()
 				}
 				return err
 			}
 			actualOffset = nv.Offset.ToActualOffset()
+			if readOption.IsOutOfRange {
+				actualOffset += int64(MaxPossibleVolumeSize)
+			}
 			readOption.VolumeRevision = v.SuperBlock.CompactionRevision
 			readOption.metaOffset = nv.Offset
 		}
