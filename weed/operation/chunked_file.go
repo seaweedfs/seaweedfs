@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"sort"
+	"strings"
 	"sync"
 
 	"google.golang.org/grpc"
@@ -187,27 +188,40 @@ func (cf *ChunkedFileReader) WriteTo(w io.Writer) (n int64, err error) {
 }
 
 // readChunk reads the chunk from one replica after another, each one resuming
-// where the previous stopped.
+// where the previous stopped. A failure drops the volume's cached locations,
+// and once every cached replica has failed the master is asked again.
 func (cf *ChunkedFileReader) readChunk(fileId string, w io.Writer, offset int64) (written int64, err error) {
 	masterFn := func(_ context.Context) pb.ServerAddress {
 		return cf.master
 	}
-	fileUrls, jwt, err := lookupFileIdUrls(masterFn, cf.grpcDialOption, fileId)
-	if err != nil {
-		return 0, err
-	}
+	vid, _, _ := strings.Cut(fileId, ",")
 	dst := &writeErrorRecorder{Writer: w}
-	for _, fileUrl := range fileUrls {
-		wn, e := readChunkNeedle(fileUrl, dst, offset+written, jwt)
-		written += wn
-		if e == nil {
-			return written, nil
+	tried := make(map[string]bool)
+	for range 2 {
+		fileUrls, jwt, lookupError := lookupFileIdUrls(masterFn, cf.grpcDialOption, fileId)
+		if lookupError != nil {
+			if err == nil {
+				err = lookupError
+			}
+			return written, err
 		}
-		if dst.err != nil {
-			return written, dst.err
+		for _, fileUrl := range fileUrls {
+			if tried[fileUrl] {
+				continue
+			}
+			tried[fileUrl] = true
+			wn, e := readChunkNeedle(fileUrl, dst, offset+written, jwt)
+			written += wn
+			if e == nil {
+				return written, nil
+			}
+			if dst.err != nil {
+				return written, dst.err
+			}
+			glog.V(0).Infof("read chunk %s from %s: %v", fileId, fileUrl, e)
+			err = e
+			InvalidateVolumeIdLocationCache(vid)
 		}
-		glog.V(0).Infof("read chunk %s from %s: %v", fileId, fileUrl, e)
-		err = e
 	}
 	return written, err
 }

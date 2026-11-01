@@ -135,6 +135,54 @@ func TestChunkedFileReaderResumesOnAnotherReplica(t *testing.T) {
 	if r := healthy.requests(); len(r) != 1 || r[0] != "bytes=1000-" {
 		t.Fatalf("healthy replica requests = %q, want one resuming at byte 1000", r)
 	}
+	if _, err := vc.Get(vid); err == nil {
+		t.Fatalf("cached locations kept after a replica failed")
+	}
+
+	reader = NewChunkedFileReader(chunks, master, dial)
+	got, err = io.ReadAll(reader)
+	reader.Close()
+	if err != nil || !bytes.Equal(got, data) {
+		t.Fatalf("second read: %d bytes, err %v", len(got), err)
+	}
+	if fake.lookups() != 1 || len(broken.requests()) != 1 {
+		t.Fatalf("second read: %d master lookups, %d requests to the broken replica; want 1 and 1", fake.lookups(), len(broken.requests()))
+	}
+}
+
+func TestChunkedFileReaderAsksMasterWhenCachedReplicasFail(t *testing.T) {
+	const vid = "91202"
+	first, second := testChunkData(3000), testChunkData(2000)
+	healthy := newChunkReplica(t, second, -1)
+	fake := &fakeVolumeLocationServer{urls: []string{healthy.host()}}
+	master := startFakeMasterServer(t, fake)
+	dial := grpc.WithTransportCredentials(insecure.NewCredentials())
+
+	firstReplica := newChunkReplica(t, first, -1)
+	const otherVid = "91203"
+	vc.Set(otherVid, []Location{{Url: firstReplica.host()}}, time.Minute)
+	vc.Set(vid, []Location{{Url: deadAddress(t)}}, time.Minute)
+	t.Cleanup(func() {
+		InvalidateVolumeIdLocationCache(vid)
+		InvalidateVolumeIdLocationCache(otherVid)
+	})
+
+	chunks := []*ChunkInfo{
+		{Fid: otherVid + ",01637037d6", Offset: 0, Size: int64(len(first))},
+		{Fid: vid + ",02637037d6", Offset: int64(len(first)), Size: int64(len(second))},
+	}
+	reader := NewChunkedFileReader(chunks, master, dial)
+	defer reader.Close()
+	got, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if want := append(append([]byte(nil), first...), second...); !bytes.Equal(got, want) {
+		t.Fatalf("read %d bytes, want %d", len(got), len(want))
+	}
+	if fake.lookups() != 1 {
+		t.Fatalf("master lookups = %d, want 1", fake.lookups())
+	}
 }
 
 type failingWriter struct{}
@@ -155,5 +203,8 @@ func TestChunkedFileReaderStopsWhenTheClientGoesAway(t *testing.T) {
 	}
 	if n := len(a.requests()) + len(b.requests()); n != 1 {
 		t.Fatalf("replica requests = %d, want 1", n)
+	}
+	if _, err := vc.Get(vid); err != nil {
+		t.Fatalf("a client write error dropped the cached locations: %v", err)
 	}
 }
