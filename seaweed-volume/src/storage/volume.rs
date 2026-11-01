@@ -1792,6 +1792,11 @@ impl Volume {
                         error = %e,
                         "failed to read remote super block during load"
                     );
+                    let replication = self.volume_info.read().unwrap().replication.clone();
+                    if !replication.is_empty() {
+                        self.super_block.write().unwrap().replica_placement =
+                            ReplicaPlacement::from_string(&replication)?;
+                    }
                 }
                 Err(e) => return Err(e),
             }
@@ -11757,6 +11762,10 @@ mod tests {
         assert!(start.elapsed() < Duration::from_secs(5));
         assert!(v.has_remote_file());
         assert_eq!(v.version(), Version::current());
+        assert_eq!(
+            v.super_block.read().unwrap().replica_placement,
+            ReplicaPlacement::from_string("001").unwrap()
+        );
 
         crate::remote_storage::s3_tier::global_s3_tier_registry()
             .write()
