@@ -121,14 +121,14 @@ func TestVectorNamespaceVendsWriteCredentialsOnlyToTrustedCallers(t *testing.T) 
 		t.Error("an untrusted declare wrote into the index")
 	}
 
-	trusted := string(security.GenJwtForFilerAdmin(key, 60))
-	forged := string(security.GenJwtForFilerAdmin(security.SigningKey("other-key"), 60))
+	trusted := string(security.GenJwtForFilerAdmin(clusterTokenKey(key), 60))
+	forged := string(security.GenJwtForFilerAdmin(key, 60))
 	for _, tc := range []struct {
 		name, target, token, want string
 	}{
 		{"describe the index", "/v1/table/vec$vector$idx/describe", "", "read-only"},
 		{"declare the index", "/v1/table/vec$vector$idx/declare", "", "read-only"},
-		{"describe with a forged token", "/v1/table/vec$vector$idx/describe", forged, "read-only"},
+		{"describe with an admin token", "/v1/table/vec$vector$idx/describe", forged, "read-only"},
 		{"trusted describe", "/v1/table/vec$vector$idx/describe", trusted, "read-write"},
 		{"trusted declare", "/v1/table/vec$vector$idx/declare", trusted, "read-write"},
 		{"another namespace", "/v1/table/vec$other$tbl/describe", "", "read-write"},

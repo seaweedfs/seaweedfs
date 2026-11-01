@@ -1,6 +1,7 @@
 package lance
 
 import (
+	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -42,6 +43,7 @@ func TestClusterTokenMarksTheCallerTrusted(t *testing.T) {
 	s := NewServer(nil, openAuthenticator{})
 	s.SetSigningKey(key)
 
+	derived := clusterTokenKey(key)
 	expired := security.SeaweedFilerAdminClaims{}
 	expired.ExpiresAt = jwt.NewNumericDate(time.Now().Add(-time.Minute))
 	for _, tc := range []struct {
@@ -50,10 +52,11 @@ func TestClusterTokenMarksTheCallerTrusted(t *testing.T) {
 		want  bool
 	}{
 		{"no token", "", false},
-		{"signed with the cluster key", string(security.GenJwtForFilerAdmin(key, 60)), true},
-		{"signed with another key", string(security.GenJwtForFilerAdmin(security.SigningKey("other-key"), 60)), false},
-		{"expired", signAdminClaims(t, key, expired), false},
-		{"session token", signAdminClaims(t, key, security.SeaweedFilerAdminClaims{SessionId: "session"}), false},
+		{"signed with the derived key", string(security.GenJwtForFilerAdmin(derived, 60)), true},
+		{"signed with the cluster key itself", string(security.GenJwtForFilerAdmin(key, 60)), false},
+		{"signed with another key", string(security.GenJwtForFilerAdmin(clusterTokenKey(security.SigningKey("other-key")), 60)), false},
+		{"expired", signAdminClaims(t, derived, expired), false},
+		{"session token", signAdminClaims(t, derived, security.SeaweedFilerAdminClaims{SessionId: "session"}), false},
 		{"garbage", "not-a-token", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -64,7 +67,15 @@ func TestClusterTokenMarksTheCallerTrusted(t *testing.T) {
 	}
 
 	s.SetSigningKey(nil)
-	if trustedSeenByHandler(t, s, string(security.GenJwtForFilerAdmin(key, 60))) {
+	if trustedSeenByHandler(t, s, string(security.GenJwtForFilerAdmin(derived, 60))) {
 		t.Error("a server with no cluster key trusted a caller")
+	}
+}
+
+// The Rust catalog client derives the same key; its tests pin this value too.
+func TestClusterTokenKeyDerivation(t *testing.T) {
+	got := hex.EncodeToString(clusterTokenKey(security.SigningKey("cluster-key")))
+	if want := "b38c0b66da41621f2a9b6de68e4239ddd0d2dd7b4ede01aa91bd34a17edc1021"; got != want {
+		t.Errorf("clusterTokenKey = %s, want %s", got, want)
 	}
 }

@@ -137,10 +137,7 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
     let tls = args.tls()?;
-    let signing_key = weed_lance_worker::catalog::SigningKey::new(
-        args.filer_signing_key.clone(),
-        args.filer_signing_key_expires_after_seconds,
-    );
+    let signing_key = weed_lance_worker::catalog::SigningKey::new(args.filer_signing_key.clone());
     let options = WorkerOptions {
         admin_address: args.admin,
         worker_id: args.id,

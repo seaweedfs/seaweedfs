@@ -8,26 +8,36 @@ use serde::Deserialize;
 /// The delimiter the Lance namespace joins identifier parts with.
 const DELIMITER: &str = "$";
 
-/// Carries a token signed with the cluster key, which marks the caller as one of
-/// the cluster's own components.
+/// Carries a token that proves the caller holds the cluster key, which marks
+/// it as one of the cluster's own components.
 const CLUSTER_TOKEN_HEADER: &str = "X-Seaweedfs-Cluster-Token";
 
-/// The cluster key, `jwt.filer_signing.key`, and the lifetime of each token
-/// minted from it; zero mints tokens with no expiry. The catalog vends
+/// A cluster token is minted for each request, so it only has to outlast the
+/// clock skew between this host and the gateway.
+const CLUSTER_TOKEN_SECS: u64 = 300;
+
+/// The key cluster tokens are signed with, derived from the cluster key
+/// (`jwt.filer_signing.key`) the way the gateway derives it, so a token
+/// captured on the wire does not authorize admin calls. The catalog vends
 /// credentials that write a vector bucket's index data only to callers that
-/// hold it. Not Debug, so the key cannot reach a log.
+/// send one. Not Debug, so the key cannot reach a log.
 #[derive(Clone)]
 pub struct SigningKey {
-    key: String,
-    expires_after_secs: u64,
+    key: Vec<u8>,
 }
 
 impl SigningKey {
-    pub fn new(key: Option<String>, expires_after_secs: u64) -> Option<Self> {
+    pub fn new(key: Option<String>) -> Option<Self> {
         key.filter(|key| !key.is_empty()).map(|key| Self {
-            key,
-            expires_after_secs,
+            key: seaweed_worker_core::token::derive_key(
+                key.as_bytes(),
+                "seaweedfs-lance-cluster-token",
+            ),
         })
+    }
+
+    fn token(&self) -> Option<String> {
+        seaweed_worker_core::token::admin_token(&self.key, CLUSTER_TOKEN_SECS)
     }
 }
 
@@ -133,12 +143,7 @@ impl NamespaceClient {
             Some(key) => request.header("x-api-key", key),
             None => request,
         };
-        match self.signing_key.as_ref().and_then(|signing| {
-            seaweed_worker_core::token::admin_token(
-                signing.key.as_bytes(),
-                signing.expires_after_secs,
-            )
-        }) {
+        match self.signing_key.as_ref().and_then(SigningKey::token) {
             Some(token) => request.header(CLUSTER_TOKEN_HEADER, token),
             None => request,
         }
@@ -270,8 +275,8 @@ pub fn parse_id(encoded: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_REDIRECT_HOPS, NamespaceClient, SigningKey, may_follow, protected_transport,
-        same_origin,
+        CLUSTER_TOKEN_SECS, MAX_REDIRECT_HOPS, NamespaceClient, SigningKey, may_follow,
+        protected_transport, same_origin,
     };
 
     /// A catalog that answers one request with a table location and hands back
@@ -307,17 +312,21 @@ mod tests {
     async fn signing_key_sends_a_cluster_token() {
         let id = ["b".to_string(), "vector".to_string(), "t".to_string()];
         let (url, request) = recording_catalog().await;
-        let key = SigningKey::new(Some("cluster-key".into()), 0);
+        let key = SigningKey::new(Some("cluster-key".into()));
         NamespaceClient::new(url)
             .with_signing_key(key.as_ref())
             .describe_table(&id)
             .await
             .unwrap();
         let request = request.await.unwrap();
-        let expected = seaweed_worker_core::token::admin_token(b"cluster-key", 0).unwrap();
-        assert_eq!(
-            header(&request, "x-seaweedfs-cluster-token"),
-            Some(expected.as_str())
+        let token = header(&request, "x-seaweedfs-cluster-token").expect("cluster token");
+        let raw =
+            seaweed_worker_core::token::admin_token(b"cluster-key", CLUSTER_TOKEN_SECS).unwrap();
+        assert_eq!(token.split('.').count(), 3);
+        assert_ne!(
+            token.rsplit('.').next(),
+            raw.rsplit('.').next(),
+            "signed with the cluster key itself"
         );
 
         let (url, request) = recording_catalog().await;
@@ -330,8 +339,8 @@ mod tests {
 
     #[test]
     fn an_empty_signing_key_is_no_key() {
-        assert!(SigningKey::new(None, 0).is_none());
-        assert!(SigningKey::new(Some(String::new()), 0).is_none());
+        assert!(SigningKey::new(None).is_none());
+        assert!(SigningKey::new(Some(String::new())).is_none());
     }
 
     #[test]

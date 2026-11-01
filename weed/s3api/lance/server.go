@@ -2,6 +2,8 @@ package lance
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"net/http"
 	"strings"
 	"time"
@@ -262,10 +264,19 @@ func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// clusterTokenHeader carries a token signed with the cluster key. The vector
+// clusterTokenHeader carries a token signed with clusterTokenKey. The vector
 // engine and the Lance maintenance worker send it next to their identity's
 // credentials, and only they may write index data in a vector bucket.
 const clusterTokenHeader = "X-Seaweedfs-Cluster-Token"
+
+// clusterTokenKey derives the key cluster tokens are signed with from the
+// cluster key, so a token captured on its way here does not authorize the
+// admin calls that take the cluster key itself.
+func clusterTokenKey(key security.SigningKey) security.SigningKey {
+	mac := hmac.New(sha256.New, key)
+	mac.Write([]byte("seaweedfs-lance-cluster-token"))
+	return mac.Sum(nil)
+}
 
 type trustedCallerKey struct{}
 
@@ -285,9 +296,9 @@ func (s *Server) hasClusterToken(r *http.Request) bool {
 	if token == "" || len(s.signingKey) == 0 {
 		return false
 	}
-	if security.IsFilerAdminToken(s.signingKey, security.EncodedJwt(token)) {
+	if security.IsFilerAdminToken(clusterTokenKey(s.signingKey), security.EncodedJwt(token)) {
 		return true
 	}
-	glog.V(1).Infof("lance: %s from %s is not signed with jwt.filer_signing.key", clusterTokenHeader, r.RemoteAddr)
+	glog.V(1).Infof("lance: %s from %s is not signed with a key derived from jwt.filer_signing.key", clusterTokenHeader, r.RemoteAddr)
 	return false
 }

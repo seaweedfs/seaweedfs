@@ -35,11 +35,6 @@ struct Args {
     /// credentials that write index data only to a caller holding it.
     #[arg(long, env = "WEED_FILER_SIGNING_KEY")]
     filer_signing_key: Option<String>,
-    /// Lifetime of each token minted from the signing key, mirroring
-    /// `jwt.filer_signing.expires_after_seconds`. Zero mints tokens with no
-    /// expiry.
-    #[arg(long, default_value = "0")]
-    filer_signing_key_expires_after_seconds: u64,
 }
 
 fn parse_option(s: &str) -> Result<(String, String), String> {
@@ -120,10 +115,7 @@ async fn main() -> Result<()> {
         ));
     }
     let fallback: FallbackOptions = args.storage_options.into_iter().collect();
-    let signing_key = SigningKey::new(
-        args.filer_signing_key,
-        args.filer_signing_key_expires_after_seconds,
-    );
+    let signing_key = SigningKey::new(args.filer_signing_key);
     let client = NamespaceClient::new(args.namespace.clone())
         .with_fallback(&fallback)
         .with_signing_key(signing_key.as_ref());
