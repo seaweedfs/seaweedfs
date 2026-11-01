@@ -1776,6 +1776,7 @@ impl Volume {
             )));
         }
 
+        let mut remote_super_block_failed = false;
         if already_has_super_block {
             match self.read_super_block(io) {
                 Ok(()) => {
@@ -1792,6 +1793,7 @@ impl Volume {
                         error = %e,
                         "failed to read remote super block during load"
                     );
+                    remote_super_block_failed = true;
                     let replication = self.volume_info.read().unwrap().replication.clone();
                     if !replication.is_empty() {
                         self.super_block.write().unwrap().replica_placement =
@@ -1845,17 +1847,24 @@ impl Volume {
             // at the front of .idx. Best effort: a volume that cannot be
             // repaired is still servable for everything the surviving rows
             // index.
-            match self.repair_idx_head_tombstones(io) {
-                Ok(0) => {}
-                Ok(restored) => info!(
+            if remote_super_block_failed {
+                debug!(
                     volume_id = self.id.0,
-                    restored, "recovered overwritten .idx rows from .dat"
-                ),
-                Err(e) => warn!(
-                    volume_id = self.id.0,
-                    error = %e,
-                    "recover overwritten .idx rows"
-                ),
+                    "remote backend unavailable, not recovering overwritten .idx rows on this load"
+                );
+            } else {
+                match self.repair_idx_head_tombstones(io) {
+                    Ok(0) => {}
+                    Ok(restored) => info!(
+                        volume_id = self.id.0,
+                        restored, "recovered overwritten .idx rows from .dat"
+                    ),
+                    Err(e) => warn!(
+                        volume_id = self.id.0,
+                        error = %e,
+                        "recover overwritten .idx rows"
+                    ),
+                }
             }
 
             // The permission bits still allow writing on a read-only mount;
@@ -11765,6 +11774,87 @@ mod tests {
         assert_eq!(
             v.super_block.read().unwrap().replica_placement,
             ReplicaPlacement::from_string("001").unwrap()
+        );
+
+        crate::remote_storage::s3_tier::global_s3_tier_registry()
+            .write()
+            .unwrap()
+            .remove(name);
+        REMOTE_SUPER_BLOCK_STALLS.lock().unwrap().remove(name);
+    }
+
+    #[test]
+    fn remote_volume_load_skips_idx_repair_on_a_stalled_backend() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let dat_len = {
+            let v = make_test_volume(dir);
+            for i in 1..=3u64 {
+                let mut n = Needle {
+                    id: NeedleId(i),
+                    cookie: Cookie(0x1234),
+                    data: format!("needle-{i}").into_bytes(),
+                    data_size: format!("needle-{i}").len() as u32,
+                    ..Needle::default()
+                };
+                v.write_needle(&mut n, true, false).unwrap();
+            }
+            v.dat_file_size().unwrap()
+        };
+        std::fs::remove_file(format!("{}/1.dat", dir)).unwrap();
+        let idx_path = format!("{}/1.idx", dir);
+        crate::storage::volume_idx_repair::tests::clobber_idx_head(&idx_path, &[4, 5]);
+        let idx_before = std::fs::read(&idx_path).unwrap();
+
+        let (_listener, backend) = silent_tier_backend();
+        let name = "s3.idx_repair_stall_test";
+        crate::remote_storage::s3_tier::global_s3_tier_registry()
+            .write()
+            .unwrap()
+            .register(name.to_string(), Arc::try_unwrap(backend).ok().unwrap());
+        REMOTE_SUPER_BLOCK_STALLS
+            .lock()
+            .unwrap()
+            .insert(name.to_string(), Instant::now() + Duration::from_secs(3600));
+
+        let vif = VifVolumeInfo {
+            files: vec![VifRemoteFile {
+                backend_type: "s3".to_string(),
+                backend_id: "idx_repair_stall_test".to_string(),
+                key: "remote-key".to_string(),
+                offset: 0,
+                file_size: dat_len,
+                modified_time: 123,
+                extension: ".dat".to_string(),
+            }],
+            version: Version::current().0 as u32,
+            ..VifVolumeInfo::default()
+        };
+        std::fs::write(
+            format!("{}/1.vif", dir),
+            serde_json::to_string_pretty(&vif).unwrap(),
+        )
+        .unwrap();
+
+        let start = Instant::now();
+        let v = Volume::new(
+            dir,
+            dir,
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            &VolumeSpec::default(),
+        )
+        .unwrap();
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "the load waited on the stalled backend"
+        );
+        assert!(v.has_remote_file());
+        drop(v);
+        assert_eq!(
+            std::fs::read(&idx_path).unwrap(),
+            idx_before,
+            "the repair ran against an unreachable backend"
         );
 
         crate::remote_storage::s3_tier::global_s3_tier_registry()
