@@ -374,47 +374,29 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 	if trustedPeer {
 		forwardedPrefix = r.Header.Get("X-Forwarded-Prefix")
 	}
+	// 9. Candidate paths: the escaped path as sent, then the decoded path that
+	// an S3 client encodes once when signing; each with the forwarded prefix first.
+	signaturePaths := []string{pathForSignature}
+	if decodedPath, decodeErr := url.PathUnescape(pathForSignature); decodeErr == nil && decodedPath != pathForSignature {
+		signaturePaths = append(signaturePaths, decodedPath)
+	}
+	if forwardedPrefix != "" {
+		prefixedPaths := make([]string, 0, 2*len(signaturePaths))
+		for _, p := range signaturePaths {
+			prefixedPaths = append(prefixedPaths, buildPathWithForwardedPrefix(forwardedPrefix, p))
+		}
+		signaturePaths = append(prefixedPaths, signaturePaths...)
+	}
 	var matchedHost string
+hostCandidates:
 	for i, hostCandidate := range extractHostHeaderCandidates(r, iam.externalHost) {
 		if i > 0 && !replaceSignedHostHeader(extractedSignedHeaders, hostCandidate) {
 			break
 		}
-
-		// 9. Verify with the X-Forwarded-Prefix path first
-		if forwardedPrefix != "" {
-			cleanedPath := buildPathWithForwardedPrefix(forwardedPrefix, pathForSignature)
-			calculatedSignature, errCode = verify(cleanedPath)
-			if errCode == s3err.ErrNone {
+		for _, p := range signaturePaths {
+			if calculatedSignature, errCode = verify(p); errCode == s3err.ErrNone {
 				matchedHost = hostCandidate
-				break
-			}
-			// A proxy forwards the percent-encoded path, so the canonical URI the
-			// client signed is the single-encoded form. Decode before re-encoding,
-			// exactly like the un-prefixed retry below, but keep the prefix that
-			// was stripped from the path.
-			if decodedPath, decodeErr := url.PathUnescape(pathForSignature); decodeErr == nil && decodedPath != pathForSignature {
-				cleanedDecodedPath := buildPathWithForwardedPrefix(forwardedPrefix, decodedPath)
-				calculatedSignature, errCode = verify(cleanedDecodedPath)
-				if errCode == s3err.ErrNone {
-					matchedHost = hostCandidate
-					break
-				}
-			}
-		}
-
-		// 10. Verify with the original path
-		calculatedSignature, errCode = verify(pathForSignature)
-		if errCode == s3err.ErrNone {
-			matchedHost = hostCandidate
-			break
-		}
-
-		// 11. Retry with decoded path if signature used raw path encoding
-		if decodedPath, decodeErr := url.PathUnescape(pathForSignature); decodeErr == nil && decodedPath != pathForSignature {
-			calculatedSignature, errCode = verify(decodedPath)
-			if errCode == s3err.ErrNone {
-				matchedHost = hostCandidate
-				break
+				break hostCandidates
 			}
 		}
 	}
