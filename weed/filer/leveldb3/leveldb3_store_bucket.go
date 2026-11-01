@@ -16,7 +16,7 @@ func (store *LevelDB3Store) OnBucketCreation(bucket string) {
 }
 
 func (store *LevelDB3Store) OnBucketDeletion(bucket string) {
-	if !isBucketFolder(bucket) {
+	if !isBucketFolder(bucket) || bucket == DEFAULT {
 		return
 	}
 	store.closeDB(bucket)
