@@ -776,7 +776,8 @@ mod tests {
         keys.map(|i| pb::Vector {
             key: format!("k{i:03}"),
             data: vec![i as f32, 1.0],
-            metadata: None,
+            metadata: (i % 3 != 0)
+                .then(|| parse_struct(&format!(r#"{{"n":{i},"tag":"t{}"}}"#, i % 2)).unwrap()),
         })
         .collect()
     }
@@ -862,7 +863,13 @@ mod tests {
                 .await
                 .unwrap(),
         );
-        let with_data = vec![KEY_COLUMN.to_string(), VECTOR_COLUMN.to_string()];
+        let with_data = projection(true, true);
+        let rows = rows_as_vectors(
+            &list_page(&dataset, &with_data, 0, 100).await.unwrap(),
+            true,
+            true,
+        );
+        assert!(rows.iter().any(|v| v.metadata.is_some()));
         for count in [2u64, 3, 4, 16] {
             for page in [1u64, 2, 3, 7] {
                 let mut seen = Vec::new();
@@ -873,8 +880,9 @@ mod tests {
                             list_segment(&dataset, &with_data, from, page, count, index)
                                 .await
                                 .unwrap();
-                        for v in rows_as_vectors(&batches, true, false) {
-                            assert_eq!(format!("k{:03}", v.data[0] as usize), v.key);
+                        for v in rows_as_vectors(&batches, true, true) {
+                            let want = rows.iter().find(|r| r.key == v.key).unwrap();
+                            assert_eq!(&v, want);
                             got.push(v.key);
                         }
                         assert!(next.is_none() || next > Some(from));
