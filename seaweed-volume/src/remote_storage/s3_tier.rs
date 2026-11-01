@@ -29,6 +29,18 @@ const CONCURRENCY: usize = 5;
 const S3_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const S3_READ_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// The SDK's read timeout runs from the start of the request, so on
+/// upload_part it would also cap sending the part body. Go's
+/// ResponseHeaderTimeout starts only once the body is written.
+fn upload_part_config() -> aws_sdk_s3::config::Builder {
+    aws_sdk_s3::config::Builder::default().timeout_config(
+        TimeoutConfig::builder()
+            .connect_timeout(S3_CONNECT_TIMEOUT)
+            .disable_read_timeout()
+            .build(),
+    )
+}
+
 /// A tier transfer failure. The variant is what callers match on; the
 /// message is the operator-facing text.
 #[derive(Debug, thiserror::Error)]
@@ -253,6 +265,8 @@ impl S3TierBackend {
                     .upload_id(&upload_id)
                     .part_number(pn)
                     .body(buf.into())
+                    .customize()
+                    .config_override(upload_part_config())
                     .send()
                     .await
                     .map_err(|e| {
@@ -937,6 +951,50 @@ mod tests {
         let timeouts = backend.client.config().timeout_config().unwrap();
         assert_eq!(timeouts.connect_timeout(), Some(S3_CONNECT_TIMEOUT));
         assert_eq!(timeouts.read_timeout(), Some(S3_READ_TIMEOUT));
+    }
+
+    #[derive(Debug)]
+    struct CaptureTimeouts(Arc<std::sync::Mutex<Option<TimeoutConfig>>>);
+
+    impl aws_sdk_s3::config::Intercept for CaptureTimeouts {
+        fn name(&self) -> &'static str {
+            "CaptureTimeouts"
+        }
+
+        fn read_before_transmit(
+            &self,
+            _context: &aws_sdk_s3::config::interceptors::BeforeTransmitInterceptorContextRef<'_>,
+            _runtime_components: &aws_sdk_s3::config::RuntimeComponents,
+            cfg: &mut aws_sdk_s3::config::ConfigBag,
+        ) -> Result<(), aws_sdk_s3::error::BoxError> {
+            *self.0.lock().unwrap() = cfg.load::<TimeoutConfig>().cloned();
+            Err("captured".into())
+        }
+    }
+
+    #[tokio::test]
+    async fn upload_part_keeps_the_connect_timeout_without_the_read_timeout() {
+        let (_listener, backend) = silent_backend();
+        let seen = Arc::new(std::sync::Mutex::new(None));
+        let _ = backend
+            .client
+            .upload_part()
+            .bucket("bucket")
+            .key("key")
+            .upload_id("upload")
+            .part_number(1)
+            .body(vec![0u8; 8].into())
+            .customize()
+            .config_override(upload_part_config().interceptor(CaptureTimeouts(seen.clone())))
+            .send()
+            .await;
+        let timeouts = seen
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("request never reached transmit");
+        assert_eq!(timeouts.connect_timeout(), Some(S3_CONNECT_TIMEOUT));
+        assert_eq!(timeouts.read_timeout(), None);
     }
 
     #[test]
