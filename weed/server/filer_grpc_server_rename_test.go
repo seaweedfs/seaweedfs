@@ -559,3 +559,30 @@ func TestAtomicRenameReleasesQueuedStampsOnCommitFailure(t *testing.T) {
 		t.Fatalf("LocalDeliveredThroughTsNs = %d, want %d: a leaked stamp still caps the claim", got, now)
 	}
 }
+
+func TestAtomicRenameEntryRejectsDotSegmentTarget(t *testing.T) {
+	for _, tc := range []struct{ dir, name string }{
+		{"/../escape", "dst.txt"},
+		{"/", ".."},
+	} {
+		store := newRenameTestStore()
+		store.entries["/src.txt"] = newFileEntry("/src.txt", 101)
+		server := &FilerServer{filer: newRenameTestFiler(t, store), entryLockTable: util.NewLockTable[util.FullPath]()}
+
+		_, err := server.AtomicRenameEntry(context.Background(), &filer_pb.AtomicRenameEntryRequest{
+			OldDirectory: "/",
+			OldName:      "src.txt",
+			NewDirectory: tc.dir,
+			NewName:      tc.name,
+		})
+		if err == nil {
+			t.Fatalf("rename to %s/%s must be rejected", tc.dir, tc.name)
+		}
+		if _, found := store.entries["/src.txt"]; !found {
+			t.Fatalf("rename to %s/%s removed the source", tc.dir, tc.name)
+		}
+		if len(store.entries) != 1 {
+			t.Fatalf("rename to %s/%s left entries %v", tc.dir, tc.name, store.entries)
+		}
+	}
+}
