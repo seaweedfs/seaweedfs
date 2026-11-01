@@ -27,7 +27,6 @@ import platform
 import random
 import re
 import statistics
-import threading
 import time
 import uuid
 
@@ -190,19 +189,21 @@ def test_query_filtered(perf):
 
 def test_query_throughput(perf):
     args, queries = perf["args"], perf["queries"]
-    local = threading.local()
     results = {}
     for threads in CONCURRENCY:
-        def one(query):
-            if not hasattr(local, "client"):
-                local.client = client(perf["endpoint"])
-            return timed(lambda: local.client.query_vectors(
-                **args, queryVector={"float32": query}, topK=TOPK))[0]
+        clients = [client(perf["endpoint"]) for _ in range(threads)]
+        for s3v in clients:
+            s3v.query_vectors(**args, queryVector={"float32": queries[0]}, topK=TOPK)
+        work = queries * threads
 
-        work = (queries * math.ceil(QUERIES * threads / len(queries)))[: QUERIES * threads]
+        def run(worker):
+            s3v = clients[worker]
+            return [timed(lambda: s3v.query_vectors(**args, queryVector={"float32": query}, topK=TOPK))[0]
+                    for query in work[worker::threads]]
+
         start = time.perf_counter()
         with concurrent.futures.ThreadPoolExecutor(threads) as pool:
-            latencies = list(pool.map(one, work))
+            latencies = [s for chunk in pool.map(run, range(threads)) for s in chunk]
         elapsed = time.perf_counter() - start
         results[str(threads)] = {"qps": len(work) / elapsed, **summarize(latencies)}
     perf["report"]["query_throughput"] = results
@@ -224,14 +225,15 @@ def test_get_vectors(perf):
 
 def test_list_vectors(perf):
     args = perf["args"]
-    local = threading.local()
     results = {}
     for segments in (1, 4, 16):
+        clients = [client(perf["endpoint"]) for _ in range(segments)]
+        for s3v in clients:
+            s3v.list_vectors(**args, maxResults=1)
+
         def scan(segment):
-            if not hasattr(local, "client"):
-                local.client = client(perf["endpoint"])
             extra = {"segmentCount": segments, "segmentIndex": segment} if segments > 1 else {}
-            return list_all(local.client, args, **extra)
+            return list_all(clients[segment], args, **extra)
 
         start = time.perf_counter()
         with concurrent.futures.ThreadPoolExecutor(segments) as pool:
