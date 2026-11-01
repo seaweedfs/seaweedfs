@@ -212,6 +212,26 @@ func TestChunkedFileReaderAsksMasterWhenCachedReplicasFail(t *testing.T) {
 	}
 }
 
+func TestChunkedFileReaderTreatsAShortBodyAsFailed(t *testing.T) {
+	const vid = "91206"
+	data := testChunkData(2048)
+	empty := newChunkReplica(t, nil, -1)
+	healthy := newChunkReplica(t, data, -1)
+	vc.Set(vid, []Location{{Url: empty.host()}, {Url: healthy.host(), DataInRemote: true}}, time.Minute)
+	t.Cleanup(func() { InvalidateVolumeIdLocationCache(vid) })
+
+	chunks := []*ChunkInfo{{Fid: vid + ",01637037d6", Offset: 0, Size: int64(len(data))}}
+	reader := NewChunkedFileReader(chunks, pb.ServerAddress("127.0.0.1:1"), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	defer reader.Close()
+	got, err := io.ReadAll(reader)
+	if err != nil || !bytes.Equal(got, data) {
+		t.Fatalf("read: %d bytes, err %v; want %d bytes", len(got), err, len(data))
+	}
+	if len(empty.requests()) != 1 || len(healthy.requests()) != 1 {
+		t.Fatalf("requests: empty %d, healthy %d; want 1 and 1", len(empty.requests()), len(healthy.requests()))
+	}
+}
+
 type failingWriter struct{}
 
 func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("client gone") }

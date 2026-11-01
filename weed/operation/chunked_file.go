@@ -95,7 +95,7 @@ func (cm *ChunkManifest) DeleteChunks(masterFn GetMasterFn, usePublicUrl bool, g
 	return nil
 }
 
-func readChunkNeedle(fileUrl string, w io.Writer, offset int64, jwt string) (written int64, e error) {
+func readChunkNeedle(fileUrl string, w io.Writer, offset int64, size int64, jwt string) (written int64, e error) {
 	req, err := http.NewRequest(http.MethodGet, fileUrl, nil)
 	if err != nil {
 		return written, err
@@ -126,7 +126,11 @@ func readChunkNeedle(fileUrl string, w io.Writer, offset int64, jwt string) (wri
 		return written, util_http.StatusError(fileUrl, resp)
 
 	}
-	return io.Copy(w, resp.Body)
+	written, e = io.CopyN(w, resp.Body, size)
+	if e == io.EOF {
+		e = fmt.Errorf("%s: %d of %d bytes: %w", fileUrl, written, size, io.ErrUnexpectedEOF)
+	}
+	return written, e
 }
 
 func NewChunkedFileReader(chunkList []*ChunkInfo, master pb.ServerAddress, grpcDialOption grpc.DialOption) *ChunkedFileReader {
@@ -176,7 +180,7 @@ func (cf *ChunkedFileReader) WriteTo(w io.Writer) (n int64, err error) {
 		return n, ErrInvalidRange
 	}
 	for ; chunkIndex < len(cf.chunkList); chunkIndex++ {
-		wn, e := cf.readChunk(cf.chunkList[chunkIndex].Fid, w, chunkStartOffset)
+		wn, e := cf.readChunk(cf.chunkList[chunkIndex], w, chunkStartOffset)
 		n += wn
 		cf.pos += wn
 		if e != nil {
@@ -192,15 +196,15 @@ func (cf *ChunkedFileReader) WriteTo(w io.Writer) (n int64, err error) {
 // failed the master is asked again. A replica that already sent part of the
 // chunk is not continued elsewhere: a volume server streams a needle before
 // its checksum is verified, so those bytes may be the corrupt ones.
-func (cf *ChunkedFileReader) readChunk(fileId string, w io.Writer, offset int64) (written int64, err error) {
+func (cf *ChunkedFileReader) readChunk(ci *ChunkInfo, w io.Writer, offset int64) (written int64, err error) {
 	masterFn := func(_ context.Context) pb.ServerAddress {
 		return cf.master
 	}
-	vid, _, _ := strings.Cut(fileId, ",")
+	vid, _, _ := strings.Cut(ci.Fid, ",")
 	dst := &writeErrorRecorder{Writer: w}
 	tried := make(map[string]bool)
 	for range 2 {
-		fileUrls, jwt, lookupError := lookupFileIdUrls(masterFn, cf.grpcDialOption, fileId)
+		fileUrls, jwt, lookupError := lookupFileIdUrls(masterFn, cf.grpcDialOption, ci.Fid)
 		if lookupError != nil {
 			if err == nil {
 				err = lookupError
@@ -212,11 +216,11 @@ func (cf *ChunkedFileReader) readChunk(fileId string, w io.Writer, offset int64)
 				continue
 			}
 			tried[fileUrl] = true
-			written, err = readChunkNeedle(fileUrl, dst, offset, jwt)
+			written, err = readChunkNeedle(fileUrl, dst, offset, ci.Size-offset, jwt)
 			if err == nil || dst.err != nil {
 				return written, err
 			}
-			glog.V(0).Infof("read chunk %s from %s: %v", fileId, fileUrl, err)
+			glog.V(0).Infof("read chunk %s from %s: %v", ci.Fid, fileUrl, err)
 			InvalidateVolumeIdLocationCache(vid)
 			if written > 0 {
 				return written, err
