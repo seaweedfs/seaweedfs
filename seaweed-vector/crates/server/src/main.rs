@@ -4,6 +4,7 @@ use tonic::transport::Server;
 use weed_lance_worker::catalog::NamespaceClient;
 use weed_lance_worker::dataset::FallbackOptions;
 use weed_vector_server::pb::vector::vector_service_server::VectorServiceServer;
+use weed_vector_server::read_cache::ReadCache;
 use weed_vector_server::service::VectorServer;
 
 /// The VectorService the S3 gateway fans vector calls out to.
@@ -27,6 +28,9 @@ struct Args {
     /// gateway discovers it via ListClusterNodes(client_type=vector).
     #[arg(long, alias = "master", env = "WEED_VECTOR_MASTERS")]
     masters: Option<String>,
+    /// Memory for caching reads of write-once table files, in MiB; 0 disables.
+    #[arg(long, env = "WEED_VECTOR_READ_CACHE_MB", default_value_t = 512)]
+    read_cache_mb: u64,
 }
 
 fn parse_option(s: &str) -> Result<(String, String), String> {
@@ -108,7 +112,10 @@ async fn main() -> Result<()> {
     }
     let fallback: FallbackOptions = args.storage_options.into_iter().collect();
     let client = NamespaceClient::new(args.namespace.clone()).with_fallback(&fallback);
-    let service = VectorServer::new(client, fallback);
+    let mut service = VectorServer::new(client, fallback);
+    if args.read_cache_mb > 0 {
+        service = service.with_read_cache(ReadCache::new(args.read_cache_mb << 20));
+    }
     tracing::info!(namespace = %args.namespace, listen = %args.listen, "weed-vector");
     Server::builder()
         // Match the gateway's 1 GiB cap — put batches over the tonic 4 MiB
