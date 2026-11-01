@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -391,6 +392,68 @@ func TestReadNeedleMustMetaOnly(t *testing.T) {
 	}
 	if _, err := read(1, metaOnly()); err != nil {
 		t.Errorf("metadata read of a damaged needle: %v", err)
+	}
+}
+
+// HasRange skips the payload at any size, like MustMetaOnly, but the range
+// read that follows reports the outcome, so the metadata read leaves the io
+// error streak alone.
+func TestReadNeedleHasRange(t *testing.T) {
+	dir := t.TempDir()
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+
+	plain := &needle.Needle{Id: 1, Cookie: 0x1234, Data: bytes.Repeat([]byte("0123456789"), 400)}
+	plain.Checksum = needle.NewCRC(plain.Data)
+	if _, _, _, err := v.writeNeedle2(plain, true, false, false); err != nil {
+		t.Fatalf("write needle: %v", err)
+	}
+	manifest := newRandomNeedle(2)
+	manifest.SetIsChunkManifest()
+	if _, _, _, err := v.writeNeedle2(manifest, true, false, false); err != nil {
+		t.Fatalf("write chunk manifest: %v", err)
+	}
+	compressed := newRandomNeedle(3)
+	compressed.SetIsCompressed()
+	if _, _, _, err := v.writeNeedle2(compressed, true, false, false); err != nil {
+		t.Fatalf("write compressed needle: %v", err)
+	}
+
+	v.checkReadWriteError(fmt.Errorf("eio: %w", syscall.EIO))
+	option := &ReadOption{AttemptMetaOnly: true, HasRange: true, ReadBufferSize: 1024}
+	got := &needle.Needle{Id: plain.Id}
+	if _, err := v.readNeedle(got, option, nil); err != nil {
+		t.Fatalf("metadata read: %v", err)
+	}
+	if !option.IsMetaOnly || len(got.Data) != 0 || got.Cookie != plain.Cookie || got.DataSize != plain.DataSize {
+		t.Errorf("metadata read: IsMetaOnly %v, %d bytes of data, cookie %x, data size %d", option.IsMetaOnly, len(got.Data), got.Cookie, got.DataSize)
+	}
+	if _, count, _ := v.getIoErrorState(); count != 1 {
+		t.Errorf("io error streak %d after the metadata read, want 1", count)
+	}
+
+	var buf bytes.Buffer
+	if err := v.readNeedleDataInto(got, option, &buf, 1500, 2000); err != nil {
+		t.Fatalf("range read: %v", err)
+	}
+	if !bytes.Equal(buf.Bytes(), plain.Data[1500:3500]) {
+		t.Errorf("range read returned %d bytes that differ from the needle", buf.Len())
+	}
+	if _, count, _ := v.getIoErrorState(); count != 0 {
+		t.Errorf("io error streak %d after the range read, want 0", count)
+	}
+
+	// A chunk manifest or a compressed needle is still read whole.
+	for _, want := range []*needle.Needle{manifest, compressed} {
+		option = &ReadOption{AttemptMetaOnly: true, HasRange: true}
+		got = &needle.Needle{Id: want.Id}
+		if _, err := v.readNeedle(got, option, nil); err != nil || option.IsMetaOnly || !bytes.Equal(got.Data, want.Data) {
+			t.Errorf("ranged read of needle %d: IsMetaOnly %v, %d bytes, %v", want.Id, option.IsMetaOnly, len(got.Data), err)
+		}
 	}
 }
 
