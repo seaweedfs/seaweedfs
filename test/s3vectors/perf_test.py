@@ -212,15 +212,16 @@ def test_query_throughput(perf):
 def test_get_vectors(perf):
     s3v, args = perf["client"], perf["args"]
     rng = random.Random(3)
+    size = min(100, VECTORS)
     s3v.get_vectors(**args, keys=["v0"])
     latencies = []
     for _ in range(max(1, QUERIES // 2)):
-        keys = [f"v{i}" for i in rng.sample(range(VECTORS), min(100, VECTORS))]
+        keys = [f"v{i}" for i in rng.sample(range(VECTORS), size)]
         seconds, response = timed(lambda: s3v.get_vectors(
             **args, keys=keys, returnData=True, returnMetadata=True))
         latencies.append(seconds)
-        assert len(response["vectors"]) == len(keys)
-    perf["report"]["get_vectors_100_keys"] = summarize(latencies)
+        assert len(response["vectors"]) == size
+    perf["report"]["get_vectors"] = {**summarize(latencies), "keys": size}
 
 
 def test_list_vectors(perf):
@@ -246,10 +247,11 @@ def test_list_vectors(perf):
 
 def test_delete_vectors(perf):
     s3v, args = perf["client"], perf["args"]
-    keys = [f"v{i}" for i in random.Random(4).sample(range(VECTORS), min(500, VECTORS))]
-    latencies = [timed(lambda: s3v.delete_vectors(**args, keys=keys[n:n + 100]))[0]
-                 for n in range(0, len(keys), 100)]
-    perf["report"]["delete_vectors_100_keys"] = summarize(latencies)
+    size = min(100, VECTORS)
+    keys = [f"v{i}" for i in random.Random(4).sample(range(VECTORS), size * min(5, VECTORS // size))]
+    latencies = [timed(lambda: s3v.delete_vectors(**args, keys=keys[n:n + size]))[0]
+                 for n in range(0, len(keys), size)]
+    perf["report"]["delete_vectors"] = {**summarize(latencies), "keys": size}
 
 
 def print_report(combo, report, path):
@@ -262,11 +264,12 @@ def print_report(combo, report, path):
                      f"batch p50 {ingest['calls']['p50_ms']:.0f} ms, first tenth "
                      f"{ingest['first_tenth_mean_ms']:.0f} ms -> last tenth {ingest['last_tenth_mean_ms']:.0f} ms")
     for name in ("upsert_existing", "query", "query_return_metadata", "query_filtered_10pct",
-                 "get_vectors_100_keys", "delete_vectors_100_keys"):
+                 "get_vectors", "delete_vectors"):
         if name in report:
             r = report[name]
+            label = f"{name} ({r['keys']} keys)" if "keys" in r else name
             extra = f"  recall@k {r['recall_at_k']:.3f}" if r.get("recall_at_k") is not None else ""
-            lines.append(f"{name:<24} p50 {r['p50_ms']:7.1f} ms  p95 {r['p95_ms']:7.1f} ms  "
+            lines.append(f"{label:<26} p50 {r['p50_ms']:7.1f} ms  p95 {r['p95_ms']:7.1f} ms  "
                          f"p99 {r['p99_ms']:7.1f} ms{extra}")
     for threads, r in report.get("query_throughput", {}).items():
         lines.append(f"query x{threads:<3} threads    {r['qps']:7.1f} qps   p50 {r['p50_ms']:7.1f} ms  "
