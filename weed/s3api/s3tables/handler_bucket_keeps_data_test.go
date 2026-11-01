@@ -880,6 +880,52 @@ func TestDeleteTableBucketRetriesTheClaimRelease(t *testing.T) {
 	requireOK(t, m, fs, "CreateNamespace", createNamespaceNsRequest(t))
 }
 
+// A claim the removal fails to lift from a leftover directory makes a create
+// read the leftover's name as taken, and one left on a directory under it counts
+// as a child of the namespace the leftover may become. A release the filer turns
+// away once is retried for both.
+func TestDeleteTableBucketRetriesLeftoverClaimReleases(t *testing.T) {
+	bucketPath := GetTableBucketPath(renameTestBucket)
+	leftover := path.Join(bucketPath, "old")
+
+	t.Run("on the leftover", func(t *testing.T) {
+		fs, m := startEmptyBucket(t)
+		fs.Put(bucketPath, "old", nil)
+		failing := &failClaimReleaseClient{SeaweedFilerClient: fs.Client, target: leftover}
+		// A file lands in the leftover after the scan, so the walk refuses it and
+		// the leftover's claim has to come off.
+		client := &beforeDeleteClient{SeaweedFilerClient: failing, target: GetTableObjectBucketPath(renameTestBucket)}
+		client.before = func() { fs.PutFile(leftover, keptDataFile, time.Now()) }
+
+		code, resp := runHandler(t, m, client, "DeleteTableBucket", deleteTableBucketRequest(t))
+
+		assert.Equal(t, http.StatusConflict, code, "%+v", resp)
+		assert.Equal(t, ErrCodeBucketNotEmpty, resp.Type, "%+v", resp)
+		require.Equal(t, 1, failing.failed, "the first release has to fail")
+		assert.NotContains(t, fs.Get(bucketPath, "old").Extended, ExtendedKeyDeleting, "a later attempt lifts the claim")
+		requireOK(t, m, fs, "CreateNamespace", &CreateNamespaceRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"old"}})
+	})
+	t.Run("on a directory under it", func(t *testing.T) {
+		fs, m := startEmptyBucket(t)
+		child := path.Join(leftover, "child")
+		fs.Put(bucketPath, "old", nil)
+		fs.Put(leftover, "child", nil)
+		failing := &failClaimReleaseClient{SeaweedFilerClient: fs.Client, target: child}
+		// A file lands in child after its claim, so its delete is refused and
+		// the claim has to come off.
+		client := &beforeDeleteClient{SeaweedFilerClient: failing, target: child}
+		client.before = func() { fs.PutFile(child, keptDataFile, time.Now()) }
+
+		code, resp := runHandler(t, m, client, "DeleteTableBucket", deleteTableBucketRequest(t))
+
+		assert.Equal(t, http.StatusConflict, code, "%+v", resp)
+		assert.Equal(t, ErrCodeBucketNotEmpty, resp.Type, "%+v", resp)
+		require.Equal(t, 1, failing.failed, "the first release has to fail")
+		assert.NotContains(t, fs.Get(leftover, "child").Extended, ExtendedKeyDeleting, "a later attempt lifts the claim")
+		assert.NotNil(t, fs.Get(child, keptDataFile), "the file stays")
+	})
+}
+
 // The scan reads the bucket a page at a time, and the leftovers it collects
 // along the way do not decide anything. With more bare directories than one page
 // holds, the namespace sorted after them is on a later page: stopping at the

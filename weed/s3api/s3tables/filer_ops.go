@@ -622,8 +622,10 @@ func (h *S3TablesHandler) releaseDeleteClaim(ctx context.Context, client filer_p
 	}
 }
 
-// releaseDeleteClaimRetrying is releaseDeleteClaim for a claim that refuses
-// every create while it stays, such as a bucket's. It retries a failed release
+// releaseDeleteClaimRetrying is releaseDeleteClaim for a claim that does harm
+// while it stays: a bucket's refuses every create in it, a leftover directory's
+// makes a create read its name as taken, and one on a directory under it counts
+// as a child of the namespace it may become. It retries a failed release
 // the way a rename retries lifting its source claim. Unlike there, a release
 // that lost to a write landing in between is retried too: the bucket entry
 // takes other writes, such as PutTableBucketPolicy, where nothing else writes a
@@ -943,7 +945,7 @@ func (h *S3TablesHandler) removeTreeDirectory(ctx context.Context, client filer_
 		return err
 	}
 	if err := h.deleteEmptyDirectoryIfMatches(ctx, client, dirPath, &filer_pb.Entry{Extended: claimed}); err != nil {
-		h.releaseDeleteClaim(ctx, client, dirPath, claim)
+		h.releaseDeleteClaimRetrying(ctx, client, dirPath, claim)
 		return err
 	}
 	return nil
@@ -974,7 +976,7 @@ func (h *S3TablesHandler) removeEmptyTree(ctx context.Context, client filer_pb.S
 	}
 	defer func() {
 		if err != nil {
-			h.releaseDeleteClaim(ctx, client, dirPath, claim)
+			h.releaseDeleteClaimRetrying(ctx, client, dirPath, claim)
 		}
 	}()
 
