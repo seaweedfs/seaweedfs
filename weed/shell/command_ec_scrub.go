@@ -68,7 +68,7 @@ func (c *commandEcVolumeScrub) Do(args []string, commandEnv *CommandEnv, writer 
 			return err
 		}
 		for _, dn := range dns {
-			volumeServerAddrs = append(volumeServerAddrs, pb.ServerAddress(dn.Address))
+			volumeServerAddrs = append(volumeServerAddrs, pb.NewServerAddressFromDataNode(dn))
 		}
 	}
 

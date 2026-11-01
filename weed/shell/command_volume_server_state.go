@@ -97,7 +97,7 @@ func (c *commandVolumeServerState) Do(args []string, commandEnv *CommandEnv, wri
 			return err
 		}
 		for _, dn := range dns {
-			volumeServerAddrs = append(volumeServerAddrs, pb.ServerAddress(dn.Address))
+			volumeServerAddrs = append(volumeServerAddrs, pb.NewServerAddressFromDataNode(dn))
 		}
 	}
 	slices.Sort(volumeServerAddrs)
