@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
@@ -129,15 +130,22 @@ func (v *Volume) readNeedleMetaAt(n *needle.Needle, offset int64, size int32) (e
 	return nil
 }
 
-// sameRecord reports whether the record a compaction moved to offset is the
-// one n's metadata came from, not a replacement of the same size.
-func (v *Volume) sameRecord(n *needle.Needle, offset Offset, size Size) bool {
-	if offset.IsZero() || size != n.Size {
-		return false
+// verifyMovedRecord checks that the record a compaction moved is the one n's
+// metadata came from, not a replacement of the same size.
+func (v *Volume) verifyMovedRecord(n *needle.Needle, moved *needle_map.NeedleValue, found bool) error {
+	if !found || moved.Offset.IsZero() || moved.Size != n.Size {
+		return ErrorNotFound
 	}
-	moved := new(needle.Needle)
-	err := moved.ReadNeedleMeta(v.DataBackend, offset.ToActualOffset(), size, v.Version())
-	return err == nil && moved.Checksum == n.Checksum && moved.AppendAtNs == n.AppendAtNs
+	m := new(needle.Needle)
+	if err := m.ReadNeedleMeta(v.DataBackend, moved.Offset.ToActualOffset(), moved.Size, v.Version()); err != nil {
+		v.checkReadWriteError(err)
+		return fmt.Errorf("ReadNeedleMeta of moved needle: %w", err)
+	}
+	// Compaction rewrites a pre-3.09 checksum in the current encoding.
+	if m.AppendAtNs != n.AppendAtNs || (m.Checksum != n.Checksum && uint32(n.Checksum) != m.Checksum.Value()) {
+		return ErrorNotFound
+	}
+	return nil
 }
 
 // read fills in Needle content by looking up n.Id from NeedleMapper
@@ -187,7 +195,7 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 	// Stream the record the metadata came from: the index may already point
 	// at a replacement, whose bytes must not go out under the old headers.
 	if !readOption.metaOffset.IsZero() {
-		nv.Offset, nv.Size = readOption.metaOffset, n.Size
+		nv = &needle_map.NeedleValue{Key: n.Id, Offset: readOption.metaOffset, Size: n.Size}
 	}
 
 	actualOffset := nv.Offset.ToActualOffset()
@@ -218,8 +226,8 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 				return ErrorNotFound
 			}
 			refreshed, found := v.nm.Get(n.Id)
-			if !found || !v.sameRecord(n, refreshed.Offset, refreshed.Size) {
-				return ErrorNotFound
+			if err := v.verifyMovedRecord(n, refreshed, found); err != nil {
+				return err
 			}
 			nv = refreshed
 			actualOffset = nv.Offset.ToActualOffset()
@@ -281,11 +289,11 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 			}
 			// the volume is compacted
 			nv, ok = v.nm.Get(n.Id)
-			if !ok || !v.sameRecord(n, nv.Offset, nv.Size) {
+			if err := v.verifyMovedRecord(n, nv, ok); err != nil {
 				if readOption.HasSlowRead {
 					v.dataFileAccessLock.RUnlock()
 				}
-				return ErrorNotFound
+				return err
 			}
 			actualOffset = nv.Offset.ToActualOffset()
 			readOption.VolumeRevision = v.SuperBlock.CompactionRevision
