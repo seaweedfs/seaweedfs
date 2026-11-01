@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 )
 
 // FilerClient provides access to the filer for storage operations.
@@ -61,6 +62,7 @@ type Server struct {
 	credentialVendor    CredentialVendor
 	s3Endpoint          string
 	s3Region            string
+	signingKey          security.SigningKey
 }
 
 // NewServer creates a Lance namespace server over the given filer.
@@ -87,6 +89,12 @@ func (s *Server) SetCredentialValidator(cv CredentialValidator) {
 // that ask for it with vend_credentials.
 func (s *Server) SetCredentialVendor(vendor CredentialVendor) {
 	s.credentialVendor = vendor
+}
+
+// SetSigningKey sets the cluster key (jwt.filer_signing.key) that a trusted
+// caller signs its clusterTokenHeader with.
+func (s *Server) SetSigningKey(key security.SigningKey) {
+	s.signingKey = key
 }
 
 // SetS3Endpoint configures the S3 endpoint advertised in storage_options so a
@@ -171,6 +179,9 @@ func loggingMiddleware(next http.Handler) http.Handler {
 // header; the S3 authenticator stays for callers that can SigV4-sign.
 func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if s.hasClusterToken(r) {
+			r = r.WithContext(withTrustedCaller(r.Context()))
+		}
 		// A request carrying a Bearer token is a Lance REST client. An invalid
 		// or expired token gets 401 immediately; falling through to the S3
 		// authenticator would parse the header as SigV4 and fail with a
@@ -249,4 +260,34 @@ func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
 
 		handler(w, r)
 	}
+}
+
+// clusterTokenHeader carries a token signed with the cluster key. The vector
+// engine and the Lance maintenance worker send it next to their identity's
+// credentials, and only they may write index data in a vector bucket.
+const clusterTokenHeader = "X-Seaweedfs-Cluster-Token"
+
+type trustedCallerKey struct{}
+
+func withTrustedCaller(ctx context.Context) context.Context {
+	return context.WithValue(ctx, trustedCallerKey{}, true)
+}
+
+func isTrustedCaller(ctx context.Context) bool {
+	trusted, _ := ctx.Value(trustedCallerKey{}).(bool)
+	return trusted
+}
+
+// hasClusterToken reports whether the request proves it holds the cluster key.
+// Without a configured key no caller can.
+func (s *Server) hasClusterToken(r *http.Request) bool {
+	token := r.Header.Get(clusterTokenHeader)
+	if token == "" || len(s.signingKey) == 0 {
+		return false
+	}
+	if security.IsFilerAdminToken(s.signingKey, security.EncodedJwt(token)) {
+		return true
+	}
+	glog.V(1).Infof("lance: %s from %s is not signed with jwt.filer_signing.key", clusterTokenHeader, r.RemoteAddr)
+	return false
 }
