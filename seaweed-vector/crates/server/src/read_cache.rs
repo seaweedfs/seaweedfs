@@ -102,6 +102,12 @@ fn plain(options: &GetOptions) -> bool {
         && !options.head
 }
 
+/// A fetched range can be a slice of a larger response buffer; the cache
+/// keeps its own copy so it holds only the bytes it counts.
+fn owned(bytes: Bytes) -> Bytes {
+    Bytes::copy_from_slice(&bytes)
+}
+
 fn whole(bytes: Bytes, object: &(ObjectMeta, Attributes)) -> GetResult {
     GetResult {
         range: 0..bytes.len() as u64,
@@ -171,7 +177,7 @@ impl ObjectStore for CachedStore {
             return Ok(result);
         }
         let object = Arc::new((result.meta.clone(), result.attributes.clone()));
-        let bytes = result.bytes().await?;
+        let bytes = owned(result.bytes().await?);
         self.cache.insert(
             key,
             Entry {
@@ -209,6 +215,7 @@ impl ObjectStore for CachedStore {
                 let Some(bytes) = fetched.next() else {
                     break;
                 };
+                let bytes = owned(bytes);
                 self.cache.insert(
                     self.key(location, Some(range.clone())),
                     Entry {
@@ -368,6 +375,30 @@ mod tests {
         }
         cache.0.run_pending_tasks();
         assert!(cache.0.weighted_size() <= 64 << 10, "{cache:?}");
+    }
+
+    #[tokio::test]
+    async fn a_cached_range_does_not_pin_its_response_buffer() {
+        let cache = ReadCache::new(1 << 20);
+        let inner = Arc::new(InMemory::new());
+        let store = cache.wrap("memory", inner.clone());
+        let path = Path::from("vector/x/data/big.lance");
+        inner
+            .put(&path, Bytes::from(vec![7u8; 256 << 10]).into())
+            .await
+            .unwrap();
+        // InMemory answers a range with a slice of the whole object.
+        let whole = inner.get(&path).await.unwrap().bytes().await.unwrap();
+        let backing = whole.as_ptr_range();
+        read(&store, &path, 10..20).await;
+        let key = Key {
+            store: "memory".into(),
+            path,
+            range: Some(10..20),
+        };
+        let cached = cache.0.get(&key).unwrap().bytes;
+        assert_eq!(cached.len(), 10);
+        assert!(!backing.contains(&cached.as_ptr()));
     }
 
     /// A catalog that answers every request with `location`.
