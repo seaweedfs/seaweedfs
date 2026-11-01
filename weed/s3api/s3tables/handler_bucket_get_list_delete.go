@@ -295,7 +295,7 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 		// A claim left behind refuses every create in the bucket until the next
 		// delete replaces it, so a failed release is retried.
 		if err := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-			h.releaseDeleteClaimRetrying(r.Context(), client, bucketPath, bucketClaim)
+			h.releaseDeleteClaim(r.Context(), client, bucketPath, bucketClaim)
 			return nil
 		}); err != nil {
 			glog.Warningf("release delete claim on %s: %v", bucketPath, err)
