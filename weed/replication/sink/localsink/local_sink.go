@@ -3,6 +3,7 @@ package localsink
 import (
 	"context"
 	"fmt"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,6 +40,15 @@ func (localsink *LocalSink) isMultiPartEntry(key string) bool {
 	return strings.HasSuffix(key, ".part") && strings.Contains(key, "/"+s3_constants.MultipartUploadsFolder+"/")
 }
 
+func (localsink *LocalSink) isInsideDir(key string) (string, bool) {
+	rel, err := filepath.Rel(filepath.Clean(localsink.Dir), filepath.Clean(key))
+	if err == nil && filepath.IsLocal(rel) {
+		return rel, true
+	}
+	glog.Warningf("local sink: skip %s outside %s", key, localsink.Dir)
+	return "", false
+}
+
 func (localsink *LocalSink) initialize(dir string, isIncremental bool) error {
 	localsink.Dir = dir
 	localsink.isIncremental = isIncremental
@@ -69,8 +79,17 @@ func (localsink *LocalSink) DeleteEntry(key string, isDirectory, deleteIncludeCh
 	if localsink.isMultiPartEntry(key) {
 		return nil
 	}
+	rel, ok := localsink.isInsideDir(key)
+	if !ok {
+		return nil
+	}
 	glog.V(4).Infof("Delete Entry key: %s", key)
-	if err := os.Remove(key); err != nil {
+	root, err := os.OpenRoot(localsink.Dir)
+	if err == nil {
+		err = root.Remove(rel)
+		root.Close()
+	}
+	if err != nil {
 		glog.V(0).Infof("remove entry key %s: %s", key, err)
 	}
 	return nil
@@ -81,6 +100,10 @@ func (localsink *LocalSink) CreateEntry(key string, entry *filer_pb.Entry, signa
 	if entry.IsDirectory || localsink.isMultiPartEntry(key) {
 		return nil
 	}
+	rel, ok := localsink.isInsideDir(key)
+	if !ok {
+		return nil
+	}
 	glog.V(4).Infof("Create Entry key: %s", key)
 
 	totalSize := filer.FileSize(entry)
@@ -89,35 +112,36 @@ func (localsink *LocalSink) CreateEntry(key string, entry *filer_pb.Entry, signa
 		return fmt.Errorf("resolve chunks of %s: %w", key, err)
 	}
 
-	dir := filepath.Dir(key)
-
-	if _, err := os.Stat(dir); os.IsNotExist(err) {
-		glog.V(4).Infof("Create Directory key: %s", dir)
-		if err = os.MkdirAll(dir, 0755); err != nil {
-			return err
-		}
+	if err := os.MkdirAll(localsink.Dir, 0755); err != nil {
+		return err
 	}
+	root, err := os.OpenRoot(localsink.Dir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
 
-	if entry.IsDirectory {
-		return os.Mkdir(key, os.FileMode(entry.Attributes.FileMode))
+	dir := filepath.Dir(rel)
+	if err := root.MkdirAll(dir, 0755); err != nil {
+		return err
 	}
 
 	mode := os.FileMode(entry.Attributes.FileMode)
-	shortFileName := util.ToShortFileName(key)
+	shortFileName := util.ToShortFileName(rel)
 
 	// Write to a temp file in the same directory, then atomically rename
 	// on success. This prevents leaving a truncated/empty file if
 	// decryption or chunk copy fails.
-	tmpFile, err := os.CreateTemp(dir, ".seaweedfs-tmp-*")
+	tmpName := filepath.Join(dir, fmt.Sprintf(".seaweedfs-tmp-%d", rand.Uint64()))
+	tmpFile, err := root.OpenFile(tmpName, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return err
 	}
-	tmpName := tmpFile.Name()
 	defer func() {
 		// Clean up temp file on any error (rename removes it on success)
 		if tmpFile != nil {
 			tmpFile.Close()
-			os.Remove(tmpName)
+			root.Remove(tmpName)
 		}
 	}()
 
@@ -151,8 +175,8 @@ func (localsink *LocalSink) CreateEntry(key string, entry *filer_pb.Entry, signa
 	tmpFile = nil // prevent deferred cleanup
 
 	// Atomic rename into final destination
-	if err := os.Rename(tmpName, shortFileName); err != nil {
-		os.Remove(tmpName)
+	if err := root.Rename(tmpName, shortFileName); err != nil {
+		root.Remove(tmpName)
 		return err
 	}
 
@@ -162,6 +186,9 @@ func (localsink *LocalSink) CreateEntry(key string, entry *filer_pb.Entry, signa
 func (localsink *LocalSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool, signatures []int32) (foundExistingEntry bool, err error) {
 	key = sanitizeFsKey(key)
 	if localsink.isMultiPartEntry(key) {
+		return true, nil
+	}
+	if _, ok := localsink.isInsideDir(key); !ok {
 		return true, nil
 	}
 	glog.V(4).Infof("Update Entry key: %s", key)
