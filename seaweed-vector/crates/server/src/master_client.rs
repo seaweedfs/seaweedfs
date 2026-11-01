@@ -2,6 +2,7 @@
 //! connected: hold a KeepConnected stream open to the leader and the node
 //! shows up in ListClusterNodes(client_type="vector").
 
+use std::collections::HashSet;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -67,37 +68,49 @@ fn http_addr(master: &str) -> String {
 
 /// Retry forever: try each master until a stream opens, hold it until it
 /// errors, then rediscover — same shape as wdclient.KeepConnectedToMaster.
-/// A follower response's leader hint takes priority on the next pass.
 pub async fn keep_connected(masters: Vec<String>, client_addr: String) {
-    let mut leader: Option<String> = None;
+    let client_addr = client_addr.as_str();
     loop {
-        for master in &seeds(&mut leader, &masters) {
-            match stream_to(master, &client_addr).await {
-                Ok(Some(l)) => {
-                    leader = Some(l);
-                    break;
-                }
-                Ok(None) => break,
-                Err(e) => tracing::warn!("master {master}: {e:#}"),
-            }
-        }
+        try_all_masters(&masters, |master| async move {
+            stream_to(&master, client_addr).await
+        })
+        .await;
         sleep(Duration::from_secs(3)).await;
     }
 }
 
-/// A hint is tried once, as wdclient.tryAllMasters keeps it for one cycle, so
-/// a former leader that went away does not delay every later pass.
-fn seeds(leader: &mut Option<String>, masters: &[String]) -> Vec<String> {
-    leader
-        .take()
-        .into_iter()
-        .chain(masters.iter().cloned())
-        .collect()
+/// One pass, as wdclient.tryAllMasters: a leader hint is followed at once,
+/// and one that failed this pass is not followed again, so a follower naming
+/// a dead leader cannot hide the other masters.
+async fn try_all_masters<F, Fut>(masters: &[String], mut connect: F)
+where
+    F: FnMut(String) -> Fut,
+    Fut: Future<Output = Result<Option<String>>>,
+{
+    let mut failed = HashSet::new();
+    for master in masters {
+        if failed.contains(&http_addr(master)) {
+            continue;
+        }
+        let mut target = master.clone();
+        // Bounded, so two masters naming each other cannot spin.
+        for _ in 0..=masters.len() {
+            match connect(target.clone()).await {
+                Ok(Some(hint)) if !failed.contains(&http_addr(&hint)) => target = hint,
+                Ok(_) => break,
+                Err(e) => {
+                    tracing::warn!("master {target}: {e:#}");
+                    failed.insert(http_addr(&target));
+                    break;
+                }
+            }
+        }
+    }
 }
 
 /// Bounds the TCP connect and then the master's first answer, the 5s wdclient
 /// gives a master call; a black-holed or silent master otherwise holds up the
-/// other seeds.
+/// other masters.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 async fn stream_to(master: &str, client_addr: &str) -> Result<Option<String>> {
@@ -153,15 +166,40 @@ async fn stream_to(master: &str, client_addr: &str) -> Result<Option<String>> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn leader_hint_is_tried_once() {
-        let masters = vec!["m1:9333".to_string(), "m2:9333".to_string()];
-        let mut leader = Some("m3:9333".to_string());
-        assert_eq!(
-            seeds(&mut leader, &masters),
-            ["m3:9333", "m1:9333", "m2:9333"]
-        );
-        assert_eq!(seeds(&mut leader, &masters), ["m1:9333", "m2:9333"]);
+    /// Runs one pass against scripted masters and returns the dial order.
+    async fn pass(masters: &[&str], answer: fn(&str) -> Result<Option<String>>) -> Vec<String> {
+        let masters: Vec<String> = masters.iter().map(|m| m.to_string()).collect();
+        let mut tried = Vec::new();
+        try_all_masters(&masters, |master| {
+            tried.push(master.clone());
+            async move { answer(&master) }
+        })
+        .await;
+        tried
+    }
+
+    #[tokio::test]
+    async fn a_dead_leader_hint_does_not_hide_the_other_masters() {
+        let tried = pass(&["m1:9333", "m2:9333", "m3:9333"], |master| match master {
+            "m1:9333" | "m2:9333" => Ok(Some("dead:9333.19333".to_string())),
+            _ => anyhow::bail!("unreachable"),
+        })
+        .await;
+        assert_eq!(tried, ["m1:9333", "dead:9333.19333", "m2:9333", "m3:9333"]);
+    }
+
+    #[tokio::test]
+    async fn masters_naming_each_other_do_not_spin() {
+        let tried = pass(&["m1:9333", "m2:9333"], |master| {
+            let other = if master == "m1:9333" {
+                "m2:9333"
+            } else {
+                "m1:9333"
+            };
+            Ok(Some(other.to_string()))
+        })
+        .await;
+        assert_eq!(tried.len(), 6);
     }
 
     #[tokio::test]
