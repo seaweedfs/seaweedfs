@@ -78,6 +78,7 @@ pub async fn drop(
         Err(err) if describe_not_found(&err) => return Ok(()),
         Err(err) => return Err(err),
     };
+    check_drop_location(id, &description.location)?;
     let mut options: HashMap<String, String> = fallback.clone();
     options.extend(description.storage_options.clone());
     let (store, path) = ObjectStore::from_uri_and_params(
@@ -92,6 +93,46 @@ pub async fn drop(
     )
     .await?;
     store.remove_dir_all(path).await?;
+    Ok(())
+}
+
+/// Where the catalog puts a table it was given no location for, as the
+/// gateway's tableLocation derives it.
+pub fn table_location(id: &[String]) -> Option<String> {
+    match id {
+        [bucket, ns @ .., name] if !ns.is_empty() => {
+            Some(format!("s3://{bucket}/{}/{name}", ns.join(".")))
+        }
+        _ => None,
+    }
+}
+
+/// A drop refused before anything was removed.
+#[derive(Debug)]
+pub struct DropRefused(String);
+
+impl std::fmt::Display for DropRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for DropRefused {}
+
+/// A location is caller-supplied and may name the bucket, the namespace, or
+/// another table, so only the table's own colocated directory is removed.
+pub fn check_drop_location(id: &[String], location: &str) -> Result<(), DropRefused> {
+    let Some(expected) = table_location(id) else {
+        return Err(DropRefused(format!(
+            "table id {id:?} needs a bucket, a namespace and a name"
+        )));
+    };
+    if location.trim_end_matches('/') != expected {
+        return Err(DropRefused(format!(
+            "refusing to drop table {}: location {location} is not its colocated path {expected}",
+            id.join("/")
+        )));
+    }
     Ok(())
 }
 
@@ -135,4 +176,54 @@ fn schema_json(dataset: &Dataset) -> Option<String> {
             .collect::<Vec<_>>(),
     )
     .ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{check_drop_location, table_location};
+
+    fn id(parts: &[&str]) -> Vec<String> {
+        parts.iter().map(|part| part.to_string()).collect()
+    }
+
+    #[test]
+    fn table_location_matches_the_gateway_layout() {
+        assert_eq!(
+            table_location(&id(&["bkt", "vector", "x"])).as_deref(),
+            Some("s3://bkt/vector/x")
+        );
+        assert_eq!(
+            table_location(&id(&["bkt", "a", "b", "t"])).as_deref(),
+            Some("s3://bkt/a.b/t")
+        );
+        assert_eq!(table_location(&id(&["bkt", "t"])), None);
+    }
+
+    #[test]
+    fn drop_location_accepts_the_colocated_path() {
+        let table = id(&["bkt", "vector", "x"]);
+        for location in ["s3://bkt/vector/x", "s3://bkt/vector/x/"] {
+            assert!(check_drop_location(&table, location).is_ok(), "{location}");
+        }
+    }
+
+    #[test]
+    fn drop_location_refuses_anything_else() {
+        let table = id(&["bkt", "vector", "x"]);
+        for location in [
+            // ancestors: the bucket and the namespace root
+            "s3://bkt",
+            "s3://bkt/",
+            "s3://bkt/vector",
+            "s3://bkt/vector/",
+            // a sibling index's directory
+            "s3://bkt/vector/prod",
+            "s3://bkt/vector/x/data",
+            "s3://other/vector/x",
+            "",
+        ] {
+            assert!(check_drop_location(&table, location).is_err(), "{location}");
+        }
+        assert!(check_drop_location(&id(&["bkt", "x"]), "s3://bkt/x").is_err());
+    }
 }

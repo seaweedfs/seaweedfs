@@ -73,10 +73,7 @@ fn advertised_addr(listen: &str, masters: &[String]) -> String {
     if let Some(master) = masters.first() {
         // Masters may arrive as host:http.grpc or scheme://host:http —
         // the UDP probe only needs a dialable host:port.
-        let probe = master
-            .rsplit_once("://")
-            .map(|(_, r)| r)
-            .unwrap_or(master);
+        let probe = master.rsplit_once("://").map(|(_, r)| r).unwrap_or(master);
         let probe = match probe.rsplit_once(':') {
             Some((h, p)) => match p.split_once('.') {
                 Some((_, g)) => format!("{h}:{g}"),
@@ -101,10 +98,12 @@ async fn main() -> Result<()> {
     let args = Args::parse_from(normalize_args(std::env::args().collect()));
     if let Some(masters) = &args.masters {
         let masters: Vec<String> = masters.split(',').map(|s| s.trim().to_string()).collect();
+        for master in &masters {
+            weed_vector_server::master_client::grpc_addr(master)?;
+        }
         let advertise = advertised_addr(&args.listen, &masters);
         tokio::spawn(weed_vector_server::master_client::keep_connected(
-            masters,
-            advertise,
+            masters, advertise,
         ));
     }
     let fallback: FallbackOptions = args.storage_options.into_iter().collect();
