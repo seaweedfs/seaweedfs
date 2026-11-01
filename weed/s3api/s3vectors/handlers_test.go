@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -981,6 +982,9 @@ func TestCreateIndexSurvivesAConcurrentNamespaceCreate(t *testing.T) {
 	bucketPath := s3tables.GetTableBucketPath("vec-bucket")
 	reached := make(chan struct{})
 	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseFirst := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(releaseFirst)
 	held := false
 	// Hold the first create where it confirms the bucket after writing the namespace.
 	fs.OnLookup = func(dir, name string) {
@@ -1002,12 +1006,16 @@ func TestCreateIndexSurvivesAConcurrentNamespaceCreate(t *testing.T) {
 	}
 	first := make(chan *httptest.ResponseRecorder)
 	go func() { first <- createIndex("first") }()
-	<-reached
+	select {
+	case <-reached:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the first create never wrote an unfinished namespace")
+	}
 
 	if w := createIndex("second"); w.Code != http.StatusOK {
 		t.Fatalf("second create index: %d %s", w.Code, w.Body.String())
 	}
-	close(release)
+	releaseFirst()
 	if w := <-first; w.Code != http.StatusOK {
 		t.Fatalf("first create index: %d %s", w.Code, w.Body.String())
 	}
