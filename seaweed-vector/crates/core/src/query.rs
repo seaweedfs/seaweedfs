@@ -5,7 +5,7 @@ use anyhow::{Context, Result, bail};
 use arrow_array::{Array, Float32Array, RecordBatch, StringArray, UInt64Array};
 use futures::TryStreamExt;
 use lance::Dataset;
-use lance::dataset::scanner::{MaterializationStyle, Scanner};
+use lance::dataset::scanner::Scanner;
 use lance_linalg::distance::DistanceType;
 use lance_table::format::Fragment;
 
@@ -63,8 +63,7 @@ pub async fn ann(dataset: &Dataset, table: &VectorTable, query: &Query) -> Resul
     run(scanner(dataset, table, query, true).await?, table).await
 }
 
-/// Fetch rows by key, projected to `columns` (all of them when None). Only
-/// the key column is read across the table; the rest is taken for matches.
+/// Fetch rows by key, projected to `columns` (all of them when None).
 pub async fn get(
     dataset: &Dataset,
     table: &VectorTable,
@@ -85,7 +84,6 @@ pub async fn get(
     let mut scanner = dataset.scan();
     scanner
         .filter(&format!("`{}` in ({list})", key_column.replace('`', "``")))?
-        .materialization_style(MaterializationStyle::AllLate)
         .with_row_id();
     if let Some(columns) = columns {
         scanner.project(columns)?;
