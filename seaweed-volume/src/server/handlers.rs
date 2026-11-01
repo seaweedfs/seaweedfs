@@ -695,6 +695,44 @@ async fn batch_delete_file_ids(
     Ok(())
 }
 
+/// Mirrors Go's checkDeleteReplicas: refuses a delete the master cannot route
+/// to every replica, as the HTTP delete path does, so an offline replica does
+/// not keep the needle once it returns.
+pub(crate) async fn check_delete_replicas(
+    state: &VolumeServerState,
+    vid: u32,
+) -> Result<(), String> {
+    let copy_count = {
+        let store = state.store.read().unwrap();
+        match store.find_volume(VolumeId(vid)) {
+            Some((_, v)) => v.super_block().replica_placement.get_copy_count(),
+            None => return Ok(()),
+        }
+    };
+    if copy_count <= 1 {
+        return Ok(());
+    }
+    let locations = lookup_volume(
+        &state.http_client,
+        &state.outgoing_http_scheme,
+        &state.current_master().await,
+        vid,
+    )
+    .await
+    .map_err(|e| format!("replicating lookup failed for {}: {}", vid, e))?;
+    let deletable = locations
+        .iter()
+        .filter(|loc| !loc.read_only || loc.read_only_can_delete)
+        .count();
+    if deletable < copy_count as usize {
+        return Err(format!(
+            "replication locations [{}] is less than volume {} replication copy count [{}]",
+            deletable, vid, copy_count
+        ));
+    }
+    Ok(())
+}
+
 /// Helper to synchronously replicate a request to peer volume servers.
 async fn do_replicated_request(
     state: &VolumeServerState,
