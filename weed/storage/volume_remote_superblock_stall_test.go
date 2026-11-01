@@ -147,3 +147,39 @@ func TestRemoteTier_DiskScanDoesNotWaitOnStalledBackend(t *testing.T) {
 	_, err = v.readNeedle(newEmptyNeedle(1), nil, nil)
 	require.NoError(t, err, "a tiered volume must serve reads once the backend answers")
 }
+
+// The .idx head repair reads the remote .dat, so it must wait for a load that
+// can reach the backend instead of stalling this one.
+func TestRemoteTier_IdxHeadRepairWaitsForReachableBackend(t *testing.T) {
+	shortenRemoteSuperBlockWait(t, 200*time.Millisecond, time.Hour)
+	local := newLocalDirBackend(t)
+	registerTestBackend(t, local)
+
+	dir := t.TempDir()
+	const vid = needle.VolumeId(80)
+	tierUpVolume(t, dir, vid, local)
+	idxPath := filepath.Join(dir, "80.idx")
+	clobberIdxHead(t, idxPath, []uint64{4, 5})
+	sizeBefore := fileSize(t, idxPath)
+
+	stalling := &stallingBackend{localDirBackend: local, release: make(chan struct{})}
+	backend.BackendStorages[testBackendName] = stalling
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(stalling.release) }) }
+	time.AfterFunc(10*time.Second, release)
+	t.Cleanup(release)
+
+	start := time.Now()
+	v := reloadVolume(t, dir, vid)
+	require.Less(t, time.Since(start), 5*time.Second, "the load waited on the stalled backend")
+	v.Close()
+	require.Equal(t, sizeBefore, fileSize(t, idxPath), "the repair ran against an unreachable backend")
+
+	backend.BackendStorages[testBackendName] = local
+	remoteSuperBlockStalls.Delete(testBackendName)
+	v = reloadVolume(t, dir, vid)
+	defer v.Close()
+	require.Greater(t, fileSize(t, idxPath), sizeBefore, "the repair did not run once the backend answered")
+	_, err := v.readNeedle(newEmptyNeedle(1), nil, nil)
+	require.NoError(t, err)
+}
