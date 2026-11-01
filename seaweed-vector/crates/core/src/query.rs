@@ -117,7 +117,7 @@ async fn scanner(
         .use_index(use_index)
         .with_row_id();
     if let Some(filter) = &query.filter {
-        scanner.filter(filter)?;
+        crate::filter::apply(&mut scanner, filter)?;
         scanner.prefilter(!query.postfilter);
     }
     if let Some(nprobes) = query.nprobes {

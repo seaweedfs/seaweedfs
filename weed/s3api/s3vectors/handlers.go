@@ -1723,20 +1723,29 @@ func fieldClause(field string, cond interface{}) (string, error) {
 					}
 					continue
 				}
-				// Members may mix types; each extractor only sees its own. A
-				// member whose typed extractor returns NULL must not let NOT
+				// Members may mix types; each extractor only sees its own, so
+				// members sharing one go into a single IN that reads the field
+				// once. A group whose extractor returns NULL must not let NOT
 				// invert NULL into NULL under $nin, so every group coalesces.
-				var groups []string
+				var cols []string
+				members := map[string][]string{}
 				for _, item := range list {
 					lit, err := sqlLiteral(item)
 					if err != nil {
 						return "", err
 					}
-					g, err := fieldMatch(field, item, "in ("+lit+")")
+					col, err := fieldAccess(field, item)
 					if err != nil {
 						return "", err
 					}
-					groups = append(groups, fmt.Sprintf("COALESCE(%s, false)", g))
+					if _, seen := members[col]; !seen {
+						cols = append(cols, col)
+					}
+					members[col] = append(members[col], lit)
+				}
+				groups := make([]string, 0, len(cols))
+				for _, col := range cols {
+					groups = append(groups, fmt.Sprintf("COALESCE(%s in (%s), false)", col, strings.Join(members[col], ", ")))
 				}
 				expr := "(" + strings.Join(groups, " OR ") + ")"
 				if op == "$nin" {

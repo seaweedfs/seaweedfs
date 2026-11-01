@@ -26,6 +26,7 @@ arrow-array = "58"
 arrow-cast = "58"
 arrow-schema = "58"
 roaring = "0.11"
+jsonb = { version = "0.5", default-features = false }
 anyhow.workspace = true
 clap = { version = "4", features = ["derive", "env"] }
 futures = "0.3"

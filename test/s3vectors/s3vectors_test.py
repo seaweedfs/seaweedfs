@@ -198,6 +198,10 @@ def test_filter_types(vectors, index):
         hits = vectors.query_vectors(**index, queryVector={"float32": [1, 0, 0, 0]}, topK=4,
                                      filter={"value": {"$eq": value}})["vectors"]
         assert [hit["key"] for hit in hits] == [str(i)]
+    for op, members in (("$in", [1, "true"]), ("$nin", ["1", True])):
+        hits = vectors.query_vectors(**index, queryVector={"float32": [1, 0, 0, 0]}, topK=4,
+                                     filter={"value": {op: members}})["vectors"]
+        assert sorted(hit["key"] for hit in hits) == ["0", "3"]
 
 
 def test_cosine_metric(vectors):
