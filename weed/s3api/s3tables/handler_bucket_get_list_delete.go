@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path"
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -275,6 +276,32 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 	var metadata tableBucketMetadata
 	var bucketPolicy string
 	hasChildren := false
+	heldDir := ""
+	unfinishedNamespace := ""
+	// What the scan found besides namespaces: the bare directories — a deleted
+	// namespace's leftovers or hidden ones — as they were seen, and the names
+	// of the hidden files.
+	var leftovers []*filer_pb.Entry
+	var hidden []string
+	// The claim this delete holds on the bucket. It goes with the bucket when it
+	// is deleted; any other way out lifts it, or the bucket would refuse every
+	// create. bucketClaimed is the bucket's record as the claim left it, which the
+	// removal has to find.
+	bucketClaim := ""
+	var bucketClaimed map[string][]byte
+	defer func() {
+		if bucketClaim == "" {
+			return
+		}
+		// A claim left behind refuses every create in the bucket until the next
+		// delete replaces it, so a failed release is retried.
+		if err := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+			h.releaseDeleteClaim(r.Context(), client, bucketPath, bucketClaim)
+			return nil
+		}); err != nil {
+			glog.Warningf("release delete claim on %s: %v", bucketPath, err)
+		}
+	}()
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		// 1. Get metadata for ownership check
 		data, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata)
@@ -310,25 +337,89 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 			return NewAuthError("DeleteTableBucket", principal, fmt.Sprintf("not authorized to delete bucket %s", bucketName))
 		}
 
-		// 3. Check if bucket is empty
-		resp, err := client.ListEntries(r.Context(), &filer_pb.ListEntriesRequest{
-			Directory: bucketPath,
-			Limit:     10,
-		})
+		// 2. Claim the bucket before scanning it. CreateNamespace refuses a
+		// claimed bucket and checks it again after its write, so a namespace is
+		// either seen by the scan below or backed out. The bucket is removed only
+		// while it still carries this claim: once another delete has replaced or
+		// lifted it, a create may have passed that check, and this delete answers
+		// 409 instead. A claim an earlier delete left behind is replaced. Only the
+		// bucket authorized above is claimed: one deleted and created again under
+		// the same name since then is another bucket and reads as gone.
+		bucketClaim, bucketClaimed, err = h.claimForDelete(r.Context(), client, bucketPath, isTableBucketCreatedAt(metadata.CreatedAt))
 		if err != nil {
 			return err
 		}
 
-		for {
-			entry, err := resp.Recv()
+		// 3. Check if bucket is empty. A file, an S3 object stored on a directory
+		// entry, or a namespace is a child. A bare directory is what a deleted
+		// namespace leaves behind to keep the data under it, so it is only a
+		// child while it still holds a file. The scan
+		// pages through the whole bucket: the first page may be nothing but bare
+		// directories sorted ahead of the namespaces.
+		lastFileName := ""
+		for !hasChildren {
+			resp, err := client.ListEntries(r.Context(), &filer_pb.ListEntriesRequest{
+				Directory:          bucketPath,
+				Limit:              10,
+				StartFromFileName:  lastFileName,
+				InclusiveStartFrom: lastFileName == "",
+			})
 			if err != nil {
-				if err == io.EOF {
-					break
-				}
 				return err
 			}
-			if entry.Entry != nil && !strings.HasPrefix(entry.Entry.Name, ".") {
-				hasChildren = true
+
+			hasMore := false
+			for {
+				entry, err := resp.Recv()
+				if err != nil {
+					if err == io.EOF {
+						break
+					}
+					return err
+				}
+				if entry.Entry == nil {
+					continue
+				}
+				hasMore = true
+				lastFileName = entry.Entry.Name
+				// Hidden entries are never children. A hidden directory can
+				// hold files the same way a leftover does, so it waits with
+				// them for the walk; a hidden file is removed by name.
+				if strings.HasPrefix(entry.Entry.Name, ".") {
+					if entry.Entry.IsDirectory {
+						leftovers = append(leftovers, entry.Entry)
+					} else {
+						hidden = append(hidden, entry.Entry.Name)
+					}
+					continue
+				}
+				if _, hasMetadata := entry.Entry.Extended[ExtendedKeyMetadata]; hasMetadata || !entry.Entry.IsDirectory || entry.Entry.IsDirectoryKeyObject() {
+					hasChildren = true
+					if hasMetadata && isUnfinishedCreate(entry.Entry.Extended) {
+						unfinishedNamespace = entry.Entry.Name
+					}
+					break
+				}
+				leftovers = append(leftovers, entry.Entry)
+			}
+			if !hasMore {
+				break
+			}
+		}
+
+		// Looked at after the scan, not during it, so a bucket that still has a
+		// namespace answers at once instead of walking the leftovers first. The
+		// first directory holding a file settles it.
+		if hasChildren {
+			return nil
+		}
+		for _, leftover := range leftovers {
+			holdsFiles, err := h.dirHoldsFiles(r.Context(), client, path.Join(bucketPath, leftover.Name))
+			if err != nil {
+				return err
+			}
+			if holdsFiles {
+				heldDir = leftover.Name
 				break
 			}
 		}
@@ -341,6 +432,8 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, fmt.Sprintf("table bucket %s not found", bucketName))
 		} else if isAuthError(err) {
 			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, fmt.Sprintf("table bucket %s not found", bucketName))
+		} else if errors.Is(err, ErrConcurrentUpdate) {
+			h.writeError(w, http.StatusConflict, ErrCodeConflict, "table bucket changed during delete, retry the request")
 		} else {
 			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to delete table bucket: %v", err))
 		}
@@ -348,8 +441,20 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 	}
 
 	if hasChildren {
-		h.writeError(w, http.StatusConflict, ErrCodeBucketNotEmpty, "table bucket is not empty")
+		message := "table bucket is not empty"
+		if unfinishedNamespace != "" {
+			// Listings hide it, so name it: creating it again finishes it.
+			message = fmt.Sprintf("table bucket is not empty: namespace %s has an unfinished create", unfinishedNamespace)
+		}
+		h.writeError(w, http.StatusConflict, ErrCodeBucketNotEmpty, message)
 		return fmt.Errorf("bucket not empty")
+	}
+
+	// Nothing in the bucket is a namespace, but data sits under a directory a
+	// deleted namespace left. Deleting the bucket would take it, so it stays.
+	if heldDir != "" {
+		h.writeError(w, http.StatusConflict, ErrCodeBucketNotEmpty, fmt.Sprintf("table bucket is not empty: directory %s still holds files", heldDir))
+		return fmt.Errorf("bucket not empty: directory %s still holds files", heldDir)
 	}
 
 	// Delete the bucket
@@ -358,15 +463,37 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 		if tableObjErr := h.deleteEntryIfExists(r.Context(), client, GetTableObjectBucketPath(bucketName)); tableObjErr != nil {
 			glog.V(1).Infof("failed to delete table object for %s: %v", bucketName, tableObjErr)
 		}
+		// Only the hidden files go by a recursive delete. A file written since
+		// the scan anywhere else makes the filer refuse the delete that would have
+		// taken it: each leftover goes only if it is still the bare directory the
+		// scan saw and holds no file or catalog record, and the bucket only if
+		// nothing is left in it.
+		for _, leftover := range leftovers {
+			if err := h.removeEmptyTree(r.Context(), client, path.Join(bucketPath, leftover.Name), leftover); err != nil {
+				return err
+			}
+		}
+		for _, name := range hidden {
+			if err := h.deleteDirectory(r.Context(), client, path.Join(bucketPath, name)); err != nil {
+				return err
+			}
+		}
 		// The bucket is the directory, so a refused delete leaves it in place
 		// and the caller must hear about it.
-		return h.deleteDirectory(r.Context(), client, bucketPath)
+		return h.deleteEmptyDirectoryIfMatches(r.Context(), client, bucketPath, &filer_pb.Entry{Extended: bucketClaimed})
 	})
 
 	if err != nil {
-		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to delete table bucket")
+		if errors.Is(err, errDirNotEmpty) {
+			h.writeError(w, http.StatusConflict, ErrCodeBucketNotEmpty, "table bucket is not empty")
+		} else if errors.Is(err, ErrConcurrentUpdate) {
+			h.writeError(w, http.StatusConflict, ErrCodeConflict, "table bucket changed during delete, retry the request")
+		} else {
+			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to delete table bucket")
+		}
 		return err
 	}
+	bucketClaim = ""
 
 	h.writeJSON(w, http.StatusOK, nil)
 	return nil

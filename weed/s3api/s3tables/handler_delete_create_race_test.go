@@ -647,6 +647,22 @@ func TestDeleteNamespaceWithTableLiftsItsClaim(t *testing.T) {
 	}
 }
 
+// A claim the delete fails to lift refuses every create in the namespace, so a
+// release the filer turns away once is retried.
+func TestDeleteNamespaceRetriesTheClaimRelease(t *testing.T) {
+	fs, m := startRenameManager(t)
+	bucketPath := GetTableBucketPath(renameTestBucket)
+	before := fs.Get(bucketPath, "ns").Extended
+	client := &failClaimReleaseClient{SeaweedFilerClient: fs.Client, target: GetNamespacePath(renameTestBucket, "ns")}
+
+	code, resp := runHandler(t, m, client, "DeleteNamespace", deleteNamespaceRequest(t))
+
+	assert.Equal(t, http.StatusConflict, code, "%+v", resp)
+	assert.Equal(t, ErrCodeNamespaceNotEmpty, resp.Type, "%+v", resp)
+	require.Equal(t, 1, client.failed, "the first release has to fail")
+	assert.Equal(t, before, fs.Get(bucketPath, "ns").Extended, "a later attempt lifts the claim")
+}
+
 // orphanMarkedRecord plants what a create that crashed after writing its
 // record leaves behind: catalog attributes under the unfinished mark.
 func orphanMarkedRecord(fs *s3tablestest.MemFiler, dir, name string) {

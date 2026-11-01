@@ -43,6 +43,10 @@ var handlers = map[string]func(*Server, http.ResponseWriter, *http.Request){
 // lance table ids put indexes under a "vector" namespace inside their bucket.
 const indexNamespace = s3tables.VectorIndexNamespace
 
+// ensureIndexNamespaceAttempts bounds how often ensureIndexNamespace declares
+// the namespace again after losing it to a concurrent declare.
+const ensureIndexNamespaceAttempts = 3
+
 // Vector bucket records are s3tables table buckets; the S3 Vectors ARN form is
 // arn:aws:s3vectors:{region}:{account}:bucket/{name}[/index/{name}].
 func (s *Server) vectorBucketArn(bucket string) string {
@@ -220,26 +224,36 @@ func vectorErr(w http.ResponseWriter, err error) {
 // calls are internal: a caller's CreateTable grant is what authorizes the
 // index, so it must not also need namespace reads or writes.
 func (s *Server) ensureIndexNamespace(ctx context.Context, bucket string) error {
-	var resp map[string]interface{}
-	err := s.internalCatalog(ctx, "GetNamespace", &s3tables.GetNamespaceRequest{
-		TableBucketARN: s.s3tablesArn(bucket),
-		Namespace:      []string{indexNamespace},
-	}, &resp)
-	if err == nil {
-		return nil
+	var err error
+	for attempt := 0; attempt < ensureIndexNamespaceAttempts; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * 50 * time.Millisecond)
+		}
+		var resp map[string]interface{}
+		err = s.internalCatalog(ctx, "GetNamespace", &s3tables.GetNamespaceRequest{
+			TableBucketARN: s.s3tablesArn(bucket),
+			Namespace:      []string{indexNamespace},
+		}, &resp)
+		if err == nil {
+			return nil
+		}
+		if code := catalogErrCode(err); code != s3tables.ErrCodeNoSuchNamespace && code != s3tables.ErrCodeNoSuchBucket {
+			return err
+		}
+		err = s.internalCatalog(ctx, "CreateNamespace", &s3tables.CreateNamespaceRequest{
+			TableBucketARN: s.s3tablesArn(bucket),
+			Namespace:      []string{indexNamespace},
+		}, &resp)
+		// A concurrent CreateIndex may have won the create, or taken over this
+		// one's namespace before it was confirmed.
+		if err == nil || catalogErrCode(err) == s3tables.ErrCodeNamespaceAlreadyExists {
+			return nil
+		}
+		if catalogErrCode(err) != s3tables.ErrCodeConflict {
+			return err
+		}
 	}
-	if code := catalogErrCode(err); code != s3tables.ErrCodeNoSuchNamespace && code != s3tables.ErrCodeNoSuchBucket {
-		return err
-	}
-	err = s.internalCatalog(ctx, "CreateNamespace", &s3tables.CreateNamespaceRequest{
-		TableBucketARN: s.s3tablesArn(bucket),
-		Namespace:      []string{indexNamespace},
-	}, &resp)
-	// A concurrent CreateIndex may have won the create.
-	if err != nil && catalogErrCode(err) != s3tables.ErrCodeNamespaceAlreadyExists {
-		return err
-	}
-	return nil
+	return err
 }
 
 func (s *Server) handleCreateVectorBucket(w http.ResponseWriter, r *http.Request) {

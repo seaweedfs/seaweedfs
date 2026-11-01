@@ -2270,9 +2270,12 @@ func (h *S3TablesHandler) authorizeCreateTable(w http.ResponseWriter, r *http.Re
 }
 
 // writeNamespaceClosedError answers a create refused because its namespace is
-// being deleted or was deleted, and reports whether err was one of those.
+// being created, being deleted, or was deleted, and reports whether err was one
+// of those.
 func (h *S3TablesHandler) writeNamespaceClosedError(w http.ResponseWriter, err error, namespaceName string) bool {
 	switch {
+	case errors.Is(err, errParentCreating):
+		h.writeError(w, http.StatusConflict, ErrCodeConflict, fmt.Sprintf("namespace %s is still being created, retry the request", namespaceName))
 	case errors.Is(err, errParentDeleting):
 		h.writeError(w, http.StatusConflict, ErrCodeConflict, fmt.Sprintf("namespace %s is being deleted", namespaceName))
 	case errors.Is(err, errParentGone), errors.Is(err, filer_pb.ErrNotFound):
@@ -2285,13 +2288,14 @@ func (h *S3TablesHandler) writeNamespaceClosedError(w http.ResponseWriter, err e
 	return true
 }
 
-// refuseClaimedNamespace answers 409 when a delete has claimed the namespace.
-// Call it after the authorization check, so denied callers never see the delete.
+// refuseClaimedNamespace answers 409 when a delete has claimed the namespace or
+// its create is not confirmed yet. Call it after the authorization check, so
+// denied callers never see the delete.
 func (h *S3TablesHandler) refuseClaimedNamespace(w http.ResponseWriter, r *http.Request, filerClient FilerClient, namespacePath, namespaceName string) error {
 	err := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		return h.checkParentOpen(r.Context(), client, namespacePath, isNamespaceEntry)
 	})
-	if errors.Is(err, errParentDeleting) {
+	if errors.Is(err, errParentDeleting) || errors.Is(err, errParentCreating) {
 		h.writeNamespaceClosedError(w, err, namespaceName)
 		return err
 	}
