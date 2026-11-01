@@ -371,6 +371,8 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 	}
 }
 
+// shouldAttemptStreamWrite picks the ReadOption flags that let a GET or HEAD
+// skip the payload read: AttemptMetaOnly, MustMetaOnly and HasRange.
 func shouldAttemptStreamWrite(hasLocalVolume bool, ext string, r *http.Request) (shouldAttempt bool, mustMetaOnly bool, hasRange bool) {
 	if !hasLocalVolume {
 		return false, false, false
@@ -390,6 +392,15 @@ func shouldAttemptStreamWrite(hasLocalVolume bool, ext string, r *http.Request) 
 		// on a spinning disk one read is cheaper than a header read followed
 		// by a trailer read.
 		return true, false, false
+	}
+	if ext == "" {
+		// The stored name may still make this an image to resize or crop,
+		// which needs the payload.
+		_, _, _, resizeIfImage := shouldResizeImages(".jpg", r)
+		_, _, _, _, cropIfImage := shouldCropImages(".jpg", r)
+		if resizeIfImage || cropIfImage {
+			return true, false, false
+		}
 	}
 	// A range streams only its bytes, so a small needle is not read whole.
 	return true, false, r.Header.Get("Range") != ""
