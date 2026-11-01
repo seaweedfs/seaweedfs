@@ -93,11 +93,17 @@ message ListVectorsRequest {
   string next_token = 3;
   bool return_data = 4;
   bool return_metadata = 5;
+  // A nonzero segment_count lists only the rows whose position modulo
+  // segment_count is segment_index; next_token stays a row position.
+  uint32 segment_count = 6;
+  uint32 segment_index = 7;
 }
 
 message ListVectorsResponse {
   repeated Vector vectors = 1;
   string next_token = 2;
+  // Set when segment_count was applied; an older engine ignores it.
+  bool segmented = 3;
 }
 
 message QueryVectorsRequest {

@@ -1,5 +1,7 @@
 use anyhow::{Result, bail};
-use arrow_array::{Array, ArrayRef, FixedSizeListArray, Float32Array, RecordBatch, StringArray};
+use arrow_array::{
+    Array, ArrayRef, FixedSizeListArray, Float32Array, RecordBatch, StringArray, UInt64Array,
+};
 use arrow_schema::{DataType, Field, Schema};
 use futures::TryStreamExt;
 use lance::Dataset;
@@ -53,6 +55,7 @@ fn open_status(err: anyhow::Error) -> Status {
 const KEY_COLUMN: &str = "key";
 const METADATA_COLUMN: &str = "metadata";
 const VECTOR_COLUMN: &str = "vector";
+const ROW_ID_COLUMN: &str = "_rowid";
 
 fn schema_for(
     dimension: usize,
@@ -255,6 +258,59 @@ async fn list_page(
     };
     scanner.limit(Some(rows as i64), Some(skip as i64))?;
     Ok(scanner.try_into_stream().await?.try_collect().await?)
+}
+
+/// The AWS ListVectors segmentCount limit.
+const MAX_SEGMENTS: u64 = 16;
+
+/// Up to `page` rows whose position modulo `count` is `index`, from position
+/// `offset`, and the position to resume from. Keys are read across the
+/// stride; the other columns only for the rows kept.
+async fn list_segment(
+    dataset: &Dataset,
+    columns: &[String],
+    offset: u64,
+    page: u64,
+    count: u64,
+    index: u64,
+) -> Result<(Vec<RecordBatch>, Option<u64>)> {
+    let first = offset.saturating_add((index + count - offset % count) % count);
+    let stride = vec![KEY_COLUMN.to_string(), ROW_ID_COLUMN.to_string()];
+    let batches = list_page(dataset, &stride, first, page * count).await?;
+    let (mut keys, mut row_ids, mut scanned) = (Vec::new(), Vec::new(), 0u64);
+    for batch in &batches {
+        let (Some(batch_keys), Some(ids)) = (
+            batch
+                .column_by_name(KEY_COLUMN)
+                .and_then(|c| c.as_any().downcast_ref::<StringArray>()),
+            batch
+                .column_by_name(ROW_ID_COLUMN)
+                .and_then(|c| c.as_any().downcast_ref::<UInt64Array>()),
+        ) else {
+            bail!("the scan did not return keys and row ids");
+        };
+        for i in 0..batch.num_rows() {
+            if (scanned + i as u64) % count == 0 {
+                keys.push(batch_keys.value(i).to_string());
+                row_ids.push(ids.value(i));
+            }
+        }
+        scanned += batch.num_rows() as u64;
+    }
+    let next = (row_ids.len() as u64 == page && scanned > (page - 1) * count + 1)
+        .then(|| first.saturating_add((page - 1) * count + 1));
+    if row_ids.is_empty() {
+        return Ok((Vec::new(), next));
+    }
+    if columns.len() == 1 {
+        let keys: ArrayRef = Arc::new(StringArray::from(keys));
+        return Ok((
+            vec![RecordBatch::try_from_iter([(KEY_COLUMN, keys)])?],
+            next,
+        ));
+    }
+    let projection = ProjectionRequest::from_columns(columns, dataset.schema());
+    Ok((vec![dataset.take_rows(&row_ids, projection).await?], next))
 }
 
 fn rows_as_vectors(
@@ -480,6 +536,12 @@ impl VectorService for VectorServer {
         let table = req
             .table
             .ok_or_else(|| Status::invalid_argument("missing table"))?;
+        let segments = req.segment_count as u64;
+        if segments > MAX_SEGMENTS || (segments > 0 && req.segment_index as u64 >= segments) {
+            return Err(Status::invalid_argument(format!(
+                "segment_index must be below segment_count, which is at most {MAX_SEGMENTS}"
+            )));
+        }
         let dataset = self.open(&table).await.map_err(open_status)?;
         let offset: u64 = if req.next_token.is_empty() {
             0
@@ -502,6 +564,23 @@ impl VectorService for VectorServer {
             0 => DEFAULT_PAGE,
             n => n.min(MAX_PAGE),
         };
+        if segments > 1 {
+            let (vectors, next) = list_segment(
+                &dataset,
+                &columns,
+                offset,
+                page as u64,
+                segments,
+                req.segment_index as u64,
+            )
+            .await
+            .map_err(internal)?;
+            return Ok(Response::new(pb::ListVectorsResponse {
+                vectors: rows_as_vectors(&vectors, req.return_data, req.return_metadata),
+                next_token: next.map(|n| n.to_string()).unwrap_or_default(),
+                segmented: true,
+            }));
+        }
         let batches = list_page(&dataset, &columns, offset, page as u64)
             .await
             .map_err(internal)?;
@@ -515,6 +594,7 @@ impl VectorService for VectorServer {
         Ok(Response::new(pb::ListVectorsResponse {
             vectors: rows_as_vectors(&batches, req.return_data, req.return_metadata),
             next_token,
+            segmented: segments > 0,
         }))
     }
 
@@ -761,6 +841,62 @@ mod tests {
                 assert_eq!(got, want, "offset {offset} rows {rows}");
             }
         }
+    }
+
+    /// Following a segment's tokens yields exactly the rows at its positions,
+    /// in order, and the segments together cover every row once.
+    #[tokio::test]
+    async fn list_segment_strides_the_listing() {
+        let dir = tempfile::tempdir().unwrap();
+        let deleted: Vec<String> = ["k002", "k009"].map(String::from).to_vec();
+        let dataset = fragmented(&dir, &[0..5, 5..12, 12..13, 13..20], &deleted).await;
+        let all = keys_of(
+            &list_page(&dataset, &[KEY_COLUMN.to_string()], 0, 100)
+                .await
+                .unwrap(),
+        );
+        let with_data = vec![KEY_COLUMN.to_string(), VECTOR_COLUMN.to_string()];
+        for count in [2u64, 3, 4, 16] {
+            for page in [1u64, 2, 3, 7] {
+                let mut seen = Vec::new();
+                for index in 0..count {
+                    let (mut got, mut offset) = (Vec::new(), Some(0));
+                    while let Some(from) = offset {
+                        let (batches, next) =
+                            list_segment(&dataset, &with_data, from, page, count, index)
+                                .await
+                                .unwrap();
+                        for v in rows_as_vectors(&batches, true, false) {
+                            assert_eq!(format!("k{:03}", v.data[0] as usize), v.key);
+                            got.push(v.key);
+                        }
+                        assert!(next.is_none() || next > Some(from));
+                        offset = next;
+                    }
+                    let want: Vec<String> = all
+                        .iter()
+                        .skip(index as usize)
+                        .step_by(count as usize)
+                        .cloned()
+                        .collect();
+                    assert_eq!(got, want, "count {count} index {index} page {page}");
+                    seen.extend(got);
+                }
+                seen.sort();
+                assert_eq!(seen.len(), all.len());
+                let mut sorted = all.clone();
+                sorted.sort();
+                assert_eq!(seen, sorted);
+            }
+        }
+        // Keys alone come from the stride scan, and a page ending on the
+        // last row carries no token.
+        let (batches, next) = list_segment(&dataset, &[KEY_COLUMN.to_string()], 0, 9, 2, 1)
+            .await
+            .unwrap();
+        let odd: Vec<String> = all.iter().skip(1).step_by(2).cloned().collect();
+        assert_eq!(keys_of(&batches), odd);
+        assert_eq!(next, None);
     }
 
     /// A catalog that answers one describe with `location`.

@@ -24,6 +24,8 @@ import (
 // and records the mutating calls a handler test asserts on.
 type fakeVectors struct {
 	vector_pb.VectorServiceClient
+	// legacy ignores segment_count, like an engine that predates it.
+	legacy  bool
 	rows    []*vector_pb.Vector
 	created []*vector_pb.CreateIndexRequest
 	puts    []*vector_pb.PutVectorsRequest
@@ -57,6 +59,18 @@ func (f *fakeVectors) ListVectors(ctx context.Context, req *vector_pb.ListVector
 	}
 	if offset > len(f.rows) {
 		offset = len(f.rows)
+	}
+	if req.SegmentCount > 0 && !f.legacy {
+		count, index := int(req.SegmentCount), int(req.SegmentIndex)
+		resp := &vector_pb.ListVectorsResponse{Segmented: true}
+		pos := offset + (index+count-offset%count)%count
+		for ; pos < len(f.rows) && len(resp.Vectors) < page; pos += count {
+			resp.Vectors = append(resp.Vectors, f.rows[pos])
+		}
+		if last := pos - count; len(resp.Vectors) == page && last+1 < len(f.rows) {
+			resp.NextToken = strconv.Itoa(last + 1)
+		}
+		return resp, nil
 	}
 	end := offset + page
 	if end > len(f.rows) {

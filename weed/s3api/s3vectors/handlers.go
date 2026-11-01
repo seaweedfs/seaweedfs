@@ -1382,20 +1382,36 @@ func (s *Server) handleListVectors(w http.ResponseWriter, r *http.Request) {
 		maxResults = *req.MaxResults
 	}
 	// AWS exposes a static split: segmentIndex/segmentCount divides the full
-	// listing. The engine service does not know AWS segments, so page through
-	// the index here and keep only the caller's share; a call scans about
-	// segmentCount × maxResults rows. The engine's next_token is a row offset,
-	// so the caller's token is the offset to resume scanning from.
-	if req.SegmentCount != nil {
-		var offset uint64
-		if req.NextToken != "" {
-			var err error
-			if offset, err = strconv.ParseUint(req.NextToken, 10, 64); err != nil {
-				writeError(w, http.StatusBadRequest, "ValidationException", "invalid nextToken")
-				return
-			}
+	// listing. A segment is the rows whose position modulo segmentCount is
+	// segmentIndex, and its token is the row position to resume from.
+	var offset uint64
+	if req.SegmentCount != nil && req.NextToken != "" {
+		var err error
+		if offset, err = strconv.ParseUint(req.NextToken, 10, 64); err != nil {
+			writeError(w, http.StatusBadRequest, "ValidationException", "invalid nextToken")
+			return
 		}
-		out, nextToken, err := s.listSegmentVectors(r.Context(), tableID(arns.bucket, arns.index),
+	}
+	listReq := &vector_pb.ListVectorsRequest{
+		Table:          tableID(arns.bucket, arns.index),
+		MaxResults:     uint32(maxResults),
+		NextToken:      req.NextToken,
+		ReturnData:     req.ReturnData,
+		ReturnMetadata: req.ReturnMetadata,
+	}
+	if req.SegmentCount != nil {
+		listReq.SegmentCount = uint32(*req.SegmentCount)
+		listReq.SegmentIndex = uint32(*req.SegmentIndex)
+	}
+	resp, err := s.vectors.ListVectors(r.Context(), listReq)
+	if err != nil {
+		vectorErr(w, err)
+		return
+	}
+	// An engine that predates segment_count lists every row; page through
+	// it here and keep only the caller's share.
+	if req.SegmentCount != nil && !resp.Segmented {
+		out, nextToken, err := s.listSegmentVectors(r.Context(), listReq.Table,
 			offset, maxResults, uint64(*req.SegmentCount), uint64(*req.SegmentIndex), req.ReturnData, req.ReturnMetadata)
 		if err != nil {
 			vectorErr(w, err)
@@ -1405,17 +1421,6 @@ func (s *Server) handleListVectors(w http.ResponseWriter, r *http.Request) {
 			NextToken: nextToken,
 			Vectors:   toOutputVectors(out, req.ReturnData, req.ReturnMetadata),
 		})
-		return
-	}
-	resp, err := s.vectors.ListVectors(r.Context(), &vector_pb.ListVectorsRequest{
-		Table:          tableID(arns.bucket, arns.index),
-		MaxResults:     uint32(maxResults),
-		NextToken:      req.NextToken,
-		ReturnData:     req.ReturnData,
-		ReturnMetadata: req.ReturnMetadata,
-	})
-	if err != nil {
-		vectorErr(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, &ListVectorsResponse{
