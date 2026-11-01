@@ -214,6 +214,64 @@ func TestDeleteTableBucketTreatsARecreatedBucketAsGone(t *testing.T) {
 	assert.Equal(t, recreated, fs.Get(TablesPath, renameTestBucket).Extended, "and is left as it was created")
 }
 
+// failNthLookupClient answers the nth lookup of target with Unavailable, the
+// way a filer that is briefly unreachable would, and counts the lookups of the
+// entries under target that follow.
+type failNthLookupClient struct {
+	filer_pb.SeaweedFilerClient
+	target       string
+	nth          int
+	lookups      int
+	childLookups int
+}
+
+func (c *failNthLookupClient) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest, opts ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	switch path.Join(req.Directory, req.Name) {
+	case c.target:
+		c.lookups++
+		if c.lookups == c.nth {
+			return nil, status.Error(codes.Unavailable, "filer unavailable")
+		}
+	default:
+		if req.Directory == c.target {
+			c.childLookups++
+		}
+	}
+	return c.SeaweedFilerClient.LookupDirectoryEntry(ctx, req, opts...)
+}
+
+// The check of the bucket before the namespace is written either passes or ends
+// the create. A bucket it could not read, or one it finds still being created,
+// is not one to write into: nothing is written, where a create that went on
+// would write and leave its confirmation to back out.
+func TestCreateNamespaceStopsAtAFailedBucketCheck(t *testing.T) {
+	bucketPath := GetTableBucketPath(renameTestBucket)
+
+	t.Run("the bucket could not be read", func(t *testing.T) {
+		fs, m := startEmptyBucket(t)
+		// The create reads the bucket three times for its authorization; the
+		// fourth read is the check before the write.
+		client := &failNthLookupClient{SeaweedFilerClient: fs.Client, target: bucketPath, nth: 4}
+
+		code, resp := runHandler(t, m, client, "CreateNamespace", createNamespaceNsRequest(t))
+
+		assert.Equal(t, http.StatusInternalServerError, code, "%+v", resp)
+		assert.Equal(t, ErrCodeInternalError, resp.Type, "%+v", resp)
+		assert.Zero(t, client.childLookups, "the create stops before it looks at the namespace")
+		assert.Nil(t, fs.Get(bucketPath, "ns"), "nothing is written")
+	})
+	t.Run("the bucket is still being created", func(t *testing.T) {
+		fs, m := startEmptyBucket(t)
+		plantCreateMark(fs, TablesPath, renameTestBucket)
+
+		code, resp := runHandler(t, m, fs.Client, "CreateNamespace", createNamespaceNsRequest(t))
+
+		assert.Equal(t, http.StatusConflict, code, "%+v", resp)
+		assert.Equal(t, ErrCodeConflict, resp.Type, "%+v", resp)
+		assert.Nil(t, fs.Get(bucketPath, "ns"), "nothing is written")
+	})
+}
+
 // A delete that has scanned an empty bucket must not lose to a create that
 // lands before the bucket is removed: the claim the delete holds since before
 // the scan turns the create away, so no namespace is answered for and deleted.

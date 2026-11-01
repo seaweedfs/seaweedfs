@@ -184,6 +184,10 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 	if h.writeBucketClosedError(w, err, bucketName) {
 		return err
 	}
+	if err != nil {
+		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to check table bucket: %v", err))
+		return err
+	}
 
 	// Check if namespace already exists. One still marked unfinished does not:
 	// its create either confirmed it or lost it, and the mark left behind would
@@ -291,9 +295,12 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 }
 
 // writeBucketClosedError answers a create refused because its bucket is being
-// deleted or was deleted, and reports whether err was one of those.
+// created, being deleted, or was deleted, and reports whether err was one of
+// those.
 func (h *S3TablesHandler) writeBucketClosedError(w http.ResponseWriter, err error, bucketName string) bool {
 	switch {
+	case errors.Is(err, errParentCreating):
+		h.writeError(w, http.StatusConflict, ErrCodeConflict, fmt.Sprintf("table bucket %s is still being created, retry the request", bucketName))
 	case errors.Is(err, errParentDeleting):
 		h.writeError(w, http.StatusConflict, ErrCodeConflict, fmt.Sprintf("table bucket %s is being deleted", bucketName))
 	case errors.Is(err, errParentGone):
