@@ -1382,21 +1382,38 @@ func (s *Server) handleListVectors(w http.ResponseWriter, r *http.Request) {
 		maxResults = *req.MaxResults
 	}
 	// AWS exposes a static split: segmentIndex/segmentCount divides the full
-	// listing. The engine service does not know AWS segments, so page through
-	// the index here and keep only the caller's share; a call scans about
-	// segmentCount × maxResults rows. The engine's next_token is a row offset,
-	// so the caller's token is the offset to resume scanning from.
-	if req.SegmentCount != nil {
-		var offset uint64
-		if req.NextToken != "" {
-			var err error
-			if offset, err = strconv.ParseUint(req.NextToken, 10, 64); err != nil {
-				writeError(w, http.StatusBadRequest, "ValidationException", "invalid nextToken")
-				return
-			}
+	// listing. A segment is the rows whose position modulo segmentCount is
+	// segmentIndex, and its token is the row position to resume from.
+	var offset uint64
+	if req.SegmentCount != nil && req.NextToken != "" {
+		var err error
+		if offset, err = strconv.ParseUint(req.NextToken, 10, 64); err != nil {
+			writeError(w, http.StatusBadRequest, "ValidationException", "invalid nextToken")
+			return
 		}
-		out, nextToken, err := s.listSegmentVectors(r.Context(), tableID(arns.bucket, arns.index),
-			offset, maxResults, uint64(*req.SegmentCount), uint64(*req.SegmentIndex), req.ReturnData, req.ReturnMetadata)
+	}
+	listReq := &vector_pb.ListVectorsRequest{
+		Table:          tableID(arns.bucket, arns.index),
+		MaxResults:     uint32(maxResults),
+		NextToken:      req.NextToken,
+		ReturnData:     req.ReturnData,
+		ReturnMetadata: req.ReturnMetadata,
+	}
+	if req.SegmentCount != nil {
+		listReq.SegmentCount = uint32(*req.SegmentCount)
+		listReq.SegmentIndex = uint32(*req.SegmentIndex)
+	}
+	resp, err := s.vectors.ListVectors(r.Context(), listReq)
+	if err != nil {
+		vectorErr(w, err)
+		return
+	}
+	// An engine that predates segment_count lists every row; page through
+	// it here, starting with the page already read, and keep only the
+	// caller's share.
+	if req.SegmentCount != nil && !resp.Segmented {
+		out, nextToken, err := s.listSegmentVectors(r.Context(), listReq.Table,
+			offset, maxResults, uint64(*req.SegmentCount), uint64(*req.SegmentIndex), req.ReturnData, req.ReturnMetadata, resp)
 		if err != nil {
 			vectorErr(w, err)
 			return
@@ -1405,17 +1422,6 @@ func (s *Server) handleListVectors(w http.ResponseWriter, r *http.Request) {
 			NextToken: nextToken,
 			Vectors:   toOutputVectors(out, req.ReturnData, req.ReturnMetadata),
 		})
-		return
-	}
-	resp, err := s.vectors.ListVectors(r.Context(), &vector_pb.ListVectorsRequest{
-		Table:          tableID(arns.bucket, arns.index),
-		MaxResults:     uint32(maxResults),
-		NextToken:      req.NextToken,
-		ReturnData:     req.ReturnData,
-		ReturnMetadata: req.ReturnMetadata,
-	})
-	if err != nil {
-		vectorErr(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, &ListVectorsResponse{
@@ -1461,8 +1467,8 @@ func listVectorsBounds(req *ListVectorsRequest) error {
 // listSegmentVectors scans the index from offset, keeping the rows that fall
 // in the caller's segment until limit are collected or the index runs out.
 // The engine's next_token is a row offset, so the returned token is the offset
-// scanning resumes from.
-func (s *Server) listSegmentVectors(ctx context.Context, table *vector_pb.Table, offset uint64, maxResults int, segmentCount, segmentIndex uint64, returnData, returnMetadata bool) ([]*vector_pb.Vector, string, error) {
+// scanning resumes from. A non-nil first is the engine page at offset.
+func (s *Server) listSegmentVectors(ctx context.Context, table *vector_pb.Table, offset uint64, maxResults int, segmentCount, segmentIndex uint64, returnData, returnMetadata bool, first *vector_pb.ListVectorsResponse) ([]*vector_pb.Vector, string, error) {
 	limit := maxResults
 	if limit <= 0 {
 		limit = vectorsDefaultPage
@@ -1473,15 +1479,20 @@ func (s *Server) listSegmentVectors(ctx context.Context, table *vector_pb.Table,
 	nextToken := ""
 	token := strconv.FormatUint(offset, 10)
 	for {
-		page, err := s.vectors.ListVectors(ctx, &vector_pb.ListVectorsRequest{
-			Table:          table,
-			MaxResults:     vectorsMaxPage,
-			NextToken:      token,
-			ReturnData:     returnData,
-			ReturnMetadata: returnMetadata,
-		})
-		if err != nil {
-			return nil, "", err
+		page := first
+		first = nil
+		if page == nil {
+			var err error
+			page, err = s.vectors.ListVectors(ctx, &vector_pb.ListVectorsRequest{
+				Table:          table,
+				MaxResults:     vectorsMaxPage,
+				NextToken:      token,
+				ReturnData:     returnData,
+				ReturnMetadata: returnMetadata,
+			})
+			if err != nil {
+				return nil, "", err
+			}
 		}
 		base := offset
 		offset += uint64(len(page.Vectors))

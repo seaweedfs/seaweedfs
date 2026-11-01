@@ -1,5 +1,7 @@
 use anyhow::{Result, bail};
-use arrow_array::{Array, ArrayRef, FixedSizeListArray, Float32Array, RecordBatch, StringArray};
+use arrow_array::{
+    Array, ArrayRef, FixedSizeListArray, Float32Array, RecordBatch, StringArray, UInt64Array,
+};
 use arrow_schema::{DataType, Field, Schema};
 use futures::TryStreamExt;
 use lance::Dataset;
@@ -8,6 +10,7 @@ use lance::dataset::WriteParams;
 use lance::dataset::{MergeInsertBuilder, WhenMatched, WhenNotMatched};
 use lance::io::ObjectStoreParams;
 use lance::io::StorageOptionsAccessor;
+use lance::table::format::Fragment;
 use lance_linalg::distance::DistanceType;
 use prost_types::{ListValue, Struct, Value, value::Kind};
 use std::collections::{BTreeMap, HashMap};
@@ -52,6 +55,7 @@ fn open_status(err: anyhow::Error) -> Status {
 const KEY_COLUMN: &str = "key";
 const METADATA_COLUMN: &str = "metadata";
 const VECTOR_COLUMN: &str = "vector";
+const ROW_ID_COLUMN: &str = "_rowid";
 
 fn schema_for(
     dimension: usize,
@@ -211,6 +215,114 @@ fn key_list(keys: &[String]) -> String {
             .collect::<Vec<_>>()
             .join(", ")
     )
+}
+
+/// The columns a GetVectors or ListVectors response carries.
+fn projection(return_data: bool, return_metadata: bool) -> Vec<String> {
+    let mut columns = vec![KEY_COLUMN.to_string()];
+    if return_data {
+        columns.push(VECTOR_COLUMN.to_string());
+    }
+    if return_metadata {
+        columns.push(METADATA_COLUMN.to_string());
+    }
+    columns
+}
+
+/// The fragments holding live rows `offset..offset + rows` in scan order, and
+/// where `offset` falls in the first of them. A scan reads every listed
+/// fragment's deletion file, so a page names only its own. None when the
+/// manifest lacks a fragment's live row count.
+fn page_fragments(dataset: &Dataset, offset: u64, rows: u64) -> Option<(Vec<Fragment>, u64)> {
+    dataset.manifest().writer_version.as_ref()?;
+    let (mut start, mut skip, mut out) = (0u64, 0u64, Vec::new());
+    for fragment in dataset.fragments().iter() {
+        if start >= offset.saturating_add(rows) {
+            break;
+        }
+        let live = fragment.num_rows()? as u64;
+        if start + live > offset {
+            if out.is_empty() {
+                skip = offset - start;
+            }
+            out.push(fragment.clone());
+        }
+        start += live;
+    }
+    Some((out, skip))
+}
+
+/// Live rows `offset..offset + rows` in scan order, projected to `columns`.
+async fn list_page(
+    dataset: &Dataset,
+    columns: &[String],
+    offset: u64,
+    rows: u64,
+) -> Result<Vec<RecordBatch>> {
+    let mut scanner = dataset.scan();
+    scanner.project(columns)?;
+    let skip = match page_fragments(dataset, offset, rows) {
+        Some((fragments, skip)) => {
+            scanner.with_fragments(fragments);
+            skip
+        }
+        None => offset,
+    };
+    scanner.limit(Some(rows as i64), Some(skip as i64))?;
+    Ok(scanner.try_into_stream().await?.try_collect().await?)
+}
+
+/// The AWS ListVectors segmentCount limit.
+const MAX_SEGMENTS: u64 = 16;
+
+/// Up to `page` rows whose position modulo `count` is `index`, from position
+/// `offset`, and the position to resume from. Keys are read across the
+/// stride; the other columns only for the rows kept.
+async fn list_segment(
+    dataset: &Dataset,
+    columns: &[String],
+    offset: u64,
+    page: u64,
+    count: u64,
+    index: u64,
+) -> Result<(Vec<RecordBatch>, Option<u64>)> {
+    let first = offset.saturating_add((index + count - offset % count) % count);
+    let stride = vec![KEY_COLUMN.to_string(), ROW_ID_COLUMN.to_string()];
+    let batches = list_page(dataset, &stride, first, page * count).await?;
+    let (mut keys, mut row_ids, mut scanned) = (Vec::new(), Vec::new(), 0u64);
+    for batch in &batches {
+        let (Some(batch_keys), Some(ids)) = (
+            batch
+                .column_by_name(KEY_COLUMN)
+                .and_then(|c| c.as_any().downcast_ref::<StringArray>()),
+            batch
+                .column_by_name(ROW_ID_COLUMN)
+                .and_then(|c| c.as_any().downcast_ref::<UInt64Array>()),
+        ) else {
+            bail!("the scan did not return keys and row ids");
+        };
+        for i in 0..batch.num_rows() {
+            if (scanned + i as u64) % count == 0 {
+                keys.push(batch_keys.value(i).to_string());
+                row_ids.push(ids.value(i));
+            }
+        }
+        scanned += batch.num_rows() as u64;
+    }
+    let next = (row_ids.len() as u64 == page && scanned > (page - 1) * count + 1)
+        .then(|| first.saturating_add((page - 1) * count + 1));
+    if row_ids.is_empty() {
+        return Ok((Vec::new(), next));
+    }
+    if columns.len() == 1 {
+        let keys: ArrayRef = Arc::new(StringArray::from(keys));
+        return Ok((
+            vec![RecordBatch::try_from_iter([(KEY_COLUMN, keys)])?],
+            next,
+        ));
+    }
+    let projection = ProjectionRequest::from_columns(columns, dataset.schema());
+    Ok((vec![dataset.take_rows(&row_ids, projection).await?], next))
 }
 
 fn rows_as_vectors(
@@ -400,7 +512,8 @@ impl VectorService for VectorServer {
             .await
             .map_err(internal)?;
         let resolved = VectorTable::resolve(&dataset, None, Some(KEY_COLUMN)).map_err(invalid)?;
-        let batches = query::get(&dataset, &resolved, &req.keys)
+        let columns = projection(req.return_data, req.return_metadata);
+        let batches = query::get(&dataset, &resolved, &req.keys, Some(&columns))
             .await
             .map_err(internal)?;
         Ok(Response::new(pb::GetVectorsResponse {
@@ -436,6 +549,12 @@ impl VectorService for VectorServer {
         let table = req
             .table
             .ok_or_else(|| Status::invalid_argument("missing table"))?;
+        let segments = req.segment_count as u64;
+        if segments > MAX_SEGMENTS || (segments > 0 && req.segment_index as u64 >= segments) {
+            return Err(Status::invalid_argument(format!(
+                "segment_index must be below segment_count, which is at most {MAX_SEGMENTS}"
+            )));
+        }
         let dataset = self.open(&table).await.map_err(open_status)?;
         let offset: u64 = if req.next_token.is_empty() {
             0
@@ -444,13 +563,7 @@ impl VectorService for VectorServer {
                 .parse()
                 .map_err(|_| Status::invalid_argument("invalid next_token"))?
         };
-        let mut columns = vec![KEY_COLUMN.to_string()];
-        if req.return_data {
-            columns.push(VECTOR_COLUMN.to_string());
-        }
-        if req.return_metadata {
-            columns.push(METADATA_COLUMN.to_string());
-        }
+        let columns = projection(req.return_data, req.return_metadata);
         // An unset max_results arrives as 0; page it like S3 Vectors does.
         const DEFAULT_PAGE: u32 = 500;
         const MAX_PAGE: u32 = 1000;
@@ -458,17 +571,33 @@ impl VectorService for VectorServer {
             0 => DEFAULT_PAGE,
             n => n.min(MAX_PAGE),
         };
-        let mut scanner = dataset.scan();
-        scanner
-            .project(&columns)
-            .map_err(internal)?
-            .limit(Some(page as i64), Some(offset as i64))
-            .map_err(internal)?;
-        let batches: Vec<RecordBatch> = scanner
-            .try_into_stream()
+        if segments > 1 {
+            // Data and metadata come from a second read of this version, so
+            // lease it as get_vectors does.
+            let _lease = if columns.len() > 1 {
+                weed_vector_core::maintenance::try_pin(&dataset)
+                    .await
+                    .map_err(internal)?
+            } else {
+                None
+            };
+            let (vectors, next) = list_segment(
+                &dataset,
+                &columns,
+                offset,
+                page as u64,
+                segments,
+                req.segment_index as u64,
+            )
             .await
-            .map_err(internal)?
-            .try_collect()
+            .map_err(internal)?;
+            return Ok(Response::new(pb::ListVectorsResponse {
+                vectors: rows_as_vectors(&vectors, req.return_data, req.return_metadata),
+                next_token: next.map(|n| n.to_string()).unwrap_or_default(),
+                segmented: true,
+            }));
+        }
+        let batches = list_page(&dataset, &columns, offset, page as u64)
             .await
             .map_err(internal)?;
         let rows = batches.iter().map(|b| b.num_rows()).sum::<usize>();
@@ -481,6 +610,7 @@ impl VectorService for VectorServer {
         Ok(Response::new(pb::ListVectorsResponse {
             vectors: rows_as_vectors(&batches, req.return_data, req.return_metadata),
             next_token,
+            segmented: segments > 0,
         }))
     }
 
@@ -649,6 +779,148 @@ mod tests {
             },
         ];
         assert!(batch_of(&vectors, 4, schema).is_err());
+    }
+
+    fn vectors(keys: std::ops::Range<usize>) -> Vec<pb::Vector> {
+        keys.map(|i| pb::Vector {
+            key: format!("k{i:03}"),
+            data: vec![i as f32, 1.0],
+            metadata: (i % 3 != 0)
+                .then(|| parse_struct(&format!(r#"{{"n":{i},"tag":"t{}"}}"#, i % 2)).unwrap()),
+        })
+        .collect()
+    }
+
+    /// One fragment per range, then the given keys deleted.
+    async fn fragmented(
+        dir: &tempfile::TempDir,
+        ranges: &[std::ops::Range<usize>],
+        deleted: &[String],
+    ) -> Dataset {
+        let uri = dir.path().to_str().unwrap();
+        let schema = schema_for(2, pb::DistanceMetric::L2, &[]);
+        let mut dataset: Option<Dataset> = None;
+        for range in ranges {
+            let batch = batch_of(&vectors(range.clone()), 2, schema.clone()).unwrap();
+            let reader = arrow_array::RecordBatchIterator::new(vec![Ok(batch)], schema.clone());
+            dataset = Some(match dataset {
+                None => Dataset::write(reader, uri, None).await.unwrap(),
+                Some(mut d) => {
+                    d.append(reader, None).await.unwrap();
+                    d
+                }
+            });
+        }
+        let mut dataset = dataset.unwrap();
+        if !deleted.is_empty() {
+            dataset.delete(&key_list(deleted)).await.unwrap();
+        }
+        dataset
+    }
+
+    fn keys_of(batches: &[RecordBatch]) -> Vec<String> {
+        rows_as_vectors(batches, false, false)
+            .into_iter()
+            .map(|v| v.key)
+            .collect()
+    }
+
+    /// Every page names only its fragments yet matches the same window of
+    /// the full scan, across deletions and a fully deleted fragment.
+    #[tokio::test]
+    async fn list_page_matches_a_full_scan() {
+        let dir = tempfile::tempdir().unwrap();
+        let deleted: Vec<String> = ["k001", "k004", "k005", "k006", "k007", "k010"]
+            .map(String::from)
+            .to_vec();
+        let dataset = fragmented(&dir, &[0..4, 4..8, 8..12, 12..13], &deleted).await;
+        let columns = vec![KEY_COLUMN.to_string()];
+        let all = keys_of(
+            &dataset
+                .scan()
+                .project(&columns)
+                .unwrap()
+                .try_into_stream()
+                .await
+                .unwrap()
+                .try_collect::<Vec<_>>()
+                .await
+                .unwrap(),
+        );
+        assert_eq!(all.len(), 7);
+        let total = all.len() as u64;
+        assert!(page_fragments(&dataset, 0, total).is_some());
+        for offset in 0..=total + 1 {
+            for rows in [1, 2, 3, 5, total + 2] {
+                let got = keys_of(&list_page(&dataset, &columns, offset, rows).await.unwrap());
+                let end = (offset + rows).min(total) as usize;
+                let want = &all[(offset.min(total) as usize)..end];
+                assert_eq!(got, want, "offset {offset} rows {rows}");
+            }
+        }
+    }
+
+    /// Following a segment's tokens yields exactly the rows at its positions,
+    /// in order, and the segments together cover every row once.
+    #[tokio::test]
+    async fn list_segment_strides_the_listing() {
+        let dir = tempfile::tempdir().unwrap();
+        let deleted: Vec<String> = ["k002", "k009"].map(String::from).to_vec();
+        let dataset = fragmented(&dir, &[0..5, 5..12, 12..13, 13..20], &deleted).await;
+        let all = keys_of(
+            &list_page(&dataset, &[KEY_COLUMN.to_string()], 0, 100)
+                .await
+                .unwrap(),
+        );
+        let with_data = projection(true, true);
+        let rows = rows_as_vectors(
+            &list_page(&dataset, &with_data, 0, 100).await.unwrap(),
+            true,
+            true,
+        );
+        assert!(rows.iter().any(|v| v.metadata.is_some()));
+        for count in [2u64, 3, 4, 16] {
+            for page in [1u64, 2, 3, 7] {
+                let mut seen = Vec::new();
+                for index in 0..count {
+                    let (mut got, mut offset) = (Vec::new(), Some(0));
+                    while let Some(from) = offset {
+                        let (batches, next) =
+                            list_segment(&dataset, &with_data, from, page, count, index)
+                                .await
+                                .unwrap();
+                        for v in rows_as_vectors(&batches, true, true) {
+                            let want = rows.iter().find(|r| r.key == v.key).unwrap();
+                            assert_eq!(&v, want);
+                            got.push(v.key);
+                        }
+                        assert!(next.is_none() || next > Some(from));
+                        offset = next;
+                    }
+                    let want: Vec<String> = all
+                        .iter()
+                        .skip(index as usize)
+                        .step_by(count as usize)
+                        .cloned()
+                        .collect();
+                    assert_eq!(got, want, "count {count} index {index} page {page}");
+                    seen.extend(got);
+                }
+                seen.sort();
+                assert_eq!(seen.len(), all.len());
+                let mut sorted = all.clone();
+                sorted.sort();
+                assert_eq!(seen, sorted);
+            }
+        }
+        // Keys alone come from the stride scan, and a page ending on the
+        // last row carries no token.
+        let (batches, next) = list_segment(&dataset, &[KEY_COLUMN.to_string()], 0, 9, 2, 1)
+            .await
+            .unwrap();
+        let odd: Vec<String> = all.iter().skip(1).step_by(2).cloned().collect();
+        assert_eq!(keys_of(&batches), odd);
+        assert_eq!(next, None);
     }
 
     /// A catalog that answers one describe with `location`.

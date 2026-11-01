@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -97,5 +98,85 @@ func TestListVectorsBoundsAccepted(t *testing.T) {
 		if len(out.Vectors) != tc.rows || engine.lists != 1 {
 			t.Fatalf("%q: %d rows in %d engine calls, want %d in 1", tc.fields, len(out.Vectors), engine.lists, tc.rows)
 		}
+	}
+}
+
+// A segmented listing comes from the engine in one call per page; an engine
+// that ignores segment_count falls back to paging here. Both cover every row
+// once, in the same segments.
+func TestListVectorsSegmentsFromTheEngine(t *testing.T) {
+	fs := s3tablestest.Start(t)
+	modern := &countingVectors{fakeVectors: newFakeVectors(2503)}
+	legacy := &countingVectors{fakeVectors: newFakeVectors(2503)}
+	legacy.legacy = true
+	segments := map[bool][]string{}
+	for _, engine := range []*countingVectors{modern, legacy} {
+		s := NewServer(s3tables.NewManagerClient(fs.Client), allowAllAuth{}, engine)
+		bucket := "vec-modern"
+		if engine.legacy {
+			bucket = "vec-legacy"
+		}
+		if w := postJSON(t, s.handleCreateVectorBucket, &CreateVectorBucketRequest{VectorBucketName: bucket}); w.Code != http.StatusOK {
+			t.Fatalf("create bucket: %d %s", w.Code, w.Body.String())
+		}
+		if w := postJSON(t, s.handleCreateIndex, &CreateIndexRequest{
+			VectorBucketName: bucket, IndexName: "idx", DataType: "float32", Dimension: 3, DistanceMetric: "euclidean",
+		}); w.Code != http.StatusOK {
+			t.Fatalf("create index: %d %s", w.Code, w.Body.String())
+		}
+		engine.lists = 0
+		seen, pages := map[string]int{}, 0
+		for index := 0; index < 3; index++ {
+			token := ""
+			for {
+				fields := `,"segmentCount":3,"segmentIndex":` + strconv.Itoa(index) + `,"maxResults":100`
+				if token != "" {
+					fields += `,"nextToken":"` + token + `"`
+				}
+				body := json.RawMessage(`{"vectorBucketName":"` + bucket + `","indexName":"idx"` + fields + `}`)
+				w := postJSON(t, s.handleListVectors, body)
+				if w.Code != http.StatusOK {
+					t.Fatalf("legacy=%v: %d %s", engine.legacy, w.Code, w.Body.String())
+				}
+				var out ListVectorsResponse
+				if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+					t.Fatal(err)
+				}
+				pages++
+				for _, v := range out.Vectors {
+					seen[v.Key]++
+					segments[engine.legacy] = append(segments[engine.legacy], strconv.Itoa(index)+"/"+v.Key)
+				}
+				if out.NextToken == "" {
+					break
+				}
+				token = out.NextToken
+			}
+		}
+		if len(seen) != len(engine.rows) {
+			t.Fatalf("legacy=%v: saw %d distinct rows, want %d", engine.legacy, len(seen), len(engine.rows))
+		}
+		for key, n := range seen {
+			if n != 1 {
+				t.Fatalf("legacy=%v: row %s seen %d times", engine.legacy, key, n)
+			}
+		}
+		if !engine.legacy && engine.lists != pages {
+			t.Fatalf("modern engine took %d calls for %d pages", engine.lists, pages)
+		}
+		// The fallback starts from the page the engine already returned.
+		engine.lists = 0
+		body := json.RawMessage(`{"vectorBucketName":"` + bucket + `","indexName":"idx","segmentCount":2,"segmentIndex":0,"maxResults":1}`)
+		w := postJSON(t, s.handleListVectors, body)
+		var out ListVectorsResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil || len(out.Vectors) != 1 || out.Vectors[0].Key != "k0" || out.NextToken != "1" {
+			t.Fatalf("legacy=%v: one-row segment page %d %s", engine.legacy, w.Code, w.Body.String())
+		}
+		if engine.lists != 1 {
+			t.Fatalf("legacy=%v: one-row segment page took %d engine calls", engine.legacy, engine.lists)
+		}
+	}
+	if strings.Join(segments[false], ",") != strings.Join(segments[true], ",") {
+		t.Fatal("legacy fallback and engine segments disagree")
 	}
 }
