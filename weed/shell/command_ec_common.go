@@ -132,6 +132,9 @@ func topologyDataNodes(topo *master_pb.TopologyInfo) []*master_pb.DataNodeInfo {
 // as given when the topology is unavailable, so it still works while the
 // master is down.
 func collectVolumeServerAddresses(commandEnv *CommandEnv, nodes string) ([]pb.ServerAddress, error) {
+	if nodes != "" && everyNodeNamesGrpcPort(nodes) {
+		return volumeServerAddresses(nil, nodes), nil
+	}
 	ctx := context.Background()
 	if nodes != "" {
 		var cancel context.CancelFunc
@@ -146,6 +149,20 @@ func collectVolumeServerAddresses(commandEnv *CommandEnv, nodes string) ([]pb.Se
 		glog.V(0).Infof("dialing volume servers as given, topology unavailable: %v", err)
 	}
 	return volumeServerAddresses(topologyDataNodes(topo), nodes), nil
+}
+
+func everyNodeNamesGrpcPort(nodes string) bool {
+	for _, node := range strings.Split(nodes, ",") {
+		node = strings.TrimSpace(node)
+		if node == "" {
+			continue
+		}
+		portsSepIndex := strings.LastIndex(node, ":")
+		if portsSepIndex < 0 || !strings.Contains(node[portsSepIndex+1:], ".") {
+			return false
+		}
+	}
+	return true
 }
 
 // volumeServerAddresses returns the comma-separated nodes, or every data node
