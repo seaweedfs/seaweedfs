@@ -388,6 +388,18 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 				matchedHost = hostCandidate
 				break
 			}
+			// A proxy forwards the percent-encoded path, so the canonical URI the
+			// client signed is the single-encoded form. Decode before re-encoding,
+			// exactly like the un-prefixed retry below, but keep the prefix that
+			// was stripped from the path.
+			if decodedPath, decodeErr := url.PathUnescape(pathForSignature); decodeErr == nil && decodedPath != pathForSignature {
+				cleanedDecodedPath := buildPathWithForwardedPrefix(forwardedPrefix, decodedPath)
+				calculatedSignature, errCode = verify(cleanedDecodedPath)
+				if errCode == s3err.ErrNone {
+					matchedHost = hostCandidate
+					break
+				}
+			}
 		}
 
 		// 10. Verify with the original path
