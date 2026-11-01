@@ -39,6 +39,15 @@ func (localsink *LocalSink) isMultiPartEntry(key string) bool {
 	return strings.HasSuffix(key, ".part") && strings.Contains(key, "/"+s3_constants.MultipartUploadsFolder+"/")
 }
 
+func (localsink *LocalSink) isInsideDir(key string) bool {
+	rel, err := filepath.Rel(filepath.Clean(localsink.Dir), filepath.Clean(key))
+	if err == nil && filepath.IsLocal(rel) {
+		return true
+	}
+	glog.Warningf("local sink: skip %s outside %s", key, localsink.Dir)
+	return false
+}
+
 func (localsink *LocalSink) initialize(dir string, isIncremental bool) error {
 	localsink.Dir = dir
 	localsink.isIncremental = isIncremental
@@ -66,7 +75,7 @@ func (localsink *LocalSink) IsIncremental() bool {
 
 func (localsink *LocalSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool, signatures []int32) error {
 	key = sanitizeFsKey(key)
-	if localsink.isMultiPartEntry(key) {
+	if localsink.isMultiPartEntry(key) || !localsink.isInsideDir(key) {
 		return nil
 	}
 	glog.V(4).Infof("Delete Entry key: %s", key)
@@ -78,7 +87,7 @@ func (localsink *LocalSink) DeleteEntry(key string, isDirectory, deleteIncludeCh
 
 func (localsink *LocalSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []int32) error {
 	key = sanitizeFsKey(key)
-	if entry.IsDirectory || localsink.isMultiPartEntry(key) {
+	if entry.IsDirectory || localsink.isMultiPartEntry(key) || !localsink.isInsideDir(key) {
 		return nil
 	}
 	glog.V(4).Infof("Create Entry key: %s", key)
@@ -161,7 +170,7 @@ func (localsink *LocalSink) CreateEntry(key string, entry *filer_pb.Entry, signa
 
 func (localsink *LocalSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool, signatures []int32) (foundExistingEntry bool, err error) {
 	key = sanitizeFsKey(key)
-	if localsink.isMultiPartEntry(key) {
+	if localsink.isMultiPartEntry(key) || !localsink.isInsideDir(key) {
 		return true, nil
 	}
 	glog.V(4).Infof("Update Entry key: %s", key)
