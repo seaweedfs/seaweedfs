@@ -863,6 +863,63 @@ func (h *S3TablesHandler) dirHoldsFiles(ctx context.Context, client filer_pb.Sea
 	return false, nil
 }
 
+// claimTreeDirectory writes a fresh delete claim onto the directory at dirPath
+// while it still carries expected, and returns the claim with the attributes it
+// left. A claim seen in expected, one a delete that died left, is replaced like
+// any other attribute; one written since fails the compare.
+//
+// The claim is what ties the later delete to this directory: the delete
+// requires it, and only this directory carries it. A file or an S3 object at
+// dirPath is refused with errDirNotEmpty, whether it was there when the entry
+// was read or took the directory's place before the write, which the filer
+// refuses since it never writes a directory entry over a file. One that takes
+// the place after the write lacks the claim, so the delete is refused instead.
+func (h *S3TablesHandler) claimTreeDirectory(ctx context.Context, client filer_pb.SeaweedFilerClient, dirPath string, expected map[string][]byte) (string, map[string][]byte, error) {
+	claim := generateVersionToken()
+	var claimed map[string][]byte
+	err := h.mutateEntry(ctx, client, dirPath, func(entry *filer_pb.Entry) error {
+		if !entry.IsDirectory || entry.IsDirectoryKeyObject() {
+			return fmt.Errorf("%w: %s is an object", errDirNotEmpty, dirPath)
+		}
+		for key, want := range expected {
+			if !bytes.Equal(entry.Extended[key], want) {
+				return fmt.Errorf("%w: %s changed on %s", ErrConcurrentUpdate, key, dirPath)
+			}
+		}
+		entry.Extended[ExtendedKeyDeleting] = []byte(claim)
+		claimed = snapshotExtended(entry.Extended)
+		return nil
+	})
+	if errors.Is(err, filer_pb.ErrNotFound) {
+		return "", nil, fmt.Errorf("%w: %s", ErrConcurrentUpdate, dirPath)
+	}
+	if err != nil && !errors.Is(err, errDirNotEmpty) && !errors.Is(err, ErrConcurrentUpdate) {
+		// The filer reports the refused write over a file only as an opaque
+		// failure, so look at what holds the path now.
+		if current, lookupErr := h.lookupEntry(ctx, client, dirPath); lookupErr == nil && !current.IsDirectory {
+			return "", nil, fmt.Errorf("%w: %s is an object", errDirNotEmpty, dirPath)
+		}
+	}
+	if err != nil {
+		return "", nil, err
+	}
+	return claim, claimed, nil
+}
+
+// removeTreeDirectory removes a directory the walk listed as listed, under a
+// claim of its own, and lifts the claim if the delete is refused.
+func (h *S3TablesHandler) removeTreeDirectory(ctx context.Context, client filer_pb.SeaweedFilerClient, dirPath string, listed *filer_pb.Entry) error {
+	claim, claimed, err := h.claimTreeDirectory(ctx, client, dirPath, snapshotExtended(listed.Extended))
+	if err != nil {
+		return err
+	}
+	if err := h.deleteEmptyDirectoryIfMatches(ctx, client, dirPath, &filer_pb.Entry{Extended: claimed}); err != nil {
+		h.releaseDeleteClaim(ctx, client, dirPath, claim)
+		return err
+	}
+	return nil
+}
+
 // removeEmptyTree removes dirPath and every directory under it, provided no
 // file, no S3 object stored on a directory entry, and no catalog record sits
 // anywhere in the tree, dirPath included. dirEntry is dirPath as the caller saw
@@ -877,33 +934,12 @@ func (h *S3TablesHandler) dirHoldsFiles(ctx context.Context, client filer_pb.Sea
 //
 // The walk lists the tree a page at a time and stops at the first file, object
 // or record with errDirNotEmpty, before anything is removed. Directories then go
-// deepest first, each in a delete that checks the attributes it had when listed
-// and refuses a directory that holds an entry by now, so a file written since
-// the walk is kept. dirPath goes last, still under this claim; any other way out
-// lifts the claim.
+// deepest first, each claimed with the attributes it had when listed and
+// deleted under that claim, which refuses a directory that holds an entry by
+// now or was replaced by a file. dirPath goes last, still under its claim; any
+// other way out lifts the claim.
 func (h *S3TablesHandler) removeEmptyTree(ctx context.Context, client filer_pb.SeaweedFilerClient, dirPath string, dirEntry *filer_pb.Entry) (err error) {
-	// A claim seen by the caller, one a delete that died left, is replaced like
-	// any other attribute the caller saw; one written since fails the compare.
-	// An object stored on dirPath since the scan is refused before the claim.
-	claim := generateVersionToken()
-	expected := snapshotExtended(dirEntry.Extended)
-	var claimed map[string][]byte
-	err = h.mutateEntry(ctx, client, dirPath, func(entry *filer_pb.Entry) error {
-		if entry.IsDirectoryKeyObject() {
-			return fmt.Errorf("%w: %s is an object", errDirNotEmpty, dirPath)
-		}
-		for key, want := range expected {
-			if !bytes.Equal(entry.Extended[key], want) {
-				return fmt.Errorf("%w: %s changed on %s", ErrConcurrentUpdate, key, dirPath)
-			}
-		}
-		entry.Extended[ExtendedKeyDeleting] = []byte(claim)
-		claimed = snapshotExtended(entry.Extended)
-		return nil
-	})
-	if errors.Is(err, filer_pb.ErrNotFound) {
-		return fmt.Errorf("%w: %s", ErrConcurrentUpdate, dirPath)
-	}
+	claim, claimed, err := h.claimTreeDirectory(ctx, client, dirPath, snapshotExtended(dirEntry.Extended))
 	if err != nil {
 		return err
 	}
@@ -969,12 +1005,12 @@ func (h *S3TablesHandler) removeEmptyTree(ctx context.Context, client filer_pb.S
 		}
 	}
 
-	for i := len(listed) - 1; i >= 0; i-- {
-		if err := h.deleteEmptyDirectoryIfMatches(ctx, client, listed[i].path, listed[i].entry); err != nil {
+	for i := len(listed) - 1; i > 0; i-- {
+		if err := h.removeTreeDirectory(ctx, client, listed[i].path, listed[i].entry); err != nil {
 			return err
 		}
 	}
-	return nil
+	return h.deleteEmptyDirectoryIfMatches(ctx, client, dirPath, &filer_pb.Entry{Extended: claimed})
 }
 
 // keepAsLeftover clears a namespace's catalog attributes and the delete's

@@ -584,6 +584,91 @@ func TestDeleteTableBucketKeepsADirectoryBackedObject(t *testing.T) {
 	})
 }
 
+// A directory the delete listed can be removed by another client and a file
+// uploaded at its path before the delete reaches it. The file carries no
+// attribute a directory would not, so only the directory's type and the claim
+// written onto it tell the two apart: the delete refuses and the file stays,
+// whether it replaced the leftover itself or a directory under it, and whether
+// it landed before that directory was claimed or after.
+func TestDeleteTableBucketKeepsAFileThatReplacedADirectory(t *testing.T) {
+	bucketPath := GetTableBucketPath(renameTestBucket)
+	leftover := path.Join(bucketPath, "old")
+	kept := func(t *testing.T, fs *s3tablestest.MemFiler, dir, name string) {
+		t.Helper()
+		entry := fs.Get(dir, name)
+		require.NotNil(t, entry, "the uploaded file must survive")
+		assert.False(t, entry.IsDirectory)
+		assert.NotContains(t, entry.Extended, ExtendedKeyDeleting, "no claim is left on the file")
+		require.NotNil(t, fs.Get(TablesPath, renameTestBucket), "the bucket must survive")
+	}
+
+	t.Run("the leftover, after the scan", func(t *testing.T) {
+		fs, m := startEmptyBucket(t)
+		fs.Put(bucketPath, "old", nil)
+		fs.BeforeDelete = func() { fs.PutFile(bucketPath, "old", time.Now()) }
+
+		code, resp := runHandler(t, m, fs.Client, "DeleteTableBucket", deleteTableBucketRequest(t))
+
+		assert.Equal(t, http.StatusConflict, code, "%+v", resp)
+		assert.Equal(t, ErrCodeBucketNotEmpty, resp.Type, "%+v", resp)
+		kept(t, fs, bucketPath, "old")
+	})
+	t.Run("a directory under it, after the walk listed it", func(t *testing.T) {
+		fs, m := startEmptyBucket(t)
+		fs.Put(bucketPath, "old", nil)
+		fs.Put(leftover, "child", nil)
+		// The scan's look for files and the removal's walk each list old, then
+		// old/child. The file takes child's place as the walk reaches it, after
+		// the walk listed child as a directory and before child is claimed.
+		client := &pauseListClient{SeaweedFilerClient: fs.Client, dir: path.Join(leftover, "child"), nth: 2}
+		client.pause = func() { fs.PutFile(leftover, "child", time.Now()) }
+
+		code, resp := runHandler(t, m, client, "DeleteTableBucket", deleteTableBucketRequest(t))
+
+		require.Equal(t, 2, client.listings, "the file has to land during the removal's walk")
+		assert.Equal(t, http.StatusConflict, code, "%+v", resp)
+		assert.Equal(t, ErrCodeBucketNotEmpty, resp.Type, "%+v", resp)
+		kept(t, fs, leftover, "child")
+		assert.NotContains(t, fs.Get(bucketPath, "old").Extended, ExtendedKeyDeleting, "a refused delete lifts its claim on the leftover")
+	})
+	t.Run("a directory under it, between the read and the write of its claim", func(t *testing.T) {
+		fs, m := startEmptyBucket(t)
+		fs.Put(bucketPath, "old", nil)
+		fs.Put(leftover, "child", nil)
+		// The filer refuses to write the claimed directory over the file and
+		// says so only as an opaque failure.
+		fs.OnUpdate = func(dir, name string) {
+			if dir != leftover || name != "child" {
+				return
+			}
+			fs.OnUpdate = nil
+			fs.PutFile(leftover, "child", time.Now())
+		}
+
+		code, resp := runHandler(t, m, fs.Client, "DeleteTableBucket", deleteTableBucketRequest(t))
+
+		assert.Equal(t, http.StatusConflict, code, "%+v", resp)
+		assert.Equal(t, ErrCodeBucketNotEmpty, resp.Type, "%+v", resp)
+		kept(t, fs, leftover, "child")
+		assert.NotContains(t, fs.Get(bucketPath, "old").Extended, ExtendedKeyDeleting, "a refused delete lifts its claim on the leftover")
+	})
+	t.Run("a directory under it, after its claim", func(t *testing.T) {
+		fs, m := startEmptyBucket(t)
+		fs.Put(bucketPath, "old", nil)
+		fs.Put(leftover, "child", nil)
+		client := &beforeDeleteClient{SeaweedFilerClient: fs.Client, target: path.Join(leftover, "child")}
+		client.before = func() { fs.PutFile(leftover, "child", time.Now()) }
+
+		code, resp := runHandler(t, m, client, "DeleteTableBucket", deleteTableBucketRequest(t))
+
+		require.Nil(t, client.before, "the file has to land right before the delete")
+		assert.Equal(t, http.StatusConflict, code, "%+v", resp)
+		assert.Equal(t, ErrCodeConflict, resp.Type, "%+v", resp)
+		kept(t, fs, leftover, "child")
+		assert.NotContains(t, fs.Get(bucketPath, "old").Extended, ExtendedKeyDeleting, "a refused delete lifts its claim on the leftover")
+	})
+}
+
 // failClaimReleaseClient answers the first write that lifts a delete claim from
 // target with Unavailable, the way a filer that is briefly unreachable would.
 type failClaimReleaseClient struct {
