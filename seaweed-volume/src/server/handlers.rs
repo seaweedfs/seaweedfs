@@ -150,6 +150,8 @@ struct SourceReadRequest {
     is_head: bool,
     has_range: bool,
     has_image_ops: bool,
+    /// No URL extension, but the stored name may still make it a transform.
+    may_have_image_ops: bool,
     bypass_cm: bool,
 }
 
@@ -175,7 +177,10 @@ impl SourceReadRequest {
         if self.has_image_ops {
             return false;
         }
-        self.is_head || self.has_range || size.0 > STREAMING_THRESHOLD as i32
+        // A range that may need a transform reads a small needle whole, like Go.
+        self.is_head
+            || (self.has_range && !self.may_have_image_ops)
+            || size.0 > STREAMING_THRESHOLD as i32
     }
 }
 
@@ -1461,6 +1466,7 @@ fn parse_read_request(
         is_head: method == Method::HEAD,
         has_range,
         has_image_ops: has_image_ops(&ext, query),
+        may_have_image_ops: ext.is_empty() && has_image_ops(".jpg", query),
         bypass_cm: query.cm.as_deref() == Some("false"),
     };
     (ext, request_kind)
@@ -6458,6 +6464,41 @@ mod tests {
         );
         let (status, _, _) = send_read(&state, Method::GET, &path, None).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    /// A range streams a small needle from the data file, unless it has no
+    /// URL extension and asks for a resize or crop the stored name may call
+    /// for: then the needle is read whole, like Go.
+    #[test]
+    fn test_range_reads_meta_first_unless_it_may_need_a_transform() {
+        let small = Size(4096);
+        let width = ReadQueryParams {
+            width: Some(100),
+            ..Default::default()
+        };
+        let crop = ReadQueryParams {
+            crop_x2: Some(10),
+            crop_y2: Some(10),
+            ..Default::default()
+        };
+        for (path, query, want) in [
+            ("/1,abc", ReadQueryParams::default(), true),
+            ("/1,abc", width, false),
+            ("/1,abc", crop, false),
+            (
+                "/1,abc.bin",
+                ReadQueryParams {
+                    width: Some(100),
+                    ..Default::default()
+                },
+                true,
+            ),
+        ] {
+            let (_, request) = parse_read_request(path, true, &query, &Method::GET);
+            assert_eq!(request.try_meta_first(small), want, "{path}");
+            let (_, request) = parse_read_request(path, false, &query, &Method::GET);
+            assert!(!request.try_meta_first(small), "{path} without a range");
+        }
     }
 
     /// HEAD and ranged reads keep answering from the needle meta and the
