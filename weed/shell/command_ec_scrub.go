@@ -52,11 +52,10 @@ func (c *commandEcVolumeScrub) Do(args []string, commandEnv *CommandEnv, writer 
 		return
 	}
 
-	dns, err := collectDataNodes(commandEnv, 0)
+	volumeServerAddrs, err := collectVolumeServerAddresses(commandEnv, *nodesStr)
 	if err != nil {
 		return err
 	}
-	volumeServerAddrs := volumeServerAddresses(dns, *nodesStr)
 
 	volumeIDs := []uint32{}
 	if *volumeIDsStr != "" {

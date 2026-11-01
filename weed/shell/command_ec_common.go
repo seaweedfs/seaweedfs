@@ -125,6 +125,19 @@ func collectDataNodes(commandEnv *CommandEnv, delayBeforeCollecting time.Duratio
 	return dataNodes, nil
 }
 
+// collectVolumeServerAddresses resolves nodes with volumeServerAddresses. An
+// explicit node list is still used as given when the topology is unavailable.
+func collectVolumeServerAddresses(commandEnv *CommandEnv, nodes string) ([]pb.ServerAddress, error) {
+	dataNodes, err := collectDataNodes(commandEnv, 0)
+	if err != nil {
+		if nodes == "" {
+			return nil, err
+		}
+		glog.V(0).Infof("dialing volume servers as given, topology unavailable: %v", err)
+	}
+	return volumeServerAddresses(dataNodes, nodes), nil
+}
+
 // volumeServerAddresses returns the comma-separated nodes, or every data node
 // when nodes is empty, dialing each registered server on its gRPC port unless
 // the node names one.
