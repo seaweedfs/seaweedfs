@@ -64,7 +64,7 @@ type Server struct {
 	credentialVendor    CredentialVendor
 	s3Endpoint          string
 	s3Region            string
-	signingKey          security.SigningKey
+	signingKey          func() security.SigningKey
 }
 
 // NewServer creates a Lance namespace server over the given filer.
@@ -93,10 +93,11 @@ func (s *Server) SetCredentialVendor(vendor CredentialVendor) {
 	s.credentialVendor = vendor
 }
 
-// SetSigningKey sets the cluster key (jwt.filer_signing.key) that a trusted
-// caller signs its clusterTokenHeader with.
-func (s *Server) SetSigningKey(key security.SigningKey) {
-	s.signingKey = key
+// SetSigningKey sets where to read the cluster key (jwt.filer_signing.key)
+// that a trusted caller's clusterTokenHeader is checked against. It is read on
+// every check, so a reloaded key takes effect at once.
+func (s *Server) SetSigningKey(signingKey func() security.SigningKey) {
+	s.signingKey = signingKey
 }
 
 // SetS3Endpoint configures the S3 endpoint advertised in storage_options so a
@@ -293,10 +294,14 @@ func isTrustedCaller(ctx context.Context) bool {
 // Without a configured key no caller can.
 func (s *Server) hasClusterToken(r *http.Request) bool {
 	token := r.Header.Get(clusterTokenHeader)
-	if token == "" || len(s.signingKey) == 0 {
+	if token == "" || s.signingKey == nil {
 		return false
 	}
-	if security.IsFilerAdminToken(clusterTokenKey(s.signingKey), security.EncodedJwt(token)) {
+	key := s.signingKey()
+	if len(key) == 0 {
+		return false
+	}
+	if security.IsFilerAdminToken(clusterTokenKey(key), security.EncodedJwt(token)) {
 		return true
 	}
 	glog.V(1).Infof("lance: %s from %s is not signed with a key derived from jwt.filer_signing.key", clusterTokenHeader, r.RemoteAddr)

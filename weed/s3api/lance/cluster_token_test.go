@@ -41,7 +41,7 @@ func trustedSeenByHandler(t *testing.T, s *Server, token string) bool {
 func TestClusterTokenMarksTheCallerTrusted(t *testing.T) {
 	key := security.SigningKey("cluster-key")
 	s := NewServer(nil, openAuthenticator{})
-	s.SetSigningKey(key)
+	s.SetSigningKey(func() security.SigningKey { return key })
 
 	derived := clusterTokenKey(key)
 	expired := security.SeaweedFilerAdminClaims{}
@@ -66,9 +66,22 @@ func TestClusterTokenMarksTheCallerTrusted(t *testing.T) {
 		})
 	}
 
-	s.SetSigningKey(nil)
-	if trustedSeenByHandler(t, s, string(security.GenJwtForFilerAdmin(derived, 60))) {
+	token := string(security.GenJwtForFilerAdmin(derived, 60))
+	key = security.SigningKey("rotated-key")
+	if trustedSeenByHandler(t, s, token) {
+		t.Error("a token from before a key rotation is still trusted")
+	}
+	if !trustedSeenByHandler(t, s, string(security.GenJwtForFilerAdmin(clusterTokenKey(key), 60))) {
+		t.Error("a token signed after a key rotation is not trusted")
+	}
+
+	key = nil
+	if trustedSeenByHandler(t, s, token) {
 		t.Error("a server with no cluster key trusted a caller")
+	}
+	s.SetSigningKey(nil)
+	if trustedSeenByHandler(t, s, token) {
+		t.Error("a server with no key source trusted a caller")
 	}
 }
 

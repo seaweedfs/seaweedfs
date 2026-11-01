@@ -110,7 +110,7 @@ func (h *testHarness) vendedKey(t *testing.T, target, token string) string {
 func TestVectorNamespaceVendsWriteCredentialsOnlyToTrustedCallers(t *testing.T) {
 	h := newTestHarness(t)
 	key := security.SigningKey("cluster-key")
-	h.server.SetSigningKey(key)
+	h.server.SetSigningKey(func() security.SigningKey { return key })
 	h.server.SetCredentialVendor(recordingVendor{})
 	h.seedVectorIndex(t, "vec", s3tables.FormatLance)
 	h.mustDo(t, http.MethodPost, "/v1/table/vec$other$tbl/declare", `{}`, http.StatusOK)
