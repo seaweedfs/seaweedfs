@@ -417,13 +417,25 @@ func (h *S3TablesHandler) getExtendedAttribute(ctx context.Context, client filer
 
 // readNamespaceMetadataAttr returns the namespace-metadata xattr at
 // namespacePath. A directory without it is not a namespace — a delete that kept
-// the data under it leaves one — so its absence reads as a missing entry.
+// the data under it leaves one — so its absence reads as a missing entry. So
+// does a namespace still marked by its create: like a table's, it is absent to
+// every reader until the create confirms it.
 func (h *S3TablesHandler) readNamespaceMetadataAttr(ctx context.Context, client filer_pb.SeaweedFilerClient, namespacePath string) ([]byte, error) {
-	data, err := h.getExtendedAttribute(ctx, client, namespacePath, ExtendedKeyMetadata)
-	if errors.Is(err, ErrAttributeNotFound) {
+	entry, err := h.lookupEntry(ctx, client, namespacePath)
+	if err != nil {
+		return nil, err
+	}
+	data, ok := entry.Extended[ExtendedKeyMetadata]
+	if !ok || isUnfinishedCreate(entry.Extended) {
 		return nil, fmt.Errorf("%w: %s", filer_pb.ErrNotFound, namespacePath)
 	}
-	return data, err
+	return data, nil
+}
+
+// isFinishedNamespaceEntry is isNamespaceEntry for a namespace its create has
+// confirmed, the only kind a reader or a delete may act on.
+func isFinishedNamespaceEntry(entry *filer_pb.Entry) bool {
+	return isNamespaceEntry(entry) && !isUnfinishedCreate(entry.Extended)
 }
 
 // loadNamespaceMetadata resolves a namespace to its metadata. A directory that

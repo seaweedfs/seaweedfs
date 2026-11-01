@@ -643,9 +643,10 @@ func (h *S3TablesHandler) handleListNamespaces(w http.ResponseWriter, r *http.Re
 					continue
 				}
 
-				// Read metadata from extended attribute
+				// Read metadata from extended attribute. A namespace its create has
+				// not confirmed is not one yet.
 				data, ok := entry.Entry.Extended[ExtendedKeyMetadata]
-				if !ok {
+				if !ok || isUnfinishedCreate(entry.Entry.Extended) {
 					continue
 				}
 
@@ -781,11 +782,14 @@ func (h *S3TablesHandler) handleDeleteNamespace(w http.ResponseWriter, r *http.R
 	}
 
 	// Claim before scanning, so a create that writes after the scan sees it.
+	// A namespace whose create has not confirmed it is absent, and claiming it
+	// would replace the create's mark: a refused delete then lifts the claim and
+	// leaves the namespace looking confirmed before its create checked the bucket.
 	var claim string
 	var claimed map[string][]byte
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		var claimErr error
-		claim, claimed, claimErr = h.claimForDelete(r.Context(), client, namespacePath, isNamespaceEntry)
+		claim, claimed, claimErr = h.claimForDelete(r.Context(), client, namespacePath, isFinishedNamespaceEntry)
 		return claimErr
 	})
 	if err != nil {

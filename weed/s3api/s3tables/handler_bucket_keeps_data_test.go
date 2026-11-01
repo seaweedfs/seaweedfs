@@ -429,7 +429,7 @@ func TestCreateNamespaceAdoptsAnUnfinishedNamespace(t *testing.T) {
 // bucket, so a table created while the namespace's own create still has to
 // confirm the bucket would survive as a table under a namespace that
 // confirmation backs out. The namespace carries the unfinished mark until the
-// confirmation has passed, and a create under it is turned away meanwhile.
+// confirmation has passed, and is absent to a create under it meanwhile.
 func TestCreateTableRefusedInNamespaceStillBeingCreated(t *testing.T) {
 	fs, m := startEmptyBucket(t)
 	bucketPath := GetTableBucketPath(renameTestBucket)
@@ -451,12 +451,78 @@ func TestCreateTableRefusedInNamespaceStillBeingCreated(t *testing.T) {
 	close(release)
 	createResult := <-created
 
-	assert.Equal(t, http.StatusConflict, status, "%+v", resp)
-	assert.Equal(t, ErrCodeConflict, resp.Type, "%+v", resp)
+	assert.Equal(t, http.StatusNotFound, status, "%+v", resp)
+	assert.Equal(t, ErrCodeNoSuchNamespace, resp.Type, "%+v", resp)
 	assert.Nil(t, fs.Get(path.Join(bucketPath, "ns"), "t"), "a refused create writes nothing")
 	assert.Equal(t, http.StatusOK, createResult.status, "%+v", createResult.resp)
 	assert.NotContains(t, fs.Get(bucketPath, "ns").Extended, ExtendedKeyDeleting, "a confirmed namespace carries no mark")
 	requireOK(t, m, fs, "CreateTable", createTableRequest(t, "ns", "t"))
+}
+
+// A namespace whose create has not confirmed it is absent to every reader, as
+// a table's is. A delete that claimed it would replace the create's mark, and
+// lifting its own claim on a refusal would leave the namespace looking
+// confirmed: open to tables before its bucket check passed, and out of reach of
+// the create's back-out. Here the create takes back a leftover holding a file,
+// which a delete would refuse on.
+func TestDeleteNamespaceLeavesAnUnfinishedNamespaceAlone(t *testing.T) {
+	fs, m := startEmptyBucket(t)
+	bucketPath := GetTableBucketPath(renameTestBucket)
+	nsPath := path.Join(bucketPath, "ns")
+	fs.Put(bucketPath, "ns", nil)
+	fs.PutFile(nsPath, keptDataFile, time.Now())
+	reached := make(chan struct{})
+	release := make(chan struct{})
+	// The create confirms the bucket right after writing the namespace; hold it there.
+	fs.OnLookup = func(dir, name string) {
+		if dir != TablesPath || name != renameTestBucket {
+			return
+		}
+		if entry := fs.Get(bucketPath, "ns"); entry == nil || entry.Extended[ExtendedKeyMetadata] == nil {
+			return
+		}
+		fs.OnLookup = nil
+		close(reached)
+		<-release
+	}
+	created := startHandler(t, m, fs.Client, "CreateNamespace", createNamespaceNsRequest(t))
+	waitForPause(t, reached, created)
+
+	deleteStatus, deleteResp := runHandler(t, m, fs.Client, "DeleteNamespace",
+		&DeleteNamespaceRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"}})
+	listed := listedNamespaces(t, m, fs)
+	tableStatus, tableResp := runHandler(t, m, fs.Client, "CreateTable", createTableRequest(t, "ns", "t"))
+	close(release)
+	createResult := <-created
+
+	assert.Equal(t, http.StatusNotFound, deleteStatus, "%+v", deleteResp)
+	assert.Equal(t, ErrCodeNoSuchNamespace, deleteResp.Type, "%+v", deleteResp)
+	assert.NotContains(t, listed, "ns", "an unfinished namespace is not listed")
+	assert.Equal(t, http.StatusNotFound, tableStatus, "%+v", tableResp)
+	assert.Equal(t, ErrCodeNoSuchNamespace, tableResp.Type, "%+v", tableResp)
+	assert.Nil(t, fs.Get(nsPath, "t"), "no table is created in it")
+	assert.Equal(t, http.StatusOK, createResult.status, "%+v", createResult.resp)
+	assert.NotContains(t, fs.Get(bucketPath, "ns").Extended, ExtendedKeyDeleting, "the create confirms it")
+	assert.NotNil(t, fs.Get(nsPath, keptDataFile), "the file under it stays")
+}
+
+// A namespace can become unfinished between a delete's read and its claim: a
+// create took its name back meanwhile. The claim refuses it as absent, rather
+// than replacing the create's mark.
+func TestDeleteNamespaceDoesNotClaimAnUnfinishedNamespace(t *testing.T) {
+	fs, m := startEmptyBucket(t)
+	bucketPath := GetTableBucketPath(renameTestBucket)
+	requireOK(t, m, fs, "CreateNamespace", createNamespaceNsRequest(t))
+	// The claim is the delete's first write.
+	fs.BeforeUpdate = func() { plantCreateMark(fs, bucketPath, "ns") }
+
+	status, resp := runHandler(t, m, fs.Client, "DeleteNamespace",
+		&DeleteNamespaceRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"}})
+
+	assert.Equal(t, http.StatusNotFound, status, "%+v", resp)
+	assert.Equal(t, ErrCodeNoSuchNamespace, resp.Type, "%+v", resp)
+	require.NotNil(t, fs.Get(bucketPath, "ns"), "the namespace stays")
+	assert.Equal(t, []byte(createClaim), fs.Get(bucketPath, "ns").Extended[ExtendedKeyDeleting], "with its create's mark")
 }
 
 // A delete that claims the bucket between the namespace's confirmation and the
