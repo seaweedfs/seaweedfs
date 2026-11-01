@@ -223,7 +223,8 @@ func TestBucketEventsStayInsideStoreDir(t *testing.T) {
 	if err := os.WriteFile(sentinel, []byte("keep"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	for _, bucket := range []string{"..", ".", "../outside", "", DEFAULT} {
+	store.OnBucketCreation("x")
+	for _, bucket := range []string{"..", ".", "../outside", "", DEFAULT, "x/../" + DEFAULT, "x/y"} {
 		store.OnBucketCreation(bucket)
 		store.OnBucketDeletion(bucket)
 	}
@@ -238,6 +239,9 @@ func TestBucketEventsStayInsideStoreDir(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, DEFAULT)); err != nil {
 		t.Fatalf("default db folder missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "x", "y")); !os.IsNotExist(err) {
+		t.Fatalf("bucket event opened a db inside another bucket folder: %v", err)
 	}
 	ctx := context.Background()
 	if err := store.InsertEntry(ctx, &filer.Entry{FullPath: "/a/b"}); err != nil {

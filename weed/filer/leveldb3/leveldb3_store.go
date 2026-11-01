@@ -208,9 +208,9 @@ func (store *LevelDB3Store) emptyBucketDB() (*leveldb.DB, error) {
 
 // Dot-prefixed entries directly under /buckets (e.g. .system) are internal
 // folders, not S3 buckets; they stay in the default DB by full path. A bucket
-// also names a folder under store.dir, so it must stay a local name.
+// also names a single folder under store.dir.
 func isBucketFolder(bucket string) bool {
-	return !strings.HasPrefix(bucket, ".") && filepath.IsLocal(bucket)
+	return !strings.HasPrefix(bucket, ".") && filepath.IsLocal(bucket) && !strings.ContainsAny(bucket, `/\`)
 }
 
 func (store *LevelDB3Store) createDB(bucket string) (*leveldb.DB, error) {
