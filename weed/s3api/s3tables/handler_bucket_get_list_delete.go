@@ -346,9 +346,10 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 			return err
 		}
 
-		// 3. Check if bucket is empty. A file or a namespace is a child. A bare
-		// directory is what a deleted namespace leaves behind to keep the data
-		// under it, so it is only a child while it still holds a file. The scan
+		// 3. Check if bucket is empty. A file, an S3 object stored on a directory
+		// entry, or a namespace is a child. A bare directory is what a deleted
+		// namespace leaves behind to keep the data under it, so it is only a
+		// child while it still holds a file. The scan
 		// pages through the whole bucket: the first page may be nothing but bare
 		// directories sorted ahead of the namespaces.
 		lastFileName := ""
@@ -382,7 +383,7 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 					hidden = append(hidden, entry.Entry.Name)
 					continue
 				}
-				if _, hasMetadata := entry.Entry.Extended[ExtendedKeyMetadata]; hasMetadata || !entry.Entry.IsDirectory {
+				if _, hasMetadata := entry.Entry.Extended[ExtendedKeyMetadata]; hasMetadata || !entry.Entry.IsDirectory || entry.Entry.IsDirectoryKeyObject() {
 					hasChildren = true
 					break
 				}

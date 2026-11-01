@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables/s3tablestest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -477,6 +478,109 @@ func TestDeleteTableBucketClaimOnTheBucket(t *testing.T) {
 		requireOK(t, m, fs, "DeleteTableBucket", deleteTableBucketRequest(t))
 
 		assert.Nil(t, fs.Get(TablesPath, renameTestBucket), "the bucket is deleted")
+	})
+}
+
+// putDirectoryObject stores an S3 object with content on the directory entry
+// dir/name, the way the S3 API stores a key that other keys sit under.
+func putDirectoryObject(t *testing.T, fs *s3tablestest.MemFiler, dir, name string) {
+	t.Helper()
+	_, err := fs.Client.CreateEntry(context.Background(), &filer_pb.CreateEntryRequest{
+		Directory: dir,
+		Entry: &filer_pb.Entry{
+			Name:        name,
+			IsDirectory: true,
+			Attributes:  &filer_pb.FuseAttributes{Mime: "application/octet-stream"},
+			Content:     []byte("object"),
+		},
+	})
+	require.NoError(t, err)
+}
+
+// markPrefixObject marks the directory dir/name as also holding an empty S3
+// object, which leaves no trace but the mark, keeping its other attributes.
+func markPrefixObject(fs *s3tablestest.MemFiler, dir, name string) {
+	extended := map[string][]byte{}
+	for key, value := range fs.Get(dir, name).Extended {
+		extended[key] = value
+	}
+	extended[s3_constants.SeaweedFSPrefixObject] = []byte("true")
+	fs.Put(dir, name, extended)
+}
+
+// beforeDeleteClient runs before just ahead of the first delete of target.
+type beforeDeleteClient struct {
+	filer_pb.SeaweedFilerClient
+	target string
+	before func()
+}
+
+func (c *beforeDeleteClient) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntryRequest, opts ...grpc.CallOption) (*filer_pb.DeleteEntryResponse, error) {
+	if before := c.before; before != nil && path.Join(req.Directory, req.Name) == c.target {
+		c.before = nil
+		before()
+	}
+	return c.SeaweedFilerClient.DeleteEntry(ctx, req, opts...)
+}
+
+// An S3 object can be stored on a directory entry: a key other keys sit under,
+// or an empty object that leaves nothing but a mark on the directory. Such a
+// directory holds no file, yet it is user data, not a leftover: the delete
+// refuses wherever it finds one and the object stays.
+func TestDeleteTableBucketKeepsADirectoryBackedObject(t *testing.T) {
+	bucketPath := GetTableBucketPath(renameTestBucket)
+	leftover := path.Join(bucketPath, "old")
+	refused := func(t *testing.T, code int, resp S3TablesError, wantType string) {
+		t.Helper()
+		assert.Equal(t, http.StatusConflict, code, "%+v", resp)
+		assert.Equal(t, wantType, resp.Type, "%+v", resp)
+	}
+
+	t.Run("an empty object in the bucket", func(t *testing.T) {
+		fs, m := startEmptyBucket(t)
+		fs.Put(bucketPath, "old", map[string][]byte{s3_constants.SeaweedFSPrefixObject: []byte("true")})
+
+		code, resp := runHandler(t, m, fs.Client, "DeleteTableBucket", deleteTableBucketRequest(t))
+
+		refused(t, code, resp, ErrCodeBucketNotEmpty)
+		require.NotNil(t, fs.Get(bucketPath, "old"), "the object must survive")
+		assert.True(t, fs.Get(bucketPath, "old").IsPrefixObject())
+	})
+	t.Run("an object under a leftover directory", func(t *testing.T) {
+		fs, m := startEmptyBucket(t)
+		fs.Put(bucketPath, "old", nil)
+		putDirectoryObject(t, fs, leftover, "a")
+
+		code, resp := runHandler(t, m, fs.Client, "DeleteTableBucket", deleteTableBucketRequest(t))
+
+		refused(t, code, resp, ErrCodeBucketNotEmpty)
+		require.NotNil(t, fs.Get(leftover, "a"), "the object must survive")
+		assert.Equal(t, []byte("object"), fs.Get(leftover, "a").Content)
+		assert.NotContains(t, fs.Get(bucketPath, "old").Extended, ExtendedKeyDeleting, "a refused delete lifts its claim on the leftover")
+	})
+	t.Run("a leftover stored as an object after the scan", func(t *testing.T) {
+		fs, m := startEmptyBucket(t)
+		fs.Put(bucketPath, "old", nil)
+		fs.BeforeDelete = func() { putDirectoryObject(t, fs, bucketPath, "old") }
+
+		code, resp := runHandler(t, m, fs.Client, "DeleteTableBucket", deleteTableBucketRequest(t))
+
+		refused(t, code, resp, ErrCodeBucketNotEmpty)
+		require.NotNil(t, fs.Get(bucketPath, "old"), "the object must survive")
+		assert.Equal(t, []byte("object"), fs.Get(bucketPath, "old").Content)
+		assert.NotContains(t, fs.Get(bucketPath, "old").Extended, ExtendedKeyDeleting, "no claim is taken on an object")
+	})
+	t.Run("a leftover marked as an empty object after the walk", func(t *testing.T) {
+		fs, m := startEmptyBucket(t)
+		fs.Put(bucketPath, "old", nil)
+		client := &beforeDeleteClient{SeaweedFilerClient: fs.Client, target: leftover}
+		client.before = func() { markPrefixObject(fs, bucketPath, "old") }
+
+		code, resp := runHandler(t, m, client, "DeleteTableBucket", deleteTableBucketRequest(t))
+
+		refused(t, code, resp, ErrCodeConflict)
+		require.NotNil(t, fs.Get(bucketPath, "old"), "the object must survive")
+		assert.True(t, fs.Get(bucketPath, "old").IsPrefixObject())
 	})
 }
 
