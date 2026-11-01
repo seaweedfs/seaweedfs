@@ -595,6 +595,7 @@ func TestDeleteTableBucketCountsANamespaceStillBeingCreated(t *testing.T) {
 
 	assert.Equal(t, http.StatusConflict, status, "%+v", resp)
 	assert.Equal(t, ErrCodeBucketNotEmpty, resp.Type, "%+v", resp)
+	assert.Contains(t, resp.Message, "namespace ns", "the hidden namespace is named")
 	assert.NotNil(t, fs.Get(TablesPath, renameTestBucket), "the bucket is kept")
 }
 

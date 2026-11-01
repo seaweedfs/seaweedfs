@@ -277,6 +277,7 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 	var bucketPolicy string
 	hasChildren := false
 	heldDir := ""
+	unfinishedNamespace := ""
 	// What the scan found besides namespaces: the bare directories a deleted
 	// namespace left, as they were seen, and the names of the hidden entries.
 	var leftovers []*filer_pb.Entry
@@ -387,6 +388,9 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 				}
 				if _, hasMetadata := entry.Entry.Extended[ExtendedKeyMetadata]; hasMetadata || !entry.Entry.IsDirectory || entry.Entry.IsDirectoryKeyObject() {
 					hasChildren = true
+					if hasMetadata && isUnfinishedCreate(entry.Entry.Extended) {
+						unfinishedNamespace = entry.Entry.Name
+					}
 					break
 				}
 				leftovers = append(leftovers, entry.Entry)
@@ -430,7 +434,12 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 	}
 
 	if hasChildren {
-		h.writeError(w, http.StatusConflict, ErrCodeBucketNotEmpty, "table bucket is not empty")
+		message := "table bucket is not empty"
+		if unfinishedNamespace != "" {
+			// Listings hide it, so name it: creating it again finishes it.
+			message = fmt.Sprintf("table bucket is not empty: namespace %s has an unfinished create", unfinishedNamespace)
+		}
+		h.writeError(w, http.StatusConflict, ErrCodeBucketNotEmpty, message)
 		return fmt.Errorf("bucket not empty")
 	}
 
