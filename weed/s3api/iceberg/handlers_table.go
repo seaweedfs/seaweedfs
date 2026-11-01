@@ -786,6 +786,9 @@ func (s *Server) mayUpdateTable(r *http.Request, bucketName string, namespace []
 	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		return s.tablesManager.AuthorizeUpdateTable(r.Context(), s3tables.NewManagerClient(client), updateReq, identityName)
 	})
+	if err == nil {
+		err = s.tablesManager.CheckVectorNamespaceWrite(r.Context(), s.filerClient, bucketName, namespace)
+	}
 	if err != nil {
 		glog.V(1).Infof("Iceberg: UpdateTable check for %s/%s failed, vending read-only: %v", bucketName, tableName, err)
 	}
