@@ -38,14 +38,24 @@ func CheckGrpcAdminPeer(ctx context.Context, signingKey SigningKey) error {
 	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") || parts[1] == "" {
 		return status.Error(codes.Unauthenticated, "authorization header must use Bearer scheme")
 	}
-	parsed, err := DecodeJwt(signingKey, EncodedJwt(parts[1]), &SeaweedFilerAdminClaims{})
-	if err != nil || parsed == nil || !parsed.Valid {
-		return status.Error(codes.Unauthenticated, "invalid admin token")
-	}
-	if claims, ok := parsed.Claims.(*SeaweedFilerAdminClaims); !ok || claims.SessionId != "" {
+	if !IsFilerAdminToken(signingKey, EncodedJwt(parts[1])) {
 		return status.Error(codes.Unauthenticated, "invalid admin token")
 	}
 	return nil
+}
+
+// IsFilerAdminToken reports whether token is an admin token signed by
+// signingKey. An STS session token signed with the same key does not count.
+func IsFilerAdminToken(signingKey SigningKey, token EncodedJwt) bool {
+	if len(signingKey) == 0 || token == "" {
+		return false
+	}
+	parsed, err := DecodeJwt(signingKey, token, &SeaweedFilerAdminClaims{})
+	if err != nil || parsed == nil || !parsed.Valid {
+		return false
+	}
+	claims, ok := parsed.Claims.(*SeaweedFilerAdminClaims)
+	return ok && claims.SessionId == ""
 }
 
 // GrpcAdminPeerCredentials returns outgoing metadata carrying a Bearer token
