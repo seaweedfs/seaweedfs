@@ -251,7 +251,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 
 	var count int
 	var memoryCost types.Size
-	readOption.AttemptMetaOnly, readOption.MustMetaOnly = shouldAttemptStreamWrite(hasVolume, ext, r)
+	readOption.AttemptMetaOnly, readOption.MustMetaOnly, readOption.HasRange = shouldAttemptStreamWrite(hasVolume, ext, r)
 	onReadSizeFn := func(size types.Size) {
 		memoryCost = size
 		atomic.AddInt64(&vs.inFlightDownloadDataSize, int64(memoryCost))
@@ -371,9 +371,11 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 	}
 }
 
-func shouldAttemptStreamWrite(hasLocalVolume bool, ext string, r *http.Request) (shouldAttempt bool, mustMetaOnly bool) {
+// shouldAttemptStreamWrite picks the ReadOption flags that let a GET or HEAD
+// skip the payload read: AttemptMetaOnly, MustMetaOnly and HasRange.
+func shouldAttemptStreamWrite(hasLocalVolume bool, ext string, r *http.Request) (shouldAttempt bool, mustMetaOnly bool, hasRange bool) {
 	if !hasLocalVolume {
-		return false, false
+		return false, false, false
 	}
 	if len(ext) > 0 {
 		ext = strings.ToLower(ext)
@@ -383,15 +385,25 @@ func shouldAttemptStreamWrite(hasLocalVolume bool, ext string, r *http.Request) 
 	if shouldResize || shouldCrop {
 		// A transformed image's length is not the needle's; the payload is
 		// needed to answer — also true for HEAD, which reports it.
-		return false, false
+		return false, false, false
 	}
 	if r.Method == http.MethodHead {
 		// Attempt only, so a needle up to PagedReadLimit is still read whole:
 		// on a spinning disk one read is cheaper than a header read followed
 		// by a trailer read.
-		return true, false
+		return true, false, false
 	}
-	return true, false
+	if ext == "" {
+		// The stored name may still make this an image to resize or crop,
+		// which needs the payload.
+		_, _, _, resizeIfImage := shouldResizeImages(".jpg", r)
+		_, _, _, _, cropIfImage := shouldCropImages(".jpg", r)
+		if resizeIfImage || cropIfImage {
+			return true, false, false
+		}
+	}
+	// A range streams only its bytes, so a small needle is not read whole.
+	return true, false, r.Header.Get("Range") != ""
 }
 
 func (vs *VolumeServer) tryHandleChunkedFile(n *needle.Needle, fileName string, ext string, w http.ResponseWriter, r *http.Request) (processed bool) {
