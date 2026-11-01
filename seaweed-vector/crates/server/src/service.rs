@@ -10,6 +10,7 @@ use lance::dataset::WriteParams;
 use lance::dataset::{MergeInsertBuilder, WhenMatched, WhenNotMatched};
 use lance::io::ObjectStoreParams;
 use lance::io::StorageOptionsAccessor;
+use lance::io::WrappingObjectStore;
 use lance::table::format::Fragment;
 use lance_linalg::distance::DistanceType;
 use prost_types::{ListValue, Struct, Value, value::Kind};
@@ -22,6 +23,7 @@ use weed_vector_core::query::{self, Query};
 use weed_vector_core::table::VectorTable;
 
 use crate::pb::vector::{self as pb, vector_service_server::VectorService};
+use crate::read_cache::ReadCache;
 
 fn internal(err: impl Into<anyhow::Error>) -> Status {
     Status::internal(format!("{:#}", err.into()))
@@ -371,15 +373,32 @@ fn rows_as_vectors(
 pub struct VectorServer {
     client: NamespaceClient,
     fallback: FallbackOptions,
+    read_cache: Option<Arc<dyn WrappingObjectStore>>,
 }
 
 impl VectorServer {
     pub fn new(client: NamespaceClient, fallback: FallbackOptions) -> Self {
-        Self { client, fallback }
+        Self {
+            client,
+            fallback,
+            read_cache: None,
+        }
+    }
+
+    /// Serve repeated reads of write-once table files from `cache`.
+    pub fn with_read_cache(mut self, cache: ReadCache) -> Self {
+        self.read_cache = Some(Arc::new(cache));
+        self
     }
 
     async fn open(&self, table: &pb::Table) -> Result<Dataset> {
-        let opened = dataset::open(&self.client, &table.id, &self.fallback).await?;
+        let opened = dataset::open_with(
+            &self.client,
+            &table.id,
+            &self.fallback,
+            self.read_cache.clone(),
+        )
+        .await?;
         let mut dataset = opened.dataset;
         if table.version != 0 {
             dataset = dataset.checkout_version(table.version).await?;

@@ -1,5 +1,6 @@
 //! The VectorService gRPC server the S3 gateway talks to.
 
+pub mod read_cache;
 pub mod service;
 
 pub mod remote_pb {
