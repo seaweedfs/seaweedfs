@@ -10,7 +10,7 @@ CARGO_TARGET_DIR ?= $(abspath ../../seaweed-vector/target)
 CARGO_OUTPUT := $(CARGO_TARGET_DIR)/$(if $(filter dev,$(CARGO_PROFILE)),debug,$(CARGO_PROFILE))
 export CARGO_TARGET_DIR
 
-.PHONY: all test build clean FORCE
+.PHONY: all test perf build clean FORCE
 
 all: test
 
@@ -37,6 +37,9 @@ build: $(WEED) $(VEC) $(WORKER) $(VOLUME)
 
 test: build
 	./run_test.sh
+
+perf: build
+	./run_perf.sh
 
 clean:
 	rm -f $(WEED) $(VEC) ./weed-vector-worker $(VOLUME)
