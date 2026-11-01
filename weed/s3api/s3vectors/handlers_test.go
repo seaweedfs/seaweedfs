@@ -967,3 +967,48 @@ func TestVectorKeysBoundsRejectsBeforeEngine(t *testing.T) {
 		t.Fatalf("engine saw %d get/%d delete calls, want none", len(f.gets), len(f.deletes))
 	}
 }
+
+// Two indexes created at once in a new bucket both declare the implicit
+// namespace. One create takes over the other's namespace while it is still
+// marked unfinished, so the other's confirmation fails; its index is created
+// all the same.
+func TestCreateIndexSurvivesAConcurrentNamespaceCreate(t *testing.T) {
+	fs := s3tablestest.Start(t)
+	s := NewServer(s3tables.NewManagerClient(fs.Client), allowAllAuth{}, newFakeVectors(0))
+	if w := postJSON(t, s.handleCreateVectorBucket, &CreateVectorBucketRequest{VectorBucketName: "vec-bucket"}); w.Code != http.StatusOK {
+		t.Fatalf("create bucket: %d %s", w.Code, w.Body.String())
+	}
+	bucketPath := s3tables.GetTableBucketPath("vec-bucket")
+	reached := make(chan struct{})
+	release := make(chan struct{})
+	held := false
+	// Hold the first create where it confirms the bucket after writing the namespace.
+	fs.OnLookup = func(dir, name string) {
+		if held || dir != s3tables.TablesPath || name != "vec-bucket" {
+			return
+		}
+		ns := fs.Get(bucketPath, indexNamespace)
+		if ns == nil || string(ns.Extended[s3tables.ExtendedKeyDeleting]) != "create" {
+			return
+		}
+		held = true
+		close(reached)
+		<-release
+	}
+	createIndex := func(name string) *httptest.ResponseRecorder {
+		return postJSON(t, s.handleCreateIndex, &CreateIndexRequest{
+			VectorBucketName: "vec-bucket", IndexName: name, DataType: "float32", Dimension: 2, DistanceMetric: "cosine",
+		})
+	}
+	first := make(chan *httptest.ResponseRecorder)
+	go func() { first <- createIndex("first") }()
+	<-reached
+
+	if w := createIndex("second"); w.Code != http.StatusOK {
+		t.Fatalf("second create index: %d %s", w.Code, w.Body.String())
+	}
+	close(release)
+	if w := <-first; w.Code != http.StatusOK {
+		t.Fatalf("first create index: %d %s", w.Code, w.Body.String())
+	}
+}
