@@ -5,7 +5,9 @@
 
 use std::collections::HashMap;
 use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, OnceLock, RwLock};
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use aws_sdk_s3::Client;
@@ -15,9 +17,13 @@ use aws_sdk_s3::config::{BehaviorVersion, Credentials, Region};
 use aws_sdk_s3::error::{DisplayErrorContext, SdkError};
 use aws_sdk_s3::operation::get_object::GetObjectError;
 use aws_sdk_s3::operation::head_object::HeadObjectError;
+use aws_sdk_s3::operation::upload_part::UploadPartOutput;
+use aws_sdk_s3::operation::upload_part::builders::UploadPartFluentBuilder;
+use aws_sdk_s3::primitives::{ByteStream, SdkBody};
 use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart};
+use bytes::Bytes;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
-use tokio::sync::Semaphore;
+use tokio::sync::{Semaphore, watch};
 
 /// Concurrency limit for multipart upload/download (matches Go's s3manager).
 const CONCURRENCY: usize = 5;
@@ -30,8 +36,9 @@ const S3_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const S3_READ_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// The SDK's read timeout runs from the start of the request, so on
-/// upload_part it would also cap sending the part body. Go's
-/// ResponseHeaderTimeout starts only once the body is written.
+/// upload_part it would also cap sending the part body. send_part bounds the
+/// response wait instead, from when the body is written, like Go's
+/// ResponseHeaderTimeout.
 fn upload_part_config() -> aws_sdk_s3::config::Builder {
     aws_sdk_s3::config::Builder::default().timeout_config(
         TimeoutConfig::builder()
@@ -39,6 +46,87 @@ fn upload_part_config() -> aws_sdk_s3::config::Builder {
             .disable_read_timeout()
             .build(),
     )
+}
+
+/// A part goes to the connection in chunks this size, so its last chunk is
+/// taken only once nearly all of the part has been written.
+const UPLOAD_CHUNK_SIZE: usize = 64 * 1024;
+
+struct PartBody {
+    rest: Bytes,
+    sent: Arc<watch::Sender<bool>>,
+}
+
+impl http_body::Body for PartBody {
+    type Data = Bytes;
+    type Error = std::convert::Infallible;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<http_body::Frame<Bytes>, Self::Error>>> {
+        if self.rest.is_empty() {
+            return Poll::Ready(None);
+        }
+        let n = self.rest.len().min(UPLOAD_CHUNK_SIZE);
+        let chunk = self.rest.split_to(n);
+        if self.rest.is_empty() {
+            self.sent.send_replace(true);
+        }
+        Poll::Ready(Some(Ok(http_body::Frame::data(chunk))))
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.rest.is_empty()
+    }
+
+    fn size_hint(&self) -> http_body::SizeHint {
+        http_body::SizeHint::with_exact(self.rest.len() as u64)
+    }
+}
+
+/// Sends one multipart part, giving up once `response_timeout` passes after
+/// the whole part was handed to the connection without a response. A retry
+/// rebuilds the body and restarts that clock. The body keeps its in-memory
+/// contents, so signing and the checksum header are unchanged.
+async fn send_part(
+    request: UploadPartFluentBuilder,
+    data: Bytes,
+    response_timeout: Duration,
+) -> Result<UploadPartOutput, String> {
+    let (sent_tx, mut sent) = watch::channel(false);
+    let sent_tx = Arc::new(sent_tx);
+    let body = {
+        let sent_tx = sent_tx.clone();
+        SdkBody::from(data.clone()).map_preserve_contents(move |_| {
+            sent_tx.send_replace(data.is_empty());
+            SdkBody::from_body_1_x(PartBody {
+                rest: data.clone(),
+                sent: sent_tx.clone(),
+            })
+        })
+    };
+    let unanswered = async {
+        loop {
+            let _ = sent.wait_for(|sent| *sent).await;
+            if tokio::time::timeout(response_timeout, sent.wait_for(|sent| !*sent))
+                .await
+                .is_err()
+            {
+                return;
+            }
+        }
+    };
+    tokio::select! {
+        resp = request
+            .body(ByteStream::new(body))
+            .customize()
+            .config_override(upload_part_config())
+            .send() => resp.map_err(|e| DisplayErrorContext(&e).to_string()),
+        () = unanswered => Err(format!(
+            "no response within {response_timeout:?} after sending the part"
+        )),
+    }
 }
 
 /// A tier transfer failure. The variant is what callers match on; the
@@ -258,25 +346,23 @@ impl S3TierBackend {
                     TierError::Io(format!("failed to read file at offset {}: {}", off, e))
                 })?;
 
-                let upload_part_resp = client
-                    .upload_part()
-                    .bucket(&bucket)
-                    .key(&key)
-                    .upload_id(&upload_id)
-                    .part_number(pn)
-                    .body(buf.into())
-                    .customize()
-                    .config_override(upload_part_config())
-                    .send()
-                    .await
-                    .map_err(|e| {
-                        TierError::Io(format!(
-                            "failed to upload part {} at offset {}: {}",
-                            pn,
-                            off,
-                            DisplayErrorContext(&e)
-                        ))
-                    })?;
+                let upload_part_resp = send_part(
+                    client
+                        .upload_part()
+                        .bucket(&bucket)
+                        .key(&key)
+                        .upload_id(&upload_id)
+                        .part_number(pn),
+                    buf.into(),
+                    S3_READ_TIMEOUT,
+                )
+                .await
+                .map_err(|e| {
+                    TierError::Io(format!(
+                        "failed to upload part {} at offset {}: {}",
+                        pn, off, e
+                    ))
+                })?;
 
                 let e_tag = upload_part_resp.e_tag().unwrap_or_default().to_string();
 
@@ -773,6 +859,13 @@ fn describe_join_error(join_error: tokio::task::JoinError) -> TierError {
 mod tests {
     use super::*;
     use crate::remote_storage::s3::tests::{CannedResponse, NO_SUCH_KEY};
+    use aws_sdk_s3::config::http::HttpRequest;
+    use aws_sdk_s3::config::{HttpClient, RuntimeComponents};
+    use aws_smithy_runtime_api::client::http::{
+        HttpConnector, HttpConnectorFuture, HttpConnectorSettings, SharedHttpConnector,
+    };
+    use aws_smithy_runtime_api::http::StatusCode;
+    use http_body::Body as _;
     use std::collections::HashSet;
     use tokio::runtime::Handle;
 
@@ -995,6 +1088,96 @@ mod tests {
             .expect("request never reached transmit");
         assert_eq!(timeouts.connect_timeout(), Some(S3_CONNECT_TIMEOUT));
         assert_eq!(timeouts.read_timeout(), None);
+    }
+
+    fn upload_part_request(backend: &S3TierBackend) -> UploadPartFluentBuilder {
+        backend
+            .client
+            .upload_part()
+            .bucket("bucket")
+            .key("key")
+            .upload_id("upload")
+            .part_number(1)
+    }
+
+    #[tokio::test]
+    async fn send_part_gives_up_when_no_response_follows_the_body() {
+        let (_listener, backend) = silent_backend();
+        let sent = tokio::time::timeout(
+            Duration::from_secs(30),
+            send_part(
+                upload_part_request(&backend),
+                Bytes::from_static(&[0u8; 8]),
+                Duration::from_millis(200),
+            ),
+        )
+        .await
+        .expect("a part with no response did not give up");
+        let err = sent.unwrap_err();
+        assert!(err.starts_with("no response within 200ms"), "{err}");
+    }
+
+    /// Takes the request body one chunk per `pause`, then answers at once.
+    #[derive(Debug, Clone)]
+    struct SlowReader {
+        pause: Duration,
+    }
+
+    impl HttpConnector for SlowReader {
+        fn call(&self, request: HttpRequest) -> HttpConnectorFuture {
+            let pause = self.pause;
+            HttpConnectorFuture::new(async move {
+                let mut body = std::pin::pin!(request.into_body());
+                loop {
+                    tokio::time::sleep(pause).await;
+                    let frame = std::future::poll_fn(|cx| body.as_mut().poll_frame(cx)).await;
+                    if frame.is_none() || body.is_end_stream() {
+                        break;
+                    }
+                }
+                let mut response =
+                    HttpResponse::new(StatusCode::try_from(200).unwrap(), SdkBody::empty());
+                response.headers_mut().insert("ETag", "\"etag\"");
+                Ok(response)
+            })
+        }
+    }
+
+    impl HttpClient for SlowReader {
+        fn http_connector(
+            &self,
+            _settings: &HttpConnectorSettings,
+            _components: &RuntimeComponents,
+        ) -> SharedHttpConnector {
+            SharedHttpConnector::new(self.clone())
+        }
+    }
+
+    #[tokio::test]
+    async fn send_part_does_not_cap_a_slow_body() {
+        let config = aws_sdk_s3::Config::builder()
+            .behavior_version(BehaviorVersion::latest())
+            .region(Region::new("us-east-1"))
+            .credentials_provider(Credentials::new("AKIATEST", "secret", None, None, "test"))
+            .endpoint_url("http://127.0.0.1:1")
+            .force_path_style(true)
+            .http_client(SlowReader {
+                pause: Duration::from_millis(300),
+            })
+            .build();
+        let backend = S3TierBackend {
+            client: Client::from_conf(config),
+            bucket: "bucket".to_string(),
+            storage_class: "STANDARD".to_string(),
+        };
+        let output = send_part(
+            upload_part_request(&backend),
+            Bytes::from(vec![0u8; 4 * UPLOAD_CHUNK_SIZE]),
+            Duration::from_millis(200),
+        )
+        .await
+        .expect("a part still being sent was cut short");
+        assert_eq!(output.e_tag(), Some("\"etag\""));
     }
 
     #[test]
