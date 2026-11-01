@@ -109,6 +109,27 @@ func (s *AdminServer) fetchPublicUrlMap() map[string]string {
 	return publicUrls
 }
 
+// diskCapacityAndUsage returns the physical capacity of one disk together with
+// the bytes in use on it, measured the same way. The bytes in use are the
+// statfs numbers the volume server heartbeats, DiskTotalBytes-DiskFreeBytes,
+// which is the same measurement CollectTierStats uses. The logical size of the
+// volumes is not comparable with the physical capacity: a compressing
+// filesystem (ZFS, Btrfs) stores fewer bytes than the volumes report, so
+// counting logical bytes as usage made the admin UI show usage above capacity
+// and derive a negative available space. Volume servers that do not report
+// statfs numbers keep the previous behaviour: slot-based capacity and the
+// logical bytes the disk holds.
+func diskCapacityAndUsage(diskInfo *master_pb.DiskInfo, volumeSizeLimitMb uint64, logicalBytes int64) (capacity int64, usage int64) {
+	if diskInfo.DiskTotalBytes > 0 {
+		capacity = int64(diskInfo.DiskTotalBytes)
+		if diskInfo.DiskTotalBytes > diskInfo.DiskFreeBytes {
+			usage = int64(diskInfo.DiskTotalBytes - diskInfo.DiskFreeBytes)
+		}
+		return capacity, usage
+	}
+	return diskInfo.MaxVolumeCount * int64(volumeSizeLimitMb) * 1024 * 1024, logicalBytes
+}
+
 // getTopologyViaGRPC gets topology using gRPC (original method)
 func (s *AdminServer) getTopologyViaGRPC(topology *ClusterTopology) error {
 	// Fetch public URL mapping from master HTTP API
@@ -150,28 +171,22 @@ func (s *AdminServer) getTopologyViaGRPC(topology *ClusterTopology) error {
 						var totalMaxVolumes int64
 						var totalSize int64
 						var remoteSize int64
-						// Prefer the real physical disk capacity the volume server
-						// reports per disk; the slot-based estimate overstates capacity
-						// when maxVolumeCount is configured higher than the disk holds.
 						var diskCapacity int64
+						var diskUsage int64
 
 						for _, diskInfo := range node.DiskInfos {
 							totalVolumes += diskInfo.VolumeCount
 							totalMaxVolumes += diskInfo.MaxVolumeCount
-							if diskInfo.DiskTotalBytes > 0 {
-								diskCapacity += int64(diskInfo.DiskTotalBytes)
-							} else {
-								diskCapacity += diskInfo.MaxVolumeCount * int64(volumeSizeLimitMb) * 1024 * 1024
-							}
 
 							// A remote-tiered volume reports its cloud object's
 							// size; keep those bytes out of the local disk usage
 							// that is compared against diskCapacity.
+							var diskLocalSize int64
 							for _, volInfo := range diskInfo.VolumeInfos {
 								if volInfo.RemoteStorageName != "" {
 									remoteSize += int64(volInfo.Size)
 								} else {
-									totalSize += int64(volInfo.Size)
+									diskLocalSize += int64(volInfo.Size)
 								}
 							}
 
@@ -179,9 +194,14 @@ func (s *AdminServer) getTopologyViaGRPC(topology *ClusterTopology) error {
 							// across nodes gives the physical footprint.
 							for _, ecShardInfo := range diskInfo.EcShardInfos {
 								for _, shardSize := range ecShardInfo.ShardSizes {
-									totalSize += shardSize
+									diskLocalSize += shardSize
 								}
 							}
+							totalSize += diskLocalSize
+
+							capacity, usage := diskCapacityAndUsage(diskInfo, volumeSizeLimitMb, diskLocalSize)
+							diskCapacity += capacity
+							diskUsage += usage
 						}
 
 						// Look up PublicUrl from master HTTP API
@@ -203,7 +223,7 @@ func (s *AdminServer) getTopologyViaGRPC(topology *ClusterTopology) error {
 							PublicURL:     publicUrl,
 							Volumes:       int(totalVolumes),
 							MaxVolumes:    int(totalMaxVolumes),
-							DiskUsage:     totalSize,
+							DiskUsage:     diskUsage,
 							DiskCapacity:  diskCapacity,
 							LastHeartbeat: time.Now(),
 							RemoteSize:    remoteSize,
