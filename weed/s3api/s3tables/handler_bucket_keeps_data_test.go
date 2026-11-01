@@ -185,6 +185,35 @@ func TestCreateNamespaceTreatsARecreatedBucketAsGone(t *testing.T) {
 	assert.Equal(t, recreated, fs.Get(TablesPath, renameTestBucket).Extended, "and is left as it was created")
 }
 
+// A delete is authorized against the bucket it read. If that bucket is deleted
+// and another is created under the same name before the delete claims it, the
+// claim and the removal would act on a bucket nobody authorized the delete for.
+// The claim takes only the bucket with the creation time the delete read, so
+// the new one reads as the old one gone and is left as it was.
+func TestDeleteTableBucketTreatsARecreatedBucketAsGone(t *testing.T) {
+	fs, m := startEmptyBucket(t)
+	recreatedMeta, err := json.Marshal(tableBucketMetadata{
+		Name:           renameTestBucket,
+		OwnerAccountID: "111122223333",
+		CreatedAt:      time.Now(),
+	})
+	require.NoError(t, err)
+	recreated := map[string][]byte{
+		ExtendedKeyTableBucket: []byte("{}"),
+		ExtendedKeyMetadata:    recreatedMeta,
+	}
+	// The claim is the delete's first write. The bucket is replaced as it lands,
+	// so the write loses and its retry reads the new bucket.
+	fs.BeforeUpdate = func() { fs.Put(TablesPath, renameTestBucket, recreated) }
+
+	code, resp := runHandler(t, m, fs.Client, "DeleteTableBucket", deleteTableBucketRequest(t))
+
+	assert.Equal(t, http.StatusNotFound, code, "%+v", resp)
+	assert.Equal(t, ErrCodeNoSuchBucket, resp.Type, "%+v", resp)
+	require.NotNil(t, fs.Get(TablesPath, renameTestBucket), "the new bucket stays")
+	assert.Equal(t, recreated, fs.Get(TablesPath, renameTestBucket).Extended, "and is left as it was created")
+}
+
 // A delete that has scanned an empty bucket must not lose to a create that
 // lands before the bucket is removed: the claim the delete holds since before
 // the scan turns the create away, so no namespace is answered for and deleted.

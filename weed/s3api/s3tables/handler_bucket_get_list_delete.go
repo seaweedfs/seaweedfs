@@ -340,8 +340,10 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 		// either seen by the scan below or backed out. The bucket is removed only
 		// while it still carries this claim: once another delete has replaced or
 		// lifted it, a create may have passed that check, and this delete answers
-		// 409 instead. A claim an earlier delete left behind is replaced.
-		bucketClaim, bucketClaimed, err = h.claimForDelete(r.Context(), client, bucketPath, IsTableBucketEntry)
+		// 409 instead. A claim an earlier delete left behind is replaced. Only the
+		// bucket authorized above is claimed: one deleted and created again under
+		// the same name since then is another bucket and reads as gone.
+		bucketClaim, bucketClaimed, err = h.claimForDelete(r.Context(), client, bucketPath, isTableBucketCreatedAt(metadata.CreatedAt))
 		if err != nil {
 			return err
 		}
