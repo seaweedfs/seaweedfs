@@ -278,8 +278,9 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 	hasChildren := false
 	heldDir := ""
 	unfinishedNamespace := ""
-	// What the scan found besides namespaces: the bare directories a deleted
-	// namespace left, as they were seen, and the names of the hidden entries.
+	// What the scan found besides namespaces: the bare directories — a deleted
+	// namespace's leftovers or hidden ones — as they were seen, and the names
+	// of the hidden files.
 	var leftovers []*filer_pb.Entry
 	var hidden []string
 	// The claim this delete holds on the bucket. It goes with the bucket when it
@@ -381,9 +382,15 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 				}
 				hasMore = true
 				lastFileName = entry.Entry.Name
-				// Hidden entries are never children.
+				// Hidden entries are never children. A hidden directory can
+				// hold files the same way a leftover does, so it waits with
+				// them for the walk; a hidden file is removed by name.
 				if strings.HasPrefix(entry.Entry.Name, ".") {
-					hidden = append(hidden, entry.Entry.Name)
+					if entry.Entry.IsDirectory {
+						leftovers = append(leftovers, entry.Entry)
+					} else {
+						hidden = append(hidden, entry.Entry.Name)
+					}
 					continue
 				}
 				if _, hasMetadata := entry.Entry.Extended[ExtendedKeyMetadata]; hasMetadata || !entry.Entry.IsDirectory || entry.Entry.IsDirectoryKeyObject() {
@@ -456,7 +463,7 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 		if tableObjErr := h.deleteEntryIfExists(r.Context(), client, GetTableObjectBucketPath(bucketName)); tableObjErr != nil {
 			glog.V(1).Infof("failed to delete table object for %s: %v", bucketName, tableObjErr)
 		}
-		// Only the hidden entries go by a recursive delete. A file written since
+		// Only the hidden files go by a recursive delete. A file written since
 		// the scan anywhere else makes the filer refuse the delete that would have
 		// taken it: each leftover goes only if it is still the bare directory the
 		// scan saw and holds no file or catalog record, and the bucket only if

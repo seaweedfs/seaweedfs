@@ -85,6 +85,52 @@ func TestDeleteTableBucketRefusesOrphanData(t *testing.T) {
 	assert.NotNil(t, fs.Get(TablesPath, renameTestBucket), "the bucket must survive")
 }
 
+// A hidden directory can hold data the same way a visible leftover does.
+// Files under it refuse the delete; only a tree holding none goes with the
+// bucket, and so does a hidden file.
+func TestDeleteTableBucketKeepsDataUnderAHiddenDirectory(t *testing.T) {
+	cases := []struct {
+		name string
+		seed func(t *testing.T, fs *s3tablestest.MemFiler, bucketPath, hiddenPath string)
+		kept bool
+	}{
+		{"files under a hidden directory", func(t *testing.T, fs *s3tablestest.MemFiler, bucketPath, hiddenPath string) {
+			fs.Put(bucketPath, ".hidden", nil)
+			fs.Put(hiddenPath, "data", nil)
+			fs.PutFile(path.Join(hiddenPath, "data"), keptDataFile, time.Now())
+		}, true},
+		{"only empty hidden directories", func(t *testing.T, fs *s3tablestest.MemFiler, bucketPath, hiddenPath string) {
+			fs.Put(bucketPath, ".hidden", nil)
+			fs.Put(hiddenPath, "data", nil)
+		}, false},
+		{"a hidden file", func(t *testing.T, fs *s3tablestest.MemFiler, bucketPath, hiddenPath string) {
+			fs.PutFile(bucketPath, ".DS_Store", time.Now())
+		}, false},
+		{"a hidden directory stored as an object", func(t *testing.T, fs *s3tablestest.MemFiler, bucketPath, hiddenPath string) {
+			putDirectoryObject(t, fs, bucketPath, ".hidden")
+		}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fs, m := startEmptyBucket(t)
+			bucketPath := GetTableBucketPath(renameTestBucket)
+			tc.seed(t, fs, bucketPath, path.Join(bucketPath, ".hidden"))
+
+			status, resp := runHandler(t, m, fs.Client, "DeleteTableBucket", deleteTableBucketRequest(t))
+
+			if tc.kept {
+				assert.Equal(t, http.StatusConflict, status, "%+v", resp)
+				assert.Equal(t, ErrCodeBucketNotEmpty, resp.Type, "%+v", resp)
+				assert.NotNil(t, fs.Get(bucketPath, ".hidden"), "the hidden entry must survive")
+				assert.NotNil(t, fs.Get(TablesPath, renameTestBucket), "the bucket must survive")
+			} else {
+				assert.Equal(t, http.StatusOK, status, "%+v", resp)
+				assert.Nil(t, fs.Get(TablesPath, renameTestBucket), "the bucket is deleted")
+			}
+		})
+	}
+}
+
 // pauseListClient runs pause just before the nth listing of dir, so a test can
 // land a competing write at a chosen step of a delete's directory walk.
 type pauseListClient struct {
