@@ -63,7 +63,8 @@ struct Args {
 
     /// Shared secret for the admin control stream, the `jwt.filer_signing.key`
     /// value the Go worker reads from its config file. Required by admins that
-    /// authenticate the worker stream with a signing key.
+    /// authenticate the worker stream with a signing key. The Lance namespace
+    /// takes it too: only a holder gets write credentials to vector indexes.
     #[arg(long, env = "WEED_FILER_SIGNING_KEY")]
     filer_signing_key: Option<String>,
 
@@ -136,6 +137,10 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
     let tls = args.tls()?;
+    let signing_key = weed_lance_worker::catalog::SigningKey::new(
+        args.filer_signing_key.clone(),
+        args.filer_signing_key_expires_after_seconds,
+    );
     let options = WorkerOptions {
         admin_address: args.admin,
         worker_id: args.id,
@@ -164,9 +169,10 @@ async fn main() -> Result<()> {
     }
 
     let mut registry = Registry::new().with_preview(Arc::new(
-        weed_lance_worker::preview::LancePreview::new(args.namespace.clone(), fallback.clone()),
+        weed_lance_worker::preview::LancePreview::new(args.namespace.clone(), fallback.clone())
+            .with_signing_key(signing_key.clone()),
     ));
-    for handler in handlers(args.namespace, fallback, Some(lance_metrics)) {
+    for handler in handlers(args.namespace, fallback, signing_key, Some(lance_metrics)) {
         registry = registry.register(handler);
     }
 

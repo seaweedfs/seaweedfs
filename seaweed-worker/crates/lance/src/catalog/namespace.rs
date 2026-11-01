@@ -8,6 +8,29 @@ use serde::Deserialize;
 /// The delimiter the Lance namespace joins identifier parts with.
 const DELIMITER: &str = "$";
 
+/// Carries a token signed with the cluster key, which marks the caller as one of
+/// the cluster's own components.
+const CLUSTER_TOKEN_HEADER: &str = "X-Seaweedfs-Cluster-Token";
+
+/// The cluster key, `jwt.filer_signing.key`, and the lifetime of each token
+/// minted from it; zero mints tokens with no expiry. The catalog vends
+/// credentials that write a vector bucket's index data only to callers that
+/// hold it.
+#[derive(Clone, Debug)]
+pub struct SigningKey {
+    key: String,
+    expires_after_secs: u64,
+}
+
+impl SigningKey {
+    pub fn new(key: Option<String>, expires_after_secs: u64) -> Option<Self> {
+        key.filter(|key| !key.is_empty()).map(|key| Self {
+            key,
+            expires_after_secs,
+        })
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct TableDescription {
     pub location: String,
@@ -35,6 +58,7 @@ pub struct NamespaceClient {
     base_url: String,
     http: reqwest::Client,
     api_key: Option<String>,
+    signing_key: Option<SigningKey>,
 }
 
 /// A namespace call that has not answered by now is not going to. Without this
@@ -71,6 +95,7 @@ impl NamespaceClient {
             base_url: base_url.into().trim_end_matches('/').to_string(),
             http,
             api_key: None,
+            signing_key: None,
         }
     }
 
@@ -92,9 +117,29 @@ impl NamespaceClient {
         self
     }
 
+    pub fn with_signing_key(mut self, signing_key: Option<&SigningKey>) -> Self {
+        if signing_key.is_some() && !protected_transport(&self.base_url) {
+            tracing::warn!(
+                "catalog url {} exposes the cluster token in cleartext",
+                self.base_url
+            );
+        }
+        self.signing_key = signing_key.cloned();
+        self
+    }
+
     fn authed(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        match &self.api_key {
+        let request = match &self.api_key {
             Some(key) => request.header("x-api-key", key),
+            None => request,
+        };
+        match self.signing_key.as_ref().and_then(|signing| {
+            seaweed_worker_core::token::admin_token(
+                signing.key.as_bytes(),
+                signing.expires_after_secs,
+            )
+        }) {
+            Some(token) => request.header(CLUSTER_TOKEN_HEADER, token),
             None => request,
         }
     }
@@ -224,7 +269,70 @@ pub fn parse_id(encoded: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_REDIRECT_HOPS, may_follow, protected_transport, same_origin};
+    use super::{
+        MAX_REDIRECT_HOPS, NamespaceClient, SigningKey, may_follow, protected_transport,
+        same_origin,
+    };
+
+    /// A catalog that answers one request with a table location and hands back
+    /// the request it read.
+    async fn recording_catalog() -> (String, tokio::sync::oneshot::Receiver<String>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            let (mut conn, _) = listener.accept().await.unwrap();
+            let mut request = vec![0u8; 8192];
+            let n = conn.read(&mut request).await.unwrap();
+            let _ = sender.send(String::from_utf8_lossy(&request[..n]).into_owned());
+            let body = r#"{"location":"s3://b/vector/t"}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = conn.write_all(response.as_bytes()).await;
+        });
+        (url, receiver)
+    }
+
+    fn header<'a>(request: &'a str, name: &str) -> Option<&'a str> {
+        request.lines().find_map(|line| {
+            let (key, value) = line.split_once(':')?;
+            key.eq_ignore_ascii_case(name).then(|| value.trim())
+        })
+    }
+
+    #[tokio::test]
+    async fn signing_key_sends_a_cluster_token() {
+        let id = ["b".to_string(), "vector".to_string(), "t".to_string()];
+        let (url, request) = recording_catalog().await;
+        let key = SigningKey::new(Some("cluster-key".into()), 0);
+        NamespaceClient::new(url)
+            .with_signing_key(key.as_ref())
+            .describe_table(&id)
+            .await
+            .unwrap();
+        let request = request.await.unwrap();
+        let expected = seaweed_worker_core::token::admin_token(b"cluster-key", 0).unwrap();
+        assert_eq!(
+            header(&request, "x-seaweedfs-cluster-token"),
+            Some(expected.as_str())
+        );
+
+        let (url, request) = recording_catalog().await;
+        NamespaceClient::new(url).describe_table(&id).await.unwrap();
+        assert_eq!(
+            header(&request.await.unwrap(), "x-seaweedfs-cluster-token"),
+            None
+        );
+    }
+
+    #[test]
+    fn an_empty_signing_key_is_no_key() {
+        assert!(SigningKey::new(None, 0).is_none());
+        assert!(SigningKey::new(Some(String::new()), 0).is_none());
+    }
 
     #[test]
     fn may_follow_bounds_hops_within_the_origin() {

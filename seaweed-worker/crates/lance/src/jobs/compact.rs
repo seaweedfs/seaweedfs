@@ -12,7 +12,7 @@ use seaweed_worker_core::pb::{
 use seaweed_worker_core::{DetectionSender, ExecutionSender, JobHandler};
 use tracing::warn;
 
-use crate::catalog::{NamespaceClient, parse_id};
+use crate::catalog::{NamespaceClient, SigningKey, parse_id};
 use crate::dataset;
 use crate::jobs::{FORMAT, clamp, observation, string_list, table_id};
 
@@ -35,6 +35,7 @@ const MIN_FRAGMENTS_CEILING: i64 = 4096;
 pub struct CompactHandler {
     namespace_url: String,
     fallback: dataset::FallbackOptions,
+    signing_key: Option<SigningKey>,
     metrics: Option<crate::metrics::LanceMetrics>,
 }
 
@@ -43,6 +44,7 @@ impl CompactHandler {
         Self {
             namespace_url,
             fallback: dataset::FallbackOptions::new(),
+            signing_key: None,
             metrics: None,
         }
     }
@@ -58,8 +60,15 @@ impl CompactHandler {
         self
     }
 
+    pub fn with_signing_key(mut self, signing_key: Option<SigningKey>) -> Self {
+        self.signing_key = signing_key;
+        self
+    }
+
     fn client(&self) -> NamespaceClient {
-        NamespaceClient::new(self.namespace_url.clone()).with_fallback(&self.fallback)
+        NamespaceClient::new(self.namespace_url.clone())
+            .with_fallback(&self.fallback)
+            .with_signing_key(self.signing_key.as_ref())
     }
 }
 
