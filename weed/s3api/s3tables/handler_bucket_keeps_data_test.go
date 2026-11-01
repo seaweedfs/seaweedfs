@@ -511,7 +511,8 @@ func TestDeleteTableBucketClaimOnTheBucket(t *testing.T) {
 }
 
 // putDirectoryObject stores an S3 object with content on the directory entry
-// dir/name, the way the S3 API stores a key that other keys sit under.
+// dir/name, the way the S3 API stores a key that other keys sit under: with the
+// prefix-object mark the filer expects on an object landing on a directory.
 func putDirectoryObject(t *testing.T, fs *s3tablestest.MemFiler, dir, name string) {
 	t.Helper()
 	_, err := fs.Client.CreateEntry(context.Background(), &filer_pb.CreateEntryRequest{
@@ -521,6 +522,7 @@ func putDirectoryObject(t *testing.T, fs *s3tablestest.MemFiler, dir, name strin
 			IsDirectory: true,
 			Attributes:  &filer_pb.FuseAttributes{Mime: "application/octet-stream"},
 			Content:     []byte("object"),
+			Extended:    map[string][]byte{s3_constants.SeaweedFSPrefixObject: []byte("true")},
 		},
 	})
 	require.NoError(t, err)
@@ -597,6 +599,27 @@ func TestDeleteTableBucketKeepsADirectoryBackedObject(t *testing.T) {
 		refused(t, code, resp, ErrCodeBucketNotEmpty)
 		require.NotNil(t, fs.Get(bucketPath, "old"), "the object must survive")
 		assert.Equal(t, []byte("object"), fs.Get(bucketPath, "old").Content)
+		assert.NotContains(t, fs.Get(bucketPath, "old").Extended, ExtendedKeyDeleting, "no claim is taken on an object")
+	})
+	t.Run("a leftover stored as an object between the read and the write of its claim", func(t *testing.T) {
+		fs, m := startEmptyBucket(t)
+		fs.Put(bucketPath, "old", nil)
+		// The claim read the bare directory; the object lands before its write,
+		// which would otherwise put the bare directory back over it.
+		fs.OnUpdate = func(dir, name string) {
+			if dir != bucketPath || name != "old" {
+				return
+			}
+			fs.OnUpdate = nil
+			putDirectoryObject(t, fs, bucketPath, "old")
+		}
+
+		code, resp := runHandler(t, m, fs.Client, "DeleteTableBucket", deleteTableBucketRequest(t))
+
+		refused(t, code, resp, ErrCodeBucketNotEmpty)
+		require.NotNil(t, fs.Get(bucketPath, "old"), "the object must survive")
+		assert.Equal(t, []byte("object"), fs.Get(bucketPath, "old").Content)
+		assert.True(t, fs.Get(bucketPath, "old").IsPrefixObject())
 		assert.NotContains(t, fs.Get(bucketPath, "old").Extended, ExtendedKeyDeleting, "no claim is taken on an object")
 	})
 	t.Run("a leftover marked as an empty object after the walk", func(t *testing.T) {

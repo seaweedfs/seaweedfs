@@ -110,6 +110,20 @@ func (h *S3TablesHandler) mutateEntry(
 	path string,
 	mutate func(entry *filer_pb.Entry) error,
 ) error {
+	return h.mutateEntryAsserting(ctx, client, path, nil, mutate)
+}
+
+// mutateEntryAsserting is mutateEntry with the keys in absent asserted at the
+// write too, as this package's own attributes are: one absent when the entry was
+// read and written by someone else since fails the compare, instead of being
+// written over with the entry as it was read.
+func (h *S3TablesHandler) mutateEntryAsserting(
+	ctx context.Context,
+	client filer_pb.SeaweedFilerClient,
+	path string,
+	absent []string,
+	mutate func(entry *filer_pb.Entry) error,
+) error {
 	dir, name := splitPath(path)
 
 	for attempt := 0; attempt < extendedAttributeUpdateAttempts; attempt++ {
@@ -122,7 +136,7 @@ func (h *S3TablesHandler) mutateEntry(
 		}
 
 		entry := resp.Entry
-		expected := snapshotExtended(entry.Extended)
+		expected := snapshotExtended(entry.Extended, absent...)
 		if entry.Extended == nil {
 			entry.Extended = make(map[string][]byte)
 		}
@@ -874,10 +888,13 @@ func (h *S3TablesHandler) dirHoldsFiles(ctx context.Context, client filer_pb.Sea
 // was read or took the directory's place before the write, which the filer
 // refuses since it never writes a directory entry over a file. One that takes
 // the place after the write lacks the claim, so the delete is refused instead.
+// An S3 object landing on the directory between the read and the write carries
+// the prefix-object mark, which the write asserts absent, so the write fails
+// instead of putting the bare directory back over the object.
 func (h *S3TablesHandler) claimTreeDirectory(ctx context.Context, client filer_pb.SeaweedFilerClient, dirPath string, expected map[string][]byte) (string, map[string][]byte, error) {
 	claim := generateVersionToken()
 	var claimed map[string][]byte
-	err := h.mutateEntry(ctx, client, dirPath, func(entry *filer_pb.Entry) error {
+	err := h.mutateEntryAsserting(ctx, client, dirPath, []string{s3_constants.SeaweedFSPrefixObject}, func(entry *filer_pb.Entry) error {
 		if !entry.IsDirectory || entry.IsDirectoryKeyObject() {
 			return fmt.Errorf("%w: %s is an object", errDirNotEmpty, dirPath)
 		}
