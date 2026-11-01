@@ -25,8 +25,8 @@ var (
 // A tier endpoint that drops packets or accepts connections without answering
 // must not hold a read, or a volume server's startup, for minutes per request.
 var (
-	s3ConnectTimeout        = 10 * time.Second
-	s3ResponseHeaderTimeout = time.Minute
+	s3ConnectTimeout = 10 * time.Second
+	s3ReadTimeout    = time.Minute
 )
 
 // httpOptions tunes the HTTP transport of the tier backend's S3 client.
@@ -46,7 +46,7 @@ type httpOptions struct {
 func (o httpOptions) newTransport() *http.Transport {
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	t.DialContext = (&net.Dialer{Timeout: s3ConnectTimeout, KeepAlive: 30 * time.Second}).DialContext
-	t.ResponseHeaderTimeout = s3ResponseHeaderTimeout
+	t.ResponseHeaderTimeout = s3ReadTimeout
 	if o.disableHTTP2 {
 		t.ForceAttemptHTTP2 = false
 		t.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{}
