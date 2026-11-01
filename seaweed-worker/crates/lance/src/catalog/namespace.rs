@@ -15,8 +15,8 @@ const CLUSTER_TOKEN_HEADER: &str = "X-Seaweedfs-Cluster-Token";
 /// The cluster key, `jwt.filer_signing.key`, and the lifetime of each token
 /// minted from it; zero mints tokens with no expiry. The catalog vends
 /// credentials that write a vector bucket's index data only to callers that
-/// hold it.
-#[derive(Clone, Debug)]
+/// hold it. Not Debug, so the key cannot reach a log.
+#[derive(Clone)]
 pub struct SigningKey {
     key: String,
     expires_after_secs: u64,
