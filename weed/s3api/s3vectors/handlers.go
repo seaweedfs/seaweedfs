@@ -1717,7 +1717,7 @@ func fieldClause(field string, cond interface{}) (string, error) {
 				// once. A group whose extractor returns NULL must not let NOT
 				// invert NULL into NULL under $nin, so every group coalesces.
 				var cols []string
-				lits := map[string][]string{}
+				members := map[string][]string{}
 				for _, item := range list {
 					lit, err := sqlLiteral(item)
 					if err != nil {
@@ -1727,14 +1727,14 @@ func fieldClause(field string, cond interface{}) (string, error) {
 					if err != nil {
 						return "", err
 					}
-					if _, seen := lits[col]; !seen {
+					if _, seen := members[col]; !seen {
 						cols = append(cols, col)
 					}
-					lits[col] = append(lits[col], lit)
+					members[col] = append(members[col], lit)
 				}
 				groups := make([]string, 0, len(cols))
 				for _, col := range cols {
-					groups = append(groups, fmt.Sprintf("COALESCE(%s in (%s), false)", col, strings.Join(lits[col], ", ")))
+					groups = append(groups, fmt.Sprintf("COALESCE(%s in (%s), false)", col, strings.Join(members[col], ", ")))
 				}
 				expr := "(" + strings.Join(groups, " OR ") + ")"
 				if op == "$nin" {
