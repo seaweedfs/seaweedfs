@@ -1004,7 +1004,7 @@ func TestCreateIndexSurvivesAConcurrentNamespaceCreate(t *testing.T) {
 			VectorBucketName: "vec-bucket", IndexName: name, DataType: "float32", Dimension: 2, DistanceMetric: "cosine",
 		})
 	}
-	first := make(chan *httptest.ResponseRecorder)
+	first := make(chan *httptest.ResponseRecorder, 1)
 	go func() { first <- createIndex("first") }()
 	select {
 	case <-reached:
