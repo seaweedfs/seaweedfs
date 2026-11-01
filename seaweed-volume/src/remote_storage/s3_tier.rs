@@ -574,6 +574,25 @@ impl S3TierBackend {
         })
     }
 
+    /// `read_range_blocking` that gives up once `timeout` passes, returning
+    /// `Ok(None)`.
+    pub fn read_range_blocking_within(
+        self: &Arc<Self>,
+        key: &str,
+        offset: u64,
+        size: usize,
+        timeout: Duration,
+    ) -> Result<Option<Vec<u8>>, TierError> {
+        let backend = Arc::clone(self);
+        let key = key.to_string();
+        block_on_tier_future(async move {
+            match tokio::time::timeout(timeout, backend.read_range(&key, offset, size)).await {
+                Ok(read) => read.map(Some),
+                Err(_) => Ok(None),
+            }
+        })
+    }
+
     pub fn read_range_blocking(
         &self,
         key: &str,
@@ -917,6 +936,17 @@ mod tests {
         let timeouts = backend.client.config().timeout_config().unwrap();
         assert_eq!(timeouts.connect_timeout(), Some(S3_CONNECT_TIMEOUT));
         assert_eq!(timeouts.read_timeout(), Some(S3_READ_TIMEOUT));
+    }
+
+    #[test]
+    fn read_range_blocking_within_gives_up_on_a_silent_endpoint() {
+        let (_listener, backend) = silent_backend();
+        let start = std::time::Instant::now();
+        let got = backend
+            .read_range_blocking_within("key", 0, 8, Duration::from_millis(200))
+            .unwrap();
+        assert!(got.is_none());
+        assert!(start.elapsed() < Duration::from_secs(5));
     }
 
     fn silent_backend() -> (std::net::TcpListener, Arc<S3TierBackend>) {
