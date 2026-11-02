@@ -10,11 +10,11 @@ use weed_vector_server::service::VectorServer;
 /// The VectorService the S3 gateway fans vector calls out to.
 #[derive(Parser)]
 struct Args {
-    /// Lance Namespace base URL, e.g. http://localhost:8888/lance.
+    /// Lance Namespace base URL: the S3 gateway's Lance port (-s3.port.lance).
     #[arg(
         long,
         env = "WEED_VECTOR_NAMESPACE",
-        default_value = "http://localhost:8888/lance"
+        default_value = "http://localhost:9101"
     )]
     namespace: String,
     /// gRPC listen address.
