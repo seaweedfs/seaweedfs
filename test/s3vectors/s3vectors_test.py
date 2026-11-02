@@ -58,7 +58,7 @@ def test_vector_lifecycle(vectors):
     assert [h["key"] for h in hits] == ["a", "c"]
     distances = {h["key"]: h["distance"] for h in hits}
     assert distances["a"] == pytest.approx(0.0, abs=1e-6)
-    assert distances["c"] == pytest.approx(0.02, abs=1e-4)
+    assert distances["c"] == pytest.approx(0.02 ** 0.5, abs=1e-4)
     assert all(h["metadata"]["color"] == "red" for h in hits)
 
     vectors.delete_vectors(vectorBucketName=BUCKET, indexName=INDEX, keys=["b"])
@@ -221,6 +221,13 @@ def test_filter_arrays(vectors, index):
     assert matches({"$in": ["classic", 2.5]}) == ["nums", "space"]
     assert matches({"$ne": "space"}) == ["flag", "nums", "strs"]
     assert matches({"$nin": [1, "2.5"]}) == ["flag", "scalar", "space"]
+
+
+def test_euclidean_distance(vectors, index):
+    vectors.put_vectors(**index, vectors=[{"key": "p", "data": {"float32": [3, 4, 0, 0]}}])
+    result = vectors.query_vectors(**index, queryVector={"float32": [0, 0, 0, 0]}, topK=1, returnDistance=True)
+    assert result["distanceMetric"] == "euclidean"
+    assert result["vectors"][0]["distance"] == pytest.approx(5.0)
 
 
 def test_cosine_metric(vectors):
