@@ -415,3 +415,46 @@ func TestDataPlaneIsUnsupported(t *testing.T) {
 		t.Fatalf("error code = %d, want %d", got.Code, codeUnsupported)
 	}
 }
+
+// createOnlyAuthenticator signs in an identity that may create and read tables
+// but not update them.
+type createOnlyAuthenticator struct{}
+
+func (createOnlyAuthenticator) AuthenticateRequest(*http.Request) (string, interface{}, s3err.ErrorCode) {
+	return "creator", &struct {
+		Name    string
+		Actions []string
+	}{Name: "creator", Actions: []string{"s3tables:CreateTable", "s3tables:GetTable"}}, s3err.ErrNone
+}
+
+func (createOnlyAuthenticator) DefaultAllow() bool { return false }
+
+// The right to create a name is the write evidence for a table the declare
+// creates, but not for one it only finds.
+func TestDeclareVendsWriteOnlyForATableItCreates(t *testing.T) {
+	h := newTestHarness(t)
+	h.createBucket(t, "lnc", s3tables.FormatLance)
+	h.mustDo(t, http.MethodPost, "/v1/namespace/lnc$ns/create", `{}`, http.StatusOK)
+	h.mustDo(t, http.MethodPost, "/v1/table/lnc$ns$theirs/declare", `{}`, http.StatusOK)
+	h.mustDo(t, http.MethodPost, "/v1/table/lnc$ns$theirs/deregister", `{}`, http.StatusOK)
+
+	server := NewServer(s3tables.NewManagerClient(h.filer.Client), createOnlyAuthenticator{})
+	server.SetCredentialVendor(recordingVendor{})
+	router := mux.NewRouter().SkipClean(true)
+	server.RegisterRoutes(router)
+	creator := &testHarness{router: router, filer: h.filer, admin: h.admin, server: server}
+
+	for _, tc := range []struct{ name, want string }{
+		{"theirs", "read-only"},
+		{"mine", "read-write"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := creator.vendedKey(t, "/v1/table/lnc$ns$"+tc.name+"/declare", ""); got != tc.want {
+				t.Errorf("vended %q, want %q", got, tc.want)
+			}
+		})
+	}
+	if h.filer.Get("/buckets/lnc/ns/theirs", deregisteredMarker) == nil {
+		t.Error("a declare that may not write the table brought it back")
+	}
+}

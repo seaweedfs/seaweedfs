@@ -135,14 +135,21 @@ func (s *Server) handleDeclareTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	_, lookupErr := s.loadLanceTable(r, bucket, ns, name)
 	location, err = s.createTable(r, bucket, ns, name, location)
 	if err != nil {
 		writeStorageError(w, r, err)
 		return
 	}
-	// A declare that only finds an existing index in the vector namespace of a
-	// vector bucket answers read-only.
-	writable := s.mayWriteNamespace(r, bucket, ns)
+	// A declare that creates the table may write it: a Lance commit is a direct
+	// S3 write that never revisits the catalog, so the create authorization is
+	// the write evidence. One that only finds the table answers like describe.
+	var writable bool
+	if isNotFound(lookupErr) {
+		writable = s.mayWriteNamespace(r, bucket, ns)
+	} else {
+		writable = s.mayUpdateTable(r, bucket, ns, name)
+	}
 	if writable {
 		if err := s.writeMarker(r, location, reservedMarker); err != nil {
 			// The catalog entry is the authority; the marker only mirrors it for
@@ -156,8 +163,6 @@ func (s *Server) handleDeclareTable(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// A Lance commit is a direct S3 write that never revisits the catalog, so
-	// the create authorization above is the write evidence for the dataset.
 	options, err := s.storageOptions(r, bucket, location, wants(r, "vend_credentials", req.VendCredentials), func() bool { return writable })
 	if err != nil {
 		writeError(w, r, http.StatusInternalServerError, codeInternal, err.Error())
