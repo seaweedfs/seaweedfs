@@ -48,11 +48,18 @@ func bucketWriteOps() []bucketWriteOp {
 		{operation: "UntagResource", input: func(t *testing.T) interface{} {
 			return &UntagResourceRequest{ResourceARN: mustBucketARN(t), TagKeys: []string{"k"}}
 		}, extra: map[string][]byte{ExtendedKeyTags: []byte(`{"k":"v","keep":"1"}`)}},
+		{operation: "PutTableBucketMaintenanceConfiguration", input: func(t *testing.T) interface{} {
+			return &PutTableBucketMaintenanceConfigurationRequest{
+				TableBucketARN: mustBucketARN(t),
+				Type:           MaintenanceTypeIcebergUnreferencedFileRemoval,
+				Value:          &MaintenanceConfigurationValue{Status: MaintenanceStatusEnabled},
+			}
+		}},
 	}
 }
 
-// A write to a bucket's policy or tags is authorized against the bucket it
-// read. If that bucket is deleted and another is created under the same name
+// A write to a bucket's policy, tags or maintenance settings is authorized
+// against the bucket it read. If that bucket is deleted and another is created under the same name
 // before the write, the values it compares can match the new bucket's just as
 // well. The write checks the bucket by its creation time and is refused, and
 // the new bucket is kept as it was created.
