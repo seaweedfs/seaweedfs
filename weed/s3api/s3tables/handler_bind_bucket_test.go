@@ -42,14 +42,20 @@ func bucketWriteOps() []bucketWriteOp {
 		{operation: "DeleteTableBucketPolicy", input: func(t *testing.T) interface{} {
 			return &DeleteTableBucketPolicyRequest{TableBucketARN: mustBucketARN(t)}
 		}, extra: map[string][]byte{ExtendedKeyPolicy: []byte(bindTestPolicy)}},
+		{operation: "TagResource", input: func(t *testing.T) interface{} {
+			return &TagResourceRequest{ResourceARN: mustBucketARN(t), Tags: map[string]string{"k": "v"}}
+		}},
+		{operation: "UntagResource", input: func(t *testing.T) interface{} {
+			return &UntagResourceRequest{ResourceARN: mustBucketARN(t), TagKeys: []string{"k"}}
+		}, extra: map[string][]byte{ExtendedKeyTags: []byte(`{"k":"v","keep":"1"}`)}},
 	}
 }
 
-// A write to a bucket's policy is authorized against the bucket it read. If that
-// bucket is deleted and another is created under the same name before the
-// write, the values it compares can match the new bucket's just as well. The
-// write checks the bucket by its creation time and is refused, and the new
-// bucket is kept as it was created.
+// A write to a bucket's policy or tags is authorized against the bucket it
+// read. If that bucket is deleted and another is created under the same name
+// before the write, the values it compares can match the new bucket's just as
+// well. The write checks the bucket by its creation time and is refused, and
+// the new bucket is kept as it was created.
 func TestBucketWritesSpareARecreatedBucket(t *testing.T) {
 	for _, op := range bucketWriteOps() {
 		t.Run(op.operation, func(t *testing.T) {

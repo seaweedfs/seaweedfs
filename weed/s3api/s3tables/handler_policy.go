@@ -12,24 +12,15 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
-// tableCreatedAtOf returns the creation time a table's metadata records, which
-// tells the table apart from one created again under its name.
-func tableCreatedAtOf(data []byte) (time.Time, error) {
-	var meta tableMetadataInternal
-	if err := json.Unmarshal(data, &meta); err != nil {
-		return time.Time{}, err
-	}
-	return meta.CreatedAt, nil
-}
-
-// extractResourceOwnerAndBucket extracts ownership info and bucket name from resource metadata.
-// This helper consolidates the repeated pattern used in handleTagResource, handleListTagsForResource,
-// and handleUntagResource.
+// extractResourceOwnerAndBucket extracts ownership info, bucket name and the
+// creation time that tells the resource apart from one created again under its
+// name. It consolidates the repeated pattern used in handleTagResource,
+// handleListTagsForResource, and handleUntagResource.
 func (h *S3TablesHandler) extractResourceOwnerAndBucket(
 	data []byte,
 	resourcePath string,
 	rType ResourceType,
-) (ownerAccountID, bucketName string, err error) {
+) (ownerAccountID, bucketName string, createdAt time.Time, err error) {
 	// Extract bucket name from resource path (format: /buckets/{bucket}/... for both tables and buckets)
 	parts := strings.Split(strings.Trim(resourcePath, "/"), "/")
 	if len(parts) >= 2 {
@@ -39,17 +30,17 @@ func (h *S3TablesHandler) extractResourceOwnerAndBucket(
 	if rType == ResourceTypeTable {
 		var meta tableMetadataInternal
 		if err := json.Unmarshal(data, &meta); err != nil {
-			return "", "", err
+			return "", "", time.Time{}, err
 		}
-		ownerAccountID = meta.OwnerAccountID
+		ownerAccountID, createdAt = meta.OwnerAccountID, meta.CreatedAt
 	} else {
 		var meta tableBucketMetadata
 		if err := json.Unmarshal(data, &meta); err != nil {
-			return "", "", err
+			return "", "", time.Time{}, err
 		}
-		ownerAccountID = meta.OwnerAccountID
+		ownerAccountID, createdAt = meta.OwnerAccountID, meta.CreatedAt
 	}
-	return ownerAccountID, bucketName, nil
+	return ownerAccountID, bucketName, createdAt, nil
 }
 
 // handlePutTableBucketPolicy puts a policy on a table bucket
@@ -711,7 +702,7 @@ func (h *S3TablesHandler) handleTagResource(w http.ResponseWriter, r *http.Reque
 	var bucketPolicy, tablePolicy string
 	var bucketTags map[string]string
 	var tableNamespace, tableName string
-	var tableCreatedAt time.Time
+	var createdAt time.Time
 	requestTagKeys := mapKeys(req.Tags)
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		// Read metadata for ownership check
@@ -723,10 +714,11 @@ func (h *S3TablesHandler) handleTagResource(w http.ResponseWriter, r *http.Reque
 			return err
 		}
 
-		ownerAccountID, bucketName, err := h.extractResourceOwnerAndBucket(data, resourcePath, rType)
+		ownerAccountID, bucketName, resourceCreatedAt, err := h.extractResourceOwnerAndBucket(data, resourcePath, rType)
 		if err != nil {
 			return err
 		}
+		createdAt = resourceCreatedAt
 
 		// Fetch bucket policy if we have a bucket name
 		if bucketName != "" {
@@ -741,9 +733,6 @@ func (h *S3TablesHandler) handleTagResource(w http.ResponseWriter, r *http.Reque
 		}
 
 		if rType == ResourceTypeTable {
-			if tableCreatedAt, err = tableCreatedAtOf(data); err != nil {
-				return err
-			}
 			if _, tableNamespace, tableName, err = parseTableFromARN(req.ResourceARN); err != nil {
 				return err
 			}
@@ -816,12 +805,14 @@ func (h *S3TablesHandler) handleTagResource(w http.ResponseWriter, r *http.Reque
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to marshal tags")
 		return fmt.Errorf("failed to marshal tags: %w", err)
 	}
+	sameResource := requireTableCreatedAt
+	if rType != ResourceTypeTable {
+		sameResource = requireTableBucketCreatedAt
+	}
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		return h.mutateCatalogRecord(r.Context(), client, resourcePath, func(extended map[string][]byte) error {
-			if rType == ResourceTypeTable {
-				if err := requireTableCreatedAt(extended, resourcePath, tableCreatedAt); err != nil {
-					return err
-				}
+			if err := sameResource(extended, resourcePath, createdAt); err != nil {
+				return err
 			}
 			extended[extendedKey] = tagsBytes
 			return nil
@@ -883,7 +874,7 @@ func (h *S3TablesHandler) handleListTagsForResource(w http.ResponseWriter, r *ht
 			return err
 		}
 
-		ownerAccountID, bucketName, err := h.extractResourceOwnerAndBucket(data, resourcePath, rType)
+		ownerAccountID, bucketName, _, err := h.extractResourceOwnerAndBucket(data, resourcePath, rType)
 		if err != nil {
 			return err
 		}
@@ -996,7 +987,7 @@ func (h *S3TablesHandler) handleUntagResource(w http.ResponseWriter, r *http.Req
 	var bucketPolicy, tablePolicy string
 	var bucketTags map[string]string
 	var tableNamespace, tableName string
-	var tableCreatedAt time.Time
+	var createdAt time.Time
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		// Read metadata for ownership check
 		data, err := h.getExtendedAttribute(r.Context(), client, resourcePath, ExtendedKeyMetadata)
@@ -1007,10 +998,11 @@ func (h *S3TablesHandler) handleUntagResource(w http.ResponseWriter, r *http.Req
 			return err
 		}
 
-		ownerAccountID, bucketName, err := h.extractResourceOwnerAndBucket(data, resourcePath, rType)
+		ownerAccountID, bucketName, resourceCreatedAt, err := h.extractResourceOwnerAndBucket(data, resourcePath, rType)
 		if err != nil {
 			return err
 		}
+		createdAt = resourceCreatedAt
 
 		// Fetch bucket policy if we have a bucket name
 		if bucketName != "" {
@@ -1025,9 +1017,6 @@ func (h *S3TablesHandler) handleUntagResource(w http.ResponseWriter, r *http.Req
 		}
 
 		if rType == ResourceTypeTable {
-			if tableCreatedAt, err = tableCreatedAtOf(data); err != nil {
-				return err
-			}
 			if _, tableNamespace, tableName, err = parseTableFromARN(req.ResourceARN); err != nil {
 				return err
 			}
@@ -1098,12 +1087,14 @@ func (h *S3TablesHandler) handleUntagResource(w http.ResponseWriter, r *http.Req
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to marshal tags")
 		return fmt.Errorf("failed to marshal tags: %w", err)
 	}
+	sameResource := requireTableCreatedAt
+	if rType != ResourceTypeTable {
+		sameResource = requireTableBucketCreatedAt
+	}
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		return h.mutateCatalogRecord(r.Context(), client, resourcePath, func(extended map[string][]byte) error {
-			if rType == ResourceTypeTable {
-				if err := requireTableCreatedAt(extended, resourcePath, tableCreatedAt); err != nil {
-					return err
-				}
+			if err := sameResource(extended, resourcePath, createdAt); err != nil {
+				return err
 			}
 			extended[extendedKey] = tagsBytes
 			return nil
