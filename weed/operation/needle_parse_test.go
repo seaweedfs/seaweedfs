@@ -146,6 +146,27 @@ func TestUploadKeepsMarginalGzipUncompressed(t *testing.T) {
 	assert.Equal(t, data, stored.Data)
 }
 
+func TestReplicationKeepsTheSourceMime(t *testing.T) {
+	for _, mimeType := range []string{"", "application/octet-stream", "Text/Plain; charset=UTF-8"} {
+		mockClient := &MockClient{}
+		var stored *needle.Needle
+		mockClient.needleHandling = func(n *needle.Needle, originalSize int, err error) {
+			assert.Equal(t, nil, err, "upload: %v", err)
+			stored = n
+		}
+		newUploader(mockClient).UploadData(context.Background(), []byte(textContent), &UploadOption{
+			UploadUrl:     "http://localhost:8080/389,0f084d17353afda0?type=replicate",
+			Filename:      "report.html",
+			MimeType:      mimeType,
+			IsReplication: true,
+		})
+		if stored == nil {
+			t.Fatal("no needle reached the volume server")
+		}
+		assert.Equal(t, mimeType, string(stored.Mime))
+	}
+}
+
 var textContent = `Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are
 met:
