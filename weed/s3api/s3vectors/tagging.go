@@ -144,13 +144,14 @@ func (s *Server) handleUntagResource(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", "tagKeys are required")
 		return
 	}
-	keys := make(map[string]string, len(req.TagKeys))
+	key := make(map[string]string, 1)
 	for _, k := range req.TagKeys {
-		keys[k] = ""
-	}
-	if err := s3tables.ValidateTagsWithLimit(keys, len(keys)); err != nil {
-		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
-		return
+		clear(key)
+		key[k] = ""
+		if err := s3tables.ValidateTagsWithLimit(key, 1); err != nil {
+			writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
+			return
+		}
 	}
 	ctx, err := s.authorizeTagging(r, "s3vectors:UntagResource", arns)
 	if err != nil {

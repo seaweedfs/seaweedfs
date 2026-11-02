@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -316,5 +317,35 @@ func TestTaggingRefusesTablesThatAreNotIndexes(t *testing.T) {
 	mustStatus(t, "untag an Iceberg table", code, body, http.StatusBadRequest)
 	if got := string(c.fs.Get(dir, name).Extended[s3tables.ExtendedKeyTags]); got != `{"team":"search"}` {
 		t.Fatalf("refused calls changed the table's tags: %s", got)
+	}
+}
+
+func TestUntagManyKeysAllocatesLikeDecoding(t *testing.T) {
+	s, _ := newTagClient(t)
+	body, err := json.Marshal(&UntagResourceRequest{ResourceArn: s.vectorBucketArn("vec-bucket"), TagKeys: make([]string, 1<<18)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	allocated := func(f func()) uint64 {
+		var before, after runtime.MemStats
+		runtime.GC()
+		runtime.ReadMemStats(&before)
+		f()
+		runtime.ReadMemStats(&after)
+		return after.TotalAlloc - before.TotalAlloc
+	}
+	decode := allocated(func() {
+		var req UntagResourceRequest
+		if err := json.Unmarshal(body, &req); err != nil {
+			t.Fatal(err)
+		}
+	})
+	w := httptest.NewRecorder()
+	handle := allocated(func() {
+		s.handleUntagResource(w, httptest.NewRequest(http.MethodPost, "/UntagResource", bytes.NewReader(body)))
+	})
+	mustStatus(t, "untag empty keys", w.Code, w.Body.String(), http.StatusBadRequest)
+	if handle > decode*3/2 {
+		t.Fatalf("untag allocated %d bytes, decoding the request takes %d", handle, decode)
 	}
 }
