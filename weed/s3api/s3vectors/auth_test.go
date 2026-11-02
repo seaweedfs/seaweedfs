@@ -14,13 +14,15 @@ import (
 )
 
 type fakeAuthenticator struct {
-	identity *s3api.Identity
-	errCode  s3err.ErrorCode
-	calls    int
+	identity  *s3api.Identity
+	errCode   s3err.ErrorCode
+	calls     int
+	bodyLimit int64
 }
 
 func (f *fakeAuthenticator) AuthenticateRequest(r *http.Request) (string, interface{}, s3err.ErrorCode) {
 	f.calls++
+	f.bodyLimit = s3_constants.GetRequestBodyLimitFromContext(r, 0)
 	if f.errCode != s3err.ErrNone {
 		return "", nil, f.errCode
 	}
@@ -70,6 +72,9 @@ func TestAuthAnswersOversizedBodyWithValidationException(t *testing.T) {
 
 			if rec.Code != tc.wantStatus || auth.calls != tc.wantAuthCalls {
 				t.Fatalf("status %d after %d auth calls, want %d after %d: %s", rec.Code, auth.calls, tc.wantStatus, tc.wantAuthCalls, rec.Body)
+			}
+			if auth.calls > 0 && auth.bodyLimit != maxRequestBodyBytes {
+				t.Fatalf("signature check reads up to %d bytes, want the route's %d", auth.bodyLimit, maxRequestBodyBytes)
 			}
 			if tc.wantCode != "" && !strings.Contains(rec.Body.String(), `"code":"`+tc.wantCode+`"`) {
 				t.Fatalf("body %s, want code %s", rec.Body, tc.wantCode)
