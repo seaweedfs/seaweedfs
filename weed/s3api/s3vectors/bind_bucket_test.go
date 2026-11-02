@@ -91,19 +91,33 @@ func TestVectorBucketPolicyWritesKeepToAuthorizedBucket(t *testing.T) {
 	}
 }
 
-// DeleteVectorBucket deletes only the bucket it authorized: one deleted and
-// created again by another account in between survives.
-func TestDeleteVectorBucketKeepsReplacingBucket(t *testing.T) {
-	fs := s3tablestest.Start(t)
-	s := NewServer(s3tables.NewManagerClient(fs.Client), allowAllAuth{}, newFakeVectors(0))
-	for _, bucket := range []string{"vec-probe", "vec-bucket"} {
-		if w := postJSONAs(t, "", s.handleCreateVectorBucket, &CreateVectorBucketRequest{VectorBucketName: bucket}); w.Code != http.StatusOK {
-			t.Fatalf("create bucket %s: %d %s", bucket, w.Code, w.Body.String())
-		}
+// replaceBucket swaps the bucket's record for another account's bucket of the
+// same name, keeping its contents.
+func replaceBucket(t *testing.T, fs *s3tablestest.MemFiler, bucket string) {
+	dir, name := splitEntryPath(s3tables.GetTableBucketPath(bucket))
+	entry := fs.Get(dir, name)
+	var meta map[string]interface{}
+	if err := json.Unmarshal(entry.Extended[s3tables.ExtendedKeyMetadata], &meta); err != nil {
+		t.Errorf("decode bucket metadata: %v", err)
+		return
 	}
+	meta["ownerAccountId"] = "bob"
+	meta["createdAt"] = time.Now().Add(time.Hour).UTC()
+	data, _ := json.Marshal(meta)
+	ext := make(map[string][]byte, len(entry.Extended))
+	for k, v := range entry.Extended {
+		ext[k] = v
+	}
+	ext[s3tables.ExtendedKeyMetadata] = data
+	fs.Put(dir, name, ext)
+}
 
-	// Count the bucket lookups authorization makes, so the bucket can be
-	// replaced right after them.
+// replaceBucketAfterAuthorization replaces bucket right after the lookups
+// authorizeVector makes, counted on a probe bucket of the same shape.
+func replaceBucketAfterAuthorization(t *testing.T, fs *s3tablestest.MemFiler, s *Server, bucket string) {
+	if w := postJSONAs(t, "", s.handleCreateVectorBucket, &CreateVectorBucketRequest{VectorBucketName: "vec-probe"}); w.Code != http.StatusOK {
+		t.Fatalf("create probe bucket: %d %s", w.Code, w.Body.String())
+	}
 	probeDir, probeName := splitEntryPath(s3tables.GetTableBucketPath("vec-probe"))
 	authLookups := 0
 	fs.OnLookup = func(d, n string) {
@@ -117,37 +131,79 @@ func TestDeleteVectorBucketKeepsReplacingBucket(t *testing.T) {
 		t.Fatalf("authorize probe: %v", err)
 	}
 
-	dir, name := splitEntryPath(s3tables.GetTableBucketPath("vec-bucket"))
+	dir, name := splitEntryPath(s3tables.GetTableBucketPath(bucket))
 	seen := 0
 	fs.OnLookup = func(d, n string) {
-		if d != dir || n != name {
-			return
+		if d == dir && n == name {
+			if seen++; seen == authLookups+1 {
+				replaceBucket(t, fs, bucket)
+			}
 		}
-		if seen++; seen != authLookups+1 {
-			return
-		}
-		entry := fs.Get(dir, name)
-		var meta map[string]interface{}
-		if err := json.Unmarshal(entry.Extended[s3tables.ExtendedKeyMetadata], &meta); err != nil {
-			t.Errorf("decode bucket metadata: %v", err)
-			return
-		}
-		meta["ownerAccountId"] = "bob"
-		meta["createdAt"] = time.Now().Add(time.Hour).UTC()
-		data, _ := json.Marshal(meta)
-		ext := make(map[string][]byte, len(entry.Extended))
-		for k, v := range entry.Extended {
-			ext[k] = v
-		}
-		ext[s3tables.ExtendedKeyMetadata] = data
-		fs.Put(dir, name, ext)
 	}
+}
+
+// DeleteVectorBucket deletes only the bucket it authorized: one deleted and
+// created again by another account in between survives.
+func TestDeleteVectorBucketKeepsReplacingBucket(t *testing.T) {
+	fs := s3tablestest.Start(t)
+	s := NewServer(s3tables.NewManagerClient(fs.Client), allowAllAuth{}, newFakeVectors(0))
+	if w := postJSONAs(t, "", s.handleCreateVectorBucket, &CreateVectorBucketRequest{VectorBucketName: "vec-bucket"}); w.Code != http.StatusOK {
+		t.Fatalf("create bucket: %d %s", w.Code, w.Body.String())
+	}
+	replaceBucketAfterAuthorization(t, fs, s, "vec-bucket")
 	w := postJSONAs(t, "", s.handleDeleteVectorBucket, &DeleteVectorBucketRequest{VectorBucketName: "vec-bucket"})
 	fs.OnLookup = nil
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("delete over a replaced bucket = %d %s, want 404", w.Code, w.Body.String())
 	}
+	dir, name := splitEntryPath(s3tables.GetTableBucketPath("vec-bucket"))
 	if fs.Get(dir, name) == nil {
 		t.Fatal("DeleteVectorBucket removed the bucket that replaced the authorized one")
 	}
+}
+
+// CreateIndex and DeleteIndex write only into the bucket they authorized.
+func TestIndexWritesKeepToAuthorizedBucket(t *testing.T) {
+	newServer := func(t *testing.T) (*s3tablestest.MemFiler, *Server) {
+		fs := s3tablestest.Start(t)
+		s := NewServer(s3tables.NewManagerClient(fs.Client), allowAllAuth{}, newFakeVectors(0))
+		if w := postJSONAs(t, "", s.handleCreateVectorBucket, &CreateVectorBucketRequest{VectorBucketName: "vec-bucket"}); w.Code != http.StatusOK {
+			t.Fatalf("create bucket: %d %s", w.Code, w.Body.String())
+		}
+		return fs, s
+	}
+	createIndex := func(s *Server) *httptest.ResponseRecorder {
+		return postJSONAs(t, "", s.handleCreateIndex, &CreateIndexRequest{
+			VectorBucketName: "vec-bucket", IndexName: "idx", DataType: "float32", Dimension: 3, DistanceMetric: "euclidean",
+		})
+	}
+	indexDir, indexName := splitEntryPath(s3tables.GetTablePath("vec-bucket", indexNamespace, "idx"))
+
+	t.Run("create", func(t *testing.T) {
+		fs, s := newServer(t)
+		replaceBucketAfterAuthorization(t, fs, s, "vec-bucket")
+		w := createIndex(s)
+		fs.OnLookup = nil
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("create over a replaced bucket = %d %s, want 404", w.Code, w.Body.String())
+		}
+		if fs.Get(indexDir, indexName) != nil {
+			t.Fatal("CreateIndex wrote an index into the bucket that replaced the authorized one")
+		}
+	})
+	t.Run("delete", func(t *testing.T) {
+		fs, s := newServer(t)
+		if w := createIndex(s); w.Code != http.StatusOK {
+			t.Fatalf("create index: %d %s", w.Code, w.Body.String())
+		}
+		replaceBucketAfterAuthorization(t, fs, s, "vec-bucket")
+		w := postJSONAs(t, "", s.handleDeleteIndex, &DeleteIndexRequest{VectorBucketName: "vec-bucket", IndexName: "idx"})
+		fs.OnLookup = nil
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("delete over a replaced bucket = %d %s, want 404", w.Code, w.Body.String())
+		}
+		if fs.Get(indexDir, indexName) == nil {
+			t.Fatal("DeleteIndex removed an index of the bucket that replaced the authorized one")
+		}
+	})
 }

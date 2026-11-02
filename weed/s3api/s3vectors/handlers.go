@@ -965,12 +965,15 @@ func (s *Server) handleCreateIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	// The create grant is exercised before any write: a denied caller must not
 	// leave even the implicit namespace behind.
-	if _, err := s.authorizeVector(r.Context(), r, "s3vectors:CreateIndex", arns.bucket, arns.index); err != nil {
+	bucketRecord, err := s.authorizeVector(r.Context(), r, "s3vectors:CreateIndex", arns.bucket, arns.index)
+	if err != nil {
 		catalogErr(w, err)
 		return
 	}
+	// The catalog writes land only in the bucket authorized above.
+	bound := s3tables.WithTableBucketCreatedAt(r.Context(), bucketRecord.CreatedAt)
 	// The namespace is implicit on AWS and internal bookkeeping here.
-	if err := s.ensureIndexNamespace(r.Context(), arns.bucket); err != nil {
+	if err := s.ensureIndexNamespace(bound, arns.bucket); err != nil {
 		catalogErr(w, err)
 		return
 	}
@@ -1005,7 +1008,7 @@ func (s *Server) handleCreateIndex(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	metadataJSON, _ := json.Marshal(metadata)
-	err = s.internalCatalog(r.Context(), "CreateTable", &s3tables.CreateTableRequest{
+	err = s.internalCatalog(bound, "CreateTable", &s3tables.CreateTableRequest{
 		TableBucketARN: s.s3tablesArn(arns.bucket),
 		Namespace:      []string{indexNamespace},
 		Name:           arns.index,
@@ -1205,7 +1208,8 @@ func (s *Server) handleDeleteIndex(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	if _, err := s.authorizeVector(r.Context(), r, "s3vectors:DeleteIndex", arns.bucket, arns.index); err != nil {
+	bucketRecord, err := s.authorizeVector(r.Context(), r, "s3vectors:DeleteIndex", arns.bucket, arns.index)
+	if err != nil {
 		catalogErr(w, err)
 		return
 	}
@@ -1229,8 +1233,9 @@ func (s *Server) handleDeleteIndex(w http.ResponseWriter, r *http.Request) {
 	// Deleting the catalog record is the delete: the catalog purges the
 	// dataset under the index's location along with the entry.
 	var resp map[string]interface{}
-	// The token limits the delete to the record checked above.
-	err = s.internalCatalog(r.Context(), "DeleteTable", &s3tables.DeleteTableRequest{
+	// The token limits the delete to the record checked above, and the bound
+	// bucket to the one authorized.
+	err = s.internalCatalog(s3tables.WithTableBucketCreatedAt(r.Context(), bucketRecord.CreatedAt), "DeleteTable", &s3tables.DeleteTableRequest{
 		TableBucketARN: s.s3tablesArn(arns.bucket),
 		Namespace:      []string{indexNamespace},
 		Name:           arns.index,
