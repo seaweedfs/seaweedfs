@@ -43,6 +43,9 @@ templ S3VectorsBucketDetails(data dash.S3VectorsBucketData) {
 		<div class="card-header py-3">
 			<h6 class="m-0 font-weight-bold text-primary">
 				<i class="bi bi-list-ul me-2"></i>{ fmt.Sprintf("%d indexes", data.TotalIndexes) }
+				if data.Truncated {
+					<span class="text-muted small ms-2">{ fmt.Sprintf("showing the first %d; list the rest with an S3 Vectors client", data.TotalIndexes) }</span>
+				}
 			</h6>
 		</div>
 		<div class="card-body">

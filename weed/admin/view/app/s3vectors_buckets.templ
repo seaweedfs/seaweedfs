@@ -29,6 +29,9 @@ templ S3VectorsBuckets(data dash.S3VectorsBucketsData) {
 		<div class="card-header py-3">
 			<h6 class="m-0 font-weight-bold text-primary">
 				<i class="bi bi-bounding-box-circles me-2"></i>{ fmt.Sprintf("%d vector buckets", data.TotalBuckets) }
+				if data.Truncated {
+					<span class="text-muted small ms-2">{ fmt.Sprintf("showing the first %d; list the rest with an S3 Vectors client", data.TotalBuckets) }</span>
+				}
 			</h6>
 		</div>
 		<div class="card-body">

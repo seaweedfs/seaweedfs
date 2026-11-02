@@ -24,6 +24,12 @@ func TestS3VectorsBucketsRendersBuckets(t *testing.T) {
 	require.Contains(t, page, `<span class="badge bg-success">AES256</span>`)
 	require.Contains(t, page, "2 vector buckets")
 	require.NotContains(t, page, "No vector buckets found")
+	require.NotContains(t, page, "showing the first")
+
+	data.Truncated = true
+	out.Reset()
+	require.NoError(t, S3VectorsBuckets(data).Render(t.Context(), &out))
+	require.Contains(t, out.String(), "showing the first 2; list the rest with an S3 Vectors client")
 }
 
 func TestS3VectorsBucketDetailsRendersIndexesAndPolicy(t *testing.T) {

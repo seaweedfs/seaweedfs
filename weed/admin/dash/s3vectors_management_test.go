@@ -81,7 +81,7 @@ func TestS3VectorsBucketsListsOnlyVectorBuckets(t *testing.T) {
 			t.Errorf("%s: arn %q created %v, want %q and a time", b.Name, b.ARN, b.CreatedAt, want)
 		}
 	}
-	if len(got) != 2 || got["media"] != "" || got["sealed"] != "AES256" || data.TotalBuckets != 2 {
+	if len(got) != 2 || got["media"] != "" || got["sealed"] != "AES256" || data.TotalBuckets != 2 || data.Truncated {
 		t.Fatalf("buckets %v (total %d), want media and sealed (AES256) without the iceberg bucket", got, data.TotalBuckets)
 	}
 }
@@ -168,7 +168,7 @@ func TestS3VectorsBucketsStopAtTheListLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if data.TotalBuckets != s3TablesAdminListLimit {
-		t.Fatalf("listed %d buckets, want the limit %d", data.TotalBuckets, s3TablesAdminListLimit)
+	if data.TotalBuckets != s3TablesAdminListLimit || !data.Truncated {
+		t.Fatalf("listed %d buckets (truncated %v), want the limit %d and truncated", data.TotalBuckets, data.Truncated, s3TablesAdminListLimit)
 	}
 }
