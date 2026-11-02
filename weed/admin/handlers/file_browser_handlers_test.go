@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"bytes"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -140,6 +142,38 @@ func TestListFolders_RejectsPathOutsideBuckets(t *testing.T) {
 
 		if w.Code != http.StatusBadRequest {
 			t.Errorf("path %q: expected 400, got %d (body: %s)", path, w.Code, w.Body.String())
+		}
+	}
+}
+
+func TestUploadFile_RejectsOversizedUpload(t *testing.T) {
+	adminServer := &dash.AdminServer{}
+	adminServer.SetUploadMaxSize(1 << 20)
+	h := &FileBrowserHandlers{adminServer: adminServer}
+
+	// 1.5MB fits the body allowance but exceeds the file total; 3MB trips the body cap.
+	for _, size := range []int{3 << 19, 3 << 20} {
+		var body bytes.Buffer
+		mw := multipart.NewWriter(&body)
+		part, err := mw.CreateFormFile("files", "big.bin")
+		if err != nil {
+			t.Fatal(err)
+		}
+		part.Write(make([]byte, size))
+		mw.WriteField("path", "/buckets/b")
+		mw.Close()
+
+		req := httptest.NewRequest(http.MethodPost, "/api/files/upload", &body)
+		req.Header.Set("Content-Type", mw.FormDataContentType())
+		w := httptest.NewRecorder()
+
+		h.UploadFile(w, req)
+
+		if w.Code != http.StatusRequestEntityTooLarge {
+			t.Errorf("size %d: expected 413, got %d (body: %s)", size, w.Code, w.Body.String())
+		}
+		if !strings.Contains(w.Body.String(), "1 MB limit") {
+			t.Errorf("size %d: expected the limit in the error, got %s", size, w.Body.String())
 		}
 	}
 }
