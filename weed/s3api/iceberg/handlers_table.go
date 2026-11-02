@@ -308,6 +308,12 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 		writeManagerError(w, authErr)
 		return
 	}
+	// Registration confines the location to the table's namespace, but both
+	// branches write, and stage-create vends credentials, before it runs.
+	if err := s3tables.ValidateMetadataLocation(metadataLocation, bucketName, flattenNamespacePath(namespace)); err != nil {
+		writeError(w, http.StatusBadRequest, "BadRequestException", err.Error())
+		return
+	}
 
 	// Stage-create persists metadata in the internal staged area and skips S3Tables registration.
 	if req.StageCreate {
