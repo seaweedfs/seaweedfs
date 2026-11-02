@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"testing"
 
@@ -116,6 +117,33 @@ func TestCreateNeedleFromRequest(t *testing.T) {
 		}
 	*/
 
+}
+
+func TestUploadKeepsMarginalGzipUncompressed(t *testing.T) {
+	data := make([]byte, 4300)
+	rand.New(rand.NewSource(1)).Read(data[:4000])
+	gzipped, _ := util.GzipData(data)
+	if len(gzipped) >= len(data) || len(gzipped)*10 < len(data)*9 {
+		t.Fatalf("gzip size %d of %d is not a marginal saving", len(gzipped), len(data))
+	}
+
+	mockClient := &MockClient{}
+	var stored *needle.Needle
+	mockClient.needleHandling = func(n *needle.Needle, originalSize int, err error) {
+		assert.Equal(t, nil, err, "upload: %v", err)
+		stored = n
+	}
+	uploadOption := &UploadOption{
+		UploadUrl: "http://localhost:8080/389,0f084d17353afda0",
+		Filename:  "doc.pdf",
+		MimeType:  "application/pdf",
+	}
+	newUploader(mockClient).Upload(context.Background(), bytes.NewReader(data), uploadOption)
+	if stored == nil {
+		t.Fatal("no needle reached the volume server")
+	}
+	assert.False(t, stored.IsCompressed(), "gzip saved less than 10%, data should stay uncompressed")
+	assert.Equal(t, data, stored.Data)
 }
 
 var textContent = `Redistribution and use in source and binary forms, with or without

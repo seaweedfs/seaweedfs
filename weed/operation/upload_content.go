@@ -412,7 +412,7 @@ func (uploader *Uploader) doUploadData(ctx context.Context, data []byte, option 
 		compressed, compressErr := util.GzipData(data)
 		// fmt.Printf("data is compressed from %d ==> %d\n", len(data), len(compressed))
 		if compressErr == nil {
-			if len(compressed) < len(data) {
+			if len(compressed)*10 < len(data)*9 {
 				data = compressed
 				contentIsGzipped = true
 			}
