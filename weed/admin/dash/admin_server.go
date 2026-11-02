@@ -43,6 +43,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/scheduler"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3vectors"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 
 	_ "github.com/seaweedfs/seaweedfs/weed/credential/grpc" // Register gRPC credential store
@@ -167,6 +168,7 @@ type AdminServer struct {
 	collectionStatsCacheThreshold time.Duration
 
 	s3TablesManager *s3tables.Manager
+	s3VectorsServer *s3vectors.Server
 	icebergPort     int
 	lancePort       int
 
@@ -219,6 +221,8 @@ func NewAdminServer(masters string, filerGroup string, templateFS http.FileSyste
 		adminPresenceLock:             presenceLock,
 		bgCancel:                      bgCancel,
 	}
+
+	server.s3VectorsServer = newS3VectorsServer(server)
 
 	// Initialize topic retention purger
 	server.topicRetentionPurger = NewTopicRetentionPurger(server)
