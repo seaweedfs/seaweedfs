@@ -182,7 +182,8 @@ func catalogErrCode(err error) string {
 func catalogErr(w http.ResponseWriter, err error) {
 	var apiErr *s3tables.S3TablesError
 	if !errors.As(err, &apiErr) {
-		writeError(w, http.StatusInternalServerError, "InternalFailure", "internal error")
+		glog.Errorf("S3 Vectors: catalog: %v", err)
+		writeError(w, http.StatusInternalServerError, "InternalFailure", internalErrorMessage)
 		return
 	}
 	switch {
@@ -200,10 +201,12 @@ func catalogErr(w http.ResponseWriter, err error) {
 	}
 }
 
+const internalErrorMessage = "internal error, see the S3 gateway log"
+
 // vectorErr maps a VectorService gRPC status onto the API's error shape.
 // Engine messages reach clients only for codes that describe the request
 // itself; transport and internal details stay in the server log.
-func vectorErr(w http.ResponseWriter, err error) {
+func vectorErr(w http.ResponseWriter, r *http.Request, arns vectorBucketARNs, err error) {
 	msg := status.Convert(err).Message()
 	switch status.Code(err) {
 	case codes.NotFound:
@@ -213,10 +216,11 @@ func vectorErr(w http.ResponseWriter, err error) {
 	case codes.PermissionDenied, codes.Unauthenticated:
 		writeError(w, http.StatusForbidden, "AccessDeniedException", "access denied")
 	case codes.Unavailable:
+		glog.Warningf("S3 Vectors: %s %s/%s: %v", operationFromRequest(r), arns.bucket, arns.index, err)
 		writeError(w, http.StatusServiceUnavailable, "ServiceUnavailableException", "vector service unavailable")
 	default:
-		glog.V(1).Infof("S3 Vectors: engine error: %v", err)
-		writeError(w, http.StatusInternalServerError, "InternalFailure", "internal error")
+		glog.Errorf("S3 Vectors: %s %s/%s: %v", operationFromRequest(r), arns.bucket, arns.index, err)
+		writeError(w, http.StatusInternalServerError, "InternalFailure", internalErrorMessage)
 	}
 }
 
@@ -1026,7 +1030,7 @@ func (s *Server) handleCreateIndex(w http.ResponseWriter, r *http.Request) {
 		} else if gerr != nil {
 			glog.Errorf("S3 Vectors: rollback lookup for %s/%s failed: %v", arns.bucket, arns.index, gerr)
 		}
-		vectorErr(w, err)
+		vectorErr(w, r, arns, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, &CreateIndexResponse{IndexArn: s.indexArn(arns.bucket, arns.index)})
@@ -1279,7 +1283,7 @@ func (s *Server) handlePutVectors(w http.ResponseWriter, r *http.Request) {
 		Vectors: vectors,
 	})
 	if err != nil {
-		vectorErr(w, err)
+		vectorErr(w, r, arns, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, &PutVectorsResponse{})
@@ -1360,7 +1364,7 @@ func (s *Server) handleGetVectors(w http.ResponseWriter, r *http.Request) {
 		ReturnMetadata: req.ReturnMetadata,
 	})
 	if err != nil {
-		vectorErr(w, err)
+		vectorErr(w, r, arns, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, &GetVectorsResponse{
@@ -1419,7 +1423,7 @@ func (s *Server) handleListVectors(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, err := s.vectors.ListVectors(r.Context(), listReq)
 	if err != nil {
-		vectorErr(w, err)
+		vectorErr(w, r, arns, err)
 		return
 	}
 	// An engine that predates segment_count lists every row; page through
@@ -1429,7 +1433,7 @@ func (s *Server) handleListVectors(w http.ResponseWriter, r *http.Request) {
 		out, nextToken, err := s.listSegmentVectors(r.Context(), listReq.Table,
 			offset, maxResults, uint64(*req.SegmentCount), uint64(*req.SegmentIndex), req.ReturnData, req.ReturnMetadata, resp)
 		if err != nil {
-			vectorErr(w, err)
+			vectorErr(w, r, arns, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, &ListVectorsResponse{
@@ -1559,7 +1563,7 @@ func (s *Server) handleDeleteVectors(w http.ResponseWriter, r *http.Request) {
 		Keys:  req.Keys,
 	})
 	if err != nil {
-		vectorErr(w, err)
+		vectorErr(w, r, arns, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, &DeleteVectorsResponse{})
@@ -1902,7 +1906,7 @@ func (s *Server) handleQueryVectors(w http.ResponseWriter, r *http.Request) {
 		ReturnDistance: req.ReturnDistance,
 	})
 	if err != nil {
-		vectorErr(w, err)
+		vectorErr(w, r, arns, err)
 		return
 	}
 	out := &QueryVectorsResponse{DistanceMetric: metric, Vectors: []*QueryOutputVector{}}

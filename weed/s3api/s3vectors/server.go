@@ -125,8 +125,17 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
 // Auth authenticates the caller and puts the identity in the request context.
 func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if r.ContentLength > maxRequestBodyBytes {
+			writeError(w, http.StatusBadRequest, "ValidationException", errRequestBodyTooLarge.Error())
+			return
+		}
 		identity, identityObj, errCode := s.authenticator.AuthenticateRequest(r)
-		if errCode != s3err.ErrNone {
+		switch errCode {
+		case s3err.ErrNone:
+		case s3err.ErrEntityTooLarge:
+			writeError(w, http.StatusBadRequest, "ValidationException", errRequestBodyTooLarge.Error())
+			return
+		default:
 			writeError(w, http.StatusForbidden, "AccessDenied", "authentication failed")
 			return
 		}
