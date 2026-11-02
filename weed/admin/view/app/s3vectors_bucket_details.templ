@@ -1,6 +1,8 @@
 package app
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -107,7 +109,7 @@ templ S3VectorsBucketDetails(data dash.S3VectorsBucketData) {
 		</div>
 		<div class="card-body">
 			if data.Policy != "" {
-				<pre class="bg-light p-3 border rounded mb-0" id="s3vectorsBucketPolicy">{ data.Policy }</pre>
+				<pre class="bg-light p-3 border rounded mb-0" id="s3vectorsBucketPolicy">{ indentJSON(data.Policy) }</pre>
 			} else {
 				<span class="text-muted">No policy. Set one with <code>PutVectorBucketPolicy</code>.</span>
 			}
@@ -164,4 +166,12 @@ templ S3VectorsBucketDetails(data dash.S3VectorsBucketData) {
 			});
 		});
 	</script>
+}
+
+func indentJSON(s string) string {
+	var out bytes.Buffer
+	if json.Indent(&out, []byte(s), "", "  ") != nil {
+		return s
+	}
+	return out.String()
 }

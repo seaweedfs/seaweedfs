@@ -35,7 +35,7 @@ func TestS3VectorsBucketsRendersBuckets(t *testing.T) {
 func TestS3VectorsBucketDetailsRendersIndexesAndPolicy(t *testing.T) {
 	data := dash.S3VectorsBucketData{
 		Bucket:       dash.S3VectorsBucketSummary{Name: "media", ARN: "arn:aws:s3vectors:us-east-1:000000000000:bucket/media"},
-		Policy:       `{"Version":"2012-10-17"}`,
+		Policy:       `{"Version":"2012-10-17","Statement":[]}`,
 		TotalIndexes: 1,
 		Indexes: []*s3vectors.Index{{
 			IndexName: "movies", IndexArn: "arn:aws:s3vectors:us-east-1:000000000000:bucket/media/index/movies",
@@ -46,10 +46,15 @@ func TestS3VectorsBucketDetailsRendersIndexesAndPolicy(t *testing.T) {
 	var out bytes.Buffer
 	require.NoError(t, S3VectorsBucketDetails(data).Render(t.Context(), &out))
 	page := out.String()
-	for _, want := range []string{"movies", ">384<", ">cosine<", ">float32<", "summary, body", `data-index-name="movies"`, `{&#34;Version&#34;:&#34;2012-10-17&#34;}`} {
+	for _, want := range []string{"movies", ">384<", ">cosine<", ">float32<", "summary, body", `data-index-name="movies"`, "{\n  &#34;Version&#34;: &#34;2012-10-17&#34;,\n  &#34;Statement&#34;: []\n}"} {
 		require.Contains(t, page, want)
 	}
 	require.False(t, strings.Contains(page, "No indexes."), "an index is listed")
+
+	data.Policy = "not json"
+	out.Reset()
+	require.NoError(t, S3VectorsBucketDetails(data).Render(t.Context(), &out))
+	require.Contains(t, out.String(), ">not json</pre>")
 }
 
 func TestS3TablesBucketsLinksVectorBuckets(t *testing.T) {
