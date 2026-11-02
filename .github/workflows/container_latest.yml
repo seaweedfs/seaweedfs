@@ -140,6 +140,11 @@ jobs:
 
       - name: Build the vector engine
         run: |
+          # An older source_ref predates the engine; its image goes without one.
+          if [ ! -f seaweed-vector/crates/server/Cargo.toml ]; then
+            echo "No vector engine in this source ref"
+            exit 0
+          fi
           cd seaweed-vector
           cargo build --release -p weed-vector-server --target ${{ matrix.target }}
           cp target/${{ matrix.target }}/release/weed-vector ../weed-vector-${{ matrix.arch }}
