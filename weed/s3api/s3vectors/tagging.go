@@ -144,6 +144,11 @@ func (s *Server) handleUntagResource(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", "tagKeys are required")
 		return
 	}
+	ctx, err := s.authorizeTagging(r, "s3vectors:UntagResource", arns)
+	if err != nil {
+		catalogErr(w, err)
+		return
+	}
 	key := make(map[string]string, 1)
 	for _, k := range req.TagKeys {
 		clear(key)
@@ -152,11 +157,6 @@ func (s *Server) handleUntagResource(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 			return
 		}
-	}
-	ctx, err := s.authorizeTagging(r, "s3vectors:UntagResource", arns)
-	if err != nil {
-		catalogErr(w, err)
-		return
 	}
 	if err := s.internalCatalog(ctx, "UntagResource",
 		&s3tables.UntagResourceRequest{ResourceARN: catalogArn, TagKeys: req.TagKeys}, nil); err != nil {

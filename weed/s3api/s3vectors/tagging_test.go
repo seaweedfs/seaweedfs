@@ -208,6 +208,8 @@ func TestTaggingNeedsItsOwnGrant(t *testing.T) {
 	mustStatus(t, "tag under list grant", code, body, http.StatusForbidden)
 	code, body = c.untag("reader", bucketArn, "team")
 	mustStatus(t, "untag under list grant", code, body, http.StatusForbidden)
+	code, body = c.untag("reader", bucketArn, "")
+	mustStatus(t, "untag an empty key under list grant", code, body, http.StatusForbidden)
 	if _, tags := c.list("", bucketArn); tags["team"] != "search" {
 		t.Fatalf("refused writes changed tags: %v", tags)
 	}
@@ -321,7 +323,9 @@ func TestTaggingRefusesTablesThatAreNotIndexes(t *testing.T) {
 }
 
 func TestUntagManyKeysAllocatesLikeDecoding(t *testing.T) {
-	s, _ := newTagClient(t)
+	s, c := newTagClient(t)
+	code, out := c.op("", "CreateVectorBucket", &CreateVectorBucketRequest{VectorBucketName: "vec-bucket"})
+	mustStatus(t, "create bucket", code, out, http.StatusOK)
 	body, err := json.Marshal(&UntagResourceRequest{ResourceArn: s.vectorBucketArn("vec-bucket"), TagKeys: make([]string, 1<<18)})
 	if err != nil {
 		t.Fatal(err)
