@@ -143,8 +143,8 @@ func IsZstdContent(data []byte) bool {
 		if strings.HasSuffix(mtype, "script") {
 			return true, true
 		}
-		// application/json, application/ld+json, application/x-ndjson, ...
-		if strings.HasSuffix(mtype, "json") {
+		// application/json, application/ld+json, application/x-ndjson, application/json-seq, ...
+		if strings.HasSuffix(mtype, "json") || strings.HasSuffix(mtype, "json-seq") {
 			return true, true
 		}
 		if strings.HasSuffix(mtype, "vnd.rar") {

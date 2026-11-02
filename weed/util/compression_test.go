@@ -13,6 +13,8 @@ func TestIsCompressableFileType(t *testing.T) {
 		{"", "application/json; charset=utf-8", true, true},
 		{"", "application/ld+json", true, true},
 		{"", "application/x-ndjson", true, true},
+		{"", "application/json-seq", true, true},
+		{"", "Application/JSON", true, true},
 		{"", "text/plain; charset=utf-8", true, true},
 		{"", "application/xml", true, true},
 		{".gz", "application/json", false, true},
