@@ -223,25 +223,27 @@ func TestBucketEventsStayInsideStoreDir(t *testing.T) {
 	if err := os.WriteFile(sentinel, []byte("keep"), 0644); err != nil {
 		t.Fatal(err)
 	}
+	// Checked after each create, before the matching delete could remove the
+	// evidence of a db opened in the wrong place.
+	assertNothingEscaped := func(bucket string) {
+		t.Helper()
+		for _, p := range []string{filepath.Join(parent, "outside"), filepath.Join(parent, "CURRENT"), filepath.Join(dir, "x", "y")} {
+			if _, err := os.Stat(p); !os.IsNotExist(err) {
+				t.Fatalf("bucket %q event created %s: %v", bucket, p, err)
+			}
+		}
+	}
 	store.OnBucketCreation("x")
 	for _, bucket := range []string{"..", ".", "../outside", "", DEFAULT, "x/../" + DEFAULT, "x/y"} {
 		store.OnBucketCreation(bucket)
+		assertNothingEscaped(bucket)
 		store.OnBucketDeletion(bucket)
 	}
 	if _, err := os.Stat(sentinel); err != nil {
 		t.Fatalf("bucket events removed %s: %v", sentinel, err)
 	}
-	if _, err := os.Stat(filepath.Join(parent, "outside")); !os.IsNotExist(err) {
-		t.Fatalf("bucket event created a folder outside %s: %v", dir, err)
-	}
-	if _, err := os.Stat(filepath.Join(parent, "CURRENT")); !os.IsNotExist(err) {
-		t.Fatalf("bucket event opened a db in %s: %v", parent, err)
-	}
 	if _, err := os.Stat(filepath.Join(dir, DEFAULT)); err != nil {
 		t.Fatalf("default db folder missing: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "x", "y")); !os.IsNotExist(err) {
-		t.Fatalf("bucket event opened a db inside another bucket folder: %v", err)
 	}
 	ctx := context.Background()
 	if err := store.InsertEntry(ctx, &filer.Entry{FullPath: "/a/b"}); err != nil {
