@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables/s3tablestest"
 
 	"github.com/stretchr/testify/require"
@@ -106,4 +107,19 @@ func TestNormalizeFormat(t *testing.T) {
 			t.Errorf("NormalizeFormat(%q) = %q,%v; want %q,%v", c.in, got, ok, c.want, c.ok)
 		}
 	}
+}
+
+func TestDeclaredBucketEncryption(t *testing.T) {
+	entry := func(format string, cfg map[string]interface{}) *filer_pb.Entry {
+		meta, _ := json.Marshal(tableBucketMetadata{Name: "b", Format: format, EncryptionConfiguration: cfg})
+		return &filer_pb.Entry{Extended: map[string][]byte{ExtendedKeyTableBucket: []byte("true"), ExtendedKeyMetadata: meta}}
+	}
+	aes := map[string]interface{}{"sseAlgorithm": "AES256"}
+
+	require.Equal(t, "AES256", DeclaredBucketEncryption(entry(FormatLance, aes)))
+	require.Empty(t, DeclaredBucketEncryption(entry(FormatLance, nil)))
+	require.Empty(t, DeclaredBucketEncryption(entry(FormatIceberg, aes)), "the Iceberg catalog reads client manifests raw")
+	require.Empty(t, DeclaredBucketEncryption(entry("", aes)), "a bucket without a format is Iceberg")
+	require.Empty(t, DeclaredBucketEncryption(&filer_pb.Entry{Extended: map[string][]byte{ExtendedKeyMetadata: entry(FormatLance, aes).Extended[ExtendedKeyMetadata]}}), "not a table bucket")
+	require.Empty(t, DeclaredBucketEncryption(nil))
 }

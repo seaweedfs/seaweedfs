@@ -92,7 +92,8 @@ def cluster(request, tmp_path_factory):
         def start(name, args):
             log = stack.enter_context((directory / f"{name}.log").open("w"))
             env = dict(os.environ, AWS_ACCESS_KEY_ID="test", AWS_SECRET_ACCESS_KEY="test",
-                       AWS_DEFAULT_REGION="us-east-1", AWS_EC2_METADATA_DISABLED="true")
+                       AWS_DEFAULT_REGION="us-east-1", AWS_EC2_METADATA_DISABLED="true",
+                       WEED_S3_SSE_KEY="s3vectors-test")
             process = subprocess.Popen(args, cwd=directory, stdout=log, stderr=log, env=env)
             processes[name] = process
             stack.callback(stop, process)
