@@ -3,6 +3,7 @@ package s3_backend
 import (
 	"crypto/tls"
 	"fmt"
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -21,8 +22,14 @@ var (
 	sessionsLock sync.Mutex
 )
 
-// httpOptions tunes the HTTP transport of the tier backend's S3 client. The
-// zero value keeps the SDK's default client.
+// A tier endpoint that drops packets or accepts connections without answering
+// must not hold a read, or a volume server's startup, for minutes per request.
+var (
+	s3ConnectTimeout = 10 * time.Second
+	s3ReadTimeout    = time.Minute
+)
+
+// httpOptions tunes the HTTP transport of the tier backend's S3 client.
 type httpOptions struct {
 	// disableHTTP2 keeps the client on HTTP/1.1. Over HTTP/2 every upload and
 	// range read to the endpoint shares one connection and its flow-control
@@ -36,12 +43,10 @@ type httpOptions struct {
 	idleConnTimeout time.Duration
 }
 
-// newTransport returns the transport for the options, or nil for the default.
 func (o httpOptions) newTransport() *http.Transport {
-	if o == (httpOptions{}) {
-		return nil
-	}
 	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.DialContext = (&net.Dialer{Timeout: s3ConnectTimeout, KeepAlive: 30 * time.Second}).DialContext
+	t.ResponseHeaderTimeout = s3ReadTimeout
 	if o.disableHTTP2 {
 		t.ForceAttemptHTTP2 = false
 		t.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{}
@@ -73,9 +78,7 @@ func createSession(awsAccessKeyId, awsSecretAccessKey, region, endpoint string, 
 		Endpoint:                      aws.String(endpoint),
 		S3ForcePathStyle:              aws.Bool(forcePathStyle),
 		S3DisableContentMD5Validation: aws.Bool(true),
-	}
-	if t := httpOpts.newTransport(); t != nil {
-		config.HTTPClient = &http.Client{Transport: t}
+		HTTPClient:                    &http.Client{Transport: httpOpts.newTransport()},
 	}
 	if awsAccessKeyId != "" && awsSecretAccessKey != "" {
 		config.Credentials = credentials.NewStaticCredentials(awsAccessKeyId, awsSecretAccessKey, "")

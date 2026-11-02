@@ -7,6 +7,8 @@ import (
 	"testing"
 	"testing/iotest"
 
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
@@ -23,7 +25,7 @@ type stubS3Client struct {
 	getObject func(*s3.GetObjectInput) (*s3.GetObjectOutput, error)
 }
 
-func (s *stubS3Client) GetObject(input *s3.GetObjectInput) (*s3.GetObjectOutput, error) {
+func (s *stubS3Client) GetObjectWithContext(_ aws.Context, input *s3.GetObjectInput, _ ...request.Option) (*s3.GetObjectOutput, error) {
 	return s.getObject(input)
 }
 
