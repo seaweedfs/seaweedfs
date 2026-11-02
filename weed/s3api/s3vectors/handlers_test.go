@@ -353,19 +353,26 @@ func TestResolveIndexARNs(t *testing.T) {
 }
 
 func TestTranslateFilter(t *testing.T) {
+	str := "json_extract(`metadata`, '$[\"k\"]')"
+	num := "TRY_CAST(json_extract(`metadata`, '$[\"k\"]') AS DOUBLE)"
+	elem := func(value string) string {
+		return "COALESCE(json_array_contains(`metadata`, '$[\"k\"]', '" + value + "'), false)"
+	}
 	cases := []struct {
 		name   string
 		filter map[string]interface{}
 		want   string
 	}{
 		{"bare string equality", map[string]interface{}{"k": "v"},
-			"json_extract(`metadata`, '$[\"k\"]') = '\"v\"'"},
+			"(COALESCE(" + str + " = '\"v\"', false) OR " + elem(`"v"`) + ")"},
 		{"bare number equality", map[string]interface{}{"k": float64(3)},
-			"TRY_CAST(json_extract(`metadata`, '$[\"k\"]') AS DOUBLE) = 3"},
+			"(COALESCE(" + num + " = 3, false) OR " + elem("3") + ")"},
 		{"bare bool equality", map[string]interface{}{"k": true},
-			"json_extract(`metadata`, '$[\"k\"]') = 'true'"},
+			"(COALESCE(" + str + " = 'true', false) OR " + elem("true") + ")"},
+		{"eq fraction", map[string]interface{}{"k": map[string]interface{}{"$eq": float64(2.5)}},
+			"(COALESCE(" + num + " = 2.5, false) OR " + elem("2.5") + ")"},
 		{"ne", map[string]interface{}{"k": map[string]interface{}{"$ne": "v"}},
-			"NOT COALESCE(json_extract(`metadata`, '$[\"k\"]') = '\"v\"', false)"},
+			"NOT (COALESCE(" + str + " = '\"v\"', false) OR " + elem(`"v"`) + ")"},
 		{"exists true", map[string]interface{}{"k": map[string]interface{}{"$exists": true}},
 			"json_exists(`metadata`, '$[\"k\"]')"},
 		{"exists false", map[string]interface{}{"k": map[string]interface{}{"$exists": false}},
@@ -373,19 +380,23 @@ func TestTranslateFilter(t *testing.T) {
 		{"exists special key", map[string]interface{}{`a.b"c`: map[string]interface{}{"$exists": true}},
 			"json_exists(`metadata`, '$[\"a.b\\\"c\"]')"},
 		{"range", map[string]interface{}{"k": map[string]interface{}{"$gt": float64(1)}},
-			"TRY_CAST(json_extract(`metadata`, '$[\"k\"]') AS DOUBLE) > 1"},
+			num + " > 1"},
 		{"in strings", map[string]interface{}{"k": map[string]interface{}{"$in": []interface{}{"a", "b"}}},
-			"(COALESCE(json_extract(`metadata`, '$[\"k\"]') in ('\"a\"', '\"b\"'), false))"},
+			"(COALESCE(" + str + " in ('\"a\"', '\"b\"'), false) OR " + elem(`"a"`) + " OR " + elem(`"b"`) + ")"},
 		{"nin numbers", map[string]interface{}{"k": map[string]interface{}{"$nin": []interface{}{float64(1)}}},
-			"NOT (COALESCE(TRY_CAST(json_extract(`metadata`, '$[\"k\"]') AS DOUBLE) in (1), false))"},
+			"NOT (COALESCE(" + num + " in (1), false) OR " + elem("1") + ")"},
 		{"in mixed types", map[string]interface{}{"k": map[string]interface{}{"$in": []interface{}{"a", float64(1), true, float64(2)}}},
-			"(COALESCE(json_extract(`metadata`, '$[\"k\"]') in ('\"a\"', 'true'), false) OR COALESCE(TRY_CAST(json_extract(`metadata`, '$[\"k\"]') AS DOUBLE) in (1, 2), false))"},
+			"(COALESCE(" + str + " in ('\"a\"', 'true'), false) OR COALESCE(" + num + " in (1, 2), false) OR " +
+				elem(`"a"`) + " OR " + elem("1") + " OR " + elem("true") + " OR " + elem("2") + ")"},
 		{"and", map[string]interface{}{"$and": []interface{}{
 			map[string]interface{}{"a": "1"}, map[string]interface{}{"b": float64(2)},
 		}},
-			"(json_extract(`metadata`, '$[\"a\"]') = '\"1\"' AND TRY_CAST(json_extract(`metadata`, '$[\"b\"]') AS DOUBLE) = 2)"},
+			"((COALESCE(json_extract(`metadata`, '$[\"a\"]') = '\"1\"', false) OR COALESCE(json_array_contains(`metadata`, '$[\"a\"]', '\"1\"'), false)) AND " +
+				"(COALESCE(TRY_CAST(json_extract(`metadata`, '$[\"b\"]') AS DOUBLE) = 2, false) OR COALESCE(json_array_contains(`metadata`, '$[\"b\"]', '2'), false)))"},
 		{"sql injection", map[string]interface{}{"a'b": "v'1"},
-			"json_extract(`metadata`, '$[\"a''b\"]') = '\"v''1\"'"},
+			"(COALESCE(json_extract(`metadata`, '$[\"a''b\"]') = '\"v''1\"', false) OR COALESCE(json_array_contains(`metadata`, '$[\"a''b\"]', '\"v''1\"'), false))"},
+		{"array value escapes", map[string]interface{}{"k": `<a&"b">`},
+			"(COALESCE(" + str + ` = '"<a&\"b\">"', false) OR ` + elem(`"<a&\"b\">"`) + ")"},
 	}
 	for _, tc := range cases {
 		got, err := translateFilter(tc.filter)
