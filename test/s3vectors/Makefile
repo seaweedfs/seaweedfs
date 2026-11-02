@@ -18,7 +18,7 @@ $(WEED): FORCE
 	go build -o $(WEED) ../../weed
 
 $(VEC): FORCE
-	cargo build --locked --profile $(CARGO_PROFILE) --manifest-path ../../seaweed-vector/Cargo.toml -p weed-vector-server
+	cd ../../seaweed-vector && cargo build --locked --profile $(CARGO_PROFILE) -p weed-vector-server
 	cp $(CARGO_OUTPUT)/weed-vector $(VEC)
 
 ifneq ($(WORKER),)
