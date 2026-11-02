@@ -1,0 +1,21 @@
+#!/bin/sh
+# Runs the protoc of the protoc-bin-vendored version in Cargo.lock, or the one
+# on PATH when the registry does not hold it.
+case "$(uname -s)-$(uname -m)" in
+Linux-x86_64) platform=linux-x86_64 ;;
+Linux-aarch64) platform=linux-aarch_64 ;;
+Linux-ppc64le) platform=linux-ppcle_64 ;;
+Linux-s390x) platform=linux-s390_64 ;;
+Linux-i?86) platform=linux-x86_32 ;;
+Darwin-x86_64) platform=macos-x86_64 ;;
+Darwin-arm64) platform=macos-aarch_64 ;;
+*) exec protoc "$@" ;;
+esac
+crate="protoc-bin-vendored-$platform"
+version=$(awk -v name="\"$crate\"" '$1 == "name" && $3 == name { found = 1; next } found && $1 == "version" { gsub(/"/, "", $3); print $3; exit }' "$(dirname "$0")/../Cargo.lock")
+for protoc in "${CARGO_HOME:-$HOME/.cargo}"/registry/src/*/"$crate-$version"/bin/protoc; do
+	if [ -x "$protoc" ]; then
+		exec "$protoc" "$@"
+	fi
+done
+exec protoc "$@"
