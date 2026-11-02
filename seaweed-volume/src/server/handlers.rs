@@ -3119,7 +3119,7 @@ pub async fn post_handler(
 
     // Fix JPEG orientation from EXIF data before storing (matches Go behavior).
     let (body_data, body_rewritten) =
-        if state.fix_jpg_orientation && crate::images::is_jpeg(&mime_type, &path) {
+        if state.fix_jpg_orientation && crate::images::is_jpeg(&mime_type, &filename) {
             let fixed = crate::images::fix_jpg_orientation(&body_data_raw);
             let rewritten = fixed != body_data_raw;
             (fixed, rewritten)
@@ -8567,6 +8567,76 @@ mod tests {
             volume.read_needle(&mut stored).unwrap();
             assert_eq!(stored.is_compressed(), compressed, "query {query:?}");
         }
+    }
+
+    #[tokio::test]
+    async fn http_orientation_fix_follows_the_filename() {
+        use tower::ServiceExt;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut state = volume_test_state(&tmp);
+        Arc::get_mut(&mut state).unwrap().fix_jpg_orientation = true;
+        let volume = state
+            .store
+            .read()
+            .unwrap()
+            .find_volume(VolumeId(1))
+            .unwrap()
+            .1;
+        let mut encoded = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(image::RgbaImage::new(3, 2))
+            .write_to(&mut encoded, image::ImageFormat::Jpeg)
+            .unwrap();
+        let exif: &[u8] =
+            b"Exif\0\0MM\0\x2a\0\0\0\x08\0\x01\x01\x12\0\x03\0\0\0\x01\0\x03\0\0\0\0\0\0";
+        let mut tagged = vec![0xFF, 0xD8, 0xFF, 0xE1, 0, exif.len() as u8 + 2];
+        tagged.extend_from_slice(exif);
+        tagged.extend_from_slice(&encoded.into_inner()[2..]);
+        let upload = |id: u64, suffix: &'static str, filename: &'static str, body: Vec<u8>| {
+            let (state, volume) = (state.clone(), volume.clone());
+            async move {
+                let response = super::super::volume_server::build_admin_router(state)
+                    .oneshot(
+                        Request::builder()
+                            .method(Method::POST)
+                            .uri(format!("/1,{id:x}{TEST_COOKIE:08x}{suffix}"))
+                            .header(header::CONTENT_TYPE, "application/octet-stream")
+                            .header(
+                                header::CONTENT_DISPOSITION,
+                                format!("attachment; filename=\"{filename}\""),
+                            )
+                            .body(Body::from(body))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    response.status(),
+                    StatusCode::CREATED,
+                    "{suffix} {filename}"
+                );
+                let mut stored = Needle {
+                    id: NeedleId(id),
+                    cookie: Cookie(TEST_COOKIE),
+                    ..Needle::default()
+                };
+                volume.read_needle(&mut stored).unwrap();
+                stored.data
+            }
+        };
+        let rotated = upload(0x6e7a_0c10, "", "photo.jpg", tagged.clone()).await;
+        assert_ne!(rotated, tagged);
+        assert_eq!(
+            upload(0x6e7a_0c11, ".jpg", "photo.png", tagged.clone()).await,
+            tagged
+        );
+        assert_eq!(
+            upload(0x6e7a_0c12, "?type=replicate", "photo.jpg", tagged.clone()).await,
+            rotated
+        );
+        assert_eq!(
+            upload(0x6e7a_0c13, "?type=replicate", "photo.jpg", rotated.clone()).await,
+            rotated
+        );
     }
 
     #[tokio::test]

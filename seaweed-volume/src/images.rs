@@ -143,12 +143,12 @@ fn flip_horizontal_if(img: DynamicImage, do_flip: bool) -> DynamicImage {
     DynamicImage::ImageRgba8(out)
 }
 
-/// Returns true if the given MIME type or file path extension indicates a JPEG file.
-pub fn is_jpeg(mime_type: &str, path: &str) -> bool {
+/// Returns true if the given MIME type or file name extension indicates a JPEG file.
+pub fn is_jpeg(mime_type: &str, filename: &str) -> bool {
     if mime_type == "image/jpeg" {
         return true;
     }
-    let lower = path.to_lowercase();
+    let lower = filename.to_lowercase();
     lower.ends_with(".jpg") || lower.ends_with(".jpeg")
 }
 
