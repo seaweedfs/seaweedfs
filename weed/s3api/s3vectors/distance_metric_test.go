@@ -3,6 +3,7 @@ package s3vectors
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -83,6 +84,57 @@ func TestIndexFromRecordLowercasesMetric(t *testing.T) {
 		}
 		if got := indexFromRecord(s, "b", "i", record).DistanceMetric; got != want {
 			t.Fatalf("stored %v: distanceMetric %q, want %q", stored, got, want)
+		}
+	}
+}
+
+type distancesFake struct {
+	*fakeVectors
+	distances []float32
+}
+
+func (f distancesFake) QueryVectors(ctx context.Context, req *vector_pb.QueryVectorsRequest, opts ...grpc.CallOption) (*vector_pb.QueryVectorsResponse, error) {
+	resp := &vector_pb.QueryVectorsResponse{}
+	for i, d := range f.distances {
+		resp.Vectors = append(resp.Vectors, &vector_pb.QueryResult{Key: fmt.Sprint(i), Distance: d})
+	}
+	return resp, nil
+}
+
+// The engine returns Lance's squared L2 distance; a euclidean index reports
+// its square root, the other metrics their engine value.
+func TestQueryVectorsReportsEuclideanDistance(t *testing.T) {
+	for metric, want := range map[string][]float32{
+		"euclidean":  {5, 0.5, 0},
+		"cosine":     {25, 0.25, -1e-7},
+		"dotproduct": {25, 0.25, -1e-7},
+	} {
+		fs := s3tablestest.Start(t)
+		engine := distancesFake{newFakeVectors(0), []float32{25, 0.25, -1e-7}}
+		s := NewServer(s3tables.NewManagerClient(fs.Client), allowAllAuth{}, engine)
+		if w := postJSON(t, s.handleCreateVectorBucket, &CreateVectorBucketRequest{VectorBucketName: "vec-bucket"}); w.Code != http.StatusOK {
+			t.Fatalf("create bucket: %d %s", w.Code, w.Body.String())
+		}
+		if w := postJSON(t, s.handleCreateIndex, &CreateIndexRequest{
+			VectorBucketName: "vec-bucket", IndexName: "idx", DataType: "float32", Dimension: 2, DistanceMetric: metric,
+		}); w.Code != http.StatusOK {
+			t.Fatalf("create index: %d %s", w.Code, w.Body.String())
+		}
+		w := postJSON(t, s.handleQueryVectors, &QueryVectorsRequest{
+			VectorBucketName: "vec-bucket", IndexName: "idx",
+			QueryVector: &QueryVector{Float32: []float32{1, 0}}, TopK: 3, ReturnDistance: true,
+		})
+		var query QueryVectorsResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &query); err != nil || len(query.Vectors) != len(want) {
+			t.Fatalf("%s QueryVectors: %d %s", metric, w.Code, w.Body.String())
+		}
+		for i, v := range query.Vectors {
+			if v.Distance == nil {
+				t.Fatalf("%s hit %d has no distance", metric, i)
+			}
+			if *v.Distance != want[i] {
+				t.Fatalf("%s hit %d distance %v, want %v", metric, i, *v.Distance, want[i])
+			}
 		}
 	}
 }
