@@ -168,10 +168,43 @@ templ S3VectorsBucketDetails(data dash.S3VectorsBucketData) {
 	</script>
 }
 
+const maxIndentedJSONDepth = 32
+
 func indentJSON(s string) string {
+	if jsonDepth(s) > maxIndentedJSONDepth {
+		return s
+	}
 	var out bytes.Buffer
 	if json.Indent(&out, []byte(s), "", "  ") != nil {
 		return s
 	}
 	return out.String()
+}
+
+func jsonDepth(s string) int {
+	depth, maxDepth := 0, 0
+	inString, escaped := false, false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case escaped:
+			escaped = false
+		case inString:
+			if c == '\\' {
+				escaped = true
+			} else if c == '"' {
+				inString = false
+			}
+		case c == '"':
+			inString = true
+		case c == '{' || c == '[':
+			depth++
+			if depth > maxDepth {
+				maxDepth = depth
+			}
+		case c == '}' || c == ']':
+			depth--
+		}
+	}
+	return maxDepth
 }

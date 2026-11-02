@@ -55,6 +55,16 @@ func TestS3VectorsBucketDetailsRendersIndexesAndPolicy(t *testing.T) {
 	out.Reset()
 	require.NoError(t, S3VectorsBucketDetails(data).Render(t.Context(), &out))
 	require.Contains(t, out.String(), ">not json</pre>")
+
+	data.Policy = `{"Version":"2012-10-17","Extra":` + strings.Repeat("[", 5000) + strings.Repeat("]", 5000) + "}"
+	out.Reset()
+	require.NoError(t, S3VectorsBucketDetails(data).Render(t.Context(), &out))
+	require.Contains(t, out.String(), `&#34;Extra&#34;:[[[[`, "a deeply nested policy is shown as stored")
+}
+
+func TestJSONDepthSkipsStrings(t *testing.T) {
+	require.Equal(t, 3, jsonDepth(`{"a":["[{\"[",{}]}`))
+	require.Equal(t, 0, jsonDepth(`"[[["`))
 }
 
 func TestS3TablesBucketsLinksVectorBuckets(t *testing.T) {
