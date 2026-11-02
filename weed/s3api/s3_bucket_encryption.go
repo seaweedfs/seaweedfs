@@ -213,10 +213,26 @@ func (s3a *S3ApiServer) getEncryptionConfiguration(bucket string) (*s3_pb.Encryp
 	}
 
 	if metadata.Encryption == nil {
-		return nil, s3err.ErrNoSuchBucketEncryptionConfiguration
+		return s3a.declaredEncryption(bucket)
 	}
 
 	return metadata.Encryption, s3err.ErrNone
+}
+
+// declaredEncryption is the encryption a table bucket's record declares. It
+// applies while the bucket has no S3 default encryption of its own.
+func (s3a *S3ApiServer) declaredEncryption(bucket string) (*s3_pb.EncryptionConfiguration, s3err.ErrorCode) {
+	if s3a.bucketConfigCache == nil {
+		return nil, s3err.ErrNoSuchBucketEncryptionConfiguration
+	}
+	config, errCode := s3a.getBucketConfig(bucket)
+	if errCode != s3err.ErrNone {
+		return nil, errCode
+	}
+	if config.DeclaredEncryption == nil {
+		return nil, s3err.ErrNoSuchBucketEncryptionConfiguration
+	}
+	return config.DeclaredEncryption, s3err.ErrNone
 }
 
 // updateEncryptionConfiguration updates the encryption configuration for a bucket
@@ -249,6 +265,10 @@ func (s3a *S3ApiServer) removeEncryptionConfiguration(bucket string) s3err.Error
 	}
 
 	if metadata.Encryption == nil {
+		// A bucket's declared encryption is fixed when the bucket is created.
+		if declared, _ := s3a.declaredEncryption(bucket); declared != nil {
+			return s3err.ErrMethodNotAllowed
+		}
 		return s3err.ErrNoSuchBucketEncryptionConfiguration
 	}
 

@@ -723,6 +723,7 @@ func (s3opt *S3Options) vectorsRouter(s3ApiServer *s3api.S3ApiServer, grpcDialOp
 	vectorsServer := s3vectors.NewServer(s3ApiServer, s3ApiServer, backend)
 	vectorsServer.SetRegion(s3tables.DefaultRegion)
 	vectorsServer.SetAccountID(s3tables.DefaultAccountID)
+	vectorsServer.SetEncryptionChecker(s3api.GetSSES3KeyManager().IsConfigured)
 	vectorsServer.RegisterRoutes(vectorsRouter)
 	return vectorsRouter
 }

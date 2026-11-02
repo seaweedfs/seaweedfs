@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables/s3tablestest"
 
 	"github.com/stretchr/testify/require"
@@ -106,4 +108,40 @@ func TestNormalizeFormat(t *testing.T) {
 			t.Errorf("NormalizeFormat(%q) = %q,%v; want %q,%v", c.in, got, ok, c.want, c.ok)
 		}
 	}
+}
+
+func TestDeclaredBucketEncryption(t *testing.T) {
+	entry := func(format string, cfg map[string]interface{}) *filer_pb.Entry {
+		meta, _ := json.Marshal(tableBucketMetadata{Name: "b", Format: format, EncryptionConfiguration: cfg})
+		return &filer_pb.Entry{Extended: map[string][]byte{ExtendedKeyTableBucket: []byte("true"), ExtendedKeyMetadata: meta}}
+	}
+	aes := map[string]interface{}{"sseAlgorithm": "AES256"}
+
+	require.Equal(t, "AES256", DeclaredBucketEncryption(entry(FormatLance, aes)))
+	require.Empty(t, DeclaredBucketEncryption(entry(FormatLance, nil)))
+	require.Empty(t, DeclaredBucketEncryption(entry(FormatIceberg, aes)), "the Iceberg catalog reads client manifests raw")
+	require.Empty(t, DeclaredBucketEncryption(entry("", aes)), "a bucket without a format is Iceberg")
+	require.Empty(t, DeclaredBucketEncryption(&filer_pb.Entry{Extended: map[string][]byte{ExtendedKeyMetadata: entry(FormatLance, aes).Extended[ExtendedKeyMetadata]}}), "not a table bucket")
+	require.Empty(t, DeclaredBucketEncryption(nil))
+}
+
+// Only a format whose files the catalog leaves to clients gets its declared
+// AES256 applied, so only that format needs the gateway's SSE-S3 key.
+func TestCreateTableBucketNeedsSSES3ForADeclaredLanceBucket(t *testing.T) {
+	fs := s3tablestest.Start(t)
+	m := NewManager()
+	m.SetEncryptionChecker(func() bool { return false })
+	create := func(name, format string, cfg map[string]interface{}) error {
+		return m.Execute(context.Background(), NewManagerClient(fs.Client), "CreateTableBucket",
+			&CreateTableBucketRequest{Name: name, Format: format, EncryptionConfiguration: cfg}, nil, s3_constants.AccountAdminId)
+	}
+	aes := map[string]interface{}{"sseAlgorithm": "AES256"}
+
+	err := create("lance-sealed", FormatLance, aes)
+	var s3Err *S3TablesError
+	require.ErrorAs(t, err, &s3Err)
+	require.Equal(t, ErrCodeInvalidRequest, s3Err.Type)
+	require.Contains(t, s3Err.Message, "s3.sse.kek")
+	require.NoError(t, create("lance-plain", FormatLance, nil))
+	require.NoError(t, create("iceberg-sealed", FormatIceberg, aes), "an Iceberg bucket only records the declaration")
 }

@@ -1,5 +1,6 @@
 """Run the S3 Vectors API against Go/Rust volumes and single/distributed queries."""
 
+import contextlib
 import json
 import time
 import uuid
@@ -270,17 +271,44 @@ def test_vector_policy_permissions(vectors, vector_clients, index):
         vectors.delete_index(**other)
 
 
+def index_object_encryption(vectors, bucket):
+    s3 = boto3.client("s3", endpoint_url=vectors.meta.endpoint_url, aws_access_key_id="test",
+                      aws_secret_access_key="test", region_name="us-east-1")
+    keys = [o["Key"] for page in s3.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=f"vector/{INDEX}/")
+            for o in page.get("Contents", []) if o["Size"] > 0]
+    assert any("/data/" in key for key in keys) and any("/_versions/" in key for key in keys)
+    return {key: s3.head_object(Bucket=bucket, Key=key).get("ServerSideEncryption") for key in keys}
+
+
 def test_vector_bucket_encryption(vectors):
     bucket = "encryption-" + uuid.uuid4().hex[:16]
+    plain = bucket + "-plain"
     config = {"sseType": "AES256"}
     vectors.create_vector_bucket(vectorBucketName=bucket, encryptionConfiguration=config)
+    vectors.create_vector_bucket(vectorBucketName=plain)
     try:
         assert vectors.get_vector_bucket(vectorBucketName=bucket)["vectorBucket"]["encryptionConfiguration"] == config
         expect_error("ValidationException", vectors.create_vector_bucket, vectorBucketName=bucket + "-kms",
                      encryptionConfiguration={"sseType": "aws:kms", "kmsKeyArn": "arn:aws:kms:us-east-1:123456789012:key/test"})
         assert vectors.list_vector_buckets(prefix=bucket + "-kms")["vectorBuckets"] == []
+
+        for name in (bucket, plain):
+            vectors.create_index(vectorBucketName=name, indexName=INDEX, dataType="float32", dimension=4,
+                                 distanceMetric="euclidean")
+            vectors.put_vectors(vectorBucketName=name, indexName=INDEX, vectors=[
+                {"key": "a", "data": {"float32": [1, 0, 0, 0]}, "metadata": {"color": "red"}},
+                {"key": "b", "data": {"float32": [0, 1, 0, 0]}, "metadata": {"color": "blue"}},
+            ])
+            hits = vectors.query_vectors(vectorBucketName=name, indexName=INDEX, queryVector={"float32": [1, 0, 0, 0]},
+                                         topK=1, returnMetadata=True)["vectors"]
+            assert [(h["key"], h["metadata"]) for h in hits] == [("a", {"color": "red"})]
+        assert set(index_object_encryption(vectors, bucket).values()) == {"AES256"}
+        assert set(index_object_encryption(vectors, plain).values()) == {None}
     finally:
-        vectors.delete_vector_bucket(vectorBucketName=bucket)
+        for name in (bucket, plain):
+            with contextlib.suppress(ClientError):
+                vectors.delete_index(vectorBucketName=name, indexName=INDEX)
+            vectors.delete_vector_bucket(vectorBucketName=name)
 
 
 def test_catalog_pagination(vectors, index):

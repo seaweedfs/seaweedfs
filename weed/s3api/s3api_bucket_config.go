@@ -24,6 +24,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 )
 
 // BucketConfig represents cached bucket configuration. Only fields parsed
@@ -56,6 +57,7 @@ type BucketConfig struct {
 	LifecycleTransitionMinSize string
 	Tags                       map[string]string              // parsed from entry content
 	Encryption                 *s3_pb.EncryptionConfiguration // parsed from entry content
+	DeclaredEncryption         *s3_pb.EncryptionConfiguration // declared by a table bucket's record
 	KMSKeyCache                *BucketKMSCache                // Per-bucket KMS key cache for SSE-KMS operations
 	LastModified               time.Time
 }
@@ -441,6 +443,9 @@ func (s3a *S3ApiServer) newBucketConfigFromEntry(bucket string, entry *filer_pb.
 			config.ObjectLockConfig = objectLockConfig
 		}
 		config.BucketPolicy = loadBucketPolicyFromExtended(entry, bucket)
+		if algorithm := s3tables.DeclaredBucketEncryption(entry); algorithm != "" {
+			config.DeclaredEncryption = &s3_pb.EncryptionConfiguration{SseAlgorithm: algorithm}
+		}
 
 		if lifecycleXML, exists := entry.Extended[bucketLifecycleConfigurationXMLKey]; exists && len(lifecycleXML) > 0 {
 			config.LifecycleXML = lifecycleXML
