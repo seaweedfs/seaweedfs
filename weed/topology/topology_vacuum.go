@@ -478,6 +478,11 @@ func (t *Topology) deleteEmptyVolumes(grpcDialOption grpc.DialOption, vl *Volume
 	quietSeconds := int64(quietPeriod / time.Second)
 	nowUnixSeconds := time.Now().Unix()
 	for vid, locationList := range todoVolumeMap {
+		// A missing replica may still hold data; deleting the listed copies
+		// would leave it as the only one when it returns.
+		if len(locationList.list) < vl.rp.GetCopyCount() {
+			continue
+		}
 		eligible := true
 		for _, dn := range locationList.list {
 			v, err := dn.GetVolumesById(vid)

@@ -211,6 +211,47 @@ func TestDeleteEmptyVolumesSkipsVidWithLiveReplica(t *testing.T) {
 	}
 }
 
+func TestDeleteEmptyVolumesSkipsUnderReplicatedVid(t *testing.T) {
+	fake := &fakeVolumeDeleteServer{}
+	grpcPort, dialOption := startFakeVolumeServer(t, fake)
+
+	topo := NewTopology("weedfs", sequence.NewMemorySequencer(), 32*1024, 5, false)
+	dn := topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1").
+		GetOrCreateDataNode("127.0.0.1", 8080, grpcPort, "127.0.0.1", "dn-online", map[string]uint32{"": 10})
+	rp, err := super_block.NewReplicaPlacementFromString("001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := storage.VolumeInfo{
+		Id:                needle.VolumeId(1),
+		Collection:        "c",
+		ModifiedAtSecond:  time.Now().Unix() - 7200,
+		Version:           needle.GetCurrentVersion(),
+		ReplicaPlacement:  rp,
+		Ttl:               needle.EMPTY_TTL,
+		ReadOnly:          true,
+		ReadOnlyCanDelete: true,
+	}
+	dn.UpdateVolumes([]storage.VolumeInfo{v})
+	topo.RegisterVolumeLayout(v, dn)
+
+	ll := NewVolumeLocationList()
+	ll.list = append(ll.list, dn)
+	todo := map[needle.VolumeId]*VolumeLocationList{v.Id: ll}
+
+	vl := topo.GetVolumeLayout("c", rp, needle.EMPTY_TTL, types.ToDiskType(""))
+	topo.deleteEmptyVolumes(dialOption, vl, todo, time.Hour)
+
+	if _, ok := todo[v.Id]; !ok {
+		t.Fatal("vid left the sweep map while a replica is missing")
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if len(fake.deletes) != 0 {
+		t.Fatalf("VolumeDelete calls = %d, want 0 (the missing replica may still hold data)", len(fake.deletes))
+	}
+}
+
 // With every copy eligible a copy whose delete RPC fails keeps the vid in the
 // sweep map; the deleted copy is gone but the vid falls through to the normal
 // compaction path for its surviving replicas.
