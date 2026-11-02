@@ -19,6 +19,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables/s3tablestest"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // fakeVectors serves a fixed row set with the engine's offset-token paging
@@ -1034,5 +1036,33 @@ func TestCreateIndexSurvivesAConcurrentNamespaceCreate(t *testing.T) {
 	releaseFirst()
 	if w := <-first; w.Code != http.StatusOK {
 		t.Fatalf("first create index: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestVectorErrKeepsEngineDetailsOutOfTheResponse(t *testing.T) {
+	arns := vectorBucketARNs{bucket: "media", index: "movies"}
+	for _, tc := range []struct {
+		err         error
+		wantStatus  int
+		wantCode    string
+		wantMessage string
+	}{
+		{status.Error(codes.Internal, "declare: 500 from http://10.0.0.5:8888/lance/v1/table/media$vector$movies/declare"),
+			http.StatusInternalServerError, "InternalFailure", internalErrorMessage},
+		{status.Error(codes.Unavailable, "no weed-vector registered on master"),
+			http.StatusServiceUnavailable, "ServiceUnavailableException", "vector service unavailable"},
+		{status.Error(codes.InvalidArgument, "vector has dimension 2, index has 3"),
+			http.StatusBadRequest, "ValidationException", "vector has dimension 2, index has 3"},
+	} {
+		rec := httptest.NewRecorder()
+		vectorErr(rec, httptest.NewRequest(http.MethodPost, "/PutVectors", nil), arns, tc.err)
+		var body map[string]string
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if rec.Code != tc.wantStatus || body["code"] != tc.wantCode || body["message"] != tc.wantMessage {
+			t.Errorf("%v: got %d %s %q, want %d %s %q", status.Code(tc.err), rec.Code, body["code"], body["message"],
+				tc.wantStatus, tc.wantCode, tc.wantMessage)
+		}
 	}
 }
