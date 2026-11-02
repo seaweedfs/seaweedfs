@@ -291,7 +291,7 @@ func (s *Store) DeleteCollection(collection string) (e error) {
 		// volume grown and destroyed between two of them was never reported at
 		// all, so nothing else would ever tell the master its slot came free.
 		for _, v := range deleted {
-			readOnly, _, readOnlyCanDelete, _ := v.ReadOnlyReasons()
+			readOnly, readOnlyCanDelete := v.reportedReadOnly()
 			s.DeletedVolumesChan <- &master_pb.VolumeShortInformationMessage{
 				Id:                uint32(v.Id),
 				Collection:        v.Collection,
@@ -428,7 +428,7 @@ func (s *Store) addVolume(vid needle.VolumeId, collection string, needleMapKind 
 			volume.diskId = diskId // Set the disk ID
 			location.SetVolume(vid, volume)
 			glog.V(0).Infof("add volume %d on disk ID %d", vid, diskId)
-			readOnly, _, readOnlyCanDelete, _ := volume.ReadOnlyReasons()
+			readOnly, readOnlyCanDelete := volume.reportedReadOnly()
 			s.NewVolumesChan <- &master_pb.VolumeShortInformationMessage{
 				Id:                uint32(vid),
 				Collection:        collection,
@@ -523,7 +523,7 @@ func collectStatsForOneLocation(location *DiskLocation) (stats []*VolumeInfo) {
 
 func collectStatForOneVolume(vid needle.VolumeId, v *Volume) (s *VolumeInfo) {
 
-	readOnly, _, readOnlyCanDelete, _ := v.ReadOnlyReasons()
+	readOnly, readOnlyCanDelete := v.reportedReadOnly()
 	s = &VolumeInfo{
 		Id:               vid,
 		Collection:       v.Collection,
@@ -1151,7 +1151,7 @@ func (s *Store) mountVolume(i needle.VolumeId, collection *string, ownLoad bool,
 					return err
 				}
 			}
-			readOnly, _, readOnlyCanDelete, _ := v.ReadOnlyReasons()
+			readOnly, readOnlyCanDelete := v.reportedReadOnly()
 			s.NewVolumesChan <- &master_pb.VolumeShortInformationMessage{
 				Id:                uint32(v.Id),
 				Collection:        v.Collection,
@@ -1183,7 +1183,7 @@ func (s *Store) UnmountVolume(i needle.VolumeId) error {
 		if !found {
 			continue
 		}
-		readOnly, _, readOnlyCanDelete, _ := v.ReadOnlyReasons()
+		readOnly, readOnlyCanDelete := v.reportedReadOnly()
 		message := master_pb.VolumeShortInformationMessage{
 			Id:                uint32(v.Id),
 			Collection:        v.Collection,
@@ -1289,7 +1289,7 @@ func (s *Store) DeleteVolume(i needle.VolumeId, onlyEmpty bool, onlyGarbage bool
 		if !found {
 			continue
 		}
-		readOnly, _, readOnlyCanDelete, _ := v.ReadOnlyReasons()
+		readOnly, readOnlyCanDelete := v.reportedReadOnly()
 		message := master_pb.VolumeShortInformationMessage{
 			Id:                uint32(v.Id),
 			Collection:        v.Collection,
@@ -1369,7 +1369,7 @@ func (s *Store) deleteVolumeGuarded(i needle.VolumeId, onlyEmpty bool, onlyGarba
 	var deletedMessages []*master_pb.VolumeShortInformationMessage
 	for _, location := range lockedLocations {
 		v := location.volumes[i]
-		readOnly, _, readOnlyCanDelete, _ := v.ReadOnlyReasons()
+		readOnly, readOnlyCanDelete := v.reportedReadOnly()
 		message := &master_pb.VolumeShortInformationMessage{
 			Id:                uint32(v.Id),
 			Collection:        v.Collection,
