@@ -33,6 +33,7 @@ ARG TARGETARCH
 ARG TAGS
 COPY weed-volume-prebuilt/ /prebuilt/
 COPY weed-worker-prebuilt/ /prebuilt-worker/
+COPY weed-vector-prebuilt/ /prebuilt-vector/
 COPY --from=builder /go/src/github.com/seaweedfs/seaweedfs/seaweed-volume /build/seaweed-volume
 # seaweed-common is a path dependency of seaweed-volume that lives beside it,
 # so the source build below needs it in the same relative position.
@@ -65,11 +66,19 @@ RUN if [ -f "/prebuilt-worker/weed-worker-${TARGETARCH}" ]; then \
       echo "No pre-built Rust worker for ${TARGETARCH}" && \
       touch /weed-worker; \
     fi
+# The vector engine carries the same lance tree, so it is pre-built or absent too.
+RUN if [ -f "/prebuilt-vector/weed-vector-${TARGETARCH}" ]; then \
+      echo "Using pre-built vector engine for ${TARGETARCH}" && \
+      cp "/prebuilt-vector/weed-vector-${TARGETARCH}" /weed-vector; \
+    else \
+      echo "No pre-built vector engine for ${TARGETARCH}" && \
+      touch /weed-vector; \
+    fi
 
 # Pre-built binaries arrive via GitHub Actions artifacts, which drop the
 # executable bit, so the copied file is 0644 and exec fails with "Permission
 # denied". Restore it (no-op for the empty placeholders, which stay size 0).
-RUN chmod 0755 /weed-volume /weed-worker
+RUN chmod 0755 /weed-volume /weed-worker /weed-vector
 
 FROM alpine AS final
 LABEL author="Chris Lu"
@@ -78,6 +87,8 @@ COPY --from=builder /go/bin/weed /usr/bin/
 COPY --from=rust_builder /weed-volume /usr/bin/weed-volume
 # Same for the Rust maintenance worker, which serves Lance table buckets
 COPY --from=rust_builder /weed-worker /usr/bin/weed-worker
+# And the vector engine behind the S3 Vectors API
+COPY --from=rust_builder /weed-vector /usr/bin/weed-vector
 RUN mkdir -p /etc/seaweedfs
 COPY --from=builder /go/src/github.com/seaweedfs/seaweedfs/docker/filer.toml /etc/seaweedfs/filer.toml
 COPY --from=builder /go/src/github.com/seaweedfs/seaweedfs/docker/entrypoint.sh /entrypoint.sh

@@ -65,17 +65,28 @@ func (s *Server) SetRegion(region string) { s.region = region }
 // SetAccountID configures the account id embedded in the ARNs this server mints.
 func (s *Server) SetAccountID(id string) { s.accountID = id }
 
-// RegisterRoutes mounts POST / dispatching on the X-Amz-Target header and
-// POST /{Operation} for clients that route per-path. Metrics wrap Auth like the
-// S3 track middleware so rejected requests still count toward the operation.
+// SetEncryptionChecker tells CreateVectorBucket whether the gateway can
+// apply the AES256 a bucket declares.
+func (s *Server) SetEncryptionChecker(fn func() bool) { s.internal.SetEncryptionChecker(fn) }
+
+// RegisterRoutes mounts POST / dispatching on the X-Amz-Target header,
+// POST /{Operation} for clients that route per-path, and the tagging calls on
+// /tags/{resourceArn}. Metrics wrap Auth like the S3 track middleware so
+// rejected requests still count toward the operation.
 func (s *Server) RegisterRoutes(router *mux.Router) {
-	router.HandleFunc("/", s.instrument(s.Auth(s.dispatch))).Methods(http.MethodPost)
-	router.HandleFunc("/{op}", s.instrument(s.Auth(s.dispatch))).Methods(http.MethodPost)
+	handler := s.instrument(s.Auth(s.dispatch))
+	router.HandleFunc("/", handler).Methods(http.MethodPost)
+	router.HandleFunc(tagsPathPrefix+"{resourceArn:.+}", handler).Methods(http.MethodGet, http.MethodPost, http.MethodDelete)
+	router.HandleFunc("/{op}", handler).Methods(http.MethodPost)
 }
 
-// operationFromRequest resolves the operation the way dispatch does: the last
-// path segment, or the X-Amz-Target suffix when the path is bare.
+// operationFromRequest resolves the operation the way dispatch does: the
+// method on a /tags/ path, else the last path segment, or the X-Amz-Target
+// suffix when the path is bare.
 func operationFromRequest(r *http.Request) string {
+	if strings.HasPrefix(r.URL.Path, tagsPathPrefix) {
+		return tagOperation(r.Method)
+	}
 	op := strings.Trim(r.URL.Path, "/")
 	if i := strings.LastIndex(op, "/"); i >= 0 {
 		op = op[i+1:]
@@ -125,8 +136,18 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
 // Auth authenticates the caller and puts the identity in the request context.
 func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if r.ContentLength > maxRequestBodyBytes {
+			writeError(w, http.StatusBadRequest, "ValidationException", errRequestBodyTooLarge.Error())
+			return
+		}
+		r = r.WithContext(s3_constants.SetRequestBodyLimitInContext(r.Context(), maxRequestBodyBytes))
 		identity, identityObj, errCode := s.authenticator.AuthenticateRequest(r)
-		if errCode != s3err.ErrNone {
+		switch errCode {
+		case s3err.ErrNone:
+		case s3err.ErrEntityTooLarge:
+			writeError(w, http.StatusBadRequest, "ValidationException", errRequestBodyTooLarge.Error())
+			return
+		default:
 			writeError(w, http.StatusForbidden, "AccessDenied", "authentication failed")
 			return
 		}

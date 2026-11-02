@@ -7,4 +7,4 @@
 
 pub mod namespace;
 
-pub use namespace::{NamespaceClient, TableDescription, parse_id};
+pub use namespace::{NamespaceClient, SigningKey, TableDescription, parse_id};

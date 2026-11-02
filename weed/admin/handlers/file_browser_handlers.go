@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"compress/gzip"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -247,17 +248,28 @@ func (h *FileBrowserHandlers) CreateFolder(w http.ResponseWriter, r *http.Reques
 
 // UploadFile handles file upload requests
 func (h *FileBrowserHandlers) UploadFile(w http.ResponseWriter, r *http.Request) {
-	// Get the current path
+	maxSize := h.adminServer.GetUploadMaxSize()
+	if maxSize > 0 {
+		r.Body = http.MaxBytesReader(w, r.Body, maxSize+uploadFormOverhead)
+	}
+
+	// Parts beyond 32MB spill to temporary files instead of memory
+	err := r.ParseMultipartForm(32 << 20)
+	if err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			writeJSONError(w, http.StatusRequestEntityTooLarge, uploadTooLargeMessage(maxSize))
+			return
+		}
+		writeJSONError(w, http.StatusBadRequest, "Failed to parse multipart form: "+err.Error())
+		return
+	}
+	// The router hands us a copy of the request, so the server cannot remove the spooled parts itself
+	defer r.MultipartForm.RemoveAll()
+
 	currentPath := r.FormValue("path")
 	if currentPath == "" {
 		currentPath = "/"
-	}
-
-	// Parse multipart form
-	err := r.ParseMultipartForm(1 << 30) // 1GB max memory for large file uploads
-	if err != nil {
-		writeJSONError(w, http.StatusBadRequest, "Failed to parse multipart form: "+err.Error())
-		return
 	}
 
 	// Get uploaded files (supports multiple files)
@@ -265,6 +277,16 @@ func (h *FileBrowserHandlers) UploadFile(w http.ResponseWriter, r *http.Request)
 	if len(files) == 0 {
 		writeJSONError(w, http.StatusBadRequest, "No files uploaded")
 		return
+	}
+	if maxSize > 0 {
+		var totalSize int64
+		for _, fileHeader := range files {
+			totalSize += fileHeader.Size
+		}
+		if totalSize > maxSize {
+			writeJSONError(w, http.StatusRequestEntityTooLarge, uploadTooLargeMessage(maxSize))
+			return
+		}
 	}
 
 	var uploadResults []map[string]interface{}
@@ -325,6 +347,15 @@ func (h *FileBrowserHandlers) UploadFile(w http.ResponseWriter, r *http.Request)
 		response["message"] = "All file uploads failed"
 		writeJSON(w, http.StatusInternalServerError, response)
 	}
+}
+
+// uploadFormOverhead allows for the multipart headers and the path field on
+// top of the file bytes an upload may carry. Go's multipart parser accepts at
+// most 1000 parts, whose headers take about half of this.
+const uploadFormOverhead = 1 << 20
+
+func uploadTooLargeMessage(maxSize int64) string {
+	return fmt.Sprintf("Total upload size exceeds the %d MB limit", maxSize>>20)
 }
 
 // uploadFileToFiler uploads a file to the cluster via filer gRPC + volume

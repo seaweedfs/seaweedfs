@@ -2,6 +2,8 @@ package lance
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"net/http"
 	"strings"
 	"time"
@@ -12,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 )
 
 // FilerClient provides access to the filer for storage operations.
@@ -22,6 +25,8 @@ type FilerClient interface {
 type S3Authenticator interface {
 	AuthenticateRequest(r *http.Request) (string, interface{}, s3err.ErrorCode)
 	DefaultAllow() bool
+	// AuthEnabled reports whether the S3 server checks credentials at all.
+	AuthEnabled() bool
 }
 
 // CredentialValidator validates S3 access key / secret key pairs
@@ -61,6 +66,7 @@ type Server struct {
 	credentialVendor    CredentialVendor
 	s3Endpoint          string
 	s3Region            string
+	signingKey          func() security.SigningKey
 }
 
 // NewServer creates a Lance namespace server over the given filer.
@@ -87,6 +93,13 @@ func (s *Server) SetCredentialValidator(cv CredentialValidator) {
 // that ask for it with vend_credentials.
 func (s *Server) SetCredentialVendor(vendor CredentialVendor) {
 	s.credentialVendor = vendor
+}
+
+// SetSigningKey sets where to read the cluster key (jwt.filer_signing.key)
+// that a trusted caller's clusterTokenHeader is checked against. It is read on
+// every check, so a reloaded key takes effect at once.
+func (s *Server) SetSigningKey(signingKey func() security.SigningKey) {
+	s.signingKey = signingKey
 }
 
 // SetS3Endpoint configures the S3 endpoint advertised in storage_options so a
@@ -166,17 +179,27 @@ func loggingMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// authEnabled is false when the S3 server has no identities and takes any
+// signature. The catalog then takes any key too, and leaves the caller to the
+// S3 authenticator.
+func (s *Server) authEnabled() bool {
+	return s.authenticator == nil || s.authenticator.AuthEnabled()
+}
+
 // Auth authenticates the caller and puts the identity in the request context.
 // Lance clients authenticate the catalog with a Bearer token or an x-api-key
 // header; the S3 authenticator stays for callers that can SigV4-sign.
 func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if s.hasClusterToken(r) {
+			r = r.WithContext(withTrustedCaller(r.Context()))
+		}
 		// A request carrying a Bearer token is a Lance REST client. An invalid
 		// or expired token gets 401 immediately; falling through to the S3
 		// authenticator would parse the header as SigV4 and fail with a
 		// different error that clients cannot act on.
 		// The auth scheme is case-insensitive (RFC 7235).
-		if strings.HasPrefix(strings.ToLower(r.Header.Get("Authorization")), "bearer ") {
+		if s.authEnabled() && strings.HasPrefix(strings.ToLower(r.Header.Get("Authorization")), "bearer ") {
 			if identityName, identity, accessKey, secretKey, ok := s.authenticateBearerKey(r); ok {
 				ctx := r.Context()
 				ctx = s3_constants.SetIdentityNameInContext(ctx, identityName)
@@ -194,7 +217,7 @@ func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		if apiKey := r.Header.Get("x-api-key"); apiKey != "" {
+		if apiKey := r.Header.Get("x-api-key"); apiKey != "" && s.authEnabled() {
 			if identityName, identity, ok := s.authenticateApiKey(apiKey); ok {
 				accessKey, secretKey, _ := strings.Cut(apiKey, ":")
 				ctx := r.Context()
@@ -249,4 +272,47 @@ func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
 
 		handler(w, r)
 	}
+}
+
+// clusterTokenHeader carries a token signed with clusterTokenKey. The vector
+// engine and the Lance maintenance worker send it next to their identity's
+// credentials, and only they may write index data in a vector bucket.
+const clusterTokenHeader = "X-Seaweedfs-Cluster-Token"
+
+// clusterTokenKey derives the key cluster tokens are signed with from the
+// cluster key, so a token captured on its way here does not authorize the
+// admin calls that take the cluster key itself.
+func clusterTokenKey(key security.SigningKey) security.SigningKey {
+	mac := hmac.New(sha256.New, key)
+	mac.Write([]byte("seaweedfs-lance-cluster-token"))
+	return mac.Sum(nil)
+}
+
+type trustedCallerKey struct{}
+
+func withTrustedCaller(ctx context.Context) context.Context {
+	return context.WithValue(ctx, trustedCallerKey{}, true)
+}
+
+func isTrustedCaller(ctx context.Context) bool {
+	trusted, _ := ctx.Value(trustedCallerKey{}).(bool)
+	return trusted
+}
+
+// hasClusterToken reports whether the request proves it holds the cluster key.
+// Without a configured key no caller can.
+func (s *Server) hasClusterToken(r *http.Request) bool {
+	token := r.Header.Get(clusterTokenHeader)
+	if token == "" || s.signingKey == nil {
+		return false
+	}
+	key := s.signingKey()
+	if len(key) == 0 {
+		return false
+	}
+	if security.IsFilerAdminToken(clusterTokenKey(key), security.EncodedJwt(token)) {
+		return true
+	}
+	glog.V(1).Infof("lance: %s from %s is not signed with a key derived from jwt.filer_signing.key", clusterTokenHeader, r.RemoteAddr)
+	return false
 }

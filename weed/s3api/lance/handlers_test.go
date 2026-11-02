@@ -24,6 +24,14 @@ func (openAuthenticator) AuthenticateRequest(*http.Request) (string, interface{}
 
 func (openAuthenticator) DefaultAllow() bool { return true }
 
+func (openAuthenticator) AuthEnabled() bool { return false }
+
+// signedAuthenticator admits the same caller on a gateway that checks
+// credentials.
+type signedAuthenticator struct{ openAuthenticator }
+
+func (signedAuthenticator) AuthEnabled() bool { return true }
+
 type testHarness struct {
 	router *mux.Router
 	filer  *s3tablestest.MemFiler
@@ -132,6 +140,28 @@ func decode[T any](t *testing.T, recorder *httptest.ResponseRecorder) T {
 		t.Fatalf("decode %s: %v", recorder.Body.String(), err)
 	}
 	return out
+}
+
+// While the S3 port takes unsigned requests the catalog says so, and a client
+// with no credentials of its own still reaches the data. Once auth is on it
+// has to sign again.
+func TestStorageOptionsSkipSignatureOnlyWhileS3AuthIsOff(t *testing.T) {
+	h := newTestHarness(t)
+	h.createBucket(t, "open", s3tables.FormatLance)
+	h.mustDo(t, http.MethodPost, "/v1/namespace/open$ns/create", `{}`, http.StatusOK)
+
+	declared := decode[DeclareTableResponse](t,
+		h.mustDo(t, http.MethodPost, "/v1/table/open$ns$t/declare", `{}`, http.StatusOK))
+	if declared.StorageOptions["aws_skip_signature"] != "true" {
+		t.Fatalf("auth off: storage options = %v, want aws_skip_signature", declared.StorageOptions)
+	}
+
+	h.server.authenticator = signedAuthenticator{}
+	described := decode[DescribeTableResponse](t,
+		h.mustDo(t, http.MethodPost, "/v1/table/open$ns$t/describe", `{}`, http.StatusOK))
+	if _, ok := described.StorageOptions["aws_skip_signature"]; ok {
+		t.Fatalf("auth on: storage options = %v, want no aws_skip_signature", described.StorageOptions)
+	}
 }
 
 // The lifecycle a Lance client drives: create the namespace, declare the table
@@ -413,5 +443,50 @@ func TestDataPlaneIsUnsupported(t *testing.T) {
 	recorder := h.mustDo(t, http.MethodPost, "/v1/table/analytics$sales$orders/query", `{}`, http.StatusNotImplemented)
 	if got := decode[errorResponse](t, recorder); got.Code != codeUnsupported {
 		t.Fatalf("error code = %d, want %d", got.Code, codeUnsupported)
+	}
+}
+
+// createOnlyAuthenticator signs in an identity that may create and read tables
+// but not update them.
+type createOnlyAuthenticator struct{}
+
+func (createOnlyAuthenticator) AuthenticateRequest(*http.Request) (string, interface{}, s3err.ErrorCode) {
+	return "creator", &struct {
+		Name    string
+		Actions []string
+	}{Name: "creator", Actions: []string{"s3tables:CreateTable", "s3tables:GetTable"}}, s3err.ErrNone
+}
+
+func (createOnlyAuthenticator) DefaultAllow() bool { return false }
+
+func (createOnlyAuthenticator) AuthEnabled() bool { return true }
+
+// The right to create a name is the write evidence for a table the declare
+// creates, but not for one it only finds.
+func TestDeclareVendsWriteOnlyForATableItCreates(t *testing.T) {
+	h := newTestHarness(t)
+	h.createBucket(t, "lnc", s3tables.FormatLance)
+	h.mustDo(t, http.MethodPost, "/v1/namespace/lnc$ns/create", `{}`, http.StatusOK)
+	h.mustDo(t, http.MethodPost, "/v1/table/lnc$ns$theirs/declare", `{}`, http.StatusOK)
+	h.mustDo(t, http.MethodPost, "/v1/table/lnc$ns$theirs/deregister", `{}`, http.StatusOK)
+
+	server := NewServer(s3tables.NewManagerClient(h.filer.Client), createOnlyAuthenticator{})
+	server.SetCredentialVendor(recordingVendor{})
+	router := mux.NewRouter().SkipClean(true)
+	server.RegisterRoutes(router)
+	creator := &testHarness{router: router, filer: h.filer, admin: h.admin, server: server}
+
+	for _, tc := range []struct{ name, want string }{
+		{"theirs", "read-only"},
+		{"mine", "read-write"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := creator.vendedKey(t, "/v1/table/lnc$ns$"+tc.name+"/declare", ""); got != tc.want {
+				t.Errorf("vended %q, want %q", got, tc.want)
+			}
+		})
+	}
+	if h.filer.Get("/buckets/lnc/ns/theirs", deregisteredMarker) == nil {
+		t.Error("a declare that may not write the table brought it back")
 	}
 }

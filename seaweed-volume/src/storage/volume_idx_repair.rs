@@ -224,7 +224,7 @@ fn finish_walk(walk: io::Result<()>) -> Result<(), VolumeError> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::storage::needle::crc::CRC;
     use crate::storage::needle_map::NeedleMapKind;
@@ -267,7 +267,7 @@ mod tests {
     /// Reproduce the damage a delete on a tiered read-only volume used to do: it
     /// writes (key, offset 0, tombstone) rows over the front of .idx instead of
     /// appending them.
-    fn clobber_idx_head(idx_path: &str, keys: &[u64]) {
+    pub(crate) fn clobber_idx_head(idx_path: &str, keys: &[u64]) {
         let mut file = OpenOptions::new().write(true).open(idx_path).unwrap();
         for (i, key) in keys.iter().enumerate() {
             let mut row = Vec::new();

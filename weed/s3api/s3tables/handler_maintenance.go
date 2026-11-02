@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
@@ -45,12 +46,13 @@ func (h *S3TablesHandler) handlePutTableBucketMaintenanceConfiguration(w http.Re
 		return err
 	}
 
-	if _, err := h.authorizeMaintenanceBucket(r, filerClient, "PutTableBucketMaintenanceConfiguration", bucketName); err != nil {
+	_, createdAt, err := h.authorizeMaintenanceBucket(r, filerClient, "PutTableBucketMaintenanceConfiguration", bucketName)
+	if err != nil {
 		h.writeMaintenanceError(w, err, ErrCodeNoSuchBucket, fmt.Sprintf("table bucket %s not found", bucketName))
 		return err
 	}
 
-	if err := h.putMaintenanceConfiguration(r, filerClient, GetTableBucketPath(bucketName), req.Type, req.Value); err != nil {
+	if err := h.putMaintenanceConfiguration(r, filerClient, GetTableBucketPath(bucketName), req.Type, req.Value, requireTableBucketCreatedAt, createdAt); err != nil {
 		h.writeMaintenanceError(w, err, ErrCodeNoSuchBucket, fmt.Sprintf("table bucket %s not found", bucketName))
 		return err
 	}
@@ -78,7 +80,7 @@ func (h *S3TablesHandler) handleGetTableBucketMaintenanceConfiguration(w http.Re
 		return err
 	}
 
-	bucketARN, err := h.authorizeMaintenanceBucket(r, filerClient, "GetTableBucketMaintenanceConfiguration", bucketName)
+	bucketARN, _, err := h.authorizeMaintenanceBucket(r, filerClient, "GetTableBucketMaintenanceConfiguration", bucketName)
 	if err != nil {
 		h.writeMaintenanceError(w, err, ErrCodeNoSuchBucket, fmt.Sprintf("table bucket %s not found", bucketName))
 		return err
@@ -116,13 +118,14 @@ func (h *S3TablesHandler) handlePutTableMaintenanceConfiguration(w http.Response
 		return err
 	}
 
-	if _, err := h.authorizeMaintenanceTable(r, filerClient, "PutTableMaintenanceConfiguration", bucketName, namespaceName, tableName); err != nil {
+	_, createdAt, err := h.authorizeMaintenanceTable(r, filerClient, "PutTableMaintenanceConfiguration", bucketName, namespaceName, tableName)
+	if err != nil {
 		h.writeMaintenanceError(w, err, ErrCodeNoSuchTable, fmt.Sprintf("table %s not found", tableName))
 		return err
 	}
 
 	tablePath := GetTablePath(bucketName, namespaceName, tableName)
-	if err := h.putMaintenanceConfiguration(r, filerClient, tablePath, req.Type, req.Value); err != nil {
+	if err := h.putMaintenanceConfiguration(r, filerClient, tablePath, req.Type, req.Value, requireTableCreatedAt, createdAt); err != nil {
 		h.writeMaintenanceError(w, err, ErrCodeNoSuchTable, fmt.Sprintf("table %s not found", tableName))
 		return err
 	}
@@ -145,7 +148,7 @@ func (h *S3TablesHandler) handleGetTableMaintenanceConfiguration(w http.Response
 		return err
 	}
 
-	tableARN, err := h.authorizeMaintenanceTable(r, filerClient, "GetTableMaintenanceConfiguration", bucketName, namespaceName, tableName)
+	tableARN, _, err := h.authorizeMaintenanceTable(r, filerClient, "GetTableMaintenanceConfiguration", bucketName, namespaceName, tableName)
 	if err != nil {
 		h.writeMaintenanceError(w, err, ErrCodeNoSuchTable, fmt.Sprintf("table %s not found", tableName))
 		return err
@@ -181,7 +184,7 @@ func (h *S3TablesHandler) handleGetTableMaintenanceJobStatus(w http.ResponseWrit
 		return err
 	}
 
-	tableARN, err := h.authorizeMaintenanceTable(r, filerClient, "GetTableMaintenanceJobStatus", bucketName, namespaceName, tableName)
+	tableARN, _, err := h.authorizeMaintenanceTable(r, filerClient, "GetTableMaintenanceJobStatus", bucketName, namespaceName, tableName)
 	if err != nil {
 		h.writeMaintenanceError(w, err, ErrCodeNoSuchTable, fmt.Sprintf("table %s not found", tableName))
 		return err
@@ -253,17 +256,24 @@ func buildJobStatusResponse(recorded MaintenanceJobStatus, config MaintenanceCon
 // putMaintenanceConfiguration merges one maintenance type into the stored
 // configuration, leaving the other types alone. The write checks the catalog
 // identity in the same conditional mutation, so it cannot land on a name a
-// concurrent rename or delete has already soft-deleted.
+// concurrent rename or delete has already soft-deleted. sameRecord refuses a
+// record other than the one created at createdAt, which the caller was
+// authorized against.
 func (h *S3TablesHandler) putMaintenanceConfiguration(
 	r *http.Request,
 	filerClient FilerClient,
 	resourcePath, maintenanceType string,
 	value *MaintenanceConfigurationValue,
+	sameRecord func(extended map[string][]byte, path string, createdAt time.Time) error,
+	createdAt time.Time,
 ) error {
 	return filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		return h.mutateCatalogRecord(r.Context(), client, resourcePath, func(extended map[string][]byte) error {
 			if len(extended[ExtendedKeyMetadata]) == 0 {
 				return fmt.Errorf("%w: %s", filer_pb.ErrNotFound, resourcePath)
+			}
+			if err := sameRecord(extended, resourcePath, createdAt); err != nil {
+				return err
 			}
 
 			config := MaintenanceConfiguration{}
@@ -325,8 +335,9 @@ func (h *S3TablesHandler) parseTableTarget(tableBucketARN string, namespace []st
 }
 
 // authorizeMaintenanceBucket checks the caller may perform operation on the
-// table bucket, returning the bucket ARN.
-func (h *S3TablesHandler) authorizeMaintenanceBucket(r *http.Request, filerClient FilerClient, operation, bucketName string) (string, error) {
+// table bucket, returning the bucket ARN and the creation time of the bucket
+// record the check read.
+func (h *S3TablesHandler) authorizeMaintenanceBucket(r *http.Request, filerClient FilerClient, operation, bucketName string) (string, time.Time, error) {
 	bucketPath := GetTableBucketPath(bucketName)
 
 	var bucketMetadata tableBucketMetadata
@@ -343,7 +354,7 @@ func (h *S3TablesHandler) authorizeMaintenanceBucket(r *http.Request, filerClien
 		return err
 	})
 	if err != nil {
-		return "", err
+		return "", time.Time{}, err
 	}
 
 	bucketARN := h.generateTableBucketARN(bucketMetadata.OwnerAccountID, bucketName)
@@ -355,15 +366,16 @@ func (h *S3TablesHandler) authorizeMaintenanceBucket(r *http.Request, filerClien
 		IdentityActions:  getIdentityActions(r),
 		DefaultAllow:     h.defaultAllowFor(r),
 	}) {
-		return "", NewAuthError(operation, principal, "not authorized to "+operation)
+		return "", time.Time{}, NewAuthError(operation, principal, "not authorized to "+operation)
 	}
 
-	return bucketARN, nil
+	return bucketARN, bucketMetadata.CreatedAt, nil
 }
 
 // authorizeMaintenanceTable checks the caller may perform operation on the
-// table, returning the table ARN.
-func (h *S3TablesHandler) authorizeMaintenanceTable(r *http.Request, filerClient FilerClient, operation, bucketName, namespaceName, tableName string) (string, error) {
+// table, returning the table ARN and the creation time of the table record the
+// check read.
+func (h *S3TablesHandler) authorizeMaintenanceTable(r *http.Request, filerClient FilerClient, operation, bucketName, namespaceName, tableName string) (string, time.Time, error) {
 	tablePath := GetTablePath(bucketName, namespaceName, tableName)
 	bucketPath := GetTableBucketPath(bucketName)
 
@@ -391,7 +403,7 @@ func (h *S3TablesHandler) authorizeMaintenanceTable(r *http.Request, filerClient
 		return err
 	})
 	if err != nil {
-		return "", err
+		return "", time.Time{}, err
 	}
 
 	tableARN := h.generateTableARN(metadata.OwnerAccountID, bucketName, namespaceName+"/"+tableName)
@@ -409,10 +421,10 @@ func (h *S3TablesHandler) authorizeMaintenanceTable(r *http.Request, filerClient
 	}
 	if deniedByPolicy(operation, principal, tablePolicy, tableARN, ctx) ||
 		!CheckPermissionWithContext(operation, principal, metadata.OwnerAccountID, bucketPolicy, tableARN, ctx) {
-		return "", NewAuthError(operation, principal, "not authorized to "+operation)
+		return "", time.Time{}, NewAuthError(operation, principal, "not authorized to "+operation)
 	}
 
-	return tableARN, nil
+	return tableARN, metadata.CreatedAt, nil
 }
 
 // readPolicy returns the policy stored on path, or an empty string when the

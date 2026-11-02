@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,6 +19,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables/s3tablestest"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // fakeVectors serves a fixed row set with the engine's offset-token paging
@@ -352,19 +355,26 @@ func TestResolveIndexARNs(t *testing.T) {
 }
 
 func TestTranslateFilter(t *testing.T) {
+	str := "json_extract(`metadata`, '$[\"k\"]')"
+	num := "TRY_CAST(json_extract(`metadata`, '$[\"k\"]') AS DOUBLE)"
+	elem := func(value string) string {
+		return "COALESCE(json_array_contains(`metadata`, '$[\"k\"]', '" + value + "'), false)"
+	}
 	cases := []struct {
 		name   string
 		filter map[string]interface{}
 		want   string
 	}{
 		{"bare string equality", map[string]interface{}{"k": "v"},
-			"json_extract(`metadata`, '$[\"k\"]') = '\"v\"'"},
+			"(COALESCE(" + str + " = '\"v\"', false) OR " + elem(`"v"`) + ")"},
 		{"bare number equality", map[string]interface{}{"k": float64(3)},
-			"TRY_CAST(json_extract(`metadata`, '$[\"k\"]') AS DOUBLE) = 3"},
+			"(COALESCE(" + num + " = 3, false) OR " + elem("3") + ")"},
 		{"bare bool equality", map[string]interface{}{"k": true},
-			"json_extract(`metadata`, '$[\"k\"]') = 'true'"},
+			"(COALESCE(" + str + " = 'true', false) OR " + elem("true") + ")"},
+		{"eq fraction", map[string]interface{}{"k": map[string]interface{}{"$eq": float64(2.5)}},
+			"(COALESCE(" + num + " = 2.5, false) OR " + elem("2.5") + ")"},
 		{"ne", map[string]interface{}{"k": map[string]interface{}{"$ne": "v"}},
-			"NOT COALESCE(json_extract(`metadata`, '$[\"k\"]') = '\"v\"', false)"},
+			"NOT (COALESCE(" + str + " = '\"v\"', false) OR " + elem(`"v"`) + ")"},
 		{"exists true", map[string]interface{}{"k": map[string]interface{}{"$exists": true}},
 			"json_exists(`metadata`, '$[\"k\"]')"},
 		{"exists false", map[string]interface{}{"k": map[string]interface{}{"$exists": false}},
@@ -372,19 +382,23 @@ func TestTranslateFilter(t *testing.T) {
 		{"exists special key", map[string]interface{}{`a.b"c`: map[string]interface{}{"$exists": true}},
 			"json_exists(`metadata`, '$[\"a.b\\\"c\"]')"},
 		{"range", map[string]interface{}{"k": map[string]interface{}{"$gt": float64(1)}},
-			"TRY_CAST(json_extract(`metadata`, '$[\"k\"]') AS DOUBLE) > 1"},
+			num + " > 1"},
 		{"in strings", map[string]interface{}{"k": map[string]interface{}{"$in": []interface{}{"a", "b"}}},
-			"(COALESCE(json_extract(`metadata`, '$[\"k\"]') in ('\"a\"', '\"b\"'), false))"},
+			"(COALESCE(" + str + " in ('\"a\"', '\"b\"'), false) OR " + elem(`"a"`) + " OR " + elem(`"b"`) + ")"},
 		{"nin numbers", map[string]interface{}{"k": map[string]interface{}{"$nin": []interface{}{float64(1)}}},
-			"NOT (COALESCE(TRY_CAST(json_extract(`metadata`, '$[\"k\"]') AS DOUBLE) in (1), false))"},
+			"NOT (COALESCE(" + num + " in (1), false) OR " + elem("1") + ")"},
 		{"in mixed types", map[string]interface{}{"k": map[string]interface{}{"$in": []interface{}{"a", float64(1), true, float64(2)}}},
-			"(COALESCE(json_extract(`metadata`, '$[\"k\"]') in ('\"a\"', 'true'), false) OR COALESCE(TRY_CAST(json_extract(`metadata`, '$[\"k\"]') AS DOUBLE) in (1, 2), false))"},
+			"(COALESCE(" + str + " in ('\"a\"', 'true'), false) OR COALESCE(" + num + " in (1, 2), false) OR " +
+				elem(`"a"`) + " OR " + elem("1") + " OR " + elem("true") + " OR " + elem("2") + ")"},
 		{"and", map[string]interface{}{"$and": []interface{}{
 			map[string]interface{}{"a": "1"}, map[string]interface{}{"b": float64(2)},
 		}},
-			"(json_extract(`metadata`, '$[\"a\"]') = '\"1\"' AND TRY_CAST(json_extract(`metadata`, '$[\"b\"]') AS DOUBLE) = 2)"},
+			"((COALESCE(json_extract(`metadata`, '$[\"a\"]') = '\"1\"', false) OR COALESCE(json_array_contains(`metadata`, '$[\"a\"]', '\"1\"'), false)) AND " +
+				"(COALESCE(TRY_CAST(json_extract(`metadata`, '$[\"b\"]') AS DOUBLE) = 2, false) OR COALESCE(json_array_contains(`metadata`, '$[\"b\"]', '2'), false)))"},
 		{"sql injection", map[string]interface{}{"a'b": "v'1"},
-			"json_extract(`metadata`, '$[\"a''b\"]') = '\"v''1\"'"},
+			"(COALESCE(json_extract(`metadata`, '$[\"a''b\"]') = '\"v''1\"', false) OR COALESCE(json_array_contains(`metadata`, '$[\"a''b\"]', '\"v''1\"'), false))"},
+		{"array value escapes", map[string]interface{}{"k": `<a&"b">`},
+			"(COALESCE(" + str + ` = '"<a&\"b\">"', false) OR ` + elem(`"<a&\"b\">"`) + ")"},
 	}
 	for _, tc := range cases {
 		got, err := translateFilter(tc.filter)
@@ -692,6 +706,32 @@ func TestValidateEncryptionConfigurationRejectsCustomerKeys(t *testing.T) {
 	}
 }
 
+// The gateway applies a vector bucket's AES256 to every index write, so a
+// gateway without an SSE-S3 key refuses the bucket instead of failing each
+// later write.
+func TestCreateVectorBucketNeedsSSES3ForAES256(t *testing.T) {
+	fs := s3tablestest.Start(t)
+	s := NewServer(s3tables.NewManagerClient(fs.Client), allowAllAuth{}, newFakeVectors(0))
+	keyLoaded := false
+	s.SetEncryptionChecker(func() bool { return keyLoaded })
+	aes := map[string]interface{}{"sseType": "AES256"}
+
+	w := postJSON(t, s.handleCreateVectorBucket, &CreateVectorBucketRequest{VectorBucketName: "sealed", EncryptionConfiguration: aes})
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "ValidationException") || !strings.Contains(w.Body.String(), "s3.sse.key") {
+		t.Fatalf("AES256 without a key: %d %s, want 400 ValidationException naming s3.sse.key", w.Code, w.Body.String())
+	}
+	if w := postJSON(t, s.handleGetVectorBucket, &GetVectorBucketRequest{VectorBucketName: "sealed"}); w.Code != http.StatusNotFound {
+		t.Fatalf("refused bucket exists: %d %s", w.Code, w.Body.String())
+	}
+	if w := postJSON(t, s.handleCreateVectorBucket, &CreateVectorBucketRequest{VectorBucketName: "plain"}); w.Code != http.StatusOK {
+		t.Fatalf("unencrypted bucket without a key: %d %s", w.Code, w.Body.String())
+	}
+	keyLoaded = true
+	if w := postJSON(t, s.handleCreateVectorBucket, &CreateVectorBucketRequest{VectorBucketName: "sealed", EncryptionConfiguration: aes}); w.Code != http.StatusOK {
+		t.Fatalf("AES256 with a key: %d %s", w.Code, w.Body.String())
+	}
+}
+
 // A vector index is colocated: its catalog entry sits at the dataset root, so
 // the catalog delete removes entry and data together.
 func TestDeleteIndexRemovesDatasetDirectory(t *testing.T) {
@@ -981,5 +1021,85 @@ func TestVectorKeysBoundsRejectsBeforeEngine(t *testing.T) {
 	}
 	if len(f.gets)+len(f.deletes) != 0 {
 		t.Fatalf("engine saw %d get/%d delete calls, want none", len(f.gets), len(f.deletes))
+	}
+}
+
+// Two indexes created at once in a new bucket both declare the implicit
+// namespace. One create takes over the other's namespace while it is still
+// marked unfinished, so the other's confirmation fails; its index is created
+// all the same.
+func TestCreateIndexSurvivesAConcurrentNamespaceCreate(t *testing.T) {
+	fs := s3tablestest.Start(t)
+	s := NewServer(s3tables.NewManagerClient(fs.Client), allowAllAuth{}, newFakeVectors(0))
+	if w := postJSON(t, s.handleCreateVectorBucket, &CreateVectorBucketRequest{VectorBucketName: "vec-bucket"}); w.Code != http.StatusOK {
+		t.Fatalf("create bucket: %d %s", w.Code, w.Body.String())
+	}
+	bucketPath := s3tables.GetTableBucketPath("vec-bucket")
+	reached := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseFirst := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(releaseFirst)
+	held := false
+	// Hold the first create where it confirms the bucket after writing the namespace.
+	fs.OnLookup = func(dir, name string) {
+		if held || dir != s3tables.TablesPath || name != "vec-bucket" {
+			return
+		}
+		ns := fs.Get(bucketPath, indexNamespace)
+		if ns == nil || string(ns.Extended[s3tables.ExtendedKeyDeleting]) != "create" {
+			return
+		}
+		held = true
+		close(reached)
+		<-release
+	}
+	createIndex := func(name string) *httptest.ResponseRecorder {
+		return postJSON(t, s.handleCreateIndex, &CreateIndexRequest{
+			VectorBucketName: "vec-bucket", IndexName: name, DataType: "float32", Dimension: 2, DistanceMetric: "cosine",
+		})
+	}
+	first := make(chan *httptest.ResponseRecorder, 1)
+	go func() { first <- createIndex("first") }()
+	select {
+	case <-reached:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the first create never wrote an unfinished namespace")
+	}
+
+	if w := createIndex("second"); w.Code != http.StatusOK {
+		t.Fatalf("second create index: %d %s", w.Code, w.Body.String())
+	}
+	releaseFirst()
+	if w := <-first; w.Code != http.StatusOK {
+		t.Fatalf("first create index: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestVectorErrKeepsEngineDetailsOutOfTheResponse(t *testing.T) {
+	arns := vectorBucketARNs{bucket: "media", index: "movies"}
+	for _, tc := range []struct {
+		err         error
+		wantStatus  int
+		wantCode    string
+		wantMessage string
+	}{
+		{status.Error(codes.Internal, "declare: 500 from http://10.0.0.5:8888/lance/v1/table/media$vector$movies/declare"),
+			http.StatusInternalServerError, "InternalFailure", internalErrorMessage},
+		{status.Error(codes.Unavailable, "no weed-vector registered on master"),
+			http.StatusServiceUnavailable, "ServiceUnavailableException", "vector service unavailable"},
+		{status.Error(codes.InvalidArgument, "vector has dimension 2, index has 3"),
+			http.StatusBadRequest, "ValidationException", "vector has dimension 2, index has 3"},
+	} {
+		rec := httptest.NewRecorder()
+		vectorErr(rec, httptest.NewRequest(http.MethodPost, "/PutVectors", nil), arns, tc.err)
+		var body map[string]string
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if rec.Code != tc.wantStatus || body["code"] != tc.wantCode || body["message"] != tc.wantMessage {
+			t.Errorf("%v: got %d %s %q, want %d %s %q", status.Code(tc.err), rec.Code, body["code"], body["message"],
+				tc.wantStatus, tc.wantCode, tc.wantMessage)
+		}
 	}
 }

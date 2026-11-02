@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -46,28 +47,58 @@ func (m *Manager) SetTrusted(trusted bool) {
 	m.handler.SetTrusted(trusted)
 }
 
-// PrincipalFor maps a forwarded identity name onto the account the catalog
-// would charge the request to: a synthesized request resolves its identity
-// name through getAccountID's name branch — normalized like any principal —
-// and an empty name falls back to the handler's account ID.
-func (m *Manager) PrincipalFor(identity string) string {
-	if principal := normalizePrincipalID(identity); principal != "" {
-		return principal
+// SetEncryptionChecker sets the handler's SSE-S3 availability predicate.
+func (m *Manager) SetEncryptionChecker(fn func() bool) {
+	m.handler.SetEncryptionChecker(fn)
+}
+
+// PrincipalFor resolves the caller of r the way the catalog's handlers do,
+// so it matches the owner CreateTableBucket records. A nil request is the
+// handler's account ID.
+func (m *Manager) PrincipalFor(r *http.Request) string {
+	if r == nil {
+		return m.handler.accountID
 	}
-	return m.handler.accountID
+	return m.handler.getAccountID(r)
 }
 
 // PolicyContext builds the evaluation context a Manager call's synthesized
 // request produces: the configured local-account predicate, the caller's own
 // identity actions so admin and action grants resolve on privileges rather
 // than the forwarded name, plus the open-by-default fallback only for a
-// trusted caller or no resolved identity.
-func (m *Manager) PolicyContext(r *http.Request) *PolicyContext {
-	ctx := &PolicyContext{IsLocalAccountID: m.handler.localAccountIDs, IdentityActions: getIdentityActions(r)}
+// trusted caller or no resolved identity. A non-empty bucket lets an identity
+// action scoped to that bucket apply, as the handlers do.
+func (m *Manager) PolicyContext(r *http.Request, bucket string) *PolicyContext {
+	ctx := &PolicyContext{IsLocalAccountID: m.handler.localAccountIDs, IdentityActions: getIdentityActions(r),
+		TrustedIssuers: m.handler.trustedIssuers(r), TableBucketName: bucket}
 	if m.handler.trusted || (m.handler.defaultAllow && s3_constants.GetIdentityNameFromContext(r) == "") {
 		ctx.DefaultAllow = true
 	}
 	return ctx
+}
+
+type tableBucketCreatedAtKey struct{}
+
+// WithTableBucketCreatedAt binds a DeleteTableBucket, CreateNamespace,
+// DeleteNamespace, CreateTable, DeleteTable or tag operation run through
+// Execute to the bucket created at createdAt, so a caller that authorized the
+// bucket itself never writes into one created again under its name.
+// In-process only: no wire request can carry it.
+func WithTableBucketCreatedAt(ctx context.Context, createdAt time.Time) context.Context {
+	return context.WithValue(ctx, tableBucketCreatedAtKey{}, createdAt)
+}
+
+// boundTableBucket returns the bucket creation time ctx binds the request to.
+func boundTableBucket(ctx context.Context) (time.Time, bool) {
+	createdAt, ok := ctx.Value(tableBucketCreatedAtKey{}).(time.Time)
+	return createdAt, ok
+}
+
+// otherTableBucket reports whether ctx binds the request to a bucket other
+// than the one created at createdAt.
+func otherTableBucket(ctx context.Context, createdAt time.Time) bool {
+	want, ok := boundTableBucket(ctx)
+	return ok && !createdAt.Equal(want)
 }
 
 // Execute runs an S3 Tables operation and decodes the response into resp (if provided).

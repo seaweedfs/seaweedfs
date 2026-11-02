@@ -6,6 +6,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3vectors"
 )
 
 templ S3TablesBuckets(data dash.S3TablesBucketsData) {
@@ -160,6 +161,9 @@ templ S3TablesBuckets(data dash.S3TablesBucketsData) {
 											<td>{ bucket.Name }</td>
 											<td>
 												<span class={ formatBadgeClass(bucket.Format) } title={ formatBadgeTitle(bucket.Format) }>{ formatLabel(bucket.Format) }</span>
+												if s3vectors.IsVectorBucketFormat(bucket.Format) {
+													<a class="ms-1 small" href={ dash.PUrl(ctx, "/object-store/vector-buckets/"+url.PathEscape(bucket.Name)) } title="This bucket's S3 Vectors indexes and policy">vector bucket</a>
+												}
 											</td>
 											<td>{ bucket.OwnerAccountID }</td>
 											<td class="text-muted small">{ bucket.ARN }</td>

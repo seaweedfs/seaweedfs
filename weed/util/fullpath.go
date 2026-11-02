@@ -76,6 +76,15 @@ func (fp FullPath) IsLongerFileName(maxFilenameLength uint32) bool {
 	return uint32(len([]byte(fp.Name()))) > maxFilenameLength
 }
 
+func (fp FullPath) HasDotSegment() bool {
+	for _, seg := range strings.Split(string(fp), "/") {
+		if seg == "." || seg == ".." {
+			return true
+		}
+	}
+	return false
+}
+
 func (fp FullPath) Child(name string) FullPath {
 	dir := string(fp)
 	noPrefix := name

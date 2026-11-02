@@ -778,6 +778,13 @@ func (km *SSES3KeyManager) StoreKey(key *SSES3Key) {
 	// The DEK is encrypted with the super key and stored in object metadata
 }
 
+// IsConfigured reports whether a KEK is loaded, i.e. SSE-S3 can encrypt.
+func (km *SSES3KeyManager) IsConfigured() bool {
+	km.mu.RLock()
+	defer km.mu.RUnlock()
+	return len(km.superKey) > 0
+}
+
 // GetMasterKey returns a derived key from the master KEK for STS signing
 // This uses HKDF to isolate the STS security domain from the SSE-S3 domain
 func (km *SSES3KeyManager) GetMasterKey() []byte {

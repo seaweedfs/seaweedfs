@@ -512,6 +512,25 @@ func TestUpdateRefusedOnAMarkedRecord(t *testing.T) {
 	assert.Equal(t, ErrCodeNoSuchTable, resp.Type)
 }
 
+// DeleteTablePolicy refuses a marked record the same way: the policy it would
+// remove sits on an entry every reader reports absent.
+func TestDeleteTablePolicyRefusedOnAMarkedRecord(t *testing.T) {
+	fs, m := startTableT(t, map[string][]byte{ExtendedKeyPolicy: []byte(bindTestPolicy)})
+	nsPath := GetNamespacePath(renameTestBucket, "ns")
+	fs.BeforeUpdate = func() { plantCreateMark(fs, nsPath, "t") }
+
+	status, resp := runHandler(t, m, fs.Client, "DeleteTablePolicy", &DeleteTablePolicyRequest{
+		TableBucketARN: mustBucketARN(t),
+		Namespace:      []string{"ns"},
+		Name:           "t",
+	})
+	assert.Equal(t, http.StatusNotFound, status, "%+v", resp)
+	assert.Equal(t, ErrCodeNoSuchTable, resp.Type)
+	extended := fs.Get(nsPath, "t").Extended
+	assert.Equal(t, []byte(bindTestPolicy), extended[ExtendedKeyPolicy], "the refused delete keeps the policy")
+	assert.Equal(t, []byte(createClaim), extended[ExtendedKeyDeleting], "and leaves the create's mark for its back-out")
+}
+
 // A rename into a namespace a delete claimed is refused before it touches the
 // source: the destination cannot be confirmed, so the name must stay where it
 // was.
@@ -645,6 +664,22 @@ func TestDeleteNamespaceWithTableLiftsItsClaim(t *testing.T) {
 			assert.NotContains(t, created.Extended, ExtendedKeyDeleting, "a finished create must lift its unfinished mark")
 		})
 	}
+}
+
+// A claim the delete fails to lift refuses every create in the namespace, so a
+// release the filer turns away once is retried.
+func TestDeleteNamespaceRetriesTheClaimRelease(t *testing.T) {
+	fs, m := startRenameManager(t)
+	bucketPath := GetTableBucketPath(renameTestBucket)
+	before := fs.Get(bucketPath, "ns").Extended
+	client := &failClaimReleaseClient{SeaweedFilerClient: fs.Client, target: GetNamespacePath(renameTestBucket, "ns")}
+
+	code, resp := runHandler(t, m, client, "DeleteNamespace", deleteNamespaceRequest(t))
+
+	assert.Equal(t, http.StatusConflict, code, "%+v", resp)
+	assert.Equal(t, ErrCodeNamespaceNotEmpty, resp.Type, "%+v", resp)
+	require.Equal(t, 1, client.failed, "the first release has to fail")
+	assert.Equal(t, before, fs.Get(bucketPath, "ns").Extended, "a later attempt lifts the claim")
 }
 
 // orphanMarkedRecord plants what a create that crashed after writing its

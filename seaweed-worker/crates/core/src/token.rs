@@ -33,9 +33,26 @@ pub fn admin_token(signing_key: &[u8], expires_after_secs: u64) -> Option<String
     ))
 }
 
+/// Derives the key for one use of a signing key, so a token signed with it is
+/// not accepted where the signing key itself is.
+pub fn derive_key(signing_key: &[u8], purpose: &str) -> Vec<u8> {
+    let key = hmac::Key::new(hmac::HMAC_SHA256, signing_key);
+    hmac::sign(&key, purpose.as_bytes()).as_ref().to_vec()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::admin_token;
+    use super::{admin_token, derive_key};
+
+    #[test]
+    fn derive_key_matches_the_go_derivation() {
+        let derived = derive_key(b"cluster-key", "seaweedfs-lance-cluster-token");
+        let hex: String = derived.iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(
+            hex,
+            "b38c0b66da41621f2a9b6de68e4239ddd0d2dd7b4ede01aa91bd34a17edc1021"
+        );
+    }
 
     #[test]
     fn no_key_no_token() {

@@ -76,6 +76,7 @@ type S3TablesHandler struct {
 	trusted         bool // Trusted local tooling (shell/admin) bypasses authorization
 	iamAuthorizer   IAMAuthorizer
 	localAccountIDs func(string) bool
+	canEncrypt      func() bool
 }
 
 // NewS3TablesHandler creates a new S3 Tables handler
@@ -117,6 +118,13 @@ func (h *S3TablesHandler) SetTrusted(trusted bool) {
 // re-anchored to an OIDC subject.
 func (h *S3TablesHandler) SetLocalAccountChecker(fn func(string) bool) {
 	h.localAccountIDs = fn
+}
+
+// SetEncryptionChecker injects the predicate that tells whether the gateway
+// holds an SSE-S3 key, so a bucket whose declared AES256 the write path
+// applies is not created where every write would then fail.
+func (h *S3TablesHandler) SetEncryptionChecker(fn func() bool) {
+	h.canEncrypt = fn
 }
 
 // FilerClient interface for filer operations

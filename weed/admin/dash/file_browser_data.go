@@ -53,6 +53,8 @@ type FileBrowserData struct {
 	HasNextPage         bool   `json:"has_next_page"`
 	LastFileName        string `json:"last_file_name"`         // Cursor for next page
 	CurrentLastFileName string `json:"current_last_file_name"` // Cursor from current request (for page size changes)
+
+	UploadMaxSize int64 `json:"upload_max_size"`
 }
 
 // GetFileBrowser retrieves file browser data for a given path with cursor-based
@@ -240,6 +242,8 @@ func (s *AdminServer) GetFileBrowser(dir string, prefix string, lastFileName str
 		HasNextPage:         hasNextPage,
 		LastFileName:        lastEntryName, // Store for next page navigation
 		CurrentLastFileName: lastFileName,  // Store input cursor for page size changes
+
+		UploadMaxSize: s.uploadMaxSize,
 	}, nil
 }
 

@@ -501,6 +501,10 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, existing *Entry, 
 		return filer_pb.ErrEntryNameTooLong
 	}
 
+	if entry.FullPath.HasDotSegment() {
+		return fmt.Errorf("invalid path %s", entry.FullPath)
+	}
+
 	if entry.IsDirectory() {
 		entry.Attr.TtlSec = 0
 	}
@@ -794,6 +798,9 @@ func (f *Filer) EnsureDirectoryEntry(ctx context.Context, dirPath util.FullPath,
 }
 
 func (f *Filer) UpdateEntry(ctx context.Context, oldEntry, entry *Entry, isFromOtherCluster bool) (err error) {
+	if entry.FullPath.HasDotSegment() {
+		return fmt.Errorf("invalid path %s", entry.FullPath)
+	}
 	ctx = f.syncWriteContext(ctx, entry.FullPath)
 	if oldEntry != nil {
 		entry.Attr.Crtime = oldEntry.Attr.Crtime

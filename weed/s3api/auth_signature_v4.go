@@ -25,6 +25,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -74,22 +75,19 @@ func streamHashRequestBody(r *http.Request, sizeLimit int64) (string, error) {
 		return emptySHA256, nil
 	}
 
-	limitedReader := io.LimitReader(r.Body, sizeLimit)
-	hasher := sha256.New()
-	var bodyBuffer bytes.Buffer
-
-	// Use io.Copy with an io.MultiWriter to hash and buffer the body simultaneously.
-	if _, err := io.Copy(io.MultiWriter(hasher, &bodyBuffer), limitedReader); err != nil {
+	body, err := readRequestBody(r, sizeLimit)
+	if err != nil {
 		return "", err
 	}
 
-	r.Body = io.NopCloser(bytes.NewReader(bodyBuffer.Bytes()))
+	r.Body = io.NopCloser(bytes.NewReader(body))
 
-	if bodyBuffer.Len() == 0 {
+	if len(body) == 0 {
 		return emptySHA256, nil
 	}
 
-	return hex.EncodeToString(hasher.Sum(nil)), nil
+	sum := sha256.Sum256(body)
+	return hex.EncodeToString(sum[:]), nil
 }
 
 // getContentSha256Cksum retrieves the "x-amz-content-sha256" header value.
@@ -374,35 +372,29 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 	if trustedPeer {
 		forwardedPrefix = r.Header.Get("X-Forwarded-Prefix")
 	}
+	// 9. Candidate paths: the escaped path as sent, then the decoded path that
+	// an S3 client encodes once when signing; each with the forwarded prefix first.
+	signaturePaths := []string{pathForSignature}
+	if decodedPath, decodeErr := url.PathUnescape(pathForSignature); decodeErr == nil && decodedPath != pathForSignature {
+		signaturePaths = append(signaturePaths, decodedPath)
+	}
+	if forwardedPrefix != "" {
+		prefixedPaths := make([]string, 0, 2*len(signaturePaths))
+		for _, p := range signaturePaths {
+			prefixedPaths = append(prefixedPaths, buildPathWithForwardedPrefix(forwardedPrefix, p))
+		}
+		signaturePaths = append(prefixedPaths, signaturePaths...)
+	}
 	var matchedHost string
+hostCandidates:
 	for i, hostCandidate := range extractHostHeaderCandidates(r, iam.externalHost) {
 		if i > 0 && !replaceSignedHostHeader(extractedSignedHeaders, hostCandidate) {
 			break
 		}
-
-		// 9. Verify with the X-Forwarded-Prefix path first
-		if forwardedPrefix != "" {
-			cleanedPath := buildPathWithForwardedPrefix(forwardedPrefix, pathForSignature)
-			calculatedSignature, errCode = verify(cleanedPath)
-			if errCode == s3err.ErrNone {
+		for _, p := range signaturePaths {
+			if calculatedSignature, errCode = verify(p); errCode == s3err.ErrNone {
 				matchedHost = hostCandidate
-				break
-			}
-		}
-
-		// 10. Verify with the original path
-		calculatedSignature, errCode = verify(pathForSignature)
-		if errCode == s3err.ErrNone {
-			matchedHost = hostCandidate
-			break
-		}
-
-		// 11. Retry with decoded path if signature used raw path encoding
-		if decodedPath, decodeErr := url.PathUnescape(pathForSignature); decodeErr == nil && decodedPath != pathForSignature {
-			calculatedSignature, errCode = verify(decodedPath)
-			if errCode == s3err.ErrNone {
-				matchedHost = hostCandidate
-				break
+				break hostCandidates
 			}
 		}
 	}
@@ -661,8 +653,12 @@ func extractV4AuthInfoFromHeader(r *http.Request) (*v4AuthInfo, s3err.ErrorCode)
 
 	hashedPayload := getContentSha256Cksum(r)
 	if signV4Values.Credential.scope.service != "s3" && hashedPayload == emptySHA256 && r.Body != nil {
+		sizeLimit := s3_constants.GetRequestBodyLimitFromContext(r, iamRequestBodyLimit)
 		var hashErr error
-		hashedPayload, hashErr = streamHashRequestBody(r, iamRequestBodyLimit)
+		hashedPayload, hashErr = streamHashRequestBody(r, sizeLimit)
+		if errors.Is(hashErr, errRequestBodyTooLarge) {
+			return nil, s3err.ErrEntityTooLarge
+		}
 		if hashErr != nil {
 			return nil, s3err.ErrInternalError
 		}

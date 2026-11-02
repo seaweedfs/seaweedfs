@@ -1,6 +1,7 @@
 package s3tables
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -85,7 +86,9 @@ func (h *S3TablesHandler) handleCreateView(w http.ResponseWriter, r *http.Reques
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create view in this namespace")
 		return ErrAccessDenied
 	}
-	if err := h.refuseClaimedNamespace(w, r, filerClient, namespacePath, namespaceName); err != nil {
+	// The view is bound to the namespace record it was authorized against.
+	isNamespace := isNamespaceCreatedAt(namespaceMetadata.CreatedAt)
+	if err := h.refuseClaimedNamespace(w, r, filerClient, namespacePath, namespaceName, isNamespace); err != nil {
 		return err
 	}
 
@@ -169,7 +172,7 @@ func (h *S3TablesHandler) handleCreateView(w http.ResponseWriter, r *http.Reques
 		if err := h.claimCatalogEntry(r.Context(), client, viewPath, attrs); err != nil {
 			return err
 		}
-		return h.confirmParent(r.Context(), client, namespacePath, isNamespaceEntry, viewPath, attrs, viewPath)
+		return h.confirmParent(r.Context(), client, namespacePath, isNamespace, viewPath, attrs, viewPath)
 	})
 	if err != nil {
 		if errors.Is(err, ErrNameTaken) {
@@ -432,14 +435,17 @@ func (h *S3TablesHandler) listViewsInNamespace(r *http.Request, client filer_pb.
 }
 
 // updateViewTarget is the view state an update was authorized against: the
-// metadata the version-token check reads and the fields the response echoes.
+// metadata the version-token check reads, the stored values the
+// optimistic-concurrency check compares and the fields the response echoes.
 type updateViewTarget struct {
-	bucketName    string
-	namespaceName string
-	viewName      string
-	viewPath      string
-	viewARN       string
-	metadata      tableMetadataInternal
+	bucketName     string
+	namespaceName  string
+	viewName       string
+	viewPath       string
+	viewARN        string
+	metadata       tableMetadataInternal
+	storedMetadata []byte
+	storedPolicy   []byte
 }
 
 // authorizeUpdateView validates the names an update names, loads the view and
@@ -460,6 +466,7 @@ func (h *S3TablesHandler) authorizeUpdateView(w http.ResponseWriter, r *http.Req
 
 	viewPath := GetTablePath(bucketName, namespaceName, viewName)
 	var metadata tableMetadataInternal
+	var storedMetadata []byte
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		entry, err := h.lookupEntry(r.Context(), client, viewPath)
 		if err != nil {
@@ -472,6 +479,7 @@ func (h *S3TablesHandler) authorizeUpdateView(w http.ResponseWriter, r *http.Req
 		if !ok {
 			return fmt.Errorf("%w: %w: %s", filer_pb.ErrNotFound, ErrAttributeNotFound, ExtendedKeyMetadata)
 		}
+		storedMetadata = data
 		return json.Unmarshal(data, &metadata)
 	})
 	if err != nil {
@@ -496,12 +504,14 @@ func (h *S3TablesHandler) authorizeUpdateView(w http.ResponseWriter, r *http.Req
 	}
 
 	return &updateViewTarget{
-		bucketName:    bucketName,
-		namespaceName: namespaceName,
-		viewName:      viewName,
-		viewPath:      viewPath,
-		viewARN:       viewARN,
-		metadata:      metadata,
+		bucketName:     bucketName,
+		namespaceName:  namespaceName,
+		viewName:       viewName,
+		viewPath:       viewPath,
+		viewARN:        viewARN,
+		metadata:       metadata,
+		storedMetadata: storedMetadata,
+		storedPolicy:   []byte(viewPolicy),
 	}, nil
 }
 
@@ -558,8 +568,18 @@ func (h *S3TablesHandler) handleUpdateView(w http.ResponseWriter, r *http.Reques
 		return err
 	}
 
+	// Conditional on the record this request read and authorized against, as
+	// UpdateTable's write is: a concurrent update would otherwise be dropped,
+	// and a view deleted and created again under the name would take a write
+	// nobody authorized for it.
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		return h.mutateCatalogRecord(r.Context(), client, viewPath, func(extended map[string][]byte) error {
+			if !bytes.Equal(extended[ExtendedKeyMetadata], target.storedMetadata) {
+				return fmt.Errorf("%w: %s", ErrConcurrentUpdate, ExtendedKeyMetadata)
+			}
+			if !bytes.Equal(extended[ExtendedKeyPolicy], target.storedPolicy) {
+				return fmt.Errorf("%w: %s", ErrConcurrentUpdate, ExtendedKeyPolicy)
+			}
 			extended[ExtendedKeyMetadata] = metadataBytes
 			return nil
 		})

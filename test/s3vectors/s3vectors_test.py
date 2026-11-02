@@ -1,10 +1,12 @@
 """Run the S3 Vectors API against Go/Rust volumes and single/distributed queries."""
 
+import contextlib
 import json
 import time
 import uuid
 
 import boto3
+from botocore.config import Config
 from botocore.exceptions import ClientError
 import pytest
 
@@ -58,7 +60,7 @@ def test_vector_lifecycle(vectors):
     assert [h["key"] for h in hits] == ["a", "c"]
     distances = {h["key"]: h["distance"] for h in hits}
     assert distances["a"] == pytest.approx(0.0, abs=1e-6)
-    assert distances["c"] == pytest.approx(0.02, abs=1e-4)
+    assert distances["c"] == pytest.approx(0.02 ** 0.5, abs=1e-4)
     assert all(h["metadata"]["color"] == "red" for h in hits)
 
     vectors.delete_vectors(vectorBucketName=BUCKET, indexName=INDEX, keys=["b"])
@@ -204,6 +206,32 @@ def test_filter_types(vectors, index):
         assert sorted(hit["key"] for hit in hits) == ["0", "3"]
 
 
+def test_filter_arrays(vectors, index):
+    rows = {"space": ["space", "classic"], "nums": [1, 2.5], "strs": ["1", "2.5"], "flag": [True], "scalar": "space"}
+    vectors.put_vectors(**index, vectors=[{"key": key, "data": {"float32": [1, 0, 0, 0]}, "metadata": {"tags": tags}}
+                                         for key, tags in rows.items()])
+
+    def matches(condition):
+        hits = vectors.query_vectors(**index, queryVector={"float32": [1, 0, 0, 0]}, topK=10,
+                                     filter={"tags": condition})["vectors"]
+        return sorted(hit["key"] for hit in hits)
+
+    assert matches("space") == ["scalar", "space"]
+    assert matches({"$eq": 1}) == ["nums"]
+    assert matches({"$eq": "1"}) == ["strs"]
+    assert matches({"$eq": True}) == ["flag"]
+    assert matches({"$in": ["classic", 2.5]}) == ["nums", "space"]
+    assert matches({"$ne": "space"}) == ["flag", "nums", "strs"]
+    assert matches({"$nin": [1, "2.5"]}) == ["flag", "scalar", "space"]
+
+
+def test_euclidean_distance(vectors, index):
+    vectors.put_vectors(**index, vectors=[{"key": "p", "data": {"float32": [3, 4, 0, 0]}}])
+    result = vectors.query_vectors(**index, queryVector={"float32": [0, 0, 0, 0]}, topK=1, returnDistance=True)
+    assert result["distanceMetric"] == "euclidean"
+    assert result["vectors"][0]["distance"] == pytest.approx(5.0)
+
+
 def test_cosine_metric(vectors):
     bucket = "cosine-" + uuid.uuid4().hex[:16]
     vectors.create_vector_bucket(vectorBucketName=bucket)
@@ -270,17 +298,44 @@ def test_vector_policy_permissions(vectors, vector_clients, index):
         vectors.delete_index(**other)
 
 
+def index_object_encryption(vectors, bucket):
+    s3 = boto3.client("s3", endpoint_url=vectors.meta.endpoint_url, aws_access_key_id="test",
+                      aws_secret_access_key="test", region_name="us-east-1")
+    keys = [o["Key"] for page in s3.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=f"vector/{INDEX}/")
+            for o in page.get("Contents", []) if o["Size"] > 0]
+    assert any("/data/" in key for key in keys) and any("/_versions/" in key for key in keys)
+    return {key: s3.head_object(Bucket=bucket, Key=key).get("ServerSideEncryption") for key in keys}
+
+
 def test_vector_bucket_encryption(vectors):
     bucket = "encryption-" + uuid.uuid4().hex[:16]
+    plain = bucket + "-plain"
     config = {"sseType": "AES256"}
     vectors.create_vector_bucket(vectorBucketName=bucket, encryptionConfiguration=config)
+    vectors.create_vector_bucket(vectorBucketName=plain)
     try:
         assert vectors.get_vector_bucket(vectorBucketName=bucket)["vectorBucket"]["encryptionConfiguration"] == config
         expect_error("ValidationException", vectors.create_vector_bucket, vectorBucketName=bucket + "-kms",
                      encryptionConfiguration={"sseType": "aws:kms", "kmsKeyArn": "arn:aws:kms:us-east-1:123456789012:key/test"})
         assert vectors.list_vector_buckets(prefix=bucket + "-kms")["vectorBuckets"] == []
+
+        for name in (bucket, plain):
+            vectors.create_index(vectorBucketName=name, indexName=INDEX, dataType="float32", dimension=4,
+                                 distanceMetric="euclidean")
+            vectors.put_vectors(vectorBucketName=name, indexName=INDEX, vectors=[
+                {"key": "a", "data": {"float32": [1, 0, 0, 0]}, "metadata": {"color": "red"}},
+                {"key": "b", "data": {"float32": [0, 1, 0, 0]}, "metadata": {"color": "blue"}},
+            ])
+            hits = vectors.query_vectors(vectorBucketName=name, indexName=INDEX, queryVector={"float32": [1, 0, 0, 0]},
+                                         topK=1, returnMetadata=True)["vectors"]
+            assert [(h["key"], h["metadata"]) for h in hits] == [("a", {"color": "red"})]
+        assert set(index_object_encryption(vectors, bucket).values()) == {"AES256"}
+        assert set(index_object_encryption(vectors, plain).values()) == {None}
     finally:
-        vectors.delete_vector_bucket(vectorBucketName=bucket)
+        for name in (bucket, plain):
+            with contextlib.suppress(ClientError):
+                vectors.delete_index(vectorBucketName=name, indexName=INDEX)
+            vectors.delete_vector_bucket(vectorBucketName=name)
 
 
 def test_catalog_pagination(vectors, index):
@@ -362,6 +417,40 @@ def test_index_arn_validation(vectors, index):
     assert vectors.get_index(**index)["index"]["indexArn"] == arn
 
 
+def test_resource_tags(vectors, vector_clients, index):
+    reader = vector_clients["reader"]
+    bucket_arn = vectors.get_vector_bucket(vectorBucketName=index["vectorBucketName"])["vectorBucket"]["vectorBucketArn"]
+    index_arn = vectors.get_index(**index)["index"]["indexArn"]
+    assert vectors.list_tags_for_resource(resourceArn=bucket_arn)["tags"] == {}
+    vectors.tag_resource(resourceArn=bucket_arn, tags={"team": "search", "env": "dev"})
+    vectors.tag_resource(resourceArn=index_arn, tags={"team": "ranking"})
+    assert vectors.list_tags_for_resource(resourceArn=bucket_arn)["tags"] == {"team": "search", "env": "dev"}
+    assert vectors.list_tags_for_resource(resourceArn=index_arn)["tags"] == {"team": "ranking"}
+    vectors.untag_resource(resourceArn=bucket_arn, tagKeys=["env", "absent"])
+    assert vectors.list_tags_for_resource(resourceArn=bucket_arn)["tags"] == {"team": "search"}
+    expect_error("ValidationException", vectors.tag_resource, resourceArn=bucket_arn,
+                 tags={f"k{i}": "v" for i in range(50)})
+    expect_error("NotFoundException", vectors.list_tags_for_resource, resourceArn=bucket_arn + "/index/missing")
+    expect_error("AccessDeniedException", reader.list_tags_for_resource, resourceArn=bucket_arn)
+    expect_error("AccessDeniedException", reader.tag_resource, resourceArn=index_arn, tags={"team": "other"})
+    assert vectors.list_tags_for_resource(resourceArn=index_arn)["tags"] == {"team": "ranking"}
+
+
+def test_create_with_tags(vectors):
+    bucket = "tagged-" + uuid.uuid4().hex[:16]
+    bucket_arn = vectors.create_vector_bucket(vectorBucketName=bucket, tags={"team": "search"})["vectorBucketArn"]
+    try:
+        assert vectors.list_tags_for_resource(resourceArn=bucket_arn)["tags"] == {"team": "search"}
+        index_arn = vectors.create_index(vectorBucketName=bucket, indexName=INDEX, dataType="float32", dimension=4,
+                                         distanceMetric="cosine", tags={"tier": "hot"})["indexArn"]
+        try:
+            assert vectors.list_tags_for_resource(resourceArn=index_arn)["tags"] == {"tier": "hot"}
+        finally:
+            vectors.delete_index(vectorBucketName=bucket, indexName=INDEX)
+    finally:
+        vectors.delete_vector_bucket(vectorBucketName=bucket)
+
+
 def test_invalid_credentials(cluster):
     client = boto3.client("s3vectors", endpoint_url=cluster["endpoint"], aws_access_key_id="unknown",
                           aws_secret_access_key="unknown", region_name="us-east-1")
@@ -389,3 +478,18 @@ def test_query_without_writer(vectors, index, cluster):
                 raise
             time.sleep(0.2)
     assert [v["key"] for v in result["vectors"]] == ["survivor"]
+
+
+def test_engine_without_credentials(open_cluster):
+    """With no S3 identities, an engine given no credentials still serves an index."""
+    client = boto3.client("s3vectors", endpoint_url=open_cluster["endpoint"], aws_access_key_id="any",
+                          aws_secret_access_key="any", region_name="us-east-1",
+                          config=Config(connect_timeout=3, read_timeout=20, retries={"max_attempts": 0}))
+    index = {"vectorBucketName": BUCKET, "indexName": INDEX}
+    client.create_vector_bucket(vectorBucketName=BUCKET)
+    client.create_index(**index, dataType="float32", dimension=2, distanceMetric="cosine")
+    client.put_vectors(**index, vectors=[{"key": "a", "data": {"float32": [1, 0]}},
+                                         {"key": "b", "data": {"float32": [0, 1]}}])
+    hits = client.query_vectors(**index, queryVector={"float32": [1, 0]}, topK=1)["vectors"]
+    assert [h["key"] for h in hits] == ["a"]
+

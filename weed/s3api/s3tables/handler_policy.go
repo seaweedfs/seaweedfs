@@ -2,23 +2,26 @@ package s3tables
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
-// extractResourceOwnerAndBucket extracts ownership info and bucket name from resource metadata.
-// This helper consolidates the repeated pattern used in handleTagResource, handleListTagsForResource,
-// and handleUntagResource.
+// extractResourceOwnerAndBucket extracts ownership info, bucket name and the
+// creation time that tells the resource apart from one created again under its
+// name. It consolidates the repeated pattern used in handleTagResource,
+// handleListTagsForResource, and handleUntagResource.
 func (h *S3TablesHandler) extractResourceOwnerAndBucket(
 	data []byte,
 	resourcePath string,
 	rType ResourceType,
-) (ownerAccountID, bucketName string, err error) {
+) (ownerAccountID, bucketName string, createdAt time.Time, err error) {
 	// Extract bucket name from resource path (format: /buckets/{bucket}/... for both tables and buckets)
 	parts := strings.Split(strings.Trim(resourcePath, "/"), "/")
 	if len(parts) >= 2 {
@@ -28,17 +31,76 @@ func (h *S3TablesHandler) extractResourceOwnerAndBucket(
 	if rType == ResourceTypeTable {
 		var meta tableMetadataInternal
 		if err := json.Unmarshal(data, &meta); err != nil {
-			return "", "", err
+			return "", "", time.Time{}, err
 		}
-		ownerAccountID = meta.OwnerAccountID
+		ownerAccountID, createdAt = meta.OwnerAccountID, meta.CreatedAt
 	} else {
 		var meta tableBucketMetadata
 		if err := json.Unmarshal(data, &meta); err != nil {
-			return "", "", err
+			return "", "", time.Time{}, err
 		}
-		ownerAccountID = meta.OwnerAccountID
+		ownerAccountID, createdAt = meta.OwnerAccountID, meta.CreatedAt
 	}
-	return ownerAccountID, bucketName, nil
+	return ownerAccountID, bucketName, createdAt, nil
+}
+
+type maxTagsKey struct{}
+
+var errTooManyTags = errors.New("too many tags")
+
+// WithMaxTags caps how many tags a TagResource run through Execute may leave
+// on its resource. In-process only, like WithTableBucketCreatedAt.
+func WithMaxTags(ctx context.Context, n int) context.Context {
+	return context.WithValue(ctx, maxTagsKey{}, n)
+}
+
+// updateTags applies set and remove to raw, the tags the record holds at the
+// write, so concurrent tag writes do not undo each other.
+func updateTags(raw []byte, set map[string]string, remove []string) (map[string]string, error) {
+	tags := make(map[string]string)
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &tags); err != nil {
+			return nil, err
+		}
+	}
+	for k, v := range set {
+		tags[k] = v
+	}
+	for _, k := range remove {
+		delete(tags, k)
+	}
+	return tags, nil
+}
+
+func writeTags(extended map[string][]byte, key string, tags map[string]string) error {
+	data, err := json.Marshal(tags)
+	if err != nil {
+		return err
+	}
+	extended[key] = data
+	return nil
+}
+
+// requireBoundTableBucket answers not found when ctx binds the request to a
+// table bucket other than the one now named bucketName.
+func (h *S3TablesHandler) requireBoundTableBucket(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketName string) error {
+	if _, bound := ctx.Value(tableBucketCreatedAtKey{}).(time.Time); !bound {
+		return nil
+	}
+	data, err := h.getExtendedAttribute(ctx, client, GetTableBucketPath(bucketName), ExtendedKeyMetadata)
+	if errors.Is(err, ErrAttributeNotFound) {
+		return filer_pb.ErrNotFound
+	} else if err != nil {
+		return err
+	}
+	var meta tableBucketMetadata
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return err
+	}
+	if otherTableBucket(ctx, meta.CreatedAt) {
+		return filer_pb.ErrNotFound
+	}
+	return nil
 }
 
 // handlePutTableBucketPolicy puts a policy on a table bucket
@@ -122,6 +184,9 @@ func (h *S3TablesHandler) handlePutTableBucketPolicy(w http.ResponseWriter, r *h
 	// landing mid-request sends the caller back through authorization.
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		return h.mutateEntryExtended(r.Context(), client, bucketPath, func(extended map[string][]byte) error {
+			if err := requireTableBucketCreatedAt(extended, bucketPath, bucketMetadata.CreatedAt); err != nil {
+				return err
+			}
 			if !bytes.Equal(extended[ExtendedKeyPolicy], []byte(bucketPolicy)) {
 				return fmt.Errorf("%w: %s", ErrConcurrentUpdate, ExtendedKeyPolicy)
 			}
@@ -133,6 +198,8 @@ func (h *S3TablesHandler) handlePutTableBucketPolicy(w http.ResponseWriter, r *h
 	if err != nil {
 		if errors.Is(err, ErrConcurrentUpdate) {
 			h.writeError(w, http.StatusConflict, ErrCodeConflict, "table bucket policy changed concurrently, retry the request")
+		} else if errors.Is(err, filer_pb.ErrNotFound) {
+			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, fmt.Sprintf("table bucket %s not found", bucketName))
 		} else {
 			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to put table bucket policy")
 		}
@@ -288,11 +355,26 @@ func (h *S3TablesHandler) handleDeleteTableBucketPolicy(w http.ResponseWriter, r
 	}
 
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return h.deleteExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
+		return h.mutateEntryExtended(r.Context(), client, bucketPath, func(extended map[string][]byte) error {
+			if err := requireTableBucketCreatedAt(extended, bucketPath, bucketMetadata.CreatedAt); err != nil {
+				return err
+			}
+			if !bytes.Equal(extended[ExtendedKeyPolicy], []byte(bucketPolicy)) {
+				return fmt.Errorf("%w: %s", ErrConcurrentUpdate, ExtendedKeyPolicy)
+			}
+			delete(extended, ExtendedKeyPolicy)
+			return nil
+		})
 	})
 
-	if err != nil && !errors.Is(err, ErrAttributeNotFound) {
-		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to delete table bucket policy")
+	if err != nil {
+		if errors.Is(err, ErrConcurrentUpdate) {
+			h.writeError(w, http.StatusConflict, ErrCodeConflict, "table bucket policy changed concurrently, retry the request")
+		} else if errors.Is(err, filer_pb.ErrNotFound) {
+			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, fmt.Sprintf("table bucket %s not found", bucketName))
+		} else {
+			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to delete table bucket policy")
+		}
 		return err
 	}
 
@@ -401,6 +483,9 @@ func (h *S3TablesHandler) handlePutTablePolicy(w http.ResponseWriter, r *http.Re
 
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		return h.mutateCatalogRecord(r.Context(), client, tablePath, func(extended map[string][]byte) error {
+			if err := requireTableCreatedAt(extended, tablePath, metadata.CreatedAt); err != nil {
+				return err
+			}
 			if !bytes.Equal(extended[ExtendedKeyPolicy], []byte(tablePolicy)) {
 				return fmt.Errorf("%w: %s", ErrConcurrentUpdate, ExtendedKeyPolicy)
 			}
@@ -617,15 +702,26 @@ func (h *S3TablesHandler) handleDeleteTablePolicy(w http.ResponseWriter, r *http
 		return NewAuthError("DeleteTablePolicy", principal, "not authorized to delete table policy")
 	}
 
+	// The removal is conditional on the table and the policy this request was
+	// authorized against, as PutTablePolicy's write is.
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return h.removeExtendedAttributesIf(r.Context(), client, tablePath,
-			map[string][]byte{ExtendedKeyPolicy: []byte(tablePolicy)},
-			ExtendedKeyPolicy)
+		return h.mutateCatalogRecord(r.Context(), client, tablePath, func(extended map[string][]byte) error {
+			if err := requireTableCreatedAt(extended, tablePath, metadata.CreatedAt); err != nil {
+				return err
+			}
+			if !bytes.Equal(extended[ExtendedKeyPolicy], []byte(tablePolicy)) {
+				return fmt.Errorf("%w: %s", ErrConcurrentUpdate, ExtendedKeyPolicy)
+			}
+			delete(extended, ExtendedKeyPolicy)
+			return nil
+		})
 	})
 
 	if err != nil && !errors.Is(err, ErrAttributeNotFound) {
 		if errors.Is(err, ErrConcurrentUpdate) {
 			h.writeError(w, http.StatusConflict, ErrCodeConflict, "table policy changed concurrently, retry the request")
+		} else if errors.Is(err, filer_pb.ErrNotFound) {
+			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchTable, fmt.Sprintf("table %s not found", tableName))
 		} else {
 			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to delete table policy")
 		}
@@ -666,6 +762,7 @@ func (h *S3TablesHandler) handleTagResource(w http.ResponseWriter, r *http.Reque
 	var bucketPolicy, tablePolicy string
 	var bucketTags map[string]string
 	var tableNamespace, tableName string
+	var createdAt time.Time
 	requestTagKeys := mapKeys(req.Tags)
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		// Read metadata for ownership check
@@ -677,10 +774,11 @@ func (h *S3TablesHandler) handleTagResource(w http.ResponseWriter, r *http.Reque
 			return err
 		}
 
-		ownerAccountID, bucketName, err := h.extractResourceOwnerAndBucket(data, resourcePath, rType)
+		ownerAccountID, bucketName, resourceCreatedAt, err := h.extractResourceOwnerAndBucket(data, resourcePath, rType)
 		if err != nil {
 			return err
 		}
+		createdAt = resourceCreatedAt
 
 		// Fetch bucket policy if we have a bucket name
 		if bucketName != "" {
@@ -713,6 +811,10 @@ func (h *S3TablesHandler) handleTagResource(w http.ResponseWriter, r *http.Reque
 			return err
 		}
 
+		// Checked after the reads, so they all came from the bound bucket.
+		if err := h.requireBoundTableBucket(r.Context(), client, bucketName); err != nil {
+			return err
+		}
 		var resourceARN string
 		if rType == ResourceTypeTable {
 			resourceARN = h.generateTableARN(ownerAccountID, bucketName, tableNamespace+"/"+tableName)
@@ -756,21 +858,24 @@ func (h *S3TablesHandler) handleTagResource(w http.ResponseWriter, r *http.Reque
 		return err
 	}
 
-	// Merge new tags
-	for k, v := range req.Tags {
-		existingTags[k] = v
+	sameResource := requireTableCreatedAt
+	if rType != ResourceTypeTable {
+		sameResource = requireTableBucketCreatedAt
 	}
-
-	// Write merged tags
-	tagsBytes, err := json.Marshal(existingTags)
-	if err != nil {
-		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to marshal tags")
-		return fmt.Errorf("failed to marshal tags: %w", err)
-	}
+	maxTags, limited := r.Context().Value(maxTagsKey{}).(int)
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		return h.mutateCatalogRecord(r.Context(), client, resourcePath, func(extended map[string][]byte) error {
-			extended[extendedKey] = tagsBytes
-			return nil
+			if err := sameResource(extended, resourcePath, createdAt); err != nil {
+				return err
+			}
+			tags, err := updateTags(extended[extendedKey], req.Tags, nil)
+			if err != nil {
+				return err
+			}
+			if limited && len(tags) > maxTags {
+				return errTooManyTags
+			}
+			return writeTags(extended, extendedKey, tags)
 		})
 	})
 
@@ -781,6 +886,11 @@ func (h *S3TablesHandler) handleTagResource(w http.ResponseWriter, r *http.Reque
 				errorCode = ErrCodeNoSuchTable
 			}
 			h.writeError(w, http.StatusNotFound, errorCode, "resource not found")
+			return err
+		}
+		if errors.Is(err, errTooManyTags) {
+			h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest,
+				fmt.Sprintf("a resource can have at most %d tags", maxTags))
 			return err
 		}
 		if errors.Is(err, ErrConcurrentUpdate) {
@@ -829,7 +939,7 @@ func (h *S3TablesHandler) handleListTagsForResource(w http.ResponseWriter, r *ht
 			return err
 		}
 
-		ownerAccountID, bucketName, err := h.extractResourceOwnerAndBucket(data, resourcePath, rType)
+		ownerAccountID, bucketName, _, err := h.extractResourceOwnerAndBucket(data, resourcePath, rType)
 		if err != nil {
 			return err
 		}
@@ -864,6 +974,10 @@ func (h *S3TablesHandler) handleListTagsForResource(w http.ResponseWriter, r *ht
 			return err
 		}
 
+		// Checked after the reads, so they all came from the bound bucket.
+		if err := h.requireBoundTableBucket(r.Context(), client, bucketName); err != nil {
+			return err
+		}
 		var resourceARN string
 		if rType == ResourceTypeTable {
 			resourceARN = h.generateTableARN(ownerAccountID, bucketName, tableNamespace+"/"+tableName)
@@ -942,6 +1056,7 @@ func (h *S3TablesHandler) handleUntagResource(w http.ResponseWriter, r *http.Req
 	var bucketPolicy, tablePolicy string
 	var bucketTags map[string]string
 	var tableNamespace, tableName string
+	var createdAt time.Time
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		// Read metadata for ownership check
 		data, err := h.getExtendedAttribute(r.Context(), client, resourcePath, ExtendedKeyMetadata)
@@ -952,10 +1067,11 @@ func (h *S3TablesHandler) handleUntagResource(w http.ResponseWriter, r *http.Req
 			return err
 		}
 
-		ownerAccountID, bucketName, err := h.extractResourceOwnerAndBucket(data, resourcePath, rType)
+		ownerAccountID, bucketName, resourceCreatedAt, err := h.extractResourceOwnerAndBucket(data, resourcePath, rType)
 		if err != nil {
 			return err
 		}
+		createdAt = resourceCreatedAt
 
 		// Fetch bucket policy if we have a bucket name
 		if bucketName != "" {
@@ -987,6 +1103,10 @@ func (h *S3TablesHandler) handleUntagResource(w http.ResponseWriter, r *http.Req
 			return err
 		}
 
+		// Checked after the reads, so they all came from the bound bucket.
+		if err := h.requireBoundTableBucket(r.Context(), client, bucketName); err != nil {
+			return err
+		}
 		var resourceARN string
 		if rType == ResourceTypeTable {
 			resourceARN = h.generateTableARN(ownerAccountID, bucketName, tableNamespace+"/"+tableName)
@@ -1029,21 +1149,20 @@ func (h *S3TablesHandler) handleUntagResource(w http.ResponseWriter, r *http.Req
 		return err
 	}
 
-	// Remove specified tags
-	for _, key := range req.TagKeys {
-		delete(tags, key)
-	}
-
-	// Write updated tags
-	tagsBytes, err := json.Marshal(tags)
-	if err != nil {
-		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to marshal tags")
-		return fmt.Errorf("failed to marshal tags: %w", err)
+	sameResource := requireTableCreatedAt
+	if rType != ResourceTypeTable {
+		sameResource = requireTableBucketCreatedAt
 	}
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		return h.mutateCatalogRecord(r.Context(), client, resourcePath, func(extended map[string][]byte) error {
-			extended[extendedKey] = tagsBytes
-			return nil
+			if err := sameResource(extended, resourcePath, createdAt); err != nil {
+				return err
+			}
+			tags, err := updateTags(extended[extendedKey], nil, req.TagKeys)
+			if err != nil {
+				return err
+			}
+			return writeTags(extended, extendedKey, tags)
 		})
 	})
 

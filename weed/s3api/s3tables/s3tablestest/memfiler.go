@@ -204,12 +204,10 @@ func (f *MemFiler) DeleteEntry(_ context.Context, req *filer_pb.DeleteEntryReque
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	// The real filer refuses a non-recursive delete of a non-empty folder.
-	if child := path.Join(req.Directory, req.Name); !req.IsRecursive && len(f.entries[child]) > 0 {
-		return &filer_pb.DeleteEntryResponse{Error: "fail to delete non-empty folder: " + child}, nil
-	}
 	// The real filer evaluates ExpectedExtended under the path lock and refuses
-	// the delete when the entry no longer matches what the caller captured.
+	// the delete when the entry no longer matches what the caller captured. It
+	// does so before anything else, so a directory that changed hands is a
+	// changed entry whether or not it also holds something.
 	for key, expected := range req.ExpectedExtended {
 		var actual []byte
 		if d, ok := f.entries[req.Directory]; ok {
@@ -220,6 +218,10 @@ func (f *MemFiler) DeleteEntry(_ context.Context, req *filer_pb.DeleteEntryReque
 		if !bytes.Equal(actual, expected) {
 			return nil, status.Errorf(codes.FailedPrecondition, "extended attribute %q changed", key)
 		}
+	}
+	// The real filer then refuses a non-recursive delete of a non-empty folder.
+	if child := path.Join(req.Directory, req.Name); !req.IsRecursive && len(f.entries[child]) > 0 {
+		return &filer_pb.DeleteEntryResponse{Error: "fail to delete non-empty folder: " + child}, nil
 	}
 	if d, ok := f.entries[req.Directory]; ok {
 		delete(d, req.Name)

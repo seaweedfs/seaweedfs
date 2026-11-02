@@ -8,6 +8,7 @@ on:
       - 'seaweed-volume/**'
       - 'seaweed-common/**'
       - 'seaweed-worker/**'
+      - 'seaweed-vector/**'
       - 'docker/**'
       - 'go.mod'
       - 'go.sum'
@@ -50,7 +51,8 @@ jobs:
             ~/.cargo/git
             seaweed-volume/target
             seaweed-worker/target/${{ matrix.target }}/release
-          key: rust-docker-dev-${{ matrix.target }}-${{ hashFiles('seaweed-volume/Cargo.lock', 'seaweed-worker/Cargo.lock') }}
+            seaweed-vector/target/${{ matrix.target }}/release
+          key: rust-docker-dev-${{ matrix.target }}-${{ hashFiles('seaweed-volume/Cargo.lock', 'seaweed-worker/Cargo.lock', 'seaweed-vector/Cargo.lock') }}
           restore-keys: |
             rust-docker-dev-${{ matrix.target }}-
 
@@ -83,6 +85,12 @@ jobs:
           cargo build --release -p weed-lance-worker --target ${{ matrix.target }}
           cp target/${{ matrix.target }}/release/weed-worker ../weed-worker-${{ matrix.arch }}
 
+      - name: Build the vector engine
+        run: |
+          cd seaweed-vector
+          cargo build --release -p weed-vector-server --target ${{ matrix.target }}
+          cp target/${{ matrix.target }}/release/weed-vector ../weed-vector-${{ matrix.arch }}
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -90,6 +98,7 @@ jobs:
           path: |
             weed-volume-normal-${{ matrix.arch }}
             weed-worker-${{ matrix.arch }}
+            weed-vector-${{ matrix.arch }}
 
   build-dev-containers:
     needs: [build-rust-binaries]
@@ -127,8 +136,17 @@ jobs:
               echo "Placed pre-built Rust worker for ${arch}"
             fi
           done
+          mkdir -p docker/weed-vector-prebuilt
+          for arch in amd64 arm64; do
+            src="./rust-bins/weed-vector-${arch}"
+            if [ -f "$src" ]; then
+              cp "$src" "docker/weed-vector-prebuilt/weed-vector-${arch}"
+              echo "Placed pre-built vector engine for ${arch}"
+            fi
+          done
           ls -la docker/weed-volume-prebuilt/
           ls -la docker/weed-worker-prebuilt/
+          ls -la docker/weed-vector-prebuilt/
 
       - name: Docker meta
         id: docker_meta

@@ -1106,9 +1106,9 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		// GetBucketLifecycleConfiguration
 		bucket.Methods(http.MethodGet).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetBucketLifecycleConfigurationHandler, ACTION_READ)), "GET")).Queries("lifecycle", "")
 		// PutBucketLifecycleConfiguration
-		bucket.Methods(http.MethodPut).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutBucketLifecycleConfigurationHandler, ACTION_WRITE)), "PUT")).Queries("lifecycle", "")
+		bucket.Methods(http.MethodPut).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutBucketLifecycleConfigurationHandler, ACTION_ADMIN)), "PUT")).Queries("lifecycle", "")
 		// DeleteBucketLifecycleConfiguration
-		bucket.Methods(http.MethodDelete).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.DeleteBucketLifecycleHandler, ACTION_WRITE)), "DELETE")).Queries("lifecycle", "")
+		bucket.Methods(http.MethodDelete).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.DeleteBucketLifecycleHandler, ACTION_ADMIN)), "DELETE")).Queries("lifecycle", "")
 
 		// GetBucketLocation
 		bucket.Methods(http.MethodGet).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetBucketLocationHandler, ACTION_READ)), "GET")).Queries("location", "")
@@ -1498,6 +1498,21 @@ func (s3a *S3ApiServer) AuthenticateRequest(r *http.Request) (string, interface{
 		return identity.Name, identity, err
 	}
 	return "", nil, err
+}
+
+// FilerSigningKey is the current jwt.filer_signing.key, which follows a
+// security.toml reload.
+func (s3a *S3ApiServer) FilerSigningKey() security.SigningKey {
+	if s3a.filerGuard == nil {
+		return nil
+	}
+	return s3a.filerGuard.SigningKey()
+}
+
+// AuthEnabled reports whether requests must carry valid credentials. With no
+// identities configured, every request is allowed as the admin.
+func (s3a *S3ApiServer) AuthEnabled() bool {
+	return s3a.iam == nil || s3a.iam.isEnabled()
 }
 
 // DefaultAllow returns whether access is allowed by default when no policy is found

@@ -96,7 +96,7 @@ func ParseUpload(r *http.Request, sizeLimit int64, bytesBuffer *bytes.Buffer) (p
 		}
 	} else if r.FormValue("type") != "replicate" {
 		// replica writes must keep the source needle's compression state, not re-derive it
-		ext := filepath.Base(pu.FileName)
+		ext := filepath.Ext(pu.FileName)
 		mimeType := pu.MimeType
 		if mimeType == "" {
 			mimeType = http.DetectContentType(pu.Data)
@@ -298,7 +298,9 @@ func parseUpload(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error) {
 
 	pu.IsChunkedFile, _ = strconv.ParseBool(r.FormValue("cm"))
 
-	if !pu.IsChunkedFile {
+	if r.FormValue("type") == "replicate" {
+		pu.MimeType = contentType
+	} else if !pu.IsChunkedFile {
 
 		dotIndex := strings.LastIndex(pu.FileName, ".")
 		ext, mtype := "", ""

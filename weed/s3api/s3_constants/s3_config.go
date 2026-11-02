@@ -13,6 +13,9 @@ var (
 	Separator                = ":"
 )
 
+// S3VectorsMaxRequestBodyBytes caps the body of an S3 Vectors API request.
+const S3VectorsMaxRequestBodyBytes = 32 << 20
+
 func Concat(elements ...string) string {
 	return strings.Join(elements, Separator)
 }

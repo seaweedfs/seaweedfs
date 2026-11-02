@@ -1,8 +1,10 @@
 package s3vectors
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -35,10 +37,19 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 	})
 }
 
-const maxRequestBodyBytes = 32 << 20
+const maxRequestBodyBytes = s3_constants.S3VectorsMaxRequestBodyBytes
+
+var errRequestBodyTooLarge = fmt.Errorf("request body exceeds %d MiB", maxRequestBodyBytes>>20)
 
 func readJSON(r *http.Request, req interface{}) error {
-	return json.NewDecoder(io.LimitReader(r.Body, maxRequestBodyBytes)).Decode(req)
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxRequestBodyBytes+1))
+	if err != nil {
+		return err
+	}
+	if len(body) > maxRequestBodyBytes {
+		return errRequestBodyTooLarge
+	}
+	return json.NewDecoder(bytes.NewReader(body)).Decode(req)
 }
 
 // Request/response shapes for the AWS S3 Vectors API (awsJson1_1).
@@ -51,7 +62,7 @@ type vectorBucketARNs struct {
 type CreateVectorBucketRequest struct {
 	VectorBucketName        string                 `json:"vectorBucketName"`
 	EncryptionConfiguration map[string]interface{} `json:"encryptionConfiguration,omitempty"`
-	MetadataResourceTags    map[string]string      `json:"-"`
+	Tags                    map[string]string      `json:"tags,omitempty"`
 }
 
 type CreateVectorBucketResponse struct {
@@ -125,6 +136,7 @@ type CreateIndexRequest struct {
 	MetadataConfiguration *MetadataConfiguration `json:"metadataConfiguration,omitempty"`
 	VectorBucketName      string                 `json:"vectorBucketName"`
 	VectorBucketArn       string                 `json:"vectorBucketArn"`
+	Tags                  map[string]string      `json:"tags,omitempty"`
 }
 
 type MetadataConfiguration struct {
@@ -283,4 +295,26 @@ type QueryOutputVector struct {
 type QueryVectorsResponse struct {
 	DistanceMetric string               `json:"distanceMetric"`
 	Vectors        []*QueryOutputVector `json:"vectors"`
+}
+
+type TagResourceRequest struct {
+	ResourceArn string            `json:"resourceArn"`
+	Tags        map[string]string `json:"tags"`
+}
+
+type TagResourceResponse struct{}
+
+type UntagResourceRequest struct {
+	ResourceArn string   `json:"resourceArn"`
+	TagKeys     []string `json:"tagKeys"`
+}
+
+type UntagResourceResponse struct{}
+
+type ListTagsForResourceRequest struct {
+	ResourceArn string `json:"resourceArn"`
+}
+
+type ListTagsForResourceResponse struct {
+	Tags map[string]string `json:"tags"`
 }

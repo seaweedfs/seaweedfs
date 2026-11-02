@@ -675,6 +675,7 @@ func (s3opt *S3Options) startLanceServer(s3ApiServer *s3api.S3ApiServer, listenO
 
 	lanceServer := lance.NewServer(s3ApiServer, s3ApiServer)
 	lanceServer.SetCredentialValidator(s3ApiServer)
+	lanceServer.SetSigningKey(s3ApiServer.FilerSigningKey)
 	if s3opt.icebergCredentialRole != nil && *s3opt.icebergCredentialRole != "" {
 		lanceServer.SetCredentialVendor(lanceCredentialVendor{s3ApiServer})
 	}
@@ -723,6 +724,7 @@ func (s3opt *S3Options) vectorsRouter(s3ApiServer *s3api.S3ApiServer, grpcDialOp
 	vectorsServer := s3vectors.NewServer(s3ApiServer, s3ApiServer, backend)
 	vectorsServer.SetRegion(s3tables.DefaultRegion)
 	vectorsServer.SetAccountID(s3tables.DefaultAccountID)
+	vectorsServer.SetEncryptionChecker(s3api.GetSSES3KeyManager().IsConfigured)
 	vectorsServer.RegisterRoutes(vectorsRouter)
 	return vectorsRouter
 }

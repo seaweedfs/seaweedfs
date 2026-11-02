@@ -308,6 +308,12 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 		writeManagerError(w, authErr)
 		return
 	}
+	// Registration confines the location to the table's namespace, but both
+	// branches write, and stage-create vends credentials, before it runs.
+	if err := s3tables.ValidateMetadataLocation(metadataLocation, bucketName, flattenNamespacePath(namespace)); err != nil {
+		writeError(w, http.StatusBadRequest, "BadRequestException", err.Error())
+		return
+	}
 
 	// Stage-create persists metadata in the internal staged area and skips S3Tables registration.
 	if req.StageCreate {
@@ -786,6 +792,9 @@ func (s *Server) mayUpdateTable(r *http.Request, bucketName string, namespace []
 	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		return s.tablesManager.AuthorizeUpdateTable(r.Context(), s3tables.NewManagerClient(client), updateReq, identityName)
 	})
+	if err == nil {
+		err = s.tablesManager.CheckVectorNamespaceWrite(r.Context(), s.filerClient, bucketName, namespace)
+	}
 	if err != nil {
 		glog.V(1).Infof("Iceberg: UpdateTable check for %s/%s failed, vending read-only: %v", bucketName, tableName, err)
 	}

@@ -10,7 +10,7 @@ import (
 
 func (f *Filer) CanRename(ctx context.Context, source, target util.FullPath, oldName string) error {
 	sourcePath := source.Child(oldName)
-	if strings.HasPrefix(string(target), string(sourcePath)) {
+	if util.IsEqualOrUnder(string(target), string(sourcePath)) {
 		return fmt.Errorf("mv: can not move directory to a subdirectory of itself")
 	}
 

@@ -232,3 +232,40 @@ func TestCreateEntryFailsWhenPriorOwnerIsUnreachable(t *testing.T) {
 		t.Fatal("a create routed away must not also write locally")
 	}
 }
+
+func TestCreateEntryRejectsDotSegments(t *testing.T) {
+	fs, store := createRouteServer(t)
+
+	for _, tc := range []struct{ dir, name string }{
+		{"/../escape", "marker.txt"},
+		{"/test/./sub", "marker.txt"},
+		{"/test", ".."},
+	} {
+		req := createReq(tc.name, false)
+		req.Directory = tc.dir
+		resp, err := fs.CreateEntry(context.Background(), req)
+		if err == nil && resp.Error == "" {
+			t.Fatalf("CreateEntry %s/%s must be rejected", tc.dir, tc.name)
+		}
+		if _, found := store.entries[string(util.NewFullPath(tc.dir, tc.name))]; found {
+			t.Fatalf("CreateEntry %s/%s stored the raw path", tc.dir, tc.name)
+		}
+	}
+
+	resp, err := fs.CreateEntry(context.Background(), createReq("marker.txt", false))
+	if err != nil || resp.Error != "" {
+		t.Fatalf("CreateEntry /test/marker.txt: err=%v resp=%v", err, resp)
+	}
+
+	update := &filer_pb.UpdateEntryRequest{
+		Directory: "/x/../test",
+		Entry:     createReq("marker.txt", false).Entry,
+	}
+	update.Entry.Attributes.Mtime++
+	if _, err := fs.UpdateEntry(context.Background(), update); err == nil {
+		t.Fatal("UpdateEntry with a dot segment must be rejected")
+	}
+	if _, found := store.entries["/x/../test/marker.txt"]; found {
+		t.Fatal("UpdateEntry stored the raw path")
+	}
+}

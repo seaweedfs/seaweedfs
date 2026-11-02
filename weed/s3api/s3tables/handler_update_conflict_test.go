@@ -67,3 +67,23 @@ func TestUntagResourceClaimedRecordConflicts(t *testing.T) {
 	assert.Equal(t, http.StatusConflict, status, "%+v", resp)
 	assert.Equal(t, ErrCodeConflict, resp.Type)
 }
+
+// DeleteTablePolicy writes like every other mutation of a table record, so a
+// record another operation claimed refuses it with 409 instead of losing the
+// policy under the claim's owner.
+func TestDeleteTablePolicyClaimedRecordConflicts(t *testing.T) {
+	fs, m := startTableT(t, map[string][]byte{ExtendedKeyPolicy: []byte(bindTestPolicy)})
+	nsPath := GetNamespacePath(renameTestBucket, "ns")
+	claimRecord(t, fs, nsPath, "t")
+
+	status, resp := runHandler(t, m, fs.Client, "DeleteTablePolicy", &DeleteTablePolicyRequest{
+		TableBucketARN: mustBucketARN(t),
+		Namespace:      []string{"ns"},
+		Name:           "t",
+	})
+	assert.Equal(t, http.StatusConflict, status, "%+v", resp)
+	assert.Equal(t, ErrCodeConflict, resp.Type, "%+v", resp)
+	extended := fs.Get(nsPath, "t").Extended
+	assert.Equal(t, []byte(bindTestPolicy), extended[ExtendedKeyPolicy], "the refused delete keeps the policy")
+	assert.Equal(t, []byte("delete"), extended[ExtendedKeyDeleting], "and leaves the claim to its owner")
+}

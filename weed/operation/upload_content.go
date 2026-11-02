@@ -390,7 +390,7 @@ func (uploader *Uploader) doUploadData(ctx context.Context, data []byte, option 
 				option.MimeType = ""
 			}
 		}
-		if shouldBeCompressed, iAmSure := util.IsCompressableFileType(filepath.Base(option.Filename), option.MimeType); iAmSure && shouldBeCompressed {
+		if shouldBeCompressed, iAmSure := util.IsCompressableFileType(filepath.Ext(option.Filename), option.MimeType); iAmSure && shouldBeCompressed {
 			shouldGzipNow = true
 		} else if !iAmSure && option.MimeType == "" && len(data) > 16*1024 {
 			var compressed []byte
@@ -412,7 +412,7 @@ func (uploader *Uploader) doUploadData(ctx context.Context, data []byte, option 
 		compressed, compressErr := util.GzipData(data)
 		// fmt.Printf("data is compressed from %d ==> %d\n", len(data), len(compressed))
 		if compressErr == nil {
-			if len(compressed) < len(data) {
+			if len(compressed)*10 < len(data)*9 {
 				data = compressed
 				contentIsGzipped = true
 			}
@@ -474,6 +474,7 @@ func (uploader *Uploader) doUploadData(ctx context.Context, data []byte, option 
 			Filename:              option.Filename,
 			Cipher:                false,
 			IsInputCompressed:     contentIsGzipped,
+			IsReplication:         option.IsReplication,
 			MimeType:              option.MimeType,
 			PairMap:               option.PairMap,
 			Jwt:                   option.Jwt,
@@ -510,7 +511,7 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 	// properly handling non-ASCII characters and special characters
 	h.Set("Content-Disposition", mime.FormatMediaType("form-data", map[string]string{"name": "file", "filename": option.Filename}))
 	h.Set("Idempotency-Key", option.UploadUrl)
-	if option.MimeType == "" {
+	if option.MimeType == "" && !option.IsReplication {
 		option.MimeType = mime.TypeByExtension(strings.ToLower(filepath.Ext(option.Filename)))
 	}
 	if option.MimeType != "" {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -38,10 +39,17 @@ var handlers = map[string]func(*Server, http.ResponseWriter, *http.Request){
 	"ListVectors":              (*Server).handleListVectors,
 	"DeleteVectors":            (*Server).handleDeleteVectors,
 	"QueryVectors":             (*Server).handleQueryVectors,
+	"TagResource":              (*Server).handleTagResource,
+	"UntagResource":            (*Server).handleUntagResource,
+	"ListTagsForResource":      (*Server).handleListTagsForResource,
 }
 
 // lance table ids put indexes under a "vector" namespace inside their bucket.
 const indexNamespace = s3tables.VectorIndexNamespace
+
+// ensureIndexNamespaceAttempts bounds how often ensureIndexNamespace declares
+// the namespace again after losing it to a concurrent declare.
+const ensureIndexNamespaceAttempts = 3
 
 // Vector bucket records are s3tables table buckets; the S3 Vectors ARN form is
 // arn:aws:s3vectors:{region}:{account}:bucket/{name}[/index/{name}].
@@ -178,7 +186,8 @@ func catalogErrCode(err error) string {
 func catalogErr(w http.ResponseWriter, err error) {
 	var apiErr *s3tables.S3TablesError
 	if !errors.As(err, &apiErr) {
-		writeError(w, http.StatusInternalServerError, "InternalFailure", "internal error")
+		glog.Errorf("S3 Vectors: catalog: %v", err)
+		writeError(w, http.StatusInternalServerError, "InternalFailure", internalErrorMessage)
 		return
 	}
 	switch {
@@ -196,10 +205,12 @@ func catalogErr(w http.ResponseWriter, err error) {
 	}
 }
 
+const internalErrorMessage = "internal error, see the S3 gateway log"
+
 // vectorErr maps a VectorService gRPC status onto the API's error shape.
 // Engine messages reach clients only for codes that describe the request
 // itself; transport and internal details stay in the server log.
-func vectorErr(w http.ResponseWriter, err error) {
+func vectorErr(w http.ResponseWriter, r *http.Request, arns vectorBucketARNs, err error) {
 	msg := status.Convert(err).Message()
 	switch status.Code(err) {
 	case codes.NotFound:
@@ -209,10 +220,11 @@ func vectorErr(w http.ResponseWriter, err error) {
 	case codes.PermissionDenied, codes.Unauthenticated:
 		writeError(w, http.StatusForbidden, "AccessDeniedException", "access denied")
 	case codes.Unavailable:
+		glog.Warningf("S3 Vectors: %s %s/%s: %v", operationFromRequest(r), arns.bucket, arns.index, err)
 		writeError(w, http.StatusServiceUnavailable, "ServiceUnavailableException", "vector service unavailable")
 	default:
-		glog.V(1).Infof("S3 Vectors: engine error: %v", err)
-		writeError(w, http.StatusInternalServerError, "InternalFailure", "internal error")
+		glog.Errorf("S3 Vectors: %s %s/%s: %v", operationFromRequest(r), arns.bucket, arns.index, err)
+		writeError(w, http.StatusInternalServerError, "InternalFailure", internalErrorMessage)
 	}
 }
 
@@ -220,26 +232,36 @@ func vectorErr(w http.ResponseWriter, err error) {
 // calls are internal: a caller's CreateTable grant is what authorizes the
 // index, so it must not also need namespace reads or writes.
 func (s *Server) ensureIndexNamespace(ctx context.Context, bucket string) error {
-	var resp map[string]interface{}
-	err := s.internalCatalog(ctx, "GetNamespace", &s3tables.GetNamespaceRequest{
-		TableBucketARN: s.s3tablesArn(bucket),
-		Namespace:      []string{indexNamespace},
-	}, &resp)
-	if err == nil {
-		return nil
+	var err error
+	for attempt := 0; attempt < ensureIndexNamespaceAttempts; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * 50 * time.Millisecond)
+		}
+		var resp map[string]interface{}
+		err = s.internalCatalog(ctx, "GetNamespace", &s3tables.GetNamespaceRequest{
+			TableBucketARN: s.s3tablesArn(bucket),
+			Namespace:      []string{indexNamespace},
+		}, &resp)
+		if err == nil {
+			return nil
+		}
+		if code := catalogErrCode(err); code != s3tables.ErrCodeNoSuchNamespace && code != s3tables.ErrCodeNoSuchBucket {
+			return err
+		}
+		err = s.internalCatalog(ctx, "CreateNamespace", &s3tables.CreateNamespaceRequest{
+			TableBucketARN: s.s3tablesArn(bucket),
+			Namespace:      []string{indexNamespace},
+		}, &resp)
+		// A concurrent CreateIndex may have won the create, or taken over this
+		// one's namespace before it was confirmed.
+		if err == nil || catalogErrCode(err) == s3tables.ErrCodeNamespaceAlreadyExists {
+			return nil
+		}
+		if catalogErrCode(err) != s3tables.ErrCodeConflict {
+			return err
+		}
 	}
-	if code := catalogErrCode(err); code != s3tables.ErrCodeNoSuchNamespace && code != s3tables.ErrCodeNoSuchBucket {
-		return err
-	}
-	err = s.internalCatalog(ctx, "CreateNamespace", &s3tables.CreateNamespaceRequest{
-		TableBucketARN: s.s3tablesArn(bucket),
-		Namespace:      []string{indexNamespace},
-	}, &resp)
-	// A concurrent CreateIndex may have won the create.
-	if err != nil && catalogErrCode(err) != s3tables.ErrCodeNamespaceAlreadyExists {
-		return err
-	}
-	return nil
+	return err
 }
 
 func (s *Server) handleCreateVectorBucket(w http.ResponseWriter, r *http.Request) {
@@ -256,6 +278,10 @@ func (s *Server) handleCreateVectorBucket(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
+	if err := s3tables.ValidateTagsWithLimit(req.Tags, maxResourceTags); err != nil {
+		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		return
+	}
 	// The catalog keeps the s3tables field name; GetVectorBucket renames it back.
 	enc := req.EncryptionConfiguration
 	if len(enc) != 0 {
@@ -263,18 +289,23 @@ func (s *Server) handleCreateVectorBucket(w http.ResponseWriter, r *http.Request
 	}
 	// No bucket exists yet, so check against the handler account as the
 	// catalog does for CreateTableBucket.
-	principal := s.tables.PrincipalFor(identityOf(r))
-	if !s3tables.CheckPermissionWithContext("s3vectors:CreateVectorBucket", principal, s.tables.PrincipalFor(""), "", "", s.tables.PolicyContext(r)) {
+	principal := s.tables.PrincipalFor(r)
+	allowed := func(action, bucket string) bool {
+		return s3tables.CheckPermissionWithContext(action, principal, s.tables.PrincipalFor(nil), "", "", s.tables.PolicyContext(r, bucket))
+	}
+	// Tagging names the new bucket, so a grant scoped to it applies.
+	if !allowed("s3vectors:CreateVectorBucket", "") ||
+		(len(req.Tags) > 0 && !allowed("s3vectors:TagResource", req.VectorBucketName)) {
 		catalogErr(w, errVectorDenied)
 		return
 	}
-	// The caller's name still makes it the owner of the record.
 	var resp map[string]interface{}
 	err := s.internal.Execute(r.Context(), s.filerClient, "CreateTableBucket",
 		&s3tables.CreateTableBucketRequest{
 			Name:                    req.VectorBucketName,
 			Format:                  s3tables.FormatLance,
 			EncryptionConfiguration: enc,
+			Tags:                    req.Tags,
 		}, &resp, identityOf(r))
 	if err != nil {
 		catalogErr(w, err)
@@ -346,13 +377,12 @@ func (s *Server) handleListVectorBuckets(w http.ResponseWriter, r *http.Request)
 		catalogErr(w, err)
 		return
 	}
-	principal := s.tables.PrincipalFor(identityOf(r))
-	pctx := s.tables.PolicyContext(r)
+	principal := s.tables.PrincipalFor(r)
 	// The catalog token continues the filtered page: ICEBERG buckets drop out
 	// of the listing, Lance and format-less legacy buckets stay.
 	out := &ListVectorBucketsResponse{NextToken: resp.ContinuationToken, VectorBuckets: []*VectorBucket{}}
 	for _, b := range resp.TableBuckets {
-		if b.Format != "" && b.Format != s3tables.FormatLance {
+		if !IsVectorBucketFormat(b.Format) {
 			continue
 		}
 		owner, policy, err := s.vectorPolicyView(r.Context(), b.Name)
@@ -362,6 +392,7 @@ func (s *Server) handleListVectorBuckets(w http.ResponseWriter, r *http.Request)
 			continue
 		}
 		arn := s.vectorBucketArn(b.Name)
+		pctx := s.tables.PolicyContext(r, b.Name)
 		if !s3tables.CheckPermissionWithContext("s3vectors:ListVectorBuckets", principal, owner, policy, arn, pctx) &&
 			!s3tables.CheckPermissionWithContext("s3vectors:GetVectorBucket", principal, owner, policy, arn, pctx) {
 			continue
@@ -387,25 +418,29 @@ func (s *Server) handleDeleteVectorBucket(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	if _, err := s.authorizeVector(r.Context(), r, "s3vectors:DeleteVectorBucket", arns.bucket, ""); err != nil {
+	record, err := s.authorizeVector(r.Context(), r, "s3vectors:DeleteVectorBucket", arns.bucket, "")
+	if err != nil {
 		catalogErr(w, err)
 		return
 	}
+	// Only the bucket authorized above is deleted, not one created again
+	// under its name since.
+	ctx := s3tables.WithTableBucketCreatedAt(r.Context(), record.CreatedAt)
 	var resp map[string]interface{}
-	err = s.internalCatalog(r.Context(), "DeleteTableBucket",
+	err = s.internalCatalog(ctx, "DeleteTableBucket",
 		&s3tables.DeleteTableBucketRequest{TableBucketARN: s.s3tablesArn(arns.bucket)}, &resp)
 	if err != nil && catalogErrCode(err) == s3tables.ErrCodeBucketNotEmpty {
 		// The implicit index namespace counts as bucket content even when it
 		// holds no indexes; drop it under the delete's own authorization and
 		// retry once. A namespace still holding indexes keeps the conflict.
 		var nsResp map[string]interface{}
-		nsErr := s.internalCatalog(context.WithoutCancel(r.Context()), "DeleteNamespace",
+		nsErr := s.internalCatalog(context.WithoutCancel(ctx), "DeleteNamespace",
 			&s3tables.DeleteNamespaceRequest{
 				TableBucketARN: s.s3tablesArn(arns.bucket),
 				Namespace:      []string{indexNamespace},
 			}, &nsResp)
 		if nsErr == nil {
-			err = s.internalCatalog(r.Context(), "DeleteTableBucket",
+			err = s.internalCatalog(ctx, "DeleteTableBucket",
 				&s3tables.DeleteTableBucketRequest{TableBucketARN: s.s3tablesArn(arns.bucket)}, &resp)
 		} else if code := catalogErrCode(nsErr); code != s3tables.ErrCodeNoSuchNamespace {
 			glog.V(1).Infof("S3 Vectors: drop internal namespace in %s: %v", arns.bucket, nsErr)
@@ -723,25 +758,41 @@ func (s *Server) mutateVectorPolicy(ctx context.Context, bucket string, mutate f
 	})
 }
 
-// isVectorBucket reports whether the catalog record describes a vector
-// bucket: an explicit ICEBERG bucket is not one, while a bucket declared
-// before formats existed reads as Lance.
+// IsVectorBucketFormat reports whether a table bucket of this format is a
+// vector bucket: an explicit ICEBERG bucket is not one, while a bucket
+// declared before formats existed reads as Lance.
+func IsVectorBucketFormat(format string) bool {
+	return format == "" || format == s3tables.FormatLance
+}
+
 func isVectorBucket(record *s3tables.GetTableBucketResponse) bool {
-	return record.Format == "" || record.Format == s3tables.FormatLance
+	return IsVectorBucketFormat(record.Format)
 }
 
 // errVectorDenied marks a failed vector permission check inside a policy
 // mutation; catalogErr renders it as AccessDenied.
 var errVectorDenied = &s3tables.S3TablesError{Type: s3tables.ErrCodeAccessDenied, Message: "access denied"}
 
+var errVectorBucketReplaced = &s3tables.S3TablesError{Type: s3tables.ErrCodeConflict,
+	Message: "vector bucket changed concurrently, retry the request"}
+
 // checkVectorPolicyDoc evaluates the caller's vector action against the
 // document the entry currently holds. Called inside a policy mutation's
 // compare-and-swap, so a grant revoked between reads never authorizes the
-// pending write.
-func (s *Server) checkVectorPolicyDoc(r *http.Request, action, bucket, owner string, ext map[string][]byte) bool {
-	principal := s.tables.PrincipalFor(identityOf(r))
-	return s3tables.CheckPermissionWithContext(action, principal, owner,
-		vectorPolicyFromExt(ext), s.vectorBucketArn(bucket), s.tables.PolicyContext(r))
+// pending write, and the entry must still be the bucket record was read from.
+func (s *Server) checkVectorPolicyDoc(r *http.Request, action, bucket string, record *s3tables.GetTableBucketResponse, ext map[string][]byte) error {
+	var meta struct {
+		CreatedAt time.Time `json:"createdAt"`
+	}
+	if json.Unmarshal(ext[s3tables.ExtendedKeyMetadata], &meta) != nil || !meta.CreatedAt.Equal(record.CreatedAt) {
+		return errVectorBucketReplaced
+	}
+	principal := s.tables.PrincipalFor(r)
+	if !s3tables.CheckPermissionWithContext(action, principal, record.OwnerAccountID,
+		vectorPolicyFromExt(ext), s.vectorBucketArn(bucket), s.tables.PolicyContext(r, bucket)) {
+		return errVectorDenied
+	}
+	return nil
 }
 
 // authorizeVector grants the request's own vector operation — not a catalog
@@ -763,8 +814,8 @@ func (s *Server) authorizeVector(ctx context.Context, r *http.Request, action, b
 	if index != "" {
 		resourceARN = s.indexArn(bucket, index)
 	}
-	principal := s.tables.PrincipalFor(identityOf(r))
-	if !s3tables.CheckPermissionWithContext(action, principal, record.OwnerAccountID, policy, resourceARN, s.tables.PolicyContext(r)) {
+	principal := s.tables.PrincipalFor(r)
+	if !s3tables.CheckPermissionWithContext(action, principal, record.OwnerAccountID, policy, resourceARN, s.tables.PolicyContext(r, bucket)) {
 		return nil, &s3tables.S3TablesError{Type: s3tables.ErrCodeAccessDenied, Message: "access denied"}
 	}
 	if !isVectorBucket(record) {
@@ -800,8 +851,8 @@ func (s *Server) handlePutVectorBucketPolicy(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	err = s.mutateVectorPolicy(r.Context(), arns.bucket, func(ext map[string][]byte) error {
-		if !s.checkVectorPolicyDoc(r, "s3vectors:PutVectorBucketPolicy", arns.bucket, record.OwnerAccountID, ext) {
-			return errVectorDenied
+		if err := s.checkVectorPolicyDoc(r, "s3vectors:PutVectorBucketPolicy", arns.bucket, record, ext); err != nil {
+			return err
 		}
 		// A raw vector document still in the shared slot migrates out with
 		// this write; catalog rules in it stay untouched.
@@ -871,8 +922,8 @@ func (s *Server) handleDeleteVectorBucketPolicy(w http.ResponseWriter, r *http.R
 		return
 	}
 	err = s.mutateVectorPolicy(r.Context(), arns.bucket, func(ext map[string][]byte) error {
-		if !s.checkVectorPolicyDoc(r, "s3vectors:DeleteVectorBucketPolicy", arns.bucket, record.OwnerAccountID, ext) {
-			return errVectorDenied
+		if err := s.checkVectorPolicyDoc(r, "s3vectors:DeleteVectorBucketPolicy", arns.bucket, record, ext); err != nil {
+			return err
 		}
 		removed := false
 		if _, ok := ext[vectorPolicyKey]; ok {
@@ -929,14 +980,27 @@ func (s *Server) handleCreateIndex(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", "dimension must be 1..=4096")
 		return
 	}
+	if err := s3tables.ValidateTagsWithLimit(req.Tags, maxResourceTags); err != nil {
+		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		return
+	}
 	// The create grant is exercised before any write: a denied caller must not
 	// leave even the implicit namespace behind.
-	if _, err := s.authorizeVector(r.Context(), r, "s3vectors:CreateIndex", arns.bucket, arns.index); err != nil {
+	bucketRecord, err := s.authorizeVector(r.Context(), r, "s3vectors:CreateIndex", arns.bucket, arns.index)
+	if err != nil {
 		catalogErr(w, err)
 		return
 	}
+	if len(req.Tags) > 0 {
+		if _, err := s.authorizeVector(r.Context(), r, "s3vectors:TagResource", arns.bucket, arns.index); err != nil {
+			catalogErr(w, err)
+			return
+		}
+	}
+	// The catalog writes land only in the bucket authorized above.
+	bound := s3tables.WithTableBucketCreatedAt(r.Context(), bucketRecord.CreatedAt)
 	// The namespace is implicit on AWS and internal bookkeeping here.
-	if err := s.ensureIndexNamespace(r.Context(), arns.bucket); err != nil {
+	if err := s.ensureIndexNamespace(bound, arns.bucket); err != nil {
 		catalogErr(w, err)
 		return
 	}
@@ -971,12 +1035,13 @@ func (s *Server) handleCreateIndex(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	metadataJSON, _ := json.Marshal(metadata)
-	err = s.internalCatalog(r.Context(), "CreateTable", &s3tables.CreateTableRequest{
+	err = s.internalCatalog(bound, "CreateTable", &s3tables.CreateTableRequest{
 		TableBucketARN: s.s3tablesArn(arns.bucket),
 		Namespace:      []string{indexNamespace},
 		Name:           arns.index,
 		Format:         s3tables.FormatLance,
 		Metadata:       &s3tables.TableMetadata{FullMetadata: metadataJSON},
+		Tags:           req.Tags,
 	}, nil)
 	if err != nil {
 		catalogErr(w, err)
@@ -1012,7 +1077,7 @@ func (s *Server) handleCreateIndex(w http.ResponseWriter, r *http.Request) {
 		} else if gerr != nil {
 			glog.Errorf("S3 Vectors: rollback lookup for %s/%s failed: %v", arns.bucket, arns.index, gerr)
 		}
-		vectorErr(w, err)
+		vectorErr(w, r, arns, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, &CreateIndexResponse{IndexArn: s.indexArn(arns.bucket, arns.index)})
@@ -1171,7 +1236,8 @@ func (s *Server) handleDeleteIndex(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	if _, err := s.authorizeVector(r.Context(), r, "s3vectors:DeleteIndex", arns.bucket, arns.index); err != nil {
+	bucketRecord, err := s.authorizeVector(r.Context(), r, "s3vectors:DeleteIndex", arns.bucket, arns.index)
+	if err != nil {
 		catalogErr(w, err)
 		return
 	}
@@ -1195,8 +1261,9 @@ func (s *Server) handleDeleteIndex(w http.ResponseWriter, r *http.Request) {
 	// Deleting the catalog record is the delete: the catalog purges the
 	// dataset under the index's location along with the entry.
 	var resp map[string]interface{}
-	// The token limits the delete to the record checked above.
-	err = s.internalCatalog(r.Context(), "DeleteTable", &s3tables.DeleteTableRequest{
+	// The token limits the delete to the record checked above, and the bound
+	// bucket to the one authorized.
+	err = s.internalCatalog(s3tables.WithTableBucketCreatedAt(r.Context(), bucketRecord.CreatedAt), "DeleteTable", &s3tables.DeleteTableRequest{
 		TableBucketARN: s.s3tablesArn(arns.bucket),
 		Namespace:      []string{indexNamespace},
 		Name:           arns.index,
@@ -1265,7 +1332,7 @@ func (s *Server) handlePutVectors(w http.ResponseWriter, r *http.Request) {
 		Vectors: vectors,
 	})
 	if err != nil {
-		vectorErr(w, err)
+		vectorErr(w, r, arns, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, &PutVectorsResponse{})
@@ -1346,7 +1413,7 @@ func (s *Server) handleGetVectors(w http.ResponseWriter, r *http.Request) {
 		ReturnMetadata: req.ReturnMetadata,
 	})
 	if err != nil {
-		vectorErr(w, err)
+		vectorErr(w, r, arns, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, &GetVectorsResponse{
@@ -1405,7 +1472,7 @@ func (s *Server) handleListVectors(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, err := s.vectors.ListVectors(r.Context(), listReq)
 	if err != nil {
-		vectorErr(w, err)
+		vectorErr(w, r, arns, err)
 		return
 	}
 	// An engine that predates segment_count lists every row; page through
@@ -1415,7 +1482,7 @@ func (s *Server) handleListVectors(w http.ResponseWriter, r *http.Request) {
 		out, nextToken, err := s.listSegmentVectors(r.Context(), listReq.Table,
 			offset, maxResults, uint64(*req.SegmentCount), uint64(*req.SegmentIndex), req.ReturnData, req.ReturnMetadata, resp)
 		if err != nil {
-			vectorErr(w, err)
+			vectorErr(w, r, arns, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, &ListVectorsResponse{
@@ -1545,7 +1612,7 @@ func (s *Server) handleDeleteVectors(w http.ResponseWriter, r *http.Request) {
 		Keys:  req.Keys,
 	})
 	if err != nil {
-		vectorErr(w, err)
+		vectorErr(w, r, arns, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, &DeleteVectorsResponse{})
@@ -1698,16 +1765,12 @@ func fieldClause(field string, cond interface{}) (string, error) {
 					return "", fmt.Errorf("$exists expects a boolean")
 				}
 			case "$eq", "$ne":
-				lit, err := sqlLiteral(operand)
-				if err != nil {
-					return "", err
-				}
-				match, err := fieldMatch(field, operand, "= "+lit)
+				match, err := equalMatch(field, operand)
 				if err != nil {
 					return "", err
 				}
 				if op == "$ne" {
-					match = "NOT COALESCE(" + match + ", false)"
+					match = "NOT " + match
 				}
 				parts = append(parts, match)
 			case "$in", "$nin":
@@ -1747,6 +1810,13 @@ func fieldClause(field string, cond interface{}) (string, error) {
 				for _, col := range cols {
 					groups = append(groups, fmt.Sprintf("COALESCE(%s in (%s), false)", col, strings.Join(members[col], ", ")))
 				}
+				for _, item := range list {
+					element, err := elementMatch(field, item)
+					if err != nil {
+						return "", err
+					}
+					groups = append(groups, element)
+				}
 				expr := "(" + strings.Join(groups, " OR ") + ")"
 				if op == "$nin" {
 					expr = "NOT " + expr
@@ -1775,12 +1845,39 @@ func fieldClause(field string, cond interface{}) (string, error) {
 		}
 		return strings.Join(parts, " AND "), nil
 	default:
-		lit, err := sqlLiteral(cond)
-		if err != nil {
-			return "", err
-		}
-		return fieldMatch(field, cond, "= "+lit)
+		return equalMatch(field, cond)
 	}
+}
+
+// equalMatch renders "field equals operand": the stored value itself or, as
+// AWS documents for $eq, any element of a stored array.
+func equalMatch(field string, operand interface{}) (string, error) {
+	lit, err := sqlLiteral(operand)
+	if err != nil {
+		return "", err
+	}
+	match, err := fieldMatch(field, operand, "= "+lit)
+	if err != nil {
+		return "", err
+	}
+	element, err := elementMatch(field, operand)
+	if err != nil {
+		return "", err
+	}
+	return "(COALESCE(" + match + ", false) OR " + element + ")", nil
+}
+
+// elementMatch renders "the array stored at field holds operand". The engine
+// compares the elements as typed JSON values, so 1 does not match "1".
+func elementMatch(field string, operand interface{}) (string, error) {
+	var b strings.Builder
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(operand); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("COALESCE(json_array_contains(`metadata`, '%s', '%s'), false)",
+		sqlEscape(existsPath(field)), sqlEscape(strings.TrimSuffix(b.String(), "\n"))), nil
 }
 
 // jsonbString renders s as the JSON text json_extract returns for a stored
@@ -1888,14 +1985,19 @@ func (s *Server) handleQueryVectors(w http.ResponseWriter, r *http.Request) {
 		ReturnDistance: req.ReturnDistance,
 	})
 	if err != nil {
-		vectorErr(w, err)
+		vectorErr(w, r, arns, err)
 		return
 	}
 	out := &QueryVectorsResponse{DistanceMetric: metric, Vectors: []*QueryOutputVector{}}
 	for _, v := range resp.Vectors {
 		o := &QueryOutputVector{Key: v.Key}
 		if req.ReturnDistance {
-			o.Distance = &v.Distance
+			d := v.Distance
+			if metric == "euclidean" {
+				// Lance's L2 distance is the square of the Euclidean distance.
+				d = float32(math.Sqrt(math.Max(0, float64(d))))
+			}
+			o.Distance = &d
 		}
 		if req.ReturnMetadata {
 			o.Metadata = structToMap(v.Metadata)

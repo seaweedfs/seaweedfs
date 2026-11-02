@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
+	"net/url"
 	"slices"
 	"sync"
 	"testing"
@@ -733,5 +734,37 @@ func TestVerifyV4SignatureUsesOriginalRequestPath(t *testing.T) {
 	rewritten = rewritten.WithContext(s3_constants.SetOriginalRequestPathInContext(rewritten.Context(), "/v1/v1/bucket/namespaces"))
 	if _, errCode := iam.reqSignatureV4Verify(rewritten); errCode != s3err.ErrNone {
 		t.Fatalf("signed request rejected after path rewrite: %d", errCode)
+	}
+}
+
+// TestSignatureV4WithForwardedPrefixUnicodeKey guards against a signature
+// mismatch when an object key contains non-ASCII characters and the request is
+// received through a trusted reverse proxy that strips a path prefix. The
+// client signs the single percent-encoded path including the prefix, so the
+// server must decode the forwarded (already encoded) path before re-encoding it
+// together with the prefix.
+func TestSignatureV4WithForwardedPrefixUnicodeKey(t *testing.T) {
+	iam := newTestIAMWithTrustedProxy()
+
+	bucket := "test-bucket"
+	key := "たあいまd·.jpg"
+
+	// The proxy strips the X-Forwarded-Prefix and forwards the percent-encoded
+	// object path (the server sees the encoded form, not the raw Unicode key).
+	r, err := newTestRequest("GET", "https://example.com/"+bucket+"/"+url.PathEscape(key), 0, nil)
+	if err != nil {
+		t.Fatalf("failed to create test request: %v", err)
+	}
+
+	r.Header.Set("X-Forwarded-Prefix", "/s3")
+	r.Header.Set("Host", "example.com")
+	r.RemoteAddr = "10.0.0.1:1234"
+
+	// The client signs the full URL path including the prefix, using the single
+	// percent-encoded form of the Unicode key.
+	signV4WithPath(r, "AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "/s3/"+bucket+"/"+key)
+
+	if _, _, errCode := iam.doesSignatureMatch(r); errCode != s3err.ErrNone {
+		t.Fatalf("signature verification failed for unicode key behind forwarded prefix: code %d", int(errCode))
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"sort"
+	"strings"
 	"sync"
 
 	"google.golang.org/grpc"
@@ -94,7 +95,7 @@ func (cm *ChunkManifest) DeleteChunks(masterFn GetMasterFn, usePublicUrl bool, g
 	return nil
 }
 
-func readChunkNeedle(fileUrl string, w io.Writer, offset int64, jwt string) (written int64, e error) {
+func readChunkNeedle(fileUrl string, w io.Writer, offset int64, size int64, jwt string) (written int64, e error) {
 	req, err := http.NewRequest(http.MethodGet, fileUrl, nil)
 	if err != nil {
 		return written, err
@@ -125,7 +126,11 @@ func readChunkNeedle(fileUrl string, w io.Writer, offset int64, jwt string) (wri
 		return written, util_http.StatusError(fileUrl, resp)
 
 	}
-	return io.Copy(w, resp.Body)
+	written, e = io.CopyN(w, resp.Body, size)
+	if e == io.EOF {
+		e = fmt.Errorf("%s: %d of %d bytes: %w", fileUrl, written, size, io.ErrUnexpectedEOF)
+	}
+	return written, e
 }
 
 func NewChunkedFileReader(chunkList []*ChunkInfo, master pb.ServerAddress, grpcDialOption grpc.DialOption) *ChunkedFileReader {
@@ -175,24 +180,67 @@ func (cf *ChunkedFileReader) WriteTo(w io.Writer) (n int64, err error) {
 		return n, ErrInvalidRange
 	}
 	for ; chunkIndex < len(cf.chunkList); chunkIndex++ {
-		ci := cf.chunkList[chunkIndex]
-		// if we need read date from local volume server first?
-		fileUrl, jwt, lookupError := LookupFileId(func(_ context.Context) pb.ServerAddress {
-			return cf.master
-		}, cf.grpcDialOption, ci.Fid)
-		if lookupError != nil {
-			return n, lookupError
-		}
-		if wn, e := readChunkNeedle(fileUrl, w, chunkStartOffset, jwt); e != nil {
+		wn, e := cf.readChunk(cf.chunkList[chunkIndex], w, chunkStartOffset)
+		n += wn
+		cf.pos += wn
+		if e != nil {
 			return n, e
-		} else {
-			n += wn
-			cf.pos += wn
 		}
-
 		chunkStartOffset = 0
 	}
 	return n, nil
+}
+
+// readChunk reads the chunk from the first replica that serves it. A failure
+// drops the volume's cached locations, and once every cached replica has
+// failed the master is asked again. A replica that already sent part of the
+// chunk is not continued elsewhere: a volume server streams a needle before
+// its checksum is verified, so those bytes may be the corrupt ones.
+func (cf *ChunkedFileReader) readChunk(ci *ChunkInfo, w io.Writer, offset int64) (written int64, err error) {
+	masterFn := func(_ context.Context) pb.ServerAddress {
+		return cf.master
+	}
+	vid, _, _ := strings.Cut(ci.Fid, ",")
+	dst := &writeErrorRecorder{Writer: w}
+	tried := make(map[string]bool)
+	for range 2 {
+		fileUrls, jwt, lookupError := lookupFileIdUrls(masterFn, cf.grpcDialOption, ci.Fid)
+		if lookupError != nil {
+			if err == nil {
+				err = lookupError
+			}
+			return 0, err
+		}
+		for _, fileUrl := range fileUrls {
+			if tried[fileUrl] {
+				continue
+			}
+			tried[fileUrl] = true
+			written, err = readChunkNeedle(fileUrl, dst, offset, ci.Size-offset, jwt)
+			if err == nil || dst.err != nil {
+				return written, err
+			}
+			glog.V(0).Infof("read chunk %s from %s: %v", ci.Fid, fileUrl, err)
+			InvalidateVolumeIdLocationCache(vid)
+			if written > 0 {
+				return written, err
+			}
+		}
+	}
+	return 0, err
+}
+
+type writeErrorRecorder struct {
+	io.Writer
+	err error
+}
+
+func (r *writeErrorRecorder) Write(p []byte) (int, error) {
+	n, err := r.Writer.Write(p)
+	if err != nil {
+		r.err = err
+	}
+	return n, err
 }
 
 func (cf *ChunkedFileReader) ReadAt(p []byte, off int64) (n int, err error) {
