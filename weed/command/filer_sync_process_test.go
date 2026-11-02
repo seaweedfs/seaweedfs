@@ -1,11 +1,14 @@
 package command
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/replication/sink"
+	"github.com/seaweedfs/seaweedfs/weed/replication/sink/localsink"
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -341,5 +344,37 @@ func TestGenProcessFunctionRenameFromExcludedDirBecomesCreate(t *testing.T) {
 	}
 	if len(dataSink.deleteKeys) != 0 || len(dataSink.updateKeys) != 0 {
 		t.Fatalf("unexpected delete/update calls: deletes=%v updates=%v", dataSink.deleteKeys, dataSink.updateKeys)
+	}
+}
+
+func TestGenProcessFunctionLocalSinkStaysInsideTarget(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "backup")
+	dataSink := &localsink.LocalSink{Dir: target}
+	dataSink.SetSourceFiler(&source.FilerSource{})
+	processFn := genProcessFunction("/", target, nil, nil, nil, nil, dataSink, true, false)
+
+	for _, dir := range []string{"/safe", "/../escape"} {
+		err := processFn(&filer_pb.SubscribeMetadataResponse{
+			Directory: dir,
+			EventNotification: &filer_pb.EventNotification{
+				NewParentPath: dir,
+				NewEntry: &filer_pb.Entry{
+					Name:       "marker.txt",
+					Content:    []byte("marker"),
+					Attributes: &filer_pb.FuseAttributes{FileMode: 0644, FileSize: 6},
+				},
+			},
+		})
+		if err != nil {
+			t.Fatalf("processFn %s: %v", dir, err)
+		}
+	}
+
+	if _, err := os.Stat(filepath.Join(target, "safe", "marker.txt")); err != nil {
+		t.Fatalf("inside file missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "escape")); !os.IsNotExist(err) {
+		t.Fatalf("local sink wrote outside %s: %v", target, err)
 	}
 }
