@@ -277,12 +277,11 @@ func (s *Server) handleCreateVectorBucket(w http.ResponseWriter, r *http.Request
 	}
 	// No bucket exists yet, so check against the handler account as the
 	// catalog does for CreateTableBucket.
-	principal := s.tables.PrincipalFor(identityOf(r))
-	if !s3tables.CheckPermissionWithContext("s3vectors:CreateVectorBucket", principal, s.tables.PrincipalFor(""), "", "", s.tables.PolicyContext(r)) {
+	principal := s.tables.PrincipalFor(r)
+	if !s3tables.CheckPermissionWithContext("s3vectors:CreateVectorBucket", principal, s.tables.PrincipalFor(nil), "", "", s.tables.PolicyContext(r, "")) {
 		catalogErr(w, errVectorDenied)
 		return
 	}
-	// The caller's name still makes it the owner of the record.
 	var resp map[string]interface{}
 	err := s.internal.Execute(r.Context(), s.filerClient, "CreateTableBucket",
 		&s3tables.CreateTableBucketRequest{
@@ -360,8 +359,7 @@ func (s *Server) handleListVectorBuckets(w http.ResponseWriter, r *http.Request)
 		catalogErr(w, err)
 		return
 	}
-	principal := s.tables.PrincipalFor(identityOf(r))
-	pctx := s.tables.PolicyContext(r)
+	principal := s.tables.PrincipalFor(r)
 	// The catalog token continues the filtered page: ICEBERG buckets drop out
 	// of the listing, Lance and format-less legacy buckets stay.
 	out := &ListVectorBucketsResponse{NextToken: resp.ContinuationToken, VectorBuckets: []*VectorBucket{}}
@@ -376,6 +374,7 @@ func (s *Server) handleListVectorBuckets(w http.ResponseWriter, r *http.Request)
 			continue
 		}
 		arn := s.vectorBucketArn(b.Name)
+		pctx := s.tables.PolicyContext(r, b.Name)
 		if !s3tables.CheckPermissionWithContext("s3vectors:ListVectorBuckets", principal, owner, policy, arn, pctx) &&
 			!s3tables.CheckPermissionWithContext("s3vectors:GetVectorBucket", principal, owner, policy, arn, pctx) {
 			continue
@@ -753,9 +752,9 @@ var errVectorDenied = &s3tables.S3TablesError{Type: s3tables.ErrCodeAccessDenied
 // compare-and-swap, so a grant revoked between reads never authorizes the
 // pending write.
 func (s *Server) checkVectorPolicyDoc(r *http.Request, action, bucket, owner string, ext map[string][]byte) bool {
-	principal := s.tables.PrincipalFor(identityOf(r))
+	principal := s.tables.PrincipalFor(r)
 	return s3tables.CheckPermissionWithContext(action, principal, owner,
-		vectorPolicyFromExt(ext), s.vectorBucketArn(bucket), s.tables.PolicyContext(r))
+		vectorPolicyFromExt(ext), s.vectorBucketArn(bucket), s.tables.PolicyContext(r, bucket))
 }
 
 // authorizeVector grants the request's own vector operation — not a catalog
@@ -777,8 +776,8 @@ func (s *Server) authorizeVector(ctx context.Context, r *http.Request, action, b
 	if index != "" {
 		resourceARN = s.indexArn(bucket, index)
 	}
-	principal := s.tables.PrincipalFor(identityOf(r))
-	if !s3tables.CheckPermissionWithContext(action, principal, record.OwnerAccountID, policy, resourceARN, s.tables.PolicyContext(r)) {
+	principal := s.tables.PrincipalFor(r)
+	if !s3tables.CheckPermissionWithContext(action, principal, record.OwnerAccountID, policy, resourceARN, s.tables.PolicyContext(r, bucket)) {
 		return nil, &s3tables.S3TablesError{Type: s3tables.ErrCodeAccessDenied, Message: "access denied"}
 	}
 	if !isVectorBucket(record) {
