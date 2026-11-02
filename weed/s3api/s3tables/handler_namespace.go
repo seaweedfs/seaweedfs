@@ -802,11 +802,12 @@ func (h *S3TablesHandler) handleDeleteNamespace(w http.ResponseWriter, r *http.R
 	// A namespace whose create has not confirmed it is absent, and claiming it
 	// would replace the create's mark: a refused delete then lifts the claim and
 	// leaves the namespace looking confirmed before its create checked the bucket.
+	// One created again since it was authorized is absent too.
 	var claim string
 	var claimed map[string][]byte
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		var claimErr error
-		claim, claimed, claimErr = h.claimForDelete(r.Context(), client, namespacePath, isFinishedNamespaceEntry)
+		claim, claimed, claimErr = h.claimForDelete(r.Context(), client, namespacePath, isNamespaceCreatedAt(metadata.CreatedAt))
 		return claimErr
 	})
 	if err != nil {
