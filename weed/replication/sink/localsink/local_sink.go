@@ -49,6 +49,25 @@ func (localsink *LocalSink) isInsideDir(key string) (string, bool) {
 	return "", false
 }
 
+// resolveInsideDir resolves symlinks in the parent of rel while it stays inside the sink directory.
+func (localsink *LocalSink) resolveInsideDir(rel string) string {
+	base, err := filepath.EvalSymlinks(localsink.Dir)
+	if err != nil {
+		return rel
+	}
+	dir, rest := filepath.Dir(rel), filepath.Base(rel)
+	for dir != "." {
+		if resolved, err := filepath.EvalSymlinks(filepath.Join(base, dir)); err == nil {
+			if inside, err := filepath.Rel(base, resolved); err == nil && filepath.IsLocal(inside) {
+				return filepath.Join(inside, rest)
+			}
+			return rel
+		}
+		dir, rest = filepath.Dir(dir), filepath.Join(filepath.Base(dir), rest)
+	}
+	return rel
+}
+
 func (localsink *LocalSink) initialize(dir string, isIncremental bool) error {
 	localsink.Dir = dir
 	localsink.isIncremental = isIncremental
@@ -86,7 +105,7 @@ func (localsink *LocalSink) DeleteEntry(key string, isDirectory, deleteIncludeCh
 	glog.V(4).Infof("Delete Entry key: %s", key)
 	root, err := os.OpenRoot(localsink.Dir)
 	if err == nil {
-		err = root.Remove(rel)
+		err = root.Remove(localsink.resolveInsideDir(rel))
 		root.Close()
 	}
 	if err != nil {
@@ -121,6 +140,7 @@ func (localsink *LocalSink) CreateEntry(key string, entry *filer_pb.Entry, signa
 	}
 	defer root.Close()
 
+	rel = localsink.resolveInsideDir(rel)
 	dir := filepath.Dir(rel)
 	if err := root.MkdirAll(dir, 0755); err != nil {
 		return err

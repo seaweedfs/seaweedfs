@@ -107,3 +107,40 @@ func TestLocalSinkDoesNotFollowSymlinksOutOfDir(t *testing.T) {
 		t.Fatalf("inside symlink target missing: %v", err)
 	}
 }
+
+func TestLocalSinkFollowsAbsoluteSymlinksInsideDir(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "backup")
+	target := filepath.Join(dir, "real")
+	if err := os.MkdirAll(target, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(dir, "abs")); err != nil {
+		t.Skipf("symlink: %v", err)
+	}
+	sink := &LocalSink{}
+	sink.initialize(dir, false)
+	sink.SetSourceFiler(&source.FilerSource{})
+
+	entry := &filer_pb.Entry{
+		Name:       "marker.txt",
+		Content:    []byte("marker"),
+		Attributes: &filer_pb.FuseAttributes{FileMode: 0644, FileSize: 6},
+	}
+	for _, name := range []string{"marker.txt", filepath.Join("sub", "marker.txt")} {
+		if err := sink.CreateEntry(filepath.Join(dir, "abs", name), entry, nil); err != nil {
+			t.Fatalf("create %s through an absolute symlink inside %s: %v", name, dir, err)
+		}
+		if _, err := os.Stat(filepath.Join(target, name)); err != nil {
+			t.Fatalf("absolute symlink target %s missing: %v", name, err)
+		}
+		if err := sink.DeleteEntry(filepath.Join(dir, "abs", name), false, false, nil); err != nil {
+			t.Fatalf("delete %s through an absolute symlink: %v", name, err)
+		}
+		if _, err := os.Stat(filepath.Join(target, name)); !os.IsNotExist(err) {
+			t.Fatalf("delete through an absolute symlink left %s: %v", name, err)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(dir, "abs")); err != nil {
+		t.Fatalf("symlink itself removed: %v", err)
+	}
+}
