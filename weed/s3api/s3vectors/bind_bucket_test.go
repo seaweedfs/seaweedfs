@@ -1,0 +1,92 @@
+package s3vectors
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables/s3tablestest"
+)
+
+// A vector bucket policy write authorizes against the bucket it read: when the
+// bucket is deleted and created again by another account before the write's
+// compare-and-swap reads the entry, the write must not land on the new bucket.
+func TestVectorBucketPolicyWritesKeepToAuthorizedBucket(t *testing.T) {
+	const policy = `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3vectors:GetVectorBucket","Resource":"*"}]}`
+	cases := []struct {
+		name string
+		call func(s *Server) *httptest.ResponseRecorder
+	}{
+		{"put", func(s *Server) *httptest.ResponseRecorder {
+			return postJSONAs(t, "", s.handlePutVectorBucketPolicy, &PutVectorBucketPolicyRequest{VectorBucketName: "vec-bucket", Policy: policy})
+		}},
+		{"delete", func(s *Server) *httptest.ResponseRecorder {
+			return postJSONAs(t, "", s.handleDeleteVectorBucketPolicy, &DeleteVectorBucketPolicyRequest{VectorBucketName: "vec-bucket"})
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fs := s3tablestest.Start(t)
+			s := NewServer(s3tables.NewManagerClient(fs.Client), allowAllAuth{}, newFakeVectors(0))
+			if w := postJSONAs(t, "", s.handleCreateVectorBucket, &CreateVectorBucketRequest{VectorBucketName: "vec-bucket"}); w.Code != http.StatusOK {
+				t.Fatalf("create bucket: %d %s", w.Code, w.Body.String())
+			}
+			if w := postJSONAs(t, "", s.handlePutVectorBucketPolicy, &PutVectorBucketPolicyRequest{VectorBucketName: "vec-bucket", Policy: policy}); w.Code != http.StatusOK {
+				t.Fatalf("seed policy: %d %s", w.Code, w.Body.String())
+			}
+
+			dir, name := splitEntryPath(s3tables.GetTableBucketPath("vec-bucket"))
+			lookups := 0
+			fs.OnLookup = func(d, n string) {
+				if d == dir && n == name {
+					lookups++
+				}
+			}
+			if w := tc.call(s); w.Code != http.StatusOK {
+				t.Fatalf("baseline %s: %d %s", tc.name, w.Code, w.Body.String())
+			}
+			fs.OnLookup = nil
+			if w := postJSONAs(t, "", s.handlePutVectorBucketPolicy, &PutVectorBucketPolicyRequest{VectorBucketName: "vec-bucket", Policy: policy}); w.Code != http.StatusOK {
+				t.Fatalf("reseed policy: %d %s", w.Code, w.Body.String())
+			}
+			// The last bucket lookup is the compare-and-swap read; replace the
+			// bucket with another account's right before it.
+			last, seen := lookups, 0
+			fs.OnLookup = func(d, n string) {
+				if d != dir || n != name {
+					return
+				}
+				if seen++; seen != last {
+					return
+				}
+				entry := fs.Get(dir, name)
+				var meta map[string]interface{}
+				if err := json.Unmarshal(entry.Extended[s3tables.ExtendedKeyMetadata], &meta); err != nil {
+					t.Errorf("decode bucket metadata: %v", err)
+					return
+				}
+				meta["ownerAccountId"] = "bob"
+				meta["createdAt"] = time.Now().Add(time.Hour).UTC()
+				data, _ := json.Marshal(meta)
+				ext := make(map[string][]byte, len(entry.Extended))
+				for k, v := range entry.Extended {
+					ext[k] = v
+				}
+				ext[s3tables.ExtendedKeyMetadata] = data
+				ext[vectorPolicyKey] = []byte("bob-policy")
+				fs.Put(dir, name, ext)
+			}
+			w := tc.call(s)
+			fs.OnLookup = nil
+			if w.Code != http.StatusConflict {
+				t.Fatalf("%s over a replaced bucket = %d %s, want 409", tc.name, w.Code, w.Body.String())
+			}
+			if got := string(fs.Get(dir, name).Extended[vectorPolicyKey]); got != "bob-policy" {
+				t.Fatalf("%s rewrote the replacing bucket's policy: %q", tc.name, got)
+			}
+		})
+	}
+}

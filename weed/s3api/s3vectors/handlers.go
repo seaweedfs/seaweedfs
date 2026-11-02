@@ -752,14 +752,26 @@ func isVectorBucket(record *s3tables.GetTableBucketResponse) bool {
 // mutation; catalogErr renders it as AccessDenied.
 var errVectorDenied = &s3tables.S3TablesError{Type: s3tables.ErrCodeAccessDenied, Message: "access denied"}
 
+var errVectorBucketReplaced = &s3tables.S3TablesError{Type: s3tables.ErrCodeConflict,
+	Message: "vector bucket changed concurrently, retry the request"}
+
 // checkVectorPolicyDoc evaluates the caller's vector action against the
 // document the entry currently holds. Called inside a policy mutation's
 // compare-and-swap, so a grant revoked between reads never authorizes the
-// pending write.
-func (s *Server) checkVectorPolicyDoc(r *http.Request, action, bucket, owner string, ext map[string][]byte) bool {
+// pending write, and the entry must still be the bucket record was read from.
+func (s *Server) checkVectorPolicyDoc(r *http.Request, action, bucket string, record *s3tables.GetTableBucketResponse, ext map[string][]byte) error {
+	var meta struct {
+		CreatedAt time.Time `json:"createdAt"`
+	}
+	if json.Unmarshal(ext[s3tables.ExtendedKeyMetadata], &meta) != nil || !meta.CreatedAt.Equal(record.CreatedAt) {
+		return errVectorBucketReplaced
+	}
 	principal := s.tables.PrincipalFor(r)
-	return s3tables.CheckPermissionWithContext(action, principal, owner,
-		vectorPolicyFromExt(ext), s.vectorBucketArn(bucket), s.tables.PolicyContext(r, bucket))
+	if !s3tables.CheckPermissionWithContext(action, principal, record.OwnerAccountID,
+		vectorPolicyFromExt(ext), s.vectorBucketArn(bucket), s.tables.PolicyContext(r, bucket)) {
+		return errVectorDenied
+	}
+	return nil
 }
 
 // authorizeVector grants the request's own vector operation — not a catalog
@@ -818,8 +830,8 @@ func (s *Server) handlePutVectorBucketPolicy(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	err = s.mutateVectorPolicy(r.Context(), arns.bucket, func(ext map[string][]byte) error {
-		if !s.checkVectorPolicyDoc(r, "s3vectors:PutVectorBucketPolicy", arns.bucket, record.OwnerAccountID, ext) {
-			return errVectorDenied
+		if err := s.checkVectorPolicyDoc(r, "s3vectors:PutVectorBucketPolicy", arns.bucket, record, ext); err != nil {
+			return err
 		}
 		// A raw vector document still in the shared slot migrates out with
 		// this write; catalog rules in it stay untouched.
@@ -889,8 +901,8 @@ func (s *Server) handleDeleteVectorBucketPolicy(w http.ResponseWriter, r *http.R
 		return
 	}
 	err = s.mutateVectorPolicy(r.Context(), arns.bucket, func(ext map[string][]byte) error {
-		if !s.checkVectorPolicyDoc(r, "s3vectors:DeleteVectorBucketPolicy", arns.bucket, record.OwnerAccountID, ext) {
-			return errVectorDenied
+		if err := s.checkVectorPolicyDoc(r, "s3vectors:DeleteVectorBucketPolicy", arns.bucket, record, ext); err != nil {
+			return err
 		}
 		removed := false
 		if _, ok := ext[vectorPolicyKey]; ok {
