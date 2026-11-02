@@ -7,6 +7,7 @@ endif
 VOLUME := ./weed-volume
 CARGO_PROFILE ?= release
 CARGO_TARGET_DIR ?= $(abspath ../../seaweed-vector/target)
+override CARGO_TARGET_DIR := $(abspath $(CARGO_TARGET_DIR))
 CARGO_OUTPUT := $(CARGO_TARGET_DIR)/$(if $(filter dev,$(CARGO_PROFILE)),debug,$(CARGO_PROFILE))
 export CARGO_TARGET_DIR
 
