@@ -223,4 +223,61 @@ func TestIndexWritesKeepToAuthorizedBucket(t *testing.T) {
 			t.Fatal("UpdateIndexMode rewrote an index of the bucket that replaced the authorized one")
 		}
 	})
+	t.Run("update mode at the write", func(t *testing.T) {
+		fs, s := newServer(t)
+		if w := createIndex(s); w.Code != http.StatusOK {
+			t.Fatalf("create index: %d %s", w.Code, w.Body.String())
+		}
+		withClassicCutoff(t, time.Now().Add(2*time.Hour))
+		lookups := 0
+		fs.OnLookup = func(d, n string) {
+			if d == indexDir && n == indexName {
+				lookups++
+			}
+		}
+		if w := postJSONAs(t, "", s.handleUpdateIndexMode, &UpdateIndexModeRequest{VectorBucketName: "vec-bucket", IndexName: "idx", IndexMode: indexModeClassic}); w.Code != http.StatusOK {
+			t.Fatalf("baseline update: %d %s", w.Code, w.Body.String())
+		}
+		// The last index lookup is the compare-and-swap read; replace the
+		// bucket and its index with another account's right before it.
+		last, seen := lookups, 0
+		var replaced string
+		fs.OnLookup = func(d, n string) {
+			if d != indexDir || n != indexName {
+				return
+			}
+			if seen++; seen != last {
+				return
+			}
+			replaceBucket(t, fs, "vec-bucket")
+			entry := fs.Get(indexDir, indexName)
+			var meta map[string]interface{}
+			if err := json.Unmarshal(entry.Extended[s3tables.ExtendedKeyMetadata], &meta); err != nil {
+				t.Errorf("decode index metadata: %v", err)
+				return
+			}
+			meta["ownerAccountId"] = "bob"
+			meta["createdAt"] = time.Now().Add(time.Hour).UTC()
+			meta["versionToken"] = "bob-token"
+			data, _ := json.Marshal(meta)
+			ext := make(map[string][]byte, len(entry.Extended))
+			for k, v := range entry.Extended {
+				ext[k] = v
+			}
+			ext[s3tables.ExtendedKeyMetadata] = data
+			replaced = string(data)
+			fs.Put(indexDir, indexName, ext)
+		}
+		w := postJSONAs(t, "", s.handleUpdateIndexMode, &UpdateIndexModeRequest{VectorBucketName: "vec-bucket", IndexName: "idx", IndexMode: indexModeEnhanced})
+		fs.OnLookup = nil
+		if replaced == "" {
+			t.Fatal("the index was never replaced")
+		}
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("update over a replaced index = %d %s, want 404", w.Code, w.Body.String())
+		}
+		if after := string(fs.Get(indexDir, indexName).Extended[s3tables.ExtendedKeyMetadata]); after != replaced {
+			t.Fatal("UpdateIndexMode rewrote the index that replaced the authorized one")
+		}
+	})
 }
