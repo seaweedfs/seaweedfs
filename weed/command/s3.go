@@ -675,6 +675,7 @@ func (s3opt *S3Options) startLanceServer(s3ApiServer *s3api.S3ApiServer, listenO
 
 	lanceServer := lance.NewServer(s3ApiServer, s3ApiServer)
 	lanceServer.SetCredentialValidator(s3ApiServer)
+	lanceServer.SetSigningKey(s3ApiServer.FilerSigningKey)
 	if s3opt.icebergCredentialRole != nil && *s3opt.icebergCredentialRole != "" {
 		lanceServer.SetCredentialVendor(lanceCredentialVendor{s3ApiServer})
 	}

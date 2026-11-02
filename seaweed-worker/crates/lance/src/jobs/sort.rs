@@ -23,7 +23,7 @@ use seaweed_worker_sort::{
 };
 use tracing::warn;
 
-use crate::catalog::{NamespaceClient, parse_id};
+use crate::catalog::{NamespaceClient, SigningKey, parse_id};
 use crate::dataset;
 use crate::jobs::{FORMAT, clamp, observation, string_list, table_id};
 
@@ -54,6 +54,7 @@ const BYTES_PER_MB: u64 = 1024 * 1024;
 pub struct SortHandler {
     namespace_url: String,
     fallback: dataset::FallbackOptions,
+    signing_key: Option<SigningKey>,
     metrics: Option<crate::metrics::LanceMetrics>,
 }
 
@@ -62,6 +63,7 @@ impl SortHandler {
         Self {
             namespace_url,
             fallback: dataset::FallbackOptions::new(),
+            signing_key: None,
             metrics: None,
         }
     }
@@ -77,8 +79,15 @@ impl SortHandler {
         self
     }
 
+    pub fn with_signing_key(mut self, signing_key: Option<SigningKey>) -> Self {
+        self.signing_key = signing_key;
+        self
+    }
+
     fn client(&self) -> NamespaceClient {
-        NamespaceClient::new(self.namespace_url.clone()).with_fallback(&self.fallback)
+        NamespaceClient::new(self.namespace_url.clone())
+            .with_fallback(&self.fallback)
+            .with_signing_key(self.signing_key.as_ref())
     }
 }
 

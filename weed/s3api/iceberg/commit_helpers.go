@@ -283,6 +283,10 @@ func (s *Server) authorizeCommit(ctx context.Context, bucketARN string, namespac
 		}, identityName)
 	})
 	if err == nil {
+		bucketName, _ := s3tables.ParseBucketNameFromARN(bucketARN)
+		err = s.tablesManager.CheckVectorNamespaceWrite(ctx, s.filerClient, bucketName, namespace)
+	}
+	if err == nil {
 		return nil
 	}
 	var tableErr *s3tables.S3TablesError

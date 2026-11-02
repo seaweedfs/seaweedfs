@@ -424,9 +424,10 @@ impl VectorService for VectorServer {
         if dimension == 0 || dimension > 4096 {
             return Err(Status::invalid_argument("dimension must be 1..=4096"));
         }
+        // The gateway has already created the table through the catalog.
         let description = self
             .client
-            .declare_table(&table.id, None)
+            .describe_table(&table.id)
             .await
             .map_err(internal)?;
         let mut options = self.fallback.clone();
