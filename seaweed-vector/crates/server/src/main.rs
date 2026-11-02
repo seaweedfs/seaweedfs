@@ -1,6 +1,7 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 use tonic::transport::Server;
+use tonic::transport::server::TcpIncoming;
 use weed_lance_worker::catalog::NamespaceClient;
 use weed_lance_worker::dataset::FallbackOptions;
 use weed_vector_server::pb::vector::vector_service_server::VectorServiceServer;
@@ -100,6 +101,11 @@ fn advertised_addr(listen: &str, masters: &[String]) -> String {
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     let args = Args::parse_from(normalize_args(std::env::args().collect()));
+    // Bind before registering, so the master never lists an engine that is
+    // about to exit because its port is taken.
+    let incoming = TcpIncoming::bind(args.listen.parse()?)
+        .with_context(|| format!("listen on {}", args.listen))?
+        .with_nodelay(Some(true));
     if let Some(masters) = &args.masters {
         let masters: Vec<String> = masters.split(',').map(|s| s.trim().to_string()).collect();
         for master in &masters {
@@ -125,7 +131,7 @@ async fn main() -> Result<()> {
                 .max_decoding_message_size(1 << 30)
                 .max_encoding_message_size(1 << 30),
         )
-        .serve(args.listen.parse()?)
+        .serve_with_incoming(incoming)
         .await?;
     Ok(())
 }
