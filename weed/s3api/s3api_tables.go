@@ -58,6 +58,11 @@ func (st *S3TablesApiServer) SetLocalAccountChecker(fn func(string) bool) {
 	st.handler.SetLocalAccountChecker(fn)
 }
 
+// SetEncryptionChecker sets the handler's SSE-S3 availability predicate.
+func (st *S3TablesApiServer) SetEncryptionChecker(fn func() bool) {
+	st.handler.SetEncryptionChecker(fn)
+}
+
 // S3TablesHandler handles S3 Tables API requests
 func (st *S3TablesApiServer) S3TablesHandler(w http.ResponseWriter, r *http.Request) {
 	st.handler.HandleRequest(w, r, st)
@@ -72,6 +77,7 @@ func (st *S3TablesApiServer) WithFilerClient(streamingMode bool, fn func(filer_p
 func (s3a *S3ApiServer) registerS3TablesRoutes(router *mux.Router) {
 	// Create S3 Tables handler
 	s3TablesApi := NewS3TablesApiServer(s3a)
+	s3TablesApi.SetEncryptionChecker(GetSSES3KeyManager().IsConfigured)
 	if s3a.iam != nil {
 		s3TablesApi.SetLocalAccountChecker(s3a.iam.isConfiguredAccountID)
 	}

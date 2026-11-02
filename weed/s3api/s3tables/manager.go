@@ -46,6 +46,11 @@ func (m *Manager) SetTrusted(trusted bool) {
 	m.handler.SetTrusted(trusted)
 }
 
+// SetEncryptionChecker sets the handler's SSE-S3 availability predicate.
+func (m *Manager) SetEncryptionChecker(fn func() bool) {
+	m.handler.SetEncryptionChecker(fn)
+}
+
 // PrincipalFor maps a forwarded identity name onto the account the catalog
 // would charge the request to: a synthesized request resolves its identity
 // name through getAccountID's name branch — normalized like any principal —

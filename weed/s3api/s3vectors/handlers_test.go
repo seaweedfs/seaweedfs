@@ -693,6 +693,32 @@ func TestValidateEncryptionConfigurationRejectsCustomerKeys(t *testing.T) {
 	}
 }
 
+// The gateway applies a vector bucket's AES256 to every index write, so a
+// gateway without an SSE-S3 key refuses the bucket instead of failing each
+// later write.
+func TestCreateVectorBucketNeedsSSES3ForAES256(t *testing.T) {
+	fs := s3tablestest.Start(t)
+	s := NewServer(s3tables.NewManagerClient(fs.Client), allowAllAuth{}, newFakeVectors(0))
+	keyLoaded := false
+	s.SetEncryptionChecker(func() bool { return keyLoaded })
+	aes := map[string]interface{}{"sseType": "AES256"}
+
+	w := postJSON(t, s.handleCreateVectorBucket, &CreateVectorBucketRequest{VectorBucketName: "sealed", EncryptionConfiguration: aes})
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "ValidationException") || !strings.Contains(w.Body.String(), "s3.sse.key") {
+		t.Fatalf("AES256 without a key: %d %s, want 400 ValidationException naming s3.sse.key", w.Code, w.Body.String())
+	}
+	if w := postJSON(t, s.handleGetVectorBucket, &GetVectorBucketRequest{VectorBucketName: "sealed"}); w.Code != http.StatusNotFound {
+		t.Fatalf("refused bucket exists: %d %s", w.Code, w.Body.String())
+	}
+	if w := postJSON(t, s.handleCreateVectorBucket, &CreateVectorBucketRequest{VectorBucketName: "plain"}); w.Code != http.StatusOK {
+		t.Fatalf("unencrypted bucket without a key: %d %s", w.Code, w.Body.String())
+	}
+	keyLoaded = true
+	if w := postJSON(t, s.handleCreateVectorBucket, &CreateVectorBucketRequest{VectorBucketName: "sealed", EncryptionConfiguration: aes}); w.Code != http.StatusOK {
+		t.Fatalf("AES256 with a key: %d %s", w.Code, w.Body.String())
+	}
+}
+
 // A vector index is colocated: its catalog entry sits at the dataset root, so
 // the catalog delete removes entry and data together.
 func TestDeleteIndexRemovesDatasetDirectory(t *testing.T) {

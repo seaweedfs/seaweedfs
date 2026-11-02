@@ -65,6 +65,10 @@ func (s *Server) SetRegion(region string) { s.region = region }
 // SetAccountID configures the account id embedded in the ARNs this server mints.
 func (s *Server) SetAccountID(id string) { s.accountID = id }
 
+// SetEncryptionChecker tells CreateVectorBucket whether the gateway can
+// apply the AES256 a bucket declares.
+func (s *Server) SetEncryptionChecker(fn func() bool) { s.internal.SetEncryptionChecker(fn) }
+
 // RegisterRoutes mounts POST / dispatching on the X-Amz-Target header and
 // POST /{Operation} for clients that route per-path. Metrics wrap Auth like the
 // S3 track middleware so rejected requests still count toward the operation.
