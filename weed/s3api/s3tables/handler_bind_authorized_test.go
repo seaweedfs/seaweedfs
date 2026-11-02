@@ -583,3 +583,28 @@ func TestUpdateNamespaceSparesARecreatedNamespace(t *testing.T) {
 	assert.Equal(t, http.StatusConflict, code, "%+v", resp)
 	assert.Equal(t, recreated, fs.Get(bucketPath, "ns").Extended, "the new namespace is untouched")
 }
+
+// DeleteNamespace removes only the namespace it was authorized against: one
+// deleted and created again before the claim reads as the first one gone.
+func TestDeleteNamespaceSparesARecreatedNamespace(t *testing.T) {
+	fs, m := startEmptyBucket(t)
+	requireOK(t, m, fs, "CreateNamespace", createNamespaceNsRequest(t))
+	bucketPath := GetTableBucketPath(renameTestBucket)
+	recreated := recreatedNamespace(t, "ns")
+	fs.OnUpdate = func(dir, name string) {
+		if dir != bucketPath || name != "ns" {
+			return
+		}
+		fs.OnUpdate = nil
+		fs.Put(bucketPath, "ns", recreated)
+	}
+
+	code, resp := runHandler(t, m, fs.Client, "DeleteNamespace", &DeleteNamespaceRequest{
+		TableBucketARN: mustBucketARN(t),
+		Namespace:      []string{"ns"},
+	})
+
+	assert.Equal(t, http.StatusNotFound, code, "%+v", resp)
+	require.NotNil(t, fs.Get(bucketPath, "ns"), "the new namespace survives")
+	assert.Equal(t, recreated, fs.Get(bucketPath, "ns").Extended, "the new namespace is untouched")
+}

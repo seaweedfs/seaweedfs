@@ -207,3 +207,37 @@ func TestIndexWritesKeepToAuthorizedBucket(t *testing.T) {
 		}
 	})
 }
+
+// DeleteVectorBucket drops the empty index namespace only from the bucket it
+// authorized: a bucket created again before that cleanup keeps its own.
+func TestDeleteVectorBucketCleanupKeepsReplacingBucket(t *testing.T) {
+	fs := s3tablestest.Start(t)
+	s := NewServer(s3tables.NewManagerClient(fs.Client), allowAllAuth{}, newFakeVectors(0))
+	if w := postJSONAs(t, "", s.handleCreateVectorBucket, &CreateVectorBucketRequest{VectorBucketName: "vec-bucket"}); w.Code != http.StatusOK {
+		t.Fatalf("create bucket: %d %s", w.Code, w.Body.String())
+	}
+	if w := postJSONAs(t, "", s.handleCreateIndex, &CreateIndexRequest{
+		VectorBucketName: "vec-bucket", IndexName: "idx", DataType: "float32", Dimension: 3, DistanceMetric: "euclidean",
+	}); w.Code != http.StatusOK {
+		t.Fatalf("create index: %d %s", w.Code, w.Body.String())
+	}
+	if w := postJSONAs(t, "", s.handleDeleteIndex, &DeleteIndexRequest{VectorBucketName: "vec-bucket", IndexName: "idx"}); w.Code != http.StatusOK {
+		t.Fatalf("delete index: %d %s", w.Code, w.Body.String())
+	}
+
+	bucketPath := s3tables.GetTableBucketPath("vec-bucket")
+	fs.OnLookup = func(d, n string) {
+		if d == bucketPath && n == indexNamespace {
+			fs.OnLookup = nil
+			replaceBucket(t, fs, "vec-bucket")
+		}
+	}
+	w := postJSONAs(t, "", s.handleDeleteVectorBucket, &DeleteVectorBucketRequest{VectorBucketName: "vec-bucket"})
+	fs.OnLookup = nil
+	if w.Code == http.StatusOK {
+		t.Fatalf("delete over a replaced bucket succeeded: %s", w.Body.String())
+	}
+	if fs.Get(bucketPath, indexNamespace) == nil {
+		t.Fatal("DeleteVectorBucket removed the index namespace of the bucket that replaced the authorized one")
+	}
+}

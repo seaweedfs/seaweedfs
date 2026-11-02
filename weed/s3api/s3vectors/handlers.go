@@ -434,7 +434,7 @@ func (s *Server) handleDeleteVectorBucket(w http.ResponseWriter, r *http.Request
 		// holds no indexes; drop it under the delete's own authorization and
 		// retry once. A namespace still holding indexes keeps the conflict.
 		var nsResp map[string]interface{}
-		nsErr := s.internalCatalog(context.WithoutCancel(r.Context()), "DeleteNamespace",
+		nsErr := s.internalCatalog(context.WithoutCancel(ctx), "DeleteNamespace",
 			&s3tables.DeleteNamespaceRequest{
 				TableBucketARN: s.s3tablesArn(arns.bucket),
 				Namespace:      []string{indexNamespace},
