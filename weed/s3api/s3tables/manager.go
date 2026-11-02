@@ -46,15 +46,14 @@ func (m *Manager) SetTrusted(trusted bool) {
 	m.handler.SetTrusted(trusted)
 }
 
-// PrincipalFor maps a forwarded identity name onto the account the catalog
-// would charge the request to: a synthesized request resolves its identity
-// name through getAccountID's name branch — normalized like any principal —
-// and an empty name falls back to the handler's account ID.
-func (m *Manager) PrincipalFor(identity string) string {
-	if principal := normalizePrincipalID(identity); principal != "" {
-		return principal
+// PrincipalFor resolves the caller of r the way the catalog's handlers do,
+// so it matches the owner CreateTableBucket records. A nil request is the
+// handler's account ID.
+func (m *Manager) PrincipalFor(r *http.Request) string {
+	if r == nil {
+		return m.handler.accountID
 	}
-	return m.handler.accountID
+	return m.handler.getAccountID(r)
 }
 
 // PolicyContext builds the evaluation context a Manager call's synthesized
@@ -63,7 +62,8 @@ func (m *Manager) PrincipalFor(identity string) string {
 // than the forwarded name, plus the open-by-default fallback only for a
 // trusted caller or no resolved identity.
 func (m *Manager) PolicyContext(r *http.Request) *PolicyContext {
-	ctx := &PolicyContext{IsLocalAccountID: m.handler.localAccountIDs, IdentityActions: getIdentityActions(r)}
+	ctx := &PolicyContext{IsLocalAccountID: m.handler.localAccountIDs, IdentityActions: getIdentityActions(r),
+		TrustedIssuers: m.handler.trustedIssuers(r)}
 	if m.handler.trusted || (m.handler.defaultAllow && s3_constants.GetIdentityNameFromContext(r) == "") {
 		ctx.DefaultAllow = true
 	}
