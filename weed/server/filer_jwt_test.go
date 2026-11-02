@@ -38,6 +38,7 @@ func TestFilerServer_maybeCheckJwtAuthorization_Scoped(t *testing.T) {
 		token            string
 		method           string
 		path             string
+		header           map[string]string
 		isWrite          bool
 		expectAuthorized bool
 	}{
@@ -225,6 +226,63 @@ func TestFilerServer_maybeCheckJwtAuthorization_Scoped(t *testing.T) {
 			isWrite:          true,
 			expectAuthorized: false,
 		},
+		{
+			name:             "write at the prefix itself allowed",
+			token:            genToken([]string{"/tenant1"}, nil),
+			method:           "POST",
+			path:             "/tenant1",
+			isWrite:          true,
+			expectAuthorized: true,
+		},
+		{
+			name:             "extract into the prefix directory allowed",
+			token:            genToken([]string{"/tenant1"}, nil),
+			method:           "POST",
+			path:             "/tenant1/?extract=zip",
+			isWrite:          true,
+			expectAuthorized: true,
+		},
+		{
+			name:             "extract beside an archive inside the prefix allowed",
+			token:            genToken([]string{"/tenant1"}, nil),
+			method:           "PUT",
+			path:             "/tenant1/pack.zip?extract=zip",
+			isWrite:          true,
+			expectAuthorized: true,
+		},
+		{
+			name:             "extract at the prefix itself writes to its parent, denied",
+			token:            genToken([]string{"/tenant1"}, nil),
+			method:           "POST",
+			path:             "/tenant1?extract=zip",
+			isWrite:          true,
+			expectAuthorized: false,
+		},
+		{
+			name:             "extract header at the prefix itself denied",
+			token:            genToken([]string{"/tenant1/"}, []string{"PUT"}),
+			method:           "PUT",
+			path:             "/tenant1",
+			header:           map[string]string{"X-Seaweedfs-Extract": "zip"},
+			isWrite:          true,
+			expectAuthorized: false,
+		},
+		{
+			name:             "extract at a nested prefix into the sibling parent denied",
+			token:            genToken([]string{"/buckets/bucket-a"}, nil),
+			method:           "POST",
+			path:             "/buckets/bucket-a?extract=zip",
+			isWrite:          true,
+			expectAuthorized: false,
+		},
+		{
+			name:             "extract with a root prefix allowed",
+			token:            genToken([]string{"/"}, nil),
+			method:           "POST",
+			path:             "/tenant1?extract=zip",
+			isWrite:          true,
+			expectAuthorized: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -232,6 +290,9 @@ func TestFilerServer_maybeCheckJwtAuthorization_Scoped(t *testing.T) {
 			req := httptest.NewRequest(tt.method, tt.path, nil)
 			if tt.token != "" {
 				req.Header.Set("Authorization", "Bearer "+tt.token)
+			}
+			for k, v := range tt.header {
+				req.Header.Set(k, v)
 			}
 			if authorized := fs.maybeCheckJwtAuthorization(req, tt.isWrite); authorized != tt.expectAuthorized {
 				t.Errorf("expected authorized=%v, got %v", tt.expectAuthorized, authorized)
