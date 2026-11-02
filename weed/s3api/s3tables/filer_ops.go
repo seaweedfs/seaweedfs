@@ -483,14 +483,6 @@ func (h *S3TablesHandler) lookupEntry(ctx context.Context, client filer_pb.Seawe
 	return resp.Entry, nil
 }
 
-// deleteExtendedAttribute deletes an extended attribute from an entry
-func (h *S3TablesHandler) deleteExtendedAttribute(ctx context.Context, client filer_pb.SeaweedFilerClient, path, key string) error {
-	return h.mutateEntryExtended(ctx, client, path, func(extended map[string][]byte) error {
-		delete(extended, key)
-		return nil
-	})
-}
-
 // deleteDirectory deletes a directory and all its contents
 func (h *S3TablesHandler) deleteDirectory(ctx context.Context, client filer_pb.SeaweedFilerClient, path string) error {
 	dir, name := splitPath(path)
@@ -768,6 +760,14 @@ func requireTableCreatedAt(extended map[string][]byte, path string, createdAt ti
 	var current tableMetadataInternal
 	if json.Unmarshal(extended[ExtendedKeyMetadata], &current) != nil || !current.CreatedAt.Equal(createdAt) {
 		return fmt.Errorf("%w: %s holds another table", ErrConcurrentUpdate, path)
+	}
+	return nil
+}
+
+// requireTableBucketCreatedAt is requireTableCreatedAt for a table bucket.
+func requireTableBucketCreatedAt(extended map[string][]byte, path string, createdAt time.Time) error {
+	if !isTableBucketCreatedAt(createdAt)(&filer_pb.Entry{Extended: extended}) {
+		return fmt.Errorf("%w: %s holds another table bucket", ErrConcurrentUpdate, path)
 	}
 	return nil
 }

@@ -133,6 +133,9 @@ func (h *S3TablesHandler) handlePutTableBucketPolicy(w http.ResponseWriter, r *h
 	// landing mid-request sends the caller back through authorization.
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		return h.mutateEntryExtended(r.Context(), client, bucketPath, func(extended map[string][]byte) error {
+			if err := requireTableBucketCreatedAt(extended, bucketPath, bucketMetadata.CreatedAt); err != nil {
+				return err
+			}
 			if !bytes.Equal(extended[ExtendedKeyPolicy], []byte(bucketPolicy)) {
 				return fmt.Errorf("%w: %s", ErrConcurrentUpdate, ExtendedKeyPolicy)
 			}
@@ -144,6 +147,8 @@ func (h *S3TablesHandler) handlePutTableBucketPolicy(w http.ResponseWriter, r *h
 	if err != nil {
 		if errors.Is(err, ErrConcurrentUpdate) {
 			h.writeError(w, http.StatusConflict, ErrCodeConflict, "table bucket policy changed concurrently, retry the request")
+		} else if errors.Is(err, filer_pb.ErrNotFound) {
+			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, fmt.Sprintf("table bucket %s not found", bucketName))
 		} else {
 			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to put table bucket policy")
 		}
@@ -299,11 +304,26 @@ func (h *S3TablesHandler) handleDeleteTableBucketPolicy(w http.ResponseWriter, r
 	}
 
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return h.deleteExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
+		return h.mutateEntryExtended(r.Context(), client, bucketPath, func(extended map[string][]byte) error {
+			if err := requireTableBucketCreatedAt(extended, bucketPath, bucketMetadata.CreatedAt); err != nil {
+				return err
+			}
+			if !bytes.Equal(extended[ExtendedKeyPolicy], []byte(bucketPolicy)) {
+				return fmt.Errorf("%w: %s", ErrConcurrentUpdate, ExtendedKeyPolicy)
+			}
+			delete(extended, ExtendedKeyPolicy)
+			return nil
+		})
 	})
 
-	if err != nil && !errors.Is(err, ErrAttributeNotFound) {
-		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to delete table bucket policy")
+	if err != nil {
+		if errors.Is(err, ErrConcurrentUpdate) {
+			h.writeError(w, http.StatusConflict, ErrCodeConflict, "table bucket policy changed concurrently, retry the request")
+		} else if errors.Is(err, filer_pb.ErrNotFound) {
+			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, fmt.Sprintf("table bucket %s not found", bucketName))
+		} else {
+			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to delete table bucket policy")
+		}
 		return err
 	}
 
