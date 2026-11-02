@@ -695,6 +695,27 @@ async fn batch_delete_file_ids(
     Ok(())
 }
 
+/// `query` with the fields named in `overrides` replaced by their values.
+fn override_query_fields(query: &str, overrides: &[(&str, String)]) -> Result<String, String> {
+    let mut fields = Vec::new();
+    for field in query.split('&').filter(|field| !field.is_empty()) {
+        let decoded: Vec<(String, String)> = serde_urlencoded::from_str(field)
+            .map_err(|e| format!("parse replication query: {e}"))?;
+        if !decoded
+            .iter()
+            .any(|(name, _)| overrides.iter().any(|(o, _)| o == name))
+        {
+            fields.push(field);
+        }
+    }
+    let encoded = serde_urlencoded::to_string(overrides)
+        .map_err(|e| format!("encode replication query: {e}"))?;
+    if !encoded.is_empty() {
+        fields.push(&encoded);
+    }
+    Ok(fields.join("&"))
+}
+
 /// Helper to synchronously replicate a request to peer volume servers.
 async fn do_replicated_request(
     state: &VolumeServerState,
@@ -756,16 +777,7 @@ async fn do_replicated_request(
         return Ok(());
     }
 
-    let mut query_fields = Vec::new();
-    for field in query.split('&').filter(|field| !field.is_empty()) {
-        let decoded: Vec<(String, String)> = serde_urlencoded::from_str(field)
-            .map_err(|e| format!("parse replication query: {e}"))?;
-        if !decoded.iter().any(|(name, _)| name == "type") {
-            query_fields.push(field);
-        }
-    }
-    query_fields.push("type=replicate");
-    let new_query = query_fields.join("&");
+    let new_query = override_query_fields(query, &[("type", "replicate".to_string())])?;
 
     let mut futures = Vec::new();
     for loc in remote_locations {
@@ -792,6 +804,12 @@ async fn do_replicated_request(
         }
         if let Some(auth) = headers.get(axum::http::header::AUTHORIZATION) {
             req_builder = req_builder.header(axum::http::header::AUTHORIZATION, auth);
+        }
+        for (name, value) in headers
+            .iter()
+            .filter(|(name, _)| name.as_str().starts_with("seaweed-"))
+        {
+            req_builder = req_builder.header(name, value);
         }
 
         if let Some(ref b) = body {
@@ -3093,11 +3111,14 @@ pub async fn post_handler(
         .collect();
 
     // Fix JPEG orientation from EXIF data before storing (matches Go behavior).
-    let body_data = if state.fix_jpg_orientation && crate::images::is_jpeg(&mime_type, &path) {
-        crate::images::fix_jpg_orientation(&body_data_raw)
-    } else {
-        body_data_raw
-    };
+    let (body_data, body_rewritten) =
+        if state.fix_jpg_orientation && crate::images::is_jpeg(&mime_type, &path) {
+            let fixed = crate::images::fix_jpg_orientation(&body_data_raw);
+            let rewritten = fixed != body_data_raw;
+            (fixed, rewritten)
+        } else {
+            (body_data_raw, false)
+        };
 
     // Auto-compress compressible file types (matches Go's IsCompressableFileType).
     // Only compress if not already gzipped and compression saves >10%.
@@ -3194,23 +3215,55 @@ pub async fn post_handler(
     };
 
     // The fan-out runs concurrently with the local needle write, like Go's
-    // ReplicatedWrite: it reads the already-buffered request body, so the two
-    // sides share no mutable state. The ack still waits for both.
+    // ReplicatedWrite: replicas get the stored bytes with their compression
+    // state, so they keep it instead of re-deriving it. The ack waits for both.
     let replication = if needs_replication {
         let state_clone = state.clone();
         let path_clone = path.clone();
         let query_clone = query.clone();
-        let headers_clone = headers.clone();
-        let body_clone = body.clone();
+        let mut overrides = vec![("ts", n.last_modified.to_string())];
+        if let Some(t) = ttl.filter(|t| !t.is_empty()) {
+            overrides.push(("ttl", t.to_string()));
+        }
+        if is_chunk_manifest {
+            overrides.push(("cm", "true".to_string()));
+        }
+        if fsync {
+            overrides.push(("fsync", "true".to_string()));
+        }
+        let mut replica_headers = HeaderMap::new();
+        if let Some(auth) = headers.get(header::AUTHORIZATION) {
+            replica_headers.insert(header::AUTHORIZATION, auth.clone());
+        }
+        if n.has_pairs() {
+            for (key, value) in &pair_map {
+                if let (Ok(name), Ok(value)) = (
+                    header::HeaderName::try_from(format!("seaweed-{key}")),
+                    header::HeaderValue::from_str(value),
+                ) {
+                    replica_headers.insert(name, value);
+                }
+            }
+        }
+        let (content_type, replica_body) = replica_upload_body(
+            if needle_has_name { &filename } else { "" },
+            if n.has_mime() { &mime_type } else { "" },
+            n.is_compressed().then_some("gzip"),
+            original_content_md5.as_deref().filter(|_| !body_rewritten),
+            &n.data,
+        );
+        if let Ok(value) = header::HeaderValue::from_str(&content_type) {
+            replica_headers.insert(header::CONTENT_TYPE, value);
+        }
         Some(tokio::spawn(async move {
             do_replicated_request(
                 &state_clone,
                 vid.0,
                 Method::POST,
                 &path_clone,
-                &query_clone,
-                &headers_clone,
-                Some(body_clone),
+                &override_query_fields(&query_clone, &overrides)?,
+                &replica_headers,
+                Some(replica_body),
             )
             .await
         }))
@@ -4780,6 +4833,41 @@ fn is_compressible_file_type(ext: &str, mtype: &str) -> bool {
         }
     }
     false
+}
+
+/// One-part multipart upload of a stored needle, the form Go's upload_content
+/// sends: the bytes as stored, labeled with their content encoding.
+fn replica_upload_body(
+    filename: &str,
+    mime: &str,
+    content_encoding: Option<&str>,
+    content_md5: Option<&str>,
+    data: &[u8],
+) -> (String, bytes::Bytes) {
+    let boundary = uuid::Uuid::new_v4().simple().to_string();
+    let mut head = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{}\"\r\n",
+        filename.replace('\\', "\\\\").replace('"', "\\\"")
+    );
+    if !mime.is_empty() {
+        head.push_str(&format!("Content-Type: {mime}\r\n"));
+    }
+    if let Some(encoding) = content_encoding {
+        head.push_str(&format!("Content-Encoding: {encoding}\r\n"));
+    }
+    if let Some(md5) = content_md5 {
+        head.push_str(&format!("Content-MD5: {md5}\r\n"));
+    }
+    head.push_str("\r\n");
+    let tail = format!("\r\n--{boundary}--\r\n");
+    let mut body = Vec::with_capacity(head.len() + data.len() + tail.len());
+    body.extend_from_slice(head.as_bytes());
+    body.extend_from_slice(data);
+    body.extend_from_slice(tail.as_bytes());
+    (
+        format!("multipart/form-data; boundary={boundary}"),
+        body.into(),
+    )
 }
 
 /// Try to gzip data. Returns None on error.
@@ -8228,12 +8316,15 @@ mod tests {
         );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         *state.current_master_url.write().await = listener.local_addr().unwrap().to_string();
-        let master_server = tokio::spawn(async move { axum::serve(listener, master).await.unwrap() });
+        let master_server =
+            tokio::spawn(async move { axum::serve(listener, master).await.unwrap() });
         let id = 0x6e7a_0c05u64;
         let fid = format!("1,{id:x}{TEST_COOKIE:08x}");
         let token = gen_jwt(&key, 60, &fid).unwrap();
-        let query = "%6Awt=expired&tag=a%2Fb+%2B&tag=x%20y&bare&%74ype=client&type=old";
-        let expected_query = "%6Awt=expired&tag=a%2Fb+%2B&tag=x%20y&bare&type=replicate";
+        let query =
+            "%6Awt=expired&tag=a%2Fb+%2B&tag=x%20y&bare&ts=1700000000&%74ype=client&type=old";
+        let expected_query =
+            "%6Awt=expired&tag=a%2Fb+%2B&tag=x%20y&bare&ts=1700000000&type=replicate";
         let payload = b"authenticated replica bytes";
         for method in [Method::POST, Method::DELETE] {
             let response = tokio::time::timeout(
@@ -8278,6 +8369,129 @@ mod tests {
             }
         }
         assert_eq!(*queries.lock().unwrap(), [expected_query, expected_query]);
+        master_server.abort();
+        peer_server.abort();
+    }
+
+    #[tokio::test]
+    async fn http_replica_stores_the_primary_needle() {
+        use crate::storage::super_block::ReplicaPlacement;
+        use axum::{Json, Router, routing::get};
+        use tower::ServiceExt;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut state = volume_test_state(&tmp);
+        Arc::get_mut(&mut state).unwrap().self_url = "127.0.0.1:8080".to_string();
+        let volume = state
+            .store
+            .read()
+            .unwrap()
+            .find_volume(VolumeId(1))
+            .unwrap()
+            .1;
+        volume
+            .set_replica_placement(ReplicaPlacement::from_string("001").unwrap())
+            .unwrap();
+        let peer_tmp = tempfile::TempDir::new().unwrap();
+        let peer = volume_test_state(&peer_tmp);
+        let peer_volume = peer
+            .store
+            .read()
+            .unwrap()
+            .find_volume(VolumeId(1))
+            .unwrap()
+            .1;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let peer_addr = listener.local_addr().unwrap();
+        let peer_server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                super::super::volume_server::build_admin_router(peer),
+            )
+            .await
+            .unwrap();
+        });
+        let master = Router::new().route(
+            "/dir/lookup",
+            get(move || async move {
+                Json(serde_json::json!({"locations": [
+                    {"url": "127.0.0.1:8080"},
+                    {"url": peer_addr.to_string()}
+                ]}))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        *state.current_master_url.write().await = listener.local_addr().unwrap().to_string();
+        let master_server =
+            tokio::spawn(async move { axum::serve(listener, master).await.unwrap() });
+
+        let payload = "compressible replica text ".repeat(64);
+        let boundary = "replica-boundary";
+        let multipart = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"ttl\"\r\n\r\n3m\r\n\
+             --{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a \\\"b\\\".txt\"\r\n\
+             Content-Type: text/plain\r\n\r\n{payload}\r\n--{boundary}--\r\n"
+        );
+        let cases = [
+            (
+                0x6e7a_0c06u64,
+                Request::builder()
+                    .header(header::CONTENT_TYPE, "text/plain")
+                    .header(
+                        header::CONTENT_DISPOSITION,
+                        "attachment; filename=\"notes.txt\"",
+                    )
+                    .header("Content-MD5", compute_md5_base64(payload.as_bytes()))
+                    .header("Seaweed-Color", "blue"),
+                Body::from(payload.clone()),
+            ),
+            (
+                0x6e7a_0c07u64,
+                Request::builder().header(
+                    header::CONTENT_TYPE,
+                    format!("multipart/form-data; boundary={boundary}"),
+                ),
+                Body::from(multipart),
+            ),
+        ];
+        for (id, request, body) in cases {
+            let response = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                super::super::volume_server::build_admin_router(state.clone()).oneshot(
+                    request
+                        .method(Method::POST)
+                        .uri(format!("/1,{id:x}{TEST_COOKIE:08x}?ts=1700000000"))
+                        .body(body)
+                        .unwrap(),
+                ),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            assert_eq!(response.status(), StatusCode::CREATED);
+            let read = |v: &Arc<crate::storage::volume::Volume>| {
+                let mut stored = Needle {
+                    id: NeedleId(id),
+                    cookie: Cookie(TEST_COOKIE),
+                    ..Needle::default()
+                };
+                v.read_needle(&mut stored).unwrap();
+                stored
+            };
+            let (primary, replica) = (read(&volume), read(&peer_volume));
+            assert!(primary.is_compressed());
+            assert_eq!(
+                maybe_decompress_gzip(&primary.data).unwrap(),
+                payload.as_bytes()
+            );
+            assert_eq!(replica.data, primary.data);
+            assert_eq!(replica.flags, primary.flags);
+            assert_eq!(replica.name, primary.name);
+            assert_eq!(replica.mime, primary.mime);
+            assert_eq!(replica.pairs, primary.pairs);
+            assert_eq!(replica.ttl, primary.ttl);
+            assert_eq!(replica.last_modified, 1700000000);
+        }
         master_server.abort();
         peer_server.abort();
     }
