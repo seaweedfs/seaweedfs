@@ -80,8 +80,8 @@ func (m *Manager) PolicyContext(r *http.Request, bucket string) *PolicyContext {
 type tableBucketCreatedAtKey struct{}
 
 // WithTableBucketCreatedAt binds a DeleteTableBucket, CreateNamespace,
-// CreateTable or DeleteTable run through Execute to the bucket created at
-// createdAt, so a
+// CreateTable, DeleteTable or tag operation run through Execute to the bucket
+// created at createdAt, so a
 // caller that authorized the bucket itself never writes into one created
 // again under its name. In-process only: no wire request can carry it.
 func WithTableBucketCreatedAt(ctx context.Context, createdAt time.Time) context.Context {

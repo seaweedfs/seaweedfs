@@ -2,6 +2,7 @@ package s3tables
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -41,6 +42,28 @@ func (h *S3TablesHandler) extractResourceOwnerAndBucket(
 		ownerAccountID, createdAt = meta.OwnerAccountID, meta.CreatedAt
 	}
 	return ownerAccountID, bucketName, createdAt, nil
+}
+
+// requireBoundTableBucket answers not found when ctx binds the request to a
+// table bucket other than the one now named bucketName.
+func (h *S3TablesHandler) requireBoundTableBucket(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketName string) error {
+	if _, bound := ctx.Value(tableBucketCreatedAtKey{}).(time.Time); !bound {
+		return nil
+	}
+	data, err := h.getExtendedAttribute(ctx, client, GetTableBucketPath(bucketName), ExtendedKeyMetadata)
+	if errors.Is(err, ErrAttributeNotFound) {
+		return filer_pb.ErrNotFound
+	} else if err != nil {
+		return err
+	}
+	var meta tableBucketMetadata
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return err
+	}
+	if otherTableBucket(ctx, meta.CreatedAt) {
+		return filer_pb.ErrNotFound
+	}
+	return nil
 }
 
 // handlePutTableBucketPolicy puts a policy on a table bucket
@@ -718,6 +741,9 @@ func (h *S3TablesHandler) handleTagResource(w http.ResponseWriter, r *http.Reque
 		if err != nil {
 			return err
 		}
+		if err := h.requireBoundTableBucket(r.Context(), client, bucketName); err != nil {
+			return err
+		}
 		createdAt = resourceCreatedAt
 
 		// Fetch bucket policy if we have a bucket name
@@ -878,6 +904,9 @@ func (h *S3TablesHandler) handleListTagsForResource(w http.ResponseWriter, r *ht
 		if err != nil {
 			return err
 		}
+		if err := h.requireBoundTableBucket(r.Context(), client, bucketName); err != nil {
+			return err
+		}
 
 		// Fetch bucket policy if we have a bucket name
 		if bucketName != "" {
@@ -1000,6 +1029,9 @@ func (h *S3TablesHandler) handleUntagResource(w http.ResponseWriter, r *http.Req
 
 		ownerAccountID, bucketName, resourceCreatedAt, err := h.extractResourceOwnerAndBucket(data, resourcePath, rType)
 		if err != nil {
+			return err
+		}
+		if err := h.requireBoundTableBucket(r.Context(), client, bucketName); err != nil {
 			return err
 		}
 		createdAt = resourceCreatedAt
