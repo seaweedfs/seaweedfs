@@ -68,19 +68,6 @@ jobs:
           restore-keys: |
             rust-vector-${{ steps.toolchain.outputs.fingerprint }}-
 
-      # lance's build scripts compile their own protos and look for a protoc.
-      # Point them at the one protoc-bin-vendored ships, so no job depends on a
-      # system package and every build sees the same version.
-      - name: Use the vendored protoc
-        run: |
-          cd seaweed-vector
-          cargo fetch
-          version=$(awk '/^name = "protoc-bin-vendored-linux-x86_64"$/{found=1; next} found && /^version = /{gsub(/"/,"",$3); print $3; exit}' Cargo.lock)
-          test -n "$version" || { echo "protoc-bin-vendored-linux-x86_64 is not in Cargo.lock" >&2; exit 1; }
-          protoc=$(find ~/.cargo/registry/src -path "*protoc-bin-vendored-linux-x86_64-$version/bin/protoc" | head -1)
-          test -x "$protoc" || { echo "no vendored protoc $version in the registry" >&2; exit 1; }
-          echo "PROTOC=$protoc" >> "$GITHUB_ENV"
-
       - name: Build the vector crates
         run: cd seaweed-vector && cargo build --release
 
@@ -125,15 +112,6 @@ jobs:
           key: vectors-e2e-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.fingerprint }}-${{ hashFiles('seaweed-vector/Cargo.lock', 'seaweed-volume/Cargo.lock') }}
           restore-keys: |
             vectors-e2e-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.fingerprint }}-
-      - name: Use the vendored protoc
-        run: |
-          cd seaweed-vector
-          cargo fetch
-          version=$(awk '/^name = "protoc-bin-vendored-linux-x86_64"$/{found=1; next} found && /^version = /{gsub(/"/,"",$3); print $3; exit}' Cargo.lock)
-          test -n "$version" || { echo "protoc-bin-vendored-linux-x86_64 is not in Cargo.lock" >&2; exit 1; }
-          protoc=$(find ~/.cargo/registry/src -path "*protoc-bin-vendored-linux-x86_64-$version/bin/protoc" | head -1)
-          test -x "$protoc" || { echo "no vendored protoc $version in the registry" >&2; exit 1; }
-          echo "PROTOC=$protoc" >> "$GITHUB_ENV"
       - name: Test Go vector gateway
         run: |
           go test ./weed/s3api/s3vectors -count=1
