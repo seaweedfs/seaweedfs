@@ -757,6 +757,17 @@ func (h *S3TablesHandler) handleDeleteNamespace(w http.ResponseWriter, r *http.R
 		if err := json.Unmarshal(data, &metadata); err != nil {
 			return fmt.Errorf("failed to unmarshal metadata: %w", err)
 		}
+		// Checked after the namespace read: a bucket created again holds only
+		// namespaces of its own, and the claim below is bound to this one.
+		if createdAt, bound := boundTableBucket(r.Context()); bound {
+			bucket, err := h.lookupEntry(r.Context(), client, bucketPath)
+			if err != nil {
+				return err
+			}
+			if !isTableBucketCreatedAt(createdAt)(bucket) {
+				return filer_pb.ErrNotFound
+			}
+		}
 
 		// Fetch bucket policy if it exists
 		policyData, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)

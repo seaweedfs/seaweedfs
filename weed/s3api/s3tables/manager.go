@@ -80,18 +80,24 @@ func (m *Manager) PolicyContext(r *http.Request, bucket string) *PolicyContext {
 type tableBucketCreatedAtKey struct{}
 
 // WithTableBucketCreatedAt binds a DeleteTableBucket, CreateNamespace,
-// CreateTable or DeleteTable run through Execute to the bucket created at
-// createdAt, so a
-// caller that authorized the bucket itself never writes into one created
-// again under its name. In-process only: no wire request can carry it.
+// DeleteNamespace, CreateTable or DeleteTable run through Execute to the
+// bucket created at createdAt, so a caller that authorized the bucket itself
+// never writes into one created again under its name. In-process only: no
+// wire request can carry it.
 func WithTableBucketCreatedAt(ctx context.Context, createdAt time.Time) context.Context {
 	return context.WithValue(ctx, tableBucketCreatedAtKey{}, createdAt)
+}
+
+// boundTableBucket returns the bucket creation time ctx binds the request to.
+func boundTableBucket(ctx context.Context) (time.Time, bool) {
+	createdAt, ok := ctx.Value(tableBucketCreatedAtKey{}).(time.Time)
+	return createdAt, ok
 }
 
 // otherTableBucket reports whether ctx binds the request to a bucket other
 // than the one created at createdAt.
 func otherTableBucket(ctx context.Context, createdAt time.Time) bool {
-	want, ok := ctx.Value(tableBucketCreatedAtKey{}).(time.Time)
+	want, ok := boundTableBucket(ctx)
 	return ok && !createdAt.Equal(want)
 }
 
