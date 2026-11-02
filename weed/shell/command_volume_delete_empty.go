@@ -86,6 +86,7 @@ func (c *commandVolumeDeleteEmpty) Do(args []string, commandEnv *CommandEnv, wri
 		if !isEmptyVolumeCopiesDeleteCandidate(replicas, quietSeconds, nowUnixSeconds, collectionMatcher) {
 			continue
 		}
+		var kept []pb.ServerAddress
 		for _, r := range replicas {
 			dn := r.location.dataNode
 			if !*applyBalancing {
@@ -96,9 +97,17 @@ func (c *commandVolumeDeleteEmpty) Do(args []string, commandEnv *CommandEnv, wri
 			onlyGarbage := r.info.FileCount > 0 && r.info.FileCount <= r.info.DeleteCount
 			// onlyEmpty stays set so a pre-upgrade server checks
 			// emptiness and refuses instead of deleting unseen.
+			server := pb.NewServerAddressFromDataNode(dn)
 			if deleteErr := deleteVolume(context.Background(), commandEnv.option.GrpcDialOption, needle.VolumeId(vid),
-				pb.NewServerAddressFromDataNode(dn), true, onlyGarbage, false); deleteErr != nil {
+				server, true, onlyGarbage, false); deleteErr != nil {
 				err = deleteErr
+				kept = append(kept, server)
+			}
+		}
+		// a rerun skips the survivors as under-replicated
+		if len(kept) < len(replicas) {
+			for _, server := range kept {
+				log.Printf("volume %d stays on %s after its other copies were deleted; once it is empty, remove it with volume.delete -node %s -volumeId %d", vid, server, server, vid)
 			}
 		}
 	}
