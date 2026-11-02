@@ -24,6 +24,8 @@ func (openAuthenticator) AuthenticateRequest(*http.Request) (string, interface{}
 
 func (openAuthenticator) DefaultAllow() bool { return true }
 
+func (openAuthenticator) AuthEnabled() bool { return false }
+
 type testHarness struct {
 	router *mux.Router
 	filer  *s3tablestest.MemFiler
@@ -428,6 +430,8 @@ func (createOnlyAuthenticator) AuthenticateRequest(*http.Request) (string, inter
 }
 
 func (createOnlyAuthenticator) DefaultAllow() bool { return false }
+
+func (createOnlyAuthenticator) AuthEnabled() bool { return true }
 
 // The right to create a name is the write evidence for a table the declare
 // creates, but not for one it only finds.
