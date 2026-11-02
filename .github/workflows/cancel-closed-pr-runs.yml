@@ -1,0 +1,37 @@
+name: "Cancel runs of closed PRs"
+
+# Merging or closing a PR leaves its pull_request runs going: concurrency
+# groups cancel a run only when a newer push arrives. pull_request_target gives
+# this job a token that can cancel runs, fork PRs included. It checks out and
+# runs no PR code.
+on:
+  pull_request_target:
+    types: [closed]
+
+permissions:
+  actions: write
+  pull-requests: read
+
+jobs:
+  cancel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Cancel the PR's queued and running pull_request runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          # Match the PR's own commits: forks reuse branch names such as master.
+          shas=$(gh api --paginate "repos/$GH_REPO/pulls/$PR/commits" --jq '.[].sha')
+          for status in queued in_progress waiting pending requested; do
+            gh run list --branch "$HEAD_REF" --event pull_request --status "$status" \
+              --limit 200 --json databaseId,headSha --jq '.[] | "\(.databaseId) \(.headSha)"'
+          done | while read -r id sha; do
+            grep -qx "$sha" <<<"$shas" || continue
+            echo "cancel run $id at $sha"
+            gh run cancel "$id" || true
+          done
