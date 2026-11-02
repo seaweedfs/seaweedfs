@@ -90,3 +90,64 @@ func TestVectorBucketPolicyWritesKeepToAuthorizedBucket(t *testing.T) {
 		})
 	}
 }
+
+// DeleteVectorBucket deletes only the bucket it authorized: one deleted and
+// created again by another account in between survives.
+func TestDeleteVectorBucketKeepsReplacingBucket(t *testing.T) {
+	fs := s3tablestest.Start(t)
+	s := NewServer(s3tables.NewManagerClient(fs.Client), allowAllAuth{}, newFakeVectors(0))
+	for _, bucket := range []string{"vec-probe", "vec-bucket"} {
+		if w := postJSONAs(t, "", s.handleCreateVectorBucket, &CreateVectorBucketRequest{VectorBucketName: bucket}); w.Code != http.StatusOK {
+			t.Fatalf("create bucket %s: %d %s", bucket, w.Code, w.Body.String())
+		}
+	}
+
+	// Count the bucket lookups authorization makes, so the bucket can be
+	// replaced right after them.
+	probeDir, probeName := splitEntryPath(s3tables.GetTableBucketPath("vec-probe"))
+	authLookups := 0
+	fs.OnLookup = func(d, n string) {
+		if d == probeDir && n == probeName {
+			authLookups++
+		}
+	}
+	probe := httptest.NewRequest(http.MethodPost, "/", nil)
+	probe = probe.WithContext(contextWithIdentity(probe.Context(), ""))
+	if _, err := s.authorizeVector(probe.Context(), probe, "s3vectors:DeleteVectorBucket", "vec-probe", ""); err != nil {
+		t.Fatalf("authorize probe: %v", err)
+	}
+
+	dir, name := splitEntryPath(s3tables.GetTableBucketPath("vec-bucket"))
+	seen := 0
+	fs.OnLookup = func(d, n string) {
+		if d != dir || n != name {
+			return
+		}
+		if seen++; seen != authLookups+1 {
+			return
+		}
+		entry := fs.Get(dir, name)
+		var meta map[string]interface{}
+		if err := json.Unmarshal(entry.Extended[s3tables.ExtendedKeyMetadata], &meta); err != nil {
+			t.Errorf("decode bucket metadata: %v", err)
+			return
+		}
+		meta["ownerAccountId"] = "bob"
+		meta["createdAt"] = time.Now().Add(time.Hour).UTC()
+		data, _ := json.Marshal(meta)
+		ext := make(map[string][]byte, len(entry.Extended))
+		for k, v := range entry.Extended {
+			ext[k] = v
+		}
+		ext[s3tables.ExtendedKeyMetadata] = data
+		fs.Put(dir, name, ext)
+	}
+	w := postJSONAs(t, "", s.handleDeleteVectorBucket, &DeleteVectorBucketRequest{VectorBucketName: "vec-bucket"})
+	fs.OnLookup = nil
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("delete over a replaced bucket = %d %s, want 404", w.Code, w.Body.String())
+	}
+	if fs.Get(dir, name) == nil {
+		t.Fatal("DeleteVectorBucket removed the bucket that replaced the authorized one")
+	}
+}

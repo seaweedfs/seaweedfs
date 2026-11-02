@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -310,6 +311,9 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 		}
 		if err := json.Unmarshal(data, &metadata); err != nil {
 			return fmt.Errorf("failed to unmarshal metadata: %w", err)
+		}
+		if want, ok := r.Context().Value(tableBucketCreatedAtKey{}).(time.Time); ok && !metadata.CreatedAt.Equal(want) {
+			return filer_pb.ErrNotFound
 		}
 
 		// Fetch bucket policy if it exists

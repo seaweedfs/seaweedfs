@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -74,6 +75,16 @@ func (m *Manager) PolicyContext(r *http.Request, bucket string) *PolicyContext {
 		ctx.DefaultAllow = true
 	}
 	return ctx
+}
+
+type tableBucketCreatedAtKey struct{}
+
+// WithTableBucketCreatedAt binds a DeleteTableBucket run through Execute to
+// the bucket created at createdAt, so a caller that authorized the bucket
+// itself never deletes one created again under its name. In-process only:
+// no wire request can carry it.
+func WithTableBucketCreatedAt(ctx context.Context, createdAt time.Time) context.Context {
+	return context.WithValue(ctx, tableBucketCreatedAtKey{}, createdAt)
 }
 
 // Execute runs an S3 Tables operation and decodes the response into resp (if provided).

@@ -405,12 +405,16 @@ func (s *Server) handleDeleteVectorBucket(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	if _, err := s.authorizeVector(r.Context(), r, "s3vectors:DeleteVectorBucket", arns.bucket, ""); err != nil {
+	record, err := s.authorizeVector(r.Context(), r, "s3vectors:DeleteVectorBucket", arns.bucket, "")
+	if err != nil {
 		catalogErr(w, err)
 		return
 	}
+	// Only the bucket authorized above is deleted, not one created again
+	// under its name since.
+	ctx := s3tables.WithTableBucketCreatedAt(r.Context(), record.CreatedAt)
 	var resp map[string]interface{}
-	err = s.internalCatalog(r.Context(), "DeleteTableBucket",
+	err = s.internalCatalog(ctx, "DeleteTableBucket",
 		&s3tables.DeleteTableBucketRequest{TableBucketARN: s.s3tablesArn(arns.bucket)}, &resp)
 	if err != nil && catalogErrCode(err) == s3tables.ErrCodeBucketNotEmpty {
 		// The implicit index namespace counts as bucket content even when it
@@ -423,7 +427,7 @@ func (s *Server) handleDeleteVectorBucket(w http.ResponseWriter, r *http.Request
 				Namespace:      []string{indexNamespace},
 			}, &nsResp)
 		if nsErr == nil {
-			err = s.internalCatalog(r.Context(), "DeleteTableBucket",
+			err = s.internalCatalog(ctx, "DeleteTableBucket",
 				&s3tables.DeleteTableBucketRequest{TableBucketARN: s.s3tablesArn(arns.bucket)}, &resp)
 		} else if code := catalogErrCode(nsErr); code != s3tables.ErrCodeNoSuchNamespace {
 			glog.V(1).Infof("S3 Vectors: drop internal namespace in %s: %v", arns.bucket, nsErr)
