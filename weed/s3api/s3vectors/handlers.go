@@ -1712,16 +1712,12 @@ func fieldClause(field string, cond interface{}) (string, error) {
 					return "", fmt.Errorf("$exists expects a boolean")
 				}
 			case "$eq", "$ne":
-				lit, err := sqlLiteral(operand)
-				if err != nil {
-					return "", err
-				}
-				match, err := fieldMatch(field, operand, "= "+lit)
+				match, err := equalMatch(field, operand)
 				if err != nil {
 					return "", err
 				}
 				if op == "$ne" {
-					match = "NOT COALESCE(" + match + ", false)"
+					match = "NOT " + match
 				}
 				parts = append(parts, match)
 			case "$in", "$nin":
@@ -1761,6 +1757,13 @@ func fieldClause(field string, cond interface{}) (string, error) {
 				for _, col := range cols {
 					groups = append(groups, fmt.Sprintf("COALESCE(%s in (%s), false)", col, strings.Join(members[col], ", ")))
 				}
+				for _, item := range list {
+					element, err := elementMatch(field, item)
+					if err != nil {
+						return "", err
+					}
+					groups = append(groups, element)
+				}
 				expr := "(" + strings.Join(groups, " OR ") + ")"
 				if op == "$nin" {
 					expr = "NOT " + expr
@@ -1789,12 +1792,39 @@ func fieldClause(field string, cond interface{}) (string, error) {
 		}
 		return strings.Join(parts, " AND "), nil
 	default:
-		lit, err := sqlLiteral(cond)
-		if err != nil {
-			return "", err
-		}
-		return fieldMatch(field, cond, "= "+lit)
+		return equalMatch(field, cond)
 	}
+}
+
+// equalMatch renders "field equals operand": the stored value itself or, as
+// AWS documents for $eq, any element of a stored array.
+func equalMatch(field string, operand interface{}) (string, error) {
+	lit, err := sqlLiteral(operand)
+	if err != nil {
+		return "", err
+	}
+	match, err := fieldMatch(field, operand, "= "+lit)
+	if err != nil {
+		return "", err
+	}
+	element, err := elementMatch(field, operand)
+	if err != nil {
+		return "", err
+	}
+	return "(COALESCE(" + match + ", false) OR " + element + ")", nil
+}
+
+// elementMatch renders "the array stored at field holds operand". The engine
+// compares the elements as typed JSON values, so 1 does not match "1".
+func elementMatch(field string, operand interface{}) (string, error) {
+	var b strings.Builder
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(operand); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("COALESCE(json_array_contains(`metadata`, '%s', '%s'), false)",
+		sqlEscape(existsPath(field)), sqlEscape(strings.TrimSuffix(b.String(), "\n"))), nil
 }
 
 // jsonbString renders s as the JSON text json_extract returns for a stored
