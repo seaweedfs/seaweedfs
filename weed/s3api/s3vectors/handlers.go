@@ -405,12 +405,16 @@ func (s *Server) handleDeleteVectorBucket(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	if _, err := s.authorizeVector(r.Context(), r, "s3vectors:DeleteVectorBucket", arns.bucket, ""); err != nil {
+	record, err := s.authorizeVector(r.Context(), r, "s3vectors:DeleteVectorBucket", arns.bucket, "")
+	if err != nil {
 		catalogErr(w, err)
 		return
 	}
+	// Only the bucket authorized above is deleted, not one created again
+	// under its name since.
+	ctx := s3tables.WithTableBucketCreatedAt(r.Context(), record.CreatedAt)
 	var resp map[string]interface{}
-	err = s.internalCatalog(r.Context(), "DeleteTableBucket",
+	err = s.internalCatalog(ctx, "DeleteTableBucket",
 		&s3tables.DeleteTableBucketRequest{TableBucketARN: s.s3tablesArn(arns.bucket)}, &resp)
 	if err != nil && catalogErrCode(err) == s3tables.ErrCodeBucketNotEmpty {
 		// The implicit index namespace counts as bucket content even when it
@@ -423,7 +427,7 @@ func (s *Server) handleDeleteVectorBucket(w http.ResponseWriter, r *http.Request
 				Namespace:      []string{indexNamespace},
 			}, &nsResp)
 		if nsErr == nil {
-			err = s.internalCatalog(r.Context(), "DeleteTableBucket",
+			err = s.internalCatalog(ctx, "DeleteTableBucket",
 				&s3tables.DeleteTableBucketRequest{TableBucketARN: s.s3tablesArn(arns.bucket)}, &resp)
 		} else if code := catalogErrCode(nsErr); code != s3tables.ErrCodeNoSuchNamespace {
 			glog.V(1).Infof("S3 Vectors: drop internal namespace in %s: %v", arns.bucket, nsErr)
@@ -752,14 +756,26 @@ func isVectorBucket(record *s3tables.GetTableBucketResponse) bool {
 // mutation; catalogErr renders it as AccessDenied.
 var errVectorDenied = &s3tables.S3TablesError{Type: s3tables.ErrCodeAccessDenied, Message: "access denied"}
 
+var errVectorBucketReplaced = &s3tables.S3TablesError{Type: s3tables.ErrCodeConflict,
+	Message: "vector bucket changed concurrently, retry the request"}
+
 // checkVectorPolicyDoc evaluates the caller's vector action against the
 // document the entry currently holds. Called inside a policy mutation's
 // compare-and-swap, so a grant revoked between reads never authorizes the
-// pending write.
-func (s *Server) checkVectorPolicyDoc(r *http.Request, action, bucket, owner string, ext map[string][]byte) bool {
+// pending write, and the entry must still be the bucket record was read from.
+func (s *Server) checkVectorPolicyDoc(r *http.Request, action, bucket string, record *s3tables.GetTableBucketResponse, ext map[string][]byte) error {
+	var meta struct {
+		CreatedAt time.Time `json:"createdAt"`
+	}
+	if json.Unmarshal(ext[s3tables.ExtendedKeyMetadata], &meta) != nil || !meta.CreatedAt.Equal(record.CreatedAt) {
+		return errVectorBucketReplaced
+	}
 	principal := s.tables.PrincipalFor(r)
-	return s3tables.CheckPermissionWithContext(action, principal, owner,
-		vectorPolicyFromExt(ext), s.vectorBucketArn(bucket), s.tables.PolicyContext(r, bucket))
+	if !s3tables.CheckPermissionWithContext(action, principal, record.OwnerAccountID,
+		vectorPolicyFromExt(ext), s.vectorBucketArn(bucket), s.tables.PolicyContext(r, bucket)) {
+		return errVectorDenied
+	}
+	return nil
 }
 
 // authorizeVector grants the request's own vector operation — not a catalog
@@ -818,8 +834,8 @@ func (s *Server) handlePutVectorBucketPolicy(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	err = s.mutateVectorPolicy(r.Context(), arns.bucket, func(ext map[string][]byte) error {
-		if !s.checkVectorPolicyDoc(r, "s3vectors:PutVectorBucketPolicy", arns.bucket, record.OwnerAccountID, ext) {
-			return errVectorDenied
+		if err := s.checkVectorPolicyDoc(r, "s3vectors:PutVectorBucketPolicy", arns.bucket, record, ext); err != nil {
+			return err
 		}
 		// A raw vector document still in the shared slot migrates out with
 		// this write; catalog rules in it stay untouched.
@@ -889,8 +905,8 @@ func (s *Server) handleDeleteVectorBucketPolicy(w http.ResponseWriter, r *http.R
 		return
 	}
 	err = s.mutateVectorPolicy(r.Context(), arns.bucket, func(ext map[string][]byte) error {
-		if !s.checkVectorPolicyDoc(r, "s3vectors:DeleteVectorBucketPolicy", arns.bucket, record.OwnerAccountID, ext) {
-			return errVectorDenied
+		if err := s.checkVectorPolicyDoc(r, "s3vectors:DeleteVectorBucketPolicy", arns.bucket, record, ext); err != nil {
+			return err
 		}
 		removed := false
 		if _, ok := ext[vectorPolicyKey]; ok {
@@ -949,12 +965,15 @@ func (s *Server) handleCreateIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	// The create grant is exercised before any write: a denied caller must not
 	// leave even the implicit namespace behind.
-	if _, err := s.authorizeVector(r.Context(), r, "s3vectors:CreateIndex", arns.bucket, arns.index); err != nil {
+	bucketRecord, err := s.authorizeVector(r.Context(), r, "s3vectors:CreateIndex", arns.bucket, arns.index)
+	if err != nil {
 		catalogErr(w, err)
 		return
 	}
+	// The catalog writes land only in the bucket authorized above.
+	bound := s3tables.WithTableBucketCreatedAt(r.Context(), bucketRecord.CreatedAt)
 	// The namespace is implicit on AWS and internal bookkeeping here.
-	if err := s.ensureIndexNamespace(r.Context(), arns.bucket); err != nil {
+	if err := s.ensureIndexNamespace(bound, arns.bucket); err != nil {
 		catalogErr(w, err)
 		return
 	}
@@ -989,7 +1008,7 @@ func (s *Server) handleCreateIndex(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	metadataJSON, _ := json.Marshal(metadata)
-	err = s.internalCatalog(r.Context(), "CreateTable", &s3tables.CreateTableRequest{
+	err = s.internalCatalog(bound, "CreateTable", &s3tables.CreateTableRequest{
 		TableBucketARN: s.s3tablesArn(arns.bucket),
 		Namespace:      []string{indexNamespace},
 		Name:           arns.index,
@@ -1189,7 +1208,8 @@ func (s *Server) handleDeleteIndex(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	if _, err := s.authorizeVector(r.Context(), r, "s3vectors:DeleteIndex", arns.bucket, arns.index); err != nil {
+	bucketRecord, err := s.authorizeVector(r.Context(), r, "s3vectors:DeleteIndex", arns.bucket, arns.index)
+	if err != nil {
 		catalogErr(w, err)
 		return
 	}
@@ -1213,8 +1233,9 @@ func (s *Server) handleDeleteIndex(w http.ResponseWriter, r *http.Request) {
 	// Deleting the catalog record is the delete: the catalog purges the
 	// dataset under the index's location along with the entry.
 	var resp map[string]interface{}
-	// The token limits the delete to the record checked above.
-	err = s.internalCatalog(r.Context(), "DeleteTable", &s3tables.DeleteTableRequest{
+	// The token limits the delete to the record checked above, and the bound
+	// bucket to the one authorized.
+	err = s.internalCatalog(s3tables.WithTableBucketCreatedAt(r.Context(), bucketRecord.CreatedAt), "DeleteTable", &s3tables.DeleteTableRequest{
 		TableBucketARN: s.s3tablesArn(arns.bucket),
 		Namespace:      []string{indexNamespace},
 		Name:           arns.index,

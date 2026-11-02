@@ -1009,6 +1009,10 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 		}
 		return err
 	}
+	if otherTableBucket(r.Context(), bucketMetadata.CreatedAt) {
+		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, fmt.Sprintf("table bucket %s not found", bucketName))
+		return filer_pb.ErrNotFound
+	}
 
 	tableARN := h.generateTableARN(metadata.OwnerAccountID, bucketName, namespaceName+"/"+tableName)
 	bucketARN := h.generateTableBucketARN(bucketMetadata.OwnerAccountID, bucketName)
@@ -2232,6 +2236,10 @@ func (h *S3TablesHandler) authorizeCreateTable(w http.ResponseWriter, r *http.Re
 	if err != nil {
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to fetch policies: %v", err))
 		return nil, err
+	}
+	if otherTableBucket(r.Context(), bucketMetadata.CreatedAt) {
+		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, fmt.Sprintf("table bucket %s not found", bucketName))
+		return nil, filer_pb.ErrNotFound
 	}
 
 	if !namespaceExists {
