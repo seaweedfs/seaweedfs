@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/gorilla/mux"
@@ -160,6 +161,10 @@ func TestTagResourceValidation(t *testing.T) {
 	mustStatus(t, "tag with bad key", code, body, http.StatusBadRequest)
 	code, body = c.untag("", bucketArn)
 	mustStatus(t, "untag with no keys", code, body, http.StatusBadRequest)
+	code, body = c.untag("", bucketArn, "")
+	mustStatus(t, "untag an empty key", code, body, http.StatusBadRequest)
+	code, body = c.untag("", bucketArn, strings.Repeat("k", 129))
+	mustStatus(t, "untag a key past 128 characters", code, body, http.StatusBadRequest)
 
 	tags := map[string]string{}
 	for i := 0; i < maxResourceTags; i++ {
