@@ -778,9 +778,6 @@ func (h *S3TablesHandler) handleTagResource(w http.ResponseWriter, r *http.Reque
 		if err != nil {
 			return err
 		}
-		if err := h.requireBoundTableBucket(r.Context(), client, bucketName); err != nil {
-			return err
-		}
 		createdAt = resourceCreatedAt
 
 		// Fetch bucket policy if we have a bucket name
@@ -814,6 +811,10 @@ func (h *S3TablesHandler) handleTagResource(w http.ResponseWriter, r *http.Reque
 			return err
 		}
 
+		// Checked after the reads, so they all came from the bound bucket.
+		if err := h.requireBoundTableBucket(r.Context(), client, bucketName); err != nil {
+			return err
+		}
 		var resourceARN string
 		if rType == ResourceTypeTable {
 			resourceARN = h.generateTableARN(ownerAccountID, bucketName, tableNamespace+"/"+tableName)
@@ -942,9 +943,6 @@ func (h *S3TablesHandler) handleListTagsForResource(w http.ResponseWriter, r *ht
 		if err != nil {
 			return err
 		}
-		if err := h.requireBoundTableBucket(r.Context(), client, bucketName); err != nil {
-			return err
-		}
 
 		// Fetch bucket policy if we have a bucket name
 		if bucketName != "" {
@@ -976,6 +974,10 @@ func (h *S3TablesHandler) handleListTagsForResource(w http.ResponseWriter, r *ht
 			return err
 		}
 
+		// Checked after the reads, so they all came from the bound bucket.
+		if err := h.requireBoundTableBucket(r.Context(), client, bucketName); err != nil {
+			return err
+		}
 		var resourceARN string
 		if rType == ResourceTypeTable {
 			resourceARN = h.generateTableARN(ownerAccountID, bucketName, tableNamespace+"/"+tableName)
@@ -1069,9 +1071,6 @@ func (h *S3TablesHandler) handleUntagResource(w http.ResponseWriter, r *http.Req
 		if err != nil {
 			return err
 		}
-		if err := h.requireBoundTableBucket(r.Context(), client, bucketName); err != nil {
-			return err
-		}
 		createdAt = resourceCreatedAt
 
 		// Fetch bucket policy if we have a bucket name
@@ -1104,6 +1103,10 @@ func (h *S3TablesHandler) handleUntagResource(w http.ResponseWriter, r *http.Req
 			return err
 		}
 
+		// Checked after the reads, so they all came from the bound bucket.
+		if err := h.requireBoundTableBucket(r.Context(), client, bucketName); err != nil {
+			return err
+		}
 		var resourceARN string
 		if rType == ResourceTypeTable {
 			resourceARN = h.generateTableARN(ownerAccountID, bucketName, tableNamespace+"/"+tableName)
