@@ -24,6 +24,8 @@ func (openAuthenticator) AuthenticateRequest(*http.Request) (string, interface{}
 
 func (openAuthenticator) DefaultAllow() bool { return true }
 
+func (openAuthenticator) AuthEnabled() bool { return false }
+
 type testHarness struct {
 	router *mux.Router
 	filer  *s3tablestest.MemFiler

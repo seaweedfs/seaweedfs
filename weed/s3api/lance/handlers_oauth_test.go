@@ -49,8 +49,9 @@ func newTestServerWithOAuth() *Server {
 }
 
 type mockS3Authenticator struct {
-	called  bool
-	errCode s3err.ErrorCode
+	called       bool
+	errCode      s3err.ErrorCode
+	authDisabled bool
 }
 
 func (m *mockS3Authenticator) AuthenticateRequest(r *http.Request) (string, interface{}, s3err.ErrorCode) {
@@ -62,6 +63,8 @@ func (m *mockS3Authenticator) AuthenticateRequest(r *http.Request) (string, inte
 }
 
 func (m *mockS3Authenticator) DefaultAllow() bool { return false }
+
+func (m *mockS3Authenticator) AuthEnabled() bool { return !m.authDisabled }
 
 func mintTestToken(t *testing.T, accessKey, secret string, issuedAt, expiresAt time.Time) string {
 	t.Helper()
@@ -313,6 +316,32 @@ func TestAuthApiKeyInvalid(t *testing.T) {
 	}
 	if auth.called {
 		t.Fatalf("bad x-api-key must not fall through to the S3 authenticator")
+	}
+}
+
+// Without identities the S3 port takes any signature, so the catalog takes any
+// key or token and leaves the caller to the S3 authenticator.
+func TestAuthTakesAnyKeyWhenS3AuthIsOff(t *testing.T) {
+	s := newTestServerWithOAuth()
+	s.authenticator = &mockS3Authenticator{authDisabled: true}
+
+	for header, value := range map[string]string{
+		"x-api-key":     "unknown:key",
+		"Authorization": "Bearer not-a-token",
+	} {
+		var gotIdentity string
+		handler := s.Auth(func(w http.ResponseWriter, r *http.Request) {
+			gotIdentity = s3_constants.GetIdentityNameFromContext(r)
+			w.WriteHeader(http.StatusOK)
+		})
+		req := httptest.NewRequest(http.MethodGet, "/v1/namespace/$/list", nil)
+		req.Header.Set(header, value)
+		rec := httptest.NewRecorder()
+		handler(rec, req)
+
+		if rec.Code != http.StatusOK || gotIdentity != "s3user" {
+			t.Fatalf("%s: status = %d, identity = %q, want 200 as s3user", header, rec.Code, gotIdentity)
+		}
 	}
 }
 
