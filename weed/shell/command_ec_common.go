@@ -93,10 +93,13 @@ func collectTopologyInfo(commandEnv *CommandEnv, delayBeforeCollecting time.Dura
 	if delayBeforeCollecting > 0 {
 		time.Sleep(delayBeforeCollecting)
 	}
+	return fetchTopologyInfo(context.Background(), commandEnv, &master_pb.VolumeListRequest{})
+}
 
+func fetchTopologyInfo(ctx context.Context, commandEnv *CommandEnv, request *master_pb.VolumeListRequest) (topoInfo *master_pb.TopologyInfo, volumeSizeLimitMb uint64, err error) {
 	var resp *master_pb.VolumeListResponse
-	err = commandEnv.MasterClient.WithClient(context.Background(), false, func(client master_pb.SeaweedClient) error {
-		resp, err = pb.CollectVolumeList(context.Background(), client, &master_pb.VolumeListRequest{})
+	err = commandEnv.MasterClient.WithClient(ctx, false, func(client master_pb.SeaweedClient) error {
+		resp, err = pb.CollectVolumeList(ctx, client, request)
 		return err
 	})
 	if err != nil {
@@ -107,22 +110,88 @@ func collectTopologyInfo(commandEnv *CommandEnv, delayBeforeCollecting time.Dura
 }
 
 func collectDataNodes(commandEnv *CommandEnv, delayBeforeCollecting time.Duration) ([]*master_pb.DataNodeInfo, error) {
-	dataNodes := []*master_pb.DataNodeInfo{}
-
 	topo, _, err := collectTopologyInfo(commandEnv, delayBeforeCollecting)
 	if err != nil {
 		return nil, err
 	}
+	return topologyDataNodes(topo), nil
+}
 
+func topologyDataNodes(topo *master_pb.TopologyInfo) []*master_pb.DataNodeInfo {
+	dataNodes := []*master_pb.DataNodeInfo{}
 	for _, dci := range topo.GetDataCenterInfos() {
 		for _, r := range dci.GetRackInfos() {
-			for _, dn := range r.GetDataNodeInfos() {
-				dataNodes = append(dataNodes, dn)
-			}
+			dataNodes = append(dataNodes, r.GetDataNodeInfos()...)
 		}
 	}
+	return dataNodes
+}
 
-	return dataNodes, nil
+// collectVolumeServerAddresses resolves nodes with volumeServerAddresses from
+// a topology-only listing. An explicit node list bounds the lookup and is used
+// as given when the topology is unavailable, so it still works while the
+// master is down.
+func collectVolumeServerAddresses(commandEnv *CommandEnv, nodes string) ([]pb.ServerAddress, error) {
+	if nodes != "" && everyNodeNamesGrpcPort(nodes) {
+		return volumeServerAddresses(nil, nodes), nil
+	}
+	ctx := context.Background()
+	if nodes != "" {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+	}
+	topo, _, err := fetchTopologyInfo(ctx, commandEnv, &master_pb.VolumeListRequest{TopologyOnly: true})
+	if err != nil {
+		if nodes == "" {
+			return nil, err
+		}
+		glog.V(0).Infof("dialing volume servers as given, topology unavailable: %v", err)
+	}
+	return volumeServerAddresses(topologyDataNodes(topo), nodes), nil
+}
+
+func everyNodeNamesGrpcPort(nodes string) bool {
+	for _, node := range strings.Split(nodes, ",") {
+		node = strings.TrimSpace(node)
+		if node == "" {
+			continue
+		}
+		portsSepIndex := strings.LastIndex(node, ":")
+		if portsSepIndex < 0 || !strings.Contains(node[portsSepIndex+1:], ".") {
+			return false
+		}
+	}
+	return true
+}
+
+// volumeServerAddresses returns the comma-separated nodes, or every data node
+// when nodes is empty, dialing each registered server on its gRPC port unless
+// the node names one.
+func volumeServerAddresses(dataNodes []*master_pb.DataNodeInfo, nodes string) []pb.ServerAddress {
+	registered := make(map[string]pb.ServerAddress, len(dataNodes))
+	all := make([]pb.ServerAddress, 0, len(dataNodes))
+	for _, dn := range dataNodes {
+		addr := pb.NewServerAddressFromDataNode(dn)
+		registered[addr.ToHttpAddress()] = addr
+		all = append(all, addr)
+	}
+	if nodes == "" {
+		return all
+	}
+	addrs := []pb.ServerAddress{}
+	for _, node := range strings.Split(nodes, ",") {
+		node = strings.TrimSpace(node)
+		if node == "" {
+			continue
+		}
+		if addr, found := registered[node]; found {
+			addrs = append(addrs, addr)
+		} else {
+			addrs = append(addrs, pb.ServerAddress(node))
+		}
+	}
+	return addrs
 }
 
 func collectEcNodesForDC(commandEnv *CommandEnv, selectedDataCenter string, diskType types.DiskType) (ecNodes []*EcNode, totalFreeEcSlots int, err error) {
