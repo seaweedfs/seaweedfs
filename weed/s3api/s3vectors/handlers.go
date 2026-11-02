@@ -18,6 +18,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/vector_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -486,10 +487,10 @@ var errNoVectorPolicy = errors.New("vector bucket policy not found")
 
 // validateVectorPolicy rejects a document the evaluator cannot honor: the
 // shared Statement shape has no negated fields, so a rule relying on one would
-// silently lose its exclusion; conditions are unsupported since the vector
-// evaluation supplies no condition keys; and a rule naming another service is
-// a dead rule the writer believes is enforced. The document must decode into
-// the same typed form the evaluator uses.
+// silently lose its exclusion; a condition on a key the vector evaluation does
+// not supply, or with an operator it does not know, never matches; and a rule
+// naming another service is a dead rule the writer believes is enforced. The
+// document must decode into the same typed form the evaluator uses.
 func validateVectorPolicy(raw string) error {
 	var typed s3tables.PolicyDocument
 	if err := json.Unmarshal([]byte(raw), &typed); err != nil {
@@ -501,14 +502,27 @@ func validateVectorPolicy(raw string) error {
 	}
 	for _, stmt := range policyStatements(doc) {
 		for key := range stmt {
-			for _, field := range []string{"NotAction", "NotResource", "NotPrincipal", "Condition"} {
+			for _, field := range []string{"NotAction", "NotResource", "NotPrincipal"} {
 				if strings.EqualFold(key, field) {
 					return fmt.Errorf("invalid policy document: %s is not supported", field)
 				}
 			}
+			if key != "Condition" && strings.EqualFold(key, "Condition") {
+				return fmt.Errorf("invalid policy document: %s must be spelled Condition", key)
+			}
 		}
 	}
 	for _, stmt := range typed.Statement {
+		for operator, keys := range stmt.Condition {
+			if _, err := policy_engine.GetConditionEvaluator(operator); err != nil {
+				return fmt.Errorf("invalid policy document: condition operator %q is not supported", operator)
+			}
+			for key := range keys {
+				if !vectorConditionKey(key) {
+					return fmt.Errorf("invalid policy document: condition key %q is not supported in a vector bucket policy", key)
+				}
+			}
+		}
 		for _, action := range statementActions(stmt.Action) {
 			if service, _, found := strings.Cut(action, ":"); found && service != "s3vectors" {
 				return fmt.Errorf("invalid policy document: action %q is not enforceable in a vector bucket policy", action)
@@ -521,6 +535,19 @@ func validateVectorPolicy(raw string) error {
 		}
 	}
 	return nil
+}
+
+// vectorConditionKey reports whether the vector evaluation supplies key.
+func vectorConditionKey(key string) bool {
+	if key == "aws:TagKeys" {
+		return true
+	}
+	for _, prefix := range []string{"aws:ResourceTag/", "aws:RequestTag/", "s3vectors:VectorBucketTag/"} {
+		if tagKey, ok := strings.CutPrefix(key, prefix); ok {
+			return tagKey != ""
+		}
+	}
+	return false
 }
 
 // arnService returns the service field of an ARN in any partition.

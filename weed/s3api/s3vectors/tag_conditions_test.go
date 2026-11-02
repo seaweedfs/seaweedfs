@@ -251,3 +251,59 @@ func jsonOf(v interface{}) string {
 	raw, _ := json.Marshal(v)
 	return string(raw)
 }
+
+func TestValidateVectorPolicyConditions(t *testing.T) {
+	withCondition := func(condition string) string {
+		return `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3vectors:GetIndex","Resource":"*","Condition":` + condition + `}]}`
+	}
+	for _, ok := range []string{
+		`{"StringEquals":{"aws:ResourceTag/env":"prod"}}`,
+		`{"StringLike":{"aws:RequestTag/team":"search-*"}}`,
+		`{"ForAllValues:StringEquals":{"aws:TagKeys":["team","env"]}}`,
+		`{"StringNotEquals":{"s3vectors:VectorBucketTag/env":"dev"}}`,
+		`{"Null":{"aws:ResourceTag/owner":"true"}}`,
+	} {
+		if err := validateVectorPolicy(withCondition(ok)); err != nil {
+			t.Errorf("%s rejected: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{
+		`{"StringEquals":{"aws:SourceIp":"10.0.0.1"}}`,
+		`{"StringEquals":{"s3tables:TableBucketTag/env":"prod"}}`,
+		`{"StringEquals":{"aws:ResourceTag/":"prod"}}`,
+		`{"StringEquals":{"aws:resourcetag/env":"prod"}}`,
+		`{"StringEqualsIfExists":{"aws:ResourceTag/env":"prod"}}`,
+		`{"NoSuchOperator":{"aws:ResourceTag/env":"prod"}}`,
+		`"aws:ResourceTag/env"`,
+	} {
+		if err := validateVectorPolicy(withCondition(bad)); err == nil {
+			t.Errorf("%s accepted", bad)
+		}
+	}
+	lower := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3vectors:GetIndex","Resource":"*","condition":{"StringEquals":{"aws:ResourceTag/env":"prod"}}}]}`
+	if err := validateVectorPolicy(lower); err == nil {
+		t.Error("a lower-case condition field was accepted")
+	}
+}
+
+func TestPutVectorBucketPolicyWithTagConditions(t *testing.T) {
+	s, c := newTagClient(t)
+	c.setup("vec-bucket", "live-idx", "test-idx")
+	mustStatus(t, "tag live", tagCode(c, s.indexArn("vec-bucket", "live-idx"), map[string]string{"stage": "live"}), "", http.StatusOK)
+	policy := policyOf(statement("Allow", `"s3vectors:GetIndex"`, s.vectorBucketArn("vec-bucket")+"/index/*",
+		`{"StringEquals":{"aws:ResourceTag/stage":"live"}}`))
+	code, body := c.op("", "PutVectorBucketPolicy", &PutVectorBucketPolicyRequest{VectorBucketName: "vec-bucket", Policy: policy})
+	mustStatus(t, "PutVectorBucketPolicy", code, body, http.StatusOK)
+	code, body = c.op("", "GetVectorBucketPolicy", &GetVectorBucketPolicyRequest{VectorBucketName: "vec-bucket"})
+	mustStatus(t, "GetVectorBucketPolicy", code, body, http.StatusOK)
+	var got GetVectorBucketPolicyResponse
+	if err := json.Unmarshal([]byte(body), &got); err != nil || got.Policy != policy {
+		t.Fatalf("stored policy = %s (%v), want %s", body, err, policy)
+	}
+	if code := c.getIndex("reader", "vec-bucket", "live-idx"); code != http.StatusOK {
+		t.Fatalf("GetIndex on stage=live: %d", code)
+	}
+	if code := c.getIndex("reader", "vec-bucket", "test-idx"); code != http.StatusForbidden {
+		t.Fatalf("GetIndex on an untagged index: %d, want 403", code)
+	}
+}

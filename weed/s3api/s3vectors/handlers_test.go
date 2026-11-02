@@ -786,7 +786,7 @@ func TestValidateVectorPolicy(t *testing.T) {
 	if err := validateVectorPolicy("not-json"); err == nil {
 		t.Fatal("malformed policy should be rejected")
 	}
-	for _, field := range []string{"NotAction", "NotResource", "NotPrincipal", "Condition"} {
+	for _, field := range []string{"NotAction", "NotResource", "NotPrincipal"} {
 		bad := fmt.Sprintf(`{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Principal":"*","%s":"s3vectors:GetIndex","Action":"s3vectors:PutVectors","Resource":"*"}]}`, field)
 		if err := validateVectorPolicy(bad); err == nil {
 			t.Fatalf("%s should be rejected", field)
