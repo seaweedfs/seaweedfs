@@ -451,6 +451,47 @@ def test_create_with_tags(vectors):
         vectors.delete_vector_bucket(vectorBucketName=bucket)
 
 
+def test_tag_conditions(vectors, vector_clients, index):
+    reader, writer = vector_clients["reader"], vector_clients["writer"]
+    bucket = index["vectorBucketName"]
+    bucket_arn = vectors.get_vector_bucket(vectorBucketName=bucket)["vectorBucket"]["vectorBucketArn"]
+    index_arn = vectors.get_index(**index)["index"]["indexArn"]
+    other = dict(index, indexName="other-index")
+    vectors.create_index(**other, dataType="float32", dimension=4, distanceMetric="euclidean")
+    vectors.tag_resource(resourceArn=bucket_arn, tags={"env": "prod"})
+    vectors.tag_resource(resourceArn=index_arn, tags={"stage": "live"})
+    indexes = bucket_arn + "/index/*"
+    statements = [
+        {"Effect": "Allow", "Principal": {"AWS": "reader"}, "Action": "s3vectors:GetIndex", "Resource": indexes,
+         "Condition": {"StringEquals": {"aws:ResourceTag/stage": "live"}}},
+        {"Effect": "Allow", "Principal": {"AWS": "reader"}, "Action": "s3vectors:QueryVectors", "Resource": indexes,
+         "Condition": {"StringEquals": {"s3vectors:VectorBucketTag/env": "prod"}}},
+        {"Effect": "Allow", "Principal": {"AWS": "writer"}, "Action": "s3vectors:TagResource", "Resource": indexes,
+         "Condition": {"StringEquals": {"aws:RequestTag/team": "search"},
+                       "ForAllValues:StringEquals": {"aws:TagKeys": ["team"]}}},
+    ]
+    try:
+        vectors.put_vector_bucket_policy(vectorBucketName=bucket,
+                                         policy=json.dumps({"Version": "2012-10-17", "Statement": statements}))
+        assert reader.get_index(**index)["index"]["indexArn"] == index_arn
+        expect_error("AccessDeniedException", reader.get_index, **other)
+        assert reader.query_vectors(**other, queryVector={"float32": [1, 0, 0, 0]}, topK=1)["vectors"] == []
+        writer.tag_resource(resourceArn=index_arn, tags={"team": "search"})
+        expect_error("AccessDeniedException", writer.tag_resource, resourceArn=index_arn, tags={"team": "other"})
+        expect_error("AccessDeniedException", writer.tag_resource, resourceArn=index_arn,
+                     tags={"team": "search", "env": "dev"})
+        assert vectors.list_tags_for_resource(resourceArn=index_arn)["tags"] == {"stage": "live", "team": "search"}
+        vectors.tag_resource(resourceArn=bucket_arn, tags={"env": "dev"})
+        expect_error("AccessDeniedException", reader.query_vectors, **other,
+                     queryVector={"float32": [1, 0, 0, 0]}, topK=1)
+        unsupported = dict(statements[0], Condition={"IpAddress": {"aws:SourceIp": "10.0.0.0/8"}})
+        expect_error("ValidationException", vectors.put_vector_bucket_policy, vectorBucketName=bucket,
+                     policy=json.dumps({"Version": "2012-10-17", "Statement": [unsupported]}))
+    finally:
+        vectors.delete_vector_bucket_policy(vectorBucketName=bucket)
+        vectors.delete_index(**other)
+
+
 def test_invalid_credentials(cluster):
     client = boto3.client("s3vectors", endpoint_url=cluster["endpoint"], aws_access_key_id="unknown",
                           aws_secret_access_key="unknown", region_name="us-east-1")
