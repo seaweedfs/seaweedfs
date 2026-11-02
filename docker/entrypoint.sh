@@ -100,6 +100,15 @@ case "$1" in
   	exec /usr/bin/weed-worker "$@"
 	;;
 
+  'vector')
+  	shift
+  	if [ ! -s /usr/bin/weed-vector ]; then
+  	  echo "Error: the vector engine is not available on this platform ($(uname -m))." >&2
+  	  exit 1
+  	fi
+  	exec /usr/bin/weed-vector "$@"
+	;;
+
   'server')
   	ARGS="-dir=/data -volume.max=0 -master.volumeSizeLimitMB=1024"
   	if isArgPassed "-volume.max" "$@"; then
