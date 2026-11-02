@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -1909,7 +1910,12 @@ func (s *Server) handleQueryVectors(w http.ResponseWriter, r *http.Request) {
 	for _, v := range resp.Vectors {
 		o := &QueryOutputVector{Key: v.Key}
 		if req.ReturnDistance {
-			o.Distance = &v.Distance
+			d := v.Distance
+			if metric == "euclidean" {
+				// Lance's L2 distance is the square of the Euclidean distance.
+				d = float32(math.Sqrt(math.Max(0, float64(d))))
+			}
+			o.Distance = &d
 		}
 		if req.ReturnMetadata {
 			o.Metadata = structToMap(v.Metadata)
