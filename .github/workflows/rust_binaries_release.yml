@@ -188,6 +188,83 @@ jobs:
             weed-worker_${{ matrix.asset_suffix }}.tar.gz
             weed-worker_${{ matrix.asset_suffix }}.tar.gz.md5
 
+  # The vector engine behind the S3 Vectors API: Linux only, like the worker,
+  # whose lance dependency tree it shares.
+  build-rust-vector-linux:
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            asset_suffix: linux_amd64
+          - target: aarch64-unknown-linux-musl
+            asset_suffix: linux_arm64
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up the musl target
+        uses: ./.github/actions/rust-musl-target
+        with:
+          target: ${{ matrix.target }}
+
+      - name: Cache cargo registry and target
+        if: runner.environment == 'github-hosted'
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            seaweed-vector/target/${{ matrix.target }}/release
+          key: rust-vector-release-${{ matrix.target }}-${{ hashFiles('seaweed-vector/Cargo.lock') }}
+          restore-keys: |
+            rust-vector-release-${{ matrix.target }}-
+
+      - name: Use the vendored protoc
+        run: |
+          cd seaweed-vector
+          cargo fetch
+          version=$(awk '/^name = "protoc-bin-vendored-linux-x86_64"$/{found=1; next} found && /^version = /{gsub(/"/,"",$3); print $3; exit}' Cargo.lock)
+          test -n "$version" || { echo "protoc-bin-vendored-linux-x86_64 is not in Cargo.lock" >&2; exit 1; }
+          protoc=$(find ~/.cargo/registry/src -path "*protoc-bin-vendored-linux-x86_64-$version/bin/protoc" | head -1)
+          test -x "$protoc" || { echo "no vendored protoc $version in the registry" >&2; exit 1; }
+          echo "PROTOC=$protoc" >> "$GITHUB_ENV"
+
+      - name: Build the vector engine
+        run: |
+          cd seaweed-vector
+          cargo build --release -p weed-vector-server --target ${{ matrix.target }}
+
+      - name: Package binary
+        run: |
+          cp seaweed-vector/target/${{ matrix.target }}/release/weed-vector weed-vector
+          tar czf weed-vector_${{ matrix.asset_suffix }}.tar.gz weed-vector
+          rm weed-vector
+          md5sum weed-vector_${{ matrix.asset_suffix }}.tar.gz > weed-vector_${{ matrix.asset_suffix }}.tar.gz.md5
+
+      - name: Upload release assets
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            weed-vector_${{ matrix.asset_suffix }}.tar.gz
+            weed-vector_${{ matrix.asset_suffix }}.tar.gz.md5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifacts
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: rust-vector-${{ matrix.asset_suffix }}
+          path: |
+            weed-vector_${{ matrix.asset_suffix }}.tar.gz
+            weed-vector_${{ matrix.asset_suffix }}.tar.gz.md5
+
   build-rust-volume-darwin:
     permissions:
       contents: write
