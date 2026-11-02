@@ -52,9 +52,13 @@ fn upload_part_config() -> aws_sdk_s3::config::Builder {
 /// taken only once nearly all of the part has been written.
 const UPLOAD_CHUNK_SIZE: usize = 64 * 1024;
 
+/// The latest attempt to send a part, and whether its body has been sent.
+type PartSent = Arc<watch::Sender<(u64, bool)>>;
+
 struct PartBody {
     rest: Bytes,
-    sent: Arc<watch::Sender<bool>>,
+    attempt: u64,
+    sent: PartSent,
 }
 
 impl http_body::Body for PartBody {
@@ -71,7 +75,12 @@ impl http_body::Body for PartBody {
         let n = self.rest.len().min(UPLOAD_CHUNK_SIZE);
         let chunk = self.rest.split_to(n);
         if self.rest.is_empty() {
-            self.sent.send_replace(true);
+            let attempt = self.attempt;
+            self.sent.send_if_modified(|state| {
+                let latest = state.0 == attempt;
+                state.1 |= latest;
+                latest
+            });
         }
         Poll::Ready(Some(Ok(http_body::Frame::data(chunk))))
     }
@@ -94,28 +103,21 @@ async fn send_part(
     data: Bytes,
     response_timeout: Duration,
 ) -> Result<UploadPartOutput, String> {
-    let (sent_tx, mut sent) = watch::channel(false);
-    let sent_tx = Arc::new(sent_tx);
+    let sent: PartSent = Arc::new(watch::channel((0, false)).0);
     let body = {
-        let sent_tx = sent_tx.clone();
+        let sent = sent.clone();
         SdkBody::from(data.clone()).map_preserve_contents(move |_| {
-            sent_tx.send_replace(data.is_empty());
+            let mut attempt = 0;
+            sent.send_modify(|state| {
+                *state = (state.0 + 1, data.is_empty());
+                attempt = state.0;
+            });
             SdkBody::from_body_1_x(PartBody {
                 rest: data.clone(),
-                sent: sent_tx.clone(),
+                attempt,
+                sent: sent.clone(),
             })
         })
-    };
-    let unanswered = async {
-        loop {
-            let _ = sent.wait_for(|sent| *sent).await;
-            if tokio::time::timeout(response_timeout, sent.wait_for(|sent| !*sent))
-                .await
-                .is_err()
-            {
-                return;
-            }
-        }
     };
     tokio::select! {
         resp = request
@@ -123,9 +125,30 @@ async fn send_part(
             .customize()
             .config_override(upload_part_config())
             .send() => resp.map_err(|e| DisplayErrorContext(&e).to_string()),
-        () = unanswered => Err(format!(
+        () = wait_unanswered(sent, response_timeout) => Err(format!(
             "no response within {response_timeout:?} after sending the part"
         )),
+    }
+}
+
+/// Completes once an attempt's body has been sent and `response_timeout`
+/// passes before a later attempt starts.
+async fn wait_unanswered(sent: PartSent, response_timeout: Duration) {
+    let mut state = sent.subscribe();
+    loop {
+        let attempt = state
+            .wait_for(|&(_, done)| done)
+            .await
+            .map_or(0, |state| state.0);
+        if tokio::time::timeout(
+            response_timeout,
+            state.wait_for(|&(latest, _)| latest != attempt),
+        )
+        .await
+        .is_err()
+        {
+            return;
+        }
     }
 }
 
@@ -1115,6 +1138,29 @@ mod tests {
         .expect("a part with no response did not give up");
         let err = sent.unwrap_err();
         assert!(err.starts_with("no response within 200ms"), "{err}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_retry_restarts_the_response_clock() {
+        let sent: PartSent = Arc::new(watch::channel((1, true)).0);
+        let mut unanswered =
+            std::pin::pin!(wait_unanswered(sent.clone(), Duration::from_millis(200)));
+        let wait = |ms| tokio::time::sleep(Duration::from_millis(ms));
+        tokio::select! {
+            () = unanswered.as_mut() => panic!("gave up early"),
+            () = wait(150) => {}
+        }
+        // The retry starts and finishes sending before the waiter runs again.
+        sent.send_replace((2, false));
+        sent.send_replace((2, true));
+        tokio::select! {
+            () = unanswered.as_mut() => panic!("kept the first attempt's clock"),
+            () = wait(150) => {}
+        }
+        tokio::select! {
+            () = unanswered => {}
+            () = wait(100) => panic!("the retry never timed out"),
+        }
     }
 
     /// Takes the request body one chunk per `pause`, then answers at once.
