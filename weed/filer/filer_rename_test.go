@@ -49,6 +49,7 @@ func TestCanRenameIntoItself(t *testing.T) {
 		{"into a child", "a", "/dir/a/b", true},
 		{"into a deeper descendant", "a", "/dir/a/b/c", true},
 		{"into a child with a trailing slash", "a", "/dir/a/b/", true},
+		{"old name with a trailing slash into a child", "a/", "/dir/a/b", true},
 		{"into a sibling sharing the name prefix", "a", "/dir/a.d", false},
 		{"into a descendant of that sibling", "a", "/dir/ab/c", false},
 		{"into the parent", "a", "/dir", false},
