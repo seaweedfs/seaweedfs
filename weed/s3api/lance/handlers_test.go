@@ -26,6 +26,12 @@ func (openAuthenticator) DefaultAllow() bool { return true }
 
 func (openAuthenticator) AuthEnabled() bool { return false }
 
+// signedAuthenticator admits the same caller on a gateway that checks
+// credentials.
+type signedAuthenticator struct{ openAuthenticator }
+
+func (signedAuthenticator) AuthEnabled() bool { return true }
+
 type testHarness struct {
 	router *mux.Router
 	filer  *s3tablestest.MemFiler
@@ -134,6 +140,28 @@ func decode[T any](t *testing.T, recorder *httptest.ResponseRecorder) T {
 		t.Fatalf("decode %s: %v", recorder.Body.String(), err)
 	}
 	return out
+}
+
+// While the S3 port takes unsigned requests the catalog says so, and a client
+// with no credentials of its own still reaches the data. Once auth is on it
+// has to sign again.
+func TestStorageOptionsSkipSignatureOnlyWhileS3AuthIsOff(t *testing.T) {
+	h := newTestHarness(t)
+	h.createBucket(t, "open", s3tables.FormatLance)
+	h.mustDo(t, http.MethodPost, "/v1/namespace/open$ns/create", `{}`, http.StatusOK)
+
+	declared := decode[DeclareTableResponse](t,
+		h.mustDo(t, http.MethodPost, "/v1/table/open$ns$t/declare", `{}`, http.StatusOK))
+	if declared.StorageOptions["aws_skip_signature"] != "true" {
+		t.Fatalf("auth off: storage options = %v, want aws_skip_signature", declared.StorageOptions)
+	}
+
+	h.server.authenticator = signedAuthenticator{}
+	described := decode[DescribeTableResponse](t,
+		h.mustDo(t, http.MethodPost, "/v1/table/open$ns$t/describe", `{}`, http.StatusOK))
+	if _, ok := described.StorageOptions["aws_skip_signature"]; ok {
+		t.Fatalf("auth on: storage options = %v, want no aws_skip_signature", described.StorageOptions)
+	}
 }
 
 // The lifecycle a Lance client drives: create the namespace, declare the table

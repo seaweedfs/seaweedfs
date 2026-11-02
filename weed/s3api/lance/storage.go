@@ -149,6 +149,11 @@ func (s *Server) storageOptions(r *http.Request, bucket, location string, vend b
 	if s.s3Region != "" {
 		options["aws_region"] = s.s3Region
 	}
+	if !s.authEnabled() {
+		// The S3 port takes unsigned requests, and a client with no
+		// credentials of its own would otherwise fail looking for some.
+		options["aws_skip_signature"] = "true"
+	}
 
 	if !vend || s.credentialVendor == nil {
 		return options, nil
