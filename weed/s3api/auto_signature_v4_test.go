@@ -16,6 +16,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/aws/aws-sdk-go/aws/credentials"
+	v4 "github.com/aws/aws-sdk-go/aws/signer/v4"
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
@@ -1820,18 +1822,10 @@ func TestIAMLargeBodySecurityLimit(t *testing.T) {
 		", SignedHeaders=content-type;host;x-amz-date, Signature=dummysignature"
 	req.Header.Set("Authorization", authHeader)
 
-	// The function should complete successfully but limit the body to 10 MiB
 	identity, _, errCode := iam.doesSignatureMatch(req)
 
-	// Should get signature mismatch (dummy signature) but not internal error
-	assert.Equal(t, s3err.ErrSignatureDoesNotMatch, errCode)
+	assert.Equal(t, s3err.ErrEntityTooLarge, errCode)
 	assert.Nil(t, identity)
-
-	// Verify the body was truncated to the limit (10 MiB)
-	bodyBytes, err := io.ReadAll(req.Body)
-	assert.NoError(t, err)
-	assert.Equal(t, 10*(1<<20), len(bodyBytes))                         // Should be exactly 10 MiB
-	assert.Equal(t, strings.Repeat("A", 10*(1<<20)), string(bodyBytes)) // All As, but truncated
 }
 
 // Test the streaming hash implementation directly
@@ -1922,30 +1916,58 @@ func TestStreamingVsNonStreamingConsistency(t *testing.T) {
 	}
 }
 
-// Test streaming with size limit enforcement
 func TestStreamingWithSizeLimit(t *testing.T) {
-	// Create a payload larger than the limit
-	largePayload := strings.Repeat("A", 11*(1<<20)) // 11 MiB
-
-	req, err := http.NewRequest("POST", "http://localhost:8111/", strings.NewReader(largePayload))
+	exact := strings.Repeat("A", 1<<20)
+	req, err := http.NewRequest("POST", "http://localhost:8111/", strings.NewReader(exact))
 	assert.NoError(t, err)
-
-	// Stream with the limit
-	hash, err := streamHashRequestBody(req, iamRequestBodyLimit)
+	hash, err := streamHashRequestBody(req, 1<<20)
 	assert.NoError(t, err)
+	assert.Equal(t, getSHA256Hash([]byte(exact)), hash)
 
-	// Verify the hash is computed for the truncated content (10 MiB)
-	truncatedPayload := strings.Repeat("A", 10*(1<<20))
-	expectedHash := sha256.Sum256([]byte(truncatedPayload))
-	expectedHashStr := hex.EncodeToString(expectedHash[:])
-
-	assert.Equal(t, expectedHashStr, hash)
-
-	// Verify the body was truncated
-	bodyBytes, err := io.ReadAll(req.Body)
+	req, err = http.NewRequest("POST", "http://localhost:8111/", strings.NewReader(exact+"A"))
 	assert.NoError(t, err)
-	assert.Equal(t, 10*(1<<20), len(bodyBytes))
-	assert.Equal(t, truncatedPayload, string(bodyBytes))
+	_, err = streamHashRequestBody(req, 1<<20)
+	assert.ErrorIs(t, err, errRequestBodyTooLarge)
+}
+
+func TestNonS3BodyHashLimitFollowsService(t *testing.T) {
+	iam := &IdentityAccessManagement{}
+	assert.NoError(t, iam.loadS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{{
+			Name:        "vec",
+			Credentials: []*iam_pb.Credential{{AccessKey: "vec_key", SecretKey: "vec_secret"}},
+			Actions:     []string{"Admin"},
+		}},
+	}))
+	signer := v4.NewSigner(credentials.NewStaticCredentials("vec_key", "vec_secret", ""))
+
+	for _, tc := range []struct {
+		service string
+		size    int
+		want    s3err.ErrorCode
+	}{
+		{"s3vectors", 20 << 20, s3err.ErrNone},
+		{"s3vectors", s3_constants.S3VectorsMaxRequestBodyBytes, s3err.ErrNone},
+		{"s3vectors", s3_constants.S3VectorsMaxRequestBodyBytes + 1, s3err.ErrEntityTooLarge},
+		{"iam", iamRequestBodyLimit + 1, s3err.ErrEntityTooLarge},
+	} {
+		t.Run(fmt.Sprintf("%s_%d", tc.service, tc.size), func(t *testing.T) {
+			body := strings.Repeat("v", tc.size)
+			req, err := http.NewRequest("POST", "http://localhost:8333/PutVectors", strings.NewReader(body))
+			assert.NoError(t, err)
+			_, err = signer.Sign(req, strings.NewReader(body), tc.service, "us-east-1", time.Now())
+			assert.NoError(t, err)
+
+			identity, _, errCode := iam.doesSignatureMatch(req)
+			assert.Equal(t, tc.want, errCode)
+			if tc.want == s3err.ErrNone {
+				assert.Equal(t, "vec", identity.Name)
+				got, err := io.ReadAll(req.Body)
+				assert.NoError(t, err)
+				assert.Equal(t, len(body), len(got))
+			}
+		})
+	}
 }
 
 // Benchmark streaming vs non-streaming memory usage

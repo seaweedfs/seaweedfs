@@ -25,6 +25,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -74,22 +75,19 @@ func streamHashRequestBody(r *http.Request, sizeLimit int64) (string, error) {
 		return emptySHA256, nil
 	}
 
-	limitedReader := io.LimitReader(r.Body, sizeLimit)
-	hasher := sha256.New()
-	var bodyBuffer bytes.Buffer
-
-	// Use io.Copy with an io.MultiWriter to hash and buffer the body simultaneously.
-	if _, err := io.Copy(io.MultiWriter(hasher, &bodyBuffer), limitedReader); err != nil {
+	body, err := readRequestBody(r, sizeLimit)
+	if err != nil {
 		return "", err
 	}
 
-	r.Body = io.NopCloser(bytes.NewReader(bodyBuffer.Bytes()))
+	r.Body = io.NopCloser(bytes.NewReader(body))
 
-	if bodyBuffer.Len() == 0 {
+	if len(body) == 0 {
 		return emptySHA256, nil
 	}
 
-	return hex.EncodeToString(hasher.Sum(nil)), nil
+	sum := sha256.Sum256(body)
+	return hex.EncodeToString(sum[:]), nil
 }
 
 // getContentSha256Cksum retrieves the "x-amz-content-sha256" header value.
@@ -655,8 +653,15 @@ func extractV4AuthInfoFromHeader(r *http.Request) (*v4AuthInfo, s3err.ErrorCode)
 
 	hashedPayload := getContentSha256Cksum(r)
 	if signV4Values.Credential.scope.service != "s3" && hashedPayload == emptySHA256 && r.Body != nil {
+		sizeLimit := int64(iamRequestBodyLimit)
+		if signV4Values.Credential.scope.service == "s3vectors" {
+			sizeLimit = s3_constants.S3VectorsMaxRequestBodyBytes
+		}
 		var hashErr error
-		hashedPayload, hashErr = streamHashRequestBody(r, iamRequestBodyLimit)
+		hashedPayload, hashErr = streamHashRequestBody(r, sizeLimit)
+		if errors.Is(hashErr, errRequestBodyTooLarge) {
+			return nil, s3err.ErrEntityTooLarge
+		}
 		if hashErr != nil {
 			return nil, s3err.ErrInternalError
 		}

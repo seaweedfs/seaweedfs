@@ -1,8 +1,10 @@
 package s3vectors
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -35,10 +37,19 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 	})
 }
 
-const maxRequestBodyBytes = 32 << 20
+const maxRequestBodyBytes = s3_constants.S3VectorsMaxRequestBodyBytes
+
+var errRequestBodyTooLarge = fmt.Errorf("request body exceeds %d MiB", maxRequestBodyBytes>>20)
 
 func readJSON(r *http.Request, req interface{}) error {
-	return json.NewDecoder(io.LimitReader(r.Body, maxRequestBodyBytes)).Decode(req)
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxRequestBodyBytes+1))
+	if err != nil {
+		return err
+	}
+	if len(body) > maxRequestBodyBytes {
+		return errRequestBodyTooLarge
+	}
+	return json.NewDecoder(bytes.NewReader(body)).Decode(req)
 }
 
 // Request/response shapes for the AWS S3 Vectors API (awsJson1_1).
