@@ -133,6 +133,7 @@ func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, "ValidationException", errRequestBodyTooLarge.Error())
 			return
 		}
+		r = r.WithContext(s3_constants.SetRequestBodyLimitInContext(r.Context(), maxRequestBodyBytes))
 		identity, identityObj, errCode := s.authenticator.AuthenticateRequest(r)
 		switch errCode {
 		case s3err.ErrNone:

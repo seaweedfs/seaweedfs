@@ -359,6 +359,7 @@ const (
 	contextKeyOriginalRequestPath contextKey = "s3-original-request-path"
 	contextKeyAccessKeyId         contextKey = "s3-access-key-id"
 	contextKeyStoredAccessKeyId   contextKey = "s3-stored-access-key-id"
+	contextKeyRequestBodyLimit    contextKey = "s3-request-body-limit"
 )
 
 // identityHolder is a mutable container for the authenticated identity name,
@@ -527,6 +528,20 @@ func GetOriginalRequestPathFromContext(r *http.Request) string {
 		return path
 	}
 	return ""
+}
+
+// SetRequestBodyLimitInContext sets how much of the body SigV4 verification
+// reads. The route sets it: the credential scope is not verified yet.
+func SetRequestBodyLimitInContext(ctx context.Context, limit int64) context.Context {
+	return context.WithValue(ctx, contextKeyRequestBodyLimit, limit)
+}
+
+// GetRequestBodyLimitFromContext returns the route's limit, or def.
+func GetRequestBodyLimitFromContext(r *http.Request, def int64) int64 {
+	if limit, ok := r.Context().Value(contextKeyRequestBodyLimit).(int64); ok {
+		return limit
+	}
+	return def
 }
 
 // SetAccessKeyIdInContext stores the access key id the request authenticated

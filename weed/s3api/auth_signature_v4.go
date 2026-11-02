@@ -653,10 +653,7 @@ func extractV4AuthInfoFromHeader(r *http.Request) (*v4AuthInfo, s3err.ErrorCode)
 
 	hashedPayload := getContentSha256Cksum(r)
 	if signV4Values.Credential.scope.service != "s3" && hashedPayload == emptySHA256 && r.Body != nil {
-		sizeLimit := int64(iamRequestBodyLimit)
-		if signV4Values.Credential.scope.service == "s3vectors" {
-			sizeLimit = s3_constants.S3VectorsMaxRequestBodyBytes
-		}
+		sizeLimit := s3_constants.GetRequestBodyLimitFromContext(r, iamRequestBodyLimit)
 		var hashErr error
 		hashedPayload, hashErr = streamHashRequestBody(r, sizeLimit)
 		if errors.Is(hashErr, errRequestBodyTooLarge) {

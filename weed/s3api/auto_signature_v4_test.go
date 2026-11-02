@@ -1930,7 +1930,7 @@ func TestStreamingWithSizeLimit(t *testing.T) {
 	assert.ErrorIs(t, err, errRequestBodyTooLarge)
 }
 
-func TestNonS3BodyHashLimitFollowsService(t *testing.T) {
+func TestNonS3BodyHashLimitFollowsRoute(t *testing.T) {
 	iam := &IdentityAccessManagement{}
 	assert.NoError(t, iam.loadS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
 		Identities: []*iam_pb.Identity{{
@@ -1941,20 +1941,27 @@ func TestNonS3BodyHashLimitFollowsService(t *testing.T) {
 	}))
 	signer := v4.NewSigner(credentials.NewStaticCredentials("vec_key", "vec_secret", ""))
 
+	vectorsRoute := int64(s3_constants.S3VectorsMaxRequestBodyBytes)
 	for _, tc := range []struct {
-		service string
-		size    int
-		want    s3err.ErrorCode
+		service    string
+		routeLimit int64
+		size       int
+		want       s3err.ErrorCode
 	}{
-		{"s3vectors", 20 << 20, s3err.ErrNone},
-		{"s3vectors", s3_constants.S3VectorsMaxRequestBodyBytes, s3err.ErrNone},
-		{"s3vectors", s3_constants.S3VectorsMaxRequestBodyBytes + 1, s3err.ErrEntityTooLarge},
-		{"iam", iamRequestBodyLimit + 1, s3err.ErrEntityTooLarge},
+		{"s3vectors", vectorsRoute, 20 << 20, s3err.ErrNone},
+		{"s3vectors", vectorsRoute, s3_constants.S3VectorsMaxRequestBodyBytes, s3err.ErrNone},
+		{"s3vectors", vectorsRoute, s3_constants.S3VectorsMaxRequestBodyBytes + 1, s3err.ErrEntityTooLarge},
+		// An s3vectors scope alone, on another route, keeps the 10 MiB limit.
+		{"s3vectors", 0, iamRequestBodyLimit + 1, s3err.ErrEntityTooLarge},
+		{"iam", 0, iamRequestBodyLimit + 1, s3err.ErrEntityTooLarge},
 	} {
-		t.Run(fmt.Sprintf("%s_%d", tc.service, tc.size), func(t *testing.T) {
+		t.Run(fmt.Sprintf("%s_route%d_%d", tc.service, tc.routeLimit, tc.size), func(t *testing.T) {
 			body := strings.Repeat("v", tc.size)
 			req, err := http.NewRequest("POST", "http://localhost:8333/PutVectors", strings.NewReader(body))
 			assert.NoError(t, err)
+			if tc.routeLimit > 0 {
+				req = req.WithContext(s3_constants.SetRequestBodyLimitInContext(req.Context(), tc.routeLimit))
+			}
 			_, err = signer.Sign(req, strings.NewReader(body), tc.service, "us-east-1", time.Now())
 			assert.NoError(t, err)
 
