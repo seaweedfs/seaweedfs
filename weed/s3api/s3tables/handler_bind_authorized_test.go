@@ -557,3 +557,29 @@ func TestCreateRefusedBeforeWritingIntoAReplacedNamespace(t *testing.T) {
 		})
 	}
 }
+
+// UpdateNamespace writes the record it was authorized against, owner and
+// creation time included. A namespace deleted and created again before that
+// write is refused, not handed the first one's owner.
+func TestUpdateNamespaceSparesARecreatedNamespace(t *testing.T) {
+	fs, m := startEmptyBucket(t)
+	requireOK(t, m, fs, "CreateNamespace", createNamespaceNsRequest(t))
+	bucketPath := GetTableBucketPath(renameTestBucket)
+	recreated := recreatedNamespace(t, "ns")
+	fs.OnUpdate = func(dir, name string) {
+		if dir != bucketPath || name != "ns" {
+			return
+		}
+		fs.OnUpdate = nil
+		fs.Put(bucketPath, "ns", recreated)
+	}
+
+	code, resp := runHandler(t, m, fs.Client, "UpdateNamespace", &UpdateNamespaceRequest{
+		TableBucketARN: mustBucketARN(t),
+		Namespace:      []string{"ns"},
+		Properties:     map[string]string{"edited": "true"},
+	})
+
+	assert.Equal(t, http.StatusConflict, code, "%+v", resp)
+	assert.Equal(t, recreated, fs.Get(bucketPath, "ns").Extended, "the new namespace is untouched")
+}

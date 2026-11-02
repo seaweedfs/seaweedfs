@@ -495,6 +495,11 @@ func (h *S3TablesHandler) handleUpdateNamespace(w http.ResponseWriter, r *http.R
 
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		return h.mutateCatalogRecord(r.Context(), client, namespacePath, func(extended map[string][]byte) error {
+			// The write carries the authorized record's owner and creation
+			// time, so it must not land on a namespace created again since.
+			if !isNamespaceCreatedAt(metadata.CreatedAt)(&filer_pb.Entry{Extended: extended}) {
+				return fmt.Errorf("%w: %s holds another namespace", ErrConcurrentUpdate, namespacePath)
+			}
 			extended[ExtendedKeyMetadata] = metadataBytes
 			return nil
 		})
