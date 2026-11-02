@@ -20,6 +20,7 @@ import (
 type tagClient struct {
 	t  *testing.T
 	ts *httptest.Server
+	fs *s3tablestest.MemFiler
 }
 
 func newTagClient(t *testing.T) (*Server, *tagClient) {
@@ -29,7 +30,7 @@ func newTagClient(t *testing.T) (*Server, *tagClient) {
 	s.RegisterRoutes(router)
 	ts := httptest.NewServer(router)
 	t.Cleanup(ts.Close)
-	return s, &tagClient{t: t, ts: ts}
+	return s, &tagClient{t: t, ts: ts, fs: fs}
 }
 
 func (c *tagClient) do(identity, method, path string, header http.Header, payload interface{}) (int, string) {
@@ -268,5 +269,39 @@ func TestCreateWithTagsNeedsTagResource(t *testing.T) {
 	}
 	if code := index(withTag, "too-many", tooMany); code != http.StatusBadRequest {
 		t.Fatalf("index create past the tag limit: %d, want 400", code)
+	}
+}
+
+func TestTaggingRefusesTablesThatAreNotIndexes(t *testing.T) {
+	s, c := newTagClient(t)
+	code, body := c.op("", "CreateVectorBucket", &CreateVectorBucketRequest{VectorBucketName: "vec-bucket"})
+	mustStatus(t, "create bucket", code, body, http.StatusOK)
+	code, body = c.op("", "CreateIndex", &CreateIndexRequest{
+		VectorBucketName: "vec-bucket", IndexName: "idx", DataType: "float32", Dimension: 3,
+	})
+	mustStatus(t, "create index", code, body, http.StatusOK)
+	indexArn := s.indexArn("vec-bucket", "idx")
+	code, body = c.tag("", indexArn, map[string]string{"team": "search"})
+	mustStatus(t, "tag index", code, body, http.StatusOK)
+
+	dir, name := splitEntryPath(s3tables.GetTablePath("vec-bucket", indexNamespace, "idx"))
+	entry := c.fs.Get(dir, name)
+	var meta map[string]interface{}
+	if err := json.Unmarshal(entry.Extended[s3tables.ExtendedKeyMetadata], &meta); err != nil {
+		t.Fatalf("decode index metadata: %v", err)
+	}
+	meta["format"] = s3tables.FormatIceberg
+	data, _ := json.Marshal(meta)
+	entry.Extended[s3tables.ExtendedKeyMetadata] = data
+	c.fs.Put(dir, name, entry.Extended)
+
+	code, _ = c.list("", indexArn)
+	mustStatus(t, "list tags of an Iceberg table", code, "", http.StatusBadRequest)
+	code, body = c.tag("", indexArn, map[string]string{"team": "other"})
+	mustStatus(t, "tag an Iceberg table", code, body, http.StatusBadRequest)
+	code, body = c.untag("", indexArn, "team")
+	mustStatus(t, "untag an Iceberg table", code, body, http.StatusBadRequest)
+	if got := string(c.fs.Get(dir, name).Extended[s3tables.ExtendedKeyTags]); got != `{"team":"search"}` {
+		t.Fatalf("refused calls changed the table's tags: %s", got)
 	}
 }
