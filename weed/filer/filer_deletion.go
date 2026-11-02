@@ -21,12 +21,17 @@ import (
 )
 
 const (
-	// Maximum number of retry attempts for failed deletions
+	// Backed-off retry attempts before a failed deletion moves to the dead letter queues
 	MaxRetryAttempts = 10
 	// Initial retry delay (will be doubled with each attempt)
 	InitialRetryDelay = 5 * time.Minute
 	// Maximum retry delay
 	MaxRetryDelay = 6 * time.Hour
+	// Deletions still failing after MaxRetryAttempts move to a dead letter
+	// queue retried after DeadLetterRetryDelay, then to a second one retried
+	// after DeadLetterFinalRetryDelay, and are dropped if that fails too.
+	DeadLetterRetryDelay      = 24 * time.Hour
+	DeadLetterFinalRetryDelay = 48 * time.Hour
 	// Interval for checking retry queue for ready items
 	DeletionRetryPollInterval = 1 * time.Minute
 	// Maximum number of items to process per retry iteration
@@ -163,6 +168,31 @@ func calculateBackoff(retryCount int) time.Duration {
 	return delay
 }
 
+const deadLetterQueues = 2
+
+// deadLetterQueue reports which dead letter queue an item with this retry
+// count is in: 0 while it is still in the regular retry schedule.
+func deadLetterQueue(retryCount int) int {
+	if retryCount <= MaxRetryAttempts {
+		return 0
+	}
+	return retryCount - MaxRetryAttempts
+}
+
+// retryDelay is the wait before the attempt numbered retryCount. Items past
+// the last dead letter queue are due at once so the next poll drops them.
+func retryDelay(retryCount int) time.Duration {
+	switch deadLetterQueue(retryCount) {
+	case 0:
+		return calculateBackoff(retryCount)
+	case 1:
+		return DeadLetterRetryDelay
+	case 2:
+		return DeadLetterFinalRetryDelay
+	}
+	return 0
+}
+
 // AddOrUpdate adds a new failed deletion or updates an existing one
 // Time complexity: O(log N) for insertion/update
 func (q *DeletionRetryQueue) AddOrUpdate(fileId string, errorMsg string, ledgerEpoch uint64) {
@@ -216,8 +246,7 @@ func (q *DeletionRetryQueue) RequeueForRetry(item *DeletionRetryItem, errorMsg s
 	item.RetryCount++
 	item.LastError = errorMsg
 
-	// Calculate next retry time with exponential backoff
-	delay := calculateBackoff(item.RetryCount)
+	delay := retryDelay(item.RetryCount)
 	item.NextRetryAt = time.Now().Add(delay)
 	item.inFlight = false // Clear in-flight flag
 	glog.V(2).Infof("requeued retry for %s: attempt %d, next retry in %v", item.FileId, item.RetryCount, delay)
@@ -249,14 +278,13 @@ func (q *DeletionRetryQueue) GetReadyItems(maxItems int) (ready []*DeletionRetry
 		// Remove from heap but keep in itemIndex with inFlight flag
 		heap.Pop(&q.heap)
 
-		if item.RetryCount <= MaxRetryAttempts {
+		if deadLetterQueue(item.RetryCount) <= deadLetterQueues {
 			item.inFlight = true // Mark as being processed
 			ready = append(ready, item)
 		} else {
-			// Max attempts reached, log and discard completely
 			delete(q.itemIndex, item.FileId)
 			expired = append(expired, item)
-			glog.Warningf("max retry attempts (%d) reached for %s, last error: %s", MaxRetryAttempts, item.FileId, item.LastError)
+			glog.Warningf("giving up deleting %s after %d retries, last error: %s", item.FileId, item.RetryCount-1, item.LastError)
 		}
 	}
 
@@ -587,6 +615,7 @@ func (f *Filer) processRetryBatch(readyItems []*DeletionRetryItem, lookupFunc fu
 
 	// Process outcomes - iterate over readyItems to ensure all items are accounted for
 	var successCount, notFoundCount, retryCount, permanentErrorCount int
+	var deadLettered, finalDeadLettered int
 	for _, item := range readyItems {
 		outcome := outcomes[item.FileId]
 
@@ -606,6 +635,12 @@ func (f *Filer) processRetryBatch(readyItems []*DeletionRetryItem, lookupFunc fu
 				glog.Warningf("no deletion result for retried file %s, re-queuing to avoid loss", item.FileId)
 			}
 			// Keep in the durable ledger: still not confirmed.
+			switch deadLetterQueue(item.RetryCount + 1) {
+			case 1:
+				deadLettered++
+			case 2:
+				finalDeadLettered++
+			}
 			f.DeletionRetryQueue.RequeueForRetry(item, outcome.errorMsg)
 		case deletionOutcomePermanent:
 			permanentErrorCount++
@@ -624,6 +659,12 @@ func (f *Filer) processRetryBatch(readyItems []*DeletionRetryItem, lookupFunc fu
 	}
 	if retryCount > 0 {
 		glog.V(1).Infof("retry: %d files still failing, will retry again later", retryCount)
+	}
+	if deadLettered > 0 {
+		glog.Warningf("retry: %d files moved to the dead letter queue, next retry in %v", deadLettered, DeadLetterRetryDelay)
+	}
+	if finalDeadLettered > 0 {
+		glog.Warningf("retry: %d files moved to the second dead letter queue, next retry in %v", finalDeadLettered, DeadLetterFinalRetryDelay)
 	}
 	if permanentErrorCount > 0 {
 		glog.Warningf("retry: %d files failed with permanent errors", permanentErrorCount)
