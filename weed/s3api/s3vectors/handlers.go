@@ -290,10 +290,12 @@ func (s *Server) handleCreateVectorBucket(w http.ResponseWriter, r *http.Request
 	// No bucket exists yet, so check against the handler account as the
 	// catalog does for CreateTableBucket.
 	principal := s.tables.PrincipalFor(r)
-	allowed := func(action string) bool {
-		return s3tables.CheckPermissionWithContext(action, principal, s.tables.PrincipalFor(nil), "", "", s.tables.PolicyContext(r, ""))
+	allowed := func(action, bucket string) bool {
+		return s3tables.CheckPermissionWithContext(action, principal, s.tables.PrincipalFor(nil), "", "", s.tables.PolicyContext(r, bucket))
 	}
-	if !allowed("s3vectors:CreateVectorBucket") || (len(req.Tags) > 0 && !allowed("s3vectors:TagResource")) {
+	// Tagging names the new bucket, so a grant scoped to it applies.
+	if !allowed("s3vectors:CreateVectorBucket", "") ||
+		(len(req.Tags) > 0 && !allowed("s3vectors:TagResource", req.VectorBucketName)) {
 		catalogErr(w, errVectorDenied)
 		return
 	}

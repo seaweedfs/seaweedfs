@@ -260,6 +260,14 @@ func TestCreateWithTagsNeedsTagResource(t *testing.T) {
 		t.Fatalf("untagged index tags = %v", got)
 	}
 
+	scoped := creator("s3vectors:CreateVectorBucket", "s3vectors:TagResource:team-bucket")
+	if code := e.vector(scoped, e.s.handleCreateVectorBucket, &CreateVectorBucketRequest{VectorBucketName: "other-bucket", Tags: tags}); code != http.StatusForbidden {
+		t.Fatalf("tagged create outside the scoped TagResource grant: %d, want 403", code)
+	}
+	if code := e.vector(scoped, e.s.handleCreateVectorBucket, &CreateVectorBucketRequest{VectorBucketName: "team-bucket", Tags: tags}); code != http.StatusOK {
+		t.Fatalf("tagged create under a TagResource grant scoped to the bucket: %d", code)
+	}
+
 	tooMany := map[string]string{}
 	for i := 0; i <= maxResourceTags; i++ {
 		tooMany[fmt.Sprintf("k%d", i)] = "v"
