@@ -7,6 +7,7 @@ endif
 VOLUME := ./weed-volume
 CARGO_PROFILE ?= release
 CARGO_TARGET_DIR ?= $(abspath ../../seaweed-vector/target)
+override CARGO_TARGET_DIR := $(abspath $(CARGO_TARGET_DIR))
 CARGO_OUTPUT := $(CARGO_TARGET_DIR)/$(if $(filter dev,$(CARGO_PROFILE)),debug,$(CARGO_PROFILE))
 export CARGO_TARGET_DIR
 
@@ -18,7 +19,7 @@ $(WEED): FORCE
 	go build -o $(WEED) ../../weed
 
 $(VEC): FORCE
-	cargo build --locked --profile $(CARGO_PROFILE) --manifest-path ../../seaweed-vector/Cargo.toml -p weed-vector-server
+	cd ../../seaweed-vector && cargo build --locked --profile $(CARGO_PROFILE) -p weed-vector-server
 	cp $(CARGO_OUTPUT)/weed-vector $(VEC)
 
 ifneq ($(WORKER),)
