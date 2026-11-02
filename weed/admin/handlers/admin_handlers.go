@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -14,6 +15,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/layout"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3vectors"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 )
 
@@ -111,6 +113,8 @@ func (h *AdminHandlers) registerUIRoutes(r *mux.Router) {
 	r.HandleFunc("/object-store/groups", h.groupHandlers.ShowGroups).Methods(http.MethodGet)
 	r.HandleFunc("/object-store/service-accounts", h.serviceAccountHandlers.ShowServiceAccounts).Methods(http.MethodGet)
 	r.HandleFunc("/object-store/s3tables/buckets", h.ShowS3TablesBuckets).Methods(http.MethodGet)
+	r.HandleFunc("/object-store/vector-buckets", h.ShowS3VectorsBuckets).Methods(http.MethodGet)
+	r.HandleFunc("/object-store/vector-buckets/{bucket}", h.ShowS3VectorsBucketDetails).Methods(http.MethodGet)
 	r.HandleFunc("/object-store/s3tables/buckets/{bucket}/namespaces", h.ShowS3TablesNamespaces).Methods(http.MethodGet)
 	r.HandleFunc("/object-store/s3tables/buckets/{bucket}/namespaces/{namespace}/tables", h.ShowS3TablesTables).Methods(http.MethodGet)
 	r.HandleFunc("/object-store/s3tables/buckets/{bucket}/namespaces/{namespace}/tables/{table}", h.ShowS3TablesTableDetails).Methods(http.MethodGet)
@@ -251,6 +255,13 @@ func (h *AdminHandlers) registerAPIRoutes(api *mux.Router, enforceWrite bool) {
 	s3TablesApi.HandleFunc("/tags", h.adminServer.ListS3TablesTags).Methods(http.MethodGet)
 	s3TablesApi.Handle("/tags", wrapWrite(h.adminServer.UntagS3TablesResource)).Methods(http.MethodDelete)
 
+	s3VectorsApi := api.PathPrefix("/s3vectors").Subrouter()
+	s3VectorsApi.HandleFunc("/buckets", h.adminServer.ListS3VectorsBucketsAPI).Methods(http.MethodGet)
+	s3VectorsApi.Handle("/buckets", wrapWrite(h.adminServer.CreateS3VectorsBucket)).Methods(http.MethodPost)
+	s3VectorsApi.Handle("/buckets", wrapWrite(h.adminServer.DeleteS3VectorsBucket)).Methods(http.MethodDelete)
+	s3VectorsApi.HandleFunc("/indexes", h.adminServer.GetS3VectorsBucketAPI).Methods(http.MethodGet)
+	s3VectorsApi.Handle("/indexes", wrapWrite(h.adminServer.DeleteS3VectorsIndex)).Methods(http.MethodDelete)
+
 	filesApi := api.PathPrefix("/files").Subrouter()
 	filesApi.Handle("/delete", wrapWrite(h.fileBrowserHandlers.DeleteFile)).Methods(http.MethodDelete)
 	filesApi.Handle("/delete-multiple", wrapWrite(h.fileBrowserHandlers.DeleteMultipleFiles)).Methods(http.MethodDelete)
@@ -369,6 +380,45 @@ func (h *AdminHandlers) ShowS3TablesBuckets(w http.ResponseWriter, r *http.Reque
 	viewCtx := layout.NewViewContext(r, username, dash.CSRFTokenFromContext(r.Context()))
 	layoutComponent := layout.Layout(viewCtx, component)
 	if err := layoutComponent.Render(r.Context(), w); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "Failed to render template: "+err.Error())
+	}
+}
+
+// ShowS3VectorsBuckets renders the vector buckets page
+func (h *AdminHandlers) ShowS3VectorsBuckets(w http.ResponseWriter, r *http.Request) {
+	username := h.getUsername(r)
+	data, err := h.adminServer.GetS3VectorsBucketsData(r.Context())
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "Failed to get vector buckets: "+err.Error())
+		return
+	}
+	data.Username = username
+
+	w.Header().Set("Content-Type", "text/html")
+	viewCtx := layout.NewViewContext(r, username, dash.CSRFTokenFromContext(r.Context()))
+	if err := layout.Layout(viewCtx, app.S3VectorsBuckets(data)).Render(r.Context(), w); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "Failed to render template: "+err.Error())
+	}
+}
+
+// ShowS3VectorsBucketDetails renders one vector bucket with its indexes and policy
+func (h *AdminHandlers) ShowS3VectorsBucketDetails(w http.ResponseWriter, r *http.Request) {
+	username := h.getUsername(r)
+	data, err := h.adminServer.GetS3VectorsBucketData(r.Context(), mux.Vars(r)["bucket"])
+	if err != nil {
+		status := http.StatusInternalServerError
+		var e *s3vectors.Error
+		if errors.As(err, &e) && e.Code == "NotFoundException" {
+			status = http.StatusNotFound
+		}
+		writeJSONError(w, status, "Failed to get vector bucket: "+err.Error())
+		return
+	}
+	data.Username = username
+
+	w.Header().Set("Content-Type", "text/html")
+	viewCtx := layout.NewViewContext(r, username, dash.CSRFTokenFromContext(r.Context()))
+	if err := layout.Layout(viewCtx, app.S3VectorsBucketDetails(data)).Render(r.Context(), w); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "Failed to render template: "+err.Error())
 	}
 }

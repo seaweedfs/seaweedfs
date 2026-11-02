@@ -382,7 +382,7 @@ func (s *Server) handleListVectorBuckets(w http.ResponseWriter, r *http.Request)
 	// of the listing, Lance and format-less legacy buckets stay.
 	out := &ListVectorBucketsResponse{NextToken: resp.ContinuationToken, VectorBuckets: []*VectorBucket{}}
 	for _, b := range resp.TableBuckets {
-		if b.Format != "" && b.Format != s3tables.FormatLance {
+		if !IsVectorBucketFormat(b.Format) {
 			continue
 		}
 		owner, policy, err := s.vectorPolicyView(r.Context(), b.Name)
@@ -758,11 +758,15 @@ func (s *Server) mutateVectorPolicy(ctx context.Context, bucket string, mutate f
 	})
 }
 
-// isVectorBucket reports whether the catalog record describes a vector
-// bucket: an explicit ICEBERG bucket is not one, while a bucket declared
-// before formats existed reads as Lance.
+// IsVectorBucketFormat reports whether a table bucket of this format is a
+// vector bucket: an explicit ICEBERG bucket is not one, while a bucket
+// declared before formats existed reads as Lance.
+func IsVectorBucketFormat(format string) bool {
+	return format == "" || format == s3tables.FormatLance
+}
+
 func isVectorBucket(record *s3tables.GetTableBucketResponse) bool {
-	return record.Format == "" || record.Format == s3tables.FormatLance
+	return IsVectorBucketFormat(record.Format)
 }
 
 // errVectorDenied marks a failed vector permission check inside a policy
