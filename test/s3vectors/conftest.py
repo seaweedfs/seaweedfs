@@ -70,8 +70,18 @@ def stop(process):
 
 @pytest.fixture(scope="module", params=combinations(), ids=lambda p: "-".join(p))
 def cluster(request, tmp_path_factory):
-    volume, mode = request.param
-    directory = tmp_path_factory.mktemp(f"vectors-{volume}-{mode}")
+    yield from run_cluster(request.param, tmp_path_factory, identities=True)
+
+
+@pytest.fixture(scope="module", params=combinations(), ids=lambda p: "-".join(p))
+def open_cluster(request, tmp_path_factory):
+    """A cluster with no S3 identities, and an engine given no credentials."""
+    yield from run_cluster(request.param, tmp_path_factory, identities=False)
+
+
+def run_cluster(param, tmp_path_factory, identities):
+    volume, mode = param
+    directory = tmp_path_factory.mktemp(f"vectors-{volume}-{mode}" + ("" if identities else "-open"))
     print(f"\nVector integration logs: {directory}")
     weed = binary("WEED_BINARY", "weed")
     engine = binary("VECTOR_BINARY", "weed-vector")
@@ -89,10 +99,12 @@ def cluster(request, tmp_path_factory):
         master_addr = f"127.0.0.1:{master}.{master_grpc}"
         filer_addr = f"127.0.0.1:{filer}.{filer_grpc}"
 
-        def start(name, args):
+        def start(name, args, unset=()):
             log = stack.enter_context((directory / f"{name}.log").open("w"))
             env = dict(os.environ, AWS_ACCESS_KEY_ID="test", AWS_SECRET_ACCESS_KEY="test",
                        AWS_DEFAULT_REGION="us-east-1", AWS_EC2_METADATA_DISABLED="true")
+            for key in unset:
+                env.pop(key)
             process = subprocess.Popen(args, cwd=directory, stdout=log, stderr=log, env=env)
             processes[name] = process
             stack.callback(stop, process)
@@ -117,14 +129,20 @@ def cluster(request, tmp_path_factory):
                         f"-defaultStoreDir={directory / 'filer'}"])
         wait_for(lambda: listening(filer_grpc), processes, "filer not ready")
         endpoint = f"http://127.0.0.1:{s3}"
-        start("s3", [weed, "-v=1", "s3", f"-filer={filer_addr}", f"-config={HERE / 's3.json'}",
+        # weed s3 turns AWS_ACCESS_KEY_ID into an admin identity, and the engine
+        # would find it as a credential.
+        if identities:
+            config, unset = [f"-config={HERE / 's3.json'}"], ()
+            credentials = ["--storage-option", "aws_access_key_id=test",
+                           "--storage-option", "aws_secret_access_key=test"]
+        else:
+            config, unset, credentials = [], ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"), []
+        start("s3", [weed, "-v=1", "s3", f"-filer={filer_addr}", *config,
                      "-ip=127.0.0.1", "-ip.bind=127.0.0.1", f"-port={s3}",
-                     f"-port.grpc={s3_grpc}", "-port.iceberg=0", f"-port.lance={lance}"])
+                     f"-port.grpc={s3_grpc}", "-port.iceberg=0", f"-port.lance={lance}"], unset)
         wait_for(lambda: http_ready(f"http://127.0.0.1:{lance}/v1/namespace/root/list"), processes, "catalog not ready")
         start("vector", [engine, "--namespace", f"http://127.0.0.1:{lance}",
-                         "--masters", master_addr, "--listen", f"127.0.0.1:{vector}",
-                         "--storage-option", "aws_access_key_id=test",
-                         "--storage-option", "aws_secret_access_key=test"])
+                         "--masters", master_addr, "--listen", f"127.0.0.1:{vector}", *credentials], unset)
         wait_for(lambda: listening(vector), processes, "vector engine not ready")
 
         wait_for(
