@@ -83,6 +83,9 @@ func (s *AdminServer) GetS3VectorsBucketsData(ctx context.Context) (S3VectorsBuc
 			return S3VectorsBucketsData{}, err
 		}
 		for _, b := range resp.VectorBuckets {
+			if len(buckets) == s3TablesAdminListLimit {
+				break
+			}
 			summary, err := s.s3VectorsBucketSummary(ctx, b.VectorBucketName)
 			if isS3VectorsNotFound(err) {
 				continue
@@ -121,6 +124,9 @@ func (s *AdminServer) GetS3VectorsBucketData(ctx context.Context, bucket string)
 			return S3VectorsBucketData{}, err
 		}
 		for _, summary := range resp.Indexes {
+			if len(data.Indexes) == s3TablesAdminListLimit {
+				break
+			}
 			var index s3vectors.GetIndexResponse
 			err := s.executeS3VectorsOperation(ctx, "GetIndex", &s3vectors.GetIndexRequest{VectorBucketName: bucket, IndexName: summary.IndexName}, &index)
 			if isS3VectorsNotFound(err) {

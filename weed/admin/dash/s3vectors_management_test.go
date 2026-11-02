@@ -3,6 +3,7 @@ package dash
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -145,5 +146,29 @@ func TestS3VectorsDeleteIndexThenBucket(t *testing.T) {
 	data, err := s.GetS3VectorsBucketsData(ctx)
 	if err != nil || data.TotalBuckets != 0 {
 		t.Fatalf("after delete: %+v, %v", data.Buckets, err)
+	}
+}
+
+func TestS3VectorsBucketsStopAtTheListLimit(t *testing.T) {
+	s, client := newS3VectorsTestServer(t)
+	ctx := context.Background()
+	// The ICEBERG bucket leaves the first page short, so the last page
+	// would carry the list past the limit.
+	if err := s3tables.NewManager().Execute(ctx, client, "CreateTableBucket", &s3tables.CreateTableBucketRequest{
+		Name: "iceberg", Format: s3tables.FormatIceberg,
+	}, nil, s3_constants.AccountAdminId); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i <= s3TablesAdminListLimit; i++ {
+		if err := s.executeS3VectorsOperation(ctx, "CreateVectorBucket", &s3vectors.CreateVectorBucketRequest{VectorBucketName: fmt.Sprintf("media-%04d", i)}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	data, err := s.GetS3VectorsBucketsData(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if data.TotalBuckets != s3TablesAdminListLimit {
+		t.Fatalf("listed %d buckets, want the limit %d", data.TotalBuckets, s3TablesAdminListLimit)
 	}
 }
