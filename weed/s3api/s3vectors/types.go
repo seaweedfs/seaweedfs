@@ -296,6 +296,7 @@ type QueryVectorsRequest struct {
 	IndexArn         string                 `json:"indexArn"`
 	IndexName        string                 `json:"indexName"`
 	QueryVector      *QueryVector           `json:"queryVector"`
+	QueryMode        string                 `json:"queryMode"`
 	ReturnDistance   bool                   `json:"returnDistance"`
 	ReturnMetadata   bool                   `json:"returnMetadata"`
 	TopK             int32                  `json:"topK"`

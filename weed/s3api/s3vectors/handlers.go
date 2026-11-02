@@ -1811,6 +1811,41 @@ func filterFields(filter map[string]interface{}, out map[string]bool) {
 	}
 }
 
+// maxEnhancedFilterConstraints is the AWS limit on the values one ENHANCED
+// query's filter evaluates.
+const maxEnhancedFilterConstraints = 100
+
+// filterConstraints counts constraints the way AWS does: each value a filter
+// evaluates is one, so an $in over three values counts three.
+func filterConstraints(filter map[string]interface{}) int {
+	n := 0
+	for key, cond := range filter {
+		if strings.HasPrefix(key, "$") {
+			if sub, ok := cond.([]interface{}); ok {
+				for _, item := range sub {
+					if m, ok := item.(map[string]interface{}); ok {
+						n += filterConstraints(m)
+					}
+				}
+			}
+			continue
+		}
+		ops, ok := cond.(map[string]interface{})
+		if !ok {
+			n++
+			continue
+		}
+		for _, operand := range ops {
+			if list, ok := operand.([]interface{}); ok {
+				n += len(list)
+			} else {
+				n++
+			}
+		}
+	}
+	return n
+}
+
 func filterExpr(filter map[string]interface{}) (string, error) {
 	parts := make([]string, 0, len(filter))
 	for key, cond := range filter {
@@ -2099,6 +2134,10 @@ func (s *Server) handleQueryVectors(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("topK must be between 1 and %d", vectorsMaxTopK))
 		return
 	}
+	if req.QueryMode != "" && !validIndexMode(req.QueryMode) {
+		writeError(w, http.StatusBadRequest, "ValidationException", "queryMode must be CLASSIC or ENHANCED")
+		return
+	}
 	if _, err := s.authorizeVector(r.Context(), r, "s3vectors:QueryVectors", arns.bucket, arns.index); err != nil {
 		catalogErr(w, err)
 		return
@@ -2123,6 +2162,19 @@ func (s *Server) handleQueryVectors(w http.ResponseWriter, r *http.Request) {
 	filter, err := translateFilter(req.Filter)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		return
+	}
+	mode := idx.IndexMode
+	if req.QueryMode != "" {
+		if req.QueryMode == indexModeClassic && idx.IndexMode == indexModeEnhanced {
+			writeError(w, http.StatusBadRequest, "ValidationException", "queryMode CLASSIC is not allowed on an ENHANCED index")
+			return
+		}
+		mode = req.QueryMode
+	}
+	if n := filterConstraints(req.Filter); mode == indexModeEnhanced && n > maxEnhancedFilterConstraints {
+		writeError(w, http.StatusBadRequest, "ValidationException",
+			fmt.Sprintf("filter has %d constraints, an ENHANCED query allows at most %d", n, maxEnhancedFilterConstraints))
 		return
 	}
 	resp, err := s.vectors.QueryVectors(r.Context(), &vector_pb.QueryVectorsRequest{

@@ -1,6 +1,7 @@
 package s3vectors
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -8,8 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/vector_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables/s3tablestest"
+	"google.golang.org/grpc"
 )
 
 func withClassicCutoff(t *testing.T, cutoff time.Time) {
@@ -235,6 +238,96 @@ func TestIndexFromRecordModeDefaultsToEnhanced(t *testing.T) {
 	} {
 		if got := indexFromRecord(s, "b", "i", tc.record).IndexMode; got != tc.want {
 			t.Fatalf("indexFromRecord(%v).IndexMode = %q, want %q", tc.record, got, tc.want)
+		}
+	}
+}
+
+type countingQueryFake struct {
+	*fakeVectors
+	calls *int
+}
+
+func (f countingQueryFake) QueryVectors(ctx context.Context, req *vector_pb.QueryVectorsRequest, opts ...grpc.CallOption) (*vector_pb.QueryVectorsResponse, error) {
+	*f.calls++
+	return &vector_pb.QueryVectorsResponse{}, nil
+}
+
+func inFilter(values int) map[string]interface{} {
+	list := make([]interface{}, values)
+	for i := range list {
+		list[i] = fmt.Sprintf("v%d", i)
+	}
+	return map[string]interface{}{"genre": map[string]interface{}{"$in": list}}
+}
+
+func TestQueryVectorsQueryMode(t *testing.T) {
+	fs := s3tablestest.Start(t)
+	calls := 0
+	s := NewServer(s3tables.NewManagerClient(fs.Client), allowAllAuth{}, countingQueryFake{newFakeVectors(0), &calls})
+	if w := postJSON(t, s.handleCreateVectorBucket, &CreateVectorBucketRequest{VectorBucketName: "vec-bucket"}); w.Code != http.StatusOK {
+		t.Fatalf("create bucket: %d %s", w.Code, w.Body.String())
+	}
+	createIndex(t, s, "vec-bucket", "enhanced")
+	withClassicCutoff(t, time.Now().Add(time.Hour))
+	createIndex(t, s, "vec-bucket", "classic")
+	if w := postJSON(t, s.handleUpdateIndexMode, &UpdateIndexModeRequest{VectorBucketName: "vec-bucket", IndexName: "classic", IndexMode: indexModeClassic}); w.Code != http.StatusOK {
+		t.Fatalf("set CLASSIC: %d %s", w.Code, w.Body.String())
+	}
+
+	for _, tc := range []struct {
+		name   string
+		index  string
+		mode   string
+		filter map[string]interface{}
+		want   int
+	}{
+		{"index mode", "enhanced", "", inFilter(3), http.StatusOK},
+		{"same mode", "enhanced", indexModeEnhanced, nil, http.StatusOK},
+		{"unknown mode", "enhanced", "FAST", nil, http.StatusBadRequest},
+		{"CLASSIC on ENHANCED", "enhanced", indexModeClassic, nil, http.StatusBadRequest},
+		{"CLASSIC on CLASSIC", "classic", indexModeClassic, nil, http.StatusOK},
+		{"ENHANCED on CLASSIC", "classic", indexModeEnhanced, nil, http.StatusOK},
+		{"100 constraints", "enhanced", "", inFilter(100), http.StatusOK},
+		{"101 constraints", "enhanced", "", inFilter(101), http.StatusBadRequest},
+		{"101 constraints, ENHANCED query on CLASSIC", "classic", indexModeEnhanced, inFilter(101), http.StatusBadRequest},
+		{"101 constraints on CLASSIC", "classic", "", inFilter(101), http.StatusOK},
+	} {
+		before := calls
+		w := postJSON(t, s.handleQueryVectors, &QueryVectorsRequest{
+			VectorBucketName: "vec-bucket",
+			IndexName:        tc.index,
+			QueryVector:      &QueryVector{Float32: []float32{1, 0, 0}},
+			TopK:             1,
+			QueryMode:        tc.mode,
+			Filter:           tc.filter,
+		})
+		if w.Code != tc.want {
+			t.Fatalf("%s: %d %s, want %d", tc.name, w.Code, w.Body.String(), tc.want)
+		}
+		if reached := calls > before; reached != (tc.want == http.StatusOK) {
+			t.Fatalf("%s: engine reached = %v with status %d", tc.name, reached, w.Code)
+		}
+	}
+}
+
+func TestFilterConstraints(t *testing.T) {
+	for _, tc := range []struct {
+		filter string
+		want   int
+	}{
+		{`{}`, 0},
+		{`{"category": "electronics"}`, 1},
+		{`{"region": {"$in": ["us-east-1", "us-west-2", "eu-west-1"]}}`, 3},
+		{`{"$and": [{"category": "electronics"}, {"price": {"$lte": 500}}]}`, 2},
+		{`{"price": {"$gte": 10, "$lte": 50}}`, 2},
+		{`{"$or": [{"genre": {"$nin": ["a", "b"]}}, {"$and": [{"year": {"$gt": 2019}}, {"genre": {"$exists": true}}]}]}`, 4},
+	} {
+		var filter map[string]interface{}
+		if err := json.Unmarshal([]byte(tc.filter), &filter); err != nil {
+			t.Fatal(err)
+		}
+		if got := filterConstraints(filter); got != tc.want {
+			t.Fatalf("filterConstraints(%s) = %d, want %d", tc.filter, got, tc.want)
 		}
 	}
 }
