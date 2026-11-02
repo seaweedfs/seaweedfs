@@ -265,6 +265,10 @@ func (s3a *S3ApiServer) removeEncryptionConfiguration(bucket string) s3err.Error
 	}
 
 	if metadata.Encryption == nil {
+		// A bucket's declared encryption is fixed when the bucket is created.
+		if declared, _ := s3a.declaredEncryption(bucket); declared != nil {
+			return s3err.ErrMethodNotAllowed
+		}
 		return s3err.ErrNoSuchBucketEncryptionConfiguration
 	}
 

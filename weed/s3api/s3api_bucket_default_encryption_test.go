@@ -264,6 +264,12 @@ func TestPutObjectAppliesTableBucketDeclaredEncryption(t *testing.T) {
 	if _, err := s3a.GetBucketEncryptionConfig("ice"); !errors.Is(err, ErrNoEncryptionConfig) {
 		t.Fatalf("GetBucketEncryptionConfig(ice) error = %v, want ErrNoEncryptionConfig", err)
 	}
+	if code := s3a.removeEncryptionConfiguration("lance"); code != s3err.ErrMethodNotAllowed {
+		t.Fatalf("DeleteBucketEncryption(lance) = %v, want MethodNotAllowed for a declared encryption", code)
+	}
+	if code := s3a.removeEncryptionConfiguration("ice"); code != s3err.ErrNoSuchBucketEncryptionConfiguration {
+		t.Fatalf("DeleteBucketEncryption(ice) = %v, want NoSuchBucketEncryptionConfiguration", code)
+	}
 
 	for bucket, want := range map[string]filer_pb.SSEType{"lance": filer_pb.SSEType_SSE_S3, "ice": filer_pb.SSEType_NONE} {
 		filePath := "/buckets/" + bucket + "/vector/idx/data/0.lance"
