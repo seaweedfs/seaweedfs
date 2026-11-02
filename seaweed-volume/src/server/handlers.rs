@@ -3122,7 +3122,8 @@ pub async fn post_handler(
 
     // Auto-compress compressible file types (matches Go's IsCompressableFileType).
     // Only compress if not already gzipped and compression saves >10%.
-    let (final_data, final_is_gzipped) = if !is_gzipped && !is_chunk_manifest {
+    // A replica keeps the compression state the primary stored.
+    let (final_data, final_is_gzipped) = if !is_gzipped && !is_chunk_manifest && !is_replicate {
         let ext = filename
             .rfind('.')
             .map(|p| &filename[p..])
@@ -8494,6 +8495,45 @@ mod tests {
         }
         master_server.abort();
         peer_server.abort();
+    }
+
+    #[tokio::test]
+    async fn http_replica_keeps_uncompressed_bytes() {
+        use tower::ServiceExt;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let volume = state
+            .store
+            .read()
+            .unwrap()
+            .find_volume(VolumeId(1))
+            .unwrap()
+            .1;
+        let payload = "compressible replica text ".repeat(64);
+        for (id, query, compressed) in [
+            (0x6e7a_0c08u64, "?type=replicate", false),
+            (0x6e7a_0c09u64, "", true),
+        ] {
+            let response = super::super::volume_server::build_admin_router(state.clone())
+                .oneshot(
+                    Request::builder()
+                        .method(Method::POST)
+                        .uri(format!("/1,{id:x}{TEST_COOKIE:08x}{query}"))
+                        .header(header::CONTENT_TYPE, "text/plain")
+                        .body(Body::from(payload.clone()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::CREATED);
+            let mut stored = Needle {
+                id: NeedleId(id),
+                cookie: Cookie(TEST_COOKIE),
+                ..Needle::default()
+            };
+            volume.read_needle(&mut stored).unwrap();
+            assert_eq!(stored.is_compressed(), compressed, "query {query:?}");
+        }
     }
 
     #[tokio::test]
