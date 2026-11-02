@@ -517,9 +517,12 @@ func validateVectorPolicy(raw string) error {
 			if _, err := policy_engine.GetConditionEvaluator(operator); err != nil {
 				return fmt.Errorf("invalid policy document: condition operator %q is not supported", operator)
 			}
-			for key := range keys {
+			for key, value := range keys {
 				if !vectorConditionKey(key) {
 					return fmt.Errorf("invalid policy document: condition key %q is not supported in a vector bucket policy", key)
+				}
+				if !conditionValue(value) {
+					return fmt.Errorf("invalid policy document: condition %s on %q needs a string, number or boolean, or a non-empty list of them", operator, key)
 				}
 			}
 		}
@@ -535,6 +538,23 @@ func validateVectorPolicy(raw string) error {
 		}
 	}
 	return nil
+}
+
+// conditionValue reports whether the evaluator can compare v: a null value
+// would panic it, and an empty list never matches.
+func conditionValue(v interface{}) bool {
+	list, ok := v.([]interface{})
+	if !ok {
+		list = []interface{}{v}
+	}
+	for _, item := range list {
+		switch item.(type) {
+		case string, float64, bool:
+		default:
+			return false
+		}
+	}
+	return len(list) > 0
 }
 
 // vectorConditionKey reports whether the vector evaluation supplies key.

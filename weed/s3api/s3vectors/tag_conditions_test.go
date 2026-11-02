@@ -261,7 +261,9 @@ func TestValidateVectorPolicyConditions(t *testing.T) {
 		`{"StringLike":{"aws:RequestTag/team":"search-*"}}`,
 		`{"ForAllValues:StringEquals":{"aws:TagKeys":["team","env"]}}`,
 		`{"StringNotEquals":{"s3vectors:VectorBucketTag/env":"dev"}}`,
-		`{"Null":{"aws:ResourceTag/owner":"true"}}`,
+		`{"Null":{"aws:ResourceTag/owner":true}}`,
+		`{"StringEquals":{"aws:ResourceTag/env":["prod","staging"]}}`,
+		`{"NumericLessThan":{"aws:RequestTag/priority":10}}`,
 	} {
 		if err := validateVectorPolicy(withCondition(ok)); err != nil {
 			t.Errorf("%s rejected: %v", ok, err)
@@ -275,6 +277,11 @@ func TestValidateVectorPolicyConditions(t *testing.T) {
 		`{"StringEqualsIfExists":{"aws:ResourceTag/env":"prod"}}`,
 		`{"NoSuchOperator":{"aws:ResourceTag/env":"prod"}}`,
 		`"aws:ResourceTag/env"`,
+		`{"StringEquals":{"aws:ResourceTag/env":null}}`,
+		`{"StringEquals":{"aws:ResourceTag/env":[]}}`,
+		`{"StringEquals":{"aws:ResourceTag/env":[null]}}`,
+		`{"StringEquals":{"aws:ResourceTag/env":{"a":"b"}}}`,
+		`{"StringEquals":{"aws:ResourceTag/env":["prod",["dev"]]}}`,
 	} {
 		if err := validateVectorPolicy(withCondition(bad)); err == nil {
 			t.Errorf("%s accepted", bad)
