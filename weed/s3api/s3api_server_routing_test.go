@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -527,5 +529,62 @@ func TestRouting_BucketRootPreflightUsesBucketCORS(t *testing.T) {
 				assert.Equal(t, "*", rr.Header().Get("Access-Control-Allow-Origin"), "service-level %s", path)
 			}
 		})
+	}
+}
+
+// Write covers a bucket's objects, not its configuration: an identity holding
+// Write on the bucket is refused lifecycle writes, while Admin on the bucket or
+// a policy granting s3:PutLifecycleConfiguration passes. The bucket is
+// negatively cached, so a request that gets past authorization ends at the
+// handler's NoSuchBucket.
+func TestRouting_BucketLifecycleWritesNeedAdmin(t *testing.T) {
+	const bucket = "config-bucket"
+	configFile := filepath.Join(t.TempDir(), "s3.json")
+	require.NoError(t, os.WriteFile(configFile, []byte(`{
+  "identities": [
+    {"name":"writer","credentials":[{"accessKey":"WRITERKEY","secretKey":"writersecret"}],"actions":["Read:`+bucket+`","Write:`+bucket+`","List:`+bucket+`","Tagging:`+bucket+`"]},
+    {"name":"bucketadmin","credentials":[{"accessKey":"BUCKETADMINKEY","secretKey":"bucketadminsecret"}],"actions":["Admin:`+bucket+`"]},
+    {"name":"lifecycler","credentials":[{"accessKey":"LIFECYCLERKEY","secretKey":"lifecyclersecret"}],"policyNames":["LifecyclePolicy"]}
+  ],
+  "policies": [
+    {"name":"LifecyclePolicy","content":"{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:PutLifecycleConfiguration\"],\"Resource\":[\"arn:aws:s3:::`+bucket+`\"]}]}"}
+  ]
+}`), 0600))
+
+	s3a := setupRoutingTestServer(t)
+	s3a.iam = NewIdentityAccessManagementWithStore(&S3ApiServerOption{Config: configFile}, nil, "memory")
+	require.True(t, s3a.iam.isEnabled())
+	s3a.cb = &CircuitBreaker{s3a: s3a}
+	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+	s3a.bucketConfigCache.SetNegativeCache(bucket)
+	router := mux.NewRouter()
+	s3a.registerRouter(router)
+
+	send := func(accessKey, secretKey, method, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, "http://localhost:8333/"+bucket+"?lifecycle", strings.NewReader(body))
+		creds := credentials.NewStaticCredentials(accessKey, secretKey, "")
+		_, err := v4.NewSigner(creds).Sign(req, strings.NewReader(body), "s3", "us-east-1", time.Now())
+		require.NoError(t, err)
+		rr := httptest.NewRecorder()
+		router.ServeHTTP(rr, req)
+		return rr
+	}
+
+	const lifecycleXML = `<LifecycleConfiguration><Rule><ID>r</ID><Status>Enabled</Status><Filter><Prefix>p/</Prefix></Filter><Expiration><Days>1</Days></Expiration></Rule></LifecycleConfiguration>`
+	for _, tc := range []struct {
+		method, body string
+	}{
+		{http.MethodPut, lifecycleXML},
+		{http.MethodDelete, ""},
+	} {
+		rr := send("WRITERKEY", "writersecret", tc.method, tc.body)
+		assert.Equal(t, http.StatusForbidden, rr.Code, "writer %s", tc.method)
+		assert.Contains(t, rr.Body.String(), "AccessDenied", "writer %s", tc.method)
+
+		for _, key := range [][2]string{{"BUCKETADMINKEY", "bucketadminsecret"}, {"LIFECYCLERKEY", "lifecyclersecret"}} {
+			rr = send(key[0], key[1], tc.method, tc.body)
+			assert.Equal(t, http.StatusNotFound, rr.Code, "%s %s", key[0], tc.method)
+			assert.Contains(t, rr.Body.String(), "NoSuchBucket", "%s %s", key[0], tc.method)
+		}
 	}
 }
