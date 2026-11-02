@@ -7,9 +7,20 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
+
+// tableCreatedAtOf returns the creation time a table's metadata records, which
+// tells the table apart from one created again under its name.
+func tableCreatedAtOf(data []byte) (time.Time, error) {
+	var meta tableMetadataInternal
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return time.Time{}, err
+	}
+	return meta.CreatedAt, nil
+}
 
 // extractResourceOwnerAndBucket extracts ownership info and bucket name from resource metadata.
 // This helper consolidates the repeated pattern used in handleTagResource, handleListTagsForResource,
@@ -401,6 +412,9 @@ func (h *S3TablesHandler) handlePutTablePolicy(w http.ResponseWriter, r *http.Re
 
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		return h.mutateCatalogRecord(r.Context(), client, tablePath, func(extended map[string][]byte) error {
+			if err := requireTableCreatedAt(extended, tablePath, metadata.CreatedAt); err != nil {
+				return err
+			}
 			if !bytes.Equal(extended[ExtendedKeyPolicy], []byte(tablePolicy)) {
 				return fmt.Errorf("%w: %s", ErrConcurrentUpdate, ExtendedKeyPolicy)
 			}
@@ -617,15 +631,26 @@ func (h *S3TablesHandler) handleDeleteTablePolicy(w http.ResponseWriter, r *http
 		return NewAuthError("DeleteTablePolicy", principal, "not authorized to delete table policy")
 	}
 
+	// The removal is conditional on the table and the policy this request was
+	// authorized against, as PutTablePolicy's write is.
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return h.removeExtendedAttributesIf(r.Context(), client, tablePath,
-			map[string][]byte{ExtendedKeyPolicy: []byte(tablePolicy)},
-			ExtendedKeyPolicy)
+		return h.mutateCatalogRecord(r.Context(), client, tablePath, func(extended map[string][]byte) error {
+			if err := requireTableCreatedAt(extended, tablePath, metadata.CreatedAt); err != nil {
+				return err
+			}
+			if !bytes.Equal(extended[ExtendedKeyPolicy], []byte(tablePolicy)) {
+				return fmt.Errorf("%w: %s", ErrConcurrentUpdate, ExtendedKeyPolicy)
+			}
+			delete(extended, ExtendedKeyPolicy)
+			return nil
+		})
 	})
 
 	if err != nil && !errors.Is(err, ErrAttributeNotFound) {
 		if errors.Is(err, ErrConcurrentUpdate) {
 			h.writeError(w, http.StatusConflict, ErrCodeConflict, "table policy changed concurrently, retry the request")
+		} else if errors.Is(err, filer_pb.ErrNotFound) {
+			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchTable, fmt.Sprintf("table %s not found", tableName))
 		} else {
 			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to delete table policy")
 		}
@@ -666,6 +691,7 @@ func (h *S3TablesHandler) handleTagResource(w http.ResponseWriter, r *http.Reque
 	var bucketPolicy, tablePolicy string
 	var bucketTags map[string]string
 	var tableNamespace, tableName string
+	var tableCreatedAt time.Time
 	requestTagKeys := mapKeys(req.Tags)
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		// Read metadata for ownership check
@@ -695,6 +721,9 @@ func (h *S3TablesHandler) handleTagResource(w http.ResponseWriter, r *http.Reque
 		}
 
 		if rType == ResourceTypeTable {
+			if tableCreatedAt, err = tableCreatedAtOf(data); err != nil {
+				return err
+			}
 			if _, tableNamespace, tableName, err = parseTableFromARN(req.ResourceARN); err != nil {
 				return err
 			}
@@ -769,6 +798,11 @@ func (h *S3TablesHandler) handleTagResource(w http.ResponseWriter, r *http.Reque
 	}
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		return h.mutateCatalogRecord(r.Context(), client, resourcePath, func(extended map[string][]byte) error {
+			if rType == ResourceTypeTable {
+				if err := requireTableCreatedAt(extended, resourcePath, tableCreatedAt); err != nil {
+					return err
+				}
+			}
 			extended[extendedKey] = tagsBytes
 			return nil
 		})
@@ -942,6 +976,7 @@ func (h *S3TablesHandler) handleUntagResource(w http.ResponseWriter, r *http.Req
 	var bucketPolicy, tablePolicy string
 	var bucketTags map[string]string
 	var tableNamespace, tableName string
+	var tableCreatedAt time.Time
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		// Read metadata for ownership check
 		data, err := h.getExtendedAttribute(r.Context(), client, resourcePath, ExtendedKeyMetadata)
@@ -970,6 +1005,9 @@ func (h *S3TablesHandler) handleUntagResource(w http.ResponseWriter, r *http.Req
 		}
 
 		if rType == ResourceTypeTable {
+			if tableCreatedAt, err = tableCreatedAtOf(data); err != nil {
+				return err
+			}
 			if _, tableNamespace, tableName, err = parseTableFromARN(req.ResourceARN); err != nil {
 				return err
 			}
@@ -1042,6 +1080,11 @@ func (h *S3TablesHandler) handleUntagResource(w http.ResponseWriter, r *http.Req
 	}
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		return h.mutateCatalogRecord(r.Context(), client, resourcePath, func(extended map[string][]byte) error {
+			if rType == ResourceTypeTable {
+				if err := requireTableCreatedAt(extended, resourcePath, tableCreatedAt); err != nil {
+					return err
+				}
+			}
 			extended[extendedKey] = tagsBytes
 			return nil
 		})

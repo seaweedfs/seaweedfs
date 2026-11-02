@@ -166,7 +166,7 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 		if err := h.claimCatalogEntry(r.Context(), client, tablePath, attrs); err != nil {
 			return err
 		}
-		return h.confirmParent(r.Context(), client, GetNamespacePath(bucketName, namespaceName), isNamespaceEntry, tablePath, attrs, dataPath, tablePath)
+		return h.confirmParent(r.Context(), client, GetNamespacePath(bucketName, namespaceName), isNamespaceCreatedAt(target.namespaceCreatedAt), tablePath, attrs, dataPath, tablePath)
 	})
 
 	if err != nil {
@@ -313,7 +313,7 @@ func (h *S3TablesHandler) handleRegisterTable(w http.ResponseWriter, r *http.Req
 		if err := h.claimCatalogEntry(r.Context(), client, tablePath, attrs); err != nil {
 			return err
 		}
-		return h.confirmParent(r.Context(), client, GetNamespacePath(bucketName, namespaceName), isNamespaceEntry, tablePath, attrs, tablePath)
+		return h.confirmParent(r.Context(), client, GetNamespacePath(bucketName, namespaceName), isNamespaceCreatedAt(target.namespaceCreatedAt), tablePath, attrs, tablePath)
 	})
 	if err != nil {
 		if errors.Is(err, ErrNameTaken) {
@@ -1636,7 +1636,10 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 		h.writeError(w, http.StatusConflict, kind.existsCode, fmt.Sprintf("%s %s already exists", kind.noun, destName))
 		return ErrTableAlreadyExists
 	}
-	if err := h.refuseClaimedNamespace(w, r, filerClient, destNamespacePath, destNamespace); err != nil {
+	// The destination is bound to the namespace the create check ran against:
+	// one deleted and created again under its name reads as gone.
+	isDestNamespace := isNamespaceCreatedAt(destNamespaceMetadata.CreatedAt)
+	if err := h.refuseClaimedNamespace(w, r, filerClient, destNamespacePath, destNamespace, isDestNamespace); err != nil {
 		return err
 	}
 
@@ -1718,7 +1721,7 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 			h.removeLeftoverDirectory(ctx, client, destPath)
 			return releaseClaim(err)
 		}
-		destParent, err := h.openParent(r.Context(), client, destNamespacePath, isNamespaceEntry)
+		destParent, err := h.openParent(r.Context(), client, destNamespacePath, isDestNamespace)
 		if err != nil {
 			return backOutDest(err)
 		}
@@ -1744,7 +1747,7 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 		destConfirmed := false
 		if err = h.removeExtendedAttributesIf(commitCtx, client, destPath, written, ExtendedKeyDeleting); err == nil {
 			destConfirmed = true
-			err = h.parentStillOpen(commitCtx, client, destNamespacePath, isNamespaceEntry, destParent)
+			err = h.parentStillOpen(commitCtx, client, destNamespacePath, isDestNamespace, destParent)
 		}
 		if err != nil {
 			if destConfirmed {
@@ -2116,13 +2119,15 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 }
 
 // createTableTarget is the namespace a create or register resolved to, once the
-// caller has been authorized to put a table there.
+// caller has been authorized to put a table there. namespaceCreatedAt names the
+// namespace record the authorization read, so the write lands in no other.
 type createTableTarget struct {
-	bucketName     string
-	namespaceName  string
-	tableName      string
-	bucketFormat   string
-	ownerAccountID string
+	bucketName         string
+	namespaceName      string
+	tableName          string
+	bucketFormat       string
+	ownerAccountID     string
+	namespaceCreatedAt time.Time
 }
 
 // authorizeCreateTable validates the names a create names and checks the caller
@@ -2256,17 +2261,18 @@ func (h *S3TablesHandler) authorizeCreateTable(w http.ResponseWriter, r *http.Re
 	}
 
 	if namespaceExists {
-		if err := h.refuseClaimedNamespace(w, r, filerClient, namespacePath, namespaceName); err != nil {
+		if err := h.refuseClaimedNamespace(w, r, filerClient, namespacePath, namespaceName, isNamespaceCreatedAt(nsMetadata.CreatedAt)); err != nil {
 			return nil, err
 		}
 	}
 
 	return &createTableTarget{
-		bucketName:     bucketName,
-		namespaceName:  namespaceName,
-		tableName:      tableName,
-		bucketFormat:   bucketMetadata.Format,
-		ownerAccountID: nsMetadata.OwnerAccountID,
+		bucketName:         bucketName,
+		namespaceName:      namespaceName,
+		tableName:          tableName,
+		bucketFormat:       bucketMetadata.Format,
+		ownerAccountID:     nsMetadata.OwnerAccountID,
+		namespaceCreatedAt: nsMetadata.CreatedAt,
 	}, nil
 }
 
@@ -2289,14 +2295,16 @@ func (h *S3TablesHandler) writeNamespaceClosedError(w http.ResponseWriter, err e
 	return true
 }
 
-// refuseClaimedNamespace answers 409 when a delete has claimed the namespace or
-// its create is not confirmed yet. Call it after the authorization check, so
-// denied callers never see the delete.
-func (h *S3TablesHandler) refuseClaimedNamespace(w http.ResponseWriter, r *http.Request, filerClient FilerClient, namespacePath, namespaceName string) error {
+// refuseClaimedNamespace refuses a request before it writes anything when the
+// namespace is not the open record the caller was authorized against: 409 when a
+// delete has claimed it, 404 when it is gone, was replaced by another namespace,
+// or its create is not confirmed yet. isNamespace accepts that record. Call it
+// after the authorization check, so denied callers never see the delete.
+func (h *S3TablesHandler) refuseClaimedNamespace(w http.ResponseWriter, r *http.Request, filerClient FilerClient, namespacePath, namespaceName string, isNamespace func(*filer_pb.Entry) bool) error {
 	err := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return h.checkParentOpen(r.Context(), client, namespacePath, isNamespaceEntry)
+		return h.checkParentOpen(r.Context(), client, namespacePath, isNamespace)
 	})
-	if errors.Is(err, errParentDeleting) || errors.Is(err, errParentCreating) {
+	if errors.Is(err, errParentDeleting) || errors.Is(err, errParentCreating) || errors.Is(err, errParentGone) {
 		h.writeNamespaceClosedError(w, err, namespaceName)
 		return err
 	}

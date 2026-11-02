@@ -643,6 +643,23 @@ func isTableBucketCreatedAt(createdAt time.Time) func(*filer_pb.Entry) bool {
 	}
 }
 
+// isNamespaceCreatedAt is isTableBucketCreatedAt for a namespace its create has
+// confirmed: one deleted and created again under the same name reads as the
+// authorized one gone. A bucket created again holds only namespaces of its own,
+// so a create bound to its namespace this way is bound to the bucket too.
+func isNamespaceCreatedAt(createdAt time.Time) func(*filer_pb.Entry) bool {
+	return func(entry *filer_pb.Entry) bool {
+		if !isFinishedNamespaceEntry(entry) {
+			return false
+		}
+		var metadata namespaceMetadata
+		if json.Unmarshal(entry.Extended[ExtendedKeyMetadata], &metadata) != nil {
+			return false
+		}
+		return metadata.CreatedAt.Equal(createdAt)
+	}
+}
+
 // isNamespaceEntry reports whether entry carries a namespace's catalog record.
 func isNamespaceEntry(entry *filer_pb.Entry) bool {
 	_, ok := entry.Extended[ExtendedKeyMetadata]
@@ -739,6 +756,20 @@ func (h *S3TablesHandler) mutateCatalogRecord(
 		}
 		return fmt.Errorf("%w: %s claimed on %s", ErrConcurrentUpdate, ExtendedKeyDeleting, path)
 	})
+}
+
+// requireTableCreatedAt refuses a write to the record at path unless it is the
+// table created at createdAt, the one the caller was authorized against: a
+// table deleted and created again under the name has a CreatedAt of its own.
+// Only the creation time is compared, so the commits an Iceberg writer lands
+// meanwhile do not turn a write of the table's policy, tags or maintenance
+// settings into a conflict.
+func requireTableCreatedAt(extended map[string][]byte, path string, createdAt time.Time) error {
+	var current tableMetadataInternal
+	if json.Unmarshal(extended[ExtendedKeyMetadata], &current) != nil || !current.CreatedAt.Equal(createdAt) {
+		return fmt.Errorf("%w: %s holds another table", ErrConcurrentUpdate, path)
+	}
+	return nil
 }
 
 // confirmParent re-checks the parent after a create wrote written onto
