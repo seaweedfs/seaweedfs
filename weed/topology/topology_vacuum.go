@@ -485,16 +485,20 @@ func (t *Topology) deleteEmptyVolumes(grpcDialOption grpc.DialOption, vl *Volume
 		if len(locationList.list) < vl.rp.GetCopyCount() && !resuming {
 			continue
 		}
-		eligible := true
+		eligible, changed := true, false
 		for _, dn := range locationList.list {
 			v, err := dn.GetVolumesById(vid)
+			if err == nil && !isQuietEmptyVolume(v, quietSeconds, nowUnixSeconds) {
+				eligible, changed = false, true
+				break
+			}
 			if err != nil || !isEmptyVolumeDeleteCandidate(v, quietSeconds, nowUnixSeconds) {
 				eligible = false
-				break
 			}
 		}
 		if !eligible {
-			if resuming {
+			// a copy that is only read-only or missing postpones the cleanup
+			if resuming && changed {
 				vl.UnmarkDeleting(vid)
 			}
 			continue
@@ -545,8 +549,11 @@ func (t *Topology) deleteEmptyVolume(grpcDialOption grpc.DialOption, dn *DataNod
 }
 
 func isEmptyVolumeDeleteCandidate(v storage.VolumeInfo, quietSeconds, nowUnixSeconds int64) bool {
+	return (!v.ReadOnly || v.ReadOnlyCanDelete) && isQuietEmptyVolume(v, quietSeconds, nowUnixSeconds)
+}
+
+func isQuietEmptyVolume(v storage.VolumeInfo, quietSeconds, nowUnixSeconds int64) bool {
 	return v.RemoteStorageName == "" &&
-		(!v.ReadOnly || v.ReadOnlyCanDelete) &&
 		(v.Size <= super_block.SuperBlockSize || v.FileCount > 0 && v.FileCount <= v.DeleteCount) &&
 		v.ModifiedAtSecond > 0 &&
 		v.ModifiedAtSecond+quietSeconds < nowUnixSeconds

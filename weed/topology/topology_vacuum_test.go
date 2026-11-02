@@ -318,6 +318,73 @@ func TestDeleteEmptyVolumesFinishesPartialDelete(t *testing.T) {
 	}
 }
 
+// A survivor that turns read-only between sweeps only postpones the cleanup;
+// once it is deletable again the next sweep must still finish the vid.
+func TestDeleteEmptyVolumesResumesAfterReadOnlySurvivor(t *testing.T) {
+	okFake := &fakeVolumeDeleteServer{}
+	okPort, dialOption := startFakeVolumeServer(t, okFake)
+	flakyFake := &fakeVolumeDeleteServer{failures: 1}
+	flakyPort, _ := startFakeVolumeServer(t, flakyFake)
+
+	topo := NewTopology("weedfs", sequence.NewMemorySequencer(), 32*1024, 5, false)
+	rack := topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1")
+	okDn := rack.GetOrCreateDataNode("127.0.0.1", 8080, okPort, "127.0.0.1", "dn-ok", map[string]uint32{"": 10})
+	flakyDn := rack.GetOrCreateDataNode("127.0.0.1", 8081, flakyPort, "127.0.0.1", "dn-flaky", map[string]uint32{"": 10})
+	rp, err := super_block.NewReplicaPlacementFromString("001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := storage.VolumeInfo{
+		Id:               needle.VolumeId(1),
+		Collection:       "c",
+		ModifiedAtSecond: time.Now().Unix() - 7200,
+		Version:          needle.GetCurrentVersion(),
+		ReplicaPlacement: rp,
+		Ttl:              needle.EMPTY_TTL,
+	}
+	for _, dn := range []*DataNode{okDn, flakyDn} {
+		dn.UpdateVolumes([]storage.VolumeInfo{v})
+		topo.RegisterVolumeLayout(v, dn)
+	}
+	vl := topo.GetVolumeLayout("c", rp, needle.EMPTY_TTL, types.ToDiskType(""))
+
+	sweep := func() map[needle.VolumeId]*VolumeLocationList {
+		vl.accessLock.RLock()
+		todo := map[needle.VolumeId]*VolumeLocationList{}
+		for vid, ll := range vl.vid2location {
+			todo[vid] = ll.Copy()
+		}
+		vl.accessLock.RUnlock()
+		topo.deleteEmptyVolumes(dialOption, vl, todo, time.Hour)
+		return todo
+	}
+
+	sweep()
+	if !vl.IsMarkedDeleting(v.Id) {
+		t.Fatal("partly deleted vid lost its deleting mark")
+	}
+
+	readOnly := v
+	readOnly.ReadOnly = true
+	flakyDn.UpdateVolumes([]storage.VolumeInfo{readOnly})
+	if todo := sweep(); todo[v.Id] == nil {
+		t.Fatal("read-only survivor was deleted")
+	}
+	if !vl.IsMarkedDeleting(v.Id) {
+		t.Fatal("read-only survivor dropped the deleting mark")
+	}
+
+	flakyDn.UpdateVolumes([]storage.VolumeInfo{v})
+	if todo := sweep(); todo[v.Id] != nil {
+		t.Fatal("sweep left the vid behind once the survivor was deletable again")
+	}
+	flakyFake.mu.Lock()
+	defer flakyFake.mu.Unlock()
+	if len(flakyFake.deletes) != 1 {
+		t.Fatalf("VolumeDelete on the survivor = %d, want 1 after it was deletable again", len(flakyFake.deletes))
+	}
+}
+
 // With every copy eligible a copy whose delete RPC fails keeps the vid in the
 // sweep map; the deleted copy is gone but the vid falls through to the normal
 // compaction path for its surviving replicas.
