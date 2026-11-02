@@ -3040,15 +3040,18 @@ pub async fn post_handler(
     let mime_type = if let Some(ref pct) = parsed_content_type {
         pct.clone()
     } else {
-        let multipart_fallback =
-            if should_parse_multipart && !filename.is_empty() && !is_chunk_manifest {
-                mime_guess::from_path(&filename)
-                    .first()
-                    .map(|m| m.to_string())
-                    .unwrap_or_default()
-            } else {
-                String::new()
-            };
+        let multipart_fallback = if should_parse_multipart
+            && !filename.is_empty()
+            && !is_chunk_manifest
+            && !is_replicate
+        {
+            mime_guess::from_path(&filename)
+                .first()
+                .map(|m| m.to_string())
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
         headers
             .get(header::CONTENT_TYPE)
             .and_then(|v| v.to_str().ok())
@@ -3247,8 +3250,8 @@ pub async fn post_handler(
             }
         }
         let (content_type, replica_body) = replica_upload_body(
-            if needle_has_name { &filename } else { "" },
-            if n.has_mime() { &mime_type } else { "" },
+            &filename,
+            &mime_type,
             n.is_compressed().then_some("gzip"),
             original_content_md5.as_deref().filter(|_| !body_rewritten),
             &n.data,
@@ -8453,6 +8456,22 @@ mod tests {
                     format!("multipart/form-data; boundary={boundary}"),
                 ),
                 Body::from(multipart),
+            ),
+            (
+                0x6e7a_0c0au64,
+                Request::builder().header(
+                    header::CONTENT_DISPOSITION,
+                    "attachment; filename=\"untyped.txt\"",
+                ),
+                Body::from(payload.clone()),
+            ),
+            (
+                0x6e7a_0c0bu64,
+                Request::builder().header(
+                    header::CONTENT_DISPOSITION,
+                    format!("attachment; filename=\"{}.txt\"", "n".repeat(300)),
+                ),
+                Body::from(payload.clone()),
             ),
         ];
         for (id, request, body) in cases {
