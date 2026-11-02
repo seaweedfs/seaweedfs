@@ -204,6 +204,25 @@ def test_filter_types(vectors, index):
         assert sorted(hit["key"] for hit in hits) == ["0", "3"]
 
 
+def test_filter_arrays(vectors, index):
+    rows = {"space": ["space", "classic"], "nums": [1, 2.5], "strs": ["1", "2.5"], "flag": [True], "scalar": "space"}
+    vectors.put_vectors(**index, vectors=[{"key": key, "data": {"float32": [1, 0, 0, 0]}, "metadata": {"tags": tags}}
+                                         for key, tags in rows.items()])
+
+    def matches(condition):
+        hits = vectors.query_vectors(**index, queryVector={"float32": [1, 0, 0, 0]}, topK=10,
+                                     filter={"tags": condition})["vectors"]
+        return sorted(hit["key"] for hit in hits)
+
+    assert matches("space") == ["scalar", "space"]
+    assert matches({"$eq": 1}) == ["nums"]
+    assert matches({"$eq": "1"}) == ["strs"]
+    assert matches({"$eq": True}) == ["flag"]
+    assert matches({"$in": ["classic", 2.5]}) == ["nums", "space"]
+    assert matches({"$ne": "space"}) == ["flag", "nums", "strs"]
+    assert matches({"$nin": [1, "2.5"]}) == ["flag", "scalar", "space"]
+
+
 def test_cosine_metric(vectors):
     bucket = "cosine-" + uuid.uuid4().hex[:16]
     vectors.create_vector_bucket(vectorBucketName=bucket)
