@@ -107,7 +107,7 @@ func (c *commandVolumeDeleteEmpty) Do(args []string, commandEnv *CommandEnv, wri
 		// a rerun skips the survivors as under-replicated
 		if len(kept) < len(replicas) {
 			for _, server := range kept {
-				log.Printf("volume %d stays on %s after its other copies were deleted; once it is empty, remove it with volume.delete -node %s -volumeId %d", vid, server, server, vid)
+				log.Printf("volume %d stays on %s after its other copies were deleted; once it is empty, remove it with volume.delete -node %s -volumeId %d", vid, server, string(server), vid)
 			}
 		}
 	}
