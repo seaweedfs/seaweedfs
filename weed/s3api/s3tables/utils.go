@@ -3,6 +3,7 @@ package s3tables
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"path"
@@ -190,6 +191,24 @@ func ValidateEncryptionConfiguration(cfg map[string]interface{}, sseField string
 		return fmt.Errorf("kmsKeyArn is not supported")
 	}
 	return nil
+}
+
+// DeclaredBucketEncryption returns the sseAlgorithm a table bucket's record
+// declares, for the S3 write path to apply, when the bucket's format leaves
+// every file to its clients. An ICEBERG bucket gets "": its catalog reads the
+// manifests clients upload straight from the filer, past S3 decryption.
+func DeclaredBucketEncryption(entry *filer_pb.Entry) string {
+	if !IsTableBucketEntry(entry) {
+		return ""
+	}
+	var metadata tableBucketMetadata
+	if json.Unmarshal(entry.Extended[ExtendedKeyMetadata], &metadata) != nil || !IsCatalogOnlyFormat(metadata.Format) {
+		return ""
+	}
+	if algorithm, _ := metadata.EncryptionConfiguration["sseAlgorithm"].(string); algorithm == "AES256" {
+		return algorithm
+	}
+	return ""
 }
 
 func parseS3Location(location string) (bucket, tablePath string, err error) {

@@ -46,6 +46,11 @@ func (m *Manager) SetTrusted(trusted bool) {
 	m.handler.SetTrusted(trusted)
 }
 
+// SetEncryptionChecker sets the handler's SSE-S3 availability predicate.
+func (m *Manager) SetEncryptionChecker(fn func() bool) {
+	m.handler.SetEncryptionChecker(fn)
+}
+
 // PrincipalFor resolves the caller of r the way the catalog's handlers do,
 // so it matches the owner CreateTableBucket records. A nil request is the
 // handler's account ID.
