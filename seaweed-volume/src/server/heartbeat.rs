@@ -1365,6 +1365,7 @@ fn build_heartbeat_with_ec_status(
                 }
 
                 let (remote_storage_name, remote_storage_key) = vol.remote_storage_name_key();
+                let (read_only, read_only_can_delete) = vol.reported_read_only();
                 let volume_message = master_pb::VolumeInformationMessage {
                     id: vol.id.0,
                     size: volume_size,
@@ -1372,8 +1373,8 @@ fn build_heartbeat_with_ec_status(
                     file_count: vol.file_count() as u64,
                     delete_count: vol.deleted_count() as u64,
                     deleted_byte_count: vol.deleted_size(),
-                    read_only: vol.is_read_only(),
-                    read_only_can_delete: vol.is_no_write_can_delete(),
+                    read_only,
+                    read_only_can_delete,
                     replica_placement: vol.super_block().replica_placement.to_byte() as u32,
                     version: vol.super_block().version.0 as u32,
                     ttl: vol.super_block().ttl.to_u32(),
@@ -1817,6 +1818,43 @@ mod tests {
             heartbeat.max_volume_counts[&DiskType::HardDrive.to_string()],
             1
         );
+    }
+
+    #[test]
+    fn test_build_heartbeat_low_disk_volume_reports_can_delete() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir = temp_dir.path().to_str().unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store
+            .add_location(
+                dir,
+                dir,
+                3,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(1.0),
+                vec![],
+            )
+            .unwrap();
+        store
+            .add_volume(VolumeId(7), DiskType::HardDrive, &VolumeSpec::default())
+            .unwrap();
+        store.locations[0]
+            .is_disk_space_low
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+
+        let heartbeat = build_heartbeat(&test_config(), &mut store);
+        assert!(heartbeat.volumes[0].read_only);
+        assert!(heartbeat.volumes[0].read_only_can_delete);
+
+        store
+            .find_volume(VolumeId(7))
+            .unwrap()
+            .1
+            .set_no_write_or_delete(true);
+        let heartbeat = build_heartbeat(&test_config(), &mut store);
+        assert!(heartbeat.volumes[0].read_only);
+        assert!(!heartbeat.volumes[0].read_only_can_delete);
     }
 
     #[test]
