@@ -512,6 +512,25 @@ func TestUpdateRefusedOnAMarkedRecord(t *testing.T) {
 	assert.Equal(t, ErrCodeNoSuchTable, resp.Type)
 }
 
+// DeleteTablePolicy refuses a marked record the same way: the policy it would
+// remove sits on an entry every reader reports absent.
+func TestDeleteTablePolicyRefusedOnAMarkedRecord(t *testing.T) {
+	fs, m := startTableT(t, map[string][]byte{ExtendedKeyPolicy: []byte(bindTestPolicy)})
+	nsPath := GetNamespacePath(renameTestBucket, "ns")
+	fs.BeforeUpdate = func() { plantCreateMark(fs, nsPath, "t") }
+
+	status, resp := runHandler(t, m, fs.Client, "DeleteTablePolicy", &DeleteTablePolicyRequest{
+		TableBucketARN: mustBucketARN(t),
+		Namespace:      []string{"ns"},
+		Name:           "t",
+	})
+	assert.Equal(t, http.StatusNotFound, status, "%+v", resp)
+	assert.Equal(t, ErrCodeNoSuchTable, resp.Type)
+	extended := fs.Get(nsPath, "t").Extended
+	assert.Equal(t, []byte(bindTestPolicy), extended[ExtendedKeyPolicy], "the refused delete keeps the policy")
+	assert.Equal(t, []byte(createClaim), extended[ExtendedKeyDeleting], "and leaves the create's mark for its back-out")
+}
+
 // A rename into a namespace a delete claimed is refused before it touches the
 // source: the destination cannot be confirmed, so the name must stay where it
 // was.
