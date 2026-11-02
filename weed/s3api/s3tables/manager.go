@@ -60,10 +60,11 @@ func (m *Manager) PrincipalFor(r *http.Request) string {
 // request produces: the configured local-account predicate, the caller's own
 // identity actions so admin and action grants resolve on privileges rather
 // than the forwarded name, plus the open-by-default fallback only for a
-// trusted caller or no resolved identity.
-func (m *Manager) PolicyContext(r *http.Request) *PolicyContext {
+// trusted caller or no resolved identity. A non-empty bucket lets an identity
+// action scoped to that bucket apply, as the handlers do.
+func (m *Manager) PolicyContext(r *http.Request, bucket string) *PolicyContext {
 	ctx := &PolicyContext{IsLocalAccountID: m.handler.localAccountIDs, IdentityActions: getIdentityActions(r),
-		TrustedIssuers: m.handler.trustedIssuers(r)}
+		TrustedIssuers: m.handler.trustedIssuers(r), TableBucketName: bucket}
 	if m.handler.trusted || (m.handler.defaultAllow && s3_constants.GetIdentityNameFromContext(r) == "") {
 		ctx.DefaultAllow = true
 	}

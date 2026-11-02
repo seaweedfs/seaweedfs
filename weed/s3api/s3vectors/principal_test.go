@@ -39,6 +39,11 @@ func newAuthTestEnv(t *testing.T) *authTestEnv {
 
 func (e *authTestEnv) vector(ident *s3api.Identity, handler http.HandlerFunc, payload interface{}) int {
 	e.t.Helper()
+	return e.vectorResp(ident, handler, payload).Code
+}
+
+func (e *authTestEnv) vectorResp(ident *s3api.Identity, handler http.HandlerFunc, payload interface{}) *httptest.ResponseRecorder {
+	e.t.Helper()
 	body, err := json.Marshal(payload)
 	if err != nil {
 		e.t.Fatalf("marshal request: %v", err)
@@ -46,7 +51,7 @@ func (e *authTestEnv) vector(ident *s3api.Identity, handler http.HandlerFunc, pa
 	e.auth.identity = ident
 	w := httptest.NewRecorder()
 	e.s.Auth(handler)(w, httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body)))
-	return w.Code
+	return w
 }
 
 func (e *authTestEnv) table(ident *s3api.Identity, operation string, req interface{}) error {
@@ -139,5 +144,97 @@ func TestVectorPrincipalMatchesTableBuckets(t *testing.T) {
 				t.Fatalf("under a deny on %q: table=%v vector=%v, want %v", c.principal, table, vector, !c.denied)
 			}
 		})
+	}
+}
+
+func (e *authTestEnv) createIndex(bucket string) {
+	e.t.Helper()
+	if code := e.vector(adminIdentity(), e.s.handleCreateIndex, &CreateIndexRequest{
+		VectorBucketName: bucket, IndexName: "idx", DataType: "float32", Dimension: 3, DistanceMetric: "euclidean",
+	}); code != http.StatusOK {
+		e.t.Fatalf("create index in %s: %d", bucket, code)
+	}
+}
+
+func (e *authTestEnv) listedVectorBuckets(ident *s3api.Identity) []string {
+	e.t.Helper()
+	w := e.vectorResp(ident, e.s.handleListVectorBuckets, &ListVectorBucketsRequest{})
+	if w.Code != http.StatusOK {
+		e.t.Fatalf("list vector buckets: %d %s", w.Code, w.Body.String())
+	}
+	var resp ListVectorBucketsResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		e.t.Fatalf("decode list: %v", err)
+	}
+	names := []string{}
+	for _, b := range resp.VectorBuckets {
+		names = append(names, b.VectorBucketName)
+	}
+	return names
+}
+
+// An identity action scoped to a bucket, s3vectors:<Op>:<bucket>, grants that
+// operation on that vector bucket and its indexes only, as
+// s3tables:<Op>:<bucket> does on a table bucket. A Deny still wins, and the
+// scoped form never creates a bucket.
+func TestBucketScopedIdentityActions(t *testing.T) {
+	e := newAuthTestEnv(t)
+	for _, name := range []string{"team-a", "team-b"} {
+		e.createBuckets(adminIdentity(), name)
+		e.createIndex("v-" + name)
+	}
+	scoped := &s3api.Identity{Name: "scoped", Account: &s3api.Account{Id: "scoped"}, Actions: []s3api.Action{
+		"s3tables:GetTableBucket:t-team-a", "s3tables:CreateTableBucket:t-team-c",
+		"s3vectors:GetVectorBucket:v-team-a", "s3vectors:GetIndex:v-team-a", "s3vectors:CreateVectorBucket:v-team-c",
+	}}
+
+	if table, vector := e.canGet(scoped, "team-a"); !table || !vector {
+		t.Fatalf("granted bucket: table=%v vector=%v, want both", table, vector)
+	}
+	if table, vector := e.canGet(scoped, "team-b"); table || vector {
+		t.Fatalf("other bucket: table=%v vector=%v, want neither", table, vector)
+	}
+	getIndex := func(ident *s3api.Identity, bucket string) int {
+		return e.vector(ident, e.s.handleGetIndex, &GetIndexRequest{VectorBucketName: bucket, IndexName: "idx"})
+	}
+	getVectors := func(ident *s3api.Identity, bucket string) int {
+		return e.vector(ident, e.s.handleGetVectors, &GetVectorsRequest{VectorBucketName: bucket, IndexName: "idx", Keys: []string{"a"}})
+	}
+	if code := getIndex(scoped, "v-team-a"); code != http.StatusOK {
+		t.Fatalf("GetIndex in granted bucket: %d", code)
+	}
+	if code := getIndex(scoped, "v-team-b"); code != http.StatusForbidden {
+		t.Fatalf("GetIndex in other bucket: %d, want 403", code)
+	}
+	if code := getVectors(scoped, "v-team-a"); code != http.StatusForbidden {
+		t.Fatalf("ungranted GetVectors in granted bucket: %d, want 403", code)
+	}
+	if got := e.listedVectorBuckets(scoped); len(got) != 1 || got[0] != "v-team-a" {
+		t.Fatalf("listing: %v, want [v-team-a]", got)
+	}
+	if err := e.table(scoped, "CreateTableBucket", &s3tables.CreateTableBucketRequest{Name: "t-team-c"}); err == nil {
+		t.Fatalf("scoped CreateTableBucket created a table bucket")
+	}
+	if code := e.vector(scoped, e.s.handleCreateVectorBucket, &CreateVectorBucketRequest{VectorBucketName: "v-team-c"}); code != http.StatusForbidden {
+		t.Fatalf("scoped CreateVectorBucket: %d, want 403", code)
+	}
+
+	wild := &s3api.Identity{Name: "wild", Account: &s3api.Account{Id: "wild"}, Actions: []s3api.Action{"s3vectors:*:v-team-a"}}
+	if code := getVectors(wild, "v-team-a"); code != http.StatusOK {
+		t.Fatalf("wildcard grant in its bucket: %d", code)
+	}
+	if code := getIndex(wild, "v-team-b"); code != http.StatusForbidden {
+		t.Fatalf("wildcard grant in other bucket: %d, want 403", code)
+	}
+	if code := e.vector(wild, e.s.handleCreateVectorBucket, &CreateVectorBucketRequest{VectorBucketName: "v-team-c"}); code != http.StatusForbidden {
+		t.Fatalf("wildcard bucket grant created a bucket: %d, want 403", code)
+	}
+
+	e.deny("team-a", "scoped")
+	if table, vector := e.canGet(scoped, "team-a"); table || vector {
+		t.Fatalf("granted bucket under a deny: table=%v vector=%v, want neither", table, vector)
+	}
+	if code := getIndex(scoped, "v-team-a"); code != http.StatusForbidden {
+		t.Fatalf("GetIndex under a deny: %d, want 403", code)
 	}
 }
