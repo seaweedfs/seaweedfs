@@ -1,13 +1,18 @@
 package s3_backend
 
 import (
+	"bufio"
 	"math"
+	"net"
 	"net/http"
 	"strconv"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 )
 
 func backendTransport(t *testing.T, s *S3BackendStorage) *http.Transport {
@@ -54,17 +59,103 @@ func TestS3BackendHTTPOptionsReachTheClient(t *testing.T) {
 	}
 }
 
-func TestS3BackendDefaultHTTPClientUnchanged(t *testing.T) {
+func TestS3BackendDefaultTransportHasTimeouts(t *testing.T) {
 	s, err := newS3BackendStorage(testProperties{"endpoint": "http://127.0.0.1:2"}, "", "http-defaults")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if transport := backendTransport(t, s); transport != nil && transport != http.DefaultTransport {
-		t.Fatalf("no options set, yet the client got a custom transport %+v", transport)
+	transport := backendTransport(t, s)
+	if transport == nil || transport == http.DefaultTransport {
+		t.Fatalf("the client must not use the shared default transport, got %+v", transport)
 	}
-	if (httpOptions{}).newTransport() != nil {
-		t.Fatal("zero options must keep the default client")
+	if transport.ResponseHeaderTimeout != s3ReadTimeout {
+		t.Errorf("ResponseHeaderTimeout = %v, want %v", transport.ResponseHeaderTimeout, s3ReadTimeout)
 	}
+	if transport.DialContext == nil {
+		t.Error("no dialer with a connect timeout")
+	}
+	if !transport.ForceAttemptHTTP2 {
+		t.Error("default options must keep HTTP/2")
+	}
+}
+
+// stallingEndpoint accepts connections and holds them open. With a non-empty
+// head, it answers each request with head and then sends nothing more.
+func stallingEndpoint(t *testing.T, head string) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var conns []net.Conn
+	var mu sync.Mutex
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			conns = append(conns, c)
+			mu.Unlock()
+			if head != "" {
+				go func() {
+					if _, err := http.ReadRequest(bufio.NewReader(c)); err == nil {
+						c.Write([]byte(head))
+					}
+				}()
+			}
+		}
+	}()
+	t.Cleanup(func() {
+		ln.Close()
+		mu.Lock()
+		defer mu.Unlock()
+		for _, c := range conns {
+			c.Close()
+		}
+	})
+	return "http://" + ln.Addr().String()
+}
+
+func readFromStallingEndpoint(t *testing.T, head, wantErr string) {
+	old := s3ReadTimeout
+	s3ReadTimeout = 100 * time.Millisecond
+	defer func() { s3ReadTimeout = old }()
+
+	s, err := newS3BackendStorage(testProperties{
+		"endpoint":              stallingEndpoint(t, head),
+		"region":                "us-east-1",
+		"bucket":                "b",
+		"aws_access_key_id":     "k",
+		"aws_secret_access_key": "s",
+	}, "", "stalling")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := s.NewStorageFile("key", &volume_server_pb.VolumeInfo{Files: []*volume_server_pb.RemoteFile{{FileSize: 1024}}})
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := f.ReadAt(make([]byte, 8), 0)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), wantErr) {
+			t.Fatalf("want an error containing %q from a stalled endpoint, got %v", wantErr, err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("a read from a stalled endpoint did not give up")
+	}
+}
+
+func TestS3BackendReadFailsAgainstSilentEndpoint(t *testing.T) {
+	readFromStallingEndpoint(t, "", "timeout")
+}
+
+func TestS3BackendReadFailsWhenBodyStalls(t *testing.T) {
+	readFromStallingEndpoint(t, "HTTP/1.1 206 Partial Content\r\nContent-Length: 8\r\nContent-Range: bytes 0-7/1024\r\n\r\n", "no data for")
 }
 
 func TestS3BackendSessionsDifferByHTTPOptions(t *testing.T) {

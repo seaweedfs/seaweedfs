@@ -1,6 +1,7 @@
 package s3_backend
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"math"
@@ -222,7 +223,9 @@ func (s3backendStorageFile S3BackendStorageFile) ReadAt(p []byte, off int64) (n 
 
 	bytesRange := fmt.Sprintf("bytes=%d-%d", off, off+int64(len(p))-1)
 
-	getObjectOutput, getObjectErr := s3backendStorageFile.backendStorage.conn.GetObject(&s3.GetObjectInput{
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	getObjectOutput, getObjectErr := s3backendStorageFile.backendStorage.conn.GetObjectWithContext(ctx, &s3.GetObjectInput{
 		Bucket: &s3backendStorageFile.backendStorage.bucket,
 		Key:    &s3backendStorageFile.key,
 		Range:  &bytesRange,
@@ -232,6 +235,8 @@ func (s3backendStorageFile S3BackendStorageFile) ReadAt(p []byte, off int64) (n 
 		return 0, fmt.Errorf("bucket %s GetObject %s: %v", s3backendStorageFile.backendStorage.bucket, s3backendStorageFile.key, getObjectErr)
 	}
 	defer getObjectOutput.Body.Close()
+	stalled := time.AfterFunc(s3ReadTimeout, cancel)
+	defer stalled.Stop()
 
 	// glog.V(3).Infof("read %s %s", s3backendStorageFile.key, bytesRange)
 	// glog.V(3).Infof("content range: %s, contentLength: %d", *getObjectOutput.ContentRange, *getObjectOutput.ContentLength)
@@ -242,6 +247,7 @@ func (s3backendStorageFile S3BackendStorageFile) ReadAt(p []byte, off int64) (n 
 		if len(p) == 0 {
 			break
 		}
+		stalled.Reset(s3ReadTimeout)
 		readCount, err = getObjectOutput.Body.Read(p)
 		n += readCount
 
@@ -252,6 +258,9 @@ func (s3backendStorageFile S3BackendStorageFile) ReadAt(p []byte, off int64) (n 
 
 	if err == io.EOF && n == requested {
 		err = nil
+	}
+	if err != nil && ctx.Err() != nil {
+		err = fmt.Errorf("bucket %s read %s: no data for %v: %w", s3backendStorageFile.backendStorage.bucket, s3backendStorageFile.key, s3ReadTimeout, err)
 	}
 
 	return
