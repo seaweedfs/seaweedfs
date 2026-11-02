@@ -118,23 +118,7 @@ func (s *Server) handleTagResource(w http.ResponseWriter, r *http.Request) {
 		catalogErr(w, err)
 		return
 	}
-	current, err := s.resourceTags(ctx, catalogArn)
-	if err != nil {
-		catalogErr(w, err)
-		return
-	}
-	count := len(current)
-	for k := range req.Tags {
-		if _, ok := current[k]; !ok {
-			count++
-		}
-	}
-	if count > maxResourceTags {
-		writeError(w, http.StatusBadRequest, "ValidationException",
-			fmt.Sprintf("a resource can have at most %d tags, this request would leave %d", maxResourceTags, count))
-		return
-	}
-	if err := s.internalCatalog(ctx, "TagResource",
+	if err := s.internalCatalog(s3tables.WithMaxTags(ctx, maxResourceTags), "TagResource",
 		&s3tables.TagResourceRequest{ResourceARN: catalogArn, Tags: req.Tags}, nil); err != nil {
 		catalogErr(w, err)
 		return
