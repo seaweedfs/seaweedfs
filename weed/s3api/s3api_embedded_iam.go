@@ -342,6 +342,8 @@ func iamAuthErrorCode(errCode s3err.ErrorCode) string {
 		return "RequestTimeTooSkewed"
 	case s3err.ErrInternalError:
 		return iam.ErrCodeServiceFailureException
+	case s3err.ErrEntityTooLarge:
+		return "InvalidInput"
 	default:
 		return "IncompleteSignature"
 	}

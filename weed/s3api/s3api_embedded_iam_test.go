@@ -3041,5 +3041,6 @@ func TestIamAuthErrorCode(t *testing.T) {
 	assert.Equal(t, "SignatureDoesNotMatch", iamAuthErrorCode(s3err.ErrSignatureDoesNotMatch))
 	assert.Equal(t, "AccessDenied", iamAuthErrorCode(s3err.ErrAccessDenied))
 	assert.Equal(t, "RequestTimeTooSkewed", iamAuthErrorCode(s3err.ErrRequestTimeTooSkewed))
+	assert.Equal(t, "InvalidInput", iamAuthErrorCode(s3err.ErrEntityTooLarge))
 	assert.Equal(t, "IncompleteSignature", iamAuthErrorCode(s3err.ErrMissingFields))
 }
