@@ -648,6 +648,13 @@ func (vl *VolumeLayout) MarkDeleting(vid needle.VolumeId) {
 	vl.waitForPendingDrain(context.Background(), vid)
 }
 
+func (vl *VolumeLayout) IsMarkedDeleting(vid needle.VolumeId) bool {
+	vl.accessLock.RLock()
+	defer vl.accessLock.RUnlock()
+	_, ok := vl.deletingVolumes[vid]
+	return ok
+}
+
 func (vl *VolumeLayout) UnmarkDeleting(vid needle.VolumeId) {
 	vl.accessLock.Lock()
 	delete(vl.deletingVolumes, vid)

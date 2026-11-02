@@ -479,8 +479,10 @@ func (t *Topology) deleteEmptyVolumes(grpcDialOption grpc.DialOption, vl *Volume
 	nowUnixSeconds := time.Now().Unix()
 	for vid, locationList := range todoVolumeMap {
 		// A missing replica may still hold data; deleting the listed copies
-		// would leave it as the only one when it returns.
-		if len(locationList.list) < vl.rp.GetCopyCount() {
+		// would leave it as the only one when it returns. A vid still marked
+		// deleting lost copies to an earlier partial delete, so finish it.
+		resuming := vl.IsMarkedDeleting(vid)
+		if len(locationList.list) < vl.rp.GetCopyCount() && !resuming {
 			continue
 		}
 		eligible := true
@@ -492,12 +494,15 @@ func (t *Topology) deleteEmptyVolumes(grpcDialOption grpc.DialOption, vl *Volume
 			}
 		}
 		if !eligible {
+			if resuming {
+				vl.UnmarkDeleting(vid)
+			}
 			continue
 		}
 		// keep the volume out of assignments for the whole delete: a heartbeat
 		// landing mid-delete must not re-add it while replicas are dropping
 		vl.MarkDeleting(vid)
-		remaining := 0
+		deleted := 0
 		kept := locationList.list[:0]
 		for _, dn := range locationList.list {
 			v, err := dn.GetVolumesById(vid)
@@ -506,16 +511,19 @@ func (t *Topology) deleteEmptyVolumes(grpcDialOption grpc.DialOption, vl *Volume
 				glog.V(0).Infof("deleting empty volume %d on %s", vid, dn.ServerAddress())
 				if err = t.deleteEmptyVolume(grpcDialOption, dn, vid, onlyGarbage); err == nil {
 					t.UnRegisterVolumeLayout(v, dn)
+					deleted++
 					continue
 				}
 			}
 			glog.Warningf("delete empty volume %d on %s: %v", vid, dn.ServerAddress(), err)
 			kept = append(kept, dn)
-			remaining++
 		}
-		vl.UnmarkDeleting(vid)
+		// a partly deleted vid stays marked so the next sweep finishes it
+		if len(kept) == 0 || deleted == 0 && !resuming {
+			vl.UnmarkDeleting(vid)
+		}
 		locationList.list = kept
-		if remaining == 0 {
+		if len(kept) == 0 {
 			delete(todoVolumeMap, vid)
 		}
 	}
