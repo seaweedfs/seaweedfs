@@ -44,6 +44,43 @@ func (h *S3TablesHandler) extractResourceOwnerAndBucket(
 	return ownerAccountID, bucketName, createdAt, nil
 }
 
+type maxTagsKey struct{}
+
+var errTooManyTags = errors.New("too many tags")
+
+// WithMaxTags caps how many tags a TagResource run through Execute may leave
+// on its resource. In-process only, like WithTableBucketCreatedAt.
+func WithMaxTags(ctx context.Context, n int) context.Context {
+	return context.WithValue(ctx, maxTagsKey{}, n)
+}
+
+// updateTags applies set and remove to raw, the tags the record holds at the
+// write, so concurrent tag writes do not undo each other.
+func updateTags(raw []byte, set map[string]string, remove []string) (map[string]string, error) {
+	tags := make(map[string]string)
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &tags); err != nil {
+			return nil, err
+		}
+	}
+	for k, v := range set {
+		tags[k] = v
+	}
+	for _, k := range remove {
+		delete(tags, k)
+	}
+	return tags, nil
+}
+
+func writeTags(extended map[string][]byte, key string, tags map[string]string) error {
+	data, err := json.Marshal(tags)
+	if err != nil {
+		return err
+	}
+	extended[key] = data
+	return nil
+}
+
 // requireBoundTableBucket answers not found when ctx binds the request to a
 // table bucket other than the one now named bucketName.
 func (h *S3TablesHandler) requireBoundTableBucket(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketName string) error {
@@ -820,28 +857,24 @@ func (h *S3TablesHandler) handleTagResource(w http.ResponseWriter, r *http.Reque
 		return err
 	}
 
-	// Merge new tags
-	for k, v := range req.Tags {
-		existingTags[k] = v
-	}
-
-	// Write merged tags
-	tagsBytes, err := json.Marshal(existingTags)
-	if err != nil {
-		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to marshal tags")
-		return fmt.Errorf("failed to marshal tags: %w", err)
-	}
 	sameResource := requireTableCreatedAt
 	if rType != ResourceTypeTable {
 		sameResource = requireTableBucketCreatedAt
 	}
+	maxTags, limited := r.Context().Value(maxTagsKey{}).(int)
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		return h.mutateCatalogRecord(r.Context(), client, resourcePath, func(extended map[string][]byte) error {
 			if err := sameResource(extended, resourcePath, createdAt); err != nil {
 				return err
 			}
-			extended[extendedKey] = tagsBytes
-			return nil
+			tags, err := updateTags(extended[extendedKey], req.Tags, nil)
+			if err != nil {
+				return err
+			}
+			if limited && len(tags) > maxTags {
+				return errTooManyTags
+			}
+			return writeTags(extended, extendedKey, tags)
 		})
 	})
 
@@ -852,6 +885,11 @@ func (h *S3TablesHandler) handleTagResource(w http.ResponseWriter, r *http.Reque
 				errorCode = ErrCodeNoSuchTable
 			}
 			h.writeError(w, http.StatusNotFound, errorCode, "resource not found")
+			return err
+		}
+		if errors.Is(err, errTooManyTags) {
+			h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest,
+				fmt.Sprintf("a resource can have at most %d tags", maxTags))
 			return err
 		}
 		if errors.Is(err, ErrConcurrentUpdate) {
@@ -1108,17 +1146,6 @@ func (h *S3TablesHandler) handleUntagResource(w http.ResponseWriter, r *http.Req
 		return err
 	}
 
-	// Remove specified tags
-	for _, key := range req.TagKeys {
-		delete(tags, key)
-	}
-
-	// Write updated tags
-	tagsBytes, err := json.Marshal(tags)
-	if err != nil {
-		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to marshal tags")
-		return fmt.Errorf("failed to marshal tags: %w", err)
-	}
 	sameResource := requireTableCreatedAt
 	if rType != ResourceTypeTable {
 		sameResource = requireTableBucketCreatedAt
@@ -1128,8 +1155,11 @@ func (h *S3TablesHandler) handleUntagResource(w http.ResponseWriter, r *http.Req
 			if err := sameResource(extended, resourcePath, createdAt); err != nil {
 				return err
 			}
-			extended[extendedKey] = tagsBytes
-			return nil
+			tags, err := updateTags(extended[extendedKey], nil, req.TagKeys)
+			if err != nil {
+				return err
+			}
+			return writeTags(extended, extendedKey, tags)
 		})
 	})
 
