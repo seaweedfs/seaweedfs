@@ -171,6 +171,7 @@ type Index struct {
 	IndexName             string                 `json:"indexName"`
 	MetadataConfiguration *MetadataConfiguration `json:"metadataConfiguration,omitempty"`
 	VectorBucketName      string                 `json:"vectorBucketName"`
+	IndexMode             string                 `json:"indexMode,omitempty"`
 }
 
 type GetIndexResponse struct {
@@ -198,6 +199,15 @@ type ListIndexesResponse struct {
 	Indexes   []*IndexSummary `json:"indexes"`
 	NextToken string          `json:"nextToken,omitempty"`
 }
+
+type UpdateIndexModeRequest struct {
+	VectorBucketName string `json:"vectorBucketName"`
+	IndexName        string `json:"indexName"`
+	IndexArn         string `json:"indexArn"`
+	IndexMode        string `json:"indexMode"`
+}
+
+type UpdateIndexModeResponse struct{}
 
 type DeleteIndexRequest struct {
 	IndexArn         string `json:"indexArn"`

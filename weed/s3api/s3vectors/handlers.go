@@ -35,6 +35,7 @@ var handlers = map[string]func(*Server, http.ResponseWriter, *http.Request){
 	"GetIndex":                        (*Server).handleGetIndex,
 	"ListIndexes":                     (*Server).handleListIndexes,
 	"DeleteIndex":                     (*Server).handleDeleteIndex,
+	"UpdateIndexMode":                 (*Server).handleUpdateIndexMode,
 	"PutVectors":                      (*Server).handlePutVectors,
 	"GetVectors":                      (*Server).handleGetVectors,
 	"ListVectors":                     (*Server).handleListVectors,
@@ -1092,9 +1093,15 @@ func (s *Server) handleCreateIndex(w http.ResponseWriter, r *http.Request) {
 		catalogErr(w, getErr)
 		return
 	}
+	indexMode, err := s.bucketDefaultIndexMode(r.Context(), arns.bucket)
+	if err != nil {
+		catalogErr(w, err)
+		return
+	}
 	metadata := map[string]string{
 		"dimension":      fmt.Sprint(req.Dimension),
 		"distanceMetric": strings.ToLower(req.DistanceMetric),
+		"indexMode":      indexMode,
 		// The nonce marks the record this request created, so a rollback after
 		// an engine failure can never erase a pre-existing index.
 		"createNonce": uuid.NewString(),
@@ -1176,6 +1183,7 @@ func indexFromRecord(s *Server, bucket, name string, m map[string]interface{}) *
 		IndexName:        name,
 		VectorBucketName: bucket,
 		DataType:         "float32",
+		IndexMode:        indexModeEnhanced,
 	}
 	if created, ok := m["createdAt"].(string); ok {
 		idx.CreationTime, _ = time.Parse(time.RFC3339, created)
@@ -1186,6 +1194,7 @@ func indexFromRecord(s *Server, bucket, name string, m map[string]interface{}) *
 			fmt.Sscan(fmt.Sprint(fm["dimension"]), &dim)
 			idx.Dimension = int32(dim)
 			idx.DistanceMetric = strings.ToLower(fmt.Sprint(fm["distanceMetric"]))
+			idx.IndexMode = storedIndexMode(fmt.Sprint(fm["indexMode"]))
 			switch keys := fm["nonFilterableMetadataKeys"].(type) {
 			case string:
 				var list []string
@@ -1233,6 +1242,75 @@ func (s *Server) handleGetIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, &GetIndexResponse{Index: indexFromRecord(s, arns.bucket, arns.index, resp)})
+}
+
+func (s *Server) handleUpdateIndexMode(w http.ResponseWriter, r *http.Request) {
+	var req UpdateIndexModeRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		return
+	}
+	arns, err := s.resolveIndexARNs(req.VectorBucketName, "", req.IndexName, req.IndexArn)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		return
+	}
+	if !validIndexMode(req.IndexMode) {
+		writeError(w, http.StatusBadRequest, "ValidationException", "indexMode must be CLASSIC or ENHANCED")
+		return
+	}
+	bucketRecord, err := s.authorizeVector(r.Context(), r, "s3vectors:UpdateIndexMode", arns.bucket, arns.index)
+	if err != nil {
+		catalogErr(w, err)
+		return
+	}
+	if err := checkClassicIndexMode(req.IndexMode, bucketRecord.CreatedAt); err != nil {
+		catalogErr(w, err)
+		return
+	}
+	bound := s3tables.WithTableBucketCreatedAt(r.Context(), bucketRecord.CreatedAt)
+	if err := s.updateIndexMode(bound, arns.bucket, arns.index, req.IndexMode); err != nil {
+		catalogErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, &UpdateIndexModeResponse{})
+}
+
+// updateIndexMode rewrites the mode in the index record, conditional on its
+// versionToken, and retries when a concurrent update moves the token.
+func (s *Server) updateIndexMode(ctx context.Context, bucket, index, mode string) error {
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		var record map[string]interface{}
+		if record, err = s.indexRecord(ctx, bucket, index); err != nil {
+			return err
+		}
+		full := map[string]interface{}{}
+		if meta, ok := record["metadata"].(map[string]interface{}); ok {
+			if fm, ok := meta["fullMetadata"].(map[string]interface{}); ok {
+				full = fm
+			}
+		}
+		if full["indexMode"] == mode {
+			return nil
+		}
+		full["indexMode"] = mode
+		raw, merr := json.Marshal(full)
+		if merr != nil {
+			return merr
+		}
+		err = s.internalCatalog(ctx, "UpdateTable", &s3tables.UpdateTableRequest{
+			TableBucketARN: s.s3tablesArn(bucket),
+			Namespace:      []string{indexNamespace},
+			Name:           index,
+			VersionToken:   recordVersionToken(record),
+			Metadata:       &s3tables.TableMetadata{FullMetadata: raw},
+		}, nil)
+		if catalogErrCode(err) != s3tables.ErrCodeConflict {
+			return err
+		}
+	}
+	return err
 }
 
 func (s *Server) handleListIndexes(w http.ResponseWriter, r *http.Request) {
