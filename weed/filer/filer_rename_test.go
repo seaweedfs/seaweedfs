@@ -29,3 +29,27 @@ func TestDetectBucket(t *testing.T) {
 		})
 	}
 }
+
+func TestMovesIntoItself(t *testing.T) {
+	tests := []struct {
+		name       string
+		sourcePath string
+		target     string
+		want       bool
+	}{
+		{"into itself", "/dir/a", "/dir/a", true},
+		{"into a child", "/dir/a", "/dir/a/b", true},
+		{"into a deeper descendant", "/dir/a", "/dir/a/b/c", true},
+		{"into a sibling sharing the name prefix", "/dir/a", "/dir/a.d", false},
+		{"into a descendant of that sibling", "/dir/a", "/dir/ab/c", false},
+		{"into the parent", "/dir/a", "/dir", false},
+		{"into an unrelated directory", "/dir/a", "/other", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := movesIntoItself(util.FullPath(tt.sourcePath), util.FullPath(tt.target)); got != tt.want {
+				t.Errorf("movesIntoItself(%q, %q) = %v, want %v", tt.sourcePath, tt.target, got, tt.want)
+			}
+		})
+	}
+}

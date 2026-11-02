@@ -10,7 +10,7 @@ import (
 
 func (f *Filer) CanRename(ctx context.Context, source, target util.FullPath, oldName string) error {
 	sourcePath := source.Child(oldName)
-	if strings.HasPrefix(string(target), string(sourcePath)) {
+	if movesIntoItself(sourcePath, target) {
 		return fmt.Errorf("mv: can not move directory to a subdirectory of itself")
 	}
 
@@ -31,6 +31,13 @@ func (f *Filer) CanRename(ctx context.Context, source, target util.FullPath, old
 	}
 
 	return nil
+}
+
+// movesIntoItself reports whether target, the new parent directory, is
+// sourcePath or lies under it. A sibling that only shares a name prefix,
+// such as /a.d for /a, does not.
+func movesIntoItself(sourcePath, target util.FullPath) bool {
+	return target == sourcePath || target.IsUnder(sourcePath)
 }
 
 func (f *Filer) DetectBucket(source util.FullPath) (bucket string) {
