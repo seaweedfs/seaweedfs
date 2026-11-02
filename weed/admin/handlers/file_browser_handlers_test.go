@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -151,15 +152,18 @@ func TestUploadFile_RejectsOversizedUpload(t *testing.T) {
 	adminServer.SetUploadMaxSize(1 << 20)
 	h := &FileBrowserHandlers{adminServer: adminServer}
 
-	// 1.5MB fits the body allowance but exceeds the file total; 3MB trips the body cap.
-	for _, size := range []int{3 << 19, 3 << 20} {
+	// 1.5MB and two 600KB files fit the body allowance but exceed the file total;
+	// 3MB trips the body cap.
+	for _, sizes := range [][]int{{3 << 19}, {600 << 10, 600 << 10}, {3 << 20}} {
 		var body bytes.Buffer
 		mw := multipart.NewWriter(&body)
-		part, err := mw.CreateFormFile("files", "big.bin")
-		if err != nil {
-			t.Fatal(err)
+		for i, size := range sizes {
+			part, err := mw.CreateFormFile("files", fmt.Sprintf("big%d.bin", i))
+			if err != nil {
+				t.Fatal(err)
+			}
+			part.Write(make([]byte, size))
 		}
-		part.Write(make([]byte, size))
 		mw.WriteField("path", "/buckets/b")
 		mw.Close()
 
@@ -170,10 +174,10 @@ func TestUploadFile_RejectsOversizedUpload(t *testing.T) {
 		h.UploadFile(w, req)
 
 		if w.Code != http.StatusRequestEntityTooLarge {
-			t.Errorf("size %d: expected 413, got %d (body: %s)", size, w.Code, w.Body.String())
+			t.Errorf("sizes %v: expected 413, got %d (body: %s)", sizes, w.Code, w.Body.String())
 		}
 		if !strings.Contains(w.Body.String(), "1 MB limit") {
-			t.Errorf("size %d: expected the limit in the error, got %s", size, w.Body.String())
+			t.Errorf("sizes %v: expected the limit in the error, got %s", sizes, w.Body.String())
 		}
 	}
 }
