@@ -757,6 +757,17 @@ func (h *S3TablesHandler) handleDeleteNamespace(w http.ResponseWriter, r *http.R
 		if err := json.Unmarshal(data, &metadata); err != nil {
 			return fmt.Errorf("failed to unmarshal metadata: %w", err)
 		}
+		// Checked after the namespace read: a bucket created again holds only
+		// namespaces of its own, and the claim below is bound to this one.
+		if createdAt, bound := boundTableBucket(r.Context()); bound {
+			bucket, err := h.lookupEntry(r.Context(), client, bucketPath)
+			if err != nil {
+				return err
+			}
+			if !isTableBucketCreatedAt(createdAt)(bucket) {
+				return filer_pb.ErrNotFound
+			}
+		}
 
 		// Fetch bucket policy if it exists
 		policyData, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
@@ -802,11 +813,12 @@ func (h *S3TablesHandler) handleDeleteNamespace(w http.ResponseWriter, r *http.R
 	// A namespace whose create has not confirmed it is absent, and claiming it
 	// would replace the create's mark: a refused delete then lifts the claim and
 	// leaves the namespace looking confirmed before its create checked the bucket.
+	// One created again since it was authorized is absent too.
 	var claim string
 	var claimed map[string][]byte
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		var claimErr error
-		claim, claimed, claimErr = h.claimForDelete(r.Context(), client, namespacePath, isFinishedNamespaceEntry)
+		claim, claimed, claimErr = h.claimForDelete(r.Context(), client, namespacePath, isNamespaceCreatedAt(metadata.CreatedAt))
 		return claimErr
 	})
 	if err != nil {
