@@ -417,6 +417,40 @@ def test_index_arn_validation(vectors, index):
     assert vectors.get_index(**index)["index"]["indexArn"] == arn
 
 
+def test_resource_tags(vectors, vector_clients, index):
+    reader = vector_clients["reader"]
+    bucket_arn = vectors.get_vector_bucket(vectorBucketName=index["vectorBucketName"])["vectorBucket"]["vectorBucketArn"]
+    index_arn = vectors.get_index(**index)["index"]["indexArn"]
+    assert vectors.list_tags_for_resource(resourceArn=bucket_arn)["tags"] == {}
+    vectors.tag_resource(resourceArn=bucket_arn, tags={"team": "search", "env": "dev"})
+    vectors.tag_resource(resourceArn=index_arn, tags={"team": "ranking"})
+    assert vectors.list_tags_for_resource(resourceArn=bucket_arn)["tags"] == {"team": "search", "env": "dev"}
+    assert vectors.list_tags_for_resource(resourceArn=index_arn)["tags"] == {"team": "ranking"}
+    vectors.untag_resource(resourceArn=bucket_arn, tagKeys=["env", "absent"])
+    assert vectors.list_tags_for_resource(resourceArn=bucket_arn)["tags"] == {"team": "search"}
+    expect_error("ValidationException", vectors.tag_resource, resourceArn=bucket_arn,
+                 tags={f"k{i}": "v" for i in range(50)})
+    expect_error("NotFoundException", vectors.list_tags_for_resource, resourceArn=bucket_arn + "/index/missing")
+    expect_error("AccessDeniedException", reader.list_tags_for_resource, resourceArn=bucket_arn)
+    expect_error("AccessDeniedException", reader.tag_resource, resourceArn=index_arn, tags={"team": "other"})
+    assert vectors.list_tags_for_resource(resourceArn=index_arn)["tags"] == {"team": "ranking"}
+
+
+def test_create_with_tags(vectors):
+    bucket = "tagged-" + uuid.uuid4().hex[:16]
+    bucket_arn = vectors.create_vector_bucket(vectorBucketName=bucket, tags={"team": "search"})["vectorBucketArn"]
+    try:
+        assert vectors.list_tags_for_resource(resourceArn=bucket_arn)["tags"] == {"team": "search"}
+        index_arn = vectors.create_index(vectorBucketName=bucket, indexName=INDEX, dataType="float32", dimension=4,
+                                         distanceMetric="cosine", tags={"tier": "hot"})["indexArn"]
+        try:
+            assert vectors.list_tags_for_resource(resourceArn=index_arn)["tags"] == {"tier": "hot"}
+        finally:
+            vectors.delete_index(vectorBucketName=bucket, indexName=INDEX)
+    finally:
+        vectors.delete_vector_bucket(vectorBucketName=bucket)
+
+
 def test_invalid_credentials(cluster):
     client = boto3.client("s3vectors", endpoint_url=cluster["endpoint"], aws_access_key_id="unknown",
                           aws_secret_access_key="unknown", region_name="us-east-1")
@@ -458,3 +492,4 @@ def test_engine_without_credentials(open_cluster):
                                          {"key": "b", "data": {"float32": [0, 1]}}])
     hits = client.query_vectors(**index, queryVector={"float32": [1, 0]}, topK=1)["vectors"]
     assert [h["key"] for h in hits] == ["a"]
+
