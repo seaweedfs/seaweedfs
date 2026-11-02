@@ -225,6 +225,30 @@ def test_filter_arrays(vectors, index):
     assert matches({"$nin": [1, "2.5"]}) == ["flag", "scalar", "space"]
 
 
+def test_index_modes(vectors, index):
+    if not hasattr(vectors, "update_index_mode"):
+        pytest.skip("boto3 predates S3 Vectors index modes")
+    bucket = index["vectorBucketName"]
+    assert vectors.get_vector_bucket(vectorBucketName=bucket)["vectorBucket"]["defaultIndexMode"] == "ENHANCED"
+    assert vectors.get_index(**index)["index"]["indexMode"] == "ENHANCED"
+    vectors.put_vector_bucket_default_index_mode(vectorBucketName=bucket, defaultIndexMode="ENHANCED")
+    vectors.update_index_mode(**index, indexMode="ENHANCED")
+    # CLASSIC is only for buckets created before September 30, 2026.
+    expect_error("ValidationException", vectors.put_vector_bucket_default_index_mode,
+                 vectorBucketName=bucket, defaultIndexMode="CLASSIC")
+    expect_error("ValidationException", vectors.update_index_mode, **index, indexMode="CLASSIC")
+    expect_error("NotFoundException", vectors.update_index_mode, vectorBucketName=bucket,
+                 indexName="missing", indexMode="ENHANCED")
+
+    vectors.put_vectors(**index, vectors=[{"key": "a", "data": {"float32": [1, 0, 0, 0]}, "metadata": {"genre": "g1"}}])
+    query = {**index, "queryVector": {"float32": [1, 0, 0, 0]}, "topK": 1}
+    assert [v["key"] for v in vectors.query_vectors(**query, queryMode="ENHANCED")["vectors"]] == ["a"]
+    expect_error("ValidationException", vectors.query_vectors, **query, queryMode="CLASSIC")
+    genres = [f"g{i}" for i in range(101)]
+    assert [v["key"] for v in vectors.query_vectors(**query, filter={"genre": {"$in": genres[:100]}})["vectors"]] == ["a"]
+    expect_error("ValidationException", vectors.query_vectors, **query, filter={"genre": {"$in": genres}})
+
+
 def test_euclidean_distance(vectors, index):
     vectors.put_vectors(**index, vectors=[{"key": "p", "data": {"float32": [3, 4, 0, 0]}}])
     result = vectors.query_vectors(**index, queryVector={"float32": [0, 0, 0, 0]}, topK=1, returnDistance=True)

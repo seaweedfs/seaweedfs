@@ -54,7 +54,10 @@ test skips when none is found, and `waitForEngineDiscovery` polls a
 data-plane op until the gateway routes to the registered engine instead of
 503. The test then walks the full lifecycle: `CreateVectorBucket` →
 `CreateIndex` → `PutVectors` → `GetVectors` → `ListVectors` → filtered
-`QueryVectors` → `DeleteVectors` → `DeleteIndex` → `DeleteVectorBucket`.
+`QueryVectors` → index modes (`GetVectorBucket`/`GetIndex` report ENHANCED,
+`PutVectorBucketDefaultIndexMode`/`UpdateIndexMode` refuse CLASSIC on a new
+bucket, `queryMode` CLASSIC and a 101-value filter are refused) →
+`DeleteVectors` → `DeleteIndex` → `DeleteVectorBucket`.
 
 ## Harness
 

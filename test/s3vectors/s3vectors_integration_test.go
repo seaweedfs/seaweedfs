@@ -447,6 +447,56 @@ func TestVectorDataPlaneLifecycle(t *testing.T) {
 		t.Fatalf("filtered query returned %v, want a and c", hits["vectors"])
 	}
 
+	// Index modes: search already filters before ranking, so every index is
+	// ENHANCED and a CLASSIC query or an over-limit filter is refused.
+	bucket := c.want(t, "GetVectorBucket", map[string]interface{}{
+		"vectorBucketName": "vec-bucket",
+	}, http.StatusOK)
+	if mode := bucket["vectorBucket"].(map[string]interface{})["defaultIndexMode"]; mode != "ENHANCED" {
+		t.Fatalf("defaultIndexMode = %v, want ENHANCED", mode)
+	}
+	c.want(t, "PutVectorBucketDefaultIndexMode", map[string]interface{}{
+		"vectorBucketName": "vec-bucket", "defaultIndexMode": "ENHANCED",
+	}, http.StatusOK)
+	c.want(t, "PutVectorBucketDefaultIndexMode", map[string]interface{}{
+		"vectorBucketName": "vec-bucket", "defaultIndexMode": "CLASSIC",
+	}, http.StatusBadRequest)
+	index := c.want(t, "GetIndex", map[string]interface{}{
+		"vectorBucketName": "vec-bucket", "indexName": "idx",
+	}, http.StatusOK)
+	if mode := index["index"].(map[string]interface{})["indexMode"]; mode != "ENHANCED" {
+		t.Fatalf("indexMode = %v, want ENHANCED", mode)
+	}
+	c.want(t, "UpdateIndexMode", map[string]interface{}{
+		"vectorBucketName": "vec-bucket", "indexName": "idx", "indexMode": "ENHANCED",
+	}, http.StatusOK)
+	c.want(t, "UpdateIndexMode", map[string]interface{}{
+		"vectorBucketName": "vec-bucket", "indexName": "idx", "indexMode": "CLASSIC",
+	}, http.StatusBadRequest)
+	query := func(extra map[string]interface{}) map[string]interface{} {
+		q := map[string]interface{}{
+			"vectorBucketName": "vec-bucket", "indexName": "idx",
+			"queryVector": map[string]interface{}{"float32": []float64{1, 0, 0}},
+			"topK":        2,
+		}
+		for k, v := range extra {
+			q[k] = v
+		}
+		return q
+	}
+	colors := make([]string, 101)
+	for i := range colors {
+		colors[i] = fmt.Sprintf("c%d", i)
+	}
+	c.want(t, "QueryVectors", query(map[string]interface{}{"queryMode": "ENHANCED"}), http.StatusOK)
+	c.want(t, "QueryVectors", query(map[string]interface{}{"queryMode": "CLASSIC"}), http.StatusBadRequest)
+	c.want(t, "QueryVectors", query(map[string]interface{}{
+		"filter": map[string]interface{}{"color": map[string]interface{}{"$in": colors[:100]}},
+	}), http.StatusOK)
+	c.want(t, "QueryVectors", query(map[string]interface{}{
+		"filter": map[string]interface{}{"color": map[string]interface{}{"$in": colors}},
+	}), http.StatusBadRequest)
+
 	c.want(t, "DeleteVectors", map[string]interface{}{
 		"vectorBucketName": "vec-bucket", "indexName": "idx", "keys": []string{"b"},
 	}, http.StatusOK)
