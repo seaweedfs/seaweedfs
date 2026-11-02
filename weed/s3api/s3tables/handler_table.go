@@ -1980,6 +1980,10 @@ func (h *S3TablesHandler) authorizeUpdateTable(w http.ResponseWriter, r *http.Re
 		}
 		return nil, err
 	}
+	if otherTableBucket(r.Context(), bucketMetadata.CreatedAt) {
+		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, fmt.Sprintf("table bucket %s not found", bucketName))
+		return nil, filer_pb.ErrNotFound
+	}
 
 	// Authorization Check
 	tableARN := h.generateTableARN(metadata.OwnerAccountID, bucketName, namespaceName+"/"+tableName)

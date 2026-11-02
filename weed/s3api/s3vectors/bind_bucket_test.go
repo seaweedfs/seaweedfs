@@ -206,4 +206,21 @@ func TestIndexWritesKeepToAuthorizedBucket(t *testing.T) {
 			t.Fatal("DeleteIndex removed an index of the bucket that replaced the authorized one")
 		}
 	})
+	t.Run("update mode", func(t *testing.T) {
+		fs, s := newServer(t)
+		if w := createIndex(s); w.Code != http.StatusOK {
+			t.Fatalf("create index: %d %s", w.Code, w.Body.String())
+		}
+		before := string(fs.Get(indexDir, indexName).Extended[s3tables.ExtendedKeyMetadata])
+		withClassicCutoff(t, time.Now().Add(2*time.Hour))
+		replaceBucketAfterAuthorization(t, fs, s, "vec-bucket")
+		w := postJSONAs(t, "", s.handleUpdateIndexMode, &UpdateIndexModeRequest{VectorBucketName: "vec-bucket", IndexName: "idx", IndexMode: indexModeClassic})
+		fs.OnLookup = nil
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("update over a replaced bucket = %d %s, want 404", w.Code, w.Body.String())
+		}
+		if after := string(fs.Get(indexDir, indexName).Extended[s3tables.ExtendedKeyMetadata]); after != before {
+			t.Fatal("UpdateIndexMode rewrote an index of the bucket that replaced the authorized one")
+		}
+	})
 }
