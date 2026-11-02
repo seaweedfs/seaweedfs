@@ -348,7 +348,8 @@ func (h *FileBrowserHandlers) UploadFile(w http.ResponseWriter, r *http.Request)
 }
 
 // uploadFormOverhead allows for the multipart headers and the path field on
-// top of the file bytes an upload may carry.
+// top of the file bytes an upload may carry. Go's multipart parser accepts at
+// most 1000 parts, whose headers take about half of this.
 const uploadFormOverhead = 1 << 20
 
 func uploadTooLargeMessage(maxSize int64) string {
