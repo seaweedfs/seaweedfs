@@ -1,7 +1,8 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 use tonic::transport::Server;
-use weed_lance_worker::catalog::NamespaceClient;
+use tonic::transport::server::TcpIncoming;
+use weed_lance_worker::catalog::{NamespaceClient, SigningKey};
 use weed_lance_worker::dataset::FallbackOptions;
 use weed_vector_server::pb::vector::vector_service_server::VectorServiceServer;
 use weed_vector_server::read_cache::ReadCache;
@@ -10,15 +11,15 @@ use weed_vector_server::service::VectorServer;
 /// The VectorService the S3 gateway fans vector calls out to.
 #[derive(Parser)]
 struct Args {
-    /// Lance Namespace base URL, e.g. http://localhost:8888/lance.
+    /// Lance Namespace base URL: the S3 gateway's Lance port (-s3.port.lance).
     #[arg(
         long,
         env = "WEED_VECTOR_NAMESPACE",
-        default_value = "http://localhost:8888/lance"
+        default_value = "http://localhost:9101"
     )]
     namespace: String,
     /// gRPC listen address.
-    #[arg(long, env = "WEED_VECTOR_LISTEN", default_value = "127.0.0.1:8080")]
+    #[arg(long, env = "WEED_VECTOR_LISTEN", default_value = "127.0.0.1:8090")]
     listen: String,
     /// object_store option fallback for deployments that vend no credentials:
     /// key=value, repeatable.
@@ -31,6 +32,10 @@ struct Args {
     /// Memory for caching reads of write-once table files, in MiB; 0 disables.
     #[arg(long, env = "WEED_VECTOR_READ_CACHE_MB", default_value_t = 512)]
     read_cache_mb: u64,
+    /// The `jwt.filer_signing.key` of the cluster. The Lance namespace vends
+    /// credentials that write index data only to a caller holding it.
+    #[arg(long, env = "WEED_FILER_SIGNING_KEY")]
+    filer_signing_key: Option<String>,
 }
 
 fn parse_option(s: &str) -> Result<(String, String), String> {
@@ -100,6 +105,11 @@ fn advertised_addr(listen: &str, masters: &[String]) -> String {
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     let args = Args::parse_from(normalize_args(std::env::args().collect()));
+    // Bind before registering, so the master never lists an engine that is
+    // about to exit because its port is taken.
+    let incoming = TcpIncoming::bind(args.listen.parse()?)
+        .with_context(|| format!("listen on {}", args.listen))?
+        .with_nodelay(Some(true));
     if let Some(masters) = &args.masters {
         let masters: Vec<String> = masters.split(',').map(|s| s.trim().to_string()).collect();
         for master in &masters {
@@ -111,7 +121,10 @@ async fn main() -> Result<()> {
         ));
     }
     let fallback: FallbackOptions = args.storage_options.into_iter().collect();
-    let client = NamespaceClient::new(args.namespace.clone()).with_fallback(&fallback);
+    let signing_key = SigningKey::new(args.filer_signing_key);
+    let client = NamespaceClient::new(args.namespace.clone())
+        .with_fallback(&fallback)
+        .with_signing_key(signing_key.as_ref());
     let mut service = VectorServer::new(client, fallback);
     if args.read_cache_mb > 0 {
         service = service.with_read_cache(ReadCache::new(args.read_cache_mb << 20));
@@ -125,7 +138,7 @@ async fn main() -> Result<()> {
                 .max_decoding_message_size(1 << 30)
                 .max_encoding_message_size(1 << 30),
         )
-        .serve(args.listen.parse()?)
+        .serve_with_incoming(incoming)
         .await?;
     Ok(())
 }

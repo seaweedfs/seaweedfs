@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -277,12 +278,11 @@ func (s *Server) handleCreateVectorBucket(w http.ResponseWriter, r *http.Request
 	}
 	// No bucket exists yet, so check against the handler account as the
 	// catalog does for CreateTableBucket.
-	principal := s.tables.PrincipalFor(identityOf(r))
-	if !s3tables.CheckPermissionWithContext("s3vectors:CreateVectorBucket", principal, s.tables.PrincipalFor(""), "", "", s.tables.PolicyContext(r)) {
+	principal := s.tables.PrincipalFor(r)
+	if !s3tables.CheckPermissionWithContext("s3vectors:CreateVectorBucket", principal, s.tables.PrincipalFor(nil), "", "", s.tables.PolicyContext(r, "")) {
 		catalogErr(w, errVectorDenied)
 		return
 	}
-	// The caller's name still makes it the owner of the record.
 	var resp map[string]interface{}
 	err := s.internal.Execute(r.Context(), s.filerClient, "CreateTableBucket",
 		&s3tables.CreateTableBucketRequest{
@@ -360,8 +360,7 @@ func (s *Server) handleListVectorBuckets(w http.ResponseWriter, r *http.Request)
 		catalogErr(w, err)
 		return
 	}
-	principal := s.tables.PrincipalFor(identityOf(r))
-	pctx := s.tables.PolicyContext(r)
+	principal := s.tables.PrincipalFor(r)
 	// The catalog token continues the filtered page: ICEBERG buckets drop out
 	// of the listing, Lance and format-less legacy buckets stay.
 	out := &ListVectorBucketsResponse{NextToken: resp.ContinuationToken, VectorBuckets: []*VectorBucket{}}
@@ -376,6 +375,7 @@ func (s *Server) handleListVectorBuckets(w http.ResponseWriter, r *http.Request)
 			continue
 		}
 		arn := s.vectorBucketArn(b.Name)
+		pctx := s.tables.PolicyContext(r, b.Name)
 		if !s3tables.CheckPermissionWithContext("s3vectors:ListVectorBuckets", principal, owner, policy, arn, pctx) &&
 			!s3tables.CheckPermissionWithContext("s3vectors:GetVectorBucket", principal, owner, policy, arn, pctx) {
 			continue
@@ -753,9 +753,9 @@ var errVectorDenied = &s3tables.S3TablesError{Type: s3tables.ErrCodeAccessDenied
 // compare-and-swap, so a grant revoked between reads never authorizes the
 // pending write.
 func (s *Server) checkVectorPolicyDoc(r *http.Request, action, bucket, owner string, ext map[string][]byte) bool {
-	principal := s.tables.PrincipalFor(identityOf(r))
+	principal := s.tables.PrincipalFor(r)
 	return s3tables.CheckPermissionWithContext(action, principal, owner,
-		vectorPolicyFromExt(ext), s.vectorBucketArn(bucket), s.tables.PolicyContext(r))
+		vectorPolicyFromExt(ext), s.vectorBucketArn(bucket), s.tables.PolicyContext(r, bucket))
 }
 
 // authorizeVector grants the request's own vector operation — not a catalog
@@ -777,8 +777,8 @@ func (s *Server) authorizeVector(ctx context.Context, r *http.Request, action, b
 	if index != "" {
 		resourceARN = s.indexArn(bucket, index)
 	}
-	principal := s.tables.PrincipalFor(identityOf(r))
-	if !s3tables.CheckPermissionWithContext(action, principal, record.OwnerAccountID, policy, resourceARN, s.tables.PolicyContext(r)) {
+	principal := s.tables.PrincipalFor(r)
+	if !s3tables.CheckPermissionWithContext(action, principal, record.OwnerAccountID, policy, resourceARN, s.tables.PolicyContext(r, bucket)) {
 		return nil, &s3tables.S3TablesError{Type: s3tables.ErrCodeAccessDenied, Message: "access denied"}
 	}
 	if !isVectorBucket(record) {
@@ -1712,16 +1712,12 @@ func fieldClause(field string, cond interface{}) (string, error) {
 					return "", fmt.Errorf("$exists expects a boolean")
 				}
 			case "$eq", "$ne":
-				lit, err := sqlLiteral(operand)
-				if err != nil {
-					return "", err
-				}
-				match, err := fieldMatch(field, operand, "= "+lit)
+				match, err := equalMatch(field, operand)
 				if err != nil {
 					return "", err
 				}
 				if op == "$ne" {
-					match = "NOT COALESCE(" + match + ", false)"
+					match = "NOT " + match
 				}
 				parts = append(parts, match)
 			case "$in", "$nin":
@@ -1761,6 +1757,13 @@ func fieldClause(field string, cond interface{}) (string, error) {
 				for _, col := range cols {
 					groups = append(groups, fmt.Sprintf("COALESCE(%s in (%s), false)", col, strings.Join(members[col], ", ")))
 				}
+				for _, item := range list {
+					element, err := elementMatch(field, item)
+					if err != nil {
+						return "", err
+					}
+					groups = append(groups, element)
+				}
 				expr := "(" + strings.Join(groups, " OR ") + ")"
 				if op == "$nin" {
 					expr = "NOT " + expr
@@ -1789,12 +1792,39 @@ func fieldClause(field string, cond interface{}) (string, error) {
 		}
 		return strings.Join(parts, " AND "), nil
 	default:
-		lit, err := sqlLiteral(cond)
-		if err != nil {
-			return "", err
-		}
-		return fieldMatch(field, cond, "= "+lit)
+		return equalMatch(field, cond)
 	}
+}
+
+// equalMatch renders "field equals operand": the stored value itself or, as
+// AWS documents for $eq, any element of a stored array.
+func equalMatch(field string, operand interface{}) (string, error) {
+	lit, err := sqlLiteral(operand)
+	if err != nil {
+		return "", err
+	}
+	match, err := fieldMatch(field, operand, "= "+lit)
+	if err != nil {
+		return "", err
+	}
+	element, err := elementMatch(field, operand)
+	if err != nil {
+		return "", err
+	}
+	return "(COALESCE(" + match + ", false) OR " + element + ")", nil
+}
+
+// elementMatch renders "the array stored at field holds operand". The engine
+// compares the elements as typed JSON values, so 1 does not match "1".
+func elementMatch(field string, operand interface{}) (string, error) {
+	var b strings.Builder
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(operand); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("COALESCE(json_array_contains(`metadata`, '%s', '%s'), false)",
+		sqlEscape(existsPath(field)), sqlEscape(strings.TrimSuffix(b.String(), "\n"))), nil
 }
 
 // jsonbString renders s as the JSON text json_extract returns for a stored
@@ -1909,7 +1939,12 @@ func (s *Server) handleQueryVectors(w http.ResponseWriter, r *http.Request) {
 	for _, v := range resp.Vectors {
 		o := &QueryOutputVector{Key: v.Key}
 		if req.ReturnDistance {
-			o.Distance = &v.Distance
+			d := v.Distance
+			if metric == "euclidean" {
+				// Lance's L2 distance is the square of the Euclidean distance.
+				d = float32(math.Sqrt(math.Max(0, float64(d))))
+			}
+			o.Distance = &d
 		}
 		if req.ReturnMetadata {
 			o.Metadata = structToMap(v.Metadata)

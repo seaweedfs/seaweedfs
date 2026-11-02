@@ -9,14 +9,14 @@
 //! Matches Go's storage/volume.go, volume_loading.go, volume_read.go,
 //! volume_write.go, volume_super_block.go.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::ops::ControlFlow;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex, RwLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Condvar, LazyLock, Mutex, RwLock};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use tracing::{debug, error, info, warn};
 
@@ -1198,6 +1198,33 @@ impl RemoteDatFile {
             .backend
             .read_range_blocking(&self.key, offset, buf.len())
             .map_err(io::Error::other)?;
+        Self::fill(buf, offset, data)
+    }
+
+    /// `read_exact_at` that fails with `TimedOut` once `timeout` passes.
+    pub(crate) fn read_exact_at_within(
+        &self,
+        buf: &mut [u8],
+        offset: u64,
+        timeout: Duration,
+    ) -> io::Result<()> {
+        match self
+            .backend
+            .read_range_blocking_within(&self.key, offset, buf.len(), timeout)
+            .map_err(io::Error::other)?
+        {
+            Some(data) => Self::fill(buf, offset, data),
+            None => Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!(
+                    "remote read at offset {} got no answer within {:?}",
+                    offset, timeout
+                ),
+            )),
+        }
+    }
+
+    fn fill(buf: &mut [u8], offset: u64, data: Vec<u8>) -> io::Result<()> {
         if data.len() != buf.len() {
             return Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
@@ -1212,6 +1239,71 @@ impl RemoteDatFile {
         buf.copy_from_slice(&data);
         Ok(())
     }
+}
+
+/// A tiered volume loads without its superblock when the backend cannot serve
+/// it; once a read stalls, the backend's other volumes skip it for a while.
+/// Matches Go's remoteSuperBlockTimeout and remoteSuperBlockStallPeriod.
+const REMOTE_SUPER_BLOCK_TIMEOUT: Duration = Duration::from_secs(10);
+const REMOTE_SUPER_BLOCK_STALL_PERIOD: Duration = Duration::from_secs(60);
+static REMOTE_SUPER_BLOCK_STALLS: LazyLock<Mutex<HashMap<String, Instant>>> =
+    LazyLock::new(Default::default);
+
+fn read_super_block_bytes(
+    mut read: impl FnMut(&mut [u8], u64) -> Result<(), VolumeError>,
+) -> Result<Vec<u8>, VolumeError> {
+    let mut header = [0u8; SUPER_BLOCK_SIZE];
+    read(&mut header, 0)?;
+
+    let extra_size = u16::from_be_bytes([header[6], header[7]]);
+    let mut full_buf = vec![0u8; SUPER_BLOCK_SIZE + extra_size as usize];
+    full_buf[..SUPER_BLOCK_SIZE].copy_from_slice(&header);
+    if extra_size > 0 {
+        read(&mut full_buf[SUPER_BLOCK_SIZE..], SUPER_BLOCK_SIZE as u64)?;
+    }
+    Ok(full_buf)
+}
+
+fn read_remote_super_block(
+    storage_name: &str,
+    remote: &RemoteDatFile,
+    timeout: Duration,
+    stall_period: Duration,
+) -> Result<Vec<u8>, VolumeError> {
+    if let Some(until) = REMOTE_SUPER_BLOCK_STALLS.lock().unwrap().get(storage_name)
+        && Instant::now() < *until
+    {
+        return Err(VolumeError::Io(io::Error::other(format!(
+            "backend {} stalled on a super block read, skipped",
+            storage_name
+        ))));
+    }
+    let deadline = Instant::now() + timeout;
+    let result = read_super_block_bytes(|buf, offset| {
+        remote
+            .read_exact_at_within(
+                buf,
+                offset,
+                deadline.saturating_duration_since(Instant::now()),
+            )
+            .map_err(VolumeError::from)
+    });
+    match &result {
+        Ok(_) => {
+            REMOTE_SUPER_BLOCK_STALLS
+                .lock()
+                .unwrap()
+                .remove(storage_name);
+        }
+        Err(VolumeError::Io(e)) if e.kind() == io::ErrorKind::TimedOut => {
+            REMOTE_SUPER_BLOCK_STALLS
+                .lock()
+                .unwrap()
+                .insert(storage_name.to_string(), Instant::now() + stall_period);
+        }
+        Err(_) => {}
+    }
+    result
 }
 
 // ============================================================================
@@ -1684,6 +1776,7 @@ impl Volume {
             )));
         }
 
+        let mut remote_super_block_failed = false;
         if already_has_super_block {
             match self.read_super_block(io) {
                 Ok(()) => {
@@ -1700,6 +1793,12 @@ impl Volume {
                         error = %e,
                         "failed to read remote super block during load"
                     );
+                    remote_super_block_failed = true;
+                    let replication = self.volume_info.read().unwrap().replication.clone();
+                    if !replication.is_empty() {
+                        self.super_block.write().unwrap().replica_placement =
+                            ReplicaPlacement::from_string(&replication)?;
+                    }
                 }
                 Err(e) => return Err(e),
             }
@@ -1748,17 +1847,24 @@ impl Volume {
             // at the front of .idx. Best effort: a volume that cannot be
             // repaired is still servable for everything the surviving rows
             // index.
-            match self.repair_idx_head_tombstones(io) {
-                Ok(0) => {}
-                Ok(restored) => info!(
+            if remote_super_block_failed {
+                debug!(
                     volume_id = self.id.0,
-                    restored, "recovered overwritten .idx rows from .dat"
-                ),
-                Err(e) => warn!(
-                    volume_id = self.id.0,
-                    error = %e,
-                    "recover overwritten .idx rows"
-                ),
+                    "remote backend unavailable, not recovering overwritten .idx rows on this load"
+                );
+            } else {
+                match self.repair_idx_head_tombstones(io) {
+                    Ok(0) => {}
+                    Ok(restored) => info!(
+                        volume_id = self.id.0,
+                        restored, "recovered overwritten .idx rows from .dat"
+                    ),
+                    Err(e) => warn!(
+                        volume_id = self.id.0,
+                        error = %e,
+                        "recover overwritten .idx rows"
+                    ),
+                }
             }
 
             // The permission bits still allow writing on a read-only mount;
@@ -2220,21 +2326,15 @@ impl Volume {
     // ---- SuperBlock I/O ----
 
     fn read_super_block(&self, io: &VolumeIo) -> Result<(), VolumeError> {
-        let mut header = [0u8; SUPER_BLOCK_SIZE];
-        self.read_exact_at_backend(io, &mut header, 0)?;
-
-        let extra_size = u16::from_be_bytes([header[6], header[7]]);
-        let total_size = SUPER_BLOCK_SIZE + extra_size as usize;
-
-        let mut full_buf = vec![0u8; total_size];
-        full_buf[..SUPER_BLOCK_SIZE].copy_from_slice(&header);
-        if extra_size > 0 {
-            self.read_exact_at_backend(
-                io,
-                &mut full_buf[SUPER_BLOCK_SIZE..],
-                SUPER_BLOCK_SIZE as u64,
-            )?;
-        }
+        let full_buf = match io.remote_dat_file.as_ref() {
+            Some(remote) if self.has_remote_file() => read_remote_super_block(
+                &self.remote_storage_name_key().0,
+                remote,
+                REMOTE_SUPER_BLOCK_TIMEOUT,
+                REMOTE_SUPER_BLOCK_STALL_PERIOD,
+            )?,
+            _ => read_super_block_bytes(|buf, offset| self.read_exact_at_backend(io, buf, offset))?,
+        };
 
         *self.super_block.write().unwrap() = SuperBlock::from_bytes(&full_buf)?;
 
@@ -11514,6 +11614,254 @@ mod tests {
             &VolumeSpec::default(),
         );
         assert!(result.is_err(), "unopenable .dat must fail load");
+    }
+
+    fn silent_tier_backend() -> (
+        std::net::TcpListener,
+        Arc<crate::remote_storage::s3_tier::S3TierBackend>,
+    ) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let backend = crate::remote_storage::s3_tier::S3TierBackend::new(
+            &crate::remote_storage::s3_tier::S3TierConfig {
+                access_key: "access".to_string(),
+                secret_key: "secret".to_string(),
+                region: "us-east-1".to_string(),
+                bucket: "bucket-a".to_string(),
+                endpoint: format!("http://{}", listener.local_addr().unwrap()),
+                storage_class: "STANDARD".to_string(),
+                force_path_style: true,
+            },
+        );
+        (listener, Arc::new(backend))
+    }
+
+    #[test]
+    fn remote_super_block_read_gives_up_on_a_silent_backend_and_skips_it() {
+        let name = "s3.super_block_stall_test";
+        let (_listener, backend) = silent_tier_backend();
+        let silent = RemoteDatFile {
+            backend,
+            key: "remote-key".to_string(),
+            file_size: 1024,
+            modified_time: 0,
+        };
+
+        let start = Instant::now();
+        let err = read_remote_super_block(
+            name,
+            &silent,
+            Duration::from_millis(200),
+            Duration::from_secs(3600),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, VolumeError::Io(e) if e.kind() == io::ErrorKind::TimedOut),
+            "{err:?}"
+        );
+        assert!(start.elapsed() < Duration::from_secs(5));
+
+        let start = Instant::now();
+        assert!(
+            read_remote_super_block(
+                name,
+                &silent,
+                Duration::from_secs(30),
+                Duration::from_secs(3600)
+            )
+            .is_err()
+        );
+        assert!(
+            start.elapsed() < Duration::from_secs(1),
+            "a stalled backend must not be asked again within the stall period"
+        );
+
+        let sb = SuperBlock {
+            version: Version::current(),
+            ..SuperBlock::default()
+        };
+        let (endpoint, shutdown_tx) = spawn_fake_s3_server(sb.to_bytes());
+        let answering = RemoteDatFile {
+            backend: Arc::new(crate::remote_storage::s3_tier::S3TierBackend::new(
+                &crate::remote_storage::s3_tier::S3TierConfig {
+                    access_key: "access".to_string(),
+                    secret_key: "secret".to_string(),
+                    region: "us-east-1".to_string(),
+                    bucket: "bucket-a".to_string(),
+                    endpoint,
+                    storage_class: "STANDARD".to_string(),
+                    force_path_style: true,
+                },
+            )),
+            key: "remote-key".to_string(),
+            file_size: SUPER_BLOCK_SIZE as u64,
+            modified_time: 0,
+        };
+        REMOTE_SUPER_BLOCK_STALLS
+            .lock()
+            .unwrap()
+            .insert(name.to_string(), Instant::now());
+        let bytes = read_remote_super_block(
+            name,
+            &answering,
+            Duration::from_secs(10),
+            Duration::from_secs(3600),
+        )
+        .unwrap();
+        assert_eq!(
+            SuperBlock::from_bytes(&bytes).unwrap().version,
+            Version::current()
+        );
+        assert!(
+            !REMOTE_SUPER_BLOCK_STALLS.lock().unwrap().contains_key(name),
+            "a successful read clears the stall"
+        );
+        let _ = shutdown_tx.send(());
+    }
+
+    #[test]
+    fn remote_volume_loads_without_waiting_on_a_stalled_backend() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let dat_len = {
+            let v = make_test_volume(dir);
+            v.dat_file_size().unwrap()
+        };
+        std::fs::remove_file(format!("{}/1.dat", dir)).unwrap();
+
+        let (_listener, backend) = silent_tier_backend();
+        let name = "s3.load_stall_test";
+        crate::remote_storage::s3_tier::global_s3_tier_registry()
+            .write()
+            .unwrap()
+            .register(name.to_string(), Arc::try_unwrap(backend).ok().unwrap());
+        REMOTE_SUPER_BLOCK_STALLS
+            .lock()
+            .unwrap()
+            .insert(name.to_string(), Instant::now() + Duration::from_secs(3600));
+
+        let vif = VifVolumeInfo {
+            files: vec![VifRemoteFile {
+                backend_type: "s3".to_string(),
+                backend_id: "load_stall_test".to_string(),
+                key: "remote-key".to_string(),
+                offset: 0,
+                file_size: dat_len,
+                modified_time: 123,
+                extension: ".dat".to_string(),
+            }],
+            version: Version::current().0 as u32,
+            replication: "001".to_string(),
+            ..VifVolumeInfo::default()
+        };
+        std::fs::write(
+            format!("{}/1.vif", dir),
+            serde_json::to_string_pretty(&vif).unwrap(),
+        )
+        .unwrap();
+
+        let start = Instant::now();
+        let v = Volume::new(
+            dir,
+            dir,
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            &VolumeSpec::default(),
+        )
+        .unwrap();
+        assert!(start.elapsed() < Duration::from_secs(5));
+        assert!(v.has_remote_file());
+        assert_eq!(v.version(), Version::current());
+        assert_eq!(
+            v.super_block.read().unwrap().replica_placement,
+            ReplicaPlacement::from_string("001").unwrap()
+        );
+
+        crate::remote_storage::s3_tier::global_s3_tier_registry()
+            .write()
+            .unwrap()
+            .remove(name);
+        REMOTE_SUPER_BLOCK_STALLS.lock().unwrap().remove(name);
+    }
+
+    #[test]
+    fn remote_volume_load_skips_idx_repair_on_a_stalled_backend() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let dat_len = {
+            let v = make_test_volume(dir);
+            for i in 1..=3u64 {
+                let mut n = Needle {
+                    id: NeedleId(i),
+                    cookie: Cookie(0x1234),
+                    data: format!("needle-{i}").into_bytes(),
+                    data_size: format!("needle-{i}").len() as u32,
+                    ..Needle::default()
+                };
+                v.write_needle(&mut n, true, false).unwrap();
+            }
+            v.dat_file_size().unwrap()
+        };
+        std::fs::remove_file(format!("{}/1.dat", dir)).unwrap();
+        let idx_path = format!("{}/1.idx", dir);
+        crate::storage::volume_idx_repair::tests::clobber_idx_head(&idx_path, &[4, 5]);
+        let idx_before = std::fs::read(&idx_path).unwrap();
+
+        let (_listener, backend) = silent_tier_backend();
+        let name = "s3.idx_repair_stall_test";
+        crate::remote_storage::s3_tier::global_s3_tier_registry()
+            .write()
+            .unwrap()
+            .register(name.to_string(), Arc::try_unwrap(backend).ok().unwrap());
+        REMOTE_SUPER_BLOCK_STALLS
+            .lock()
+            .unwrap()
+            .insert(name.to_string(), Instant::now() + Duration::from_secs(3600));
+
+        let vif = VifVolumeInfo {
+            files: vec![VifRemoteFile {
+                backend_type: "s3".to_string(),
+                backend_id: "idx_repair_stall_test".to_string(),
+                key: "remote-key".to_string(),
+                offset: 0,
+                file_size: dat_len,
+                modified_time: 123,
+                extension: ".dat".to_string(),
+            }],
+            version: Version::current().0 as u32,
+            ..VifVolumeInfo::default()
+        };
+        std::fs::write(
+            format!("{}/1.vif", dir),
+            serde_json::to_string_pretty(&vif).unwrap(),
+        )
+        .unwrap();
+
+        let start = Instant::now();
+        let v = Volume::new(
+            dir,
+            dir,
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            &VolumeSpec::default(),
+        )
+        .unwrap();
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "the load waited on the stalled backend"
+        );
+        assert!(v.has_remote_file());
+        drop(v);
+        assert_eq!(
+            std::fs::read(&idx_path).unwrap(),
+            idx_before,
+            "the repair ran against an unreachable backend"
+        );
+
+        crate::remote_storage::s3_tier::global_s3_tier_registry()
+            .write()
+            .unwrap()
+            .remove(name);
+        REMOTE_SUPER_BLOCK_STALLS.lock().unwrap().remove(name);
     }
 
     #[test]

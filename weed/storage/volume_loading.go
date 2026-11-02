@@ -232,6 +232,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		return datFileLoadError(v.FileName(".dat"), err)
 	}
 
+	var remoteSuperBlockErr error
 	if alreadyHasSuperBlock {
 		err = v.readSuperBlock()
 		if err == nil {
@@ -244,6 +245,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		if v.HasRemoteFile() {
 			// maybe temporary network problem
 			logRemoteSuperBlockErr(v.Id, err)
+			remoteSuperBlockErr = err
 			err = nil
 		}
 	} else {
@@ -292,7 +294,9 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		// Recover rows that deletes on a tiered read-only volume overwrote at
 		// the front of .idx. Best effort: a volume that cannot be repaired is
 		// still servable for everything the surviving rows index.
-		if restored, repairErr := v.repairIdxHeadTombstones(); repairErr != nil {
+		if remoteSuperBlockErr != nil {
+			glog.V(1).Infof("volume %d: remote backend unavailable, not recovering overwritten %s rows on this load", v.Id, v.FileName(".idx"))
+		} else if restored, repairErr := v.repairIdxHeadTombstones(); repairErr != nil {
 			glog.Warningf("volume %d: recover overwritten %s rows: %v", v.Id, v.FileName(".idx"), repairErr)
 		} else if restored > 0 {
 			glog.V(0).Infof("volume %d: recovered %d overwritten %s rows from %s", v.Id, restored, v.FileName(".idx"), v.FileName(".dat"))

@@ -65,21 +65,38 @@ pub async fn open_with(
     })
 }
 
-/// The namespace vends object_store's own option names, so they pass straight
-/// through. What it vends always wins: the fallback exists because a deployment
-/// without STS vends no credentials at all, and then the worker has no other way
-/// to reach the data.
+/// The object_store options for a table. The namespace vends object_store's own
+/// option names, so they pass straight through. What it vends always wins: the
+/// fallback exists because a deployment without STS vends no credentials at
+/// all, and then the worker has no other way to reach the data.
+pub fn table_options(
+    description: &TableDescription,
+    fallback: &FallbackOptions,
+) -> HashMap<String, String> {
+    let mut options: HashMap<String, String> = fallback.clone();
+    options.extend(description.storage_options.clone());
+    // A store that takes unsigned requests needs no credentials, but without
+    // any lance builds the AWS default chain, and that probes instance
+    // metadata on every open.
+    if options
+        .get("aws_skip_signature")
+        .is_some_and(|v| v == "true")
+    {
+        options.entry("aws_access_key_id".into()).or_default();
+        options.entry("aws_secret_access_key".into()).or_default();
+    }
+    options
+}
+
 async fn open_at(
     description: &TableDescription,
     fallback: &FallbackOptions,
     wrapper: Option<Arc<dyn WrappingObjectStore>>,
 ) -> Result<Dataset> {
-    let mut options: HashMap<String, String> = fallback.clone();
-    options.extend(description.storage_options.clone());
     DatasetBuilder::from_uri(&description.location)
         .with_store_params(ObjectStoreParams {
             storage_options_accessor: Some(Arc::new(StorageOptionsAccessor::with_static_options(
-                options,
+                table_options(description, fallback),
             ))),
             object_store_wrapper: wrapper,
             ..Default::default()
@@ -102,14 +119,12 @@ pub async fn drop(
         Err(err) => return Err(err),
     };
     check_drop_location(id, &description.location)?;
-    let mut options: HashMap<String, String> = fallback.clone();
-    options.extend(description.storage_options.clone());
     let (store, path) = ObjectStore::from_uri_and_params(
         Arc::new(ObjectStoreRegistry::default()),
         &description.location,
         &ObjectStoreParams {
             storage_options_accessor: Some(Arc::new(StorageOptionsAccessor::with_static_options(
-                options,
+                table_options(&description, fallback),
             ))),
             ..Default::default()
         },
@@ -203,10 +218,43 @@ fn schema_json(dataset: &Dataset) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{check_drop_location, table_location};
+    use super::{FallbackOptions, check_drop_location, table_location, table_options};
+    use crate::catalog::TableDescription;
 
     fn id(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|part| part.to_string()).collect()
+    }
+
+    fn options(pairs: &[(&str, &str)]) -> FallbackOptions {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn table_options_keep_an_unsigned_store_off_the_aws_default_chain() {
+        let described = |vended: &[(&str, &str)]| TableDescription {
+            location: "s3://bkt/vector/x".into(),
+            storage_options: options(vended),
+            managed_versioning: false,
+        };
+        let unsigned = described(&[("aws_skip_signature", "true")]);
+
+        let got = table_options(&unsigned, &FallbackOptions::new());
+        assert_eq!(got.get("aws_access_key_id").map(String::as_str), Some(""));
+        assert_eq!(
+            got.get("aws_secret_access_key").map(String::as_str),
+            Some("")
+        );
+
+        let fallback = options(&[("aws_access_key_id", "k"), ("aws_secret_access_key", "s")]);
+        let got = table_options(&unsigned, &fallback);
+        assert_eq!(got.get("aws_access_key_id").map(String::as_str), Some("k"));
+
+        let signed = described(&[("aws_endpoint", "http://s3:8333")]);
+        let got = table_options(&signed, &FallbackOptions::new());
+        assert!(!got.contains_key("aws_access_key_id"), "{got:?}");
     }
 
     #[test]

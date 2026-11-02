@@ -6,6 +6,7 @@ import time
 import uuid
 
 import boto3
+from botocore.config import Config
 from botocore.exceptions import ClientError
 import pytest
 
@@ -59,7 +60,7 @@ def test_vector_lifecycle(vectors):
     assert [h["key"] for h in hits] == ["a", "c"]
     distances = {h["key"]: h["distance"] for h in hits}
     assert distances["a"] == pytest.approx(0.0, abs=1e-6)
-    assert distances["c"] == pytest.approx(0.02, abs=1e-4)
+    assert distances["c"] == pytest.approx(0.02 ** 0.5, abs=1e-4)
     assert all(h["metadata"]["color"] == "red" for h in hits)
 
     vectors.delete_vectors(vectorBucketName=BUCKET, indexName=INDEX, keys=["b"])
@@ -203,6 +204,32 @@ def test_filter_types(vectors, index):
         hits = vectors.query_vectors(**index, queryVector={"float32": [1, 0, 0, 0]}, topK=4,
                                      filter={"value": {op: members}})["vectors"]
         assert sorted(hit["key"] for hit in hits) == ["0", "3"]
+
+
+def test_filter_arrays(vectors, index):
+    rows = {"space": ["space", "classic"], "nums": [1, 2.5], "strs": ["1", "2.5"], "flag": [True], "scalar": "space"}
+    vectors.put_vectors(**index, vectors=[{"key": key, "data": {"float32": [1, 0, 0, 0]}, "metadata": {"tags": tags}}
+                                         for key, tags in rows.items()])
+
+    def matches(condition):
+        hits = vectors.query_vectors(**index, queryVector={"float32": [1, 0, 0, 0]}, topK=10,
+                                     filter={"tags": condition})["vectors"]
+        return sorted(hit["key"] for hit in hits)
+
+    assert matches("space") == ["scalar", "space"]
+    assert matches({"$eq": 1}) == ["nums"]
+    assert matches({"$eq": "1"}) == ["strs"]
+    assert matches({"$eq": True}) == ["flag"]
+    assert matches({"$in": ["classic", 2.5]}) == ["nums", "space"]
+    assert matches({"$ne": "space"}) == ["flag", "nums", "strs"]
+    assert matches({"$nin": [1, "2.5"]}) == ["flag", "scalar", "space"]
+
+
+def test_euclidean_distance(vectors, index):
+    vectors.put_vectors(**index, vectors=[{"key": "p", "data": {"float32": [3, 4, 0, 0]}}])
+    result = vectors.query_vectors(**index, queryVector={"float32": [0, 0, 0, 0]}, topK=1, returnDistance=True)
+    assert result["distanceMetric"] == "euclidean"
+    assert result["vectors"][0]["distance"] == pytest.approx(5.0)
 
 
 def test_cosine_metric(vectors):
@@ -417,3 +444,17 @@ def test_query_without_writer(vectors, index, cluster):
                 raise
             time.sleep(0.2)
     assert [v["key"] for v in result["vectors"]] == ["survivor"]
+
+
+def test_engine_without_credentials(open_cluster):
+    """With no S3 identities, an engine given no credentials still serves an index."""
+    client = boto3.client("s3vectors", endpoint_url=open_cluster["endpoint"], aws_access_key_id="any",
+                          aws_secret_access_key="any", region_name="us-east-1",
+                          config=Config(connect_timeout=3, read_timeout=20, retries={"max_attempts": 0}))
+    index = {"vectorBucketName": BUCKET, "indexName": INDEX}
+    client.create_vector_bucket(vectorBucketName=BUCKET)
+    client.create_index(**index, dataType="float32", dimension=2, distanceMetric="cosine")
+    client.put_vectors(**index, vectors=[{"key": "a", "data": {"float32": [1, 0]}},
+                                         {"key": "b", "data": {"float32": [0, 1]}}])
+    hits = client.query_vectors(**index, queryVector={"float32": [1, 0]}, topK=1)["vectors"]
+    assert [h["key"] for h in hits] == ["a"]

@@ -9,7 +9,7 @@
 #   curl -fsSL ... | bash -s -- --version 4.34 --dir /usr/local/bin
 #
 # Options:
-#   --component COMP   Which binary to install: weed, volume-rust, worker-rust, all (default: weed)
+#   --component COMP   Which binary to install: weed, volume-rust, worker-rust, vector, all (default: weed)
 #   --version VER      Release version tag (default: latest)
 #   --large-disk       Use large disk variant (5-byte offset, 8TB max volume)
 #   --dir DIR          Installation directory (default: /usr/local/bin)
@@ -23,6 +23,7 @@ VERSION=""
 LARGE_DISK=false
 INSTALL_DIR="/usr/local/bin"
 WORKER_INSTALLED=false
+VECTOR_INSTALLED=false
 
 # Colors (if terminal supports them)
 if [ -t 1 ]; then
@@ -156,6 +157,12 @@ worker_asset_name() {
     echo "weed-worker_${os}_${arch}.tar.gz"
 }
 
+# The vector engine behind the S3 Vectors API, built like the worker.
+vector_asset_name() {
+    local os="$1" arch="$2"
+    echo "weed-vector_${os}_${arch}.tar.gz"
+}
+
 # Install a single component
 install_component() {
     local component="$1" os="$2" arch="$3"
@@ -264,8 +271,38 @@ install_component() {
             ok "Installed weed-worker to ${INSTALL_DIR}/weed-worker"
             ;;
 
+        vector)
+            # Published for linux amd64/arm64 only, like the worker.
+            case "$os" in
+                linux) ;;
+                *) error "The vector engine is not available for ${os}. Supported: linux" ;;
+            esac
+            case "$arch" in
+                amd64|arm64) ;;
+                *) error "The vector engine is not available for ${arch}. Supported: amd64, arm64" ;;
+            esac
+
+            asset_name="$(vector_asset_name "$os" "$arch")"
+            download_url="https://github.com/${REPO}/releases/download/${VERSION}/${asset_name}"
+            download "$download_url" "${tmpdir}/${asset_name}"
+
+            info "Extracting ${asset_name}..."
+            tar xzf "${tmpdir}/${asset_name}" -C "$tmpdir"
+
+            local vector_bin
+            vector_bin="$(find "$tmpdir" -name 'weed-vector' -type f | head -1)"
+            if [ -z "$vector_bin" ]; then
+                error "Could not find weed-vector binary in archive"
+            fi
+
+            chmod +x "$vector_bin"
+            install_binary "$vector_bin" "weed-vector"
+            VECTOR_INSTALLED=true
+            ok "Installed weed-vector to ${INSTALL_DIR}/weed-vector"
+            ;;
+
         *)
-            error "Unknown component: ${component}. Use: weed, volume-rust, worker-rust, all"
+            error "Unknown component: ${component}. Use: weed, volume-rust, worker-rust, vector, all"
             ;;
     esac
 
@@ -327,6 +364,13 @@ main() {
             else
                 install_component "worker-rust" "$os" "$arch"
             fi
+            if [ "$os" != "linux" ] || { [ "$arch" != "amd64" ] && [ "$arch" != "arm64" ]; }; then
+                warn "Skipping the vector engine: no build for ${os}/${arch}"
+            elif ! asset_exists "https://github.com/${REPO}/releases/download/${VERSION}/$(vector_asset_name "$os" "$arch")"; then
+                warn "Skipping the vector engine: ${VERSION} does not carry one"
+            else
+                install_component "vector" "$os" "$arch"
+            fi
             ;;
         *)
             install_component "$COMPONENT" "$os" "$arch"
@@ -344,6 +388,9 @@ main() {
     if [ "$WORKER_INSTALLED" = true ]; then
         info "  weed-worker:     ${INSTALL_DIR}/weed-worker"
     fi
+    if [ "$VECTOR_INSTALLED" = true ]; then
+        info "  weed-vector:     ${INSTALL_DIR}/weed-vector"
+    fi
     echo ""
     info "Quick start:"
     info "  weed master                          # Start master server"
@@ -351,6 +398,9 @@ main() {
     info "  weed-volume -mserver localhost:9333 # Start Rust volume server"
     if [ "$WORKER_INSTALLED" = true ]; then
         info "  weed-worker --admin localhost:12535  # Start the Rust maintenance worker"
+    fi
+    if [ "$VECTOR_INSTALLED" = true ]; then
+        info "  weed-vector --help                   # The vector engine for S3 vector buckets"
     fi
 }
 

@@ -188,8 +188,9 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 	tableARN := h.generateTableARN(metadata.OwnerAccountID, bucketName, namespaceName+"/"+tableName)
 
 	resp := &CreateTableResponse{
-		TableARN:     tableARN,
-		VersionToken: versionToken,
+		TableARN:         tableARN,
+		VersionToken:     versionToken,
+		MetadataLocation: metadata.MetadataLocation,
 	}
 
 	h.writeJSON(w, http.StatusOK, resp)

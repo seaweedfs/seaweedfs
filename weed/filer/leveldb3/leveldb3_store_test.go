@@ -3,6 +3,8 @@ package leveldb
 import (
 	"context"
 	"math"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -205,5 +207,46 @@ func TestListDirectoryPrefixedEntries_StartBelowPrefix(t *testing.T) {
 	}
 	if len(names) != 1 || names[0] != "item-b.versions" {
 		t.Fatalf("want [item-b.versions], got %v", names)
+	}
+}
+
+func TestBucketEventsStayInsideStoreDir(t *testing.T) {
+	parent := t.TempDir()
+	dir := filepath.Join(parent, "store")
+	store := &LevelDB3Store{}
+	if err := store.initialize(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer store.Shutdown()
+
+	sentinel := filepath.Join(parent, "keep")
+	if err := os.WriteFile(sentinel, []byte("keep"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// Checked after each create, before the matching delete could remove the
+	// evidence of a db opened in the wrong place.
+	assertNothingEscaped := func(bucket string) {
+		t.Helper()
+		for _, p := range []string{filepath.Join(parent, "outside"), filepath.Join(parent, "CURRENT"), filepath.Join(dir, "x", "y")} {
+			if _, err := os.Stat(p); !os.IsNotExist(err) {
+				t.Fatalf("bucket %q event created %s: %v", bucket, p, err)
+			}
+		}
+	}
+	store.OnBucketCreation("x")
+	for _, bucket := range []string{"..", ".", "../outside", "", DEFAULT, "x/../" + DEFAULT, "x/y"} {
+		store.OnBucketCreation(bucket)
+		assertNothingEscaped(bucket)
+		store.OnBucketDeletion(bucket)
+	}
+	if _, err := os.Stat(sentinel); err != nil {
+		t.Fatalf("bucket events removed %s: %v", sentinel, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, DEFAULT)); err != nil {
+		t.Fatalf("default db folder missing: %v", err)
+	}
+	ctx := context.Background()
+	if err := store.InsertEntry(ctx, &filer.Entry{FullPath: "/a/b"}); err != nil {
+		t.Fatalf("default db unusable after bucket events: %v", err)
 	}
 }

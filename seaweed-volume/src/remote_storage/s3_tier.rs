@@ -5,20 +5,152 @@
 
 use std::collections::HashMap;
 use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, OnceLock, RwLock};
+use std::task::{Context, Poll};
+use std::time::Duration;
 
 use aws_sdk_s3::Client;
 use aws_sdk_s3::config::http::HttpResponse;
+use aws_sdk_s3::config::timeout::TimeoutConfig;
 use aws_sdk_s3::config::{BehaviorVersion, Credentials, Region};
 use aws_sdk_s3::error::{DisplayErrorContext, SdkError};
 use aws_sdk_s3::operation::get_object::GetObjectError;
 use aws_sdk_s3::operation::head_object::HeadObjectError;
+use aws_sdk_s3::operation::upload_part::UploadPartOutput;
+use aws_sdk_s3::operation::upload_part::builders::UploadPartFluentBuilder;
+use aws_sdk_s3::primitives::{ByteStream, SdkBody};
 use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart};
+use bytes::Bytes;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
-use tokio::sync::Semaphore;
+use tokio::sync::{Semaphore, watch};
 
 /// Concurrency limit for multipart upload/download (matches Go's s3manager).
 const CONCURRENCY: usize = 5;
+
+/// A tier endpoint that drops packets or accepts connections without answering
+/// must not hold a read, or a volume server's startup, for minutes per request.
+/// Matches Go's s3ConnectTimeout and s3ReadTimeout. The SDK's stalled-stream
+/// protection already fails a body that stops arriving.
+const S3_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const S3_READ_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// The SDK's read timeout runs from the start of the request, so on
+/// upload_part it would also cap sending the part body. send_part bounds the
+/// response wait instead, from when the body is written, like Go's
+/// ResponseHeaderTimeout.
+fn upload_part_config() -> aws_sdk_s3::config::Builder {
+    aws_sdk_s3::config::Builder::default().timeout_config(
+        TimeoutConfig::builder()
+            .connect_timeout(S3_CONNECT_TIMEOUT)
+            .disable_read_timeout()
+            .build(),
+    )
+}
+
+/// A part goes to the connection in chunks this size, so its last chunk is
+/// taken only once nearly all of the part has been written.
+const UPLOAD_CHUNK_SIZE: usize = 64 * 1024;
+
+/// The latest attempt to send a part, and whether its body has been sent.
+type PartSent = Arc<watch::Sender<(u64, bool)>>;
+
+struct PartBody {
+    rest: Bytes,
+    attempt: u64,
+    sent: PartSent,
+}
+
+impl http_body::Body for PartBody {
+    type Data = Bytes;
+    type Error = std::convert::Infallible;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<http_body::Frame<Bytes>, Self::Error>>> {
+        if self.rest.is_empty() {
+            return Poll::Ready(None);
+        }
+        let n = self.rest.len().min(UPLOAD_CHUNK_SIZE);
+        let chunk = self.rest.split_to(n);
+        if self.rest.is_empty() {
+            let attempt = self.attempt;
+            self.sent.send_if_modified(|state| {
+                let latest = state.0 == attempt;
+                state.1 |= latest;
+                latest
+            });
+        }
+        Poll::Ready(Some(Ok(http_body::Frame::data(chunk))))
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.rest.is_empty()
+    }
+
+    fn size_hint(&self) -> http_body::SizeHint {
+        http_body::SizeHint::with_exact(self.rest.len() as u64)
+    }
+}
+
+/// Sends one multipart part, giving up once `response_timeout` passes after
+/// the whole part was handed to the connection without a response. A retry
+/// rebuilds the body and restarts that clock. The body keeps its in-memory
+/// contents, so signing and the checksum header are unchanged.
+async fn send_part(
+    request: UploadPartFluentBuilder,
+    data: Bytes,
+    response_timeout: Duration,
+) -> Result<UploadPartOutput, String> {
+    let sent: PartSent = Arc::new(watch::channel((0, false)).0);
+    let body = {
+        let sent = sent.clone();
+        SdkBody::from(data.clone()).map_preserve_contents(move |_| {
+            let mut attempt = 0;
+            sent.send_modify(|state| {
+                *state = (state.0 + 1, data.is_empty());
+                attempt = state.0;
+            });
+            SdkBody::from_body_1_x(PartBody {
+                rest: data.clone(),
+                attempt,
+                sent: sent.clone(),
+            })
+        })
+    };
+    tokio::select! {
+        resp = request
+            .body(ByteStream::new(body))
+            .customize()
+            .config_override(upload_part_config())
+            .send() => resp.map_err(|e| DisplayErrorContext(&e).to_string()),
+        () = wait_unanswered(sent, response_timeout) => Err(format!(
+            "no response within {response_timeout:?} after sending the part"
+        )),
+    }
+}
+
+/// Completes once an attempt's body has been sent and `response_timeout`
+/// passes before a later attempt starts.
+async fn wait_unanswered(sent: PartSent, response_timeout: Duration) {
+    let mut state = sent.subscribe();
+    loop {
+        let attempt = state
+            .wait_for(|&(_, done)| done)
+            .await
+            .map_or(0, |state| state.0);
+        if tokio::time::timeout(
+            response_timeout,
+            state.wait_for(|&(latest, _)| latest != attempt),
+        )
+        .await
+        .is_err()
+        {
+            return;
+        }
+    }
+}
 
 /// A tier transfer failure. The variant is what callers match on; the
 /// message is the operator-facing text.
@@ -107,7 +239,13 @@ impl S3TierBackend {
             .behavior_version(BehaviorVersion::latest())
             .region(Region::new(region.to_string()))
             .credentials_provider(credentials)
-            .force_path_style(config.force_path_style);
+            .force_path_style(config.force_path_style)
+            .timeout_config(
+                TimeoutConfig::builder()
+                    .connect_timeout(S3_CONNECT_TIMEOUT)
+                    .read_timeout(S3_READ_TIMEOUT)
+                    .build(),
+            );
 
         if !config.endpoint.is_empty() {
             s3_config = s3_config.endpoint_url(&config.endpoint);
@@ -231,23 +369,23 @@ impl S3TierBackend {
                     TierError::Io(format!("failed to read file at offset {}: {}", off, e))
                 })?;
 
-                let upload_part_resp = client
-                    .upload_part()
-                    .bucket(&bucket)
-                    .key(&key)
-                    .upload_id(&upload_id)
-                    .part_number(pn)
-                    .body(buf.into())
-                    .send()
-                    .await
-                    .map_err(|e| {
-                        TierError::Io(format!(
-                            "failed to upload part {} at offset {}: {}",
-                            pn,
-                            off,
-                            DisplayErrorContext(&e)
-                        ))
-                    })?;
+                let upload_part_resp = send_part(
+                    client
+                        .upload_part()
+                        .bucket(&bucket)
+                        .key(&key)
+                        .upload_id(&upload_id)
+                        .part_number(pn),
+                    buf.into(),
+                    S3_READ_TIMEOUT,
+                )
+                .await
+                .map_err(|e| {
+                    TierError::Io(format!(
+                        "failed to upload part {} at offset {}: {}",
+                        pn, off, e
+                    ))
+                })?;
 
                 let e_tag = upload_part_resp.e_tag().unwrap_or_default().to_string();
 
@@ -560,6 +698,25 @@ impl S3TierBackend {
         })
     }
 
+    /// `read_range_blocking` that gives up once `timeout` passes, returning
+    /// `Ok(None)`.
+    pub fn read_range_blocking_within(
+        self: &Arc<Self>,
+        key: &str,
+        offset: u64,
+        size: usize,
+        timeout: Duration,
+    ) -> Result<Option<Vec<u8>>, TierError> {
+        let backend = Arc::clone(self);
+        let key = key.to_string();
+        block_on_tier_future(async move {
+            match tokio::time::timeout(timeout, backend.read_range(&key, offset, size)).await {
+                Ok(read) => read.map(Some),
+                Err(_) => Ok(None),
+            }
+        })
+    }
+
     pub fn read_range_blocking(
         &self,
         key: &str,
@@ -725,6 +882,13 @@ fn describe_join_error(join_error: tokio::task::JoinError) -> TierError {
 mod tests {
     use super::*;
     use crate::remote_storage::s3::tests::{CannedResponse, NO_SUCH_KEY};
+    use aws_sdk_s3::config::http::HttpRequest;
+    use aws_sdk_s3::config::{HttpClient, RuntimeComponents};
+    use aws_smithy_runtime_api::client::http::{
+        HttpConnector, HttpConnectorFuture, HttpConnectorSettings, SharedHttpConnector,
+    };
+    use aws_smithy_runtime_api::http::StatusCode;
+    use http_body::Body as _;
     use std::collections::HashSet;
     use tokio::runtime::Handle;
 
@@ -895,6 +1059,235 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, TierError::Io(_)), "{err:?}");
+    }
+
+    #[test]
+    fn backend_bounds_connect_and_read_waits() {
+        let (_listener, backend) = silent_backend();
+        let timeouts = backend.client.config().timeout_config().unwrap();
+        assert_eq!(timeouts.connect_timeout(), Some(S3_CONNECT_TIMEOUT));
+        assert_eq!(timeouts.read_timeout(), Some(S3_READ_TIMEOUT));
+    }
+
+    #[derive(Debug)]
+    struct CaptureTimeouts(Arc<std::sync::Mutex<Option<TimeoutConfig>>>);
+
+    impl aws_sdk_s3::config::Intercept for CaptureTimeouts {
+        fn name(&self) -> &'static str {
+            "CaptureTimeouts"
+        }
+
+        fn read_before_transmit(
+            &self,
+            _context: &aws_sdk_s3::config::interceptors::BeforeTransmitInterceptorContextRef<'_>,
+            _runtime_components: &aws_sdk_s3::config::RuntimeComponents,
+            cfg: &mut aws_sdk_s3::config::ConfigBag,
+        ) -> Result<(), aws_sdk_s3::error::BoxError> {
+            *self.0.lock().unwrap() = cfg.load::<TimeoutConfig>().cloned();
+            Err("captured".into())
+        }
+    }
+
+    #[tokio::test]
+    async fn upload_part_keeps_the_connect_timeout_without_the_read_timeout() {
+        let (_listener, backend) = silent_backend();
+        let seen = Arc::new(std::sync::Mutex::new(None));
+        let _ = backend
+            .client
+            .upload_part()
+            .bucket("bucket")
+            .key("key")
+            .upload_id("upload")
+            .part_number(1)
+            .body(vec![0u8; 8].into())
+            .customize()
+            .config_override(upload_part_config().interceptor(CaptureTimeouts(seen.clone())))
+            .send()
+            .await;
+        let timeouts = seen
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("request never reached transmit");
+        assert_eq!(timeouts.connect_timeout(), Some(S3_CONNECT_TIMEOUT));
+        assert_eq!(timeouts.read_timeout(), None);
+    }
+
+    fn upload_part_request(backend: &S3TierBackend) -> UploadPartFluentBuilder {
+        backend
+            .client
+            .upload_part()
+            .bucket("bucket")
+            .key("key")
+            .upload_id("upload")
+            .part_number(1)
+    }
+
+    #[tokio::test]
+    async fn send_part_gives_up_when_no_response_follows_the_body() {
+        let (_listener, backend) = silent_backend();
+        let sent = tokio::time::timeout(
+            Duration::from_secs(30),
+            send_part(
+                upload_part_request(&backend),
+                Bytes::from_static(&[0u8; 8]),
+                Duration::from_millis(200),
+            ),
+        )
+        .await
+        .expect("a part with no response did not give up");
+        let err = sent.unwrap_err();
+        assert!(err.starts_with("no response within 200ms"), "{err}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_retry_restarts_the_response_clock() {
+        let sent: PartSent = Arc::new(watch::channel((1, true)).0);
+        let mut unanswered =
+            std::pin::pin!(wait_unanswered(sent.clone(), Duration::from_millis(200)));
+        let wait = |ms| tokio::time::sleep(Duration::from_millis(ms));
+        tokio::select! {
+            () = unanswered.as_mut() => panic!("gave up early"),
+            () = wait(150) => {}
+        }
+        // The retry starts and finishes sending before the waiter runs again.
+        sent.send_replace((2, false));
+        sent.send_replace((2, true));
+        tokio::select! {
+            () = unanswered.as_mut() => panic!("kept the first attempt's clock"),
+            () = wait(150) => {}
+        }
+        tokio::select! {
+            () = unanswered => {}
+            () = wait(100) => panic!("the retry never timed out"),
+        }
+    }
+
+    /// Takes the request body one chunk per `pause`, then answers at once.
+    #[derive(Debug, Clone)]
+    struct SlowReader {
+        pause: Duration,
+    }
+
+    impl HttpConnector for SlowReader {
+        fn call(&self, request: HttpRequest) -> HttpConnectorFuture {
+            let pause = self.pause;
+            HttpConnectorFuture::new(async move {
+                let mut body = std::pin::pin!(request.into_body());
+                loop {
+                    tokio::time::sleep(pause).await;
+                    let frame = std::future::poll_fn(|cx| body.as_mut().poll_frame(cx)).await;
+                    if frame.is_none() || body.is_end_stream() {
+                        break;
+                    }
+                }
+                let mut response =
+                    HttpResponse::new(StatusCode::try_from(200).unwrap(), SdkBody::empty());
+                response.headers_mut().insert("ETag", "\"etag\"");
+                Ok(response)
+            })
+        }
+    }
+
+    impl HttpClient for SlowReader {
+        fn http_connector(
+            &self,
+            _settings: &HttpConnectorSettings,
+            _components: &RuntimeComponents,
+        ) -> SharedHttpConnector {
+            SharedHttpConnector::new(self.clone())
+        }
+    }
+
+    #[tokio::test]
+    async fn send_part_does_not_cap_a_slow_body() {
+        let config = aws_sdk_s3::Config::builder()
+            .behavior_version(BehaviorVersion::latest())
+            .region(Region::new("us-east-1"))
+            .credentials_provider(Credentials::new("AKIATEST", "secret", None, None, "test"))
+            .endpoint_url("http://127.0.0.1:1")
+            .force_path_style(true)
+            .http_client(SlowReader {
+                pause: Duration::from_millis(300),
+            })
+            .build();
+        let backend = S3TierBackend {
+            client: Client::from_conf(config),
+            bucket: "bucket".to_string(),
+            storage_class: "STANDARD".to_string(),
+        };
+        let output = send_part(
+            upload_part_request(&backend),
+            Bytes::from(vec![0u8; 4 * UPLOAD_CHUNK_SIZE]),
+            Duration::from_millis(200),
+        )
+        .await
+        .expect("a part still being sent was cut short");
+        assert_eq!(output.e_tag(), Some("\"etag\""));
+    }
+
+    #[test]
+    fn read_range_blocking_within_gives_up_on_a_silent_endpoint() {
+        let (_listener, backend) = silent_backend();
+        let start = std::time::Instant::now();
+        let got = backend
+            .read_range_blocking_within("key", 0, 8, Duration::from_millis(200))
+            .unwrap();
+        assert!(got.is_none());
+        assert!(start.elapsed() < Duration::from_secs(5));
+    }
+
+    #[tokio::test]
+    async fn read_range_gives_up_when_the_body_stalls() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            let mut held = Vec::new();
+            for mut conn in listener.incoming().flatten() {
+                let mut request = Vec::new();
+                let mut byte = [0u8; 1];
+                while !request.ends_with(b"\r\n\r\n") {
+                    match std::io::Read::read(&mut conn, &mut byte) {
+                        Ok(1) => request.push(byte[0]),
+                        _ => break,
+                    }
+                }
+                let _ = std::io::Write::write_all(
+                    &mut conn,
+                    b"HTTP/1.1 206 Partial Content\r\nContent-Length: 8\r\nContent-Range: bytes 0-7/1024\r\n\r\n",
+                );
+                held.push(conn);
+            }
+        });
+        let backend = S3TierBackend::new(&S3TierConfig {
+            access_key: "access".to_string(),
+            secret_key: "secret".to_string(),
+            region: "us-east-1".to_string(),
+            bucket: "bucket".to_string(),
+            endpoint,
+            storage_class: String::new(),
+            force_path_style: true,
+        });
+
+        let read = tokio::time::timeout(Duration::from_secs(30), backend.read_range("key", 0, 8))
+            .await
+            .expect("a read whose body stalls did not give up");
+        let err = read.unwrap_err();
+        assert!(matches!(err, TierError::Io(_)), "{err:?}");
+    }
+
+    fn silent_backend() -> (std::net::TcpListener, Arc<S3TierBackend>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let backend = S3TierBackend::new(&S3TierConfig {
+            access_key: "access".to_string(),
+            secret_key: "secret".to_string(),
+            region: "us-east-1".to_string(),
+            bucket: "bucket".to_string(),
+            endpoint: format!("http://{}", listener.local_addr().unwrap()),
+            storage_class: String::new(),
+            force_path_style: true,
+        });
+        (listener, Arc::new(backend))
     }
 
     #[test]
