@@ -18,7 +18,7 @@ struct Args {
     )]
     namespace: String,
     /// gRPC listen address.
-    #[arg(long, env = "WEED_VECTOR_LISTEN", default_value = "127.0.0.1:8080")]
+    #[arg(long, env = "WEED_VECTOR_LISTEN", default_value = "127.0.0.1:8090")]
     listen: String,
     /// object_store option fallback for deployments that vend no credentials:
     /// key=value, repeatable.
