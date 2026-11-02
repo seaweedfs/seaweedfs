@@ -429,8 +429,7 @@ impl VectorService for VectorServer {
             .declare_table(&table.id, None)
             .await
             .map_err(internal)?;
-        let mut options = self.fallback.clone();
-        options.extend(description.storage_options.clone());
+        let options = dataset::table_options(&description, &self.fallback);
         let schema = schema_for(dimension, metric, &req.non_filterable_metadata_keys);
         let empty = RecordBatch::new_empty(schema.clone());
         let reader = arrow_array::RecordBatchIterator::new(vec![Ok(empty)].into_iter(), schema);

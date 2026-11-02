@@ -5,6 +5,7 @@ import time
 import uuid
 
 import boto3
+from botocore.config import Config
 from botocore.exceptions import ClientError
 import pytest
 
@@ -389,3 +390,17 @@ def test_query_without_writer(vectors, index, cluster):
                 raise
             time.sleep(0.2)
     assert [v["key"] for v in result["vectors"]] == ["survivor"]
+
+
+def test_engine_without_credentials(open_cluster):
+    """With no S3 identities, an engine given no credentials still serves an index."""
+    client = boto3.client("s3vectors", endpoint_url=open_cluster["endpoint"], aws_access_key_id="any",
+                          aws_secret_access_key="any", region_name="us-east-1",
+                          config=Config(connect_timeout=3, read_timeout=20, retries={"max_attempts": 0}))
+    index = {"vectorBucketName": BUCKET, "indexName": INDEX}
+    client.create_vector_bucket(vectorBucketName=BUCKET)
+    client.create_index(**index, dataType="float32", dimension=2, distanceMetric="cosine")
+    client.put_vectors(**index, vectors=[{"key": "a", "data": {"float32": [1, 0]}},
+                                         {"key": "b", "data": {"float32": [0, 1]}}])
+    hits = client.query_vectors(**index, queryVector={"float32": [1, 0]}, topK=1)["vectors"]
+    assert [h["key"] for h in hits] == ["a"]

@@ -22,6 +22,8 @@ type FilerClient interface {
 type S3Authenticator interface {
 	AuthenticateRequest(r *http.Request) (string, interface{}, s3err.ErrorCode)
 	DefaultAllow() bool
+	// AuthEnabled reports whether the S3 server checks credentials at all.
+	AuthEnabled() bool
 }
 
 // CredentialValidator validates S3 access key / secret key pairs
@@ -166,6 +168,13 @@ func loggingMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// authEnabled is false when the S3 server has no identities and takes any
+// signature. The catalog then takes any key too, and leaves the caller to the
+// S3 authenticator.
+func (s *Server) authEnabled() bool {
+	return s.authenticator == nil || s.authenticator.AuthEnabled()
+}
+
 // Auth authenticates the caller and puts the identity in the request context.
 // Lance clients authenticate the catalog with a Bearer token or an x-api-key
 // header; the S3 authenticator stays for callers that can SigV4-sign.
@@ -176,7 +185,7 @@ func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
 		// authenticator would parse the header as SigV4 and fail with a
 		// different error that clients cannot act on.
 		// The auth scheme is case-insensitive (RFC 7235).
-		if strings.HasPrefix(strings.ToLower(r.Header.Get("Authorization")), "bearer ") {
+		if s.authEnabled() && strings.HasPrefix(strings.ToLower(r.Header.Get("Authorization")), "bearer ") {
 			if identityName, identity, accessKey, secretKey, ok := s.authenticateBearerKey(r); ok {
 				ctx := r.Context()
 				ctx = s3_constants.SetIdentityNameInContext(ctx, identityName)
@@ -194,7 +203,7 @@ func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		if apiKey := r.Header.Get("x-api-key"); apiKey != "" {
+		if apiKey := r.Header.Get("x-api-key"); apiKey != "" && s.authEnabled() {
 			if identityName, identity, ok := s.authenticateApiKey(apiKey); ok {
 				accessKey, secretKey, _ := strings.Cut(apiKey, ":")
 				ctx := r.Context()

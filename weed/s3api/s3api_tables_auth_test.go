@@ -159,6 +159,34 @@ func TestLanceAuthRejectsFailedSignature(t *testing.T) {
 	assert.NotEqual(t, http.StatusOK, rr.Code)
 }
 
+// The Lance catalog takes any x-api-key while the S3 port runs without
+// identities, as the admin, and refuses an unknown key once auth is on.
+func TestLanceAuthTakesAnyKeyOnlyWhileS3AuthIsOff(t *testing.T) {
+	s3a := &S3ApiServer{iam: &IdentityAccessManagement{}}
+	server := lance.NewServer(nil, s3a)
+	server.SetCredentialValidator(s3a)
+
+	call := func() (int, string) {
+		req := httptest.NewRequest(http.MethodGet, "/v1/namespace/list", nil)
+		req.Header.Set("x-api-key", "unknown:key")
+		identity := ""
+		rr := httptest.NewRecorder()
+		server.Auth(func(w http.ResponseWriter, r *http.Request) {
+			identity = s3_constants.GetIdentityNameFromContext(r)
+			w.WriteHeader(http.StatusOK)
+		})(rr, req)
+		return rr.Code, identity
+	}
+
+	code, identity := call()
+	assert.Equal(t, http.StatusOK, code)
+	assert.Equal(t, s3_constants.AccountAdminId, identity)
+
+	s3a.iam.isAuthEnabled = true
+	code, _ = call()
+	assert.Equal(t, http.StatusUnauthorized, code)
+}
+
 func TestAuthSignatureOnlyScrubsAccountHeader(t *testing.T) {
 	s3a := setupDefaultAllowAuthServer(t)
 

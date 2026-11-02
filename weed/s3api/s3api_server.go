@@ -1500,6 +1500,12 @@ func (s3a *S3ApiServer) AuthenticateRequest(r *http.Request) (string, interface{
 	return "", nil, err
 }
 
+// AuthEnabled reports whether requests must carry valid credentials. With no
+// identities configured, every request is allowed as the admin.
+func (s3a *S3ApiServer) AuthEnabled() bool {
+	return s3a.iam == nil || s3a.iam.isEnabled()
+}
+
 // DefaultAllow returns whether access is allowed by default when no policy is found
 func (s3a *S3ApiServer) DefaultAllow() bool {
 	if s3a.iam == nil || s3a.iam.iamIntegration == nil {
