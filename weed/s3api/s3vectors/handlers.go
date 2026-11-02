@@ -39,6 +39,9 @@ var handlers = map[string]func(*Server, http.ResponseWriter, *http.Request){
 	"ListVectors":              (*Server).handleListVectors,
 	"DeleteVectors":            (*Server).handleDeleteVectors,
 	"QueryVectors":             (*Server).handleQueryVectors,
+	"TagResource":              (*Server).handleTagResource,
+	"UntagResource":            (*Server).handleUntagResource,
+	"ListTagsForResource":      (*Server).handleListTagsForResource,
 }
 
 // lance table ids put indexes under a "vector" namespace inside their bucket.

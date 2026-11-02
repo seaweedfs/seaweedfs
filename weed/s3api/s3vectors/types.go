@@ -295,3 +295,25 @@ type QueryVectorsResponse struct {
 	DistanceMetric string               `json:"distanceMetric"`
 	Vectors        []*QueryOutputVector `json:"vectors"`
 }
+
+type TagResourceRequest struct {
+	ResourceArn string            `json:"resourceArn"`
+	Tags        map[string]string `json:"tags"`
+}
+
+type TagResourceResponse struct{}
+
+type UntagResourceRequest struct {
+	ResourceArn string   `json:"resourceArn"`
+	TagKeys     []string `json:"tagKeys"`
+}
+
+type UntagResourceResponse struct{}
+
+type ListTagsForResourceRequest struct {
+	ResourceArn string `json:"resourceArn"`
+}
+
+type ListTagsForResourceResponse struct {
+	Tags map[string]string `json:"tags"`
+}
