@@ -99,6 +99,12 @@ func IsZstdContent(data []byte) bool {
 /*
 * Default not to compressed since compression can be done on client side.
  */func IsCompressableFileType(ext, mtype string) (shouldBeCompressed, iAmSure bool) {
+	ext = strings.ToLower(ext)
+	// Match on the media type alone: "application/json; charset=utf-8" is JSON.
+	if i := strings.IndexByte(mtype, ';'); i >= 0 {
+		mtype = strings.TrimSpace(mtype[:i])
+	}
+	mtype = strings.ToLower(mtype)
 
 	// text
 	if strings.HasPrefix(mtype, "text/") {
@@ -135,6 +141,10 @@ func IsZstdContent(data []byte) bool {
 			return true, true
 		}
 		if strings.HasSuffix(mtype, "script") {
+			return true, true
+		}
+		// application/json, application/ld+json, application/x-ndjson, application/json-seq, ...
+		if strings.HasSuffix(mtype, "json") || strings.HasSuffix(mtype, "json-seq") {
 			return true, true
 		}
 		if strings.HasSuffix(mtype, "vnd.rar") {

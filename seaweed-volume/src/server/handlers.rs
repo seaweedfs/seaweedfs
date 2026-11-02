@@ -3101,15 +3101,12 @@ pub async fn post_handler(
 
     // Auto-compress compressible file types (matches Go's IsCompressableFileType).
     // Only compress if not already gzipped and compression saves >10%.
-    // Go uses filepath.Base(pu.FileName) for extension detection (not the URL path).
     let (final_data, final_is_gzipped) = if !is_gzipped && !is_chunk_manifest {
-        let ext = {
-            let dot_pos = filename.rfind('.');
-            dot_pos
-                .map(|p| filename[p..].to_lowercase())
-                .unwrap_or_default()
-        };
-        if is_compressible_file_type(&ext, &mime_type) {
+        let ext = filename
+            .rfind('.')
+            .map(|p| &filename[p..])
+            .unwrap_or_default();
+        if is_compressible_file_type(ext, &mime_type) {
             if let Some(compressed) = try_gzip_data(&body_data) {
                 if compressed.len() * 10 < body_data.len() * 9 {
                     (compressed, true)
@@ -4728,6 +4725,15 @@ fn extract_jwt(headers: &HeaderMap, uri: &axum::http::Uri) -> Option<String> {
 /// Check if a file type should be compressed based on extension and MIME type.
 /// Returns true only when we are sure the type is compressible.
 fn is_compressible_file_type(ext: &str, mtype: &str) -> bool {
+    let ext = ext.to_ascii_lowercase();
+    let ext = ext.as_str();
+    let mtype = mtype
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    let mtype = mtype.as_str();
     // text/*
     if mtype.starts_with("text/") {
         return true;
@@ -4758,6 +4764,9 @@ fn is_compressible_file_type(ext: &str, mtype: &str) -> bool {
             return true;
         }
         if mtype.ends_with("script") {
+            return true;
+        }
+        if mtype.ends_with("json") || mtype.ends_with("json-seq") {
             return true;
         }
         if mtype.ends_with("vnd.rar") {
@@ -5245,6 +5254,18 @@ mod tests {
         assert!(is_compressible_file_type("", "application/javascript"));
         assert!(!is_compressible_file_type("", "application/zstd"));
         assert!(!is_compressible_file_type("", "application/vnd.rar"));
+        assert!(is_compressible_file_type("", "application/json"));
+        assert!(is_compressible_file_type(
+            "",
+            "application/json; charset=utf-8"
+        ));
+        assert!(is_compressible_file_type("", "Application/JSON"));
+        assert!(is_compressible_file_type("", "application/ld+json"));
+        assert!(is_compressible_file_type("", "application/x-ndjson"));
+        assert!(is_compressible_file_type("", "application/json-seq"));
+        assert!(is_compressible_file_type("", "text/plain; charset=utf-8"));
+        assert!(is_compressible_file_type(".JSON", ""));
+        assert!(!is_compressible_file_type(".gz", "application/json"));
 
         // Audio
         assert!(is_compressible_file_type(".wav", "audio/wav"));
