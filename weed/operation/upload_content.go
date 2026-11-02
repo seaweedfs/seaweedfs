@@ -474,6 +474,7 @@ func (uploader *Uploader) doUploadData(ctx context.Context, data []byte, option 
 			Filename:              option.Filename,
 			Cipher:                false,
 			IsInputCompressed:     contentIsGzipped,
+			IsReplication:         option.IsReplication,
 			MimeType:              option.MimeType,
 			PairMap:               option.PairMap,
 			Jwt:                   option.Jwt,
@@ -510,7 +511,7 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 	// properly handling non-ASCII characters and special characters
 	h.Set("Content-Disposition", mime.FormatMediaType("form-data", map[string]string{"name": "file", "filename": option.Filename}))
 	h.Set("Idempotency-Key", option.UploadUrl)
-	if option.MimeType == "" {
+	if option.MimeType == "" && !option.IsReplication {
 		option.MimeType = mime.TypeByExtension(strings.ToLower(filepath.Ext(option.Filename)))
 	}
 	if option.MimeType != "" {
