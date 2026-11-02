@@ -264,6 +264,8 @@ func (h *FileBrowserHandlers) UploadFile(w http.ResponseWriter, r *http.Request)
 		writeJSONError(w, http.StatusBadRequest, "Failed to parse multipart form: "+err.Error())
 		return
 	}
+	// The router hands us a copy of the request, so the server cannot remove the spooled parts itself
+	defer r.MultipartForm.RemoveAll()
 
 	currentPath := r.FormValue("path")
 	if currentPath == "" {
