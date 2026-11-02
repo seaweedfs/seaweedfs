@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/gorilla/mux"
+	"github.com/seaweedfs/seaweedfs/weed/s3api"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables/s3tablestest"
 )
@@ -202,5 +203,70 @@ func TestTaggingNeedsItsOwnGrant(t *testing.T) {
 	mustStatus(t, "untag under list grant", code, body, http.StatusForbidden)
 	if _, tags := c.list("", bucketArn); tags["team"] != "search" {
 		t.Fatalf("refused writes changed tags: %v", tags)
+	}
+}
+
+func TestCreateWithTagsNeedsTagResource(t *testing.T) {
+	e := newAuthTestEnv(t)
+	tags := map[string]string{"team": "search"}
+	listed := func(arn string) map[string]string {
+		t.Helper()
+		w := e.vectorResp(adminIdentity(), e.s.handleListTagsForResource, &ListTagsForResourceRequest{ResourceArn: arn})
+		var resp ListTagsForResourceResponse
+		if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &resp) != nil {
+			t.Fatalf("list tags of %s: %d %s", arn, w.Code, w.Body.String())
+		}
+		return resp.Tags
+	}
+	creator := func(actions ...s3api.Action) *s3api.Identity {
+		return &s3api.Identity{Name: "creator", Account: &s3api.Account{Id: "creator"}, Actions: actions}
+	}
+	createOnly := creator("s3vectors:CreateVectorBucket", "s3vectors:CreateIndex")
+	withTag := creator("s3vectors:CreateVectorBucket", "s3vectors:CreateIndex", "s3vectors:TagResource")
+
+	if code := e.vector(createOnly, e.s.handleCreateVectorBucket, &CreateVectorBucketRequest{VectorBucketName: "denied", Tags: tags}); code != http.StatusForbidden {
+		t.Fatalf("tagged bucket create without TagResource: %d, want 403", code)
+	}
+	if code := e.vector(adminIdentity(), e.s.handleGetVectorBucket, &GetVectorBucketRequest{VectorBucketName: "denied"}); code != http.StatusNotFound {
+		t.Fatalf("refused create left a bucket: %d", code)
+	}
+	if code := e.vector(withTag, e.s.handleCreateVectorBucket, &CreateVectorBucketRequest{VectorBucketName: "vec-bucket", Tags: tags}); code != http.StatusOK {
+		t.Fatalf("tagged bucket create: %d", code)
+	}
+	if got := listed(e.s.vectorBucketArn("vec-bucket")); !reflect.DeepEqual(got, tags) {
+		t.Fatalf("bucket tags = %v, want %v", got, tags)
+	}
+
+	e.createBuckets(adminIdentity(), "shared")
+	index := func(ident *s3api.Identity, name string, tags map[string]string) int {
+		return e.vector(ident, e.s.handleCreateIndex, &CreateIndexRequest{
+			VectorBucketName: "v-shared", IndexName: name, DataType: "float32", Dimension: 3, Tags: tags,
+		})
+	}
+	if code := index(createOnly, "denied", tags); code != http.StatusForbidden {
+		t.Fatalf("tagged index create without TagResource: %d, want 403", code)
+	}
+	if code := index(createOnly, "plain", nil); code != http.StatusOK {
+		t.Fatalf("untagged index create: %d", code)
+	}
+	if code := index(withTag, "tagged", tags); code != http.StatusOK {
+		t.Fatalf("tagged index create: %d", code)
+	}
+	if got := listed(e.s.indexArn("v-shared", "tagged")); !reflect.DeepEqual(got, tags) {
+		t.Fatalf("index tags = %v, want %v", got, tags)
+	}
+	if got := listed(e.s.indexArn("v-shared", "plain")); len(got) != 0 {
+		t.Fatalf("untagged index tags = %v", got)
+	}
+
+	tooMany := map[string]string{}
+	for i := 0; i <= maxResourceTags; i++ {
+		tooMany[fmt.Sprintf("k%d", i)] = "v"
+	}
+	if code := e.vector(withTag, e.s.handleCreateVectorBucket, &CreateVectorBucketRequest{VectorBucketName: "too-many", Tags: tooMany}); code != http.StatusBadRequest {
+		t.Fatalf("bucket create past the tag limit: %d, want 400", code)
+	}
+	if code := index(withTag, "too-many", tooMany); code != http.StatusBadRequest {
+		t.Fatalf("index create past the tag limit: %d, want 400", code)
 	}
 }

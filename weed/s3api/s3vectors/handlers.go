@@ -278,6 +278,10 @@ func (s *Server) handleCreateVectorBucket(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
+	if err := s3tables.ValidateTagsWithLimit(req.Tags, maxResourceTags); err != nil {
+		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		return
+	}
 	// The catalog keeps the s3tables field name; GetVectorBucket renames it back.
 	enc := req.EncryptionConfiguration
 	if len(enc) != 0 {
@@ -286,7 +290,10 @@ func (s *Server) handleCreateVectorBucket(w http.ResponseWriter, r *http.Request
 	// No bucket exists yet, so check against the handler account as the
 	// catalog does for CreateTableBucket.
 	principal := s.tables.PrincipalFor(r)
-	if !s3tables.CheckPermissionWithContext("s3vectors:CreateVectorBucket", principal, s.tables.PrincipalFor(nil), "", "", s.tables.PolicyContext(r, "")) {
+	allowed := func(action string) bool {
+		return s3tables.CheckPermissionWithContext(action, principal, s.tables.PrincipalFor(nil), "", "", s.tables.PolicyContext(r, ""))
+	}
+	if !allowed("s3vectors:CreateVectorBucket") || (len(req.Tags) > 0 && !allowed("s3vectors:TagResource")) {
 		catalogErr(w, errVectorDenied)
 		return
 	}
@@ -296,6 +303,7 @@ func (s *Server) handleCreateVectorBucket(w http.ResponseWriter, r *http.Request
 			Name:                    req.VectorBucketName,
 			Format:                  s3tables.FormatLance,
 			EncryptionConfiguration: enc,
+			Tags:                    req.Tags,
 		}, &resp, identityOf(r))
 	if err != nil {
 		catalogErr(w, err)
@@ -966,12 +974,22 @@ func (s *Server) handleCreateIndex(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", "dimension must be 1..=4096")
 		return
 	}
+	if err := s3tables.ValidateTagsWithLimit(req.Tags, maxResourceTags); err != nil {
+		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		return
+	}
 	// The create grant is exercised before any write: a denied caller must not
 	// leave even the implicit namespace behind.
 	bucketRecord, err := s.authorizeVector(r.Context(), r, "s3vectors:CreateIndex", arns.bucket, arns.index)
 	if err != nil {
 		catalogErr(w, err)
 		return
+	}
+	if len(req.Tags) > 0 {
+		if _, err := s.authorizeVector(r.Context(), r, "s3vectors:TagResource", arns.bucket, arns.index); err != nil {
+			catalogErr(w, err)
+			return
+		}
 	}
 	// The catalog writes land only in the bucket authorized above.
 	bound := s3tables.WithTableBucketCreatedAt(r.Context(), bucketRecord.CreatedAt)
@@ -1017,6 +1035,7 @@ func (s *Server) handleCreateIndex(w http.ResponseWriter, r *http.Request) {
 		Name:           arns.index,
 		Format:         s3tables.FormatLance,
 		Metadata:       &s3tables.TableMetadata{FullMetadata: metadataJSON},
+		Tags:           req.Tags,
 	}, nil)
 	if err != nil {
 		catalogErr(w, err)

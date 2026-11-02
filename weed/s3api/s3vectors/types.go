@@ -62,7 +62,7 @@ type vectorBucketARNs struct {
 type CreateVectorBucketRequest struct {
 	VectorBucketName        string                 `json:"vectorBucketName"`
 	EncryptionConfiguration map[string]interface{} `json:"encryptionConfiguration,omitempty"`
-	MetadataResourceTags    map[string]string      `json:"-"`
+	Tags                    map[string]string      `json:"tags,omitempty"`
 }
 
 type CreateVectorBucketResponse struct {
@@ -136,6 +136,7 @@ type CreateIndexRequest struct {
 	MetadataConfiguration *MetadataConfiguration `json:"metadataConfiguration,omitempty"`
 	VectorBucketName      string                 `json:"vectorBucketName"`
 	VectorBucketArn       string                 `json:"vectorBucketArn"`
+	Tags                  map[string]string      `json:"tags,omitempty"`
 }
 
 type MetadataConfiguration struct {
