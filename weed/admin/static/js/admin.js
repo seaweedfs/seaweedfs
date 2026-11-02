@@ -1180,10 +1180,9 @@ async function submitUploadFile() {
     const files = Array.from(fileInput.files);
     const totalSize = files.reduce((sum, file) => sum + file.size, 0);
 
-    // Validate total file size (limit to 500MB for admin interface)
-    const maxSize = 500 * 1024 * 1024; // 500MB total
-    if (totalSize > maxSize) {
-        showErrorMessage('Total file size exceeds 500MB limit. Please select fewer or smaller files.');
+    const maxSize = Number(document.getElementById('uploadFileForm').dataset.maxSize) || 0;
+    if (maxSize > 0 && totalSize > maxSize) {
+        showErrorMessage(`Total file size exceeds the ${formatBytes(maxSize)} limit. Please select fewer or smaller files.`);
         return;
     }
 

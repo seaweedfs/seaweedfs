@@ -175,7 +175,13 @@ type AdminServer struct {
 	// s3PublicEndpoint is the client-facing S3 address from admin.toml
 	// (s3.public_endpoint); discovered S3 servers are the fallback.
 	s3PublicEndpoint string
+
+	// uploadMaxSize caps the total bytes of one file browser upload; 0 means no limit.
+	uploadMaxSize int64
 }
+
+// DefaultUploadMaxSizeMB is the default total size limit of one file browser upload.
+const DefaultUploadMaxSizeMB = 500
 
 // Type definitions moved to types.go
 
@@ -217,6 +223,7 @@ func NewAdminServer(masters string, filerGroup string, templateFS http.FileSyste
 		icebergPort:                   icebergPort,
 		lancePort:                     lancePort,
 		s3PublicEndpoint:              normalizeS3PublicEndpoint(s3PublicEndpoint),
+		uploadMaxSize:                 DefaultUploadMaxSizeMB << 20,
 		pluginLock:                    lockManager,
 		adminPresenceLock:             presenceLock,
 		bgCancel:                      bgCancel,
@@ -1572,6 +1579,18 @@ func (s *AdminServer) GetClusterS3Servers() (*ClusterS3ServersData, error) {
 // the client-facing address cannot be discovered and must be configured.
 func (s *AdminServer) GetS3Endpoint() string {
 	return s.s3PublicEndpoint
+}
+
+// SetUploadMaxSize sets the total size limit in bytes of one file browser
+// upload; zero or less removes the limit.
+func (s *AdminServer) SetUploadMaxSize(maxBytes int64) {
+	s.uploadMaxSize = max(maxBytes, 0)
+}
+
+// GetUploadMaxSize returns the total size limit in bytes of one file browser
+// upload, or 0 when uploads are unlimited.
+func (s *AdminServer) GetUploadMaxSize() int64 {
+	return s.uploadMaxSize
 }
 
 // normalizeS3PublicEndpoint trims a trailing slash and drops, with a warning,
