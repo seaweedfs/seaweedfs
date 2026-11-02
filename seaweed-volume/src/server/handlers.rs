@@ -2873,8 +2873,12 @@ pub async fn post_handler(
         while let Ok(Some(field)) = multipart.next_field().await {
             let field_name = field.name().map(|s| s.to_string());
             let fname = field.file_name().map(clean_windows_path_base);
-            let fct = field.content_type().map(|m| m.to_string());
             let field_headers = field.headers().clone();
+            let fct = field_headers
+                .get(header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
             let fce = field_headers
                 .get(header::CONTENT_ENCODING)
                 .and_then(|v| v.to_str().ok())
@@ -8471,6 +8475,16 @@ mod tests {
                     header::CONTENT_DISPOSITION,
                     format!("attachment; filename=\"{}.txt\"", "n".repeat(300)),
                 ),
+                Body::from(payload.clone()),
+            ),
+            (
+                0x6e7a_0c0eu64,
+                Request::builder()
+                    .header(header::CONTENT_TYPE, "Text/Plain; charset=UTF-8")
+                    .header(
+                        header::CONTENT_DISPOSITION,
+                        "attachment; filename=\"upper.txt\"",
+                    ),
                 Body::from(payload.clone()),
             ),
         ];
