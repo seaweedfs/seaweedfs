@@ -83,7 +83,16 @@ type VectorBucket struct {
 	VectorBucketName        string                 `json:"vectorBucketName"`
 	CreationTime            time.Time              `json:"creationTime"`
 	EncryptionConfiguration map[string]interface{} `json:"encryptionConfiguration,omitempty"`
+	DefaultIndexMode        string                 `json:"defaultIndexMode,omitempty"`
 }
+
+type PutVectorBucketDefaultIndexModeRequest struct {
+	VectorBucketName string `json:"vectorBucketName"`
+	VectorBucketArn  string `json:"vectorBucketArn"`
+	DefaultIndexMode string `json:"defaultIndexMode"`
+}
+
+type PutVectorBucketDefaultIndexModeResponse struct{}
 
 type ListVectorBucketsRequest struct {
 	MaxResults *int   `json:"maxResults"`

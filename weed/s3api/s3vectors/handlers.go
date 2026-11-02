@@ -23,22 +23,23 @@ import (
 )
 
 var handlers = map[string]func(*Server, http.ResponseWriter, *http.Request){
-	"CreateVectorBucket":       (*Server).handleCreateVectorBucket,
-	"GetVectorBucket":          (*Server).handleGetVectorBucket,
-	"ListVectorBuckets":        (*Server).handleListVectorBuckets,
-	"DeleteVectorBucket":       (*Server).handleDeleteVectorBucket,
-	"PutVectorBucketPolicy":    (*Server).handlePutVectorBucketPolicy,
-	"GetVectorBucketPolicy":    (*Server).handleGetVectorBucketPolicy,
-	"DeleteVectorBucketPolicy": (*Server).handleDeleteVectorBucketPolicy,
-	"CreateIndex":              (*Server).handleCreateIndex,
-	"GetIndex":                 (*Server).handleGetIndex,
-	"ListIndexes":              (*Server).handleListIndexes,
-	"DeleteIndex":              (*Server).handleDeleteIndex,
-	"PutVectors":               (*Server).handlePutVectors,
-	"GetVectors":               (*Server).handleGetVectors,
-	"ListVectors":              (*Server).handleListVectors,
-	"DeleteVectors":            (*Server).handleDeleteVectors,
-	"QueryVectors":             (*Server).handleQueryVectors,
+	"CreateVectorBucket":              (*Server).handleCreateVectorBucket,
+	"GetVectorBucket":                 (*Server).handleGetVectorBucket,
+	"ListVectorBuckets":               (*Server).handleListVectorBuckets,
+	"DeleteVectorBucket":              (*Server).handleDeleteVectorBucket,
+	"PutVectorBucketPolicy":           (*Server).handlePutVectorBucketPolicy,
+	"GetVectorBucketPolicy":           (*Server).handleGetVectorBucketPolicy,
+	"DeleteVectorBucketPolicy":        (*Server).handleDeleteVectorBucketPolicy,
+	"PutVectorBucketDefaultIndexMode": (*Server).handlePutVectorBucketDefaultIndexMode,
+	"CreateIndex":                     (*Server).handleCreateIndex,
+	"GetIndex":                        (*Server).handleGetIndex,
+	"ListIndexes":                     (*Server).handleListIndexes,
+	"DeleteIndex":                     (*Server).handleDeleteIndex,
+	"PutVectors":                      (*Server).handlePutVectors,
+	"GetVectors":                      (*Server).handleGetVectors,
+	"ListVectors":                     (*Server).handleListVectors,
+	"DeleteVectors":                   (*Server).handleDeleteVectors,
+	"QueryVectors":                    (*Server).handleQueryVectors,
 }
 
 // lance table ids put indexes under a "vector" namespace inside their bucket.
@@ -326,6 +327,10 @@ func (s *Server) handleGetVectorBucket(w http.ResponseWriter, r *http.Request) {
 		bucket.EncryptionConfiguration = map[string]interface{}{"sseType": cfg}
 	} else if len(record.EncryptionConfiguration) > 0 {
 		bucket.EncryptionConfiguration = record.EncryptionConfiguration
+	}
+	if bucket.DefaultIndexMode, err = s.bucketDefaultIndexMode(r.Context(), arns.bucket); err != nil {
+		catalogErr(w, err)
+		return
 	}
 	writeJSON(w, http.StatusOK, &GetVectorBucketResponse{VectorBucket: bucket})
 }
@@ -664,8 +669,16 @@ func (s *Server) vectorBucket(ctx context.Context, bucket string) (*s3tables.Get
 // slot; one that still names vector actions keeps working until the next
 // vector policy write migrates it out.
 func (s *Server) vectorPolicy(ctx context.Context, bucket string) (string, error) {
+	ext, err := s.bucketExtended(ctx, bucket)
+	if err != nil {
+		return "", err
+	}
+	return vectorPolicyFromExt(ext), nil
+}
+
+func (s *Server) bucketExtended(ctx context.Context, bucket string) (map[string][]byte, error) {
 	dir, name := splitEntryPath(s3tables.GetTableBucketPath(bucket))
-	var policy string
+	var ext map[string][]byte
 	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
 			Directory: dir,
@@ -674,10 +687,19 @@ func (s *Server) vectorPolicy(ctx context.Context, bucket string) (string, error
 		if err != nil {
 			return err
 		}
-		policy = vectorPolicyFromExt(resp.Entry.Extended)
+		ext = resp.Entry.Extended
 		return nil
 	})
-	return policy, err
+	return ext, err
+}
+
+// bucketDefaultIndexMode reads the mode new indexes in the bucket inherit.
+func (s *Server) bucketDefaultIndexMode(ctx context.Context, bucket string) (string, error) {
+	ext, err := s.bucketExtended(ctx, bucket)
+	if err != nil {
+		return "", err
+	}
+	return storedIndexMode(string(ext[vectorDefaultIndexModeKey])), nil
 }
 
 // vectorPolicyView resolves a bucket's owner and stored s3vectors policy in
@@ -705,9 +727,10 @@ func (s *Server) vectorPolicyView(ctx context.Context, bucket string) (owner, po
 	return owner, policy, err
 }
 
-// mutateVectorPolicy applies a change to the bucket's vector-policy
-// attribute under the entry's extended-attribute compare-and-swap, retrying
-// a racing writer the way the catalog's own policy updates do.
+// mutateVectorPolicy applies a change to the bucket's vector attributes (the
+// policy, the default index mode) under the entry's extended-attribute
+// compare-and-swap, retrying a racing writer the way the catalog's own policy
+// updates do.
 func (s *Server) mutateVectorPolicy(ctx context.Context, bucket string, mutate func(ext map[string][]byte) error) error {
 	dir, name := splitEntryPath(s3tables.GetTableBucketPath(bucket))
 	return s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
@@ -741,7 +764,7 @@ func (s *Server) mutateVectorPolicy(ctx context.Context, bucket string, mutate f
 			}
 		}
 		return &s3tables.S3TablesError{Type: s3tables.ErrCodeConflict,
-			Message: "vector bucket policy changed concurrently, retry the request"}
+			Message: "vector bucket changed concurrently, retry the request"}
 	})
 }
 
@@ -937,6 +960,82 @@ func (s *Server) handleDeleteVectorBucketPolicy(w http.ResponseWriter, r *http.R
 		return
 	}
 	writeJSON(w, http.StatusOK, &DeleteVectorBucketPolicyResponse{})
+}
+
+const (
+	indexModeClassic  = "CLASSIC"
+	indexModeEnhanced = "ENHANCED"
+)
+
+const vectorDefaultIndexModeKey = s3tables.ExtendedKeyVectorDefaultIndexMode
+
+// classicIndexModeCutoff follows AWS: only buckets created before it may use
+// CLASSIC. Search filters before ranking in either mode.
+var classicIndexModeCutoff = time.Date(2026, time.September, 30, 0, 0, 0, 0, time.UTC)
+
+var errClassicIndexMode = &s3tables.S3TablesError{Type: s3tables.ErrCodeInvalidRequest,
+	Message: "CLASSIC is only allowed in a vector bucket created before September 30, 2026"}
+
+func validIndexMode(mode string) bool {
+	return mode == indexModeClassic || mode == indexModeEnhanced
+}
+
+// storedIndexMode reads an unset mode as ENHANCED, which is how search has
+// always behaved here.
+func storedIndexMode(mode string) string {
+	if mode == indexModeClassic {
+		return indexModeClassic
+	}
+	return indexModeEnhanced
+}
+
+func checkClassicIndexMode(mode string, bucketCreatedAt time.Time) error {
+	if mode == indexModeClassic && !bucketCreatedAt.Before(classicIndexModeCutoff) {
+		return errClassicIndexMode
+	}
+	return nil
+}
+
+func (s *Server) handlePutVectorBucketDefaultIndexMode(w http.ResponseWriter, r *http.Request) {
+	var req PutVectorBucketDefaultIndexModeRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		return
+	}
+	arns, err := s.bucketARNs(req.VectorBucketName, req.VectorBucketArn)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		return
+	}
+	if !validIndexMode(req.DefaultIndexMode) {
+		writeError(w, http.StatusBadRequest, "ValidationException", "defaultIndexMode must be CLASSIC or ENHANCED")
+		return
+	}
+	record, err := s.vectorBucket(r.Context(), arns.bucket)
+	if err != nil {
+		catalogErr(w, err)
+		return
+	}
+	if !isVectorBucket(record) {
+		writeError(w, http.StatusNotFound, "NotFoundException",
+			fmt.Sprintf("vector bucket %s not found", arns.bucket))
+		return
+	}
+	err = s.mutateVectorPolicy(r.Context(), arns.bucket, func(ext map[string][]byte) error {
+		if err := s.checkVectorPolicyDoc(r, "s3vectors:PutVectorBucketDefaultIndexMode", arns.bucket, record, ext); err != nil {
+			return err
+		}
+		if err := checkClassicIndexMode(req.DefaultIndexMode, record.CreatedAt); err != nil {
+			return err
+		}
+		ext[vectorDefaultIndexModeKey] = []byte(req.DefaultIndexMode)
+		return nil
+	})
+	if err != nil {
+		catalogErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, &PutVectorBucketDefaultIndexModeResponse{})
 }
 
 func (s *Server) handleCreateIndex(w http.ResponseWriter, r *http.Request) {

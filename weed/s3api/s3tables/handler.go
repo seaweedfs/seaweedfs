@@ -45,6 +45,10 @@ const (
 	// not know the key could silently erase a concurrently saved vector policy.
 	ExtendedKeyVectorPolicy = "s3vectors-policy"
 
+	// ExtendedKeyVectorDefaultIndexMode holds a vector bucket's default index
+	// mode, asserted in update preconditions like ExtendedKeyVectorPolicy.
+	ExtendedKeyVectorDefaultIndexMode = "s3vectors-default-index-mode"
+
 	// Entry-type marker values for ExtendedKeyEntryType. Absent or "table" means
 	// a table; views are stored like tables but tagged "view".
 	EntryTypeTable = "table"
