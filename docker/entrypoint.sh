@@ -106,6 +106,10 @@ case "$1" in
   	  echo "Error: the vector engine is not available on this platform ($(uname -m))." >&2
   	  exit 1
   	fi
+  	# The gateway dials the engine from another container, so not loopback.
+  	if [ -z "$WEED_VECTOR_LISTEN" ] && ! isArgPassed "-listen" "$@"; then
+  	  set -- --listen 0.0.0.0:8090 "$@"
+  	fi
   	exec /usr/bin/weed-vector "$@"
 	;;
 
