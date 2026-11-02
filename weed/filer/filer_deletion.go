@@ -64,6 +64,7 @@ var retryablePatterns = []string{
 	"too many requests",         // Rate limiting / backpressure
 	"try again",                 // Explicit retry suggestion
 	"replication copy count",    // A replica is offline; deletes wait for it to return
+	"no space left on device",   // A low-disk replica could not append the tombstone yet
 }
 
 // DeletionRetryItem represents a file deletion that failed and needs to be retried

@@ -185,6 +185,8 @@ func TestIsRetryableError(t *testing.T) {
 		{"i/o timeout", true, "I/O timeout"},
 		{"broken pipe", true, "broken pipe"},
 		{"replication locations [1] is less than volume 9 replication copy count [2]", true, "replica offline"},
+		{"write /data/9.dat: no space left on device", true, "disk full"},
+		{"No space left on device (os error 28)", true, "disk full (rust)"},
 		{"not found", false, "not found (not retryable)"},
 		{"invalid file id", false, "invalid input (not retryable)"},
 		{"", false, "empty error"},
