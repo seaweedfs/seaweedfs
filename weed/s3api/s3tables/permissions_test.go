@@ -538,3 +538,22 @@ func TestServiceWildcardScopesToOwnService(t *testing.T) {
 		t.Error("the global admin action keeps the bypass on vector operations")
 	}
 }
+
+func TestBucketTagConditionKeys(t *testing.T) {
+	ctx := &PolicyContext{
+		TableBucketTags: map[string]string{"env": "prod"},
+		ResourceTags:    map[string]string{"env": "dev"},
+	}
+	for key, want := range map[string]string{
+		"s3tables:TableBucketTag/env":   "prod",
+		"s3vectors:VectorBucketTag/env": "prod",
+		"aws:ResourceTag/env":           "dev",
+	} {
+		if got := getConditionContextValues(key, ctx); len(got) != 1 || got[0] != want {
+			t.Errorf("%s = %v, want %s", key, got, want)
+		}
+	}
+	if got := getConditionContextValues("s3vectors:VectorBucketTag/team", ctx); got != nil {
+		t.Errorf("absent bucket tag = %v, want none", got)
+	}
+}
