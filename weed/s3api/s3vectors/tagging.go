@@ -63,8 +63,8 @@ func (s *Server) tagTarget(r *http.Request, bodyArn string) (vectorBucketARNs, s
 // authorizeTagging grants action on the tagged bucket or index and returns a
 // context binding the catalog calls to the bucket it authorized. An index
 // target must be a vector index, not another table in its namespace.
-func (s *Server) authorizeTagging(r *http.Request, action string, arns vectorBucketARNs) (context.Context, error) {
-	record, err := s.authorizeVector(r.Context(), r, action, arns.bucket, arns.index)
+func (s *Server) authorizeTagging(r *http.Request, action string, arns vectorBucketARNs, req tagRequest) (context.Context, error) {
+	record, err := s.authorizeVectorTags(r.Context(), r, action, arns.bucket, arns.index, req)
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +113,7 @@ func (s *Server) handleTagResource(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	ctx, err := s.authorizeTagging(r, "s3vectors:TagResource", arns)
+	ctx, err := s.authorizeTagging(r, "s3vectors:TagResource", arns, setTags(req.Tags))
 	if err != nil {
 		catalogErr(w, err)
 		return
@@ -144,7 +144,7 @@ func (s *Server) handleUntagResource(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ValidationException", "tagKeys are required")
 		return
 	}
-	ctx, err := s.authorizeTagging(r, "s3vectors:UntagResource", arns)
+	ctx, err := s.authorizeTagging(r, "s3vectors:UntagResource", arns, tagRequest{keys: req.TagKeys})
 	if err != nil {
 		catalogErr(w, err)
 		return
@@ -177,7 +177,7 @@ func (s *Server) handleListTagsForResource(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
-	ctx, err := s.authorizeTagging(r, "s3vectors:ListTagsForResource", arns)
+	ctx, err := s.authorizeTagging(r, "s3vectors:ListTagsForResource", arns, tagRequest{})
 	if err != nil {
 		catalogErr(w, err)
 		return

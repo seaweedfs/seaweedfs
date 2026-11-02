@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -385,14 +387,14 @@ func (s *Server) handleListVectorBuckets(w http.ResponseWriter, r *http.Request)
 		if !IsVectorBucketFormat(b.Format) {
 			continue
 		}
-		owner, policy, err := s.vectorPolicyView(r.Context(), b.Name)
+		owner, policy, tags, err := s.vectorPolicyView(r.Context(), b.Name)
 		if err != nil {
 			// A bucket that vanished mid-list drops out of the page rather
 			// than failing the whole listing.
 			continue
 		}
 		arn := s.vectorBucketArn(b.Name)
-		pctx := s.tables.PolicyContext(r, b.Name)
+		pctx := s.policyContext(r, b.Name, tags, tags, tagRequest{})
 		if !s3tables.CheckPermissionWithContext("s3vectors:ListVectorBuckets", principal, owner, policy, arn, pctx) &&
 			!s3tables.CheckPermissionWithContext("s3vectors:GetVectorBucket", principal, owner, policy, arn, pctx) {
 			continue
@@ -672,14 +674,13 @@ func (s *Server) vectorBucket(ctx context.Context, bucket string) (*s3tables.Get
 	return &resp, nil
 }
 
-// vectorPolicy reads the bucket's stored s3vectors policy. A bucket written
-// before the dedicated key carried the raw document in the shared policy
-// slot; one that still names vector actions keeps working until the next
-// vector policy write migrates it out.
-func (s *Server) vectorPolicy(ctx context.Context, bucket string) (string, error) {
+// vectorPolicy reads the bucket's stored s3vectors policy and its tags. A
+// bucket written before the dedicated key carried the raw document in the
+// shared policy slot; one that still names vector actions keeps working until
+// the next vector policy write migrates it out.
+func (s *Server) vectorPolicy(ctx context.Context, bucket string) (policy string, tags map[string]string, err error) {
 	dir, name := splitEntryPath(s3tables.GetTableBucketPath(bucket))
-	var policy string
-	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	err = s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
 			Directory: dir,
 			Name:      name,
@@ -688,14 +689,94 @@ func (s *Server) vectorPolicy(ctx context.Context, bucket string) (string, error
 			return err
 		}
 		policy = vectorPolicyFromExt(resp.Entry.Extended)
-		return nil
+		tags, err = tagsFromExt(resp.Entry.Extended)
+		return err
 	})
-	return policy, err
+	return policy, tags, err
 }
 
-// vectorPolicyView resolves a bucket's owner and stored s3vectors policy in
-// one filer lookup — the per-bucket check the vector listing runs.
-func (s *Server) vectorPolicyView(ctx context.Context, bucket string) (owner, policy string, err error) {
+// indexTags reads an index's tags; one not created yet has none.
+func (s *Server) indexTags(ctx context.Context, bucket, index string) (map[string]string, error) {
+	dir, name := splitEntryPath(s3tables.GetTablePath(bucket, indexNamespace, index))
+	var tags map[string]string
+	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
+			Directory: dir,
+			Name:      name,
+		})
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		tags, err = tagsFromExt(resp.Entry.Extended)
+		return err
+	})
+	return tags, err
+}
+
+func tagsFromExt(ext map[string][]byte) (map[string]string, error) {
+	raw := ext[s3tables.ExtendedKeyTags]
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var tags map[string]string
+	if err := json.Unmarshal(raw, &tags); err != nil {
+		return nil, fmt.Errorf("decode tags: %w", err)
+	}
+	return tags, nil
+}
+
+// readsResourceTags reports whether a policy has a condition on
+// aws:ResourceTag, which on an index needs the index's tags read. A document
+// that does not decode is treated as having one.
+func readsResourceTags(policy string) bool {
+	if policy == "" {
+		return false
+	}
+	var doc s3tables.PolicyDocument
+	if json.Unmarshal([]byte(policy), &doc) != nil {
+		return true
+	}
+	for _, stmt := range doc.Statement {
+		for _, keys := range stmt.Condition {
+			for key := range keys {
+				if strings.HasPrefix(key, "aws:ResourceTag/") {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// tagRequest is what a request sets or removes, for aws:RequestTag and
+// aws:TagKeys.
+type tagRequest struct {
+	tags map[string]string
+	keys []string
+}
+
+func setTags(tags map[string]string) tagRequest {
+	return tagRequest{tags: tags, keys: slices.Sorted(maps.Keys(tags))}
+}
+
+// policyContext is the catalog's evaluation context plus the tag condition
+// keys: aws:ResourceTag reads the target's tags and s3vectors:VectorBucketTag
+// the bucket's.
+func (s *Server) policyContext(r *http.Request, bucket string, bucketTags, resourceTags map[string]string, req tagRequest) *s3tables.PolicyContext {
+	pctx := s.tables.PolicyContext(r, bucket)
+	pctx.TableBucketTags = bucketTags
+	pctx.ResourceTags = resourceTags
+	pctx.RequestTags = req.tags
+	pctx.TagKeys = req.keys
+	return pctx
+}
+
+// vectorPolicyView resolves a bucket's owner, stored s3vectors policy and
+// tags in one filer lookup — the per-bucket check the vector listing runs.
+func (s *Server) vectorPolicyView(ctx context.Context, bucket string) (owner, policy string, tags map[string]string, err error) {
 	dir, name := splitEntryPath(s3tables.GetTableBucketPath(bucket))
 	err = s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
@@ -713,9 +794,10 @@ func (s *Server) vectorPolicyView(ctx context.Context, bucket string) (owner, po
 		}
 		owner = meta.OwnerAccountID
 		policy = vectorPolicyFromExt(resp.Entry.Extended)
-		return nil
+		tags, err = tagsFromExt(resp.Entry.Extended)
+		return err
 	})
-	return owner, policy, err
+	return owner, policy, tags, err
 }
 
 // mutateVectorPolicy applies a change to the bucket's vector-policy
@@ -787,9 +869,13 @@ func (s *Server) checkVectorPolicyDoc(r *http.Request, action, bucket string, re
 	if json.Unmarshal(ext[s3tables.ExtendedKeyMetadata], &meta) != nil || !meta.CreatedAt.Equal(record.CreatedAt) {
 		return errVectorBucketReplaced
 	}
+	tags, err := tagsFromExt(ext)
+	if err != nil {
+		return err
+	}
 	principal := s.tables.PrincipalFor(r)
 	if !s3tables.CheckPermissionWithContext(action, principal, record.OwnerAccountID,
-		vectorPolicyFromExt(ext), s.vectorBucketArn(bucket), s.tables.PolicyContext(r, bucket)) {
+		vectorPolicyFromExt(ext), s.vectorBucketArn(bucket), s.policyContext(r, bucket, tags, tags, tagRequest{})) {
 		return errVectorDenied
 	}
 	return nil
@@ -802,20 +888,32 @@ func (s *Server) checkVectorPolicyDoc(r *http.Request, action, bucket string, re
 // trusted internal path, the same pattern the implicit namespace uses.
 // The returned record saves the handler a second bucket lookup.
 func (s *Server) authorizeVector(ctx context.Context, r *http.Request, action, bucket, index string) (*s3tables.GetTableBucketResponse, error) {
+	return s.authorizeVectorTags(ctx, r, action, bucket, index, tagRequest{})
+}
+
+// authorizeVectorTags is authorizeVector for a request that sets or removes
+// tags.
+func (s *Server) authorizeVectorTags(ctx context.Context, r *http.Request, action, bucket, index string, req tagRequest) (*s3tables.GetTableBucketResponse, error) {
 	record, err := s.vectorBucket(ctx, bucket)
 	if err != nil {
 		return nil, err
 	}
-	policy, err := s.vectorPolicy(ctx, bucket)
+	policy, bucketTags, err := s.vectorPolicy(ctx, bucket)
 	if err != nil {
 		return nil, err
 	}
-	resourceARN := s.vectorBucketArn(bucket)
+	resourceARN, resourceTags := s.vectorBucketArn(bucket), bucketTags
 	if index != "" {
-		resourceARN = s.indexArn(bucket, index)
+		resourceARN, resourceTags = s.indexArn(bucket, index), nil
+		if readsResourceTags(policy) {
+			if resourceTags, err = s.indexTags(ctx, bucket, index); err != nil {
+				return nil, err
+			}
+		}
 	}
 	principal := s.tables.PrincipalFor(r)
-	if !s3tables.CheckPermissionWithContext(action, principal, record.OwnerAccountID, policy, resourceARN, s.tables.PolicyContext(r, bucket)) {
+	if !s3tables.CheckPermissionWithContext(action, principal, record.OwnerAccountID, policy, resourceARN,
+		s.policyContext(r, bucket, bucketTags, resourceTags, req)) {
 		return nil, &s3tables.S3TablesError{Type: s3tables.ErrCodeAccessDenied, Message: "access denied"}
 	}
 	if !isVectorBucket(record) {
@@ -888,7 +986,7 @@ func (s *Server) handleGetVectorBucketPolicy(w http.ResponseWriter, r *http.Requ
 		catalogErr(w, err)
 		return
 	}
-	policy, err := s.vectorPolicy(r.Context(), arns.bucket)
+	policy, _, err := s.vectorPolicy(r.Context(), arns.bucket)
 	if err != nil {
 		catalogErr(w, err)
 		return
@@ -986,13 +1084,13 @@ func (s *Server) handleCreateIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	// The create grant is exercised before any write: a denied caller must not
 	// leave even the implicit namespace behind.
-	bucketRecord, err := s.authorizeVector(r.Context(), r, "s3vectors:CreateIndex", arns.bucket, arns.index)
+	bucketRecord, err := s.authorizeVectorTags(r.Context(), r, "s3vectors:CreateIndex", arns.bucket, arns.index, setTags(req.Tags))
 	if err != nil {
 		catalogErr(w, err)
 		return
 	}
 	if len(req.Tags) > 0 {
-		if _, err := s.authorizeVector(r.Context(), r, "s3vectors:TagResource", arns.bucket, arns.index); err != nil {
+		if _, err := s.authorizeVectorTags(r.Context(), r, "s3vectors:TagResource", arns.bucket, arns.index, setTags(req.Tags)); err != nil {
 			catalogErr(w, err)
 			return
 		}
