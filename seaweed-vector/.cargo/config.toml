@@ -1,0 +1,6 @@
+# lance's build scripts run $PROTOC. Point them at the protoc that
+# protoc-bin-vendored ships, as this workspace's own build script does, so a
+# build needs no system protoc. An explicit PROTOC still wins. Cargo reads this
+# file only when it runs inside seaweed-vector/.
+[env]
+PROTOC = { value = ".cargo/protoc", relative = true }
