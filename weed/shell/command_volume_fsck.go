@@ -350,7 +350,6 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 				fmt.Fprintf(c.writer, "checking directory %s\n", util.NewFullPath(entry.Dir, entry.Entry.Name))
 			}
 			dataChunks, manifestChunks, resolveErr := filer.ResolveChunkManifest(ctx, filer.LookupFn(c.env), entry.Entry.GetChunks(), 0, math.MaxInt64, nil)
-			manifestsResolved := resolveErr == nil
 			if resolveErr != nil {
 				// Cancellation/deadline isn't manifest corruption; surface it
 				// so the BFS bails out cleanly without polluting the
@@ -367,7 +366,7 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 				// unknown), warn, and keep going. The unresolved counter blocks
 				// any purge step downstream so we never delete a sub-chunk we
 				// couldn't account for.
-				fmt.Fprintf(c.writer, "WARNING: ResolveChunkManifest failed for %s: %v — recording top-level chunk fids only; purging will be disabled\n",
+				fmt.Fprintf(c.writer, "WARNING: ResolveChunkManifest failed for %s: %v — recording top-level chunk fids only; orphan purging will be disabled\n",
 					util.NewFullPath(entry.Dir, entry.Entry.Name), resolveErr)
 				c.unresolvedManifestEntries.Add(1)
 				dataChunks = entry.Entry.GetChunks()
@@ -388,7 +387,6 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 					_, selectedVolume = c.volumeIds[chunk.Fid.VolumeId]
 				}
 				purgePath := purgeAbsent &&
-					manifestsResolved &&
 					selectedVolume &&
 					!c.knownVolumeIds[chunk.Fid.VolumeId] &&
 					!purgePathQueued && c.collectionMatcher == nil

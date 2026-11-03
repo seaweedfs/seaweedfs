@@ -135,3 +135,42 @@ func TestValidateMissingVolumePurgeConfirmation(t *testing.T) {
 		})
 	}
 }
+
+func TestVolumeFsckPurgesEntryWhoseManifestIsOnMissingVolume(t *testing.T) {
+	manifest := &filer_pb.FileChunk{
+		Fid:             &filer_pb.FileId{VolumeId: 99, FileKey: 1, Cookie: 1},
+		Size:            1,
+		IsChunkManifest: true,
+	}
+	stub := &stubFilerServer{entries: map[string]*filer_pb.Entry{
+		"/":     {IsDirectory: true},
+		"/big":  {Chunks: []*filer_pb.FileChunk{manifest}},
+		"/live": {Chunks: []*filer_pb.FileChunk{{Fid: &filer_pb.FileId{VolumeId: 7, FileKey: 2, Cookie: 1}, Size: 1}}},
+	}}
+
+	verbose := false
+	findMissing := true
+	var output bytes.Buffer
+	c := &commandVolumeFsck{
+		tempFolder:               t.TempDir(),
+		verbose:                  &verbose,
+		findMissingChunksInFiler: &findMissing,
+		writer:                   &output,
+		env:                      startStubFiler(t, stub),
+		volumeIds:                map[uint32]bool{99: true},
+		knownVolumeIds:           map[uint32]bool{7: true},
+	}
+	var purged []purgeItem
+	if err := c.collectFilerFileIdAndPaths(map[string]map[uint32]VInfo{"dn1": {7: {}}}, true, func(item purgeItem) {
+		purged = append(purged, item)
+	}, 0, 0); err != nil {
+		t.Fatalf("collect filer references: %v", err)
+	}
+
+	if !strings.Contains(output.String(), "ResolveChunkManifest failed for /big") {
+		t.Fatalf("manifest on the missing volume resolved unexpectedly: %q", output.String())
+	}
+	if len(purged) != 1 || purged[0].path != util.FullPath("/big") {
+		t.Fatalf("purged paths = %v, want /big, whose manifest is on missing volume 99", purged)
+	}
+}

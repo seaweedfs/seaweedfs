@@ -120,8 +120,7 @@ func TestVolumeFsckFindsReferenceAfterRealVolumeDeletion(t *testing.T) {
 	if !strings.Contains(metaAfter, "fsck-probe.txt") {
 		t.Fatalf("report-only fsck changed or removed the Filer entry: %q", metaAfter)
 	}
-	// A manifest whose parent volume is gone cannot prove which child FIDs it
-	// contains. Even with the explicit purge flag, preserve that Filer entry.
+	// An entry whose chunk manifest lived on the retired volume is unreadable too.
 	filerConn, err := grpc.NewClient(fmt.Sprintf("127.0.0.1:%d", filerGRPC), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		t.Fatalf("dial Filer gRPC: %v", err)
@@ -155,13 +154,16 @@ func TestVolumeFsckFindsReferenceAfterRealVolumeDeletion(t *testing.T) {
 	if !strings.Contains(purgeOutput, "ResolveChunkManifest failed") {
 		t.Fatalf("fsck did not surface the unresolved manifest: %q", purgeOutput)
 	}
-	if strings.Contains(purgeOutput, "deleting path /manifest-probe.txt") {
-		t.Fatalf("fsck queued unresolved manifest entry for deletion: %q", purgeOutput)
+	if !strings.Contains(purgeOutput, "deleting path /manifest-probe.txt") {
+		t.Fatalf("confirmed purge did not queue the entry whose manifest was on the retired volume: %q", purgeOutput)
 	}
-	metaAfterUnresolved := runIntegrationShell(t, weed, masterAddress, filerAddress,
-		"lock\nfs.meta.cat /manifest-probe.txt\nunlock\n")
-	if !strings.Contains(metaAfterUnresolved, "manifest-probe.txt") {
-		t.Fatalf("unresolved-manifest purge removed the Filer entry: %q", metaAfterUnresolved)
+	manifestAfterPurge, err := http.Get(filerURL + "/manifest-probe.txt")
+	if err != nil {
+		t.Fatalf("read manifest probe after confirmed purge: %v", err)
+	}
+	manifestAfterPurge.Body.Close()
+	if manifestAfterPurge.StatusCode != http.StatusNotFound {
+		t.Fatalf("confirmed purge manifest probe GET status = %d, want 404", manifestAfterPurge.StatusCode)
 	}
 
 	if !strings.Contains(purgeOutput, "deleting path /fsck-probe.txt after volume not found") {
