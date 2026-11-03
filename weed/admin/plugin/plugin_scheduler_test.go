@@ -1513,3 +1513,60 @@ func TestExecutorCapacityCountsUnitemizedSlots(t *testing.T) {
 		t.Fatalf("one vacuum job in flight leaves room for a second at per-worker 2")
 	}
 }
+
+// A job homed on a replica-host worker stays pinned there while its home
+// queue is short, so a free remote worker cannot take it. When the home is
+// held by work the lane cannot free, the run gives the job up after the
+// orphan grace instead of waiting out the window beside the free worker.
+func TestDispatchGivesUpPinnedJobsWhoseHomeIsHeldByForeignWork(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	registerECWorkers(t, pluginSvc, map[string]string{
+		"worker-local":  "10.0.0.1:9334",
+		"worker-remote": "10.0.0.2:9334",
+	})
+	pluginSvc.registry.UpdateHeartbeat("worker-local", &plugin_pb.WorkerHeartbeat{
+		WorkerId: "worker-local", ExecutionSlotsUsed: 1, ExecutionSlotsTotal: 1,
+		RunningWork: []*plugin_pb.RunningWork{{
+			WorkId: "vac-1", Kind: plugin_pb.WorkKind_WORK_KIND_EXECUTION, JobType: "vacuum",
+		}},
+	})
+	pluginSvc.registry.UpdateHeartbeat("worker-remote", &plugin_pb.WorkerHeartbeat{
+		WorkerId: "worker-remote", ExecutionSlotsUsed: 0, ExecutionSlotsTotal: 1,
+	})
+
+	window, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	policy := schedulerPolicy{
+		ExecutionConcurrency:   1,
+		PerWorkerConcurrency:   1,
+		LocalQueuePin:          5,
+		ExecutionTimeout:       time.Hour,
+		ExecutorReserveBackoff: time.Millisecond,
+		OrphanRehomeGrace:      50 * time.Millisecond,
+	}
+	proposals := []*plugin_pb.JobProposal{{
+		ProposalId: "p1", JobType: "erasure_coding", DedupeKey: "k1",
+		Parameters: replicaJob("j1", "10.0.0.1:8080").Parameters,
+	}}
+
+	started := time.Now()
+	success, errCount, canceled := pluginSvc.dispatchScheduledProposals(window, "erasure_coding", proposals, &plugin_pb.ClusterContext{}, policy)
+	if elapsed := time.Since(started); elapsed < policy.OrphanRehomeGrace || elapsed > 4*time.Second {
+		t.Fatalf("dispatch took %v, want about the %v grace", elapsed, policy.OrphanRehomeGrace)
+	}
+	if success != 0 || errCount != 0 || canceled != 1 {
+		t.Fatalf("unexpected dispatch counts: success=%d errors=%d canceled=%d", success, errCount, canceled)
+	}
+	activity := findActivity(pluginSvc.ListActivities("erasure_coding", 100), "admin_scheduler", "skipped_no_executor")
+	want := "no executor capacity for erasure_coding: worker worker-local has 1/1 slots used by vacuum this admin did not dispatch"
+	if activity == nil || activity.Message != want {
+		t.Fatalf("expected %q, got %+v", want, activity)
+	}
+}

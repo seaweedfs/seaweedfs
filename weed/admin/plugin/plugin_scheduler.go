@@ -1030,8 +1030,8 @@ func (r *Plugin) dispatchScheduledProposals(
 // clears on a schedule the lane has no view of, and a lane that serialises
 // its job types would idle every other type in it for the whole runtime
 // budget; those jobs are given up now, with the reason, and re-proposed by
-// the next detection. A missing worker is waited for only as long as the
-// orphan grace, the usual reconnect blink.
+// the next detection. A missing worker, or a free one that the queue's pin
+// keeps off a busy home, is waited for only as long as the orphan grace.
 func (r *Plugin) executorCapacityOutlook(jobType string, policy schedulerPolicy, blockedFor time.Duration) (bool, string) {
 	executors, err := r.registry.ListExecutors(jobType)
 	if err != nil || len(executors) == 0 {
@@ -1043,6 +1043,7 @@ func (r *Plugin) executorCapacityOutlook(jobType string, policy schedulerPolicy,
 
 	lane := JobTypeLane(jobType)
 	held := make([]string, 0, len(executors))
+	free := false
 	r.execResMu.Lock()
 	defer r.execResMu.Unlock()
 	for _, executor := range executors {
@@ -1050,7 +1051,11 @@ func (r *Plugin) executorCapacityOutlook(jobType string, policy schedulerPolicy,
 			continue
 		}
 		fits, blocking, limit := r.executorCapacityLocked(executor, jobType, policy)
-		if fits || blocking.reservedLanes[lane] > 0 {
+		if fits {
+			free = true
+			continue
+		}
+		if blocking.reservedLanes[lane] > 0 {
 			return true, ""
 		}
 		if limit <= 0 {
@@ -1059,6 +1064,9 @@ func (r *Plugin) executorCapacityOutlook(jobType string, policy schedulerPolicy,
 		}
 		held = append(held, fmt.Sprintf("worker %s has %d/%d slots used by %s",
 			executor.WorkerID, blocking.total(), limit, blocking.holders()))
+	}
+	if free && (len(held) == 0 || blockedFor < policy.OrphanRehomeGrace) {
+		return true, ""
 	}
 	return false, fmt.Sprintf("no executor capacity for %s: %s", jobType, strings.Join(held, "; "))
 }
