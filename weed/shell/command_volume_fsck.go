@@ -837,7 +837,7 @@ func (c *commandVolumeFsck) httpDelete(path util.FullPath) {
 		fmt.Fprintln(c.writer, "delete response Headers : ", resp.Header)
 	}
 
-	if resp.StatusCode >= http.StatusBadRequest {
+	if resp.StatusCode >= http.StatusMultipleChoices {
 		fmt.Fprintf(c.writer, "DELETE %s failed: %s\n", path, resp.Status)
 	} else {
 		dir, _ := path.DirAndName()
