@@ -123,7 +123,10 @@ async fn main() -> Result<()> {
     if let Some(path) = security.path() {
         tracing::info!("security settings from {}", path.display());
     }
-    let master_tls = security.grpc_client_tls("grpc.client", args.tls_server_name.clone())?;
+    let master_tls = match &args.masters {
+        Some(_) => security.grpc_client_tls("grpc.client", args.tls_server_name.clone())?,
+        None => None,
+    };
     let server_tls = security
         .grpc_server_tls("grpc.vector")?
         .map(ServerTls::load)
