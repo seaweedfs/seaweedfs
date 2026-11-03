@@ -280,13 +280,13 @@ func TestPluginJobsAndActivitiesAPILimitAfterLaneFilter(t *testing.T) {
 	if rows := get(s.GetPluginJobsAPI, "/api/plugin/jobs?limit=2&lane=iceberg"); len(rows) != 1 || rows[0]["job_id"] != "iceberg-1" {
 		t.Fatalf("iceberg lane jobs: got %v, want the one iceberg job", rows)
 	}
-	if rows := get(s.GetPluginJobsAPI, "/api/plugin/jobs?limit=2&lane=default"); len(rows) != 2 {
-		t.Fatalf("default lane jobs: got %d rows, want the limit of 2", len(rows))
+	if rows := get(s.GetPluginJobsAPI, "/api/plugin/jobs?limit=2&lane=default"); len(rows) != 2 || rows[0]["job_id"] != "vacuum-0" || rows[1]["job_id"] != "vacuum-1" {
+		t.Fatalf("default lane jobs: got %v, want vacuum-0 and vacuum-1", rows)
 	}
 	if rows := get(s.GetPluginActivitiesAPI, "/api/plugin/activities?limit=2&lane=iceberg"); len(rows) != 1 || rows[0]["job_id"] != "iceberg-1" {
 		t.Fatalf("iceberg lane activities: got %v, want the one iceberg activity", rows)
 	}
-	if rows := get(s.GetPluginActivitiesAPI, "/api/plugin/activities?limit=2&lane=default"); len(rows) != 2 {
-		t.Fatalf("default lane activities: got %d rows, want the limit of 2", len(rows))
+	if rows := get(s.GetPluginActivitiesAPI, "/api/plugin/activities?limit=2&lane=default"); len(rows) != 2 || rows[0]["job_id"] != "vacuum-0" || rows[1]["job_id"] != "vacuum-1" {
+		t.Fatalf("default lane activities: got %v, want vacuum-0 and vacuum-1", rows)
 	}
 }
