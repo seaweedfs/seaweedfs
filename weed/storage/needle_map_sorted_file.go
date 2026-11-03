@@ -127,6 +127,9 @@ func (m *SortedFileNeedleMap) Delete(key NeedleId, offset Offset) error {
 		return err
 	}
 	_, _, err = erasure_coding.SearchNeedleFromSortedIndex(f.file, m.dbFileSize, key, erasure_coding.MarkNeedleDeleted)
+	if err == nil {
+		m.logDelete(size)
+	}
 
 	return err
 }

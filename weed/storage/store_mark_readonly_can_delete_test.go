@@ -152,3 +152,44 @@ func TestMountVolumeAnnouncesReadOnlyState(t *testing.T) {
 		})
 	}
 }
+
+// After a restart a canDelete volume is served from .sdx; its deletes must
+// still move the counters volume.deleteEmpty and vacuum read, and land them
+// where the next reload would.
+func TestMarkVolumeReadonlyCanDelete_CountsDeletesAfterRestart(t *testing.T) {
+	dir := t.TempDir()
+	store := newSingleDirStore(t, dir)
+	const vid = needle.VolumeId(13)
+	require.NoError(t, store.AddVolume(vid, "", NeedleMapInMemory, "000", "", 0, needle.GetCurrentVersion(), 0, types.HardDriveType, 0))
+
+	needles := []*needle.Needle{newRandomNeedle(1), newRandomNeedle(2), newRandomNeedle(3)}
+	for _, n := range needles {
+		_, err := store.WriteVolumeNeedle(vid, n, true, false)
+		require.NoError(t, err)
+	}
+	require.NoError(t, store.MarkVolumeReadonly(vid, true, true))
+	store.Close()
+
+	store2 := newSingleDirStore(t, dir)
+	v := store2.GetVolume(vid)
+	require.NotNil(t, v)
+	require.IsType(t, &SortedFileNeedleMap{}, v.nm)
+	for _, n := range needles {
+		_, err := store2.DeleteVolumeNeedle(vid, n)
+		require.NoError(t, err)
+	}
+	counters := func(v *Volume) [4]uint64 {
+		return [4]uint64{v.FileCount(), v.DeletedCount(), v.ContentSize(), v.DeletedSize()}
+	}
+	afterDeletes := counters(v)
+	require.Equal(t, uint64(len(needles)), afterDeletes[0])
+	require.Equal(t, afterDeletes[0], afterDeletes[1], "an emptied volume must report every file deleted")
+	require.Equal(t, afterDeletes[2], afterDeletes[3])
+	store2.Close()
+
+	store3 := newSingleDirStore(t, dir)
+	v3 := store3.GetVolume(vid)
+	require.NotNil(t, v3)
+	require.Equal(t, afterDeletes, counters(v3))
+	store3.Close()
+}
