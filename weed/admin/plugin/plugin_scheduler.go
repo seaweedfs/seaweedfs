@@ -1220,6 +1220,7 @@ type execReservation struct {
 	workerID   string
 	jobType    string
 	jobID      string
+	reservedAt time.Time
 	releasedAt time.Time
 }
 
@@ -1282,7 +1283,8 @@ func (l executorLoad) holders() string {
 // jobType "" counts work of every type, otherwise only that type. A
 // heartbeat entry whose job id matches a reservation is the same slot seen
 // twice and counts once. Slots the worker counts without itemizing them go
-// first to this admin's jobs it does not list, a completed one only until the
+// first to this admin's jobs it does not list, a pending one only once a
+// heartbeat came after its reservation and a completed one only until the
 // worker's next heartbeat; the rest are of unknown type and count against
 // every type. Caller holds r.execResMu.
 func (r *Plugin) executorLoadLocked(executor *WorkerSession, jobType string) executorLoad {
@@ -1330,7 +1332,7 @@ func (r *Plugin) executorLoadLocked(executor *WorkerSession, jobType string) exe
 		}
 		switch {
 		case !released:
-			if !isListed {
+			if !isListed && !executor.LastSeenAt.Before(res.reservedAt) {
 				unitemized--
 			}
 			countReserved(res)
@@ -1442,9 +1444,10 @@ func (r *Plugin) reserveExecutorSlot(
 	r.execResSeq++
 	token := r.execResSeq
 	r.execRes[token] = execReservation{
-		workerID: strings.TrimSpace(executor.WorkerID),
-		jobType:  jobType,
-		jobID:    jobID,
+		workerID:   strings.TrimSpace(executor.WorkerID),
+		jobType:    jobType,
+		jobID:      jobID,
+		reservedAt: time.Now(),
 	}
 	release := func() {
 		r.execResMu.Lock()
