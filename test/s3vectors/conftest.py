@@ -198,6 +198,8 @@ def run_cluster(param, tmp_path_factory, identities):
                        WEED_S3_SSE_KEY="s3vectors-test",
                        **({"WEED_JWT_SIGNING_READ_KEY": read_jwt_key} if read_jwt_key else {}))
             env.pop("WEED_S3_SSE_KEK", None)
+            if not read_jwt_key:
+                env.pop("WEED_JWT_SIGNING_READ_KEY", None)
             for key in unset:
                 env.pop(key)
             process = subprocess.Popen(args, cwd=directory, stdout=log, stderr=log, env=env)
