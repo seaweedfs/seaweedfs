@@ -251,6 +251,9 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 					fmt.Printf("skip %s: changed during merge\n", entryPath)
 					moved.targets = unreferencedTargets(context.Background(), filerClient, lookupFn, parentPath, entry.Name, moved.targets)
 					moved.abandon(commandEnv, entryPath, plan)
+					if len(entry.HardLinkId) > 0 {
+						processedHardLinks.Delete(string(entry.HardLinkId))
+					}
 					return nil
 				}
 				if uErr != nil {
