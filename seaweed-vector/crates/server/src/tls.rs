@@ -42,10 +42,11 @@ pub fn refresh_interval() -> Duration {
         .unwrap_or(DEFAULT_REFRESH_INTERVAL)
 }
 
-/// `time.ParseDuration`'s grammar for the units weed deployments use:
-/// a sequence of `<number><unit>` with units `h`, `m`, `s`, `ms`.
+/// `time.ParseDuration`'s grammar: an optional `+`, then a sequence of
+/// `<number><unit>`. A negative value is `None`, as weed ignores one.
 fn parse_go_duration(s: &str) -> Option<Duration> {
-    let mut rest = s.trim();
+    let s = s.trim();
+    let mut rest = s.strip_prefix('+').unwrap_or(s);
     if rest.is_empty() {
         return None;
     }
@@ -64,7 +65,9 @@ fn parse_go_duration(s: &str) -> Option<Duration> {
             "h" => 3600.0,
             "m" => 60.0,
             "s" => 1.0,
-            "ms" => 0.001,
+            "ms" => 1e-3,
+            "us" | "\u{b5}s" | "\u{3bc}s" => 1e-6,
+            "ns" => 1e-9,
             _ => return None,
         };
         total += Duration::from_secs_f64(value * seconds);
@@ -539,6 +542,21 @@ mod tests {
         assert_eq!(parse_go_duration("500ms"), Some(Duration::from_millis(500)));
         assert_eq!(parse_go_duration("1h30m"), Some(Duration::from_secs(5400)));
         assert_eq!(parse_go_duration("2.5s"), Some(Duration::from_millis(2500)));
+        assert_eq!(parse_go_duration("+2s"), Some(Duration::from_secs(2)));
+        assert_eq!(
+            parse_go_duration("1500us"),
+            Some(Duration::from_micros(1500))
+        );
+        assert_eq!(
+            parse_go_duration("3\u{b5}s"),
+            Some(Duration::from_micros(3))
+        );
+        assert_eq!(
+            parse_go_duration("3\u{3bc}s"),
+            Some(Duration::from_micros(3))
+        );
+        assert_eq!(parse_go_duration("1s20ns"), Some(Duration::new(1, 20)));
+        assert_eq!(parse_go_duration("-5m"), None);
         assert_eq!(parse_go_duration("2d"), None);
         assert_eq!(parse_go_duration(""), None);
     }
