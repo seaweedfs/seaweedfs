@@ -3,6 +3,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use aws_lc_rs::hmac;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 
+/// 9999-12-31T23:59:59Z; golang-jwt reads `exp` through float64 and time.Unix.
+const MAX_EXP_SECS: u64 = 253_402_300_799;
+
 /// Mints the HS256 Bearer token the admin control stream requires when
 /// jwt.filer_signing.key is configured, matching the SeaweedFilerAdminClaims
 /// the Go worker sends: registered claims only, no session id.
@@ -15,7 +18,8 @@ pub fn admin_token(signing_key: &[u8], expires_after_secs: u64) -> Option<String
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or_default()
-            + expires_after_secs;
+            .saturating_add(expires_after_secs)
+            .min(MAX_EXP_SECS);
         format!("{{\"exp\":{exp}}}")
     } else {
         "{}".to_string()
@@ -42,7 +46,7 @@ pub fn derive_key(signing_key: &[u8], purpose: &str) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{admin_token, derive_key};
+    use super::{admin_token, derive_key, MAX_EXP_SECS};
 
     #[test]
     fn derive_key_matches_the_go_derivation() {
@@ -74,5 +78,14 @@ mod tests {
         use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
         let claims = URL_SAFE_NO_PAD.decode(payload).unwrap();
         assert_eq!(claims, b"{}");
+    }
+
+    #[test]
+    fn huge_expiry_is_capped() {
+        let token = admin_token(b"secret", u64::MAX).unwrap();
+        let payload = token.split('.').nth(1).unwrap();
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+        let claims = URL_SAFE_NO_PAD.decode(payload).unwrap();
+        assert_eq!(claims, format!("{{\"exp\":{MAX_EXP_SECS}}}").as_bytes());
     }
 }
