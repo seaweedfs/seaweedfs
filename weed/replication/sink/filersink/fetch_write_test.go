@@ -1126,6 +1126,39 @@ func TestManifestResolveRetryGateOrdersByCommit(t *testing.T) {
 	}
 }
 
+// A replicate failure on a version the source has moved past is skipped: the
+// later event carries the current content. The error here is transient, not a
+// missing chunk, so only the supersession check can turn it into a skip.
+func TestOnReplicateChunkErrorSkipsSupersededVersion(t *testing.T) {
+	transient := errors.New("copy 5617,01abc: dial tcp: connection refused")
+	live, replayed := committedOverWithOlderMtime()
+
+	t.Run("source entry gone", func(t *testing.T) {
+		fs := &FilerSink{filerSource: startSourceFilerServer(t, &sourceFilerServer{
+			lookupFn: func(dir, name string) (*filer_pb.Entry, error) {
+				return nil, filer_pb.ErrNotFound
+			},
+		}), dir: "/dst"}
+		if err := fs.onReplicateChunkError("/dst/x.bin", replayed, transient); err != nil {
+			t.Fatalf("a deleted source entry must skip the replay, got %v", err)
+		}
+	})
+
+	t.Run("committed over with an older mtime", func(t *testing.T) {
+		fs := &FilerSink{filerSource: startSourceFilerWithEntry(t, live, ""), dir: "/dst"}
+		if err := fs.onReplicateChunkError("/dst/x.bin", replayed, transient); err != nil {
+			t.Fatalf("a later commit that dropped the replayed chunks must skip the replay, got %v", err)
+		}
+	})
+
+	t.Run("source unchanged", func(t *testing.T) {
+		fs := &FilerSink{filerSource: startSourceFilerWithEntry(t, replayed, ""), dir: "/dst"}
+		if err := fs.onReplicateChunkError("/dst/x.bin", replayed, transient); !errors.Is(err, transient) {
+			t.Fatalf("a failure on the current version must propagate, got %v", err)
+		}
+	})
+}
+
 func committedOverWithOlderMtime() (live, replayed *filer_pb.Entry) {
 	live = &filer_pb.Entry{
 		Attributes: &filer_pb.FuseAttributes{Mtime: 4},
