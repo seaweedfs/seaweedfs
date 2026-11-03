@@ -25,6 +25,10 @@ func ParseS3Metadata(r *http.Request, existing map[string][]byte, isReplace bool
 
 	// Storage class
 	if sc := r.Header.Get(s3_constants.AmzStorageClass); sc != "" {
+		if !validateStorageClass(sc) {
+			glog.Warningf("Invalid storage class %q", sc)
+			return nil, s3err.ErrInvalidStorageClass
+		}
 		metadata[s3_constants.AmzStorageClass] = []byte(sc)
 	}
 

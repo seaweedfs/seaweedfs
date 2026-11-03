@@ -134,6 +134,12 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	tagSet, headerCode := validatePutHeaders(r)
+	if headerCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, headerCode)
+		return
+	}
+
 	if r.Header.Get("Cache-Control") != "" {
 		if _, err = cacheobject.ParseRequestCacheControl(r.Header.Get("Cache-Control")); err != nil {
 			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidDigest)
@@ -279,6 +285,12 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 						entry.Extended = make(map[string][]byte)
 					}
 					entry.Extended[s3_constants.ExtETagKey] = []byte(dirEtag)
+					if sc := r.Header.Get(s3_constants.AmzStorageClass); sc != "" {
+						entry.Extended[s3_constants.AmzStorageClass] = []byte(sc)
+					}
+					for key, value := range tagSet {
+						entry.Extended[S3TAG_PREFIX+key] = []byte(value)
+					}
 
 					storeSSEMetadata(entry, sseResult)
 
@@ -524,6 +536,28 @@ func withMultipartPart(r *http.Request) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), multipartPartContextKey{}, true))
 }
 
+// validatePutHeaders checks x-amz-storage-class and x-amz-tagging, so the
+// handlers can reject them before reading the body and putToFiler before
+// uploading any chunk. It returns the parsed tag set.
+func validatePutHeaders(r *http.Request) (map[string]string, s3err.ErrorCode) {
+	if sc := r.Header.Get(s3_constants.AmzStorageClass); sc != "" && !validateStorageClass(sc) {
+		return nil, s3err.ErrInvalidStorageClass
+	}
+	tagging := r.Header.Get(s3_constants.AmzObjectTagging)
+	if tagging == "" {
+		return nil, s3err.ErrNone
+	}
+	tagSet, err := parseTagsHeader(tagging)
+	if err == nil {
+		err = ValidateTags(tagSet)
+	}
+	if err != nil {
+		glog.V(1).Infof("invalid tagging header %q: %v", tagging, err)
+		return nil, s3err.ErrInvalidTag
+	}
+	return tagSet, s3err.ErrNone
+}
+
 func isMultipartPartRequest(r *http.Request) bool {
 	marked, _ := r.Context().Value(multipartPartContextKey{}).(bool)
 	return marked
@@ -546,21 +580,11 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 		return "", s3err.ErrInvalidRequest, SSEResponseMetadata{}
 	}
 
-	// Reject invalid tags before any chunks are uploaded so a failed request
-	// leaves nothing behind on the volume servers.
-	var tagSet map[string]string
-	if tagging := r.Header.Get(s3_constants.AmzObjectTagging); tagging != "" {
-		parsed, err := parseTagsHeader(tagging)
-		if err != nil {
-			glog.Warningf("putToFiler: invalid tagging header for %s: %v", filePath, err)
-			return "", s3err.ErrInvalidTag, SSEResponseMetadata{}
-		}
-		if err := ValidateTags(parsed); err != nil {
-			glog.Warningf("putToFiler: invalid tags (%d) for %s: %v", len(parsed), filePath, err)
-			return "", s3err.ErrInvalidTag, SSEResponseMetadata{}
-		}
-		tagSet = parsed
+	tagSet, headerCode := validatePutHeaders(r)
+	if headerCode != s3err.ErrNone {
+		return "", headerCode, SSEResponseMetadata{}
 	}
+	storageClass := r.Header.Get(s3_constants.AmzStorageClass)
 	// NEW OPTIMIZATION: Write directly to volume servers, bypassing filer proxy
 	// This eliminates the filer proxy overhead for PUT operations
 	// Note: filePath is now passed directly instead of URL (no parsing needed)
@@ -963,13 +987,9 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 		}
 	}
 
-	// Store the storage class from header
-	if sc := r.Header.Get(s3_constants.AmzStorageClass); sc != "" {
-		if !validateStorageClass(sc) {
-			glog.Warningf("putToFiler: Invalid storage class '%s' for %s", sc, filePath)
-			return "", s3err.ErrInvalidStorageClass, SSEResponseMetadata{}
-		}
-		entry.Extended[s3_constants.AmzStorageClass] = []byte(sc)
+	// Store the storage class validated before the chunk upload
+	if storageClass != "" {
+		entry.Extended[s3_constants.AmzStorageClass] = []byte(storageClass)
 	}
 
 	// Store the tags validated before the chunk upload
