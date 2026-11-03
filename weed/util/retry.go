@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -246,6 +247,9 @@ func RetryWithBackoff(ctx context.Context, name string, maxDuration time.Duratio
 		if sleepTime > maxWaitTime {
 			sleepTime = maxWaitTime
 		}
+		if hint, ok := serverRetryDelay(err); ok && hint < sleepTime-retryHintSlack {
+			sleepTime = hint + retryHintSlack
+		}
 		if sleepTime > remaining {
 			sleepTime = remaining
 		}
@@ -264,6 +268,30 @@ func RetryWithBackoff(ctx context.Context, name string, maxDuration time.Duratio
 			waitTime = maxWaitTime
 		}
 	}
+}
+
+// retryHintSlack is added to a server's retry hint so the next attempt lands
+// just after the server is ready, not just before it.
+const retryHintSlack = 50 * time.Millisecond
+
+// serverRetryDelay returns the delay a gRPC server suggested in a RetryInfo
+// detail (for example the master's remaining warm-up). A hint only shortens a
+// backoff step; it never makes a retry wait longer than the backoff would.
+// Only a valid, positive hint counts: a zero, negative or malformed one from a
+// misbehaving server would otherwise turn the backoff into tight polling.
+func serverRetryDelay(err error) (time.Duration, bool) {
+	st, ok := status.FromError(err)
+	if !ok {
+		return 0, false
+	}
+	for _, d := range st.Details() {
+		if ri, ok := d.(*errdetails.RetryInfo); ok && ri.GetRetryDelay().CheckValid() == nil {
+			if delay := ri.GetRetryDelay().AsDuration(); delay > 0 {
+				return delay, true
+			}
+		}
+	}
+	return 0, false
 }
 
 // Nvl return the first non-empty string

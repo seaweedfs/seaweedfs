@@ -18,8 +18,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/topology"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/durationpb"
 )
 
 func (ms *MasterServer) StreamAssign(server master_pb.Seaweed_StreamAssignServer) error {
@@ -71,7 +73,7 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 	}
 
 	if ms.Topo.IsWarmingUp() {
-		return nil, status.Errorf(codes.Unavailable, "master is warming up, topology is still loading")
+		return nil, warmingUpAssignError(ms.Topo.RemainingWarmupDuration())
 	}
 	diskType := types.ToDiskType(req.DiskType)
 
@@ -329,4 +331,20 @@ func (w *unservedLayoutWarning) Do(optionKey string, lastErr error) {
 	}
 	w.last[optionKey] = now
 	glog.Warningf("assign requests for %s will keep failing until a volume server registers that disk layout or clients change their assignment disk type: %v", optionKey, lastErr)
+}
+
+// warmingUpAssignError refuses an Assign during warm-up. Like the HTTP handler's
+// Retry-After header, it tells the client how much warm-up is left, as a gRPC
+// RetryInfo detail, so a retrying client can try again right when warm-up ends
+// instead of sleeping through a longer backoff step.
+func warmingUpAssignError(remaining time.Duration) error {
+	st := status.New(codes.Unavailable, "master is warming up, topology is still loading")
+	if remaining <= 0 {
+		return st.Err()
+	}
+	withHint, err := st.WithDetails(&errdetails.RetryInfo{RetryDelay: durationpb.New(remaining)})
+	if err != nil {
+		return st.Err()
+	}
+	return withHint.Err()
 }
