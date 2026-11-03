@@ -2678,12 +2678,11 @@ impl Volume {
         Ok(())
     }
 
-    /// Resolve a needle read under the caller's store guard, without data I/O.
-    /// It takes the data-file read lease, as `read_needle_with_option` does: a
-    /// vacuum commit holds the write lease while the needle map is closed and
-    /// takes no store lock, so without the lease a read planned in that window
-    /// answers NotFound for a live needle. With it the plan waits for the
-    /// commit, as Go's readNeedle does.
+    /// Resolve a needle read without data I/O. It takes the data-file read
+    /// lease, as `read_needle_with_option` does, so a plan made while a vacuum
+    /// commit has the needle map closed waits for the commit, as Go's
+    /// readNeedle does, instead of answering NotFound for a live needle.
+    /// Callers must not hold the store guard; see `Store::needle_read_plan`.
     pub(crate) fn needle_read_plan(
         &self,
         id: NeedleId,

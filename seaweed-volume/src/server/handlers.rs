@@ -198,11 +198,8 @@ fn read_needle_for_get(
     Option<(Needle, Option<crate::storage::volume::NeedleStreamInfo>)>,
     crate::storage::volume::VolumeError,
 > {
-    let mut plan = state
-        .store
-        .read()
-        .unwrap()
-        .needle_read_plan(vid, needle_id, read_deleted)?;
+    let mut plan =
+        crate::storage::store::Store::needle_read_plan(&state.store, vid, needle_id, read_deleted)?;
     let blank = || Needle {
         id: needle_id,
         cookie,
@@ -8079,12 +8076,13 @@ mod tests {
             .delete_volume_needle(VolumeId(1), &mut filler)
             .unwrap();
         let data_offset = || {
-            let mut plan = state
-                .store
-                .read()
-                .unwrap()
-                .needle_read_plan(VolumeId(1), NeedleId(ID), false)
-                .unwrap();
+            let mut plan = crate::storage::store::Store::needle_read_plan(
+                &state.store,
+                VolumeId(1),
+                NeedleId(ID),
+                false,
+            )
+            .unwrap();
             let mut n = Needle::default();
             plan.read_meta(&mut n).unwrap();
             plan.into_stream_info(&n).data_file_offset
