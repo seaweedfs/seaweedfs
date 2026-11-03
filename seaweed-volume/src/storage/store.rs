@@ -952,7 +952,7 @@ impl Store {
     /// the plan can wait on a vacuum commit's data-file lease, and waiting
     /// under the guard would park store writers, and every reader queued
     /// behind them, on that commit. A handle closed while the plan waited is
-    /// looked up once more.
+    /// looked up again, a bounded number of times.
     pub(crate) fn needle_read_plan(
         store: &std::sync::RwLock<Store>,
         vid: VolumeId,
@@ -966,11 +966,14 @@ impl Store {
                 .map(|(_, vol)| vol)
                 .ok_or(VolumeError::NotFound)
         };
-        let vol = find()?;
-        match vol.needle_read_plan(id, read_deleted) {
-            Err(_) if vol.is_closed() => find()?.needle_read_plan(id, read_deleted),
-            plan => plan,
+        let mut vol = find()?;
+        for _ in 0..3 {
+            match vol.needle_read_plan(id, read_deleted) {
+                Err(_) if vol.is_closed() => vol = find()?,
+                plan => return plan,
+            }
         }
+        vol.needle_read_plan(id, read_deleted)
     }
 
     /// Write a needle to a volume. With `fsync` the volume flushes its .dat
