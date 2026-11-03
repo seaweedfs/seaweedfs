@@ -66,9 +66,10 @@ pub fn master_endpoint(master: &str, tls: Option<&GrpcTls>) -> Result<Endpoint> 
     weed_lance_worker::tls::install_default_crypto_provider();
     let endpoint = Endpoint::new(addr.replacen("http://", "https://", 1))?;
     let host = dialed_host(&endpoint).with_context(|| format!("master {master} has no host"))?;
+    let (ca, cert, key) = tls.pems()?;
     let config = ClientTlsConfig::new()
-        .ca_certificate(Certificate::from_pem(&tls.ca_pem))
-        .identity(Identity::from_pem(&tls.cert_pem, &tls.key_pem))
+        .ca_certificate(Certificate::from_pem(ca))
+        .identity(Identity::from_pem(cert, key))
         .domain_name(tls.server_name.clone().unwrap_or(host));
     Ok(endpoint
         .tls_config(config)

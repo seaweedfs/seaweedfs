@@ -14,14 +14,27 @@ const FILE_NAME: &str = "security.toml";
 #[derive(Clone)]
 pub struct GrpcTls {
     /// `grpc.ca`
-    pub ca_pem: Vec<u8>,
+    pub ca_path: String,
     /// The component's `client_cert` and `client_key`, else its `cert` and
     /// `key`.
-    pub cert_pem: Vec<u8>,
-    pub key_pem: Vec<u8>,
+    pub cert_path: String,
+    pub key_path: String,
     /// The name the server's certificate is checked against, when it is not
     /// the host in the server's address.
     pub server_name: Option<String>,
+}
+
+impl GrpcTls {
+    /// The CA, certificate and key as the files hold them now, so a dial
+    /// after the files rotate presents the new pair.
+    pub fn pems(&self) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>)> {
+        let read = |path: &str| std::fs::read(path).with_context(|| format!("reading {path}"));
+        Ok((
+            read(&self.ca_path)?,
+            read(&self.cert_path)?,
+            read(&self.key_path)?,
+        ))
+    }
 }
 
 impl std::fmt::Debug for GrpcTls {
@@ -203,10 +216,13 @@ impl Security {
             format!("{component}.allowed_server_wildcard_domain"),
             "grpc.allowed_server_wildcard_domain".into(),
         ])?;
+        self.read("grpc.ca", &ca)?;
+        self.read(&format!("{component} cert"), &cert)?;
+        self.read(&format!("{component} key"), &key)?;
         Ok(Some(GrpcTls {
-            ca_pem: self.read("grpc.ca", &ca)?,
-            cert_pem: self.read(&format!("{component} cert"), &cert)?,
-            key_pem: self.read(&format!("{component} key"), &key)?,
+            ca_path: ca,
+            cert_path: cert,
+            key_path: key,
             server_name,
         }))
     }
@@ -324,10 +340,13 @@ mod tests {
         .unwrap()
         .unwrap();
         assert_eq!(
-            (tls.ca_pem, tls.cert_pem, tls.key_pem),
+            tls.pems().unwrap(),
             (b"CA".to_vec(), b"CERT".to_vec(), b"KEY".to_vec())
         );
         assert_eq!(tls.server_name.as_deref(), Some("master.internal"));
+        // Each dial reads the files, so a rotated pair is picked up.
+        std::fs::write(&cert, "ROTATED").unwrap();
+        assert_eq!(tls.pems().unwrap().1, b"ROTATED");
 
         // A dedicated client certificate is preferred, and the environment
         // can supply it.
@@ -341,7 +360,7 @@ mod tests {
         .grpc_client_tls("grpc.client", None)
         .unwrap()
         .unwrap();
-        assert_eq!(tls.cert_pem, b"CLIENT");
+        assert_eq!(tls.pems().unwrap().1, b"CLIENT");
 
         for broken in [
             format!("[grpc.client]\ncert = {cert:?}\nkey = {key:?}\n"),
