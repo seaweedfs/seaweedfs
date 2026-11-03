@@ -54,38 +54,82 @@ pub fn refresh_interval() -> Duration {
         .unwrap_or(DEFAULT_REFRESH_INTERVAL)
 }
 
-/// `time.ParseDuration`'s grammar: an optional `+`, then a sequence of
-/// `<number><unit>`. A negative value is `None`, as weed ignores one.
+/// `time.ParseDuration`, with its arithmetic: an optional `+`, then a
+/// sequence of `<number><unit>`, summed in whole nanoseconds (a fraction of
+/// one is dropped) up to `i64::MAX`. A negative value is `None`, as weed
+/// ignores one.
 fn parse_go_duration(s: &str) -> Option<Duration> {
-    let s = s.trim();
+    const LIMIT: u64 = 1 << 63;
+    let digits = |s: &str| s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
     let mut rest = s.strip_prefix('+').unwrap_or(s);
+    if rest == "0" {
+        return Some(Duration::ZERO);
+    }
     if rest.is_empty() {
         return None;
     }
-    let mut total = Duration::ZERO;
+    let mut total: u64 = 0;
     while !rest.is_empty() {
-        let digits = rest
-            .find(|c: char| !c.is_ascii_digit() && c != '.')
-            .unwrap_or(rest.len());
-        let (number, tail) = rest.split_at(digits);
-        let value: f64 = number.parse().ok()?;
+        let (whole, tail) = rest.split_at(digits(rest));
+        let mut v: u64 = 0;
+        for c in whole.bytes() {
+            if v > LIMIT / 10 {
+                return None;
+            }
+            v = v * 10 + u64::from(c - b'0');
+            if v > LIMIT {
+                return None;
+            }
+        }
+        let (mut fraction, mut scale) = (0u64, 1f64);
+        let (fraction_digits, tail) = match tail.strip_prefix('.') {
+            Some(tail) => tail.split_at(digits(tail)),
+            None => ("", tail),
+        };
+        let mut overflow = false;
+        for c in fraction_digits.bytes() {
+            if overflow || fraction > (LIMIT - 1) / 10 {
+                overflow = true;
+                continue;
+            }
+            let next = fraction * 10 + u64::from(c - b'0');
+            if next > LIMIT {
+                overflow = true;
+                continue;
+            }
+            fraction = next;
+            scale *= 10.0;
+        }
+        if whole.is_empty() && fraction_digits.is_empty() {
+            return None;
+        }
         let unit_len = tail
-            .find(|c: char| c.is_ascii_digit() || c == '.')
+            .find(|c: char| c == '.' || c.is_ascii_digit())
             .unwrap_or(tail.len());
         let (unit, tail) = tail.split_at(unit_len);
-        let seconds = match unit {
-            "h" => 3600.0,
-            "m" => 60.0,
-            "s" => 1.0,
-            "ms" => 1e-3,
-            "us" | "\u{b5}s" | "\u{3bc}s" => 1e-6,
-            "ns" => 1e-9,
+        let unit: u64 = match unit {
+            "ns" => 1,
+            "us" | "\u{b5}s" | "\u{3bc}s" => 1_000,
+            "ms" => 1_000_000,
+            "s" => 1_000_000_000,
+            "m" => 60_000_000_000,
+            "h" => 3_600_000_000_000,
             _ => return None,
         };
-        total = total.checked_add(Duration::try_from_secs_f64(value * seconds).ok()?)?;
+        if v > LIMIT / unit {
+            return None;
+        }
+        v *= unit;
+        if fraction > 0 {
+            v += (fraction as f64 * (unit as f64 / scale)) as u64;
+            if v > LIMIT {
+                return None;
+            }
+        }
+        total = total.checked_add(v).filter(|&total| total <= LIMIT)?;
         rest = tail;
     }
-    Some(total)
+    (total < LIMIT).then(|| Duration::from_nanos(total))
 }
 
 /// The listener's TLS configuration, rebuilt from the files whenever they
@@ -876,5 +920,29 @@ mod tests {
         );
         assert_eq!(parse_go_duration("2d"), None);
         assert_eq!(parse_go_duration(""), None);
+        assert_eq!(parse_go_duration("0"), Some(Duration::ZERO));
+        assert_eq!(parse_go_duration("0.3s"), Some(Duration::from_millis(300)));
+        assert_eq!(parse_go_duration("1.1s"), Some(Duration::from_millis(1100)));
+        assert_eq!(parse_go_duration(".5h"), Some(Duration::from_secs(1800)));
+        assert_eq!(parse_go_duration("5.s"), Some(Duration::from_secs(5)));
+        assert_eq!(parse_go_duration(".s"), None);
+        assert_eq!(parse_go_duration("1.2.3s"), None);
+        assert_eq!(parse_go_duration(" 30m"), None);
+        // A fraction of a nanosecond is dropped, so this is zero and the
+        // default applies, as in weed.
+        assert_eq!(parse_go_duration("0.9ns"), Some(Duration::ZERO));
+        assert_eq!(parse_go_duration("1.9ns"), Some(Duration::from_nanos(1)));
+        // The longest time.Duration, and past it.
+        assert_eq!(
+            parse_go_duration("2562047h47m16.854775807s"),
+            Some(Duration::from_nanos(i64::MAX as u64))
+        );
+        assert_eq!(
+            parse_go_duration("9223372036854775807ns"),
+            Some(Duration::from_nanos(i64::MAX as u64))
+        );
+        assert_eq!(parse_go_duration("9223372036854775808ns"), None);
+        assert_eq!(parse_go_duration("2562048h"), None);
+        assert_eq!(parse_go_duration("3000000h"), None);
     }
 }
