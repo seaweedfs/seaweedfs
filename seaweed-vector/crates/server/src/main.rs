@@ -1,11 +1,14 @@
+use std::path::PathBuf;
+
 use anyhow::{Context, Result};
 use clap::Parser;
-use tonic::transport::Server;
 use tonic::transport::server::TcpIncoming;
+use tonic::transport::{Certificate, Identity, Server, ServerTlsConfig};
 use weed_lance_worker::catalog::{NamespaceClient, SigningKey};
 use weed_lance_worker::dataset::FallbackOptions;
 use weed_vector_server::pb::vector::vector_service_server::VectorServiceServer;
 use weed_vector_server::read_cache::ReadCache;
+use weed_vector_server::security::Security;
 use weed_vector_server::service::VectorServer;
 
 /// The VectorService the S3 gateway fans vector calls out to.
@@ -36,6 +39,15 @@ struct Args {
     /// credentials that write index data only to a caller holding it.
     #[arg(long, env = "WEED_FILER_SIGNING_KEY")]
     filer_signing_key: Option<String>,
+    /// The cluster's security.toml, for gRPC TLS: this server's identity is
+    /// [grpc.vector], the masters are dialed with [grpc.client]. By default
+    /// the file weed processes find in ., ~/.seaweedfs and /etc/seaweedfs.
+    #[arg(long, env = "WEED_VECTOR_SECURITY_TOML")]
+    security_toml: Option<PathBuf>,
+    /// The name the masters' TLS certificates are checked against, when it is
+    /// not their host.
+    #[arg(long, env = "WEED_VECTOR_TLS_SERVER_NAME")]
+    tls_server_name: Option<String>,
 }
 
 fn parse_option(s: &str) -> Result<(String, String), String> {
@@ -105,6 +117,13 @@ fn advertised_addr(listen: &str, masters: &[String]) -> String {
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     let args = Args::parse_from(normalize_args(std::env::args().collect()));
+    weed_lance_worker::tls::install_default_crypto_provider();
+    let security = Security::load(args.security_toml.as_deref())?;
+    if let Some(path) = security.path() {
+        tracing::info!("security settings from {}", path.display());
+    }
+    let master_tls = security.grpc_client_tls("grpc.client", args.tls_server_name.clone())?;
+    let server_tls = security.grpc_server_tls("grpc.vector")?;
     // Bind before registering, so the master never lists an engine that is
     // about to exit because its port is taken.
     let incoming = TcpIncoming::bind(args.listen.parse()?)
@@ -117,7 +136,9 @@ async fn main() -> Result<()> {
         }
         let advertise = advertised_addr(&args.listen, &masters);
         tokio::spawn(weed_vector_server::master_client::keep_connected(
-            masters, advertise,
+            masters,
+            advertise,
+            master_tls.clone(),
         ));
     }
     let fallback: FallbackOptions = args.storage_options.into_iter().collect();
@@ -129,8 +150,24 @@ async fn main() -> Result<()> {
     if args.read_cache_mb > 0 {
         service = service.with_read_cache(ReadCache::new(args.read_cache_mb << 20));
     }
-    tracing::info!(namespace = %args.namespace, listen = %args.listen, "weed-vector");
-    Server::builder()
+    let mut server = Server::builder();
+    if let Some(tls) = &server_tls {
+        server = server
+            .tls_config(
+                ServerTlsConfig::new()
+                    .identity(Identity::from_pem(&tls.cert_pem, &tls.key_pem))
+                    .client_ca_root(Certificate::from_pem(&tls.ca_pem)),
+            )
+            .context("gRPC TLS from grpc.vector")?;
+    }
+    tracing::info!(
+        namespace = %args.namespace,
+        listen = %args.listen,
+        "weed-vector; serving gRPC {}, dialing masters {}",
+        if server_tls.is_some() { "over TLS with client certificates required" } else { "in plaintext" },
+        if master_tls.is_some() { "over TLS" } else { "in plaintext" },
+    );
+    server
         // Match the gateway's 1 GiB cap — put batches over the tonic 4 MiB
         // default otherwise get rejected before they reach the handler.
         .add_service(

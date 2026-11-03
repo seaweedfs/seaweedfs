@@ -7,9 +7,10 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use tokio::time::sleep;
-use tonic::transport::Endpoint;
+use tonic::transport::{Certificate, ClientTlsConfig, Endpoint, Identity};
 
 use crate::master_pb::{KeepConnectedRequest, seaweed_client::SeaweedClient};
+use crate::security::GrpcTls;
 
 fn registration(client_addr: &str) -> KeepConnectedRequest {
     KeepConnectedRequest {
@@ -54,6 +55,31 @@ pub fn grpc_addr(master: &str) -> Result<String> {
     Ok(format!("{scheme}://{rest}"))
 }
 
+/// The master's gRPC endpoint, over TLS with `grpc.client`'s credentials when
+/// the cluster has them; the master's certificate is checked against the host
+/// dialed unless the credentials name another.
+pub fn master_endpoint(master: &str, tls: Option<&GrpcTls>) -> Result<Endpoint> {
+    let addr = grpc_addr(master)?;
+    let Some(tls) = tls else {
+        return Ok(Endpoint::new(addr)?);
+    };
+    weed_lance_worker::tls::install_default_crypto_provider();
+    let uri = addr.replacen("http://", "https://", 1);
+    let host = uri
+        .trim_start_matches("https://")
+        .rsplit_once(':')
+        .map_or(uri.as_str(), |(host, _)| host)
+        .trim_matches(|c| c == '[' || c == ']')
+        .to_string();
+    let config = ClientTlsConfig::new()
+        .ca_certificate(Certificate::from_pem(&tls.ca_pem))
+        .identity(Identity::from_pem(&tls.cert_pem, &tls.key_pem))
+        .domain_name(tls.server_name.clone().unwrap_or(host));
+    Ok(Endpoint::new(uri)?
+        .tls_config(config)
+        .with_context(|| format!("TLS for master {master}"))?)
+}
+
 // `host:http.grpc` normalizes to `host:http` so a leader hint naming the
 // dialed master does not read as a redirect.
 fn http_addr(master: &str) -> String {
@@ -68,11 +94,12 @@ fn http_addr(master: &str) -> String {
 
 /// Retry forever: try each master until a stream opens, hold it until it
 /// errors, then rediscover — same shape as wdclient.KeepConnectedToMaster.
-pub async fn keep_connected(masters: Vec<String>, client_addr: String) {
+pub async fn keep_connected(masters: Vec<String>, client_addr: String, tls: Option<GrpcTls>) {
     let client_addr = client_addr.as_str();
+    let tls = tls.as_ref();
     loop {
         try_all_masters(&masters, |master| async move {
-            stream_to(&master, client_addr).await
+            stream_to(&master, client_addr, tls).await
         })
         .await;
         sleep(Duration::from_secs(3)).await;
@@ -113,8 +140,12 @@ where
 /// other masters.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
-async fn stream_to(master: &str, client_addr: &str) -> Result<Option<String>> {
-    let channel = Endpoint::new(grpc_addr(master)?)?
+async fn stream_to(
+    master: &str,
+    client_addr: &str,
+    tls: Option<&GrpcTls>,
+) -> Result<Option<String>> {
+    let channel = master_endpoint(master, tls)?
         .connect_timeout(CONNECT_TIMEOUT)
         .connect()
         .await?;
@@ -215,7 +246,7 @@ mod tests {
     #[tokio::test]
     async fn dial_to_a_black_holed_master_is_bounded() {
         // TEST-NET-1 (RFC 5737) is reserved, so nothing answers the SYN.
-        let dial = stream_to("192.0.2.1:9333", "127.0.0.1:8080");
+        let dial = stream_to("192.0.2.1:9333", "127.0.0.1:8080", None);
         let result = tokio::time::timeout(CONNECT_TIMEOUT * 3, dial).await;
         assert!(matches!(result, Ok(Err(_))), "dial was not bounded");
     }
@@ -229,7 +260,7 @@ mod tests {
             let _ = tokio::io::copy(&mut conn, &mut tokio::io::sink()).await;
         });
         let master = format!("127.0.0.1:9333.{port}");
-        let open = stream_to(&master, "127.0.0.1:8080");
+        let open = stream_to(&master, "127.0.0.1:8080", None);
         match tokio::time::timeout(CONNECT_TIMEOUT * 3, open).await {
             Ok(Err(e)) => assert!(format!("{e:#}").contains("did not answer"), "{e:#}"),
             other => panic!("open was not bounded: {other:?}"),
