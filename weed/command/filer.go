@@ -506,12 +506,9 @@ func (fo *FilerOptions) startFiler() {
 	grpcS := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.filer"))
 	filer_pb.RegisterSeaweedFilerServer(grpcS, fs)
 
-	// Register the IAM gRPC service. Auth is opt-in: when
-	// jwt.filer_signing.key is configured the service requires a Bearer token
-	// signed with that key; otherwise it runs unauthenticated, matching the
-	// rest of the filer's gRPC surface. Operators who expose the filer gRPC
-	// port beyond a trusted network should set jwt.filer_signing.key on both
-	// the filer and the admin server.
+	// IAM RPCs require a Bearer token signed with jwt.filer_signing.key when it
+	// is set. The key does not protect the rest of this port; that needs
+	// [grpc.filer] mTLS.
 	if credentialManager != nil {
 		adminSigningKey := security.SigningKey(util.GetViper().GetString("jwt.filer_signing.key"))
 		iamGrpcServer := weed_server.NewIamGrpcServer(credentialManager, adminSigningKey)
