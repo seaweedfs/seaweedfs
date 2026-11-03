@@ -859,9 +859,12 @@ func TestSourceMovedOn(t *testing.T) {
 		t.Fatal("newer mtime is still moved on")
 	}
 	live.Attributes.Mtime = 4
-	replayed.Chunks = []*filer_pb.FileChunk{{FileId: "5617,01abc", Size: 10}}
 	if fs.sourceMovedOn("/dst/x.bin", replayed) {
-		t.Fatal("an older live entry cannot supersede the replayed version")
+		t.Fatal("identical chunks under an older mtime is a timestamp change, not a new version")
+	}
+	replayed.Chunks = []*filer_pb.FileChunk{{FileId: "5617,01abc", Size: 10}}
+	if !fs.sourceMovedOn("/dst/x.bin", replayed) {
+		t.Fatal("a live entry stamped older but holding different chunks has moved on")
 	}
 }
 
@@ -1243,6 +1246,58 @@ func TestUpdateEntrySyncsLiveVersion(t *testing.T) {
 	updated := dst.lastUpdate.Load()
 	if updated == nil || string(updated.GetContent()) != "live" || updated.GetAttributes().GetMtime() != 6 {
 		t.Fatalf("the destination must get the live version, got %+v", updated)
+	}
+}
+
+// A timestamp-preserving rewrite leaves the live source older than the replay
+// whose chunks it dropped. The destination must still converge on the live
+// version instead of fetching chunks the source vacuumed.
+func TestUpdateEntrySyncsOlderLiveVersion(t *testing.T) {
+	var volumeLookups atomic.Int32
+	existing := &filer_pb.Entry{
+		Name:       "x.bin",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 3},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "4,00aaa", SourceFileId: "5617,00aaa", Size: 10}},
+	}
+	oldEntry := &filer_pb.Entry{
+		Name:       "x.bin",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 3},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "5617,00aaa", Size: 10}},
+	}
+	live := &filer_pb.Entry{
+		Name:       "x.bin",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 4},
+		Content:    []byte("live"),
+	}
+	filerSrc := startSourceFilerServer(t, &sourceFilerServer{entry: live, volumeLookups: &volumeLookups})
+	dst, dstAddr := startRecordingFiler(t, existing)
+
+	fs := &FilerSink{
+		filerSource:    filerSrc,
+		dir:            "/dst",
+		grpcAddress:    dstAddr,
+		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		executor:       util.NewLimitedConcurrentExecutor(1),
+	}
+	fs.SetUploader(operation.NewUploaderWithHttpClient(http.DefaultClient))
+
+	replayed := &filer_pb.Entry{
+		Name:       "x.bin",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 5},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "5617,01abc", Size: 10}},
+	}
+	if _, err := fs.UpdateEntry("/dst/x.bin", oldEntry, "", replayed, true, nil); err != nil {
+		t.Fatalf("syncing the live version should succeed: %v", err)
+	}
+	if dst.updates.Load() != 1 {
+		t.Fatal("the live version must be committed to the destination")
+	}
+	updated := dst.lastUpdate.Load()
+	if updated == nil || string(updated.GetContent()) != "live" || updated.GetAttributes().GetMtime() != 4 {
+		t.Fatalf("the destination must get the live version, got %+v", updated)
+	}
+	if volumeLookups.Load() != 0 {
+		t.Fatal("the superseded version's chunks must not be fetched")
 	}
 }
 
