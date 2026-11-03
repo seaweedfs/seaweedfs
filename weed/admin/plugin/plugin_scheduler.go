@@ -1264,7 +1264,9 @@ func (l executorLoad) holders() string {
 // executorLoadLocked tallies the worker's slots as the admin sees them:
 // jobType "" counts work of every type, otherwise only that type. A
 // heartbeat entry whose job id matches a reservation is the same slot seen
-// twice and counts once. Caller holds r.execResMu.
+// twice and counts once. Slots the worker counts without itemizing them go
+// first to this admin's jobs it does not list; the rest are of unknown type
+// and count against every type. Caller holds r.execResMu.
 func (r *Plugin) executorLoadLocked(executor *WorkerSession, jobType string) executorLoad {
 	load := executorLoad{
 		reservedLanes: make(map[SchedulerLane]int),
@@ -1273,60 +1275,78 @@ func (r *Plugin) executorLoadLocked(executor *WorkerSession, jobType string) exe
 	if executor == nil {
 		return load
 	}
-	workerID := strings.TrimSpace(executor.WorkerID)
-	covered := make(map[string]struct{})
-	echoes := make(map[string]execReservation)
-	now := time.Now()
-	for token, res := range r.execRes {
-		if !res.releasedAt.IsZero() {
-			if now.Sub(res.releasedAt) > completedJobEchoGrace {
-				delete(r.execRes, token)
-			} else if res.workerID == workerID {
-				echoes[res.jobID] = res
-			}
-			continue
-		}
-		if res.workerID != workerID {
-			continue
-		}
-		if res.jobID != "" {
-			covered[res.jobID] = struct{}{}
-		}
+	countReserved := func(res execReservation) {
 		if jobType != "" && res.jobType != jobType {
-			continue
+			return
 		}
 		load.reserved++
 		load.reservedLanes[JobTypeLane(res.jobType)]++
 		load.byType[res.jobType]++
 	}
-	seenCovered := 0
-	for _, work := range executor.Heartbeat.GetRunningWork() {
+	running := executor.Heartbeat.GetRunningWork()
+	listed := make(map[string]struct{}, len(running))
+	unitemized := int(executor.Heartbeat.GetExecutionSlotsUsed())
+	for _, work := range running {
+		if work.GetKind() == plugin_pb.WorkKind_WORK_KIND_EXECUTION {
+			listed[work.GetWorkId()] = struct{}{}
+			unitemized--
+		}
+	}
+	workerID := strings.TrimSpace(executor.WorkerID)
+	claimed := make(map[string]struct{})
+	var unlistedEchoes []execReservation
+	now := time.Now()
+	for token, res := range r.execRes {
+		released := !res.releasedAt.IsZero()
+		if released && now.Sub(res.releasedAt) > completedJobEchoGrace {
+			delete(r.execRes, token)
+			continue
+		}
+		if res.workerID != workerID {
+			continue
+		}
+		isListed := false
+		if res.jobID != "" {
+			claimed[res.jobID] = struct{}{}
+			_, isListed = listed[res.jobID]
+		}
+		switch {
+		case !released:
+			if !isListed {
+				unitemized--
+			}
+			countReserved(res)
+		case isListed:
+			countReserved(res)
+		default:
+			unlistedEchoes = append(unlistedEchoes, res)
+		}
+	}
+	sort.Slice(unlistedEchoes, func(i, j int) bool {
+		return unlistedEchoes[i].releasedAt.After(unlistedEchoes[j].releasedAt)
+	})
+	for _, res := range unlistedEchoes {
+		if unitemized <= 0 {
+			break
+		}
+		unitemized--
+		countReserved(res)
+	}
+	if unitemized > 0 {
+		load.foreign += unitemized
+	}
+	for _, work := range running {
 		if work.GetKind() != plugin_pb.WorkKind_WORK_KIND_EXECUTION {
 			continue
 		}
-		if _, ok := covered[work.GetWorkId()]; ok {
-			seenCovered++
+		if _, ok := claimed[work.GetWorkId()]; ok {
 			continue
 		}
 		if jobType != "" && work.GetJobType() != jobType {
 			continue
 		}
-		if res, ok := echoes[work.GetWorkId()]; ok {
-			seenCovered++
-			load.reserved++
-			load.reservedLanes[JobTypeLane(res.jobType)]++
-			load.byType[res.jobType]++
-			continue
-		}
 		load.foreign++
 		load.byType[work.GetJobType()]++
-	}
-	// A worker that reports more slots in use than it itemizes still has
-	// them in use.
-	if jobType == "" && executor.Heartbeat != nil {
-		if used := int(executor.Heartbeat.ExecutionSlotsUsed) - seenCovered; used > load.foreign {
-			load.foreign = used
-		}
 	}
 	return load
 }
