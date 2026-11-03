@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"compress/gzip"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -289,13 +290,26 @@ func (h *FileBrowserHandlers) UploadFile(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
+	// A folder upload names each file by its path inside the folder; the multipart
+	// file name keeps only the base name.
+	var relativePaths []string
+	if v, ok := r.MultipartForm.Value["relativePaths"]; ok {
+		if len(v) != 1 || json.Unmarshal([]byte(v[0]), &relativePaths) != nil || len(relativePaths) != len(files) {
+			writeJSONError(w, http.StatusBadRequest, "relativePaths must list one path per uploaded file")
+			return
+		}
+	}
+
 	var uploadResults []map[string]interface{}
 	var failedUploads []string
 
 	// Process each uploaded file
-	for _, fileHeader := range files {
+	for i, fileHeader := range files {
 		// Validate file name
 		fileName := fileHeader.Filename
+		if relativePaths != nil {
+			fileName = relativePaths[i]
+		}
 		if fileName == "" {
 			failedUploads = append(failedUploads, "invalid filename")
 			continue
@@ -303,6 +317,10 @@ func (h *FileBrowserHandlers) UploadFile(w http.ResponseWriter, r *http.Request)
 
 		// Normalize Windows-style backslashes to forward slashes
 		fileName = util.CleanWindowsPath(fileName)
+		if relativePaths != nil && !isRelativeUploadPath(fileName) {
+			failedUploads = append(failedUploads, fmt.Sprintf("%s: invalid relative path", fileName))
+			continue
+		}
 
 		// Create full path for the file using path.Join for URL path semantics
 		// path.Join handles double slashes and is not OS-specific like filepath.Join
@@ -347,6 +365,16 @@ func (h *FileBrowserHandlers) UploadFile(w http.ResponseWriter, r *http.Request)
 		response["message"] = "All file uploads failed"
 		writeJSON(w, http.StatusInternalServerError, response)
 	}
+}
+
+// isRelativeUploadPath reports whether name stays inside the upload directory.
+func isRelativeUploadPath(name string) bool {
+	for _, part := range strings.Split(name, "/") {
+		if part == "" || part == "." || part == ".." {
+			return false
+		}
+	}
+	return true
 }
 
 // uploadFormOverhead allows for the multipart headers and the path field on

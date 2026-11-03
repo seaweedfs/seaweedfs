@@ -216,3 +216,58 @@ func TestUploadFile_RemovesSpooledParts(t *testing.T) {
 		t.Errorf("spooled parts left behind: %v", left)
 	}
 }
+
+func TestIsRelativeUploadPath(t *testing.T) {
+	for name, want := range map[string]bool{
+		"a.txt":         true,
+		"photos/a.jpg":  true,
+		"a/b/c/..x.txt": true,
+		"/etc/a":        false,
+		"a/../../b":     false,
+		"..":            false,
+		"a//b":          false,
+		"./a":           false,
+		"a/":            false,
+	} {
+		if got := isRelativeUploadPath(name); got != want {
+			t.Errorf("isRelativeUploadPath(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
+
+func TestUploadFile_FolderRelativePaths(t *testing.T) {
+	h := &FileBrowserHandlers{adminServer: &dash.AdminServer{}}
+	upload := func(relativePaths string) *httptest.ResponseRecorder {
+		var body bytes.Buffer
+		mw := multipart.NewWriter(&body)
+		for _, name := range []string{"a.txt", "b.txt"} {
+			part, err := mw.CreateFormFile("files", name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			part.Write([]byte(name))
+		}
+		mw.WriteField("path", "/buckets/b")
+		mw.WriteField("relativePaths", relativePaths)
+		mw.Close()
+		req := httptest.NewRequest(http.MethodPost, "/api/files/upload", &body)
+		req.Header.Set("Content-Type", mw.FormDataContentType())
+		w := httptest.NewRecorder()
+		h.UploadFile(w, req)
+		return w
+	}
+
+	for _, paths := range []string{`["dir/a.txt"]`, `not json`, ``, `null`} {
+		if w := upload(paths); w.Code != http.StatusBadRequest {
+			t.Errorf("relativePaths %s: expected 400, got %d (body: %s)", paths, w.Code, w.Body.String())
+		}
+	}
+
+	w := upload(`["../a.txt", "dir\\..\\..\\b.txt"]`)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected every escaping path to fail, got %d (body: %s)", w.Code, w.Body.String())
+	}
+	if strings.Count(w.Body.String(), "invalid relative path") != 2 {
+		t.Errorf("expected both paths rejected before upload, got %s", w.Body.String())
+	}
+}

@@ -1167,32 +1167,138 @@ async function submitCreateFolder() {
     }
 }
 
+// Files dropped on the listing, each with its path under the current directory;
+// null when the modal's inputs hold the selection.
+let droppedUploadFiles = null;
+// Bumped by every drop and picker change, so a slow folder read cannot replace a newer selection.
+let uploadSelection = 0;
+
+function selectedUploadFiles() {
+    if (droppedUploadFiles) {
+        return droppedUploadFiles;
+    }
+    const selected = [];
+    ['fileInput', 'folderInput'].forEach(id => {
+        const input = document.getElementById(id);
+        Array.from((input && input.files) || []).forEach(file => {
+            selected.push({ file, path: file.webkitRelativePath || file.name });
+        });
+    });
+    return selected;
+}
+
+// Lists the dropped files, walking into dropped folders and stopping once
+// isCurrent turns false. The entries must be taken before the first await,
+// while the drop event still exposes them.
+async function collectDroppedFiles(dataTransfer, isCurrent) {
+    const entries = Array.from(dataTransfer.items || [])
+        .map(item => item.webkitGetAsEntry && item.webkitGetAsEntry())
+        .filter(Boolean);
+    if (entries.length === 0) {
+        return Array.from(dataTransfer.files).map(file => ({ file, path: file.name }));
+    }
+    const collected = [];
+    async function walk(entry) {
+        if (!isCurrent()) {
+            return;
+        }
+        if (entry.isFile) {
+            const file = await new Promise((resolve, reject) => entry.file(resolve, reject));
+            collected.push({ file, path: entry.fullPath.replace(/^\/+/, '') });
+            return;
+        }
+        const reader = entry.createReader();
+        while (isCurrent()) {
+            const batch = await new Promise((resolve, reject) => reader.readEntries(resolve, reject));
+            if (batch.length === 0) {
+                return;
+            }
+            for (const child of batch) {
+                await walk(child);
+            }
+        }
+    }
+    for (const entry of entries) {
+        await walk(entry);
+    }
+    return collected;
+}
+
+// Go's multipart parser rejects a form of more than 1000 parts, so a large
+// selection goes out in several requests.
+const uploadBatchSize = 500;
+// Longer file lists show this many rows and a count of the rest.
+const uploadListLimit = 200;
+// Set once files are uploaded while the modal stays open, so closing it reloads the listing.
+let uploadChangedListing = false;
+// The batch in flight, aborted when the modal closes.
+let activeUploadRequest = null;
+
+function postUploadBatch(batch, currentPath, onProgress) {
+    const formData = new FormData();
+    batch.forEach(item => {
+        formData.append('files', item.file);
+    });
+    if (batch.some(item => item.path !== item.file.name)) {
+        formData.append('relativePaths', JSON.stringify(batch.map(item => item.path)));
+    }
+    formData.append('path', currentPath);
+
+    return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.upload.addEventListener('progress', function (e) {
+            if (e.lengthComputable) {
+                onProgress(e.loaded / e.total);
+            }
+        });
+        xhr.addEventListener('load', function () {
+            let response = null;
+            try {
+                response = JSON.parse(xhr.responseText);
+            } catch (e) {
+                // reported below
+            }
+            // Per-file failures come back with counts, even when all of them failed.
+            if (response && typeof response.uploaded === 'number') {
+                resolve(response);
+                return;
+            }
+            if (xhr.status === 200) {
+                reject(new Error('Upload completed but response format was unexpected'));
+                return;
+            }
+            const errorMessage = (response && (response.error || response.message)) || `Server returned status ${xhr.status}`;
+            reject(new Error(`Failed to upload files: ${errorMessage}`));
+        });
+        xhr.addEventListener('error', function () {
+            reject(new Error('Failed to upload files. Please check your connection and try again.'));
+        });
+        xhr.addEventListener('abort', function () {
+            reject(new Error('File upload was cancelled.'));
+        });
+        xhr.open('POST', basePath('/api/files/upload'));
+        activeUploadRequest = xhr;
+        xhr.send(formData);
+    });
+}
+
 // Submit upload file form
 async function submitUploadFile() {
-    const fileInput = document.getElementById('fileInput');
     const currentPath = document.getElementById('uploadPath').value;
+    const selected = selectedUploadFiles();
 
-    if (!fileInput.files || fileInput.files.length === 0) {
-        showErrorMessage('Please select at least one file to upload');
+    if (selected.length === 0) {
+        showErrorMessage('Please select at least one file or folder to upload');
         return;
     }
 
-    const files = Array.from(fileInput.files);
-    const totalSize = files.reduce((sum, file) => sum + file.size, 0);
+    const totalSize = selected.reduce((sum, item) => sum + item.file.size, 0);
 
     const maxSize = Number(document.getElementById('uploadFileForm').dataset.maxSize) || 0;
     if (maxSize > 0 && totalSize > maxSize) {
         showErrorMessage(`Total file size exceeds the ${formatBytes(maxSize)} limit. Please select fewer or smaller files.`);
         return;
     }
-
-    // Individual file size validation removed - no limit per file
-
-    const formData = new FormData();
-    files.forEach(file => {
-        formData.append('files', file);
-    });
-    formData.append('path', currentPath);
 
     // Show progress bar and disable button
     const progressContainer = document.getElementById('uploadProgress');
@@ -1201,100 +1307,71 @@ async function submitUploadFile() {
     const submitButton = document.querySelector('#uploadFileModal .btn-primary');
     const originalText = submitButton.innerHTML;
 
+    const showProgress = percentComplete => {
+        progressBar.style.width = percentComplete + '%';
+        progressBar.setAttribute('aria-valuenow', percentComplete);
+        progressBar.textContent = percentComplete + '%';
+        uploadStatus.textContent = `Uploading ${selected.length} file(s)... ${percentComplete}%`;
+    };
+
     progressContainer.style.display = 'block';
-    progressBar.style.width = '0%';
-    progressBar.setAttribute('aria-valuenow', '0');
-    progressBar.textContent = '0%';
-    uploadStatus.textContent = `Uploading ${files.length} file(s)...`;
+    showProgress(0);
+    uploadStatus.textContent = `Uploading ${selected.length} file(s)...`;
     submitButton.disabled = true;
     submitButton.innerHTML = '<i class="bi bi-arrow-repeat icon-spin me-1"></i>Uploading...';
 
+    const result = { uploaded: 0, failed: 0, errors: [] };
+    let failure = '';
     try {
-        const xhr = new XMLHttpRequest();
-
-        // Handle progress
-        xhr.upload.addEventListener('progress', function (e) {
-            if (e.lengthComputable) {
-                const percentComplete = Math.round((e.loaded / e.total) * 100);
-                progressBar.style.width = percentComplete + '%';
-                progressBar.setAttribute('aria-valuenow', percentComplete);
-                progressBar.textContent = percentComplete + '%';
-                uploadStatus.textContent = `Uploading ${files.length} file(s)... ${percentComplete}%`;
+        let sentSize = 0;
+        for (let start = 0; start < selected.length; start += uploadBatchSize) {
+            const batch = selected.slice(start, start + uploadBatchSize);
+            const batchSize = batch.reduce((sum, item) => sum + item.file.size, 0);
+            const response = await postUploadBatch(batch, currentPath, fraction => {
+                const done = totalSize > 0
+                    ? (sentSize + fraction * batchSize) / totalSize
+                    : (start + fraction * batch.length) / selected.length;
+                showProgress(Math.round(done * 100));
+            });
+            sentSize += batchSize;
+            result.uploaded += response.uploaded;
+            result.failed += response.failed;
+            result.errors.push(...(response.errors || []));
+            if (response.uploaded > 0) {
+                uploadChangedListing = true;
             }
-        });
-
-        // Handle completion
-        xhr.addEventListener('load', function () {
-            if (xhr.status === 200) {
-                try {
-                    const response = JSON.parse(xhr.responseText);
-
-                    if (response.uploaded > 0) {
-                        if (response.failed === 0) {
-                            showSuccessMessage(`Successfully uploaded ${response.uploaded} file(s)`);
-                        } else {
-                            showSuccessMessage(response.message);
-                            // Show details of failed uploads
-                            if (response.errors && response.errors.length > 0) {
-                                console.warn('Upload errors:', response.errors);
-                            }
-                        }
-
-                        // Hide modal and refresh page
-                        const modal = bootstrap.Modal.getInstance(document.getElementById('uploadFileModal'));
-                        modal.hide();
-                        setTimeout(() => {
-                            window.location.reload();
-                        }, 1000);
-                    } else {
-                        let errorMessage = response.message || 'All file uploads failed';
-                        if (response.errors && response.errors.length > 0) {
-                            errorMessage += ': ' + response.errors.join(', ');
-                        }
-                        showErrorMessage(errorMessage);
-                    }
-                } catch (e) {
-                    showErrorMessage('Upload completed but response format was unexpected');
-                }
-                progressContainer.style.display = 'none';
-            } else {
-                let errorMessage = 'Unknown error';
-                try {
-                    const error = JSON.parse(xhr.responseText);
-                    errorMessage = error.error || error.message || errorMessage;
-                } catch (e) {
-                    errorMessage = `Server returned status ${xhr.status}`;
-                }
-                showErrorMessage(`Failed to upload files: ${errorMessage}`);
-                progressContainer.style.display = 'none';
-            }
-        });
-
-        // Handle errors
-        xhr.addEventListener('error', function () {
-            showErrorMessage('Failed to upload files. Please check your connection and try again.');
-            progressContainer.style.display = 'none';
-        });
-
-        // Handle abort
-        xhr.addEventListener('abort', function () {
-            showErrorMessage('File upload was cancelled.');
-            progressContainer.style.display = 'none';
-        });
-
-        // Send request
-        xhr.open('POST', basePath('/api/files/upload'));
-        xhr.send(formData);
-
+        }
     } catch (error) {
         console.error('Upload error:', error);
-        showErrorMessage('Failed to upload files. Please try again.');
-        progressContainer.style.display = 'none';
-    } finally {
-        // Re-enable the button
-        submitButton.disabled = false;
-        submitButton.innerHTML = originalText;
+        uploadChangedListing = true;
+        failure = error.message || 'Failed to upload files. Please try again.';
+        if (result.uploaded > 0) {
+            failure += ` (${result.uploaded} file(s) were uploaded before this)`;
+        }
     }
+    activeUploadRequest = null;
+
+    submitButton.disabled = false;
+    submitButton.innerHTML = originalText;
+
+    if (!failure && result.failed === 0) {
+        uploadChangedListing = false;
+        progressContainer.style.display = 'none';
+        showSuccessMessage(`Successfully uploaded ${result.uploaded} file(s)`);
+        bootstrap.Modal.getInstance(document.getElementById('uploadFileModal')).hide();
+        setTimeout(() => {
+            window.location.reload();
+        }, 1000);
+        return;
+    }
+
+    if (!failure) {
+        failure = result.uploaded === 0 ? 'All file uploads failed' : `Uploaded ${result.uploaded} file(s), ${result.failed} failed`;
+    }
+    showErrorMessage(escapeHtml(failure));
+    uploadStatus.innerHTML = `<div class="text-danger">${escapeHtml(failure)}</div>` +
+        result.errors.slice(0, uploadListLimit).map(error => `<div class="text-break">${escapeHtml(error)}</div>`).join('') +
+        (result.errors.length > uploadListLimit ? `<div>and ${result.errors.length - uploadListLimit} more</div>` : '');
 }
 
 // Export file list to CSV
@@ -1430,12 +1507,16 @@ function setupFileManagerEventHandlers() {
     }
 
     // Handle file selection change to show preview
-    const fileInput = document.getElementById('fileInput');
-    if (fileInput) {
-        fileInput.addEventListener('change', function (e) {
-            updateFileListPreview();
-        });
-    }
+    ['fileInput', 'folderInput'].forEach(id => {
+        const input = document.getElementById(id);
+        if (input) {
+            input.addEventListener('change', function (e) {
+                uploadSelection++;
+                droppedUploadFiles = null;
+                updateFileListPreview();
+            });
+        }
+    });
 
     // Setup checkbox event listeners for file selection
     const checkboxes = document.querySelectorAll('.file-checkbox');
@@ -1460,10 +1541,20 @@ function setupFileManagerEventHandlers() {
     const uploadFileModal = document.getElementById('uploadFileModal');
     if (uploadFileModal) {
         uploadFileModal.addEventListener('hidden.bs.modal', function () {
+            const cancelled = activeUploadRequest;
+            if (cancelled) {
+                cancelled.abort();
+            }
+            if (cancelled || uploadChangedListing) {
+                window.location.reload();
+                return;
+            }
             const fileInput = document.getElementById('fileInput');
             const progressContainer = document.getElementById('uploadProgress');
             const fileListPreview = document.getElementById('fileListPreview');
             fileInput.value = '';
+            document.getElementById('folderInput').value = '';
+            droppedUploadFiles = null;
             progressContainer.style.display = 'none';
             fileListPreview.style.display = 'none';
         });
@@ -1540,43 +1631,42 @@ function setupDragAndDrop() {
         }
     }
 
-    function handleDrop(e) {
-        const dt = e.dataTransfer;
-        const files = dt.files;
-
-        if (files.length > 0) {
-            // Open upload modal and set files
-            const fileInput = document.getElementById('fileInput');
-            if (fileInput) {
-                // Create a new FileList-like object
-                const fileArray = Array.from(files);
-
-                // Set files to input (this is a bit tricky with file inputs)
-                const dataTransfer = new DataTransfer();
-                fileArray.forEach(file => dataTransfer.items.add(file));
-                fileInput.files = dataTransfer.files;
-
-                // Update preview and show modal
-                updateFileListPreview();
-                const modal = new bootstrap.Modal(uploadModal);
-                modal.show();
+    async function handleDrop(e) {
+        const selection = ++uploadSelection;
+        let dropped;
+        try {
+            dropped = await collectDroppedFiles(e.dataTransfer, () => selection === uploadSelection);
+        } catch (error) {
+            console.error('Drop error:', error);
+            if (selection === uploadSelection) {
+                showErrorMessage('Failed to read the dropped files.');
             }
+            return;
         }
+        if (selection !== uploadSelection || dropped.length === 0) {
+            return;
+        }
+        document.getElementById('fileInput').value = '';
+        document.getElementById('folderInput').value = '';
+        droppedUploadFiles = dropped;
+        updateFileListPreview();
+        const modal = new bootstrap.Modal(uploadModal);
+        modal.show();
     }
 }
 
 // Update file list preview when files are selected
 function updateFileListPreview() {
-    const fileInput = document.getElementById('fileInput');
     const fileListPreview = document.getElementById('fileListPreview');
     const selectedFilesList = document.getElementById('selectedFilesList');
+    const selected = selectedUploadFiles();
 
-    if (!fileInput.files || fileInput.files.length === 0) {
+    if (selected.length === 0) {
         fileListPreview.style.display = 'none';
         return;
     }
 
-    const files = Array.from(fileInput.files);
+    const files = selected.map(item => item.file);
     const totalSize = files.reduce((sum, file) => sum + file.size, 0);
 
     let html = `<div class="d-flex justify-content-between align-items-center mb-2">
@@ -1584,16 +1674,19 @@ function updateFileListPreview() {
         <small class="text-muted">Total: ${formatBytes(totalSize)}</small>
     </div>`;
 
-    files.forEach((file, index) => {
+    selected.slice(0, uploadListLimit).forEach(({ file, path }, index) => {
         const fileIcon = getFileIconByName(file.name);
         html += `<div class="d-flex justify-content-between align-items-center py-1 ${index > 0 ? 'border-top' : ''}">
             <div class="d-flex align-items-center">
                 <i class="bi ${fileIcon} me-2 text-muted"></i>
-                <span class="text-truncate" style="max-width: 200px;" title="${file.name}">${file.name}</span>
+                <span class="text-truncate" style="max-width: 400px;" title="${escapeHtmlForAttribute(path)}">${escapeHtml(path)}</span>
             </div>
             <small class="text-muted">${formatBytes(file.size)}</small>
         </div>`;
     });
+    if (selected.length > uploadListLimit) {
+        html += `<div class="border-top py-1 small text-muted">and ${selected.length - uploadListLimit} more</div>`;
+    }
 
     selectedFilesList.innerHTML = html;
     fileListPreview.style.display = 'block';

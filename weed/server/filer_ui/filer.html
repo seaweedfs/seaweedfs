@@ -39,7 +39,7 @@
             background: #ddd;
         }
 
-        #fileElem {
+        #fileElem, #dirElem {
             display: none;
         }
 
@@ -94,6 +94,9 @@
                 <label class="btn btn-default" for="fileElem">
                     <span class="glyphicon glyphicon-cloud-upload" aria-hidden="true"></span> Upload
                 </label>
+                <label class="btn btn-default" for="dirElem">
+                    <span class="glyphicon glyphicon-folder-close" aria-hidden="true"></span> Upload Folder
+                </label>
             </div>
             <ol class="breadcrumb">
             {{ range $entry := .Breadcrumbs }}
@@ -108,6 +111,7 @@
     <div class="row" id="drop-area">
         <form class="upload-form">
             <input type="file" id="fileElem" multiple onchange="handleFiles(this.files)">
+            <input type="file" id="dirElem" webkitdirectory multiple onchange="handleFiles(this.files)">
 
             {{ if .EmptyFolder }}
             <div class="row add-files">
@@ -219,10 +223,42 @@
     }
 
     function handleDrop(e) {
-        var dt = e.dataTransfer;
-        var files = dt.files;
+        collectDroppedFiles(e.dataTransfer).then(uploadItems, function (err) {
+            alert('Failed to read the dropped files: ' + err);
+        });
+    }
 
-        handleFiles(files);
+    // Lists the dropped files, walking into dropped folders. The entries must be
+    // taken before the first await, while the drop event still exposes them.
+    async function collectDroppedFiles(dataTransfer) {
+        var entries = [...(dataTransfer.items || [])]
+            .map(item => item.webkitGetAsEntry && item.webkitGetAsEntry())
+            .filter(Boolean);
+        if (entries.length === 0) {
+            return [...dataTransfer.files].map(file => ({'file': file, 'path': file.name}));
+        }
+        var collected = [];
+        async function walk(entry) {
+            if (entry.isFile) {
+                var file = await new Promise((resolve, reject) => entry.file(resolve, reject));
+                collected.push({'file': file, 'path': entry.fullPath.replace(/^\/+/, '')});
+                return;
+            }
+            var reader = entry.createReader();
+            for (;;) {
+                var batch = await new Promise((resolve, reject) => reader.readEntries(resolve, reject));
+                if (batch.length === 0) {
+                    return;
+                }
+                for (let child of batch) {
+                    await walk(child);
+                }
+            }
+        }
+        for (let entry of entries) {
+            await walk(entry);
+        }
+        return collected;
     }
 
     function reloadPage() {
@@ -232,14 +268,37 @@
     var uploadList = {};
 
     function handleFiles(files) {
-        files = [...files];
-        files.forEach(startUpload);
-        renderProgress();
-        files.forEach(uploadFile);
+        uploadItems([...files].map(file => ({'file': file, 'path': file.webkitRelativePath || file.name})));
     }
 
-    function startUpload(file, i) {
-        uploadList[file.name] = {'name': file.name, 'percent': 0, 'finish': false};
+    // A large folder uploads a few files at a time instead of opening a request per file,
+    // and a selection made meanwhile joins the same queue.
+    var uploadConcurrency = 4;
+    var uploadQueue = [];
+    var activeUploads = 0;
+
+    function uploadItems(items) {
+        if (items.length === 0) {
+            return;
+        }
+        items.forEach(startUpload);
+        renderProgress();
+        uploadQueue.push(...items);
+        uploadNext();
+    }
+
+    function uploadNext() {
+        while (activeUploads < uploadConcurrency && uploadQueue.length > 0) {
+            activeUploads++;
+            uploadFile(uploadQueue.shift(), function () {
+                activeUploads--;
+                uploadNext();
+            });
+        }
+    }
+
+    function startUpload(item, i) {
+        uploadList[item.path] = {'name': item.path, 'percent': 0, 'finish': false};
     }
 
     function renderProgress() {
@@ -253,7 +312,7 @@
             html += '<tr>\n<td>\n';
             html += '<div class="progress" style="margin-bottom: 2px;">\n';
             html += '<div class="progress-bar ' + progressBarClass + '" role="progressbar" aria-valuenow="' + '100" aria-valuemin="0" aria-valuemax="100" style="width:' + i.percent + '%;">';
-            html += '<span style="margin-right: 10px;">' + i.name + '</span>' + i.percent + '%<\/div>';
+            html += '<span style="margin-right: 10px;">' + escapeHtml(i.name) + '</span>' + i.percent + '%<\/div>';
             html += '<\/div>\n<\/td>\n<\/tr>\n';
         }
         html += '<\/table>\n';
@@ -285,13 +344,35 @@
         }
     }
 
-    function uploadFile(file, i) {
-        var url = window.location.href;
+    function escapeHtml(text) {
+        var div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    // A file from a folder goes to its subfolder under the current directory,
+    // which the filer creates on the first upload into it.
+    function uploadUrl(path) {
+        var dirs = path.split('/').slice(0, -1);
+        if (dirs.length === 0) {
+            return window.location.href;
+        }
+        var baseUrl = window.location.origin + window.location.pathname;
+        if (!baseUrl.endsWith('/')) {
+            baseUrl += '/';
+        }
+        return baseUrl + dirs.map(encodeURIComponent).join('/') + '/' + window.location.search;
+    }
+
+    function uploadFile(item, done) {
+        var file = item.file;
+        var url = uploadUrl(item.path);
         var xhr = new XMLHttpRequest();
-        var fileName = file.name;
+        var fileName = item.path;
         xhr.onreadystatechange = function() {
             if (xhr.readyState == XMLHttpRequest.DONE) {
-                finishUpload(fileName)
+                finishUpload(fileName);
+                done();
             }
         }
         xhr.upload.addEventListener('progress', function(e) {

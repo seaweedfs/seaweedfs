@@ -313,12 +313,19 @@ templ FileBrowser(data dash.FileBrowserData) {
 					<form id="uploadFileForm" enctype="multipart/form-data" data-max-size={ fmt.Sprint(data.UploadMaxSize) }>
 						<div class="mb-3">
 							<label for="fileInput" class="form-label">Select Files</label>
-							<input type="file" class="form-control" id="fileInput" name="files" multiple required>
+							<input type="file" class="form-control" id="fileInput" name="files" multiple>
 							<div class="form-text">
 								Choose one or more files to upload to the current directory. You can select multiple files by holding Ctrl (Cmd on Mac) while clicking.
 								if data.UploadMaxSize > 0 {
 									Total upload size limit: { formatBytes(data.UploadMaxSize) }.
 								}
+							</div>
+						</div>
+						<div class="mb-3">
+							<label for="folderInput" class="form-label">Or Select a Folder</label>
+							<input type="file" class="form-control" id="folderInput" webkitdirectory multiple>
+							<div class="form-text">
+								Uploads every file in the folder, keeping its subfolders. Empty subfolders are skipped.
 							</div>
 						</div>
 						<input type="hidden" id="uploadPath" name="path" value={ data.CurrentPath }>
@@ -401,11 +408,6 @@ templ FileBrowser(data dash.FileBrowserData) {
 					break;
 			}
 		});
-		
-		// Initialize file manager event handlers from admin.js
-		if (typeof setupFileManagerEventHandlers === 'function') {
-			setupFileManagerEventHandlers();
-		}
 	});
 	
 	// File browser specific functions
