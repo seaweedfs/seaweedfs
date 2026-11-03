@@ -165,7 +165,8 @@ impl SortedFileNeedleMap {
             return Ok(None);
         }
         let file = pooled_index_files().borrow(&self.db_file_name, true)?;
-        let Some((entry_index, _, size)) = search_sorted_index(&file, self.db_file_size, key)?
+        let Some((entry_index, needle_offset, size)) =
+            search_sorted_index(&file, self.db_file_size, key)?
         else {
             return Ok(None);
         };
@@ -182,22 +183,14 @@ impl SortedFileNeedleMap {
         // already counts as deleted.
         self.append_to_index_file(key, offset, TOMBSTONE_FILE_SIZE)?;
 
-        // Move the counters to where a reload would put them, so the heartbeat
-        // does not report this volume as garbage-free until it restarts. The
-        // tombstone is one more .idx row, and under the rule index_metric
-        // applies both it and the row it supersedes count as deletions; the
-        // bytes leave the live set without leaving the .idx.
-        //
-        // This belongs to the `.idx` append, not to the `.sdx` mark below: the
-        // append is what makes the delete durable and what a reload would
-        // count, and the retry path returns early once the overlay records it.
-        // Leaving the counters until after the mark would strand them at their
-        // pre-delete values whenever the mark fails.
-        self.metric.file_count.fetch_add(1, Ordering::Relaxed);
-        self.metric.deletion_count.fetch_add(2, Ordering::Relaxed);
-        self.metric
-            .deletion_byte_count
-            .fetch_add(size.0.max(0) as u64, Ordering::Relaxed);
+        // Count against the `.idx` append, not the `.sdx` mark below: the
+        // append is what a reload counts, and the retry path returns early
+        // once the overlay records it, so a failed mark must not strand the
+        // counters at their pre-delete values.
+        self.metric.on_delete(&NeedleValue {
+            offset: needle_offset,
+            size,
+        });
 
         // From here the delete is durable in `.idx`, so no lookup may report
         // this needle live again. Record it before touching `.sdx` and clear
@@ -449,11 +442,11 @@ fn write_sorted_file_from_idx(
 /// its bloom filter — and so without its false positives or its per-volume
 /// allocation.
 ///
-/// Go counts every `.idx` row in `FileCounter`, and counts a row in
-/// `DeletionCounter` when it is not the last, still-valid row for its key. The
-/// rows that *are* the last valid row for their key are exactly the entries
-/// `.sdx` holds, so `DeletionCounter = rows - live` and
-/// `DeletionByteCounter = valid bytes in .idx - live bytes in .sdx`, each
+/// Go counts every `.idx` put row in `FileCounter` and tombstones in neither
+/// counter, so a key costs one deletion per put that is no longer its live
+/// row. The live rows are exactly the unmarked entries `.sdx` holds, so
+/// `DeletionCounter = puts - live` and
+/// `DeletionByteCounter = put bytes in .idx - live bytes in .sdx`, each
 /// computable in one sequential pass with no per-key state.
 fn index_metric(
     index_file_name: &str,
@@ -462,15 +455,17 @@ fn index_metric(
 ) -> io::Result<NeedleMapMetric> {
     let metric = NeedleMapMetric::default();
 
-    let mut rows: i64 = 0;
-    let mut valid_bytes: u64 = 0;
+    let is_put = |offset: Offset, size: Size| !offset.is_zero() && !size.is_deleted();
+
+    let mut puts: i64 = 0;
+    let mut put_bytes: u64 = 0;
     let mut index_file = File::open(index_file_name)?;
     idx::walk_index_file(&mut index_file, 0, |key, offset, size| {
-        rows += 1;
         metric.maybe_set_max_file_key(key);
         metric.maybe_set_max_needle_end(offset, size, version);
-        if size.is_valid() {
-            valid_bytes += size.0 as u64;
+        if is_put(offset, size) {
+            puts += 1;
+            put_bytes += size.0 as u64;
         }
         Ok(())
     })?;
@@ -478,22 +473,22 @@ fn index_metric(
     let mut live: i64 = 0;
     let mut live_bytes: u64 = 0;
     let mut db_file = File::open(db_file_name)?;
-    idx::walk_index_file(&mut db_file, 0, |_, _, size| {
-        if size.is_valid() {
+    idx::walk_index_file(&mut db_file, 0, |_, offset, size| {
+        if is_put(offset, size) {
             live += 1;
             live_bytes += size.0 as u64;
         }
         Ok(())
     })?;
 
-    metric.file_count.store(rows, Ordering::Relaxed);
-    metric.file_byte_count.store(valid_bytes, Ordering::Relaxed);
+    metric.file_count.store(puts, Ordering::Relaxed);
+    metric.file_byte_count.store(put_bytes, Ordering::Relaxed);
     metric
         .deletion_count
-        .store((rows - live).max(0), Ordering::Relaxed);
+        .store((puts - live).max(0), Ordering::Relaxed);
     metric
         .deletion_byte_count
-        .store(valid_bytes.saturating_sub(live_bytes), Ordering::Relaxed);
+        .store(put_bytes.saturating_sub(live_bytes), Ordering::Relaxed);
     Ok(metric)
 }
 
@@ -617,11 +612,11 @@ mod tests {
         );
 
         let m = SortedFileNeedleMap::open(&base, version()).unwrap();
-        // Every row counts, matching Go's FileCounter.
-        assert_eq!(m.file_count(), 5);
+        // Every put row counts, matching Go's FileCounter; the tombstone does not.
+        assert_eq!(m.file_count(), 4);
         assert_eq!(m.content_size(), 100 + 200 + 150 + 300);
-        // Superseded row for key 1, plus both rows for the deleted key 2.
-        assert_eq!(m.deleted_count(), 3);
+        // Superseded row for key 1, plus the put of the deleted key 2.
+        assert_eq!(m.deleted_count(), 2);
         assert_eq!(m.deleted_size(), 100 + 200);
         assert_eq!(m.max_file_key(), NeedleId(3));
     }
@@ -709,8 +704,8 @@ mod tests {
         // already agree with it or the heartbeat jumps at every restart.
         drop(m);
         let reloaded = SortedFileNeedleMap::open(&base, version()).unwrap();
-        assert_eq!(reloaded.file_count(), 4);
-        assert_eq!(reloaded.deleted_count(), 2);
+        assert_eq!(reloaded.file_count(), 3);
+        assert_eq!(reloaded.deleted_count(), 1);
         assert_eq!(reloaded.deleted_size(), 200);
         assert_eq!(reloaded.content_size(), 600);
 
@@ -718,7 +713,7 @@ mod tests {
         reloaded
             .delete(NeedleId(2), Offset::from_actual_offset(16))
             .unwrap();
-        assert_eq!((reloaded.file_count(), reloaded.deleted_count()), (4, 2));
+        assert_eq!((reloaded.file_count(), reloaded.deleted_count()), (3, 1));
     }
 
     #[test]
@@ -960,7 +955,7 @@ mod tests {
 
         assert_eq!(
             m.deleted_count(),
-            deleted_before + 2,
+            deleted_before + 1,
             "a durable tombstone must move the deletion count"
         );
         assert_eq!(
@@ -979,7 +974,7 @@ mod tests {
                 .unwrap(),
             None
         );
-        assert_eq!(m.deleted_count(), deleted_before + 2);
+        assert_eq!(m.deleted_count(), deleted_before + 1);
         assert_eq!(m.deleted_size(), bytes_before + 100);
     }
 
