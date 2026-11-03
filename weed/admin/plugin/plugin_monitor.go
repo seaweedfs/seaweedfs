@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -143,12 +144,14 @@ func (r *Plugin) ExpireJob(jobID, reason string) (*TrackedJob, bool, error) {
 
 	var jobType string
 	var requestID string
+	var workerID string
 	active := false
 
 	r.jobsMu.RLock()
 	if tracked := r.jobs[normalizedJobID]; tracked != nil {
 		jobType = tracked.JobType
 		requestID = tracked.RequestID
+		workerID = tracked.WorkerID
 		active = isActiveTrackedJobState(tracked.State)
 	}
 	r.jobsMu.RUnlock()
@@ -162,6 +165,9 @@ func (r *Plugin) ExpireJob(jobID, reason string) (*TrackedJob, bool, error) {
 			}
 			if requestID == "" {
 				requestID = detail.RequestID
+			}
+			if workerID == "" {
+				workerID = detail.WorkerID
 			}
 			if !active && isActiveTrackedJobState(detail.State) {
 				active = true
@@ -185,14 +191,12 @@ func (r *Plugin) ExpireJob(jobID, reason string) (*TrackedJob, bool, error) {
 	}
 
 	now := time.Now().UTC()
-	r.handleJobCompleted(&plugin_pb.JobCompleted{
-		JobId:        normalizedJobID,
-		JobType:      jobType,
-		RequestId:    requestID,
-		Success:      false,
-		ErrorMessage: reason,
-		CompletedAt:  timestamppb.New(now),
-	})
+	r.expireActiveJob(activeJobSnapshot{
+		jobID:     normalizedJobID,
+		jobType:   jobType,
+		workerID:  workerID,
+		requestID: requestID,
+	}, reason, now)
 	r.appendActivity(JobActivity{
 		JobID:      normalizedJobID,
 		JobType:    jobType,
@@ -235,18 +239,26 @@ func (r *Plugin) expireStaleJobs(now time.Time) int {
 			continue
 		}
 
-		r.handleJobCompleted(&plugin_pb.JobCompleted{
-			JobId:        snap.jobID,
-			JobType:      snap.jobType,
-			RequestId:    snap.requestID,
-			Success:      false,
-			ErrorMessage: reason,
-			CompletedAt:  timestamppb.New(now),
-		})
+		r.expireActiveJob(snap, reason, now)
 		expired++
 	}
 
 	return expired
+}
+
+// expireActiveJob fails the tracked job and tells its worker to stop it.
+// Failing the record alone leaves the worker running the job and its slot
+// taken, which is what kept a stuck job's slot out of reach for days.
+func (r *Plugin) expireActiveJob(snap activeJobSnapshot, reason string, now time.Time) {
+	r.handleJobCompleted(&plugin_pb.JobCompleted{
+		JobId:        snap.jobID,
+		JobType:      snap.jobType,
+		RequestId:    snap.requestID,
+		Success:      false,
+		ErrorMessage: reason,
+		CompletedAt:  timestamppb.New(now),
+	})
+	r.sendCancel(snap.workerID, snap.jobID, plugin_pb.WorkKind_WORK_KIND_EXECUTION, errors.New(reason))
 }
 
 func (r *Plugin) snapshotActiveJobs() []activeJobSnapshot {

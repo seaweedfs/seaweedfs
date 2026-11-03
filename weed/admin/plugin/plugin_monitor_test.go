@@ -629,3 +629,77 @@ func TestBuildJobDetailLoadsFromDiskWhenMemoryCleared(t *testing.T) {
 		t.Fatalf("unexpected disk detail payload: %q", detail.Job.Detail)
 	}
 }
+
+func expectCancelFor(t *testing.T, session *streamSession, jobID string) {
+	t.Helper()
+	select {
+	case msg := <-session.outgoing:
+		cancel := msg.GetCancelRequest()
+		if cancel == nil || cancel.TargetId != jobID || cancel.TargetKind != plugin_pb.WorkKind_WORK_KIND_EXECUTION {
+			t.Fatalf("expected a cancel for %s, got %+v", jobID, msg)
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("expected the worker to be told to stop %s", jobID)
+	}
+}
+
+// Expiring a job reaches the worker too: writing a job off in the admin
+// while the worker keeps running it would leave the slot taken.
+func TestExpireJobCancelsTheJobOnItsWorker(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	const workerID = "worker-1"
+	const jobID = "job-operator-expired"
+	session := &streamSession{workerID: workerID, outgoing: make(chan *plugin_pb.AdminToWorkerMessage, 8), done: make(chan struct{})}
+	pluginSvc.putSession(session)
+	pluginSvc.trackExecutionStart("req-operator-expired", workerID, &plugin_pb.JobSpec{JobId: jobID, JobType: "s3_lifecycle"}, 1)
+
+	updated, expired, err := pluginSvc.ExpireJob(jobID, "")
+	if err != nil || !expired {
+		t.Fatalf("ExpireJob: expired=%v err=%v", expired, err)
+	}
+	if updated == nil || updated.State != StateFailed {
+		t.Fatalf("expected the job to be failed, got %+v", updated)
+	}
+	expectCancelFor(t, session, jobID)
+}
+
+// The stale sweep sends the same cancel, so the worker's slot comes back
+// on its next heartbeat rather than staying taken by a job the admin
+// already wrote off.
+func TestExpireStaleJobsCancelsTheJobOnItsWorker(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	const workerID = "worker-1"
+	const jobID = "job-stale"
+	pluginSvc.registry.UpsertFromHello(&plugin_pb.WorkerHello{WorkerId: workerID})
+	pluginSvc.registry.UpdateHeartbeat(workerID, &plugin_pb.WorkerHeartbeat{WorkerId: workerID, ExecutionSlotsTotal: 4})
+	session := &streamSession{workerID: workerID, outgoing: make(chan *plugin_pb.AdminToWorkerMessage, 8), done: make(chan struct{})}
+	pluginSvc.putSession(session)
+	pluginSvc.trackExecutionStart("req-stale", workerID, &plugin_pb.JobSpec{JobId: jobID, JobType: "s3_lifecycle"}, 1)
+
+	startedAt := time.Now().UTC()
+	if n := pluginSvc.expireStaleJobs(startedAt.Add(defaultStaleActiveJobTimeout - time.Minute)); n != 0 {
+		t.Fatalf("expired %d jobs before the stale limit", n)
+	}
+	if n := pluginSvc.expireStaleJobs(startedAt.Add(defaultStaleActiveJobTimeout + time.Minute)); n != 1 {
+		t.Fatalf("expired %d jobs past the stale limit, want 1", n)
+	}
+	got, _ := pluginSvc.GetTrackedJob(jobID)
+	if got == nil || got.State != StateFailed {
+		t.Fatalf("expected the stale job to be failed, got %+v", got)
+	}
+	expectCancelFor(t, session, jobID)
+}
