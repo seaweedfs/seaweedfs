@@ -620,6 +620,7 @@ templ Plugin(page string, initialJob string, lane string) {
                 schedulerLock: null,
                 allJobs: [],
                 allActivities: [],
+                monitorRowsScope: null,
                 loadedJobType: '',
                 descriptor: null,
                 config: null,
@@ -3089,12 +3090,22 @@ templ Plugin(page string, initialJob string, lane string) {
                 // The newest 500 rows cluster-wide may hold none of the selected job type on a busy
                 // cluster, so the job-type sub-tabs fetch their own server-side filtered window.
                 var scopedJobType = monitorJobTypeScope();
+                var sameScope = state.monitorRowsScope === scopedJobType;
 
-                var allJobsPromise = pluginRequest('GET', appendLaneParam('/api/plugin/jobs?limit=500'));
-                var allActivitiesPromise = pluginRequest('GET', appendLaneParam('/api/plugin/activities?limit=500'));
-                var jobsPromise = scopedJobType ? pluginRequest('GET', appendJobTypeParam(appendLaneParam('/api/plugin/jobs?limit=500'), scopedJobType)).catch(function() { return null; }) : allJobsPromise;
-                var activitiesPromise = scopedJobType ? pluginRequest('GET', appendJobTypeParam(appendLaneParam('/api/plugin/activities?limit=500'), scopedJobType)).catch(function() { return null; }) : allActivitiesPromise;
-                var schedulerPromise = pluginRequest('GET', appendLaneParam('/api/plugin/scheduler-states'));
+                // A failed request keeps its last rows; the rest still land and the failure is rethrown.
+                var failure = null;
+                function keepOnFailure(promise, previous) {
+                    return promise.catch(function(e) {
+                        failure = failure || e;
+                        return previous;
+                    });
+                }
+
+                var allJobsPromise = keepOnFailure(pluginRequest('GET', appendLaneParam('/api/plugin/jobs?limit=500')), state.allJobs);
+                var allActivitiesPromise = keepOnFailure(pluginRequest('GET', appendLaneParam('/api/plugin/activities?limit=500')), state.allActivities);
+                var jobsPromise = scopedJobType ? keepOnFailure(pluginRequest('GET', appendJobTypeParam(appendLaneParam('/api/plugin/jobs?limit=500'), scopedJobType)), sameScope ? state.jobs : null) : allJobsPromise;
+                var activitiesPromise = scopedJobType ? keepOnFailure(pluginRequest('GET', appendJobTypeParam(appendLaneParam('/api/plugin/activities?limit=500'), scopedJobType)), sameScope ? state.activities : null) : allActivitiesPromise;
+                var schedulerPromise = keepOnFailure(pluginRequest('GET', appendLaneParam('/api/plugin/scheduler-states')), state.schedulerStates);
                 var schedulerStatusPromise = pluginRequest('GET', appendLaneParam('/api/plugin/scheduler-status'));
 
                 var allJobs = await allJobsPromise;
@@ -3116,6 +3127,7 @@ templ Plugin(page string, initialJob string, lane string) {
                 state.allActivities = Array.isArray(allActivities) ? allActivities : [];
                 state.jobs = Array.isArray(jobs) ? jobs : state.allJobs;
                 state.activities = Array.isArray(activities) ? activities : state.allActivities;
+                state.monitorRowsScope = scopedJobType;
                 state.schedulerStates = Array.isArray(schedulerStates) ? schedulerStates : [];
                 state.schedulerStatus = schedulerStatus && schedulerStatus.scheduler ? schedulerStatus.scheduler : null;
                 state.schedulerLock = schedulerStatus && schedulerStatus.lock ? schedulerStatus.lock : null;
@@ -3127,6 +3139,9 @@ templ Plugin(page string, initialJob string, lane string) {
                 renderSchedulerStatus();
                 renderStatus();
                 renderJobTypeSummary();
+                if (failure) {
+                    throw failure;
+                }
             }
 
             async function refreshAll() {
