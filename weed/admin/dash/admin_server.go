@@ -2309,16 +2309,24 @@ func collectCollectionStats(topologyInfo *master_pb.TopologyInfo) map[string]col
 
 	// Fold EC per-volume counts into the collection totals. fileCount is
 	// deduped via max across every node reporting shards for the volume;
-	// deleteCount is summed across the same nodes.
+	// deleteCount is summed across the same nodes, and a tombstone recorded
+	// on more than one shard holder can push that sum past fileCount. This
+	// is an expected accounting artefact that recurs on every refresh, so
+	// it is summarized once per pass rather than logged per volume.
+	skipped := 0
 	for vid, agg := range ecVolumeAgg {
 		data := collectionMap[agg.collection]
 		if agg.fileCount >= agg.deleteCount {
 			data.FileCount += int64(agg.fileCount - agg.deleteCount)
 		} else {
-			glog.Warningf("ec volume %d in collection %q: summed delete_count=%d exceeds file_count=%d; skipping object count",
+			skipped++
+			glog.V(2).Infof("ec volume %d in collection %q: summed delete_count=%d exceeds file_count=%d; skipping object count",
 				vid, agg.collection, agg.deleteCount, agg.fileCount)
 		}
 		collectionMap[agg.collection] = data
+	}
+	if skipped > 0 {
+		glog.V(1).Infof("%d ec volumes have summed delete_count above file_count; skipping object count for them", skipped)
 	}
 
 	return collectionMap
