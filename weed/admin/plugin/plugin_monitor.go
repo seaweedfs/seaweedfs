@@ -258,8 +258,13 @@ func (r *Plugin) expireActiveJob(snap activeJobSnapshot, reason string, now time
 		ErrorMessage: reason,
 		CompletedAt:  timestamppb.New(now),
 	})
-	if err := r.sendCancel(snap.workerID, snap.jobID, plugin_pb.WorkKind_WORK_KIND_EXECUTION, errors.New(reason)); err != nil {
-		r.holdUndeliveredCancel(snap.jobID, snap.workerID, reason)
+	// A retry reuses the job id, so the request id is what names this attempt.
+	target := snap.requestID
+	if target == "" {
+		target = snap.jobID
+	}
+	if err := r.sendCancel(snap.workerID, target, plugin_pb.WorkKind_WORK_KIND_EXECUTION, errors.New(reason)); err != nil {
+		r.holdUndeliveredCancel(snap.jobID, undeliveredCancel{workerID: snap.workerID, target: target, reason: reason})
 	}
 }
 
@@ -267,13 +272,14 @@ func (r *Plugin) expireActiveJob(snap activeJobSnapshot, reason string, now time
 // disconnected, or its outgoing buffer stayed full past the send timeout.
 type undeliveredCancel struct {
 	workerID string
+	target   string
 	reason   string
 }
 
 // holdUndeliveredCancel keeps the cancel for the worker's next heartbeat.
 // Entries whose job is no longer tracked are dropped here, so a worker that
 // never comes back does not keep them forever.
-func (r *Plugin) holdUndeliveredCancel(jobID, workerID, reason string) {
+func (r *Plugin) holdUndeliveredCancel(jobID string, pending undeliveredCancel) {
 	r.undeliveredCancelsMu.Lock()
 	defer r.undeliveredCancelsMu.Unlock()
 	if r.undeliveredCancels == nil {
@@ -286,24 +292,25 @@ func (r *Plugin) holdUndeliveredCancel(jobID, workerID, reason string) {
 		}
 	}
 	r.jobsMu.RUnlock()
-	r.undeliveredCancels[jobID] = undeliveredCancel{workerID: workerID, reason: reason}
+	r.undeliveredCancels[jobID] = pending
 }
 
 // resendUndeliveredCancels sends a held cancel again while the worker's
-// heartbeat still lists the job, and forgets it otherwise. A job active
-// again belongs to a new attempt, which a cancel by job id would stop.
+// heartbeat still lists the job, and forgets it otherwise. A cancel that
+// can only name the job id is skipped once the job is active again, since
+// it would stop a new attempt too.
 func (r *Plugin) resendUndeliveredCancels(workerID string, heartbeat *plugin_pb.WorkerHeartbeat) {
 	r.undeliveredCancelsMu.Lock()
-	var held map[string]string
+	var held map[string]undeliveredCancel
 	for jobID, pending := range r.undeliveredCancels {
 		if pending.workerID != workerID {
 			continue
 		}
 		delete(r.undeliveredCancels, jobID)
 		if held == nil {
-			held = make(map[string]string)
+			held = make(map[string]undeliveredCancel)
 		}
-		held[jobID] = pending.reason
+		held[jobID] = pending
 	}
 	r.undeliveredCancelsMu.Unlock()
 	if len(held) == 0 {
@@ -312,21 +319,23 @@ func (r *Plugin) resendUndeliveredCancels(workerID string, heartbeat *plugin_pb.
 
 	for _, work := range heartbeat.GetRunningWork() {
 		jobID := strings.TrimSpace(work.GetWorkId())
-		reason, ok := held[jobID]
+		pending, ok := held[jobID]
 		if !ok || work.GetKind() != plugin_pb.WorkKind_WORK_KIND_EXECUTION {
 			continue
 		}
 		delete(held, jobID)
-		r.jobsMu.RLock()
-		tracked := r.jobs[jobID]
-		stillExpired := tracked != nil && !isActiveTrackedJobState(tracked.State)
-		r.jobsMu.RUnlock()
-		if !stillExpired {
-			continue
+		if pending.target == jobID {
+			r.jobsMu.RLock()
+			tracked := r.jobs[jobID]
+			active := tracked == nil || isActiveTrackedJobState(tracked.State)
+			r.jobsMu.RUnlock()
+			if active {
+				continue
+			}
 		}
 		go func() {
-			if err := r.sendCancel(workerID, jobID, plugin_pb.WorkKind_WORK_KIND_EXECUTION, errors.New(reason)); err != nil {
-				r.holdUndeliveredCancel(jobID, workerID, reason)
+			if err := r.sendCancel(workerID, pending.target, plugin_pb.WorkKind_WORK_KIND_EXECUTION, errors.New(pending.reason)); err != nil {
+				r.holdUndeliveredCancel(jobID, pending)
 			}
 		}()
 	}
