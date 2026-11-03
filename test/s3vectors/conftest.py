@@ -102,15 +102,23 @@ def write_tls(directory):
         "subjectAltName=DNS:localhost,IP:127.0.0.1\nextendedKeyUsage=serverAuth,clientAuth\nbasicConstraints=CA:FALSE\n")
     openssl("x509", "-req", "-in", "req.csr", "-CA", "ca.pem", "-CAkey", "ca.key", "-CAcreateserial",
             "-out", "cert.pem", "-days", "2", "-extfile", "ext.cnf")
+    # A second identity the same CA signed, which the engine's allowlist
+    # must keep out.
+    openssl("req", "-newkey", "rsa:2048", "-nodes", "-keyout", "outsider.key", "-out", "outsider.csr", "-subj", "/CN=outsider")
+    openssl("x509", "-req", "-in", "outsider.csr", "-CA", "ca.pem", "-CAkey", "ca.key", "-CAcreateserial",
+            "-out", "outsider.pem", "-days", "2", "-extfile", "ext.cnf")
     cert, key, ca = (f'{key} = {json.dumps(str(directory / name), ensure_ascii=False)}\n' for key, name in (("cert", "cert.pem"), ("key", "key.pem"), ("ca", "ca.pem")))
     pem = cert + key + ca
-    grpc = "".join(f"[grpc.{component}]\n{cert}{key}\n" for component in ("master", "volume", "filer", "s3", "client", "vector"))
+    grpc = "".join(f"[grpc.{component}]\n{cert}{key}\n" for component in ("master", "volume", "filer", "s3", "client"))
+    grpc += f"[grpc.vector]\n{cert}{key}allowed_commonNames = \"localhost\"\n"
     (directory / "security.toml").write_text(f"[https.volume]\n{pem}\n[https.client]\nenabled = true\n{pem}\n[grpc]\n{ca}\n{grpc}")
 
 
-def probe_grpc_tls(name, port, directory):
+def probe_grpc_tls(name, port, directory, outsider=False):
     """A TLS gRPC listener must refuse plaintext HTTP/2 and a connection
-    without the client certificate, and answer the HTTP/2 preface with it."""
+    without the client certificate, and answer the HTTP/2 preface with it.
+    With `outsider`, a certificate the CA signed for a name outside the
+    listener's allowed_commonNames must be refused too."""
     preface = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
     with socket.create_connection(("127.0.0.1", port), timeout=5) as sock:
         sock.sendall(preface)
@@ -125,6 +133,15 @@ def probe_grpc_tls(name, port, directory):
             with context.wrap_socket(sock, server_hostname="localhost") as tls:
                 tls.sendall(preface)
                 assert not tls.recv(16), f"{name} gRPC served a client without a certificate"
+    if outsider:
+        other = ssl.create_default_context(cafile=directory / "ca.pem")
+        other.set_alpn_protocols(["h2"])
+        other.load_cert_chain(directory / "outsider.pem", directory / "outsider.key")
+        with contextlib.suppress(ConnectionError, TimeoutError, ssl.SSLError):
+            with socket.create_connection(("127.0.0.1", port), timeout=5) as sock:
+                with other.wrap_socket(sock, server_hostname="localhost") as tls:
+                    tls.sendall(preface)
+                    assert not tls.recv(16), f"{name} gRPC served a certificate outside allowed_commonNames"
     context.load_cert_chain(directory / "cert.pem", directory / "key.pem")
     with socket.create_connection(("127.0.0.1", port), timeout=5) as sock:
         with context.wrap_socket(sock, server_hostname="localhost") as tls:
@@ -280,7 +297,7 @@ def run_cluster(param, tmp_path_factory, identities):
         wait_for(lambda: listening(vector), processes, "vector engine not ready")
         if os.environ.get("VECTOR_TLS"):
             probe_grpc_tls("master", master_grpc, directory)
-            probe_grpc_tls("engine", vector, directory)
+            probe_grpc_tls("engine", vector, directory, outsider=True)
 
         wait_for(
             lambda: f"Cluster: vector node 127.0.0.1:{vector} added to group ''"
