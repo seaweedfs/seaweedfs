@@ -97,9 +97,10 @@ fn read_file(path: &Path) -> (Option<String>, Option<u64>) {
         .get("key")
         .and_then(|v| v.as_str())
         .map(str::to_string);
-    // Viper's GetInt also reads a quoted number.
+    // Viper's GetInt also reads a quoted number and truncates a float.
     let expires = section.get("expires_after_seconds").and_then(|v| match v {
         toml::Value::Integer(n) => u64::try_from(*n).ok(),
+        toml::Value::Float(f) if f.is_finite() && *f >= 0.0 => Some(*f as u64),
         toml::Value::String(s) => s.trim().parse().ok(),
         _ => None,
     });
@@ -154,6 +155,17 @@ key = "read-key"
         let path = write(
             &dir,
             "[jwt.filer_signing]\nkey = \"k\"\nexpires_after_seconds = \"300\"\n",
+        );
+        let got = filer_signing_from(&env_of(&[]), Some(&path)).unwrap();
+        assert_eq!(got.expires_after_seconds, 300);
+    }
+
+    #[test]
+    fn float_expiry_truncates_to_seconds() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = write(
+            &dir,
+            "[jwt.filer_signing]\nkey = \"k\"\nexpires_after_seconds = 300.9\n",
         );
         let got = filer_signing_from(&env_of(&[]), Some(&path)).unwrap();
         assert_eq!(got.expires_after_seconds, 300);
