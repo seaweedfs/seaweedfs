@@ -708,7 +708,8 @@ async fn run(
                 .build_v1alpha()
                 .expect("Failed to build gRPC reflection v1alpha service");
             let result = if let Some(tls_acceptor) = grpc_tls_acceptor {
-                let incoming = grpc_tls_incoming(grpc_listener, tls_acceptor);
+                let incoming =
+                    grpc_tls_incoming(grpc_listener, tls_acceptor, GRPC_TLS_HANDSHAKE_TIMEOUT);
                 info!("gRPC server listening on {} (TLS enabled)", grpc_local_addr);
                 build_grpc_server_builder()
                     .layer(GrpcRequestIdLayer)
@@ -954,6 +955,7 @@ const GRPC_TLS_HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::fro
 fn grpc_tls_incoming(
     listener: tokio::net::TcpListener,
     tls_acceptor: TlsAcceptor,
+    handshake_timeout: std::time::Duration,
 ) -> impl tokio_stream::Stream<
     Item = Result<tokio_rustls::server::TlsStream<tokio::net::TcpStream>, std::io::Error>,
 > {
@@ -987,11 +989,7 @@ fn grpc_tls_incoming(
             let tls_acceptor = tls_acceptor.clone();
             let tx = tx.clone();
             tokio::spawn(async move {
-                match tokio::time::timeout(
-                    GRPC_TLS_HANDSHAKE_TIMEOUT,
-                    tls_acceptor.accept(tcp_stream),
-                )
-                .await
+                match tokio::time::timeout(handshake_timeout, tls_acceptor.accept(tcp_stream)).await
                 {
                     Ok(Ok(tls_stream)) => {
                         let _ = tx.send(Ok(tls_stream)).await;
@@ -1113,8 +1111,8 @@ async fn serve_https<F>(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_grpc_server_tls_acceptor, effective_http_tls_policy, grpc_tls_incoming,
-        tls_policy_is_configured,
+        GRPC_TLS_HANDSHAKE_TIMEOUT, build_grpc_server_tls_acceptor, effective_http_tls_policy,
+        grpc_tls_incoming, tls_policy_is_configured,
     };
     use seaweed_volume::security::tls::TlsPolicy;
 
@@ -1129,21 +1127,28 @@ mod tests {
     const TEST_LEAF_PEM: &str = "-----BEGIN CERTIFICATE-----\nMIIBuTCCAV+gAwIBAgIUC4xhlzsyNZi0XHzyCwV/xquGQLkwCgYIKoZIzj0EAwIw\nGTEXMBUGA1UEAwwOdm9sdW1lLXRlc3QtY2EwHhcNMjYxMTAzMTgzOTI2WhcNMzYx\nMDMxMTgzOTI2WjAUMRIwEAYDVQQDDAlsb2NhbGhvc3QwWTATBgcqhkjOPQIBBggq\nhkjOPQMBBwNCAASKt0T/i1pt7Aw3DloYFRoaX8+w/reR3tIEaMo911/fIvQhqkg4\nLPCXKocq0KNw3Na3HnZeU9Ls+FLoSHynBsyIo4GJMIGGMBoGA1UdEQQTMBGCCWxv\nY2FsaG9zdIcEfwAAATAdBgNVHSUEFjAUBggrBgEFBQcDAQYIKwYBBQUHAwIwCQYD\nVR0TBAIwADAdBgNVHQ4EFgQUp8jNqBiE0UeYRkCny2In6SyKEKkwHwYDVR0jBBgw\nFoAUBzkmfd5uY5pSyaUuXBcx9oYnBHYwCgYIKoZIzj0EAwIDSAAwRQIhAIzNfGpS\n+rIxr3eGInfD+0DzQxSuqfcQZTkV2eGkebcuAiAIV73Y7wKg7D08qfmmrH/TaAZB\nm2wr/1assOVDaw8dMg==\n-----END CERTIFICATE-----\n";
     const TEST_LEAF_KEY_PEM: &str = "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgmMs2vKPN5ymhYOXl\nztUUiSWAcmKVVWxveajzfxIwqBehRANCAASKt0T/i1pt7Aw3DloYFRoaX8+w/reR\n3tIEaMo911/fIvQhqkg4LPCXKocq0KNw3Na3HnZeU9Ls+FLoSHynBsyI\n-----END PRIVATE KEY-----\n";
 
+    fn test_grpc_tls_acceptor(dir: &tempfile::TempDir) -> tokio_rustls::TlsAcceptor {
+        seaweed_volume::security::tls::install_default_crypto_provider();
+        let ca = write_pem(dir, "ca.pem", TEST_CA_PEM);
+        let cert = write_pem(dir, "leaf.pem", TEST_LEAF_PEM);
+        let key = write_pem(dir, "leaf.key", TEST_LEAF_KEY_PEM);
+        build_grpc_server_tls_acceptor(&cert, &key, &ca, &TlsPolicy::default(), "", &[])
+            .unwrap()
+            .unwrap()
+    }
+
     #[tokio::test]
     async fn test_grpc_tls_incoming_serves_past_a_silent_peer() {
         use tokio_stream::StreamExt;
-        seaweed_volume::security::tls::install_default_crypto_provider();
         let dir = tempfile::tempdir().unwrap();
-        let ca = write_pem(&dir, "ca.pem", TEST_CA_PEM);
-        let cert = write_pem(&dir, "leaf.pem", TEST_LEAF_PEM);
-        let key = write_pem(&dir, "leaf.key", TEST_LEAF_KEY_PEM);
-        let acceptor =
-            build_grpc_server_tls_acceptor(&cert, &key, &ca, &TlsPolicy::default(), "", &[])
-                .unwrap()
-                .unwrap();
+        let acceptor = test_grpc_tls_acceptor(&dir);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        let mut incoming = Box::pin(grpc_tls_incoming(listener, acceptor));
+        let mut incoming = Box::pin(grpc_tls_incoming(
+            listener,
+            acceptor,
+            GRPC_TLS_HANDSHAKE_TIMEOUT,
+        ));
         let _silent = tokio::net::TcpStream::connect(addr).await.unwrap();
 
         let mut roots = rustls::RootCertStore::empty();
@@ -1173,6 +1178,25 @@ mod tests {
             "the handshake waited behind a silent peer"
         );
         client.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_grpc_tls_incoming_closes_a_silent_peer_after_the_handshake_timeout() {
+        use tokio::io::AsyncReadExt;
+        let dir = tempfile::tempdir().unwrap();
+        let acceptor = test_grpc_tls_acceptor(&dir);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let _incoming =
+            grpc_tls_incoming(listener, acceptor, std::time::Duration::from_millis(100));
+        let mut silent = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let mut buf = [0u8; 1];
+        let read =
+            tokio::time::timeout(std::time::Duration::from_secs(5), silent.read(&mut buf)).await;
+        assert!(
+            matches!(read, Ok(Ok(0)) | Ok(Err(_))),
+            "the silent peer stayed connected past the handshake timeout"
+        );
     }
 
     #[test]
