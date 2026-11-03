@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"math/rand/v2"
 	"net"
 	"strings"
 	"syscall"
@@ -247,9 +248,7 @@ func RetryWithBackoff(ctx context.Context, name string, maxDuration time.Duratio
 		if sleepTime > maxWaitTime {
 			sleepTime = maxWaitTime
 		}
-		if hint, ok := serverRetryDelay(err); ok && hint < sleepTime-retryHintSlack {
-			sleepTime = hint + retryHintSlack
-		}
+		sleepTime = shortenStep(sleepTime, err, retryHintSlack())
 		if sleepTime > remaining {
 			sleepTime = remaining
 		}
@@ -271,8 +270,22 @@ func RetryWithBackoff(ctx context.Context, name string, maxDuration time.Duratio
 }
 
 // retryHintSlack is added to a server's retry hint so the next attempt lands
-// just after the server is ready, not just before it.
-const retryHintSlack = 50 * time.Millisecond
+// just after the server is ready, not just before it. It is random in
+// [50ms, 300ms] so clients refused at the same moment do not all retry in the
+// same instant (HTTP Retry-After spreads them by rounding up to whole seconds).
+func retryHintSlack() time.Duration {
+	return 50*time.Millisecond + rand.N(250*time.Millisecond+1)
+}
+
+// shortenStep is the backoff step after a server hint: hint plus slack when
+// that is shorter than the step, otherwise the step unchanged. Comparing
+// hint < step-slack (not hint+slack < step) keeps a huge hint from overflowing.
+func shortenStep(step time.Duration, err error, slack time.Duration) time.Duration {
+	if hint, ok := serverRetryDelay(err); ok && hint < step-slack {
+		return hint + slack
+	}
+	return step
+}
 
 // serverRetryDelay returns the delay a gRPC server suggested in a RetryInfo
 // detail (for example the master's remaining warm-up). A hint only shortens a

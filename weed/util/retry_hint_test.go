@@ -2,6 +2,8 @@ package util
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"math"
 	"testing"
 	"time"
@@ -12,92 +14,76 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 )
 
-func unavailableWithHint(t *testing.T, hint time.Duration) error {
+func unavailableWithDelay(t *testing.T, d *durationpb.Duration) error {
 	t.Helper()
-	st, err := status.New(codes.Unavailable, "warming up").WithDetails(&errdetails.RetryInfo{RetryDelay: durationpb.New(hint)})
+	st, err := status.New(codes.Unavailable, "warming up").WithDetails(&errdetails.RetryInfo{RetryDelay: d})
 	if err != nil {
 		t.Fatalf("WithDetails: %v", err)
 	}
 	return st.Err()
 }
 
-func isUnavailable(err error) bool { return status.Code(err) == codes.Unavailable }
+// Every guard on a server hint, without sleeping: a hint only ever shortens
+// the backoff step, and only a valid, positive one counts.
+func TestShortenStep(t *testing.T) {
+	const step, slack = time.Second, 50 * time.Millisecond
+	hinted := func(d time.Duration) error { return unavailableWithDelay(t, durationpb.New(d)) }
+	for _, c := range []struct {
+		name string
+		err  error
+		want time.Duration
+	}{
+		{"valid shorter hint", hinted(200 * time.Millisecond), 250 * time.Millisecond},
+		{"wrapped status keeps its hint", fmt.Errorf("assign: %w", hinted(200*time.Millisecond)), 250 * time.Millisecond},
+		{"zero hint", hinted(0), step},
+		{"negative hint", hinted(-200 * time.Millisecond), step},
+		{"hint longer than the step", hinted(10 * time.Second), step},
+		{"huge hint does not overflow", hinted(time.Duration(math.MaxInt64)), step},
+		{"malformed duration", unavailableWithDelay(t, &durationpb.Duration{Seconds: 1, Nanos: -999999999}), step},
+		{"no hint", status.Error(codes.Unavailable, "warming up"), step},
+		{"not a status error", errors.New("plain"), step},
+	} {
+		if got := shortenStep(step, c.err, slack); got != c.want {
+			t.Errorf("%s: step %v, want %v", c.name, got, c.want)
+		}
+	}
+}
 
-// timeSecondAttempt runs RetryWithBackoff with one failing attempt and returns
-// how long it waited before the second attempt.
-func timeSecondAttempt(t *testing.T, first error) time.Duration {
-	t.Helper()
+// The slack is jittered within [50ms, 300ms] so refused clients spread out.
+func TestRetryHintSlackIsJitteredWithinBounds(t *testing.T) {
+	lo, hi := time.Hour, time.Duration(0)
+	for i := 0; i < 2000; i++ {
+		s := retryHintSlack()
+		if s < 50*time.Millisecond || s > 300*time.Millisecond {
+			t.Fatalf("slack %v outside [50ms, 300ms]", s)
+		}
+		lo, hi = min(lo, s), max(hi, s)
+	}
+	if hi-lo < 100*time.Millisecond {
+		t.Fatalf("slack barely varies: [%v, %v]", lo, hi)
+	}
+}
+
+// One timing check of the whole loop: a 200ms hint brings the retry forward
+// from the 1s step to hint + slack.
+func TestRetryWithBackoffHonoursShorterServerHint(t *testing.T) {
 	var calls int
 	var firstAt, secondAt time.Time
-	err := RetryWithBackoff(context.Background(), "hint-test", 30*time.Second, isUnavailable, func() error {
-		calls++
-		if calls == 1 {
-			firstAt = time.Now()
-			return first
-		}
-		secondAt = time.Now()
-		return nil
-	})
+	err := RetryWithBackoff(context.Background(), "hint-test", 30*time.Second,
+		func(err error) bool { return status.Code(err) == codes.Unavailable },
+		func() error {
+			calls++
+			if calls == 1 {
+				firstAt = time.Now()
+				return unavailableWithDelay(t, durationpb.New(200*time.Millisecond))
+			}
+			secondAt = time.Now()
+			return nil
+		})
 	if err != nil || calls != 2 {
 		t.Fatalf("RetryWithBackoff = %v after %d calls, want success after 2", err, calls)
 	}
-	return secondAt.Sub(firstAt)
-}
-
-// A server hint shorter than the backoff step brings the retry forward.
-func TestRetryWithBackoffHonoursShorterServerHint(t *testing.T) {
-	wait := timeSecondAttempt(t, unavailableWithHint(t, 200*time.Millisecond))
-	// The lower bound pins the slack: timers never fire early, so the retry
-	// lands no sooner than hint + 50 ms, just after the server is ready.
-	if wait < 250*time.Millisecond || wait > 700*time.Millisecond {
-		t.Fatalf("waited %v before the retry, want about 250ms (hint + 50ms slack), not the 1s backoff", wait)
-	}
-}
-
-// A zero or negative hint from a misbehaving server must not turn the backoff
-// into tight polling: it is ignored and the 1s step applies.
-func TestRetryWithBackoffIgnoresNonPositiveServerHint(t *testing.T) {
-	for _, hint := range []time.Duration{0, -200 * time.Millisecond} {
-		wait := timeSecondAttempt(t, unavailableWithHint(t, hint))
-		if wait < 900*time.Millisecond || wait > 2*time.Second {
-			t.Fatalf("waited %v before the retry after a %v hint, want the 1s backoff step", wait, hint)
-		}
-	}
-}
-
-// A hint longer than the backoff step never makes the client wait longer.
-func TestRetryWithBackoffIgnoresLongerServerHint(t *testing.T) {
-	wait := timeSecondAttempt(t, unavailableWithHint(t, 10*time.Second))
-	if wait < 900*time.Millisecond || wait > 2*time.Second {
-		t.Fatalf("waited %v before the retry, want the 1s backoff step", wait)
-	}
-}
-
-// Control: without a hint the first backoff step is unchanged.
-func TestRetryWithBackoffWithoutHintKeepsBackoff(t *testing.T) {
-	wait := timeSecondAttempt(t, status.Error(codes.Unavailable, "warming up"))
-	if wait < 900*time.Millisecond || wait > 2*time.Second {
-		t.Fatalf("waited %v before the retry, want the 1s backoff step", wait)
-	}
-}
-
-// A valid hint near the Duration maximum must not overflow into an immediate retry.
-func TestRetryWithBackoffHugeServerHintKeepsBackoff(t *testing.T) {
-	wait := timeSecondAttempt(t, unavailableWithHint(t, time.Duration(math.MaxInt64)))
-	if wait < 900*time.Millisecond || wait > 2*time.Second {
-		t.Fatalf("waited %v before the retry, want the 1s backoff step", wait)
-	}
-}
-
-// A malformed protobuf Duration converts to a small positive value, so it must be
-// rejected as invalid, not read as a hint.
-func TestRetryWithBackoffIgnoresInvalidServerHint(t *testing.T) {
-	st, err := status.New(codes.Unavailable, "warming up").WithDetails(&errdetails.RetryInfo{RetryDelay: &durationpb.Duration{Seconds: 1, Nanos: -999999999}})
-	if err != nil {
-		t.Fatalf("WithDetails: %v", err)
-	}
-	wait := timeSecondAttempt(t, st.Err())
-	if wait < 900*time.Millisecond || wait > 2*time.Second {
-		t.Fatalf("waited %v before the retry, want the 1s backoff step", wait)
+	if wait := secondAt.Sub(firstAt); wait < 250*time.Millisecond || wait > 900*time.Millisecond {
+		t.Fatalf("waited %v before the retry, want hint + slack (250-500ms), not the 1s step", wait)
 	}
 }

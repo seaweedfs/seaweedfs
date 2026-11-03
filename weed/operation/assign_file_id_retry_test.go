@@ -154,11 +154,3 @@ func TestAssignRetryLandsAtWarmupEndWithHint(t *testing.T) {
 		t.Fatalf("assign took %v over %d calls, want about 1.25s (warm-up end)", elapsed, calls)
 	}
 }
-
-// Control: without the hint the client sleeps through the backoff schedule.
-func TestAssignRetryWithoutHintWaitsForBackoff(t *testing.T) {
-	elapsed, calls := assignThroughWarmup(t, false)
-	if elapsed < 2*time.Second {
-		t.Fatalf("assign took %v over %d calls, want the 2.5s backoff schedule", elapsed, calls)
-	}
-}

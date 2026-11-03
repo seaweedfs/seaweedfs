@@ -73,7 +73,7 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 	}
 
 	if ms.Topo.IsWarmingUp() {
-		return nil, warmingUpAssignError(ms.Topo.RemainingWarmupDuration())
+		return nil, warmingUpError(ms.Topo.RemainingWarmupDuration())
 	}
 	diskType := types.ToDiskType(req.DiskType)
 
@@ -333,11 +333,11 @@ func (w *unservedLayoutWarning) Do(optionKey string, lastErr error) {
 	glog.Warningf("assign requests for %s will keep failing until a volume server registers that disk layout or clients change their assignment disk type: %v", optionKey, lastErr)
 }
 
-// warmingUpAssignError refuses an Assign during warm-up. Like the HTTP handler's
+// warmingUpError refuses an Assign or a LookupVolume during warm-up. Like the HTTP handler's
 // Retry-After header, it tells the client how much warm-up is left, as a gRPC
 // RetryInfo detail, so a retrying client can try again right when warm-up ends
 // instead of sleeping through a longer backoff step.
-func warmingUpAssignError(remaining time.Duration) error {
+func warmingUpError(remaining time.Duration) error {
 	st := status.New(codes.Unavailable, "master is warming up, topology is still loading")
 	if remaining <= 0 {
 		return st.Err()
