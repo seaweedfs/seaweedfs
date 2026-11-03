@@ -1339,6 +1339,7 @@ async function submitUploadFile() {
         }
     } catch (error) {
         console.error('Upload error:', error);
+        uploadChangedListing = true;
         failure = error.message || 'Failed to upload files. Please try again.';
         if (result.uploaded > 0) {
             failure += ` (${result.uploaded} file(s) were uploaded before this)`;
