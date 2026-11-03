@@ -50,10 +50,6 @@ struct Args {
     /// first.
     #[arg(long, alias = "config_dir", env = "WEED_VECTOR_CONFIG_DIR")]
     config_dir: Option<PathBuf>,
-    /// The name the masters' TLS certificates are checked against, when it is
-    /// not their host.
-    #[arg(long, env = "WEED_VECTOR_TLS_SERVER_NAME")]
-    tls_server_name: Option<String>,
 }
 
 fn parse_option(s: &str) -> Result<(String, String), String> {
@@ -129,7 +125,7 @@ async fn main() -> Result<()> {
         tracing::info!("security settings from {}", path.display());
     }
     let master_tls = match &args.masters {
-        Some(_) => security.grpc_client_tls("grpc.client", args.tls_server_name.clone())?,
+        Some(_) => security.grpc_client_tls("grpc.client", "grpc.master")?,
         None => None,
     };
     let server_tls = security

@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use tokio::time::sleep;
-use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint, Identity};
+use tonic::transport::{Channel, Endpoint};
 
 use crate::master_pb::{KeepConnectedRequest, seaweed_client::SeaweedClient};
 use crate::security::GrpcTls;
@@ -53,32 +53,6 @@ pub fn grpc_addr(master: &str) -> Result<String> {
         }
     }
     Ok(format!("{scheme}://{rest}"))
-}
-
-/// The master's gRPC endpoint, over TLS with `grpc.client`'s credentials when
-/// the cluster has them; the master's certificate is checked against the host
-/// dialed unless the credentials name another.
-pub async fn master_endpoint(master: &str, tls: Option<&GrpcTls>) -> Result<Endpoint> {
-    let addr = grpc_addr(master)?;
-    let Some(tls) = tls else {
-        return Ok(Endpoint::new(addr)?);
-    };
-    weed_lance_worker::tls::install_default_crypto_provider();
-    let endpoint = Endpoint::new(addr.replacen("http://", "https://", 1))?;
-    let host = dialed_host(&endpoint).with_context(|| format!("master {master} has no host"))?;
-    let (ca, cert, key) = tls.pems().await?;
-    let config = ClientTlsConfig::new()
-        .ca_certificate(Certificate::from_pem(ca))
-        .identity(Identity::from_pem(cert, key))
-        .domain_name(tls.server_name.clone().unwrap_or(host));
-    Ok(endpoint
-        .tls_config(config)
-        .with_context(|| format!("TLS for master {master}"))?)
-}
-
-fn dialed_host(endpoint: &Endpoint) -> Option<String> {
-    let host = endpoint.uri().host()?;
-    Some(host.trim_matches(|c| c == '[' || c == ']').to_string())
 }
 
 // `host:http.grpc` normalizes to `host:http` so a leader hint naming the
@@ -141,9 +115,21 @@ where
 /// black-holed or silent master otherwise holds up the other masters.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
-async fn connect(endpoint: impl Future<Output = Result<Endpoint>>) -> Result<Channel> {
+/// A channel to the master's gRPC, over TLS with `grpc.client`'s credentials
+/// when the cluster has them.
+pub async fn connect(master: &str, tls: Option<&GrpcTls>) -> Result<Channel> {
+    let addr = grpc_addr(master)?;
     tokio::time::timeout(CONNECT_TIMEOUT, async {
-        Ok(endpoint.await?.connect().await?)
+        Ok(match tls {
+            None => Endpoint::new(addr)?.connect().await?,
+            // The connector does the TLS; tonic adds its own only for an
+            // https URI, which it refuses without a tls_config.
+            Some(tls) => {
+                Endpoint::new(addr.replacen("https://", "http://", 1))?
+                    .connect_with_connector(crate::tls::connector(tls.clone()))
+                    .await?
+            }
+        })
     })
     .await
     .context("master did not complete the connection")?
@@ -154,7 +140,7 @@ async fn stream_to(
     client_addr: &str,
     tls: Option<&GrpcTls>,
 ) -> Result<Option<String>> {
-    let channel = connect(master_endpoint(master, tls)).await?;
+    let channel = connect(master, tls).await?;
     // A master answers at once, a follower with its leader hint.
     let answer_by = tokio::time::Instant::now() + CONNECT_TIMEOUT;
     let mut client = SeaweedClient::new(channel);
@@ -273,6 +259,24 @@ mod tests {
         }
     }
 
+    /// `tests/tls`: a CA and the `engine-a` leaf it signed.
+    fn credentials() -> GrpcTls {
+        let fixture = |name: &str| {
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/tls")
+                .join(name)
+                .display()
+                .to_string()
+        };
+        GrpcTls {
+            ca_path: fixture("ca.pem"),
+            cert_path: fixture("a.pem"),
+            key_path: fixture("a.key"),
+            allowed_server_names: Vec::new(),
+            allowed_server_wildcard_domain: String::new(),
+        }
+    }
+
     #[tokio::test]
     async fn a_master_that_stalls_the_tls_handshake_is_bounded() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -281,27 +285,12 @@ mod tests {
             let (mut conn, _) = listener.accept().await.unwrap();
             let _ = tokio::io::copy(&mut conn, &mut tokio::io::sink()).await;
         });
-        weed_lance_worker::tls::install_default_crypto_provider();
-        let endpoint = Endpoint::new(format!("https://127.0.0.1:{port}"))
-            .unwrap()
-            .tls_config(ClientTlsConfig::new().domain_name("localhost"))
-            .unwrap();
-        match tokio::time::timeout(CONNECT_TIMEOUT * 3, connect(async { Ok(endpoint) })).await {
+        let master = format!("127.0.0.1:9333.{port}");
+        let tls = credentials();
+        let open = stream_to(&master, "127.0.0.1:8080", Some(&tls));
+        match tokio::time::timeout(CONNECT_TIMEOUT * 3, open).await {
             Ok(Err(e)) => assert!(format!("{e:#}").contains("did not complete"), "{e:#}"),
             other => panic!("handshake was not bounded: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn the_tls_name_is_the_dialed_host() {
-        for (master, host) in [
-            ("m1:9333", "m1"),
-            ("https://master.example", "master.example"),
-            ("https://master.example:9333", "master.example"),
-            ("[::1]:9333", "::1"),
-        ] {
-            let endpoint = Endpoint::new(grpc_addr(master).unwrap()).unwrap();
-            assert_eq!(dialed_host(&endpoint).as_deref(), Some(host), "{master}");
         }
     }
 
