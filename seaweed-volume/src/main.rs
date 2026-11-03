@@ -845,23 +845,33 @@ async fn run(
         }))
     };
 
-    // Both servers stop on the shutdown signal, and a gRPC serve error sends
-    // it, so waiting for both never hangs on one.
+    // Whichever server stops first takes the other down, as a serve failure
+    // is fatal for the Go volume server.
     let mut server_err: Option<String> = None;
-    let (grpc_result, _) = tokio::join!(grpc_handle, http_handle);
+    let mut grpc_handle = grpc_handle;
+    let mut http_handle = http_handle;
+    let grpc_result = tokio::select! {
+        r = &mut grpc_handle => {
+            let _ = shutdown_tx.send(());
+            let _ = http_handle.await;
+            r
+        }
+        _ = &mut http_handle => {
+            let _ = shutdown_tx.send(());
+            grpc_handle.await
+        }
+    };
     match grpc_result {
         Ok(Ok(())) => {}
         Ok(Err(e)) => {
             let msg = format!("gRPC server exited with error: {}", e);
             error!("{}", msg);
             server_err = Some(msg);
-            // serve error already sent shutdown inside the task
         }
         Err(e) => {
             let msg = format!("gRPC task panicked: {}", e);
             error!("{}", msg);
             server_err = Some(msg);
-            let _ = shutdown_tx.send(());
         }
     }
     if let Some(h) = public_handle {
