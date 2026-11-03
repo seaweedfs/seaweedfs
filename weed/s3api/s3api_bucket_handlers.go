@@ -1123,7 +1123,11 @@ func (s3a *S3ApiServer) PutBucketAclHandler(w http.ResponseWriter, r *http.Reque
 	// resolves to the admin account, the registry's default bucket owner.
 	ownerId := aclAccountId
 	bucketConfig, errCode := s3a.getBucketConfig(bucket)
-	if errCode == s3err.ErrNone && bucketConfig.Owner != "" {
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+	if bucketConfig.Owner != "" {
 		ownerId = bucketConfig.Owner
 	}
 

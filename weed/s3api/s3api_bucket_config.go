@@ -436,7 +436,8 @@ func (s3a *S3ApiServer) newBucketConfigFromEntry(bucket string, entry *filer_pb.
 			if pab, err := parsePublicAccessBlock(data); err == nil {
 				config.PublicAccessBlock = pab
 			} else {
-				glog.Errorf("newBucketConfigFromEntry: bucket %s public access block: %v", bucket, err)
+				glog.Errorf("newBucketConfigFromEntry: bucket %s public access block, blocking all public access: %v", bucket, err)
+				config.PublicAccessBlock = &PublicAccessBlockConfiguration{BlockPublicAcls: true, IgnorePublicAcls: true, BlockPublicPolicy: true, RestrictPublicBuckets: true}
 			}
 		}
 		if acl, exists := entry.Extended[s3_constants.ExtAmzAclKey]; exists {

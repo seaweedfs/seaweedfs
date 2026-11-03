@@ -54,6 +54,17 @@ func TestPutPublicAccessBlockStoresConfiguration(t *testing.T) {
 	}, *config)
 }
 
+func TestUnreadablePublicAccessBlockBlocksPublicAccess(t *testing.T) {
+	s3a, _ := newPublicAccessBlockTestServer(t, nil)
+	config := s3a.newBucketConfigFromEntry("b", &filer_pb.Entry{Name: "b", IsDirectory: true, Extended: map[string][]byte{
+		s3_constants.ExtPublicAccessBlockKey: []byte("<PublicAccessBlockConfiguration><BlockPublicAcls>"),
+		s3_constants.ExtAmzAclKey:            []byte(`[{"Grantee":{"Type":"Group","URI":"` + s3_constants.GranteeGroupAllUsers + `"},"Permission":"READ"}]`),
+	}})
+	require.True(t, config.PublicAccessBlock.blocksPublicAcls())
+	require.True(t, config.PublicAccessBlock.ignoresPublicAcls())
+	require.False(t, config.IsPublicRead)
+}
+
 func TestPutPublicAccessBlockRejectsMalformedXML(t *testing.T) {
 	const bucket = "pab-malformed"
 	s3a, filer := newPublicAccessBlockTestServer(t, &filer_pb.Entry{Name: bucket, IsDirectory: true})

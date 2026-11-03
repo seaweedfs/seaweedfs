@@ -158,7 +158,12 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 			s3err.WriteErrorResponse(w, r, refineDenialForBucketName(r, identity, errCode))
 			return
 		}
-		if config, errCode := s3a.getBucketConfig(bucket); errCode == s3err.ErrNone && config.PublicAccessBlock.blocksPublicAcls() {
+		config, errCode := s3a.getBucketConfig(bucket)
+		if errCode != s3err.ErrNone && errCode != s3err.ErrNoSuchBucket {
+			s3err.WriteErrorResponse(w, r, errCode)
+			return
+		}
+		if errCode == s3err.ErrNone && config.PublicAccessBlock.blocksPublicAcls() {
 			_, grants, aclCode := ParseAclHeaders(r, config.Ownership, config.Owner, "", false)
 			if aclCode == s3err.ErrNone {
 				aclCode = rejectPublicGrants(config, grants)
