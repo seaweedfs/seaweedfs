@@ -36,28 +36,7 @@ func TestAssignDuringWarmupCarriesRemainingWarmup(t *testing.T) {
 	}
 }
 
-// A LookupVolume refused during warm-up carries the same hint, so the
-// masterclient's lookup retry (RetryWithBackoff) also lands at warm-up end.
-func TestLookupVolumeDuringWarmupCarriesRemainingWarmup(t *testing.T) {
-	ms := newWarmingUpMaster(t)
-	want := ms.Topo.RemainingWarmupDuration()
-	_, err := ms.LookupVolume(context.Background(), &master_pb.LookupVolumeRequest{VolumeOrFileIds: []string{"7", "8"}})
-	st, _ := status.FromError(err)
-	var hint *errdetails.RetryInfo
-	for _, d := range st.Details() {
-		if ri, ok := d.(*errdetails.RetryInfo); ok {
-			hint = ri
-		}
-	}
-	if st.Code() != codes.Unavailable || hint == nil {
-		t.Fatalf("LookupVolume during warm-up = %v with details %v, want Unavailable with RetryInfo", err, st.Details())
-	}
-	if got := hint.GetRetryDelay().AsDuration(); got <= 0 || got > want || want-got > time.Second {
-		t.Fatalf("RetryInfo delay = %v, want the remaining warm-up (about %v)", got, want)
-	}
-}
-
-func TestWarmingUpAssignErrorWithoutRemainingHasNoHint(t *testing.T) {
+func TestWarmingUpErrorWithoutRemainingHasNoHint(t *testing.T) {
 	st, _ := status.FromError(warmingUpError(0))
 	if st.Code() != codes.Unavailable || len(st.Details()) != 0 {
 		t.Fatalf("got %v with details %v, want plain Unavailable", st.Code(), st.Details())

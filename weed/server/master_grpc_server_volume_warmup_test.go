@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -59,5 +60,26 @@ func TestLookupVolumeAfterWarmupReportsNotFoundPerVolume(t *testing.T) {
 	}
 	if len(resp.VolumeIdLocations[1].Locations) != 0 || resp.VolumeIdLocations[1].Error == "" {
 		t.Fatalf("absent volume answer = %+v", resp.VolumeIdLocations[1])
+	}
+}
+
+// A LookupVolume refused during warm-up carries the same hint, so the
+// masterclient's lookup retry (RetryWithBackoff) also lands at warm-up end.
+func TestLookupVolumeDuringWarmupCarriesRemainingWarmup(t *testing.T) {
+	ms := newWarmingUpMaster(t)
+	want := ms.Topo.RemainingWarmupDuration()
+	_, err := ms.LookupVolume(context.Background(), &master_pb.LookupVolumeRequest{VolumeOrFileIds: []string{"7", "8"}})
+	st, _ := status.FromError(err)
+	var hint *errdetails.RetryInfo
+	for _, d := range st.Details() {
+		if ri, ok := d.(*errdetails.RetryInfo); ok {
+			hint = ri
+		}
+	}
+	if st.Code() != codes.Unavailable || hint == nil {
+		t.Fatalf("LookupVolume during warm-up = %v with details %v, want Unavailable with RetryInfo", err, st.Details())
+	}
+	if got := hint.GetRetryDelay().AsDuration(); got <= 0 || got > want || want-got > time.Second {
+		t.Fatalf("RetryInfo delay = %v, want the remaining warm-up (about %v)", got, want)
 	}
 }
