@@ -288,6 +288,38 @@ func TestAnonymousObjectACLLegacyOwnership(t *testing.T) {
 	require.Equal(t, 200, rr.Code, rr.Body.String())
 }
 
+func TestAnonymousObjectACLIgnorePublicAcls(t *testing.T) {
+	publicBucket := &filer_pb.Entry{Name: "b", IsDirectory: true, Extended: map[string][]byte{
+		s3_constants.ExtAmzAclKey: anonymousReadGrant("READ"),
+	}}
+	ignoring := proto.Clone(publicBucket).(*filer_pb.Entry)
+	ignoring.Extended[s3_constants.ExtPublicAccessBlockKey] = []byte(`<PublicAccessBlockConfiguration><IgnorePublicAcls>true</IgnorePublicAcls></PublicAccessBlockConfiguration>`)
+	for _, tc := range []struct {
+		name   string
+		bucket *filer_pb.Entry
+		acl    []byte
+		want   int
+	}{
+		{"public object", publicBucket, anonymousReadGrant("READ"), 200},
+		{"public object ignored", ignoring, anonymousReadGrant("READ"), 403},
+		{"public bucket", publicBucket, nil, 200},
+		{"public bucket ignored", ignoring, nil, 403},
+	} {
+		for _, method := range []string{http.MethodGet, http.MethodHead} {
+			t.Run(tc.name+"/"+method, func(t *testing.T) {
+				s3a, f := newAnonymousReadTestServer(t)
+				s3a.bucketConfigCache.Set("b", s3a.newBucketConfigFromEntry("b", tc.bucket))
+				f.entries["/buckets/b/o"] = anonymousReadEntry(tc.acl)
+				rr := serveAnonymousRead(s3a, method, "o", "", nil)
+				require.Equal(t, tc.want, rr.Code, rr.Body.String())
+				if tc.want == 403 {
+					require.NotContains(t, rr.Body.String(), "hello world")
+				}
+			})
+		}
+	}
+}
+
 func TestAnonymousObjectACLConfiguredIdentity(t *testing.T) {
 	for _, tc := range []struct {
 		name     string

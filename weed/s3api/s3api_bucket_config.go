@@ -442,7 +442,7 @@ func (s3a *S3ApiServer) newBucketConfigFromEntry(bucket string, entry *filer_pb.
 		if acl, exists := entry.Extended[s3_constants.ExtAmzAclKey]; exists {
 			config.ACL = acl
 			// Parse ACL once and cache public-read status.
-			config.IsPublicRead = parseAndCachePublicReadStatus(acl)
+			config.IsPublicRead = !config.PublicAccessBlock.ignoresPublicAcls() && parseAndCachePublicReadStatus(acl)
 		}
 		config.Owner = bucketOwnerAccountId(s3a.iam, entry)
 		if identityId, exists := entry.Extended[s3_constants.AmzIdentityId]; exists {
