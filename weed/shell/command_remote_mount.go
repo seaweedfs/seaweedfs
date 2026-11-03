@@ -212,7 +212,11 @@ func ensureMountDirectory(commandEnv *CommandEnv, dir string, nonEmpty bool, rem
 // if an entry has synchronized metadata but has new updates
 //
 //	entry.Attributes.Mtime * 1,000,000,000    > entry.RemoteEntry.LastLocalSyncTsNs
-func doSaveRemoteEntry(client filer_pb.SeaweedFilerClient, localDir string, existingEntry *filer_pb.Entry, remoteEntry *filer_pb.RemoteEntry) error {
+//
+// The entry is written only while the filer still holds existingEntry; stale
+// reports that it changed since it was read and nothing was written.
+func doSaveRemoteEntry(client filer_pb.SeaweedFilerClient, localDir string, existingEntry *filer_pb.Entry, remoteEntry *filer_pb.RemoteEntry) (stale bool, err error) {
+	readEntry := proto.Clone(existingEntry).(*filer_pb.Entry)
 	existingEntry.RemoteEntry = remoteEntry
 	existingEntry.Attributes.FileSize = uint64(remoteEntry.RemoteSize)
 	existingEntry.Attributes.Mtime = remoteEntry.RemoteMtime
@@ -221,12 +225,5 @@ func doSaveRemoteEntry(client filer_pb.SeaweedFilerClient, localDir string, exis
 	existingEntry.Extended = filer.MergeRemoteContentEncoding(remoteEntry, existingEntry.Extended)
 	existingEntry.Chunks = nil
 	existingEntry.Content = nil
-	_, updateErr := client.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{
-		Directory: localDir,
-		Entry:     existingEntry,
-	})
-	if updateErr != nil {
-		return updateErr
-	}
-	return nil
+	return updateEntryIfUnchanged(context.Background(), client, localDir, existingEntry, readEntry)
 }

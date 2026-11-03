@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -255,9 +256,13 @@ func pullMetadataDirectory(ctx context.Context, client filer_pb.SeaweedFilerClie
 				// persist the stat-derived encoding so the next run skips the stat
 				(statFiles && existingEntry.RemoteEntry.RemoteContentEncoding == nil &&
 					child.remoteEntry.RemoteContentEncoding != nil) {
-				fmt.Fprintf(writer, "%s (update)\n", localPath)
-				if err := doSaveRemoteEntry(client, string(localDir), existingEntry, child.remoteEntry); err != nil {
+				stale, err := doSaveRemoteEntry(client, string(localDir), existingEntry, child.remoteEntry)
+				if stale {
+					fmt.Fprintf(writer, "%s (skip, changed since listed)\n", localPath)
+				} else if err != nil {
 					return err
+				} else {
+					fmt.Fprintf(writer, "%s (update)\n", localPath)
 				}
 			} else {
 				fmt.Fprintf(writer, "%s (skip)\n", localPath)
@@ -356,7 +361,7 @@ func createRemoteEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, 
 		attributes.FileSize = uint64(child.remoteEntry.RemoteSize)
 		attributes.Mtime = child.remoteEntry.RemoteMtime
 	}
-	_, err := client.CreateEntry(ctx, &filer_pb.CreateEntryRequest{
+	err := filer_pb.CreateEntry(ctx, client, &filer_pb.CreateEntryRequest{
 		Directory: string(localDir),
 		Entry: &filer_pb.Entry{
 			Name:        name,
@@ -365,9 +370,17 @@ func createRemoteEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, 
 			Extended:    filer.MergeRemoteContentEncoding(remoteEntry, nil),
 			RemoteEntry: remoteEntry,
 		},
+		OExcl: true,
 	})
+	if errors.Is(err, filer_pb.ErrEntryAlreadyExists) {
+		fmt.Fprintf(writer, "%s (skip, created since listed)\n", localDir.Child(name))
+		return nil
+	}
+	if err != nil {
+		return err
+	}
 	fmt.Fprintf(writer, "%s (create)\n", localDir.Child(name))
-	return err
+	return nil
 }
 
 func childRemoteLocation(remoteLoc *remote_pb.RemoteStorageLocation, name string) *remote_pb.RemoteStorageLocation {
