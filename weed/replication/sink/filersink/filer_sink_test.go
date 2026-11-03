@@ -108,7 +108,7 @@ func TestGetEntryMtimeNs(t *testing.T) {
 // onCorruptChunk must surface the error, not skip, when it can't confirm
 // supersession (no source filer here) — otherwise it could drop a live file.
 func TestOnCorruptChunkRefusesWhenSupersessionUnconfirmed(t *testing.T) {
-	fs := &FilerSink{} // filerSource nil => hasSourceNewerVersion is always false
+	fs := &FilerSink{} // filerSource nil => sourceMovedOn is always false
 	sentinel := errors.New("corrupt chunk: read 0 bytes, source says 107")
 
 	got := fs.onCorruptChunk("/buckets/x/config",
@@ -123,14 +123,14 @@ func TestOnCorruptChunkRefusesWhenSupersessionUnconfirmed(t *testing.T) {
 // onReplicateChunkError must NOT swallow a transient/partial replicate failure
 // (a volume-id lookup race or unretried manifest-chunk resolve during a write
 // burst) when it cannot confirm the source has moved on. Here filerSource is
-// nil, so hasSourceNewerVersion is always false — the "supersession unconfirmed"
+// nil, so sourceMovedOn is always false — the "supersession unconfirmed"
 // case. Returning nil would let the metadata subscription advance its offset
 // past an event whose file was never written, silently dropping it (the
 // filer.backup partial-landing bug). It must propagate so the offset stays put
-// and the event is reprocessed. Genuine source-404 (gone/superseded) skipping is
-// covered by TestSourceSupersedes, which gates the return-nil branch.
+// and the event is reprocessed. The gone or superseded skip is covered by
+// TestOnReplicateChunkErrorSkipsSupersededVersion.
 func TestOnReplicateChunkErrorPropagatesWhenSupersessionUnconfirmed(t *testing.T) {
-	fs := &FilerSink{} // filerSource nil => hasSourceNewerVersion always false
+	fs := &FilerSink{} // filerSource nil => sourceMovedOn always false
 	sentinel := errors.New("replicate manifest data chunks 7,02def: volume id 7 not found")
 
 	got := fs.onReplicateChunkError("/buckets/x/model.pt",
