@@ -295,7 +295,7 @@ func (fs *FilerSink) manifestResolveRetryGate(path string, sourceMtimeNs int64, 
 				chunkName, path, missingSourceChunkGrace, resolveErr)
 			return false
 		}
-		if isSourceChunkMissing(resolveErr) && fs.sourceDroppedChunk(path, chunkName, sourceMtimeNs) {
+		if isSourceChunkMissing(resolveErr) && fs.sourceDroppedChunk(path, chunkName) {
 			glog.V(0).Infof("source no longer lists manifest %s for %s, skipping the obsolete version: %v",
 				chunkName, path, resolveErr)
 			return false
@@ -522,7 +522,7 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string,
 			if anchorId == "" {
 				anchorId = sourceChunk.GetFileIdString()
 			}
-			if fs.sourceDroppedChunk(path, anchorId, sourceMtimeNs) {
+			if fs.sourceDroppedChunk(path, anchorId) {
 				glog.V(0).Infof("source no longer lists %s for %s, skipping the obsolete version: %v",
 					anchorId, path, retryErr)
 				return false
@@ -669,16 +669,16 @@ func (fs *FilerSink) hasSourceNewerVersion(targetPath string, sourceMtimeNs int6
 
 // sourceDroppedChunk reports whether the live source entry still exists but no
 // longer references fileId — a version rewritten in place, which the mtime
-// supersession check cannot see. Only a live entry at least as new as the
-// replayed version can prove that; an older one means the source was rolled
-// back and says nothing about whether the chunk is still needed.
-func (fs *FilerSink) sourceDroppedChunk(targetPath string, fileId string, sourceMtimeNs int64) bool {
+// supersession check cannot see. The live entry's mtime does not matter: a
+// client that preserves timestamps stamps a rewrite with an older mtime, and
+// the chunk it stopped referencing is just as gone.
+func (fs *FilerSink) sourceDroppedChunk(targetPath string, fileId string) bool {
 	sourcePath, ok := fs.targetPathToSourcePath(targetPath)
 	if !ok {
 		return false
 	}
 	live, err := fs.sourceEntry(sourcePath)
-	if err != nil || live == nil || sourceMtimeNs <= 0 || getEntryMtimeNs(live) < sourceMtimeNs {
+	if err != nil || live == nil {
 		return false
 	}
 	return !chunkFileIds(live.GetChunks())[fileId]

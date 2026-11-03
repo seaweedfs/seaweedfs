@@ -419,11 +419,14 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 			}
 			glog.Warningf("entry %s superseded before replicate; syncing live version", targetKey)
 			newEntry = live
-			// The replayed oldEntry predates the live version, so an
-			// incremental diff could resolve manifests the overwrite already
-			// vacuumed; repair from the live snapshot instead.
-			if action = chooseUpdateAction(existingEntry, oldEntry, newEntry); action == updateNormal {
-				action = updateRepair
+			// The live snapshot is the source's current state, not a replay:
+			// a newer destination mtime does not make it stale, and the
+			// replayed oldEntry predates it, so an incremental diff could
+			// resolve manifests the overwrite already vacuumed. Repair from
+			// the snapshot unless the destination already holds it.
+			action = updateRepair
+			if destinationHoldsContent(existingEntry, live) {
+				action = updateSkip
 			}
 		}
 	}
@@ -570,20 +573,25 @@ func (fs *FilerSink) onReplicateChunkError(key string, entry *filer_pb.Entry, er
 
 // sourceVersion returns the source's live entry for targetPath and whether it
 // moved past the replayed version: gone (live == nil), strictly newer, or
-// rewritten in place so it no longer references the same chunks — the last is
-// invisible to the mtime check. A live entry older than the replayed version
-// proves nothing about it, and neither does a failed lookup.
+// rewritten so it no longer references the same chunks — the last is invisible
+// to the mtime check, and holds whatever mtime the rewrite was stamped with,
+// since timestamp-preserving writers make a newer version read older. A failed
+// lookup proves nothing, and neither does a live entry committed before the
+// replayed version: the lookup lags the event, as when a peer filer's event
+// reaches subscribers before the local store applies it.
 func (fs *FilerSink) sourceVersion(targetPath string, entry *filer_pb.Entry) (live *filer_pb.Entry, movedOn bool) {
 	sourcePath, ok := fs.targetPathToSourcePath(targetPath)
 	if !ok {
 		return nil, false
 	}
-	replayedMtimeNs := getEntryMtimeNs(entry)
 	live, lookupErr := fs.sourceEntry(sourcePath)
-	if sourceSupersedes(sourcePath, live, lookupErr, replayedMtimeNs) {
+	if lookupErr == nil && live != nil && committedBefore(live, entry) {
+		return nil, false
+	}
+	if sourceSupersedes(sourcePath, live, lookupErr, getEntryMtimeNs(entry)) {
 		return live, true
 	}
-	if lookupErr != nil || live == nil || replayedMtimeNs <= 0 || getEntryMtimeNs(live) < replayedMtimeNs {
+	if lookupErr != nil || live == nil {
 		return nil, false
 	}
 	liveIds := chunkFileIds(live.GetChunks())
@@ -597,6 +605,13 @@ func (fs *FilerSink) sourceVersion(targetPath string, entry *filer_pb.Entry) (li
 		}
 	}
 	return nil, false
+}
+
+// committedBefore reports whether the source committed live before replayed.
+// Both stamps come from the source's meta log, so they order versions that
+// mtime cannot; an unstamped live entry predates a stamped replay.
+func committedBefore(live, replayed *filer_pb.Entry) bool {
+	return replayed.GetCommitTsNs() > 0 && live.GetCommitTsNs() < replayed.GetCommitTsNs()
 }
 
 // sourceMovedOn reports whether the live source entry moved past the replayed

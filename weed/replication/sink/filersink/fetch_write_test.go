@@ -824,15 +824,15 @@ func TestSourceDroppedChunk(t *testing.T) {
 	}
 	fs := &FilerSink{filerSource: startSourceFilerWithEntry(t, live, ""), dir: "/dst"}
 
-	if !fs.sourceDroppedChunk("/dst/x.bin", "5617,01abc", 5*int64(time.Second)) {
+	if !fs.sourceDroppedChunk("/dst/x.bin", "5617,01abc") {
 		t.Fatal("live entry no longer referencing the chunk must count as dropped")
 	}
-	if fs.sourceDroppedChunk("/dst/x.bin", "5617,02def", 5*int64(time.Second)) {
+	if fs.sourceDroppedChunk("/dst/x.bin", "5617,02def") {
 		t.Fatal("a chunk the live entry still lists must not count as dropped")
 	}
 	live.Attributes.Mtime = 4
-	if fs.sourceDroppedChunk("/dst/x.bin", "5617,01abc", 5*int64(time.Second)) {
-		t.Fatal("a live entry older than the replayed version cannot prove the chunk dropped")
+	if !fs.sourceDroppedChunk("/dst/x.bin", "5617,01abc") {
+		t.Fatal("a live entry stamped older than the replayed version still dropped the chunk")
 	}
 }
 
@@ -859,9 +859,28 @@ func TestSourceMovedOn(t *testing.T) {
 		t.Fatal("newer mtime is still moved on")
 	}
 	live.Attributes.Mtime = 4
-	replayed.Chunks = []*filer_pb.FileChunk{{FileId: "5617,01abc", Size: 10}}
 	if fs.sourceMovedOn("/dst/x.bin", replayed) {
-		t.Fatal("an older live entry cannot supersede the replayed version")
+		t.Fatal("identical chunks under an older mtime is a timestamp change, not a new version")
+	}
+	replayed.Chunks = []*filer_pb.FileChunk{{FileId: "5617,01abc", Size: 10}}
+	if !fs.sourceMovedOn("/dst/x.bin", replayed) {
+		t.Fatal("a live entry stamped older but holding different chunks has moved on")
+	}
+	live.CommitTsNs, replayed.CommitTsNs = 20, 10
+	if !fs.sourceMovedOn("/dst/x.bin", replayed) {
+		t.Fatal("a rewrite committed after the replay has moved on whatever its mtime")
+	}
+	live.CommitTsNs = 5
+	if fs.sourceMovedOn("/dst/x.bin", replayed) {
+		t.Fatal("a live entry committed before the replay lags the event and proves nothing")
+	}
+	live.CommitTsNs = 0
+	if fs.sourceMovedOn("/dst/x.bin", replayed) {
+		t.Fatal("an unstamped live entry predates a stamped replay")
+	}
+	live.CommitTsNs, live.Attributes.Mtime = 5, 6
+	if fs.sourceMovedOn("/dst/x.bin", replayed) {
+		t.Fatal("a lagging live entry with a newer mtime still predates the replay")
 	}
 }
 
@@ -904,6 +923,53 @@ func TestFetchAndWriteStopsWhenSourceDroppedChunk(t *testing.T) {
 
 	live := &filer_pb.Entry{
 		Attributes: &filer_pb.FuseAttributes{Mtime: 5},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "5617,02def", Size: 10}},
+	}
+	filerSrc := startSourceFilerWithEntry(t, live, strings.TrimPrefix(gone.URL, "http://"), "5617")
+
+	fs := &FilerSink{
+		filerSource: filerSrc,
+		dir:         "/dst",
+		executor:    util.NewLimitedConcurrentExecutor(1),
+	}
+	fs.SetUploader(operation.NewUploaderWithHttpClient(http.DefaultClient))
+
+	done := make(chan error, 1)
+	go func() {
+		_, fetchErr := fs.fetchAndWrite(&filer_pb.FileChunk{FileId: "5617,01abc", Size: 10},
+			"/dst/x.bin", 5*int64(time.Second), "")
+		done <- fetchErr
+	}()
+
+	select {
+	case fetchErr := <-done:
+		if !errors.Is(fetchErr, util_http.ErrNotFound) {
+			t.Fatalf("expected the 404 to propagate, got %v", fetchErr)
+		}
+		if errors.Is(fetchErr, errSourceChunkMissing) {
+			t.Fatalf("an obsolete version must not wait for the give-up gate: %v", fetchErr)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("fetchAndWrite kept retrying a chunk the live entry no longer lists")
+	}
+}
+
+// Mtime order says nothing about which version is current: a client that
+// preserves timestamps (cp -p, rsync -a, tar) rewrites a file and then stamps
+// it with an older mtime, so the live entry reads older than the replay whose
+// chunk it no longer lists. The missing chunk is still gone for good.
+func TestFetchAndWriteStopsWhenOlderLiveEntryDroppedChunk(t *testing.T) {
+	prevRetryWaitTime := util.RetryWaitTime
+	util.RetryWaitTime = 100 * time.Millisecond
+	t.Cleanup(func() { util.RetryWaitTime = prevRetryWaitTime })
+
+	gone := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer gone.Close()
+
+	live := &filer_pb.Entry{
+		Attributes: &filer_pb.FuseAttributes{Mtime: 4},
 		Chunks:     []*filer_pb.FileChunk{{FileId: "5617,02def", Size: 10}},
 	}
 	filerSrc := startSourceFilerWithEntry(t, live, strings.TrimPrefix(gone.URL, "http://"), "5617")
@@ -1196,6 +1262,144 @@ func TestUpdateEntrySyncsLiveVersion(t *testing.T) {
 	updated := dst.lastUpdate.Load()
 	if updated == nil || string(updated.GetContent()) != "live" || updated.GetAttributes().GetMtime() != 6 {
 		t.Fatalf("the destination must get the live version, got %+v", updated)
+	}
+}
+
+// A timestamp-preserving rewrite leaves the live source older than the replay
+// whose chunks it dropped, and older than a destination that already took an
+// earlier version. The destination must still converge on the live version
+// instead of fetching chunks the source vacuumed or keeping its newer-stamped
+// stale bytes.
+func TestUpdateEntrySyncsOlderLiveVersion(t *testing.T) {
+	var volumeLookups atomic.Int32
+	existing := &filer_pb.Entry{
+		Name:       "x.bin",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 5},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "4,00aaa", SourceFileId: "5617,00aaa", Size: 10}},
+	}
+	oldEntry := &filer_pb.Entry{
+		Name:       "x.bin",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 5},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "5617,00aaa", Size: 10}},
+	}
+	live := &filer_pb.Entry{
+		Name:       "x.bin",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 4},
+		Content:    []byte("live"),
+	}
+	filerSrc := startSourceFilerServer(t, &sourceFilerServer{entry: live, volumeLookups: &volumeLookups})
+	dst, dstAddr := startRecordingFiler(t, existing)
+
+	fs := &FilerSink{
+		filerSource:    filerSrc,
+		dir:            "/dst",
+		grpcAddress:    dstAddr,
+		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		executor:       util.NewLimitedConcurrentExecutor(1),
+	}
+	fs.SetUploader(operation.NewUploaderWithHttpClient(http.DefaultClient))
+
+	replayed := &filer_pb.Entry{
+		Name:       "x.bin",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 6},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "5617,01abc", Size: 10}},
+	}
+	if _, err := fs.UpdateEntry("/dst/x.bin", oldEntry, "", replayed, true, nil); err != nil {
+		t.Fatalf("syncing the live version should succeed: %v", err)
+	}
+	if dst.updates.Load() != 1 {
+		t.Fatal("the live version must be committed to the destination")
+	}
+	updated := dst.lastUpdate.Load()
+	if updated == nil || string(updated.GetContent()) != "live" || updated.GetAttributes().GetMtime() != 4 {
+		t.Fatalf("the destination must get the live version, got %+v", updated)
+	}
+	if volumeLookups.Load() != 0 {
+		t.Fatal("the superseded version's chunks must not be fetched")
+	}
+}
+
+// A peer filer's event reaches subscribers before the local store applies it,
+// so the live lookup can still return the version the replay replaces. That
+// lagging entry was committed earlier and must not be synced over the replay.
+func TestUpdateEntryAppliesReplayAheadOfLiveLookup(t *testing.T) {
+	var volumeLookups atomic.Int32
+	existing := &filer_pb.Entry{
+		Name:       "x.bin",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 5},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "4,00aaa", SourceFileId: "5617,00aaa", Size: 10}},
+	}
+	oldEntry := &filer_pb.Entry{
+		Name:       "x.bin",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 5},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "5617,00aaa", Size: 10}},
+		CommitTsNs: 5,
+	}
+	filerSrc := startSourceFilerServer(t, &sourceFilerServer{entry: oldEntry, volumeLookups: &volumeLookups})
+	dst, dstAddr := startRecordingFiler(t, existing)
+
+	fs := &FilerSink{
+		filerSource:    filerSrc,
+		dir:            "/dst",
+		grpcAddress:    dstAddr,
+		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		executor:       util.NewLimitedConcurrentExecutor(1),
+	}
+	fs.SetUploader(operation.NewUploaderWithHttpClient(http.DefaultClient))
+
+	replayed := &filer_pb.Entry{
+		Name:       "x.bin",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 6},
+		Content:    []byte("new"),
+		CommitTsNs: 10,
+	}
+	if _, err := fs.UpdateEntry("/dst/x.bin", oldEntry, "", replayed, true, nil); err != nil {
+		t.Fatalf("applying the replay should succeed: %v", err)
+	}
+	updated := dst.lastUpdate.Load()
+	if updated == nil || string(updated.GetContent()) != "new" || len(updated.GetChunks()) != 0 {
+		t.Fatalf("the destination must get the replayed version, got %+v", updated)
+	}
+	if volumeLookups.Load() != 0 {
+		t.Fatal("the lagging live entry's chunks must not be fetched")
+	}
+}
+
+// Once the destination already holds the live version, the same stale replay
+// must not re-replicate it.
+func TestUpdateEntryKeepsDestinationHoldingLiveVersion(t *testing.T) {
+	live := &filer_pb.Entry{
+		Name:       "x.bin",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 4},
+		Content:    []byte("live"),
+	}
+	filerSrc := startSourceFilerServer(t, &sourceFilerServer{entry: live})
+	dst, dstAddr := startRecordingFiler(t, live)
+
+	fs := &FilerSink{
+		filerSource:    filerSrc,
+		dir:            "/dst",
+		grpcAddress:    dstAddr,
+		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		executor:       util.NewLimitedConcurrentExecutor(1),
+	}
+	fs.SetUploader(operation.NewUploaderWithHttpClient(http.DefaultClient))
+
+	oldEntry := &filer_pb.Entry{
+		Name:       "x.bin",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 3},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "5617,00aaa", Size: 10}},
+	}
+	replayed := &filer_pb.Entry{
+		Name:       "x.bin",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 5},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "5617,01abc", Size: 10}},
+	}
+	if _, err := fs.UpdateEntry("/dst/x.bin", oldEntry, "", replayed, true, nil); err != nil {
+		t.Fatalf("a destination holding the live version should be left alone: %v", err)
+	}
+	if dst.updates.Load() != 0 {
+		t.Fatal("a destination already holding the live version must not be rewritten")
 	}
 }
 
