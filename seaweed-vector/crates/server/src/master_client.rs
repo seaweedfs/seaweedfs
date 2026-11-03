@@ -301,13 +301,15 @@ mod tests {
         let fifo = dir.path().join("ca.pem");
         let made = std::process::Command::new("mkfifo").arg(&fifo).status();
         assert!(made.unwrap().success());
-        // Nothing listens there: a dial that skipped the read is refused at
-        // once instead of timing out.
-        let port = std::net::TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port();
+        // Every connection is dropped at once, so a dial that skipped the read
+        // fails its handshake instead of timing out.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            while let Ok((conn, _)) = listener.accept().await {
+                drop(conn);
+            }
+        });
         let mut tls = credentials();
         tls.ca_path = fifo.display().to_string();
         let master = format!("127.0.0.1:9333.{port}");
