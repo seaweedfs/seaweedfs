@@ -111,8 +111,8 @@ func (c *commandVolumeFsck) Help() string {
 	-reallyDeleteFilerEntries needs -confirmMissingVolumeDeletion as well; pass
 	it only after checking that every expected volume server is online. A purge
 	removes the whole filer entry, including its chunks on other volumes.
-	A -collection filter cannot be checked against an unlisted volume, so its
-	references are only reported.
+	A -collection filter cannot be checked against an unlisted volume, so with a
+	filter its references are reported but never purged.
 
 `
 }
@@ -132,7 +132,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	applyPurging := fsckCommand.Bool("reallyDeleteFromVolume", false, "<expert only!> after detection, delete missing data from volumes / delete missing file entries from filer. Currently this only works with default filerGroup.")
 	c.forcePurging = fsckCommand.Bool("forcePurging", false, "delete missing data from volumes in one replica used together with applyPurging")
 	purgeAbsent := fsckCommand.Bool("reallyDeleteFilerEntries", false, "<expert only!> delete missing file entries from filer if the corresponding volume is missing for any reason, please ensure all still existing/expected volumes are connected! used together with findMissingChunksInFiler")
-	confirmMissingVolumeDeletion := fsckCommand.Bool("confirmMissingVolumeDeletion", false, "confirm selected volume IDs absent from master are intentionally retired; required with -reallyDeleteFilerEntries")
+	confirmMissingVolumeDeletion := fsckCommand.Bool("confirmMissingVolumeDeletion", false, "with -reallyDeleteFilerEntries, confirm that the -volumeId volumes the master does not list are retired")
 	c.purgeConcurrency = fsckCommand.Int("purgeConcurrency", 16, "parallel filer deletes for -reallyDeleteFilerEntries")
 	tempPath := fsckCommand.String("tempPath", path.Join(os.TempDir()), "path for temporary idx files")
 	cutoffTimeAgo := fsckCommand.Duration("cutoffTimeAgo", 5*time.Hour, "only include entries on volume servers before this cutoff time to check orphan chunks")
@@ -213,8 +213,10 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 			return err
 		}
 		if len(missing) > 0 {
-			if err := validateMissingVolumeCollectionFilter(missing, c.collectionMatcher); err != nil {
-				return err
+			if *purgeAbsent {
+				if err := validateMissingVolumeCollectionFilter(missing, c.collectionMatcher); err != nil {
+					return err
+				}
 			}
 			if err := validateMissingVolumePurgeConfirmation(missing, *purgeAbsent, *confirmMissingVolumeDeletion); err != nil {
 				return err

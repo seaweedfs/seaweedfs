@@ -73,6 +73,9 @@ func TestVolumeFsckFindMissingFilerEntriesForDeletedSelectedVolume(t *testing.T)
 			t.Errorf("missing-volume report %q lacks %q", output.String(), line)
 		}
 	}
+	if strings.Contains(output.String(), "100,200000001") {
+		t.Errorf("missing-volume report %q includes unselected volume 100", output.String())
+	}
 }
 
 // Unknown IDs remain errors outside the reverse Filer scan, preserving typo detection.
