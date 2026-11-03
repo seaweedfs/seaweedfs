@@ -1102,7 +1102,7 @@ func TestFetchAndWriteStopsOnTransientErrorWhenCommittedOver(t *testing.T) {
 
 // The resolve gate stops on the same supersession check, and like it ignores a
 // live lookup that lags the replay: an entry committed earlier proves nothing,
-// even with a newer mtime.
+// even with a newer mtime or without the replayed manifest.
 func TestManifestResolveRetryGateOrdersByCommit(t *testing.T) {
 	transient := errors.New("dial tcp: connection refused")
 	live, replayed := committedOverWithOlderMtime()
@@ -1123,6 +1123,12 @@ func TestManifestResolveRetryGateOrdersByCommit(t *testing.T) {
 	gate = fs.manifestResolveRetryGate("/dst/x.bin", replayed, manifestId, fs.newMissingSourceChunkGate(manifestId))
 	if !gate(transient) {
 		t.Fatal("a live lookup committed before the replay must not stop its retries")
+	}
+
+	volumeGone := fmt.Errorf("LookupFileId locate volume id 5617: %w", source.ErrVolumeNotFound)
+	gate = fs.manifestResolveRetryGate("/dst/x.bin", replayed, manifestId, fs.newMissingSourceChunkGate(manifestId))
+	if !gate(volumeGone) {
+		t.Fatal("a live lookup committed before the replay must not cut a missing volume's wait short")
 	}
 }
 
