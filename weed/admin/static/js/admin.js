@@ -1218,6 +1218,57 @@ async function collectDroppedFiles(dataTransfer) {
     return collected;
 }
 
+// Go's multipart parser rejects a form of more than 1000 parts, so a large
+// selection goes out in several requests.
+const uploadBatchSize = 500;
+
+function postUploadBatch(batch, currentPath, onProgress) {
+    const formData = new FormData();
+    batch.forEach(item => {
+        formData.append('files', item.file);
+    });
+    if (batch.some(item => item.path !== item.file.name)) {
+        formData.append('relativePaths', JSON.stringify(batch.map(item => item.path)));
+    }
+    formData.append('path', currentPath);
+
+    return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.upload.addEventListener('progress', function (e) {
+            if (e.lengthComputable) {
+                onProgress(e.loaded / e.total);
+            }
+        });
+        xhr.addEventListener('load', function () {
+            let response = null;
+            try {
+                response = JSON.parse(xhr.responseText);
+            } catch (e) {
+                // reported below
+            }
+            // Per-file failures come back with counts, even when all of them failed.
+            if (response && typeof response.uploaded === 'number') {
+                resolve(response);
+                return;
+            }
+            if (xhr.status === 200) {
+                reject(new Error('Upload completed but response format was unexpected'));
+                return;
+            }
+            const errorMessage = (response && (response.error || response.message)) || `Server returned status ${xhr.status}`;
+            reject(new Error(`Failed to upload files: ${errorMessage}`));
+        });
+        xhr.addEventListener('error', function () {
+            reject(new Error('Failed to upload files. Please check your connection and try again.'));
+        });
+        xhr.addEventListener('abort', function () {
+            reject(new Error('File upload was cancelled.'));
+        });
+        xhr.open('POST', basePath('/api/files/upload'));
+        xhr.send(formData);
+    });
+}
+
 // Submit upload file form
 async function submitUploadFile() {
     const currentPath = document.getElementById('uploadPath').value;
@@ -1228,25 +1279,13 @@ async function submitUploadFile() {
         return;
     }
 
-    const files = selected.map(item => item.file);
-    const totalSize = files.reduce((sum, file) => sum + file.size, 0);
+    const totalSize = selected.reduce((sum, item) => sum + item.file.size, 0);
 
     const maxSize = Number(document.getElementById('uploadFileForm').dataset.maxSize) || 0;
     if (maxSize > 0 && totalSize > maxSize) {
         showErrorMessage(`Total file size exceeds the ${formatBytes(maxSize)} limit. Please select fewer or smaller files.`);
         return;
     }
-
-    // Individual file size validation removed - no limit per file
-
-    const formData = new FormData();
-    files.forEach(file => {
-        formData.append('files', file);
-    });
-    if (selected.some(item => item.path !== item.file.name)) {
-        formData.append('relativePaths', JSON.stringify(selected.map(item => item.path)));
-    }
-    formData.append('path', currentPath);
 
     // Show progress bar and disable button
     const progressContainer = document.getElementById('uploadProgress');
@@ -1255,100 +1294,71 @@ async function submitUploadFile() {
     const submitButton = document.querySelector('#uploadFileModal .btn-primary');
     const originalText = submitButton.innerHTML;
 
+    const showProgress = percentComplete => {
+        progressBar.style.width = percentComplete + '%';
+        progressBar.setAttribute('aria-valuenow', percentComplete);
+        progressBar.textContent = percentComplete + '%';
+        uploadStatus.textContent = `Uploading ${selected.length} file(s)... ${percentComplete}%`;
+    };
+
     progressContainer.style.display = 'block';
-    progressBar.style.width = '0%';
-    progressBar.setAttribute('aria-valuenow', '0');
-    progressBar.textContent = '0%';
-    uploadStatus.textContent = `Uploading ${files.length} file(s)...`;
+    showProgress(0);
+    uploadStatus.textContent = `Uploading ${selected.length} file(s)...`;
     submitButton.disabled = true;
     submitButton.innerHTML = '<i class="bi bi-arrow-repeat icon-spin me-1"></i>Uploading...';
 
+    const result = { uploaded: 0, failed: 0, errors: [] };
     try {
-        const xhr = new XMLHttpRequest();
-
-        // Handle progress
-        xhr.upload.addEventListener('progress', function (e) {
-            if (e.lengthComputable) {
-                const percentComplete = Math.round((e.loaded / e.total) * 100);
-                progressBar.style.width = percentComplete + '%';
-                progressBar.setAttribute('aria-valuenow', percentComplete);
-                progressBar.textContent = percentComplete + '%';
-                uploadStatus.textContent = `Uploading ${files.length} file(s)... ${percentComplete}%`;
-            }
-        });
-
-        // Handle completion
-        xhr.addEventListener('load', function () {
-            if (xhr.status === 200) {
-                try {
-                    const response = JSON.parse(xhr.responseText);
-
-                    if (response.uploaded > 0) {
-                        if (response.failed === 0) {
-                            showSuccessMessage(`Successfully uploaded ${response.uploaded} file(s)`);
-                        } else {
-                            showSuccessMessage(response.message);
-                            // Show details of failed uploads
-                            if (response.errors && response.errors.length > 0) {
-                                console.warn('Upload errors:', response.errors);
-                            }
-                        }
-
-                        // Hide modal and refresh page
-                        const modal = bootstrap.Modal.getInstance(document.getElementById('uploadFileModal'));
-                        modal.hide();
-                        setTimeout(() => {
-                            window.location.reload();
-                        }, 1000);
-                    } else {
-                        let errorMessage = response.message || 'All file uploads failed';
-                        if (response.errors && response.errors.length > 0) {
-                            errorMessage += ': ' + response.errors.join(', ');
-                        }
-                        showErrorMessage(errorMessage);
-                    }
-                } catch (e) {
-                    showErrorMessage('Upload completed but response format was unexpected');
-                }
-                progressContainer.style.display = 'none';
-            } else {
-                let errorMessage = 'Unknown error';
-                try {
-                    const error = JSON.parse(xhr.responseText);
-                    errorMessage = error.error || error.message || errorMessage;
-                } catch (e) {
-                    errorMessage = `Server returned status ${xhr.status}`;
-                }
-                showErrorMessage(`Failed to upload files: ${errorMessage}`);
-                progressContainer.style.display = 'none';
-            }
-        });
-
-        // Handle errors
-        xhr.addEventListener('error', function () {
-            showErrorMessage('Failed to upload files. Please check your connection and try again.');
-            progressContainer.style.display = 'none';
-        });
-
-        // Handle abort
-        xhr.addEventListener('abort', function () {
-            showErrorMessage('File upload was cancelled.');
-            progressContainer.style.display = 'none';
-        });
-
-        // Send request
-        xhr.open('POST', basePath('/api/files/upload'));
-        xhr.send(formData);
-
+        let sentSize = 0;
+        for (let start = 0; start < selected.length; start += uploadBatchSize) {
+            const batch = selected.slice(start, start + uploadBatchSize);
+            const batchSize = batch.reduce((sum, item) => sum + item.file.size, 0);
+            const response = await postUploadBatch(batch, currentPath, fraction => {
+                showProgress(Math.round(((sentSize + fraction * batchSize) / (totalSize || 1)) * 100));
+            });
+            sentSize += batchSize;
+            result.uploaded += response.uploaded;
+            result.failed += response.failed;
+            result.errors.push(...(response.errors || []));
+        }
     } catch (error) {
         console.error('Upload error:', error);
-        showErrorMessage('Failed to upload files. Please try again.');
+        let errorMessage = error.message || 'Failed to upload files. Please try again.';
+        if (result.uploaded > 0) {
+            errorMessage += ` (${result.uploaded} file(s) were uploaded before this)`;
+        }
+        showErrorMessage(errorMessage);
         progressContainer.style.display = 'none';
-    } finally {
-        // Re-enable the button
         submitButton.disabled = false;
         submitButton.innerHTML = originalText;
+        return;
     }
+
+    progressContainer.style.display = 'none';
+    submitButton.disabled = false;
+    submitButton.innerHTML = originalText;
+
+    if (result.uploaded === 0) {
+        let errorMessage = 'All file uploads failed';
+        if (result.errors.length > 0) {
+            errorMessage += ': ' + result.errors.join(', ');
+        }
+        showErrorMessage(errorMessage);
+        return;
+    }
+    if (result.failed === 0) {
+        showSuccessMessage(`Successfully uploaded ${result.uploaded} file(s)`);
+    } else {
+        showSuccessMessage(`Uploaded ${result.uploaded} file(s), ${result.failed} failed`);
+        console.warn('Upload errors:', result.errors);
+    }
+
+    // Hide modal and refresh page
+    const modal = bootstrap.Modal.getInstance(document.getElementById('uploadFileModal'));
+    modal.hide();
+    setTimeout(() => {
+        window.location.reload();
+    }, 1000);
 }
 
 // Export file list to CSV
