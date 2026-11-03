@@ -185,6 +185,47 @@ func TestCollectCollectionStatsECFileAndDeleteCountAggregation(t *testing.T) {
 	}
 }
 
+// TestCollectCollectionStatsECDeleteCountAboveFileCount verifies that an EC
+// volume whose summed delete_count exceeds its file_count adds nothing to the
+// collection's object count, while other volumes in the collection still do.
+func TestCollectCollectionStatsECDeleteCountAboveFileCount(t *testing.T) {
+	shard := func(vid uint32, bits uint32, fileCount, deleteCount uint64) *master_pb.VolumeEcShardInformationMessage {
+		return &master_pb.VolumeEcShardInformationMessage{
+			Id:          vid,
+			Collection:  "bucket-c",
+			EcIndexBits: bits,
+			ShardSizes:  []int64{1},
+			FileCount:   fileCount,
+			DeleteCount: deleteCount,
+		}
+	}
+	node := func(shards ...*master_pb.VolumeEcShardInformationMessage) *master_pb.DataNodeInfo {
+		return &master_pb.DataNodeInfo{
+			DiskInfos: map[string]*master_pb.DiskInfo{"disk1": {EcShardInfos: shards}},
+		}
+	}
+
+	topo := &master_pb.TopologyInfo{
+		DataCenterInfos: []*master_pb.DataCenterInfo{
+			{
+				RackInfos: []*master_pb.RackInfo{
+					{
+						DataNodeInfos: []*master_pb.DataNodeInfo{
+							node(shard(21, 1<<0, 100, 60), shard(22, 1<<0, 50, 10)),
+							node(shard(21, 1<<1, 100, 60)),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	got := collectCollectionStats(topo)["bucket-c"]
+	if got.FileCount != 40 {
+		t.Errorf("FileCount: got %d, want 40 (volume 21 skipped, volume 22 has 50-10)", got.FileCount)
+	}
+}
+
 // TestCollectCollectionStatsECFileCountMaxDedupe verifies that EC file_count
 // is taken as the max across reporting nodes rather than the first-seen
 // value. A node that has not yet finished loading .ecx reports file_count=0,
