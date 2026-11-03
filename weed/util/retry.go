@@ -293,7 +293,7 @@ func shortenStep(step time.Duration, err error, slack time.Duration) time.Durati
 // Only a valid, positive hint counts: a zero, negative or malformed one from a
 // misbehaving server would otherwise turn the backoff into tight polling.
 func serverRetryDelay(err error) (time.Duration, bool) {
-	st, ok := status.FromError(err)
+	st, ok := ServerStatus(err)
 	if !ok {
 		return 0, false
 	}
