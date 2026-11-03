@@ -75,6 +75,14 @@ impl std::fmt::Debug for Security {
     }
 }
 
+// weed's util.ResolvePath for "~" and "~/..."
+fn resolve_path(path: &Path, home: Option<&Path>) -> PathBuf {
+    match (path.strip_prefix("~"), home) {
+        (Ok(rest), Some(home)) => home.join(rest),
+        _ => path.to_path_buf(),
+    }
+}
+
 fn candidates(
     config_dir: Option<&Path>,
     current_dir: Option<&Path>,
@@ -82,7 +90,7 @@ fn candidates(
 ) -> Vec<PathBuf> {
     let mut found = Vec::new();
     if let Some(dir) = config_dir {
-        found.push(dir.join(FILE_NAME));
+        found.push(resolve_path(dir, home).join(FILE_NAME));
     }
     if let Some(dir) = current_dir {
         found.push(dir.join(FILE_NAME));
@@ -521,6 +529,19 @@ mod tests {
             ]
             .map(PathBuf::from)
         );
+        let home = Some(Path::new("/home/u"));
+        for (dir, want) in [
+            ("~", "/home/u/security.toml"),
+            ("~/cluster", "/home/u/cluster/security.toml"),
+            ("~other/cluster", "~other/cluster/security.toml"),
+            ("/srv/~/cluster", "/srv/~/cluster/security.toml"),
+        ] {
+            assert_eq!(
+                candidates(Some(Path::new(dir)), None, home)[0],
+                PathBuf::from(want),
+                "{dir}"
+            );
+        }
     }
 
     #[test]
