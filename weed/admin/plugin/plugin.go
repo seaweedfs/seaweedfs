@@ -1449,6 +1449,12 @@ func (r *Plugin) handleJobCompleted(completed *plugin_pb.JobCompleted) {
 	if completed.RequestId != "" {
 		r.safeSendJobCompleted(completed.RequestId, completed)
 	}
+	r.jobsMu.RLock()
+	ended := attemptEnded(r.jobs[completed.JobId], completed.RequestId)
+	r.jobsMu.RUnlock()
+	if ended {
+		return
+	}
 
 	tracked := r.trackExecutionCompletion(completed)
 	workerID := ""

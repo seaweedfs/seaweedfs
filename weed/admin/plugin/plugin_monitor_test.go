@@ -835,3 +835,69 @@ func TestUndeliveredCancelByJobIDSkipsAnActiveJob(t *testing.T) {
 	pluginSvc.handleWorkerMessage(session, heartbeatListing(workerID, jobID))
 	expectNoCancel(t, session)
 }
+
+// Once the admin expires an attempt, that attempt's late progress and its
+// completion from the cancel neither reopen the record nor log a second run,
+// while a retry under a new request id is still recorded.
+func TestExpiredAttemptIgnoresItsLateReports(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	const workerID = "worker-1"
+	const jobID = "job-late-reports"
+	const jobType = "s3_lifecycle"
+	pluginSvc.trackExecutionStart("req-late-1", workerID, &plugin_pb.JobSpec{JobId: jobID, JobType: jobType}, 1)
+	if _, expired, err := pluginSvc.ExpireJob(jobID, "stuck"); err != nil || !expired {
+		t.Fatalf("ExpireJob: expired=%v err=%v", expired, err)
+	}
+
+	pluginSvc.handleJobProgressUpdate(workerID, &plugin_pb.JobProgressUpdate{
+		JobId:     jobID,
+		JobType:   jobType,
+		RequestId: "req-late-1",
+		State:     plugin_pb.JobState_JOB_STATE_RUNNING,
+		Stage:     "copying",
+	})
+	pluginSvc.handleJobCompleted(&plugin_pb.JobCompleted{
+		JobId:        jobID,
+		JobType:      jobType,
+		RequestId:    "req-late-1",
+		ErrorMessage: "context canceled",
+	})
+
+	got, _ := pluginSvc.GetTrackedJob(jobID)
+	if got == nil || got.State != StateFailed || got.ErrorMessage != "stuck" {
+		t.Fatalf("expected the expiry to stand, got %+v", got)
+	}
+	history, err := pluginSvc.LoadRunHistory(jobType)
+	if err != nil {
+		t.Fatalf("LoadRunHistory: %v", err)
+	}
+	if len(history.ErrorRuns) != 1 || len(history.SuccessfulRuns) != 0 {
+		t.Fatalf("expected the expiry's run record only, got %+v", history)
+	}
+
+	pluginSvc.trackExecutionStart("req-late-2", workerID, &plugin_pb.JobSpec{JobId: jobID, JobType: jobType}, 2)
+	pluginSvc.handleJobCompleted(&plugin_pb.JobCompleted{
+		JobId:     jobID,
+		JobType:   jobType,
+		RequestId: "req-late-2",
+		Success:   true,
+	})
+	got, _ = pluginSvc.GetTrackedJob(jobID)
+	if got == nil || got.State != StateSucceeded {
+		t.Fatalf("expected the retry to complete, got %+v", got)
+	}
+	history, err = pluginSvc.LoadRunHistory(jobType)
+	if err != nil {
+		t.Fatalf("LoadRunHistory: %v", err)
+	}
+	if len(history.ErrorRuns) != 1 || len(history.SuccessfulRuns) != 1 {
+		t.Fatalf("expected the retry's run to be recorded, got %+v", history)
+	}
+}

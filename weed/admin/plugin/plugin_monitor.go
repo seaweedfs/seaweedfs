@@ -368,6 +368,13 @@ func (r *Plugin) snapshotActiveJobs() []activeJobSnapshot {
 	return out
 }
 
+// attemptEnded reports whether the job's record already closed the attempt
+// requestID names, as an expiry does while the worker is still running it.
+// That attempt's late reports must not reopen the record or log a second run.
+func attemptEnded(job *TrackedJob, requestID string) bool {
+	return job != nil && requestID != "" && job.RequestID == requestID && !isActiveTrackedJobState(job.State)
+}
+
 func jobLastUpdated(job *TrackedJob) time.Time {
 	if job == nil {
 		return time.Time{}
@@ -784,6 +791,10 @@ func (r *Plugin) handleJobProgressUpdate(workerID string, update *plugin_pb.JobP
 	if strings.TrimSpace(update.JobId) != "" {
 		r.jobsMu.Lock()
 		job := r.jobs[update.JobId]
+		if attemptEnded(job, update.RequestId) {
+			r.jobsMu.Unlock()
+			return
+		}
 		if job == nil {
 			job = &TrackedJob{
 				JobID:     update.JobId,
