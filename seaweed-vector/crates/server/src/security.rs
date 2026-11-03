@@ -233,9 +233,13 @@ impl Security {
     /// `allowed_commonNames`. `None` keeps plaintext. The files are read by
     /// [`crate::tls::ServerTls`], which keeps re-reading them.
     pub fn grpc_server_tls(&self, component: &str) -> Result<Option<GrpcServerTls>> {
+        let allowed = format!("{component}.allowed_commonNames");
         let Some((cert_path, key_path)) =
             self.pair(&format!("{component}.cert"), &format!("{component}.key"))?
         else {
+            if self.get(&allowed).is_some() {
+                bail!("{allowed} is set but {component}.cert and {component}.key are not");
+            }
             return Ok(None);
         };
         let ca_path = self
@@ -246,7 +250,7 @@ impl Security {
             key_path,
             ca_path,
             allowed_common_names: self
-                .get(&format!("{component}.allowed_commonNames"))
+                .get(&allowed)
                 .unwrap_or_default()
                 .split(',')
                 .map(str::trim)
@@ -424,6 +428,7 @@ mod tests {
         for broken in [
             format!("[grpc.vector]\ncert = {cert:?}\nkey = {key:?}\n"),
             format!("[grpc]\nca = {ca:?}\n[grpc.vector]\nkey = {key:?}\n"),
+            format!("[grpc]\nca = {ca:?}\n[grpc.vector]\nallowed_commonNames = \"s3\"\n"),
         ] {
             assert!(
                 security(&broken, &[])
