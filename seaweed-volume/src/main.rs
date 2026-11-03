@@ -845,23 +845,10 @@ async fn run(
         }))
     };
 
-    // Wait for servers. Use select! with &mut so the losing handle is not
-    // dropped, then await it explicitly afterward.
+    // Both servers stop on the shutdown signal, and a gRPC serve error sends
+    // it, so waiting for both never hangs on one.
     let mut server_err: Option<String> = None;
-    let mut http_handle = http_handle;
-    let mut grpc_handle = grpc_handle;
-    let grpc_finished_first = tokio::select! {
-        _ = &mut http_handle => false,
-        _ = &mut grpc_handle => true,
-    };
-    // Inspect the gRPC result (already resolved if it finished first,
-    // otherwise await it now).
-    let grpc_result = if grpc_finished_first {
-        grpc_handle.await
-    } else {
-        // HTTP finished first; gRPC is still running. Await it.
-        grpc_handle.await
-    };
+    let (grpc_result, _) = tokio::join!(grpc_handle, http_handle);
     match grpc_result {
         Ok(Ok(())) => {}
         Ok(Err(e)) => {
@@ -877,8 +864,6 @@ async fn run(
             let _ = shutdown_tx.send(());
         }
     }
-    // Ensure the HTTP handle completes too.
-    let _ = http_handle.await;
     if let Some(h) = public_handle {
         let _ = h.await;
     }
