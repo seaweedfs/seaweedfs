@@ -3,11 +3,13 @@ package dash
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/admin/plugin"
@@ -228,5 +230,63 @@ func TestFilterActivitiesByLane(t *testing.T) {
 	}
 	if filtered[0].JobID != "lifecycle-1" {
 		t.Fatalf("expected lifecycle activity to be retained, got %+v", filtered[0])
+	}
+}
+
+func TestPluginJobsAndActivitiesAPILimitAfterLaneFilter(t *testing.T) {
+	dataDir := t.TempDir()
+	store, err := plugin.NewConfigStore(dataDir)
+	if err != nil {
+		t.Fatalf("NewConfigStore: %v", err)
+	}
+	now := time.Now()
+	var jobs []plugin.TrackedJob
+	var activities []plugin.JobActivity
+	for i := 0; i < 5; i++ {
+		jobType, jobID := "vacuum", fmt.Sprintf("vacuum-%d", i)
+		if i == 4 {
+			jobType, jobID = "iceberg_maintenance", "iceberg-1"
+		}
+		at := now.Add(-time.Duration(i) * time.Minute)
+		jobs = append(jobs, plugin.TrackedJob{JobID: jobID, JobType: jobType, State: plugin.StateSucceeded, UpdatedAt: &at})
+		activities = append(activities, plugin.JobActivity{JobID: jobID, JobType: jobType, Message: "done", OccurredAt: &at})
+	}
+	if err := store.SaveTrackedJobs(jobs); err != nil {
+		t.Fatalf("SaveTrackedJobs: %v", err)
+	}
+	if err := store.SaveActivities(activities); err != nil {
+		t.Fatalf("SaveActivities: %v", err)
+	}
+	p, err := plugin.New(plugin.Options{DataDir: dataDir})
+	if err != nil {
+		t.Fatalf("plugin.New: %v", err)
+	}
+	defer p.Shutdown()
+	s := &AdminServer{plugin: p}
+
+	get := func(handler http.HandlerFunc, url string) []map[string]any {
+		recorder := httptest.NewRecorder()
+		handler(recorder, httptest.NewRequest(http.MethodGet, url, nil))
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("%s: status %d", url, recorder.Code)
+		}
+		var rows []map[string]any
+		if err := json.Unmarshal(recorder.Body.Bytes(), &rows); err != nil {
+			t.Fatalf("%s: %v", url, err)
+		}
+		return rows
+	}
+
+	if rows := get(s.GetPluginJobsAPI, "/api/plugin/jobs?limit=2&lane=iceberg"); len(rows) != 1 || rows[0]["job_id"] != "iceberg-1" {
+		t.Fatalf("iceberg lane jobs: got %v, want the one iceberg job", rows)
+	}
+	if rows := get(s.GetPluginJobsAPI, "/api/plugin/jobs?limit=2&lane=default"); len(rows) != 2 {
+		t.Fatalf("default lane jobs: got %d rows, want the limit of 2", len(rows))
+	}
+	if rows := get(s.GetPluginActivitiesAPI, "/api/plugin/activities?limit=2&lane=iceberg"); len(rows) != 1 || rows[0]["job_id"] != "iceberg-1" {
+		t.Fatalf("iceberg lane activities: got %v, want the one iceberg activity", rows)
+	}
+	if rows := get(s.GetPluginActivitiesAPI, "/api/plugin/activities?limit=2&lane=default"); len(rows) != 2 {
+		t.Fatalf("default lane activities: got %d rows, want the limit of 2", len(rows))
 	}
 }
