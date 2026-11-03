@@ -1,6 +1,7 @@
 package topology
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -59,8 +60,14 @@ func TestSyncRefreshesEcCountsWithoutShardChange(t *testing.T) {
 	if fileCount != 1000 || deleteCount != 250 {
 		t.Errorf("counts after heartbeat = %d/%d, want 1000/250", fileCount, deleteCount)
 	}
-	if after != before {
-		t.Errorf("count-only heartbeat replaced the stored record instead of updating it in place")
+	// Readers keep the pointers GetEcShards handed out after the lock is
+	// released, so a refresh must publish a new record rather than write
+	// into the one they may still be reading.
+	if after == before {
+		t.Errorf("count-only heartbeat updated the stored record in place instead of swapping in a copy")
+	}
+	if before.FileCount != 1000 || before.DeleteCount != 10 {
+		t.Errorf("previously obtained record now reads %d/%d, want the 1000/10 snapshot it was taken with", before.FileCount, before.DeleteCount)
 	}
 	if after.ShardsInfo.Count() != len(shards) {
 		t.Errorf("stored shard count = %d, want %d", after.ShardsInfo.Count(), len(shards))
@@ -153,11 +160,82 @@ func TestIncrementalSyncRefreshesEcCounts(t *testing.T) {
 		t.Errorf("stored shard count after mount = %d, want 3", record.ShardsInfo.Count())
 	}
 
-	// A message that does count refreshes the existing record.
+	// A message that does count refreshes the existing record, again by
+	// swapping in a copy so an escaped pointer keeps its snapshot.
 	topo.IncrementalSyncDataNodeEcShards([]*master_pb.VolumeEcShardInformationMessage{
 		ecMessageWithCounts(100, 0, []erasure_coding.ShardId{3}, 1000, 400),
 	}, nil, dn)
-	if _, fileCount, deleteCount := storedEcCounts(t, dn, 100, 0); fileCount != 1000 || deleteCount != 400 {
+	after, fileCount, deleteCount := storedEcCounts(t, dn, 100, 0)
+	if fileCount != 1000 || deleteCount != 400 {
 		t.Errorf("counts after counted mount = %d/%d, want 1000/400", fileCount, deleteCount)
+	}
+	if after == record {
+		t.Errorf("counted mount updated the stored record in place instead of swapping in a copy")
+	}
+	if record.FileCount != 1000 || record.DeleteCount != 10 || record.ShardsInfo.Count() != 3 {
+		t.Errorf("previously obtained record now reads %d/%d with %d shards, want the 1000/10, 3-shard snapshot it was taken with",
+			record.FileCount, record.DeleteCount, record.ShardsInfo.Count())
+	}
+}
+
+// TestEcCountRefreshDoesNotRaceReaders runs full and incremental heartbeats
+// that only move the counts against readers that keep reading the records
+// GetEcShards handed out, the way CollectionStatistics and ToDiskInfo do.
+// Run with -race: an in-place refresh is a write to memory a reader holds
+// without the lock. Without -race it still checks that every reader sees
+// one heartbeat's pair, never a FileCount from one and a DeleteCount from
+// another.
+func TestEcCountRefreshDoesNotRaceReaders(t *testing.T) {
+	topo, dn := newEcCountsTestNode(t)
+	shards := []erasure_coding.ShardId{0, 1, 2}
+	pairs := [][2]uint64{{1000, 10}, {2000, 20}}
+
+	topo.SyncDataNodeEcShards([]*master_pb.VolumeEcShardInformationMessage{
+		ecMessageWithCounts(100, 0, shards, pairs[0][0], pairs[0][1]),
+	}, dn)
+
+	done := make(chan struct{})
+	var readers sync.WaitGroup
+	for r := 0; r < 4; r++ {
+		readers.Add(1)
+		go func() {
+			defer readers.Done()
+			for {
+				select {
+				case <-done:
+					return
+				default:
+				}
+				for _, ev := range dn.GetEcShards() {
+					fileCount, deleteCount := ev.FileCount, ev.DeleteCount
+					if (fileCount != pairs[0][0] || deleteCount != pairs[0][1]) && (fileCount != pairs[1][0] || deleteCount != pairs[1][1]) {
+						t.Errorf("reader saw counts %d/%d, which no heartbeat sent", fileCount, deleteCount)
+						return
+					}
+				}
+				topo.CollectionEcVolumeStats("col")
+			}
+		}()
+	}
+
+	for i := 1; i <= 300; i++ {
+		pair := pairs[i%2]
+		topo.SyncDataNodeEcShards([]*master_pb.VolumeEcShardInformationMessage{
+			ecMessageWithCounts(100, 0, shards, pair[0], pair[1]),
+		}, dn)
+		pair = pairs[(i+1)%2]
+		// A re-mount of a shard the node already holds takes the
+		// existing-record branch of AddOrUpdateEcShard.
+		topo.IncrementalSyncDataNodeEcShards([]*master_pb.VolumeEcShardInformationMessage{
+			ecMessageWithCounts(100, 0, shards[:1], pair[0], pair[1]),
+		}, nil, dn)
+	}
+	close(done)
+	readers.Wait()
+
+	if record, fileCount, deleteCount := storedEcCounts(t, dn, 100, 0); fileCount != pairs[1][0] || deleteCount != pairs[1][1] {
+		t.Errorf("final counts = %d/%d, want %d/%d", fileCount, deleteCount, pairs[1][0], pairs[1][1])
+	} else if record.ShardsInfo.Count() != len(shards) {
+		t.Errorf("final shard count = %d, want %d", record.ShardsInfo.Count(), len(shards))
 	}
 }

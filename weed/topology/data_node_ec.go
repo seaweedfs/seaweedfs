@@ -79,12 +79,10 @@ func (dn *DataNode) UpdateEcShards(actualShards []*erasure_coding.EcVolumeInfo) 
 				deletedShardCount += d.ShardsInfo.Count()
 			}
 			// Counts move without any shard changing hands, and the
-			// rewrite below only runs on a membership change, so refresh
-			// the stored record in place.
+			// rewrite below only runs on a membership change, so publish
+			// the new counts on their own.
 			if ecCountsChanged(ecShards, actualEcShards) {
-				disk.ecShardsLock.Lock()
-				ecShards.FileCount, ecShards.DeleteCount = actualEcShards.FileCount, actualEcShards.DeleteCount
-				disk.ecShardsLock.Unlock()
+				disk.refreshEcShardCounts(key.vid, key.diskId, actualEcShards.FileCount, actualEcShards.DeleteCount)
 			}
 		}
 
