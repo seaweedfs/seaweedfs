@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -260,7 +261,7 @@ func (c *commandRemoteCache) doComprehensiveSync(commandEnv *CommandEnv, writer 
 			isDirectory := remoteEntry.RemoteSize == 0 && remoteEntry.RemoteMtime == 0
 			if lookupErr == filer_pb.ErrNotFound {
 				// Create new entry
-				_, createErr := client.CreateEntry(ctx, &filer_pb.CreateEntryRequest{
+				createErr := filer_pb.CreateEntry(ctx, client, &filer_pb.CreateEntryRequest{
 					Directory: string(localDir),
 					Entry: &filer_pb.Entry{
 						Name:        name,
@@ -273,7 +274,12 @@ func (c *commandRemoteCache) doComprehensiveSync(commandEnv *CommandEnv, writer 
 						Extended:    filer.MergeRemoteContentEncoding(remoteEntry, nil),
 						RemoteEntry: remoteEntry,
 					},
+					OExcl: true,
 				})
+				if errors.Is(createErr, filer_pb.ErrEntryAlreadyExists) {
+					fmt.Fprintf(writer, "skipped (created since it was looked up)\n")
+					continue
+				}
 				if createErr != nil {
 					fmt.Fprintf(writer, "failed to create: %v\n", createErr)
 					continue
@@ -287,18 +293,11 @@ func (c *commandRemoteCache) doComprehensiveSync(commandEnv *CommandEnv, writer 
 					continue
 				}
 
-				existingEntry.RemoteEntry = remoteEntry
-				existingEntry.Attributes.FileSize = uint64(remoteEntry.RemoteSize)
-				existingEntry.Attributes.Mtime = remoteEntry.RemoteMtime
-				existingEntry.Attributes.Md5 = nil
-				existingEntry.Extended = filer.MergeRemoteContentEncoding(remoteEntry, existingEntry.Extended)
-				existingEntry.Chunks = nil
-				existingEntry.Content = nil
-
-				_, updateErr := client.UpdateEntry(ctx, &filer_pb.UpdateEntryRequest{
-					Directory: string(localDir),
-					Entry:     existingEntry,
-				})
+				stale, updateErr := doSaveRemoteEntry(client, string(localDir), existingEntry, remoteEntry)
+				if stale {
+					fmt.Fprintf(writer, "skipped (changed since it was looked up)\n")
+					continue
+				}
 				if updateErr != nil {
 					fmt.Fprintf(writer, "failed to update: %v\n", updateErr)
 					continue
