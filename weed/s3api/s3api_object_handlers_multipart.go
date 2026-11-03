@@ -389,7 +389,7 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if errCode := validatePutHeaders(r); errCode != s3err.ErrNone {
+	if _, errCode := validatePutHeaders(r); errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
