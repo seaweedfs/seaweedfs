@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/protobuf/proto"
 )
 
 func init() {
@@ -106,18 +107,18 @@ func (c *commandRemoteUncache) uncacheContentData(commandEnv *CommandEnv, writer
 			return true // should not uncache an entry that is not synchronized with remote
 		}
 
-		entry.RemoteEntry.LastLocalSyncTsNs = 0
-		entry.Chunks = nil
-
 		fmt.Fprintf(writer, "Uncache %+v ... ", dir.Child(entry.Name))
 
+		var stale bool
 		err := commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-			_, updateErr := client.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{
-				Directory: string(dir),
-				Entry:     entry,
-			})
+			var updateErr error
+			stale, updateErr = uncacheEntry(client, string(dir), entry)
 			return updateErr
 		})
+		if stale {
+			fmt.Fprintf(writer, "skipped, changed since it was read\n")
+			return true
+		}
 		if err != nil {
 			fmt.Fprintf(writer, "uncache %+v: %v\n", dir.Child(entry.Name), err)
 			return false
@@ -126,6 +127,15 @@ func (c *commandRemoteUncache) uncacheContentData(commandEnv *CommandEnv, writer
 
 		return true
 	})
+}
+
+// uncacheEntry drops the local copy of entry only while the filer still holds
+// it as read, so a write that landed after the read keeps its data.
+func uncacheEntry(client filer_pb.SeaweedFilerClient, dir string, entry *filer_pb.Entry) (stale bool, err error) {
+	readEntry := proto.Clone(entry).(*filer_pb.Entry)
+	entry.RemoteEntry.LastLocalSyncTsNs = 0
+	entry.Chunks = nil
+	return updateEntryIfUnchanged(context.Background(), client, dir, entry, readEntry)
 }
 
 type FileFilter struct {

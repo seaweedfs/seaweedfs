@@ -5,6 +5,9 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestFileFilter_matches_minCacheAge(t *testing.T) {
@@ -98,6 +101,42 @@ func TestFileFilter_matches_minCacheAge(t *testing.T) {
 
 			if got := ff.matches(tt.entry); got != tt.want {
 				t.Errorf("FileFilter.matches() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// The uncache clears the chunks of the entry its walk read. Conditioning the
+// write on that copy keeps a file overwritten since the walk from being reset
+// to the remote pointer with its new chunks dropped.
+func TestUncacheEntryIsConditionedOnTheReadEntry(t *testing.T) {
+	read := &filer_pb.Entry{
+		Name:        "f",
+		Chunks:      []*filer_pb.FileChunk{{Fid: &filer_pb.FileId{VolumeId: 3, FileKey: 1, Cookie: 7}}},
+		RemoteEntry: &filer_pb.RemoteEntry{StorageName: "r", LastLocalSyncTsNs: 5},
+	}
+	for _, tc := range []struct {
+		name  string
+		err   error
+		stale bool
+	}{
+		{"unchanged", nil, false},
+		{"overwritten since the walk", status.Error(codes.FailedPrecondition, "precondition failed"), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &conditionalUpdateFiler{err: tc.err}
+			entry := proto.Clone(read).(*filer_pb.Entry)
+			stale, err := uncacheEntry(fake, "/buckets/b", entry)
+			if stale != tc.stale || (err != nil) != (tc.err != nil) {
+				t.Fatalf("stale=%v err=%v, want stale=%v err=%v", stale, err, tc.stale, tc.err)
+			}
+			clauses := fake.req.GetCondition().GetClauses()
+			if len(clauses) != 1 || clauses[0].Kind != filer_pb.WriteCondition_IF_ENTRY_EQUAL || !proto.Equal(clauses[0].ExpectedEntry, read) {
+				t.Fatalf("condition %v must expect the entry as read", fake.req.GetCondition())
+			}
+			written := fake.req.Entry
+			if len(written.Chunks) != 0 || written.RemoteEntry.LastLocalSyncTsNs != 0 {
+				t.Fatalf("written entry %v must drop the local copy", written)
 			}
 		})
 	}
