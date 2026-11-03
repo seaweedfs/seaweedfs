@@ -290,15 +290,17 @@ func (r *Plugin) WorkerStream(stream plugin_pb.PluginControlService_WorkerStream
 	}
 
 	workerID := hello.WorkerId
-	r.registry.UpsertFromHello(hello)
-
 	session := &streamSession{
 		workerID: workerID,
 		outgoing: make(chan *plugin_pb.AdminToWorkerMessage, r.outgoingBuffer),
 		done:     make(chan struct{}),
 	}
+	// The stream is published before the registry entry so a previous
+	// stream for this worker that is still unwinding sees itself superseded
+	// in cleanupSession and leaves the fresh registration alone.
 	r.putSession(session)
-	defer r.cleanupSession(workerID)
+	defer r.cleanupSession(session)
+	r.registry.UpsertFromHello(hello)
 
 	glog.V(0).Infof("Plugin worker connected: %s (%s)", workerID, hello.Address)
 
@@ -1345,17 +1347,28 @@ func (r *Plugin) putSession(session *streamSession) {
 	r.sessions[session.workerID] = session
 }
 
-func (r *Plugin) cleanupSession(workerID string) {
-	r.registry.Remove(workerID)
+// cleanupSession ends one stream. Only the stream currently registered for
+// the worker takes the registry entry down with it; a stream that a reconnect
+// already replaced must not evict its successor.
+func (r *Plugin) cleanupSession(session *streamSession) {
+	session.close()
+	workerID := session.workerID
 
 	r.sessionsMu.Lock()
-	session, exists := r.sessions[workerID]
-	if exists {
+	current, exists := r.sessions[workerID]
+	superseded := exists && current != session
+	if exists && !superseded {
 		delete(r.sessions, workerID)
-		session.close()
+	}
+	if !superseded {
+		r.registry.Remove(workerID)
 	}
 	r.sessionsMu.Unlock()
 
+	if superseded {
+		glog.V(1).Infof("Plugin worker stream closed: %s (replaced by a newer session)", workerID)
+		return
+	}
 	glog.V(0).Infof("Plugin worker disconnected: %s", workerID)
 }
 
