@@ -155,7 +155,9 @@ def probe_hardening(endpoint, filer, vol, directory, read_jwt_key):
             stored = response.read()
         if encrypted:
             assert chunk.get("cipher_key"), "the gateway stored a chunk without a cipher key"
-            assert stored != body, "the volume server holds the chunk in plaintext"
+            assert stored and stored != body, "the volume server holds the chunk in plaintext or not at all"
+        else:
+            assert stored == body, "the signed read did not return the chunk"
     finally:
         s3.delete_object(Bucket=bucket, Key="chunk")
         s3.delete_bucket(Bucket=bucket)
