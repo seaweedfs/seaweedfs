@@ -153,6 +153,7 @@ func TestCopyObjectDestinationACL(t *testing.T) {
 		mime                                                                             string
 		race, condition                                                                  string
 		prefix                                                                           bool
+		blockPublicAcls                                                                  bool
 	}{
 		{name: "default private"},
 		{name: "replace metadata also defaults private", replace: true},
@@ -204,6 +205,9 @@ func TestCopyObjectDestinationACL(t *testing.T) {
 		{name: "prefix private control", self: true, replace: true, routed: true, prefix: true},
 		{name: "prefix mode changes before commit", self: true, replace: true, routed: true, prefix: true, race: "commit"},
 		{name: "self copy reads owner ahead of replica", self: true, replace: true, routed: true, race: "replica"},
+		{name: "block public acls private", acl: "private", blockPublicAcls: true},
+		{name: "block public acls rejects public", acl: "public-read", blockPublicAcls: true, errorCode: "AccessDenied"},
+		{name: "block public acls rejects public self copy", self: true, replace: true, routed: true, acl: "public-read", blockPublicAcls: true, errorCode: "AccessDenied"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -234,7 +238,11 @@ func TestCopyObjectDestinationACL(t *testing.T) {
 			}}
 			filer.entries["/buckets/"+bucket] = bucketEntry
 			s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
-			s3a.bucketConfigCache.Set(bucket, &BucketConfig{Name: bucket, Owner: bucketOwner, Ownership: ownership, Versioning: tt.versioning})
+			bucketConfig := &BucketConfig{Name: bucket, Owner: bucketOwner, Ownership: ownership, Versioning: tt.versioning}
+			if tt.blockPublicAcls {
+				bucketConfig.PublicAccessBlock = &PublicAccessBlockConfiguration{BlockPublicAcls: true}
+			}
+			s3a.bucketConfigCache.Set(bucket, bucketConfig)
 			s3a.bucketRegistry = NewBucketRegistry(s3a)
 			s3a.bucketRegistry.LoadBucketMetadata(bucketEntry)
 			mode := tt.sourceMode

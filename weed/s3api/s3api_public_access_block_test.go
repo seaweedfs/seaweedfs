@@ -52,6 +52,13 @@ func TestPutPublicAccessBlockStoresConfiguration(t *testing.T) {
 		IgnorePublicAcls:      true,
 		RestrictPublicBuckets: true,
 	}, *config)
+
+	// The PUT loaded the bucket into the cache; a GET must not serve that copy.
+	filer.entry.Extended = filer.txnSeen[0].Mutations[0].SetExtended
+	rr = httptest.NewRecorder()
+	s3a.GetPublicAccessBlockHandler(rr, publicAccessBlockRequest(http.MethodGet, bucket, ""))
+	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+	require.Contains(t, rr.Body.String(), "<IgnorePublicAcls>true</IgnorePublicAcls>")
 }
 
 func TestUnreadablePublicAccessBlockBlocksPublicAccess(t *testing.T) {
