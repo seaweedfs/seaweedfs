@@ -1,7 +1,10 @@
 import contextlib
+import http.client
+import json
 import os
 from pathlib import Path
 import socket
+import ssl
 import subprocess
 import time
 import urllib.error
@@ -97,6 +100,45 @@ def write_tls(directory):
     (directory / "security.toml").write_text(f"[https.volume]\n{pem}\n[https.client]\nenabled = true\n{pem}")
 
 
+def probe_hardening(endpoint, filer, vol, directory):
+    """The hardened switches must be enforced, not only configured: a TLS
+    volume server refuses plain HTTP and a connection without the client
+    certificate, and a volume server under a read key refuses an unsigned
+    read of a real chunk."""
+    scheme = "https" if os.environ.get("VECTOR_TLS") else "http"
+    context = None
+    if scheme == "https":
+        context = ssl.create_default_context(cafile=directory / "ca.pem")
+        for url, kwargs in ((f"http://127.0.0.1:{vol}/status", {}),
+                            (f"https://127.0.0.1:{vol}/status", {"context": context})):
+            try:
+                with urllib.request.urlopen(url, timeout=5, **kwargs) as response:
+                    assert response.status != 200, f"{url} answered without the client certificate"
+            # Go answers plaintext with HTTP 400, Rust with a TLS alert.
+            except (urllib.error.URLError, ConnectionError, ssl.SSLError, http.client.HTTPException):
+                pass
+        context.load_cert_chain(directory / "cert.pem", directory / "key.pem")
+        with urllib.request.urlopen(f"https://127.0.0.1:{vol}/status", timeout=5, context=context) as response:
+            assert response.status == 200
+    if os.environ.get("VECTOR_READ_JWT"):
+        s3 = boto3.client("s3", endpoint_url=endpoint, aws_access_key_id="test", aws_secret_access_key="test",
+                          region_name="us-east-1", config=Config(s3={"addressing_style": "path"}))
+        bucket = "hardening-" + uuid.uuid4().hex[:12]
+        s3.create_bucket(Bucket=bucket)
+        try:
+            s3.put_object(Bucket=bucket, Key="chunk", Body=b"x" * 1024)
+            with urllib.request.urlopen(f"http://127.0.0.1:{filer}/buckets/{bucket}/chunk?metadata=true", timeout=5) as response:
+                fid = json.load(response)["chunks"][0]["file_id"]
+            try:
+                with urllib.request.urlopen(f"{scheme}://127.0.0.1:{vol}/{fid}", timeout=5, context=context):
+                    raise AssertionError("the volume server served an unsigned read")
+            except urllib.error.HTTPError as error:
+                assert error.code == 401, error
+        finally:
+            s3.delete_object(Bucket=bucket, Key="chunk")
+            s3.delete_bucket(Bucket=bucket)
+
+
 def run_cluster(param, tmp_path_factory, identities):
     volume, mode = param
     directory = tmp_path_factory.mktemp(f"vectors-{volume}-{mode}" + ("" if identities else "-open"))
@@ -173,6 +215,8 @@ def run_cluster(param, tmp_path_factory, identities):
                      "-ip=127.0.0.1", "-ip.bind=127.0.0.1", f"-port={s3}",
                      f"-port.grpc={s3_grpc}", "-port.iceberg=0", f"-port.lance={lance}"], unset)
         wait_for(lambda: http_ready(f"http://127.0.0.1:{lance}/v1/namespace/root/list"), processes, "catalog not ready")
+        if os.environ.get("VECTOR_TLS") or os.environ.get("VECTOR_READ_JWT"):
+            probe_hardening(endpoint, filer, vol, directory)
         start("vector", [engine, "--namespace", f"http://127.0.0.1:{lance}",
                          "--masters", master_addr, "--listen", f"127.0.0.1:{vector}", *credentials], unset)
         wait_for(lambda: listening(vector), processes, "vector engine not ready")
