@@ -28,8 +28,14 @@ func TestGenerateDirectReadFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	globalSSES3KeyManager.mu.Lock()
+	previous := globalSSES3KeyManager.superKey
 	globalSSES3KeyManager.superKey = kek
 	globalSSES3KeyManager.mu.Unlock()
+	t.Cleanup(func() {
+		globalSSES3KeyManager.mu.Lock()
+		globalSSES3KeyManager.superKey = previous
+		globalSSES3KeyManager.mu.Unlock()
+	})
 
 	plain := make([]byte, 5000)
 	for i := range plain {
@@ -132,10 +138,13 @@ func TestGenerateDirectReadFixture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
 	enc := json.NewEncoder(f)
 	enc.SetIndent("", " ")
 	if err := enc.Encode(fixture); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
 		t.Fatal(err)
 	}
 }
