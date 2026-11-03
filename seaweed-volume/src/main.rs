@@ -850,17 +850,21 @@ async fn run(
     let mut server_err: Option<String> = None;
     let mut grpc_handle = grpc_handle;
     let mut http_handle = http_handle;
-    let grpc_result = tokio::select! {
+    let (http_result, grpc_result) = tokio::select! {
         r = &mut grpc_handle => {
             let _ = shutdown_tx.send(());
-            let _ = http_handle.await;
-            r
+            (http_handle.await, r)
         }
-        _ = &mut http_handle => {
+        r = &mut http_handle => {
             let _ = shutdown_tx.send(());
-            grpc_handle.await
+            (r, grpc_handle.await)
         }
     };
+    if let Err(e) = http_result {
+        let msg = format!("HTTP task panicked: {}", e);
+        error!("{}", msg);
+        server_err = Some(msg);
+    }
     match grpc_result {
         Ok(Ok(())) => {}
         Ok(Err(e)) => {
