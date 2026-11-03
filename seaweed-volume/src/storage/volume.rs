@@ -11430,6 +11430,75 @@ mod tests {
         v.write_needle(&mut n, true, false).unwrap();
     }
 
+    // After a restart a canDelete volume is served from .sdx; its deletes must
+    // still move the counters volume.deleteEmpty and vacuum read, and land them
+    // where the next reload would.
+    #[test]
+    fn test_read_only_can_delete_counts_deletes_after_restart() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let ids = 1..=3u64;
+        {
+            let v = make_test_volume(dir);
+            for id in ids.clone() {
+                let mut n = Needle {
+                    id: NeedleId(id),
+                    cookie: Cookie(id as u32),
+                    data: b"payload".to_vec(),
+                    data_size: 7,
+                    ..Needle::default()
+                };
+                v.write_needle(&mut n, true, false).unwrap();
+            }
+            v.set_read_only_persist(true, true).unwrap();
+            v.close();
+        }
+        let reopen = || {
+            Volume::new(
+                dir,
+                dir,
+                VolumeId(1),
+                NeedleMapKind::InMemory,
+                &VolumeSpec::default(),
+            )
+            .unwrap()
+        };
+        let counters = |v: &Volume| {
+            (
+                v.file_count(),
+                v.deleted_count(),
+                v.content_size(),
+                v.deleted_size(),
+            )
+        };
+
+        let v = reopen();
+        assert!(matches!(
+            v.io.read().unwrap().nm,
+            Some(NeedleMap::SortedFile(_))
+        ));
+        for id in ids.clone() {
+            v.delete_needle(&mut Needle {
+                id: NeedleId(id),
+                cookie: Cookie(id as u32),
+                ..Needle::default()
+            })
+            .unwrap();
+        }
+        let after_deletes = counters(&v);
+        assert_eq!(after_deletes.0, 3);
+        assert_eq!(
+            after_deletes.0, after_deletes.1,
+            "an emptied volume must report every file deleted"
+        );
+        assert_eq!(after_deletes.2, after_deletes.3);
+        v.close();
+        drop(v);
+
+        let v = reopen();
+        assert_eq!(counters(&v), after_deletes);
+    }
+
     // Upgrading a volume that booted plain persisted-readonly to canDelete
     // must attach the missing .idx writer, or delete tombstones cannot append.
     #[test]
