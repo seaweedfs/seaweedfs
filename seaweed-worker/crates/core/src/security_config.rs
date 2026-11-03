@@ -82,10 +82,14 @@ fn read_file(path: &Path) -> (Option<String>, Option<u64>) {
         .get("key")
         .and_then(|v| v.as_str())
         .map(str::to_string);
+    // Viper's GetInt also reads a quoted number.
     let expires = section
         .get("expires_after_seconds")
-        .and_then(|v| v.as_integer())
-        .and_then(|v| u64::try_from(v).ok());
+        .and_then(|v| match v {
+            toml::Value::Integer(n) => u64::try_from(*n).ok(),
+            toml::Value::String(s) => s.trim().parse().ok(),
+            _ => None,
+        });
     (key, expires)
 }
 
@@ -129,6 +133,17 @@ key = "read-key"
         assert_eq!(got.key, "cluster-key");
         assert_eq!(got.expires_after_seconds, 300);
         assert_eq!(got.source, path.display().to_string());
+    }
+
+    #[test]
+    fn quoted_expiry_reads_as_a_number() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = write(
+            &dir,
+            "[jwt.filer_signing]\nkey = \"k\"\nexpires_after_seconds = \"300\"\n",
+        );
+        let got = filer_signing_from(&env_of(&[]), Some(&path)).unwrap();
+        assert_eq!(got.expires_after_seconds, 300);
     }
 
     #[test]
