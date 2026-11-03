@@ -349,7 +349,7 @@ func deleteLocalEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, l
 	var ok bool
 	req.IfNotModifiedAfter, req.IfNotModifiedAfterNs, ok = deleteEntryCutoff(entry.Attributes.GetMtime(), entry.Attributes.GetMtimeNs())
 	if !ok {
-		req.IfNotModifiedAfterNs = 1
+		req.IfNotModifiedAfterNs = max(1, int64(entry.Attributes.GetMtimeNs()))
 	}
 	_, err := filer_pb.DoRemoveRequest(ctx, client, req)
 	return err

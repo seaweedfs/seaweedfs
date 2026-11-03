@@ -182,6 +182,7 @@ func TestPullMetadataDirectoryDeletesOnlyTheListedFile(t *testing.T) {
 		{"remote turned it into a directory", &filer_pb.Entry{Name: "f", Attributes: &filer_pb.FuseAttributes{Mtime: 10, MtimeNs: 5}, RemoteEntry: remoteFile}, map[string]bool{"f": true}, false, 10, 10e9 + 5},
 		{"gone from the remote", &filer_pb.Entry{Name: "f", Attributes: &filer_pb.FuseAttributes{Mtime: 10, MtimeNs: 5}, RemoteEntry: remoteFile}, map[string]bool{}, true, 10, 10e9 + 5},
 		{"listed without an mtime", &filer_pb.Entry{Name: "f", Attributes: &filer_pb.FuseAttributes{}, RemoteEntry: remoteFile}, map[string]bool{}, true, 0, 1},
+		{"listed at the epoch with nanoseconds", &filer_pb.Entry{Name: "f", Attributes: &filer_pb.FuseAttributes{MtimeNs: 500}, RemoteEntry: remoteFile}, map[string]bool{}, true, 0, 500},
 		{"empty directory gone from the remote", &filer_pb.Entry{Name: "f", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Mtime: 20}, RemoteEntry: &filer_pb.RemoteEntry{StorageName: "r"}}, map[string]bool{}, true, 20, 20e9},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
