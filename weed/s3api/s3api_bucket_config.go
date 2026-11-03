@@ -519,6 +519,8 @@ func (s3a *S3ApiServer) updateBucketConfig(bucket string, updateFn func(*BucketC
 	}
 
 	config := s3a.newBucketConfigFromEntry(bucket, entry)
+	loadedPAB := config.PublicAccessBlock
+	loadedPABXML, _ := xml.Marshal(loadedPAB)
 
 	// Apply update function
 	if err := updateFn(config); err != nil {
@@ -534,6 +536,10 @@ func (s3a *S3ApiServer) updateBucketConfig(bucket string, updateFn func(*BucketC
 	if err := applyBucketConfigToExtended(config, newExt); err != nil {
 		glog.Errorf("updateBucketConfig: failed to serialize config for bucket %s: %v", bucket, err)
 		return s3err.ErrInternalError
+	}
+	// Keep the stored bytes, readable or not, unless updateFn changed the setting.
+	if loadedPAB != nil && config.PublicAccessBlock == loadedPAB && bytes.Equal(newExt[s3_constants.ExtPublicAccessBlockKey], loadedPABXML) {
+		newExt[s3_constants.ExtPublicAccessBlockKey] = oldExt[s3_constants.ExtPublicAccessBlockKey]
 	}
 
 	// Patch only the changed/removed extended keys, leaving Entry.content

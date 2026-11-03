@@ -10,6 +10,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/stretchr/testify/require"
 )
 
@@ -70,6 +71,40 @@ func TestUnreadablePublicAccessBlockBlocksPublicAccess(t *testing.T) {
 	require.True(t, config.PublicAccessBlock.blocksPublicAcls())
 	require.True(t, config.PublicAccessBlock.ignoresPublicAcls())
 	require.False(t, config.IsPublicRead)
+}
+
+func TestBucketUpdateKeepsStoredPublicAccessBlock(t *testing.T) {
+	const bucket = "pab-keep"
+	unreadable := []byte("<PublicAccessBlockConfiguration><BlockPublicAcls>")
+	for _, stored := range [][]byte{unreadable, []byte(testPublicAccessBlockXML)} {
+		s3a, filer := newPublicAccessBlockTestServer(t, &filer_pb.Entry{
+			Name:        bucket,
+			IsDirectory: true,
+			Extended:    map[string][]byte{s3_constants.ExtPublicAccessBlockKey: stored},
+		})
+		require.Equal(t, s3err.ErrNone, s3a.updateBucketConfig(bucket, func(config *BucketConfig) error {
+			config.Versioning = s3_constants.VersioningEnabled
+			return nil
+		}))
+		require.Len(t, filer.txnSeen, 1)
+		require.NotContains(t, filer.txnSeen[0].Mutations[0].SetExtended, s3_constants.ExtPublicAccessBlockKey)
+		require.NotContains(t, filer.txnSeen[0].Mutations[0].DeleteExtended, s3_constants.ExtPublicAccessBlockKey)
+	}
+
+	s3a, filer := newPublicAccessBlockTestServer(t, &filer_pb.Entry{
+		Name:        bucket,
+		IsDirectory: true,
+		Extended:    map[string][]byte{s3_constants.ExtPublicAccessBlockKey: unreadable},
+	})
+	all := `<PublicAccessBlockConfiguration><BlockPublicAcls>true</BlockPublicAcls><IgnorePublicAcls>true</IgnorePublicAcls>` +
+		`<BlockPublicPolicy>true</BlockPublicPolicy><RestrictPublicBuckets>true</RestrictPublicBuckets></PublicAccessBlockConfiguration>`
+	rr := httptest.NewRecorder()
+	s3a.PutPublicAccessBlockHandler(rr, publicAccessBlockRequest(http.MethodPut, bucket, all))
+	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+	require.Len(t, filer.txnSeen, 1)
+	written, err := parsePublicAccessBlock(filer.txnSeen[0].Mutations[0].SetExtended[s3_constants.ExtPublicAccessBlockKey])
+	require.NoError(t, err)
+	require.True(t, written.BlockPublicAcls && written.IgnorePublicAcls && written.BlockPublicPolicy && written.RestrictPublicBuckets)
 }
 
 func TestPutPublicAccessBlockRejectsMalformedXML(t *testing.T) {
