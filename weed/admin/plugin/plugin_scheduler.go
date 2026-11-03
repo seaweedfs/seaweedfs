@@ -36,6 +36,7 @@ const (
 	// Wait this long after a home worker disappears before stealing
 	// its queue; 0 steals immediately. Covers a reconnect blink.
 	defaultOrphanRehomeGrace         = 30 * time.Second
+	completedJobEchoGrace            = 30 * time.Second
 	maxScheduledExecutionConcurrency = 128
 	defaultScheduledRetryBackoff     = 5 * time.Second
 	defaultClusterContextTimeout     = 10 * time.Second
@@ -1201,17 +1202,21 @@ func sortExecutorsByLoad(executors []*WorkerSession, load func(*WorkerSession) i
 // execReservation is an execution slot this admin holds on a worker for one
 // job, from the moment the job is picked until its completion is handled.
 // The job id is what tells a slot the admin already counts from one only the
-// worker's heartbeat knows about.
+// worker's heartbeat knows about. The worker reports the completion before
+// the heartbeat that frees the slot, so a released reservation is kept for
+// completedJobEchoGrace to claim that echo.
 type execReservation struct {
-	workerID string
-	jobType  string
-	jobID    string
+	workerID   string
+	jobType    string
+	jobID      string
+	releasedAt time.Time
 }
 
 // executorLoad is how many execution slots on one worker the admin must
-// treat as taken. reserved is this admin's own reservations; foreign is work
-// the worker reports that no reservation covers: manual runs, work still running
-// from before a reconnect, and the brief echo of a job that just completed.
+// treat as taken. reserved is this admin's own reservations, including the
+// echo of a job it just completed; foreign is work the worker reports that
+// no reservation covers: manual runs and work still running from before a
+// reconnect.
 type executorLoad struct {
 	reserved int
 	foreign  int
@@ -1270,7 +1275,17 @@ func (r *Plugin) executorLoadLocked(executor *WorkerSession, jobType string) exe
 	}
 	workerID := strings.TrimSpace(executor.WorkerID)
 	covered := make(map[string]struct{})
-	for _, res := range r.execRes {
+	echoes := make(map[string]execReservation)
+	now := time.Now()
+	for token, res := range r.execRes {
+		if !res.releasedAt.IsZero() {
+			if now.Sub(res.releasedAt) > completedJobEchoGrace {
+				delete(r.execRes, token)
+			} else if res.workerID == workerID {
+				echoes[res.jobID] = res
+			}
+			continue
+		}
 		if res.workerID != workerID {
 			continue
 		}
@@ -1294,6 +1309,13 @@ func (r *Plugin) executorLoadLocked(executor *WorkerSession, jobType string) exe
 			continue
 		}
 		if jobType != "" && work.GetJobType() != jobType {
+			continue
+		}
+		if res, ok := echoes[work.GetWorkId()]; ok {
+			seenCovered++
+			load.reserved++
+			load.reservedLanes[JobTypeLane(res.jobType)]++
+			load.byType[res.jobType]++
 			continue
 		}
 		load.foreign++
@@ -1379,8 +1401,17 @@ func (r *Plugin) reserveExecutorSlot(
 	}
 	release := func() {
 		r.execResMu.Lock()
-		delete(r.execRes, token)
-		r.execResMu.Unlock()
+		defer r.execResMu.Unlock()
+		res, ok := r.execRes[token]
+		if !ok || !res.releasedAt.IsZero() {
+			return
+		}
+		if res.jobID == "" {
+			delete(r.execRes, token)
+			return
+		}
+		res.releasedAt = time.Now()
+		r.execRes[token] = res
 	}
 	return release, true
 }

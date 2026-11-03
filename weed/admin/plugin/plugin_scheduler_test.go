@@ -1383,3 +1383,83 @@ func TestDispatchGivesUpWhenNoExecutorReturnsWithinGrace(t *testing.T) {
 		t.Fatalf("expected the no-worker reason, got %+v", activity)
 	}
 }
+
+// The worker reports a job's completion before the heartbeat that frees its
+// slot, so for a moment the lane's own finished job still shows as running.
+// That echo is the lane's slot coming back, not foreign work.
+func TestDispatchWaitsForTheEchoOfItsOwnCompletedJob(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	const workerID = "worker-a"
+	pluginSvc.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: workerID,
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: "vacuum", CanExecute: true, MaxExecutionConcurrency: 1},
+		},
+	})
+	pluginSvc.registry.UpdateHeartbeat(workerID, &plugin_pb.WorkerHeartbeat{
+		WorkerId: workerID, ExecutionSlotsUsed: 0, ExecutionSlotsTotal: 1,
+	})
+	session := &streamSession{workerID: workerID, outgoing: make(chan *plugin_pb.AdminToWorkerMessage, 8), done: make(chan struct{})}
+	pluginSvc.putSession(session)
+
+	policy := schedulerPolicy{
+		ExecutionConcurrency:   1,
+		PerWorkerConcurrency:   1,
+		ExecutionTimeout:       time.Hour,
+		ExecutorReserveBackoff: time.Millisecond,
+		OrphanRehomeGrace:      time.Second,
+	}
+	proposals := []*plugin_pb.JobProposal{
+		{ProposalId: "p1", JobType: "vacuum", DedupeKey: "k1"},
+		{ProposalId: "p2", JobType: "vacuum", DedupeKey: "k2"},
+	}
+	resultCh := make(chan [3]int, 1)
+	go func() {
+		success, errCount, canceled := pluginSvc.dispatchScheduledProposals(
+			context.Background(), "vacuum", proposals, &plugin_pb.ClusterContext{}, policy)
+		resultCh <- [3]int{success, errCount, canceled}
+	}()
+
+	complete := func(message *plugin_pb.AdminToWorkerMessage) {
+		t.Helper()
+		execReq := message.GetExecuteJobRequest()
+		if execReq == nil {
+			t.Fatalf("expected execute_job_request, got %+v", message)
+		}
+		running := &plugin_pb.WorkerHeartbeat{
+			WorkerId: workerID, ExecutionSlotsUsed: 1, ExecutionSlotsTotal: 1,
+			RunningWork: []*plugin_pb.RunningWork{{
+				WorkId: execReq.Job.JobId, Kind: plugin_pb.WorkKind_WORK_KIND_EXECUTION, JobType: "vacuum",
+			}},
+		}
+		pluginSvc.registry.UpdateHeartbeat(workerID, running)
+		pluginSvc.handleJobCompleted(&plugin_pb.JobCompleted{
+			RequestId: message.RequestId, JobId: execReq.Job.JobId, JobType: "vacuum", Success: true, CompletedAt: timestamppb.Now(),
+		})
+	}
+
+	complete(<-session.outgoing)
+	select {
+	case result := <-resultCh:
+		t.Fatalf("dispatch gave up on the echo of its own completed job: %v", result)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	pluginSvc.registry.UpdateHeartbeat(workerID, &plugin_pb.WorkerHeartbeat{
+		WorkerId: workerID, ExecutionSlotsUsed: 0, ExecutionSlotsTotal: 1,
+	})
+	complete(<-session.outgoing)
+	pluginSvc.registry.UpdateHeartbeat(workerID, &plugin_pb.WorkerHeartbeat{
+		WorkerId: workerID, ExecutionSlotsUsed: 0, ExecutionSlotsTotal: 1,
+	})
+	if result := <-resultCh; result != [3]int{2, 0, 0} {
+		t.Fatalf("unexpected dispatch counts: success=%d errors=%d canceled=%d", result[0], result[1], result[2])
+	}
+}
