@@ -111,8 +111,9 @@ func (c *commandVolumeFsck) Help() string {
 	-reallyDeleteFilerEntries needs -confirmMissingVolumeDeletion as well; pass
 	it only after checking that every expected volume server is online. A purge
 	removes the whole filer entry, including its chunks on other volumes.
-	A -collection filter cannot be checked against an unlisted volume, so with a
-	filter its references are reported but never purged.
+	A -collection filter cannot be checked against an unlisted volume. With a
+	filter, a purge only reports references to unlisted volumes, and it refuses
+	to run when -volumeId names one.
 
 `
 }
@@ -170,9 +171,6 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	if c.collectionMatcher, err = wildcard.CompileCollectionMatcher(*c.collection); err != nil {
 		return fmt.Errorf("invalid collection pattern %q: %w", *c.collection, err)
 	}
-	if *c.findMissingChunksInFiler && *purgeAbsent && c.collectionMatcher != nil {
-		fmt.Fprintln(c.writer, "WARNING: collection cannot be verified for volumes absent from master; Filer entries referencing those volumes will be reported but not purged.")
-	}
 
 	c.bucketsPath, err = readFilerBucketsPath(commandEnv)
 	if err != nil {
@@ -223,6 +221,9 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 			}
 			fmt.Fprintf(c.writer, "WARNING: volume(s) not found on master (deleted or temporarily unavailable); scanning filer references for selected volume(s): %v\n", missing)
 		}
+	}
+	if *c.findMissingChunksInFiler && *purgeAbsent && c.collectionMatcher != nil {
+		fmt.Fprintln(c.writer, "WARNING: collection cannot be verified for volumes absent from master; Filer entries referencing those volumes will be reported but not purged.")
 	}
 
 	var collectCutoffFromAtNs int64 = 0
