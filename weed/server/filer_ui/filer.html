@@ -271,13 +271,24 @@
         uploadItems([...files].map(file => ({'file': file, 'path': file.webkitRelativePath || file.name})));
     }
 
+    // A large folder uploads a few files at a time instead of opening a request per file.
+    var uploadConcurrency = 4;
+
     function uploadItems(items) {
         if (items.length === 0) {
             return;
         }
         items.forEach(startUpload);
         renderProgress();
-        items.forEach(uploadFile);
+        var next = 0;
+        function uploadNext() {
+            if (next < items.length) {
+                uploadFile(items[next++], uploadNext);
+            }
+        }
+        for (var i = 0; i < uploadConcurrency; i++) {
+            uploadNext();
+        }
     }
 
     function startUpload(item, i) {
@@ -347,14 +358,15 @@
         return baseUrl + dirs.map(encodeURIComponent).join('/') + '/' + window.location.search;
     }
 
-    function uploadFile(item, i) {
+    function uploadFile(item, done) {
         var file = item.file;
         var url = uploadUrl(item.path);
         var xhr = new XMLHttpRequest();
         var fileName = item.path;
         xhr.onreadystatechange = function() {
             if (xhr.readyState == XMLHttpRequest.DONE) {
-                finishUpload(fileName)
+                finishUpload(fileName);
+                done();
             }
         }
         xhr.upload.addEventListener('progress', function(e) {
