@@ -250,7 +250,7 @@ def run_cluster(param, tmp_path_factory, identities):
         start("volume", prefix + [f"{flag}{key}={value}" for key, value in {
             "master": master_addr, "ip": "127.0.0.1", "ip.bind": "127.0.0.1",
             "port": vol, "port.grpc": vol_grpc, "dir": directory / "volume",
-            "max": 16, "preStopSeconds": 0,
+            "max": 64, "preStopSeconds": 0,
         }.items()])
         wait_for(lambda: listening(vol_grpc), processes, "volume not ready")
         start("filer", [weed, "filer", f"-master={master_addr}", "-ip=127.0.0.1",
