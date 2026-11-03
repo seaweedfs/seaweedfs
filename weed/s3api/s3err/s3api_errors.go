@@ -178,6 +178,7 @@ const (
 	ErrAccessControlListNotSupported
 	// The request's snapshot changed during a conditional write; clients can retry.
 	ErrConditionalRequestConflict
+	ErrNoSuchPublicAccessBlockConfiguration
 )
 
 // Error message constants for checksum validation
@@ -763,6 +764,12 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrNoSuchConfiguration: {
 		Code:           "NoSuchConfiguration",
 		Description:    "The specified configuration does not exist.",
+		HTTPStatusCode: http.StatusNotFound,
+	},
+
+	ErrNoSuchPublicAccessBlockConfiguration: {
+		Code:           "NoSuchPublicAccessBlockConfiguration",
+		Description:    "The public access block configuration was not found",
 		HTTPStatusCode: http.StatusNotFound,
 	},
 }

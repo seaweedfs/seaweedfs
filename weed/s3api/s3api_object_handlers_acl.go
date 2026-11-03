@@ -289,6 +289,9 @@ func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Reque
 	// Extract ACL from request (either canned ACL or XML body)
 	// This function also validates that the owner in the request matches the object owner
 	grants, errCode := ExtractAcl(r, s3a.iam, bucketOwnership, bucketOwnerId, objectOwner, amzAccountId)
+	if errCode == s3err.ErrNone {
+		errCode = rejectPublicGrants(bucketConfig, grants)
+	}
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return

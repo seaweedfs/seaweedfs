@@ -1122,8 +1122,13 @@ func (s3a *S3ApiServer) PutBucketAclHandler(w http.ResponseWriter, r *http.Reque
 	// the bucket has one, else the request's account — an anonymous request
 	// resolves to the admin account, the registry's default bucket owner.
 	ownerId := aclAccountId
-	if config, errCode := s3a.getBucketConfig(bucket); errCode == s3err.ErrNone && config.Owner != "" {
-		ownerId = config.Owner
+	bucketConfig, errCode := s3a.getBucketConfig(bucket)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+	if bucketConfig.Owner != "" {
+		ownerId = bucketConfig.Owner
 	}
 
 	// Get bucket ownership settings (these would be used for ownership validation in a full implementation)
@@ -1132,6 +1137,9 @@ func (s3a *S3ApiServer) PutBucketAclHandler(w http.ResponseWriter, r *http.Reque
 
 	// Use the existing ACL parsing logic to handle both canned ACLs and XML body
 	grants, errCode := ExtractAcl(r, s3a.iam, bucketOwnership, bucketOwnerId, ownerId, aclAccountId)
+	if errCode == s3err.ErrNone {
+		errCode = rejectPublicGrants(bucketConfig, grants)
+	}
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return

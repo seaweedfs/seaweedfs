@@ -495,3 +495,48 @@ func TestPostPolicyBucketHandlerAutoCreateDeniedForNonAdmin(t *testing.T) {
 	defer filer.mu.Unlock()
 	assert.Empty(t, filer.entries, "a non-admin POST must not create the bucket")
 }
+
+// A bucket that blocks public ACLs refuses a POST upload whose acl or grant
+// fields would make the object public, and still accepts a private one.
+func TestPostPolicyBucketHandlerBlocksPublicAcls(t *testing.T) {
+	newServer := func(t *testing.T) (*S3ApiServer, *ambiguousPutFiler) {
+		filer := &ambiguousPutFiler{
+			volume: startFakeVolumeServer(t),
+			entries: map[string]*filer_pb.Entry{"/buckets/" + postAuthzBucket: {
+				Name:        postAuthzBucket,
+				IsDirectory: true,
+				Attributes:  &filer_pb.FuseAttributes{},
+				Extended: map[string][]byte{
+					s3_constants.ExtAmzOwnerKey:          []byte("000000000000"),
+					s3_constants.ExtPublicAccessBlockKey: []byte(`<PublicAccessBlockConfiguration><BlockPublicAcls>true</BlockPublicAcls></PublicAccessBlockConfiguration>`),
+				},
+			}},
+			apply: true,
+		}
+		return newPostAutoCreateServer(t, filer), filer
+	}
+	const key = "uploads/pic.png"
+	for _, fields := range []map[string]string{
+		{"acl": "public-read"},
+		{"acl": "authenticated-read"},
+		{"x-amz-grant-read": `uri="` + s3_constants.GranteeGroupAllUsers + `"`},
+	} {
+		s3a, filer := newServer(t)
+		rec := httptest.NewRecorder()
+		s3a.PostPolicyBucketHandler(rec, newSignedPostRequestFor(t, key, postAdminAccessKey, postAdminSecretKey, fields))
+		assert.Equal(t, http.StatusForbidden, rec.Code, "%v must be refused, body: %s", fields, rec.Body.String())
+		assert.Contains(t, rec.Body.String(), "AccessDenied")
+		filer.mu.Lock()
+		assert.Nil(t, filer.entries["/buckets/"+postAuthzBucket+"/"+key], "%v must not write the object", fields)
+		filer.mu.Unlock()
+	}
+
+	s3a, filer := newServer(t)
+	rec := httptest.NewRecorder()
+	s3a.PostPolicyBucketHandler(rec, newSignedPostRequestFor(t, key, postAdminAccessKey, postAdminSecretKey,
+		map[string]string{"acl": "private", "success_action_status": "201"}))
+	assert.Equal(t, http.StatusCreated, rec.Code, "a private POST must succeed, body: %s", rec.Body.String())
+	filer.mu.Lock()
+	defer filer.mu.Unlock()
+	assert.NotNil(t, filer.entries["/buckets/"+postAuthzBucket+"/"+key])
+}

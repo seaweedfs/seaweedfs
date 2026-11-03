@@ -212,6 +212,9 @@ func (s3a *S3ApiServer) preparePutObjectACL(r *http.Request, bucket string) (*ht
 	if code == s3err.ErrNone && custom {
 		grants, code = ValidateAndTransferGrants(s3a.iam, grants)
 	}
+	if code == s3err.ErrNone {
+		code = rejectPublicGrants(metadata, grants)
+	}
 	if code != s3err.ErrNone {
 		return r, code
 	}

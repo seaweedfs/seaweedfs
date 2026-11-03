@@ -123,4 +123,18 @@ func TestNewMultipartUploadInitiateACL(t *testing.T) {
 		}
 		require.True(t, publicRead, "public-read grants should persist on the upload entry: %s", string(uploadEntry(t, f).Extended[s3_constants.ExtAmzAclKey]))
 	})
+
+	t.Run("blocked public acl is refused", func(t *testing.T) {
+		s3a, f := setup(t, true)
+		config, _ := s3a.bucketConfigCache.Get(bucket)
+		config.PublicAccessBlock = &PublicAccessBlockConfiguration{BlockPublicAcls: true}
+		rr := initiate(t, s3a, map[string]string{s3_constants.AmzCannedAcl: "public-read"})
+		require.Equal(t, http.StatusForbidden, rr.Code, rr.Body.String())
+		require.Contains(t, rr.Body.String(), "AccessDenied")
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		for key := range f.entries {
+			require.False(t, strings.HasPrefix(key, "/buckets/"+bucket+"/"+s3_constants.MultipartUploadsFolder+"/"), key)
+		}
+	})
 }

@@ -87,8 +87,10 @@ func (s3a *S3ApiServer) authorizeAnonymousObjectRead(r *http.Request, bucket, ob
 		return s3err.ErrNone
 	}
 	// Match the upload/ACL path: legacy buckets without recorded ownership
-	// controls still accept ACLs. An enforced control explicitly disables them.
-	if config.Ownership == "" || s3_constants.EffectiveOwnership(config.Ownership) != s3_constants.OwnershipBucketOwnerEnforced {
+	// controls still accept ACLs. An enforced control explicitly disables them,
+	// and IgnorePublicAcls leaves an object ACL nothing it could grant here.
+	if !config.PublicAccessBlock.ignoresPublicAcls() &&
+		(config.Ownership == "" || s3_constants.EffectiveOwnership(config.Ownership) != s3_constants.OwnershipBucketOwnerEnforced) {
 		if data, exists := extended[s3_constants.ExtAmzAclKey]; exists {
 			// An explicitly stored ACL replaces the legacy bucket-ACL fallback.
 			// Empty, malformed and non-public ACLs must not grant anonymous read.
