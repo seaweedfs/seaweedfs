@@ -1226,8 +1226,9 @@ type execReservation struct {
 // no reservation covers: manual runs and work still running from before a
 // reconnect.
 type executorLoad struct {
-	reserved int
-	foreign  int
+	reserved   int
+	foreign    int
+	unitemized int
 	// The lane of each reservation and the job types behind the whole load,
 	// so a blocked dispatch can tell whether the load is its own lane's and
 	// name what holds the worker when it is not.
@@ -1254,13 +1255,18 @@ func (l executorLoad) holders() string {
 		}
 		return types[i] < types[j]
 	})
-	parts := make([]string, 0, len(types))
-	for _, jobType := range types {
-		if n := l.byType[jobType]; n > 1 {
-			parts = append(parts, fmt.Sprintf("%s x%d", jobType, n))
-			continue
+	parts := make([]string, 0, len(types)+1)
+	add := func(holder string, n int) {
+		if n > 1 {
+			holder = fmt.Sprintf("%s x%d", holder, n)
 		}
-		parts = append(parts, jobType)
+		parts = append(parts, holder)
+	}
+	for _, jobType := range types {
+		add(jobType, l.byType[jobType])
+	}
+	if l.unitemized > 0 {
+		add("unitemized work", l.unitemized)
 	}
 	out := strings.Join(parts, ", ")
 	if l.reserved == 0 {
@@ -1343,6 +1349,7 @@ func (r *Plugin) executorLoadLocked(executor *WorkerSession, jobType string) exe
 	}
 	if unitemized > 0 {
 		load.foreign += unitemized
+		load.unitemized = unitemized
 	}
 	for _, work := range running {
 		if work.GetKind() != plugin_pb.WorkKind_WORK_KIND_EXECUTION {

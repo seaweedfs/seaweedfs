@@ -1655,3 +1655,35 @@ func TestExecutorCapacityStopsCreditingACompletedJobAfterTheNextHeartbeat(t *tes
 		t.Fatalf("a slot counted after vacuum-1 completed may hold balance work")
 	}
 }
+
+// The reason a dispatch gives up names every holder of the worker's slots,
+// the unitemized ones included.
+func TestCapacityReasonNamesUnitemizedSlots(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	const workerID = "worker-a"
+	pluginSvc.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: workerID,
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: "admin_script", CanExecute: true, MaxExecutionConcurrency: 2},
+		},
+	})
+	pluginSvc.registry.UpdateHeartbeat(workerID, &plugin_pb.WorkerHeartbeat{
+		WorkerId: workerID, ExecutionSlotsUsed: 2, ExecutionSlotsTotal: 2,
+		RunningWork: []*plugin_pb.RunningWork{{
+			WorkId: "lc-1", Kind: plugin_pb.WorkKind_WORK_KIND_EXECUTION, JobType: "s3_lifecycle",
+		}},
+	})
+
+	wait, reason := pluginSvc.executorCapacityOutlook("admin_script", schedulerPolicy{PerWorkerConcurrency: 2}, 0)
+	want := "no executor capacity for admin_script: worker worker-a has 2/2 slots used by s3_lifecycle, unitemized work this admin did not dispatch"
+	if wait || reason != want {
+		t.Fatalf("outlook = (%v, %q), want (false, %q)", wait, reason, want)
+	}
+}
