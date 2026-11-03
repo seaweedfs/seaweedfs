@@ -1283,10 +1283,10 @@ func (l executorLoad) holders() string {
 // jobType "" counts work of every type, otherwise only that type. A
 // heartbeat entry whose job id matches a reservation is the same slot seen
 // twice and counts once. Slots the worker counts without itemizing them go
-// first to this admin's jobs it does not list, a pending one only once a
-// heartbeat came after its reservation and a completed one only until the
-// worker's next heartbeat; the rest are of unknown type and count against
-// every type. Caller holds r.execResMu.
+// first to this admin's jobs it does not list, and only from a heartbeat
+// that came after the job's reservation: a pending job's from then on, a
+// completed job's until the worker's next heartbeat. The rest are of unknown
+// type and count against every type. Caller holds r.execResMu.
 func (r *Plugin) executorLoadLocked(executor *WorkerSession, jobType string) executorLoad {
 	load := executorLoad{
 		reservedLanes: make(map[SchedulerLane]int),
@@ -1338,7 +1338,7 @@ func (r *Plugin) executorLoadLocked(executor *WorkerSession, jobType string) exe
 			countReserved(res)
 		case isListed:
 			countReserved(res)
-		case executor.heartbeatAt.Before(res.releasedAt):
+		case !executor.heartbeatAt.Before(res.reservedAt) && executor.heartbeatAt.Before(res.releasedAt):
 			unlistedEchoes = append(unlistedEchoes, res)
 		}
 	}

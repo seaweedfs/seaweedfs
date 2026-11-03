@@ -1695,6 +1695,39 @@ func TestExecutorCapacityKeepsSlotsCountedBeforeAReservation(t *testing.T) {
 	}
 }
 
+// A job that completes before any heartbeat counts it has no echo: the slot
+// the last heartbeat counted is still unknown work, not the job's.
+func TestExecutorCapacityKeepsSlotsCountedBeforeACompletedJob(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	const workerID = "worker-a"
+	pluginSvc.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: workerID,
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: "vacuum", CanExecute: true, MaxExecutionConcurrency: 4},
+			{JobType: "balance", CanExecute: true, MaxExecutionConcurrency: 4},
+		},
+	})
+	oneUsed := &plugin_pb.WorkerHeartbeat{WorkerId: workerID, ExecutionSlotsUsed: 1, ExecutionSlotsTotal: 4}
+	pluginSvc.registry.UpdateHeartbeat(workerID, oneUsed)
+	_, release, err := pluginSvc.reserveExecutorByID("vacuum", schedulerPolicy{PerWorkerConcurrency: 2}, workerID, "vacuum-1")
+	if err != nil {
+		t.Fatalf("reserve vacuum-1: %v", err)
+	}
+	release()
+
+	executor, _ := pluginSvc.registry.Get(workerID)
+	if pluginSvc.executorHasCapacity(executor, "balance", schedulerPolicy{PerWorkerConcurrency: 1}) {
+		t.Fatalf("the slot counted before vacuum-1 was reserved may hold balance work")
+	}
+}
+
 // The reason a dispatch gives up names every holder of the worker's slots,
 // the unitemized ones included.
 func TestCapacityReasonNamesUnitemizedSlots(t *testing.T) {
