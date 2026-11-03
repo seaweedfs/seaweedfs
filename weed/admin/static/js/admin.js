@@ -1170,6 +1170,8 @@ async function submitCreateFolder() {
 // Files dropped on the listing, each with its path under the current directory;
 // null when the modal's inputs hold the selection.
 let droppedUploadFiles = null;
+// Bumped by every drop and picker change, so a slow folder read cannot replace a newer selection.
+let uploadSelection = 0;
 
 function selectedUploadFiles() {
     if (droppedUploadFiles) {
@@ -1504,6 +1506,7 @@ function setupFileManagerEventHandlers() {
         const input = document.getElementById(id);
         if (input) {
             input.addEventListener('change', function (e) {
+                uploadSelection++;
                 droppedUploadFiles = null;
                 updateFileListPreview();
             });
@@ -1624,6 +1627,7 @@ function setupDragAndDrop() {
     }
 
     async function handleDrop(e) {
+        const selection = ++uploadSelection;
         let dropped;
         try {
             dropped = await collectDroppedFiles(e.dataTransfer);
@@ -1632,7 +1636,7 @@ function setupDragAndDrop() {
             showErrorMessage('Failed to read the dropped files.');
             return;
         }
-        if (dropped.length === 0) {
+        if (selection !== uploadSelection || dropped.length === 0) {
             return;
         }
         document.getElementById('fileInput').value = '';
