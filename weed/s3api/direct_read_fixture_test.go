@@ -118,6 +118,15 @@ func TestGenerateDirectReadFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	v1 := base64.StdEncoding.EncodeToString(gcm.Seal(nonce, nonce, kek, nil))
+	for _, wrapped := range []struct {
+		data []byte
+		isV2 bool
+	}{{[]byte(v1), false}, {v2, true}} {
+		unwrapped, isV2, err := km.unwrapKEK(wrapped.data)
+		if err != nil || isV2 != wrapped.isV2 || !bytes.Equal(unwrapped, kek) {
+			t.Fatalf("unwrapKEK(v2=%v) = v2=%v, err=%v; want the KEK back", wrapped.isV2, isV2, err)
+		}
+	}
 
 	fixture := map[string]any{
 		"kek_secret":        "s3vectors-test",
