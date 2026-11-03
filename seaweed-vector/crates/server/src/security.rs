@@ -160,6 +160,19 @@ impl Security {
         }
     }
 
+    /// weed checks a dialed server's identity against these on top of
+    /// `grpc.ca`; the engine's master dial cannot, so it refuses to start
+    /// rather than accept every master certificate the CA signed.
+    fn refuse_server_allowlists(&self, keys: &[String]) -> Result<()> {
+        if let Some(key) = keys.iter().find(|key| self.get(key).is_some()) {
+            bail!(
+                "{key} is set, but weed-vector does not check master certificates against it; \
+                 pass a --security-toml without it to accept any master certificate under grpc.ca"
+            );
+        }
+        Ok(())
+    }
+
     /// The credentials `component` (such as `grpc.client`) dials servers with,
     /// following `security.LoadClientTLS`: a dedicated client certificate is
     /// preferred over the component's own, and once either pair is set
@@ -184,6 +197,12 @@ impl Security {
         let ca = self
             .get("grpc.ca")
             .with_context(|| format!("{component} cert and key are set but grpc.ca is not"))?;
+        self.refuse_server_allowlists(&[
+            format!("{component}.allowed_server_commonNames"),
+            "grpc.allowed_server_commonNames".into(),
+            format!("{component}.allowed_server_wildcard_domain"),
+            "grpc.allowed_server_wildcard_domain".into(),
+        ])?;
         Ok(Some(GrpcTls {
             ca_pem: self.read("grpc.ca", &ca)?,
             cert_pem: self.read(&format!("{component} cert"), &cert)?,
@@ -328,6 +347,14 @@ mod tests {
             format!("[grpc.client]\ncert = {cert:?}\nkey = {key:?}\n"),
             format!("[grpc]\nca = {ca:?}\n[grpc.client]\ncert = {cert:?}\n"),
             format!("[grpc]\nca = {ca:?}\n[grpc.client]\nclient_key = {key:?}\n"),
+            format!(
+                "[grpc]\nca = {ca:?}\nallowed_server_wildcard_domain = \".internal\"\n\
+                 [grpc.client]\ncert = {cert:?}\nkey = {key:?}\n"
+            ),
+            format!(
+                "[grpc]\nca = {ca:?}\n[grpc.client]\ncert = {cert:?}\nkey = {key:?}\n\
+                 allowed_server_commonNames = \"master\"\n"
+            ),
         ] {
             assert!(
                 security(&broken, &[])
