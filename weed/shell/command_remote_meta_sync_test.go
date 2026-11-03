@@ -152,3 +152,47 @@ func TestPullMetadataDirectoryDescendsOnlyIntoATakenDirectory(t *testing.T) {
 		})
 	}
 }
+
+type deleteRecordingFiler struct {
+	takenNameFiler
+	deletes []*filer_pb.DeleteEntryRequest
+}
+
+func (s *deleteRecordingFiler) DeleteEntry(_ context.Context, req *filer_pb.DeleteEntryRequest, _ ...grpc.CallOption) (*filer_pb.DeleteEntryResponse, error) {
+	s.deletes = append(s.deletes, req)
+	return &filer_pb.DeleteEntryResponse{}, nil
+}
+
+// A remote-backed file that meta.sync drops may be overwritten locally after
+// the directory listing; the delete must only remove the listed version.
+func TestPullMetadataDirectoryDeletesOnlyTheListedFile(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		remote      map[string]bool
+		deleteStale bool
+	}{
+		{"remote turned it into a directory", map[string]bool{"f": true}, false},
+		{"gone from the remote", map[string]bool{}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			listed := &filer_pb.Entry{
+				Name:        "f",
+				Attributes:  &filer_pb.FuseAttributes{Mtime: 10, MtimeNs: 5},
+				RemoteEntry: &filer_pb.RemoteEntry{StorageName: "r", RemoteSize: 1, RemoteMtime: 10},
+			}
+			fake := &deleteRecordingFiler{takenNameFiler: takenNameFiler{stubFilerSvc: stubFilerSvc{
+				listResp:   []*filer_pb.Entry{listed},
+				lookupResp: &filer_pb.LookupDirectoryEntryResponse{Entry: &filer_pb.Entry{Name: "f"}},
+			}}}
+			remote := &listingRemote{dirs: map[string]map[string]bool{"/": tc.remote}}
+			var out strings.Builder
+			loc := &remote_pb.RemoteStorageLocation{Name: "r", Bucket: "rb", Path: "/"}
+			if err := pullMetadataDirectory(context.Background(), fake, &out, remote, util.FullPath("/buckets/b"), loc, tc.deleteStale, false); err != nil {
+				t.Fatalf("sync: %v", err)
+			}
+			if len(fake.deletes) != 1 || fake.deletes[0].Name != "f" || fake.deletes[0].IfNotModifiedAfter != 10 || fake.deletes[0].IfNotModifiedAfterNs != 10e9+5 {
+				t.Fatalf("deletes %v must be conditioned on the listed mtime", fake.deletes)
+			}
+		})
+	}
+}

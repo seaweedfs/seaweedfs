@@ -216,7 +216,7 @@ func pullMetadataDirectory(ctx context.Context, client filer_pb.SeaweedFilerClie
 				}
 			} else {
 				fmt.Fprintf(writer, "%s (delete)\n", localPath)
-				if err := deleteLocalEntry(ctx, client, localDir, name); err != nil {
+				if err := deleteLocalEntry(ctx, client, localDir, existingEntry); err != nil {
 					return err
 				}
 			}
@@ -314,7 +314,7 @@ func deleteRemoteBackedEntry(ctx context.Context, client filer_pb.SeaweedFilerCl
 			return nil
 		}
 		fmt.Fprintf(writer, "%s (delete)\n", localPath)
-		return deleteLocalEntry(ctx, client, localDir, name)
+		return deleteLocalEntry(ctx, client, localDir, existingEntry)
 	}
 
 	children, err := listLocalDirectory(ctx, client, localPath)
@@ -336,13 +336,20 @@ func deleteRemoteBackedEntry(ctx context.Context, client filer_pb.SeaweedFilerCl
 	}
 	if empty {
 		fmt.Fprintf(writer, "%s (delete)\n", localPath)
-		return deleteLocalEntry(ctx, client, localDir, name)
+		return deleteLocalEntry(ctx, client, localDir, existingEntry)
 	}
 	return nil
 }
 
-func deleteLocalEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, localDir util.FullPath, name string) error {
-	return filer_pb.DoRemove(ctx, client, string(localDir), name, true, false, false, false, nil)
+// deleteLocalEntry removes the entry as it was listed; the filer keeps a file
+// whose mtime a local write has moved past the listed one.
+func deleteLocalEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, localDir util.FullPath, entry *filer_pb.Entry) error {
+	req := &filer_pb.DeleteEntryRequest{Directory: string(localDir), Name: entry.Name, IsDeleteData: true}
+	if !entry.IsDirectory {
+		req.IfNotModifiedAfter, req.IfNotModifiedAfterNs, _ = deleteEntryCutoff(entry.Attributes.GetMtime(), entry.Attributes.GetMtimeNs())
+	}
+	_, err := filer_pb.DoRemoveRequest(ctx, client, req)
+	return err
 }
 
 func isLocalDirectoryEmpty(ctx context.Context, client filer_pb.SeaweedFilerClient, dir util.FullPath) (bool, error) {
