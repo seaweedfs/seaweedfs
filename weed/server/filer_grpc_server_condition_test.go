@@ -434,3 +434,35 @@ func TestDeleteCutoff(t *testing.T) {
 		t.Fatal("entry past the guarded far-future second must be treated as newer")
 	}
 }
+
+func TestDeleteEntryKeepsAnEntryModifiedAfterTheCutoff(t *testing.T) {
+	listed := time.Unix(1700000000, 500)
+	for _, tc := range []struct {
+		name  string
+		req   *filer_pb.DeleteEntryRequest
+		mtime time.Time
+		kept  bool
+	}{
+		{"ns cutoff, unchanged", &filer_pb.DeleteEntryRequest{IfNotModifiedAfterNs: listed.UnixNano()}, listed, false},
+		{"ns cutoff, modified since", &filer_pb.DeleteEntryRequest{IfNotModifiedAfterNs: listed.UnixNano()}, listed.Add(time.Nanosecond), true},
+		{"seconds cutoff, same second", &filer_pb.DeleteEntryRequest{IfNotModifiedAfter: listed.Unix()}, listed.Add(time.Millisecond), false},
+		{"seconds cutoff, modified since", &filer_pb.DeleteEntryRequest{IfNotModifiedAfter: listed.Unix()}, listed.Add(time.Second), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newRenameTestStore()
+			store.entries["/test/obj"] = &filer.Entry{
+				FullPath: "/test/obj",
+				Attr:     filer.Attr{Inode: 1, Mtime: tc.mtime, Mode: 0644},
+			}
+			fs := &FilerServer{filer: newRenameTestFiler(t, store), option: &FilerOption{}, entryLockTable: util.NewLockTable[util.FullPath]()}
+			tc.req.Directory, tc.req.Name = "/test", "obj"
+			resp, err := fs.DeleteEntry(context.Background(), tc.req)
+			if err != nil || resp.Error != "" {
+				t.Fatalf("DeleteEntry: %v %q", err, resp.GetError())
+			}
+			if _, kept := store.entries["/test/obj"]; kept != tc.kept {
+				t.Fatalf("kept = %v, want %v", kept, tc.kept)
+			}
+		})
+	}
+}

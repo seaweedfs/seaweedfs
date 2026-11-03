@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -214,9 +215,12 @@ func pullMetadataDirectory(ctx context.Context, client filer_pb.SeaweedFilerClie
 					continue
 				}
 			} else {
-				fmt.Fprintf(writer, "%s (delete)\n", localPath)
-				if err := deleteLocalEntry(ctx, client, localDir, name); err != nil {
+				kept, err := deleteLocalEntry(ctx, client, writer, localDir, existingEntry)
+				if err != nil {
 					return err
+				}
+				if kept {
+					continue
 				}
 			}
 			existingEntry = nil
@@ -240,8 +244,19 @@ func pullMetadataDirectory(ctx context.Context, client filer_pb.SeaweedFilerClie
 		}
 
 		if existingEntry == nil {
-			if err := createRemoteEntry(ctx, client, writer, localDir, name, child, remoteLoc.Name); err != nil {
+			taken, err := createRemoteEntry(ctx, client, writer, localDir, name, child, remoteLoc.Name)
+			if err != nil {
 				return err
+			}
+			if taken && child.isDirectory {
+				// descending into a name a local file took would turn it into a directory
+				resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{Directory: string(localDir), Name: name})
+				if err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+					return err
+				}
+				if resp == nil || !resp.Entry.IsDirectory {
+					continue
+				}
 			}
 		} else if !child.isDirectory {
 			if existingEntry.RemoteEntry == nil {
@@ -255,9 +270,13 @@ func pullMetadataDirectory(ctx context.Context, client filer_pb.SeaweedFilerClie
 				// persist the stat-derived encoding so the next run skips the stat
 				(statFiles && existingEntry.RemoteEntry.RemoteContentEncoding == nil &&
 					child.remoteEntry.RemoteContentEncoding != nil) {
-				fmt.Fprintf(writer, "%s (update)\n", localPath)
-				if err := doSaveRemoteEntry(client, string(localDir), existingEntry, child.remoteEntry); err != nil {
+				stale, err := doSaveRemoteEntry(client, string(localDir), existingEntry, child.remoteEntry)
+				if stale {
+					fmt.Fprintf(writer, "%s (skip, changed since listed)\n", localPath)
+				} else if err != nil {
 					return err
+				} else {
+					fmt.Fprintf(writer, "%s (update)\n", localPath)
 				}
 			} else {
 				fmt.Fprintf(writer, "%s (skip)\n", localPath)
@@ -297,8 +316,8 @@ func deleteRemoteBackedEntry(ctx context.Context, client filer_pb.SeaweedFilerCl
 		if existingEntry.RemoteEntry == nil {
 			return nil
 		}
-		fmt.Fprintf(writer, "%s (delete)\n", localPath)
-		return deleteLocalEntry(ctx, client, localDir, name)
+		_, err := deleteLocalEntry(ctx, client, writer, localDir, existingEntry)
+		return err
 	}
 
 	children, err := listLocalDirectory(ctx, client, localPath)
@@ -319,14 +338,35 @@ func deleteRemoteBackedEntry(ctx context.Context, client filer_pb.SeaweedFilerCl
 		return err
 	}
 	if empty {
-		fmt.Fprintf(writer, "%s (delete)\n", localPath)
-		return deleteLocalEntry(ctx, client, localDir, name)
+		_, err = deleteLocalEntry(ctx, client, writer, localDir, existingEntry)
 	}
-	return nil
+	return err
 }
 
-func deleteLocalEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, localDir util.FullPath, name string) error {
-	return filer_pb.DoRemove(ctx, client, string(localDir), name, true, false, false, false, nil)
+// deleteLocalEntry removes the entry as it was listed; the filer keeps an entry
+// whose mtime a local write has moved past the listed one, reported as kept.
+// An entry listed without an mtime is kept once a write sets one.
+func deleteLocalEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, writer io.Writer, localDir util.FullPath, entry *filer_pb.Entry) (kept bool, err error) {
+	req := &filer_pb.DeleteEntryRequest{Directory: string(localDir), Name: entry.Name, IsDeleteData: true}
+	var ok bool
+	req.IfNotModifiedAfter, req.IfNotModifiedAfterNs, ok = deleteEntryCutoff(entry.Attributes.GetMtime(), entry.Attributes.GetMtimeNs())
+	if !ok {
+		req.IfNotModifiedAfterNs = max(1, int64(entry.Attributes.GetMtimeNs()))
+	}
+	if _, err = filer_pb.DoRemoveRequest(ctx, client, req); err != nil {
+		return false, err
+	}
+	localPath := localDir.Child(entry.Name)
+	_, err = filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{Directory: string(localDir), Name: entry.Name})
+	if err == nil {
+		fmt.Fprintf(writer, "%s (skip, changed since listed)\n", localPath)
+		return true, nil
+	}
+	if !errors.Is(err, filer_pb.ErrNotFound) {
+		return false, err
+	}
+	fmt.Fprintf(writer, "%s (delete)\n", localPath)
+	return false, nil
 }
 
 func isLocalDirectoryEmpty(ctx context.Context, client filer_pb.SeaweedFilerClient, dir util.FullPath) (bool, error) {
@@ -338,7 +378,9 @@ func isLocalDirectoryEmpty(ctx context.Context, client filer_pb.SeaweedFilerClie
 	return empty, err
 }
 
-func createRemoteEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, writer io.Writer, localDir util.FullPath, name string, child *remoteChild, storageName string) error {
+// createRemoteEntry creates the entry only if the name is still free; taken
+// reports that something was created there after the directory was listed.
+func createRemoteEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, writer io.Writer, localDir util.FullPath, name string, child *remoteChild, storageName string) (taken bool, err error) {
 	attributes := &filer_pb.FuseAttributes{
 		FileMode: remoteEntryFileMode(child.isDirectory),
 		TtlSec:   0, // Remote entries should not have TTL
@@ -356,7 +398,7 @@ func createRemoteEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, 
 		attributes.FileSize = uint64(child.remoteEntry.RemoteSize)
 		attributes.Mtime = child.remoteEntry.RemoteMtime
 	}
-	_, err := client.CreateEntry(ctx, &filer_pb.CreateEntryRequest{
+	err = filer_pb.CreateEntry(ctx, client, &filer_pb.CreateEntryRequest{
 		Directory: string(localDir),
 		Entry: &filer_pb.Entry{
 			Name:        name,
@@ -365,9 +407,17 @@ func createRemoteEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, 
 			Extended:    filer.MergeRemoteContentEncoding(remoteEntry, nil),
 			RemoteEntry: remoteEntry,
 		},
+		OExcl: true,
 	})
+	if errors.Is(err, filer_pb.ErrEntryAlreadyExists) {
+		fmt.Fprintf(writer, "%s (skip, created since listed)\n", localDir.Child(name))
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
 	fmt.Fprintf(writer, "%s (create)\n", localDir.Child(name))
-	return err
+	return false, nil
 }
 
 func childRemoteLocation(remoteLoc *remote_pb.RemoteStorageLocation, name string) *remote_pb.RemoteStorageLocation {
