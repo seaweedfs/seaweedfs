@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
@@ -212,12 +213,21 @@ func TestPutObjectDirectoryMarkerStoresHeaders(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, probe.Code, probe.Body.String())
 	filer.mu.Lock()
-	defer filer.mu.Unlock()
 	entry := filer.entries["/buckets/b/dir"]
 	require.NotNil(t, entry)
 	require.Equal(t, "STANDARD_IA", string(entry.Extended[s3_constants.AmzStorageClass]))
 	require.Equal(t, "v1", string(entry.Extended[S3TAG_PREFIX+"k1"]))
 	require.Equal(t, "v2", string(entry.Extended[S3TAG_PREFIX+"k2"]))
+	filer.mu.Unlock()
+
+	getReq := httptest.NewRequest(http.MethodGet, "/b/dir/?tagging", nil)
+	getReq = mux.SetURLVars(getReq, map[string]string{"bucket": "b", "object": "dir/"})
+	rec := httptest.NewRecorder()
+	s3a.GetObjectTaggingHandler(rec, getReq)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var tagging Tagging
+	require.NoError(t, xml.Unmarshal(rec.Body.Bytes(), &tagging))
+	require.ElementsMatch(t, []Tag{{Key: "k1", Value: "v1"}, {Key: "k2", Value: "v2"}}, tagging.TagSet.Tag)
 }
 
 // A valid storage class still stores, and the content type is still sniffed.
