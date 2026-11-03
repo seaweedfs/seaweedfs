@@ -408,9 +408,11 @@ type conditionalUpdateFiler struct {
 	req       *filer_pb.UpdateEntryRequest
 	current   *filer_pb.Entry
 	lookupErr error
+	lookupReq *filer_pb.LookupDirectoryEntryRequest
 }
 
-func (s *conditionalUpdateFiler) LookupDirectoryEntry(_ context.Context, _ *filer_pb.LookupDirectoryEntryRequest, _ ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error) {
+func (s *conditionalUpdateFiler) LookupDirectoryEntry(_ context.Context, req *filer_pb.LookupDirectoryEntryRequest, _ ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	s.lookupReq = req
 	if s.lookupErr != nil {
 		return nil, s.lookupErr
 	}
@@ -480,6 +482,9 @@ func TestUnreferencedTargets(t *testing.T) {
 			got := unreferencedTargets(context.Background(), fake, nil, "/dir", "f", targets())
 			if !slices.Equal(got, tc.want) {
 				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+			if fake.lookupReq.GetDirectory() != "/dir" || fake.lookupReq.GetName() != "f" {
+				t.Fatalf("looked up %v, want /dir f", fake.lookupReq)
 			}
 		})
 	}
