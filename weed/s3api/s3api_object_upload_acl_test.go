@@ -45,6 +45,7 @@ func TestPutObjectUploadACL(t *testing.T) {
 		copySource                                                               string
 		grantAccount, grantEmail                                                 string
 		unregisteredWriter                                                       bool
+		blockPublicAcls                                                          bool
 	}
 	tests := []uploadACLTest{
 		{name: "default private", status: 200},
@@ -151,6 +152,17 @@ func TestPutObjectUploadACL(t *testing.T) {
 		{name: "single line grants preserve condition deny", grantHeader: s3_constants.AmzAclRead, grant: `id="bucket-owner",id="upload-writer"`, policy: "bucket-condition-deny", conditionValue: `id="bucket-owner",id="upload-writer"`, status: 403, errorCode: "AccessDenied"},
 		{name: "presigned grants preserve condition deny", grantHeader: s3_constants.AmzAclRead, grant: `id="bucket-owner",id="upload-writer"`, presigned: true, policy: "bucket-condition-deny", conditionValue: `id="bucket-owner",id="upload-writer"`, status: 403, errorCode: "AccessDenied"},
 		{name: "extra grantee defeats allow condition", grantHeader: s3_constants.AmzAclRead, grant: `id="bucket-owner"`, repeatedGrant: `id="upload-writer"`, writeOnly: true, policy: "bucket-condition-allow", conditionValue: `id="bucket-owner"`, status: 403, errorCode: "AccessDenied"},
+		{name: "block public acls default", blockPublicAcls: true, status: 200},
+		{name: "block public acls private", acl: "private", blockPublicAcls: true, status: 200},
+		{name: "block public acls bucket owner full control", acl: "bucket-owner-full-control", blockPublicAcls: true, status: 200},
+		{name: "block public acls account grant", grantHeader: s3_constants.AmzAclRead, grant: `id="bucket-owner"`, blockPublicAcls: true, status: 200},
+		{name: "block public acls rejects public read", acl: "public-read", blockPublicAcls: true, status: 403, errorCode: "AccessDenied"},
+		{name: "block public acls rejects public read write", acl: "public-read-write", blockPublicAcls: true, status: 403, errorCode: "AccessDenied"},
+		{name: "block public acls rejects authenticated read", acl: "authenticated-read", blockPublicAcls: true, status: 403, errorCode: "AccessDenied"},
+		{name: "block public acls rejects presigned public read", acl: "public-read", presigned: true, blockPublicAcls: true, status: 403, errorCode: "AccessDenied"},
+		{name: "block public acls rejects all users grant", grantHeader: s3_constants.AmzAclRead, grant: `uri="` + s3_constants.GranteeGroupAllUsers + `"`, blockPublicAcls: true, status: 403, errorCode: "AccessDenied"},
+		{name: "block public acls rejects authenticated users grant", grantHeader: s3_constants.AmzAclFullControl, grant: `id="bucket-owner",uri="` + s3_constants.GranteeGroupAuthenticatedUsers + `"`, blockPublicAcls: true, status: 403, errorCode: "AccessDenied"},
+		{name: "block public acls rejected overwrite preserves acl", overwrite: true, acl: "public-read", blockPublicAcls: true, status: 403, errorCode: "AccessDenied"},
 	}
 	// Invalid multipart parameters or copy headers must not bypass policy normalization on the actual regular-upload route.
 	for _, policy := range []string{"bucket", "iam"} {
@@ -373,7 +385,11 @@ func TestPutObjectUploadACL(t *testing.T) {
 			}
 			filer.entries["/buckets/"+bucket] = bucketEntry
 			s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
-			s3a.bucketConfigCache.Set(bucket, &BucketConfig{Name: bucket, Owner: bucketOwner, Ownership: storedOwnership, Versioning: tt.versioning})
+			bucketConfig := &BucketConfig{Name: bucket, Owner: bucketOwner, Ownership: storedOwnership, Versioning: tt.versioning}
+			if tt.blockPublicAcls {
+				bucketConfig.PublicAccessBlock = &PublicAccessBlockConfiguration{BlockPublicAcls: true}
+			}
+			s3a.bucketConfigCache.Set(bucket, bucketConfig)
 			s3a.bucketRegistry = NewBucketRegistry(s3a)
 			s3a.bucketRegistry.LoadBucketMetadata(bucketEntry)
 			if tt.versioning == s3_constants.VersioningEnabled {

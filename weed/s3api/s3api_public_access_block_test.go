@@ -125,3 +125,69 @@ func TestPublicAccessBlockMissingBucket(t *testing.T) {
 		require.Contains(t, rr.Body.String(), "NoSuchBucket", tc.method)
 	}
 }
+
+func TestBlockPublicAclsRejectsPublicBucketAndObjectAcls(t *testing.T) {
+	const bucket, object = "pab-acl", "doc.txt"
+	newServer := func(t *testing.T) (*S3ApiServer, *fakeLookupFiler) {
+		// The fake filer answers every lookup with this entry, so it serves
+		// as both the bucket and the object.
+		return newPublicAccessBlockTestServer(t, &filer_pb.Entry{
+			Name:       object,
+			Attributes: &filer_pb.FuseAttributes{},
+			Extended: map[string][]byte{
+				s3_constants.ExtPublicAccessBlockKey: []byte(`<PublicAccessBlockConfiguration><BlockPublicAcls>true</BlockPublicAcls></PublicAccessBlockConfiguration>`),
+				s3_constants.ExtAmzOwnerKey:          []byte(s3_constants.AccountAdminId),
+			},
+		})
+	}
+	for _, tc := range []struct {
+		acl    string
+		status int
+	}{
+		{s3_constants.CannedAclPrivate, http.StatusOK},
+		{s3_constants.CannedAclPublicRead, http.StatusForbidden},
+		{s3_constants.CannedAclPublicReadWrite, http.StatusForbidden},
+		{s3_constants.CannedAclAuthenticatedRead, http.StatusForbidden},
+	} {
+		t.Run("bucket "+tc.acl, func(t *testing.T) {
+			s3a, filer := newServer(t)
+			req := httptest.NewRequest(http.MethodPut, "http://s3/"+bucket+"?acl", http.NoBody)
+			req = mux.SetURLVars(req, map[string]string{"bucket": bucket})
+			req.Header.Set(s3_constants.AmzCannedAcl, tc.acl)
+			rr := httptest.NewRecorder()
+			s3a.PutBucketAclHandler(rr, req)
+			require.Equal(t, tc.status, rr.Code, rr.Body.String())
+			if tc.status == http.StatusForbidden {
+				require.Contains(t, rr.Body.String(), "AccessDenied")
+				require.Empty(t, filer.txnSeen)
+			}
+		})
+		t.Run("object "+tc.acl, func(t *testing.T) {
+			s3a, filer := newServer(t)
+			req := httptest.NewRequest(http.MethodPut, "http://s3/"+bucket+"/"+object+"?acl", http.NoBody)
+			req = mux.SetURLVars(req, map[string]string{"bucket": bucket, "object": object})
+			req.Header.Set(s3_constants.AmzCannedAcl, tc.acl)
+			rr := httptest.NewRecorder()
+			s3a.PutObjectAclHandler(rr, req)
+			require.Equal(t, tc.status, rr.Code, rr.Body.String())
+			if tc.status == http.StatusForbidden {
+				require.Contains(t, rr.Body.String(), "AccessDenied")
+				require.Equal(t, s3_constants.AccountAdminId, string(filer.entry.Extended[s3_constants.ExtAmzOwnerKey]))
+				require.NotContains(t, filer.entry.Extended, s3_constants.ExtAmzAclKey)
+			}
+		})
+	}
+
+	t.Run("bucket xml all users grant", func(t *testing.T) {
+		s3a, filer := newServer(t)
+		body := `<AccessControlPolicy><Owner><ID>admin</ID></Owner><AccessControlList>` +
+			`<Grant><Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="Group"><URI>` + s3_constants.GranteeGroupAllUsers + `</URI></Grantee><Permission>READ</Permission></Grant>` +
+			`</AccessControlList></AccessControlPolicy>`
+		req := httptest.NewRequest(http.MethodPut, "http://s3/"+bucket+"?acl", strings.NewReader(body))
+		req = mux.SetURLVars(req, map[string]string{"bucket": bucket})
+		rr := httptest.NewRecorder()
+		s3a.PutBucketAclHandler(rr, req)
+		require.Equal(t, http.StatusForbidden, rr.Code, rr.Body.String())
+		require.Empty(t, filer.txnSeen)
+	})
+}
