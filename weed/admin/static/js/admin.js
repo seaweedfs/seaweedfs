@@ -1323,7 +1323,7 @@ async function submitUploadFile() {
         }
     } catch (error) {
         console.error('Upload error:', error);
-        let errorMessage = error.message || 'Failed to upload files. Please try again.';
+        let errorMessage = escapeHtml(error.message || 'Failed to upload files. Please try again.');
         if (result.uploaded > 0) {
             errorMessage += ` (${result.uploaded} file(s) were uploaded before this)`;
         }
@@ -1341,7 +1341,7 @@ async function submitUploadFile() {
     if (result.uploaded === 0) {
         let errorMessage = 'All file uploads failed';
         if (result.errors.length > 0) {
-            errorMessage += ': ' + result.errors.join(', ');
+            errorMessage += ': ' + result.errors.map(escapeHtml).join(', ');
         }
         showErrorMessage(errorMessage);
         return;
