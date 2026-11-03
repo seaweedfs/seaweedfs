@@ -561,6 +561,12 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 		}
 		tagSet = parsed
 	}
+	// Reject an invalid storage class before any chunks are uploaded.
+	storageClass := r.Header.Get(s3_constants.AmzStorageClass)
+	if storageClass != "" && !validateStorageClass(storageClass) {
+		glog.Warningf("putToFiler: invalid storage class %q for %s", storageClass, filePath)
+		return "", s3err.ErrInvalidStorageClass, SSEResponseMetadata{}
+	}
 	// NEW OPTIMIZATION: Write directly to volume servers, bypassing filer proxy
 	// This eliminates the filer proxy overhead for PUT operations
 	// Note: filePath is now passed directly instead of URL (no parsing needed)
@@ -963,13 +969,9 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 		}
 	}
 
-	// Store the storage class from header
-	if sc := r.Header.Get(s3_constants.AmzStorageClass); sc != "" {
-		if !validateStorageClass(sc) {
-			glog.Warningf("putToFiler: Invalid storage class '%s' for %s", sc, filePath)
-			return "", s3err.ErrInvalidStorageClass, SSEResponseMetadata{}
-		}
-		entry.Extended[s3_constants.AmzStorageClass] = []byte(sc)
+	// Store the storage class validated before the chunk upload
+	if storageClass != "" {
+		entry.Extended[s3_constants.AmzStorageClass] = []byte(storageClass)
 	}
 
 	// Store the tags validated before the chunk upload
