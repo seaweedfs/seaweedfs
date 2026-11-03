@@ -834,9 +834,8 @@ impl IoUnavailable {
     }
 }
 
-/// A needle read resolved under a store guard and run after it is released;
-/// the handle pins the inode, as for `DatScanPlan`. It takes no data-file
-/// lease: writers wait for one while holding the store write lock.
+/// A needle read resolved under the data-file read lease and run after it is
+/// released; the handle pins the inode, as for `DatScanPlan`.
 pub(crate) struct NeedleReadPlan {
     source: NeedleStreamSource,
     offset: i64,
