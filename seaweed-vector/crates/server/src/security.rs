@@ -522,4 +522,18 @@ mod tests {
             .map(PathBuf::from)
         );
     }
+
+    #[test]
+    fn load_takes_the_config_dir_before_the_usual_places() {
+        let dir = tempfile::tempdir().unwrap();
+        let in_config_dir = dir.path().join(FILE_NAME);
+        std::fs::write(&in_config_dir, "").unwrap();
+        let loaded = Security::load(None, Some(dir.path())).unwrap();
+        assert_eq!(loaded.path(), Some(in_config_dir.as_path()));
+        // An explicit file still wins.
+        let explicit = dir.path().join("other.toml");
+        std::fs::write(&explicit, "").unwrap();
+        let loaded = Security::load(Some(&explicit), Some(dir.path())).unwrap();
+        assert_eq!(loaded.path(), Some(explicit.as_path()));
+    }
 }
