@@ -621,6 +621,7 @@ templ Plugin(page string, initialJob string, lane string) {
                 allJobs: [],
                 allActivities: [],
                 monitorRowsScope: null,
+                refreshError: '',
                 loadedJobType: '',
                 descriptor: null,
                 config: null,
@@ -3180,8 +3181,13 @@ templ Plugin(page string, initialJob string, lane string) {
                     }
 
                     await refreshJobsAndActivities();
+                    state.refreshError = '';
                 } catch (e) {
-                    notify('Refresh failed: ' + e.message, 'error');
+                    // The 3s timer would otherwise reopen the same alert on every tick.
+                    if (e.message !== state.refreshError) {
+                        state.refreshError = e.message;
+                        notify('Refresh failed: ' + e.message, 'error');
+                    }
                 }
             }
 
