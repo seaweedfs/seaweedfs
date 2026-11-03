@@ -198,8 +198,14 @@ func (c *commandFsDistributeChunks) Do(args []string, commandEnv *CommandEnv, wr
 
 	finalChunks := chunks
 	if hadManifest {
-		// no chunk deleter here: a failed fold reports the blobs it saved
-		remanifested, manErr := filer.MaybeManifestize(newShellSaveAsChunk(commandEnv), nil, chunks)
+		dropSaved := func(saved []*filer_pb.FileChunk) {
+			var blobs []orphanedNeedle
+			for _, chunk := range saved {
+				blobs = append(blobs, orphanedNeedle{volumeId: chunk.GetFid().GetVolumeId(), fileId: chunk.GetFileIdString()})
+			}
+			deleteOrphanedNeedles(commandEnv, util.FullPath(path), blobs, true)
+		}
+		remanifested, manErr := filer.MaybeManifestize(newShellSaveAsChunk(commandEnv), dropSaved, chunks)
 		if manErr != nil {
 			fmt.Fprintf(writer, "WARNING: re-manifestize failed: %v. Writing flat chunk list.\n", manErr)
 		} else {
