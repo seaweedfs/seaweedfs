@@ -28,7 +28,10 @@ func TestHealStrandedPointerIsConditional(t *testing.T) {
 	if string(clauses[0].ExpectedEntry.Extended[s3_constants.ExtLatestVersionIdKey]) != "v1" {
 		t.Fatalf("expected entry must hold the pointer the audit saw, got %v", clauses[0].ExpectedEntry.Extended)
 	}
-	if _, ok := fake.req.Entry.Extended[s3_constants.ExtLatestVersionIdKey]; ok || string(fake.req.Entry.Extended["keep"]) != "x" {
-		t.Fatalf("written entry must clear only the pointer, got %v", fake.req.Entry.Extended)
+	written := fake.req.Entry.Extended
+	_, idKept := written[s3_constants.ExtLatestVersionIdKey]
+	_, nameKept := written[s3_constants.ExtLatestVersionFileNameKey]
+	if idKept || nameKept || string(written["keep"]) != "x" {
+		t.Fatalf("written entry must clear only the pointer, got %v", written)
 	}
 }
