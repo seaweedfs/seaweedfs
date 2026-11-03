@@ -1,12 +1,22 @@
 package shell
 
 import (
+	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 func newMergeCmd(limitMB uint64, vols ...*master_pb.VolumeInformationMessage) *commandFsMergeVolumes {
@@ -392,5 +402,114 @@ func TestWarnUnreferencedSources_ConcurrentRecording(t *testing.T) {
 	c.warnUnreferencedSources(&sb, plan, seen, "/buckets/test")
 	if sb.Len() != 0 {
 		t.Fatalf("expected no warning when all needles were seen, got %q", sb.String())
+	}
+}
+
+type conditionalUpdateFiler struct {
+	filer_pb.SeaweedFilerClient
+	err       error
+	req       *filer_pb.UpdateEntryRequest
+	current   *filer_pb.Entry
+	lookupErr error
+	lookupReq *filer_pb.LookupDirectoryEntryRequest
+}
+
+func (s *conditionalUpdateFiler) LookupDirectoryEntry(_ context.Context, req *filer_pb.LookupDirectoryEntryRequest, _ ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	s.lookupReq = req
+	if s.lookupErr != nil {
+		return nil, s.lookupErr
+	}
+	return &filer_pb.LookupDirectoryEntryResponse{Entry: s.current}, nil
+}
+
+func (s *conditionalUpdateFiler) UpdateEntry(_ context.Context, req *filer_pb.UpdateEntryRequest, _ ...grpc.CallOption) (*filer_pb.UpdateEntryResponse, error) {
+	s.req = req
+	if s.err != nil {
+		return nil, s.err
+	}
+	return &filer_pb.UpdateEntryResponse{}, nil
+}
+
+// The write-back is conditioned on the entry as it was read, and only a refusal
+// that proves nothing was written counts as stale: the caller then deletes the
+// copies it made, which would lose data if the update might have landed.
+func TestUpdateEntryIfUnchanged(t *testing.T) {
+	read := &filer_pb.Entry{Name: "f", Chunks: []*filer_pb.FileChunk{{Fid: &filer_pb.FileId{VolumeId: 3, FileKey: 1, Cookie: 7}}}}
+	moved := &filer_pb.Entry{Name: "f", Chunks: []*filer_pb.FileChunk{{Fid: &filer_pb.FileId{VolumeId: 9, FileKey: 1, Cookie: 7}}}}
+
+	for _, tc := range []struct {
+		name  string
+		err   error
+		stale bool
+	}{
+		{"committed", nil, false},
+		{"changed", status.Error(codes.FailedPrecondition, "precondition failed"), true},
+		{"deleted", status.Error(codes.NotFound, "not found"), true},
+		{"outcome unknown", status.Error(codes.Unavailable, "filer down"), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &conditionalUpdateFiler{err: tc.err}
+			stale, err := updateEntryIfUnchanged(context.Background(), fake, "/dir", moved, read)
+			if stale != tc.stale || (err != nil) != (tc.err != nil) {
+				t.Fatalf("stale=%v err=%v, want stale=%v err=%v", stale, err, tc.stale, tc.err)
+			}
+			clauses := fake.req.GetCondition().GetClauses()
+			if len(clauses) != 1 || clauses[0].Kind != filer_pb.WriteCondition_IF_ENTRY_EQUAL ||
+				!proto.Equal(clauses[0].ExpectedEntry, read) || !proto.Equal(fake.req.Entry, moved) {
+				t.Fatalf("request %v must write the moved entry conditioned on the read one", fake.req)
+			}
+		})
+	}
+}
+
+// A refused update may have been refused by an overlapping run that moved the
+// same chunk to the same volume: moveChunk keeps the key and cookie, so that
+// run's committed entry points at the very fid this run would delete.
+func TestUnreferencedTargets(t *testing.T) {
+	committed := orphanedNeedle{volumeId: 9, fileId: "9,0101000007"}
+	own := orphanedNeedle{volumeId: 9, fileId: "9,0202000007"}
+	manifestCopy := orphanedNeedle{volumeId: 9, fileId: "9,0303000007"}
+	targets := func() []orphanedNeedle { return []orphanedNeedle{committed, own, manifestCopy} }
+	direct := &filer_pb.Entry{Name: "f", Chunks: []*filer_pb.FileChunk{{FileId: committed.fileId}}}
+
+	blob, err := proto.Marshal(&filer_pb.FileChunkManifest{Chunks: []*filer_pb.FileChunk{{FileId: committed.fileId, Size: 10}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	volumeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(blob)
+	}))
+	defer volumeServer.Close()
+	lookupFn := func(_ context.Context, fileId string) ([]string, error) {
+		if fileId != manifestCopy.fileId {
+			return nil, fmt.Errorf("volume of %s unavailable", fileId)
+		}
+		return []string{volumeServer.URL + "/" + fileId}, nil
+	}
+	viaManifest := &filer_pb.Entry{Name: "f", Chunks: []*filer_pb.FileChunk{{FileId: manifestCopy.fileId, IsChunkManifest: true, Size: 10}}}
+	unreadableManifest := &filer_pb.Entry{Name: "f", Chunks: []*filer_pb.FileChunk{{FileId: "9,0404000007", IsChunkManifest: true, Size: 10}}}
+
+	for _, tc := range []struct {
+		name      string
+		current   *filer_pb.Entry
+		lookupErr error
+		want      []orphanedNeedle
+	}{
+		{"another run committed one copy", direct, nil, []orphanedNeedle{own, manifestCopy}},
+		{"another run committed copies through a manifest", viaManifest, nil, []orphanedNeedle{own}},
+		{"manifest unreadable", unreadableManifest, nil, nil},
+		{"entry deleted", direct, status.Error(codes.NotFound, "not found"), targets()},
+		{"entry unreadable", direct, status.Error(codes.Unavailable, "filer down"), nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &conditionalUpdateFiler{current: tc.current, lookupErr: tc.lookupErr}
+			got := unreferencedTargets(context.Background(), fake, lookupFn, "/dir", "f", targets())
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+			if fake.lookupReq.GetDirectory() != "/dir" || fake.lookupReq.GetName() != "f" {
+				t.Fatalf("looked up %v, want /dir f", fake.lookupReq)
+			}
+		})
 	}
 }
