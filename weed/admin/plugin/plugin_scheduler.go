@@ -334,7 +334,7 @@ func (r *Plugin) runJobTypeIteration(jobType string, policy schedulerPolicy) boo
 		r.recordSchedulerRunComplete(jobType, "timeout")
 		return false
 	}
-	detect := func() (*DetectionReport, error) {
+	detect := func(avoid *streamSession) (*DetectionReport, error) {
 		detectionTimeout := policy.DetectionTimeout
 		if detectionTimeout <= 0 {
 			detectionTimeout = defaultScheduledDetectionTimeout
@@ -344,13 +344,13 @@ func (r *Plugin) runJobTypeIteration(jobType string, policy schedulerPolicy) boo
 		}
 		detectCtx, cancelDetect := context.WithTimeout(jobCtx, detectionTimeout)
 		defer cancelDetect()
-		return r.RunDetectionWithReport(detectCtx, jobType, clusterContext, policy.MaxResults)
+		return r.runDetectionWithReport(detectCtx, jobType, clusterContext, policy.MaxResults, avoid)
 	}
 
-	report, err := detect()
-	// A detector that dropped mid-request gets one replacement pick in this
-	// iteration while the runtime budget allows; anything else waits for the
-	// next cycle, which re-detects anyway.
+	report, err := detect(nil)
+	// A detector that dropped mid-request gets one replacement pick, steered
+	// off the stream that dropped, in this iteration while the runtime budget
+	// allows; anything else waits for the next cycle, which re-detects anyway.
 	var lost *detectionWorkerDisconnectedError
 	if errors.As(err, &lost) && time.Until(start.Add(maxRuntime)) > 0 {
 		r.recordSchedulerDetectionError(jobType, err)
@@ -361,7 +361,7 @@ func (r *Plugin) runJobTypeIteration(jobType string, policy schedulerPolicy) boo
 			Stage:      "retrying",
 			OccurredAt: timeToPtr(time.Now().UTC()),
 		})
-		report, err = detect()
+		report, err = detect(lost.session)
 	}
 	releaseDetectionLock()
 	if err != nil {

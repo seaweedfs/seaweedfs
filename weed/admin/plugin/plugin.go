@@ -152,6 +152,7 @@ type pendingDetectionState struct {
 type detectionWorkerDisconnectedError struct {
 	WorkerID string
 	Reason   string
+	session  *streamSession
 }
 
 func (e *detectionWorkerDisconnectedError) Error() string {
@@ -484,10 +485,22 @@ func (r *Plugin) RunDetectionWithReport(
 	clusterContext *plugin_pb.ClusterContext,
 	maxResults int32,
 ) (*DetectionReport, error) {
+	return r.runDetectionWithReport(ctx, jobType, clusterContext, maxResults, nil)
+}
+
+// runDetectionWithReport is RunDetectionWithReport with a stream the pick
+// must avoid: the one whose closure a retry is recovering from.
+func (r *Plugin) runDetectionWithReport(
+	ctx context.Context,
+	jobType string,
+	clusterContext *plugin_pb.ClusterContext,
+	maxResults int32,
+	avoid *streamSession,
+) (*DetectionReport, error) {
 	releaseGate := r.acquireDetectionExecutionGate(jobType, false)
 	defer releaseGate()
 
-	detector, err := r.pickDetector(jobType)
+	detector, err := r.pickDetector(jobType, avoid)
 	if err != nil {
 		return nil, err
 	}
@@ -604,13 +617,13 @@ func (r *Plugin) RunDetectionWithReport(
 			})
 			return emptyReport(), ctx.Err()
 		case <-session.done:
-			return emptyReport(), r.failDetectionWorkerLost(jobType, requestID, detector.WorkerID, "", false)
+			return emptyReport(), r.failDetectionWorkerLost(jobType, requestID, session, "", false)
 		case <-liveness.C:
 			if r.isWorkerAvailable(detector.WorkerID) {
 				continue
 			}
 			// The stream may still be open, so the worker is told to stop.
-			return emptyReport(), r.failDetectionWorkerLost(jobType, requestID, detector.WorkerID, "heartbeat stale", true)
+			return emptyReport(), r.failDetectionWorkerLost(jobType, requestID, session, "heartbeat stale", true)
 		case complete, ok := <-state.complete:
 			if !ok {
 				return emptyReport(), fmt.Errorf("detection request %s interrupted", requestID)
@@ -637,8 +650,9 @@ func (r *Plugin) RunDetectionWithReport(
 // failDetectionWorkerLost closes out a detection whose worker session ended
 // before it answered. The detector lease is dropped so the next pick starts
 // fresh; the worker is only told to cancel when its stream may still be open.
-func (r *Plugin) failDetectionWorkerLost(jobType, requestID, workerID, reason string, cancelOnWorker bool) error {
-	err := &detectionWorkerDisconnectedError{WorkerID: workerID, Reason: reason}
+func (r *Plugin) failDetectionWorkerLost(jobType, requestID string, session *streamSession, reason string, cancelOnWorker bool) error {
+	workerID := session.workerID
+	err := &detectionWorkerDisconnectedError{WorkerID: workerID, Reason: reason, session: session}
 	r.clearDetectorLease(jobType, workerID)
 	if cancelOnWorker {
 		r.sendCancel(workerID, requestID, plugin_pb.WorkKind_WORK_KIND_DETECTION, err)
@@ -903,17 +917,20 @@ func (r *Plugin) FilterProposalsWithActiveJobs(jobType string, proposals []*plug
 }
 
 func (r *Plugin) PickDetectorWorker(jobType string) (*WorkerSession, error) {
-	return r.pickDetector(jobType)
+	return r.pickDetector(jobType, nil)
 }
 
 func (r *Plugin) PickExecutorWorker(jobType string) (*WorkerSession, error) {
 	return r.registry.PickExecutor(jobType)
 }
 
-func (r *Plugin) pickDetector(jobType string) (*WorkerSession, error) {
+// pickDetector picks a detector that can actually be sent to: registered,
+// with an open stream, and not the stream in avoid. The registry alone is
+// not enough because a stream can close before its entry is removed.
+func (r *Plugin) pickDetector(jobType string, avoid *streamSession) (*WorkerSession, error) {
 	leasedWorkerID := r.getDetectorLease(jobType)
 	if leasedWorkerID != "" {
-		if worker, ok := r.registry.Get(leasedWorkerID); ok {
+		if worker, ok := r.registry.Get(leasedWorkerID); ok && r.sessionIsOpen(leasedWorkerID, avoid) {
 			if capability := worker.Capabilities[jobType]; capability != nil && capability.CanDetect {
 				return worker, nil
 			}
@@ -921,13 +938,31 @@ func (r *Plugin) pickDetector(jobType string) (*WorkerSession, error) {
 		r.clearDetectorLease(jobType, leasedWorkerID)
 	}
 
-	detector, err := r.registry.PickDetector(jobType)
-	if err != nil {
-		return nil, err
+	var excluded []string
+	for {
+		detector, err := r.registry.PickDetector(jobType, excluded...)
+		if err != nil {
+			return nil, err
+		}
+		if r.sessionIsOpen(detector.WorkerID, avoid) {
+			r.setDetectorLease(jobType, detector.WorkerID)
+			return detector, nil
+		}
+		excluded = append(excluded, detector.WorkerID)
 	}
+}
 
-	r.setDetectorLease(jobType, detector.WorkerID)
-	return detector, nil
+func (r *Plugin) sessionIsOpen(workerID string, avoid *streamSession) bool {
+	session, ok := r.getSession(workerID)
+	if !ok || session == avoid {
+		return false
+	}
+	select {
+	case <-session.done:
+		return false
+	default:
+		return true
+	}
 }
 
 func (r *Plugin) getDetectorLease(jobType string) string {
@@ -1438,6 +1473,8 @@ func (r *Plugin) registerSession(session *streamSession, hello *plugin_pb.Worker
 }
 
 // publishSessionLocked installs the stream and closes the one it replaces.
+// Anything waiting on the old stream's done wakes to a registry and session
+// map that already describe the replacement.
 func (r *Plugin) publishSessionLocked(session *streamSession) {
 	old, exists := r.sessions[session.workerID]
 	r.sessions[session.workerID] = session
@@ -1461,9 +1498,9 @@ func (r *Plugin) updateRegistryFromSession(session *streamSession, update func()
 
 // cleanupSession ends one stream. Only the stream currently registered for
 // the worker takes the registry entry down with it; a stream that a reconnect
-// already replaced must not evict its successor.
+// already replaced must not evict its successor. The registry entry goes
+// before done closes so nothing woken by the closure can still pick it.
 func (r *Plugin) cleanupSession(session *streamSession) {
-	session.close()
 	workerID := session.workerID
 
 	r.sessionsMu.Lock()
@@ -1475,6 +1512,7 @@ func (r *Plugin) cleanupSession(session *streamSession) {
 	if !superseded {
 		r.registry.Remove(workerID)
 	}
+	session.close()
 	r.sessionsMu.Unlock()
 
 	if superseded {

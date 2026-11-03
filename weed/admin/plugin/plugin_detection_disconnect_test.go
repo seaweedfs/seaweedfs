@@ -355,7 +355,7 @@ func TestRegisterSessionKeepsRegistryOnLiveStream(t *testing.T) {
 	current, ok := p.getSession("worker-a")
 	require.True(t, ok)
 	require.Same(t, streamB, current)
-	_, err = p.pickDetector("ec_vacuum")
+	_, err = p.pickDetector("ec_vacuum", nil)
 	require.Error(t, err, "the capability only stream A advertised must be gone")
 
 	p.handleWorkerMessage(streamB, &plugin_pb.WorkerToAdminMessage{Body: &plugin_pb.WorkerToAdminMessage_Heartbeat{Heartbeat: &plugin_pb.WorkerHeartbeat{DetectionSlotsTotal: 2}}})
@@ -363,4 +363,44 @@ func TestRegisterSessionKeepsRegistryOnLiveStream(t *testing.T) {
 	require.True(t, ok)
 	require.NotNil(t, worker.Heartbeat)
 	require.EqualValues(t, 2, worker.Heartbeat.DetectionSlotsTotal)
+}
+
+func TestScheduledDetectionRetryAvoidsClosedDetectorStream(t *testing.T) {
+	p, err := New(Options{})
+	require.NoError(t, err)
+	defer p.Shutdown()
+	p.clusterContextProvider = func(context.Context) (*plugin_pb.ClusterContext, error) {
+		return &plugin_pb.ClusterContext{}, nil
+	}
+
+	const jobType = "vacuum"
+	sessionA := newDetectorSession(p, "worker-a", jobType)
+	sessionB := newDetectorSession(p, "worker-b", jobType)
+	// worker-a ranks first on free detection slots, for the first pick and
+	// for any retry that still sees it in the registry.
+	p.registry.UpdateHeartbeat("worker-a", &plugin_pb.WorkerHeartbeat{DetectionSlotsTotal: 4})
+	p.registry.UpdateHeartbeat("worker-b", &plugin_pb.WorkerHeartbeat{DetectionSlotsTotal: 1})
+
+	done := make(chan struct{})
+	go func() {
+		p.runJobTypeIteration(jobType, schedulerPolicy{DetectionTimeout: time.Hour, JobTypeMaxRuntime: time.Hour})
+		close(done)
+	}()
+	awaitDetectionRequest(t, sessionA)
+
+	// Close the stream while its registry entry is still present: the
+	// ordering where the retry picks before the disconnect is fully cleaned up.
+	sessionA.close()
+
+	retry := awaitDetectionRequest(t, sessionB)
+	require.Equal(t, "worker-b", p.getDetectorLease(jobType))
+	p.handleDetectionComplete("worker-b", &plugin_pb.DetectionComplete{RequestId: retry.RequestId, JobType: jobType, Success: true})
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("scheduled iteration did not finish after the retry completed")
+	}
+	require.Equal(t, "success", p.snapshotSchedulerRun(jobType).lastRunStatus)
+	require.Len(t, sessionA.outgoing, 0, "nothing may be sent on the closed stream")
 }
