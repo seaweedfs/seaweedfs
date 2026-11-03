@@ -479,13 +479,61 @@ func bucketPolicyMirrorOps(oldEntry, newEntry *filer_pb.Entry) (removeName, upda
 // GetPublicAccessBlockHandler Retrieves the PublicAccessBlock configuration for an S3 bucket
 // https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetPublicAccessBlock.html
 func (s3a *S3ApiServer) GetPublicAccessBlockHandler(w http.ResponseWriter, r *http.Request) {
-	s3err.WriteErrorResponse(w, r, s3err.ErrNotImplemented)
+	bucket, _ := s3_constants.GetBucketAndObject(r)
+	config, errCode := s3a.getBucketConfig(bucket)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+	if config.PublicAccessBlock == nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchPublicAccessBlockConfiguration)
+		return
+	}
+	response := *config.PublicAccessBlock
+	response.XMLNS = s3_constants.S3Namespace
+	writeSuccessResponseXML(w, r, response)
 }
 
+// PutPublicAccessBlockHandler https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutPublicAccessBlock.html
 func (s3a *S3ApiServer) PutPublicAccessBlockHandler(w http.ResponseWriter, r *http.Request) {
-	s3err.WriteErrorResponse(w, r, s3err.ErrNotImplemented)
+	bucket, _ := s3_constants.GetBucketAndObject(r)
+	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, err)
+		return
+	}
+	body, err := readRequestBody(r, maxPublicAccessBlockConfigurationSize)
+	if err != nil {
+		if errors.Is(err, errRequestBodyTooLarge) {
+			s3err.WriteErrorResponse(w, r, s3err.ErrEntityTooLarge)
+			return
+		}
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+		return
+	}
+	config, err := parsePublicAccessBlock(body)
+	if err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrMalformedXML)
+		return
+	}
+	if errCode := s3a.updateBucketConfig(bucket, func(bucketConfig *BucketConfig) error {
+		bucketConfig.PublicAccessBlock = config
+		return nil
+	}); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+	writeSuccessResponseEmpty(w, r)
 }
 
+// DeletePublicAccessBlockHandler https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeletePublicAccessBlock.html
 func (s3a *S3ApiServer) DeletePublicAccessBlockHandler(w http.ResponseWriter, r *http.Request) {
-	s3err.WriteErrorResponse(w, r, s3err.ErrNotImplemented)
+	bucket, _ := s3_constants.GetBucketAndObject(r)
+	if errCode := s3a.updateBucketConfig(bucket, func(bucketConfig *BucketConfig) error {
+		bucketConfig.PublicAccessBlock = nil
+		return nil
+	}); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+	s3err.WriteEmptyResponse(w, r, http.StatusNoContent)
 }

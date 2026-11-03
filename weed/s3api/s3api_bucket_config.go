@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -60,6 +61,7 @@ type BucketConfig struct {
 	DeclaredEncryption         *s3_pb.EncryptionConfiguration // declared by a table bucket's record
 	KMSKeyCache                *BucketKMSCache                // Per-bucket KMS key cache for SSE-KMS operations
 	LastModified               time.Time
+	PublicAccessBlock          *PublicAccessBlockConfiguration
 }
 
 // BucketKMSCache represents per-bucket KMS key caching for SSE-KMS operations
@@ -430,6 +432,13 @@ func (s3a *S3ApiServer) newBucketConfigFromEntry(bucket string, entry *filer_pb.
 		if ownership, exists := entry.Extended[s3_constants.ExtOwnershipKey]; exists {
 			config.Ownership = string(ownership)
 		}
+		if data, exists := entry.Extended[s3_constants.ExtPublicAccessBlockKey]; exists && len(data) > 0 {
+			if pab, err := parsePublicAccessBlock(data); err == nil {
+				config.PublicAccessBlock = pab
+			} else {
+				glog.Errorf("newBucketConfigFromEntry: bucket %s public access block: %v", bucket, err)
+			}
+		}
 		if acl, exists := entry.Extended[s3_constants.ExtAmzAclKey]; exists {
 			config.ACL = acl
 			// Parse ACL once and cache public-read status.
@@ -571,6 +580,15 @@ func applyBucketConfigToExtended(config *BucketConfig, ext map[string][]byte) er
 	}
 	setOrDelete(s3_constants.ExtVersioningKey, []byte(config.Versioning))
 	setOrDelete(s3_constants.ExtOwnershipKey, []byte(config.Ownership))
+	if config.PublicAccessBlock != nil {
+		data, err := xml.Marshal(config.PublicAccessBlock)
+		if err != nil {
+			return err
+		}
+		ext[s3_constants.ExtPublicAccessBlockKey] = data
+	} else {
+		delete(ext, s3_constants.ExtPublicAccessBlockKey)
+	}
 	setOrDelete(s3_constants.ExtAmzAclKey, config.ACL)
 	setOrDelete(s3_constants.ExtAmzOwnerKey, []byte(config.Owner))
 	setOrDelete(bucketLifecycleConfigurationXMLKey, config.LifecycleXML)
