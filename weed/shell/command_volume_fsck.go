@@ -105,9 +105,14 @@ func (c *commandVolumeFsck) Help() string {
 	walked directory by directory; there, avoid running with -reallyDeleteFromVolume
 	while files are being renamed or moved.
 
-	For -findMissingChunksInFiler, a selected volume ID can be absent from the master. Master absence may indicate a temporary outage or intentional deletion.
-	Use -confirmMissingVolumeDeletion with -reallyDeleteFilerEntries only after verifying expected volume servers are online.
-	A non-global -collection filter cannot safely purge references to a volume with no master metadata.
+	With -findMissingChunksInFiler, -volumeId may name a volume the master no
+	longer lists, to find the filer entries that still reference it. A volume is
+	also unlisted while its server is offline, so purging these entries with
+	-reallyDeleteFilerEntries needs -confirmMissingVolumeDeletion as well; pass
+	it only after checking that every expected volume server is online. A purge
+	removes the whole filer entry, including its chunks on other volumes.
+	A -collection filter cannot be checked against an unlisted volume, so its
+	references are only reported.
 
 `
 }
@@ -127,7 +132,6 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	applyPurging := fsckCommand.Bool("reallyDeleteFromVolume", false, "<expert only!> after detection, delete missing data from volumes / delete missing file entries from filer. Currently this only works with default filerGroup.")
 	c.forcePurging = fsckCommand.Bool("forcePurging", false, "delete missing data from volumes in one replica used together with applyPurging")
 	purgeAbsent := fsckCommand.Bool("reallyDeleteFilerEntries", false, "<expert only!> delete missing file entries from filer if the corresponding volume is missing for any reason, please ensure all still existing/expected volumes are connected! used together with findMissingChunksInFiler")
-	// Master absence can be a temporary outage, so destructive cleanup needs a second explicit acknowledgement.
 	confirmMissingVolumeDeletion := fsckCommand.Bool("confirmMissingVolumeDeletion", false, "confirm selected volume IDs absent from master are intentionally retired; required with -reallyDeleteFilerEntries")
 	c.purgeConcurrency = fsckCommand.Int("purgeConcurrency", 16, "parallel filer deletes for -reallyDeleteFilerEntries")
 	tempPath := fsckCommand.String("tempPath", path.Join(os.TempDir()), "path for temporary idx files")
@@ -203,10 +207,6 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 		}
 	}
 
-	// A missing ID is normally an input error. In this reverse Filer scan,
-	// it can be the target after a volume deletion. Master absence alone cannot
-	// distinguish retirement from an outage. Explicit purge still requires
-	// operator verification that all expected volumes are online.
 	if len(c.volumeIds) > 0 {
 		missing, err := validateSelectedVolumeIDs(c.volumeIds, c.knownVolumeIds, *c.findMissingChunksInFiler)
 		if err != nil {
@@ -1118,9 +1118,8 @@ func writeToFile(bytes []byte, fileName string) error {
 	return err
 }
 
-// validateSelectedVolumeIDs keeps unknown IDs as errors for normal fsck modes.
-// The reverse Filer scan is different: an ID missing from the master can be
-// the reason the operator is running it, so report those IDs and scan for refs.
+// validateSelectedVolumeIDs rejects IDs the master does not list, unless the
+// reverse filer scan is looking for references to exactly those volumes.
 func validateSelectedVolumeIDs(requested, known map[uint32]bool, allowMissing bool) ([]uint32, error) {
 	var missing []uint32
 	for vid := range requested {

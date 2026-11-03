@@ -65,8 +65,13 @@ func TestVolumeFsckFindMissingFilerEntriesForDeletedSelectedVolume(t *testing.T)
 	if !foundSurvivingChunk {
 		t.Fatal("the surviving chunk reference was not recorded for volume 7")
 	}
-	if !bytes.Contains(output.Bytes(), []byte("99,1")) {
-		t.Fatalf("missing-volume report %q does not identify selected volume 99", output.String())
+	for _, line := range []string{
+		"99,100000001 /archive/old volume not found\n",
+		"99,400000001 /archive/old volume not found\n",
+	} {
+		if !strings.Contains(output.String(), line) {
+			t.Errorf("missing-volume report %q lacks %q", output.String(), line)
+		}
 	}
 }
 

@@ -23,9 +23,8 @@ import (
 	"time"
 )
 
-// This opt-in test verifies the deleted-volume recovery path against real
-// services. It deliberately runs report-only fsck; the expert purge path is
-// not exercised by this integration test.
+// Opt-in: runs report-only and confirmed-purge scans against real services
+// after a volume is deleted, and checks that a stopped server blocks the purge.
 func TestVolumeFsckFindsReferenceAfterRealVolumeDeletion(t *testing.T) {
 	weed := buildWeedForIntegration(t)
 	base := t.TempDir()
