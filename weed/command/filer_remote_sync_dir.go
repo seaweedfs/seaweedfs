@@ -507,6 +507,13 @@ func processUpdateEvent(
 			// the object the update produced when the backend reports it
 			if updated != nil {
 				remoteEntry = updated
+			} else if stamp := message.NewEntry.RemoteEntry; stamp != nil && stamp.LastLocalSyncTsNs >= message.NewEntry.Attributes.Mtime*1e9+int64(message.NewEntry.Attributes.MtimeNs) {
+				// nothing changed on the remote, and the entry already carries a
+				// stamp taken after its mtime. Restamping logs one more update,
+				// which shouldSendToRemote still reads as dirty when the mtime is
+				// past RemoteMtime (a touch), so it comes back here and restamps
+				// again, forever.
+				return nil
 			}
 			return updateLocalEntry(filerClient, message.NewParentPath, message.NewEntry, remoteEntry)
 		}
