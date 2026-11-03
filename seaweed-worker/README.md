@@ -96,9 +96,12 @@ and `--secret-key` supply a fallback; anything the namespace does vend wins over
 them.
 
 In a vector bucket's `vector` namespace the gateway vends write credentials only
-to a caller that proves it holds `jwt.filer_signing.key`. Pass that key with
-`--filer-signing-key` so compaction, cleanup and index builds can rewrite
-vector indexes.
+to a caller that proves it holds `jwt.filer_signing.key`. The same key signs
+the admin stream when admin requires it. The worker reads it from where
+`weed worker` does: `WEED_JWT_FILER_SIGNING_KEY`, or `[jwt.filer_signing]` in
+the security.toml found in the working directory, `~/.seaweedfs`,
+`/usr/local/etc/seaweedfs` or `/etc/seaweedfs`. `--filer-signing-key` overrides
+both.
 
 ## State
 

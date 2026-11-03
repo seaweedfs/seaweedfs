@@ -11,6 +11,7 @@ pub mod config;
 pub mod config_form;
 pub mod metrics;
 pub mod registry;
+pub mod security_config;
 pub mod senders;
 pub mod stream;
 pub mod token;

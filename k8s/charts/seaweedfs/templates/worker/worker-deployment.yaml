@@ -239,6 +239,22 @@ spec:
             {{- /* the URL crosses a shell line; metacharacters must arrive as data, not syntax */}}
             - name: LANCE_NAMESPACE_URL
               value: {{ include "seaweedfs.worker.lanceNamespaceUrl" . | quote }}
+            {{- $mergedExtraEnvironmentVars := dict }}
+            {{- include "seaweedfs.mergeExtraEnvironmentVars" (dict "global" .Values.global.seaweedfs "component" .Values.worker "target" $mergedExtraEnvironmentVars) }}
+            {{- /* a duplicate would win over the chart's value and change --id or --namespace */}}
+            {{- $mergedExtraEnvironmentVars = omit $mergedExtraEnvironmentVars "POD_NAME" "LANCE_NAMESPACE_URL" }}
+            {{- range $key := keys $mergedExtraEnvironmentVars | sortAlpha }}
+            {{- $value := index $mergedExtraEnvironmentVars $key }}
+            - name: {{ $key }}
+            {{- if kindIs "string" $value }}
+              value: {{ tpl $value $ | quote }}
+            {{- else if kindIs "map" $value }}
+              valueFrom:
+                {{ toYaml $value | nindent 16 | trim }}
+            {{- else if not (kindIs "invalid" $value) }}
+              value: {{ toJson $value | quote }}
+            {{- end -}}
+            {{- end }}
           command:
             - "/bin/sh"
             - "-ec"
@@ -268,6 +284,12 @@ spec:
               --max-concurrency={{ .Values.worker.maxExecute }}
           volumeMounts:
             {{- include "seaweedfs.tmpDirVolumeMount" (list . .Values.worker.containerSecurityContext "" "") | nindent 12 }}
+            {{- if include "seaweedfs.securityConfigEnabled" . }}
+            - name: security-config
+              readOnly: true
+              mountPath: /etc/seaweedfs/security.toml
+              subPath: security.toml
+            {{- end }}
             {{- if .Values.global.seaweedfs.enableSecurity }}
             - name: ca-cert
               readOnly: true

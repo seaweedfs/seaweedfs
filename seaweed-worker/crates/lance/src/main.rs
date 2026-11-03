@@ -61,18 +61,20 @@ struct Args {
     #[arg(long)]
     tls_server_name: Option<String>,
 
-    /// Shared secret for the admin control stream, the `jwt.filer_signing.key`
-    /// value the Go worker reads from its config file. Required by admins that
-    /// authenticate the worker stream with a signing key. The Lance namespace
-    /// takes it too: only a holder gets write credentials to vector indexes.
+    /// Shared secret for the admin control stream, `jwt.filer_signing.key`.
+    /// Required by admins that authenticate the worker stream with a signing
+    /// key. The Lance namespace takes it too: only a holder gets write
+    /// credentials to vector indexes. When not given, read from where the Go
+    /// worker reads it: WEED_JWT_FILER_SIGNING_KEY, then security.toml.
     #[arg(long, env = "WEED_FILER_SIGNING_KEY")]
     filer_signing_key: Option<String>,
 
     /// Lifetime of the token minted from the signing key, mirroring
     /// `jwt.filer_signing.expires_after_seconds`. Zero mints a token with no
-    /// expiry.
-    #[arg(long, default_value = "0")]
-    filer_signing_key_expires_after_seconds: u64,
+    /// expiry. When not given, the expiry configured beside a discovered key,
+    /// else zero.
+    #[arg(long)]
+    filer_signing_key_expires_after_seconds: Option<u64>,
 
     /// Serve /health, /ready and /metrics on this port, the way
     /// `weed worker -metricsPort` does. Zero, the default, serves nothing.
@@ -137,7 +139,15 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
     let tls = args.tls()?;
-    let signing_key = weed_lance_worker::catalog::SigningKey::new(args.filer_signing_key.clone());
+    let filer_signing = match args.filer_signing_key.filter(|key| !key.is_empty()) {
+        Some(key) => Some((key, 0)),
+        None => seaweed_worker_core::security_config::filer_signing().map(|signing| {
+            tracing::info!(source = %signing.source, "using jwt.filer_signing.key");
+            (signing.key, signing.expires_after_seconds)
+        }),
+    };
+    let (filer_signing_key, configured_expiry) = filer_signing.unzip();
+    let signing_key = weed_lance_worker::catalog::SigningKey::new(filer_signing_key.clone());
     let options = WorkerOptions {
         admin_address: args.admin,
         worker_id: args.id,
@@ -145,8 +155,11 @@ async fn main() -> Result<()> {
         max_detection_concurrency: args.max_concurrency,
         max_execution_concurrency: args.max_concurrency,
         tls,
-        signing_key: args.filer_signing_key,
-        signing_key_expires_after_seconds: args.filer_signing_key_expires_after_seconds,
+        signing_key: filer_signing_key,
+        signing_key_expires_after_seconds: args
+            .filer_signing_key_expires_after_seconds
+            .or(configured_expiry)
+            .unwrap_or(0),
         ..Default::default()
     };
 

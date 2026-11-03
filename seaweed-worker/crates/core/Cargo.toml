@@ -16,6 +16,8 @@ seaweed-common = { path = "../../../seaweed-common" }
 # admin token can sign with the same HMAC the Go worker uses.
 aws-lc-rs = "1"
 base64 = "0.22"
+# The same requirement seaweed-volume states for its security.toml reader.
+toml = "0.8"
 anyhow.workspace = true
 async-trait.workspace = true
 prost.workspace = true
@@ -27,6 +29,9 @@ tonic-prost.workspace = true
 axum.workspace = true
 prometheus.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
 
 [build-dependencies]
 tonic-prost-build.workspace = true
