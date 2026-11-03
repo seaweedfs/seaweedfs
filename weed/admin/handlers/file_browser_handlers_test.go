@@ -257,7 +257,7 @@ func TestUploadFile_FolderRelativePaths(t *testing.T) {
 		return w
 	}
 
-	for _, paths := range []string{`["dir/a.txt"]`, `not json`} {
+	for _, paths := range []string{`["dir/a.txt"]`, `not json`, ``, `null`} {
 		if w := upload(paths); w.Code != http.StatusBadRequest {
 			t.Errorf("relativePaths %s: expected 400, got %d (body: %s)", paths, w.Code, w.Body.String())
 		}

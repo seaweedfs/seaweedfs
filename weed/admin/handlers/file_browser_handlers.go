@@ -293,8 +293,8 @@ func (h *FileBrowserHandlers) UploadFile(w http.ResponseWriter, r *http.Request)
 	// A folder upload names each file by its path inside the folder; the multipart
 	// file name keeps only the base name.
 	var relativePaths []string
-	if v := r.FormValue("relativePaths"); v != "" {
-		if err := json.Unmarshal([]byte(v), &relativePaths); err != nil || len(relativePaths) != len(files) {
+	if v, ok := r.MultipartForm.Value["relativePaths"]; ok {
+		if len(v) != 1 || json.Unmarshal([]byte(v[0]), &relativePaths) != nil || len(relativePaths) != len(files) {
 			writeJSONError(w, http.StatusBadRequest, "relativePaths must list one path per uploaded file")
 			return
 		}
