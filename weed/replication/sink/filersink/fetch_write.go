@@ -286,7 +286,7 @@ func (fs *FilerSink) manifestResolveRetryGate(path string, replayed *filer_pb.En
 	_, canCheckSupersession := fs.targetPathToSourcePath(path)
 	attempts := 0
 	return func(resolveErr error) (shouldContinue bool) {
-		if fs.hasSourceNewerVersion(path, getEntryMtimeNs(replayed)) {
+		if fs.sourceMovedOn(path, replayed) {
 			glog.V(1).Infof("skip retrying stale source manifest %s for %s: %v", chunkName, path, resolveErr)
 			return false
 		}
@@ -375,7 +375,7 @@ func (fs *FilerSink) uploadManifestChunk(path string, replayed *filer_pb.Entry, 
 		fileId = currentFileId
 		return nil
 	}, func(uploadErr error) (shouldContinue bool) {
-		if fs.hasSourceNewerVersion(path, getEntryMtimeNs(replayed)) {
+		if fs.sourceMovedOn(path, replayed) {
 			glog.V(1).Infof("skip retrying stale source manifest %s for %s: %v", sourceFileId, path, uploadErr)
 			return false
 		}
@@ -505,7 +505,7 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string,
 			transferStatus.mu.Unlock()
 			return false
 		}
-		if fs.hasSourceNewerVersion(path, getEntryMtimeNs(replayed)) {
+		if fs.sourceMovedOn(path, replayed) {
 			glog.V(1).Infof("skip retrying stale source %s for %s: %v", sourceChunk.GetFileIdString(), path, retryErr)
 			return false
 		}
@@ -651,20 +651,6 @@ func (fs *FilerSink) sourceStillServesChunks() bool {
 	}
 	util_http.CloseResponse(resp)
 	return true
-}
-
-// hasSourceNewerVersion reports whether the source's current entry for targetPath
-// has moved past sourceMtimeNs — gone, or a strictly-newer mtime — meaning the
-// version being replayed is stale. The lookup runs regardless of sourceMtimeNs so
-// a deleted source is detected even when the replayed mtime is epoch/unset.
-func (fs *FilerSink) hasSourceNewerVersion(targetPath string, sourceMtimeNs int64) bool {
-	sourcePath, ok := fs.targetPathToSourcePath(targetPath)
-	if !ok {
-		return false
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), sourceLookupTimeout)
-	defer cancel()
-	return SourceSupersedes(ctx, fs.filerSource, sourcePath, sourceMtimeNs)
 }
 
 // sourceDroppedChunk reports whether the live source entry still exists but no

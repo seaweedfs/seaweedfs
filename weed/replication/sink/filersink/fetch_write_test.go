@@ -616,7 +616,7 @@ func TestFetchAndWriteStopsOnMissingSourceChunk(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, fetchErr := fs.fetchAndWrite(&filer_pb.FileChunk{FileId: "5617,01abc", Size: 10}, "/dst/x.bin", entryWithMtimeNs(5*int64(time.Second)), "")
+		_, fetchErr := fs.fetchAndWrite(&filer_pb.FileChunk{FileId: "5617,01abc", Size: 10}, "/dst/x.bin", live, "")
 		done <- fetchErr
 	}()
 
@@ -1042,7 +1042,7 @@ func TestFetchAndWriteManifestChildKeepsRetrying(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		_, fetchErr := fs.fetchAndWrite(&filer_pb.FileChunk{FileId: "5617,01abc", Size: 10},
-			"/dst/x.bin", entryWithMtimeNs(5*int64(time.Second)), "5617,09fed")
+			"/dst/x.bin", live, "5617,09fed")
 		done <- fetchErr
 	}()
 
@@ -1054,6 +1054,80 @@ func TestFetchAndWriteManifestChildKeepsRetrying(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("a still-listed manifest's missing child must not retry past the gate")
 	}
+}
+
+// A transient read error must not keep retrying a version the source has
+// since committed over, even when the later version carries an older mtime.
+func TestFetchAndWriteStopsOnTransientErrorWhenCommittedOver(t *testing.T) {
+	refused, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	refusedAddr := refused.Addr().String()
+	refused.Close()
+
+	live, replayed := committedOverWithOlderMtime()
+	fs := &FilerSink{
+		filerSource: startSourceFilerWithEntry(t, live, refusedAddr, "5617"),
+		dir:         "/dst",
+		executor:    util.NewLimitedConcurrentExecutor(1),
+	}
+	fs.SetUploader(operation.NewUploaderWithHttpClient(http.DefaultClient))
+
+	done := make(chan error, 1)
+	go func() {
+		_, fetchErr := fs.fetchAndWrite(replayed.Chunks[0], "/dst/x.bin", replayed, "")
+		done <- fetchErr
+	}()
+
+	select {
+	case fetchErr := <-done:
+		if fetchErr == nil {
+			t.Fatal("a read against a refused volume server cannot succeed")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("fetchAndWrite kept retrying a version the source committed over")
+	}
+}
+
+// The resolve gate stops on the same supersession check, and like it ignores a
+// live lookup that lags the replay: an entry committed earlier proves nothing,
+// even with a newer mtime.
+func TestManifestResolveRetryGateOrdersByCommit(t *testing.T) {
+	transient := errors.New("dial tcp: connection refused")
+	live, replayed := committedOverWithOlderMtime()
+	manifestId := replayed.Chunks[0].GetFileIdString()
+
+	fs := &FilerSink{filerSource: startSourceFilerWithEntry(t, live, ""), dir: "/dst"}
+	gate := fs.manifestResolveRetryGate("/dst/x.bin", replayed, manifestId, fs.newMissingSourceChunkGate(manifestId))
+	if gate(transient) {
+		t.Fatal("a transient resolve error must not keep retrying a version the source committed over")
+	}
+
+	lagging := &filer_pb.Entry{
+		Attributes: &filer_pb.FuseAttributes{Mtime: 6},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "5617,00aaa", Size: 10}},
+		CommitTsNs: 50,
+	}
+	fs = &FilerSink{filerSource: startSourceFilerWithEntry(t, lagging, ""), dir: "/dst"}
+	gate = fs.manifestResolveRetryGate("/dst/x.bin", replayed, manifestId, fs.newMissingSourceChunkGate(manifestId))
+	if !gate(transient) {
+		t.Fatal("a live lookup committed before the replay must not stop its retries")
+	}
+}
+
+func committedOverWithOlderMtime() (live, replayed *filer_pb.Entry) {
+	live = &filer_pb.Entry{
+		Attributes: &filer_pb.FuseAttributes{Mtime: 4},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "5617,02def", Size: 10}},
+		CommitTsNs: 200,
+	}
+	replayed = &filer_pb.Entry{
+		Attributes: &filer_pb.FuseAttributes{Mtime: 5},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "5617,01abc", Size: 10}},
+		CommitTsNs: 100,
+	}
+	return live, replayed
 }
 
 // A replayed version whose source entry is gone must not cost a single chunk
