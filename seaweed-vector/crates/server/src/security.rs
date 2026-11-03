@@ -91,13 +91,16 @@ fn candidates(current_dir: Option<&Path>, home: Option<&Path>) -> Vec<PathBuf> {
     found
 }
 
-// viper keys are case-insensitive
+// viper keys are case-insensitive; of two spellings, a set value wins over an
+// empty one
 fn entry<'a>(table: &'a toml::Table, key: &str) -> Option<&'a toml::Value> {
-    table.get(key).or_else(|| {
+    let set = |v: &&toml::Value| v.as_str() != Some("");
+    table.get(key).filter(set).or_else(|| {
         table
             .iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case(key))
+            .filter(|(k, _)| k.eq_ignore_ascii_case(key))
             .map(|(_, v)| v)
+            .find(set)
     })
 }
 
@@ -321,6 +324,14 @@ mod tests {
         assert_eq!(
             s.get("grpc.vector.allowed_commonNames").as_deref(),
             Some("s3")
+        );
+        let s = security(
+            "[grpc.client]\nallowed_server_commonNames = \"\"\nallowed_server_commonnames = \"master\"\n",
+            &[],
+        );
+        assert_eq!(
+            s.get("grpc.client.allowed_server_commonNames").as_deref(),
+            Some("master")
         );
         assert!(security("", &[]).get("jwt.signing.read.key").is_none());
         assert!(
