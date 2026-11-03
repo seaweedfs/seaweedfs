@@ -1,6 +1,6 @@
 //! The cluster's `security.toml`, found and read the way weed processes do:
-//! the file in `.`, `~/.seaweedfs`, `/usr/local/etc/seaweedfs` or
-//! `/etc/seaweedfs`, with `WEED_*` environment variables over it.
+//! the file in `-config_dir`, `.`, `~/.seaweedfs`, `/usr/local/etc/seaweedfs`
+//! or `/etc/seaweedfs`, with `WEED_*` environment variables over it.
 
 use std::path::{Path, PathBuf};
 
@@ -8,10 +8,12 @@ use anyhow::{Context, Result, bail};
 
 const FILE_NAME: &str = "security.toml";
 
-/// Credentials for dialing a weed gRPC server under TLS, as
-/// `security.LoadClientTLS` builds them: the server's certificate must chain
-/// to `grpc.ca` and name the host dialed, and this client presents its own.
-#[derive(Clone)]
+/// What a weed gRPC server is dialed with, as `security.LoadClientTLS` reads
+/// it: the files, re-read at every dial, and the server identities allowed.
+/// The server's certificate must chain to `grpc.ca`; like weed clients, this
+/// one does not check it against the host dialed, only against the allowlist
+/// when one is set.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GrpcTls {
     /// `grpc.ca`
     pub ca_path: String,
@@ -19,9 +21,12 @@ pub struct GrpcTls {
     /// `key`.
     pub cert_path: String,
     pub key_path: String,
-    /// The name the server's certificate is checked against, when it is not
-    /// the host in the server's address.
-    pub server_name: Option<String>,
+    /// `allowed_server_commonNames`: when set, the server certificate's common
+    /// name or a DNS SAN must be one of these or lie under the wildcard
+    /// domain; a URI SAN must be one of these exactly.
+    pub allowed_server_names: Vec<String>,
+    /// `allowed_server_wildcard_domain`
+    pub allowed_server_wildcard_domain: String,
 }
 
 impl GrpcTls {
@@ -38,14 +43,6 @@ impl GrpcTls {
             read(&self.cert_path).await?,
             read(&self.key_path).await?,
         ))
-    }
-}
-
-impl std::fmt::Debug for GrpcTls {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("GrpcTls")
-            .field("server_name", &self.server_name)
-            .finish_non_exhaustive()
     }
 }
 
@@ -78,8 +75,23 @@ impl std::fmt::Debug for Security {
     }
 }
 
-fn candidates(current_dir: Option<&Path>, home: Option<&Path>) -> Vec<PathBuf> {
+// weed's util.ResolvePath for "~" and "~/..."
+fn resolve_path(path: &Path, home: Option<&Path>) -> PathBuf {
+    match (path.strip_prefix("~"), home) {
+        (Ok(rest), Some(home)) => home.join(rest),
+        _ => path.to_path_buf(),
+    }
+}
+
+fn candidates(
+    config_dir: Option<&Path>,
+    current_dir: Option<&Path>,
+    home: Option<&Path>,
+) -> Vec<PathBuf> {
     let mut found = Vec::new();
+    if let Some(dir) = config_dir {
+        found.push(resolve_path(dir, home).join(FILE_NAME));
+    }
     if let Some(dir) = current_dir {
         found.push(dir.join(FILE_NAME));
     }
@@ -89,6 +101,17 @@ fn candidates(current_dir: Option<&Path>, home: Option<&Path>) -> Vec<PathBuf> {
     found.push(PathBuf::from("/usr/local/etc/seaweedfs").join(FILE_NAME));
     found.push(PathBuf::from("/etc/seaweedfs").join(FILE_NAME));
     found
+}
+
+/// A comma-separated list such as `allowed_commonNames`, trimmed, without
+/// empties.
+fn names(list: Option<String>) -> Vec<String> {
+    list.unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 // viper keys are case-insensitive; of two spellings, a set value wins over an
@@ -105,16 +128,21 @@ fn entry<'a>(table: &'a toml::Table, key: &str) -> Option<&'a toml::Value> {
 }
 
 impl Security {
-    /// Reads `path`, or the first `security.toml` where weed looks; without
-    /// one, only the environment applies.
-    pub fn load(path: Option<&Path>) -> Result<Self> {
+    /// Reads `path`, or the first `security.toml` where weed looks: the
+    /// `-config_dir`, then `.`, `~/.seaweedfs`, `/usr/local/etc/seaweedfs`
+    /// and `/etc/seaweedfs`. Without one, only the environment applies.
+    pub fn load(path: Option<&Path>, config_dir: Option<&Path>) -> Result<Self> {
         let path = match path {
             Some(path) => Some(path.to_path_buf()),
             None => {
                 let home = std::env::var_os("HOME").map(PathBuf::from);
-                candidates(std::env::current_dir().ok().as_deref(), home.as_deref())
-                    .into_iter()
-                    .find(|p| p.is_file())
+                candidates(
+                    config_dir,
+                    std::env::current_dir().ok().as_deref(),
+                    home.as_deref(),
+                )
+                .into_iter()
+                .find(|p| p.is_file())
             }
         };
         Self::from_file(path, Box::new(|name| std::env::var(name).ok()))
@@ -180,28 +208,15 @@ impl Security {
         }
     }
 
-    /// weed checks a dialed server's identity against these on top of
-    /// `grpc.ca`; the engine's master dial cannot, so it refuses to start
-    /// rather than accept every master certificate the CA signed.
-    fn refuse_server_allowlists(&self, keys: &[String]) -> Result<()> {
-        if let Some(key) = keys.iter().find(|key| self.get(key).is_some()) {
-            bail!(
-                "{key} is set, but weed-vector does not check master certificates against it; \
-                 pass a --security-toml without it to accept any master certificate under grpc.ca"
-            );
-        }
-        Ok(())
-    }
-
-    /// The credentials `component` (such as `grpc.client`) dials servers with,
-    /// following `security.LoadClientTLS`: a dedicated client certificate is
-    /// preferred over the component's own, and once either pair is set
-    /// `grpc.ca` is required. `None` keeps plaintext.
-    pub fn grpc_client_tls(
-        &self,
-        component: &str,
-        server_name: Option<String>,
-    ) -> Result<Option<GrpcTls>> {
+    /// The credentials `component` (such as `grpc.client`) dials `target`
+    /// (such as `grpc.master`) with, following `security.LoadClientTLS`: a
+    /// dedicated client certificate is preferred over the component's own,
+    /// and once either pair is set `grpc.ca` is required. The server
+    /// allowlist comes from `<component>.<target>_allowed_server_commonNames`,
+    /// else `<component>.allowed_server_commonNames`, else
+    /// `grpc.allowed_server_commonNames`, and the wildcard domain likewise.
+    /// `None` keeps plaintext.
+    pub fn grpc_client_tls(&self, component: &str, target: &str) -> Result<Option<GrpcTls>> {
         let client = (
             format!("{component}.client_cert"),
             format!("{component}.client_key"),
@@ -217,20 +232,30 @@ impl Security {
         let ca = self
             .get("grpc.ca")
             .with_context(|| format!("{component} cert and key are set but grpc.ca is not"))?;
-        self.refuse_server_allowlists(&[
-            format!("{component}.allowed_server_commonNames"),
-            "grpc.allowed_server_commonNames".into(),
-            format!("{component}.allowed_server_wildcard_domain"),
-            "grpc.allowed_server_wildcard_domain".into(),
-        ])?;
         self.read("grpc.ca", &ca)?;
         self.read(&format!("{component} cert"), &cert)?;
         self.read(&format!("{component} key"), &key)?;
+        let prefix = if target == component {
+            String::new()
+        } else {
+            format!("{}_", target.trim_start_matches("grpc."))
+        };
+        let first = |suffix: &str| {
+            [
+                format!("{component}.{prefix}{suffix}"),
+                format!("{component}.{suffix}"),
+                format!("grpc.{suffix}"),
+            ]
+            .iter()
+            .find_map(|key| self.get(key))
+        };
         Ok(Some(GrpcTls {
             ca_path: ca,
             cert_path: cert,
             key_path: key,
-            server_name,
+            allowed_server_names: names(first("allowed_server_commonNames")),
+            allowed_server_wildcard_domain: first("allowed_server_wildcard_domain")
+                .unwrap_or_default(),
         }))
     }
 
@@ -256,14 +281,7 @@ impl Security {
             cert_path,
             key_path,
             ca_path,
-            allowed_common_names: self
-                .get(&allowed)
-                .unwrap_or_default()
-                .split(',')
-                .map(str::trim)
-                .filter(|name| !name.is_empty())
-                .map(str::to_string)
-                .collect(),
+            allowed_common_names: names(self.get(&allowed)),
             allowed_wildcard_domain: self.get("grpc.allowed_wildcard_domain").unwrap_or_default(),
         }))
     }
@@ -346,7 +364,7 @@ mod tests {
         let (_dir, ca, cert, key, client) = files();
         assert!(
             security("", &[])
-                .grpc_client_tls("grpc.client", None)
+                .grpc_client_tls("grpc.client", "grpc.master")
                 .unwrap()
                 .is_none()
         );
@@ -355,14 +373,23 @@ mod tests {
             &format!("[grpc]\nca = {ca:?}\n[grpc.client]\ncert = {cert:?}\nkey = {key:?}\n"),
             &[],
         )
-        .grpc_client_tls("grpc.client", Some("master.internal".into()))
+        .grpc_client_tls("grpc.client", "grpc.master")
         .unwrap()
         .unwrap();
+        assert_eq!(
+            tls,
+            GrpcTls {
+                ca_path: ca.clone(),
+                cert_path: cert.clone(),
+                key_path: key.clone(),
+                allowed_server_names: Vec::new(),
+                allowed_server_wildcard_domain: String::new(),
+            }
+        );
         assert_eq!(
             tls.pems().await.unwrap(),
             (b"CA".to_vec(), b"CERT".to_vec(), b"KEY".to_vec())
         );
-        assert_eq!(tls.server_name.as_deref(), Some("master.internal"));
         // Each dial reads the files, so a rotated pair is picked up.
         std::fs::write(&cert, "ROTATED").unwrap();
         assert_eq!(tls.pems().await.unwrap().1, b"ROTATED");
@@ -376,7 +403,7 @@ mod tests {
                 ("WEED_GRPC_CLIENT_CLIENT_KEY", &key),
             ],
         )
-        .grpc_client_tls("grpc.client", None)
+        .grpc_client_tls("grpc.client", "grpc.master")
         .unwrap()
         .unwrap();
         assert_eq!(tls.pems().await.unwrap().1, b"CLIENT");
@@ -385,22 +412,52 @@ mod tests {
             format!("[grpc.client]\ncert = {cert:?}\nkey = {key:?}\n"),
             format!("[grpc]\nca = {ca:?}\n[grpc.client]\ncert = {cert:?}\n"),
             format!("[grpc]\nca = {ca:?}\n[grpc.client]\nclient_key = {key:?}\n"),
-            format!(
-                "[grpc]\nca = {ca:?}\nallowed_server_wildcard_domain = \".internal\"\n\
-                 [grpc.client]\ncert = {cert:?}\nkey = {key:?}\n"
-            ),
-            format!(
-                "[grpc]\nca = {ca:?}\n[grpc.client]\ncert = {cert:?}\nkey = {key:?}\n\
-                 allowed_server_commonNames = \"master\"\n"
-            ),
         ] {
             assert!(
                 security(&broken, &[])
-                    .grpc_client_tls("grpc.client", None)
+                    .grpc_client_tls("grpc.client", "grpc.master")
                     .is_err(),
                 "{broken}"
             );
         }
+    }
+
+    #[test]
+    fn server_allowlists_fall_back_from_target_to_component_to_grpc() {
+        let (_dir, ca, cert, key, _client) = files();
+        let base = format!("[grpc.client]\ncert = {cert:?}\nkey = {key:?}\n");
+        let load = |grpc: &str, client_extra: &str| {
+            security(
+                &format!("[grpc]\nca = {ca:?}\n{grpc}{base}{client_extra}"),
+                &[],
+            )
+            .grpc_client_tls("grpc.client", "grpc.master")
+            .unwrap()
+            .unwrap()
+        };
+        let tls = load(
+            "allowed_server_commonNames = \"any\"\nallowed_server_wildcard_domain = \".any\"\n",
+            "",
+        );
+        assert_eq!(tls.allowed_server_names, ["any"]);
+        assert_eq!(tls.allowed_server_wildcard_domain, ".any");
+        let tls = load(
+            "allowed_server_commonNames = \"any\"\n",
+            "allowed_server_commonNames = \"client, wide\"\n",
+        );
+        assert_eq!(tls.allowed_server_names, ["client", "wide"]);
+        let tls = load(
+            "allowed_server_commonNames = \"any\"\n",
+            "allowed_server_commonNames = \"client\"\nmaster_allowed_server_commonNames = \"master\"\n",
+        );
+        assert_eq!(tls.allowed_server_names, ["master"]);
+        assert!(tls.allowed_server_wildcard_domain.is_empty());
+        // An empty spelling falls through, as firstConfigString skips "".
+        let tls = load(
+            "allowed_server_commonNames = \"any\"\n",
+            "master_allowed_server_commonNames = \"\"\n",
+        );
+        assert_eq!(tls.allowed_server_names, ["any"]);
     }
 
     #[test]
@@ -456,10 +513,15 @@ mod tests {
 
     #[test]
     fn the_file_is_searched_where_weed_looks() {
-        let found = candidates(Some(Path::new("/cwd")), Some(Path::new("/home/u")));
+        let found = candidates(
+            Some(Path::new("/etc/weed")),
+            Some(Path::new("/cwd")),
+            Some(Path::new("/home/u")),
+        );
         assert_eq!(
             found,
             [
+                "/etc/weed/security.toml",
                 "/cwd/security.toml",
                 "/home/u/.seaweedfs/security.toml",
                 "/usr/local/etc/seaweedfs/security.toml",
@@ -467,5 +529,32 @@ mod tests {
             ]
             .map(PathBuf::from)
         );
+        let home = Some(Path::new("/home/u"));
+        for (dir, want) in [
+            ("~", "/home/u/security.toml"),
+            ("~/cluster", "/home/u/cluster/security.toml"),
+            ("~other/cluster", "~other/cluster/security.toml"),
+            ("/srv/~/cluster", "/srv/~/cluster/security.toml"),
+        ] {
+            assert_eq!(
+                candidates(Some(Path::new(dir)), None, home)[0],
+                PathBuf::from(want),
+                "{dir}"
+            );
+        }
+    }
+
+    #[test]
+    fn load_takes_the_config_dir_before_the_usual_places() {
+        let dir = tempfile::tempdir().unwrap();
+        let in_config_dir = dir.path().join(FILE_NAME);
+        std::fs::write(&in_config_dir, "").unwrap();
+        let loaded = Security::load(None, Some(dir.path())).unwrap();
+        assert_eq!(loaded.path(), Some(in_config_dir.as_path()));
+        // An explicit file still wins.
+        let explicit = dir.path().join("other.toml");
+        std::fs::write(&explicit, "").unwrap();
+        let loaded = Security::load(Some(&explicit), Some(dir.path())).unwrap();
+        assert_eq!(loaded.path(), Some(explicit.as_path()));
     }
 }

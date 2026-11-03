@@ -42,13 +42,14 @@ struct Args {
     filer_signing_key: Option<String>,
     /// The cluster's security.toml, for gRPC TLS: this server's identity is
     /// [grpc.vector], the masters are dialed with [grpc.client]. By default
-    /// the file weed processes find in ., ~/.seaweedfs and /etc/seaweedfs.
+    /// the file weed processes find in -config_dir, ., ~/.seaweedfs and
+    /// /etc/seaweedfs.
     #[arg(long, env = "WEED_VECTOR_SECURITY_TOML")]
     security_toml: Option<PathBuf>,
-    /// The name the masters' TLS certificates are checked against, when it is
-    /// not their host.
-    #[arg(long, env = "WEED_VECTOR_TLS_SERVER_NAME")]
-    tls_server_name: Option<String>,
+    /// The directory weed's -config_dir names, searched for security.toml
+    /// first.
+    #[arg(long, alias = "config_dir", env = "WEED_VECTOR_CONFIG_DIR")]
+    config_dir: Option<PathBuf>,
 }
 
 fn parse_option(s: &str) -> Result<(String, String), String> {
@@ -119,12 +120,12 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     let args = Args::parse_from(normalize_args(std::env::args().collect()));
     weed_lance_worker::tls::install_default_crypto_provider();
-    let security = Security::load(args.security_toml.as_deref())?;
+    let security = Security::load(args.security_toml.as_deref(), args.config_dir.as_deref())?;
     if let Some(path) = security.path() {
         tracing::info!("security settings from {}", path.display());
     }
     let master_tls = match &args.masters {
-        Some(_) => security.grpc_client_tls("grpc.client", args.tls_server_name.clone())?,
+        Some(_) => security.grpc_client_tls("grpc.client", "grpc.master")?,
         None => None,
     };
     let server_tls = security
