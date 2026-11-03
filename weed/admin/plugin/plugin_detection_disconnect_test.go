@@ -42,6 +42,12 @@ func findActivity(activities []JobActivity, source, stage string) *JobActivity {
 	return nil
 }
 
+func (r *Plugin) detectionInFlightForTest(jobType string) bool {
+	r.schedulerMu.Lock()
+	defer r.schedulerMu.Unlock()
+	return r.detectionInFlight[jobType]
+}
+
 func (r *Plugin) pendingDetectionCountForTest() int {
 	r.pendingDetectionMu.Lock()
 	defer r.pendingDetectionMu.Unlock()
@@ -221,4 +227,97 @@ func TestRunDetectionFailsWhenDetectorHeartbeatGoesStale(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("no cancel request after stale worker")
 	}
+}
+
+func TestScheduledDetectionFailsFastOnWorkerDisconnect(t *testing.T) {
+	p, err := New(Options{})
+	require.NoError(t, err)
+	defer p.Shutdown()
+	p.clusterContextProvider = func(context.Context) (*plugin_pb.ClusterContext, error) {
+		return &plugin_pb.ClusterContext{}, nil
+	}
+
+	const jobType = "vacuum"
+	session := newDetectorSession(p, "worker-a", jobType)
+
+	done := make(chan struct{})
+	go func() {
+		p.runJobTypeIteration(jobType, schedulerPolicy{DetectionTimeout: time.Hour, JobTypeMaxRuntime: time.Hour})
+		close(done)
+	}()
+	awaitDetectionRequest(t, session)
+	require.True(t, p.detectionInFlightForTest(jobType))
+
+	p.WorkerDisconnectForTest("worker-a")
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("scheduled iteration kept waiting after its detector disconnected")
+	}
+	require.False(t, p.detectionInFlightForTest(jobType))
+	require.Equal(t, 0, p.pendingDetectionCountForTest())
+	require.Equal(t, "error", p.snapshotSchedulerRun(jobType).lastRunStatus)
+	require.False(t, p.snapshotSchedulerDetection(jobType).lastErrorAt.IsZero())
+
+	activities := p.ListActivities(jobType, 50)
+	require.NotNil(t, findActivity(activities, "detector", "disconnected"))
+	retrying := findActivity(activities, "admin_scheduler", "retrying")
+	require.NotNil(t, retrying, "the scheduler should have tried a replacement pick")
+	require.Contains(t, retrying.Message, "detection worker worker-a disconnected")
+	failed := findActivity(activities, "admin_scheduler", "failed")
+	require.NotNil(t, failed, "with no other detector the run must end as failed")
+
+	// The next cycle can detect again.
+	next := newDetectorSession(p, "worker-b", jobType)
+	go func() {
+		p.runJobTypeIteration(jobType, schedulerPolicy{DetectionTimeout: time.Hour, JobTypeMaxRuntime: time.Hour})
+	}()
+	awaitDetectionRequest(t, next)
+}
+
+func TestScheduledDetectionRetriesOnAnotherWorkerAfterDisconnect(t *testing.T) {
+	p, err := New(Options{})
+	require.NoError(t, err)
+	defer p.Shutdown()
+	p.clusterContextProvider = func(context.Context) (*plugin_pb.ClusterContext, error) {
+		return &plugin_pb.ClusterContext{}, nil
+	}
+
+	const jobType = "vacuum"
+	sessions := map[string]*streamSession{
+		"worker-a": newDetectorSession(p, "worker-a", jobType),
+		"worker-b": newDetectorSession(p, "worker-b", jobType),
+	}
+
+	done := make(chan struct{})
+	go func() {
+		p.runJobTypeIteration(jobType, schedulerPolicy{DetectionTimeout: time.Hour, JobTypeMaxRuntime: time.Hour})
+		close(done)
+	}()
+
+	first, other := "", ""
+	select {
+	case <-sessions["worker-a"].outgoing:
+		first, other = "worker-a", "worker-b"
+	case <-sessions["worker-b"].outgoing:
+		first, other = "worker-b", "worker-a"
+	case <-time.After(2 * time.Second):
+		t.Fatal("no detection request")
+	}
+
+	p.WorkerDisconnectForTest(first)
+
+	retry := awaitDetectionRequest(t, sessions[other])
+	p.handleDetectionComplete(other, &plugin_pb.DetectionComplete{RequestId: retry.RequestId, JobType: jobType, Success: true})
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("scheduled iteration did not finish after the retry completed")
+	}
+	require.False(t, p.detectionInFlightForTest(jobType))
+	require.Equal(t, "success", p.snapshotSchedulerRun(jobType).lastRunStatus)
+	require.False(t, p.snapshotSchedulerDetection(jobType).lastDetectedAt.IsZero())
+	require.NotNil(t, findActivity(p.ListActivities(jobType, 50), "admin_scheduler", "retrying"))
 }
