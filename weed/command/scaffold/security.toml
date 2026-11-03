@@ -57,9 +57,11 @@ expires_after_seconds = 10           # seconds
 #       CreateAccessKey, ...). When set, every IAM RPC must carry a Bearer
 #       token signed with this key in its "authorization" gRPC metadata; mint
 #       such a token with security.GenJwtForFilerAdmin. When empty, the IAM
-#       gRPC service runs unauthenticated, like the rest of the filer's gRPC
-#       surface — set the key on both filer and admin if the gRPC port is
-#       reachable beyond a trusted network.
+#       gRPC service runs unauthenticated and refuses its OIDC provider and
+#       role RPCs. When set, set it on both filer and admin.
+#       The key does not protect the other filer gRPC RPCs, which can read and
+#       write the IAM store under /etc/iam; if the filer gRPC port is reachable
+#       beyond a trusted network, enable [grpc.filer] mTLS below.
 # the jwt defaults to expire after 10 seconds.
 [jwt.filer_signing]
 key = ""
