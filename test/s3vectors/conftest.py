@@ -6,6 +6,7 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
+import uuid
 
 import boto3
 from botocore.config import Config
@@ -79,6 +80,23 @@ def open_cluster(request, tmp_path_factory):
     yield from run_cluster(request.param, tmp_path_factory, identities=False)
 
 
+def write_tls(directory):
+    """A CA and one certificate for localhost; volume servers serve HTTPS
+    requiring client certificates, and every client presents the same one."""
+    def openssl(*args):
+        subprocess.run(["openssl", *args], check=True, capture_output=True, cwd=directory)
+    openssl("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", "ca.key", "-out", "ca.pem",
+            "-subj", "/CN=s3vectors test CA", "-days", "2",
+            "-addext", "basicConstraints=critical,CA:TRUE", "-addext", "keyUsage=critical,keyCertSign,cRLSign")
+    openssl("req", "-newkey", "rsa:2048", "-nodes", "-keyout", "key.pem", "-out", "req.csr", "-subj", "/CN=localhost")
+    (directory / "ext.cnf").write_text(
+        "subjectAltName=DNS:localhost,IP:127.0.0.1\nextendedKeyUsage=serverAuth,clientAuth\nbasicConstraints=CA:FALSE\n")
+    openssl("x509", "-req", "-in", "req.csr", "-CA", "ca.pem", "-CAkey", "ca.key", "-CAcreateserial",
+            "-out", "cert.pem", "-days", "2", "-extfile", "ext.cnf")
+    pem = "".join(f'{key} = "{directory / name}"\n' for key, name in (("cert", "cert.pem"), ("key", "key.pem"), ("ca", "ca.pem")))
+    (directory / "security.toml").write_text(f"[https.volume]\n{pem}\n[https.client]\nenabled = true\n{pem}")
+
+
 def run_cluster(param, tmp_path_factory, identities):
     volume, mode = param
     directory = tmp_path_factory.mktemp(f"vectors-{volume}-{mode}" + ("" if identities else "-open"))
@@ -99,11 +117,20 @@ def run_cluster(param, tmp_path_factory, identities):
         master_addr = f"127.0.0.1:{master}.{master_grpc}"
         filer_addr = f"127.0.0.1:{filer}.{filer_grpc}"
 
+        # VECTOR_READ_JWT=1 makes volume reads need a JWT; every weed process
+        # and the workers sign with the key.
+        read_jwt_key = os.environ.get("VECTOR_READ_JWT") and uuid.uuid4().hex
+        # VECTOR_TLS=1 puts the volume servers behind HTTPS with client
+        # certificates; every process finds security.toml in its cwd.
+        if os.environ.get("VECTOR_TLS"):
+            write_tls(directory)
+
         def start(name, args, unset=()):
             log = stack.enter_context((directory / f"{name}.log").open("w"))
             env = dict(os.environ, AWS_ACCESS_KEY_ID="test", AWS_SECRET_ACCESS_KEY="test",
                        AWS_DEFAULT_REGION="us-east-1", AWS_EC2_METADATA_DISABLED="true",
-                       WEED_S3_SSE_KEY="s3vectors-test")
+                       WEED_S3_SSE_KEY="s3vectors-test",
+                       **({"WEED_JWT_SIGNING_READ_KEY": read_jwt_key} if read_jwt_key else {}))
             env.pop("WEED_S3_SSE_KEK", None)
             for key in unset:
                 env.pop(key)
@@ -139,7 +166,10 @@ def run_cluster(param, tmp_path_factory, identities):
                            "--storage-option", "aws_secret_access_key=test"]
         else:
             config, unset, credentials = [], ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"), []
-        start("s3", [weed, "-v=1", "s3", f"-filer={filer_addr}", *config,
+        # VECTOR_ENCRYPT_VOLUMES=1 has the gateway encrypt every chunk it
+        # stores, which direct reads must undo.
+        encrypt = ["-encryptVolumeData"] if os.environ.get("VECTOR_ENCRYPT_VOLUMES") else []
+        start("s3", [weed, "-v=1", "s3", f"-filer={filer_addr}", *config, *encrypt,
                      "-ip=127.0.0.1", "-ip.bind=127.0.0.1", f"-port={s3}",
                      f"-port.grpc={s3_grpc}", "-port.iceberg=0", f"-port.lance={lance}"], unset)
         wait_for(lambda: http_ready(f"http://127.0.0.1:{lance}/v1/namespace/root/list"), processes, "catalog not ready")
