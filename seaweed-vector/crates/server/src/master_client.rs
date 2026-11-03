@@ -64,20 +64,20 @@ pub fn master_endpoint(master: &str, tls: Option<&GrpcTls>) -> Result<Endpoint> 
         return Ok(Endpoint::new(addr)?);
     };
     weed_lance_worker::tls::install_default_crypto_provider();
-    let uri = addr.replacen("http://", "https://", 1);
-    let host = uri
-        .trim_start_matches("https://")
-        .rsplit_once(':')
-        .map_or(uri.as_str(), |(host, _)| host)
-        .trim_matches(|c| c == '[' || c == ']')
-        .to_string();
+    let endpoint = Endpoint::new(addr.replacen("http://", "https://", 1))?;
+    let host = dialed_host(&endpoint).with_context(|| format!("master {master} has no host"))?;
     let config = ClientTlsConfig::new()
         .ca_certificate(Certificate::from_pem(&tls.ca_pem))
         .identity(Identity::from_pem(&tls.cert_pem, &tls.key_pem))
         .domain_name(tls.server_name.clone().unwrap_or(host));
-    Ok(Endpoint::new(uri)?
+    Ok(endpoint
         .tls_config(config)
         .with_context(|| format!("TLS for master {master}"))?)
+}
+
+fn dialed_host(endpoint: &Endpoint) -> Option<String> {
+    let host = endpoint.uri().host()?;
+    Some(host.trim_matches(|c| c == '[' || c == ']').to_string())
 }
 
 // `host:http.grpc` normalizes to `host:http` so a leader hint naming the
@@ -264,6 +264,19 @@ mod tests {
         match tokio::time::timeout(CONNECT_TIMEOUT * 3, open).await {
             Ok(Err(e)) => assert!(format!("{e:#}").contains("did not answer"), "{e:#}"),
             other => panic!("open was not bounded: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_tls_name_is_the_dialed_host() {
+        for (master, host) in [
+            ("m1:9333", "m1"),
+            ("https://master.example", "master.example"),
+            ("https://master.example:9333", "master.example"),
+            ("[::1]:9333", "::1"),
+        ] {
+            let endpoint = Endpoint::new(grpc_addr(master).unwrap()).unwrap();
+            assert_eq!(dialed_host(&endpoint).as_deref(), Some(host), "{master}");
         }
     }
 
