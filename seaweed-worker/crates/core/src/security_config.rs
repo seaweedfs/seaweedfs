@@ -25,11 +25,15 @@ pub struct FilerSigning {
 /// None when neither configures one.
 pub fn filer_signing() -> Option<FilerSigning> {
     let env = |key: &str| std::env::var_os(key);
-    let file = location::find(
-        std::env::current_dir().ok().as_deref(),
-        location::home_dir(&env).as_deref(),
-    );
-    filer_signing_from(&env, file.as_deref())
+    filer_signing_in(&env, std::env::current_dir().ok().as_deref())
+}
+
+fn filer_signing_in(
+    env: &dyn Fn(&str) -> Option<OsString>,
+    current_dir: Option<&Path>,
+) -> Option<FilerSigning> {
+    let file = location::find(current_dir, location::home_dir(env).as_deref());
+    filer_signing_from(env, file.as_deref())
 }
 
 fn filer_signing_from(
@@ -195,6 +199,30 @@ key = "read-key"
         assert_eq!(got.key, "file-key");
         assert_eq!(got.expires_after_seconds, 5);
         assert_eq!(got.source, path.display().to_string());
+    }
+
+    #[test]
+    fn discovers_the_file_in_the_working_directory_then_home() {
+        let work = tempfile::TempDir::new().unwrap();
+        let home = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir(home.path().join(".seaweedfs")).unwrap();
+        let in_home = home
+            .path()
+            .join(".seaweedfs")
+            .join(location::SECURITY_CONFIG_FILE_NAME);
+        std::fs::write(&in_home, "[jwt.filer_signing]\nkey = \"home-key\"\n").unwrap();
+        let vars = [("HOME", home.path().to_str().unwrap())];
+        let env = env_of(&vars);
+
+        let got = filer_signing_in(&env, Some(work.path())).unwrap();
+        assert_eq!(got.key, "home-key");
+        assert_eq!(got.source, in_home.display().to_string());
+
+        write(&work, "[jwt.filer_signing]\nkey = \"work-key\"\n");
+        assert_eq!(
+            filer_signing_in(&env, Some(work.path())).unwrap().key,
+            "work-key"
+        );
     }
 
     #[test]
