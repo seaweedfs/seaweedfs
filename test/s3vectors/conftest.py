@@ -1,4 +1,7 @@
+import base64
 import contextlib
+import hashlib
+import hmac
 import http.client
 import json
 import os
@@ -100,11 +103,18 @@ def write_tls(directory):
     (directory / "security.toml").write_text(f"[https.volume]\n{pem}\n[https.client]\nenabled = true\n{pem}")
 
 
-def probe_hardening(endpoint, filer, vol, directory):
+def read_token(key, fid):
+    def encode(data):
+        return base64.urlsafe_b64encode(data).rstrip(b"=")
+    signed = encode(b'{"alg":"HS256","typ":"JWT"}') + b"." + encode(json.dumps({"fid": fid}).encode())
+    return (signed + b"." + encode(hmac.new(key.encode(), signed, hashlib.sha256).digest())).decode()
+
+
+def probe_hardening(endpoint, filer, vol, directory, read_jwt_key):
     """The hardened switches must be enforced, not only configured: a TLS
     volume server refuses plain HTTP and a connection without the client
-    certificate, and a volume server under a read key refuses an unsigned
-    read of a real chunk."""
+    certificate, a volume server under a read key refuses an unsigned
+    read of a real chunk, and an encrypted chunk is stored as ciphertext."""
     scheme = "https" if os.environ.get("VECTOR_TLS") else "http"
     context = None
     if scheme == "https":
@@ -120,23 +130,35 @@ def probe_hardening(endpoint, filer, vol, directory):
         context.load_cert_chain(directory / "cert.pem", directory / "key.pem")
         with urllib.request.urlopen(f"https://127.0.0.1:{vol}/status", timeout=5, context=context) as response:
             assert response.status == 200
-    if os.environ.get("VECTOR_READ_JWT"):
-        s3 = boto3.client("s3", endpoint_url=endpoint, aws_access_key_id="test", aws_secret_access_key="test",
-                          region_name="us-east-1", config=Config(s3={"addressing_style": "path"}))
-        bucket = "hardening-" + uuid.uuid4().hex[:12]
-        s3.create_bucket(Bucket=bucket)
-        try:
-            s3.put_object(Bucket=bucket, Key="chunk", Body=b"x" * 1024)
-            with urllib.request.urlopen(f"http://127.0.0.1:{filer}/buckets/{bucket}/chunk?metadata=true", timeout=5) as response:
-                fid = json.load(response)["chunks"][0]["file_id"]
+    encrypted = os.environ.get("VECTOR_ENCRYPT_VOLUMES")
+    if not (read_jwt_key or encrypted):
+        return
+    s3 = boto3.client("s3", endpoint_url=endpoint, aws_access_key_id="test", aws_secret_access_key="test",
+                      region_name="us-east-1", config=Config(s3={"addressing_style": "path"}))
+    bucket = "hardening-" + uuid.uuid4().hex[:12]
+    body = b"x" * 1024
+    s3.create_bucket(Bucket=bucket)
+    try:
+        s3.put_object(Bucket=bucket, Key="chunk", Body=body)
+        with urllib.request.urlopen(f"http://127.0.0.1:{filer}/buckets/{bucket}/chunk?metadata=true", timeout=5) as response:
+            chunk = json.load(response)["chunks"][0]
+        url = f"{scheme}://127.0.0.1:{vol}/{chunk['file_id']}"
+        headers = {}
+        if read_jwt_key:
             try:
-                with urllib.request.urlopen(f"{scheme}://127.0.0.1:{vol}/{fid}", timeout=5, context=context):
+                with urllib.request.urlopen(url, timeout=5, context=context):
                     raise AssertionError("the volume server served an unsigned read")
             except urllib.error.HTTPError as error:
                 assert error.code == 401, error
-        finally:
-            s3.delete_object(Bucket=bucket, Key="chunk")
-            s3.delete_bucket(Bucket=bucket)
+            headers["Authorization"] = "Bearer " + read_token(read_jwt_key, chunk["file_id"])
+        with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=5, context=context) as response:
+            stored = response.read()
+        if encrypted:
+            assert chunk.get("cipher_key"), "the gateway stored a chunk without a cipher key"
+            assert stored != body, "the volume server holds the chunk in plaintext"
+    finally:
+        s3.delete_object(Bucket=bucket, Key="chunk")
+        s3.delete_bucket(Bucket=bucket)
 
 
 def run_cluster(param, tmp_path_factory, identities):
@@ -215,8 +237,8 @@ def run_cluster(param, tmp_path_factory, identities):
                      "-ip=127.0.0.1", "-ip.bind=127.0.0.1", f"-port={s3}",
                      f"-port.grpc={s3_grpc}", "-port.iceberg=0", f"-port.lance={lance}"], unset)
         wait_for(lambda: http_ready(f"http://127.0.0.1:{lance}/v1/namespace/root/list"), processes, "catalog not ready")
-        if os.environ.get("VECTOR_TLS") or os.environ.get("VECTOR_READ_JWT"):
-            probe_hardening(endpoint, filer, vol, directory)
+        if os.environ.get("VECTOR_TLS") or read_jwt_key or encrypt:
+            probe_hardening(endpoint, filer, vol, directory, read_jwt_key)
         start("vector", [engine, "--namespace", f"http://127.0.0.1:{lance}",
                          "--masters", master_addr, "--listen", f"127.0.0.1:{vector}", *credentials], unset)
         wait_for(lambda: listening(vector), processes, "vector engine not ready")
