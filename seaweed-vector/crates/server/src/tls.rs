@@ -30,6 +30,7 @@ use crate::security::GrpcServerTls;
 /// certificate files at; a Go duration such as `30m` or `500ms`.
 pub const REFRESH_INTERVAL_ENV: &str = "WEED_TLS_CERT_REFRESH_INTERVAL";
 const DEFAULT_REFRESH_INTERVAL: Duration = Duration::from_secs(5 * 3600);
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// How often the files are re-read: the environment's value, else weed's
 /// default of five hours.
@@ -188,32 +189,44 @@ impl ServerTls {
     }
 
     /// Connections accepted on `listener` and taken through the TLS
-    /// handshake with the configuration current at that moment; a failed
+    /// handshake with the configuration current at that moment. Each
+    /// handshake runs on its own task under `HANDSHAKE_TIMEOUT`, so a peer
+    /// that connects and stays silent holds up nobody else; a failed
     /// handshake is logged and skipped, as the Rust volume server does.
     pub fn incoming(
         self: &Arc<Self>,
         listener: TcpListener,
     ) -> impl Stream<Item = std::io::Result<TlsStream<TcpStream>>> + Send + 'static {
         let tls = self.clone();
-        futures::stream::unfold(listener, move |listener| {
-            let tls = tls.clone();
-            async move {
-                loop {
-                    match listener.accept().await {
-                        Ok((stream, peer)) => {
-                            let _ = stream.set_nodelay(true);
-                            match tls.acceptor().accept(stream).await {
-                                Ok(stream) => return Some((Ok(stream), listener)),
-                                Err(err) => {
-                                    tracing::debug!("gRPC TLS handshake from {peer}: {err}")
-                                }
-                            }
-                        }
-                        Err(err) => return Some((Err(err), listener)),
+        let (tx, rx) = tokio::sync::mpsc::channel(64);
+        tokio::spawn(async move {
+            loop {
+                let accepted = tokio::select! {
+                    _ = tx.closed() => return,
+                    accepted = listener.accept() => accepted,
+                };
+                let (stream, peer) = match accepted {
+                    Ok(accepted) => accepted,
+                    Err(err) => {
+                        let _ = tx.send(Err(err)).await;
+                        continue;
                     }
-                }
+                };
+                let _ = stream.set_nodelay(true);
+                let acceptor = tls.acceptor();
+                let tx = tx.clone();
+                tokio::spawn(async move {
+                    match tokio::time::timeout(HANDSHAKE_TIMEOUT, acceptor.accept(stream)).await {
+                        Ok(Ok(stream)) => {
+                            let _ = tx.send(Ok(stream)).await;
+                        }
+                        Ok(Err(err)) => tracing::debug!("gRPC TLS handshake from {peer}: {err}"),
+                        Err(_) => tracing::debug!("gRPC TLS handshake from {peer} timed out"),
+                    }
+                });
             }
-        })
+        });
+        tokio_stream::wrappers::ReceiverStream::new(rx)
     }
 
     /// Re-reads the files every `every`, and at once on SIGHUP.
@@ -422,6 +435,42 @@ mod tests {
             Arc::ptr_eq(after.config(), tls.acceptor().config()),
             "a broken file leaves the working configuration in place"
         );
+    }
+
+    #[tokio::test]
+    async fn a_silent_peer_does_not_hold_up_the_next_handshake() {
+        use futures::StreamExt;
+        weed_lance_worker::tls::install_default_crypto_provider();
+        let dir = tempfile::tempdir().unwrap();
+        let tls = ServerTls::load(install(dir.path(), "a")).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut incoming = Box::pin(tls.incoming(listener));
+        let _silent = TcpStream::connect(addr).await.unwrap();
+
+        let mut roots = RootCertStore::empty();
+        for cert in CertificateDer::pem_file_iter(fixture("ca.pem")).unwrap() {
+            roots.add(cert.unwrap()).unwrap();
+        }
+        let config = rustls::ClientConfig::builder()
+            .with_root_certificates(roots)
+            .with_client_auth_cert(
+                vec![CertificateDer::from_pem_file(fixture("a.pem")).unwrap()],
+                PrivateKeyDer::from_pem_file(fixture("a.key")).unwrap(),
+            )
+            .unwrap();
+        let client = tokio::spawn(async move {
+            let tcp = TcpStream::connect(addr).await.unwrap();
+            tokio_rustls::TlsConnector::from(Arc::new(config))
+                .connect("localhost".try_into().unwrap(), tcp)
+                .await
+        });
+        let served = tokio::time::timeout(Duration::from_secs(5), incoming.next()).await;
+        assert!(
+            matches!(served, Ok(Some(Ok(_)))),
+            "the handshake waited behind a silent peer"
+        );
+        client.await.unwrap().unwrap();
     }
 
     #[test]
