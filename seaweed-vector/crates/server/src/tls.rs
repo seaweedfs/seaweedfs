@@ -70,7 +70,7 @@ fn parse_go_duration(s: &str) -> Option<Duration> {
             "ns" => 1e-9,
             _ => return None,
         };
-        total += Duration::from_secs_f64(value * seconds);
+        total = total.checked_add(Duration::try_from_secs_f64(value * seconds).ok()?)?;
         rest = tail;
     }
     Some(total)
@@ -557,6 +557,11 @@ mod tests {
         );
         assert_eq!(parse_go_duration("1s20ns"), Some(Duration::new(1, 20)));
         assert_eq!(parse_go_duration("-5m"), None);
+        assert_eq!(parse_go_duration("99999999999999999999h"), None);
+        assert_eq!(
+            parse_go_duration("4000000000000000h4000000000000000h"),
+            None
+        );
         assert_eq!(parse_go_duration("2d"), None);
         assert_eq!(parse_go_duration(""), None);
     }
