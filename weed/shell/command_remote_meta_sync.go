@@ -241,8 +241,19 @@ func pullMetadataDirectory(ctx context.Context, client filer_pb.SeaweedFilerClie
 		}
 
 		if existingEntry == nil {
-			if err := createRemoteEntry(ctx, client, writer, localDir, name, child, remoteLoc.Name); err != nil {
+			taken, err := createRemoteEntry(ctx, client, writer, localDir, name, child, remoteLoc.Name)
+			if err != nil {
 				return err
+			}
+			if taken && child.isDirectory {
+				// descending into a name a local file took would turn it into a directory
+				resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{Directory: string(localDir), Name: name})
+				if err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+					return err
+				}
+				if resp == nil || !resp.Entry.IsDirectory {
+					continue
+				}
 			}
 		} else if !child.isDirectory {
 			if existingEntry.RemoteEntry == nil {
@@ -343,7 +354,9 @@ func isLocalDirectoryEmpty(ctx context.Context, client filer_pb.SeaweedFilerClie
 	return empty, err
 }
 
-func createRemoteEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, writer io.Writer, localDir util.FullPath, name string, child *remoteChild, storageName string) error {
+// createRemoteEntry creates the entry only if the name is still free; taken
+// reports that something was created there after the directory was listed.
+func createRemoteEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, writer io.Writer, localDir util.FullPath, name string, child *remoteChild, storageName string) (taken bool, err error) {
 	attributes := &filer_pb.FuseAttributes{
 		FileMode: remoteEntryFileMode(child.isDirectory),
 		TtlSec:   0, // Remote entries should not have TTL
@@ -361,7 +374,7 @@ func createRemoteEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, 
 		attributes.FileSize = uint64(child.remoteEntry.RemoteSize)
 		attributes.Mtime = child.remoteEntry.RemoteMtime
 	}
-	err := filer_pb.CreateEntry(ctx, client, &filer_pb.CreateEntryRequest{
+	err = filer_pb.CreateEntry(ctx, client, &filer_pb.CreateEntryRequest{
 		Directory: string(localDir),
 		Entry: &filer_pb.Entry{
 			Name:        name,
@@ -374,13 +387,13 @@ func createRemoteEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, 
 	})
 	if errors.Is(err, filer_pb.ErrEntryAlreadyExists) {
 		fmt.Fprintf(writer, "%s (skip, created since listed)\n", localDir.Child(name))
-		return nil
+		return true, nil
 	}
 	if err != nil {
-		return err
+		return false, err
 	}
 	fmt.Fprintf(writer, "%s (create)\n", localDir.Child(name))
-	return nil
+	return false, nil
 }
 
 func childRemoteLocation(remoteLoc *remote_pb.RemoteStorageLocation, name string) *remote_pb.RemoteStorageLocation {

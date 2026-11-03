@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
+	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -81,15 +83,71 @@ func TestCreateRemoteEntryKeepsAnEntryCreatedSinceListed(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			fake := &exclusiveCreateFiler{resp: tc.resp}
 			var out strings.Builder
-			err := createRemoteEntry(context.Background(), fake, &out, util.FullPath("/buckets/b"), "f", child, "r")
-			if (err != nil) != tc.err {
-				t.Fatalf("err=%v, want error %v", err, tc.err)
+			taken, err := createRemoteEntry(context.Background(), fake, &out, util.FullPath("/buckets/b"), "f", child, "r")
+			if (err != nil) != tc.err || taken != (tc.resp.ErrorCode == filer_pb.FilerError_ENTRY_ALREADY_EXISTS) {
+				t.Fatalf("taken=%v err=%v, want error %v", taken, err, tc.err)
 			}
 			if !fake.req.OExcl {
 				t.Fatalf("create of %s must be exclusive", fake.req.Entry.Name)
 			}
 			if got := strings.TrimSpace(out.String()); got != tc.output {
 				t.Fatalf("output %q, want %q", got, tc.output)
+			}
+		})
+	}
+}
+
+type takenNameFiler struct {
+	stubFilerSvc
+	creates []string
+}
+
+func (s *takenNameFiler) CreateEntry(_ context.Context, req *filer_pb.CreateEntryRequest, _ ...grpc.CallOption) (*filer_pb.CreateEntryResponse, error) {
+	s.creates = append(s.creates, string(util.FullPath(req.Directory).Child(req.Entry.Name)))
+	return &filer_pb.CreateEntryResponse{Error: "exists", ErrorCode: filer_pb.FilerError_ENTRY_ALREADY_EXISTS}, nil
+}
+
+type listingRemote struct {
+	remote_storage.RemoteStorageClient
+	dirs map[string]map[string]bool
+}
+
+func (r *listingRemote) ListDirectory(_ context.Context, loc *remote_pb.RemoteStorageLocation, visitFn remote_storage.VisitFunc) error {
+	for name, isDirectory := range r.dirs[loc.Path] {
+		if err := visitFn(loc.Path, name, isDirectory, &filer_pb.RemoteEntry{StorageName: "r", RemoteSize: 1, RemoteMtime: 1}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// A remote directory whose name is taken locally after the listing is only
+// descended into when the name now holds a directory: creating remote
+// children under a local file would turn that file into a directory.
+func TestPullMetadataDirectoryDescendsOnlyIntoATakenDirectory(t *testing.T) {
+	remote := &listingRemote{dirs: map[string]map[string]bool{
+		"/":     {"docs": true},
+		"/docs": {"a.txt": false},
+	}}
+	for _, tc := range []struct {
+		name    string
+		isDir   bool
+		creates []string
+	}{
+		{"taken by a file", false, []string{"/buckets/b/docs"}},
+		{"taken by a directory", true, []string{"/buckets/b/docs", "/buckets/b/docs/a.txt"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &takenNameFiler{stubFilerSvc: stubFilerSvc{lookupResp: &filer_pb.LookupDirectoryEntryResponse{
+				Entry: &filer_pb.Entry{Name: "docs", IsDirectory: tc.isDir},
+			}}}
+			var out strings.Builder
+			loc := &remote_pb.RemoteStorageLocation{Name: "r", Bucket: "rb", Path: "/"}
+			if err := pullMetadataDirectory(context.Background(), fake, &out, remote, util.FullPath("/buckets/b"), loc, false, false); err != nil {
+				t.Fatalf("sync: %v", err)
+			}
+			if strings.Join(fake.creates, ",") != strings.Join(tc.creates, ",") {
+				t.Fatalf("creates %v, want %v", fake.creates, tc.creates)
 			}
 		})
 	}
