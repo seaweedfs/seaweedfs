@@ -61,3 +61,17 @@ func TestPutToFilerStorageClass(t *testing.T) {
 		})
 	}
 }
+
+// CreateMultipartUpload stores the storage class for the completed object,
+// so it must reject an invalid one as PutObject and CopyObject do.
+func TestParseS3MetadataRejectsInvalidStorageClass(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "http://s3/b/o?uploads", nil)
+	req.Header.Set(s3_constants.AmzStorageClass, "BOGUS")
+	_, code := ParseS3Metadata(req, nil, false)
+	require.Equal(t, s3err.ErrInvalidStorageClass, code)
+
+	req.Header.Set(s3_constants.AmzStorageClass, "GLACIER")
+	metadata, code := ParseS3Metadata(req, nil, false)
+	require.Equal(t, s3err.ErrNone, code)
+	require.Equal(t, "GLACIER", string(metadata[s3_constants.AmzStorageClass]))
+}
