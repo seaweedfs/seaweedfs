@@ -14,6 +14,7 @@ pub mod master_pb {
 }
 pub mod master_client;
 pub mod security;
+pub mod tls;
 
 pub mod pb {
     pub mod vector {

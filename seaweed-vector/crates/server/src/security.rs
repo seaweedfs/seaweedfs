@@ -32,20 +32,19 @@ impl std::fmt::Debug for GrpcTls {
     }
 }
 
-/// A gRPC listener's identity, as `security.LoadServerTLS` builds it: every
-/// client must present a certificate chaining to `grpc.ca`.
-#[derive(Clone)]
+/// What a gRPC listener serves with, as `security.LoadServerTLS` reads it:
+/// the files, re-read when they change, and the client identities allowed.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GrpcServerTls {
-    pub cert_pem: Vec<u8>,
-    pub key_pem: Vec<u8>,
-    /// `grpc.ca`
-    pub ca_pem: Vec<u8>,
-}
-
-impl std::fmt::Debug for GrpcServerTls {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("GrpcServerTls").finish_non_exhaustive()
-    }
+    pub cert_path: String,
+    pub key_path: String,
+    /// `grpc.ca`, which every client certificate must chain to.
+    pub ca_path: String,
+    /// `<component>.allowed_commonNames`: when set, the client certificate's
+    /// common name must be one of these, or lie under the wildcard domain.
+    pub allowed_common_names: Vec<String>,
+    /// `grpc.allowed_wildcard_domain`
+    pub allowed_wildcard_domain: String,
 }
 
 pub struct Security {
@@ -183,20 +182,31 @@ impl Security {
 
     /// The identity `component` (such as `grpc.vector`) serves with, following
     /// `security.LoadServerTLS`: its `cert` and `key`, with `grpc.ca` as the
-    /// root every client certificate must chain to. `None` keeps plaintext.
+    /// root every client certificate must chain to, and the component's
+    /// `allowed_commonNames`. `None` keeps plaintext. The files are read by
+    /// [`crate::tls::ServerTls`], which keeps re-reading them.
     pub fn grpc_server_tls(&self, component: &str) -> Result<Option<GrpcServerTls>> {
-        let Some((cert, key)) =
+        let Some((cert_path, key_path)) =
             self.pair(&format!("{component}.cert"), &format!("{component}.key"))?
         else {
             return Ok(None);
         };
-        let ca = self
+        let ca_path = self
             .get("grpc.ca")
             .with_context(|| format!("{component} cert and key are set but grpc.ca is not"))?;
         Ok(Some(GrpcServerTls {
-            cert_pem: self.read(&format!("{component}.cert"), &cert)?,
-            key_pem: self.read(&format!("{component}.key"), &key)?,
-            ca_pem: self.read("grpc.ca", &ca)?,
+            cert_path,
+            key_path,
+            ca_path,
+            allowed_common_names: self
+                .get(&format!("{component}.allowed_commonNames"))
+                .unwrap_or_default()
+                .split(',')
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .map(str::to_string)
+                .collect(),
+            allowed_wildcard_domain: self.get("grpc.allowed_wildcard_domain").unwrap_or_default(),
         }))
     }
 }
@@ -323,9 +333,26 @@ mod tests {
         .unwrap()
         .unwrap();
         assert_eq!(
-            (tls.cert_pem, tls.key_pem, tls.ca_pem),
-            (b"CERT".to_vec(), b"KEY".to_vec(), b"CA".to_vec())
+            tls,
+            GrpcServerTls {
+                cert_path: cert.clone(),
+                key_path: key.clone(),
+                ca_path: ca.clone(),
+                allowed_common_names: Vec::new(),
+                allowed_wildcard_domain: String::new(),
+            }
         );
+        let tls = security(
+            &format!(
+                "[grpc]\nca = {ca:?}\nallowed_wildcard_domain = \".internal\"\n[grpc.vector]\ncert = {cert:?}\nkey = {key:?}\nallowed_commonNames = \"gateway, s3 ,\"\n"
+            ),
+            &[],
+        )
+        .grpc_server_tls("grpc.vector")
+        .unwrap()
+        .unwrap();
+        assert_eq!(tls.allowed_common_names, ["gateway", "s3"]);
+        assert_eq!(tls.allowed_wildcard_domain, ".internal");
         for broken in [
             format!("[grpc.vector]\ncert = {cert:?}\nkey = {key:?}\n"),
             format!("[grpc]\nca = {ca:?}\n[grpc.vector]\nkey = {key:?}\n"),

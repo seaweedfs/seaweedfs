@@ -2,14 +2,15 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use tonic::transport::server::TcpIncoming;
-use tonic::transport::{Certificate, Identity, Server, ServerTlsConfig};
+use tokio_stream::wrappers::TcpListenerStream;
+use tonic::transport::Server;
 use weed_lance_worker::catalog::{NamespaceClient, SigningKey};
 use weed_lance_worker::dataset::FallbackOptions;
 use weed_vector_server::pb::vector::vector_service_server::VectorServiceServer;
 use weed_vector_server::read_cache::ReadCache;
 use weed_vector_server::security::Security;
 use weed_vector_server::service::VectorServer;
+use weed_vector_server::tls::{self, ServerTls};
 
 /// The VectorService the S3 gateway fans vector calls out to.
 #[derive(Parser)]
@@ -123,12 +124,15 @@ async fn main() -> Result<()> {
         tracing::info!("security settings from {}", path.display());
     }
     let master_tls = security.grpc_client_tls("grpc.client", args.tls_server_name.clone())?;
-    let server_tls = security.grpc_server_tls("grpc.vector")?;
+    let server_tls = security
+        .grpc_server_tls("grpc.vector")?
+        .map(ServerTls::load)
+        .transpose()?;
     // Bind before registering, so the master never lists an engine that is
     // about to exit because its port is taken.
-    let incoming = TcpIncoming::bind(args.listen.parse()?)
-        .with_context(|| format!("listen on {}", args.listen))?
-        .with_nodelay(Some(true));
+    let listener = tokio::net::TcpListener::bind(&args.listen)
+        .await
+        .with_context(|| format!("listen on {}", args.listen))?;
     if let Some(masters) = &args.masters {
         let masters: Vec<String> = masters.split(',').map(|s| s.trim().to_string()).collect();
         for master in &masters {
@@ -150,32 +154,37 @@ async fn main() -> Result<()> {
     if args.read_cache_mb > 0 {
         service = service.with_read_cache(ReadCache::new(args.read_cache_mb << 20));
     }
-    let mut server = Server::builder();
-    if let Some(tls) = &server_tls {
-        server = server
-            .tls_config(
-                ServerTlsConfig::new()
-                    .identity(Identity::from_pem(&tls.cert_pem, &tls.key_pem))
-                    .client_ca_root(Certificate::from_pem(&tls.ca_pem)),
-            )
-            .context("gRPC TLS from grpc.vector")?;
-    }
     tracing::info!(
         namespace = %args.namespace,
         listen = %args.listen,
         "weed-vector; serving gRPC {}, dialing masters {}",
-        if server_tls.is_some() { "over TLS with client certificates required" } else { "in plaintext" },
+        match &server_tls {
+            Some(tls) if tls.files().allowed_common_names.is_empty()
+                && tls.files().allowed_wildcard_domain.is_empty() =>
+                "over TLS with client certificates required",
+            Some(_) => "over TLS with allowed client certificates required",
+            None => "in plaintext",
+        },
         if master_tls.is_some() { "over TLS" } else { "in plaintext" },
     );
-    server
+    let router = Server::builder()
         // Match the gateway's 1 GiB cap — put batches over the tonic 4 MiB
         // default otherwise get rejected before they reach the handler.
         .add_service(
             VectorServiceServer::new(service)
                 .max_decoding_message_size(1 << 30)
                 .max_encoding_message_size(1 << 30),
-        )
-        .serve_with_incoming(incoming)
-        .await?;
+        );
+    match server_tls {
+        Some(tls) => {
+            tokio::spawn(tls.clone().refresh(tls::refresh_interval()));
+            router.serve_with_incoming(tls.incoming(listener)).await?;
+        }
+        None => {
+            router
+                .serve_with_incoming(TcpListenerStream::new(listener))
+                .await?
+        }
+    }
     Ok(())
 }
