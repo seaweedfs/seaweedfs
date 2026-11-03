@@ -294,6 +294,34 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_credential_read_that_stalls_is_bounded() {
+        let dir = tempfile::tempdir().unwrap();
+        let fifo = dir.path().join("ca.pem");
+        let made = std::process::Command::new("mkfifo").arg(&fifo).status();
+        assert!(made.unwrap().success());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let mut tls = credentials();
+        tls.ca_path = fifo.display().to_string();
+        let master = format!("127.0.0.1:9333.{port}");
+        let open = stream_to(&master, "127.0.0.1:8080", Some(&tls));
+        let result = tokio::time::timeout(CONNECT_TIMEOUT * 3, open).await;
+        // A read+write open of a FIFO does not block, and it lets the
+        // blocked read finish so the runtime can shut down.
+        drop(
+            std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&fifo),
+        );
+        match result {
+            Ok(Err(e)) => assert!(format!("{e:#}").contains("did not complete"), "{e:#}"),
+            other => panic!("credential read was not bounded: {other:?}"),
+        }
+    }
+
     #[test]
     fn grpc_addr_refuses_a_port_past_65535() {
         assert_eq!(grpc_addr("m1:9333").unwrap(), "http://m1:19333");
