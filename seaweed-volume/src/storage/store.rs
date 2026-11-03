@@ -948,14 +948,39 @@ impl Store {
         vol.read_needle_opt(n, read_deleted)
     }
 
-    /// Resolve a needle read under this guard, to run after it is released.
+    /// Resolve a needle read with the store guard held only for the lookup:
+    /// the plan can wait on a vacuum commit's data-file lease, and waiting
+    /// under the guard would park store writers, and every reader queued
+    /// behind them, on that commit. A handle closed while the plan waited is
+    /// looked up again, a bounded number of times.
     pub(crate) fn needle_read_plan(
-        &self,
+        store: &std::sync::RwLock<Store>,
         vid: VolumeId,
         id: NeedleId,
         read_deleted: bool,
     ) -> Result<crate::storage::volume::NeedleReadPlan, VolumeError> {
-        let (_, vol) = self.find_volume(vid).ok_or(VolumeError::NotFound)?;
+        let find = || {
+            let store = store.read().unwrap();
+            store
+                .find_volume(vid)
+                .map(|(_, vol)| vol)
+                .ok_or(VolumeError::NotFound)
+        };
+        Self::plan_on_open_handle(find, id, read_deleted)
+    }
+
+    fn plan_on_open_handle(
+        mut find: impl FnMut() -> Result<Arc<Volume>, VolumeError>,
+        id: NeedleId,
+        read_deleted: bool,
+    ) -> Result<crate::storage::volume::NeedleReadPlan, VolumeError> {
+        let mut vol = find()?;
+        for _ in 0..3 {
+            match vol.needle_read_plan(id, read_deleted) {
+                Err(_) if vol.is_closed() => vol = find()?,
+                plan => return plan,
+            }
+        }
         vol.needle_read_plan(id, read_deleted)
     }
 
@@ -3383,6 +3408,207 @@ mod tests {
         assert_eq!(v.file_count(), 2);
         assert_eq!(v.deleted_count(), 0);
         assert_eq!(v.dat_file_size().unwrap(), volume_size);
+    }
+
+    /// A volume `vid` holding needle 1, compacted and ready to commit, behind
+    /// the store lock the server's handlers use.
+    fn store_ready_to_commit(
+        dir: &str,
+        vid: VolumeId,
+        kind: NeedleMapKind,
+    ) -> Arc<std::sync::RwLock<Store>> {
+        let mut store = make_test_store(&[dir]);
+        store.needle_map_kind = kind;
+        store
+            .add_volume(vid, DiskType::HardDrive, &VolumeSpec::default())
+            .unwrap();
+        write_test_needle(&mut store, vid, 1, b"live needle");
+        store.compact_volume(vid, 0, 0, |_| true).unwrap();
+        Arc::new(std::sync::RwLock::new(store))
+    }
+
+    /// Commits as the vacuum-commit RPC does: the volume is looked up under
+    /// the store guard, which is dropped before the commit takes its locks.
+    /// The result comes back on a channel, so a deadlock fails a test by
+    /// timing out instead of hanging it.
+    fn commit_like_the_rpc(
+        store: Arc<std::sync::RwLock<Store>>,
+        vid: VolumeId,
+    ) -> std::sync::mpsc::Receiver<Result<(), VolumeError>> {
+        let (committed, result) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let (_, vol) = store.read().unwrap().find_volume(vid).unwrap();
+            let _sync_guard = vol.data_file_sync_lock().lock().unwrap();
+            let _lease = vol.instance().write_lock();
+            let _ = committed.send(vol.commit_compact_held());
+        });
+        result
+    }
+
+    /// Holds the next commit of `vid` inside its swap window, where the needle
+    /// map is closed, until the returned sender is used.
+    fn hold_commit_in_swap_window(
+        vid: VolumeId,
+    ) -> (
+        crate::storage::volume::commit_swap_hook::Registration,
+        std::sync::mpsc::Receiver<()>,
+        std::sync::mpsc::Sender<()>,
+    ) {
+        let (entered, in_window) = std::sync::mpsc::channel();
+        let (release, released) = std::sync::mpsc::channel::<()>();
+        let released = std::sync::Mutex::new(released);
+        let entered = std::sync::Mutex::new(entered);
+        let hook = crate::storage::volume::commit_swap_hook::register(vid, move || {
+            entered.lock().unwrap().send(()).unwrap();
+            released.lock().unwrap().recv().unwrap();
+        });
+        (hook, in_window, release)
+    }
+
+    /// Plans and reads needle 1 of `vid` on another thread, and returns once
+    /// the plan holds the volume handle, so a timed check cannot pass on a
+    /// late start.
+    fn plan_in_background(
+        store: &Arc<std::sync::RwLock<Store>>,
+        vid: VolumeId,
+    ) -> std::sync::mpsc::Receiver<Result<Vec<u8>, VolumeError>> {
+        let (_, vol) = store.read().unwrap().find_volume(vid).unwrap();
+        let handles = Arc::strong_count(&vol);
+        let (planned, plan) = std::sync::mpsc::channel();
+        let reader = store.clone();
+        std::thread::spawn(move || {
+            let mut n = Needle {
+                id: NeedleId(1),
+                cookie: Cookie(1),
+                ..Needle::default()
+            };
+            let read = Store::needle_read_plan(&reader, vid, NeedleId(1), false)
+                .and_then(|mut plan| plan.read_full(&mut n))
+                .map(|()| n.data);
+            let _ = planned.send(read);
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while Arc::strong_count(&vol) == handles {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the plan never looked up the volume"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        plan
+    }
+
+    /// A GET planned while a vacuum commit has the needle map closed waits for
+    /// the commit, as Go's readNeedle does, instead of answering NotFound for a
+    /// live needle.
+    fn check_read_plan_waits_out_a_commit_swap_window(kind: NeedleMapKind, vid: VolumeId) {
+        let tmp = TempDir::new().unwrap();
+        let store = store_ready_to_commit(tmp.path().to_str().unwrap(), vid, kind);
+        let (_hook, in_window, release) = hold_commit_in_swap_window(vid);
+        let commit = commit_like_the_rpc(store.clone(), vid);
+        in_window
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("the commit never reached its swap window");
+
+        let plan = plan_in_background(&store, vid);
+        if let Ok(early) = plan.recv_timeout(std::time::Duration::from_millis(300)) {
+            release.send(()).unwrap();
+            panic!("planned during the swap window instead of waiting: {early:?}");
+        }
+
+        release.send(()).unwrap();
+        commit
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("the commit never finished")
+            .unwrap();
+        let after = plan
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("the plan still waits after the commit finished");
+        assert_eq!(after.unwrap(), b"live needle");
+    }
+
+    #[test]
+    fn test_read_plan_waits_out_a_commit_swap_window_in_memory() {
+        check_read_plan_waits_out_a_commit_swap_window(NeedleMapKind::InMemory, VolumeId(81));
+    }
+
+    #[test]
+    fn test_read_plan_waits_out_a_commit_swap_window_redb() {
+        check_read_plan_waits_out_a_commit_swap_window(NeedleMapKind::Redb, VolumeId(83));
+    }
+
+    /// A plan on a handle an unmount closed looks the volume up again and
+    /// reads the remounted volume.
+    #[test]
+    fn test_read_plan_retries_a_handle_closed_by_a_remount() {
+        let tmp = TempDir::new().unwrap();
+        let vid = VolumeId(1);
+        let mut store = make_test_store(&[tmp.path().to_str().unwrap()]);
+        store
+            .add_volume(vid, DiskType::HardDrive, &VolumeSpec::default())
+            .unwrap();
+        write_test_needle(&mut store, vid, 1, b"live needle");
+        let (_, stale) = store.find_volume(vid).unwrap();
+        assert!(store.unmount_volume(vid).unwrap());
+        store.mount_volume(vid, "", DiskType::HardDrive).unwrap();
+
+        let mut stale = Some(stale);
+        let mut plan = Store::plan_on_open_handle(
+            || match stale.take() {
+                Some(vol) => Ok(vol),
+                None => store
+                    .find_volume(vid)
+                    .map(|(_, vol)| vol)
+                    .ok_or(VolumeError::NotFound),
+            },
+            NeedleId(1),
+            false,
+        )
+        .unwrap();
+        let mut n = Needle {
+            id: NeedleId(1),
+            cookie: Cookie(1),
+            ..Needle::default()
+        };
+        plan.read_full(&mut n).unwrap();
+        assert_eq!(n.data, b"live needle");
+    }
+
+    /// A plan waiting for a commit holds no store guard, so a store writer
+    /// finishes while the commit is still in its swap window.
+    #[test]
+    fn test_read_plan_waiting_on_a_commit_does_not_block_a_store_writer() {
+        let tmp = TempDir::new().unwrap();
+        let vid = VolumeId(82);
+        let store =
+            store_ready_to_commit(tmp.path().to_str().unwrap(), vid, NeedleMapKind::InMemory);
+        let (_hook, in_window, release) = hold_commit_in_swap_window(vid);
+        let commit = commit_like_the_rpc(store.clone(), vid);
+        in_window
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("the commit never reached its swap window");
+
+        let plan = plan_in_background(&store, vid);
+        let (wrote, written) = std::sync::mpsc::channel();
+        let writer = store.clone();
+        std::thread::spawn(move || {
+            let _guard = writer.write().unwrap();
+            let _ = wrote.send(());
+        });
+        let writer_done = written.recv_timeout(std::time::Duration::from_secs(10));
+        let planned_early = plan.try_recv().is_ok();
+        release.send(()).unwrap();
+        writer_done.expect("a store writer waited on the commit");
+        assert!(!planned_early, "planned during the swap window");
+
+        let committed = commit
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("the commit never finished");
+        assert!(committed.is_ok(), "{committed:?}");
+        let after = plan
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("the plan still waits after the commit finished");
+        assert_eq!(after.unwrap(), b"live needle");
     }
 
     fn write_test_needle(store: &mut Store, vid: VolumeId, id: u64, data: &[u8]) {

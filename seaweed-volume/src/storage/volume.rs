@@ -553,6 +553,43 @@ pub(crate) mod needle_read_hook {
 }
 
 #[cfg(test)]
+pub(crate) mod commit_swap_hook {
+    use super::VolumeId;
+    use std::sync::{Arc, Mutex};
+
+    type Hook = Arc<dyn Fn() + Send + Sync>;
+    static HOOKS: Mutex<Vec<(VolumeId, Hook)>> = Mutex::new(Vec::new());
+
+    pub(crate) struct Registration(VolumeId);
+
+    impl Drop for Registration {
+        fn drop(&mut self) {
+            HOOKS.lock().unwrap().retain(|(id, _)| *id != self.0);
+        }
+    }
+
+    /// Runs inside a compaction commit, after the needle map is closed and
+    /// before the swap. Volume ids are the key, so parallel tests must use
+    /// distinct ones.
+    pub(crate) fn register(id: VolumeId, hook: impl Fn() + Send + Sync + 'static) -> Registration {
+        HOOKS.lock().unwrap().push((id, Arc::new(hook)));
+        Registration(id)
+    }
+
+    pub(crate) fn fire(id: VolumeId) {
+        let hook = HOOKS
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(hook_id, _)| *hook_id == id)
+            .map(|(_, hook)| hook.clone());
+        if let Some(hook) = hook {
+            hook();
+        }
+    }
+}
+
+#[cfg(test)]
 pub(crate) mod needle_write_hook {
     use super::NeedleId;
     use std::sync::{Arc, Mutex};
@@ -797,9 +834,8 @@ impl IoUnavailable {
     }
 }
 
-/// A needle read resolved under a store guard and run after it is released;
-/// the handle pins the inode, as for `DatScanPlan`. It takes no data-file
-/// lease: writers wait for one while holding the store write lock.
+/// A needle read resolved under the data-file read lease and run after it is
+/// released; the handle pins the inode, as for `DatScanPlan`.
 pub(crate) struct NeedleReadPlan {
     source: NeedleStreamSource,
     offset: i64,
@@ -2641,12 +2677,17 @@ impl Volume {
         Ok(())
     }
 
-    /// Resolve a needle read under the caller's store guard, without data I/O.
+    /// Resolve a needle read without data I/O. It takes the data-file read
+    /// lease, as `read_needle_with_option` does, so a plan made while a vacuum
+    /// commit has the needle map closed waits for the commit, as Go's
+    /// readNeedle does, instead of answering NotFound for a live needle.
+    /// Callers must not hold the store guard; see `Store::needle_read_plan`.
     pub(crate) fn needle_read_plan(
         &self,
         id: NeedleId,
         read_deleted: bool,
     ) -> Result<NeedleReadPlan, VolumeError> {
+        let _guard = self.data_file_access_control.read_lock();
         if let Some(e) = self.unavailable_error() {
             return Err(e);
         }
@@ -5558,6 +5599,8 @@ impl Volume {
             io.dat_file = None;
             io.remote_dat_file = None;
         }
+        #[cfg(test)]
+        commit_swap_hook::fire(self.id);
 
         // makeup_diff has fsynced the .cpd/.cpx contents. Persist a durable .cpc
         // commit marker BEFORE the renames so the two-rename swap is atomic
