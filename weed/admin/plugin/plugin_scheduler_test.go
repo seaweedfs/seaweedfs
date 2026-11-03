@@ -1218,3 +1218,168 @@ func TestExecutorCapacityDoesNotDoubleCountReservedJobsEchoedByHeartbeat(t *test
 		t.Fatalf("one vacuum job in flight leaves room for a second at per-worker 2")
 	}
 }
+
+// ---------- undispatchable jobs do not hold the lane ----------
+
+// A worker whose slots are all held by work this admin never dispatched
+// will not free them on any schedule the lane can see. The run gives the
+// job up at once, says why, and leaves the window for the lane's other
+// job types instead of idling until job_type_max_runtime.
+func TestDispatchGivesUpWhenCapacityIsHeldByForeignWork(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	const workerID = "worker-a"
+	pluginSvc.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: workerID,
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: "admin_script", CanExecute: true, MaxExecutionConcurrency: 1},
+		},
+	})
+	pluginSvc.registry.UpdateHeartbeat(workerID, &plugin_pb.WorkerHeartbeat{
+		WorkerId: workerID, ExecutionSlotsUsed: 1, ExecutionSlotsTotal: 1,
+		RunningWork: []*plugin_pb.RunningWork{{
+			WorkId: "lc-1", Kind: plugin_pb.WorkKind_WORK_KIND_EXECUTION, JobType: "s3_lifecycle",
+		}},
+	})
+
+	window, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	policy := schedulerPolicy{
+		ExecutionConcurrency:   1,
+		PerWorkerConcurrency:   1,
+		ExecutionTimeout:       time.Second,
+		ExecutorReserveBackoff: time.Millisecond,
+		OrphanRehomeGrace:      time.Second,
+	}
+	proposals := []*plugin_pb.JobProposal{{ProposalId: "p1", JobType: "admin_script", DedupeKey: "k1"}}
+
+	started := time.Now()
+	success, errCount, canceled := pluginSvc.dispatchScheduledProposals(window, "admin_script", proposals, &plugin_pb.ClusterContext{}, policy)
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Fatalf("dispatch held the lane for %v with no executor able to take the job", elapsed)
+	}
+	if success != 0 || errCount != 0 || canceled != 1 {
+		t.Fatalf("unexpected dispatch counts: success=%d errors=%d canceled=%d", success, errCount, canceled)
+	}
+
+	activity := findActivity(pluginSvc.ListActivities("admin_script", 100), "admin_scheduler", "skipped_no_executor")
+	if activity == nil {
+		t.Fatalf("expected a skipped_no_executor activity, got %+v", pluginSvc.ListActivities("admin_script", 100))
+	}
+	want := "no executor capacity for admin_script: worker worker-a has 1/1 slots used by s3_lifecycle this admin did not dispatch"
+	if activity.Message != want {
+		t.Fatalf("activity message = %q, want %q", activity.Message, want)
+	}
+	for _, job := range pluginSvc.ListTrackedJobs("admin_script", "", 10) {
+		if job.State != StateCanceled || job.Message != want {
+			t.Fatalf("queued job should be canceled with the reason, got %+v", job)
+		}
+	}
+}
+
+// Capacity held by the lane's own jobs is a different matter: they finish
+// and release, so the run waits for them as before.
+func TestDispatchWaitsForItsOwnLaneToReleaseCapacity(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	const workerID = "worker-a"
+	pluginSvc.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: workerID,
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: "admin_script", CanExecute: true, MaxExecutionConcurrency: 1},
+			{JobType: "vacuum", CanExecute: true, MaxExecutionConcurrency: 1},
+		},
+	})
+	pluginSvc.registry.UpdateHeartbeat(workerID, &plugin_pb.WorkerHeartbeat{
+		WorkerId: workerID, ExecutionSlotsUsed: 0, ExecutionSlotsTotal: 1,
+	})
+	session := &streamSession{workerID: workerID, outgoing: make(chan *plugin_pb.AdminToWorkerMessage, 8), done: make(chan struct{})}
+	pluginSvc.putSession(session)
+
+	policy := schedulerPolicy{
+		ExecutionConcurrency:   1,
+		PerWorkerConcurrency:   1,
+		ExecutionTimeout:       time.Hour,
+		ExecutorReserveBackoff: time.Millisecond,
+		OrphanRehomeGrace:      time.Second,
+	}
+	// A vacuum job of the same (default) lane holds the worker's only slot.
+	_, releaseVacuum, err := pluginSvc.reserveExecutorByID("vacuum", policy, workerID, "vacuum-1")
+	if err != nil {
+		t.Fatalf("reserve vacuum: %v", err)
+	}
+
+	resultCh := make(chan [3]int, 1)
+	go func() {
+		success, errCount, canceled := pluginSvc.dispatchScheduledProposals(
+			context.Background(), "admin_script", []*plugin_pb.JobProposal{{ProposalId: "p1", JobType: "admin_script", DedupeKey: "k1"}},
+			&plugin_pb.ClusterContext{}, policy)
+		resultCh <- [3]int{success, errCount, canceled}
+	}()
+
+	select {
+	case result := <-resultCh:
+		t.Fatalf("dispatch gave up on capacity its own lane holds: %v", result)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	releaseVacuum()
+	first := <-session.outgoing
+	execReq := first.GetExecuteJobRequest()
+	if execReq == nil {
+		t.Fatalf("expected execute_job_request after the vacuum slot was released, got %+v", first)
+	}
+	pluginSvc.handleJobCompleted(&plugin_pb.JobCompleted{
+		RequestId: first.RequestId, JobId: execReq.Job.JobId, JobType: "admin_script", Success: true, CompletedAt: timestamppb.Now(),
+	})
+	if result := <-resultCh; result != [3]int{1, 0, 0} {
+		t.Fatalf("unexpected dispatch counts: success=%d errors=%d canceled=%d", result[0], result[1], result[2])
+	}
+}
+
+// With no capable worker connected the run waits out the reconnect grace,
+// then gives up rather than holding the lane for the whole window.
+func TestDispatchGivesUpWhenNoExecutorReturnsWithinGrace(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	window, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	policy := schedulerPolicy{
+		ExecutionConcurrency:   1,
+		PerWorkerConcurrency:   1,
+		ExecutorReserveBackoff: time.Millisecond,
+		OrphanRehomeGrace:      20 * time.Millisecond,
+	}
+
+	started := time.Now()
+	_, _, canceled := pluginSvc.dispatchScheduledProposals(window, "admin_script",
+		[]*plugin_pb.JobProposal{{ProposalId: "p1", JobType: "admin_script", DedupeKey: "k1"}}, &plugin_pb.ClusterContext{}, policy)
+	if elapsed := time.Since(started); elapsed < policy.OrphanRehomeGrace || elapsed > 5*time.Second {
+		t.Fatalf("dispatch took %v, want about the %v grace", elapsed, policy.OrphanRehomeGrace)
+	}
+	if canceled != 1 {
+		t.Fatalf("canceled = %d, want 1", canceled)
+	}
+	activity := findActivity(pluginSvc.ListActivities("admin_script", 100), "admin_scheduler", "skipped_no_executor")
+	if activity == nil || activity.Message != "no executor worker available for admin_script" {
+		t.Fatalf("expected the no-worker reason, got %+v", activity)
+	}
+}

@@ -888,6 +888,7 @@ func (r *Plugin) dispatchScheduledProposals(
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			var blockedSince time.Time
 			for {
 				select {
 				case <-r.shutdownCh:
@@ -906,11 +907,22 @@ func (r *Plugin) dispatchScheduledProposals(
 					if queues.isEmpty() {
 						return
 					}
+					if blockedSince.IsZero() {
+						blockedSince = time.Now()
+					}
+					if wait, reason := r.executorCapacityOutlook(jobType, policy, time.Since(blockedSince)); !wait {
+						given := r.giveUpQueuedJobs(queues, jobType, reason)
+						statsMu.Lock()
+						canceledCount += given
+						statsMu.Unlock()
+						return
+					}
 					if !waitForShutdownOrTimerWithContext(r.shutdownCh, ctx, policy.ExecutorReserveBackoff) {
 						return
 					}
 					continue
 				}
+				blockedSince = time.Time{}
 				if ctx.Err() != nil {
 					queues.pushFront(item)
 					return
@@ -1008,6 +1020,68 @@ func (r *Plugin) dispatchScheduledProposals(
 	}
 
 	return successCount, errorCount, canceledCount
+}
+
+// executorCapacityOutlook decides whether a dispatch goroutine that found
+// no executor for jobType should keep waiting. Capacity held by this lane's
+// own jobs comes back when they complete, so that is worth the wait.
+// Capacity held by other lanes or by work this admin never dispatched
+// clears on a schedule the lane has no view of, and a lane that serialises
+// its job types would idle every other type in it for the whole runtime
+// budget; those jobs are given up now, with the reason, and re-proposed by
+// the next detection. A missing worker is waited for only as long as the
+// orphan grace, the usual reconnect blink.
+func (r *Plugin) executorCapacityOutlook(jobType string, policy schedulerPolicy, blockedFor time.Duration) (bool, string) {
+	executors, err := r.registry.ListExecutors(jobType)
+	if err != nil || len(executors) == 0 {
+		if blockedFor < policy.OrphanRehomeGrace {
+			return true, ""
+		}
+		return false, fmt.Sprintf("no executor worker available for %s", jobType)
+	}
+
+	lane := JobTypeLane(jobType)
+	held := make([]string, 0, len(executors))
+	r.execResMu.Lock()
+	defer r.execResMu.Unlock()
+	for _, executor := range executors {
+		if executor == nil {
+			continue
+		}
+		fits, blocking, limit := r.executorCapacityLocked(executor, jobType, policy)
+		if fits || blocking.reservedLanes[lane] > 0 {
+			return true, ""
+		}
+		if limit <= 0 {
+			held = append(held, fmt.Sprintf("worker %s accepts no %s jobs", executor.WorkerID, jobType))
+			continue
+		}
+		held = append(held, fmt.Sprintf("worker %s has %d/%d slots used by %s",
+			executor.WorkerID, blocking.total(), limit, blocking.holders()))
+	}
+	return false, fmt.Sprintf("no executor capacity for %s: %s", jobType, strings.Join(held, "; "))
+}
+
+// giveUpQueuedJobs cancels whatever is still queued for jobType with the
+// reason no executor can take it, so the lane moves on and the next
+// detection proposes the work again. Returns how many jobs it canceled.
+func (r *Plugin) giveUpQueuedJobs(queues *workerJobQueues, jobType, reason string) int {
+	items := queues.drain()
+	if len(items) == 0 {
+		return 0
+	}
+	r.appendActivity(JobActivity{
+		JobType:    jobType,
+		Source:     "admin_scheduler",
+		Message:    reason,
+		Stage:      "skipped_no_executor",
+		OccurredAt: timeToPtr(time.Now().UTC()),
+	})
+	cause := errors.New(reason)
+	for _, item := range items {
+		r.cancelQueuedJob(item.job, cause)
+	}
+	return len(items)
 }
 
 func (r *Plugin) reserveScheduledExecutor(
