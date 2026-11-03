@@ -3457,19 +3457,27 @@ mod tests {
         (hook, in_window, release)
     }
 
-    /// Plans needle 1 of `vid` on another thread and returns once the plan
-    /// holds the volume handle, so a timed check cannot pass on a late start.
+    /// Plans and reads needle 1 of `vid` on another thread, and returns once
+    /// the plan holds the volume handle, so a timed check cannot pass on a
+    /// late start.
     fn plan_in_background(
         store: &Arc<std::sync::RwLock<Store>>,
         vid: VolumeId,
-    ) -> std::sync::mpsc::Receiver<Result<(), VolumeError>> {
+    ) -> std::sync::mpsc::Receiver<Result<Vec<u8>, VolumeError>> {
         let (_, vol) = store.read().unwrap().find_volume(vid).unwrap();
         let handles = Arc::strong_count(&vol);
         let (planned, plan) = std::sync::mpsc::channel();
         let reader = store.clone();
         std::thread::spawn(move || {
-            let _ =
-                planned.send(Store::needle_read_plan(&reader, vid, NeedleId(1), false).map(|_| ()));
+            let mut n = Needle {
+                id: NeedleId(1),
+                cookie: Cookie(1),
+                ..Needle::default()
+            };
+            let read = Store::needle_read_plan(&reader, vid, NeedleId(1), false)
+                .and_then(|mut plan| plan.read_full(&mut n))
+                .map(|()| n.data);
+            let _ = planned.send(read);
         });
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         while Arc::strong_count(&vol) == handles {
@@ -3508,11 +3516,7 @@ mod tests {
         let after = plan
             .recv_timeout(std::time::Duration::from_secs(10))
             .expect("the plan still waits after the commit finished");
-        assert!(after.is_ok(), "the live needle after the commit: {after:?}");
-        assert_eq!(
-            read_test_needle(&store.read().unwrap(), vid, 1).unwrap(),
-            b"live needle"
-        );
+        assert_eq!(after.unwrap(), b"live needle");
     }
 
     #[test]
@@ -3559,7 +3563,7 @@ mod tests {
         let after = plan
             .recv_timeout(std::time::Duration::from_secs(10))
             .expect("the plan still waits after the commit finished");
-        assert!(after.is_ok(), "the live needle after the commit: {after:?}");
+        assert_eq!(after.unwrap(), b"live needle");
     }
 
     fn write_test_needle(store: &mut Store, vid: VolumeId, id: u64, data: &[u8]) {
