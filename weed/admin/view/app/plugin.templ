@@ -621,6 +621,8 @@ templ Plugin(page string, initialJob string, lane string) {
                 allJobs: [],
                 allActivities: [],
                 monitorRowsScope: null,
+                monitorRefreshSeq: 0,
+                monitorCommittedSeq: 0,
                 refreshError: '',
                 loadedJobType: '',
                 descriptor: null,
@@ -3102,6 +3104,7 @@ templ Plugin(page string, initialJob string, lane string) {
                 // cluster, so the job-type sub-tabs fetch their own server-side filtered window.
                 var scopedJobType = monitorJobTypeScope();
                 var sameScope = state.monitorRowsScope === scopedJobType;
+                var refreshSeq = ++state.monitorRefreshSeq;
 
                 // A failed request keeps its last rows; the rest still land and the failure is rethrown.
                 var failure = null;
@@ -3130,9 +3133,11 @@ templ Plugin(page string, initialJob string, lane string) {
                 } catch (e) {
                     schedulerStatus = null;
                 }
-                if (monitorJobTypeScope() !== scopedJobType) {
+                // Drop a refresh that a newer one already landed before, or that a tab change left behind.
+                if (refreshSeq < state.monitorCommittedSeq || monitorJobTypeScope() !== scopedJobType) {
                     return;
                 }
+                state.monitorCommittedSeq = refreshSeq;
 
                 state.allJobs = Array.isArray(allJobs) ? allJobs : [];
                 state.allActivities = Array.isArray(allActivities) ? allActivities : [];
