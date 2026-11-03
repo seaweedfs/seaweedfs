@@ -923,7 +923,6 @@ func (r *Plugin) dispatchScheduledProposals(
 					}
 					continue
 				}
-				blockedSince = time.Time{}
 				if ctx.Err() != nil {
 					queues.pushFront(item)
 					return
@@ -935,11 +934,15 @@ func (r *Plugin) dispatchScheduledProposals(
 					if ctx.Err() != nil {
 						return
 					}
+					if blockedSince.IsZero() {
+						blockedSince = time.Now()
+					}
 					if !waitForShutdownOrTimerWithContext(r.shutdownCh, ctx, policy.ExecutorReserveBackoff) {
 						return
 					}
 					continue
 				}
+				blockedSince = time.Time{}
 
 				var releaseJobLock func()
 				if jobsRequireLock {
