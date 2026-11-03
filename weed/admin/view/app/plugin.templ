@@ -1269,11 +1269,16 @@ templ Plugin(page string, initialJob string, lane string) {
                     } else {
                         notify('Job expired: ' + normalizedJobID, 'success');
                     }
-                    await refreshJobsAndActivities();
-                    await openJobDetail(normalizedJobID);
                 } catch (e) {
                     notify('Failed to expire job: ' + e.message, 'error');
+                    return;
                 }
+                try {
+                    await refreshJobsAndActivities();
+                } catch (refreshErr) {
+                    notify('Monitoring refresh failed: ' + refreshErr.message, 'error');
+                }
+                await openJobDetail(normalizedJobID);
             }
 
             async function openJobDetail(jobID) {
@@ -3076,9 +3081,14 @@ templ Plugin(page string, initialJob string, lane string) {
                         '<div class="text-success">Success: ' + escapeHtml(String(data.success_count || 0)) + '</div>' +
                         '<div class="text-danger">Errors: ' + escapeHtml(String(data.error_count || 0)) + '</div>';
                     await loadRunHistory(jobType);
-                    await refreshJobsAndActivities();
                 } catch (e) {
                     notify('Workflow run failed: ' + e.message, 'error');
+                    return;
+                }
+                try {
+                    await refreshJobsAndActivities();
+                } catch (refreshErr) {
+                    notify('Workflow run succeeded, but monitoring refresh failed: ' + refreshErr.message, 'error');
                 }
             }
 
