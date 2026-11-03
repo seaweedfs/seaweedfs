@@ -36,6 +36,7 @@ const (
 	// Wait this long after a home worker disappears before stealing
 	// its queue; 0 steals immediately. Covers a reconnect blink.
 	defaultOrphanRehomeGrace         = 30 * time.Second
+	completedJobEchoGrace            = 30 * time.Second
 	maxScheduledExecutionConcurrency = 128
 	defaultScheduledRetryBackoff     = 5 * time.Second
 	defaultClusterContextTimeout     = 10 * time.Second
@@ -888,6 +889,7 @@ func (r *Plugin) dispatchScheduledProposals(
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			var blockedSince time.Time
 			for {
 				select {
 				case <-r.shutdownCh:
@@ -906,6 +908,16 @@ func (r *Plugin) dispatchScheduledProposals(
 					if queues.isEmpty() {
 						return
 					}
+					if blockedSince.IsZero() {
+						blockedSince = time.Now()
+					}
+					if wait, reason := r.executorCapacityOutlook(jobType, policy, time.Since(blockedSince)); !wait {
+						given := r.giveUpQueuedJobs(queues, jobType, reason)
+						statsMu.Lock()
+						canceledCount += given
+						statsMu.Unlock()
+						return
+					}
 					if !waitForShutdownOrTimerWithContext(r.shutdownCh, ctx, policy.ExecutorReserveBackoff) {
 						return
 					}
@@ -916,17 +928,21 @@ func (r *Plugin) dispatchScheduledProposals(
 					return
 				}
 
-				executor, release, reserveErr := r.reserveExecutorByID(jobType, policy, targetID)
+				executor, release, reserveErr := r.reserveExecutorByID(jobType, policy, targetID, item.job.JobId)
 				if reserveErr != nil {
 					queues.pushFront(item)
 					if ctx.Err() != nil {
 						return
+					}
+					if blockedSince.IsZero() {
+						blockedSince = time.Now()
 					}
 					if !waitForShutdownOrTimerWithContext(r.shutdownCh, ctx, policy.ExecutorReserveBackoff) {
 						return
 					}
 					continue
 				}
+				blockedSince = time.Time{}
 
 				var releaseJobLock func()
 				if jobsRequireLock {
@@ -1010,6 +1026,76 @@ func (r *Plugin) dispatchScheduledProposals(
 	return successCount, errorCount, canceledCount
 }
 
+// executorCapacityOutlook decides whether a dispatch goroutine that found
+// no executor for jobType should keep waiting. Capacity held by this lane's
+// own jobs comes back when they complete, so that is worth the wait.
+// Capacity held by other lanes or by work this admin never dispatched
+// clears on a schedule the lane has no view of, and a lane that serialises
+// its job types would idle every other type in it for the whole runtime
+// budget; those jobs are given up now, with the reason, and re-proposed by
+// the next detection. A missing worker, or a free one that the queue's pin
+// keeps off a busy home, is waited for only as long as the orphan grace.
+func (r *Plugin) executorCapacityOutlook(jobType string, policy schedulerPolicy, blockedFor time.Duration) (bool, string) {
+	executors, err := r.registry.ListExecutors(jobType)
+	if err != nil || len(executors) == 0 {
+		if blockedFor < policy.OrphanRehomeGrace {
+			return true, ""
+		}
+		return false, fmt.Sprintf("no executor worker available for %s", jobType)
+	}
+
+	lane := JobTypeLane(jobType)
+	held := make([]string, 0, len(executors))
+	free := false
+	r.execResMu.Lock()
+	defer r.execResMu.Unlock()
+	for _, executor := range executors {
+		if executor == nil {
+			continue
+		}
+		fits, blocking, limit := r.executorCapacityLocked(executor, jobType, policy)
+		if fits {
+			free = true
+			continue
+		}
+		if blocking.reservedLanes[lane] > 0 {
+			return true, ""
+		}
+		if limit <= 0 {
+			held = append(held, fmt.Sprintf("worker %s accepts no %s jobs", executor.WorkerID, jobType))
+			continue
+		}
+		held = append(held, fmt.Sprintf("worker %s has %d/%d slots used by %s",
+			executor.WorkerID, blocking.total(), limit, blocking.holders()))
+	}
+	if free && (len(held) == 0 || blockedFor < policy.OrphanRehomeGrace) {
+		return true, ""
+	}
+	return false, fmt.Sprintf("no executor capacity for %s: %s", jobType, strings.Join(held, "; "))
+}
+
+// giveUpQueuedJobs cancels whatever is still queued for jobType with the
+// reason no executor can take it, so the lane moves on and the next
+// detection proposes the work again. Returns how many jobs it canceled.
+func (r *Plugin) giveUpQueuedJobs(queues *workerJobQueues, jobType, reason string) int {
+	items := queues.drain()
+	if len(items) == 0 {
+		return 0
+	}
+	r.appendActivity(JobActivity{
+		JobType:    jobType,
+		Source:     "admin_scheduler",
+		Message:    reason,
+		Stage:      "skipped_no_executor",
+		OccurredAt: timeToPtr(time.Now().UTC()),
+	})
+	cause := errors.New(reason)
+	for _, item := range items {
+		r.cancelQueuedJob(item.job, cause)
+	}
+	return len(items)
+}
+
 func (r *Plugin) reserveScheduledExecutor(
 	ctx context.Context,
 	jobType string,
@@ -1054,18 +1140,16 @@ func (r *Plugin) reserveScheduledExecutor(
 		}
 
 		pref, rest := partitionByPreferredHost(executors, preferredHosts)
-		lane := JobTypeLane(jobType)
-		loadOf := func(e *WorkerSession) int { return r.executorReservationLoad(e, lane) }
 
 		if len(pref) > 0 {
-			sortExecutorsByLoad(pref, loadOf)
-			if executor, release, ok := r.tryReserveFirst(pref, jobType, policy); ok {
+			sortExecutorsByLoad(pref, r.executorWorkerLoad)
+			if executor, release, ok := r.tryReserveFirst(pref, jobType, "", policy); ok {
 				return executor, release, nil
 			}
 		}
 
-		sortExecutorsByLoad(rest, loadOf)
-		if executor, release, ok := r.tryReserveFirst(rest, jobType, policy); ok {
+		sortExecutorsByLoad(rest, r.executorWorkerLoad)
+		if executor, release, ok := r.tryReserveFirst(rest, jobType, "", policy); ok {
 			return executor, release, nil
 		}
 
@@ -1078,17 +1162,9 @@ func (r *Plugin) reserveScheduledExecutor(
 	}
 }
 
-func (r *Plugin) tryReserveExecutorCapacity(
-	executor *WorkerSession,
-	jobType string,
-	policy schedulerPolicy,
-) (func(), bool) {
-	return r.tryReserveExecutorCapacityForLane(executor, jobType, policy, JobTypeLane(jobType))
-}
-
-func (r *Plugin) tryReserveFirst(executors []*WorkerSession, jobType string, policy schedulerPolicy) (*WorkerSession, func(), bool) {
+func (r *Plugin) tryReserveFirst(executors []*WorkerSession, jobType, jobID string, policy schedulerPolicy) (*WorkerSession, func(), bool) {
 	for _, executor := range executors {
-		release, ok := r.tryReserveExecutorCapacity(executor, jobType, policy)
+		release, ok := r.reserveExecutorSlot(executor, jobType, jobID, policy)
 		if ok {
 			return executor, release, true
 		}
@@ -1096,7 +1172,7 @@ func (r *Plugin) tryReserveFirst(executors []*WorkerSession, jobType string, pol
 	return nil, nil, false
 }
 
-func (r *Plugin) reserveExecutorByID(jobType string, policy schedulerPolicy, workerID string) (*WorkerSession, func(), error) {
+func (r *Plugin) reserveExecutorByID(jobType string, policy schedulerPolicy, workerID, jobID string) (*WorkerSession, func(), error) {
 	workerID = strings.TrimSpace(workerID)
 	if workerID == "" {
 		return nil, nil, fmt.Errorf("executor id is empty")
@@ -1109,34 +1185,13 @@ func (r *Plugin) reserveExecutorByID(jobType string, policy schedulerPolicy, wor
 		if executor == nil || executor.WorkerID != workerID {
 			continue
 		}
-		release, ok := r.tryReserveExecutorCapacity(executor, jobType, policy)
+		release, ok := r.reserveExecutorSlot(executor, jobType, jobID, policy)
 		if !ok {
 			return nil, nil, errExecutorAtCapacity
 		}
 		return executor, release, nil
 	}
 	return nil, nil, fmt.Errorf("executor %s is not available for %s", workerID, jobType)
-}
-
-func (r *Plugin) executorReservationLoad(executor *WorkerSession, lane SchedulerLane) int {
-	if executor == nil {
-		return 0
-	}
-	load := 0
-	if executor.Heartbeat != nil && executor.Heartbeat.ExecutionSlotsUsed > 0 {
-		load = int(executor.Heartbeat.ExecutionSlotsUsed)
-	}
-	workerID := strings.TrimSpace(executor.WorkerID)
-	if ls := r.lanes[lane]; ls != nil {
-		ls.execMu.Lock()
-		load += ls.execRes[workerID]
-		ls.execMu.Unlock()
-		return load
-	}
-	r.schedulerExecMu.Lock()
-	load += r.schedulerExecReservations[workerID]
-	r.schedulerExecMu.Unlock()
-	return load
 }
 
 func sortExecutorsByLoad(executors []*WorkerSession, load func(*WorkerSession) int) {
@@ -1155,100 +1210,264 @@ func sortExecutorsByLoad(executors []*WorkerSession, load func(*WorkerSession) i
 	})
 }
 
-// tryReserveExecutorCapacityForLane reserves an execution slot on the
-// per-lane reservation pool so that lanes cannot starve each other.
-func (r *Plugin) tryReserveExecutorCapacityForLane(
+// execReservation is an execution slot this admin holds on a worker for one
+// job, from the moment the job is picked until its completion is handled.
+// The job id is what tells a slot the admin already counts from one only the
+// worker's heartbeat knows about. The worker reports the completion before
+// the heartbeat that frees the slot, so a released reservation is kept for
+// completedJobEchoGrace to claim that echo.
+type execReservation struct {
+	workerID   string
+	jobType    string
+	jobID      string
+	releasedAt time.Time
+}
+
+// executorLoad is how many execution slots on one worker the admin must
+// treat as taken. reserved is this admin's own reservations, including the
+// echo of a job it just completed; foreign is work the worker reports that
+// no reservation covers: manual runs and work still running from before a
+// reconnect.
+type executorLoad struct {
+	reserved   int
+	foreign    int
+	unitemized int
+	// The lane of each reservation and the job types behind the whole load,
+	// so a blocked dispatch can tell whether the load is its own lane's and
+	// name what holds the worker when it is not.
+	reservedLanes map[SchedulerLane]int
+	byType        map[string]int
+}
+
+func (l executorLoad) total() int {
+	return l.reserved + l.foreign
+}
+
+// holders names the job types behind the load, busiest first.
+func (l executorLoad) holders() string {
+	if len(l.byType) == 0 {
+		return "work the worker did not itemize"
+	}
+	types := make([]string, 0, len(l.byType))
+	for jobType := range l.byType {
+		types = append(types, jobType)
+	}
+	sort.Slice(types, func(i, j int) bool {
+		if l.byType[types[i]] != l.byType[types[j]] {
+			return l.byType[types[i]] > l.byType[types[j]]
+		}
+		return types[i] < types[j]
+	})
+	parts := make([]string, 0, len(types)+1)
+	add := func(holder string, n int) {
+		if n > 1 {
+			holder = fmt.Sprintf("%s x%d", holder, n)
+		}
+		parts = append(parts, holder)
+	}
+	for _, jobType := range types {
+		add(jobType, l.byType[jobType])
+	}
+	if l.unitemized > 0 {
+		add("unitemized work", l.unitemized)
+	}
+	out := strings.Join(parts, ", ")
+	if l.reserved == 0 {
+		out += " this admin did not dispatch"
+	}
+	return out
+}
+
+// executorLoadLocked tallies the worker's slots as the admin sees them:
+// jobType "" counts work of every type, otherwise only that type. A
+// heartbeat entry whose job id matches a reservation is the same slot seen
+// twice and counts once. Slots the worker counts without itemizing them go
+// first to this admin's jobs it does not list, a completed one only until the
+// worker's next heartbeat; the rest are of unknown type and count against
+// every type. Caller holds r.execResMu.
+func (r *Plugin) executorLoadLocked(executor *WorkerSession, jobType string) executorLoad {
+	load := executorLoad{
+		reservedLanes: make(map[SchedulerLane]int),
+		byType:        make(map[string]int),
+	}
+	if executor == nil {
+		return load
+	}
+	countReserved := func(res execReservation) {
+		if jobType != "" && res.jobType != jobType {
+			return
+		}
+		load.reserved++
+		load.reservedLanes[JobTypeLane(res.jobType)]++
+		load.byType[res.jobType]++
+	}
+	running := executor.Heartbeat.GetRunningWork()
+	listed := make(map[string]struct{}, len(running))
+	unitemized := int(executor.Heartbeat.GetExecutionSlotsUsed())
+	for _, work := range running {
+		if work.GetKind() == plugin_pb.WorkKind_WORK_KIND_EXECUTION {
+			listed[work.GetWorkId()] = struct{}{}
+			unitemized--
+		}
+	}
+	workerID := strings.TrimSpace(executor.WorkerID)
+	claimed := make(map[string]struct{})
+	var unlistedEchoes []execReservation
+	now := time.Now()
+	for token, res := range r.execRes {
+		released := !res.releasedAt.IsZero()
+		if released && now.Sub(res.releasedAt) > completedJobEchoGrace {
+			delete(r.execRes, token)
+			continue
+		}
+		if res.workerID != workerID {
+			continue
+		}
+		isListed := false
+		if res.jobID != "" {
+			claimed[res.jobID] = struct{}{}
+			_, isListed = listed[res.jobID]
+		}
+		switch {
+		case !released:
+			if !isListed {
+				unitemized--
+			}
+			countReserved(res)
+		case isListed:
+			countReserved(res)
+		case executor.LastSeenAt.Before(res.releasedAt):
+			unlistedEchoes = append(unlistedEchoes, res)
+		}
+	}
+	sort.Slice(unlistedEchoes, func(i, j int) bool {
+		return unlistedEchoes[i].releasedAt.After(unlistedEchoes[j].releasedAt)
+	})
+	for _, res := range unlistedEchoes {
+		if unitemized <= 0 {
+			break
+		}
+		unitemized--
+		countReserved(res)
+	}
+	if unitemized > 0 {
+		load.foreign += unitemized
+		load.unitemized = unitemized
+	}
+	for _, work := range running {
+		if work.GetKind() != plugin_pb.WorkKind_WORK_KIND_EXECUTION {
+			continue
+		}
+		if _, ok := claimed[work.GetWorkId()]; ok {
+			continue
+		}
+		if jobType != "" && work.GetJobType() != jobType {
+			continue
+		}
+		load.foreign++
+		load.byType[work.GetJobType()]++
+	}
+	return load
+}
+
+// executorCapacityLocked reports whether one more jobType job fits on the
+// worker. per_worker_execution_concurrency is a per-job-type limit, so it is
+// checked against jobType work alone; the worker's advertised slot total is
+// checked against work of every type. When the job does not fit, the load
+// and the limit that refused it come back for the caller to act on or
+// report. Caller holds r.execResMu.
+func (r *Plugin) executorCapacityLocked(executor *WorkerSession, jobType string, policy schedulerPolicy) (bool, executorLoad, int) {
+	limit := schedulerWorkerExecutionLimit(executor, jobType, policy)
+	if limit <= 0 {
+		return false, executorLoad{}, 0
+	}
+	if load := r.executorLoadLocked(executor, jobType); load.total() >= limit {
+		return false, load, limit
+	}
+	if total := int(executor.Heartbeat.GetExecutionSlotsTotal()); total > 0 {
+		if load := r.executorLoadLocked(executor, ""); load.total() >= total {
+			return false, load, total
+		}
+	}
+	return true, executorLoad{}, limit
+}
+
+func (r *Plugin) executorHasCapacity(executor *WorkerSession, jobType string, policy schedulerPolicy) bool {
+	if executor == nil || strings.TrimSpace(executor.WorkerID) == "" {
+		return false
+	}
+	r.execResMu.Lock()
+	defer r.execResMu.Unlock()
+	fits, _, _ := r.executorCapacityLocked(executor, jobType, policy)
+	return fits
+}
+
+// executorWorkerLoad is the worker's load across every job type, the
+// number to balance by.
+func (r *Plugin) executorWorkerLoad(executor *WorkerSession) int {
+	if executor == nil {
+		return 0
+	}
+	r.execResMu.Lock()
+	defer r.execResMu.Unlock()
+	return r.executorLoadLocked(executor, "").total()
+}
+
+// reserveExecutorSlot holds a slot on the worker for jobID if one more
+// jobType job fits. The release returned gives it back; the reservation
+// is the admin's own count of the slot until then.
+func (r *Plugin) reserveExecutorSlot(
 	executor *WorkerSession,
 	jobType string,
+	jobID string,
 	policy schedulerPolicy,
-	lane SchedulerLane,
 ) (func(), bool) {
 	if executor == nil || strings.TrimSpace(executor.WorkerID) == "" {
 		return nil, false
 	}
 
-	limit := schedulerWorkerExecutionLimit(executor, jobType, policy)
-	if limit <= 0 {
+	r.execResMu.Lock()
+	defer r.execResMu.Unlock()
+	if fits, _, _ := r.executorCapacityLocked(executor, jobType, policy); !fits {
 		return nil, false
 	}
-	heartbeatUsed := 0
-	if executor.Heartbeat != nil && executor.Heartbeat.ExecutionSlotsUsed > 0 {
-		heartbeatUsed = int(executor.Heartbeat.ExecutionSlotsUsed)
-	}
-
-	workerID := strings.TrimSpace(executor.WorkerID)
-
-	ls := r.lanes[lane]
-	if ls == nil {
-		// Fallback to global reservations if lane state is missing.
-		r.schedulerExecMu.Lock()
-		reserved := r.schedulerExecReservations[workerID]
-		if heartbeatUsed+reserved >= limit {
-			r.schedulerExecMu.Unlock()
-			return nil, false
+	jobID = strings.TrimSpace(jobID)
+	if jobID != "" {
+		for token, res := range r.execRes {
+			if res.jobID == jobID && !res.releasedAt.IsZero() {
+				delete(r.execRes, token)
+			}
 		}
-		r.schedulerExecReservations[workerID] = reserved + 1
-		r.schedulerExecMu.Unlock()
-		release := func() { r.releaseExecutorCapacity(workerID) }
-		return release, true
 	}
-
-	ls.execMu.Lock()
-	reserved := ls.execRes[workerID]
-	if heartbeatUsed+reserved >= limit {
-		ls.execMu.Unlock()
-		return nil, false
+	r.execResSeq++
+	token := r.execResSeq
+	r.execRes[token] = execReservation{
+		workerID: strings.TrimSpace(executor.WorkerID),
+		jobType:  jobType,
+		jobID:    jobID,
 	}
-	ls.execRes[workerID] = reserved + 1
-	ls.execMu.Unlock()
-
 	release := func() {
-		r.releaseExecutorCapacityForLane(workerID, lane)
+		r.execResMu.Lock()
+		defer r.execResMu.Unlock()
+		res, ok := r.execRes[token]
+		if !ok || !res.releasedAt.IsZero() {
+			return
+		}
+		if res.jobID == "" {
+			delete(r.execRes, token)
+			return
+		}
+		res.releasedAt = time.Now()
+		r.execRes[token] = res
 	}
 	return release, true
 }
 
-// releaseExecutorCapacityForLane releases a reservation from the per-lane pool.
-func (r *Plugin) releaseExecutorCapacityForLane(workerID string, lane SchedulerLane) {
-	workerID = strings.TrimSpace(workerID)
-	if workerID == "" {
-		return
-	}
-
-	ls := r.lanes[lane]
-	if ls == nil {
-		r.releaseExecutorCapacity(workerID)
-		return
-	}
-
-	ls.execMu.Lock()
-	defer ls.execMu.Unlock()
-
-	current := ls.execRes[workerID]
-	if current <= 1 {
-		delete(ls.execRes, workerID)
-		return
-	}
-	ls.execRes[workerID] = current - 1
-}
-
-func (r *Plugin) releaseExecutorCapacity(workerID string) {
-	workerID = strings.TrimSpace(workerID)
-	if workerID == "" {
-		return
-	}
-
-	r.schedulerExecMu.Lock()
-	defer r.schedulerExecMu.Unlock()
-
-	current := r.schedulerExecReservations[workerID]
-	if current <= 1 {
-		delete(r.schedulerExecReservations, workerID)
-		return
-	}
-	r.schedulerExecReservations[workerID] = current - 1
-}
-
+// schedulerWorkerExecutionLimit is the most jobType jobs one worker may run
+// at once for this admin: per_worker_execution_concurrency, capped by what
+// the worker declared for the type and by its slot total. It bounds jobType
+// work alone; other job types on the same worker count only against the
+// slot total (see executorCapacityLocked).
 func schedulerWorkerExecutionLimit(executor *WorkerSession, jobType string, policy schedulerPolicy) int {
 	limit := policy.PerWorkerConcurrency
 	if limit <= 0 {

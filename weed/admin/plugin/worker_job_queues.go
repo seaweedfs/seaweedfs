@@ -141,7 +141,6 @@ func (r *Plugin) assignJobsToWorkerQueues(
 ) *workerJobQueues {
 	qs := newWorkerJobQueues()
 	executors, err := r.registry.ListExecutors(jobType)
-	lane := JobTypeLane(jobType)
 	queued := make(map[string]int, len(executors))
 
 	for _, job := range jobs {
@@ -164,7 +163,7 @@ func (r *Plugin) assignJobsToWorkerQueues(
 			}
 		}
 		sortExecutorsByLoad(pref, func(e *WorkerSession) int {
-			return r.executorReservationLoad(e, lane) + queued[e.WorkerID]
+			return r.executorWorkerLoad(e) + queued[e.WorkerID]
 		})
 		home := pref[0].WorkerID
 		qs.push(home, job)
@@ -194,7 +193,6 @@ func (r *Plugin) takeQueuedJob(
 	if err != nil || len(executors) == 0 {
 		return nil, ""
 	}
-	lane := JobTypeLane(jobType)
 	pin := policy.LocalQueuePin
 	defer func() {
 		if item != nil && targetID != "" {
@@ -214,14 +212,10 @@ func (r *Plugin) takeQueuedJob(
 		if len(qs.q[exec.WorkerID]) == 0 {
 			continue
 		}
-		limit := schedulerWorkerExecutionLimit(exec, jobType, policy)
-		if limit <= 0 {
+		if !r.executorHasCapacity(exec, jobType, policy) {
 			continue
 		}
-		load := r.executorReservationLoad(exec, lane)
-		if load >= limit {
-			continue
-		}
+		load := r.executorWorkerLoad(exec)
 		if bestHome == nil || load < bestLoad || (load == bestLoad && exec.WorkerID < bestHome.WorkerID) {
 			bestHome = exec
 			bestLoad = load
@@ -236,11 +230,7 @@ func (r *Plugin) takeQueuedJob(
 
 	var thief *WorkerSession
 	for _, exec := range executors {
-		limit := schedulerWorkerExecutionLimit(exec, jobType, policy)
-		if limit <= 0 {
-			continue
-		}
-		if r.executorReservationLoad(exec, lane) >= limit {
+		if !r.executorHasCapacity(exec, jobType, policy) {
 			continue
 		}
 		if thief == nil || exec.WorkerID < thief.WorkerID {

@@ -79,16 +79,19 @@ type Plugin struct {
 
 	lanes map[SchedulerLane]*schedulerLaneState
 
-	schedulerExecMu           sync.Mutex
-	schedulerExecReservations map[string]int
-	adminScriptRunMu          sync.RWMutex
-	schedulerDetectionMu      sync.Mutex
-	schedulerDetection        map[string]*schedulerDetectionInfo
-	schedulerRunMu            sync.Mutex
-	schedulerRun              map[string]*schedulerRunInfo
-	schedulerLoopMu           sync.Mutex
-	schedulerLoopState        schedulerLoopState
-	schedulerWakeCh           chan struct{}
+	// Execution slots this admin holds on workers, one entry per job in
+	// flight; see executorLoadLocked for how they meet the heartbeat.
+	execResMu            sync.Mutex
+	execRes              map[uint64]execReservation
+	execResSeq           uint64
+	adminScriptRunMu     sync.RWMutex
+	schedulerDetectionMu sync.Mutex
+	schedulerDetection   map[string]*schedulerDetectionInfo
+	schedulerRunMu       sync.Mutex
+	schedulerRun         map[string]*schedulerRunInfo
+	schedulerLoopMu      sync.Mutex
+	schedulerLoopState   schedulerLoopState
+	schedulerWakeCh      chan struct{}
 
 	dedupeMu           sync.Mutex
 	recentDedupeByType map[string]map[string]time.Time
@@ -114,6 +117,9 @@ type Plugin struct {
 	jobs   map[string]*TrackedJob
 	// serialize stale job cleanup to avoid duplicate expirations
 	staleJobsMu sync.Mutex
+
+	undeliveredCancelsMu sync.Mutex
+	undeliveredCancels   map[string]undeliveredCancel
 
 	jobDetailsMu sync.Mutex
 
@@ -216,7 +222,7 @@ func New(options Options) (*Plugin, error) {
 		nextDetectionAt:           make(map[string]time.Time),
 		detectionInFlight:         make(map[string]bool),
 		detectorLeases:            make(map[string]string),
-		schedulerExecReservations: make(map[string]int),
+		execRes:                   make(map[uint64]execReservation),
 		schedulerDetection:        make(map[string]*schedulerDetectionInfo),
 		schedulerRun:              make(map[string]*schedulerRunInfo),
 		recentDedupeByType:        make(map[string]map[string]time.Time),
@@ -1034,9 +1040,9 @@ func (r *Plugin) clearDetectorLease(jobType string, workerID string) {
 	delete(r.detectorLeases, jobType)
 }
 
-func (r *Plugin) sendCancel(workerID, targetID string, kind plugin_pb.WorkKind, cause error) {
+func (r *Plugin) sendCancel(workerID, targetID string, kind plugin_pb.WorkKind, cause error) error {
 	if strings.TrimSpace(workerID) == "" || strings.TrimSpace(targetID) == "" {
-		return
+		return nil
 	}
 
 	requestID, err := newRequestID("cancel")
@@ -1059,9 +1065,11 @@ func (r *Plugin) sendCancel(workerID, targetID string, kind plugin_pb.WorkKind, 
 			},
 		},
 	}
-	if err := r.sendToWorker(workerID, message); err != nil {
+	err = r.sendToWorker(workerID, message)
+	if err != nil {
 		glog.V(1).Infof("Plugin failed to send cancel request to worker=%s target=%s: %v", workerID, targetID, err)
 	}
+	return err
 }
 
 func (r *Plugin) sendAdminHello(session *streamSession) error {
@@ -1148,6 +1156,7 @@ func (r *Plugin) handleWorkerMessage(session *streamSession, message *plugin_pb.
 		if !r.updateRegistryFromSession(session, func() { r.registry.UpdateHeartbeat(workerID, body.Heartbeat) }) {
 			return
 		}
+		r.resendUndeliveredCancels(workerID, body.Heartbeat)
 	case *plugin_pb.WorkerToAdminMessage_ConfigSchemaResponse:
 		r.handleConfigSchemaResponse(body.ConfigSchemaResponse)
 	case *plugin_pb.WorkerToAdminMessage_DetectionProposals:
@@ -1439,6 +1448,12 @@ func (r *Plugin) handleJobCompleted(completed *plugin_pb.JobCompleted) {
 
 	if completed.RequestId != "" {
 		r.safeSendJobCompleted(completed.RequestId, completed)
+	}
+	r.jobsMu.RLock()
+	ended := attemptEnded(r.jobs[completed.JobId], completed.RequestId)
+	r.jobsMu.RUnlock()
+	if ended {
+		return
 	}
 
 	tracked := r.trackExecutionCompletion(completed)
