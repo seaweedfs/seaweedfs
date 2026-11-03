@@ -587,11 +587,62 @@ func (r *Plugin) runDetectionWithReport(
 		return nil, err
 	}
 
+	return r.awaitDetectionOutcome(ctx, jobType, requestID, session, state)
+}
+
+// awaitDetectionOutcome waits for the request's completion, the end of the
+// stream it was sent on, a stale worker heartbeat, or ctx. A completion the
+// worker delivered before its stream ended is buffered in state.complete, and
+// the stream's closure can be observed in the same select: that completion
+// wins, so a scan that finished right before its worker went away is reported
+// as the success it was, not as a disconnect. A ctx that ended stands as is:
+// the caller stopped wanting the answer.
+func (r *Plugin) awaitDetectionOutcome(
+	ctx context.Context,
+	jobType string,
+	requestID string,
+	session *streamSession,
+	state *pendingDetectionState,
+) (*DetectionReport, error) {
+	workerID := session.workerID
 	emptyReport := func() *DetectionReport {
 		return &DetectionReport{
 			RequestID: requestID,
 			JobType:   jobType,
-			WorkerID:  detector.WorkerID,
+			WorkerID:  workerID,
+		}
+	}
+	finish := func(complete *plugin_pb.DetectionComplete, ok bool) (*DetectionReport, error) {
+		if !ok {
+			return emptyReport(), fmt.Errorf("detection request %s interrupted", requestID)
+		}
+		proposals := cloneJobProposals(state.proposals)
+		report := &DetectionReport{
+			RequestID: requestID,
+			JobType:   jobType,
+			WorkerID:  workerID,
+			Proposals: proposals,
+			Complete:  complete,
+		}
+		if complete == nil {
+			return report, fmt.Errorf("detection request %s returned no completion state", requestID)
+		}
+		if !complete.Success {
+			return report, fmt.Errorf("detection failed for %s: %s", jobType, complete.ErrorMessage)
+		}
+		return report, nil
+	}
+	// finishIfCompleted takes a completion that is already queued when the
+	// worker is judged lost. The lease still goes: the worker that answered
+	// is gone or unreachable, so the next pick must start fresh.
+	finishIfCompleted := func() (bool, *DetectionReport, error) {
+		select {
+		case complete, ok := <-state.complete:
+			r.clearDetectorLease(jobType, workerID)
+			report, err := finish(complete, ok)
+			return true, report, err
+		default:
+			return false, nil, nil
 		}
 	}
 
@@ -605,11 +656,11 @@ func (r *Plugin) runDetectionWithReport(
 	for {
 		select {
 		case <-ctx.Done():
-			r.sendCancel(detector.WorkerID, requestID, plugin_pb.WorkKind_WORK_KIND_DETECTION, ctx.Err())
+			r.sendCancel(workerID, requestID, plugin_pb.WorkKind_WORK_KIND_DETECTION, ctx.Err())
 			r.appendActivity(JobActivity{
 				JobType:    jobType,
 				RequestID:  requestID,
-				WorkerID:   detector.WorkerID,
+				WorkerID:   workerID,
 				Source:     "detector",
 				Stage:      "canceled",
 				Message:    "detection canceled",
@@ -617,32 +668,21 @@ func (r *Plugin) runDetectionWithReport(
 			})
 			return emptyReport(), ctx.Err()
 		case <-session.done:
+			if completed, report, err := finishIfCompleted(); completed {
+				return report, err
+			}
 			return emptyReport(), r.failDetectionWorkerLost(jobType, requestID, session, "", false)
 		case <-liveness.C:
-			if r.isWorkerAvailable(detector.WorkerID) {
+			if r.isWorkerAvailable(workerID) {
 				continue
+			}
+			if completed, report, err := finishIfCompleted(); completed {
+				return report, err
 			}
 			// The stream may still be open, so the worker is told to stop.
 			return emptyReport(), r.failDetectionWorkerLost(jobType, requestID, session, "heartbeat stale", true)
 		case complete, ok := <-state.complete:
-			if !ok {
-				return emptyReport(), fmt.Errorf("detection request %s interrupted", requestID)
-			}
-			proposals := cloneJobProposals(state.proposals)
-			report := &DetectionReport{
-				RequestID: requestID,
-				JobType:   jobType,
-				WorkerID:  detector.WorkerID,
-				Proposals: proposals,
-				Complete:  complete,
-			}
-			if complete == nil {
-				return report, fmt.Errorf("detection request %s returned no completion state", requestID)
-			}
-			if !complete.Success {
-				return report, fmt.Errorf("detection failed for %s: %s", jobType, complete.ErrorMessage)
-			}
-			return report, nil
+			return finish(complete, ok)
 		}
 	}
 }

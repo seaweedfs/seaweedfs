@@ -404,3 +404,169 @@ func TestScheduledDetectionRetryAvoidsClosedDetectorStream(t *testing.T) {
 	require.Equal(t, "success", p.snapshotSchedulerRun(jobType).lastRunStatus)
 	require.Len(t, sessionA.outgoing, 0, "nothing may be sent on the closed stream")
 }
+
+// The stream delivered the completion and then closed before the waiter
+// reached its select, so both channels are ready at once.
+func TestAwaitDetectionOutcomePrefersBufferedCompletionOverClosedStream(t *testing.T) {
+	p, err := New(Options{})
+	require.NoError(t, err)
+	defer p.Shutdown()
+
+	const jobType = "vacuum"
+	session := newDetectorSession(p, "worker-a", jobType)
+	p.setDetectorLease(jobType, "worker-a")
+	state := &pendingDetectionState{
+		complete: make(chan *plugin_pb.DetectionComplete, 1),
+		jobType:  jobType,
+		workerID: "worker-a",
+	}
+	state.proposals = []*plugin_pb.JobProposal{{ProposalId: "p-1", JobType: jobType}}
+	state.complete <- &plugin_pb.DetectionComplete{RequestId: "detect-1", JobType: jobType, Success: true, TotalProposals: 1}
+	p.WorkerDisconnectForTest("worker-a")
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
+	defer cancel()
+	report, err := p.awaitDetectionOutcome(ctx, jobType, "detect-1", session, state)
+	require.NoError(t, err)
+	require.NotNil(t, report)
+	require.Equal(t, "detect-1", report.RequestID)
+	require.Equal(t, "worker-a", report.WorkerID)
+	require.True(t, report.Complete.GetSuccess())
+	require.Len(t, report.Proposals, 1)
+	require.Equal(t, "p-1", report.Proposals[0].ProposalId)
+	require.Nil(t, findActivity(p.ListActivities(jobType, 50), "detector", "disconnected"), "a completed detection must not be reported as disconnected")
+
+	// The next pick must not be pinned to the gone worker.
+	newDetectorSession(p, "worker-b", jobType)
+	picked, err := p.pickDetector(jobType, nil)
+	require.NoError(t, err)
+	require.Equal(t, "worker-b", picked.WorkerID)
+	require.Equal(t, "worker-b", p.getDetectorLease(jobType))
+}
+
+func TestRunDetectionKeepsCompletionDeliveredBeforeDisconnect(t *testing.T) {
+	p, err := New(Options{})
+	require.NoError(t, err)
+	defer p.Shutdown()
+
+	const jobType = "vacuum"
+	session := newDetectorSession(p, "worker-a", jobType)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
+	defer cancel()
+	type result struct {
+		report *DetectionReport
+		err    error
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		report, runErr := p.RunDetectionWithReport(ctx, jobType, &plugin_pb.ClusterContext{}, 10)
+		resultCh <- result{report: report, err: runErr}
+	}()
+	request := awaitDetectionRequest(t, session)
+
+	// The worker's stream carries proposals and the completion, then ends:
+	// the worker finished its scan and restarted.
+	p.handleDetectionProposals("worker-a", &plugin_pb.DetectionProposals{
+		RequestId: request.RequestId,
+		JobType:   jobType,
+		Proposals: []*plugin_pb.JobProposal{{ProposalId: "p-1", JobType: jobType}},
+	})
+	p.handleDetectionComplete("worker-a", &plugin_pb.DetectionComplete{RequestId: request.RequestId, JobType: jobType, Success: true, TotalProposals: 1})
+	p.WorkerDisconnectForTest("worker-a")
+
+	var got result
+	select {
+	case got = <-resultCh:
+	case <-time.After(5 * time.Second):
+		t.Fatal("detection did not return")
+	}
+	require.NoError(t, got.err)
+	require.NotNil(t, got.report)
+	require.Equal(t, request.RequestId, got.report.RequestID)
+	require.True(t, got.report.Complete.GetSuccess())
+	require.Len(t, got.report.Proposals, 1)
+	require.Equal(t, "p-1", got.report.Proposals[0].ProposalId)
+	require.Equal(t, 0, p.pendingDetectionCountForTest())
+	require.Nil(t, findActivity(p.ListActivities(jobType, 50), "detector", "disconnected"))
+
+	// The next detection goes to a live worker, not the gone one.
+	next := newDetectorSession(p, "worker-b", jobType)
+	go func() {
+		_, _ = p.RunDetectionWithReport(ctx, jobType, &plugin_pb.ClusterContext{}, 10)
+	}()
+	awaitDetectionRequest(t, next)
+	require.Equal(t, "worker-b", p.getDetectorLease(jobType))
+}
+
+// A completion that lands after the waiter already gave up on the request
+// must not satisfy the next detection of the same job type.
+func TestLateDetectionCompletionDoesNotReachNextDetection(t *testing.T) {
+	p, err := New(Options{})
+	require.NoError(t, err)
+	defer p.Shutdown()
+
+	const jobType = "vacuum"
+	session := newDetectorSession(p, "worker-a", jobType)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() {
+		_, runErr := p.RunDetectionWithReport(ctx, jobType, &plugin_pb.ClusterContext{}, 10)
+		errCh <- runErr
+	}()
+	lost := awaitDetectionRequest(t, session)
+	p.WorkerDisconnectForTest("worker-a")
+	select {
+	case runErr := <-errCh:
+		var disconnected *detectionWorkerDisconnectedError
+		require.True(t, errors.As(runErr, &disconnected), "unexpected error: %v", runErr)
+	case <-time.After(5 * time.Second):
+		t.Fatal("detection did not fail after its worker disconnected")
+	}
+	require.Equal(t, 0, p.pendingDetectionCountForTest())
+
+	next := newDetectorSession(p, "worker-b", jobType)
+	type result struct {
+		report *DetectionReport
+		err    error
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		report, runErr := p.RunDetectionWithReport(ctx, jobType, &plugin_pb.ClusterContext{}, 10)
+		resultCh <- result{report: report, err: runErr}
+	}()
+	request := awaitDetectionRequest(t, next)
+	require.NotEqual(t, lost.RequestId, request.RequestId)
+
+	// The old worker's answer arrives late, under the old request ID.
+	p.handleDetectionProposals("worker-a", &plugin_pb.DetectionProposals{
+		RequestId: lost.RequestId,
+		JobType:   jobType,
+		Proposals: []*plugin_pb.JobProposal{{ProposalId: "stale", JobType: jobType}},
+	})
+	p.handleDetectionComplete("worker-a", &plugin_pb.DetectionComplete{RequestId: lost.RequestId, JobType: jobType, Success: true, TotalProposals: 1})
+	select {
+	case got := <-resultCh:
+		t.Fatalf("the late completion ended the next detection: %+v %v", got.report, got.err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	require.Equal(t, 1, p.pendingDetectionCountForTest())
+
+	p.handleDetectionProposals("worker-b", &plugin_pb.DetectionProposals{
+		RequestId: request.RequestId,
+		JobType:   jobType,
+		Proposals: []*plugin_pb.JobProposal{{ProposalId: "fresh", JobType: jobType}},
+	})
+	p.handleDetectionComplete("worker-b", &plugin_pb.DetectionComplete{RequestId: request.RequestId, JobType: jobType, Success: true, TotalProposals: 1})
+	select {
+	case got := <-resultCh:
+		require.NoError(t, got.err)
+		require.Equal(t, request.RequestId, got.report.RequestID)
+		require.Len(t, got.report.Proposals, 1)
+		require.Equal(t, "fresh", got.report.Proposals[0].ProposalId)
+	case <-time.After(5 * time.Second):
+		t.Fatal("detection did not complete")
+	}
+}
