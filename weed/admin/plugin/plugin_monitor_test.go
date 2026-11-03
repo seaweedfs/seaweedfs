@@ -703,3 +703,88 @@ func TestExpireStaleJobsCancelsTheJobOnItsWorker(t *testing.T) {
 	}
 	expectCancelFor(t, session, jobID)
 }
+
+func expectNoCancel(t *testing.T, session *streamSession) {
+	t.Helper()
+	select {
+	case msg := <-session.outgoing:
+		t.Fatalf("expected no message, got %+v", msg)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func heartbeatListing(workerID string, jobIDs ...string) *plugin_pb.WorkerToAdminMessage {
+	heartbeat := &plugin_pb.WorkerHeartbeat{WorkerId: workerID, ExecutionSlotsTotal: 4}
+	for _, jobID := range jobIDs {
+		heartbeat.RunningWork = append(heartbeat.RunningWork, &plugin_pb.RunningWork{
+			WorkId:  jobID,
+			Kind:    plugin_pb.WorkKind_WORK_KIND_EXECUTION,
+			JobType: "s3_lifecycle",
+			State:   plugin_pb.JobState_JOB_STATE_RUNNING,
+		})
+	}
+	return &plugin_pb.WorkerToAdminMessage{Body: &plugin_pb.WorkerToAdminMessage_Heartbeat{Heartbeat: heartbeat}}
+}
+
+// A cancel the worker could not receive when its job expired goes out with
+// the worker's next heartbeat that still lists the job, once.
+func TestExpireJobResendsAnUndeliveredCancelOnHeartbeat(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	const workerID = "worker-1"
+	const jobID = "job-expired-while-away"
+	pluginSvc.trackExecutionStart("req-away", workerID, &plugin_pb.JobSpec{JobId: jobID, JobType: "s3_lifecycle"}, 1)
+	if _, expired, err := pluginSvc.ExpireJob(jobID, ""); err != nil || !expired {
+		t.Fatalf("ExpireJob: expired=%v err=%v", expired, err)
+	}
+
+	pluginSvc.registry.UpsertFromHello(&plugin_pb.WorkerHello{WorkerId: workerID})
+	session := &streamSession{workerID: workerID, outgoing: make(chan *plugin_pb.AdminToWorkerMessage, 8), done: make(chan struct{})}
+	pluginSvc.putSession(session)
+
+	pluginSvc.handleWorkerMessage(session, heartbeatListing(workerID, jobID))
+	expectCancelFor(t, session, jobID)
+
+	pluginSvc.handleWorkerMessage(session, heartbeatListing(workerID, jobID))
+	expectNoCancel(t, session)
+}
+
+// A held cancel is dropped when the worker's heartbeat no longer lists the
+// job, and is not sent to a new attempt that reuses the job id.
+func TestUndeliveredCancelSkipsStoppedJobsAndNewAttempts(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	const workerID = "worker-1"
+	const stoppedJobID = "job-stopped"
+	const retriedJobID = "job-retried"
+	pluginSvc.trackExecutionStart("req-stopped", workerID, &plugin_pb.JobSpec{JobId: stoppedJobID, JobType: "s3_lifecycle"}, 1)
+	pluginSvc.trackExecutionStart("req-retried-1", workerID, &plugin_pb.JobSpec{JobId: retriedJobID, JobType: "s3_lifecycle"}, 1)
+	for _, jobID := range []string{stoppedJobID, retriedJobID} {
+		if _, expired, err := pluginSvc.ExpireJob(jobID, ""); err != nil || !expired {
+			t.Fatalf("ExpireJob(%s): expired=%v err=%v", jobID, expired, err)
+		}
+	}
+	pluginSvc.trackExecutionStart("req-retried-2", workerID, &plugin_pb.JobSpec{JobId: retriedJobID, JobType: "s3_lifecycle"}, 2)
+
+	pluginSvc.registry.UpsertFromHello(&plugin_pb.WorkerHello{WorkerId: workerID})
+	session := &streamSession{workerID: workerID, outgoing: make(chan *plugin_pb.AdminToWorkerMessage, 8), done: make(chan struct{})}
+	pluginSvc.putSession(session)
+
+	pluginSvc.handleWorkerMessage(session, heartbeatListing(workerID, retriedJobID))
+	expectNoCancel(t, session)
+
+	pluginSvc.handleWorkerMessage(session, heartbeatListing(workerID, stoppedJobID))
+	expectNoCancel(t, session)
+}

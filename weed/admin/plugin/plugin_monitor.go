@@ -258,7 +258,78 @@ func (r *Plugin) expireActiveJob(snap activeJobSnapshot, reason string, now time
 		ErrorMessage: reason,
 		CompletedAt:  timestamppb.New(now),
 	})
-	r.sendCancel(snap.workerID, snap.jobID, plugin_pb.WorkKind_WORK_KIND_EXECUTION, errors.New(reason))
+	if err := r.sendCancel(snap.workerID, snap.jobID, plugin_pb.WorkKind_WORK_KIND_EXECUTION, errors.New(reason)); err != nil {
+		r.holdUndeliveredCancel(snap.jobID, snap.workerID, reason)
+	}
+}
+
+// undeliveredCancel is an expiry cancel its worker never received: it was
+// disconnected, or its outgoing buffer stayed full past the send timeout.
+type undeliveredCancel struct {
+	workerID string
+	reason   string
+}
+
+// holdUndeliveredCancel keeps the cancel for the worker's next heartbeat.
+// Entries whose job is no longer tracked are dropped here, so a worker that
+// never comes back does not keep them forever.
+func (r *Plugin) holdUndeliveredCancel(jobID, workerID, reason string) {
+	r.undeliveredCancelsMu.Lock()
+	defer r.undeliveredCancelsMu.Unlock()
+	if r.undeliveredCancels == nil {
+		r.undeliveredCancels = make(map[string]undeliveredCancel)
+	}
+	r.jobsMu.RLock()
+	for id := range r.undeliveredCancels {
+		if _, tracked := r.jobs[id]; !tracked {
+			delete(r.undeliveredCancels, id)
+		}
+	}
+	r.jobsMu.RUnlock()
+	r.undeliveredCancels[jobID] = undeliveredCancel{workerID: workerID, reason: reason}
+}
+
+// resendUndeliveredCancels sends a held cancel again while the worker's
+// heartbeat still lists the job, and forgets it otherwise. A job active
+// again belongs to a new attempt, which a cancel by job id would stop.
+func (r *Plugin) resendUndeliveredCancels(workerID string, heartbeat *plugin_pb.WorkerHeartbeat) {
+	r.undeliveredCancelsMu.Lock()
+	var held map[string]string
+	for jobID, pending := range r.undeliveredCancels {
+		if pending.workerID != workerID {
+			continue
+		}
+		delete(r.undeliveredCancels, jobID)
+		if held == nil {
+			held = make(map[string]string)
+		}
+		held[jobID] = pending.reason
+	}
+	r.undeliveredCancelsMu.Unlock()
+	if len(held) == 0 {
+		return
+	}
+
+	for _, work := range heartbeat.GetRunningWork() {
+		jobID := strings.TrimSpace(work.GetWorkId())
+		reason, ok := held[jobID]
+		if !ok || work.GetKind() != plugin_pb.WorkKind_WORK_KIND_EXECUTION {
+			continue
+		}
+		delete(held, jobID)
+		r.jobsMu.RLock()
+		tracked := r.jobs[jobID]
+		stillExpired := tracked != nil && !isActiveTrackedJobState(tracked.State)
+		r.jobsMu.RUnlock()
+		if !stillExpired {
+			continue
+		}
+		go func() {
+			if err := r.sendCancel(workerID, jobID, plugin_pb.WorkKind_WORK_KIND_EXECUTION, errors.New(reason)); err != nil {
+				r.holdUndeliveredCancel(jobID, workerID, reason)
+			}
+		}()
+	}
 }
 
 func (r *Plugin) snapshotActiveJobs() []activeJobSnapshot {

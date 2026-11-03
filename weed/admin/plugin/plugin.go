@@ -118,6 +118,9 @@ type Plugin struct {
 	// serialize stale job cleanup to avoid duplicate expirations
 	staleJobsMu sync.Mutex
 
+	undeliveredCancelsMu sync.Mutex
+	undeliveredCancels   map[string]undeliveredCancel
+
 	jobDetailsMu sync.Mutex
 
 	activitiesMu sync.RWMutex
@@ -1037,9 +1040,9 @@ func (r *Plugin) clearDetectorLease(jobType string, workerID string) {
 	delete(r.detectorLeases, jobType)
 }
 
-func (r *Plugin) sendCancel(workerID, targetID string, kind plugin_pb.WorkKind, cause error) {
+func (r *Plugin) sendCancel(workerID, targetID string, kind plugin_pb.WorkKind, cause error) error {
 	if strings.TrimSpace(workerID) == "" || strings.TrimSpace(targetID) == "" {
-		return
+		return nil
 	}
 
 	requestID, err := newRequestID("cancel")
@@ -1062,9 +1065,11 @@ func (r *Plugin) sendCancel(workerID, targetID string, kind plugin_pb.WorkKind, 
 			},
 		},
 	}
-	if err := r.sendToWorker(workerID, message); err != nil {
+	err = r.sendToWorker(workerID, message)
+	if err != nil {
 		glog.V(1).Infof("Plugin failed to send cancel request to worker=%s target=%s: %v", workerID, targetID, err)
 	}
+	return err
 }
 
 func (r *Plugin) sendAdminHello(session *streamSession) error {
@@ -1151,6 +1156,7 @@ func (r *Plugin) handleWorkerMessage(session *streamSession, message *plugin_pb.
 		if !r.updateRegistryFromSession(session, func() { r.registry.UpdateHeartbeat(workerID, body.Heartbeat) }) {
 			return
 		}
+		r.resendUndeliveredCancels(workerID, body.Heartbeat)
 	case *plugin_pb.WorkerToAdminMessage_ConfigSchemaResponse:
 		r.handleConfigSchemaResponse(body.ConfigSchemaResponse)
 	case *plugin_pb.WorkerToAdminMessage_DetectionProposals:
