@@ -419,11 +419,14 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 			}
 			glog.Warningf("entry %s superseded before replicate; syncing live version", targetKey)
 			newEntry = live
-			// The replayed oldEntry predates the live version, so an
-			// incremental diff could resolve manifests the overwrite already
-			// vacuumed; repair from the live snapshot instead.
-			if action = chooseUpdateAction(existingEntry, oldEntry, newEntry); action == updateNormal {
-				action = updateRepair
+			// The live snapshot is the source's current state, not a replay:
+			// a newer destination mtime does not make it stale, and the
+			// replayed oldEntry predates it, so an incremental diff could
+			// resolve manifests the overwrite already vacuumed. Repair from
+			// the snapshot unless the destination already holds it.
+			action = updateRepair
+			if destinationHoldsContent(existingEntry, live) {
+				action = updateSkip
 			}
 		}
 	}

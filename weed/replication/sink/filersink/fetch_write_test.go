@@ -1250,18 +1250,20 @@ func TestUpdateEntrySyncsLiveVersion(t *testing.T) {
 }
 
 // A timestamp-preserving rewrite leaves the live source older than the replay
-// whose chunks it dropped. The destination must still converge on the live
-// version instead of fetching chunks the source vacuumed.
+// whose chunks it dropped, and older than a destination that already took an
+// earlier version. The destination must still converge on the live version
+// instead of fetching chunks the source vacuumed or keeping its newer-stamped
+// stale bytes.
 func TestUpdateEntrySyncsOlderLiveVersion(t *testing.T) {
 	var volumeLookups atomic.Int32
 	existing := &filer_pb.Entry{
 		Name:       "x.bin",
-		Attributes: &filer_pb.FuseAttributes{Mtime: 3},
+		Attributes: &filer_pb.FuseAttributes{Mtime: 5},
 		Chunks:     []*filer_pb.FileChunk{{FileId: "4,00aaa", SourceFileId: "5617,00aaa", Size: 10}},
 	}
 	oldEntry := &filer_pb.Entry{
 		Name:       "x.bin",
-		Attributes: &filer_pb.FuseAttributes{Mtime: 3},
+		Attributes: &filer_pb.FuseAttributes{Mtime: 5},
 		Chunks:     []*filer_pb.FileChunk{{FileId: "5617,00aaa", Size: 10}},
 	}
 	live := &filer_pb.Entry{
@@ -1283,7 +1285,7 @@ func TestUpdateEntrySyncsOlderLiveVersion(t *testing.T) {
 
 	replayed := &filer_pb.Entry{
 		Name:       "x.bin",
-		Attributes: &filer_pb.FuseAttributes{Mtime: 5},
+		Attributes: &filer_pb.FuseAttributes{Mtime: 6},
 		Chunks:     []*filer_pb.FileChunk{{FileId: "5617,01abc", Size: 10}},
 	}
 	if _, err := fs.UpdateEntry("/dst/x.bin", oldEntry, "", replayed, true, nil); err != nil {
@@ -1298,6 +1300,44 @@ func TestUpdateEntrySyncsOlderLiveVersion(t *testing.T) {
 	}
 	if volumeLookups.Load() != 0 {
 		t.Fatal("the superseded version's chunks must not be fetched")
+	}
+}
+
+// Once the destination already holds the live version, the same stale replay
+// must not re-replicate it.
+func TestUpdateEntryKeepsDestinationHoldingLiveVersion(t *testing.T) {
+	live := &filer_pb.Entry{
+		Name:       "x.bin",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 4},
+		Content:    []byte("live"),
+	}
+	filerSrc := startSourceFilerServer(t, &sourceFilerServer{entry: live})
+	dst, dstAddr := startRecordingFiler(t, live)
+
+	fs := &FilerSink{
+		filerSource:    filerSrc,
+		dir:            "/dst",
+		grpcAddress:    dstAddr,
+		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		executor:       util.NewLimitedConcurrentExecutor(1),
+	}
+	fs.SetUploader(operation.NewUploaderWithHttpClient(http.DefaultClient))
+
+	oldEntry := &filer_pb.Entry{
+		Name:       "x.bin",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 3},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "5617,00aaa", Size: 10}},
+	}
+	replayed := &filer_pb.Entry{
+		Name:       "x.bin",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 5},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "5617,01abc", Size: 10}},
+	}
+	if _, err := fs.UpdateEntry("/dst/x.bin", oldEntry, "", replayed, true, nil); err != nil {
+		t.Fatalf("a destination holding the live version should be left alone: %v", err)
+	}
+	if dst.updates.Load() != 0 {
+		t.Fatal("a destination already holding the live version must not be rewritten")
 	}
 }
 
