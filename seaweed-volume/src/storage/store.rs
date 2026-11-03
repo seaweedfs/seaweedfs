@@ -3452,6 +3452,31 @@ mod tests {
         (hook, in_window, release)
     }
 
+    /// Plans needle 1 of `vid` on another thread and returns once the plan
+    /// holds the volume handle, so a timed check cannot pass on a late start.
+    fn plan_in_background(
+        store: &Arc<std::sync::RwLock<Store>>,
+        vid: VolumeId,
+    ) -> std::sync::mpsc::Receiver<Result<(), VolumeError>> {
+        let (_, vol) = store.read().unwrap().find_volume(vid).unwrap();
+        let handles = Arc::strong_count(&vol);
+        let (planned, plan) = std::sync::mpsc::channel();
+        let reader = store.clone();
+        std::thread::spawn(move || {
+            let _ =
+                planned.send(Store::needle_read_plan(&reader, vid, NeedleId(1), false).map(|_| ()));
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while Arc::strong_count(&vol) == handles {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the plan never looked up the volume"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        plan
+    }
+
     /// A GET planned while a vacuum commit has the needle map closed waits for
     /// the commit, as Go's readNeedle does, instead of answering NotFound for a
     /// live needle.
@@ -3466,12 +3491,7 @@ mod tests {
             .recv_timeout(std::time::Duration::from_secs(10))
             .expect("the commit never reached its swap window");
 
-        let (planned, plan) = std::sync::mpsc::channel();
-        let reader = store.clone();
-        std::thread::spawn(move || {
-            let _ =
-                planned.send(Store::needle_read_plan(&reader, vid, NeedleId(1), false).map(|_| ()));
-        });
+        let plan = plan_in_background(&store, vid);
         if let Ok(early) = plan.recv_timeout(std::time::Duration::from_millis(300)) {
             release.send(()).unwrap();
             panic!("planned during the swap window instead of waiting: {early:?}");
@@ -3505,18 +3525,7 @@ mod tests {
             .recv_timeout(std::time::Duration::from_secs(10))
             .expect("the commit never reached its swap window");
 
-        let (_, vol) = store.read().unwrap().find_volume(vid).unwrap();
-        let handles = Arc::strong_count(&vol);
-        let (planned, plan) = std::sync::mpsc::channel();
-        let reader = store.clone();
-        std::thread::spawn(move || {
-            let _ = planned.send(Store::needle_read_plan(&reader, vid, NeedleId(1), false).is_ok());
-        });
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        while Arc::strong_count(&vol) == handles {
-            assert!(std::time::Instant::now() < deadline, "the plan never looked up the volume");
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
+        let plan = plan_in_background(&store, vid);
         let (wrote, written) = std::sync::mpsc::channel();
         let writer = store.clone();
         std::thread::spawn(move || {
@@ -3533,11 +3542,10 @@ mod tests {
             .recv_timeout(std::time::Duration::from_secs(10))
             .expect("the commit never finished");
         assert!(committed.is_ok(), "{committed:?}");
-        assert!(
-            plan.recv_timeout(std::time::Duration::from_secs(10))
-                .expect("the plan still waits after the commit finished"),
-            "the live needle after the commit"
-        );
+        let after = plan
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("the plan still waits after the commit finished");
+        assert!(after.is_ok(), "the live needle after the commit: {after:?}");
     }
 
     fn write_test_needle(store: &mut Store, vid: VolumeId, id: u64, data: &[u8]) {
