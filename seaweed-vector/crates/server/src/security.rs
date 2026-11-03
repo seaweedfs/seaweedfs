@@ -27,12 +27,16 @@ pub struct GrpcTls {
 impl GrpcTls {
     /// The CA, certificate and key as the files hold them now, so a dial
     /// after the files rotate presents the new pair.
-    pub fn pems(&self) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>)> {
-        let read = |path: &str| std::fs::read(path).with_context(|| format!("reading {path}"));
+    pub async fn pems(&self) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>)> {
+        async fn read(path: &str) -> Result<Vec<u8>> {
+            tokio::fs::read(path)
+                .await
+                .with_context(|| format!("reading {path}"))
+        }
         Ok((
-            read(&self.ca_path)?,
-            read(&self.cert_path)?,
-            read(&self.key_path)?,
+            read(&self.ca_path).await?,
+            read(&self.cert_path).await?,
+            read(&self.key_path).await?,
         ))
     }
 }
@@ -326,8 +330,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn client_credentials_follow_the_gateways_rules() {
+    #[tokio::test]
+    async fn client_credentials_follow_the_gateways_rules() {
         let (_dir, ca, cert, key, client) = files();
         assert!(
             security("", &[])
@@ -344,13 +348,13 @@ mod tests {
         .unwrap()
         .unwrap();
         assert_eq!(
-            tls.pems().unwrap(),
+            tls.pems().await.unwrap(),
             (b"CA".to_vec(), b"CERT".to_vec(), b"KEY".to_vec())
         );
         assert_eq!(tls.server_name.as_deref(), Some("master.internal"));
         // Each dial reads the files, so a rotated pair is picked up.
         std::fs::write(&cert, "ROTATED").unwrap();
-        assert_eq!(tls.pems().unwrap().1, b"ROTATED");
+        assert_eq!(tls.pems().await.unwrap().1, b"ROTATED");
 
         // A dedicated client certificate is preferred, and the environment
         // can supply it.
@@ -364,7 +368,7 @@ mod tests {
         .grpc_client_tls("grpc.client", None)
         .unwrap()
         .unwrap();
-        assert_eq!(tls.pems().unwrap().1, b"CLIENT");
+        assert_eq!(tls.pems().await.unwrap().1, b"CLIENT");
 
         for broken in [
             format!("[grpc.client]\ncert = {cert:?}\nkey = {key:?}\n"),

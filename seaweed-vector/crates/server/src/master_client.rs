@@ -58,7 +58,7 @@ pub fn grpc_addr(master: &str) -> Result<String> {
 /// The master's gRPC endpoint, over TLS with `grpc.client`'s credentials when
 /// the cluster has them; the master's certificate is checked against the host
 /// dialed unless the credentials name another.
-pub fn master_endpoint(master: &str, tls: Option<&GrpcTls>) -> Result<Endpoint> {
+pub async fn master_endpoint(master: &str, tls: Option<&GrpcTls>) -> Result<Endpoint> {
     let addr = grpc_addr(master)?;
     let Some(tls) = tls else {
         return Ok(Endpoint::new(addr)?);
@@ -66,7 +66,7 @@ pub fn master_endpoint(master: &str, tls: Option<&GrpcTls>) -> Result<Endpoint> 
     weed_lance_worker::tls::install_default_crypto_provider();
     let endpoint = Endpoint::new(addr.replacen("http://", "https://", 1))?;
     let host = dialed_host(&endpoint).with_context(|| format!("master {master} has no host"))?;
-    let (ca, cert, key) = tls.pems()?;
+    let (ca, cert, key) = tls.pems().await?;
     let config = ClientTlsConfig::new()
         .ca_certificate(Certificate::from_pem(ca))
         .identity(Identity::from_pem(cert, key))
@@ -136,15 +136,17 @@ where
     }
 }
 
-/// Bounds the connect, TLS handshake included, and then the master's first
-/// answer, the 5s wdclient gives a master call; a black-holed or silent master
-/// otherwise holds up the other masters.
+/// Bounds the credential reads and the connect, TLS handshake included, and
+/// then the master's first answer, the 5s wdclient gives a master call; a
+/// black-holed or silent master otherwise holds up the other masters.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
-async fn connect(endpoint: Endpoint) -> Result<Channel> {
-    Ok(tokio::time::timeout(CONNECT_TIMEOUT, endpoint.connect())
-        .await
-        .context("master did not complete the connection")??)
+async fn connect(endpoint: impl Future<Output = Result<Endpoint>>) -> Result<Channel> {
+    tokio::time::timeout(CONNECT_TIMEOUT, async {
+        Ok(endpoint.await?.connect().await?)
+    })
+    .await
+    .context("master did not complete the connection")?
 }
 
 async fn stream_to(
@@ -152,7 +154,7 @@ async fn stream_to(
     client_addr: &str,
     tls: Option<&GrpcTls>,
 ) -> Result<Option<String>> {
-    let channel = connect(master_endpoint(master, tls)?).await?;
+    let channel = connect(master_endpoint(master, tls)).await?;
     // A master answers at once, a follower with its leader hint.
     let answer_by = tokio::time::Instant::now() + CONNECT_TIMEOUT;
     let mut client = SeaweedClient::new(channel);
@@ -284,7 +286,7 @@ mod tests {
             .unwrap()
             .tls_config(ClientTlsConfig::new().domain_name("localhost"))
             .unwrap();
-        match tokio::time::timeout(CONNECT_TIMEOUT * 3, connect(endpoint)).await {
+        match tokio::time::timeout(CONNECT_TIMEOUT * 3, connect(async { Ok(endpoint) })).await {
             Ok(Err(e)) => assert!(format!("{e:#}").contains("did not complete"), "{e:#}"),
             other => panic!("handshake was not bounded: {other:?}"),
         }
