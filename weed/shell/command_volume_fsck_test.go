@@ -56,9 +56,10 @@ func TestVolumeFsckHttpDeleteRecordsParentDirectory(t *testing.T) {
 	defer filer.Close()
 
 	verbose := false
+	var output bytes.Buffer
 	c := &commandVolumeFsck{
 		verbose:    &verbose,
-		writer:     io.Discard,
+		writer:     &output,
 		purgedDirs: make(map[util.FullPath]struct{}),
 		env:        &CommandEnv{option: &ShellOptions{FilerAddress: pb.ServerAddress(strings.TrimPrefix(filer.URL, "http://"))}},
 	}
@@ -71,6 +72,9 @@ func TestVolumeFsckHttpDeleteRecordsParentDirectory(t *testing.T) {
 	}
 	if _, found := c.purgedDirs["/locked/dir"]; found {
 		t.Errorf("expected a rejected delete not to be recorded, got %v", c.purgedDirs)
+	}
+	if got := output.String(); got != "DELETE /locked/dir/file.txt failed: 403 Forbidden\n" {
+		t.Errorf("delete output = %q, want only the rejected path", got)
 	}
 }
 
