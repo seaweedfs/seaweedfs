@@ -93,7 +93,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: ${{ runner.environment == 'github-hosted' }}
@@ -124,7 +124,7 @@ jobs:
           set -e
           make ./weed ./weed-vector CARGO_PROFILE=dev
           if [ "${{ matrix.volume }}" = "rust" ]; then make ./weed-volume CARGO_PROFILE=dev; fi
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install test dependencies

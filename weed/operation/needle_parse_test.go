@@ -120,7 +120,7 @@ func TestCreateNeedleFromRequest(t *testing.T) {
 }
 
 func TestUploadKeepsMarginalGzipUncompressed(t *testing.T) {
-	data := make([]byte, 4300)
+	data := make([]byte, 4450)
 	rand.New(rand.NewSource(1)).Read(data[:4000])
 	gzipped, _ := util.GzipData(data)
 	if len(gzipped) >= len(data) || len(gzipped)*10 < len(data)*9 {

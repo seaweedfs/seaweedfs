@@ -586,9 +586,12 @@ func getConditionContextValues(key string, ctx *PolicyContext) []string {
 			return []string{val}
 		}
 	}
-	if strings.HasPrefix(key, "s3tables:TableBucketTag/") {
-		tagKey := strings.TrimPrefix(key, "s3tables:TableBucketTag/")
-		if val, ok := ctx.TableBucketTags[tagKey]; ok {
+	tagKey, ok := strings.CutPrefix(key, "s3tables:TableBucketTag/")
+	if !ok {
+		tagKey, ok = strings.CutPrefix(key, "s3vectors:VectorBucketTag/")
+	}
+	if ok {
+		if val, found := ctx.TableBucketTags[tagKey]; found {
 			return []string{val}
 		}
 	}
