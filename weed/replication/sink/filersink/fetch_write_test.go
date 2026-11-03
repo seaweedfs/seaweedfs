@@ -233,7 +233,7 @@ func TestFetchAndWriteRejectsZeroByteSource(t *testing.T) {
 		err    error
 	}, 1)
 	go func() {
-		gotFileId, gotErr := fs.fetchAndWrite(sourceChunk, "/dst/index.bin", 0, "")
+		gotFileId, gotErr := fs.fetchAndWrite(sourceChunk, "/dst/index.bin", nil, "")
 		done <- struct {
 			fileId string
 			err    error
@@ -331,7 +331,7 @@ func TestReplicateChunksPreservesSizeMismatchSentinel(t *testing.T) {
 
 	sourceChunks := []*filer_pb.FileChunk{{FileId: fid, Size: expectedSize}}
 
-	_, err := fs.replicateChunks(nil, sourceChunks, "/dst/index.bin", 0, "")
+	_, err := fs.replicateChunks(nil, sourceChunks, "/dst/index.bin", nil, "")
 	if err == nil {
 		t.Fatal("expected error from replicateChunks, got nil")
 	}
@@ -396,7 +396,7 @@ func TestSourceSupersedesEpochMtime(t *testing.T) {
 // attempts and propagate instead of spinning forever.
 func TestManifestResolveRetryGateUnverifiableSupersessionBounded(t *testing.T) {
 	fs := &FilerSink{isIncremental: true, dir: "/backup"}
-	gate := fs.manifestResolveRetryGate("/backup/2026-07-10/buckets/x/f.pt", 123, "3,01abc", fs.newMissingSourceChunkGate("3,01abc"))
+	gate := fs.manifestResolveRetryGate("/backup/2026-07-10/buckets/x/f.pt", entryWithMtimeNs(123), "3,01abc", fs.newMissingSourceChunkGate("3,01abc"))
 	resolveErr := errors.New("LookupFileId volume id 3: not found")
 	for i := 1; i < maxUnverifiableResolveAttempts; i++ {
 		if !gate(resolveErr) {
@@ -414,7 +414,7 @@ func TestManifestResolveRetryGateUnverifiableSupersessionBounded(t *testing.T) {
 // retrying until the source is superseded.
 func TestManifestResolveRetryGateNonTransientPropagates(t *testing.T) {
 	fs := &FilerSink{dir: "/backup"}
-	gate := fs.manifestResolveRetryGate("/backup/buckets/x/f.pt", 123, "3,01abc", fs.newMissingSourceChunkGate("3,01abc"))
+	gate := fs.manifestResolveRetryGate("/backup/buckets/x/f.pt", entryWithMtimeNs(123), "3,01abc", fs.newMissingSourceChunkGate("3,01abc"))
 	permanentErrs := []error{
 		errors.New("fail to unmarshal manifest 3,01abc: proto: cannot parse invalid wire-format data"),
 		errors.New("invalid fileId abc"),
@@ -616,7 +616,7 @@ func TestFetchAndWriteStopsOnMissingSourceChunk(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, fetchErr := fs.fetchAndWrite(&filer_pb.FileChunk{FileId: "5617,01abc", Size: 10}, "/dst/x.bin", 5*int64(time.Second), "")
+		_, fetchErr := fs.fetchAndWrite(&filer_pb.FileChunk{FileId: "5617,01abc", Size: 10}, "/dst/x.bin", entryWithMtimeNs(5*int64(time.Second)), "")
 		done <- fetchErr
 	}()
 
@@ -800,7 +800,7 @@ func TestFetchAndWriteMissingSourceChunkUnverifiableSupersession(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		_, fetchErr := fs.fetchAndWrite(&filer_pb.FileChunk{FileId: "5617,01abc", Size: 10},
-			"/backup/2026-07-10/x.bin", 5*int64(time.Second), "")
+			"/backup/2026-07-10/x.bin", entryWithMtimeNs(5*int64(time.Second)), "")
 		done <- fetchErr
 	}()
 
@@ -834,6 +834,13 @@ func TestSourceDroppedChunk(t *testing.T) {
 	if !fs.sourceDroppedChunk("/dst/x.bin", "5617,01abc") {
 		t.Fatal("a live entry stamped older than the replayed version still dropped the chunk")
 	}
+}
+
+func entryWithMtimeNs(mtimeNs int64) *filer_pb.Entry {
+	return &filer_pb.Entry{Attributes: &filer_pb.FuseAttributes{
+		Mtime:   mtimeNs / int64(time.Second),
+		MtimeNs: int32(mtimeNs % int64(time.Second)),
+	}}
 }
 
 func TestSourceMovedOn(t *testing.T) {
@@ -937,7 +944,7 @@ func TestFetchAndWriteStopsWhenSourceDroppedChunk(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		_, fetchErr := fs.fetchAndWrite(&filer_pb.FileChunk{FileId: "5617,01abc", Size: 10},
-			"/dst/x.bin", 5*int64(time.Second), "")
+			"/dst/x.bin", entryWithMtimeNs(5*int64(time.Second)), "")
 		done <- fetchErr
 	}()
 
@@ -984,7 +991,7 @@ func TestFetchAndWriteStopsWhenOlderLiveEntryDroppedChunk(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		_, fetchErr := fs.fetchAndWrite(&filer_pb.FileChunk{FileId: "5617,01abc", Size: 10},
-			"/dst/x.bin", 5*int64(time.Second), "")
+			"/dst/x.bin", entryWithMtimeNs(5*int64(time.Second)), "")
 		done <- fetchErr
 	}()
 
@@ -1035,7 +1042,7 @@ func TestFetchAndWriteManifestChildKeepsRetrying(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		_, fetchErr := fs.fetchAndWrite(&filer_pb.FileChunk{FileId: "5617,01abc", Size: 10},
-			"/dst/x.bin", 5*int64(time.Second), "5617,09fed")
+			"/dst/x.bin", entryWithMtimeNs(5*int64(time.Second)), "5617,09fed")
 		done <- fetchErr
 	}()
 
