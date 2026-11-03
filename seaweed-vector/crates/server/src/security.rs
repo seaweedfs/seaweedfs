@@ -1,6 +1,6 @@
 //! The cluster's `security.toml`, found and read the way weed processes do:
-//! the file in `.`, `~/.seaweedfs`, `/usr/local/etc/seaweedfs` or
-//! `/etc/seaweedfs`, with `WEED_*` environment variables over it.
+//! the file in `-config_dir`, `.`, `~/.seaweedfs`, `/usr/local/etc/seaweedfs`
+//! or `/etc/seaweedfs`, with `WEED_*` environment variables over it.
 
 use std::path::{Path, PathBuf};
 
@@ -78,8 +78,15 @@ impl std::fmt::Debug for Security {
     }
 }
 
-fn candidates(current_dir: Option<&Path>, home: Option<&Path>) -> Vec<PathBuf> {
+fn candidates(
+    config_dir: Option<&Path>,
+    current_dir: Option<&Path>,
+    home: Option<&Path>,
+) -> Vec<PathBuf> {
     let mut found = Vec::new();
+    if let Some(dir) = config_dir {
+        found.push(dir.join(FILE_NAME));
+    }
     if let Some(dir) = current_dir {
         found.push(dir.join(FILE_NAME));
     }
@@ -105,16 +112,21 @@ fn entry<'a>(table: &'a toml::Table, key: &str) -> Option<&'a toml::Value> {
 }
 
 impl Security {
-    /// Reads `path`, or the first `security.toml` where weed looks; without
-    /// one, only the environment applies.
-    pub fn load(path: Option<&Path>) -> Result<Self> {
+    /// Reads `path`, or the first `security.toml` where weed looks: the
+    /// `-config_dir`, then `.`, `~/.seaweedfs`, `/usr/local/etc/seaweedfs`
+    /// and `/etc/seaweedfs`. Without one, only the environment applies.
+    pub fn load(path: Option<&Path>, config_dir: Option<&Path>) -> Result<Self> {
         let path = match path {
             Some(path) => Some(path.to_path_buf()),
             None => {
                 let home = std::env::var_os("HOME").map(PathBuf::from);
-                candidates(std::env::current_dir().ok().as_deref(), home.as_deref())
-                    .into_iter()
-                    .find(|p| p.is_file())
+                candidates(
+                    config_dir,
+                    std::env::current_dir().ok().as_deref(),
+                    home.as_deref(),
+                )
+                .into_iter()
+                .find(|p| p.is_file())
             }
         };
         Self::from_file(path, Box::new(|name| std::env::var(name).ok()))
@@ -456,10 +468,15 @@ mod tests {
 
     #[test]
     fn the_file_is_searched_where_weed_looks() {
-        let found = candidates(Some(Path::new("/cwd")), Some(Path::new("/home/u")));
+        let found = candidates(
+            Some(Path::new("/etc/weed")),
+            Some(Path::new("/cwd")),
+            Some(Path::new("/home/u")),
+        );
         assert_eq!(
             found,
             [
+                "/etc/weed/security.toml",
                 "/cwd/security.toml",
                 "/home/u/.seaweedfs/security.toml",
                 "/usr/local/etc/seaweedfs/security.toml",
