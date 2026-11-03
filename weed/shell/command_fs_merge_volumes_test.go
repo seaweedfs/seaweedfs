@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -403,8 +404,17 @@ func TestWarnUnreferencedSources_ConcurrentRecording(t *testing.T) {
 
 type conditionalUpdateFiler struct {
 	filer_pb.SeaweedFilerClient
-	err error
-	req *filer_pb.UpdateEntryRequest
+	err       error
+	req       *filer_pb.UpdateEntryRequest
+	current   *filer_pb.Entry
+	lookupErr error
+}
+
+func (s *conditionalUpdateFiler) LookupDirectoryEntry(_ context.Context, _ *filer_pb.LookupDirectoryEntryRequest, _ ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	if s.lookupErr != nil {
+		return nil, s.lookupErr
+	}
+	return &filer_pb.LookupDirectoryEntryResponse{Entry: s.current}, nil
 }
 
 func (s *conditionalUpdateFiler) UpdateEntry(_ context.Context, req *filer_pb.UpdateEntryRequest, _ ...grpc.CallOption) (*filer_pb.UpdateEntryResponse, error) {
@@ -442,6 +452,34 @@ func TestUpdateEntryIfUnchanged(t *testing.T) {
 			if len(clauses) != 1 || clauses[0].Kind != filer_pb.WriteCondition_IF_ENTRY_EQUAL ||
 				!proto.Equal(clauses[0].ExpectedEntry, read) || !proto.Equal(fake.req.Entry, moved) {
 				t.Fatalf("request %v must write the moved entry conditioned on the read one", fake.req)
+			}
+		})
+	}
+}
+
+// A refused update may have been refused by an overlapping run that moved the
+// same chunk to the same volume: moveChunk keeps the key and cookie, so that
+// run's committed entry points at the very fid this run would delete.
+func TestUnreferencedTargets(t *testing.T) {
+	committed := orphanedNeedle{volumeId: 9, fileId: "9,0101000007"}
+	own := orphanedNeedle{volumeId: 9, fileId: "9,0202000007"}
+	targets := func() []orphanedNeedle { return []orphanedNeedle{committed, own} }
+	current := &filer_pb.Entry{Name: "f", Chunks: []*filer_pb.FileChunk{{FileId: committed.fileId}}}
+
+	for _, tc := range []struct {
+		name      string
+		lookupErr error
+		want      []orphanedNeedle
+	}{
+		{"another run committed one copy", nil, []orphanedNeedle{own}},
+		{"entry deleted", status.Error(codes.NotFound, "not found"), []orphanedNeedle{committed, own}},
+		{"entry unreadable", status.Error(codes.Unavailable, "filer down"), nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &conditionalUpdateFiler{current: current, lookupErr: tc.lookupErr}
+			got := unreferencedTargets(context.Background(), fake, nil, "/dir", "f", targets())
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("got %v, want %v", got, tc.want)
 			}
 		})
 	}

@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"sort"
 	"strconv"
@@ -248,6 +249,7 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 				stale, uErr := updateEntryIfUnchanged(context.Background(), filerClient, string(parentPath), entry, readEntry)
 				if stale {
 					fmt.Printf("skip %s: changed during merge\n", entryPath)
+					moved.targets = unreferencedTargets(context.Background(), filerClient, lookupFn, parentPath, entry.Name, moved.targets)
 					moved.abandon(commandEnv, entryPath, plan)
 					return nil
 				}
@@ -363,6 +365,30 @@ func updateEntryIfUnchanged(ctx context.Context, client filer_pb.SeaweedFilerCli
 		return true, err
 	}
 	return false, err
+}
+
+// unreferencedTargets drops the copies the filer's current entry points at.
+// moveChunk keeps the key and cookie, so an overlapping run that moved the same
+// chunk to the same volume wrote the same fid, and its committed update is what
+// refused this one. When the entry cannot be read, no copy is reported.
+func unreferencedTargets(ctx context.Context, client filer_pb.SeaweedFilerClient, lookupFn wdclient.LookupFileIdFunctionType, dir util.FullPath, name string, targets []orphanedNeedle) []orphanedNeedle {
+	resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{Directory: string(dir), Name: name})
+	if errors.Is(err, filer_pb.ErrNotFound) {
+		return targets
+	}
+	if err != nil {
+		return nil
+	}
+	chunks := resp.Entry.GetChunks()
+	dataChunks, manifestChunks, err := filer.ResolveChunkManifest(ctx, lookupFn, chunks, 0, math.MaxInt64, nil)
+	if err != nil {
+		return nil
+	}
+	referenced := make(map[string]bool)
+	for _, chunk := range slices.Concat(chunks, dataChunks, manifestChunks) {
+		referenced[chunk.GetFileIdString()] = true
+	}
+	return slices.DeleteFunc(targets, func(t orphanedNeedle) bool { return referenced[t.fileId] })
 }
 
 // deleteOrphanedNeedles fans out BatchDelete RPCs to every replica of each
