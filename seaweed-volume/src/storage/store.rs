@@ -966,6 +966,14 @@ impl Store {
                 .map(|(_, vol)| vol)
                 .ok_or(VolumeError::NotFound)
         };
+        Self::plan_on_open_handle(find, id, read_deleted)
+    }
+
+    fn plan_on_open_handle(
+        mut find: impl FnMut() -> Result<Arc<Volume>, VolumeError>,
+        id: NeedleId,
+        read_deleted: bool,
+    ) -> Result<crate::storage::volume::NeedleReadPlan, VolumeError> {
         let mut vol = find()?;
         for _ in 0..3 {
             match vol.needle_read_plan(id, read_deleted) {
@@ -3527,6 +3535,43 @@ mod tests {
     #[test]
     fn test_read_plan_waits_out_a_commit_swap_window_redb() {
         check_read_plan_waits_out_a_commit_swap_window(NeedleMapKind::Redb, VolumeId(83));
+    }
+
+    /// A plan on a handle an unmount closed looks the volume up again and
+    /// reads the remounted volume.
+    #[test]
+    fn test_read_plan_retries_a_handle_closed_by_a_remount() {
+        let tmp = TempDir::new().unwrap();
+        let vid = VolumeId(1);
+        let mut store = make_test_store(&[tmp.path().to_str().unwrap()]);
+        store
+            .add_volume(vid, DiskType::HardDrive, &VolumeSpec::default())
+            .unwrap();
+        write_test_needle(&mut store, vid, 1, b"live needle");
+        let (_, stale) = store.find_volume(vid).unwrap();
+        assert!(store.unmount_volume(vid).unwrap());
+        store.mount_volume(vid, "", DiskType::HardDrive).unwrap();
+
+        let mut stale = Some(stale);
+        let mut plan = Store::plan_on_open_handle(
+            || match stale.take() {
+                Some(vol) => Ok(vol),
+                None => store
+                    .find_volume(vid)
+                    .map(|(_, vol)| vol)
+                    .ok_or(VolumeError::NotFound),
+            },
+            NeedleId(1),
+            false,
+        )
+        .unwrap();
+        let mut n = Needle {
+            id: NeedleId(1),
+            cookie: Cookie(1),
+            ..Needle::default()
+        };
+        plan.read_full(&mut n).unwrap();
+        assert_eq!(n.data, b"live needle");
     }
 
     /// A plan waiting for a commit holds no store guard, so a store writer
