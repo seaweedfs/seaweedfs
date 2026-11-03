@@ -1,7 +1,7 @@
 use clap::Parser;
 use std::ffi::OsString;
 use std::net::UdpSocket;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::security::tls::TlsPolicy;
 
@@ -1051,8 +1051,6 @@ pub struct SecurityConfig {
     pub guard_white_list: Vec<String>,
 }
 
-const SECURITY_CONFIG_FILE_NAME: &str = "security.toml";
-
 /// Parse a security.toml file to extract JWT signing keys and TLS configuration.
 /// Format:
 /// ```toml
@@ -1272,39 +1270,10 @@ fn resolve_security_config_path(path: &str, env: EnvLookup<'_>) -> Option<PathBu
         return Some(PathBuf::from(path));
     }
 
-    default_security_config_candidates(
+    seaweed_common::security_config::find(
         std::env::current_dir().ok().as_deref(),
-        home_dir_from_env(env).as_deref(),
+        seaweed_common::security_config::home_dir(env).as_deref(),
     )
-    .into_iter()
-    .find(|candidate| candidate.is_file())
-}
-
-fn default_security_config_candidates(
-    current_dir: Option<&Path>,
-    home_dir: Option<&Path>,
-) -> Vec<PathBuf> {
-    let mut candidates = Vec::new();
-    if let Some(dir) = current_dir {
-        candidates.push(dir.join(SECURITY_CONFIG_FILE_NAME));
-    }
-    if let Some(home) = home_dir {
-        candidates.push(home.join(".seaweedfs").join(SECURITY_CONFIG_FILE_NAME));
-    }
-    candidates.push(PathBuf::from("/usr/local/etc/seaweedfs").join(SECURITY_CONFIG_FILE_NAME));
-    candidates.push(PathBuf::from("/etc/seaweedfs").join(SECURITY_CONFIG_FILE_NAME));
-    candidates
-}
-
-fn home_dir_from_env(env: EnvLookup<'_>) -> Option<PathBuf> {
-    env("HOME")
-        .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| {
-            env("USERPROFILE")
-                .filter(|v| !v.is_empty())
-                .map(PathBuf::from)
-        })
 }
 
 /// Apply WEED_ environment variable overrides to a SecurityConfig.
@@ -1403,7 +1372,9 @@ fn detect_host_address() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use seaweed_common::security_config::SECURITY_CONFIG_FILE_NAME;
     use std::collections::HashMap;
+    use std::path::Path;
     use std::sync::{Mutex, MutexGuard, OnceLock};
 
     /// Serialises the tests that move the process working directory against

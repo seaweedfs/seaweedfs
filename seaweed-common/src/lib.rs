@@ -6,6 +6,9 @@
 //! second copy is a correctness risk rather than a typing cost: the HTTP↔gRPC
 //! address rule, which two copies had already drifted on, and the process-wide
 //! rustls provider, which only works if every binary installs the same one.
+//! The security.toml search path joined them for the same reason: an operator
+//! mounts the file once and every binary has to look where `weed` looks.
 
 pub mod address;
+pub mod security_config;
 pub mod tls;
