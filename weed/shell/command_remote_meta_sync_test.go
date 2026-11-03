@@ -156,6 +156,11 @@ func TestPullMetadataDirectoryDescendsOnlyIntoATakenDirectory(t *testing.T) {
 type deleteRecordingFiler struct {
 	takenNameFiler
 	deletes []*filer_pb.DeleteEntryRequest
+	listing map[string][]*filer_pb.Entry
+}
+
+func (s *deleteRecordingFiler) ListEntries(_ context.Context, req *filer_pb.ListEntriesRequest, _ ...grpc.CallOption) (filer_pb.SeaweedFiler_ListEntriesClient, error) {
+	return &stubListStream{entries: s.listing[req.Directory]}, nil
 }
 
 func (s *deleteRecordingFiler) DeleteEntry(_ context.Context, req *filer_pb.DeleteEntryRequest, _ ...grpc.CallOption) (*filer_pb.DeleteEntryResponse, error) {
@@ -163,34 +168,36 @@ func (s *deleteRecordingFiler) DeleteEntry(_ context.Context, req *filer_pb.Dele
 	return &filer_pb.DeleteEntryResponse{}, nil
 }
 
-// A remote-backed file that meta.sync drops may be overwritten locally after
-// the directory listing; the delete must only remove the listed version.
+// A remote-backed entry that meta.sync drops may be replaced locally after the
+// directory listing; the delete must only remove the listed version.
 func TestPullMetadataDirectoryDeletesOnlyTheListedFile(t *testing.T) {
+	remoteFile := &filer_pb.RemoteEntry{StorageName: "r", RemoteSize: 1, RemoteMtime: 10}
 	for _, tc := range []struct {
 		name        string
+		listed      *filer_pb.Entry
 		remote      map[string]bool
 		deleteStale bool
+		sec, ns     int64
 	}{
-		{"remote turned it into a directory", map[string]bool{"f": true}, false},
-		{"gone from the remote", map[string]bool{}, true},
+		{"remote turned it into a directory", &filer_pb.Entry{Name: "f", Attributes: &filer_pb.FuseAttributes{Mtime: 10, MtimeNs: 5}, RemoteEntry: remoteFile}, map[string]bool{"f": true}, false, 10, 10e9 + 5},
+		{"gone from the remote", &filer_pb.Entry{Name: "f", Attributes: &filer_pb.FuseAttributes{Mtime: 10, MtimeNs: 5}, RemoteEntry: remoteFile}, map[string]bool{}, true, 10, 10e9 + 5},
+		{"listed without an mtime", &filer_pb.Entry{Name: "f", Attributes: &filer_pb.FuseAttributes{}, RemoteEntry: remoteFile}, map[string]bool{}, true, 0, 1},
+		{"empty directory gone from the remote", &filer_pb.Entry{Name: "f", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Mtime: 20}, RemoteEntry: &filer_pb.RemoteEntry{StorageName: "r"}}, map[string]bool{}, true, 20, 20e9},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			listed := &filer_pb.Entry{
-				Name:        "f",
-				Attributes:  &filer_pb.FuseAttributes{Mtime: 10, MtimeNs: 5},
-				RemoteEntry: &filer_pb.RemoteEntry{StorageName: "r", RemoteSize: 1, RemoteMtime: 10},
+			fake := &deleteRecordingFiler{
+				takenNameFiler: takenNameFiler{stubFilerSvc: stubFilerSvc{
+					lookupResp: &filer_pb.LookupDirectoryEntryResponse{Entry: &filer_pb.Entry{Name: "f"}},
+				}},
+				listing: map[string][]*filer_pb.Entry{"/buckets/b": {tc.listed}},
 			}
-			fake := &deleteRecordingFiler{takenNameFiler: takenNameFiler{stubFilerSvc: stubFilerSvc{
-				listResp:   []*filer_pb.Entry{listed},
-				lookupResp: &filer_pb.LookupDirectoryEntryResponse{Entry: &filer_pb.Entry{Name: "f"}},
-			}}}
 			remote := &listingRemote{dirs: map[string]map[string]bool{"/": tc.remote}}
 			var out strings.Builder
 			loc := &remote_pb.RemoteStorageLocation{Name: "r", Bucket: "rb", Path: "/"}
 			if err := pullMetadataDirectory(context.Background(), fake, &out, remote, util.FullPath("/buckets/b"), loc, tc.deleteStale, false); err != nil {
 				t.Fatalf("sync: %v", err)
 			}
-			if len(fake.deletes) != 1 || fake.deletes[0].Name != "f" || fake.deletes[0].IfNotModifiedAfter != 10 || fake.deletes[0].IfNotModifiedAfterNs != 10e9+5 {
+			if len(fake.deletes) != 1 || fake.deletes[0].Name != "f" || fake.deletes[0].IfNotModifiedAfter != tc.sec || fake.deletes[0].IfNotModifiedAfterNs != tc.ns {
 				t.Fatalf("deletes %v must be conditioned on the listed mtime", fake.deletes)
 			}
 		})

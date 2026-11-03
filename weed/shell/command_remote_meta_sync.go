@@ -341,12 +341,15 @@ func deleteRemoteBackedEntry(ctx context.Context, client filer_pb.SeaweedFilerCl
 	return nil
 }
 
-// deleteLocalEntry removes the entry as it was listed; the filer keeps a file
-// whose mtime a local write has moved past the listed one.
+// deleteLocalEntry removes the entry as it was listed; the filer keeps an entry
+// whose mtime a local write has moved past the listed one. An entry listed
+// without an mtime is kept once a write sets one.
 func deleteLocalEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, localDir util.FullPath, entry *filer_pb.Entry) error {
 	req := &filer_pb.DeleteEntryRequest{Directory: string(localDir), Name: entry.Name, IsDeleteData: true}
-	if !entry.IsDirectory {
-		req.IfNotModifiedAfter, req.IfNotModifiedAfterNs, _ = deleteEntryCutoff(entry.Attributes.GetMtime(), entry.Attributes.GetMtimeNs())
+	var ok bool
+	req.IfNotModifiedAfter, req.IfNotModifiedAfterNs, ok = deleteEntryCutoff(entry.Attributes.GetMtime(), entry.Attributes.GetMtimeNs())
+	if !ok {
+		req.IfNotModifiedAfterNs = 1
 	}
 	_, err := filer_pb.DoRemoveRequest(ctx, client, req)
 	return err
