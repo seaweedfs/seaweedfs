@@ -318,12 +318,8 @@ func (r *Plugin) WorkerStream(stream plugin_pb.PluginControlService_WorkerStream
 		outgoing: make(chan *plugin_pb.AdminToWorkerMessage, r.outgoingBuffer),
 		done:     make(chan struct{}),
 	}
-	// The stream is published before the registry entry so a previous
-	// stream for this worker that is still unwinding sees itself superseded
-	// in cleanupSession and leaves the fresh registration alone.
-	r.putSession(session)
+	r.registerSession(session, hello)
 	defer r.cleanupSession(session)
-	r.registry.UpsertFromHello(hello)
 
 	glog.V(0).Infof("Plugin worker connected: %s (%s)", workerID, hello.Address)
 
@@ -334,7 +330,7 @@ func (r *Plugin) WorkerStream(stream plugin_pb.PluginControlService_WorkerStream
 		sendErrCh <- r.sendLoop(stream.Context(), stream, session)
 	}()
 
-	if err := r.sendAdminHello(workerID); err != nil {
+	if err := r.sendAdminHello(session); err != nil {
 		glog.Warningf("failed to send plugin admin hello to %s: %v", workerID, err)
 	}
 	go r.prefetchDescriptorsFromHello(hello)
@@ -349,7 +345,7 @@ func (r *Plugin) WorkerStream(stream plugin_pb.PluginControlService_WorkerStream
 				recvErrCh <- recvErr
 				return
 			}
-			r.handleWorkerMessage(workerID, message)
+			r.handleWorkerMessage(session, message)
 		}
 	}()
 
@@ -993,7 +989,7 @@ func (r *Plugin) sendCancel(workerID, targetID string, kind plugin_pb.WorkKind, 
 	}
 }
 
-func (r *Plugin) sendAdminHello(workerID string) error {
+func (r *Plugin) sendAdminHello(session *streamSession) error {
 	msg := &plugin_pb.AdminToWorkerMessage{
 		RequestId: "",
 		SentAt:    timestamppb.Now(),
@@ -1006,7 +1002,7 @@ func (r *Plugin) sendAdminHello(workerID string) error {
 			},
 		},
 	}
-	return r.sendToWorker(workerID, msg)
+	return r.sendToSession(session, msg)
 }
 
 func (r *Plugin) sendLoop(
@@ -1061,17 +1057,22 @@ func (r *Plugin) sendToSession(session *streamSession, message *plugin_pb.AdminT
 	}
 }
 
-func (r *Plugin) handleWorkerMessage(workerID string, message *plugin_pb.WorkerToAdminMessage) {
+func (r *Plugin) handleWorkerMessage(session *streamSession, message *plugin_pb.WorkerToAdminMessage) {
 	if message == nil {
 		return
 	}
+	workerID := session.workerID
 
 	switch body := message.Body.(type) {
 	case *plugin_pb.WorkerToAdminMessage_Hello:
-		r.registry.UpsertFromHello(body.Hello)
+		if !r.updateRegistryFromSession(session, func() { r.registry.UpsertFromHello(body.Hello) }) {
+			return
+		}
 		r.wakeScheduler()
 	case *plugin_pb.WorkerToAdminMessage_Heartbeat:
-		r.registry.UpdateHeartbeat(workerID, body.Heartbeat)
+		if !r.updateRegistryFromSession(session, func() { r.registry.UpdateHeartbeat(workerID, body.Heartbeat) }) {
+			return
+		}
 	case *plugin_pb.WorkerToAdminMessage_ConfigSchemaResponse:
 		r.handleConfigSchemaResponse(body.ConfigSchemaResponse)
 	case *plugin_pb.WorkerToAdminMessage_DetectionProposals:
@@ -1416,14 +1417,46 @@ func (r *Plugin) safeSendJobCompleted(requestID string, completed *plugin_pb.Job
 	safeSendCh(ch, completed, r.shutdownCh)
 }
 
+// The registry entry for a worker always describes the stream that is
+// currently sendable for it: every registry write for a worker happens under
+// sessionsMu, together with or checked against r.sessions[workerID].
+
 func (r *Plugin) putSession(session *streamSession) {
 	r.sessionsMu.Lock()
 	defer r.sessionsMu.Unlock()
+	r.publishSessionLocked(session)
+}
 
-	if old, exists := r.sessions[session.workerID]; exists {
+// registerSession publishes a stream and its hello as one step so a second
+// stream for the same worker cannot leave the registry describing the older
+// hello while only the newer stream is sendable.
+func (r *Plugin) registerSession(session *streamSession, hello *plugin_pb.WorkerHello) {
+	r.sessionsMu.Lock()
+	defer r.sessionsMu.Unlock()
+	r.registry.UpsertFromHello(hello)
+	r.publishSessionLocked(session)
+}
+
+// publishSessionLocked installs the stream and closes the one it replaces.
+func (r *Plugin) publishSessionLocked(session *streamSession) {
+	old, exists := r.sessions[session.workerID]
+	r.sessions[session.workerID] = session
+	if exists && old != session {
 		old.close()
 	}
-	r.sessions[session.workerID] = session
+}
+
+// updateRegistryFromSession applies a registry write for a stream's worker
+// only while that stream is the registered one; a superseded stream's late
+// hello or heartbeat must not describe the live stream.
+func (r *Plugin) updateRegistryFromSession(session *streamSession, update func()) bool {
+	r.sessionsMu.RLock()
+	defer r.sessionsMu.RUnlock()
+	if current, ok := r.sessions[session.workerID]; !ok || current != session {
+		return false
+	}
+	update()
+	return true
 }
 
 // cleanupSession ends one stream. Only the stream currently registered for

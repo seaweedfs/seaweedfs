@@ -321,3 +321,46 @@ func TestScheduledDetectionRetriesOnAnotherWorkerAfterDisconnect(t *testing.T) {
 	require.False(t, p.snapshotSchedulerDetection(jobType).lastDetectedAt.IsZero())
 	require.NotNil(t, findActivity(p.ListActivities(jobType, 50), "admin_scheduler", "retrying"))
 }
+
+func TestRegisterSessionKeepsRegistryOnLiveStream(t *testing.T) {
+	p, err := New(Options{})
+	require.NoError(t, err)
+	defer p.Shutdown()
+
+	helloA := &plugin_pb.WorkerHello{WorkerId: "worker-a", WorkerInstanceId: "a-1", Capabilities: []*plugin_pb.JobTypeCapability{{JobType: "ec_vacuum", CanDetect: true}}}
+	helloB := &plugin_pb.WorkerHello{WorkerId: "worker-a", WorkerInstanceId: "a-2", Capabilities: []*plugin_pb.JobTypeCapability{{JobType: "s3_lifecycle", CanDetect: true}}}
+	streamA := &streamSession{workerID: "worker-a", outgoing: make(chan *plugin_pb.AdminToWorkerMessage, 1), done: make(chan struct{})}
+	streamB := &streamSession{workerID: "worker-a", outgoing: make(chan *plugin_pb.AdminToWorkerMessage, 1), done: make(chan struct{})}
+
+	p.registerSession(streamA, helloA)
+	p.registerSession(streamB, helloB)
+	select {
+	case <-streamA.done:
+	default:
+		t.Fatal("the replaced stream must be closed")
+	}
+
+	// Stream A's hello and heartbeat arriving after it was replaced must not
+	// describe the live stream B, and neither must A's own cleanup.
+	p.handleWorkerMessage(streamA, &plugin_pb.WorkerToAdminMessage{Body: &plugin_pb.WorkerToAdminMessage_Hello{Hello: helloA}})
+	p.handleWorkerMessage(streamA, &plugin_pb.WorkerToAdminMessage{Body: &plugin_pb.WorkerToAdminMessage_Heartbeat{Heartbeat: &plugin_pb.WorkerHeartbeat{DetectionSlotsTotal: 9}}})
+	p.cleanupSession(streamA)
+
+	worker, ok := p.registry.Get("worker-a")
+	require.True(t, ok)
+	require.Equal(t, "a-2", worker.WorkerInstance)
+	require.Nil(t, worker.Capabilities["ec_vacuum"])
+	require.NotNil(t, worker.Capabilities["s3_lifecycle"])
+	require.Nil(t, worker.Heartbeat, "a superseded stream's heartbeat must be dropped")
+	current, ok := p.getSession("worker-a")
+	require.True(t, ok)
+	require.Same(t, streamB, current)
+	_, err = p.pickDetector("ec_vacuum")
+	require.Error(t, err, "the capability only stream A advertised must be gone")
+
+	p.handleWorkerMessage(streamB, &plugin_pb.WorkerToAdminMessage{Body: &plugin_pb.WorkerToAdminMessage_Heartbeat{Heartbeat: &plugin_pb.WorkerHeartbeat{DetectionSlotsTotal: 2}}})
+	worker, ok = p.registry.Get("worker-a")
+	require.True(t, ok)
+	require.NotNil(t, worker.Heartbeat)
+	require.EqualValues(t, 2, worker.Heartbeat.DetectionSlotsTotal)
+}
