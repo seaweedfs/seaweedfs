@@ -27,6 +27,10 @@ const (
 	defaultReconnectDelay      = 5
 	defaultPendingSchemaBuffer = 1
 	adminScriptJobType         = "admin_script"
+	// How often an in-flight detection re-checks that its worker is still
+	// registered and heartbeating; a session that went stale fails the
+	// detection the same way a closed stream does.
+	defaultDetectionLivenessInterval = 30 * time.Second
 )
 
 type Options struct {
@@ -58,6 +62,8 @@ type Plugin struct {
 
 	outgoingBuffer int
 	sendTimeout    time.Duration
+
+	detectionLivenessInterval time.Duration
 
 	schedulerTick          time.Duration
 	clusterContextProvider func(context.Context) (*plugin_pb.ClusterContext, error)
@@ -140,6 +146,22 @@ type pendingDetectionState struct {
 	workerID  string
 }
 
+// detectionWorkerDisconnectedError reports a detection whose worker session
+// ended (stream closed, replaced by a reconnect, or heartbeat went stale)
+// before it answered.
+type detectionWorkerDisconnectedError struct {
+	WorkerID string
+	Reason   string
+}
+
+func (e *detectionWorkerDisconnectedError) Error() string {
+	msg := fmt.Sprintf("detection worker %s disconnected", e.WorkerID)
+	if e.Reason != "" {
+		msg += ": " + e.Reason
+	}
+	return msg
+}
+
 // DetectionReport captures one detection run including request metadata.
 type DetectionReport struct {
 	RequestID string
@@ -178,6 +200,7 @@ func New(options Options) (*Plugin, error) {
 		registry:                  NewRegistry(),
 		outgoingBuffer:            bufferSize,
 		sendTimeout:               sendTimeout,
+		detectionLivenessInterval: defaultDetectionLivenessInterval,
 		schedulerTick:             schedulerTick,
 		clusterContextProvider:    options.ClusterContextProvider,
 		configDefaultsProvider:    options.ConfigDefaultsProvider,
@@ -532,7 +555,16 @@ func (r *Plugin) RunDetectionWithReport(
 		},
 	}
 
-	if err := r.sendToWorker(detector.WorkerID, message); err != nil {
+	// The request is bound to the stream it was sent on: if that stream ends
+	// (disconnect or a reconnect with a new session) the answer can never
+	// arrive, so the wait below fails instead of running out the timeout.
+	session, connected := r.getSession(detector.WorkerID)
+	if !connected {
+		err = fmt.Errorf("worker %s is not connected", detector.WorkerID)
+	} else {
+		err = r.sendToSession(session, message)
+	}
+	if err != nil {
 		r.clearDetectorLease(jobType, detector.WorkerID)
 		r.appendActivity(JobActivity{
 			JobType:    jobType,
@@ -546,47 +578,86 @@ func (r *Plugin) RunDetectionWithReport(
 		return nil, err
 	}
 
-	select {
-	case <-ctx.Done():
-		r.sendCancel(detector.WorkerID, requestID, plugin_pb.WorkKind_WORK_KIND_DETECTION, ctx.Err())
-		r.appendActivity(JobActivity{
-			JobType:    jobType,
-			RequestID:  requestID,
-			WorkerID:   detector.WorkerID,
-			Source:     "detector",
-			Stage:      "canceled",
-			Message:    "detection canceled",
-			OccurredAt: timeToPtr(time.Now().UTC()),
-		})
+	emptyReport := func() *DetectionReport {
 		return &DetectionReport{
 			RequestID: requestID,
 			JobType:   jobType,
 			WorkerID:  detector.WorkerID,
-		}, ctx.Err()
-	case complete, ok := <-state.complete:
-		if !ok {
-			return &DetectionReport{
+		}
+	}
+
+	livenessInterval := r.detectionLivenessInterval
+	if livenessInterval <= 0 {
+		livenessInterval = defaultDetectionLivenessInterval
+	}
+	liveness := time.NewTicker(livenessInterval)
+	defer liveness.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			r.sendCancel(detector.WorkerID, requestID, plugin_pb.WorkKind_WORK_KIND_DETECTION, ctx.Err())
+			r.appendActivity(JobActivity{
+				JobType:    jobType,
+				RequestID:  requestID,
+				WorkerID:   detector.WorkerID,
+				Source:     "detector",
+				Stage:      "canceled",
+				Message:    "detection canceled",
+				OccurredAt: timeToPtr(time.Now().UTC()),
+			})
+			return emptyReport(), ctx.Err()
+		case <-session.done:
+			return emptyReport(), r.failDetectionWorkerLost(jobType, requestID, detector.WorkerID, "", false)
+		case <-liveness.C:
+			if r.isWorkerAvailable(detector.WorkerID) {
+				continue
+			}
+			// The stream may still be open, so the worker is told to stop.
+			return emptyReport(), r.failDetectionWorkerLost(jobType, requestID, detector.WorkerID, "heartbeat stale", true)
+		case complete, ok := <-state.complete:
+			if !ok {
+				return emptyReport(), fmt.Errorf("detection request %s interrupted", requestID)
+			}
+			proposals := cloneJobProposals(state.proposals)
+			report := &DetectionReport{
 				RequestID: requestID,
 				JobType:   jobType,
 				WorkerID:  detector.WorkerID,
-			}, fmt.Errorf("detection request %s interrupted", requestID)
+				Proposals: proposals,
+				Complete:  complete,
+			}
+			if complete == nil {
+				return report, fmt.Errorf("detection request %s returned no completion state", requestID)
+			}
+			if !complete.Success {
+				return report, fmt.Errorf("detection failed for %s: %s", jobType, complete.ErrorMessage)
+			}
+			return report, nil
 		}
-		proposals := cloneJobProposals(state.proposals)
-		report := &DetectionReport{
-			RequestID: requestID,
-			JobType:   jobType,
-			WorkerID:  detector.WorkerID,
-			Proposals: proposals,
-			Complete:  complete,
-		}
-		if complete == nil {
-			return report, fmt.Errorf("detection request %s returned no completion state", requestID)
-		}
-		if !complete.Success {
-			return report, fmt.Errorf("detection failed for %s: %s", jobType, complete.ErrorMessage)
-		}
-		return report, nil
 	}
+}
+
+// failDetectionWorkerLost closes out a detection whose worker session ended
+// before it answered. The detector lease is dropped so the next pick starts
+// fresh; the worker is only told to cancel when its stream may still be open.
+func (r *Plugin) failDetectionWorkerLost(jobType, requestID, workerID, reason string, cancelOnWorker bool) error {
+	err := &detectionWorkerDisconnectedError{WorkerID: workerID, Reason: reason}
+	r.clearDetectorLease(jobType, workerID)
+	if cancelOnWorker {
+		r.sendCancel(workerID, requestID, plugin_pb.WorkKind_WORK_KIND_DETECTION, err)
+	}
+	glog.Warningf("Plugin detection %s for %s failed: %v", requestID, jobType, err)
+	r.appendActivity(JobActivity{
+		JobType:    jobType,
+		RequestID:  requestID,
+		WorkerID:   workerID,
+		Source:     "detector",
+		Stage:      "disconnected",
+		Message:    err.Error(),
+		OccurredAt: timeToPtr(time.Now().UTC()),
+	})
+	return err
 }
 
 // RunDetection requests one detector worker to produce job proposals for a job type.
@@ -962,23 +1033,31 @@ func (r *Plugin) sendLoop(
 	}
 }
 
-func (r *Plugin) sendToWorker(workerID string, message *plugin_pb.AdminToWorkerMessage) error {
+func (r *Plugin) getSession(workerID string) (*streamSession, bool) {
 	r.sessionsMu.RLock()
 	session, ok := r.sessions[workerID]
 	r.sessionsMu.RUnlock()
+	return session, ok
+}
+
+func (r *Plugin) sendToWorker(workerID string, message *plugin_pb.AdminToWorkerMessage) error {
+	session, ok := r.getSession(workerID)
 	if !ok {
 		return fmt.Errorf("worker %s is not connected", workerID)
 	}
+	return r.sendToSession(session, message)
+}
 
+func (r *Plugin) sendToSession(session *streamSession, message *plugin_pb.AdminToWorkerMessage) error {
 	select {
 	case <-r.shutdownCh:
 		return fmt.Errorf("plugin is shutting down")
 	case <-session.done:
-		return fmt.Errorf("worker %s session is closed", workerID)
+		return fmt.Errorf("worker %s session is closed", session.workerID)
 	case session.outgoing <- message:
 		return nil
 	case <-time.After(r.sendTimeout):
-		return fmt.Errorf("timed out sending message to worker %s", workerID)
+		return fmt.Errorf("timed out sending message to worker %s", session.workerID)
 	}
 }
 
@@ -1507,5 +1586,9 @@ func (r *Plugin) WorkerConnectForTest(hello *plugin_pb.WorkerHello) {
 
 // WorkerDisconnectForTest simulates a worker disconnecting (test helper).
 func (r *Plugin) WorkerDisconnectForTest(workerID string) {
+	if session, ok := r.getSession(workerID); ok {
+		r.cleanupSession(session)
+		return
+	}
 	r.registry.Remove(workerID)
 }

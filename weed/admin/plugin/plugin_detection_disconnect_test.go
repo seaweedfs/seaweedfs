@@ -1,0 +1,224 @@
+package plugin
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
+	"github.com/stretchr/testify/require"
+)
+
+func newDetectorSession(p *Plugin, workerID, jobType string) *streamSession {
+	p.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId:         workerID,
+		WorkerInstanceId: workerID + "-instance-" + time.Now().Format("150405.000000"),
+		Capabilities:     []*plugin_pb.JobTypeCapability{{JobType: jobType, CanDetect: true, MaxDetectionConcurrency: 1}},
+	})
+	session := &streamSession{workerID: workerID, outgoing: make(chan *plugin_pb.AdminToWorkerMessage, 8), done: make(chan struct{})}
+	p.putSession(session)
+	return session
+}
+
+func awaitDetectionRequest(t *testing.T, session *streamSession) *plugin_pb.AdminToWorkerMessage {
+	t.Helper()
+	select {
+	case request := <-session.outgoing:
+		require.NotNil(t, request.GetRunDetectionRequest(), "expected run_detection_request, got %+v", request)
+		return request
+	case <-time.After(2 * time.Second):
+		t.Fatal("no detection request")
+		return nil
+	}
+}
+
+func findActivity(activities []JobActivity, source, stage string) *JobActivity {
+	for i := range activities {
+		if activities[i].Source == source && activities[i].Stage == stage {
+			return &activities[i]
+		}
+	}
+	return nil
+}
+
+func (r *Plugin) pendingDetectionCountForTest() int {
+	r.pendingDetectionMu.Lock()
+	defer r.pendingDetectionMu.Unlock()
+	return len(r.pendingDetection)
+}
+
+func TestRunDetectionFailsWhenDetectorDisconnects(t *testing.T) {
+	p, err := New(Options{})
+	require.NoError(t, err)
+	defer p.Shutdown()
+
+	const jobType = "vacuum"
+	session := newDetectorSession(p, "worker-a", jobType)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
+	defer cancel()
+	type result struct {
+		report *DetectionReport
+		err    error
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		report, runErr := p.RunDetectionWithReport(ctx, jobType, &plugin_pb.ClusterContext{}, 10)
+		resultCh <- result{report: report, err: runErr}
+	}()
+	request := awaitDetectionRequest(t, session)
+
+	p.WorkerDisconnectForTest("worker-a")
+
+	var got result
+	select {
+	case got = <-resultCh:
+	case <-time.After(5 * time.Second):
+		t.Fatal("detection did not fail after its worker disconnected")
+	}
+	require.Error(t, got.err)
+	var lost *detectionWorkerDisconnectedError
+	require.True(t, errors.As(got.err, &lost), "unexpected error type: %v", got.err)
+	require.Equal(t, "detection worker worker-a disconnected", got.err.Error())
+	require.NotNil(t, got.report)
+	require.Equal(t, request.RequestId, got.report.RequestID)
+	require.Equal(t, 0, p.pendingDetectionCountForTest())
+	require.Equal(t, "", p.getDetectorLease(jobType), "detector lease must not pin the lost worker")
+
+	activity := findActivity(p.ListActivities(jobType, 50), "detector", "disconnected")
+	require.NotNil(t, activity, "expected a disconnected detector activity")
+	require.Equal(t, request.RequestId, activity.RequestID)
+	require.Equal(t, "worker-a", activity.WorkerID)
+
+	// A replacement worker can serve the next detection right away.
+	next := newDetectorSession(p, "worker-b", jobType)
+	go func() {
+		_, _ = p.RunDetectionWithReport(ctx, jobType, &plugin_pb.ClusterContext{}, 10)
+	}()
+	awaitDetectionRequest(t, next)
+}
+
+func TestRunDetectionFailsWhenDetectorReconnectsWithNewSession(t *testing.T) {
+	p, err := New(Options{})
+	require.NoError(t, err)
+	defer p.Shutdown()
+
+	const jobType = "vacuum"
+	session := newDetectorSession(p, "worker-a", jobType)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() {
+		_, runErr := p.RunDetectionWithReport(ctx, jobType, &plugin_pb.ClusterContext{}, 10)
+		errCh <- runErr
+	}()
+	awaitDetectionRequest(t, session)
+
+	// The worker process restarted: same worker ID, new instance, new stream.
+	replacement := newDetectorSession(p, "worker-a", jobType)
+
+	select {
+	case runErr := <-errCh:
+		var lost *detectionWorkerDisconnectedError
+		require.True(t, errors.As(runErr, &lost), "unexpected error: %v", runErr)
+	case <-time.After(5 * time.Second):
+		t.Fatal("detection did not fail after its worker reconnected with a new session")
+	}
+	require.Len(t, replacement.outgoing, 0, "the replacement session must not receive a cancel for the old request")
+
+	// The old stream unwinding afterwards must not evict the new session.
+	p.cleanupSession(session)
+	current, ok := p.getSession("worker-a")
+	require.True(t, ok)
+	require.Same(t, replacement, current)
+	_, registered := p.registry.Get("worker-a")
+	require.True(t, registered)
+}
+
+func TestRunDetectionSurvivesOtherWorkerDisconnect(t *testing.T) {
+	p, err := New(Options{})
+	require.NoError(t, err)
+	defer p.Shutdown()
+
+	const jobType = "vacuum"
+	sessionA := newDetectorSession(p, "worker-a", jobType)
+	sessionB := newDetectorSession(p, "worker-b", jobType)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() {
+		_, runErr := p.RunDetectionWithReport(ctx, jobType, &plugin_pb.ClusterContext{}, 10)
+		errCh <- runErr
+	}()
+
+	var request *plugin_pb.AdminToWorkerMessage
+	detector, other := "", ""
+	select {
+	case request = <-sessionA.outgoing:
+		detector, other = "worker-a", "worker-b"
+	case request = <-sessionB.outgoing:
+		detector, other = "worker-b", "worker-a"
+	case <-time.After(2 * time.Second):
+		t.Fatal("no detection request")
+	}
+	require.NotNil(t, request.GetRunDetectionRequest())
+
+	p.WorkerDisconnectForTest(other)
+
+	select {
+	case runErr := <-errCh:
+		t.Fatalf("detection on %s ended after %s disconnected: %v", detector, other, runErr)
+	case <-time.After(300 * time.Millisecond):
+	}
+	require.Equal(t, 1, p.pendingDetectionCountForTest())
+
+	p.handleDetectionComplete(detector, &plugin_pb.DetectionComplete{RequestId: request.RequestId, JobType: jobType, Success: true})
+	select {
+	case runErr := <-errCh:
+		require.NoError(t, runErr)
+	case <-time.After(2 * time.Second):
+		t.Fatal("detection did not complete")
+	}
+}
+
+func TestRunDetectionFailsWhenDetectorHeartbeatGoesStale(t *testing.T) {
+	p, err := New(Options{})
+	require.NoError(t, err)
+	defer p.Shutdown()
+	p.registry.staleAfter = 50 * time.Millisecond
+	p.detectionLivenessInterval = 20 * time.Millisecond
+
+	const jobType = "vacuum"
+	session := newDetectorSession(p, "worker-a", jobType)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() {
+		_, runErr := p.RunDetectionWithReport(ctx, jobType, &plugin_pb.ClusterContext{}, 10)
+		errCh <- runErr
+	}()
+	request := awaitDetectionRequest(t, session)
+
+	select {
+	case runErr := <-errCh:
+		require.Error(t, runErr)
+		require.Equal(t, "detection worker worker-a disconnected: heartbeat stale", runErr.Error())
+	case <-time.After(5 * time.Second):
+		t.Fatal("detection did not fail after its worker went stale")
+	}
+
+	// The stream may still be open, so the worker is asked to stop the request.
+	select {
+	case message := <-session.outgoing:
+		cancelReq := message.GetCancelRequest()
+		require.NotNil(t, cancelReq, "expected cancel_request, got %+v", message)
+		require.Equal(t, request.RequestId, cancelReq.TargetId)
+		require.Equal(t, plugin_pb.WorkKind_WORK_KIND_DETECTION, cancelReq.TargetKind)
+	case <-time.After(2 * time.Second):
+		t.Fatal("no cancel request after stale worker")
+	}
+}
