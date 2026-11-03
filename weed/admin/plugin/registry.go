@@ -24,6 +24,8 @@ type WorkerSession struct {
 	LastSeenAt      time.Time
 	Capabilities    map[string]*plugin_pb.JobTypeCapability
 	Heartbeat       *plugin_pb.WorkerHeartbeat
+	// heartbeatAt is when Heartbeat arrived; a hello moves LastSeenAt alone.
+	heartbeatAt time.Time
 }
 
 // Registry tracks connected plugin workers and capability-based selection.
@@ -91,7 +93,8 @@ func (r *Registry) UpdateHeartbeat(workerID string, heartbeat *plugin_pb.WorkerH
 		return
 	}
 	session.Heartbeat = cloneWorkerHeartbeat(heartbeat)
-	session.LastSeenAt = time.Now()
+	session.heartbeatAt = time.Now()
+	session.LastSeenAt = session.heartbeatAt
 }
 
 func (r *Registry) Get(workerID string) (*WorkerSession, bool) {

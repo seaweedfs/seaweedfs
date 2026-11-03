@@ -1332,13 +1332,13 @@ func (r *Plugin) executorLoadLocked(executor *WorkerSession, jobType string) exe
 		}
 		switch {
 		case !released:
-			if !isListed && !executor.LastSeenAt.Before(res.reservedAt) {
+			if !isListed && !executor.heartbeatAt.Before(res.reservedAt) {
 				unitemized--
 			}
 			countReserved(res)
 		case isListed:
 			countReserved(res)
-		case executor.LastSeenAt.Before(res.releasedAt):
+		case executor.heartbeatAt.Before(res.releasedAt):
 			unlistedEchoes = append(unlistedEchoes, res)
 		}
 	}
