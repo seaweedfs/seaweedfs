@@ -878,6 +878,10 @@ func TestSourceMovedOn(t *testing.T) {
 	if fs.sourceMovedOn("/dst/x.bin", replayed) {
 		t.Fatal("an unstamped live entry predates a stamped replay")
 	}
+	live.CommitTsNs, live.Attributes.Mtime = 5, 6
+	if fs.sourceMovedOn("/dst/x.bin", replayed) {
+		t.Fatal("a lagging live entry with a newer mtime still predates the replay")
+	}
 }
 
 // A source that accepts the lookup but never answers must not hang the

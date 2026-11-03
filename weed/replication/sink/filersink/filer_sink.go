@@ -585,10 +585,13 @@ func (fs *FilerSink) sourceVersion(targetPath string, entry *filer_pb.Entry) (li
 		return nil, false
 	}
 	live, lookupErr := fs.sourceEntry(sourcePath)
+	if lookupErr == nil && live != nil && committedBefore(live, entry) {
+		return nil, false
+	}
 	if sourceSupersedes(sourcePath, live, lookupErr, getEntryMtimeNs(entry)) {
 		return live, true
 	}
-	if lookupErr != nil || live == nil || committedBefore(live, entry) {
+	if lookupErr != nil || live == nil {
 		return nil, false
 	}
 	liveIds := chunkFileIds(live.GetChunks())
