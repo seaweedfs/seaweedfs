@@ -21,6 +21,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"golang.org/x/exp/maps"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
@@ -171,7 +173,16 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 			// look like mergeVolumes hadn't done anything. Track the old fids
 			// and delete them below after the filer update commits, so the
 			// filer never points at a fid we already deleted.
-			var movedSources []orphanedNeedle
+			var moved rewrittenNeedles
+			// The update only lands while the filer still holds the entry as
+			// the walk read it, so keep that copy before the first chunk is
+			// rewritten in place.
+			var readEntry *filer_pb.Entry
+			keepReadEntry := func() {
+				if readEntry == nil {
+					readEntry = proto.Clone(entry).(*filer_pb.Entry)
+				}
+			}
 			for i, chunk := range entry.Chunks {
 				if chunk.IsChunkManifest {
 					if !c.manifestMayReferencePlan(plan, planCollections, needle.VolumeId(chunk.Fid.VolumeId)) {
@@ -190,14 +201,18 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 					if !changed || !*apply {
 						continue
 					}
+					keepReadEntry()
 					entry.Chunks[i] = newChunk
 					entryChanged = true
-					movedSources = append(movedSources, rewritten.sources...)
+					moved.sources = append(moved.sources, rewritten.sources...)
 					// The old manifest needle is always orphaned when we
 					// replace it with a freshly uploaded one, even when the
 					// rewrite was triggered by sub-chunk moves rather than the
 					// manifest volume itself being in the plan.
-					movedSources = append(movedSources, orphanedNeedle{volumeId: oldManifestVid, fileId: oldManifestFid})
+					moved.sources = append(moved.sources, orphanedNeedle{volumeId: oldManifestVid, fileId: oldManifestFid})
+					moved.targets = append(moved.targets, rewritten.targets...)
+					moved.targets = append(moved.targets, orphanedNeedle{volumeId: newChunk.Fid.VolumeId, fileId: newChunk.GetFileIdString()})
+					moved.reservations = append(moved.reservations, rewritten.reservations...)
 					continue
 				}
 
@@ -206,6 +221,7 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 					continue
 				}
 				seen.record(chunkVolumeId)
+				keepReadEntry()
 
 				oldFid := chunk.GetFileIdString()
 				oldVid := chunk.Fid.VolumeId
@@ -224,20 +240,25 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 					continue
 				}
 				entryChanged = true
-				movedSources = append(movedSources, orphanedNeedle{volumeId: oldVid, fileId: oldFid})
+				moved.sources = append(moved.sources, orphanedNeedle{volumeId: oldVid, fileId: oldFid})
+				moved.targets = append(moved.targets, orphanedNeedle{volumeId: uint32(toVolumeId), fileId: chunk.GetFileIdString()})
+				moved.reservations = append(moved.reservations, reservation{src: chunkVolumeId, dst: toVolumeId, size: chunk.Size})
 			}
 			if entryChanged {
-				if uErr := filer_pb.UpdateEntry(context.Background(), filerClient, &filer_pb.UpdateEntryRequest{
-					Directory: string(parentPath),
-					Entry:     entry,
-				}); uErr != nil {
+				stale, uErr := updateEntryIfUnchanged(context.Background(), filerClient, string(parentPath), entry, readEntry)
+				if stale {
+					fmt.Printf("skip %s: changed during merge\n", entryPath)
+					moved.abandon(commandEnv, entryPath, plan)
+					return nil
+				}
+				if uErr != nil {
 					fmt.Printf("failed to update %s: %v\n", entryPath, uErr)
 					// Filer still references the source fids. Deleting them
 					// now would lose data — abandon the cleanup for this
 					// entry and let fsck reconcile later.
 					return nil
 				}
-				deleteOrphanedNeedles(commandEnv, entryPath, movedSources, false)
+				deleteOrphanedNeedles(commandEnv, entryPath, moved.sources, false)
 			}
 			return nil
 		})
@@ -311,6 +332,37 @@ type rewrittenNeedles struct {
 	sources      []orphanedNeedle
 	targets      []orphanedNeedle
 	reservations []reservation
+}
+
+// abandon drops a rewrite the filer never took: the copies on the target
+// volumes belong to nobody, and the plan gets back the room they held, or a
+// multi-target merge keeps counting bytes it just deleted and skips later
+// chunks for no reason.
+func (r rewrittenNeedles) abandon(commandEnv *CommandEnv, entryPath util.FullPath, plan *mergePlan) {
+	deleteOrphanedNeedles(commandEnv, entryPath, r.targets, true)
+	for _, res := range r.reservations {
+		plan.release(res.src, res.dst, res.size)
+	}
+}
+
+// updateEntryIfUnchanged writes entry back only while the filer still holds
+// readEntry. An unconditional write would revert a change made since the read
+// and the filer would delete the newer chunks as garbage. stale reports that
+// the filer refused because the entry was changed or deleted, so nothing was
+// written and the copies made for this update are referenced by nothing.
+func updateEntryIfUnchanged(ctx context.Context, client filer_pb.SeaweedFilerClient, dir string, entry, readEntry *filer_pb.Entry) (stale bool, err error) {
+	err = filer_pb.UpdateEntry(ctx, client, &filer_pb.UpdateEntryRequest{
+		Directory: dir,
+		Entry:     entry,
+		Condition: &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{
+			{Kind: filer_pb.WriteCondition_IF_ENTRY_EQUAL, ExpectedEntry: readEntry},
+		}},
+	})
+	switch status.Code(err) {
+	case codes.FailedPrecondition, codes.NotFound:
+		return true, err
+	}
+	return false, err
 }
 
 // deleteOrphanedNeedles fans out BatchDelete RPCs to every replica of each
@@ -740,16 +792,8 @@ func (c *commandFsMergeVolumes) rewriteManifestChunk(
 
 	var rewritten rewrittenNeedles
 	// Every path out of here that is not the successful return abandons the
-	// rewrite with the filer still pointing at the old manifest, so whatever
-	// already landed on the target volumes belongs to nobody. Give the plan
-	// back the room those copies were holding, or a multi-target merge keeps
-	// counting bytes it just deleted and skips later chunks for no reason.
-	abandon := func() {
-		deleteOrphanedNeedles(commandEnv, entryPath, rewritten.targets, true)
-		for _, r := range rewritten.reservations {
-			plan.release(r.src, r.dst, r.size)
-		}
-	}
+	// rewrite with the filer still pointing at the old manifest.
+	abandon := func() { rewritten.abandon(commandEnv, entryPath, plan) }
 	anySubChanged := false
 	for i, sub := range subChunks {
 		if sub.IsChunkManifest {

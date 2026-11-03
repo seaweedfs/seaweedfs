@@ -1,12 +1,18 @@
 package shell
 
 import (
+	"context"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 func newMergeCmd(limitMB uint64, vols ...*master_pb.VolumeInformationMessage) *commandFsMergeVolumes {
@@ -392,5 +398,51 @@ func TestWarnUnreferencedSources_ConcurrentRecording(t *testing.T) {
 	c.warnUnreferencedSources(&sb, plan, seen, "/buckets/test")
 	if sb.Len() != 0 {
 		t.Fatalf("expected no warning when all needles were seen, got %q", sb.String())
+	}
+}
+
+type conditionalUpdateFiler struct {
+	filer_pb.SeaweedFilerClient
+	err error
+	req *filer_pb.UpdateEntryRequest
+}
+
+func (s *conditionalUpdateFiler) UpdateEntry(_ context.Context, req *filer_pb.UpdateEntryRequest, _ ...grpc.CallOption) (*filer_pb.UpdateEntryResponse, error) {
+	s.req = req
+	if s.err != nil {
+		return nil, s.err
+	}
+	return &filer_pb.UpdateEntryResponse{}, nil
+}
+
+// The write-back is conditioned on the entry as it was read, and only a refusal
+// that proves nothing was written counts as stale: the caller then deletes the
+// copies it made, which would lose data if the update might have landed.
+func TestUpdateEntryIfUnchanged(t *testing.T) {
+	read := &filer_pb.Entry{Name: "f", Chunks: []*filer_pb.FileChunk{{Fid: &filer_pb.FileId{VolumeId: 3, FileKey: 1, Cookie: 7}}}}
+	moved := &filer_pb.Entry{Name: "f", Chunks: []*filer_pb.FileChunk{{Fid: &filer_pb.FileId{VolumeId: 9, FileKey: 1, Cookie: 7}}}}
+
+	for _, tc := range []struct {
+		name  string
+		err   error
+		stale bool
+	}{
+		{"committed", nil, false},
+		{"changed", status.Error(codes.FailedPrecondition, "precondition failed"), true},
+		{"deleted", status.Error(codes.NotFound, "not found"), true},
+		{"outcome unknown", status.Error(codes.Unavailable, "filer down"), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &conditionalUpdateFiler{err: tc.err}
+			stale, err := updateEntryIfUnchanged(context.Background(), fake, "/dir", moved, read)
+			if stale != tc.stale || (err != nil) != (tc.err != nil) {
+				t.Fatalf("stale=%v err=%v, want stale=%v err=%v", stale, err, tc.stale, tc.err)
+			}
+			clauses := fake.req.GetCondition().GetClauses()
+			if len(clauses) != 1 || clauses[0].Kind != filer_pb.WriteCondition_IF_ENTRY_EQUAL ||
+				!proto.Equal(clauses[0].ExpectedEntry, read) || !proto.Equal(fake.req.Entry, moved) {
+				t.Fatalf("request %v must write the moved entry conditioned on the read one", fake.req)
+			}
+		})
 	}
 }
