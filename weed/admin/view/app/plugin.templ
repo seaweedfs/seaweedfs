@@ -794,6 +794,10 @@ templ Plugin(page string, initialJob string, lane string) {
                 return { jobType: jobType, displayName: displayName };
             }
 
+            function monitorJobTypeScope() {
+                return state.activeTopTab === 'overview' ? '' : state.selectedJobType;
+            }
+
             function topTabKeyForJobType(jobType) {
                 var normalized = String(jobType || '').trim();
                 if (!normalized) {
@@ -1615,7 +1619,7 @@ templ Plugin(page string, initialJob string, lane string) {
             }
 
             function renderSchedulerStatus() {
-                window.renderPluginSchedulerStatus({scheduler: state.schedulerStatus, lock: state.schedulerLock, job_type: state.activeTopTab === 'overview' ? '' : state.selectedJobType});
+                window.renderPluginSchedulerStatus({scheduler: state.schedulerStatus, lock: state.schedulerLock, job_type: monitorJobTypeScope()});
                 var valueNodes = document.querySelectorAll('.plugin-scheduler-next-run');
                 if (!valueNodes.length) {
                     return;
@@ -3084,7 +3088,7 @@ templ Plugin(page string, initialJob string, lane string) {
 
                 // The newest 500 rows cluster-wide may hold none of the selected job type on a busy
                 // cluster, so the job-type sub-tabs fetch their own server-side filtered window.
-                var scopedJobType = state.activeTopTab === 'overview' ? '' : state.selectedJobType;
+                var scopedJobType = monitorJobTypeScope();
 
                 var allJobsPromise = pluginRequest('GET', appendLaneParam('/api/plugin/jobs?limit=500'));
                 var allActivitiesPromise = pluginRequest('GET', appendLaneParam('/api/plugin/activities?limit=500'));
@@ -3103,6 +3107,9 @@ templ Plugin(page string, initialJob string, lane string) {
                     schedulerStatus = await schedulerStatusPromise;
                 } catch (e) {
                     schedulerStatus = null;
+                }
+                if (monitorJobTypeScope() !== scopedJobType) {
+                    return;
                 }
 
                 state.allJobs = Array.isArray(allJobs) ? allJobs : [];
