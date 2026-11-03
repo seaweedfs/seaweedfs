@@ -1,14 +1,20 @@
 package s3api
 
 import (
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"github.com/stretchr/testify/require"
 )
 
@@ -60,6 +66,158 @@ func TestPutToFilerStorageClass(t *testing.T) {
 			require.Equal(t, tt.class, string(entry.Extended[s3_constants.AmzStorageClass]))
 		})
 	}
+}
+
+// countingBody counts the reads a handler makes of the request body.
+type countingBody struct {
+	r     io.Reader
+	reads atomic.Int32
+}
+
+func (b *countingBody) Read(p []byte) (int, error) { b.reads.Add(1); return b.r.Read(p) }
+func (b *countingBody) Close() error               { return nil }
+
+// drainProbe is the ResponseWriter of these tests. WriteErrorResponse drains
+// the body before it answers, which would count as reads, so the probe notes
+// how many the handler had made when that drain starts.
+type drainProbe struct {
+	*httptest.ResponseRecorder
+	body         *countingBody
+	readsAtDrain int32
+}
+
+func (p *drainProbe) SetReadDeadline(time.Time) error {
+	if p.readsAtDrain < 0 {
+		p.readsAtDrain = p.body.reads.Load()
+	}
+	return nil
+}
+
+func newHeaderTestServer(t *testing.T, versioning string) (*S3ApiServer, *ambiguousPutFiler, *fakeVolumeServer) {
+	t.Helper()
+	util_http.InitGlobalHttpClient()
+	volume := startFakeVolumeServer(t)
+	filer := &ambiguousPutFiler{volume: volume, apply: true, entries: map[string]*filer_pb.Entry{}}
+	s3a := newPutTestServer(t, startFakeFiler(t, filer))
+	s3a.iam = &IdentityAccessManagement{}
+	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+	s3a.bucketConfigCache.Set("b", &BucketConfig{Name: "b", Versioning: versioning})
+	return s3a, filer, volume
+}
+
+// newHeaderTestRequest builds a request without a Content-Type, so a handler
+// has to sniff one from the body.
+func newHeaderTestRequest(target, object, payload, header, value string) (*http.Request, *drainProbe) {
+	body := &countingBody{r: strings.NewReader(payload)}
+	req := httptest.NewRequest(http.MethodPut, target, body)
+	req.ContentLength = int64(len(payload))
+	req.Header.Set(header, value)
+	req = mux.SetURLVars(req, map[string]string{"bucket": "b", "object": object})
+	return req, &drainProbe{ResponseRecorder: httptest.NewRecorder(), body: body, readsAtDrain: -1}
+}
+
+func tagHeader(n int) string {
+	tags := make([]string, n)
+	for i := range tags {
+		tags[i] = fmt.Sprintf("k%d=v", i)
+	}
+	return strings.Join(tags, "&")
+}
+
+var invalidPutHeaders = []struct {
+	name, header, value string
+	want                s3err.ErrorCode
+}{
+	{"storage class", s3_constants.AmzStorageClass, "BOGUS", s3err.ErrInvalidStorageClass},
+	{"11 tags", s3_constants.AmzObjectTagging, tagHeader(11), s3err.ErrInvalidTag},
+}
+
+func requireRejected(t *testing.T, probe *drainProbe, volume *fakeVolumeServer, want s3err.ErrorCode) {
+	t.Helper()
+	apiErr := s3err.GetAPIError(want)
+	require.Equal(t, apiErr.HTTPStatusCode, probe.Code, probe.Body.String())
+	require.Contains(t, probe.Body.String(), "<Code>"+apiErr.Code+"</Code>")
+	require.Zero(t, probe.readsAtDrain, "body reads before the error response")
+	require.Zero(t, volume.storedCount(), "chunks stored on the volume server")
+}
+
+// An invalid storage class or tag set is answered before the handler touches
+// the body, whichever way the bucket versions: the content-type sniff of a PUT
+// without Content-Type blocks on the first read.
+func TestPutObjectRejectsInvalidHeadersBeforeReadingBody(t *testing.T) {
+	for _, state := range []struct{ name, versioning string }{
+		{"unversioned", ""},
+		{"versioning enabled", s3_constants.VersioningEnabled},
+		{"versioning suspended", s3_constants.VersioningSuspended},
+	} {
+		for _, h := range invalidPutHeaders {
+			t.Run(state.name+"/"+h.name, func(t *testing.T) {
+				s3a, filer, volume := newHeaderTestServer(t, state.versioning)
+				req, probe := newHeaderTestRequest("/b/o", "o", "hello world", h.header, h.value)
+
+				s3a.PutObjectHandler(probe, req)
+
+				requireRejected(t, probe, volume, h.want)
+				filer.mu.Lock()
+				defer filer.mu.Unlock()
+				require.Empty(t, filer.entries)
+			})
+		}
+	}
+}
+
+func TestPutObjectPartRejectsInvalidHeadersBeforeReadingBody(t *testing.T) {
+	for _, h := range invalidPutHeaders {
+		t.Run(h.name, func(t *testing.T) {
+			s3a, filer, volume := newHeaderTestServer(t, "")
+			uploadID := s3a.generateUploadID("o")
+			filer.mu.Lock()
+			filer.entries["/buckets/b/.uploads/"+uploadID] = &filer_pb.Entry{
+				Name: uploadID, IsDirectory: true,
+				Extended: map[string][]byte{s3_constants.ExtMultipartObjectKey: []byte("o")},
+			}
+			filer.mu.Unlock()
+			req, probe := newHeaderTestRequest("/b/o?partNumber=1&uploadId="+uploadID, "o", "hello world", h.header, h.value)
+
+			s3a.PutObjectPartHandler(probe, req)
+
+			requireRejected(t, probe, volume, h.want)
+		})
+	}
+}
+
+// A directory marker carries neither header, but AWS validates them on any PUT.
+func TestPutObjectDirectoryMarkerRejectsInvalidHeaders(t *testing.T) {
+	for _, h := range invalidPutHeaders {
+		t.Run(h.name, func(t *testing.T) {
+			s3a, filer, volume := newHeaderTestServer(t, "")
+			req, probe := newHeaderTestRequest("/b/dir/", "dir/", "", h.header, h.value)
+
+			s3a.PutObjectHandler(probe, req)
+
+			requireRejected(t, probe, volume, h.want)
+			filer.mu.Lock()
+			defer filer.mu.Unlock()
+			require.Nil(t, filer.entries["/buckets/b/dir"], "directory marker created")
+		})
+	}
+}
+
+// A valid storage class still stores, and the content type is still sniffed.
+func TestPutObjectValidStorageClassSniffsContentType(t *testing.T) {
+	s3a, filer, volume := newHeaderTestServer(t, "")
+	req, probe := newHeaderTestRequest("/b/o", "o", "hello world", s3_constants.AmzStorageClass, "STANDARD_IA")
+
+	s3a.PutObjectHandler(probe, req)
+
+	require.Equal(t, http.StatusOK, probe.Code, probe.Body.String())
+	require.Equal(t, 1, volume.storedCount())
+	filer.mu.Lock()
+	defer filer.mu.Unlock()
+	entry := filer.entries["/buckets/b/o"]
+	require.NotNil(t, entry)
+	require.Equal(t, "STANDARD_IA", string(entry.Extended[s3_constants.AmzStorageClass]))
+	require.Equal(t, "text/plain; charset=utf-8", entry.Attributes.Mime)
 }
 
 // CreateMultipartUpload stores the storage class for the completed object,

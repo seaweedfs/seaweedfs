@@ -148,6 +148,11 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
+	if errCode := validatePutHeaders(r); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
 	dataReader, s3ErrCode := getRequestDataReader(s3a, r)
 	if s3ErrCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, s3ErrCode)
@@ -522,6 +527,26 @@ type multipartPartContextKey struct{}
 
 func withMultipartPart(r *http.Request) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), multipartPartContextKey{}, true))
+}
+
+// validatePutHeaders checks the x-amz-storage-class and x-amz-tagging headers
+// of a PUT before anything reads the body, so an invalid value is answered
+// without waiting on the first body read (the content-type sniff blocks on it)
+// or doing any filer work. putToFiler checks them again for its other callers.
+func validatePutHeaders(r *http.Request) s3err.ErrorCode {
+	if sc := r.Header.Get(s3_constants.AmzStorageClass); sc != "" && !validateStorageClass(sc) {
+		return s3err.ErrInvalidStorageClass
+	}
+	if tagging := r.Header.Get(s3_constants.AmzObjectTagging); tagging != "" {
+		parsed, err := parseTagsHeader(tagging)
+		if err != nil {
+			return s3err.ErrInvalidTag
+		}
+		if err := ValidateTags(parsed); err != nil {
+			return s3err.ErrInvalidTag
+		}
+	}
+	return s3err.ErrNone
 }
 
 func isMultipartPartRequest(r *http.Request) bool {
