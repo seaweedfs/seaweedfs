@@ -959,16 +959,29 @@ fn grpc_tls_incoming(
 > {
     let (tx, rx) = tokio::sync::mpsc::channel(64);
     tokio::spawn(async move {
+        let mut retry_delay = std::time::Duration::ZERO;
         loop {
             let accepted = tokio::select! {
                 _ = tx.closed() => return,
                 accepted = listener.accept() => accepted,
             };
             let (tcp_stream, remote_addr) = match accepted {
-                Ok(accepted) => accepted,
+                Ok(accepted) => {
+                    retry_delay = std::time::Duration::ZERO;
+                    accepted
+                }
                 Err(e) => {
-                    let _ = tx.send(Err(e)).await;
-                    return;
+                    // Back off and retry like grpc-go, so running out of file
+                    // descriptors does not close the gRPC port for good.
+                    retry_delay = (retry_delay * 2).clamp(
+                        std::time::Duration::from_millis(5),
+                        std::time::Duration::from_secs(1),
+                    );
+                    tracing::warn!("gRPC accept error: {}; retrying in {:?}", e, retry_delay);
+                    tokio::select! {
+                        _ = tx.closed() => return,
+                        _ = tokio::time::sleep(retry_delay) => continue,
+                    }
                 }
             };
             let tls_acceptor = tls_acceptor.clone();
