@@ -865,7 +865,7 @@ func FileBrowser(data dash.FileBrowserData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 94, "\"><div class=\"mb-3\"><label for=\"fileInput\" class=\"form-label\">Select Files</label> <input type=\"file\" class=\"form-control\" id=\"fileInput\" name=\"files\" multiple required><div class=\"form-text\">Choose one or more files to upload to the current directory. You can select multiple files by holding Ctrl (Cmd on Mac) while clicking. ")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 94, "\"><div class=\"mb-3\"><label for=\"fileInput\" class=\"form-label\">Select Files</label> <input type=\"file\" class=\"form-control\" id=\"fileInput\" name=\"files\" multiple><div class=\"form-text\">Choose one or more files to upload to the current directory. You can select multiple files by holding Ctrl (Cmd on Mac) while clicking. ")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -888,14 +888,14 @@ func FileBrowser(data dash.FileBrowserData) templ.Component {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 97, "</div></div><input type=\"hidden\" id=\"uploadPath\" name=\"path\" value=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 97, "</div></div><div class=\"mb-3\"><label for=\"folderInput\" class=\"form-label\">Or Select a Folder</label> <input type=\"file\" class=\"form-control\" id=\"folderInput\" webkitdirectory multiple><div class=\"form-text\">Uploads every file in the folder, keeping its subfolders. Empty subfolders are skipped.</div></div><input type=\"hidden\" id=\"uploadPath\" name=\"path\" value=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var42 string
 		templ_7745c5c3_Var42, templ_7745c5c3_Err = templruntime.NewAttributeExpression(data.CurrentPath).Resolve(ctx)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/file_browser.templ`, Line: 324, Col: 79}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/file_browser.templ`, Line: 331, Col: 79}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var42)
 		if templ_7745c5c3_Err != nil {

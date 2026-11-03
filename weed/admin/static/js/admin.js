@@ -1167,17 +1167,68 @@ async function submitCreateFolder() {
     }
 }
 
+// Files dropped on the listing, each with its path under the current directory;
+// null when the modal's inputs hold the selection.
+let droppedUploadFiles = null;
+
+function selectedUploadFiles() {
+    if (droppedUploadFiles) {
+        return droppedUploadFiles;
+    }
+    const selected = [];
+    ['fileInput', 'folderInput'].forEach(id => {
+        const input = document.getElementById(id);
+        Array.from((input && input.files) || []).forEach(file => {
+            selected.push({ file, path: file.webkitRelativePath || file.name });
+        });
+    });
+    return selected;
+}
+
+// Lists the dropped files, walking into dropped folders. The entries must be
+// taken before the first await, while the drop event still exposes them.
+async function collectDroppedFiles(dataTransfer) {
+    const entries = Array.from(dataTransfer.items || [])
+        .map(item => item.webkitGetAsEntry && item.webkitGetAsEntry())
+        .filter(Boolean);
+    if (entries.length === 0) {
+        return Array.from(dataTransfer.files).map(file => ({ file, path: file.name }));
+    }
+    const collected = [];
+    async function walk(entry) {
+        if (entry.isFile) {
+            const file = await new Promise((resolve, reject) => entry.file(resolve, reject));
+            collected.push({ file, path: entry.fullPath.replace(/^\/+/, '') });
+            return;
+        }
+        const reader = entry.createReader();
+        for (;;) {
+            const batch = await new Promise((resolve, reject) => reader.readEntries(resolve, reject));
+            if (batch.length === 0) {
+                return;
+            }
+            for (const child of batch) {
+                await walk(child);
+            }
+        }
+    }
+    for (const entry of entries) {
+        await walk(entry);
+    }
+    return collected;
+}
+
 // Submit upload file form
 async function submitUploadFile() {
-    const fileInput = document.getElementById('fileInput');
     const currentPath = document.getElementById('uploadPath').value;
+    const selected = selectedUploadFiles();
 
-    if (!fileInput.files || fileInput.files.length === 0) {
-        showErrorMessage('Please select at least one file to upload');
+    if (selected.length === 0) {
+        showErrorMessage('Please select at least one file or folder to upload');
         return;
     }
 
-    const files = Array.from(fileInput.files);
+    const files = selected.map(item => item.file);
     const totalSize = files.reduce((sum, file) => sum + file.size, 0);
 
     const maxSize = Number(document.getElementById('uploadFileForm').dataset.maxSize) || 0;
@@ -1192,6 +1243,9 @@ async function submitUploadFile() {
     files.forEach(file => {
         formData.append('files', file);
     });
+    if (selected.some(item => item.path !== item.file.name)) {
+        formData.append('relativePaths', JSON.stringify(selected.map(item => item.path)));
+    }
     formData.append('path', currentPath);
 
     // Show progress bar and disable button
@@ -1430,12 +1484,15 @@ function setupFileManagerEventHandlers() {
     }
 
     // Handle file selection change to show preview
-    const fileInput = document.getElementById('fileInput');
-    if (fileInput) {
-        fileInput.addEventListener('change', function (e) {
-            updateFileListPreview();
-        });
-    }
+    ['fileInput', 'folderInput'].forEach(id => {
+        const input = document.getElementById(id);
+        if (input) {
+            input.addEventListener('change', function (e) {
+                droppedUploadFiles = null;
+                updateFileListPreview();
+            });
+        }
+    });
 
     // Setup checkbox event listeners for file selection
     const checkboxes = document.querySelectorAll('.file-checkbox');
@@ -1464,6 +1521,8 @@ function setupFileManagerEventHandlers() {
             const progressContainer = document.getElementById('uploadProgress');
             const fileListPreview = document.getElementById('fileListPreview');
             fileInput.value = '';
+            document.getElementById('folderInput').value = '';
+            droppedUploadFiles = null;
             progressContainer.style.display = 'none';
             fileListPreview.style.display = 'none';
         });
@@ -1540,43 +1599,39 @@ function setupDragAndDrop() {
         }
     }
 
-    function handleDrop(e) {
-        const dt = e.dataTransfer;
-        const files = dt.files;
-
-        if (files.length > 0) {
-            // Open upload modal and set files
-            const fileInput = document.getElementById('fileInput');
-            if (fileInput) {
-                // Create a new FileList-like object
-                const fileArray = Array.from(files);
-
-                // Set files to input (this is a bit tricky with file inputs)
-                const dataTransfer = new DataTransfer();
-                fileArray.forEach(file => dataTransfer.items.add(file));
-                fileInput.files = dataTransfer.files;
-
-                // Update preview and show modal
-                updateFileListPreview();
-                const modal = new bootstrap.Modal(uploadModal);
-                modal.show();
-            }
+    async function handleDrop(e) {
+        let dropped;
+        try {
+            dropped = await collectDroppedFiles(e.dataTransfer);
+        } catch (error) {
+            console.error('Drop error:', error);
+            showErrorMessage('Failed to read the dropped files.');
+            return;
         }
+        if (dropped.length === 0) {
+            return;
+        }
+        document.getElementById('fileInput').value = '';
+        document.getElementById('folderInput').value = '';
+        droppedUploadFiles = dropped;
+        updateFileListPreview();
+        const modal = new bootstrap.Modal(uploadModal);
+        modal.show();
     }
 }
 
 // Update file list preview when files are selected
 function updateFileListPreview() {
-    const fileInput = document.getElementById('fileInput');
     const fileListPreview = document.getElementById('fileListPreview');
     const selectedFilesList = document.getElementById('selectedFilesList');
+    const selected = selectedUploadFiles();
 
-    if (!fileInput.files || fileInput.files.length === 0) {
+    if (selected.length === 0) {
         fileListPreview.style.display = 'none';
         return;
     }
 
-    const files = Array.from(fileInput.files);
+    const files = selected.map(item => item.file);
     const totalSize = files.reduce((sum, file) => sum + file.size, 0);
 
     let html = `<div class="d-flex justify-content-between align-items-center mb-2">
@@ -1584,12 +1639,12 @@ function updateFileListPreview() {
         <small class="text-muted">Total: ${formatBytes(totalSize)}</small>
     </div>`;
 
-    files.forEach((file, index) => {
+    selected.forEach(({ file, path }, index) => {
         const fileIcon = getFileIconByName(file.name);
         html += `<div class="d-flex justify-content-between align-items-center py-1 ${index > 0 ? 'border-top' : ''}">
             <div class="d-flex align-items-center">
                 <i class="bi ${fileIcon} me-2 text-muted"></i>
-                <span class="text-truncate" style="max-width: 200px;" title="${file.name}">${file.name}</span>
+                <span class="text-truncate" style="max-width: 400px;" title="${escapeHtmlForAttribute(path)}">${escapeHtml(path)}</span>
             </div>
             <small class="text-muted">${formatBytes(file.size)}</small>
         </div>`;
