@@ -204,3 +204,42 @@ func TestPullMetadataDirectoryDeletesOnlyTheListedFile(t *testing.T) {
 		})
 	}
 }
+
+// The filer answers a delete it skipped under the cutoff with success, so the
+// sync reports what a lookup after the delete finds.
+func TestPullMetadataDirectoryReportsAKeptEntry(t *testing.T) {
+	listed := &filer_pb.Entry{Name: "f", Attributes: &filer_pb.FuseAttributes{Mtime: 10}, RemoteEntry: &filer_pb.RemoteEntry{StorageName: "r", RemoteSize: 1, RemoteMtime: 10}}
+	for _, tc := range []struct {
+		name        string
+		remote      map[string]bool
+		deleteStale bool
+		kept        bool
+		want        string
+		creates     int
+	}{
+		{"stale file kept", map[string]bool{}, true, true, "/buckets/b/f (skip, changed since listed)\n", 0},
+		{"stale file deleted", map[string]bool{}, true, false, "/buckets/b/f (delete)\n", 0},
+		{"file replaced by a remote directory kept", map[string]bool{"f": true}, false, true, "/buckets/b/f (skip, changed since listed)\n", 0},
+		{"file replaced by a remote directory deleted", map[string]bool{"f": true}, false, false, "/buckets/b/f (delete)\n/buckets/b/f (skip, created since listed)\n", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := stubFilerSvc{lookupErr: filer_pb.ErrNotFound}
+			if tc.kept {
+				stub = stubFilerSvc{lookupResp: &filer_pb.LookupDirectoryEntryResponse{Entry: listed}}
+			}
+			fake := &deleteRecordingFiler{
+				takenNameFiler: takenNameFiler{stubFilerSvc: stub},
+				listing:        map[string][]*filer_pb.Entry{"/buckets/b": {listed}},
+			}
+			remote := &listingRemote{dirs: map[string]map[string]bool{"/": tc.remote}}
+			var out strings.Builder
+			loc := &remote_pb.RemoteStorageLocation{Name: "r", Bucket: "rb", Path: "/"}
+			if err := pullMetadataDirectory(context.Background(), fake, &out, remote, util.FullPath("/buckets/b"), loc, tc.deleteStale, false); err != nil {
+				t.Fatalf("sync: %v", err)
+			}
+			if out.String() != tc.want || len(fake.creates) != tc.creates {
+				t.Fatalf("output %q with %d creates, want %q with %d", out.String(), len(fake.creates), tc.want, tc.creates)
+			}
+		})
+	}
+}
