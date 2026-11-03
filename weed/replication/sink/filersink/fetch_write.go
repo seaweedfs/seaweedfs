@@ -295,7 +295,7 @@ func (fs *FilerSink) manifestResolveRetryGate(path string, replayed *filer_pb.En
 				chunkName, path, missingSourceChunkGrace, resolveErr)
 			return false
 		}
-		if isSourceChunkMissing(resolveErr) && fs.sourceDroppedChunk(path, chunkName) {
+		if isSourceChunkMissing(resolveErr) && fs.sourceDroppedChunk(path, chunkName, replayed) {
 			glog.V(0).Infof("source no longer lists manifest %s for %s, skipping the obsolete version: %v",
 				chunkName, path, resolveErr)
 			return false
@@ -522,7 +522,7 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string,
 			if anchorId == "" {
 				anchorId = sourceChunk.GetFileIdString()
 			}
-			if fs.sourceDroppedChunk(path, anchorId) {
+			if fs.sourceDroppedChunk(path, anchorId, replayed) {
 				glog.V(0).Infof("source no longer lists %s for %s, skipping the obsolete version: %v",
 					anchorId, path, retryErr)
 				return false
@@ -657,14 +657,15 @@ func (fs *FilerSink) sourceStillServesChunks() bool {
 // longer references fileId — a version rewritten in place, which the mtime
 // supersession check cannot see. The live entry's mtime does not matter: a
 // client that preserves timestamps stamps a rewrite with an older mtime, and
-// the chunk it stopped referencing is just as gone.
-func (fs *FilerSink) sourceDroppedChunk(targetPath string, fileId string) bool {
+// the chunk it stopped referencing is just as gone. A live entry committed
+// before the replayed version lags the event and proves nothing.
+func (fs *FilerSink) sourceDroppedChunk(targetPath string, fileId string, replayed *filer_pb.Entry) bool {
 	sourcePath, ok := fs.targetPathToSourcePath(targetPath)
 	if !ok {
 		return false
 	}
 	live, err := fs.sourceEntry(sourcePath)
-	if err != nil || live == nil {
+	if err != nil || live == nil || committedBefore(live, replayed) {
 		return false
 	}
 	return !chunkFileIds(live.GetChunks())[fileId]

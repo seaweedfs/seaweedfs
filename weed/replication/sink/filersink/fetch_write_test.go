@@ -823,16 +823,26 @@ func TestSourceDroppedChunk(t *testing.T) {
 		Chunks:     []*filer_pb.FileChunk{{FileId: "5617,02def", Size: 10}},
 	}
 	fs := &FilerSink{filerSource: startSourceFilerWithEntry(t, live, ""), dir: "/dst"}
+	replayed := entryWithMtimeNs(5 * int64(time.Second))
 
-	if !fs.sourceDroppedChunk("/dst/x.bin", "5617,01abc") {
+	if !fs.sourceDroppedChunk("/dst/x.bin", "5617,01abc", replayed) {
 		t.Fatal("live entry no longer referencing the chunk must count as dropped")
 	}
-	if fs.sourceDroppedChunk("/dst/x.bin", "5617,02def") {
+	if fs.sourceDroppedChunk("/dst/x.bin", "5617,02def", replayed) {
 		t.Fatal("a chunk the live entry still lists must not count as dropped")
 	}
 	live.Attributes.Mtime = 4
-	if !fs.sourceDroppedChunk("/dst/x.bin", "5617,01abc") {
+	if !fs.sourceDroppedChunk("/dst/x.bin", "5617,01abc", replayed) {
 		t.Fatal("a live entry stamped older than the replayed version still dropped the chunk")
+	}
+
+	replayed.CommitTsNs, live.CommitTsNs = 100, 200
+	if !fs.sourceDroppedChunk("/dst/x.bin", "5617,01abc", replayed) {
+		t.Fatal("a live entry committed after the replay dropped the chunk")
+	}
+	live.CommitTsNs, live.Attributes.Mtime = 50, 6
+	if fs.sourceDroppedChunk("/dst/x.bin", "5617,01abc", replayed) {
+		t.Fatal("a live entry committed before the replay lags the event and cannot prove the chunk dropped")
 	}
 }
 
@@ -1128,6 +1138,52 @@ func committedOverWithOlderMtime() (live, replayed *filer_pb.Entry) {
 		CommitTsNs: 100,
 	}
 	return live, replayed
+}
+
+// A peer filer's event can reach the sink before the source store applies it,
+// so the live lookup returns the version the replay replaces, which never
+// listed the replay's chunk. That lagging entry cannot prove the chunk dropped:
+// the 404 must be waited out like any other, not cut short.
+func TestFetchAndWriteLaggingLookupKeepsRetrying(t *testing.T) {
+	prevRetryWaitTime, prevGrace := util.RetryWaitTime, missingSourceChunkGrace
+	util.RetryWaitTime = 100 * time.Millisecond
+	missingSourceChunkGrace = 500 * time.Millisecond
+	t.Cleanup(func() {
+		util.RetryWaitTime, missingSourceChunkGrace = prevRetryWaitTime, prevGrace
+	})
+
+	gone := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer gone.Close()
+
+	lagging := &filer_pb.Entry{
+		Attributes: &filer_pb.FuseAttributes{Mtime: 4},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "5617,00aaa", Size: 10}},
+		CommitTsNs: 50,
+	}
+	_, replayed := committedOverWithOlderMtime()
+	fs := &FilerSink{
+		filerSource: startSourceFilerWithEntry(t, lagging, strings.TrimPrefix(gone.URL, "http://"), "5617"),
+		dir:         "/dst",
+		executor:    util.NewLimitedConcurrentExecutor(1),
+	}
+	fs.SetUploader(operation.NewUploaderWithHttpClient(http.DefaultClient))
+
+	done := make(chan error, 1)
+	go func() {
+		_, fetchErr := fs.fetchAndWrite(replayed.Chunks[0], "/dst/x.bin", replayed, "")
+		done <- fetchErr
+	}()
+
+	select {
+	case fetchErr := <-done:
+		if !errors.Is(fetchErr, errSourceChunkMissing) {
+			t.Fatalf("a lagging live lookup must not cut the missing-chunk wait short, got %v", fetchErr)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the missing chunk must still expire via the gate")
+	}
 }
 
 // A replayed version whose source entry is gone must not cost a single chunk
