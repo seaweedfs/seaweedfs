@@ -408,11 +408,6 @@ templ FileBrowser(data dash.FileBrowserData) {
 					break;
 			}
 		});
-		
-		// Initialize file manager event handlers from admin.js
-		if (typeof setupFileManagerEventHandlers === 'function') {
-			setupFileManagerEventHandlers();
-		}
 	});
 	
 	// File browser specific functions
