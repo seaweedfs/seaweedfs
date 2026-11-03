@@ -63,12 +63,12 @@ func StartSingleVolumeClusterWithFiler(t testing.TB, profile matrix.Profile) *Cl
 
 	if err = baseCluster.waitForTCP(net.JoinHostPort("127.0.0.1", strconv.Itoa(filerGrpcPort))); err != nil {
 		filerLogTail := baseCluster.tailLog("filer.log")
-		stopProcess(filerCmd)
+		stopProcess(t, "filer", filerCmd)
 		t.Fatalf("wait for filer grpc readiness: %v\nfiler log tail:\n%s", err, filerLogTail)
 	}
 
 	t.Cleanup(func() {
-		stopProcess(filerCmd)
+		stopProcess(t, "filer", filerCmd)
 	})
 
 	return &ClusterWithFiler{

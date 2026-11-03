@@ -26,7 +26,9 @@ func TestRustVolumeArgsIncludeReadMode(t *testing.T) {
 
 func assertArgPair(t *testing.T, args []string, flag string, want string) {
 	t.Helper()
-	for i := 0; i+1 < len(args); i += 2 {
+	// Not every flag takes a value (--volume.allowUntrustedRemoteEndpoints),
+	// so pairs do not line up at even indexes.
+	for i := 0; i+1 < len(args); i++ {
 		if args[i] == flag {
 			if args[i+1] != want {
 				t.Fatalf("%s value mismatch: got %q want %q", flag, args[i+1], want)

@@ -178,9 +178,9 @@ func (c *RustMultiVolumeCluster) Stop() {
 	c.cleanupOnce.Do(func() {
 		// Stop volume servers in reverse order
 		for i := len(c.volumeCmds) - 1; i >= 0; i-- {
-			stopProcess(c.volumeCmds[i])
+			stopProcess(c.testingTB, fmt.Sprintf("volume server %d", i), c.volumeCmds[i])
 		}
-		stopProcess(c.masterCmd)
+		stopProcess(c.testingTB, "master", c.masterCmd)
 		if !c.keepLogs && !c.testingTB.Failed() {
 			_ = os.RemoveAll(c.baseDir)
 		} else if c.baseDir != "" {

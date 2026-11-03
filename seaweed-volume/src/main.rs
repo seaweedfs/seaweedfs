@@ -845,40 +845,39 @@ async fn run(
         }))
     };
 
-    // Wait for servers. Use select! with &mut so the losing handle is not
-    // dropped, then await it explicitly afterward.
+    // Whichever server stops first takes the other down, as a serve failure
+    // is fatal for the Go volume server.
     let mut server_err: Option<String> = None;
-    let mut http_handle = http_handle;
     let mut grpc_handle = grpc_handle;
-    let grpc_finished_first = tokio::select! {
-        _ = &mut http_handle => false,
-        _ = &mut grpc_handle => true,
+    let mut http_handle = http_handle;
+    let (http_result, grpc_result) = tokio::select! {
+        r = &mut grpc_handle => {
+            let _ = shutdown_tx.send(());
+            (http_handle.await, r)
+        }
+        r = &mut http_handle => {
+            let _ = shutdown_tx.send(());
+            (r, grpc_handle.await)
+        }
     };
-    // Inspect the gRPC result (already resolved if it finished first,
-    // otherwise await it now).
-    let grpc_result = if grpc_finished_first {
-        grpc_handle.await
-    } else {
-        // HTTP finished first; gRPC is still running. Await it.
-        grpc_handle.await
-    };
+    if let Err(e) = http_result {
+        let msg = format!("HTTP task panicked: {}", e);
+        error!("{}", msg);
+        server_err = Some(msg);
+    }
     match grpc_result {
         Ok(Ok(())) => {}
         Ok(Err(e)) => {
             let msg = format!("gRPC server exited with error: {}", e);
             error!("{}", msg);
             server_err = Some(msg);
-            // serve error already sent shutdown inside the task
         }
         Err(e) => {
             let msg = format!("gRPC task panicked: {}", e);
             error!("{}", msg);
             server_err = Some(msg);
-            let _ = shutdown_tx.send(());
         }
     }
-    // Ensure the HTTP handle completes too.
-    let _ = http_handle.await;
     if let Some(h) = public_handle {
         let _ = h.await;
     }

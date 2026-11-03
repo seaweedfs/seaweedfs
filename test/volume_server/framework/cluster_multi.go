@@ -198,9 +198,9 @@ func (c *MultiVolumeCluster) Stop() {
 	c.cleanupOnce.Do(func() {
 		// Stop volume servers in reverse order
 		for i := len(c.volumeCmds) - 1; i >= 0; i-- {
-			stopProcess(c.volumeCmds[i])
+			stopProcess(c.testingTB, fmt.Sprintf("volume server %d", i), c.volumeCmds[i])
 		}
-		stopProcess(c.masterCmd)
+		stopProcess(c.testingTB, "master", c.masterCmd)
 		if !c.keepLogs && !c.testingTB.Failed() {
 			_ = os.RemoveAll(c.baseDir)
 		} else if c.baseDir != "" {
@@ -249,6 +249,7 @@ func (c *MultiVolumeCluster) startVolume(index int, dataDirs []string) error {
 		"-config_dir=" + c.configDir,
 		"volume",
 		"-ip=127.0.0.1",
+		"-preStopSeconds=0",
 		"-port=" + strconv.Itoa(c.volumePorts[index]),
 		"-port.grpc=" + strconv.Itoa(c.volumeGrpcPorts[index]),
 		"-port.public=" + strconv.Itoa(c.volumePubPorts[index]),
