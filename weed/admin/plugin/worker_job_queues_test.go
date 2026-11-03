@@ -103,7 +103,7 @@ func TestAssignAndTakeDoesNotStarveOtherHomes(t *testing.T) {
 	}
 
 	_, target1 := pluginSvc.takeQueuedJob(qs, "erasure_coding", policy)
-	_, release1, err := pluginSvc.reserveExecutorByID("erasure_coding", policy, target1)
+	_, release1, err := pluginSvc.reserveExecutorByID("erasure_coding", policy, target1, "")
 	if err != nil {
 		t.Fatalf("reserve 1: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestTakeStealsOnlyWhenHomeQueueReachesK(t *testing.T) {
 	if target != "worker-local" {
 		t.Fatalf("first take want local, got %s", target)
 	}
-	_, release, err := pluginSvc.reserveExecutorByID("erasure_coding", policy, "worker-local")
+	_, release, err := pluginSvc.reserveExecutorByID("erasure_coding", policy, "worker-local", "")
 	if err != nil {
 		t.Fatalf("reserve local: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestTakeStealsImmediatelyWhenPinDisabled(t *testing.T) {
 	if target != "worker-local" {
 		t.Fatalf("first take want local, got %s", target)
 	}
-	_, release, err := pluginSvc.reserveExecutorByID("erasure_coding", policy, "worker-local")
+	_, release, err := pluginSvc.reserveExecutorByID("erasure_coding", policy, "worker-local", "")
 	if err != nil {
 		t.Fatalf("reserve local: %v", err)
 	}
@@ -381,7 +381,7 @@ func TestHomelessAllRemoteWorkersUseFIFOWithoutPinOrGrace(t *testing.T) {
 	if item1 == nil || item1.job.JobId != "h1" {
 		t.Fatalf("FIFO first want h1, got %v", item1)
 	}
-	_, release1, err := pluginSvc.reserveExecutorByID("erasure_coding", policy, target1)
+	_, release1, err := pluginSvc.reserveExecutorByID("erasure_coding", policy, target1, "")
 	if err != nil {
 		t.Fatalf("reserve 1: %v", err)
 	}
@@ -433,7 +433,7 @@ func TestMixedReplicaLocalJobsStayHomeBeforeHomeless(t *testing.T) {
 	if item1 == nil || item1.job.JobId != "local-1" || target1 != "worker-local" {
 		t.Fatalf("first take want local-1 on home, got job=%v target=%s", item1, target1)
 	}
-	_, release, err := pluginSvc.reserveExecutorByID("erasure_coding", policy, "worker-local")
+	_, release, err := pluginSvc.reserveExecutorByID("erasure_coding", policy, "worker-local", "")
 	if err != nil {
 		t.Fatalf("reserve local: %v", err)
 	}
@@ -523,7 +523,7 @@ func TestHomelessWorkerTakesFIFOBeforeStealableHome(t *testing.T) {
 	if target != "worker-local" {
 		t.Fatalf("first take want local, got %s", target)
 	}
-	_, release, err := pluginSvc.reserveExecutorByID("erasure_coding", policy, "worker-local")
+	_, release, err := pluginSvc.reserveExecutorByID("erasure_coding", policy, "worker-local", "")
 	if err != nil {
 		t.Fatalf("reserve local: %v", err)
 	}
@@ -579,7 +579,7 @@ func TestHomeWorkerStealsBeforeHomelessAfterOwnQueueEmpty(t *testing.T) {
 	if item1 == nil || target1 != "worker-local" {
 		t.Fatalf("first take want local home, got job=%v target=%s", item1, target1)
 	}
-	_, release, err := pluginSvc.reserveExecutorByID("erasure_coding", policy, "worker-local")
+	_, release, err := pluginSvc.reserveExecutorByID("erasure_coding", policy, "worker-local", "")
 	if err != nil {
 		t.Fatalf("reserve local: %v", err)
 	}

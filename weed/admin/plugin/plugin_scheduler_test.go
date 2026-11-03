@@ -1048,3 +1048,173 @@ func TestReserveWaterfillsPreferredHosts(t *testing.T) {
 		t.Fatalf("want one job per worker, got %v", seen)
 	}
 }
+
+// ---------- executor capacity ----------
+
+// registerBusyWorker connects one worker that can run every job type in
+// caps with four slots, one of which the worker reports taken by running
+// work of busyType that this admin never dispatched.
+func registerBusyWorker(t *testing.T, pluginSvc *Plugin, workerID, busyType, busyJobID string, caps ...string) {
+	t.Helper()
+	hello := &plugin_pb.WorkerHello{WorkerId: workerID}
+	for _, jobType := range caps {
+		hello.Capabilities = append(hello.Capabilities, &plugin_pb.JobTypeCapability{
+			JobType: jobType, CanExecute: true, MaxExecutionConcurrency: 4,
+		})
+	}
+	pluginSvc.registry.UpsertFromHello(hello)
+	heartbeat := &plugin_pb.WorkerHeartbeat{
+		WorkerId:            workerID,
+		ExecutionSlotsUsed:  1,
+		ExecutionSlotsTotal: 4,
+		RunningWork: []*plugin_pb.RunningWork{{
+			WorkId:  busyJobID,
+			Kind:    plugin_pb.WorkKind_WORK_KIND_EXECUTION,
+			JobType: busyType,
+			State:   plugin_pb.JobState_JOB_STATE_RUNNING,
+			Stage:   "starting",
+		}},
+	}
+	pluginSvc.registry.UpdateHeartbeat(workerID, heartbeat)
+}
+
+// The field case: the only admin_script-capable worker has 4 slots, one held
+// by an s3_lifecycle job the worker reports running that this admin never
+// dispatched, and admin_script runs at global 1 / per-worker 1.
+// per_worker_execution_concurrency bounds admin_script work, so the
+// lifecycle job must not make admin_script undispatchable; the limit still
+// holds within admin_script itself and against foreign work of the same type.
+func TestExecutorCapacityCountsOnlyTheJobTypeBeingDispatched(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	const workerID = "w-penso--7aa8"
+	registerBusyWorker(t, pluginSvc, workerID, "s3_lifecycle", "s3_lifecycle-scheduled-1793477386659262943-0",
+		"admin_script", "s3_lifecycle", "vacuum", "ec_balance")
+	policy := schedulerPolicy{ExecutionConcurrency: 1, PerWorkerConcurrency: 1, LocalQueuePin: 5}
+
+	job := &plugin_pb.JobSpec{JobId: "admin_script-scheduled-1793738609215134308-0", JobType: "admin_script", DedupeKey: "admin_script"}
+	qs := pluginSvc.assignJobsToWorkerQueues("admin_script", []*plugin_pb.JobSpec{job}, policy)
+	item, target := pluginSvc.takeQueuedJob(qs, "admin_script", policy)
+	if item == nil || target != workerID {
+		t.Fatalf("admin_script should dispatch to %s past the foreign s3_lifecycle job, got item=%v target=%q", workerID, item, target)
+	}
+	executor, release, err := pluginSvc.reserveExecutorByID("admin_script", policy, target, job.JobId)
+	if err != nil {
+		t.Fatalf("reserve admin_script: %v", err)
+	}
+	defer release()
+
+	// The per-type limit of 1 is now spent on admin_script's own job.
+	if pluginSvc.executorHasCapacity(executor, "admin_script", policy) {
+		t.Fatalf("a second admin_script job must wait for the first")
+	}
+	// Unrelated types on the same worker still have their own per-type budget.
+	if !pluginSvc.executorHasCapacity(executor, "vacuum", policy) {
+		t.Fatalf("vacuum should still fit: 2 of 4 slots used, none by vacuum")
+	}
+	// Foreign work of the same type counts against that type's limit.
+	if pluginSvc.executorHasCapacity(executor, "s3_lifecycle", policy) {
+		t.Fatalf("a second s3_lifecycle job must not fit beside the foreign one at per-worker 1")
+	}
+}
+
+// Per-type budgets never add up to more than the worker's slot total: a
+// worker whose slots are all taken by other job types takes nothing, whether
+// it itemized that work or only reported the count.
+func TestExecutorCapacityHonorsWorkerSlotTotalAcrossJobTypes(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	const workerID = "worker-a"
+	pluginSvc.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: workerID,
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: "admin_script", CanExecute: true, MaxExecutionConcurrency: 4},
+			{JobType: "s3_lifecycle", CanExecute: true, MaxExecutionConcurrency: 4},
+		},
+	})
+	policy := schedulerPolicy{ExecutionConcurrency: 1, PerWorkerConcurrency: 1}
+	executor := func() *WorkerSession {
+		session, ok := pluginSvc.registry.Get(workerID)
+		if !ok {
+			t.Fatalf("worker missing")
+		}
+		return session
+	}
+
+	pluginSvc.registry.UpdateHeartbeat(workerID, &plugin_pb.WorkerHeartbeat{
+		WorkerId: workerID, ExecutionSlotsUsed: 1, ExecutionSlotsTotal: 1,
+		RunningWork: []*plugin_pb.RunningWork{{
+			WorkId: "lc-1", Kind: plugin_pb.WorkKind_WORK_KIND_EXECUTION, JobType: "s3_lifecycle",
+		}},
+	})
+	if pluginSvc.executorHasCapacity(executor(), "admin_script", policy) {
+		t.Fatalf("the worker's only slot is taken by s3_lifecycle")
+	}
+
+	pluginSvc.registry.UpdateHeartbeat(workerID, &plugin_pb.WorkerHeartbeat{
+		WorkerId: workerID, ExecutionSlotsUsed: 1, ExecutionSlotsTotal: 1,
+	})
+	if pluginSvc.executorHasCapacity(executor(), "admin_script", policy) {
+		t.Fatalf("a slot the worker counts as used is used even when not itemized")
+	}
+
+	pluginSvc.registry.UpdateHeartbeat(workerID, &plugin_pb.WorkerHeartbeat{
+		WorkerId: workerID, ExecutionSlotsUsed: 0, ExecutionSlotsTotal: 1,
+	})
+	if !pluginSvc.executorHasCapacity(executor(), "admin_script", policy) {
+		t.Fatalf("a free worker should take the job")
+	}
+}
+
+// A job this admin dispatched shows up twice, as its reservation and in the
+// worker's heartbeat. It is one slot, and must not be charged as two.
+func TestExecutorCapacityDoesNotDoubleCountReservedJobsEchoedByHeartbeat(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	const workerID = "worker-a"
+	pluginSvc.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: workerID,
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: "vacuum", CanExecute: true, MaxExecutionConcurrency: 4},
+		},
+	})
+	policy := schedulerPolicy{ExecutionConcurrency: 2, PerWorkerConcurrency: 2}
+
+	_, release, err := pluginSvc.reserveExecutorByID("vacuum", policy, workerID, "vacuum-1")
+	if err != nil {
+		t.Fatalf("reserve vacuum-1: %v", err)
+	}
+	defer release()
+
+	pluginSvc.registry.UpdateHeartbeat(workerID, &plugin_pb.WorkerHeartbeat{
+		WorkerId: workerID, ExecutionSlotsUsed: 1, ExecutionSlotsTotal: 4,
+		RunningWork: []*plugin_pb.RunningWork{{
+			WorkId: "vacuum-1", Kind: plugin_pb.WorkKind_WORK_KIND_EXECUTION, JobType: "vacuum",
+		}},
+	})
+	executor, _ := pluginSvc.registry.Get(workerID)
+	if got := pluginSvc.executorWorkerLoad(executor); got != 1 {
+		t.Fatalf("worker load = %d, want 1: the reservation and its heartbeat echo are one slot", got)
+	}
+	if !pluginSvc.executorHasCapacity(executor, "vacuum", policy) {
+		t.Fatalf("one vacuum job in flight leaves room for a second at per-worker 2")
+	}
+}

@@ -79,16 +79,19 @@ type Plugin struct {
 
 	lanes map[SchedulerLane]*schedulerLaneState
 
-	schedulerExecMu           sync.Mutex
-	schedulerExecReservations map[string]int
-	adminScriptRunMu          sync.RWMutex
-	schedulerDetectionMu      sync.Mutex
-	schedulerDetection        map[string]*schedulerDetectionInfo
-	schedulerRunMu            sync.Mutex
-	schedulerRun              map[string]*schedulerRunInfo
-	schedulerLoopMu           sync.Mutex
-	schedulerLoopState        schedulerLoopState
-	schedulerWakeCh           chan struct{}
+	// Execution slots this admin holds on workers, one entry per job in
+	// flight; see executorLoadLocked for how they meet the heartbeat.
+	execResMu            sync.Mutex
+	execRes              map[uint64]execReservation
+	execResSeq           uint64
+	adminScriptRunMu     sync.RWMutex
+	schedulerDetectionMu sync.Mutex
+	schedulerDetection   map[string]*schedulerDetectionInfo
+	schedulerRunMu       sync.Mutex
+	schedulerRun         map[string]*schedulerRunInfo
+	schedulerLoopMu      sync.Mutex
+	schedulerLoopState   schedulerLoopState
+	schedulerWakeCh      chan struct{}
 
 	dedupeMu           sync.Mutex
 	recentDedupeByType map[string]map[string]time.Time
@@ -216,7 +219,7 @@ func New(options Options) (*Plugin, error) {
 		nextDetectionAt:           make(map[string]time.Time),
 		detectionInFlight:         make(map[string]bool),
 		detectorLeases:            make(map[string]string),
-		schedulerExecReservations: make(map[string]int),
+		execRes:                   make(map[uint64]execReservation),
 		schedulerDetection:        make(map[string]*schedulerDetectionInfo),
 		schedulerRun:              make(map[string]*schedulerRunInfo),
 		recentDedupeByType:        make(map[string]map[string]time.Time),
