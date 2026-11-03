@@ -134,8 +134,9 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if _, errCode := validatePutHeaders(r); errCode != s3err.ErrNone {
-		s3err.WriteErrorResponse(w, r, errCode)
+	tagSet, headerCode := validatePutHeaders(r)
+	if headerCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, headerCode)
 		return
 	}
 
@@ -284,6 +285,12 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 						entry.Extended = make(map[string][]byte)
 					}
 					entry.Extended[s3_constants.ExtETagKey] = []byte(dirEtag)
+					if sc := r.Header.Get(s3_constants.AmzStorageClass); sc != "" {
+						entry.Extended[s3_constants.AmzStorageClass] = []byte(sc)
+					}
+					for key, value := range tagSet {
+						entry.Extended[S3TAG_PREFIX+key] = []byte(value)
+					}
 
 					storeSSEMetadata(entry, sseResult)
 

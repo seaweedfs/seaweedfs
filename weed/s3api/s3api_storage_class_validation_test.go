@@ -186,7 +186,7 @@ func TestPutObjectPartRejectsInvalidHeadersBeforeReadingBody(t *testing.T) {
 	}
 }
 
-// A directory marker carries neither header, but AWS validates them on any PUT.
+// A directory marker is validated like any other PUT.
 func TestPutObjectDirectoryMarkerRejectsInvalidHeaders(t *testing.T) {
 	for _, h := range invalidPutHeaders {
 		t.Run(h.name, func(t *testing.T) {
@@ -201,6 +201,23 @@ func TestPutObjectDirectoryMarkerRejectsInvalidHeaders(t *testing.T) {
 			require.Nil(t, filer.entries["/buckets/b/dir"], "directory marker created")
 		})
 	}
+}
+
+func TestPutObjectDirectoryMarkerStoresHeaders(t *testing.T) {
+	s3a, filer, _ := newHeaderTestServer(t, "")
+	req, probe := newHeaderTestRequest("/b/dir/", "dir/", "", s3_constants.AmzStorageClass, "STANDARD_IA")
+	req.Header.Set(s3_constants.AmzObjectTagging, "k1=v1&k2=v2")
+
+	s3a.PutObjectHandler(probe, req)
+
+	require.Equal(t, http.StatusOK, probe.Code, probe.Body.String())
+	filer.mu.Lock()
+	defer filer.mu.Unlock()
+	entry := filer.entries["/buckets/b/dir"]
+	require.NotNil(t, entry)
+	require.Equal(t, "STANDARD_IA", string(entry.Extended[s3_constants.AmzStorageClass]))
+	require.Equal(t, "v1", string(entry.Extended[S3TAG_PREFIX+"k1"]))
+	require.Equal(t, "v2", string(entry.Extended[S3TAG_PREFIX+"k2"]))
 }
 
 // A valid storage class still stores, and the content type is still sniffed.
