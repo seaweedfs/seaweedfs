@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -467,26 +468,26 @@ func TestUpdateEntryIfUnchanged(t *testing.T) {
 func TestUnreferencedTargets(t *testing.T) {
 	committed := orphanedNeedle{volumeId: 9, fileId: "9,0101000007"}
 	own := orphanedNeedle{volumeId: 9, fileId: "9,0202000007"}
-	targets := func() []orphanedNeedle { return []orphanedNeedle{committed, own} }
+	manifestCopy := orphanedNeedle{volumeId: 9, fileId: "9,0303000007"}
+	targets := func() []orphanedNeedle { return []orphanedNeedle{committed, own, manifestCopy} }
 	direct := &filer_pb.Entry{Name: "f", Chunks: []*filer_pb.FileChunk{{FileId: committed.fileId}}}
 
-	manifestFid := "9,0303000007"
 	blob, err := proto.Marshal(&filer_pb.FileChunkManifest{Chunks: []*filer_pb.FileChunk{{FileId: committed.fileId, Size: 10}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	volumeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.TrimPrefix(r.URL.Path, "/") != manifestFid {
-			http.NotFound(w, r)
-			return
-		}
 		_, _ = w.Write(blob)
 	}))
 	defer volumeServer.Close()
 	lookupFn := func(_ context.Context, fileId string) ([]string, error) {
+		if fileId != manifestCopy.fileId {
+			return nil, fmt.Errorf("volume of %s unavailable", fileId)
+		}
 		return []string{volumeServer.URL + "/" + fileId}, nil
 	}
-	viaManifest := &filer_pb.Entry{Name: "f", Chunks: []*filer_pb.FileChunk{{FileId: manifestFid, IsChunkManifest: true, Size: 10}}}
+	viaManifest := &filer_pb.Entry{Name: "f", Chunks: []*filer_pb.FileChunk{{FileId: manifestCopy.fileId, IsChunkManifest: true, Size: 10}}}
+	unreadableManifest := &filer_pb.Entry{Name: "f", Chunks: []*filer_pb.FileChunk{{FileId: "9,0404000007", IsChunkManifest: true, Size: 10}}}
 
 	for _, tc := range []struct {
 		name      string
@@ -494,9 +495,10 @@ func TestUnreferencedTargets(t *testing.T) {
 		lookupErr error
 		want      []orphanedNeedle
 	}{
-		{"another run committed one copy", direct, nil, []orphanedNeedle{own}},
-		{"another run committed one copy inside a manifest", viaManifest, nil, []orphanedNeedle{own}},
-		{"entry deleted", direct, status.Error(codes.NotFound, "not found"), []orphanedNeedle{committed, own}},
+		{"another run committed one copy", direct, nil, []orphanedNeedle{own, manifestCopy}},
+		{"another run committed copies through a manifest", viaManifest, nil, []orphanedNeedle{own}},
+		{"manifest unreadable", unreadableManifest, nil, nil},
+		{"entry deleted", direct, status.Error(codes.NotFound, "not found"), targets()},
 		{"entry unreadable", direct, status.Error(codes.Unavailable, "filer down"), nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
