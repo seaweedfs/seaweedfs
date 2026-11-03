@@ -36,7 +36,12 @@ fn filer_signing_from(
     env: &dyn Fn(&str) -> Option<OsString>,
     file: Option<&Path>,
 ) -> Option<FilerSigning> {
-    let env_string = |key: &str| env(key).and_then(|v| v.into_string().ok());
+    // Viper treats an empty environment value as unset.
+    let env_string = |key: &str| {
+        env(key)
+            .and_then(|v| v.into_string().ok())
+            .filter(|v| !v.is_empty())
+    };
     let (file_key, file_expires) = file.map(read_file).unwrap_or_default();
 
     let (key, source) = match env_string("WEED_JWT_FILER_SIGNING_KEY") {
@@ -149,6 +154,23 @@ key = "read-key"
             filer_signing_from(&env_of(&[("WEED_JWT_FILER_SIGNING_KEY", "k")]), None).unwrap();
         assert_eq!(got.key, "k");
         assert_eq!(got.expires_after_seconds, 0);
+    }
+
+    #[test]
+    fn empty_environment_values_fall_back_to_the_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = write(
+            &dir,
+            "[jwt.filer_signing]\nkey = \"file-key\"\nexpires_after_seconds = 5\n",
+        );
+        let env = env_of(&[
+            ("WEED_JWT_FILER_SIGNING_KEY", ""),
+            ("WEED_JWT_FILER_SIGNING_EXPIRES_AFTER_SECONDS", ""),
+        ]);
+        let got = filer_signing_from(&env, Some(&path)).unwrap();
+        assert_eq!(got.key, "file-key");
+        assert_eq!(got.expires_after_seconds, 5);
+        assert_eq!(got.source, path.display().to_string());
     }
 
     #[test]

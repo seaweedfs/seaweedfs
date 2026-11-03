@@ -139,7 +139,7 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
     let tls = args.tls()?;
-    let filer_signing = match args.filer_signing_key {
+    let filer_signing = match args.filer_signing_key.filter(|key| !key.is_empty()) {
         Some(key) => Some((key, args.filer_signing_key_expires_after_seconds)),
         None => seaweed_worker_core::security_config::filer_signing().map(|signing| {
             tracing::info!(source = %signing.source, "using jwt.filer_signing.key");
