@@ -1638,7 +1638,9 @@ function setupDragAndDrop() {
             dropped = await collectDroppedFiles(e.dataTransfer, () => selection === uploadSelection);
         } catch (error) {
             console.error('Drop error:', error);
-            showErrorMessage('Failed to read the dropped files.');
+            if (selection === uploadSelection) {
+                showErrorMessage('Failed to read the dropped files.');
+            }
             return;
         }
         if (selection !== uploadSelection || dropped.length === 0) {
