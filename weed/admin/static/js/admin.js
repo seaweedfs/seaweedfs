@@ -1221,6 +1221,10 @@ async function collectDroppedFiles(dataTransfer) {
 // Go's multipart parser rejects a form of more than 1000 parts, so a large
 // selection goes out in several requests.
 const uploadBatchSize = 500;
+// Longer file lists show this many rows and a count of the rest.
+const uploadListLimit = 200;
+// Set once files are uploaded while the modal stays open, so closing it reloads the listing.
+let uploadChangedListing = false;
 
 function postUploadBatch(batch, currentPath, onProgress) {
     const formData = new FormData();
@@ -1308,6 +1312,7 @@ async function submitUploadFile() {
     submitButton.innerHTML = '<i class="bi bi-arrow-repeat icon-spin me-1"></i>Uploading...';
 
     const result = { uploaded: 0, failed: 0, errors: [] };
+    let failure = '';
     try {
         let sentSize = 0;
         for (let start = 0; start < selected.length; start += uploadBatchSize) {
@@ -1320,45 +1325,39 @@ async function submitUploadFile() {
             result.uploaded += response.uploaded;
             result.failed += response.failed;
             result.errors.push(...(response.errors || []));
+            if (response.uploaded > 0) {
+                uploadChangedListing = true;
+            }
         }
     } catch (error) {
         console.error('Upload error:', error);
-        let errorMessage = escapeHtml(error.message || 'Failed to upload files. Please try again.');
+        failure = error.message || 'Failed to upload files. Please try again.';
         if (result.uploaded > 0) {
-            errorMessage += ` (${result.uploaded} file(s) were uploaded before this)`;
+            failure += ` (${result.uploaded} file(s) were uploaded before this)`;
         }
-        showErrorMessage(errorMessage);
-        progressContainer.style.display = 'none';
-        submitButton.disabled = false;
-        submitButton.innerHTML = originalText;
-        return;
     }
 
-    progressContainer.style.display = 'none';
     submitButton.disabled = false;
     submitButton.innerHTML = originalText;
 
-    if (result.uploaded === 0) {
-        let errorMessage = 'All file uploads failed';
-        if (result.errors.length > 0) {
-            errorMessage += ': ' + result.errors.map(escapeHtml).join(', ');
-        }
-        showErrorMessage(errorMessage);
+    if (!failure && result.failed === 0) {
+        uploadChangedListing = false;
+        progressContainer.style.display = 'none';
+        showSuccessMessage(`Successfully uploaded ${result.uploaded} file(s)`);
+        bootstrap.Modal.getInstance(document.getElementById('uploadFileModal')).hide();
+        setTimeout(() => {
+            window.location.reload();
+        }, 1000);
         return;
     }
-    if (result.failed === 0) {
-        showSuccessMessage(`Successfully uploaded ${result.uploaded} file(s)`);
-    } else {
-        showSuccessMessage(`Uploaded ${result.uploaded} file(s), ${result.failed} failed`);
-        console.warn('Upload errors:', result.errors);
-    }
 
-    // Hide modal and refresh page
-    const modal = bootstrap.Modal.getInstance(document.getElementById('uploadFileModal'));
-    modal.hide();
-    setTimeout(() => {
-        window.location.reload();
-    }, 1000);
+    if (!failure) {
+        failure = result.uploaded === 0 ? 'All file uploads failed' : `Uploaded ${result.uploaded} file(s), ${result.failed} failed`;
+    }
+    showErrorMessage(escapeHtml(failure));
+    uploadStatus.innerHTML = `<div class="text-danger">${escapeHtml(failure)}</div>` +
+        result.errors.slice(0, uploadListLimit).map(error => `<div class="text-break">${escapeHtml(error)}</div>`).join('') +
+        (result.errors.length > uploadListLimit ? `<div>and ${result.errors.length - uploadListLimit} more</div>` : '');
 }
 
 // Export file list to CSV
@@ -1527,6 +1526,10 @@ function setupFileManagerEventHandlers() {
     const uploadFileModal = document.getElementById('uploadFileModal');
     if (uploadFileModal) {
         uploadFileModal.addEventListener('hidden.bs.modal', function () {
+            if (uploadChangedListing) {
+                window.location.reload();
+                return;
+            }
             const fileInput = document.getElementById('fileInput');
             const progressContainer = document.getElementById('uploadProgress');
             const fileListPreview = document.getElementById('fileListPreview');
