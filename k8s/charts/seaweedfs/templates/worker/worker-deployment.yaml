@@ -241,6 +241,8 @@ spec:
               value: {{ include "seaweedfs.worker.lanceNamespaceUrl" . | quote }}
             {{- $mergedExtraEnvironmentVars := dict }}
             {{- include "seaweedfs.mergeExtraEnvironmentVars" (dict "global" .Values.global.seaweedfs "component" .Values.worker "target" $mergedExtraEnvironmentVars) }}
+            {{- /* a duplicate would win over the chart's value and change --id or --namespace */}}
+            {{- $mergedExtraEnvironmentVars = omit $mergedExtraEnvironmentVars "POD_NAME" "LANCE_NAMESPACE_URL" }}
             {{- range $key := keys $mergedExtraEnvironmentVars | sortAlpha }}
             {{- $value := index $mergedExtraEnvironmentVars $key }}
             - name: {{ $key }}
