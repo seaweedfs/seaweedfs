@@ -252,6 +252,20 @@ pub static SCRUB_SHARD_FAILURES: LazyLock<IntCounterVec> = LazyLock::new(|| {
     .expect("metric can be created")
 });
 
+/// EC shard intervals a needle read couldn't read directly and reconstructed
+/// from the other shards, by result (success, failure).
+/// Mirrors Go's VolumeServerECDegradedReadCounter.
+pub static EC_DEGRADED_READ_COUNTER: LazyLock<IntCounterVec> = LazyLock::new(|| {
+    IntCounterVec::new(
+        Opts::new(
+            "SeaweedFS_volumeServer_ec_degraded_read_total",
+            "Counter of EC shard intervals reconstructed because a direct read failed, by result.",
+        ),
+        &["result"],
+    )
+    .expect("metric can be created")
+});
+
 /// Counter of storage read/write EIO errors on volumes and EC shards.
 /// Mirrors Go's VolumeServerStorageIoErrorCounter.
 pub static STORAGE_IO_ERROR_COUNTER: LazyLock<IntCounter> = LazyLock::new(|| {
@@ -402,6 +416,7 @@ pub fn register_metrics() {
             Box::new(SCRUB_VOLUME_FAILURES.clone()),
             Box::new(SCRUB_SHARD_FAILURES.clone()),
             Box::new(STORAGE_IO_ERROR_COUNTER.clone()),
+            Box::new(EC_DEGRADED_READ_COUNTER.clone()),
             Box::new(IO_QUARANTINE_GAUGE.clone()),
             // Legacy metrics
             Box::new(VOLUMES_TOTAL.clone()),
