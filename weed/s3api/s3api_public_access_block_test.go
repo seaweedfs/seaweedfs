@@ -48,7 +48,6 @@ func TestPutPublicAccessBlockStoresConfiguration(t *testing.T) {
 	config, err := parsePublicAccessBlock(stored)
 	require.NoError(t, err)
 	require.Equal(t, PublicAccessBlockConfiguration{
-		XMLName:               config.XMLName,
 		BlockPublicAcls:       true,
 		IgnorePublicAcls:      true,
 		RestrictPublicBuckets: true,
@@ -59,7 +58,12 @@ func TestPutPublicAccessBlockRejectsMalformedXML(t *testing.T) {
 	const bucket = "pab-malformed"
 	s3a, filer := newPublicAccessBlockTestServer(t, &filer_pb.Entry{Name: bucket, IsDirectory: true})
 
-	for _, body := range []string{"", "<PublicAccessBlockConfiguration><BlockPublicAcls>yes</BlockPublicAcls></PublicAccessBlockConfiguration>"} {
+	for _, body := range []string{
+		"",
+		"<PublicAccessBlockConfiguration><BlockPublicAcls>yes</BlockPublicAcls></PublicAccessBlockConfiguration>",
+		"<PublicAccessBlockConfiguration><BlockPublicAcl>true</BlockPublicAcl></PublicAccessBlockConfiguration>",
+		"<PublicAccessBlock><BlockPublicAcls>true</BlockPublicAcls></PublicAccessBlock>",
+	} {
 		rr := httptest.NewRecorder()
 		s3a.PutPublicAccessBlockHandler(rr, publicAccessBlockRequest(http.MethodPut, bucket, body))
 		require.Equal(t, http.StatusBadRequest, rr.Code, rr.Body.String())
@@ -86,6 +90,7 @@ func TestGetPublicAccessBlock(t *testing.T) {
 	s3a.GetPublicAccessBlockHandler(rr, publicAccessBlockRequest(http.MethodGet, bucket, ""))
 	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
 	body := rr.Body.String()
+	require.Equal(t, 1, strings.Count(body, "xmlns="), body)
 	require.Contains(t, body, `<PublicAccessBlockConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/">`)
 	require.Contains(t, body, "<BlockPublicAcls>true</BlockPublicAcls>")
 	require.Contains(t, body, "<IgnorePublicAcls>true</IgnorePublicAcls>")
