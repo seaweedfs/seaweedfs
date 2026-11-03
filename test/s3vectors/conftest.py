@@ -146,8 +146,12 @@ def probe_grpc_tls(name, port, directory, outsider=False):
     with socket.create_connection(("127.0.0.1", port), timeout=5) as sock:
         with context.wrap_socket(sock, server_hostname="localhost") as tls:
             tls.sendall(preface)
+            header = b""
+            while len(header) < 9 and (chunk := tls.recv(9 - len(header))):
+                header += chunk
             # The first server frame is SETTINGS (type 4).
-            assert tls.recv(16)[3] == 4, f"{name} gRPC did not answer the HTTP/2 preface over TLS"
+            assert len(header) == 9 and header[3] == 4, \
+                f"{name} gRPC did not answer the HTTP/2 preface over TLS: {header!r}"
 
 
 def read_token(key, fid):
