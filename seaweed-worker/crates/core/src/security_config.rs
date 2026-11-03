@@ -63,13 +63,24 @@ fn filer_signing_from(
 }
 
 /// `[jwt.filer_signing]` key and expires_after_seconds from one file. A file
-/// that cannot be read or parsed configures nothing, as it does for viper.
+/// that cannot be read or parsed configures nothing, as it does for viper,
+/// which also logs a warning.
 fn read_file(path: &Path) -> (Option<String>, Option<u64>) {
-    let Ok(content) = std::fs::read_to_string(path) else {
-        return (None, None);
-    };
-    let Ok(table) = content.parse::<toml::Table>() else {
-        return (None, None);
+    // The message alone: the full parse error quotes the offending line,
+    // which can hold a key.
+    let parsed = std::fs::read_to_string(path)
+        .map_err(|e| e.to_string())
+        .and_then(|content| {
+            content
+                .parse::<toml::Table>()
+                .map_err(|e| e.message().to_string())
+        });
+    let table = match parsed {
+        Ok(table) => table,
+        Err(error) => {
+            tracing::warn!(path = %path.display(), %error, "skipping unreadable security.toml");
+            return (None, None);
+        }
     };
     let section = table
         .get("jwt")
@@ -83,13 +94,11 @@ fn read_file(path: &Path) -> (Option<String>, Option<u64>) {
         .and_then(|v| v.as_str())
         .map(str::to_string);
     // Viper's GetInt also reads a quoted number.
-    let expires = section
-        .get("expires_after_seconds")
-        .and_then(|v| match v {
-            toml::Value::Integer(n) => u64::try_from(*n).ok(),
-            toml::Value::String(s) => s.trim().parse().ok(),
-            _ => None,
-        });
+    let expires = section.get("expires_after_seconds").and_then(|v| match v {
+        toml::Value::Integer(n) => u64::try_from(*n).ok(),
+        toml::Value::String(s) => s.trim().parse().ok(),
+        _ => None,
+    });
     (key, expires)
 }
 
