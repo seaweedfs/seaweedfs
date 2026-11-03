@@ -1420,12 +1420,20 @@ func (r *Plugin) reserveExecutorSlot(
 	if fits, _, _ := r.executorCapacityLocked(executor, jobType, policy); !fits {
 		return nil, false
 	}
+	jobID = strings.TrimSpace(jobID)
+	if jobID != "" {
+		for token, res := range r.execRes {
+			if res.jobID == jobID && !res.releasedAt.IsZero() {
+				delete(r.execRes, token)
+			}
+		}
+	}
 	r.execResSeq++
 	token := r.execResSeq
 	r.execRes[token] = execReservation{
 		workerID: strings.TrimSpace(executor.WorkerID),
 		jobType:  jobType,
-		jobID:    strings.TrimSpace(jobID),
+		jobID:    jobID,
 	}
 	release := func() {
 		r.execResMu.Lock()
