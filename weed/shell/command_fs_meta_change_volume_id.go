@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/protobuf/proto"
 )
 
 func init() {
@@ -78,6 +79,7 @@ func (c *commandFsMetaChangeVolumeId) Do(args []string, commandEnv *CommandEnv, 
 		return filer_pb.TraverseBfs(context.Background(), commandEnv, util.FullPath(*dir), func(parentPath util.FullPath, entry *filer_pb.Entry) error {
 			if !entry.IsDirectory {
 				var hasChanges bool
+				var readEntry *filer_pb.Entry
 				for _, chunk := range entry.Chunks {
 					if chunk.IsChunkManifest {
 						fmt.Printf("Change volume id for large file is not implemented yet: %s/%s\n", parentPath, entry.Name)
@@ -85,6 +87,9 @@ func (c *commandFsMetaChangeVolumeId) Do(args []string, commandEnv *CommandEnv, 
 					}
 					chunkVolumeId := chunk.Fid.VolumeId
 					if toVolumeId, found := mapping[needle.VolumeId(chunkVolumeId)]; found {
+						if readEntry == nil {
+							readEntry = proto.Clone(entry).(*filer_pb.Entry)
+						}
 						hasChanges = true
 						chunk.Fid.VolumeId = uint32(toVolumeId)
 						chunk.FileId = ""
@@ -93,10 +98,9 @@ func (c *commandFsMetaChangeVolumeId) Do(args []string, commandEnv *CommandEnv, 
 				if hasChanges {
 					println("Updating", parentPath, entry.Name)
 					if *applyChanges {
-						if updateErr := filer_pb.UpdateEntry(context.Background(), client, &filer_pb.UpdateEntryRequest{
-							Directory: string(parentPath),
-							Entry:     entry,
-						}); updateErr != nil {
+						if stale, updateErr := updateEntryIfUnchanged(context.Background(), client, string(parentPath), entry, readEntry); stale {
+							fmt.Printf("skip %s/%s: changed since it was read\n", parentPath, entry.Name)
+						} else if updateErr != nil {
 							fmt.Printf("failed to update %s/%s: %v\n", parentPath, entry.Name, updateErr)
 						}
 					}
