@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use tokio::time::sleep;
-use tonic::transport::{Certificate, ClientTlsConfig, Endpoint, Identity};
+use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint, Identity};
 
 use crate::master_pb::{KeepConnectedRequest, seaweed_client::SeaweedClient};
 use crate::security::GrpcTls;
@@ -135,20 +135,23 @@ where
     }
 }
 
-/// Bounds the TCP connect and then the master's first answer, the 5s wdclient
-/// gives a master call; a black-holed or silent master otherwise holds up the
-/// other masters.
+/// Bounds the connect, TLS handshake included, and then the master's first
+/// answer, the 5s wdclient gives a master call; a black-holed or silent master
+/// otherwise holds up the other masters.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+
+async fn connect(endpoint: Endpoint) -> Result<Channel> {
+    Ok(tokio::time::timeout(CONNECT_TIMEOUT, endpoint.connect())
+        .await
+        .context("master did not complete the connection")??)
+}
 
 async fn stream_to(
     master: &str,
     client_addr: &str,
     tls: Option<&GrpcTls>,
 ) -> Result<Option<String>> {
-    let channel = master_endpoint(master, tls)?
-        .connect_timeout(CONNECT_TIMEOUT)
-        .connect()
-        .await?;
+    let channel = connect(master_endpoint(master, tls)?).await?;
     // A master answers at once, a follower with its leader hint.
     let answer_by = tokio::time::Instant::now() + CONNECT_TIMEOUT;
     let mut client = SeaweedClient::new(channel);
@@ -264,6 +267,25 @@ mod tests {
         match tokio::time::timeout(CONNECT_TIMEOUT * 3, open).await {
             Ok(Err(e)) => assert!(format!("{e:#}").contains("did not answer"), "{e:#}"),
             other => panic!("open was not bounded: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_master_that_stalls_the_tls_handshake_is_bounded() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let (mut conn, _) = listener.accept().await.unwrap();
+            let _ = tokio::io::copy(&mut conn, &mut tokio::io::sink()).await;
+        });
+        weed_lance_worker::tls::install_default_crypto_provider();
+        let endpoint = Endpoint::new(format!("https://127.0.0.1:{port}"))
+            .unwrap()
+            .tls_config(ClientTlsConfig::new().domain_name("localhost"))
+            .unwrap();
+        match tokio::time::timeout(CONNECT_TIMEOUT * 3, connect(endpoint)).await {
+            Ok(Err(e)) => assert!(format!("{e:#}").contains("did not complete"), "{e:#}"),
+            other => panic!("handshake was not bounded: {other:?}"),
         }
     }
 
