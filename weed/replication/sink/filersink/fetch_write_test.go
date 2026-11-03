@@ -824,15 +824,15 @@ func TestSourceDroppedChunk(t *testing.T) {
 	}
 	fs := &FilerSink{filerSource: startSourceFilerWithEntry(t, live, ""), dir: "/dst"}
 
-	if !fs.sourceDroppedChunk("/dst/x.bin", "5617,01abc", 5*int64(time.Second)) {
+	if !fs.sourceDroppedChunk("/dst/x.bin", "5617,01abc") {
 		t.Fatal("live entry no longer referencing the chunk must count as dropped")
 	}
-	if fs.sourceDroppedChunk("/dst/x.bin", "5617,02def", 5*int64(time.Second)) {
+	if fs.sourceDroppedChunk("/dst/x.bin", "5617,02def") {
 		t.Fatal("a chunk the live entry still lists must not count as dropped")
 	}
 	live.Attributes.Mtime = 4
-	if fs.sourceDroppedChunk("/dst/x.bin", "5617,01abc", 5*int64(time.Second)) {
-		t.Fatal("a live entry older than the replayed version cannot prove the chunk dropped")
+	if !fs.sourceDroppedChunk("/dst/x.bin", "5617,01abc") {
+		t.Fatal("a live entry stamped older than the replayed version still dropped the chunk")
 	}
 }
 
@@ -904,6 +904,53 @@ func TestFetchAndWriteStopsWhenSourceDroppedChunk(t *testing.T) {
 
 	live := &filer_pb.Entry{
 		Attributes: &filer_pb.FuseAttributes{Mtime: 5},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "5617,02def", Size: 10}},
+	}
+	filerSrc := startSourceFilerWithEntry(t, live, strings.TrimPrefix(gone.URL, "http://"), "5617")
+
+	fs := &FilerSink{
+		filerSource: filerSrc,
+		dir:         "/dst",
+		executor:    util.NewLimitedConcurrentExecutor(1),
+	}
+	fs.SetUploader(operation.NewUploaderWithHttpClient(http.DefaultClient))
+
+	done := make(chan error, 1)
+	go func() {
+		_, fetchErr := fs.fetchAndWrite(&filer_pb.FileChunk{FileId: "5617,01abc", Size: 10},
+			"/dst/x.bin", 5*int64(time.Second), "")
+		done <- fetchErr
+	}()
+
+	select {
+	case fetchErr := <-done:
+		if !errors.Is(fetchErr, util_http.ErrNotFound) {
+			t.Fatalf("expected the 404 to propagate, got %v", fetchErr)
+		}
+		if errors.Is(fetchErr, errSourceChunkMissing) {
+			t.Fatalf("an obsolete version must not wait for the give-up gate: %v", fetchErr)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("fetchAndWrite kept retrying a chunk the live entry no longer lists")
+	}
+}
+
+// Mtime order says nothing about which version is current: a client that
+// preserves timestamps (cp -p, rsync -a, tar) rewrites a file and then stamps
+// it with an older mtime, so the live entry reads older than the replay whose
+// chunk it no longer lists. The missing chunk is still gone for good.
+func TestFetchAndWriteStopsWhenOlderLiveEntryDroppedChunk(t *testing.T) {
+	prevRetryWaitTime := util.RetryWaitTime
+	util.RetryWaitTime = 100 * time.Millisecond
+	t.Cleanup(func() { util.RetryWaitTime = prevRetryWaitTime })
+
+	gone := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer gone.Close()
+
+	live := &filer_pb.Entry{
+		Attributes: &filer_pb.FuseAttributes{Mtime: 4},
 		Chunks:     []*filer_pb.FileChunk{{FileId: "5617,02def", Size: 10}},
 	}
 	filerSrc := startSourceFilerWithEntry(t, live, strings.TrimPrefix(gone.URL, "http://"), "5617")
