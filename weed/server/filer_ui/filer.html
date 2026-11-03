@@ -271,8 +271,11 @@
         uploadItems([...files].map(file => ({'file': file, 'path': file.webkitRelativePath || file.name})));
     }
 
-    // A large folder uploads a few files at a time instead of opening a request per file.
+    // A large folder uploads a few files at a time instead of opening a request per file,
+    // and a selection made meanwhile joins the same queue.
     var uploadConcurrency = 4;
+    var uploadQueue = [];
+    var activeUploads = 0;
 
     function uploadItems(items) {
         if (items.length === 0) {
@@ -280,14 +283,17 @@
         }
         items.forEach(startUpload);
         renderProgress();
-        var next = 0;
-        function uploadNext() {
-            if (next < items.length) {
-                uploadFile(items[next++], uploadNext);
-            }
-        }
-        for (var i = 0; i < uploadConcurrency; i++) {
-            uploadNext();
+        uploadQueue.push(...items);
+        uploadNext();
+    }
+
+    function uploadNext() {
+        while (activeUploads < uploadConcurrency && uploadQueue.length > 0) {
+            activeUploads++;
+            uploadFile(uploadQueue.shift(), function () {
+                activeUploads--;
+                uploadNext();
+            });
         }
     }
 
