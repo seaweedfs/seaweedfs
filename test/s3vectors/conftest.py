@@ -1,5 +1,6 @@
 import base64
 import contextlib
+import gzip
 import hashlib
 import hmac
 import http.client
@@ -13,6 +14,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+import zlib
 
 import boto3
 from botocore.config import Config
@@ -156,6 +158,8 @@ def probe_hardening(endpoint, filer, vol, directory, read_jwt_key):
         if encrypted:
             assert chunk.get("cipher_key"), "the gateway stored a chunk without a cipher key"
             assert stored and stored != body, "the volume server holds the chunk in plaintext or not at all"
+            with contextlib.suppress(OSError, EOFError, zlib.error):
+                assert gzip.decompress(stored) != body, "the volume server holds the chunk gzipped, not encrypted"
         else:
             assert stored == body, "the signed read did not return the chunk"
     finally:
