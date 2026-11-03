@@ -272,9 +272,10 @@ func (r *Registry) PickSchemaProvider(jobType string) (*WorkerSession, error) {
 	return cloneWorkerSession(candidates[0]), nil
 }
 
-// PickDetector picks one detector worker for a job type.
-func (r *Registry) PickDetector(jobType string) (*WorkerSession, error) {
-	return r.pickByKind(jobType, true)
+// PickDetector picks one detector worker for a job type, skipping any
+// worker IDs in excluded.
+func (r *Registry) PickDetector(jobType string, excluded ...string) (*WorkerSession, error) {
+	return r.pickByKind(jobType, true, excluded)
 }
 
 // PickExecutor picks one executor worker for a job type.
@@ -322,11 +323,24 @@ func (r *Registry) ListExecutors(jobType string, preferredHosts ...string) ([]*W
 	return out, nil
 }
 
-func (r *Registry) pickByKind(jobType string, detect bool) (*WorkerSession, error) {
+func (r *Registry) pickByKind(jobType string, detect bool, excluded []string) (*WorkerSession, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	candidates := r.collectByKindLocked(jobType, detect, time.Now())
+	if len(excluded) > 0 {
+		skip := make(map[string]struct{}, len(excluded))
+		for _, workerID := range excluded {
+			skip[workerID] = struct{}{}
+		}
+		kept := candidates[:0]
+		for _, candidate := range candidates {
+			if _, found := skip[candidate.WorkerID]; !found {
+				kept = append(kept, candidate)
+			}
+		}
+		candidates = kept
+	}
 
 	if len(candidates) == 0 {
 		kind := "executor"

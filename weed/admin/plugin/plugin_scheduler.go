@@ -322,7 +322,6 @@ func (r *Plugin) runJobTypeIteration(jobType string, policy schedulerPolicy) boo
 	}
 	defer releaseDetectionLock()
 
-	detectionTimeout := policy.DetectionTimeout
 	remaining := time.Until(start.Add(maxRuntime))
 	if remaining <= 0 {
 		r.appendActivity(JobActivity{
@@ -335,16 +334,35 @@ func (r *Plugin) runJobTypeIteration(jobType string, policy schedulerPolicy) boo
 		r.recordSchedulerRunComplete(jobType, "timeout")
 		return false
 	}
-	if detectionTimeout <= 0 {
-		detectionTimeout = defaultScheduledDetectionTimeout
-	}
-	if detectionTimeout > remaining {
-		detectionTimeout = remaining
+	detect := func(avoid *streamSession) (*DetectionReport, error) {
+		detectionTimeout := policy.DetectionTimeout
+		if detectionTimeout <= 0 {
+			detectionTimeout = defaultScheduledDetectionTimeout
+		}
+		if remaining := time.Until(start.Add(maxRuntime)); detectionTimeout > remaining {
+			detectionTimeout = remaining
+		}
+		detectCtx, cancelDetect := context.WithTimeout(jobCtx, detectionTimeout)
+		defer cancelDetect()
+		return r.runDetectionWithReport(detectCtx, jobType, clusterContext, policy.MaxResults, avoid)
 	}
 
-	detectCtx, cancelDetect := context.WithTimeout(jobCtx, detectionTimeout)
-	report, err := r.RunDetectionWithReport(detectCtx, jobType, clusterContext, policy.MaxResults)
-	cancelDetect()
+	report, err := detect(nil)
+	// A detector that dropped mid-request gets one replacement pick, steered
+	// off the stream that dropped, in this iteration while the runtime budget
+	// allows; anything else waits for the next cycle, which re-detects anyway.
+	var lost *detectionWorkerDisconnectedError
+	if errors.As(err, &lost) && time.Until(start.Add(maxRuntime)) > 0 {
+		r.recordSchedulerDetectionError(jobType, err)
+		r.appendActivity(JobActivity{
+			JobType:    jobType,
+			Source:     "admin_scheduler",
+			Message:    fmt.Sprintf("scheduled detection retrying on another worker: %v", err),
+			Stage:      "retrying",
+			OccurredAt: timeToPtr(time.Now().UTC()),
+		})
+		report, err = detect(lost.session)
+	}
 	releaseDetectionLock()
 	if err != nil {
 		r.recordSchedulerDetectionError(jobType, err)

@@ -69,7 +69,7 @@ func TestRequestObjectPreviewReturnsTheWorkersRows(t *testing.T) {
 		t.Fatalf("request lost its parameters: %+v", asked)
 	}
 
-	pluginSvc.handleWorkerMessage(workerID, &plugin_pb.WorkerToAdminMessage{
+	pluginSvc.handleWorkerMessage(session, &plugin_pb.WorkerToAdminMessage{
 		WorkerId: workerID,
 		Body: &plugin_pb.WorkerToAdminMessage_ObjectPreviewResponse{
 			ObjectPreviewResponse: &plugin_pb.ObjectPreviewResponse{
@@ -114,7 +114,7 @@ func TestRequestObjectPreviewSurfacesTheWorkersError(t *testing.T) {
 	}()
 
 	request := <-session.outgoing
-	pluginSvc.handleWorkerMessage(workerID, &plugin_pb.WorkerToAdminMessage{
+	pluginSvc.handleWorkerMessage(session, &plugin_pb.WorkerToAdminMessage{
 		WorkerId: workerID,
 		Body: &plugin_pb.WorkerToAdminMessage_ObjectPreviewResponse{
 			ObjectPreviewResponse: &plugin_pb.ObjectPreviewResponse{
@@ -187,7 +187,7 @@ func TestObjectPreviewResponseRacesShutdown(t *testing.T) {
 		}()
 		go func() {
 			defer wg.Done()
-			pluginSvc.handleWorkerMessage(workerID, &plugin_pb.WorkerToAdminMessage{
+			pluginSvc.handleWorkerMessage(session, &plugin_pb.WorkerToAdminMessage{
 				WorkerId: workerID,
 				Body: &plugin_pb.WorkerToAdminMessage_ObjectPreviewResponse{
 					ObjectPreviewResponse: &plugin_pb.ObjectPreviewResponse{

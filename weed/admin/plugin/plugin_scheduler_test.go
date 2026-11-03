@@ -562,9 +562,11 @@ func TestPickDetectorPrefersLeasedWorker(t *testing.T) {
 		},
 	})
 
+	pluginSvc.putSession(&streamSession{workerID: "worker-a", outgoing: make(chan *plugin_pb.AdminToWorkerMessage, 1), done: make(chan struct{})})
+	pluginSvc.putSession(&streamSession{workerID: "worker-b", outgoing: make(chan *plugin_pb.AdminToWorkerMessage, 1), done: make(chan struct{})})
 	pluginSvc.setDetectorLease("vacuum", "worker-b")
 
-	detector, err := pluginSvc.pickDetector("vacuum")
+	detector, err := pluginSvc.pickDetector("vacuum", nil)
 	if err != nil {
 		t.Fatalf("pickDetector: %v", err)
 	}
@@ -588,9 +590,10 @@ func TestPickDetectorReassignsWhenLeaseIsStale(t *testing.T) {
 			{JobType: "vacuum", CanDetect: true},
 		},
 	})
+	pluginSvc.putSession(&streamSession{workerID: "worker-a", outgoing: make(chan *plugin_pb.AdminToWorkerMessage, 1), done: make(chan struct{})})
 	pluginSvc.setDetectorLease("vacuum", "worker-stale")
 
-	detector, err := pluginSvc.pickDetector("vacuum")
+	detector, err := pluginSvc.pickDetector("vacuum", nil)
 	if err != nil {
 		t.Fatalf("pickDetector: %v", err)
 	}
