@@ -89,8 +89,9 @@ def open_cluster(request, tmp_path_factory):
 
 
 def write_tls(directory):
-    """A CA and one certificate for localhost; volume servers serve HTTPS
-    requiring client certificates, and every client presents the same one."""
+    """A CA and one certificate for localhost. Volume servers serve HTTPS and
+    every gRPC listener (master, volume, filer, gateway, engine) serves TLS,
+    all requiring client certificates, and every client presents the same one."""
     def openssl(*args):
         subprocess.run(["openssl", *args], check=True, capture_output=True, cwd=directory)
     openssl("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", "ca.key", "-out", "ca.pem",
@@ -101,8 +102,56 @@ def write_tls(directory):
         "subjectAltName=DNS:localhost,IP:127.0.0.1\nextendedKeyUsage=serverAuth,clientAuth\nbasicConstraints=CA:FALSE\n")
     openssl("x509", "-req", "-in", "req.csr", "-CA", "ca.pem", "-CAkey", "ca.key", "-CAcreateserial",
             "-out", "cert.pem", "-days", "2", "-extfile", "ext.cnf")
-    pem = "".join(f'{key} = {json.dumps(str(directory / name), ensure_ascii=False)}\n' for key, name in (("cert", "cert.pem"), ("key", "key.pem"), ("ca", "ca.pem")))
-    (directory / "security.toml").write_text(f"[https.volume]\n{pem}\n[https.client]\nenabled = true\n{pem}")
+    # A second identity the same CA signed, which the engine's allowlist
+    # must keep out.
+    openssl("req", "-newkey", "rsa:2048", "-nodes", "-keyout", "outsider.key", "-out", "outsider.csr", "-subj", "/CN=outsider")
+    openssl("x509", "-req", "-in", "outsider.csr", "-CA", "ca.pem", "-CAkey", "ca.key", "-CAcreateserial",
+            "-out", "outsider.pem", "-days", "2", "-extfile", "ext.cnf")
+    cert, key, ca = (f'{key} = {json.dumps(str(directory / name), ensure_ascii=False)}\n' for key, name in (("cert", "cert.pem"), ("key", "key.pem"), ("ca", "ca.pem")))
+    pem = cert + key + ca
+    grpc = "".join(f"[grpc.{component}]\n{cert}{key}\n" for component in ("master", "volume", "filer", "s3", "client"))
+    grpc += f"[grpc.vector]\n{cert}{key}allowed_commonNames = \"localhost\"\n"
+    (directory / "security.toml").write_text(f"[https.volume]\n{pem}\n[https.client]\nenabled = true\n{pem}\n[grpc]\n{ca}\n{grpc}")
+
+
+def probe_grpc_tls(name, port, directory, outsider=False):
+    """A TLS gRPC listener must refuse plaintext HTTP/2 and a connection
+    without the client certificate, and answer the HTTP/2 preface with it.
+    With `outsider`, a certificate the CA signed for a name outside the
+    listener's allowed_commonNames must be refused too."""
+    preface = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
+    with socket.create_connection(("127.0.0.1", port), timeout=5) as sock:
+        sock.sendall(preface)
+        with contextlib.suppress(ConnectionError, TimeoutError):
+            answer = sock.recv(16)
+            # Nothing, or a TLS alert record; a plaintext server sends SETTINGS.
+            assert not answer or answer[0] == 0x15, f"{name} gRPC answered plaintext HTTP/2: {answer!r}"
+    context = ssl.create_default_context(cafile=directory / "ca.pem")
+    context.set_alpn_protocols(["h2"])
+    with contextlib.suppress(ConnectionError, TimeoutError, ssl.SSLError):
+        with socket.create_connection(("127.0.0.1", port), timeout=5) as sock:
+            with context.wrap_socket(sock, server_hostname="localhost") as tls:
+                tls.sendall(preface)
+                assert not tls.recv(16), f"{name} gRPC served a client without a certificate"
+    if outsider:
+        other = ssl.create_default_context(cafile=directory / "ca.pem")
+        other.set_alpn_protocols(["h2"])
+        other.load_cert_chain(directory / "outsider.pem", directory / "outsider.key")
+        with contextlib.suppress(ConnectionError, TimeoutError, ssl.SSLError):
+            with socket.create_connection(("127.0.0.1", port), timeout=5) as sock:
+                with other.wrap_socket(sock, server_hostname="localhost") as tls:
+                    tls.sendall(preface)
+                    assert not tls.recv(16), f"{name} gRPC served a certificate outside allowed_commonNames"
+    context.load_cert_chain(directory / "cert.pem", directory / "key.pem")
+    with socket.create_connection(("127.0.0.1", port), timeout=5) as sock:
+        with context.wrap_socket(sock, server_hostname="localhost") as tls:
+            tls.sendall(preface)
+            header = b""
+            while len(header) < 9 and (chunk := tls.recv(9 - len(header))):
+                header += chunk
+            # The first server frame is SETTINGS (type 4).
+            assert len(header) == 9 and header[3] == 4, \
+                f"{name} gRPC did not answer the HTTP/2 preface over TLS: {header!r}"
 
 
 def read_token(key, fid):
@@ -222,7 +271,7 @@ def run_cluster(param, tmp_path_factory, identities):
         start("volume", prefix + [f"{flag}{key}={value}" for key, value in {
             "master": master_addr, "ip": "127.0.0.1", "ip.bind": "127.0.0.1",
             "port": vol, "port.grpc": vol_grpc, "dir": directory / "volume",
-            "max": 16, "preStopSeconds": 0,
+            "max": 64, "preStopSeconds": 0,
         }.items()])
         wait_for(lambda: listening(vol_grpc), processes, "volume not ready")
         start("filer", [weed, "filer", f"-master={master_addr}", "-ip=127.0.0.1",
@@ -250,6 +299,12 @@ def run_cluster(param, tmp_path_factory, identities):
         start("vector", [engine, "--namespace", f"http://127.0.0.1:{lance}",
                          "--masters", master_addr, "--listen", f"127.0.0.1:{vector}", *credentials], unset)
         wait_for(lambda: listening(vector), processes, "vector engine not ready")
+        if os.environ.get("VECTOR_TLS"):
+            wait_for(lambda: listening(s3_grpc), processes, "s3 gRPC not ready")
+            for name, port in (("master", master_grpc), ("volume", vol_grpc), ("filer", filer_grpc),
+                               ("s3", s3_grpc)):
+                probe_grpc_tls(name, port, directory)
+            probe_grpc_tls("engine", vector, directory, outsider=True)
 
         wait_for(
             lambda: f"Cluster: vector node 127.0.0.1:{vector} added to group ''"

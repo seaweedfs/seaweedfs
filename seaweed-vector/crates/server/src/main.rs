@@ -1,12 +1,16 @@
+use std::path::PathBuf;
+
 use anyhow::{Context, Result};
 use clap::Parser;
+use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::Server;
-use tonic::transport::server::TcpIncoming;
 use weed_lance_worker::catalog::{NamespaceClient, SigningKey};
 use weed_lance_worker::dataset::FallbackOptions;
 use weed_vector_server::pb::vector::vector_service_server::VectorServiceServer;
 use weed_vector_server::read_cache::ReadCache;
+use weed_vector_server::security::Security;
 use weed_vector_server::service::VectorServer;
+use weed_vector_server::tls::{self, ServerTls};
 
 /// The VectorService the S3 gateway fans vector calls out to.
 #[derive(Parser)]
@@ -36,6 +40,15 @@ struct Args {
     /// credentials that write index data only to a caller holding it.
     #[arg(long, env = "WEED_FILER_SIGNING_KEY")]
     filer_signing_key: Option<String>,
+    /// The cluster's security.toml, for gRPC TLS: this server's identity is
+    /// [grpc.vector], the masters are dialed with [grpc.client]. By default
+    /// the file weed processes find in ., ~/.seaweedfs and /etc/seaweedfs.
+    #[arg(long, env = "WEED_VECTOR_SECURITY_TOML")]
+    security_toml: Option<PathBuf>,
+    /// The name the masters' TLS certificates are checked against, when it is
+    /// not their host.
+    #[arg(long, env = "WEED_VECTOR_TLS_SERVER_NAME")]
+    tls_server_name: Option<String>,
 }
 
 fn parse_option(s: &str) -> Result<(String, String), String> {
@@ -105,11 +118,24 @@ fn advertised_addr(listen: &str, masters: &[String]) -> String {
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     let args = Args::parse_from(normalize_args(std::env::args().collect()));
+    weed_lance_worker::tls::install_default_crypto_provider();
+    let security = Security::load(args.security_toml.as_deref())?;
+    if let Some(path) = security.path() {
+        tracing::info!("security settings from {}", path.display());
+    }
+    let master_tls = match &args.masters {
+        Some(_) => security.grpc_client_tls("grpc.client", args.tls_server_name.clone())?,
+        None => None,
+    };
+    let server_tls = security
+        .grpc_server_tls("grpc.vector")?
+        .map(ServerTls::load)
+        .transpose()?;
     // Bind before registering, so the master never lists an engine that is
     // about to exit because its port is taken.
-    let incoming = TcpIncoming::bind(args.listen.parse()?)
-        .with_context(|| format!("listen on {}", args.listen))?
-        .with_nodelay(Some(true));
+    let listener = tokio::net::TcpListener::bind(&args.listen)
+        .await
+        .with_context(|| format!("listen on {}", args.listen))?;
     if let Some(masters) = &args.masters {
         let masters: Vec<String> = masters.split(',').map(|s| s.trim().to_string()).collect();
         for master in &masters {
@@ -117,7 +143,9 @@ async fn main() -> Result<()> {
         }
         let advertise = advertised_addr(&args.listen, &masters);
         tokio::spawn(weed_vector_server::master_client::keep_connected(
-            masters, advertise,
+            masters,
+            advertise,
+            master_tls.clone(),
         ));
     }
     let fallback: FallbackOptions = args.storage_options.into_iter().collect();
@@ -129,16 +157,37 @@ async fn main() -> Result<()> {
     if args.read_cache_mb > 0 {
         service = service.with_read_cache(ReadCache::new(args.read_cache_mb << 20));
     }
-    tracing::info!(namespace = %args.namespace, listen = %args.listen, "weed-vector");
-    Server::builder()
+    tracing::info!(
+        namespace = %args.namespace,
+        listen = %args.listen,
+        "weed-vector; serving gRPC {}, dialing masters {}",
+        match &server_tls {
+            Some(tls) if tls.files().allowed_common_names.is_empty()
+                && tls.files().allowed_wildcard_domain.is_empty() =>
+                "over TLS with client certificates required",
+            Some(_) => "over TLS with allowed client certificates required",
+            None => "in plaintext",
+        },
+        if master_tls.is_some() { "over TLS" } else { "in plaintext" },
+    );
+    let router = Server::builder()
         // Match the gateway's 1 GiB cap — put batches over the tonic 4 MiB
         // default otherwise get rejected before they reach the handler.
         .add_service(
             VectorServiceServer::new(service)
                 .max_decoding_message_size(1 << 30)
                 .max_encoding_message_size(1 << 30),
-        )
-        .serve_with_incoming(incoming)
-        .await?;
+        );
+    match server_tls {
+        Some(tls) => {
+            tokio::spawn(tls.clone().refresh(tls::refresh_interval()));
+            router.serve_with_incoming(tls.incoming(listener)).await?;
+        }
+        None => {
+            router
+                .serve_with_incoming(TcpListenerStream::new(listener))
+                .await?
+        }
+    }
     Ok(())
 }

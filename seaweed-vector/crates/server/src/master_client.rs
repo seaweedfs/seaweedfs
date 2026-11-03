@@ -7,9 +7,10 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use tokio::time::sleep;
-use tonic::transport::Endpoint;
+use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint, Identity};
 
 use crate::master_pb::{KeepConnectedRequest, seaweed_client::SeaweedClient};
+use crate::security::GrpcTls;
 
 fn registration(client_addr: &str) -> KeepConnectedRequest {
     KeepConnectedRequest {
@@ -54,6 +55,32 @@ pub fn grpc_addr(master: &str) -> Result<String> {
     Ok(format!("{scheme}://{rest}"))
 }
 
+/// The master's gRPC endpoint, over TLS with `grpc.client`'s credentials when
+/// the cluster has them; the master's certificate is checked against the host
+/// dialed unless the credentials name another.
+pub async fn master_endpoint(master: &str, tls: Option<&GrpcTls>) -> Result<Endpoint> {
+    let addr = grpc_addr(master)?;
+    let Some(tls) = tls else {
+        return Ok(Endpoint::new(addr)?);
+    };
+    weed_lance_worker::tls::install_default_crypto_provider();
+    let endpoint = Endpoint::new(addr.replacen("http://", "https://", 1))?;
+    let host = dialed_host(&endpoint).with_context(|| format!("master {master} has no host"))?;
+    let (ca, cert, key) = tls.pems().await?;
+    let config = ClientTlsConfig::new()
+        .ca_certificate(Certificate::from_pem(ca))
+        .identity(Identity::from_pem(cert, key))
+        .domain_name(tls.server_name.clone().unwrap_or(host));
+    Ok(endpoint
+        .tls_config(config)
+        .with_context(|| format!("TLS for master {master}"))?)
+}
+
+fn dialed_host(endpoint: &Endpoint) -> Option<String> {
+    let host = endpoint.uri().host()?;
+    Some(host.trim_matches(|c| c == '[' || c == ']').to_string())
+}
+
 // `host:http.grpc` normalizes to `host:http` so a leader hint naming the
 // dialed master does not read as a redirect.
 fn http_addr(master: &str) -> String {
@@ -68,11 +95,12 @@ fn http_addr(master: &str) -> String {
 
 /// Retry forever: try each master until a stream opens, hold it until it
 /// errors, then rediscover — same shape as wdclient.KeepConnectedToMaster.
-pub async fn keep_connected(masters: Vec<String>, client_addr: String) {
+pub async fn keep_connected(masters: Vec<String>, client_addr: String, tls: Option<GrpcTls>) {
     let client_addr = client_addr.as_str();
+    let tls = tls.as_ref();
     loop {
         try_all_masters(&masters, |master| async move {
-            stream_to(&master, client_addr).await
+            stream_to(&master, client_addr, tls).await
         })
         .await;
         sleep(Duration::from_secs(3)).await;
@@ -108,16 +136,25 @@ where
     }
 }
 
-/// Bounds the TCP connect and then the master's first answer, the 5s wdclient
-/// gives a master call; a black-holed or silent master otherwise holds up the
-/// other masters.
+/// Bounds the credential reads and the connect, TLS handshake included, and
+/// then the master's first answer, the 5s wdclient gives a master call; a
+/// black-holed or silent master otherwise holds up the other masters.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
-async fn stream_to(master: &str, client_addr: &str) -> Result<Option<String>> {
-    let channel = Endpoint::new(grpc_addr(master)?)?
-        .connect_timeout(CONNECT_TIMEOUT)
-        .connect()
-        .await?;
+async fn connect(endpoint: impl Future<Output = Result<Endpoint>>) -> Result<Channel> {
+    tokio::time::timeout(CONNECT_TIMEOUT, async {
+        Ok(endpoint.await?.connect().await?)
+    })
+    .await
+    .context("master did not complete the connection")?
+}
+
+async fn stream_to(
+    master: &str,
+    client_addr: &str,
+    tls: Option<&GrpcTls>,
+) -> Result<Option<String>> {
+    let channel = connect(master_endpoint(master, tls)).await?;
     // A master answers at once, a follower with its leader hint.
     let answer_by = tokio::time::Instant::now() + CONNECT_TIMEOUT;
     let mut client = SeaweedClient::new(channel);
@@ -215,7 +252,7 @@ mod tests {
     #[tokio::test]
     async fn dial_to_a_black_holed_master_is_bounded() {
         // TEST-NET-1 (RFC 5737) is reserved, so nothing answers the SYN.
-        let dial = stream_to("192.0.2.1:9333", "127.0.0.1:8080");
+        let dial = stream_to("192.0.2.1:9333", "127.0.0.1:8080", None);
         let result = tokio::time::timeout(CONNECT_TIMEOUT * 3, dial).await;
         assert!(matches!(result, Ok(Err(_))), "dial was not bounded");
     }
@@ -229,10 +266,42 @@ mod tests {
             let _ = tokio::io::copy(&mut conn, &mut tokio::io::sink()).await;
         });
         let master = format!("127.0.0.1:9333.{port}");
-        let open = stream_to(&master, "127.0.0.1:8080");
+        let open = stream_to(&master, "127.0.0.1:8080", None);
         match tokio::time::timeout(CONNECT_TIMEOUT * 3, open).await {
             Ok(Err(e)) => assert!(format!("{e:#}").contains("did not answer"), "{e:#}"),
             other => panic!("open was not bounded: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_master_that_stalls_the_tls_handshake_is_bounded() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let (mut conn, _) = listener.accept().await.unwrap();
+            let _ = tokio::io::copy(&mut conn, &mut tokio::io::sink()).await;
+        });
+        weed_lance_worker::tls::install_default_crypto_provider();
+        let endpoint = Endpoint::new(format!("https://127.0.0.1:{port}"))
+            .unwrap()
+            .tls_config(ClientTlsConfig::new().domain_name("localhost"))
+            .unwrap();
+        match tokio::time::timeout(CONNECT_TIMEOUT * 3, connect(async { Ok(endpoint) })).await {
+            Ok(Err(e)) => assert!(format!("{e:#}").contains("did not complete"), "{e:#}"),
+            other => panic!("handshake was not bounded: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_tls_name_is_the_dialed_host() {
+        for (master, host) in [
+            ("m1:9333", "m1"),
+            ("https://master.example", "master.example"),
+            ("https://master.example:9333", "master.example"),
+            ("[::1]:9333", "::1"),
+        ] {
+            let endpoint = Endpoint::new(grpc_addr(master).unwrap()).unwrap();
+            assert_eq!(dialed_host(&endpoint).as_deref(), Some(host), "{master}");
         }
     }
 
