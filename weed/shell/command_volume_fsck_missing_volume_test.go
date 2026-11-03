@@ -8,6 +8,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 )
 
 // A selected volume can already be absent from the master when fsck is used to
@@ -90,12 +91,19 @@ func TestVolumeFsckSelectedVolumeIDValidation(t *testing.T) {
 // restriction must fail closed instead of silently widening or narrowing scope.
 func TestValidateMissingVolumeCollectionFilter(t *testing.T) {
 	missing := []uint32{12}
-	for _, filter := range []string{"", "*"} {
-		if err := validateMissingVolumeCollectionFilter(missing, filter); err != nil {
+	compile := func(filter string) *wildcard.CollectionMatcher {
+		matcher, err := wildcard.CompileCollectionMatcher(filter)
+		if err != nil {
+			t.Fatalf("compile %q: %v", filter, err)
+		}
+		return matcher
+	}
+	for _, filter := range []string{"", "*", "ALL_COLLECTIONS", "EACH_COLLECTION"} {
+		if err := validateMissingVolumeCollectionFilter(missing, compile(filter)); err != nil {
 			t.Errorf("filter %q: %v", filter, err)
 		}
 	}
-	if err := validateMissingVolumeCollectionFilter(missing, "photos"); err == nil || !strings.Contains(err.Error(), "collection is unknown") {
+	if err := validateMissingVolumeCollectionFilter(missing, compile("photos")); err == nil || !strings.Contains(err.Error(), "collection is unknown") {
 		t.Fatalf("expected an unknown-collection error, got %v", err)
 	}
 }

@@ -166,7 +166,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	if c.collectionMatcher, err = wildcard.CompileCollectionMatcher(*c.collection); err != nil {
 		return fmt.Errorf("invalid collection pattern %q: %w", *c.collection, err)
 	}
-	if *c.findMissingChunksInFiler && *purgeAbsent && !isGlobalCollectionFilter(*c.collection) {
+	if *c.findMissingChunksInFiler && *purgeAbsent && c.collectionMatcher != nil {
 		fmt.Fprintln(c.writer, "WARNING: collection cannot be verified for volumes absent from master; Filer entries referencing those volumes will be reported but not purged.")
 	}
 
@@ -213,7 +213,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 			return err
 		}
 		if len(missing) > 0 {
-			if err := validateMissingVolumeCollectionFilter(missing, *c.collection); err != nil {
+			if err := validateMissingVolumeCollectionFilter(missing, c.collectionMatcher); err != nil {
 				return err
 			}
 			if err := validateMissingVolumePurgeConfirmation(missing, *purgeAbsent, *confirmMissingVolumeDeletion); err != nil {
@@ -324,7 +324,6 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 	if *c.verbose {
 		fmt.Fprintf(c.writer, "checking each file from filer path /...\n")
 	}
-	collectionScopeIsGlobal := c.collection == nil || isGlobalCollectionFilter(*c.collection)
 
 	files := make(map[uint32]*os.File)
 	for _, volumeIdToServer := range dataNodeVolumeIdToVInfo {
@@ -392,7 +391,7 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 					manifestsResolved &&
 					selectedVolume &&
 					!c.knownVolumeIds[chunk.Fid.VolumeId] &&
-					!purgePathQueued && collectionScopeIsGlobal
+					!purgePathQueued && c.collectionMatcher == nil
 				if purgePath {
 					purgePathQueued = true
 				}
@@ -1141,12 +1140,11 @@ func validateSelectedVolumeIDs(requested, known map[uint32]bool, allowMissing bo
 
 // validateMissingVolumeCollectionFilter fails closed because a deleted volume
 // has no master metadata from which fsck can verify its collection.
-func validateMissingVolumeCollectionFilter(missing []uint32, collectionFilter string) error {
-	filter := strings.TrimSpace(collectionFilter)
-	if len(missing) == 0 || filter == "" || filter == "*" {
+func validateMissingVolumeCollectionFilter(missing []uint32, matcher *wildcard.CollectionMatcher) error {
+	if len(missing) == 0 || matcher == nil {
 		return nil
 	}
-	return fmt.Errorf("cannot apply -collection=%q to missing volume(s) %v: their collection is unknown", filter, missing)
+	return fmt.Errorf("cannot apply -collection=%q to missing volume(s) %v: their collection is unknown", matcher.String(), missing)
 }
 
 // validateMissingVolumePurgeConfirmation requires operators to distinguish
@@ -1156,11 +1154,4 @@ func validateMissingVolumePurgeConfirmation(missing []uint32, purgeAbsent, confi
 		return nil
 	}
 	return fmt.Errorf("refusing to purge Filer entries for volume(s) absent from master: %v; verify all expected volumes are connected and pass -confirmMissingVolumeDeletion", missing)
-}
-
-// isGlobalCollectionFilter reports whether a reverse scan can safely assign
-// unknown-volume references to the requested collection scope.
-func isGlobalCollectionFilter(filter string) bool {
-	filter = strings.TrimSpace(filter)
-	return filter == "" || filter == "*"
 }
