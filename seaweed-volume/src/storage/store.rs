@@ -3404,8 +3404,13 @@ mod tests {
 
     /// A volume `vid` holding needle 1, compacted and ready to commit, behind
     /// the store lock the server's handlers use.
-    fn store_ready_to_commit(dir: &str, vid: VolumeId) -> Arc<std::sync::RwLock<Store>> {
+    fn store_ready_to_commit(
+        dir: &str,
+        vid: VolumeId,
+        kind: NeedleMapKind,
+    ) -> Arc<std::sync::RwLock<Store>> {
         let mut store = make_test_store(&[dir]);
+        store.needle_map_kind = kind;
         store
             .add_volume(vid, DiskType::HardDrive, &VolumeSpec::default())
             .unwrap();
@@ -3480,11 +3485,9 @@ mod tests {
     /// A GET planned while a vacuum commit has the needle map closed waits for
     /// the commit, as Go's readNeedle does, instead of answering NotFound for a
     /// live needle.
-    #[test]
-    fn test_read_plan_waits_out_a_commit_swap_window() {
+    fn check_read_plan_waits_out_a_commit_swap_window(kind: NeedleMapKind, vid: VolumeId) {
         let tmp = TempDir::new().unwrap();
-        let vid = VolumeId(81);
-        let store = store_ready_to_commit(tmp.path().to_str().unwrap(), vid);
+        let store = store_ready_to_commit(tmp.path().to_str().unwrap(), vid, kind);
         let (_hook, in_window, release) = hold_commit_in_swap_window(vid);
         let commit = commit_like_the_rpc(store.clone(), vid);
         in_window
@@ -3512,13 +3515,24 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_read_plan_waits_out_a_commit_swap_window_in_memory() {
+        check_read_plan_waits_out_a_commit_swap_window(NeedleMapKind::InMemory, VolumeId(81));
+    }
+
+    #[test]
+    fn test_read_plan_waits_out_a_commit_swap_window_redb() {
+        check_read_plan_waits_out_a_commit_swap_window(NeedleMapKind::Redb, VolumeId(83));
+    }
+
     /// A plan waiting for a commit holds no store guard, so a store writer
     /// finishes while the commit is still in its swap window.
     #[test]
     fn test_read_plan_waiting_on_a_commit_does_not_block_a_store_writer() {
         let tmp = TempDir::new().unwrap();
         let vid = VolumeId(82);
-        let store = store_ready_to_commit(tmp.path().to_str().unwrap(), vid);
+        let store =
+            store_ready_to_commit(tmp.path().to_str().unwrap(), vid, NeedleMapKind::InMemory);
         let (_hook, in_window, release) = hold_commit_in_swap_window(vid);
         let commit = commit_like_the_rpc(store.clone(), vid);
         in_window
