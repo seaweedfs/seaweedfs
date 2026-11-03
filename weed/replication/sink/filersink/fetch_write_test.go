@@ -866,6 +866,18 @@ func TestSourceMovedOn(t *testing.T) {
 	if !fs.sourceMovedOn("/dst/x.bin", replayed) {
 		t.Fatal("a live entry stamped older but holding different chunks has moved on")
 	}
+	live.CommitTsNs, replayed.CommitTsNs = 20, 10
+	if !fs.sourceMovedOn("/dst/x.bin", replayed) {
+		t.Fatal("a rewrite committed after the replay has moved on whatever its mtime")
+	}
+	live.CommitTsNs = 5
+	if fs.sourceMovedOn("/dst/x.bin", replayed) {
+		t.Fatal("a live entry committed before the replay lags the event and proves nothing")
+	}
+	live.CommitTsNs = 0
+	if fs.sourceMovedOn("/dst/x.bin", replayed) {
+		t.Fatal("an unstamped live entry predates a stamped replay")
+	}
 }
 
 // A source that accepts the lookup but never answers must not hang the
@@ -1300,6 +1312,52 @@ func TestUpdateEntrySyncsOlderLiveVersion(t *testing.T) {
 	}
 	if volumeLookups.Load() != 0 {
 		t.Fatal("the superseded version's chunks must not be fetched")
+	}
+}
+
+// A peer filer's event reaches subscribers before the local store applies it,
+// so the live lookup can still return the version the replay replaces. That
+// lagging entry was committed earlier and must not be synced over the replay.
+func TestUpdateEntryAppliesReplayAheadOfLiveLookup(t *testing.T) {
+	var volumeLookups atomic.Int32
+	existing := &filer_pb.Entry{
+		Name:       "x.bin",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 5},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "4,00aaa", SourceFileId: "5617,00aaa", Size: 10}},
+	}
+	oldEntry := &filer_pb.Entry{
+		Name:       "x.bin",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 5},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "5617,00aaa", Size: 10}},
+		CommitTsNs: 5,
+	}
+	filerSrc := startSourceFilerServer(t, &sourceFilerServer{entry: oldEntry, volumeLookups: &volumeLookups})
+	dst, dstAddr := startRecordingFiler(t, existing)
+
+	fs := &FilerSink{
+		filerSource:    filerSrc,
+		dir:            "/dst",
+		grpcAddress:    dstAddr,
+		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		executor:       util.NewLimitedConcurrentExecutor(1),
+	}
+	fs.SetUploader(operation.NewUploaderWithHttpClient(http.DefaultClient))
+
+	replayed := &filer_pb.Entry{
+		Name:       "x.bin",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 6},
+		Content:    []byte("new"),
+		CommitTsNs: 10,
+	}
+	if _, err := fs.UpdateEntry("/dst/x.bin", oldEntry, "", replayed, true, nil); err != nil {
+		t.Fatalf("applying the replay should succeed: %v", err)
+	}
+	updated := dst.lastUpdate.Load()
+	if updated == nil || string(updated.GetContent()) != "new" || len(updated.GetChunks()) != 0 {
+		t.Fatalf("the destination must get the replayed version, got %+v", updated)
+	}
+	if volumeLookups.Load() != 0 {
+		t.Fatal("the lagging live entry's chunks must not be fetched")
 	}
 }
 
