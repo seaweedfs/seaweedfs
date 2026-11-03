@@ -1187,9 +1187,10 @@ function selectedUploadFiles() {
     return selected;
 }
 
-// Lists the dropped files, walking into dropped folders. The entries must be
-// taken before the first await, while the drop event still exposes them.
-async function collectDroppedFiles(dataTransfer) {
+// Lists the dropped files, walking into dropped folders and stopping once
+// isCurrent turns false. The entries must be taken before the first await,
+// while the drop event still exposes them.
+async function collectDroppedFiles(dataTransfer, isCurrent) {
     const entries = Array.from(dataTransfer.items || [])
         .map(item => item.webkitGetAsEntry && item.webkitGetAsEntry())
         .filter(Boolean);
@@ -1198,13 +1199,16 @@ async function collectDroppedFiles(dataTransfer) {
     }
     const collected = [];
     async function walk(entry) {
+        if (!isCurrent()) {
+            return;
+        }
         if (entry.isFile) {
             const file = await new Promise((resolve, reject) => entry.file(resolve, reject));
             collected.push({ file, path: entry.fullPath.replace(/^\/+/, '') });
             return;
         }
         const reader = entry.createReader();
-        for (;;) {
+        while (isCurrent()) {
             const batch = await new Promise((resolve, reject) => reader.readEntries(resolve, reject));
             if (batch.length === 0) {
                 return;
@@ -1631,7 +1635,7 @@ function setupDragAndDrop() {
         const selection = ++uploadSelection;
         let dropped;
         try {
-            dropped = await collectDroppedFiles(e.dataTransfer);
+            dropped = await collectDroppedFiles(e.dataTransfer, () => selection === uploadSelection);
         } catch (error) {
             console.error('Drop error:', error);
             showErrorMessage('Failed to read the dropped files.');
