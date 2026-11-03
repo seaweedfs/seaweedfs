@@ -1322,7 +1322,10 @@ async function submitUploadFile() {
             const batch = selected.slice(start, start + uploadBatchSize);
             const batchSize = batch.reduce((sum, item) => sum + item.file.size, 0);
             const response = await postUploadBatch(batch, currentPath, fraction => {
-                showProgress(Math.round(((sentSize + fraction * batchSize) / (totalSize || 1)) * 100));
+                const done = totalSize > 0
+                    ? (sentSize + fraction * batchSize) / totalSize
+                    : (start + fraction * batch.length) / selected.length;
+                showProgress(Math.round(done * 100));
             });
             sentSize += batchSize;
             result.uploaded += response.uploaded;
