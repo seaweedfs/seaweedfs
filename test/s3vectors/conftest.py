@@ -297,6 +297,7 @@ def run_cluster(param, tmp_path_factory, identities):
                      "-ip=127.0.0.1", "-ip.bind=127.0.0.1", f"-port={s3}",
                      f"-port.grpc={s3_grpc}", "-port.iceberg=0", f"-port.lance={lance}"], unset)
         wait_for(lambda: http_ready(f"http://127.0.0.1:{lance}/v1/namespace/root/list"), processes, "catalog not ready")
+        wait_for(lambda: listening(s3), processes, "s3 not ready")
         if os.environ.get("VECTOR_TLS") or read_jwt_key or encrypt:
             probe_hardening(endpoint, filer, vol, directory, read_jwt_key)
         start("vector", [engine, "--namespace", f"http://127.0.0.1:{lance}",
