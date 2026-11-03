@@ -300,7 +300,10 @@ def run_cluster(param, tmp_path_factory, identities):
                          "--masters", master_addr, "--listen", f"127.0.0.1:{vector}", *credentials], unset)
         wait_for(lambda: listening(vector), processes, "vector engine not ready")
         if os.environ.get("VECTOR_TLS"):
-            probe_grpc_tls("master", master_grpc, directory)
+            wait_for(lambda: listening(s3_grpc), processes, "s3 gRPC not ready")
+            for name, port in (("master", master_grpc), ("volume", vol_grpc), ("filer", filer_grpc),
+                               ("s3", s3_grpc)):
+                probe_grpc_tls(name, port, directory)
             probe_grpc_tls("engine", vector, directory, outsider=True)
 
         wait_for(
