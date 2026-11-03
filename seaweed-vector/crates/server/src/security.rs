@@ -74,6 +74,16 @@ fn candidates(current_dir: Option<&Path>, home: Option<&Path>) -> Vec<PathBuf> {
     found
 }
 
+// viper keys are case-insensitive
+fn entry<'a>(table: &'a toml::Table, key: &str) -> Option<&'a toml::Value> {
+    table.get(key).or_else(|| {
+        table
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(key))
+            .map(|(_, v)| v)
+    })
+}
+
 impl Security {
     /// Reads `path`, or the first `security.toml` where weed looks; without
     /// one, only the environment applies.
@@ -110,12 +120,14 @@ impl Security {
 
     fn raw(&self, key: &str) -> Option<String> {
         let env_name = format!("WEED_{}", key.to_uppercase().replace('.', "_"));
-        if let Some(value) = (self.env)(&env_name) {
+        // viper treats an empty variable as unset
+        if let Some(value) = (self.env)(&env_name).filter(|v| !v.is_empty()) {
             return Some(value);
         }
-        let mut value = self.table.get(key.split('.').next()?)?;
-        for part in key.split('.').skip(1) {
-            value = value.as_table()?.get(part)?;
+        let mut parts = key.split('.');
+        let mut value = entry(&self.table, parts.next()?)?;
+        for part in parts {
+            value = entry(value.as_table()?, part)?;
         }
         match value {
             toml::Value::String(s) => Some(s.clone()),
@@ -257,6 +269,16 @@ mod tests {
         assert!(s.get_bool("https.client.enabled"));
         let s = security("[jwt.signing.read]\nkey = \"from-file\"\n", &[]);
         assert_eq!(s.get("jwt.signing.read.key").as_deref(), Some("from-file"));
+        let s = security(
+            "[jwt.signing.read]\nkey = \"from-file\"\n",
+            &[("WEED_JWT_SIGNING_READ_KEY", "")],
+        );
+        assert_eq!(s.get("jwt.signing.read.key").as_deref(), Some("from-file"));
+        let s = security("[grpc.vector]\nallowed_commonnames = \"s3\"\n", &[]);
+        assert_eq!(
+            s.get("grpc.vector.allowed_commonNames").as_deref(),
+            Some("s3")
+        );
         assert!(security("", &[]).get("jwt.signing.read.key").is_none());
         assert!(
             security("[grpc]\nca = \"\"\n", &[])
