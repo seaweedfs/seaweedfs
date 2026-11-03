@@ -109,7 +109,10 @@ def write_tls(directory):
             "-out", "outsider.pem", "-days", "2", "-extfile", "ext.cnf")
     cert, key, ca = (f'{key} = {json.dumps(str(directory / name), ensure_ascii=False)}\n' for key, name in (("cert", "cert.pem"), ("key", "key.pem"), ("ca", "ca.pem")))
     pem = cert + key + ca
-    grpc = "".join(f"[grpc.{component}]\n{cert}{key}\n" for component in ("master", "volume", "filer", "s3", "client"))
+    grpc = "".join(f"[grpc.{component}]\n{cert}{key}\n" for component in ("master", "volume", "filer", "s3"))
+    # Clients (the gateway, the engine) accept only servers named localhost;
+    # the engine serves only clients named localhost.
+    grpc += f"[grpc.client]\n{cert}{key}allowed_server_commonNames = \"localhost\"\n"
     grpc += f"[grpc.vector]\n{cert}{key}allowed_commonNames = \"localhost\"\n"
     (directory / "security.toml").write_text(f"[https.volume]\n{pem}\n[https.client]\nenabled = true\n{pem}\n[grpc]\n{ca}\n{grpc}")
 
