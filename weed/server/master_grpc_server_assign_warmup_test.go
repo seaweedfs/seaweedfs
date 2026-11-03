@@ -3,7 +3,6 @@ package weed_server
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
@@ -11,29 +10,35 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// During warm-up, Assign is refused with Unavailable and a RetryInfo detail
-// carrying the remaining warm-up, the gRPC twin of the HTTP Retry-After header.
-func TestAssignDuringWarmupCarriesRemainingWarmup(t *testing.T) {
-	ms := newWarmingUpMaster(t)
-	want := ms.Topo.RemainingWarmupDuration()
-	_, err := ms.Assign(context.Background(), &master_pb.AssignRequest{Count: 1})
+// assertWarmupHint calls refuse during warm-up and checks it is refused with
+// Unavailable and a RetryInfo delay within the remaining warm-up measured
+// around the call.
+func assertWarmupHint(t *testing.T, ms *MasterServer, refuse func() error) {
+	t.Helper()
+	before := ms.Topo.RemainingWarmupDuration()
+	err := refuse()
+	after := ms.Topo.RemainingWarmupDuration()
 	st, _ := status.FromError(err)
-	if st.Code() != codes.Unavailable {
-		t.Fatalf("Assign during warm-up = %v, want Unavailable", err)
-	}
 	var hint *errdetails.RetryInfo
 	for _, d := range st.Details() {
 		if ri, ok := d.(*errdetails.RetryInfo); ok {
 			hint = ri
 		}
 	}
-	if hint == nil {
-		t.Fatalf("Assign during warm-up carries no RetryInfo: details %v", st.Details())
+	if st.Code() != codes.Unavailable || hint == nil {
+		t.Fatalf("refused with %v and details %v, want Unavailable with RetryInfo", err, st.Details())
 	}
-	got := hint.GetRetryDelay().AsDuration()
-	if got <= 0 || got > want || want-got > time.Second {
-		t.Fatalf("RetryInfo delay = %v, want the remaining warm-up (about %v)", got, want)
+	if got := hint.GetRetryDelay().AsDuration(); got <= 0 || got > before || got < after {
+		t.Fatalf("RetryInfo delay = %v, want within [%v, %v]", got, after, before)
 	}
+}
+
+func TestAssignDuringWarmupCarriesRemainingWarmup(t *testing.T) {
+	ms := newWarmingUpMaster(t)
+	assertWarmupHint(t, ms, func() error {
+		_, err := ms.Assign(context.Background(), &master_pb.AssignRequest{Count: 1})
+		return err
+	})
 }
 
 func TestWarmingUpErrorWithoutRemainingHasNoHint(t *testing.T) {
