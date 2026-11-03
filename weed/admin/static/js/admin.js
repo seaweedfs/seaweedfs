@@ -1225,6 +1225,8 @@ const uploadBatchSize = 500;
 const uploadListLimit = 200;
 // Set once files are uploaded while the modal stays open, so closing it reloads the listing.
 let uploadChangedListing = false;
+// The batch in flight, aborted when the modal closes.
+let activeUploadRequest = null;
 
 function postUploadBatch(batch, currentPath, onProgress) {
     const formData = new FormData();
@@ -1269,6 +1271,7 @@ function postUploadBatch(batch, currentPath, onProgress) {
             reject(new Error('File upload was cancelled.'));
         });
         xhr.open('POST', basePath('/api/files/upload'));
+        activeUploadRequest = xhr;
         xhr.send(formData);
     });
 }
@@ -1336,6 +1339,7 @@ async function submitUploadFile() {
             failure += ` (${result.uploaded} file(s) were uploaded before this)`;
         }
     }
+    activeUploadRequest = null;
 
     submitButton.disabled = false;
     submitButton.innerHTML = originalText;
@@ -1526,7 +1530,11 @@ function setupFileManagerEventHandlers() {
     const uploadFileModal = document.getElementById('uploadFileModal');
     if (uploadFileModal) {
         uploadFileModal.addEventListener('hidden.bs.modal', function () {
-            if (uploadChangedListing) {
+            const cancelled = activeUploadRequest;
+            if (cancelled) {
+                cancelled.abort();
+            }
+            if (cancelled || uploadChangedListing) {
                 window.location.reload();
                 return;
             }
