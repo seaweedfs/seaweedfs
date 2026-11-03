@@ -57,6 +57,9 @@ func (c *commandFsMergeVolumes) Help() string {
 	-toVolumeId accepts a comma-separated list. With -fromVolumeId, the source
 	chunks are distributed across the listed volumes by remaining capacity, so a
 	volume that does not fit into any single target can still be cleared.
+
+	-apply needs the shell lock (run "lock" first), so two runs never move the
+	same chunks at once.
 `
 }
 
@@ -74,6 +77,11 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 	apply := fsMergeVolumesCommand.Bool("apply", false, "applying the metadata changes")
 	if err = fsMergeVolumesCommand.Parse(args); err != nil {
 		return err
+	}
+	if *apply {
+		if err = commandEnv.confirmIsLocked(args); err != nil {
+			return err
+		}
 	}
 
 	dir := *dirArg
