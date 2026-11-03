@@ -1667,7 +1667,7 @@ function updateFileListPreview() {
         <small class="text-muted">Total: ${formatBytes(totalSize)}</small>
     </div>`;
 
-    selected.forEach(({ file, path }, index) => {
+    selected.slice(0, uploadListLimit).forEach(({ file, path }, index) => {
         const fileIcon = getFileIconByName(file.name);
         html += `<div class="d-flex justify-content-between align-items-center py-1 ${index > 0 ? 'border-top' : ''}">
             <div class="d-flex align-items-center">
@@ -1677,6 +1677,9 @@ function updateFileListPreview() {
             <small class="text-muted">${formatBytes(file.size)}</small>
         </div>`;
     });
+    if (selected.length > uploadListLimit) {
+        html += `<div class="border-top py-1 small text-muted">and ${selected.length - uploadListLimit} more</div>`;
+    }
 
     selectedFilesList.innerHTML = html;
     fileListPreview.style.display = 'block';
