@@ -6230,11 +6230,11 @@ mod tests {
         })
     }
 
-    /// EC degraded-read marker: one fresh volume per case, the needle (on
+    /// EC reconstructed-interval counter: one fresh volume per case, the needle (on
     /// shard 0) EC-encoded under a known generation, the `missing` shards
     /// unmounted and the shards in `corrupt` overwritten where the needle lies.
     /// Returns the read's bytes and the marker lines logged at debug.
-    async fn read_ec_degraded(
+    async fn read_ec_reconstructed(
         vid: u32,
         missing: &[crate::storage::erasure_coding::ec_shard::ShardId],
         corrupt: &[crate::storage::erasure_coding::ec_shard::ShardId],
@@ -6311,7 +6311,7 @@ mod tests {
         let text = String::from_utf8(out.0.lock().unwrap().clone()).unwrap();
         let lines = text
             .lines()
-            .filter(|l| l.contains("ec degraded read:"))
+            .filter(|l| l.contains("ec reconstructed interval:"))
             .map(|l| l.trim_end().to_string())
             .collect();
         (read.ok().and_then(Result::ok).map(|n| n.data), lines)
@@ -6339,21 +6339,29 @@ mod tests {
         }
     }
 
-    /// A direct read logs nothing; a read that rebuilds shard 0 logs one success
-    /// and counts it; one with 5 shards left fails and logs one failure; a read
-    /// whose corruption the repair path can't fix is not marked at all.
+    /// What the counter and line mean, case by case. A direct read logs nothing;
+    /// a read that rebuilds shard 0 logs and counts one success; one with 5
+    /// shards left fails and logs one failure; a corrupt interval read directly
+    /// goes to the repair path and isn't marked. `success` is not needle
+    /// validation: rebuilt from corrupt parity, the interval logs success while
+    /// the read fails.
     #[tokio::test]
-    async fn test_ec_degraded_read_marker() {
-        use crate::metrics::EC_DEGRADED_READ_COUNTER as C;
+    async fn test_ec_reconstructed_interval() {
+        use crate::metrics::EC_RECONSTRUCTED_INTERVAL_COUNTER as C;
         let prefix = |vid: u32| {
-            format!("ec degraded read: volume={vid} generation={EC_GENERATION} needle=7 shard=0 ")
+            format!(
+                "ec reconstructed interval: volume={vid} generation={EC_GENERATION} needle=7 shard=0 "
+            )
         };
         let data = Some(b"ec degraded read".to_vec());
 
-        assert_eq!(read_ec_degraded(61, &[], &[]).await, (data.clone(), vec![]));
+        assert_eq!(
+            read_ec_reconstructed(61, &[], &[]).await,
+            (data.clone(), vec![])
+        );
 
         let success = C.with_label_values(&["success"]).get();
-        let (read, lines) = read_ec_degraded(62, &[0], &[]).await;
+        let (read, lines) = read_ec_reconstructed(62, &[0], &[]).await;
         assert_eq!(read, data);
         assert!(
             matches!(&lines[..], [l] if l.ends_with(&(prefix(62) + "result=success error=<nil>"))),
@@ -6362,7 +6370,7 @@ mod tests {
         assert!(C.with_label_values(&["success"]).get() > success);
 
         let failure = C.with_label_values(&["failure"]).get();
-        let (read, lines) = read_ec_degraded(63, &[0, 6, 7, 8, 9, 10, 11, 12, 13], &[]).await;
+        let (read, lines) = read_ec_reconstructed(63, &[0, 6, 7, 8, 9, 10, 11, 12, 13], &[]).await;
         assert_eq!(read, None);
         assert!(
             matches!(&lines[..], [l] if l.contains(&(prefix(63) + "result=failure error=")) && !l.ends_with("error=")),
@@ -6370,12 +6378,21 @@ mod tests {
         );
         assert!(C.with_label_values(&["failure"]).get() > failure);
 
-        let (read, lines) = read_ec_degraded(64, &[], &[0, 10, 11, 12, 13]).await;
+        let (read, lines) = read_ec_reconstructed(64, &[], &[0, 10, 11, 12, 13]).await;
         assert_eq!(
             (read, lines),
             (None, vec![]),
             "an unrepairable corrupt read was marked"
         );
+
+        let success = C.with_label_values(&["success"]).get();
+        let (read, lines) = read_ec_reconstructed(65, &[0], &[10, 11, 12, 13]).await;
+        assert_eq!(read, None, "a read rebuilt from corrupt parity was served");
+        assert!(
+            matches!(&lines[..], [l] if l.ends_with(&(prefix(65) + "result=success error=<nil>"))),
+            "{lines:?}"
+        );
+        assert!(C.with_label_values(&["success"]).get() > success);
     }
 
     /// Write `data` as a chunk manifest on a fresh EC volume 2. Chunks stay on volume 1.

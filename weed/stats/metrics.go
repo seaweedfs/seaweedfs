@@ -668,15 +668,16 @@ var (
 			Help:      "Counter of EC shard rebuild operations by result.",
 		}, []string{"result"})
 
-	// VolumeServerECDegradedReadCounter counts EC shard intervals that a needle read
-	// could not read directly and reconstructed from the other shards, by result
-	// (success, failure).
-	VolumeServerECDegradedReadCounter = prometheus.NewCounterVec(
+	// VolumeServerECReconstructedIntervalCounter counts reads of an EC shard
+	// interval that could not be read directly and were served by reconstructing
+	// it from the other shards. success means the reconstruction produced data,
+	// not that the needle then passed validation.
+	VolumeServerECReconstructedIntervalCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
 			Subsystem: subsystemVolumeServer,
-			Name:      "ec_degraded_read_total",
-			Help:      "Counter of EC shard intervals reconstructed because a direct read failed, by result.",
+			Name:      "ec_reconstructed_interval_total",
+			Help:      "Reads of an EC interval served by reconstructing from other shards; success means reconstruction produced data, not that the needle passed validation.",
 		}, []string{"result"})
 
 	S3RequestCounter = prometheus.NewCounterVec(
@@ -1088,7 +1089,7 @@ func init() {
 	Gather.MustRegister(VolumeServerReplicationFailures)
 	Gather.MustRegister(VolumeServerECRebuildHistogram)
 	Gather.MustRegister(VolumeServerECRebuildCounter)
-	Gather.MustRegister(VolumeServerECDegradedReadCounter)
+	Gather.MustRegister(VolumeServerECReconstructedIntervalCounter)
 	Gather.MustRegister(MasterUnderReplicatedVolumes)
 	Gather.MustRegister(MasterVolumeCreationCounter)
 

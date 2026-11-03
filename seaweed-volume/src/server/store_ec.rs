@@ -1358,25 +1358,26 @@ async fn fetch_one_interval(
     // (shard_offset, size). Mirrors `recoverOneRemoteEcShardInterval`.
     let result =
         recover_one_remote_ec_shard_interval(state, iv, map, &HashSet::from([iv.shard_id])).await;
-    note_ec_degraded_read(iv, &result);
+    note_ec_reconstructed_interval(iv, &result);
     result
 }
 
 /// Counts one interval that couldn't be read directly and was reconstructed,
 /// and at debug logs it with the needle and the encode generation, which the
-/// counter can't carry. A holder's "deleted" answer with too few shards rebuilt
-/// nothing, so it is a failure, as Go's reconstruct error makes it there.
-fn note_ec_degraded_read(iv: EcInterval, result: &io::Result<(Vec<u8>, bool)>) {
+/// counter can't carry. `success` means the reconstruction produced data; the
+/// needle is validated later. A holder's "deleted" answer with too few shards
+/// rebuilt nothing, so it is a failure, as Go's reconstruct error makes it there.
+fn note_ec_reconstructed_interval(iv: EcInterval, result: &io::Result<(Vec<u8>, bool)>) {
     let outcome = match result {
         Ok((buf, _)) if !buf.is_empty() => "success",
         _ => "failure",
     };
-    crate::metrics::EC_DEGRADED_READ_COUNTER
+    crate::metrics::EC_RECONSTRUCTED_INTERVAL_COUNTER
         .with_label_values(&[outcome])
         .inc();
     // tracing evaluates these arguments only when debug is enabled.
     tracing::debug!(
-        "ec degraded read: volume={} generation={} needle={} shard={} result={} error={}",
+        "ec reconstructed interval: volume={} generation={} needle={} shard={} result={} error={}",
         iv.vid.0,
         iv.expected_encode_ts_ns,
         iv.needle_id,

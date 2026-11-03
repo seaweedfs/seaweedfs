@@ -682,7 +682,7 @@ func (s *Store) readOneEcShardInterval(needleId types.NeedleId, ecVolume *erasur
 
 	// try reading by recovering from other shards
 	_, is_deleted, err = s.recoverOneRemoteEcShardInterval(needleId, ecVolume, shardId, data, actualOffset)
-	noteEcDegradedRead(ecVolume, needleId, shardId, err)
+	noteEcReconstructedInterval(ecVolume, needleId, shardId, err)
 	if err == nil {
 		return
 	}
@@ -1265,16 +1265,17 @@ func (s *Store) recoverEcShardInterval(needleId types.NeedleId, ecVolume *erasur
 	return len(buf), is_deleted, nil
 }
 
-// noteEcDegradedRead counts one shard interval that could not be read directly
-// and was reconstructed from the other shards, and at V(3) logs it with the
-// needle and the volume's encode generation, which the counter can't carry.
-func noteEcDegradedRead(ecVolume *erasure_coding.EcVolume, needleId types.NeedleId, shardId erasure_coding.ShardId, err error) {
+// noteEcReconstructedInterval counts one shard interval that could not be read
+// directly and was reconstructed from the other shards, and at V(3) logs it with
+// the needle and the volume's encode generation, which the counter can't carry.
+// success means the reconstruction produced data; the needle is validated later.
+func noteEcReconstructedInterval(ecVolume *erasure_coding.EcVolume, needleId types.NeedleId, shardId erasure_coding.ShardId, err error) {
 	result := "success"
 	if err != nil {
 		result = "failure"
 	}
-	stats.VolumeServerECDegradedReadCounter.WithLabelValues(result).Inc()
-	glog.V(3).Infof("ec degraded read: volume=%d generation=%d needle=%s shard=%d result=%s error=%v",
+	stats.VolumeServerECReconstructedIntervalCounter.WithLabelValues(result).Inc()
+	glog.V(3).Infof("ec reconstructed interval: volume=%d generation=%d needle=%s shard=%d result=%s error=%v",
 		ecVolume.VolumeId, ecVolume.EncodeTsNs, needleId, shardId, result, err)
 }
 
