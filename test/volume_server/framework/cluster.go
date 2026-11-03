@@ -186,8 +186,8 @@ func (c *Cluster) Stop() {
 		return
 	}
 	c.cleanupOnce.Do(func() {
-		stopProcess(c.volumeCmd)
-		stopProcess(c.masterCmd)
+		stopProcess(c.testingTB, "volume server", c.volumeCmd)
+		stopProcess(c.testingTB, "master", c.masterCmd)
 		if !c.keepLogs && !c.testingTB.Failed() {
 			_ = os.RemoveAll(c.baseDir)
 		} else if c.baseDir != "" {
@@ -202,7 +202,7 @@ func (c *Cluster) Stop() {
 // a second-run startup failure.
 func (c *Cluster) RestartVolumeServer() {
 	c.testingTB.Helper()
-	stopProcess(c.volumeCmd)
+	stopProcess(c.testingTB, "volume server", c.volumeCmd)
 	c.volumeCmd = nil
 	// Rotate the log; absent on the first call after a clean start, which
 	// is fine — startVolume will create it. Any real filesystem failure
@@ -224,7 +224,7 @@ func (c *Cluster) RestartVolumeServer() {
 // dirs alone. Pair with RestartVolumeServer or Stop.
 func (c *Cluster) StopVolumeServer() {
 	c.testingTB.Helper()
-	stopProcess(c.volumeCmd)
+	stopProcess(c.testingTB, "volume server", c.volumeCmd)
 	c.volumeCmd = nil
 }
 
@@ -267,6 +267,7 @@ func (c *Cluster) startVolume(dataDirs []string) error {
 		"-config_dir=" + c.configDir,
 		"volume",
 		"-ip=127.0.0.1",
+		"-preStopSeconds=0",
 		"-port=" + strconv.Itoa(c.volumePort),
 		"-port.grpc=" + strconv.Itoa(c.volumeGrpcPort),
 		"-port.public=" + strconv.Itoa(c.volumePubPort),
@@ -325,7 +326,10 @@ func (c *Cluster) waitForTCP(addr string) error {
 	return fmt.Errorf("timed out waiting for tcp %s", addr)
 }
 
-func stopProcess(cmd *exec.Cmd) {
+// stopProcess interrupts cmd and waits for it to exit, killing it after 10s.
+// A server that does not exit cleanly on SIGINT fails the test: a panic or a
+// hang on shutdown is a bug the tests would otherwise never see.
+func stopProcess(tb testing.TB, name string, cmd *exec.Cmd) {
 	if cmd == nil || cmd.Process == nil {
 		return
 	}
@@ -340,7 +344,11 @@ func stopProcess(cmd *exec.Cmd) {
 	case <-time.After(10 * time.Second):
 		_ = cmd.Process.Kill()
 		<-done
-	case <-done:
+		tb.Errorf("%s did not exit within 10s of SIGINT", name)
+	case err := <-done:
+		if err != nil {
+			tb.Errorf("%s did not exit cleanly on SIGINT: %v", name, err)
+		}
 	}
 }
 

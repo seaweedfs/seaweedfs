@@ -148,8 +148,8 @@ func (rc *RustCluster) Stop() {
 		return
 	}
 	rc.cleanupOnce.Do(func() {
-		stopProcess(rc.volumeCmd)
-		stopProcess(rc.masterCmd)
+		stopProcess(rc.testingTB, "rust volume server", rc.volumeCmd)
+		stopProcess(rc.testingTB, "master", rc.masterCmd)
 		if !rc.keepLogs && !rc.testingTB.Failed() {
 			_ = os.RemoveAll(rc.baseDir)
 		} else if rc.baseDir != "" {
