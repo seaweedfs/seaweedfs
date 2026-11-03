@@ -620,6 +620,8 @@ templ Plugin(page string, initialJob string, lane string) {
                 schedulerLock: null,
                 allJobs: [],
                 allActivities: [],
+                monitorRowsScope: null,
+                refreshError: '',
                 loadedJobType: '',
                 descriptor: null,
                 config: null,
@@ -631,6 +633,13 @@ templ Plugin(page string, initialJob string, lane string) {
                 if (!pluginLane) return url;
                 var sep = url.indexOf('?') === -1 ? '?' : '&';
                 return url + sep + 'lane=' + encodeURIComponent(pluginLane);
+            }
+
+            // appendJobTypeParam appends ?job_type= or &job_type= to a URL if a job type is given.
+            function appendJobTypeParam(url, jobType) {
+                if (!jobType) return url;
+                var sep = url.indexOf('?') === -1 ? '?' : '&';
+                return url + sep + 'job_type=' + encodeURIComponent(jobType);
             }
 
             function getCSRFToken() {
@@ -785,6 +794,10 @@ templ Plugin(page string, initialJob string, lane string) {
                 }
                 
                 return { jobType: jobType, displayName: displayName };
+            }
+
+            function monitorJobTypeScope() {
+                return state.activeTopTab === 'overview' ? '' : state.selectedJobType;
             }
 
             function topTabKeyForJobType(jobType) {
@@ -1257,11 +1270,16 @@ templ Plugin(page string, initialJob string, lane string) {
                     } else {
                         notify('Job expired: ' + normalizedJobID, 'success');
                     }
-                    await refreshJobsAndActivities();
-                    await openJobDetail(normalizedJobID);
                 } catch (e) {
                     notify('Failed to expire job: ' + e.message, 'error');
+                    return;
                 }
+                try {
+                    await refreshJobsAndActivities();
+                } catch (refreshErr) {
+                    notify('Monitoring refresh failed: ' + refreshErr.message, 'error');
+                }
+                await openJobDetail(normalizedJobID);
             }
 
             async function openJobDetail(jobID) {
@@ -1608,7 +1626,7 @@ templ Plugin(page string, initialJob string, lane string) {
             }
 
             function renderSchedulerStatus() {
-                window.renderPluginSchedulerStatus({scheduler: state.schedulerStatus, lock: state.schedulerLock, job_type: state.activeTopTab === 'overview' ? '' : state.selectedJobType});
+                window.renderPluginSchedulerStatus({scheduler: state.schedulerStatus, lock: state.schedulerLock, job_type: monitorJobTypeScope()});
                 var valueNodes = document.querySelectorAll('.plugin-scheduler-next-run');
                 if (!valueNodes.length) {
                     return;
@@ -1735,9 +1753,9 @@ templ Plugin(page string, initialJob string, lane string) {
                 }
 
                 var filteredJobs = [];
-                var allJobs = Array.isArray(state.allJobs) ? state.allJobs : [];
-                for (var i = 0; i < allJobs.length; i++) {
-                    var job = allJobs[i] || {};
+                var jobs = Array.isArray(state.jobs) ? state.jobs : [];
+                for (var i = 0; i < jobs.length; i++) {
+                    var job = jobs[i] || {};
                     var jobType = String(job.job_type || '').trim();
                     if (state.selectedJobType && jobType !== state.selectedJobType) {
                         continue;
@@ -1801,9 +1819,9 @@ templ Plugin(page string, initialJob string, lane string) {
                 }
 
                 var filteredJobs = [];
-                var allJobs = Array.isArray(state.allJobs) ? state.allJobs : [];
-                for (var i = 0; i < allJobs.length; i++) {
-                    var queueJob = allJobs[i] || {};
+                var jobs = Array.isArray(state.jobs) ? state.jobs : [];
+                for (var i = 0; i < jobs.length; i++) {
+                    var queueJob = jobs[i] || {};
                     var queueJobType = String(queueJob.job_type || '').trim();
                     if (state.selectedJobType && queueJobType !== state.selectedJobType) {
                         continue;
@@ -1858,9 +1876,9 @@ templ Plugin(page string, initialJob string, lane string) {
                 }
 
                 var filteredActivities = [];
-                var allActivities = Array.isArray(state.allActivities) ? state.allActivities : [];
-                for (var i = 0; i < allActivities.length; i++) {
-                    var activity = allActivities[i] || {};
+                var activities = Array.isArray(state.activities) ? state.activities : [];
+                for (var i = 0; i < activities.length; i++) {
+                    var activity = activities[i] || {};
                     var jobType = String(activity.job_type || '').trim();
                     if (state.selectedJobType && jobType !== state.selectedJobType) {
                         continue;
@@ -1900,9 +1918,9 @@ templ Plugin(page string, initialJob string, lane string) {
                 }
 
                 var filteredActivities = [];
-                var allActivities = Array.isArray(state.allActivities) ? state.allActivities : [];
-                for (var i = 0; i < allActivities.length; i++) {
-                    var activity = allActivities[i] || {};
+                var activities = Array.isArray(state.activities) ? state.activities : [];
+                for (var i = 0; i < activities.length; i++) {
+                    var activity = activities[i] || {};
                     if (isDetectionActivitySource(activity.source)) {
                         continue;
                     }
@@ -3064,9 +3082,14 @@ templ Plugin(page string, initialJob string, lane string) {
                         '<div class="text-success">Success: ' + escapeHtml(String(data.success_count || 0)) + '</div>' +
                         '<div class="text-danger">Errors: ' + escapeHtml(String(data.error_count || 0)) + '</div>';
                     await loadRunHistory(jobType);
-                    await refreshJobsAndActivities();
                 } catch (e) {
                     notify('Workflow run failed: ' + e.message, 'error');
+                    return;
+                }
+                try {
+                    await refreshJobsAndActivities();
+                } catch (refreshErr) {
+                    notify('Workflow run succeeded, but monitoring refresh failed: ' + refreshErr.message, 'error');
                 }
             }
 
@@ -3075,13 +3098,31 @@ templ Plugin(page string, initialJob string, lane string) {
 
                 state.monitorExecutionJobState = executionStateFilter ? String(executionStateFilter.value || '').trim() : '';
 
-                var allJobsPromise = pluginRequest('GET', appendLaneParam('/api/plugin/jobs?limit=500'));
-                var allActivitiesPromise = pluginRequest('GET', appendLaneParam('/api/plugin/activities?limit=500'));
-                var schedulerPromise = pluginRequest('GET', appendLaneParam('/api/plugin/scheduler-states'));
+                // The newest 500 rows cluster-wide may hold none of the selected job type on a busy
+                // cluster, so the job-type sub-tabs fetch their own server-side filtered window.
+                var scopedJobType = monitorJobTypeScope();
+                var sameScope = state.monitorRowsScope === scopedJobType;
+
+                // A failed request keeps its last rows; the rest still land and the failure is rethrown.
+                var failure = null;
+                function keepOnFailure(promise, previous) {
+                    return promise.catch(function(e) {
+                        failure = failure || e;
+                        return previous;
+                    });
+                }
+
+                var allJobsPromise = keepOnFailure(pluginRequest('GET', appendLaneParam('/api/plugin/jobs?limit=500')), state.allJobs);
+                var allActivitiesPromise = keepOnFailure(pluginRequest('GET', appendLaneParam('/api/plugin/activities?limit=500')), state.allActivities);
+                var jobsPromise = scopedJobType ? keepOnFailure(pluginRequest('GET', appendJobTypeParam(appendLaneParam('/api/plugin/jobs?limit=500'), scopedJobType)), sameScope ? state.jobs : null) : allJobsPromise;
+                var activitiesPromise = scopedJobType ? keepOnFailure(pluginRequest('GET', appendJobTypeParam(appendLaneParam('/api/plugin/activities?limit=500'), scopedJobType)), sameScope ? state.activities : null) : allActivitiesPromise;
+                var schedulerPromise = keepOnFailure(pluginRequest('GET', appendLaneParam('/api/plugin/scheduler-states')), state.schedulerStates);
                 var schedulerStatusPromise = pluginRequest('GET', appendLaneParam('/api/plugin/scheduler-status'));
 
                 var allJobs = await allJobsPromise;
                 var allActivities = await allActivitiesPromise;
+                var jobs = await jobsPromise;
+                var activities = await activitiesPromise;
                 var schedulerStates = await schedulerPromise;
                 var schedulerStatus = null;
                 try {
@@ -3089,11 +3130,15 @@ templ Plugin(page string, initialJob string, lane string) {
                 } catch (e) {
                     schedulerStatus = null;
                 }
+                if (monitorJobTypeScope() !== scopedJobType) {
+                    return;
+                }
 
-                state.jobs = Array.isArray(allJobs) ? allJobs : [];
-                state.activities = Array.isArray(allActivities) ? allActivities : [];
-                state.allJobs = state.jobs;
-                state.allActivities = state.activities;
+                state.allJobs = Array.isArray(allJobs) ? allJobs : [];
+                state.allActivities = Array.isArray(allActivities) ? allActivities : [];
+                state.jobs = Array.isArray(jobs) ? jobs : state.allJobs;
+                state.activities = Array.isArray(activities) ? activities : state.allActivities;
+                state.monitorRowsScope = scopedJobType;
                 state.schedulerStates = Array.isArray(schedulerStates) ? schedulerStates : [];
                 state.schedulerStatus = schedulerStatus && schedulerStatus.scheduler ? schedulerStatus.scheduler : null;
                 state.schedulerLock = schedulerStatus && schedulerStatus.lock ? schedulerStatus.lock : null;
@@ -3105,6 +3150,9 @@ templ Plugin(page string, initialJob string, lane string) {
                 renderSchedulerStatus();
                 renderStatus();
                 renderJobTypeSummary();
+                if (failure) {
+                    throw failure;
+                }
             }
 
             async function refreshAll() {
@@ -3133,8 +3181,13 @@ templ Plugin(page string, initialJob string, lane string) {
                     }
 
                     await refreshJobsAndActivities();
+                    state.refreshError = '';
                 } catch (e) {
-                    notify('Refresh failed: ' + e.message, 'error');
+                    // The 3s timer would otherwise reopen the same alert on every tick.
+                    if (e.message !== state.refreshError) {
+                        state.refreshError = e.message;
+                        notify('Refresh failed: ' + e.message, 'error');
+                    }
                 }
             }
 
@@ -3231,10 +3284,11 @@ templ Plugin(page string, initialJob string, lane string) {
                             }
                             await loadRunHistory(jobType);
                         }
-                        renderQueueJobs();
-                        renderDetectionJobs();
-                        renderExecutionJobs();
-                        renderExecutionActivities();
+                        try {
+                            await refreshJobsAndActivities();
+                        } catch (e) {
+                            notify('Refresh failed: ' + e.message, 'error');
+                        }
                         return;
                     }
 
@@ -3300,10 +3354,11 @@ templ Plugin(page string, initialJob string, lane string) {
                         console.error('Failed to load data on popstate navigation:', e);
                     }
                 }
-                renderQueueJobs();
-                renderDetectionJobs();
-                renderExecutionJobs();
-                renderExecutionActivities();
+                try {
+                    await refreshJobsAndActivities();
+                } catch (e) {
+                    console.error('Failed to refresh jobs on popstate navigation:', e);
+                }
             });
 
             window.addEventListener('beforeunload', function() {

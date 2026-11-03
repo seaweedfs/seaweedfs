@@ -23,6 +23,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
+	"google.golang.org/protobuf/proto"
 )
 
 func init() {
@@ -116,6 +117,7 @@ func (c *commandFsDistributeChunks) Do(args []string, commandEnv *CommandEnv, wr
 	if err != nil {
 		return fmt.Errorf("lookup %s: %v", path, err)
 	}
+	readEntry := proto.Clone(entry).(*filer_pb.Entry)
 
 	chunks, hadManifest, err := resolveEntryDataChunks(commandEnv, entry)
 	if err != nil {
@@ -180,6 +182,11 @@ func (c *commandFsDistributeChunks) Do(args []string, commandEnv *CommandEnv, wr
 	fmt.Fprintf(writer, "\nExecuting redistribution...\n")
 	defer util_http.GetGlobalHttpClient().CloseIdleConnections()
 
+	readFids := make(map[string]bool, len(chunks))
+	for _, chunk := range chunks {
+		readFids[chunk.GetFileIdString()] = true
+	}
+
 	movedCount, err := executeChunkMoves(commandEnv, writer, moves, volumeInfoMap)
 	if err != nil {
 		return err
@@ -191,8 +198,14 @@ func (c *commandFsDistributeChunks) Do(args []string, commandEnv *CommandEnv, wr
 
 	finalChunks := chunks
 	if hadManifest {
-		// no chunk deleter here: a failed fold reports the blobs it saved
-		remanifested, manErr := filer.MaybeManifestize(newShellSaveAsChunk(commandEnv), nil, chunks)
+		dropSaved := func(saved []*filer_pb.FileChunk) {
+			var blobs []orphanedNeedle
+			for _, chunk := range saved {
+				blobs = append(blobs, orphanedNeedle{volumeId: chunk.GetFid().GetVolumeId(), fileId: chunk.GetFileIdString()})
+			}
+			deleteOrphanedNeedles(commandEnv, util.FullPath(path), blobs, true)
+		}
+		remanifested, manErr := filer.MaybeManifestize(newShellSaveAsChunk(commandEnv), dropSaved, chunks)
 		if manErr != nil {
 			fmt.Fprintf(writer, "WARNING: re-manifestize failed: %v. Writing flat chunk list.\n", manErr)
 		} else {
@@ -203,12 +216,24 @@ func (c *commandFsDistributeChunks) Do(args []string, commandEnv *CommandEnv, wr
 	entry.Chunks = finalChunks
 
 	fmt.Fprintf(writer, "\nUpdating filer metadata (%d chunks moved)...\n", movedCount)
+	var stale bool
 	err = commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return filer_pb.UpdateEntry(context.Background(), client, &filer_pb.UpdateEntryRequest{
-			Directory: dir,
-			Entry:     entry,
-		})
+		var uErr error
+		stale, uErr = updateEntryIfUnchanged(context.Background(), client, dir, entry, readEntry)
+		return uErr
 	})
+	if stale {
+		var copies []orphanedNeedle
+		for _, chunk := range slices.Concat(chunks, finalChunks) {
+			if fid := chunk.GetFileIdString(); !readFids[fid] {
+				readFids[fid] = true
+				copies = append(copies, orphanedNeedle{volumeId: chunk.GetFid().GetVolumeId(), fileId: fid})
+			}
+		}
+		deleteOrphanedNeedles(commandEnv, util.FullPath(path), copies, true)
+		fmt.Fprintf(writer, "%s was changed or deleted during redistribution; the filer kept that version and the moved copies were deleted.\n", path)
+		return err
+	}
 	if err != nil {
 		fmt.Fprintf(writer, "FAILED to update filer metadata: %v\n", err)
 		fmt.Fprintf(writer, "WARNING: New chunks were uploaded but metadata was not updated.\n")

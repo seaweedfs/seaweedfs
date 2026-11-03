@@ -87,3 +87,25 @@ func TestNoPassphraseKeepsLegacyHexDecodePath(t *testing.T) {
 		t.Fatal("wrapKEK without passphrase should fail; got nil error")
 	}
 }
+
+// A KEK wrapped in the legacy v1 layout (nonce || ciphertext+tag) under the
+// fixed salt "seaweedfs-sse-s3-kek-wrapping-v1", produced outside this
+// package, so a change to legacyKEKWrappingSalt cannot pass by changing
+// both sides.
+func TestUnwrapKEKReadsPinnedLegacyV1(t *testing.T) {
+	km := NewSSES3KeyManager("legacy-passphrase")
+	got, isV2, err := km.unwrapKEK([]byte("oKGio6SlpqeoqaqrixOn/dNaewpX3OoMjLT3VUFh+zg+Hd1fqbiWa6Xhc3SAg6hZdXb+Pwo520Fc1dfj"))
+	if err != nil {
+		t.Fatalf("unwrapKEK: %v", err)
+	}
+	if isV2 {
+		t.Fatal("a legacy payload was reported as v2")
+	}
+	want := make([]byte, SSES3KeySize)
+	for i := range want {
+		want[i] = byte(i)
+	}
+	if string(got) != string(want) {
+		t.Fatalf("unwrapped %x, want %x", got, want)
+	}
+}

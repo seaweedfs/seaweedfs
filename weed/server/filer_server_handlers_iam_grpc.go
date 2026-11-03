@@ -17,11 +17,11 @@ import (
 )
 
 // IamGrpcServer implements the IAM gRPC service on the filer.
-// Auth is opt-in: when jwt.filer_signing.key is set in security.toml the
-// service requires a Bearer token in the "authorization" metadata signed with
-// that key; when it is empty every RPC is accepted unauthenticated, matching
-// the rest of SeaweedFS's gRPC surface. Operators who expose the filer gRPC
-// port beyond a trusted network should configure the key.
+// When jwt.filer_signing.key is set, every RPC requires a Bearer token signed
+// with it; otherwise RPCs run unauthenticated, except the OIDC provider and
+// role RPCs, which are refused. The key gates only this service: the filer RPCs
+// on the same port can still read and write the IAM store under /etc/iam.
+// Protect a filer gRPC port reachable by untrusted clients with [grpc.filer] mTLS.
 type IamGrpcServer struct {
 	iam_pb.UnimplementedSeaweedIdentityAccessManagementServer
 	credentialManager *credential.CredentialManager

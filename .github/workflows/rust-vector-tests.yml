@@ -76,19 +76,25 @@ jobs:
 
 
   vectors-e2e:
-    name: S3 Vectors Integration (${{ matrix.volume }} volume)
+    name: S3 Vectors Integration (${{ matrix.volume }} volume${{ matrix.hardened && ', hardened' || '' }})
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         volume: [go, rust]
+        # Hardened: volume servers behind mutual TLS, read JWTs required,
+        # and every chunk encrypted by the gateway.
+        hardened: ["", "1"]
     env:
       CARGO_PROFILE_DEV_DEBUG: "0"
       CARGO_BUILD_JOBS: "2"
       CARGO_TARGET_DIR: ${{ github.workspace }}/seaweed-vector/target
       VOLUME_SERVER_IMPL: ${{ matrix.volume }}
       VECTOR_QUERY_MODE: single
+      VECTOR_TLS: ${{ matrix.hardened }}
+      VECTOR_READ_JWT: ${{ matrix.hardened }}
+      VECTOR_ENCRYPT_VOLUMES: ${{ matrix.hardened }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -147,7 +153,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: vectors-e2e-diagnostics-${{ matrix.volume }}
+          name: vectors-e2e-diagnostics-${{ matrix.volume }}${{ matrix.hardened && '-hardened' || '' }}
           path: |
             ${{ runner.temp }}/vector-tests
             ${{ runner.temp }}/vector-results.xml

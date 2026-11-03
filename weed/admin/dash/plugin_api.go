@@ -152,12 +152,21 @@ func (s *AdminServer) GetPluginJobsAPI(w http.ResponseWriter, r *http.Request) {
 	state := strings.TrimSpace(query.Get("state"))
 	laneFilter := strings.TrimSpace(query.Get("lane"))
 	limit := parsePositiveInt(query.Get("limit"), 200)
-	jobs := s.ListPluginJobs(jobType, state, limit)
+	// Apply the lane before the limit, or a busy lane's newest rows crowd out a quiet lane.
+	listLimit := limit
+	if laneFilter != "" {
+		listLimit = 0
+	}
+	jobs := s.ListPluginJobs(jobType, state, listLimit)
 	if jobs == nil {
 		writeJSON(w, http.StatusOK, []interface{}{})
 		return
 	}
-	writeJSON(w, http.StatusOK, filterTrackedJobsByLane(jobs, laneFilter))
+	jobs = filterTrackedJobsByLane(jobs, laneFilter)
+	if len(jobs) > limit {
+		jobs = jobs[:limit]
+	}
+	writeJSON(w, http.StatusOK, jobs)
 }
 
 // GetPluginJobAPI returns one tracked job.
@@ -248,12 +257,20 @@ func (s *AdminServer) GetPluginActivitiesAPI(w http.ResponseWriter, r *http.Requ
 	jobType := strings.TrimSpace(query.Get("job_type"))
 	laneFilter := strings.TrimSpace(query.Get("lane"))
 	limit := parsePositiveInt(query.Get("limit"), 500)
-	activities := s.ListPluginActivities(jobType, limit)
+	listLimit := limit
+	if laneFilter != "" {
+		listLimit = 0
+	}
+	activities := s.ListPluginActivities(jobType, listLimit)
 	if activities == nil {
 		writeJSON(w, http.StatusOK, []interface{}{})
 		return
 	}
-	writeJSON(w, http.StatusOK, filterActivitiesByLane(activities, laneFilter))
+	activities = filterActivitiesByLane(activities, laneFilter)
+	if len(activities) > limit {
+		activities = activities[:limit]
+	}
+	writeJSON(w, http.StatusOK, activities)
 }
 
 // GetPluginSchedulerStatesAPI returns per-job-type scheduler status for monitoring.

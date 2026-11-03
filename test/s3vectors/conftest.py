@@ -1,11 +1,20 @@
+import base64
 import contextlib
+import gzip
+import hashlib
+import hmac
+import http.client
+import json
 import os
 from pathlib import Path
 import socket
+import ssl
 import subprocess
 import time
 import urllib.error
 import urllib.request
+import uuid
+import zlib
 
 import boto3
 from botocore.config import Config
@@ -79,6 +88,85 @@ def open_cluster(request, tmp_path_factory):
     yield from run_cluster(request.param, tmp_path_factory, identities=False)
 
 
+def write_tls(directory):
+    """A CA and one certificate for localhost; volume servers serve HTTPS
+    requiring client certificates, and every client presents the same one."""
+    def openssl(*args):
+        subprocess.run(["openssl", *args], check=True, capture_output=True, cwd=directory)
+    openssl("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", "ca.key", "-out", "ca.pem",
+            "-subj", "/CN=s3vectors test CA", "-days", "2",
+            "-addext", "basicConstraints=critical,CA:TRUE", "-addext", "keyUsage=critical,keyCertSign,cRLSign")
+    openssl("req", "-newkey", "rsa:2048", "-nodes", "-keyout", "key.pem", "-out", "req.csr", "-subj", "/CN=localhost")
+    (directory / "ext.cnf").write_text(
+        "subjectAltName=DNS:localhost,IP:127.0.0.1\nextendedKeyUsage=serverAuth,clientAuth\nbasicConstraints=CA:FALSE\n")
+    openssl("x509", "-req", "-in", "req.csr", "-CA", "ca.pem", "-CAkey", "ca.key", "-CAcreateserial",
+            "-out", "cert.pem", "-days", "2", "-extfile", "ext.cnf")
+    pem = "".join(f'{key} = {json.dumps(str(directory / name), ensure_ascii=False)}\n' for key, name in (("cert", "cert.pem"), ("key", "key.pem"), ("ca", "ca.pem")))
+    (directory / "security.toml").write_text(f"[https.volume]\n{pem}\n[https.client]\nenabled = true\n{pem}")
+
+
+def read_token(key, fid):
+    def encode(data):
+        return base64.urlsafe_b64encode(data).rstrip(b"=")
+    signed = encode(b'{"alg":"HS256","typ":"JWT"}') + b"." + encode(json.dumps({"fid": fid}).encode())
+    return (signed + b"." + encode(hmac.new(key.encode(), signed, hashlib.sha256).digest())).decode()
+
+
+def probe_hardening(endpoint, filer, vol, directory, read_jwt_key):
+    """The hardened switches must be enforced, not only configured: a TLS
+    volume server refuses plain HTTP and a connection without the client
+    certificate, a volume server under a read key refuses an unsigned
+    read of a real chunk, and an encrypted chunk is stored as ciphertext."""
+    scheme = "https" if os.environ.get("VECTOR_TLS") else "http"
+    context = None
+    if scheme == "https":
+        context = ssl.create_default_context(cafile=directory / "ca.pem")
+        for url, kwargs in ((f"http://127.0.0.1:{vol}/status", {}),
+                            (f"https://127.0.0.1:{vol}/status", {"context": context})):
+            try:
+                with urllib.request.urlopen(url, timeout=5, **kwargs) as response:
+                    assert response.status != 200, f"{url} answered without the client certificate"
+            # Go answers plaintext with HTTP 400, Rust with a TLS alert.
+            except (urllib.error.URLError, ConnectionError, ssl.SSLError, http.client.HTTPException):
+                pass
+        context.load_cert_chain(directory / "cert.pem", directory / "key.pem")
+        with urllib.request.urlopen(f"https://127.0.0.1:{vol}/status", timeout=5, context=context) as response:
+            assert response.status == 200
+    encrypted = os.environ.get("VECTOR_ENCRYPT_VOLUMES")
+    if not (read_jwt_key or encrypted):
+        return
+    s3 = boto3.client("s3", endpoint_url=endpoint, aws_access_key_id="test", aws_secret_access_key="test",
+                      region_name="us-east-1", config=Config(s3={"addressing_style": "path"}))
+    bucket = "hardening-" + uuid.uuid4().hex[:12]
+    body = b"x" * 1024
+    s3.create_bucket(Bucket=bucket)
+    try:
+        s3.put_object(Bucket=bucket, Key="chunk", Body=body)
+        with urllib.request.urlopen(f"http://127.0.0.1:{filer}/buckets/{bucket}/chunk?metadata=true", timeout=5) as response:
+            chunk = json.load(response)["chunks"][0]
+        url = f"{scheme}://127.0.0.1:{vol}/{chunk['file_id']}"
+        headers = {}
+        if read_jwt_key:
+            try:
+                with urllib.request.urlopen(url, timeout=5, context=context):
+                    raise AssertionError("the volume server served an unsigned read")
+            except urllib.error.HTTPError as error:
+                assert error.code == 401, error
+            headers["Authorization"] = "Bearer " + read_token(read_jwt_key, chunk["file_id"])
+        with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=5, context=context) as response:
+            stored = response.read()
+        if encrypted:
+            assert chunk.get("cipher_key"), "the gateway stored a chunk without a cipher key"
+            assert stored and stored != body, "the volume server holds the chunk in plaintext or not at all"
+            with contextlib.suppress(OSError, EOFError, zlib.error):
+                assert gzip.decompress(stored) != body, "the volume server holds the chunk gzipped, not encrypted"
+        else:
+            assert stored == body, "the signed read did not return the chunk"
+    finally:
+        s3.delete_object(Bucket=bucket, Key="chunk")
+        s3.delete_bucket(Bucket=bucket)
+
+
 def run_cluster(param, tmp_path_factory, identities):
     volume, mode = param
     directory = tmp_path_factory.mktemp(f"vectors-{volume}-{mode}" + ("" if identities else "-open"))
@@ -99,12 +187,23 @@ def run_cluster(param, tmp_path_factory, identities):
         master_addr = f"127.0.0.1:{master}.{master_grpc}"
         filer_addr = f"127.0.0.1:{filer}.{filer_grpc}"
 
+        # VECTOR_READ_JWT=1 makes volume reads need a JWT; every weed process
+        # and the workers sign with the key.
+        read_jwt_key = os.environ.get("VECTOR_READ_JWT") and uuid.uuid4().hex
+        # VECTOR_TLS=1 puts the volume servers behind HTTPS with client
+        # certificates; every process finds security.toml in its cwd.
+        if os.environ.get("VECTOR_TLS"):
+            write_tls(directory)
+
         def start(name, args, unset=()):
             log = stack.enter_context((directory / f"{name}.log").open("w"))
             env = dict(os.environ, AWS_ACCESS_KEY_ID="test", AWS_SECRET_ACCESS_KEY="test",
                        AWS_DEFAULT_REGION="us-east-1", AWS_EC2_METADATA_DISABLED="true",
-                       WEED_S3_SSE_KEY="s3vectors-test")
+                       WEED_S3_SSE_KEY="s3vectors-test",
+                       **({"WEED_JWT_SIGNING_READ_KEY": read_jwt_key} if read_jwt_key else {}))
             env.pop("WEED_S3_SSE_KEK", None)
+            if not read_jwt_key:
+                env.pop("WEED_JWT_SIGNING_READ_KEY", None)
             for key in unset:
                 env.pop(key)
             process = subprocess.Popen(args, cwd=directory, stdout=log, stderr=log, env=env)
@@ -139,10 +238,15 @@ def run_cluster(param, tmp_path_factory, identities):
                            "--storage-option", "aws_secret_access_key=test"]
         else:
             config, unset, credentials = [], ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"), []
-        start("s3", [weed, "-v=1", "s3", f"-filer={filer_addr}", *config,
+        # VECTOR_ENCRYPT_VOLUMES=1 has the gateway encrypt every chunk it
+        # stores, which direct reads must undo.
+        encrypt = ["-encryptVolumeData"] if os.environ.get("VECTOR_ENCRYPT_VOLUMES") else []
+        start("s3", [weed, "-v=1", "s3", f"-filer={filer_addr}", *config, *encrypt,
                      "-ip=127.0.0.1", "-ip.bind=127.0.0.1", f"-port={s3}",
                      f"-port.grpc={s3_grpc}", "-port.iceberg=0", f"-port.lance={lance}"], unset)
         wait_for(lambda: http_ready(f"http://127.0.0.1:{lance}/v1/namespace/root/list"), processes, "catalog not ready")
+        if os.environ.get("VECTOR_TLS") or read_jwt_key or encrypt:
+            probe_hardening(endpoint, filer, vol, directory, read_jwt_key)
         start("vector", [engine, "--namespace", f"http://127.0.0.1:{lance}",
                          "--masters", master_addr, "--listen", f"127.0.0.1:{vector}", *credentials], unset)
         wait_for(lambda: listening(vector), processes, "vector engine not ready")

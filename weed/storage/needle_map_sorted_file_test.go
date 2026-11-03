@@ -65,6 +65,21 @@ func TestSortedFileNeedleMap_DeleteAppendsTombstone(t *testing.T) {
 		t.Fatalf("Delete: %v", err)
 	}
 
+	if got, want := m.DeletedCount(), 1; got != want {
+		t.Fatalf("DeletedCount after delete: got %d, want %d", got, want)
+	}
+	if got, want := m.DeletedSize(), uint64(1024); got != want {
+		t.Fatalf("DeletedSize after delete: got %d, want %d", got, want)
+	}
+
+	// Idempotent delete must not double count deletions.
+	if err := m.Delete(deletedKey, deletedOff); err != nil {
+		t.Fatalf("idempotent Delete: %v", err)
+	}
+	if got, want := m.DeletedCount(), 1; got != want {
+		t.Fatalf("DeletedCount after idempotent delete: got %d, want %d", got, want)
+	}
+
 	if got, want := fileSize(t, idxPath), wantIdxSize+int64(NeedleMapEntrySize); got != want {
 		t.Fatalf("idx size after delete: got %d, want %d (front-overwrite regression)", got, want)
 	}

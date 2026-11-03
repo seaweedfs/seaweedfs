@@ -13,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	s3_constants "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/protobuf/proto"
 )
 
 func init() {
@@ -228,6 +229,7 @@ func healStrandedPointer(ctx context.Context, client filer_pb.SeaweedFilerClient
 	if entry.Extended == nil {
 		return nil
 	}
+	readEntry := proto.Clone(entry).(*filer_pb.Entry)
 	delete(entry.Extended, s3_constants.ExtLatestVersionIdKey)
 	delete(entry.Extended, s3_constants.ExtLatestVersionFileNameKey)
 	// Also clear the cached list metadata so a stale size/mtime/etag
@@ -237,10 +239,9 @@ func healStrandedPointer(ctx context.Context, client filer_pb.SeaweedFilerClient
 	delete(entry.Extended, s3_constants.ExtLatestVersionETagKey)
 	delete(entry.Extended, s3_constants.ExtLatestVersionOwnerKey)
 	delete(entry.Extended, s3_constants.ExtLatestVersionIsDeleteMarker)
-	_, err := client.UpdateEntry(ctx, &filer_pb.UpdateEntryRequest{
-		Directory: string(parentPath),
-		Entry:     entry,
-	})
+	// A version written since the audit read the directory has moved the
+	// pointer, and clearing it would hide that version.
+	_, err := updateEntryIfUnchanged(ctx, client, string(parentPath), entry, readEntry)
 	return err
 }
 
