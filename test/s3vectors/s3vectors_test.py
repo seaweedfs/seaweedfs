@@ -515,8 +515,17 @@ def test_vector_index_job(vectors, cluster):
     vectors.create_vector_bucket(vectorBucketName=bucket)
     vectors.create_index(vectorBucketName=bucket, indexName=index, dataType="float32",
                          dimension=dim, distanceMetric="cosine")
+    # Embedding-like data: points around shared centres. Independent Gaussian
+    # vectors have no locality for an IVF index to use, so recall through one
+    # would only track the fraction of partitions probed.
     rng = random.Random(7)
-    rows = {f"v{i}": [rng.gauss(0, 1) for _ in range(dim)] for i in range(1200)}
+    centres = [[rng.gauss(0, 1) for _ in range(dim)] for _ in range(30)]
+
+    def point():
+        centre = rng.choice(centres)
+        return [c + 0.3 * rng.gauss(0, 1) for c in centre]
+
+    rows = {f"v{i}": point() for i in range(1200)}
     keys = list(rows)
     for offset in range(0, len(keys), 400):
         vectors.put_vectors(vectorBucketName=bucket, indexName=index,
@@ -545,14 +554,14 @@ def test_vector_index_job(vectors, cluster):
 
     found = 0
     for _ in range(20):
-        query = [rng.gauss(0, 1) for _ in range(dim)]
+        query = point()
         hits = vectors.query_vectors(vectorBucketName=bucket, indexName=index,
                                      queryVector={"float32": query}, topK=10)["vectors"]
         assert len(hits) == 10
         found += len({h["key"] for h in hits} & exact_neighbours(rows, query, 10))
     assert found >= 180, f"recall {found}/200"
 
-    late = [rng.gauss(0, 1) for _ in range(dim)]
+    late = point()
     vectors.put_vectors(vectorBucketName=bucket, indexName=index, vectors=[{"key": "late", "data": {"float32": late}}])
     hits = vectors.query_vectors(vectorBucketName=bucket, indexName=index, queryVector={"float32": late}, topK=1)
     assert [h["key"] for h in hits["vectors"]] == ["late"]
