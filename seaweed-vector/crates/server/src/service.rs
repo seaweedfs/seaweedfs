@@ -434,17 +434,9 @@ impl VectorServer {
                 Some(session.clone()),
             )
             .await?;
-            if !self.recreated(&opened.dataset) {
-                if Arc::ptr_eq(&self.session.read().unwrap(), &session) {
-                    break opened.dataset;
-                }
-                continue;
+            if !self.stale(&opened.dataset) {
+                break opened.dataset;
             }
-            let mut current = self.session.write().unwrap();
-            if Arc::ptr_eq(&current, &session) {
-                *current = session_of(self.index_cache_bytes);
-            }
-            drop(current);
         };
         if table.version != 0 {
             dataset = dataset.checkout_version(table.version).await?;
@@ -452,12 +444,13 @@ impl VectorServer {
         Ok(dataset)
     }
 
-    /// Whether `dataset` is a table dropped and created again at the URI of
-    /// one opened before. The session keys index lists and transactions by
-    /// version alone, so the new table's versions would read the old one's.
-    /// A table's versions only grow, and the new table commits after the old
-    /// one's last commit seen here.
-    fn recreated(&self, dataset: &Dataset) -> bool {
+    /// Whether `dataset` has to be opened again, because the session it was
+    /// opened in is no longer the shared one. The session keys index lists
+    /// and transactions by version alone, so a table dropped and created
+    /// again at a URI opened before would read the old table's; it replaces
+    /// the session. A table's versions only grow, and the new table commits
+    /// after the old one's last commit seen here.
+    fn stale(&self, dataset: &Dataset) -> bool {
         let seen = (
             dataset.manifest().version,
             dataset.manifest().timestamp_nanos,
@@ -468,7 +461,11 @@ impl VectorServer {
         if recreated || seen.0 > last.0 {
             *last = seen;
         }
-        recreated
+        let mut current = self.session.write().unwrap();
+        if recreated && Arc::ptr_eq(&current, &dataset.session()) {
+            *current = session_of(self.index_cache_bytes);
+        }
+        !Arc::ptr_eq(&current, &dataset.session())
     }
 }
 
@@ -576,7 +573,7 @@ impl VectorService for VectorServer {
             .execute_batches(vec![batch])
             .await
             .map_err(internal)?;
-        self.recreated(&dataset);
+        self.stale(&dataset);
         Ok(Response::new(pb::PutVectorsResponse {
             version: dataset.version().version,
         }))
@@ -620,7 +617,7 @@ impl VectorService for VectorServer {
                 .delete(&key_list(&req.keys))
                 .await
                 .map_err(internal)?;
-            self.recreated(&dataset);
+            self.stale(&dataset);
         }
         Ok(Response::new(pb::DeleteVectorsResponse {
             version: dataset.version().version,
