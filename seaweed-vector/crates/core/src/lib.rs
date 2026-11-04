@@ -7,6 +7,7 @@
 
 pub mod coverage;
 mod filter;
+pub mod index;
 pub mod maintenance;
 pub mod query;
 pub mod segments;
