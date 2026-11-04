@@ -143,4 +143,7 @@ func TestAssignRetryLandsAtWarmupEndWithHint(t *testing.T) {
 	if elapsed := time.Since(start); elapsed > 2400*time.Millisecond {
 		t.Fatalf("assign took %v over %d calls, want about 1.25s (warm-up end)", elapsed, srv.callCount.Load())
 	}
+	if calls := srv.callCount.Load(); calls < 2 {
+		t.Fatalf("got %d calls, want a refused call during warm-up before the retry", calls)
+	}
 }
