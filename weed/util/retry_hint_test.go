@@ -64,14 +64,15 @@ func TestRetryHintSlackIsJitteredWithinBounds(t *testing.T) {
 	}
 }
 
-// The loop sleeps hint + slack, not the 1s step, after a refusal with a 100ms hint.
+// The loop waits hint + slack, not the 1s step, after a refusal with a 100ms hint.
 func TestRetryWithBackoffHonoursShorterServerHint(t *testing.T) {
 	var waits []time.Duration
 	defer func(orig func(time.Duration) *time.Timer) { retryBackoffTimer = orig }(retryBackoffTimer)
 	retryBackoffTimer = func(d time.Duration) *time.Timer {
 		waits = append(waits, d)
-		return time.NewTimer(0)
+		return time.NewTimer(d)
 	}
+	start := time.Now()
 	var calls int
 	err := RetryWithBackoff(context.Background(), "hint-test", 30*time.Second,
 		func(err error) bool { return status.Code(err) == codes.Unavailable },
@@ -84,6 +85,9 @@ func TestRetryWithBackoffHonoursShorterServerHint(t *testing.T) {
 		})
 	if err != nil || calls != 2 {
 		t.Fatalf("RetryWithBackoff = %v after %d calls, want success after 2", err, calls)
+	}
+	if elapsed := time.Since(start); elapsed < 150*time.Millisecond {
+		t.Fatalf("returned after %v, want the retry to wait out its timer", elapsed)
 	}
 	if len(waits) != 1 || waits[0] < 150*time.Millisecond || waits[0] > 400*time.Millisecond {
 		t.Fatalf("waits %v, want one wait of hint + slack (150-400ms), not the 1s step", waits)
