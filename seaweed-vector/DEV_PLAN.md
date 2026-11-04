@@ -217,9 +217,10 @@ single/distributed) are the gate:
 
 ### Phase 1 — Engine query path (small)
 
-- Probe policy when an index exists: `minimum_nprobes` from the index's
-  partition count, `maximum_nprobes` equal to it without a filter and open
-  with one.
+- Probe policy when an index exists: `minimum_nprobes` is the per-query
+  count from the Probes rule above, taken from the largest delta;
+  `maximum_nprobes` equals that count without a filter and stays open with
+  one.
 - `nprobes` in `QueryVectorsRequest` for tests and the CLI; zero means the
   policy.
 - Per-query log line and counters: segments searched, tail rows scanned,
