@@ -160,9 +160,8 @@ func TestReaderCacheRefreshesLocationsAfterPartialFailure(t *testing.T) {
 		w.Write(payload)
 	}))
 	defer live.Close()
-	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	deadURL := dead.URL
-	dead.Close()
+	reachServer(t, live)
+	deadURL := deadServerURL(t)
 
 	fileId := "3,abc"
 	invalidator := &mockCacheInvalidatorForReaderCache{}
@@ -189,6 +188,25 @@ func TestReaderCacheRefreshesLocationsAfterPartialFailure(t *testing.T) {
 	if got := atomic.LoadInt32(&lookupCount); got != 2 {
 		t.Fatalf("expected a lookup before the read and one after invalidation, got %d", got)
 	}
+}
+
+// reachServer has srv answer one request. The read path orders replicas by
+// whether their host recently failed, and srv's port may be one an earlier test
+// left marked as failed, so the answer clears that record.
+func reachServer(t *testing.T, srv *httptest.Server) {
+	t.Helper()
+	if _, _, err := util_http.Get(srv.URL); err != nil {
+		t.Fatalf("reach %s: %v", srv.URL, err)
+	}
+}
+
+// deadServerURL is a replica that answered once and then went away.
+func deadServerURL(t *testing.T) string {
+	t.Helper()
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer dead.Close()
+	reachServer(t, dead)
+	return dead.URL
 }
 
 func TestReaderCacheRemovesFailedDownloader(t *testing.T) {
