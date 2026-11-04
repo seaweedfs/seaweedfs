@@ -240,3 +240,34 @@ func TestExecutionNotTrackedWhenWorkerNotConnected(t *testing.T) {
 		t.Fatalf("job %s tracked as %s for a dispatch that never went out", jobID, tracked.State)
 	}
 }
+
+// The captured stream closed before the request went out, as when the worker
+// reconnects mid-dispatch: no report will ever close the attempt.
+func TestExecutionFailedWhenSendToSessionFails(t *testing.T) {
+	t.Parallel()
+	p, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer p.Shutdown()
+
+	p.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId:     "worker-a",
+		Capabilities: []*plugin_pb.JobTypeCapability{{JobType: orphanTestJobType, CanExecute: true, MaxExecutionConcurrency: 2}},
+	})
+	closed := &streamSession{workerID: "worker-a", outgoing: make(chan *plugin_pb.AdminToWorkerMessage), done: make(chan struct{})}
+	closed.close()
+	p.putSession(closed)
+	executor, ok := p.registry.Get("worker-a")
+	if !ok {
+		t.Fatal("worker-a is not registered")
+	}
+	const jobID = "job-send-failed"
+	if _, err := p.executeJobWithExecutor(context.Background(), executor, &plugin_pb.JobSpec{JobId: jobID, JobType: orphanTestJobType}, &plugin_pb.ClusterContext{}, 1); err == nil {
+		t.Fatal("expected an error for a closed stream")
+	}
+	tracked, ok := p.GetTrackedJob(jobID)
+	if !ok || tracked == nil || tracked.State != StateFailed {
+		t.Fatalf("expected job %s failed, got %+v", jobID, tracked)
+	}
+}
