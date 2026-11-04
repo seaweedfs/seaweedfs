@@ -283,6 +283,7 @@ func TestValidateVectorPolicyConditions(t *testing.T) {
 		`{"StringEquals":{"aws:ResourceTag/env":{"a":"b"}}}`,
 		`{"StringEquals":{"aws:ResourceTag/env":["prod",["dev"]]}}`,
 		`{"NumericLessThan":{"aws:RequestTag/priority":"low"}}`,
+		`{"StringEquals":{}}`,
 	} {
 		if err := validateVectorPolicy(withCondition(bad)); err == nil {
 			t.Errorf("%s accepted", bad)

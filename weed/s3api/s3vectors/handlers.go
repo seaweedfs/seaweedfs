@@ -517,6 +517,9 @@ func validateVectorPolicy(raw string) error {
 			if _, err := policy_engine.GetConditionEvaluator(operator); err != nil {
 				return fmt.Errorf("invalid policy document: condition operator %q is not supported", operator)
 			}
+			if len(keys) == 0 {
+				return fmt.Errorf("invalid policy document: condition %s needs at least one key", operator)
+			}
 			for key, value := range keys {
 				if !vectorConditionKey(key) {
 					return fmt.Errorf("invalid policy document: condition key %q is not supported in a vector bucket policy", key)
