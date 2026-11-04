@@ -78,6 +78,25 @@ type Statement struct {
 	Action    interface{}                       `json:"Action"`    // Can be string or []string
 	Resource  interface{}                       `json:"Resource"`  // Can be string or []string
 	Condition map[string]map[string]interface{} `json:"Condition,omitempty"`
+	// nullCondition records a literal "Condition": null, which decodes the
+	// same as no Condition.
+	nullCondition bool
+}
+
+func (s *Statement) UnmarshalJSON(data []byte) error {
+	type plain Statement
+	aux := struct {
+		*plain
+		Condition json.RawMessage `json:"Condition"`
+	}{plain: (*plain)(s)}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	s.nullCondition = string(aux.Condition) == "null"
+	if aux.Condition == nil {
+		return nil
+	}
+	return json.Unmarshal(aux.Condition, &s.Condition)
 }
 
 type PolicyContext struct {
@@ -439,7 +458,11 @@ func checkPermission(operation, principal, owner, resourcePolicy, resourceARN st
 			continue
 		}
 
-		// A condition that cannot be evaluated never grants.
+		// A condition that cannot be evaluated never grants, nor does a null
+		// one stored before validatePolicyDocument refused it.
+		if stmt.Effect == "Allow" && stmt.nullCondition {
+			continue
+		}
 		if matched, usable := matchesConditions(stmt.Condition, ctx); !usable || !matched {
 			continue
 		}

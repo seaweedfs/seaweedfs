@@ -787,6 +787,31 @@ func TestUnusableConditionAllowNeverGrants(t *testing.T) {
 	}
 }
 
+// A stored Allow whose Condition is null never grants; a Deny with one still
+// applies.
+func TestStoredNullConditionAllowNeverGrants(t *testing.T) {
+	ctx := &PolicyContext{}
+	for _, tc := range []struct{ action, policy string }{
+		{"s3tables:GetTable", `{"Statement":[{"Effect":"Allow","Principal":"*","Action":"s3tables:GetTable","Resource":"*","Condition":null}]}`},
+		{"s3tables:GetTable", `{"Statement":{"Effect":"Allow","Principal":"*","Action":"s3tables:GetTable","Resource":"*","Condition":null}}`},
+		{"s3tables:GetTable", `{"Statement":[{"Effect":"Allow","Principal":"*","Action":"s3tables:GetTable","Resource":"*","condition":null}]}`},
+		{"s3tables:GetTable", `{"Statement":[{"Effect":"Allow","Principal":"*","Action":"s3tables:GetTable","Resource":"*","Condition":{"StringEquals":{"aws:ResourceTag/env":"prod"}},"condition":null}]}`},
+		{"s3vectors:GetVectorBucket", `{"Statement":[{"Effect":"Allow","Principal":"*","Action":"s3vectors:GetVectorBucket","Resource":"*","Condition":null}]}`},
+	} {
+		if CheckPermissionWithContext(tc.action, "reader", "owner", tc.policy, "", ctx) {
+			t.Errorf("%s granted a non-owner", tc.policy)
+		}
+	}
+	allow := `{"Statement":[{"Effect":"Allow","Principal":"*","Action":"s3tables:GetTable","Resource":"*"}]}`
+	if !CheckPermissionWithContext("s3tables:GetTable", "reader", "owner", allow, "", ctx) {
+		t.Error("an Allow without a Condition must still grant")
+	}
+	deny := `{"Statement":[{"Effect":"Deny","Principal":"*","Action":"s3tables:GetTable","Resource":"*","Condition":null}]}`
+	if CheckPermissionWithContext("s3tables:GetTable", "owner", "owner", deny, "", ctx) {
+		t.Error("a Deny with a null Condition must apply")
+	}
+}
+
 // A Deny whose operator the evaluator does not know applies instead of being
 // skipped: the writer meant it to protect the resource.
 func TestUnsupportedOperatorDenyApplies(t *testing.T) {
