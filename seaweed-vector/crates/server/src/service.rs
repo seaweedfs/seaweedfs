@@ -1000,25 +1000,91 @@ mod tests {
         assert_eq!(next, None);
     }
 
-    /// A catalog that answers one describe with `location`.
+    /// A catalog that answers every describe with `location`.
     async fn catalog_describing(location: &str) -> String {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let body = serde_json::json!({ "location": location }).to_string();
         tokio::spawn(async move {
-            let (mut conn, _) = listener.accept().await.unwrap();
-            let mut request = [0u8; 8192];
-            let _ = conn.read(&mut request).await;
-            let response = format!(
-                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-                body.len()
-            );
-            conn.write_all(response.as_bytes()).await.unwrap();
-            let _ = conn.shutdown().await;
-            let _ = tokio::io::copy(&mut conn, &mut tokio::io::sink()).await;
+            while let Ok((mut conn, _)) = listener.accept().await {
+                let body = body.clone();
+                tokio::spawn(async move {
+                    let mut request = [0u8; 8192];
+                    let _ = conn.read(&mut request).await;
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    conn.write_all(response.as_bytes()).await.unwrap();
+                    let _ = conn.shutdown().await;
+                    let _ = tokio::io::copy(&mut conn, &mut tokio::io::sink()).await;
+                });
+            }
         });
         url
+    }
+
+    #[tokio::test]
+    async fn open_forgets_a_table_another_engine_dropped_and_created_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let location = dir.path().join("x").to_str().unwrap().to_string();
+        let catalog = catalog_describing(&location).await;
+        let engine = || {
+            VectorServer::new(
+                NamespaceClient::new(catalog.clone()),
+                FallbackOptions::new(),
+            )
+        };
+        let (here, other) = (engine(), engine());
+        let table = pb::Table {
+            id: vec!["bkt".into(), "vector".into(), "x".into()],
+            version: 0,
+        };
+        let create = || {
+            Request::new(pb::CreateIndexRequest {
+                table: Some(table.clone()),
+                dimension: 2,
+                distance_metric: pb::DistanceMetric::L2 as i32,
+                non_filterable_metadata_keys: vec![],
+            })
+        };
+        let put = |keys| {
+            Request::new(pb::PutVectorsRequest {
+                table: Some(table.clone()),
+                vectors: vectors(keys),
+            })
+        };
+
+        here.create_index(create()).await.unwrap();
+        here.put_vectors(put(0..300)).await.unwrap();
+        let mut dataset = Dataset::open(&location).await.unwrap();
+        index::build(&mut dataset, VECTOR_COLUMN, index::INDEX_NAME, 2, false)
+            .await
+            .unwrap();
+        let opened = here.open(&table).await.unwrap();
+        assert_eq!(opened.version().version, 3);
+        assert_eq!(
+            index::index_names(&opened, VECTOR_COLUMN)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+
+        std::fs::remove_dir_all(&location).unwrap();
+        other.create_index(create()).await.unwrap();
+        other.put_vectors(put(0..10)).await.unwrap();
+        other.put_vectors(put(10..20)).await.unwrap();
+        let opened = here.open(&table).await.unwrap();
+        assert_eq!(opened.version().version, 3);
+        assert!(
+            index::index_names(&opened, VECTOR_COLUMN)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(opened.count_rows(None).await.unwrap(), 20);
     }
 
     #[tokio::test]
