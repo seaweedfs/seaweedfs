@@ -152,6 +152,25 @@ func TestExecutionKeptWhenWorkerReconnectsWithJob(t *testing.T) {
 	}
 }
 
+// Work ids are compared trimmed, so a padded job id still matches its listing.
+func TestExecutionKeptWhenReconnectedWorkerListsPaddedJobID(t *testing.T) {
+	t.Parallel()
+	p, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer p.Shutdown()
+
+	const jobID = " job-padded "
+	_, resultCh := dispatchToExecutor(t, p, connectExecutor(p, "worker-a"), jobID)
+	reconnected := connectExecutor(p, "worker-a")
+
+	for i := 0; i < orphanedExecutionMisses+1; i++ {
+		sendExecutionHeartbeat(p, reconnected, 1, jobID)
+	}
+	expectDispatchStillPending(t, resultCh)
+}
+
 // The worker counts a job before it lists it, and heartbeats can lag; the
 // stream the job went out on is never judged by what it has not listed yet.
 func TestExecutionKeptWhileDispatchSessionHasNotListedJob(t *testing.T) {

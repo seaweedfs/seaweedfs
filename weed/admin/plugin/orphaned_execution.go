@@ -54,7 +54,7 @@ func (r *Plugin) failExecutionsMissingFromHeartbeat(session *streamSession, hear
 		if pending.failed || pending.session == nil || pending.session == session || pending.session.workerID != session.workerID {
 			continue
 		}
-		if _, ok := listed[pending.jobID]; ok {
+		if _, ok := listed[strings.TrimSpace(pending.jobID)]; ok {
 			pending.misses = 0
 			continue
 		}
