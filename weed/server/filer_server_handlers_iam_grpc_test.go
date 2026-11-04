@@ -129,6 +129,19 @@ func TestIamGrpc_ValidTokenAfterStaleToken_ReachesHandler(t *testing.T) {
 	}
 }
 
+func TestIamGrpc_AllInvalidTokens_Unauthenticated(t *testing.T) {
+	s := newTestIamGrpcServer(t)
+	stale := security.GenJwtForFilerAdmin(security.SigningKey("a-different-key"), 60)
+	other := security.GenJwtForFilerAdmin(security.SigningKey("another-different-key"), 60)
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.MD{
+		"authorization": []string{"Bearer " + string(stale), "Bearer " + string(other)},
+	})
+	_, err := s.ListUsers(ctx, &iam_pb.ListUsersRequest{})
+	if got, want := status.Code(err), codes.Unauthenticated; got != want {
+		t.Fatalf("ListUsers with two invalid tokens: got code %v, want %v (err=%v)", got, want, err)
+	}
+}
+
 func TestIamGrpc_NoSigningKey_Unauthenticated_Allowed(t *testing.T) {
 	// Auth is opt-in: when the server is built without a signing key, every
 	// RPC is accepted regardless of (or in the absence of) metadata so the
