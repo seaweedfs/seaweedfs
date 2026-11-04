@@ -64,7 +64,7 @@ func TestRetryHintSlackIsJitteredWithinBounds(t *testing.T) {
 	}
 }
 
-// One timing check of the whole loop: a 200ms hint brings the retry forward
+// One timing check of the whole loop: a 100ms hint brings the retry forward
 // from the 1s step to hint + slack.
 func TestRetryWithBackoffHonoursShorterServerHint(t *testing.T) {
 	var calls int
@@ -75,7 +75,7 @@ func TestRetryWithBackoffHonoursShorterServerHint(t *testing.T) {
 			calls++
 			if calls == 1 {
 				firstAt = time.Now()
-				return unavailableWithDelay(t, durationpb.New(200*time.Millisecond))
+				return unavailableWithDelay(t, durationpb.New(100*time.Millisecond))
 			}
 			secondAt = time.Now()
 			return nil
@@ -83,7 +83,7 @@ func TestRetryWithBackoffHonoursShorterServerHint(t *testing.T) {
 	if err != nil || calls != 2 {
 		t.Fatalf("RetryWithBackoff = %v after %d calls, want success after 2", err, calls)
 	}
-	if wait := secondAt.Sub(firstAt); wait < 250*time.Millisecond || wait > 900*time.Millisecond {
-		t.Fatalf("waited %v before the retry, want hint + slack (250-500ms), not the 1s step", wait)
+	if wait := secondAt.Sub(firstAt); wait < 150*time.Millisecond || wait > 900*time.Millisecond {
+		t.Fatalf("waited %v before the retry, want hint + slack (150-400ms), not the 1s step", wait)
 	}
 }

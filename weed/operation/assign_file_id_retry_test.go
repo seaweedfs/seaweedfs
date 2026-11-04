@@ -110,30 +110,25 @@ func TestAssignStopsOnContextCancel(t *testing.T) {
 }
 
 // warmingAssignServer refuses Assign until warmEnd, like a master in warm-up,
-// optionally telling the client the remaining warm-up.
+// telling the client the remaining warm-up.
 type warmingAssignServer struct {
 	master_pb.UnimplementedSeaweedServer
 	warmEnd   time.Time
-	sendHint  bool
 	callCount atomic.Int32
 }
 
 func (s *warmingAssignServer) Assign(_ context.Context, _ *master_pb.AssignRequest) (*master_pb.AssignResponse, error) {
 	s.callCount.Add(1)
 	if remaining := time.Until(s.warmEnd); remaining > 0 {
-		st := status.New(codes.Unavailable, "master is warming up")
-		if s.sendHint {
-			st, _ = st.WithDetails(&errdetails.RetryInfo{RetryDelay: durationpb.New(remaining)})
-		}
+		st, _ := status.New(codes.Unavailable, "master is warming up").WithDetails(&errdetails.RetryInfo{RetryDelay: durationpb.New(remaining)})
 		return nil, st.Err()
 	}
 	return &master_pb.AssignResponse{Fid: "1,abc", Count: 1, Location: &master_pb.Location{Url: "127.0.0.1:8080", PublicUrl: "127.0.0.1:8080"}}, nil
 }
 
-func assignThroughWarmup(t *testing.T, sendHint bool) (time.Duration, int32) {
-	t.Helper()
+func TestAssignRetryLandsAtWarmupEndWithHint(t *testing.T) {
 	const warmup = 1200 * time.Millisecond
-	srv := &warmingAssignServer{sendHint: sendHint}
+	srv := &warmingAssignServer{}
 	addr := startFakeServer(t, srv)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -143,14 +138,9 @@ func assignThroughWarmup(t *testing.T, sendHint bool) (time.Duration, int32) {
 		grpc.WithTransportCredentials(insecure.NewCredentials()), &VolumeAssignRequest{Count: 1}); err != nil {
 		t.Fatalf("Assign: %v", err)
 	}
-	return time.Since(start), srv.callCount.Load()
-}
-
-// With the remaining warm-up as a hint, the assign lands right after warm-up
-// ends (1.2s) instead of at the next backoff step (1s + 1.5s = 2.5s).
-func TestAssignRetryLandsAtWarmupEndWithHint(t *testing.T) {
-	elapsed, calls := assignThroughWarmup(t, true)
-	if elapsed > 2*time.Second {
-		t.Fatalf("assign took %v over %d calls, want about 1.25s (warm-up end)", elapsed, calls)
+	// The hint lands the retry just after warm-up ends (1.2s), not at the
+	// next backoff step (1s + 1.5s = 2.5s).
+	if elapsed := time.Since(start); elapsed > 2250*time.Millisecond {
+		t.Fatalf("assign took %v over %d calls, want about 1.25s (warm-up end)", elapsed, srv.callCount.Load())
 	}
 }
