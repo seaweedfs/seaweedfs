@@ -43,8 +43,9 @@ func (c *commandEcRebuild) Help() string {
 	  -diskType: disk type for EC shards (hdd, ssd, or empty for default hdd)
 	  -checksum: first verify every shard against its checksum sidecar (as
 	             ec.scrub -mode=checksum does), and rebuild the shards that fail
-	             it, also in volumes that have every shard. This reads every
-	             shard in full.
+	             it, also in volumes that have every shard. A failing copy is
+	             removed once a good copy of its shard is mounted elsewhere.
+	             This reads every shard in full.
 
 	Algorithm:
 
