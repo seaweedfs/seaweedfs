@@ -1,6 +1,7 @@
 package s3tables
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -30,7 +31,7 @@ type PolicyDocument struct {
 func (pd *PolicyDocument) UnmarshalJSON(data []byte) error {
 	type Alias PolicyDocument
 	aux := &struct {
-		Statement interface{} `json:"Statement"`
+		Statement json.RawMessage `json:"Statement"`
 		*Alias
 	}{
 		Alias: (*Alias)(pd),
@@ -40,33 +41,24 @@ func (pd *PolicyDocument) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	// Handle Statement as either a single object or array
-	switch s := aux.Statement.(type) {
-	case map[string]interface{}:
-		// Single statement object - unmarshal to one Statement
-		stmtData, err := json.Marshal(s)
-		if err != nil {
-			return fmt.Errorf("failed to marshal single statement: %w", err)
-		}
+	// Statements decode from their original bytes so Statement.UnmarshalJSON
+	// sees every repeated key.
+	raw := bytes.TrimSpace(aux.Statement)
+	switch {
+	case len(raw) == 0 || string(raw) == "null":
+		pd.Statement = []Statement{}
+	case raw[0] == '{':
 		var stmt Statement
-		if err := json.Unmarshal(stmtData, &stmt); err != nil {
+		if err := json.Unmarshal(raw, &stmt); err != nil {
 			return fmt.Errorf("failed to unmarshal single statement: %w", err)
 		}
 		pd.Statement = []Statement{stmt}
-	case []interface{}:
-		// Array of statements - normal handling
-		stmtData, err := json.Marshal(s)
-		if err != nil {
-			return fmt.Errorf("failed to marshal statement array: %w", err)
-		}
-		if err := json.Unmarshal(stmtData, &pd.Statement); err != nil {
+	case raw[0] == '[':
+		if err := json.Unmarshal(raw, &pd.Statement); err != nil {
 			return fmt.Errorf("failed to unmarshal statement array: %w", err)
 		}
-	case nil:
-		// No statements
-		pd.Statement = []Statement{}
 	default:
-		return fmt.Errorf("Statement must be an object or array, got %T", aux.Statement)
+		return fmt.Errorf("Statement must be an object or array")
 	}
 
 	return nil
@@ -81,9 +73,9 @@ type Statement struct {
 	// nullCondition records a literal "Condition": null, which decodes the
 	// same as no Condition.
 	nullCondition bool
-	// splitCondition records a Condition under more than one key spelling.
+	// splitCondition records more than one Condition key, in any spelling.
 	// Those objects decode into one map in which an operator they share keeps
-	// only the last spelling's keys.
+	// only the last one's keys.
 	splitCondition bool
 }
 
@@ -94,18 +86,27 @@ func (s *Statement) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, (*plain)(s)); err != nil {
 		return err
 	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(data, &fields); err != nil {
+	// Walk the keys: a map keeps only the last of a repeated key.
+	dec := json.NewDecoder(bytes.NewReader(data))
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
 		return err
 	}
-	spellings := 0
-	for key, raw := range fields {
-		if strings.EqualFold(key, "Condition") {
-			spellings++
-			s.nullCondition = s.nullCondition || string(raw) == "null"
+	conditions, null := 0, false
+	for dec.More() {
+		key, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		var raw json.RawMessage
+		if err := dec.Decode(&raw); err != nil {
+			return err
+		}
+		if name, _ := key.(string); strings.EqualFold(name, "Condition") {
+			conditions++
+			null = null || string(raw) == "null"
 		}
 	}
-	s.splitCondition = spellings > 1
+	s.nullCondition, s.splitCondition = null, conditions > 1
 	return nil
 }
 

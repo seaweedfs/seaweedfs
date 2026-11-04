@@ -2,6 +2,7 @@ package s3tables
 
 import (
 	"encoding/json"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -813,24 +814,29 @@ func TestStoredNullConditionAllowNeverGrants(t *testing.T) {
 	}
 }
 
-// Condition objects under two key spellings decode into one map in which an
-// operator they share keeps only the last spelling's keys. Such a statement is
-// refused, and one stored before that never grants and always vetoes.
+// Condition objects under two keys, repeated or respelled, decode into one map
+// in which an operator they share keeps only the last one's keys. Such a
+// statement is refused, and one stored before that never grants and always
+// vetoes.
 func TestConditionSplitAcrossSpellings(t *testing.T) {
 	for _, split := range []string{
 		`"Condition":{"StringEquals":{"aws:ResourceTag/env":"prod"}},"condition":{"StringEquals":{"aws:ResourceTag/team":"x"}}`,
 		`"Condition":{"StringEquals":{"aws:ResourceTag/env":"prod"}},"condition":{}`,
+		`"Condition":{"StringEquals":{"aws:ResourceTag/env":"prod"}},"Condition":{"StringEquals":{"aws:ResourceTag/team":"x"}}`,
+		`"Condition":null,"Condition":{}`,
 	} {
-		allow := `{"Statement":[{"Effect":"Allow","Principal":"*","Action":"s3tables:GetTable","Resource":"*",` + split + `}]}`
-		if err := validatePolicyDocument(allow); err == nil {
-			t.Errorf("%s: validatePolicyDocument accepted it", split)
-		}
-		if CheckPermissionWithContext("s3tables:GetTable", "reader", "owner", allow, "", &PolicyContext{ResourceTags: map[string]string{"env": "dev", "team": "x"}}) {
-			t.Errorf("%s: the env=prod restriction was dropped", split)
-		}
-		deny := `{"Statement":[{"Effect":"Deny","Principal":"*","Action":"s3tables:GetTable","Resource":"*",` + split + `}]}`
-		if CheckPermissionWithContext("s3tables:GetTable", "owner", "owner", deny, "", &PolicyContext{ResourceTags: map[string]string{"env": "dev", "team": "x"}}) {
-			t.Errorf("%s: the Deny was skipped", split)
+		for _, wrap := range []string{`{"Statement":[%s]}`, `{"Statement":%s}`} {
+			allow := fmt.Sprintf(wrap, `{"Effect":"Allow","Principal":"*","Action":"s3tables:GetTable","Resource":"*",`+split+`}`)
+			if err := validatePolicyDocument(allow); err == nil {
+				t.Errorf("%s: validatePolicyDocument accepted it", allow)
+			}
+			if CheckPermissionWithContext("s3tables:GetTable", "reader", "owner", allow, "", &PolicyContext{ResourceTags: map[string]string{"env": "dev", "team": "x"}}) {
+				t.Errorf("%s: the Allow granted", allow)
+			}
+			deny := fmt.Sprintf(wrap, `{"Effect":"Deny","Principal":"*","Action":"s3tables:GetTable","Resource":"*",`+split+`}`)
+			if CheckPermissionWithContext("s3tables:GetTable", "owner", "owner", deny, "", &PolicyContext{ResourceTags: map[string]string{"env": "dev", "team": "x"}}) {
+				t.Errorf("%s: the Deny was skipped", deny)
+			}
 		}
 	}
 	single := `{"Statement":[{"Effect":"Allow","Principal":"*","Action":"s3tables:GetTable","Resource":"*","condition":{"StringEquals":{"aws:ResourceTag/env":"prod"}}}]}`
