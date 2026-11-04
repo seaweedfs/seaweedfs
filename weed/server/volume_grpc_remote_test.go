@@ -902,6 +902,36 @@ func TestGuardedPeerHTTPClientUploadsOverTLS(t *testing.T) {
 	}
 }
 
+// TestFetchAndWriteReplicaBoundsASilentPeer: a replica that accepts the
+// connection and never answers fails the write at the bound.
+func TestFetchAndWriteReplicaBoundsASilentPeer(t *testing.T) {
+	listener, err := net.Listen("tcp", net.JoinHostPort(peerIPv4(t).String(), "0"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	defer func(original time.Duration) { fetchAndWriteReplicaTimeout = original }(fetchAndWriteReplicaTimeout)
+	fetchAndWriteReplicaTimeout = time.Second
+
+	addr := listener.Addr().String()
+	uploader := operation.NewUploaderWithHttpClient(newGuardedPeerHTTPClient(addr))
+	done := make(chan error, 1)
+	go func() {
+		done <- fetchAndWriteReplica(t.Context(), uploader, []byte("needle-data"), &operation.UploadOption{
+			UploadUrl:     "http://" + addr + "/1,01637037d6?type=replicate",
+			IsReplication: true,
+		})
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("silent replica: got %v, want %v", err, context.DeadlineExceeded)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the write to a silent replica is still waiting")
+	}
+}
+
 // TestGuardedPeerHTTPClientRejectsHTTPSDowngrade pins the downgrade guard the
 // global client carries: an HTTPS peer answering with a redirect to a
 // reachable http server must fail the upload rather than resend the body and
