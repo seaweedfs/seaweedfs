@@ -6988,16 +6988,6 @@ fn set_file_mtime(path: &str, modified_ts_ns: i64) -> std::io::Result<()> {
     file.set_times(ft)
 }
 
-/// Drain a CopyFile stream into `file`, returning the number of bytes written.
-///
-/// Uses async, buffered I/O (`tokio::fs` + `BufWriter`) so the receive-and-write
-/// loop never blocks a Tokio worker thread on disk I/O — a synchronous
-/// `std::fs::File::write_all` per chunk would stall the runtime for the duration
-/// of each write (noticeable for a large `.ecx`/`.dat` on a slow or busy disk).
-///
-/// On any recv/write/flush error the partially written destination is removed
-/// (matching `receive_file` and the Go volume server), so a failed copy never
-/// leaves a truncated shard or checksum file behind for a later reader to trip on.
 /// An optional copy (the source may lack the file) streams into
 /// `<file_path>.copying` and is renamed into place only once the source sent
 /// bytes, so a missing source or a failed stream leaves an existing destination
@@ -7023,6 +7013,16 @@ async fn drain_optional_copy_to_file(
     Ok(written)
 }
 
+/// Drain a CopyFile stream into `file`, returning the number of bytes written.
+///
+/// Uses async, buffered I/O (`tokio::fs` + `BufWriter`) so the receive-and-write
+/// loop never blocks a Tokio worker thread on disk I/O — a synchronous
+/// `std::fs::File::write_all` per chunk would stall the runtime for the duration
+/// of each write (noticeable for a large `.ecx`/`.dat` on a slow or busy disk).
+///
+/// On any recv/write/flush error the partially written destination is removed
+/// (matching `receive_file` and the Go volume server), so a failed copy never
+/// leaves a truncated shard or checksum file behind for a later reader to trip on.
 async fn drain_copy_stream_to_file(
     stream: &mut tonic::Streaming<volume_server_pb::CopyFileResponse>,
     file: tokio::fs::File,
