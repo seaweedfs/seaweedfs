@@ -539,6 +539,12 @@ func TestValidatePolicyDocument(t *testing.T) {
 		{`{"Bool":{"aws:ResourceTag/is_public":"yes"}}`, []string{"Bool", `"aws:ResourceTag/is_public"`}},
 		{`{"Null":{"aws:ResourceTag/owner":"maybe"}}`, []string{"Null", `"aws:ResourceTag/owner"`}},
 		{`{"IpAddress":{"aws:ResourceTag/net":"not-an-ip"}}`, []string{"IpAddress", `"aws:ResourceTag/net"`}},
+		{`{"StringEquals":{"s3tables:tableName":"t","s3tables:tableBucketName":"b","s3tables:StorageClass":"STANDARD"}}`, nil},
+		{`{"StringEquals":{"s3tables:SSEAlgorithm":"AES256","s3tables:KMSKeyArn":"arn:k","s3tables:TableBucketTag/env":"prod"}}`, nil},
+		{`{"IpAddress":{"aws:SourceIp":"10.0.0.0/8"}}`, []string{`"aws:SourceIp"`, "not supported"}},
+		{`{"StringEquals":{"aws:resourcetag/env":"prod"}}`, []string{`"aws:resourcetag/env"`, "not supported"}},
+		{`{"StringEquals":{"aws:ResourceTag/":"prod"}}`, []string{`"aws:ResourceTag/"`, "not supported"}},
+		{`{"Null":{"aws:PrincipalArn":"true"}}`, []string{`"aws:PrincipalArn"`, "not supported"}},
 	} {
 		err := validatePolicyDocument(withCondition(tc.condition))
 		if len(tc.mentions) == 0 {

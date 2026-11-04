@@ -175,6 +175,9 @@ func validatePolicyDocument(raw string) error {
 				return fmt.Errorf("invalid policy document: condition %s needs at least one key", operator)
 			}
 			for key, value := range keys {
+				if !tableConditionKey(key) {
+					return fmt.Errorf("invalid policy document: condition key %q is not supported in a table policy", key)
+				}
 				if !ConditionValue(operator, value) {
 					return fmt.Errorf("invalid policy document: condition %s on %q needs values %s can read (a number for Numeric*, an RFC 3339 time for Date*, true or false for Bool and Null, an IP or CIDR for IpAddress)", operator, key, operator)
 				}
@@ -716,6 +719,21 @@ func matchesConditionOperator(operator string, conditionValues map[string]interf
 		}
 	}
 	return true, true
+}
+
+// tableConditionKey reports whether getConditionContextValues supplies key.
+func tableConditionKey(key string) bool {
+	switch key {
+	case "s3tables:namespace", "s3tables:tableName", "s3tables:tableBucketName",
+		"s3tables:SSEAlgorithm", "s3tables:KMSKeyArn", "s3tables:StorageClass", "aws:TagKeys":
+		return true
+	}
+	for _, prefix := range []string{"aws:RequestTag/", "aws:ResourceTag/", "s3tables:TableBucketTag/", "s3vectors:VectorBucketTag/"} {
+		if tagKey, ok := strings.CutPrefix(key, prefix); ok {
+			return tagKey != ""
+		}
+	}
+	return false
 }
 
 func getConditionContextValues(key string, ctx *PolicyContext) []string {
