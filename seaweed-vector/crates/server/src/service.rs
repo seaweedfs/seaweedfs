@@ -15,7 +15,7 @@ use lance::session::Session;
 use lance::table::format::Fragment;
 use prost_types::{ListValue, Struct, Value, value::Kind};
 use std::collections::{BTreeMap, HashMap};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, RwLock};
 use tonic::{Request, Response, Status};
 use weed_lance_worker::catalog::NamespaceClient;
 use weed_lance_worker::dataset::{self, FallbackOptions};
@@ -377,7 +377,18 @@ pub struct VectorServer {
     read_cache: Option<Arc<dyn WrappingObjectStore>>,
     nprobes: Option<usize>,
     /// Shared by every open, so a table's index stays loaded between queries.
-    session: Arc<Session>,
+    session: RwLock<Arc<Session>>,
+    index_cache_bytes: usize,
+    /// The newest version opened at each table URI, with its commit time.
+    newest: Mutex<HashMap<String, (u64, u128)>>,
+}
+
+fn session_of(index_cache_bytes: usize) -> Arc<Session> {
+    Arc::new(Session::new(
+        index_cache_bytes,
+        lance::dataset::DEFAULT_METADATA_CACHE_SIZE,
+        Default::default(),
+    ))
 }
 
 impl VectorServer {
@@ -387,17 +398,16 @@ impl VectorServer {
             fallback,
             read_cache: None,
             nprobes: None,
-            session: Arc::new(Session::default()),
+            session: RwLock::new(session_of(lance::dataset::DEFAULT_INDEX_CACHE_SIZE)),
+            index_cache_bytes: lance::dataset::DEFAULT_INDEX_CACHE_SIZE,
+            newest: Mutex::new(HashMap::new()),
         }
     }
 
     /// Memory for keeping opened indices between queries.
     pub fn with_index_cache(mut self, bytes: usize) -> Self {
-        self.session = Arc::new(Session::new(
-            bytes,
-            lance::dataset::DEFAULT_METADATA_CACHE_SIZE,
-            Default::default(),
-        ));
+        self.session = RwLock::new(session_of(bytes));
+        self.index_cache_bytes = bytes;
         self
     }
 
@@ -414,19 +424,51 @@ impl VectorServer {
     }
 
     async fn open(&self, table: &pb::Table) -> Result<Dataset> {
-        let opened = dataset::open_in(
-            &self.client,
-            &table.id,
-            &self.fallback,
-            self.read_cache.clone(),
-            Some(self.session.clone()),
-        )
-        .await?;
-        let mut dataset = opened.dataset;
+        let mut dataset = loop {
+            let session = self.session.read().unwrap().clone();
+            let opened = dataset::open_in(
+                &self.client,
+                &table.id,
+                &self.fallback,
+                self.read_cache.clone(),
+                Some(session.clone()),
+            )
+            .await?;
+            if !self.recreated(&opened.dataset) {
+                if Arc::ptr_eq(&self.session.read().unwrap(), &session) {
+                    break opened.dataset;
+                }
+                continue;
+            }
+            let mut current = self.session.write().unwrap();
+            if Arc::ptr_eq(&current, &session) {
+                *current = session_of(self.index_cache_bytes);
+            }
+            drop(current);
+        };
         if table.version != 0 {
             dataset = dataset.checkout_version(table.version).await?;
         }
         Ok(dataset)
+    }
+
+    /// Whether `dataset` is a table dropped and created again at the URI of
+    /// one opened before. The session keys index lists and transactions by
+    /// version alone, so the new table's versions would read the old one's.
+    /// A table's versions only grow, and the new table commits after the old
+    /// one's last commit seen here.
+    fn recreated(&self, dataset: &Dataset) -> bool {
+        let seen = (
+            dataset.manifest().version,
+            dataset.manifest().timestamp_nanos,
+        );
+        let mut newest = self.newest.lock().unwrap();
+        let last = newest.entry(dataset.uri().to_string()).or_insert(seen);
+        let recreated = seen.0 <= last.0 && seen.1 > last.1;
+        if recreated || seen.0 > last.0 {
+            *last = seen;
+        }
+        recreated
     }
 }
 
@@ -534,6 +576,7 @@ impl VectorService for VectorServer {
             .execute_batches(vec![batch])
             .await
             .map_err(internal)?;
+        self.recreated(&dataset);
         Ok(Response::new(pb::PutVectorsResponse {
             version: dataset.version().version,
         }))
@@ -577,6 +620,7 @@ impl VectorService for VectorServer {
                 .delete(&key_list(&req.keys))
                 .await
                 .map_err(internal)?;
+            self.recreated(&dataset);
         }
         Ok(Response::new(pb::DeleteVectorsResponse {
             version: dataset.version().version,
