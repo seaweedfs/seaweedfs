@@ -376,15 +376,14 @@ func TestReadEcShardNeedleHealsCorruptSuspectNextToCleanOne(t *testing.T) {
 }
 
 // Past the recovery budget the corrupt-set search gathers only as wide as a
-// gather that excludes every suspect, or one decode when that is narrower. A
-// lone suspect still gets every other shard, but two suspects lose the spare
-// input the clean one would give.
+// gather that excludes every suspect. A lone suspect still gets every other
+// shard, but two suspects lose the spare input the clean one would give.
 func TestReadEcShardNeedleCorruptSetSearchPastBudget(t *testing.T) {
 	setEcRecoverBudget(t, 1)
 	store := newTestStore(t, 1)
 
-	// A needle over more shards than parity skips the single pass, so the
-	// search alone has to rebuild its one corrupt range.
+	// A needle over more shards than parity skips both the single pass and the
+	// search, so rebuilding one suspect at a time has to repair its range.
 	const wideVid = needle.VolumeId(17)
 	wide := randomNeedleOfSize(77, 6*erasure_coding.ErasureCodingSmallBlockSize+1234)
 	ecVolume := encodeAndMountEcVolume(t, store, wideVid, []*needle.Needle{wide})
