@@ -303,6 +303,14 @@ func TestValidateVectorPolicyConditions(t *testing.T) {
 			t.Errorf("%s accepted", misspelled)
 		}
 	}
+	for _, repeated := range []string{
+		`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3vectors:GetIndex","Resource":"*","Condition":null,"Condition":{}}]}`,
+		`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3vectors:GetIndex","Resource":"*","Condition":{"StringEquals":{"aws:ResourceTag/env":"prod"}},"Condition":{"StringEquals":{"aws:ResourceTag/team":"x"}}}]}`,
+	} {
+		if err := validateVectorPolicy(repeated); err == nil {
+			t.Errorf("%s accepted", repeated)
+		}
+	}
 	denyNull := `{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Principal":"*","Action":"s3vectors:GetIndex","Resource":"*","Condition":null}]}`
 	if err := validateVectorPolicy(denyNull); err != nil {
 		t.Errorf("a Deny with a null Condition was rejected: %v", err)

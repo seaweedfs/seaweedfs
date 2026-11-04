@@ -110,6 +110,12 @@ func (s *Statement) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// SplitCondition reports a statement with more than one Condition key, which
+// the evaluator never grants on and always vetoes with.
+func (s *Statement) SplitCondition() bool {
+	return s.splitCondition
+}
+
 type PolicyContext struct {
 	Namespace       string
 	TableName       string

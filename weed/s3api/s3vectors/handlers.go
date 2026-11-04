@@ -523,6 +523,9 @@ func validateVectorPolicy(raw string) error {
 		}
 	}
 	for _, stmt := range typed.Statement {
+		if stmt.SplitCondition() {
+			return fmt.Errorf("invalid policy document: a statement's Condition must be under one key")
+		}
 		for operator, keys := range stmt.Condition {
 			if _, err := policy_engine.GetConditionEvaluator(operator); err != nil {
 				return fmt.Errorf("invalid policy document: condition operator %q is not supported", operator)
