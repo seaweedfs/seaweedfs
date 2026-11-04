@@ -521,8 +521,8 @@ func validateVectorPolicy(raw string) error {
 				if !vectorConditionKey(key) {
 					return fmt.Errorf("invalid policy document: condition key %q is not supported in a vector bucket policy", key)
 				}
-				if !conditionValue(value) {
-					return fmt.Errorf("invalid policy document: condition %s on %q needs a string, number or boolean, or a non-empty list of them", operator, key)
+				if !s3tables.ConditionValue(operator, value) {
+					return fmt.Errorf("invalid policy document: condition %s on %q needs values %s can read (a number for Numeric*, an RFC 3339 time for Date*, true or false for Bool and Null, an IP or CIDR for IpAddress)", operator, key, operator)
 				}
 			}
 		}
@@ -538,23 +538,6 @@ func validateVectorPolicy(raw string) error {
 		}
 	}
 	return nil
-}
-
-// conditionValue reports whether the evaluator can compare v: a null value
-// would panic it, and an empty list never matches.
-func conditionValue(v interface{}) bool {
-	list, ok := v.([]interface{})
-	if !ok {
-		list = []interface{}{v}
-	}
-	for _, item := range list {
-		switch item.(type) {
-		case string, float64, bool:
-		default:
-			return false
-		}
-	}
-	return len(list) > 0
 }
 
 // vectorConditionKey reports whether the vector evaluation supplies key.

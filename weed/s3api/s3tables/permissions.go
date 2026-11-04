@@ -3,7 +3,10 @@ package s3tables
 import (
 	"encoding/json"
 	"fmt"
+	"net"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
@@ -142,15 +145,40 @@ func CheckTableOrBucketPermission(operation, principal, resourceOwner, resourceP
 }
 
 // validatePolicyDocument rejects a policy the evaluator could not honor: one
-// that does not parse, or whose actions and resources name the vector service.
-// Either stored here would be a dead rule the writer believes is enforced —
-// vector requests authorize their s3tables action on a s3tables ARN.
+// that does not parse, whose actions and resources name the vector service,
+// whose conditions the evaluator cannot compare, or whose Allow carries a null
+// Condition. Any of them stored here would be a rule the writer believes is
+// enforced — vector requests authorize their s3tables action on a s3tables
+// ARN, an unusable condition is skipped on an Allow and vetoes everything on a
+// Deny, and a null Condition reads as none, so the Allow grants unconditionally.
 func validatePolicyDocument(raw string) error {
 	var doc PolicyDocument
 	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
 		return fmt.Errorf("invalid policy document: %w", err)
 	}
-	for _, stmt := range doc.Statement {
+	nullCondition, err := nullConditionStatements(raw)
+	if err != nil {
+		return fmt.Errorf("invalid policy document: %w", err)
+	}
+	for i, stmt := range doc.Statement {
+		// A null Condition on a Deny only widens the veto, so it stays allowed.
+		if stmt.Effect == "Allow" && i < len(nullCondition) && nullCondition[i] {
+			return fmt.Errorf("invalid policy document: an Allow statement's Condition must not be null")
+		}
+		for operator, keys := range stmt.Condition {
+			if _, err := policy_engine.GetConditionEvaluator(operator); err != nil {
+				return fmt.Errorf("invalid policy document: condition operator %q is not supported", operator)
+			}
+			// An operator with no keys holds for every request.
+			if len(keys) == 0 {
+				return fmt.Errorf("invalid policy document: condition %s needs at least one key", operator)
+			}
+			for key, value := range keys {
+				if !ConditionValue(operator, value) {
+					return fmt.Errorf("invalid policy document: condition %s on %q needs values %s can read (a number for Numeric*, an RFC 3339 time for Date*, true or false for Bool and Null, an IP or CIDR for IpAddress)", operator, key, operator)
+				}
+			}
+		}
 		for _, action := range statementActions(stmt.Action) {
 			if strings.HasPrefix(strings.ToLower(action), "s3vectors:") {
 				return fmt.Errorf("action %q is not enforceable in a resource policy", action)
@@ -163,6 +191,111 @@ func validatePolicyDocument(raw string) error {
 		}
 	}
 	return nil
+}
+
+// nullConditionStatements reports, statement by statement, whether the
+// Condition the evaluator reads is a literal null, which the typed decode
+// cannot tell apart from no Condition. It takes the route
+// PolicyDocument.UnmarshalJSON takes — Statement through a generic value and
+// back — so keys that differ only in case, such as "condition" and
+// "Condition", resolve as they do for the evaluator rather than in document
+// order.
+func nullConditionStatements(raw string) ([]bool, error) {
+	var aux struct {
+		Statement interface{} `json:"Statement"`
+	}
+	if err := json.Unmarshal([]byte(raw), &aux); err != nil {
+		return nil, err
+	}
+	var stmts []interface{}
+	switch s := aux.Statement.(type) {
+	case map[string]interface{}:
+		stmts = []interface{}{s}
+	case []interface{}:
+		stmts = s
+	}
+	nullCondition := make([]bool, len(stmts))
+	for i, stmt := range stmts {
+		data, err := json.Marshal(stmt)
+		if err != nil {
+			return nil, err
+		}
+		var probe struct {
+			Condition json.RawMessage `json:"Condition"`
+		}
+		if err := json.Unmarshal(data, &probe); err != nil {
+			return nil, err
+		}
+		nullCondition[i] = string(probe.Condition) == "null"
+	}
+	return nullCondition, nil
+}
+
+// ConditionValue reports whether operator's evaluator can read v: a JSON
+// type it can compare, and a value it parses rather than skips. A null
+// value would panic it, an empty list never matches, and an unreadable
+// value is skipped — dropping a Deny or matching a negated Allow.
+func ConditionValue(operator string, v interface{}) bool {
+	list, ok := v.([]interface{})
+	if !ok {
+		list = []interface{}{v}
+	}
+	base, qualified := strings.CutPrefix(operator, "ForAllValues:")
+	if !qualified {
+		base, _ = strings.CutPrefix(operator, "ForAnyValue:")
+	}
+	for _, item := range list {
+		switch item.(type) {
+		case string, float64, bool:
+		default:
+			return false
+		}
+		if !conditionValueReadable(base, item) {
+			return false
+		}
+	}
+	return len(list) > 0
+}
+
+// conditionValueReadable reports whether the evaluator for base parses item
+// the way it reads it. An operator without a case here is refused, so one
+// added to the policy engine cannot be accepted before it is checked.
+func conditionValueReadable(base string, item interface{}) bool {
+	switch base {
+	case "StringEquals", "StringNotEquals", "StringLike", "StringNotLike",
+		"StringEqualsIgnoreCase", "StringNotEqualsIgnoreCase", "ArnEquals", "ArnLike":
+		return true
+	case "NumericEquals", "NumericNotEquals", "NumericLessThan", "NumericLessThanEquals",
+		"NumericGreaterThan", "NumericGreaterThanEquals":
+		switch v := item.(type) {
+		case float64:
+			return true
+		case string:
+			_, err := strconv.ParseFloat(v, 64)
+			return err == nil
+		}
+	case "DateEquals", "DateNotEquals", "DateLessThan", "DateLessThanEquals",
+		"DateGreaterThan", "DateGreaterThanEquals":
+		if v, ok := item.(string); ok {
+			_, err := time.Parse(time.RFC3339, v)
+			return err == nil
+		}
+	case "Bool", "Null":
+		switch v := item.(type) {
+		case bool:
+			return true
+		case string:
+			return strings.EqualFold(v, "true") || strings.EqualFold(v, "false")
+		}
+	case "IpAddress", "NotIpAddress":
+		if v, ok := item.(string); ok {
+			if _, _, err := net.ParseCIDR(v); err == nil {
+				return true
+			}
+			return net.ParseIP(v) != nil
+		}
+	}
+	return false
 }
 
 // arnService returns the service field of an ARN in any partition, so a
@@ -210,7 +343,9 @@ func adminCaller(operation string, ctx *PolicyContext) bool {
 
 // matchesDenyStatement reports whether the JSON policy carries a statement
 // matching this request with Effect Deny. Malformed policies return false;
-// the caller's normal evaluation still denies them.
+// the caller's normal evaluation still denies them. A Deny whose condition
+// cannot be evaluated applies: it was written to protect the resource, and
+// dropping it would widen access.
 func matchesDenyStatement(operation, principal, resourcePolicy, resourceARN string, ctx *PolicyContext) bool {
 	if resourcePolicy == "" {
 		return false
@@ -227,11 +362,17 @@ func matchesDenyStatement(operation, principal, resourcePolicy, resourceARN stri
 		if stmt.Effect != "Deny" ||
 			!matchesDenyCaller(stmt.Principal, principal, ctx) ||
 			!matchesAction(stmt.Action, fullAction) ||
-			(resourceARN != "" && !matchesResource(stmt.Resource, resourceARN)) ||
-			!matchesConditions(stmt.Condition, ctx) {
+			(resourceARN != "" && !matchesResource(stmt.Resource, resourceARN)) {
 			continue
 		}
-		return true
+		matched, usable := matchesConditions(stmt.Condition, ctx)
+		if !usable {
+			glog.Warningf("S3Tables: policy on %q has a Deny condition that cannot be evaluated; denying %s for %s until the policy is replaced", resourceARN, fullAction, principal)
+			return true
+		}
+		if matched {
+			return true
+		}
 	}
 	return false
 }
@@ -294,7 +435,8 @@ func checkPermission(operation, principal, owner, resourcePolicy, resourceARN st
 			continue
 		}
 
-		if !matchesConditions(stmt.Condition, ctx) {
+		// A condition that cannot be evaluated never grants.
+		if matched, usable := matchesConditions(stmt.Condition, ctx); !usable || !matched {
 			continue
 		}
 
@@ -527,34 +669,52 @@ func matchesActionPattern(pattern, action string) bool {
 	return wildcard.MatchesWildcard(pattern, action)
 }
 
-func matchesConditions(conditions map[string]map[string]interface{}, ctx *PolicyContext) bool {
+// matchesConditions reports whether every condition holds for ctx, and
+// whether the block can be evaluated at all: one unsupported operator, keyless
+// operator or uncomparable value leaves it unusable, and the caller decides
+// what that means for the statement's Effect. Every operator is checked
+// before answering, so the verdict does not depend on map iteration order.
+func matchesConditions(conditions map[string]map[string]interface{}, ctx *PolicyContext) (matched, usable bool) {
 	if len(conditions) == 0 {
-		return true
+		return true, true
 	}
-	if ctx == nil {
-		return false
-	}
+	matched = true
 	for operator, conditionValues := range conditions {
-		if !matchesConditionOperator(operator, conditionValues, ctx) {
-			return false
+		ok, valid := matchesConditionOperator(operator, conditionValues, ctx)
+		if !valid {
+			return false, false
 		}
+		matched = matched && ok
 	}
-	return true
+	return matched, true
 }
 
-func matchesConditionOperator(operator string, conditionValues map[string]interface{}, ctx *PolicyContext) bool {
+func matchesConditionOperator(operator string, conditionValues map[string]interface{}, ctx *PolicyContext) (matched, usable bool) {
 	evaluator, err := policy_engine.GetConditionEvaluator(operator)
 	if err != nil {
-		return false
+		return false, false
+	}
+	// With no keys the loop below would hold for every request; a stored
+	// keyless operator is unusable, so it never lets an Allow grant.
+	if len(conditionValues) == 0 {
+		return false, false
+	}
+	for _, value := range conditionValues {
+		if !ConditionValue(operator, value) {
+			return false, false
+		}
+	}
+	if ctx == nil {
+		return false, true
 	}
 
 	for key, value := range conditionValues {
 		contextVals := getConditionContextValues(key, ctx)
 		if !evaluator.Evaluate(value, contextVals) {
-			return false
+			return false, true
 		}
 	}
-	return true
+	return true, true
 }
 
 func getConditionContextValues(key string, ctx *PolicyContext) []string {
