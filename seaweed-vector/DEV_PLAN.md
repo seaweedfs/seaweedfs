@@ -78,7 +78,8 @@ What already exists, with the files that hold it:
   `build_index_task` (one delta per shard, named
   `<column>-w<worker>-v<version>`, built with `create_index_builder(..)
   .fragments(..)`) and `optimize_policy` (append deltas until `MAX_DELTAS = 8`,
-  then merge). Nothing calls these three yet; `tests/index.rs`,
+  then Lance's default options, which promise no merge; see phase 3).
+  Nothing calls these three yet; `tests/index.rs`,
   `tests/plan_search.rs` and `tests/engine_query.rs` exercise them with
   `ivf_flat(4)` indexes.
 - **Lance 10.0.0 offers** `VectorIndexParams::ivf_flat`, `ivf_pq`,
@@ -167,8 +168,8 @@ The Lance maintenance worker (`weed-worker`) gets a new job type,
   engines are registered, splits the uncovered fragments with `plan_index`
   and has each engine run `build_index_task` for its shard, producing one
   named delta per shard. This is what `index.rs` was written for; the worker
-  drives it, the engines build, and `optimize_policy` keeps the delta count
-  under eight.
+  drives it, the engines build, and the shared `optimize_policy` keeps each
+  name's delta count under eight.
 
 ### Keeping it covering
 
@@ -209,8 +210,16 @@ single/distributed) are the gate:
   `tests/index.rs` asserts `coverage_known` after build, append and merge.
 - Index names never mix within a shard set; the router and `plan.rs` group by
   name, and `with_index_segments` rejects mixed names.
-- Segment count per index stays under `MAX_DELTAS` through `optimize_policy`,
-  so `SegmentList` and per-query fan-out stay bounded.
+- Segment count per index name stays under `MAX_DELTAS`: at the limit
+  `optimize_policy` passes an explicit `OptimizeOptions::merge(deltas)`,
+  since Lance's default options may append another delta instead of
+  merging. A test runs repeated append-and-optimize cycles and checks the
+  actual segment counts.
+- Coverage is measured as the union over an index's names. After a sharded
+  build each name misses the other shards' fragments, so a per-name count
+  would extend every shard over the whole table and duplicate the index.
+  An optimize extends one name only, the one with the fewest deltas; a test
+  checks that two disjoint shards stay disjoint through it.
 - `resident_bytes` is the index files' size and `tail_bytes` the uncovered
   fragments' size; the controller's `max_scan_mb` and memory sizing need no
   change for IVF_FLAT, and PQ only makes slots smaller.
@@ -273,9 +282,15 @@ single/distributed) are the gate:
 ### Phase 3 — Keep it covering (small)
 
 - Relative budget and `retrain` policy in `lance_optimize_indices` for vector
-  tables.
-- Test: append 20% new rows, run the job, coverage returns to full and the
-  delta count stays under eight.
+  tables. The retrain rebuilds through the builder with partitions for the
+  current row count; Lance's `OptimizeOptions::retrain()` does not size them.
+- Union-based coverage over an index's names, extension scoped to one name,
+  and `optimize_policy` with an explicit merge of all deltas at
+  `MAX_DELTAS`, shared with the Enterprise builds in the worker crate.
+- Tests: append and optimize nine times and check the delta counts climb to
+  the limit and fold; two names on disjoint fragments stay disjoint through
+  an optimize; the end-to-end test runs the job after a tenth of the index
+  is appended and again after the table has grown fivefold.
 
 ### Phase 4 — Gateway, docs and gates (small)
 
@@ -289,7 +304,8 @@ single/distributed) are the gate:
 ### Phase 5 — Enterprise distributed builds and placement (medium)
 
 - Drive `plan_index` / `build_index_task` from the worker job when engines
-  are registered; `optimize_policy` for merges.
+  are registered; replace the Enterprise copy of `optimize_policy` with the
+  shared one, which merges at the limit.
 - Measure four engines on 1M × 384 with ANN: latency, warm time of a merged
   segment, placement epochs per merge.
 - mono s3vectors legs with the index enabled, go and rust volume servers,
