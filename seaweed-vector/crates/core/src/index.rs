@@ -194,6 +194,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn build_uses_the_tables_metric() {
+        for (metric, distance) in [
+            ("COSINE", DistanceType::Cosine),
+            ("DOT_PRODUCT", DistanceType::Dot),
+            ("L2", DistanceType::L2),
+        ] {
+            let dir = TempDir::new().unwrap();
+            let rows = testing::vectors(300, DIM);
+            let mut dataset =
+                testing::write_dataset_with_metric(&dir, &rows, &["a"; 300], metric).await;
+            let table = VectorTable::resolve(&dataset, None, None).unwrap();
+            assert_eq!(distance_metric(&dataset, "vector"), distance);
+            build(&mut dataset, &table.vector_column, INDEX_NAME, 4, false)
+                .await
+                .unwrap();
+            for vector in testing::vectors(3, DIM) {
+                let q = Query {
+                    distance,
+                    ..exact(&vector, 10)
+                };
+                let flat = query::flat(&dataset, &table, &q).await.unwrap();
+                let ann = query::ann(
+                    &dataset,
+                    &table,
+                    &Query {
+                        nprobes: Some(4),
+                        ..q
+                    },
+                )
+                .await
+                .unwrap();
+                assert_eq!(flat.len(), ann.len(), "{metric}");
+                for (f, a) in flat.iter().zip(ann.iter()) {
+                    assert!(
+                        (f.distance - a.distance).abs() < 1e-5,
+                        "{metric}: {flat:?} vs {ann:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn optimize_appends_then_retrain_folds_segments() {
         let dir = TempDir::new().unwrap();
         let mut dataset =
@@ -203,13 +246,17 @@ mod tests {
             .await
             .unwrap();
         testing::append_dataset(&mut dataset, &testing::vectors(40, DIM), &["b"; 40]).await;
-        optimize(&mut dataset, false).await.unwrap();
+        optimize(&mut dataset, &table.vector_column, false)
+            .await
+            .unwrap();
         let cov = &coverage(&dataset, "vector").await.unwrap()[0];
         assert_eq!(cov.segments, 2);
         assert!(cov.unindexed_fragments.is_empty());
 
         testing::append_dataset(&mut dataset, &testing::vectors(40, DIM), &["c"; 40]).await;
-        optimize(&mut dataset, true).await.unwrap();
+        optimize(&mut dataset, &table.vector_column, true)
+            .await
+            .unwrap();
         let cov = &coverage(&dataset, "vector").await.unwrap()[0];
         assert_eq!(cov.segments, 1);
         assert!(cov.coverage_known);

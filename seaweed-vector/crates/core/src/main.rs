@@ -308,7 +308,7 @@ async fn main() -> Result<()> {
                     .await?;
                 }
                 IndexAction::Optimize { retrain, .. } => {
-                    index::optimize(&mut dataset, retrain).await?;
+                    index::optimize(&mut dataset, &table.vector_column, retrain).await?;
                 }
             }
             println!(
