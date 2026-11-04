@@ -38,19 +38,29 @@ func (s3a *S3ApiServer) checkAdminAuth(ctx context.Context) error {
 	if len(authHeaders) == 0 {
 		return status.Error(codes.Unauthenticated, "missing authorization metadata")
 	}
-	raw := strings.TrimSpace(authHeaders[0])
-	parts := strings.Fields(raw)
-	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") || parts[1] == "" {
-		return status.Error(codes.Unauthenticated, "authorization header must use Bearer scheme")
+	var lastErr error
+	for _, raw := range authHeaders {
+		raw = strings.TrimSpace(raw)
+		parts := strings.Fields(raw)
+		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") || parts[1] == "" {
+			lastErr = status.Error(codes.Unauthenticated, "authorization header must use Bearer scheme")
+			continue
+		}
+		parsed, err := security.DecodeJwt(signingKey, security.EncodedJwt(parts[1]), &security.SeaweedFilerAdminClaims{})
+		if err != nil || parsed == nil || !parsed.Valid {
+			lastErr = status.Error(codes.Unauthenticated, "invalid admin token")
+			continue
+		}
+		if claims, ok := parsed.Claims.(*security.SeaweedFilerAdminClaims); !ok || claims.SessionId != "" {
+			lastErr = status.Error(codes.Unauthenticated, "invalid admin token")
+			continue
+		}
+		return nil
 	}
-	parsed, err := security.DecodeJwt(signingKey, security.EncodedJwt(parts[1]), &security.SeaweedFilerAdminClaims{})
-	if err != nil || parsed == nil || !parsed.Valid {
-		return status.Error(codes.Unauthenticated, "invalid admin token")
+	if lastErr != nil {
+		return lastErr
 	}
-	if claims, ok := parsed.Claims.(*security.SeaweedFilerAdminClaims); !ok || claims.SessionId != "" {
-		return status.Error(codes.Unauthenticated, "invalid admin token")
-	}
-	return nil
+	return status.Error(codes.Unauthenticated, "invalid admin token")
 }
 
 func checkLocalPeer(ctx context.Context) error {

@@ -66,7 +66,14 @@ func WithS3InternalAdminAuth(ctx context.Context) (context.Context, time.Duratio
 	if token == "" {
 		return ctx, 0
 	}
-	return metadata.AppendToOutgoingContext(ctx, "authorization", security.BearerPrefix+string(token)), time.Duration(expiresAfterSec) * time.Second
+	md, ok := metadata.FromOutgoingContext(ctx)
+	if ok {
+		md = md.Copy()
+		md.Set("authorization", security.BearerPrefix+string(token))
+	} else {
+		md = metadata.Pairs("authorization", security.BearerPrefix+string(token))
+	}
+	return metadata.NewOutgoingContext(ctx, md), time.Duration(expiresAfterSec) * time.Second
 }
 
 func (s *PropagatingCredentialStore) propagateChange(ctx context.Context, fn func(context.Context, s3_pb.SeaweedS3IamCacheClient) error) {

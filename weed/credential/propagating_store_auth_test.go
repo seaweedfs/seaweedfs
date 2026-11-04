@@ -62,3 +62,24 @@ func TestWithS3InternalAdminAuth_ZeroExpiry_ZeroTTL(t *testing.T) {
 		t.Fatalf("expected zero TTL for no-expiry token, got %v", ttl)
 	}
 }
+
+func TestWithS3InternalAdminAuth_ReplacesExistingAuthorization(t *testing.T) {
+	const k = "propagation-test-signing-key"
+	util.GetViper().Set("jwt.filer_signing.key", k)
+	defer util.GetViper().Set("jwt.filer_signing.key", "")
+	util.GetViper().Set("jwt.filer_signing.expires_after_seconds", 60)
+
+	initialCtx := metadata.AppendToOutgoingContext(context.Background(), "authorization", "stale-token")
+	ctx, _ := WithS3InternalAdminAuth(initialCtx)
+	md, ok := metadata.FromOutgoingContext(ctx)
+	if !ok {
+		t.Fatal("expected outgoing metadata to be set")
+	}
+	headers := md.Get("authorization")
+	if len(headers) != 1 {
+		t.Fatalf("expected exactly one authorization header, got %v", headers)
+	}
+	if headers[0] == "stale-token" {
+		t.Fatalf("expected fresh token, still got stale token")
+	}
+}
