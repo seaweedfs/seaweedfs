@@ -253,7 +253,7 @@ func RetryWithBackoff(ctx context.Context, name string, maxDuration time.Duratio
 			sleepTime = remaining
 		}
 		glog.V(1).Infof("retry %s: retrying in %v: %v", name, sleepTime, err)
-		timer := time.NewTimer(sleepTime)
+		timer := retryBackoffTimer(sleepTime)
 		select {
 		case <-ctx.Done():
 			if !timer.Stop() {
@@ -268,6 +268,8 @@ func RetryWithBackoff(ctx context.Context, name string, maxDuration time.Duratio
 		}
 	}
 }
+
+var retryBackoffTimer = time.NewTimer
 
 // retryHintSlack lands a hinted retry just after the server is ready, jittered
 // so clients refused together do not retry together.
