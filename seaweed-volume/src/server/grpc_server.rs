@@ -10044,43 +10044,54 @@ mod tests {
         assert!(!std::path::Path::new(&format!("{}.copying", vif)).exists());
     }
 
+    /// Polls `copy` until `staging` exists, then drops it as a cancelled RPC
+    /// would.
+    async fn cancel_once_staged(copy: impl std::future::Future, staging: &str) {
+        let staged = async {
+            while !std::path::Path::new(staging).exists() {
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            }
+        };
+        tokio::select! {
+            _ = copy => panic!("a stalled copy must not complete"),
+            r = tokio::time::timeout(std::time::Duration::from_secs(5), staged) => {
+                r.expect("staging file was not created")
+            }
+        }
+    }
+
     // A copy dropped mid-stream, as when its RPC is cancelled, still removes
     // the staged copy and leaves the destination as it was.
     #[tokio::test]
     async fn test_optional_copy_removes_staging_when_cancelled() {
         let dest_tmp = TempDir::new().unwrap();
         let dir = dest_tmp.path().to_str().unwrap();
-        let cancel = std::time::Duration::from_millis(50);
 
         let ecsum = format!("{}/1.ecsum", dir);
+        let staging = format!("{}.copying", ecsum);
         std::fs::write(&ecsum, b"local sidecar").unwrap();
         let mut stream = copy_stream_after_bytes(true);
-        assert!(
-            tokio::time::timeout(
-                cancel,
-                drain_optional_copy_to_file(&mut stream, &ecsum, ".ecsum")
-            )
-            .await
-            .is_err()
-        );
+        cancel_once_staged(
+            drain_optional_copy_to_file(&mut stream, &ecsum, ".ecsum"),
+            &staging,
+        )
+        .await;
         assert_eq!(std::fs::read(&ecsum).unwrap(), b"local sidecar");
-        assert!(!std::path::Path::new(&format!("{}.copying", ecsum)).exists());
+        assert!(!std::path::Path::new(&staging).exists());
 
         let vif = format!("{}/1.vif", dir);
+        let staging = format!("{}.copying", vif);
         std::fs::write(&vif, b"local vif").unwrap();
-        assert!(
-            tokio::time::timeout(
-                cancel,
-                crate::server::store_ec::drain_optional_copy_stream(
-                    copy_stream_after_bytes(true),
-                    &vif
-                )
-            )
-            .await
-            .is_err()
-        );
+        cancel_once_staged(
+            crate::server::store_ec::drain_optional_copy_stream(
+                copy_stream_after_bytes(true),
+                &vif,
+            ),
+            &staging,
+        )
+        .await;
         assert_eq!(std::fs::read(&vif).unwrap(), b"local vif");
-        assert!(!std::path::Path::new(&format!("{}.copying", vif)).exists());
+        assert!(!std::path::Path::new(&staging).exists());
     }
 
     // A copy that mounts and then fails validation (check_copy_counts) is
