@@ -1964,10 +1964,12 @@ fn search_ec_corrupt_sets(
                     return None;
                 }
                 if plan(set, &mut inputs, gathers) {
-                    if k > 1 && spent >= EC_REBUILD_MAX_BYTES {
-                        return None;
+                    if k > 1 {
+                        if spent >= EC_REBUILD_MAX_BYTES {
+                            return None;
+                        }
+                        spent += corrupted.len();
                     }
-                    spent += corrupted.len();
                     if decode(&inputs, &mut candidate, gathers) {
                         let mut convicted: Vec<ShardId> = Vec::new();
                         let mut pos = 0usize;

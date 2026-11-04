@@ -894,10 +894,12 @@ func (s *Store) rebuildEcNeedleFromDroppedInputs(n *needle.Needle, needleId type
 					return nil, false
 				}
 				if plan(set) {
-					if k > 1 && spent >= ecRebuildMaxBytes {
-						return nil, false
+					if k > 1 {
+						if spent >= ecRebuildMaxBytes {
+							return nil, false
+						}
+						spent += len(corrupted)
 					}
-					spent += len(corrupted)
 					if decode() {
 						// The verdict convicts every differing range, and every
 						// other shard the set kept out of the decodes.
