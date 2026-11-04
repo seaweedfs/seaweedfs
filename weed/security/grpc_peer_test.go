@@ -66,3 +66,33 @@ func TestGrpcAdminPeerCredentials(t *testing.T) {
 		t.Fatalf("expected one authorization entry, got %v", md)
 	}
 }
+
+func TestCheckGrpcAdminToken(t *testing.T) {
+	key := SigningKey("test-signing-key-0123456789abcdef")
+	fresh := "Bearer " + string(GenJwtForFilerAdmin(key, 60))
+	stale := "Bearer " + string(GenJwtForFilerAdmin(SigningKey("another-key"), 60))
+
+	for name, tc := range map[string]struct {
+		values  []string
+		wantErr string
+	}{
+		"stale then fresh":    {[]string{stale, fresh}, ""},
+		"fresh then garbage":  {[]string{fresh, "garbage"}, ""},
+		"only stale":          {[]string{stale}, "invalid admin token"},
+		"basic then stale":    {[]string{"Basic dXNlcjpwYXNz", stale}, "invalid admin token"},
+		"no bearer value":     {[]string{"Basic dXNlcjpwYXNz", "garbage"}, "authorization header must use Bearer scheme"},
+		"lowercase scheme ok": {[]string{"bearer " + fresh[len("Bearer "):]}, ""},
+	} {
+		ctx := metadata.NewIncomingContext(context.Background(), metadata.MD{"authorization": tc.values})
+		err := CheckGrpcAdminToken(ctx, key)
+		if tc.wantErr == "" {
+			if err != nil {
+				t.Errorf("%s: unexpected error %v", name, err)
+			}
+			continue
+		}
+		if status.Code(err) != codes.Unauthenticated || status.Convert(err).Message() != tc.wantErr {
+			t.Errorf("%s: got %v, want Unauthenticated %q", name, err, tc.wantErr)
+		}
+	}
+}
