@@ -133,11 +133,12 @@ everything downstream keeps working because it only ever sees:
 - **Probes**: one count per query, `max(8, ceil(partitions / 10))` clamped to
   the partition count, taken from the largest delta of the index. A delta
   with no more partitions than that count is searched in full; a larger one
-  at that count. Lance searches at least that many partitions.
-  Under a filter the upper bound stays open, so Lance keeps probing until it
-  has k rows when a selective filter empties the probed partitions; without
-  a filter it stops at the count. Phase 0 measures; the perf suite's recall
-  gate decides.
+  at that count. Lance searches at least that many partitions. Under a
+  filter it may widen to four times the count until it has k rows, which a
+  selective filter needs; an open upper bound made Lance prepare every
+  partition for that and cost as much as the exact scan (201 ms against
+  104 ms for the 10% filter at 50k × 384). Without a filter it stops at the
+  count.
 
 ### Who builds, and when
 
@@ -246,8 +247,8 @@ single/distributed) are the gate:
 
 - Probe policy when an index exists: `minimum_nprobes` is the per-query
   count from the Probes rule above, taken from the largest delta;
-  `maximum_nprobes` equals that count without a filter and stays open with
-  one.
+  `maximum_nprobes` equals that count without a filter and four times it
+  with one.
 - `nprobes` in `QueryVectorsRequest` for tests and the CLI; zero means the
   policy.
 - Per-query log line and counters: segments searched, tail rows scanned,
