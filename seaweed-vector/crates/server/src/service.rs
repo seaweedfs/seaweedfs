@@ -374,6 +374,7 @@ pub struct VectorServer {
     client: NamespaceClient,
     fallback: FallbackOptions,
     read_cache: Option<Arc<dyn WrappingObjectStore>>,
+    nprobes: Option<usize>,
 }
 
 impl VectorServer {
@@ -382,10 +383,17 @@ impl VectorServer {
             client,
             fallback,
             read_cache: None,
+            nprobes: None,
         }
     }
 
     /// Serve repeated reads of write-once table files from `cache`.
+    /// Partitions every query probes, instead of the index's own default.
+    pub fn with_nprobes(mut self, nprobes: Option<usize>) -> Self {
+        self.nprobes = nprobes;
+        self
+    }
+
     pub fn with_read_cache(mut self, cache: ReadCache) -> Self {
         self.read_cache = Some(Arc::new(cache));
         self
@@ -678,7 +686,7 @@ impl VectorService for VectorServer {
             },
             postfilter: req.postfilter,
             distance,
-            nprobes: None,
+            nprobes: self.nprobes,
             index_segments: None,
             fragments: None,
         };
