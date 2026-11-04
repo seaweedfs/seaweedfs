@@ -101,6 +101,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn build_uses_the_tables_metric() {
+        for (metric, distance) in [
+            ("COSINE", DistanceType::Cosine),
+            ("DOT_PRODUCT", DistanceType::Dot),
+            ("EUCLIDEAN", DistanceType::L2),
+        ] {
+            let dir = TempDir::new().unwrap();
+            let rows = testing::vectors(300, DIM);
+            let mut dataset =
+                testing::write_dataset_with_metric(&dir, &rows, &["a"; 300], metric).await;
+            let table = VectorTable::resolve(&dataset, None, None).unwrap();
+            assert_eq!(distance_metric(&dataset, "vector"), distance);
+            build(&mut dataset, &table.vector_column, INDEX_NAME, 4, false)
+                .await
+                .unwrap();
+            for vector in testing::vectors(3, DIM) {
+                let q = Query {
+                    distance,
+                    ..exact(&vector, 10)
+                };
+                let flat = query::flat(&dataset, &table, &q).await.unwrap();
+                let ann = query::ann(
+                    &dataset,
+                    &table,
+                    &Query {
+                        nprobes: Some(4),
+                        ..q
+                    },
+                )
+                .await
+                .unwrap();
+                assert_eq!(flat.len(), ann.len(), "{metric}");
+                for (f, a) in flat.iter().zip(ann.iter()) {
+                    assert!(
+                        (f.distance - a.distance).abs() < 1e-5,
+                        "{metric}: {flat:?} vs {ann:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn optimize_appends_then_retrain_folds_segments() {
         let dir = TempDir::new().unwrap();
         let mut dataset =
