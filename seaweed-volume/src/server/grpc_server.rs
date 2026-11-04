@@ -9926,6 +9926,53 @@ mod tests {
         assert_eq!(std::fs::read(&dest).unwrap(), b"peer sidecar");
     }
 
+    // Missing-index recovery copies the peer's .vif the same way, so a peer
+    // without one cannot truncate the local .vif that carries the EC ratio.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_index_recovery_vif_copy_keeps_local_vif_when_peer_lacks_it() {
+        let (source_service, source_tmp) = make_local_service_with_volume("optional_vif", None);
+        let source_vif = format!("{}/1.vif", source_tmp.path().to_str().unwrap());
+        let _ = std::fs::remove_file(&source_vif);
+        let (port, _shutdown) = serve_source(source_service).await;
+        let channel = tonic::transport::Endpoint::from_shared(format!("http://127.0.0.1:{}", port))
+            .unwrap()
+            .connect()
+            .await
+            .unwrap();
+        let mut client = volume_server_pb::volume_server_client::VolumeServerClient::new(channel);
+        let request = volume_server_pb::CopyFileRequest {
+            volume_id: 1,
+            ext: ".vif".to_string(),
+            is_ec_volume: true,
+            compaction_revision: u32::MAX,
+            stop_offset: i64::MAX as u64,
+            ignore_source_file_not_found: true,
+            ..Default::default()
+        };
+
+        let dest_tmp = TempDir::new().unwrap();
+        let dest = format!("{}/1.vif", dest_tmp.path().to_str().unwrap());
+        std::fs::write(&dest, b"local vif").unwrap();
+
+        let missing = client
+            .copy_file(request.clone())
+            .await
+            .unwrap()
+            .into_inner();
+        crate::server::store_ec::drain_optional_copy_stream(missing, &dest)
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), b"local vif");
+        assert!(!std::path::Path::new(&format!("{}.copying", dest)).exists());
+
+        std::fs::write(&source_vif, b"peer vif").unwrap();
+        let present = client.copy_file(request).await.unwrap().into_inner();
+        crate::server::store_ec::drain_optional_copy_stream(present, &dest)
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), b"peer vif");
+    }
+
     // A copy that mounts and then fails validation (check_copy_counts) is
     // unmounted, not deleted. With a redb needle map the mount has already
     // built <idx base>.rdb; the failure cleanup must remove it with the other

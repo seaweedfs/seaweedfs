@@ -2162,7 +2162,7 @@ async fn fetch_ec_index_from_one_peer(
 
     match client.copy_file(copy_req(".vif", true)).await {
         Ok(resp) => {
-            if let Err(e) = drain_copy_stream(resp.into_inner(), vif_path).await {
+            if let Err(e) = drain_optional_copy_stream(resp.into_inner(), vif_path).await {
                 tracing::warn!(volume_id = m.vid.0, peer = %peer, "copy .vif: {}", e);
             }
         }
@@ -2170,6 +2170,28 @@ async fn fetch_ec_index_from_one_peer(
     }
 
     Ok(())
+}
+
+/// Drain an optional CopyFile stream into `<dest_path>.copying` and rename it
+/// into place only once the source sent bytes, so a peer without the file or a
+/// failed stream leaves an existing destination untouched, as Go's writeToFile
+/// does for ignore_source_file_not_found.
+pub(crate) async fn drain_optional_copy_stream(
+    stream: tonic::Streaming<crate::pb::volume_server_pb::CopyFileResponse>,
+    dest_path: &str,
+) -> io::Result<()> {
+    let staging = format!("{}.copying", dest_path);
+    let drained = drain_copy_stream(stream, &staging).await;
+    let has_bytes = fs::metadata(&staging).is_ok_and(|meta| meta.len() > 0);
+    if drained.is_ok() && has_bytes {
+        if let Err(e) = fs::rename(&staging, dest_path) {
+            let _ = fs::remove_file(&staging);
+            return Err(io::Error::other(format!("commit {}: {}", dest_path, e)));
+        }
+        return Ok(());
+    }
+    let _ = fs::remove_file(&staging);
+    drained
 }
 
 /// Drain a CopyFile stream into a local file, truncating it first.
