@@ -70,7 +70,7 @@ func (c *commandS3BucketAccess) Help() string {
 		# Grant anonymous read and list access
 		s3.bucket.access -name <bucket_name> -user anonymous -access Read,List
 
-		# Grant full anonymous access
+		# Grant anonymous read, write and list access
 		s3.bucket.access -name <bucket_name> -user anonymous -access Read,Write,List
 
 		# Remove all access for a user on a bucket
