@@ -1809,8 +1809,9 @@ const EC_REBUILD_MAX_BYTES: usize = 1 << 30;
 /// Handle a rebuild the single pass could not repair: shards besides the
 /// suspects can be corrupt over the same ranges and get read as reconstruction
 /// inputs. Each interval is gathered once from as many other shards as the
-/// recovery budget covers, and never from fewer than the shards outside every
-/// suspect. Then `search_ec_corrupt_sets` tries the candidate corrupt sets.
+/// recovery budget covers, and never from fewer than one decode needs or than
+/// the shards outside every suspect. Then `search_ec_corrupt_sets` tries the
+/// candidate corrupt sets.
 /// Mirrors Go's `rebuildEcNeedleFromDroppedInputs`.
 async fn rebuild_ec_needle_from_dropped_inputs(
     state: &Arc<VolumeServerState>,
@@ -1839,7 +1840,8 @@ async fn rebuild_ec_needle_from_dropped_inputs(
 
     let want = (EC_RECOVER_BUDGET / total_size.max(1))
         .min(total_shards - 1)
-        .max(total_shards - suspects.len());
+        .max(total_shards - suspects.len())
+        .max(data_shards);
     let mut gathers: Vec<Vec<Option<Vec<u8>>>> = Vec::with_capacity(metas.len());
     for iv in metas {
         let (bufs, is_deleted) =

@@ -376,11 +376,30 @@ func TestReadEcShardNeedleHealsCorruptSuspectNextToCleanOne(t *testing.T) {
 }
 
 // Past the recovery budget the corrupt-set search gathers only as wide as a
-// gather that excludes every suspect. A lone suspect still gets every other
-// shard, but two suspects lose the spare input the clean one would give.
+// gather that excludes every suspect, or one decode when that is narrower. A
+// lone suspect still gets every other shard, but two suspects lose the spare
+// input the clean one would give.
 func TestReadEcShardNeedleCorruptSetSearchPastBudget(t *testing.T) {
 	setEcRecoverBudget(t, 1)
 	store := newTestStore(t, 1)
+
+	// A needle over more shards than parity skips the single pass, so the
+	// search alone has to rebuild its one corrupt range.
+	const wideVid = needle.VolumeId(17)
+	wide := randomNeedleOfSize(77, 6*erasure_coding.ErasureCodingSmallBlockSize+1234)
+	ecVolume := encodeAndMountEcVolume(t, store, wideVid, []*needle.Needle{wide})
+	_, _, intervals, err := ecVolume.LocateEcShardNeedle(wide.Id, ecVolume.Version)
+	if err != nil {
+		t.Fatalf("locate needle: %v", err)
+	}
+	if len(intervals) <= ecVolume.ECContext.ParityShards {
+		t.Fatalf("needle covers %d intervals, want more than %d", len(intervals), ecVolume.ECContext.ParityShards)
+	}
+	shardId, shardOffset := ecVolume.IntervalToShardIdAndOffset(intervals[1])
+	corruptEcShardRange(t, ecVolume, shardId, shardOffset, int64(intervals[1].Size))
+	if err := readEcNeedleBack(t, store, wideVid, wide); err != nil {
+		t.Fatalf("one corrupt shard should reconstruct past the budget: %v", err)
+	}
 
 	n := rotParityManyShards(t, store, 15)
 	if err := readEcNeedleBack(t, store, 15, n); err != nil {
