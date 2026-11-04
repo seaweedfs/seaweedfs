@@ -45,6 +45,9 @@ $(VOLUME): $(VEC) $(WORKER) FORCE
 FORCE:
 
 build: $(WEED) $(VEC) $(WORKER) $(VOLUME)
+ifneq ($(VECTOR_WORKER),)
+build: $(CLI) $(LANCE_WORKER)
+endif
 
 test: build
 	./run_test.sh
@@ -53,4 +56,4 @@ perf: build $(CLI)
 	./run_perf.sh
 
 clean:
-	rm -f $(WEED) $(VEC) $(CLI) ./weed-vector-worker $(VOLUME)
+	rm -f $(WEED) $(VEC) $(CLI) $(LANCE_WORKER) ./weed-vector-worker $(VOLUME)
