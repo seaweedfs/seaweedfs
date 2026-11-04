@@ -411,7 +411,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                         </div>
                         <div class="mb-3" id="editUnshownActionsGroup" style="display: none;">
                             <label class="form-label">Other Bucket Permissions</label>
-                            <small class="form-text text-muted d-block mb-2">Bucket-scoped grants the permissions above cannot show. Uncheck a grant to remove it.</small>
+                            <small class="form-text text-muted d-block mb-2">Grants the permission and bucket pickers above cannot show. Uncheck a grant to remove it.</small>
                             <div id="editUnshownActions"></div>
                         </div>
                         <div class="mb-3">
@@ -760,7 +760,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                 if (action.startsWith('s3tables:')) {
                     const actionValue = action.slice('s3tables:'.length);
                     if (actionValue === '*') {
-                        globalBucketPerms.push('S3TablesAdmin');
+                        globalBucketPerms.push({ permission: 'S3TablesAdmin', action: action });
                         return;
                     }
                     const parts = actionValue.split(':');
@@ -769,7 +769,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     if (bucket) {
                         bucketActions.push({ permission: perm, bucketId: 's3tables:' + bucket, action: action });
                     } else {
-                        globalBucketPerms.push(perm);
+                        globalBucketPerms.push({ permission: perm, action: action });
                     }
                 } else if (action.includes(':')) {
                     const parts = action.split(':');
@@ -777,7 +777,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     const bucket = parts.slice(1).join(':').replace(/\/\*$/, '');
                     bucketActions.push({ permission: perm, bucketId: 's3:' + bucket, action: action });
                 } else {
-                    globalBucketPerms.push(action);
+                    globalBucketPerms.push({ permission: action, action: action });
                 }
             });
 
@@ -789,17 +789,21 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
 
             // If we have global bucket permissions (no colon), they apply to all buckets
             if (globalBucketPerms.length > 0) {
-                result.permissions = globalBucketPerms;
+                const listed = globalBucketPerms.filter(gp => hasPickerOption('editActions', gp.permission));
+                result.permissions = listed.map(gp => gp.permission);
                 result.applyToAll = true;
-                result.unshownActions = bucketActions.map(ba => ba.action);
+                result.unshownActions = globalBucketPerms.filter(gp => !listed.includes(gp)).map(gp => gp.action)
+                    .concat(bucketActions.map(ba => ba.action));
             } else if (bucketActions.length > 0) {
                 // The form saves every permission on every selected bucket, so it can
-                // show the grants only when they cover that full product.
+                // show the grants only when they cover that full product with listed options.
                 const perms = [...new Set(bucketActions.map(ba => ba.permission))];
                 const buckets = [...new Set(bucketActions.map(ba => ba.bucketId))];
                 const pairs = new Set(bucketActions.map(ba => JSON.stringify([ba.permission, ba.bucketId])));
+                const allListed = perms.every(perm => hasPickerOption('editActions', perm)) &&
+                    buckets.every(bucketId => hasPickerOption('editSelectedBuckets', bucketId));
 
-                if (pairs.size === perms.length * buckets.length) {
+                if (allListed && pairs.size === perms.length * buckets.length) {
                     result.permissions = perms;
                     result.specificBuckets = buckets;
                 } else {
@@ -808,6 +812,11 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             }
 
             return result;
+        }
+
+        function hasPickerOption(selectId, value) {
+            const select = document.getElementById(selectId);
+            return !!select && Array.from(select.options).some(option => option.value === value);
         }
 
         function parseBucketOptionValue(value) {
