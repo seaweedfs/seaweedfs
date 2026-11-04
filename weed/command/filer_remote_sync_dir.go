@@ -513,6 +513,7 @@ func processUpdateEvent(
 				// which shouldSendToRemote still reads as dirty when the mtime is
 				// past RemoteMtime (a touch), so it comes back here and restamps
 				// again, forever.
+				glog.V(2).Infof("skipping restamp of synced entry: %s/%s ts_ns=%d", filer_pb.MetadataEventTargetDirectory(resp), message.GetNewEntry().GetName(), resp.TsNs)
 				return nil
 			}
 			return updateLocalEntry(filerClient, message.NewParentPath, message.NewEntry, remoteEntry)
