@@ -19,6 +19,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"golang.org/x/net/http/httpguts"
 )
 
 func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.Request) {
@@ -145,6 +146,10 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 
 	// Forward validated POST form fields to the underlying PUT as headers.
 	applyPostPolicyFormHeaders(r, formValues)
+	if !validHeaderValues(r.Header) {
+		s3err.WriteErrorResponse(w, r, s3err.ErrMalformedPOSTRequest)
+		return
+	}
 
 	// Authorize the object like the PUT path.
 	if errCode := s3a.iam.AuthorizeObjectWrite(r, identity, bucket, object); errCode != s3err.ErrNone {
@@ -310,6 +315,19 @@ func applyPostPolicyFormHeaders(r *http.Request, formValues http.Header) {
 			r.Header.Set(k, formValues.Get(k))
 		}
 	}
+}
+
+// validHeaderValues rejects form values carrying control characters, which a
+// real PUT could not send and which would corrupt the volume upload framing.
+func validHeaderValues(h http.Header) bool {
+	for _, values := range h {
+		for _, v := range values {
+			if !httpguts.ValidHeaderFieldValue(v) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // postRequestsAcl reports whether the request carries ACL headers, whether
