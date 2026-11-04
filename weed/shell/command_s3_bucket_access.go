@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 
@@ -27,6 +28,26 @@ var canonicalActions = map[string]string{
 }
 
 const supportedActionNames = "Read, ReadAcp, Write, WriteAcp, List, Tagging, Admin"
+
+// canonicalActionList parses a comma-separated action list into canonical
+// names, skipping empty entries and repeats.
+func canonicalActionList(list string) ([]string, error) {
+	var actions []string
+	for _, a := range strings.Split(list, ",") {
+		a = strings.TrimSpace(a)
+		if a == "" {
+			continue
+		}
+		canonical, ok := canonicalActions[strings.ToLower(a)]
+		if !ok {
+			return nil, fmt.Errorf("invalid action %q: supported actions are %s", a, supportedActionNames)
+		}
+		if !slices.Contains(actions, canonical) {
+			actions = append(actions, canonical)
+		}
+	}
+	return actions, nil
+}
 
 func init() {
 	Commands = append(Commands, &commandS3BucketAccess{})
@@ -88,16 +109,13 @@ func (c *commandS3BucketAccess) Do(args []string, commandEnv *CommandEnv, writer
 
 	accessStr := strings.TrimSpace(*access)
 
-	// Validate and normalize actions to canonical casing
 	if accessStr != "" && strings.ToLower(accessStr) != "none" {
-		var normalized []string
-		for _, a := range strings.Split(accessStr, ",") {
-			a = strings.TrimSpace(a)
-			canonical, ok := canonicalActions[strings.ToLower(a)]
-			if !ok {
-				return fmt.Errorf("invalid action %q: must be %s, or none", a, supportedActionNames)
-			}
-			normalized = append(normalized, canonical)
+		normalized, err := canonicalActionList(accessStr)
+		if err != nil {
+			return err
+		}
+		if len(normalized) == 0 {
+			return fmt.Errorf("invalid -access %q: use %s, or none", accessStr, supportedActionNames)
 		}
 		accessStr = strings.Join(normalized, ",")
 	}

@@ -57,6 +57,13 @@ func (c *commandS3AnonymousSet) Do(args []string, commandEnv *CommandEnv, writer
 	if *access == "" {
 		return fmt.Errorf("-access is required")
 	}
+	var granted []string
+	if strings.ToLower(strings.TrimSpace(*access)) != "none" {
+		var err error
+		if granted, err = canonicalActionList(*access); err != nil {
+			return err
+		}
+	}
 
 	return commandEnv.withIamClient(func(ctx context.Context, client iam_pb.SeaweedIdentityAccessManagementClient) error {
 		// Get or create anonymous user
@@ -74,23 +81,8 @@ func (c *commandS3AnonymousSet) Do(args []string, commandEnv *CommandEnv, writer
 			}
 		}
 
-		// Add new actions unless "none"
-		if strings.ToLower(strings.TrimSpace(*access)) != "none" {
-			seen := make(map[string]struct{})
-			for _, action := range strings.Split(*access, ",") {
-				action = strings.TrimSpace(action)
-				if action != "" {
-					canonical, ok := canonicalActions[strings.ToLower(action)]
-					if !ok {
-						return fmt.Errorf("invalid action %q: supported actions are %s", action, supportedActionNames)
-					}
-					if _, dup := seen[canonical]; dup {
-						continue
-					}
-					seen[canonical] = struct{}{}
-					kept = append(kept, canonical+":"+*bucket)
-				}
-			}
+		for _, action := range granted {
+			kept = append(kept, action+":"+*bucket)
 		}
 
 		identity.Actions = kept

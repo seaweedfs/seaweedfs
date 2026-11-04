@@ -32,6 +32,19 @@ func TestCanonicalActionsAcceptAcpActions(t *testing.T) {
 	}
 }
 
+func TestCanonicalActionList(t *testing.T) {
+	got, err := canonicalActionList(" readacp, WriteAcp,,writeacp ,list")
+	if err != nil {
+		t.Fatalf("canonicalActionList: %v", err)
+	}
+	if want := []string{"ReadAcp", "WriteAcp", "List"}; !slices.Equal(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	if _, err := canonicalActionList("Read,PutObjectAcl"); err == nil {
+		t.Error("expected an error for an unsupported action")
+	}
+}
+
 func TestUpdateBucketActions_SetActions(t *testing.T) {
 	identity := &iam_pb.Identity{
 		Name:    "anonymous",
