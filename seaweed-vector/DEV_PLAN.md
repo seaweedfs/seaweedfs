@@ -189,7 +189,7 @@ single/distributed) are the gate:
   phase 5 measures how long a merged segment takes to warm and sets
   expectations for `warmup_timeout`.
 - Workers read index files the way they read data files, directly from the
-  filers and volume servers (seaweed-mono#954), and the files are write-once,
+  filers and volume servers, and the files are write-once,
   so the read cache and the warm path apply unchanged.
 - Query semantics are identical in both modes: each engine applies the same
   probe policy to the segments it owns, or the count the router passes in
