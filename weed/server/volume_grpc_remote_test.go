@@ -932,6 +932,22 @@ func TestFetchAndWriteReplicaBoundsASilentPeer(t *testing.T) {
 	}
 }
 
+func TestFetchAndWriteReplicaBoundGrowsWithTheChunk(t *testing.T) {
+	const mib = replicaMinBytesPerSec
+	for _, tc := range []struct {
+		size int
+		want time.Duration
+	}{
+		{0, fetchAndWriteReplicaTimeout},
+		{mib / 2, fetchAndWriteReplicaTimeout + 500*time.Millisecond},
+		{1024 * mib, fetchAndWriteReplicaTimeout + 1024*time.Second},
+	} {
+		if got := fetchAndWriteReplicaBound(tc.size); got != tc.want {
+			t.Errorf("fetchAndWriteReplicaBound(%d) = %v, want %v", tc.size, got, tc.want)
+		}
+	}
+}
+
 // TestGuardedPeerHTTPClientRejectsHTTPSDowngrade pins the downgrade guard the
 // global client carries: an HTTPS peer answering with a redirect to a
 // reachable http server must fail the upload rather than resend the body and
