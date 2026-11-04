@@ -284,6 +284,7 @@ func TestValidateVectorPolicyConditions(t *testing.T) {
 		`{"StringEquals":{"aws:ResourceTag/env":["prod",["dev"]]}}`,
 		`{"NumericLessThan":{"aws:RequestTag/priority":"low"}}`,
 		`{"StringEquals":{}}`,
+		`null`,
 	} {
 		if err := validateVectorPolicy(withCondition(bad)); err == nil {
 			t.Errorf("%s accepted", bad)
@@ -292,6 +293,10 @@ func TestValidateVectorPolicyConditions(t *testing.T) {
 	lower := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3vectors:GetIndex","Resource":"*","condition":{"StringEquals":{"aws:ResourceTag/env":"prod"}}}]}`
 	if err := validateVectorPolicy(lower); err == nil {
 		t.Error("a lower-case condition field was accepted")
+	}
+	denyNull := `{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Principal":"*","Action":"s3vectors:GetIndex","Resource":"*","Condition":null}]}`
+	if err := validateVectorPolicy(denyNull); err != nil {
+		t.Errorf("a Deny with a null Condition was rejected: %v", err)
 	}
 }
 

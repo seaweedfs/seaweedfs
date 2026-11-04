@@ -511,6 +511,9 @@ func validateVectorPolicy(raw string) error {
 				return fmt.Errorf("invalid policy document: %s must be spelled Condition", key)
 			}
 		}
+		if condition, ok := stmt["Condition"]; ok && condition == nil && stmt["Effect"] == "Allow" {
+			return fmt.Errorf("invalid policy document: an Allow statement's Condition must not be null")
+		}
 	}
 	for _, stmt := range typed.Statement {
 		for operator, keys := range stmt.Condition {
