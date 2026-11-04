@@ -2007,10 +2007,10 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "max by (instance) (SeaweedFS_master_volume_growth_frozen{cluster=~\"$cluster\"})",
+              "expr": "max by (cluster, instance) (SeaweedFS_master_volume_growth_frozen{cluster=~\"$cluster\"})",
               "range": true,
               "refId": "A",
-              "legendFormat": "{{instance}}"
+              "legendFormat": "{{cluster}} {{instance}}"
             }
           ],
           "pluginVersion": "10.3.1"
@@ -2103,10 +2103,10 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "sum by (collection, volumeId) (max_over_time(SeaweedFS_master_duplicate_volume_ids{cluster=~\"$cluster\"}[$__range]))",
+              "expr": "sum by (cluster, collection, volumeId) (max_over_time(SeaweedFS_master_duplicate_volume_ids{cluster=~\"$cluster\"}[$__range]))",
               "range": true,
               "refId": "A",
-              "legendFormat": "{{collection}} {{volumeId}}"
+              "legendFormat": "{{cluster}} {{collection}} {{volumeId}}"
             }
           ],
           "pluginVersion": "10.3.1"
