@@ -5014,12 +5014,14 @@ mod tests {
 
     /// The whole replicated write path, not only the request builder: the
     /// replica receives the forward, never answers, and the write fails at
-    /// the bound with an error naming that replica.
+    /// the bound for its body with an error naming that replica.
     #[tokio::test]
     async fn test_replicated_write_fails_at_the_bound_when_a_peer_never_answers() {
         let tmp = tempfile::TempDir::new().unwrap();
         let (peer, mut receipts) = spawn_silent_replica().await;
         let state = remote_manifest_state(&tmp, spawn_lookup(peer).await);
+        let body = bytes::Bytes::from(vec![0u8; REPLICA_MIN_BYTES_PER_SEC as usize]);
+        let bound = replica_request_timeout(body.len());
         let started = std::time::Instant::now();
         let sent = do_replicated_request(
             &state,
@@ -5028,7 +5030,7 @@ mod tests {
             "/1,01ab",
             "",
             &axum::http::HeaderMap::new(),
-            Some(bytes::Bytes::from_static(b"x")),
+            Some(body),
         )
         .await;
         let took = started.elapsed();
@@ -5042,8 +5044,7 @@ mod tests {
         let error = sent.expect_err("a silent replica cannot ack the write");
         assert!(error.contains(&peer.to_string()), "{error}");
         assert!(
-            took >= REPLICA_REQUEST_TIMEOUT
-                && took < REPLICA_REQUEST_TIMEOUT + std::time::Duration::from_secs(5),
+            took >= bound && took < bound + std::time::Duration::from_secs(5),
             "{took:?}"
         );
     }
