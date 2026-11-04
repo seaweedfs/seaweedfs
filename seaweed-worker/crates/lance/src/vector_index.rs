@@ -95,14 +95,16 @@ pub async fn build(
     Ok(())
 }
 
-/// Extend the table's indices over rows written since they were built: a new
-/// delta segment, or with `retrain` one index trained again on all rows.
-pub async fn optimize(dataset: &mut Dataset, retrain: bool) -> Result<()> {
-    let options = if retrain {
+/// Extend the indices on `vector_column` over rows written since they were
+/// built: a new delta segment, or with `retrain` one index trained again on
+/// all rows. Indices on other columns are left alone.
+pub async fn optimize(dataset: &mut Dataset, vector_column: &str, retrain: bool) -> Result<()> {
+    let mut options = if retrain {
         OptimizeOptions::retrain()
     } else {
         OptimizeOptions::append()
     };
+    options.index_names = Some(index_names(dataset, vector_column).await?);
     dataset.optimize_indices(&options).await?;
     dataset.checkout_latest().await?;
     Ok(())

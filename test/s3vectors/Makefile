@@ -53,4 +53,4 @@ perf: build $(CLI)
 	./run_perf.sh
 
 clean:
-	rm -f $(WEED) $(VEC) ./weed-vector-worker $(VOLUME)
+	rm -f $(WEED) $(VEC) $(CLI) ./weed-vector-worker $(VOLUME)
