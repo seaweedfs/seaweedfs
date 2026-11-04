@@ -409,6 +409,11 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                                 <small class="form-text text-muted">Hold Ctrl/Cmd to select multiple buckets</small>
                             </div>
                         </div>
+                        <div class="mb-3" id="editUnshownActionsGroup" style="display: none;">
+                            <label class="form-label">Other Bucket Permissions</label>
+                            <small class="form-text text-muted d-block mb-2">Bucket-scoped grants that cannot be combined with the all-bucket permissions above. Uncheck a grant to remove it.</small>
+                            <div id="editUnshownActions"></div>
+                        </div>
                         <div class="mb-3">
                             <label for="editPolicies" class="form-label">Attached Policies</label>
                             <select multiple class="form-control" id="editPolicies" name="policies" size="5">
@@ -573,8 +578,6 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
 
         // Global variable to store available buckets
         var availableBuckets = [];
-        // Bucket-scoped actions of the user being edited that the form cannot show.
-        var editUnshownActions = [];
         var bucketPermissionCounter = 0;
         const s3TablesPermissions = new Set([
             'CreateTableBucket',
@@ -812,6 +815,32 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             return { type: 's3', name: value };
         }
 
+        function renderUnshownActions(actions) {
+            const container = document.getElementById('editUnshownActions');
+            container.replaceChildren();
+            actions.forEach((action, i) => {
+                const wrapper = document.createElement('div');
+                wrapper.className = 'form-check';
+                const input = document.createElement('input');
+                input.className = 'form-check-input';
+                input.type = 'checkbox';
+                input.id = 'editUnshownAction' + i;
+                input.value = action;
+                input.checked = true;
+                const label = document.createElement('label');
+                label.className = 'form-check-label';
+                label.htmlFor = input.id;
+                label.textContent = action;
+                wrapper.append(input, label);
+                container.appendChild(wrapper);
+            });
+            document.getElementById('editUnshownActionsGroup').style.display = actions.length > 0 ? '' : 'none';
+        }
+
+        function selectedUnshownActions() {
+            return Array.from(document.querySelectorAll('#editUnshownActions input:checked')).map(input => input.value);
+        }
+
         // Build bucket permission action strings using original permissions dropdown
         /**
          * Builds bucket permission strings based on selected permissions and bucket scope.
@@ -951,7 +980,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     const user = await response.json();
 
                     // Populate edit form
-                    editUnshownActions = [];
+                    renderUnshownActions([]);
                     document.getElementById('editUsername').value = username;
                     document.getElementById('editEmail').value = user.email || '';
 
@@ -972,7 +1001,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     // Populate bucket permissions using original permissions dropdown
                     if (user.actions && user.actions.length > 0) {
                         const bucketPerms = parseBucketPermissions(user.actions);
-                        editUnshownActions = bucketPerms.unshownActions;
+                        renderUnshownActions(bucketPerms.unshownActions);
 
                         // Set permissions in the original multi-select
                         const actionsSelect = document.getElementById('editActions');
@@ -1250,7 +1279,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
 
             const userData = {
                 email: document.getElementById('editEmail').value,
-                actions: [...new Set([...allActions, ...editUnshownActions])],
+                actions: [...new Set([...allActions, ...selectedUnshownActions()])],
                 policy_names: Array.from(document.getElementById('editPolicies').selectedOptions).map(option => option.value)
             };
 
