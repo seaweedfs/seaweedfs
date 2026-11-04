@@ -230,22 +230,29 @@ func TestMountEcShards_FallsBackToLocationDiskTypeWhenEmpty(t *testing.T) {
 	}
 }
 
-// TestMountEcShards_ReportsFileAndDeleteCounts pins the mount notification to
-// the counts the full EC heartbeat carries (EcVolume.FileAndDeleteCount):
-// every .ecx entry, and the deletes journaled in .ecj.
-func TestMountEcShards_ReportsFileAndDeleteCounts(t *testing.T) {
-	store, captured, vid, collection, plant := setupECStoreWithMixedDisks(t)
-	plant()
-
+// writeEcCounts gives the planted volume three .ecx entries and one deleted
+// needle, journaled twice so a count of .ecj records would read 2.
+func writeEcCounts(t *testing.T, store *Store, collection string, vid needle.VolumeId) {
+	t.Helper()
 	base := erasure_coding.EcShardFileName(collection, store.Locations[0].Directory, int(vid))
 	if err := os.WriteFile(base+".ecx", make([]byte, 3*types.NeedleMapEntrySize), 0o644); err != nil {
 		t.Fatalf("write .ecx: %v", err)
 	}
-	ecj := make([]byte, types.NeedleIdSize)
-	types.NeedleIdToBytes(ecj, types.NeedleId(7))
+	ecj := make([]byte, 2*types.NeedleIdSize)
+	types.NeedleIdToBytes(ecj[:types.NeedleIdSize], types.NeedleId(7))
+	types.NeedleIdToBytes(ecj[types.NeedleIdSize:], types.NeedleId(7))
 	if err := os.WriteFile(base+".ecj", ecj, 0o644); err != nil {
 		t.Fatalf("write .ecj: %v", err)
 	}
+}
+
+// TestMountEcShards_ReportsFileAndDeleteCounts pins the mount notification to
+// the counts the full EC heartbeat carries (EcVolume.FileAndDeleteCount):
+// every .ecx entry, and the distinct deletes journaled in .ecj.
+func TestMountEcShards_ReportsFileAndDeleteCounts(t *testing.T) {
+	store, captured, vid, collection, plant := setupECStoreWithMixedDisks(t)
+	plant()
+	writeEcCounts(t, store, collection, vid)
 
 	if err := store.MountEcShards(collection, vid, 0, ""); err != nil {
 		t.Fatalf("MountEcShards: %v", err)
@@ -260,5 +267,41 @@ func TestMountEcShards_ReportsFileAndDeleteCounts(t *testing.T) {
 	heartbeatMsg := findHeartbeatShard(t, hb, vid)
 	if heartbeatMsg.FileCount != 3 || heartbeatMsg.DeleteCount != 1 {
 		t.Errorf("heartbeat counts = (%d, %d), want (3, 1)", heartbeatMsg.FileCount, heartbeatMsg.DeleteCount)
+	}
+}
+
+// TestNewStore_StartupEcMessageReportsFileAndDeleteCounts covers the message
+// the startup scan publishes for a shard it loads.
+func TestNewStore_StartupEcMessageReportsFileAndDeleteCounts(t *testing.T) {
+	store, _, vid, collection, plant := setupECStoreWithMixedDisks(t)
+	plant()
+	writeEcCounts(t, store, collection, vid)
+
+	restarted := NewStore(nil, "localhost", 8081, 18081, "http://localhost:8081", "store-id-restarted",
+		[]string{store.Locations[0].Directory, store.Locations[1].Directory},
+		[]int32{100, 100},
+		[]util.MinFreeSpace{{}, {}},
+		"",
+		NeedleMapInMemory,
+		[]types.DiskType{types.HardDriveType, types.SsdType},
+		nil,
+		3,
+		stats.DefaultDiskIOProbeConfig(),
+	)
+	t.Cleanup(restarted.Close)
+
+	for {
+		select {
+		case msg := <-restarted.NewEcShardsChan:
+			if msg.Id != uint32(vid) {
+				continue
+			}
+			if msg.FileCount != 3 || msg.DeleteCount != 1 {
+				t.Errorf("startup NewEcShardsChan counts = (%d, %d), want (3, 1)", msg.FileCount, msg.DeleteCount)
+			}
+			return
+		default:
+			t.Fatalf("no startup NewEcShardsChan message for volume %d", vid)
+		}
 	}
 }
