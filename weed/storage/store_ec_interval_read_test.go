@@ -283,12 +283,10 @@ func TestReadEcShardNeedleHealsWhenRebuildInputAlsoRotted(t *testing.T) {
 	}
 }
 
-// With as many corrupt shards as parity over the same range, every cheap decode
-// reads at least two corrupt inputs. The read has to find the full corrupt set.
-func TestReadEcShardNeedleHealsWhenParityManyShardsRotted(t *testing.T) {
-	store := newTestStore(t, 1)
-	const vid = needle.VolumeId(13)
-
+// rotParityManyShards stores a one-interval needle and corrupts its range on
+// its own shard and on the lowest-numbered survivors, as many as parity, so
+// every cheap decode reads at least two corrupt inputs.
+func rotParityManyShards(t *testing.T, store *Store, vid needle.VolumeId) *needle.Needle {
 	n := randomNeedleOfSize(99, 1024)
 	ecVolume := encodeAndMountEcVolume(t, store, vid, []*needle.Needle{n})
 
@@ -301,7 +299,6 @@ func TestReadEcShardNeedleHealsWhenParityManyShardsRotted(t *testing.T) {
 	}
 	shardId, shardOffset := ecVolume.IntervalToShardIdAndOffset(intervals[0])
 	corruptEcShardRange(t, ecVolume, shardId, shardOffset, int64(intervals[0].Size))
-	// The lowest-numbered survivors are the inputs every first decode reads.
 	corrupted := 1
 	for other := erasure_coding.ShardId(0); corrupted < ecVolume.ECContext.ParityShards; other++ {
 		if other == shardId {
@@ -310,24 +307,13 @@ func TestReadEcShardNeedleHealsWhenParityManyShardsRotted(t *testing.T) {
 		corruptEcShardRange(t, ecVolume, other, shardOffset, int64(intervals[0].Size))
 		corrupted++
 	}
-
-	got := new(needle.Needle)
-	got.Id = n.Id
-	if _, err := store.ReadEcShardNeedle(vid, got, nil); err != nil {
-		t.Fatalf("read should reconstruct within parity: %v", err)
-	}
-	if !bytes.Equal(got.Data, n.Data) {
-		t.Fatalf("read back %d bytes, want the %d written", len(got.Data), len(n.Data))
-	}
+	return n
 }
 
-// A needle over two shards where only the first is corrupt, plus enough other
-// corrupt shards that rebuilding both suspects would exceed parity. The clean
-// suspect keeps its bytes and serves as an input for the corrupt one.
-func TestReadEcShardNeedleHealsCorruptSuspectNextToCleanOne(t *testing.T) {
-	store := newTestStore(t, 1)
-	const vid = needle.VolumeId(14)
-
+// rotSuspectNextToCleanOne stores a needle over two shards, corrupts the first
+// of them, and corrupts enough other shards that rebuilding both suspects would
+// exceed parity: only the clean suspect kept as an input repairs the read.
+func rotSuspectNextToCleanOne(t *testing.T, store *Store, vid needle.VolumeId) *needle.Needle {
 	n := randomNeedleOfSize(55, erasure_coding.ErasureCodingSmallBlockSize+1234)
 	ecVolume := encodeAndMountEcVolume(t, store, vid, []*needle.Needle{n})
 
@@ -356,14 +342,54 @@ func TestReadEcShardNeedleHealsCorruptSuspectNextToCleanOne(t *testing.T) {
 		}
 		corrupted++
 	}
+	return n
+}
 
+func readEcNeedleBack(t *testing.T, store *Store, vid needle.VolumeId, n *needle.Needle) error {
 	got := new(needle.Needle)
 	got.Id = n.Id
 	if _, err := store.ReadEcShardNeedle(vid, got, nil); err != nil {
-		t.Fatalf("read should reconstruct within parity: %v", err)
+		return err
 	}
 	if !bytes.Equal(got.Data, n.Data) {
 		t.Fatalf("read back %d bytes, want the %d written", len(got.Data), len(n.Data))
+	}
+	return nil
+}
+
+func TestReadEcShardNeedleHealsWhenParityManyShardsRotted(t *testing.T) {
+	store := newTestStore(t, 1)
+	const vid = needle.VolumeId(13)
+	n := rotParityManyShards(t, store, vid)
+	if err := readEcNeedleBack(t, store, vid, n); err != nil {
+		t.Fatalf("read should reconstruct within parity: %v", err)
+	}
+}
+
+func TestReadEcShardNeedleHealsCorruptSuspectNextToCleanOne(t *testing.T) {
+	store := newTestStore(t, 1)
+	const vid = needle.VolumeId(14)
+	n := rotSuspectNextToCleanOne(t, store, vid)
+	if err := readEcNeedleBack(t, store, vid, n); err != nil {
+		t.Fatalf("read should reconstruct within parity: %v", err)
+	}
+}
+
+// Past the recovery budget the corrupt-set search gathers only as wide as a
+// gather that excludes every suspect. A lone suspect still gets every other
+// shard, but two suspects lose the spare input the clean one would give.
+func TestReadEcShardNeedleCorruptSetSearchPastBudget(t *testing.T) {
+	setEcRecoverBudget(t, 1)
+	store := newTestStore(t, 1)
+
+	n := rotParityManyShards(t, store, 15)
+	if err := readEcNeedleBack(t, store, 15, n); err != nil {
+		t.Fatalf("a lone suspect should still reconstruct past the budget: %v", err)
+	}
+
+	n = rotSuspectNextToCleanOne(t, store, 16)
+	if err := readEcNeedleBack(t, store, 16, n); err == nil {
+		t.Fatalf("two suspects past the budget should not gather the clean one as an input")
 	}
 }
 

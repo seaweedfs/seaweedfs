@@ -774,12 +774,13 @@ const (
 
 // rebuildEcNeedleFromDroppedInputs handles a rebuild the single pass could not
 // repair: shards besides the suspects can be corrupt over the same ranges and
-// get read as reconstruction inputs. Each interval is gathered once from every
-// other shard that answers, then each set of up to ParityShards shards holding
-// a suspect is tried as the corrupt set, smallest first: suspect ranges inside
-// it are rebuilt from the shards outside it, the rest keep the bytes read, and
-// a needle parse arbitrates. A set whose decodes read the same inputs as one
-// already tried is skipped. Nil when no set parses.
+// get read as reconstruction inputs. Each interval is gathered once from as
+// many other shards as the recovery budget covers, and never from fewer than
+// the shards outside every suspect. Then each set of up to ParityShards shards
+// holding a suspect is tried as the corrupt set, smallest first: suspect ranges
+// inside it are rebuilt from the shards outside it, the rest keep the bytes
+// read, and a needle parse arbitrates. A set whose decodes read the same inputs
+// as one already tried is skipped. Nil when no set parses.
 func (s *Store) rebuildEcNeedleFromDroppedInputs(n *needle.Needle, needleId types.NeedleId, ecVolume *erasure_coding.EcVolume, ecCtx *erasure_coding.ECContext, intervals []erasure_coding.Interval, shardIds []erasure_coding.ShardId, offsets []int64, offset int64, size types.Size, corrupted []byte, suspects map[erasure_coding.ShardId]bool) ([]byte, bool) {
 	var totalSize int64
 	for _, interval := range intervals {
@@ -795,9 +796,10 @@ func (s *Store) rebuildEcNeedleFromDroppedInputs(n *needle.Needle, needleId type
 	}
 	defer ecRecoverSem.Release(weight)
 
+	want := max(total-len(suspects), min(total-1, int(ecRecoverBudget/max(totalSize, 1))))
 	gathers := make([][][]byte, len(intervals))
 	for i, interval := range intervals {
-		shardIntervals, isDeleted := s.gatherEcShardIntervals(needleId, ecVolume, ecCtx, map[erasure_coding.ShardId]bool{shardIds[i]: true}, int(interval.Size), offsets[i], total)
+		shardIntervals, isDeleted := s.gatherEcShardIntervals(needleId, ecVolume, ecCtx, map[erasure_coding.ShardId]bool{shardIds[i]: true}, int(interval.Size), offsets[i], want)
 		if isDeleted {
 			return nil, true
 		}
