@@ -266,7 +266,8 @@ func (erb *ecRebuilder) recoverMissingIndexes() {
 
 // findCorruptShards checksum-scrubs each node's shards of the targeted volumes
 // and records the copies that fail their checksum sidecar. A node whose scrub
-// fails is reported and its copies are taken as they are.
+// fails fails the run, but its copies are taken as they are so the rest of the
+// cluster is still repaired.
 func (erb *ecRebuilder) findCorruptShards(collections []string) {
 	erb.ecNodesMu.Lock()
 	nodes := append([]*EcNode(nil), erb.ecNodes...)
@@ -300,6 +301,7 @@ func (erb *ecRebuilder) findCorruptShards(collections []string) {
 			defer mu.Unlock()
 			if err != nil {
 				erb.write("%s checksum scrub failed: %v\n", node.Info.Id, err)
+				erb.ewg.AddErrorf("checksum scrub on %s: %w", node.Info.Id, err)
 				return nil
 			}
 			for _, detail := range resp.GetDetails() {
