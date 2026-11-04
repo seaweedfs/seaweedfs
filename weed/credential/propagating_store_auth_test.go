@@ -62,3 +62,28 @@ func TestWithS3InternalAdminAuth_ZeroExpiry_ZeroTTL(t *testing.T) {
 		t.Fatalf("expected zero TTL for no-expiry token, got %v", ttl)
 	}
 }
+
+func TestWithS3InternalAdminAuth_ReplacesInheritedToken(t *testing.T) {
+	const k = "propagation-test-signing-key"
+	util.GetViper().Set("jwt.filer_signing.key", k)
+	defer util.GetViper().Set("jwt.filer_signing.key", "")
+	util.GetViper().Set("jwt.filer_signing.expires_after_seconds", 60)
+
+	parent := metadata.NewOutgoingContext(context.Background(), metadata.Pairs(
+		"authorization", security.BearerPrefix+"stale-token",
+		"x-other", "kept",
+	))
+	ctx, _ := WithS3InternalAdminAuth(parent)
+	md, _ := metadata.FromOutgoingContext(ctx)
+	headers := md.Get("authorization")
+	if len(headers) != 1 || headers[0] == security.BearerPrefix+"stale-token" {
+		t.Fatalf("expected only the fresh token, got %v", headers)
+	}
+	if got := md.Get("x-other"); len(got) != 1 || got[0] != "kept" {
+		t.Fatalf("expected other metadata to be kept, got %v", got)
+	}
+	parentMD, _ := metadata.FromOutgoingContext(parent)
+	if got := parentMD.Get("authorization"); len(got) != 1 || got[0] != security.BearerPrefix+"stale-token" {
+		t.Fatalf("parent metadata was modified: %v", got)
+	}
+}

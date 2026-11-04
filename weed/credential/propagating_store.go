@@ -51,11 +51,12 @@ func (s *PropagatingCredentialStore) SetFilerAddressFunc(getFiler func() pb.Serv
 	}
 }
 
-// WithS3InternalAdminAuth attaches a Bearer token signed with
-// jwt.filer_signing.key to the outgoing context so the S3 gateway's internal
-// gRPC handlers (IAM cache, lifecycle) accept the call. With no key configured
-// it is a no-op, matching the S3 handler's checkAdminAuth. Returns the token's
-// lifetime (0 = no expiry) so callers can cap any downstream timeout below it.
+// WithS3InternalAdminAuth sets a fresh Bearer token signed with
+// jwt.filer_signing.key on the outgoing context, replacing any it already
+// carries, so the S3 gateway's internal gRPC handlers (IAM cache, lifecycle)
+// accept the call. With no key configured it is a no-op, matching the S3
+// handler's checkAdminAuth. Returns the token's lifetime (0 = no expiry) so
+// callers can cap any downstream timeout below it.
 func WithS3InternalAdminAuth(ctx context.Context) (context.Context, time.Duration) {
 	signingKey := util.GetViper().GetString("jwt.filer_signing.key")
 	if signingKey == "" {
@@ -66,7 +67,10 @@ func WithS3InternalAdminAuth(ctx context.Context) (context.Context, time.Duratio
 	if token == "" {
 		return ctx, 0
 	}
-	return metadata.AppendToOutgoingContext(ctx, "authorization", security.BearerPrefix+string(token)), time.Duration(expiresAfterSec) * time.Second
+	md, _ := metadata.FromOutgoingContext(ctx)
+	md = md.Copy()
+	md.Set("authorization", security.BearerPrefix+string(token))
+	return metadata.NewOutgoingContext(ctx, md), time.Duration(expiresAfterSec) * time.Second
 }
 
 func (s *PropagatingCredentialStore) propagateChange(ctx context.Context, fn func(context.Context, s3_pb.SeaweedS3IamCacheClient) error) {
