@@ -411,7 +411,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                         </div>
                         <div class="mb-3" id="editUnshownActionsGroup" style="display: none;">
                             <label class="form-label">Other Bucket Permissions</label>
-                            <small class="form-text text-muted d-block mb-2">Bucket-scoped grants that cannot be combined with the all-bucket permissions above. Uncheck a grant to remove it.</small>
+                            <small class="form-text text-muted d-block mb-2">Bucket-scoped grants the permissions above cannot show. Uncheck a grant to remove it.</small>
                             <div id="editUnshownActions"></div>
                         </div>
                         <div class="mb-3">
@@ -752,12 +752,6 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                 unshownActions: []
             };
 
-            // Check if user has Admin permission
-            if (actions.includes('Admin')) {
-                result.isAdmin = true;
-                return result;
-            }
-
             // Separate bucket-scoped from global actions
             const bucketActions = [];
             const globalBucketPerms = [];
@@ -786,6 +780,12 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     globalBucketPerms.push(action);
                 }
             });
+
+            if (actions.includes('Admin')) {
+                result.isAdmin = true;
+                result.unshownActions = bucketActions.map(ba => ba.action);
+                return result;
+            }
 
             // If we have global bucket permissions (no colon), they apply to all buckets
             if (globalBucketPerms.length > 0) {
