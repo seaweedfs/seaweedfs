@@ -127,7 +127,7 @@ func (s *warmingAssignServer) Assign(_ context.Context, _ *master_pb.AssignReque
 }
 
 func TestAssignRetryLandsAtWarmupEndWithHint(t *testing.T) {
-	const warmup = 1200 * time.Millisecond
+	const warmup = 2600 * time.Millisecond
 	srv := &warmingAssignServer{}
 	addr := startFakeServer(t, srv)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -138,10 +138,10 @@ func TestAssignRetryLandsAtWarmupEndWithHint(t *testing.T) {
 		grpc.WithTransportCredentials(insecure.NewCredentials()), &VolumeAssignRequest{Count: 1}); err != nil {
 		t.Fatalf("Assign: %v", err)
 	}
-	// The hint lands the retry just after warm-up ends (1.2s), not at the
-	// next backoff step (1s + 1.5s = 2.5s).
-	if elapsed := time.Since(start); elapsed > 2400*time.Millisecond {
-		t.Fatalf("assign took %v over %d calls, want about 1.25s (warm-up end)", elapsed, srv.callCount.Load())
+	// The hint lands the retry just after warm-up ends (2.6s), not at the
+	// next backoff step (1s + 1.5s + 2.25s = 4.75s).
+	if elapsed := time.Since(start); elapsed > 4500*time.Millisecond {
+		t.Fatalf("assign took %v over %d calls, want about 2.75s (warm-up end)", elapsed, srv.callCount.Load())
 	}
 	if calls := srv.callCount.Load(); calls < 2 {
 		t.Fatalf("got %d calls, want a refused call during warm-up before the retry", calls)
