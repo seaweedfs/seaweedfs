@@ -387,14 +387,12 @@ func applyMultipartSSES3HeadersFromUploadEntry(dst *filer_pb.Entry, sses3Info *m
 }
 
 func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *s3.CompleteMultipartUploadInput, parts *CompleteMultipartUpload, uploadDirectory, entryName, dirName string, completedPartNumbers []int, completedPartMap map[int][]string, maxPartNo int) (*multipartCompletionState, *CompleteMultipartUploadResult, s3err.ErrorCode) {
-	if entry, err := s3a.resolveObjectEntry(*input.Bucket, *input.Key, ""); err == nil && entry != nil && entry.Extended != nil {
-		if uploadId, ok := entry.Extended[s3_constants.SeaweedFSUploadId]; ok && *input.UploadId == string(uploadId) {
-			cleanupEntries, _, cleanupErr := s3a.list(uploadDirectory, "", "", false, s3_constants.MaxS3MultipartParts+1)
-			if cleanupErr != nil && !errors.Is(cleanupErr, filer_pb.ErrNotFound) {
-				glog.Warningf("completeMultipartUpload: failed to list stale upload directory %s for cleanup: %v", uploadDirectory, cleanupErr)
-			}
-			return &multipartCompletionState{deleteEntries: cleanupEntries, metadataOnlyCleanup: true}, completeMultipartResult(r, input, getEtagFromEntry(entry), entry), s3err.ErrNone
+	if output := s3a.committedCompletion(r, input); output != nil {
+		cleanupEntries, _, cleanupErr := s3a.list(uploadDirectory, "", "", false, s3_constants.MaxS3MultipartParts+1)
+		if cleanupErr != nil && !errors.Is(cleanupErr, filer_pb.ErrNotFound) {
+			glog.Warningf("completeMultipartUpload: failed to list stale upload directory %s for cleanup: %v", uploadDirectory, cleanupErr)
 		}
+		return &multipartCompletionState{deleteEntries: cleanupEntries, metadataOnlyCleanup: true}, output, s3err.ErrNone
 	}
 
 	entries, _, err := s3a.list(uploadDirectory, "", "", false, s3_constants.MaxS3MultipartParts+1)
@@ -1086,6 +1084,19 @@ func (s3a *S3ApiServer) deleteUnusedPartEntries(ctx context.Context, uploadDirec
 		}
 	}
 	return lastErr
+}
+
+// committedCompletion returns this upload's completion result when the key's
+// current object is the one the upload committed.
+func (s3a *S3ApiServer) committedCompletion(r *http.Request, input *s3.CompleteMultipartUploadInput) *CompleteMultipartUploadResult {
+	entry, err := s3a.resolveObjectEntry(*input.Bucket, *input.Key, "")
+	if err != nil || entry == nil || entry.Extended == nil {
+		return nil
+	}
+	if uploadId, ok := entry.Extended[s3_constants.SeaweedFSUploadId]; !ok || string(uploadId) != *input.UploadId {
+		return nil
+	}
+	return completeMultipartResult(r, input, getEtagFromEntry(entry), entry)
 }
 
 // resumeCommittedObject finds an entry this upload already committed at the
