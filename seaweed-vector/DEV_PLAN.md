@@ -11,12 +11,12 @@ distributed query layer. Writes stay unchanged.
 
 ## Status (2026-11-04)
 
-| Phase | Pull request | State |
+| Phase | Branch | State |
 |---|---|---|
-| 0 Build and measure | #12411 | open: `vector_index` builder, `weed-vector-cli index`, `PERF_INDEX`, `PERF_CLUSTERS` |
-| 1 Probe policy | #12412 | open: policy in `query::scanner`, `--nprobes`, one Lance session per engine |
-| 2 Build job | #12413 | open: `lance_vector_index` in `weed-worker`, admin-driven end-to-end test, worker CI legs |
-| 3 Keep it covering | branch `vector-ann-phase3` | relative budget, retrain rule, end-to-end steps |
+| 0 Build and measure | `vector-ann-phase0` | open: `vector_index` builder, `weed-vector-cli index`, `PERF_INDEX`, `PERF_CLUSTERS` |
+| 1 Probe policy | `vector-ann-phase1` | open: policy in `query::scanner`, `--nprobes`, one Lance session per engine |
+| 2 Build job | `vector-ann-phase2` | open: `lance_vector_index` in `weed-worker`, admin-driven end-to-end test, worker CI legs |
+| 3 Keep it covering | `vector-ann-phase3` | relative budget, retrain rule, end-to-end steps |
 | 4 Docs and gates | — | after the above merge |
 | 5 Enterprise sharded builds | — | the Enterprise repository |
 
