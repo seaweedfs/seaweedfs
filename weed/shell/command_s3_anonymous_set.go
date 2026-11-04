@@ -63,6 +63,9 @@ func (c *commandS3AnonymousSet) Do(args []string, commandEnv *CommandEnv, writer
 		if granted, err = canonicalActionList(*access); err != nil {
 			return err
 		}
+		if len(granted) == 0 {
+			return fmt.Errorf("invalid -access %q: use %s, or none", *access, supportedActionNames)
+		}
 	}
 
 	return commandEnv.withIamClient(func(ctx context.Context, client iam_pb.SeaweedIdentityAccessManagementClient) error {

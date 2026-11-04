@@ -45,6 +45,13 @@ func TestCanonicalActionList(t *testing.T) {
 	}
 }
 
+func TestAnonymousSetRejectsEmptyAccess(t *testing.T) {
+	err := (&commandS3AnonymousSet{}).Do([]string{"-bucket", "b", "-access", " , ,"}, nil, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "invalid -access") {
+		t.Errorf("got %v, want an invalid -access error", err)
+	}
+}
+
 func TestUpdateBucketActions_SetActions(t *testing.T) {
 	identity := &iam_pb.Identity{
 		Name:    "anonymous",
