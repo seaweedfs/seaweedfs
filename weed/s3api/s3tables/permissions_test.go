@@ -848,6 +848,18 @@ func TestConditionSplitAcrossSpellings(t *testing.T) {
 	}
 }
 
+// Only the Condition keys are read from the original bytes. Every other field
+// keeps the spelling the re-marshaled decode always picked, so a stored Deny
+// written twice stays a Deny.
+func TestStatementFieldSpellingsDecodeAsBefore(t *testing.T) {
+	stmt := `{"effect":"Deny","Effect":"Allow","Principal":"*","Action":"s3tables:*","Resource":"*"}`
+	for _, policy := range []string{`{"Statement":[` + stmt + `]}`, `{"Statement":` + stmt + `}`} {
+		if CheckPermissionWithContext("s3tables:GetTable", "owner", "owner", policy, "", nil) {
+			t.Errorf("%s: the Deny no longer applies", policy)
+		}
+	}
+}
+
 // A Deny whose operator the evaluator does not know applies instead of being
 // skipped: the writer meant it to protect the resource.
 func TestUnsupportedOperatorDenyApplies(t *testing.T) {

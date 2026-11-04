@@ -40,27 +40,53 @@ func (pd *PolicyDocument) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &aux); err != nil {
 		return err
 	}
+	var statement interface{}
+	if len(aux.Statement) > 0 {
+		if err := json.Unmarshal(aux.Statement, &statement); err != nil {
+			return err
+		}
+	}
 
-	// Statements decode from their original bytes so Statement.UnmarshalJSON
-	// sees every repeated key.
-	raw := bytes.TrimSpace(aux.Statement)
-	switch {
-	case len(raw) == 0 || string(raw) == "null":
-		pd.Statement = []Statement{}
-	case raw[0] == '{':
+	// Handle Statement as either a single object or array
+	raws := []json.RawMessage{aux.Statement}
+	switch s := statement.(type) {
+	case map[string]interface{}:
+		// Single statement object - unmarshal to one Statement
+		stmtData, err := json.Marshal(s)
+		if err != nil {
+			return fmt.Errorf("failed to marshal single statement: %w", err)
+		}
 		var stmt Statement
-		if err := json.Unmarshal(raw, &stmt); err != nil {
+		if err := json.Unmarshal(stmtData, &stmt); err != nil {
 			return fmt.Errorf("failed to unmarshal single statement: %w", err)
 		}
 		pd.Statement = []Statement{stmt}
-	case raw[0] == '[':
-		if err := json.Unmarshal(raw, &pd.Statement); err != nil {
+	case []interface{}:
+		// Array of statements - normal handling
+		stmtData, err := json.Marshal(s)
+		if err != nil {
+			return fmt.Errorf("failed to marshal statement array: %w", err)
+		}
+		if err := json.Unmarshal(stmtData, &pd.Statement); err != nil {
 			return fmt.Errorf("failed to unmarshal statement array: %w", err)
 		}
+		if err := json.Unmarshal(aux.Statement, &raws); err != nil {
+			return err
+		}
+	case nil:
+		// No statements
+		pd.Statement = []Statement{}
 	default:
-		return fmt.Errorf("Statement must be an object or array")
+		return fmt.Errorf("Statement must be an object or array, got %T", statement)
 	}
 
+	// The re-marshal above keeps only the last of a repeated key, so the
+	// Condition keys are counted from the original bytes.
+	for i := range pd.Statement {
+		if i < len(raws) {
+			pd.Statement[i].nullCondition, pd.Statement[i].splitCondition = conditionKeys(raws[i])
+		}
+	}
 	return nil
 }
 
@@ -79,35 +105,29 @@ type Statement struct {
 	splitCondition bool
 }
 
-// UnmarshalJSON decodes as the plain struct would and separately records the
-// Condition shapes that decode cannot represent.
-func (s *Statement) UnmarshalJSON(data []byte) error {
-	type plain Statement
-	if err := json.Unmarshal(data, (*plain)(s)); err != nil {
-		return err
-	}
-	// Walk the keys: a map keeps only the last of a repeated key.
+// conditionKeys walks a statement object's keys, which a map would collapse,
+// and reports a null Condition and a Condition under more than one key.
+func conditionKeys(data []byte) (null, split bool) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
-		return err
+		return false, false
 	}
-	conditions, null := 0, false
+	conditions := 0
 	for dec.More() {
 		key, err := dec.Token()
 		if err != nil {
-			return err
+			break
 		}
 		var raw json.RawMessage
 		if err := dec.Decode(&raw); err != nil {
-			return err
+			break
 		}
 		if name, _ := key.(string); strings.EqualFold(name, "Condition") {
 			conditions++
 			null = null || string(raw) == "null"
 		}
 	}
-	s.nullCondition, s.splitCondition = null, conditions > 1
-	return nil
+	return null, conditions > 1
 }
 
 // SplitCondition reports a statement with more than one Condition key, which
