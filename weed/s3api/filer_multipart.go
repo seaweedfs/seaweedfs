@@ -387,7 +387,7 @@ func applyMultipartSSES3HeadersFromUploadEntry(dst *filer_pb.Entry, sses3Info *m
 }
 
 func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *s3.CompleteMultipartUploadInput, parts *CompleteMultipartUpload, uploadDirectory, entryName, dirName string, completedPartNumbers []int, completedPartMap map[int][]string, maxPartNo int) (*multipartCompletionState, *CompleteMultipartUploadResult, s3err.ErrorCode) {
-	if output := s3a.committedCompletion(r, input); output != nil {
+	if output, _ := s3a.committedCompletion(r, input); output != nil {
 		cleanupEntries, _, cleanupErr := s3a.list(uploadDirectory, "", "", false, s3_constants.MaxS3MultipartParts+1)
 		if cleanupErr != nil && !errors.Is(cleanupErr, filer_pb.ErrNotFound) {
 			glog.Warningf("completeMultipartUpload: failed to list stale upload directory %s for cleanup: %v", uploadDirectory, cleanupErr)
@@ -1045,8 +1045,9 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 		// A finalize can fail after its commit. When the key now holds this
 		// upload's object, answer as a retry would.
 		var committed *CompleteMultipartUploadResult
+		var committedEntry *filer_pb.Entry
 		if completionState != nil && completionState.manifestsReferenced {
-			committed = s3a.committedCompletion(r, input)
+			committed, committedEntry = s3a.committedCompletion(r, input)
 		}
 		if committed == nil {
 			// this attempt's manifests are orphans unless a failed rollback left an entry holding them
@@ -1056,6 +1057,11 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			return nil, finalizeCode
 		}
 		glog.Warningf("completeMultipartUpload %s/%s upload %s: committed despite %s", *input.Bucket, *input.Key, *input.UploadId, s3err.GetAPIError(finalizeCode).Code)
+		// Another attempt of this upload may own the commit, and its parts can
+		// include ones this attempt counts as unused.
+		if !sameFileChunks(committedEntry.GetChunks(), completionState.finalParts) {
+			completionState.metadataOnlyCleanup = true
+		}
 		output = committed
 	}
 
@@ -1096,17 +1102,17 @@ func (s3a *S3ApiServer) deleteUnusedPartEntries(ctx context.Context, uploadDirec
 	return lastErr
 }
 
-// committedCompletion returns this upload's completion result when the key's
-// current object is the one the upload committed.
-func (s3a *S3ApiServer) committedCompletion(r *http.Request, input *s3.CompleteMultipartUploadInput) *CompleteMultipartUploadResult {
+// committedCompletion returns this upload's completion result, and the object
+// entry, when the key's current object is the one the upload committed.
+func (s3a *S3ApiServer) committedCompletion(r *http.Request, input *s3.CompleteMultipartUploadInput) (*CompleteMultipartUploadResult, *filer_pb.Entry) {
 	entry, err := s3a.resolveObjectEntry(*input.Bucket, *input.Key, "")
 	if err != nil || entry == nil || entry.Extended == nil {
-		return nil
+		return nil, nil
 	}
 	if uploadId, ok := entry.Extended[s3_constants.SeaweedFSUploadId]; !ok || string(uploadId) != *input.UploadId {
-		return nil
+		return nil, nil
 	}
-	return completeMultipartResult(r, input, getEtagFromEntry(entry), entry)
+	return completeMultipartResult(r, input, getEtagFromEntry(entry), entry), entry
 }
 
 // resumeCommittedObject finds an entry this upload already committed at the

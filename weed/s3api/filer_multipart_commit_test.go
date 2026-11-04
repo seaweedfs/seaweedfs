@@ -16,14 +16,16 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// memCompleteFiler keeps entries in memory. Its CreateEntry can store the
-// entry and still fail, as a filer that committed but lost the response.
+// memCompleteFiler keeps entries in memory. A failing CreateEntry still
+// stores what storedOnFailure returns, as a filer whose commit landed before
+// the call failed.
 type memCompleteFiler struct {
 	filer_pb.UnimplementedSeaweedFilerServer
-	mu            sync.Mutex
-	entries       map[string]map[string]*filer_pb.Entry
-	storeOnFail   bool
-	createFailure error
+	mu              sync.Mutex
+	entries         map[string]map[string]*filer_pb.Entry
+	createFailure   error
+	storedOnFailure func(*filer_pb.Entry) *filer_pb.Entry
+	deletedData     map[string]bool
 }
 
 func (f *memCompleteFiler) put(dir string, entry *filer_pb.Entry) {
@@ -60,19 +62,26 @@ func (f *memCompleteFiler) ListEntries(req *filer_pb.ListEntriesRequest, stream 
 func (f *memCompleteFiler) CreateEntry(ctx context.Context, req *filer_pb.CreateEntryRequest) (*filer_pb.CreateEntryResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.createFailure == nil || f.storeOnFail {
+	if f.createFailure == nil {
 		f.put(req.Directory, req.Entry)
+		return &filer_pb.CreateEntryResponse{}, nil
 	}
-	if f.createFailure != nil {
-		return nil, f.createFailure
+	if f.storedOnFailure != nil {
+		if entry := f.storedOnFailure(req.Entry); entry != nil {
+			f.put(req.Directory, entry)
+		}
 	}
-	return &filer_pb.CreateEntryResponse{}, nil
+	return nil, f.createFailure
 }
 
 func (f *memCompleteFiler) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntryRequest) (*filer_pb.DeleteEntryResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	delete(f.entries[req.Directory], req.Name)
+	if f.deletedData == nil {
+		f.deletedData = map[string]bool{}
+	}
+	f.deletedData[req.Name] = req.IsDeleteData
 	return &filer_pb.DeleteEntryResponse{}, nil
 }
 
@@ -93,6 +102,13 @@ func newCompleteTestServer(t *testing.T, f *memCompleteFiler) *S3ApiServer {
 		Chunks:     []*filer_pb.FileChunk{{FileId: "3,01637037d6", Size: 11}},
 		Extended:   map[string][]byte{s3_constants.ExtETagKey: []byte("5eb63bbbe01eeed093cb22bb8f5acdc3")},
 	})
+	// An earlier upload of part 1 the completion does not use.
+	f.put(uploadsDir+"/u1", &filer_pb.Entry{
+		Name:       "0001_old.part",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 11},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "3,02637037d6", Size: 11}},
+		Extended:   map[string][]byte{s3_constants.ExtETagKey: []byte("0f343b0931126a20f133d67c2b018a3b")},
+	})
 	return s3a
 }
 
@@ -105,7 +121,8 @@ func completeU1(s3a *S3ApiServer) (*CompleteMultipartUploadResult, s3err.ErrorCo
 // A completion whose commit landed but whose call failed answers success, as
 // its retry would, instead of a 500 the client cannot interpret.
 func TestCompleteMultipartUploadCommittedDespiteFailure(t *testing.T) {
-	f := &memCompleteFiler{entries: map[string]map[string]*filer_pb.Entry{}, storeOnFail: true, createFailure: status.Error(codes.Internal, "response lost after commit")}
+	f := &memCompleteFiler{entries: map[string]map[string]*filer_pb.Entry{}, createFailure: status.Error(codes.Internal, "response lost after commit"),
+		storedOnFailure: func(entry *filer_pb.Entry) *filer_pb.Entry { return entry }}
 	s3a := newCompleteTestServer(t, f)
 
 	output, code := completeU1(s3a)
@@ -121,6 +138,37 @@ func TestCompleteMultipartUploadCommittedDespiteFailure(t *testing.T) {
 	}
 	if _, ok := f.entries[s3a.genUploadsFolder("b")]["u1"]; ok {
 		t.Error("the upload directory survived the completed upload")
+	}
+	if deleteData, ok := f.deletedData["0001_old.part"]; !ok || !deleteData {
+		t.Errorf("unused part deleted = %v, with data = %v; want its data freed as on success", ok, deleteData)
+	}
+}
+
+// The object found may be another attempt's commit of the same upload, whose
+// parts this attempt can count as unused: their data must stay.
+func TestCompleteMultipartUploadKeepsPartDataUnderAnotherAttemptsCommit(t *testing.T) {
+	other := &filer_pb.Entry{
+		Name:       "a.bin",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 11},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "3,02637037d6", Size: 11}},
+		Extended: map[string][]byte{
+			s3_constants.SeaweedFSUploadId: []byte("u1"),
+			s3_constants.ExtETagKey:        []byte("8a6d5f0e5c8f7b2f4e1d0c9b8a7f6e5d-1"),
+		},
+	}
+	f := &memCompleteFiler{entries: map[string]map[string]*filer_pb.Entry{}, createFailure: status.Error(codes.Internal, "lost the race"),
+		storedOnFailure: func(*filer_pb.Entry) *filer_pb.Entry { return other }}
+	s3a := newCompleteTestServer(t, f)
+
+	output, code := completeU1(s3a)
+	if code != s3err.ErrNone || output == nil {
+		t.Fatalf("code = %v, want success for the upload's committed object", s3err.GetAPIError(code).Code)
+	}
+	if got, want := aws.StringValue(output.ETag), getEtagFromEntry(other); got != want {
+		t.Errorf("ETag = %s, want the committed object's %s", got, want)
+	}
+	if deleteData, ok := f.deletedData["0001_old.part"]; ok && deleteData {
+		t.Error("freed the data of a part the committed object references")
 	}
 }
 
