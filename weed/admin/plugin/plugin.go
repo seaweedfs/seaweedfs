@@ -106,7 +106,7 @@ type Plugin struct {
 	pendingDetection   map[string]*pendingDetectionState
 
 	pendingExecutionMu sync.Mutex
-	pendingExecution   map[string]chan *plugin_pb.JobCompleted
+	pendingExecution   map[string]*pendingExecutionState
 
 	pendingPreviewMu sync.Mutex
 	pendingPreview   map[string]chan *plugin_pb.ObjectPreviewResponse
@@ -216,7 +216,7 @@ func New(options Options) (*Plugin, error) {
 		sessions:                  make(map[string]*streamSession),
 		pendingSchema:             make(map[string]chan *plugin_pb.ConfigSchemaResponse),
 		pendingDetection:          make(map[string]*pendingDetectionState),
-		pendingExecution:          make(map[string]chan *plugin_pb.JobCompleted),
+		pendingExecution:          make(map[string]*pendingExecutionState),
 		pendingPreview:            make(map[string]chan *plugin_pb.ObjectPreviewResponse),
 		observations:              NewObservationStore(),
 		nextDetectionAt:           make(map[string]time.Time),
@@ -289,8 +289,8 @@ func (r *Plugin) Shutdown() {
 	r.pendingDetectionMu.Unlock()
 
 	r.pendingExecutionMu.Lock()
-	for requestID, ch := range r.pendingExecution {
-		close(ch)
+	for requestID, pending := range r.pendingExecution {
+		close(pending.completed)
 		delete(r.pendingExecution, requestID)
 	}
 	r.pendingExecutionMu.Unlock()
@@ -815,17 +815,29 @@ func (r *Plugin) executeJobWithExecutor(
 	// the single active worker, not 1/N of it.
 	clusterContext = r.decorateClusterContextForJob(clusterContext, job.JobType, adminConfigValues, int(adminRuntime.GetMaxJobsPerDetection()))
 
+	r.trackExecutionStart(requestID, executor.WorkerID, job, attempt)
+
+	// The request goes out on this stream and no other, so a newer stream
+	// of the worker can tell it never received it.
+	session, ok := r.getSession(executor.WorkerID)
+	if !ok {
+		return nil, fmt.Errorf("worker %s is not connected", executor.WorkerID)
+	}
+
 	completedCh := make(chan *plugin_pb.JobCompleted, 1)
 	r.pendingExecutionMu.Lock()
-	r.pendingExecution[requestID] = completedCh
+	r.pendingExecution[requestID] = &pendingExecutionState{
+		completed: completedCh,
+		jobID:     job.JobId,
+		jobType:   job.JobType,
+		session:   session,
+	}
 	r.pendingExecutionMu.Unlock()
 	defer func() {
 		r.pendingExecutionMu.Lock()
 		delete(r.pendingExecution, requestID)
 		r.pendingExecutionMu.Unlock()
 	}()
-
-	r.trackExecutionStart(requestID, executor.WorkerID, job, attempt)
 
 	message := &plugin_pb.AdminToWorkerMessage{
 		RequestId: requestID,
@@ -843,7 +855,7 @@ func (r *Plugin) executeJobWithExecutor(
 		},
 	}
 
-	if err := r.sendToWorker(executor.WorkerID, message); err != nil {
+	if err := r.sendToSession(session, message); err != nil {
 		return nil, err
 	}
 
@@ -1157,6 +1169,7 @@ func (r *Plugin) handleWorkerMessage(session *streamSession, message *plugin_pb.
 			return
 		}
 		r.resendUndeliveredCancels(workerID, body.Heartbeat)
+		r.failExecutionsMissingFromHeartbeat(session, body.Heartbeat)
 	case *plugin_pb.WorkerToAdminMessage_ConfigSchemaResponse:
 		r.handleConfigSchemaResponse(body.ConfigSchemaResponse)
 	case *plugin_pb.WorkerToAdminMessage_DetectionProposals:
@@ -1501,8 +1514,11 @@ func (r *Plugin) handleJobCompleted(completed *plugin_pb.JobCompleted) {
 }
 
 func (r *Plugin) safeSendJobCompleted(requestID string, completed *plugin_pb.JobCompleted) {
+	var ch chan *plugin_pb.JobCompleted
 	r.pendingExecutionMu.Lock()
-	ch := r.pendingExecution[requestID]
+	if pending := r.pendingExecution[requestID]; pending != nil {
+		ch = pending.completed
+	}
 	r.pendingExecutionMu.Unlock()
 	safeSendCh(ch, completed, r.shutdownCh)
 }
