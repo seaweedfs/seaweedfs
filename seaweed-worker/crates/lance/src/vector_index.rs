@@ -216,16 +216,22 @@ async fn build_with(
 /// Cover the rows written since the indices on `vector_column` were built.
 /// One name takes them, the one with the fewest deltas, under
 /// [`optimize_policy`]; the other names keep the fragments they have, so
-/// shards stay disjoint. With `retrain` every name is built again over the
+/// shards stay disjoint. With `retrain` the index is built again over the
 /// whole table with partitions for the current row count, in the metric it
-/// has; only IVF_FLAT indices are rebuilt this way. Lance's own retrain does
-/// not size the partitions, so the rebuild goes through [`build`]. Indices
-/// on other columns are left alone.
+/// has; only a single IVF_FLAT name is rebuilt this way. Lance's own retrain
+/// does not size the partitions, so the rebuild goes through [`build`].
+/// Indices on other columns are left alone.
 pub async fn optimize(dataset: &mut Dataset, vector_column: &str, retrain: bool) -> Result<()> {
     let Some(cover) = coverage(dataset, vector_column).await? else {
         return Ok(());
     };
     if retrain {
+        if cover.deltas.len() > 1 {
+            anyhow::bail!(
+                "the vector index is sharded over {} names; each would be rebuilt over the whole table",
+                cover.deltas.len()
+            );
+        }
         let partitions = partitions_for(dataset.count_rows(None).await?);
         for name in cover.deltas.keys() {
             let settings = index_settings(dataset, name).await?;
