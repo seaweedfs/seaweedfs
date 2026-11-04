@@ -815,14 +815,14 @@ func (r *Plugin) executeJobWithExecutor(
 	// the single active worker, not 1/N of it.
 	clusterContext = r.decorateClusterContextForJob(clusterContext, job.JobType, adminConfigValues, int(adminRuntime.GetMaxJobsPerDetection()))
 
-	r.trackExecutionStart(requestID, executor.WorkerID, job, attempt)
-
 	// The request goes out on this stream and no other, so a newer stream
 	// of the worker can tell it never received it.
 	session, ok := r.getSession(executor.WorkerID)
 	if !ok {
 		return nil, fmt.Errorf("worker %s is not connected", executor.WorkerID)
 	}
+
+	r.trackExecutionStart(requestID, executor.WorkerID, job, attempt)
 
 	completedCh := make(chan *plugin_pb.JobCompleted, 1)
 	r.pendingExecutionMu.Lock()

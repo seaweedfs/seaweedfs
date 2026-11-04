@@ -215,3 +215,28 @@ func TestExecutionKeptWhenReplacementStreamListsJobBetweenOmissions(t *testing.T
 		})
 	}
 }
+
+func TestExecutionNotTrackedWhenWorkerNotConnected(t *testing.T) {
+	t.Parallel()
+	p, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer p.Shutdown()
+
+	p.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId:     "worker-a",
+		Capabilities: []*plugin_pb.JobTypeCapability{{JobType: orphanTestJobType, CanExecute: true, MaxExecutionConcurrency: 2}},
+	})
+	executor, ok := p.registry.Get("worker-a")
+	if !ok {
+		t.Fatal("worker-a is not registered")
+	}
+	const jobID = "job-without-session"
+	if _, err := p.executeJobWithExecutor(context.Background(), executor, &plugin_pb.JobSpec{JobId: jobID, JobType: orphanTestJobType}, &plugin_pb.ClusterContext{}, 1); err == nil {
+		t.Fatal("expected an error for a worker without a stream")
+	}
+	if tracked, ok := p.GetTrackedJob(jobID); ok && tracked != nil {
+		t.Fatalf("job %s tracked as %s for a dispatch that never went out", jobID, tracked.State)
+	}
+}
