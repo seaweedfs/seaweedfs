@@ -5631,27 +5631,7 @@ impl VolumeServer for VolumeGrpcService {
                 let needle_id = req.needle_id;
                 let size = req.size;
                 handles.push(tokio::spawn(async move {
-                    let form = reqwest::multipart::Form::new()
-                        .part("file", reqwest::multipart::Part::bytes(data_clone));
-                    let resp = client_clone
-                        .post(&url)
-                        .multipart(form)
-                        .send()
-                        .await
-                        .map_err(|e| {
-                            format!("remote write needle {} size {}: {}", needle_id, size, e)
-                        })?;
-                    if resp.status().is_success() {
-                        Ok(())
-                    } else {
-                        Err(format!(
-                            "remote write needle {} size {}: {} returned status {}",
-                            needle_id,
-                            size,
-                            url,
-                            resp.status()
-                        ))
-                    }
+                    fetch_and_write_replica(&client_clone, &url, data_clone, needle_id, size).await
                 }));
             }
         }
@@ -7892,6 +7872,38 @@ impl EcDecodeJob {
             tracing::error!(volume_id = vid.0, error = %e, "compact decoded volume");
         }
         Ok(())
+    }
+}
+
+/// The most `fetch_and_write_needle` waits on one replica, from connect to the
+/// response status. Mirrors the Go volume server's fetchAndWriteReplicaTimeout.
+const FETCH_AND_WRITE_REPLICA_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+async fn fetch_and_write_replica(
+    client: &reqwest::Client,
+    url: &str,
+    data: Vec<u8>,
+    needle_id: u64,
+    size: i64,
+) -> Result<(), String> {
+    let form = reqwest::multipart::Form::new().part("file", reqwest::multipart::Part::bytes(data));
+    let resp = client
+        .post(url)
+        .multipart(form)
+        .timeout(FETCH_AND_WRITE_REPLICA_TIMEOUT)
+        .send()
+        .await
+        .map_err(|e| format!("remote write needle {} size {}: {}", needle_id, size, e))?;
+    if resp.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "remote write needle {} size {}: {} returned status {}",
+            needle_id,
+            size,
+            url,
+            resp.status()
+        ))
     }
 }
 
@@ -14907,6 +14919,62 @@ mod tests {
                 .into_inner();
             assert_eq!(resp.results[0].status, status, "skip={skip_cookie_check}");
             assert_eq!(resp.results[0].error, "not found");
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn fetch_and_write_replica_fails_when_the_peer_goes_silent() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!(
+            "http://{}/3,01637037d6?type=replicate",
+            listener.local_addr().unwrap()
+        );
+        let client = reqwest::Client::new();
+        let started = tokio::time::Instant::now();
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(600),
+            fetch_and_write_replica(&client, &url, b"needle".to_vec(), 1, 6),
+        )
+        .await
+        .expect("a replica that never answers must not hold the request");
+        let err = result.expect_err("a silent replica must fail the write");
+        assert!(err.contains("remote write needle 1 size 6"), "{err}");
+        assert!(started.elapsed() <= FETCH_AND_WRITE_REPLICA_TIMEOUT);
+        drop(listener);
+    }
+
+    #[tokio::test]
+    async fn fetch_and_write_replica_reports_the_peer_status() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        for (status_line, ok) in [("201 Created", true), ("500 Internal Server Error", false)] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = format!(
+                "http://{}/3,01637037d6?type=replicate",
+                listener.local_addr().unwrap()
+            );
+            let peer = tokio::spawn(async move {
+                let (mut conn, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                let mut buf = [0u8; 4096];
+                while !request.ends_with(b"--\r\n") {
+                    let n = conn.read(&mut buf).await.unwrap();
+                    assert!(n > 0, "request ended early");
+                    request.extend_from_slice(&buf[..n]);
+                }
+                let reply = format!("HTTP/1.1 {status_line}\r\nContent-Length: 0\r\n\r\n");
+                conn.write_all(reply.as_bytes()).await.unwrap();
+                String::from_utf8_lossy(&request).into_owned()
+            });
+            let result =
+                fetch_and_write_replica(&reqwest::Client::new(), &url, b"needle".to_vec(), 1, 6)
+                    .await;
+            let request = peer.await.unwrap();
+            assert!(
+                request.starts_with("POST /3,01637037d6?type=replicate "),
+                "{request}"
+            );
+            assert!(request.contains("needle"), "{request}");
+            assert_eq!(result.is_ok(), ok, "{status_line}: {result:?}");
         }
     }
 }
