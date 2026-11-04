@@ -4,10 +4,33 @@ import (
 	"bytes"
 	"slices"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
+
+func TestCanonicalActionsAcceptAcpActions(t *testing.T) {
+	names := strings.Split(supportedActionNames, ", ")
+	for _, action := range []string{
+		s3_constants.ACTION_READ, s3_constants.ACTION_READ_ACP,
+		s3_constants.ACTION_WRITE, s3_constants.ACTION_WRITE_ACP,
+		s3_constants.ACTION_LIST, s3_constants.ACTION_TAGGING, s3_constants.ACTION_ADMIN,
+	} {
+		for _, input := range []string{action, strings.ToLower(action), strings.ToUpper(action)} {
+			if got := canonicalActions[strings.ToLower(input)]; got != action {
+				t.Errorf("canonicalActions[%q] = %q, want %q", input, got, action)
+			}
+		}
+		if !slices.Contains(names, action) {
+			t.Errorf("supportedActionNames %q does not list %s", supportedActionNames, action)
+		}
+	}
+	if len(names) != len(canonicalActions) {
+		t.Errorf("supportedActionNames lists %d actions, canonicalActions has %d", len(names), len(canonicalActions))
+	}
+}
 
 func TestUpdateBucketActions_SetActions(t *testing.T) {
 	identity := &iam_pb.Identity{

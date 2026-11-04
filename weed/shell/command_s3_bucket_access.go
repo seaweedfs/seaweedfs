@@ -17,12 +17,16 @@ import (
 
 // canonicalActions maps lowercased action names to their canonical form.
 var canonicalActions = map[string]string{
-	"read":    "Read",
-	"write":   "Write",
-	"list":    "List",
-	"tagging": "Tagging",
-	"admin":   "Admin",
+	"read":     "Read",
+	"readacp":  "ReadAcp",
+	"write":    "Write",
+	"writeacp": "WriteAcp",
+	"list":     "List",
+	"tagging":  "Tagging",
+	"admin":    "Admin",
 }
+
+const supportedActionNames = "Read, ReadAcp, Write, WriteAcp, List, Tagging, Admin"
 
 func init() {
 	Commands = append(Commands, &commandS3BucketAccess{})
@@ -52,7 +56,9 @@ func (c *commandS3BucketAccess) Help() string {
 		s3.bucket.access -name <bucket_name> -user <username> -access none
 
 	Supported action names (comma-separated):
-		Read, Write, List, Tagging, Admin
+		Read, ReadAcp, Write, WriteAcp, List, Tagging, Admin
+		ReadAcp covers GET ?acl; WriteAcp covers PUT ?acl and uploads
+		that carry an ACL header such as x-amz-acl.
 
 	The user is auto-created if it does not exist. Actions are scoped to
 	the specified bucket (stored as "Action:bucket" in the identity).
@@ -68,7 +74,7 @@ func (c *commandS3BucketAccess) Do(args []string, commandEnv *CommandEnv, writer
 	bucketCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	bucketName := bucketCommand.String("name", "", "bucket name")
 	userName := bucketCommand.String("user", "", "user name")
-	access := bucketCommand.String("access", "", "comma-separated actions: Read,Write,List,Tagging,Admin or none")
+	access := bucketCommand.String("access", "", "comma-separated actions: Read,ReadAcp,Write,WriteAcp,List,Tagging,Admin or none")
 	if err = bucketCommand.Parse(args); err != nil {
 		return err
 	}
@@ -89,7 +95,7 @@ func (c *commandS3BucketAccess) Do(args []string, commandEnv *CommandEnv, writer
 			a = strings.TrimSpace(a)
 			canonical, ok := canonicalActions[strings.ToLower(a)]
 			if !ok {
-				return fmt.Errorf("invalid action %q: must be Read, Write, List, Tagging, Admin, or none", a)
+				return fmt.Errorf("invalid action %q: must be %s, or none", a, supportedActionNames)
 			}
 			normalized = append(normalized, canonical)
 		}
