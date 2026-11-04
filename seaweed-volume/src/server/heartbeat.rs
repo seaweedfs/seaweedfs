@@ -508,7 +508,17 @@ fn diff_ec_shard_delta_messages(
     let mut deleted_ec_shards = Vec::new();
 
     for (key, message) in current {
-        if previous.get(key) != Some(message) {
+        // Counts move with every delete; the full EC heartbeat carries those,
+        // so only a change to the shard itself is news here.
+        let unchanged = previous.get(key).is_some_and(|prev| {
+            *message
+                == master_pb::VolumeEcShardInformationMessage {
+                    file_count: message.file_count,
+                    delete_count: message.delete_count,
+                    ..prev.clone()
+                }
+        });
+        if !unchanged {
             new_ec_shards.push(message.clone());
         }
     }
@@ -3161,6 +3171,33 @@ mod tests {
         assert_eq!(deleted_after_delete.len(), 1);
         assert_eq!(deleted_after_delete[0].ec_index_bits, 1);
         assert_eq!(deleted_after_delete[0].shard_sizes, vec![0]);
+    }
+
+    #[test]
+    fn test_diff_ec_shard_delta_messages_ignores_count_changes() {
+        let key = (81, "ec_delta_case".to_string(), 0, 0);
+        let previous = HashMap::from([(
+            key.clone(),
+            master_pb::VolumeEcShardInformationMessage {
+                id: 81,
+                collection: "ec_delta_case".to_string(),
+                ec_index_bits: 1,
+                shard_sizes: vec![5],
+                file_count: 3,
+                ..Default::default()
+            },
+        )]);
+
+        let mut current = previous.clone();
+        current.get_mut(&key).unwrap().delete_count = 1;
+        let (new_ec_shards, deleted_ec_shards) = diff_ec_shard_delta_messages(&previous, &current);
+        assert!(new_ec_shards.is_empty());
+        assert!(deleted_ec_shards.is_empty());
+
+        current.get_mut(&key).unwrap().shard_sizes = vec![6];
+        let (new_ec_shards, _) = diff_ec_shard_delta_messages(&previous, &current);
+        assert_eq!(new_ec_shards.len(), 1);
+        assert_eq!(new_ec_shards[0].delete_count, 1);
     }
 
     /// Both EC emission paths report the counts the Go server's
