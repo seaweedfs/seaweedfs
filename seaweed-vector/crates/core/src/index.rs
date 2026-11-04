@@ -152,13 +152,26 @@ mod tests {
         build(&mut dataset, &table.vector_column, INDEX_NAME, 4, false)
             .await
             .unwrap();
-        testing::append_dataset(&mut dataset, &testing::vectors(40, DIM), &["b"; 40]).await;
+        let mut appended = testing::vectors(40, DIM);
+        appended.push(vec![9.0; DIM]);
+        testing::append_dataset(&mut dataset, &appended, &["b"; 41]).await;
         optimize(&mut dataset, &table.vector_column, false)
             .await
             .unwrap();
         let cov = &coverage(&dataset, "vector").await.unwrap()[0];
         assert_eq!(cov.segments, 2);
         assert!(cov.unindexed_fragments.is_empty());
+        let hits = query::ann(
+            &dataset,
+            &table,
+            &Query {
+                nprobes: Some(4),
+                ..exact(&[9.0; DIM], 1)
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(hits[0].key, "k140", "{hits:?}");
 
         testing::append_dataset(&mut dataset, &testing::vectors(40, DIM), &["c"; 40]).await;
         optimize(&mut dataset, &table.vector_column, true)
