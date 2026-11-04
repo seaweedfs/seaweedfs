@@ -230,6 +230,8 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                                 <option value="Write">Write</option>
                                 <option value="List">List</option>
                                 <option value="Tagging">Tagging</option>
+                                <option value="ReadAcp" title="Needed for GET ?acl on buckets and objects">Read ACL (ReadAcp)</option>
+                                <option value="WriteAcp" title="Needed for PUT ?acl and for uploads that send x-amz-acl or x-amz-grant-* headers">Write ACL (WriteAcp)</option>
                                 <optgroup label="Object Lock Permissions">
                                     <option value="BypassGovernanceRetention">Bypass Governance Retention</option>
                                     <option value="GetObjectRetention">Get Object Retention</option>
@@ -342,6 +344,8 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                                 <option value="Write">Write</option>
                                 <option value="List">List</option>
                                 <option value="Tagging">Tagging</option>
+                                <option value="ReadAcp" title="Needed for GET ?acl on buckets and objects">Read ACL (ReadAcp)</option>
+                                <option value="WriteAcp" title="Needed for PUT ?acl and for uploads that send x-amz-acl or x-amz-grant-* headers">Write ACL (WriteAcp)</option>
                                 <optgroup label="Object Lock Permissions">
                                     <option value="BypassGovernanceRetention">Bypass Governance Retention</option>
                                     <option value="GetObjectRetention">Get Object Retention</option>
@@ -404,6 +408,11 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                                 </select>
                                 <small class="form-text text-muted">Hold Ctrl/Cmd to select multiple buckets</small>
                             </div>
+                        </div>
+                        <div class="mb-3" id="editUnshownActionsGroup" style="display: none;">
+                            <label class="form-label">Other Bucket Permissions</label>
+                            <small class="form-text text-muted d-block mb-2">Grants the permission and bucket pickers above cannot show. Uncheck a grant to remove it.</small>
+                            <div id="editUnshownActions"></div>
                         </div>
                         <div class="mb-3">
                             <label for="editPolicies" class="form-label">Attached Policies</label>
@@ -739,14 +748,9 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                 isAdmin: false,
                 permissions: [],
                 applyToAll: false,
-                specificBuckets: []
+                specificBuckets: [],
+                unshownActions: []
             };
-
-            // Check if user has Admin permission
-            if (actions.includes('Admin')) {
-                result.isAdmin = true;
-                return result;
-            }
 
             // Separate bucket-scoped from global actions
             const bucketActions = [];
@@ -756,42 +760,65 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                 if (action.startsWith('s3tables:')) {
                     const actionValue = action.slice('s3tables:'.length);
                     if (actionValue === '*') {
-                        globalBucketPerms.push('S3TablesAdmin');
+                        globalBucketPerms.push({ permission: 'S3TablesAdmin', action: action });
                         return;
                     }
                     const parts = actionValue.split(':');
                     const perm = parts[0];
-                    const bucket = parts.length > 1 ? parts.slice(1).join(':').replace(/\/\*$/, '') : '';
+                    const bucket = parts.length > 1 ? parts.slice(1).join(':') : '';
                     if (bucket) {
-                        bucketActions.push({ permission: perm, bucketId: 's3tables:' + bucket });
+                        bucketActions.push({ permission: perm, bucketId: 's3tables:' + bucket, action: action });
                     } else {
-                        globalBucketPerms.push(perm);
+                        globalBucketPerms.push({ permission: perm, action: action });
                     }
                 } else if (action.includes(':')) {
                     const parts = action.split(':');
                     const perm = parts[0];
-                    const bucket = parts.slice(1).join(':').replace(/\/\*$/, '');
-                    bucketActions.push({ permission: perm, bucketId: 's3:' + bucket });
+                    const bucket = parts.slice(1).join(':');
+                    bucketActions.push({ permission: perm, bucketId: 's3:' + bucket, action: action });
                 } else {
-                    globalBucketPerms.push(action);
+                    globalBucketPerms.push({ permission: action, action: action });
                 }
             });
 
+            const listed = globalBucketPerms.filter(gp => hasPickerOption('editActions', gp.permission));
+            const unlisted = globalBucketPerms.filter(gp => !listed.includes(gp)).map(gp => gp.action);
+
+            if (actions.includes('Admin')) {
+                result.isAdmin = true;
+                result.permissions = listed.map(gp => gp.permission);
+                result.unshownActions = unlisted.concat(bucketActions.map(ba => ba.action));
+                return result;
+            }
+
             // If we have global bucket permissions (no colon), they apply to all buckets
             if (globalBucketPerms.length > 0) {
-                result.permissions = globalBucketPerms;
+                result.permissions = listed.map(gp => gp.permission);
                 result.applyToAll = true;
+                result.unshownActions = unlisted.concat(bucketActions.map(ba => ba.action));
             } else if (bucketActions.length > 0) {
-                // Get unique permissions and buckets
+                // The form saves every permission on every selected bucket, so it can
+                // show the grants only when they cover that full product with listed options.
                 const perms = [...new Set(bucketActions.map(ba => ba.permission))];
                 const buckets = [...new Set(bucketActions.map(ba => ba.bucketId))];
+                const pairs = new Set(bucketActions.map(ba => JSON.stringify([ba.permission, ba.bucketId])));
+                const allListed = perms.every(perm => hasPickerOption('editActions', perm)) &&
+                    buckets.every(bucketId => hasPickerOption('editSelectedBuckets', bucketId));
 
-                result.permissions = perms;
-                result.applyToAll = false;
-                result.specificBuckets = buckets;
+                if (allListed && pairs.size === perms.length * buckets.length) {
+                    result.permissions = perms;
+                    result.specificBuckets = buckets;
+                } else {
+                    result.unshownActions = bucketActions.map(ba => ba.action);
+                }
             }
 
             return result;
+        }
+
+        function hasPickerOption(selectId, value) {
+            const select = document.getElementById(selectId);
+            return !!select && Array.from(select.options).some(option => option.value === value);
         }
 
         function parseBucketOptionValue(value) {
@@ -802,6 +829,32 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                 return { type: 's3', name: value.slice('s3:'.length) };
             }
             return { type: 's3', name: value };
+        }
+
+        function renderUnshownActions(actions) {
+            const container = document.getElementById('editUnshownActions');
+            container.replaceChildren();
+            actions.forEach((action, i) => {
+                const wrapper = document.createElement('div');
+                wrapper.className = 'form-check';
+                const input = document.createElement('input');
+                input.className = 'form-check-input';
+                input.type = 'checkbox';
+                input.id = 'editUnshownAction' + i;
+                input.value = action;
+                input.checked = true;
+                const label = document.createElement('label');
+                label.className = 'form-check-label';
+                label.htmlFor = input.id;
+                label.textContent = action;
+                wrapper.append(input, label);
+                container.appendChild(wrapper);
+            });
+            document.getElementById('editUnshownActionsGroup').style.display = actions.length > 0 ? '' : 'none';
+        }
+
+        function selectedUnshownActions() {
+            return Array.from(document.querySelectorAll('#editUnshownActions input:checked')).map(input => input.value);
         }
 
         // Build bucket permission action strings using original permissions dropdown
@@ -943,6 +996,12 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     const user = await response.json();
 
                     // Populate edit form
+                    renderUnshownActions([]);
+                    document.getElementById('editAllBuckets').checked = true;
+                    Array.from(document.getElementById('editSelectedBuckets').options).forEach(option => {
+                        option.selected = false;
+                    });
+                    toggleBucketList('edit');
                     document.getElementById('editUsername').value = username;
                     document.getElementById('editEmail').value = user.email || '';
 
@@ -963,14 +1022,13 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     // Populate bucket permissions using original permissions dropdown
                     if (user.actions && user.actions.length > 0) {
                         const bucketPerms = parseBucketPermissions(user.actions);
+                        renderUnshownActions(bucketPerms.unshownActions);
 
                         // Set permissions in the original multi-select
                         const actionsSelect = document.getElementById('editActions');
                         if (actionsSelect) {
                             Array.from(actionsSelect.options).forEach(option => {
-                                if (bucketPerms.isAdmin && option.value === 'Admin') {
-                                    option.selected = true;
-                                } else if (!bucketPerms.isAdmin && bucketPerms.permissions.includes(option.value)) {
+                                if (bucketPerms.permissions.includes(option.value)) {
                                     option.selected = true;
                                 }
                             });
@@ -1232,15 +1290,15 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                 return;
             }
 
-            // Validate that permissions are not empty
-            if (!allActions || allActions.length === 0) {
+            const actions = [...new Set([...allActions, ...selectedUnshownActions()])];
+            if (actions.length === 0) {
                 showAlert('At least one permission must be selected', 'error');
                 return;
             }
 
             const userData = {
                 email: document.getElementById('editEmail').value,
-                actions: allActions,
+                actions: actions,
                 policy_names: Array.from(document.getElementById('editPolicies').selectedOptions).map(option => option.value)
             };
 

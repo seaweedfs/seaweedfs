@@ -34,6 +34,13 @@ func (c *commandS3Configure) Help() string {
 
 	# create a new identity with account information
 	s3.configure -user=username -actions=Read,Write,List,Tagging -buckets=bucket-name -policies=policy1,policy2 -access_key=key -secret_key=secret -account_id=id -account_display_name=name -account_email=email@example.com -apply
+
+	# allow uploads that send an ACL header such as x-amz-acl
+	s3.configure -user=username -actions=Write,WriteAcp -buckets=bucket-name -apply
+
+	Common action names: Read, ReadAcp, Write, WriteAcp, List, Tagging, Admin
+	ReadAcp covers GET ?acl and WriteAcp covers PUT ?acl. An upload or copy
+	that carries an ACL header such as x-amz-acl needs both Write and WriteAcp.
 	`
 }
 
@@ -44,7 +51,7 @@ func (c *commandS3Configure) HasTag(tag CommandTag) bool {
 func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	s3ConfigureCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
-	actions := s3ConfigureCommand.String("actions", "", "comma separated actions names: Read,Write,List,Tagging,Admin")
+	actions := s3ConfigureCommand.String("actions", "", "comma separated actions names: Read,ReadAcp,Write,WriteAcp,List,Tagging,Admin")
 	user := s3ConfigureCommand.String("user", "", "user name")
 	buckets := s3ConfigureCommand.String("buckets", "", "bucket name")
 	accessKey := s3ConfigureCommand.String("access_key", "", "specify the access key")

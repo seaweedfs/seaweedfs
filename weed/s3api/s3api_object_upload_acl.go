@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -156,8 +157,12 @@ func (s3a *S3ApiServer) preparePutObjectACL(r *http.Request, bucket string) (*ht
 		// Setting an ACL during upload or copy also requires s3:PutObjectAcl. Use the
 		// unified authorization path so bucket-policy allows and explicit denies
 		// retain the same semantics as standalone ACL requests.
-		identity, authCode := s3a.iam.authRequest(r.Clone(r.Context()), s3_constants.ACTION_WRITE_ACP)
+		identity, authCode, _ := s3a.iam.authRequestWithAuthType(r.Clone(r.Context()), s3_constants.ACTION_WRITE_ACP)
 		if authCode != s3err.ErrNone {
+			if authCode == s3err.ErrAccessDenied && identity != nil && identity.Name != s3_constants.AccountAnonymousId {
+				_, object := s3_constants.GetBucketAndObject(r)
+				glog.Infof("denied %s %q for %q: the request sets an ACL and failed the %s (s3:PutObjectAcl) check", r.Method, bucket+"/"+object, identity.Name, s3_constants.ACTION_WRITE_ACP)
+			}
 			return r, authCode
 		}
 		if identity == nil || identity.Account == nil {

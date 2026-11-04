@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 
@@ -17,11 +18,35 @@ import (
 
 // canonicalActions maps lowercased action names to their canonical form.
 var canonicalActions = map[string]string{
-	"read":    "Read",
-	"write":   "Write",
-	"list":    "List",
-	"tagging": "Tagging",
-	"admin":   "Admin",
+	"read":     "Read",
+	"readacp":  "ReadAcp",
+	"write":    "Write",
+	"writeacp": "WriteAcp",
+	"list":     "List",
+	"tagging":  "Tagging",
+	"admin":    "Admin",
+}
+
+const supportedActionNames = "Read, ReadAcp, Write, WriteAcp, List, Tagging, Admin"
+
+// canonicalActionList parses a comma-separated action list into canonical
+// names, skipping empty entries and repeats.
+func canonicalActionList(list string) ([]string, error) {
+	var actions []string
+	for _, a := range strings.Split(list, ",") {
+		a = strings.TrimSpace(a)
+		if a == "" {
+			continue
+		}
+		canonical, ok := canonicalActions[strings.ToLower(a)]
+		if !ok {
+			return nil, fmt.Errorf("invalid action %q: supported actions are %s", a, supportedActionNames)
+		}
+		if !slices.Contains(actions, canonical) {
+			actions = append(actions, canonical)
+		}
+	}
+	return actions, nil
 }
 
 func init() {
@@ -45,14 +70,16 @@ func (c *commandS3BucketAccess) Help() string {
 		# Grant anonymous read and list access
 		s3.bucket.access -name <bucket_name> -user anonymous -access Read,List
 
-		# Grant full anonymous access
+		# Grant anonymous read, write and list access
 		s3.bucket.access -name <bucket_name> -user anonymous -access Read,Write,List
 
 		# Remove all access for a user on a bucket
 		s3.bucket.access -name <bucket_name> -user <username> -access none
 
 	Supported action names (comma-separated):
-		Read, Write, List, Tagging, Admin
+		Read, ReadAcp, Write, WriteAcp, List, Tagging, Admin
+		ReadAcp covers GET ?acl and WriteAcp covers PUT ?acl. An upload
+		that carries an ACL header such as x-amz-acl needs Write and WriteAcp.
 
 	The user is auto-created if it does not exist. Actions are scoped to
 	the specified bucket (stored as "Action:bucket" in the identity).
@@ -68,7 +95,7 @@ func (c *commandS3BucketAccess) Do(args []string, commandEnv *CommandEnv, writer
 	bucketCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	bucketName := bucketCommand.String("name", "", "bucket name")
 	userName := bucketCommand.String("user", "", "user name")
-	access := bucketCommand.String("access", "", "comma-separated actions: Read,Write,List,Tagging,Admin or none")
+	access := bucketCommand.String("access", "", "comma-separated actions: Read,ReadAcp,Write,WriteAcp,List,Tagging,Admin or none")
 	if err = bucketCommand.Parse(args); err != nil {
 		return err
 	}
@@ -82,16 +109,13 @@ func (c *commandS3BucketAccess) Do(args []string, commandEnv *CommandEnv, writer
 
 	accessStr := strings.TrimSpace(*access)
 
-	// Validate and normalize actions to canonical casing
 	if accessStr != "" && strings.ToLower(accessStr) != "none" {
-		var normalized []string
-		for _, a := range strings.Split(accessStr, ",") {
-			a = strings.TrimSpace(a)
-			canonical, ok := canonicalActions[strings.ToLower(a)]
-			if !ok {
-				return fmt.Errorf("invalid action %q: must be Read, Write, List, Tagging, Admin, or none", a)
-			}
-			normalized = append(normalized, canonical)
+		normalized, err := canonicalActionList(accessStr)
+		if err != nil {
+			return err
+		}
+		if len(normalized) == 0 {
+			return fmt.Errorf("invalid -access %q: use %s, or none", accessStr, supportedActionNames)
 		}
 		accessStr = strings.Join(normalized, ",")
 	}

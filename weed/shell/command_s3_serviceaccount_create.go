@@ -7,7 +7,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/iam"
@@ -84,26 +83,12 @@ func (c *commandS3ServiceAccountCreate) Do(args []string, commandEnv *CommandEnv
 		CreatedAt: time.Now().Unix(),
 	}
 
-	validActions := map[string]string{
-		"read": "Read", "write": "Write", "list": "List",
-		"tagging": "Tagging", "admin": "Admin",
-	}
 	if *actions != "" {
-		seen := make(map[string]struct{})
-		for _, a := range strings.Split(*actions, ",") {
-			a = strings.TrimSpace(a)
-			if a != "" {
-				canonical, ok := validActions[strings.ToLower(a)]
-				if !ok {
-					return fmt.Errorf("invalid action %q: supported actions are Read, Write, List, Tagging, Admin", a)
-				}
-				if _, dup := seen[canonical]; dup {
-					continue
-				}
-				seen[canonical] = struct{}{}
-				sa.Actions = append(sa.Actions, canonical)
-			}
+		parsed, err := canonicalActionList(*actions)
+		if err != nil {
+			return err
 		}
+		sa.Actions = parsed
 	}
 
 	if *expiry < 0 {

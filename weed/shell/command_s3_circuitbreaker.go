@@ -65,7 +65,7 @@ func (c *commandS3CircuitBreaker) Do(args []string, commandEnv *CommandEnv, writ
 	buckets := s3CircuitBreakerCommand.String("buckets", "", "the bucket name(s) to configure, eg: -buckets x,y,z")
 	global := s3CircuitBreakerCommand.Bool("global", false, "configure global circuit breaker")
 
-	actions := s3CircuitBreakerCommand.String("actions", "", "comma separated actions names: Read,Write,List,Tagging,Admin")
+	actions := s3CircuitBreakerCommand.String("actions", "", "comma separated actions names: "+strings.Join(s3_constants.AllowedActions, ","))
 	limitType := s3CircuitBreakerCommand.String("type", "", "'Count' or 'MB'; Count represents the number of simultaneous requests, and MB represents the content size of all simultaneous requests")
 	values := s3CircuitBreakerCommand.String("values", "", "comma separated values")
 

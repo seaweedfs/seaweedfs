@@ -31,7 +31,7 @@ func (c *commandS3AnonymousSet) Help() string {
 	s3.anonymous.set -bucket <bucket_name> -access Read,List
 	s3.anonymous.set -bucket <bucket_name> -access none
 
-	Supported actions: Read, Write, List, Tagging, Admin
+	Supported actions: Read, ReadAcp, Write, WriteAcp, List, Tagging, Admin
 	Use "none" to remove all anonymous access for the bucket.
 
 	This manages the special "anonymous" user's actions. It does not
@@ -46,7 +46,7 @@ func (c *commandS3AnonymousSet) HasTag(CommandTag) bool {
 func (c *commandS3AnonymousSet) Do(args []string, commandEnv *CommandEnv, writer io.Writer) error {
 	f := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	bucket := f.String("bucket", "", "bucket name")
-	access := f.String("access", "", "comma-separated actions: Read,Write,List,Tagging,Admin or none")
+	access := f.String("access", "", "comma-separated actions: Read,ReadAcp,Write,WriteAcp,List,Tagging,Admin or none")
 	if err := f.Parse(args); err != nil {
 		return err
 	}
@@ -56,6 +56,16 @@ func (c *commandS3AnonymousSet) Do(args []string, commandEnv *CommandEnv, writer
 	}
 	if *access == "" {
 		return fmt.Errorf("-access is required")
+	}
+	var granted []string
+	if strings.ToLower(strings.TrimSpace(*access)) != "none" {
+		var err error
+		if granted, err = canonicalActionList(*access); err != nil {
+			return err
+		}
+		if len(granted) == 0 {
+			return fmt.Errorf("invalid -access %q: use %s, or none", *access, supportedActionNames)
+		}
 	}
 
 	return commandEnv.withIamClient(func(ctx context.Context, client iam_pb.SeaweedIdentityAccessManagementClient) error {
@@ -74,27 +84,8 @@ func (c *commandS3AnonymousSet) Do(args []string, commandEnv *CommandEnv, writer
 			}
 		}
 
-		// Add new actions unless "none"
-		canonicalActions := map[string]string{
-			"read": "Read", "write": "Write", "list": "List",
-			"tagging": "Tagging", "admin": "Admin",
-		}
-		if strings.ToLower(strings.TrimSpace(*access)) != "none" {
-			seen := make(map[string]struct{})
-			for _, action := range strings.Split(*access, ",") {
-				action = strings.TrimSpace(action)
-				if action != "" {
-					canonical, ok := canonicalActions[strings.ToLower(action)]
-					if !ok {
-						return fmt.Errorf("invalid action %q: supported actions are Read, Write, List, Tagging, Admin", action)
-					}
-					if _, dup := seen[canonical]; dup {
-						continue
-					}
-					seen[canonical] = struct{}{}
-					kept = append(kept, canonical+":"+*bucket)
-				}
-			}
+		for _, action := range granted {
+			kept = append(kept, action+":"+*bucket)
 		}
 
 		identity.Actions = kept
