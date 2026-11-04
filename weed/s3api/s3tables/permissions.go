@@ -176,13 +176,9 @@ func validatePolicyDocument(raw string) error {
 	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
 		return fmt.Errorf("invalid policy document: %w", err)
 	}
-	nullCondition, err := nullConditionStatements(raw)
-	if err != nil {
-		return fmt.Errorf("invalid policy document: %w", err)
-	}
-	for i, stmt := range doc.Statement {
+	for _, stmt := range doc.Statement {
 		// A null Condition on a Deny only widens the veto, so it stays allowed.
-		if stmt.Effect == "Allow" && i < len(nullCondition) && nullCondition[i] {
+		if stmt.Effect == "Allow" && stmt.nullCondition {
 			return fmt.Errorf("invalid policy document: an Allow statement's Condition must not be null")
 		}
 		for operator, keys := range stmt.Condition {
@@ -214,44 +210,6 @@ func validatePolicyDocument(raw string) error {
 		}
 	}
 	return nil
-}
-
-// nullConditionStatements reports, statement by statement, whether the
-// Condition the evaluator reads is a literal null, which the typed decode
-// cannot tell apart from no Condition. It takes the route
-// PolicyDocument.UnmarshalJSON takes — Statement through a generic value and
-// back — so keys that differ only in case, such as "condition" and
-// "Condition", resolve as they do for the evaluator rather than in document
-// order.
-func nullConditionStatements(raw string) ([]bool, error) {
-	var aux struct {
-		Statement interface{} `json:"Statement"`
-	}
-	if err := json.Unmarshal([]byte(raw), &aux); err != nil {
-		return nil, err
-	}
-	var stmts []interface{}
-	switch s := aux.Statement.(type) {
-	case map[string]interface{}:
-		stmts = []interface{}{s}
-	case []interface{}:
-		stmts = s
-	}
-	nullCondition := make([]bool, len(stmts))
-	for i, stmt := range stmts {
-		data, err := json.Marshal(stmt)
-		if err != nil {
-			return nil, err
-		}
-		var probe struct {
-			Condition json.RawMessage `json:"Condition"`
-		}
-		if err := json.Unmarshal(data, &probe); err != nil {
-			return nil, err
-		}
-		nullCondition[i] = string(probe.Condition) == "null"
-	}
-	return nullCondition, nil
 }
 
 // ConditionValue reports whether operator's evaluator can read v: a JSON
