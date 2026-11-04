@@ -9973,6 +9973,74 @@ mod tests {
         assert_eq!(std::fs::read(&dest).unwrap(), b"peer vif");
     }
 
+    /// A CopyFile stream that delivers `frame` and then fails.
+    struct FailAfterFrame(Option<bytes::Bytes>);
+
+    impl http_body::Body for FailAfterFrame {
+        type Data = bytes::Bytes;
+        type Error = Status;
+
+        fn poll_frame(
+            mut self: Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Option<Result<http_body::Frame<bytes::Bytes>, Status>>> {
+            std::task::Poll::Ready(Some(match self.0.take() {
+                Some(frame) => Ok(http_body::Frame::data(frame)),
+                None => Err(Status::unavailable("source went away")),
+            }))
+        }
+    }
+
+    fn copy_stream_failing_after_bytes() -> tonic::Streaming<volume_server_pb::CopyFileResponse> {
+        let message = prost::Message::encode_to_vec(&volume_server_pb::CopyFileResponse {
+            file_content: b"partial".to_vec(),
+            modified_ts_ns: 1,
+            ..Default::default()
+        });
+        let mut frame = vec![0u8];
+        frame.extend_from_slice(&(message.len() as u32).to_be_bytes());
+        frame.extend_from_slice(&message);
+        tonic::Streaming::new_response(
+            tonic_prost::ProstDecoder::<volume_server_pb::CopyFileResponse>::default(),
+            FailAfterFrame(Some(frame.into())),
+            tonic::codegen::http::StatusCode::OK,
+            None,
+            None,
+        )
+    }
+
+    // A stream that fails after sending bytes leaves the destination as it was
+    // and removes the staged copy, on both optional-copy paths.
+    #[tokio::test]
+    async fn test_optional_copy_keeps_destination_when_stream_fails() {
+        let dest_tmp = TempDir::new().unwrap();
+        let dir = dest_tmp.path().to_str().unwrap();
+
+        let ecsum = format!("{}/1.ecsum", dir);
+        std::fs::write(&ecsum, b"local sidecar").unwrap();
+        let mut stream = copy_stream_failing_after_bytes();
+        assert!(
+            drain_optional_copy_to_file(&mut stream, &ecsum, ".ecsum")
+                .await
+                .is_err()
+        );
+        assert_eq!(std::fs::read(&ecsum).unwrap(), b"local sidecar");
+        assert!(!std::path::Path::new(&format!("{}.copying", ecsum)).exists());
+
+        let vif = format!("{}/1.vif", dir);
+        std::fs::write(&vif, b"local vif").unwrap();
+        assert!(
+            crate::server::store_ec::drain_optional_copy_stream(
+                copy_stream_failing_after_bytes(),
+                &vif
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(std::fs::read(&vif).unwrap(), b"local vif");
+        assert!(!std::path::Path::new(&format!("{}.copying", vif)).exists());
+    }
+
     // A copy that mounts and then fails validation (check_copy_counts) is
     // unmounted, not deleted. With a redb needle map the mount has already
     // built <idx base>.rdb; the failure cleanup must remove it with the other
