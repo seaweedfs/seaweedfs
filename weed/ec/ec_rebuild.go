@@ -26,6 +26,11 @@ type ecRebuilder struct {
 	volumeIds    []needle.VolumeId
 	diskType     types.DiskType
 
+	maxParallelization int
+	// corruptShards holds, per volume and shard, the nodes whose copy failed
+	// the checksum scrub. It is filled before any rebuild starts.
+	corruptShards map[needle.VolumeId]map[erasure_coding.ShardId][]*EcNode
+
 	ewg       *util.ErrorWaitGroup
 	ecNodesMu sync.Mutex
 }
@@ -35,7 +40,9 @@ type ecRebuilder struct {
 // left unmounted by a missing .ecx index; such shards are invisible to the
 // master, so recovering them first avoids regenerating data that is actually
 // present. volumeIds, when non-empty, restricts the rebuild to those volumes.
-func RebuildEcVolumes(env *Env, ecNodes []*EcNode, writer io.Writer, collections []string, volumeIds []needle.VolumeId, diskType types.DiskType, maxParallelization int, applyChanges bool) error {
+// verifyChecksums scrubs every shard against its checksum sidecar first, and
+// rebuilds shards whose copies fail it even in volumes with every shard present.
+func RebuildEcVolumes(env *Env, ecNodes []*EcNode, writer io.Writer, collections []string, volumeIds []needle.VolumeId, diskType types.DiskType, maxParallelization int, applyChanges bool, verifyChecksums bool) error {
 	erb := &ecRebuilder{
 		env:          env,
 		ecNodes:      ecNodes,
@@ -45,6 +52,8 @@ func RebuildEcVolumes(env *Env, ecNodes []*EcNode, writer io.Writer, collections
 		volumeIds:    volumeIds,
 		diskType:     diskType,
 
+		maxParallelization: maxParallelization,
+
 		ewg: util.NewErrorWaitGroup(maxParallelization),
 	}
 
@@ -52,6 +61,10 @@ func RebuildEcVolumes(env *Env, ecNodes []*EcNode, writer io.Writer, collections
 	// shards never register with the master, so the rebuild below would treat the
 	// volume as short or unrepairable even though its data is intact (issue #10104).
 	erb.recoverMissingIndexes()
+
+	if verifyChecksums {
+		erb.findCorruptShards(collections)
+	}
 
 	fmt.Printf("rebuildEcVolumes for %d collection(s)\n", len(collections))
 	for _, c := range collections {
@@ -162,6 +175,8 @@ func (erb *ecRebuilder) rebuildEcVolumes(collection string) {
 	}
 	erb.ecNodesMu.Unlock()
 
+	erb.dropCorruptShards(ecShardMap)
+
 	for vid, locations := range ecShardMap {
 		if !erb.matchesVolumeId(vid) {
 			continue
@@ -245,6 +260,75 @@ func (erb *ecRebuilder) recoverMissingIndexes() {
 	erb.ecNodesMu.Lock()
 	erb.ecNodes = refreshed
 	erb.ecNodesMu.Unlock()
+}
+
+// findCorruptShards checksum-scrubs each node's shards of the targeted volumes
+// and records the copies that fail their checksum sidecar. A node whose scrub
+// fails is reported and its copies are taken as they are.
+func (erb *ecRebuilder) findCorruptShards(collections []string) {
+	erb.ecNodesMu.Lock()
+	nodes := append([]*EcNode(nil), erb.ecNodes...)
+	erb.ecNodesMu.Unlock()
+
+	erb.corruptShards = make(map[needle.VolumeId]map[erasure_coding.ShardId][]*EcNode)
+	var mu sync.Mutex
+	ewg := util.NewErrorWaitGroup(erb.maxParallelization)
+	for _, node := range nodes {
+		var vids []uint32
+		for _, diskInfo := range node.Info.DiskInfos {
+			for _, ecShardInfo := range diskInfo.EcShardInfos {
+				if slices.Contains(collections, ecShardInfo.Collection) && erb.matchesVolumeId(needle.VolumeId(ecShardInfo.Id)) && !slices.Contains(vids, ecShardInfo.Id) {
+					vids = append(vids, ecShardInfo.Id)
+				}
+			}
+		}
+		if len(vids) == 0 {
+			continue
+		}
+		ewg.Add(func() error {
+			var resp *volume_server_pb.ScrubEcVolumeResponse
+			err := operation.WithVolumeServerClient(false, pb.NewServerAddressFromDataNode(node.Info), erb.env.GrpcDialOption, func(client volume_server_pb.VolumeServerClient) (scrubErr error) {
+				resp, scrubErr = client.ScrubEcVolume(context.Background(), &volume_server_pb.ScrubEcVolumeRequest{
+					Mode:      volume_server_pb.VolumeScrubMode_CHECKSUM,
+					VolumeIds: vids,
+				})
+				return scrubErr
+			})
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				erb.write("%s checksum scrub failed: %v\n", node.Info.Id, err)
+				return nil
+			}
+			for _, shardInfo := range resp.GetBrokenShardInfos() {
+				vid, shardId := needle.VolumeId(shardInfo.VolumeId), erasure_coding.ShardId(shardInfo.ShardId)
+				erb.write("ec volume %d shard %d on %s fails its checksum\n", vid, shardId, node.Info.Id)
+				if erb.corruptShards[vid] == nil {
+					erb.corruptShards[vid] = make(map[erasure_coding.ShardId][]*EcNode)
+				}
+				erb.corruptShards[vid][shardId] = append(erb.corruptShards[vid][shardId], node)
+			}
+			return nil
+		})
+	}
+	ewg.Wait()
+}
+
+// dropCorruptShards takes the copies that failed the checksum scrub out of the
+// rebuild plan: a shard left without a good copy counts as missing, so the
+// rebuild regenerates it instead of skipping a volume that only looks complete.
+func (erb *ecRebuilder) dropCorruptShards(ecShardMap EcShardMap) {
+	for vid, byShard := range erb.corruptShards {
+		locations, found := ecShardMap[vid]
+		if !found {
+			continue
+		}
+		for shardId, corruptNodes := range byShard {
+			locations[shardId] = slices.DeleteFunc(locations[shardId], func(node *EcNode) bool {
+				return slices.Contains(corruptNodes, node)
+			})
+		}
+	}
 }
 
 func (erb *ecRebuilder) rebuildOneEcVolume(collection string, volumeId needle.VolumeId, locations EcShardLocations, rebuilder *EcNode) error {
