@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -102,12 +103,13 @@ func TestEcReconstructedIntervalLogLine(t *testing.T) {
 	markers := func(vmodule string, vid needle.VolumeId, missing shards) (n *needle.Needle, lines []string) {
 		flag.Set("vmodule", vmodule)
 		r, w, _ := os.Pipe()
-		stderr, out := os.Stderr, make(chan []byte)
-		go func() { b, _ := io.ReadAll(r); out <- b }()
+		stderr, out := os.Stderr, make(chan []byte, 1)
+		restore := sync.OnceFunc(func() { os.Stderr = stderr; w.Close() })
+		t.Cleanup(restore)
+		go func() { b, _ := io.ReadAll(r); r.Close(); out <- b }()
 		os.Stderr = w
 		n, _, _, _ = readEcNeedle(t, vid, missing, nil)
-		os.Stderr = stderr
-		w.Close()
+		restore()
 		for _, line := range strings.Split(string(<-out), "\n") {
 			if strings.Contains(line, "ec reconstructed interval:") {
 				lines = append(lines, line)
