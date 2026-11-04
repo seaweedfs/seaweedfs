@@ -120,9 +120,9 @@ func (dn *DataNode) UpdateEcShards(actualShards []*erasure_coding.EcVolumeInfo) 
 }
 
 // ecCountsChanged reports whether a heartbeat moves the stored FileCount or
-// DeleteCount. A message reporting 0/0 did not count (older volume servers and
-// the incremental mount message omit the fields), so it keeps the stored values
-// and carries them onto the incoming record in case the map is rewritten.
+// DeleteCount. A message reporting 0/0 did not count (older volume servers omit
+// the fields), so it keeps the stored values and carries them onto the incoming
+// record in case the map is rewritten.
 func ecCountsChanged(stored, actual *erasure_coding.EcVolumeInfo) bool {
 	if actual.FileCount == 0 && actual.DeleteCount == 0 {
 		actual.FileCount, actual.DeleteCount = stored.FileCount, stored.DeleteCount

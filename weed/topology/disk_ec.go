@@ -49,7 +49,7 @@ func (d *Disk) AddOrUpdateEcShard(s *erasure_coding.EcVolumeInfo) {
 		updated := *existing
 		updated.ShardsInfo = existing.ShardsInfo.Plus(s.ShardsInfo)
 		delta = updated.ShardsInfo.Count() - existing.ShardsInfo.Count()
-		// 0/0 means the message did not count (the mount message omits the fields)
+		// 0/0 means the message did not count (older volume servers omit the fields)
 		if s.FileCount != 0 || s.DeleteCount != 0 {
 			updated.FileCount, updated.DeleteCount = s.FileCount, s.DeleteCount
 		}
