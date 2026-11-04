@@ -62,7 +62,7 @@ What already exists, with the files that hold it:
   unless the request asks for post-filtering, which S3 Vectors never does.
   Lance's IVF search honours the prefilter, so this is already the behaviour
   AWS calls an `ENHANCED` index.
-- **Enterprise consumes exactly this model.** In seaweed-mono,
+- **Enterprise consumes exactly this model.** In the Enterprise repository,
   `enterprise/weed/pb/vector_coord.proto` defines `SegmentInfo{id,
   resident_bytes, rows, fragment_ids}` and `SegmentList{tail_fragment_ids,
   tail_bytes}`; `VectorQuery` already carries `nprobes`; a `Task` is a set of
