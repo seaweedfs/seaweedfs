@@ -35,12 +35,12 @@ func (c *commandS3Configure) Help() string {
 	# create a new identity with account information
 	s3.configure -user=username -actions=Read,Write,List,Tagging -buckets=bucket-name -policies=policy1,policy2 -access_key=key -secret_key=secret -account_id=id -account_display_name=name -account_email=email@example.com -apply
 
-	# allow setting object and bucket ACLs, including x-amz-acl on uploads
-	s3.configure -user=username -actions=WriteAcp -buckets=bucket-name -apply
+	# allow uploads that send an ACL header such as x-amz-acl
+	s3.configure -user=username -actions=Write,WriteAcp -buckets=bucket-name -apply
 
 	Common action names: Read, ReadAcp, Write, WriteAcp, List, Tagging, Admin
-	ReadAcp covers GET ?acl; WriteAcp covers PUT ?acl and uploads that carry
-	an ACL header such as x-amz-acl.
+	ReadAcp covers GET ?acl and WriteAcp covers PUT ?acl. An upload or copy
+	that carries an ACL header such as x-amz-acl needs both Write and WriteAcp.
 	`
 }
 

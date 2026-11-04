@@ -57,8 +57,8 @@ func (c *commandS3BucketAccess) Help() string {
 
 	Supported action names (comma-separated):
 		Read, ReadAcp, Write, WriteAcp, List, Tagging, Admin
-		ReadAcp covers GET ?acl; WriteAcp covers PUT ?acl and uploads
-		that carry an ACL header such as x-amz-acl.
+		ReadAcp covers GET ?acl and WriteAcp covers PUT ?acl. An upload
+		that carries an ACL header such as x-amz-acl needs Write and WriteAcp.
 
 	The user is auto-created if it does not exist. Actions are scoped to
 	the specified bucket (stored as "Action:bucket" in the identity).
