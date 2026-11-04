@@ -15,6 +15,11 @@ a larger profile:
     PERF_INDEX        1 builds the vector index after ingest with weed-vector-cli,
                       so the queries run through it (PERF_PARTITIONS overrides
                       the partition count)
+    PERF_CLUSTERS     draw vectors around this many shared centres instead of
+                      independently (0); PERF_NOISE is the spread around a
+                      centre (0.3). Independent Gaussian vectors have no
+                      locality for an IVF index to use, so recall through one
+                      only tracks the fraction of partitions probed.
 
 Each timed scenario starts with one untimed call. Timings only report; the
 assertions check correctness (recall against an exact client-side search,
@@ -48,6 +53,8 @@ CONCURRENCY = [int(c) for c in os.environ.get("PERF_CONCURRENCY", "1,4,8").split
 CATEGORIES = 10
 RECALL_SAMPLE = int(os.environ.get("PERF_RECALL", "20"))
 INDEXED = bool(os.environ.get("PERF_INDEX"))
+CLUSTERS = int(os.environ.get("PERF_CLUSTERS", "0"))
+NOISE = float(os.environ.get("PERF_NOISE", "0.3"))
 INDEX = "perf"
 
 REPORT = {}
@@ -110,11 +117,19 @@ def recall(expected, hits):
 def perf(cluster):
     assert 1 <= BATCH <= 500 and VECTORS >= BATCH
     rng = random.Random(1)
+    centres = [[rng.gauss(0, 1) for _ in range(DIM)] for _ in range(CLUSTERS)]
+
+    def vector():
+        if not centres:
+            return [round(rng.gauss(0, 1), 5) for _ in range(DIM)]
+        centre = rng.choice(centres)
+        return [round(c + NOISE * rng.gauss(0, 1), 5) for c in centre]
+
     data = []
     for _ in range(VECTORS):
-        vector = [round(rng.gauss(0, 1), 5) for _ in range(DIM)]
-        data.append((vector, math.sqrt(sum(x * x for x in vector))))
-    queries = [[round(rng.gauss(0, 1), 5) for _ in range(DIM)] for _ in range(QUERIES)]
+        v = vector()
+        data.append((v, math.sqrt(sum(x * x for x in v))))
+    queries = [vector() for _ in range(QUERIES)]
 
     s3v = client(cluster["endpoint"])
     bucket = "perf-" + uuid.uuid4().hex[:12]
@@ -124,6 +139,7 @@ def perf(cluster):
     args = {"vectorBucketName": bucket, "indexName": INDEX}
     combo = re.sub(r"^vectors-|\d+$", "", cluster["directory"].name)
     REPORT[combo] = {"config": {"vectors": VECTORS, "dim": DIM, "batch": BATCH, "queries": QUERIES,
+                                "clusters": CLUSTERS,
                                 "top_k": TOPK, "concurrency": CONCURRENCY, "cpus": os.cpu_count(),
                                 "load_1m": os.getloadavg()[0], "machine": platform.machine()}}
     yield {"client": s3v, "endpoint": cluster["endpoint"], "args": args, "data": data,
