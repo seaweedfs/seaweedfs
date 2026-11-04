@@ -630,6 +630,8 @@ func TestConditionValue(t *testing.T) {
 		{"NumericLessThan", `["low","10"]`, false},
 		{"NumericLessThan", `"NaN"`, false},
 		{"NumericNotEquals", `"nan"`, false},
+		{"NumericNotEquals", `"Inf"`, false},
+		{"NumericGreaterThan", `"-Infinity"`, false},
 		{"ForAnyValue:NumericLessThan", `"low"`, false},
 		{"ForAllValues:NumericLessThan", `"10"`, true},
 

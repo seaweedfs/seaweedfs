@@ -276,7 +276,7 @@ func conditionValueReadable(base string, item interface{}) bool {
 			return true
 		case string:
 			f, err := strconv.ParseFloat(v, 64)
-			return err == nil && !math.IsNaN(f)
+			return err == nil && !math.IsNaN(f) && !math.IsInf(f, 0)
 		}
 	case "DateEquals", "DateNotEquals", "DateLessThan", "DateLessThanEquals",
 		"DateGreaterThan", "DateGreaterThanEquals":
