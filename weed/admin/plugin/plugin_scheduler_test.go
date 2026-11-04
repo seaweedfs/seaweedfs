@@ -1656,6 +1656,78 @@ func TestExecutorCapacityStopsCreditingACompletedJobAfterTheNextHeartbeat(t *tes
 	}
 }
 
+// A count-only heartbeat taken before a reservation cannot count that job,
+// so the slot it counted is still unknown work rather than the new job's.
+// A reconnect's hello keeps that heartbeat and does not change this.
+func TestExecutorCapacityKeepsSlotsCountedBeforeAReservation(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	const workerID = "worker-a"
+	hello := &plugin_pb.WorkerHello{
+		WorkerId: workerID,
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: "vacuum", CanExecute: true, MaxExecutionConcurrency: 4},
+		},
+	}
+	pluginSvc.registry.UpsertFromHello(hello)
+	policy := schedulerPolicy{PerWorkerConcurrency: 2}
+	oneUsed := &plugin_pb.WorkerHeartbeat{WorkerId: workerID, ExecutionSlotsUsed: 1, ExecutionSlotsTotal: 4}
+	pluginSvc.registry.UpdateHeartbeat(workerID, oneUsed)
+	if _, _, err := pluginSvc.reserveExecutorByID("vacuum", policy, workerID, "vacuum-1"); err != nil {
+		t.Fatalf("reserve vacuum-1: %v", err)
+	}
+	pluginSvc.registry.UpsertFromHello(hello)
+
+	executor, _ := pluginSvc.registry.Get(workerID)
+	if pluginSvc.executorHasCapacity(executor, "vacuum", policy) {
+		t.Fatalf("the slot counted before vacuum-1 was reserved may hold vacuum work")
+	}
+	pluginSvc.registry.UpdateHeartbeat(workerID, oneUsed)
+	executor, _ = pluginSvc.registry.Get(workerID)
+	if !pluginSvc.executorHasCapacity(executor, "vacuum", policy) {
+		t.Fatalf("a heartbeat after the reservation counts vacuum-1 itself")
+	}
+}
+
+// A job that completes before any heartbeat counts it has no echo: the slot
+// the last heartbeat counted is still unknown work, not the job's.
+func TestExecutorCapacityKeepsSlotsCountedBeforeACompletedJob(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	const workerID = "worker-a"
+	pluginSvc.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: workerID,
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: "vacuum", CanExecute: true, MaxExecutionConcurrency: 4},
+			{JobType: "balance", CanExecute: true, MaxExecutionConcurrency: 4},
+		},
+	})
+	oneUsed := &plugin_pb.WorkerHeartbeat{WorkerId: workerID, ExecutionSlotsUsed: 1, ExecutionSlotsTotal: 4}
+	pluginSvc.registry.UpdateHeartbeat(workerID, oneUsed)
+	_, release, err := pluginSvc.reserveExecutorByID("vacuum", schedulerPolicy{PerWorkerConcurrency: 2}, workerID, "vacuum-1")
+	if err != nil {
+		t.Fatalf("reserve vacuum-1: %v", err)
+	}
+	release()
+
+	executor, _ := pluginSvc.registry.Get(workerID)
+	if pluginSvc.executorHasCapacity(executor, "balance", schedulerPolicy{PerWorkerConcurrency: 1}) {
+		t.Fatalf("the slot counted before vacuum-1 was reserved may hold balance work")
+	}
+}
+
 // The reason a dispatch gives up names every holder of the worker's slots,
 // the unitemized ones included.
 func TestCapacityReasonNamesUnitemizedSlots(t *testing.T) {
