@@ -14939,7 +14939,12 @@ mod tests {
         .expect("a replica that never answers must not hold the request");
         let err = result.expect_err("a silent replica must fail the write");
         assert!(err.contains("remote write needle 1 size 6"), "{err}");
-        assert!(started.elapsed() <= FETCH_AND_WRITE_REPLICA_TIMEOUT);
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed >= FETCH_AND_WRITE_REPLICA_TIMEOUT
+                && elapsed < FETCH_AND_WRITE_REPLICA_TIMEOUT + std::time::Duration::from_secs(1),
+            "failed after {elapsed:?}: {err}"
+        );
         drop(listener);
     }
 
