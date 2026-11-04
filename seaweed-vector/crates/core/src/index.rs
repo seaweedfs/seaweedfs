@@ -99,9 +99,10 @@ mod tests {
         }
     }
 
-    /// Pseudo-random rows, so partitions are not degenerate.
-    fn scattered(rows: usize, dim: usize) -> Vec<Vec<f32>> {
-        let mut state: u64 = 0x9E3779B97F4A7C15;
+    /// Pseudo-random rows, so partitions are not degenerate; a different seed
+    /// gives vectors the table does not hold.
+    fn scattered(rows: usize, dim: usize, seed: u64) -> Vec<Vec<f32>> {
+        let mut state: u64 = seed;
         (0..rows)
             .map(|_| {
                 (0..dim)
@@ -119,7 +120,7 @@ mod tests {
     #[tokio::test]
     async fn default_probes_follow_the_index_and_find_the_neighbours() {
         let dir = TempDir::new().unwrap();
-        let rows = scattered(4000, 8);
+        let rows = scattered(4000, 8, 0x9E3779B97F4A7C15);
         let tags: Vec<&str> = (0..4000)
             .map(|i| if i % 100 == 0 { "rare" } else { "common" })
             .collect();
@@ -136,7 +137,7 @@ mod tests {
 
         let mut found = 0;
         let total = 20 * 10;
-        for vector in &scattered(20, 8) {
+        for vector in &scattered(20, 8, 0xD1B54A32D192ED03) {
             let q = exact(vector, 10);
             let flat: std::collections::HashSet<u64> = query::flat(&dataset, &table, &q)
                 .await
