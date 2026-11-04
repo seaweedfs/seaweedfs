@@ -409,11 +409,21 @@ func TestUpsertIdentityKeepsServiceAccountKeys(t *testing.T) {
 		require.True(t, found, "access key %s must survive the parent push", accessKey)
 		assert.Equal(t, "pacs", ident.Name)
 		if accessKey != "AKPACS" {
+			assert.Equal(t, "sa-secret", cred.SecretKey)
+			assert.Equal(t, "Active", cred.Status)
 			assert.Equal(t, expiration, cred.Expiration)
 		}
 	}
 
 	require.NoError(t, cm.DeleteServiceAccount(ctx, first.Id))
+	pushed, err = cm.GetUser(ctx, "pacs")
+	require.NoError(t, err)
+	require.NoError(t, s3a.iam.UpsertIdentity(pushed))
+	_, _, found := s3a.iam.LookupByAccessKey("AKSA1")
+	assert.False(t, found, "a deleted service account must stop authenticating")
+	_, _, found = s3a.iam.LookupByAccessKey("AKSA2")
+	assert.True(t, found, "a sibling service account must survive another one's deletion")
+
 	disabled := newServiceAccount(second.Id, "AKSA2")
 	disabled.Disabled = true
 	require.NoError(t, cm.UpdateServiceAccount(ctx, second.Id, disabled))
@@ -421,8 +431,8 @@ func TestUpsertIdentityKeepsServiceAccountKeys(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, s3a.iam.UpsertIdentity(pushed))
 
-	_, _, found := s3a.iam.LookupByAccessKey("AKSA1")
-	assert.False(t, found, "a deleted service account must stop authenticating")
+	_, _, found = s3a.iam.LookupByAccessKey("AKSA1")
+	assert.False(t, found)
 	_, _, found = s3a.iam.LookupByAccessKey("AKSA2")
 	assert.False(t, found, "a disabled service account must stop authenticating")
 	_, _, found = s3a.iam.LookupByAccessKey("AKPACS")
