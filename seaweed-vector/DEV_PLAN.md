@@ -9,6 +9,33 @@ a size threshold and for rows written since the last index build, and one
 code path that serves both the open-source single engine and the Enterprise
 distributed query layer. Writes stay unchanged.
 
+## Status (2026-11-04)
+
+| Phase | Pull request | State |
+|---|---|---|
+| 0 Build and measure | #12411 | open: `vector_index` builder, `weed-vector-cli index`, `PERF_INDEX`, `PERF_CLUSTERS` |
+| 1 Probe policy | #12412 | open: policy in `query::scanner`, `--nprobes`, one Lance session per engine |
+| 2 Build job | #12413 | open: `lance_vector_index` in `weed-worker`, admin-driven end-to-end test, worker CI legs |
+| 3 Keep it covering | branch `vector-ann-phase3` | relative budget, retrain rule, end-to-end steps |
+| 4 Docs and gates | — | after the above merge |
+| 5 Enterprise sharded builds | — | seaweed-mono |
+
+What the measurements changed:
+
+- **IVF needs structure in the data.** On independent Gaussian vectors, the
+  perf suite's default, recall through an IVF index tracks the fraction of
+  partitions probed: at 50k × 384 with 224 partitions, 8 probes gave 0.13 and
+  64 probes 0.56, and latency did not fall with fewer probes. On vectors drawn
+  around 100 shared centres, 8 probes gave recall 1.0 at about half the exact
+  scan's latency. Embeddings cluster; the perf suite grows `PERF_CLUSTERS`
+  and the end-to-end test draws its rows around centres. The probe rule
+  stands as written.
+- **The engine opened every table in a fresh Lance session**, so the index
+  cache died with each request. Phase 1 gives the engine one session, sized
+  by `--index-cache-mb`.
+- **Compaction keeps the index covering** (Lance 10 remaps it), so the
+  compaction risk below did not materialise.
+
 ## Where things stand (2026-11-04)
 
 What already exists, with the files that hold it:
@@ -272,9 +299,8 @@ single/distributed) are the gate:
 - **Memory.** IVF_FLAT resident bytes are about the raw vectors: 1M × 384 ×
   4 bytes is 1.5 GB per copy. Enterprise spreads it by `capacity_bytes`; the
   single open-source engine needs that much RAM or PQ.
-- **Compaction and coverage.** If compaction drops a delta's bitmap, the
-  planner refuses to shard and the job must fall back to a retrain. Phase 0
-  settles whether Lance 10 preserves bitmaps through `compact_files`.
+- **Compaction and coverage.** Settled in phase 0: Lance 10 keeps the
+  bitmaps through `compact_files`, and coverage stays complete.
 - **Build cost on the worker.** k-means over 1M × 384 is CPU-bound; execution
   concurrency stays at one and the job reports progress so the admin UI shows
   it working rather than hung.
