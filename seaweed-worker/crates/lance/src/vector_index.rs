@@ -96,15 +96,21 @@ pub async fn build(
 }
 
 /// Extend the indices on `vector_column` over rows written since they were
-/// built: a new delta segment, or with `retrain` one index trained again on
-/// all rows. Indices on other columns are left alone.
+/// built: a new delta segment, or with `retrain` each index built again over
+/// all rows with partitions for the current row count. Lance's own retrain
+/// does not size the partitions, so the rebuild goes through [`build`].
+/// Indices on other columns are left alone.
 pub async fn optimize(dataset: &mut Dataset, vector_column: &str, retrain: bool) -> Result<()> {
-    let mut options = if retrain {
-        OptimizeOptions::retrain()
-    } else {
-        OptimizeOptions::append()
-    };
-    options.index_names = Some(index_names(dataset, vector_column).await?);
+    let names = index_names(dataset, vector_column).await?;
+    if retrain {
+        let partitions = partitions_for(dataset.count_rows(None).await?);
+        for name in &names {
+            build(dataset, vector_column, name, partitions, true).await?;
+        }
+        return Ok(());
+    }
+    let mut options = OptimizeOptions::append();
+    options.index_names = Some(names);
     dataset.optimize_indices(&options).await?;
     dataset.checkout_latest().await?;
     Ok(())

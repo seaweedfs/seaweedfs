@@ -17,7 +17,7 @@ use crate::catalog::{NamespaceClient, SigningKey, parse_id};
 use crate::dataset::{self, OpenTable};
 use crate::jobs::vector_index::is_vector_table;
 use crate::jobs::{clamp, string_list, table_id};
-use crate::vector_index::{index_names, needs_retrain, partitions};
+use crate::vector_index::{self, index_names, needs_retrain, partitions};
 
 pub const JOB_TYPE: &str = "lance_optimize_indices";
 
@@ -263,15 +263,13 @@ impl JobHandler for OptimizeIndicesHandler {
         let client = self.client();
         let mut table = dataset::open(&client, &id, &self.fallback).await?;
         let before = index_rows(&table).await?.map_or(0, |rows| rows.unindexed);
-        // A vector index whose table has outgrown its partitions is trained
-        // again instead of extended.
-        let mut options = OptimizeOptions::default();
+        // A vector index whose table has outgrown its partitions is built
+        // again with partitions for the rows it now holds.
+        let mut retrain = false;
         if is_vector_table(&id) {
-            let rows = table.stats().await?.rows;
+            let rows = table.dataset.count_rows(None).await?;
             for name in index_names(&table.dataset, "vector").await? {
-                if needs_retrain(partitions(&table.dataset, &name).await?, rows) {
-                    options = OptimizeOptions::retrain();
-                }
+                retrain |= needs_retrain(partitions(&table.dataset, &name).await?, rows);
             }
         }
 
@@ -280,7 +278,7 @@ impl JobHandler for OptimizeIndicesHandler {
             job_id: job.job_id.clone(),
             job_type: JOB_TYPE.to_string(),
             progress_percent: 10.0,
-            stage: if options.retrain {
+            stage: if retrain {
                 "retraining the vector index".to_string()
             } else {
                 format!("indexing {before} uncovered rows")
@@ -288,12 +286,17 @@ impl JobHandler for OptimizeIndicesHandler {
             ..Default::default()
         })?;
 
+        if retrain {
+            vector_index::optimize(&mut table.dataset, "vector", true)
+                .await
+                .with_context(|| format!("retrain the vector index of {}", table.location))?;
+        }
         // Merging every delta keeps read latency from drifting as the table is
         // reindexed again and again; leaving them unmerged is how an index ends
         // up fast to write and slow to search.
         table
             .dataset
-            .optimize_indices(&options)
+            .optimize_indices(&OptimizeOptions::default())
             .await
             .with_context(|| format!("optimize indices of {}", table.location))?;
 
@@ -309,7 +312,7 @@ impl JobHandler for OptimizeIndicesHandler {
         output.insert("unindexed_rows_after".to_string(), int_value(after as i64));
         output.insert(
             "retrained".to_string(),
-            seaweed_worker_core::config_form::bool_value(options.retrain),
+            seaweed_worker_core::config_form::bool_value(retrain),
         );
 
         sender.send_completed(JobCompleted {
