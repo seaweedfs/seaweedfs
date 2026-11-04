@@ -834,6 +834,9 @@ func TestConditionSplitAcrossSpellings(t *testing.T) {
 				t.Errorf("%s: the Allow granted", allow)
 			}
 			deny := fmt.Sprintf(wrap, `{"Effect":"Deny","Principal":"*","Action":"s3tables:GetTable","Resource":"*",`+split+`}`)
+			if err := validatePolicyDocument(deny); err == nil {
+				t.Errorf("%s: validatePolicyDocument accepted it", deny)
+			}
 			if CheckPermissionWithContext("s3tables:GetTable", "owner", "owner", deny, "", &PolicyContext{ResourceTags: map[string]string{"env": "dev", "team": "x"}}) {
 				t.Errorf("%s: the Deny was skipped", deny)
 			}
