@@ -7875,9 +7875,21 @@ impl EcDecodeJob {
     }
 }
 
-/// The most `fetch_and_write_needle` waits on one replica, from connect to the
-/// response status. Mirrors the Go volume server's fetchAndWriteReplicaTimeout.
+/// The base bound on one `fetch_and_write_needle` replica write, from connect to
+/// the response status. Mirrors the Go volume server's fetchAndWriteReplicaTimeout.
 const FETCH_AND_WRITE_REPLICA_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// The slowest link a replica write's chunk may cross within its bound. The
+/// reqwest timeout includes sending the body, and a remote-cache chunk can be
+/// a thousandth of a very large object.
+const REPLICA_MIN_BYTES_PER_SEC: u64 = 1 << 20;
+
+fn fetch_and_write_replica_timeout(body_len: usize) -> std::time::Duration {
+    FETCH_AND_WRITE_REPLICA_TIMEOUT
+        + std::time::Duration::from_millis(
+            (body_len as u64).saturating_mul(1000) / REPLICA_MIN_BYTES_PER_SEC,
+        )
+}
 
 async fn fetch_and_write_replica(
     client: &reqwest::Client,
@@ -7886,11 +7898,12 @@ async fn fetch_and_write_replica(
     needle_id: u64,
     size: i64,
 ) -> Result<(), String> {
+    let timeout = fetch_and_write_replica_timeout(data.len());
     let form = reqwest::multipart::Form::new().part("file", reqwest::multipart::Part::bytes(data));
     let resp = client
         .post(url)
         .multipart(form)
-        .timeout(FETCH_AND_WRITE_REPLICA_TIMEOUT)
+        .timeout(timeout)
         .send()
         .await
         .map_err(|e| format!("remote write needle {} size {}: {}", needle_id, size, e))?;
@@ -14946,6 +14959,23 @@ mod tests {
             "failed after {elapsed:?}: {err}"
         );
         drop(listener);
+    }
+
+    #[test]
+    fn fetch_and_write_replica_timeout_grows_with_the_chunk() {
+        let mib = REPLICA_MIN_BYTES_PER_SEC as usize;
+        assert_eq!(
+            fetch_and_write_replica_timeout(0),
+            FETCH_AND_WRITE_REPLICA_TIMEOUT
+        );
+        assert_eq!(
+            fetch_and_write_replica_timeout(1024 * mib),
+            FETCH_AND_WRITE_REPLICA_TIMEOUT + std::time::Duration::from_secs(1024)
+        );
+        assert_eq!(
+            fetch_and_write_replica_timeout(mib / 2),
+            FETCH_AND_WRITE_REPLICA_TIMEOUT + std::time::Duration::from_millis(500)
+        );
     }
 
     #[tokio::test]
