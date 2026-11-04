@@ -18,7 +18,7 @@ distributed query layer. Writes stay unchanged.
 | 2 Build job | #12413 | open: `lance_vector_index` in `weed-worker`, admin-driven end-to-end test, worker CI legs |
 | 3 Keep it covering | branch `vector-ann-phase3` | relative budget, retrain rule, end-to-end steps |
 | 4 Docs and gates | — | after the above merge |
-| 5 Enterprise sharded builds | — | seaweed-mono |
+| 5 Enterprise sharded builds | — | the Enterprise repository |
 
 What the measurements changed:
 
