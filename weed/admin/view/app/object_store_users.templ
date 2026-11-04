@@ -230,6 +230,8 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                                 <option value="Write">Write</option>
                                 <option value="List">List</option>
                                 <option value="Tagging">Tagging</option>
+                                <option value="ReadAcp" title="Needed for GET ?acl on buckets and objects">Read ACL (ReadAcp)</option>
+                                <option value="WriteAcp" title="Needed for PUT ?acl and for uploads that send x-amz-acl or x-amz-grant-* headers">Write ACL (WriteAcp)</option>
                                 <optgroup label="Object Lock Permissions">
                                     <option value="BypassGovernanceRetention">Bypass Governance Retention</option>
                                     <option value="GetObjectRetention">Get Object Retention</option>
@@ -342,6 +344,8 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                                 <option value="Write">Write</option>
                                 <option value="List">List</option>
                                 <option value="Tagging">Tagging</option>
+                                <option value="ReadAcp" title="Needed for GET ?acl on buckets and objects">Read ACL (ReadAcp)</option>
+                                <option value="WriteAcp" title="Needed for PUT ?acl and for uploads that send x-amz-acl or x-amz-grant-* headers">Write ACL (WriteAcp)</option>
                                 <optgroup label="Object Lock Permissions">
                                     <option value="BypassGovernanceRetention">Bypass Governance Retention</option>
                                     <option value="GetObjectRetention">Get Object Retention</option>
