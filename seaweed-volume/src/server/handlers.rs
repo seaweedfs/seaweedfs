@@ -6227,6 +6227,171 @@ mod tests {
         })
     }
 
+    /// EC reconstructed-interval counter: one fresh volume per case, the needle (on
+    /// shard 0) EC-encoded under a known generation, the `missing` shards
+    /// unmounted and the shards in `corrupt` overwritten where the needle lies.
+    /// Returns the read's bytes and the marker lines logged at debug.
+    async fn read_ec_reconstructed(
+        vid: u32,
+        missing: &[crate::storage::erasure_coding::ec_shard::ShardId],
+        corrupt: &[crate::storage::erasure_coding::ec_shard::ShardId],
+    ) -> (Option<Vec<u8>>, Vec<String>) {
+        use crate::storage::erasure_coding::ec_encoder::write_ec_files;
+        use crate::storage::needle_map::NeedleMapKind;
+        use crate::storage::volume::{VifEcShardConfig, VifVolumeInfo, Volume, VolumeSpec};
+        use std::io::{Seek, SeekFrom, Write};
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let dir = tmp.path().to_str().unwrap();
+        let v = Volume::new(
+            dir,
+            dir,
+            VolumeId(vid),
+            NeedleMapKind::InMemory,
+            &VolumeSpec::default(),
+        )
+        .unwrap();
+        let mut n = Needle {
+            id: NeedleId(7),
+            cookie: Cookie(TEST_COOKIE),
+            data: b"ec degraded read".to_vec(),
+            data_size: 16,
+            ..Needle::default()
+        };
+        v.write_needle(&mut n, true, false).unwrap();
+        v.sync_to_disk().unwrap();
+        v.close();
+        let block_size = write_ec_files(dir, dir, "", VolumeId(vid), 10, 4).unwrap();
+        let vif = format!("{dir}/{vid}.vif");
+        let mut info: VifVolumeInfo =
+            serde_json::from_str(&std::fs::read_to_string(&vif).unwrap()).unwrap();
+        info.ec_shard_config = Some(VifEcShardConfig {
+            data_shards: 10,
+            parity_shards: 4,
+            encode_ts_ns: EC_GENERATION,
+            block_size,
+        });
+        crate::storage::store::save_vif_volume_info(&vif, &info).unwrap();
+        for shard in corrupt {
+            let mut f = std::fs::OpenOptions::new()
+                .write(true)
+                .open(format!("{dir}/{vid}.ec{shard:02}"))
+                .unwrap();
+            f.seek(SeekFrom::Start(0)).unwrap();
+            f.write_all(&[0xA5; 256]).unwrap();
+        }
+        let mounted: Vec<_> = (0..14).filter(|s| !missing.contains(s)).collect();
+        state
+            .store
+            .write()
+            .unwrap()
+            .mount_ec_shards(VolumeId(vid), "", &mounted)
+            .unwrap();
+
+        let out = Captured::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::DEBUG)
+            .with_ansi(false)
+            .with_writer(out.clone())
+            .finish();
+        let guard = tracing::subscriber::set_default(subscriber);
+        // Another test may have reached the marker's callsite first, with no
+        // subscriber, and cached it as never enabled.
+        tracing::callsite::rebuild_interest_cache();
+        let read = crate::server::store_ec::read_ec_shard_needle_or_miss(
+            &state,
+            VolumeId(vid),
+            NeedleId(7),
+        )
+        .await;
+        drop(guard);
+        let text = String::from_utf8(out.0.lock().unwrap().clone()).unwrap();
+        let lines = text
+            .lines()
+            .filter(|l| l.contains("ec reconstructed interval:"))
+            .map(|l| l.trim_end().to_string())
+            .collect();
+        (read.ok().and_then(Result::ok).map(|n| n.data), lines)
+    }
+
+    const EC_GENERATION: i64 = 1_700_000_000_123_456_789;
+
+    #[derive(Clone, Default)]
+    struct Captured(Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Captured {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Captured {
+        type Writer = Captured;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    /// What the counter and line mean, case by case. A direct read logs nothing;
+    /// a read that rebuilds shard 0 logs and counts one success; one with 5
+    /// shards left fails and logs one failure; a corrupt interval read directly
+    /// goes to the repair path and isn't marked. `success` is not needle
+    /// validation: rebuilt from corrupt parity, the interval logs success while
+    /// the read fails.
+    #[tokio::test]
+    async fn test_ec_reconstructed_interval() {
+        use crate::metrics::EC_RECONSTRUCTED_INTERVAL_COUNTER as C;
+        let prefix = |vid: u32| {
+            format!(
+                "ec reconstructed interval: volume={vid} generation={EC_GENERATION} needle=7 shard=0 "
+            )
+        };
+        let data = Some(b"ec degraded read".to_vec());
+
+        assert_eq!(
+            read_ec_reconstructed(61, &[], &[]).await,
+            (data.clone(), vec![])
+        );
+
+        let success = C.with_label_values(&["success"]).get();
+        let (read, lines) = read_ec_reconstructed(62, &[0], &[]).await;
+        assert_eq!(read, data);
+        assert!(
+            matches!(&lines[..], [l] if l.ends_with(&(prefix(62) + "result=success error=<nil>"))),
+            "{lines:?}"
+        );
+        assert!(C.with_label_values(&["success"]).get() > success);
+
+        let failure = C.with_label_values(&["failure"]).get();
+        let (read, lines) = read_ec_reconstructed(63, &[0, 6, 7, 8, 9, 10, 11, 12, 13], &[]).await;
+        assert_eq!(read, None);
+        assert!(
+            matches!(&lines[..], [l] if l.contains(&(prefix(63) + "result=failure error=")) && !l.ends_with("error=")),
+            "{lines:?}"
+        );
+        assert!(C.with_label_values(&["failure"]).get() > failure);
+
+        let (read, lines) = read_ec_reconstructed(64, &[], &[0, 10, 11, 12, 13]).await;
+        assert_eq!(
+            (read, lines),
+            (None, vec![]),
+            "an unrepairable corrupt read was marked"
+        );
+
+        let success = C.with_label_values(&["success"]).get();
+        let (read, lines) = read_ec_reconstructed(65, &[0], &[10, 11, 12, 13]).await;
+        assert_eq!(read, None, "a read rebuilt from corrupt parity was served");
+        assert!(
+            matches!(&lines[..], [l] if l.ends_with(&(prefix(65) + "result=success error=<nil>"))),
+            "{lines:?}"
+        );
+        assert!(C.with_label_values(&["success"]).get() > success);
+    }
+
     /// Write `data` as a chunk manifest on a fresh EC volume 2. Chunks stay on volume 1.
     fn put_ec_manifest(
         state: &VolumeServerState,

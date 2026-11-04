@@ -682,6 +682,7 @@ func (s *Store) readOneEcShardInterval(needleId types.NeedleId, ecVolume *erasur
 
 	// try reading by recovering from other shards
 	_, is_deleted, err = s.recoverOneRemoteEcShardInterval(needleId, ecVolume, shardId, data, actualOffset)
+	noteEcReconstructedInterval(ecVolume, needleId, shardId, err)
 	if err == nil {
 		return
 	}
@@ -1262,6 +1263,20 @@ func (s *Store) recoverEcShardInterval(needleId types.NeedleId, ecVolume *erasur
 	copy(buf, shardIntervals[shardIdToRecover])
 
 	return len(buf), is_deleted, nil
+}
+
+// noteEcReconstructedInterval counts one shard interval that could not be read
+// directly and was reconstructed from the other shards, and at V(3) logs it with
+// the needle and the volume's encode generation, which the counter can't carry.
+// success means the reconstruction produced data; the needle is validated later.
+func noteEcReconstructedInterval(ecVolume *erasure_coding.EcVolume, needleId types.NeedleId, shardId erasure_coding.ShardId, err error) {
+	result := "success"
+	if err != nil {
+		result = "failure"
+	}
+	stats.VolumeServerECReconstructedIntervalCounter.WithLabelValues(result).Inc()
+	glog.V(3).Infof("ec reconstructed interval: volume=%d generation=%d needle=%s shard=%d result=%s error=%v",
+		ecVolume.VolumeId, ecVolume.EncodeTsNs, needleId, shardId, result, err)
 }
 
 func (s *Store) EcVolumes() (ecVolumes []*erasure_coding.EcVolume) {
