@@ -7,7 +7,9 @@ import (
 	"net"
 	"slices"
 	"testing"
+	"time"
 
+	jwt "github.com/golang-jwt/jwt/v5"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
@@ -72,6 +74,12 @@ func TestCheckGrpcAdminToken(t *testing.T) {
 	key := SigningKey("test-signing-key-0123456789abcdef")
 	fresh := "Bearer " + string(GenJwtForFilerAdmin(key, 60))
 	stale := "Bearer " + string(GenJwtForFilerAdmin(SigningKey("another-key"), 60))
+	expired, signErr := jwt.NewWithClaims(jwt.SigningMethodHS256, SeaweedFilerAdminClaims{
+		RegisteredClaims: jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(time.Now().Add(-time.Hour))},
+	}).SignedString([]byte(key))
+	if signErr != nil {
+		t.Fatalf("sign expired token: %v", signErr)
+	}
 
 	for name, tc := range map[string]struct {
 		values  []string
@@ -79,6 +87,8 @@ func TestCheckGrpcAdminToken(t *testing.T) {
 	}{
 		"stale then fresh":    {[]string{stale, fresh}, ""},
 		"fresh then garbage":  {[]string{fresh, "garbage"}, ""},
+		"expired then fresh":  {[]string{"Bearer " + expired, fresh}, ""},
+		"only expired":        {[]string{"Bearer " + expired}, "invalid admin token"},
 		"only stale":          {[]string{stale}, "invalid admin token"},
 		"basic then stale":    {[]string{"Basic dXNlcjpwYXNz", stale}, "invalid admin token"},
 		"no bearer value":     {[]string{"Basic dXNlcjpwYXNz", "garbage"}, "authorization header must use Bearer scheme"},
