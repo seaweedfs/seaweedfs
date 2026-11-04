@@ -183,7 +183,10 @@ changes:
   trained on, so partitions do not go stale. No row count is recorded: the
   retrain is due when the partition rule for the current rows gives twice
   the partitions the index has, and it rebuilds a single IVF_FLAT name
-  through the builder at that count.
+  through the builder at that count. Past 2,048 partitions (about 4.2M
+  rows) the rule cannot double under the 4,096 cap, so those centroids are
+  not retrained again: that would need the trained row count recorded and a
+  full rebuild of a table that size, which is left for later.
 
 ### Deletes and upserts
 
