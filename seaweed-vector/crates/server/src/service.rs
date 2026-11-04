@@ -12,13 +12,13 @@ use lance::io::ObjectStoreParams;
 use lance::io::StorageOptionsAccessor;
 use lance::io::WrappingObjectStore;
 use lance::table::format::Fragment;
-use lance_linalg::distance::DistanceType;
 use prost_types::{ListValue, Struct, Value, value::Kind};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
 use weed_lance_worker::catalog::NamespaceClient;
 use weed_lance_worker::dataset::{self, FallbackOptions};
+use weed_vector_core::index;
 use weed_vector_core::query::{self, Query};
 use weed_vector_core::table::VectorTable;
 
@@ -658,16 +658,7 @@ impl VectorService for VectorServer {
         if req.top_k == 0 {
             return Err(Status::invalid_argument("top_k must be positive"));
         }
-        // The index's configured metric lives in the vector field's metadata.
-        let distance = match dataset
-            .schema()
-            .field(VECTOR_COLUMN)
-            .and_then(|f| f.metadata.get("distance_metric").map(String::as_str))
-        {
-            Some("COSINE") => DistanceType::Cosine,
-            Some("DOT_PRODUCT") => DistanceType::Dot,
-            _ => DistanceType::L2,
-        };
+        let distance = index::distance_metric(&dataset, VECTOR_COLUMN);
         let query = Query {
             vector: req.query_vector,
             k: req.top_k as usize,
