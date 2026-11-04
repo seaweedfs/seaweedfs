@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -497,6 +498,58 @@ func TestReplicatedWriteFailsAtTheBoundWhenAReplicaNeverAnswers(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(timeouts) - timeoutsBefore; got != 1 {
 		t.Fatalf("replication timeout failures went up by %v, want 1: %v", got, err)
+	}
+}
+
+// TestReplicatedWriteGivesALargerBodyMoreTime: a replica that answers after
+// the bodiless bound, but within the bound for its body, still acks the write.
+func TestReplicatedWriteGivesALargerBodyMoreTime(t *testing.T) {
+	defer func(d time.Duration) { replicaRequestTimeout = d }(replicaRequestTimeout)
+	replicaRequestTimeout = 300 * time.Millisecond
+	data := make([]byte, replicaMinBytesPerSec)
+	answerAfter := (replicaRequestTimeout + replicaRequestBound(len(data))) / 2
+
+	received := make(chan int, 1)
+	replica := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mr, err := r.MultipartReader()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		part, err := mr.NextPart()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		body, _ := io.ReadAll(part)
+		received <- len(body)
+		time.Sleep(answerAfter)
+		w.WriteHeader(http.StatusCreated)
+		fmt.Fprint(w, "{}")
+	}))
+	defer replica.Close()
+
+	masterFn, dialOption := startMockMasterServer(t, &mockMasterServer{
+		locations: []*master_pb.Location{{Url: strings.TrimPrefix(replica.URL, "http://")}},
+	})
+	volumeId := needle.VolumeId(1)
+	operation.InvalidateVolumeIdLocationCache(volumeId.String())
+	r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:8080/1,01637037d6", nil)
+	if err := r.ParseForm(); err != nil {
+		t.Fatal(err)
+	}
+	n := &needle.Needle{Id: 1, Data: data, Ttl: needle.EMPTY_TTL}
+
+	if _, err := ReplicatedWrite(context.Background(), masterFn, dialOption, &storage.Store{}, volumeId, n, r, ""); err != nil {
+		t.Fatalf("a replica answering within the %v bound for a %d-byte body failed the write: %v", replicaRequestBound(len(data)), len(data), err)
+	}
+	select {
+	case got := <-received:
+		if got != len(data) {
+			t.Fatalf("the replica received %d bytes, want %d", got, len(data))
+		}
+	default:
+		t.Fatal("the replica never received the forward")
 	}
 }
 
