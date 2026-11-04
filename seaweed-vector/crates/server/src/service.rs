@@ -11,6 +11,7 @@ use lance::dataset::{MergeInsertBuilder, WhenMatched, WhenNotMatched};
 use lance::io::ObjectStoreParams;
 use lance::io::StorageOptionsAccessor;
 use lance::io::WrappingObjectStore;
+use lance::session::Session;
 use lance::table::format::Fragment;
 use lance_linalg::distance::DistanceType;
 use prost_types::{ListValue, Struct, Value, value::Kind};
@@ -375,6 +376,8 @@ pub struct VectorServer {
     fallback: FallbackOptions,
     read_cache: Option<Arc<dyn WrappingObjectStore>>,
     nprobes: Option<usize>,
+    /// Shared by every open, so a table's index stays loaded between queries.
+    session: Arc<Session>,
 }
 
 impl VectorServer {
@@ -384,7 +387,18 @@ impl VectorServer {
             fallback,
             read_cache: None,
             nprobes: None,
+            session: Arc::new(Session::default()),
         }
+    }
+
+    /// Memory for keeping opened indices between queries.
+    pub fn with_index_cache(mut self, bytes: usize) -> Self {
+        self.session = Arc::new(Session::new(
+            bytes,
+            lance::dataset::DEFAULT_METADATA_CACHE_SIZE,
+            Default::default(),
+        ));
+        self
     }
 
     /// Partitions every query probes, instead of the index's own default.
@@ -400,11 +414,12 @@ impl VectorServer {
     }
 
     async fn open(&self, table: &pb::Table) -> Result<Dataset> {
-        let opened = dataset::open_with(
+        let opened = dataset::open_in(
             &self.client,
             &table.id,
             &self.fallback,
             self.read_cache.clone(),
+            Some(self.session.clone()),
         )
         .await?;
         let mut dataset = opened.dataset;
