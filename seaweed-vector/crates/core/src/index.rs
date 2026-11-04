@@ -201,6 +201,23 @@ mod tests {
         let cov = &coverage(&dataset, "vector").await.unwrap()[0];
         assert!(cov.coverage_known);
         assert!(cov.unindexed_fragments.is_empty(), "{cov:?}");
+        let hits = query::ann(
+            &dataset,
+            &table,
+            &Query {
+                nprobes: Some(MAX_PARTITIONS),
+                ..exact(&testing::vectors(1, DIM)[0], 10)
+            },
+        )
+        .await
+        .unwrap();
+        let mut tied: Vec<&str> = hits
+            .iter()
+            .filter(|h| h.distance < 1e-6)
+            .map(|h| h.key.as_str())
+            .collect();
+        tied.sort();
+        assert_eq!(tied, ["k120", "k180", "k60"], "{hits:?}");
         for vector in testing::vectors(4, DIM) {
             assert_same_top_k(&dataset, &vector, 10).await;
         }
