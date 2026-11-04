@@ -465,6 +465,9 @@ fn collect_ec_shard_delta_messages(
             if quarantined {
                 continue;
             }
+            // Same numbers the full EC heartbeat carries, read off the active
+            // generation's index and journal; one call covers every shard.
+            let (file_count, delete_count) = ec_vol.file_and_delete_count();
             for shard in ec_vol.shards.iter().flatten() {
                 messages.insert(
                     (
@@ -481,6 +484,8 @@ fn collect_ec_shard_delta_messages(
                         disk_type: ec_vol.disk_type.to_string(),
                         expire_at_sec: ec_vol.expire_at_sec,
                         disk_id: disk_id as u32,
+                        file_count,
+                        delete_count,
                         encode_ts_ns: ec_vol.encode_ts_ns,
                         ..Default::default()
                     },
@@ -3156,5 +3161,61 @@ mod tests {
         assert_eq!(deleted_after_delete.len(), 1);
         assert_eq!(deleted_after_delete[0].ec_index_bits, 1);
         assert_eq!(deleted_after_delete[0].shard_sizes, vec![0]);
+    }
+
+    /// Both EC emission paths report the counts the Go server's
+    /// `EcVolume.FileAndDeleteCount` defines: file_count is every entry in the
+    /// active .ecx (live and tombstoned alike), delete_count the needles this
+    /// holder deleted.
+    #[test]
+    fn test_ec_shard_messages_carry_file_and_delete_counts() {
+        use crate::storage::types::{NEEDLE_MAP_ENTRY_SIZE, Offset, Size, idx_entry_to_bytes};
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir = temp_dir.path().to_str().unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store
+            .add_location(
+                dir,
+                dir,
+                8,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(1.0),
+                Vec::new(),
+            )
+            .unwrap();
+
+        std::fs::write(format!("{}/ec_counts_case_91.ec00", dir), b"shard").unwrap();
+        let mut ecx = Vec::new();
+        for (key, offset) in [(1u64, 8u32), (5, 200), (10, 500)] {
+            let mut entry = [0u8; NEEDLE_MAP_ENTRY_SIZE];
+            idx_entry_to_bytes(
+                &mut entry,
+                NeedleId(key),
+                Offset::from_actual_offset(offset as i64),
+                Size(100),
+            );
+            ecx.extend_from_slice(&entry);
+        }
+        std::fs::write(format!("{}/ec_counts_case_91.ecx", dir), &ecx).unwrap();
+        store.locations[0]
+            .mount_ec_shards(VolumeId(91), "ec_counts_case", &[0], "")
+            .unwrap();
+
+        let ec_vol = store.locations[0].find_ec_volume_mut(VolumeId(91)).unwrap();
+        ec_vol.journal_delete(NeedleId(1)).unwrap();
+
+        let delta = collect_ec_shard_delta_messages(&store);
+        let message = delta
+            .get(&(91, "ec_counts_case".to_string(), 0, 0))
+            .expect("delta message for the mounted shard");
+        assert_eq!(message.file_count, 3);
+        assert_eq!(message.delete_count, 1);
+
+        let heartbeat = collect_ec_heartbeat(&test_config(), &store);
+        assert_eq!(heartbeat.ec_shards.len(), 1);
+        assert_eq!(heartbeat.ec_shards[0].file_count, 3);
+        assert_eq!(heartbeat.ec_shards[0].delete_count, 1);
     }
 }
