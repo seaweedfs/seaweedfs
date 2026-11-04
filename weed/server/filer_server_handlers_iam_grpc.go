@@ -3,7 +3,6 @@ package weed_server
 import (
 	"context"
 	"encoding/json"
-	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -12,7 +11,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
@@ -48,30 +46,7 @@ func (s *IamGrpcServer) checkAdminAuth(ctx context.Context) error {
 	if len(s.adminSigningKey) == 0 {
 		return nil
 	}
-	md, ok := metadata.FromIncomingContext(ctx)
-	if !ok {
-		return status.Error(codes.Unauthenticated, "missing metadata")
-	}
-	authHeaders := md.Get("authorization")
-	if len(authHeaders) == 0 {
-		return status.Error(codes.Unauthenticated, "missing authorization metadata")
-	}
-	// RFC 6750 §2.1: the "Bearer" auth-scheme name is case-insensitive.
-	// Tolerate surrounding whitespace and any spacing between scheme and token.
-	raw := strings.TrimSpace(authHeaders[0])
-	parts := strings.Fields(raw)
-	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") || parts[1] == "" {
-		return status.Error(codes.Unauthenticated, "authorization header must use Bearer scheme")
-	}
-	token := parts[1]
-	parsed, err := security.DecodeJwt(s.adminSigningKey, security.EncodedJwt(token), &security.SeaweedFilerAdminClaims{})
-	if err != nil || parsed == nil || !parsed.Valid {
-		return status.Error(codes.Unauthenticated, "invalid admin token")
-	}
-	if claims, ok := parsed.Claims.(*security.SeaweedFilerAdminClaims); !ok || claims.SessionId != "" {
-		return status.Error(codes.Unauthenticated, "invalid admin token")
-	}
-	return nil
+	return security.CheckGrpcAdminToken(ctx, s.adminSigningKey)
 }
 
 //////////////////////////////////////////////////
