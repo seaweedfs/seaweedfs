@@ -592,7 +592,7 @@ def test_vector_index_job(vectors, cluster):
     assert before["unindexed_rows"] == 201, before
     optimize(1)
     after = coverage_now()
-    assert after["unindexed_rows"] == 0 and after["segments"] == 1, after
+    assert after["unindexed_rows"] == 0 and after["segments"] == 2, after
 
     # Five times the rows the index was sized for: the job trains it again
     # instead of extending it, and the partitions follow the new row count.
