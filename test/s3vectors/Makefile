@@ -6,6 +6,7 @@ ifneq ($(wildcard $(WORKER_MANIFEST)),)
 WORKER := ./weed-vector-worker
 endif
 VOLUME := ./weed-volume
+LANCE_WORKER := ./weed-worker
 CARGO_PROFILE ?= release
 CARGO_TARGET_DIR ?= $(abspath ../../seaweed-vector/target)
 override CARGO_TARGET_DIR := $(abspath $(CARGO_TARGET_DIR))
@@ -26,6 +27,10 @@ $(VEC): FORCE
 $(CLI): FORCE
 	cd ../../seaweed-vector && cargo build --locked --profile $(CARGO_PROFILE) -p weed-vector-core --bin weed-vector-cli
 	cp $(CARGO_OUTPUT)/weed-vector-cli $(CLI)
+
+$(LANCE_WORKER): FORCE
+	cargo build --locked --profile $(CARGO_PROFILE) --manifest-path ../../seaweed-worker/Cargo.toml -p weed-lance-worker --bin weed-worker
+	cp $(CARGO_OUTPUT)/weed-worker $(LANCE_WORKER)
 
 ifneq ($(WORKER),)
 $(WORKER): $(VEC) FORCE

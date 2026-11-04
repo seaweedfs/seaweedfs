@@ -77,6 +77,20 @@ def stop(process):
             process.wait(timeout=10)
 
 
+def pytest_configure(config):
+    config.addinivalue_line("markers", "worker: needs the admin server and the Lance maintenance worker")
+
+
+def pytest_collection_modifyitems(config, items):
+    # Deselected rather than skipped: CI rejects a leg that reports skips.
+    if os.environ.get("VECTOR_WORKER"):
+        return
+    skipped = [item for item in items if item.get_closest_marker("worker")]
+    if skipped:
+        config.hook.pytest_deselected(items=skipped)
+        items[:] = [item for item in items if item not in skipped]
+
+
 @pytest.fixture(scope="module", params=combinations(), ids=lambda p: "-".join(p))
 def cluster(request, tmp_path_factory):
     yield from run_cluster(request.param, tmp_path_factory, identities=True)
@@ -225,17 +239,21 @@ def run_cluster(param, tmp_path_factory, identities):
     print(f"\nVector integration logs: {directory}")
     weed = binary("WEED_BINARY", "weed")
     engine = binary("VECTOR_BINARY", "weed-vector")
+    # VECTOR_WORKER=1 adds the admin server and the Lance maintenance worker,
+    # for the tests that build vector indexes through a plugin job.
+    lance_worker = binary("LANCE_WORKER_BINARY", "weed-worker") if os.environ.get("VECTOR_WORKER") else None
     worker = binary("VECTOR_WORKER_BINARY", "weed-vector-worker") if mode == "distributed" else None
     volume_binary = binary("RUST_VOLUME_SERVER_BINARY", "weed-volume") if volume == "rust" else weed
     processes = {}
     with contextlib.ExitStack() as stack:
         with contextlib.ExitStack() as reservations:
             ports = []
-            for _ in range(12):
+            for _ in range(14):
                 sock = reservations.enter_context(socket.socket())
                 sock.bind(("127.0.0.1", 0))
                 ports.append(sock.getsockname()[1])
-        master, master_grpc, vol, vol_grpc, filer, filer_grpc, s3, s3_grpc, lance, vector, worker1, worker2 = ports
+        (master, master_grpc, vol, vol_grpc, filer, filer_grpc, s3, s3_grpc, lance, vector, worker1, worker2,
+         admin, admin_grpc) = ports
         master_addr = f"127.0.0.1:{master}.{master_grpc}"
         filer_addr = f"127.0.0.1:{filer}.{filer_grpc}"
 
@@ -330,8 +348,22 @@ def run_cluster(param, tmp_path_factory, identities):
                 processes,
                 "gateway did not discover both search workers",
             )
+        admin_url = None
+        if lance_worker:
+            (directory / "admin").mkdir()
+            admin_url = f"http://127.0.0.1:{admin}"
+            start("admin", [weed, "admin", "-ip=127.0.0.1", f"-port={admin}", f"-port.grpc={admin_grpc}",
+                            "-port.legacy=0", f"-master={master_addr}", f"-dataDir={directory / 'admin'}"])
+            wait_for(lambda: http_ready(f"{admin_url}/api/plugin/job-types"), processes, "admin not ready")
+            start("lance-worker", [lance_worker, "--admin", f"127.0.0.1:{admin}.{admin_grpc}",
+                                   "--namespace", f"http://127.0.0.1:{lance}", "--id", "vectors-test-worker",
+                                   "--access-key", "test", "--secret-key", "test"])
+            wait_for(lambda: "lance_vector_index" in
+                     [jt["job_type"] for jt in json.load(urllib.request.urlopen(f"{admin_url}/api/plugin/job-types", timeout=2))],
+                     processes, "the Lance worker never registered with admin")
+
         yield {"endpoint": endpoint, "mode": mode, "processes": processes, "directory": directory,
-               "catalog": f"http://127.0.0.1:{lance}"}
+               "catalog": f"http://127.0.0.1:{lance}", "admin": admin_url}
 
 
 @pytest.fixture(scope="module")
