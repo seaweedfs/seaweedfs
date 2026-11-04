@@ -259,8 +259,8 @@ single/distributed) are the gate:
 
 - Probe policy when an index exists: `minimum_nprobes` is the per-query
   count from the Probes rule above, taken from the largest delta;
-  `maximum_nprobes` equals that count without a filter and four times it
-  with one.
+  `maximum_nprobes` is four times it, which Lance uses only under a
+  prefilter.
 - `nprobes` in `QueryVectorsRequest` for tests and the CLI; zero means the
   policy.
 - Per-query log line and counters: segments searched, tail rows scanned,
