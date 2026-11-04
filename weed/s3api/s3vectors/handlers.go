@@ -500,6 +500,11 @@ func validateVectorPolicy(raw string) error {
 	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
 		return fmt.Errorf("invalid policy document: %w", err)
 	}
+	for key := range doc {
+		if key != "Statement" && strings.EqualFold(key, "Statement") {
+			return fmt.Errorf("invalid policy document: %s must be spelled Statement", key)
+		}
+	}
 	for _, stmt := range policyStatements(doc) {
 		for key := range stmt {
 			for _, field := range []string{"NotAction", "NotResource", "NotPrincipal"} {
@@ -507,8 +512,10 @@ func validateVectorPolicy(raw string) error {
 					return fmt.Errorf("invalid policy document: %s is not supported", field)
 				}
 			}
-			if key != "Condition" && strings.EqualFold(key, "Condition") {
-				return fmt.Errorf("invalid policy document: %s must be spelled Condition", key)
+			for _, field := range []string{"Condition", "Effect"} {
+				if key != field && strings.EqualFold(key, field) {
+					return fmt.Errorf("invalid policy document: %s must be spelled %s", key, field)
+				}
 			}
 		}
 		if condition, ok := stmt["Condition"]; ok && condition == nil && stmt["Effect"] == "Allow" {

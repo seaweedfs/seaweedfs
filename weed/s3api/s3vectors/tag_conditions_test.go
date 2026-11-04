@@ -294,6 +294,15 @@ func TestValidateVectorPolicyConditions(t *testing.T) {
 	if err := validateVectorPolicy(lower); err == nil {
 		t.Error("a lower-case condition field was accepted")
 	}
+	for _, misspelled := range []string{
+		`{"Version":"2012-10-17","Statement":[{"effect":"Allow","Principal":"*","Action":"s3vectors:GetIndex","Resource":"*","Condition":null}]}`,
+		`{"Version":"2012-10-17","Statement":[{"Effect":"Deny","effect":"Allow","Principal":"*","Action":"s3vectors:GetIndex","Resource":"*","Condition":null}]}`,
+		`{"Version":"2012-10-17","statement":[{"Effect":"Allow","Principal":"*","Action":"s3vectors:GetIndex","Resource":"*","Condition":null}]}`,
+	} {
+		if err := validateVectorPolicy(misspelled); err == nil {
+			t.Errorf("%s accepted", misspelled)
+		}
+	}
 	denyNull := `{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Principal":"*","Action":"s3vectors:GetIndex","Resource":"*","Condition":null}]}`
 	if err := validateVectorPolicy(denyNull); err != nil {
 		t.Errorf("a Deny with a null Condition was rejected: %v", err)
