@@ -159,7 +159,7 @@ func (s3a *S3ApiServer) preparePutObjectACL(r *http.Request, bucket string) (*ht
 		// retain the same semantics as standalone ACL requests.
 		identity, authCode, _ := s3a.iam.authRequestWithAuthType(r.Clone(r.Context()), s3_constants.ACTION_WRITE_ACP)
 		if authCode != s3err.ErrNone {
-			if authCode == s3err.ErrAccessDenied && identity != nil {
+			if authCode == s3err.ErrAccessDenied && identity != nil && identity.Name != s3_constants.AccountAnonymousId {
 				_, object := s3_constants.GetBucketAndObject(r)
 				glog.Infof("denied %s %q for %q: the request sets an ACL and failed the %s (s3:PutObjectAcl) check", r.Method, bucket+"/"+object, identity.Name, s3_constants.ACTION_WRITE_ACP)
 			}
