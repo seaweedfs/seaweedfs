@@ -85,6 +85,10 @@ func TestS3TablesIntegration(t *testing.T) {
 		testTablePolicy(t, client)
 	})
 
+	t.Run("PolicyConditionValidation", func(t *testing.T) {
+		testPolicyConditionValidation(t, client)
+	})
+
 	t.Run("Tagging", func(t *testing.T) {
 		testTagging(t, client)
 	})
@@ -423,6 +427,46 @@ func testTablePolicy(t *testing.T, client *S3TablesClient) {
 	_, err = client.GetTablePolicy(bucketARN, []string{namespaceName}, tableName)
 	assert.Error(t, err, "Policy should not exist after deletion")
 	t.Logf("Verified policy deletion")
+}
+
+// A null condition value is refused with InvalidRequest instead of being
+// stored and later panicking the evaluator, and the bucket stays reachable.
+// A well-formed conditional policy is still stored as written.
+func testPolicyConditionValidation(t *testing.T, client *S3TablesClient) {
+	bucketName := "test-policy-cond-" + randomString(8)
+	createBucketResp, err := client.CreateTableBucket(bucketName, nil)
+	require.NoError(t, err, "Failed to create table bucket")
+	defer client.DeleteTableBucket(createBucketResp.ARN)
+	bucketARN := createBucketResp.ARN
+
+	nullCondition := `{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Principal":"*","Action":"s3tables:*","Resource":"*","Condition":{"StringEquals":{"aws:ResourceTag/env":null}}}]}`
+	err = client.PutTableBucketPolicy(bucketARN, nullCondition)
+	require.Error(t, err, "a null condition value must be rejected")
+	assert.Contains(t, err.Error(), s3tables.ErrCodeInvalidRequest)
+
+	_, err = client.GetTableBucket(bucketARN)
+	require.NoError(t, err, "the bucket must stay reachable after the rejected policy")
+	_, err = client.GetTableBucketPolicy(bucketARN)
+	assert.Error(t, err, "the rejected policy must not be stored")
+
+	validCondition := `{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Principal":"*","Action":"s3tables:DeleteTableBucket","Resource":"*","Condition":{"StringEquals":{"aws:ResourceTag/env":"prod"}}}]}`
+	require.NoError(t, client.PutTableBucketPolicy(bucketARN, validCondition), "a valid conditional policy must be accepted")
+	getPolicyResp, err := client.GetTableBucketPolicy(bucketARN)
+	require.NoError(t, err)
+	assert.Equal(t, validCondition, getPolicyResp.ResourcePolicy)
+
+	// A null Condition reads as none, so this Allow would grant everyone.
+	allowNull := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3tables:*","Resource":"*","Condition":null}]}`
+	err = client.PutTableBucketPolicy(bucketARN, allowNull)
+	require.Error(t, err, "an Allow with a null Condition must be rejected")
+	assert.Contains(t, err.Error(), s3tables.ErrCodeInvalidRequest)
+	getPolicyResp, err = client.GetTableBucketPolicy(bucketARN)
+	require.NoError(t, err)
+	assert.Equal(t, validCondition, getPolicyResp.ResourcePolicy, "the stored policy must be unchanged")
+
+	_, err = client.GetTableBucket(bucketARN)
+	require.NoError(t, err, "the bucket must stay reachable under a valid conditional policy")
+	require.NoError(t, client.DeleteTableBucketPolicy(bucketARN))
 }
 
 func testTagging(t *testing.T, client *S3TablesClient) {

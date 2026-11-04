@@ -2,9 +2,17 @@ package s3tables
 
 import (
 	"encoding/json"
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 )
 
 func TestMatchesActionPattern(t *testing.T) {
@@ -127,6 +135,9 @@ func TestEvaluatePolicyWithConditions(t *testing.T) {
 	}
 	policyBytes, _ := json.Marshal(policy)
 	policyStr := string(policyBytes)
+	if err := validatePolicyDocument(policyStr); err != nil {
+		t.Fatalf("conditional policy rejected by the validator: %v", err)
+	}
 
 	tests := []struct {
 		name     string
@@ -491,6 +502,391 @@ func TestValidatePolicyDocument(t *testing.T) {
 	deadMixed := `{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Principal":"*","Action":"s3tables:*","Resource":["arn:aws:s3tables:r:a:bucket/b","arn:aws:s3vectors:r:a:bucket/b"]}]}`
 	if err := validatePolicyDocument(deadMixed); err == nil {
 		t.Fatal("resource list containing s3vectors should be rejected")
+	}
+
+	withCondition := func(condition string) string {
+		return `{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Principal":"*","Action":"s3tables:GetTable","Resource":"*","Condition":` + condition + `}]}`
+	}
+	for _, tc := range []struct {
+		condition string
+		mentions  []string // the error must name these; empty means accepted
+	}{
+		{`{"StringEquals":{"aws:ResourceTag/env":"prod"}}`, nil},
+		{`{"StringEquals":{"aws:ResourceTag/env":["a","b"]}}`, nil},
+		{`{"NumericLessThan":{"aws:RequestTag/priority":10}}`, nil},
+		{`{"Bool":{"aws:ResourceTag/is_public":true}}`, nil},
+		{`{"ForAnyValue:StringEquals":{"aws:TagKeys":["team","env"]}}`, nil},
+		{`{"Null":{"aws:ResourceTag/owner":"true"}}`, nil},
+		{`{"StringEquals":{"s3tables:namespace":"default"}}`, nil},
+		{`{"StringEquals":{"aws:ResourceTag/env":null}}`, []string{"StringEquals", `"aws:ResourceTag/env"`}},
+		{`{"StringEquals":{"aws:ResourceTag/env":[null]}}`, []string{"StringEquals", `"aws:ResourceTag/env"`}},
+		{`{"StringNotEquals":{"aws:ResourceTag/env":[]}}`, []string{"StringNotEquals", `"aws:ResourceTag/env"`}},
+		{`{"StringEquals":{"aws:ResourceTag/env":{}}}`, []string{"StringEquals", `"aws:ResourceTag/env"`}},
+		{`{"StringEquals":{"aws:ResourceTag/env":{"a":1}}}`, []string{"StringEquals", `"aws:ResourceTag/env"`}},
+		{`{"StringEquals":{"aws:ResourceTag/env":[["a"]]}}`, []string{"StringEquals", `"aws:ResourceTag/env"`}},
+		{`{"StringEquals":null}`, []string{"StringEquals", "at least one key"}},
+		{`{"StringEquals":{}}`, []string{"StringEquals", "at least one key"}},
+		{`{"StringEqualsBogus":{"aws:ResourceTag/env":"prod"}}`, []string{`"StringEqualsBogus"`, "not supported"}},
+		{`{"NumericLessThan":{"aws:RequestTag/priority":"10"}}`, nil},
+		{`{"DateLessThan":{"aws:ResourceTag/created":"2026-01-01T00:00:00Z"}}`, nil},
+		{`{"Bool":{"aws:ResourceTag/is_public":"TRUE"}}`, nil},
+		{`{"IpAddress":{"aws:ResourceTag/net":"10.0.0.0/8"}}`, nil},
+		{`{"StringEquals":{"aws:ResourceTag/env":10}}`, nil},
+		{`{"NumericLessThan":{"aws:RequestTag/priority":"low"}}`, []string{"NumericLessThan", `"aws:RequestTag/priority"`}},
+		{`{"NumericLessThan":{"aws:RequestTag/priority":true}}`, []string{"NumericLessThan", `"aws:RequestTag/priority"`}},
+		{`{"NumericLessThan":{"aws:RequestTag/priority":["low","10"]}}`, []string{"NumericLessThan", `"aws:RequestTag/priority"`}},
+		{`{"ForAnyValue:NumericLessThan":{"aws:RequestTag/priority":"low"}}`, []string{"ForAnyValue:NumericLessThan", `"aws:RequestTag/priority"`}},
+		{`{"DateLessThan":{"aws:ResourceTag/created":"2026-01-01"}}`, []string{"DateLessThan", `"aws:ResourceTag/created"`}},
+		{`{"Bool":{"aws:ResourceTag/is_public":"yes"}}`, []string{"Bool", `"aws:ResourceTag/is_public"`}},
+		{`{"Null":{"aws:ResourceTag/owner":"maybe"}}`, []string{"Null", `"aws:ResourceTag/owner"`}},
+		{`{"IpAddress":{"aws:ResourceTag/net":"not-an-ip"}}`, []string{"IpAddress", `"aws:ResourceTag/net"`}},
+		{`{"StringEquals":{"s3tables:tableName":"t","s3tables:tableBucketName":"b","s3tables:StorageClass":"STANDARD"}}`, nil},
+		{`{"StringEquals":{"s3tables:SSEAlgorithm":"AES256","s3tables:KMSKeyArn":"arn:k","s3tables:TableBucketTag/env":"prod"}}`, nil},
+		{`{"IpAddress":{"aws:SourceIp":"10.0.0.0/8"}}`, []string{`"aws:SourceIp"`, "not supported"}},
+		{`{"StringEquals":{"aws:resourcetag/env":"prod"}}`, []string{`"aws:resourcetag/env"`, "not supported"}},
+		{`{"StringEquals":{"aws:ResourceTag/":"prod"}}`, []string{`"aws:ResourceTag/"`, "not supported"}},
+		{`{"Null":{"aws:PrincipalArn":"true"}}`, []string{`"aws:PrincipalArn"`, "not supported"}},
+	} {
+		err := validatePolicyDocument(withCondition(tc.condition))
+		if len(tc.mentions) == 0 {
+			if err != nil {
+				t.Errorf("%s rejected: %v", tc.condition, err)
+			}
+			continue
+		}
+		if err == nil {
+			t.Errorf("%s accepted", tc.condition)
+			continue
+		}
+		for _, want := range tc.mentions {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%s: error %q does not mention %s", tc.condition, err, want)
+			}
+		}
+	}
+
+	// The typed decode reads a null Condition as none, so an Allow carrying
+	// one would grant unconditionally; a Deny carrying one only vetoes more.
+	const (
+		allowNull      = `{"Effect":"Allow","Principal":"*","Action":"s3tables:GetTable","Resource":"*","Condition":null}`
+		allowNullLower = `{"Effect":"Allow","Principal":"*","Action":"s3tables:GetTable","Resource":"*","condition":null}`
+		allowValid     = `{"Effect":"Allow","Principal":"*","Action":"s3tables:GetTable","Resource":"*","Condition":{"StringEquals":{"aws:ResourceTag/env":"prod"}}}`
+		allowNone      = `{"Effect":"Allow","Principal":"*","Action":"s3tables:GetTable","Resource":"*"}`
+		denyNull       = `{"Effect":"Deny","Principal":"*","Action":"s3tables:GetTable","Resource":"*","Condition":null}`
+		denyNone       = `{"Effect":"Deny","Principal":"*","Action":"s3tables:GetTable","Resource":"*"}`
+		// Duplicate keys reach the evaluator in sorted order, not document
+		// order: the lower-case null wins here, the object wins in the mirror,
+		// and both are refused whichever spelling is null.
+		allowNullWins   = `{"Effect":"Allow","Principal":"*","Action":"s3tables:GetTable","Resource":"*","condition":null,"Condition":{"StringEquals":{"aws:ResourceTag/env":"prod"}}}`
+		allowObjectWins = `{"Effect":"Allow","Principal":"*","Action":"s3tables:GetTable","Resource":"*","Condition":null,"condition":{"StringEquals":{"aws:ResourceTag/env":"prod"}}}`
+	)
+	for _, tc := range []struct {
+		statement string
+		rejected  bool
+	}{
+		{`[` + allowNull + `]`, true},
+		{`[` + allowNullLower + `]`, true},
+		{allowNull, true},
+		{`[` + denyNone + `,` + allowNull + `]`, true},
+		{`[` + allowNullWins + `]`, true},
+		{`[` + denyNull + `]`, false},
+		{`[` + denyNull + `,` + allowValid + `]`, false},
+		{`[` + allowNone + `]`, false},
+		{`[` + allowObjectWins + `]`, true},
+	} {
+		raw := `{"Version":"2012-10-17","Statement":` + tc.statement + `}`
+		err := validatePolicyDocument(raw)
+		switch {
+		case tc.rejected && err == nil:
+			t.Errorf("%s accepted", tc.statement)
+		case tc.rejected && !strings.Contains(err.Error(), "Condition must not be null"):
+			t.Errorf("%s: unexpected error %v", tc.statement, err)
+		case !tc.rejected && err != nil:
+			t.Errorf("%s rejected: %v", tc.statement, err)
+		}
+	}
+}
+
+func TestConditionValue(t *testing.T) {
+	for _, tc := range []struct {
+		operator string
+		raw      string
+		want     bool
+	}{
+		{"StringEquals", `"prod"`, true},
+		{"StringEquals", `["a","b"]`, true},
+		{"StringEquals", `10`, true},
+		{"StringEquals", `true`, true},
+		{"StringEquals", `null`, false},
+		{"StringEquals", `[null]`, false},
+		{"StringEquals", `["a",null]`, false},
+		{"StringEquals", `[]`, false},
+		{"StringEquals", `{}`, false},
+		{"StringEquals", `{"a":1}`, false},
+		{"StringEquals", `[["a"]]`, false},
+
+		{"NumericLessThan", `10`, true},
+		{"NumericLessThan", `"10"`, true},
+		{"NumericLessThan", `"low"`, false},
+		{"NumericLessThan", `true`, false},
+		{"NumericLessThan", `["low","10"]`, false},
+		{"NumericLessThan", `"NaN"`, false},
+		{"NumericNotEquals", `"nan"`, false},
+		{"NumericNotEquals", `"Inf"`, false},
+		{"NumericGreaterThan", `"-Infinity"`, false},
+		{"ForAnyValue:NumericLessThan", `"low"`, false},
+		{"ForAllValues:NumericLessThan", `"10"`, true},
+
+		{"DateLessThan", `"2026-01-01T00:00:00Z"`, true},
+		{"DateLessThan", `"2026-01-01"`, false},
+
+		{"Bool", `true`, true},
+		{"Bool", `"TRUE"`, true},
+		{"Bool", `"yes"`, false},
+		{"Null", `"false"`, true},
+		{"Null", `"maybe"`, false},
+
+		{"IpAddress", `"10.0.0.0/8"`, true},
+		{"IpAddress", `"10.0.0.1"`, true},
+		{"IpAddress", `"not-an-ip"`, false},
+
+		{"StringEqualsBogus", `"prod"`, false},
+	} {
+		var v interface{}
+		if err := json.Unmarshal([]byte(tc.raw), &v); err != nil {
+			t.Fatalf("%s: %v", tc.raw, err)
+		}
+		if got := ConditionValue(tc.operator, v); got != tc.want {
+			t.Errorf("ConditionValue(%s, %s) = %v, want %v", tc.operator, tc.raw, got, tc.want)
+		}
+	}
+}
+
+// Every operator the policy engine evaluates must have its own case in
+// ConditionValue: one that falls through to the default refuses every value,
+// so a newly added operator turns this test red instead of being accepted
+// unchecked or refused unnoticed.
+func TestConditionValueCoversEveryOperator(t *testing.T) {
+	file, err := parser.ParseFile(token.NewFileSet(), filepath.Join("..", "policy_engine", "conditions.go"), nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var operators []string
+	ast.Inspect(file, func(n ast.Node) bool {
+		fn, ok := n.(*ast.FuncDecl)
+		if !ok || fn.Name.Name != "baseConditionEvaluator" {
+			return true
+		}
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			if clause, ok := n.(*ast.CaseClause); ok {
+				for _, expr := range clause.List {
+					if lit, ok := expr.(*ast.BasicLit); ok && lit.Kind == token.STRING {
+						operator, _ := strconv.Unquote(lit.Value)
+						operators = append(operators, operator)
+					}
+				}
+			}
+			return true
+		})
+		return false
+	})
+	if len(operators) < 20 {
+		t.Fatalf("found only %d operators in baseConditionEvaluator", len(operators)) // positive control
+	}
+	samples := []interface{}{"x", "10", "2026-01-01T00:00:00Z", "true", "10.0.0.0/8"}
+	for _, operator := range operators {
+		if _, err := policy_engine.GetConditionEvaluator(operator); err != nil {
+			t.Fatalf("%s: %v", operator, err)
+		}
+		readable := false
+		for _, sample := range samples {
+			readable = readable || ConditionValue(operator, sample)
+		}
+		if !readable {
+			t.Errorf("ConditionValue has no case for %s", operator)
+		}
+	}
+}
+
+// A value the operator cannot read is skipped by its evaluator, so before
+// write-time checks such a Deny never matched and the owner kept access. A
+// stored one is now unusable: the Deny applies, and the admin can still
+// remove the policy.
+func TestUnreadableConditionDenyApplies(t *testing.T) {
+	arn := "arn:aws:s3tables:us-east-1:acct:bucket/b"
+	ctx := &PolicyContext{
+		RequestTags:  map[string]string{"priority": "5"},
+		ResourceTags: map[string]string{"is_public": "true", "created": "2025-06-01T00:00:00Z"},
+	}
+	admin := &PolicyContext{IdentityActions: []string{"Admin"}, RequestTags: ctx.RequestTags, ResourceTags: ctx.ResourceTags}
+	for _, condition := range []string{
+		`{"NumericLessThan":{"aws:RequestTag/priority":"low"}}`,
+		`{"DateLessThan":{"aws:ResourceTag/created":"2026-01-01"}}`,
+		`{"Bool":{"aws:ResourceTag/is_public":"yes"}}`,
+		`{"NumericLessThan":{"aws:RequestTag/priority":"NaN"}}`,
+	} {
+		var conditions map[string]map[string]interface{}
+		if err := json.Unmarshal([]byte(condition), &conditions); err != nil {
+			t.Fatalf("%s: %v", condition, err)
+		}
+		if _, usable := matchesConditions(conditions, ctx); usable {
+			t.Errorf("%s reported usable", condition)
+		}
+		deny := `{"Statement":[{"Effect":"Deny","Principal":"*","Action":"s3tables:*","Resource":"*","Condition":` + condition + `}]}`
+		if checkPermission("s3tables:GetTableBucket", "owner", "owner", deny, arn, ctx) {
+			t.Errorf("%s: the Deny must apply to the owner", condition)
+		}
+		if !CheckPermissionWithContext("s3tables:DeleteTableBucketPolicy", "admin", "owner", deny, arn, admin) {
+			t.Errorf("%s: the admin must keep the bypass", condition)
+		}
+	}
+}
+
+// A policy stored before conditions were validated may still carry a null
+// value. Evaluating it must not panic: the Deny it sits on applies to the
+// owner too, while the admin keeps the bypass needed to remove the policy.
+func TestNullConditionDoesNotPanic(t *testing.T) {
+	arn := "arn:aws:s3tables:us-east-1:acct:bucket/b"
+	denyNull := `{"Statement":[{"Effect":"Deny","Principal":"*","Action":"s3tables:*","Resource":"*","Condition":{"StringEquals":{"aws:ResourceTag/env":null}}}]}`
+	ctx := &PolicyContext{ResourceTags: map[string]string{"env": "prod"}}
+
+	if checkPermission("s3tables:GetTableBucket", "owner", "owner", denyNull, arn, ctx) {
+		t.Error("a Deny whose condition cannot be evaluated must still deny the owner")
+	}
+	if CheckTableOrBucketPermission("s3tables:GetTable", "owner", "owner", "", arn+"/table/ns/t", "owner", denyNull, arn, ctx) {
+		t.Error("a broken bucket Deny must veto the table request too")
+	}
+	admin := &PolicyContext{IdentityActions: []string{"Admin"}, ResourceTags: ctx.ResourceTags}
+	if !CheckPermissionWithContext("s3tables:DeleteTableBucketPolicy", "admin", "owner", denyNull, arn, admin) {
+		t.Error("the admin must keep the bypass to remove a broken policy")
+	}
+}
+
+// An Allow whose condition cannot be evaluated grants nothing. A [null] value
+// used to normalize to "<nil>", so StringNotEquals matched every request.
+func TestUnusableConditionAllowNeverGrants(t *testing.T) {
+	ctx := &PolicyContext{ResourceTags: map[string]string{"env": "prod"}}
+	for _, condition := range []string{
+		`{"StringNotEquals":{"aws:ResourceTag/env":[null]}}`,
+		`{"StringNotEquals":{"aws:ResourceTag/env":[]}}`,
+		`{"StringNotEquals":{"aws:ResourceTag/env":{"a":1}}}`,
+		`{"StringEquals":{"aws:ResourceTag/env":null}}`,
+		`{"StringEqualsBogus":{"aws:ResourceTag/env":"prod"}}`,
+		`{"NumericNotEquals":{"aws:ResourceTag/env":"low"}}`,
+		`{"NotIpAddress":{"aws:ResourceTag/env":"not-an-ip"}}`,
+		`{"NumericNotEquals":{"aws:ResourceTag/env":"NaN"}}`,
+		`{"StringEquals":{}}`,
+		`{"StringEquals":null}`,
+	} {
+		allow := `{"Statement":[{"Effect":"Allow","Principal":"*","Action":"s3tables:GetTable","Resource":"*","Condition":` + condition + `}]}`
+		if CheckPermissionWithContext("s3tables:GetTable", "reader", "owner", allow, "", ctx) {
+			t.Errorf("%s granted a non-owner", condition)
+		}
+	}
+	// A keyless operator is unusable whether or not there is a context.
+	if _, usable := matchesConditions(map[string]map[string]interface{}{"StringEquals": {}}, nil); usable {
+		t.Error("a keyless operator without a context reported usable")
+	}
+}
+
+// A stored Allow whose Condition is null never grants; a Deny with one still
+// applies.
+func TestStoredNullConditionAllowNeverGrants(t *testing.T) {
+	ctx := &PolicyContext{}
+	for _, tc := range []struct{ action, policy string }{
+		{"s3tables:GetTable", `{"Statement":[{"Effect":"Allow","Principal":"*","Action":"s3tables:GetTable","Resource":"*","Condition":null}]}`},
+		{"s3tables:GetTable", `{"Statement":{"Effect":"Allow","Principal":"*","Action":"s3tables:GetTable","Resource":"*","Condition":null}}`},
+		{"s3tables:GetTable", `{"Statement":[{"Effect":"Allow","Principal":"*","Action":"s3tables:GetTable","Resource":"*","condition":null}]}`},
+		{"s3tables:GetTable", `{"Statement":[{"Effect":"Allow","Principal":"*","Action":"s3tables:GetTable","Resource":"*","Condition":{"StringEquals":{"aws:ResourceTag/env":"prod"}},"condition":null}]}`},
+		{"s3vectors:GetVectorBucket", `{"Statement":[{"Effect":"Allow","Principal":"*","Action":"s3vectors:GetVectorBucket","Resource":"*","Condition":null}]}`},
+	} {
+		if CheckPermissionWithContext(tc.action, "reader", "owner", tc.policy, "", ctx) {
+			t.Errorf("%s granted a non-owner", tc.policy)
+		}
+	}
+	allow := `{"Statement":[{"Effect":"Allow","Principal":"*","Action":"s3tables:GetTable","Resource":"*"}]}`
+	if !CheckPermissionWithContext("s3tables:GetTable", "reader", "owner", allow, "", ctx) {
+		t.Error("an Allow without a Condition must still grant")
+	}
+	deny := `{"Statement":[{"Effect":"Deny","Principal":"*","Action":"s3tables:GetTable","Resource":"*","Condition":null}]}`
+	if CheckPermissionWithContext("s3tables:GetTable", "owner", "owner", deny, "", ctx) {
+		t.Error("a Deny with a null Condition must apply")
+	}
+}
+
+// Condition objects under two keys, repeated or respelled, decode into one map
+// in which an operator they share keeps only the last one's keys. Such a
+// statement is refused, and one stored before that never grants and always
+// vetoes.
+func TestConditionSplitAcrossSpellings(t *testing.T) {
+	for _, split := range []string{
+		`"Condition":{"StringEquals":{"aws:ResourceTag/env":"prod"}},"condition":{"StringEquals":{"aws:ResourceTag/team":"x"}}`,
+		`"Condition":{"StringEquals":{"aws:ResourceTag/env":"prod"}},"condition":{}`,
+		`"Condition":{"StringEquals":{"aws:ResourceTag/env":"prod"}},"Condition":{"StringEquals":{"aws:ResourceTag/team":"x"}}`,
+		`"Condition":null,"Condition":{}`,
+	} {
+		for _, wrap := range []string{`{"Statement":[%s]}`, `{"Statement":%s}`} {
+			allow := fmt.Sprintf(wrap, `{"Effect":"Allow","Principal":"*","Action":"s3tables:GetTable","Resource":"*",`+split+`}`)
+			if err := validatePolicyDocument(allow); err == nil {
+				t.Errorf("%s: validatePolicyDocument accepted it", allow)
+			}
+			if CheckPermissionWithContext("s3tables:GetTable", "reader", "owner", allow, "", &PolicyContext{ResourceTags: map[string]string{"env": "dev", "team": "x"}}) {
+				t.Errorf("%s: the Allow granted", allow)
+			}
+			deny := fmt.Sprintf(wrap, `{"Effect":"Deny","Principal":"*","Action":"s3tables:GetTable","Resource":"*",`+split+`}`)
+			if err := validatePolicyDocument(deny); err == nil {
+				t.Errorf("%s: validatePolicyDocument accepted it", deny)
+			}
+			if CheckPermissionWithContext("s3tables:GetTable", "owner", "owner", deny, "", &PolicyContext{ResourceTags: map[string]string{"env": "dev", "team": "x"}}) {
+				t.Errorf("%s: the Deny was skipped", deny)
+			}
+		}
+	}
+	single := `{"Statement":[{"Effect":"Allow","Principal":"*","Action":"s3tables:GetTable","Resource":"*","condition":{"StringEquals":{"aws:ResourceTag/env":"prod"}}}]}`
+	if err := validatePolicyDocument(single); err != nil {
+		t.Errorf("one lowercase spelling: %v", err)
+	}
+	if !CheckPermissionWithContext("s3tables:GetTable", "reader", "owner", single, "", &PolicyContext{ResourceTags: map[string]string{"env": "prod"}}) {
+		t.Error("one lowercase spelling no longer grants")
+	}
+}
+
+// Only the Condition keys are read from the original bytes. Every other field
+// keeps the spelling the re-marshaled decode always picked, so a stored Deny
+// written twice stays a Deny.
+func TestStatementFieldSpellingsDecodeAsBefore(t *testing.T) {
+	stmt := `{"effect":"Deny","Effect":"Allow","Principal":"*","Action":"s3tables:*","Resource":"*"}`
+	for _, policy := range []string{`{"Statement":[` + stmt + `]}`, `{"Statement":` + stmt + `}`} {
+		if CheckPermissionWithContext("s3tables:GetTable", "owner", "owner", policy, "", nil) {
+			t.Errorf("%s: the Deny no longer applies", policy)
+		}
+	}
+}
+
+// A Deny whose operator the evaluator does not know applies instead of being
+// skipped: the writer meant it to protect the resource.
+func TestUnsupportedOperatorDenyApplies(t *testing.T) {
+	deny := `{"Statement":[{"Effect":"Deny","Principal":"*","Action":"s3tables:GetTable","Resource":"*","Condition":{"StringEqualsBogus":{"aws:ResourceTag/env":"prod"}}}]}`
+	ctx := &PolicyContext{ResourceTags: map[string]string{"env": "dev"}}
+	if CheckPermissionWithContext("s3tables:GetTable", "owner", "owner", deny, "", ctx) {
+		t.Error("a Deny with an unsupported operator must apply")
+	}
+}
+
+// One unusable entry makes the whole block unusable whichever entry the map
+// yields first, so a non-matching sibling cannot hide it.
+func TestUnusableConditionIgnoresMapOrder(t *testing.T) {
+	ctx := &PolicyContext{ResourceTags: map[string]string{"env": "prod"}}
+	for _, condition := range []string{
+		`{"StringEquals":{"aws:ResourceTag/env":"dev","aws:ResourceTag/team":null}}`,
+		`{"StringEquals":{"aws:ResourceTag/env":"dev"},"StringNotEquals":{"aws:ResourceTag/team":[null]}}`,
+	} {
+		deny := `{"Statement":[{"Effect":"Deny","Principal":"*","Action":"s3tables:GetTable","Resource":"*","Condition":` + condition + `}]}`
+		for i := 0; i < 32; i++ {
+			if CheckPermissionWithContext("s3tables:GetTable", "owner", "owner", deny, "", ctx) {
+				t.Fatalf("%s: the Deny was skipped on attempt %d", condition, i)
+			}
+		}
 	}
 }
 

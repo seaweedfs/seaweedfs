@@ -500,6 +500,11 @@ func validateVectorPolicy(raw string) error {
 	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
 		return fmt.Errorf("invalid policy document: %w", err)
 	}
+	for key := range doc {
+		if key != "Statement" && strings.EqualFold(key, "Statement") {
+			return fmt.Errorf("invalid policy document: %s must be spelled Statement", key)
+		}
+	}
 	for _, stmt := range policyStatements(doc) {
 		for key := range stmt {
 			for _, field := range []string{"NotAction", "NotResource", "NotPrincipal"} {
@@ -507,22 +512,33 @@ func validateVectorPolicy(raw string) error {
 					return fmt.Errorf("invalid policy document: %s is not supported", field)
 				}
 			}
-			if key != "Condition" && strings.EqualFold(key, "Condition") {
-				return fmt.Errorf("invalid policy document: %s must be spelled Condition", key)
+			for _, field := range []string{"Condition", "Effect"} {
+				if key != field && strings.EqualFold(key, field) {
+					return fmt.Errorf("invalid policy document: %s must be spelled %s", key, field)
+				}
 			}
+		}
+		if condition, ok := stmt["Condition"]; ok && condition == nil && stmt["Effect"] == "Allow" {
+			return fmt.Errorf("invalid policy document: an Allow statement's Condition must not be null")
 		}
 	}
 	for _, stmt := range typed.Statement {
+		if stmt.SplitCondition() {
+			return fmt.Errorf("invalid policy document: a statement's Condition must be under one key")
+		}
 		for operator, keys := range stmt.Condition {
 			if _, err := policy_engine.GetConditionEvaluator(operator); err != nil {
 				return fmt.Errorf("invalid policy document: condition operator %q is not supported", operator)
+			}
+			if len(keys) == 0 {
+				return fmt.Errorf("invalid policy document: condition %s needs at least one key", operator)
 			}
 			for key, value := range keys {
 				if !vectorConditionKey(key) {
 					return fmt.Errorf("invalid policy document: condition key %q is not supported in a vector bucket policy", key)
 				}
-				if !conditionValue(value) {
-					return fmt.Errorf("invalid policy document: condition %s on %q needs a string, number or boolean, or a non-empty list of them", operator, key)
+				if !s3tables.ConditionValue(operator, value) {
+					return fmt.Errorf("invalid policy document: condition %s on %q needs values %s can read (a number for Numeric*, an RFC 3339 time for Date*, true or false for Bool and Null, an IP or CIDR for IpAddress)", operator, key, operator)
 				}
 			}
 		}
@@ -538,23 +554,6 @@ func validateVectorPolicy(raw string) error {
 		}
 	}
 	return nil
-}
-
-// conditionValue reports whether the evaluator can compare v: a null value
-// would panic it, and an empty list never matches.
-func conditionValue(v interface{}) bool {
-	list, ok := v.([]interface{})
-	if !ok {
-		list = []interface{}{v}
-	}
-	for _, item := range list {
-		switch item.(type) {
-		case string, float64, bool:
-		default:
-			return false
-		}
-	}
-	return len(list) > 0
 }
 
 // vectorConditionKey reports whether the vector evaluation supplies key.

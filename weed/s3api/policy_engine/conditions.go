@@ -130,6 +130,9 @@ var normalizedValueCache = NewNormalizedValueCache(1000)
 
 // getCachedNormalizedValues returns cached normalized values or caches new ones
 func getCachedNormalizedValues(value interface{}) []string {
+	if value == nil {
+		return nil // no expected values; never reach reflect.TypeOf(nil)
+	}
 	// Create a string key for caching - more efficient than fmt.Sprintf
 	typeStr := reflect.TypeOf(value).String()
 	cacheKey := typeStr + ":" + fmt.Sprint(value)

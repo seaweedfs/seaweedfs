@@ -282,6 +282,9 @@ func TestValidateVectorPolicyConditions(t *testing.T) {
 		`{"StringEquals":{"aws:ResourceTag/env":[null]}}`,
 		`{"StringEquals":{"aws:ResourceTag/env":{"a":"b"}}}`,
 		`{"StringEquals":{"aws:ResourceTag/env":["prod",["dev"]]}}`,
+		`{"NumericLessThan":{"aws:RequestTag/priority":"low"}}`,
+		`{"StringEquals":{}}`,
+		`null`,
 	} {
 		if err := validateVectorPolicy(withCondition(bad)); err == nil {
 			t.Errorf("%s accepted", bad)
@@ -290,6 +293,29 @@ func TestValidateVectorPolicyConditions(t *testing.T) {
 	lower := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3vectors:GetIndex","Resource":"*","condition":{"StringEquals":{"aws:ResourceTag/env":"prod"}}}]}`
 	if err := validateVectorPolicy(lower); err == nil {
 		t.Error("a lower-case condition field was accepted")
+	}
+	for _, misspelled := range []string{
+		`{"Version":"2012-10-17","Statement":[{"effect":"Allow","Principal":"*","Action":"s3vectors:GetIndex","Resource":"*","Condition":null}]}`,
+		`{"Version":"2012-10-17","Statement":[{"Effect":"Deny","effect":"Allow","Principal":"*","Action":"s3vectors:GetIndex","Resource":"*","Condition":null}]}`,
+		`{"Version":"2012-10-17","statement":[{"Effect":"Allow","Principal":"*","Action":"s3vectors:GetIndex","Resource":"*","Condition":null}]}`,
+	} {
+		if err := validateVectorPolicy(misspelled); err == nil {
+			t.Errorf("%s accepted", misspelled)
+		}
+	}
+	for _, repeated := range []string{
+		`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3vectors:GetIndex","Resource":"*","Condition":null,"Condition":{}}]}`,
+		`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3vectors:GetIndex","Resource":"*","Condition":{"StringEquals":{"aws:ResourceTag/env":"prod"}},"Condition":{"StringEquals":{"aws:ResourceTag/team":"x"}}}]}`,
+		`{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Principal":"*","Action":"s3vectors:GetIndex","Resource":"*","Condition":{"StringEquals":{"aws:ResourceTag/env":"prod"}},"Condition":{"StringEquals":{"aws:ResourceTag/team":"x"}}}]}`,
+		`{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Principal":"*","Action":"s3vectors:GetIndex","Resource":"*","Condition":null,"Condition":{}}]}`,
+	} {
+		if err := validateVectorPolicy(repeated); err == nil {
+			t.Errorf("%s accepted", repeated)
+		}
+	}
+	denyNull := `{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Principal":"*","Action":"s3vectors:GetIndex","Resource":"*","Condition":null}]}`
+	if err := validateVectorPolicy(denyNull); err != nil {
+		t.Errorf("a Deny with a null Condition was rejected: %v", err)
 	}
 }
 
