@@ -98,6 +98,7 @@ var jobTypeLaneMap = map[string]SchedulerLane{
 	"lance_compact":          LaneLance,
 	"lance_optimize_indices": LaneLance,
 	"lance_cleanup_versions": LaneLance,
+	"lance_vector_index":     LaneLance,
 }
 
 // JobTypeLane returns the scheduler lane for the given job type.

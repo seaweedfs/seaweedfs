@@ -162,10 +162,6 @@ impl JobHandler for VectorIndexHandler {
             if let Some(counters) = &self.metrics {
                 counters.worker.object_seen(JOB_TYPE);
             }
-            let rows = table.stats().await?.rows;
-            if rows < min_rows {
-                continue;
-            }
             match unindexed_vector_column(&table).await {
                 Ok(Some(_)) => {}
                 Ok(None) => continue,
@@ -176,6 +172,10 @@ impl JobHandler for VectorIndexHandler {
                     warn!("skipping {encoded}: reading its indices failed: {err:#}");
                     continue;
                 }
+            }
+            let rows = table.dataset.count_rows(None).await?;
+            if rows < min_rows {
+                continue;
             }
             let mut parameters: HashMap<String, ConfigValue> = HashMap::new();
             parameters.insert("table_id".to_string(), string_list(&id));
@@ -226,7 +226,7 @@ impl JobHandler for VectorIndexHandler {
 
         let client = self.client();
         let mut table = dataset::open(&client, &id, &self.fallback).await?;
-        let rows = table.stats().await?.rows;
+        let rows = table.dataset.count_rows(None).await?;
         let partitions = partitions_for(rows);
         let mut output: HashMap<String, ConfigValue> = HashMap::new();
         output.insert("rows".to_string(), int_value(rows as i64));
