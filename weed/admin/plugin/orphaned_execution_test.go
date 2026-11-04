@@ -349,3 +349,41 @@ func TestExecutionFailedWhenSendFailsAfterShutdownUnregisters(t *testing.T) {
 		t.Fatalf("expected job %s failed, got %+v", jobID, tracked)
 	}
 }
+
+// The dispatcher can take the completion from the buffer before it
+// unregisters the attempt; heartbeats in that gap must not count misses.
+func TestExecutionNotOrphanedAfterDispatcherTookCompletion(t *testing.T) {
+	t.Parallel()
+	p, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer p.Shutdown()
+
+	const jobID = "job-completion-taken"
+	const requestID = "exec-completion-taken"
+	original := connectExecutor(p, "worker-a")
+	pending := &pendingExecutionState{
+		completed: make(chan *plugin_pb.JobCompleted, 1),
+		jobID:     jobID,
+		jobType:   orphanTestJobType,
+		session:   original,
+	}
+	p.pendingExecutionMu.Lock()
+	p.pendingExecution[requestID] = pending
+	p.pendingExecutionMu.Unlock()
+
+	p.safeSendJobCompleted(requestID, &plugin_pb.JobCompleted{RequestId: requestID, JobId: jobID, JobType: orphanTestJobType, Success: true})
+	<-pending.completed
+
+	reconnected := connectExecutor(p, "worker-a")
+	for i := 0; i < orphanedExecutionMisses+1; i++ {
+		sendExecutionHeartbeat(p, reconnected, 0)
+	}
+	p.pendingExecutionMu.Lock()
+	failed := pending.failed
+	p.pendingExecutionMu.Unlock()
+	if failed {
+		t.Fatal("attempt whose completion was already delivered was failed as orphaned")
+	}
+}

@@ -24,6 +24,9 @@ type pendingExecutionState struct {
 	session *streamSession
 	misses  int
 	failed  bool
+	// completionSent is set once a completion is handed to the dispatcher,
+	// which may already have taken it from the buffer.
+	completionSent bool
 }
 
 // failExecutionsMissingFromHeartbeat fails the executions sent on an earlier
@@ -61,8 +64,7 @@ func (r *Plugin) failExecutionsMissingFromHeartbeat(session *streamSession, hear
 		if !itemizesAll {
 			continue
 		}
-		// the completion is already on its way to the dispatcher
-		if len(pending.completed) > 0 {
+		if pending.completionSent {
 			continue
 		}
 		pending.misses++

@@ -1535,6 +1535,7 @@ func (r *Plugin) safeSendJobCompleted(requestID string, completed *plugin_pb.Job
 	r.pendingExecutionMu.Lock()
 	if pending := r.pendingExecution[requestID]; pending != nil {
 		ch = pending.completed
+		pending.completionSent = true
 	}
 	r.pendingExecutionMu.Unlock()
 	safeSendCh(ch, completed, r.shutdownCh)
