@@ -793,13 +793,18 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                 result.applyToAll = true;
                 result.unshownActions = bucketActions.map(ba => ba.action);
             } else if (bucketActions.length > 0) {
-                // Get unique permissions and buckets
+                // The form saves every permission on every selected bucket, so it can
+                // show the grants only when they cover that full product.
                 const perms = [...new Set(bucketActions.map(ba => ba.permission))];
                 const buckets = [...new Set(bucketActions.map(ba => ba.bucketId))];
+                const pairs = new Set(bucketActions.map(ba => JSON.stringify([ba.permission, ba.bucketId])));
 
-                result.permissions = perms;
-                result.applyToAll = false;
-                result.specificBuckets = buckets;
+                if (pairs.size === perms.length * buckets.length) {
+                    result.permissions = perms;
+                    result.specificBuckets = buckets;
+                } else {
+                    result.unshownActions = bucketActions.map(ba => ba.action);
+                }
             }
 
             return result;
@@ -981,6 +986,11 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
 
                     // Populate edit form
                     renderUnshownActions([]);
+                    document.getElementById('editAllBuckets').checked = true;
+                    Array.from(document.getElementById('editSelectedBuckets').options).forEach(option => {
+                        option.selected = false;
+                    });
+                    toggleBucketList('edit');
                     document.getElementById('editUsername').value = username;
                     document.getElementById('editEmail').value = user.email || '';
 
