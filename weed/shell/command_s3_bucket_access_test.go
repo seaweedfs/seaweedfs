@@ -82,6 +82,24 @@ func TestUpdateBucketActions_ReplaceActions(t *testing.T) {
 	}
 }
 
+func TestUpdateBucketActions_AcpActions(t *testing.T) {
+	identity := &iam_pb.Identity{
+		Name:    "testuser",
+		Actions: []string{"Read:my-bucket", "Write:other-bucket"},
+	}
+
+	normalized, err := canonicalActionList("read,readacp,WRITEACP")
+	if err != nil {
+		t.Fatalf("canonicalActionList: %v", err)
+	}
+	updateBucketActions(identity, "my-bucket", strings.Join(normalized, ","))
+
+	expected := []string{"Write:other-bucket", "Read:my-bucket", "ReadAcp:my-bucket", "WriteAcp:my-bucket"}
+	if !slices.Equal(identity.Actions, expected) {
+		t.Errorf("got %v, want %v", identity.Actions, expected)
+	}
+}
+
 func TestUpdateBucketActions_None(t *testing.T) {
 	identity := &iam_pb.Identity{
 		Name:    "anonymous",
