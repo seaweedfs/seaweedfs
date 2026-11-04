@@ -302,6 +302,9 @@ func (erb *ecRebuilder) findCorruptShards(collections []string) {
 				erb.write("%s checksum scrub failed: %v\n", node.Info.Id, err)
 				return nil
 			}
+			for _, detail := range resp.GetDetails() {
+				erb.write("%s checksum scrub: %s\n", node.Info.Id, detail)
+			}
 			for _, shardInfo := range resp.GetBrokenShardInfos() {
 				vid, shardId := needle.VolumeId(shardInfo.VolumeId), erasure_coding.ShardId(shardInfo.ShardId)
 				erb.write("ec volume %d shard %d on %s fails its checksum\n", vid, shardId, node.Info.Id)
