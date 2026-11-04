@@ -215,10 +215,11 @@ single/distributed) are the gate:
 - Index names never mix within a shard set; the router and `plan.rs` group by
   name, and `with_index_segments` rejects mixed names.
 - Segment count per index name stays under `MAX_DELTAS`: at the limit
-  `optimize_policy` passes an explicit `OptimizeOptions::merge(deltas)`,
-  since Lance's default options may append another delta instead of
-  merging. A test runs repeated append-and-optimize cycles and checks the
-  actual segment counts.
+  `optimize_policy(deltas)` passes `OptimizeOptions::merge(deltas)`, where
+  `deltas` is the name's delta count, so every delta of that name folds
+  into one with the new rows; Lance's default options may append another
+  delta instead of merging. A test runs repeated append-and-optimize cycles
+  and checks the actual segment counts.
 - Coverage is measured as the union over an index's names. After a sharded
   build each name misses the other shards' fragments, so a per-name count
   would extend every shard over the whole table and duplicate the index.
