@@ -367,3 +367,74 @@ func TestPutGroupRaceKeepsNewerInlinePolicy(t *testing.T) {
 		s3a.iam.VerifyActionPermission(req, ident, s3_constants.ACTION_READ, "bucket", "obj"),
 		"a stale group push must not restore a grant the newer policy revoked")
 }
+
+// Service account changes push the parent identity, whose proto carries only
+// the user's own keys. The upsert must rebuild the parent's service account
+// keys from the store instead of dropping them.
+func TestUpsertIdentityKeepsServiceAccountKeys(t *testing.T) {
+	s3a := newTestS3ApiServerWithMemoryIAM(t, []*iam_pb.Identity{{
+		Name:        "pacs",
+		Credentials: []*iam_pb.Credential{{AccessKey: "AKPACS", SecretKey: "secret"}},
+		Actions:     []string{"Read:bucket"},
+	}})
+	cm := s3a.iam.credentialManager
+	ctx := context.Background()
+	expiration := time.Now().Add(time.Hour).Unix()
+	newServiceAccount := func(id, accessKey string) *iam_pb.ServiceAccount {
+		return &iam_pb.ServiceAccount{
+			Id:         id,
+			ParentUser: "pacs",
+			Credential: &iam_pb.Credential{AccessKey: accessKey, SecretKey: "sa-secret", Status: "Active"},
+			Expiration: expiration,
+		}
+	}
+
+	first := newServiceAccount("sa:pacs:1", "AKSA1")
+	require.NoError(t, cm.CreateServiceAccount(ctx, first))
+	parent, err := cm.GetUser(ctx, "pacs")
+	require.NoError(t, err)
+	require.NoError(t, s3a.iam.ReplaceS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
+		Identities:      []*iam_pb.Identity{parent},
+		ServiceAccounts: []*iam_pb.ServiceAccount{first},
+	}))
+
+	second := newServiceAccount("sa:pacs:2", "AKSA2")
+	require.NoError(t, cm.CreateServiceAccount(ctx, second))
+	pushed, err := cm.GetUser(ctx, "pacs")
+	require.NoError(t, err)
+	require.NoError(t, s3a.iam.UpsertIdentity(pushed))
+
+	for _, accessKey := range []string{"AKPACS", "AKSA1", "AKSA2"} {
+		ident, cred, found := s3a.iam.LookupByAccessKey(accessKey)
+		require.True(t, found, "access key %s must survive the parent push", accessKey)
+		assert.Equal(t, "pacs", ident.Name)
+		if accessKey != "AKPACS" {
+			assert.Equal(t, "sa-secret", cred.SecretKey)
+			assert.Equal(t, "Active", cred.Status)
+			assert.Equal(t, expiration, cred.Expiration)
+		}
+	}
+
+	require.NoError(t, cm.DeleteServiceAccount(ctx, first.Id))
+	pushed, err = cm.GetUser(ctx, "pacs")
+	require.NoError(t, err)
+	require.NoError(t, s3a.iam.UpsertIdentity(pushed))
+	_, _, found := s3a.iam.LookupByAccessKey("AKSA1")
+	assert.False(t, found, "a deleted service account must stop authenticating")
+	_, _, found = s3a.iam.LookupByAccessKey("AKSA2")
+	assert.True(t, found, "a sibling service account must survive another one's deletion")
+
+	disabled := newServiceAccount(second.Id, "AKSA2")
+	disabled.Disabled = true
+	require.NoError(t, cm.UpdateServiceAccount(ctx, second.Id, disabled))
+	pushed, err = cm.GetUser(ctx, "pacs")
+	require.NoError(t, err)
+	require.NoError(t, s3a.iam.UpsertIdentity(pushed))
+
+	_, _, found = s3a.iam.LookupByAccessKey("AKSA1")
+	assert.False(t, found)
+	_, _, found = s3a.iam.LookupByAccessKey("AKSA2")
+	assert.False(t, found, "a disabled service account must stop authenticating")
+	_, _, found = s3a.iam.LookupByAccessKey("AKPACS")
+	assert.True(t, found)
+}

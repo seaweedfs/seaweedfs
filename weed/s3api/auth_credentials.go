@@ -1412,6 +1412,17 @@ func (iam *IdentityAccessManagement) UpsertIdentity(ident *iam_pb.Identity) erro
 				config.Policies = append(config.Policies, &iam_pb.Policy{Name: runtimeName, Content: string(content)})
 			}
 		}
+		// The proto carries only the user's own keys; the merge replaces the
+		// identity, so its service account keys have to come from the store.
+		serviceAccounts, err := iam.credentialManager.ListServiceAccounts(context.Background())
+		if err != nil {
+			return err
+		}
+		for _, sa := range serviceAccounts {
+			if sa.ParentUser == ident.Name {
+				config.ServiceAccounts = append(config.ServiceAccounts, sa)
+			}
+		}
 	}
 	if err := iam.MergeS3ApiConfiguration(config, false, false); err != nil {
 		return err
