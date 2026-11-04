@@ -2021,7 +2021,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "title": "Duplicate Volume IDs",
-          "description": "Volume ids registered under two different layouts",
+          "description": "Volume ids a master has flagged as registered under two different layouts since it started",
           "type": "timeseries",
           "id": 238,
           "gridPos": {
@@ -2103,7 +2103,7 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "sum by (collection, volumeId) (increase(SeaweedFS_master_duplicate_volume_ids{cluster=~\"$cluster\"}[$__range])) > 0",
+              "expr": "sum by (collection, volumeId) (max_over_time(SeaweedFS_master_duplicate_volume_ids{cluster=~\"$cluster\"}[$__range]))",
               "range": true,
               "refId": "A",
               "legendFormat": "{{collection}} {{volumeId}}"
