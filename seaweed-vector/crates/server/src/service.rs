@@ -387,13 +387,13 @@ impl VectorServer {
         }
     }
 
-    /// Serve repeated reads of write-once table files from `cache`.
     /// Partitions every query probes, instead of the index's own default.
     pub fn with_nprobes(mut self, nprobes: Option<usize>) -> Self {
         self.nprobes = nprobes;
         self
     }
 
+    /// Serve repeated reads of write-once table files from `cache`.
     pub fn with_read_cache(mut self, cache: ReadCache) -> Self {
         self.read_cache = Some(Arc::new(cache));
         self
