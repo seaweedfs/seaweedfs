@@ -3,6 +3,7 @@ package storage
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,10 +24,9 @@ import (
 // locations and then invoke MountEcShards — this mirrors the real
 // VolumeEcShardsCopy → VolumeEcShardsMount sequence and avoids racing
 // with the startup-scan publish (which uses the location's disk type
-// and would otherwise pollute the captured slice). The returned slice
-// is appended to only by the goroutine; tests should not race against
-// it directly — use waitForShardMsg instead.
-func setupECStoreWithMixedDisks(t *testing.T) (store *Store, drainedShardMsgs *[]*master_pb.VolumeEcShardInformationMessage, vid needle.VolumeId, collection string, plant func()) {
+// and would otherwise pollute the captured messages). Read them with
+// waitForShardMsg.
+func setupECStoreWithMixedDisks(t *testing.T) (store *Store, drainedShardMsgs *shardMsgLog, vid needle.VolumeId, collection string, plant func()) {
 	t.Helper()
 	tempDir := t.TempDir()
 	hddDir := filepath.Join(tempDir, "hdd")
@@ -56,14 +56,15 @@ func setupECStoreWithMixedDisks(t *testing.T) (store *Store, drainedShardMsgs *[
 		diskIOProbeConfig,
 	)
 
-	captured := []*master_pb.VolumeEcShardInformationMessage{}
-	drainedShardMsgs = &captured
+	drainedShardMsgs = &shardMsgLog{}
 	done := make(chan struct{})
 	go func() {
 		for {
 			select {
 			case msg := <-store.NewEcShardsChan:
-				captured = append(captured, msg)
+				drainedShardMsgs.mu.Lock()
+				drainedShardMsgs.msgs = append(drainedShardMsgs.msgs, msg)
+				drainedShardMsgs.mu.Unlock()
 			case <-store.NewVolumesChan:
 			case <-store.DeletedVolumesChan:
 			case <-store.DeletedEcShardsChan:
@@ -114,16 +115,31 @@ func setupECStoreWithMixedDisks(t *testing.T) (store *Store, drainedShardMsgs *[
 	return store, drainedShardMsgs, vid, collection, plant
 }
 
+// shardMsgLog collects the NewEcShardsChan messages the drain goroutine reads.
+type shardMsgLog struct {
+	mu   sync.Mutex
+	msgs []*master_pb.VolumeEcShardInformationMessage
+}
+
+func (l *shardMsgLog) find(vid needle.VolumeId) *master_pb.VolumeEcShardInformationMessage {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, msg := range l.msgs {
+		if msg.Id == uint32(vid) {
+			return msg
+		}
+	}
+	return nil
+}
+
 // waitForShardMsg returns the first captured mount message for vid, polling
 // briefly because the goroutine reads asynchronously from MountEcShards.
-func waitForShardMsg(t *testing.T, captured *[]*master_pb.VolumeEcShardInformationMessage, vid needle.VolumeId) *master_pb.VolumeEcShardInformationMessage {
+func waitForShardMsg(t *testing.T, captured *shardMsgLog, vid needle.VolumeId) *master_pb.VolumeEcShardInformationMessage {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		for _, msg := range *captured {
-			if msg.Id == uint32(vid) {
-				return msg
-			}
+		if msg := captured.find(vid); msg != nil {
+			return msg
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -211,5 +227,81 @@ func TestMountEcShards_FallsBackToLocationDiskTypeWhenEmpty(t *testing.T) {
 	heartbeatMsg := findHeartbeatShard(t, hb, vid)
 	if heartbeatMsg.DiskType != string(types.HardDriveType) {
 		t.Errorf("heartbeat disk_type = %q, want %q", heartbeatMsg.DiskType, string(types.HardDriveType))
+	}
+}
+
+// writeEcCounts gives the planted volume three .ecx entries and one deleted
+// needle, journaled twice so a count of .ecj records would read 2.
+func writeEcCounts(t *testing.T, store *Store, collection string, vid needle.VolumeId) {
+	t.Helper()
+	base := erasure_coding.EcShardFileName(collection, store.Locations[0].Directory, int(vid))
+	if err := os.WriteFile(base+".ecx", make([]byte, 3*types.NeedleMapEntrySize), 0o644); err != nil {
+		t.Fatalf("write .ecx: %v", err)
+	}
+	ecj := make([]byte, 2*types.NeedleIdSize)
+	types.NeedleIdToBytes(ecj[:types.NeedleIdSize], types.NeedleId(7))
+	types.NeedleIdToBytes(ecj[types.NeedleIdSize:], types.NeedleId(7))
+	if err := os.WriteFile(base+".ecj", ecj, 0o644); err != nil {
+		t.Fatalf("write .ecj: %v", err)
+	}
+}
+
+// TestMountEcShards_ReportsFileAndDeleteCounts pins the mount notification to
+// the counts the full EC heartbeat carries (EcVolume.FileAndDeleteCount):
+// every .ecx entry, and the distinct deletes journaled in .ecj.
+func TestMountEcShards_ReportsFileAndDeleteCounts(t *testing.T) {
+	store, captured, vid, collection, plant := setupECStoreWithMixedDisks(t)
+	plant()
+	writeEcCounts(t, store, collection, vid)
+
+	if err := store.MountEcShards(collection, vid, 0, ""); err != nil {
+		t.Fatalf("MountEcShards: %v", err)
+	}
+
+	mountMsg := waitForShardMsg(t, captured, vid)
+	if mountMsg.FileCount != 3 || mountMsg.DeleteCount != 1 {
+		t.Errorf("NewEcShardsChan counts = (%d, %d), want (3, 1)", mountMsg.FileCount, mountMsg.DeleteCount)
+	}
+
+	hb := store.CollectErasureCodingHeartbeat()
+	heartbeatMsg := findHeartbeatShard(t, hb, vid)
+	if heartbeatMsg.FileCount != 3 || heartbeatMsg.DeleteCount != 1 {
+		t.Errorf("heartbeat counts = (%d, %d), want (3, 1)", heartbeatMsg.FileCount, heartbeatMsg.DeleteCount)
+	}
+}
+
+// TestNewStore_StartupEcMessageReportsFileAndDeleteCounts covers the message
+// the startup scan publishes for a shard it loads.
+func TestNewStore_StartupEcMessageReportsFileAndDeleteCounts(t *testing.T) {
+	store, _, vid, collection, plant := setupECStoreWithMixedDisks(t)
+	plant()
+	writeEcCounts(t, store, collection, vid)
+
+	restarted := NewStore(nil, "localhost", 8081, 18081, "http://localhost:8081", "store-id-restarted",
+		[]string{store.Locations[0].Directory, store.Locations[1].Directory},
+		[]int32{100, 100},
+		[]util.MinFreeSpace{{}, {}},
+		"",
+		NeedleMapInMemory,
+		[]types.DiskType{types.HardDriveType, types.SsdType},
+		nil,
+		3,
+		stats.DefaultDiskIOProbeConfig(),
+	)
+	t.Cleanup(restarted.Close)
+
+	for {
+		select {
+		case msg := <-restarted.NewEcShardsChan:
+			if msg.Id != uint32(vid) {
+				continue
+			}
+			if msg.FileCount != 3 || msg.DeleteCount != 1 {
+				t.Errorf("startup NewEcShardsChan counts = (%d, %d), want (3, 1)", msg.FileCount, msg.DeleteCount)
+			}
+			return
+		default:
+			t.Fatalf("no startup NewEcShardsChan message for volume %d", vid)
+		}
 	}
 }

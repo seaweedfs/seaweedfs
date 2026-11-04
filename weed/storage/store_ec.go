@@ -268,6 +268,9 @@ func (s *Store) MountEcShards(collection string, vid needle.VolumeId, shardId er
 
 	si := erasure_coding.NewShardsInfo()
 	si.Set(erasure_coding.NewShardInfo(shardId, erasure_coding.ShardSize(ecVolume.ShardSize())))
+	// Same counts the full EC heartbeat carries, so a volume the master first
+	// learns of here does not read 0 files until the next full heartbeat.
+	fileCount, deleteCount := ecVolume.FileAndDeleteCount()
 	s.NewEcShardsChan <- &master_pb.VolumeEcShardInformationMessage{
 		Id:          uint32(vid),
 		Collection:  collection,
@@ -276,6 +279,8 @@ func (s *Store) MountEcShards(collection string, vid needle.VolumeId, shardId er
 		DiskType:    string(ecVolume.DiskType()),
 		ExpireAtSec: ecVolume.ExpireAtSec,
 		DiskId:      uint32(diskId),
+		FileCount:   fileCount,
+		DeleteCount: deleteCount,
 		EncodeTsNs:  ecVolume.EncodeTsNs,
 	}
 	s.UpdateMaxVolumeIdSeen(vid)
