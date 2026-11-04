@@ -753,52 +753,40 @@ func (s *Store) rebuildEcShardNeedle(n *needle.Needle, needleId types.NeedleId, 
 	}
 
 	// When parity still covers every suspect, one pass excludes them all and
-	// repairs any subset of them being corrupt at once. Otherwise one suspect
-	// is rebuilt at a time, which fixes a single corrupt suspect.
+	// repairs any subset of them being corrupt at once.
 	if len(suspects) <= ecCtx.ParityShards {
 		if candidate, isDeleted := try(suspects); isDeleted {
 			return nil, true
 		} else if candidate != nil {
 			return candidate, false
 		}
-		// The gather behind a failed candidate can itself have read a second
-		// corrupt shard as reconstruction input. With slack left in the parity
-		// budget, retry while dropping one gathered input at a time.
-		if len(suspects) < ecCtx.ParityShards {
-			if candidate, isDeleted := s.rebuildEcNeedleFromDroppedInputs(n, needleId, ecVolume, ecCtx, intervals, shardIds, offsets, offset, size, corrupted, suspects); isDeleted {
-				return nil, true
-			} else if candidate != nil {
-				return candidate, false
-			}
-		}
-		if len(suspects) == 1 {
-			return nil, false
-		}
 	}
-	for shardId := range suspects {
-		if candidate, isDeleted := try(map[erasure_coding.ShardId]bool{shardId: true}); isDeleted {
-			return nil, true
-		} else if candidate != nil {
-			return candidate, false
-		}
-	}
-	return nil, false
+	return s.rebuildEcNeedleFromDroppedInputs(n, needleId, ecVolume, ecCtx, intervals, shardIds, offsets, offset, size, corrupted, suspects)
 }
 
-// rebuildEcNeedleFromDroppedInputs handles a rebuild whose every suspect range
-// was recovered yet the candidate still failed to parse: the gather behind it
-// can itself have read a second corrupt shard as reconstruction input. Each
-// interval is gathered once — keeping every shard that answers rather than
-// stopping at DataShards — then the decode is retried with one gathered input
-// dropped at a time and a needle parse arbitrates. The hypotheses tried are
-// the inputs the first decode consumed, the only shards whose corruption can
-// explain the failed candidate. Nil when no dropped-input subset parses.
+// ecRebuildMaxSets bounds how many candidate corrupt sets one needle's search
+// enumerates, and ecRebuildMaxBytes the needle bytes it rebuilds and parses
+// past the single-shard sets. 10+4 has 1470 sets of at most four shards.
+const (
+	ecRebuildMaxSets  = 4096
+	ecRebuildMaxBytes = 1 << 30
+)
+
+// rebuildEcNeedleFromDroppedInputs handles a rebuild the single pass could not
+// repair: shards besides the suspects can be corrupt over the same ranges and
+// get read as reconstruction inputs. Each interval is gathered once from every
+// other shard that answers, then each set of up to ParityShards shards holding
+// a suspect is tried as the corrupt set, smallest first: suspect ranges inside
+// it are rebuilt from the shards outside it, the rest keep the bytes read, and
+// a needle parse arbitrates. A set whose decodes read the same inputs as one
+// already tried is skipped. Nil when no set parses.
 func (s *Store) rebuildEcNeedleFromDroppedInputs(n *needle.Needle, needleId types.NeedleId, ecVolume *erasure_coding.EcVolume, ecCtx *erasure_coding.ECContext, intervals []erasure_coding.Interval, shardIds []erasure_coding.ShardId, offsets []int64, offset int64, size types.Size, corrupted []byte, suspects map[erasure_coding.ShardId]bool) ([]byte, bool) {
 	var totalSize int64
 	for _, interval := range intervals {
 		totalSize += int64(interval.Size)
 	}
-	weight := totalSize * int64(ecCtx.Total())
+	total := ecCtx.Total()
+	weight := totalSize * int64(total)
 	if weight > ecRecoverBudget {
 		weight = ecRecoverBudget
 	}
@@ -808,59 +796,140 @@ func (s *Store) rebuildEcNeedleFromDroppedInputs(n *needle.Needle, needleId type
 	defer ecRecoverSem.Release(weight)
 
 	gathers := make([][][]byte, len(intervals))
-	picked := make(map[erasure_coding.ShardId]bool)
 	for i, interval := range intervals {
-		shardIntervals, isDeleted := s.gatherEcShardIntervals(needleId, ecVolume, ecCtx, suspects, int(interval.Size), offsets[i], ecCtx.Total())
+		shardIntervals, isDeleted := s.gatherEcShardIntervals(needleId, ecVolume, ecCtx, map[erasure_coding.ShardId]bool{shardIds[i]: true}, int(interval.Size), offsets[i], total)
 		if isDeleted {
 			return nil, true
-		}
-		taken := 0
-		for shardId := 0; shardId < ecCtx.Total() && taken < ecCtx.DataShards; shardId++ {
-			if shardIntervals[shardId] != nil {
-				picked[erasure_coding.ShardId(shardId)] = true
-				taken++
-			}
 		}
 		gathers[i] = shardIntervals
 	}
 
-	for drop := erasure_coding.ShardId(0); int(drop) < ecCtx.Total(); drop++ {
-		if !picked[drop] {
-			continue
-		}
-		candidate := make([]byte, len(corrupted))
-		copy(candidate, corrupted)
-		pos := 0
-		ok := true
-		for i, interval := range intervals {
-			view := slices.Clone(gathers[i])
-			view[drop] = nil
-			if err := reconstructEcShardInterval(ecVolume, ecCtx, view, shardIds[i]); err != nil {
-				ok = false
-				break
+	enc, err := reedsolomon.New(ecCtx.DataShards, ecCtx.ParityShards)
+	if err != nil {
+		return nil, false
+	}
+	candidate := slices.Clone(corrupted)
+	required := make([]bool, total)
+	view := make([][]byte, total)
+	inputs := make([]uint64, len(intervals))
+	tried := make(map[string]bool)
+
+	// plan records in inputs the shards each interval's decode reads when set
+	// is excluded, 0 for an interval that keeps its bytes. False when an
+	// interval has too few shards left, or the same decodes were tried before.
+	plan := func(set uint64) bool {
+		for i := range intervals {
+			inputs[i] = 0
+			if set&(1<<shardIds[i]) == 0 {
+				continue
 			}
-			copy(candidate[pos:pos+int(interval.Size)], view[shardIds[i]])
-			pos += int(interval.Size)
+			taken := 0
+			for shardId := 0; shardId < total && taken < ecCtx.DataShards; shardId++ {
+				if set&(1<<shardId) == 0 && gathers[i][shardId] != nil {
+					inputs[i] |= 1 << shardId
+					taken++
+				}
+			}
+			if taken < ecCtx.DataShards {
+				return false
+			}
 		}
-		if !ok {
-			continue
+		key := fmt.Sprint(inputs)
+		if tried[key] {
+			return false
+		}
+		tried[key] = true
+		return true
+	}
+
+	// decode rebuilds the planned intervals into candidate. The parsed needle
+	// keeps slices of candidate, so it is reset only on failure.
+	decode := func() bool {
+		pos := 0
+		for i, interval := range intervals {
+			end := pos + int(interval.Size)
+			if inputs[i] != 0 {
+				for shardId := range view {
+					view[shardId] = nil
+					if inputs[i]&(1<<shardId) != 0 {
+						view[shardId] = gathers[i][shardId]
+					}
+				}
+				view[shardIds[i]] = candidate[pos:pos:end]
+				required[shardIds[i]] = true
+				err := enc.ReconstructSome(view, required)
+				required[shardIds[i]] = false
+				if err != nil {
+					copy(candidate, corrupted)
+					return false
+				}
+			}
+			pos = end
 		}
 		check := &needle.Needle{Id: needleId}
 		if check.ReadBytes(candidate, offset, size, ecVolume.Version) != nil || check.Id != needleId {
-			continue
+			copy(candidate, corrupted)
+			return false
 		}
-		// The verdict convicts every differing range — and the dropped input,
-		// without which the same decode kept failing to parse.
-		pos = 0
-		for i, interval := range intervals {
-			if !bytes.Equal(candidate[pos:pos+int(interval.Size)], corrupted[pos:pos+int(interval.Size)]) {
-				forgetShardId(ecVolume, shardIds[i])
-			}
-			pos += int(interval.Size)
-		}
-		forgetShardId(ecVolume, drop)
 		*n = *check
-		return candidate, false
+		return true
+	}
+
+	sets, spent := 0, 0
+	members := make([]int, 0, ecCtx.ParityShards)
+	for k := 1; k <= ecCtx.ParityShards && k <= total; k++ {
+		members = members[:k]
+		for j := range members {
+			members[j] = j
+		}
+		for {
+			var set uint64
+			holdsSuspect := false
+			for _, shardId := range members {
+				set |= 1 << shardId
+				holdsSuspect = holdsSuspect || suspects[erasure_coding.ShardId(shardId)]
+			}
+			if holdsSuspect {
+				if sets++; sets > ecRebuildMaxSets {
+					return nil, false
+				}
+				if plan(set) {
+					if k > 1 && spent >= ecRebuildMaxBytes {
+						return nil, false
+					}
+					spent += len(corrupted)
+					if decode() {
+						// The verdict convicts every differing range, and every
+						// other shard the set kept out of the decodes.
+						pos := 0
+						for i, interval := range intervals {
+							end := pos + int(interval.Size)
+							if !bytes.Equal(candidate[pos:end], corrupted[pos:end]) {
+								forgetShardId(ecVolume, shardIds[i])
+							}
+							pos = end
+						}
+						for _, shardId := range members {
+							if !suspects[erasure_coding.ShardId(shardId)] {
+								forgetShardId(ecVolume, erasure_coding.ShardId(shardId))
+							}
+						}
+						return candidate, false
+					}
+				}
+			}
+			j := k - 1
+			for j >= 0 && members[j] == total-k+j {
+				j--
+			}
+			if j < 0 {
+				break
+			}
+			members[j]++
+			for m := j + 1; m < k; m++ {
+				members[m] = members[m-1] + 1
+			}
+		}
 	}
 	return nil, false
 }
