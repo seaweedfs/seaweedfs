@@ -25,6 +25,7 @@ type ecRebuildFakeServer struct {
 	corrupt     map[uint32]bool // shard id -> fails the checksum
 	copied      map[uint32]bool
 	failUnmount bool
+	failScrub   bool
 	scrubs      int
 	rebuilds    int
 	copiedIds   []uint32
@@ -35,6 +36,9 @@ func (f *ecRebuildFakeServer) ScrubEcVolume(ctx context.Context, req *volume_ser
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.scrubs++
+	if f.failScrub {
+		return nil, fmt.Errorf("scrub refused")
+	}
 	resp := &volume_server_pb.ScrubEcVolumeResponse{}
 	for _, vid := range req.VolumeIds {
 		for sid := range f.shards[vid] {
@@ -290,4 +294,20 @@ func TestRebuildChecksumReportsDuplicateRemovalFailures(t *testing.T) {
 			t.Errorf("removed %v without the lock", holder.deleted)
 		}
 	})
+}
+
+// A node whose scrub fails fails the run, and the corruption found on the
+// other nodes is still repaired.
+func TestRebuildChecksumScrubFailureFailsRun(t *testing.T) {
+	const vid = uint32(1)
+	holder := startEcRebuildFakeServer(t, vid, shardRange(0, 9), 3)
+	rebuilder := startEcRebuildFakeServer(t, vid, shardRange(9, 14))
+	rebuilder.failScrub = true
+
+	out, err := runChecksumRebuildLocked(t, true, true, nil, holder, rebuilder)
+	if err == nil || !strings.Contains(err.Error(), "scrub refused") {
+		t.Fatalf("expected the failed scrub to fail the run, got %v\n%s", err, out)
+	}
+	assertShards(t, "rebuilder", rebuilder, vid, append([]uint32{3}, shardRange(9, 14)...))
+	assertShards(t, "holder", holder, vid, []uint32{0, 1, 2, 4, 5, 6, 7, 8})
 }
