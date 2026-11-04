@@ -781,19 +781,21 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                 }
             });
 
+            const listed = globalBucketPerms.filter(gp => hasPickerOption('editActions', gp.permission));
+            const unlisted = globalBucketPerms.filter(gp => !listed.includes(gp)).map(gp => gp.action);
+
             if (actions.includes('Admin')) {
                 result.isAdmin = true;
-                result.unshownActions = bucketActions.map(ba => ba.action);
+                result.permissions = listed.map(gp => gp.permission);
+                result.unshownActions = unlisted.concat(bucketActions.map(ba => ba.action));
                 return result;
             }
 
             // If we have global bucket permissions (no colon), they apply to all buckets
             if (globalBucketPerms.length > 0) {
-                const listed = globalBucketPerms.filter(gp => hasPickerOption('editActions', gp.permission));
                 result.permissions = listed.map(gp => gp.permission);
                 result.applyToAll = true;
-                result.unshownActions = globalBucketPerms.filter(gp => !listed.includes(gp)).map(gp => gp.action)
-                    .concat(bucketActions.map(ba => ba.action));
+                result.unshownActions = unlisted.concat(bucketActions.map(ba => ba.action));
             } else if (bucketActions.length > 0) {
                 // The form saves every permission on every selected bucket, so it can
                 // show the grants only when they cover that full product with listed options.
@@ -1026,9 +1028,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                         const actionsSelect = document.getElementById('editActions');
                         if (actionsSelect) {
                             Array.from(actionsSelect.options).forEach(option => {
-                                if (bucketPerms.isAdmin && option.value === 'Admin') {
-                                    option.selected = true;
-                                } else if (!bucketPerms.isAdmin && bucketPerms.permissions.includes(option.value)) {
+                                if (bucketPerms.permissions.includes(option.value)) {
                                     option.selected = true;
                                 }
                             });
