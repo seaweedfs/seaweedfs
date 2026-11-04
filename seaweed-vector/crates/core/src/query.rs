@@ -120,8 +120,20 @@ async fn scanner(
         crate::filter::apply(&mut scanner, filter)?;
         scanner.prefilter(!query.postfilter);
     }
-    if let Some(nprobes) = query.nprobes {
-        scanner.nprobes(nprobes);
+    if use_index {
+        let probes = match query.nprobes {
+            Some(n) => Some(n),
+            None => crate::index::default_probes(dataset, &table.vector_column).await?,
+        };
+        if let Some(probes) = probes {
+            // Lance searches at least this many partitions, and under a
+            // prefilter keeps going until it has k rows.
+            scanner.minimum_nprobes(probes);
+            if query.filter.is_none() {
+                scanner.maximum_nprobes(probes);
+            }
+            tracing::debug!(probes, filtered = query.filter.is_some(), "ann scan");
+        }
     }
     let segments = query.index_segments.as_deref().unwrap_or(&[]);
     if use_index && !segments.is_empty() {

@@ -1,6 +1,10 @@
 //! Sizing the vector index an S3 Vectors table searches through, and the
 //! probes a query spends on it. Building lives in the worker crate.
 
+use anyhow::{Context, Result};
+use lance::Dataset;
+use lance::index::DatasetIndexExt;
+
 pub use weed_lance_worker::vector_index::{
     INDEX_NAME, MAX_PARTITIONS, build, distance_metric, index_names, optimize, partitions_for,
 };
@@ -13,6 +17,28 @@ pub fn probes_for(partitions: usize) -> usize {
     MIN_PROBES
         .max(partitions.div_ceil(10))
         .min(partitions.max(1))
+}
+
+/// The probes a query of `vector_column` uses when it names none: from the
+/// partition count of the index that covers it, or `None` without an index.
+pub async fn default_probes(dataset: &Dataset, vector_column: &str) -> Result<Option<usize>> {
+    let Some(name) = index_names(dataset, vector_column)
+        .await?
+        .into_iter()
+        .next()
+    else {
+        return Ok(None);
+    };
+    let stats: serde_json::Value = serde_json::from_str(&dataset.index_statistics(&name).await?)
+        .with_context(|| format!("parse index statistics for {name}"))?;
+    let partitions = stats["indices"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|i| i["num_partitions"].as_u64())
+        .max()
+        .unwrap_or(0) as usize;
+    Ok(Some(probes_for(partitions)))
 }
 
 #[cfg(test)]
@@ -71,6 +97,72 @@ mod tests {
                 "{flat:?} vs {ann:?}"
             );
         }
+    }
+
+    /// Pseudo-random rows, so partitions are not degenerate.
+    fn scattered(rows: usize, dim: usize) -> Vec<Vec<f32>> {
+        let mut state: u64 = 0x9E3779B97F4A7C15;
+        (0..rows)
+            .map(|_| {
+                (0..dim)
+                    .map(|_| {
+                        state = state
+                            .wrapping_mul(6364136223846793005)
+                            .wrapping_add(1442695040888963407);
+                        ((state >> 40) as f32) / (1u64 << 24) as f32
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn default_probes_follow_the_index_and_find_the_neighbours() {
+        let dir = TempDir::new().unwrap();
+        let rows = scattered(4000, 8);
+        let tags: Vec<&str> = (0..4000)
+            .map(|i| if i % 100 == 0 { "rare" } else { "common" })
+            .collect();
+        let mut dataset = testing::write_dataset(&dir, &rows, &tags).await;
+        let table = VectorTable::resolve(&dataset, None, None).unwrap();
+        assert_eq!(default_probes(&dataset, "vector").await.unwrap(), None);
+        build(&mut dataset, &table.vector_column, INDEX_NAME, 64, false)
+            .await
+            .unwrap();
+        assert_eq!(
+            default_probes(&dataset, "vector").await.unwrap(),
+            Some(probes_for(64))
+        );
+
+        let mut found = 0;
+        let total = 20 * 10;
+        for vector in &scattered(20, 8) {
+            let q = exact(vector, 10);
+            let flat: std::collections::HashSet<u64> = query::flat(&dataset, &table, &q)
+                .await
+                .unwrap()
+                .iter()
+                .map(|h| h.row_id)
+                .collect();
+            let ann = query::ann(&dataset, &table, &q).await.unwrap();
+            assert_eq!(ann.len(), 10);
+            found += ann.iter().filter(|h| flat.contains(&h.row_id)).count();
+        }
+        assert!(found * 10 >= total * 9, "recall {found}/{total}");
+
+        // One probe cannot hold ten rare rows; a filtered query keeps probing.
+        let filtered = query::ann(
+            &dataset,
+            &table,
+            &Query {
+                filter: Some("tag = 'rare'".to_string()),
+                nprobes: Some(1),
+                ..exact(&rows[0], 10)
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(filtered.len(), 10);
     }
 
     #[tokio::test]
