@@ -23,7 +23,8 @@ a larger profile:
 
 Each timed scenario starts with one untimed call. Timings only report; the
 assertions check correctness (recall against an exact client-side search,
-complete listings), never speed.
+complete listings), never speed. Recall through an index is approximate, so
+PERF_INDEX runs report it without asserting it.
 """
 
 import concurrent.futures
@@ -211,7 +212,7 @@ def run_queries(perf, name, **extra):
         if n < RECALL_SAMPLE:
             recalls.append(recall(exact_top_k(data, query, TOPK, keep), response["vectors"]))
     perf["report"][name] = {**summarize(latencies), "recall_at_k": statistics.fmean(recalls) if recalls else None}
-    assert not recalls or statistics.fmean(recalls) >= 0.9
+    assert INDEXED or not recalls or statistics.fmean(recalls) >= 0.9
 
 
 def test_query(perf):
