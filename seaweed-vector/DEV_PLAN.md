@@ -100,12 +100,13 @@ everything downstream keeps working because it only ever sees:
 - **Metric from the table.** The vector field's `distance_metric` metadata
   (`COSINE`, `DOT_PRODUCT`, else L2) is the metric the index is built with,
   exactly as `service.rs` resolves it for queries.
-- **Partitions**: start at `clamp(round(sqrt(rows)), 16, 4096)` for the whole
+- **Partitions**: start at `clamp(round(sqrt(rows)), 1, 4096)` for the whole
   table, and for a shard, `sqrt` of the shard's rows. Phase 0 measures
   recall and latency against this and adjusts before it becomes a default.
 - **Probes**: one count per query, `max(8, ceil(partitions / 10))` clamped to
-  the partition count, taken from the largest delta of the index; a smaller
-  delta is probed in full. Lance searches at least that many partitions.
+  the partition count, taken from the largest delta of the index. A delta
+  with no more partitions than that count is searched in full; a larger one
+  at that count. Lance searches at least that many partitions.
   Under a filter the upper bound stays open, so Lance keeps probing until it
   has k rows when a selective filter empties the probed partitions; without
   a filter it stops at the count. Phase 0 measures; the perf suite's recall
