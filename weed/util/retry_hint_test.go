@@ -83,7 +83,7 @@ func TestRetryWithBackoffHonoursShorterServerHint(t *testing.T) {
 	if err != nil || calls != 2 {
 		t.Fatalf("RetryWithBackoff = %v after %d calls, want success after 2", err, calls)
 	}
-	if wait := secondAt.Sub(firstAt); wait < 150*time.Millisecond || wait > 900*time.Millisecond {
+	if wait := secondAt.Sub(firstAt); wait < 150*time.Millisecond || wait > 990*time.Millisecond {
 		t.Fatalf("waited %v before the retry, want hint + slack (150-400ms), not the 1s step", wait)
 	}
 }

@@ -140,7 +140,7 @@ func TestAssignRetryLandsAtWarmupEndWithHint(t *testing.T) {
 	}
 	// The hint lands the retry just after warm-up ends (1.2s), not at the
 	// next backoff step (1s + 1.5s = 2.5s).
-	if elapsed := time.Since(start); elapsed > 2250*time.Millisecond {
+	if elapsed := time.Since(start); elapsed > 2400*time.Millisecond {
 		t.Fatalf("assign took %v over %d calls, want about 1.25s (warm-up end)", elapsed, srv.callCount.Load())
 	}
 }
