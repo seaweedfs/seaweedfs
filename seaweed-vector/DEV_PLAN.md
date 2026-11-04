@@ -26,8 +26,11 @@ What the measurements changed:
   perf suite's default, recall through an IVF index tracks the fraction of
   partitions probed: at 50k × 384 with 224 partitions, 8 probes gave 0.13 and
   64 probes 0.56, and latency did not fall with fewer probes. On vectors drawn
-  around 100 shared centres, 8 probes gave recall 1.0 at about half the exact
-  scan's latency. Embeddings cluster; the perf suite grows `PERF_CLUSTERS`
+  around 100 shared centres, 8 probes gave recall 1.0; with eight clients
+  the index served 145 queries/s against 52 exact at 50k and 70 against 11
+  at 200k, and the 10% filtered query at 200k fell from 445 to 265 ms,
+  while one client's latency stayed at the request path's floor on the
+  shared host. Embeddings cluster; the perf suite grows `PERF_CLUSTERS`
   and the end-to-end test draws its rows around centres. The probe rule
   stands as written.
 - **The engine opened every table in a fresh Lance session**, so the index
