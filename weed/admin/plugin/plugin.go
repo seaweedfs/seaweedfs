@@ -857,17 +857,21 @@ func (r *Plugin) executeJobWithExecutor(
 
 	if err := r.sendToSession(session, message); err != nil {
 		// The worker never got the request, so no report will close the
-		// attempt. Unregister first: nobody reads completedCh any more.
+		// attempt unless an expiry already claimed it. Unregister first:
+		// nobody reads completedCh any more.
 		r.pendingExecutionMu.Lock()
+		pending := r.pendingExecution[requestID]
 		delete(r.pendingExecution, requestID)
 		r.pendingExecutionMu.Unlock()
-		r.handleJobCompleted(&plugin_pb.JobCompleted{
-			JobId:        job.JobId,
-			JobType:      job.JobType,
-			RequestId:    requestID,
-			ErrorMessage: err.Error(),
-			CompletedAt:  timestamppb.Now(),
-		})
+		if pending != nil && !pending.failed {
+			r.handleJobCompleted(&plugin_pb.JobCompleted{
+				JobId:        job.JobId,
+				JobType:      job.JobType,
+				RequestId:    requestID,
+				ErrorMessage: err.Error(),
+				CompletedAt:  timestamppb.Now(),
+			})
+		}
 		return nil, err
 	}
 
