@@ -142,6 +142,71 @@ func TestCompleteMultipartUploadCommittedDespiteFailure(t *testing.T) {
 	if deleteData, ok := f.deletedData["0001_old.part"]; !ok || !deleteData {
 		t.Errorf("unused part deleted = %v, with data = %v; want its data freed as on success", ok, deleteData)
 	}
+	if deleteData, ok := f.deletedData["u1"]; !ok || deleteData {
+		t.Errorf("upload directory deleted = %v, with data = %v; want metadata only, its parts are the object's", ok, deleteData)
+	}
+}
+
+func newVersionedCommitTestServer(t *testing.T, versioning string) (*S3ApiServer, *memCompleteFiler) {
+	t.Helper()
+	f := &memCompleteFiler{entries: map[string]map[string]*filer_pb.Entry{}}
+	s3a := newFailoverTestServer(t, startFakeFiler(t, f))
+	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+	s3a.bucketConfigCache.Set("b", &BucketConfig{Name: "b", Versioning: versioning})
+	return s3a, f
+}
+
+func pointLatestVersion(f *memCompleteFiler, s3a *S3ApiServer, versionId string, version *filer_pb.Entry) {
+	f.put(s3a.bucketDir("b"), &filer_pb.Entry{Name: "a.bin" + s3_constants.VersionsFolder, IsDirectory: true, Extended: map[string][]byte{
+		s3_constants.ExtLatestVersionIdKey:       []byte(versionId),
+		s3_constants.ExtLatestVersionFileNameKey: []byte(version.Name),
+	}})
+	f.put(s3a.bucketDir("b")+"/a.bin"+s3_constants.VersionsFolder, version)
+}
+
+// On a versioned bucket the committed version is read through the latest
+// pointer, and the answer carries its version id and checksum.
+func TestCommittedCompletionReadsTheLatestVersion(t *testing.T) {
+	s3a, f := newVersionedCommitTestServer(t, s3_constants.VersioningEnabled)
+	pointLatestVersion(f, s3a, "3a1b", &filer_pb.Entry{Name: "v_3a1b", Attributes: &filer_pb.FuseAttributes{FileSize: 11}, Extended: map[string][]byte{
+		s3_constants.SeaweedFSUploadId:    []byte("u1"),
+		s3_constants.ExtVersionIdKey:      []byte("3a1b"),
+		s3_constants.ExtETagKey:           []byte("8a6d5f0e5c8f7b2f4e1d0c9b8a7f6e5d-1"),
+		s3_constants.ExtChecksumAlgorithm: []byte(s3_constants.AmzChecksumCRC32C),
+		s3_constants.ExtChecksumValue:     []byte("fx4FQw==-1"),
+		s3_constants.ExtChecksumType:      []byte(s3_constants.ChecksumTypeComposite),
+	}})
+
+	input := &s3.CompleteMultipartUploadInput{Bucket: aws.String("b"), Key: aws.String("a.bin"), UploadId: aws.String("u1")}
+	output, entry := s3a.committedCompletion(httptest.NewRequest("POST", "/b/a.bin?uploadId=u1", nil), input)
+	if output == nil || entry == nil {
+		t.Fatal("did not find the committed version")
+	}
+	if got := aws.StringValue(output.VersionId); got != "3a1b" {
+		t.Errorf("VersionId = %q, want 3a1b", got)
+	}
+	if output.ChecksumCRC32C != "fx4FQw==-1" || output.ChecksumType != s3_constants.ChecksumTypeComposite {
+		t.Errorf("checksum = %q %q, want the committed version's", output.ChecksumCRC32C, output.ChecksumType)
+	}
+}
+
+// Suspended versioning whose null write left the delete marker current reads
+// as deleted, so the upload's object behind it is not a completed answer.
+func TestCommittedCompletionBehindADeleteMarker(t *testing.T) {
+	s3a, f := newVersionedCommitTestServer(t, s3_constants.VersioningSuspended)
+	f.put(s3a.bucketDir("b"), &filer_pb.Entry{Name: "a.bin", Attributes: &filer_pb.FuseAttributes{FileSize: 11}, Extended: map[string][]byte{
+		s3_constants.SeaweedFSUploadId: []byte("u1"),
+		s3_constants.ExtVersionIdKey:   []byte("null"),
+	}})
+	pointLatestVersion(f, s3a, "7c2d", &filer_pb.Entry{Name: "v_7c2d", Attributes: &filer_pb.FuseAttributes{}, Extended: map[string][]byte{
+		s3_constants.ExtVersionIdKey:    []byte("7c2d"),
+		s3_constants.ExtDeleteMarkerKey: []byte("true"),
+	}})
+
+	input := &s3.CompleteMultipartUploadInput{Bucket: aws.String("b"), Key: aws.String("a.bin"), UploadId: aws.String("u1")}
+	if output, _ := s3a.committedCompletion(httptest.NewRequest("POST", "/b/a.bin?uploadId=u1", nil), input); output != nil {
+		t.Fatalf("answered %+v for a key that reads as deleted", output)
+	}
 }
 
 // The object found may be another attempt's commit of the same upload, whose
