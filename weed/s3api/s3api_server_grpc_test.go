@@ -140,6 +140,27 @@ func TestS3IamCache_ValidToken_WritesIdentity(t *testing.T) {
 	}
 }
 
+func TestS3IamCache_ValidTokenFollowingStaleToken_Succeeds(t *testing.T) {
+	s := newTestS3IamCacheServer(t, testS3IamCacheSigningKey)
+	bad := security.GenJwtForFilerAdmin(security.SigningKey("a-different-key"), 60)
+	good := security.GenJwtForFilerAdmin(security.SigningKey(testS3IamCacheSigningKey), 60)
+	multiCtx := metadata.NewIncomingContext(context.Background(), metadata.MD{
+		"authorization": []string{
+			security.BearerPrefix + string(bad),
+			security.BearerPrefix + string(good),
+		},
+	})
+	_, err := s.PutIdentity(multiCtx, &iam_pb.PutIdentityRequest{
+		Identity: &iam_pb.Identity{
+			Name:    "pushed_multi",
+			Actions: []string{"Admin"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("PutIdentity with valid token following stale token: unexpected error %v", err)
+	}
+}
+
 // Without a signing key remote callers cannot be authenticated, so admin
 // RPCs are restricted to local clients: unix socket, loopback, or the
 // server's own interface addresses. Remote peers and missing peer info are

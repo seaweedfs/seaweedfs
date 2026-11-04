@@ -25,6 +25,18 @@ func CheckGrpcAdminPeer(ctx context.Context, signingKey SigningKey) error {
 	if len(signingKey) == 0 {
 		return CheckLocalGrpcPeer(ctx)
 	}
+	return CheckGrpcAdminToken(ctx, signingKey)
+}
+
+// maxGrpcAdminAuthValues bounds the JWT parses one request can trigger; a
+// caller sends its own token plus at most one forwarded from its context.
+const maxGrpcAdminAuthValues = 4
+
+// CheckGrpcAdminToken accepts the call when one of the first
+// maxGrpcAdminAuthValues authorization values is a Bearer admin token signed
+// by signingKey, so a fresh token still counts when the caller's context also
+// forwards an older one.
+func CheckGrpcAdminToken(ctx context.Context, signingKey SigningKey) error {
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
 		return status.Error(codes.Unauthenticated, "missing metadata")
@@ -33,15 +45,21 @@ func CheckGrpcAdminPeer(ctx context.Context, signingKey SigningKey) error {
 	if len(authHeaders) == 0 {
 		return status.Error(codes.Unauthenticated, "missing authorization metadata")
 	}
-	raw := strings.TrimSpace(authHeaders[0])
-	parts := strings.Fields(raw)
-	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") || parts[1] == "" {
-		return status.Error(codes.Unauthenticated, "authorization header must use Bearer scheme")
+	if len(authHeaders) > maxGrpcAdminAuthValues {
+		authHeaders = authHeaders[:maxGrpcAdminAuthValues]
 	}
-	if !IsFilerAdminToken(signingKey, EncodedJwt(parts[1])) {
-		return status.Error(codes.Unauthenticated, "invalid admin token")
+	err := status.Error(codes.Unauthenticated, "authorization header must use Bearer scheme")
+	for _, raw := range authHeaders {
+		parts := strings.Fields(raw)
+		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") || parts[1] == "" {
+			continue
+		}
+		if IsFilerAdminToken(signingKey, EncodedJwt(parts[1])) {
+			return nil
+		}
+		err = status.Error(codes.Unauthenticated, "invalid admin token")
 	}
-	return nil
+	return err
 }
 
 // IsFilerAdminToken reports whether token is an admin token signed by

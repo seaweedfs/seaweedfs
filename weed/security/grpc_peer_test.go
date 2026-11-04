@@ -5,8 +5,11 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"net"
+	"slices"
 	"testing"
+	"time"
 
+	jwt "github.com/golang-jwt/jwt/v5"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
@@ -64,5 +67,52 @@ func TestGrpcAdminPeerCredentials(t *testing.T) {
 	md := GrpcAdminPeerCredentials(SigningKey("key"), 60)
 	if len(md.Get("authorization")) != 1 {
 		t.Fatalf("expected one authorization entry, got %v", md)
+	}
+}
+
+func TestCheckGrpcAdminToken(t *testing.T) {
+	key := SigningKey("test-signing-key-0123456789abcdef")
+	fresh := "Bearer " + string(GenJwtForFilerAdmin(key, 60))
+	stale := "Bearer " + string(GenJwtForFilerAdmin(SigningKey("another-key"), 60))
+	expired, signErr := jwt.NewWithClaims(jwt.SigningMethodHS256, SeaweedFilerAdminClaims{
+		RegisteredClaims: jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(time.Now().Add(-time.Hour))},
+	}).SignedString([]byte(key))
+	if signErr != nil {
+		t.Fatalf("sign expired token: %v", signErr)
+	}
+	session, signErr := jwt.NewWithClaims(jwt.SigningMethodHS256, SeaweedFilerAdminClaims{
+		SessionId:        "session",
+		RegisteredClaims: jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour))},
+	}).SignedString([]byte(key))
+	if signErr != nil {
+		t.Fatalf("sign session token: %v", signErr)
+	}
+
+	for name, tc := range map[string]struct {
+		values  []string
+		wantErr string
+	}{
+		"stale then fresh":    {[]string{stale, fresh}, ""},
+		"fresh then garbage":  {[]string{fresh, "garbage"}, ""},
+		"expired then fresh":  {[]string{"Bearer " + expired, fresh}, ""},
+		"only expired":        {[]string{"Bearer " + expired}, "invalid admin token"},
+		"only stale":          {[]string{stale}, "invalid admin token"},
+		"same-key session":    {[]string{"Bearer " + session}, "invalid admin token"},
+		"basic then stale":    {[]string{"Basic dXNlcjpwYXNz", stale}, "invalid admin token"},
+		"no bearer value":     {[]string{"Basic dXNlcjpwYXNz", "garbage"}, "authorization header must use Bearer scheme"},
+		"lowercase scheme ok": {[]string{"bearer " + fresh[len("Bearer "):]}, ""},
+		"fresh past the cap":  {append(slices.Repeat([]string{stale}, maxGrpcAdminAuthValues), fresh), "invalid admin token"},
+	} {
+		ctx := metadata.NewIncomingContext(context.Background(), metadata.MD{"authorization": tc.values})
+		err := CheckGrpcAdminToken(ctx, key)
+		if tc.wantErr == "" {
+			if err != nil {
+				t.Errorf("%s: unexpected error %v", name, err)
+			}
+			continue
+		}
+		if status.Code(err) != codes.Unauthenticated || status.Convert(err).Message() != tc.wantErr {
+			t.Errorf("%s: got %v, want Unauthenticated %q", name, err, tc.wantErr)
+		}
 	}
 }
