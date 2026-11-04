@@ -269,17 +269,14 @@ func RetryWithBackoff(ctx context.Context, name string, maxDuration time.Duratio
 	}
 }
 
-// retryHintSlack is added to a server's retry hint so the next attempt lands
-// just after the server is ready, not just before it. It is random in
-// [50ms, 300ms] so clients refused at the same moment do not all retry in the
-// same instant (HTTP Retry-After spreads them by rounding up to whole seconds).
+// retryHintSlack lands a hinted retry just after the server is ready, jittered
+// so clients refused together do not retry together.
 func retryHintSlack() time.Duration {
 	return 50*time.Millisecond + rand.N(250*time.Millisecond+1)
 }
 
-// shortenStep is the backoff step after a server hint: hint plus slack when
-// that is shorter than the step, otherwise the step unchanged. Comparing
-// hint < step-slack (not hint+slack < step) keeps a huge hint from overflowing.
+// shortenStep returns hint plus slack when that is shorter than step.
+// hint < step-slack, not hint+slack < step, so a huge hint cannot overflow.
 func shortenStep(step time.Duration, err error, slack time.Duration) time.Duration {
 	if hint, ok := serverRetryDelay(err); ok && hint < step-slack {
 		return hint + slack
@@ -287,11 +284,8 @@ func shortenStep(step time.Duration, err error, slack time.Duration) time.Durati
 	return step
 }
 
-// serverRetryDelay returns the delay a gRPC server suggested in a RetryInfo
-// detail (for example the master's remaining warm-up). A hint only shortens a
-// backoff step; it never makes a retry wait longer than the backoff would.
-// Only a valid, positive hint counts: a zero, negative or malformed one from a
-// misbehaving server would otherwise turn the backoff into tight polling.
+// serverRetryDelay returns a valid, positive gRPC RetryInfo delay; anything
+// else would let a misbehaving server turn the backoff into tight polling.
 func serverRetryDelay(err error) (time.Duration, bool) {
 	st, ok := ServerStatus(err)
 	if !ok {

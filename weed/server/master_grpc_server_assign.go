@@ -333,10 +333,8 @@ func (w *unservedLayoutWarning) Do(optionKey string, lastErr error) {
 	glog.Warningf("assign requests for %s will keep failing until a volume server registers that disk layout or clients change their assignment disk type: %v", optionKey, lastErr)
 }
 
-// warmingUpError refuses an Assign or a LookupVolume during warm-up. Like the HTTP handler's
-// Retry-After header, it tells the client how much warm-up is left, as a gRPC
-// RetryInfo detail, so a retrying client can try again right when warm-up ends
-// instead of sleeping through a longer backoff step.
+// warmingUpError carries the remaining warm-up as a RetryInfo detail, the gRPC
+// counterpart of the HTTP handlers' Retry-After.
 func warmingUpError(remaining time.Duration) error {
 	st := status.New(codes.Unavailable, "master is warming up, topology is still loading")
 	if remaining <= 0 {
