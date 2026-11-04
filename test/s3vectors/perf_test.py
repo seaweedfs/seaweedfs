@@ -84,16 +84,21 @@ def client(endpoint):
                                       max_pool_connections=max(CONCURRENCY) + 2))
 
 
-def exact_top_k(data, query, k, keep=None):
-    """Cosine top-k over the ingested vectors, the reference for recall."""
+def recall(data, query, k, hits, keep=None):
+    """Hits in the exact cosine top-k over the ingested vectors. A hit tying
+    the k-th best score counts: tied vectors are interchangeable."""
     qn = math.sqrt(sum(x * x for x in query))
-    scored = []
-    for i, (vector, norm) in enumerate(data):
-        if keep is not None and not keep(i):
-            continue
-        scored.append((sum(a * b for a, b in zip(vector, query)) / (norm * qn), i))
-    scored.sort(reverse=True)
-    return {f"v{i}" for _, i in scored[:k]}
+
+    def score(i):
+        vector, norm = data[i]
+        return sum(a * b for a, b in zip(vector, query)) / (norm * qn)
+
+    def eligible(i):
+        return keep is None or keep(i)
+
+    best = sorted((score(i) for i in range(len(data)) if eligible(i)), reverse=True)[:k]
+    found = [int(h["key"][1:]) for h in hits]
+    return sum(1 for i in found if eligible(i) and score(i) >= best[-1]) / len(best)
 
 
 def list_all(s3v, args, **extra):
@@ -108,10 +113,6 @@ def list_all(s3v, args, **extra):
 
 def assert_complete(keys):
     assert len(keys) == VECTORS and set(keys) == {f"v{i}" for i in range(VECTORS)}
-
-
-def recall(expected, hits):
-    return len(expected & {h["key"] for h in hits}) / len(expected)
 
 
 @pytest.fixture(scope="module")
@@ -210,7 +211,7 @@ def run_queries(perf, name, **extra):
             **args, queryVector={"float32": query}, topK=TOPK, returnDistance=True, **extra))
         latencies.append(seconds)
         if n < RECALL_SAMPLE:
-            recalls.append(recall(exact_top_k(data, query, TOPK, keep), response["vectors"]))
+            recalls.append(recall(data, query, TOPK, response["vectors"], keep))
     perf["report"][name] = {**summarize(latencies), "recall_at_k": statistics.fmean(recalls) if recalls else None}
     assert INDEXED or not recalls or statistics.fmean(recalls) >= 0.9
 
