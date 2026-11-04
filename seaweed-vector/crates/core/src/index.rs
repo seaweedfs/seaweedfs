@@ -11,17 +11,29 @@ pub use weed_lance_worker::vector_index::{
 
 pub const MIN_PROBES: usize = 8;
 
-/// Partitions one query probes: a tenth of them, at least [`MIN_PROBES`], never
-/// more than exist.
-pub fn probes_for(partitions: usize) -> usize {
-    MIN_PROBES
-        .max(partitions.div_ceil(10))
-        .min(partitions.max(1))
+/// How many partitions a query searches: `min` always, and under a prefilter
+/// up to `max` until it has k rows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Probes {
+    pub min: usize,
+    pub max: usize,
+}
+
+/// Probes for an index of `partitions`: a tenth of them, at least
+/// [`MIN_PROBES`], never more than exist; a filtered query may widen to four
+/// times that.
+pub fn probes_for(partitions: usize) -> Probes {
+    let partitions = partitions.max(1);
+    let min = MIN_PROBES.max(partitions.div_ceil(10)).min(partitions);
+    Probes {
+        min,
+        max: (min * 4).min(partitions),
+    }
 }
 
 /// The probes a query of `vector_column` uses when it names none: from the
 /// partition count of the index that covers it, or `None` without an index.
-pub async fn default_probes(dataset: &Dataset, vector_column: &str) -> Result<Option<usize>> {
+pub async fn default_probes(dataset: &Dataset, vector_column: &str) -> Result<Option<Probes>> {
     let Some(name) = index_names(dataset, vector_column)
         .await?
         .into_iter()
@@ -55,11 +67,17 @@ mod tests {
 
     #[test]
     fn probes_are_a_tenth_with_a_floor() {
-        assert_eq!(probes_for(1), 1);
-        assert_eq!(probes_for(8), 8);
-        assert_eq!(probes_for(64), 8);
-        assert_eq!(probes_for(224), 23);
-        assert_eq!(probes_for(4096), 410);
+        assert_eq!(probes_for(1), Probes { min: 1, max: 1 });
+        assert_eq!(probes_for(8), Probes { min: 8, max: 8 });
+        assert_eq!(probes_for(64), Probes { min: 8, max: 32 });
+        assert_eq!(probes_for(224), Probes { min: 23, max: 92 });
+        assert_eq!(
+            probes_for(4096),
+            Probes {
+                min: 410,
+                max: 1640
+            }
+        );
     }
 
     fn exact(vector: &[f32], k: usize) -> Query {
@@ -151,13 +169,13 @@ mod tests {
         }
         assert!(found * 10 >= total * 9, "recall {found}/{total}");
 
-        // One probe cannot hold ten rare rows; a filtered query keeps probing.
+        // Eight probes do not hold ten of the 1% rare rows; a filtered query
+        // widens past the minimum until it has them.
         let filtered = query::ann(
             &dataset,
             &table,
             &Query {
                 filter: Some("tag = 'rare'".to_string()),
-                nprobes: Some(1),
                 ..exact(&rows[0], 10)
             },
         )
