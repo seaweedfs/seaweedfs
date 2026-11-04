@@ -3,6 +3,7 @@ package ec
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net"
 	"slices"
 	"strings"
@@ -21,12 +22,13 @@ import (
 // the checksum.
 type ecRebuildFakeServer struct {
 	*ecBalanceFakeServer
-	corrupt   map[uint32]bool // shard id -> fails the checksum
-	copied    map[uint32]bool
-	scrubs    int
-	rebuilds  int
-	copiedIds []uint32
-	deleted   []uint32
+	corrupt     map[uint32]bool // shard id -> fails the checksum
+	copied      map[uint32]bool
+	failUnmount bool
+	scrubs      int
+	rebuilds    int
+	copiedIds   []uint32
+	deleted     []uint32
 }
 
 func (f *ecRebuildFakeServer) ScrubEcVolume(ctx context.Context, req *volume_server_pb.ScrubEcVolumeRequest) (*volume_server_pb.ScrubEcVolumeResponse, error) {
@@ -68,6 +70,13 @@ func (f *ecRebuildFakeServer) VolumeEcShardsRebuild(ctx context.Context, req *vo
 		resp.RebuiltShardIds = append(resp.RebuiltShardIds, sid)
 	}
 	return resp, nil
+}
+
+func (f *ecRebuildFakeServer) VolumeEcShardsUnmount(ctx context.Context, req *volume_server_pb.VolumeEcShardsUnmountRequest) (*volume_server_pb.VolumeEcShardsUnmountResponse, error) {
+	if f.failUnmount {
+		return nil, fmt.Errorf("unmount refused")
+	}
+	return &volume_server_pb.VolumeEcShardsUnmountResponse{}, nil
 }
 
 func (f *ecRebuildFakeServer) VolumeEcShardsDelete(ctx context.Context, req *volume_server_pb.VolumeEcShardsDeleteRequest) (*volume_server_pb.VolumeEcShardsDeleteResponse, error) {
@@ -117,6 +126,15 @@ func shardRange(from, to uint32) (ids []uint32) {
 
 func runChecksumRebuild(t *testing.T, apply, verifyChecksums bool, servers ...*ecRebuildFakeServer) string {
 	t.Helper()
+	out, err := runChecksumRebuildLocked(t, apply, verifyChecksums, nil, servers...)
+	if err != nil {
+		t.Fatalf("rebuild: %v\n%s", err, out)
+	}
+	return out
+}
+
+func runChecksumRebuildLocked(t *testing.T, apply, verifyChecksums bool, isLocked func() bool, servers ...*ecRebuildFakeServer) (string, error) {
+	t.Helper()
 	var balanceServers []*ecBalanceFakeServer
 	for _, f := range servers {
 		balanceServers = append(balanceServers, f.ecBalanceFakeServer)
@@ -124,16 +142,15 @@ func runChecksumRebuild(t *testing.T, apply, verifyChecksums bool, servers ...*e
 	env := &Env{
 		GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
 		FetchTopology:  fetchEcBalanceTopology(balanceServers),
+		IsLocked:       isLocked,
 	}
 	ecNodes, _, err := CollectEcNodes(env, types.HardDriveType)
 	if err != nil {
 		t.Fatalf("collect ec nodes: %v", err)
 	}
 	var out bytes.Buffer
-	if err := RebuildEcVolumes(env, ecNodes, &out, []string{"c1"}, nil, types.HardDriveType, 1, apply, verifyChecksums); err != nil {
-		t.Fatalf("rebuild: %v\n%s", err, out.String())
-	}
-	return out.String()
+	err = RebuildEcVolumes(env, ecNodes, &out, []string{"c1"}, nil, types.HardDriveType, 1, apply, verifyChecksums)
+	return out.String(), err
 }
 
 func assertShards(t *testing.T, name string, f *ecRebuildFakeServer, vid uint32, want []uint32) {
@@ -240,4 +257,33 @@ func TestRebuildWithoutChecksumSkipsCompleteVolume(t *testing.T) {
 		t.Errorf("scrubs %d, rebuilds %d; want none", holder.scrubs+rebuilder.scrubs, holder.rebuilds+rebuilder.rebuilds)
 	}
 	assertShards(t, "holder", holder, vid, shardRange(0, 9))
+}
+
+// The removal of a corrupt duplicate is the whole repair of that volume, so a
+// failed removal fails the run, and nothing is removed once the lock is lost.
+func TestRebuildChecksumReportsDuplicateRemovalFailures(t *testing.T) {
+	const vid = uint32(1)
+	t.Run("unmount fails", func(t *testing.T) {
+		holder := startEcRebuildFakeServer(t, vid, shardRange(0, 9), 3)
+		other := startEcRebuildFakeServer(t, vid, append([]uint32{3}, shardRange(9, 14)...))
+		holder.failUnmount = true
+
+		out, err := runChecksumRebuildLocked(t, true, true, nil, holder, other)
+		if err == nil || !strings.Contains(err.Error(), "unmount refused") {
+			t.Fatalf("expected the failed removal to fail the run, got %v\n%s", err, out)
+		}
+		assertShards(t, "holder", holder, vid, shardRange(0, 9))
+	})
+	t.Run("lock lost", func(t *testing.T) {
+		holder := startEcRebuildFakeServer(t, vid, shardRange(0, 9), 3)
+		other := startEcRebuildFakeServer(t, vid, append([]uint32{3}, shardRange(9, 14)...))
+
+		out, err := runChecksumRebuildLocked(t, true, true, func() bool { return false }, holder, other)
+		if err == nil || !strings.Contains(err.Error(), "lock is lost") {
+			t.Fatalf("expected a lost lock error, got %v\n%s", err, out)
+		}
+		if holder.deleted != nil {
+			t.Errorf("removed %v without the lock", holder.deleted)
+		}
+	})
 }
