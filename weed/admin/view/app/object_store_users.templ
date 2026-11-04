@@ -1271,15 +1271,15 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                 return;
             }
 
-            // Validate that permissions are not empty
-            if (!allActions || allActions.length === 0) {
+            const actions = [...new Set([...allActions, ...selectedUnshownActions()])];
+            if (actions.length === 0) {
                 showAlert('At least one permission must be selected', 'error');
                 return;
             }
 
             const userData = {
                 email: document.getElementById('editEmail').value,
-                actions: [...new Set([...allActions, ...selectedUnshownActions()])],
+                actions: actions,
                 policy_names: Array.from(document.getElementById('editPolicies').selectedOptions).map(option => option.value)
             };
 
