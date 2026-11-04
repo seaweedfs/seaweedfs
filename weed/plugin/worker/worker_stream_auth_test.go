@@ -104,21 +104,19 @@ func TestWorkerJobContextDoesNotCarryStreamToken(t *testing.T) {
 	go worker.runOnce(ctx, listener.Addr().String())
 
 	select {
-	case got := <-handler.authorization:
-		if len(got) != 0 {
-			t.Fatalf("job context forwards the stream's admin token: %v", got)
-		}
-	case err := <-admin.streamErr:
-		t.Fatalf("admin stream ended before the job ran: %v", err)
-	case <-ctx.Done():
-		t.Fatal("timed out waiting for the job to run")
-	}
-	select {
 	case err := <-admin.streamErr:
 		if err != nil {
 			t.Fatalf("admin stream: %v", err)
 		}
 	case <-ctx.Done():
 		t.Fatal("timed out waiting for the job to complete")
+	}
+	select {
+	case got := <-handler.authorization:
+		if len(got) != 0 {
+			t.Fatalf("job context forwards the stream's admin token: %v", got)
+		}
+	default:
+		t.Fatal("job completed without running the handler")
 	}
 }
