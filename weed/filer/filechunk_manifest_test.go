@@ -652,7 +652,9 @@ func TestFetchWholeChunkRefreshesLocationsAfterPartialFailure(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	liveURL := manifestServer(t, manifestBytes).URL + "/5,abc"
+	live := manifestServer(t, manifestBytes)
+	reachServer(t, live)
+	liveURL := live.URL + "/5,abc"
 	deadURL := deadServerURL(t)
 
 	lookup := &stagedLookup{
