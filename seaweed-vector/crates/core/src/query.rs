@@ -122,17 +122,22 @@ async fn scanner(
     }
     if use_index {
         let probes = match query.nprobes {
-            Some(n) => Some(n),
+            Some(n) => Some(crate::index::Probes { min: n, max: n }),
             None => crate::index::default_probes(dataset, &table.vector_column).await?,
         };
         if let Some(probes) = probes {
-            // Lance searches at least this many partitions, and under a
-            // prefilter keeps going until it has k rows.
-            scanner.minimum_nprobes(probes);
-            if query.filter.is_none() {
-                scanner.maximum_nprobes(probes);
-            }
-            tracing::debug!(probes, filtered = query.filter.is_some(), "ann scan");
+            // Lance searches `min` partitions, and under a prefilter keeps
+            // going up to `max` until it has k rows. An open bound would
+            // make it prepare every partition for that, which costs as much
+            // as the exact scan it is meant to avoid.
+            scanner.minimum_nprobes(probes.min);
+            scanner.maximum_nprobes(probes.max);
+            tracing::debug!(
+                min = probes.min,
+                max = probes.max,
+                filtered = query.filter.is_some(),
+                "ann scan"
+            );
         }
     }
     let segments = query.index_segments.as_deref().unwrap_or(&[]);
