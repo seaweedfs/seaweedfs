@@ -216,6 +216,8 @@ def run_queries(perf, name, **extra):
         seconds, response = timed(lambda: s3v.query_vectors(
             **args, queryVector={"float32": query}, topK=TOPK, returnDistance=True, **extra))
         latencies.append(seconds)
+        if keep:
+            assert all(keep(int(h["key"][1:])) for h in response["vectors"]), response["vectors"]
         if n < RECALL_SAMPLE:
             recalls.append(recall(data, query, TOPK, response["vectors"], keep))
     perf["report"][name] = {**summarize(latencies), "recall_at_k": statistics.fmean(recalls) if recalls else None}
