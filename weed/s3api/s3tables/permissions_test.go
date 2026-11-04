@@ -574,7 +574,8 @@ func TestValidatePolicyDocument(t *testing.T) {
 		denyNull       = `{"Effect":"Deny","Principal":"*","Action":"s3tables:GetTable","Resource":"*","Condition":null}`
 		denyNone       = `{"Effect":"Deny","Principal":"*","Action":"s3tables:GetTable","Resource":"*"}`
 		// Duplicate keys reach the evaluator in sorted order, not document
-		// order: the lower-case null wins here, the object wins in the mirror.
+		// order: the lower-case null wins here, the object wins in the mirror,
+		// and both are refused whichever spelling is null.
 		allowNullWins   = `{"Effect":"Allow","Principal":"*","Action":"s3tables:GetTable","Resource":"*","condition":null,"Condition":{"StringEquals":{"aws:ResourceTag/env":"prod"}}}`
 		allowObjectWins = `{"Effect":"Allow","Principal":"*","Action":"s3tables:GetTable","Resource":"*","Condition":null,"condition":{"StringEquals":{"aws:ResourceTag/env":"prod"}}}`
 	)
@@ -590,7 +591,7 @@ func TestValidatePolicyDocument(t *testing.T) {
 		{`[` + denyNull + `]`, false},
 		{`[` + denyNull + `,` + allowValid + `]`, false},
 		{`[` + allowNone + `]`, false},
-		{`[` + allowObjectWins + `]`, false},
+		{`[` + allowObjectWins + `]`, true},
 	} {
 		raw := `{"Version":"2012-10-17","Statement":` + tc.statement + `}`
 		err := validatePolicyDocument(raw)
@@ -812,18 +813,32 @@ func TestStoredNullConditionAllowNeverGrants(t *testing.T) {
 	}
 }
 
-// Condition objects under differently cased keys merge, so an empty one does
-// not erase the other's restriction.
-func TestConditionSpellingsMerge(t *testing.T) {
-	allow := `{"Statement":[{"Effect":"Allow","Principal":"*","Action":"s3tables:GetTable","Resource":"*","Condition":{"StringEquals":{"aws:ResourceTag/env":"prod"}},"condition":{}}]}`
-	if err := validatePolicyDocument(allow); err != nil {
-		t.Fatalf("validatePolicyDocument: %v", err)
+// Condition objects under two key spellings decode into one map in which an
+// operator they share keeps only the last spelling's keys. Such a statement is
+// refused, and one stored before that never grants and always vetoes.
+func TestConditionSplitAcrossSpellings(t *testing.T) {
+	for _, split := range []string{
+		`"Condition":{"StringEquals":{"aws:ResourceTag/env":"prod"}},"condition":{"StringEquals":{"aws:ResourceTag/team":"x"}}`,
+		`"Condition":{"StringEquals":{"aws:ResourceTag/env":"prod"}},"condition":{}`,
+	} {
+		allow := `{"Statement":[{"Effect":"Allow","Principal":"*","Action":"s3tables:GetTable","Resource":"*",` + split + `}]}`
+		if err := validatePolicyDocument(allow); err == nil {
+			t.Errorf("%s: validatePolicyDocument accepted it", split)
+		}
+		if CheckPermissionWithContext("s3tables:GetTable", "reader", "owner", allow, "", &PolicyContext{ResourceTags: map[string]string{"env": "dev", "team": "x"}}) {
+			t.Errorf("%s: the env=prod restriction was dropped", split)
+		}
+		deny := `{"Statement":[{"Effect":"Deny","Principal":"*","Action":"s3tables:GetTable","Resource":"*",` + split + `}]}`
+		if CheckPermissionWithContext("s3tables:GetTable", "owner", "owner", deny, "", &PolicyContext{ResourceTags: map[string]string{"env": "dev", "team": "x"}}) {
+			t.Errorf("%s: the Deny was skipped", split)
+		}
 	}
-	if CheckPermissionWithContext("s3tables:GetTable", "reader", "owner", allow, "", &PolicyContext{ResourceTags: map[string]string{"env": "dev"}}) {
-		t.Error("the env=prod restriction was dropped")
+	single := `{"Statement":[{"Effect":"Allow","Principal":"*","Action":"s3tables:GetTable","Resource":"*","condition":{"StringEquals":{"aws:ResourceTag/env":"prod"}}}]}`
+	if err := validatePolicyDocument(single); err != nil {
+		t.Errorf("one lowercase spelling: %v", err)
 	}
-	if !CheckPermissionWithContext("s3tables:GetTable", "reader", "owner", allow, "", &PolicyContext{ResourceTags: map[string]string{"env": "prod"}}) {
-		t.Error("a request meeting the restriction was refused")
+	if !CheckPermissionWithContext("s3tables:GetTable", "reader", "owner", single, "", &PolicyContext{ResourceTags: map[string]string{"env": "prod"}}) {
+		t.Error("one lowercase spelling no longer grants")
 	}
 }
 

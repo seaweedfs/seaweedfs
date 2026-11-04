@@ -81,22 +81,31 @@ type Statement struct {
 	// nullCondition records a literal "Condition": null, which decodes the
 	// same as no Condition.
 	nullCondition bool
+	// splitCondition records a Condition under more than one key spelling.
+	// Those objects decode into one map in which an operator they share keeps
+	// only the last spelling's keys.
+	splitCondition bool
 }
 
-// UnmarshalJSON decodes as the plain struct would, merging Condition objects
-// under differently cased keys, and separately records a literal null.
+// UnmarshalJSON decodes as the plain struct would and separately records the
+// Condition shapes that decode cannot represent.
 func (s *Statement) UnmarshalJSON(data []byte) error {
 	type plain Statement
 	if err := json.Unmarshal(data, (*plain)(s)); err != nil {
 		return err
 	}
-	var probe struct {
-		Condition json.RawMessage `json:"Condition"`
-	}
-	if err := json.Unmarshal(data, &probe); err != nil {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
 		return err
 	}
-	s.nullCondition = string(probe.Condition) == "null"
+	spellings := 0
+	for key, raw := range fields {
+		if strings.EqualFold(key, "Condition") {
+			spellings++
+			s.nullCondition = s.nullCondition || string(raw) == "null"
+		}
+	}
+	s.splitCondition = spellings > 1
 	return nil
 }
 
@@ -181,6 +190,9 @@ func validatePolicyDocument(raw string) error {
 		// A null Condition on a Deny only widens the veto, so it stays allowed.
 		if stmt.Effect == "Allow" && stmt.nullCondition {
 			return fmt.Errorf("invalid policy document: an Allow statement's Condition must not be null")
+		}
+		if stmt.splitCondition {
+			return fmt.Errorf("invalid policy document: a statement's Condition must be under one key, spelled Condition")
 		}
 		for operator, keys := range stmt.Condition {
 			if _, err := policy_engine.GetConditionEvaluator(operator); err != nil {
@@ -348,7 +360,7 @@ func matchesDenyStatement(operation, principal, resourcePolicy, resourceARN stri
 			continue
 		}
 		matched, usable := matchesConditions(stmt.Condition, ctx)
-		if !usable {
+		if !usable || stmt.splitCondition {
 			glog.Warningf("S3Tables: policy on %q has a Deny condition that cannot be evaluated; denying %s for %s until the policy is replaced", resourceARN, fullAction, principal)
 			return true
 		}
@@ -418,8 +430,8 @@ func checkPermission(operation, principal, owner, resourcePolicy, resourceARN st
 		}
 
 		// A condition that cannot be evaluated never grants, nor does a null
-		// one stored before validatePolicyDocument refused it.
-		if stmt.Effect == "Allow" && stmt.nullCondition {
+		// or split one stored before validatePolicyDocument refused it.
+		if stmt.Effect == "Allow" && (stmt.nullCondition || stmt.splitCondition) {
 			continue
 		}
 		if matched, usable := matchesConditions(stmt.Condition, ctx); !usable || !matched {
