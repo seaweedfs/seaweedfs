@@ -304,7 +304,16 @@ def index_object_encryption(vectors, bucket):
     keys = [o["Key"] for page in s3.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=f"vector/{INDEX}/")
             for o in page.get("Contents", []) if o["Size"] > 0]
     assert any("/data/" in key for key in keys) and any("/_versions/" in key for key in keys)
-    return {key: s3.head_object(Bucket=bucket, Key=key).get("ServerSideEncryption") for key in keys}
+    encryption = {}
+    for key in keys:
+        try:
+            encryption[key] = s3.head_object(Bucket=bucket, Key=key).get("ServerSideEncryption")
+        except ClientError as exc:
+            # a query's lease tag is released in the background after it answers
+            if "/_refs/tags/weed-vector-query-" in key and exc.response["Error"]["Code"] in ("404", "NoSuchKey"):
+                continue
+            raise
+    return encryption
 
 
 def test_vector_bucket_encryption(vectors):
