@@ -733,3 +733,61 @@ func TestPostPolicyBucketHandler_AuthDisabledSkipsSignature(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), "Policy Condition failed",
 		"the policy check must still run, body: %s", rec.Body.String())
 }
+
+func TestPostPolicyBucketHandler_RejectsControlCharsInHeaderFields(t *testing.T) {
+	const testBucket = "test-bucket"
+
+	tests := []struct {
+		name  string
+		field string
+		value string
+	}{
+		{"content-type newline", "Content-Type", "\n"},
+		{"content-type crlf", "Content-Type", "text/plain\r\nContent-MD5: x"},
+		{"content-disposition newline", "Content-Disposition", "inline\n"},
+		{"metadata newline", "x-amz-meta-foo", "a\nb"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			iam := &IdentityAccessManagement{
+				hashes:       make(map[string]*sync.Pool),
+				hashCounters: make(map[string]*int32),
+			}
+			assert.NoError(t, iam.loadS3ApiConfiguration(&iam_pb.S3ApiConfiguration{}))
+
+			s3a := &S3ApiServer{
+				option: &S3ApiServerOption{BucketsPath: "/buckets"},
+				iam:    iam,
+			}
+			s3a.bucketRegistry = NewBucketRegistry(s3a)
+			s3a.bucketRegistry.setMetadataCache(&BucketMetaData{Name: testBucket, IsTableBucket: false})
+
+			var buf bytes.Buffer
+			writer := multipart.NewWriter(&buf)
+			assert.NoError(t, writer.WriteField("key", "object.txt"))
+			assert.NoError(t, writer.WriteField(tt.field, tt.value))
+			filePart, err := writer.CreateFormFile("file", "payload.txt")
+			assert.NoError(t, err)
+			_, err = filePart.Write([]byte("contents"))
+			assert.NoError(t, err)
+			assert.NoError(t, writer.Close())
+
+			req := httptest.NewRequest(http.MethodPost, "/"+testBucket, &buf)
+			req.Header.Set("Content-Type", writer.FormDataContentType())
+			req = mux.SetURLVars(req, map[string]string{"bucket": testBucket})
+			rec := httptest.NewRecorder()
+
+			s3a.PostPolicyBucketHandler(rec, req)
+
+			assert.Equal(t, http.StatusBadRequest, rec.Code, "body: %s", rec.Body.String())
+			assert.Contains(t, rec.Body.String(), "MalformedPOSTRequest")
+		})
+	}
+}
+
+func TestValidHeaderValues(t *testing.T) {
+	assert.True(t, validHeaderValues(http.Header{"Content-Type": {"text/plain; charset=utf-8"}, "X-Amz-Meta-Name": {"café\tbar"}}))
+	assert.False(t, validHeaderValues(http.Header{"Content-Type": {"\r\n"}}))
+	assert.False(t, validHeaderValues(http.Header{"Cache-Control": {"no-cache\x00"}}))
+}
