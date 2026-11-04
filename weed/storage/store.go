@@ -172,6 +172,7 @@ func NewStore(
 			s.UpdateMaxVolumeIdSeen(vid)
 			si := erasure_coding.NewShardsInfo()
 			si.Set(erasure_coding.NewShardInfo(shardId, erasure_coding.ShardSize(ecVolume.ShardSize())))
+			fileCount, deleteCount := ecVolume.FileAndDeleteCount()
 
 			// Use non-blocking send during startup to avoid deadlock
 			// The channel reader only starts after connecting to master, but we're loading during startup
@@ -184,6 +185,8 @@ func NewStore(
 				DiskType:    string(location.DiskType),
 				ExpireAtSec: ecVolume.ExpireAtSec,
 				DiskId:      diskId,
+				FileCount:   fileCount,
+				DeleteCount: deleteCount,
 				EncodeTsNs:  ecVolume.EncodeTsNs,
 			}:
 			default:

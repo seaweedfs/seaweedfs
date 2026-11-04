@@ -213,3 +213,36 @@ func TestMountEcShards_FallsBackToLocationDiskTypeWhenEmpty(t *testing.T) {
 		t.Errorf("heartbeat disk_type = %q, want %q", heartbeatMsg.DiskType, string(types.HardDriveType))
 	}
 }
+
+// TestMountEcShards_ReportsFileAndDeleteCounts pins the mount notification to
+// the counts the full EC heartbeat carries (EcVolume.FileAndDeleteCount):
+// every .ecx entry, and the deletes journaled in .ecj.
+func TestMountEcShards_ReportsFileAndDeleteCounts(t *testing.T) {
+	store, captured, vid, collection, plant := setupECStoreWithMixedDisks(t)
+	plant()
+
+	base := erasure_coding.EcShardFileName(collection, store.Locations[0].Directory, int(vid))
+	if err := os.WriteFile(base+".ecx", make([]byte, 3*types.NeedleMapEntrySize), 0o644); err != nil {
+		t.Fatalf("write .ecx: %v", err)
+	}
+	ecj := make([]byte, types.NeedleIdSize)
+	types.NeedleIdToBytes(ecj, types.NeedleId(7))
+	if err := os.WriteFile(base+".ecj", ecj, 0o644); err != nil {
+		t.Fatalf("write .ecj: %v", err)
+	}
+
+	if err := store.MountEcShards(collection, vid, 0, ""); err != nil {
+		t.Fatalf("MountEcShards: %v", err)
+	}
+
+	mountMsg := waitForShardMsg(t, captured, vid)
+	if mountMsg.FileCount != 3 || mountMsg.DeleteCount != 1 {
+		t.Errorf("NewEcShardsChan counts = (%d, %d), want (3, 1)", mountMsg.FileCount, mountMsg.DeleteCount)
+	}
+
+	hb := store.CollectErasureCodingHeartbeat()
+	heartbeatMsg := findHeartbeatShard(t, hb, vid)
+	if heartbeatMsg.FileCount != 3 || heartbeatMsg.DeleteCount != 1 {
+		t.Errorf("heartbeat counts = (%d, %d), want (3, 1)", heartbeatMsg.FileCount, heartbeatMsg.DeleteCount)
+	}
+}
