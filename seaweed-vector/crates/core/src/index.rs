@@ -105,7 +105,7 @@ mod tests {
         for (metric, distance) in [
             ("COSINE", DistanceType::Cosine),
             ("DOT_PRODUCT", DistanceType::Dot),
-            ("EUCLIDEAN", DistanceType::L2),
+            ("L2", DistanceType::L2),
         ] {
             let dir = TempDir::new().unwrap();
             let rows = testing::vectors(300, DIM);

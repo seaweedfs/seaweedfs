@@ -67,7 +67,7 @@ pub async fn write_dataset_at(uri: &str, vectors: &[Vec<f32>], tags: &[&str]) ->
 }
 
 /// Like [`write_dataset`], with the vector field carrying the `distance_metric`
-/// metadata the S3 Vectors gateway writes (`COSINE`, `DOT_PRODUCT`, `EUCLIDEAN`).
+/// metadata `CreateIndex` writes (`L2`, `COSINE`, `DOT_PRODUCT`).
 pub async fn write_dataset_with_metric(
     dir: &TempDir,
     vectors: &[Vec<f32>],
