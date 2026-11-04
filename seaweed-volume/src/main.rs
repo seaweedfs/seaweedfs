@@ -1136,6 +1136,7 @@ mod tests {
             }
         }
         let client = super::outgoing_client_builder(reqwest::redirect::Policy::none())
+            .no_proxy()
             .dns_resolver(std::sync::Arc::new(Stalled))
             .build()
             .unwrap();
