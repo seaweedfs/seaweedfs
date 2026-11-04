@@ -50,6 +50,26 @@ pub async fn index_names(dataset: &Dataset, vector_column: &str) -> Result<Vec<S
     Ok(names)
 }
 
+/// Partitions of the index named `name`: the most any of its deltas has.
+pub async fn partitions(dataset: &Dataset, name: &str) -> Result<usize> {
+    let stats: serde_json::Value = serde_json::from_str(&dataset.index_statistics(name).await?)
+        .with_context(|| format!("parse index statistics for {name}"))?;
+    Ok(stats["indices"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|i| i["num_partitions"].as_u64())
+        .max()
+        .unwrap_or(0) as usize)
+}
+
+/// Whether an index built with `partitions` should be trained again for a
+/// table of `rows`: once the table has grown to twice the partitions it was
+/// sized for, the centroids no longer fit it.
+pub fn needs_retrain(partitions: usize, rows: usize) -> bool {
+    partitions_for(rows) >= 2 * partitions.max(1)
+}
+
 /// Build an IVF_FLAT index named `name` over `vector_column` in the metric the
 /// table was created with. `replace` rebuilds an index of that name; the
 /// dataset is left at the new version.
@@ -91,6 +111,15 @@ pub async fn optimize(dataset: &mut Dataset, retrain: bool) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retrain_once_the_table_quadruples() {
+        assert!(!needs_retrain(224, 50_000));
+        assert!(!needs_retrain(224, 150_000));
+        assert!(needs_retrain(224, 200_704));
+        assert!(needs_retrain(0, 4));
+        assert!(!needs_retrain(4096, 100_000_000));
+    }
 
     #[test]
     fn partitions_follow_the_square_root() {
