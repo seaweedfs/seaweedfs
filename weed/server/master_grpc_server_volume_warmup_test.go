@@ -61,3 +61,11 @@ func TestLookupVolumeAfterWarmupReportsNotFoundPerVolume(t *testing.T) {
 		t.Fatalf("absent volume answer = %+v", resp.VolumeIdLocations[1])
 	}
 }
+
+func TestLookupVolumeDuringWarmupCarriesRemainingWarmup(t *testing.T) {
+	ms := newWarmingUpMaster(t)
+	assertWarmupHint(t, ms, func() error {
+		_, err := ms.LookupVolume(context.Background(), &master_pb.LookupVolumeRequest{VolumeOrFileIds: []string{"7", "8"}})
+		return err
+	})
+}

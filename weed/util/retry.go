@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"io"
+	"math/rand/v2"
 	"net"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -246,11 +248,12 @@ func RetryWithBackoff(ctx context.Context, name string, maxDuration time.Duratio
 		if sleepTime > maxWaitTime {
 			sleepTime = maxWaitTime
 		}
+		sleepTime = shortenStep(sleepTime, err, retryHintSlack())
 		if sleepTime > remaining {
 			sleepTime = remaining
 		}
 		glog.V(1).Infof("retry %s: retrying in %v: %v", name, sleepTime, err)
-		timer := time.NewTimer(sleepTime)
+		timer := retryBackoffTimer(sleepTime)
 		select {
 		case <-ctx.Done():
 			if !timer.Stop() {
@@ -264,6 +267,40 @@ func RetryWithBackoff(ctx context.Context, name string, maxDuration time.Duratio
 			waitTime = maxWaitTime
 		}
 	}
+}
+
+var retryBackoffTimer = time.NewTimer
+
+// retryHintSlack lands a hinted retry just after the server is ready, jittered
+// so clients refused together do not retry together.
+func retryHintSlack() time.Duration {
+	return 50*time.Millisecond + rand.N(250*time.Millisecond+1)
+}
+
+// shortenStep returns hint plus slack when that is shorter than step.
+// hint < step-slack, not hint+slack < step, so a huge hint cannot overflow.
+func shortenStep(step time.Duration, err error, slack time.Duration) time.Duration {
+	if hint, ok := serverRetryDelay(err); ok && hint < step-slack {
+		return hint + slack
+	}
+	return step
+}
+
+// serverRetryDelay returns a valid, positive gRPC RetryInfo delay; anything
+// else would let a misbehaving server turn the backoff into tight polling.
+func serverRetryDelay(err error) (time.Duration, bool) {
+	st, ok := ServerStatus(err)
+	if !ok {
+		return 0, false
+	}
+	for _, d := range st.Details() {
+		if ri, ok := d.(*errdetails.RetryInfo); ok && ri.GetRetryDelay().CheckValid() == nil {
+			if delay := ri.GetRetryDelay().AsDuration(); delay > 0 {
+				return delay, true
+			}
+		}
+	}
+	return 0, false
 }
 
 // Nvl return the first non-empty string

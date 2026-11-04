@@ -228,7 +228,7 @@ func (ms *MasterServer) LookupVolume(ctx context.Context, req *master_pb.LookupV
 	// missing volume as gone.
 	if notFoundCount > 0 && ms.Topo.IsLeader() && ms.Topo.IsWarmingUp() {
 		glog.V(0).Infof("lookup volume warming up: topology is still loading (%d of %d not found)", notFoundCount, len(req.VolumeOrFileIds))
-		return nil, status.Errorf(codes.Unavailable, "master is warming up, topology is still loading")
+		return nil, warmingUpError(ms.Topo.RemainingWarmupDuration())
 	}
 
 	return resp, nil
