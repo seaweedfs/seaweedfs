@@ -3,6 +3,7 @@ package s3tables
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net"
 	"strconv"
 	"strings"
@@ -271,8 +272,8 @@ func conditionValueReadable(base string, item interface{}) bool {
 		case float64:
 			return true
 		case string:
-			_, err := strconv.ParseFloat(v, 64)
-			return err == nil
+			f, err := strconv.ParseFloat(v, 64)
+			return err == nil && !math.IsNaN(f)
 		}
 	case "DateEquals", "DateNotEquals", "DateLessThan", "DateLessThanEquals",
 		"DateGreaterThan", "DateGreaterThanEquals":

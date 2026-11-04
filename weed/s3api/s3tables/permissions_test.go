@@ -622,6 +622,8 @@ func TestConditionValue(t *testing.T) {
 		{"NumericLessThan", `"low"`, false},
 		{"NumericLessThan", `true`, false},
 		{"NumericLessThan", `["low","10"]`, false},
+		{"NumericLessThan", `"NaN"`, false},
+		{"NumericNotEquals", `"nan"`, false},
 		{"ForAnyValue:NumericLessThan", `"low"`, false},
 		{"ForAllValues:NumericLessThan", `"10"`, true},
 
@@ -711,6 +713,7 @@ func TestUnreadableConditionDenyApplies(t *testing.T) {
 		`{"NumericLessThan":{"aws:RequestTag/priority":"low"}}`,
 		`{"DateLessThan":{"aws:ResourceTag/created":"2026-01-01"}}`,
 		`{"Bool":{"aws:ResourceTag/is_public":"yes"}}`,
+		`{"NumericLessThan":{"aws:RequestTag/priority":"NaN"}}`,
 	} {
 		var conditions map[string]map[string]interface{}
 		if err := json.Unmarshal([]byte(condition), &conditions); err != nil {
@@ -761,6 +764,7 @@ func TestUnusableConditionAllowNeverGrants(t *testing.T) {
 		`{"StringEqualsBogus":{"aws:ResourceTag/env":"prod"}}`,
 		`{"NumericNotEquals":{"aws:ResourceTag/env":"low"}}`,
 		`{"NotIpAddress":{"aws:ResourceTag/env":"not-an-ip"}}`,
+		`{"NumericNotEquals":{"aws:ResourceTag/env":"NaN"}}`,
 		`{"StringEquals":{}}`,
 		`{"StringEquals":null}`,
 	} {
