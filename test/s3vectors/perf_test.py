@@ -139,7 +139,7 @@ def perf(cluster):
     args = {"vectorBucketName": bucket, "indexName": INDEX}
     combo = re.sub(r"^vectors-|\d+$", "", cluster["directory"].name)
     REPORT[combo] = {"config": {"vectors": VECTORS, "dim": DIM, "batch": BATCH, "queries": QUERIES,
-                                "clusters": CLUSTERS,
+                                "clusters": CLUSTERS, "noise": NOISE,
                                 "top_k": TOPK, "concurrency": CONCURRENCY, "cpus": os.cpu_count(),
                                 "load_1m": os.getloadavg()[0], "machine": platform.machine()}}
     yield {"client": s3v, "endpoint": cluster["endpoint"], "args": args, "data": data,
