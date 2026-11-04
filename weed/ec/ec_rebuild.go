@@ -363,6 +363,9 @@ func (erb *ecRebuilder) removeCorruptCopies(collection string, volumeId needle.V
 			erb.write("would remove corrupt shards %d.%v from %s\n", volumeId, shardIds, node.Info.Id)
 			continue
 		}
+		if !erb.isLocked() {
+			return errors.Join(append(errs, fmt.Errorf("lock is lost"))...)
+		}
 		if err := volume_move.NewMover(erb.env.GrpcDialOption).RemoveEcShards(context.Background(), volumeId, collection, pb.NewServerAddressFromDataNode(node.Info), shardIds); err != nil {
 			errs = append(errs, fmt.Errorf("remove corrupt shards %d.%v from %s: %w", volumeId, shardIds, node.Info.Id, err))
 			continue
