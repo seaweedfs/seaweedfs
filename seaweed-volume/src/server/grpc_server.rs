@@ -6998,17 +6998,16 @@ async fn drain_optional_copy_to_file(
     what: &str,
 ) -> Result<u64, Status> {
     let staging = format!("{}.copying", file_path);
+    let mut incomplete = crate::server::store_ec::RemoveIncomplete::new(&staging);
     let file = tokio::fs::File::create(&staging)
         .await
         .map_err(|e| Status::internal(format!("create {}: {}", staging, e)))?;
     let written = drain_copy_stream_to_file(stream, file, &staging, what).await?;
-    if written == 0 {
-        let _ = tokio::fs::remove_file(&staging).await;
-        return Ok(0);
-    }
-    if let Err(e) = tokio::fs::rename(&staging, file_path).await {
-        let _ = tokio::fs::remove_file(&staging).await;
-        return Err(Status::internal(format!("commit {}: {}", file_path, e)));
+    if written > 0 {
+        tokio::fs::rename(&staging, file_path)
+            .await
+            .map_err(|e| Status::internal(format!("commit {}: {}", file_path, e)))?;
+        incomplete.committed();
     }
     Ok(written)
 }

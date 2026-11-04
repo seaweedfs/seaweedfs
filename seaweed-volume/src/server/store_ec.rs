@@ -2181,17 +2181,37 @@ pub(crate) async fn drain_optional_copy_stream(
     dest_path: &str,
 ) -> io::Result<()> {
     let staging = format!("{}.copying", dest_path);
+    let mut incomplete = RemoveIncomplete::new(&staging);
     let drained = drain_copy_stream(stream, &staging).await;
     let has_bytes = fs::metadata(&staging).is_ok_and(|meta| meta.len() > 0);
     if drained.is_ok() && has_bytes {
-        if let Err(e) = fs::rename(&staging, dest_path) {
-            let _ = fs::remove_file(&staging);
-            return Err(io::Error::other(format!("commit {}: {}", dest_path, e)));
-        }
-        return Ok(());
+        fs::rename(&staging, dest_path)
+            .map_err(|e| io::Error::other(format!("commit {}: {}", dest_path, e)))?;
+        incomplete.committed();
     }
-    let _ = fs::remove_file(&staging);
     drained
+}
+
+/// Removes a staged copy unless it was committed, including when the copy is
+/// dropped mid-stream because its RPC was cancelled.
+pub(crate) struct RemoveIncomplete(Option<String>);
+
+impl RemoveIncomplete {
+    pub(crate) fn new(staging: &str) -> Self {
+        Self(Some(staging.to_string()))
+    }
+
+    pub(crate) fn committed(&mut self) {
+        self.0 = None;
+    }
+}
+
+impl Drop for RemoveIncomplete {
+    fn drop(&mut self) {
+        if let Some(staging) = self.0.take() {
+            let _ = fs::remove_file(staging);
+        }
+    }
 }
 
 /// Drain a CopyFile stream into a local file, truncating it first.
