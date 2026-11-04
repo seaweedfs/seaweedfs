@@ -825,13 +825,14 @@ func (r *Plugin) executeJobWithExecutor(
 	r.trackExecutionStart(requestID, executor.WorkerID, job, attempt)
 
 	completedCh := make(chan *plugin_pb.JobCompleted, 1)
-	r.pendingExecutionMu.Lock()
-	r.pendingExecution[requestID] = &pendingExecutionState{
+	pending := &pendingExecutionState{
 		completed: completedCh,
 		jobID:     job.JobId,
 		jobType:   job.JobType,
 		session:   session,
 	}
+	r.pendingExecutionMu.Lock()
+	r.pendingExecution[requestID] = pending
 	r.pendingExecutionMu.Unlock()
 	defer func() {
 		r.pendingExecutionMu.Lock()
@@ -858,12 +859,12 @@ func (r *Plugin) executeJobWithExecutor(
 	if err := r.sendToSession(session, message); err != nil {
 		// The worker never got the request, so no report will close the
 		// attempt unless an expiry already claimed it. Unregister first:
-		// nobody reads completedCh any more.
+		// nobody reads completedCh any more. Shutdown may have done so.
 		r.pendingExecutionMu.Lock()
-		pending := r.pendingExecution[requestID]
 		delete(r.pendingExecution, requestID)
+		claimed := pending.failed
 		r.pendingExecutionMu.Unlock()
-		if pending != nil && !pending.failed {
+		if !claimed {
 			r.handleJobCompleted(&plugin_pb.JobCompleted{
 				JobId:        job.JobId,
 				JobType:      job.JobType,

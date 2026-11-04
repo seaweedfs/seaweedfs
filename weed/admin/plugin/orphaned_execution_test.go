@@ -271,3 +271,62 @@ func TestExecutionFailedWhenSendToSessionFails(t *testing.T) {
 		t.Fatalf("expected job %s failed, got %+v", jobID, tracked)
 	}
 }
+
+// Shutdown unregisters every pending dispatch before a blocked send returns
+// its error; the attempt is still recorded as failed.
+func TestExecutionFailedWhenSendFailsAfterShutdownUnregisters(t *testing.T) {
+	t.Parallel()
+	p, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer p.Shutdown()
+
+	p.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId:     "worker-a",
+		Capabilities: []*plugin_pb.JobTypeCapability{{JobType: orphanTestJobType, CanExecute: true, MaxExecutionConcurrency: 2}},
+	})
+	blocked := &streamSession{workerID: "worker-a", outgoing: make(chan *plugin_pb.AdminToWorkerMessage), done: make(chan struct{})}
+	p.putSession(blocked)
+	executor, ok := p.registry.Get("worker-a")
+	if !ok {
+		t.Fatal("worker-a is not registered")
+	}
+	const jobID = "job-send-after-shutdown"
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := p.executeJobWithExecutor(context.Background(), executor, &plugin_pb.JobSpec{JobId: jobID, JobType: orphanTestJobType}, &plugin_pb.ClusterContext{}, 1)
+		errCh <- err
+	}()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for unregistered := false; !unregistered; {
+		if time.Now().After(deadline) {
+			t.Fatal("dispatch never registered")
+		}
+		p.pendingExecutionMu.Lock()
+		for requestID, pending := range p.pendingExecution {
+			if pending.jobID == jobID {
+				close(pending.completed)
+				delete(p.pendingExecution, requestID)
+				unregistered = true
+			}
+		}
+		p.pendingExecutionMu.Unlock()
+		time.Sleep(time.Millisecond)
+	}
+	blocked.close()
+
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatal("expected an error for a closed stream")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("dispatch did not return")
+	}
+	tracked, ok := p.GetTrackedJob(jobID)
+	if !ok || tracked == nil || tracked.State != StateFailed {
+		t.Fatalf("expected job %s failed, got %+v", jobID, tracked)
+	}
+}
