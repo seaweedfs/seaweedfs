@@ -9972,8 +9972,9 @@ mod tests {
         assert_eq!(std::fs::read(&dest).unwrap(), b"peer vif");
     }
 
-    /// A CopyFile stream that delivers `frame` and then fails.
-    struct FailAfterFrame(Option<bytes::Bytes>);
+    /// A CopyFile stream that delivers `frame` and then fails, or stalls
+    /// forever when the second field is set.
+    struct FailAfterFrame(Option<bytes::Bytes>, bool);
 
     impl http_body::Body for FailAfterFrame {
         type Data = bytes::Bytes;
@@ -9983,14 +9984,17 @@ mod tests {
             mut self: Pin<&mut Self>,
             _cx: &mut std::task::Context<'_>,
         ) -> std::task::Poll<Option<Result<http_body::Frame<bytes::Bytes>, Status>>> {
-            std::task::Poll::Ready(Some(match self.0.take() {
-                Some(frame) => Ok(http_body::Frame::data(frame)),
-                None => Err(Status::unavailable("source went away")),
-            }))
+            match self.0.take() {
+                Some(frame) => std::task::Poll::Ready(Some(Ok(http_body::Frame::data(frame)))),
+                None if self.1 => std::task::Poll::Pending,
+                None => std::task::Poll::Ready(Some(Err(Status::unavailable("source went away")))),
+            }
         }
     }
 
-    fn copy_stream_failing_after_bytes() -> tonic::Streaming<volume_server_pb::CopyFileResponse> {
+    fn copy_stream_after_bytes(
+        stall: bool,
+    ) -> tonic::Streaming<volume_server_pb::CopyFileResponse> {
         let message = prost::Message::encode_to_vec(&volume_server_pb::CopyFileResponse {
             file_content: b"partial".to_vec(),
             modified_ts_ns: 1,
@@ -10001,7 +10005,7 @@ mod tests {
         frame.extend_from_slice(&message);
         tonic::Streaming::new_response(
             tonic_prost::ProstDecoder::<volume_server_pb::CopyFileResponse>::default(),
-            FailAfterFrame(Some(frame.into())),
+            FailAfterFrame(Some(frame.into()), stall),
             tonic::codegen::http::StatusCode::OK,
             None,
             None,
@@ -10017,7 +10021,7 @@ mod tests {
 
         let ecsum = format!("{}/1.ecsum", dir);
         std::fs::write(&ecsum, b"local sidecar").unwrap();
-        let mut stream = copy_stream_failing_after_bytes();
+        let mut stream = copy_stream_after_bytes(false);
         assert!(
             drain_optional_copy_to_file(&mut stream, &ecsum, ".ecsum")
                 .await
@@ -10030,8 +10034,47 @@ mod tests {
         std::fs::write(&vif, b"local vif").unwrap();
         assert!(
             crate::server::store_ec::drain_optional_copy_stream(
-                copy_stream_failing_after_bytes(),
+                copy_stream_after_bytes(false),
                 &vif
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(std::fs::read(&vif).unwrap(), b"local vif");
+        assert!(!std::path::Path::new(&format!("{}.copying", vif)).exists());
+    }
+
+    // A copy dropped mid-stream, as when its RPC is cancelled, still removes
+    // the staged copy and leaves the destination as it was.
+    #[tokio::test]
+    async fn test_optional_copy_removes_staging_when_cancelled() {
+        let dest_tmp = TempDir::new().unwrap();
+        let dir = dest_tmp.path().to_str().unwrap();
+        let cancel = std::time::Duration::from_millis(50);
+
+        let ecsum = format!("{}/1.ecsum", dir);
+        std::fs::write(&ecsum, b"local sidecar").unwrap();
+        let mut stream = copy_stream_after_bytes(true);
+        assert!(
+            tokio::time::timeout(
+                cancel,
+                drain_optional_copy_to_file(&mut stream, &ecsum, ".ecsum")
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(std::fs::read(&ecsum).unwrap(), b"local sidecar");
+        assert!(!std::path::Path::new(&format!("{}.copying", ecsum)).exists());
+
+        let vif = format!("{}/1.vif", dir);
+        std::fs::write(&vif, b"local vif").unwrap();
+        assert!(
+            tokio::time::timeout(
+                cancel,
+                crate::server::store_ec::drain_optional_copy_stream(
+                    copy_stream_after_bytes(true),
+                    &vif
+                )
             )
             .await
             .is_err()
