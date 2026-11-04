@@ -207,13 +207,16 @@ func (w *Worker) runOnce(ctx context.Context, adminAddress string) error {
 	connCtx, cancelConn := context.WithCancel(ctx)
 	defer cancelConn()
 
+	// Only the stream carries the admin token: jobs derive their contexts from
+	// connCtx and must not forward it, since it is minted once per connection.
+	streamCtx := connCtx
 	if md := security.GrpcAdminPeerCredentials(
 		security.SigningKey(util.GetViper().GetString("jwt.filer_signing.key")),
 		util.GetViper().GetInt("jwt.filer_signing.expires_after_seconds")); len(md) > 0 {
-		connCtx = metadata.NewOutgoingContext(connCtx, md)
+		streamCtx = metadata.NewOutgoingContext(connCtx, md)
 	}
 
-	stream, err := client.WorkerStream(connCtx)
+	stream, err := client.WorkerStream(streamCtx)
 	if err != nil {
 		return fmt.Errorf("open worker stream: %w", err)
 	}
