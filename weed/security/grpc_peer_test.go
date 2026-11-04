@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"net"
+	"slices"
 	"testing"
 
 	"google.golang.org/grpc/codes"
@@ -82,6 +83,7 @@ func TestCheckGrpcAdminToken(t *testing.T) {
 		"basic then stale":    {[]string{"Basic dXNlcjpwYXNz", stale}, "invalid admin token"},
 		"no bearer value":     {[]string{"Basic dXNlcjpwYXNz", "garbage"}, "authorization header must use Bearer scheme"},
 		"lowercase scheme ok": {[]string{"bearer " + fresh[len("Bearer "):]}, ""},
+		"fresh past the cap":  {append(slices.Repeat([]string{stale}, maxGrpcAdminAuthValues), fresh), "invalid admin token"},
 	} {
 		ctx := metadata.NewIncomingContext(context.Background(), metadata.MD{"authorization": tc.values})
 		err := CheckGrpcAdminToken(ctx, key)

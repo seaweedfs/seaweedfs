@@ -28,9 +28,14 @@ func CheckGrpcAdminPeer(ctx context.Context, signingKey SigningKey) error {
 	return CheckGrpcAdminToken(ctx, signingKey)
 }
 
-// CheckGrpcAdminToken accepts the call when any authorization value is a
-// Bearer admin token signed by signingKey, so a fresh token still counts when
-// the caller's context also forwards an older one.
+// maxGrpcAdminAuthValues bounds the JWT parses one request can trigger; a
+// caller sends its own token plus at most one forwarded from its context.
+const maxGrpcAdminAuthValues = 4
+
+// CheckGrpcAdminToken accepts the call when one of the first
+// maxGrpcAdminAuthValues authorization values is a Bearer admin token signed
+// by signingKey, so a fresh token still counts when the caller's context also
+// forwards an older one.
 func CheckGrpcAdminToken(ctx context.Context, signingKey SigningKey) error {
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
@@ -39,6 +44,9 @@ func CheckGrpcAdminToken(ctx context.Context, signingKey SigningKey) error {
 	authHeaders := md.Get("authorization")
 	if len(authHeaders) == 0 {
 		return status.Error(codes.Unauthenticated, "missing authorization metadata")
+	}
+	if len(authHeaders) > maxGrpcAdminAuthValues {
+		authHeaders = authHeaders[:maxGrpcAdminAuthValues]
 	}
 	err := status.Error(codes.Unauthenticated, "authorization header must use Bearer scheme")
 	for _, raw := range authHeaders {
