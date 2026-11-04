@@ -98,7 +98,7 @@ def recall(data, query, k, hits, keep=None):
         return keep is None or keep(i)
 
     best = sorted((score(i) for i in range(len(data)) if eligible(i)), reverse=True)[:k]
-    found = [int(h["key"][1:]) for h in hits]
+    found = {int(h["key"][1:]) for h in hits}
     return sum(1 for i in found if eligible(i) and score(i) >= best[-1] - 1e-6) / len(best)
 
 
