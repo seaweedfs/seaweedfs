@@ -1,12 +1,12 @@
 //! Sizing the vector index an S3 Vectors table searches through, and the
 //! probes a query spends on it. Building lives in the worker crate.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use lance::Dataset;
-use lance::index::DatasetIndexExt;
 
 pub use weed_lance_worker::vector_index::{
-    INDEX_NAME, MAX_PARTITIONS, build, distance_metric, index_names, optimize, partitions_for,
+    INDEX_NAME, MAX_PARTITIONS, build, distance_metric, index_names, optimize, partitions,
+    partitions_for,
 };
 
 pub const MIN_PROBES: usize = 8;
@@ -29,16 +29,7 @@ pub async fn default_probes(dataset: &Dataset, vector_column: &str) -> Result<Op
     else {
         return Ok(None);
     };
-    let stats: serde_json::Value = serde_json::from_str(&dataset.index_statistics(&name).await?)
-        .with_context(|| format!("parse index statistics for {name}"))?;
-    let partitions = stats["indices"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|i| i["num_partitions"].as_u64())
-        .max()
-        .unwrap_or(0) as usize;
-    Ok(Some(probes_for(partitions)))
+    Ok(Some(probes_for(partitions(dataset, &name).await?)))
 }
 
 #[cfg(test)]
