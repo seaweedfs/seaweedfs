@@ -1042,11 +1042,21 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 		}, completionBody)
 	}
 	if finalizeCode != s3err.ErrNone {
-		// this attempt's manifests are orphans unless a failed rollback left an entry holding them
-		if completionState != nil && !completionState.manifestsReferenced && len(completionState.newManifestChunks) > 0 {
-			s3a.deleteOrphanedChunks(completionState.newManifestChunks)
+		// A finalize can fail after its commit. When the key now holds this
+		// upload's object, answer as a retry would.
+		var committed *CompleteMultipartUploadResult
+		if completionState != nil && completionState.manifestsReferenced {
+			committed = s3a.committedCompletion(r, input)
 		}
-		return nil, finalizeCode
+		if committed == nil {
+			// this attempt's manifests are orphans unless a failed rollback left an entry holding them
+			if completionState != nil && !completionState.manifestsReferenced && len(completionState.newManifestChunks) > 0 {
+				s3a.deleteOrphanedChunks(completionState.newManifestChunks)
+			}
+			return nil, finalizeCode
+		}
+		glog.Warningf("completeMultipartUpload %s/%s upload %s: committed despite %s", *input.Bucket, *input.Key, *input.UploadId, s3err.GetAPIError(finalizeCode).Code)
+		output = committed
 	}
 
 	if completionState != nil {
