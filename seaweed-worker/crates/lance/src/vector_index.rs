@@ -1,6 +1,8 @@
 //! The vector index an S3 Vectors table searches through: how it is named,
 //! sized and built. The query engine and the maintenance worker share this.
 
+use std::collections::BTreeMap;
+
 use anyhow::{Context, Result};
 use lance::Dataset;
 use lance::index::DatasetIndexExt;
@@ -8,10 +10,14 @@ use lance::index::vector::VectorIndexParams;
 use lance_index::IndexType;
 use lance_index::optimize::OptimizeOptions;
 use lance_linalg::distance::DistanceType;
+use roaring::RoaringBitmap;
 
 /// The name every S3 Vectors index build uses, so a table has one logical index.
 pub const INDEX_NAME: &str = "vector_idx";
 pub const MAX_PARTITIONS: usize = 4096;
+/// Delta segments one index name may pile up before they are merged into one:
+/// each is a separate search per query.
+pub const MAX_DELTAS: usize = 8;
 
 /// IVF partitions for a table of `rows`: about one per sqrt(rows), at least one.
 pub fn partitions_for(rows: usize) -> usize {
@@ -50,17 +56,101 @@ pub async fn index_names(dataset: &Dataset, vector_column: &str) -> Result<Vec<S
     Ok(names)
 }
 
-/// Partitions of the index named `name`: the most any of its deltas has.
-pub async fn partitions(dataset: &Dataset, name: &str) -> Result<usize> {
+/// What the indices on a vector column cover, taken together. Sharded builds
+/// give one name per shard and each name misses the others' fragments, so
+/// coverage is the union over names, never a single name's statistics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Coverage {
+    pub indexed_rows: u64,
+    pub unindexed_rows: u64,
+    /// Delta segments per index name.
+    pub deltas: BTreeMap<String, usize>,
+}
+
+/// Coverage of `vector_column` by every index built on it, or `None` when it
+/// has no index.
+pub async fn coverage(dataset: &Dataset, vector_column: &str) -> Result<Option<Coverage>> {
+    let Some(field) = dataset.schema().field(vector_column) else {
+        return Ok(None);
+    };
+    let mut deltas: BTreeMap<String, usize> = BTreeMap::new();
+    let mut covered = RoaringBitmap::new();
+    for index in dataset.load_indices().await?.iter() {
+        if index.fields != [field.id] {
+            continue;
+        }
+        *deltas.entry(index.name.clone()).or_default() += 1;
+        if let Some(bitmap) = &index.fragment_bitmap {
+            covered |= bitmap;
+        }
+    }
+    if deltas.is_empty() {
+        return Ok(None);
+    }
+    let (mut indexed_rows, mut unindexed_rows) = (0, 0);
+    for fragment in dataset.get_fragments() {
+        let rows = fragment.count_rows(None).await? as u64;
+        if covered.contains(fragment.id() as u32) {
+            indexed_rows += rows;
+        } else {
+            unindexed_rows += rows;
+        }
+    }
+    Ok(Some(Coverage {
+        indexed_rows,
+        unindexed_rows,
+        deltas,
+    }))
+}
+
+/// How to extend an index name that already has `deltas` segments: another
+/// delta while there is room, and once the limit is reached every delta
+/// merged with the new rows into one. Lance's default options promise no
+/// merge, so the count is explicit.
+pub fn optimize_policy(deltas: usize) -> OptimizeOptions {
+    if deltas >= MAX_DELTAS {
+        OptimizeOptions::merge(deltas)
+    } else {
+        OptimizeOptions::append()
+    }
+}
+
+/// What an index was built as, from Lance's statistics.
+#[derive(Debug, Clone, PartialEq)]
+pub struct IndexSettings {
+    /// The most partitions any of its deltas has.
+    pub partitions: usize,
+    /// Lance's name for the type, such as `IVF_FLAT`.
+    pub index_type: String,
+    pub metric: Option<DistanceType>,
+}
+
+pub async fn index_settings(dataset: &Dataset, name: &str) -> Result<IndexSettings> {
     let stats: serde_json::Value = serde_json::from_str(&dataset.index_statistics(name).await?)
         .with_context(|| format!("parse index statistics for {name}"))?;
-    Ok(stats["indices"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|i| i["num_partitions"].as_u64())
-        .max()
-        .unwrap_or(0) as usize)
+    let deltas: Vec<&serde_json::Value> =
+        stats["indices"].as_array().into_iter().flatten().collect();
+    Ok(IndexSettings {
+        partitions: deltas
+            .iter()
+            .filter_map(|i| i["num_partitions"].as_u64())
+            .max()
+            .unwrap_or(0) as usize,
+        index_type: deltas
+            .first()
+            .and_then(|i| i["index_type"].as_str())
+            .unwrap_or_default()
+            .to_string(),
+        metric: deltas
+            .first()
+            .and_then(|i| i["metric_type"].as_str())
+            .and_then(|m| DistanceType::try_from(m).ok()),
+    })
+}
+
+/// Partitions of the index named `name`: the most any of its deltas has.
+pub async fn partitions(dataset: &Dataset, name: &str) -> Result<usize> {
+    Ok(index_settings(dataset, name).await?.partitions)
 }
 
 /// Whether an index built with `partitions` should be trained again for a
@@ -80,7 +170,19 @@ pub async fn build(
     partitions: usize,
     replace: bool,
 ) -> Result<()> {
-    let params = VectorIndexParams::ivf_flat(partitions, distance_metric(dataset, vector_column));
+    let metric = distance_metric(dataset, vector_column);
+    build_with(dataset, vector_column, name, partitions, replace, metric).await
+}
+
+async fn build_with(
+    dataset: &mut Dataset,
+    vector_column: &str,
+    name: &str,
+    partitions: usize,
+    replace: bool,
+    metric: DistanceType,
+) -> Result<()> {
+    let params = VectorIndexParams::ivf_flat(partitions, metric);
     dataset
         .create_index(
             &[vector_column],
@@ -95,22 +197,43 @@ pub async fn build(
     Ok(())
 }
 
-/// Extend the indices on `vector_column` over rows written since they were
-/// built: a new delta segment, or with `retrain` each index built again over
-/// all rows with partitions for the current row count. Lance's own retrain
-/// does not size the partitions, so the rebuild goes through [`build`].
-/// Indices on other columns are left alone.
+/// Cover the rows written since the indices on `vector_column` were built.
+/// One name takes them, the one with the fewest deltas, under
+/// [`optimize_policy`]; the other names keep the fragments they have, so
+/// shards stay disjoint. With `retrain` every name is built again over the
+/// whole table with partitions for the current row count, in the metric it
+/// has; only IVF_FLAT indices are rebuilt this way. Lance's own retrain does
+/// not size the partitions, so the rebuild goes through [`build`]. Indices
+/// on other columns are left alone.
 pub async fn optimize(dataset: &mut Dataset, vector_column: &str, retrain: bool) -> Result<()> {
-    let names = index_names(dataset, vector_column).await?;
+    let Some(cover) = coverage(dataset, vector_column).await? else {
+        return Ok(());
+    };
     if retrain {
         let partitions = partitions_for(dataset.count_rows(None).await?);
-        for name in &names {
-            build(dataset, vector_column, name, partitions, true).await?;
+        for name in cover.deltas.keys() {
+            let settings = index_settings(dataset, name).await?;
+            if settings.index_type != "IVF_FLAT" {
+                anyhow::bail!(
+                    "index {name} is {}; only an IVF_FLAT index is retrained here",
+                    settings.index_type
+                );
+            }
+            let metric = settings
+                .metric
+                .unwrap_or_else(|| distance_metric(dataset, vector_column));
+            build_with(dataset, vector_column, name, partitions, true, metric).await?;
         }
         return Ok(());
     }
-    let mut options = OptimizeOptions::append();
-    options.index_names = Some(names);
+    let (name, deltas) = cover
+        .deltas
+        .iter()
+        .min_by_key(|(name, deltas)| (**deltas, (*name).clone()))
+        .map(|(name, deltas)| (name.clone(), *deltas))
+        .context("no index to extend")?;
+    let mut options = optimize_policy(deltas);
+    options.index_names = Some(vec![name]);
     dataset.optimize_indices(&options).await?;
     dataset.checkout_latest().await?;
     Ok(())
@@ -127,6 +250,14 @@ mod tests {
         assert!(needs_retrain(224, 200_704));
         assert!(needs_retrain(0, 4));
         assert!(!needs_retrain(4096, 100_000_000));
+    }
+
+    #[test]
+    fn deltas_append_until_the_limit_then_merge() {
+        assert_eq!(optimize_policy(1).num_indices_to_merge, Some(0));
+        assert_eq!(optimize_policy(7).num_indices_to_merge, Some(0));
+        assert_eq!(optimize_policy(8).num_indices_to_merge, Some(8));
+        assert_eq!(optimize_policy(11).num_indices_to_merge, Some(11));
     }
 
     #[test]
