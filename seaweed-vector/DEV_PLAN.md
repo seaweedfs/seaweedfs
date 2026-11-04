@@ -179,10 +179,11 @@ changes:
 - The budget becomes relative for vector tables: reindex when uncovered rows
   exceed `min(absolute budget, 10% of indexed rows)`, so a 60k-row index
   reindexes after 6k new rows instead of waiting for 100k.
-- `OptimizeOptions.retrain = true` when the table has grown past 4× the rows
-  the centroids were trained on, so partitions do not go stale. The index's
-  row count at build time is recorded in the index name's version or in table
-  properties; phase 2 picks one.
+- A retrain once the table has grown to about 4× the rows the centroids were
+  trained on, so partitions do not go stale. No row count is recorded: the
+  retrain is due when the partition rule for the current rows gives twice
+  the partitions the index has, and it rebuilds a single IVF_FLAT name
+  through the builder at that count.
 
 ### Deletes and upserts
 
