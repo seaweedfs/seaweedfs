@@ -153,13 +153,17 @@ mod tests {
             .await
             .unwrap();
         testing::append_dataset(&mut dataset, &testing::vectors(40, DIM), &["b"; 40]).await;
-        optimize(&mut dataset, false).await.unwrap();
+        optimize(&mut dataset, &table.vector_column, false)
+            .await
+            .unwrap();
         let cov = &coverage(&dataset, "vector").await.unwrap()[0];
         assert_eq!(cov.segments, 2);
         assert!(cov.unindexed_fragments.is_empty());
 
         testing::append_dataset(&mut dataset, &testing::vectors(40, DIM), &["c"; 40]).await;
-        optimize(&mut dataset, true).await.unwrap();
+        optimize(&mut dataset, &table.vector_column, true)
+            .await
+            .unwrap();
         let cov = &coverage(&dataset, "vector").await.unwrap()[0];
         assert_eq!(cov.segments, 1);
         assert!(cov.coverage_known);
