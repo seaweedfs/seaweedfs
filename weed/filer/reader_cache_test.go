@@ -160,9 +160,7 @@ func TestReaderCacheRefreshesLocationsAfterPartialFailure(t *testing.T) {
 		w.Write(payload)
 	}))
 	defer live.Close()
-	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	deadURL := dead.URL
-	dead.Close()
+	deadURL := deadServerURL(t)
 
 	fileId := "3,abc"
 	invalidator := &mockCacheInvalidatorForReaderCache{}
@@ -189,6 +187,19 @@ func TestReaderCacheRefreshesLocationsAfterPartialFailure(t *testing.T) {
 	if got := atomic.LoadInt32(&lookupCount); got != 2 {
 		t.Fatalf("expected a lookup before the read and one after invalidation, got %d", got)
 	}
+}
+
+// deadServerURL is a replica that answered once and then went away. The read
+// path tries hosts that recently failed last, and the port may be one an
+// earlier test left marked as failed, so the answer clears that record.
+func deadServerURL(t *testing.T) string {
+	t.Helper()
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	if _, _, err := util_http.Get(dead.URL); err != nil {
+		t.Fatalf("reach %s: %v", dead.URL, err)
+	}
+	dead.Close()
+	return dead.URL
 }
 
 func TestReaderCacheRemovesFailedDownloader(t *testing.T) {

@@ -653,9 +653,7 @@ func TestFetchWholeChunkRefreshesLocationsAfterPartialFailure(t *testing.T) {
 	assert.NoError(t, err)
 
 	liveURL := manifestServer(t, manifestBytes).URL + "/5,abc"
-	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	deadURL := dead.URL
-	dead.Close()
+	deadURL := deadServerURL(t)
 
 	lookup := &stagedLookup{
 		staleUrls: []string{deadURL + "/5,abc", liveURL},
