@@ -195,10 +195,10 @@ func TestReaderCacheRefreshesLocationsAfterPartialFailure(t *testing.T) {
 func deadServerURL(t *testing.T) string {
 	t.Helper()
 	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer dead.Close()
 	if _, _, err := util_http.Get(dead.URL); err != nil {
 		t.Fatalf("reach %s: %v", dead.URL, err)
 	}
-	dead.Close()
 	return dead.URL
 }
 
