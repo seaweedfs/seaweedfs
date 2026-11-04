@@ -450,3 +450,61 @@ func TestReplicatedWriteRejectsWriteWithNoTarget(t *testing.T) {
 		})
 	}
 }
+
+// TestReplicatedWriteFailsAtTheBoundWhenAReplicaNeverAnswers: a replica that
+// takes the forward and never answers fails the write at the forward bound,
+// not at the transport's 30 s response header timeout.
+func TestReplicatedWriteFailsAtTheBoundWhenAReplicaNeverAnswers(t *testing.T) {
+	received := make(chan struct{}, 1)
+	release := make(chan struct{})
+	replica := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received <- struct{}{}
+		<-release
+	}))
+	defer replica.Close()
+	defer close(release)
+
+	defer func(d time.Duration) { replicaRequestTimeout = d }(replicaRequestTimeout)
+	replicaRequestTimeout = 300 * time.Millisecond
+
+	masterFn, dialOption := startMockMasterServer(t, &mockMasterServer{
+		locations: []*master_pb.Location{{Url: strings.TrimPrefix(replica.URL, "http://")}},
+	})
+	volumeId := needle.VolumeId(1)
+	operation.InvalidateVolumeIdLocationCache(volumeId.String())
+	r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:8080/1,01637037d6", nil)
+	if err := r.ParseForm(); err != nil {
+		t.Fatal(err)
+	}
+	n := &needle.Needle{Id: 1, Data: []byte("test data"), Ttl: needle.EMPTY_TTL}
+
+	start := time.Now()
+	_, err := ReplicatedWrite(context.Background(), masterFn, dialOption, &storage.Store{}, volumeId, n, r, "")
+	elapsed := time.Since(start)
+	select {
+	case <-received:
+	default:
+		t.Fatal("the replica never received the forward")
+	}
+	if err == nil {
+		t.Fatal("a replica that never answers cannot ack the write")
+	}
+	if elapsed < replicaRequestTimeout || elapsed > 5*time.Second {
+		t.Fatalf("write failed after %v, want about the %v forward bound: %v", elapsed, replicaRequestTimeout, err)
+	}
+}
+
+func TestReplicaRequestBoundGrowsWithTheBody(t *testing.T) {
+	for _, tc := range []struct {
+		size int
+		want time.Duration
+	}{
+		{0, replicaRequestTimeout},
+		{replicaMinBytesPerSec / 2, replicaRequestTimeout + 500*time.Millisecond},
+		{256 * replicaMinBytesPerSec, replicaRequestTimeout + 256*time.Second},
+	} {
+		if got := replicaRequestBound(tc.size); got != tc.want {
+			t.Errorf("replicaRequestBound(%d) = %v, want %v", tc.size, got, tc.want)
+		}
+	}
+}

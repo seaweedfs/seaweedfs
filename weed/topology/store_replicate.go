@@ -177,7 +177,7 @@ func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDi
 					glog.Errorf("replication-UploadData, err:%v, url:%s", uploaderErr, u.String())
 					return uploaderErr
 				}
-				_, uploadErr := uploader.UploadData(ctx, replicaData, uploadOption)
+				uploadErr := replicateTo(ctx, uploader, replicaData, uploadOption)
 				if uploadErr != nil {
 					glog.Errorf("replication-UploadData, err:%v, url:%s", uploadErr, u.String())
 				}
@@ -209,6 +209,26 @@ func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDi
 		return false, remoteErr
 	}
 	return localIsUnchanged, nil
+}
+
+// replicaRequestTimeout bounds one replica forward with no body, from connect
+// to the end of the response, so a silently partitioned peer cannot hold the
+// write. Mirrors the Rust volume server's REPLICA_REQUEST_TIMEOUT.
+var replicaRequestTimeout = 10 * time.Second
+
+// replicaMinBytesPerSec is the slowest link a forward's body may cross within
+// its bound, so a large write is not cut off on a link slower than a LAN.
+const replicaMinBytesPerSec = 1 << 20
+
+func replicaRequestBound(size int) time.Duration {
+	return replicaRequestTimeout + time.Duration(int64(size)*1000/replicaMinBytesPerSec)*time.Millisecond
+}
+
+func replicateTo(ctx context.Context, uploader *operation.Uploader, data []byte, option *operation.UploadOption) error {
+	ctx, cancel := context.WithTimeout(ctx, replicaRequestBound(len(data)))
+	defer cancel()
+	_, err := uploader.UploadData(ctx, data, option)
+	return err
 }
 
 // ReplicatedDelete deletes a needle from the local volume and sends delete
