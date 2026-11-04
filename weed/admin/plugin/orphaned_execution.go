@@ -46,9 +46,7 @@ func (r *Plugin) failExecutionsMissingFromHeartbeat(session *streamSession, hear
 			itemized++
 		}
 	}
-	if int(heartbeat.GetExecutionSlotsUsed()) > itemized {
-		return
-	}
+	itemizesAll := int(heartbeat.GetExecutionSlotsUsed()) <= itemized
 
 	var orphaned []activeJobSnapshot
 	r.pendingExecutionMu.Lock()
@@ -58,6 +56,9 @@ func (r *Plugin) failExecutionsMissingFromHeartbeat(session *streamSession, hear
 		}
 		if _, ok := listed[pending.jobID]; ok {
 			pending.misses = 0
+			continue
+		}
+		if !itemizesAll {
 			continue
 		}
 		// the completion is already on its way to the dispatcher

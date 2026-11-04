@@ -191,3 +191,27 @@ func TestExecutionKeptWhenHeartbeatDoesNotItemize(t *testing.T) {
 	}
 	expectDispatchStillPending(t, resultCh)
 }
+
+// A listing between two omissions shows the worker still runs the job, even
+// when that heartbeat also counts a slot it does not itemize.
+func TestExecutionKeptWhenReplacementStreamListsJobBetweenOmissions(t *testing.T) {
+	t.Parallel()
+	for name, listing := range map[string]int32{"itemized": 1, "partly itemized": 2} {
+		t.Run(name, func(t *testing.T) {
+			p, err := New(Options{})
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			defer p.Shutdown()
+
+			const jobID = "job-listed-between-omissions"
+			_, resultCh := dispatchToExecutor(t, p, connectExecutor(p, "worker-a"), jobID)
+			reconnected := connectExecutor(p, "worker-a")
+
+			sendExecutionHeartbeat(p, reconnected, 0)
+			sendExecutionHeartbeat(p, reconnected, listing, jobID)
+			sendExecutionHeartbeat(p, reconnected, 0)
+			expectDispatchStillPending(t, resultCh)
+		})
+	}
+}
