@@ -17,9 +17,11 @@ use crate::catalog::{NamespaceClient, SigningKey, parse_id};
 use crate::dataset::{self, OpenTable};
 use crate::jobs::vector_index::is_vector_table;
 use crate::jobs::{clamp, string_list, table_id};
-use crate::vector_index::{self, index_names, needs_retrain, partitions};
+use crate::vector_index::{self, needs_retrain, partitions};
 
 pub const JOB_TYPE: &str = "lance_optimize_indices";
+/// The vector column the S3 Vectors API writes.
+const VECTOR_COLUMN: &str = "vector";
 
 const DEFAULT_MAX_UNINDEXED_ROWS: i64 = 100_000;
 
@@ -73,15 +75,25 @@ impl OptimizeIndicesHandler {
     }
 }
 
-/// Rows the table's indices cover and rows they miss, taken from the index
-/// that misses the most. A table with no indices at all has nothing to
-/// optimize, which is different from a table whose indices have fallen behind.
+/// Rows the table's indices cover and rows they miss. A vector table's indices
+/// are taken together, since a sharded build gives one name per shard; any
+/// other table reports the index that misses the most. A table with no
+/// indices at all has nothing to optimize, which is different from a table
+/// whose indices have fallen behind.
 struct IndexRows {
     indexed: u64,
     unindexed: u64,
 }
 
-async fn index_rows(table: &OpenTable) -> Result<Option<IndexRows>> {
+async fn index_rows(table: &OpenTable, vector_table: bool) -> Result<Option<IndexRows>> {
+    if vector_table {
+        return Ok(vector_index::coverage(&table.dataset, VECTOR_COLUMN)
+            .await?
+            .map(|cover| IndexRows {
+                indexed: cover.indexed_rows,
+                unindexed: cover.unindexed_rows,
+            }));
+    }
     let indices = table.dataset.load_indices().await?;
     if indices.is_empty() {
         return Ok(None);
@@ -197,7 +209,8 @@ impl JobHandler for OptimizeIndicesHandler {
             if let Some(counters) = &self.metrics {
                 counters.worker.object_seen(JOB_TYPE);
             }
-            let rows = match index_rows(&table).await {
+            let vector_table = is_vector_table(&id);
+            let rows = match index_rows(&table, vector_table).await {
                 Ok(Some(rows)) => rows,
                 Ok(None) => continue,
                 Err(err) => {
@@ -208,7 +221,7 @@ impl JobHandler for OptimizeIndicesHandler {
                     continue;
                 }
             };
-            let budget = effective_budget(budget, &rows, is_vector_table(&id));
+            let budget = effective_budget(budget, &rows, vector_table);
             let unindexed = rows.unindexed;
             if unindexed <= budget {
                 continue;
@@ -262,14 +275,19 @@ impl JobHandler for OptimizeIndicesHandler {
 
         let client = self.client();
         let mut table = dataset::open(&client, &id, &self.fallback).await?;
-        let before = index_rows(&table).await?.map_or(0, |rows| rows.unindexed);
+        let vector_table = is_vector_table(&id);
+        let before = index_rows(&table, vector_table)
+            .await?
+            .map_or(0, |rows| rows.unindexed);
         // A vector index whose table has outgrown its partitions is built
         // again with partitions for the rows it now holds.
         let mut retrain = false;
-        if is_vector_table(&id) {
+        if vector_table {
             let rows = table.dataset.count_rows(None).await?;
-            for name in index_names(&table.dataset, "vector").await? {
-                retrain |= needs_retrain(partitions(&table.dataset, &name).await?, rows);
+            if let Some(cover) = vector_index::coverage(&table.dataset, VECTOR_COLUMN).await? {
+                for name in cover.deltas.keys() {
+                    retrain |= needs_retrain(partitions(&table.dataset, name).await?, rows);
+                }
             }
         }
 
@@ -286,21 +304,24 @@ impl JobHandler for OptimizeIndicesHandler {
             ..Default::default()
         })?;
 
-        if retrain {
-            vector_index::optimize(&mut table.dataset, "vector", true)
+        if vector_table {
+            vector_index::optimize(&mut table.dataset, VECTOR_COLUMN, retrain)
                 .await
-                .with_context(|| format!("retrain the vector index of {}", table.location))?;
+                .with_context(|| format!("optimize the vector index of {}", table.location))?;
+        } else {
+            // Merging every delta keeps read latency from drifting as the table
+            // is reindexed again and again; leaving them unmerged is how an
+            // index ends up fast to write and slow to search.
+            table
+                .dataset
+                .optimize_indices(&OptimizeOptions::default())
+                .await
+                .with_context(|| format!("optimize indices of {}", table.location))?;
         }
-        // Merging every delta keeps read latency from drifting as the table is
-        // reindexed again and again; leaving them unmerged is how an index ends
-        // up fast to write and slow to search.
-        table
-            .dataset
-            .optimize_indices(&OptimizeOptions::default())
-            .await
-            .with_context(|| format!("optimize indices of {}", table.location))?;
 
-        let after = index_rows(&table).await?.map_or(0, |rows| rows.unindexed);
+        let after = index_rows(&table, vector_table)
+            .await?
+            .map_or(0, |rows| rows.unindexed);
         if let Some(counters) = &self.metrics {
             counters.rows_indexed.inc_by(before.saturating_sub(after));
         }
