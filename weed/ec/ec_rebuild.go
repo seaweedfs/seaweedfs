@@ -335,7 +335,7 @@ func (erb *ecRebuilder) dropCorruptShards(collection string, ecShardMap EcShardM
 			})
 			if len(locations[shardId]) > 0 {
 				if err := erb.removeCorruptCopies(collection, vid, nil, []erasure_coding.ShardId{shardId}); err != nil {
-					erb.write("%v\n", err)
+					erb.ewg.AddErrorf("ec volume %d: %w", vid, err)
 				}
 			}
 		}
