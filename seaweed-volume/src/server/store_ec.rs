@@ -1769,8 +1769,9 @@ async fn try_ec_shard_needle_candidate(
 /// `rebuildEcShardNeedle`. Every interval's source shard is a suspect: rebuild
 /// all suspect ranges at once while parity covers the suspect set, then search
 /// the sets of shards that may be corrupt, then rebuild one suspect at a time,
-/// and let a successful parse arbitrate which copy was corrupt. A holder's deleted report stops the
-/// search: the needle is gone whatever the local index says.
+/// and let a successful parse arbitrate which copy was corrupt. A holder's
+/// deleted report stops the search: the needle is gone whatever the local index
+/// says.
 async fn rebuild_ec_shard_needle(
     state: &Arc<VolumeServerState>,
     metas: &[EcInterval],
@@ -1793,8 +1794,23 @@ async fn rebuild_ec_shard_needle(
         if let Some(candidate) = candidate {
             return (Some(candidate), false);
         }
+        // The gather behind a failed candidate can itself have read a second
+        // corrupt shard as reconstruction input. With slack left in the parity
+        // budget, retry while dropping one gathered input at a time.
+        if suspects.len() < map.parity_shards {
+            let (candidate, is_deleted) = rebuild_ec_needle_from_dropped_inputs(
+                state, metas, map, corrupted, &suspects, offset, size, version, needle_id,
+            )
+            .await;
+            if is_deleted {
+                return (None, true);
+            }
+            if let Some(candidate) = candidate {
+                return (Some(candidate), false);
+            }
+        }
     }
-    let (candidate, is_deleted) = rebuild_ec_needle_from_dropped_inputs(
+    let (candidate, is_deleted) = rebuild_ec_needle_from_corrupt_sets(
         state, metas, map, corrupted, &suspects, offset, size, version, needle_id,
     )
     .await;
@@ -1804,8 +1820,6 @@ async fn rebuild_ec_shard_needle(
     if let Some(candidate) = candidate {
         return (Some(candidate), false);
     }
-    // A search the budget kept narrow can miss a single corrupt suspect, which
-    // one suspect at a time fixes while holding one interval's fan-out.
     if suspects.len() == 1 {
         return (None, false);
     }
@@ -1832,19 +1846,14 @@ async fn rebuild_ec_shard_needle(
     (None, false)
 }
 
-/// Bounds on one needle's corrupt-set search, as Go's `ecRebuildMaxSets` and
-/// `ecRebuildMaxBytes`: sets enumerated, and needle bytes rebuilt and parsed
-/// past the single-shard sets. 10+4 has 1470 sets of at most four shards.
-const EC_REBUILD_MAX_SETS: usize = 4096;
-const EC_REBUILD_MAX_BYTES: usize = 1 << 30;
-
-/// Handle a rebuild the single pass could not repair: shards besides the
-/// suspects can be corrupt over the same ranges and get read as reconstruction
-/// inputs. Each interval is gathered once from as many other shards as the
-/// recovery budget covers, or, with parity to spare over the suspects, from
-/// every shard outside them. Then `search_ec_corrupt_sets` tries the candidate
-/// corrupt sets. `None` when the gather would be narrower than one decode.
-/// Mirrors Go's `rebuildEcNeedleFromDroppedInputs`.
+/// Retry a rebuild whose every suspect range was recovered yet the candidate
+/// still failed to parse: the gather behind it can itself have read a second
+/// corrupt shard as reconstruction input. Each interval is gathered once —
+/// every shard that answers, not just the `data_shards` a decode consumes —
+/// then the decode is retried with one gathered input dropped at a time and a
+/// needle parse arbitrates. The hypotheses tried are the inputs the first
+/// decode consumed, the only shards whose corruption can explain the failed
+/// candidate. Mirrors Go's `rebuildEcNeedleFromDroppedInputs`.
 async fn rebuild_ec_needle_from_dropped_inputs(
     state: &Arc<VolumeServerState>,
     metas: &[EcInterval],
@@ -1863,11 +1872,130 @@ async fn rebuild_ec_needle_from_dropped_inputs(
     } = map;
     let total_shards = data_shards + parity_shards;
     let total_size: usize = metas.iter().map(|iv| iv.size).sum();
-    let mut want = (EC_RECOVER_BUDGET / total_size.max(1)).min(total_shards - 1);
-    if suspects.len() < parity_shards {
-        want = want.max(total_shards - suspects.len());
+    let Ok(_permit) = EC_RECOVER_SEM
+        .acquire_many((total_size * total_shards).min(EC_RECOVER_BUDGET) as u32)
+        .await
+    else {
+        return (None, false);
+    };
+
+    let mut gathers: Vec<Vec<Option<Vec<u8>>>> = Vec::with_capacity(metas.len());
+    let mut picked: HashSet<ShardId> = HashSet::new();
+    for iv in metas {
+        let (bufs, is_deleted) =
+            gather_ec_shard_intervals(state, *iv, map, suspects, total_shards).await;
+        if is_deleted {
+            return (None, true);
+        }
+        let mut taken = 0;
+        for (sid, slot) in bufs.iter().enumerate() {
+            if taken >= data_shards {
+                break;
+            }
+            if slot.is_some() {
+                picked.insert(sid as ShardId);
+                taken += 1;
+            }
+        }
+        gathers.push(bufs);
     }
-    if want < data_shards {
+
+    let Ok(rs) = ReedSolomon::new(data_shards, parity_shards) else {
+        return (None, false);
+    };
+    for drop in 0..total_shards as ShardId {
+        if !picked.contains(&drop) {
+            continue;
+        }
+        let mut candidate = corrupted.to_vec();
+        let mut pos = 0usize;
+        let mut ok = true;
+        for (i, iv) in metas.iter().enumerate() {
+            let bufs = &mut gathers[i];
+            let saved = bufs[drop as usize].take();
+            let present: Vec<bool> = bufs.iter().map(|slot| slot.is_some()).collect();
+            let out = rs
+                .reconstruct(bufs)
+                .ok()
+                .and_then(|_| bufs[iv.shard_id as usize].take());
+            // reconstruct fills every missing slot; keep only what the gather
+            // produced so the next variant decodes from the same inputs.
+            for (sid, slot) in bufs.iter_mut().enumerate() {
+                if !present[sid] {
+                    *slot = None;
+                }
+            }
+            bufs[drop as usize] = saved;
+            let Some(buf) = out else {
+                ok = false;
+                break;
+            };
+            if buf.len() != iv.size {
+                ok = false;
+                break;
+            }
+            candidate[pos..pos + iv.size].copy_from_slice(&buf);
+            pos += iv.size;
+        }
+        if !ok {
+            continue;
+        }
+        let mut check = Needle {
+            id: needle_id,
+            ..Needle::default()
+        };
+        if check.read_bytes(&candidate, offset, size, version).is_err() || check.id != needle_id {
+            continue;
+        }
+        // The verdict convicts every differing range — and the dropped input,
+        // without which the same decode kept failing to parse.
+        let mut pos = 0usize;
+        for iv in metas {
+            let end = pos + iv.size;
+            if candidate[pos..end] != corrupted[pos..end] {
+                forget_shard_location(state, iv.vid, iv.shard_id);
+            }
+            pos = end;
+        }
+        if let Some(first) = metas.first() {
+            forget_shard_location(state, first.vid, drop);
+        }
+        return (Some(candidate), false);
+    }
+    (None, false)
+}
+
+/// Bounds on one needle's corrupt-set search, as Go's `ecRebuildMaxSets` and
+/// `ecRebuildMaxBytes`: sets enumerated, and needle bytes rebuilt and parsed
+/// past the single-shard sets. 10+4 has 1470 sets of at most four shards.
+const EC_REBUILD_MAX_SETS: usize = 4096;
+const EC_REBUILD_MAX_BYTES: usize = 1 << 30;
+
+/// Handle a rebuild the retries above could not repair: more shards than one
+/// can be corrupt over the same ranges and get read as reconstruction inputs.
+/// Each interval is gathered once from every other shard that answers, then
+/// `search_ec_corrupt_sets` tries the candidate corrupt sets. `None` when that
+/// gather would outgrow the recovery budget. Mirrors Go's
+/// `rebuildEcNeedleFromCorruptSets`.
+async fn rebuild_ec_needle_from_corrupt_sets(
+    state: &Arc<VolumeServerState>,
+    metas: &[EcInterval],
+    map: EcShardMap<'_>,
+    corrupted: &[u8],
+    suspects: &HashSet<ShardId>,
+    offset: i64,
+    size: Size,
+    version: Version,
+    needle_id: NeedleId,
+) -> (Option<Vec<u8>>, bool) {
+    let EcShardMap {
+        data_shards,
+        parity_shards,
+        ..
+    } = map;
+    let total_shards = data_shards + parity_shards;
+    let total_size: usize = metas.iter().map(|iv| iv.size).sum();
+    if total_size * (total_shards - 1) > EC_RECOVER_BUDGET {
         return (None, false);
     }
     let Ok(permit) = EC_RECOVER_SEM
@@ -1880,7 +2008,8 @@ async fn rebuild_ec_needle_from_dropped_inputs(
     let mut gathers: Vec<Vec<Option<Vec<u8>>>> = Vec::with_capacity(metas.len());
     for iv in metas {
         let (bufs, is_deleted) =
-            gather_ec_shard_intervals(state, *iv, map, &HashSet::from([iv.shard_id]), want).await;
+            gather_ec_shard_intervals(state, *iv, map, &HashSet::from([iv.shard_id]), total_shards)
+                .await;
         if is_deleted {
             return (None, true);
         }

@@ -375,15 +375,14 @@ func TestReadEcShardNeedleHealsCorruptSuspectNextToCleanOne(t *testing.T) {
 	}
 }
 
-// Past the recovery budget the corrupt-set search gathers only as wide as a
-// gather that excludes every suspect. A lone suspect still gets every other
-// shard, but two suspects lose the spare input the clean one would give.
+// Past the recovery budget the corrupt-set search does not run, and the read
+// keeps to the retries it extends: one corrupt range in a needle over more
+// shards than parity still heals one suspect at a time, while parity-many
+// corrupt shards stay unreadable.
 func TestReadEcShardNeedleCorruptSetSearchPastBudget(t *testing.T) {
 	setEcRecoverBudget(t, 1)
 	store := newTestStore(t, 1)
 
-	// A needle over more shards than parity skips both the single pass and the
-	// search, so rebuilding one suspect at a time has to repair its range.
 	const wideVid = needle.VolumeId(17)
 	wide := randomNeedleOfSize(77, 6*erasure_coding.ErasureCodingSmallBlockSize+1234)
 	ecVolume := encodeAndMountEcVolume(t, store, wideVid, []*needle.Needle{wide})
@@ -401,13 +400,8 @@ func TestReadEcShardNeedleCorruptSetSearchPastBudget(t *testing.T) {
 	}
 
 	n := rotParityManyShards(t, store, 15)
-	if err := readEcNeedleBack(t, store, 15, n); err != nil {
-		t.Fatalf("a lone suspect should still reconstruct past the budget: %v", err)
-	}
-
-	n = rotSuspectNextToCleanOne(t, store, 16)
-	if err := readEcNeedleBack(t, store, 16, n); err == nil {
-		t.Fatalf("two suspects past the budget should not gather the clean one as an input")
+	if err := readEcNeedleBack(t, store, 15, n); err == nil {
+		t.Fatalf("parity-many corrupt shards should need the search, which the budget rules out")
 	}
 }
 
