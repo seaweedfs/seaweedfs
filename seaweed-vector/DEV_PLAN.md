@@ -1,0 +1,282 @@
+# S3 Vectors ANN — Dev Plan
+
+## Goal
+
+Approximate nearest-neighbour search for S3 Vectors indexes, built on Lance
+vector indexes, so that query latency stops growing linearly with the index.
+Target: 90%+ recall@10 (what AWS states for S3 Vectors), exact results below
+a size threshold and for rows written since the last index build, and one
+code path that serves both the open-source single engine and the Enterprise
+distributed query layer. Writes stay unchanged.
+
+## Where things stand (2026-11-04)
+
+What already exists, with the files that hold it:
+
+- **The engine is index-aware; nothing builds an index.** `QueryVectors` in
+  `crates/server/src/service.rs` always calls `weed_vector_core::query::ann`,
+  which runs a Lance scan with `use_index(true)`: ANN on fragments an index
+  covers, a flat pass on the rest, decided per fragment by Lance
+  (`crates/core/src/query.rs`). `nprobes` is `None`. `CreateIndex` writes an
+  empty Lance dataset and no vector index, so today every fragment is "tail"
+  and every query is an exact scan.
+- **The maintenance worker only extends indexes that exist.** The
+  `lance_optimize_indices` job in `seaweed-worker/crates/lance/src/jobs/indices.rs`
+  skips a table whose `load_indices()` is empty and otherwise calls
+  `optimize_indices(&OptimizeOptions::default())` once `num_unindexed_rows`
+  exceeds its `max_unindexed_rows` budget (default 100,000).
+- **Coverage and segments are modelled.** `crates/core/src/coverage.rs` reports,
+  per index name, the fragments covered and the uncovered rows; it requires the
+  fragment bitmap each Lance `IndexMetadata` delta carries.
+  `crates/core/src/segments.rs` lists physical segments (one per delta) with
+  their names and bitmaps, and partitions them across workers. `weed-vector-cli
+  coverage` and `weed-vector-cli query --flat` expose both.
+- **Filters are applied before ranking.** `query.rs` sets `prefilter(true)`
+  unless the request asks for post-filtering, which S3 Vectors never does.
+  Lance's IVF search honours the prefilter, so this is already the behaviour
+  AWS calls an `ENHANCED` index.
+- **Enterprise consumes exactly this model.** In seaweed-mono,
+  `enterprise/weed/pb/vector_coord.proto` defines `SegmentInfo{id,
+  resident_bytes, rows, fragment_ids}` and `SegmentList{tail_fragment_ids,
+  tail_bytes}`; `VectorQuery` already carries `nprobes`; a `Task` is a set of
+  segment ids plus fragment ids. `sw-vector-distributed/src/plan.rs` assigns
+  a fragment covered by several segments to the lowest segment and never mixes
+  index names in one scan; `resident_bytes` is the index files' size.
+  `datasets.rs` warms a slot with `prewarm_index_segments` per index name and
+  warms the tail by scanning it. `sw-vector-distributed/src/index.rs` holds
+  `plan_index` (shard the uncovered fragments across workers),
+  `build_index_task` (one delta per shard, named
+  `<column>-w<worker>-v<version>`, built with `create_index_builder(..)
+  .fragments(..)`) and `optimize_policy` (append deltas until `MAX_DELTAS = 8`,
+  then merge). Nothing calls these three yet; `tests/index.rs`,
+  `tests/plan_search.rs` and `tests/engine_query.rs` exercise them with
+  `ivf_flat(4)` indexes.
+- **Lance 10.0.0 offers** `VectorIndexParams::ivf_flat`, `ivf_pq`,
+  `with_ivf_sq_params`, `with_ivf_rq_params`, `ivf_hnsw` and HNSW variants;
+  scanner knobs `nprobes`, `minimum_nprobes`, `maximum_nprobes`, `ef`,
+  `refine`; `OptimizeOptions{num_indices_to_merge, index_names, retrain}`.
+- **Measured today** (384-d, cosine, top-10, one 16-core host, exact scans):
+  one engine answers in 42 ms at 50k vectors and 82 ms at 200k; filtered
+  queries take 81 and 259–336 ms. Four Enterprise engines split four ways
+  bring 200k to 58 ms and the filtered query to 73 ms. Recall is 1.000.
+- **Tests assume exactness only on tiny tables.** `test/s3vectors/s3vectors_test.py`
+  asserts exact result order on indexes of a handful of vectors; the perf
+  suite asserts recall@10 ≥ 0.9 against a client-side exact search.
+- **AWS**: "90%+ average recall for most datasets"; `CLASSIC` and `ENHANCED`
+  index modes, the latter pre-filtering; no algorithm named.
+
+## Design
+
+### The contract every consumer relies on
+
+An S3 Vectors index gains a Lance vector index on its `vector` column, and
+everything downstream keeps working because it only ever sees:
+
+1. **Segments**: Lance index deltas with fragment bitmaps. Every build and
+   every merge must leave `coverage_known == true`; a delta without a bitmap
+   turns the whole index into "rebuild" for the Enterprise planner.
+2. **Names**: one logical index name per shard, never two shards under one
+   name within a build. Scans and warm-ups group by name.
+3. **Tail**: fragments no segment covers, searched exactly. Rows written
+   after a build land here, so recall never drops to zero between builds.
+4. **Bytes**: `resident_bytes` of a segment is its index files' size. The
+   controller's W sizing (`W_mem`, `W_scan`) and the engine's
+   `--capacity-bytes` budget use it unchanged.
+5. **Versions**: a build or merge commits a new dataset version. Routers cache
+   segment lists per version, plans pin versions with the lease tags in
+   `crates/core/src/maintenance.rs`, and cleanup respects those leases. No
+   new mechanism is needed, but the build job must go through the same
+   commit path as any Lance write.
+
+### Index type and parameters
+
+- **IVF_FLAT first.** Distances inside probed partitions are exact, so recall
+  is governed by `nprobes` alone; the only training is k-means over the
+  centroids; resident bytes stay close to the raw vectors, which keeps the
+  Enterprise W sizing in the same range as today. `IVF_PQ` becomes an
+  operator option later for indexes whose raw size is the constraint. HNSW
+  variants are out of scope: their build cost and memory do not fit the
+  maintenance-worker model.
+- **Metric from the table.** The vector field's `distance_metric` metadata
+  (`COSINE`, `DOT_PRODUCT`, else L2) is the metric the index is built with,
+  exactly as `service.rs` resolves it for queries.
+- **Partitions**: start at `clamp(round(sqrt(rows)), 16, 4096)` for the whole
+  table, and for a shard, `sqrt` of the shard's rows. Phase 0 measures
+  recall and latency against this and adjusts before it becomes a default.
+- **Probes**: `nprobes` is per segment, since each delta has its own
+  centroids. Start at `max(8, ceil(partitions / 10))`; with a filter, set
+  `minimum_nprobes` to that and `maximum_nprobes` to the partition count so
+  Lance widens the search when a selective filter empties the probed
+  partitions. Phase 0 measures; the perf suite's recall gate decides.
+
+### Who builds, and when
+
+The Lance maintenance worker (`weed-worker`) gets a new job type,
+`lance_vector_index`, beside `lance_optimize_indices`:
+
+- **Detection**: tables in a vector bucket's `vector` namespace (ids of the
+  form `<bucket>$vector$<index>`) whose vector column has no index and at
+  least `min_rows` live rows (default 50,000). Below the threshold the index
+  stays exact, which also keeps the existing small-table tests exact.
+- **Execution**: one `create_index` call with IVF_FLAT, the table's metric,
+  the partition rule above, and a fixed name (`vector_idx`). Progress and
+  counters follow the pattern of `indices.rs`; a new `indexes_built_total`
+  metric and an admin observation of index coverage sit beside the row and
+  fragment counts the worker already reports.
+- **Why the worker and not the engine or the gateway.** `CreateIndex` has no
+  rows to index. The engine serves queries and should not run minute-long
+  k-means builds. The worker already has the catalog client, credentials,
+  the admin UI settings form, metrics, retries and dedupe, and plugin jobs
+  start disabled until an operator turns them on, which is the rollout
+  switch we want.
+- **Enterprise sharded builds** (phase 5): the same job, when Enterprise
+  engines are registered, splits the uncovered fragments with `plan_index`
+  and has each engine run `build_index_task` for its shard, producing one
+  named delta per shard. This is what `index.rs` was written for; the worker
+  drives it, the engines build, and `optimize_policy` keeps the delta count
+  under eight.
+
+### Keeping it covering
+
+`lance_optimize_indices` already does the work once an index exists. Two
+changes:
+
+- The budget becomes relative for vector tables: reindex when uncovered rows
+  exceed `max(absolute budget, 10% of indexed rows)`, so a 60k-row index does
+  not wait for 100k new rows.
+- `OptimizeOptions.retrain = true` when the table has grown past 4× the rows
+  the centroids were trained on, so partitions do not go stale. The index's
+  row count at build time is recorded in the index name's version or in table
+  properties; phase 2 picks one.
+
+### Deletes and upserts
+
+A delete marks rows in Lance deletion files; an upsert is a delete plus an
+append. Deleted rows are excluded through the prefilter on indexed and
+unindexed fragments alike, and appended rows are tail until the next
+optimize. Phase 1 adds a test that proves both, since this is where ANN
+systems silently return stale hits.
+
+### API surface
+
+No new S3 Vectors API parameter is needed to reach AWS parity. Two optional
+items for later: accept and echo AWS's `indexMode`/`queryMode` (both behave
+as `ENHANCED` here, because filters are always applied first), and a
+non-AWS per-request `nprobes` for the perf suite and the CLI, carried in the
+engine's `QueryVectorsRequest` (the Enterprise `VectorQuery` already has the
+field).
+
+### Enterprise compatibility requirements
+
+These hold for every phase, and the mono s3vectors legs (go/rust ×
+single/distributed) are the gate:
+
+- Builds produce deltas with fragment bitmaps; merges keep them. A test in
+  `tests/index.rs` asserts `coverage_known` after build, append and merge.
+- Index names never mix within a shard set; the router and `plan.rs` group by
+  name, and `with_index_segments` rejects mixed names.
+- Segment count per index stays under `MAX_DELTAS` through `optimize_policy`,
+  so `SegmentList` and per-query fan-out stay bounded.
+- `resident_bytes` is the index files' size and `tail_bytes` the uncovered
+  fragments' size; the controller's `max_scan_mb` and memory sizing need no
+  change for IVF_FLAT, and PQ only makes slots smaller.
+- A merge replaces segment UUIDs, which is a new placement epoch. The
+  existing make-before-break (target groups warm with
+  `prewarm_index_segments` while serving groups keep answering) covers it;
+  phase 5 measures how long a merged segment takes to warm and sets
+  expectations for `warmup_timeout`.
+- Workers read index files the way they read data files, directly from the
+  filers and volume servers (seaweed-mono#954), and the files are write-once,
+  so the read cache and the warm path apply unchanged.
+- Query semantics are identical in both modes: each engine runs ANN over its
+  owned segments with the same `nprobes` and a flat pass over its tail
+  fragments; the gateway merges the partial top-k lists. Per-segment probing
+  means the merged answer is never worse than one engine's.
+- The open-source `weed-vector` stays the writer and the fallback engine, and
+  it serves ANN through the same `query::ann` the workers call.
+
+## Phases
+
+### Phase 0 — Measure before deciding (small)
+
+- `weed-vector-cli index build --partitions N --name ..` on a local table,
+  reusing the code paths the tests already use, so builds can be tried
+  without the worker.
+- Perf suite: `PERF_INDEX=1` builds the index after ingest and reports exact
+  versus ANN latency and recall@10 at 50k, 200k and 1M × 384, unfiltered and
+  with the 10% filter, for a grid of partitions and `nprobes`.
+- Verify Lance behaviour we depend on: deletions excluded under ANN;
+  compaction (`lance_compact`) keeps bitmaps and coverage; `optimize_indices`
+  with `append` versus merge versus `retrain`.
+- Exit: chosen defaults for `min_rows`, partitions and probes with numbers
+  behind them, and a written answer to each verification item.
+
+### Phase 1 — Engine query path (small)
+
+- Probe policy when an index exists: `nprobes`, and `minimum_nprobes` /
+  `maximum_nprobes` for filtered queries, from the segment's partition count.
+- `nprobes` in `QueryVectorsRequest` for tests and the CLI; zero means the
+  policy.
+- Per-query log line and counters: segments searched, tail rows scanned,
+  index hit or not. Without these, recall regressions are invisible.
+- Tests in `crates/core`: ANN versus flat recall on a 50k synthetic table;
+  delete and upsert correctness under ANN; filtered query with a selective
+  filter still returns k results.
+
+### Phase 2 — Build job in the maintenance worker (medium)
+
+- `lance_vector_index` job: detection, execution, settings form (`min_rows`,
+  index type, partition rule), metrics, admin observation of coverage.
+- Unit tests after the pattern of the other jobs; an integration test in
+  `test/s3vectors` that ingests above the threshold, runs the worker, and
+  asserts coverage through the CLI and recall ≥ 0.9 through the API.
+- Exit: a fresh cluster with the job enabled indexes a 100k-vector table on
+  its own, and the small-table tests stay exact.
+
+### Phase 3 — Keep it covering (small)
+
+- Relative budget and `retrain` policy in `lance_optimize_indices` for vector
+  tables.
+- Test: append 20% new rows, run the job, coverage returns to full and the
+  delta count stays under eight.
+
+### Phase 4 — Gateway, docs and gates (small)
+
+- Optional `indexMode`/`queryMode` acceptance; `GetIndex` echoes the mode.
+- Wiki and site docs: "Queries are exact" becomes "exact below the threshold,
+  ANN above it, with the tail exact", with the recall and latency measured
+  in phase 0. The performance page gets an ANN column.
+- CI: a `test/s3vectors` leg with the worker and a low threshold, gated on
+  recall.
+
+### Phase 5 — Enterprise distributed builds and placement (medium)
+
+- Drive `plan_index` / `build_index_task` from the worker job when engines
+  are registered; `optimize_policy` for merges.
+- Measure four engines on 1M × 384 with ANN: latency, warm time of a merged
+  segment, placement epochs per merge.
+- mono s3vectors legs with the index enabled, go and rust volume servers,
+  single and distributed, plus the hardened TLS legs.
+
+## Risks
+
+- **Filtered recall.** AWS's weak spot is selective filters. Pre-filtering
+  keeps recall but costs probes; `minimum_nprobes`/`maximum_nprobes` is the
+  lever, and phase 0 has to show the latency is acceptable at 1M rows.
+- **Memory.** IVF_FLAT resident bytes are about the raw vectors: 1M × 384 ×
+  4 bytes is 1.5 GB per copy. Enterprise spreads it by `capacity_bytes`; the
+  single open-source engine needs that much RAM or PQ.
+- **Compaction and coverage.** If compaction drops a delta's bitmap, the
+  planner refuses to shard and the job must fall back to a retrain. Phase 0
+  settles whether Lance 10 preserves bitmaps through `compact_files`.
+- **Build cost on the worker.** k-means over 1M × 384 is CPU-bound; execution
+  concurrency stays at one and the job reports progress so the admin UI shows
+  it working rather than hung.
+- **Placement churn after merges.** Every merge is a new epoch; too frequent
+  merging makes engines re-warm constantly. `MAX_DELTAS = 8` bounds it; the
+  phase 5 measurement decides whether to raise it.
+
+## Out of scope
+
+HNSW indexes, GPU builds, per-request recall parameters in the AWS API
+surface, and building an index at `CreateIndex` time.
