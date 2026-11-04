@@ -330,7 +330,8 @@ def run_cluster(param, tmp_path_factory, identities):
                 processes,
                 "gateway did not discover both search workers",
             )
-        yield {"endpoint": endpoint, "mode": mode, "processes": processes, "directory": directory}
+        yield {"endpoint": endpoint, "mode": mode, "processes": processes, "directory": directory,
+               "catalog": f"http://127.0.0.1:{lance}"}
 
 
 @pytest.fixture(scope="module")

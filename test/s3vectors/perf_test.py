@@ -12,6 +12,9 @@ a larger profile:
     PERF_CONCURRENCY  client threads for the throughput scenario ("1,4,8")
     PERF_RECALL       queries checked against an exact search (20)
     PERF_REPORT       JSON report path (perf-results.json in the cluster dir)
+    PERF_INDEX        1 builds the vector index after ingest with weed-vector-cli,
+                      so the queries run through it (PERF_PARTITIONS overrides
+                      the partition count)
 
 Each timed scenario starts with one untimed call. Timings only report; the
 assertions check correctness (recall against an exact client-side search,
@@ -27,6 +30,7 @@ import platform
 import random
 import re
 import statistics
+import subprocess
 import time
 import uuid
 
@@ -34,6 +38,7 @@ import boto3
 from botocore.config import Config
 import pytest
 
+HERE = Path(__file__).resolve().parent
 VECTORS = int(os.environ.get("PERF_VECTORS", "10000"))
 DIM = int(os.environ.get("PERF_DIM", "128"))
 BATCH = int(os.environ.get("PERF_BATCH", "500"))
@@ -42,6 +47,7 @@ TOPK = int(os.environ.get("PERF_TOPK", "10"))
 CONCURRENCY = [int(c) for c in os.environ.get("PERF_CONCURRENCY", "1,4,8").split(",")]
 CATEGORIES = 10
 RECALL_SAMPLE = int(os.environ.get("PERF_RECALL", "20"))
+INDEXED = bool(os.environ.get("PERF_INDEX"))
 INDEX = "perf"
 
 REPORT = {}
@@ -121,7 +127,7 @@ def perf(cluster):
                                 "top_k": TOPK, "concurrency": CONCURRENCY, "cpus": os.cpu_count(),
                                 "load_1m": os.getloadavg()[0], "machine": platform.machine()}}
     yield {"client": s3v, "endpoint": cluster["endpoint"], "args": args, "data": data,
-           "queries": queries, "report": REPORT[combo]}
+           "queries": queries, "report": REPORT[combo], "cluster": cluster, "bucket": bucket}
     s3v.delete_index(**args)
     s3v.delete_vector_bucket(vectorBucketName=bucket)
     path = Path(os.environ.get("PERF_REPORT", cluster["directory"] / "perf-results.json"))
@@ -156,6 +162,23 @@ def test_upsert_existing(perf):
     latencies = [timed(lambda: s3v.put_vectors(**args, vectors=batch))[0] for _ in range(5)]
     perf["report"]["upsert_existing"] = summarize(latencies)
     assert_complete(list_all(s3v, args))
+
+
+def test_build_index(perf):
+    if not INDEXED:
+        pytest.skip("PERF_INDEX not set")
+    cli = Path(os.environ.get("VECTOR_CLI_BINARY", HERE / "weed-vector-cli")).resolve()
+    assert cli.is_file(), f"missing {cli}; run make ./weed-vector-cli"
+    command = [str(cli), "--namespace", perf["cluster"]["catalog"], "--access-key", "test",
+               "--secret-key", "test", "index", "build", f"{perf['bucket']}$vector${INDEX}"]
+    if os.environ.get("PERF_PARTITIONS"):
+        command += ["--partitions", os.environ["PERF_PARTITIONS"]]
+    seconds, out = timed(lambda: subprocess.run(command, check=True, capture_output=True, text=True))
+    report = json.loads(out.stdout)
+    coverage = report["coverage"]
+    assert len(coverage) == 1 and coverage[0]["unindexed_rows"] == 0, coverage
+    perf["report"]["index"] = {"seconds": seconds, "segments": coverage[0]["segments"],
+                               "partitions": int(os.environ.get("PERF_PARTITIONS", "0")) or None}
 
 
 def run_queries(perf, name, **extra):
@@ -258,6 +281,9 @@ def print_report(combo, report, path):
     cfg = report["config"]
     lines = [f"\n== S3 Vectors perf [{combo}]: {cfg['vectors']} x {cfg['dim']}d cosine, "
              f"topK {cfg['top_k']}, {cfg['cpus']} CPUs, load {cfg['load_1m']:.1f}"]
+    index = report.get("index")
+    if index:
+        lines.append(f"index built in {index['seconds']:.1f} s, {index['segments']} segment(s)")
     ingest = report.get("ingest")
     if ingest:
         lines.append(f"ingest            {ingest['vectors_per_s']:9.0f} vectors/s  "
