@@ -17,7 +17,7 @@ use crate::catalog::{NamespaceClient, SigningKey, parse_id};
 use crate::dataset::{self, OpenTable};
 use crate::jobs::vector_index::is_vector_table;
 use crate::jobs::{clamp, string_list, table_id};
-use crate::vector_index::{self, needs_retrain, partitions};
+use crate::vector_index;
 
 pub const JOB_TYPE: &str = "lance_optimize_indices";
 /// The vector column the S3 Vectors API writes.
@@ -281,15 +281,8 @@ impl JobHandler for OptimizeIndicesHandler {
             .map_or(0, |rows| rows.unindexed);
         // A vector index whose table has outgrown its partitions is built
         // again with partitions for the rows it now holds.
-        let mut retrain = false;
-        if vector_table {
-            let rows = table.dataset.count_rows(None).await?;
-            if let Some(cover) = vector_index::coverage(&table.dataset, VECTOR_COLUMN).await? {
-                for name in cover.deltas.keys() {
-                    retrain |= needs_retrain(partitions(&table.dataset, name).await?, rows);
-                }
-            }
-        }
+        let retrain =
+            vector_table && vector_index::retrain_due(&table.dataset, VECTOR_COLUMN).await?;
 
         sender.send_progress(JobProgressUpdate {
             request_id: request.request_id.clone(),

@@ -160,6 +160,22 @@ pub fn needs_retrain(partitions: usize, rows: usize) -> bool {
     partitions_for(rows) >= 2 * partitions.max(1)
 }
 
+/// Whether the index on `vector_column` is due for [`optimize`] with
+/// `retrain`: a single IVF_FLAT name the table has outgrown. A sharded build
+/// sizes each name for its shard, and other index types keep the settings
+/// they were built with.
+pub async fn retrain_due(dataset: &Dataset, vector_column: &str) -> Result<bool> {
+    let Some(cover) = coverage(dataset, vector_column).await? else {
+        return Ok(false);
+    };
+    let [name] = Vec::from_iter(cover.deltas.keys())[..] else {
+        return Ok(false);
+    };
+    let settings = index_settings(dataset, name).await?;
+    Ok(settings.index_type == "IVF_FLAT"
+        && needs_retrain(settings.partitions, dataset.count_rows(None).await?))
+}
+
 /// Build an IVF_FLAT index named `name` over `vector_column` in the metric the
 /// table was created with. `replace` rebuilds an index of that name; the
 /// dataset is left at the new version.
