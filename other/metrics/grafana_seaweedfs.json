@@ -7056,6 +7056,17 @@
               "range": true,
               "refId": "B",
               "legendFormat": "{{sourceFiler}} -> {{targetFiler}} {{path}} processed"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${DS_PROMETHEUS}"
+              },
+              "editorMode": "code",
+              "expr": "rate(SeaweedFS_filerSync_failed_bytes_total{cluster=~\"$cluster\"}[$__rate_interval])",
+              "range": true,
+              "refId": "C",
+              "legendFormat": "{{sourceFiler}} -> {{targetFiler}} {{path}} failed"
             }
           ],
           "pluginVersion": "10.3.1"
