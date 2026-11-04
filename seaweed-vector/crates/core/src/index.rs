@@ -382,6 +382,67 @@ mod tests {
         }
     }
 
+    /// A retrain is due for one IVF_FLAT name the table outgrew, never for
+    /// shards sized each for their own fragments or for another index type,
+    /// and an explicit retrain of shards leaves them as they are.
+    #[tokio::test]
+    async fn retrain_is_due_for_one_ivf_flat_name_only() {
+        use lance::index::DatasetIndexExt;
+        use lance::index::vector::VectorIndexParams;
+        use lance_index::IndexType;
+        use weed_lance_worker::vector_index::{coverage as covered, retrain_due};
+        let grown = |dir: &TempDir| {
+            let path = dir.path().to_str().unwrap().to_string();
+            async move {
+                let mut dataset =
+                    testing::write_dataset_at(&path, &testing::vectors(300, DIM), &["a"; 300])
+                        .await;
+                testing::append_dataset(&mut dataset, &testing::vectors(300, DIM), &["b"; 300])
+                    .await;
+                dataset
+            }
+        };
+
+        let dir = TempDir::new().unwrap();
+        let mut dataset = grown(&dir).await;
+        build(&mut dataset, "vector", INDEX_NAME, 2, false)
+            .await
+            .unwrap();
+        assert!(retrain_due(&dataset, "vector").await.unwrap());
+
+        let dir = TempDir::new().unwrap();
+        let mut dataset = grown(&dir).await;
+        let params = VectorIndexParams::ivf_pq(2, 8, 2, DistanceType::L2, 10);
+        dataset
+            .create_index(&["vector"], IndexType::Vector, None, &params, false)
+            .await
+            .unwrap();
+        dataset.checkout_latest().await.unwrap();
+        assert!(!retrain_due(&dataset, "vector").await.unwrap());
+
+        let dir = TempDir::new().unwrap();
+        let mut dataset = grown(&dir).await;
+        let params = VectorIndexParams::ivf_flat(2, DistanceType::L2);
+        for (name, fragment) in [("shard-0", 0u32), ("shard-1", 1u32)] {
+            dataset
+                .create_index_builder(&["vector"], IndexType::Vector, &params)
+                .name(name.to_string())
+                .fragments(vec![fragment])
+                .await
+                .unwrap();
+            dataset.checkout_latest().await.unwrap();
+        }
+        assert!(!retrain_due(&dataset, "vector").await.unwrap());
+        let before = covered(&dataset, "vector").await.unwrap();
+        assert!(optimize(&mut dataset, "vector", true).await.is_err());
+        assert_eq!(covered(&dataset, "vector").await.unwrap(), before);
+        let per_name = coverage(&dataset, "vector").await.unwrap();
+        assert!(
+            per_name.iter().all(|c| c.indexed_fragments.len() == 1),
+            "{per_name:?}"
+        );
+    }
+
     #[tokio::test]
     async fn compaction_keeps_the_index_covering() {
         let dir = TempDir::new().unwrap();
