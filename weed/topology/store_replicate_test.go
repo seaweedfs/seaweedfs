@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -478,6 +479,8 @@ func TestReplicatedWriteFailsAtTheBoundWhenAReplicaNeverAnswers(t *testing.T) {
 	}
 	n := &needle.Needle{Id: 1, Data: []byte("test data"), Ttl: needle.EMPTY_TTL}
 
+	timeouts := stats.VolumeServerReplicationFailures.WithLabelValues(stats.ReplicationOpWrite, stats.FailureTimeout)
+	timeoutsBefore := testutil.ToFloat64(timeouts)
 	start := time.Now()
 	_, err := ReplicatedWrite(context.Background(), masterFn, dialOption, &storage.Store{}, volumeId, n, r, "")
 	elapsed := time.Since(start)
@@ -491,6 +494,9 @@ func TestReplicatedWriteFailsAtTheBoundWhenAReplicaNeverAnswers(t *testing.T) {
 	}
 	if elapsed < replicaRequestTimeout || elapsed > 5*time.Second {
 		t.Fatalf("write failed after %v, want about the %v forward bound: %v", elapsed, replicaRequestTimeout, err)
+	}
+	if got := testutil.ToFloat64(timeouts) - timeoutsBefore; got != 1 {
+		t.Fatalf("replication timeout failures went up by %v, want 1: %v", got, err)
 	}
 }
 
