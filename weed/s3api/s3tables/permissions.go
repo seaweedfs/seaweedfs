@@ -83,20 +83,21 @@ type Statement struct {
 	nullCondition bool
 }
 
+// UnmarshalJSON decodes as the plain struct would, merging Condition objects
+// under differently cased keys, and separately records a literal null.
 func (s *Statement) UnmarshalJSON(data []byte) error {
 	type plain Statement
-	aux := struct {
-		*plain
-		Condition json.RawMessage `json:"Condition"`
-	}{plain: (*plain)(s)}
-	if err := json.Unmarshal(data, &aux); err != nil {
+	if err := json.Unmarshal(data, (*plain)(s)); err != nil {
 		return err
 	}
-	s.nullCondition = string(aux.Condition) == "null"
-	if aux.Condition == nil {
-		return nil
+	var probe struct {
+		Condition json.RawMessage `json:"Condition"`
 	}
-	return json.Unmarshal(aux.Condition, &s.Condition)
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return err
+	}
+	s.nullCondition = string(probe.Condition) == "null"
+	return nil
 }
 
 type PolicyContext struct {

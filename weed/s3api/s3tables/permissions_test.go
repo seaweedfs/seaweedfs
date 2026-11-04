@@ -812,6 +812,21 @@ func TestStoredNullConditionAllowNeverGrants(t *testing.T) {
 	}
 }
 
+// Condition objects under differently cased keys merge, so an empty one does
+// not erase the other's restriction.
+func TestConditionSpellingsMerge(t *testing.T) {
+	allow := `{"Statement":[{"Effect":"Allow","Principal":"*","Action":"s3tables:GetTable","Resource":"*","Condition":{"StringEquals":{"aws:ResourceTag/env":"prod"}},"condition":{}}]}`
+	if err := validatePolicyDocument(allow); err != nil {
+		t.Fatalf("validatePolicyDocument: %v", err)
+	}
+	if CheckPermissionWithContext("s3tables:GetTable", "reader", "owner", allow, "", &PolicyContext{ResourceTags: map[string]string{"env": "dev"}}) {
+		t.Error("the env=prod restriction was dropped")
+	}
+	if !CheckPermissionWithContext("s3tables:GetTable", "reader", "owner", allow, "", &PolicyContext{ResourceTags: map[string]string{"env": "prod"}}) {
+		t.Error("a request meeting the restriction was refused")
+	}
+}
+
 // A Deny whose operator the evaluator does not know applies instead of being
 // skipped: the writer meant it to protect the resource.
 func TestUnsupportedOperatorDenyApplies(t *testing.T) {
