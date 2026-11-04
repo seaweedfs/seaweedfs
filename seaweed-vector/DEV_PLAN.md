@@ -103,11 +103,13 @@ everything downstream keeps working because it only ever sees:
 - **Partitions**: start at `clamp(round(sqrt(rows)), 16, 4096)` for the whole
   table, and for a shard, `sqrt` of the shard's rows. Phase 0 measures
   recall and latency against this and adjusts before it becomes a default.
-- **Probes**: `nprobes` is per segment, since each delta has its own
-  centroids. Start at `max(8, ceil(partitions / 10))`; with a filter, set
-  `minimum_nprobes` to that and `maximum_nprobes` to the partition count so
-  Lance widens the search when a selective filter empties the probed
-  partitions. Phase 0 measures; the perf suite's recall gate decides.
+- **Probes**: one count per query, `max(8, ceil(partitions / 10))` clamped to
+  the partition count, taken from the largest delta of the index; a smaller
+  delta is probed in full. Lance searches at least that many partitions.
+  Under a filter the upper bound stays open, so Lance keeps probing until it
+  has k rows when a selective filter empties the probed partitions; without
+  a filter it stops at the count. Phase 0 measures; the perf suite's recall
+  gate decides.
 
 ### Who builds, and when
 
@@ -142,8 +144,8 @@ The Lance maintenance worker (`weed-worker`) gets a new job type,
 changes:
 
 - The budget becomes relative for vector tables: reindex when uncovered rows
-  exceed `max(absolute budget, 10% of indexed rows)`, so a 60k-row index does
-  not wait for 100k new rows.
+  exceed `min(absolute budget, 10% of indexed rows)`, so a 60k-row index
+  reindexes after 6k new rows instead of waiting for 100k.
 - `OptimizeOptions.retrain = true` when the table has grown past 4× the rows
   the centroids were trained on, so partitions do not go stale. The index's
   row count at build time is recorded in the index name's version or in table
@@ -188,10 +190,11 @@ single/distributed) are the gate:
 - Workers read index files the way they read data files, directly from the
   filers and volume servers (seaweed-mono#954), and the files are write-once,
   so the read cache and the warm path apply unchanged.
-- Query semantics are identical in both modes: each engine runs ANN over its
-  owned segments with the same `nprobes` and a flat pass over its tail
-  fragments; the gateway merges the partial top-k lists. Per-segment probing
-  means the merged answer is never worse than one engine's.
+- Query semantics are identical in both modes: each engine applies the same
+  probe policy to the segments it owns, or the count the router passes in
+  `VectorQuery.nprobes`, plus a flat pass over its tail fragments; the
+  gateway merges the partial top-k lists. Each delta is probed on its own
+  centroids, so the merged answer is never worse than one engine's.
 - The open-source `weed-vector` stays the writer and the fallback engine, and
   it serves ANN through the same `query::ann` the workers call.
 
@@ -213,8 +216,9 @@ single/distributed) are the gate:
 
 ### Phase 1 — Engine query path (small)
 
-- Probe policy when an index exists: `nprobes`, and `minimum_nprobes` /
-  `maximum_nprobes` for filtered queries, from the segment's partition count.
+- Probe policy when an index exists: `minimum_nprobes` from the index's
+  partition count, `maximum_nprobes` equal to it without a filter and open
+  with one.
 - `nprobes` in `QueryVectorsRequest` for tests and the CLI; zero means the
   policy.
 - Per-query log line and counters: segments searched, tail rows scanned,
