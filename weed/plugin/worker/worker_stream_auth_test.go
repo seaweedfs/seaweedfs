@@ -65,12 +65,13 @@ func (h *outgoingAuthCaptureHandler) Execute(ctx context.Context, _ *plugin_pb.E
 	return sender.SendCompleted(&plugin_pb.JobCompleted{Success: true})
 }
 
-func TestWorkerJobContextDoesNotCarryStreamToken(t *testing.T) {
+func startAuthCaptureWorker(t *testing.T, ctx context.Context, handler JobHandler) *authCaptureAdmin {
+	t.Helper()
 	const signingKey = "plugin-worker-stream-auth-key"
 	util.GetViper().Set("jwt.filer_signing.key", signingKey)
-	defer util.GetViper().Set("jwt.filer_signing.key", "")
+	t.Cleanup(func() { util.GetViper().Set("jwt.filer_signing.key", "") })
 	util.GetViper().Set("jwt.filer_signing.expires_after_seconds", 10)
-	defer util.GetViper().Set("jwt.filer_signing.expires_after_seconds", 0)
+	t.Cleanup(func() { util.GetViper().Set("jwt.filer_signing.expires_after_seconds", 0) })
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -80,15 +81,8 @@ func TestWorkerJobContextDoesNotCarryStreamToken(t *testing.T) {
 	server := grpc.NewServer()
 	plugin_pb.RegisterPluginControlServiceServer(server, admin)
 	go server.Serve(listener)
-	defer server.Stop()
+	t.Cleanup(server.Stop)
 
-	handler := &outgoingAuthCaptureHandler{
-		testJobHandler: testJobHandler{
-			capability: &plugin_pb.JobTypeCapability{JobType: "vacuum", CanExecute: true},
-			descriptor: &plugin_pb.JobTypeDescriptor{JobType: "vacuum"},
-		},
-		authorization: make(chan []string, 1),
-	}
 	worker, err := NewWorker(WorkerOptions{
 		AdminServer:             listener.Addr().String(),
 		GrpcDialOption:          grpc.WithTransportCredentials(insecure.NewCredentials()),
@@ -98,10 +92,25 @@ func TestWorkerJobContextDoesNotCarryStreamToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewWorker error = %v", err)
 	}
+	go worker.runOnce(ctx, listener.Addr().String())
+	return admin
+}
 
+func vacuumTestJobHandler() testJobHandler {
+	return testJobHandler{
+		capability: &plugin_pb.JobTypeCapability{JobType: "vacuum", CanExecute: true},
+		descriptor: &plugin_pb.JobTypeDescriptor{JobType: "vacuum"},
+	}
+}
+
+func TestWorkerJobContextDoesNotCarryStreamToken(t *testing.T) {
+	handler := &outgoingAuthCaptureHandler{
+		testJobHandler: vacuumTestJobHandler(),
+		authorization:  make(chan []string, 1),
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	go worker.runOnce(ctx, listener.Addr().String())
+	admin := startAuthCaptureWorker(t, ctx, handler)
 
 	select {
 	case err := <-admin.streamErr:
@@ -118,5 +127,42 @@ func TestWorkerJobContextDoesNotCarryStreamToken(t *testing.T) {
 		}
 	default:
 		t.Fatal("job completed without running the handler")
+	}
+}
+
+type blockingCancelHandler struct {
+	testJobHandler
+	started  chan struct{}
+	canceled chan struct{}
+}
+
+func (h *blockingCancelHandler) Execute(ctx context.Context, _ *plugin_pb.ExecuteJobRequest, _ ExecutionSender) error {
+	close(h.started)
+	<-ctx.Done()
+	close(h.canceled)
+	return ctx.Err()
+}
+
+func TestWorkerConnectionTeardownCancelsJobContext(t *testing.T) {
+	handler := &blockingCancelHandler{
+		testJobHandler: vacuumTestJobHandler(),
+		started:        make(chan struct{}),
+		canceled:       make(chan struct{}),
+	}
+	connCtx, cancelConn := context.WithCancel(context.Background())
+	defer cancelConn()
+	startAuthCaptureWorker(t, connCtx, handler)
+
+	timeout := time.After(10 * time.Second)
+	select {
+	case <-handler.started:
+	case <-timeout:
+		t.Fatal("timed out waiting for the job to start")
+	}
+	cancelConn()
+	select {
+	case <-handler.canceled:
+	case <-timeout:
+		t.Fatal("job context outlived the worker connection")
 	}
 }
