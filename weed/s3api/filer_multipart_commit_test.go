@@ -17,8 +17,8 @@ import (
 )
 
 // memCompleteFiler keeps entries in memory. A failing CreateEntry still
-// stores what storedOnFailure returns, as a filer whose commit landed before
-// the call failed.
+// stores what storedOnFailure returns, and a failing ObjectTransaction still
+// applies its mutations, as a filer whose commit landed before the call failed.
 type memCompleteFiler struct {
 	filer_pb.UnimplementedSeaweedFilerServer
 	mu              sync.Mutex
@@ -77,12 +77,42 @@ func (f *memCompleteFiler) CreateEntry(ctx context.Context, req *filer_pb.Create
 func (f *memCompleteFiler) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntryRequest) (*filer_pb.DeleteEntryResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	delete(f.entries[req.Directory], req.Name)
+	f.remove(req.Directory, req.Name, req.IsDeleteData)
+	return &filer_pb.DeleteEntryResponse{}, nil
+}
+
+func (f *memCompleteFiler) remove(dir, name string, isDeleteData bool) {
+	delete(f.entries[dir], name)
 	if f.deletedData == nil {
 		f.deletedData = map[string]bool{}
 	}
-	f.deletedData[req.Name] = req.IsDeleteData
-	return &filer_pb.DeleteEntryResponse{}, nil
+	f.deletedData[name] = isDeleteData
+}
+
+// ObjectTransaction applies PUT and DELETE as given and points a recompute at
+// the transaction's PUT, the newest version.
+func (f *memCompleteFiler) ObjectTransaction(ctx context.Context, req *filer_pb.ObjectTransactionRequest) (*filer_pb.ObjectTransactionResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var put *filer_pb.Entry
+	for _, m := range req.Mutations {
+		switch m.Type {
+		case filer_pb.ObjectMutation_PUT:
+			put = m.Entry
+			f.put(m.Directory, m.Entry)
+		case filer_pb.ObjectMutation_DELETE:
+			f.remove(m.Directory, m.Name, m.IsDeleteData)
+		case filer_pb.ObjectMutation_RECOMPUTE_LATEST:
+			f.put(m.Directory, &filer_pb.Entry{Name: m.Name, IsDirectory: true, Extended: map[string][]byte{
+				s3_constants.ExtLatestVersionIdKey:       put.Extended[s3_constants.ExtVersionIdKey],
+				s3_constants.ExtLatestVersionFileNameKey: []byte(put.Name),
+			}})
+		}
+	}
+	if f.createFailure != nil {
+		return nil, f.createFailure
+	}
+	return &filer_pb.ObjectTransactionResponse{}, nil
 }
 
 func newCompleteTestServer(t *testing.T, f *memCompleteFiler) *S3ApiServer {
@@ -187,6 +217,40 @@ func TestCommittedCompletionReadsTheLatestVersion(t *testing.T) {
 	}
 	if output.ChecksumCRC32C != "fx4FQw==-1" || output.ChecksumType != s3_constants.ChecksumTypeComposite {
 		t.Errorf("checksum = %q %q, want the committed version's", output.ChecksumCRC32C, output.ChecksumType)
+	}
+}
+
+// A versioned finalize whose transaction landed but whose call failed answers
+// with the committed version's id and checksum.
+func TestCompleteMultipartUploadVersionedCommittedDespiteFailure(t *testing.T) {
+	f := &memCompleteFiler{entries: map[string]map[string]*filer_pb.Entry{}, createFailure: status.Error(codes.Internal, "response lost after commit")}
+	s3a := newCompleteTestServer(t, f)
+	s3a.bucketConfigCache.Set("b", &BucketConfig{Name: "b", Versioning: s3_constants.VersioningEnabled})
+	uploadsDir := s3a.genUploadsFolder("b")
+	f.entries[uploadsDir]["u1"].Extended[s3_constants.ExtChecksumAlgorithm] = []byte(s3_constants.AmzChecksumCRC32C)
+	part := f.entries[uploadsDir+"/u1"]["0001.part"]
+	part.Extended[s3_constants.ExtChecksumAlgorithm] = []byte(s3_constants.AmzChecksumCRC32C)
+	part.Extended[s3_constants.ExtChecksumValue] = []byte("yZRlqg==")
+
+	input := &s3.CompleteMultipartUploadInput{Bucket: aws.String("b"), Key: aws.String("a.bin"), UploadId: aws.String("u1")}
+	parts := &CompleteMultipartUpload{Parts: []CompletedPart{{PartNumber: 1, ETag: `"5eb63bbbe01eeed093cb22bb8f5acdc3"`, ChecksumResult: ChecksumResult{ChecksumCRC32C: "yZRlqg=="}}}}
+	output, code := s3a.completeMultipartUpload(httptest.NewRequest("POST", "/b/a.bin?uploadId=u1", nil), input, parts)
+	if code != s3err.ErrNone || output == nil {
+		t.Fatalf("code = %v, want success for the committed version", s3err.GetAPIError(code).Code)
+	}
+	pointer := f.entries[s3a.bucketDir("b")]["a.bin"+s3_constants.VersionsFolder]
+	version := f.entries[s3a.bucketDir("b")+"/a.bin"+s3_constants.VersionsFolder][string(pointer.Extended[s3_constants.ExtLatestVersionFileNameKey])]
+	if version == nil {
+		t.Fatal("the transaction did not store the version")
+	}
+	if got, want := aws.StringValue(output.VersionId), string(version.Extended[s3_constants.ExtVersionIdKey]); got == "" || got != want {
+		t.Errorf("VersionId = %q, want the committed version's %q", got, want)
+	}
+	if got, want := output.ChecksumCRC32C, string(version.Extended[s3_constants.ExtChecksumValue]); got == "" || got != want {
+		t.Errorf("ChecksumCRC32C = %q, want the committed version's %q", got, want)
+	}
+	if output.ChecksumType != s3_constants.ChecksumTypeComposite {
+		t.Errorf("ChecksumType = %q, want %q", output.ChecksumType, s3_constants.ChecksumTypeComposite)
 	}
 }
 
