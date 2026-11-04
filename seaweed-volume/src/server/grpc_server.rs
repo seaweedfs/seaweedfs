@@ -4114,10 +4114,7 @@ impl VolumeServer for VolumeGrpcService {
                     crate::storage::volume::volume_file_name(&dest_dir, &req.collection, vid);
                 format!("{}.vif", base)
             };
-            let file = tokio::fs::File::create(&file_path)
-                .await
-                .map_err(|e| Status::internal(format!("create {}: {}", file_path, e)))?;
-            drain_copy_stream_to_file(&mut stream, file, &file_path, ".vif").await?;
+            drain_optional_copy_to_file(&mut stream, &file_path, ".vif").await?;
         }
 
         // Copy the generation-0 bitrot checksum sidecar (.ecsum) when requested, so
@@ -4151,17 +4148,7 @@ impl VolumeServer for VolumeGrpcService {
                     crate::storage::volume::volume_file_name(&dest_dir, &req.collection, vid);
                 format!("{}.ecsum", base)
             };
-            let file = tokio::fs::File::create(&file_path)
-                .await
-                .map_err(|e| Status::internal(format!("create {}: {}", file_path, e)))?;
-            let written =
-                drain_copy_stream_to_file(&mut stream, file, &file_path, ".ecsum").await?;
-            // A missing source yields an empty stream; drop the 0-byte file so mount
-            // sees no sidecar (protection Off) rather than a truncated/invalid one.
-            // (drain_copy_stream_to_file has already closed the file on return.)
-            if written == 0 {
-                let _ = tokio::fs::remove_file(&file_path).await;
-            }
+            drain_optional_copy_to_file(&mut stream, &file_path, ".ecsum").await?;
         }
 
         Ok(Response::new(
@@ -7011,6 +6998,31 @@ fn set_file_mtime(path: &str, modified_ts_ns: i64) -> std::io::Result<()> {
 /// On any recv/write/flush error the partially written destination is removed
 /// (matching `receive_file` and the Go volume server), so a failed copy never
 /// leaves a truncated shard or checksum file behind for a later reader to trip on.
+/// An optional copy (the source may lack the file) streams into
+/// `<file_path>.copying` and is renamed into place only once the source sent
+/// bytes, so a missing source or a failed stream leaves an existing destination
+/// untouched, as Go's writeToFile does for ignore_source_file_not_found.
+async fn drain_optional_copy_to_file(
+    stream: &mut tonic::Streaming<volume_server_pb::CopyFileResponse>,
+    file_path: &str,
+    what: &str,
+) -> Result<u64, Status> {
+    let staging = format!("{}.copying", file_path);
+    let file = tokio::fs::File::create(&staging)
+        .await
+        .map_err(|e| Status::internal(format!("create {}: {}", staging, e)))?;
+    let written = drain_copy_stream_to_file(stream, file, &staging, what).await?;
+    if written == 0 {
+        let _ = tokio::fs::remove_file(&staging).await;
+        return Ok(0);
+    }
+    if let Err(e) = tokio::fs::rename(&staging, file_path).await {
+        let _ = tokio::fs::remove_file(&staging).await;
+        return Err(Status::internal(format!("commit {}: {}", file_path, e)));
+    }
+    Ok(written)
+}
+
 async fn drain_copy_stream_to_file(
     stream: &mut tonic::Streaming<volume_server_pb::CopyFileResponse>,
     file: tokio::fs::File,
@@ -9858,6 +9870,60 @@ mod tests {
             copied,
             dat_bytes.len()
         );
+    }
+
+    // An optional sidecar copy from a peer that lacks the file must leave the
+    // destination's own copy in place; one from a peer that has it replaces it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_optional_copy_keeps_destination_when_source_lacks_file() {
+        let (source_service, source_tmp) = make_local_service_with_volume("optional_copy", None);
+        let (port, _shutdown) = serve_source(source_service).await;
+        let channel = tonic::transport::Endpoint::from_shared(format!("http://127.0.0.1:{}", port))
+            .unwrap()
+            .connect()
+            .await
+            .unwrap();
+        let mut client = volume_server_pb::volume_server_client::VolumeServerClient::new(channel);
+        let request = |ext: &str| volume_server_pb::CopyFileRequest {
+            volume_id: 1,
+            ext: ext.to_string(),
+            is_ec_volume: true,
+            compaction_revision: u32::MAX,
+            stop_offset: i64::MAX as u64,
+            ignore_source_file_not_found: true,
+            ..Default::default()
+        };
+
+        let dest_tmp = TempDir::new().unwrap();
+        let dest = format!("{}/1.ecsum", dest_tmp.path().to_str().unwrap());
+        std::fs::write(&dest, b"local sidecar").unwrap();
+
+        let mut missing = client
+            .copy_file(request(".ecsum"))
+            .await
+            .unwrap()
+            .into_inner();
+        let written = drain_optional_copy_to_file(&mut missing, &dest, ".ecsum")
+            .await
+            .unwrap();
+        assert_eq!(written, 0);
+        assert_eq!(std::fs::read(&dest).unwrap(), b"local sidecar");
+        assert!(!std::path::Path::new(&format!("{}.copying", dest)).exists());
+
+        std::fs::write(
+            format!("{}/1.ecsum", source_tmp.path().to_str().unwrap()),
+            b"peer sidecar",
+        )
+        .unwrap();
+        let mut present = client
+            .copy_file(request(".ecsum"))
+            .await
+            .unwrap()
+            .into_inner();
+        drain_optional_copy_to_file(&mut present, &dest, ".ecsum")
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), b"peer sidecar");
     }
 
     // A copy that mounts and then fails validation (check_copy_counts) is
