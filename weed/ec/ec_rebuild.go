@@ -422,7 +422,14 @@ func (erb *ecRebuilder) rebuildOneEcVolume(collection string, volumeId needle.Vo
 	}
 
 	if !erb.applyChanges {
-		return nil
+		var regenerated []erasure_coding.ShardId
+		for shardId := range erb.corruptShards[volumeId] {
+			if len(locations[shardId]) == 0 {
+				regenerated = append(regenerated, shardId)
+			}
+		}
+		slices.Sort(regenerated)
+		return erb.removeCorruptCopies(collection, volumeId, rebuilder, regenerated)
 	}
 
 	// generate ec shards, and maybe ecx file

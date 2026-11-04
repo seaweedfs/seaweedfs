@@ -238,7 +238,11 @@ func TestRebuildChecksumDryRun(t *testing.T) {
 	if rebuilder.rebuilds != 0 || rebuilder.copiedIds != nil || holder.deleted != nil {
 		t.Errorf("dry run changed state: rebuilds %d, copied %v, deleted %v", rebuilder.rebuilds, rebuilder.copiedIds, holder.deleted)
 	}
-	for _, want := range []string{"ec volume 1 shard 3 on " + holder.nodeId() + " fails its checksum", "missing shard 1.3"} {
+	for _, want := range []string{
+		"ec volume 1 shard 3 on " + holder.nodeId() + " fails its checksum",
+		"missing shard 1.3",
+		"would remove corrupt shards 1.[3] from " + holder.nodeId(),
+	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("expected %q in the output:\n%s", want, out)
 		}
