@@ -3189,6 +3189,7 @@ mod tests {
         )]);
 
         let mut current = previous.clone();
+        current.get_mut(&key).unwrap().file_count = 4;
         current.get_mut(&key).unwrap().delete_count = 1;
         let (new_ec_shards, deleted_ec_shards) = diff_ec_shard_delta_messages(&previous, &current);
         assert!(new_ec_shards.is_empty());
