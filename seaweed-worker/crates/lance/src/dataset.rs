@@ -15,6 +15,7 @@ use lance::io::{
     ObjectStore, ObjectStoreParams, ObjectStoreRegistry, StorageOptionsAccessor,
     WrappingObjectStore,
 };
+use lance::session::Session;
 
 use crate::catalog::{NamespaceClient, TableDescription};
 
@@ -56,8 +57,21 @@ pub async fn open_with(
     fallback: &FallbackOptions,
     wrapper: Option<Arc<dyn WrappingObjectStore>>,
 ) -> Result<OpenTable> {
+    open_in(client, id, fallback, wrapper, None).await
+}
+
+/// [`open_with`] inside `session`, so the index and metadata caches outlive
+/// this open: a server that opens a table per request keeps its indices
+/// loaded this way.
+pub async fn open_in(
+    client: &NamespaceClient,
+    id: &[String],
+    fallback: &FallbackOptions,
+    wrapper: Option<Arc<dyn WrappingObjectStore>>,
+    session: Option<Arc<Session>>,
+) -> Result<OpenTable> {
     let description = client.describe_table(id).await?;
-    let dataset = open_at(&description, fallback, wrapper).await?;
+    let dataset = open_at(&description, fallback, wrapper, session).await?;
     Ok(OpenTable {
         id: id.to_vec(),
         location: description.location,
@@ -92,15 +106,20 @@ async fn open_at(
     description: &TableDescription,
     fallback: &FallbackOptions,
     wrapper: Option<Arc<dyn WrappingObjectStore>>,
+    session: Option<Arc<Session>>,
 ) -> Result<Dataset> {
-    DatasetBuilder::from_uri(&description.location)
-        .with_store_params(ObjectStoreParams {
+    let mut builder =
+        DatasetBuilder::from_uri(&description.location).with_store_params(ObjectStoreParams {
             storage_options_accessor: Some(Arc::new(StorageOptionsAccessor::with_static_options(
                 table_options(description, fallback),
             ))),
             object_store_wrapper: wrapper,
             ..Default::default()
-        })
+        });
+    if let Some(session) = session {
+        builder = builder.with_session(session);
+    }
+    builder
         .load()
         .await
         .with_context(|| format!("open lance dataset at {}", description.location))
