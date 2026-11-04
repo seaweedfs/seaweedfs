@@ -560,6 +560,51 @@ def test_vector_index_job(vectors, cluster):
     again = call("/run", "POST", {"timeout_seconds": 60})
     assert again["detected_count"] == 0, again
 
+    def coverage_now():
+        return json.loads(subprocess.run(
+            [str(cli), "--namespace", cluster["catalog"], "--access-key", "test", "--secret-key", "test",
+             "coverage", f"{bucket}$vector${index}"], check=True, capture_output=True, text=True).stdout)[0]
+
+    def optimize(expect_detected):
+        request = urllib.request.Request(
+            f"{admin}/api/plugin/job-types/lance_optimize_indices/run", method="POST",
+            data=json.dumps({"timeout_seconds": 110}).encode(), headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(request, timeout=120) as response:
+            result = json.load(response)
+        assert result["detected_count"] == expect_detected and result["error_count"] == 0, result
+
+    # A tenth of the index written after the build brings the optimize job
+    # in, even though it is far below its absolute budget.
+    optimize(0)
+    more = {f"m{i}": [rng.gauss(0, 1) for _ in range(dim)] for i in range(200)}
+    vectors.put_vectors(vectorBucketName=bucket, indexName=index,
+                        vectors=[{"key": key, "data": {"float32": v}} for key, v in more.items()])
+    before = coverage_now()
+    assert before["unindexed_rows"] == 201, before
+    optimize(1)
+    after = coverage_now()
+    assert after["unindexed_rows"] == 0 and after["partitions"] == before["partitions"], after
+
+    # Five times the rows the index was sized for: the job trains it again
+    # instead of extending it, and the partitions follow the new row count.
+    rows.update(more)
+    for offset in range(0, 4600, 400):
+        batch = {f"g{offset + i}": [rng.gauss(0, 1) for _ in range(dim)] for i in range(400)}
+        rows.update(batch)
+        vectors.put_vectors(vectorBucketName=bucket, indexName=index,
+                            vectors=[{"key": key, "data": {"float32": v}} for key, v in batch.items()])
+    optimize(1)
+    retrained = coverage_now()
+    assert retrained["unindexed_rows"] == 0 and retrained["segments"] == 1, retrained
+    assert retrained["partitions"] > after["partitions"], (before, after, retrained)
+    found = 0
+    for _ in range(20):
+        query = [rng.gauss(0, 1) for _ in range(dim)]
+        hits = vectors.query_vectors(vectorBucketName=bucket, indexName=index,
+                                     queryVector={"float32": query}, topK=10)["vectors"]
+        found += len({h["key"] for h in hits} & exact_neighbours(rows, query, 10))
+    assert found >= 180, f"recall after retrain {found}/200"
+
 
 def test_invalid_credentials(cluster):
     client = boto3.client("s3vectors", endpoint_url=cluster["endpoint"], aws_access_key_id="unknown",

@@ -15,7 +15,9 @@ use tracing::warn;
 
 use crate::catalog::{NamespaceClient, SigningKey, parse_id};
 use crate::dataset::{self, OpenTable};
+use crate::jobs::vector_index::is_vector_table;
 use crate::jobs::{clamp, string_list, table_id};
+use crate::vector_index::{index_names, needs_retrain, partitions};
 
 pub const JOB_TYPE: &str = "lance_optimize_indices";
 
@@ -71,16 +73,24 @@ impl OptimizeIndicesHandler {
     }
 }
 
-/// Rows no index covers, summed across a table's indices. A table with no
-/// indices at all has nothing to optimize, which is different from a table whose
-/// indices have fallen behind.
-async fn unindexed_rows(table: &OpenTable) -> Result<Option<u64>> {
+/// Rows the table's indices cover and rows they miss, taken from the index
+/// that misses the most. A table with no indices at all has nothing to
+/// optimize, which is different from a table whose indices have fallen behind.
+struct IndexRows {
+    indexed: u64,
+    unindexed: u64,
+}
+
+async fn index_rows(table: &OpenTable) -> Result<Option<IndexRows>> {
     let indices = table.dataset.load_indices().await?;
     if indices.is_empty() {
         return Ok(None);
     }
 
-    let mut worst = 0u64;
+    let mut worst = IndexRows {
+        indexed: 0,
+        unindexed: 0,
+    };
     let mut names: Vec<String> = indices.iter().map(|index| index.name.clone()).collect();
     names.sort();
     names.dedup();
@@ -88,13 +98,25 @@ async fn unindexed_rows(table: &OpenTable) -> Result<Option<u64>> {
         let raw = table.dataset.index_statistics(&name).await?;
         let stats: serde_json::Value = serde_json::from_str(&raw)
             .with_context(|| format!("parse index statistics for {name}"))?;
-        let unindexed = stats
-            .get("num_unindexed_rows")
-            .and_then(|value| value.as_u64())
-            .unwrap_or(0);
-        worst = worst.max(unindexed);
+        let count = |key: &str| stats.get(key).and_then(|value| value.as_u64()).unwrap_or(0);
+        if count("num_unindexed_rows") >= worst.unindexed {
+            worst = IndexRows {
+                indexed: count("num_indexed_rows"),
+                unindexed: count("num_unindexed_rows"),
+            };
+        }
     }
     Ok(Some(worst))
+}
+
+/// A vector index also reindexes once a tenth of it is uncovered, so a small
+/// index does not wait for the absolute budget.
+fn effective_budget(budget: u64, rows: &IndexRows, vector_table: bool) -> u64 {
+    if vector_table {
+        budget.min(rows.indexed / 10)
+    } else {
+        budget
+    }
 }
 
 #[async_trait]
@@ -175,8 +197,8 @@ impl JobHandler for OptimizeIndicesHandler {
             if let Some(counters) = &self.metrics {
                 counters.worker.object_seen(JOB_TYPE);
             }
-            let unindexed = match unindexed_rows(&table).await {
-                Ok(Some(unindexed)) => unindexed,
+            let rows = match index_rows(&table).await {
+                Ok(Some(rows)) => rows,
                 Ok(None) => continue,
                 Err(err) => {
                     if let Some(counters) = &self.metrics {
@@ -186,6 +208,8 @@ impl JobHandler for OptimizeIndicesHandler {
                     continue;
                 }
             };
+            let budget = effective_budget(budget, &rows, is_vector_table(&id));
+            let unindexed = rows.unindexed;
             if unindexed <= budget {
                 continue;
             }
@@ -238,14 +262,29 @@ impl JobHandler for OptimizeIndicesHandler {
 
         let client = self.client();
         let mut table = dataset::open(&client, &id, &self.fallback).await?;
-        let before = unindexed_rows(&table).await?.unwrap_or(0);
+        let before = index_rows(&table).await?.map_or(0, |rows| rows.unindexed);
+        // A vector index whose table has outgrown its partitions is trained
+        // again instead of extended.
+        let mut options = OptimizeOptions::default();
+        if is_vector_table(&id) {
+            let rows = table.stats().await?.rows;
+            for name in index_names(&table.dataset, "vector").await? {
+                if needs_retrain(partitions(&table.dataset, &name).await?, rows) {
+                    options = OptimizeOptions::retrain();
+                }
+            }
+        }
 
         sender.send_progress(JobProgressUpdate {
             request_id: request.request_id.clone(),
             job_id: job.job_id.clone(),
             job_type: JOB_TYPE.to_string(),
             progress_percent: 10.0,
-            stage: format!("indexing {before} uncovered rows"),
+            stage: if options.retrain {
+                "retraining the vector index".to_string()
+            } else {
+                format!("indexing {before} uncovered rows")
+            },
             ..Default::default()
         })?;
 
@@ -254,11 +293,11 @@ impl JobHandler for OptimizeIndicesHandler {
         // up fast to write and slow to search.
         table
             .dataset
-            .optimize_indices(&OptimizeOptions::default())
+            .optimize_indices(&options)
             .await
             .with_context(|| format!("optimize indices of {}", table.location))?;
 
-        let after = unindexed_rows(&table).await?.unwrap_or(0);
+        let after = index_rows(&table).await?.map_or(0, |rows| rows.unindexed);
         if let Some(counters) = &self.metrics {
             counters.rows_indexed.inc_by(before.saturating_sub(after));
         }
@@ -268,6 +307,10 @@ impl JobHandler for OptimizeIndicesHandler {
             int_value(before as i64),
         );
         output.insert("unindexed_rows_after".to_string(), int_value(after as i64));
+        output.insert(
+            "retrained".to_string(),
+            seaweed_worker_core::config_form::bool_value(options.retrain),
+        );
 
         sender.send_completed(JobCompleted {
             request_id: request.request_id.clone(),
@@ -282,5 +325,25 @@ impl JobHandler for OptimizeIndicesHandler {
             ..Default::default()
         })?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vector_tables_reindex_at_a_tenth_of_their_rows() {
+        let small = IndexRows {
+            indexed: 60_000,
+            unindexed: 0,
+        };
+        assert_eq!(effective_budget(100_000, &small, true), 6_000);
+        assert_eq!(effective_budget(100_000, &small, false), 100_000);
+        let large = IndexRows {
+            indexed: 5_000_000,
+            unindexed: 0,
+        };
+        assert_eq!(effective_budget(100_000, &large, true), 100_000);
     }
 }
