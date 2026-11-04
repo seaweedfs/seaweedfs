@@ -80,6 +80,13 @@ func TestCheckGrpcAdminToken(t *testing.T) {
 	if signErr != nil {
 		t.Fatalf("sign expired token: %v", signErr)
 	}
+	session, signErr := jwt.NewWithClaims(jwt.SigningMethodHS256, SeaweedFilerAdminClaims{
+		SessionId:        "session",
+		RegisteredClaims: jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour))},
+	}).SignedString([]byte(key))
+	if signErr != nil {
+		t.Fatalf("sign session token: %v", signErr)
+	}
 
 	for name, tc := range map[string]struct {
 		values  []string
@@ -90,6 +97,7 @@ func TestCheckGrpcAdminToken(t *testing.T) {
 		"expired then fresh":  {[]string{"Bearer " + expired, fresh}, ""},
 		"only expired":        {[]string{"Bearer " + expired}, "invalid admin token"},
 		"only stale":          {[]string{stale}, "invalid admin token"},
+		"same-key session":    {[]string{"Bearer " + session}, "invalid admin token"},
 		"basic then stale":    {[]string{"Basic dXNlcjpwYXNz", stale}, "invalid admin token"},
 		"no bearer value":     {[]string{"Basic dXNlcjpwYXNz", "garbage"}, "authorization header must use Bearer scheme"},
 		"lowercase scheme ok": {[]string{"bearer " + fresh[len("Bearer "):]}, ""},
