@@ -1799,10 +1799,11 @@ async fn try_ec_shard_needle_candidate(
 
 /// Repair a needle whose reassembled bytes failed to parse — Go's
 /// `rebuildEcShardNeedle`. Every interval's source shard is a suspect: rebuild
-/// all suspect ranges at once while parity covers the suspect set, or one
-/// suspect at a time when the needle spans more shards than that, and let a
-/// successful parse arbitrate which copy was corrupt. A holder's deleted report
-/// stops the search: the needle is gone whatever the local index says.
+/// all suspect ranges at once while parity covers the suspect set, then search
+/// the sets of shards that may be corrupt, then rebuild one suspect at a time,
+/// and let a successful parse arbitrate which copy was corrupt. A holder's
+/// deleted report stops the search: the needle is gone whatever the local index
+/// says.
 async fn rebuild_ec_shard_needle(
     state: &Arc<VolumeServerState>,
     metas: &[EcInterval],
@@ -1840,9 +1841,19 @@ async fn rebuild_ec_shard_needle(
                 return (Some(candidate), false);
             }
         }
-        if suspects.len() == 1 {
-            return (None, false);
-        }
+    }
+    let (candidate, is_deleted) = rebuild_ec_needle_from_corrupt_sets(
+        state, metas, map, corrupted, &suspects, offset, size, version, needle_id,
+    )
+    .await;
+    if is_deleted {
+        return (None, true);
+    }
+    if let Some(candidate) = candidate {
+        return (Some(candidate), false);
+    }
+    if suspects.len() == 1 {
+        return (None, false);
     }
     for shard_id in suspects {
         let (candidate, is_deleted) = try_ec_shard_needle_candidate(
@@ -1984,6 +1995,239 @@ async fn rebuild_ec_needle_from_dropped_inputs(
         return (Some(candidate), false);
     }
     (None, false)
+}
+
+/// Bounds on one needle's corrupt-set search, as Go's `ecRebuildMaxSets` and
+/// `ecRebuildMaxBytes`: sets enumerated, and needle bytes rebuilt and parsed
+/// past the single-shard sets. 10+4 has 1470 sets of at most four shards.
+const EC_REBUILD_MAX_SETS: usize = 4096;
+const EC_REBUILD_MAX_BYTES: usize = 1 << 30;
+
+/// Handle a rebuild the retries above could not repair: more shards than one
+/// can be corrupt over the same ranges and get read as reconstruction inputs.
+/// Each interval is gathered once from every other shard that answers, then
+/// `search_ec_corrupt_sets` tries the candidate corrupt sets. `None` when that
+/// gather would outgrow the recovery budget. Mirrors Go's
+/// `rebuildEcNeedleFromCorruptSets`.
+async fn rebuild_ec_needle_from_corrupt_sets(
+    state: &Arc<VolumeServerState>,
+    metas: &[EcInterval],
+    map: EcShardMap<'_>,
+    corrupted: &[u8],
+    suspects: &HashSet<ShardId>,
+    offset: i64,
+    size: Size,
+    version: Version,
+    needle_id: NeedleId,
+) -> (Option<Vec<u8>>, bool) {
+    let EcShardMap {
+        data_shards,
+        parity_shards,
+        ..
+    } = map;
+    let total_shards = data_shards + parity_shards;
+    let total_size: usize = metas.iter().map(|iv| iv.size).sum();
+    if total_size * (total_shards - 1) > EC_RECOVER_BUDGET {
+        return (None, false);
+    }
+    let Ok(permit) = EC_RECOVER_SEM
+        .acquire_many((total_size * total_shards).min(EC_RECOVER_BUDGET) as u32)
+        .await
+    else {
+        return (None, false);
+    };
+
+    let mut gathers: Vec<Vec<Option<Vec<u8>>>> = Vec::with_capacity(metas.len());
+    for iv in metas {
+        let (bufs, is_deleted) =
+            gather_ec_shard_intervals(state, *iv, map, &HashSet::from([iv.shard_id]), total_shards)
+                .await;
+        if is_deleted {
+            return (None, true);
+        }
+        gathers.push(bufs);
+    }
+
+    // The search can run hundreds of decodes, so keep it off the runtime. The
+    // permit goes with it: a dropped read does not stop a blocking task.
+    let (metas_owned, corrupted, suspects) = (metas.to_vec(), corrupted.to_vec(), suspects.clone());
+    let search = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let rs = ReedSolomon::new(data_shards, parity_shards).ok()?;
+        search_ec_corrupt_sets(
+            &mut gathers,
+            &metas_owned,
+            &rs,
+            &corrupted,
+            &suspects,
+            |candidate| {
+                let mut check = Needle {
+                    id: needle_id,
+                    ..Needle::default()
+                };
+                check.read_bytes(candidate, offset, size, version).is_ok() && check.id == needle_id
+            },
+        )
+    });
+    let Ok(Some((candidate, convicted))) = search.await else {
+        return (None, false);
+    };
+    if let Some(first) = metas.first() {
+        for shard_id in convicted {
+            forget_shard_location(state, first.vid, shard_id);
+        }
+    }
+    (Some(candidate), false)
+}
+
+/// Try each set of up to `parity_shards` shards holding a suspect as the
+/// corrupt set, smallest first: suspect ranges inside it are rebuilt from the
+/// shards outside it, the rest keep the bytes read, and `parses` arbitrates. A
+/// set whose decodes read the same inputs as one already tried is skipped.
+/// Returns the candidate with the shards it convicts: every differing range,
+/// and every other shard the set kept out of the decodes.
+fn search_ec_corrupt_sets(
+    gathers: &mut [Vec<Option<Vec<u8>>>],
+    metas: &[EcInterval],
+    rs: &ReedSolomon,
+    corrupted: &[u8],
+    suspects: &HashSet<ShardId>,
+    parses: impl Fn(&[u8]) -> bool,
+) -> Option<(Vec<u8>, Vec<ShardId>)> {
+    let data_shards = rs.data_shard_count();
+    let total_shards = rs.total_shard_count();
+    let mut candidate = corrupted.to_vec();
+    let mut scratch: Vec<Vec<u8>> = vec![Vec::new(); data_shards];
+    let mut inputs = vec![0u64; metas.len()];
+    let mut tried: HashSet<Vec<u64>> = HashSet::new();
+
+    // Records in `inputs` the shards each interval's decode reads when `set`
+    // is excluded, 0 for an interval that keeps its bytes. False when an
+    // interval has too few shards left, or the same decodes were tried before.
+    let mut plan = |set: u64, inputs: &mut [u64], gathers: &[Vec<Option<Vec<u8>>>]| {
+        for (i, iv) in metas.iter().enumerate() {
+            inputs[i] = 0;
+            if set & (1 << iv.shard_id) == 0 {
+                continue;
+            }
+            let mut taken = 0;
+            for (sid, slot) in gathers[i].iter().enumerate() {
+                if taken == data_shards {
+                    break;
+                }
+                if set & (1 << sid) == 0 && slot.is_some() {
+                    inputs[i] |= 1 << sid;
+                    taken += 1;
+                }
+            }
+            if taken < data_shards {
+                return false;
+            }
+        }
+        tried.insert(inputs.to_vec())
+    };
+
+    // Rebuilds the planned intervals into `candidate`; reset on failure.
+    let mut decode =
+        |inputs: &[u64], candidate: &mut [u8], gathers: &mut [Vec<Option<Vec<u8>>>]| {
+            let mut pos = 0usize;
+            for (i, iv) in metas.iter().enumerate() {
+                let end = pos + iv.size;
+                if inputs[i] != 0 {
+                    let Some(buf) =
+                        decode_ec_interval(rs, &mut gathers[i], inputs[i], &mut scratch, iv)
+                    else {
+                        candidate.copy_from_slice(corrupted);
+                        return false;
+                    };
+                    candidate[pos..end].copy_from_slice(buf);
+                }
+                pos = end;
+            }
+            if parses(candidate) {
+                return true;
+            }
+            candidate.copy_from_slice(corrupted);
+            false
+        };
+
+    let (mut sets, mut spent) = (0usize, 0usize);
+    for k in 1..=rs.parity_shard_count().min(total_shards) {
+        let mut members: Vec<usize> = (0..k).collect();
+        loop {
+            let set = members.iter().fold(0u64, |set, &sid| set | 1 << sid);
+            let holds_suspect = members
+                .iter()
+                .any(|&sid| suspects.contains(&(sid as ShardId)));
+            if holds_suspect {
+                sets += 1;
+                if sets > EC_REBUILD_MAX_SETS {
+                    return None;
+                }
+                if plan(set, &mut inputs, gathers) {
+                    if k > 1 {
+                        if spent >= EC_REBUILD_MAX_BYTES {
+                            return None;
+                        }
+                        spent += corrupted.len();
+                    }
+                    if decode(&inputs, &mut candidate, gathers) {
+                        let mut convicted: Vec<ShardId> = Vec::new();
+                        let mut pos = 0usize;
+                        for iv in metas {
+                            let end = pos + iv.size;
+                            if candidate[pos..end] != corrupted[pos..end] {
+                                convicted.push(iv.shard_id);
+                            }
+                            pos = end;
+                        }
+                        convicted.extend(
+                            members
+                                .iter()
+                                .map(|&sid| sid as ShardId)
+                                .filter(|sid| !suspects.contains(sid)),
+                        );
+                        return Some((candidate, convicted));
+                    }
+                }
+            }
+            let Some(j) = (0..k).rev().find(|&j| members[j] != total_shards - k + j) else {
+                break;
+            };
+            members[j] += 1;
+            for m in j + 1..k {
+                members[m] = members[m - 1] + 1;
+            }
+        }
+    }
+    None
+}
+
+/// Decode `iv`'s data shard from the gathered shards in `inputs`, using
+/// `scratch`, one buffer per data shard, for every data shard it lacks.
+fn decode_ec_interval<'a>(
+    rs: &ReedSolomon,
+    slots: &mut [Option<Vec<u8>>],
+    inputs: u64,
+    scratch: &'a mut [Vec<u8>],
+    iv: &EcInterval,
+) -> Option<&'a [u8]> {
+    let mut spare = scratch.iter_mut();
+    let mut view: Vec<(&mut [u8], bool)> = slots
+        .iter_mut()
+        .enumerate()
+        .map(|(sid, slot)| match (slot, spare.next()) {
+            (Some(shard), _) if inputs & (1 << sid) != 0 => (shard.as_mut_slice(), true),
+            (_, Some(buf)) => {
+                buf.resize(iv.size, 0);
+                (buf.as_mut_slice(), false)
+            }
+            _ => (&mut [][..], false),
+        })
+        .collect();
+    rs.reconstruct_data(&mut view).ok()?;
+    drop(view);
+    Some(&scratch[iv.shard_id as usize])
 }
 
 // parse_grpc_address lives in `grpc_client.rs` and is re-exported
@@ -2240,6 +2484,139 @@ mod tests {
             gather_intervals(vec![Ok((vec![1], false)), Ok((vec![2], false))]).unwrap(),
             Some(vec![vec![1], vec![2]])
         );
+    }
+
+    const BLOCK: usize = 4096;
+
+    /// One row of 10+4 shards holding a needle at `dat_offset`, the needle's
+    /// intervals, and its bytes.
+    fn ec_row_with_needle(
+        dat_offset: usize,
+        data_len: usize,
+    ) -> (Vec<Vec<u8>>, Vec<EcInterval>, Vec<u8>, Needle) {
+        let mut n = Needle {
+            id: NeedleId(7),
+            data: (0..data_len).map(|i| (i * 31 + 7) as u8).collect(),
+            ..Needle::default()
+        };
+        let bytes = n.write_bytes(VERSION_3);
+        let mut dat = vec![0u8; 10 * BLOCK];
+        dat[dat_offset..dat_offset + bytes.len()].copy_from_slice(&bytes);
+        let mut shards: Vec<Vec<u8>> = dat.chunks(BLOCK).map(|c| c.to_vec()).collect();
+        shards.resize(14, vec![0u8; BLOCK]);
+        ReedSolomon::new(10, 4)
+            .unwrap()
+            .encode(&mut shards)
+            .unwrap();
+
+        let mut metas = Vec::new();
+        let (mut pos, end) = (dat_offset, dat_offset + bytes.len());
+        while pos < end {
+            let size = (BLOCK - pos % BLOCK).min(end - pos);
+            metas.push(EcInterval {
+                vid: VolumeId(1),
+                needle_id: n.id,
+                shard_id: (pos / BLOCK) as ShardId,
+                shard_offset: (pos % BLOCK) as i64,
+                size,
+                expected_encode_ts_ns: 0,
+            });
+            pos += size;
+        }
+        (shards, metas, bytes, n)
+    }
+
+    fn corrupt(shards: &mut [Vec<u8>], shard_ids: &[ShardId], metas: &[EcInterval]) {
+        for &sid in shard_ids {
+            for iv in metas {
+                let start = iv.shard_offset as usize;
+                for b in &mut shards[sid as usize][start..start + iv.size] {
+                    *b ^= 0xFF;
+                }
+            }
+        }
+    }
+
+    fn search(
+        shards: &[Vec<u8>],
+        metas: &[EcInterval],
+        n: &Needle,
+        dat_offset: usize,
+    ) -> Option<(Vec<u8>, Vec<ShardId>)> {
+        let mut corrupted = Vec::new();
+        let mut gathers = Vec::new();
+        for iv in metas {
+            let range = iv.shard_offset as usize..iv.shard_offset as usize + iv.size;
+            corrupted.extend_from_slice(&shards[iv.shard_id as usize][range.clone()]);
+            gathers.push(
+                shards
+                    .iter()
+                    .enumerate()
+                    .map(|(sid, shard)| {
+                        (sid != iv.shard_id as usize).then(|| shard[range.clone()].to_vec())
+                    })
+                    .collect(),
+            );
+        }
+        let suspects: HashSet<ShardId> = metas.iter().map(|iv| iv.shard_id).collect();
+        let rs = ReedSolomon::new(10, 4).unwrap();
+        search_ec_corrupt_sets(
+            &mut gathers,
+            metas,
+            &rs,
+            &corrupted,
+            &suspects,
+            |candidate| {
+                let mut check = Needle {
+                    id: n.id,
+                    ..Needle::default()
+                };
+                check
+                    .read_bytes(candidate, dat_offset as i64, n.size, VERSION_3)
+                    .is_ok()
+                    && check.id == n.id
+            },
+        )
+    }
+
+    #[test]
+    fn search_ec_corrupt_sets_rebuilds_with_parity_many_shards_corrupt() {
+        let dat_offset = 2 * BLOCK + 100;
+        let (mut shards, metas, bytes, n) = ec_row_with_needle(dat_offset, 1000);
+        assert_eq!(metas.len(), 1);
+        // The needle's own shard and the lowest-numbered survivors, which every
+        // first decode reads.
+        corrupt(&mut shards, &[2, 0, 1, 3], &metas);
+
+        let (rebuilt, mut convicted) = search(&shards, &metas, &n, dat_offset).unwrap();
+        assert_eq!(rebuilt, bytes);
+        convicted.sort();
+        assert_eq!(convicted, vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn search_ec_corrupt_sets_keeps_a_clean_suspect_as_input() {
+        let dat_offset = BLOCK - 300;
+        let (mut shards, metas, bytes, n) = ec_row_with_needle(dat_offset, 1000);
+        assert_eq!(metas.len(), 2);
+        // Shard 0 is corrupt and shard 1 clean; rebuilding both would exceed
+        // parity with three other shards corrupt too.
+        corrupt(&mut shards, &[0], &metas[..1]);
+        corrupt(&mut shards, &[2, 3, 4], &metas);
+
+        let (rebuilt, mut convicted) = search(&shards, &metas, &n, dat_offset).unwrap();
+        assert_eq!(rebuilt, bytes);
+        convicted.sort();
+        assert_eq!(convicted, vec![0, 2, 3, 4]);
+    }
+
+    #[test]
+    fn search_ec_corrupt_sets_fails_past_parity() {
+        let dat_offset = 100;
+        let (mut shards, metas, _, n) = ec_row_with_needle(dat_offset, 1000);
+        corrupt(&mut shards, &[0, 1, 2, 3, 4], &metas);
+
+        assert!(search(&shards, &metas, &n, dat_offset).is_none());
     }
 
     fn locations(count: usize) -> HashMap<ShardId, Vec<String>> {

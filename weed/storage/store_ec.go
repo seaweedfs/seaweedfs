@@ -772,9 +772,14 @@ func (s *Store) rebuildEcShardNeedle(n *needle.Needle, needleId types.NeedleId, 
 				return candidate, false
 			}
 		}
-		if len(suspects) == 1 {
-			return nil, false
-		}
+	}
+	if candidate, isDeleted := s.rebuildEcNeedleFromCorruptSets(n, needleId, ecVolume, ecCtx, intervals, shardIds, offsets, offset, size, corrupted, suspects); isDeleted {
+		return nil, true
+	} else if candidate != nil {
+		return candidate, false
+	}
+	if len(suspects) == 1 {
+		return nil, false
 	}
 	for shardId := range suspects {
 		if candidate, isDeleted := try(map[erasure_coding.ShardId]bool{shardId: true}); isDeleted {
@@ -862,6 +867,182 @@ func (s *Store) rebuildEcNeedleFromDroppedInputs(n *needle.Needle, needleId type
 		forgetShardId(ecVolume, drop)
 		*n = *check
 		return candidate, false
+	}
+	return nil, false
+}
+
+// ecRebuildMaxSets bounds how many candidate corrupt sets one needle's search
+// enumerates, and ecRebuildMaxBytes the needle bytes it rebuilds and parses
+// past the single-shard sets. 10+4 has 1470 sets of at most four shards.
+const (
+	ecRebuildMaxSets  = 4096
+	ecRebuildMaxBytes = 1 << 30
+)
+
+// rebuildEcNeedleFromCorruptSets handles a rebuild the retries above could not
+// repair: more shards than one can be corrupt over the same ranges and get read
+// as reconstruction inputs. Each interval is gathered once from every other
+// shard that answers, then each set of up to ParityShards shards holding a
+// suspect is tried as the corrupt set, smallest first: suspect ranges inside it
+// are rebuilt from the shards outside it, the rest keep the bytes read, and a
+// needle parse arbitrates. A set whose decodes read the same inputs as one
+// already tried is skipped. Nil when that gather would outgrow the recovery
+// budget, or no set parses.
+func (s *Store) rebuildEcNeedleFromCorruptSets(n *needle.Needle, needleId types.NeedleId, ecVolume *erasure_coding.EcVolume, ecCtx *erasure_coding.ECContext, intervals []erasure_coding.Interval, shardIds []erasure_coding.ShardId, offsets []int64, offset int64, size types.Size, corrupted []byte, suspects map[erasure_coding.ShardId]bool) ([]byte, bool) {
+	var totalSize int64
+	for _, interval := range intervals {
+		totalSize += int64(interval.Size)
+	}
+	total := ecCtx.Total()
+	if totalSize*int64(total-1) > ecRecoverBudget {
+		return nil, false
+	}
+	weight := totalSize * int64(total)
+	if weight > ecRecoverBudget {
+		weight = ecRecoverBudget
+	}
+	if err := ecRecoverSem.Acquire(context.Background(), weight); err != nil {
+		return nil, false
+	}
+	defer ecRecoverSem.Release(weight)
+
+	gathers := make([][][]byte, len(intervals))
+	for i, interval := range intervals {
+		shardIntervals, isDeleted := s.gatherEcShardIntervals(needleId, ecVolume, ecCtx, map[erasure_coding.ShardId]bool{shardIds[i]: true}, int(interval.Size), offsets[i], total)
+		if isDeleted {
+			return nil, true
+		}
+		gathers[i] = shardIntervals
+	}
+
+	enc, err := reedsolomon.New(ecCtx.DataShards, ecCtx.ParityShards)
+	if err != nil {
+		return nil, false
+	}
+	candidate := slices.Clone(corrupted)
+	required := make([]bool, total)
+	view := make([][]byte, total)
+	inputs := make([]uint64, len(intervals))
+	tried := make(map[string]bool)
+
+	// plan records in inputs the shards each interval's decode reads when set
+	// is excluded, 0 for an interval that keeps its bytes. False when an
+	// interval has too few shards left, or the same decodes were tried before.
+	plan := func(set uint64) bool {
+		for i := range intervals {
+			inputs[i] = 0
+			if set&(1<<shardIds[i]) == 0 {
+				continue
+			}
+			taken := 0
+			for shardId := 0; shardId < total && taken < ecCtx.DataShards; shardId++ {
+				if set&(1<<shardId) == 0 && gathers[i][shardId] != nil {
+					inputs[i] |= 1 << shardId
+					taken++
+				}
+			}
+			if taken < ecCtx.DataShards {
+				return false
+			}
+		}
+		key := fmt.Sprint(inputs)
+		if tried[key] {
+			return false
+		}
+		tried[key] = true
+		return true
+	}
+
+	// decode rebuilds the planned intervals into candidate. The parsed needle
+	// keeps slices of candidate, so it is reset only on failure.
+	decode := func() bool {
+		pos := 0
+		for i, interval := range intervals {
+			end := pos + int(interval.Size)
+			if inputs[i] != 0 {
+				for shardId := range view {
+					view[shardId] = nil
+					if inputs[i]&(1<<shardId) != 0 {
+						view[shardId] = gathers[i][shardId]
+					}
+				}
+				view[shardIds[i]] = candidate[pos:pos:end]
+				required[shardIds[i]] = true
+				err := enc.ReconstructSome(view, required)
+				required[shardIds[i]] = false
+				if err != nil {
+					copy(candidate, corrupted)
+					return false
+				}
+			}
+			pos = end
+		}
+		check := &needle.Needle{Id: needleId}
+		if check.ReadBytes(candidate, offset, size, ecVolume.Version) != nil || check.Id != needleId {
+			copy(candidate, corrupted)
+			return false
+		}
+		*n = *check
+		return true
+	}
+
+	sets, spent := 0, 0
+	members := make([]int, 0, ecCtx.ParityShards)
+	for k := 1; k <= ecCtx.ParityShards && k <= total; k++ {
+		members = members[:k]
+		for j := range members {
+			members[j] = j
+		}
+		for {
+			var set uint64
+			holdsSuspect := false
+			for _, shardId := range members {
+				set |= 1 << shardId
+				holdsSuspect = holdsSuspect || suspects[erasure_coding.ShardId(shardId)]
+			}
+			if holdsSuspect {
+				if sets++; sets > ecRebuildMaxSets {
+					return nil, false
+				}
+				if plan(set) {
+					if k > 1 {
+						if spent >= ecRebuildMaxBytes {
+							return nil, false
+						}
+						spent += len(corrupted)
+					}
+					if decode() {
+						// The verdict convicts every differing range, and every
+						// other shard the set kept out of the decodes.
+						pos := 0
+						for i, interval := range intervals {
+							end := pos + int(interval.Size)
+							if !bytes.Equal(candidate[pos:end], corrupted[pos:end]) {
+								forgetShardId(ecVolume, shardIds[i])
+							}
+							pos = end
+						}
+						for _, shardId := range members {
+							if !suspects[erasure_coding.ShardId(shardId)] {
+								forgetShardId(ecVolume, erasure_coding.ShardId(shardId))
+							}
+						}
+						return candidate, false
+					}
+				}
+			}
+			j := k - 1
+			for j >= 0 && members[j] == total-k+j {
+				j--
+			}
+			if j < 0 {
+				break
+			}
+			members[j]++
+			for m := j + 1; m < k; m++ {
+				members[m] = members[m-1] + 1
+			}
+		}
 	}
 	return nil, false
 }
