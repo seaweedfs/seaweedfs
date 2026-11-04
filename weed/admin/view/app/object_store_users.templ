@@ -765,7 +765,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     }
                     const parts = actionValue.split(':');
                     const perm = parts[0];
-                    const bucket = parts.length > 1 ? parts.slice(1).join(':').replace(/\/\*$/, '') : '';
+                    const bucket = parts.length > 1 ? parts.slice(1).join(':') : '';
                     if (bucket) {
                         bucketActions.push({ permission: perm, bucketId: 's3tables:' + bucket, action: action });
                     } else {
@@ -774,7 +774,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                 } else if (action.includes(':')) {
                     const parts = action.split(':');
                     const perm = parts[0];
-                    const bucket = parts.slice(1).join(':').replace(/\/\*$/, '');
+                    const bucket = parts.slice(1).join(':');
                     bucketActions.push({ permission: perm, bucketId: 's3:' + bucket, action: action });
                 } else {
                     globalBucketPerms.push({ permission: action, action: action });
