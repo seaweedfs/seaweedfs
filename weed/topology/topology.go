@@ -1543,17 +1543,21 @@ func (t *Topology) EnableVacuum() {
 }
 
 // DisableVacuumByPlugin is called by the admin server's vacuum monitor
-// when a vacuum plugin worker connects. Only sets the plugin flag.
+// while a vacuum plugin worker is connected. Only sets the plugin flag.
+// The monitor repeats the call on every poll, so only a change is logged.
 func (t *Topology) DisableVacuumByPlugin() {
-	glog.V(0).Infof("DisableVacuum (by plugin worker)")
-	t.vacuumDisabledByPlugin.Store(true)
+	if !t.vacuumDisabledByPlugin.Swap(true) {
+		glog.V(0).Infof("DisableVacuum (by plugin worker)")
+	}
 }
 
 // EnableVacuumByPlugin is called by the admin server's vacuum monitor
-// when a vacuum plugin worker disconnects. Only clears the plugin flag.
+// while no vacuum plugin worker is connected. Only clears the plugin flag.
+// The monitor repeats the call on every poll, so only a change is logged.
 func (t *Topology) EnableVacuumByPlugin() {
-	glog.V(0).Infof("EnableVacuum (by plugin worker)")
-	t.vacuumDisabledByPlugin.Store(false)
+	if t.vacuumDisabledByPlugin.Swap(false) {
+		glog.V(0).Infof("EnableVacuum (by plugin worker)")
+	}
 }
 
 // IsVacuumDisabledByPlugin returns whether the plugin monitor has disabled vacuum.

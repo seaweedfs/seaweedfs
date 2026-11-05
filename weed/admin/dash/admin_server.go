@@ -380,35 +380,44 @@ func (m *masterVacuumToggler) enableVacuum() error {
 	})
 }
 
-// syncVacuumState performs a single sync step: checks if a vacuum-capable worker
-// is present and calls disable/enable accordingly. Returns the updated state
-// and whether the call failed (for log dedup on retries).
+// syncVacuumState performs a single sync step: tells the master to disable its
+// automatic vacuum while a vacuum-capable worker is present, and to re-enable it
+// otherwise.
+//
+// The call is sent on every tick, not only when the worker state changes. The
+// master keeps the flag in memory and it is not replicated through raft, so a
+// leader change or a master restart silently drops it. Sending it only on a
+// transition left the new leader running its own scheduled vacuum next to the
+// plugin worker, and when both vacuum the same volume the second commit fails
+// and the master drops that replica. Both RPCs are idempotent and cheap.
+//
+// Only transitions are logged. Returns the state the master was last
+// successfully set to, and whether this call failed (for log dedup on retries).
 func syncVacuumState(hasWorker bool, previouslyActive bool, toggler vacuumToggler, retrying bool) (active bool, failed bool) {
-	if hasWorker == previouslyActive {
-		return previouslyActive, false
-	}
+	changed := hasWorker != previouslyActive
 	if hasWorker {
-		if !retrying {
+		if changed && !retrying {
 			glog.V(0).Infof("Vacuum plugin worker connected, disabling master automatic vacuum")
 		}
 		if err := toggler.disableVacuum(); err != nil {
 			glog.Warningf("Failed to disable vacuum on master: %v", err)
-			return false, true // retry next tick
+			return previouslyActive, true // retry next tick
 		}
 		return true, false
 	}
-	if !retrying {
+	if changed && !retrying {
 		glog.V(0).Infof("Vacuum plugin worker disconnected, re-enabling master automatic vacuum")
 	}
 	if err := toggler.enableVacuum(); err != nil {
 		glog.Warningf("Failed to enable vacuum on master: %v", err)
-		return true, true // retry next tick
+		return previouslyActive, true // retry next tick
 	}
 	return false, false
 }
 
 // monitorVacuumWorker polls the plugin registry for vacuum-capable workers and
-// disables/enables the master's automatic scheduled vacuum accordingly.
+// disables/enables the master's automatic scheduled vacuum accordingly, re-sending
+// the state every poll so it survives master leader changes and restarts.
 func (s *AdminServer) monitorVacuumWorker(ctx context.Context) {
 	const pollInterval = 30 * time.Second
 	ticker := time.NewTicker(pollInterval)
