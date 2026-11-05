@@ -142,6 +142,11 @@ func TestVersionedDeleteMarkerCommitsOnOwner(t *testing.T) {
 	dataVersionId := putResult.Header().Get("x-amz-version-id")
 	require.NotEmpty(t, dataVersionId)
 
+	var deleteTxns []*filer_pb.ObjectTransactionRequest
+	owner.mu.Lock()
+	owner.txnCheck = func(req *filer_pb.ObjectTransactionRequest) { deleteTxns = append(deleteTxns, req) }
+	owner.mu.Unlock()
+
 	del := httptest.NewRequest(http.MethodDelete, "/bucket/key", nil)
 	del = mux.SetURLVars(del, map[string]string{"bucket": "bucket", "object": "key"})
 	delResult := httptest.NewRecorder()
@@ -153,6 +158,13 @@ func TestVersionedDeleteMarkerCommitsOnOwner(t *testing.T) {
 
 	markerKey := "/buckets/bucket/key.versions/v_" + markerId
 	owner.mu.Lock()
+	require.Len(t, deleteTxns, 1, "the marker and the pointer flip must share one transaction")
+	mutations := deleteTxns[0].Mutations
+	require.Len(t, mutations, 2)
+	require.Equal(t, filer_pb.ObjectMutation_PUT, mutations[0].Type)
+	require.Equal(t, "/buckets/bucket/key.versions", mutations[0].Directory)
+	require.Equal(t, "v_"+markerId, mutations[0].Entry.GetName())
+	require.Equal(t, filer_pb.ObjectMutation_RECOMPUTE_LATEST, mutations[1].Type)
 	require.NotNil(t, owner.entries[markerKey], "the marker must commit on the owner")
 	pointer := owner.entries["/buckets/bucket/key.versions"]
 	require.NotNil(t, pointer)
