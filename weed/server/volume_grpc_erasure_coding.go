@@ -1248,12 +1248,6 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 	}
 
 	dataBaseFileName := v.DataBaseFileName()
-
-	prot, bitrotStatus := erasure_coding.SelectBitrotProtection(vs.store.FindAllEcVolumes(needle.VolumeId(req.VolumeId)))
-	if err := erasure_coding.VerifyEcVolumeDataShards(prot, bitrotStatus, shardFileNames); err != nil {
-		return nil, fmt.Errorf("ec volume %d: %w", req.VolumeId, err)
-	}
-
 	// The fold and the index write must work on the same .ecj that runtime
 	// deletes append to through ecjFile — the volume's resolved index dir,
 	// which can differ from IndexBaseFileName when an .ecx copy exists in
@@ -1306,6 +1300,11 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 	}
 	if !hasLive {
 		return nil, status.Errorf(codes.FailedPrecondition, "ec volume %d %s", req.VolumeId, erasure_coding.EcNoLiveEntriesSubstring)
+	}
+
+	prot, bitrotStatus := erasure_coding.SelectBitrotProtection(vs.store.FindAllEcVolumes(needle.VolumeId(req.VolumeId)))
+	if err := erasure_coding.VerifyEcVolumeDataShards(prot, bitrotStatus, shardFileNames); err != nil {
+		return nil, fmt.Errorf("ec volume %d: %w", req.VolumeId, err)
 	}
 
 	// calculate .dat file size. Pass shard 0's resolved path: on a multi-disk
