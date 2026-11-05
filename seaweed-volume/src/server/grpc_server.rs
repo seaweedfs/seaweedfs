@@ -4366,7 +4366,7 @@ impl VolumeServer for VolumeGrpcService {
         // however often it reloaded. One delivered copy, reachable from all.
         let ec_metadata_dirs = store.ec_metadata_dirs();
         for ec_vol in store.find_all_ec_volumes_mut(vid) {
-            ec_vol.reload_bitrot_sidecar(&ec_metadata_dirs);
+            let _ = ec_vol.reload_bitrot_sidecar(&ec_metadata_dirs);
         }
         drop(store);
         self.state.volume_state_notify.notify_one();
@@ -7794,7 +7794,9 @@ impl EcDecodeJob {
             let mut store = state.store.write().unwrap();
             let ec_metadata_dirs = store.ec_metadata_dirs();
             for ec_vol in store.find_all_ec_volumes_mut(vid) {
-                ec_vol.reload_bitrot_sidecar(&ec_metadata_dirs);
+                ec_vol
+                    .reload_bitrot_sidecar(&ec_metadata_dirs)
+                    .map_err(|e| Status::internal(format!("ec volume {}: {}", vid, e)))?;
             }
             crate::storage::erasure_coding::ec_volume::EcVolume::select_bitrot_protection(
                 &store.find_all_ec_volumes(vid),
@@ -14593,7 +14595,7 @@ mod tests {
         {
             let mut store = service.state.store.write().unwrap();
             for ec_vol in store.find_all_ec_volumes_mut(VolumeId(1)) {
-                ec_vol.reload_bitrot_sidecar(&[]);
+                ec_vol.reload_bitrot_sidecar(&[]).unwrap();
                 assert_eq!(
                     ec_vol.bitrot_protection().1,
                     crate::storage::erasure_coding::ec_bitrot::BitrotStatus::Off,
@@ -14603,6 +14605,40 @@ mod tests {
         }
         std::fs::rename(&hidden, &sidecar).unwrap();
         assert_corrupt_data_shard_rejected(&service, &data).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_volume_ec_shards_to_volume_refuses_a_late_sidecar_with_another_layout() {
+        use crate::storage::erasure_coding::ec_bitrot;
+        let (service, _tmp, data, _idx, _) = make_split_idx_ec_decode_service(&[], false).await;
+        let sidecar = format!("{data}/1.ecsum");
+        let hidden = format!("{data}/1.ecsum.hidden");
+        std::fs::rename(&sidecar, &hidden).unwrap();
+        {
+            let mut store = service.state.store.write().unwrap();
+            for ec_vol in store.find_all_ec_volumes_mut(VolumeId(1)) {
+                ec_vol.reload_bitrot_sidecar(&[]).unwrap();
+            }
+        }
+        let mut prot = ec_bitrot::load_bitrot_sidecar(&hidden).unwrap();
+        prot.ec_shard_config.as_mut().unwrap().parity_shards = 2;
+        ec_bitrot::save_bitrot_sidecar(&sidecar, &prot).unwrap();
+        std::fs::remove_file(&hidden).unwrap();
+
+        let err = service
+            .volume_ec_shards_to_volume(ec_shards_to_volume_request())
+            .await
+            .unwrap_err();
+
+        assert!(
+            err.message().contains("refusing to serve"),
+            "unexpected error: {}",
+            err.message()
+        );
+        assert!(!std::path::Path::new(&format!("{data}/1.dat")).exists());
+        for shard_id in 0..14 {
+            assert!(std::path::Path::new(&format!("{data}/1.ec{shard_id:02}")).exists());
+        }
     }
 
     async fn assert_corrupt_data_shard_rejected(service: &VolumeGrpcService, data: &str) {
