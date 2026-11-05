@@ -3073,7 +3073,7 @@ mod tests {
             .add_location(
                 dir,
                 dir,
-                2,
+                5,
                 DiskType::HardDrive,
                 MinFreeSpace::Percent(1.0),
                 Vec::new(),
