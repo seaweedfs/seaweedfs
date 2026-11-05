@@ -18,6 +18,9 @@ const (
 	ACTION_PUT_BUCKET_OBJECT_LOCK_CONFIG = "PutBucketObjectLockConfiguration"
 	ACTION_PUT_BUCKET_POLICY             = "PutBucketPolicy"
 	ACTION_DELETE_BUCKET_POLICY          = "DeleteBucketPolicy"
+	ACTION_PUT_BUCKET_CORS               = "PutBucketCors"
+	ACTION_DELETE_BUCKET_CORS            = "DeleteBucketCors"
+	ACTION_PUT_BUCKET_VERSIONING         = "PutBucketVersioning"
 	ACTION_PUT_BUCKET_QUOTA              = "PutBucketQuota"
 	ACTION_GET_BUCKET_QUOTA              = "GetBucketQuota"
 	// Scoped to their single operation: the multipart listing routes are

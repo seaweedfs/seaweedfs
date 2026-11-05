@@ -427,6 +427,12 @@ func mapBaseActionToS3Format(baseAction string) string {
 		return s3_constants.S3_ACTION_PUT_BUCKET_POLICY
 	case s3_constants.ACTION_DELETE_BUCKET_POLICY:
 		return s3_constants.S3_ACTION_DELETE_BUCKET_POLICY
+	case s3_constants.ACTION_PUT_BUCKET_CORS:
+		return s3_constants.S3_ACTION_PUT_BUCKET_CORS
+	case s3_constants.ACTION_DELETE_BUCKET_CORS:
+		return s3_constants.S3_ACTION_DELETE_BUCKET_CORS
+	case s3_constants.ACTION_PUT_BUCKET_VERSIONING:
+		return s3_constants.S3_ACTION_PUT_BUCKET_VERSIONING
 	case s3_constants.ACTION_PUT_BUCKET_QUOTA:
 		return s3_constants.S3_ACTION_PUT_BUCKET_QUOTA
 	case s3_constants.ACTION_GET_BUCKET_QUOTA:
