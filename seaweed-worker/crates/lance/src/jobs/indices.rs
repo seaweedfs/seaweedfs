@@ -234,6 +234,10 @@ impl JobHandler for OptimizeIndicesHandler {
             }
             let mut parameters: HashMap<String, ConfigValue> = HashMap::new();
             parameters.insert("table_id".to_string(), string_list(&id));
+            if vector_table {
+                // The run may turn out to be a retrain.
+                super::vector_index::declare_build_runtime(&mut parameters);
+            }
             proposals.push(JobProposal {
                 proposal_id: format!("{JOB_TYPE}:{encoded}"),
                 dedupe_key: format!("{JOB_TYPE}:{encoded}"),
