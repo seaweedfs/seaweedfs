@@ -64,10 +64,11 @@ pub async fn run_heartbeat_with_state(
     let pulse = Duration::from_secs(config.pulse_seconds.max(1));
     let mut new_leader: Option<String> = None;
     let mut duplicate_retry_count: u32 = 0;
-    // Whether a heartbeat stream was ever answered by a leader; before first
-    // registration the retry loop reconnects promptly instead of pacing a
-    // full pulse. Mirrors Go's `confirmedLeaderOnce`.
-    let mut confirmed_leader_once = false;
+    // When a stream a leader had answered last ended, `None` before first
+    // registration. Until then, and for a pulse after each loss, the retry
+    // loop reconnects promptly instead of pacing a full pulse. Mirrors Go's
+    // `confirmedLeaderOnce` and `leaderLostAt`.
+    let mut leader_lost_at: Option<tokio::time::Instant> = None;
 
     loop {
         let mut tried_hints: HashSet<String> = HashSet::new();
@@ -110,7 +111,7 @@ pub async fn run_heartbeat_with_state(
                     &leader,
                     pulse,
                     &mut shutdown_rx,
-                    &mut confirmed_leader_once,
+                    &mut leader_lost_at,
                     &mut duplicate_retry_count,
                 )
                 .await;
@@ -134,7 +135,7 @@ pub async fn run_heartbeat_with_state(
                 master_addr,
                 pulse,
                 &mut shutdown_rx,
-                &mut confirmed_leader_once,
+                &mut leader_lost_at,
                 &mut duplicate_retry_count,
             )
             .await
@@ -168,7 +169,7 @@ async fn heartbeat_once(
     target_addr: &str,
     pulse: Duration,
     shutdown_rx: &mut broadcast::Receiver<()>,
-    confirmed_leader_once: &mut bool,
+    leader_lost_at: &mut Option<tokio::time::Instant>,
     duplicate_retry_count: &mut u32,
 ) -> Option<String> {
     let grpc_addr = to_grpc_address(target_addr);
@@ -181,17 +182,22 @@ async fn heartbeat_once(
         SleepDuplicate(Duration),
         SleepPulse,
     }
-    let action = match do_heartbeat(
+    let mut confirmed_leader = false;
+    let result = do_heartbeat(
         config,
         state,
         &grpc_addr,
         target_addr,
         pulse,
         shutdown_rx,
-        confirmed_leader_once,
+        &mut confirmed_leader,
     )
     .await
-    {
+    .map_err(|e| e.to_string());
+    if confirmed_leader {
+        *leader_lost_at = Some(tokio::time::Instant::now());
+    }
+    let action = match result {
         Ok(Some(leader)) => {
             info!("Master leader changed to {}", leader);
             return Some(leader);
@@ -200,10 +206,7 @@ async fn heartbeat_once(
             *duplicate_retry_count = 0;
             return None;
         }
-        Err(e) => {
-            let err_msg = e.to_string();
-            // Drop `e` (non-Send) before any .await
-            drop(e);
+        Err(err_msg) => {
             warn!("Heartbeat to {} error: {}", grpc_addr, err_msg);
 
             if err_msg.contains(DUPLICATE_UUID_RETRY_MESSAGE) {
@@ -236,16 +239,17 @@ async fn heartbeat_once(
             // The lookup spends part of the retry delay rather than adding
             // to it.
             let retry_at = tokio::time::Instant::now() + pulse;
+            let unregistered_or_just_lost = leader_lost_at.is_none_or(|at| at.elapsed() < pulse);
             let leader = refresh_leader_from_peers(config, state, target_addr, pulse).await;
             let mut wait = retry_at.saturating_duration_since(tokio::time::Instant::now());
             if wait > Duration::from_secs(1)
-                && (!state.current_master().await.is_empty() || !*confirmed_leader_once)
+                && (!state.current_master().await.is_empty() || unregistered_or_just_lost)
             {
                 // A leader just named by the refresh usually accepts the
-                // next stream right away, and an unregistered server has
-                // nothing else to do, so reconnect promptly. Once the
-                // server was registered and no leader is known, keep the
-                // pulse backoff.
+                // next stream right away, an unregistered server has
+                // nothing else to do, and a master that just dropped the
+                // stream is usually back within a second, so reconnect
+                // promptly. Otherwise keep the pulse backoff.
                 wait = Duration::from_secs(1);
             }
             tokio::time::sleep(wait).await;
@@ -564,7 +568,7 @@ async fn do_heartbeat(
     current_master: &str,
     pulse: Duration,
     shutdown_rx: &mut broadcast::Receiver<()>,
-    confirmed_leader_once: &mut bool,
+    confirmed_leader: &mut bool,
 ) -> Result<Option<String>, Box<dyn std::error::Error>> {
     let channel = connect_channel(
         grpc_addr,
@@ -611,7 +615,6 @@ async fn do_heartbeat(
     volume_tick.tick().await;
     ec_tick.tick().await;
 
-    let mut confirmed_leader = false;
     loop {
         tokio::select! {
             resp = response_stream.message() => {
@@ -629,12 +632,11 @@ async fn do_heartbeat(
                                 publish_current_master(state, &hb_resp.leader).await;
                                 return Ok(Some(hb_resp.leader));
                             }
-                        } else if !confirmed_leader {
+                        } else if !*confirmed_leader {
                             // The leader answers every new stream without
                             // naming a leader, so this peer is the one lookups
                             // go to.
-                            confirmed_leader = true;
-                            *confirmed_leader_once = true;
+                            *confirmed_leader = true;
                             publish_current_master(state, current_master).await;
                         }
                         if !hb_resp.duplicated_uuids.is_empty() {
@@ -2426,6 +2428,56 @@ mod tests {
         assert!(store.has_volume(VolumeId(51)));
         let (_, volume) = store.find_volume(VolumeId(51)).unwrap();
         assert!(volume.is_no_write_or_delete());
+    }
+
+    // A master that is down is redialed after about a second for a pulse after
+    // the stream to it was lost, since a restarting master is usually back by
+    // then, and at the pulse pace once the loss is older. Mirrors Go's
+    // TestHeartbeatOnceKeepsPulseBackoffOnceLossIsOld.
+    #[tokio::test]
+    async fn test_heartbeat_once_redials_promptly_only_for_a_pulse_after_a_loss() {
+        let down = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
+            format!("127.0.0.1:{}.{}", port, port)
+        };
+        let pulse = Duration::from_secs(3);
+        let mut config = test_config();
+        config.master_addresses = vec![down.clone()];
+        config.pulse_seconds = pulse.as_secs();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let state = test_state_with_store(reporting_store(temp_dir.path().to_str().unwrap(), 0));
+        let (_shutdown_tx, mut shutdown_rx) = broadcast::channel(1);
+
+        for (lost_ago, prompt) in [(Duration::ZERO, true), (pulse, false)] {
+            let mut leader_lost_at = Some(tokio::time::Instant::now() - lost_ago);
+            let mut duplicate_retry_count = 0;
+            let started = tokio::time::Instant::now();
+            heartbeat_once(
+                &config,
+                &state,
+                &down,
+                pulse,
+                &mut shutdown_rx,
+                &mut leader_lost_at,
+                &mut duplicate_retry_count,
+            )
+            .await;
+            let elapsed = started.elapsed();
+            if prompt {
+                assert!(
+                    elapsed < Duration::from_secs(2),
+                    "redial right after a loss took {:?}",
+                    elapsed
+                );
+            } else {
+                assert!(
+                    elapsed >= Duration::from_millis(2500),
+                    "redial a pulse after a loss took {:?}",
+                    elapsed
+                );
+            }
+        }
     }
 
     // The pass only reads the store, so it must not shut out the readers that
