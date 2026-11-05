@@ -1303,8 +1303,13 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 	}
 
 	// A rebuild's backfill writes the sidecar without reloading the mounted
-	// runtimes, so resolve it again the way a shard mount does.
+	// runtimes, so resolve it again the way a shard mount does. Any runtime
+	// left finds it on every disk; with none left (an unmount raced the
+	// decode) the protection would read as Off.
 	ecVolumes := vs.store.FindAllEcVolumes(needle.VolumeId(req.VolumeId))
+	if len(ecVolumes) == 0 {
+		return nil, fmt.Errorf("ec volume %d was unmounted during the decode", req.VolumeId)
+	}
 	ecMetadataDirs := vs.store.EcMetadataDirs()
 	for _, ecVolume := range ecVolumes {
 		if err := ecVolume.ReloadBitrotSidecar(ecMetadataDirs...); err != nil {
