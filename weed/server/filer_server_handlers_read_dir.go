@@ -13,6 +13,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
 )
 
+// readOnlyListingKey marks a request served on the read-only port, whose
+// listing page must not offer write operations.
+type readOnlyListingKey struct{}
+
 // listDirectoryHandler lists directories and folders under a directory
 // files are sorted by name and paginated via "lastFileName" and "limit".
 // sub directories are listed on the first page, when "lastFileName"
@@ -91,6 +95,7 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 		ShouldDisplayLoadMore bool
 		EmptyFolder           bool
 		ShowDirectoryDelete   bool
+		ReadOnly              bool
 	}{
 		version.Version(),
 		path,
@@ -101,6 +106,7 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 		shouldDisplayLoadMore,
 		emptyFolder,
 		fs.option.ShowUIDirectoryDelete,
+		ctx.Value(readOnlyListingKey{}) != nil,
 	})
 	if err != nil {
 		glog.V(0).InfofCtx(ctx, "Template Execute Error: %v", err)

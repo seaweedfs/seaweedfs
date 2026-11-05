@@ -194,7 +194,7 @@ func (fs *FilerServer) readonlyFilerHandler(w http.ResponseWriter, r *http.Reque
 
 	switch r.Method {
 	case http.MethodGet, http.MethodHead:
-		fs.GetOrHeadHandler(w, r)
+		fs.GetOrHeadHandler(w, r.WithContext(context.WithValue(r.Context(), readOnlyListingKey{}, true)))
 	default:
 		requestMethod = "INVALID"
 		w.WriteHeader(http.StatusMethodNotAllowed)
