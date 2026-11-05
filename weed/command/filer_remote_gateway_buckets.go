@@ -158,6 +158,11 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 
 		client, remoteStorageMountLocation, err := option.findRemoteStorageClient(entry.Name)
 		if err != nil {
+			bucket := util.FullPath(option.bucketsDir).Child(entry.Name)
+			if _, isMounted := option.mappings.Mappings[string(bucket)]; !isMounted {
+				glog.V(0).Infof("remote bucket %s is not mounted, skipping delete", entry.Name)
+				return nil
+			}
 			return fmt.Errorf("findRemoteStorageClient %s: %v", entry.Name, err)
 		}
 

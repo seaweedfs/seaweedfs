@@ -340,3 +340,34 @@ func TestGatewayMetadataOnlyDeleteKeepsTheRemoteObject(t *testing.T) {
 		t.Fatalf("deletes = %+v, want the ordinary delete", remote.deletes)
 	}
 }
+
+func TestGatewayUnmountedBucketDeleteIsSkipped(t *testing.T) {
+	remote := &recordingRemote{}
+	remote_storage.RemoteStorageClientMakers["gatewaytest"] = recordingRemoteMaker{client: remote}
+	t.Cleanup(func() { delete(remote_storage.RemoteStorageClientMakers, "gatewaytest") })
+	option := &RemoteGatewayOptions{
+		bucketsDir:  "/buckets",
+		mappings:    &remote_pb.RemoteStorageMapping{Mappings: map[string]*remote_pb.RemoteStorageLocation{}},
+		remoteConfs: map[string]*remote_pb.RemoteConf{"gatewaytest": {Name: "gatewaytest", Type: "gatewaytest"}},
+	}
+	process, err := option.makeBucketedEventProcessor(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	deleteBucketEvent := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: &filer_pb.Entry{
+				Name:        "unmounted-bucket",
+				IsDirectory: true,
+			},
+		},
+	}
+
+	// Deleting a bucket that is not mounted (for instance because it was already unmounted
+	// by an earlier copy of the delete event) should return nil and not error.
+	if err := process(deleteBucketEvent); err != nil {
+		t.Fatalf("expected nil for unmounted bucket delete, got: %v", err)
+	}
+}
