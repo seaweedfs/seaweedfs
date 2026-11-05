@@ -13,7 +13,7 @@ pub struct IndexCoverage {
     pub index_name: String,
     /// Physical index segments: the IndexMetadata deltas sharing the name.
     pub segments: usize,
-    /// IVF partitions of the largest segment; 0 when the coverage is not known.
+    /// IVF partitions of the largest segment.
     pub partitions: usize,
     /// False when any delta of this index lacks a fragment bitmap: the index
     /// exists but which fragments it covers is unknown.
@@ -30,6 +30,7 @@ pub async fn coverage(dataset: &Dataset, vector_column: &str) -> Result<Vec<Inde
         .field(vector_column)
         .with_context(|| format!("no such column {vector_column}"))?;
     let mut by_name: BTreeMap<String, Vec<Option<RoaringBitmap>>> = BTreeMap::new();
+    let mut partitions: BTreeMap<String, usize> = BTreeMap::new();
     for index in dataset.load_indices().await?.iter() {
         if index.fields != [field.id] {
             continue;
@@ -38,6 +39,9 @@ pub async fn coverage(dataset: &Dataset, vector_column: &str) -> Result<Vec<Inde
             .entry(index.name.clone())
             .or_default()
             .push(index.fragment_bitmap.clone());
+        let count = crate::index::segment_partitions(dataset, vector_column, &index.uuid).await?;
+        let most = partitions.entry(index.name.clone()).or_default();
+        *most = count.max(*most);
     }
     let all: RoaringBitmap = dataset.fragments().iter().map(|f| f.id as u32).collect();
     let mut out = Vec::new();
@@ -59,14 +63,8 @@ pub async fn coverage(dataset: &Dataset, vector_column: &str) -> Result<Vec<Inde
                 unindexed_rows += fragment.count_rows(None).await?;
             }
         }
-        // Lance's statistics fail on an index that records no fragments.
-        let partitions = if coverage_known {
-            weed_lance_worker::vector_index::partitions(dataset, &name).await?
-        } else {
-            0
-        };
         out.push(IndexCoverage {
-            partitions,
+            partitions: partitions.get(&name).copied().unwrap_or(0),
             index_name: name,
             segments: bitmaps.len(),
             coverage_known,

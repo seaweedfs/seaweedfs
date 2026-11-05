@@ -6,8 +6,7 @@ use lance::Dataset;
 use lance::index::{DatasetIndexExt, DatasetIndexInternalExt};
 
 pub use weed_lance_worker::vector_index::{
-    INDEX_NAME, MAX_PARTITIONS, build, distance_metric, index_names, optimize, partitions,
-    partitions_for,
+    INDEX_NAME, MAX_PARTITIONS, build, distance_metric, index_names, optimize, partitions_for,
 };
 
 pub const MIN_PROBES: usize = 8;
@@ -32,11 +31,27 @@ pub fn probes_for(partitions: usize) -> Probes {
     }
 }
 
+/// Partitions of one index segment, read from the opened index. Lance's index
+/// statistics cost several milliseconds and may rewrite an old manifest.
+pub async fn segment_partitions(
+    dataset: &Dataset,
+    vector_column: &str,
+    segment: &uuid::Uuid,
+) -> Result<usize> {
+    let opened = dataset
+        .open_vector_index(
+            vector_column,
+            segment,
+            &lance_index::metrics::NoOpMetricsCollector,
+        )
+        .await?;
+    Ok(opened.total_partitions())
+}
+
 /// The probes a query of `vector_column` uses when it names none, or `None`
 /// without an index. The count comes from the most partitions any index on
-/// the column has, whichever of them the scan ends up searching.
-/// It is read from the opened index, which the scan then finds loaded;
-/// Lance's index statistics cost several milliseconds a query.
+/// the column has, whichever of them the scan ends up searching; the scan
+/// then finds the index it was read from already open.
 pub async fn default_probes(dataset: &Dataset, vector_column: &str) -> Result<Option<Probes>> {
     let Some(field) = dataset.schema().field(vector_column) else {
         return Ok(None);
@@ -46,14 +61,8 @@ pub async fn default_probes(dataset: &Dataset, vector_column: &str) -> Result<Op
         if index.fields != [field.id] {
             continue;
         }
-        let opened = dataset
-            .open_vector_index(
-                vector_column,
-                &index.uuid,
-                &lance_index::metrics::NoOpMetricsCollector,
-            )
-            .await?;
-        partitions = Some(opened.total_partitions().max(partitions.unwrap_or(0)));
+        let count = segment_partitions(dataset, vector_column, &index.uuid).await?;
+        partitions = Some(count.max(partitions.unwrap_or(0)));
     }
     Ok(partitions.map(probes_for))
 }

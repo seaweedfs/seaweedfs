@@ -153,11 +153,6 @@ pub async fn index_settings(dataset: &Dataset, name: &str) -> Result<IndexSettin
     })
 }
 
-/// Partitions of the index named `name`: the most any of its deltas has.
-pub async fn partitions(dataset: &Dataset, name: &str) -> Result<usize> {
-    Ok(index_settings(dataset, name).await?.partitions)
-}
-
 /// Whether an index built with `partitions` should be trained again for a
 /// table of `rows`: once the table has grown to twice the partitions it was
 /// sized for, the centroids no longer fit it.
