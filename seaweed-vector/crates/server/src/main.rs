@@ -36,6 +36,10 @@ struct Args {
     /// Memory for caching reads of write-once table files, in MiB; 0 disables.
     #[arg(long, env = "WEED_VECTOR_READ_CACHE_MB", default_value_t = 512)]
     read_cache_mb: u64,
+    /// Partitions each query probes in a table's vector index. Default: a
+    /// tenth of the index's partitions, at least 8; more under a filter.
+    #[arg(long, env = "WEED_VECTOR_NPROBES")]
+    nprobes: Option<std::num::NonZeroUsize>,
     /// The `jwt.filer_signing.key` of the cluster. The Lance namespace vends
     /// credentials that write index data only to a caller holding it.
     #[arg(long, env = "WEED_FILER_SIGNING_KEY")]
@@ -154,7 +158,8 @@ async fn main() -> Result<()> {
     let client = NamespaceClient::new(args.namespace.clone())
         .with_fallback(&fallback)
         .with_signing_key(signing_key.as_ref());
-    let mut service = VectorServer::new(client, fallback);
+    let mut service = VectorServer::new(client, fallback)
+        .with_nprobes(args.nprobes.map(std::num::NonZeroUsize::get));
     if args.read_cache_mb > 0 {
         service = service.with_read_cache(ReadCache::new(args.read_cache_mb << 20));
     }
@@ -191,4 +196,16 @@ async fn main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nprobes_must_be_positive() {
+        assert!(Args::try_parse_from(["weed-vector", "--nprobes", "0"]).is_err());
+        let args = Args::try_parse_from(["weed-vector", "--nprobes", "12"]).unwrap();
+        assert_eq!(args.nprobes.map(std::num::NonZeroUsize::get), Some(12));
+    }
 }

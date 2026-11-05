@@ -120,8 +120,28 @@ async fn scanner(
         crate::filter::apply(&mut scanner, filter)?;
         scanner.prefilter(!query.postfilter);
     }
-    if let Some(nprobes) = query.nprobes {
-        scanner.nprobes(nprobes);
+    // An explicitly empty segment list searches no index, so there is
+    // nothing to size probes for.
+    let no_segments = query.index_segments.as_ref().is_some_and(|s| s.is_empty());
+    if use_index && !no_segments {
+        let probes = match query.nprobes {
+            Some(n) => Some(crate::index::Probes { min: n, max: n }),
+            None => crate::index::default_probes(dataset, &table.vector_column).await?,
+        };
+        if let Some(probes) = probes {
+            // Lance searches `min` partitions, and under a prefilter keeps
+            // going up to `max` until it has k rows. An open bound would
+            // make it prepare every partition for that, which costs as much
+            // as the exact scan it is meant to avoid.
+            scanner.minimum_nprobes(probes.min);
+            scanner.maximum_nprobes(probes.max);
+            tracing::debug!(
+                min = probes.min,
+                max = probes.max,
+                filtered = query.filter.is_some(),
+                "ann scan"
+            );
+        }
     }
     let segments = query.index_segments.as_deref().unwrap_or(&[]);
     if use_index && !segments.is_empty() {

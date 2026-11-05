@@ -1,18 +1,60 @@
 //! Sizing the vector index an S3 Vectors table searches through, and the
 //! probes a query spends on it. Building lives in the worker crate.
 
+use anyhow::Result;
+use lance::Dataset;
+use lance::index::{DatasetIndexExt, DatasetIndexInternalExt};
+
 pub use weed_lance_worker::vector_index::{
     INDEX_NAME, MAX_PARTITIONS, build, distance_metric, index_names, optimize, partitions_for,
 };
 
 pub const MIN_PROBES: usize = 8;
 
-/// Partitions one query probes: a tenth of them, at least [`MIN_PROBES`], never
-/// more than exist.
-pub fn probes_for(partitions: usize) -> usize {
-    MIN_PROBES
-        .max(partitions.div_ceil(10))
-        .min(partitions.max(1))
+/// How many partitions a query searches: `min` always, and under a prefilter
+/// up to `max` until it has k rows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Probes {
+    pub min: usize,
+    pub max: usize,
+}
+
+/// Probes for an index of `partitions`: a tenth of them, at least
+/// [`MIN_PROBES`], never more than exist; a filtered query may widen to four
+/// times that.
+pub fn probes_for(partitions: usize) -> Probes {
+    let partitions = partitions.max(1);
+    let min = MIN_PROBES.max(partitions.div_ceil(10)).min(partitions);
+    Probes {
+        min,
+        max: (min * 4).min(partitions),
+    }
+}
+
+/// The probes a query of `vector_column` uses when it names none, or `None`
+/// without an index. The count comes from the most partitions any index on
+/// the column has, whichever of them the scan ends up searching.
+/// It is read from the opened index, which the scan then finds loaded;
+/// Lance's index statistics cost several milliseconds a query.
+pub async fn default_probes(dataset: &Dataset, vector_column: &str) -> Result<Option<Probes>> {
+    let Some(field) = dataset.schema().field(vector_column) else {
+        return Ok(None);
+    };
+    let mut partitions = None;
+    for index in dataset.load_indices().await?.iter() {
+        if index.fields != [field.id] {
+            continue;
+        }
+        let opened = dataset
+            .open_vector_index(
+                vector_column,
+                &index.uuid,
+                &lance_index::metrics::NoOpMetricsCollector,
+            )
+            .await?;
+        partitions = Some(opened.total_partitions().max(partitions.unwrap_or(0)));
+    }
+    Ok(partitions.map(probes_for))
 }
 
 #[cfg(test)]
@@ -29,11 +71,17 @@ mod tests {
 
     #[test]
     fn probes_are_a_tenth_with_a_floor() {
-        assert_eq!(probes_for(1), 1);
-        assert_eq!(probes_for(8), 8);
-        assert_eq!(probes_for(64), 8);
-        assert_eq!(probes_for(224), 23);
-        assert_eq!(probes_for(4096), 410);
+        assert_eq!(probes_for(1), Probes { min: 1, max: 1 });
+        assert_eq!(probes_for(8), Probes { min: 8, max: 8 });
+        assert_eq!(probes_for(64), Probes { min: 8, max: 32 });
+        assert_eq!(probes_for(224), Probes { min: 23, max: 92 });
+        assert_eq!(
+            probes_for(4096),
+            Probes {
+                min: 410,
+                max: 1640
+            }
+        );
     }
 
     fn exact(vector: &[f32], k: usize) -> Query {
@@ -71,6 +119,107 @@ mod tests {
                 "{flat:?} vs {ann:?}"
             );
         }
+    }
+
+    /// Pseudo-random rows, so partitions are not degenerate; a different seed
+    /// gives vectors the table does not hold.
+    fn scattered(rows: usize, dim: usize, seed: u64) -> Vec<Vec<f32>> {
+        let mut state: u64 = seed;
+        (0..rows)
+            .map(|_| {
+                (0..dim)
+                    .map(|_| {
+                        state = state
+                            .wrapping_mul(6364136223846793005)
+                            .wrapping_add(1442695040888963407);
+                        ((state >> 40) as f32) / (1u64 << 24) as f32
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn default_probes_follow_the_index_and_find_the_neighbours() {
+        let dir = TempDir::new().unwrap();
+        let rows = scattered(4000, 8, 0x9E3779B97F4A7C15);
+        let tags: Vec<&str> = (0..4000)
+            .map(|i| if i % 100 == 0 { "rare" } else { "common" })
+            .collect();
+        let mut dataset = testing::write_dataset(&dir, &rows, &tags).await;
+        let table = VectorTable::resolve(&dataset, None, None).unwrap();
+        assert_eq!(default_probes(&dataset, "vector").await.unwrap(), None);
+        build(&mut dataset, &table.vector_column, INDEX_NAME, 64, false)
+            .await
+            .unwrap();
+        assert_eq!(
+            default_probes(&dataset, "vector").await.unwrap(),
+            Some(probes_for(64))
+        );
+
+        let mut found = 0;
+        let total = 20 * 10;
+        for vector in &scattered(20, 8, 0xD1B54A32D192ED03) {
+            let q = exact(vector, 10);
+            let flat: std::collections::HashSet<u64> = query::flat(&dataset, &table, &q)
+                .await
+                .unwrap()
+                .iter()
+                .map(|h| h.row_id)
+                .collect();
+            let ann = query::ann(&dataset, &table, &q).await.unwrap();
+            assert_eq!(ann.len(), 10);
+            found += ann.iter().filter(|h| flat.contains(&h.row_id)).count();
+        }
+        assert!(found * 10 >= total * 9, "recall {found}/{total}");
+
+        // Eight probes do not hold ten of the 1% rare rows; a filtered query
+        // widens past the minimum until it has them.
+        let filtered = query::ann(
+            &dataset,
+            &table,
+            &Query {
+                filter: Some("tag = 'rare'".to_string()),
+                ..exact(&rows[0], 10)
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(filtered.len(), 10);
+    }
+
+    #[tokio::test]
+    async fn default_probes_take_the_largest_index() {
+        use lance::index::DatasetIndexExt;
+        use lance::index::vector::VectorIndexParams;
+        use lance_index::IndexType;
+        let dir = TempDir::new().unwrap();
+        let mut dataset =
+            testing::write_dataset(&dir, &scattered(1000, 8, 0x9E3779B97F4A7C15), &["a"; 1000])
+                .await;
+        testing::append_dataset(
+            &mut dataset,
+            &scattered(1000, 8, 0xD1B54A32D192ED03),
+            &["b"; 1000],
+        )
+        .await;
+        for (name, fragment, partitions) in [("a-small", 0u32, 2), ("z-large", 1u32, 100)] {
+            dataset
+                .create_index_builder(
+                    &["vector"],
+                    IndexType::Vector,
+                    &VectorIndexParams::ivf_flat(partitions, DistanceType::L2),
+                )
+                .name(name.to_string())
+                .fragments(vec![fragment])
+                .await
+                .unwrap();
+            dataset.checkout_latest().await.unwrap();
+        }
+        assert_eq!(
+            default_probes(&dataset, "vector").await.unwrap(),
+            Some(probes_for(100))
+        );
     }
 
     #[tokio::test]
