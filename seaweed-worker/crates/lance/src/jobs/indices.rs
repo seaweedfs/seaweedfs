@@ -6,8 +6,8 @@ use lance::index::DatasetIndexExt;
 use lance_index::optimize::OptimizeOptions;
 use seaweed_worker_core::config_form::{form, int_or, int_value, number_field};
 use seaweed_worker_core::pb::{
-    ConfigValue, DetectionComplete, DetectionProposals, ExecuteJobRequest, JobCompleted,
-    JobProgressUpdate, JobProposal, JobResult, JobTypeCapability, JobTypeDescriptor,
+    AdminRuntimeDefaults, ConfigValue, DetectionComplete, DetectionProposals, ExecuteJobRequest,
+    JobCompleted, JobProgressUpdate, JobProposal, JobResult, JobTypeCapability, JobTypeDescriptor,
     RunDetectionRequest,
 };
 use seaweed_worker_core::{DetectionSender, ExecutionSender, JobHandler};
@@ -172,6 +172,11 @@ impl JobHandler for OptimizeIndicesHandler {
                 defaults.clone(),
             )),
             worker_default_values: defaults,
+            // A retrain is a whole build, so it gets a build's time.
+            admin_runtime_defaults: Some(AdminRuntimeDefaults {
+                execution_timeout_seconds: super::vector_index::EXECUTION_TIMEOUT_SECONDS,
+                ..Default::default()
+            }),
             ..Default::default()
         }
     }
@@ -348,6 +353,14 @@ impl JobHandler for OptimizeIndicesHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_retrain_gets_a_builds_execution_timeout() {
+        let descriptor = OptimizeIndicesHandler::new(String::new()).descriptor();
+        let defaults = descriptor.admin_runtime_defaults.unwrap();
+        assert_eq!(defaults.execution_timeout_seconds, 3600);
+        assert!(!defaults.enabled);
+    }
 
     #[test]
     fn vector_tables_reindex_at_a_tenth_of_their_rows() {

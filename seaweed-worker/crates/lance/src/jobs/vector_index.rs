@@ -26,7 +26,7 @@ const VECTOR_NAMESPACE: &str = "vector";
 /// The column S3 Vectors writes its vectors to.
 const VECTOR_COLUMN: &str = "vector";
 /// A build trains on the whole table, so the admin's 90 seconds are not enough.
-const EXECUTION_TIMEOUT_SECONDS: i32 = 3600;
+pub(crate) const EXECUTION_TIMEOUT_SECONDS: i32 = 3600;
 
 /// Builds the vector index of an S3 Vectors table once it holds enough rows
 /// for an exact scan to be the slow way. Tables below the threshold, and rows
