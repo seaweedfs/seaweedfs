@@ -507,12 +507,9 @@ func processUpdateEvent(
 			// the object the update produced when the backend reports it
 			if updated != nil {
 				remoteEntry = updated
-			} else if stamp := message.NewEntry.RemoteEntry; stamp != nil && stamp.LastLocalSyncTsNs >= message.NewEntry.Attributes.Mtime*1e9+int64(message.NewEntry.Attributes.MtimeNs) {
-				// nothing changed on the remote, and the entry already carries a
-				// stamp taken after its mtime. Restamping logs one more update,
-				// which shouldSendToRemote still reads as dirty when the mtime is
-				// past RemoteMtime (a touch), so it comes back here and restamps
-				// again, forever.
+			} else if isStampOnlyUpdate(message) {
+				// restamping a stamp's own event logs the next one, and an mtime
+				// past RemoteMtime (a touch) keeps reading dirty, forever
 				glog.V(2).Infof("skipping restamp of synced entry: %s/%s ts_ns=%d", filer_pb.MetadataEventTargetDirectory(resp), message.GetNewEntry().GetName(), resp.TsNs)
 				return nil
 			}
@@ -1104,6 +1101,18 @@ func isMetadataOnlyUpdate(dir string, message *filer_pb.EventNotification) bool 
 		return false
 	}
 	return filer.IsSameData(message.OldEntry, message.NewEntry)
+}
+
+// isStampOnlyUpdate reports an update that changed the entry's RemoteEntry
+// and nothing else, as a sync stamp does.
+func isStampOnlyUpdate(message *filer_pb.EventNotification) bool {
+	if proto.Equal(message.OldEntry.GetRemoteEntry(), message.NewEntry.GetRemoteEntry()) {
+		return false
+	}
+	oldEntry := proto.Clone(message.OldEntry).(*filer_pb.Entry)
+	newEntry := proto.Clone(message.NewEntry).(*filer_pb.Entry)
+	oldEntry.RemoteEntry, newEntry.RemoteEntry = nil, nil
+	return proto.Equal(oldEntry, newEntry)
 }
 
 // liveRemoteEntry returns the RemoteEntry showing the entry's object is on the

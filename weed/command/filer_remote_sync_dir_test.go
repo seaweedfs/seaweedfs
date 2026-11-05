@@ -2211,52 +2211,63 @@ func TestMetadataUpdateKeepsTheStoredStampOnNilResult(t *testing.T) {
 // the content alone. The metadata-only update stamps the entry with the same
 // RemoteEntry, and the stamp is an update event of its own, which
 // shouldSendToRemote still reads as dirty because the mtime is past
-// RemoteMtime. Each stamp was processed into the next one, forever.
+// RemoteMtime. Each stamp was processed into the next one, forever. An mtime
+// ahead of the sync's clock stays past every stamp it takes.
 func TestTouchedEntryIsStampedOnce(t *testing.T) {
-	const mountedDir = "/buckets"
-	const dir = "/buckets/b"
-	mountLoc := &remote_pb.RemoteStorageLocation{Name: "s3", Bucket: "bucket", Path: "/"}
 	const uploaded = 1786096669
-	synced := &filer_pb.RemoteEntry{StorageName: "s3", RemoteETag: `"d41d8cd98f00b204e9800998ecf8427e"`, RemoteMtime: uploaded, LastLocalSyncTsNs: uploaded*1e9 + 500}
-	before := &filer_pb.Entry{Name: "app.lock", Attributes: &filer_pb.FuseAttributes{Mtime: uploaded}, RemoteEntry: synced}
-	touched := proto.Clone(before).(*filer_pb.Entry)
-	touched.Attributes.Mtime = uploaded + 3600
+	for _, tc := range []struct {
+		name  string
+		mtime int64
+	}{
+		{name: "touched", mtime: uploaded + 3600},
+		{name: "touched into the future", mtime: time.Now().Add(24 * time.Hour).Unix()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const mountedDir = "/buckets"
+			const dir = "/buckets/b"
+			mountLoc := &remote_pb.RemoteStorageLocation{Name: "s3", Bucket: "bucket", Path: "/"}
+			synced := &filer_pb.RemoteEntry{StorageName: "s3", RemoteETag: `"d41d8cd98f00b204e9800998ecf8427e"`, RemoteMtime: uploaded, LastLocalSyncTsNs: uploaded*1e9 + 500}
+			before := &filer_pb.Entry{Name: "app.lock", Attributes: &filer_pb.FuseAttributes{Mtime: uploaded}, RemoteEntry: synced}
+			touched := proto.Clone(before).(*filer_pb.Entry)
+			touched.Attributes.Mtime = tc.mtime
 
-	remote := &recordingRemote{}
-	filerClient := &stubFilerClient{}
-	event := &filer_pb.SubscribeMetadataResponse{
-		Directory:         dir,
-		EventNotification: &filer_pb.EventNotification{OldEntry: before, NewParentPath: dir, NewEntry: touched},
-	}
-	stamps := 0
-	for round := 0; round < 5; round++ {
-		filerClient.updated = nil
-		if err := processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, event); err != nil {
-			t.Fatal(err)
-		}
-		if filerClient.updated == nil {
-			break
-		}
-		stamps++
-		stamped := proto.Clone(filerClient.updated.Entry).(*filer_pb.Entry)
-		if !shouldSendToRemote(stamped) {
-			t.Fatal("precondition: the stamped entry still reads dirty, its mtime is past RemoteMtime")
-		}
-		// the filer logs the stamp as the next update of the entry
-		event = &filer_pb.SubscribeMetadataResponse{
-			Directory: dir,
-			EventNotification: &filer_pb.EventNotification{
-				OldEntry:      proto.Clone(filerClient.updated.Condition.Clauses[0].ExpectedEntry).(*filer_pb.Entry),
-				NewParentPath: dir,
-				NewEntry:      stamped,
-			},
-		}
-	}
-	if stamps != 1 {
-		t.Errorf("stamped the entry %d times, want 1: the touch is stamped, the stamp's own event is not", stamps)
-	}
-	if len(remote.writes) != 0 {
-		t.Errorf("writes = %+v, want none: the content did not change", remote.writes)
+			remote := &recordingRemote{}
+			filerClient := &stubFilerClient{}
+			event := &filer_pb.SubscribeMetadataResponse{
+				Directory:         dir,
+				EventNotification: &filer_pb.EventNotification{OldEntry: before, NewParentPath: dir, NewEntry: touched},
+			}
+			stamps := 0
+			for round := 0; round < 5; round++ {
+				filerClient.updated = nil
+				if err := processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, event); err != nil {
+					t.Fatal(err)
+				}
+				if filerClient.updated == nil {
+					break
+				}
+				stamps++
+				stamped := proto.Clone(filerClient.updated.Entry).(*filer_pb.Entry)
+				if !shouldSendToRemote(stamped) {
+					t.Fatal("precondition: the stamped entry still reads dirty, its mtime is past RemoteMtime")
+				}
+				// the filer logs the stamp as the next update of the entry
+				event = &filer_pb.SubscribeMetadataResponse{
+					Directory: dir,
+					EventNotification: &filer_pb.EventNotification{
+						OldEntry:      proto.Clone(filerClient.updated.Condition.Clauses[0].ExpectedEntry).(*filer_pb.Entry),
+						NewParentPath: dir,
+						NewEntry:      stamped,
+					},
+				}
+			}
+			if stamps != 1 {
+				t.Errorf("stamped the entry %d times, want 1: the touch is stamped, the stamp's own event is not", stamps)
+			}
+			if len(remote.writes) != 0 {
+				t.Errorf("writes = %+v, want none: the content did not change", remote.writes)
+			}
+		})
 	}
 }
 
