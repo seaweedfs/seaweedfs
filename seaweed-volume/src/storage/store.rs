@@ -3064,6 +3064,7 @@ mod tests {
 
     #[test]
     fn test_maybe_adjust_volume_max_reserves_plain_volumes_while_preallocating() {
+        let _g = FAKE_DISK_LOCK.lock().unwrap();
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
 
@@ -3072,7 +3073,7 @@ mod tests {
             .add_location(
                 dir,
                 dir,
-                2,
+                5,
                 DiskType::HardDrive,
                 MinFreeSpace::Percent(1.0),
                 Vec::new(),
@@ -3089,15 +3090,13 @@ mod tests {
             )
             .unwrap();
 
-        // Room for 2.5 volumes: the plain volume claims one, leaving one more slot.
-        let (_, free) = crate::storage::disk_location::get_disk_stats(dir);
-        let volume_size_limit = (free as f64 / 2.5) as u64;
-        if volume_size_limit == 0 {
-            return; // cannot determine free disk space
-        }
-        store
-            .volume_size_limit
-            .store(volume_size_limit, Ordering::Relaxed);
+        // Room for 2.5 volumes above the 1% floor: the plain volume claims one,
+        // leaving one more slot.
+        let limit = 1024 * MIB;
+        FAKE_ALL.store(100 * limit, Ordering::Relaxed);
+        FAKE_FREE.store(limit + limit * 5 / 2, Ordering::Relaxed);
+        store.disk_stats_of = fake_disk_stats;
+        store.volume_size_limit.store(limit, Ordering::Relaxed);
         store.locations[0].original_max_volume_count = 0;
         store.set_preallocate(true);
 
