@@ -53,6 +53,11 @@ type VolumeServer struct {
 	guard               *security.Guard
 	grpcDialOption      grpc.DialOption
 
+	// leaderLostAt is when a stream a leader had answered last ended, in Unix
+	// nanoseconds. For a pulse after that the loop also reconnects promptly:
+	// a master that just dropped the stream is usually restarting.
+	leaderLostAt atomic.Int64
+
 	needleMapKind                 storage.NeedleMapKind
 	ldbTimout                     int64
 	FixJpgOrientation             bool

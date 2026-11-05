@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
@@ -231,14 +232,15 @@ func (vs *VolumeServer) heartbeatOnce(target pb.ServerAddress, grpcDialOption gr
 		// The lookup spends part of the retry delay rather than
 		// adding to it.
 		retryAt := time.Now().Add(vs.pulsePeriod)
+		lostRecently := time.Since(time.Unix(0, vs.leaderLostAt.Load())) < vs.pulsePeriod
 		leader = vs.refreshLeaderFromPeers(target, vs.pulsePeriod)
 		wait := time.Until(retryAt)
-		if wait > time.Second && (vs.getCurrentMaster() != "" || !vs.confirmedLeaderOnce.Load()) {
+		if wait > time.Second && (vs.getCurrentMaster() != "" || !vs.confirmedLeaderOnce.Load() || lostRecently) {
 			// A leader just named by the refresh usually accepts the
-			// next stream right away, and an unregistered server has
-			// nothing else to do, so reconnect promptly. Once the
-			// server was registered and no leader is known, keep the
-			// pulse backoff.
+			// next stream right away, an unregistered server has
+			// nothing else to do, and a master that just dropped the
+			// stream is usually back within a second, so reconnect
+			// promptly. Otherwise keep the pulse backoff.
 			wait = time.Second
 		}
 		time.Sleep(wait)
@@ -288,8 +290,18 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 	// since a gRPC stream allows only one sender at a time.
 	resendChan := make(chan struct{}, 1)
 
+	var registered atomic.Bool
+	recvDone := make(chan struct{})
+	defer func() {
+		cancel()
+		<-recvDone
+		if registered.Load() {
+			vs.leaderLostAt.Store(time.Now().UnixNano())
+		}
+	}()
+
 	go func() {
-		confirmedLeader := false
+		defer close(recvDone)
 		for {
 			in, err := stream.Recv()
 			if err != nil {
@@ -312,10 +324,10 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 					doneChan <- nil
 					return
 				}
-			} else if !confirmedLeader {
+			} else if !registered.Load() {
 				// The leader answers every new heartbeat stream without naming a
 				// leader, so this peer is the one lookups should go to.
-				confirmedLeader = true
+				registered.Store(true)
 				vs.confirmedLeaderOnce.Store(true)
 				vs.setCurrentMaster(masterAddress)
 			}

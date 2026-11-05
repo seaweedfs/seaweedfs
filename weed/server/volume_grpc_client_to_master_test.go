@@ -531,3 +531,62 @@ func TestHeartbeatKeepsUntriedHintOverStaleSeedAnswer(t *testing.T) {
 		t.Fatalf("live leader got no heartbeat; currentMaster = %q", vs.getCurrentMaster())
 	}
 }
+
+// droppingLeader confirms each heartbeat stream and then ends it, the way a
+// master that is killed right after registering a volume server looks.
+type droppingLeader struct {
+	master_pb.UnimplementedSeaweedServer
+}
+
+func (m *droppingLeader) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServer) error {
+	if _, err := stream.Recv(); err != nil {
+		return err
+	}
+	if err := stream.Send(&master_pb.HeartbeatResponse{VolumeSizeLimit: 1 << 30}); err != nil {
+		return err
+	}
+	return fmt.Errorf("master stopped")
+}
+
+func timeHeartbeatOnce(vs *VolumeServer, target pb.ServerAddress) time.Duration {
+	start := time.Now()
+	vs.heartbeatOnce(target, vs.grpcDialOption, 0)
+	return time.Since(start)
+}
+
+// A registered server whose master just dropped the stream redials after about
+// a second, since a restarting master is usually back by then, even though no
+// peer names a leader.
+func TestHeartbeatOnceRedialsPromptlyAfterLosingRegisteredStream(t *testing.T) {
+	addr := startFakeMasterServerForLeaderLookup(t, &droppingLeader{})
+	vs := newHeartbeatTestVolumeServer(t)
+	vs.SeedMasterNodes = []pb.ServerAddress{addr}
+	vs.pulsePeriod = 3 * time.Second
+
+	if elapsed := timeHeartbeatOnce(vs, addr); elapsed < 900*time.Millisecond || elapsed >= 2*time.Second {
+		t.Fatalf("redial after losing a registered stream took %v, want about 1s", elapsed)
+	}
+	if !vs.confirmedLeaderOnce.Load() {
+		t.Fatal("the dropping leader never confirmed the stream")
+	}
+}
+
+// Once the loss is a pulse old, a master that is still down is redialed at the
+// pulse pace again.
+func TestHeartbeatOnceKeepsPulseBackoffOnceLossIsOld(t *testing.T) {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	down := fakeMasterAddress(lis.Addr())
+	lis.Close()
+	vs := newHeartbeatTestVolumeServer(t)
+	vs.SeedMasterNodes = []pb.ServerAddress{down}
+	vs.pulsePeriod = 3 * time.Second
+	vs.confirmedLeaderOnce.Store(true)
+	vs.leaderLostAt.Store(time.Now().Add(-vs.pulsePeriod).UnixNano())
+
+	if elapsed := timeHeartbeatOnce(vs, down); elapsed < 2500*time.Millisecond {
+		t.Fatalf("redial of a master lost a pulse ago took %v, want the %v pulse", elapsed, vs.pulsePeriod)
+	}
+}
