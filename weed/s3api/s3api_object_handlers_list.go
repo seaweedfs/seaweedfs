@@ -1215,13 +1215,25 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 			InclusiveStartFrom: inclusiveStartFrom,
 		}
 
-		stream, listErr := client.ListEntries(ctx, request)
-		if listErr != nil {
-			if errors.Is(listErr, filer_pb.ErrNotFound) {
+		var stream listEntriesStream
+		// A trailing-slash prefix names one directory, the only entry this level
+		// lists. Looking it up by name spares listing every sibling the name
+		// prefixes, which a SQL store answers by scanning the rest of the directory.
+		if cursor.prefixEndsOnDelimiter && prefix != "" && startName == "" {
+			if resp, lookupErr := client.LookupDirectoryEntry(ctx, &filer_pb.LookupDirectoryEntryRequest{Directory: dir, Name: prefix}); lookupErr == nil && resp.GetEntry().GetIsDirectory() {
+				stream = &listWindow{entries: []*filer_pb.Entry{resp.Entry}}
+			}
+		}
+		if stream == nil {
+			var listErr error
+			stream, listErr = client.ListEntries(ctx, request)
+			if listErr != nil {
+				if errors.Is(listErr, filer_pb.ErrNotFound) {
+					return
+				}
+				err = fmt.Errorf("list entries %+v: %w", request, listErr)
 				return
 			}
-			err = fmt.Errorf("list entries %+v: %w", request, listErr)
-			return
 		}
 
 		var entriesReceived uint32
@@ -1393,6 +1405,24 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 		startName = lastEntryName
 		inclusiveStartFrom = false
 	}
+}
+
+type listEntriesStream interface {
+	Recv() (*filer_pb.ListEntriesResponse, error)
+}
+
+// listWindow serves entries already in hand the way a ListEntries stream does.
+type listWindow struct {
+	entries []*filer_pb.Entry
+}
+
+func (w *listWindow) Recv() (*filer_pb.ListEntriesResponse, error) {
+	if len(w.entries) == 0 {
+		return nil, io.EOF
+	}
+	entry := w.entries[0]
+	w.entries = w.entries[1:]
+	return &filer_pb.ListEntriesResponse{Entry: entry}, nil
 }
 
 // hiddenProbePageSize is the window one probe request asks the filer for.
