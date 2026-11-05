@@ -377,7 +377,10 @@ func TestGatewayUnmountedBucketDeleteIsSkipped(t *testing.T) {
 // records its mount in it.
 func TestGatewayCreatesABucketAfterTheMappingFileIsDeleted(t *testing.T) {
 	option, remote := gatewayTestOption("gatewaytest-mapping-reset")
-	t.Cleanup(func() { delete(remote_storage.RemoteStorageClientMakers, "gatewaytest-mapping-reset") })
+	t.Cleanup(func() {
+		delete(remote_storage.RemoteStorageClientMakers, "gatewaytest-mapping-reset")
+		remote_storage.ResetRemoteStorageClients()
+	})
 	createAt, noFilter, noSuffix := "gatewaytest-mapping-reset", "", false
 	option.createBucketAt, option.include, option.exclude, option.createBucketRandomSuffix = &createAt, &noFilter, &noFilter, &noSuffix
 	process, err := option.makeBucketedEventProcessor(nil)
@@ -413,7 +416,10 @@ func TestGatewayCreatesABucketAfterTheMappingFileIsDeleted(t *testing.T) {
 // nothing left to do and must not hold the sync offset.
 func TestGatewayDeleteOfAnAbsentObjectSucceeds(t *testing.T) {
 	option, remote := gatewayTestOption("gatewaytest-absent-delete")
-	t.Cleanup(func() { delete(remote_storage.RemoteStorageClientMakers, "gatewaytest-absent-delete") })
+	t.Cleanup(func() {
+		delete(remote_storage.RemoteStorageClientMakers, "gatewaytest-absent-delete")
+		remote_storage.ResetRemoteStorageClients()
+	})
 	remote.deleteErr = remote_storage.ErrRemoteObjectNotFound
 	process, err := option.makeBucketedEventProcessor(nil)
 	if err != nil {
