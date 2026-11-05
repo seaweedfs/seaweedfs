@@ -86,13 +86,7 @@ func (c *commandEcDecode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 
 	// volumeId is provided
 	if vid != 0 {
-		targetCollection := *collection
-		if targetCollection == "" {
-			if c, found := ec.FindEcVolumeCollection(topologyInfo, vid); found {
-				targetCollection = c
-			}
-		}
-		return ec.DoEcDecode(env, topologyInfo, targetCollection, vid, diskType, *checkMinFreeSpace, diskUsageState)
+		return ec.DoEcDecode(env, topologyInfo, *collection, vid, diskType, *checkMinFreeSpace, diskUsageState)
 	}
 
 	// apply to all volumes in the collection
