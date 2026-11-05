@@ -1708,6 +1708,15 @@ func (s *AdminServer) GetPlugin() *adminplugin.Plugin {
 	return s.plugin
 }
 
+// SetAdminLockFairnessWindow sets the cluster admin lock's fairness window
+// (see AdminLockManager.SetFairnessWindow).
+func (s *AdminServer) SetAdminLockFairnessWindow(window time.Duration) {
+	if s == nil || s.pluginLock == nil {
+		return
+	}
+	s.pluginLock.SetFairnessWindow(window)
+}
+
 func (s *AdminServer) acquirePluginLock(reason string) (func(), error) {
 	if s == nil || s.pluginLock == nil {
 		return func() {}, nil
