@@ -407,3 +407,28 @@ func TestGatewayCreatesABucketAfterTheMappingFileIsDeleted(t *testing.T) {
 		t.Errorf("mapping for /buckets/fresh = %v, want bucket fresh", loc)
 	}
 }
+
+// TestGatewayDeleteOfAnAbsentObjectSucceeds: a repeated delete finds the
+// object gone, which GCS reports as ErrRemoteObjectNotFound; the event has
+// nothing left to do and must not hold the sync offset.
+func TestGatewayDeleteOfAnAbsentObjectSucceeds(t *testing.T) {
+	option, remote := gatewayTestOption("gatewaytest-absent-delete")
+	t.Cleanup(func() { delete(remote_storage.RemoteStorageClientMakers, "gatewaytest-absent-delete") })
+	remote.deleteErr = remote_storage.ErrRemoteObjectNotFound
+	process, err := option.makeBucketedEventProcessor(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := process(&filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets/gold/dir",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: &filer_pb.Entry{Name: "obj.bin", Attributes: &filer_pb.FuseAttributes{}},
+		},
+	}); err != nil {
+		t.Fatalf("delete of an absent object: %v", err)
+	}
+	if len(remote.deletes) != 1 || remote.deletes[0].Path != "/dir/obj.bin" {
+		t.Errorf("deletes = %+v, want /dir/obj.bin", remote.deletes)
+	}
+}

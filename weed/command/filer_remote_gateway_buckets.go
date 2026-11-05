@@ -336,7 +336,7 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 				return client.RemoveDirectory(dest)
 			}
 			glog.V(0).Infof("delete %s", remote_storage.FormatLocation(dest))
-			return client.DeleteFile(dest)
+			return deleteRemoteFile(client, dest)
 		}
 		if message.OldEntry != nil && message.NewEntry != nil {
 			if resp.Directory == option.bucketsDir {
