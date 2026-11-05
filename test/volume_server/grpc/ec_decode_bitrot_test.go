@@ -19,7 +19,16 @@ func TestEcShardsToVolumeRejectsCorruptDataShard(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
+	t.Run("sidecar loaded at mount", func(t *testing.T) {
+		testEcShardsToVolumeRejectsCorruptDataShard(t, false)
+	})
+	// A rebuild's backfill writes the sidecar after the shards are mounted.
+	t.Run("sidecar written after mount", func(t *testing.T) {
+		testEcShardsToVolumeRejectsCorruptDataShard(t, true)
+	})
+}
 
+func testEcShardsToVolumeRejectsCorruptDataShard(t *testing.T, sidecarAfterMount bool) {
 	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
@@ -44,17 +53,26 @@ func TestEcShardsToVolumeRejectsCorruptDataShard(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("VolumeEcShardsGenerate: %v", err)
 	}
+	dataDir := filepath.Join(clusterHarness.BaseDir(), "volume")
+	base := filepath.Join(dataDir, fmt.Sprintf("%d", volumeID))
+	if _, err := os.Stat(base + ".ecsum"); err != nil {
+		t.Fatalf("precondition: the encode wrote a bitrot sidecar: %v", err)
+	}
+	if sidecarAfterMount {
+		if err := os.Rename(base+".ecsum", base+".ecsum.hidden"); err != nil {
+			t.Fatalf("hide sidecar: %v", err)
+		}
+	}
 	if _, err := grpcClient.VolumeEcShardsMount(ctx, &volume_server_pb.VolumeEcShardsMountRequest{
 		VolumeId: volumeID,
 		ShardIds: []uint32{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13},
 	}); err != nil {
 		t.Fatalf("VolumeEcShardsMount: %v", err)
 	}
-
-	dataDir := filepath.Join(clusterHarness.BaseDir(), "volume")
-	base := filepath.Join(dataDir, fmt.Sprintf("%d", volumeID))
-	if _, err := os.Stat(base + ".ecsum"); err != nil {
-		t.Fatalf("precondition: the encode wrote a bitrot sidecar: %v", err)
+	if sidecarAfterMount {
+		if err := os.Rename(base+".ecsum.hidden", base+".ecsum"); err != nil {
+			t.Fatalf("restore sidecar: %v", err)
+		}
 	}
 	shard := base + ".ec03"
 	content, err := os.ReadFile(shard)
