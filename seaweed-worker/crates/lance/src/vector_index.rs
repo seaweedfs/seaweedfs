@@ -68,7 +68,8 @@ pub struct Coverage {
 }
 
 /// Coverage of `vector_column` by every index built on it, or `None` when it
-/// has no index.
+/// has no index. An index that does not record its fragments is an error:
+/// counting its rows as uncovered would have them indexed a second time.
 pub async fn coverage(dataset: &Dataset, vector_column: &str) -> Result<Option<Coverage>> {
     let Some(field) = dataset.schema().field(vector_column) else {
         return Ok(None);
@@ -79,10 +80,14 @@ pub async fn coverage(dataset: &Dataset, vector_column: &str) -> Result<Option<C
         if index.fields != [field.id] {
             continue;
         }
+        let Some(bitmap) = &index.fragment_bitmap else {
+            anyhow::bail!(
+                "index {} does not record the fragments it covers",
+                index.name
+            );
+        };
         *deltas.entry(index.name.clone()).or_default() += 1;
-        if let Some(bitmap) = &index.fragment_bitmap {
-            covered |= bitmap;
-        }
+        covered |= bitmap;
     }
     if deltas.is_empty() {
         return Ok(None);
