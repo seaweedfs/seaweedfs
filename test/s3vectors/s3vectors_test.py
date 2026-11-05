@@ -492,6 +492,84 @@ def test_tag_conditions(vectors, vector_clients, index):
         vectors.delete_index(**other)
 
 
+def exact_neighbours(rows, query, k):
+    import math
+    qn = math.sqrt(sum(x * x for x in query))
+    scored = sorted(((sum(a * b for a, b in zip(v, query)) / (math.sqrt(sum(a * a for a in v)) * qn), key)
+                     for key, v in rows.items()), reverse=True)
+    return {key for _, key in scored[:k]}
+
+
+@pytest.mark.worker
+def test_vector_index_job(vectors, cluster):
+    """The maintenance worker indexes a table past the row threshold through the
+    admin server, queries then run through the index, and rows written after
+    the build are still found."""
+    import os
+    import random
+    import subprocess
+    import urllib.request
+    from pathlib import Path
+
+    bucket, index, dim = "vectors-indexed", "idx", 16
+    vectors.create_vector_bucket(vectorBucketName=bucket)
+    vectors.create_index(vectorBucketName=bucket, indexName=index, dataType="float32",
+                         dimension=dim, distanceMetric="cosine")
+    # Embedding-like data: points around shared centres. Independent Gaussian
+    # vectors have no locality for an IVF index to use, so recall through one
+    # would only track the fraction of partitions probed.
+    rng = random.Random(7)
+    centres = [[rng.gauss(0, 1) for _ in range(dim)] for _ in range(30)]
+
+    def point():
+        centre = rng.choice(centres)
+        return [c + 0.3 * rng.gauss(0, 1) for c in centre]
+
+    rows = {f"v{i}": point() for i in range(1200)}
+    keys = list(rows)
+    for offset in range(0, len(keys), 400):
+        vectors.put_vectors(vectorBucketName=bucket, indexName=index,
+                            vectors=[{"key": key, "data": {"float32": rows[key]}} for key in keys[offset:offset + 400]])
+
+    admin = cluster["admin"]
+    job = "lance_vector_index"
+
+    def call(path, method="GET", body=None):
+        data = json.dumps(body).encode() if body is not None else None
+        request = urllib.request.Request(f"{admin}/api/plugin/job-types/{job}{path}", data=data, method=method,
+                                         headers={"Content-Type": "application/json"} if data else {})
+        with urllib.request.urlopen(request, timeout=120) as response:
+            return json.load(response)
+
+    call("/config", "PUT", {"admin_runtime": {"enabled": True},
+                            "worker_config_values": {"min_rows": {"int64_value": "1000"}}})
+    run = call("/run", "POST", {"timeout_seconds": 110})
+    assert run["success_count"] == 1 and run["error_count"] == 0, run
+
+    cli = Path(os.environ.get("VECTOR_CLI_BINARY", Path(__file__).resolve().parent / "weed-vector-cli"))
+    coverage = json.loads(subprocess.run(
+        [str(cli), "--namespace", cluster["catalog"], "--access-key", "test", "--secret-key", "test",
+         "coverage", f"{bucket}$vector${index}"], check=True, capture_output=True, text=True).stdout)
+    assert len(coverage) == 1 and coverage[0]["segments"] == 1 and coverage[0]["unindexed_rows"] == 0, coverage
+
+    found = 0
+    for _ in range(20):
+        query = point()
+        hits = vectors.query_vectors(vectorBucketName=bucket, indexName=index,
+                                     queryVector={"float32": query}, topK=10)["vectors"]
+        assert len(hits) == 10
+        found += len({h["key"] for h in hits} & exact_neighbours(rows, query, 10))
+    assert found >= 180, f"recall {found}/200"
+
+    late = point()
+    vectors.put_vectors(vectorBucketName=bucket, indexName=index, vectors=[{"key": "late", "data": {"float32": late}}])
+    hits = vectors.query_vectors(vectorBucketName=bucket, indexName=index, queryVector={"float32": late}, topK=1)
+    assert [h["key"] for h in hits["vectors"]] == ["late"]
+
+    again = call("/run", "POST", {"timeout_seconds": 60})
+    assert again["detected_count"] == 0, again
+
+
 def test_invalid_credentials(cluster):
     client = boto3.client("s3vectors", endpoint_url=cluster["endpoint"], aws_access_key_id="unknown",
                           aws_secret_access_key="unknown", region_name="us-east-1")

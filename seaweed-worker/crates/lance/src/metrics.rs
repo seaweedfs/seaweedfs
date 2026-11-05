@@ -18,6 +18,7 @@ pub struct LanceMetrics {
     pub worker: Metrics,
     pub fragments_removed: IntCounter,
     pub rows_indexed: IntCounter,
+    pub indexes_built: IntCounter,
     pub rows_sorted: IntCounter,
     pub versions_removed: IntCounter,
     pub bytes_reclaimed: IntCounter,
@@ -34,6 +35,10 @@ impl LanceMetrics {
             rows_indexed: metrics.counter(
                 "lance_rows_indexed_total",
                 "Rows brought under an index that did not cover them.",
+            )?,
+            indexes_built: metrics.counter(
+                "lance_vector_indexes_built_total",
+                "Vector indexes built for S3 Vectors tables.",
             )?,
             rows_sorted: metrics.counter(
                 "lance_rows_sorted_total",

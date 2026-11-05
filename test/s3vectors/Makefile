@@ -6,6 +6,7 @@ ifneq ($(wildcard $(WORKER_MANIFEST)),)
 WORKER := ./weed-vector-worker
 endif
 VOLUME := ./weed-volume
+LANCE_WORKER := ./weed-worker
 CARGO_PROFILE ?= release
 CARGO_TARGET_DIR ?= $(abspath ../../seaweed-vector/target)
 override CARGO_TARGET_DIR := $(abspath $(CARGO_TARGET_DIR))
@@ -27,6 +28,10 @@ $(CLI): FORCE
 	cd ../../seaweed-vector && cargo build --locked --profile $(CARGO_PROFILE) -p weed-vector-core --bin weed-vector-cli
 	cp $(CARGO_OUTPUT)/weed-vector-cli $(CLI)
 
+$(LANCE_WORKER): FORCE
+	cargo build --locked --profile $(CARGO_PROFILE) --manifest-path ../../seaweed-worker/Cargo.toml -p weed-lance-worker --bin weed-worker
+	cp $(CARGO_OUTPUT)/weed-worker $(LANCE_WORKER)
+
 ifneq ($(WORKER),)
 $(WORKER): $(VEC) FORCE
 	cargo build --locked --profile $(CARGO_PROFILE) --manifest-path ../../rust/Cargo.toml -p sw-vector-distributed --bin weed-vector
@@ -40,6 +45,9 @@ $(VOLUME): $(VEC) $(WORKER) FORCE
 FORCE:
 
 build: $(WEED) $(VEC) $(WORKER) $(VOLUME)
+ifneq ($(VECTOR_WORKER),)
+build: $(CLI) $(LANCE_WORKER)
+endif
 
 test: build
 	./run_test.sh
@@ -48,4 +56,4 @@ perf: build $(CLI)
 	./run_perf.sh
 
 clean:
-	rm -f $(WEED) $(VEC) $(CLI) ./weed-vector-worker $(VOLUME)
+	rm -f $(WEED) $(VEC) $(CLI) $(LANCE_WORKER) ./weed-vector-worker $(VOLUME)

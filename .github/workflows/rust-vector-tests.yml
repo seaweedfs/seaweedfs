@@ -76,7 +76,7 @@ jobs:
 
 
   vectors-e2e:
-    name: S3 Vectors Integration (${{ matrix.volume }} volume${{ matrix.hardened && ', hardened' || '' }})
+    name: S3 Vectors Integration (${{ matrix.volume }} volume${{ matrix.hardened && ', hardened' || '' }}${{ matrix.worker && ', worker' || '' }})
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
@@ -87,6 +87,16 @@ jobs:
         # volume, filer, gateway, engine) under mutual TLS, read JWTs
         # required, and every chunk encrypted by the gateway.
         hardened: ["", "1"]
+        worker: [""]
+        # Worker: the admin server and the Lance maintenance worker join the
+        # cluster, for the tests that build vector indexes through a job.
+        include:
+          - volume: go
+            hardened: ""
+            worker: "1"
+          - volume: rust
+            hardened: ""
+            worker: "1"
     env:
       CARGO_PROFILE_DEV_DEBUG: "0"
       CARGO_BUILD_JOBS: "2"
@@ -96,6 +106,7 @@ jobs:
       VECTOR_TLS: ${{ matrix.hardened }}
       VECTOR_READ_JWT: ${{ matrix.hardened }}
       VECTOR_ENCRYPT_VOLUMES: ${{ matrix.hardened }}
+      VECTOR_WORKER: ${{ matrix.worker }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -123,6 +134,18 @@ jobs:
         run: |
           go test ./weed/s3api/s3vectors -count=1
           go test ./weed/command -run 'Vector|Vectors' -count=1
+      # The worker workspace has no protoc of its own for lance's build
+      # scripts; use the vendored one its lock names, as its own workflow does.
+      - name: Use the vendored protoc for the worker
+        if: matrix.worker == '1'
+        run: |
+          cd seaweed-worker
+          cargo fetch --locked
+          version=$(awk '/^name = "protoc-bin-vendored-linux-x86_64"$/{found=1; next} found && /^version = /{gsub(/"/,"",$3); print $3; exit}' Cargo.lock)
+          test -n "$version" || { echo "protoc-bin-vendored-linux-x86_64 is not in Cargo.lock" >&2; exit 1; }
+          protoc=$(find ~/.cargo/registry/src -path "*protoc-bin-vendored-linux-x86_64-$version/bin/protoc" | head -1)
+          test -x "$protoc" || { echo "no vendored protoc $version in the registry" >&2; exit 1; }
+          echo "PROTOC=$protoc" >> "$GITHUB_ENV"
       - name: Build integration binaries
         working-directory: test/s3vectors
         # dev profile: correctness suite, no release codegen needed. weed-volume
@@ -131,6 +154,7 @@ jobs:
           set -e
           make ./weed ./weed-vector CARGO_PROFILE=dev
           if [ "${{ matrix.volume }}" = "rust" ]; then make ./weed-volume CARGO_PROFILE=dev; fi
+          if [ "${{ matrix.worker }}" = "1" ]; then make ./weed-vector-cli ./weed-worker CARGO_PROFILE=dev; fi
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -154,7 +178,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: vectors-e2e-diagnostics-${{ matrix.volume }}${{ matrix.hardened && '-hardened' || '' }}
+          name: vectors-e2e-diagnostics-${{ matrix.volume }}${{ matrix.hardened && '-hardened' || '' }}${{ matrix.worker && '-worker' || '' }}
           path: |
             ${{ runner.temp }}/vector-tests
             ${{ runner.temp }}/vector-results.xml
