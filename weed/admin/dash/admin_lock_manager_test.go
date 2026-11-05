@@ -89,7 +89,7 @@ func TestAdminLockManagerRefCountsOverlappingHolds(t *testing.T) {
 	t.Parallel()
 
 	locker := &fakeAdminLocker{}
-	m := newTestLockManager(locker, defaultAdminLockYieldWindow, defaultAdminLockFairnessWindow)
+	m := newTestLockManager(locker, defaultAdminLockYieldWindow, DefaultAdminLockFairnessWindow)
 
 	release1, _ := m.Acquire("a")
 	release2, _ := m.Acquire("b")
@@ -112,7 +112,7 @@ func TestAdminLockManagerYieldsBeforeReacquire(t *testing.T) {
 	t.Parallel()
 
 	locker := &fakeAdminLocker{}
-	m := newTestLockManager(locker, 100*time.Millisecond, defaultAdminLockFairnessWindow)
+	m := newTestLockManager(locker, 100*time.Millisecond, DefaultAdminLockFairnessWindow)
 
 	release, _ := m.Acquire("first")
 	release()
@@ -178,7 +178,7 @@ func TestAdminLockManagerAcquireWaitsForReleaseInFlight(t *testing.T) {
 	t.Parallel()
 
 	locker := &fakeAdminLocker{releaseDelay: 50 * time.Millisecond}
-	m := newTestLockManager(locker, time.Millisecond, defaultAdminLockFairnessWindow)
+	m := newTestLockManager(locker, time.Millisecond, DefaultAdminLockFairnessWindow)
 
 	release1, _ := m.Acquire("first")
 	releaseDone := make(chan struct{})
@@ -199,5 +199,74 @@ func TestAdminLockManagerAcquireWaitsForReleaseInFlight(t *testing.T) {
 	}
 	if locker.requests[1].Before(locker.releases[0]) {
 		t.Fatalf("RequestLock ran while ReleaseLock was still in flight")
+	}
+}
+
+func TestAdminLockManagerZeroFairnessWindowKeepsJoining(t *testing.T) {
+	t.Parallel()
+
+	locker := &fakeAdminLocker{}
+	m := newTestLockManager(locker, time.Millisecond, 0)
+
+	release1, _ := m.Acquire("long-job")
+	m.mu.Lock()
+	m.heldSince = time.Now().Add(-time.Hour)
+	m.mu.Unlock()
+
+	acquired := make(chan func(), 1)
+	go func() {
+		release2, _ := m.Acquire("late-joiner")
+		acquired <- release2
+	}()
+
+	select {
+	case release2 := <-acquired:
+		release2()
+	case <-time.After(time.Second):
+		t.Fatalf("late acquire waited for a full release with the fairness window disabled")
+	}
+	release1()
+
+	if requests, releases := locker.counts(); requests != 1 || releases != 1 {
+		t.Fatalf("expected one shared hold, got requests=%d releases=%d", requests, releases)
+	}
+}
+
+func TestAdminLockManagerSetFairnessWindowWakesWaiters(t *testing.T) {
+	t.Parallel()
+
+	locker := &fakeAdminLocker{}
+	m := newTestLockManager(locker, time.Millisecond, time.Millisecond)
+
+	release1, _ := m.Acquire("long-job")
+	m.mu.Lock()
+	m.heldSince = time.Now().Add(-time.Second)
+	m.mu.Unlock()
+
+	acquired := make(chan func(), 1)
+	go func() {
+		release2, _ := m.Acquire("late-joiner")
+		acquired <- release2
+	}()
+
+	require.Eventually(t, func() bool { return len(m.Status().Waiters) == 1 }, time.Second, time.Millisecond)
+	select {
+	case <-acquired:
+		t.Fatalf("late acquire joined a hold older than the fairness window")
+	default:
+	}
+
+	m.SetFairnessWindow(0)
+
+	select {
+	case release2 := <-acquired:
+		release2()
+	case <-time.After(time.Second):
+		t.Fatalf("disabling the fairness window did not admit the waiting acquire")
+	}
+	release1()
+
+	if requests, releases := locker.counts(); requests != 1 || releases != 1 {
+		t.Fatalf("expected one shared hold, got requests=%d releases=%d", requests, releases)
 	}
 }

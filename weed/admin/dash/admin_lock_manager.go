@@ -23,7 +23,7 @@ const (
 	// After the lock has been held continuously for this long (overlapping
 	// reference-counted holds can keep it held indefinitely), new Acquire
 	// calls wait for a full release so shell clients are not starved.
-	defaultAdminLockFairnessWindow = time.Minute
+	DefaultAdminLockFairnessWindow = time.Minute
 )
 
 // adminLocker is the subset of exclusive_locks.ExclusiveLocker the manager uses.
@@ -67,7 +67,7 @@ func NewAdminLockManager(masterClient *wdclient.MasterClient, clientName string)
 		locker:         exclusive_locks.NewExclusiveLocker(masterClient, adminLockName),
 		clientName:     clientName,
 		yieldWindow:    defaultAdminLockYieldWindow,
-		fairnessWindow: defaultAdminLockFairnessWindow,
+		fairnessWindow: DefaultAdminLockFairnessWindow,
 	}
 	manager.cond = sync.NewCond(&manager.mu)
 	return manager
@@ -93,7 +93,7 @@ func (m *AdminLockManager) Acquire(reason string) (func(), error) {
 		delete(m.waiters, waiter)
 		m.mu.Unlock()
 	}()
-	for m.acquiring || m.releasing || (m.holdCount > 0 && time.Since(m.heldSince) > m.fairnessWindow) {
+	for m.acquiring || m.releasing || m.fairnessDueLocked() {
 		m.cond.Wait()
 	}
 	if reason != "" {
@@ -132,6 +132,26 @@ func (m *AdminLockManager) Acquire(reason string) (func(), error) {
 	}
 	m.mu.Unlock()
 	return m.Release, nil
+}
+
+// fairnessDueLocked reports whether new holders must wait for a full release
+// because the lock has been held past the fairness window. A window of zero
+// or less never forces one. Caller holds m.mu.
+func (m *AdminLockManager) fairnessDueLocked() bool {
+	return m.fairnessWindow > 0 && m.holdCount > 0 && time.Since(m.heldSince) > m.fairnessWindow
+}
+
+// SetFairnessWindow changes how long overlapping holds may keep the lock
+// before new Acquire calls wait for a full release; zero or less disables
+// the forced release, leaving shell clients the gaps between holds.
+func (m *AdminLockManager) SetFairnessWindow(window time.Duration) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.fairnessWindow = window
+	m.cond.Broadcast()
+	m.mu.Unlock()
 }
 
 func (m *AdminLockManager) Release() {
