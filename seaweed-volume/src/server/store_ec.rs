@@ -2438,7 +2438,7 @@ async fn fetch_ec_index_from_one_peer(
 
     match client.copy_file(copy_req(".vif", true)).await {
         Ok(resp) => {
-            if let Err(e) = drain_copy_stream(resp.into_inner(), vif_path).await {
+            if let Err(e) = drain_optional_copy_stream(resp.into_inner(), vif_path).await {
                 tracing::warn!(volume_id = m.vid.0, peer = %peer, "copy .vif: {}", e);
             }
         }
@@ -2446,6 +2446,48 @@ async fn fetch_ec_index_from_one_peer(
     }
 
     Ok(())
+}
+
+/// Drain an optional CopyFile stream into `<dest_path>.copying` and rename it
+/// into place only once the source sent bytes, so a peer without the file or a
+/// failed stream leaves an existing destination untouched, as Go's writeToFile
+/// does for ignore_source_file_not_found.
+pub(crate) async fn drain_optional_copy_stream(
+    stream: tonic::Streaming<crate::pb::volume_server_pb::CopyFileResponse>,
+    dest_path: &str,
+) -> io::Result<()> {
+    let staging = format!("{}.copying", dest_path);
+    let mut incomplete = RemoveIncomplete::new(&staging);
+    let drained = drain_copy_stream(stream, &staging).await;
+    let has_bytes = fs::metadata(&staging).is_ok_and(|meta| meta.len() > 0);
+    if drained.is_ok() && has_bytes {
+        fs::rename(&staging, dest_path)
+            .map_err(|e| io::Error::other(format!("commit {}: {}", dest_path, e)))?;
+        incomplete.committed();
+    }
+    drained
+}
+
+/// Removes a staged copy unless it was committed, including when the copy is
+/// dropped mid-stream because its RPC was cancelled.
+pub(crate) struct RemoveIncomplete(Option<String>);
+
+impl RemoveIncomplete {
+    pub(crate) fn new(staging: &str) -> Self {
+        Self(Some(staging.to_string()))
+    }
+
+    pub(crate) fn committed(&mut self) {
+        self.0 = None;
+    }
+}
+
+impl Drop for RemoveIncomplete {
+    fn drop(&mut self) {
+        if let Some(staging) = self.0.take() {
+            let _ = fs::remove_file(staging);
+        }
+    }
 }
 
 /// Drain a CopyFile stream into a local file, truncating it first.

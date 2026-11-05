@@ -4114,10 +4114,7 @@ impl VolumeServer for VolumeGrpcService {
                     crate::storage::volume::volume_file_name(&dest_dir, &req.collection, vid);
                 format!("{}.vif", base)
             };
-            let file = tokio::fs::File::create(&file_path)
-                .await
-                .map_err(|e| Status::internal(format!("create {}: {}", file_path, e)))?;
-            drain_copy_stream_to_file(&mut stream, file, &file_path, ".vif").await?;
+            drain_optional_copy_to_file(&mut stream, &file_path, ".vif").await?;
         }
 
         // Copy the generation-0 bitrot checksum sidecar (.ecsum) when requested, so
@@ -4151,17 +4148,7 @@ impl VolumeServer for VolumeGrpcService {
                     crate::storage::volume::volume_file_name(&dest_dir, &req.collection, vid);
                 format!("{}.ecsum", base)
             };
-            let file = tokio::fs::File::create(&file_path)
-                .await
-                .map_err(|e| Status::internal(format!("create {}: {}", file_path, e)))?;
-            let written =
-                drain_copy_stream_to_file(&mut stream, file, &file_path, ".ecsum").await?;
-            // A missing source yields an empty stream; drop the 0-byte file so mount
-            // sees no sidecar (protection Off) rather than a truncated/invalid one.
-            // (drain_copy_stream_to_file has already closed the file on return.)
-            if written == 0 {
-                let _ = tokio::fs::remove_file(&file_path).await;
-            }
+            drain_optional_copy_to_file(&mut stream, &file_path, ".ecsum").await?;
         }
 
         Ok(Response::new(
@@ -6999,6 +6986,30 @@ fn set_file_mtime(path: &str, modified_ts_ns: i64) -> std::io::Result<()> {
     let file = std::fs::File::open(path)?;
     let ft = std::fs::FileTimes::new().set_accessed(ts).set_modified(ts);
     file.set_times(ft)
+}
+
+/// An optional copy (the source may lack the file) streams into
+/// `<file_path>.copying` and is renamed into place only once the source sent
+/// bytes, so a missing source or a failed stream leaves an existing destination
+/// untouched, as Go's writeToFile does for ignore_source_file_not_found.
+async fn drain_optional_copy_to_file(
+    stream: &mut tonic::Streaming<volume_server_pb::CopyFileResponse>,
+    file_path: &str,
+    what: &str,
+) -> Result<u64, Status> {
+    let staging = format!("{}.copying", file_path);
+    let mut incomplete = crate::server::store_ec::RemoveIncomplete::new(&staging);
+    let file = tokio::fs::File::create(&staging)
+        .await
+        .map_err(|e| Status::internal(format!("create {}: {}", staging, e)))?;
+    let written = drain_copy_stream_to_file(stream, file, &staging, what).await?;
+    if written > 0 {
+        tokio::fs::rename(&staging, file_path)
+            .await
+            .map_err(|e| Status::internal(format!("commit {}: {}", file_path, e)))?;
+        incomplete.committed();
+    }
+    Ok(written)
 }
 
 /// Drain a CopyFile stream into `file`, returning the number of bytes written.
@@ -9858,6 +9869,229 @@ mod tests {
             copied,
             dat_bytes.len()
         );
+    }
+
+    // An optional sidecar copy from a peer that lacks the file must leave the
+    // destination's own copy in place; one from a peer that has it replaces it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_optional_copy_keeps_destination_when_source_lacks_file() {
+        let (source_service, source_tmp) = make_local_service_with_volume("optional_copy", None);
+        let (port, _shutdown) = serve_source(source_service).await;
+        let channel = tonic::transport::Endpoint::from_shared(format!("http://127.0.0.1:{}", port))
+            .unwrap()
+            .connect()
+            .await
+            .unwrap();
+        let mut client = volume_server_pb::volume_server_client::VolumeServerClient::new(channel);
+        let request = |ext: &str| volume_server_pb::CopyFileRequest {
+            volume_id: 1,
+            ext: ext.to_string(),
+            is_ec_volume: true,
+            compaction_revision: u32::MAX,
+            stop_offset: i64::MAX as u64,
+            ignore_source_file_not_found: true,
+            ..Default::default()
+        };
+
+        let dest_tmp = TempDir::new().unwrap();
+        let dest = format!("{}/1.ecsum", dest_tmp.path().to_str().unwrap());
+        std::fs::write(&dest, b"local sidecar").unwrap();
+
+        let mut missing = client
+            .copy_file(request(".ecsum"))
+            .await
+            .unwrap()
+            .into_inner();
+        let written = drain_optional_copy_to_file(&mut missing, &dest, ".ecsum")
+            .await
+            .unwrap();
+        assert_eq!(written, 0);
+        assert_eq!(std::fs::read(&dest).unwrap(), b"local sidecar");
+        assert!(!std::path::Path::new(&format!("{}.copying", dest)).exists());
+
+        std::fs::write(
+            format!("{}/1.ecsum", source_tmp.path().to_str().unwrap()),
+            b"peer sidecar",
+        )
+        .unwrap();
+        let mut present = client
+            .copy_file(request(".ecsum"))
+            .await
+            .unwrap()
+            .into_inner();
+        drain_optional_copy_to_file(&mut present, &dest, ".ecsum")
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), b"peer sidecar");
+    }
+
+    // Missing-index recovery copies the peer's .vif the same way, so a peer
+    // without one cannot truncate the local .vif that carries the EC ratio.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_index_recovery_vif_copy_keeps_local_vif_when_peer_lacks_it() {
+        let (source_service, source_tmp) = make_local_service_with_volume("optional_vif", None);
+        let source_vif = format!("{}/1.vif", source_tmp.path().to_str().unwrap());
+        let _ = std::fs::remove_file(&source_vif);
+        let (port, _shutdown) = serve_source(source_service).await;
+        let channel = tonic::transport::Endpoint::from_shared(format!("http://127.0.0.1:{}", port))
+            .unwrap()
+            .connect()
+            .await
+            .unwrap();
+        let mut client = volume_server_pb::volume_server_client::VolumeServerClient::new(channel);
+        let request = volume_server_pb::CopyFileRequest {
+            volume_id: 1,
+            ext: ".vif".to_string(),
+            is_ec_volume: true,
+            compaction_revision: u32::MAX,
+            stop_offset: i64::MAX as u64,
+            ignore_source_file_not_found: true,
+            ..Default::default()
+        };
+
+        let dest_tmp = TempDir::new().unwrap();
+        let dest = format!("{}/1.vif", dest_tmp.path().to_str().unwrap());
+        std::fs::write(&dest, b"local vif").unwrap();
+
+        let missing = client
+            .copy_file(request.clone())
+            .await
+            .unwrap()
+            .into_inner();
+        crate::server::store_ec::drain_optional_copy_stream(missing, &dest)
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), b"local vif");
+        assert!(!std::path::Path::new(&format!("{}.copying", dest)).exists());
+
+        std::fs::write(&source_vif, b"peer vif").unwrap();
+        let present = client.copy_file(request).await.unwrap().into_inner();
+        crate::server::store_ec::drain_optional_copy_stream(present, &dest)
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), b"peer vif");
+    }
+
+    /// A CopyFile stream that delivers `frame` and then fails, or stalls
+    /// forever when the second field is set.
+    struct FailAfterFrame(Option<bytes::Bytes>, bool);
+
+    impl http_body::Body for FailAfterFrame {
+        type Data = bytes::Bytes;
+        type Error = Status;
+
+        fn poll_frame(
+            mut self: Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Option<Result<http_body::Frame<bytes::Bytes>, Status>>> {
+            match self.0.take() {
+                Some(frame) => std::task::Poll::Ready(Some(Ok(http_body::Frame::data(frame)))),
+                None if self.1 => std::task::Poll::Pending,
+                None => std::task::Poll::Ready(Some(Err(Status::unavailable("source went away")))),
+            }
+        }
+    }
+
+    fn copy_stream_after_bytes(
+        stall: bool,
+    ) -> tonic::Streaming<volume_server_pb::CopyFileResponse> {
+        let message = prost::Message::encode_to_vec(&volume_server_pb::CopyFileResponse {
+            file_content: b"partial".to_vec(),
+            modified_ts_ns: 1,
+            ..Default::default()
+        });
+        let mut frame = vec![0u8];
+        frame.extend_from_slice(&(message.len() as u32).to_be_bytes());
+        frame.extend_from_slice(&message);
+        tonic::Streaming::new_response(
+            tonic_prost::ProstDecoder::<volume_server_pb::CopyFileResponse>::default(),
+            FailAfterFrame(Some(frame.into()), stall),
+            tonic::codegen::http::StatusCode::OK,
+            None,
+            None,
+        )
+    }
+
+    // A stream that fails after sending bytes leaves the destination as it was
+    // and removes the staged copy, on both optional-copy paths.
+    #[tokio::test]
+    async fn test_optional_copy_keeps_destination_when_stream_fails() {
+        let dest_tmp = TempDir::new().unwrap();
+        let dir = dest_tmp.path().to_str().unwrap();
+
+        let ecsum = format!("{}/1.ecsum", dir);
+        std::fs::write(&ecsum, b"local sidecar").unwrap();
+        let mut stream = copy_stream_after_bytes(false);
+        assert!(
+            drain_optional_copy_to_file(&mut stream, &ecsum, ".ecsum")
+                .await
+                .is_err()
+        );
+        assert_eq!(std::fs::read(&ecsum).unwrap(), b"local sidecar");
+        assert!(!std::path::Path::new(&format!("{}.copying", ecsum)).exists());
+
+        let vif = format!("{}/1.vif", dir);
+        std::fs::write(&vif, b"local vif").unwrap();
+        assert!(
+            crate::server::store_ec::drain_optional_copy_stream(
+                copy_stream_after_bytes(false),
+                &vif
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(std::fs::read(&vif).unwrap(), b"local vif");
+        assert!(!std::path::Path::new(&format!("{}.copying", vif)).exists());
+    }
+
+    /// Polls `copy` until `staging` exists, then drops it as a cancelled RPC
+    /// would.
+    async fn cancel_once_staged(copy: impl std::future::Future, staging: &str) {
+        let staged = async {
+            while !std::path::Path::new(staging).exists() {
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            }
+        };
+        tokio::select! {
+            _ = copy => panic!("a stalled copy must not complete"),
+            r = tokio::time::timeout(std::time::Duration::from_secs(5), staged) => {
+                r.expect("staging file was not created")
+            }
+        }
+    }
+
+    // A copy dropped mid-stream, as when its RPC is cancelled, still removes
+    // the staged copy and leaves the destination as it was.
+    #[tokio::test]
+    async fn test_optional_copy_removes_staging_when_cancelled() {
+        let dest_tmp = TempDir::new().unwrap();
+        let dir = dest_tmp.path().to_str().unwrap();
+
+        let ecsum = format!("{}/1.ecsum", dir);
+        let staging = format!("{}.copying", ecsum);
+        std::fs::write(&ecsum, b"local sidecar").unwrap();
+        let mut stream = copy_stream_after_bytes(true);
+        cancel_once_staged(
+            drain_optional_copy_to_file(&mut stream, &ecsum, ".ecsum"),
+            &staging,
+        )
+        .await;
+        assert_eq!(std::fs::read(&ecsum).unwrap(), b"local sidecar");
+        assert!(!std::path::Path::new(&staging).exists());
+
+        let vif = format!("{}/1.vif", dir);
+        let staging = format!("{}.copying", vif);
+        std::fs::write(&vif, b"local vif").unwrap();
+        cancel_once_staged(
+            crate::server::store_ec::drain_optional_copy_stream(
+                copy_stream_after_bytes(true),
+                &vif,
+            ),
+            &staging,
+        )
+        .await;
+        assert_eq!(std::fs::read(&vif).unwrap(), b"local vif");
+        assert!(!std::path::Path::new(&staging).exists());
     }
 
     // A copy that mounts and then fails validation (check_copy_counts) is
