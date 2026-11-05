@@ -428,6 +428,10 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsReq
 			maxKeys:               maxKeys,
 			prefixEndsOnDelimiter: prefixEndsOnDelimiter,
 		}
+		if delimiter != "/" {
+			cursor.prefetch = newListPrefetcher(ctx, client, maxKeys)
+			defer cursor.prefetch.close()
+		}
 
 		var lastEntryWasCommonPrefix bool
 		var lastCommonPrefix string
@@ -911,6 +915,9 @@ type ListingCursor struct {
 	// callback to its plain key; its "<name>/" CommonPrefix is deferred to the
 	// directory's own block position.
 	prefixObjectKeyOnly bool
+	// prefetch reads directories ahead of a recursive walk; nil lists each directory
+	// when the walk enters it.
+	prefetch *listPrefetcher
 }
 
 // excludedMarkerKey returns the key an exclusive marker names that the walk's cutoff no
@@ -1216,12 +1223,18 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 		}
 
 		var stream listEntriesStream
+		windowLimit := request.Limit
 		// A trailing-slash prefix names one directory, the only entry this level
 		// lists. Looking it up by name spares listing every sibling the name
 		// prefixes, which a SQL store answers by scanning the rest of the directory.
 		if cursor.prefixEndsOnDelimiter && prefix != "" && startName == "" {
 			if resp, lookupErr := client.LookupDirectoryEntry(ctx, &filer_pb.LookupDirectoryEntryRequest{Directory: dir, Name: prefix}); lookupErr == nil && resp.GetEntry().GetIsDirectory() {
 				stream = &listWindow{entries: []*filer_pb.Entry{resp.Entry}}
+			}
+		}
+		if stream == nil {
+			if entries, limit, ok := cursor.prefetch.take(request); ok {
+				stream, windowLimit = &listWindow{entries: entries}, limit
 			}
 		}
 		if stream == nil {
@@ -1233,6 +1246,17 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 				}
 				err = fmt.Errorf("list entries %+v: %w", request, listErr)
 				return
+			}
+			if cursor.prefetch != nil {
+				// Hand the window's directories to the prefetcher before the walk
+				// descends into the first, so their siblings are read meanwhile.
+				window := drainListWindow(stream)
+				for _, entry := range window.entries {
+					if listWalkDescends(entry) && entry.Name+"/" > marker && (!cursor.prefixEndsOnDelimiter || entry.Name == prefix) {
+						cursor.prefetch.add(dir + "/" + entry.Name)
+					}
+				}
+				stream = window
 			}
 		}
 
@@ -1398,7 +1422,7 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 		if cursor.isTruncated || stopped {
 			return
 		}
-		if entriesReceived < request.Limit {
+		if entriesReceived < windowLimit {
 			err = flushDirs("")
 			return
 		}
@@ -1411,13 +1435,34 @@ type listEntriesStream interface {
 	Recv() (*filer_pb.ListEntriesResponse, error)
 }
 
-// listWindow serves entries already in hand the way a ListEntries stream does.
+// listWindow serves entries already in hand the way a ListEntries stream does,
+// ending with the error the stream they were read from ended with.
 type listWindow struct {
 	entries []*filer_pb.Entry
+	err     error
+}
+
+func drainListWindow(stream listEntriesStream) *listWindow {
+	w := &listWindow{}
+	for {
+		resp, err := stream.Recv()
+		if err != nil {
+			if err != io.EOF {
+				w.err = err
+			}
+			return w
+		}
+		if resp.Entry != nil {
+			w.entries = append(w.entries, resp.Entry)
+		}
+	}
 }
 
 func (w *listWindow) Recv() (*filer_pb.ListEntriesResponse, error) {
 	if len(w.entries) == 0 {
+		if w.err != nil {
+			return nil, w.err
+		}
 		return nil, io.EOF
 	}
 	entry := w.entries[0]
