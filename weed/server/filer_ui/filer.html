@@ -87,6 +87,7 @@
     </div>
     <div class="row">
         <div>
+            {{ if not .ReadOnly }}
             <div class="btn-group btn-group-sm pull-right" role="group" style="margin-top:3px;">
                 <label class="btn btn-default" onclick="handleCreateDir()">
                     <span class="glyphicon glyphicon-plus" aria-hidden="true"></span> New Folder
@@ -98,6 +99,7 @@
                     <span class="glyphicon glyphicon-folder-close" aria-hidden="true"></span> Upload Folder
                 </label>
             </div>
+            {{ end }}
             <ol class="breadcrumb">
             {{ range $entry := .Breadcrumbs }}
             <li><a href="{{ printpath $entry.Link }}">
@@ -114,9 +116,11 @@
             <input type="file" id="dirElem" webkitdirectory multiple onchange="handleFiles(this.files)">
 
             {{ if .EmptyFolder }}
+            {{ if not .ReadOnly }}
             <div class="row add-files">
                 +
             </div>
+            {{ end }}
             {{ else }}
             <table width="100%" class="table table-hover">
                 {{ $path := .Path }}
@@ -148,6 +152,7 @@
                     <td align="right" nowrap>
                         {{ $entry.Timestamp.Format "2006-01-02 15:04" }}
                     </td>
+                    {{ if not $.ReadOnly }}
                     <td style="width:75px">
                         <div class="btn-group btn-group-xs pull-right operations" role="group">
                             <label class="btn" onclick="handleRename('{{ $entry.Name }}', '{{ printpath $path "/" }}')">
@@ -165,6 +170,7 @@
                             {{ end }}
                         </div>
                     </td>
+                    {{ end }}
                 </tr>
                 {{ end }}
             </table>
@@ -186,6 +192,7 @@
     </div>
 </div>
 </body>
+{{ if not .ReadOnly }}
 <script type="text/javascript">
     // ************************ Drag and drop ***************** //
     let dropArea = document.getElementById("drop-area");
@@ -442,4 +449,5 @@
         reloadPage();
     }
 </script>
+{{ end }}
 </html>
