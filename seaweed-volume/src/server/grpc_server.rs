@@ -4732,11 +4732,6 @@ impl VolumeServer for VolumeGrpcService {
                 }
             }
 
-            let (bitrot, bitrot_status) =
-                crate::storage::erasure_coding::ec_volume::EcVolume::select_bitrot_protection(
-                    &store.find_all_ec_volumes(vid),
-                );
-
             // Reconstruct the volume from EC shards. Use the EcVolume's
             // own dir for the produced .dat (matches the volume's home
             // disk) and its `ecx_actual_dir` for the .ecx lookup, while
@@ -4757,8 +4752,6 @@ impl VolumeServer for VolumeGrpcService {
                     .map(|d| d.clone().unwrap())
                     .collect(),
                 needle_map_kind: store.needle_map_kind,
-                bitrot,
-                bitrot_status,
             }
         };
 
@@ -7725,8 +7718,6 @@ struct EcDecodeJob {
     /// Directory of each data shard.
     shard_dirs: Vec<String>,
     needle_map_kind: crate::storage::needle_map::NeedleMapKind,
-    bitrot: Option<volume_server_pb::EcBitrotProtection>,
-    bitrot_status: ec_bitrot::BitrotStatus,
 }
 
 impl EcDecodeJob {
@@ -7743,8 +7734,6 @@ impl EcDecodeJob {
             small_block_size,
             shard_dirs,
             needle_map_kind,
-            bitrot,
-            bitrot_status,
         } = self;
 
         // Deletions journaled beside the .ecx, or collected by
@@ -7799,6 +7788,18 @@ impl EcDecodeJob {
                 .file_name()
             })
             .collect();
+        // A rebuild's backfill writes the sidecar without reloading the
+        // mounted runtimes, so resolve it again the way a shard mount does.
+        let (bitrot, bitrot_status) = {
+            let mut store = state.store.write().unwrap();
+            let ec_metadata_dirs = store.ec_metadata_dirs();
+            for ec_vol in store.find_all_ec_volumes_mut(vid) {
+                ec_vol.reload_bitrot_sidecar(&ec_metadata_dirs);
+            }
+            crate::storage::erasure_coding::ec_volume::EcVolume::select_bitrot_protection(
+                &store.find_all_ec_volumes(vid),
+            )
+        };
         ec_bitrot::verify_ec_volume_data_shards(bitrot.as_ref(), bitrot_status, &shard_paths)
             .map_err(|e| Status::internal(format!("ec volume {}: {}", vid, e)))?;
 
@@ -14578,6 +14579,33 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_volume_ec_shards_to_volume_rejects_a_corrupt_data_shard() {
         let (service, _tmp, data, _idx, _) = make_split_idx_ec_decode_service(&[], false).await;
+        assert_corrupt_data_shard_rejected(&service, &data).await;
+    }
+
+    /// A rebuild's backfill writes the sidecar after the shards are mounted,
+    /// without reloading the runtimes: the decode must still find it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_volume_ec_shards_to_volume_rejects_a_corrupt_shard_with_a_late_sidecar() {
+        let (service, _tmp, data, _idx, _) = make_split_idx_ec_decode_service(&[], false).await;
+        let sidecar = format!("{data}/1.ecsum");
+        let hidden = format!("{data}/1.ecsum.hidden");
+        std::fs::rename(&sidecar, &hidden).unwrap();
+        {
+            let mut store = service.state.store.write().unwrap();
+            for ec_vol in store.find_all_ec_volumes_mut(VolumeId(1)) {
+                ec_vol.reload_bitrot_sidecar(&[]);
+                assert_eq!(
+                    ec_vol.bitrot_protection().1,
+                    crate::storage::erasure_coding::ec_bitrot::BitrotStatus::Off,
+                    "precondition: the mounted runtime holds no protection"
+                );
+            }
+        }
+        std::fs::rename(&hidden, &sidecar).unwrap();
+        assert_corrupt_data_shard_rejected(&service, &data).await;
+    }
+
+    async fn assert_corrupt_data_shard_rejected(service: &VolumeGrpcService, data: &str) {
         let shard = format!("{data}/1.ec03");
         let mut bytes = std::fs::read(&shard).unwrap();
         bytes[0] ^= 0xff;
