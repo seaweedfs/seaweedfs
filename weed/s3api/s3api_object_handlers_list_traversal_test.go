@@ -2,11 +2,13 @@ package s3api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -326,4 +328,73 @@ func TestRecursiveListingDoesNotWaitForStalledListings(t *testing.T) {
 		}
 		cancel()
 	}
+}
+
+// failingFilerClient breaks the listings it picks after their first entry.
+type failingFilerClient struct {
+	*testFilerClient
+	fail   func(*filer_pb.ListEntriesRequest) bool
+	failed atomic.Int32
+}
+
+type failingStream struct {
+	grpc.ServerStreamingClient[filer_pb.ListEntriesResponse]
+	client   *failingFilerClient
+	received bool
+}
+
+func (s *failingStream) Recv() (*filer_pb.ListEntriesResponse, error) {
+	if s.received {
+		s.client.failed.Add(1)
+		return nil, errors.New("connection reset")
+	}
+	resp, err := s.ServerStreamingClient.Recv()
+	s.received = err == nil
+	return resp, err
+}
+
+func (c *failingFilerClient) ListEntries(ctx context.Context, in *filer_pb.ListEntriesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[filer_pb.ListEntriesResponse], error) {
+	stream, err := c.testFilerClient.ListEntries(ctx, in, opts...)
+	if err != nil || !c.fail(in) {
+		return stream, err
+	}
+	return &failingStream{ServerStreamingClient: stream, client: c}, nil
+}
+
+// A listing that breaks before the page fills fails the walk, and a prefetched
+// window that breaks is read again by the walk itself.
+func TestRecursiveListingStreamErrors(t *testing.T) {
+	keys, emptyDirs := branchedTreeKeys(40)
+	tree := filerTreeOf("/buckets/test", keys, emptyDirs)
+	s3a := &S3ApiServer{option: &S3ApiServerOption{BucketsPath: "/buckets"}}
+	walk := func(client *failingFilerClient, readAhead bool) (seen []string, err error) {
+		cursor := &ListingCursor{maxKeys: 1000}
+		if readAhead {
+			cursor.prefetch = newListPrefetcher(context.Background(), client, cursor.maxKeys)
+			defer cursor.prefetch.close()
+		}
+		_, err = s3a.doListFilerEntries(context.Background(), client, listDirectoryRequest{dir: "/buckets/test", bucket: "test"}, cursor, func(dir string, entry *filer_pb.Entry) {
+			seen = append(seen, strings.TrimPrefix(dir+"/"+entry.Name, "/buckets/test/"))
+			cursor.maxKeys--
+		})
+		return
+	}
+
+	for _, readAhead := range []bool{false, true} {
+		for _, dir := range []string{"/buckets/test", "/buckets/test/acct-03/Contract"} {
+			client := &failingFilerClient{testFilerClient: &testFilerClient{entriesByDir: tree}, fail: func(in *filer_pb.ListEntriesRequest) bool {
+				return in.Directory == dir
+			}}
+			_, err := walk(client, readAhead)
+			assert.ErrorContains(t, err, "connection reset", "readAhead=%v dir=%s", readAhead, dir)
+		}
+	}
+
+	client := &failingFilerClient{testFilerClient: &testFilerClient{entriesByDir: tree}, fail: func(in *filer_pb.ListEntriesRequest) bool {
+		return in.Limit == listPrefetchWindow
+	}}
+	seen, err := walk(client, true)
+	require.NoError(t, err)
+	assert.Equal(t, keys, seen)
+	assert.Positive(t, client.failed.Load(), "prefetched windows broke")
 }
