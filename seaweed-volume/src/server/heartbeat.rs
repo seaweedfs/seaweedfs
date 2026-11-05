@@ -2436,11 +2436,16 @@ mod tests {
     // TestHeartbeatOnceKeepsPulseBackoffOnceLossIsOld.
     #[tokio::test]
     async fn test_heartbeat_once_redials_promptly_only_for_a_pulse_after_a_loss() {
-        let down = {
-            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-            let port = listener.local_addr().unwrap().port();
-            format!("127.0.0.1:{}.{}", port, port)
-        };
+        // Closing each connection fails every dial at once, where Windows takes
+        // about two seconds to refuse a closed port.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            while let Ok((conn, _)) = listener.accept().await {
+                drop(conn);
+            }
+        });
+        let down = format!("127.0.0.1:{}.{}", port, port);
         let pulse = Duration::from_secs(3);
         let mut config = test_config();
         config.master_addresses = vec![down.clone()];
