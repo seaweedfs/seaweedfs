@@ -17,6 +17,7 @@ const (
 	listPrefetchAhead   = 64
 	listPrefetchWindow  = 32
 	listPrefetchQueued  = 4096
+	listPrefetchBytes   = 128 << 10
 	listReadAheadBytes  = 1 << 20
 )
 
@@ -29,7 +30,8 @@ const (
 // at ahead, which starts at the worker count and doubles up to maxAhead while the walk
 // keeps finding directories that end inside their first window; a larger directory
 // keeps the walk busy on its own, and the cap falls back so a page ending inside it
-// leaves few windows unread.
+// leaves few windows unread. A window also ends at listPrefetchBytes of entries, and
+// the walk reads the rest of that directory itself.
 type listPrefetcher struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
@@ -53,6 +55,7 @@ type listPrefetcher struct {
 type prefetchedWindow struct {
 	done    chan struct{}
 	entries []*filer_pb.Entry
+	more    bool
 	err     error
 }
 
@@ -146,18 +149,18 @@ func (p *listPrefetcher) take(request *filer_pb.ListEntriesRequest) (entries []*
 		return nil, 0, false
 	}
 	p.mu.Lock()
-	if uint32(len(w.entries)) < p.window {
+	if w.more {
+		p.ahead = p.workers
+	} else {
 		p.ahead = min(p.ahead*2, p.maxAhead)
 		p.wake.Broadcast()
-	} else {
-		p.ahead = p.workers
 	}
 	p.mu.Unlock()
 	entries, limit = w.entries, request.Limit
 	if uint32(len(entries)) >= limit {
 		entries = entries[:limit]
-	} else if uint32(len(entries)) == p.window {
-		limit = p.window
+	} else if w.more {
+		limit = uint32(len(entries))
 	}
 	return entries, limit, true
 }
@@ -199,22 +202,30 @@ func (p *listPrefetcher) run() {
 
 func (p *listPrefetcher) read(dir string, w *prefetchedWindow) {
 	defer close(w.done)
-	stream, err := p.client.ListEntries(p.ctx, &filer_pb.ListEntriesRequest{Directory: dir, Limit: p.window})
+	ctx, cancel := context.WithCancel(p.ctx)
+	defer cancel()
+	stream, err := p.client.ListEntries(ctx, &filer_pb.ListEntriesRequest{Directory: dir, Limit: p.window})
 	if err != nil {
 		w.err = err
 		return
 	}
-	for {
+	for size := 0; ; {
 		resp, recvErr := stream.Recv()
 		if recvErr == io.EOF {
+			w.more = uint32(len(w.entries)) == p.window
 			break
 		}
 		if recvErr != nil {
 			w.err = recvErr
 			return
 		}
-		if resp.Entry != nil {
-			w.entries = append(w.entries, resp.Entry)
+		if resp.Entry == nil {
+			continue
+		}
+		w.entries = append(w.entries, resp.Entry)
+		if size += proto.Size(resp.Entry); size >= listPrefetchBytes {
+			w.more = true
+			break
 		}
 	}
 	for _, entry := range w.entries {

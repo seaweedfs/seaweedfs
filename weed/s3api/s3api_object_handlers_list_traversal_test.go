@@ -73,7 +73,7 @@ func TestTrailingSlashPrefixLooksUpItsDirectory(t *testing.T) {
 
 // branchedTreeKeys builds keys shaped like a bucket of many accounts, each holding a
 // few documents several directories down, with siblings that sort around the
-// "<name>/" block of a directory.
+// "<name>/" block of a directory, and some directories longer than a prefetch window.
 func branchedTreeKeys(accounts int) (keys, emptyDirs []string) {
 	for i := 0; i < accounts; i++ {
 		keys = append(keys, fmt.Sprintf("acct-%02d/Contract/rec-%02d/2026/10/doc.pdf", i, i))
@@ -91,6 +91,11 @@ func branchedTreeKeys(accounts int) (keys, emptyDirs []string) {
 		}
 		if i%7 == 0 {
 			emptyDirs = append(emptyDirs, fmt.Sprintf("acct-%02d/empty", i))
+		}
+		if i%10 == 0 {
+			for j := 0; j < listPrefetchWindow+8; j++ {
+				keys = append(keys, fmt.Sprintf("acct-%02d/bulk/f-%02d", i, j))
+			}
 		}
 	}
 	sort.Strings(keys)
@@ -165,7 +170,29 @@ func (c *slowFilerClient) ListEntries(ctx context.Context, in *filer_pb.ListEntr
 // and where the next page resumes, exactly as the serial walk has them.
 func TestRecursiveListingReadsAhead(t *testing.T) {
 	keys, emptyDirs := branchedTreeKeys(40)
-	tree := filerTreeOf("/buckets/test", keys, emptyDirs)
+	t.Run("small entries", func(t *testing.T) {
+		testReadAheadMatchesSerialWalk(t, filerTreeOf("/buckets/test", keys, emptyDirs), keys)
+	})
+	// Entries this large stop prefetched windows and the read-ahead of the walk's own
+	// listing at their byte limits, short of their entry limits.
+	t.Run("large entries", func(t *testing.T) {
+		tree := filerTreeOf("/buckets/test", keys, emptyDirs)
+		for dir, entries := range tree {
+			size := listPrefetchBytes / 3
+			if dir == "/buckets/test" {
+				size = listReadAheadBytes / 4
+			}
+			for _, entry := range entries {
+				if !entry.IsDirectory {
+					entry.Content = make([]byte, size)
+				}
+			}
+		}
+		testReadAheadMatchesSerialWalk(t, tree, keys)
+	})
+}
+
+func testReadAheadMatchesSerialWalk(t *testing.T, tree map[string][]*filer_pb.Entry, keys []string) {
 	s3a := &S3ApiServer{option: &S3ApiServerOption{BucketsPath: "/buckets"}}
 
 	walk := func(maxKeys uint16, readAhead bool) (seen []string, nextMarker string, cursor *ListingCursor, client *slowFilerClient) {
