@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/ec"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -120,13 +119,9 @@ func (c *commandEcDecode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 			fmt.Printf("ec decode batch %d/%d: %v\n", i+1, len(batches), batch)
 		}
 		for _, vid := range batch {
-			targetCollection := *collection
-			if targetCollection == "" || strings.ContainsAny(targetCollection, ".*+?[]()|^$") {
-				if c, found := ec.FindEcVolumeCollection(topologyInfo, vid); found {
-					targetCollection = c
-				}
-			}
-			if err = ec.DoEcDecode(env, topologyInfo, targetCollection, vid, diskType, *checkMinFreeSpace, diskUsageState); err != nil {
+			// -collection is a selector, not the volume's collection
+			volumeCollection, _ := ec.FindEcVolumeCollection(topologyInfo, vid)
+			if err = ec.DoEcDecode(env, topologyInfo, volumeCollection, vid, diskType, *checkMinFreeSpace, diskUsageState); err != nil {
 				return err
 			}
 		}
