@@ -11,11 +11,10 @@ use lance::dataset::{MergeInsertBuilder, WhenMatched, WhenNotMatched};
 use lance::io::ObjectStoreParams;
 use lance::io::StorageOptionsAccessor;
 use lance::io::WrappingObjectStore;
-use lance::session::Session;
 use lance::table::format::Fragment;
 use prost_types::{ListValue, Struct, Value, value::Kind};
 use std::collections::{BTreeMap, HashMap};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::Arc;
 use tonic::{Request, Response, Status};
 use weed_lance_worker::catalog::NamespaceClient;
 use weed_lance_worker::dataset::{self, FallbackOptions};
@@ -376,19 +375,6 @@ pub struct VectorServer {
     fallback: FallbackOptions,
     read_cache: Option<Arc<dyn WrappingObjectStore>>,
     nprobes: Option<usize>,
-    /// Shared by every open, so a table's index stays loaded between queries.
-    session: RwLock<Arc<Session>>,
-    index_cache_bytes: usize,
-    /// The newest version opened at each table URI, with its commit time.
-    newest: Mutex<HashMap<String, (u64, u128)>>,
-}
-
-fn session_of(index_cache_bytes: usize) -> Arc<Session> {
-    Arc::new(Session::new(
-        index_cache_bytes,
-        lance::dataset::DEFAULT_METADATA_CACHE_SIZE,
-        Default::default(),
-    ))
 }
 
 impl VectorServer {
@@ -398,17 +384,7 @@ impl VectorServer {
             fallback,
             read_cache: None,
             nprobes: None,
-            session: RwLock::new(session_of(lance::dataset::DEFAULT_INDEX_CACHE_SIZE)),
-            index_cache_bytes: lance::dataset::DEFAULT_INDEX_CACHE_SIZE,
-            newest: Mutex::new(HashMap::new()),
         }
-    }
-
-    /// Memory for keeping opened indices between queries.
-    pub fn with_index_cache(mut self, bytes: usize) -> Self {
-        self.session = RwLock::new(session_of(bytes));
-        self.index_cache_bytes = bytes;
-        self
     }
 
     /// Partitions every query probes, instead of the index's own default.
@@ -424,48 +400,18 @@ impl VectorServer {
     }
 
     async fn open(&self, table: &pb::Table) -> Result<Dataset> {
-        let mut dataset = loop {
-            let session = self.session.read().unwrap().clone();
-            let opened = dataset::open_in(
-                &self.client,
-                &table.id,
-                &self.fallback,
-                self.read_cache.clone(),
-                Some(session.clone()),
-            )
-            .await?;
-            if !self.stale(&opened.dataset) {
-                break opened.dataset;
-            }
-        };
+        let opened = dataset::open_with(
+            &self.client,
+            &table.id,
+            &self.fallback,
+            self.read_cache.clone(),
+        )
+        .await?;
+        let mut dataset = opened.dataset;
         if table.version != 0 {
             dataset = dataset.checkout_version(table.version).await?;
         }
         Ok(dataset)
-    }
-
-    /// Whether `dataset` has to be opened again, because the session it was
-    /// opened in is no longer the shared one. The session keys index lists
-    /// and transactions by version alone, so a table dropped and created
-    /// again at a URI opened before would read the old table's; it replaces
-    /// the session. A table's versions only grow, and the new table commits
-    /// after the old one's last commit seen here.
-    fn stale(&self, dataset: &Dataset) -> bool {
-        let seen = (
-            dataset.manifest().version,
-            dataset.manifest().timestamp_nanos,
-        );
-        let mut newest = self.newest.lock().unwrap();
-        let last = newest.entry(dataset.uri().to_string()).or_insert(seen);
-        let recreated = seen.0 <= last.0 && seen.1 > last.1;
-        if recreated || seen.0 > last.0 {
-            *last = seen;
-        }
-        let mut current = self.session.write().unwrap();
-        if recreated && Arc::ptr_eq(&current, &dataset.session()) {
-            *current = session_of(self.index_cache_bytes);
-        }
-        !Arc::ptr_eq(&current, &dataset.session())
     }
 }
 
@@ -573,7 +519,6 @@ impl VectorService for VectorServer {
             .execute_batches(vec![batch])
             .await
             .map_err(internal)?;
-        self.stale(&dataset);
         Ok(Response::new(pb::PutVectorsResponse {
             version: dataset.version().version,
         }))
@@ -617,7 +562,6 @@ impl VectorService for VectorServer {
                 .delete(&key_list(&req.keys))
                 .await
                 .map_err(internal)?;
-            self.stale(&dataset);
         }
         Ok(Response::new(pb::DeleteVectorsResponse {
             version: dataset.version().version,
@@ -997,91 +941,25 @@ mod tests {
         assert_eq!(next, None);
     }
 
-    /// A catalog that answers every describe with `location`.
+    /// A catalog that answers one describe with `location`.
     async fn catalog_describing(location: &str) -> String {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let body = serde_json::json!({ "location": location }).to_string();
         tokio::spawn(async move {
-            while let Ok((mut conn, _)) = listener.accept().await {
-                let body = body.clone();
-                tokio::spawn(async move {
-                    let mut request = [0u8; 8192];
-                    let _ = conn.read(&mut request).await;
-                    let response = format!(
-                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-                        body.len()
-                    );
-                    conn.write_all(response.as_bytes()).await.unwrap();
-                    let _ = conn.shutdown().await;
-                    let _ = tokio::io::copy(&mut conn, &mut tokio::io::sink()).await;
-                });
-            }
+            let (mut conn, _) = listener.accept().await.unwrap();
+            let mut request = [0u8; 8192];
+            let _ = conn.read(&mut request).await;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            conn.write_all(response.as_bytes()).await.unwrap();
+            let _ = conn.shutdown().await;
+            let _ = tokio::io::copy(&mut conn, &mut tokio::io::sink()).await;
         });
         url
-    }
-
-    #[tokio::test]
-    async fn open_forgets_a_table_another_engine_dropped_and_created_again() {
-        let dir = tempfile::tempdir().unwrap();
-        let location = dir.path().join("x").to_str().unwrap().to_string();
-        let catalog = catalog_describing(&location).await;
-        let engine = || {
-            VectorServer::new(
-                NamespaceClient::new(catalog.clone()),
-                FallbackOptions::new(),
-            )
-        };
-        let (here, other) = (engine(), engine());
-        let table = pb::Table {
-            id: vec!["bkt".into(), "vector".into(), "x".into()],
-            version: 0,
-        };
-        let create = || {
-            Request::new(pb::CreateIndexRequest {
-                table: Some(table.clone()),
-                dimension: 2,
-                distance_metric: pb::DistanceMetric::L2 as i32,
-                non_filterable_metadata_keys: vec![],
-            })
-        };
-        let put = |keys| {
-            Request::new(pb::PutVectorsRequest {
-                table: Some(table.clone()),
-                vectors: vectors(keys),
-            })
-        };
-
-        here.create_index(create()).await.unwrap();
-        here.put_vectors(put(0..300)).await.unwrap();
-        let mut dataset = Dataset::open(&location).await.unwrap();
-        index::build(&mut dataset, VECTOR_COLUMN, index::INDEX_NAME, 2, false)
-            .await
-            .unwrap();
-        let opened = here.open(&table).await.unwrap();
-        assert_eq!(opened.version().version, 3);
-        assert_eq!(
-            index::index_names(&opened, VECTOR_COLUMN)
-                .await
-                .unwrap()
-                .len(),
-            1
-        );
-
-        std::fs::remove_dir_all(&location).unwrap();
-        other.create_index(create()).await.unwrap();
-        other.put_vectors(put(0..10)).await.unwrap();
-        other.put_vectors(put(10..20)).await.unwrap();
-        let opened = here.open(&table).await.unwrap();
-        assert_eq!(opened.version().version, 3);
-        assert!(
-            index::index_names(&opened, VECTOR_COLUMN)
-                .await
-                .unwrap()
-                .is_empty()
-        );
-        assert_eq!(opened.count_rows(None).await.unwrap(), 20);
     }
 
     #[tokio::test]
