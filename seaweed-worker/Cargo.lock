@@ -6518,6 +6518,7 @@ dependencies = [
  "lance-table",
  "prometheus",
  "reqwest 0.12.28",
+ "roaring",
  "seaweed-common",
  "seaweed-worker-core",
  "seaweed-worker-sort",

@@ -27,7 +27,17 @@ const VECTOR_NAMESPACE: &str = "vector";
 const VECTOR_COLUMN: &str = "vector";
 /// A build trains on the whole table, so the admin's 90 seconds are not enough.
 /// The run window is as long, or it would cut an attempt short first.
-const EXECUTION_TIMEOUT_SECONDS: i32 = 3600;
+pub(crate) const EXECUTION_TIMEOUT_SECONDS: i32 = 3600;
+
+/// Declares a build's time on a proposal. A run started by hand while the
+/// schedule is off has no policy to take the timeout from, and the admin
+/// gives a job at least the runtime its proposal declares.
+pub(crate) fn declare_build_runtime(parameters: &mut HashMap<String, ConfigValue>) {
+    parameters.insert(
+        "estimated_runtime_seconds".to_string(),
+        int_value(EXECUTION_TIMEOUT_SECONDS as i64),
+    );
+}
 
 /// Builds the vector index of an S3 Vectors table once it holds enough rows
 /// for an exact scan to be the slow way. Tables below the threshold, and rows
@@ -215,6 +225,7 @@ impl JobHandler for VectorIndexHandler {
             }
             let mut parameters: HashMap<String, ConfigValue> = HashMap::new();
             parameters.insert("table_id".to_string(), string_list(&id));
+            declare_build_runtime(&mut parameters);
             proposals.push(JobProposal {
                 proposal_id: format!("{JOB_TYPE}:{encoded}"),
                 dedupe_key: format!("{JOB_TYPE}:{encoded}"),
@@ -341,6 +352,16 @@ mod tests {
         assert_eq!(skip_reason(true, 0), Some("already indexed"));
         assert_eq!(skip_reason(false, 0), Some("no rows to index"));
         assert_eq!(skip_reason(false, 60_000), None);
+    }
+
+    #[test]
+    fn a_proposal_declares_a_builds_runtime() {
+        let mut parameters = HashMap::new();
+        declare_build_runtime(&mut parameters);
+        assert_eq!(
+            seaweed_worker_core::config_form::int_or(&parameters, "estimated_runtime_seconds", 0),
+            3600
+        );
     }
 
     #[test]

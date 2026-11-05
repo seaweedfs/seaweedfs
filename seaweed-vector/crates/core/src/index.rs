@@ -31,11 +31,27 @@ pub fn probes_for(partitions: usize) -> Probes {
     }
 }
 
+/// Partitions of one index segment, read from the opened index. Lance's index
+/// statistics cost several milliseconds and may rewrite an old manifest.
+pub async fn segment_partitions(
+    dataset: &Dataset,
+    vector_column: &str,
+    segment: &uuid::Uuid,
+) -> Result<usize> {
+    let opened = dataset
+        .open_vector_index(
+            vector_column,
+            segment,
+            &lance_index::metrics::NoOpMetricsCollector,
+        )
+        .await?;
+    Ok(opened.total_partitions())
+}
+
 /// The probes a query of `vector_column` uses when it names none, or `None`
 /// without an index. The count comes from the most partitions any index on
-/// the column has, whichever of them the scan ends up searching.
-/// It is read from the opened index, which the scan then finds loaded;
-/// Lance's index statistics cost several milliseconds a query.
+/// the column has, whichever of them the scan ends up searching; the scan
+/// then finds the index it was read from already open.
 pub async fn default_probes(dataset: &Dataset, vector_column: &str) -> Result<Option<Probes>> {
     let Some(field) = dataset.schema().field(vector_column) else {
         return Ok(None);
@@ -45,14 +61,8 @@ pub async fn default_probes(dataset: &Dataset, vector_column: &str) -> Result<Op
         if index.fields != [field.id] {
             continue;
         }
-        let opened = dataset
-            .open_vector_index(
-                vector_column,
-                &index.uuid,
-                &lance_index::metrics::NoOpMetricsCollector,
-            )
-            .await?;
-        partitions = Some(opened.total_partitions().max(partitions.unwrap_or(0)));
+        let count = segment_partitions(dataset, vector_column, &index.uuid).await?;
+        partitions = Some(count.max(partitions.unwrap_or(0)));
     }
     Ok(partitions.map(probes_for))
 }
@@ -292,6 +302,37 @@ mod tests {
         }
     }
 
+    /// An index built as cosine on a table without metric metadata keeps
+    /// cosine through a retrain, and gets partitions for the new row count.
+    #[tokio::test]
+    async fn retrain_keeps_the_indexs_own_metric() {
+        use lance::index::DatasetIndexExt;
+        use lance::index::vector::VectorIndexParams;
+        use lance_index::IndexType;
+        use weed_lance_worker::vector_index::index_settings;
+        let dir = TempDir::new().unwrap();
+        let mut dataset =
+            testing::write_dataset(&dir, &testing::vectors(100, DIM), &["a"; 100]).await;
+        let params = VectorIndexParams::ivf_flat(2, DistanceType::Cosine);
+        dataset
+            .create_index(
+                &["vector"],
+                IndexType::Vector,
+                Some("idx".to_string()),
+                &params,
+                false,
+            )
+            .await
+            .unwrap();
+        dataset.checkout_latest().await.unwrap();
+        testing::append_dataset(&mut dataset, &testing::vectors(800, DIM), &["b"; 800]).await;
+        optimize(&mut dataset, "vector", true).await.unwrap();
+        let settings = index_settings(&dataset, "idx").await.unwrap();
+        assert_eq!(settings.metric, Some(DistanceType::Cosine));
+        assert_eq!(settings.index_type, "IVF_FLAT");
+        assert_eq!(settings.partitions, partitions_for(900));
+    }
+
     #[tokio::test]
     async fn optimize_appends_then_retrain_folds_segments() {
         let dir = TempDir::new().unwrap();
@@ -333,6 +374,143 @@ mod tests {
         for vector in testing::vectors(4, DIM) {
             assert_same_top_k(&dataset, &vector, 10).await;
         }
+    }
+
+    /// Append and optimize nine times: the deltas climb to the limit and then
+    /// fold into one, and nothing is ever uncovered after an optimize.
+    #[tokio::test]
+    async fn deltas_stay_under_the_limit_across_cycles() {
+        use weed_lance_worker::vector_index::{MAX_DELTAS, coverage as covered};
+        let dir = TempDir::new().unwrap();
+        let mut dataset =
+            testing::write_dataset(&dir, &testing::vectors(100, DIM), &["a"; 100]).await;
+        let table = VectorTable::resolve(&dataset, None, None).unwrap();
+        build(&mut dataset, &table.vector_column, INDEX_NAME, 4, false)
+            .await
+            .unwrap();
+        let mut seen = Vec::new();
+        for round in 0..9 {
+            testing::append_dataset(&mut dataset, &testing::vectors(20, DIM), &["b"; 20]).await;
+            optimize(&mut dataset, &table.vector_column, false)
+                .await
+                .unwrap();
+            let cover = covered(&dataset, "vector").await.unwrap().unwrap();
+            assert_eq!(cover.unindexed_rows, 0, "round {round}");
+            seen.push(cover.deltas[INDEX_NAME]);
+        }
+        assert_eq!(seen, vec![2, 3, 4, 5, 6, 7, 8, 1, 2]);
+        assert!(seen.iter().all(|&d| d <= MAX_DELTAS));
+    }
+
+    /// Two names covering disjoint fragments, as a sharded build leaves them:
+    /// coverage is their union, and an optimize extends one name only.
+    #[tokio::test]
+    async fn shards_stay_disjoint_through_an_optimize() {
+        use lance::index::DatasetIndexExt;
+        use lance::index::vector::VectorIndexParams;
+        use lance_index::IndexType;
+        use weed_lance_worker::vector_index::coverage as covered;
+        let dir = TempDir::new().unwrap();
+        let mut dataset =
+            testing::write_dataset(&dir, &testing::vectors(60, DIM), &["a"; 60]).await;
+        testing::append_dataset(&mut dataset, &testing::vectors(60, DIM), &["b"; 60]).await;
+        let params = VectorIndexParams::ivf_flat(2, DistanceType::L2);
+        for (name, fragment) in [("shard-0", 0u32), ("shard-1", 1u32)] {
+            dataset
+                .create_index_builder(&["vector"], IndexType::Vector, &params)
+                .name(name.to_string())
+                .fragments(vec![fragment])
+                .await
+                .unwrap();
+            dataset.checkout_latest().await.unwrap();
+        }
+        let cover = covered(&dataset, "vector").await.unwrap().unwrap();
+        assert_eq!((cover.indexed_rows, cover.unindexed_rows), (120, 0));
+        assert_eq!(cover.deltas.len(), 2);
+
+        testing::append_dataset(&mut dataset, &testing::vectors(30, DIM), &["c"; 30]).await;
+        let table = VectorTable::resolve(&dataset, None, None).unwrap();
+        optimize(&mut dataset, &table.vector_column, false)
+            .await
+            .unwrap();
+        let cover = covered(&dataset, "vector").await.unwrap().unwrap();
+        assert_eq!(cover.unindexed_rows, 0);
+        assert_eq!(
+            cover.deltas.values().sum::<usize>(),
+            3,
+            "{:?}",
+            cover.deltas
+        );
+        let per_name = coverage(&dataset, "vector").await.unwrap();
+        let untouched = per_name
+            .iter()
+            .filter(|c| c.segments == 1 && c.indexed_fragments.len() == 1)
+            .count();
+        assert_eq!(untouched, 1, "{per_name:?}");
+        for vector in testing::vectors(3, DIM) {
+            assert_same_top_k(&dataset, &vector, 10).await;
+        }
+    }
+
+    /// A retrain is due for one IVF_FLAT name the table outgrew, never for
+    /// shards sized each for their own fragments or for another index type,
+    /// and an explicit retrain of shards leaves them as they are.
+    #[tokio::test]
+    async fn retrain_is_due_for_one_ivf_flat_name_only() {
+        use lance::index::DatasetIndexExt;
+        use lance::index::vector::VectorIndexParams;
+        use lance_index::IndexType;
+        use weed_lance_worker::vector_index::{coverage as covered, retrain_due};
+        let grown = |dir: &TempDir| {
+            let path = dir.path().to_str().unwrap().to_string();
+            async move {
+                let mut dataset =
+                    testing::write_dataset_at(&path, &testing::vectors(300, DIM), &["a"; 300])
+                        .await;
+                testing::append_dataset(&mut dataset, &testing::vectors(300, DIM), &["b"; 300])
+                    .await;
+                dataset
+            }
+        };
+
+        let dir = TempDir::new().unwrap();
+        let mut dataset = grown(&dir).await;
+        build(&mut dataset, "vector", INDEX_NAME, 2, false)
+            .await
+            .unwrap();
+        assert!(retrain_due(&dataset, "vector").await.unwrap());
+
+        let dir = TempDir::new().unwrap();
+        let mut dataset = grown(&dir).await;
+        let params = VectorIndexParams::ivf_pq(2, 8, 2, DistanceType::L2, 10);
+        dataset
+            .create_index(&["vector"], IndexType::Vector, None, &params, false)
+            .await
+            .unwrap();
+        dataset.checkout_latest().await.unwrap();
+        assert!(!retrain_due(&dataset, "vector").await.unwrap());
+
+        let dir = TempDir::new().unwrap();
+        let mut dataset = grown(&dir).await;
+        let params = VectorIndexParams::ivf_flat(2, DistanceType::L2);
+        for (name, fragment) in [("shard-0", 0u32), ("shard-1", 1u32)] {
+            dataset
+                .create_index_builder(&["vector"], IndexType::Vector, &params)
+                .name(name.to_string())
+                .fragments(vec![fragment])
+                .await
+                .unwrap();
+            dataset.checkout_latest().await.unwrap();
+        }
+        assert!(!retrain_due(&dataset, "vector").await.unwrap());
+        let before = covered(&dataset, "vector").await.unwrap();
+        assert!(optimize(&mut dataset, "vector", true).await.is_err());
+        assert_eq!(covered(&dataset, "vector").await.unwrap(), before);
+        let per_name = coverage(&dataset, "vector").await.unwrap();
+        assert!(
+            per_name.iter().all(|c| c.indexed_fragments.len() == 1),
+            "{per_name:?}"
+        );
     }
 
     #[tokio::test]
