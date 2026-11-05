@@ -1302,6 +1302,25 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 		return nil, status.Errorf(codes.FailedPrecondition, "ec volume %d %s", req.VolumeId, erasure_coding.EcNoLiveEntriesSubstring)
 	}
 
+	// A rebuild's backfill writes the sidecar without reloading the mounted
+	// runtimes, so resolve it again the way a shard mount does. Any runtime
+	// left finds it on every disk; with none left (an unmount raced the
+	// decode) the protection would read as Off.
+	ecVolumes := vs.store.FindAllEcVolumes(needle.VolumeId(req.VolumeId))
+	if len(ecVolumes) == 0 {
+		return nil, fmt.Errorf("ec volume %d was unmounted during the decode", req.VolumeId)
+	}
+	ecMetadataDirs := vs.store.EcMetadataDirs()
+	for _, ecVolume := range ecVolumes {
+		if err := ecVolume.ReloadBitrotSidecar(ecMetadataDirs...); err != nil {
+			return nil, fmt.Errorf("ec volume %d: %w", req.VolumeId, err)
+		}
+	}
+	prot, bitrotStatus := erasure_coding.SelectBitrotProtection(ecVolumes)
+	if err := erasure_coding.VerifyEcVolumeDataShards(prot, bitrotStatus, shardFileNames); err != nil {
+		return nil, fmt.Errorf("ec volume %d: %w", req.VolumeId, err)
+	}
+
 	// calculate .dat file size. Pass shard 0's resolved path: on a multi-disk
 	// server the volume's shards can sit on several disks, so the .ec00 is not
 	// necessarily beside the EcVolume's own base path.

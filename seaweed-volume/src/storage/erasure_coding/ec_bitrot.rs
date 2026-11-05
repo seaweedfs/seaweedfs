@@ -581,6 +581,51 @@ pub fn verify_shard_blocks(
     Ok(mismatched)
 }
 
+/// Checks the data shards a decode reads against the volume's bitrot
+/// protection: a corrupt shard copied into the .dat is lost for good once the
+/// caller deletes the parity that could repair it. Mirrors Go's
+/// `VerifyEcVolumeDataShards`.
+pub fn verify_ec_volume_data_shards(
+    prot: Option<&EcBitrotProtection>,
+    status: BitrotStatus,
+    shard_paths: &[String],
+) -> io::Result<()> {
+    let prot = match (status, prot) {
+        (BitrotStatus::Off, _) => return Ok(()),
+        (BitrotStatus::On, Some(prot)) => prot,
+        _ => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "bitrot sidecar is malformed or unverifiable",
+            ));
+        }
+    };
+    for (shard_id, path) in shard_paths.iter().enumerate() {
+        let Some(entry) = shard_checksums(prot, shard_id as u32) else {
+            continue;
+        };
+        let mismatched =
+            verify_shard_file_blocks(path, entry, prot.block_size as i64).map_err(|e| {
+                io::Error::new(
+                    e.kind(),
+                    format!("verify data shard {} {}: {}", shard_id, path, e),
+                )
+            })?;
+        if !mismatched.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "data shard {} {} fails its bitrot checksum in {} blocks",
+                    shard_id,
+                    path,
+                    mismatched.len()
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Builds the `EcShardConfig` proto for the given layout. The bitrot sidecar
 /// carries its own top-level encode_uuid, so the nested config leaves it empty.
 pub fn ec_shard_config(data_shards: u32, parity_shards: u32, block_size: i64) -> EcShardConfig {

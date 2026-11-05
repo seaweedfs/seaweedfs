@@ -347,17 +347,81 @@ func TestRemoveBitrotSidecars(t *testing.T) {
 
 func corruptOneByte(t *testing.T, path string) {
 	t.Helper()
+	corruptOneByteAt(t, path, 0)
+}
+
+func corruptOneByteAt(t *testing.T, path string, offset int64) {
+	t.Helper()
 	f, err := os.OpenFile(path, os.O_RDWR, 0644)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer f.Close()
 	var b [1]byte
-	if _, err := f.ReadAt(b[:], 0); err != nil {
+	if _, err := f.ReadAt(b[:], offset); err != nil {
 		t.Fatal(err)
 	}
 	b[0] ^= 0xff
-	if _, err := f.WriteAt(b[:], 0); err != nil {
+	if _, err := f.WriteAt(b[:], offset); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestVerifyEcVolumeDataShards(t *testing.T) {
+	old := BitrotBlockSize
+	BitrotBlockSize = 1 << 20
+	t.Cleanup(func() { BitrotBlockSize = old })
+
+	dir := t.TempDir()
+	base := filepath.Join(dir, "42")
+	writeRandomDat(t, base, 25*1024*1024)
+	ctx := &ECContext{DataShards: 10, ParityShards: 4}
+	prot, err := WriteEcFiles(base, ctx)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+
+	shardFileNames := make([]string, ctx.DataShards)
+	for id := range shardFileNames {
+		shardFileNames[id] = base + ctx.ToExt(id)
+	}
+
+	if err := VerifyEcVolumeDataShards(prot, BitrotOn, shardFileNames); err != nil {
+		t.Fatalf("clean data shards: %v", err)
+	}
+	if err := VerifyEcVolumeDataShards(nil, BitrotInvalid, shardFileNames); err == nil {
+		t.Fatal("an invalid sidecar must fail the verification")
+	}
+
+	corruptOneByteAt(t, shardFileNames[3], 1<<20)
+	if err := VerifyEcVolumeDataShards(prot, BitrotOn, shardFileNames); err == nil {
+		t.Fatal("a corrupt second block of data shard 3 must fail the verification")
+	}
+	if err := VerifyEcVolumeDataShards(nil, BitrotOff, shardFileNames); err != nil {
+		t.Fatalf("an unprotected volume must pass: %v", err)
+	}
+}
+
+func TestSelectBitrotProtection(t *testing.T) {
+	prot := &volume_server_pb.EcBitrotProtection{BlockSize: 1}
+	runtime := func(p *volume_server_pb.EcBitrotProtection, status BitrotStatus) *EcVolume {
+		return &EcVolume{bitrot: p, bitrotStatus: status}
+	}
+	for _, tc := range []struct {
+		name     string
+		volumes  []*EcVolume
+		wantProt bool
+		want     BitrotStatus
+	}{
+		{"none", nil, false, BitrotOff},
+		{"all off", []*EcVolume{runtime(nil, BitrotOff), runtime(nil, BitrotOff)}, false, BitrotOff},
+		{"sidecar on the second disk", []*EcVolume{runtime(nil, BitrotOff), runtime(prot, BitrotOn)}, true, BitrotOn},
+		{"invalid beside off", []*EcVolume{runtime(nil, BitrotOff), runtime(nil, BitrotInvalid)}, false, BitrotInvalid},
+		{"on wins over invalid", []*EcVolume{runtime(nil, BitrotInvalid), runtime(prot, BitrotOn)}, true, BitrotOn},
+	} {
+		got, status := SelectBitrotProtection(tc.volumes)
+		if status != tc.want || (got != nil) != tc.wantProt {
+			t.Errorf("%s: got (%v, %v), want status %v", tc.name, got, status, tc.want)
+		}
 	}
 }

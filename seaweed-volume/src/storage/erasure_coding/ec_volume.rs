@@ -238,8 +238,8 @@ pub struct EcVolume {
     /// no encode identity, so provenance is the only signal that a loaded
     /// manifest may describe a different encode run. Same purpose as
     /// `ecx_actual_dir`. Empty when no sidecar was found. Always committed in
-    /// the same step as `bitrot`/`bitrot_status`, so a reload whose `Err` gets
-    /// swallowed by `reload_bitrot_sidecar` cannot leave this describing a
+    /// the same step as `bitrot`/`bitrot_status`, so a reload whose `Err` a
+    /// caller ignores cannot leave this describing a
     /// sidecar other than the one those two fields actually hold.
     pub(crate) bitrot_source_dir: String,
 
@@ -802,14 +802,17 @@ impl EcVolume {
     /// shard delivery can bring the manifest with it, and the receive path only
     /// writes the file, so without this the in-memory volume keeps the
     /// protection state it resolved at mount (off) until a remount.
-    pub fn reload_bitrot_sidecar(&mut self, additional_dirs: &[String]) {
-        if let Err(e) = self.load_active_bitrot_sidecar(additional_dirs) {
+    /// Returns the layout-mismatch error a mount would fail on.
+    pub fn reload_bitrot_sidecar(&mut self, additional_dirs: &[String]) -> io::Result<()> {
+        let result = self.load_active_bitrot_sidecar(additional_dirs);
+        if let Err(e) = &result {
             tracing::warn!(
                 volume_id = self.volume_id.0,
                 error = %e,
                 "reload bitrot sidecar",
             );
         }
+        result
     }
 
     /// Load the generation-0 checksum sidecar into `self.bitrot`/`self.bitrot_status`.
@@ -888,8 +891,8 @@ impl EcVolume {
             self.parity_shards as usize,
         );
         // Provenance is committed together with the sidecar it describes, so a
-        // swallowed reload (`reload_bitrot_sidecar` logs and discards the `Err`
-        // above) cannot leave them disagreeing: the geometry-mismatch return
+        // reload whose `Err` above a caller ignores cannot leave them
+        // disagreeing: the geometry-mismatch return
         // happens before this point, so `bitrot`/`bitrot_status` below and
         // `bitrot_source_dir` here always describe the same load attempt.
         // Only a path that actually exists is a real source: `path` falls back
@@ -932,6 +935,31 @@ impl EcVolume {
         crate::storage::erasure_coding::ec_bitrot::BitrotStatus,
     ) {
         (self.bitrot.clone(), self.bitrot_status)
+    }
+
+    /// The protection of a volume's per-disk runtimes: the first `On`, else
+    /// `Invalid`, else `Off`. After a restart only the runtime whose disk holds
+    /// the sidecar resolves it. Mirrors Go's `SelectBitrotProtection`.
+    pub(crate) fn select_bitrot_protection(
+        volumes: &[&EcVolume],
+    ) -> (
+        Option<crate::pb::volume_server_pb::EcBitrotProtection>,
+        crate::storage::erasure_coding::ec_bitrot::BitrotStatus,
+    ) {
+        use crate::storage::erasure_coding::ec_bitrot::BitrotStatus;
+        let mut invalid = false;
+        for v in volumes {
+            match v.bitrot_protection() {
+                (prot, BitrotStatus::On) => return (prot, BitrotStatus::On),
+                (_, BitrotStatus::Invalid) => invalid = true,
+                _ => {}
+            }
+        }
+        if invalid {
+            (None, BitrotStatus::Invalid)
+        } else {
+            (None, BitrotStatus::Off)
+        }
     }
 
     /// Read-only EC bitrot checksum scrub of the LOCAL shards of this volume's

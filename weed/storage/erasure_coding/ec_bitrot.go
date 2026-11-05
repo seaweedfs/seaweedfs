@@ -399,6 +399,52 @@ func verifyShardFileBlocks(path string, entry *volume_server_pb.EcShardChecksums
 	return mismatched, nil
 }
 
+// SelectBitrotProtection picks the protection of a volume's per-disk runtimes:
+// the first On, else the first Invalid, else Off. After a restart only the
+// runtime whose disk holds the sidecar resolves it.
+func SelectBitrotProtection(volumes []*EcVolume) (*volume_server_pb.EcBitrotProtection, BitrotStatus) {
+	var invalid bool
+	for _, v := range volumes {
+		prot, status := v.BitrotProtection()
+		switch status {
+		case BitrotOn:
+			return prot, status
+		case BitrotInvalid:
+			invalid = true
+		}
+	}
+	if invalid {
+		return nil, BitrotInvalid
+	}
+	return nil, BitrotOff
+}
+
+// VerifyEcVolumeDataShards checks the data shards a decode reads against the
+// volume's bitrot protection: a corrupt shard copied into the .dat is lost for
+// good once the caller deletes the parity that could repair it.
+func VerifyEcVolumeDataShards(prot *volume_server_pb.EcBitrotProtection, status BitrotStatus, shardFileNames []string) error {
+	switch status {
+	case BitrotOff:
+		return nil
+	case BitrotInvalid:
+		return fmt.Errorf("bitrot sidecar is malformed or unverifiable")
+	}
+	for shardId, shardPath := range shardFileNames {
+		entry := shardChecksums(prot, uint32(shardId))
+		if entry == nil {
+			continue
+		}
+		mismatched, err := verifyShardFileBlocks(shardPath, entry, int64(prot.BlockSize))
+		if err != nil {
+			return fmt.Errorf("verify data shard %d %s: %w", shardId, shardPath, err)
+		}
+		if len(mismatched) > 0 {
+			return fmt.Errorf("data shard %d %s fails its bitrot checksum in %d blocks", shardId, shardPath, len(mismatched))
+		}
+	}
+	return nil
+}
+
 // ComputeProtectionFromShards builds a complete EcBitrotProtection by reading
 // the on-disk bytes of every shard for a generation — the trust-on-first-use
 // backfill primitive for EC volumes that were encoded before this feature. It
@@ -480,10 +526,13 @@ func (ev *EcVolume) BitrotProtection() (*volume_server_pb.EcBitrotProtection, Bi
 // already mounted — a shard delivery can bring the manifest with it, and the
 // receive path only writes the file, so without this the in-memory volume
 // keeps the protection state it resolved at mount (off) until a remount.
-func (ev *EcVolume) ReloadBitrotSidecar(additionalDirs ...string) {
-	if err := ev.loadActiveBitrotSidecar(additionalDirs...); err != nil {
+// It returns the layout-mismatch error a mount would fail on.
+func (ev *EcVolume) ReloadBitrotSidecar(additionalDirs ...string) error {
+	err := ev.loadActiveBitrotSidecar(additionalDirs...)
+	if err != nil {
 		glog.Warningf("ec volume %d: reload bitrot sidecar: %v", ev.VolumeId, err)
 	}
+	return err
 }
 
 // loadActiveBitrotSidecar loads the generation-0 checksum sidecar into the
