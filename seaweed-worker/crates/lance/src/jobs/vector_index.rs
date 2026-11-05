@@ -146,10 +146,12 @@ impl JobHandler for VectorIndexHandler {
             MIN_ROWS_FLOOR,
             MIN_ROWS_CEILING,
         ) as usize;
+        let max_results = usize::try_from(request.max_results).unwrap_or(0);
         let client = self.client();
         let tables = client.list_all_tables().await?;
 
         let mut proposals = Vec::new();
+        let mut has_more = false;
         for encoded in &tables {
             let id = parse_id(encoded);
             if !is_vector_table(&id) {
@@ -192,6 +194,10 @@ impl JobHandler for VectorIndexHandler {
             if rows < min_rows {
                 continue;
             }
+            if max_results > 0 && proposals.len() >= max_results {
+                has_more = true;
+                break;
+            }
             let mut parameters: HashMap<String, ConfigValue> = HashMap::new();
             parameters.insert("table_id".to_string(), string_list(&id));
             proposals.push(JobProposal {
@@ -213,7 +219,7 @@ impl JobHandler for VectorIndexHandler {
             request_id: request.request_id.clone(),
             job_type: JOB_TYPE.to_string(),
             proposals,
-            has_more: false,
+            has_more,
         })?;
         sender.send_complete(DetectionComplete {
             request_id: request.request_id.clone(),
