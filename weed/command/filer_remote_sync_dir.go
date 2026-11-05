@@ -1104,7 +1104,8 @@ func isMetadataOnlyUpdate(dir string, message *filer_pb.EventNotification) bool 
 }
 
 // isStampOnlyUpdate reports an update that changed the entry's RemoteEntry
-// and nothing else, as a sync stamp does.
+// and nothing else, as a sync stamp does. CommitTsNs is the filer's, new on
+// every stored update.
 func isStampOnlyUpdate(message *filer_pb.EventNotification) bool {
 	if proto.Equal(message.OldEntry.GetRemoteEntry(), message.NewEntry.GetRemoteEntry()) {
 		return false
@@ -1112,6 +1113,7 @@ func isStampOnlyUpdate(message *filer_pb.EventNotification) bool {
 	oldEntry := proto.Clone(message.OldEntry).(*filer_pb.Entry)
 	newEntry := proto.Clone(message.NewEntry).(*filer_pb.Entry)
 	oldEntry.RemoteEntry, newEntry.RemoteEntry = nil, nil
+	oldEntry.CommitTsNs, newEntry.CommitTsNs = 0, 0
 	return proto.Equal(oldEntry, newEntry)
 }
 

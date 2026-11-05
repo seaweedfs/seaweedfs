@@ -2227,9 +2227,10 @@ func TestTouchedEntryIsStampedOnce(t *testing.T) {
 			const dir = "/buckets/b"
 			mountLoc := &remote_pb.RemoteStorageLocation{Name: "s3", Bucket: "bucket", Path: "/"}
 			synced := &filer_pb.RemoteEntry{StorageName: "s3", RemoteETag: `"d41d8cd98f00b204e9800998ecf8427e"`, RemoteMtime: uploaded, LastLocalSyncTsNs: uploaded*1e9 + 500}
-			before := &filer_pb.Entry{Name: "app.lock", Attributes: &filer_pb.FuseAttributes{Mtime: uploaded}, RemoteEntry: synced}
+			before := &filer_pb.Entry{Name: "app.lock", Attributes: &filer_pb.FuseAttributes{Mtime: uploaded}, RemoteEntry: synced, CommitTsNs: uploaded * 1e9}
 			touched := proto.Clone(before).(*filer_pb.Entry)
 			touched.Attributes.Mtime = tc.mtime
+			touched.CommitTsNs++
 
 			remote := &recordingRemote{}
 			filerClient := &stubFilerClient{}
@@ -2248,6 +2249,8 @@ func TestTouchedEntryIsStampedOnce(t *testing.T) {
 				}
 				stamps++
 				stamped := proto.Clone(filerClient.updated.Entry).(*filer_pb.Entry)
+				// the filer gives every stored update a new commit timestamp
+				stamped.CommitTsNs++
 				if !shouldSendToRemote(stamped) {
 					t.Fatal("precondition: the stamped entry still reads dirty, its mtime is past RemoteMtime")
 				}
