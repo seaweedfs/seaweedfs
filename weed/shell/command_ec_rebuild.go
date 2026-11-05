@@ -27,7 +27,7 @@ func (c *commandEcRebuild) Name() string {
 func (c *commandEcRebuild) Help() string {
 	return `find and rebuild missing ec shards among volume servers
 
-	ec.rebuild [-c EACH_COLLECTION|<collection_name>] [-apply] [-maxParallelization N] [-diskType=<disk_type>]
+	ec.rebuild [-c EACH_COLLECTION|<collection_name>] [-apply] [-maxParallelization N] [-diskType=<disk_type>] [-checksum]
 
 	Before rebuilding, asks volume servers to recover any shards left unmounted by
 	a missing .ecx index (the index resides only on a peer server). Such shards are
@@ -41,6 +41,11 @@ func (c *commandEcRebuild) Help() string {
 	                       Increase for faster rebuilds with more system resources.
 	                       Decrease if experiencing resource contention or instability.
 	  -diskType: disk type for EC shards (hdd, ssd, or empty for default hdd)
+	  -checksum: first verify every shard against its checksum sidecar (as
+	             ec.scrub -mode=checksum does), and rebuild the shards that fail
+	             it, also in volumes that have every shard. A failing copy is
+	             removed once a good copy of its shard is mounted elsewhere.
+	             This reads every shard in full.
 
 	Algorithm:
 
@@ -79,6 +84,7 @@ func (c *commandEcRebuild) Do(args []string, commandEnv *CommandEnv, writer io.W
 	maxParallelization := fixCommand.Int("maxParallelization", DefaultMaxParallelization, "run up to X tasks in parallel, whenever possible")
 	applyChanges := fixCommand.Bool("apply", false, "apply the changes")
 	diskTypeStr := fixCommand.String("diskType", "", "disk type for EC shards (hdd, ssd, or empty for default hdd)")
+	verifyChecksums := fixCommand.Bool("checksum", false, "verify every shard against its checksum sidecar first, and rebuild the shards that fail it, also in volumes that have every shard")
 	// TODO: remove this alias
 	applyChangesAlias := fixCommand.Bool("force", false, "apply the changes (alias for -apply)")
 	if err = fixCommand.Parse(args); err != nil {
@@ -119,5 +125,5 @@ func (c *commandEcRebuild) Do(args []string, commandEnv *CommandEnv, writer io.W
 		}
 	}
 
-	return ec.RebuildEcVolumes(commandEnv.ecEnv(), allEcNodes, writer, collections, volumeIds, diskType, *maxParallelization, *applyChanges)
+	return ec.RebuildEcVolumes(commandEnv.ecEnv(), allEcNodes, writer, collections, volumeIds, diskType, *maxParallelization, *applyChanges, *verifyChecksums)
 }
