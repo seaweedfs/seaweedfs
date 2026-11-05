@@ -2,12 +2,14 @@ package s3api
 
 import (
 	"context"
+	"io"
 	"sort"
 	"strings"
 	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -15,6 +17,7 @@ const (
 	listPrefetchAhead   = 64
 	listPrefetchWindow  = 32
 	listPrefetchQueued  = 4096
+	listReadAheadBytes  = 1 << 20
 )
 
 // listPrefetcher reads directories ahead of a recursive listing walk. The walk enters
@@ -35,15 +38,16 @@ type listPrefetcher struct {
 	maxAhead int
 	workers  int
 
-	running sync.WaitGroup
-	mu      sync.Mutex
-	wake    *sync.Cond
-	closed  bool
-	started bool
-	ahead   int
-	pos     string
-	queued  []string
-	windows map[string]*prefetchedWindow
+	running  sync.WaitGroup
+	mu       sync.Mutex
+	wake     *sync.Cond
+	streamed *sync.Cond
+	closed   bool
+	started  bool
+	ahead    int
+	pos      string
+	queued   []string
+	windows  map[string]*prefetchedWindow
 }
 
 type prefetchedWindow struct {
@@ -63,6 +67,7 @@ func newListPrefetcher(ctx context.Context, client filer_pb.SeaweedFilerClient, 
 	p.workers = min(listPrefetchWorkers, p.maxAhead)
 	p.ahead = p.workers
 	p.wake = sync.NewCond(&p.mu)
+	p.streamed = sync.NewCond(&p.mu)
 	return p
 }
 
@@ -165,6 +170,7 @@ func (p *listPrefetcher) close() {
 	p.mu.Lock()
 	p.closed = true
 	p.wake.Broadcast()
+	p.streamed.Broadcast()
 	p.mu.Unlock()
 	p.cancel()
 	p.running.Wait()
@@ -198,15 +204,112 @@ func (p *listPrefetcher) read(dir string, w *prefetchedWindow) {
 		w.err = err
 		return
 	}
-	window := drainListWindow(stream)
-	if window.err != nil {
-		w.err = window.err
-		return
+	for {
+		resp, recvErr := stream.Recv()
+		if recvErr == io.EOF {
+			break
+		}
+		if recvErr != nil {
+			w.err = recvErr
+			return
+		}
+		if resp.Entry != nil {
+			w.entries = append(w.entries, resp.Entry)
+		}
 	}
-	w.entries = window.entries
 	for _, entry := range w.entries {
 		if listWalkDescends(entry) {
 			p.add(dir + "/" + entry.Name)
 		}
 	}
+}
+
+// listAhead is the walk's own listing of a directory, read ahead of the walk: each
+// directory the walk will descend into goes to the prefetcher as it arrives, so its
+// siblings are read while the walk is inside the first. The walk still takes each
+// entry as it arrives, and at most listReadAheadBytes of entries wait for it.
+type listAhead struct {
+	p       *listPrefetcher
+	entries []*filer_pb.Entry
+	sizes   []int
+	size    int
+	err     error
+}
+
+// list opens the walk's listing of a directory; descends picks the entries to prefetch.
+func (p *listPrefetcher) list(ctx context.Context, client filer_pb.SeaweedFilerClient, request *filer_pb.ListEntriesRequest, descends func(*filer_pb.Entry) bool) (listEntriesStream, error) {
+	if p == nil {
+		return client.ListEntries(ctx, request)
+	}
+	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
+		return client.ListEntries(ctx, request)
+	}
+	p.running.Add(1)
+	p.mu.Unlock()
+	stream, err := client.ListEntries(p.ctx, request)
+	if err != nil {
+		p.running.Done()
+		return nil, err
+	}
+	a := &listAhead{p: p}
+	go a.read(stream, request.Directory, descends)
+	return a, nil
+}
+
+func (a *listAhead) read(stream listEntriesStream, dir string, descends func(*filer_pb.Entry) bool) {
+	p := a.p
+	defer p.running.Done()
+	for {
+		p.mu.Lock()
+		for a.size >= listReadAheadBytes && !p.closed {
+			p.streamed.Wait()
+		}
+		closed := p.closed
+		p.mu.Unlock()
+		var resp *filer_pb.ListEntriesResponse
+		err := context.Canceled
+		if !closed {
+			resp, err = stream.Recv()
+		}
+		p.mu.Lock()
+		if err != nil {
+			a.err = err
+			p.streamed.Broadcast()
+			p.mu.Unlock()
+			return
+		}
+		entry := resp.Entry
+		if entry != nil {
+			size := proto.Size(entry)
+			a.entries = append(a.entries, entry)
+			a.sizes = append(a.sizes, size)
+			a.size += size
+			p.streamed.Broadcast()
+		}
+		p.mu.Unlock()
+		if entry != nil && descends(entry) {
+			p.add(dir + "/" + entry.Name)
+		}
+	}
+}
+
+func (a *listAhead) Recv() (*filer_pb.ListEntriesResponse, error) {
+	p := a.p
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for len(a.entries) == 0 && a.err == nil {
+		p.streamed.Wait()
+	}
+	if len(a.entries) == 0 {
+		return nil, a.err
+	}
+	entry := a.entries[0]
+	a.entries[0] = nil
+	a.entries = a.entries[1:]
+	a.size -= a.sizes[0]
+	a.sizes = a.sizes[1:]
+	p.streamed.Broadcast()
+	return &filer_pb.ListEntriesResponse{Entry: entry}, nil
 }

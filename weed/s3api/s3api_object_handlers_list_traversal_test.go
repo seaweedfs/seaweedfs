@@ -3,6 +3,7 @@ package s3api
 import (
 	"context"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 	"sync"
@@ -236,5 +237,66 @@ func TestRecursiveListingPagesWithReadAhead(t *testing.T) {
 				assert.Equal(t, want, got)
 			})
 		}
+	}
+}
+
+// stallingFilerClient holds a listing open after its last entry until the caller
+// gives up, like a SQL store still scanning a directory past the last match.
+type stallingFilerClient struct {
+	*testFilerClient
+	stall func(*filer_pb.ListEntriesRequest) bool
+}
+
+type stallingStream struct {
+	grpc.ServerStreamingClient[filer_pb.ListEntriesResponse]
+	ctx context.Context
+}
+
+func (s stallingStream) Recv() (*filer_pb.ListEntriesResponse, error) {
+	resp, err := s.ServerStreamingClient.Recv()
+	if err == io.EOF {
+		<-s.ctx.Done()
+		return nil, s.ctx.Err()
+	}
+	return resp, err
+}
+
+func (c *stallingFilerClient) ListEntries(ctx context.Context, in *filer_pb.ListEntriesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[filer_pb.ListEntriesResponse], error) {
+	stream, err := c.testFilerClient.ListEntries(ctx, in, opts...)
+	if err != nil || !c.stall(in) {
+		return stream, err
+	}
+	return stallingStream{ServerStreamingClient: stream, ctx: ctx}, nil
+}
+
+// A page that fills before a listing ends must not wait for the listing's end, and
+// the reads still open when the page is done are cancelled and joined.
+func TestRecursiveListingDoesNotWaitForStalledListings(t *testing.T) {
+	keys, emptyDirs := branchedTreeKeys(40)
+	tree := filerTreeOf("/buckets/test", keys, emptyDirs)
+
+	for _, maxKeys := range []uint16{2, 5} {
+		want := listedNames(t, &testFilerClient{entriesByDir: tree}, listDirectoryRequest{dir: "/buckets/test", bucket: "test"}, &ListingCursor{maxKeys: maxKeys})
+
+		ctx, cancel := context.WithCancel(context.Background())
+		client := &stallingFilerClient{testFilerClient: &testFilerClient{entriesByDir: tree}, stall: func(in *filer_pb.ListEntriesRequest) bool {
+			return in.Directory == "/buckets/test" || !strings.HasPrefix(in.Directory, "/buckets/test/acct-00")
+		}}
+		done := make(chan []string)
+		go func() {
+			cursor := &ListingCursor{maxKeys: maxKeys}
+			cursor.prefetch = newListPrefetcher(ctx, client, maxKeys)
+			got := listedNames(t, client, listDirectoryRequest{dir: "/buckets/test", bucket: "test"}, cursor)
+			cursor.prefetch.close()
+			done <- got
+		}()
+		select {
+		case got := <-done:
+			assert.Equal(t, want, got)
+		case <-time.After(10 * time.Second):
+			cancel()
+			t.Fatalf("max=%d: listing waited for a stalled stream", maxKeys)
+		}
+		cancel()
 	}
 }

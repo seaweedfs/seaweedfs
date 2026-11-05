@@ -1239,25 +1239,17 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 			}
 		}
 		if stream == nil {
+			onlyPrefix := cursor.prefixEndsOnDelimiter
 			var listErr error
-			stream, listErr = client.ListEntries(ctx, request)
+			stream, listErr = cursor.prefetch.list(ctx, client, request, func(entry *filer_pb.Entry) bool {
+				return listWalkDescends(entry) && entry.Name+"/" > marker && (!onlyPrefix || entry.Name == prefix)
+			})
 			if listErr != nil {
 				if errors.Is(listErr, filer_pb.ErrNotFound) {
 					return
 				}
 				err = fmt.Errorf("list entries %+v: %w", request, listErr)
 				return
-			}
-			if cursor.prefetch != nil {
-				// Hand the window's directories to the prefetcher before the walk
-				// descends into the first, so their siblings are read meanwhile.
-				window := drainListWindow(stream)
-				for _, entry := range window.entries {
-					if listWalkDescends(entry) && entry.Name+"/" > marker && (!cursor.prefixEndsOnDelimiter || entry.Name == prefix) {
-						cursor.prefetch.add(dir + "/" + entry.Name)
-					}
-				}
-				stream = window
 			}
 		}
 
@@ -1436,34 +1428,13 @@ type listEntriesStream interface {
 	Recv() (*filer_pb.ListEntriesResponse, error)
 }
 
-// listWindow serves entries already in hand the way a ListEntries stream does,
-// ending with the error the stream they were read from ended with.
+// listWindow serves entries already in hand the way a ListEntries stream does.
 type listWindow struct {
 	entries []*filer_pb.Entry
-	err     error
-}
-
-func drainListWindow(stream listEntriesStream) *listWindow {
-	w := &listWindow{}
-	for {
-		resp, err := stream.Recv()
-		if err != nil {
-			if err != io.EOF {
-				w.err = err
-			}
-			return w
-		}
-		if resp.Entry != nil {
-			w.entries = append(w.entries, resp.Entry)
-		}
-	}
 }
 
 func (w *listWindow) Recv() (*filer_pb.ListEntriesResponse, error) {
 	if len(w.entries) == 0 {
-		if w.err != nil {
-			return nil, w.err
-		}
 		return nil, io.EOF
 	}
 	entry := w.entries[0]
