@@ -249,10 +249,11 @@ func TestAdminLockManagerSetFairnessWindowWakesWaiters(t *testing.T) {
 		acquired <- release2
 	}()
 
+	require.Eventually(t, func() bool { return len(m.Status().Waiters) == 1 }, time.Second, time.Millisecond)
 	select {
 	case <-acquired:
 		t.Fatalf("late acquire joined a hold older than the fairness window")
-	case <-time.After(50 * time.Millisecond):
+	default:
 	}
 
 	m.SetFairnessWindow(0)
