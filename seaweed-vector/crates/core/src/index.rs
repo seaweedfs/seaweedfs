@@ -263,13 +263,26 @@ mod tests {
         build(&mut dataset, &table.vector_column, INDEX_NAME, 4, false)
             .await
             .unwrap();
-        testing::append_dataset(&mut dataset, &testing::vectors(40, DIM), &["b"; 40]).await;
+        let mut appended = testing::vectors(40, DIM);
+        appended.push(vec![9.0; DIM]);
+        testing::append_dataset(&mut dataset, &appended, &["b"; 41]).await;
         optimize(&mut dataset, &table.vector_column, false)
             .await
             .unwrap();
         let cov = &coverage(&dataset, "vector").await.unwrap()[0];
         assert_eq!(cov.segments, 2);
         assert!(cov.unindexed_fragments.is_empty());
+        let hits = query::ann(
+            &dataset,
+            &table,
+            &Query {
+                nprobes: Some(4),
+                ..exact(&[9.0; DIM], 1)
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(hits[0].key, "k140", "{hits:?}");
 
         testing::append_dataset(&mut dataset, &testing::vectors(40, DIM), &["c"; 40]).await;
         optimize(&mut dataset, &table.vector_column, true)
@@ -312,6 +325,23 @@ mod tests {
         let cov = &coverage(&dataset, "vector").await.unwrap()[0];
         assert!(cov.coverage_known);
         assert!(cov.unindexed_fragments.is_empty(), "{cov:?}");
+        let hits = query::ann(
+            &dataset,
+            &table,
+            &Query {
+                nprobes: Some(MAX_PARTITIONS),
+                ..exact(&testing::vectors(1, DIM)[0], 10)
+            },
+        )
+        .await
+        .unwrap();
+        let mut tied: Vec<&str> = hits
+            .iter()
+            .filter(|h| h.distance < 1e-6)
+            .map(|h| h.key.as_str())
+            .collect();
+        tied.sort();
+        assert_eq!(tied, ["k120", "k180", "k60"], "{hits:?}");
         for vector in testing::vectors(4, DIM) {
             assert_same_top_k(&dataset, &vector, 10).await;
         }
