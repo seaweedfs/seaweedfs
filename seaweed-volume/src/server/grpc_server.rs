@@ -7790,10 +7790,19 @@ impl EcDecodeJob {
             .collect();
         // A rebuild's backfill writes the sidecar without reloading the
         // mounted runtimes, so resolve it again the way a shard mount does.
+        // Any runtime left finds it on every disk; with none left (an unmount
+        // raced the decode) the protection would read as Off.
         let (bitrot, bitrot_status) = {
             let mut store = state.store.write().unwrap();
             let ec_metadata_dirs = store.ec_metadata_dirs();
-            for ec_vol in store.find_all_ec_volumes_mut(vid) {
+            let runtimes = store.find_all_ec_volumes_mut(vid);
+            if runtimes.is_empty() {
+                return Err(Status::internal(format!(
+                    "ec volume {} was unmounted during the decode",
+                    vid
+                )));
+            }
+            for ec_vol in runtimes {
                 ec_vol
                     .reload_bitrot_sidecar(&ec_metadata_dirs)
                     .map_err(|e| Status::internal(format!("ec volume {}: {}", vid, e)))?;
@@ -14639,6 +14648,61 @@ mod tests {
         for shard_id in 0..14 {
             assert!(std::path::Path::new(&format!("{data}/1.ec{shard_id:02}")).exists());
         }
+    }
+
+    /// An unmount between the job snapshot and the verification leaves no
+    /// runtime to resolve the sidecar: the job must refuse, not verify as Off.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_ec_decode_job_refuses_when_every_runtime_was_unmounted() {
+        let (service, _tmp, data, _idx, _) = make_split_idx_ec_decode_service(&[], false).await;
+        let job = {
+            let store = service.state.store.read().unwrap();
+            let (ec_vol, shard_dirs) = store
+                .collect_ec_shard_dirs(
+                    VolumeId(1),
+                    crate::storage::erasure_coding::ec_shard::MAX_SHARD_COUNT,
+                )
+                .unwrap();
+            let data_shards = ec_vol.data_shards as usize;
+            EcDecodeJob {
+                vid: VolumeId(1),
+                dat_dir: ec_vol.dir.clone(),
+                ecx_dir: ec_vol.ecx_actual_dir().to_string(),
+                idx_dir: ec_vol.dir_idx.clone(),
+                collection: ec_vol.collection.clone(),
+                vif_dat_file_size: ec_vol.dat_file_size,
+                large_block_size: ec_vol.large_block_size() as usize,
+                small_block_size: ec_vol.small_block_size() as usize,
+                shard_dirs: shard_dirs[..data_shards]
+                    .iter()
+                    .map(|d| d.clone().unwrap())
+                    .collect(),
+                needle_map_kind: store.needle_map_kind,
+            }
+        };
+        service
+            .volume_ec_shards_unmount(Request::new(
+                volume_server_pb::VolumeEcShardsUnmountRequest {
+                    volume_id: 1,
+                    shard_ids: (0..14).collect(),
+                    encode_ts_ns: 0,
+                },
+            ))
+            .await
+            .unwrap();
+        let shard = format!("{data}/1.ec03");
+        let mut bytes = std::fs::read(&shard).unwrap();
+        bytes[0] ^= 0xff;
+        std::fs::write(&shard, bytes).unwrap();
+
+        let err = job.run(&service.state).unwrap_err();
+
+        assert!(
+            err.message().contains("unmounted during the decode"),
+            "unexpected error: {}",
+            err.message()
+        );
+        assert!(!std::path::Path::new(&format!("{data}/1.dat")).exists());
     }
 
     async fn assert_corrupt_data_shard_rejected(service: &VolumeGrpcService, data: &str) {
