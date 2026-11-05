@@ -197,7 +197,7 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 		} else if metadataEventRemovesFromDirectory(resp, filer.DirectoryEtcRemote) {
 			// deletion
 			if message.OldEntry.Name == filer.REMOTE_STORAGE_MOUNT_FILE {
-				option.mappings = &remote_pb.RemoteStorageMapping{}
+				option.mappings = &remote_pb.RemoteStorageMapping{Mappings: map[string]*remote_pb.RemoteStorageLocation{}}
 			}
 			if strings.HasSuffix(message.OldEntry.Name, filer.REMOTE_STORAGE_CONF_SUFFIX) {
 				conf := &remote_pb.RemoteConf{}

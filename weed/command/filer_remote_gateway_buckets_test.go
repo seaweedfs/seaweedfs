@@ -371,3 +371,39 @@ func TestGatewayUnmountedBucketDeleteIsSkipped(t *testing.T) {
 		t.Fatalf("expected nil for unmounted bucket delete, got: %v", err)
 	}
 }
+
+// TestGatewayCreatesABucketAfterTheMappingFileIsDeleted: deleting
+// mount.mapping empties the mapping table, and a later bucket create still
+// records its mount in it.
+func TestGatewayCreatesABucketAfterTheMappingFileIsDeleted(t *testing.T) {
+	option, remote := gatewayTestOption("gatewaytest-mapping-reset")
+	t.Cleanup(func() { delete(remote_storage.RemoteStorageClientMakers, "gatewaytest-mapping-reset") })
+	createAt, noFilter, noSuffix := "gatewaytest-mapping-reset", "", false
+	option.createBucketAt, option.include, option.exclude, option.createBucketRandomSuffix = &createAt, &noFilter, &noFilter, &noSuffix
+	process, err := option.makeBucketedEventProcessor(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := process(&filer_pb.SubscribeMetadataResponse{
+		Directory:         filer.DirectoryEtcRemote,
+		EventNotification: &filer_pb.EventNotification{OldEntry: &filer_pb.Entry{Name: filer.REMOTE_STORAGE_MOUNT_FILE}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// saving the new mount needs a filer, so the create itself errors
+	_ = process(&filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets",
+		EventNotification: &filer_pb.EventNotification{
+			NewParentPath: "/buckets",
+			NewEntry:      &filer_pb.Entry{Name: "fresh", IsDirectory: true},
+		},
+	})
+
+	if !slices.Equal(remote.bucketCreates, []string{"fresh"}) {
+		t.Errorf("bucket creates = %v, want [fresh]", remote.bucketCreates)
+	}
+	if loc := option.mappings.Mappings["/buckets/fresh"]; loc.GetBucket() != "fresh" {
+		t.Errorf("mapping for /buckets/fresh = %v, want bucket fresh", loc)
+	}
+}
