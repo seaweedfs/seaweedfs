@@ -291,13 +291,17 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 	resendChan := make(chan struct{}, 1)
 
 	var registered atomic.Bool
+	recvDone := make(chan struct{})
 	defer func() {
+		cancel()
+		<-recvDone
 		if registered.Load() {
 			vs.leaderLostAt.Store(time.Now().UnixNano())
 		}
 	}()
 
 	go func() {
+		defer close(recvDone)
 		for {
 			in, err := stream.Recv()
 			if err != nil {
