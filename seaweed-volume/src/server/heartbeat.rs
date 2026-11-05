@@ -2466,7 +2466,7 @@ mod tests {
             let elapsed = started.elapsed();
             if prompt {
                 assert!(
-                    elapsed < Duration::from_secs(2),
+                    elapsed >= Duration::from_millis(900) && elapsed < Duration::from_secs(2),
                     "redial right after a loss took {:?}",
                     elapsed
                 );
@@ -2582,7 +2582,7 @@ mod tests {
             "the end of the confirmed stream was not recorded"
         );
         assert!(
-            elapsed < Duration::from_secs(2),
+            elapsed >= Duration::from_millis(900) && elapsed < Duration::from_secs(2),
             "redial after losing a registered stream took {:?}",
             elapsed
         );

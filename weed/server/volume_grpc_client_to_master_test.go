@@ -563,7 +563,7 @@ func TestHeartbeatOnceRedialsPromptlyAfterLosingRegisteredStream(t *testing.T) {
 	vs.SeedMasterNodes = []pb.ServerAddress{addr}
 	vs.pulsePeriod = 3 * time.Second
 
-	if elapsed := timeHeartbeatOnce(vs, addr); elapsed >= 2*time.Second {
+	if elapsed := timeHeartbeatOnce(vs, addr); elapsed < 900*time.Millisecond || elapsed >= 2*time.Second {
 		t.Fatalf("redial after losing a registered stream took %v, want about 1s", elapsed)
 	}
 	if !vs.confirmedLeaderOnce.Load() {
