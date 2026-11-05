@@ -13,7 +13,7 @@ pub struct IndexCoverage {
     pub index_name: String,
     /// Physical index segments: the IndexMetadata deltas sharing the name.
     pub segments: usize,
-    /// IVF partitions of the largest segment.
+    /// IVF partitions of the largest segment; 0 when the coverage is not known.
     pub partitions: usize,
     /// False when any delta of this index lacks a fragment bitmap: the index
     /// exists but which fragments it covers is unknown.
@@ -59,8 +59,14 @@ pub async fn coverage(dataset: &Dataset, vector_column: &str) -> Result<Vec<Inde
                 unindexed_rows += fragment.count_rows(None).await?;
             }
         }
+        // Lance's statistics fail on an index that records no fragments.
+        let partitions = if coverage_known {
+            weed_lance_worker::vector_index::partitions(dataset, &name).await?
+        } else {
+            0
+        };
         out.push(IndexCoverage {
-            partitions: weed_lance_worker::vector_index::partitions(dataset, &name).await?,
+            partitions,
             index_name: name,
             segments: bitmaps.len(),
             coverage_known,
