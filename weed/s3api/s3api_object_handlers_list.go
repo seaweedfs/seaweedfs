@@ -1225,10 +1225,11 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 		var stream listEntriesStream
 		windowLimit := request.Limit
 		// A trailing-slash prefix names one directory, the only entry this level
-		// lists. Looking it up by name spares listing every sibling the name
-		// prefixes, which a SQL store answers by scanning the rest of the directory.
+		// lists; a file of that name lists nothing. Looking the name up spares
+		// listing every sibling it prefixes, which a SQL store answers by scanning
+		// the rest of the directory.
 		if cursor.prefixEndsOnDelimiter && prefix != "" && startName == "" {
-			if resp, lookupErr := client.LookupDirectoryEntry(ctx, &filer_pb.LookupDirectoryEntryRequest{Directory: dir, Name: prefix}); lookupErr == nil && resp.GetEntry().GetIsDirectory() {
+			if resp, lookupErr := client.LookupDirectoryEntry(ctx, &filer_pb.LookupDirectoryEntryRequest{Directory: dir, Name: prefix}); lookupErr == nil && resp.GetEntry() != nil {
 				stream = &listWindow{entries: []*filer_pb.Entry{resp.Entry}}
 			}
 		}

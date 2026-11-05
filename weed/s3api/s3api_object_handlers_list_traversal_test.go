@@ -63,6 +63,11 @@ func TestTrailingSlashPrefixLooksUpItsDirectory(t *testing.T) {
 		seen = listedNames(t, newClient(), listDirectoryRequest{dir: "/buckets/test", prefix: prefix, bucket: "test"}, &ListingCursor{maxKeys: 1000, prefixEndsOnDelimiter: true})
 		assert.Empty(t, seen, "prefix %q/ names no directory", prefix)
 	}
+
+	client = newClient()
+	seen = listedNames(t, client, listDirectoryRequest{dir: "/buckets/test", prefix: "solo", bucket: "test"}, &ListingCursor{maxKeys: 1000, prefixEndsOnDelimiter: true})
+	assert.Empty(t, seen)
+	assert.NotContains(t, client.listed, "/buckets/test", "a file found by the lookup ends the listing")
 }
 
 // branchedTreeKeys builds keys shaped like a bucket of many accounts, each holding a
