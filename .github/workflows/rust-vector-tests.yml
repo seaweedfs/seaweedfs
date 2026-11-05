@@ -134,6 +134,18 @@ jobs:
         run: |
           go test ./weed/s3api/s3vectors -count=1
           go test ./weed/command -run 'Vector|Vectors' -count=1
+      # The worker workspace has no protoc of its own for lance's build
+      # scripts; use the vendored one its lock names, as its own workflow does.
+      - name: Use the vendored protoc for the worker
+        if: matrix.worker == '1'
+        run: |
+          cd seaweed-worker
+          cargo fetch --locked
+          version=$(awk '/^name = "protoc-bin-vendored-linux-x86_64"$/{found=1; next} found && /^version = /{gsub(/"/,"",$3); print $3; exit}' Cargo.lock)
+          test -n "$version" || { echo "protoc-bin-vendored-linux-x86_64 is not in Cargo.lock" >&2; exit 1; }
+          protoc=$(find ~/.cargo/registry/src -path "*protoc-bin-vendored-linux-x86_64-$version/bin/protoc" | head -1)
+          test -x "$protoc" || { echo "no vendored protoc $version in the registry" >&2; exit 1; }
+          echo "PROTOC=$protoc" >> "$GITHUB_ENV"
       - name: Build integration binaries
         working-directory: test/s3vectors
         # dev profile: correctness suite, no release codegen needed. weed-volume
