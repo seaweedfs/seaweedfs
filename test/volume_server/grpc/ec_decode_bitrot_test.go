@@ -53,6 +53,12 @@ func testEcShardsToVolumeRejectsCorruptDataShard(t *testing.T, sidecarAfterMount
 	}); err != nil {
 		t.Fatalf("VolumeEcShardsGenerate: %v", err)
 	}
+	// Reads must go through the EC shards, not the source volume.
+	if _, err := grpcClient.VolumeUnmount(ctx, &volume_server_pb.VolumeUnmountRequest{
+		VolumeId: volumeID,
+	}); err != nil {
+		t.Fatalf("VolumeUnmount: %v", err)
+	}
 	dataDir := filepath.Join(clusterHarness.BaseDir(), "volume")
 	base := filepath.Join(dataDir, fmt.Sprintf("%d", volumeID))
 	if _, err := os.Stat(base + ".ecsum"); err != nil {
