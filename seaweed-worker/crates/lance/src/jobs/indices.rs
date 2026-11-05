@@ -174,6 +174,7 @@ impl JobHandler for OptimizeIndicesHandler {
             worker_default_values: defaults,
             // A retrain is a whole build, so it gets a build's time.
             admin_runtime_defaults: Some(AdminRuntimeDefaults {
+                job_type_max_runtime_seconds: super::vector_index::EXECUTION_TIMEOUT_SECONDS,
                 execution_timeout_seconds: super::vector_index::EXECUTION_TIMEOUT_SECONDS,
                 ..Default::default()
             }),
@@ -359,6 +360,7 @@ mod tests {
         let descriptor = OptimizeIndicesHandler::new(String::new()).descriptor();
         let defaults = descriptor.admin_runtime_defaults.unwrap();
         assert_eq!(defaults.execution_timeout_seconds, 3600);
+        assert_eq!(defaults.job_type_max_runtime_seconds, 3600);
         assert!(!defaults.enabled);
     }
 
