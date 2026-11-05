@@ -26,10 +26,11 @@ func TestListDirectoryWriteControlsFollowPort(t *testing.T) {
 	}
 
 	writeControls := []string{
-		"handleCreateDir()",
+		`onclick="handleCreateDir()"`,
 		`for="fileElem"`,
-		"handleRename(",
-		"handleDelete(",
+		`for="dirElem"`,
+		`onclick="handleRename(`,
+		`onclick="handleDelete(`,
 		`class="row add-files"`,
 		"function uploadFile(",
 	}
