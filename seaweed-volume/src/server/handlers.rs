@@ -713,6 +713,36 @@ fn override_query_fields(query: &str, overrides: &[(&str, String)]) -> Result<St
     Ok(fields.join("&"))
 }
 
+/// Bound on one replica forward, from connecting until its response arrives.
+/// Without it a silently partitioned peer (packets dropped, no reset) holds the
+/// write until TCP gives up, minutes later; with it the forward fails and the
+/// writer gets "replication failed" (500). It bounds each forward after the
+/// master lookup, not the whole write: the lookup has only the client's connect
+/// bound. A forward with a body gets more time, see replica_request_timeout.
+pub(crate) const REPLICA_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// The slowest link a replica forward's body may cross within its bound, so a
+/// large write is not cut off on a link that is merely slower than a LAN.
+const REPLICA_MIN_BYTES_PER_SEC: u64 = 1 << 20;
+
+fn replica_request_timeout(body_len: usize) -> std::time::Duration {
+    REPLICA_REQUEST_TIMEOUT
+        + std::time::Duration::from_millis(
+            (body_len as u64).saturating_mul(1000) / REPLICA_MIN_BYTES_PER_SEC,
+        )
+}
+
+fn replica_request(
+    client: &reqwest::Client,
+    method: axum::http::Method,
+    url: &str,
+    body_len: usize,
+) -> reqwest::RequestBuilder {
+    client
+        .request(method, url)
+        .timeout(replica_request_timeout(body_len))
+}
+
 /// Helper to synchronously replicate a request to peer volume servers.
 async fn do_replicated_request(
     state: &VolumeServerState,
@@ -787,7 +817,8 @@ async fn do_replicated_request(
         )?;
         let client = state.http_client.clone();
 
-        let mut req_builder = client.request(method.clone(), &url);
+        let body_len = body.as_ref().map_or(0, |b| b.len());
+        let mut req_builder = replica_request(&client, method.clone(), &url, body_len);
 
         // Forward relevant headers
         if let Some(ct) = headers.get(axum::http::header::CONTENT_TYPE) {
@@ -4954,6 +4985,127 @@ fn parse_content_disposition_filename(value: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A replica that reads the forward and never answers. Each request's
+    /// first line is sent on the returned channel.
+    async fn spawn_silent_replica() -> (
+        std::net::SocketAddr,
+        tokio::sync::mpsc::UnboundedReceiver<String>,
+    ) {
+        use tokio::io::AsyncReadExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (received, receipts) = tokio::sync::mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let received = received.clone();
+                tokio::spawn(async move {
+                    let mut request = vec![0u8; 4096];
+                    let n = socket.read(&mut request).await.unwrap_or(0);
+                    let text = String::from_utf8_lossy(&request[..n]).into_owned();
+                    let _ = received.send(text.lines().next().unwrap_or("").to_string());
+                    std::future::pending::<()>().await;
+                });
+            }
+        });
+        (addr, receipts)
+    }
+
+    /// The whole replicated write path, not only the request builder: the
+    /// replica receives the forward, never answers, and the write fails at
+    /// the bound for its body with an error naming that replica.
+    #[tokio::test]
+    async fn test_replicated_write_fails_at_the_bound_when_a_peer_never_answers() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (peer, mut receipts) = spawn_silent_replica().await;
+        let state = remote_manifest_state(&tmp, spawn_lookup(peer).await);
+        let body = bytes::Bytes::from(vec![0u8; REPLICA_MIN_BYTES_PER_SEC as usize]);
+        let bound = replica_request_timeout(body.len());
+        let started = std::time::Instant::now();
+        let sent = do_replicated_request(
+            &state,
+            1,
+            axum::http::Method::POST,
+            "/1,01ab",
+            "",
+            &axum::http::HeaderMap::new(),
+            Some(body),
+        )
+        .await;
+        let took = started.elapsed();
+        let forwarded = receipts
+            .try_recv()
+            .expect("the replica never received the forward");
+        assert!(
+            forwarded.starts_with("POST /1,01ab?") && forwarded.contains("type=replicate"),
+            "{forwarded}"
+        );
+        let error = sent.expect_err("a silent replica cannot ack the write");
+        assert!(error.contains(&peer.to_string()), "{error}");
+        assert!(
+            took >= bound && took < bound + std::time::Duration::from_secs(5),
+            "{took:?}"
+        );
+    }
+
+    /// A peer that accepts the connection but never answers (a silent
+    /// partition after connect) must fail the forward at the bound, not hold
+    /// the write until TCP gives up.
+    #[tokio::test(start_paused = true)]
+    async fn test_replica_request_times_out_on_a_silent_peer() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let _held = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            std::future::pending::<()>().await;
+            drop(socket);
+        });
+        let client = reqwest::Client::new();
+        let url = format!("http://{}/3,01ab?type=replicate", addr);
+        let body = vec![0u8; 1 << 20];
+        let bound = replica_request_timeout(body.len());
+        let started = tokio::time::Instant::now();
+        let sent = tokio::time::timeout(
+            std::time::Duration::from_secs(600),
+            replica_request(&client, axum::http::Method::POST, &url, body.len())
+                .body(body)
+                .send(),
+        )
+        .await
+        .expect("replica forward must not outlive its bound");
+        let err = sent.expect_err("a silent peer cannot ack the replica");
+        assert!(err.is_timeout(), "{err}");
+        assert!(started.elapsed() >= bound && started.elapsed() < bound * 2);
+    }
+
+    /// A forward's bound grows with its body at REPLICA_MIN_BYTES_PER_SEC, so
+    /// a write near the file size limit is not cut off at the bodiless bound.
+    #[test]
+    fn test_replica_request_bound_grows_with_the_body() {
+        assert_eq!(replica_request_timeout(0), REPLICA_REQUEST_TIMEOUT);
+        let mib = REPLICA_MIN_BYTES_PER_SEC as usize;
+        assert_eq!(
+            replica_request_timeout(256 * mib),
+            REPLICA_REQUEST_TIMEOUT + std::time::Duration::from_secs(256)
+        );
+        assert_eq!(
+            replica_request_timeout(mib / 2),
+            REPLICA_REQUEST_TIMEOUT + std::time::Duration::from_millis(500)
+        );
+        let request = replica_request(
+            &reqwest::Client::new(),
+            axum::http::Method::POST,
+            "http://127.0.0.1:1/3,01ab?type=replicate",
+            64 * mib,
+        )
+        .build()
+        .unwrap();
+        assert_eq!(
+            request.timeout(),
+            Some(&(REPLICA_REQUEST_TIMEOUT + std::time::Duration::from_secs(64)))
+        );
+    }
 
     /// The upload handler reads fsync off the decoded query fields rather than
     /// matching the raw string, because Go's r.FormValue decodes and a raw

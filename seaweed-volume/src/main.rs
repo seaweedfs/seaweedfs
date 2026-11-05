@@ -118,6 +118,17 @@ fn reject_https_downgrade(attempt: reqwest::redirect::Attempt) -> reqwest::redir
     }
 }
 
+/// A peer that never answers a SYN (silent partition) must not stall new
+/// outgoing connections; requests set their own overall bounds as needed.
+const OUTGOING_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Base of every outgoing HTTP client: redirect policy and connect bound.
+fn outgoing_client_builder(redirect_policy: reqwest::redirect::Policy) -> reqwest::ClientBuilder {
+    reqwest::Client::builder()
+        .redirect(redirect_policy)
+        .connect_timeout(OUTGOING_CONNECT_TIMEOUT)
+}
+
 fn build_outgoing_http_client(
     config: &VolumeServerConfig,
 ) -> Result<(reqwest::Client, String), Box<dyn std::error::Error>> {
@@ -129,14 +140,12 @@ fn build_outgoing_http_client(
     let redirect_policy = reqwest::redirect::Policy::custom(reject_https_downgrade);
     if !config.https_client_enabled {
         return Ok((
-            reqwest::Client::builder()
-                .redirect(redirect_policy)
-                .build()?,
+            outgoing_client_builder(redirect_policy).build()?,
             scheme.to_string(),
         ));
     }
 
-    let mut builder = reqwest::Client::builder().redirect(redirect_policy);
+    let mut builder = outgoing_client_builder(redirect_policy);
     if !config.https_client_ca_file.is_empty() {
         let ca_pem = std::fs::read(&config.https_client_ca_file).map_err(|e| {
             format!(
@@ -1114,6 +1123,33 @@ mod tests {
         grpc_tls_incoming, tls_policy_is_configured,
     };
     use seaweed_volume::security::tls::TlsPolicy;
+
+    /// A connect that never finishes fails at the 5 s bound. It stalls in the
+    /// resolver, which the connect bound also covers, because that needs no
+    /// routing: a real unanswered SYN depends on the host's network.
+    #[tokio::test(start_paused = true)]
+    async fn outgoing_client_bounds_a_stalled_connect() {
+        struct Stalled;
+        impl reqwest::dns::Resolve for Stalled {
+            fn resolve(&self, _: reqwest::dns::Name) -> reqwest::dns::Resolving {
+                Box::pin(std::future::pending())
+            }
+        }
+        let client = super::outgoing_client_builder(reqwest::redirect::Policy::none())
+            .no_proxy()
+            .dns_resolver(std::sync::Arc::new(Stalled))
+            .build()
+            .unwrap();
+        let started = tokio::time::Instant::now();
+        let sent = tokio::time::timeout(
+            std::time::Duration::from_secs(600),
+            client.get("http://silent-peer.invalid:8080/status").send(),
+        )
+        .await
+        .expect("a stalled connect must not outlive its bound");
+        assert!(sent.is_err(), "a stalled connect cannot answer");
+        assert_eq!(started.elapsed(), super::OUTGOING_CONNECT_TIMEOUT);
+    }
 
     fn write_pem(dir: &tempfile::TempDir, name: &str, body: &str) -> String {
         let path = dir.path().join(name);

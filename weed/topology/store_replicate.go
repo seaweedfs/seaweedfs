@@ -177,7 +177,7 @@ func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDi
 					glog.Errorf("replication-UploadData, err:%v, url:%s", uploaderErr, u.String())
 					return uploaderErr
 				}
-				_, uploadErr := uploader.UploadData(ctx, replicaData, uploadOption)
+				uploadErr := replicateTo(ctx, uploader, replicaData, uploadOption)
 				if uploadErr != nil {
 					glog.Errorf("replication-UploadData, err:%v, url:%s", uploadErr, u.String())
 				}
@@ -209,6 +209,30 @@ func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDi
 		return false, remoteErr
 	}
 	return localIsUnchanged, nil
+}
+
+// replicaRequestTimeout bounds one replica forward with no body, from connect
+// to the end of the response, so a silently partitioned peer cannot hold the
+// write. Mirrors the Rust volume server's REPLICA_REQUEST_TIMEOUT.
+var replicaRequestTimeout = 10 * time.Second
+
+// replicaMinBytesPerSec is the slowest link a forward's body may cross within
+// its bound, so a large write is not cut off on a link slower than a LAN.
+const replicaMinBytesPerSec = 1 << 20
+
+func replicaRequestBound(size int) time.Duration {
+	return replicaRequestTimeout + time.Duration(int64(size)*1000/replicaMinBytesPerSec)*time.Millisecond
+}
+
+func replicateTo(ctx context.Context, uploader *operation.Uploader, data []byte, option *operation.UploadOption) error {
+	bound := replicaRequestBound(len(data))
+	ctx, cancel := context.WithTimeout(ctx, bound)
+	defer cancel()
+	_, err := uploader.UploadData(ctx, data, option)
+	if err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) && !errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("%w after %v: %v", context.DeadlineExceeded, bound, err)
+	}
+	return err
 }
 
 // ReplicatedDelete deletes a needle from the local volume and sends delete
@@ -275,17 +299,29 @@ func ReplicatedDelete(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOp
 type DistributedOperationResult map[string]error
 
 func (dr DistributedOperationResult) Error() error {
-	var errs []string
+	var msgs []string
+	var errs []error
 	for k, v := range dr {
 		if v != nil {
-			errs = append(errs, fmt.Sprintf("[%s]: %v", k, v))
+			msgs = append(msgs, fmt.Sprintf("[%s]: %v", k, v))
+			errs = append(errs, v)
 		}
 	}
 	if len(errs) == 0 {
 		return nil
 	}
-	return errors.New(strings.Join(errs, "\n"))
+	return &distributedOperationError{msg: strings.Join(msgs, "\n"), errs: errs}
 }
+
+// distributedOperationError keeps each replica's error reachable through
+// errors.Is, so a forward that hit its bound is classified as a timeout.
+type distributedOperationError struct {
+	msg  string
+	errs []error
+}
+
+func (e *distributedOperationError) Error() string   { return e.msg }
+func (e *distributedOperationError) Unwrap() []error { return e.errs }
 
 type RemoteResult struct {
 	Host  string
