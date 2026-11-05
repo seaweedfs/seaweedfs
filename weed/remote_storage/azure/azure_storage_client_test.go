@@ -483,3 +483,26 @@ func TestAzureReadNotFoundClassification(t *testing.T) {
 		})
 	}
 }
+
+func TestAzureDeleteBucketOfAMissingContainerSucceeds(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		code       string
+		wantErr    bool
+	}{
+		{"missing container", http.StatusNotFound, "ContainerNotFound", false},
+		{"container being deleted", http.StatusConflict, "ContainerBeingDeleted", false},
+		{"auth failure", http.StatusForbidden, "AuthenticationFailed", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			conf := &remote_pb.RemoteConf{Name: "test", AzureAccountName: "testaccount", AzureAccountKey: "dGVzdGtleQ=="}
+			rs, err := MakeWithHTTPClient(conf, &http.Client{Transport: &azureErrorRoundTripper{statusCode: tt.statusCode, code: tt.code}})
+			require.NoError(t, err)
+
+			err = rs.DeleteBucket("container")
+			require.Equal(t, tt.wantErr, err != nil, "DeleteBucket: %v", err)
+		})
+	}
+}

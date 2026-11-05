@@ -488,6 +488,10 @@ func (gcs *gcsRemoteStorageClient) CreateBucket(name string) (err error) {
 func (gcs *gcsRemoteStorageClient) DeleteBucket(name string) (err error) {
 	err = gcs.client.Bucket(name).Delete(context.Background())
 	if err != nil {
+		var gerr *googleapi.Error
+		if errors.Is(err, storage.ErrBucketNotExist) || (errors.As(err, &gerr) && gerr.Code == http.StatusNotFound) {
+			return nil
+		}
 		return fmt.Errorf("delete bucket %s: %v", name, err)
 	}
 	return

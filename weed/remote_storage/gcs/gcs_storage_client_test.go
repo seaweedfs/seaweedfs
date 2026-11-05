@@ -107,3 +107,22 @@ func TestGCSReadNotFoundClassification(t *testing.T) {
 		})
 	}
 }
+
+func TestGCSDeleteBucketOfAMissingBucketSucceeds(t *testing.T) {
+	tests := []struct {
+		name    string
+		status  int
+		wantErr bool
+	}{
+		{"missing bucket", http.StatusNotFound, false},
+		{"bucket not empty", http.StatusConflict, true},
+		{"access denied", http.StatusForbidden, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := (&fakeGCS{readStatus: tt.status}).client(t)
+			err := client.DeleteBucket("bucket")
+			require.Equal(t, tt.wantErr, err != nil, "DeleteBucket: %v", err)
+		})
+	}
+}

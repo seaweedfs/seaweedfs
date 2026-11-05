@@ -119,6 +119,7 @@ type RemoteStorageClient interface {
 	DeleteFile(loc *remote_pb.RemoteStorageLocation) (err error)
 	ListBuckets() ([]*Bucket, error)
 	CreateBucket(name string) (err error)
+	// DeleteBucket succeeds when the bucket is already gone.
 	DeleteBucket(name string) (err error)
 }
 
