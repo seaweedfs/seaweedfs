@@ -1249,14 +1249,9 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 
 	dataBaseFileName := v.DataBaseFileName()
 
-	// Verify data shards against bitrot sidecar before decoding to prevent building
-	// a corrupt volume and destroying parity shards.
-	additionalDirs := make([]string, 0, len(vs.store.Locations))
-	for _, loc := range vs.store.Locations {
-		additionalDirs = append(additionalDirs, loc.Directory)
-	}
-	if err := erasure_coding.VerifyEcVolumeDataShards(dataBaseFileName, v.ECContext, shardFileNames, additionalDirs...); err != nil {
-		return nil, fmt.Errorf("verify data shards for volume %d: %w", req.VolumeId, err)
+	prot, bitrotStatus := erasure_coding.SelectBitrotProtection(vs.store.FindAllEcVolumes(needle.VolumeId(req.VolumeId)))
+	if err := erasure_coding.VerifyEcVolumeDataShards(prot, bitrotStatus, shardFileNames); err != nil {
+		return nil, fmt.Errorf("ec volume %d: %w", req.VolumeId, err)
 	}
 
 	// The fold and the index write must work on the same .ecj that runtime

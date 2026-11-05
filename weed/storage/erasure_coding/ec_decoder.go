@@ -19,45 +19,6 @@ import (
 // decoding should be a no-op (all entries are deleted).
 const EcNoLiveEntriesSubstring = "has no live entries"
 
-// VerifyEcVolumeDataShards verifies that all present data shards match their checksums
-// in the bitrot sidecar (if present). If a data shard fails its checksum, an error is returned
-// to prevent decoding a corrupt shard into a normal volume and permanently deleting parity shards.
-func VerifyEcVolumeDataShards(baseFileName string, ctx *ECContext, shardFileNames []string, additionalDirs ...string) error {
-	if ctx == nil {
-		return nil
-	}
-	prot, status := loadRebuildSidecar(baseFileName, ctx, additionalDirs)
-	switch status {
-	case BitrotInvalid:
-		return fmt.Errorf("bitrot sidecar for %s is malformed or unverifiable", baseFileName)
-	case BitrotOff:
-		return nil
-	case BitrotOn:
-		dataShards := ctx.DataShards
-		if len(shardFileNames) < dataShards {
-			dataShards = len(shardFileNames)
-		}
-		for shardId := 0; shardId < dataShards; shardId++ {
-			shardPath := shardFileNames[shardId]
-			if shardPath == "" {
-				continue
-			}
-			entry := shardChecksums(prot, uint32(shardId))
-			if entry == nil {
-				continue
-			}
-			mismatched, verr := verifyShardFileBlocks(shardPath, entry, int64(prot.BlockSize))
-			if verr != nil {
-				return fmt.Errorf("verify data shard %d for %s: %w", shardId, baseFileName, verr)
-			}
-			if len(mismatched) > 0 {
-				return fmt.Errorf("data shard %d for %s failed bitrot checksum (%d blocks mismatched)", shardId, baseFileName, len(mismatched))
-			}
-		}
-	}
-	return nil
-}
-
 // HasLiveNeedles returns whether the EC index (.ecx) contains at least one live (non-deleted) entry.
 // This is used by ec.decode to avoid generating an empty normal volume when all entries were deleted.
 func HasLiveNeedles(indexBaseFileName string) (hasLive bool, err error) {
