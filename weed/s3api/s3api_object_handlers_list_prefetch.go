@@ -43,7 +43,6 @@ type listPrefetcher struct {
 	ahead   int
 	pos     string
 	queued  []string
-	seen    map[string]bool
 	windows map[string]*prefetchedWindow
 }
 
@@ -58,7 +57,6 @@ func newListPrefetcher(ctx context.Context, client filer_pb.SeaweedFilerClient, 
 		client:   client,
 		window:   min(uint32(listPrefetchWindow), uint32(maxKeys)+2),
 		maxAhead: min(listPrefetchAhead, int(maxKeys)),
-		seen:     map[string]bool{},
 		windows:  map[string]*prefetchedWindow{},
 	}
 	p.ctx, p.cancel = context.WithCancel(ctx)
@@ -81,12 +79,11 @@ func (p *listPrefetcher) add(dir string) {
 	key := dir + "/"
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.closed || key <= p.pos || p.seen[key] {
+	if p.closed || key <= p.pos || p.windows[key] != nil {
 		return
 	}
-	p.seen[key] = true
 	i := sort.SearchStrings(p.queued, key)
-	if i >= listPrefetchQueued {
+	if i >= listPrefetchQueued || (i < len(p.queued) && p.queued[i] == key) {
 		return
 	}
 	p.queued = append(p.queued, "")
