@@ -596,7 +596,9 @@ func TestRouting_BucketCorsAndVersioningWritesNeedTheirActions(t *testing.T) {
   "identities": [
     {"name":"writer","credentials":[{"accessKey":"WRITERKEY","secretKey":"writersecret"}],"actions":["Read:`+bucket+`","Write:`+bucket+`","List:`+bucket+`","Tagging:`+bucket+`"]},
     {"name":"bucketadmin","credentials":[{"accessKey":"BUCKETADMINKEY","secretKey":"bucketadminsecret"}],"actions":["Admin:`+bucket+`"]},
-    {"name":"configurer","credentials":[{"accessKey":"CONFIGURERKEY","secretKey":"configurersecret"}],"actions":["PutBucketCors:`+bucket+`","DeleteBucketCors:`+bucket+`","PutBucketVersioning:`+bucket+`"]},
+    {"name":"corsputter","credentials":[{"accessKey":"CORSPUTKEY","secretKey":"corsputsecret"}],"actions":["PutBucketCors:`+bucket+`"]},
+    {"name":"corsdeleter","credentials":[{"accessKey":"CORSDELKEY","secretKey":"corsdelsecret"}],"actions":["DeleteBucketCors:`+bucket+`"]},
+    {"name":"versioner","credentials":[{"accessKey":"VERSIONERKEY","secretKey":"versionersecret"}],"actions":["PutBucketVersioning:`+bucket+`"]},
     {"name":"policyuser","credentials":[{"accessKey":"POLICYUSERKEY","secretKey":"policyusersecret"}],"policyNames":["ConfigPolicy"]}
   ],
   "policies": [
@@ -625,19 +627,30 @@ func TestRouting_BucketCorsAndVersioningWritesNeedTheirActions(t *testing.T) {
 
 	const corsXML = `<CORSConfiguration><CORSRule><AllowedOrigin>*</AllowedOrigin><AllowedMethod>GET</AllowedMethod></CORSRule></CORSConfiguration>`
 	const versioningXML = `<VersioningConfiguration><Status>Suspended</Status></VersioningConfiguration>`
+	singleActionKeys := map[string]string{"CORSPUTKEY": "corsputsecret", "CORSDELKEY": "corsdelsecret", "VERSIONERKEY": "versionersecret"}
 	for _, tc := range []struct {
-		method, query, body string
+		method, query, body, allowedKey string
 	}{
-		{http.MethodPut, "cors", corsXML},
-		{http.MethodDelete, "cors", ""},
-		{http.MethodPut, "versioning", versioningXML},
+		{http.MethodPut, "cors", corsXML, "CORSPUTKEY"},
+		{http.MethodDelete, "cors", "", "CORSDELKEY"},
+		{http.MethodPut, "versioning", versioningXML, "VERSIONERKEY"},
 	} {
-		rr := send("WRITERKEY", "writersecret", tc.method, tc.query, tc.body)
-		assert.Equal(t, http.StatusForbidden, rr.Code, "writer %s ?%s", tc.method, tc.query)
-		assert.Contains(t, rr.Body.String(), "AccessDenied", "writer %s ?%s", tc.method, tc.query)
-
-		for _, key := range [][2]string{{"BUCKETADMINKEY", "bucketadminsecret"}, {"CONFIGURERKEY", "configurersecret"}, {"POLICYUSERKEY", "policyusersecret"}} {
-			rr = send(key[0], key[1], tc.method, tc.query, tc.body)
+		denied := [][2]string{{"WRITERKEY", "writersecret"}}
+		allowed := [][2]string{{"BUCKETADMINKEY", "bucketadminsecret"}, {"POLICYUSERKEY", "policyusersecret"}}
+		for key, secret := range singleActionKeys {
+			if key == tc.allowedKey {
+				allowed = append(allowed, [2]string{key, secret})
+			} else {
+				denied = append(denied, [2]string{key, secret})
+			}
+		}
+		for _, key := range denied {
+			rr := send(key[0], key[1], tc.method, tc.query, tc.body)
+			assert.Equal(t, http.StatusForbidden, rr.Code, "%s %s ?%s", key[0], tc.method, tc.query)
+			assert.Contains(t, rr.Body.String(), "AccessDenied", "%s %s ?%s", key[0], tc.method, tc.query)
+		}
+		for _, key := range allowed {
+			rr := send(key[0], key[1], tc.method, tc.query, tc.body)
 			assert.Equal(t, http.StatusNotFound, rr.Code, "%s %s ?%s", key[0], tc.method, tc.query)
 			assert.Contains(t, rr.Body.String(), "NoSuchBucket", "%s %s ?%s", key[0], tc.method, tc.query)
 		}
