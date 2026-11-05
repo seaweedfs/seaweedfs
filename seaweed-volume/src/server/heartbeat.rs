@@ -2480,6 +2480,114 @@ mod tests {
         }
     }
 
+    /// A master that confirms each heartbeat stream and then ends it, the way
+    /// one killed right after registering this server looks. It answers
+    /// nothing else, so no peer names a leader.
+    #[derive(Clone)]
+    struct DroppingLeader;
+
+    impl tonic::server::NamedService for DroppingLeader {
+        const NAME: &'static str = "master_pb.Seaweed";
+    }
+
+    impl tonic::codegen::Service<tonic::codegen::http::Request<tonic::body::Body>> for DroppingLeader {
+        type Response = tonic::codegen::http::Response<tonic::body::Body>;
+        type Error = std::convert::Infallible;
+        type Future = tonic::codegen::BoxFuture<Self::Response, Self::Error>;
+
+        fn poll_ready(
+            &mut self,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+
+        fn call(&mut self, req: tonic::codegen::http::Request<tonic::body::Body>) -> Self::Future {
+            Box::pin(async move {
+                if req.uri().path() != "/master_pb.Seaweed/SendHeartbeat" {
+                    return Ok(tonic::Status::unimplemented("").into_http());
+                }
+                let mut grpc = tonic::server::Grpc::new(tonic_prost::ProstCodec::default());
+                Ok(grpc.streaming(ConfirmThenDrop, req).await)
+            })
+        }
+    }
+
+    struct ConfirmThenDrop;
+
+    impl tonic::server::StreamingService<master_pb::Heartbeat> for ConfirmThenDrop {
+        type Response = master_pb::HeartbeatResponse;
+        type ResponseStream = tokio_stream::Iter<
+            std::vec::IntoIter<Result<master_pb::HeartbeatResponse, tonic::Status>>,
+        >;
+        type Future =
+            tonic::codegen::BoxFuture<tonic::Response<Self::ResponseStream>, tonic::Status>;
+
+        fn call(
+            &mut self,
+            request: tonic::Request<tonic::Streaming<master_pb::Heartbeat>>,
+        ) -> Self::Future {
+            Box::pin(async move {
+                let _ = request.into_inner().message().await;
+                Ok(tonic::Response::new(tokio_stream::iter(vec![
+                    Ok(master_pb::HeartbeatResponse {
+                        volume_size_limit: 1 << 30,
+                        ..Default::default()
+                    }),
+                    Err(tonic::Status::unavailable("master stopped")),
+                ])))
+            })
+        }
+    }
+
+    // A server registered long ago whose master just dropped the stream
+    // redials after about a second, not a pulse. Mirrors Go's
+    // TestHeartbeatOnceRedialsPromptlyAfterLosingRegisteredStream.
+    #[tokio::test]
+    async fn test_heartbeat_once_redials_promptly_after_losing_a_registered_stream() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let master = format!("127.0.0.1:{}.{}", port, port);
+        tokio::spawn(
+            tonic::transport::Server::builder()
+                .add_service(DroppingLeader)
+                .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener)),
+        );
+        let pulse = Duration::from_secs(3);
+        let mut config = test_config();
+        config.master_addresses = vec![master.clone()];
+        config.pulse_seconds = pulse.as_secs();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let state = test_state_with_store(reporting_store(temp_dir.path().to_str().unwrap(), 0));
+        let (_shutdown_tx, mut shutdown_rx) = broadcast::channel(1);
+        let registered_long_ago = tokio::time::Instant::now() - 10 * pulse;
+        let mut leader_lost_at = Some(registered_long_ago);
+        let mut duplicate_retry_count = 0;
+
+        let started = tokio::time::Instant::now();
+        heartbeat_once(
+            &config,
+            &state,
+            &master,
+            pulse,
+            &mut shutdown_rx,
+            &mut leader_lost_at,
+            &mut duplicate_retry_count,
+        )
+        .await;
+        let elapsed = started.elapsed();
+
+        assert!(
+            leader_lost_at.is_some_and(|at| at >= started),
+            "the end of the confirmed stream was not recorded"
+        );
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "redial after losing a registered stream took {:?}",
+            elapsed
+        );
+    }
+
     // The pass only reads the store, so it must not shut out the readers that
     // serve traffic while it stats every volume.
     #[tokio::test]
