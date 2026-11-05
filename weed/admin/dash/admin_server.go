@@ -380,19 +380,11 @@ func (m *masterVacuumToggler) enableVacuum() error {
 	})
 }
 
-// syncVacuumState performs a single sync step: tells the master to disable its
-// automatic vacuum while a vacuum-capable worker is present, and to re-enable it
-// otherwise.
-//
-// The call is sent on every tick, not only when the worker state changes. The
-// master keeps the flag in memory and it is not replicated through raft, so a
-// leader change or a master restart silently drops it. Sending it only on a
-// transition left the new leader running its own scheduled vacuum next to the
-// plugin worker, and when both vacuum the same volume the second commit fails
-// and the master drops that replica. Both RPCs are idempotent and cheap.
-//
-// Only transitions are logged. Returns the state the master was last
-// successfully set to, and whether this call failed (for log dedup on retries).
+// syncVacuumState tells the master to disable its automatic vacuum while a
+// vacuum-capable worker is present and to re-enable it otherwise. It re-sends
+// on every tick because the master keeps the flag in memory only, so a leader
+// change or master restart drops it. Only transitions are logged. Returns the
+// state the master was last set to and whether this call failed.
 func syncVacuumState(hasWorker bool, previouslyActive bool, toggler vacuumToggler, retrying bool) (active bool, failed bool) {
 	changed := hasWorker != previouslyActive
 	if hasWorker {
@@ -416,8 +408,7 @@ func syncVacuumState(hasWorker bool, previouslyActive bool, toggler vacuumToggle
 }
 
 // monitorVacuumWorker polls the plugin registry for vacuum-capable workers and
-// disables/enables the master's automatic scheduled vacuum accordingly, re-sending
-// the state every poll so it survives master leader changes and restarts.
+// disables/enables the master's automatic scheduled vacuum accordingly.
 func (s *AdminServer) monitorVacuumWorker(ctx context.Context) {
 	const pollInterval = 30 * time.Second
 	ticker := time.NewTicker(pollInterval)
