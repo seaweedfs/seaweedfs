@@ -4,7 +4,9 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
 
 // shardsOn builds one holder's inventory.
@@ -85,6 +87,102 @@ func TestMissingDataShard(t *testing.T) {
 			}
 			if missed && id != tt.wantID {
 				t.Errorf("missing shard id = %d, want %d", id, tt.wantID)
+			}
+		})
+	}
+}
+
+func TestFindEcVolumeCollection(t *testing.T) {
+	topo := &master_pb.TopologyInfo{
+		DataCenterInfos: []*master_pb.DataCenterInfo{
+			{
+				Id: "dc1",
+				RackInfos: []*master_pb.RackInfo{
+					{
+						Id: "rack1",
+						DataNodeInfos: []*master_pb.DataNodeInfo{
+							{
+								Id: "node1",
+								DiskInfos: map[string]*master_pb.DiskInfo{
+									"hdd": {
+										EcShardInfos: []*master_pb.VolumeEcShardInformationMessage{
+											{
+												Id:         10,
+												Collection: "s3bucket",
+											},
+											{
+												Id:         30,
+												Collection: "",
+											},
+										},
+										VolumeInfos: []*master_pb.VolumeInformationMessage{
+											{
+												Id:         20,
+												Collection: "regular_col",
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	tests := []struct {
+		name      string
+		topo      *master_pb.TopologyInfo
+		vid       needle.VolumeId
+		wantCol   string
+		wantFound bool
+	}{
+		{
+			name:      "nil topology",
+			topo:      nil,
+			vid:       10,
+			wantCol:   "",
+			wantFound: false,
+		},
+		{
+			name:      "ec volume with named collection",
+			topo:      topo,
+			vid:       10,
+			wantCol:   "s3bucket",
+			wantFound: true,
+		},
+		{
+			name:      "ec volume with empty collection",
+			topo:      topo,
+			vid:       30,
+			wantCol:   "",
+			wantFound: true,
+		},
+		{
+			name:      "regular volume record is not an ec volume",
+			topo:      topo,
+			vid:       20,
+			wantCol:   "",
+			wantFound: false,
+		},
+		{
+			name:      "not found",
+			topo:      topo,
+			vid:       999,
+			wantCol:   "",
+			wantFound: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			col, found := FindEcVolumeCollection(tt.topo, tt.vid)
+			if found != tt.wantFound {
+				t.Fatalf("FindEcVolumeCollection() found = %v, want %v", found, tt.wantFound)
+			}
+			if col != tt.wantCol {
+				t.Errorf("FindEcVolumeCollection() col = %q, want %q", col, tt.wantCol)
 			}
 		})
 	}
