@@ -760,7 +760,7 @@ func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_ser
 					uploader = operation.NewUploaderWithHttpClient(newGuardedPeerHTTPClient(targetVolumeServer))
 				}
 
-				if _, replicaWriteErr := uploader.UploadData(ctx, data, uploadOption); replicaWriteErr != nil {
+				if replicaWriteErr := fetchAndWriteReplica(ctx, uploader, data, uploadOption); replicaWriteErr != nil {
 					replicaErrs[idx] = fmt.Errorf("remote write needle %d size %d: %v", req.NeedleId, req.Size, replicaWriteErr)
 				}
 			}(i, replica.Url)
@@ -778,6 +778,27 @@ func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_ser
 	}
 
 	return resp, err
+}
+
+// fetchAndWriteReplicaTimeout is the base bound on one FetchAndWriteNeedle
+// replica write, retries included, so a peer that stops answering cannot hold
+// the request.
+var fetchAndWriteReplicaTimeout = 30 * time.Second
+
+// replicaMinBytesPerSec is the slowest link a replica write's chunk may cross
+// within its bound. The bound includes sending the body, and a remote-cache
+// chunk can be a thousandth of a very large object.
+const replicaMinBytesPerSec = 1 << 20
+
+func fetchAndWriteReplicaBound(size int) time.Duration {
+	return fetchAndWriteReplicaTimeout + time.Duration(int64(size)*1000/replicaMinBytesPerSec)*time.Millisecond
+}
+
+func fetchAndWriteReplica(ctx context.Context, uploader *operation.Uploader, data []byte, option *operation.UploadOption) error {
+	ctx, cancel := context.WithTimeout(ctx, fetchAndWriteReplicaBound(len(data)))
+	defer cancel()
+	_, err := uploader.UploadData(ctx, data, option)
+	return err
 }
 
 // volumeRemoteReadError keeps a confirmed missing object distinguishable across
