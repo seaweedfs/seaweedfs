@@ -4732,6 +4732,11 @@ impl VolumeServer for VolumeGrpcService {
                 }
             }
 
+            let (bitrot, bitrot_status) =
+                crate::storage::erasure_coding::ec_volume::EcVolume::select_bitrot_protection(
+                    &store.find_all_ec_volumes(vid),
+                );
+
             // Reconstruct the volume from EC shards. Use the EcVolume's
             // own dir for the produced .dat (matches the volume's home
             // disk) and its `ecx_actual_dir` for the .ecx lookup, while
@@ -4752,6 +4757,8 @@ impl VolumeServer for VolumeGrpcService {
                     .map(|d| d.clone().unwrap())
                     .collect(),
                 needle_map_kind: store.needle_map_kind,
+                bitrot,
+                bitrot_status,
             }
         };
 
@@ -7718,6 +7725,8 @@ struct EcDecodeJob {
     /// Directory of each data shard.
     shard_dirs: Vec<String>,
     needle_map_kind: crate::storage::needle_map::NeedleMapKind,
+    bitrot: Option<volume_server_pb::EcBitrotProtection>,
+    bitrot_status: ec_bitrot::BitrotStatus,
 }
 
 impl EcDecodeJob {
@@ -7734,6 +7743,8 @@ impl EcDecodeJob {
             small_block_size,
             shard_dirs,
             needle_map_kind,
+            bitrot,
+            bitrot_status,
         } = self;
 
         // Deletions journaled beside the .ecx, or collected by
@@ -7774,6 +7785,22 @@ impl EcDecodeJob {
                 vid
             )));
         }
+
+        let shard_paths: Vec<String> = shard_dirs
+            .iter()
+            .enumerate()
+            .map(|(i, dir)| {
+                crate::storage::erasure_coding::ec_shard::EcVolumeShard::new(
+                    dir,
+                    &collection,
+                    vid,
+                    i as ShardId,
+                )
+                .file_name()
+            })
+            .collect();
+        ec_bitrot::verify_ec_volume_data_shards(bitrot.as_ref(), bitrot_status, &shard_paths)
+            .map_err(|e| Status::internal(format!("ec volume {}: {}", vid, e)))?;
 
         // Calculate .dat file size from .ecx entries (.ec00 lives on
         // its own disk, .ecx on the index disk).
@@ -14544,6 +14571,33 @@ mod tests {
 
         assert!(!std::path::Path::new(&format!("{data}/1.ecsum")).exists());
         assert!(std::path::Path::new(&idx_sidecar).exists());
+    }
+
+    /// A data shard that fails its .ecsum checksum must fail the decode and
+    /// leave every shard and the sidecar in place for a repair.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_volume_ec_shards_to_volume_rejects_a_corrupt_data_shard() {
+        let (service, _tmp, data, _idx, _) = make_split_idx_ec_decode_service(&[], false).await;
+        let shard = format!("{data}/1.ec03");
+        let mut bytes = std::fs::read(&shard).unwrap();
+        bytes[0] ^= 0xff;
+        std::fs::write(&shard, bytes).unwrap();
+
+        let err = service
+            .volume_ec_shards_to_volume(ec_shards_to_volume_request())
+            .await
+            .unwrap_err();
+
+        assert!(
+            err.message().contains("data shard 3"),
+            "unexpected error: {}",
+            err.message()
+        );
+        assert!(!std::path::Path::new(&format!("{data}/1.dat")).exists());
+        assert!(std::path::Path::new(&format!("{data}/1.ecsum")).exists());
+        for shard_id in 0..14 {
+            assert!(std::path::Path::new(&format!("{data}/1.ec{shard_id:02}")).exists());
+        }
     }
 
     /// Replaces the idx-dir .ecj with a FIFO: the decode's open of it blocks

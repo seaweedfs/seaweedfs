@@ -934,6 +934,31 @@ impl EcVolume {
         (self.bitrot.clone(), self.bitrot_status)
     }
 
+    /// The protection of a volume's per-disk runtimes: the first `On`, else
+    /// `Invalid`, else `Off`. After a restart only the runtime whose disk holds
+    /// the sidecar resolves it. Mirrors Go's `SelectBitrotProtection`.
+    pub(crate) fn select_bitrot_protection(
+        volumes: &[&EcVolume],
+    ) -> (
+        Option<crate::pb::volume_server_pb::EcBitrotProtection>,
+        crate::storage::erasure_coding::ec_bitrot::BitrotStatus,
+    ) {
+        use crate::storage::erasure_coding::ec_bitrot::BitrotStatus;
+        let mut invalid = false;
+        for v in volumes {
+            match v.bitrot_protection() {
+                (prot, BitrotStatus::On) => return (prot, BitrotStatus::On),
+                (_, BitrotStatus::Invalid) => invalid = true,
+                _ => {}
+            }
+        }
+        if invalid {
+            (None, BitrotStatus::Invalid)
+        } else {
+            (None, BitrotStatus::Off)
+        }
+    }
+
     /// Read-only EC bitrot checksum scrub of the LOCAL shards of this volume's
     /// active generation.
     ///
