@@ -3,6 +3,7 @@
 
 use anyhow::Result;
 use lance::Dataset;
+use lance::index::{DatasetIndexExt, DatasetIndexInternalExt};
 
 pub use weed_lance_worker::vector_index::{
     INDEX_NAME, MAX_PARTITIONS, build, distance_metric, index_names, optimize, partitions,
@@ -31,17 +32,30 @@ pub fn probes_for(partitions: usize) -> Probes {
     }
 }
 
-/// The probes a query of `vector_column` uses when it names none: from the
-/// partition count of the index that covers it, or `None` without an index.
+/// The probes a query of `vector_column` uses when it names none, or `None`
+/// without an index. The count comes from the most partitions any index on
+/// the column has, whichever of them the scan ends up searching.
+/// It is read from the opened index, which the scan then finds loaded;
+/// Lance's index statistics cost several milliseconds a query.
 pub async fn default_probes(dataset: &Dataset, vector_column: &str) -> Result<Option<Probes>> {
-    let Some(name) = index_names(dataset, vector_column)
-        .await?
-        .into_iter()
-        .next()
-    else {
+    let Some(field) = dataset.schema().field(vector_column) else {
         return Ok(None);
     };
-    Ok(Some(probes_for(partitions(dataset, &name).await?)))
+    let mut partitions = None;
+    for index in dataset.load_indices().await?.iter() {
+        if index.fields != [field.id] {
+            continue;
+        }
+        let opened = dataset
+            .open_vector_index(
+                vector_column,
+                &index.uuid,
+                &lance_index::metrics::NoOpMetricsCollector,
+            )
+            .await?;
+        partitions = Some(opened.total_partitions().max(partitions.unwrap_or(0)));
+    }
+    Ok(partitions.map(probes_for))
 }
 
 #[cfg(test)]
@@ -173,6 +187,40 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(filtered.len(), 10);
+    }
+
+    #[tokio::test]
+    async fn default_probes_take_the_largest_index() {
+        use lance::index::DatasetIndexExt;
+        use lance::index::vector::VectorIndexParams;
+        use lance_index::IndexType;
+        let dir = TempDir::new().unwrap();
+        let mut dataset =
+            testing::write_dataset(&dir, &scattered(1000, 8, 0x9E3779B97F4A7C15), &["a"; 1000])
+                .await;
+        testing::append_dataset(
+            &mut dataset,
+            &scattered(1000, 8, 0xD1B54A32D192ED03),
+            &["b"; 1000],
+        )
+        .await;
+        for (name, fragment, partitions) in [("a-small", 0u32, 2), ("z-large", 1u32, 100)] {
+            dataset
+                .create_index_builder(
+                    &["vector"],
+                    IndexType::Vector,
+                    &VectorIndexParams::ivf_flat(partitions, DistanceType::L2),
+                )
+                .name(name.to_string())
+                .fragments(vec![fragment])
+                .await
+                .unwrap();
+            dataset.checkout_latest().await.unwrap();
+        }
+        assert_eq!(
+            default_probes(&dataset, "vector").await.unwrap(),
+            Some(probes_for(100))
+        );
     }
 
     #[tokio::test]

@@ -120,7 +120,10 @@ async fn scanner(
         crate::filter::apply(&mut scanner, filter)?;
         scanner.prefilter(!query.postfilter);
     }
-    if use_index {
+    // An explicitly empty segment list searches no index, so there is
+    // nothing to size probes for.
+    let no_segments = query.index_segments.as_ref().is_some_and(|s| s.is_empty());
+    if use_index && !no_segments {
         let probes = match query.nprobes {
             Some(n) => Some(crate::index::Probes { min: n, max: n }),
             None => crate::index::default_probes(dataset, &table.vector_column).await?,
