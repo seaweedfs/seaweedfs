@@ -185,6 +185,9 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 				if readErr != nil {
 					return fmt.Errorf("unmarshal mappings: %w", readErr)
 				}
+				if newMappings.PrimaryBucketStorageName == "" {
+					newMappings.PrimaryBucketStorageName = option.mappings.PrimaryBucketStorageName
+				}
 				option.mappings = newMappings
 			}
 			if strings.HasSuffix(message.NewEntry.Name, filer.REMOTE_STORAGE_CONF_SUFFIX) {
@@ -197,7 +200,10 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 		} else if metadataEventRemovesFromDirectory(resp, filer.DirectoryEtcRemote) {
 			// deletion
 			if message.OldEntry.Name == filer.REMOTE_STORAGE_MOUNT_FILE {
-				option.mappings = &remote_pb.RemoteStorageMapping{Mappings: map[string]*remote_pb.RemoteStorageLocation{}}
+				option.mappings = &remote_pb.RemoteStorageMapping{
+					PrimaryBucketStorageName: option.mappings.PrimaryBucketStorageName,
+					Mappings:                 map[string]*remote_pb.RemoteStorageLocation{},
+				}
 			}
 			if strings.HasSuffix(message.OldEntry.Name, filer.REMOTE_STORAGE_CONF_SUFFIX) {
 				conf := &remote_pb.RemoteConf{}
