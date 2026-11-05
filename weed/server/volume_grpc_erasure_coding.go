@@ -1302,7 +1302,14 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 		return nil, status.Errorf(codes.FailedPrecondition, "ec volume %d %s", req.VolumeId, erasure_coding.EcNoLiveEntriesSubstring)
 	}
 
-	prot, bitrotStatus := erasure_coding.SelectBitrotProtection(vs.store.FindAllEcVolumes(needle.VolumeId(req.VolumeId)))
+	// A rebuild's backfill writes the sidecar without reloading the mounted
+	// runtimes, so resolve it again the way a shard mount does.
+	ecVolumes := vs.store.FindAllEcVolumes(needle.VolumeId(req.VolumeId))
+	ecMetadataDirs := vs.store.EcMetadataDirs()
+	for _, ecVolume := range ecVolumes {
+		ecVolume.ReloadBitrotSidecar(ecMetadataDirs...)
+	}
+	prot, bitrotStatus := erasure_coding.SelectBitrotProtection(ecVolumes)
 	if err := erasure_coding.VerifyEcVolumeDataShards(prot, bitrotStatus, shardFileNames); err != nil {
 		return nil, fmt.Errorf("ec volume %d: %w", req.VolumeId, err)
 	}
