@@ -361,3 +361,44 @@ func corruptOneByte(t *testing.T, path string) {
 		t.Fatal(err)
 	}
 }
+
+func TestVerifyEcVolumeDataShards(t *testing.T) {
+	old := BitrotBlockSize
+	BitrotBlockSize = 1 << 20
+	t.Cleanup(func() { BitrotBlockSize = old })
+
+	dir := t.TempDir()
+	base := filepath.Join(dir, "42")
+	writeRandomDat(t, base, 6*1024*1024)
+	ctx := &ECContext{DataShards: 10, ParityShards: 4}
+	prot, err := WriteEcFiles(base, ctx)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	if err := SaveBitrotSidecar(BitrotSidecarPath(base, 0), prot); err != nil {
+		t.Fatalf("save sidecar: %v", err)
+	}
+
+	shardFileNames := make([]string, ctx.DataShards)
+	for id := 0; id < ctx.DataShards; id++ {
+		shardFileNames[id] = base + ctx.ToExt(id)
+	}
+
+	// Clean data shards must verify without errors
+	if err := VerifyEcVolumeDataShards(base, ctx, shardFileNames); err != nil {
+		t.Fatalf("expected clean data shards to pass verification, got: %v", err)
+	}
+
+	// Corrupting data shard 3 must cause verification to fail
+	corruptOneByte(t, shardFileNames[3])
+	err = VerifyEcVolumeDataShards(base, ctx, shardFileNames)
+	if err == nil {
+		t.Fatalf("expected verification to fail on corrupt data shard 3")
+	}
+
+	// When sidecar is removed, verification returns nil (no bitrot protection)
+	RemoveBitrotSidecars(base)
+	if err := VerifyEcVolumeDataShards(base, ctx, shardFileNames); err != nil {
+		t.Fatalf("expected absent sidecar to be treated as BitrotOff, got: %v", err)
+	}
+}
