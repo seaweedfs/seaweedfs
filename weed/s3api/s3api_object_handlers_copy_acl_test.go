@@ -537,6 +537,9 @@ func TestCopyObjectACLWithBucketDefaultEncryption(t *testing.T) {
 	defer filer.mu.Unlock()
 	stored := filer.entries["/buckets/"+bucket+"/destination"]
 	require.NotNil(t, stored)
-	require.NotEmpty(t, stored.Extended[s3_constants.SeaweedFSSSEKMSKey], "the copy must still take the bucket default SSE-KMS")
+	sseKMSKey, err := DeserializeSSEKMSMetadata(stored.Extended[s3_constants.SeaweedFSSSEKMSKey])
+	require.NoError(t, err, "the copy must still take the bucket default SSE-KMS")
+	require.Equal(t, kmsKey.KeyID, sseKMSKey.KeyID)
+	require.NotEmpty(t, stored.Content)
 	require.NotEqual(t, []byte("data"), stored.Content, "the copy must be stored encrypted")
 }
