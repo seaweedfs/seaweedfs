@@ -582,3 +582,23 @@ func TestS3MakeResolvesEnvCredentialsWhenAnonymousDefault(t *testing.T) {
 	require.Equal(t, "env-access", value.AccessKeyID)
 	require.Equal(t, "env-secret", value.SecretAccessKey)
 }
+
+func TestS3DeleteBucketOfAMissingBucketSucceeds(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		code       string
+		wantErr    bool
+	}{
+		{"missing bucket", http.StatusNotFound, "NoSuchBucket", false},
+		{"bucket not empty", http.StatusConflict, "BucketNotEmpty", true},
+		{"access denied", http.StatusForbidden, "AccessDenied", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := newS3ClientWithTransport(t, &errorRoundTripper{statusCode: tt.statusCode, code: tt.code}, false)
+			err := client.DeleteBucket("bucket")
+			require.Equal(t, tt.wantErr, err != nil, "DeleteBucket: %v", err)
+		})
+	}
+}

@@ -884,6 +884,7 @@ type recordingRemote struct {
 	// metadataUpdateResult is the RemoteEntry UpdateFileMetadata reports; nil
 	// means the update left the object untouched
 	metadataUpdateResult *filer_pb.RemoteEntry
+	bucketCreates        []string
 }
 
 func (r *recordingRemote) WriteFile(loc *remote_pb.RemoteStorageLocation, entry *filer_pb.Entry, reader io.Reader) (*filer_pb.RemoteEntry, error) {
@@ -930,6 +931,11 @@ func (r *recordingRemote) ReadFile(loc *remote_pb.RemoteStorageLocation, offset 
 func (r *recordingRemote) DeleteFile(loc *remote_pb.RemoteStorageLocation) error {
 	r.deletes = append(r.deletes, loc)
 	return r.deleteErr
+}
+
+func (r *recordingRemote) CreateBucket(name string) error {
+	r.bucketCreates = append(r.bucketCreates, name)
+	return nil
 }
 
 func (r *recordingRemote) UpdateFileMetadata(loc *remote_pb.RemoteStorageLocation, oldEntry, newEntry *filer_pb.Entry) (*filer_pb.RemoteEntry, error) {

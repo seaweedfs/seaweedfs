@@ -158,6 +158,11 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 
 		client, remoteStorageMountLocation, err := option.findRemoteStorageClient(entry.Name)
 		if err != nil {
+			bucket := util.FullPath(option.bucketsDir).Child(entry.Name)
+			if _, isMounted := option.mappings.Mappings[string(bucket)]; !isMounted {
+				glog.V(0).Infof("remote bucket %s is not mounted, skipping delete", entry.Name)
+				return nil
+			}
 			return fmt.Errorf("findRemoteStorageClient %s: %v", entry.Name, err)
 		}
 
@@ -180,6 +185,9 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 				if readErr != nil {
 					return fmt.Errorf("unmarshal mappings: %w", readErr)
 				}
+				if newMappings.PrimaryBucketStorageName == "" {
+					newMappings.PrimaryBucketStorageName = option.mappings.PrimaryBucketStorageName
+				}
 				option.mappings = newMappings
 			}
 			if strings.HasSuffix(message.NewEntry.Name, filer.REMOTE_STORAGE_CONF_SUFFIX) {
@@ -192,7 +200,10 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 		} else if metadataEventRemovesFromDirectory(resp, filer.DirectoryEtcRemote) {
 			// deletion
 			if message.OldEntry.Name == filer.REMOTE_STORAGE_MOUNT_FILE {
-				option.mappings = &remote_pb.RemoteStorageMapping{}
+				option.mappings = &remote_pb.RemoteStorageMapping{
+					PrimaryBucketStorageName: option.mappings.PrimaryBucketStorageName,
+					Mappings:                 map[string]*remote_pb.RemoteStorageLocation{},
+				}
 			}
 			if strings.HasSuffix(message.OldEntry.Name, filer.REMOTE_STORAGE_CONF_SUFFIX) {
 				conf := &remote_pb.RemoteConf{}
@@ -331,7 +342,7 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 				return client.RemoveDirectory(dest)
 			}
 			glog.V(0).Infof("delete %s", remote_storage.FormatLocation(dest))
-			return client.DeleteFile(dest)
+			return deleteRemoteFile(client, dest)
 		}
 		if message.OldEntry != nil && message.NewEntry != nil {
 			if resp.Directory == option.bucketsDir {

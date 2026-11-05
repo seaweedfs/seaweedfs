@@ -645,6 +645,9 @@ func (az *azureRemoteStorageClient) DeleteBucket(name string) (err error) {
 	containerClient := az.client.ServiceClient().NewContainerClient(name)
 	_, err = containerClient.Delete(context.Background(), nil)
 	if err != nil {
+		if bloberror.HasCode(err, bloberror.ContainerNotFound, bloberror.ContainerBeingDeleted) {
+			return nil
+		}
 		return fmt.Errorf("delete bucket %s: %w", name, err)
 	}
 	return

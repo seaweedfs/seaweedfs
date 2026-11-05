@@ -1001,6 +1001,10 @@ func (s *s3RemoteStorageClient) DeleteBucket(name string) (err error) {
 		Bucket: aws.String(name),
 	})
 	if err != nil {
+		var aerr awserr.Error
+		if errors.As(err, &aerr) && aerr.Code() == s3.ErrCodeNoSuchBucket {
+			return nil
+		}
 		return fmt.Errorf("delete bucket %s: %v", name, err)
 	}
 	return

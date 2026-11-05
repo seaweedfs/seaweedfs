@@ -340,3 +340,145 @@ func TestGatewayMetadataOnlyDeleteKeepsTheRemoteObject(t *testing.T) {
 		t.Fatalf("deletes = %+v, want the ordinary delete", remote.deletes)
 	}
 }
+
+func TestGatewayUnmountedBucketDeleteIsSkipped(t *testing.T) {
+	remote := &recordingRemote{}
+	remote_storage.RemoteStorageClientMakers["gatewaytest"] = recordingRemoteMaker{client: remote}
+	t.Cleanup(func() { delete(remote_storage.RemoteStorageClientMakers, "gatewaytest") })
+	option := &RemoteGatewayOptions{
+		bucketsDir:  "/buckets",
+		mappings:    &remote_pb.RemoteStorageMapping{Mappings: map[string]*remote_pb.RemoteStorageLocation{}},
+		remoteConfs: map[string]*remote_pb.RemoteConf{"gatewaytest": {Name: "gatewaytest", Type: "gatewaytest"}},
+	}
+	process, err := option.makeBucketedEventProcessor(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	deleteBucketEvent := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: &filer_pb.Entry{
+				Name:        "unmounted-bucket",
+				IsDirectory: true,
+			},
+		},
+	}
+
+	// Deleting a bucket that is not mounted (for instance because it was already unmounted
+	// by an earlier copy of the delete event) should return nil and not error.
+	if err := process(deleteBucketEvent); err != nil {
+		t.Fatalf("expected nil for unmounted bucket delete, got: %v", err)
+	}
+}
+
+// TestGatewayCreatesABucketAfterTheMappingFileIsDeleted: deleting
+// mount.mapping empties the mapping table, and a later bucket create still
+// records its mount in it.
+func TestGatewayCreatesABucketAfterTheMappingFileIsDeleted(t *testing.T) {
+	option, remote := gatewayTestOption("gatewaytest-mapping-reset")
+	t.Cleanup(func() {
+		delete(remote_storage.RemoteStorageClientMakers, "gatewaytest-mapping-reset")
+		remote_storage.ResetRemoteStorageClients()
+	})
+	createAt, noFilter, noSuffix := "gatewaytest-mapping-reset", "", false
+	option.createBucketAt, option.include, option.exclude, option.createBucketRandomSuffix = &createAt, &noFilter, &noFilter, &noSuffix
+	process, err := option.makeBucketedEventProcessor(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := process(&filer_pb.SubscribeMetadataResponse{
+		Directory:         filer.DirectoryEtcRemote,
+		EventNotification: &filer_pb.EventNotification{OldEntry: &filer_pb.Entry{Name: filer.REMOTE_STORAGE_MOUNT_FILE}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// saving the new mount needs a filer, so the create itself errors
+	_ = process(&filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets",
+		EventNotification: &filer_pb.EventNotification{
+			NewParentPath: "/buckets",
+			NewEntry:      &filer_pb.Entry{Name: "fresh", IsDirectory: true},
+		},
+	})
+
+	if !slices.Equal(remote.bucketCreates, []string{"fresh"}) {
+		t.Errorf("bucket creates = %v, want [fresh]", remote.bucketCreates)
+	}
+	if loc := option.mappings.Mappings["/buckets/fresh"]; loc.GetBucket() != "fresh" {
+		t.Errorf("mapping for /buckets/fresh = %v, want bucket fresh", loc)
+	}
+}
+
+// TestGatewayDeleteOfAnAbsentObjectSucceeds: a repeated delete finds the
+// object gone, which GCS reports as ErrRemoteObjectNotFound; the event has
+// nothing left to do and must not hold the sync offset.
+func TestGatewayDeleteOfAnAbsentObjectSucceeds(t *testing.T) {
+	option, remote := gatewayTestOption("gatewaytest-absent-delete")
+	t.Cleanup(func() {
+		delete(remote_storage.RemoteStorageClientMakers, "gatewaytest-absent-delete")
+		remote_storage.ResetRemoteStorageClients()
+	})
+	remote.deleteErr = remote_storage.ErrRemoteObjectNotFound
+	process, err := option.makeBucketedEventProcessor(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := process(&filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets/gold/dir",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: &filer_pb.Entry{Name: "obj.bin", Attributes: &filer_pb.FuseAttributes{}},
+		},
+	}); err != nil {
+		t.Fatalf("delete of an absent object: %v", err)
+	}
+	if len(remote.deletes) != 1 || remote.deletes[0].Path != "/dir/obj.bin" {
+		t.Errorf("deletes = %+v, want /dir/obj.bin", remote.deletes)
+	}
+}
+
+// TestGatewayKeepsTheDefaultStorageAcrossMappingChanges: the default storage
+// for new buckets is derived at startup and never saved in mount.mapping, so
+// replacing or deleting that file must not drop it.
+func TestGatewayKeepsTheDefaultStorageAcrossMappingChanges(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		event *filer_pb.EventNotification
+	}{
+		{"mapping updated", &filer_pb.EventNotification{NewParentPath: filer.DirectoryEtcRemote, NewEntry: &filer_pb.Entry{Name: filer.REMOTE_STORAGE_MOUNT_FILE}}},
+		{"mapping deleted", &filer_pb.EventNotification{OldEntry: &filer_pb.Entry{Name: filer.REMOTE_STORAGE_MOUNT_FILE}}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			option, remote := gatewayTestOption("gatewaytest-default-storage")
+			t.Cleanup(func() {
+				delete(remote_storage.RemoteStorageClientMakers, "gatewaytest-default-storage")
+				remote_storage.ResetRemoteStorageClients()
+			})
+			option.mappings.PrimaryBucketStorageName = "gatewaytest-default-storage"
+			createAt, noFilter, noSuffix := "", "", false
+			option.createBucketAt, option.include, option.exclude, option.createBucketRandomSuffix = &createAt, &noFilter, &noFilter, &noSuffix
+			process, err := option.makeBucketedEventProcessor(nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if err := process(&filer_pb.SubscribeMetadataResponse{Directory: filer.DirectoryEtcRemote, EventNotification: tt.event}); err != nil {
+				t.Fatal(err)
+			}
+			// saving the new mount needs a filer, so the create itself errors
+			_ = process(&filer_pb.SubscribeMetadataResponse{
+				Directory: "/buckets",
+				EventNotification: &filer_pb.EventNotification{
+					NewParentPath: "/buckets",
+					NewEntry:      &filer_pb.Entry{Name: "fresh", IsDirectory: true},
+				},
+			})
+
+			if !slices.Equal(remote.bucketCreates, []string{"fresh"}) {
+				t.Errorf("bucket creates = %v, want [fresh] in the default storage", remote.bucketCreates)
+			}
+		})
+	}
+}
