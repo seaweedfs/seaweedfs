@@ -1,9 +1,9 @@
 //! Sizing the vector index an S3 Vectors table searches through, and the
 //! probes a query spends on it. Building lives in the worker crate.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use lance::Dataset;
-use lance::index::DatasetIndexExt;
+use lance::index::{DatasetIndexExt, DatasetIndexInternalExt};
 
 pub use weed_lance_worker::vector_index::{
     INDEX_NAME, MAX_PARTITIONS, build, distance_metric, index_names, optimize, partitions_for,
@@ -34,20 +34,25 @@ pub fn probes_for(partitions: usize) -> Probes {
 /// The probes a query of `vector_column` uses when it names none, or `None`
 /// without an index. The count comes from the most partitions any index on
 /// the column has, whichever of them the scan ends up searching.
+/// It is read from the opened index, which the scan then finds loaded;
+/// Lance's index statistics cost several milliseconds a query.
 pub async fn default_probes(dataset: &Dataset, vector_column: &str) -> Result<Option<Probes>> {
+    let Some(field) = dataset.schema().field(vector_column) else {
+        return Ok(None);
+    };
     let mut partitions = None;
-    for name in index_names(dataset, vector_column).await? {
-        let stats: serde_json::Value =
-            serde_json::from_str(&dataset.index_statistics(&name).await?)
-                .with_context(|| format!("parse index statistics for {name}"))?;
-        let most = stats["indices"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|i| i["num_partitions"].as_u64())
-            .max()
-            .unwrap_or(0) as usize;
-        partitions = Some(most.max(partitions.unwrap_or(0)));
+    for index in dataset.load_indices().await?.iter() {
+        if index.fields != [field.id] {
+            continue;
+        }
+        let opened = dataset
+            .open_vector_index(
+                vector_column,
+                &index.uuid,
+                &lance_index::metrics::NoOpMetricsCollector,
+            )
+            .await?;
+        partitions = Some(opened.total_partitions().max(partitions.unwrap_or(0)));
     }
     Ok(partitions.map(probes_for))
 }
