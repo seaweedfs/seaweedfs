@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
 use seaweed_worker_core::config_form::{form, int_or, int_value, number_field};
 use seaweed_worker_core::pb::{
     AdminRuntimeDefaults, ConfigValue, DetectionComplete, DetectionProposals, ExecuteJobRequest,
-    JobCompleted, JobProgressUpdate, JobProposal, JobResult, JobTypeCapability,
-    JobTypeDescriptor, RunDetectionRequest,
+    JobCompleted, JobProgressUpdate, JobProposal, JobResult, JobTypeCapability, JobTypeDescriptor,
+    RunDetectionRequest,
 };
 use seaweed_worker_core::{DetectionSender, ExecutionSender, JobHandler};
 use tracing::warn;
@@ -23,6 +23,8 @@ const MIN_ROWS_FLOOR: i64 = 1;
 const MIN_ROWS_CEILING: i64 = 1_000_000_000;
 /// The namespace an S3 Vectors bucket keeps its indexes in.
 const VECTOR_NAMESPACE: &str = "vector";
+/// The column S3 Vectors writes its vectors to.
+const VECTOR_COLUMN: &str = "vector";
 /// A build trains on the whole table, so the admin's 90 seconds are not enough.
 const EXECUTION_TIMEOUT_SECONDS: i32 = 3600;
 
@@ -74,16 +76,24 @@ pub fn is_vector_table(id: &[String]) -> bool {
     id.len() == 3 && id[1] == VECTOR_NAMESPACE
 }
 
-/// The vector column S3 Vectors writes, and whether it already has an index.
-async fn unindexed_vector_column(table: &OpenTable) -> Result<Option<String>> {
-    let column = "vector";
-    if table.dataset.schema().field(column).is_none() {
-        return Ok(None);
+fn has_vector_column(table: &OpenTable) -> bool {
+    table.dataset.schema().field(VECTOR_COLUMN).is_some()
+}
+
+async fn is_indexed(table: &OpenTable) -> Result<bool> {
+    Ok(!index_names(&table.dataset, VECTOR_COLUMN).await?.is_empty())
+}
+
+/// Why an execution leaves the table as it is, if it does: the table may have
+/// changed since it was proposed.
+fn skip_reason(indexed: bool, rows: usize) -> Option<&'static str> {
+    if indexed {
+        Some("already indexed")
+    } else if rows == 0 {
+        Some("no rows to index")
+    } else {
+        None
     }
-    if !index_names(&table.dataset, column).await?.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(column.to_string()))
 }
 
 #[async_trait]
@@ -170,9 +180,12 @@ impl JobHandler for VectorIndexHandler {
             if let Some(counters) = &self.metrics {
                 counters.worker.object_seen(JOB_TYPE);
             }
-            match unindexed_vector_column(&table).await {
-                Ok(Some(_)) => {}
-                Ok(None) => continue,
+            if !has_vector_column(&table) {
+                continue;
+            }
+            match is_indexed(&table).await {
+                Ok(false) => {}
+                Ok(true) => continue,
                 Err(err) => {
                     if let Some(counters) = &self.metrics {
                         counters.worker.object_skipped(JOB_TYPE, "indices");
@@ -253,7 +266,10 @@ impl JobHandler for VectorIndexHandler {
         output.insert("rows".to_string(), int_value(rows as i64));
         output.insert("partitions".to_string(), int_value(partitions as i64));
 
-        let Some(column) = unindexed_vector_column(&table).await? else {
+        if !has_vector_column(&table) {
+            bail!("the table has no {VECTOR_COLUMN} column to index");
+        }
+        if let Some(reason) = skip_reason(is_indexed(&table).await?, rows) {
             sender.send_completed(JobCompleted {
                 request_id: request.request_id.clone(),
                 job_id: job.job_id.clone(),
@@ -261,13 +277,13 @@ impl JobHandler for VectorIndexHandler {
                 success: true,
                 result: Some(JobResult {
                     output_values: output,
-                    summary: "already indexed".to_string(),
+                    summary: reason.to_string(),
                     ..Default::default()
                 }),
                 ..Default::default()
             })?;
             return Ok(());
-        };
+        }
 
         sender.send_progress(JobProgressUpdate {
             request_id: request.request_id.clone(),
@@ -278,7 +294,14 @@ impl JobHandler for VectorIndexHandler {
             ..Default::default()
         })?;
 
-        build(&mut table.dataset, &column, INDEX_NAME, partitions, false).await?;
+        build(
+            &mut table.dataset,
+            VECTOR_COLUMN,
+            INDEX_NAME,
+            partitions,
+            false,
+        )
+        .await?;
         if let Some(counters) = &self.metrics {
             counters.indexes_built.inc();
         }
@@ -308,6 +331,14 @@ mod tests {
         assert!(is_vector_table(&parse_id("media$vector$movies")));
         assert!(!is_vector_table(&parse_id("media$ml$events")));
         assert!(!is_vector_table(&parse_id("vector$movies")));
+    }
+
+    #[test]
+    fn a_table_indexed_or_emptied_since_detection_is_left_alone() {
+        assert_eq!(skip_reason(true, 60_000), Some("already indexed"));
+        assert_eq!(skip_reason(true, 0), Some("already indexed"));
+        assert_eq!(skip_reason(false, 0), Some("no rows to index"));
+        assert_eq!(skip_reason(false, 60_000), None);
     }
 
     #[test]
