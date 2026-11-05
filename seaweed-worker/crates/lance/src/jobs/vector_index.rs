@@ -4,9 +4,9 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use seaweed_worker_core::config_form::{form, int_or, int_value, number_field};
 use seaweed_worker_core::pb::{
-    ConfigValue, DetectionComplete, DetectionProposals, ExecuteJobRequest, JobCompleted,
-    JobProgressUpdate, JobProposal, JobResult, JobTypeCapability, JobTypeDescriptor,
-    RunDetectionRequest,
+    AdminRuntimeDefaults, ConfigValue, DetectionComplete, DetectionProposals, ExecuteJobRequest,
+    JobCompleted, JobProgressUpdate, JobProposal, JobResult, JobTypeCapability,
+    JobTypeDescriptor, RunDetectionRequest,
 };
 use seaweed_worker_core::{DetectionSender, ExecutionSender, JobHandler};
 use tracing::warn;
@@ -23,6 +23,8 @@ const MIN_ROWS_FLOOR: i64 = 1;
 const MIN_ROWS_CEILING: i64 = 1_000_000_000;
 /// The namespace an S3 Vectors bucket keeps its indexes in.
 const VECTOR_NAMESPACE: &str = "vector";
+/// A build trains on the whole table, so the admin's 90 seconds are not enough.
+const EXECUTION_TIMEOUT_SECONDS: i32 = 3600;
 
 /// Builds the vector index of an S3 Vectors table once it holds enough rows
 /// for an exact scan to be the slow way. Tables below the threshold, and rows
@@ -126,6 +128,10 @@ impl JobHandler for VectorIndexHandler {
                 defaults.clone(),
             )),
             worker_default_values: defaults,
+            admin_runtime_defaults: Some(AdminRuntimeDefaults {
+                execution_timeout_seconds: EXECUTION_TIMEOUT_SECONDS,
+                ..Default::default()
+            }),
             ..Default::default()
         }
     }
@@ -296,5 +302,13 @@ mod tests {
         assert!(is_vector_table(&parse_id("media$vector$movies")));
         assert!(!is_vector_table(&parse_id("media$ml$events")));
         assert!(!is_vector_table(&parse_id("vector$movies")));
+    }
+
+    #[test]
+    fn a_build_gets_longer_than_the_default_execution_timeout() {
+        let descriptor = VectorIndexHandler::new(String::new()).descriptor();
+        let defaults = descriptor.admin_runtime_defaults.unwrap();
+        assert_eq!(defaults.execution_timeout_seconds, 3600);
+        assert!(!defaults.enabled);
     }
 }
