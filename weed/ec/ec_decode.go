@@ -26,6 +26,12 @@ func DoEcDecode(env *Env, topoInfo *master_pb.TopologyInfo, collection string, v
 		return fmt.Errorf("lock is lost")
 	}
 
+	if collection == "" {
+		if c, found := FindEcVolumeCollection(topoInfo, vid); found {
+			collection = c
+		}
+	}
+
 	// find volume location
 	nodeToEcShardsInfo, dataShards := collectEcNodeShardsInfo(topoInfo, vid)
 
@@ -374,6 +380,43 @@ func CollectEcShardIds(topoInfo *master_pb.TopologyInfo, collectionMatcher *wild
 	}
 
 	return
+}
+
+// FindEcVolumeCollection searches the topology for the collection of the given volume id.
+// It checks EC shard information first across all datanodes and disks, and falls back to
+// checking regular volume information in case a previous decode was interrupted after
+// the normal volume was created.
+func FindEcVolumeCollection(topoInfo *master_pb.TopologyInfo, vid needle.VolumeId) (string, bool) {
+	if topoInfo == nil {
+		return "", false
+	}
+	var collection string
+	var found bool
+	EachDataNode(topoInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
+		if found {
+			return
+		}
+		for _, diskInfo := range dn.DiskInfos {
+			if diskInfo == nil {
+				continue
+			}
+			for _, v := range diskInfo.EcShardInfos {
+				if v.Id == uint32(vid) {
+					collection = v.Collection
+					found = true
+					return
+				}
+			}
+			for _, vi := range diskInfo.VolumeInfos {
+				if needle.VolumeId(vi.Id) == vid {
+					collection = vi.Collection
+					found = true
+					return
+				}
+			}
+		}
+	})
+	return collection, found
 }
 
 func collectEcNodeShardsInfo(topoInfo *master_pb.TopologyInfo, vid needle.VolumeId) (map[pb.ServerAddress]*erasure_coding.ShardsInfo, int) {

@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/ec"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -86,7 +87,13 @@ func (c *commandEcDecode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 
 	// volumeId is provided
 	if vid != 0 {
-		return ec.DoEcDecode(env, topologyInfo, *collection, vid, diskType, *checkMinFreeSpace, diskUsageState)
+		targetCollection := *collection
+		if targetCollection == "" {
+			if c, found := ec.FindEcVolumeCollection(topologyInfo, vid); found {
+				targetCollection = c
+			}
+		}
+		return ec.DoEcDecode(env, topologyInfo, targetCollection, vid, diskType, *checkMinFreeSpace, diskUsageState)
 	}
 
 	// apply to all volumes in the collection
@@ -113,7 +120,13 @@ func (c *commandEcDecode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 			fmt.Printf("ec decode batch %d/%d: %v\n", i+1, len(batches), batch)
 		}
 		for _, vid := range batch {
-			if err = ec.DoEcDecode(env, topologyInfo, *collection, vid, diskType, *checkMinFreeSpace, diskUsageState); err != nil {
+			targetCollection := *collection
+			if targetCollection == "" || strings.ContainsAny(targetCollection, ".*+?[]()|^$") {
+				if c, found := ec.FindEcVolumeCollection(topologyInfo, vid); found {
+					targetCollection = c
+				}
+			}
+			if err = ec.DoEcDecode(env, topologyInfo, targetCollection, vid, diskType, *checkMinFreeSpace, diskUsageState); err != nil {
 				return err
 			}
 		}
