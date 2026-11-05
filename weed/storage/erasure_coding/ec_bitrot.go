@@ -526,10 +526,13 @@ func (ev *EcVolume) BitrotProtection() (*volume_server_pb.EcBitrotProtection, Bi
 // already mounted — a shard delivery can bring the manifest with it, and the
 // receive path only writes the file, so without this the in-memory volume
 // keeps the protection state it resolved at mount (off) until a remount.
-func (ev *EcVolume) ReloadBitrotSidecar(additionalDirs ...string) {
-	if err := ev.loadActiveBitrotSidecar(additionalDirs...); err != nil {
+// It returns the layout-mismatch error a mount would fail on.
+func (ev *EcVolume) ReloadBitrotSidecar(additionalDirs ...string) error {
+	err := ev.loadActiveBitrotSidecar(additionalDirs...)
+	if err != nil {
 		glog.Warningf("ec volume %d: reload bitrot sidecar: %v", ev.VolumeId, err)
 	}
+	return err
 }
 
 // loadActiveBitrotSidecar loads the generation-0 checksum sidecar into the

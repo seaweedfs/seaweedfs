@@ -1307,7 +1307,9 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 	ecVolumes := vs.store.FindAllEcVolumes(needle.VolumeId(req.VolumeId))
 	ecMetadataDirs := vs.store.EcMetadataDirs()
 	for _, ecVolume := range ecVolumes {
-		ecVolume.ReloadBitrotSidecar(ecMetadataDirs...)
+		if err := ecVolume.ReloadBitrotSidecar(ecMetadataDirs...); err != nil {
+			return nil, fmt.Errorf("ec volume %d: %w", req.VolumeId, err)
+		}
 	}
 	prot, bitrotStatus := erasure_coding.SelectBitrotProtection(ecVolumes)
 	if err := erasure_coding.VerifyEcVolumeDataShards(prot, bitrotStatus, shardFileNames); err != nil {

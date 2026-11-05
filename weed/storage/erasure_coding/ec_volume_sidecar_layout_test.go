@@ -3,6 +3,7 @@ package erasure_coding
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
@@ -59,7 +60,7 @@ func TestNewEcVolumeTakesLayoutFromSidecarWhenVifHasNoConfig(t *testing.T) {
 // legacy layout.
 func TestNewEcVolumeFindsSidecarInTheIndexDirectory(t *testing.T) {
 	for _, tc := range []struct {
-		name    string
+		name     string
 		writeVif bool
 	}{
 		{name: "no vif at all"},
@@ -198,6 +199,16 @@ func TestReloadBitrotSidecarFindsItOnASiblingDisk(t *testing.T) {
 	ev.ReloadBitrotSidecar(mine, sibling)
 	if got := ev.bitrotStatus; got != BitrotOn {
 		t.Errorf("cross-disk reload: status = %v, want BitrotOn", got)
+	}
+
+	// A delivered sidecar that records another layout is reported, not
+	// swallowed: the decode refuses on it.
+	prot.EcShardConfig.ParityShards = 2
+	if err := SaveBitrotSidecar(BitrotSidecarPath(filepath.Join(sibling, "7"), 0), prot); err != nil {
+		t.Fatalf("seed mismatched .ecsum: %v", err)
+	}
+	if err := ev.ReloadBitrotSidecar(mine, sibling); err == nil || !strings.Contains(err.Error(), "refusing to serve") {
+		t.Errorf("mismatched-layout reload: err = %v, want the layout mismatch", err)
 	}
 }
 
