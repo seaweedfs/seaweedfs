@@ -13,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/test/volume_server/framework"
 	"github.com/seaweedfs/seaweedfs/test/volume_server/matrix"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 )
 
 func TestEcShardsToVolumeRejectsCorruptDataShard(t *testing.T) {
@@ -20,15 +21,18 @@ func TestEcShardsToVolumeRejectsCorruptDataShard(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 	t.Run("sidecar loaded at mount", func(t *testing.T) {
-		testEcShardsToVolumeRejectsCorruptDataShard(t, false)
+		testEcShardsToVolumeRejectsCorruptDataShard(t, false, 0, "data shard 3")
 	})
 	// A rebuild's backfill writes the sidecar after the shards are mounted.
 	t.Run("sidecar written after mount", func(t *testing.T) {
-		testEcShardsToVolumeRejectsCorruptDataShard(t, true)
+		testEcShardsToVolumeRejectsCorruptDataShard(t, true, 0, "data shard 3")
+	})
+	t.Run("sidecar with another layout written after mount", func(t *testing.T) {
+		testEcShardsToVolumeRejectsCorruptDataShard(t, true, 2, "refusing to serve")
 	})
 }
 
-func testEcShardsToVolumeRejectsCorruptDataShard(t *testing.T, sidecarAfterMount bool) {
+func testEcShardsToVolumeRejectsCorruptDataShard(t *testing.T, sidecarAfterMount bool, lateParityShards uint32, wantErr string) {
 	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
@@ -80,6 +84,16 @@ func testEcShardsToVolumeRejectsCorruptDataShard(t *testing.T, sidecarAfterMount
 			t.Fatalf("restore sidecar: %v", err)
 		}
 	}
+	if lateParityShards != 0 {
+		prot, err := erasure_coding.LoadBitrotSidecar(base + ".ecsum")
+		if err != nil {
+			t.Fatalf("load sidecar: %v", err)
+		}
+		prot.EcShardConfig.ParityShards = lateParityShards
+		if err := erasure_coding.SaveBitrotSidecar(base+".ecsum", prot); err != nil {
+			t.Fatalf("rewrite sidecar: %v", err)
+		}
+	}
 	shard := base + ".ec03"
 	content, err := os.ReadFile(shard)
 	if err != nil {
@@ -93,7 +107,7 @@ func testEcShardsToVolumeRejectsCorruptDataShard(t *testing.T, sidecarAfterMount
 	_, err = grpcClient.VolumeEcShardsToVolume(ctx, &volume_server_pb.VolumeEcShardsToVolumeRequest{
 		VolumeId: volumeID,
 	})
-	if err == nil || !strings.Contains(err.Error(), "data shard 3") {
+	if err == nil || !strings.Contains(err.Error(), wantErr) {
 		t.Fatalf("VolumeEcShardsToVolume with a corrupt data shard: %v", err)
 	}
 
