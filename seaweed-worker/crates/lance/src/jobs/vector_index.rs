@@ -26,6 +26,7 @@ const VECTOR_NAMESPACE: &str = "vector";
 /// The column S3 Vectors writes its vectors to.
 const VECTOR_COLUMN: &str = "vector";
 /// A build trains on the whole table, so the admin's 90 seconds are not enough.
+/// The run window is as long, or it would cut an attempt short first.
 const EXECUTION_TIMEOUT_SECONDS: i32 = 3600;
 
 /// Builds the vector index of an S3 Vectors table once it holds enough rows
@@ -139,6 +140,7 @@ impl JobHandler for VectorIndexHandler {
             )),
             worker_default_values: defaults,
             admin_runtime_defaults: Some(AdminRuntimeDefaults {
+                job_type_max_runtime_seconds: EXECUTION_TIMEOUT_SECONDS,
                 execution_timeout_seconds: EXECUTION_TIMEOUT_SECONDS,
                 ..Default::default()
             }),
@@ -346,6 +348,7 @@ mod tests {
         let descriptor = VectorIndexHandler::new(String::new()).descriptor();
         let defaults = descriptor.admin_runtime_defaults.unwrap();
         assert_eq!(defaults.execution_timeout_seconds, 3600);
+        assert_eq!(defaults.job_type_max_runtime_seconds, 3600);
         assert!(!defaults.enabled);
     }
 }
