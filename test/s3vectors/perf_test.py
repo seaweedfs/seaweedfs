@@ -23,7 +23,8 @@ a larger profile:
 
 Each timed scenario starts with one untimed call. Timings only report; the
 assertions check correctness (recall against an exact client-side search,
-complete listings), never speed.
+complete listings), never speed. Recall through an index is approximate, so
+PERF_INDEX runs report it without asserting it.
 """
 
 import concurrent.futures
@@ -83,16 +84,27 @@ def client(endpoint):
                                       max_pool_connections=max(CONCURRENCY) + 2))
 
 
-def exact_top_k(data, query, k, keep=None):
-    """Cosine top-k over the ingested vectors, the reference for recall."""
+def recall(data, query, k, hits, keep=None):
+    """Hits in the exact cosine top-k over the ingested vectors. Hits within
+    1e-6 of the k-th best score fill the slots the top-k leaves for that tie:
+    tied vectors are interchangeable, and the server ranks in float32."""
     qn = math.sqrt(sum(x * x for x in query))
-    scored = []
-    for i, (vector, norm) in enumerate(data):
-        if keep is not None and not keep(i):
-            continue
-        scored.append((sum(a * b for a, b in zip(vector, query)) / (norm * qn), i))
-    scored.sort(reverse=True)
-    return {f"v{i}" for _, i in scored[:k]}
+
+    def score(i):
+        vector, norm = data[i]
+        return sum(a * b for a, b in zip(vector, query)) / (norm * qn)
+
+    def eligible(i):
+        return keep is None or keep(i)
+
+    best = sorted((score(i) for i in range(len(data)) if eligible(i)), reverse=True)[:k]
+    found = {int(h["key"][1:]) for h in hits}
+    cutoff = best[-1]
+    scores = [score(i) for i in found if eligible(i)]
+    above = sum(1 for s in scores if s > cutoff + 1e-6)
+    tied = sum(1 for s in scores if abs(s - cutoff) <= 1e-6)
+    slots = len(best) - sum(1 for s in best if s > cutoff + 1e-6)
+    return (above + min(tied, slots)) / len(best)
 
 
 def list_all(s3v, args, **extra):
@@ -107,10 +119,6 @@ def list_all(s3v, args, **extra):
 
 def assert_complete(keys):
     assert len(keys) == VECTORS and set(keys) == {f"v{i}" for i in range(VECTORS)}
-
-
-def recall(expected, hits):
-    return len(expected & {h["key"] for h in hits}) / len(expected)
 
 
 @pytest.fixture(scope="module")
@@ -139,7 +147,7 @@ def perf(cluster):
     args = {"vectorBucketName": bucket, "indexName": INDEX}
     combo = re.sub(r"^vectors-|\d+$", "", cluster["directory"].name)
     REPORT[combo] = {"config": {"vectors": VECTORS, "dim": DIM, "batch": BATCH, "queries": QUERIES,
-                                "clusters": CLUSTERS,
+                                "clusters": CLUSTERS, "noise": NOISE,
                                 "top_k": TOPK, "concurrency": CONCURRENCY, "cpus": os.cpu_count(),
                                 "load_1m": os.getloadavg()[0], "machine": platform.machine()}}
     yield {"client": s3v, "endpoint": cluster["endpoint"], "args": args, "data": data,
@@ -208,10 +216,12 @@ def run_queries(perf, name, **extra):
         seconds, response = timed(lambda: s3v.query_vectors(
             **args, queryVector={"float32": query}, topK=TOPK, returnDistance=True, **extra))
         latencies.append(seconds)
+        if keep:
+            assert all(keep(int(h["key"][1:])) for h in response["vectors"]), response["vectors"]
         if n < RECALL_SAMPLE:
-            recalls.append(recall(exact_top_k(data, query, TOPK, keep), response["vectors"]))
+            recalls.append(recall(data, query, TOPK, response["vectors"], keep))
     perf["report"][name] = {**summarize(latencies), "recall_at_k": statistics.fmean(recalls) if recalls else None}
-    assert not recalls or statistics.fmean(recalls) >= 0.9
+    assert INDEXED or not recalls or statistics.fmean(recalls) >= 0.9
 
 
 def test_query(perf):

@@ -173,7 +173,16 @@ impl JobHandler for VectorIndexHandler {
                     continue;
                 }
             }
-            let rows = table.dataset.count_rows(None).await?;
+            let rows = match table.dataset.count_rows(None).await {
+                Ok(rows) => rows,
+                Err(err) => {
+                    if let Some(counters) = &self.metrics {
+                        counters.worker.object_skipped(JOB_TYPE, "rows");
+                    }
+                    warn!("skipping {encoded}: counting its rows failed: {err:#}");
+                    continue;
+                }
+            };
             if rows < min_rows {
                 continue;
             }
