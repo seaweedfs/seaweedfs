@@ -160,11 +160,11 @@ func TestFindEcVolumeCollection(t *testing.T) {
 			wantFound: true,
 		},
 		{
-			name:      "regular volume fallback",
+			name:      "regular volume record is not an ec volume",
 			topo:      topo,
 			vid:       20,
-			wantCol:   "regular_col",
-			wantFound: true,
+			wantCol:   "",
+			wantFound: false,
 		},
 		{
 			name:      "not found",

@@ -382,10 +382,7 @@ func CollectEcShardIds(topoInfo *master_pb.TopologyInfo, collectionMatcher *wild
 	return
 }
 
-// FindEcVolumeCollection searches the topology for the collection of the given volume id.
-// It checks EC shard information first across all datanodes and disks, and falls back to
-// checking regular volume information in case a previous decode was interrupted after
-// the normal volume was created.
+// FindEcVolumeCollection returns the collection of the ec volume's shards.
 func FindEcVolumeCollection(topoInfo *master_pb.TopologyInfo, vid needle.VolumeId) (string, bool) {
 	if topoInfo == nil {
 		return "", false
@@ -403,13 +400,6 @@ func FindEcVolumeCollection(topoInfo *master_pb.TopologyInfo, vid needle.VolumeI
 			for _, v := range diskInfo.EcShardInfos {
 				if v.Id == uint32(vid) {
 					collection = v.Collection
-					found = true
-					return
-				}
-			}
-			for _, vi := range diskInfo.VolumeInfos {
-				if needle.VolumeId(vi.Id) == vid {
-					collection = vi.Collection
 					found = true
 					return
 				}
