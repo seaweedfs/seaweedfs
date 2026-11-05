@@ -40,9 +40,6 @@ struct Args {
     /// tenth of the index's partitions, at least 8; more under a filter.
     #[arg(long, env = "WEED_VECTOR_NPROBES")]
     nprobes: Option<usize>,
-    /// Memory for keeping opened vector indices between queries, in MiB.
-    #[arg(long, env = "WEED_VECTOR_INDEX_CACHE_MB", default_value_t = 512)]
-    index_cache_mb: u64,
     /// The `jwt.filer_signing.key` of the cluster. The Lance namespace vends
     /// credentials that write index data only to a caller holding it.
     #[arg(long, env = "WEED_FILER_SIGNING_KEY")]
@@ -162,8 +159,7 @@ async fn main() -> Result<()> {
         .with_fallback(&fallback)
         .with_signing_key(signing_key.as_ref());
     let mut service = VectorServer::new(client, fallback)
-        .with_nprobes(args.nprobes)
-        .with_index_cache((args.index_cache_mb << 20) as usize);
+        .with_nprobes(args.nprobes);
     if args.read_cache_mb > 0 {
         service = service.with_read_cache(ReadCache::new(args.read_cache_mb << 20));
     }
