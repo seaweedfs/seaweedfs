@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -107,7 +108,7 @@ func (s3a *S3ApiServer) withFilerClientFailover(ctx context.Context, preferred p
 
 	var lastErr error
 	for _, filer := range ordered {
-		received := false
+		var received atomic.Bool
 		fnRan := false
 		// Background, not ctx: WithGrpcClient's context only decides whether an
 		// error invalidates the shared connection, and that call is fn's to make,
@@ -144,7 +145,7 @@ func (s3a *S3ApiServer) withFilerClientFailover(ctx context.Context, preferred p
 		// fn consumed part of a response; a replay would stack a second copy
 		// onto whatever it accumulated, so surface the error unwrapped. The filer
 		// answered, so this also says nothing about its health.
-		if received {
+		if received.Load() {
 			return err
 		}
 		s3a.filerClient.RecordFilerFailure(filer)
@@ -194,18 +195,18 @@ func filerConnReady(ctx context.Context, conn *grpc.ClientConn) bool {
 	}
 }
 
-// receiveTrackingConn flags *received once a unary reply or a streamed message
+// receiveTrackingConn flags received once a unary reply or a streamed message
 // has been handed to the callback, the point past which a failover replay is
-// no longer transparent.
+// no longer transparent. The callback may share the client across goroutines.
 type receiveTrackingConn struct {
 	grpc.ClientConnInterface
-	received *bool
+	received *atomic.Bool
 }
 
 func (c receiveTrackingConn) Invoke(ctx context.Context, method string, args, reply any, opts ...grpc.CallOption) error {
 	err := c.ClientConnInterface.Invoke(ctx, method, args, reply, opts...)
 	if err == nil {
-		*c.received = true
+		c.received.Store(true)
 	}
 	return err
 }
@@ -220,13 +221,13 @@ func (c receiveTrackingConn) NewStream(ctx context.Context, desc *grpc.StreamDes
 
 type receiveTrackingStream struct {
 	grpc.ClientStream
-	received *bool
+	received *atomic.Bool
 }
 
 func (s receiveTrackingStream) RecvMsg(m any) error {
 	err := s.ClientStream.RecvMsg(m)
 	if err == nil {
-		*s.received = true
+		s.received.Store(true)
 	}
 	return err
 }
