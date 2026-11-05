@@ -66,6 +66,40 @@ pub async fn write_dataset_at(uri: &str, vectors: &[Vec<f32>], tags: &[&str]) ->
     Dataset::write(reader, uri, None).await.unwrap()
 }
 
+/// Like [`write_dataset`], with the vector field carrying the `distance_metric`
+/// metadata `CreateIndex` writes (`L2`, `COSINE`, `DOT_PRODUCT`).
+pub async fn write_dataset_with_metric(
+    dir: &TempDir,
+    vectors: &[Vec<f32>],
+    tags: &[&str],
+    metric: &str,
+) -> Dataset {
+    let dim = vectors[0].len();
+    let plain = schema(dim);
+    let fields: Vec<Arc<Field>> =
+        plain
+            .fields()
+            .iter()
+            .map(|f| {
+                if f.name() == "vector" {
+                    Arc::new(f.as_ref().clone().with_metadata(
+                        [("distance_metric".to_string(), metric.to_string())].into(),
+                    ))
+                } else {
+                    f.clone()
+                }
+            })
+            .collect();
+    let schema = Arc::new(Schema::new(fields));
+    let batch = batch(0, vectors, tags, dim)
+        .with_schema(schema.clone())
+        .unwrap();
+    let reader = RecordBatchIterator::new(vec![Ok(batch)].into_iter(), schema);
+    Dataset::write(reader, dir.path().to_str().unwrap(), None)
+        .await
+        .unwrap()
+}
+
 /// Deterministic non-trivial vectors for index coverage tests.
 pub fn vectors(rows: usize, dim: usize) -> Vec<Vec<f32>> {
     (0..rows)

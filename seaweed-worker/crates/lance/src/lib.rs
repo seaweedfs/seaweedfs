@@ -11,5 +11,6 @@ pub mod jobs;
 pub mod metrics;
 pub mod preview;
 pub mod tls;
+pub mod vector_index;
 
 pub use jobs::handlers;

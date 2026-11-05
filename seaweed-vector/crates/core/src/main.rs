@@ -4,6 +4,7 @@ use clap::{Parser, Subcommand};
 use weed_lance_worker::catalog::{NamespaceClient, parse_id};
 use weed_lance_worker::dataset::{self, FallbackOptions};
 use weed_vector_core::coverage;
+use weed_vector_core::index;
 use weed_vector_core::query::{self, Query};
 use weed_vector_core::table::VectorTable;
 
@@ -91,6 +92,38 @@ enum Command {
         #[arg(long)]
         key_column: Option<String>,
     },
+    /// Build or extend the vector index, then print its coverage.
+    Index {
+        #[command(subcommand)]
+        action: IndexAction,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum IndexAction {
+    /// An IVF_FLAT index in the table's metric; partitions default to the
+    /// square root of the row count.
+    Build {
+        id: String,
+        #[arg(long)]
+        partitions: Option<usize>,
+        #[arg(long, default_value = index::INDEX_NAME)]
+        name: String,
+        /// Rebuild an index of that name instead of failing.
+        #[arg(long)]
+        replace: bool,
+        #[arg(long)]
+        vector_column: Option<String>,
+    },
+    /// Cover the rows written since the index was built.
+    Optimize {
+        id: String,
+        /// Train the index again on every row instead of adding a segment.
+        #[arg(long)]
+        retrain: bool,
+        #[arg(long)]
+        vector_column: Option<String>,
+    },
 }
 
 /// `id` is a delimiter-joined table id; when it looks like a URI (`s3://...`,
@@ -116,6 +149,7 @@ async fn open_dataset(
 async fn main() -> Result<()> {
     weed_lance_worker::tls::install_default_crypto_provider();
     tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
@@ -243,6 +277,49 @@ async fn main() -> Result<()> {
             };
             println!("{}", serde_json::to_string_pretty(&hits)?);
         }
+        Command::Index { action } => {
+            let (id, vector_column) = match &action {
+                IndexAction::Build {
+                    id, vector_column, ..
+                }
+                | IndexAction::Optimize {
+                    id, vector_column, ..
+                } => (id.clone(), vector_column.clone()),
+            };
+            let mut dataset = open_dataset(&client, &id, &fallback).await?;
+            let table = VectorTable::resolve(&dataset, vector_column.as_deref(), None)?;
+            let started = std::time::Instant::now();
+            match action {
+                IndexAction::Build {
+                    partitions,
+                    name,
+                    replace,
+                    ..
+                } => {
+                    let rows = dataset.count_rows(None).await?;
+                    let partitions = partitions.unwrap_or_else(|| index::partitions_for(rows));
+                    index::build(
+                        &mut dataset,
+                        &table.vector_column,
+                        &name,
+                        partitions,
+                        replace,
+                    )
+                    .await?;
+                }
+                IndexAction::Optimize { retrain, .. } => {
+                    index::optimize(&mut dataset, &table.vector_column, retrain).await?;
+                }
+            }
+            println!(
+                "{}",
+                serde_json::json!({
+                    "version": dataset.version().version,
+                    "seconds": started.elapsed().as_secs_f64(),
+                    "coverage": coverage::coverage(&dataset, &table.vector_column).await?,
+                })
+            );
+        }
     }
     Ok(())
 }
@@ -269,6 +346,38 @@ mod tests {
                 assert_eq!(k, 3);
             }
             _ => panic!("expected query"),
+        }
+    }
+
+    #[test]
+    fn index_build_takes_partitions_and_a_name() {
+        let args = Args::try_parse_from([
+            "weed-vector",
+            "index",
+            "build",
+            "b$vector$i",
+            "--partitions",
+            "32",
+            "--replace",
+        ])
+        .unwrap();
+        match args.command {
+            Command::Index {
+                action:
+                    IndexAction::Build {
+                        id,
+                        partitions,
+                        name,
+                        replace,
+                        ..
+                    },
+            } => {
+                assert_eq!(id, "b$vector$i");
+                assert_eq!(partitions, Some(32));
+                assert_eq!(name, index::INDEX_NAME);
+                assert!(replace);
+            }
+            _ => panic!("expected index build"),
         }
     }
 

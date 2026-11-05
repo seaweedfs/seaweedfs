@@ -12,10 +12,19 @@ a larger profile:
     PERF_CONCURRENCY  client threads for the throughput scenario ("1,4,8")
     PERF_RECALL       queries checked against an exact search (20)
     PERF_REPORT       JSON report path (perf-results.json in the cluster dir)
+    PERF_INDEX        1 builds the vector index after ingest with weed-vector-cli,
+                      so the queries run through it (PERF_PARTITIONS overrides
+                      the partition count)
+    PERF_CLUSTERS     draw vectors around this many shared centres instead of
+                      independently (0); PERF_NOISE is the spread around a
+                      centre (0.3). Independent Gaussian vectors have no
+                      locality for an IVF index to use, so recall through one
+                      only tracks the fraction of partitions probed.
 
 Each timed scenario starts with one untimed call. Timings only report; the
 assertions check correctness (recall against an exact client-side search,
-complete listings), never speed.
+complete listings), never speed. Recall through an index is approximate, so
+PERF_INDEX runs report it without asserting it.
 """
 
 import concurrent.futures
@@ -27,6 +36,7 @@ import platform
 import random
 import re
 import statistics
+import subprocess
 import time
 import uuid
 
@@ -34,6 +44,7 @@ import boto3
 from botocore.config import Config
 import pytest
 
+HERE = Path(__file__).resolve().parent
 VECTORS = int(os.environ.get("PERF_VECTORS", "10000"))
 DIM = int(os.environ.get("PERF_DIM", "128"))
 BATCH = int(os.environ.get("PERF_BATCH", "500"))
@@ -42,6 +53,9 @@ TOPK = int(os.environ.get("PERF_TOPK", "10"))
 CONCURRENCY = [int(c) for c in os.environ.get("PERF_CONCURRENCY", "1,4,8").split(",")]
 CATEGORIES = 10
 RECALL_SAMPLE = int(os.environ.get("PERF_RECALL", "20"))
+INDEXED = bool(os.environ.get("PERF_INDEX"))
+CLUSTERS = int(os.environ.get("PERF_CLUSTERS", "0"))
+NOISE = float(os.environ.get("PERF_NOISE", "0.3"))
 INDEX = "perf"
 
 REPORT = {}
@@ -70,16 +84,27 @@ def client(endpoint):
                                       max_pool_connections=max(CONCURRENCY) + 2))
 
 
-def exact_top_k(data, query, k, keep=None):
-    """Cosine top-k over the ingested vectors, the reference for recall."""
+def recall(data, query, k, hits, keep=None):
+    """Hits in the exact cosine top-k over the ingested vectors. Hits within
+    1e-6 of the k-th best score fill the slots the top-k leaves for that tie:
+    tied vectors are interchangeable, and the server ranks in float32."""
     qn = math.sqrt(sum(x * x for x in query))
-    scored = []
-    for i, (vector, norm) in enumerate(data):
-        if keep is not None and not keep(i):
-            continue
-        scored.append((sum(a * b for a, b in zip(vector, query)) / (norm * qn), i))
-    scored.sort(reverse=True)
-    return {f"v{i}" for _, i in scored[:k]}
+
+    def score(i):
+        vector, norm = data[i]
+        return sum(a * b for a, b in zip(vector, query)) / (norm * qn)
+
+    def eligible(i):
+        return keep is None or keep(i)
+
+    best = sorted((score(i) for i in range(len(data)) if eligible(i)), reverse=True)[:k]
+    found = {int(h["key"][1:]) for h in hits}
+    cutoff = best[-1]
+    scores = [score(i) for i in found if eligible(i)]
+    above = sum(1 for s in scores if s > cutoff + 1e-6)
+    tied = sum(1 for s in scores if abs(s - cutoff) <= 1e-6)
+    slots = len(best) - sum(1 for s in best if s > cutoff + 1e-6)
+    return (above + min(tied, slots)) / len(best)
 
 
 def list_all(s3v, args, **extra):
@@ -96,19 +121,23 @@ def assert_complete(keys):
     assert len(keys) == VECTORS and set(keys) == {f"v{i}" for i in range(VECTORS)}
 
 
-def recall(expected, hits):
-    return len(expected & {h["key"] for h in hits}) / len(expected)
-
-
 @pytest.fixture(scope="module")
 def perf(cluster):
     assert 1 <= BATCH <= 500 and VECTORS >= BATCH
     rng = random.Random(1)
+    centres = [[rng.gauss(0, 1) for _ in range(DIM)] for _ in range(CLUSTERS)]
+
+    def vector():
+        if not centres:
+            return [round(rng.gauss(0, 1), 5) for _ in range(DIM)]
+        centre = rng.choice(centres)
+        return [round(c + NOISE * rng.gauss(0, 1), 5) for c in centre]
+
     data = []
     for _ in range(VECTORS):
-        vector = [round(rng.gauss(0, 1), 5) for _ in range(DIM)]
-        data.append((vector, math.sqrt(sum(x * x for x in vector))))
-    queries = [[round(rng.gauss(0, 1), 5) for _ in range(DIM)] for _ in range(QUERIES)]
+        v = vector()
+        data.append((v, math.sqrt(sum(x * x for x in v))))
+    queries = [vector() for _ in range(QUERIES)]
 
     s3v = client(cluster["endpoint"])
     bucket = "perf-" + uuid.uuid4().hex[:12]
@@ -118,10 +147,11 @@ def perf(cluster):
     args = {"vectorBucketName": bucket, "indexName": INDEX}
     combo = re.sub(r"^vectors-|\d+$", "", cluster["directory"].name)
     REPORT[combo] = {"config": {"vectors": VECTORS, "dim": DIM, "batch": BATCH, "queries": QUERIES,
+                                "clusters": CLUSTERS, "noise": NOISE,
                                 "top_k": TOPK, "concurrency": CONCURRENCY, "cpus": os.cpu_count(),
                                 "load_1m": os.getloadavg()[0], "machine": platform.machine()}}
     yield {"client": s3v, "endpoint": cluster["endpoint"], "args": args, "data": data,
-           "queries": queries, "report": REPORT[combo]}
+           "queries": queries, "report": REPORT[combo], "cluster": cluster, "bucket": bucket}
     s3v.delete_index(**args)
     s3v.delete_vector_bucket(vectorBucketName=bucket)
     path = Path(os.environ.get("PERF_REPORT", cluster["directory"] / "perf-results.json"))
@@ -158,6 +188,23 @@ def test_upsert_existing(perf):
     assert_complete(list_all(s3v, args))
 
 
+def test_build_index(perf):
+    if not INDEXED:
+        pytest.skip("PERF_INDEX not set")
+    cli = Path(os.environ.get("VECTOR_CLI_BINARY", HERE / "weed-vector-cli")).resolve()
+    assert cli.is_file(), f"missing {cli}; run make ./weed-vector-cli"
+    command = [str(cli), "--namespace", perf["cluster"]["catalog"], "--access-key", "test",
+               "--secret-key", "test", "index", "build", f"{perf['bucket']}$vector${INDEX}"]
+    if os.environ.get("PERF_PARTITIONS"):
+        command += ["--partitions", os.environ["PERF_PARTITIONS"]]
+    seconds, out = timed(lambda: subprocess.run(command, check=True, capture_output=True, text=True))
+    report = json.loads(out.stdout)
+    coverage = report["coverage"]
+    assert len(coverage) == 1 and coverage[0]["unindexed_rows"] == 0, coverage
+    perf["report"]["index"] = {"seconds": seconds, "segments": coverage[0]["segments"],
+                               "partitions": int(os.environ.get("PERF_PARTITIONS", "0")) or None}
+
+
 def run_queries(perf, name, **extra):
     s3v, args, data, queries = perf["client"], perf["args"], perf["data"], perf["queries"]
     latencies, recalls = [], []
@@ -169,10 +216,12 @@ def run_queries(perf, name, **extra):
         seconds, response = timed(lambda: s3v.query_vectors(
             **args, queryVector={"float32": query}, topK=TOPK, returnDistance=True, **extra))
         latencies.append(seconds)
+        if keep:
+            assert all(keep(int(h["key"][1:])) for h in response["vectors"]), response["vectors"]
         if n < RECALL_SAMPLE:
-            recalls.append(recall(exact_top_k(data, query, TOPK, keep), response["vectors"]))
+            recalls.append(recall(data, query, TOPK, response["vectors"], keep))
     perf["report"][name] = {**summarize(latencies), "recall_at_k": statistics.fmean(recalls) if recalls else None}
-    assert not recalls or statistics.fmean(recalls) >= 0.9
+    assert INDEXED or not recalls or statistics.fmean(recalls) >= 0.9
 
 
 def test_query(perf):
@@ -258,6 +307,9 @@ def print_report(combo, report, path):
     cfg = report["config"]
     lines = [f"\n== S3 Vectors perf [{combo}]: {cfg['vectors']} x {cfg['dim']}d cosine, "
              f"topK {cfg['top_k']}, {cfg['cpus']} CPUs, load {cfg['load_1m']:.1f}"]
+    index = report.get("index")
+    if index:
+        lines.append(f"index built in {index['seconds']:.1f} s, {index['segments']} segment(s)")
     ingest = report.get("ingest")
     if ingest:
         lines.append(f"ingest            {ingest['vectors_per_s']:9.0f} vectors/s  "

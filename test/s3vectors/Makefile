@@ -1,5 +1,6 @@
 WEED := ./weed
 VEC := ./weed-vector
+CLI := ./weed-vector-cli
 WORKER_MANIFEST := ../../rust/sw-vector-distributed/Cargo.toml
 ifneq ($(wildcard $(WORKER_MANIFEST)),)
 WORKER := ./weed-vector-worker
@@ -22,6 +23,10 @@ $(VEC): FORCE
 	cd ../../seaweed-vector && cargo build --locked --profile $(CARGO_PROFILE) -p weed-vector-server
 	cp $(CARGO_OUTPUT)/weed-vector $(VEC)
 
+$(CLI): FORCE
+	cd ../../seaweed-vector && cargo build --locked --profile $(CARGO_PROFILE) -p weed-vector-core --bin weed-vector-cli
+	cp $(CARGO_OUTPUT)/weed-vector-cli $(CLI)
+
 ifneq ($(WORKER),)
 $(WORKER): $(VEC) FORCE
 	cargo build --locked --profile $(CARGO_PROFILE) --manifest-path ../../rust/Cargo.toml -p sw-vector-distributed --bin weed-vector
@@ -39,8 +44,8 @@ build: $(WEED) $(VEC) $(WORKER) $(VOLUME)
 test: build
 	./run_test.sh
 
-perf: build
+perf: build $(CLI)
 	./run_perf.sh
 
 clean:
-	rm -f $(WEED) $(VEC) ./weed-vector-worker $(VOLUME)
+	rm -f $(WEED) $(VEC) $(CLI) ./weed-vector-worker $(VOLUME)

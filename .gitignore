@@ -148,5 +148,7 @@ __pycache__/
 /test/s3vectors/weed
 /test/s3vectors/weed-vector
 /test/s3vectors/weed-vector-worker
+/test/s3vectors/weed-vector-cli
+/test/s3vectors/weed-worker
 /test/s3vectors/weed-volume
 .pytest_cache/
