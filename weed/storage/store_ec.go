@@ -258,6 +258,11 @@ func (s *Store) MountEcShards(collection string, vid needle.VolumeId, shardId er
 		return err
 	}
 	glog.V(0).Infof("MountEcShards %d.%d on disk ID %d", vid, shardId, diskId)
+	// The master must not route reads to a disk already found faulty, and a
+	// caller moving the shard here keeps its source copy on this error.
+	if _, _, quarantined := ecVolume.GetIoErrorState(); quarantined {
+		return fmt.Errorf("ec volume %d on disk %d is quarantined after IO errors, shard %d not announced", vid, diskId, shardId)
+	}
 
 	// Apply the orchestrator-supplied source disk type so the EC
 	// volume reports under it instead of the location's. Empty means

@@ -170,6 +170,9 @@ func NewStore(
 
 		location.ecShardNotifyHandler = func(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, ecVolume *erasure_coding.EcVolume) {
 			s.UpdateMaxVolumeIdSeen(vid)
+			if _, _, quarantined := ecVolume.GetIoErrorState(); quarantined {
+				return
+			}
 			si := erasure_coding.NewShardsInfo()
 			si.Set(erasure_coding.NewShardInfo(shardId, erasure_coding.ShardSize(ecVolume.ShardSize())))
 			fileCount, deleteCount := ecVolume.FileAndDeleteCount()

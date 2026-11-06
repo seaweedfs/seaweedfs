@@ -145,3 +145,24 @@ func TestCollectHeartbeatReportsQuarantinedEcShardsDeletedOnce(t *testing.T) {
 		t.Errorf("next heartbeat reported the quarantined shards deleted again: %v", deleted)
 	}
 }
+
+// A shard mounted onto a quarantined EC volume is not announced, and the mount
+// fails so a caller moving the shard here keeps its source copy.
+func TestMountEcShardsRefusesQuarantinedEcVolume(t *testing.T) {
+	store := newTestStore(t, 1)
+	const vid = needle.VolumeId(7)
+	last := erasure_coding.ShardId(erasure_coding.TotalShardsCount - 1)
+	_, ecVolume, _ := mountEcShardRange(t, store, vid, 0, int(last))
+	for len(store.NewEcShardsChan) > 0 {
+		<-store.NewEcShardsChan
+	}
+
+	ecVolume.MarkIoQuarantined()
+	if err := store.MountEcShards("", vid, last, ""); err == nil {
+		t.Error("mount onto a quarantined ec volume succeeded")
+	}
+	store.Locations[0].ecShardNotifyHandler("", vid, last, ecVolume)
+	if pending := len(store.NewEcShardsChan); pending != 0 {
+		t.Errorf("%d shard announcements queued for a quarantined ec volume, want 0", pending)
+	}
+}
