@@ -2199,10 +2199,10 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "max by (instance) (SeaweedFS_raft_commitTime{quantile=\"0.99\", cluster=~\"$cluster\"})",
+              "expr": "max by (cluster, instance) (SeaweedFS_raft_commitTime{quantile=\"0.99\", cluster=~\"$cluster\"})",
               "range": true,
               "refId": "A",
-              "legendFormat": "{{instance}}"
+              "legendFormat": "{{cluster}} {{instance}}"
             }
           ],
           "pluginVersion": "10.3.1"
@@ -2295,10 +2295,10 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "max by (instance) (SeaweedFS_raft_leader_lastContact{quantile=\"0.99\", cluster=~\"$cluster\"})",
+              "expr": "max by (cluster, instance) (SeaweedFS_raft_leader_lastContact{quantile=\"0.99\", cluster=~\"$cluster\"})",
               "range": true,
               "refId": "A",
-              "legendFormat": "{{instance}}"
+              "legendFormat": "{{cluster}} {{instance}}"
             }
           ],
           "pluginVersion": "10.3.1"
