@@ -58,7 +58,10 @@ func startHeldWrite(t *testing.T) (store *storage.Store, fid string, release fun
 		done <- err
 	}()
 	<-held.entered
-	return store, needle.NewFileIdFromNeedle(1, n).String(), func() { close(held.release) }, done
+	var releaseOnce sync.Once
+	release = func() { releaseOnce.Do(func() { close(held.release) }) }
+	t.Cleanup(release)
+	return store, needle.NewFileIdFromNeedle(1, n).String(), release, done
 }
 
 func requireTakenBack(t *testing.T, store *storage.Store, written <-chan error, takenBack bool) {
