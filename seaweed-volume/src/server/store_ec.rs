@@ -1399,7 +1399,19 @@ fn read_quarantined_local_interval(
     let mut buf = vec![0u8; iv.size];
     let read = shard.read_at(&mut buf, iv.shard_offset as u64);
     ecv.check_read_write_error(read.as_ref().err());
-    (read.ok()? == iv.size).then_some(buf)
+    match read {
+        Ok(n) if n == iv.size => Some(buf),
+        result => {
+            tracing::info!(
+                "read quarantined ec shard {}.{} offset {}: {:?}",
+                iv.vid.0,
+                iv.shard_id,
+                iv.shard_offset,
+                result
+            );
+            None
+        }
+    }
 }
 
 /// Counts one interval that couldn't be read directly and was reconstructed,

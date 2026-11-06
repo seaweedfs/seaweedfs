@@ -702,10 +702,12 @@ func (s *Store) readOneEcShardInterval(needleId types.NeedleId, ecVolume *erasur
 	glog.V(0).Infof("recover ec shard %d.%d : %v", ecVolume.VolumeId, shardId, err)
 
 	if !is_deleted && errors.Is(localErr, errShardQuarantined) {
-		if lastErr := s.readLocalEcShardInterval(ecVolume, shardId, data, actualOffset, true); lastErr == nil {
+		lastErr := s.readLocalEcShardInterval(ecVolume, shardId, data, actualOffset, true)
+		if lastErr == nil {
 			glog.V(0).Infof("read ec shard %d.%d from its quarantined disk: no healthy copy answered", ecVolume.VolumeId, shardId)
 			return false, nil
 		}
+		glog.V(0).Infof("read quarantined ec shard %d.%d offset %d: %v", ecVolume.VolumeId, shardId, actualOffset, lastErr)
 	}
 
 	return
