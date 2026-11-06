@@ -166,3 +166,18 @@ func TestMountEcShardsRefusesQuarantinedEcVolume(t *testing.T) {
 		t.Errorf("%d shard announcements queued for a quarantined ec volume, want 0", pending)
 	}
 }
+
+// The last-resort read does not depend on the master: once the quarantined
+// shards are dropped from it, the location lookup fails, and the read must
+// still reach the local copy.
+func TestReadEcShardNeedleFallsBackToQuarantinedShardsWithoutLookup(t *testing.T) {
+	store := newTestStore(t, 1)
+	store.grpcDialOption = grpc.WithTransportCredentials(insecure.NewCredentials())
+	const vid = needle.VolumeId(7)
+	_, ecVolume, n := mountEcShardRange(t, store, vid, 0, erasure_coding.TotalShardsCount)
+
+	ecVolume.MarkIoQuarantined()
+	if err := readWrittenEcNeedle(t, store, vid, n); err != nil {
+		t.Fatalf("read with no master and only the quarantined disk holding the shards: %v", err)
+	}
+}

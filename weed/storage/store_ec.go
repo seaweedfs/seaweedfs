@@ -607,8 +607,11 @@ var (
 const ecIntervalReadConcurrency = 8
 
 func (s *Store) readEcShardIntervals(needleId types.NeedleId, ecVolume *erasure_coding.EcVolume, intervals []erasure_coding.Interval) (data []byte, is_deleted bool, err error) {
-	if err = s.cachedLookupEcShardLocations(ecVolume); err != nil {
-		return nil, false, fmt.Errorf("failed to locate shard via master grpc %s: %v", s.masterAddress(), err)
+	// Like the Rust server, read on with the cached locations when the lookup
+	// fails: local shards, a quarantined disk's last-resort copy included, do
+	// not need it.
+	if lookupErr := s.cachedLookupEcShardLocations(ecVolume); lookupErr != nil {
+		glog.V(0).Infof("locate ec volume %d via master grpc %s, using cached locations: %v", ecVolume.VolumeId, s.masterAddress(), lookupErr)
 	}
 
 	var totalSize int
