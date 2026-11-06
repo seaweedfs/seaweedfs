@@ -135,10 +135,10 @@ var baseS3ActionMap = map[string]string{
 	"ListAllMyBuckets":                 s3_constants.ACTION_LIST,
 	"GetBucketLocation":                s3_constants.ACTION_READ,
 	"GetBucketVersioning":              s3_constants.ACTION_READ,
-	"PutBucketVersioning":              s3_constants.ACTION_WRITE,
+	"PutBucketVersioning":              s3_constants.ACTION_PUT_BUCKET_VERSIONING,
 	"GetBucketCors":                    s3_constants.ACTION_READ,
-	"PutBucketCors":                    s3_constants.ACTION_WRITE,
-	"DeleteBucketCors":                 s3_constants.ACTION_WRITE,
+	"PutBucketCors":                    s3_constants.ACTION_PUT_BUCKET_CORS,
+	"DeleteBucketCors":                 s3_constants.ACTION_DELETE_BUCKET_CORS,
 	"GetBucketNotification":            s3_constants.ACTION_READ,
 	"PutBucketNotification":            s3_constants.ACTION_WRITE,
 	"GetBucketObjectLockConfiguration": s3_constants.ACTION_GET_BUCKET_OBJECT_LOCK_CONFIG,
@@ -220,6 +220,12 @@ func MapToIdentitiesAction(action string) string {
 		return "PutBucketPolicy"
 	case s3_constants.ACTION_DELETE_BUCKET_POLICY:
 		return "DeleteBucketPolicy"
+	case s3_constants.ACTION_PUT_BUCKET_CORS:
+		return "PutBucketCors"
+	case s3_constants.ACTION_DELETE_BUCKET_CORS:
+		return "DeleteBucketCors"
+	case s3_constants.ACTION_PUT_BUCKET_VERSIONING:
+		return "PutBucketVersioning"
 	case s3_constants.ACTION_LIST_MULTIPART_UPLOADS:
 		return "ListBucketMultipartUploads"
 	case s3_constants.ACTION_LIST_PARTS:
