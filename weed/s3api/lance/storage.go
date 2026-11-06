@@ -25,6 +25,15 @@ func (s *Server) execute(r *http.Request, operation string, req, resp interface{
 	})
 }
 
+// executeInternal runs one S3 Tables operation through the trusted manager —
+// the caller's catalog grants must not gate an internal resolution that the
+// caller's own vector permission already authorized.
+func (s *Server) executeInternal(r *http.Request, operation string, req, resp interface{}) error {
+	return s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return s.internal.Execute(r.Context(), s3tables.NewManagerClient(client), operation, req, resp, "")
+	})
+}
+
 func bucketARN(bucket string) string {
 	arn, _ := s3tables.BuildBucketARN(s3tables.DefaultRegion, s3_constants.AccountAdminId, bucket)
 	return arn
