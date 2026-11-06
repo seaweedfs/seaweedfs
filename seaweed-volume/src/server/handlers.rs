@@ -3419,10 +3419,15 @@ async fn write_upload_needle(
         Ok(vol) => vol,
         Err(refused) => return Ok(Err(refused)),
     };
-    if fsync {
+    let pending = vol.track_pending_write(n.id);
+    let written = if fsync {
         vol.write_needle(&mut n, true, fsync).map(Ok)
     } else {
         vol.write_needle_unsynced_or_refused(&mut n)
+    };
+    match written {
+        Ok(Ok(written)) => vol.settle_pending_write(pending, &n, written).map(Ok),
+        other => other,
     }
 }
 
@@ -3615,15 +3620,25 @@ pub async fn delete_handler(
 
     // Read needle first to validate cookie (matching Go behavior)
     let original_cookie = cookie;
+    let is_replicate = del_query.split('&').any(|p| p == "type=replicate");
     {
         let vol = {
             let store = state.store.read().unwrap();
             store.find_volume(vid).map(|(_, vol)| vol)
         };
-        match vol
+        let mut found = vol
+            .as_ref()
             .ok_or(crate::storage::volume::VolumeError::NotFound)
-            .and_then(|vol| vol.read_needle_with_option(&mut n, &mut delete_read_option()))
+            .and_then(|vol| vol.read_needle_with_option(&mut n, &mut delete_read_option()));
+        if found.is_err()
+            && is_replicate
+            && let Some(vol) = &vol
         {
+            // the write this delete undoes can still be queued here
+            vol.cancel_pending_writes(needle_id);
+            found = vol.read_needle_with_option(&mut n, &mut delete_read_option());
+        }
+        match found {
             Ok(_) => {}
             Err(_) => {
                 let result = DeleteResult { size: 0 };
@@ -3711,7 +3726,6 @@ pub async fn delete_handler(
         }
     };
 
-    let is_replicate = del_query.split('&').any(|p| p == "type=replicate");
     if !is_replicate && delete_result.is_ok() {
         let needs_replication = {
             let store = state.store.read().unwrap();
@@ -9047,6 +9061,98 @@ mod tests {
                 response.headers().get("x-seaweed-write-outcome").is_none(),
                 "{query}"
             );
+        }
+    }
+
+    /// A write queued behind another write's fsync is not indexed yet, so a
+    /// replicate delete of it finds nothing. The delete cancels the write, so
+    /// it is taken back when it lands instead of reviving the needle on this
+    /// copy alone, even when its handler was dropped while it waited in the
+    /// durable queue. A plain delete that finds nothing is not sent on to the
+    /// replicas, so it leaves the write alone.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_replicate_delete_cancels_a_queued_write() {
+        use crate::server::write_queue::{SyncBatchOption, WriteQueue};
+        use crate::storage::volume::VolumeError;
+        use std::time::{Duration, Instant};
+
+        for (id, fsync, replicate, abandon) in [
+            (0x6e7a_0c01u64, false, true, false),
+            (0x6e7a_0c02, true, true, false),
+            (0x6e7a_0c03, true, true, true),
+            (0x6e7a_0c04, false, false, false),
+        ] {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let state = volume_test_state(&tmp);
+            assert!(
+                state
+                    .write_queue
+                    .set(WriteQueue::new(
+                        state.clone(),
+                        128,
+                        SyncBatchOption::default()
+                    ))
+                    .is_ok()
+            );
+            let vol = state
+                .store
+                .read()
+                .unwrap()
+                .find_volume(VolumeId(1))
+                .unwrap()
+                .1;
+            let held = vol.sync_lock_for_test();
+
+            let mut n = Needle {
+                id: NeedleId(id),
+                cookie: Cookie(TEST_COOKIE),
+                data: b"late write".to_vec(),
+                data_size: 10,
+                ..Needle::default()
+            };
+            n.checksum = CRC::new(&n.data);
+            let write = tokio::spawn({
+                let state = state.clone();
+                async move { write_upload_needle(&state, VolumeId(1), n, fsync).await }
+            });
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while vol.pending_writes_for_test(NeedleId(id)) == 0 {
+                assert!(Instant::now() < deadline, "the write never registered");
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+
+            let mut path = format!("/1,{:x}{:08x}", id, TEST_COOKIE);
+            if replicate {
+                path.push_str("?type=replicate");
+            }
+            assert_eq!(send_delete(&state, &path).await, StatusCode::NOT_FOUND);
+            if abandon {
+                write.abort();
+                drop(held);
+                while vol.pending_writes_for_test(NeedleId(id)) > 0 {
+                    assert!(Instant::now() < deadline, "the queued write never settled");
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+            } else {
+                drop(held);
+                let written = write.await.unwrap();
+                if replicate {
+                    assert!(matches!(written, Err(VolumeError::Deleted)), "{id:x}");
+                } else {
+                    assert!(matches!(written, Ok(Ok(_))), "{id:x}");
+                }
+                assert_eq!(vol.pending_writes_for_test(NeedleId(id)), 0);
+            }
+
+            let read = vol.read_needle(&mut Needle {
+                id: NeedleId(id),
+                ..Needle::default()
+            });
+            if replicate {
+                assert!(read.is_err(), "{id:x}: the cancelled write is live");
+            } else {
+                assert!(read.is_ok(), "{id:x}: {read:?}");
+            }
         }
     }
 
