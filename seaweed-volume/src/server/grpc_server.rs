@@ -13289,15 +13289,15 @@ mod tests {
     }
 
     /// While a quarantined sibling holds the same shard, the result follows
-    /// the disk the shard mounted on: a mount onto the healthy disk succeeds,
-    /// and a refused mount leaves no copy there.
+    /// the disk the store picks for the shard: the healthy disk mounts it,
+    /// the quarantined one refuses and leaves no copy on the healthy disk.
     #[tokio::test]
     async fn test_volume_ec_shards_mount_beside_a_quarantined_sibling() {
         let (service, tmp) = make_local_service_with_volume("", None);
         generate_and_mount_ec_1(&service, vec![]).await;
         let sibling = TempDir::new().unwrap();
         let dir = sibling.path().to_str().unwrap();
-        {
+        let picked = {
             let mut store = service.state.store.write().unwrap();
             store
                 .add_location(
@@ -13309,6 +13309,7 @@ mod tests {
                     Vec::new(),
                 )
                 .unwrap();
+            store.locations[0].unmount_ec_shards(VolumeId(1), &[1]);
             for name in ["1.ec01", "1.ecx", "1.ecj", "1.vif"] {
                 let src = tmp.path().join(name);
                 if src.exists() {
@@ -13322,7 +13323,12 @@ mod tests {
                 .find_ec_volume(VolumeId(1))
                 .unwrap()
                 .mark_io_quarantined();
-        }
+            let picked = store.mount_ec_shard(VolumeId(1), "", 1, "").unwrap();
+            if picked == 0 {
+                store.locations[0].unmount_ec_shards(VolumeId(1), &[1]);
+            }
+            picked
+        };
 
         let mounted = service
             .volume_ec_shards_mount(Request::new(volume_server_pb::VolumeEcShardsMountRequest {
@@ -13336,10 +13342,11 @@ mod tests {
             .is_some_and(|ecv| ecv.has_shard(1));
         assert_eq!(
             mounted.is_ok(),
-            healthy_holds,
-            "mount returned {:?}, healthy disk holds the shard: {healthy_holds}",
+            picked == 0,
+            "mount returned {:?} with disk {picked} picked",
             mounted.err()
         );
+        assert_eq!(mounted.is_ok(), healthy_holds);
     }
 
     /// A shard that fails to mount stops the batch, but the shards mounted
