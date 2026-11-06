@@ -744,12 +744,10 @@ func buildUntagResourceRequest(r *http.Request) (interface{}, error) {
 // internal test harnesses running against a default-allow server —
 // must sign with SERVICE=s3tables.
 func isS3TablesSignedRequest(r *http.Request) bool {
-	scope := extractCredentialScope(r)
-	// Credential scope is AK/DATE/REGION/SERVICE/aws4_request. Slashes
-	// do not appear inside any other component (access keys are
-	// alphanumeric), so /s3tables/ matches iff SERVICE is exactly
-	// s3tables.
-	return scope != "" && strings.Contains(scope, "/s3tables/")
+	// AK/DATE/REGION/SERVICE/aws4_request, split the way parseCredentialHeader
+	// does: a region named s3tables must not match.
+	parts := strings.Split(extractCredentialScope(r), "/")
+	return len(parts) == 5 && parts[3] == "s3tables"
 }
 
 // extractCredentialScope returns the raw credential value from either the

@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go/aws/credentials"
+	v4 "github.com/aws/aws-sdk-go/aws/signer/v4"
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -66,6 +68,16 @@ func TestIsS3TablesSignedRequest(t *testing.T) {
 		{
 			name: "service substring in access key must not match",
 			auth: "AWS4-HMAC-SHA256 Credential=s3tablesAKIA/20260101/us-east-1/s3/aws4_request, Signature=zzz",
+			want: false,
+		},
+		{
+			name: "region named s3tables on a regular S3 request",
+			auth: "AWS4-HMAC-SHA256 Credential=AKIA/20260101/s3tables/s3/aws4_request, Signature=zzz",
+			want: false,
+		},
+		{
+			name: "region named s3tables on a presigned S3 request",
+			cred: "AKIA/20260101/s3tables/s3/aws4_request",
 			want: false,
 		},
 	}
@@ -420,6 +432,29 @@ func TestRouting_S3SignedArnShapedKeysStayObjectRequests(t *testing.T) {
 				t.Fatalf("%s %s signed for s3 matched %q with bucket %q; want the S3 route for bucket %q", tc.method, tc.path, tmpl, got, wantBucket)
 			}
 		})
+	}
+}
+
+// An S3 client configured with a region named s3tables still signs for
+// service s3, so its requests must stay on the bucket routers.
+func TestRouting_S3RegionNamedS3TablesStaysObjectRequest(t *testing.T) {
+	router, _ := newS3TablesServeTestServer(t, "")
+	const body = "data"
+	req, err := http.NewRequest(http.MethodPut, "http://localhost:8333/tables/"+routingTestTableBucketARN+"/ns/t/metadata-location", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer := v4.NewSigner(credentials.NewStaticCredentials(routingTestAccessKey, routingTestSecretKey, ""))
+	if _, err := signer.Sign(req, strings.NewReader(body), "s3", "s3tables", time.Now()); err != nil {
+		t.Fatalf("sign request: %v", err)
+	}
+	var match mux.RouteMatch
+	if !router.Match(req, &match) {
+		t.Fatalf("PUT matched no route: %v", match.MatchErr)
+	}
+	if got := match.Vars["bucket"]; got != "tables" {
+		tmpl, _ := match.Route.GetPathTemplate()
+		t.Fatalf("S3 request in region s3tables matched %q with bucket %q; want the S3 route for bucket \"tables\"", tmpl, got)
 	}
 }
 
