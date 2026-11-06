@@ -46,25 +46,6 @@ func (s3a *S3ApiServer) LifecycleDelete(ctx context.Context, req *s3_lifecycle_p
 		return noopResolved("STALE_IDENTITY"), nil
 	}
 
-	// A version file never changes, so the identity check cannot see a
-	// newer write; current-version expiration must still target the latest.
-	if req.VersionId != "" && (req.ActionKind == s3_lifecycle_pb.ActionKind_EXPIRATION_DAYS || req.ActionKind == s3_lifecycle_pb.ActionKind_EXPIRATION_DATE) {
-		latest, latestErr := s3a.getLatestObjectVersion(req.Bucket, req.ObjectPath)
-		if latestErr != nil {
-			if isObjectEntryMiss(latestErr) {
-				return noopResolved("NOT_FOUND"), nil
-			}
-			return retryLater("TRANSPORT_ERROR: latest-version lookup: " + latestErr.Error()), nil
-		}
-		latestId := string(latest.Extended[s3_constants.ExtVersionIdKey])
-		if latestId == "" {
-			latestId = "null"
-		}
-		if latestId != req.VersionId {
-			return noopResolved("VERSION_NOT_LATEST"), nil
-		}
-	}
-
 	// Lifecycle never bypasses governance/compliance; the http.Request is
 	// only read when bypass is allowed, so nil is safe here.
 	if err := s3a.enforceObjectLockProtections(nil, req.Bucket, req.ObjectPath, req.VersionId, false); err != nil {
@@ -91,6 +72,12 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 				return noopResolved("BUCKET_NOT_FOUND"), nil
 			}
 			return retryLater("TRANSPORT_ERROR: versioning lookup: " + vErr.Error()), nil
+		}
+		// An unaddressed read already resolves the latest when enabled.
+		if state == s3_constants.VersioningSuspended || (state == s3_constants.VersioningEnabled && req.VersionId != "") {
+			if resp := s3a.lifecycleRequireLatest(req, entry); resp != nil {
+				return resp, nil
+			}
 		}
 		switch state {
 		case s3_constants.VersioningEnabled:
@@ -227,6 +214,33 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 	default:
 		return blocked("FATAL_EVENT_ERROR: unknown action_kind " + req.ActionKind.String()), nil
 	}
+}
+
+// lifecycleRequireLatest refuses a current-version expiration whose version
+// is no longer the key's latest. A version file never changes, so the identity
+// check cannot see a newer write.
+func (s3a *S3ApiServer) lifecycleRequireLatest(req *s3_lifecycle_pb.LifecycleDeleteRequest, entry *filer_pb.Entry) *s3_lifecycle_pb.LifecycleDeleteResponse {
+	latest, err := s3a.getLatestObjectVersion(req.Bucket, req.ObjectPath)
+	if err != nil {
+		if isObjectEntryMiss(err) {
+			return noopResolved("NOT_FOUND")
+		}
+		return retryLater("TRANSPORT_ERROR: latest-version lookup: " + err.Error())
+	}
+	versionIdOrNull := func(e *filer_pb.Entry) string {
+		if id := string(e.Extended[s3_constants.ExtVersionIdKey]); id != "" {
+			return id
+		}
+		return "null"
+	}
+	addressed := req.VersionId
+	if addressed == "" {
+		addressed = versionIdOrNull(entry)
+	}
+	if versionIdOrNull(latest) != addressed {
+		return noopResolved("VERSION_NOT_LATEST")
+	}
+	return nil
 }
 
 func (s3a *S3ApiServer) lifecycleAbortMPU(ctx context.Context, req *s3_lifecycle_pb.LifecycleDeleteRequest) (*s3_lifecycle_pb.LifecycleDeleteResponse, error) {

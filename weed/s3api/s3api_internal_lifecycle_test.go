@@ -414,20 +414,27 @@ func TestLifecycleDelete_CurrentExpirationRequiresLatestVersion(t *testing.T) {
 	cases := []struct {
 		name       string
 		versioning string
+		versionId  string
+		listed     *filer_pb.Entry
 		entries    map[string]*filer_pb.Entry
 		outcome    s3_lifecycle_pb.LifecycleDeleteOutcome
 	}{
-		{"newer version", s3_constants.VersioningEnabled, map[string]*filer_pb.Entry{
+		{"newer version", s3_constants.VersioningEnabled, "old", listed, map[string]*filer_pb.Entry{
 			"/buckets/b/obj.versions":       versionsDir("new"),
 			"/buckets/b/obj.versions/v_old": listed,
 			"/buckets/b/obj.versions/v_new": newer,
 		}, s3_lifecycle_pb.LifecycleDeleteOutcome_NOOP_RESOLVED},
-		{"null version written while suspended", s3_constants.VersioningSuspended, map[string]*filer_pb.Entry{
+		{"null version written while suspended", s3_constants.VersioningSuspended, "old", listed, map[string]*filer_pb.Entry{
 			"/buckets/b/obj":                nullOverwrite,
 			"/buckets/b/obj.versions":       versionsDir(""),
 			"/buckets/b/obj.versions/v_old": listed,
 		}, s3_lifecycle_pb.LifecycleDeleteOutcome_NOOP_RESOLVED},
-		{"still latest", s3_constants.VersioningEnabled, map[string]*filer_pb.Entry{
+		{"unaddressed null behind a newer version while suspended", s3_constants.VersioningSuspended, "", nullOverwrite, map[string]*filer_pb.Entry{
+			"/buckets/b/obj":                nullOverwrite,
+			"/buckets/b/obj.versions":       versionsDir("new"),
+			"/buckets/b/obj.versions/v_new": newer,
+		}, s3_lifecycle_pb.LifecycleDeleteOutcome_NOOP_RESOLVED},
+		{"still latest", s3_constants.VersioningEnabled, "old", listed, map[string]*filer_pb.Entry{
 			"/buckets/b/obj.versions":       versionsDir("old"),
 			"/buckets/b/obj.versions/v_old": listed,
 		}, s3_lifecycle_pb.LifecycleDeleteOutcome_DONE},
@@ -446,9 +453,9 @@ func TestLifecycleDelete_CurrentExpirationRequiresLatestVersion(t *testing.T) {
 				resp, err := s3a.LifecycleDelete(s3LocalPeerCtx(), &s3_lifecycle_pb.LifecycleDeleteRequest{
 					Bucket:           "b",
 					ObjectPath:       "obj",
-					VersionId:        "old",
+					VersionId:        c.versionId,
 					ActionKind:       kind,
-					ExpectedIdentity: computeEntryIdentity(listed),
+					ExpectedIdentity: computeEntryIdentity(c.listed),
 				})
 				require.NoError(t, err)
 				require.Equal(t, c.outcome, resp.Outcome, resp.Reason)
