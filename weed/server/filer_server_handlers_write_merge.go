@@ -12,7 +12,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 )
 
-const MergeChunkMinCount int = 1000
+// MergeChunkMinCount matches the small-chunk fold so a merge rewrites them
+// before MaybeManifestize hides them in a manifest.
+const MergeChunkMinCount int = filer.SmallChunkManifestBatch
 
 func (fs *FilerServer) maybeMergeChunks(ctx context.Context, so *operation.StorageOption, inputChunks []*filer_pb.FileChunk) (mergedChunks []*filer_pb.FileChunk, err error) {
 	// Don't merge SSE-encrypted chunks to preserve per-chunk metadata

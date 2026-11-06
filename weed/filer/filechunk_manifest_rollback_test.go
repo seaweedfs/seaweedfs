@@ -13,8 +13,8 @@ func flatTestChunks(n int) []*filer_pb.FileChunk {
 	for i := range chunks {
 		chunks[i] = &filer_pb.FileChunk{
 			FileId: fmt.Sprintf("1,%x", i+1),
-			Offset: int64(i) * 8,
-			Size:   8,
+			Offset: int64(i) * smallChunkSize,
+			Size:   smallChunkSize,
 		}
 	}
 	return chunks
@@ -57,7 +57,7 @@ func TestMaybeManifestizeFolds(t *testing.T) {
 	if store.saves != 1 || len(store.deleted) != 0 {
 		t.Errorf("expected 1 save and no deletes, got %d saves, %d deleted", store.saves, len(store.deleted))
 	}
-	if manifests[0].Offset != 0 || manifests[0].Size != uint64(ManifestBatch*8) {
+	if manifests[0].Offset != 0 || manifests[0].Size != uint64(ManifestBatch*smallChunkSize) {
 		t.Errorf("manifest span [%d,%d) wrong", manifests[0].Offset, manifests[0].Size)
 	}
 }
@@ -129,5 +129,25 @@ func TestMaybeManifestizeRollbackWithoutDeleter(t *testing.T) {
 	}
 	if len(result) != len(chunks) || HasChunkManifest(result) {
 		t.Fatalf("expected fallback to %d flat chunks, got %d", len(chunks), len(result))
+	}
+}
+
+// Small-chunk manifests saved before a later batch fails are deleted too.
+func TestMaybeManifestizeRollsBackSmallFold(t *testing.T) {
+	store := &fakeManifestStore{failOn: 3}
+	chunks := flatTestChunks(2*ManifestBatch + 50)
+	for i := 0; i < SmallChunkManifestBatch; i++ {
+		chunks = append(chunks, &filer_pb.FileChunk{FileId: fmt.Sprintf("3,%x", i+1), Offset: int64(i) * 8, Size: 8})
+	}
+
+	result, err := MaybeManifestize(store.save, store.delete, chunks)
+	if err == nil {
+		t.Fatal("expected the failed save to be reported")
+	}
+	if len(result) != len(chunks) || HasChunkManifest(result) {
+		t.Fatalf("expected fallback to %d flat chunks, got %d", len(chunks), len(result))
+	}
+	if len(store.deleted) != 2 || store.deleted[0].FileId != "2,1" || store.deleted[1].FileId != "2,2" {
+		t.Fatalf("expected the small-chunk and first regular manifests deleted, got %+v", store.deleted)
 	}
 }

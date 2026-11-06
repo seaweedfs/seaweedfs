@@ -256,7 +256,7 @@ func TestMaybeManifestizePreservesSSEMetadata(t *testing.T) {
 			store := newTestManifestStore()
 			chunks := make([]*filer_pb.FileChunk, ManifestBatch+1)
 			for i := range chunks {
-				chunks[i] = testChunk(1, uint64(i+1), uint32(i+1), int64(i*8), 8, int64(i+1))
+				chunks[i] = testChunk(1, uint64(i+1), uint32(i+1), int64(i)*smallChunkSize, smallChunkSize, int64(i+1))
 				chunks[i].SseType = sseType
 				chunks[i].SseMetadata = []byte(fmt.Sprintf("metadata-%d", i))
 			}
@@ -806,4 +806,97 @@ type failOnWrite struct{}
 
 func (w *failOnWrite) Write(p []byte) (int, error) {
 	return 0, fmt.Errorf("no space left")
+}
+
+func TestMaybeManifestizeBoundsSmallAppends(t *testing.T) {
+	const appends = 2726
+	store := newTestManifestStore()
+	var chunks, before []*filer_pb.FileChunk
+	var appended []*filer_pb.FileChunk
+	for i := 0; i < appends; i++ {
+		chunk := testChunk(1, uint64(i+1), uint32(i+1), int64(i)*308, 308, int64(i+1))
+		chunk.ETag = fmt.Sprintf("etag-%022d", i)
+		appended = append(appended, proto.Clone(chunk).(*filer_pb.FileChunk))
+		before = chunks
+		var err error
+		chunks, err = MaybeManifestize(store.saveFunc(), nil, append(append([]*filer_pb.FileChunk(nil), chunks...), chunk))
+		require.NoError(t, err)
+		require.Less(t, len(chunks), SmallChunkManifestBatch+i/SmallChunkManifestBatch+1, "append %d", i)
+	}
+
+	manifests, flat := SeparateManifestChunks(chunks)
+	assert.Len(t, manifests, appends/SmallChunkManifestBatch)
+	assert.Len(t, flat, appends%SmallChunkManifestBatch)
+	assert.Equal(t, appends/SmallChunkManifestBatch, store.nextID, "each manifest is saved once")
+
+	resolved, _, err := store.resolveAll(chunks)
+	require.NoError(t, err)
+	require.Len(t, resolved, appends)
+	seen := make(map[string]bool)
+	for _, chunk := range resolved {
+		seen[chunk.GetFileIdString()] = true
+	}
+	for _, chunk := range appended {
+		assert.True(t, seen[chunk.GetFileIdString()], "chunk %s lost", chunk.GetFileIdString())
+	}
+
+	eventSize := func(oldChunks, newChunks []*filer_pb.FileChunk) int {
+		return proto.Size(&filer_pb.SubscribeMetadataResponse{EventNotification: &filer_pb.EventNotification{
+			OldEntry: &filer_pb.Entry{Name: "journal.jsonl", Chunks: oldChunks},
+			NewEntry: &filer_pb.Entry{Name: "journal.jsonl", Chunks: newChunks},
+		}})
+	}
+	folded := eventSize(before, chunks)
+	unfolded := eventSize(appended[:appends-1], appended)
+	assert.Less(t, folded*10, unfolded, "folded event %d bytes, unfolded %d", folded, unfolded)
+}
+
+func TestMaybeManifestizeLeavesLargeChunksToManifestBatch(t *testing.T) {
+	store := newTestManifestStore()
+	var chunks []*filer_pb.FileChunk
+	var offset int64
+	for i := 0; i < 3*SmallChunkManifestBatch; i++ {
+		size := uint64(smallChunkSize)
+		if i%2 == 0 {
+			size = 100
+		}
+		chunks = append(chunks, testChunk(1, uint64(i+1), uint32(i+1), offset, size, int64(i+1)))
+		offset += int64(size)
+	}
+
+	packed, err := MaybeManifestize(store.saveFunc(), nil, chunks)
+	require.NoError(t, err)
+
+	manifests, flat := SeparateManifestChunks(packed)
+	require.Len(t, manifests, 1)
+	assert.Len(t, flat, len(chunks)-SmallChunkManifestBatch)
+	for _, chunk := range flat {
+		if chunk.Size < smallChunkSize {
+			continue
+		}
+		assert.Equal(t, uint64(smallChunkSize), chunk.Size)
+	}
+	folded, err := store.resolve(manifests[0])
+	require.NoError(t, err)
+	require.Len(t, folded, SmallChunkManifestBatch)
+	for _, chunk := range folded {
+		assert.Equal(t, uint64(100), chunk.Size)
+	}
+}
+
+func TestMaybeManifestizeKeepsOrderBelowSmallBatch(t *testing.T) {
+	store := newTestManifestStore()
+	var chunks []*filer_pb.FileChunk
+	for i := 0; i < 2*(SmallChunkManifestBatch-1); i++ {
+		size := uint64(smallChunkSize)
+		if i%2 == 0 {
+			size = 100
+		}
+		chunks = append(chunks, testChunk(1, uint64(i+1), uint32(i+1), int64(i)*smallChunkSize, size, int64(i+1)))
+	}
+
+	packed, err := MaybeManifestize(store.saveFunc(), nil, chunks)
+	require.NoError(t, err)
+	assert.Zero(t, store.nextID)
+	assertEqualChunks(t, chunks, packed)
 }
