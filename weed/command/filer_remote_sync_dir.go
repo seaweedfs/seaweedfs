@@ -1069,20 +1069,37 @@ func retriedWriteFile(client remote_storage.RemoteStorageClient, filerSource fil
 }
 
 func collectLastSyncOffset(filerClient filer_pb.FilerClient, grpcDialOption grpc.DialOption, filerAddress pb.ServerAddress, mountedDir string, timeAgo time.Duration) time.Time {
-	// 1. specified by timeAgo
-	// 2. last offset timestamp for this directory
-	// 3. directory creation time
+	return resolveLastSyncOffset(mountedDir, timeAgo,
+		func() (*filer_pb.Entry, error) {
+			ctx, cancel := lookupContext()
+			defer cancel()
+			entry, _, _, err := filer_pb.GetEntry(ctx, filerClient, util.FullPath(mountedDir))
+			return entry, err
+		},
+		func() (int64, error) { return remote_storage.GetSyncOffset(grpcDialOption, filerAddress, mountedDir) })
+}
+
+// resolveLastSyncOffset picks the position to subscribe from:
+// 1. now minus timeAgo, or the saved offset when it is older
+// 2. the saved offset for this directory
+// 3. the directory's creation time
+// A mount lookup that fails never resolves to now: the saved offset still
+// orders the replay, and without one the daemon exits so a restart retries
+// instead of skipping every event since the failure.
+func resolveLastSyncOffset(mountedDir string, timeAgo time.Duration, lookupMount func() (*filer_pb.Entry, error), readOffset func() (int64, error)) time.Time {
 	var lastOffsetTs time.Time
 	if timeAgo == 0 {
-		ctx, cancel := lookupContext()
-		mountedDirEntry, _, _, err := filer_pb.GetEntry(ctx, filerClient, util.FullPath(mountedDir))
-		cancel()
+		mountedDirEntry, err := lookupMount()
 		if err != nil {
-			glog.V(0).Infof("get mounted directory %s: %v", mountedDir, err)
-			return time.Now()
+			lastOffsetTsNs, offsetErr := readOffset()
+			if offsetErr == nil && lastOffsetTsNs > 0 {
+				glog.V(0).Infof("get mounted directory %s: %v; resume from the saved offset %v", mountedDir, err, time.Unix(0, lastOffsetTsNs))
+				return time.Unix(0, lastOffsetTsNs)
+			}
+			glog.Fatalf("get mounted directory %s: %v; no saved sync offset (%v)", mountedDir, err, offsetErr)
 		}
 
-		lastOffsetTsNs, err := remote_storage.GetSyncOffset(grpcDialOption, filerAddress, mountedDir)
+		lastOffsetTsNs, err := readOffset()
 		if mountedDirEntry != nil {
 			if err == nil && mountedDirEntry.Attributes.Crtime < lastOffsetTsNs/1000000 {
 				lastOffsetTs = time.Unix(0, lastOffsetTsNs)
@@ -1095,7 +1112,7 @@ func collectLastSyncOffset(filerClient filer_pb.FilerClient, grpcDialOption grpc
 		}
 	} else {
 		lastOffsetTs = time.Now().Add(-timeAgo)
-		if lastOffsetTsNs, err := remote_storage.GetSyncOffset(grpcDialOption, filerAddress, mountedDir); err == nil && lastOffsetTsNs > 0 {
+		if lastOffsetTsNs, err := readOffset(); err == nil && lastOffsetTsNs > 0 {
 			if savedOffsetTs := time.Unix(0, lastOffsetTsNs); savedOffsetTs.Before(lastOffsetTs) {
 				lastOffsetTs = savedOffsetTs
 			}

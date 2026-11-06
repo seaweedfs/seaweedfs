@@ -588,6 +588,24 @@ func TestFilerLookupsOnTheSyncPathCarryADeadline(t *testing.T) {
 	}
 }
 
+func TestResolveLastSyncOffsetKeepsTheSavedOffsetWhenTheLookupFails(t *testing.T) {
+	saved := time.Date(2026, 11, 4, 17, 57, 10, 0, time.UTC)
+	lookupFails := func() (*filer_pb.Entry, error) { return nil, context.DeadlineExceeded }
+	savedOffset := func() (int64, error) { return saved.UnixNano(), nil }
+
+	got := resolveLastSyncOffset("/buckets/x", 0, lookupFails, savedOffset)
+	if !got.Equal(saved) {
+		t.Fatalf("resolved %v, want the saved offset %v: a failed mount lookup must not start the replay at now", got, saved)
+	}
+
+	// a mount that answers resumes from the saved offset when it postdates the directory
+	entry := &filer_pb.Entry{Name: "x", Attributes: &filer_pb.FuseAttributes{Crtime: saved.Add(-time.Hour).Unix()}}
+	got = resolveLastSyncOffset("/buckets/x", 0, func() (*filer_pb.Entry, error) { return entry, nil }, savedOffset)
+	if !got.Equal(saved) {
+		t.Fatalf("resolved %v, want %v", got, saved)
+	}
+}
+
 func TestRemoteUploadReaderSharesOneChunkCache(t *testing.T) {
 	entry := entryWith("blob.bin", nil, chunk("3,01", "e1"))
 	for i := 0; i < 3; i++ {
