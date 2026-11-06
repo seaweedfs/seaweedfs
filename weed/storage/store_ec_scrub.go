@@ -100,7 +100,7 @@ func (s *Store) scrubEcVolumeWalk(ecv *erasure_coding.EcVolume, mode volume_serv
 			shardId, offset := ecv.IntervalToShardIdAndOffset(iv)
 
 			// try a local shard read first...
-			if err := s.readLocalEcShardInterval(ecv, shardId, chunk, offset); err == nil {
+			if err := s.readLocalEcShardInterval(ecv, shardId, chunk, offset, true); err == nil {
 				data = append(data, chunk...)
 				continue
 			}

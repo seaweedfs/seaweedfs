@@ -1068,15 +1068,17 @@ fn collect_heartbeat_with_snapshot(
     master_pb::Heartbeat,
     Vec<master_pb::VolumeInformationMessage>,
 ) {
-    let (_, expired_ec) = state.store.read().unwrap().find_expired_ec_volumes();
-    let mut deleted_ec_shards = Vec::new();
+    let (_, expired_ec, mut deleted_ec_shards) =
+        state.store.read().unwrap().find_expired_ec_volumes();
     if !expired_ec.is_empty() {
-        deleted_ec_shards = state
-            .store
-            .write()
-            .unwrap()
-            .remove_expired_ec_volumes(expired_ec)
-            .0;
+        deleted_ec_shards.extend(
+            state
+                .store
+                .write()
+                .unwrap()
+                .remove_expired_ec_volumes(expired_ec)
+                .0,
+        );
     }
     #[cfg(test)]
     {
@@ -3083,6 +3085,46 @@ mod tests {
         assert_eq!(last_ec_shards.len(), 1);
     }
 
+    // The volume heartbeat that quarantines an EC volume tells the master its
+    // shards are gone, once; neither the next delta nor the next heartbeat
+    // repeats it.
+    #[test]
+    fn test_ec_volume_quarantined_by_a_volume_heartbeat_is_reported_deleted_once() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir = temp_dir.path().to_str().unwrap();
+        let state = test_state_with_store(reporting_store(dir, 0));
+        mount_test_ec_shard(&state, dir, "ec_delta_kept", 96);
+        mount_test_ec_shard(&state, dir, "ec_delta_quarantined", 97);
+        let mut last_ec_shards = collect_ec_shard_delta_messages(&state.store.read().unwrap());
+        {
+            let store = state.store.read().unwrap();
+            let ec_vol = store.find_ec_volume(VolumeId(97)).unwrap();
+            let eio = crate::storage::volume::media_error_for_test();
+            for _ in 0..crate::storage::io_error::IO_ERROR_TOLERANCE {
+                ec_vol.check_read_write_error(Some(&eio));
+            }
+        }
+
+        let (heartbeat, new_ec_shards, deleted_ec_shards) =
+            ec_delta_after_volume_tick(&state, &mut last_ec_shards);
+        assert_eq!(
+            heartbeat
+                .deleted_ec_shards
+                .iter()
+                .map(|s| s.id)
+                .collect::<Vec<_>>(),
+            vec![97]
+        );
+        assert!(new_ec_shards.is_empty());
+        assert!(
+            deleted_ec_shards.is_empty(),
+            "a quarantined EC volume was reported deleted twice"
+        );
+
+        let (heartbeat, _, _) = ec_delta_after_volume_tick(&state, &mut last_ec_shards);
+        assert!(heartbeat.deleted_ec_shards.is_empty());
+    }
+
     #[test]
     fn test_expired_ec_volume_gone_before_removal_is_not_reported_deleted() {
         let temp_dir = tempfile::tempdir().unwrap();
@@ -3111,7 +3153,7 @@ mod tests {
                 .expire_at_sec = 1;
         }
 
-        let (ec_shards, mut expired) = store.find_expired_ec_volumes();
+        let (ec_shards, mut expired, _) = store.find_expired_ec_volumes();
         expired.sort();
         assert!(ec_shards.is_empty());
         assert_eq!(expired, vec![(0, VolumeId(71)), (0, VolumeId(72))]);

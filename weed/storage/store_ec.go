@@ -253,11 +253,22 @@ func (s *Store) CollectErasureCodingHeartbeat() *master_pb.Heartbeat {
 }
 
 func (s *Store) MountEcShards(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, sourceDiskType string) error {
+	ownersBefore := s.EcShardOwnerDisks(vid, []erasure_coding.ShardId{shardId})
 	ecVolume, diskId, err := s.LoadEcShardAcrossDisks(collection, vid, shardId)
 	if err != nil {
 		return err
 	}
 	glog.V(0).Infof("MountEcShards %d.%d on disk ID %d", vid, shardId, diskId)
+	// The master must not route reads to a disk already found faulty, and a
+	// caller moving the shard here keeps its source copy on this error. A
+	// shard this call loaded is dropped again, so it does not draw later
+	// copies to the same disk.
+	if _, _, quarantined := ecVolume.GetIoErrorState(); quarantined {
+		if location := s.Locations[diskId]; !slices.Contains(ownersBefore, location) {
+			location.UnloadEcShard(vid, shardId)
+		}
+		return fmt.Errorf("ec volume %d on disk %d is quarantined after IO errors, shard %d not announced", vid, diskId, shardId)
+	}
 
 	// Apply the orchestrator-supplied source disk type so the EC
 	// volume reports under it instead of the location's. Empty means
@@ -602,8 +613,11 @@ var (
 const ecIntervalReadConcurrency = 8
 
 func (s *Store) readEcShardIntervals(needleId types.NeedleId, ecVolume *erasure_coding.EcVolume, intervals []erasure_coding.Interval) (data []byte, is_deleted bool, err error) {
-	if err = s.cachedLookupEcShardLocations(ecVolume); err != nil {
-		return nil, false, fmt.Errorf("failed to locate shard via master grpc %s: %v", s.masterAddress(), err)
+	// Like the Rust server, read on with the cached locations when the lookup
+	// fails: local shards, a quarantined disk's last-resort copy included, do
+	// not need it.
+	if lookupErr := s.cachedLookupEcShardLocations(ecVolume); lookupErr != nil {
+		glog.V(0).Infof("locate ec volume %d via master grpc %s, using cached locations: %v", ecVolume.VolumeId, s.masterAddress(), lookupErr)
 	}
 
 	var totalSize int
@@ -657,15 +671,15 @@ func (s *Store) readOneEcShardInterval(needleId types.NeedleId, ecVolume *erasur
 	shardId, actualOffset := ecVolume.IntervalToShardIdAndOffset(interval)
 
 	// try local read
-	err = s.readLocalEcShardInterval(ecVolume, shardId, data, actualOffset)
-	if err == nil {
+	localErr := s.readLocalEcShardInterval(ecVolume, shardId, data, actualOffset, false)
+	if localErr == nil {
 		return
 	}
-	if errors.Is(err, errShardNotLocal) {
+	if errors.Is(localErr, errShardNotLocal) {
 		// expected when shards are spread across servers; fall through to remote read
-		glog.V(4).Infof("ec shard %d.%d not local, will try remote", ecVolume.VolumeId, shardId)
+		glog.V(4).Infof("ec shard %d.%d not local, will try remote: %v", ecVolume.VolumeId, shardId, localErr)
 	} else {
-		glog.V(0).Infof("read local ec shard %d.%d offset %d: %v", ecVolume.VolumeId, shardId, actualOffset, err)
+		glog.V(0).Infof("read local ec shard %d.%d offset %d: %v", ecVolume.VolumeId, shardId, actualOffset, localErr)
 	}
 
 	ecVolume.ShardLocationsLock.RLock()
@@ -692,6 +706,15 @@ func (s *Store) readOneEcShardInterval(needleId types.NeedleId, ecVolume *erasur
 		return
 	}
 	glog.V(0).Infof("recover ec shard %d.%d : %v", ecVolume.VolumeId, shardId, err)
+
+	if !is_deleted && errors.Is(localErr, errShardQuarantined) {
+		lastErr := s.readLocalEcShardInterval(ecVolume, shardId, data, actualOffset, true)
+		if lastErr == nil {
+			glog.V(0).Infof("read ec shard %d.%d from its quarantined disk: no healthy copy answered", ecVolume.VolumeId, shardId)
+			return false, nil
+		}
+		glog.V(0).Infof("read quarantined ec shard %d.%d offset %d: %v", ecVolume.VolumeId, shardId, actualOffset, lastErr)
+	}
 
 	return
 }
@@ -1149,7 +1172,14 @@ func (s *Store) cachedLookupEcShardLocations(ecVolume *erasure_coding.EcVolume) 
 	return
 }
 
-func (s *Store) readLocalEcShardInterval(ecVolume *erasure_coding.EcVolume, shardId erasure_coding.ShardId, buf []byte, offset int64) error {
+// errShardQuarantined marks a local shard skipped because its disk is
+// quarantined after repeated IO errors. It reads as not local, so callers go
+// to peers or reconstruction first.
+var errShardQuarantined = fmt.Errorf("ec shard on a quarantined disk: %w", errShardNotLocal)
+
+// readLocalEcShardInterval refuses a shard whose disk is quarantined unless
+// allowQuarantined is set.
+func (s *Store) readLocalEcShardInterval(ecVolume *erasure_coding.EcVolume, shardId erasure_coding.ShardId, buf []byte, offset int64, allowQuarantined bool) error {
 	// Resolve the shard together with the EcVolume on the disk that owns it; the
 	// shard may live on a sibling disk of this server.
 	ownerVolume, shard, found := s.FindEcVolumeWithShard(ecVolume.VolumeId, shardId)
@@ -1163,6 +1193,9 @@ func (s *Store) readLocalEcShardInterval(ecVolume *erasure_coding.EcVolume, shar
 	if ecVolume.EncodeTsNs != 0 && ecVolume.EncodeTsNs != ownerVolume.EncodeTsNs {
 		glog.V(1).Infof("skip local ec shard %d.%d from a different encode run: caller EncodeTsNs %d, local %d", ecVolume.VolumeId, shardId, ecVolume.EncodeTsNs, ownerVolume.EncodeTsNs)
 		return fmt.Errorf("shard %d for volume %d: %w", shardId, ecVolume.VolumeId, errShardNotLocal)
+	}
+	if _, _, quarantined := ownerVolume.GetIoErrorState(); quarantined && !allowQuarantined {
+		return fmt.Errorf("shard %d for volume %d: %w", shardId, ecVolume.VolumeId, errShardQuarantined)
 	}
 
 	readBytes, err := shard.ReadAt(buf, offset)
@@ -1219,6 +1252,10 @@ func (s *Store) doReadRemoteEcShardInterval(sourceDataNode pb.ServerAddress, nee
 				break
 			}
 			if receiveErr != nil {
+				// A deleted answer stands even if the stream fails after it.
+				if is_deleted {
+					break
+				}
 				return fmt.Errorf("receiving ec shard %d.%d from %s: %v", vid, shardId, sourceDataNode, receiveErr)
 			}
 			// Validate the served shard's identity client-side, so the guard holds
@@ -1263,6 +1300,7 @@ func (s *Store) gatherEcShardIntervals(needleId types.NeedleId, ecVolume *erasur
 	// A shard this server already holds costs no round trip and no peer buffer,
 	// so seed those before asking peers for the rest.
 	available := 0
+	var quarantined []erasure_coding.ShardId
 	for shardId := erasure_coding.ShardId(0); int(shardId) < ecCtx.Total() && available < want; shardId++ {
 		if skip[shardId] {
 			continue
@@ -1271,7 +1309,10 @@ func (s *Store) gatherEcShardIntervals(needleId types.NeedleId, ecVolume *erasur
 			continue
 		}
 		data := make([]byte, size)
-		if localErr := s.readLocalEcShardInterval(ecVolume, shardId, data, offset); localErr != nil {
+		if localErr := s.readLocalEcShardInterval(ecVolume, shardId, data, offset, false); localErr != nil {
+			if errors.Is(localErr, errShardQuarantined) {
+				quarantined = append(quarantined, shardId)
+			}
 			glog.V(3).Infof("recover: read local ec shard %d.%d: %v", ecVolume.VolumeId, shardId, localErr)
 			continue
 		}
@@ -1338,7 +1379,26 @@ func (s *Store) gatherEcShardIntervals(needleId types.NeedleId, ecVolume *erasur
 		}
 	}
 
-	return shardIntervals, isDeletedFlag.Load()
+	isDeleted = isDeletedFlag.Load()
+	// Healthy sources fell short: fill in from the quarantined local disk.
+	for _, shardId := range quarantined {
+		if isDeleted || available >= want {
+			break
+		}
+		if shardIntervals[shardId] != nil {
+			continue
+		}
+		data := make([]byte, size)
+		if readErr := s.readLocalEcShardInterval(ecVolume, shardId, data, offset, true); readErr != nil {
+			glog.V(0).Infof("recover: read quarantined ec shard %d.%d offset %d: %v", ecVolume.VolumeId, shardId, offset, readErr)
+			continue
+		}
+		glog.V(1).Infof("recover: read ec shard %d.%d from its quarantined disk", ecVolume.VolumeId, shardId)
+		shardIntervals[shardId] = data
+		available++
+	}
+
+	return shardIntervals, isDeleted
 }
 
 // checkEcShardRebuildable rejects a parity target. ReconstructData rebuilds data shards

@@ -1182,13 +1182,14 @@ impl Store {
     /// Matches Go's Store.MountEcShards which mounts one shard at a time.
     /// `source_disk_type` is the source volume's disk type from the
     /// `VolumeEcShardsMount` RPC (#9423); pass `""` for non-RPC paths.
+    /// Returns the index of the disk the shard mounted on.
     pub fn mount_ec_shard(
         &mut self,
         vid: VolumeId,
         collection: &str,
         shard_id: ShardId,
         source_disk_type: &str,
-    ) -> Result<(), VolumeError> {
+    ) -> Result<usize, VolumeError> {
         self.stamp_allocated_vid(vid);
         // The .ecx may live on a different disk than the shard being mounted
         // (ec.balance / ec.rebuild can spread shards across sibling disks), so
@@ -1201,7 +1202,7 @@ impl Store {
         // next. Like Go, a NotFound just means "not this disk"; anything else
         // is collected so an all-disks-fail error names every disk tried.
         let mut failures: Vec<(String, VolumeError)> = Vec::new();
-        for loc in &mut self.locations {
+        for (disk, loc) in self.locations.iter_mut().enumerate() {
             // Check if the shard file exists on this location
             let shard = EcVolumeShard::new(&loc.directory, collection, vid, shard_id);
             if !std::path::Path::new(&shard.file_name()).exists() {
@@ -1226,7 +1227,7 @@ impl Store {
                 &idx_dir,
                 source_disk_type,
             ) {
-                Ok(()) => return Ok(()),
+                Ok(()) => return Ok(disk),
                 Err(VolumeError::Io(e)) if e.kind() == io::ErrorKind::NotFound => {}
                 Err(e) => failures.push((loc.directory.clone(), e)),
             }
@@ -1491,22 +1492,27 @@ impl Store {
         Vec<master_pb::VolumeEcShardInformationMessage>,
         Vec<master_pb::VolumeEcShardInformationMessage>,
     ) {
-        let (mut ec_shards, expired) = self.find_expired_ec_volumes();
-        let (deleted, still_held) = self.remove_expired_ec_volumes(expired);
+        let (mut ec_shards, expired, quarantined) = self.find_expired_ec_volumes();
+        let (mut deleted, still_held) = self.remove_expired_ec_volumes(expired);
         ec_shards.extend(still_held);
+        deleted.extend(quarantined);
         (ec_shards, deleted)
     }
 
-    /// The read half of `delete_expired_ec_volumes`: the shards to report, and
-    /// the expired EC volumes, by disk index, for `remove_expired_ec_volumes`.
+    /// The read half of `delete_expired_ec_volumes`: the shards to report, the
+    /// expired EC volumes, by disk index, for `remove_expired_ec_volumes`, and
+    /// the shards of volumes this pass quarantined, which go out as deleted
+    /// once so the master drops them before the next full EC heartbeat.
     pub fn find_expired_ec_volumes(
         &self,
     ) -> (
         Vec<master_pb::VolumeEcShardInformationMessage>,
         Vec<(usize, VolumeId)>,
+        Vec<master_pb::VolumeEcShardInformationMessage>,
     ) {
         let mut ec_shards = Vec::new();
         let mut expired = Vec::new();
+        let mut quarantined_now = Vec::new();
 
         for (disk_id, loc) in self.locations.iter().enumerate() {
             for (vid, ec_vol) in loc.ec_volumes() {
@@ -1521,6 +1527,8 @@ impl Store {
                             io_count,
                             "ec volume quarantined after consecutive IO errors"
                         );
+                        quarantined_now
+                            .extend(ec_vol.to_volume_ec_shard_information_messages(disk_id as u32));
                     }
                 } else {
                     ec_shards
@@ -1529,7 +1537,7 @@ impl Store {
             }
         }
 
-        (ec_shards, expired)
+        (ec_shards, expired, quarantined_now)
     }
 
     /// The write half of `delete_expired_ec_volumes`: destroys each volume that

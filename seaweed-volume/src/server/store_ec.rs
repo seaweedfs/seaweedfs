@@ -40,7 +40,7 @@ use tonic::Request;
 
 use crate::pb::master_pb::{self, LookupEcVolumeRequest};
 use crate::pb::volume_server_pb::{
-    CopyFileRequest, VolumeEcBlobDeleteRequest, VolumeEcShardReadRequest,
+    CopyFileRequest, VolumeEcBlobDeleteRequest, VolumeEcShardReadRequest, VolumeEcShardReadResponse,
 };
 use crate::server::grpc_client::{
     GrpcDialOptions, connect_channel, master_client, parse_grpc_address, volume_server_client,
@@ -1035,7 +1035,7 @@ fn scrub_snapshot_under_lock(
         version: ecv.version,
         actual_size: get_actual_size(size, ecv.version) as usize,
         size_for_parse: size,
-        intervals: read_local_intervals(ecv, &intervals),
+        intervals: read_local_intervals(ecv, &intervals, true),
         encode_ts_ns: ecv.encode_ts_ns,
     })
 }
@@ -1052,20 +1052,29 @@ struct ScrubSnapshot {
 }
 
 /// Read any locally-held shard intervals, marking the rest `NeedRemote`. Shared
-/// by the read-path `build_snapshot` and the scrub snapshot.
+/// by the read-path `build_snapshot` and the scrub snapshot. Shards on a
+/// quarantined disk count as not local unless `allow_quarantined` is set.
 fn read_local_intervals(
     ecv: &crate::storage::erasure_coding::ec_volume::EcVolume,
     intervals: &[crate::storage::erasure_coding::ec_locate::Interval],
+    allow_quarantined: bool,
 ) -> Vec<IntervalResult> {
+    let skip_local = !allow_quarantined && ecv.get_io_error_state().2;
     let mut interval_results = Vec::with_capacity(intervals.len());
     for interval in intervals {
         let (shard_id, shard_offset) = ecv.interval_to_shard_id_and_offset(interval);
         let buf_size = interval.size as usize;
-        let local = ecv.shards.get(shard_id as usize).and_then(|s| s.as_ref());
+        let local = ecv
+            .shards
+            .get(shard_id as usize)
+            .and_then(|s| s.as_ref())
+            .filter(|_| !skip_local);
         match local {
             Some(shard) => {
                 let mut buf = vec![0u8; buf_size];
-                match shard.read_at(&mut buf, shard_offset as u64) {
+                let read = shard.read_at(&mut buf, shard_offset as u64);
+                ecv.check_read_write_error(read.as_ref().err());
+                match read {
                     Ok(n) if n == buf_size => interval_results.push(IntervalResult::Local(buf)),
                     _ => interval_results.push(IntervalResult::NeedRemote {
                         shard_id,
@@ -1101,7 +1110,7 @@ fn build_snapshot(
         ));
     }
     let actual = get_actual_size(size, ecv.version);
-    let interval_results = read_local_intervals(ecv, intervals);
+    let interval_results = read_local_intervals(ecv, intervals, false);
     let metas = intervals
         .iter()
         .map(|iv| {
@@ -1359,7 +1368,50 @@ async fn fetch_one_interval(
     let result =
         recover_one_remote_ec_shard_interval(state, iv, map, &HashSet::from([iv.shard_id])).await;
     note_ec_reconstructed_interval(iv, &result);
+    if result.is_err()
+        && let Some(buf) = read_quarantined_local_interval(state, iv)
+    {
+        tracing::info!(
+            "read ec shard {}.{} from its quarantined disk: no healthy copy answered",
+            vid.0,
+            shard_id
+        );
+        return Ok((buf, false));
+    }
     result
+}
+
+/// Last resort once peers and reconstruction failed: the interval from a local
+/// shard skipped because its disk is quarantined. Mirrors the tail of Go's
+/// `readOneEcShardInterval`.
+fn read_quarantined_local_interval(
+    state: &Arc<VolumeServerState>,
+    iv: EcInterval,
+) -> Option<Vec<u8>> {
+    let store = state.store.read().unwrap();
+    let ecv = store.find_ec_volume_with_shard(iv.vid, iv.shard_id)?;
+    if !ecv.get_io_error_state().2
+        || (iv.expected_encode_ts_ns != 0 && ecv.encode_ts_ns != iv.expected_encode_ts_ns)
+    {
+        return None;
+    }
+    let shard = ecv.shards.get(iv.shard_id as usize)?.as_ref()?;
+    let mut buf = vec![0u8; iv.size];
+    let read = shard.read_at(&mut buf, iv.shard_offset as u64);
+    ecv.check_read_write_error(read.as_ref().err());
+    match read {
+        Ok(n) if n == iv.size => Some(buf),
+        result => {
+            tracing::info!(
+                "read quarantined ec shard {}.{} offset {}: {:?}",
+                iv.vid.0,
+                iv.shard_id,
+                iv.shard_offset,
+                result
+            );
+            None
+        }
+    }
 }
 
 /// Counts one interval that couldn't be read directly and was reconstructed,
@@ -1461,15 +1513,30 @@ async fn do_read_remote_ec_shard_interval(
                 vid.0, shard_id, source, e
             ))
         })?;
-    let mut stream = resp.into_inner();
+    collect_ec_shard_read(resp.into_inner(), source, iv).await
+}
 
+/// Reads one `VolumeEcShardRead` reply into the interval's bytes, or the
+/// holder's deleted answer, which stands even if the stream fails after it.
+async fn collect_ec_shard_read(
+    mut stream: tonic::Streaming<VolumeEcShardReadResponse>,
+    source: &str,
+    iv: EcInterval,
+) -> io::Result<(Vec<u8>, bool)> {
+    let EcInterval {
+        vid,
+        shard_id,
+        size,
+        expected_encode_ts_ns,
+        ..
+    } = iv;
     let mut out = Vec::with_capacity(size);
     let mut is_deleted = false;
-    while let Some(msg) = stream
-        .message()
-        .await
-        .map_err(|e| io::Error::other(format!("recv: {}", e)))?
-    {
+    // A deleted answer stands even if the stream fails after it.
+    while let Some(msg) = match stream.message().await {
+        Err(_) if is_deleted => None,
+        msg => msg.map_err(|e| io::Error::other(format!("recv: {}", e)))?,
+    } {
         // Validate the served shard's identity client-side, so the guard holds even
         // against a pre-upgrade server that ignored the request field (returns 0).
         // A mismatch fails the read; the caller recovers from parity.
@@ -1548,6 +1615,7 @@ async fn gather_ec_shard_intervals(
     // shard_locations cache or a failed master lookup, local
     // survivors still contribute.
     let mut available = 0usize;
+    let mut quarantined = Vec::new();
     {
         let store = state.store.read().unwrap();
         for (sid, slot) in bufs.iter_mut().enumerate() {
@@ -1573,13 +1641,15 @@ async fn gather_ec_shard_intervals(
                 }
                 _ => continue,
             };
+            if owner.get_io_error_state().2 {
+                quarantined.push(sid_shard);
+                continue;
+            }
             if let Some(Some(shard)) = owner.shards.get(sid) {
                 let mut buf = vec![0u8; size];
-                if shard
-                    .read_at(&mut buf, shard_offset as u64)
-                    .map(|n| n == size)
-                    .unwrap_or(false)
-                {
+                let read = shard.read_at(&mut buf, shard_offset as u64);
+                owner.check_read_write_error(read.as_ref().err());
+                if read.map(|n| n == size).unwrap_or(false) {
                     *slot = Some(buf);
                     available += 1;
                 }
@@ -1652,6 +1722,31 @@ async fn gather_ec_shard_intervals(
         if any_deleted {
             // every shard of a deleted needle answers deleted, so another wave cannot help
             break;
+        }
+    }
+
+    // Healthy sources fell short: fill in from the quarantined local disk.
+    for sid in quarantined {
+        if any_deleted || available >= want {
+            break;
+        }
+        if bufs[sid as usize].is_some() {
+            continue;
+        }
+        if let Some(buf) = read_quarantined_local_interval(
+            state,
+            EcInterval {
+                shard_id: sid,
+                ..iv
+            },
+        ) {
+            tracing::debug!(
+                "recover: read ec shard {}.{} from its quarantined disk",
+                vid.0,
+                sid
+            );
+            bufs[sid as usize] = Some(buf);
+            available += 1;
         }
     }
 
@@ -2685,5 +2780,59 @@ mod tests {
         assert!(needs_refresh(&locations(9), aged, false, 10, 14));
         // An unrefreshed cache always looks up.
         assert!(needs_refresh(&locations(0), None, false, 10, 14));
+    }
+
+    struct FailAfterFrame(Option<bytes::Bytes>);
+
+    impl http_body::Body for FailAfterFrame {
+        type Data = bytes::Bytes;
+        type Error = tonic::Status;
+
+        fn poll_frame(
+            mut self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Option<Result<http_body::Frame<bytes::Bytes>, tonic::Status>>>
+        {
+            std::task::Poll::Ready(Some(match self.0.take() {
+                Some(frame) => Ok(http_body::Frame::data(frame)),
+                None => Err(tonic::Status::unavailable(
+                    "stream failed after the deleted answer",
+                )),
+            }))
+        }
+    }
+
+    /// A holder's deleted answer stands even when its stream fails afterwards,
+    /// so a later source or the quarantined shard cannot answer for the needle.
+    #[tokio::test]
+    async fn test_collect_ec_shard_read_keeps_deletion_when_the_stream_fails() {
+        let message = prost::Message::encode_to_vec(&VolumeEcShardReadResponse {
+            is_deleted: true,
+            ..Default::default()
+        });
+        let mut frame = vec![0u8];
+        frame.extend_from_slice(&(message.len() as u32).to_be_bytes());
+        frame.extend_from_slice(&message);
+        let stream = tonic::Streaming::new_response(
+            tonic_prost::ProstDecoder::<VolumeEcShardReadResponse>::default(),
+            FailAfterFrame(Some(frame.into())),
+            tonic::codegen::http::StatusCode::OK,
+            None,
+            None,
+        );
+        let iv = EcInterval {
+            vid: VolumeId(7),
+            needle_id: NeedleId(42),
+            shard_id: 0,
+            shard_offset: 0,
+            size: 64,
+            expected_encode_ts_ns: 0,
+        };
+
+        let (buf, is_deleted) = collect_ec_shard_read(stream, "peer:18080", iv)
+            .await
+            .unwrap();
+        assert!(is_deleted);
+        assert!(buf.is_empty());
     }
 }
