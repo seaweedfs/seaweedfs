@@ -3099,7 +3099,7 @@ mod tests {
         {
             let store = state.store.read().unwrap();
             let ec_vol = store.find_ec_volume(VolumeId(97)).unwrap();
-            let eio = std::io::Error::from_raw_os_error(libc::EIO);
+            let eio = crate::storage::volume::media_error_for_test();
             for _ in 0..crate::storage::io_error::IO_ERROR_TOLERANCE {
                 ec_vol.check_read_write_error(Some(&eio));
             }
