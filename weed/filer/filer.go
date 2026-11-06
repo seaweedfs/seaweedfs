@@ -525,10 +525,10 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, existing *Entry, 
 	if oldEntry == nil {
 		var findErr error
 		// A lazy fetch here would persist outside the transaction and wait on
-		// the lock it holds for a target it just deleted; the create writes
-		// the path either way.
+		// the lock it holds for a target it just deleted; a non-exclusive
+		// create writes the path either way.
 		findCtx := ctx
-		if ctx.Value(storeTransactionKey{}) != nil {
+		if ctx.Value(storeTransactionKey{}) != nil && !o_excl {
 			findCtx = context.WithValue(ctx, lazyFetchContextKey{}, true)
 		}
 		oldEntry, findErr = f.FindEntry(findCtx, entry.FullPath)
