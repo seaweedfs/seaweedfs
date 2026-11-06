@@ -1657,31 +1657,12 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 		return NewAuthError(kind.renameOp, principal, "not authorized to create "+kind.noun+" in the destination namespace")
 	}
 
-	// The token is compared against srcExtended, the exact bytes the claim
-	// below asserts, not against metadata: that came from an earlier lookup,
-	// and a commit landing between the two would leave a stale token matching
-	// metadata while the claim succeeds on the newer snapshot.
-	if req.VersionToken != "" {
-		raw := srcExtended[ExtendedKeyMetadata]
-		if len(raw) == 0 {
-			h.writeError(w, http.StatusNotFound, kind.notFoundCode, fmt.Sprintf("%s %s not found", kind.noun, srcName))
-			return fmt.Errorf("%s %s not found", kind.noun, srcName)
-		}
-		var current tableMetadataInternal
-		if err := json.Unmarshal(raw, &current); err != nil {
-			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to read "+kind.noun+" metadata")
-			return err
-		}
-		if current.VersionToken != req.VersionToken {
-			h.writeError(w, http.StatusConflict, ErrCodeConflict, "version token mismatch")
-			return ErrVersionTokenMismatch
-		}
-	}
-
 	// The destination is built from attributes read one lookup at a time, but
 	// the claim and the source clear assert srcExtended. A write landing between
 	// those reads would let the claim succeed while the destination publishes
 	// the older values, dropping the write; refuse it so the caller retries.
+	// Past this check metadata is the claimed snapshot, so the token compares
+	// against it.
 	if !renameReadsMatchSnapshot(srcExtended, tableTags, map[string][]byte{
 		ExtendedKeyMetadata:          metadataXattr,
 		ExtendedKeyMetadataVersion:   metadataVersionXattr,
@@ -1691,6 +1672,10 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 	}) {
 		h.writeError(w, http.StatusConflict, ErrCodeConflict, kind.noun+" changed during rename, retry the request")
 		return ErrConcurrentUpdate
+	}
+	if req.VersionToken != "" && metadata.VersionToken != req.VersionToken {
+		h.writeError(w, http.StatusConflict, ErrCodeConflict, "version token mismatch")
+		return ErrVersionTokenMismatch
 	}
 
 	if destExists {
