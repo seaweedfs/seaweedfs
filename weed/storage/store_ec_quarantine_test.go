@@ -8,7 +8,9 @@ import (
 	"testing"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -104,6 +106,34 @@ func TestReadEcShardNeedleFallsBackToQuarantinedShards(t *testing.T) {
 	ecVolume.MarkIoQuarantined()
 	if err := readWrittenEcNeedle(t, store, vid, n); err != nil {
 		t.Fatalf("read with only the quarantined disk holding the shards: %v", err)
+	}
+}
+
+// deletedThenFailingEcShardPeer reports the needle deleted, then fails the stream.
+type deletedThenFailingEcShardPeer struct {
+	volume_server_pb.UnimplementedVolumeServerServer
+}
+
+func (p *deletedThenFailingEcShardPeer) VolumeEcShardRead(req *volume_server_pb.VolumeEcShardReadRequest, stream volume_server_pb.VolumeServer_VolumeEcShardReadServer) error {
+	if err := stream.Send(&volume_server_pb.VolumeEcShardReadResponse{IsDeleted: true, EncodeTsNs: req.EncodeTsNs}); err != nil {
+		return err
+	}
+	return status.Error(codes.Unavailable, "stream failed after the deleted answer")
+}
+
+// A peer's deleted answer stands even when its stream fails afterwards, so a
+// later source or the quarantined shard cannot answer for a deleted needle.
+func TestReadRemoteEcShardIntervalKeepsDeletionWhenTheStreamFails(t *testing.T) {
+	store := newTestStore(t, 1)
+	store.grpcDialOption = grpc.WithTransportCredentials(insecure.NewCredentials())
+	sources := []pb.ServerAddress{
+		startEcShardPeer(t, &deletedThenFailingEcShardPeer{}),
+		startEcShardPeer(t, &volume_server_pb.UnimplementedVolumeServerServer{}),
+	}
+
+	_, isDeleted, err := store.readRemoteEcShardInterval(sources, 42, 7, 0, make([]byte, 64), 0, 0)
+	if err != nil || !isDeleted {
+		t.Errorf("read got deleted=%v err=%v, want deleted and no error", isDeleted, err)
 	}
 }
 

@@ -1252,6 +1252,10 @@ func (s *Store) doReadRemoteEcShardInterval(sourceDataNode pb.ServerAddress, nee
 				break
 			}
 			if receiveErr != nil {
+				// A deleted answer stands even if the stream fails after it.
+				if is_deleted {
+					break
+				}
 				return fmt.Errorf("receiving ec shard %d.%d from %s: %v", vid, shardId, sourceDataNode, receiveErr)
 			}
 			// Validate the served shard's identity client-side, so the guard holds
