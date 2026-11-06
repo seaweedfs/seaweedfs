@@ -220,3 +220,18 @@ func TestReadEcShardNeedleFallsBackToQuarantinedShardsWithoutLookup(t *testing.T
 		t.Fatalf("read with no master and only the quarantined disk holding the shards: %v", err)
 	}
 }
+
+// Reconstruction falls back to quarantined local shards when the healthy
+// sources cannot supply enough of them.
+func TestReadEcShardNeedleReconstructsFromQuarantinedShards(t *testing.T) {
+	store := newTestStore(t, 1)
+	store.grpcDialOption = grpc.WithTransportCredentials(insecure.NewCredentials())
+	const vid = needle.VolumeId(7)
+	_, ecVolume, n := mountEcShardRange(t, store, vid, erasure_coding.ParityShardsCount, erasure_coding.TotalShardsCount)
+	seedShardLocations(ecVolume, startEcShardPeer(t, &volume_server_pb.UnimplementedVolumeServerServer{}))
+
+	ecVolume.MarkIoQuarantined()
+	if err := readWrittenEcNeedle(t, store, vid, n); err != nil {
+		t.Fatalf("read with the needle's shards gone and only quarantined shards to rebuild from: %v", err)
+	}
+}

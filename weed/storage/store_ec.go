@@ -1300,6 +1300,7 @@ func (s *Store) gatherEcShardIntervals(needleId types.NeedleId, ecVolume *erasur
 	// A shard this server already holds costs no round trip and no peer buffer,
 	// so seed those before asking peers for the rest.
 	available := 0
+	var quarantined []erasure_coding.ShardId
 	for shardId := erasure_coding.ShardId(0); int(shardId) < ecCtx.Total() && available < want; shardId++ {
 		if skip[shardId] {
 			continue
@@ -1309,6 +1310,9 @@ func (s *Store) gatherEcShardIntervals(needleId types.NeedleId, ecVolume *erasur
 		}
 		data := make([]byte, size)
 		if localErr := s.readLocalEcShardInterval(ecVolume, shardId, data, offset, false); localErr != nil {
+			if errors.Is(localErr, errShardQuarantined) {
+				quarantined = append(quarantined, shardId)
+			}
 			glog.V(3).Infof("recover: read local ec shard %d.%d: %v", ecVolume.VolumeId, shardId, localErr)
 			continue
 		}
@@ -1375,7 +1379,26 @@ func (s *Store) gatherEcShardIntervals(needleId types.NeedleId, ecVolume *erasur
 		}
 	}
 
-	return shardIntervals, isDeletedFlag.Load()
+	isDeleted = isDeletedFlag.Load()
+	// Healthy sources fell short: fill in from the quarantined local disk.
+	for _, shardId := range quarantined {
+		if isDeleted || available >= want {
+			break
+		}
+		if shardIntervals[shardId] != nil {
+			continue
+		}
+		data := make([]byte, size)
+		if readErr := s.readLocalEcShardInterval(ecVolume, shardId, data, offset, true); readErr != nil {
+			glog.V(0).Infof("recover: read quarantined ec shard %d.%d offset %d: %v", ecVolume.VolumeId, shardId, offset, readErr)
+			continue
+		}
+		glog.V(1).Infof("recover: read ec shard %d.%d from its quarantined disk", ecVolume.VolumeId, shardId)
+		shardIntervals[shardId] = data
+		available++
+	}
+
+	return shardIntervals, isDeleted
 }
 
 // checkEcShardRebuildable rejects a parity target. ReconstructData rebuilds data shards
