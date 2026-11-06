@@ -1,14 +1,18 @@
 package mount
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"syscall"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -74,27 +78,55 @@ func newUploadTestPages(t *testing.T, writeback bool, save *flakySave) *ChunkedD
 
 var errVolumeRefused = fmt.Errorf("upload data: %w", &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED})
 
+// filerProxyOutage is what a filer proxy sends when it cannot reach the
+// volume server: a 500 with an empty body.
+func filerProxyOutage(t *testing.T) error {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+	_, err := operation.NewUploaderWithHttpClient(server.Client()).UploadData(context.Background(), []byte("hello"),
+		&operation.UploadOption{UploadUrl: server.URL, MaxAttempts: 1})
+	if err == nil {
+		t.Fatal("upload to the failing proxy succeeded")
+	}
+	return fmt.Errorf("upload data: %w", err)
+}
+
 // close() has already returned for a writeback handle, so a volume outage must
 // not drop the buffered chunk: the same bytes go out again once it ends.
 func TestChunkedDirtyPagesWritebackRetriesTransientUploadError(t *testing.T) {
-	save := &flakySave{failures: []error{errVolumeRefused}}
-	pages := newUploadTestPages(t, true, save)
+	for name, outage := range map[string]error{
+		"volume refused":  errVolumeRefused,
+		"filer proxy 500": filerProxyOutage(t),
+	} {
+		t.Run(name, func(t *testing.T) {
+			save := &flakySave{failures: []error{outage}}
+			pages := newUploadTestPages(t, true, save)
 
-	pages.saveChunkedFileIntervalToStorage(util.NewBytesReader([]byte("hello")), 0, 5, 1, func() {})
+			pages.saveChunkedFileIntervalToStorage(util.NewBytesReader([]byte("hello")), 0, 5, 1, func() {})
 
-	if err := pages.LastError(); err != nil {
-		t.Fatalf("LastError = %v, want the retried upload to succeed", err)
-	}
-	if save.calls != 2 || save.bodies[1] != "hello" {
-		t.Fatalf("uploads = %d with bodies %q, want a second upload of the same bytes", save.calls, save.bodies)
-	}
-	if chunks := pages.fh.GetEntry().GetChunks(); len(chunks) != 1 || chunks[0].Size != 5 {
-		t.Fatalf("entry chunks = %v, want the retried chunk", chunks)
+			if err := pages.LastError(); err != nil {
+				t.Fatalf("LastError = %v, want the retried upload to succeed", err)
+			}
+			if save.calls != 2 || save.bodies[1] != "hello" {
+				t.Fatalf("uploads = %d with bodies %q, want a second upload of the same bytes", save.calls, save.bodies)
+			}
+			if chunks := pages.fh.GetEntry().GetChunks(); len(chunks) != 1 || chunks[0].Size != 5 {
+				t.Fatalf("entry chunks = %v, want the retried chunk", chunks)
+			}
+		})
 	}
 }
 
 func TestChunkedDirtyPagesUploadErrorWithoutRetry(t *testing.T) {
 	permanent := errors.New("upload data: assign volume failure: no writable volumes")
+	readOnly := fmt.Errorf("upload data: assign volume failure path:\"/unavailable/f\": %w",
+		filer_pb.AssignVolumeResponseError(&filer_pb.AssignVolumeResponse{
+			Error:     "assign volume: read only: /unavailable",
+			ErrorCode: filer_pb.FilerError_READ_ONLY,
+		}))
 	tests := []struct {
 		name      string
 		writeback bool
@@ -103,6 +135,7 @@ func TestChunkedDirtyPagesUploadErrorWithoutRetry(t *testing.T) {
 	}{
 		{name: "sync mode reports the outage to close", err: errVolumeRefused},
 		{name: "writeback permanent error", writeback: true, err: permanent},
+		{name: "writeback read-only path", writeback: true, err: readOnly},
 		{name: "writeback pages discarded mid-upload", writeback: true, err: errVolumeRefused, destroy: true},
 	}
 	for _, tt := range tests {

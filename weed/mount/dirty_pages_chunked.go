@@ -1,6 +1,7 @@
 package mount
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -9,6 +10,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mount/page_writer"
+	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -114,7 +116,7 @@ func (pages *ChunkedDirtyPages) saveChunkedFileIntervalToStorage(reader io.Reade
 	}, func(err error) bool {
 		// close() already returned for a writeback handle, so nothing would
 		// see the error and the buffered data is the only copy left.
-		if !pages.fh.wfs.option.WritebackCache || !util.IsTransientError(err) || pages.destroyed.Load() {
+		if !pages.fh.wfs.option.WritebackCache || !isRetryableUploadError(err) || pages.destroyed.Load() {
 			return false
 		}
 		seeker, ok := reader.(io.Seeker)
@@ -136,6 +138,15 @@ func (pages *ChunkedDirtyPages) saveChunkedFileIntervalToStorage(reader io.Reade
 	pages.fh.entryChunkGroup.AddChunk(chunk)
 	glog.V(3).Infof("%v saveToStorage %s [%d,%d)", fileFullPath, chunk.FileId, offset, offset+size)
 
+}
+
+// isRetryableUploadError also takes the failures the upload layer reassigns on,
+// such as a filer proxy answering 500, but never a read-only verdict.
+func isRetryableUploadError(err error) bool {
+	if errors.Is(err, filer_pb.ErrReadOnly) {
+		return false
+	}
+	return util.IsTransientError(err) || operation.ShouldReassignUpload(err)
 }
 
 func (pages *ChunkedDirtyPages) Destroy() {
