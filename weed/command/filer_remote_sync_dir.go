@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_objectlock"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -1369,15 +1370,32 @@ func isDeleteMarker(entry *filer_pb.Entry) bool {
 
 // syncDeleteMarker propagates a delete marker to the remote storage and
 // persists a local sync marker so that replaying the same event is a no-op.
+// Every version uploads to the object's key, so while a version under the
+// marker holds a legal hold or retention the remote object can be its only
+// remote copy, and it is kept.
 func syncDeleteMarker(
 	client remote_storage.RemoteStorageClient,
 	filerClient filer_pb.FilerClient,
 	message *filer_pb.EventNotification,
 	dest *remote_pb.RemoteStorageLocation,
 ) error {
-	glog.V(0).Infof("delete (marker) %s", remote_storage.FormatLocation(dest))
-	if err := deleteRemoteFile(client, dest); err != nil {
+	var locked bool
+	if err := filerClient.WithFilerClient(true, func(c filer_pb.SeaweedFilerClient) error {
+		ctx, cancel := lookupContext()
+		defer cancel()
+		var err error
+		locked, err = s3_objectlock.HasObjectsWithActiveLocks(ctx, c, message.NewParentPath)
 		return err
+	}); err != nil {
+		return err
+	}
+	if locked {
+		glog.V(0).Infof("keep %s: a version under the delete marker is locked", remote_storage.FormatLocation(dest))
+	} else {
+		glog.V(0).Infof("delete (marker) %s", remote_storage.FormatLocation(dest))
+		if err := deleteRemoteFile(client, dest); err != nil {
+			return err
+		}
 	}
 	return updateLocalEntry(filerClient, message.NewParentPath, message.NewEntry, &filer_pb.RemoteEntry{
 		StorageName: dest.Name,

@@ -464,6 +464,13 @@ func (c *stubFilerClient) UpdateEntry(_ context.Context, req *filer_pb.UpdateEnt
 	return &filer_pb.UpdateEntryResponse{}, nil
 }
 
+func (c *stubFilerClient) ListEntries(ctx context.Context, in *filer_pb.ListEntriesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[filer_pb.ListEntriesResponse], error) {
+	if c.err != nil {
+		return nil, c.err
+	}
+	return (&lookupEntrySeaweedClient{entries: c.entries}).ListEntries(ctx, in, opts...)
+}
+
 func (c *stubFilerClient) WithFilerClient(_ bool, fn func(filer_pb.SeaweedFilerClient) error) error {
 	return fn(c)
 }
@@ -2964,4 +2971,60 @@ func TestRemoteSyncSkipsSystemFolder(t *testing.T) {
 	if len(remote.deletes) != 0 {
 		t.Fatalf("expected 0 remote deletes for system path, got %d deletes", len(remote.deletes))
 	}
+}
+
+// TestSyncDeleteMarkerKeepsALockedVersion: every version uploads to the
+// object's key, so deleting that object for a delete marker can remove the
+// only remote copy of a version under legal hold or retention.
+func TestSyncDeleteMarkerKeepsALockedVersion(t *testing.T) {
+	const versionsDir = "/buckets/b/held.bin.versions"
+	dest := &remote_pb.RemoteStorageLocation{Name: "azure", Bucket: "b", Path: "/held.bin"}
+	marker := &filer_pb.Entry{
+		Name:       "v_marker",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 1786096669},
+		Extended:   map[string][]byte{s3_constants.ExtDeleteMarkerKey: []byte("true")},
+	}
+	future := []byte(fmt.Sprint(time.Now().Add(time.Hour).Unix()))
+	past := []byte(fmt.Sprint(time.Now().Add(-time.Hour).Unix()))
+	for _, tc := range []struct {
+		name       string
+		lock       map[string][]byte
+		wantDelete bool
+	}{
+		{"legal hold", map[string][]byte{s3_constants.ExtLegalHoldKey: []byte(s3_constants.LegalHoldOn)}, false},
+		{"retention", map[string][]byte{s3_constants.ExtObjectLockModeKey: []byte(s3_constants.RetentionModeGovernance), s3_constants.ExtRetentionUntilDateKey: future}, false},
+		{"released hold", map[string][]byte{s3_constants.ExtLegalHoldKey: []byte(s3_constants.LegalHoldOff)}, true},
+		{"expired retention", map[string][]byte{s3_constants.ExtObjectLockModeKey: []byte(s3_constants.RetentionModeCompliance), s3_constants.ExtRetentionUntilDateKey: past}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			filerClient := &stubFilerClient{entries: map[string]*filer_pb.Entry{
+				versionsDir + "/v_old":    {Name: "v_old", Attributes: &filer_pb.FuseAttributes{FileSize: 8192}, Extended: tc.lock},
+				versionsDir + "/v_new":    {Name: "v_new", Attributes: &filer_pb.FuseAttributes{FileSize: 16384}},
+				versionsDir + "/v_marker": marker,
+			}}
+			remote := &recordingRemote{}
+			message := &filer_pb.EventNotification{NewParentPath: versionsDir, NewEntry: marker}
+			if err := syncDeleteMarker(remote, filerClient, message, dest); err != nil {
+				t.Fatalf("err = %v", err)
+			}
+			if deleted := len(remote.deletes) == 1; deleted != tc.wantDelete || len(remote.deletes) > 1 {
+				t.Errorf("deletes = %+v, want deleted=%v", remote.deletes, tc.wantDelete)
+			}
+			if filerClient.updates != 1 {
+				t.Errorf("stamped %d times, want 1", filerClient.updates)
+			}
+		})
+	}
+
+	t.Run("listing failure", func(t *testing.T) {
+		remote := &recordingRemote{}
+		filerClient := &stubFilerClient{err: status.Error(codes.Unavailable, "filer is shutting down")}
+		message := &filer_pb.EventNotification{NewParentPath: versionsDir, NewEntry: marker}
+		if err := syncDeleteMarker(remote, filerClient, message, dest); err == nil {
+			t.Fatal("err = nil, want the listing failure")
+		}
+		if len(remote.deletes) != 0 || filerClient.updates != 0 {
+			t.Errorf("deletes = %+v, stamps = %d; want neither before the lock check answers", remote.deletes, filerClient.updates)
+		}
+	})
 }
