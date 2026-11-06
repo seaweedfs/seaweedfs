@@ -59,6 +59,8 @@ type Volume struct {
 	asyncRequestsChan chan *needle.AsyncRequest
 	asyncWorkerClosed bool
 
+	pendingWrites pendingWrites
+
 	lastModifiedTsSeconds    uint64         // unix time in seconds
 	lastAppendAtNs           uint64         // unix time in nanoseconds
 	lastWriteAppendAtNs      uint64         // AppendAtNs of the newest write; tombstones don't move it
