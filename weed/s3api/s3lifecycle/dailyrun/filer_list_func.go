@@ -13,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/bootstrap"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/engine"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/router"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -143,6 +144,7 @@ func walkBucketTree(ctx context.Context, client filer_pb.SeaweedFilerClient, dir
 			Size:     int64(e.Attributes.FileSize),
 			IsLatest: true, // Non-versioned default.
 			Tags:     extractTags(e.Extended),
+			Identity: router.BuildIdentityFromEntry(e),
 		}
 		return cb(entry)
 	})
@@ -273,6 +275,7 @@ func expandVersionsDir(ctx context.Context, client filer_pb.SeaweedFilerClient, 
 			NumVersions:      len(items),
 			SuccessorModTime: successor,
 			Tags:             extractTags(it.entry.Extended),
+			Identity:         router.BuildIdentityFromEntry(it.entry),
 		}
 		if !isLatest {
 			rank := i

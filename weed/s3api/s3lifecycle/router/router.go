@@ -491,7 +491,7 @@ func routePointerTransitionExpand(ctx context.Context, snap *engine.Snapshot, ev
 // single-lookup and full-expansion paths.
 func emitNoncurrentMatches(snap *engine.Snapshot, ev *reader.Event, keys []s3lifecycle.ActionKey, info *s3lifecycle.ObjectInfo, entry *filer_pb.Entry, versionID string, successor time.Time) []Match {
 	eventTime := time.Unix(0, ev.TsNs)
-	identity := buildIdentityFromEntry(entry)
+	identity := BuildIdentityFromEntry(entry)
 	var matches []Match
 	for _, key := range keys {
 		if key.ActionKind != s3lifecycle.ActionKindNoncurrentDays && key.ActionKind != s3lifecycle.ActionKindNewerNoncurrent {
@@ -561,7 +561,7 @@ func routeVersionFileExpiration(snap *engine.Snapshot, ev *reader.Event, keys []
 		info.Tags = tags
 	}
 	eventTime := time.Unix(0, ev.TsNs)
-	identity := buildIdentityFromEntry(entry)
+	identity := BuildIdentityFromEntry(entry)
 	var matches []Match
 	for _, key := range keys {
 		action := snap.Action(key)
@@ -643,7 +643,7 @@ func routeSoleSurvivorMarker(ctx context.Context, snap *engine.Snapshot, ev *rea
 		info.Tags = tags
 	}
 	eventTime := time.Unix(0, ev.TsNs)
-	identity := buildIdentityFromEntry(entry)
+	identity := BuildIdentityFromEntry(entry)
 	var matches []Match
 	for _, key := range keys {
 		if key.ActionKind != s3lifecycle.ActionKindExpiredDeleteMarker {
@@ -703,7 +703,7 @@ func routeBootstrapVersion(snap *engine.Snapshot, ev *reader.Event, keys []s3lif
 		info.Tags = tags
 	}
 	eventTime := time.Unix(0, ev.TsNs)
-	identity := buildIdentityFromEntry(entry)
+	identity := BuildIdentityFromEntry(entry)
 	var matches []Match
 	for _, key := range keys {
 		action := snap.Action(key)
@@ -873,10 +873,10 @@ func mpuInitInfo(ev *reader.Event, entry *filer_pb.Entry) (destKey string, ok bo
 // buildIdentity captures the entry's schedule-time fingerprint for the CAS
 // witness. Returns nil if the event has no entry to fingerprint (deletes).
 func buildIdentity(ev *reader.Event) *EntryIdentity {
-	return buildIdentityFromEntry(ev.NewEntry)
+	return BuildIdentityFromEntry(ev.NewEntry)
 }
 
-func buildIdentityFromEntry(entry *filer_pb.Entry) *EntryIdentity {
+func BuildIdentityFromEntry(entry *filer_pb.Entry) *EntryIdentity {
 	if entry == nil {
 		return nil
 	}
