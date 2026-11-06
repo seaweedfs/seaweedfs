@@ -326,6 +326,9 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 			// Skip deletion of internal version files; individual version
 			// deletes should not propagate to the remote object
 			if isVersionedPath(resp.Directory, message.OldEntry.Name, message.OldEntry.IsDirectory) {
+				if releasesVersionLock(message.OldEntry, nil) {
+					return syncGatewayKeptDeleteMarker(option, option, resp.Directory, message.OldEntry.Name)
+				}
 				glog.V(2).Infof("skipping delete of internal version path: %s/%s", resp.Directory, message.OldEntry.Name)
 				return nil
 			}
@@ -371,6 +374,9 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 			}
 			// Skip updates to internal version paths
 			if isVersionedPath(message.NewParentPath, message.NewEntry.Name, message.NewEntry.IsDirectory) {
+				if releasesVersionLock(message.OldEntry, message.NewEntry) {
+					return syncGatewayKeptDeleteMarker(option, option, message.NewParentPath, message.NewEntry.Name)
+				}
 				glog.V(2).Infof("skipping update of internal version path: %s/%s", message.NewParentPath, message.NewEntry.Name)
 				return nil
 			}
@@ -595,6 +601,25 @@ func gatewayRemoteOnlyRename(filerClient filer_pb.FilerClient, option *RemoteGat
 		return err
 	}
 	return deleteRenameSource(filerClient, srcClient, message.NewParentPath, current.Name, source, stamp)
+}
+
+// syncGatewayKeptDeleteMarker runs syncKeptDeleteMarker against the object
+// key that the version file's bucket mount maps to.
+func syncGatewayKeptDeleteMarker(filerClient filer_pb.FilerClient, option *RemoteGatewayOptions, versionsDir, versionName string) error {
+	newParent, newName, ok := rewriteVersionedSourcePath(versionsDir, versionName)
+	if !ok {
+		return nil
+	}
+	bucket, remoteStorageMountLocation, remoteStorage, ok := option.detectBucketInfo(newParent)
+	if !ok {
+		return nil
+	}
+	client, err := remote_storage.GetRemoteStorage(remoteStorage)
+	if err != nil {
+		return err
+	}
+	dest := toRemoteStorageLocation(bucket, util.NewFullPath(newParent, newName), remoteStorageMountLocation)
+	return syncKeptDeleteMarker(client, filerClient, versionsDir, dest)
 }
 
 // releaseGatewayRenamedSource releases the pending source a rename's old

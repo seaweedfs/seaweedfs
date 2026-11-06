@@ -464,6 +464,13 @@ func (c *stubFilerClient) UpdateEntry(_ context.Context, req *filer_pb.UpdateEnt
 	return &filer_pb.UpdateEntryResponse{}, nil
 }
 
+func (c *stubFilerClient) ListEntries(ctx context.Context, in *filer_pb.ListEntriesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[filer_pb.ListEntriesResponse], error) {
+	if c.err != nil {
+		return nil, c.err
+	}
+	return (&lookupEntrySeaweedClient{entries: c.entries}).ListEntries(ctx, in, opts...)
+}
+
 func (c *stubFilerClient) WithFilerClient(_ bool, fn func(filer_pb.SeaweedFilerClient) error) error {
 	return fn(c)
 }
@@ -2963,5 +2970,191 @@ func TestRemoteSyncSkipsSystemFolder(t *testing.T) {
 	}
 	if len(remote.deletes) != 0 {
 		t.Fatalf("expected 0 remote deletes for system path, got %d deletes", len(remote.deletes))
+	}
+}
+
+// TestSyncDeleteMarkerKeepsALockedVersion: every version uploads to the
+// object's key, so deleting that object for a delete marker can remove the
+// only remote copy of a version under legal hold or retention.
+func TestSyncDeleteMarkerKeepsALockedVersion(t *testing.T) {
+	const versionsDir = "/buckets/b/held.bin.versions"
+	dest := &remote_pb.RemoteStorageLocation{Name: "azure", Bucket: "b", Path: "/held.bin"}
+	marker := &filer_pb.Entry{
+		Name:       "v_marker",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 1786096669},
+		Extended:   map[string][]byte{s3_constants.ExtDeleteMarkerKey: []byte("true")},
+	}
+	future := []byte(fmt.Sprint(time.Now().Add(time.Hour).Unix()))
+	past := []byte(fmt.Sprint(time.Now().Add(-time.Hour).Unix()))
+	for _, tc := range []struct {
+		name       string
+		lock       map[string][]byte
+		wantDelete bool
+	}{
+		{"legal hold", map[string][]byte{s3_constants.ExtLegalHoldKey: []byte(s3_constants.LegalHoldOn)}, false},
+		{"retention", map[string][]byte{s3_constants.ExtObjectLockModeKey: []byte(s3_constants.RetentionModeGovernance), s3_constants.ExtRetentionUntilDateKey: future}, false},
+		{"released hold", map[string][]byte{s3_constants.ExtLegalHoldKey: []byte(s3_constants.LegalHoldOff)}, true},
+		{"expired retention", map[string][]byte{s3_constants.ExtObjectLockModeKey: []byte(s3_constants.RetentionModeCompliance), s3_constants.ExtRetentionUntilDateKey: past}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			filerClient := &stubFilerClient{entries: map[string]*filer_pb.Entry{
+				versionsDir + "/v_old":    {Name: "v_old", Attributes: &filer_pb.FuseAttributes{FileSize: 8192}, Extended: tc.lock},
+				versionsDir + "/v_new":    {Name: "v_new", Attributes: &filer_pb.FuseAttributes{FileSize: 16384}},
+				versionsDir + "/v_marker": marker,
+			}}
+			remote := &recordingRemote{}
+			message := &filer_pb.EventNotification{NewParentPath: versionsDir, NewEntry: marker}
+			if err := syncDeleteMarker(remote, filerClient, message, dest); err != nil {
+				t.Fatalf("err = %v", err)
+			}
+			if deleted := len(remote.deletes) == 1; deleted != tc.wantDelete || len(remote.deletes) > 1 {
+				t.Errorf("deletes = %+v, want deleted=%v", remote.deletes, tc.wantDelete)
+			}
+			if stamped := filerClient.updates == 1; stamped != tc.wantDelete || filerClient.updates > 1 {
+				t.Errorf("stamped %d times, want the marker stamped only once deleted (a kept one is retried)", filerClient.updates)
+			}
+		})
+	}
+
+	t.Run("listing failure", func(t *testing.T) {
+		remote := &recordingRemote{}
+		filerClient := &stubFilerClient{err: status.Error(codes.Unavailable, "filer is shutting down")}
+		message := &filer_pb.EventNotification{NewParentPath: versionsDir, NewEntry: marker}
+		if err := syncDeleteMarker(remote, filerClient, message, dest); err == nil {
+			t.Fatal("err = nil, want the listing failure")
+		}
+		if len(remote.deletes) != 0 || filerClient.updates != 0 {
+			t.Errorf("deletes = %+v, stamps = %d; want neither before the lock check answers", remote.deletes, filerClient.updates)
+		}
+	})
+}
+
+// TestKeptDeleteMarkerRetriesWhenTheLockIsReleased: a delete marker kept for a
+// locked version is deleted once an update or delete of a version that held
+// the lock leaves no lock on the key.
+func TestKeptDeleteMarkerRetriesWhenTheLockIsReleased(t *testing.T) {
+	const (
+		mountedDir  = "/buckets/b"
+		versionsDir = "/buckets/b/held.bin.versions"
+	)
+	mountLoc := &remote_pb.RemoteStorageLocation{Name: "azure", Bucket: "b", Path: "/"}
+	held := map[string][]byte{s3_constants.ExtLegalHoldKey: []byte(s3_constants.LegalHoldOn)}
+	released := map[string][]byte{s3_constants.ExtLegalHoldKey: []byte(s3_constants.LegalHoldOff)}
+	expired := map[string][]byte{
+		s3_constants.ExtObjectLockModeKey:     []byte(s3_constants.RetentionModeGovernance),
+		s3_constants.ExtRetentionUntilDateKey: []byte(fmt.Sprint(time.Now().Add(-time.Hour).Unix())),
+	}
+	version := func(name string, extended map[string][]byte) *filer_pb.Entry {
+		return &filer_pb.Entry{Name: name, Attributes: &filer_pb.FuseAttributes{FileSize: 8192}, Extended: extended}
+	}
+	marker := func(stamp *filer_pb.RemoteEntry) *filer_pb.Entry {
+		return &filer_pb.Entry{
+			Name:        "v_marker",
+			Attributes:  &filer_pb.FuseAttributes{Mtime: 1786096669},
+			Extended:    map[string][]byte{s3_constants.ExtDeleteMarkerKey: []byte("true")},
+			RemoteEntry: stamp,
+		}
+	}
+	latest := func(isMarker string) *filer_pb.Entry {
+		return &filer_pb.Entry{Name: "held.bin.versions", IsDirectory: true, Extended: map[string][]byte{
+			s3_constants.ExtLatestVersionFileNameKey:    []byte("v_marker"),
+			s3_constants.ExtLatestVersionIsDeleteMarker: []byte(isMarker),
+		}}
+	}
+	update := func(oldEntry, newEntry *filer_pb.Entry) *filer_pb.SubscribeMetadataResponse {
+		return &filer_pb.SubscribeMetadataResponse{Directory: versionsDir, EventNotification: &filer_pb.EventNotification{
+			OldEntry: oldEntry, NewEntry: newEntry, NewParentPath: versionsDir,
+		}}
+	}
+	remove := func(oldEntry *filer_pb.Entry) *filer_pb.SubscribeMetadataResponse {
+		return &filer_pb.SubscribeMetadataResponse{Directory: versionsDir, EventNotification: &filer_pb.EventNotification{OldEntry: oldEntry}}
+	}
+
+	for _, tc := range []struct {
+		name       string
+		entries    map[string]*filer_pb.Entry
+		event      *filer_pb.SubscribeMetadataResponse
+		wantDelete bool
+	}{
+		{
+			name: "hold released",
+			entries: map[string]*filer_pb.Entry{
+				mountedDir + "/held.bin.versions": latest("true"),
+				versionsDir + "/v_old":            version("v_old", released),
+				versionsDir + "/v_marker":         marker(nil),
+			},
+			event:      update(version("v_old", held), version("v_old", released)),
+			wantDelete: true,
+		},
+		{
+			name: "expired version deleted",
+			entries: map[string]*filer_pb.Entry{
+				mountedDir + "/held.bin.versions": latest("true"),
+				versionsDir + "/v_marker":         marker(nil),
+			},
+			event:      remove(version("v_old", expired)),
+			wantDelete: true,
+		},
+		{
+			name: "another version still held",
+			entries: map[string]*filer_pb.Entry{
+				mountedDir + "/held.bin.versions": latest("true"),
+				versionsDir + "/v_old":            version("v_old", released),
+				versionsDir + "/v_other":          version("v_other", held),
+				versionsDir + "/v_marker":         marker(nil),
+			},
+			event: update(version("v_old", held), version("v_old", released)),
+		},
+		{
+			name: "marker already synced",
+			entries: map[string]*filer_pb.Entry{
+				mountedDir + "/held.bin.versions": latest("true"),
+				versionsDir + "/v_old":            version("v_old", released),
+				versionsDir + "/v_marker":         marker(&filer_pb.RemoteEntry{StorageName: "azure"}),
+			},
+			event: update(version("v_old", held), version("v_old", released)),
+		},
+		{
+			name: "a newer version is latest",
+			entries: map[string]*filer_pb.Entry{
+				mountedDir + "/held.bin.versions": latest("false"),
+				versionsDir + "/v_old":            version("v_old", released),
+				versionsDir + "/v_marker":         marker(nil),
+			},
+			event: update(version("v_old", held), version("v_old", released)),
+		},
+		{
+			name: "unlocked version updated",
+			entries: map[string]*filer_pb.Entry{
+				mountedDir + "/held.bin.versions": latest("true"),
+				versionsDir + "/v_old":            version("v_old", nil),
+				versionsDir + "/v_marker":         marker(nil),
+			},
+			event: update(version("v_old", nil), version("v_old", map[string][]byte{s3_constants.ExtNoncurrentSinceNsKey: []byte("1")})),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			filerClient := &stubFilerClient{entries: tc.entries}
+			remote := &recordingRemote{}
+			var err error
+			if tc.event.EventNotification.NewEntry != nil {
+				err = processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, tc.event)
+			} else {
+				err = processDeleteEvent(filerClient, remote, mountedDir, mountLoc, tc.event)
+			}
+			if err != nil {
+				t.Fatalf("err = %v", err)
+			}
+			if tc.wantDelete {
+				if len(remote.deletes) != 1 || remote.deletes[0].Path != "/held.bin" {
+					t.Errorf("deletes = %+v, want /held.bin", remote.deletes)
+				}
+				if filerClient.updates != 1 || filerClient.updated.GetEntry().GetName() != "v_marker" {
+					t.Errorf("stamps = %d (%v), want the marker stamped", filerClient.updates, filerClient.updated)
+				}
+			} else if len(remote.deletes) != 0 || filerClient.updates != 0 {
+				t.Errorf("deletes = %+v, stamps = %d; want neither", remote.deletes, filerClient.updates)
+			}
+		})
 	}
 }

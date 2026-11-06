@@ -6,10 +6,12 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
 type recordingRemoteMaker struct{ client *recordingRemote }
@@ -479,6 +481,96 @@ func TestGatewayKeepsTheDefaultStorageAcrossMappingChanges(t *testing.T) {
 
 			if !slices.Equal(remote.bucketCreates, []string{"fresh"}) {
 				t.Errorf("bucket creates = %v, want [fresh] in the default storage", remote.bucketCreates)
+			}
+		})
+	}
+}
+
+// TestGatewayKeptDeleteMarkerRetry: once a lock is released, the kept marker's
+// delete goes to the object key the bucket mount maps the version to, and the
+// marker is stamped with the mount's storage.
+func TestGatewayKeptDeleteMarkerRetry(t *testing.T) {
+	const versionsDir = "/buckets/gold/dir/held.bin.versions"
+	option, remote := gatewayTestOption("gatewaytest-kept-marker")
+	t.Cleanup(func() {
+		delete(remote_storage.RemoteStorageClientMakers, "gatewaytest-kept-marker")
+		remote_storage.ResetRemoteStorageClients()
+	})
+	filerClient := &stubFilerClient{entries: map[string]*filer_pb.Entry{
+		versionsDir: {Name: "held.bin.versions", IsDirectory: true, Extended: map[string][]byte{
+			s3_constants.ExtLatestVersionFileNameKey:    []byte("v_marker"),
+			s3_constants.ExtLatestVersionIsDeleteMarker: []byte("true"),
+		}},
+		versionsDir + "/v_marker": {
+			Name:       "v_marker",
+			Attributes: &filer_pb.FuseAttributes{Mtime: 1786096669},
+			Extended:   map[string][]byte{s3_constants.ExtDeleteMarkerKey: []byte("true")},
+		},
+	}}
+
+	if err := syncGatewayKeptDeleteMarker(filerClient, option, versionsDir, "v_old"); err != nil {
+		t.Fatal(err)
+	}
+	if len(remote.deletes) != 1 || remote.deletes[0].Bucket != "gold" || remote.deletes[0].Path != "/dir/held.bin" {
+		t.Errorf("deletes = %+v, want gold:/dir/held.bin", remote.deletes)
+	}
+	stamped := filerClient.updated.GetEntry()
+	if filerClient.updates != 1 || stamped.GetName() != "v_marker" || stamped.GetRemoteEntry().GetStorageName() != "gatewaytest-kept-marker" {
+		t.Errorf("stamps = %d (%v), want v_marker stamped with the mount's storage", filerClient.updates, stamped)
+	}
+
+	if err := syncGatewayKeptDeleteMarker(filerClient, option, "/buckets/unmounted/held.bin.versions", "v_old"); err != nil {
+		t.Fatal(err)
+	}
+	if len(remote.deletes) != 1 || filerClient.updates != 1 {
+		t.Errorf("deletes = %+v, stamps = %d; want nothing more for an unmounted bucket", remote.deletes, filerClient.updates)
+	}
+}
+
+// TestGatewayLockReleaseLooksUpTheKeptMarker: an update or delete that
+// releases a version's lock reads the key's versions from the gateway's filer,
+// which the test cannot reach, so the event fails with that filer's address
+// instead of being skipped. A change to an unlocked version is skipped
+// without a lookup.
+func TestGatewayLockReleaseLooksUpTheKeptMarker(t *testing.T) {
+	const versionsDir = "/buckets/gold/dir/held.bin.versions"
+	option, remote := gatewayTestOption("gatewaytest-lock-release")
+	t.Cleanup(func() {
+		delete(remote_storage.RemoteStorageClientMakers, "gatewaytest-lock-release")
+		remote_storage.ResetRemoteStorageClients()
+	})
+	filerGrpcAddress := pb.ServerAddress(*option.filerAddress).ToGrpcAddress()
+	process, err := option.makeBucketedEventProcessor(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	version := func(extended map[string][]byte) *filer_pb.Entry {
+		return &filer_pb.Entry{Name: "v_old", Attributes: &filer_pb.FuseAttributes{FileSize: 8192}, Extended: extended}
+	}
+	held := map[string][]byte{s3_constants.ExtLegalHoldKey: []byte(s3_constants.LegalHoldOn)}
+	released := map[string][]byte{s3_constants.ExtLegalHoldKey: []byte(s3_constants.LegalHoldOff)}
+
+	for _, tc := range []struct {
+		name       string
+		event      *filer_pb.EventNotification
+		wantLookup bool
+	}{
+		{"hold released", &filer_pb.EventNotification{OldEntry: version(held), NewParentPath: versionsDir, NewEntry: version(released)}, true},
+		{"held version deleted", &filer_pb.EventNotification{OldEntry: version(held)}, true},
+		{"unlocked version updated", &filer_pb.EventNotification{OldEntry: version(nil), NewParentPath: versionsDir, NewEntry: version(released)}, false},
+		{"unlocked version deleted", &filer_pb.EventNotification{OldEntry: version(nil)}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := process(&filer_pb.SubscribeMetadataResponse{Directory: versionsDir, EventNotification: tc.event})
+			if tc.wantLookup {
+				if err == nil || !strings.Contains(err.Error(), filerGrpcAddress) {
+					t.Errorf("process = %v, want an unanswered lookup on %s", err, filerGrpcAddress)
+				}
+			} else if err != nil {
+				t.Errorf("process = %v, want the change skipped", err)
+			}
+			if len(remote.deletes) != 0 || len(remote.writes) != 0 {
+				t.Errorf("deletes = %+v, writes = %+v; want the remote untouched", remote.deletes, remote.writes)
 			}
 		})
 	}
