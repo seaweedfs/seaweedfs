@@ -78,3 +78,33 @@ func TestCopyMetadataStreamsFromAnUnfinishedWalk(t *testing.T) {
 		t.Fatalf("offset = %v, want a fresh walk's start after %v", offset, beforeRestart)
 	}
 }
+
+// TestCopyMetadataIgnoresAWalkStartTheStreamPassed: a walk start left behind
+// (a crash between saving the offset and clearing it, or an interrupted
+// -restart followed by a plain restart) only matters until the stream saves an
+// offset past it; after that a new walk starts fresh.
+func TestCopyMetadataIgnoresAWalkStartTheStreamPassed(t *testing.T) {
+	backup := &FilerMetaBackupOptions{store: &kvOnlyStore{kv: map[string][]byte{}}}
+	walkStart := time.Now().Add(-time.Hour)
+	if err := backup.setTime(MetaBackupWalkKey, walkStart); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := backup.setOffset(walkStart); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := backup.walkStartTime(); err != nil || !got.Equal(walkStart) {
+		t.Fatalf("walk start with the offset at it = %v, %v; want %v", got, err, walkStart)
+	}
+
+	if err := backup.setOffset(walkStart.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	beforeWalk := time.Now()
+	if err := backup.copyMetadata(func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if offset, _ := backup.getOffset(); offset.Before(beforeWalk) {
+		t.Fatalf("offset = %v, want a fresh walk's start after %v", offset, beforeWalk)
+	}
+}

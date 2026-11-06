@@ -161,14 +161,9 @@ func (metaBackup *FilerMetaBackupOptions) shouldInclude(fullpath string) bool {
 // since the first walk that did not finish: its start time stays in the store
 // until a walk completes.
 func (metaBackup *FilerMetaBackupOptions) copyMetadata(traverse func() error) error {
-	startTime := time.Now()
-	if earlier, err := metaBackup.getTime(MetaBackupWalkKey); err == nil {
-		glog.V(0).Infof("an earlier metadata walk started at %v did not finish; streaming from then", earlier)
-		startTime = earlier
-	} else if !errors.Is(err, filer.ErrKvNotFound) {
-		return fmt.Errorf("read metadata walk start: %w", err)
-	} else if err := metaBackup.setTime(MetaBackupWalkKey, startTime); err != nil {
-		return fmt.Errorf("save metadata walk start: %w", err)
+	startTime, err := metaBackup.walkStartTime()
+	if err != nil {
+		return err
 	}
 	glog.V(0).Infof("traversing metadata tree...")
 	if err := traverse(); err != nil {
@@ -182,6 +177,25 @@ func (metaBackup *FilerMetaBackupOptions) copyMetadata(traverse func() error) er
 	}
 	glog.V(0).Infof("metadata copied up to %v", startTime)
 	return nil
+}
+
+// walkStartTime is the start of an unfinished earlier walk, unless the stream
+// has saved an offset past it since, or else now, saved as this walk's start.
+func (metaBackup *FilerMetaBackupOptions) walkStartTime() (time.Time, error) {
+	earlier, err := metaBackup.getTime(MetaBackupWalkKey)
+	if err == nil {
+		if offset, offsetErr := metaBackup.getOffset(); offsetErr != nil || !offset.After(earlier) {
+			glog.V(0).Infof("an earlier metadata walk started at %v did not finish; streaming from then", earlier)
+			return earlier, nil
+		}
+	} else if !errors.Is(err, filer.ErrKvNotFound) {
+		return time.Time{}, fmt.Errorf("read metadata walk start: %w", err)
+	}
+	now := time.Now()
+	if err := metaBackup.setTime(MetaBackupWalkKey, now); err != nil {
+		return time.Time{}, fmt.Errorf("save metadata walk start: %w", err)
+	}
+	return now, nil
 }
 
 func (metaBackup *FilerMetaBackupOptions) traverseMetadata() (err error) {
