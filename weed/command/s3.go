@@ -104,6 +104,7 @@ type S3Options struct {
 	// whatever process may hold the configured port.
 	icebergBound atomic.Bool
 	lanceBound   atomic.Bool
+	lanceServer  *lance.Server
 }
 
 func init() {
@@ -682,6 +683,7 @@ func (s3opt *S3Options) startLanceServer(s3ApiServer *s3api.S3ApiServer, listenO
 	lanceServer.SetS3Endpoint(s3opt.deriveLanceStorageEndpoint())
 	lanceServer.SetS3Region(s3tables.DefaultRegion)
 	lanceServer.RegisterRoutes(lanceRouter)
+	s3opt.lanceServer = lanceServer
 
 	listenAddress := fmt.Sprintf("%s:%d", *s3opt.bindIp, *s3opt.portLance)
 	lanceListener, lanceLocalListener, err := util.NewIpAndLocalListeners(
@@ -719,12 +721,25 @@ func (s3opt *S3Options) vectorsRouter(s3ApiServer *s3api.S3ApiServer, grpcDialOp
 		return nil
 	}
 	backend := &vectorDiscovery{masters: masterAddresses, grpcDialOption: grpcDialOption, discover: discoverVectorWorkers}
+	// In-process describe — the router resolves locations and vended
+	// storage options through the catalog directly, never over HTTP. The
+	// lookup itself runs under the trusted identity: the caller's vector
+	// permission already authorized the query, and catalog grants must not
+	// gate an internal resolution.
+	describe := func(ctx context.Context, id []string) (string, map[string]string, error) {
+		if s3opt.lanceServer == nil {
+			return "", nil, fmt.Errorf("lance catalog is not running")
+		}
+		r := (&http.Request{Method: http.MethodPost, Header: make(http.Header)}).WithContext(ctx)
+		return s3opt.lanceServer.DescribeTableInternal(r, id)
+	}
 	vectorsRouter := mux.NewRouter().SkipClean(true)
 
 	vectorsServer := s3vectors.NewServer(s3ApiServer, s3ApiServer, backend)
 	vectorsServer.SetRegion(s3tables.DefaultRegion)
 	vectorsServer.SetAccountID(s3tables.DefaultAccountID)
 	vectorsServer.SetEncryptionChecker(s3api.GetSSES3KeyManager().IsConfigured)
+	vectorsServer.SetDescribe(describe)
 	vectorsServer.RegisterRoutes(vectorsRouter)
 	return vectorsRouter
 }
