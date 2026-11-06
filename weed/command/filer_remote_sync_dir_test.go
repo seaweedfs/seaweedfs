@@ -637,7 +637,7 @@ func TestRetriedWriteFileStopsWhenTheLookupAfterAFailureIsUnanswered(t *testing.
 }
 
 func TestResolveLastSyncOffsetKeepsTheSavedOffsetWhenTheLookupFails(t *testing.T) {
-	saved := time.Date(2026, 11, 4, 17, 57, 10, 0, time.UTC)
+	saved := time.Date(2026, 11, 4, 17, 57, 10, 123_000_000, time.UTC)
 	lookupFails := func() (*filer_pb.Entry, error) { return nil, context.DeadlineExceeded }
 	savedOffset := func() (int64, error) { return saved.UnixNano(), nil }
 
