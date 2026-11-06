@@ -5,17 +5,19 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-const orphanTestFid = "7,0abc"
+const appendTestLog = util.FullPath("/topics/.system/log/2026-11-05/10-00.00000001")
 
-func orphanTestChunk() (*operation.AssignResult, *operation.UploadResult) {
-	return &operation.AssignResult{Fid: orphanTestFid}, &operation.UploadResult{Name: "chunk", Size: 5}
+func newAppendTestFiler(store *stubFilerStore) *Filer {
+	f := NewFiler(pb.ServerDiscovery{}, nil, "", "", "", "", "", 255, nil)
+	f.Store = NewFilerStoreWrapper(store)
+	return f
 }
 
 func queuedForDeletion(f *Filer, fid string) bool {
@@ -25,46 +27,40 @@ func queuedForDeletion(f *Filer, fid string) bool {
 	return queued
 }
 
-// TestCommitAppendedChunkReleasesChunkWhenCommitFails covers the orphan-chunk
-// leak behind unbounded metadata-log growth.
-//
-// appendToFile uploads the chunk first and commits the filer entry afterwards.
-// When the commit fails the chunk is already on a volume server but nothing
-// references it: no entry points at that fid, so no later delete can ever mark
-// it, and neither vacuum nor fsck can see it because both work from the entry
-// index. The volume server keeps counting those bytes as live data, which is
-// how a cluster with a few hundred megabytes of real logs ends up carrying
-// tens of gigabytes of "live" volume data.
 func TestCommitAppendedChunkReleasesChunkWhenCommitFails(t *testing.T) {
 	store := newStubFilerStore()
 	store.insertErr = errors.New("store unavailable")
-	f := NewFiler(pb.ServerDiscovery{}, nil, "", "", "", "", "", 255, nil)
-	f.Store = NewFilerStoreWrapper(store)
+	f := newAppendTestFiler(store)
 
-	assignResult, uploadResult := orphanTestChunk()
-	path := util.FullPath("/topics/.system/log/2026-11-05")
+	err := f.commitAppendedChunk(context.Background(), appendTestLog, &filer_pb.FileChunk{FileId: "7,0abc", Size: 5})
 
-	err := f.commitAppendedChunk(context.Background(), path, &Entry{FullPath: path}, assignResult, uploadResult, 0)
-
-	require.Error(t, err, "the commit failure must be surfaced to the caller")
-	assert.True(t, queuedForDeletion(f, orphanTestFid),
-		"the uploaded chunk must be released after a failed entry commit, "+
-			"otherwise it stays orphaned on the volume server and only volume.fsck can reclaim it")
+	require.Error(t, err)
+	assert.True(t, queuedForDeletion(f, "7,0abc"), "a chunk no entry references must be released")
 }
 
-// TestCommitAppendedChunkKeepsChunkOnSuccess guards against over-correcting: a
-// successful commit must never delete the chunk it just attached.
-func TestCommitAppendedChunkKeepsChunkOnSuccess(t *testing.T) {
+func TestCommitAppendedChunkReleasesChunkWhenLookupFails(t *testing.T) {
 	store := newStubFilerStore()
-	f := NewFiler(pb.ServerDiscovery{}, nil, "", "", "", "", "", 255, nil)
-	f.Store = NewFilerStoreWrapper(store)
+	store.findErrByPath = map[string]error{string(appendTestLog): errors.New("store unavailable")}
+	f := newAppendTestFiler(store)
 
-	assignResult, uploadResult := orphanTestChunk()
-	path := util.FullPath("/topics/.system/log/2026-11-05")
+	err := f.commitAppendedChunk(context.Background(), appendTestLog, &filer_pb.FileChunk{FileId: "7,0abc", Size: 5})
 
-	err := f.commitAppendedChunk(context.Background(), path, &Entry{FullPath: path}, assignResult, uploadResult, 0)
+	require.Error(t, err)
+	assert.True(t, queuedForDeletion(f, "7,0abc"), "a chunk no entry references must be released")
+}
 
+func TestCommitAppendedChunkAppendsAfterExistingChunks(t *testing.T) {
+	store := newStubFilerStore()
+	f := newAppendTestFiler(store)
+	ctx := context.Background()
+
+	require.NoError(t, f.commitAppendedChunk(ctx, appendTestLog, &filer_pb.FileChunk{FileId: "7,0abc", Size: 5}))
+	require.NoError(t, f.commitAppendedChunk(ctx, appendTestLog, &filer_pb.FileChunk{FileId: "7,0abd", Size: 3}))
+
+	stored, err := store.FindEntry(ctx, appendTestLog)
 	require.NoError(t, err)
-	assert.False(t, queuedForDeletion(f, orphanTestFid),
-		"a successfully committed chunk must never be queued for deletion")
+	require.Len(t, stored.Chunks, 2)
+	assert.Equal(t, int64(5), stored.Chunks[1].Offset)
+	assert.False(t, queuedForDeletion(f, "7,0abc"))
+	assert.False(t, queuedForDeletion(f, "7,0abd"))
 }

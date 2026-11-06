@@ -22,10 +22,14 @@ func (f *Filer) appendToFile(ctx context.Context, targetFile string, data []byte
 	// expired shutdown deadline does not strand the chunk.
 	ctx = context.WithoutCancel(ctx)
 
+	return f.commitAppendedChunk(ctx, util.FullPath(targetFile), uploadResult.ToPbFileChunk(assignResult.Fid, 0, time.Now().UnixNano()))
+}
+
+// commitAppendedChunk appends an uploaded chunk to the file, releasing the
+// chunk when it cannot be committed: the flush retries with a new upload.
+func (f *Filer) commitAppendedChunk(ctx context.Context, fullpath util.FullPath, chunk *filer_pb.FileChunk) error {
 	// find out existing entry
-	fullpath := util.FullPath(targetFile)
 	entry, err := f.FindEntry(ctx, fullpath)
-	var offset int64 = 0
 	if err == filer_pb.ErrNotFound {
 		entry = &Entry{
 			FullPath: fullpath,
@@ -38,33 +42,21 @@ func (f *Filer) appendToFile(ctx context.Context, targetFile string, data []byte
 			},
 		}
 	} else if err != nil {
+		f.DeleteUncommittedChunks(ctx, []*filer_pb.FileChunk{chunk})
 		return fmt.Errorf("find %s: %v", fullpath, err)
 	} else {
-		offset = int64(TotalSize(entry.GetChunks()))
+		chunk.Offset = int64(TotalSize(entry.GetChunks()))
 	}
 
 	// append to existing chunks
-	entry.Chunks = append(entry.GetChunks(), uploadResult.ToPbFileChunk(assignResult.Fid, offset, time.Now().UnixNano()))
+	entry.Chunks = append(entry.GetChunks(), chunk)
 
 	// update the entry
-	return f.commitAppendedChunk(ctx, fullpath, entry, assignResult, uploadResult, offset)
-}
-
-// commitAppendedChunk commits an entry whose chunk has already been uploaded,
-// releasing that chunk if the commit fails.
-//
-// The chunk is uploaded before the entry is committed. When the commit fails
-// nothing references the chunk: no entry points at that fid, so no later delete
-// can ever mark it, and neither vacuum nor fsck can see it because both work
-// from the entry index. The volume server keeps counting those bytes as live
-// data, which is how a cluster with a few hundred megabytes of real logs ends
-// up carrying tens of gigabytes of "live" volume data.
-func (f *Filer) commitAppendedChunk(ctx context.Context, fullpath util.FullPath, entry *Entry, assignResult *operation.AssignResult, uploadResult *operation.UploadResult, offset int64) error {
-	err := f.CreateEntry(ctx, entry, nil, false, false, nil, false, f.MaxFilenameLength)
-	if err != nil {
-		f.DeleteChunks(ctx, fullpath, []*filer_pb.FileChunk{uploadResult.ToPbFileChunk(assignResult.Fid, offset, time.Now().UnixNano())})
+	if err := f.CreateEntry(ctx, entry, nil, false, false, nil, false, f.MaxFilenameLength); err != nil {
+		f.DeleteUncommittedChunks(ctx, []*filer_pb.FileChunk{chunk})
+		return err
 	}
-	return err
+	return nil
 }
 
 // resolveMetadataLogAssignDiskType returns the disk type and matched path rule for
