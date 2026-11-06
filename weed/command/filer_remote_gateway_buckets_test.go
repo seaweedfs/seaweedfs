@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
@@ -527,9 +528,10 @@ func TestGatewayKeptDeleteMarkerRetry(t *testing.T) {
 }
 
 // TestGatewayLockReleaseLooksUpTheKeptMarker: an update or delete that
-// releases a version's lock reads the key's versions from the filer, which the
-// test cannot reach, so the event fails instead of being skipped. A change to
-// an unlocked version is skipped without a lookup.
+// releases a version's lock reads the key's versions from the gateway's filer,
+// which the test cannot reach, so the event fails with that filer's address
+// instead of being skipped. A change to an unlocked version is skipped
+// without a lookup.
 func TestGatewayLockReleaseLooksUpTheKeptMarker(t *testing.T) {
 	const versionsDir = "/buckets/gold/dir/held.bin.versions"
 	option, remote := gatewayTestOption("gatewaytest-lock-release")
@@ -537,6 +539,7 @@ func TestGatewayLockReleaseLooksUpTheKeptMarker(t *testing.T) {
 		delete(remote_storage.RemoteStorageClientMakers, "gatewaytest-lock-release")
 		remote_storage.ResetRemoteStorageClients()
 	})
+	filerGrpcAddress := pb.ServerAddress(*option.filerAddress).ToGrpcAddress()
 	process, err := option.makeBucketedEventProcessor(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -559,8 +562,12 @@ func TestGatewayLockReleaseLooksUpTheKeptMarker(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := process(&filer_pb.SubscribeMetadataResponse{Directory: versionsDir, EventNotification: tc.event})
-			if looked := err != nil && strings.Contains(err.Error(), "dial"); looked != tc.wantLookup || (err != nil && !looked) {
-				t.Errorf("process = %v, want an unanswered lookup: %v", err, tc.wantLookup)
+			if tc.wantLookup {
+				if err == nil || !strings.Contains(err.Error(), filerGrpcAddress) {
+					t.Errorf("process = %v, want an unanswered lookup on %s", err, filerGrpcAddress)
+				}
+			} else if err != nil {
+				t.Errorf("process = %v, want the change skipped", err)
 			}
 			if len(remote.deletes) != 0 || len(remote.writes) != 0 {
 				t.Errorf("deletes = %+v, writes = %+v; want the remote untouched", remote.deletes, remote.writes)
