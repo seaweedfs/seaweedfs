@@ -18,6 +18,7 @@ import (
 	"github.com/hashicorp/raft"
 	hashicorpRaft "github.com/hashicorp/raft"
 	boltdb "github.com/hashicorp/raft-boltdb/v2"
+	prom "github.com/prometheus/client_golang/prometheus"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
@@ -199,7 +200,7 @@ func NewHashicorpRaftServer(option *RaftServerOption) (*RaftServer, error) {
 		}()
 	}
 
-	if err := registerRaftMetrics(); err != nil {
+	if err := registerRaftMetrics(stats.Gather); err != nil {
 		return nil, err
 	}
 
@@ -207,10 +208,10 @@ func NewHashicorpRaftServer(option *RaftServerOption) (*RaftServer, error) {
 }
 
 // registerRaftMetrics points the hashicorp/go-metrics global, which raft and
-// raft-boltdb report to, at a prometheus sink on stats.Gather.
-func registerRaftMetrics() error {
+// raft-boltdb report to, at a prometheus sink on reg.
+func registerRaftMetrics(reg prom.Registerer) error {
 	sink, err := prometheus.NewPrometheusSinkFrom(prometheus.PrometheusOpts{
-		Registerer: stats.Gather,
+		Registerer: reg,
 	})
 	if err != nil {
 		return fmt.Errorf("NewPrometheusSink: %w", err)

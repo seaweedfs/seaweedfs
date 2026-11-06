@@ -6,6 +6,7 @@ import (
 
 	"github.com/hashicorp/go-metrics"
 	"github.com/hashicorp/raft"
+	prom "github.com/prometheus/client_golang/prometheus"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 )
@@ -76,13 +77,14 @@ func TestAddPeersConfigurationUsesCanonicalIDs(t *testing.T) {
 }
 
 func TestRaftMetricsReachPrometheus(t *testing.T) {
-	if err := registerRaftMetrics(); err != nil {
+	reg := prom.NewRegistry()
+	if err := registerRaftMetrics(reg); err != nil {
 		t.Fatal(err)
 	}
 	// raft reports through the hashicorp/go-metrics global
 	metrics.SetGauge([]string{"raft", "peers"}, 3)
 
-	families, err := stats.Gather.Gather()
+	families, err := reg.Gather()
 	if err != nil {
 		t.Fatal(err)
 	}
