@@ -1095,10 +1095,16 @@ func (vs *VolumeServer) VolumeEcShardRead(req *volume_server_pb.VolumeEcShardRea
 	if req.EncodeTsNs != 0 && req.EncodeTsNs != ecVolume.EncodeTsNs {
 		return fmt.Errorf("ec shard %d.%d belongs to a different encode run", req.VolumeId, req.ShardId)
 	}
+	if _, _, quarantined := ecVolume.GetIoErrorState(); quarantined {
+		return fmt.Errorf("ec shard %d.%d is on a disk quarantined after IO errors", req.VolumeId, req.ShardId)
+	}
 
 	if req.FileKey != 0 {
-		_, size, _ := ecVolume.FindNeedleFromEcx(types.Uint64ToNeedleId(req.FileKey))
-		if size.IsDeleted() {
+		_, size, err := ecVolume.FindNeedleFromEcx(types.Uint64ToNeedleId(req.FileKey))
+		if err != nil && !errors.Is(err, erasure_coding.NotFoundError) {
+			return fmt.Errorf("ec shard %d.%d locate needle %d: %w", req.VolumeId, req.ShardId, req.FileKey, err)
+		}
+		if err == nil && size.IsDeleted() {
 			return stream.Send(&volume_server_pb.VolumeEcShardReadResponse{
 				IsDeleted:  true,
 				EncodeTsNs: ecVolume.EncodeTsNs,
