@@ -451,8 +451,16 @@ func (fs *Filer) GetMaster(ctx context.Context) pb.ServerAddress {
 	return fs.MasterClient.GetMaster(ctx)
 }
 
+// storeTransactionKey marks a context inside BeginTransaction, whatever key
+// the store keeps its own transaction under.
+type storeTransactionKey struct{}
+
 func (f *Filer) BeginTransaction(ctx context.Context) (context.Context, error) {
-	return f.Store.BeginTransaction(ctx)
+	txCtx, err := f.Store.BeginTransaction(ctx)
+	if err != nil {
+		return txCtx, err
+	}
+	return context.WithValue(txCtx, storeTransactionKey{}, true), nil
 }
 
 func (f *Filer) CommitTransaction(ctx context.Context) error {
@@ -516,7 +524,14 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, existing *Entry, 
 	oldEntry := existing
 	if oldEntry == nil {
 		var findErr error
-		oldEntry, findErr = f.FindEntry(ctx, entry.FullPath)
+		// A lazy fetch here would persist outside the transaction and wait on
+		// the lock it holds for a target it just deleted; a non-exclusive
+		// create writes the path either way.
+		findCtx := ctx
+		if ctx.Value(storeTransactionKey{}) != nil && !o_excl {
+			findCtx = context.WithValue(ctx, lazyFetchContextKey{}, true)
+		}
+		oldEntry, findErr = f.FindEntry(findCtx, entry.FullPath)
 		if findErr != nil && !errors.Is(findErr, filer_pb.ErrNotFound) {
 			// A create cannot decide whether the path exists when the lookup
 			// itself failed; proceeding would upsert over it.

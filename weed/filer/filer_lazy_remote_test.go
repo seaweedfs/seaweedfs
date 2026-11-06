@@ -734,6 +734,48 @@ func TestMaybeLazyFetchFromRemote_ContextGuardPreventsRecursion(t *testing.T) {
 	assert.Equal(t, 0, countingStub.statCalls, "guard should prevent StatFile from being called")
 }
 
+func TestCreateEntry_SkipsTheLazyFetchInsideAStoreTransaction(t *testing.T) {
+	const storageType = "stub_lazy_tx"
+	countingStub := &countingRemoteClient{
+		stubRemoteClient: stubRemoteClient{
+			statResult: &filer_pb.RemoteEntry{RemoteMtime: 1, RemoteSize: 1},
+		},
+	}
+	f, store := newMountedTestFiler(t, storageType, countingStub, 0)
+	putDirEntry(store, "/buckets/mybucket/dir")
+	// the stub opens no transaction of its own; the filer marks it anyway
+	txCtx, err := f.BeginTransaction(context.Background())
+	require.NoError(t, err)
+
+	// a create inside the transaction: its lookup does not consult the
+	// remote, the entry is inserted as given
+	created := &Entry{FullPath: "/buckets/mybucket/dir/a.txt", Attr: Attr{Mode: 0644, Mtime: time.Now(), Crtime: time.Now()}}
+	require.NoError(t, f.CreateEntry(txCtx, created, nil, false, false, nil, false, f.MaxFilenameLength))
+	assert.Equal(t, 0, countingStub.statCalls, "a create inside a transaction must not consult the remote")
+	got, err := f.FindEntry(txCtx, "/buckets/mybucket/dir/a.txt")
+	require.NoError(t, err)
+	assert.False(t, got.IsInRemoteOnly())
+
+	// a read inside the transaction keeps the fetch: a target the filer only
+	// holds on the remote is still seen by a rename's target check
+	entry, err := f.FindEntry(txCtx, "/buckets/mybucket/dir/b.txt")
+	require.NoError(t, err)
+	require.NotNil(t, entry)
+	assert.True(t, entry.IsInRemoteOnly())
+	assert.NotZero(t, countingStub.statCalls)
+
+	// an exclusive create inside the transaction still sees the remote object
+	excl := &Entry{FullPath: "/buckets/mybucket/dir/c.txt", Attr: Attr{Mode: 0644, Mtime: time.Now(), Crtime: time.Now()}}
+	err = f.CreateEntry(txCtx, excl, nil, true, false, nil, false, f.MaxFilenameLength)
+	assert.ErrorIs(t, err, filer_pb.ErrEntryAlreadyExists)
+
+	// outside a transaction a create still consults the remote
+	statCalls := countingStub.statCalls
+	plain := &Entry{FullPath: "/buckets/mybucket/dir/d.txt", Attr: Attr{Mode: 0644, Mtime: time.Now(), Crtime: time.Now()}}
+	require.NoError(t, f.CreateEntry(context.Background(), plain, nil, false, false, nil, false, f.MaxFilenameLength))
+	assert.Greater(t, countingStub.statCalls, statCalls)
+}
+
 func TestMaybeLazyFetchFromRemote_GuardedClientRejectsEndpoint(t *testing.T) {
 	const storageType = "stub_lazy_guarded"
 	countingStub := &countingRemoteClient{
