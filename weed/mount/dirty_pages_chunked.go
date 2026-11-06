@@ -27,6 +27,9 @@ type ChunkedDirtyPages struct {
 
 	saveDataAsChunk func(util.FullPath) filer.SaveDataAsChunkFunctionType
 	destroyed       atomic.Bool
+	// attachLock keeps Destroy from landing between the destroyed check and
+	// the chunk append, which would put old bytes into the replacing entry.
+	attachLock sync.Mutex
 }
 
 var (
@@ -140,6 +143,8 @@ func (pages *ChunkedDirtyPages) saveChunkedFileIntervalToStorage(reader io.Reade
 		return
 	}
 	// Truncation or newer content replaced these pages while they uploaded.
+	pages.attachLock.Lock()
+	defer pages.attachLock.Unlock()
 	if pages.destroyed.Load() {
 		glog.V(3).Infof("%v saveToStorage %s [%d,%d): pages discarded, chunk not attached", fileFullPath, chunk.FileId, offset, offset+size)
 		return
@@ -160,7 +165,9 @@ func isRetryableUploadError(err error) bool {
 }
 
 func (pages *ChunkedDirtyPages) Destroy() {
+	pages.attachLock.Lock()
 	pages.destroyed.Store(true)
+	pages.attachLock.Unlock()
 	pages.uploadPipeline.Shutdown()
 }
 
