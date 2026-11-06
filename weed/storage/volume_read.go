@@ -5,6 +5,8 @@ import (
 	"io"
 	"time"
 
+	lru "github.com/hashicorp/golang-lru/v2"
+
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -17,6 +19,19 @@ import (
 )
 
 const PagedReadLimit = 1024 * 1024
+
+// A range carries no checksum of its own, so a ranged read checks the whole
+// needle's CRC the first time any range of it is read. verifiedNeedles
+// remembers the needles that passed, so later ranges stream as before.
+var verifiedNeedles, _ = lru.New[verifiedNeedle, struct{}](64 * 1024)
+
+type verifiedNeedle struct {
+	volumeId   needle.VolumeId
+	revision   uint16
+	id         NeedleId
+	appendAtNs uint64
+	checksum   needle.CRC
+}
 
 // read fills in Needle content by looking up n.Id from NeedleMapper
 func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption, onReadSizeFn func(size Size)) (count int, err error) {
@@ -157,6 +172,18 @@ func (v *Volume) verifyMovedRecord(n *needle.Needle, moved *needle_map.NeedleVal
 
 // read fills in Needle content by looking up n.Id from NeedleMapper
 func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, writer io.Writer, offset int64, size int64) (err error) {
+
+	// Check the CRC before writing any byte of the range, so a damaged
+	// replica fails the read and the reader tries another copy.
+	if offset != 0 || size != int64(n.DataSize) {
+		key := verifiedNeedle{v.Id, v.SuperBlock.CompactionRevision, n.Id, n.AppendAtNs, n.Checksum}
+		if !verifiedNeedles.Contains(key) {
+			if err = v.readNeedleDataInto(n, readOption, io.Discard, 0, int64(n.DataSize)); err != nil {
+				return err
+			}
+			verifiedNeedles.Add(key, struct{}{})
+		}
+	}
 
 	if !readOption.HasSlowRead {
 		v.dataFileAccessLock.RLock()

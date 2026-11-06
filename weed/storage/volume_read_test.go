@@ -324,6 +324,61 @@ func TestReadNeedleDataIntoChecksumMismatchHoldsLastPage(t *testing.T) {
 	}
 }
 
+// A range carries no checksum of its own, so the first ranged read of a
+// needle checks the whole needle's CRC and writes nothing on a mismatch. The
+// reader can then fall back to another replica.
+func TestReadNeedleDataIntoRangeChecksumMismatch(t *testing.T) {
+	dir := t.TempDir()
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+
+	data := bytes.Repeat([]byte("0123456789"), 300)
+	// One buffer holds the whole needle, or the check streams it in pages.
+	for i, page := range []int{4096, 1024} {
+		write := func(id uint64) (types.Offset, int64) {
+			n := &needle.Needle{Id: types.Uint64ToNeedleId(id), Cookie: 0x1234, Data: append([]byte(nil), data...)}
+			n.Checksum = needle.NewCRC(n.Data)
+			offset, _, _, err := v.writeNeedle2(n, true, false, false)
+			if err != nil {
+				t.Fatalf("write needle: %v", err)
+			}
+			nv, _ := v.nm.Get(n.Id)
+			return nv.Offset, int64(offset)
+		}
+		read := func(id uint64, at types.Offset) (bytes.Buffer, error) {
+			meta := &needle.Needle{Id: types.Uint64ToNeedleId(id)}
+			nv, _ := v.nm.Get(meta.Id)
+			if err := v.readNeedleMetaAt(meta, at.ToActualOffset(), int32(nv.Size)); err != nil {
+				t.Fatalf("read meta: %v", err)
+			}
+			var buf bytes.Buffer
+			err := v.readNeedleDataInto(meta, &ReadOption{ReadBufferSize: page}, &buf, 1000, 500)
+			return buf, err
+		}
+
+		intact := uint64(10*i + 1)
+		at, _ := write(intact)
+		if got, err := read(intact, at); err != nil || !bytes.Equal(got.Bytes(), data[1000:1500]) {
+			t.Fatalf("page %d: intact range read: %d bytes, %v", page, got.Len(), err)
+		}
+
+		// Damage a byte outside the range: the range itself is intact, but
+		// the needle is not, so this replica must not serve it.
+		damaged := uint64(10*i + 2)
+		at, raw := write(damaged)
+		if _, err := v.DataBackend.WriteAt([]byte{0xff}, raw+types.NeedleHeaderSize+types.DataSizeSize+10); err != nil {
+			t.Fatalf("damage needle: %v", err)
+		}
+		got, err := read(damaged, at)
+		if err == nil || !strings.Contains(err.Error(), "checksum") || got.Len() != 0 {
+			t.Fatalf("page %d: damaged range read wrote %d bytes, err %v; want a checksum error and nothing written", page, got.Len(), err)
+		}
+	}
+}
+
 // With MustMetaOnly set, the payload is skipped whatever the needle's size.
 // This is the option a delete uses. A chunk manifest is the exception: its
 // data is still read, because a delete needs it to find the chunks.
