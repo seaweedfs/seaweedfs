@@ -4,8 +4,11 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/hashicorp/go-metrics"
 	"github.com/hashicorp/raft"
+	prom "github.com/prometheus/client_golang/prometheus"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 )
 
 func TestRaftServerID(t *testing.T) {
@@ -71,4 +74,27 @@ func TestAddPeersConfigurationUsesCanonicalIDs(t *testing.T) {
 			t.Fatalf("addrs[%d] = %q, want %q", i, addrs[i], wantAddrs[i])
 		}
 	}
+}
+
+func TestRaftMetricsReachPrometheus(t *testing.T) {
+	reg := prom.NewRegistry()
+	if err := registerRaftMetrics(reg); err != nil {
+		t.Fatal(err)
+	}
+	// raft reports through the hashicorp/go-metrics global
+	metrics.SetGauge([]string{"raft", "peers"}, 3)
+
+	families, err := reg.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range families {
+		if f.GetName() == stats.Namespace+"_raft_peers" {
+			if got := f.GetMetric()[0].GetGauge().GetValue(); got != 3 {
+				t.Fatalf("raft_peers = %v, want 3", got)
+			}
+			return
+		}
+	}
+	t.Fatalf("%s_raft_peers was not gathered", stats.Namespace)
 }

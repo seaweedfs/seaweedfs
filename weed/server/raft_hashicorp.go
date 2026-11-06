@@ -13,11 +13,12 @@ import (
 	"time"
 
 	transport "github.com/Jille/raft-grpc-transport"
-	"github.com/armon/go-metrics"
-	"github.com/armon/go-metrics/prometheus"
+	"github.com/hashicorp/go-metrics"
+	"github.com/hashicorp/go-metrics/prometheus"
 	"github.com/hashicorp/raft"
 	hashicorpRaft "github.com/hashicorp/raft"
 	boltdb "github.com/hashicorp/raft-boltdb/v2"
+	prom "github.com/prometheus/client_golang/prometheus"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
@@ -146,6 +147,10 @@ func NewHashicorpRaftServer(option *RaftServerOption) (*RaftServer, error) {
 		return nil, fmt.Errorf("raft.ValidateConfig: %w", err)
 	}
 
+	if err := registerRaftMetrics(stats.Gather); err != nil {
+		return nil, err
+	}
+
 	if err := os.MkdirAll(path.Join(s.dataDir, "snapshots"), os.ModePerm); err != nil {
 		return nil, err
 	}
@@ -199,18 +204,23 @@ func NewHashicorpRaftServer(option *RaftServerOption) (*RaftServer, error) {
 		}()
 	}
 
-	// Configure a prometheus sink as the raft metrics sink
-	if sink, err := prometheus.NewPrometheusSinkFrom(prometheus.PrometheusOpts{
-		Registerer: stats.Gather,
-	}); err != nil {
-		return nil, fmt.Errorf("NewPrometheusSink: %w", err)
-	} else {
-		metricsConf := metrics.DefaultConfig(stats.Namespace)
-		metricsConf.EnableRuntimeMetrics = false
-		if _, err = metrics.NewGlobal(metricsConf, sink); err != nil {
-			return nil, fmt.Errorf("metrics.NewGlobal: %w", err)
-		}
-	}
-
 	return s, nil
+}
+
+// registerRaftMetrics points the hashicorp/go-metrics global, which raft and
+// raft-boltdb report to, at a prometheus sink on reg.
+func registerRaftMetrics(reg prom.Registerer) error {
+	sink, err := prometheus.NewPrometheusSinkFrom(prometheus.PrometheusOpts{
+		Registerer: reg,
+	})
+	if err != nil {
+		return fmt.Errorf("NewPrometheusSink: %w", err)
+	}
+	metricsConf := metrics.DefaultConfig(stats.Namespace)
+	metricsConf.EnableRuntimeMetrics = false
+	metricsConf.EnableHostname = false
+	if _, err = metrics.NewGlobal(metricsConf, sink); err != nil {
+		return fmt.Errorf("metrics.NewGlobal: %w", err)
+	}
+	return nil
 }
