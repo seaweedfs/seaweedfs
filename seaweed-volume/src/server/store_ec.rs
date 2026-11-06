@@ -1065,7 +1065,9 @@ fn read_local_intervals(
         match local {
             Some(shard) => {
                 let mut buf = vec![0u8; buf_size];
-                match shard.read_at(&mut buf, shard_offset as u64) {
+                let read = shard.read_at(&mut buf, shard_offset as u64);
+                ecv.check_read_write_error(read.as_ref().err());
+                match read {
                     Ok(n) if n == buf_size => interval_results.push(IntervalResult::Local(buf)),
                     _ => interval_results.push(IntervalResult::NeedRemote {
                         shard_id,
@@ -1575,11 +1577,9 @@ async fn gather_ec_shard_intervals(
             };
             if let Some(Some(shard)) = owner.shards.get(sid) {
                 let mut buf = vec![0u8; size];
-                if shard
-                    .read_at(&mut buf, shard_offset as u64)
-                    .map(|n| n == size)
-                    .unwrap_or(false)
-                {
+                let read = shard.read_at(&mut buf, shard_offset as u64);
+                owner.check_read_write_error(read.as_ref().err());
+                if read.map(|n| n == size).unwrap_or(false) {
                     *slot = Some(buf);
                     available += 1;
                 }
