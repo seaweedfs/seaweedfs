@@ -3619,7 +3619,11 @@ pub async fn delete_handler(
 
     // Read needle first to validate cookie (matching Go behavior)
     let original_cookie = cookie;
-    let is_replicate = del_query.split('&').any(|p| p == "type=replicate");
+    let is_replicate = serde_urlencoded::from_str::<Vec<(String, String)>>(&del_query)
+        .unwrap_or_default()
+        .into_iter()
+        .find(|(name, _)| name == "type")
+        .is_some_and(|(_, value)| value == "replicate");
     {
         let vol = {
             let store = state.store.read().unwrap();
@@ -9076,12 +9080,14 @@ mod tests {
         use crate::storage::volume::VolumeError;
         use std::time::{Duration, Instant};
 
-        for (id, fsync, replicate, abandon) in [
-            (0x6e7a_0c01u64, false, true, false),
-            (0x6e7a_0c02, true, true, false),
-            (0x6e7a_0c03, true, true, true),
-            (0x6e7a_0c04, false, false, false),
+        for (id, fsync, query, abandon) in [
+            (0x6e7a_0c01u64, false, "?type=replicate", false),
+            (0x6e7a_0c02, true, "?type=replicate", false),
+            (0x6e7a_0c03, true, "?type=replicate", true),
+            (0x6e7a_0c04, false, "", false),
+            (0x6e7a_0c05, false, "?%74ype=replicat%65", false),
         ] {
+            let replicate = !query.is_empty();
             let tmp = tempfile::TempDir::new().unwrap();
             let state = volume_test_state(&tmp);
             assert!(
@@ -9121,10 +9127,7 @@ mod tests {
                 tokio::time::sleep(Duration::from_millis(1)).await;
             }
 
-            let mut path = format!("/1,{:x}{:08x}", id, TEST_COOKIE);
-            if replicate {
-                path.push_str("?type=replicate");
-            }
+            let path = format!("/1,{:x}{:08x}{}", id, TEST_COOKIE, query);
             assert_eq!(send_delete(&state, &path).await, StatusCode::NOT_FOUND);
             if abandon {
                 write.abort();
