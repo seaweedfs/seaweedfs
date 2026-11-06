@@ -549,6 +549,12 @@ func (c *blockingFilerClient) LookupDirectoryEntry(ctx context.Context, _ *filer
 	return nil, ctx.Err()
 }
 
+func (c *blockingFilerClient) UpdateEntry(ctx context.Context, _ *filer_pb.UpdateEntryRequest, _ ...grpc.CallOption) (*filer_pb.UpdateEntryResponse, error) {
+	c.updates++
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
 func (c *blockingFilerClient) WithFilerClient(_ bool, fn func(filer_pb.SeaweedFilerClient) error) error {
 	return fn(c)
 }
@@ -570,8 +576,12 @@ func TestFilerLookupsOnTheSyncPathCarryADeadline(t *testing.T) {
 	if _, writeErr := retriedWriteFile(nil, &blockingFilerClient{}, dir, event, &remote_pb.RemoteStorageLocation{Name: "b2", Bucket: "b", Path: "/lease.json"}); !errors.Is(writeErr, context.DeadlineExceeded) {
 		t.Errorf("retriedWriteFile = %v on an unanswered supersession lookup; want the lookup error, not an upload", writeErr)
 	}
+	stamp := &blockingFilerClient{}
+	if stampErr := updateLocalEntry(stamp, dir, event, &filer_pb.RemoteEntry{StorageName: "b2"}); stamp.updates != 1 || !errors.Is(stampErr, context.DeadlineExceeded) {
+		t.Errorf("updateLocalEntry = %v after %d updates on an unanswered stamp; want deadline exceeded after 1", stampErr, stamp.updates)
+	}
 	if elapsed := time.Since(started); elapsed > 5*time.Second {
-		t.Fatalf("two timed-out lookups took %v; the deadline did not bound them", elapsed)
+		t.Fatalf("four timed-out filer calls took %v; the deadline did not bound them", elapsed)
 	}
 }
 

@@ -1243,7 +1243,9 @@ func updateLocalEntry(filerClient filer_pb.FilerClient, dir string, entry *filer
 	entry.RemoteEntry = remoteEntry
 	delete(entry.Extended, filer.ExtRemoteRenameSourceKey)
 	err := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		_, err := client.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{
+		ctx, cancel := lookupContext()
+		defer cancel()
+		_, err := client.UpdateEntry(ctx, &filer_pb.UpdateEntryRequest{
 			Directory: dir,
 			Entry:     entry,
 			Condition: ifEntryEqual(expected),
