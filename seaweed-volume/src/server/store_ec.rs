@@ -1615,6 +1615,7 @@ async fn gather_ec_shard_intervals(
     // shard_locations cache or a failed master lookup, local
     // survivors still contribute.
     let mut available = 0usize;
+    let mut quarantined = Vec::new();
     {
         let store = state.store.read().unwrap();
         for (sid, slot) in bufs.iter_mut().enumerate() {
@@ -1634,14 +1635,16 @@ async fn gather_ec_shard_intervals(
             }
             let owner = match store.find_ec_volume_with_shard(vid, sid_shard) {
                 Some(ecv)
-                    if (expected_encode_ts_ns == 0
-                        || ecv.encode_ts_ns == expected_encode_ts_ns)
-                        && !ecv.get_io_error_state().2 =>
+                    if expected_encode_ts_ns == 0 || ecv.encode_ts_ns == expected_encode_ts_ns =>
                 {
                     ecv
                 }
                 _ => continue,
             };
+            if owner.get_io_error_state().2 {
+                quarantined.push(sid_shard);
+                continue;
+            }
             if let Some(Some(shard)) = owner.shards.get(sid) {
                 let mut buf = vec![0u8; size];
                 let read = shard.read_at(&mut buf, shard_offset as u64);
@@ -1719,6 +1722,31 @@ async fn gather_ec_shard_intervals(
         if any_deleted {
             // every shard of a deleted needle answers deleted, so another wave cannot help
             break;
+        }
+    }
+
+    // Healthy sources fell short: fill in from the quarantined local disk.
+    for sid in quarantined {
+        if any_deleted || available >= want {
+            break;
+        }
+        if bufs[sid as usize].is_some() {
+            continue;
+        }
+        if let Some(buf) = read_quarantined_local_interval(
+            state,
+            EcInterval {
+                shard_id: sid,
+                ..iv
+            },
+        ) {
+            tracing::debug!(
+                "recover: read ec shard {}.{} from its quarantined disk",
+                vid.0,
+                sid
+            );
+            bufs[sid as usize] = Some(buf);
+            available += 1;
         }
     }
 

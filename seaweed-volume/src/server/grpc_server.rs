@@ -13176,12 +13176,10 @@ mod tests {
         assert_eq!(miss, crate::server::store_ec::EcMiss::Deleted);
     }
 
-    /// When no healthy copy answers, the quarantined shards still serve the read.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn test_ec_read_falls_back_to_quarantined_shards() {
-        let (service, _tmp) = make_local_service_with_volume("", None);
-        let want = needle_status(&service, 11).await.unwrap();
-        generate_and_mount_ec_1(&service, (0..14).collect()).await;
+    /// Leaves `service` holding `local_shards` of EC volume 1 on a quarantined
+    /// disk, with every shard's other holder unreachable.
+    async fn quarantine_ec_1_without_peers(service: &VolumeGrpcService, local_shards: Vec<u32>) {
+        generate_and_mount_ec_1(service, local_shards).await;
         {
             let mut store = service.state.store.write().unwrap();
             store.unmount_volume(VolumeId(1)).unwrap();
@@ -13194,11 +13192,33 @@ mod tests {
                         .collect(),
                 );
         }
-        quarantine_ec_1(&service);
+        quarantine_ec_1(service);
+    }
+
+    /// When no healthy copy answers, the quarantined shards still serve the read.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_ec_read_falls_back_to_quarantined_shards() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        let want = needle_status(&service, 11).await.unwrap();
+        quarantine_ec_1_without_peers(&service, (0..14).collect()).await;
 
         let got = needle_status(&service, 11)
             .await
             .expect("only the quarantined disk holds the shards");
+        assert_eq!(got, want);
+    }
+
+    /// Reconstruction falls back to quarantined local shards when the healthy
+    /// sources cannot supply enough of them.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_ec_read_reconstructs_from_quarantined_shards() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        let want = needle_status(&service, 11).await.unwrap();
+        quarantine_ec_1_without_peers(&service, (4..14).collect()).await;
+
+        let got = needle_status(&service, 11)
+            .await
+            .expect("the needle's shard is gone and only quarantined shards can rebuild it");
         assert_eq!(got, want);
     }
 
