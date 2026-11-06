@@ -123,6 +123,13 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_, ok := vs.store.ReadVolumeNeedle(volumeId, n, deleteReadOption(), nil)
+	if ok != nil && r.FormValue("type") == "replicate" {
+		// the write this delete undoes can still be queued here
+		if v := vs.store.GetVolume(volumeId); v != nil {
+			v.CancelPendingWrites(n.Id)
+			_, ok = vs.store.ReadVolumeNeedle(volumeId, n, deleteReadOption(), nil)
+		}
+	}
 	if ok != nil {
 		m := make(map[string]uint32)
 		m["size"] = 0
