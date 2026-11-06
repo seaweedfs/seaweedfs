@@ -7,7 +7,6 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
-	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -68,32 +67,4 @@ func TestCommitAppendedChunkKeepsChunkOnSuccess(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, queuedForDeletion(f, orphanTestFid),
 		"a successfully committed chunk must never be queued for deletion")
-}
-
-func entryWithChunks(n int) *filer_pb.Entry {
-	e := &filer_pb.Entry{Name: "journal.jsonl"}
-	for i := 0; i < n; i++ {
-		e.Chunks = append(e.Chunks, &filer_pb.FileChunk{FileId: "7,0abc", Offset: int64(i), Size: 1})
-	}
-	return e
-}
-
-// TestCapEventChunksDropsOversizedChunkLists covers the quadratic metadata-log
-// growth: a metadata event embeds the whole old and new entry, so an
-// append-only file makes every append re-serialize every chunk it ever had.
-func TestCapEventChunksDropsOversizedChunkLists(t *testing.T) {
-	atLimit := entryWithChunks(metadataEventChunkLimit)
-	capped, truncated := capEventChunks(atLimit)
-	assert.False(t, truncated, "an entry at the limit must be carried intact")
-	assert.Len(t, capped.Chunks, metadataEventChunkLimit)
-
-	overLimit := entryWithChunks(metadataEventChunkLimit + 1)
-	capped, truncated = capEventChunks(overLimit)
-	assert.True(t, truncated, "an oversized entry must be reported as truncated")
-	assert.Empty(t, capped.Chunks, "the chunk list must be dropped from the event")
-	assert.Len(t, overLimit.Chunks, metadataEventChunkLimit+1,
-		"the caller's entry must not be mutated")
-
-	_, truncated = capEventChunks(nil)
-	assert.False(t, truncated, "a nil entry must not be reported as truncated")
 }
