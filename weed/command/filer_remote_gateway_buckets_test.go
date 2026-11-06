@@ -1,6 +1,7 @@
 package command
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
