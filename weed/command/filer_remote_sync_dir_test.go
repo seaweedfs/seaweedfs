@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -553,6 +554,67 @@ func entryWith(name string, remote *filer_pb.RemoteEntry, chunks ...*filer_pb.Fi
 // of a write in progress: a mount flushes metadata while chunk uploads are
 // still running, so the snapshot can have holes, and the stream reader stops
 // at the first one on every retry.
+// blockingFilerClient answers a lookup only when its context ends.
+type blockingFilerClient struct {
+	stubFilerClient
+}
+
+func (c *blockingFilerClient) LookupDirectoryEntry(ctx context.Context, _ *filer_pb.LookupDirectoryEntryRequest, _ ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	c.lookups++
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (c *blockingFilerClient) WithFilerClient(_ bool, fn func(filer_pb.SeaweedFilerClient) error) error {
+	return fn(c)
+}
+
+func TestFilerLookupsOnTheSyncPathCarryADeadline(t *testing.T) {
+	remoteSyncLookupTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { remoteSyncLookupTimeout = 30 * time.Second })
+	const dir = "/buckets/ingest"
+	event := entryWith("lease.json", nil, chunk("3,01", "e1"))
+
+	started := time.Now()
+	current, err := currentEntry(&blockingFilerClient{}, dir, event.Name)
+	if current != nil || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("currentEntry = %v, %v; want nil, deadline exceeded", current, err)
+	}
+	if isSuperseded(&blockingFilerClient{}, dir, event) {
+		t.Error("isSuperseded = true on a lookup that timed out; want false (the write failure is kept and retried)")
+	}
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Fatalf("two timed-out lookups took %v; the deadline did not bound them", elapsed)
+	}
+}
+
+func TestRemoteUploadReaderSharesOneChunkCache(t *testing.T) {
+	entry := entryWith("blob.bin", nil, chunk("3,01", "e1"))
+	for i := 0; i < 3; i++ {
+		if _, closeFn, err := remoteUploadReader(&stubFilerClient{}, entry); err != nil {
+			t.Fatal(err)
+		} else if closeFn != nil {
+			_ = closeFn()
+		}
+	}
+	runtime.GC()
+	before := runtime.NumGoroutine()
+	for i := 0; i < 200; i++ {
+		_, closeFn, err := remoteUploadReader(&stubFilerClient{}, entry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if closeFn != nil {
+			_ = closeFn()
+		}
+	}
+	runtime.GC()
+	time.Sleep(100 * time.Millisecond)
+	if after := runtime.NumGoroutine(); after-before > 20 {
+		t.Fatalf("200 upload readers left %d goroutines behind (%d -> %d); one chunk cache per reader leaks its worker", after-before, before, after)
+	}
+}
+
 func TestIsSuperseded(t *testing.T) {
 	const dir = "/buckets/ingest"
 	event := entryWith("tmpjt9req69__Alan_Doe_Resume-1.pdf", nil, chunk("3,01", "e1"), chunk("3,02", "e2"))

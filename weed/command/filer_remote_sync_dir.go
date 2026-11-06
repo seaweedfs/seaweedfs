@@ -614,8 +614,19 @@ func releaseRenamedSource(filerSource filer_pb.FilerClient, client remote_storag
 
 // currentEntry returns what the filer holds at dir/name now, nil when the
 // entry is gone.
+// remoteSyncLookupTimeout bounds a filer lookup on the sync path. A lookup
+// that never answers keeps its job alive, the job keeps its path in the
+// processor's conflict index, and the stream stops behind it.
+var remoteSyncLookupTimeout = 30 * time.Second
+
+func lookupContext() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), remoteSyncLookupTimeout)
+}
+
 func currentEntry(filerSource filer_pb.FilerClient, dir, name string) (*filer_pb.Entry, error) {
-	current, _, _, err := filer_pb.GetEntry(context.Background(), filerSource, util.NewFullPath(dir, name))
+	ctx, cancel := lookupContext()
+	defer cancel()
+	current, _, _, err := filer_pb.GetEntry(ctx, filerSource, util.NewFullPath(dir, name))
 	if errors.Is(err, filer_pb.ErrNotFound) {
 		return nil, nil
 	}
@@ -743,7 +754,9 @@ func openRemoteObject(client remote_storage.RemoteStorageClient, loc *remote_pb.
 // finishes a rename: its stamp can already describe the destination (a sync
 // plus remote.uncache in the meantime), and only then is it complete.
 func uploadCurrentEntry(filerClient filer_pb.FilerClient, filerSource filer_pb.FilerClient, client remote_storage.RemoteStorageClient, dir, name string, oldSource renameSource, dest *remote_pb.RemoteStorageLocation, storageClass string, sourceOf func(*filer_pb.Entry, renameSource) renameSource) error {
-	current, _, _, err := filer_pb.GetEntry(context.Background(), filerSource, util.NewFullPath(dir, name))
+	ctx, cancel := lookupContext()
+	defer cancel()
+	current, _, _, err := filer_pb.GetEntry(ctx, filerSource, util.NewFullPath(dir, name))
 	if errors.Is(err, filer_pb.ErrNotFound) {
 		return nil
 	}
@@ -960,7 +973,9 @@ func readRemoteStorageConf(filerClient filer_pb.FilerClient, storageName string)
 // object or the later write uploads the current content. A lookup that fails
 // for any other reason keeps the write failure, so the event is retried.
 func isSuperseded(filerClient filer_pb.FilerClient, dir string, entry *filer_pb.Entry) bool {
-	current, _, _, err := filer_pb.GetEntry(context.Background(), filerClient, util.NewFullPath(dir, entry.Name))
+	ctx, cancel := lookupContext()
+	defer cancel()
+	current, _, _, err := filer_pb.GetEntry(ctx, filerClient, util.NewFullPath(dir, entry.Name))
 	if errors.Is(err, filer_pb.ErrNotFound) {
 		return true
 	}
@@ -988,6 +1003,10 @@ func isSuperseded(filerClient filer_pb.FilerClient, dir string, entry *filer_pb.
 // the backend a short body on every retry — a hole that never fills wedges
 // the event, and a backend that does not verify the length publishes a
 // truncated object.
+// remoteUploadChunkCache is one per process: a chunk cache runs a worker
+// goroutine that nothing stops, so a cache per upload leaks one per file.
+var remoteUploadChunkCache = chunk_cache.NewChunkCacheInMemory(8)
+
 func remoteUploadReader(filerClient filer_pb.FilerClient, entry *filer_pb.Entry) (reader io.Reader, closeFn func() error, err error) {
 	if len(entry.Content) > 0 {
 		return bytes.NewReader(entry.Content), nil, nil
@@ -999,7 +1018,7 @@ func remoteUploadReader(filerClient filer_pb.FilerClient, entry *filer_pb.Entry)
 		return nil, nil, err
 	}
 	readerAt := filer.NewChunkReaderAtFromClient(context.Background(),
-		filer.NewReaderCache(8, chunk_cache.NewChunkCacheInMemory(8), lookupFileIdFn, nil),
+		filer.NewReaderCache(8, remoteUploadChunkCache, lookupFileIdFn, nil),
 		chunkViews, size, filer.DefaultPrefetchCount)
 	return io.NewSectionReader(readerAt, 0, size), readerAt.Close, nil
 }
@@ -1055,7 +1074,9 @@ func collectLastSyncOffset(filerClient filer_pb.FilerClient, grpcDialOption grpc
 	// 3. directory creation time
 	var lastOffsetTs time.Time
 	if timeAgo == 0 {
-		mountedDirEntry, _, _, err := filer_pb.GetEntry(context.Background(), filerClient, util.FullPath(mountedDir))
+		ctx, cancel := lookupContext()
+		mountedDirEntry, _, _, err := filer_pb.GetEntry(ctx, filerClient, util.FullPath(mountedDir))
+		cancel()
 		if err != nil {
 			glog.V(0).Infof("get mounted directory %s: %v", mountedDir, err)
 			return time.Now()
@@ -1126,7 +1147,9 @@ func liveRemoteEntry(filerClient filer_pb.FilerClient, dir string, entry *filer_
 	if entry.RemoteEntry != nil {
 		return entry.RemoteEntry, nil
 	}
-	current, _, _, err := filer_pb.GetEntry(context.Background(), filerClient, util.NewFullPath(dir, entry.Name))
+	ctx, cancel := lookupContext()
+	defer cancel()
+	current, _, _, err := filer_pb.GetEntry(ctx, filerClient, util.NewFullPath(dir, entry.Name))
 	if err != nil {
 		return nil, err
 	}
