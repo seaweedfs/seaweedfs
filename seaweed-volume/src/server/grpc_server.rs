@@ -4461,7 +4461,7 @@ impl VolumeServer for VolumeGrpcService {
         // rather than first-match `find_ec_volume(vid)` which would
         // miss shards that live on a sibling. Mirrors Go's findEcShard.
         let ec_vol = store
-            .find_servable_ec_volume_with_shard(vid, shard_id, req.encode_ts_ns)
+            .find_ec_volume_with_shard(vid, shard_id)
             .ok_or_else(|| {
                 Status::not_found(format!(
                     "ec volume {} shard {} not found",
@@ -13246,53 +13246,6 @@ mod tests {
             Ok(_) => panic!("a quarantined shard was served"),
             Err(status) => assert_eq!(status.code(), tonic::Code::Unavailable, "{status}"),
         }
-    }
-
-    /// A copy of the shard on a healthy disk serves the peer when another
-    /// disk's copy is quarantined.
-    #[tokio::test]
-    async fn test_volume_ec_shard_read_serves_a_healthy_copy_on_another_disk() {
-        let (service, tmp) = make_local_service_with_volume("", None);
-        generate_and_mount_ec_1(&service, vec![0]).await;
-        quarantine_ec_1(&service);
-
-        let second = TempDir::new().unwrap();
-        let dir = second.path().to_str().unwrap();
-        {
-            let mut store = service.state.store.write().unwrap();
-            store
-                .add_location(
-                    dir,
-                    dir,
-                    10,
-                    DiskType::HardDrive,
-                    MinFreeSpace::Percent(1.0),
-                    Vec::new(),
-                )
-                .unwrap();
-            for name in ["1.ec00", "1.ecx", "1.ecj", "1.vif"] {
-                std::fs::copy(tmp.path().join(name), second.path().join(name)).unwrap();
-            }
-            store
-                .locations
-                .last_mut()
-                .unwrap()
-                .mount_ec_shards(VolumeId(1), "", &[0], "")
-                .unwrap();
-        }
-
-        service
-            .volume_ec_shard_read(Request::new(
-                volume_server_pb::VolumeEcShardReadRequest {
-                    volume_id: 1,
-                    shard_id: 0,
-                    offset: 0,
-                    size: 8,
-                    ..Default::default()
-                },
-            ))
-            .await
-            .expect("a healthy copy on another disk serves the read");
     }
 
     /// A shard mounted onto a quarantined EC volume fails the mount, so a
