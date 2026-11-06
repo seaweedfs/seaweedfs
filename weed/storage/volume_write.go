@@ -236,7 +236,9 @@ func (v *Volume) syncWrite(n *needle.Needle, checkCookie bool, fsync bool) (offs
 		return 0, 0, false, syncErr
 	}
 	if !isUnchanged {
-		err = v.publishWriteRequest(n, offset, fsync)
+		if err = v.publishWriteRequest(n, offset, fsync); err == nil {
+			err = v.dropCancelledWrite(n, offset)
+		}
 	}
 	// The .idx row goes down before the write is acknowledged, same as the
 	// .dat record above; the access lock is dropped for the fsync the same
@@ -278,12 +280,7 @@ func (v *Volume) writeNeedle2(n *needle.Needle, checkCookie bool, fsync bool, is
 		return 0, 0, false, err
 	}
 
-	pending := v.trackPendingWrite(n.Id)
-	defer func() {
-		if v.untrackPendingWrite(n.Id, pending) && err == nil && !isUnchanged {
-			err = v.dropCancelledWrite(n, offset)
-		}
-	}()
+	defer v.untrackPendingWrite(v.trackPendingWrite(n))
 
 	if n.Ttl == needle.EMPTY_TTL && v.Ttl != needle.EMPTY_TTL {
 		n.SetHasTtl()
@@ -311,7 +308,9 @@ func (v *Volume) doWriteRequest(n *needle.Needle, checkCookie bool, fsync bool) 
 	if err != nil || isUnchanged {
 		return
 	}
-	err = v.publishWriteRequest(n, offset, fsync)
+	if err = v.publishWriteRequest(n, offset, fsync); err == nil {
+		err = v.dropCancelledWrite(n, offset)
+	}
 	return
 }
 
@@ -648,6 +647,8 @@ func (v *Volume) processBatchRun(run []*needle.AsyncRequest) {
 				if perr := v.publishWriteRequest(run[i].N, stagedWriteOffsets[i], true); perr != nil {
 					run[i].UpdateResult(0, 0, false, perr)
 					refused = true
+				} else if derr := v.dropCancelledWrite(run[i].N, stagedWriteOffsets[i]); derr != nil {
+					run[i].UpdateResult(0, 0, false, derr)
 				}
 			}
 		} else if stagedDeleteOk[i] {

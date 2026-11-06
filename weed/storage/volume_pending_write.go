@@ -14,6 +14,7 @@ import (
 // queued behind the volume locks, and landing after the delete would revive
 // the needle on this copy alone.
 type pendingWrite struct {
+	n         *needle.Needle
 	cancelled bool
 }
 
@@ -22,21 +23,21 @@ type pendingWrites struct {
 	byId map[NeedleId][]*pendingWrite
 }
 
-func (v *Volume) trackPendingWrite(id NeedleId) *pendingWrite {
-	w := &pendingWrite{}
+func (v *Volume) trackPendingWrite(n *needle.Needle) *pendingWrite {
+	w := &pendingWrite{n: n}
 	v.pendingWrites.Lock()
 	defer v.pendingWrites.Unlock()
 	if v.pendingWrites.byId == nil {
 		v.pendingWrites.byId = make(map[NeedleId][]*pendingWrite)
 	}
-	v.pendingWrites.byId[id] = append(v.pendingWrites.byId[id], w)
+	v.pendingWrites.byId[n.Id] = append(v.pendingWrites.byId[n.Id], w)
 	return w
 }
 
-// untrackPendingWrite reports whether a delete cancelled the write.
-func (v *Volume) untrackPendingWrite(id NeedleId, w *pendingWrite) bool {
+func (v *Volume) untrackPendingWrite(w *pendingWrite) {
 	v.pendingWrites.Lock()
 	defer v.pendingWrites.Unlock()
+	id := w.n.Id
 	writes := v.pendingWrites.byId[id]
 	for i, x := range writes {
 		if x == w {
@@ -49,7 +50,6 @@ func (v *Volume) untrackPendingWrite(id NeedleId, w *pendingWrite) bool {
 	} else {
 		v.pendingWrites.byId[id] = writes
 	}
-	return w.cancelled
 }
 
 // CancelPendingWrites cancels the writes of the needle that are in flight. A
@@ -63,25 +63,26 @@ func (v *Volume) CancelPendingWrites(id NeedleId) {
 	}
 }
 
-// dropCancelledWrite tombstones a cancelled write that landed, unless the
-// needle has been deleted or rewritten since.
-func (v *Volume) dropCancelledWrite(n *needle.Needle, offset uint64) error {
-	v.dataFileSyncLock.Lock()
-	defer v.dataFileSyncLock.Unlock()
-	v.dataFileAccessLock.Lock()
-	defer v.dataFileAccessLock.Unlock()
+func (v *Volume) isCancelledWrite(n *needle.Needle) bool {
+	v.pendingWrites.Lock()
+	defer v.pendingWrites.Unlock()
+	for _, w := range v.pendingWrites.byId[n.Id] {
+		if w.n == n {
+			return w.cancelled
+		}
+	}
+	return false
+}
 
-	if v.nm == nil {
+// dropCancelledWrite tombstones a cancelled write right after it is published,
+// under the same dataFileSyncLock and dataFileAccessLock hold, so no reader,
+// later write or compaction sees it live in between.
+func (v *Volume) dropCancelledWrite(n *needle.Needle, offset uint64) error {
+	if !v.isCancelledWrite(n) {
 		return nil
 	}
 	if nv, ok := v.nm.Get(n.Id); !ok || nv.Size.IsDeleted() || nv.Offset != ToOffset(int64(offset)) {
 		return nil
-	}
-	if err := v.UnavailableError(); err != nil {
-		return err
-	}
-	if _, noWriteOrDelete, _, _ := v.ReadOnlyReasons(); noWriteOrDelete {
-		return fmt.Errorf("volume %d is read only", v.Id)
 	}
 	tombstone := &needle.Needle{Id: n.Id, Cookie: n.Cookie, LastModified: uint64(time.Now().Unix())}
 	if _, err := v.doDeleteRequest(tombstone); err != nil {
