@@ -182,7 +182,7 @@ func TestRecoverOneRemoteEcShardIntervalUsesLocalShards(t *testing.T) {
 	}
 
 	want := make([]byte, len(got))
-	if err := store.readLocalEcShardInterval(ecVolume, shardIdToRecover, want, actualOffset); err != nil {
+	if err := store.readLocalEcShardInterval(ecVolume, shardIdToRecover, want, actualOffset, false); err != nil {
 		t.Fatalf("read local ec shard %d: %v", shardIdToRecover, err)
 	}
 	if !bytes.Equal(got, want) {
