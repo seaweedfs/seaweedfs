@@ -4432,6 +4432,12 @@ impl VolumeServer for VolumeGrpcService {
                 req.volume_id, req.shard_id
             )));
         }
+        if ec_vol.get_io_error_state().2 {
+            return Err(Status::unavailable(format!(
+                "ec shard {}.{} is on a disk quarantined after IO errors",
+                req.volume_id, req.shard_id
+            )));
+        }
 
         // Identity of the shard actually served, echoed on every response chunk so
         // the client can reject a different encode run even from a pre-upgrade server.
@@ -13147,6 +13153,32 @@ mod tests {
             .await
             .expect("only the quarantined disk holds the shards");
         assert_eq!(got, want);
+    }
+
+    /// Peers move on to the next holder or reconstruct when a shard sits on a
+    /// quarantined disk.
+    #[tokio::test]
+    async fn test_volume_ec_shard_read_refuses_a_quarantined_shard() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        generate_and_mount_ec_1(&service, vec![0]).await;
+        let read = || {
+            service.volume_ec_shard_read(Request::new(
+                volume_server_pb::VolumeEcShardReadRequest {
+                    volume_id: 1,
+                    shard_id: 0,
+                    offset: 0,
+                    size: 8,
+                    ..Default::default()
+                },
+            ))
+        };
+        assert!(read().await.is_ok());
+
+        quarantine_ec_1(&service);
+        match read().await {
+            Ok(_) => panic!("a quarantined shard was served"),
+            Err(status) => assert_eq!(status.code(), tonic::Code::Unavailable, "{status}"),
+        }
     }
 
     /// A volume unmounted before the EC read resolves it is "volume not found",
