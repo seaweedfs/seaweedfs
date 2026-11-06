@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -95,5 +97,46 @@ func TestVersionedConditionalPutAfterLockWaitBecomesLatest(t *testing.T) {
 	filerImpl.mu.Unlock()
 	if stored == nil || string(stored.Extended[s3_constants.ExtVersionIdKey]) != versionId {
 		t.Fatalf("version file for %q missing or carries another id", versionId)
+	}
+}
+
+// A routed PUT whose upload overlaps a DELETE commits after it, so the delete
+// marker must not stay latest over the accepted write.
+func TestVersionedRoutedPutAfterConcurrentDeleteBecomesLatest(t *testing.T) {
+	filerImpl, s3a := newVersionedPutFiler(t)
+	filerAddr := s3a.option.Filers[0]
+	s3a.objectWriteLockClient = cluster.NewLockClient(s3a.option.GrpcDialOption, filerAddr)
+	s3a.objectWriteLockClient.SetRing([]pb.ServerAddress{filerAddr}, 1)
+
+	markerId := ""
+	filerImpl.beforeAssign = func() {
+		if markerId != "" {
+			return
+		}
+		markerId = generateVersionId(true)
+		markerName := "v_" + markerId
+		filerImpl.entries["/buckets/b/k.versions/"+markerName] = &filer_pb.Entry{
+			Name:       markerName,
+			Attributes: &filer_pb.FuseAttributes{},
+			Extended: map[string][]byte{
+				s3_constants.ExtVersionIdKey:    []byte(markerId),
+				s3_constants.ExtDeleteMarkerKey: []byte("true"),
+			},
+		}
+		pointer := filerImpl.entries["/buckets/b/k.versions"]
+		pointer.Extended[s3_constants.ExtLatestVersionIdKey] = []byte(markerId)
+		pointer.Extended[s3_constants.ExtLatestVersionFileNameKey] = []byte(markerName)
+	}
+
+	r := httptest.NewRequest(http.MethodPut, "/b/k", strings.NewReader("new"))
+	versionId, _, code, _ := s3a.putVersionedObject(r, "b", "k", r.Body, "")
+	if code != s3err.ErrNone {
+		t.Fatalf("PUT = %v", code)
+	}
+	if filerImpl.txnCount != 1 {
+		t.Fatalf("PUT should route one transaction, got %d", filerImpl.txnCount)
+	}
+	if got := latestVersionId(filerImpl); got != versionId {
+		t.Fatalf("latest version = %q, want the returned version %q (delete marker %q)", got, versionId, markerId)
 	}
 }

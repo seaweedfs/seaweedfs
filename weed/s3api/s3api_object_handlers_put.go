@@ -1113,6 +1113,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 				lockKey, finalizeMutations = finalize.lockKey, finalize.mutations
 			}
 			routeKey := s3a.objectRouteKey(bucket, object)
+			remintVersion()
 			resp, err := s3a.routedPut(owner, routeKey, lockKey, filePath, entry, cond, "", condAltKey, false, nil, "", finalizeMutations)
 			if err == nil && resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED && condAltKey != "" {
 				// A filer that ignores condition_alt_key evaluated the empty
