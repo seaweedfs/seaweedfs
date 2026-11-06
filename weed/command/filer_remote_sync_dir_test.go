@@ -670,11 +670,17 @@ func TestResolveLastSyncOffsetReturnsTheErrorToTheRetryLoop(t *testing.T) {
 		t.Fatalf("got %v, want the lookup error: without a saved offset the caller's retry loop decides, not an exit", err)
 	}
 
-	// no directory and no saved offset yet: a first run starts now
+	// no directory and no saved offset yet: a first run starts no later than
+	// the lookup, so a bucket created while the offset is read is replayed
 	started := time.Now()
-	notFound := func() (*filer_pb.Entry, error) { return nil, fmt.Errorf("lookup /buckets: %w", filer_pb.ErrNotFound) }
-	if got, err := resolveLastSyncOffset("/buckets", 0, notFound, noOffset); err != nil || got.Before(started) {
-		t.Fatalf("got %v, %v; want now and no error before the directory exists", got, err)
+	var lookedUp time.Time
+	notFound := func() (*filer_pb.Entry, error) {
+		lookedUp = time.Now()
+		return nil, fmt.Errorf("lookup /buckets: %w", filer_pb.ErrNotFound)
+	}
+	slowNoOffset := func() (int64, error) { time.Sleep(10 * time.Millisecond); return 0, nil }
+	if got, err := resolveLastSyncOffset("/buckets", 0, notFound, slowNoOffset); err != nil || got.Before(started) || got.After(lookedUp) {
+		t.Fatalf("got %v, %v; want a start between %v and the lookup at %v", got, err, started, lookedUp)
 	}
 
 	// the mount answers but the saved offset is unreadable: never its creation time
