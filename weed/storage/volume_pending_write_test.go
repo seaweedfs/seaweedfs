@@ -1,0 +1,117 @@
+package storage
+
+import (
+	"fmt"
+	"testing"
+	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
+	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/stretchr/testify/require"
+)
+
+func waitForPendingWrites(t *testing.T, v *Volume, id NeedleId, count int) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		v.pendingWrites.Lock()
+		got := len(v.pendingWrites.byId[id])
+		v.pendingWrites.Unlock()
+		if got >= count {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d of %d writes of needle %d registered", got, count, id)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func requireNeedleDeleted(t *testing.T, v *Volume, id NeedleId) {
+	t.Helper()
+	_, err := v.readNeedle(&needle.Needle{Id: id}, nil, nil)
+	require.ErrorIs(t, err, ErrorDeleted)
+}
+
+// A replicate delete that finds nothing can still have the write it undoes
+// queued behind the volume locks. That write must not land live afterwards.
+func TestDeleteOfMissingNeedleCancelsQueuedWrite(t *testing.T) {
+	for _, fsync := range []bool{false, true} {
+		t.Run(fmt.Sprintf("fsync=%v", fsync), func(t *testing.T) {
+			dir := t.TempDir()
+			v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+			require.NoError(t, err)
+
+			n := newRandomNeedle(1)
+			v.dataFileSyncLock.Lock()
+			written := make(chan error, 1)
+			go func() {
+				_, _, _, err := v.writeNeedle2(n, true, fsync, false)
+				written <- err
+			}()
+			waitForPendingWrites(t, v, n.Id, 1)
+
+			_, err = v.readNeedle(&needle.Needle{Id: n.Id}, nil, nil)
+			require.ErrorIs(t, err, ErrorNotFound)
+			v.CancelPendingWrites(n.Id)
+			v.dataFileSyncLock.Unlock()
+
+			require.ErrorIs(t, <-written, ErrorDeleted)
+			requireNeedleDeleted(t, v, n.Id)
+			require.Empty(t, v.pendingWrites.byId)
+
+			v.Close()
+			v, err = NewVolume(dir, dir, "", 1, NeedleMapInMemory, nil, nil, 0, needle.GetCurrentVersion(), 0, 0)
+			require.NoError(t, err)
+			defer v.Close()
+			requireNeedleDeleted(t, v, n.Id)
+		})
+	}
+}
+
+// A delete that finds a copy also cancels a retry of the same write that is
+// still queued, so the retry does not bring the needle back.
+func TestDeleteCancelsQueuedRewrite(t *testing.T) {
+	v := newWorkerTestVolume(t)
+	n := newRandomNeedle(1)
+	_, _, _, err := v.writeNeedle2(n, true, false, false)
+	require.NoError(t, err)
+
+	rewrite := newRandomNeedle(1)
+	rewrite.Cookie = n.Cookie
+	// holds the durable rewrite after it registers, before it reaches the worker
+	v.asyncWorkerLock.Lock()
+	written := make(chan error, 1)
+	go func() {
+		_, _, _, err := v.writeNeedle2(rewrite, true, true, false)
+		written <- err
+	}()
+	waitForPendingWrites(t, v, n.Id, 1)
+
+	_, err = v.deleteNeedle2(&needle.Needle{Id: n.Id, Cookie: n.Cookie})
+	require.NoError(t, err)
+	requireNeedleDeleted(t, v, n.Id)
+	v.asyncWorkerLock.Unlock()
+
+	require.ErrorIs(t, <-written, ErrorDeleted)
+	requireNeedleDeleted(t, v, n.Id)
+	require.Empty(t, v.pendingWrites.byId)
+}
+
+// Only writes already in flight are cancelled: writing the needle again after
+// the delete works as before.
+func TestWriteAfterDeleteIsNotCancelled(t *testing.T) {
+	v := newWorkerTestVolume(t)
+	n := newRandomNeedle(1)
+	v.CancelPendingWrites(n.Id)
+	_, err := v.deleteNeedle2(&needle.Needle{Id: n.Id, Cookie: n.Cookie})
+	require.NoError(t, err)
+
+	_, _, _, err = v.writeNeedle2(n, true, false, false)
+	require.NoError(t, err)
+	got := &needle.Needle{Id: n.Id}
+	_, err = v.readNeedle(got, nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, n.Data, got.Data)
+}

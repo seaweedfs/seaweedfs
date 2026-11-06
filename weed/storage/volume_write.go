@@ -278,6 +278,13 @@ func (v *Volume) writeNeedle2(n *needle.Needle, checkCookie bool, fsync bool, is
 		return 0, 0, false, err
 	}
 
+	pending := v.trackPendingWrite(n.Id)
+	defer func() {
+		if v.untrackPendingWrite(n.Id, pending) && err == nil && !isUnchanged {
+			err = v.dropCancelledWrite(n, offset)
+		}
+	}()
+
 	if n.Ttl == needle.EMPTY_TTL && v.Ttl != needle.EMPTY_TTL {
 		n.SetHasTtl()
 		n.Ttl = v.Ttl
@@ -433,6 +440,8 @@ func (v *Volume) syncDelete(n *needle.Needle) (Size, error) {
 }
 
 func (v *Volume) deleteNeedle2(n *needle.Needle) (Size, error) {
+	v.CancelPendingWrites(n.Id)
+
 	// todo: delete info is always appended no fsync, it may need fsync in future
 	fsync := false
 
