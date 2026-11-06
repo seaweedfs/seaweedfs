@@ -56,22 +56,21 @@ fn needle_not_found(needle_id: NeedleId) -> Status {
     Status::not_found(format!("needle not found {}", needle_id.0))
 }
 
-/// The disks holding `shard_id` of `vid`, each with whether its EC volume is
-/// quarantined.
+/// The disks holding `shard_id` of `vid`.
 fn ec_shard_disks(
     store: &crate::storage::store::Store,
     vid: VolumeId,
     shard_id: ShardId,
-) -> Vec<(usize, bool)> {
+) -> Vec<usize> {
     store
         .locations
         .iter()
         .enumerate()
-        .filter_map(|(disk, loc)| {
-            let ecv = loc.find_ec_volume(vid)?;
-            ecv.shards.get(shard_id as usize)?.as_ref()?;
-            Some((disk, ecv.get_io_error_state().2))
+        .filter(|(_, loc)| {
+            loc.find_ec_volume(vid)
+                .is_some_and(|ecv| ecv.has_shard(shard_id))
         })
+        .map(|(disk, _)| disk)
         .collect()
 }
 
@@ -4351,24 +4350,26 @@ impl VolumeServer for VolumeGrpcService {
         let mut mount_err = None;
         for &shard_id in &validated {
             let held_before = ec_shard_disks(&store, vid, shard_id);
-            if let Err(e) =
-                store.mount_ec_shard(vid, &req.collection, shard_id, &req.source_disk_type)
-            {
-                mount_err = Some(Status::internal(format!(
-                    "mount {}.{}: {}",
-                    req.volume_id, shard_id, e
-                )));
-                break;
-            }
+            let disk =
+                match store.mount_ec_shard(vid, &req.collection, shard_id, &req.source_disk_type) {
+                    Ok(disk) => disk,
+                    Err(e) => {
+                        mount_err = Some(Status::internal(format!(
+                            "mount {}.{}: {}",
+                            req.volume_id, shard_id, e
+                        )));
+                        break;
+                    }
+                };
             // Mirrors Go's MountEcShards: a caller moving the shard here keeps
             // its source copy, and the heartbeat never announces it. A shard
             // this call mounted is dropped again, so it does not draw later
             // copies to the same disk.
-            if let Some((disk, _)) = ec_shard_disks(&store, vid, shard_id)
-                .into_iter()
-                .find(|&(_, quarantined)| quarantined)
+            if store.locations[disk]
+                .find_ec_volume(vid)
+                .is_some_and(|ecv| ecv.get_io_error_state().2)
             {
-                if !held_before.iter().any(|&(d, _)| d == disk) {
+                if !held_before.contains(&disk) {
                     store.locations[disk].unmount_ec_shards(vid, &[shard_id]);
                 }
                 mount_err = Some(Status::internal(format!(
@@ -13284,6 +13285,51 @@ mod tests {
         assert!(
             shard_mounted(0),
             "a refused remount unmounted a shard that was already mounted"
+        );
+    }
+
+    /// Like Go, only the disk the shard mounted on is checked: a healthy disk's
+    /// copy mounts while a quarantined sibling holds the same shard.
+    #[tokio::test]
+    async fn test_volume_ec_shards_mount_beside_a_quarantined_sibling() {
+        let (service, tmp) = make_local_service_with_volume("", None);
+        generate_and_mount_ec_1(&service, vec![]).await;
+        let sibling = TempDir::new().unwrap();
+        let dir = sibling.path().to_str().unwrap();
+        {
+            let mut store = service.state.store.write().unwrap();
+            store
+                .add_location(
+                    dir,
+                    dir,
+                    10,
+                    DiskType::HardDrive,
+                    MinFreeSpace::Percent(1.0),
+                    Vec::new(),
+                )
+                .unwrap();
+            for name in ["1.ec01", "1.ecx", "1.ecj", "1.vif"] {
+                let src = tmp.path().join(name);
+                if src.exists() {
+                    std::fs::copy(&src, sibling.path().join(name)).unwrap();
+                }
+            }
+            store.locations[1]
+                .mount_ec_shards_with_idx_dir(VolumeId(1), "", &[1], dir, "")
+                .unwrap();
+            store.locations[1]
+                .find_ec_volume(VolumeId(1))
+                .unwrap()
+                .mark_io_quarantined();
+        }
+
+        mount_ec_1(&service, vec![1]).await;
+        let store = service.state.store.read().unwrap();
+        assert!(
+            store.locations[0]
+                .find_ec_volume(VolumeId(1))
+                .is_some_and(|ecv| ecv.has_shard(1)),
+            "the healthy disk's copy was not mounted"
         );
     }
 

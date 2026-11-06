@@ -1182,13 +1182,14 @@ impl Store {
     /// Matches Go's Store.MountEcShards which mounts one shard at a time.
     /// `source_disk_type` is the source volume's disk type from the
     /// `VolumeEcShardsMount` RPC (#9423); pass `""` for non-RPC paths.
+    /// Returns the index of the disk the shard mounted on.
     pub fn mount_ec_shard(
         &mut self,
         vid: VolumeId,
         collection: &str,
         shard_id: ShardId,
         source_disk_type: &str,
-    ) -> Result<(), VolumeError> {
+    ) -> Result<usize, VolumeError> {
         self.stamp_allocated_vid(vid);
         // The .ecx may live on a different disk than the shard being mounted
         // (ec.balance / ec.rebuild can spread shards across sibling disks), so
@@ -1201,7 +1202,7 @@ impl Store {
         // next. Like Go, a NotFound just means "not this disk"; anything else
         // is collected so an all-disks-fail error names every disk tried.
         let mut failures: Vec<(String, VolumeError)> = Vec::new();
-        for loc in &mut self.locations {
+        for (disk, loc) in self.locations.iter_mut().enumerate() {
             // Check if the shard file exists on this location
             let shard = EcVolumeShard::new(&loc.directory, collection, vid, shard_id);
             if !std::path::Path::new(&shard.file_name()).exists() {
@@ -1226,7 +1227,7 @@ impl Store {
                 &idx_dir,
                 source_disk_type,
             ) {
-                Ok(()) => return Ok(()),
+                Ok(()) => return Ok(disk),
                 Err(VolumeError::Io(e)) if e.kind() == io::ErrorKind::NotFound => {}
                 Err(e) => failures.push((loc.directory.clone(), e)),
             }
