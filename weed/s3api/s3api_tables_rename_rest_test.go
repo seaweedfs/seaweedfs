@@ -80,6 +80,16 @@ func TestBuildRenameTableRequest(t *testing.T) {
 			wantErr: "invalid newNamespaceName",
 		},
 		{
+			name:    "empty newName beside a valid newNamespaceName",
+			body:    `{"newNamespaceName":"other","newName":""}`,
+			wantErr: "invalid newName",
+		},
+		{
+			name:    "empty newNamespaceName beside a valid newName",
+			body:    `{"newNamespaceName":"","newName":"t2"}`,
+			wantErr: "invalid newNamespaceName",
+		},
+		{
 			name:      "source namespace with ..",
 			namespace: "..",
 			body:      `{"newName":"t2"}`,

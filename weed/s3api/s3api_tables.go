@@ -552,9 +552,9 @@ func buildDeleteTableRequest(r *http.Request) (interface{}, error) {
 // renameTableRESTBody is the AWS RenameTable body: the path names the source,
 // the body only the destination, and both destination fields are optional.
 type renameTableRESTBody struct {
-	NewNamespaceName string `json:"newNamespaceName"`
-	NewName          string `json:"newName"`
-	VersionToken     string `json:"versionToken"`
+	NewNamespaceName *string `json:"newNamespaceName"`
+	NewName          *string `json:"newName"`
+	VersionToken     string  `json:"versionToken"`
 }
 
 func buildRenameTableRequest(r *http.Request) (interface{}, error) {
@@ -580,20 +580,20 @@ func buildRenameTableRequest(r *http.Request) (interface{}, error) {
 	if _, err := s3tables.ValidateTableName(name); err != nil {
 		return nil, err
 	}
-	if body.NewNamespaceName == "" && body.NewName == "" {
+	if body.NewNamespaceName == nil && body.NewName == nil {
 		return nil, fmt.Errorf("newNamespaceName or newName is required")
 	}
 	destNamespace, destName := namespace, name
-	if body.NewNamespaceName != "" {
-		if destNamespace, err = s3tables.ParseNamespace(body.NewNamespaceName); err != nil {
+	if body.NewNamespaceName != nil {
+		if destNamespace, err = s3tables.ParseNamespace(*body.NewNamespaceName); err != nil {
 			return nil, fmt.Errorf("invalid newNamespaceName: %w", err)
 		}
 	}
-	if body.NewName != "" {
-		if _, err := s3tables.ValidateTableName(body.NewName); err != nil {
+	if body.NewName != nil {
+		if _, err := s3tables.ValidateTableName(*body.NewName); err != nil {
 			return nil, fmt.Errorf("invalid newName: %w", err)
 		}
-		destName = body.NewName
+		destName = *body.NewName
 	}
 	return &s3tables.RenameTableRequest{
 		TableBucketARN: tableBucketARN, SourceNamespace: namespace, SourceName: name,
