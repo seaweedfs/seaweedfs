@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -109,17 +110,10 @@ func runFilerMetaBackup(cmd *Command, args []string) bool {
 	}
 
 	if *metaBackup.restart || missingPreviousBackup {
-		glog.V(0).Infof("traversing metadata tree...")
-		startTime := time.Now()
-		if err := metaBackup.traverseMetadata(); err != nil {
-			glog.Errorf("traverse meta data: %v", err)
+		if err := metaBackup.copyMetadata(metaBackup.traverseMetadata); err != nil {
+			glog.Exitf("%v", err)
 			return true
 		}
-		if err := metaBackup.setOffset(startTime); err != nil {
-			glog.Exitf("set metadata backup offset: %v", err)
-			return true
-		}
-		glog.V(0).Infof("metadata copied up to %v", startTime)
 	}
 
 	for {
@@ -162,6 +156,52 @@ func (metaBackup *FilerMetaBackupOptions) shouldInclude(fullpath string) bool {
 	return metaBackup.pathFilter.ShouldInclude(fullpath)
 }
 
+// copyMetadata walks the tree, then saves the offset the stream resumes from.
+// A walk only inserts, so the stream has to replay every delete and rename
+// since the first walk that did not finish: its start time stays in the store
+// until a walk completes.
+func (metaBackup *FilerMetaBackupOptions) copyMetadata(traverse func() error) error {
+	startTime, err := metaBackup.walkStartTime()
+	if err != nil {
+		return err
+	}
+	glog.V(0).Infof("traversing metadata tree...")
+	if err := traverse(); err != nil {
+		return fmt.Errorf("traverse meta data: %w", err)
+	}
+	if err := metaBackup.setOffset(startTime); err != nil {
+		return fmt.Errorf("set metadata backup offset: %w", err)
+	}
+	if err := metaBackup.store.KvDelete(context.Background(), MetaBackupWalkKey); err != nil {
+		glog.Warningf("clear metadata walk start: %v", err)
+	}
+	glog.V(0).Infof("metadata copied up to %v", startTime)
+	return nil
+}
+
+// walkStartTime is the start of an unfinished earlier walk, unless the stream
+// has saved an offset past it since, or else now, saved as this walk's start.
+func (metaBackup *FilerMetaBackupOptions) walkStartTime() (time.Time, error) {
+	earlier, err := metaBackup.getTime(MetaBackupWalkKey)
+	if err == nil {
+		offset, offsetErr := metaBackup.getOffset()
+		if offsetErr != nil && !errors.Is(offsetErr, filer.ErrKvNotFound) {
+			return time.Time{}, fmt.Errorf("read metadata backup offset: %w", offsetErr)
+		}
+		if offsetErr != nil || !offset.After(earlier) {
+			glog.V(0).Infof("an earlier metadata walk started at %v did not finish; streaming from then", earlier)
+			return earlier, nil
+		}
+	} else if !errors.Is(err, filer.ErrKvNotFound) {
+		return time.Time{}, fmt.Errorf("read metadata walk start: %w", err)
+	}
+	now := time.Now()
+	if err := metaBackup.setTime(MetaBackupWalkKey, now); err != nil {
+		return time.Time{}, fmt.Errorf("save metadata walk start: %w", err)
+	}
+	return now, nil
+}
+
 func (metaBackup *FilerMetaBackupOptions) traverseMetadata() (err error) {
 	return filer_pb.TraverseBfs(context.Background(), metaBackup, util.FullPath(*metaBackup.filerDirectory), func(parentPath util.FullPath, entry *filer_pb.Entry) error {
 		fullpath := string(parentPath.Child(entry.Name))
@@ -178,7 +218,8 @@ func (metaBackup *FilerMetaBackupOptions) traverseMetadata() (err error) {
 }
 
 var (
-	MetaBackupKey = []byte("metaBackup")
+	MetaBackupKey     = []byte("metaBackup")
+	MetaBackupWalkKey = []byte("metaBackupWalk")
 )
 
 func (metaBackup *FilerMetaBackupOptions) streamMetadataBackup(startTime time.Time) error {
@@ -274,23 +315,27 @@ func (metaBackup *FilerMetaBackupOptions) streamMetadataBackup(startTime time.Ti
 }
 
 func (metaBackup *FilerMetaBackupOptions) getOffset() (lastWriteTime time.Time, err error) {
-	value, err := metaBackup.store.KvGet(context.Background(), MetaBackupKey)
+	return metaBackup.getTime(MetaBackupKey)
+}
+
+func (metaBackup *FilerMetaBackupOptions) setOffset(lastWriteTime time.Time) error {
+	return metaBackup.setTime(MetaBackupKey, lastWriteTime)
+}
+
+func (metaBackup *FilerMetaBackupOptions) getTime(key []byte) (time.Time, error) {
+	value, err := metaBackup.store.KvGet(context.Background(), key)
 	if err != nil {
-		return
+		return time.Time{}, err
 	}
 	tsNs := util.BytesToUint64(value)
 
 	return time.Unix(0, int64(tsNs)), nil
 }
 
-func (metaBackup *FilerMetaBackupOptions) setOffset(lastWriteTime time.Time) error {
+func (metaBackup *FilerMetaBackupOptions) setTime(key []byte, t time.Time) error {
 	valueBuf := make([]byte, 8)
-	util.Uint64toBytes(valueBuf, uint64(lastWriteTime.UnixNano()))
-
-	if err := metaBackup.store.KvPut(context.Background(), MetaBackupKey, valueBuf); err != nil {
-		return err
-	}
-	return nil
+	util.Uint64toBytes(valueBuf, uint64(t.UnixNano()))
+	return metaBackup.store.KvPut(context.Background(), key, valueBuf)
 }
 
 var _ = filer_pb.FilerClient(&FilerMetaBackupOptions{})
