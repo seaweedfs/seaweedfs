@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
@@ -131,19 +132,28 @@ func TestChunkedDirtyPagesUploadErrorWithoutRetry(t *testing.T) {
 		name      string
 		writeback bool
 		err       error
-		destroy   bool
+		discard   func(pages *ChunkedDirtyPages)
+		wantErr   error
 	}{
 		{name: "sync mode reports the outage to close", err: errVolumeRefused},
 		{name: "writeback permanent error", writeback: true, err: permanent},
 		{name: "writeback read-only path", writeback: true, err: readOnly},
-		{name: "writeback pages discarded mid-upload", writeback: true, err: errVolumeRefused, destroy: true},
+		{name: "writeback pages discarded mid-upload", writeback: true, err: errVolumeRefused,
+			discard: func(pages *ChunkedDirtyPages) { pages.Destroy() }},
+		{name: "writeback pages discarded during the retry wait", writeback: true, err: errVolumeRefused,
+			discard: func(pages *ChunkedDirtyPages) { time.AfterFunc(100*time.Millisecond, pages.Destroy) },
+			wantErr: errDirtyPagesDiscarded},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			save := &flakySave{failures: []error{tt.err}}
 			pages := newUploadTestPages(t, tt.writeback, save)
-			if tt.destroy {
-				save.onCall = pages.Destroy
+			if tt.discard != nil {
+				save.onCall = func() { tt.discard(pages) }
+			}
+			wantErr := tt.err
+			if tt.wantErr != nil {
+				wantErr = tt.wantErr
 			}
 
 			pages.saveChunkedFileIntervalToStorage(util.NewBytesReader([]byte("hello")), 0, 5, 1, func() {})
@@ -151,9 +161,23 @@ func TestChunkedDirtyPagesUploadErrorWithoutRetry(t *testing.T) {
 			if save.calls != 1 {
 				t.Fatalf("uploads = %d, want 1", save.calls)
 			}
-			if err := pages.LastError(); !errors.Is(err, tt.err) {
-				t.Fatalf("LastError = %v, want %v", err, tt.err)
+			if err := pages.LastError(); !errors.Is(err, wantErr) {
+				t.Fatalf("LastError = %v, want %v", err, wantErr)
 			}
 		})
+	}
+}
+
+// A chunk whose pages were discarded while it uploaded must not reappear in
+// the handle's entry, e.g. after a truncate replaced the content.
+func TestChunkedDirtyPagesDiscardedUploadNotAttached(t *testing.T) {
+	save := &flakySave{}
+	pages := newUploadTestPages(t, true, save)
+	save.onCall = pages.Destroy
+
+	pages.saveChunkedFileIntervalToStorage(util.NewBytesReader([]byte("hello")), 0, 5, 1, func() {})
+
+	if chunks := pages.fh.GetEntry().GetChunks(); len(chunks) != 0 {
+		t.Fatalf("entry chunks = %v, want none from discarded pages", chunks)
 	}
 }

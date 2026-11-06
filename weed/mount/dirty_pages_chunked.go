@@ -33,6 +33,8 @@ var (
 	_ = page_writer.DirtyPages(&ChunkedDirtyPages{})
 )
 
+var errDirtyPagesDiscarded = errors.New("dirty pages discarded")
+
 func newMemoryChunkPages(fh *FileHandle, chunkSize int64) *ChunkedDirtyPages {
 
 	dirtyPages := &ChunkedDirtyPages{
@@ -111,6 +113,9 @@ func (pages *ChunkedDirtyPages) saveChunkedFileIntervalToStorage(reader io.Reade
 	save := pages.saveDataAsChunk(fileFullPath)
 	var chunk *filer_pb.FileChunk
 	err := util.RetryUntil("writeback upload "+string(fileFullPath), func() (err error) {
+		if pages.destroyed.Load() {
+			return errDirtyPagesDiscarded
+		}
 		chunk, err = save(reader, fileName, offset, modifiedTsNs, uint64(size))
 		return err
 	}, func(err error) bool {
@@ -132,6 +137,11 @@ func (pages *ChunkedDirtyPages) saveChunkedFileIntervalToStorage(reader io.Reade
 	if err != nil {
 		glog.V(0).Infof("%v saveToStorage [%d,%d): %v", fileFullPath, offset, offset+size, err)
 		pages.setLastError(err)
+		return
+	}
+	// Truncation or newer content replaced these pages while they uploaded.
+	if pages.destroyed.Load() {
+		glog.V(3).Infof("%v saveToStorage %s [%d,%d): pages discarded, chunk not attached", fileFullPath, chunk.FileId, offset, offset+size)
 		return
 	}
 	pages.fh.AddChunks([]*filer_pb.FileChunk{chunk})
