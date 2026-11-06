@@ -313,7 +313,7 @@ var (
 			Namespace: Namespace,
 			Subsystem: subsystemFiler,
 			Name:      "remote_deletion_tombstones_full",
-			Help:      "1 while the tombstone table is at its cap and the lazy remote fetch is off, 0 otherwise.",
+			Help:      "1 from a delete the full table could not record until the table has room and that delete is past the TTL; lazy remote fetches are off meanwhile. 0 otherwise.",
 		})
 
 	FilerStoreHistogram = prometheus.NewHistogramVec(
