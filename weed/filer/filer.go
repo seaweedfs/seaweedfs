@@ -451,8 +451,16 @@ func (fs *Filer) GetMaster(ctx context.Context) pb.ServerAddress {
 	return fs.MasterClient.GetMaster(ctx)
 }
 
+// storeTransactionKey marks a context inside BeginTransaction, whatever key
+// the store keeps its own transaction under.
+type storeTransactionKey struct{}
+
 func (f *Filer) BeginTransaction(ctx context.Context) (context.Context, error) {
-	return f.Store.BeginTransaction(ctx)
+	txCtx, err := f.Store.BeginTransaction(ctx)
+	if err != nil {
+		return txCtx, err
+	}
+	return context.WithValue(txCtx, storeTransactionKey{}, true), nil
 }
 
 func (f *Filer) CommitTransaction(ctx context.Context) error {
@@ -516,13 +524,11 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, existing *Entry, 
 	oldEntry := existing
 	if oldEntry == nil {
 		var findErr error
-		// Inside a store transaction the lookup must not run the lazy remote
-		// fetch: the fetch persists on a second connection, which waits on
-		// the row lock this transaction holds when it deleted the path (a
-		// rename onto an existing target). The create writes the path either
-		// way; reads inside the transaction keep the fetch.
+		// A lazy fetch here would persist outside the transaction and wait on
+		// the lock it holds for a target it just deleted; the create writes
+		// the path either way.
 		findCtx := ctx
-		if ctx.Value("tx") != nil {
+		if ctx.Value(storeTransactionKey{}) != nil {
 			findCtx = context.WithValue(ctx, lazyFetchContextKey{}, true)
 		}
 		oldEntry, findErr = f.FindEntry(findCtx, entry.FullPath)
