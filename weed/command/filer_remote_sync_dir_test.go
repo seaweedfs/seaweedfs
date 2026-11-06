@@ -670,6 +670,13 @@ func TestResolveLastSyncOffsetReturnsTheErrorToTheRetryLoop(t *testing.T) {
 		t.Fatalf("got %v, want the lookup error: without a saved offset the caller's retry loop decides, not an exit", err)
 	}
 
+	// no directory and no saved offset yet: a first run starts now
+	started := time.Now()
+	notFound := func() (*filer_pb.Entry, error) { return nil, fmt.Errorf("lookup /buckets: %w", filer_pb.ErrNotFound) }
+	if got, err := resolveLastSyncOffset("/buckets", 0, notFound, noOffset); err != nil || got.Before(started) {
+		t.Fatalf("got %v, %v; want now and no error before the directory exists", got, err)
+	}
+
 	// the mount answers but the saved offset is unreadable: never its creation time
 	mount := &filer_pb.Entry{Name: "x", Attributes: &filer_pb.FuseAttributes{Crtime: 1}}
 	if _, err := resolveLastSyncOffset("/buckets/x", 0, func() (*filer_pb.Entry, error) { return mount, nil }, readFails); err == nil || !strings.Contains(err.Error(), "filer unavailable") {
