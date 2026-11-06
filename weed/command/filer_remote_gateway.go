@@ -75,6 +75,10 @@ var cmdFilerRemoteGateway = &Command{
 
 		weed filer.remote.gateway -createBucketAt=cloud1
 
+	In a versioned bucket every version is written to the object's key, so the
+	remote keeps earlier versions only when versioning is enabled on it. A delete
+	marker deletes the remote object unless a version of the key is locked.
+
 `,
 }
 

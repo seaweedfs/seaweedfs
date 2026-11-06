@@ -65,6 +65,9 @@ var cmdFilerRemoteSynchronize = &Command{
 
 		weed filer.remote.sync -dir=/mount/s3_on_cloud
 
+	In a versioned bucket every version is written to the object's key, so the
+	remote keeps earlier versions only when versioning is enabled on it.
+
 	The metadata sync starting time is determined with the following priority order:
 	1. specified by timeAgo
 	2. last sync timestamp for this directory
