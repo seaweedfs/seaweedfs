@@ -756,6 +756,39 @@ func TestMaybeLazyFetchFromRemote_SkipsInsideStoreTransaction(t *testing.T) {
 	assert.NotZero(t, countingStub.statCalls, "the same lookup outside a transaction consults the remote")
 }
 
+func TestPrefetchRemoteEntries_MaterializesBeforeATransaction(t *testing.T) {
+	const storageType = "stub_lazy_prefetch"
+	countingStub := &countingRemoteClient{
+		stubRemoteClient: stubRemoteClient{
+			statResult: &filer_pb.RemoteEntry{RemoteMtime: 1, RemoteSize: 1},
+		},
+	}
+	f, store := newMountedTestFiler(t, storageType, countingStub, 0)
+	putDirEntry(store, "/buckets/mybucket/dir")
+	target := util.FullPath("/buckets/mybucket/dir/target.txt")
+	txCtx := context.WithValue(context.Background(), "tx", struct{}{})
+
+	// unseen on the filer, present on the remote: inside a transaction it
+	// reads as absent
+	_, err := f.FindEntry(txCtx, target)
+	require.ErrorIs(t, err, filer_pb.ErrNotFound)
+	assert.Equal(t, 0, countingStub.statCalls)
+
+	// the prefetch outside the transaction materializes it, and the
+	// transaction then finds it in the store
+	f.PrefetchRemoteEntries(context.Background(), target, "/buckets/mybucket/dir/absent.txt")
+	assert.NotZero(t, countingStub.statCalls)
+	entry, err := f.FindEntry(txCtx, target)
+	require.NoError(t, err)
+	require.NotNil(t, entry)
+	assert.True(t, entry.IsInRemoteOnly())
+
+	// a prefetch that itself runs inside a transaction does nothing
+	before := countingStub.statCalls
+	f.PrefetchRemoteEntries(txCtx, "/buckets/mybucket/dir/other.txt")
+	assert.Equal(t, before, countingStub.statCalls)
+}
+
 func TestMaybeLazyFetchFromRemote_GuardedClientRejectsEndpoint(t *testing.T) {
 	const storageType = "stub_lazy_guarded"
 	countingStub := &countingRemoteClient{
