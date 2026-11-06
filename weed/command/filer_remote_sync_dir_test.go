@@ -658,6 +658,17 @@ func TestResolveLastSyncOffsetKeepsTheSavedOffsetWhenTheLookupFails(t *testing.T
 	if !got.Equal(saved) {
 		t.Fatalf("resolved %v, want %v", got, saved)
 	}
+
+	// remote.unmount recreates the directory, then saves the offset in the same
+	// second: starting at the creation second would replay the unmount's purge
+	unmounted := &filer_pb.Entry{Name: "x", Attributes: &filer_pb.FuseAttributes{Crtime: saved.Unix()}}
+	got, err = resolveLastSyncOffset("/buckets/x", 0, func() (*filer_pb.Entry, error) { return unmounted, nil }, savedOffset)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Equal(saved) {
+		t.Fatalf("resolved %v, want the saved offset %v", got, saved)
+	}
 }
 
 func TestResolveLastSyncOffsetReturnsTheErrorToTheRetryLoop(t *testing.T) {

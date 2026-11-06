@@ -1145,7 +1145,9 @@ func resolveLastSyncOffset(mountedDir string, timeAgo time.Duration, lookupMount
 			return time.Time{}, fmt.Errorf("read the sync offset of %s: %w", mountedDir, err)
 		}
 		if mountedDirEntry != nil {
-			if mountedDirEntry.Attributes.Crtime < lastOffsetTsNs/1000000 {
+			// a saved offset wins even over a newer creation time: remote.unmount
+			// saves one after recreating the directory, often in the same second
+			if lastOffsetTsNs > 0 {
 				lastOffsetTs = time.Unix(0, lastOffsetTsNs)
 				glog.V(0).Infof("resume from %v", lastOffsetTs)
 			} else {
