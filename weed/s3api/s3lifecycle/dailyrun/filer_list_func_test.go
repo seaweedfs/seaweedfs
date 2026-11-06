@@ -13,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/bootstrap"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/engine"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/router"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -568,6 +569,33 @@ func TestFilerListFunc_AttributesPropagate(t *testing.T) {
 	assert.Equal(t, int64(1234), got.ModTime.UnixNano()-mtime.Unix()*int64(time.Second))
 	assert.Equal(t, int64(4096), got.Size)
 	assert.True(t, got.IsLatest)
+}
+
+func TestFilerListFunc_EntriesCarryListedIdentity(t *testing.T) {
+	mtime := time.Date(2026, 5, 11, 12, 0, 0, 1234, time.UTC)
+	flat := fileWithExt("flat", mtime, 4096, map[string][]byte{"k": []byte("v")})
+	flat.Chunks = []*filer_pb.FileChunk{{FileId: "3,01637037d6", Size: 4096}}
+	latest := fileWithExt("v1", mtime, 8, map[string][]byte{s3_constants.ExtVersionIdKey: []byte("v1")})
+	latest.Chunks = []*filer_pb.FileChunk{{FileId: "4,02a1b2c3d4", Size: 8}}
+	older := fileWithExt("v0", mtime.Add(-time.Minute), 9, map[string][]byte{s3_constants.ExtVersionIdKey: []byte("v0")})
+	older.Chunks = []*filer_pb.FileChunk{{FileId: "5,03a1b2c3d4", Size: 9}}
+	client := &fakeFiler{tree: map[string][]*filer_pb.Entry{
+		"/buckets/bkt": {flat, versionsDir("foo"+s3_constants.VersionsFolder, "v1")},
+		"/buckets/bkt/foo" + s3_constants.VersionsFolder: {latest, older},
+	}}
+	listFn := FilerListFunc(client, "/buckets", nil)
+	byKey := map[string]*bootstrap.Entry{}
+	require.NoError(t, listFn(context.Background(), "bkt", "", func(e *bootstrap.Entry) error {
+		byKey[e.Path+"@"+e.VersionID] = e
+		return nil
+	}))
+	require.Len(t, byKey, 3)
+	assert.Equal(t, router.BuildIdentityFromEntry(flat), byKey["flat@"].Identity)
+	assert.Equal(t, "3,01637037d6", byKey["flat@"].Identity.HeadFid)
+	assert.Equal(t, router.BuildIdentityFromEntry(latest), byKey["foo@v1"].Identity)
+	assert.Equal(t, "4,02a1b2c3d4", byKey["foo@v1"].Identity.HeadFid)
+	assert.Equal(t, router.BuildIdentityFromEntry(older), byKey["foo@v0"].Identity)
+	assert.Equal(t, "5,03a1b2c3d4", byKey["foo@v0"].Identity.HeadFid)
 }
 
 func TestDirInRuleScope(t *testing.T) {

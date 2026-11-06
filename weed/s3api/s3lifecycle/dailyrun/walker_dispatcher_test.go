@@ -10,6 +10,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/bootstrap"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/engine"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/router"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/time/rate"
@@ -53,7 +54,8 @@ func TestWalkerDispatcher_NonVersionedSendsExpectedRequest(t *testing.T) {
 	c := &walkerStubClient{outcome: s3_lifecycle_pb.LifecycleDeleteOutcome_DONE}
 	d := &WalkerDispatcher{Client: c}
 	a := sampleAction(t, s3lifecycle.ActionKindExpirationDays)
-	err := d.Delete(context.Background(), a, &bootstrap.Entry{Path: "obj"})
+	identity := &router.EntryIdentity{MtimeNs: 1_700_000_000_123, Size: 42, HeadFid: "3,01637037d6", ExtendedHash: []byte{0xab}}
+	err := d.Delete(context.Background(), a, &bootstrap.Entry{Path: "obj", Identity: identity})
 	require.NoError(t, err)
 	require.NotNil(t, c.lastReq)
 	assert.Equal(t, "bkt", c.lastReq.Bucket)
@@ -61,8 +63,11 @@ func TestWalkerDispatcher_NonVersionedSendsExpectedRequest(t *testing.T) {
 	assert.Equal(t, "", c.lastReq.VersionId)
 	assert.Equal(t, a.Key.RuleHash[:], c.lastReq.RuleHash)
 	assert.Equal(t, s3_lifecycle_pb.ActionKind_EXPIRATION_DAYS, c.lastReq.ActionKind)
-	// Bootstrap-style call: server skips CAS witness when nil.
-	assert.Nil(t, c.lastReq.ExpectedIdentity)
+	require.NotNil(t, c.lastReq.ExpectedIdentity, "the listed entry's identity is the CAS witness")
+	assert.Equal(t, identity.MtimeNs, c.lastReq.ExpectedIdentity.MtimeNs)
+	assert.Equal(t, identity.Size, c.lastReq.ExpectedIdentity.Size)
+	assert.Equal(t, identity.HeadFid, c.lastReq.ExpectedIdentity.HeadFid)
+	assert.Equal(t, identity.ExtendedHash, c.lastReq.ExpectedIdentity.ExtendedHash)
 }
 
 func TestWalkerDispatcher_VersionedPassesVersionID(t *testing.T) {

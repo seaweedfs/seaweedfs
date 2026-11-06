@@ -14,10 +14,9 @@ import (
 
 // WalkerDispatcher adapts LifecycleClient to bootstrap.Dispatcher so
 // the Phase 4b walker can drive the same LifecycleDelete RPC the
-// meta-log replay path uses. No CAS witness is supplied; the server's
-// identityMatches treats nil ExpectedIdentity as "bootstrap call, skip
-// witness" (see weed/s3api/s3api_internal_lifecycle.go), which is the
-// right contract for a full-tree walk that has just observed the entry.
+// meta-log replay path uses, with the listed entry's identity as the
+// CAS witness: an object rewritten between listing and dispatch
+// resolves as STALE_IDENTITY instead of being deleted.
 type WalkerDispatcher struct {
 	Client LifecycleClient
 	// Limiter throttles LifecycleDelete dispatch under the cluster's
@@ -57,13 +56,12 @@ func (d *WalkerDispatcher) Delete(ctx context.Context, action *engine.CompiledAc
 	}
 	rh := action.Key.RuleHash
 	req := &s3_lifecycle_pb.LifecycleDeleteRequest{
-		Bucket:     action.Bucket,
-		ObjectPath: objectPath,
-		VersionId:  entry.VersionID,
-		RuleHash:   rh[:],
-		ActionKind: toProtoActionKind(action.Key.ActionKind),
-		// ExpectedIdentity intentionally nil; server bootstraps from
-		// the live entry on this code path.
+		Bucket:           action.Bucket,
+		ObjectPath:       objectPath,
+		VersionId:        entry.VersionID,
+		RuleHash:         rh[:],
+		ActionKind:       toProtoActionKind(action.Key.ActionKind),
+		ExpectedIdentity: toProtoIdentity(entry.Identity),
 	}
 	kindLabel := action.Key.ActionKind.String()
 	if d.Limiter != nil {

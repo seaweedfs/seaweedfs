@@ -15,6 +15,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/engine"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/router"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 )
 
@@ -47,6 +48,10 @@ type Entry struct {
 	// doesn't use it, but the Dispatcher needs it to address the
 	// right version on LifecycleDelete.
 	VersionID string
+
+	// Identity is the listed entry's fingerprint; the server refuses the
+	// delete when the live entry no longer matches it.
+	Identity *router.EntryIdentity
 }
 
 // ListFunc must skip entries with Path <= start so kill-resume picks up
