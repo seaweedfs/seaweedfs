@@ -734,6 +734,28 @@ func TestMaybeLazyFetchFromRemote_ContextGuardPreventsRecursion(t *testing.T) {
 	assert.Equal(t, 0, countingStub.statCalls, "guard should prevent StatFile from being called")
 }
 
+func TestMaybeLazyFetchFromRemote_SkipsInsideStoreTransaction(t *testing.T) {
+	const storageType = "stub_lazy_tx"
+	countingStub := &countingRemoteClient{
+		stubRemoteClient: stubRemoteClient{
+			statResult: &filer_pb.RemoteEntry{RemoteMtime: 1, RemoteSize: 1},
+		},
+	}
+	f, _ := newMountedTestFiler(t, storageType, countingStub, 0)
+
+	// the key a store transaction travels under (abstract_sql getTxOrDB)
+	txCtx := context.WithValue(context.Background(), "tx", struct{}{})
+	entry, err := f.maybeLazyFetchFromRemote(txCtx, "/buckets/mybucket/dir/a.txt")
+	require.NoError(t, err)
+	assert.Nil(t, entry)
+	assert.Equal(t, 0, countingStub.statCalls, "a lookup inside a transaction must not consult the remote")
+
+	entry, err = f.maybeLazyFetchFromRemote(context.Background(), "/buckets/mybucket/dir/a.txt")
+	require.NoError(t, err)
+	require.NotNil(t, entry)
+	assert.NotZero(t, countingStub.statCalls, "the same lookup outside a transaction consults the remote")
+}
+
 func TestMaybeLazyFetchFromRemote_GuardedClientRejectsEndpoint(t *testing.T) {
 	const storageType = "stub_lazy_guarded"
 	countingStub := &countingRemoteClient{

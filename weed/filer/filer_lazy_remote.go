@@ -41,6 +41,12 @@ func (f *Filer) maybeLazyFetchFromRemote(ctx context.Context, p util.FullPath) (
 		return nil, nil
 	}
 
+	// A lookup inside a store transaction persists on a second connection,
+	// which waits on the row locks the transaction holds.
+	if ctx.Value("tx") != nil {
+		return nil, nil
+	}
+
 	if f.RemoteStorage == nil {
 		return nil, nil
 	}
