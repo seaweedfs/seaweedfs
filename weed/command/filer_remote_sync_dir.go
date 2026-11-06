@@ -1041,6 +1041,10 @@ func remoteUploadReader(filerClient filer_pb.FilerClient, entry *filer_pb.Entry)
 // follows in the log and uploads them.
 var errSuperseded = errors.New("superseded or incomplete since the event was logged")
 
+// errLookupUnanswered marks an upload stopped because the filer did not
+// answer the supersession lookup; the processor retries the event.
+var errLookupUnanswered = errors.New("supersession lookup unanswered")
+
 // retriedWriteFile uploads the entry, retrying transient failures. The filer is
 // asked whether the entry is superseded before the first attempt and after
 // every failed one, and the upload stops at once when it is. Before: a backlog
@@ -1055,15 +1059,25 @@ func retriedWriteFile(client remote_storage.RemoteStorageClient, filerSource fil
 	} else if superseded {
 		return nil, fmt.Errorf("%s %w", util.NewFullPath(dir, newEntry.Name), errSuperseded)
 	}
+	// A failed attempt is retried only once the filer has answered that the
+	// entry is still the one the event described; an unanswered lookup
+	// ends the loop so no further attempt uploads an unverified snapshot.
+	afterFailure := func(attemptErr error) error {
+		superseded, lookupErr := supersessionLookup(filerSource, dir, newEntry)
+		if lookupErr != nil {
+			return fmt.Errorf("%s %w: %w (after: %v)", util.NewFullPath(dir, newEntry.Name), errLookupUnanswered, lookupErr, attemptErr)
+		}
+		if superseded {
+			return fmt.Errorf("%s %w: %w", util.NewFullPath(dir, newEntry.Name), errSuperseded, attemptErr)
+		}
+		return attemptErr
+	}
 	err = util.RetryOnError("writeFile", func(err error) bool {
-		return !errors.Is(err, errSuperseded) && util.IsTransientError(err)
+		return !errors.Is(err, errSuperseded) && !errors.Is(err, errLookupUnanswered) && util.IsTransientError(err)
 	}, func() error {
 		reader, closeFn, readerErr := remoteUploadReader(filerSource, newEntry)
 		if readerErr != nil {
-			if isSuperseded(filerSource, dir, newEntry) {
-				return fmt.Errorf("%s %w: %w", util.NewFullPath(dir, newEntry.Name), errSuperseded, readerErr)
-			}
-			return readerErr
+			return afterFailure(readerErr)
 		}
 		if closeFn != nil {
 			defer closeFn()
@@ -1071,10 +1085,10 @@ func retriedWriteFile(client remote_storage.RemoteStorageClient, filerSource fil
 		glog.V(0).Infof("create %s", remote_storage.FormatLocation(dest))
 		var writeErr error
 		remoteEntry, writeErr = client.WriteFile(dest, newEntry, reader)
-		if writeErr != nil && isSuperseded(filerSource, dir, newEntry) {
-			return fmt.Errorf("%s %w: %w", util.NewFullPath(dir, newEntry.Name), errSuperseded, writeErr)
+		if writeErr != nil {
+			return afterFailure(writeErr)
 		}
-		return writeErr
+		return nil
 	})
 	if err != nil && !errors.Is(err, errSuperseded) {
 		glog.Errorf("write to %s: %v", dest, err)
@@ -1126,7 +1140,13 @@ func resolveLastSyncOffset(mountedDir string, timeAgo time.Duration, lookupMount
 		}
 	} else {
 		lastOffsetTs = time.Now().Add(-timeAgo)
-		if lastOffsetTsNs, err := readOffset(); err == nil && lastOffsetTsNs > 0 {
+		lastOffsetTsNs, err := readOffset()
+		if err != nil {
+			// an unread offset must not resolve to now minus timeAgo: the
+			// saved one may be older, and everything between would be skipped
+			glog.Fatalf("read the sync offset of %s: %v", mountedDir, err)
+		}
+		if lastOffsetTsNs > 0 {
 			if savedOffsetTs := time.Unix(0, lastOffsetTsNs); savedOffsetTs.Before(lastOffsetTs) {
 				lastOffsetTs = savedOffsetTs
 			}

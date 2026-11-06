@@ -591,6 +591,52 @@ func TestFilerLookupsOnTheSyncPathCarryADeadline(t *testing.T) {
 	}
 }
 
+// answerThenBlockFilerClient answers the first lookup and blocks every later
+// one until its context ends.
+type answerThenBlockFilerClient struct {
+	stubFilerClient
+	entry *filer_pb.Entry
+}
+
+func (c *answerThenBlockFilerClient) LookupDirectoryEntry(ctx context.Context, _ *filer_pb.LookupDirectoryEntryRequest, _ ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	c.lookups++
+	if c.lookups == 1 {
+		return &filer_pb.LookupDirectoryEntryResponse{Entry: c.entry}, nil
+	}
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (c *answerThenBlockFilerClient) WithFilerClient(_ bool, fn func(filer_pb.SeaweedFilerClient) error) error {
+	return fn(c)
+}
+
+func TestRetriedWriteFileStopsWhenTheLookupAfterAFailureIsUnanswered(t *testing.T) {
+	remoteSyncLookupTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { remoteSyncLookupTimeout = 30 * time.Second })
+	const dir = "/buckets/ingest"
+	event := entryWith("lease.json", nil, chunk("3,01", "e1"))
+	dest := &remote_pb.RemoteStorageLocation{Name: "b2", Bucket: "tier", Path: "/" + event.Name}
+	transient := errors.New("RequestError: send request failed\ncaused by: Put \"https://s3.example.com/tier/x\": 503 Service Unavailable")
+	remote := &failingRemote{err: transient}
+	filerClient := &answerThenBlockFilerClient{entry: entryWith(event.Name, nil, chunk("3,01", "e1"))}
+
+	started := time.Now()
+	_, err := retriedWriteFile(remote, filerClient, dir, event, dest)
+	if !errors.Is(err, errLookupUnanswered) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want the unanswered-lookup error wrapping the deadline", err)
+	}
+	if remote.writes != 1 {
+		t.Errorf("wrote %d times, want 1: no further attempt until the filer answers", remote.writes)
+	}
+	if filerClient.lookups != 2 {
+		t.Errorf("looked up the filer %d times, want one before the attempt and one after it failed", filerClient.lookups)
+	}
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Fatalf("took %v; the retry loop did not stop on the unanswered lookup", elapsed)
+	}
+}
+
 func TestResolveLastSyncOffsetKeepsTheSavedOffsetWhenTheLookupFails(t *testing.T) {
 	saved := time.Date(2026, 11, 4, 17, 57, 10, 0, time.UTC)
 	lookupFails := func() (*filer_pb.Entry, error) { return nil, context.DeadlineExceeded }
