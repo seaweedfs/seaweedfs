@@ -47,8 +47,23 @@ func (f *Filer) appendToFile(ctx context.Context, targetFile string, data []byte
 	entry.Chunks = append(entry.GetChunks(), uploadResult.ToPbFileChunk(assignResult.Fid, offset, time.Now().UnixNano()))
 
 	// update the entry
-	err = f.CreateEntry(ctx, entry, nil, false, false, nil, false, f.MaxFilenameLength)
+	return f.commitAppendedChunk(ctx, fullpath, entry, assignResult, uploadResult, offset)
+}
 
+// commitAppendedChunk commits an entry whose chunk has already been uploaded,
+// releasing that chunk if the commit fails.
+//
+// The chunk is uploaded before the entry is committed. When the commit fails
+// nothing references the chunk: no entry points at that fid, so no later delete
+// can ever mark it, and neither vacuum nor fsck can see it because both work
+// from the entry index. The volume server keeps counting those bytes as live
+// data, which is how a cluster with a few hundred megabytes of real logs ends
+// up carrying tens of gigabytes of "live" volume data.
+func (f *Filer) commitAppendedChunk(ctx context.Context, fullpath util.FullPath, entry *Entry, assignResult *operation.AssignResult, uploadResult *operation.UploadResult, offset int64) error {
+	err := f.CreateEntry(ctx, entry, nil, false, false, nil, false, f.MaxFilenameLength)
+	if err != nil {
+		f.DeleteChunks(ctx, fullpath, []*filer_pb.FileChunk{uploadResult.ToPbFileChunk(assignResult.Fid, offset, time.Now().UnixNano())})
+	}
 	return err
 }
 

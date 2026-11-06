@@ -255,6 +255,33 @@ func (f *Filer) stampOf(newEntry *Entry) int64 {
 	return f.metaLogInflight.stamp()
 }
 
+// metadataEventChunkLimit caps how many chunk references a single metadata
+// event carries. A metadata event embeds the whole old and new entry, so an
+// append-only file — a log or journal written in small pieces — makes every
+// append re-serialize every chunk it ever had. The cost is quadratic in the
+// number of chunks: a 2,700-chunk file emits a couple of megabytes per append,
+// which the filer then writes to its own metadata log. A handful of such files
+// is enough to grow the metadata log by tens of gigabytes a day while the
+// user data stays in the megabytes.
+//
+// Past this limit the event is emitted without chunk references and with
+// MetadataEventChunksTruncated set, so subscribers that need the content read
+// the entry from the filer instead of trusting the event. Subscribers that
+// only track names, attributes, or chunk deltas keep working unchanged.
+const metadataEventChunkLimit = 256
+
+// capEventChunks replaces the chunk list of an entry carried by a metadata
+// event when it exceeds metadataEventChunkLimit, and reports whether it did.
+// The entry is copied: the caller's entry must stay intact.
+func capEventChunks(entry *filer_pb.Entry) (capped *filer_pb.Entry, truncated bool) {
+	if entry == nil || len(entry.Chunks) <= metadataEventChunkLimit {
+		return entry, false
+	}
+	capped = proto.Clone(entry).(*filer_pb.Entry)
+	capped.Chunks = nil
+	return capped, true
+}
+
 func (f *Filer) newMetadataEvent(oldEntry, newEntry *Entry, deleteChunks, isFromOtherCluster bool, signatures []int32, tsNs int64) *filer_pb.SubscribeMetadataResponse {
 	if oldEntry == nil && newEntry == nil {
 		return nil
@@ -271,15 +298,18 @@ func (f *Filer) newMetadataEvent(oldEntry, newEntry *Entry, deleteChunks, isFrom
 	if newEntry != nil {
 		newParentPath, _ = newEntry.FullPath.DirAndName()
 	}
+	oldProto, oldTruncated := capEventChunks(oldEntry.ToProtoEntry())
+	newProto, newTruncated := capEventChunks(newEntry.ToProtoEntry())
 	return &filer_pb.SubscribeMetadataResponse{
 		Directory: dir,
 		EventNotification: &filer_pb.EventNotification{
-			OldEntry:           oldEntry.ToProtoEntry(),
-			NewEntry:           newEntry.ToProtoEntry(),
-			DeleteChunks:       deleteChunks,
-			NewParentPath:      newParentPath,
-			IsFromOtherCluster: isFromOtherCluster,
-			Signatures:         signatures,
+			OldEntry:                     oldProto,
+			NewEntry:                     newProto,
+			DeleteChunks:                 deleteChunks,
+			NewParentPath:                newParentPath,
+			IsFromOtherCluster:           isFromOtherCluster,
+			Signatures:                   signatures,
+			MetadataEventChunksTruncated: oldTruncated || newTruncated,
 		},
 		// In flight until appended to the local log buffer (see metaLogInflight).
 		TsNs:         tsNs,

@@ -191,6 +191,11 @@ message EventNotification {
     string new_parent_path = 4;
     bool is_from_other_cluster = 5;
     repeated int32 signatures = 6;
+    // Set when old_entry or new_entry carried more chunks than a metadata
+    // event is allowed to embed, in which case their chunk lists were
+    // dropped. Subscribers that need the content must read the entry from
+    // the filer; the event alone is not enough to reconstruct it.
+    bool metadata_event_chunks_truncated = 7;
 }
 
 enum SSEType {
