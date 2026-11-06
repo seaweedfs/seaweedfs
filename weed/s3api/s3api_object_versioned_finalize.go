@@ -66,13 +66,23 @@ func (s3a *S3ApiServer) latestPointerRecompute(bucket, object string, useInverte
 
 // routedVersionedFinalize flips the .versions pointer to the newest version and
 // demotes the prior latest, atomically under the object's per-path lock on the
-// owner filer, via a single RECOMPUTE_LATEST. The version file is already
-// written; the owner re-derives the pointer by scanning the directory.
-func (s3a *S3ApiServer) routedVersionedFinalize(owner pb.ServerAddress, bucket, object string, useInvertedFormat bool) s3err.ErrorCode {
+// owner filer, via a single RECOMPUTE_LATEST. versionEntry, when set, is PUT
+// into .versions in the same transaction, so the recompute's scan sees it even
+// when the gateway's own filer is not the owner; otherwise the version file is
+// already written on the owner.
+func (s3a *S3ApiServer) routedVersionedFinalize(owner pb.ServerAddress, bucket, object string, useInvertedFormat bool, versionEntry *filer_pb.Entry) s3err.ErrorCode {
+	mutations := []*filer_pb.ObjectMutation{s3a.latestPointerRecompute(bucket, object, useInvertedFormat, "", true)}
+	if versionEntry != nil {
+		mutations = append([]*filer_pb.ObjectMutation{{
+			Type:      filer_pb.ObjectMutation_PUT,
+			Directory: s3a.toFilerPath(bucket, object+s3_constants.VersionsFolder),
+			Entry:     versionEntry,
+		}}, mutations...)
+	}
 	req := &filer_pb.ObjectTransactionRequest{
 		LockKey:   s3a.toFilerPath(bucket, object),
 		RouteKey:  s3a.objectRouteKey(bucket, object),
-		Mutations: []*filer_pb.ObjectMutation{s3a.latestPointerRecompute(bucket, object, useInvertedFormat, "", true)},
+		Mutations: mutations,
 	}
 	resp, err := s3a.objectTxnOnFiler(owner, req)
 	switch {
