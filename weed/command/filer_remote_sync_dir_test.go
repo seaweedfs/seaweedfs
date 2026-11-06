@@ -538,22 +538,6 @@ func entryWith(name string, remote *filer_pb.RemoteEntry, chunks ...*filer_pb.Fi
 	return &filer_pb.Entry{Name: name, Attributes: &filer_pb.FuseAttributes{Mtime: 1786096669}, RemoteEntry: remote, Chunks: chunks}
 }
 
-// TestIsSuperseded decides what a failed upload means for its event (#11148).
-// A replay from an earlier offset re-emits creates for entries the filer has
-// since deleted or rewritten; their chunks are gone, so the upload can never
-// succeed, and failing the event pins the offset before it forever. Those are
-// skipped. A failure to upload an entry the filer still holds as described is
-// a real failure and must keep failing the event so the subscription retries.
-//
-// Every write stores its chunks under new file ids, so the entry is compared
-// by chunk identity, the way the filer itself decides which chunks an update
-// leaves for deletion. Content fingerprints would miss a delete-and-recreate
-// of identical bytes and fail the event forever on its dead chunks.
-//
-// Chunks the filer has added since count too. The event was then a snapshot
-// of a write in progress: a mount flushes metadata while chunk uploads are
-// still running, so the snapshot can have holes, and the stream reader stops
-// at the first one on every retry.
 // blockingFilerClient answers a lookup only when its context ends.
 type blockingFilerClient struct {
 	stubFilerClient
@@ -704,6 +688,22 @@ func TestRemoteUploadReaderSharesOneChunkCache(t *testing.T) {
 	}
 }
 
+// TestIsSuperseded decides what a failed upload means for its event (#11148).
+// A replay from an earlier offset re-emits creates for entries the filer has
+// since deleted or rewritten; their chunks are gone, so the upload can never
+// succeed, and failing the event pins the offset before it forever. Those are
+// skipped. A failure to upload an entry the filer still holds as described is
+// a real failure and must keep failing the event so the subscription retries.
+//
+// Every write stores its chunks under new file ids, so the entry is compared
+// by chunk identity, the way the filer itself decides which chunks an update
+// leaves for deletion. Content fingerprints would miss a delete-and-recreate
+// of identical bytes and fail the event forever on its dead chunks.
+//
+// Chunks the filer has added since count too. The event was then a snapshot
+// of a write in progress: a mount flushes metadata while chunk uploads are
+// still running, so the snapshot can have holes, and the stream reader stops
+// at the first one on every retry.
 func TestIsSuperseded(t *testing.T) {
 	const dir = "/buckets/ingest"
 	event := entryWith("tmpjt9req69__Alan_Doe_Resume-1.pdf", nil, chunk("3,01", "e1"), chunk("3,02", "e2"))

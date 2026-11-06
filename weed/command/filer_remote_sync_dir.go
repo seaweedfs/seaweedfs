@@ -615,8 +615,6 @@ func releaseRenamedSource(filerSource filer_pb.FilerClient, client remote_storag
 	return releasePendingSource(filerSource, client, mountedDir, remoteStorageMountLocation, message.OldEntry)
 }
 
-// currentEntry returns what the filer holds at dir/name now, nil when the
-// entry is gone.
 // remoteSyncLookupTimeout bounds a filer lookup on the sync path. A lookup
 // that never answers keeps its job alive, the job keeps its path in the
 // processor's conflict index, and the stream stops behind it.
@@ -626,6 +624,8 @@ func lookupContext() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), remoteSyncLookupTimeout)
 }
 
+// currentEntry returns what the filer holds at dir/name now, nil when the
+// entry is gone.
 func currentEntry(filerSource filer_pb.FilerClient, dir, name string) (*filer_pb.Entry, error) {
 	ctx, cancel := lookupContext()
 	defer cancel()
@@ -1010,6 +1010,10 @@ func entryDiffers(entry, current *filer_pb.Entry) bool {
 		len(filer.DoMinusChunks(current.GetChunks(), entry.GetChunks())) > 0
 }
 
+// remoteUploadChunkCache is one per process: a chunk cache runs a worker
+// goroutine that nothing stops, so a cache per upload leaks one per file.
+var remoteUploadChunkCache = chunk_cache.NewChunkCacheInMemory(8)
+
 // remoteUploadReader streams the entry's full declared size through
 // ChunkReadAt, which zero-fills any range no chunk view covers: a sparse
 // file, a mid-write snapshot flushed while its chunk uploads were still
@@ -1018,10 +1022,6 @@ func entryDiffers(entry, current *filer_pb.Entry) bool {
 // the backend a short body on every retry — a hole that never fills wedges
 // the event, and a backend that does not verify the length publishes a
 // truncated object.
-// remoteUploadChunkCache is one per process: a chunk cache runs a worker
-// goroutine that nothing stops, so a cache per upload leaks one per file.
-var remoteUploadChunkCache = chunk_cache.NewChunkCacheInMemory(8)
-
 func remoteUploadReader(filerClient filer_pb.FilerClient, entry *filer_pb.Entry) (reader io.Reader, closeFn func() error, err error) {
 	if len(entry.Content) > 0 {
 		return bytes.NewReader(entry.Content), nil, nil
