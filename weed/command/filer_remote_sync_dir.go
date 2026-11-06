@@ -108,7 +108,23 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 		Resubscribe: processor.ResubscribeCh(),
 	}
 
-	return pb.FollowMetadata(pb.ServerAddress(*option.filerAddress), option.grpcDialOption, metadataFollowOption, processEventFnWithOffset)
+	err = pb.FollowMetadata(pb.ServerAddress(*option.filerAddress), option.grpcDialOption, metadataFollowOption, processEventFnWithOffset)
+	saveResumeOffset(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir, processor)
+	return err
+}
+
+// saveResumeOffset records where the next subscription resumes once this one
+// ends. The periodic checkpoint only runs as events arrive, and the retry
+// recomputes -timeAgo from now, so a failure before the first checkpoint
+// would otherwise start the retry after the event it failed on.
+func saveResumeOffset(grpcDialOption grpc.DialOption, filerAddress pb.ServerAddress, dir string, processor *MetadataProcessor) {
+	offsetTsNs := resumeTsNsFor(processor)
+	if offsetTsNs <= 0 {
+		return
+	}
+	if err := remote_storage.SetSyncOffset(grpcDialOption, filerAddress, dir, offsetTsNs); err != nil {
+		glog.Errorf("save the sync offset of %s: %v", dir, err)
+	}
 }
 
 func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.RemoteConf, mountedDir string, remoteStorageMountLocation *remote_pb.RemoteStorageLocation, filerSource *source.FilerSource) (pb.ProcessMetadataFunc, error) {
