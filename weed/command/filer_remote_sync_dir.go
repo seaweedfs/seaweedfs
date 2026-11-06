@@ -62,7 +62,7 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 		return err
 	}
 
-	lastOffsetTs, err := collectLastSyncOffset(option, option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir, *option.timeAgo)
+	lastOffsetTs, err := collectLastSyncOffset(option, option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir, *option.timeAgo, option.resumeTsNs)
 	if err != nil {
 		return err
 	}
@@ -109,22 +109,24 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 	}
 
 	err = pb.FollowMetadata(pb.ServerAddress(*option.filerAddress), option.grpcDialOption, metadataFollowOption, processEventFnWithOffset)
-	saveResumeOffset(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir, processor)
+	option.resumeTsNs = saveResumeOffset(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir, processor)
 	return err
 }
 
 // saveResumeOffset records where the next subscription resumes once this one
 // ends. The periodic checkpoint only runs as events arrive, and the retry
 // recomputes -timeAgo from now, so a failure before the first checkpoint
-// would otherwise start the retry after the event it failed on.
-func saveResumeOffset(grpcDialOption grpc.DialOption, filerAddress pb.ServerAddress, dir string, processor *MetadataProcessor) {
+// would otherwise start the retry after the event it failed on. The offset is
+// returned for the retry in this process, which must not depend on the write.
+func saveResumeOffset(grpcDialOption grpc.DialOption, filerAddress pb.ServerAddress, dir string, processor *MetadataProcessor) int64 {
 	offsetTsNs := resumeTsNsFor(processor)
 	if offsetTsNs <= 0 {
-		return
+		return 0
 	}
 	if err := remote_storage.SetSyncOffset(grpcDialOption, filerAddress, dir, offsetTsNs); err != nil {
 		glog.Errorf("save the sync offset of %s: %v", dir, err)
 	}
+	return offsetTsNs
 }
 
 func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.RemoteConf, mountedDir string, remoteStorageMountLocation *remote_pb.RemoteStorageLocation, filerSource *source.FilerSource) (pb.ProcessMetadataFunc, error) {
@@ -1104,7 +1106,13 @@ func retriedWriteFile(client remote_storage.RemoteStorageClient, filerSource fil
 	return
 }
 
-func collectLastSyncOffset(filerClient filer_pb.FilerClient, grpcDialOption grpc.DialOption, filerAddress pb.ServerAddress, mountedDir string, timeAgo time.Duration) (time.Time, error) {
+func collectLastSyncOffset(filerClient filer_pb.FilerClient, grpcDialOption grpc.DialOption, filerAddress pb.ServerAddress, mountedDir string, timeAgo time.Duration, resumeTsNs int64) (time.Time, error) {
+	if resumeTsNs > 0 {
+		// the previous attempt pinned where it stopped, which can sit behind
+		// both the saved offset and a recomputed -timeAgo window
+		glog.V(0).Infof("resuming previous attempt at %v", time.Unix(0, resumeTsNs))
+		return time.Unix(0, resumeTsNs), nil
+	}
 	return resolveLastSyncOffset(mountedDir, timeAgo,
 		func() (*filer_pb.Entry, error) {
 			ctx, cancel := lookupContext()

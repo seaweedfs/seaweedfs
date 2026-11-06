@@ -725,6 +725,19 @@ func TestSaveResumeOffsetKeepsTheStartForTheRetry(t *testing.T) {
 	if got.After(start) {
 		t.Fatalf("the retry starts at %v, after the first subscription's start %v", got, start)
 	}
+
+	// the write fails and the retry reads no saved offset: the position
+	// returned for this process still holds the start
+	failingAddress, failingDialOption := startFiler(t, &failingKvFilerServer{})
+	resumeTsNs := saveResumeOffset(failingDialOption, failingAddress, dir, processor)
+	emptyAddress, emptyDialOption := startKvFiler(t)
+	got, err = collectLastSyncOffset(&stubFilerClient{}, emptyDialOption, emptyAddress, dir, time.Hour, resumeTsNs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.After(start) {
+		t.Fatalf("after a failed write the retry starts at %v, after the first subscription's start %v", got, start)
+	}
 }
 
 func TestRemoteUploadReaderSharesOneChunkCache(t *testing.T) {
