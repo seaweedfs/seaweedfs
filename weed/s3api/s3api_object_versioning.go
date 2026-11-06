@@ -215,11 +215,31 @@ func (s3a *S3ApiServer) createDeleteMarker(bucket, object string) (string, error
 	bucketDir := s3a.bucketDir(bucket)
 	versionsDir := bucketDir + "/" + cleanObject + s3_constants.VersionsFolder
 
-	// Create the delete marker entry in the .versions directory
 	deleteMarkerMtime := time.Now().Unix()
 	deleteMarkerExtended := map[string][]byte{
 		s3_constants.ExtVersionIdKey:    []byte(versionId),
 		s3_constants.ExtDeleteMarkerKey: []byte("true"),
+	}
+
+	// On the owner filer the marker and the pointer flip commit in one
+	// transaction; RECOMPUTE_LATEST picks the marker as the new latest.
+	if owner := s3a.objectWriteOwner(bucket, cleanObject); owner != "" {
+		deleteMarkerEntry := &filer_pb.Entry{
+			Name: versionFileName,
+			Attributes: &filer_pb.FuseAttributes{
+				Mtime:    deleteMarkerMtime,
+				Crtime:   deleteMarkerMtime,
+				FileMode: uint32(0770),
+				Uid:      filer_pb.OS_UID,
+				Gid:      filer_pb.OS_GID,
+			},
+			Extended: deleteMarkerExtended,
+		}
+		if code := s3a.routedVersionedFinalize(owner, bucket, cleanObject, useInvertedFormat, deleteMarkerEntry); code != s3err.ErrNone {
+			return "", fmt.Errorf("createDeleteMarker: routed finalize failed for %s/%s: code %d", bucket, object, code)
+		}
+		glog.V(2).Infof("createDeleteMarker: successfully created delete marker %s for %s/%s", versionId, bucket, object)
+		return versionId, nil
 	}
 
 	err := s3a.mkFile(versionsDir, versionFileName, nil, func(entry *filer_pb.Entry) {
@@ -249,13 +269,7 @@ func (s3a *S3ApiServer) createDeleteMarker(bucket, object string) (string, error
 		},
 		Extended: deleteMarkerExtended,
 	}
-	// Route the pointer flip to the owner filer when known (off the distributed
-	// lock); RECOMPUTE_LATEST picks the just-written marker as the new latest.
-	if owner := s3a.objectWriteOwner(bucket, cleanObject); owner != "" {
-		if code := s3a.routedVersionedFinalize(owner, bucket, cleanObject, useInvertedFormat); code != s3err.ErrNone {
-			return "", fmt.Errorf("createDeleteMarker: routed finalize failed for %s/%s: code %d", bucket, object, code)
-		}
-	} else if err = s3a.updateLatestVersionInDirectory(bucket, cleanObject, versionId, versionFileName, deleteMarkerEntry); err != nil {
+	if err = s3a.updateLatestVersionInDirectory(bucket, cleanObject, versionId, versionFileName, deleteMarkerEntry); err != nil {
 		glog.Errorf("createDeleteMarker: failed to update latest version in directory: %v", err)
 		return "", fmt.Errorf("failed to update latest version in directory: %w", err)
 	}

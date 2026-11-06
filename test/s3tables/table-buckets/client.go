@@ -336,6 +336,44 @@ func (c *S3TablesClient) DeleteTable(bucketARN string, namespace []string, name 
 	return c.doRestRequestAndDecode("DeleteTable", http.MethodDelete, path, nil, nil)
 }
 
+// RenameTable renames a table through the AWS REST shape: the path names the
+// source and the body the destination, where an empty newNamespace or newName
+// keeps the source's. Any 2xx is success, as for the SDK (AWS answers 204).
+func (c *S3TablesClient) RenameTable(bucketARN string, namespace []string, name, newNamespace, newName, versionToken string) error {
+	nameSpace, err := getFirstNamespace(namespace)
+	if err != nil {
+		return fmt.Errorf("RenameTable requires namespace: %w", err)
+	}
+	body := map[string]string{}
+	if newNamespace != "" {
+		body["newNamespaceName"] = newNamespace
+	}
+	if newName != "" {
+		body["newName"] = newName
+	}
+	if versionToken != "" {
+		body["versionToken"] = versionToken
+	}
+	path := "/tables/" + url.PathEscape(bucketARN) + "/" + url.PathEscape(nameSpace) + "/" + url.PathEscape(name) + "/rename"
+	resp, err := c.doRestRequest(http.MethodPut, path, body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	bodyBytes, readErr := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+	if readErr != nil {
+		return fmt.Errorf("RenameTable failed with status %d and could not read error response body: %v", resp.StatusCode, readErr)
+	}
+	var errResp s3tables.S3TablesError
+	if err := json.Unmarshal(bodyBytes, &errResp); err != nil {
+		return fmt.Errorf("RenameTable failed with status %d, could not decode error response: %v. Body: %s", resp.StatusCode, err, string(bodyBytes))
+	}
+	return fmt.Errorf("RenameTable failed: %s - %s", errResp.Type, errResp.Message)
+}
+
 // Policy operations
 
 func (c *S3TablesClient) PutTableBucketPolicy(bucketARN, policy string) error {

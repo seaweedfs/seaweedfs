@@ -18,7 +18,7 @@ use tracing::debug;
 
 use crate::storage::needle::needle::Needle;
 use crate::storage::types::{Size, VolumeId};
-use crate::storage::volume::VolumeError;
+use crate::storage::volume::{PendingWrite, VolumeError};
 
 use super::volume_server::VolumeServerState;
 
@@ -26,7 +26,12 @@ use super::volume_server::VolumeServerState;
 pub type WriteResult = Result<(u64, Size, bool), VolumeError>;
 
 /// The needles queued for one volume, each with the durability it asked for.
-type VolumeBatch = Vec<(Needle, bool, oneshot::Sender<WriteResult>)>;
+type VolumeBatch = Vec<(
+    Needle,
+    bool,
+    oneshot::Sender<WriteResult>,
+    Option<PendingWrite>,
+)>;
 
 /// A request to write a needle, submitted to the write queue.
 pub struct WriteRequest {
@@ -38,6 +43,8 @@ pub struct WriteRequest {
     /// that cancels `submit` after the send must not free the slot while the
     /// worker still holds the needle.
     pub queue_permit: Option<OwnedSemaphorePermit>,
+    /// Tracked from submission, so a delete cancels the write while it waits.
+    pub pending: Option<PendingWrite>,
 }
 
 /// Maximum number of write requests to batch together.
@@ -167,12 +174,13 @@ impl WriteQueue {
         #[cfg(test)]
         self.submits
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        {
+        let pending = {
             let store = self.state.store.read().unwrap();
-            if store.find_volume(volume_id).is_none() {
-                return Err(VolumeError::NotFound);
+            match store.find_volume(volume_id) {
+                Some((_, vol)) => vol.track_pending_write(&needle),
+                None => return Err(VolumeError::NotFound),
             }
-        }
+        };
         // The permit travels inside the request, so the global queued bound
         // covers the request until the worker drops it — including after a
         // canceled submit.
@@ -189,6 +197,7 @@ impl WriteQueue {
             fsync,
             response_tx,
             queue_permit: Some(queue_permit),
+            pending: Some(pending),
         };
 
         // A send fails only against a retiring worker's closed channel; the
@@ -345,10 +354,11 @@ fn process_batch(state: Arc<VolumeServerState>, batch: Vec<WriteRequest>) {
 
     for req in batch {
         let vid = req.volume_id;
+        let entry = (req.needle, req.fsync, req.response_tx, req.pending);
         if let Some(group) = groups.iter_mut().find(|(v, _)| *v == vid) {
-            group.1.push((req.needle, req.fsync, req.response_tx));
+            group.1.push(entry);
         } else {
-            groups.push((vid, vec![(req.needle, req.fsync, req.response_tx)]));
+            groups.push((vid, vec![entry]));
         }
     }
 
@@ -356,16 +366,28 @@ fn process_batch(state: Arc<VolumeServerState>, batch: Vec<WriteRequest>) {
     // the group's I/O with the guard released — one volume's write must not
     // block admission on another volume's.
     for (vid, entries) in groups {
-        let (mut writes, senders): (Vec<_>, Vec<_>) = entries
-            .into_iter()
-            .map(|(needle, fsync, response_tx)| ((needle, fsync), response_tx))
-            .unzip();
         let vol = {
             let store = state.store.read().unwrap();
             store.writable_volume(vid)
         };
-        let results = match vol {
-            Ok(vol) => vol.write_needles_grouped(&mut writes),
+        let mut writes = Vec::with_capacity(entries.len());
+        let mut senders = Vec::with_capacity(entries.len());
+        let mut pendings = Vec::with_capacity(entries.len());
+        for (needle, fsync, response_tx, pending) in entries {
+            // A delete reaching a remounted volume cannot cancel a write
+            // queued for the old one.
+            if let (Ok(vol), Some(pending)) = (&vol, &pending)
+                && !vol.tracks_pending_write(pending)
+            {
+                let _ = response_tx.send(Err(VolumeError::NotFound));
+                continue;
+            }
+            writes.push((needle, fsync));
+            senders.push(response_tx);
+            pendings.push(pending);
+        }
+        let results: Vec<WriteResult> = match vol {
+            Ok(vol) => vol.write_pending_needles(&mut writes, &pendings),
             Err(e) => writes
                 .iter()
                 .map(|_| match e {
@@ -577,6 +599,7 @@ mod tests {
                     fsync: true,
                     response_tx,
                     queue_permit: None,
+                    pending: None,
                 }
             })
             .collect();
@@ -669,6 +692,7 @@ mod tests {
             fsync: false,
             response_tx,
             queue_permit: None,
+            pending: None,
         }];
         let writer = {
             let state = state.clone();

@@ -3,10 +3,19 @@ package s3api
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/gorilla/mux"
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -106,4 +115,63 @@ func TestDeleteUnversionedObjectWithClient_PropagatesEntryAttributesIrrelevant(t
 	require.NoError(t, s3a.deleteUnversionedObjectWithClient(context.Background(), client, "b", "k", true))
 	require.NotNil(t, client.deleteReq)
 	assert.False(t, client.deleteReq.IsDeleteData)
+}
+
+// The gateway's own filer is not the object's write owner and has not seen the
+// owner's writes yet. The delete marker must still commit on the owner, where
+// the latest-pointer recompute scans .versions, so the marker becomes current.
+func TestVersionedDeleteMarkerCommitsOnOwner(t *testing.T) {
+	util_http.InitGlobalHttpClient()
+	volume := startFakeVolumeServer(t)
+	owner := &ambiguousPutFiler{volume: volume, apply: true, entries: map[string]*filer_pb.Entry{}}
+	replica := &ambiguousPutFiler{volume: volume, apply: true, entries: map[string]*filer_pb.Entry{}}
+	ownerAddr := startFakeFiler(t, owner)
+	replicaAddr := startFakeFiler(t, replica)
+	s3a := newPutTestServer(t, replicaAddr)
+	s3a.iam = &IdentityAccessManagement{}
+	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+	s3a.bucketConfigCache.Set("bucket", &BucketConfig{Name: "bucket", Versioning: s3_constants.VersioningEnabled})
+	s3a.objectWriteLockClient = cluster.NewLockClient(s3a.option.GrpcDialOption, ownerAddr)
+	s3a.objectWriteLockClient.SetRing([]pb.ServerAddress{ownerAddr}, 1)
+
+	put := httptest.NewRequest(http.MethodPut, "/bucket/key", strings.NewReader("data"))
+	put = mux.SetURLVars(put, map[string]string{"bucket": "bucket", "object": "key"})
+	putResult := httptest.NewRecorder()
+	s3a.PutObjectHandler(putResult, put)
+	require.Equal(t, http.StatusOK, putResult.Code, putResult.Body.String())
+	dataVersionId := putResult.Header().Get("x-amz-version-id")
+	require.NotEmpty(t, dataVersionId)
+
+	var deleteTxns []*filer_pb.ObjectTransactionRequest
+	owner.mu.Lock()
+	owner.txnCheck = func(req *filer_pb.ObjectTransactionRequest) { deleteTxns = append(deleteTxns, req) }
+	owner.mu.Unlock()
+
+	del := httptest.NewRequest(http.MethodDelete, "/bucket/key", nil)
+	del = mux.SetURLVars(del, map[string]string{"bucket": "bucket", "object": "key"})
+	delResult := httptest.NewRecorder()
+	s3a.DeleteObjectHandler(delResult, del)
+	require.Equal(t, http.StatusNoContent, delResult.Code, delResult.Body.String())
+	markerId := delResult.Header().Get("x-amz-version-id")
+	require.NotEmpty(t, markerId)
+	require.NotEqual(t, dataVersionId, markerId)
+
+	markerKey := "/buckets/bucket/key.versions/v_" + markerId
+	owner.mu.Lock()
+	require.Len(t, deleteTxns, 1, "the marker and the pointer flip must share one transaction")
+	mutations := deleteTxns[0].Mutations
+	require.Len(t, mutations, 2)
+	require.Equal(t, filer_pb.ObjectMutation_PUT, mutations[0].Type)
+	require.Equal(t, "/buckets/bucket/key.versions", mutations[0].Directory)
+	require.Equal(t, "v_"+markerId, mutations[0].Entry.GetName())
+	require.Equal(t, filer_pb.ObjectMutation_RECOMPUTE_LATEST, mutations[1].Type)
+	require.NotNil(t, owner.entries[markerKey], "the marker must commit on the owner")
+	pointer := owner.entries["/buckets/bucket/key.versions"]
+	require.NotNil(t, pointer)
+	require.Equal(t, markerId, string(pointer.Extended[s3_constants.ExtLatestVersionIdKey]))
+	require.Equal(t, "true", string(pointer.Extended[s3_constants.ExtLatestVersionIsDeleteMarker]))
+	owner.mu.Unlock()
+	replica.mu.Lock()
+	require.Nil(t, replica.entries[markerKey], "the replica must still be behind")
+	replica.mu.Unlock()
 }

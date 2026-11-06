@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"path"
 	"strconv"
@@ -1395,6 +1396,24 @@ func (h *S3TablesHandler) handleRenameView(w http.ResponseWriter, r *http.Reques
 	return h.renameCatalogEntry(w, r, filerClient, viewEntryKind)
 }
 
+// renameReadsMatchSnapshot reports whether the source attributes a rename read
+// separately (reads, plus the parsed tags) are the ones in snapshot, the entry
+// its claim asserts. An absent attribute matches an empty read.
+func renameReadsMatchSnapshot(snapshot map[string][]byte, tags map[string]string, reads map[string][]byte) bool {
+	for key, value := range reads {
+		if !bytes.Equal(snapshot[key], value) {
+			return false
+		}
+	}
+	var snapshotTags map[string]string
+	if raw := snapshot[ExtendedKeyTags]; len(raw) > 0 {
+		if err := json.Unmarshal(raw, &snapshotTags); err != nil {
+			return false
+		}
+	}
+	return maps.Equal(snapshotTags, tags)
+}
+
 // markSourceGone tags a missing source path so the rename reports it under the
 // source name instead of the closed-parent mapping naming the destination.
 func markSourceGone(err error) error {
@@ -1447,6 +1466,7 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 	destPath := GetTablePath(bucketName, destNamespace, destName)
 
 	var metadata tableMetadataInternal
+	var metadataXattr []byte
 	var metadataVersionXattr []byte
 	var maintenanceXattr []byte
 	var maintenanceStatusXattr []byte
@@ -1461,6 +1481,7 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 		if err != nil {
 			return err
 		}
+		metadataXattr = data
 		if err := json.Unmarshal(data, &metadata); err != nil {
 			return fmt.Errorf("failed to unmarshal table metadata: %w", err)
 		}
@@ -1634,6 +1655,27 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 		}) {
 		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, fmt.Sprintf("namespace %s not found", destNamespace))
 		return NewAuthError(kind.renameOp, principal, "not authorized to create "+kind.noun+" in the destination namespace")
+	}
+
+	// The destination is built from attributes read one lookup at a time, but
+	// the claim and the source clear assert srcExtended. A write landing between
+	// those reads would let the claim succeed while the destination publishes
+	// the older values, dropping the write; refuse it so the caller retries.
+	// Past this check metadata is the claimed snapshot, so the token compares
+	// against it.
+	if !renameReadsMatchSnapshot(srcExtended, tableTags, map[string][]byte{
+		ExtendedKeyMetadata:          metadataXattr,
+		ExtendedKeyMetadataVersion:   metadataVersionXattr,
+		ExtendedKeyPolicy:            []byte(tablePolicy),
+		ExtendedKeyMaintenance:       maintenanceXattr,
+		ExtendedKeyMaintenanceStatus: maintenanceStatusXattr,
+	}) {
+		h.writeError(w, http.StatusConflict, ErrCodeConflict, kind.noun+" changed during rename, retry the request")
+		return ErrConcurrentUpdate
+	}
+	if req.VersionToken != "" && metadata.VersionToken != req.VersionToken {
+		h.writeError(w, http.StatusConflict, ErrCodeConflict, "version token mismatch")
+		return ErrVersionTokenMismatch
 	}
 
 	if destExists {

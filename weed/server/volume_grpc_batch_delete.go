@@ -10,6 +10,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
 func (vs *VolumeServer) BatchDelete(ctx context.Context, req *volume_server_pb.BatchDeleteRequest) (*volume_server_pb.BatchDeleteResponse, error) {
@@ -37,8 +38,9 @@ func (vs *VolumeServer) BatchDelete(ctx context.Context, req *volume_server_pb.B
 
 		n := new(needle.Needle)
 		volumeId, _ := needle.NewVolumeId(vid)
+		var fidCookie types.Cookie
 		if req.SkipCookieCheck {
-			n.Id, _, err = needle.ParseNeedleIdCookie(id_cookie)
+			n.Id, fidCookie, err = needle.ParseNeedleIdCookie(id_cookie)
 			if err != nil {
 				resp.Results = append(resp.Results, &volume_server_pb.DeleteResult{
 					FileId: fid,
@@ -99,6 +101,10 @@ func (vs *VolumeServer) BatchDelete(ctx context.Context, req *volume_server_pb.B
 
 		n.LastModified = now
 		if !isEcVolume {
+			if req.SkipCookieCheck {
+				// the delete cancels in-flight writes carrying this cookie
+				n.Cookie = fidCookie
+			}
 			if size, err := vs.store.DeleteVolumeNeedle(volumeId, n); err != nil {
 				resp.Results = append(resp.Results, &volume_server_pb.DeleteResult{
 					FileId: fid,

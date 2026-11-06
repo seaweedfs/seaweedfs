@@ -301,6 +301,9 @@ type RenameTableRequest struct {
 	SourceName      string   `json:"sourceName"`
 	DestNamespace   []string `json:"destNamespace"`
 	DestName        string   `json:"destName"`
+	// VersionToken, when set, makes the rename conditional on the source still
+	// carrying this version token.
+	VersionToken string `json:"versionToken,omitempty"`
 }
 
 type RenameTableResponse struct {
