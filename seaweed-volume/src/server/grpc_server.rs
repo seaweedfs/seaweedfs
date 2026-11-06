@@ -13005,16 +13005,16 @@ mod tests {
             .unwrap();
     }
 
-    /// Leaves `service` holding only EC shard 1 of volume 1, with shard 0 (the
-    /// one with needle 11's bytes) served by a peer; `peer_deletes` journals
-    /// the needle's delete on the peer alone.
+    /// Leaves `service` holding `local_shards` of EC volume 1, with shard 0 (the
+    /// one with needle 11's bytes) also served by a peer; `peer_deletes`
+    /// journals the needle's delete on the peer alone.
     async fn put_ec_1_needle_shard_on_a_peer(
         service: &VolumeGrpcService,
         tmp: &TempDir,
+        local_shards: Vec<u32>,
         peer_deletes: bool,
     ) -> (TempDir, tokio::sync::oneshot::Sender<()>) {
-        // One local shard, not the needle's: only a peer read can answer.
-        generate_and_mount_ec_1(service, vec![1]).await;
+        generate_and_mount_ec_1(service, local_shards).await;
 
         let (peer, peer_tmp) = make_local_service_with_volume("", None);
         peer.state
@@ -13070,7 +13070,7 @@ mod tests {
     async fn test_volume_needle_status_reads_an_ec_needle_from_a_peer_shard() {
         let (service, tmp) = make_local_service_with_volume("", None);
         let want = needle_status(&service, 11).await.unwrap();
-        let _peer = put_ec_1_needle_shard_on_a_peer(&service, &tmp, false).await;
+        let _peer = put_ec_1_needle_shard_on_a_peer(&service, &tmp, vec![1], false).await;
 
         let got = needle_status(&service, 11)
             .await
@@ -13083,11 +13083,70 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_volume_needle_status_reports_a_peer_reported_ec_deletion() {
         let (service, tmp) = make_local_service_with_volume("", None);
-        let _peer = put_ec_1_needle_shard_on_a_peer(&service, &tmp, true).await;
+        let _peer = put_ec_1_needle_shard_on_a_peer(&service, &tmp, vec![1], true).await;
 
         let err = needle_status(&service, 11).await.unwrap_err();
         assert_eq!(err.code(), tonic::Code::Unknown, "{err}");
         assert_eq!(err.message(), "already deleted");
+    }
+
+    fn quarantine_ec_1(service: &VolumeGrpcService) {
+        service
+            .state
+            .store
+            .read()
+            .unwrap()
+            .find_ec_volume(VolumeId(1))
+            .unwrap()
+            .mark_io_quarantined();
+    }
+
+    /// A quarantined disk is not read while a peer holds the shard: the peer's
+    /// answer, here that the needle is deleted, replaces the local copy's.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_ec_read_skips_quarantined_local_shards() {
+        let (service, tmp) = make_local_service_with_volume("", None);
+        let _peer = put_ec_1_needle_shard_on_a_peer(&service, &tmp, (0..14).collect(), true).await;
+        needle_status(&service, 11)
+            .await
+            .expect("healthy local shards answer first");
+
+        quarantine_ec_1(&service);
+        let miss = crate::server::store_ec::read_ec_shard_needle_or_miss(
+            &service.state,
+            VolumeId(1),
+            NeedleId(11),
+        )
+        .await
+        .unwrap()
+        .unwrap_err();
+        assert_eq!(miss, crate::server::store_ec::EcMiss::Deleted);
+    }
+
+    /// When no healthy copy answers, the quarantined shards still serve the read.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_ec_read_falls_back_to_quarantined_shards() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        let want = needle_status(&service, 11).await.unwrap();
+        generate_and_mount_ec_1(&service, (0..14).collect()).await;
+        {
+            let mut store = service.state.store.write().unwrap();
+            store.unmount_volume(VolumeId(1)).unwrap();
+            store
+                .find_ec_volume(VolumeId(1))
+                .unwrap()
+                .merge_shard_locations(
+                    (0u8..14)
+                        .map(|sid| (sid, vec!["127.0.0.1:255.1".to_string()]))
+                        .collect(),
+                );
+        }
+        quarantine_ec_1(&service);
+
+        let got = needle_status(&service, 11)
+            .await
+            .expect("only the quarantined disk holds the shards");
+        assert_eq!(got, want);
     }
 
     /// A volume unmounted before the EC read resolves it is "volume not found",
@@ -13295,7 +13354,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_batch_delete_peer_reported_ec_deletion_is_not_an_error() {
         let (service, tmp) = make_local_service_with_volume("", None);
-        let _peer = put_ec_1_needle_shard_on_a_peer(&service, &tmp, true).await;
+        let _peer = put_ec_1_needle_shard_on_a_peer(&service, &tmp, vec![1], true).await;
 
         assert_eq!(
             batch_delete_1(&service, 11, 0x3344, true).await,

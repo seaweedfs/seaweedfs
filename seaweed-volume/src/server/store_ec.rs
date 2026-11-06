@@ -1035,7 +1035,7 @@ fn scrub_snapshot_under_lock(
         version: ecv.version,
         actual_size: get_actual_size(size, ecv.version) as usize,
         size_for_parse: size,
-        intervals: read_local_intervals(ecv, &intervals),
+        intervals: read_local_intervals(ecv, &intervals, true),
         encode_ts_ns: ecv.encode_ts_ns,
     })
 }
@@ -1052,16 +1052,23 @@ struct ScrubSnapshot {
 }
 
 /// Read any locally-held shard intervals, marking the rest `NeedRemote`. Shared
-/// by the read-path `build_snapshot` and the scrub snapshot.
+/// by the read-path `build_snapshot` and the scrub snapshot. Shards on a
+/// quarantined disk count as not local unless `allow_quarantined` is set.
 fn read_local_intervals(
     ecv: &crate::storage::erasure_coding::ec_volume::EcVolume,
     intervals: &[crate::storage::erasure_coding::ec_locate::Interval],
+    allow_quarantined: bool,
 ) -> Vec<IntervalResult> {
+    let skip_local = !allow_quarantined && ecv.get_io_error_state().2;
     let mut interval_results = Vec::with_capacity(intervals.len());
     for interval in intervals {
         let (shard_id, shard_offset) = ecv.interval_to_shard_id_and_offset(interval);
         let buf_size = interval.size as usize;
-        let local = ecv.shards.get(shard_id as usize).and_then(|s| s.as_ref());
+        let local = ecv
+            .shards
+            .get(shard_id as usize)
+            .and_then(|s| s.as_ref())
+            .filter(|_| !skip_local);
         match local {
             Some(shard) => {
                 let mut buf = vec![0u8; buf_size];
@@ -1103,7 +1110,7 @@ fn build_snapshot(
         ));
     }
     let actual = get_actual_size(size, ecv.version);
-    let interval_results = read_local_intervals(ecv, intervals);
+    let interval_results = read_local_intervals(ecv, intervals, false);
     let metas = intervals
         .iter()
         .map(|iv| {
@@ -1361,7 +1368,38 @@ async fn fetch_one_interval(
     let result =
         recover_one_remote_ec_shard_interval(state, iv, map, &HashSet::from([iv.shard_id])).await;
     note_ec_reconstructed_interval(iv, &result);
+    if result.is_err()
+        && let Some(buf) = read_quarantined_local_interval(state, iv)
+    {
+        tracing::info!(
+            "read ec shard {}.{} from its quarantined disk: no healthy copy answered",
+            vid.0,
+            shard_id
+        );
+        return Ok((buf, false));
+    }
     result
+}
+
+/// Last resort once peers and reconstruction failed: the interval from a local
+/// shard skipped because its disk is quarantined. Mirrors the tail of Go's
+/// `readOneEcShardInterval`.
+fn read_quarantined_local_interval(
+    state: &Arc<VolumeServerState>,
+    iv: EcInterval,
+) -> Option<Vec<u8>> {
+    let store = state.store.read().unwrap();
+    let ecv = store.find_ec_volume_with_shard(iv.vid, iv.shard_id)?;
+    if !ecv.get_io_error_state().2
+        || (iv.expected_encode_ts_ns != 0 && ecv.encode_ts_ns != iv.expected_encode_ts_ns)
+    {
+        return None;
+    }
+    let shard = ecv.shards.get(iv.shard_id as usize)?.as_ref()?;
+    let mut buf = vec![0u8; iv.size];
+    let read = shard.read_at(&mut buf, iv.shard_offset as u64);
+    ecv.check_read_write_error(read.as_ref().err());
+    (read.ok()? == iv.size).then_some(buf)
 }
 
 /// Counts one interval that couldn't be read directly and was reconstructed,
@@ -1569,7 +1607,9 @@ async fn gather_ec_shard_intervals(
             }
             let owner = match store.find_ec_volume_with_shard(vid, sid_shard) {
                 Some(ecv)
-                    if expected_encode_ts_ns == 0 || ecv.encode_ts_ns == expected_encode_ts_ns =>
+                    if (expected_encode_ts_ns == 0
+                        || ecv.encode_ts_ns == expected_encode_ts_ns)
+                        && !ecv.get_io_error_state().2 =>
                 {
                     ecv
                 }
