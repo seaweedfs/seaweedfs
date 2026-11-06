@@ -126,7 +126,7 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	if ok != nil && r.FormValue("type") == "replicate" {
 		// the write this delete undoes can still be queued here
 		if v := vs.store.GetVolume(volumeId); v != nil {
-			v.CancelPendingWrites(n.Id)
+			v.CancelPendingWrites(n.Id, cookie)
 			_, ok = vs.store.ReadVolumeNeedle(volumeId, n, deleteReadOption(), nil)
 		}
 	}

@@ -54,7 +54,7 @@ func TestDeleteOfMissingNeedleCancelsQueuedWrite(t *testing.T) {
 
 			_, err = v.readNeedle(&needle.Needle{Id: n.Id}, nil, nil)
 			require.ErrorIs(t, err, ErrorNotFound)
-			v.CancelPendingWrites(n.Id)
+			v.CancelPendingWrites(n.Id, n.Cookie)
 			v.dataFileSyncLock.Unlock()
 
 			require.ErrorIs(t, <-written, ErrorDeleted)
@@ -104,7 +104,7 @@ func TestDeleteCancelsQueuedRewrite(t *testing.T) {
 func TestWriteAfterDeleteIsNotCancelled(t *testing.T) {
 	v := newWorkerTestVolume(t)
 	n := newRandomNeedle(1)
-	v.CancelPendingWrites(n.Id)
+	v.CancelPendingWrites(n.Id, n.Cookie)
 	_, err := v.deleteNeedle2(&needle.Needle{Id: n.Id, Cookie: n.Cookie})
 	require.NoError(t, err)
 
@@ -112,6 +112,27 @@ func TestWriteAfterDeleteIsNotCancelled(t *testing.T) {
 	require.NoError(t, err)
 	got := &needle.Needle{Id: n.Id}
 	_, err = v.readNeedle(got, nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, n.Data, got.Data)
+}
+
+// A delete only cancels writes that carry its cookie.
+func TestCancelWithOtherCookieKeepsWrite(t *testing.T) {
+	v := newWorkerTestVolume(t)
+	n := newRandomNeedle(1)
+	v.dataFileSyncLock.Lock()
+	written := make(chan error, 1)
+	go func() {
+		_, _, _, err := v.writeNeedle2(n, true, false, false)
+		written <- err
+	}()
+	waitForPendingWrites(t, v, n.Id, 1)
+	v.CancelPendingWrites(n.Id, n.Cookie+1)
+	v.dataFileSyncLock.Unlock()
+
+	require.NoError(t, <-written)
+	got := &needle.Needle{Id: n.Id}
+	_, err := v.readNeedle(got, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, n.Data, got.Data)
 }
@@ -147,7 +168,7 @@ func TestWriteAfterCancelledWriteStaysLive(t *testing.T) {
 	n := newRandomNeedle(1)
 	first := queue(n)
 	window := <-armed
-	v.CancelPendingWrites(n.Id)
+	v.CancelPendingWrites(n.Id, n.Cookie)
 	retry := queue(&needle.Needle{Id: n.Id, Cookie: n.Cookie, Data: n.Data, Checksum: n.Checksum})
 	require.Eventually(t, func() bool { return len(v.asyncRequestsChan) == 0 }, 10*time.Second, time.Millisecond)
 	window <- time.Now()

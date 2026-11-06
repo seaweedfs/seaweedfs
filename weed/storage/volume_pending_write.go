@@ -15,6 +15,7 @@ import (
 // the needle on this copy alone.
 type pendingWrite struct {
 	n         *needle.Needle
+	cookie    Cookie
 	cancelled bool
 }
 
@@ -24,7 +25,7 @@ type pendingWrites struct {
 }
 
 func (v *Volume) trackPendingWrite(n *needle.Needle) *pendingWrite {
-	w := &pendingWrite{n: n}
+	w := &pendingWrite{n: n, cookie: n.Cookie}
 	v.pendingWrites.Lock()
 	defer v.pendingWrites.Unlock()
 	if v.pendingWrites.byId == nil {
@@ -55,11 +56,13 @@ func (v *Volume) untrackPendingWrite(w *pendingWrite) {
 // CancelPendingWrites cancels the writes of the needle that are in flight. A
 // caller that found the needle missing must look it up again afterwards: a
 // write that finished in between is no longer pending.
-func (v *Volume) CancelPendingWrites(id NeedleId) {
+func (v *Volume) CancelPendingWrites(id NeedleId, cookie Cookie) {
 	v.pendingWrites.Lock()
 	defer v.pendingWrites.Unlock()
 	for _, w := range v.pendingWrites.byId[id] {
-		w.cancelled = true
+		if w.cookie == cookie {
+			w.cancelled = true
+		}
 	}
 }
 

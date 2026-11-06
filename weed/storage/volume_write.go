@@ -439,7 +439,7 @@ func (v *Volume) syncDelete(n *needle.Needle) (Size, error) {
 }
 
 func (v *Volume) deleteNeedle2(n *needle.Needle) (Size, error) {
-	v.CancelPendingWrites(n.Id)
+	v.CancelPendingWrites(n.Id, n.Cookie)
 
 	// todo: delete info is always appended no fsync, it may need fsync in future
 	fsync := false
