@@ -743,8 +743,9 @@ func TestCreateEntry_SkipsTheLazyFetchInsideAStoreTransaction(t *testing.T) {
 	}
 	f, store := newMountedTestFiler(t, storageType, countingStub, 0)
 	putDirEntry(store, "/buckets/mybucket/dir")
-	// the key a store transaction travels under (abstract_sql getTxOrDB)
-	txCtx := context.WithValue(context.Background(), "tx", struct{}{})
+	// the stub opens no transaction of its own; the filer marks it anyway
+	txCtx, err := f.BeginTransaction(context.Background())
+	require.NoError(t, err)
 
 	// a create inside the transaction: its lookup does not consult the
 	// remote, the entry is inserted as given
