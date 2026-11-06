@@ -2,9 +2,11 @@ package storage
 
 import (
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -182,4 +184,46 @@ func TestWriteAfterCancelledWriteStaysLive(t *testing.T) {
 	_, err = v.readNeedle(got, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, n.Data, got.Data)
+}
+
+type syncedSizeBackend struct {
+	backend.BackendStorageFile
+	synced atomic.Int64
+}
+
+func (b *syncedSizeBackend) Sync() error {
+	size, _, err := b.GetStat()
+	if err != nil {
+		return err
+	}
+	b.synced.Store(size)
+	return b.BackendStorageFile.Sync()
+}
+
+// A durable write taken back during its fsync appends the tombstone after
+// that fsync; it must be flushed before the .idx row that points at it.
+func TestTakenBackTombstoneIsSynced(t *testing.T) {
+	for _, isStopping := range []bool{false, true} {
+		t.Run(fmt.Sprintf("inline=%v", isStopping), func(t *testing.T) {
+			v := newWorkerTestVolume(t)
+			synced := &syncedSizeBackend{BackendStorageFile: v.DataBackend}
+			v.DataBackend = synced
+
+			n := newRandomNeedle(1)
+			v.dataFileSyncLock.Lock()
+			written := make(chan error, 1)
+			go func() {
+				_, _, _, err := v.writeNeedle2(n, true, true, isStopping)
+				written <- err
+			}()
+			waitForPendingWrites(t, v, n.Id, 1)
+			v.CancelPendingWrites(n.Id, n.Cookie)
+			v.dataFileSyncLock.Unlock()
+
+			require.ErrorIs(t, <-written, ErrorDeleted)
+			size, _, err := v.DataBackend.GetStat()
+			require.NoError(t, err)
+			require.Equal(t, size, synced.synced.Load(), "the tombstone was not flushed")
+		})
+	}
 }

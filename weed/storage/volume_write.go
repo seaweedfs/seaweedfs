@@ -244,11 +244,32 @@ func (v *Volume) syncWrite(n *needle.Needle, checkCookie bool, fsync bool) (offs
 	// .dat record above; the access lock is dropped for the fsync the same
 	// way, since the row is already published.
 	v.dataFileAccessLock.Unlock()
-	if idxErr := v.syncIndex(); err == nil {
+	var idxErr error
+	if errors.Is(err, ErrorDeleted) {
+		idxErr = v.syncTakenBack(backend)
+	}
+	if idxErr == nil {
+		idxErr = v.syncIndex()
+	}
+	if err == nil {
 		err = idxErr
 	}
 	v.dataFileAccessLock.Lock()
 	return
+}
+
+// syncTakenBack flushes the tombstones dropCancelledWrite appended after the
+// .dat sync, so their .idx rows never outlive them. Like syncIndex, a failure
+// cannot be undone and stops the volume taking writes.
+func (v *Volume) syncTakenBack(backend backend.BackendStorageFile) error {
+	if err := backend.Sync(); err != nil {
+		v.checkReadWriteError(err)
+		v.noWriteLock.Lock()
+		v.noWriteOrDelete = true
+		v.noWriteLock.Unlock()
+		return fmt.Errorf("sync volume %d tombstone: %w", v.Id, err)
+	}
+	return nil
 }
 
 // syncIndex flushes the .idx, the second half of a durable write: the row is
@@ -637,6 +658,7 @@ func (v *Volume) processBatchRun(run []*needle.AsyncRequest) {
 	}
 
 	refused := false
+	tookBack := false
 	for i := 0; i < len(run); i++ {
 		if refused {
 			run[i].UpdateResult(0, 0, false, fmt.Errorf("volume %d is read only", v.Id))
@@ -649,6 +671,7 @@ func (v *Volume) processBatchRun(run []*needle.AsyncRequest) {
 					refused = true
 				} else if derr := v.dropCancelledWrite(run[i].N, stagedWriteOffsets[i]); derr != nil {
 					run[i].UpdateResult(0, 0, false, derr)
+					tookBack = tookBack || errors.Is(derr, ErrorDeleted)
 				}
 			}
 		} else if stagedDeleteOk[i] {
@@ -662,7 +685,14 @@ func (v *Volume) processBatchRun(run []*needle.AsyncRequest) {
 	// rows cannot be rolled back, so a failed sync fails every request in the
 	// run instead of acknowledging an index entry that may not survive.
 	if needIndexSync {
-		if idxErr := v.syncIndex(); idxErr != nil {
+		var idxErr error
+		if tookBack {
+			idxErr = v.syncTakenBack(backend)
+		}
+		if idxErr == nil {
+			idxErr = v.syncIndex()
+		}
+		if idxErr != nil {
 			for i := 0; i < len(run); i++ {
 				run[i].UpdateResult(0, 0, false, idxErr)
 			}
