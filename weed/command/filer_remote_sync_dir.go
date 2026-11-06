@@ -1120,8 +1120,11 @@ func resolveLastSyncOffset(mountedDir string, timeAgo time.Duration, lookupMount
 		}
 
 		lastOffsetTsNs, err := readOffset()
+		if err != nil {
+			return time.Time{}, fmt.Errorf("read the sync offset of %s: %w", mountedDir, err)
+		}
 		if mountedDirEntry != nil {
-			if err == nil && mountedDirEntry.Attributes.Crtime < lastOffsetTsNs/1000000 {
+			if mountedDirEntry.Attributes.Crtime < lastOffsetTsNs/1000000 {
 				lastOffsetTs = time.Unix(0, lastOffsetTsNs)
 				glog.V(0).Infof("resume from %v", lastOffsetTs)
 			} else {

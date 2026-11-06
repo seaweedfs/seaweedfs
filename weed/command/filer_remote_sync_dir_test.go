@@ -665,6 +665,12 @@ func TestResolveLastSyncOffsetReturnsTheErrorToTheRetryLoop(t *testing.T) {
 		t.Fatalf("got %v, want the lookup error: without a saved offset the caller's retry loop decides, not an exit", err)
 	}
 
+	// the mount answers but the saved offset is unreadable: never its creation time
+	mount := &filer_pb.Entry{Name: "x", Attributes: &filer_pb.FuseAttributes{Crtime: 1}}
+	if _, err := resolveLastSyncOffset("/buckets/x", 0, func() (*filer_pb.Entry, error) { return mount, nil }, readFails); err == nil || !strings.Contains(err.Error(), "filer unavailable") {
+		t.Fatalf("got %v, want the offset read error: the creation time would replay everything already synced", err)
+	}
+
 	// -timeAgo set, the saved offset unreadable: never now minus timeAgo
 	if _, err := resolveLastSyncOffset("/buckets/x", time.Hour, func() (*filer_pb.Entry, error) { return nil, nil }, readFails); err == nil || !strings.Contains(err.Error(), "filer unavailable") {
 		t.Fatalf("got %v, want the offset read error", err)
