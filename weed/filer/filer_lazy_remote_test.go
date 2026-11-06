@@ -768,6 +768,12 @@ func TestCreateEntry_SkipsTheLazyFetchInsideAStoreTransaction(t *testing.T) {
 	excl := &Entry{FullPath: "/buckets/mybucket/dir/c.txt", Attr: Attr{Mode: 0644, Mtime: time.Now(), Crtime: time.Now()}}
 	err = f.CreateEntry(txCtx, excl, nil, true, false, nil, false, f.MaxFilenameLength)
 	assert.ErrorIs(t, err, filer_pb.ErrEntryAlreadyExists)
+
+	// outside a transaction a create still consults the remote
+	statCalls := countingStub.statCalls
+	plain := &Entry{FullPath: "/buckets/mybucket/dir/d.txt", Attr: Attr{Mode: 0644, Mtime: time.Now(), Crtime: time.Now()}}
+	require.NoError(t, f.CreateEntry(context.Background(), plain, nil, false, false, nil, false, f.MaxFilenameLength))
+	assert.Greater(t, countingStub.statCalls, statCalls)
 }
 
 func TestMaybeLazyFetchFromRemote_GuardedClientRejectsEndpoint(t *testing.T) {
