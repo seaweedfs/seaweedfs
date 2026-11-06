@@ -61,13 +61,17 @@ func TestRenameTableREST(t *testing.T) {
 		defer tables.DeleteNamespace(bucketARN, []string{ns})
 	}
 
-	createResp, err := tables.CreateTable(bucketARN, []string{namespace}, "src", "ICEBERG", nil, nil)
-	require.NoError(t, err)
-	defer tables.DeleteTable(bucketARN, []string{otherNamespace}, "moved")
-	defer tables.DeleteTable(bucketARN, []string{namespace}, "dst")
-	defer tables.DeleteTable(bucketARN, []string{namespace}, "src")
+	// Each subtest owns its source table, so any one of them runs alone.
+	createSource := func(t *testing.T, name string) string {
+		resp, err := tables.CreateTable(bucketARN, []string{namespace}, name, "ICEBERG", nil, nil)
+		require.NoError(t, err)
+		return resp.VersionToken
+	}
 
 	t.Run("newName only", func(t *testing.T) {
+		createSource(t, "src")
+		defer tables.DeleteTable(bucketARN, []string{namespace}, "src")
+		defer tables.DeleteTable(bucketARN, []string{namespace}, "dst")
 		require.NoError(t, tables.RenameTable(bucketARN, []string{namespace}, "src", "", "dst", ""))
 
 		got, err := tables.GetTable(bucketARN, []string{namespace}, "dst")
@@ -84,24 +88,28 @@ func TestRenameTableREST(t *testing.T) {
 	})
 
 	t.Run("stale versionToken", func(t *testing.T) {
-		err := tables.RenameTable(bucketARN, []string{namespace}, "dst", otherNamespace, "moved", createResp.VersionToken+"-stale")
+		token := createSource(t, "stale_src")
+		defer tables.DeleteTable(bucketARN, []string{namespace}, "stale_src")
+		defer tables.DeleteTable(bucketARN, []string{otherNamespace}, "stale_moved")
+		err := tables.RenameTable(bucketARN, []string{namespace}, "stale_src", otherNamespace, "stale_moved", token+"-stale")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), s3tables.ErrCodeConflict)
 
-		_, err = tables.GetTable(bucketARN, []string{namespace}, "dst")
+		_, err = tables.GetTable(bucketARN, []string{namespace}, "stale_src")
 		require.NoError(t, err, "a refused rename must leave the source in place")
 	})
 
 	t.Run("newNamespaceName and newName with the current versionToken", func(t *testing.T) {
-		current, err := tables.GetTable(bucketARN, []string{namespace}, "dst")
-		require.NoError(t, err)
-		require.NoError(t, tables.RenameTable(bucketARN, []string{namespace}, "dst", otherNamespace, "moved", current.VersionToken))
+		token := createSource(t, "tok_src")
+		defer tables.DeleteTable(bucketARN, []string{namespace}, "tok_src")
+		defer tables.DeleteTable(bucketARN, []string{otherNamespace}, "moved")
+		require.NoError(t, tables.RenameTable(bucketARN, []string{namespace}, "tok_src", otherNamespace, "moved", token))
 
 		got, err := tables.GetTable(bucketARN, []string{otherNamespace}, "moved")
 		require.NoError(t, err)
 		assert.Equal(t, "moved", got.Name)
 
-		_, err = tables.GetTable(bucketARN, []string{namespace}, "dst")
+		_, err = tables.GetTable(bucketARN, []string{namespace}, "tok_src")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), s3tables.ErrCodeNoSuchTable)
 	})
