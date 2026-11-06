@@ -54,13 +54,18 @@ func TestIsEmptyVolumeDeleteCandidate(t *testing.T) {
 
 type fakeVolumeDeleteServer struct {
 	volume_server_pb.UnimplementedVolumeServerServer
-	mu      sync.Mutex
-	deletes []*volume_server_pb.VolumeDeleteRequest
+	mu       sync.Mutex
+	deletes  []*volume_server_pb.VolumeDeleteRequest
+	failures int
 }
 
 func (f *fakeVolumeDeleteServer) VolumeDelete(ctx context.Context, req *volume_server_pb.VolumeDeleteRequest) (*volume_server_pb.VolumeDeleteResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.failures > 0 {
+		f.failures--
+		return nil, errors.New("volume server busy")
+	}
 	f.deletes = append(f.deletes, req)
 	return &volume_server_pb.VolumeDeleteResponse{}, nil
 }
@@ -208,6 +213,175 @@ func TestDeleteEmptyVolumesSkipsVidWithLiveReplica(t *testing.T) {
 	defer fake.mu.Unlock()
 	if len(fake.deletes) != 0 {
 		t.Fatalf("VolumeDelete calls = %d, want 0 (a live sibling keeps the whole vid)", len(fake.deletes))
+	}
+}
+
+func TestDeleteEmptyVolumesSkipsUnderReplicatedVid(t *testing.T) {
+	fake := &fakeVolumeDeleteServer{}
+	grpcPort, dialOption := startFakeVolumeServer(t, fake)
+
+	topo := NewTopology("weedfs", sequence.NewMemorySequencer(), 32*1024, 5, false)
+	dn := topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1").
+		GetOrCreateDataNode("127.0.0.1", 8080, grpcPort, "127.0.0.1", "dn-online", map[string]uint32{"": 10})
+	rp, err := super_block.NewReplicaPlacementFromString("001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := storage.VolumeInfo{
+		Id:                needle.VolumeId(1),
+		Collection:        "c",
+		ModifiedAtSecond:  time.Now().Unix() - 7200,
+		Version:           needle.GetCurrentVersion(),
+		ReplicaPlacement:  rp,
+		Ttl:               needle.EMPTY_TTL,
+		ReadOnly:          true,
+		ReadOnlyCanDelete: true,
+	}
+	dn.UpdateVolumes([]storage.VolumeInfo{v})
+	topo.RegisterVolumeLayout(v, dn)
+
+	ll := NewVolumeLocationList()
+	ll.list = append(ll.list, dn)
+	todo := map[needle.VolumeId]*VolumeLocationList{v.Id: ll}
+
+	vl := topo.GetVolumeLayout("c", rp, needle.EMPTY_TTL, types.ToDiskType(""))
+	topo.deleteEmptyVolumes(dialOption, vl, todo, time.Hour)
+
+	if _, ok := todo[v.Id]; !ok {
+		t.Fatal("vid left the sweep map while a replica is missing")
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if len(fake.deletes) != 0 {
+		t.Fatalf("VolumeDelete calls = %d, want 0 (the missing replica may still hold data)", len(fake.deletes))
+	}
+}
+
+// A delete that removed one copy and failed on the other leaves the vid with
+// fewer copies than its replica placement; the next sweep must still finish
+// it instead of treating it as a volume with a replica offline.
+func TestDeleteEmptyVolumesFinishesPartialDelete(t *testing.T) {
+	okFake := &fakeVolumeDeleteServer{}
+	okPort, dialOption := startFakeVolumeServer(t, okFake)
+	flakyFake := &fakeVolumeDeleteServer{failures: 1}
+	flakyPort, _ := startFakeVolumeServer(t, flakyFake)
+
+	topo := NewTopology("weedfs", sequence.NewMemorySequencer(), 32*1024, 5, false)
+	rack := topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1")
+	okDn := rack.GetOrCreateDataNode("127.0.0.1", 8080, okPort, "127.0.0.1", "dn-ok", map[string]uint32{"": 10})
+	flakyDn := rack.GetOrCreateDataNode("127.0.0.1", 8081, flakyPort, "127.0.0.1", "dn-flaky", map[string]uint32{"": 10})
+	rp, err := super_block.NewReplicaPlacementFromString("001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := storage.VolumeInfo{
+		Id:               needle.VolumeId(1),
+		Collection:       "c",
+		ModifiedAtSecond: time.Now().Unix() - 7200,
+		Version:          needle.GetCurrentVersion(),
+		ReplicaPlacement: rp,
+		Ttl:              needle.EMPTY_TTL,
+	}
+	for _, dn := range []*DataNode{okDn, flakyDn} {
+		dn.UpdateVolumes([]storage.VolumeInfo{v})
+		topo.RegisterVolumeLayout(v, dn)
+	}
+	vl := topo.GetVolumeLayout("c", rp, needle.EMPTY_TTL, types.ToDiskType(""))
+
+	sweep := func() map[needle.VolumeId]*VolumeLocationList {
+		vl.accessLock.RLock()
+		todo := map[needle.VolumeId]*VolumeLocationList{}
+		for vid, ll := range vl.vid2location {
+			todo[vid] = ll.Copy()
+		}
+		vl.accessLock.RUnlock()
+		topo.deleteEmptyVolumes(dialOption, vl, todo, time.Hour)
+		return todo
+	}
+
+	if todo := sweep(); todo[v.Id] == nil {
+		t.Fatal("vid left the sweep map while a copy delete failed")
+	}
+	if !vl.IsMarkedDeleting(v.Id) {
+		t.Fatal("partly deleted vid lost its deleting mark")
+	}
+	if todo := sweep(); todo[v.Id] != nil {
+		t.Fatal("next sweep left the partly deleted vid behind")
+	}
+	if vl.IsMarkedDeleting(v.Id) {
+		t.Error("fully deleted vid kept its deleting mark")
+	}
+	flakyFake.mu.Lock()
+	defer flakyFake.mu.Unlock()
+	if len(flakyFake.deletes) != 1 {
+		t.Fatalf("VolumeDelete on the flaky copy = %d, want 1 after the retry", len(flakyFake.deletes))
+	}
+}
+
+// A survivor that turns read-only between sweeps only postpones the cleanup;
+// once it is deletable again the next sweep must still finish the vid.
+func TestDeleteEmptyVolumesResumesAfterReadOnlySurvivor(t *testing.T) {
+	okFake := &fakeVolumeDeleteServer{}
+	okPort, dialOption := startFakeVolumeServer(t, okFake)
+	flakyFake := &fakeVolumeDeleteServer{failures: 1}
+	flakyPort, _ := startFakeVolumeServer(t, flakyFake)
+
+	topo := NewTopology("weedfs", sequence.NewMemorySequencer(), 32*1024, 5, false)
+	rack := topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1")
+	okDn := rack.GetOrCreateDataNode("127.0.0.1", 8080, okPort, "127.0.0.1", "dn-ok", map[string]uint32{"": 10})
+	flakyDn := rack.GetOrCreateDataNode("127.0.0.1", 8081, flakyPort, "127.0.0.1", "dn-flaky", map[string]uint32{"": 10})
+	rp, err := super_block.NewReplicaPlacementFromString("001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := storage.VolumeInfo{
+		Id:               needle.VolumeId(1),
+		Collection:       "c",
+		ModifiedAtSecond: time.Now().Unix() - 7200,
+		Version:          needle.GetCurrentVersion(),
+		ReplicaPlacement: rp,
+		Ttl:              needle.EMPTY_TTL,
+	}
+	for _, dn := range []*DataNode{okDn, flakyDn} {
+		dn.UpdateVolumes([]storage.VolumeInfo{v})
+		topo.RegisterVolumeLayout(v, dn)
+	}
+	vl := topo.GetVolumeLayout("c", rp, needle.EMPTY_TTL, types.ToDiskType(""))
+
+	sweep := func() map[needle.VolumeId]*VolumeLocationList {
+		vl.accessLock.RLock()
+		todo := map[needle.VolumeId]*VolumeLocationList{}
+		for vid, ll := range vl.vid2location {
+			todo[vid] = ll.Copy()
+		}
+		vl.accessLock.RUnlock()
+		topo.deleteEmptyVolumes(dialOption, vl, todo, time.Hour)
+		return todo
+	}
+
+	sweep()
+	if !vl.IsMarkedDeleting(v.Id) {
+		t.Fatal("partly deleted vid lost its deleting mark")
+	}
+
+	readOnly := v
+	readOnly.ReadOnly = true
+	flakyDn.UpdateVolumes([]storage.VolumeInfo{readOnly})
+	if todo := sweep(); todo[v.Id] == nil {
+		t.Fatal("read-only survivor was deleted")
+	}
+	if !vl.IsMarkedDeleting(v.Id) {
+		t.Fatal("read-only survivor dropped the deleting mark")
+	}
+
+	flakyDn.UpdateVolumes([]storage.VolumeInfo{v})
+	if todo := sweep(); todo[v.Id] != nil {
+		t.Fatal("sweep left the vid behind once the survivor was deletable again")
+	}
+	flakyFake.mu.Lock()
+	defer flakyFake.mu.Unlock()
+	if len(flakyFake.deletes) != 1 {
+		t.Fatalf("VolumeDelete on the survivor = %d, want 1 after it was deletable again", len(flakyFake.deletes))
 	}
 }
 

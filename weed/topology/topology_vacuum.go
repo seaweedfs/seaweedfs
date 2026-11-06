@@ -478,21 +478,35 @@ func (t *Topology) deleteEmptyVolumes(grpcDialOption grpc.DialOption, vl *Volume
 	quietSeconds := int64(quietPeriod / time.Second)
 	nowUnixSeconds := time.Now().Unix()
 	for vid, locationList := range todoVolumeMap {
-		eligible := true
+		// A missing replica may still hold data; deleting the listed copies
+		// would leave it as the only one when it returns. A vid still marked
+		// deleting lost copies to an earlier partial delete, so finish it.
+		resuming := vl.IsMarkedDeleting(vid)
+		if len(locationList.list) < vl.rp.GetCopyCount() && !resuming {
+			continue
+		}
+		eligible, changed := true, false
 		for _, dn := range locationList.list {
 			v, err := dn.GetVolumesById(vid)
+			if err == nil && !isQuietEmptyVolume(v, quietSeconds, nowUnixSeconds) {
+				eligible, changed = false, true
+				break
+			}
 			if err != nil || !isEmptyVolumeDeleteCandidate(v, quietSeconds, nowUnixSeconds) {
 				eligible = false
-				break
 			}
 		}
 		if !eligible {
+			// a copy that is only read-only or missing postpones the cleanup
+			if resuming && changed {
+				vl.UnmarkDeleting(vid)
+			}
 			continue
 		}
 		// keep the volume out of assignments for the whole delete: a heartbeat
 		// landing mid-delete must not re-add it while replicas are dropping
 		vl.MarkDeleting(vid)
-		remaining := 0
+		deleted := 0
 		kept := locationList.list[:0]
 		for _, dn := range locationList.list {
 			v, err := dn.GetVolumesById(vid)
@@ -501,16 +515,19 @@ func (t *Topology) deleteEmptyVolumes(grpcDialOption grpc.DialOption, vl *Volume
 				glog.V(0).Infof("deleting empty volume %d on %s", vid, dn.ServerAddress())
 				if err = t.deleteEmptyVolume(grpcDialOption, dn, vid, onlyGarbage); err == nil {
 					t.UnRegisterVolumeLayout(v, dn)
+					deleted++
 					continue
 				}
 			}
 			glog.Warningf("delete empty volume %d on %s: %v", vid, dn.ServerAddress(), err)
 			kept = append(kept, dn)
-			remaining++
 		}
-		vl.UnmarkDeleting(vid)
+		// a partly deleted vid stays marked so the next sweep finishes it
+		if len(kept) == 0 || deleted == 0 && !resuming {
+			vl.UnmarkDeleting(vid)
+		}
 		locationList.list = kept
-		if remaining == 0 {
+		if len(kept) == 0 {
 			delete(todoVolumeMap, vid)
 		}
 	}
@@ -532,8 +549,11 @@ func (t *Topology) deleteEmptyVolume(grpcDialOption grpc.DialOption, dn *DataNod
 }
 
 func isEmptyVolumeDeleteCandidate(v storage.VolumeInfo, quietSeconds, nowUnixSeconds int64) bool {
+	return (!v.ReadOnly || v.ReadOnlyCanDelete) && isQuietEmptyVolume(v, quietSeconds, nowUnixSeconds)
+}
+
+func isQuietEmptyVolume(v storage.VolumeInfo, quietSeconds, nowUnixSeconds int64) bool {
 	return v.RemoteStorageName == "" &&
-		(!v.ReadOnly || v.ReadOnlyCanDelete) &&
 		(v.Size <= super_block.SuperBlockSize || v.FileCount > 0 && v.FileCount <= v.DeleteCount) &&
 		v.ModifiedAtSecond > 0 &&
 		v.ModifiedAtSecond+quietSeconds < nowUnixSeconds

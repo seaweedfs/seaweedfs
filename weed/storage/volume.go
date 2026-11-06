@@ -549,7 +549,7 @@ func (v *Volume) ToVolumeInformationMessage(into *master_pb.VolumeInformationMes
 	volumeInfo.FileCount = fileCount
 	volumeInfo.DeleteCount = deletedCount
 	volumeInfo.DeletedByteCount = deletedSize
-	volumeInfo.ReadOnly, _, volumeInfo.ReadOnlyCanDelete, _ = v.ReadOnlyReasons()
+	volumeInfo.ReadOnly, volumeInfo.ReadOnlyCanDelete = v.reportedReadOnly()
 	volumeInfo.ReplicaPlacement = uint32(v.ReplicaPlacement.Byte())
 	volumeInfo.Version = uint32(v.Version())
 	volumeInfo.Ttl = v.Ttl.ToUint32()
@@ -590,6 +590,13 @@ func (v *Volume) ReadOnlyReasons() (readOnly, noWriteOrDelete, noWriteCanDelete,
 	// after NewVolume hands it back.
 	diskSpaceLow = v.location != nil && v.location.isDiskSpaceLow.Load()
 	return noWriteOrDelete || noWriteCanDelete || diskSpaceLow, noWriteOrDelete, noWriteCanDelete, diskSpaceLow
+}
+
+// reportedReadOnly is what the master is told: low disk space still lets
+// deletes through, only noWriteOrDelete refuses them.
+func (v *Volume) reportedReadOnly() (readOnly, readOnlyCanDelete bool) {
+	readOnly, noWriteOrDelete, _, _ := v.ReadOnlyReasons()
+	return readOnly, readOnly && !noWriteOrDelete
 }
 
 var errVolumeUnavailable = errors.New("volume unavailable")

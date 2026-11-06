@@ -153,6 +153,30 @@ func TestMountVolumeAnnouncesReadOnlyState(t *testing.T) {
 	}
 }
 
+func TestLowDiskVolumeReportsCanDelete(t *testing.T) {
+	store := newSingleDirStore(t, t.TempDir())
+	defer store.Close()
+	const vid = needle.VolumeId(14)
+	require.NoError(t, store.AddVolume(vid, "", NeedleMapInMemory, "000", "", 0, needle.GetCurrentVersion(), 0, types.HardDriveType, 0))
+	v := store.GetVolume(vid)
+	n := newRandomNeedle(1)
+	_, err := store.WriteVolumeNeedle(vid, n, true, false)
+	require.NoError(t, err)
+
+	store.Locations[0].isDiskSpaceLow.Store(true)
+	_, message := v.ToVolumeInformationMessage(nil)
+	require.True(t, message.ReadOnly)
+	require.True(t, message.ReadOnlyCanDelete)
+	require.Equal(t, message.ReadOnlyCanDelete, store.CollectHeartbeat().Volumes[0].ReadOnlyCanDelete)
+	_, err = store.DeleteVolumeNeedle(vid, n)
+	require.NoError(t, err)
+
+	require.NoError(t, store.MarkVolumeReadonly(vid, false, false))
+	_, message = v.ToVolumeInformationMessage(nil)
+	require.True(t, message.ReadOnly)
+	require.False(t, message.ReadOnlyCanDelete)
+}
+
 // After a restart a canDelete volume is served from .sdx; its deletes must
 // still move the counters volume.deleteEmpty and vacuum read, and land them
 // where the next reload would.

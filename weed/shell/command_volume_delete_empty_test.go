@@ -39,3 +39,46 @@ func TestIsEmptyVolumeDeleteCandidate(t *testing.T) {
 		})
 	}
 }
+
+func TestIsEmptyVolumeCopiesDeleteCandidate(t *testing.T) {
+	matcher, err := wildcard.CompileCollectionMatcher("")
+	assert.NoError(t, err)
+
+	const quietSeconds = int64(60)
+	const now = int64(1_000_000)
+	old := now - quietSeconds - 1
+	copyOf := func(rp uint32, v *master_pb.VolumeInformationMessage) *VolumeReplica {
+		v.ReplicaPlacement = rp
+		return &VolumeReplica{location: &location{dataNode: &master_pb.DataNodeInfo{Id: "dn"}}, info: v}
+	}
+	empty := func() *master_pb.VolumeInformationMessage {
+		return &master_pb.VolumeInformationMessage{Size: super_block.SuperBlockSize, ModifiedAtSecond: old}
+	}
+	lowDisk := func() *master_pb.VolumeInformationMessage {
+		return &master_pb.VolumeInformationMessage{Size: super_block.SuperBlockSize, ReadOnly: true, ReadOnlyCanDelete: true, ModifiedAtSecond: old}
+	}
+	withData := func() *master_pb.VolumeInformationMessage {
+		return &master_pb.VolumeInformationMessage{Size: 1 << 20, FileCount: 3, ModifiedAtSecond: old}
+	}
+	protected := func() *master_pb.VolumeInformationMessage {
+		return &master_pb.VolumeInformationMessage{Size: super_block.SuperBlockSize, ReadOnly: true, ModifiedAtSecond: old}
+	}
+
+	tests := []struct {
+		name     string
+		replicas []*VolumeReplica
+		want     bool
+	}{
+		{"single copy volume", []*VolumeReplica{copyOf(0, empty())}, true},
+		{"every copy empty", []*VolumeReplica{copyOf(1, empty()), copyOf(1, lowDisk())}, true},
+		{"other copy holds data", []*VolumeReplica{copyOf(1, lowDisk()), copyOf(1, withData())}, false},
+		{"other copy is missing", []*VolumeReplica{copyOf(1, lowDisk())}, false},
+		{"other copy is protected read-only", []*VolumeReplica{copyOf(1, empty()), copyOf(1, protected())}, false},
+		{"no copies", nil, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, isEmptyVolumeCopiesDeleteCandidate(tc.replicas, quietSeconds, now, matcher))
+		})
+	}
+}

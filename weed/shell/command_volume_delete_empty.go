@@ -5,6 +5,8 @@ import (
 	"flag"
 	"io"
 	"log"
+	"maps"
+	"slices"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -31,10 +33,12 @@ func (c *commandVolumeDeleteEmpty) Help() string {
 	volume.deleteEmpty -quietFor=24h -apply
 	volume.deleteEmpty -collectionPattern=important* -quietFor=24h -apply
 
-	This command deletes all empty volumes from one volume server.
+	This command deletes all empty volumes from all volume servers.
 	A volume with no live needles left is empty too, even when its
 	.dat file is still large: compacting it first would only rewrite
 	bytes that are all deleted already.
+	A replicated volume is deleted only when all of its copies are
+	listed and every copy is empty.
 
 `
 }
@@ -76,29 +80,53 @@ func (c *commandVolumeDeleteEmpty) Do(args []string, commandEnv *CommandEnv, wri
 	quietSeconds := int64(*quietPeriod / time.Second)
 	nowUnixSeconds := time.Now().Unix()
 
-	eachDataNode(topologyInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
-		for _, diskInfo := range dn.DiskInfos {
-			for _, v := range diskInfo.VolumeInfos {
-				if isEmptyVolumeDeleteCandidate(v, quietSeconds, nowUnixSeconds, collectionMatcher) {
-					if *applyBalancing {
-						log.Printf("deleting empty volume %d from %s", v.Id, dn.Id)
-						onlyGarbage := v.FileCount > 0 && v.FileCount <= v.DeleteCount
-						// onlyEmpty stays set so a pre-upgrade server checks
-						// emptiness and refuses instead of deleting unseen.
-						if deleteErr := deleteVolume(context.Background(), commandEnv.option.GrpcDialOption, needle.VolumeId(v.Id),
-							pb.NewServerAddressFromDataNode(dn), true, onlyGarbage, false); deleteErr != nil {
-							err = deleteErr
-						}
-						continue
-					} else {
-						log.Printf("empty volume %d from %s", v.Id, dn.Id)
-					}
-				}
+	volumeReplicas, _ := collectVolumeReplicaLocations(topologyInfo)
+	for _, vid := range slices.Sorted(maps.Keys(volumeReplicas)) {
+		replicas := volumeReplicas[vid]
+		if !isEmptyVolumeCopiesDeleteCandidate(replicas, quietSeconds, nowUnixSeconds, collectionMatcher) {
+			continue
+		}
+		var kept []pb.ServerAddress
+		for _, r := range replicas {
+			dn := r.location.dataNode
+			if !*applyBalancing {
+				log.Printf("empty volume %d from %s", vid, dn.Id)
+				continue
+			}
+			log.Printf("deleting empty volume %d from %s", vid, dn.Id)
+			onlyGarbage := r.info.FileCount > 0 && r.info.FileCount <= r.info.DeleteCount
+			// onlyEmpty stays set so a pre-upgrade server checks
+			// emptiness and refuses instead of deleting unseen.
+			server := pb.NewServerAddressFromDataNode(dn)
+			if deleteErr := deleteVolume(context.Background(), commandEnv.option.GrpcDialOption, needle.VolumeId(vid),
+				server, true, onlyGarbage, false); deleteErr != nil {
+				err = deleteErr
+				kept = append(kept, server)
 			}
 		}
-	})
+		// a rerun skips the survivors as under-replicated
+		if len(kept) < len(replicas) {
+			for _, server := range kept {
+				log.Printf("volume %d stays on %s after its other copies were deleted; once it is empty, remove it with volume.delete -node %s -volumeId %d", vid, server, string(server), vid)
+			}
+		}
+	}
 
 	return
+}
+
+// isEmptyVolumeCopiesDeleteCandidate requires every copy to be listed and
+// empty: deleting only the empty ones would leave a copy that holds data, or
+// one that is offline, as the volume's only copy.
+func isEmptyVolumeCopiesDeleteCandidate(replicas []*VolumeReplica, quietSeconds, nowUnixSeconds int64, collectionMatcher *wildcard.CollectionMatcher) bool {
+	for _, r := range replicas {
+		rp, err := super_block.NewReplicaPlacementFromByte(byte(r.info.ReplicaPlacement))
+		if err != nil || len(replicas) < rp.GetCopyCount() ||
+			!isEmptyVolumeDeleteCandidate(r.info, quietSeconds, nowUnixSeconds, collectionMatcher) {
+			return false
+		}
+	}
+	return len(replicas) > 0
 }
 
 func isEmptyVolumeDeleteCandidate(v *master_pb.VolumeInformationMessage, quietSeconds, nowUnixSeconds int64, collectionMatcher *wildcard.CollectionMatcher) bool {

@@ -3631,6 +3631,13 @@ impl Volume {
         self.no_write_flags().1
     }
 
+    /// What the master is told: low disk space still lets deletes through,
+    /// only no_write_or_delete refuses them. Mirrors Go's reportedReadOnly.
+    pub fn reported_read_only(&self) -> (bool, bool) {
+        let (read_only, no_write_or_delete, _, _) = self.read_only_reasons();
+        (read_only, read_only && !no_write_or_delete)
+    }
+
     pub fn last_compact_revision(&self) -> u16 {
         self.io.read().unwrap().last_compact_revision
     }
