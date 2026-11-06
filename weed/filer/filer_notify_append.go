@@ -8,6 +8,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -55,11 +56,16 @@ func (f *Filer) commitAppendedChunk(ctx context.Context, fullpath util.FullPath,
 
 	// update the entry
 	if err := f.CreateEntry(ctx, entry, nil, false, false, nil, false, f.MaxFilenameLength); err != nil {
-		// A create can store the entry and then fail on its parent folders.
+		// A create can store the entry and then fail on its parent folders;
+		// a retry would only append the piece again.
 		stored, findErr := f.FindEntry(ctx, fullpath)
-		if errors.Is(findErr, filer_pb.ErrNotFound) || findErr == nil && !slices.ContainsFunc(stored.GetChunks(), func(c *filer_pb.FileChunk) bool {
+		if findErr == nil && slices.ContainsFunc(stored.GetChunks(), func(c *filer_pb.FileChunk) bool {
 			return c.GetFileIdString() == chunk.GetFileIdString()
 		}) {
+			glog.V(0).Infof("append to %s landed despite: %v", fullpath, err)
+			return nil
+		}
+		if findErr == nil || errors.Is(findErr, filer_pb.ErrNotFound) {
 			f.DeleteUncommittedChunks(ctx, []*filer_pb.FileChunk{chunk})
 		}
 		return err

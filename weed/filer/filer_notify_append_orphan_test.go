@@ -57,7 +57,7 @@ func TestCommitAppendedChunkKeepsChunkTheFailedCreateStored(t *testing.T) {
 
 	err := f.commitAppendedChunk(context.Background(), appendTestLog, &filer_pb.FileChunk{FileId: "7,0abc", Size: 5})
 
-	require.Error(t, err)
+	require.NoError(t, err, "a stored piece must not be appended again by the flush retry")
 	stored, findErr := store.FindEntry(context.Background(), appendTestLog)
 	require.NoError(t, findErr, "the entry is stored before its parent folders are created")
 	require.Len(t, stored.Chunks, 1)
