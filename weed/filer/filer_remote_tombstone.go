@@ -56,7 +56,7 @@ type remoteDeletionTombstones struct {
 	mu      sync.Mutex
 	files   map[string]remoteDeletionTombstone // file path -> delete event
 	dirs    map[string]remoteDeletionTombstone // deleted directory path -> event; covers its subtree
-	pending map[string]bool                   // tombstone path recorded ahead of its event
+	pending map[string]bool                    // tombstone path recorded ahead of its event
 	// full is set when a delete could not be recorded: from then on an
 	// unrecorded path may be a pending delete, so every lazy fetch stays off.
 	// It lifts once the table has room and the newest unrecorded delete is
@@ -64,6 +64,10 @@ type remoteDeletionTombstones struct {
 	// to confirm it, so only the TTL makes it safe, as for a pending one.
 	full               bool
 	skippedThroughTsNs int64
+	// drainedOffsets records, per mount, the write-back offset the last
+	// drain released through, so a read repeats the sweep only once the
+	// offset has advanced.
+	drainedOffsets map[string]int64
 }
 
 // isFull reports whether an unrecorded delete still keeps the lazy fetch off.
@@ -76,33 +80,48 @@ func (t *remoteDeletionTombstones) isFull() bool {
 	return t.full
 }
 
-// drain evicts expired tombstones and those the write-back offset has
-// passed, then re-evaluates the full state. haveOffset is false when the
-// mount's persisted offset could not be read.
-func (t *remoteDeletionTombstones) drain(nowNs, offsetTsNs int64, haveOffset bool) {
+// drain, while the table is full, evicts expired tombstones and releases the
+// mount's tombstones its write-back offset has passed, then re-evaluates
+// the full state. It sweeps only when that offset advanced since the last
+// drain for the mount or the unrecorded deletes have aged past the TTL, so
+// a listing of many missing children does not rescan the table per child.
+// haveOffset is false when the mount's persisted offset could not be read.
+func (t *remoteDeletionTombstones) drain(mountDir string, nowNs, offsetTsNs int64, haveOffset bool) {
 	if t == nil {
 		return
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if t.drainedOffsets == nil {
+		t.drainedOffsets = make(map[string]int64)
+	}
+	advanced := haveOffset && offsetTsNs > t.drainedOffsets[mountDir]
+	aged := t.skippedThroughTsNs != 0 && nowNs-t.skippedThroughTsNs >= int64(remoteDeletionTombstoneTTL)
+	if !advanced && !aged {
+		return
+	}
 	t.evictExpiredLocked(nowNs)
-	if haveOffset {
-		t.releaseConsumedLocked(offsetTsNs)
+	if advanced {
+		t.releaseConsumedLocked(mountDir, offsetTsNs)
+		t.drainedOffsets[mountDir] = offsetTsNs
 	}
 	t.observeLocked()
 }
 
-// releaseConsumedLocked drops every tombstone whose event the write-back
-// offset has passed; a pending one has no event timestamp yet and stays.
+// releaseConsumedLocked drops the mount's tombstones whose event the mount's
+// write-back offset has passed; a pending one has no event timestamp yet
+// and stays, and another mount's tombstones answer to their own offset.
 // Caller must hold t.mu.
-func (t *remoteDeletionTombstones) releaseConsumedLocked(offsetTsNs int64) {
+func (t *remoteDeletionTombstones) releaseConsumedLocked(mountDir string, offsetTsNs int64) {
+	prefix := strings.TrimSuffix(mountDir, "/") + "/"
+	under := func(p string) bool { return p == mountDir || strings.HasPrefix(p, prefix) }
 	for p, cur := range t.files {
-		if !t.pending[p] && cur.streamTsNs <= offsetTsNs {
+		if under(p) && !t.pending[p] && cur.streamTsNs <= offsetTsNs {
 			delete(t.files, p)
 		}
 	}
 	for p, cur := range t.dirs {
-		if !t.pending[p] && cur.streamTsNs <= offsetTsNs {
+		if under(p) && !t.pending[p] && cur.streamTsNs <= offsetTsNs {
 			delete(t.dirs, p)
 		}
 	}
@@ -391,7 +410,7 @@ func (f *Filer) isRemoteDeletionPending(ctx context.Context, p util.FullPath, mo
 	// Reads keep the table draining meanwhile.
 	if f.remoteTombstones.isFull() {
 		offset, err := f.readRemoteSyncOffset(ctx, mountDir)
-		f.remoteTombstones.drain(time.Now().UnixNano(), offset, err == nil)
+		f.remoteTombstones.drain(string(mountDir), time.Now().UnixNano(), offset, err == nil)
 		if f.remoteTombstones.isFull() {
 			return true
 		}

@@ -221,13 +221,15 @@ func TestMaybeLazyFetchFromRemote_FullTableDrainsOnReads(t *testing.T) {
 	now := time.Now().UnixNano()
 	tsA, tsB, tsC := now-3*int64(time.Second), now-2*int64(time.Second), now-int64(time.Second)
 
-	// two deletes confirmed by their events fill the table; a third is
-	// unrecorded and closes the fetch
+	// a confirmed delete on another mount, then two on this one fill the
+	// table; a third on this mount is unrecorded and closes the fetch
+	remoteDeletionTombstoneLimit = 3
+	f.remoteTombstones.addFromEvent("/buckets/other/dir/z.txt", false, tsA, tsA)
 	f.remoteTombstones.addFromEvent("/buckets/mybucket/dir/a.txt", false, tsA, tsA)
 	f.remoteTombstones.addFromEvent("/buckets/mybucket/dir/b.txt", false, tsB, tsB)
 	f.remoteTombstones.addFromEvent("/buckets/mybucket/dir/c.txt", false, tsC, tsC)
 	assert.True(t, f.remoteTombstones.isFull())
-	assert.Len(t, f.remoteTombstones.files, 2)
+	assert.Len(t, f.remoteTombstones.files, 3)
 
 	// the write-back offset behind the recorded deletes: a read drains
 	// nothing and the fetch stays off
@@ -236,17 +238,20 @@ func TestMaybeLazyFetchFromRemote_FullTableDrainsOnReads(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, entry)
 	assert.Equal(t, 0, stub.statCalls)
-	assert.Len(t, f.remoteTombstones.files, 2)
+	assert.Len(t, f.remoteTombstones.files, 3)
 
-	// the offset past both recorded deletes: the read drains them without
-	// any mutation; the unrecorded delete is still inside the TTL, so the
-	// fetch stays off
+	// the offset past both recorded deletes of this mount: the read drains
+	// them without any mutation; the other mount's tombstone answers to its
+	// own offset and stays; the unrecorded delete is still inside the TTL,
+	// so the fetch stays off
 	putRemoteSyncOffset(t, store, "/buckets/mybucket", tsB)
 	entry, err = f.maybeLazyFetchFromRemote(context.Background(), "/buckets/mybucket/dir/other.txt")
 	require.NoError(t, err)
 	assert.Nil(t, entry)
 	assert.Equal(t, 0, stub.statCalls)
-	assert.Len(t, f.remoteTombstones.files, 0)
+	assert.Len(t, f.remoteTombstones.files, 1)
+	_, otherKept := f.remoteTombstones.files["/buckets/other/dir/z.txt"]
+	assert.True(t, otherKept, "another mount's tombstone must not be released by this mount's offset")
 	assert.True(t, f.remoteTombstones.isFull())
 
 	// once the unrecorded delete has aged past the TTL the next read lifts
