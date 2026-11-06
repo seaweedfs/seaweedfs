@@ -6635,7 +6635,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "title": "Remote Deletion Tombstones",
-          "description": "Paths deleted under a remote mount whose remote delete write-back has not consumed yet",
+          "description": "Paths deleted under a remote mount whose remote delete the write-back daemon has not consumed yet",
           "type": "timeseries",
           "id": 246,
           "gridPos": {
