@@ -2116,7 +2116,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "title": "Raft Commit Time p99",
+          "title": "Raft Commit Time (avg)",
           "description": "Time for the leader to commit a log entry (-raftHashicorp masters only)",
           "type": "timeseries",
           "id": 248,
@@ -2199,7 +2199,7 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "max by (cluster, instance) (SeaweedFS_raft_commitTime{quantile=\"0.99\", cluster=~\"$cluster\"})",
+              "expr": "max by (cluster, instance) (rate(SeaweedFS_raft_commitTime_sum{cluster=~\"$cluster\"}[$__rate_interval]) / clamp_min(rate(SeaweedFS_raft_commitTime_count{cluster=~\"$cluster\"}[$__rate_interval]), 1e-9))",
               "range": true,
               "refId": "A",
               "legendFormat": "{{cluster}} {{instance}}"
@@ -2212,7 +2212,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "title": "Raft Leader Last Contact p99",
+          "title": "Raft Leader Last Contact (avg)",
           "description": "Time since the leader last heard from its followers (-raftHashicorp masters only)",
           "type": "timeseries",
           "id": 249,
@@ -2295,7 +2295,7 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "max by (cluster, instance) (SeaweedFS_raft_leader_lastContact{quantile=\"0.99\", cluster=~\"$cluster\"})",
+              "expr": "max by (cluster, instance) (rate(SeaweedFS_raft_leader_lastContact_sum{cluster=~\"$cluster\"}[$__rate_interval]) / clamp_min(rate(SeaweedFS_raft_leader_lastContact_count{cluster=~\"$cluster\"}[$__rate_interval]), 1e-9))",
               "range": true,
               "refId": "A",
               "legendFormat": "{{cluster}} {{instance}}"
