@@ -180,22 +180,6 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// A copy request without SSE headers takes the destination bucket's
-	// default encryption, including its configured KMS key and bucket-key
-	// setting. Surface them as headers so every downstream parse sees them.
-	if !IsSSECRequest(r) && r.Header.Get(s3_constants.AmzServerSideEncryption) == "" {
-		encryptionConfig, encErr := s3a.GetBucketEncryptionConfig(dstBucket)
-		switch {
-		case encErr == nil:
-			applyCopyBucketDefaultEncryptionHeaders(r, encryptionConfig)
-		case errors.Is(encErr, ErrNoEncryptionConfig):
-		default:
-			glog.Errorf("CopyObjectHandler: read encryption config for bucket %s: %v", dstBucket, encErr)
-			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-			return
-		}
-	}
-
 	if !isValidDirective(r.Header.Get(s3_constants.AmzUserMetaDirective)) {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidMetadataDirective)
 		return
@@ -237,6 +221,24 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	if aclCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, aclCode)
 		return
+	}
+
+	// A copy request without SSE headers takes the destination bucket's
+	// default encryption, including its configured KMS key and bucket-key
+	// setting. Surface them as headers so every downstream parse sees them.
+	// This runs after the ACL check above: it re-authenticates the request, and
+	// these headers are not in the client's SignedHeaders.
+	if !IsSSECRequest(r) && r.Header.Get(s3_constants.AmzServerSideEncryption) == "" {
+		encryptionConfig, encErr := s3a.GetBucketEncryptionConfig(dstBucket)
+		switch {
+		case encErr == nil:
+			applyCopyBucketDefaultEncryptionHeaders(r, encryptionConfig)
+		case errors.Is(encErr, ErrNoEncryptionConfig):
+		default:
+			glog.Errorf("CopyObjectHandler: read encryption config for bucket %s: %v", dstBucket, encErr)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return
+		}
 	}
 
 	// Get detailed versioning state for source bucket
