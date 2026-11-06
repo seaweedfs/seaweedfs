@@ -49,6 +49,21 @@ func TestCommitAppendedChunkReleasesChunkWhenLookupFails(t *testing.T) {
 	assert.True(t, queuedForDeletion(f, "7,0abc"), "a chunk no entry references must be released")
 }
 
+func TestCommitAppendedChunkKeepsChunkTheFailedCreateStored(t *testing.T) {
+	store := newStubFilerStore()
+	parent, _ := appendTestLog.DirAndName()
+	store.findErrByPath = map[string]error{parent: errors.New("store unavailable")}
+	f := newAppendTestFiler(store)
+
+	err := f.commitAppendedChunk(context.Background(), appendTestLog, &filer_pb.FileChunk{FileId: "7,0abc", Size: 5})
+
+	require.Error(t, err)
+	stored, findErr := store.FindEntry(context.Background(), appendTestLog)
+	require.NoError(t, findErr, "the entry is stored before its parent folders are created")
+	require.Len(t, stored.Chunks, 1)
+	assert.False(t, queuedForDeletion(f, "7,0abc"), "a chunk the stored entry references must stay")
+}
+
 func TestCommitAppendedChunkAppendsAfterExistingChunks(t *testing.T) {
 	store := newStubFilerStore()
 	f := newAppendTestFiler(store)

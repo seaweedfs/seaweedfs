@@ -2,8 +2,10 @@ package filer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
@@ -53,7 +55,13 @@ func (f *Filer) commitAppendedChunk(ctx context.Context, fullpath util.FullPath,
 
 	// update the entry
 	if err := f.CreateEntry(ctx, entry, nil, false, false, nil, false, f.MaxFilenameLength); err != nil {
-		f.DeleteUncommittedChunks(ctx, []*filer_pb.FileChunk{chunk})
+		// A create can store the entry and then fail on its parent folders.
+		stored, findErr := f.FindEntry(ctx, fullpath)
+		if errors.Is(findErr, filer_pb.ErrNotFound) || findErr == nil && !slices.ContainsFunc(stored.GetChunks(), func(c *filer_pb.FileChunk) bool {
+			return c.GetFileIdString() == chunk.GetFileIdString()
+		}) {
+			f.DeleteUncommittedChunks(ctx, []*filer_pb.FileChunk{chunk})
+		}
 		return err
 	}
 	return nil
