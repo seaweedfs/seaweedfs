@@ -456,6 +456,11 @@ func (c *stubFilerClient) UpdateEntry(_ context.Context, req *filer_pb.UpdateEnt
 	if c.updateErr != nil {
 		return &filer_pb.UpdateEntryResponse{}, c.updateErr
 	}
+	if key := req.Directory + "/" + req.Entry.GetName(); c.entries[key] != nil {
+		c.entries[key] = req.Entry
+	} else if c.entry != nil && c.entry.Name == req.Entry.GetName() {
+		c.entry = req.Entry
+	}
 	return &filer_pb.UpdateEntryResponse{}, nil
 }
 
@@ -1549,6 +1554,28 @@ func TestDeleteEventAbsentRemoteObjectIsSuccess(t *testing.T) {
 	})
 }
 
+// TestUpdateLocalEntryLeavesTheEventEntryAlone: a transient stamp failure
+// retries the same event in place, so the event must still read as unsynced
+// and keep its rename source, or the retry skips the upload and the stamp.
+func TestUpdateLocalEntryLeavesTheEventEntryAlone(t *testing.T) {
+	const dir = "/buckets/b/vol"
+	event := entryWith("state.db", nil, chunk("3,01", "e1"))
+	event.Extended = map[string][]byte{filer.ExtRemoteRenameSourceKey: []byte("src")}
+	filerClient := &stubFilerClient{updateErr: status.Error(codes.Unavailable, "filer is shutting down")}
+	if err := updateLocalEntry(filerClient, dir, event, &filer_pb.RemoteEntry{StorageName: "gcs", RemoteSize: 7}); err == nil {
+		t.Fatal("err = nil, want the transient failure")
+	}
+	if event.RemoteEntry != nil || len(event.Extended[filer.ExtRemoteRenameSourceKey]) == 0 {
+		t.Errorf("event entry = %v, want it untouched by the failed stamp", event)
+	}
+	if !shouldSendToRemote(event) {
+		t.Error("shouldSendToRemote = false after a failed stamp: the in-place retry would skip the upload")
+	}
+	if sent := filerClient.updated.GetEntry(); sent.GetRemoteEntry() == nil || len(sent.GetExtended()[filer.ExtRemoteRenameSourceKey]) > 0 {
+		t.Errorf("stamp request entry = %v, want the remote entry set and the rename source dropped", sent)
+	}
+}
+
 // TestUpdateLocalEntrySkipsDeletedEntry: the stamp that follows an upload lands
 // on an entry a later event already deleted. The filer answers "not found"; the
 // delete's own event follows in the log, so the stamp is skipped rather than
@@ -1834,7 +1861,7 @@ func TestCompleteRemoteOnlyRenameClearsThePendingSourceFirst(t *testing.T) {
 
 	t.Run("a marker still in place keeps the source", func(t *testing.T) {
 		// the stamp did not land: the filer still has the marker
-		filerClient := &stubFilerClient{entry: pending()}
+		filerClient := &stubFilerClient{entry: pending(), updateErr: status.Error(codes.FailedPrecondition, "entry changed")}
 		remote := &recordingRemote{objects: objects(), statETag: `"copy"`}
 		if err := completeRemoteOnlyRename(filerClient, remote, "/buckets/b/dst", pending(), renameSource{path: "/buckets/b/src/a.jpg", loc: oldDest}, dest, ""); err == nil {
 			t.Fatal("err = nil, want the event retried")
