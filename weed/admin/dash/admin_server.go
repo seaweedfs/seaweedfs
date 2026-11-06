@@ -380,29 +380,29 @@ func (m *masterVacuumToggler) enableVacuum() error {
 	})
 }
 
-// syncVacuumState performs a single sync step: checks if a vacuum-capable worker
-// is present and calls disable/enable accordingly. Returns the updated state
-// and whether the call failed (for log dedup on retries).
+// syncVacuumState tells the master to disable its automatic vacuum while a
+// vacuum-capable worker is present and to re-enable it otherwise. It re-sends
+// on every tick because the master keeps the flag in memory only, so a leader
+// change or master restart drops it. Only transitions are logged. Returns the
+// state the master was last set to and whether this call failed.
 func syncVacuumState(hasWorker bool, previouslyActive bool, toggler vacuumToggler, retrying bool) (active bool, failed bool) {
-	if hasWorker == previouslyActive {
-		return previouslyActive, false
-	}
+	changed := hasWorker != previouslyActive
 	if hasWorker {
-		if !retrying {
+		if changed && !retrying {
 			glog.V(0).Infof("Vacuum plugin worker connected, disabling master automatic vacuum")
 		}
 		if err := toggler.disableVacuum(); err != nil {
 			glog.Warningf("Failed to disable vacuum on master: %v", err)
-			return false, true // retry next tick
+			return previouslyActive, true // retry next tick
 		}
 		return true, false
 	}
-	if !retrying {
+	if changed && !retrying {
 		glog.V(0).Infof("Vacuum plugin worker disconnected, re-enabling master automatic vacuum")
 	}
 	if err := toggler.enableVacuum(); err != nil {
 		glog.Warningf("Failed to enable vacuum on master: %v", err)
-		return true, true // retry next tick
+		return previouslyActive, true // retry next tick
 	}
 	return false, false
 }
