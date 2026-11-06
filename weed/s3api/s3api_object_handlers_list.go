@@ -428,6 +428,10 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsReq
 			maxKeys:               maxKeys,
 			prefixEndsOnDelimiter: prefixEndsOnDelimiter,
 		}
+		if delimiter != "/" {
+			cursor.prefetch = newListPrefetcher(ctx, client, maxKeys)
+			defer cursor.prefetch.close()
+		}
 
 		var lastEntryWasCommonPrefix bool
 		var lastCommonPrefix string
@@ -911,6 +915,9 @@ type ListingCursor struct {
 	// callback to its plain key; its "<name>/" CommonPrefix is deferred to the
 	// directory's own block position.
 	prefixObjectKeyOnly bool
+	// prefetch reads directories ahead of a recursive walk; nil lists each directory
+	// when the walk enters it.
+	prefetch *listPrefetcher
 }
 
 // excludedMarkerKey returns the key an exclusive marker names that the walk's cutoff no
@@ -1215,13 +1222,35 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 			InclusiveStartFrom: inclusiveStartFrom,
 		}
 
-		stream, listErr := client.ListEntries(ctx, request)
-		if listErr != nil {
-			if errors.Is(listErr, filer_pb.ErrNotFound) {
+		var stream listEntriesStream
+		windowLimit := request.Limit
+		// A trailing-slash prefix names one directory, the only entry this level
+		// lists; a file of that name lists nothing. Looking the name up spares
+		// listing every sibling it prefixes, which a SQL store answers by scanning
+		// the rest of the directory.
+		if cursor.prefixEndsOnDelimiter && prefix != "" && startName == "" {
+			if resp, lookupErr := client.LookupDirectoryEntry(ctx, &filer_pb.LookupDirectoryEntryRequest{Directory: dir, Name: prefix}); lookupErr == nil && resp.GetEntry() != nil {
+				stream = &listWindow{entries: []*filer_pb.Entry{resp.Entry}}
+			}
+		}
+		if stream == nil {
+			if entries, limit, ok := cursor.prefetch.take(request); ok {
+				stream, windowLimit = &listWindow{entries: entries}, limit
+			}
+		}
+		if stream == nil {
+			onlyPrefix := cursor.prefixEndsOnDelimiter
+			var listErr error
+			stream, listErr = cursor.prefetch.list(ctx, client, request, func(entry *filer_pb.Entry) bool {
+				return listWalkDescends(entry) && entry.Name+"/" > marker && (!onlyPrefix || entry.Name == prefix)
+			})
+			if listErr != nil {
+				if errors.Is(listErr, filer_pb.ErrNotFound) {
+					return
+				}
+				err = fmt.Errorf("list entries %+v: %w", request, listErr)
 				return
 			}
-			err = fmt.Errorf("list entries %+v: %w", request, listErr)
-			return
 		}
 
 		var entriesReceived uint32
@@ -1386,13 +1415,31 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 		if cursor.isTruncated || stopped {
 			return
 		}
-		if entriesReceived < request.Limit {
+		if entriesReceived < windowLimit {
 			err = flushDirs("")
 			return
 		}
 		startName = lastEntryName
 		inclusiveStartFrom = false
 	}
+}
+
+type listEntriesStream interface {
+	Recv() (*filer_pb.ListEntriesResponse, error)
+}
+
+// listWindow serves entries already in hand the way a ListEntries stream does.
+type listWindow struct {
+	entries []*filer_pb.Entry
+}
+
+func (w *listWindow) Recv() (*filer_pb.ListEntriesResponse, error) {
+	if len(w.entries) == 0 {
+		return nil, io.EOF
+	}
+	entry := w.entries[0]
+	w.entries = w.entries[1:]
+	return &filer_pb.ListEntriesResponse{Entry: entry}, nil
 }
 
 // hiddenProbePageSize is the window one probe request asks the filer for.
