@@ -222,6 +222,23 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 		return nil
 	}
 
+	syncKeptMarker := func(versionsDir, versionName string) error {
+		newParent, newName, ok := rewriteVersionedSourcePath(versionsDir, versionName)
+		if !ok {
+			return nil
+		}
+		bucket, remoteStorageMountLocation, remoteStorage, ok := option.detectBucketInfo(newParent)
+		if !ok {
+			return nil
+		}
+		client, err := remote_storage.GetRemoteStorage(remoteStorage)
+		if err != nil {
+			return err
+		}
+		dest := toRemoteStorageLocation(bucket, util.NewFullPath(newParent, newName), remoteStorageMountLocation)
+		return syncKeptDeleteMarker(client, option, versionsDir, dest)
+	}
+
 	eachEntryFunc := func(resp *filer_pb.SubscribeMetadataResponse) error {
 		message := resp.EventNotification
 		sourceInEtcRemote, targetInEtcRemote := metadataEventDirectoryMembership(resp, filer.DirectoryEtcRemote)
@@ -326,6 +343,9 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 			// Skip deletion of internal version files; individual version
 			// deletes should not propagate to the remote object
 			if isVersionedPath(resp.Directory, message.OldEntry.Name, message.OldEntry.IsDirectory) {
+				if releasesVersionLock(message.OldEntry, nil) {
+					return syncKeptMarker(resp.Directory, message.OldEntry.Name)
+				}
 				glog.V(2).Infof("skipping delete of internal version path: %s/%s", resp.Directory, message.OldEntry.Name)
 				return nil
 			}
@@ -371,6 +391,9 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 			}
 			// Skip updates to internal version paths
 			if isVersionedPath(message.NewParentPath, message.NewEntry.Name, message.NewEntry.IsDirectory) {
+				if releasesVersionLock(message.OldEntry, message.NewEntry) {
+					return syncKeptMarker(message.NewParentPath, message.NewEntry.Name)
+				}
 				glog.V(2).Infof("skipping update of internal version path: %s/%s", message.NewParentPath, message.NewEntry.Name)
 				return nil
 			}

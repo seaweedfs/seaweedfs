@@ -77,7 +77,8 @@ var cmdFilerRemoteGateway = &Command{
 
 	In a versioned bucket every version is written to the object's key, so the
 	remote keeps earlier versions only when versioning is enabled on it. A delete
-	marker deletes the remote object unless a version of the key is locked.
+	marker over a version with a legal hold or retention keeps the remote object
+	until a later change to that version releases the lock.
 
 `,
 }

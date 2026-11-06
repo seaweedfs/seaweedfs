@@ -368,6 +368,10 @@ func processDeleteEvent(
 	// Skip deletion of internal version files; individual version
 	// deletes should not propagate to the remote object
 	if isVersionedPath(resp.Directory, message.OldEntry.Name, message.OldEntry.IsDirectory) {
+		if newParent, newName, ok := rewriteVersionedSourcePath(resp.Directory, message.OldEntry.Name); ok && releasesVersionLock(message.OldEntry, nil) {
+			dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(newParent, newName), remoteStorageMountLocation)
+			return syncKeptDeleteMarker(client, filerSource, resp.Directory, dest)
+		}
 		glog.V(2).Infof("skipping delete of internal version path: %s/%s", resp.Directory, message.OldEntry.Name)
 		return nil
 	}
@@ -482,6 +486,10 @@ func processUpdateEvent(
 		return nil
 	}
 	if isVersionedPath(message.NewParentPath, message.NewEntry.Name, message.NewEntry.IsDirectory) {
+		if newParent, newName, ok := rewriteVersionedSourcePath(message.NewParentPath, message.NewEntry.Name); ok && releasesVersionLock(message.OldEntry, message.NewEntry) {
+			dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(newParent, newName), remoteStorageMountLocation)
+			return syncKeptDeleteMarker(client, filerClient, message.NewParentPath, dest)
+		}
 		glog.V(2).Infof("skipping update of internal version path: %s/%s", message.NewParentPath, message.NewEntry.Name)
 		return nil
 	}
@@ -1372,7 +1380,8 @@ func isDeleteMarker(entry *filer_pb.Entry) bool {
 // persists a local sync marker so that replaying the same event is a no-op.
 // Every version uploads to the object's key, so while a version under the
 // marker holds a legal hold or retention the remote object can be its only
-// remote copy, and it is kept.
+// remote copy: it is kept, and the marker stays unstamped for
+// syncKeptDeleteMarker to retry.
 func syncDeleteMarker(
 	client remote_storage.RemoteStorageClient,
 	filerClient filer_pb.FilerClient,
@@ -1391,16 +1400,53 @@ func syncDeleteMarker(
 	}
 	if locked {
 		glog.V(0).Infof("keep %s: a version under the delete marker is locked", remote_storage.FormatLocation(dest))
-	} else {
-		glog.V(0).Infof("delete (marker) %s", remote_storage.FormatLocation(dest))
-		if err := deleteRemoteFile(client, dest); err != nil {
-			return err
-		}
+		return nil
+	}
+	glog.V(0).Infof("delete (marker) %s", remote_storage.FormatLocation(dest))
+	if err := deleteRemoteFile(client, dest); err != nil {
+		return err
 	}
 	return updateLocalEntry(filerClient, message.NewParentPath, message.NewEntry, &filer_pb.RemoteEntry{
 		StorageName: dest.Name,
 		RemoteMtime: message.NewEntry.Attributes.GetMtime(),
 	})
+}
+
+// syncKeptDeleteMarker retries the delete of the latest delete marker in
+// versionsDir that syncDeleteMarker kept for a locked version.
+func syncKeptDeleteMarker(
+	client remote_storage.RemoteStorageClient,
+	filerClient filer_pb.FilerClient,
+	versionsDir string,
+	dest *remote_pb.RemoteStorageLocation,
+) error {
+	dir, name := util.FullPath(versionsDir).DirAndName()
+	versionsEntry, err := currentEntry(filerClient, dir, name)
+	if err != nil || versionsEntry == nil {
+		return err
+	}
+	markerName := string(versionsEntry.Extended[s3_constants.ExtLatestVersionFileNameKey])
+	if string(versionsEntry.Extended[s3_constants.ExtLatestVersionIsDeleteMarker]) != "true" || markerName == "" {
+		return nil
+	}
+	marker, err := currentEntry(filerClient, versionsDir, markerName)
+	if err != nil || !isDeleteMarker(marker) || marker.RemoteEntry != nil {
+		return err
+	}
+	return syncDeleteMarker(client, filerClient, &filer_pb.EventNotification{NewParentPath: versionsDir, NewEntry: marker}, dest)
+}
+
+// releasesVersionLock reports an update or delete of a version that carried a
+// legal hold or retention and holds no active lock afterwards.
+func releasesVersionLock(oldEntry, newEntry *filer_pb.Entry) bool {
+	if oldEntry == nil || oldEntry.IsDirectory || isDeleteMarker(oldEntry) {
+		return false
+	}
+	hold := strings.TrimSpace(strings.ToUpper(string(oldEntry.Extended[s3_constants.ExtLegalHoldKey])))
+	if hold != s3_constants.LegalHoldOn && len(oldEntry.Extended[s3_constants.ExtObjectLockModeKey]) == 0 {
+		return false
+	}
+	return !s3_objectlock.EntryHasActiveLock(newEntry, time.Now())
 }
 
 // isVersionedPath returns true if the dir/name refers to an internal
