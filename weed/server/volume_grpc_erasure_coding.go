@@ -1091,7 +1091,7 @@ func (vs *VolumeServer) VolumeEcShardRead(req *volume_server_pb.VolumeEcShardRea
 	// rather than a first-match volume on a sibling disk: on a multi-disk server
 	// those can belong to different encode generations, and the guard must
 	// validate the identity of the volume whose bytes we serve.
-	ecVolume, ecShard, found := vs.store.FindEcVolumeWithShard(needle.VolumeId(req.VolumeId), erasure_coding.ShardId(req.ShardId))
+	ecVolume, ecShard, found := vs.store.FindServableEcVolumeWithShard(needle.VolumeId(req.VolumeId), erasure_coding.ShardId(req.ShardId), req.EncodeTsNs)
 	if !found {
 		return fmt.Errorf("not found ec shard %d.%d", req.VolumeId, req.ShardId)
 	}

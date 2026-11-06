@@ -456,6 +456,32 @@ func (s *Store) FindEcVolumeWithShard(vid needle.VolumeId, shardId erasure_codin
 	return nil, nil, false
 }
 
+// FindServableEcVolumeWithShard is FindEcVolumeWithShard for serving a peer:
+// among the disks holding the shard it prefers one from the caller's encode
+// run (any when encodeTsNs is zero) that is not quarantined, and otherwise
+// returns the first holder.
+func (s *Store) FindServableEcVolumeWithShard(vid needle.VolumeId, shardId erasure_coding.ShardId, encodeTsNs int64) (*erasure_coding.EcVolume, *erasure_coding.EcVolumeShard, bool) {
+	var firstVolume *erasure_coding.EcVolume
+	var firstShard *erasure_coding.EcVolumeShard
+	for _, location := range s.Locations {
+		shard, found := location.FindEcShard(vid, shardId)
+		if !found {
+			continue
+		}
+		ev, ok := location.FindEcVolume(vid)
+		if !ok {
+			continue
+		}
+		if _, _, quarantined := ev.GetIoErrorState(); !quarantined && (encodeTsNs == 0 || ev.EncodeTsNs == encodeTsNs) {
+			return ev, shard, true
+		}
+		if firstVolume == nil {
+			firstVolume, firstShard = ev, shard
+		}
+	}
+	return firstVolume, firstShard, firstVolume != nil
+}
+
 // EcMetadataDirs lists every directory on this server that could hold an EC
 // volume's metadata — each disk's data and index directory. Startup mirroring
 // gives each shard-bearing disk its own .ecx/.ecj/.vif, but the checksum
