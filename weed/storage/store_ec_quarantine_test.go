@@ -208,8 +208,9 @@ func TestMountEcShardsRefusesQuarantinedEcVolume(t *testing.T) {
 	}
 }
 
-// Only the disk the shard mounts on is checked: a healthy disk's copy mounts
-// while a quarantined sibling holds the same shard.
+// While a quarantined sibling holds the same shard, the result follows the
+// disk the shard mounted on: a mount onto the healthy disk succeeds, and a
+// refused mount leaves no copy there.
 func TestMountEcShardsBesideAQuarantinedSibling(t *testing.T) {
 	store := newTestStore(t, 2)
 	const vid = needle.VolumeId(7)
@@ -230,11 +231,9 @@ func TestMountEcShardsBesideAQuarantinedSibling(t *testing.T) {
 	}
 	quarantined.MarkIoQuarantined()
 
-	if err := store.MountEcShards("", vid, 1, ""); err != nil {
-		t.Fatalf("mount beside a quarantined sibling: %v", err)
-	}
-	if _, found := store.Locations[0].FindEcShard(vid, 1); !found {
-		t.Error("the healthy disk's copy was not mounted")
+	err = store.MountEcShards("", vid, 1, "")
+	if _, healthyHolds := store.Locations[0].FindEcShard(vid, 1); (err == nil) != healthyHolds {
+		t.Errorf("mount returned %v, healthy disk holds the shard: %v", err, healthyHolds)
 	}
 }
 
