@@ -13,8 +13,8 @@ import (
 	"time"
 
 	transport "github.com/Jille/raft-grpc-transport"
-	"github.com/armon/go-metrics"
-	"github.com/armon/go-metrics/prometheus"
+	"github.com/hashicorp/go-metrics"
+	"github.com/hashicorp/go-metrics/prometheus"
 	"github.com/hashicorp/raft"
 	hashicorpRaft "github.com/hashicorp/raft"
 	boltdb "github.com/hashicorp/raft-boltdb/v2"
@@ -199,19 +199,27 @@ func NewHashicorpRaftServer(option *RaftServerOption) (*RaftServer, error) {
 		}()
 	}
 
-	// Configure a prometheus sink as the raft metrics sink
-	if sink, err := prometheus.NewPrometheusSinkFrom(prometheus.PrometheusOpts{
-		Registerer: stats.Gather,
-	}); err != nil {
-		return nil, fmt.Errorf("NewPrometheusSink: %w", err)
-	} else {
-		metricsConf := metrics.DefaultConfig(stats.Namespace)
-		metricsConf.EnableRuntimeMetrics = false
-		metricsConf.EnableHostname = false
-		if _, err = metrics.NewGlobal(metricsConf, sink); err != nil {
-			return nil, fmt.Errorf("metrics.NewGlobal: %w", err)
-		}
+	if err := registerRaftMetrics(); err != nil {
+		return nil, err
 	}
 
 	return s, nil
+}
+
+// registerRaftMetrics points the hashicorp/go-metrics global, which raft and
+// raft-boltdb report to, at a prometheus sink on stats.Gather.
+func registerRaftMetrics() error {
+	sink, err := prometheus.NewPrometheusSinkFrom(prometheus.PrometheusOpts{
+		Registerer: stats.Gather,
+	})
+	if err != nil {
+		return fmt.Errorf("NewPrometheusSink: %w", err)
+	}
+	metricsConf := metrics.DefaultConfig(stats.Namespace)
+	metricsConf.EnableRuntimeMetrics = false
+	metricsConf.EnableHostname = false
+	if _, err = metrics.NewGlobal(metricsConf, sink); err != nil {
+		return fmt.Errorf("metrics.NewGlobal: %w", err)
+	}
+	return nil
 }
