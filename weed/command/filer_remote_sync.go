@@ -22,6 +22,7 @@ type RemoteSyncOptions struct {
 	dir                *string
 	clientId           int32
 	clientEpoch        int32
+	resumeTsNs         int64
 }
 
 var _ = filer_pb.FilerClient(&RemoteSyncOptions{})

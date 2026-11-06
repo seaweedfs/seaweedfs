@@ -3,6 +3,7 @@ package remote_storage
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -23,10 +24,16 @@ func SyncOffsetKey(dir string) []byte {
 	return syncKey
 }
 
+// syncOffsetTimeout bounds an offset read or write: one that never answers
+// would hold the daemon's start, or its event stream behind the checkpoint.
+const syncOffsetTimeout = 30 * time.Second
+
 func GetSyncOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, dir string) (lastOffsetTsNs int64, readErr error) {
 
 	readErr = pb.WithFilerClient(false, 0, filer, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-		resp, err := client.KvGet(context.Background(), &filer_pb.KvGetRequest{Key: SyncOffsetKey(dir)})
+		ctx, cancel := context.WithTimeout(context.Background(), syncOffsetTimeout)
+		defer cancel()
+		resp, err := client.KvGet(ctx, &filer_pb.KvGetRequest{Key: SyncOffsetKey(dir)})
 		if err != nil {
 			return err
 		}
@@ -54,7 +61,9 @@ func SetSyncOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, dir s
 		valueBuf := make([]byte, 8)
 		util.Uint64toBytes(valueBuf, uint64(offsetTsNs))
 
-		resp, err := client.KvPut(context.Background(), &filer_pb.KvPutRequest{
+		ctx, cancel := context.WithTimeout(context.Background(), syncOffsetTimeout)
+		defer cancel()
+		resp, err := client.KvPut(ctx, &filer_pb.KvPutRequest{
 			Key:   SyncOffsetKey(dir),
 			Value: valueBuf,
 		})

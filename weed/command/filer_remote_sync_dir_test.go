@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -455,6 +456,11 @@ func (c *stubFilerClient) UpdateEntry(_ context.Context, req *filer_pb.UpdateEnt
 	if c.updateErr != nil {
 		return &filer_pb.UpdateEntryResponse{}, c.updateErr
 	}
+	if key := req.Directory + "/" + req.Entry.GetName(); c.entries[key] != nil {
+		c.entries[key] = req.Entry
+	} else if c.entry != nil && c.entry.Name == req.Entry.GetName() {
+		c.entry = req.Entry
+	}
 	return &filer_pb.UpdateEntryResponse{}, nil
 }
 
@@ -537,6 +543,230 @@ func entryWith(name string, remote *filer_pb.RemoteEntry, chunks ...*filer_pb.Fi
 	return &filer_pb.Entry{Name: name, Attributes: &filer_pb.FuseAttributes{Mtime: 1786096669}, RemoteEntry: remote, Chunks: chunks}
 }
 
+// blockingFilerClient answers a lookup only when its context ends.
+type blockingFilerClient struct {
+	stubFilerClient
+}
+
+func (c *blockingFilerClient) LookupDirectoryEntry(ctx context.Context, _ *filer_pb.LookupDirectoryEntryRequest, _ ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	c.lookups++
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (c *blockingFilerClient) UpdateEntry(ctx context.Context, _ *filer_pb.UpdateEntryRequest, _ ...grpc.CallOption) (*filer_pb.UpdateEntryResponse, error) {
+	c.updates++
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (c *blockingFilerClient) WithFilerClient(_ bool, fn func(filer_pb.SeaweedFilerClient) error) error {
+	return fn(c)
+}
+
+func TestFilerLookupsOnTheSyncPathCarryADeadline(t *testing.T) {
+	remoteSyncLookupTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { remoteSyncLookupTimeout = 30 * time.Second })
+	const dir = "/buckets/ingest"
+	event := entryWith("lease.json", nil, chunk("3,01", "e1"))
+
+	started := time.Now()
+	current, err := currentEntry(&blockingFilerClient{}, dir, event.Name)
+	if current != nil || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("currentEntry = %v, %v; want nil, deadline exceeded", current, err)
+	}
+	if superseded, lookupErr := isSuperseded(&blockingFilerClient{}, dir, event); superseded || !errors.Is(lookupErr, context.DeadlineExceeded) {
+		t.Errorf("isSuperseded = %v, %v on a lookup that timed out; want false, deadline exceeded (no upload starts on an unanswered lookup)", superseded, lookupErr)
+	}
+	if _, writeErr := retriedWriteFile(nil, &blockingFilerClient{}, dir, event, &remote_pb.RemoteStorageLocation{Name: "b2", Bucket: "b", Path: "/lease.json"}); !errors.Is(writeErr, context.DeadlineExceeded) {
+		t.Errorf("retriedWriteFile = %v on an unanswered supersession lookup; want the lookup error, not an upload", writeErr)
+	}
+	stamp := &blockingFilerClient{}
+	if stampErr := updateLocalEntry(stamp, dir, event, &filer_pb.RemoteEntry{StorageName: "b2"}); stamp.updates != 1 || !errors.Is(stampErr, context.DeadlineExceeded) {
+		t.Errorf("updateLocalEntry = %v after %d updates on an unanswered stamp; want deadline exceeded after 1", stampErr, stamp.updates)
+	}
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Fatalf("four timed-out filer calls took %v; the deadline did not bound them", elapsed)
+	}
+}
+
+// answerThenBlockFilerClient answers the first lookup and blocks every later
+// one until its context ends.
+type answerThenBlockFilerClient struct {
+	stubFilerClient
+	entry *filer_pb.Entry
+}
+
+func (c *answerThenBlockFilerClient) LookupDirectoryEntry(ctx context.Context, _ *filer_pb.LookupDirectoryEntryRequest, _ ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	c.lookups++
+	if c.lookups == 1 {
+		return &filer_pb.LookupDirectoryEntryResponse{Entry: c.entry}, nil
+	}
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (c *answerThenBlockFilerClient) WithFilerClient(_ bool, fn func(filer_pb.SeaweedFilerClient) error) error {
+	return fn(c)
+}
+
+func TestRetriedWriteFileStopsWhenTheLookupAfterAFailureIsUnanswered(t *testing.T) {
+	remoteSyncLookupTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { remoteSyncLookupTimeout = 30 * time.Second })
+	const dir = "/buckets/ingest"
+	event := entryWith("lease.json", nil, chunk("3,01", "e1"))
+	dest := &remote_pb.RemoteStorageLocation{Name: "b2", Bucket: "tier", Path: "/" + event.Name}
+	transient := errors.New("RequestError: send request failed\ncaused by: Put \"https://s3.example.com/tier/x\": 503 Service Unavailable")
+	remote := &failingRemote{err: transient}
+	filerClient := &answerThenBlockFilerClient{entry: entryWith(event.Name, nil, chunk("3,01", "e1"))}
+
+	started := time.Now()
+	_, err := retriedWriteFile(remote, filerClient, dir, event, dest)
+	if !errors.Is(err, errLookupUnanswered) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want the unanswered-lookup error wrapping the deadline", err)
+	}
+	if remote.writes != 1 {
+		t.Errorf("wrote %d times, want 1: no further attempt until the filer answers", remote.writes)
+	}
+	if filerClient.lookups != 2 {
+		t.Errorf("looked up the filer %d times, want one before the attempt and one after it failed", filerClient.lookups)
+	}
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Fatalf("took %v; the retry loop did not stop on the unanswered lookup", elapsed)
+	}
+}
+
+func TestResolveLastSyncOffsetKeepsTheSavedOffsetWhenTheLookupFails(t *testing.T) {
+	saved := time.Date(2026, 11, 4, 17, 57, 10, 123_000_000, time.UTC)
+	lookupFails := func() (*filer_pb.Entry, error) { return nil, context.DeadlineExceeded }
+	savedOffset := func() (int64, error) { return saved.UnixNano(), nil }
+
+	got, err := resolveLastSyncOffset("/buckets/x", 0, lookupFails, savedOffset)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Equal(saved) {
+		t.Fatalf("resolved %v, want the saved offset %v: a failed mount lookup must not start the replay at now", got, saved)
+	}
+
+	// a mount that answers resumes from the saved offset when it postdates the directory
+	entry := &filer_pb.Entry{Name: "x", Attributes: &filer_pb.FuseAttributes{Crtime: saved.Add(-time.Hour).Unix()}}
+	got, err = resolveLastSyncOffset("/buckets/x", 0, func() (*filer_pb.Entry, error) { return entry, nil }, savedOffset)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Equal(saved) {
+		t.Fatalf("resolved %v, want %v", got, saved)
+	}
+
+	// remote.unmount recreates the directory, then saves the offset in the same
+	// second: starting at the creation second would replay the unmount's purge
+	unmounted := &filer_pb.Entry{Name: "x", Attributes: &filer_pb.FuseAttributes{Crtime: saved.Unix()}}
+	got, err = resolveLastSyncOffset("/buckets/x", 0, func() (*filer_pb.Entry, error) { return unmounted, nil }, savedOffset)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Equal(saved) {
+		t.Fatalf("resolved %v, want the saved offset %v", got, saved)
+	}
+}
+
+func TestResolveLastSyncOffsetReturnsTheErrorToTheRetryLoop(t *testing.T) {
+	lookupFails := func() (*filer_pb.Entry, error) { return nil, context.DeadlineExceeded }
+	noOffset := func() (int64, error) { return 0, nil }
+	readFails := func() (int64, error) { return 0, errors.New("filer unavailable") }
+
+	// no saved offset to fall back on: the error goes back to the caller
+	if _, err := resolveLastSyncOffset("/buckets/x", 0, lookupFails, noOffset); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("got %v, want the lookup error: without a saved offset the caller's retry loop decides, not an exit", err)
+	}
+
+	// no directory and no saved offset yet: a first run starts no later than
+	// the lookup, so a bucket created while the offset is read is replayed
+	started := time.Now()
+	var lookedUp time.Time
+	notFound := func() (*filer_pb.Entry, error) {
+		lookedUp = time.Now()
+		return nil, fmt.Errorf("lookup /buckets: %w", filer_pb.ErrNotFound)
+	}
+	slowNoOffset := func() (int64, error) { time.Sleep(10 * time.Millisecond); return 0, nil }
+	if got, err := resolveLastSyncOffset("/buckets", 0, notFound, slowNoOffset); err != nil || got.Before(started) || got.After(lookedUp) {
+		t.Fatalf("got %v, %v; want a start between %v and the lookup at %v", got, err, started, lookedUp)
+	}
+
+	// the mount answers but the saved offset is unreadable: never its creation time
+	mount := &filer_pb.Entry{Name: "x", Attributes: &filer_pb.FuseAttributes{Crtime: 1}}
+	if _, err := resolveLastSyncOffset("/buckets/x", 0, func() (*filer_pb.Entry, error) { return mount, nil }, readFails); err == nil || !strings.Contains(err.Error(), "filer unavailable") {
+		t.Fatalf("got %v, want the offset read error: the creation time would replay everything already synced", err)
+	}
+
+	// -timeAgo set, the saved offset unreadable: never now minus timeAgo
+	if _, err := resolveLastSyncOffset("/buckets/x", time.Hour, func() (*filer_pb.Entry, error) { return nil, nil }, readFails); err == nil || !strings.Contains(err.Error(), "filer unavailable") {
+		t.Fatalf("got %v, want the offset read error", err)
+	}
+}
+
+// TestSaveResumeOffsetKeepsTheStartForTheRetry: a subscription that ends
+// before its first checkpoint still records where it started, so the retry's
+// -timeAgo, recomputed from a later now, cannot start after it.
+func TestSaveResumeOffsetKeepsTheStartForTheRetry(t *testing.T) {
+	filerAddress, dialOption := startKvFiler(t)
+	const dir = "/buckets/x"
+	start := time.Now().Add(-time.Hour)
+	processor := NewMetadataProcessor(func(*filer_pb.SubscribeMetadataResponse) error { return nil }, 1, start.UnixNano())
+	saveResumeOffset(dialOption, filerAddress, dir, processor)
+
+	got, err := resolveLastSyncOffset(dir, time.Hour, func() (*filer_pb.Entry, error) { return nil, nil }, func() (int64, error) {
+		return remote_storage.GetSyncOffset(dialOption, filerAddress, dir)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.After(start) {
+		t.Fatalf("the retry starts at %v, after the first subscription's start %v", got, start)
+	}
+
+	// the write fails and the retry reads no saved offset: the position
+	// returned for this process still holds the start
+	failingAddress, failingDialOption := startFiler(t, &failingKvFilerServer{})
+	resumeTsNs := saveResumeOffset(failingDialOption, failingAddress, dir, processor)
+	emptyAddress, emptyDialOption := startKvFiler(t)
+	got, err = collectLastSyncOffset(&stubFilerClient{}, emptyDialOption, emptyAddress, dir, time.Hour, resumeTsNs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.After(start) {
+		t.Fatalf("after a failed write the retry starts at %v, after the first subscription's start %v", got, start)
+	}
+}
+
+func TestRemoteUploadReaderSharesOneChunkCache(t *testing.T) {
+	entry := entryWith("blob.bin", nil, chunk("3,01", "e1"))
+	for i := 0; i < 3; i++ {
+		if _, closeFn, err := remoteUploadReader(&stubFilerClient{}, entry); err != nil {
+			t.Fatal(err)
+		} else if closeFn != nil {
+			_ = closeFn()
+		}
+	}
+	runtime.GC()
+	before := runtime.NumGoroutine()
+	for i := 0; i < 200; i++ {
+		_, closeFn, err := remoteUploadReader(&stubFilerClient{}, entry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if closeFn != nil {
+			_ = closeFn()
+		}
+	}
+	runtime.GC()
+	time.Sleep(100 * time.Millisecond)
+	if after := runtime.NumGoroutine(); after-before > 20 {
+		t.Fatalf("200 upload readers left %d goroutines behind (%d -> %d); one chunk cache per reader leaks its worker", after-before, before, after)
+	}
+}
+
 // TestIsSuperseded decides what a failed upload means for its event (#11148).
 // A replay from an earlier offset re-emits creates for entries the filer has
 // since deleted or rewritten; their chunks are gone, so the upload can never
@@ -571,12 +801,12 @@ func TestIsSuperseded(t *testing.T) {
 		{name: "still as described", filer: &stubFilerClient{entry: entryWith(event.Name, nil, chunk("3,01", "e1"), chunk("3,02", "e2"))}, want: false},
 		{name: "still as described, since replicated", filer: &stubFilerClient{entry: entryWith(event.Name, stamped, chunk("3,01", "e1"), chunk("3,02", "e2"))}, want: false},
 		{name: "appended since", filer: &stubFilerClient{entry: entryWith(event.Name, nil, chunk("3,01", "e1"), chunk("3,02", "e2"), chunk("3,03", "e3"))}, want: true},
-		{name: "filer lookup failed", filer: &stubFilerClient{err: errors.New("rpc error: code = Unavailable")}, want: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := isSuperseded(tt.filer, dir, event); got != tt.want {
-				t.Errorf("isSuperseded = %v, want %v", got, tt.want)
+			got, err := isSuperseded(tt.filer, dir, event)
+			if err != nil || got != tt.want {
+				t.Errorf("isSuperseded = %v, %v; want %v, nil", got, err, tt.want)
 			}
 			if tt.filer.lookups != 1 {
 				t.Errorf("looked up the filer %d times, want 1", tt.filer.lookups)
@@ -584,19 +814,35 @@ func TestIsSuperseded(t *testing.T) {
 		})
 	}
 
+	t.Run("filer lookup failed", func(t *testing.T) {
+		lookupErr := errors.New("rpc error: code = Unavailable")
+		if got, err := isSuperseded(&stubFilerClient{err: lookupErr}, dir, event); got || !errors.Is(err, lookupErr) {
+			t.Errorf("isSuperseded = %v, %v; want false and the lookup error", got, err)
+		}
+	})
+
+	superseded := func(t *testing.T, filer *stubFilerClient, entry *filer_pb.Entry) bool {
+		t.Helper()
+		got, err := isSuperseded(filer, dir, entry)
+		if err != nil {
+			t.Fatalf("isSuperseded: %v", err)
+		}
+		return got
+	}
+
 	t.Run("written since: the event described an entry without data", func(t *testing.T) {
 		remoteOnly := entryWith("video.mp4", &filer_pb.RemoteEntry{StorageName: "b2", RemoteSize: 20971520, RemoteMtime: 1786096669})
-		if !isSuperseded(&stubFilerClient{entry: entryWith("video.mp4", remoteOnly.RemoteEntry, chunk("3,09", "e9"))}, dir, remoteOnly) {
+		if !superseded(t, &stubFilerClient{entry: entryWith("video.mp4", remoteOnly.RemoteEntry, chunk("3,09", "e9"))}, remoteOnly) {
 			t.Error("isSuperseded = false, want true: the filer wrote local data to a remote-only entry")
 		}
-		if isSuperseded(&stubFilerClient{entry: entryWith("video.mp4", remoteOnly.RemoteEntry)}, dir, remoteOnly) {
+		if superseded(t, &stubFilerClient{entry: entryWith("video.mp4", remoteOnly.RemoteEntry)}, remoteOnly) {
 			t.Error("isSuperseded = true, want false: the entry is still remote-only")
 		}
 		empty := &filer_pb.Entry{Name: "touch.txt", Attributes: &filer_pb.FuseAttributes{Mtime: 1786096669}}
-		if !isSuperseded(&stubFilerClient{entry: &filer_pb.Entry{Name: "touch.txt", Content: []byte("now")}}, dir, empty) {
+		if !superseded(t, &stubFilerClient{entry: &filer_pb.Entry{Name: "touch.txt", Content: []byte("now")}}, empty) {
 			t.Error("isSuperseded = false, want true: the empty file was written to")
 		}
-		if isSuperseded(&stubFilerClient{entry: &filer_pb.Entry{Name: "touch.txt"}}, dir, empty) {
+		if superseded(t, &stubFilerClient{entry: &filer_pb.Entry{Name: "touch.txt"}}, empty) {
 			t.Error("isSuperseded = true, want false: the file is still empty")
 		}
 	})
@@ -604,20 +850,20 @@ func TestIsSuperseded(t *testing.T) {
 	t.Run("mid-write snapshot with a hole, filled in since", func(t *testing.T) {
 		snapshot := entryWith("IMG_6526.mov", nil, chunkAt("222,01", "e1", 0), chunkAt("220,03", "e3", 2048))
 		filled := entryWith("IMG_6526.mov", nil, chunkAt("222,01", "e1", 0), chunkAt("216,02", "e2", 1024), chunkAt("220,03", "e3", 2048))
-		if !isSuperseded(&stubFilerClient{entry: filled}, dir, snapshot) {
+		if !superseded(t, &stubFilerClient{entry: filled}, snapshot) {
 			t.Error("isSuperseded = false, want true: the filer holds the finished write, the snapshot can never be read past its hole")
 		}
-		if isSuperseded(&stubFilerClient{entry: filled}, dir, filled) {
+		if superseded(t, &stubFilerClient{entry: filled}, filled) {
 			t.Error("isSuperseded = true, want false for the event that describes the finished write")
 		}
 	})
 
 	t.Run("inline content rewritten since", func(t *testing.T) {
 		event := &filer_pb.Entry{Name: "note.txt", Content: []byte("v1")}
-		if !isSuperseded(&stubFilerClient{entry: &filer_pb.Entry{Name: "note.txt", Content: []byte("v2")}}, dir, event) {
+		if !superseded(t, &stubFilerClient{entry: &filer_pb.Entry{Name: "note.txt", Content: []byte("v2")}}, event) {
 			t.Error("isSuperseded = false, want true for an entry whose inline content has changed")
 		}
-		if isSuperseded(&stubFilerClient{entry: &filer_pb.Entry{Name: "note.txt", Content: []byte("v1")}}, dir, event) {
+		if superseded(t, &stubFilerClient{entry: &filer_pb.Entry{Name: "note.txt", Content: []byte("v1")}}, event) {
 			t.Error("isSuperseded = true, want false for an entry whose inline content is unchanged")
 		}
 	})
@@ -1366,6 +1612,28 @@ func TestDeleteEventAbsentRemoteObjectIsSuccess(t *testing.T) {
 	})
 }
 
+// TestUpdateLocalEntryLeavesTheEventEntryAlone: a transient stamp failure
+// retries the same event in place, so the event must still read as unsynced
+// and keep its rename source, or the retry skips the upload and the stamp.
+func TestUpdateLocalEntryLeavesTheEventEntryAlone(t *testing.T) {
+	const dir = "/buckets/b/vol"
+	event := entryWith("state.db", nil, chunk("3,01", "e1"))
+	event.Extended = map[string][]byte{filer.ExtRemoteRenameSourceKey: []byte("src")}
+	filerClient := &stubFilerClient{updateErr: status.Error(codes.Unavailable, "filer is shutting down")}
+	if err := updateLocalEntry(filerClient, dir, event, &filer_pb.RemoteEntry{StorageName: "gcs", RemoteSize: 7}); err == nil {
+		t.Fatal("err = nil, want the transient failure")
+	}
+	if event.RemoteEntry != nil || len(event.Extended[filer.ExtRemoteRenameSourceKey]) == 0 {
+		t.Errorf("event entry = %v, want it untouched by the failed stamp", event)
+	}
+	if !shouldSendToRemote(event) {
+		t.Error("shouldSendToRemote = false after a failed stamp: the in-place retry would skip the upload")
+	}
+	if sent := filerClient.updated.GetEntry(); sent.GetRemoteEntry() == nil || len(sent.GetExtended()[filer.ExtRemoteRenameSourceKey]) > 0 {
+		t.Errorf("stamp request entry = %v, want the remote entry set and the rename source dropped", sent)
+	}
+}
+
 // TestUpdateLocalEntrySkipsDeletedEntry: the stamp that follows an upload lands
 // on an entry a later event already deleted. The filer answers "not found"; the
 // delete's own event follows in the log, so the stamp is skipped rather than
@@ -1651,7 +1919,7 @@ func TestCompleteRemoteOnlyRenameClearsThePendingSourceFirst(t *testing.T) {
 
 	t.Run("a marker still in place keeps the source", func(t *testing.T) {
 		// the stamp did not land: the filer still has the marker
-		filerClient := &stubFilerClient{entry: pending()}
+		filerClient := &stubFilerClient{entry: pending(), updateErr: status.Error(codes.FailedPrecondition, "entry changed")}
 		remote := &recordingRemote{objects: objects(), statETag: `"copy"`}
 		if err := completeRemoteOnlyRename(filerClient, remote, "/buckets/b/dst", pending(), renameSource{path: "/buckets/b/src/a.jpg", loc: oldDest}, dest, ""); err == nil {
 			t.Fatal("err = nil, want the event retried")

@@ -62,7 +62,10 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 		return err
 	}
 
-	lastOffsetTs := collectLastSyncOffset(option, option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir, *option.timeAgo)
+	lastOffsetTs, err := collectLastSyncOffset(option, option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir, *option.timeAgo, option.resumeTsNs)
+	if err != nil {
+		return err
+	}
 	processor := NewMetadataProcessor(eachEntryFunc, 128, lastOffsetTs.UnixNano())
 
 	var lastLogTsNs = time.Now().UnixNano()
@@ -105,7 +108,25 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 		Resubscribe: processor.ResubscribeCh(),
 	}
 
-	return pb.FollowMetadata(pb.ServerAddress(*option.filerAddress), option.grpcDialOption, metadataFollowOption, processEventFnWithOffset)
+	err = pb.FollowMetadata(pb.ServerAddress(*option.filerAddress), option.grpcDialOption, metadataFollowOption, processEventFnWithOffset)
+	option.resumeTsNs = saveResumeOffset(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir, processor)
+	return err
+}
+
+// saveResumeOffset records where the next subscription resumes once this one
+// ends. The periodic checkpoint only runs as events arrive, and the retry
+// recomputes -timeAgo from now, so a failure before the first checkpoint
+// would otherwise start the retry after the event it failed on. The offset is
+// returned for the retry in this process, which must not depend on the write.
+func saveResumeOffset(grpcDialOption grpc.DialOption, filerAddress pb.ServerAddress, dir string, processor *MetadataProcessor) int64 {
+	offsetTsNs := resumeTsNsFor(processor)
+	if offsetTsNs <= 0 {
+		return 0
+	}
+	if err := remote_storage.SetSyncOffset(grpcDialOption, filerAddress, dir, offsetTsNs); err != nil {
+		glog.Errorf("save the sync offset of %s: %v", dir, err)
+	}
+	return offsetTsNs
 }
 
 func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.RemoteConf, mountedDir string, remoteStorageMountLocation *remote_pb.RemoteStorageLocation, filerSource *source.FilerSource) (pb.ProcessMetadataFunc, error) {
@@ -612,10 +633,21 @@ func releaseRenamedSource(filerSource filer_pb.FilerClient, client remote_storag
 	return releasePendingSource(filerSource, client, mountedDir, remoteStorageMountLocation, message.OldEntry)
 }
 
+// remoteSyncLookupTimeout bounds a filer lookup on the sync path. A lookup
+// that never answers keeps its job alive, the job keeps its path in the
+// processor's conflict index, and the stream stops behind it.
+var remoteSyncLookupTimeout = 30 * time.Second
+
+func lookupContext() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), remoteSyncLookupTimeout)
+}
+
 // currentEntry returns what the filer holds at dir/name now, nil when the
 // entry is gone.
 func currentEntry(filerSource filer_pb.FilerClient, dir, name string) (*filer_pb.Entry, error) {
-	current, _, _, err := filer_pb.GetEntry(context.Background(), filerSource, util.NewFullPath(dir, name))
+	ctx, cancel := lookupContext()
+	defer cancel()
+	current, _, _, err := filer_pb.GetEntry(ctx, filerSource, util.NewFullPath(dir, name))
 	if errors.Is(err, filer_pb.ErrNotFound) {
 		return nil, nil
 	}
@@ -743,7 +775,9 @@ func openRemoteObject(client remote_storage.RemoteStorageClient, loc *remote_pb.
 // finishes a rename: its stamp can already describe the destination (a sync
 // plus remote.uncache in the meantime), and only then is it complete.
 func uploadCurrentEntry(filerClient filer_pb.FilerClient, filerSource filer_pb.FilerClient, client remote_storage.RemoteStorageClient, dir, name string, oldSource renameSource, dest *remote_pb.RemoteStorageLocation, storageClass string, sourceOf func(*filer_pb.Entry, renameSource) renameSource) error {
-	current, _, _, err := filer_pb.GetEntry(context.Background(), filerSource, util.NewFullPath(dir, name))
+	ctx, cancel := lookupContext()
+	defer cancel()
+	current, _, _, err := filer_pb.GetEntry(ctx, filerSource, util.NewFullPath(dir, name))
 	if errors.Is(err, filer_pb.ErrNotFound) {
 		return nil
 	}
@@ -958,27 +992,34 @@ func readRemoteStorageConf(filerClient filer_pb.FilerClient, storageName string)
 // after it in the log is never persisted. Skipping is safe: the event that
 // superseded this one follows in the log, and the delete removes the remote
 // object or the later write uploads the current content. A lookup that fails
-// for any other reason keeps the write failure, so the event is retried.
-func isSuperseded(filerClient filer_pb.FilerClient, dir string, entry *filer_pb.Entry) bool {
-	current, _, _, err := filer_pb.GetEntry(context.Background(), filerClient, util.NewFullPath(dir, entry.Name))
+// for any other reason is returned: no upload starts on a lookup that did not
+// answer, or an older snapshot in a replay overwrites a newer remote object.
+func isSuperseded(filerClient filer_pb.FilerClient, dir string, entry *filer_pb.Entry) (bool, error) {
+	ctx, cancel := lookupContext()
+	defer cancel()
+	current, _, _, err := filer_pb.GetEntry(ctx, filerClient, util.NewFullPath(dir, entry.Name))
 	if errors.Is(err, filer_pb.ErrNotFound) {
-		return true
+		return true, nil
 	}
 	if err != nil {
-		return false
+		return false, err
 	}
 	if !filer.HasData(entry) && filer.HasData(current) {
 		// The event described an entry without data (remote-only, or empty);
 		// the filer has written to it since. Uploading the snapshot would put
 		// an empty object where the write belongs.
-		return true
+		return true, nil
 	}
 	if len(entry.Content) > 0 || len(current.Content) > 0 {
-		return !bytes.Equal(entry.Content, current.Content)
+		return !bytes.Equal(entry.Content, current.Content), nil
 	}
 	return len(filer.DoMinusChunks(entry.GetChunks(), current.GetChunks())) > 0 ||
-		len(filer.DoMinusChunks(current.GetChunks(), entry.GetChunks())) > 0
+		len(filer.DoMinusChunks(current.GetChunks(), entry.GetChunks())) > 0, nil
 }
+
+// remoteUploadChunkCache is one per process: a chunk cache runs a worker
+// goroutine that nothing stops, so a cache per upload leaks one per file.
+var remoteUploadChunkCache = chunk_cache.NewChunkCacheInMemory(8)
 
 // remoteUploadReader streams the entry's full declared size through
 // ChunkReadAt, which zero-fills any range no chunk view covers: a sparse
@@ -999,7 +1040,7 @@ func remoteUploadReader(filerClient filer_pb.FilerClient, entry *filer_pb.Entry)
 		return nil, nil, err
 	}
 	readerAt := filer.NewChunkReaderAtFromClient(context.Background(),
-		filer.NewReaderCache(8, chunk_cache.NewChunkCacheInMemory(8), lookupFileIdFn, nil),
+		filer.NewReaderCache(8, remoteUploadChunkCache, lookupFileIdFn, nil),
 		chunkViews, size, filer.DefaultPrefetchCount)
 	return io.NewSectionReader(readerAt, 0, size), readerAt.Close, nil
 }
@@ -1010,6 +1051,10 @@ func remoteUploadReader(filerClient filer_pb.FilerClient, entry *filer_pb.Entry)
 // follows in the log and uploads them.
 var errSuperseded = errors.New("superseded or incomplete since the event was logged")
 
+// errLookupUnanswered marks an upload stopped because the filer did not
+// answer the supersession lookup; the processor retries the event.
+var errLookupUnanswered = errors.New("supersession lookup unanswered")
+
 // retriedWriteFile uploads the entry, retrying transient failures. The filer is
 // asked whether the entry is superseded before the first attempt and after
 // every failed one, and the upload stops at once when it is. Before: a backlog
@@ -1019,18 +1064,30 @@ var errSuperseded = errors.New("superseded or incomplete since the event was log
 // still holds is worth sending. After: a dead chunk reads as a transient
 // "RequestError" from the SDK, and waiting out the backoff on it buys nothing.
 func retriedWriteFile(client remote_storage.RemoteStorageClient, filerSource filer_pb.FilerClient, dir string, newEntry *filer_pb.Entry, dest *remote_pb.RemoteStorageLocation) (remoteEntry *filer_pb.RemoteEntry, err error) {
-	if isSuperseded(filerSource, dir, newEntry) {
+	if superseded, lookupErr := isSuperseded(filerSource, dir, newEntry); lookupErr != nil {
+		return nil, fmt.Errorf("%s: supersession lookup: %w", util.NewFullPath(dir, newEntry.Name), lookupErr)
+	} else if superseded {
 		return nil, fmt.Errorf("%s %w", util.NewFullPath(dir, newEntry.Name), errSuperseded)
 	}
+	// A failed attempt is retried only once the filer has answered that the
+	// entry is still the one the event described; an unanswered lookup
+	// ends the loop so no further attempt uploads an unverified snapshot.
+	afterFailure := func(attemptErr error) error {
+		superseded, lookupErr := isSuperseded(filerSource, dir, newEntry)
+		if lookupErr != nil {
+			return fmt.Errorf("%s %w: %w (after: %v)", util.NewFullPath(dir, newEntry.Name), errLookupUnanswered, lookupErr, attemptErr)
+		}
+		if superseded {
+			return fmt.Errorf("%s %w: %w", util.NewFullPath(dir, newEntry.Name), errSuperseded, attemptErr)
+		}
+		return attemptErr
+	}
 	err = util.RetryOnError("writeFile", func(err error) bool {
-		return !errors.Is(err, errSuperseded) && util.IsTransientError(err)
+		return !errors.Is(err, errSuperseded) && !errors.Is(err, errLookupUnanswered) && util.IsTransientError(err)
 	}, func() error {
 		reader, closeFn, readerErr := remoteUploadReader(filerSource, newEntry)
 		if readerErr != nil {
-			if isSuperseded(filerSource, dir, newEntry) {
-				return fmt.Errorf("%s %w: %w", util.NewFullPath(dir, newEntry.Name), errSuperseded, readerErr)
-			}
-			return readerErr
+			return afterFailure(readerErr)
 		}
 		if closeFn != nil {
 			defer closeFn()
@@ -1038,10 +1095,10 @@ func retriedWriteFile(client remote_storage.RemoteStorageClient, filerSource fil
 		glog.V(0).Infof("create %s", remote_storage.FormatLocation(dest))
 		var writeErr error
 		remoteEntry, writeErr = client.WriteFile(dest, newEntry, reader)
-		if writeErr != nil && isSuperseded(filerSource, dir, newEntry) {
-			return fmt.Errorf("%s %w: %w", util.NewFullPath(dir, newEntry.Name), errSuperseded, writeErr)
+		if writeErr != nil {
+			return afterFailure(writeErr)
 		}
-		return writeErr
+		return nil
 	})
 	if err != nil && !errors.Is(err, errSuperseded) {
 		glog.Errorf("write to %s: %v", dest, err)
@@ -1049,38 +1106,79 @@ func retriedWriteFile(client remote_storage.RemoteStorageClient, filerSource fil
 	return
 }
 
-func collectLastSyncOffset(filerClient filer_pb.FilerClient, grpcDialOption grpc.DialOption, filerAddress pb.ServerAddress, mountedDir string, timeAgo time.Duration) time.Time {
-	// 1. specified by timeAgo
-	// 2. last offset timestamp for this directory
-	// 3. directory creation time
+func collectLastSyncOffset(filerClient filer_pb.FilerClient, grpcDialOption grpc.DialOption, filerAddress pb.ServerAddress, mountedDir string, timeAgo time.Duration, resumeTsNs int64) (time.Time, error) {
+	if resumeTsNs > 0 {
+		// the previous attempt pinned where it stopped, which can sit behind
+		// both the saved offset and a recomputed -timeAgo window
+		glog.V(0).Infof("resuming previous attempt at %v", time.Unix(0, resumeTsNs))
+		return time.Unix(0, resumeTsNs), nil
+	}
+	return resolveLastSyncOffset(mountedDir, timeAgo,
+		func() (*filer_pb.Entry, error) {
+			ctx, cancel := lookupContext()
+			defer cancel()
+			entry, _, _, err := filer_pb.GetEntry(ctx, filerClient, util.FullPath(mountedDir))
+			return entry, err
+		},
+		func() (int64, error) { return remote_storage.GetSyncOffset(grpcDialOption, filerAddress, mountedDir) })
+}
+
+// resolveLastSyncOffset picks the position to subscribe from:
+// 1. now minus timeAgo, or the saved offset when it is older
+// 2. the saved offset for this directory
+// 3. the directory's creation time
+// A mount lookup that fails never resolves to now: the saved offset still
+// orders the replay, and without one the error goes back to the caller's
+// retry loop instead of skipping every event since the failure. Only a
+// directory that does not exist yet, with no saved offset, starts now.
+func resolveLastSyncOffset(mountedDir string, timeAgo time.Duration, lookupMount func() (*filer_pb.Entry, error), readOffset func() (int64, error)) (time.Time, error) {
+	startedAt := time.Now()
 	var lastOffsetTs time.Time
 	if timeAgo == 0 {
-		mountedDirEntry, _, _, err := filer_pb.GetEntry(context.Background(), filerClient, util.FullPath(mountedDir))
+		mountedDirEntry, err := lookupMount()
 		if err != nil {
-			glog.V(0).Infof("get mounted directory %s: %v", mountedDir, err)
-			return time.Now()
+			lastOffsetTsNs, offsetErr := readOffset()
+			if offsetErr == nil && lastOffsetTsNs > 0 {
+				glog.V(0).Infof("get mounted directory %s: %v; resume from the saved offset %v", mountedDir, err, time.Unix(0, lastOffsetTsNs))
+				return time.Unix(0, lastOffsetTsNs), nil
+			}
+			if offsetErr == nil && errors.Is(err, filer_pb.ErrNotFound) {
+				return startedAt, nil
+			}
+			return time.Time{}, fmt.Errorf("get mounted directory %s: %w; no saved sync offset (%v)", mountedDir, err, offsetErr)
 		}
 
-		lastOffsetTsNs, err := remote_storage.GetSyncOffset(grpcDialOption, filerAddress, mountedDir)
+		lastOffsetTsNs, err := readOffset()
+		if err != nil {
+			return time.Time{}, fmt.Errorf("read the sync offset of %s: %w", mountedDir, err)
+		}
 		if mountedDirEntry != nil {
-			if err == nil && mountedDirEntry.Attributes.Crtime < lastOffsetTsNs/1000000 {
+			// a saved offset wins even over a newer creation time: remote.unmount
+			// saves one after recreating the directory, often in the same second
+			if lastOffsetTsNs > 0 {
 				lastOffsetTs = time.Unix(0, lastOffsetTsNs)
 				glog.V(0).Infof("resume from %v", lastOffsetTs)
 			} else {
 				lastOffsetTs = time.Unix(mountedDirEntry.Attributes.Crtime, 0)
 			}
 		} else {
-			lastOffsetTs = time.Now()
+			lastOffsetTs = startedAt
 		}
 	} else {
-		lastOffsetTs = time.Now().Add(-timeAgo)
-		if lastOffsetTsNs, err := remote_storage.GetSyncOffset(grpcDialOption, filerAddress, mountedDir); err == nil && lastOffsetTsNs > 0 {
+		lastOffsetTs = startedAt.Add(-timeAgo)
+		lastOffsetTsNs, err := readOffset()
+		if err != nil {
+			// an unread offset must not resolve to now minus timeAgo: the
+			// saved one may be older, and everything between would be skipped
+			return time.Time{}, fmt.Errorf("read the sync offset of %s: %w", mountedDir, err)
+		}
+		if lastOffsetTsNs > 0 {
 			if savedOffsetTs := time.Unix(0, lastOffsetTsNs); savedOffsetTs.Before(lastOffsetTs) {
 				lastOffsetTs = savedOffsetTs
 			}
 		}
 	}
-	return lastOffsetTs
+	return lastOffsetTs, nil
 }
 
 func toRemoteStorageLocation(mountDir, sourcePath util.FullPath, remoteMountLocation *remote_pb.RemoteStorageLocation) *remote_pb.RemoteStorageLocation {
@@ -1126,7 +1224,9 @@ func liveRemoteEntry(filerClient filer_pb.FilerClient, dir string, entry *filer_
 	if entry.RemoteEntry != nil {
 		return entry.RemoteEntry, nil
 	}
-	current, _, _, err := filer_pb.GetEntry(context.Background(), filerClient, util.NewFullPath(dir, entry.Name))
+	ctx, cancel := lookupContext()
+	defer cancel()
+	current, _, _, err := filer_pb.GetEntry(ctx, filerClient, util.NewFullPath(dir, entry.Name))
 	if err != nil {
 		return nil, err
 	}
@@ -1174,10 +1274,13 @@ func updateLocalEntry(filerClient filer_pb.FilerClient, dir string, entry *filer
 	remoteEntry = proto.Clone(remoteEntry).(*filer_pb.RemoteEntry)
 	remoteEntry.LastLocalSyncTsNs = time.Now().UnixNano()
 	expected := proto.Clone(entry).(*filer_pb.Entry)
+	entry = proto.Clone(entry).(*filer_pb.Entry)
 	entry.RemoteEntry = remoteEntry
 	delete(entry.Extended, filer.ExtRemoteRenameSourceKey)
 	err := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		_, err := client.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{
+		ctx, cancel := lookupContext()
+		defer cancel()
+		_, err := client.UpdateEntry(ctx, &filer_pb.UpdateEntryRequest{
 			Directory: dir,
 			Entry:     entry,
 			Condition: ifEntryEqual(expected),
