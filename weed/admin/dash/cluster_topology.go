@@ -235,6 +235,8 @@ func (s *AdminServer) getTopologyViaGRPC(topology *ClusterTopology) error {
 						// TotalSize is the logical data size, wherever the
 						// bytes live, so remote-tiered volumes still count.
 						topology.TotalSize += totalSize + remoteSize
+						topology.DiskUsage += diskUsage
+						topology.DiskCapacity += diskCapacity
 					}
 
 					dataCenter.Racks = append(dataCenter.Racks, rackObj)

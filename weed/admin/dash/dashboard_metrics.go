@@ -60,7 +60,7 @@ func (s *AdminServer) recordDashboardSample() {
 		t:        time.Now(),
 		volumes:  float64(topology.TotalVolumes),
 		ecShards: float64(ecShards),
-		diskUsed: float64(topology.TotalSize),
+		diskUsed: float64(topology.DiskUsage),
 		chunks:   float64(topology.TotalChunks),
 	}
 	if s.maintenanceManager != nil {

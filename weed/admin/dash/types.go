@@ -18,9 +18,14 @@ type ClusterTopology struct {
 	TotalVolumes  int            `json:"total_volumes"`
 	// TotalChunks counts chunks stored in volumes, not filer entries: a file
 	// is split into one or more chunks.
-	TotalChunks int64     `json:"total_chunks"`
-	TotalSize   int64     `json:"total_size"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	TotalChunks int64 `json:"total_chunks"`
+	TotalSize   int64 `json:"total_size"`
+	// DiskUsage and DiskCapacity sum the volume servers' DiskUsage and
+	// DiskCapacity: the bytes in use on their disks, parity, deleted needles
+	// and retained EC generations included, and the disks' size.
+	DiskUsage    int64     `json:"disk_usage"`
+	DiskCapacity int64     `json:"disk_capacity"`
+	UpdatedAt    time.Time `json:"updated_at"`
 	// TierStats breaks volumes and EC shards down by storage tier: local
 	// disk types plus one entry per remote storage holding tiered volumes.
 	TierStats []TierStats `json:"tier_stats"`
