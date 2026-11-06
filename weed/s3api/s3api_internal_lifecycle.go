@@ -46,6 +46,25 @@ func (s3a *S3ApiServer) LifecycleDelete(ctx context.Context, req *s3_lifecycle_p
 		return noopResolved("STALE_IDENTITY"), nil
 	}
 
+	// A version file never changes, so the identity check cannot see a
+	// newer write; current-version expiration must still target the latest.
+	if req.VersionId != "" && (req.ActionKind == s3_lifecycle_pb.ActionKind_EXPIRATION_DAYS || req.ActionKind == s3_lifecycle_pb.ActionKind_EXPIRATION_DATE) {
+		latest, latestErr := s3a.getLatestObjectVersion(req.Bucket, req.ObjectPath)
+		if latestErr != nil {
+			if isObjectEntryMiss(latestErr) {
+				return noopResolved("NOT_FOUND"), nil
+			}
+			return retryLater("TRANSPORT_ERROR: latest-version lookup: " + latestErr.Error()), nil
+		}
+		latestId := string(latest.Extended[s3_constants.ExtVersionIdKey])
+		if latestId == "" {
+			latestId = "null"
+		}
+		if latestId != req.VersionId {
+			return noopResolved("VERSION_NOT_LATEST"), nil
+		}
+	}
+
 	// Lifecycle never bypasses governance/compliance; the http.Request is
 	// only read when bypass is allowed, so nil is safe here.
 	if err := s3a.enforceObjectLockProtections(nil, req.Bucket, req.ObjectPath, req.VersionId, false); err != nil {
