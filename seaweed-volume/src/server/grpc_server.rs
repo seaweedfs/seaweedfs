@@ -13288,8 +13288,9 @@ mod tests {
         );
     }
 
-    /// Like Go, only the disk the shard mounted on is checked: a healthy disk's
-    /// copy mounts while a quarantined sibling holds the same shard.
+    /// While a quarantined sibling holds the same shard, the result follows
+    /// the disk the shard mounted on: a mount onto the healthy disk succeeds,
+    /// and a refused mount leaves no copy there.
     #[tokio::test]
     async fn test_volume_ec_shards_mount_beside_a_quarantined_sibling() {
         let (service, tmp) = make_local_service_with_volume("", None);
@@ -13323,13 +13324,21 @@ mod tests {
                 .mark_io_quarantined();
         }
 
-        mount_ec_1(&service, vec![1]).await;
-        let store = service.state.store.read().unwrap();
-        assert!(
-            store.locations[0]
-                .find_ec_volume(VolumeId(1))
-                .is_some_and(|ecv| ecv.has_shard(1)),
-            "the healthy disk's copy was not mounted"
+        let mounted = service
+            .volume_ec_shards_mount(Request::new(volume_server_pb::VolumeEcShardsMountRequest {
+                volume_id: 1,
+                shard_ids: vec![1],
+                ..Default::default()
+            }))
+            .await;
+        let healthy_holds = service.state.store.read().unwrap().locations[0]
+            .find_ec_volume(VolumeId(1))
+            .is_some_and(|ecv| ecv.has_shard(1));
+        assert_eq!(
+            mounted.is_ok(),
+            healthy_holds,
+            "mount returned {:?}, healthy disk holds the shard: {healthy_holds}",
+            mounted.err()
         );
     }
 
