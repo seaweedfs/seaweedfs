@@ -141,6 +141,8 @@ func (s3a *S3ApiServer) registerS3TablesRoutes(router *mux.Router) {
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("ListTables", buildListTablesRequest)), "S3Tables-ListTables"))
 	router.Methods(http.MethodDelete).Path("/tables/{tableBucketARN:" + tableBucketARNRegex + "}/{namespace}/{name}").MatcherFunc(serviceMatcher).
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("DeleteTable", buildDeleteTableRequest)), "S3Tables-DeleteTable"))
+	router.Methods(http.MethodPut).Path("/tables/{tableBucketARN:" + tableBucketARNRegex + "}/{namespace}/{name}/rename").MatcherFunc(serviceMatcher).
+		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("RenameTable", buildRenameTableRequest)), "S3Tables-RenameTable"))
 
 	router.Methods(http.MethodPut).Path("/tables/{tableBucketARN:" + tableBucketARNRegex + "}/{namespace}/{name}/policy").MatcherFunc(serviceMatcher).
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("PutTablePolicy", buildPutTablePolicyRequest)), "S3Tables-PutTablePolicy"))
@@ -170,7 +172,23 @@ func (s3a *S3ApiServer) registerS3TablesRoutes(router *mux.Router) {
 	router.Methods(http.MethodGet).Path("/get-table").MatcherFunc(serviceMatcher).
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("GetTable", buildGetTableRequest)), "S3Tables-GetTable"))
 
+	// Every S3 Tables operation this gateway serves has a route above. A request
+	// signed for s3tables that none of them took is answered here: the /{bucket}
+	// routers registered later would run it as an S3 request on a bucket named
+	// after its first path segment, where a PUT stores the body as an object (or
+	// creates a bucket) and answers 2xx, which the SDK reports as success.
+	router.MatcherFunc(serviceMatcher).
+		HandlerFunc(track(handleUnroutedS3TablesRequest, "S3Tables-Unrouted"))
+
 	glog.V(1).Infof("S3 Tables API enabled")
+}
+
+const s3TablesErrUnknownOperation = "UnknownOperationException"
+
+func handleUnroutedS3TablesRequest(w http.ResponseWriter, r *http.Request) {
+	glog.V(1).Infof("S3Tables: no route for %s %s", r.Method, r.URL.Path)
+	writeS3TablesError(w, http.StatusNotFound, s3TablesErrUnknownOperation,
+		"S3 Tables operation not supported: "+r.Method+" "+r.URL.Path)
 }
 
 type s3tablesRequestBuilder func(r *http.Request) (interface{}, error)
@@ -531,6 +549,58 @@ func buildDeleteTableRequest(r *http.Request) (interface{}, error) {
 	}, nil
 }
 
+// renameTableRESTBody is the AWS RenameTable body: the path names the source,
+// the body only the destination, and both destination fields are optional.
+type renameTableRESTBody struct {
+	NewNamespaceName *string `json:"newNamespaceName"`
+	NewName          *string `json:"newName"`
+	VersionToken     string  `json:"versionToken"`
+}
+
+func buildRenameTableRequest(r *http.Request) (interface{}, error) {
+	var body renameTableRESTBody
+	if err := readS3TablesJSONBody(r, &body); err != nil {
+		return nil, err
+	}
+	tableBucketARN, err := getDecodedPathParam(r, "tableBucketARN")
+	if err != nil {
+		return nil, err
+	}
+	namespace, err := parseRequiredNamespacePathParam(r, "namespace")
+	if err != nil {
+		return nil, err
+	}
+	name, err := getDecodedPathParam(r, "name")
+	if err != nil {
+		return nil, err
+	}
+	if name == "" {
+		return nil, fmt.Errorf("name is required")
+	}
+	if _, err := s3tables.ValidateTableName(name); err != nil {
+		return nil, err
+	}
+	if body.NewNamespaceName == nil && body.NewName == nil {
+		return nil, fmt.Errorf("newNamespaceName or newName is required")
+	}
+	destNamespace, destName := namespace, name
+	if body.NewNamespaceName != nil {
+		if destNamespace, err = s3tables.ParseNamespace(*body.NewNamespaceName); err != nil {
+			return nil, fmt.Errorf("invalid newNamespaceName: %w", err)
+		}
+	}
+	if body.NewName != nil {
+		if _, err := s3tables.ValidateTableName(*body.NewName); err != nil {
+			return nil, fmt.Errorf("invalid newName: %w", err)
+		}
+		destName = *body.NewName
+	}
+	return &s3tables.RenameTableRequest{
+		TableBucketARN: tableBucketARN, SourceNamespace: namespace, SourceName: name,
+		DestNamespace: destNamespace, DestName: destName, VersionToken: body.VersionToken,
+	}, nil
+}
+
 func buildPutTablePolicyRequest(r *http.Request) (interface{}, error) {
 	var req s3tables.PutTablePolicyRequest
 	if err := readS3TablesJSONBody(r, &req); err != nil {
@@ -674,12 +744,10 @@ func buildUntagResourceRequest(r *http.Request) (interface{}, error) {
 // internal test harnesses running against a default-allow server —
 // must sign with SERVICE=s3tables.
 func isS3TablesSignedRequest(r *http.Request) bool {
-	scope := extractCredentialScope(r)
-	// Credential scope is AK/DATE/REGION/SERVICE/aws4_request. Slashes
-	// do not appear inside any other component (access keys are
-	// alphanumeric), so /s3tables/ matches iff SERVICE is exactly
-	// s3tables.
-	return scope != "" && strings.Contains(scope, "/s3tables/")
+	// AK/DATE/REGION/SERVICE/aws4_request, split the way parseCredentialHeader
+	// does: a region named s3tables must not match.
+	parts := strings.Split(extractCredentialScope(r), "/")
+	return len(parts) == 5 && parts[3] == "s3tables"
 }
 
 // extractCredentialScope returns the raw credential value from either the

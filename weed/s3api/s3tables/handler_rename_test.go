@@ -3,7 +3,9 @@ package s3tables
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"path"
+	"sync"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -349,4 +351,193 @@ func TestRenameTableRejectsConcurrentMaintenanceWrite(t *testing.T) {
 	require.Error(t, err, "cleanup must refuse to delete a configuration written after the copy")
 	assert.ErrorIs(t, err, ErrConcurrentUpdate)
 	assert.Equal(t, landedLate, src.Extended[ExtendedKeyMaintenance], "the late write must survive")
+}
+
+// setRenameSourceVersionToken stamps the seeded source table with token.
+func setRenameSourceVersionToken(t *testing.T, fs *s3tablestest.MemFiler, token string) {
+	t.Helper()
+	src := fs.Get(GetNamespacePath(renameTestBucket, "ns"), "t")
+	require.NotNil(t, src)
+	var meta tableMetadataInternal
+	require.NoError(t, json.Unmarshal(src.Extended[ExtendedKeyMetadata], &meta))
+	meta.VersionToken = token
+	raw, err := json.Marshal(&meta)
+	require.NoError(t, err)
+	src.Extended[ExtendedKeyMetadata] = raw
+}
+
+// assertRenameRefused checks a refused rename left the source resolving, the
+// destination absent, and no claim behind on the source.
+func assertRenameRefused(t *testing.T, m *Manager, fs *s3tablestest.MemFiler) {
+	t.Helper()
+	_, err := runGetTable(t, m, fs, "ns", "t")
+	assert.NoError(t, err, "the source must still resolve")
+
+	_, err = runGetTable(t, m, fs, "ns", "t2")
+	var s3Err *S3TablesError
+	require.ErrorAs(t, err, &s3Err, "the destination must not resolve")
+	assert.Equal(t, ErrCodeNoSuchTable, s3Err.Type)
+	assert.Nil(t, fs.Get(GetNamespacePath(renameTestBucket, "ns"), "t2"), "the destination must not be written")
+
+	src := fs.Get(GetNamespacePath(renameTestBucket, "ns"), "t")
+	require.NotNil(t, src)
+	_, claimed := src.Extended[ExtendedKeyDeleting]
+	assert.False(t, claimed, "a refused rename must not leave its claim on the source")
+}
+
+func renameTToT2(t *testing.T, token string) *RenameTableRequest {
+	return &RenameTableRequest{
+		TableBucketARN:  mustBucketARN(t),
+		SourceNamespace: []string{"ns"},
+		SourceName:      "t",
+		DestNamespace:   []string{"ns"},
+		DestName:        "t2",
+		VersionToken:    token,
+	}
+}
+
+func TestRenameTableVersionTokenMatches(t *testing.T) {
+	fs, m := startRenameManager(t)
+	setRenameSourceVersionToken(t, fs, "tok-1")
+
+	status, resp := runHandler(t, m, fs.Client, "RenameTable", renameTToT2(t, "tok-1"))
+	require.Equal(t, http.StatusOK, status, "%+v", resp)
+
+	got, err := runGetTable(t, m, fs, "ns", "t2")
+	require.NoError(t, err)
+	assert.Equal(t, "t2", got.Name)
+}
+
+func TestRenameTableVersionTokenMismatch(t *testing.T) {
+	fs, m := startRenameManager(t)
+	setRenameSourceVersionToken(t, fs, "tok-1")
+
+	status, resp := runHandler(t, m, fs.Client, "RenameTable", renameTToT2(t, "stale"))
+	assert.Equal(t, http.StatusConflict, status, "%+v", resp)
+	assert.Equal(t, ErrCodeConflict, resp.Type)
+	assertRenameRefused(t, m, fs)
+}
+
+// The token must be checked against the snapshot the claim asserts, not the
+// metadata read at the start of the rename. An UpdateTable landing between
+// the two moves the token on; checking the first read would accept the stale
+// token, and the claim would then succeed on the newer snapshot.
+func TestRenameTableVersionTokenCheckedAgainstClaimedSnapshot(t *testing.T) {
+	fs, m := startRenameManager(t)
+	setRenameSourceVersionToken(t, fs, "tok-1")
+
+	status, resp := renameDuringUpdate(t, fs, m, "tok-1")
+
+	assert.Equal(t, http.StatusConflict, status, "a rename carrying the pre-update token must be refused: %+v", resp)
+	assert.Equal(t, ErrCodeConflict, resp.Type)
+	assertRenameRefused(t, m, fs)
+
+	got, err := runGetTable(t, m, fs, "ns", "t")
+	require.NoError(t, err)
+	assert.NotEqual(t, "tok-1", got.VersionToken, "the update must have moved the token on")
+}
+
+// Without a token the same race must still not publish the metadata read
+// before the update: the claim succeeds on the newer snapshot, so a rename
+// built from the first read would move the table back to v3 and drop the
+// update's commit.
+func TestRenameTableRefusesSourceChangedBetweenReads(t *testing.T) {
+	fs, m := startRenameManager(t)
+	setRenameSourceVersionToken(t, fs, "tok-1")
+
+	status, resp := renameDuringUpdate(t, fs, m, "")
+
+	assert.Equal(t, http.StatusConflict, status, "a rename built from a torn read must be refused: %+v", resp)
+	assert.Equal(t, ErrCodeConflict, resp.Type)
+	assertRenameRefused(t, m, fs)
+
+	got, err := runGetTable(t, m, fs, "ns", "t")
+	require.NoError(t, err)
+	assert.Equal(t, "s3://"+renameTestBucket+"/ns/t/metadata/v4.metadata.json", got.MetadataLocation, "the update's commit must survive")
+}
+
+// renameDuringUpdate renames t to t2 carrying token while an UpdateTable to
+// v4 lands between the rename's first read of the source and the lookup its
+// claim snapshots, and returns the rename's answer.
+func renameDuringUpdate(t *testing.T, fs *s3tablestest.MemFiler, m *Manager, token string) (int, S3TablesError) {
+	t.Helper()
+	nsPath := GetNamespacePath(renameTestBucket, "ns")
+
+	// The rename's first lookup of the source reads its metadata; the second
+	// starts the reads that end in the lookupEntry the claim snapshots. The
+	// update lands on that second lookup. Its own lookups re-enter this hook,
+	// so it fires once under a mutex and a flag rather than a sync.Once,
+	// which would deadlock on the nested call.
+	var (
+		mu           sync.Mutex
+		lookups      int
+		fired        bool
+		updateStatus int
+		updateResp   S3TablesError
+	)
+	fs.OnLookup = func(dir, name string) {
+		if dir != nsPath || name != "t" {
+			return
+		}
+		mu.Lock()
+		if fired {
+			mu.Unlock()
+			return
+		}
+		lookups++
+		if lookups < 2 {
+			mu.Unlock()
+			return
+		}
+		fired = true
+		mu.Unlock()
+		updateStatus, updateResp = runHandler(t, m, fs.Client, "UpdateTable", &UpdateTableRequest{
+			TableBucketARN:   mustBucketARN(t),
+			Namespace:        []string{"ns"},
+			Name:             "t",
+			VersionToken:     "tok-1",
+			MetadataLocation: "s3://" + renameTestBucket + "/ns/t/metadata/v4.metadata.json",
+		})
+	}
+
+	status, resp := runHandler(t, m, fs.Client, "RenameTable", renameTToT2(t, token))
+	fs.OnLookup = nil
+
+	mu.Lock()
+	require.True(t, fired, "the competing update never ran")
+	mu.Unlock()
+	require.Equal(t, http.StatusOK, updateStatus, "competing update: %+v", updateResp)
+	return status, resp
+}
+
+func TestRenameReadsMatchSnapshot(t *testing.T) {
+	snapshot := map[string][]byte{
+		ExtendedKeyMetadata: []byte(`{"name":"t"}`),
+		ExtendedKeyPolicy:   []byte(`{"Version":"2012-10-17"}`),
+		ExtendedKeyTags:     []byte(`{"team":"a"}`),
+	}
+	reads := func(policy string) map[string][]byte {
+		return map[string][]byte{
+			ExtendedKeyMetadata:    snapshot[ExtendedKeyMetadata],
+			ExtendedKeyPolicy:      []byte(policy),
+			ExtendedKeyMaintenance: nil,
+		}
+	}
+	cases := []struct {
+		name   string
+		policy string
+		tags   map[string]string
+		want   bool
+	}{
+		{"unchanged", `{"Version":"2012-10-17"}`, map[string]string{"team": "a"}, true},
+		{"policy changed", `{"Version":"2008-10-17"}`, map[string]string{"team": "a"}, false},
+		{"policy removed", "", map[string]string{"team": "a"}, false},
+		{"tag value changed", `{"Version":"2012-10-17"}`, map[string]string{"team": "b"}, false},
+		{"tags removed", `{"Version":"2012-10-17"}`, nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, renameReadsMatchSnapshot(snapshot, tc.tags, reads(tc.policy)))
+		})
+	}
 }
