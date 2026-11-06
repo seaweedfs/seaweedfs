@@ -1105,7 +1105,8 @@ func collectLastSyncOffset(filerClient filer_pb.FilerClient, grpcDialOption grpc
 // 3. the directory's creation time
 // A mount lookup that fails never resolves to now: the saved offset still
 // orders the replay, and without one the error goes back to the caller's
-// retry loop instead of skipping every event since the failure.
+// retry loop instead of skipping every event since the failure. Only a
+// directory that does not exist yet, with no saved offset, starts now.
 func resolveLastSyncOffset(mountedDir string, timeAgo time.Duration, lookupMount func() (*filer_pb.Entry, error), readOffset func() (int64, error)) (time.Time, error) {
 	var lastOffsetTs time.Time
 	if timeAgo == 0 {
@@ -1115,6 +1116,9 @@ func resolveLastSyncOffset(mountedDir string, timeAgo time.Duration, lookupMount
 			if offsetErr == nil && lastOffsetTsNs > 0 {
 				glog.V(0).Infof("get mounted directory %s: %v; resume from the saved offset %v", mountedDir, err, time.Unix(0, lastOffsetTsNs))
 				return time.Unix(0, lastOffsetTsNs), nil
+			}
+			if offsetErr == nil && errors.Is(err, filer_pb.ErrNotFound) {
+				return time.Now(), nil
 			}
 			return time.Time{}, fmt.Errorf("get mounted directory %s: %w; no saved sync offset (%v)", mountedDir, err, offsetErr)
 		}
