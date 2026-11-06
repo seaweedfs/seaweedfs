@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"syscall"
 	"testing"
 
@@ -203,6 +205,36 @@ func TestMountEcShardsRefusesQuarantinedEcVolume(t *testing.T) {
 	store.Locations[0].ecShardNotifyHandler("", vid, last, ecVolume)
 	if pending := len(store.NewEcShardsChan); pending != 0 {
 		t.Errorf("%d shard announcements queued for a quarantined ec volume, want 0", pending)
+	}
+}
+
+// Only the disk the shard mounts on is checked: a healthy disk's copy mounts
+// while a quarantined sibling holds the same shard.
+func TestMountEcShardsBesideAQuarantinedSibling(t *testing.T) {
+	store := newTestStore(t, 2)
+	const vid = needle.VolumeId(7)
+	baseFileName, _ := writeEcVolumeFiles(t, store.Locations[0].Directory, vid)
+	sibling := store.Locations[1]
+	for _, ext := range []string{".ec01", ".ecx", ".ecj", ".vif"} {
+		data, err := os.ReadFile(baseFileName + ext)
+		if err != nil {
+			t.Fatalf("read %s: %v", ext, err)
+		}
+		if err := os.WriteFile(filepath.Join(sibling.Directory, filepath.Base(baseFileName)+ext), data, 0o644); err != nil {
+			t.Fatalf("copy %s: %v", ext, err)
+		}
+	}
+	quarantined, err := sibling.LoadEcShard("", vid, 1)
+	if err != nil {
+		t.Fatalf("load sibling shard: %v", err)
+	}
+	quarantined.MarkIoQuarantined()
+
+	if err := store.MountEcShards("", vid, 1, ""); err != nil {
+		t.Fatalf("mount beside a quarantined sibling: %v", err)
+	}
+	if _, found := store.Locations[0].FindEcShard(vid, 1); !found {
+		t.Error("the healthy disk's copy was not mounted")
 	}
 }
 
