@@ -900,13 +900,16 @@ func (s *Store) deleteExpiredEcVolumes() (ecShards, deleted []*master_pb.VolumeE
 		// Quarantine EC volumes on faulty media: keep them in memory (so
 		// healthz can observe the quarantine state and an operator can
 		// recover) but stop reporting them so the master re-replicates
-		// from healthy peers. Mirrors the regular volume quarantine.
+		// from healthy peers. Mirrors the regular volume quarantine. The
+		// shards go out as deleted once, so the master drops them now rather
+		// than at the next full EC heartbeat.
 		for _, ev := range ioQuarantinedEvs {
 			ioErr, ioCount, quarantined := ev.GetIoErrorState()
 			if !quarantined {
 				ev.MarkIoQuarantined()
 				glog.Warningf("ec volume %d quarantined after %d consecutive IO errors: %v",
 					ev.VolumeId, ioCount, ioErr)
+				deleted = append(deleted, ev.ToVolumeEcShardInformationMessage(uint32(diskId))...)
 			}
 		}
 	}

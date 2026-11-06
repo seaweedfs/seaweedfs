@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"fmt"
 	"net"
+	"syscall"
 	"testing"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -58,6 +60,12 @@ func readWrittenEcNeedle(t *testing.T, store *Store, vid needle.VolumeId, want *
 	return nil
 }
 
+func quarantineEcVolume(ev *erasure_coding.EcVolume) {
+	for i := 0; i < IoErrorTolerance; i++ {
+		ev.CheckReadWriteError(fmt.Errorf("read shard: %w", syscall.EIO))
+	}
+}
+
 // A quarantined disk is not read while a peer can serve the shard.
 func TestReadEcShardNeedleSkipsQuarantinedLocalShards(t *testing.T) {
 	store := newTestStore(t, 1)
@@ -96,5 +104,44 @@ func TestReadEcShardNeedleFallsBackToQuarantinedShards(t *testing.T) {
 	ecVolume.MarkIoQuarantined()
 	if err := readWrittenEcNeedle(t, store, vid, n); err != nil {
 		t.Fatalf("read with only the quarantined disk holding the shards: %v", err)
+	}
+}
+
+func ecShardMessagesFor(messages []*master_pb.VolumeEcShardInformationMessage, vid needle.VolumeId) []*master_pb.VolumeEcShardInformationMessage {
+	var found []*master_pb.VolumeEcShardInformationMessage
+	for _, m := range messages {
+		if needle.VolumeId(m.Id) == vid {
+			found = append(found, m)
+		}
+	}
+	return found
+}
+
+// The heartbeat that quarantines an EC volume tells the master its shards are
+// gone, once, instead of leaving them registered until the next full EC
+// heartbeat.
+func TestCollectHeartbeatReportsQuarantinedEcShardsDeletedOnce(t *testing.T) {
+	store := newTestStore(t, 1)
+	const vid = needle.VolumeId(7)
+	_, ecVolume, _ := mountEcShardRange(t, store, vid, 0, erasure_coding.TotalShardsCount)
+
+	if deleted := ecShardMessagesFor(store.CollectHeartbeat().DeletedEcShards, vid); len(deleted) != 0 {
+		t.Fatalf("healthy ec volume reported deleted: %v", deleted)
+	}
+
+	quarantineEcVolume(ecVolume)
+	deleted := ecShardMessagesFor(store.CollectHeartbeat().DeletedEcShards, vid)
+	if len(deleted) != 1 {
+		t.Fatalf("quarantining heartbeat carried %d deleted messages for volume %d, want 1", len(deleted), vid)
+	}
+	if got := erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(deleted[0]).Count(); got != erasure_coding.TotalShardsCount {
+		t.Errorf("deleted message names %d shards, want %d", got, erasure_coding.TotalShardsCount)
+	}
+	if _, _, quarantined := ecVolume.GetIoErrorState(); !quarantined {
+		t.Fatal("ec volume not quarantined")
+	}
+
+	if deleted := ecShardMessagesFor(store.CollectHeartbeat().DeletedEcShards, vid); len(deleted) != 0 {
+		t.Errorf("next heartbeat reported the quarantined shards deleted again: %v", deleted)
 	}
 }
