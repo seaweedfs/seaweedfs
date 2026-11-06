@@ -1448,6 +1448,31 @@ impl Store {
         None
     }
 
+    /// `find_ec_volume_with_shard` for serving a peer: among the disks holding
+    /// the shard it prefers one from the caller's encode run (any when
+    /// `encode_ts_ns` is zero) that is not quarantined, and otherwise returns
+    /// the first holder. Mirrors Go's `FindServableEcVolumeWithShard`.
+    pub fn find_servable_ec_volume_with_shard(
+        &self,
+        vid: VolumeId,
+        shard_id: ShardId,
+        encode_ts_ns: i64,
+    ) -> Option<&EcVolume> {
+        let holders: Vec<&EcVolume> = self
+            .find_all_ec_volumes(vid)
+            .into_iter()
+            .filter(|ecv| ecv.has_shard(shard_id))
+            .collect();
+        holders
+            .iter()
+            .copied()
+            .find(|ecv| {
+                !ecv.get_io_error_state().2
+                    && (encode_ts_ns == 0 || ecv.encode_ts_ns == encode_ts_ns)
+            })
+            .or_else(|| holders.first().copied())
+    }
+
     /// Aggregate the data dir of each mounted shard for `vid` across
     /// all locations. Returns the EcVolume to use for metadata
     /// (`.ecx`, `dir_idx`, etc — any per-disk EcVolume for this vid
