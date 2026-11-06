@@ -17,17 +17,20 @@ import (
 )
 
 const (
-	// remoteDeletionTombstoneTTL bounds a tombstone when no write-back sync
-	// offset ever confirms the remote delete. A remote object re-created
+	// defaultRemoteDeletionTombstoneTTL bounds a tombstone when no write-back
+	// sync offset ever confirms the remote delete. A remote object re-created
 	// outside the filer at a deleted path stays hidden for this long.
-	remoteDeletionTombstoneTTL = 24 * time.Hour
-	// remoteDeletionTombstoneLimit bounds tracked paths; past it new
-	// tombstones are dropped after an expired sweep still leaves no room.
+	defaultRemoteDeletionTombstoneTTL = 24 * time.Hour
+	// defaultRemoteDeletionTombstoneLimit bounds tracked paths; at the cap a
+	// new delete is not recorded and the lazy fetch stays off instead.
 	defaultRemoteDeletionTombstoneLimit = 1 << 16
 )
 
-// remoteDeletionTombstoneLimit is a variable for tests that fill the table.
-var remoteDeletionTombstoneLimit = defaultRemoteDeletionTombstoneLimit
+// Variables for tests that fill or age the table.
+var (
+	remoteDeletionTombstoneTTL   = defaultRemoteDeletionTombstoneTTL
+	remoteDeletionTombstoneLimit = defaultRemoteDeletionTombstoneLimit
+)
 
 // remoteDeletionTombstones tracks paths deleted under a remote mount whose
 // remote object may still exist because the write-back daemon has not
@@ -55,12 +58,15 @@ type remoteDeletionTombstones struct {
 	dirs    map[string]remoteDeletionTombstone // deleted directory path -> event; covers its subtree
 	pending map[string]bool                   // tombstone path recorded ahead of its event
 	// full is set when a delete could not be recorded: from then on an
-	// unrecorded path may be a pending delete, so every lazy fetch stays off
-	// until the table has room again.
-	full bool
+	// unrecorded path may be a pending delete, so every lazy fetch stays off.
+	// It lifts once the table has room and the newest unrecorded delete is
+	// past the TTL (skippedThroughTsNs): an unrecorded delete has no event
+	// to confirm it, so only the TTL makes it safe, as for a pending one.
+	full               bool
+	skippedThroughTsNs int64
 }
 
-// isFull reports whether a delete was dropped since the table last had room.
+// isFull reports whether an unrecorded delete still keeps the lazy fetch off.
 func (t *remoteDeletionTombstones) isFull() bool {
 	if t == nil {
 		return false
@@ -70,12 +76,46 @@ func (t *remoteDeletionTombstones) isFull() bool {
 	return t.full
 }
 
-// observeLocked publishes the table size and clears the full flag once a
-// delete fits again. Caller must hold t.mu.
+// drain evicts expired tombstones and those the write-back offset has
+// passed, then re-evaluates the full state. haveOffset is false when the
+// mount's persisted offset could not be read.
+func (t *remoteDeletionTombstones) drain(nowNs, offsetTsNs int64, haveOffset bool) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.evictExpiredLocked(nowNs)
+	if haveOffset {
+		t.releaseConsumedLocked(offsetTsNs)
+	}
+	t.observeLocked()
+}
+
+// releaseConsumedLocked drops every tombstone whose event the write-back
+// offset has passed; a pending one has no event timestamp yet and stays.
+// Caller must hold t.mu.
+func (t *remoteDeletionTombstones) releaseConsumedLocked(offsetTsNs int64) {
+	for p, cur := range t.files {
+		if !t.pending[p] && cur.streamTsNs <= offsetTsNs {
+			delete(t.files, p)
+		}
+	}
+	for p, cur := range t.dirs {
+		if !t.pending[p] && cur.streamTsNs <= offsetTsNs {
+			delete(t.dirs, p)
+		}
+	}
+}
+
+// observeLocked publishes the table size and lifts the full state once a
+// delete fits again and the newest unrecorded delete is past the TTL.
+// Caller must hold t.mu.
 func (t *remoteDeletionTombstones) observeLocked() {
 	size := len(t.files) + len(t.dirs)
-	if size < remoteDeletionTombstoneLimit {
+	if size < remoteDeletionTombstoneLimit && (t.skippedThroughTsNs == 0 || time.Now().UnixNano()-t.skippedThroughTsNs >= int64(remoteDeletionTombstoneTTL)) {
 		t.full = false
+		t.skippedThroughTsNs = 0
 	}
 	stats.FilerRemoteDeletionTombstones.Set(float64(size))
 	if t.full {
@@ -150,9 +190,12 @@ func (t *remoteDeletionTombstones) upsert(path string, isDir bool, commitTsNs, s
 		t.evictExpiredLocked(time.Now().UnixNano())
 		if len(t.files)+len(t.dirs) >= remoteDeletionTombstoneLimit {
 			if !t.full {
-				glog.V(0).Infof("remote deletion tombstones full (%d), lazy remote fetch off until the table has room; first skipped %s", remoteDeletionTombstoneLimit, path)
+				glog.V(0).Infof("remote deletion tombstones full (%d), lazy remote fetch off until the table has room and the unrecorded deletes age out; first skipped %s", remoteDeletionTombstoneLimit, path)
 			}
 			t.full = true
+			if commitTsNs > t.skippedThroughTsNs {
+				t.skippedThroughTsNs = commitTsNs
+			}
 			t.observeLocked()
 			return
 		}
@@ -344,9 +387,14 @@ func (f *Filer) isRemoteDeletionPending(ctx context.Context, p util.FullPath, mo
 		return false
 	}
 	// With deletes unrecorded, any path may be one: no lazy fetch resurrects
-	// it until the table has room again.
+	// it until the table has room again and the unrecorded deletes aged out.
+	// Reads keep the table draining meanwhile.
 	if f.remoteTombstones.isFull() {
-		return true
+		offset, err := f.readRemoteSyncOffset(ctx, mountDir)
+		f.remoteTombstones.drain(time.Now().UnixNano(), offset, err == nil)
+		if f.remoteTombstones.isFull() {
+			return true
+		}
 	}
 	streamTsNs, commitTsNs, pending := f.remoteTombstones.blockedSince(string(p))
 	if commitTsNs == 0 {
