@@ -56,6 +56,25 @@ fn needle_not_found(needle_id: NeedleId) -> Status {
     Status::not_found(format!("needle not found {}", needle_id.0))
 }
 
+/// The disks holding `shard_id` of `vid`, each with whether its EC volume is
+/// quarantined.
+fn ec_shard_disks(
+    store: &crate::storage::store::Store,
+    vid: VolumeId,
+    shard_id: ShardId,
+) -> Vec<(usize, bool)> {
+    store
+        .locations
+        .iter()
+        .enumerate()
+        .filter_map(|(disk, loc)| {
+            let ecv = loc.find_ec_volume(vid)?;
+            ecv.shards.get(shard_id as usize)?.as_ref()?;
+            Some((disk, ecv.get_io_error_state().2))
+        })
+        .collect()
+}
+
 /// Mirrors Go's `isNotLeaderErr`: the master returns raft's NotLeaderError,
 /// which arrives as an Unknown-status message.
 fn is_not_leader_status(e: &Status) -> bool {
@@ -4328,17 +4347,23 @@ impl VolumeServer for VolumeGrpcService {
         // Matches Go: for _, shardId := range req.ShardIds { err = vs.store.MountEcShards(...) }
         let mut store = self.state.store.write().unwrap();
         for &shard_id in &validated {
+            let held_before = ec_shard_disks(&store, vid, shard_id);
             store
                 .mount_ec_shard(vid, &req.collection, shard_id, &req.source_disk_type)
                 .map_err(|e| {
                     Status::internal(format!("mount {}.{}: {}", req.volume_id, shard_id, e))
                 })?;
             // Mirrors Go's MountEcShards: a caller moving the shard here keeps
-            // its source copy, and the heartbeat never announces it.
-            if store
-                .find_ec_volume_with_shard(vid, shard_id)
-                .is_some_and(|ecv| ecv.get_io_error_state().2)
+            // its source copy, and the heartbeat never announces it. A shard
+            // this call mounted is dropped again, so it does not draw later
+            // copies to the same disk.
+            if let Some((disk, _)) = ec_shard_disks(&store, vid, shard_id)
+                .into_iter()
+                .find(|&(_, quarantined)| quarantined)
             {
+                if !held_before.iter().any(|&(d, _)| d == disk) {
+                    store.locations[disk].unmount_ec_shards(vid, &[shard_id]);
+                }
                 return Err(Status::internal(format!(
                     "mount {}.{}: ec volume is quarantined after IO errors, shard not announced",
                     req.volume_id, shard_id
@@ -13200,15 +13225,35 @@ mod tests {
         generate_and_mount_ec_1(&service, vec![0]).await;
         quarantine_ec_1(&service);
 
-        let err = service
-            .volume_ec_shards_mount(Request::new(volume_server_pb::VolumeEcShardsMountRequest {
-                volume_id: 1,
-                shard_ids: vec![1],
-                ..Default::default()
-            }))
-            .await
-            .unwrap_err();
+        let mount = |shard_id: u32| {
+            service.volume_ec_shards_mount(Request::new(
+                volume_server_pb::VolumeEcShardsMountRequest {
+                    volume_id: 1,
+                    shard_ids: vec![shard_id],
+                    ..Default::default()
+                },
+            ))
+        };
+        let shard_mounted = |shard_id: ShardId| {
+            service
+                .state
+                .store
+                .read()
+                .unwrap()
+                .find_ec_volume_with_shard(VolumeId(1), shard_id)
+                .is_some()
+        };
+
+        let err = mount(1).await.unwrap_err();
         assert!(err.message().contains("quarantined"), "{err}");
+        assert!(!shard_mounted(1), "the refused shard stayed mounted");
+
+        let err = mount(0).await.unwrap_err();
+        assert!(err.message().contains("quarantined"), "{err}");
+        assert!(
+            shard_mounted(0),
+            "a refused remount unmounted a shard that was already mounted"
+        );
     }
 
     /// A volume unmounted before the EC read resolves it is "volume not found",

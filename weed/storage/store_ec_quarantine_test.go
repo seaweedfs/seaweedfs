@@ -161,6 +161,15 @@ func TestMountEcShardsRefusesQuarantinedEcVolume(t *testing.T) {
 	if err := store.MountEcShards("", vid, last, ""); err == nil {
 		t.Error("mount onto a quarantined ec volume succeeded")
 	}
+	if _, _, found := store.FindEcShard(vid, last); found {
+		t.Error("the refused shard stayed loaded")
+	}
+	if err := store.MountEcShards("", vid, 0, ""); err == nil {
+		t.Error("remount of a shard on a quarantined ec volume succeeded")
+	}
+	if _, _, found := store.FindEcShard(vid, 0); !found {
+		t.Error("a refused remount unloaded a shard that was already mounted")
+	}
 	store.Locations[0].ecShardNotifyHandler("", vid, last, ecVolume)
 	if pending := len(store.NewEcShardsChan); pending != 0 {
 		t.Errorf("%d shard announcements queued for a quarantined ec volume, want 0", pending)

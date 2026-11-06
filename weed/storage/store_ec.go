@@ -253,14 +253,20 @@ func (s *Store) CollectErasureCodingHeartbeat() *master_pb.Heartbeat {
 }
 
 func (s *Store) MountEcShards(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, sourceDiskType string) error {
+	ownersBefore := s.EcShardOwnerDisks(vid, []erasure_coding.ShardId{shardId})
 	ecVolume, diskId, err := s.LoadEcShardAcrossDisks(collection, vid, shardId)
 	if err != nil {
 		return err
 	}
 	glog.V(0).Infof("MountEcShards %d.%d on disk ID %d", vid, shardId, diskId)
 	// The master must not route reads to a disk already found faulty, and a
-	// caller moving the shard here keeps its source copy on this error.
+	// caller moving the shard here keeps its source copy on this error. A
+	// shard this call loaded is dropped again, so it does not draw later
+	// copies to the same disk.
 	if _, _, quarantined := ecVolume.GetIoErrorState(); quarantined {
+		if location := s.Locations[diskId]; !slices.Contains(ownersBefore, location) {
+			location.UnloadEcShard(vid, shardId)
+		}
 		return fmt.Errorf("ec volume %d on disk %d is quarantined after IO errors, shard %d not announced", vid, diskId, shardId)
 	}
 
