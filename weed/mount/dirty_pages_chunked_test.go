@@ -16,6 +16,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // Once a chunk upload fails its data is gone, so the handle must reject
@@ -101,6 +103,10 @@ func TestChunkedDirtyPagesWritebackRetriesTransientUploadError(t *testing.T) {
 	for name, outage := range map[string]error{
 		"volume refused":  errVolumeRefused,
 		"filer proxy 500": filerProxyOutage(t),
+		// With no volume server left the assign keeps timing out, and the
+		// filer client gives up after its own retries.
+		"assign timed out": fmt.Errorf("upload data: filerGrpcAddress assign volume: %w",
+			status.Error(codes.Unavailable, "filer 127.0.0.1:18888: call timed out")),
 	} {
 		t.Run(name, func(t *testing.T) {
 			save := &flakySave{failures: []error{outage}}
