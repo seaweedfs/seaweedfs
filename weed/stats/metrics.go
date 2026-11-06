@@ -300,6 +300,22 @@ var (
 			Help:      "Counter of filer store requests.",
 		}, []string{"store", "type"})
 
+	FilerRemoteDeletionTombstones = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemFiler,
+			Name:      "remote_deletion_tombstones",
+			Help:      "Paths deleted under a remote mount whose remote delete the write-back daemon has not consumed yet.",
+		})
+
+	FilerRemoteDeletionTombstonesFull = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemFiler,
+			Name:      "remote_deletion_tombstones_full",
+			Help:      "1 while the tombstone table is at its cap and the lazy remote fetch is off, 0 otherwise.",
+		})
+
 	FilerStoreHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: Namespace,
@@ -1037,6 +1053,8 @@ func init() {
 	Gather.MustRegister(FilerInFlightUploadCountGauge)
 	Gather.MustRegister(FilerStoreCounter)
 	Gather.MustRegister(FilerStoreHistogram)
+	Gather.MustRegister(FilerRemoteDeletionTombstones)
+	Gather.MustRegister(FilerRemoteDeletionTombstonesFull)
 	Gather.MustRegister(FilerSyncOffsetGauge)
 	Gather.MustRegister(FilerSyncEventsReceivedCounter)
 	Gather.MustRegister(FilerSyncEventsProcessedCounter)

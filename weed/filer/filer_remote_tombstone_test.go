@@ -165,6 +165,40 @@ func TestRemoteDeletionTombstones_RaisedLocalTombstoneIsPendingAgain(t *testing.
 	assert.False(t, pending)
 }
 
+func TestMaybeLazyFetchFromRemote_FullTableKeepsTheFetchOff(t *testing.T) {
+	const storageType = "stub_tomb_full"
+	stub := &countingRemoteClient{
+		stubRemoteClient: stubRemoteClient{
+			statResult: &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 11},
+		},
+	}
+	f, _ := newMountedTestFiler(t, storageType, stub, 0)
+	remoteDeletionTombstoneLimit = 2
+	t.Cleanup(func() { remoteDeletionTombstoneLimit = defaultRemoteDeletionTombstoneLimit })
+
+	now := time.Now().UnixNano()
+	f.noteRemoteDeletion("/buckets/mybucket/dir/a.txt", false, now)
+	f.noteRemoteDeletion("/buckets/mybucket/dir/b.txt", false, now)
+	assert.False(t, f.remoteTombstones.isFull())
+
+	// the third delete does not fit: from here every path may be a pending
+	// delete, so no lookup miss consults the remote
+	f.noteRemoteDeletion("/buckets/mybucket/dir/c.txt", false, now)
+	assert.True(t, f.remoteTombstones.isFull())
+	entry, err := f.maybeLazyFetchFromRemote(context.Background(), "/buckets/mybucket/dir/other.txt")
+	require.NoError(t, err)
+	assert.Nil(t, entry)
+	assert.Equal(t, 0, stub.statCalls)
+
+	// room again once a recorded delete lifts
+	f.remoteTombstones.drop("/buckets/mybucket/dir/a.txt", now)
+	assert.False(t, f.remoteTombstones.isFull())
+	entry, err = f.maybeLazyFetchFromRemote(context.Background(), "/buckets/mybucket/dir/other.txt")
+	require.NoError(t, err)
+	require.NotNil(t, entry)
+	assert.NotZero(t, stub.statCalls)
+}
+
 func TestMaybeLazyFetchFromRemote_SkipsTombstonedPath(t *testing.T) {
 	const storageType = "stub_tomb_fetch"
 	stub := &countingRemoteClient{
