@@ -503,6 +503,10 @@ type putFinalize struct {
 	// when the write path is absent — a suspended-versioning write points it
 	// at the latest version so check and write stay under the filer lock
 	conditionAltKey string
+	// newVersion re-mints a versioned write's id at commit time, so the
+	// version orders after every write committed during its upload or lock
+	// wait. It renames entry and returns the new write path.
+	newVersion func(entry *filer_pb.Entry) string
 }
 
 const (
@@ -1095,6 +1099,11 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	if finalize != nil {
 		condAltKey = finalize.conditionAltKey
 	}
+	remintVersion := func() {
+		if finalize != nil && finalize.newVersion != nil {
+			filePath = finalize.newVersion(entry)
+		}
+	}
 	if owner = s3a.routableWriteOwner(bucket, object); owner != "" {
 		if cond, ok := routeWriteCondition(r, uniqueWritePath && condAltKey == ""); ok {
 			// Routed mutations ride in the PUT's transaction (committing atomically),
@@ -1143,7 +1152,10 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 		}
 	}
 	if !routed {
-		createFn := func() s3err.ErrorCode { return createUnderLock(nil) }
+		createFn := func() s3err.ErrorCode {
+			remintVersion()
+			return createUnderLock(nil)
+		}
 		if routedAmbiguous {
 			createFn = func() s3err.ErrorCode {
 				return s3a.createAfterAmbiguousRoute(filePath, bucket, object, owner, entry, chunkResult.FileChunks, finalize, &entryCreated, s3a.uploadedChunksExist, createUnderLock)
@@ -2185,7 +2197,7 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 	// directly — versioned objects sit on regular volumes and the
 	// lifecycle worker handles their expiration.
 	etag, errCode, sseMetadata = s3a.putToFiler(r, versionFilePath, body, bucket, normalizedObject, 1, 0,
-		s3a.versionedFinalize(bucket, normalizedObject, versionId, versionFileName, useInvertedFormat), true, "")
+		s3a.versionedFinalize(bucket, normalizedObject, &versionId, useInvertedFormat), true, "")
 	if errCode != s3err.ErrNone {
 		glog.Errorf("putVersionedObject: failed to upload version: %v", errCode)
 		return "", "", errCode, SSEResponseMetadata{}
