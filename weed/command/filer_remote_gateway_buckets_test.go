@@ -1,7 +1,7 @@
 package command
 
 import (
-	"slices"
+	"strings"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -63,11 +63,13 @@ func TestGatewayDroppedLocalCopyIsNotUploaded(t *testing.T) {
 	}
 }
 
-// TestGatewayUncachedRewriteIsStillUploaded: a rewrite of an uncached entry
-// holds local data, so the dropped-copy skip does not apply and the rewrite
-// uploads. The stamp cannot reach a filer in the test, so the call errors;
-// the upload is what is asserted.
-func TestGatewayUncachedRewriteIsStillUploaded(t *testing.T) {
+// TestGatewayUncachedRewriteWaitsForTheSupersessionLookup: a rewrite of an
+// uncached entry holds local data, so the dropped-copy skip does not apply
+// and the rewrite is an upload. The lookup that guards the upload cannot
+// reach a filer in the test, so the event fails with that error and nothing
+// is uploaded: an unanswered lookup never lets a snapshot overwrite the
+// remote object, and the processor retries the event.
+func TestGatewayUncachedRewriteWaitsForTheSupersessionLookup(t *testing.T) {
 	option, remote := gatewayTestOption("gatewaytest-rewrite")
 	t.Cleanup(func() { delete(remote_storage.RemoteStorageClientMakers, "gatewaytest-rewrite") })
 	process, err := option.makeBucketedEventProcessor(&source.FilerSource{})
@@ -77,14 +79,12 @@ func TestGatewayUncachedRewriteIsStillUploaded(t *testing.T) {
 
 	rewrite := entryWith(droppedCopyName, droppedCopyStamp(), chunk("4,02", "e2"))
 	resp := droppedCopyUpdate(droppedCopyEntry(droppedCopyStamp()), rewrite)
-	if err := process(resp); err != nil {
-		t.Logf("stamp against the test filer fails as expected: %v", err)
+	err = process(resp)
+	if err == nil || !strings.Contains(err.Error(), "supersession lookup") {
+		t.Fatalf("process = %v, want the supersession lookup error", err)
 	}
-	if len(remote.writes) != 1 {
-		t.Fatalf("writes = %+v, want the rewrite uploaded once", remote.writes)
-	}
-	if !slices.Equal(remote.writtenChunks[0], []string{"4,02"}) {
-		t.Errorf("uploaded chunks %v, want the rewrite's [4,02]", remote.writtenChunks[0])
+	if len(remote.writes) != 0 {
+		t.Fatalf("writes = %+v, want none until the lookup answers", remote.writes)
 	}
 }
 

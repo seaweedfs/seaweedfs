@@ -580,8 +580,11 @@ func TestFilerLookupsOnTheSyncPathCarryADeadline(t *testing.T) {
 	if current != nil || !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("currentEntry = %v, %v; want nil, deadline exceeded", current, err)
 	}
-	if isSuperseded(&blockingFilerClient{}, dir, event) {
-		t.Error("isSuperseded = true on a lookup that timed out; want false (the write failure is kept and retried)")
+	if superseded, lookupErr := supersessionLookup(&blockingFilerClient{}, dir, event); superseded || !errors.Is(lookupErr, context.DeadlineExceeded) {
+		t.Errorf("supersessionLookup = %v, %v on a lookup that timed out; want false, deadline exceeded (no upload starts on an unanswered lookup)", superseded, lookupErr)
+	}
+	if _, writeErr := retriedWriteFile(nil, &blockingFilerClient{}, dir, event, &remote_pb.RemoteStorageLocation{Name: "b2", Bucket: "b", Path: "/lease.json"}); !errors.Is(writeErr, context.DeadlineExceeded) {
+		t.Errorf("retriedWriteFile = %v on an unanswered supersession lookup; want the lookup error, not an upload", writeErr)
 	}
 	if elapsed := time.Since(started); elapsed > 5*time.Second {
 		t.Fatalf("two timed-out lookups took %v; the deadline did not bound them", elapsed)

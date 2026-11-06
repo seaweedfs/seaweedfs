@@ -973,15 +973,27 @@ func readRemoteStorageConf(filerClient filer_pb.FilerClient, storageName string)
 // object or the later write uploads the current content. A lookup that fails
 // for any other reason keeps the write failure, so the event is retried.
 func isSuperseded(filerClient filer_pb.FilerClient, dir string, entry *filer_pb.Entry) bool {
+	superseded, _ := supersessionLookup(filerClient, dir, entry)
+	return superseded
+}
+
+// supersessionLookup is isSuperseded with the lookup failure surfaced: an
+// upload must not start on a lookup that did not answer, or an older
+// snapshot in a replay overwrites a newer remote object.
+func supersessionLookup(filerClient filer_pb.FilerClient, dir string, entry *filer_pb.Entry) (bool, error) {
 	ctx, cancel := lookupContext()
 	defer cancel()
 	current, _, _, err := filer_pb.GetEntry(ctx, filerClient, util.NewFullPath(dir, entry.Name))
 	if errors.Is(err, filer_pb.ErrNotFound) {
-		return true
+		return true, nil
 	}
 	if err != nil {
-		return false
+		return false, err
 	}
+	return entryDiffers(entry, current), nil
+}
+
+func entryDiffers(entry, current *filer_pb.Entry) bool {
 	if !filer.HasData(entry) && filer.HasData(current) {
 		// The event described an entry without data (remote-only, or empty);
 		// the filer has written to it since. Uploading the snapshot would put
@@ -1038,7 +1050,9 @@ var errSuperseded = errors.New("superseded or incomplete since the event was log
 // still holds is worth sending. After: a dead chunk reads as a transient
 // "RequestError" from the SDK, and waiting out the backoff on it buys nothing.
 func retriedWriteFile(client remote_storage.RemoteStorageClient, filerSource filer_pb.FilerClient, dir string, newEntry *filer_pb.Entry, dest *remote_pb.RemoteStorageLocation) (remoteEntry *filer_pb.RemoteEntry, err error) {
-	if isSuperseded(filerSource, dir, newEntry) {
+	if superseded, lookupErr := supersessionLookup(filerSource, dir, newEntry); lookupErr != nil {
+		return nil, fmt.Errorf("%s: supersession lookup: %w", util.NewFullPath(dir, newEntry.Name), lookupErr)
+	} else if superseded {
 		return nil, fmt.Errorf("%s %w", util.NewFullPath(dir, newEntry.Name), errSuperseded)
 	}
 	err = util.RetryOnError("writeFile", func(err error) bool {
