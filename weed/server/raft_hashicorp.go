@@ -207,6 +207,7 @@ func NewHashicorpRaftServer(option *RaftServerOption) (*RaftServer, error) {
 	} else {
 		metricsConf := metrics.DefaultConfig(stats.Namespace)
 		metricsConf.EnableRuntimeMetrics = false
+		metricsConf.EnableHostname = false
 		if _, err = metrics.NewGlobal(metricsConf, sink); err != nil {
 			return nil, fmt.Errorf("metrics.NewGlobal: %w", err)
 		}
