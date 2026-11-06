@@ -6730,8 +6730,8 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "title": "Lazy Remote Fetch Off (Tombstones Full)",
-          "description": "1 while the tombstone table is at its cap and lazy remote fetches are off",
+          "title": "Lazy Remote Fetch Off (Skipped Deletes)",
+          "description": "1 from the first delete the full tombstone table could not record until the table has room and the last skipped delete is past the 24 h TTL; lazy remote fetches are off meanwhile",
           "type": "timeseries",
           "id": 247,
           "gridPos": {
