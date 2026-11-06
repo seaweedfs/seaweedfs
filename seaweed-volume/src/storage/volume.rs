@@ -2935,6 +2935,7 @@ impl Volume {
             }
         }
 
+        let mut took_back = false;
         {
             let _guard = self.data_file_access_control.write_lock();
             let mut io = self.io.write().unwrap();
@@ -2967,6 +2968,7 @@ impl Volume {
                         n,
                         &(offset, n.size, false),
                     ) {
+                        took_back |= matches!(e, VolumeError::Deleted);
                         *r = Err(e);
                     }
                 }
@@ -2975,7 +2977,12 @@ impl Volume {
 
         if sync {
             let io = self.io.read().unwrap();
-            if let Err(e) = self.flush_idx(&io) {
+            let flushed = if took_back {
+                self.flush_taken_back(&io)
+            } else {
+                Ok(())
+            };
+            if let Err(e) = flushed.and_then(|()| self.flush_idx(&io)) {
                 return staged
                     .into_iter()
                     .map(|r| r.and_then(|_| Err(run_error(&e))))
@@ -3094,6 +3101,17 @@ impl Volume {
             return Err(VolumeError::Io(e));
         }
         Ok(())
+    }
+
+    /// Flush the tombstones drop_cancelled_write appended after the .dat sync,
+    /// so their .idx rows never outlive them. Like flush_idx, a failure cannot
+    /// be undone and stops the volume taking writes.
+    fn flush_taken_back(&self, io: &VolumeIo) -> Result<(), VolumeError> {
+        self.flush_dat(io).map_err(|e| {
+            self.check_read_write_error(Some(&e));
+            self.set_no_write_flag(NO_WRITE_OR_DELETE, true);
+            VolumeError::Io(e)
+        })
     }
 
     /// Take an unflushed append back off the .dat after its sync failed.
@@ -8780,6 +8798,26 @@ mod tests {
             v.read_needle(&mut got).unwrap();
             assert_eq!(got.data, b"same bytes");
         }
+    }
+
+    /// A durable write taken back appends its tombstone after the .dat sync;
+    /// the tombstone is flushed before the .idx row that points at it.
+    #[test]
+    fn test_taken_back_tombstone_is_synced() {
+        let tmp = TempDir::new().unwrap();
+        let v = make_test_volume(tmp.path().to_str().unwrap());
+
+        let n = pending_needle(1, b"late write");
+        let pending = v.track_pending_write(&n);
+        v.cancel_pending_writes(n.id, n.cookie);
+        let err = write_pending(&v, n, true, pending).unwrap_err();
+        assert!(matches!(err, VolumeError::Deleted));
+        assert_eq!(v.sync_counts_for_test(), (2, 1));
+
+        let n = pending_needle(2, b"kept");
+        let pending = v.track_pending_write(&n);
+        write_pending(&v, n, true, pending).unwrap();
+        assert_eq!(v.sync_counts_for_test(), (3, 2));
     }
 
     // Guard the Rust integrity-check tombstone path against the Go regression
