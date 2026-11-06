@@ -2199,7 +2199,7 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "max by (cluster, instance) (rate(SeaweedFS_raft_commitTime_sum{cluster=~\"$cluster\"}[$__rate_interval]) / clamp_min(rate(SeaweedFS_raft_commitTime_count{cluster=~\"$cluster\"}[$__rate_interval]), 1e-9))",
+              "expr": "max by (cluster, instance) (rate(SeaweedFS_raft_commitTime_sum{cluster=~\"$cluster\"}[$__rate_interval]) / (rate(SeaweedFS_raft_commitTime_count{cluster=~\"$cluster\"}[$__rate_interval]) > 0))",
               "range": true,
               "refId": "A",
               "legendFormat": "{{cluster}} {{instance}}"
@@ -2295,7 +2295,7 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "max by (cluster, instance) (rate(SeaweedFS_raft_leader_lastContact_sum{cluster=~\"$cluster\"}[$__rate_interval]) / clamp_min(rate(SeaweedFS_raft_leader_lastContact_count{cluster=~\"$cluster\"}[$__rate_interval]), 1e-9))",
+              "expr": "max by (cluster, instance) (rate(SeaweedFS_raft_leader_lastContact_sum{cluster=~\"$cluster\"}[$__rate_interval]) / (rate(SeaweedFS_raft_leader_lastContact_count{cluster=~\"$cluster\"}[$__rate_interval]) > 0))",
               "range": true,
               "refId": "A",
               "legendFormat": "{{cluster}} {{instance}}"
