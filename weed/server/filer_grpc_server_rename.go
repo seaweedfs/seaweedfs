@@ -47,10 +47,6 @@ func (fs *FilerServer) AtomicRenameEntry(ctx context.Context, req *filer_pb.Atom
 
 	defer fs.acquireRenamePathLocks("AtomicRenameEntry", oldParent.Child(req.OldName), newParent.Child(req.NewName))()
 
-	// the lazy remote fetch is off inside the transaction: a source or
-	// target the filer only holds on the remote is materialized first
-	fs.filer.PrefetchRemoteEntries(ctx, oldParent.Child(req.OldName), newParent.Child(req.NewName))
-
 	// a SQL store keeps the transaction in the context and refuses calls
 	// through it once committed; the work after the commit uses this one
 	afterCommitCtx := ctx
@@ -122,7 +118,6 @@ func (fs *FilerServer) StreamRenameEntry(req *filer_pb.StreamRenameEntryRequest,
 	defer fs.acquireRenamePathLocks("StreamRenameEntry", oldParent.Child(req.OldName), newParent.Child(req.NewName))()
 
 	ctx := context.Background()
-	fs.filer.PrefetchRemoteEntries(ctx, oldParent.Child(req.OldName), newParent.Child(req.NewName))
 
 	afterCommitCtx := ctx
 	ctx, err = fs.filer.BeginTransaction(ctx)

@@ -41,12 +41,6 @@ func (f *Filer) maybeLazyFetchFromRemote(ctx context.Context, p util.FullPath) (
 		return nil, nil
 	}
 
-	// A lookup inside a store transaction persists on a second connection,
-	// which waits on the row locks the transaction holds.
-	if ctx.Value("tx") != nil {
-		return nil, nil
-	}
-
 	if f.RemoteStorage == nil {
 		return nil, nil
 	}
@@ -437,18 +431,4 @@ func (f *Filer) RemoteCopyLocations(ctx context.Context, entry *Entry, oldPath, 
 	src = MapFullPathToRemoteStorageLocation(mountDir, remoteLoc, f.RemoteSourcePath(entry, oldPath))
 	dst = MapFullPathToRemoteStorageLocation(mountDir, remoteLoc, newPath)
 	return src, dst, copier, nil
-}
-
-// PrefetchRemoteEntries runs the lazy remote fetch for the paths a store
-// transaction is about to read. Inside the transaction the fetch is off,
-// so an object the filer has not seen yet would read as absent there.
-func (f *Filer) PrefetchRemoteEntries(ctx context.Context, paths ...util.FullPath) {
-	if ctx.Value("tx") != nil {
-		return
-	}
-	for _, p := range paths {
-		if _, err := f.FindEntry(ctx, p); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
-			glog.V(1).InfofCtx(ctx, "prefetch remote entry %s: %v", p, err)
-		}
-	}
 }

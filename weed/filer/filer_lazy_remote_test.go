@@ -734,30 +734,8 @@ func TestMaybeLazyFetchFromRemote_ContextGuardPreventsRecursion(t *testing.T) {
 	assert.Equal(t, 0, countingStub.statCalls, "guard should prevent StatFile from being called")
 }
 
-func TestMaybeLazyFetchFromRemote_SkipsInsideStoreTransaction(t *testing.T) {
+func TestCreateEntry_SkipsTheLazyFetchInsideAStoreTransaction(t *testing.T) {
 	const storageType = "stub_lazy_tx"
-	countingStub := &countingRemoteClient{
-		stubRemoteClient: stubRemoteClient{
-			statResult: &filer_pb.RemoteEntry{RemoteMtime: 1, RemoteSize: 1},
-		},
-	}
-	f, _ := newMountedTestFiler(t, storageType, countingStub, 0)
-
-	// the key a store transaction travels under (abstract_sql getTxOrDB)
-	txCtx := context.WithValue(context.Background(), "tx", struct{}{})
-	entry, err := f.maybeLazyFetchFromRemote(txCtx, "/buckets/mybucket/dir/a.txt")
-	require.NoError(t, err)
-	assert.Nil(t, entry)
-	assert.Equal(t, 0, countingStub.statCalls, "a lookup inside a transaction must not consult the remote")
-
-	entry, err = f.maybeLazyFetchFromRemote(context.Background(), "/buckets/mybucket/dir/a.txt")
-	require.NoError(t, err)
-	require.NotNil(t, entry)
-	assert.NotZero(t, countingStub.statCalls, "the same lookup outside a transaction consults the remote")
-}
-
-func TestPrefetchRemoteEntries_MaterializesBeforeATransaction(t *testing.T) {
-	const storageType = "stub_lazy_prefetch"
 	countingStub := &countingRemoteClient{
 		stubRemoteClient: stubRemoteClient{
 			statResult: &filer_pb.RemoteEntry{RemoteMtime: 1, RemoteSize: 1},
@@ -765,28 +743,25 @@ func TestPrefetchRemoteEntries_MaterializesBeforeATransaction(t *testing.T) {
 	}
 	f, store := newMountedTestFiler(t, storageType, countingStub, 0)
 	putDirEntry(store, "/buckets/mybucket/dir")
-	target := util.FullPath("/buckets/mybucket/dir/target.txt")
+	// the key a store transaction travels under (abstract_sql getTxOrDB)
 	txCtx := context.WithValue(context.Background(), "tx", struct{}{})
 
-	// unseen on the filer, present on the remote: inside a transaction it
-	// reads as absent
-	_, err := f.FindEntry(txCtx, target)
-	require.ErrorIs(t, err, filer_pb.ErrNotFound)
-	assert.Equal(t, 0, countingStub.statCalls)
+	// a create inside the transaction: its lookup does not consult the
+	// remote, the entry is inserted as given
+	created := &Entry{FullPath: "/buckets/mybucket/dir/a.txt", Attr: Attr{Mode: 0644, Mtime: time.Now(), Crtime: time.Now()}}
+	require.NoError(t, f.CreateEntry(txCtx, created, nil, false, false, nil, false, f.MaxFilenameLength))
+	assert.Equal(t, 0, countingStub.statCalls, "a create inside a transaction must not consult the remote")
+	got, err := f.FindEntry(txCtx, "/buckets/mybucket/dir/a.txt")
+	require.NoError(t, err)
+	assert.False(t, got.IsInRemoteOnly())
 
-	// the prefetch outside the transaction materializes it, and the
-	// transaction then finds it in the store
-	f.PrefetchRemoteEntries(context.Background(), target, "/buckets/mybucket/dir/absent.txt")
-	assert.NotZero(t, countingStub.statCalls)
-	entry, err := f.FindEntry(txCtx, target)
+	// a read inside the transaction keeps the fetch: a target the filer only
+	// holds on the remote is still seen by a rename's target check
+	entry, err := f.FindEntry(txCtx, "/buckets/mybucket/dir/b.txt")
 	require.NoError(t, err)
 	require.NotNil(t, entry)
 	assert.True(t, entry.IsInRemoteOnly())
-
-	// a prefetch that itself runs inside a transaction does nothing
-	before := countingStub.statCalls
-	f.PrefetchRemoteEntries(txCtx, "/buckets/mybucket/dir/other.txt")
-	assert.Equal(t, before, countingStub.statCalls)
+	assert.NotZero(t, countingStub.statCalls)
 }
 
 func TestMaybeLazyFetchFromRemote_GuardedClientRejectsEndpoint(t *testing.T) {

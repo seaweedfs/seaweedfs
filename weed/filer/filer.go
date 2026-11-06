@@ -516,7 +516,16 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, existing *Entry, 
 	oldEntry := existing
 	if oldEntry == nil {
 		var findErr error
-		oldEntry, findErr = f.FindEntry(ctx, entry.FullPath)
+		// Inside a store transaction the lookup must not run the lazy remote
+		// fetch: the fetch persists on a second connection, which waits on
+		// the row lock this transaction holds when it deleted the path (a
+		// rename onto an existing target). The create writes the path either
+		// way; reads inside the transaction keep the fetch.
+		findCtx := ctx
+		if ctx.Value("tx") != nil {
+			findCtx = context.WithValue(ctx, lazyFetchContextKey{}, true)
+		}
+		oldEntry, findErr = f.FindEntry(findCtx, entry.FullPath)
 		if findErr != nil && !errors.Is(findErr, filer_pb.ErrNotFound) {
 			// A create cannot decide whether the path exists when the lookup
 			// itself failed; proceeding would upsert over it.
