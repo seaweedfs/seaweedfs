@@ -3497,6 +3497,12 @@ impl Volume {
         }
     }
 
+    /// Whether the write was tracked on this volume rather than on one that
+    /// has since been unmounted under the same id.
+    pub fn tracks_pending_write(&self, pending: &PendingWrite) -> bool {
+        Arc::ptr_eq(&pending.writes, &self.pending_writes)
+    }
+
     /// Cancels the writes of the needle that are in flight. A caller that found
     /// the needle missing must look it up again afterwards: a write that
     /// finished in between is no longer pending.

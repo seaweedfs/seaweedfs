@@ -366,18 +366,26 @@ fn process_batch(state: Arc<VolumeServerState>, batch: Vec<WriteRequest>) {
     // the group's I/O with the guard released — one volume's write must not
     // block admission on another volume's.
     for (vid, entries) in groups {
-        let mut writes = Vec::with_capacity(entries.len());
-        let mut senders = Vec::with_capacity(entries.len());
-        let mut pendings = Vec::with_capacity(entries.len());
-        for (needle, fsync, response_tx, pending) in entries {
-            writes.push((needle, fsync));
-            senders.push(response_tx);
-            pendings.push(pending);
-        }
         let vol = {
             let store = state.store.read().unwrap();
             store.writable_volume(vid)
         };
+        let mut writes = Vec::with_capacity(entries.len());
+        let mut senders = Vec::with_capacity(entries.len());
+        let mut pendings = Vec::with_capacity(entries.len());
+        for (needle, fsync, response_tx, pending) in entries {
+            // A delete reaching a remounted volume cannot cancel a write
+            // queued for the old one.
+            if let (Ok(vol), Some(pending)) = (&vol, &pending)
+                && !vol.tracks_pending_write(pending)
+            {
+                let _ = response_tx.send(Err(VolumeError::NotFound));
+                continue;
+            }
+            writes.push((needle, fsync));
+            senders.push(response_tx);
+            pendings.push(pending);
+        }
         let results: Vec<WriteResult> = match vol {
             Ok(vol) => vol.write_pending_needles(&mut writes, &pendings),
             Err(e) => writes
