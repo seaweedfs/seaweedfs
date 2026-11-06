@@ -62,7 +62,10 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 		return err
 	}
 
-	lastOffsetTs := collectLastSyncOffset(option, option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir, *option.timeAgo)
+	lastOffsetTs, err := collectLastSyncOffset(option, option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir, *option.timeAgo)
+	if err != nil {
+		return err
+	}
 	processor := NewMetadataProcessor(eachEntryFunc, 128, lastOffsetTs.UnixNano())
 
 	var lastLogTsNs = time.Now().UnixNano()
@@ -1096,7 +1099,7 @@ func retriedWriteFile(client remote_storage.RemoteStorageClient, filerSource fil
 	return
 }
 
-func collectLastSyncOffset(filerClient filer_pb.FilerClient, grpcDialOption grpc.DialOption, filerAddress pb.ServerAddress, mountedDir string, timeAgo time.Duration) time.Time {
+func collectLastSyncOffset(filerClient filer_pb.FilerClient, grpcDialOption grpc.DialOption, filerAddress pb.ServerAddress, mountedDir string, timeAgo time.Duration) (time.Time, error) {
 	return resolveLastSyncOffset(mountedDir, timeAgo,
 		func() (*filer_pb.Entry, error) {
 			ctx, cancel := lookupContext()
@@ -1112,9 +1115,9 @@ func collectLastSyncOffset(filerClient filer_pb.FilerClient, grpcDialOption grpc
 // 2. the saved offset for this directory
 // 3. the directory's creation time
 // A mount lookup that fails never resolves to now: the saved offset still
-// orders the replay, and without one the daemon exits so a restart retries
-// instead of skipping every event since the failure.
-func resolveLastSyncOffset(mountedDir string, timeAgo time.Duration, lookupMount func() (*filer_pb.Entry, error), readOffset func() (int64, error)) time.Time {
+// orders the replay, and without one the error goes back to the caller's
+// retry loop instead of skipping every event since the failure.
+func resolveLastSyncOffset(mountedDir string, timeAgo time.Duration, lookupMount func() (*filer_pb.Entry, error), readOffset func() (int64, error)) (time.Time, error) {
 	var lastOffsetTs time.Time
 	if timeAgo == 0 {
 		mountedDirEntry, err := lookupMount()
@@ -1122,9 +1125,9 @@ func resolveLastSyncOffset(mountedDir string, timeAgo time.Duration, lookupMount
 			lastOffsetTsNs, offsetErr := readOffset()
 			if offsetErr == nil && lastOffsetTsNs > 0 {
 				glog.V(0).Infof("get mounted directory %s: %v; resume from the saved offset %v", mountedDir, err, time.Unix(0, lastOffsetTsNs))
-				return time.Unix(0, lastOffsetTsNs)
+				return time.Unix(0, lastOffsetTsNs), nil
 			}
-			glog.Fatalf("get mounted directory %s: %v; no saved sync offset (%v)", mountedDir, err, offsetErr)
+			return time.Time{}, fmt.Errorf("get mounted directory %s: %w; no saved sync offset (%v)", mountedDir, err, offsetErr)
 		}
 
 		lastOffsetTsNs, err := readOffset()
@@ -1144,7 +1147,7 @@ func resolveLastSyncOffset(mountedDir string, timeAgo time.Duration, lookupMount
 		if err != nil {
 			// an unread offset must not resolve to now minus timeAgo: the
 			// saved one may be older, and everything between would be skipped
-			glog.Fatalf("read the sync offset of %s: %v", mountedDir, err)
+			return time.Time{}, fmt.Errorf("read the sync offset of %s: %w", mountedDir, err)
 		}
 		if lastOffsetTsNs > 0 {
 			if savedOffsetTs := time.Unix(0, lastOffsetTsNs); savedOffsetTs.Before(lastOffsetTs) {
@@ -1152,7 +1155,7 @@ func resolveLastSyncOffset(mountedDir string, timeAgo time.Duration, lookupMount
 			}
 		}
 	}
-	return lastOffsetTs
+	return lastOffsetTs, nil
 }
 
 func toRemoteStorageLocation(mountDir, sourcePath util.FullPath, remoteMountLocation *remote_pb.RemoteStorageLocation) *remote_pb.RemoteStorageLocation {

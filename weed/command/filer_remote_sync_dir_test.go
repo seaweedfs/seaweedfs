@@ -642,16 +642,38 @@ func TestResolveLastSyncOffsetKeepsTheSavedOffsetWhenTheLookupFails(t *testing.T
 	lookupFails := func() (*filer_pb.Entry, error) { return nil, context.DeadlineExceeded }
 	savedOffset := func() (int64, error) { return saved.UnixNano(), nil }
 
-	got := resolveLastSyncOffset("/buckets/x", 0, lookupFails, savedOffset)
+	got, err := resolveLastSyncOffset("/buckets/x", 0, lookupFails, savedOffset)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !got.Equal(saved) {
 		t.Fatalf("resolved %v, want the saved offset %v: a failed mount lookup must not start the replay at now", got, saved)
 	}
 
 	// a mount that answers resumes from the saved offset when it postdates the directory
 	entry := &filer_pb.Entry{Name: "x", Attributes: &filer_pb.FuseAttributes{Crtime: saved.Add(-time.Hour).Unix()}}
-	got = resolveLastSyncOffset("/buckets/x", 0, func() (*filer_pb.Entry, error) { return entry, nil }, savedOffset)
+	got, err = resolveLastSyncOffset("/buckets/x", 0, func() (*filer_pb.Entry, error) { return entry, nil }, savedOffset)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !got.Equal(saved) {
 		t.Fatalf("resolved %v, want %v", got, saved)
+	}
+}
+
+func TestResolveLastSyncOffsetReturnsTheErrorToTheRetryLoop(t *testing.T) {
+	lookupFails := func() (*filer_pb.Entry, error) { return nil, context.DeadlineExceeded }
+	noOffset := func() (int64, error) { return 0, nil }
+	readFails := func() (int64, error) { return 0, errors.New("filer unavailable") }
+
+	// no saved offset to fall back on: the error goes back to the caller
+	if _, err := resolveLastSyncOffset("/buckets/x", 0, lookupFails, noOffset); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("got %v, want the lookup error: without a saved offset the caller's retry loop decides, not an exit", err)
+	}
+
+	// -timeAgo set, the saved offset unreadable: never now minus timeAgo
+	if _, err := resolveLastSyncOffset("/buckets/x", time.Hour, func() (*filer_pb.Entry, error) { return nil, nil }, readFails); err == nil || !strings.Contains(err.Error(), "filer unavailable") {
+		t.Fatalf("got %v, want the offset read error", err)
 	}
 }
 
