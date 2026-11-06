@@ -147,6 +147,10 @@ func NewHashicorpRaftServer(option *RaftServerOption) (*RaftServer, error) {
 		return nil, fmt.Errorf("raft.ValidateConfig: %w", err)
 	}
 
+	if err := registerRaftMetrics(stats.Gather); err != nil {
+		return nil, err
+	}
+
 	if err := os.MkdirAll(path.Join(s.dataDir, "snapshots"), os.ModePerm); err != nil {
 		return nil, err
 	}
@@ -198,10 +202,6 @@ func NewHashicorpRaftServer(option *RaftServerOption) (*RaftServer, error) {
 				}
 			}
 		}()
-	}
-
-	if err := registerRaftMetrics(stats.Gather); err != nil {
-		return nil, err
 	}
 
 	return s, nil
