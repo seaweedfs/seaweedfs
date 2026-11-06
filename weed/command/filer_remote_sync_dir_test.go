@@ -695,6 +695,27 @@ func TestResolveLastSyncOffsetReturnsTheErrorToTheRetryLoop(t *testing.T) {
 	}
 }
 
+// TestSaveResumeOffsetKeepsTheStartForTheRetry: a subscription that ends
+// before its first checkpoint still records where it started, so the retry's
+// -timeAgo, recomputed from a later now, cannot start after it.
+func TestSaveResumeOffsetKeepsTheStartForTheRetry(t *testing.T) {
+	filerAddress, dialOption := startKvFiler(t)
+	const dir = "/buckets/x"
+	start := time.Now().Add(-time.Hour)
+	processor := NewMetadataProcessor(func(*filer_pb.SubscribeMetadataResponse) error { return nil }, 1, start.UnixNano())
+	saveResumeOffset(dialOption, filerAddress, dir, processor)
+
+	got, err := resolveLastSyncOffset(dir, time.Hour, func() (*filer_pb.Entry, error) { return nil, nil }, func() (int64, error) {
+		return remote_storage.GetSyncOffset(dialOption, filerAddress, dir)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.After(start) {
+		t.Fatalf("the retry starts at %v, after the first subscription's start %v", got, start)
+	}
+}
+
 func TestRemoteUploadReaderSharesOneChunkCache(t *testing.T) {
 	entry := entryWith("blob.bin", nil, chunk("3,01", "e1"))
 	for i := 0; i < 3; i++ {
