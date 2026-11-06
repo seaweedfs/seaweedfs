@@ -4333,6 +4333,17 @@ impl VolumeServer for VolumeGrpcService {
                 .map_err(|e| {
                     Status::internal(format!("mount {}.{}: {}", req.volume_id, shard_id, e))
                 })?;
+            // Mirrors Go's MountEcShards: a caller moving the shard here keeps
+            // its source copy, and the heartbeat never announces it.
+            if store
+                .find_ec_volume_with_shard(vid, shard_id)
+                .is_some_and(|ecv| ecv.get_io_error_state().2)
+            {
+                return Err(Status::internal(format!(
+                    "mount {}.{}: ec volume is quarantined after IO errors, shard not announced",
+                    req.volume_id, shard_id
+                )));
+            }
         }
         // A delivery can bring the checksum manifest alongside the shards, but
         // the receive path only writes the file. When this server already had
@@ -13179,6 +13190,25 @@ mod tests {
             Ok(_) => panic!("a quarantined shard was served"),
             Err(status) => assert_eq!(status.code(), tonic::Code::Unavailable, "{status}"),
         }
+    }
+
+    /// A shard mounted onto a quarantined EC volume fails the mount, so a
+    /// caller moving it here keeps its source copy.
+    #[tokio::test]
+    async fn test_volume_ec_shards_mount_refuses_a_quarantined_volume() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        generate_and_mount_ec_1(&service, vec![0]).await;
+        quarantine_ec_1(&service);
+
+        let err = service
+            .volume_ec_shards_mount(Request::new(volume_server_pb::VolumeEcShardsMountRequest {
+                volume_id: 1,
+                shard_ids: vec![1],
+                ..Default::default()
+            }))
+            .await
+            .unwrap_err();
+        assert!(err.message().contains("quarantined"), "{err}");
     }
 
     /// A volume unmounted before the EC read resolves it is "volume not found",
