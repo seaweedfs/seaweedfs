@@ -2,10 +2,13 @@ package filer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -22,10 +25,14 @@ func (f *Filer) appendToFile(ctx context.Context, targetFile string, data []byte
 	// expired shutdown deadline does not strand the chunk.
 	ctx = context.WithoutCancel(ctx)
 
+	return f.commitAppendedChunk(ctx, util.FullPath(targetFile), uploadResult.ToPbFileChunk(assignResult.Fid, 0, time.Now().UnixNano()))
+}
+
+// commitAppendedChunk appends an uploaded chunk to the file, releasing the
+// chunk when it cannot be committed: the flush retries with a new upload.
+func (f *Filer) commitAppendedChunk(ctx context.Context, fullpath util.FullPath, chunk *filer_pb.FileChunk) error {
 	// find out existing entry
-	fullpath := util.FullPath(targetFile)
 	entry, err := f.FindEntry(ctx, fullpath)
-	var offset int64 = 0
 	if err == filer_pb.ErrNotFound {
 		entry = &Entry{
 			FullPath: fullpath,
@@ -38,18 +45,32 @@ func (f *Filer) appendToFile(ctx context.Context, targetFile string, data []byte
 			},
 		}
 	} else if err != nil {
+		f.DeleteUncommittedChunks(ctx, []*filer_pb.FileChunk{chunk})
 		return fmt.Errorf("find %s: %v", fullpath, err)
 	} else {
-		offset = int64(TotalSize(entry.GetChunks()))
+		chunk.Offset = int64(TotalSize(entry.GetChunks()))
 	}
 
 	// append to existing chunks
-	entry.Chunks = append(entry.GetChunks(), uploadResult.ToPbFileChunk(assignResult.Fid, offset, time.Now().UnixNano()))
+	entry.Chunks = append(entry.GetChunks(), chunk)
 
 	// update the entry
-	err = f.CreateEntry(ctx, entry, nil, false, false, nil, false, f.MaxFilenameLength)
-
-	return err
+	if err := f.CreateEntry(ctx, entry, nil, false, false, nil, false, f.MaxFilenameLength); err != nil {
+		// A create can store the entry and then fail on its parent folders;
+		// a retry would only append the piece again.
+		stored, findErr := f.FindEntry(ctx, fullpath)
+		if findErr == nil && slices.ContainsFunc(stored.GetChunks(), func(c *filer_pb.FileChunk) bool {
+			return c.GetFileIdString() == chunk.GetFileIdString()
+		}) {
+			glog.V(0).Infof("append to %s landed despite: %v", fullpath, err)
+			return nil
+		}
+		if findErr == nil || errors.Is(findErr, filer_pb.ErrNotFound) {
+			f.DeleteUncommittedChunks(ctx, []*filer_pb.FileChunk{chunk})
+		}
+		return err
+	}
+	return nil
 }
 
 // resolveMetadataLogAssignDiskType returns the disk type and matched path rule for
