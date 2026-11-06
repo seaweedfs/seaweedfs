@@ -974,16 +974,9 @@ func readRemoteStorageConf(filerClient filer_pb.FilerClient, storageName string)
 // after it in the log is never persisted. Skipping is safe: the event that
 // superseded this one follows in the log, and the delete removes the remote
 // object or the later write uploads the current content. A lookup that fails
-// for any other reason keeps the write failure, so the event is retried.
-func isSuperseded(filerClient filer_pb.FilerClient, dir string, entry *filer_pb.Entry) bool {
-	superseded, _ := supersessionLookup(filerClient, dir, entry)
-	return superseded
-}
-
-// supersessionLookup is isSuperseded with the lookup failure surfaced: an
-// upload must not start on a lookup that did not answer, or an older
-// snapshot in a replay overwrites a newer remote object.
-func supersessionLookup(filerClient filer_pb.FilerClient, dir string, entry *filer_pb.Entry) (bool, error) {
+// for any other reason is returned: no upload starts on a lookup that did not
+// answer, or an older snapshot in a replay overwrites a newer remote object.
+func isSuperseded(filerClient filer_pb.FilerClient, dir string, entry *filer_pb.Entry) (bool, error) {
 	ctx, cancel := lookupContext()
 	defer cancel()
 	current, _, _, err := filer_pb.GetEntry(ctx, filerClient, util.NewFullPath(dir, entry.Name))
@@ -993,21 +986,17 @@ func supersessionLookup(filerClient filer_pb.FilerClient, dir string, entry *fil
 	if err != nil {
 		return false, err
 	}
-	return entryDiffers(entry, current), nil
-}
-
-func entryDiffers(entry, current *filer_pb.Entry) bool {
 	if !filer.HasData(entry) && filer.HasData(current) {
 		// The event described an entry without data (remote-only, or empty);
 		// the filer has written to it since. Uploading the snapshot would put
 		// an empty object where the write belongs.
-		return true
+		return true, nil
 	}
 	if len(entry.Content) > 0 || len(current.Content) > 0 {
-		return !bytes.Equal(entry.Content, current.Content)
+		return !bytes.Equal(entry.Content, current.Content), nil
 	}
 	return len(filer.DoMinusChunks(entry.GetChunks(), current.GetChunks())) > 0 ||
-		len(filer.DoMinusChunks(current.GetChunks(), entry.GetChunks())) > 0
+		len(filer.DoMinusChunks(current.GetChunks(), entry.GetChunks())) > 0, nil
 }
 
 // remoteUploadChunkCache is one per process: a chunk cache runs a worker
@@ -1057,7 +1046,7 @@ var errLookupUnanswered = errors.New("supersession lookup unanswered")
 // still holds is worth sending. After: a dead chunk reads as a transient
 // "RequestError" from the SDK, and waiting out the backoff on it buys nothing.
 func retriedWriteFile(client remote_storage.RemoteStorageClient, filerSource filer_pb.FilerClient, dir string, newEntry *filer_pb.Entry, dest *remote_pb.RemoteStorageLocation) (remoteEntry *filer_pb.RemoteEntry, err error) {
-	if superseded, lookupErr := supersessionLookup(filerSource, dir, newEntry); lookupErr != nil {
+	if superseded, lookupErr := isSuperseded(filerSource, dir, newEntry); lookupErr != nil {
 		return nil, fmt.Errorf("%s: supersession lookup: %w", util.NewFullPath(dir, newEntry.Name), lookupErr)
 	} else if superseded {
 		return nil, fmt.Errorf("%s %w", util.NewFullPath(dir, newEntry.Name), errSuperseded)
@@ -1066,7 +1055,7 @@ func retriedWriteFile(client remote_storage.RemoteStorageClient, filerSource fil
 	// entry is still the one the event described; an unanswered lookup
 	// ends the loop so no further attempt uploads an unverified snapshot.
 	afterFailure := func(attemptErr error) error {
-		superseded, lookupErr := supersessionLookup(filerSource, dir, newEntry)
+		superseded, lookupErr := isSuperseded(filerSource, dir, newEntry)
 		if lookupErr != nil {
 			return fmt.Errorf("%s %w: %w (after: %v)", util.NewFullPath(dir, newEntry.Name), errLookupUnanswered, lookupErr, attemptErr)
 		}

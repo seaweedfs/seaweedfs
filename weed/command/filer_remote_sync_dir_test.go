@@ -564,8 +564,8 @@ func TestFilerLookupsOnTheSyncPathCarryADeadline(t *testing.T) {
 	if current != nil || !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("currentEntry = %v, %v; want nil, deadline exceeded", current, err)
 	}
-	if superseded, lookupErr := supersessionLookup(&blockingFilerClient{}, dir, event); superseded || !errors.Is(lookupErr, context.DeadlineExceeded) {
-		t.Errorf("supersessionLookup = %v, %v on a lookup that timed out; want false, deadline exceeded (no upload starts on an unanswered lookup)", superseded, lookupErr)
+	if superseded, lookupErr := isSuperseded(&blockingFilerClient{}, dir, event); superseded || !errors.Is(lookupErr, context.DeadlineExceeded) {
+		t.Errorf("isSuperseded = %v, %v on a lookup that timed out; want false, deadline exceeded (no upload starts on an unanswered lookup)", superseded, lookupErr)
 	}
 	if _, writeErr := retriedWriteFile(nil, &blockingFilerClient{}, dir, event, &remote_pb.RemoteStorageLocation{Name: "b2", Bucket: "b", Path: "/lease.json"}); !errors.Is(writeErr, context.DeadlineExceeded) {
 		t.Errorf("retriedWriteFile = %v on an unanswered supersession lookup; want the lookup error, not an upload", writeErr)
@@ -722,12 +722,12 @@ func TestIsSuperseded(t *testing.T) {
 		{name: "still as described", filer: &stubFilerClient{entry: entryWith(event.Name, nil, chunk("3,01", "e1"), chunk("3,02", "e2"))}, want: false},
 		{name: "still as described, since replicated", filer: &stubFilerClient{entry: entryWith(event.Name, stamped, chunk("3,01", "e1"), chunk("3,02", "e2"))}, want: false},
 		{name: "appended since", filer: &stubFilerClient{entry: entryWith(event.Name, nil, chunk("3,01", "e1"), chunk("3,02", "e2"), chunk("3,03", "e3"))}, want: true},
-		{name: "filer lookup failed", filer: &stubFilerClient{err: errors.New("rpc error: code = Unavailable")}, want: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := isSuperseded(tt.filer, dir, event); got != tt.want {
-				t.Errorf("isSuperseded = %v, want %v", got, tt.want)
+			got, err := isSuperseded(tt.filer, dir, event)
+			if err != nil || got != tt.want {
+				t.Errorf("isSuperseded = %v, %v; want %v, nil", got, err, tt.want)
 			}
 			if tt.filer.lookups != 1 {
 				t.Errorf("looked up the filer %d times, want 1", tt.filer.lookups)
@@ -735,19 +735,35 @@ func TestIsSuperseded(t *testing.T) {
 		})
 	}
 
+	t.Run("filer lookup failed", func(t *testing.T) {
+		lookupErr := errors.New("rpc error: code = Unavailable")
+		if got, err := isSuperseded(&stubFilerClient{err: lookupErr}, dir, event); got || !errors.Is(err, lookupErr) {
+			t.Errorf("isSuperseded = %v, %v; want false and the lookup error", got, err)
+		}
+	})
+
+	superseded := func(t *testing.T, filer *stubFilerClient, entry *filer_pb.Entry) bool {
+		t.Helper()
+		got, err := isSuperseded(filer, dir, entry)
+		if err != nil {
+			t.Fatalf("isSuperseded: %v", err)
+		}
+		return got
+	}
+
 	t.Run("written since: the event described an entry without data", func(t *testing.T) {
 		remoteOnly := entryWith("video.mp4", &filer_pb.RemoteEntry{StorageName: "b2", RemoteSize: 20971520, RemoteMtime: 1786096669})
-		if !isSuperseded(&stubFilerClient{entry: entryWith("video.mp4", remoteOnly.RemoteEntry, chunk("3,09", "e9"))}, dir, remoteOnly) {
+		if !superseded(t, &stubFilerClient{entry: entryWith("video.mp4", remoteOnly.RemoteEntry, chunk("3,09", "e9"))}, remoteOnly) {
 			t.Error("isSuperseded = false, want true: the filer wrote local data to a remote-only entry")
 		}
-		if isSuperseded(&stubFilerClient{entry: entryWith("video.mp4", remoteOnly.RemoteEntry)}, dir, remoteOnly) {
+		if superseded(t, &stubFilerClient{entry: entryWith("video.mp4", remoteOnly.RemoteEntry)}, remoteOnly) {
 			t.Error("isSuperseded = true, want false: the entry is still remote-only")
 		}
 		empty := &filer_pb.Entry{Name: "touch.txt", Attributes: &filer_pb.FuseAttributes{Mtime: 1786096669}}
-		if !isSuperseded(&stubFilerClient{entry: &filer_pb.Entry{Name: "touch.txt", Content: []byte("now")}}, dir, empty) {
+		if !superseded(t, &stubFilerClient{entry: &filer_pb.Entry{Name: "touch.txt", Content: []byte("now")}}, empty) {
 			t.Error("isSuperseded = false, want true: the empty file was written to")
 		}
-		if isSuperseded(&stubFilerClient{entry: &filer_pb.Entry{Name: "touch.txt"}}, dir, empty) {
+		if superseded(t, &stubFilerClient{entry: &filer_pb.Entry{Name: "touch.txt"}}, empty) {
 			t.Error("isSuperseded = true, want false: the file is still empty")
 		}
 	})
@@ -755,20 +771,20 @@ func TestIsSuperseded(t *testing.T) {
 	t.Run("mid-write snapshot with a hole, filled in since", func(t *testing.T) {
 		snapshot := entryWith("IMG_6526.mov", nil, chunkAt("222,01", "e1", 0), chunkAt("220,03", "e3", 2048))
 		filled := entryWith("IMG_6526.mov", nil, chunkAt("222,01", "e1", 0), chunkAt("216,02", "e2", 1024), chunkAt("220,03", "e3", 2048))
-		if !isSuperseded(&stubFilerClient{entry: filled}, dir, snapshot) {
+		if !superseded(t, &stubFilerClient{entry: filled}, snapshot) {
 			t.Error("isSuperseded = false, want true: the filer holds the finished write, the snapshot can never be read past its hole")
 		}
-		if isSuperseded(&stubFilerClient{entry: filled}, dir, filled) {
+		if superseded(t, &stubFilerClient{entry: filled}, filled) {
 			t.Error("isSuperseded = true, want false for the event that describes the finished write")
 		}
 	})
 
 	t.Run("inline content rewritten since", func(t *testing.T) {
 		event := &filer_pb.Entry{Name: "note.txt", Content: []byte("v1")}
-		if !isSuperseded(&stubFilerClient{entry: &filer_pb.Entry{Name: "note.txt", Content: []byte("v2")}}, dir, event) {
+		if !superseded(t, &stubFilerClient{entry: &filer_pb.Entry{Name: "note.txt", Content: []byte("v2")}}, event) {
 			t.Error("isSuperseded = false, want true for an entry whose inline content has changed")
 		}
-		if isSuperseded(&stubFilerClient{entry: &filer_pb.Entry{Name: "note.txt", Content: []byte("v1")}}, dir, event) {
+		if superseded(t, &stubFilerClient{entry: &filer_pb.Entry{Name: "note.txt", Content: []byte("v1")}}, event) {
 			t.Error("isSuperseded = true, want false for an entry whose inline content is unchanged")
 		}
 	})
