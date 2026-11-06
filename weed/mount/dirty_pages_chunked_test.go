@@ -2,7 +2,15 @@ package mount
 
 import (
 	"errors"
+	"fmt"
+	"io"
+	"net"
+	"syscall"
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // Once a chunk upload fails its data is gone, so the handle must reject
@@ -27,5 +35,92 @@ func TestChunkedDirtyPagesFailWritesAfterUploadError(t *testing.T) {
 	pages.setLastError(errors.New("later error"))
 	if err := pages.LastError(); !errors.Is(err, uploadErr) {
 		t.Fatalf("LastError = %v, want first error %v", err, uploadErr)
+	}
+}
+
+type flakySave struct {
+	failures []error
+	calls    int
+	bodies   []string
+	onCall   func()
+}
+
+func (s *flakySave) saveDataAsChunk(util.FullPath) filer.SaveDataAsChunkFunctionType {
+	return func(reader io.Reader, name string, offset int64, tsNs int64, _ uint64) (*filer_pb.FileChunk, error) {
+		body, _ := io.ReadAll(reader)
+		s.bodies = append(s.bodies, string(body))
+		s.calls++
+		if s.onCall != nil {
+			s.onCall()
+		}
+		if s.calls <= len(s.failures) {
+			return nil, s.failures[s.calls-1]
+		}
+		return &filer_pb.FileChunk{FileId: "1,01", Offset: offset, Size: uint64(len(body)), ModifiedTsNs: tsNs}, nil
+	}
+}
+
+func newUploadTestPages(t *testing.T, writeback bool, save *flakySave) *ChunkedDirtyPages {
+	t.Helper()
+	wfs := newInvalidateTestWFS(t)
+	wfs.option.WritebackCache = writeback
+	fh := newFileHandle(wfs, 1, 2, &filer_pb.Entry{Name: "f", Attributes: &filer_pb.FuseAttributes{}})
+	fh.RememberPath("/dir/f")
+	pages := newMemoryChunkPages(fh, 1024)
+	t.Cleanup(pages.Destroy)
+	pages.saveDataAsChunk = save.saveDataAsChunk
+	return pages
+}
+
+var errVolumeRefused = fmt.Errorf("upload data: %w", &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED})
+
+// close() has already returned for a writeback handle, so a volume outage must
+// not drop the buffered chunk: the same bytes go out again once it ends.
+func TestChunkedDirtyPagesWritebackRetriesTransientUploadError(t *testing.T) {
+	save := &flakySave{failures: []error{errVolumeRefused}}
+	pages := newUploadTestPages(t, true, save)
+
+	pages.saveChunkedFileIntervalToStorage(util.NewBytesReader([]byte("hello")), 0, 5, 1, func() {})
+
+	if err := pages.LastError(); err != nil {
+		t.Fatalf("LastError = %v, want the retried upload to succeed", err)
+	}
+	if save.calls != 2 || save.bodies[1] != "hello" {
+		t.Fatalf("uploads = %d with bodies %q, want a second upload of the same bytes", save.calls, save.bodies)
+	}
+	if chunks := pages.fh.GetEntry().GetChunks(); len(chunks) != 1 || chunks[0].Size != 5 {
+		t.Fatalf("entry chunks = %v, want the retried chunk", chunks)
+	}
+}
+
+func TestChunkedDirtyPagesUploadErrorWithoutRetry(t *testing.T) {
+	permanent := errors.New("upload data: assign volume failure: no writable volumes")
+	tests := []struct {
+		name      string
+		writeback bool
+		err       error
+		destroy   bool
+	}{
+		{name: "sync mode reports the outage to close", err: errVolumeRefused},
+		{name: "writeback permanent error", writeback: true, err: permanent},
+		{name: "writeback pages discarded mid-upload", writeback: true, err: errVolumeRefused, destroy: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			save := &flakySave{failures: []error{tt.err}}
+			pages := newUploadTestPages(t, tt.writeback, save)
+			if tt.destroy {
+				save.onCall = pages.Destroy
+			}
+
+			pages.saveChunkedFileIntervalToStorage(util.NewBytesReader([]byte("hello")), 0, 5, 1, func() {})
+
+			if save.calls != 1 {
+				t.Fatalf("uploads = %d, want 1", save.calls)
+			}
+			if err := pages.LastError(); !errors.Is(err, tt.err) {
+				t.Fatalf("LastError = %v, want %v", err, tt.err)
+			}
+		})
 	}
 }
