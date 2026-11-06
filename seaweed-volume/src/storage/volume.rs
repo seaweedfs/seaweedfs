@@ -1456,7 +1456,12 @@ const NO_WRITE_OR_DELETE: u8 = 1;
 const NO_WRITE_CAN_DELETE: u8 = 2;
 
 #[derive(Default)]
-struct PendingWrites(Mutex<HashMap<NeedleId, Vec<Arc<AtomicBool>>>>);
+struct PendingWrites(Mutex<HashMap<NeedleId, Vec<Arc<CancelFlag>>>>);
+
+struct CancelFlag {
+    cookie: Cookie,
+    cancelled: AtomicBool,
+}
 
 /// A write that has entered the volume but not returned yet. A delete of its
 /// needle in that window cancels it: the write may still be queued behind the
@@ -1465,14 +1470,14 @@ struct PendingWrites(Mutex<HashMap<NeedleId, Vec<Arc<AtomicBool>>>>);
 pub struct PendingWrite {
     writes: Arc<PendingWrites>,
     id: NeedleId,
-    cancelled: Arc<AtomicBool>,
+    flag: Arc<CancelFlag>,
 }
 
 impl Drop for PendingWrite {
     fn drop(&mut self) {
         let mut by_id = self.writes.0.lock().unwrap();
         if let Some(writes) = by_id.get_mut(&self.id) {
-            writes.retain(|w| !Arc::ptr_eq(w, &self.cancelled));
+            writes.retain(|w| !Arc::ptr_eq(w, &self.flag));
             if writes.is_empty() {
                 by_id.remove(&self.id);
             }
@@ -3474,28 +3479,31 @@ impl Volume {
     }
 
     pub fn track_pending_write(&self, n: &Needle) -> PendingWrite {
-        let cancelled = Arc::new(AtomicBool::new(false));
+        let flag = Arc::new(CancelFlag {
+            cookie: n.cookie,
+            cancelled: AtomicBool::new(false),
+        });
         self.pending_writes
             .0
             .lock()
             .unwrap()
             .entry(n.id)
             .or_default()
-            .push(cancelled.clone());
+            .push(flag.clone());
         PendingWrite {
             writes: self.pending_writes.clone(),
             id: n.id,
-            cancelled,
+            flag,
         }
     }
 
     /// Cancels the writes of the needle that are in flight. A caller that found
     /// the needle missing must look it up again afterwards: a write that
     /// finished in between is no longer pending.
-    pub fn cancel_pending_writes(&self, id: NeedleId) {
+    pub fn cancel_pending_writes(&self, id: NeedleId, cookie: Cookie) {
         if let Some(writes) = self.pending_writes.0.lock().unwrap().get(&id) {
-            for w in writes {
-                w.store(true, Ordering::Release);
+            for w in writes.iter().filter(|w| w.cookie == cookie) {
+                w.cancelled.store(true, Ordering::Release);
             }
         }
     }
@@ -3511,7 +3519,7 @@ impl Volume {
         written: &(u64, Size, bool),
     ) -> Result<(), VolumeError> {
         let (offset, _, unchanged) = *written;
-        if unchanged || !pending.is_some_and(|p| p.cancelled.load(Ordering::Acquire)) {
+        if unchanged || !pending.is_some_and(|p| p.flag.cancelled.load(Ordering::Acquire)) {
             return Ok(());
         }
         let live = match io.nm.as_ref() {
@@ -3536,7 +3544,7 @@ impl Volume {
 
     /// Delete a needle from the volume.
     pub fn delete_needle(&self, n: &mut Needle) -> Result<Size, VolumeError> {
-        self.cancel_pending_writes(n.id);
+        self.cancel_pending_writes(n.id, n.cookie);
         let _sync_guard = self.data_file_sync_lock.lock().unwrap();
         let _guard = self.data_file_access_control.write_lock();
         let mut io = self.io.write().unwrap();
@@ -8684,7 +8692,7 @@ mod tests {
 
         let mut n = pending_needle(1, b"late write");
         let pending = v.track_pending_write(&n);
-        v.cancel_pending_writes(n.id);
+        v.cancel_pending_writes(n.id, n.cookie);
         let err = v
             .write_pending_needle_unsynced(&mut n, Some(&pending))
             .unwrap_err();
@@ -8712,7 +8720,8 @@ mod tests {
         assert!(matches!(err, VolumeError::Deleted));
     }
 
-    /// Only writes already in flight are cancelled.
+    /// Only writes already in flight and carrying the delete's cookie are
+    /// cancelled.
     #[test]
     fn test_pending_write_cancel_leaves_later_writes() {
         let tmp = TempDir::new().unwrap();
@@ -8726,6 +8735,14 @@ mod tests {
         let mut got = pending_needle(1, b"");
         v.read_needle(&mut got).unwrap();
         assert_eq!(got.data, b"after the delete");
+
+        let n = pending_needle(2, b"other cookie");
+        let pending = v.track_pending_write(&n);
+        v.cancel_pending_writes(n.id, Cookie(n.cookie.0 + 1));
+        write_pending(&v, n, false, pending).unwrap();
+        let mut got = pending_needle(2, b"");
+        v.read_needle(&mut got).unwrap();
+        assert_eq!(got.data, b"other cookie");
     }
 
     /// The cancelled write is taken back before the next write of the needle
@@ -8739,7 +8756,7 @@ mod tests {
 
             let first = pending_needle(1, b"same bytes");
             let first_pending = v.track_pending_write(&first);
-            v.cancel_pending_writes(first.id);
+            v.cancel_pending_writes(first.id, first.cookie);
             let retry = pending_needle(1, b"same bytes");
             let retry_pending = v.track_pending_write(&retry);
             let mut results = v.write_pending_needles(

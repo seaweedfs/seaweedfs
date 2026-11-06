@@ -3634,7 +3634,7 @@ pub async fn delete_handler(
             && let Some(vol) = &vol
         {
             // the write this delete undoes can still be queued here
-            vol.cancel_pending_writes(needle_id);
+            vol.cancel_pending_writes(needle_id, original_cookie);
             found = vol.read_needle_with_option(&mut n, &mut delete_read_option());
         }
         match found {
