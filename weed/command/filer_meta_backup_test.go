@@ -11,10 +11,14 @@ import (
 
 type kvOnlyStore struct {
 	filer.FilerStore
-	kv map[string][]byte
+	kv     map[string][]byte
+	getErr error
 }
 
 func (s *kvOnlyStore) KvGet(_ context.Context, key []byte) ([]byte, error) {
+	if s.getErr != nil && string(key) == string(MetaBackupKey) {
+		return nil, s.getErr
+	}
 	value, found := s.kv[string(key)]
 	if !found {
 		return nil, filer.ErrKvNotFound
@@ -100,6 +104,12 @@ func TestCopyMetadataIgnoresAWalkStartTheStreamPassed(t *testing.T) {
 	if err := backup.setOffset(walkStart.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
+	store := backup.store.(*kvOnlyStore)
+	store.getErr = errors.New("connection reset")
+	if _, err := backup.walkStartTime(); !errors.Is(err, store.getErr) {
+		t.Fatalf("walk start with an unreadable offset: err = %v, want the read error", err)
+	}
+	store.getErr = nil
 	beforeWalk := time.Now()
 	if err := backup.copyMetadata(func() error { return nil }); err != nil {
 		t.Fatal(err)

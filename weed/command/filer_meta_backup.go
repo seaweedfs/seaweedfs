@@ -184,7 +184,11 @@ func (metaBackup *FilerMetaBackupOptions) copyMetadata(traverse func() error) er
 func (metaBackup *FilerMetaBackupOptions) walkStartTime() (time.Time, error) {
 	earlier, err := metaBackup.getTime(MetaBackupWalkKey)
 	if err == nil {
-		if offset, offsetErr := metaBackup.getOffset(); offsetErr != nil || !offset.After(earlier) {
+		offset, offsetErr := metaBackup.getOffset()
+		if offsetErr != nil && !errors.Is(offsetErr, filer.ErrKvNotFound) {
+			return time.Time{}, fmt.Errorf("read metadata backup offset: %w", offsetErr)
+		}
+		if offsetErr != nil || !offset.After(earlier) {
 			glog.V(0).Infof("an earlier metadata walk started at %v did not finish; streaming from then", earlier)
 			return earlier, nil
 		}
