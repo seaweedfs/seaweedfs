@@ -156,6 +156,7 @@ type ambiguousPutFiler struct {
 	// just-committed entry before recovery reads it.
 	beforeCreate func()
 	beforeLookup func()
+	beforeAssign func()
 	stores       int
 	conds        []*filer_pb.WriteCondition
 }
@@ -163,6 +164,9 @@ type ambiguousPutFiler struct {
 func (f *ambiguousPutFiler) AssignVolume(context.Context, *filer_pb.AssignVolumeRequest) (*filer_pb.AssignVolumeResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.beforeAssign != nil {
+		f.beforeAssign()
+	}
 	f.nextKey++
 	return &filer_pb.AssignVolumeResponse{
 		FileId: fmt.Sprintf("3,%016x%08x", f.nextKey, uint32(f.nextKey)),
