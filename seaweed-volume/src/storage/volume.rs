@@ -2806,13 +2806,24 @@ impl Volume {
         &self,
         n: &mut Needle,
     ) -> Result<Result<(u64, Size, bool), VolumeError>, VolumeError> {
+        self.write_pending_needle_unsynced(n, None)
+    }
+
+    /// write_needle_unsynced_or_refused for a write a delete can cancel.
+    pub fn write_pending_needle_unsynced(
+        &self,
+        n: &mut Needle,
+        pending: Option<&PendingWrite>,
+    ) -> Result<Result<(u64, Size, bool), VolumeError>, VolumeError> {
         let _sync_guard = self.data_file_sync_lock.lock().unwrap();
         let _guard = self.data_file_access_control.write_lock();
         let mut io = self.io.write().unwrap();
         if let Err(refused) = self.check_writable() {
             return Ok(Err(refused));
         }
-        self.do_write_request(&mut io, n, true, false).map(Ok)
+        let written = self.do_write_request(&mut io, n, true, false)?;
+        self.drop_cancelled_write(&mut io, pending, n, &written)?;
+        Ok(Ok(written))
     }
 
     /// Write a batch of needles the way Go's processBatch does: one .dat
@@ -2827,6 +2838,16 @@ impl Volume {
         &self,
         writes: &mut [(Needle, bool)],
     ) -> Vec<Result<(u64, Size, bool), VolumeError>> {
+        self.write_pending_needles(writes, &[])
+    }
+
+    /// write_needles_grouped for writes a delete can cancel, `pending[i]`
+    /// tracking `writes[i]`.
+    pub fn write_pending_needles(
+        &self,
+        writes: &mut [(Needle, bool)],
+        pending: &[Option<PendingWrite>],
+    ) -> Vec<Result<(u64, Size, bool), VolumeError>> {
         // The sync lock serializes a .dat mutation with the flush that makes
         // it durable: a failed sync's rollback can never clobber an append
         // that slipped in behind it, and a compaction swap or unlink cannot
@@ -2840,16 +2861,21 @@ impl Volume {
             let mut ids = HashSet::new();
             let len = rest.iter().take_while(|(n, _)| ids.insert(n.id)).count();
             let (run, tail) = std::mem::take(&mut rest).split_at_mut(len);
+            let tracked = pending.get(results.len()..).unwrap_or_default();
             if run.iter().any(|(_, fsync)| *fsync) {
-                results.extend(self.write_synced_run(run));
+                results.extend(self.write_synced_run(run, tracked));
             } else {
                 let _guard = self.data_file_access_control.write_lock();
                 let mut io = self.io.write().unwrap();
-                for (n, _) in run.iter_mut() {
-                    results.push(
-                        self.check_writable()
-                            .and_then(|()| self.do_write_request(&mut io, n, true, false)),
-                    );
+                for (i, (n, _)) in run.iter_mut().enumerate() {
+                    let written = self
+                        .check_writable()
+                        .and_then(|()| self.do_write_request(&mut io, n, true, false));
+                    results.push(written.and_then(|written| {
+                        let pending = tracked.get(i).and_then(Option::as_ref);
+                        self.drop_cancelled_write(&mut io, pending, n, &written)
+                            .map(|()| written)
+                    }));
                 }
             }
             rest = tail;
@@ -2860,6 +2886,7 @@ impl Volume {
     fn write_synced_run(
         &self,
         run: &mut [(Needle, bool)],
+        pending: &[Option<PendingWrite>],
     ) -> Vec<Result<(u64, Size, bool), VolumeError>> {
         // Per entry: Some(offset) once appended, None when it dedups.
         let mut staged = Vec::with_capacity(run.len());
@@ -2919,17 +2946,24 @@ impl Volume {
             // writes, so the entries after it are refused the way a lone
             // write would be.
             let mut refused = false;
-            for ((n, fsync), r) in run.iter().zip(staged.iter_mut()) {
+            for (i, ((n, fsync), r)) in run.iter().zip(staged.iter_mut()).enumerate() {
                 if refused {
                     *r = Err(self
                         .check_writable()
                         .err()
                         .unwrap_or(VolumeError::ReadOnly(self.id)));
-                } else if let Ok(Some(offset)) = *r
-                    && let Err(e) = self.publish_write(&mut io, n, offset, *fsync)
-                {
-                    *r = Err(e);
-                    refused = *fsync;
+                } else if let Ok(Some(offset)) = *r {
+                    if let Err(e) = self.publish_write(&mut io, n, offset, *fsync) {
+                        *r = Err(e);
+                        refused = *fsync;
+                    } else if let Err(e) = self.drop_cancelled_write(
+                        &mut io,
+                        pending.get(i).and_then(Option::as_ref),
+                        n,
+                        &(offset, n.size, false),
+                    ) {
+                        *r = Err(e);
+                    }
                 }
             }
         }
@@ -3439,18 +3473,18 @@ impl Volume {
         Ok((offset, n.size, actual_size))
     }
 
-    pub fn track_pending_write(&self, id: NeedleId) -> PendingWrite {
+    pub fn track_pending_write(&self, n: &Needle) -> PendingWrite {
         let cancelled = Arc::new(AtomicBool::new(false));
         self.pending_writes
             .0
             .lock()
             .unwrap()
-            .entry(id)
+            .entry(n.id)
             .or_default()
             .push(cancelled.clone());
         PendingWrite {
             writes: self.pending_writes.clone(),
-            id,
+            id: n.id,
             cancelled,
         }
     }
@@ -3466,27 +3500,18 @@ impl Volume {
         }
     }
 
-    /// The outcome of a tracked write: one a delete cancelled is taken back.
-    pub fn settle_pending_write(
+    /// Tombstones a cancelled write right after it is published, under the
+    /// same lock hold, so no reader, later write or compaction sees it live
+    /// in between.
+    fn drop_cancelled_write(
         &self,
-        pending: PendingWrite,
+        io: &mut VolumeIo,
+        pending: Option<&PendingWrite>,
         n: &Needle,
-        written: (u64, Size, bool),
-    ) -> Result<(u64, Size, bool), VolumeError> {
-        if written.2 || !pending.cancelled.load(Ordering::Acquire) {
-            return Ok(written);
-        }
-        drop(pending);
-        self.drop_cancelled_write(n, written.0).map(|()| written)
-    }
-
-    /// Tombstones a cancelled write that landed, unless the needle has been
-    /// deleted or rewritten since.
-    fn drop_cancelled_write(&self, n: &Needle, offset: u64) -> Result<(), VolumeError> {
-        let _sync_guard = self.data_file_sync_lock.lock().unwrap();
-        let _guard = self.data_file_access_control.write_lock();
-        let mut io = self.io.write().unwrap();
-        if self.is_closed() {
+        written: &(u64, Size, bool),
+    ) -> Result<(), VolumeError> {
+        let (offset, _, unchanged) = *written;
+        if unchanged || !pending.is_some_and(|p| p.cancelled.load(Ordering::Acquire)) {
             return Ok(());
         }
         let live = match io.nm.as_ref() {
@@ -3498,18 +3523,12 @@ impl Volume {
         if !live {
             return Ok(());
         }
-        if let Some(e) = self.unavailable_error() {
-            return Err(e);
-        }
-        if self.no_write_flags().0 {
-            return Err(VolumeError::ReadOnly(self.id));
-        }
         let mut tombstone = Needle {
             id: n.id,
             cookie: n.cookie,
             ..Needle::default()
         };
-        self.do_delete_request(&mut io, &mut tombstone)?;
+        self.do_delete_request(io, &mut tombstone)?;
         Err(VolumeError::Deleted)
     }
 
@@ -8614,35 +8633,64 @@ mod tests {
         }
     }
 
+    fn write_pending(
+        v: &Volume,
+        n: Needle,
+        fsync: bool,
+        pending: PendingWrite,
+    ) -> Result<(u64, Size, bool), VolumeError> {
+        v.write_pending_needles(&mut [(n, fsync)], &[Some(pending)])
+            .pop()
+            .unwrap()
+    }
+
     /// A delete that finds nothing can still have the write it undoes in
     /// flight. That write must not land live afterwards.
     #[test]
     fn test_delete_of_missing_needle_cancels_pending_write() {
+        for fsync in [false, true] {
+            let tmp = TempDir::new().unwrap();
+            let dir = tmp.path().to_str().unwrap();
+            let v = make_test_volume(dir);
+
+            let n = pending_needle(1, b"late write");
+            let pending = v.track_pending_write(&n);
+            v.delete_needle(&mut pending_needle(1, b"")).unwrap();
+            let err = write_pending(&v, n, fsync, pending).unwrap_err();
+            assert!(matches!(err, VolumeError::Deleted));
+
+            let err = v.read_needle(&mut pending_needle(1, b"")).unwrap_err();
+            assert!(matches!(err, VolumeError::Deleted));
+            assert!(v.pending_writes.0.lock().unwrap().is_empty());
+
+            v.close();
+            let v = Volume::new(
+                dir,
+                dir,
+                VolumeId(1),
+                NeedleMapKind::InMemory,
+                &VolumeSpec::default(),
+            )
+            .unwrap();
+            assert!(v.read_needle(&mut pending_needle(1, b"")).is_err());
+        }
+    }
+
+    /// The unsynced write path takes a cancelled write back the same way.
+    #[test]
+    fn test_unsynced_write_cancelled_by_delete() {
         let tmp = TempDir::new().unwrap();
-        let dir = tmp.path().to_str().unwrap();
-        let v = make_test_volume(dir);
+        let v = make_test_volume(tmp.path().to_str().unwrap());
 
         let mut n = pending_needle(1, b"late write");
-        let pending = v.track_pending_write(n.id);
-        v.delete_needle(&mut pending_needle(1, b"")).unwrap();
-        let written = v.write_needle(&mut n, true, false).unwrap();
-        let err = v.settle_pending_write(pending, &n, written).unwrap_err();
+        let pending = v.track_pending_write(&n);
+        v.cancel_pending_writes(n.id);
+        let err = v
+            .write_pending_needle_unsynced(&mut n, Some(&pending))
+            .unwrap_err();
         assert!(matches!(err, VolumeError::Deleted));
-
         let err = v.read_needle(&mut pending_needle(1, b"")).unwrap_err();
         assert!(matches!(err, VolumeError::Deleted));
-        assert!(v.pending_writes.0.lock().unwrap().is_empty());
-
-        v.close();
-        let v = Volume::new(
-            dir,
-            dir,
-            VolumeId(1),
-            NeedleMapKind::InMemory,
-            &VolumeSpec::default(),
-        )
-        .unwrap();
-        assert!(v.read_needle(&mut pending_needle(1, b"")).is_err());
     }
 
     /// A delete that finds a copy also cancels a retry of the same write that
@@ -8655,20 +8703,16 @@ mod tests {
 
         v.write_needle(&mut pending_needle(1, b"first"), true, false)
             .unwrap();
-        let mut rewrite = pending_needle(1, b"retry");
-        let pending = v.track_pending_write(rewrite.id);
+        let rewrite = pending_needle(1, b"retry");
+        let pending = v.track_pending_write(&rewrite);
         v.delete_needle(&mut pending_needle(1, b"")).unwrap();
-        let written = v.write_needle(&mut rewrite, true, false).unwrap();
-        let err = v
-            .settle_pending_write(pending, &rewrite, written)
-            .unwrap_err();
+        let err = write_pending(&v, rewrite, false, pending).unwrap_err();
         assert!(matches!(err, VolumeError::Deleted));
         let err = v.read_needle(&mut pending_needle(1, b"")).unwrap_err();
         assert!(matches!(err, VolumeError::Deleted));
     }
 
-    /// Only writes already in flight are cancelled, and a cancelled write
-    /// that something else deleted or replaced is left alone.
+    /// Only writes already in flight are cancelled.
     #[test]
     fn test_pending_write_cancel_leaves_later_writes() {
         let tmp = TempDir::new().unwrap();
@@ -8676,24 +8720,43 @@ mod tests {
         let v = make_test_volume(dir);
 
         v.delete_needle(&mut pending_needle(1, b"")).unwrap();
-        let mut n = pending_needle(1, b"after the delete");
-        let pending = v.track_pending_write(n.id);
-        let written = v.write_needle(&mut n, true, false).unwrap();
-        v.settle_pending_write(pending, &n, written).unwrap();
+        let n = pending_needle(1, b"after the delete");
+        let pending = v.track_pending_write(&n);
+        write_pending(&v, n, false, pending).unwrap();
         let mut got = pending_needle(1, b"");
         v.read_needle(&mut got).unwrap();
         assert_eq!(got.data, b"after the delete");
+    }
 
-        let mut stale = pending_needle(2, b"stale");
-        let pending = v.track_pending_write(stale.id);
-        let written = v.write_needle(&mut stale, true, false).unwrap();
-        v.cancel_pending_writes(stale.id);
-        v.write_needle(&mut pending_needle(2, b"newer"), true, false)
-            .unwrap();
-        v.settle_pending_write(pending, &stale, written).unwrap();
-        let mut got = pending_needle(2, b"");
-        v.read_needle(&mut got).unwrap();
-        assert_eq!(got.data, b"newer");
+    /// The cancelled write is taken back before the next write of the needle
+    /// runs, so an identical write sent after the delete appends its own copy
+    /// instead of matching the record about to be deleted.
+    #[test]
+    fn test_write_after_cancelled_write_stays_live() {
+        for fsync in [false, true] {
+            let tmp = TempDir::new().unwrap();
+            let v = make_test_volume(tmp.path().to_str().unwrap());
+
+            let first = pending_needle(1, b"same bytes");
+            let first_pending = v.track_pending_write(&first);
+            v.cancel_pending_writes(first.id);
+            let retry = pending_needle(1, b"same bytes");
+            let retry_pending = v.track_pending_write(&retry);
+            let mut results = v.write_pending_needles(
+                &mut [(first, fsync), (retry, fsync)],
+                &[Some(first_pending), Some(retry_pending)],
+            );
+            let retried = results.pop().unwrap().unwrap();
+            assert!(
+                !retried.2,
+                "fsync={fsync}: the retry matched the cancelled write"
+            );
+            assert!(matches!(results.pop().unwrap(), Err(VolumeError::Deleted)));
+
+            let mut got = pending_needle(1, b"");
+            v.read_needle(&mut got).unwrap();
+            assert_eq!(got.data, b"same bytes");
+        }
     }
 
     // Guard the Rust integrity-check tombstone path against the Go regression

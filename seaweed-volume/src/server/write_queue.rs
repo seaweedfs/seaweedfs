@@ -177,7 +177,7 @@ impl WriteQueue {
         let pending = {
             let store = self.state.store.read().unwrap();
             match store.find_volume(volume_id) {
-                Some((_, vol)) => vol.track_pending_write(needle.id),
+                Some((_, vol)) => vol.track_pending_write(&needle),
                 None => return Err(VolumeError::NotFound),
             }
         };
@@ -379,18 +379,7 @@ fn process_batch(state: Arc<VolumeServerState>, batch: Vec<WriteRequest>) {
             store.writable_volume(vid)
         };
         let results: Vec<WriteResult> = match vol {
-            Ok(vol) => vol
-                .write_needles_grouped(&mut writes)
-                .into_iter()
-                .zip(&writes)
-                .zip(pendings)
-                .map(|((result, (needle, _)), pending)| match (result, pending) {
-                    (Ok(written), Some(pending)) => {
-                        vol.settle_pending_write(pending, needle, written)
-                    }
-                    (result, _) => result,
-                })
-                .collect(),
+            Ok(vol) => vol.write_pending_needles(&mut writes, &pendings),
             Err(e) => writes
                 .iter()
                 .map(|_| match e {

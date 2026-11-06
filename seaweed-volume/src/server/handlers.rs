@@ -3419,15 +3419,14 @@ async fn write_upload_needle(
         Ok(vol) => vol,
         Err(refused) => return Ok(Err(refused)),
     };
-    let pending = vol.track_pending_write(n.id);
-    let written = if fsync {
-        vol.write_needle(&mut n, true, fsync).map(Ok)
+    let pending = vol.track_pending_write(&n);
+    if fsync {
+        vol.write_pending_needles(&mut [(n, true)], &[Some(pending)])
+            .pop()
+            .unwrap_or(Err(crate::storage::volume::VolumeError::NotFound))
+            .map(Ok)
     } else {
-        vol.write_needle_unsynced_or_refused(&mut n)
-    };
-    match written {
-        Ok(Ok(written)) => vol.settle_pending_write(pending, &n, written).map(Ok),
-        other => other,
+        vol.write_pending_needle_unsynced(&mut n, Some(&pending))
     }
 }
 
@@ -9071,6 +9070,7 @@ mod tests {
     /// durable queue. A plain delete that finds nothing is not sent on to the
     /// replicas, so it leaves the write alone.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[allow(clippy::await_holding_lock)]
     async fn test_replicate_delete_cancels_a_queued_write() {
         use crate::server::write_queue::{SyncBatchOption, WriteQueue};
         use crate::storage::volume::VolumeError;
