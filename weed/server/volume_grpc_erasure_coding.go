@@ -1016,6 +1016,9 @@ func (vs *VolumeServer) VolumeEcShardsMount(ctx context.Context, req *volume_ser
 		vs.recoverMissingEcIndexes(req.VolumeId)
 	}
 
+	// A failed shard stops the batch, but the shards mounted before it still
+	// get the sidecar reload below.
+	var mountErr error
 	for _, shardId := range req.ShardIds {
 		err := vs.store.MountEcShards(req.Collection, needle.VolumeId(req.VolumeId), erasure_coding.ShardId(shardId), req.SourceDiskType)
 
@@ -1026,7 +1029,8 @@ func (vs *VolumeServer) VolumeEcShardsMount(ctx context.Context, req *volume_ser
 		}
 
 		if err != nil {
-			return nil, fmt.Errorf("mount %d.%d: %v", req.VolumeId, shardId, err)
+			mountErr = fmt.Errorf("mount %d.%d: %v", req.VolumeId, shardId, err)
+			break
 		}
 	}
 
@@ -1049,6 +1053,9 @@ func (vs *VolumeServer) VolumeEcShardsMount(ctx context.Context, req *volume_ser
 	ecMetadataDirs := vs.store.EcMetadataDirs()
 	for _, v := range vs.store.FindAllEcVolumes(needle.VolumeId(req.VolumeId)) {
 		v.ReloadBitrotSidecar(ecMetadataDirs...)
+	}
+	if mountErr != nil {
+		return nil, mountErr
 	}
 
 	return &volume_server_pb.VolumeEcShardsMountResponse{}, nil

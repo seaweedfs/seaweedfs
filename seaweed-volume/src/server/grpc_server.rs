@@ -4345,14 +4345,21 @@ impl VolumeServer for VolumeGrpcService {
 
         // Mount one shard at a time, returning error on first failure.
         // Matches Go: for _, shardId := range req.ShardIds { err = vs.store.MountEcShards(...) }
+        // A failed shard stops the batch, but the shards mounted before it still
+        // get the sidecar reload and the heartbeat notify below.
         let mut store = self.state.store.write().unwrap();
+        let mut mount_err = None;
         for &shard_id in &validated {
             let held_before = ec_shard_disks(&store, vid, shard_id);
-            store
-                .mount_ec_shard(vid, &req.collection, shard_id, &req.source_disk_type)
-                .map_err(|e| {
-                    Status::internal(format!("mount {}.{}: {}", req.volume_id, shard_id, e))
-                })?;
+            if let Err(e) =
+                store.mount_ec_shard(vid, &req.collection, shard_id, &req.source_disk_type)
+            {
+                mount_err = Some(Status::internal(format!(
+                    "mount {}.{}: {}",
+                    req.volume_id, shard_id, e
+                )));
+                break;
+            }
             // Mirrors Go's MountEcShards: a caller moving the shard here keeps
             // its source copy, and the heartbeat never announces it. A shard
             // this call mounted is dropped again, so it does not draw later
@@ -4364,10 +4371,11 @@ impl VolumeServer for VolumeGrpcService {
                 if !held_before.iter().any(|&(d, _)| d == disk) {
                     store.locations[disk].unmount_ec_shards(vid, &[shard_id]);
                 }
-                return Err(Status::internal(format!(
+                mount_err = Some(Status::internal(format!(
                     "mount {}.{}: ec volume is quarantined after IO errors, shard not announced",
                     req.volume_id, shard_id
                 )));
+                break;
             }
         }
         // A delivery can bring the checksum manifest alongside the shards, but
@@ -4393,6 +4401,9 @@ impl VolumeServer for VolumeGrpcService {
         }
         drop(store);
         self.state.volume_state_notify.notify_one();
+        if let Some(status) = mount_err {
+            return Err(status);
+        }
 
         Ok(Response::new(
             volume_server_pb::VolumeEcShardsMountResponse {},
@@ -13253,6 +13264,46 @@ mod tests {
         assert!(
             shard_mounted(0),
             "a refused remount unmounted a shard that was already mounted"
+        );
+    }
+
+    /// A shard that fails to mount stops the batch, but the shards mounted
+    /// before it are still announced.
+    #[tokio::test]
+    async fn test_volume_ec_shards_mount_failure_still_announces_earlier_shards() {
+        use futures::FutureExt;
+        let (service, tmp) = make_local_service_with_volume("", None);
+        generate_and_mount_ec_1(&service, vec![0]).await;
+        let _ = service.state.volume_state_notify.notified().now_or_never();
+        std::fs::remove_file(tmp.path().join("1.ec02")).unwrap();
+
+        service
+            .volume_ec_shards_mount(Request::new(
+                volume_server_pb::VolumeEcShardsMountRequest {
+                    volume_id: 1,
+                    shard_ids: vec![1, 2],
+                    ..Default::default()
+                },
+            ))
+            .await
+            .unwrap_err();
+        assert!(
+            service
+                .state
+                .store
+                .read()
+                .unwrap()
+                .find_ec_volume_with_shard(VolumeId(1), 1)
+                .is_some()
+        );
+        assert!(
+            service
+                .state
+                .volume_state_notify
+                .notified()
+                .now_or_never()
+                .is_some(),
+            "shard 1 was mounted but the heartbeat was never told"
         );
     }
 
