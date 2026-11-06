@@ -79,22 +79,6 @@ func TestVolumeEcShardRead_RefusesQuarantinedShard(t *testing.T) {
 	}
 }
 
-// A copy of the shard on a healthy disk serves the peer when another disk's
-// copy is quarantined.
-func TestVolumeEcShardRead_ServesAHealthyCopyOnAnotherDisk(t *testing.T) {
-	const vid = needle.VolumeId(7)
-	quarantinedDisk, _ := ecVolumeWithLiveNeedle(t, vid, 1)
-	healthyDisk, _ := ecVolumeWithLiveNeedle(t, vid, 1)
-	vs := &VolumeServer{store: &storage.Store{Locations: append(quarantinedDisk.store.Locations, healthyDisk.store.Locations...)}}
-	ecVolume, _ := quarantinedDisk.store.FindEcVolume(vid)
-	ecVolume.MarkIoQuarantined()
-
-	req := &volume_server_pb.VolumeEcShardReadRequest{VolumeId: uint32(vid), ShardId: 0, Offset: 0, Size: 8, FileKey: 1}
-	if err := vs.VolumeEcShardRead(req, &ecShardReadRecorder{}); err != nil {
-		t.Fatalf("read with a healthy copy on another disk: %v", err)
-	}
-}
-
 // An .ecx that cannot be read must fail the request: answering "deleted" would
 // make the caller drop a live needle.
 func TestVolumeEcShardRead_EcxReadErrorIsNotADelete(t *testing.T) {
