@@ -509,3 +509,35 @@ func renameDuringUpdate(t *testing.T, fs *s3tablestest.MemFiler, m *Manager, tok
 	require.Equal(t, http.StatusOK, updateStatus, "competing update: %+v", updateResp)
 	return status, resp
 }
+
+func TestRenameReadsMatchSnapshot(t *testing.T) {
+	snapshot := map[string][]byte{
+		ExtendedKeyMetadata: []byte(`{"name":"t"}`),
+		ExtendedKeyPolicy:   []byte(`{"Version":"2012-10-17"}`),
+		ExtendedKeyTags:     []byte(`{"team":"a"}`),
+	}
+	reads := func(policy string) map[string][]byte {
+		return map[string][]byte{
+			ExtendedKeyMetadata:    snapshot[ExtendedKeyMetadata],
+			ExtendedKeyPolicy:      []byte(policy),
+			ExtendedKeyMaintenance: nil,
+		}
+	}
+	cases := []struct {
+		name   string
+		policy string
+		tags   map[string]string
+		want   bool
+	}{
+		{"unchanged", `{"Version":"2012-10-17"}`, map[string]string{"team": "a"}, true},
+		{"policy changed", `{"Version":"2008-10-17"}`, map[string]string{"team": "a"}, false},
+		{"policy removed", "", map[string]string{"team": "a"}, false},
+		{"tag value changed", `{"Version":"2012-10-17"}`, map[string]string{"team": "b"}, false},
+		{"tags removed", `{"Version":"2012-10-17"}`, nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, renameReadsMatchSnapshot(snapshot, tc.tags, reads(tc.policy)))
+		})
+	}
+}
