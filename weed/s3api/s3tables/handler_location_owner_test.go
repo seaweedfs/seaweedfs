@@ -165,6 +165,21 @@ func TestLocationRaceBacksOut(t *testing.T) {
 		require.True(t, client.planted)
 		assert.Equal(t, string(before), string(fs.Get(nsPath, "t").Extended[ExtendedKeyMetadata]))
 	})
+
+	t.Run("rename", func(t *testing.T) {
+		fs, m := startRenameManager(t)
+		requireOK(t, m, fs, "CreateTable", &CreateTableRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"}, Name: "c", Format: FormatIceberg})
+		client := &rootRaceClient{SeaweedFilerClient: fs.Client, f: fs, dir: nsPath, name: "dest", location: renameLocation("ns/dest/metadata/v1.metadata.json")}
+		status, resp := runHandler(t, m, client, "RenameTable", &RenameTableRequest{
+			TableBucketARN: mustBucketARN(t), SourceNamespace: []string{"ns"}, SourceName: "c", DestNamespace: []string{"ns"}, DestName: "dest",
+		})
+		assert.Equal(t, http.StatusConflict, status, "%+v", resp)
+		require.True(t, client.planted)
+		assert.Contains(t, fs.Get(nsPath, "c").Extended, ExtendedKeyMetadata)
+		if entry := fs.Get(nsPath, "dest"); entry != nil {
+			assert.NotContains(t, entry.Extended, ExtendedKeyMetadata)
+		}
+	})
 }
 
 // A table that keeps its files elsewhere still owns its catalog entry: a view

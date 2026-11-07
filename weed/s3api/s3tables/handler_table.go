@@ -1793,6 +1793,11 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 			h.removeLeftoverDirectory(ctx, client, destPath)
 			return releaseClaim(err)
 		}
+		if metadata.MetadataLocation == "" {
+			if err := checkLocationUnclaimed(r.Context(), client, bucketName, destPath, ""); err != nil {
+				return backOutDest(err)
+			}
+		}
 		destParent, err := h.openParent(r.Context(), client, destNamespacePath, isDestNamespace)
 		if err != nil {
 			return backOutDest(err)
@@ -1917,6 +1922,10 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 		}
 		if errors.Is(err, errSourceGone) {
 			h.writeError(w, http.StatusNotFound, kind.notFoundCode, fmt.Sprintf("%s %s not found", kind.noun, srcName))
+			return err
+		}
+		if errors.Is(err, ErrLocationInUse) {
+			h.writeError(w, http.StatusConflict, ErrCodeConflict, err.Error())
 			return err
 		}
 		if h.writeNamespaceClosedError(w, err, destNamespace) {
