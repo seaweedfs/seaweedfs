@@ -2008,8 +2008,9 @@ async fn range_from_source_response(
 ) -> Response {
     let range_str = range_str.to_string();
     let tracking = track_download.then(|| state.clone());
+    let chunk_size = streaming_chunk_size(state.read_buffer_size_bytes, info.data_size as usize);
     tokio::task::spawn_blocking(move || {
-        handle_range_request_from_source(&range_str, info, response_headers, tracking)
+        handle_range_request_from_source(&range_str, info, response_headers, tracking, chunk_size)
     })
     .await
     .unwrap_or_else(|e| {
@@ -2353,6 +2354,7 @@ fn handle_range_request_from_source(
     info: crate::storage::volume::NeedleStreamInfo,
     mut headers: HeaderMap,
     state: Option<Arc<VolumeServerState>>,
+    chunk_size: usize,
 ) -> Response {
     let total = info.data_size as i64;
     let ranges = match parse_range_header(range_str, total) {
@@ -2374,6 +2376,16 @@ fn handle_range_request_from_source(
 
     if sum_ranges_size(&ranges) > total {
         return (StatusCode::OK, headers).into_response();
+    }
+
+    if ranges.iter().any(|r| r.start != 0 || r.length != total)
+        && let Err(err) = info.verify_checksum(chunk_size)
+    {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("range read error: {}", err),
+        )
+            .into_response();
     }
 
     let read_slice = |start: i64, length: i64| -> Result<Vec<u8>, std::io::Error> {
@@ -7013,11 +7025,97 @@ mod tests {
             io_unavailable: Arc::default(),
             io_errors: io_errors.clone(),
             needle_id: NeedleId(1),
-            checksum: 0,
+            checksum: CRC::new(&data).0,
+            append_at_ns: 0,
+            load_generation: u64::MAX,
         };
-        let resp = handle_range_request_from_source("bytes=10-19", info, HeaderMap::new(), None);
+        // The checksum pass leaves the streak to the range read.
+        info.verify_checksum(64).unwrap();
+        assert_eq!(io_errors.get_io_error_state().1, 2);
+        let resp =
+            handle_range_request_from_source("bytes=10-19", info, HeaderMap::new(), None, 64);
         assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
         assert_eq!(io_errors.get_io_error_state().1, 0);
+    }
+
+    /// A range carries no checksum of its own, so the first ranged read of a
+    /// needle checks the whole needle's CRC and sends none of the range on a
+    /// mismatch; the reader can then fall back to another replica. A verified
+    /// needle is checked again once the volume reloads.
+    #[tokio::test]
+    async fn test_range_read_checks_the_needle_checksum() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let payload =
+            |seed: u32| -> Vec<u8> { (0..3000u32).map(|i| ((i * 7 + seed) % 251) as u8).collect() };
+        let damage = |data: &[u8]| {
+            let dat = tmp.path().join("1.dat");
+            let mut bytes = std::fs::read(&dat).unwrap();
+            let at = bytes.windows(data.len()).position(|w| w == data).unwrap();
+            bytes[at + 10] ^= 0xff;
+            std::fs::write(&dat, bytes).unwrap();
+        };
+
+        let intact = payload(1);
+        let path = put_test_needle(&state, 0x6e7a_0c01, &intact);
+        let (status, _, body) =
+            send_read(&state, Method::GET, &path, Some(b"bytes=1000-1499")).await;
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(body, &intact[1000..1500]);
+
+        // Damage a byte outside the range: the range itself is intact, but
+        // the needle is not, so this replica must not serve it.
+        let damaged = payload(2);
+        let path = put_test_needle(&state, 0x6e7a_0c02, &damaged);
+        damage(&damaged);
+        for range in [&b"bytes=1000-1499"[..], b"bytes=0-1,1000-1001"] {
+            let (status, _, body) = send_read(&state, Method::GET, &path, Some(range)).await;
+            assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{range:?}");
+            assert!(
+                !body.windows(2).any(|w| w == &damaged[1000..1002]),
+                "{range:?}"
+            );
+        }
+
+        // Concurrent first ranges of a needle all see the outcome of the check.
+        for (seed, damage_it) in [(3, false), (4, true)] {
+            let data = payload(seed);
+            let path = put_test_needle(&state, 0x6e7a_0c00 + seed as u64, &data);
+            if damage_it {
+                damage(&data);
+            }
+            let reads = (0..8).map(|_| send_read(&state, Method::GET, &path, Some(b"bytes=10-19")));
+            for (status, _, _) in futures::future::join_all(reads).await {
+                assert_eq!(status == StatusCode::PARTIAL_CONTENT, !damage_it, "{seed}");
+            }
+        }
+
+        // A verified needle is checked again after a reload, as a compaction
+        // commit does; until then later ranges skip the check.
+        let data = payload(5);
+        let path = put_test_needle(&state, 0x6e7a_0c05, &data);
+        let (status, _, _) = send_read(&state, Method::GET, &path, Some(b"bytes=10-19")).await;
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        let (_, v) = state
+            .store
+            .read()
+            .unwrap()
+            .find_volume(VolumeId(1))
+            .unwrap();
+        v.compact_by_index(0, 0, |_| true).unwrap();
+        v.commit_compact().unwrap();
+        damage(&data);
+        let (status, _, _) = send_read(&state, Method::GET, &path, Some(b"bytes=10-19")).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+
+        let data = payload(6);
+        let path = put_test_needle(&state, 0x6e7a_0c06, &data);
+        let (status, _, _) = send_read(&state, Method::GET, &path, Some(b"bytes=10-19")).await;
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        damage(&data);
+        let (status, _, body) = send_read(&state, Method::GET, &path, Some(b"bytes=100-109")).await;
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(body, &data[100..110]);
     }
 
     /// Range is read as Go reads it: a byte its parseRange cannot parse is a
