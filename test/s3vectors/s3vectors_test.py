@@ -271,27 +271,42 @@ def test_sse_s3_bucket(vectors, cluster):
     bucket = "sealed-" + uuid.uuid4().hex[:16]
     vectors.create_vector_bucket(vectorBucketName=bucket, encryptionConfiguration={"sseType": "AES256"})
     args = {"vectorBucketName": bucket, "indexName": INDEX}
+    # A small index, whose data file is one chunk, and a wide one whose data
+    # file spans several: the gateway reads the two differently.
     vectors.create_index(**args, dataType="float32", dimension=2, distanceMetric="euclidean")
     vectors.put_vectors(**args, vectors=[{"key": "a", "data": {"float32": [1, 0]}},
                                          {"key": "b", "data": {"float32": [0, 1]}}])
     hits = vectors.query_vectors(**args, queryVector={"float32": [0, 1]}, topK=1)["vectors"]
     assert [h["key"] for h in hits] == ["b"]
+    wide = {"vectorBucketName": bucket, "indexName": "wide"}
+    vectors.create_index(**wide, dataType="float32", dimension=4096, distanceMetric="euclidean")
+    vectors.put_vectors(**wide, vectors=[{"key": f"w{i}", "data": {"float32": [float(i)] * 4096}} for i in range(300)])
+    hits = vectors.query_vectors(**wide, queryVector={"float32": [7.0] * 4096}, topK=1)["vectors"]
+    assert [h["key"] for h in hits] == ["w7"]
 
-    table = f"/buckets/{bucket}/vector/{INDEX}"
-    listing = urllib.request.Request(f"http://127.0.0.1:{cluster['filer']}{table}/data/", headers={"Accept": "application/json"})
-    with urllib.request.urlopen(listing, timeout=5) as response:
-        names = [e["FullPath"].rsplit("/", 1)[1] for e in json.load(response)["Entries"] or []]
-    assert names, "the engine wrote no data file"
-    for name in names:
-        with urllib.request.urlopen(f"http://127.0.0.1:{cluster['filer']}{table}/data/{name}?metadata=true", timeout=5) as response:
-            meta = json.load(response)
-        assert "x-seaweedfs-sse-s3-key" in meta["Extended"], meta["Extended"].keys()
-        assert all(chunk.get("sse_type") == 3 for chunk in meta["chunks"]), meta["chunks"]
     s3 = boto3.client("s3", endpoint_url=cluster["endpoint"], aws_access_key_id="test", aws_secret_access_key="test",
                       region_name="us-east-1", config=Config(s3={"addressing_style": "path"}))
-    through_gateway = s3.get_object(Bucket=bucket, Key=f"vector/{INDEX}/data/{names[0]}")["Body"].read()
-    assert through_gateway[:4] == b"LANC" or b"LANC" in through_gateway[-16:], through_gateway[:16]
+    chunk_counts = set()
+    for index in (INDEX, "wide"):
+        table = f"/buckets/{bucket}/vector/{index}"
+        listing = urllib.request.Request(f"http://127.0.0.1:{cluster['filer']}{table}/data/", headers={"Accept": "application/json"})
+        with urllib.request.urlopen(listing, timeout=5) as response:
+            names = [e["FullPath"].rsplit("/", 1)[1] for e in json.load(response)["Entries"] or []]
+        assert names, f"the engine wrote no data file for {index}"
+        for name in names:
+            with urllib.request.urlopen(f"http://127.0.0.1:{cluster['filer']}{table}/data/{name}?metadata=true", timeout=5) as response:
+                meta = json.load(response)
+            assert "x-seaweedfs-sse-s3-key" in meta["Extended"], meta["Extended"].keys()
+            assert all(chunk.get("sse_type") == 3 for chunk in meta["chunks"]), meta["chunks"]
+            chunk_counts.add(len(meta["chunks"]))
+            # The gateway's own S3 API serves the file decrypted: a Lance
+            # file, its magic in the footer, of the size the filer records.
+            through_gateway = s3.get_object(Bucket=bucket, Key=f"vector/{index}/data/{name}")["Body"].read()
+            assert through_gateway[-4:] == b"LANC", (index, name, through_gateway[-16:])
+            assert len(through_gateway) == meta["FileSize"], (len(through_gateway), meta["FileSize"])
+    assert 1 in chunk_counts and max(chunk_counts) > 1, chunk_counts
 
+    vectors.delete_index(**wide)
     vectors.delete_index(**args)
     vectors.delete_vector_bucket(vectorBucketName=bucket)
 
