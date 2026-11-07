@@ -225,6 +225,24 @@ func TestLocationRaceBacksOut(t *testing.T) {
 		})
 	}
 
+	// Another update of the record landing while a move is checked cannot
+	// leave the record on the root a racing create took.
+	for _, other := range []string{"ns/shared/metadata/v2.metadata.json", "ns/old/metadata/v2.metadata.json"} {
+		t.Run("update moving under an update to "+other, func(t *testing.T) {
+			fs, m := startRenameManager(t)
+			requireOK(t, m, fs, "CreateTable", &CreateTableRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"}, Name: "a", Format: FormatIceberg, MetadataLocation: renameLocation("ns/old/metadata/v1.metadata.json")})
+			client := &rootRaceClient{SeaweedFilerClient: fs.Client, f: fs, dir: nsPath, name: "a", location: location}
+			client.then = func() {
+				runHandler(t, m, fs.Client, "UpdateTable", &UpdateTableRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"}, Name: "a", MetadataVersion: 3, MetadataLocation: renameLocation(other)})
+			}
+			status, resp := runHandler(t, m, client, "UpdateTable", &UpdateTableRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"}, Name: "a", MetadataVersion: 2, MetadataLocation: location})
+			assert.Equal(t, http.StatusConflict, status, "%+v", resp)
+			require.True(t, client.planted)
+			assert.False(t, RootClaimed(mustRoots(t, fs), path.Join(nsPath, "rival"), path.Join(nsPath, "shared")))
+			assert.NotContains(t, fs.Get(nsPath, "a").Extended, ExtendedKeyMoving)
+		})
+	}
+
 	t.Run("update with a failed check", func(t *testing.T) {
 		fs, m := startRenameManager(t)
 		before := fs.Get(nsPath, "t").Extended[ExtendedKeyMetadata]
