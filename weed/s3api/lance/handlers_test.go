@@ -2,6 +2,7 @@ package lance
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -516,8 +517,10 @@ func TestDescribeTableInternalIgnoresCatalogGrants(t *testing.T) {
 	}
 
 	h.mustDo(t, http.MethodPost, "/v1/table/lnc$ns$t/deregister", `{}`, http.StatusOK)
-	if _, _, err := server.DescribeTableInternal(anonymous, []string{"lnc", "ns", "t"}); err == nil {
-		t.Fatal("a deregistered table resolved")
+	_, _, err = server.DescribeTableInternal(anonymous, []string{"lnc", "ns", "t"})
+	var apiErr *s3tables.S3TablesError
+	if !errors.As(err, &apiErr) || apiErr.Type != s3tables.ErrCodeNoSuchTable {
+		t.Fatalf("a deregistered table resolved: %v, want %s", err, s3tables.ErrCodeNoSuchTable)
 	}
 }
 

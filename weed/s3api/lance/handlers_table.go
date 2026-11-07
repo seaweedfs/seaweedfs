@@ -1,7 +1,6 @@
 package lance
 
 import (
-	"fmt"
 	"net/http"
 	"strings"
 
@@ -219,7 +218,7 @@ func (s *Server) describeTable(r *http.Request, parts []string, internal bool) (
 		return "", nil, err
 	}
 	if deregistered {
-		return "", nil, fmt.Errorf("table is deregistered")
+		return "", nil, &s3tables.S3TablesError{Type: s3tables.ErrCodeNoSuchTable, Message: "table is deregistered"}
 	}
 	canWrite := func() bool { return s.mayUpdateTable(r, bucket, ns, name) }
 	if internal && len(ns) == 1 && ns[0] == s3tables.VectorIndexNamespace {
