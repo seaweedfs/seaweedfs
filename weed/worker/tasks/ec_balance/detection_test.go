@@ -4,8 +4,10 @@ import (
 	"context"
 	"net"
 	"slices"
+	"strings"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/admin/topology"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding/ecbalancer"
@@ -194,5 +196,60 @@ func TestSortMovesByPhaseKeepsAVolumesMovesInPlanOrder(t *testing.T) {
 	}
 	if want := []string{"global 3", "global other 2", "within 1", "within 2", "global 1"}; !slices.Equal(got, want) {
 		t.Errorf("order = %q, want %q", got, want)
+	}
+}
+
+// TestDetectionKeepsGlobalMovesUnderTheCap: the within-rack moves that come
+// first in plan order must not push every global move past maxResults.
+func TestDetectionKeepsGlobalMovesUnderTheCap(t *testing.T) {
+	disk := func(shards ...*master_pb.VolumeEcShardInformationMessage) map[string]*master_pb.DiskInfo {
+		return map[string]*master_pb.DiskInfo{"": {Type: "", MaxVolumeCount: 100, EcShardInfos: shards}}
+	}
+	// Volume 100 sits on one machine (within-rack moves); volumes 1-20 load one
+	// server (global moves).
+	var loaded []*master_pb.VolumeEcShardInformationMessage
+	for vid := uint32(1); vid <= 20; vid++ {
+		loaded = append(loaded, &master_pb.VolumeEcShardInformationMessage{Id: vid, Collection: "col1", EcIndexBits: 1})
+	}
+	topoInfo := &master_pb.TopologyInfo{
+		DataCenterInfos: []*master_pb.DataCenterInfo{{
+			Id: "dc1",
+			RackInfos: []*master_pb.RackInfo{{Id: "rack1", DataNodeInfos: []*master_pb.DataNodeInfo{
+				{Id: "10.0.0.1:8080", DiskInfos: disk(&master_pb.VolumeEcShardInformationMessage{Id: 100, Collection: "col1", EcIndexBits: 0x3FFF})},
+				{Id: "10.0.0.2:8080", DiskInfos: disk(loaded...)},
+				{Id: "10.0.0.3:8080", DiskInfos: disk()},
+				{Id: "10.0.0.4:8080", DiskInfos: disk()},
+			}}},
+		}},
+	}
+	at := topology.NewActiveTopology(0)
+	if err := at.UpdateTopology(topoInfo); err != nil {
+		t.Fatalf("UpdateTopology: %v", err)
+	}
+	clusterInfo := &types.ClusterInfo{ActiveTopology: at}
+
+	all, _, err := Detection(context.Background(), nil, clusterInfo, NewDefaultConfig(), 0)
+	if err != nil {
+		t.Fatalf("Detection: %v", err)
+	}
+	withinRack := 0
+	for _, r := range all {
+		if strings.Contains(r.Reason, " within_rack:") {
+			withinRack++
+		}
+	}
+	if withinRack < 2 {
+		t.Fatalf("fixture plans %d within-rack moves, want at least 2", withinRack)
+	}
+
+	results, hasMore, err := Detection(context.Background(), nil, clusterInfo, NewDefaultConfig(), 1)
+	if err != nil {
+		t.Fatalf("Detection: %v", err)
+	}
+	if len(results) != 1 || !hasMore {
+		t.Fatalf("got %d results (hasMore %v), want 1 and more", len(results), hasMore)
+	}
+	if !strings.Contains(results[0].Reason, " global:") {
+		t.Errorf("kept %q, want a global move", results[0].Reason)
 	}
 }
