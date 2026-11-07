@@ -14,6 +14,7 @@ use seaweed_worker_core::pb::{
     JobProgressUpdate, JobProposal, ObjectObservation, WorkerObservations, config_value::Kind,
 };
 use seaweed_worker_core::{DetectionSender, ExecutionSender};
+use weed_lance_worker::catalog::{NamespaceClient, SigningKey};
 
 /// Keeps everything a handler reports, so a test can assert on it afterwards.
 #[derive(Default)]
@@ -57,6 +58,14 @@ impl ExecutionSender for Recorder {
 /// these handlers rewrite real files, and there is nothing to learn from them
 /// against a fake.
 pub fn namespace_url() -> Option<String> {
+    // The handlers say why they skip a table only in their logs.
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .with_test_writer()
+        .try_init();
     std::env::var("WEED_LANCE_NAMESPACE")
         .ok()
         .filter(|s| !s.is_empty())
@@ -81,10 +90,26 @@ pub async fn storage() -> weed_lance_worker::dataset::Storage {
         .ok()
         .filter(|s| !s.is_empty())
         .expect("WEED_LANCE_NAMESPACE names a live namespace; WEED_MASTERS must name its masters");
-    let security = weed_lance_worker::security::Security::load(None, None).expect("security.toml");
+    let security = security();
     let cluster =
         weed_lance_worker::cluster::Cluster::new(&masters, "", &security).expect("masters");
     weed_lance_worker::dataset::Storage(Some(
         cluster.storage(&security, false).await.expect("storage"),
     ))
+}
+
+fn security() -> weed_lance_worker::security::Security {
+    weed_lance_worker::security::Security::load(None, None).expect("security.toml")
+}
+
+/// The cluster token the namespace authenticates its processes by, from
+/// `jwt.filer_signing.key` (WEED_JWT_FILER_SIGNING_KEY or security.toml),
+/// as the worker reads it.
+pub fn signing_key() -> Option<SigningKey> {
+    SigningKey::new(security().get("jwt.filer_signing.key"))
+}
+
+/// The namespace client the handlers would use.
+pub fn client(url: &str) -> NamespaceClient {
+    NamespaceClient::new(url.to_string()).with_signing_key(signing_key().as_ref())
 }

@@ -9,14 +9,13 @@ use seaweed_worker_core::pb::{
     ExecuteJobRequest, JobSpec, RunDetectionRequest, config_value::Kind,
 };
 use seaweed_worker_core::{JobHandler, PreviewProvider};
-use weed_lance_worker::catalog::NamespaceClient;
 use weed_lance_worker::jobs::cleanup::CleanupVersionsHandler;
 use weed_lance_worker::jobs::compact::{CompactHandler, JOB_TYPE};
 use weed_lance_worker::jobs::indices::OptimizeIndicesHandler;
 use weed_lance_worker::preview::LancePreview;
 
 mod common;
-use common::{Recorder, int_config, namespace_url, storage};
+use common::{Recorder, client, int_config, namespace_url, signing_key, storage};
 
 /// These tests drive one live gateway and one shared catalog: `list_all_tables`
 /// sweeps everything, so a table another test is writing shows up in this test's
@@ -66,7 +65,7 @@ async fn seed_table(
         .await?
         .error_for_status()?;
 
-    let client = NamespaceClient::new(url.to_string());
+    let client = client(url);
     let id = vec!["vec".to_string(), "ml".to_string(), name.to_string()];
     let description = client.describe_table(&id).await?;
 
@@ -145,7 +144,9 @@ async fn compacts_a_fragmented_table() {
     let encoded = seed_fragmented_table(&url, "compactme", 12)
         .await
         .expect("seed a fragmented table");
-    let handler = CompactHandler::new(url).with_storage(storage().await);
+    let handler = CompactHandler::new(url)
+        .with_storage(storage().await)
+        .with_signing_key(signing_key());
     let recorder = Recorder::default();
 
     let request = RunDetectionRequest {
@@ -233,7 +234,9 @@ async fn cleans_up_old_versions() {
         .await
         .expect("seed a table with versions to clean");
 
-    let handler = CleanupVersionsHandler::new(url).with_storage(storage().await);
+    let handler = CleanupVersionsHandler::new(url)
+        .with_storage(storage().await)
+        .with_signing_key(signing_key());
     let recorder = Recorder::default();
 
     let request = RunDetectionRequest {
@@ -297,7 +300,9 @@ async fn skips_tables_without_indices() {
         .await
         .expect("seed a table without an index");
 
-    let handler = OptimizeIndicesHandler::new(url).with_storage(storage().await);
+    let handler = OptimizeIndicesHandler::new(url)
+        .with_storage(storage().await)
+        .with_signing_key(signing_key());
     let recorder = Recorder::default();
 
     let request = RunDetectionRequest {
@@ -336,7 +341,9 @@ async fn reindexes_rows_an_index_does_not_cover() {
     let encoded = seed_table(&url, "reindexme", 2, 512, true)
         .await
         .expect("seed an indexed table with uncovered rows");
-    let handler = OptimizeIndicesHandler::new(url).with_storage(storage().await);
+    let handler = OptimizeIndicesHandler::new(url)
+        .with_storage(storage().await)
+        .with_signing_key(signing_key());
     let recorder = Recorder::default();
 
     let request = RunDetectionRequest {
@@ -441,7 +448,7 @@ async fn concurrent_writers_keep_every_commit() {
         .await
         .expect("seed the table the writers will append to");
 
-    let client = NamespaceClient::new(url.clone());
+    let client = client(&url);
     let id = vec!["vec".to_string(), "ml".to_string(), "racers".to_string()];
     let description = client.describe_table(&id).await.expect("describe");
     let wrapper = storage()
