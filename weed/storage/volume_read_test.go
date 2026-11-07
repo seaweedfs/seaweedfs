@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -430,11 +429,83 @@ func TestReadNeedleDataIntoRangeChecksumMismatch(t *testing.T) {
 	if err := v.readNeedleMetaAt(meta, nv.Offset.ToActualOffset(), int32(nv.Size)); err != nil {
 		t.Fatalf("read meta: %v", err)
 	}
-	if err := v.readNeedleDataInto(meta, &ReadOption{ReadBufferSize: 4096}, io.Discard, 0, int64(meta.DataSize)); err != nil {
+	v.loadGeneration.Store(volumeLoads.Add(1))
+	if _, err := v.verifiedNeedleBlocks(meta, &ReadOption{ReadBufferSize: 4096}); err != nil {
 		t.Fatalf("verification pass: %v", err)
 	}
 	if _, count, _ := v.getIoErrorState(); count != 1 {
 		t.Errorf("io error streak %d after a verification pass, want 1", count)
+	}
+}
+
+// Damage that appears after a needle passed its check is caught too: a later
+// range checks the blocks it covers against the CRCs the check recorded, so it
+// never serves damaged bytes, while ranges over intact blocks still read.
+func TestReadNeedleDataIntoRangeDamagedAfterCheck(t *testing.T) {
+	dir := t.TempDir()
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+
+	const block = minRangeCheckBlockSize
+	data := make([]byte, 5*block-100)
+	for i := range data {
+		data[i] = byte(i*7 + i/251)
+	}
+	for i, page := range []int{4096, PagedReadLimit} {
+		n := &needle.Needle{Id: types.Uint64ToNeedleId(uint64(i + 1)), Cookie: 0x1234, Data: append([]byte(nil), data...)}
+		n.Checksum = needle.NewCRC(n.Data)
+		raw, _, _, err := v.writeNeedle2(n, true, false, false)
+		if err != nil {
+			t.Fatalf("write needle: %v", err)
+		}
+		read := func(offset, size int64) ([]byte, error) {
+			meta := &needle.Needle{Id: n.Id}
+			nv, _ := v.nm.Get(meta.Id)
+			if err := v.readNeedleMetaAt(meta, nv.Offset.ToActualOffset(), int32(nv.Size)); err != nil {
+				t.Fatalf("read meta: %v", err)
+			}
+			var buf bytes.Buffer
+			err := v.readNeedleDataInto(meta, &ReadOption{ReadBufferSize: page}, &buf, offset, size)
+			return buf.Bytes(), err
+		}
+
+		ranges := [][2]int64{{3*block + 10, 100}, {block - 50, 3 * block}, {4*block + 5, int64(len(data)) - 4*block - 5}}
+		for _, r := range ranges {
+			if got, err := read(r[0], r[1]); err != nil || !bytes.Equal(got, data[r[0]:r[0]+r[1]]) {
+				t.Fatalf("page %d: range %v before damage: %d bytes, %v", page, r, len(got), err)
+			}
+		}
+
+		damagedAt := int64(3*block + 500)
+		if _, err := v.DataBackend.WriteAt([]byte{^data[damagedAt]}, int64(raw)+types.NeedleHeaderSize+types.DataSizeSize+damagedAt); err != nil {
+			t.Fatalf("damage needle: %v", err)
+		}
+		for _, r := range ranges[:2] {
+			got, err := read(r[0], r[1])
+			if err == nil || !strings.Contains(err.Error(), "checksum") {
+				t.Fatalf("page %d: range %v over a block damaged after the check: %v; want a checksum error", page, r, err)
+			}
+			// Only bytes of blocks that passed go out, and they are intact.
+			if int64(len(got)) > max(0, 3*block-r[0]) || !bytes.Equal(got, data[r[0]:r[0]+int64(len(got))]) {
+				t.Fatalf("page %d: range %v wrote %d bytes reaching into the damaged block", page, r, len(got))
+			}
+		}
+		for _, r := range [][2]int64{ranges[2], {10, 100}, {2*block + 1, block - 1}} {
+			if got, err := read(r[0], r[1]); err != nil || !bytes.Equal(got, data[r[0]:r[0]+r[1]]) {
+				t.Fatalf("page %d: range %v over intact blocks: %d bytes, %v", page, r, len(got), err)
+			}
+		}
+	}
+
+	for _, tc := range []struct{ size, block int64 }{
+		{0, block}, {64 * block, block}, {64*block + 1, 2 * block}, {64 * PagedReadLimit, PagedReadLimit}, {1 << 34, PagedReadLimit},
+	} {
+		if got := rangeCheckBlockSize(tc.size); got != tc.block {
+			t.Errorf("rangeCheckBlockSize(%d) = %d, want %d", tc.size, got, tc.block)
+		}
 	}
 }
 
