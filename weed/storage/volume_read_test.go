@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -420,6 +421,20 @@ func TestReadNeedleDataIntoRangeChecksumMismatch(t *testing.T) {
 		if _, err := read(reloaded, at); err == nil || !strings.Contains(err.Error(), "checksum") {
 			t.Fatalf("page %d: range read after reload: %v; want a checksum error", page, err)
 		}
+	}
+
+	// The verification pass leaves the io error streak to the range read.
+	v.checkReadWriteError(fmt.Errorf("eio: %w", syscall.EIO))
+	meta := &needle.Needle{Id: types.Uint64ToNeedleId(1)}
+	nv, _ := v.nm.Get(meta.Id)
+	if err := v.readNeedleMetaAt(meta, nv.Offset.ToActualOffset(), int32(nv.Size)); err != nil {
+		t.Fatalf("read meta: %v", err)
+	}
+	if err := v.readNeedleDataInto(meta, &ReadOption{ReadBufferSize: 4096}, io.Discard, 0, int64(meta.DataSize)); err != nil {
+		t.Fatalf("verification pass: %v", err)
+	}
+	if _, count, _ := v.getIoErrorState(); count != 1 {
+		t.Errorf("io error streak %d after a verification pass, want 1", count)
 	}
 }
 

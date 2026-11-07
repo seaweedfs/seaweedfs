@@ -184,7 +184,7 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 	// replica fails the read and the reader tries another copy.
 	if offset != 0 || size != int64(n.DataSize) {
 		key := verifiedNeedle{v.loadGeneration.Load(), n.Id, n.AppendAtNs, n.Checksum}
-		if !verifiedNeedles.Contains(key) {
+		if _, ok := verifiedNeedles.Get(key); !ok {
 			_, err, _ = verifyingNeedles.Do(fmt.Sprint(key), func() (any, error) {
 				if err := v.readNeedleDataInto(n, readOption, io.Discard, 0, int64(n.DataSize)); err != nil {
 					return nil, err
@@ -410,8 +410,12 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 		return fmt.Errorf("ReadNeedleData checksum %v expected %v for Needle: %v,%v", crc, n.Checksum, v.Id, n)
 	}
 	// The read succeeded only once the checksum passes; a failed needle
-	// leaves the io error streak untouched, matching the streamed path.
-	v.checkReadWriteError(nil)
+	// leaves the io error streak untouched, matching the streamed path. A
+	// ranged read's verification pass (into io.Discard) leaves it alone too:
+	// the range read that follows reports the outcome.
+	if writer != io.Discard {
+		v.checkReadWriteError(nil)
+	}
 	if pending != nil {
 		if _, err = writer.Write(pending); err != nil {
 			return fmt.Errorf("ReadNeedleData write: %w", err)
