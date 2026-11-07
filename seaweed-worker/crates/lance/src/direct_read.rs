@@ -401,14 +401,13 @@ impl Source for Filers {
     }
 }
 
-/// The filer answers a listing of a missing directory, or a delete of a
-/// missing entry, with its missing-entry error; the filer client's tonic is
-/// not this crate's, so it is read as text.
+/// The filer answers a listing of a missing directory with its missing-entry
+/// error, `filer_pb.ErrNotFound`; the filer client's tonic is not this
+/// crate's, so it is read as text. Other errors saying "not found", such as
+/// an unresolved remote storage, are failures.
 fn is_not_found(err: &anyhow::Error) -> bool {
-    err.chain().any(|cause| {
-        let text = cause.to_string();
-        text.contains("no entry is found") || text.contains("not found")
-    })
+    err.chain()
+        .any(|cause| cause.to_string().contains("no entry is found"))
 }
 
 fn child(dir: &Path, name: &str) -> Path {
@@ -2392,6 +2391,14 @@ mod tests {
         assert_eq!(filers.name(), "127.0.0.1:2,127.0.0.1:3");
         filers.set_addresses(&[]).unwrap();
         assert!(filers.lookup("/buckets", "vb").await.is_err());
+    }
+
+    #[test]
+    fn only_the_filers_missing_entry_error_is_not_found() {
+        let missing = anyhow::anyhow!("filer: no entry is found in filer store");
+        assert!(is_not_found(&missing.context("ListEntries")));
+        let remote = anyhow::anyhow!("resolve remote storage client for /buckets/vb/t: not found");
+        assert!(!is_not_found(&remote.context("DeleteEntry")));
     }
 
     /// A store writing through `fake`, with `chunk_size` bytes per chunk.
