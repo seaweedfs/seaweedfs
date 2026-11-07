@@ -37,26 +37,40 @@ struct Entry {
 
 /// Wraps each object store Lance opens; clones share one cache.
 #[derive(Clone)]
-pub struct ReadCache(moka::sync::Cache<Key, Entry>);
+pub struct ReadCache {
+    cache: moka::sync::Cache<Key, Entry>,
+    /// Keeps entries apart from those of another [`Self::scoped`] view, for
+    /// stores that share a prefix but not their bytes.
+    scope: Arc<str>,
+}
 
 impl ReadCache {
     pub fn new(capacity_bytes: u64) -> Self {
-        Self(
-            moka::sync::Cache::builder()
+        Self {
+            cache: moka::sync::Cache::builder()
                 .max_capacity(capacity_bytes)
                 .weigher(|key: &Key, entry: &Entry| {
                     u32::try_from(key.path.as_ref().len() + entry.bytes.len()).unwrap_or(u32::MAX)
                 })
                 .build(),
-        )
+            scope: "".into(),
+        }
+    }
+
+    /// The same cache, keyed apart under `scope`.
+    pub fn scoped(&self, scope: &str) -> Self {
+        Self {
+            cache: self.cache.clone(),
+            scope: scope.into(),
+        }
     }
 }
 
 impl fmt::Debug for ReadCache {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ReadCache")
-            .field("entries", &self.0.entry_count())
-            .field("bytes", &self.0.weighted_size())
+            .field("entries", &self.cache.entry_count())
+            .field("bytes", &self.cache.weighted_size())
             .finish()
     }
 }
@@ -65,8 +79,8 @@ impl WrappingObjectStore for ReadCache {
     fn wrap(&self, store_prefix: &str, original: Arc<dyn ObjectStore>) -> Arc<dyn ObjectStore> {
         Arc::new(CachedStore {
             inner: original,
-            store: store_prefix.into(),
-            cache: self.0.clone(),
+            store: format!("{}|{store_prefix}", self.scope).into(),
+            cache: self.cache.clone(),
         })
     }
 }
@@ -373,8 +387,8 @@ mod tests {
                 .unwrap();
             read(&store, &path, 0..(8 << 10)).await;
         }
-        cache.0.run_pending_tasks();
-        assert!(cache.0.weighted_size() <= 64 << 10, "{cache:?}");
+        cache.cache.run_pending_tasks();
+        assert!(cache.cache.weighted_size() <= 64 << 10, "{cache:?}");
     }
 
     #[tokio::test]
@@ -392,11 +406,11 @@ mod tests {
         let backing = whole.as_ptr_range();
         read(&store, &path, 10..20).await;
         let key = Key {
-            store: "memory".into(),
+            store: "|memory".into(),
             path,
             range: Some(10..20),
         };
-        let cached = cache.0.get(&key).unwrap().bytes;
+        let cached = cache.cache.get(&key).unwrap().bytes;
         assert_eq!(cached.len(), 10);
         assert!(!backing.contains(&cached.as_ptr()));
     }

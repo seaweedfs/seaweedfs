@@ -389,7 +389,7 @@ fn resolved(table: &pb::Table) -> Option<TableDescription> {
 pub struct VectorServer {
     client: NamespaceClient,
     fallback: FallbackOptions,
-    read_cache: Option<Arc<dyn WrappingObjectStore>>,
+    read_cache: Option<ReadCache>,
     nprobes: Option<usize>,
 }
 
@@ -411,7 +411,7 @@ impl VectorServer {
 
     /// Serve repeated reads of write-once table files from `cache`.
     pub fn with_read_cache(mut self, cache: ReadCache) -> Self {
-        self.read_cache = Some(Arc::new(cache));
+        self.read_cache = Some(cache);
         self
     }
 
@@ -426,8 +426,17 @@ impl VectorServer {
 
     async fn open(&self, table: &pb::Table) -> Result<Dataset> {
         let description = self.describe(table).await?;
-        let mut dataset =
-            dataset::open_at(&description, &self.fallback, self.read_cache.clone()).await?;
+        // The options name the store the bytes come from; the cache is scoped
+        // by it so the same bucket and path on another endpoint never share.
+        let cache = self.read_cache.as_ref().map(|cache| {
+            let options = dataset::table_options(&description, &self.fallback);
+            let endpoint = options
+                .get("aws_endpoint")
+                .map(String::as_str)
+                .unwrap_or("");
+            Arc::new(cache.scoped(endpoint)) as Arc<dyn WrappingObjectStore>
+        });
+        let mut dataset = dataset::open_at(&description, &self.fallback, cache).await?;
         if table.version != 0 {
             dataset = dataset.checkout_version(table.version).await?;
         }
