@@ -81,6 +81,12 @@ func TestCreateTableThatLosesTheRaceReturnsTheRegisteredTable(t *testing.T) {
 	if lost != won {
 		t.Errorf("losing create answered %+v, want the registered table %+v", lost, won)
 	}
+	wonDir := path.Join(s3tables.TablesPath, strings.TrimPrefix(won.Metadata.Location, "s3://"))
+	for p := range fc.entries {
+		if strings.HasPrefix(p, s3tables.GetTablePath(bucket, "finance", "orders-")) && p != wonDir && !strings.HasPrefix(p, wonDir+"/") {
+			t.Errorf("losing create left %s", p)
+		}
+	}
 }
 
 // A staged table's commit that finds its name registered by another create

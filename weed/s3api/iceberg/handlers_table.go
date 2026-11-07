@@ -336,6 +336,13 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 		// Another create registered the name first; answer with its table.
 		err = &s3tables.S3TablesError{Type: s3tables.ErrCodeTableAlreadyExists, Message: fmt.Sprintf("table %s already exists", tableName)}
 	}
+	if isS3TablesAlreadyExists(err) && strings.HasSuffix(metadataPath, tablePath) {
+		// The name went to another table before this request wrote a record,
+		// so nothing names the directory the server picked for it.
+		if cleanupErr := s.cleanupStaleTableLocation(r.Context(), metadataBucket, metadataPath); cleanupErr != nil {
+			glog.V(1).Infof("Iceberg: CreateTable cleanup %s: %v", metadataPath, cleanupErr)
+		}
+	}
 
 	if err != nil {
 		var tableErr *s3tables.S3TablesError
