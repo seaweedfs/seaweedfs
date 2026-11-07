@@ -165,8 +165,7 @@ var exitAtMountEnd = func(mountedDir string, from, to *remote_pb.RemoteStorageLo
 // directory's creation second and replays the table's earlier versions.
 func mountTableEnds(mountedDir string, loc *remote_pb.RemoteStorageLocation, resp *filer_pb.SubscribeMetadataResponse) (ended bool, moved *remote_pb.RemoteStorageLocation, err error) {
 	message := resp.EventNotification
-	switch {
-	case metadataEventUpdatesDirectory(resp, filer.DirectoryEtcRemote) && message.NewEntry.Name == filer.REMOTE_STORAGE_MOUNT_FILE:
+	if isMountTable(filer_pb.MetadataEventTargetDirectory(resp), message.NewEntry) {
 		mappings, readErr := filer.UnmarshalRemoteStorageMappings(message.NewEntry.Content)
 		if readErr != nil {
 			return false, nil, fmt.Errorf("unmarshal mappings: %w", readErr)
@@ -175,8 +174,7 @@ func mountTableEnds(mountedDir string, loc *remote_pb.RemoteStorageLocation, res
 		if sameMountLocation(moved, loc) {
 			return false, nil, nil
 		}
-	case metadataEventRemovesFromDirectory(resp, filer.DirectoryEtcRemote) && message.OldEntry.Name == filer.REMOTE_STORAGE_MOUNT_FILE:
-	default:
+	} else if !isMountTable(resp.Directory, message.OldEntry) {
 		return false, nil, nil
 	}
 	if !replacedTableMapped(mountedDir, loc, resp) {
@@ -194,7 +192,7 @@ func replacedTableMapped(mountedDir string, loc *remote_pb.RemoteStorageLocation
 	if oldEntry == nil {
 		return false
 	}
-	if resp.Directory != filer.DirectoryEtcRemote || oldEntry.Name != filer.REMOTE_STORAGE_MOUNT_FILE {
+	if !isMountTable(resp.Directory, oldEntry) {
 		return true
 	}
 	mappings, err := filer.UnmarshalRemoteStorageMappings(oldEntry.Content)
@@ -202,6 +200,12 @@ func replacedTableMapped(mountedDir string, loc *remote_pb.RemoteStorageLocation
 		return true
 	}
 	return sameMountLocation(mappings.Mappings[mountedDir], loc)
+}
+
+// isMountTable reports whether entry, in dir, is the mount table. A table
+// renamed away, deleted, or written anywhere else no longer counts.
+func isMountTable(dir string, entry *filer_pb.Entry) bool {
+	return entry != nil && dir == filer.DirectoryEtcRemote && entry.Name == filer.REMOTE_STORAGE_MOUNT_FILE
 }
 
 func sameMountLocation(a, b *remote_pb.RemoteStorageLocation) bool {

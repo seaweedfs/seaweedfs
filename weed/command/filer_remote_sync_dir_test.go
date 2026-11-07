@@ -3178,6 +3178,12 @@ func mountTableEvent(t *testing.T, tsNs int64, old, new map[string]*remote_pb.Re
 	return &filer_pb.SubscribeMetadataResponse{Directory: filer.DirectoryEtcRemote, TsNs: tsNs, EventNotification: message}
 }
 
+func renamedTable(resp *filer_pb.SubscribeMetadataResponse, newParent, newName string) *filer_pb.SubscribeMetadataResponse {
+	resp.EventNotification.NewParentPath = newParent
+	resp.EventNotification.NewEntry.Name = newName
+	return resp
+}
+
 func TestMountTableEnds(t *testing.T) {
 	mountedDir := "/buckets/b"
 	loc := &remote_pb.RemoteStorageLocation{Name: "r", Bucket: "b", Path: "/"}
@@ -3202,6 +3208,9 @@ func TestMountTableEnds(t *testing.T) {
 		{"the mount itself", mountTableEvent(t, 1, map[string]*remote_pb.RemoteStorageLocation{"/buckets/c": other}, mappedWithOther), false, nil},
 		{"replayed mount elsewhere", mountTableEvent(t, 1, map[string]*remote_pb.RemoteStorageLocation{}, map[string]*remote_pb.RemoteStorageLocation{mountedDir: elsewhere}), false, nil},
 		{"replayed unmount from elsewhere", mountTableEvent(t, 1, map[string]*remote_pb.RemoteStorageLocation{mountedDir: elsewhere}, map[string]*remote_pb.RemoteStorageLocation{}), false, nil},
+		{"table renamed away", renamedTable(mountTableEvent(t, 1, mapped, mapped), filer.DirectoryEtcRemote, filer.REMOTE_STORAGE_MOUNT_FILE+".bak"), true, nil},
+		{"table moved out of the directory", renamedTable(mountTableEvent(t, 1, mapped, mapped), "/etc", filer.REMOTE_STORAGE_MOUNT_FILE), true, nil},
+		{"a table-named file in a subdirectory", renamedTable(mountTableEvent(t, 1, nil, map[string]*remote_pb.RemoteStorageLocation{}), filer.DirectoryEtcRemote+"/old", filer.REMOTE_STORAGE_MOUNT_FILE), false, nil},
 		{"remote conf updated", &filer_pb.SubscribeMetadataResponse{Directory: filer.DirectoryEtcRemote, EventNotification: &filer_pb.EventNotification{
 			NewParentPath: filer.DirectoryEtcRemote, NewEntry: &filer_pb.Entry{Name: "r" + filer.REMOTE_STORAGE_CONF_SUFFIX}}}, false, nil},
 		{"file under the mount", &filer_pb.SubscribeMetadataResponse{Directory: mountedDir, EventNotification: &filer_pb.EventNotification{
