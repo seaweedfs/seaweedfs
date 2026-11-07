@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/gorilla/mux"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 )
 
@@ -137,6 +139,37 @@ func TestStagedCommitThatLosesTheRaceFails(t *testing.T) {
 	published := path.Join(s3tables.TablesPath, strings.TrimPrefix(location, "s3://"), "metadata", "v1.metadata.json")
 	if _, ok := fc.entries[published]; !ok {
 		t.Errorf("losing commit removed %s", published)
+	}
+}
+
+// Two clients can stage the same name, each at a location of its own. The
+// commit of the first lands at its own staged location, not at the location of
+// the stage that came after it.
+func TestStagedCommitKeepsItsOwnLocation(t *testing.T) {
+	const bucket = "warehouse"
+	fc := newMemFiler()
+	seedNamespace(fc, bucket, "finance", "alice")
+	s := NewServer(fc, nil)
+	stage := func() createdResult {
+		w := httptest.NewRecorder()
+		s.handleCreateTable(w, newCreateTableRequest(t, bucket, "finance", `{"name":"orders","stage-create":true}`, "alice"))
+		return decodeCreated(t, w)
+	}
+	first, second := stage(), stage()
+	if first.Metadata.Location == second.Metadata.Location {
+		t.Fatalf("both stages got %s", first.Metadata.Location)
+	}
+
+	body := `{"requirements":[{"type":"assert-create"}],"updates":[{"action":"assign-uuid","uuid":"` + first.Metadata.TableUUID + `"}]}`
+	r := httptest.NewRequest(http.MethodPost, "/v1/"+bucket+"/namespaces/finance/tables/orders", strings.NewReader(body))
+	r = mux.SetURLVars(r, map[string]string{"prefix": bucket, "namespace": "finance", "table": "orders"})
+	r = r.WithContext(s3_constants.SetIdentityNameInContext(r.Context(), "alice"))
+	w := httptest.NewRecorder()
+	s.handleUpdateTable(w, r)
+
+	committed := decodeCreated(t, w)
+	if !strings.HasPrefix(committed.MetadataLocation, first.Metadata.Location+"/metadata/") || committed.Metadata.Location != first.Metadata.Location {
+		t.Errorf("commit landed at %s (location %s), want under %s", committed.MetadataLocation, committed.Metadata.Location, first.Metadata.Location)
 	}
 }
 

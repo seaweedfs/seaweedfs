@@ -119,7 +119,7 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 				var latestMarker *stageCreateMarker
 				if stageCreateEnabled {
 					var markerErr error
-					latestMarker, markerErr = s.loadLatestStageCreateMarker(r.Context(), bucketName, namespace, tableName)
+					latestMarker, markerErr = s.loadLatestStageCreateMarker(r.Context(), bucketName, namespace, tableName, assignedTableUUID(raw.Updates))
 					if markerErr != nil {
 						writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to load stage-create marker: "+markerErr.Error())
 						return

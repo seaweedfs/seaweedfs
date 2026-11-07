@@ -90,7 +90,9 @@ func (s *Server) pruneExpiredStageCreateMarkers(ctx context.Context, bucketName 
 	})
 }
 
-func (s *Server) loadLatestStageCreateMarker(ctx context.Context, bucketName string, namespace []string, tableName string) (*stageCreateMarker, error) {
+// loadLatestStageCreateMarker returns the newest live marker for the table,
+// preferring the one staged with tableUUID, since each stage has its own location.
+func (s *Server) loadLatestStageCreateMarker(ctx context.Context, bucketName string, namespace []string, tableName string, tableUUID string) (*stageCreateMarker, error) {
 	opCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
@@ -99,6 +101,7 @@ func (s *Server) loadLatestStageCreateMarker(ctx context.Context, bucketName str
 
 	var latestMarker *stageCreateMarker
 	var latestCreatedAt time.Time
+	latestMatches := false
 
 	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		stream, err := client.ListEntries(opCtx, &filer_pb.ListEntriesRequest{
@@ -137,10 +140,12 @@ func (s *Server) loadLatestStageCreateMarker(ctx context.Context, bucketName str
 			if err != nil {
 				createdAt = time.Time{}
 			}
-			if latestMarker == nil || createdAt.After(latestCreatedAt) {
+			matches := tableUUID != "" && strings.EqualFold(marker.TableUUID, tableUUID)
+			if latestMarker == nil || matches && !latestMatches || matches == latestMatches && createdAt.After(latestCreatedAt) {
 				candidate := marker
 				latestMarker = &candidate
 				latestCreatedAt = createdAt
+				latestMatches = matches
 			}
 		}
 	})
@@ -273,4 +278,18 @@ func isStageCreateEnabled() bool {
 	default:
 		return true
 	}
+}
+
+// assignedTableUUID returns the UUID a commit's assign-uuid update names.
+func assignedTableUUID(updates []json.RawMessage) string {
+	for _, raw := range updates {
+		var update struct {
+			Action string `json:"action"`
+			UUID   string `json:"uuid"`
+		}
+		if json.Unmarshal(raw, &update) == nil && update.Action == "assign-uuid" {
+			return update.UUID
+		}
+	}
+	return ""
 }
