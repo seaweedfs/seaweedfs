@@ -271,13 +271,22 @@ impl VolumeTransport for HttpTransport {
         range: Option<(u64, u64)>,
         auth: &str,
     ) -> Result<Vec<u8>> {
+        let range_header = match range {
+            Some((_, 0)) => return Ok(Vec::new()),
+            Some((start, len)) => {
+                let end = start
+                    .checked_add(len - 1)
+                    .with_context(|| format!("range {start}+{len} of {file_id}"))?;
+                Some(format!("bytes={start}-{end}"))
+            }
+            None => None,
+        };
         let mut last_err = None;
         for url in locations {
             let full = format!("{}://{url}/{file_id}", self.scheme);
             let mut req = self.http.get(&full).timeout(self.read_timeout);
-            if let Some((start, len)) = range {
-                let end = start + len - 1;
-                req = req.header(RANGE, format!("bytes={start}-{end}"));
+            if let Some(range) = &range_header {
+                req = req.header(RANGE, range);
             }
             if !auth.is_empty() {
                 req = req.header(AUTHORIZATION, format!("BEARER {auth}"));
@@ -425,6 +434,26 @@ mod tests {
             .unwrap();
         assert_eq!(bytes, b"abc");
         server.await.unwrap();
+    }
+
+    /// An empty range needs no request, and one past the end of the address
+    /// space sends none.
+    #[tokio::test]
+    async fn empty_and_overflowing_ranges_send_no_request() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let closed = listener.local_addr().unwrap().to_string();
+        drop(listener);
+        let http = HttpTransport::new();
+        let read = http
+            .read(std::slice::from_ref(&closed), "7,abc", Some((5, 0)))
+            .await
+            .unwrap();
+        assert!(read.is_empty());
+        let error = http
+            .read(&[closed], "7,abc", Some((u64::MAX, 2)))
+            .await
+            .expect_err("the range cannot be expressed");
+        assert!(format!("{error:#}").contains("range"), "{error:#}");
     }
 
     /// A server that accepts the connection and never answers: a silently
