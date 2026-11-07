@@ -887,6 +887,16 @@ impl Object {
             version: None,
         }
     }
+
+    /// What a read reports besides the bytes: the entry's content type.
+    fn attributes(&self) -> Attributes {
+        match self.entry.attributes.as_ref().map(|a| a.mime.as_str()) {
+            Some(mime) if !mime.is_empty() => {
+                Attributes::from_iter([(Attribute::ContentType, mime.to_string())])
+            }
+            _ => Attributes::new(),
+        }
+    }
 }
 
 impl DirectStore {
@@ -1132,7 +1142,7 @@ impl ObjectStore for DirectStore {
                 payload: GetResultPayload::Stream(futures::stream::empty().boxed()),
                 meta,
                 range: 0..0,
-                attributes: Default::default(),
+                attributes: object.attributes(),
             });
         }
         let range = match &options.range {
@@ -1149,7 +1159,7 @@ impl ObjectStore for DirectStore {
             payload: GetResultPayload::Stream(futures::stream::once(async { Ok(bytes) }).boxed()),
             meta,
             range,
-            attributes: Default::default(),
+            attributes: object.attributes(),
         })
     }
 
@@ -3057,6 +3067,13 @@ mod tests {
             .unwrap();
         let typed = entry_of(&fake, "vector/idx/typed");
         assert_eq!(typed.attributes.unwrap().mime, "application/json");
+        let read = store.get(&Path::from("vector/idx/typed")).await.unwrap();
+        assert_eq!(
+            read.attributes
+                .get(&Attribute::ContentType)
+                .map(|v| v.as_ref()),
+            Some("application/json")
+        );
     }
 
     /// A bucket encrypts when its S3 Tables record says LANCE and AES256,
