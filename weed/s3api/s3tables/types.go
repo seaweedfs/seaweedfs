@@ -2,6 +2,7 @@ package s3tables
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"time"
 )
@@ -587,6 +588,23 @@ type S3TablesError struct {
 
 func (e *S3TablesError) Error() string {
 	return e.Message
+}
+
+// PublishedTableChangedMessage is the message of the conflict a CreateTable
+// answers when the table it registered was already visible, and another
+// caller updated or renamed it before the create could back it out. The
+// record survives, under this name or another, so whatever the caller staged
+// for it may still be in use.
+const PublishedTableChangedMessage = "table was registered and then changed by another request before the create finished"
+
+// IsPublishedTableChanged reports whether err, as a CreateTable caller
+// receives it, is the conflict PublishedTableChangedMessage describes.
+func IsPublishedTableChanged(err error) bool {
+	if errors.Is(err, ErrPublishedRecordChanged) {
+		return true
+	}
+	var tableErr *S3TablesError
+	return errors.As(err, &tableErr) && tableErr.Type == ErrCodeConflict && tableErr.Message == PublishedTableChangedMessage
 }
 
 // Table formats a catalog entry may declare.

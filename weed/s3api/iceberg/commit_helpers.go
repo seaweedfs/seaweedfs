@@ -35,18 +35,66 @@ func sleepBeforeCommitRetry(attempt int) {
 // decides which commit won. This mirrors how the maintenance worker stages its
 // own metadata.
 func (s *Server) stageCommitMetadata(ctx context.Context, metadataBucket, metadataPath, location, metadataFileName string, metadataBytes []byte) (string, string, error) {
-	err := s.saveMetadataFile(ctx, metadataBucket, metadataPath, metadataFileName, metadataBytes, true)
+	name, metadataLocation, _, err := s.stageOwnedMetadata(ctx, metadataBucket, metadataPath, location, metadataFileName, metadataBytes)
+	return name, metadataLocation, err
+}
+
+// stageOwnedMetadata is stageCommitMetadata that also returns the token the
+// file was tagged with, which discardStagedMetadata needs to remove it.
+func (s *Server) stageOwnedMetadata(ctx context.Context, metadataBucket, metadataPath, location, metadataFileName string, metadataBytes []byte) (string, string, string, error) {
+	token := uuid.NewString()
+	extended := map[string][]byte{stageTokenKey: []byte(token)}
+	err := s.saveMetadataBlob(ctx, metadataBucket, metadataPath, metadataFileName, metadataBytes, "application/json", true, extended)
 	if errors.Is(err, filer_pb.ErrEntryAlreadyExists) {
 		// v{N}-{uuid}, a form both the catalog and the maintenance worker
 		// still read the version from.
 		metadataFileName = fmt.Sprintf("%s-%s.metadata.json", strings.TrimSuffix(metadataFileName, ".metadata.json"), uuid.NewString())
 		glog.V(1).Infof("Iceberg: metadata file already staged for %s, using %s", location, metadataFileName)
-		err = s.saveMetadataFile(ctx, metadataBucket, metadataPath, metadataFileName, metadataBytes, true)
+		err = s.saveMetadataBlob(ctx, metadataBucket, metadataPath, metadataFileName, metadataBytes, "application/json", true, extended)
 	}
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
-	return metadataFileName, fmt.Sprintf("%s/metadata/%s", strings.TrimSuffix(location, "/"), metadataFileName), nil
+	return metadataFileName, fmt.Sprintf("%s/metadata/%s", strings.TrimSuffix(location, "/"), metadataFileName), token, nil
+}
+
+// discardStagedMetadata removes a metadata file this request staged and the
+// catalog will never point at. metadataFileName and token must be what
+// stageOwnedMetadata returned. The name alone does not identify the file: the
+// path can be reused once this request's file is gone — the table dropped and
+// its directory purged, then a new create staging the same v1.metadata.json —
+// so the delete goes through only while the entry still carries this
+// request's token, and a replacement is left alone.
+func (s *Server) discardStagedMetadata(ctx context.Context, metadataBucket, metadataPath, metadataFileName, metadataLocation, token string) {
+	err := s.deleteStagedMetadataFile(ctx, metadataBucket, metadataPath, metadataFileName, token)
+	if errors.Is(err, errStagedFileReplaced) {
+		glog.V(1).Infof("Iceberg: keeping metadata file %s, it is no longer the one this request staged: %v", metadataLocation, err)
+		return
+	}
+	if err != nil {
+		glog.V(1).Infof("Iceberg: failed to cleanup metadata file %s after the catalog refused it: %v", metadataLocation, err)
+	}
+}
+
+// registrationRefused reports whether a failed registration was refused
+// before any record pointing at the staged file became visible, so the file can
+// go. A name already taken, a conflict, and any other 4xx are refused that way:
+// the create wrote nothing, or backed out what it wrote, or lost its
+// still-hidden record to another create. One conflict is not: a create whose
+// record was already visible, and was updated or renamed away before the
+// create could back it out, leaves that record in place — under the original
+// name or another — still pointing at the file. A transport failure or 5xx is
+// not a refusal either: the record may have been written before the error
+// surfaced.
+func registrationRefused(err error) bool {
+	if s3tables.IsPublishedTableChanged(err) {
+		return false
+	}
+	if isS3TablesConflict(err) || isS3TablesAlreadyExists(err) {
+		return true
+	}
+	status, _, _ := classifyManagerError(err)
+	return status >= 400 && status < 500
 }
 
 type icebergRequestError struct {
@@ -102,16 +150,20 @@ func hasAssertCreateRequirement(requirements table.Requirements) bool {
 	return false
 }
 
+// isS3TablesAlreadyExists reports whether err says the name is already taken.
+// A typed error says so through its code alone: a server fault whose message
+// happens to mention an existing entry is still a server fault, and taking it
+// for a refusal would answer 409 and discard a file the catalog may point at.
+// Only an untyped error is read by its message.
 func isS3TablesAlreadyExists(err error) bool {
 	if err == nil {
 		return false
 	}
-	if strings.Contains(strings.ToLower(err.Error()), "already exists") {
-		return true
-	}
 	var tableErr *s3tables.S3TablesError
-	return errors.As(err, &tableErr) &&
-		(tableErr.Type == s3tables.ErrCodeTableAlreadyExists || tableErr.Type == s3tables.ErrCodeNamespaceAlreadyExists || strings.Contains(strings.ToLower(tableErr.Message), "already exists"))
+	if errors.As(err, &tableErr) {
+		return tableErr.Type == s3tables.ErrCodeTableAlreadyExists || tableErr.Type == s3tables.ErrCodeNamespaceAlreadyExists
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "already exists")
 }
 
 func (s *Server) finalizeCreateOnCommit(ctx context.Context, input createOnCommitInput) (*CommitTableResponse, *icebergRequestError) {
@@ -147,7 +199,6 @@ func (s *Server) finalizeCreateOnCommit(ctx context.Context, input createOnCommi
 		metadataVersion = 1
 	}
 	metadataFileName := fmt.Sprintf("v%d.metadata.json", metadataVersion)
-	newMetadataLocation := fmt.Sprintf("%s/metadata/%s", strings.TrimSuffix(input.location, "/"), metadataFileName)
 
 	metadataBytes, err := json.Marshal(newMetadata)
 	if err != nil {
@@ -194,7 +245,11 @@ func (s *Server) finalizeCreateOnCommit(ctx context.Context, input createOnCommi
 			message: err.Error(),
 		}
 	}
-	if err := s.saveMetadataFile(ctx, metadataBucket, metadataPath, metadataFileName, metadataBytes, false); err != nil {
+	// Two creators racing for the same table both pick this name. Staging it
+	// exclusively gives each its own file, so the loser can discard its file
+	// below without deleting the one the winner's record points at.
+	metadataFileName, newMetadataLocation, stageToken, err := s.stageOwnedMetadata(ctx, metadataBucket, metadataPath, input.location, metadataFileName, metadataBytes)
+	if err != nil {
 		return nil, &icebergRequestError{
 			status:  http.StatusInternalServerError,
 			errType: "InternalServerError",
@@ -216,20 +271,22 @@ func (s *Server) finalizeCreateOnCommit(ctx context.Context, input createOnCommi
 		MetadataVersion:  metadataVersion,
 		MetadataLocation: newMetadataLocation,
 	}
+	var createResp s3tables.CreateTableResponse
 	createErr := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		mgrClient := s3tables.NewManagerClient(client)
-		return s.tablesManager.Execute(ctx, mgrClient, "CreateTable", createReq, nil, input.identityName)
+		return s.tablesManager.Execute(ctx, mgrClient, "CreateTable", createReq, &createResp, input.identityName)
 	})
+	tableCreatedConcurrently := &icebergRequestError{
+		status:  http.StatusConflict,
+		errType: "CommitFailedException",
+		message: "Table was created concurrently",
+	}
 	if createErr != nil {
-		if cleanupErr := s.deleteMetadataFile(ctx, metadataBucket, metadataPath, metadataFileName); cleanupErr != nil {
-			glog.V(1).Infof("Iceberg: failed to cleanup metadata file %s after create-on-commit failure: %v", newMetadataLocation, cleanupErr)
+		if registrationRefused(createErr) {
+			s.discardStagedMetadata(ctx, metadataBucket, metadataPath, metadataFileName, newMetadataLocation, stageToken)
 		}
 		if isS3TablesConflict(createErr) || isS3TablesAlreadyExists(createErr) {
-			return nil, &icebergRequestError{
-				status:  http.StatusConflict,
-				errType: "CommitFailedException",
-				message: "Table was created concurrently",
-			}
+			return nil, tableCreatedConcurrently
 		}
 		glog.Errorf("Iceberg: CommitTable CreateTable error: %v", createErr)
 		return nil, &icebergRequestError{
@@ -237,6 +294,13 @@ func (s *Server) finalizeCreateOnCommit(ctx context.Context, input createOnCommi
 			errType: "InternalServerError",
 			message: "Failed to commit table creation: " + createErr.Error(),
 		}
+	}
+	// A name that already holds a table is answered with that table's own
+	// location rather than an error: another creator won the race. That
+	// location is empty for a table registered without one.
+	if createResp.MetadataLocation != newMetadataLocation {
+		s.discardStagedMetadata(ctx, metadataBucket, metadataPath, metadataFileName, newMetadataLocation, stageToken)
+		return nil, tableCreatedConcurrently
 	}
 
 	markerBucket := input.markerBucket
