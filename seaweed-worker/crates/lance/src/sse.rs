@@ -316,7 +316,8 @@ impl EntryDecoder {
     }
 
     fn chunk_key(&self, chunk: &FileChunk) -> Result<Arc<ObjectKey>> {
-        let id = chunk.file_id.clone();
+        // A chunk out of a manifest carries its id as `fid`, not `file_id`.
+        let id = sw_client::read::file_id_string(chunk).unwrap_or_default();
         if let Some(key) = self.chunk_keys.lock().unwrap().get(&id) {
             return Ok(key.clone());
         }
@@ -475,6 +476,31 @@ mod tests {
                     .unwrap();
                 assert_eq!(got, want, "chunk {i} from {offset}");
             }
+        }
+    }
+
+    /// Chunks expanded from a manifest name themselves by `fid`; keyed by the
+    /// empty `file_id` they would all share one key and IV.
+    #[test]
+    fn chunks_out_of_a_manifest_keep_their_own_keys() {
+        let f = fixture();
+        let plain = un(&f.plaintext);
+        let mut entry = sse_entry(&f, false);
+        for (i, chunk) in entry.chunks.iter_mut().enumerate() {
+            chunk.file_id.clear();
+            chunk.fid = Some(sw_client::filer_pb::FileId {
+                volume_id: 3,
+                file_key: i as u64 + 1,
+                cookie: 7,
+            });
+        }
+        let decoder = EntryDecoder::new(from_secret(&f), &entry).unwrap();
+        for (i, chunk) in entry.chunks.iter().enumerate() {
+            let got = decoder
+                .decode(chunk, 0, un(&f.chunks[i].ciphertext))
+                .unwrap();
+            let want = &plain[chunk.offset as usize..chunk.offset as usize + chunk.size as usize];
+            assert_eq!(got, want, "chunk {i}");
         }
     }
 
