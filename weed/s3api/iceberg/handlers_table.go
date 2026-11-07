@@ -268,11 +268,12 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Authoritative existence check: ask the catalog whether a table is registered
-	// at this name. If it is, short-circuit with the existing table (idempotent
-	// CreateTable). Any leftover objects at the target path from a previous
-	// lifecycle of the same name are purged by handleDropTable on the way out —
-	// we deliberately do not clean storage here to keep CreateTable free of
-	// destructive side effects. See issue #9074.
+	// at this name. If it is, refuse with 409 as the Iceberg REST spec requires;
+	// clients that want create-if-not-exists catch the 409 and load the table.
+	// Any leftover objects at the target path from a previous lifecycle of the
+	// same name are purged by handleDropTable on the way out — we deliberately do
+	// not clean storage here to keep CreateTable free of destructive side
+	// effects. See issue #9074.
 	existsReq := &s3tables.GetTableRequest{
 		TableBucketARN: bucketARN,
 		Namespace:      namespace,
@@ -284,15 +285,7 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 		return s.tablesManager.Execute(r.Context(), mgrClient, "GetTable", existsReq, &existsResp, identityName)
 	})
 	if existsErr == nil {
-		// Table already registered. Return the existing definition so CTAS/IF NOT
-		// EXISTS flows see a stable response instead of a 409.
-		result, buildErr := s.buildLoadTableResult(r, existsResp, bucketName, namespace, tableName)
-		if buildErr != nil {
-			glog.Errorf("Iceberg: CreateTable load existing %s: %v", tableName, buildErr)
-			writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to build table metadata")
-			return
-		}
-		writeLoadResult(w, http.StatusOK, result)
+		writeTableAlreadyExists(w, namespace, tableName)
 		return
 	}
 	if !isNoSuchTableError(existsErr) {
@@ -318,7 +311,9 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 	// Stage-create persists metadata in the internal staged area and skips S3Tables registration.
 	if req.StageCreate {
 		stagedTablePath := stageCreateStagedTablePath(namespace, tableName, tableUUID)
-		if err := s.saveMetadataFile(r.Context(), metadataBucket, stagedTablePath, metadataFileName, metadataBytes, false); err != nil {
+		// The staged path carries the table UUID, so the name cannot already be
+		// taken; exclusive keeps it that way if it ever is.
+		if err := s.saveMetadataFile(r.Context(), metadataBucket, stagedTablePath, metadataFileName, metadataBytes, true); err != nil {
 			writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to save staged metadata file: "+err.Error())
 			return
 		}
@@ -339,7 +334,12 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 		writeLoadResult(w, http.StatusOK, result)
 		return
 	}
-	if err := s.saveMetadataFile(r.Context(), metadataBucket, metadataPath, metadataFileName, metadataBytes, false); err != nil {
+	// The location may already hold a v1.metadata.json: a table created there
+	// earlier and since dropped, an unregistered file, or a request racing this
+	// one for the same name. Writing it exclusively keeps this request from
+	// replacing that file, and from deleting it below if registration fails.
+	metadataFileName, metadataLocation, err = s.stageCommitMetadata(r.Context(), metadataBucket, metadataPath, location, metadataFileName, metadataBytes)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to save metadata file: "+err.Error())
 		return
 	}
@@ -367,53 +367,16 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 	})
 
 	if err != nil {
-		var tableErr *s3tables.S3TablesError
-		if errors.As(err, &tableErr) && tableErr.Type == s3tables.ErrCodeTableAlreadyExists {
-			getReq := &s3tables.GetTableRequest{
-				TableBucketARN: bucketARN,
-				Namespace:      namespace,
-				Name:           tableName,
-			}
-			var getResp s3tables.GetTableResponse
-			getErr := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-				mgrClient := s3tables.NewManagerClient(client)
-				return s.tablesManager.Execute(r.Context(), mgrClient, "GetTable", getReq, &getResp, identityName)
-			})
-			if getErr != nil {
-				writeError(w, http.StatusConflict, "AlreadyExistsException", err.Error())
-				return
-			}
-			result, buildErr := s.buildLoadTableResult(r, getResp, bucketName, namespace, tableName)
-			if buildErr != nil {
-				glog.Errorf("Iceberg: CreateTable load existing %s: %v", tableName, buildErr)
-				writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to build table metadata")
-				return
-			}
-			writeLoadResult(w, http.StatusOK, result)
-			return
+		// The file is named by this request alone, so it can go once the
+		// catalog refused the registration outright and no record references
+		// it. After a failure that may have committed the record (transport,
+		// 5xx) it stays: the record could point at it, and removing it would
+		// leave the table unreadable.
+		if registrationRefused(err) && !s.recordReferencesAt(r.Context(), bucketName, namespace, tableName, metadataLocation, tableUUID.String()) {
+			s.discardStagedMetadata(r.Context(), metadataBucket, metadataPath, metadataFileName, metadataLocation)
 		}
-		if strings.Contains(err.Error(), "already exists") {
-			getReq := &s3tables.GetTableRequest{
-				TableBucketARN: bucketARN,
-				Namespace:      namespace,
-				Name:           tableName,
-			}
-			var getResp s3tables.GetTableResponse
-			getErr := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-				mgrClient := s3tables.NewManagerClient(client)
-				return s.tablesManager.Execute(r.Context(), mgrClient, "GetTable", getReq, &getResp, identityName)
-			})
-			if getErr != nil {
-				writeError(w, http.StatusConflict, "AlreadyExistsException", err.Error())
-				return
-			}
-			result, buildErr := s.buildLoadTableResult(r, getResp, bucketName, namespace, tableName)
-			if buildErr != nil {
-				glog.Errorf("Iceberg: CreateTable load existing %s: %v", tableName, buildErr)
-				writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to build table metadata")
-				return
-			}
-			writeLoadResult(w, http.StatusOK, result)
+		if isS3TablesAlreadyExists(err) {
+			writeTableAlreadyExists(w, namespace, tableName)
 			return
 		}
 		glog.V(1).Infof("Iceberg: CreateTable error: %v", err)
@@ -421,11 +384,17 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Use returned location if available, otherwise fallback to local one
-	finalLocation := createResp.MetadataLocation
-	if finalLocation == "" {
-		finalLocation = metadataLocation
+	// The catalog answers a create for a name that already holds a table with
+	// that table's own metadata location rather than an error. The table was
+	// registered by a request that won the race, not by this one. A winner
+	// registered without a location comes back empty, which is no match either:
+	// this request always sends one, and a fresh create echoes it.
+	if createResp.MetadataLocation != metadataLocation {
+		s.discardStagedMetadata(r.Context(), metadataBucket, metadataPath, metadataFileName, metadataLocation)
+		writeTableAlreadyExists(w, namespace, tableName)
+		return
 	}
+	finalLocation := metadataLocation
 	if markerErr := s.deleteStageCreateMarkers(r.Context(), bucketName, namespace, tableName); markerErr != nil {
 		glog.V(1).Infof("Iceberg: failed to cleanup stage-create markers for %s.%s after create: %v", flattenNamespacePath(namespace), tableName, markerErr)
 	}
@@ -985,6 +954,12 @@ func (s *Server) handleRenameTable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// writeTableAlreadyExists answers a create for a name that holds a table with
+// the 409 the Iceberg REST spec defines for it.
+func writeTableAlreadyExists(w http.ResponseWriter, namespace []string, tableName string) {
+	writeError(w, http.StatusConflict, "AlreadyExistsException", fmt.Sprintf("Table already exists: %s.%s", strings.Join(namespace, "."), tableName))
 }
 
 // isNoSuchTableError reports whether an error from the S3 Tables manager
