@@ -479,7 +479,7 @@ async fn expand_chunks(
         let raw = volumes.get(&urls, &fid, None).await?;
         let raw = match decoder {
             Some(decoder) => decoder.decode(chunk, 0, raw)?,
-            None if !chunk.cipher_key.is_empty() => {
+            None if encoded(chunk) => {
                 bail!("encrypted manifest chunk {fid} needs a decoder")
             }
             None => raw,
@@ -1470,6 +1470,13 @@ mod tests {
             &plain[..16],
             "plain chunks and manifests read without one"
         );
+
+        let mut sse_manifest = entry.clone();
+        sse_manifest.chunks[1].sse_type = 3;
+        let err = read_file(&mut client, &volumes, &sse_manifest, 0, 8)
+            .await
+            .unwrap_err();
+        assert!(format!("{err:#}").contains("needs a decoder"), "{err:#}");
     }
 
     #[tokio::test]
