@@ -138,14 +138,15 @@ func (s *Server) tablePathOccupied(ctx context.Context, bucketName, tablePath st
 	return occupied, err
 }
 
-// authorizeCreateTable checks the caller may create the table, for the create
-// paths that write to the bucket before the catalog registers it.
-func (s *Server) authorizeCreateTable(ctx context.Context, bucketARN string, namespace []string, tableName, identityName string) error {
+// authorizeCreateTable checks the caller may create the table at location, for
+// the create paths that touch the bucket before the catalog registers it.
+func (s *Server) authorizeCreateTable(ctx context.Context, bucketARN string, namespace []string, tableName, identityName, location string) error {
 	return s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		return s.tablesManager.AuthorizeCreateTable(ctx, s3tables.NewManagerClient(client), &s3tables.CreateTableRequest{
-			TableBucketARN: bucketARN,
-			Namespace:      namespace,
-			Name:           tableName,
+			TableBucketARN:   bucketARN,
+			Namespace:        namespace,
+			Name:             tableName,
+			MetadataLocation: location,
 		}, identityName)
 	})
 }
@@ -304,7 +305,7 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 	// Both branches below write into the table bucket, and stage-create never
 	// reaches the registration that carries the authorization, so the caller has
 	// to pass the CreateTable gate here.
-	if authErr := s.authorizeCreateTable(r.Context(), bucketARN, namespace, tableName, identityName); authErr != nil {
+	if authErr := s.authorizeCreateTable(r.Context(), bucketARN, namespace, tableName, identityName, metadataLocation); authErr != nil {
 		writeManagerError(w, authErr)
 		return
 	}
@@ -488,6 +489,11 @@ func (s *Server) handleRegisterTable(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "BadRequestException", "invalid metadata-location path")
 		return
 	}
+	if authErr := s.authorizeCreateTable(r.Context(), bucketARN, namespace, req.Name, identityName, req.MetadataLocation); authErr != nil {
+		writeManagerError(w, authErr)
+		return
+	}
+
 	metadataFileName := path.Base(req.MetadataLocation)
 	// A table migrated in has its metadata uploaded through the S3 gateway,
 	// which stores it in chunks rather than inline, so follow the chunks.
@@ -1031,7 +1037,14 @@ func (s *Server) cleanupStaleTableLocation(ctx context.Context, bucketName, tabl
 		return fmt.Errorf("cleanupStaleTableLocation: refusing unsafe table path %q", tablePath)
 	}
 	return s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		err := filer_pb.DoRemove(ctx, client, parentDir, name, true, true, true, false, nil)
+		roots, err := s3tables.CatalogRecordRoots(ctx, client, bucketName)
+		if err != nil {
+			return err
+		}
+		if s3tables.RootClaimed(roots, "", path.Join(parentDir, name)) {
+			return s3tables.ErrLocationInUse
+		}
+		err = filer_pb.DoRemove(ctx, client, parentDir, name, true, true, true, false, nil)
 		if err == nil || errors.Is(err, filer_pb.ErrNotFound) {
 			return nil
 		}

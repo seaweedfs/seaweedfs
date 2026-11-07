@@ -374,3 +374,35 @@ func TestAbsentTagTargetDenySurvivesForeignAccountARN(t *testing.T) {
 		})
 	}
 }
+
+// A caller refused CreateTable gets the same answer whether the namespace
+// exists, is missing, is unreadable, or the bucket is missing.
+func TestCreateTableDenialMatchesMissingNamespace(t *testing.T) {
+	existing, manager := startRenameManager(t)
+	missing := s3tablestest.Start(t)
+	manager.SetTrusted(false)
+	manager.SetDefaultAllow(false)
+	existing.Put(GetTableBucketPath(renameTestBucket), "broken", map[string][]byte{ExtendedKeyMetadata: []byte("{")})
+
+	for _, operation := range []string{"CreateTable", "RegisterTable"} {
+		t.Run(operation, func(t *testing.T) {
+			request := func(namespace string) interface{} {
+				if operation == "RegisterTable" {
+					return &RegisterTableRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{namespace}, Name: "x",
+						MetadataLocation: "s3://" + renameTestBucket + "/" + namespace + "/x/metadata/v1.metadata.json"}
+				}
+				return &CreateTableRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{namespace}, Name: "x", Format: FormatIceberg}
+			}
+
+			want := runUnauthorizedRequest(t, manager, existing, operation, request("ns"))
+			assert.Equal(t, 403, want.status)
+			assert.Equal(t, want, runUnauthorizedRequest(t, manager, existing, operation, request("nope")))
+			assert.Equal(t, want, runUnauthorizedRequest(t, manager, existing, operation, request("broken")))
+			assert.Equal(t, want, runUnauthorizedRequest(t, manager, missing, operation, request("ns")))
+
+			status, resp := runHandler(t, manager, existing.Client, operation, request("nope"))
+			assert.Equal(t, 404, status)
+			assert.Equal(t, ErrCodeNoSuchNamespace, resp.Type)
+		})
+	}
+}

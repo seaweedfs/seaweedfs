@@ -81,13 +81,20 @@ func (m *memFiler) UpdateEntry(_ context.Context, in *filer_pb.UpdateEntryReques
 func (m *memFiler) ListEntries(_ context.Context, in *filer_pb.ListEntriesRequest, _ ...grpc.CallOption) (filer_pb.SeaweedFiler_ListEntriesClient, error) {
 	var names []string
 	for p := range m.entries {
-		if path.Dir(p) == in.Directory {
-			names = append(names, p)
+		if path.Dir(p) != in.Directory {
+			continue
 		}
+		if name := path.Base(p); in.StartFromFileName != "" && (name < in.StartFromFileName || name == in.StartFromFileName && !in.InclusiveStartFrom) {
+			continue
+		}
+		names = append(names, p)
 	}
 	sort.Strings(names)
 	stream := &memListEntries{}
 	for _, name := range names {
+		if in.Limit > 0 && uint32(len(stream.entries)) >= in.Limit {
+			break
+		}
 		stream.entries = append(stream.entries, m.entries[name])
 	}
 	return stream, nil
