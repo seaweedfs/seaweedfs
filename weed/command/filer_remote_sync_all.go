@@ -282,6 +282,12 @@ func (m *mountSupervisor) start(dir string) {
 			if err != nil {
 				glog.Errorf("synchronize %s: %v", dir, err)
 			}
+			// no stream is running here: a directory the live table no longer
+			// mounts is retired, and started again if it is mounted again
+			if !m.stillMounted(dir) {
+				m.forget(dir, f)
+				return
+			}
 			if time.Since(attempt) > allMountsRetryMax {
 				wait = allMountsRetryMin
 			}
@@ -317,6 +323,13 @@ func (m *mountSupervisor) ended(dir string, f *mountFollower, ran time.Duration)
 	m.notBefore[dir] = m.now().Add(pause)
 	m.mu.Unlock()
 	m.poke()
+}
+
+// stillMounted reports whether the live table maps dir; an unreadable table
+// counts as mapped.
+func (m *mountSupervisor) stillMounted(dir string) bool {
+	mappings, err := m.readMappings()
+	return err != nil || (mappings != nil && mappings.Mappings[dir] != nil)
 }
 
 func (m *mountSupervisor) forget(dir string, f *mountFollower) {

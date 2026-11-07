@@ -82,6 +82,11 @@ func (f *fakeMounts) supervisor() *mountSupervisor {
 		f.clients[o.clientId] = dir
 		gone := make(chan struct{})
 		f.gone[dir] = gone
+		if f.table[dir] == nil { // DetectMountInfo
+			f.active[dir]--
+			f.mu.Unlock()
+			return errors.New(dir + " is not mounted")
+		}
 		if f.failing[dir] > 0 {
 			f.failing[dir]--
 			f.active[dir]--
@@ -262,6 +267,38 @@ func TestAllMountsGuards(t *testing.T) {
 
 	if _, _, _, overlap := f.snapshot(); overlap {
 		t.Error("two follows at once for one directory, or a client id 0")
+	}
+}
+
+// A follow that fails while no stream runs, for a directory the live table no
+// longer mounts, is retired instead of retried forever, and the directory is
+// followed again once it is mounted again.
+func TestAllMountsRetiresAFailedFollowWhoseMountIsGone(t *testing.T) {
+	f := newFakeMounts()
+	f.mount("/buckets/a")
+	f.failing["/buckets/a"] = 1
+	m := f.supervisor()
+	stop := runSupervisor(m)
+	defer stop()
+	waitFor(t, "the first follow failed", func() bool { _, s, _, _ := f.snapshot(); return s["/buckets/a"] == 1 })
+
+	f.unmount("/buckets/a")
+	waitFor(t, "the follower retired", func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		_, running := m.followers["/buckets/a"]
+		return !running
+	})
+	_, started, _, _ := f.snapshot()
+	time.Sleep(80 * time.Millisecond)
+	if _, s, _, _ := f.snapshot(); s["/buckets/a"] != started["/buckets/a"] {
+		t.Fatalf("a retired follow was tried again: %d starts, then %d", started["/buckets/a"], s["/buckets/a"])
+	}
+
+	f.mount("/buckets/a")
+	waitFor(t, "a followed again", func() bool { a, _, _, _ := f.snapshot(); return a["/buckets/a"] == 1 })
+	if _, _, _, overlap := f.snapshot(); overlap {
+		t.Error("two follows at once for one directory")
 	}
 }
 
