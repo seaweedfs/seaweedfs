@@ -106,7 +106,9 @@ func (h *testHarness) vendedKey(t *testing.T, target, token string) string {
 }
 
 // A caller holding every s3tables grant still gets read-only credentials to a
-// vector bucket's index data; only the cluster's own components can write it.
+// vector bucket's index data; only the cluster's own components can write it,
+// and a cluster process presenting the token alone reaches the files itself,
+// so it is vended nothing.
 func TestVectorNamespaceVendsWriteCredentialsOnlyToTrustedCallers(t *testing.T) {
 	h := newTestHarness(t)
 	key := security.SigningKey("cluster-key")
@@ -129,8 +131,8 @@ func TestVectorNamespaceVendsWriteCredentialsOnlyToTrustedCallers(t *testing.T) 
 		{"describe the index", "/v1/table/vec$vector$idx/describe", "", "read-only"},
 		{"declare the index", "/v1/table/vec$vector$idx/declare", "", "read-only"},
 		{"describe with an admin token", "/v1/table/vec$vector$idx/describe", forged, "read-only"},
-		{"trusted describe", "/v1/table/vec$vector$idx/describe", trusted, "read-write"},
-		{"trusted declare", "/v1/table/vec$vector$idx/declare", trusted, "read-write"},
+		{"trusted describe", "/v1/table/vec$vector$idx/describe", trusted, ""},
+		{"trusted declare", "/v1/table/vec$vector$idx/declare", trusted, ""},
 		{"another namespace", "/v1/table/vec$other$tbl/describe", "", "read-write"},
 		{"bucket from before formats", "/v1/table/old$vector$idx/describe", "", "read-write"},
 	} {

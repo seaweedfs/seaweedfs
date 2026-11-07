@@ -18,8 +18,13 @@ import (
 const defaultPageSize = 1000
 
 // execute runs one S3 Tables operation as the request's authenticated caller.
+// A cluster process, authenticated by the cluster token alone, has no identity
+// of its own and runs through the trusted manager.
 func (s *Server) execute(r *http.Request, operation string, req, resp interface{}) error {
 	identityName := s3_constants.GetIdentityNameFromContext(r)
+	if identityName == "" && isTrustedCaller(r.Context()) {
+		return s.executeInternal(r, operation, req, resp)
+	}
 	return s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		return s.tablesManager.Execute(r.Context(), s3tables.NewManagerClient(client), operation, req, resp, identityName)
 	})
@@ -169,6 +174,11 @@ func (s *Server) storageOptions(r *http.Request, bucket, location string, vend b
 	}
 
 	principal := s3_constants.GetIdentityNameFromContext(r)
+	// A cluster process reaches the table's files on the filers and volume
+	// servers itself; it has no principal and needs no S3 credentials.
+	if principal == "" && isTrustedCaller(r.Context()) {
+		return options, nil
+	}
 	credentials, err := s.credentialVendor.VendTableCredentials(r.Context(), principal, bucket, locationPrefix(location), canWrite == nil || !canWrite())
 	if err != nil {
 		return nil, err
