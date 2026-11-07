@@ -137,6 +137,13 @@ def assert_engine_wrote_like_the_gateway(cluster, index):
             assert all(chunk.get("cipher_key") for chunk in meta["chunks"]), meta["chunks"]
 
 
+def cli_cluster_args(cluster):
+    """How weed-vector-cli reaches the cluster: the namespace that names the
+    tables, the masters whose filers hold them, and the cluster token's key."""
+    return ["--namespace", cluster["catalog"], "--masters", cluster["masters"],
+            "--filer-signing-key", cluster["filer_signing_key"]]
+
+
 def expect_error(code, operation, **kwargs):
     with pytest.raises(ClientError) as exc:
         operation(**kwargs)
@@ -614,8 +621,8 @@ def test_vector_index_job(vectors, cluster):
 
     cli = Path(os.environ.get("VECTOR_CLI_BINARY", Path(__file__).resolve().parent / "weed-vector-cli"))
     coverage = json.loads(subprocess.run(
-        [str(cli), "--namespace", cluster["catalog"], "--access-key", "test", "--secret-key", "test",
-         "coverage", f"{bucket}$vector${index}"], check=True, capture_output=True, text=True).stdout)
+        [str(cli), *cli_cluster_args(cluster), "coverage", f"{bucket}$vector${index}"],
+        check=True, capture_output=True, text=True).stdout)
     assert len(coverage) == 1 and coverage[0]["segments"] == 1 and coverage[0]["unindexed_rows"] == 0, coverage
 
     found = 0
@@ -637,8 +644,8 @@ def test_vector_index_job(vectors, cluster):
 
     def coverage_now():
         return json.loads(subprocess.run(
-            [str(cli), "--namespace", cluster["catalog"], "--access-key", "test", "--secret-key", "test",
-             "coverage", f"{bucket}$vector${index}"], check=True, capture_output=True, text=True).stdout)[0]
+            [str(cli), *cli_cluster_args(cluster), "coverage", f"{bucket}$vector${index}"],
+            check=True, capture_output=True, text=True).stdout)[0]
 
     def optimize(expect_detected):
         request = urllib.request.Request(

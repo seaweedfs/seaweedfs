@@ -193,8 +193,9 @@ def test_build_index(perf):
         pytest.skip("PERF_INDEX not set")
     cli = Path(os.environ.get("VECTOR_CLI_BINARY", HERE / "weed-vector-cli")).resolve()
     assert cli.is_file(), f"missing {cli}; run make ./weed-vector-cli"
-    command = [str(cli), "--namespace", perf["cluster"]["catalog"], "--access-key", "test",
-               "--secret-key", "test", "index", "build", f"{perf['bucket']}$vector${INDEX}"]
+    command = [str(cli), "--namespace", perf["cluster"]["catalog"], "--masters", perf["cluster"]["masters"],
+               "--filer-signing-key", perf["cluster"]["filer_signing_key"],
+               "index", "build", f"{perf['bucket']}$vector${INDEX}"]
     if os.environ.get("PERF_PARTITIONS"):
         command += ["--partitions", os.environ["PERF_PARTITIONS"]]
     seconds, out = timed(lambda: subprocess.run(command, check=True, capture_output=True, text=True))

@@ -260,6 +260,9 @@ def run_cluster(param, tmp_path_factory, identities):
         # VECTOR_READ_JWT=1 makes volume reads need a JWT; every weed process
         # and the workers sign with the key.
         read_jwt_key = os.environ.get("VECTOR_READ_JWT") and uuid.uuid4().hex
+        # The cluster's filer signing key: the gateway's catalog authenticates
+        # the worker and the CLI by the token they derive from it.
+        filer_signing_key = uuid.uuid4().hex
         # VECTOR_TLS=1 puts the volume servers behind HTTPS with client
         # certificates; every process finds security.toml in its cwd.
         if os.environ.get("VECTOR_TLS"):
@@ -269,7 +272,7 @@ def run_cluster(param, tmp_path_factory, identities):
             log = stack.enter_context((directory / f"{name}.log").open("w"))
             env = dict(os.environ, AWS_ACCESS_KEY_ID="test", AWS_SECRET_ACCESS_KEY="test",
                        AWS_DEFAULT_REGION="us-east-1", AWS_EC2_METADATA_DISABLED="true",
-                       WEED_S3_SSE_KEY="s3vectors-test",
+                       WEED_S3_SSE_KEY="s3vectors-test", WEED_JWT_FILER_SIGNING_KEY=filer_signing_key,
                        **({"WEED_JWT_SIGNING_READ_KEY": read_jwt_key} if read_jwt_key else {}))
             env.pop("WEED_S3_SSE_KEK", None)
             if not read_jwt_key:
@@ -356,12 +359,13 @@ def run_cluster(param, tmp_path_factory, identities):
             wait_for(lambda: http_ready(f"{admin_url}/api/plugin/job-types"), processes, "admin not ready")
             start("lance-worker", [lance_worker, "--admin", f"127.0.0.1:{admin}.{admin_grpc}",
                                    "--namespace", f"http://127.0.0.1:{lance}", "--id", "vectors-test-worker",
-                                   "--access-key", "test", "--secret-key", "test"])
+                                   "--masters", master_addr, *encrypt])
             wait_for(lambda: "lance_vector_index" in
                      [jt["job_type"] for jt in json.load(urllib.request.urlopen(f"{admin_url}/api/plugin/job-types", timeout=2))],
                      processes, "the Lance worker never registered with admin")
 
         yield {"endpoint": endpoint, "mode": mode, "processes": processes, "directory": directory, "filer": filer,
+               "masters": master_addr, "filer_signing_key": filer_signing_key,
                "catalog": f"http://127.0.0.1:{lance}", "admin": admin_url}
 
 
