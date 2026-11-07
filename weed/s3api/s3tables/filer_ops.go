@@ -1047,9 +1047,10 @@ func (h *S3TablesHandler) claimCatalogEntryAt(ctx context.Context, client filer_
 
 // revertClaimedMove checks again, once an update moved the record at path onto
 // the root metadataLocation gives it, that no other record took that root
-// meanwhile, and if one did puts the previous metadata back.
+// meanwhile, and if one did, or the check fails, puts the previous metadata back.
 func (h *S3TablesHandler) revertClaimedMove(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketName, path, metadataLocation string, written, previous []byte) error {
-	if err := checkLocationUnclaimed(ctx, client, bucketName, path, metadataLocation); !errors.Is(err, ErrLocationInUse) {
+	checkErr := checkLocationUnclaimed(ctx, client, bucketName, path, metadataLocation)
+	if checkErr == nil {
 		return nil
 	}
 	if err := h.mutateCatalogRecord(context.WithoutCancel(ctx), client, path, func(extended map[string][]byte) error {
@@ -1061,7 +1062,7 @@ func (h *S3TablesHandler) revertClaimedMove(ctx context.Context, client filer_pb
 	}); err != nil {
 		glog.Warningf("revert move of %s: %v", path, err)
 	}
-	return ErrLocationInUse
+	return checkErr
 }
 
 // refuseClaimedLocation answers a request whose record would share its files

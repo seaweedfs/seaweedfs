@@ -3,6 +3,7 @@ package s3tables
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"path"
 	"testing"
@@ -135,6 +136,30 @@ func (c *rootRaceClient) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEn
 	return resp, err
 }
 
+// listFailClient fails every listing once a write reaches the record at
+// dir/name, so the check that follows the write cannot run.
+type listFailClient struct {
+	filer_pb.SeaweedFilerClient
+	dir     string
+	name    string
+	failing bool
+}
+
+func (c *listFailClient) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntryRequest, opts ...grpc.CallOption) (*filer_pb.UpdateEntryResponse, error) {
+	resp, err := c.SeaweedFilerClient.UpdateEntry(ctx, req, opts...)
+	if err == nil && req.Directory == c.dir && req.Entry.Name == c.name {
+		c.failing = true
+	}
+	return resp, err
+}
+
+func (c *listFailClient) ListEntries(ctx context.Context, in *filer_pb.ListEntriesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[filer_pb.ListEntriesResponse], error) {
+	if c.failing {
+		return nil, errors.New("listing unavailable")
+	}
+	return c.SeaweedFilerClient.ListEntries(ctx, in, opts...)
+}
+
 // Two writers that both read a root free each check it again once their record
 // is written, so the one that sees the other backs out instead of both landing.
 func TestLocationRaceBacksOut(t *testing.T) {
@@ -163,6 +188,18 @@ func TestLocationRaceBacksOut(t *testing.T) {
 		})
 		assert.Equal(t, http.StatusConflict, status, "%+v", resp)
 		require.True(t, client.planted)
+		assert.Equal(t, string(before), string(fs.Get(nsPath, "t").Extended[ExtendedKeyMetadata]))
+	})
+
+	t.Run("update with a failed check", func(t *testing.T) {
+		fs, m := startRenameManager(t)
+		before := fs.Get(nsPath, "t").Extended[ExtendedKeyMetadata]
+		client := &listFailClient{SeaweedFilerClient: fs.Client, dir: nsPath, name: "t"}
+		status, resp := runHandler(t, m, client, "UpdateTable", &UpdateTableRequest{
+			TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"}, Name: "t", MetadataVersion: 4, MetadataLocation: location,
+		})
+		assert.NotEqual(t, http.StatusOK, status, "%+v", resp)
+		require.True(t, client.failing)
 		assert.Equal(t, string(before), string(fs.Get(nsPath, "t").Extended[ExtendedKeyMetadata]))
 	})
 
