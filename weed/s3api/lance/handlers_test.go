@@ -520,3 +520,33 @@ func TestDescribeTableInternalIgnoresCatalogGrants(t *testing.T) {
 		t.Fatal("a deregistered table resolved")
 	}
 }
+
+// The options an internal describe vends may write a vector index, whose
+// writer is the engine, but not a table whose writes s3tables grants gate.
+func TestDescribeTableInternalVendsWriteForTheVectorNamespace(t *testing.T) {
+	h := newTestHarness(t)
+	h.seedVectorIndex(t, "vec", s3tables.FormatLance)
+	h.createBucket(t, "lnc", s3tables.FormatLance)
+	h.mustDo(t, http.MethodPost, "/v1/namespace/lnc$ns/create", `{}`, http.StatusOK)
+	h.mustDo(t, http.MethodPost, "/v1/table/lnc$ns$t/declare", `{}`, http.StatusOK)
+
+	server := NewServer(s3tables.NewManagerClient(h.filer.Client), createOnlyAuthenticator{})
+	server.SetCredentialVendor(recordingVendor{})
+	stranger := httptest.NewRequest(http.MethodPost, "/", nil)
+	stranger = stranger.WithContext(s3_constants.SetIdentityNameInContext(stranger.Context(), "stranger"))
+	for _, tc := range []struct {
+		id   []string
+		want string
+	}{
+		{[]string{"vec", "vector", "idx"}, "read-write"},
+		{[]string{"lnc", "ns", "t"}, "read-only"},
+	} {
+		_, options, err := server.DescribeTableInternal(stranger, tc.id)
+		if err != nil {
+			t.Fatalf("%v: %v", tc.id, err)
+		}
+		if got := options["aws_access_key_id"]; got != tc.want {
+			t.Errorf("%v: vended %q, want %q", tc.id, got, tc.want)
+		}
+	}
+}

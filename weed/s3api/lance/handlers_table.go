@@ -191,7 +191,10 @@ func (s *Server) DescribeTable(r *http.Request, parts []string) (string, map[str
 // vector coordinator, which only invokes it after the caller's own vector
 // permission authorized the operation. A caller's catalog grants must not
 // gate an internal resolution. Storage options are still vended for the
-// caller's principal.
+// caller's principal, and for a table of the vector namespace they may write
+// it: the engine is that namespace's writer, and the operation it carries
+// out was authorized by the caller's vector permission, not by s3tables
+// grants the caller need not hold.
 func (s *Server) DescribeTableInternal(r *http.Request, parts []string) (string, map[string]string, error) {
 	return s.describeTable(r, parts, true)
 }
@@ -218,9 +221,11 @@ func (s *Server) describeTable(r *http.Request, parts []string, internal bool) (
 	if deregistered {
 		return "", nil, fmt.Errorf("table is deregistered")
 	}
-	options, err := s.storageOptions(r, bucket, location, true, func() bool {
-		return s.mayUpdateTable(r, bucket, ns, name)
-	})
+	canWrite := func() bool { return s.mayUpdateTable(r, bucket, ns, name) }
+	if internal && len(ns) == 1 && ns[0] == s3tables.VectorIndexNamespace {
+		canWrite = func() bool { return true }
+	}
+	options, err := s.storageOptions(r, bucket, location, true, canWrite)
 	return location, options, err
 }
 
