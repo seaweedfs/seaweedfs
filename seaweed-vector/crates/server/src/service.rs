@@ -16,7 +16,7 @@ use prost_types::{ListValue, Struct, Value, value::Kind};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
-use weed_lance_worker::catalog::{NamespaceClient, TableDescription};
+use weed_lance_worker::catalog::TableDescription;
 use weed_lance_worker::dataset::{self, FallbackOptions};
 use weed_lance_worker::jobs::vector_index::is_vector_table;
 use weed_vector_core::index;
@@ -36,17 +36,14 @@ fn invalid(err: impl Into<anyhow::Error>) -> Status {
 
 fn open_status(err: anyhow::Error) -> Status {
     let missing = err.chain().any(|cause| {
-        cause
-            .downcast_ref::<reqwest::Error>()
-            .is_some_and(|e| e.status() == Some(reqwest::StatusCode::NOT_FOUND))
-            || cause.downcast_ref::<lance::Error>().is_some_and(|e| {
-                matches!(
-                    e,
-                    lance::Error::DatasetNotFound { .. }
-                        | lance::Error::NotFound { .. }
-                        | lance::Error::VersionNotFound { .. }
-                )
-            })
+        cause.downcast_ref::<lance::Error>().is_some_and(|e| {
+            matches!(
+                e,
+                lance::Error::DatasetNotFound { .. }
+                    | lance::Error::NotFound { .. }
+                    | lance::Error::VersionNotFound { .. }
+            )
+        })
     });
     if missing {
         Status::not_found(format!("{:#}", err))
@@ -413,36 +410,48 @@ fn rows_as_vectors(
     out
 }
 
-/// The description a gateway sent with the table, if it resolved it. Only a
-/// vector index at its colocated path is taken on trust, since the engine is
-/// that path's writer already; any other location is looked up through the
-/// catalog, so a caller cannot point the engine at storage the catalog does
-/// not know.
-fn resolved(table: &pb::Table) -> Option<TableDescription> {
+/// The description a gateway sent with the table. Only a vector index at its
+/// colocated path is taken, since the engine is that path's writer already;
+/// any other location would point the engine at storage the catalog does not
+/// know.
+fn resolved(table: &pb::Table, schemes: &[&str]) -> Option<TableDescription> {
     let colocated = dataset::table_location(&table.id)?;
-    let trusted = is_vector_table(&table.id) && table.location.trim_end_matches('/') == colocated;
+    let path = colocated.strip_prefix("s3://")?;
+    let location = table.location.trim_end_matches('/');
+    let trusted = is_vector_table(&table.id)
+        && schemes
+            .iter()
+            .any(|scheme| location == format!("{scheme}://{path}"));
     trusted.then(|| TableDescription {
-        location: colocated,
+        location: location.to_string(),
         storage_options: table.storage_options.clone(),
         managed_versioning: false,
     })
 }
 
 pub struct VectorServer {
-    client: NamespaceClient,
     fallback: FallbackOptions,
     read_cache: Option<ReadCache>,
     nprobes: Option<usize>,
+    /// URI schemes a table's location may have.
+    schemes: &'static [&'static str],
 }
 
 impl VectorServer {
-    pub fn new(client: NamespaceClient, fallback: FallbackOptions) -> Self {
+    pub fn new(fallback: FallbackOptions) -> Self {
         Self {
-            client,
             fallback,
             read_cache: None,
             nprobes: None,
+            schemes: &["s3"],
         }
+    }
+
+    /// Tables on an in-process store, for tests.
+    #[cfg(test)]
+    pub(crate) fn with_schemes(mut self, schemes: &'static [&'static str]) -> Self {
+        self.schemes = schemes;
+        self
     }
 
     /// Partitions every query probes, instead of the index's own default.
@@ -457,32 +466,30 @@ impl VectorServer {
         self
     }
 
-    /// The table as the gateway resolved it, or through the catalog when the
-    /// request names no location, or options the engine's credentials must
-    /// not be used with.
-    async fn describe(&self, table: &pb::Table) -> Result<TableDescription> {
-        match self.trusted(table) {
-            Some(description) => Ok(description),
-            None => self.client.describe_table(&table.id).await,
+    /// The table as the gateway resolved it. A request that names no
+    /// location, another location than the index's own, or storage options
+    /// the engine's credentials must not be used with is refused.
+    fn describe(&self, table: &pb::Table) -> Result<TableDescription, Status> {
+        if table.location.is_empty() {
+            return Err(Status::invalid_argument("the table names no location"));
         }
+        let description = resolved(table, self.schemes).ok_or_else(|| {
+            Status::permission_denied(format!(
+                "{} is not the location of index {}",
+                table.location,
+                table.id.join("/")
+            ))
+        })?;
+        if !options_trusted(&description.storage_options, &self.fallback) {
+            return Err(Status::permission_denied(
+                "the storage options would send the engine's credentials elsewhere",
+            ));
+        }
+        Ok(description)
     }
 
-    /// The description a request carries, when the engine may act on it.
-    fn trusted(&self, table: &pb::Table) -> Option<TableDescription> {
-        resolved(table).filter(|description| {
-            let trusted = options_trusted(&description.storage_options, &self.fallback);
-            if !trusted {
-                tracing::debug!(
-                    location = %description.location,
-                    "the request's storage options are not taken; describing through the catalog"
-                );
-            }
-            trusted
-        })
-    }
-
-    async fn open(&self, table: &pb::Table) -> Result<Dataset> {
-        let description = self.describe(table).await?;
+    async fn open(&self, table: &pb::Table) -> Result<Dataset, Status> {
+        let description = self.describe(table)?;
         // The options name the store the bytes come from; the cache is scoped
         // by it so the same bucket and path on another endpoint never share.
         let cache = self.read_cache.as_ref().map(|cache| {
@@ -493,9 +500,14 @@ impl VectorServer {
                 .unwrap_or("");
             Arc::new(cache.scoped(endpoint)) as Arc<dyn WrappingObjectStore>
         });
-        let mut dataset = dataset::open_at(&description, &self.fallback, cache).await?;
+        let mut dataset = dataset::open_at(&description, &self.fallback, cache)
+            .await
+            .map_err(open_status)?;
         if table.version != 0 {
-            dataset = dataset.checkout_version(table.version).await?;
+            dataset = dataset
+                .checkout_version(table.version)
+                .await
+                .map_err(|err| open_status(err.into()))?;
         }
         Ok(dataset)
     }
@@ -519,7 +531,7 @@ impl VectorService for VectorServer {
             return Err(Status::invalid_argument("dimension must be 1..=4096"));
         }
         // The gateway has already created the table through the catalog.
-        let description = self.describe(&table).await.map_err(internal)?;
+        let description = self.describe(&table)?;
         let options = dataset::table_options(&description, &self.fallback);
         let schema = schema_for(dimension, metric, &req.non_filterable_metadata_keys);
         let empty = RecordBatch::new_empty(schema.clone());
@@ -552,17 +564,16 @@ impl VectorService for VectorServer {
         let table = req
             .table
             .ok_or_else(|| Status::invalid_argument("missing table"))?;
-        let dropped = match self.trusted(&table) {
-            Some(description) => dataset::drop_at(&table.id, &description, &self.fallback).await,
-            None => dataset::drop(&self.client, &table.id, &self.fallback).await,
-        };
-        dropped.map_err(|err| {
-            if err.is::<dataset::DropRefused>() {
-                Status::failed_precondition(format!("{err:#}"))
-            } else {
-                internal(err)
-            }
-        })?;
+        let description = self.describe(&table)?;
+        dataset::drop_at(&table.id, &description, &self.fallback)
+            .await
+            .map_err(|err| {
+                if err.is::<dataset::DropRefused>() {
+                    Status::failed_precondition(format!("{err:#}"))
+                } else {
+                    internal(err)
+                }
+            })?;
         Ok(Response::new(pb::DropIndexResponse {}))
     }
 
@@ -574,7 +585,7 @@ impl VectorService for VectorServer {
         let table = req
             .table
             .ok_or_else(|| Status::invalid_argument("missing table"))?;
-        let dataset = self.open(&table).await.map_err(open_status)?;
+        let dataset = self.open(&table).await?;
         if req.vectors.is_empty() {
             return Ok(Response::new(pb::PutVectorsResponse {
                 version: dataset.version().version,
@@ -616,7 +627,7 @@ impl VectorService for VectorServer {
         let table = req
             .table
             .ok_or_else(|| Status::invalid_argument("missing table"))?;
-        let dataset = self.open(&table).await.map_err(open_status)?;
+        let dataset = self.open(&table).await?;
         // Lease the resolved version so maintenance cannot reclaim its files
         // while this query runs against it.
         let _lease = weed_vector_core::maintenance::try_pin(&dataset)
@@ -640,7 +651,7 @@ impl VectorService for VectorServer {
         let table = req
             .table
             .ok_or_else(|| Status::invalid_argument("missing table"))?;
-        let mut dataset = self.open(&table).await.map_err(open_status)?;
+        let mut dataset = self.open(&table).await?;
         if !req.keys.is_empty() {
             dataset
                 .delete(&key_list(&req.keys))
@@ -666,7 +677,7 @@ impl VectorService for VectorServer {
                 "segment_index must be below segment_count, which is at most {MAX_SEGMENTS}"
             )));
         }
-        let dataset = self.open(&table).await.map_err(open_status)?;
+        let dataset = self.open(&table).await?;
         let offset: u64 = if req.next_token.is_empty() {
             0
         } else {
@@ -733,7 +744,7 @@ impl VectorService for VectorServer {
         let table = req
             .table
             .ok_or_else(|| Status::invalid_argument("missing table"))?;
-        let dataset = self.open(&table).await.map_err(open_status)?;
+        let dataset = self.open(&table).await?;
         // Lease the resolved version so maintenance cannot reclaim its files
         // while this query runs against it.
         let _lease = weed_vector_core::maintenance::try_pin(&dataset)
@@ -1025,37 +1036,20 @@ mod tests {
         assert_eq!(next, None);
     }
 
-    /// A catalog that answers one describe with `location`.
-    async fn catalog_describing(location: &str) -> String {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}", listener.local_addr().unwrap());
-        let body = serde_json::json!({ "location": location }).to_string();
-        tokio::spawn(async move {
-            let (mut conn, _) = listener.accept().await.unwrap();
-            let mut request = [0u8; 8192];
-            let _ = conn.read(&mut request).await;
-            let response = format!(
-                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-                body.len()
-            );
-            conn.write_all(response.as_bytes()).await.unwrap();
-            let _ = conn.shutdown().await;
-            let _ = tokio::io::copy(&mut conn, &mut tokio::io::sink()).await;
-        });
-        url
-    }
-
+    /// A location that is not the index's own is refused before anything is
+    /// opened or removed.
     #[tokio::test]
     async fn drop_index_refuses_a_location_outside_the_table() {
-        for location in ["s3://bkt/vector", "s3://bkt/vector/prod"] {
-            let server = VectorServer::new(
-                NamespaceClient::new(catalog_describing(location).await),
-                FallbackOptions::new(),
-            );
+        let server = VectorServer::new(FallbackOptions::new());
+        for location in [
+            "s3://bkt/vector",
+            "s3://bkt/vector/prod",
+            "s3://other/vector/x",
+        ] {
             let request = pb::DropIndexRequest {
                 table: Some(pb::Table {
                     id: vec!["bkt".into(), "vector".into(), "x".into()],
+                    location: location.into(),
                     ..Default::default()
                 }),
             };
@@ -1063,12 +1057,11 @@ mod tests {
                 .drop_index(Request::new(request))
                 .await
                 .expect_err(location);
-            assert_eq!(err.code(), tonic::Code::FailedPrecondition, "{location}");
+            assert_eq!(err.code(), tonic::Code::PermissionDenied, "{location}");
         }
     }
 
-    /// Only a vector index at its colocated path is taken from the request;
-    /// anything else is left to the catalog.
+    /// Only a vector index at its colocated path is taken from the request.
     #[test]
     fn resolved_takes_only_a_colocated_vector_index() {
         let table = |id: &[&str], location: &str| pb::Table {
@@ -1077,9 +1070,10 @@ mod tests {
             storage_options: HashMap::from([("aws_endpoint".to_string(), "http://gw".to_string())]),
             ..Default::default()
         };
+        let s3 = &["s3"];
         let index = ["bkt", "vector", "x"];
         for location in ["s3://bkt/vector/x", "s3://bkt/vector/x/"] {
-            let description = resolved(&table(&index, location)).expect(location);
+            let description = resolved(&table(&index, location), s3).expect(location);
             assert_eq!(description.location, "s3://bkt/vector/x");
             assert_eq!(
                 description
@@ -1089,21 +1083,23 @@ mod tests {
                 Some("http://gw")
             );
         }
-        assert!(resolved(&table(&index, "")).is_none());
-        assert!(resolved(&table(&index, "s3://other/vector/x")).is_none());
-        assert!(resolved(&table(&index, "s3://bkt/vector/y")).is_none());
-        assert!(resolved(&table(&["bkt", "ns", "x"], "s3://bkt/ns/x")).is_none());
-        assert!(resolved(&table(&["bkt", "x"], "s3://bkt/x")).is_none());
+        assert!(resolved(&table(&index, ""), s3).is_none());
+        assert!(resolved(&table(&index, "s3://other/vector/x"), s3).is_none());
+        assert!(resolved(&table(&index, "s3://bkt/vector/y"), s3).is_none());
+        assert!(resolved(&table(&index, "file://bkt/vector/x"), s3).is_none());
+        assert!(resolved(&table(&index, "memory://bkt/vector/x"), &["s3", "memory"]).is_some());
+        assert!(resolved(&table(&["bkt", "ns", "x"], "s3://bkt/ns/x"), s3).is_none());
+        assert!(resolved(&table(&["bkt", "x"], "s3://bkt/x"), s3).is_none());
     }
 
-    /// A table the request does not resolve is described through the
-    /// catalog, so without one the call fails rather than trusting the
-    /// request.
+    /// A request names the table's location or is refused.
     #[tokio::test]
-    async fn an_unresolved_table_needs_the_catalog() {
-        let unreachable = NamespaceClient::new("http://127.0.0.1:1");
-        let server = VectorServer::new(unreachable, FallbackOptions::new());
-        for location in ["", "s3://other/vector/x"] {
+    async fn a_table_without_its_location_is_refused() {
+        let server = VectorServer::new(FallbackOptions::new());
+        for (location, code) in [
+            ("", tonic::Code::InvalidArgument),
+            ("s3://other/vector/x", tonic::Code::PermissionDenied),
+        ] {
             let err = server
                 .get_vectors(Request::new(pb::GetVectorsRequest {
                     table: Some(pb::Table {
@@ -1116,7 +1112,7 @@ mod tests {
                 }))
                 .await
                 .expect_err(location);
-            assert_eq!(err.code(), tonic::Code::Unavailable, "{location}");
+            assert_eq!(err.code(), code, "{location}");
         }
     }
 
@@ -1176,10 +1172,9 @@ mod tests {
         }
     }
 
-    /// Options the engine must not use send the table to the catalog, for a
-    /// drop as for an open.
+    /// Options the engine must not use are refused, for a drop as for an open.
     #[tokio::test]
-    async fn untrusted_options_go_to_the_catalog() {
+    async fn untrusted_options_are_refused() {
         let sent = |endpoint: &str| pb::Table {
             id: vec!["bkt".into(), "vector".into(), "x".into()],
             location: "s3://bkt/vector/x".into(),
@@ -1187,27 +1182,18 @@ mod tests {
             ..Default::default()
         };
         let pinned =
-            || FallbackOptions::from([(ENDPOINT_OPTION.to_string(), "http://gw".to_string())]);
-        let server = VectorServer::new(NamespaceClient::new("http://127.0.0.1:1"), pinned());
-        let description = server.describe(&sent("http://gw")).await.unwrap();
+            FallbackOptions::from([(ENDPOINT_OPTION.to_string(), "http://gw".to_string())]);
+        let server = VectorServer::new(pinned);
+        let description = server.describe(&sent("http://gw")).unwrap();
         assert_eq!(description.location, "s3://bkt/vector/x");
-        server
-            .describe(&sent("http://elsewhere"))
-            .await
-            .expect_err("another endpoint was taken from the request");
-
-        // The catalog names a location outside the table, which only the
-        // catalog path refuses: the request's colocated one would have passed.
-        let server = VectorServer::new(
-            NamespaceClient::new(catalog_describing("s3://bkt/vector").await),
-            pinned(),
-        );
+        let err = server.describe(&sent("http://elsewhere")).unwrap_err();
+        assert_eq!(err.code(), tonic::Code::PermissionDenied);
         let err = server
             .drop_index(Request::new(pb::DropIndexRequest {
                 table: Some(sent("http://elsewhere")),
             }))
             .await
-            .expect_err("a drop took another endpoint from the request");
-        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::PermissionDenied);
     }
 }

@@ -291,7 +291,6 @@ mod tests {
     use object_store::ObjectStoreExt;
     use object_store::memory::InMemory;
     use tonic::Request;
-    use weed_lance_worker::catalog::NamespaceClient;
     use weed_lance_worker::dataset::FallbackOptions;
 
     fn cached(inner: Arc<InMemory>) -> Arc<dyn ObjectStore> {
@@ -415,31 +414,6 @@ mod tests {
         assert!(!backing.contains(&cached.as_ptr()));
     }
 
-    /// A catalog that answers every request with `location`.
-    async fn catalog_at(location: String) -> String {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}", listener.local_addr().unwrap());
-        let body = serde_json::json!({ "location": location }).to_string();
-        tokio::spawn(async move {
-            loop {
-                let (mut conn, _) = listener.accept().await.unwrap();
-                let body = body.clone();
-                tokio::spawn(async move {
-                    let mut request = [0u8; 8192];
-                    let _ = conn.read(&mut request).await;
-                    let response = format!(
-                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-                        body.len()
-                    );
-                    let _ = conn.write_all(response.as_bytes()).await;
-                    let _ = conn.shutdown().await;
-                });
-            }
-        });
-        url
-    }
-
     fn vector(key: &str, data: Vec<f32>) -> pb::Vector {
         pb::Vector {
             key: key.to_string(),
@@ -506,14 +480,14 @@ mod tests {
     /// dropped and recreated at the same location answers with its new rows.
     #[tokio::test]
     async fn cached_reads_follow_writes_and_a_recreated_index() {
-        let location = format!("shared-memory://cache-{}/vector/x", uuid_like(),);
-        let server = VectorServer::new(
-            NamespaceClient::new(catalog_at(location.clone()).await),
-            FallbackOptions::new(),
-        )
-        .with_read_cache(ReadCache::new(16 << 20));
+        let bucket = format!("cache-{}", uuid_like());
+        let location = format!("shared-memory://{bucket}/vector/x");
+        let server = VectorServer::new(FallbackOptions::new())
+            .with_schemes(&["shared-memory"])
+            .with_read_cache(ReadCache::new(16 << 20));
         let table = pb::Table {
-            id: vec!["bkt".into(), "vector".into(), "x".into()],
+            id: vec![bucket, "vector".into(), "x".into()],
+            location: location.clone(),
             ..Default::default()
         };
 

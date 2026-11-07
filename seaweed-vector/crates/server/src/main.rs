@@ -4,7 +4,6 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::Server;
-use weed_lance_worker::catalog::{NamespaceClient, SigningKey};
 use weed_lance_worker::dataset::FallbackOptions;
 use weed_vector_server::pb::vector::vector_service_server::VectorServiceServer;
 use weed_vector_server::read_cache::ReadCache;
@@ -15,20 +14,12 @@ use weed_vector_server::tls::{self, ServerTls};
 /// The VectorService the S3 gateway fans vector calls out to.
 #[derive(Parser)]
 struct Args {
-    /// Lance Namespace base URL: the S3 gateway's Lance port (-s3.port.lance).
-    #[arg(
-        long,
-        env = "WEED_VECTOR_NAMESPACE",
-        default_value = "http://localhost:9101"
-    )]
-    namespace: String,
     /// gRPC listen address.
     #[arg(long, env = "WEED_VECTOR_LISTEN", default_value = "127.0.0.1:8090")]
     listen: String,
-    /// object_store option fallback for deployments that vend no credentials:
-    /// key=value, repeatable. Credentials given here are used only with the
-    /// aws_endpoint given here; a table the gateway resolved to another
-    /// endpoint is looked up through the catalog instead.
+    /// object_store options for deployments whose gateway vends no
+    /// credentials: key=value, repeatable. Credentials given here are used
+    /// only with the aws_endpoint given here.
     #[arg(long = "storage-option", alias = "storage.option", value_parser = parse_option)]
     storage_options: Vec<(String, String)>,
     /// Comma-separated master addresses to register this server with; the
@@ -42,10 +33,6 @@ struct Args {
     /// tenth of the index's partitions, at least 8; more under a filter.
     #[arg(long, env = "WEED_VECTOR_NPROBES")]
     nprobes: Option<std::num::NonZeroUsize>,
-    /// The `jwt.filer_signing.key` of the cluster. The Lance namespace vends
-    /// credentials that write index data only to a caller holding it.
-    #[arg(long, env = "WEED_FILER_SIGNING_KEY")]
-    filer_signing_key: Option<String>,
     /// The cluster's security.toml, for gRPC TLS: this server's identity is
     /// [grpc.vector], the masters are dialed with [grpc.client]. By default
     /// the file weed processes find in -config_dir, ., ~/.seaweedfs and
@@ -156,17 +143,12 @@ async fn main() -> Result<()> {
         ));
     }
     let fallback: FallbackOptions = args.storage_options.into_iter().collect();
-    let signing_key = SigningKey::new(args.filer_signing_key);
-    let client = NamespaceClient::new(args.namespace.clone())
-        .with_fallback(&fallback)
-        .with_signing_key(signing_key.as_ref());
-    let mut service = VectorServer::new(client, fallback)
-        .with_nprobes(args.nprobes.map(std::num::NonZeroUsize::get));
+    let mut service =
+        VectorServer::new(fallback).with_nprobes(args.nprobes.map(std::num::NonZeroUsize::get));
     if args.read_cache_mb > 0 {
         service = service.with_read_cache(ReadCache::new(args.read_cache_mb << 20));
     }
     tracing::info!(
-        namespace = %args.namespace,
         listen = %args.listen,
         "weed-vector; serving gRPC {}, dialing masters {}",
         match &server_tls {
