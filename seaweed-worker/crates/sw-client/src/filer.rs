@@ -824,7 +824,11 @@ impl FilerClient {
             .context("CreateEntry RPC failed")?
             .into_inner();
         if !resp.error.is_empty() {
-            bail!("CreateEntry: {}", resp.error);
+            let error = anyhow::anyhow!("CreateEntry: {}", resp.error);
+            if resp.error_code == crate::filer_pb::FilerError::EntryAlreadyExists as i32 {
+                return Err(error.context(EntryExists));
+            }
+            return Err(error);
         }
         Ok(LogPos {
             ts_ns: resp.log_ts_ns,
@@ -1054,6 +1058,24 @@ fn assign_volume_request(
 
 /// Entries fetched per `ListEntries` page.
 const LIST_PAGE_SIZE: u32 = 1000;
+
+/// Marker [`FilerClient::create_entry`] attaches when `o_excl` found the entry
+/// already there; detect it with [`is_entry_exists`].
+#[derive(Debug)]
+pub struct EntryExists;
+
+impl std::fmt::Display for EntryExists {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "the entry already exists")
+    }
+}
+
+impl std::error::Error for EntryExists {}
+
+/// Whether `err` is an exclusive create that found its entry in place.
+pub fn is_entry_exists(err: &anyhow::Error) -> bool {
+    err.downcast_ref::<EntryExists>().is_some()
+}
 
 /// Whether `err` is a filer being unreachable or slow rather than refusing
 /// the request, so that another filer may answer it.

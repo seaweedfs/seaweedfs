@@ -178,8 +178,7 @@ async fn reap_expired(dataset: &Dataset, now: u128) {
                 }
             })
             .is_some_and(|(own, stamp)| {
-                now.saturating_sub(stamp)
-                    > if own { LEASE_TTL } else { FOREIGN_TTL }.as_nanos()
+                now.saturating_sub(stamp) > if own { LEASE_TTL } else { FOREIGN_TTL }.as_nanos()
             });
         if expired && !held {
             let _ = dataset.tags().delete(name).await;
@@ -379,7 +378,10 @@ mod tests {
         let foreign = format!("{QUERY_TAG_PREFIX}other-{stale}-foreign");
         dataset
             .tags()
-            .create(&foreign, Ref::Version(None, Some(dataset.version().version)))
+            .create(
+                &foreign,
+                Ref::Version(None, Some(dataset.version().version)),
+            )
             .await
             .unwrap();
         let lease = pin(&dataset).await.unwrap();

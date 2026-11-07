@@ -18,7 +18,7 @@ use weed_lance_worker::jobs::cleanup::{self, CleanupVersionsHandler};
 use weed_lance_worker::jobs::compact::{CompactHandler, JOB_TYPE as COMPACT_JOB_TYPE};
 
 mod common;
-use common::{Recorder, fallback, int_config, namespace_url};
+use common::{Recorder, int_config, namespace_url, signing_key, storage};
 
 fn table() -> Option<String> {
     std::env::var("WEED_LANCE_TABLE")
@@ -40,14 +40,18 @@ async fn maintains_the_named_table() {
     // anything above one fragment is worth merging here.
     let mut config = int_config("min_fragments", 2);
     config.extend(int_config("target_rows_per_fragment", 1_048_576));
-    let compact = CompactHandler::new(url.clone()).with_fallback(fallback());
+    let compact = CompactHandler::new(url.clone())
+        .with_storage(storage().await)
+        .with_signing_key(signing_key());
     run(&compact, COMPACT_JOB_TYPE, &name, config, true).await;
 
     // Keep the current version and retain nothing else, so the versions
     // compaction superseded are actually removed rather than counted.
     let mut config = int_config("min_versions_to_keep", 1);
     config.extend(int_config("retain_hours", 0));
-    let cleanup = CleanupVersionsHandler::new(url).with_fallback(fallback());
+    let cleanup = CleanupVersionsHandler::new(url)
+        .with_storage(storage().await)
+        .with_signing_key(signing_key());
     run(&cleanup, cleanup::JOB_TYPE, &name, config, true).await;
 }
 

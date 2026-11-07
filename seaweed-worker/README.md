@@ -35,7 +35,7 @@ binary for the runner's platform, resolved from the version in `Cargo.lock`.
 
 ## Running
 
-    cargo run -p weed-lance-worker -- --admin 127.0.0.1:12535
+    cargo run -p weed-lance-worker -- --admin 127.0.0.1:12535 --masters 127.0.0.1:9333
 
 The admin's *HTTP* address is what an operator has; the gRPC port is derived
 from it the way the Go side does. Dialling the HTTP port fails as "frame with
@@ -49,7 +49,7 @@ Released builds do not need a toolchain. The worker ships inside the SeaweedFS
 image, beside the Rust volume server, under the verb that mirrors
 `volume-rust`:
 
-    docker run chrislusf/seaweedfs worker-rust --admin admin:12535
+    docker run chrislusf/seaweedfs worker-rust --admin admin:12535 --masters master:9333
 
 and as `weed-worker_linux_{amd64,arm64}.tar.gz` on each GitHub release. Both are
 linux amd64/arm64 only — lance, arrow and datafusion make every extra target an
@@ -59,7 +59,7 @@ entrypoint says so rather than failing as "not found".
 
 ## Metrics
 
-    cargo run -p weed-lance-worker -- --admin 127.0.0.1:12535 --metrics-port 9328
+    cargo run -p weed-lance-worker -- --admin 127.0.0.1:12535 --masters 127.0.0.1:9333 --metrics-port 9328
 
 Serves `/health`, `/ready` and `/metrics` on that port, the same three the Go
 worker serves under `weed worker -metricsPort`, so one scrape config covers
@@ -89,19 +89,21 @@ running but is not going to do anything.
 
 ## Credentials
 
-The worker holds none. It asks the namespace to describe a table with
-`vend_credentials` and hands the `storage_options` that come back to lance. A
-gateway without STS configured vends no credentials at all, so `--access-key`
-and `--secret-key` supply a fallback; anything the namespace does vend wins over
-them.
+The worker holds no S3 credentials. The namespace tells it where a table is;
+its files are read and written on the cluster's filers and volume servers,
+which `--masters` names the masters of (`--filer-group` picks the filers). What
+that takes comes from the same security.toml the weed processes use:
+`grpc.client` for the filers, `https.client` for volume servers under HTTPS,
+`jwt.signing.read.key` where volume reads are signed, and `s3.sse.kek` or
+`s3.sse.key` where a bucket encrypts with SSE-S3. `--encryptVolumeData` encrypts
+every chunk the worker writes for the volume servers, as the gateway's flag does.
 
-In a vector bucket's `vector` namespace the gateway vends write credentials only
-to a caller that proves it holds `jwt.filer_signing.key`. The same key signs
-the admin stream when admin requires it. The worker reads it from where
-`weed worker` does: `WEED_JWT_FILER_SIGNING_KEY`, or `[jwt.filer_signing]` in
-the security.toml found in the working directory, `~/.seaweedfs`,
-`/usr/local/etc/seaweedfs` or `/etc/seaweedfs`. `--filer-signing-key` overrides
-both.
+The namespace authenticates the worker by the cluster token it derives from
+`jwt.filer_signing.key`; the same key signs the admin stream when admin requires
+it. The worker reads it from where `weed worker` does: `WEED_JWT_FILER_SIGNING_KEY`,
+or `[jwt.filer_signing]` in the security.toml found in the working directory,
+`~/.seaweedfs`, `/usr/local/etc/seaweedfs` or `/etc/seaweedfs`.
+`--filer-signing-key` overrides both.
 
 ## State
 
@@ -113,7 +115,10 @@ All three jobs are implemented and tested end to end against a live gateway:
 
 `cargo test -p weed-lance-worker` runs them when `WEED_LANCE_NAMESPACE` names a
 live namespace and skips otherwise, the way the Go integration tests skip
-without Docker. Each test seeds the table it needs, including building a vector
+without Docker. A live namespace needs `WEED_MASTERS` naming its cluster's
+masters, and `WEED_JWT_FILER_SIGNING_KEY` (or security.toml) where the
+namespace authenticates cluster processes; the tests fail without the first
+and are refused without the second. Each test seeds the table it needs, including building a vector
 index and then appending rows outside it, so a run does not depend on what the
 previous one left behind — the first version of these did, and quietly stopped
 testing anything once it had done its job.
