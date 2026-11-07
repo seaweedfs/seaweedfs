@@ -639,6 +639,15 @@ def test_vector_index_job(vectors, cluster):
         [str(cli), *cli_cluster_args(cluster), "coverage", f"{bucket}$vector${index}"],
         check=True, capture_output=True, text=True).stdout)
     assert len(coverage) == 1 and coverage[0]["segments"] == 1 and coverage[0]["unindexed_rows"] == 0, coverage
+    # A table named by its s3:// location is opened on the cluster as well.
+    uri = json.loads(subprocess.run(
+        [str(cli), *cli_cluster_args(cluster), "describe", f"{bucket}$vector${index}"],
+        check=True, capture_output=True, text=True).stdout)["uri"]
+    assert uri.startswith("s3://"), uri
+    direct = json.loads(subprocess.run(
+        [str(cli), *cli_cluster_args(cluster), "coverage", uri],
+        check=True, capture_output=True, text=True).stdout)
+    assert direct == coverage, (direct, coverage)
 
     found = 0
     for _ in range(20):

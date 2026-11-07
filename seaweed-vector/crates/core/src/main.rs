@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 
-use weed_lance_worker::catalog::{NamespaceClient, SigningKey, parse_id};
+use weed_lance_worker::catalog::{NamespaceClient, SigningKey, TableDescription, parse_id};
 use weed_lance_worker::dataset::{self, Storage};
 use weed_vector_core::coverage;
 use weed_vector_core::index;
@@ -143,22 +143,31 @@ enum IndexAction {
     },
 }
 
-/// `id` is a delimiter-joined table id; when it looks like a URI (`s3://...`,
-/// `/path/...`, `file://...`) the dataset is opened directly, skipping the
-/// namespace — useful for a spike run against a local dataset.
+/// `id` is a delimiter-joined table id; when it looks like a URI the dataset
+/// is opened directly, skipping the namespace: an `s3://` URI on the
+/// cluster's storage, a local path (`/path/...`, `file://...`) as it is.
 async fn open_dataset(
     client: &NamespaceClient,
     id: &str,
     storage: &Storage,
 ) -> Result<lance::Dataset> {
-    if id.contains("://") || id.starts_with('/') {
+    let on_cluster = id.starts_with("s3://");
+    if !on_cluster && (id.contains("://") || id.starts_with('/')) {
         return lance::dataset::builder::DatasetBuilder::from_uri(id)
             .load()
             .await
             .with_context(|| format!("open {id}"));
     }
     if storage.0.is_none() {
-        bail!("a table named through the namespace needs --masters");
+        bail!("{id} is kept on the cluster and needs --masters");
+    }
+    if on_cluster {
+        let description = TableDescription {
+            location: id.to_string(),
+            storage_options: Default::default(),
+            managed_versioning: false,
+        };
+        return dataset::open_at(&description, storage.wrapper(id).await?).await;
     }
     let table = dataset::open(client, &parse_id(id), storage).await?;
     Ok(table.dataset)
