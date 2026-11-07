@@ -3221,7 +3221,7 @@ func TestMountTableEnds(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ended, moved, err := mountTableEnds(mountedDir, loc, tt.resp)
+			ended, moved, err := mountTableEnds(mountedDir, mountedDir, loc, tt.resp)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -3234,7 +3234,7 @@ func TestMountTableEnds(t *testing.T) {
 	t.Run("unreadable table", func(t *testing.T) {
 		resp := mountTableEvent(t, 1, mapped, mapped)
 		resp.EventNotification.NewEntry.Content = []byte{0xff, 0xff, 0xff}
-		if _, _, err := mountTableEnds(mountedDir, loc, resp); err == nil {
+		if _, _, err := mountTableEnds(mountedDir, mountedDir, loc, resp); err == nil {
 			t.Error("want an error for a table that does not unmarshal")
 		}
 	})
@@ -3245,11 +3245,43 @@ func TestMountTableEnds(t *testing.T) {
 		renamedOver := mountTableEvent(t, 1, mapped, map[string]*remote_pb.RemoteStorageLocation{})
 		renamedOver.EventNotification.OldEntry.Name = filer.REMOTE_STORAGE_MOUNT_FILE + ".new"
 		for _, resp := range []*filer_pb.SubscribeMetadataResponse{unreadable, renamedOver} {
-			if ended, _, err := mountTableEnds(mountedDir, loc, resp); err != nil || !ended {
+			if ended, _, err := mountTableEnds(mountedDir, mountedDir, loc, resp); err != nil || !ended {
 				t.Errorf("mountTableEnds(%s) = %v, %v; want the mount ended", resp.EventNotification.OldEntry.Name, ended, err)
 			}
 		}
 	})
+}
+
+func TestMountTableEndsBelowAMount(t *testing.T) {
+	dir, mountKey := "/buckets/b/sub", "/buckets/b"
+	loc := &remote_pb.RemoteStorageLocation{Name: "r", Bucket: "b", Path: "/"}
+	nested := &remote_pb.RemoteStorageLocation{Name: "r", Bucket: "nested", Path: "/"}
+	other := &remote_pb.RemoteStorageLocation{Name: "r", Bucket: "c", Path: "/"}
+	mapped := map[string]*remote_pb.RemoteStorageLocation{mountKey: loc}
+
+	tests := []struct {
+		name      string
+		resp      *filer_pb.SubscribeMetadataResponse
+		wantEnded bool
+		wantMoved *remote_pb.RemoteStorageLocation
+	}{
+		{"another mount added", mountTableEvent(t, 1, mapped, map[string]*remote_pb.RemoteStorageLocation{mountKey: loc, "/buckets/c": other}), false, nil},
+		{"the parent unmounted", mountTableEvent(t, 1, mapped, map[string]*remote_pb.RemoteStorageLocation{}), true, nil},
+		{"the directory mounted itself", mountTableEvent(t, 1, mapped, map[string]*remote_pb.RemoteStorageLocation{mountKey: loc, dir: nested}), true, nested},
+		{"replayed nested unmount from before", mountTableEvent(t, 1, map[string]*remote_pb.RemoteStorageLocation{mountKey: loc, dir: nested}, mapped), false, nil},
+		{"replayed version from before the mount", mountTableEvent(t, 1, map[string]*remote_pb.RemoteStorageLocation{}, map[string]*remote_pb.RemoteStorageLocation{"/buckets/c": other}), false, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ended, moved, err := mountTableEnds(dir, mountKey, loc, tt.resp)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ended != tt.wantEnded || !proto.Equal(moved, tt.wantMoved) {
+				t.Errorf("mountTableEnds = %v, %v; want %v, %v", ended, moved, tt.wantEnded, tt.wantMoved)
+			}
+		})
+	}
 }
 
 func TestAdmitUntilMountEndsDrainsBeforeTheExit(t *testing.T) {
@@ -3284,7 +3316,7 @@ func TestAdmitUntilMountEndsDrainsBeforeTheExit(t *testing.T) {
 			}(exitAtMountEnd)
 			exitAtMountEnd = func(_ string, _, to *remote_pb.RemoteStorageLocation) { exits <- exitCall{to, len(ran)} }
 
-			admit := admitUntilMountEnds(processor, mountedDir, loc)
+			admit := admitUntilMountEnds(processor, mountedDir, mountedDir, loc)
 			if err := admit(&filer_pb.SubscribeMetadataResponse{Directory: mountedDir, TsNs: 1, EventNotification: &filer_pb.EventNotification{
 				NewParentPath: mountedDir, NewEntry: &filer_pb.Entry{Name: "a.txt"}}}); err != nil {
 				t.Fatal(err)

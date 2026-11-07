@@ -70,7 +70,7 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 	processor := NewMetadataProcessor(eachEntryFunc, 128, lastOffsetTs.UnixNano())
 
 	var lastLogTsNs = time.Now().UnixNano()
-	processEventFnWithOffset := pb.AddOffsetFunc(admitUntilMountEnds(processor, mountKey, remoteStorageMountLocation), 3*time.Second, func(counter int64, lastTsNs int64) error {
+	processEventFnWithOffset := pb.AddOffsetFunc(admitUntilMountEnds(processor, mountedDir, mountKey, remoteStorageMountLocation), 3*time.Second, func(counter int64, lastTsNs int64) error {
 		offsetTsNs := processor.processedTsWatermark.Load()
 		if offsetTsNs == 0 {
 			return nil
@@ -128,14 +128,14 @@ func saveResumeOffset(grpcDialOption grpc.DialOption, filerAddress pb.ServerAddr
 }
 
 // admitUntilMountEnds judges each mount-table version before the next event
-// is admitted, by the mount's own key: -dir may lie below it. remote.unmount purges the directory right after writing the
+// is admitted. remote.unmount purges the directory right after writing the
 // table, and a purge delete admitted under a directory no longer mounted
 // deletes the remote objects. At the end nothing more is admitted and no
 // offset is saved, keeping the one remote.unmount writes after its purge;
 // the admitted jobs drain before the exit.
-func admitUntilMountEnds(processor *MetadataProcessor, mountedDir string, mountLocation *remote_pb.RemoteStorageLocation) pb.ProcessMetadataFunc {
+func admitUntilMountEnds(processor *MetadataProcessor, mountedDir, mountKey string, mountLocation *remote_pb.RemoteStorageLocation) pb.ProcessMetadataFunc {
 	return func(resp *filer_pb.SubscribeMetadataResponse) error {
-		ended, moved, err := mountTableEnds(mountedDir, mountLocation, resp)
+		ended, moved, err := mountTableEnds(mountedDir, mountKey, mountLocation, resp)
 		if err != nil {
 			return err
 		}
@@ -158,36 +158,37 @@ var exitAtMountEnd = func(mountedDir string, from, to *remote_pb.RemoteStorageLo
 }
 
 // mountTableEnds reports whether a mount-table event ends the write-back of
-// mountedDir at loc: a version that no longer maps the directory there,
-// replacing one that did. moved is the new location of a directory mounted
-// elsewhere, nil for an unmount. A version replacing one that did not map it
-// there predates the mount: without a saved offset the follow starts at the
+// mountedDir, which mountKey mounts at loc: a version in which another mount
+// or none covers the directory, replacing one in which this mount did.
+// moved is the location of the covering mount, nil for an unmount. A
+// version replacing one in which this mount did not cover the directory
+// predates the mount: without a saved offset the follow starts at the
 // directory's creation second and replays the table's earlier versions.
-func mountTableEnds(mountedDir string, loc *remote_pb.RemoteStorageLocation, resp *filer_pb.SubscribeMetadataResponse) (ended bool, moved *remote_pb.RemoteStorageLocation, err error) {
+func mountTableEnds(mountedDir, mountKey string, loc *remote_pb.RemoteStorageLocation, resp *filer_pb.SubscribeMetadataResponse) (ended bool, moved *remote_pb.RemoteStorageLocation, err error) {
 	message := resp.EventNotification
 	if isMountTable(filer_pb.MetadataEventTargetDirectory(resp), message.NewEntry) {
-		mappings, readErr := filer.UnmarshalRemoteStorageMappings(message.NewEntry.Content)
+		key, newLoc, readErr := mountOf(message.NewEntry, mountedDir)
 		if readErr != nil {
 			return false, nil, fmt.Errorf("unmarshal mappings: %w", readErr)
 		}
-		moved = mappings.Mappings[mountedDir]
-		if sameMountLocation(moved, loc) {
+		if key == mountKey && sameMountLocation(newLoc, loc) {
 			return false, nil, nil
 		}
+		moved = newLoc
 	} else if !isMountTable(resp.Directory, message.OldEntry) {
 		return false, nil, nil
 	}
-	if !replacedTableMapped(mountedDir, loc, resp) {
+	if !replacedTableMapped(mountedDir, mountKey, loc, resp) {
 		return false, nil, nil
 	}
 	return true, moved, nil
 }
 
-// replacedTableMapped reports whether the mount table an event replaced
-// mapped mountedDir to loc. A created table replaced none; a replaced
-// version the event does not carry, or that does not unmarshal, counts as
-// mapped.
-func replacedTableMapped(mountedDir string, loc *remote_pb.RemoteStorageLocation, resp *filer_pb.SubscribeMetadataResponse) bool {
+// replacedTableMapped reports whether, in the mount table an event replaced,
+// mountKey covered mountedDir at loc. A created table replaced none; a
+// replaced version the event does not carry, or that does not unmarshal,
+// counts as covering it.
+func replacedTableMapped(mountedDir, mountKey string, loc *remote_pb.RemoteStorageLocation, resp *filer_pb.SubscribeMetadataResponse) bool {
 	oldEntry := resp.EventNotification.OldEntry
 	if oldEntry == nil {
 		return false
@@ -195,11 +196,22 @@ func replacedTableMapped(mountedDir string, loc *remote_pb.RemoteStorageLocation
 	if !isMountTable(resp.Directory, oldEntry) {
 		return true
 	}
-	mappings, err := filer.UnmarshalRemoteStorageMappings(oldEntry.Content)
+	key, oldLoc, err := mountOf(oldEntry, mountedDir)
 	if err != nil {
 		return true
 	}
-	return sameMountLocation(mappings.Mappings[mountedDir], loc)
+	return key == mountKey && sameMountLocation(oldLoc, loc)
+}
+
+// mountOf resolves the mount covering dir in a mount-table version, as
+// DetectMountInfo does in the live table: "" and nil when none does.
+func mountOf(table *filer_pb.Entry, dir string) (string, *remote_pb.RemoteStorageLocation, error) {
+	mappings, err := filer.UnmarshalRemoteStorageMappings(table.Content)
+	if err != nil {
+		return "", nil, err
+	}
+	key, loc, _ := filer.FindMountedRemoteMapping(mappings, dir)
+	return key, loc, nil
 }
 
 // isMountTable reports whether entry, in dir, is the mount table. A table
