@@ -205,12 +205,6 @@ async fn main() -> Result<()> {
     for master in &masters {
         master_client::grpc_addr(master)?;
     }
-    let advertise = advertised_addr(&args.listen, &masters);
-    tokio::spawn(master_client::keep_connected(
-        masters.clone(),
-        advertise,
-        master_tls.clone(),
-    ));
     // The filers are dialed as the masters are: grpc.client's credentials
     // and server allowlist, through the engine's own connector.
     let filer_dialer: Option<FilerDialer> = security
@@ -252,7 +246,7 @@ async fn main() -> Result<()> {
     );
     tokio::spawn(follow_filers(
         reads.clone(),
-        masters,
+        masters.clone(),
         args.filer_group.clone(),
         master_tls.clone(),
     ));
@@ -275,6 +269,14 @@ async fn main() -> Result<()> {
         },
         if master_tls.is_some() { "over TLS" } else { "in plaintext" },
     );
+    // Registered only now, with storage connected and the listener bound,
+    // so the gateway never finds an engine that cannot serve yet.
+    let advertise = advertised_addr(&args.listen, &masters);
+    tokio::spawn(master_client::keep_connected(
+        masters.clone(),
+        advertise,
+        master_tls.clone(),
+    ));
     let router = Server::builder()
         // Match the gateway's 1 GiB cap — put batches over the tonic 4 MiB
         // default otherwise get rejected before they reach the handler.
