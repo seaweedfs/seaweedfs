@@ -254,13 +254,51 @@ func TestDetectionKeepsGlobalMovesUnderTheCap(t *testing.T) {
 	}
 }
 
-// TestGlobalMaxMovesPerRackFallsBackToDefault: an unset cap must not reach the planner as 0,
-// which it reads as unlimited.
-func TestGlobalMaxMovesPerRackFallsBackToDefault(t *testing.T) {
-	if got := globalMaxMovesPerRack(&Config{}); got != DefaultGlobalMaxMovesPerRack {
-		t.Errorf("unset cap = %d, want %d", got, DefaultGlobalMaxMovesPerRack)
+// TestDetectionUsesConfiguredGlobalCap: the configured per-rack cap reaches the planner, and
+// an unset one plans the default rather than the planner's unlimited 0.
+func TestDetectionUsesConfiguredGlobalCap(t *testing.T) {
+	disk := func(shards ...*master_pb.VolumeEcShardInformationMessage) map[string]*master_pb.DiskInfo {
+		return map[string]*master_pb.DiskInfo{"": {Type: "", MaxVolumeCount: 100, EcShardInfos: shards}}
 	}
-	if got := globalMaxMovesPerRack(&Config{GlobalMaxMovesPerRack: 200}); got != 200 {
-		t.Errorf("configured cap = %d, want 200", got)
+	var loaded []*master_pb.VolumeEcShardInformationMessage
+	for vid := uint32(1); vid <= 40; vid++ {
+		loaded = append(loaded, &master_pb.VolumeEcShardInformationMessage{Id: vid, Collection: "col1", EcIndexBits: 1})
+	}
+	topoInfo := &master_pb.TopologyInfo{
+		DataCenterInfos: []*master_pb.DataCenterInfo{{
+			Id: "dc1",
+			RackInfos: []*master_pb.RackInfo{{Id: "rack1", DataNodeInfos: []*master_pb.DataNodeInfo{
+				{Id: "10.0.0.1:8080", DiskInfos: disk(loaded...)},
+				{Id: "10.0.0.2:8080", DiskInfos: disk()},
+				{Id: "10.0.0.3:8080", DiskInfos: disk()},
+				{Id: "10.0.0.4:8080", DiskInfos: disk()},
+			}}},
+		}},
+	}
+	at := topology.NewActiveTopology(0)
+	if err := at.UpdateTopology(topoInfo); err != nil {
+		t.Fatalf("UpdateTopology: %v", err)
+	}
+	clusterInfo := &types.ClusterInfo{ActiveTopology: at}
+
+	for _, tc := range []struct{ configured, want int }{
+		{0, DefaultGlobalMaxMovesPerRack},
+		{25, 25},
+	} {
+		config := NewDefaultConfig()
+		config.GlobalMaxMovesPerRack = tc.configured
+		results, _, err := Detection(context.Background(), nil, clusterInfo, config, 0)
+		if err != nil {
+			t.Fatalf("Detection: %v", err)
+		}
+		global := 0
+		for _, r := range results {
+			if strings.Contains(r.Reason, " global:") {
+				global++
+			}
+		}
+		if global != tc.want {
+			t.Errorf("cap %d planned %d global moves, want %d", tc.configured, global, tc.want)
+		}
 	}
 }
