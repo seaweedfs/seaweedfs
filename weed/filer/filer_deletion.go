@@ -17,6 +17,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
@@ -68,10 +69,14 @@ type DeletionRetryItem struct {
 	NextRetryAt time.Time
 	LastError   string
 	ledgerEpoch uint64 // pendingDeletions epoch when the item was queued; expiry forgets only a matching epoch
-	heapIndex   int    // index in the heap (for heap.Interface)
-	inFlight    bool   // true when item is being processed, prevents duplicate additions
-	manifest    *filer_pb.FileChunk
-	fsync       bool
+	// goneSince and goneSeen track consecutive retries the master answered
+	// "volume not found" for (volumeGoneConfirmed).
+	goneSince time.Time
+	goneSeen  int
+	heapIndex int  // index in the heap (for heap.Interface)
+	inFlight  bool // true when item is being processed, prevents duplicate additions
+	manifest  *filer_pb.FileChunk
+	fsync     bool
 }
 
 // retryHeap implements heap.Interface for DeletionRetryItem
@@ -310,21 +315,116 @@ func LookupByMasterClientFn(masterClient *wdclient.MasterClient) func(vids []str
 		m := make(map[string]*operation.LookupResult)
 		for _, vid := range vids {
 			locs, _ := masterClient.GetVidLocations(vid)
-			var locations []operation.Location
-			for _, loc := range locs {
-				locations = append(locations, operation.Location{
-					Url:       loc.Url,
-					PublicUrl: loc.PublicUrl,
-					GrpcPort:  loc.GrpcPort,
-				})
-			}
 			m[vid] = &operation.LookupResult{
 				VolumeOrFileId: vid,
-				Locations:      locations,
+				Locations:      toOperationLocations(locs),
 			}
 		}
 		return m, nil
 	}
+}
+
+func toOperationLocations(locs []wdclient.Location) []operation.Location {
+	var locations []operation.Location
+	for _, loc := range locs {
+		locations = append(locations, operation.Location{
+			Url:       loc.Url,
+			PublicUrl: loc.PublicUrl,
+			GrpcPort:  loc.GrpcPort,
+		})
+	}
+	return locations
+}
+
+// volumeGoneError starts the lookup error of a volume the master answered
+// "not found" for. That is what a deleted volume (a dropped collection, a
+// removed bucket) answers, but also a live one whose server is disconnected
+// for now, or one a follower master has not cached yet; so the retry loop
+// ends such a deletion only once the answer has held (volumeGoneConfirmed).
+const volumeGoneError = "volume not found by the master"
+
+const (
+	// masterLookupTimeout bounds the retry loop's master lookup.
+	masterLookupTimeout = 5 * time.Second
+	// VolumeGoneGrace and VolumeGoneMinAnswers: how long, and over how many
+	// retries in a row, the master must answer "not found" for a volume
+	// before its pending chunk deletions count as done.
+	VolumeGoneGrace      = 30 * time.Minute
+	VolumeGoneMinAnswers = 3
+)
+
+// retryLookupFn is the retry loop's lookup: the client's cache, then the
+// master for the volumes the cache does not know. Without it a chunk on a
+// deleted volume reached no volume server, got no deletion result, and was
+// re-queued forever: the durable ledger reloads it with a fresh retry count
+// on every restart.
+func retryLookupFn(masterClient *wdclient.MasterClient) func(vids []string) (map[string]*operation.LookupResult, error) {
+	return lookupWithMasterFallback(masterClient.GetVidLocations, func(vids []string) (*master_pb.LookupVolumeResponse, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), masterLookupTimeout)
+		defer cancel()
+		var resp *master_pb.LookupVolumeResponse
+		err := masterClient.WithClient(ctx, false, func(client master_pb.SeaweedClient) error {
+			r, err := client.LookupVolume(ctx, &master_pb.LookupVolumeRequest{VolumeOrFileIds: vids})
+			resp = r
+			return err
+		})
+		return resp, err
+	})
+}
+
+// lookupWithMasterFallback resolves locations from the cache and asks the
+// master about the rest. A volume the master has no location for and answers
+// "... not found" carries volumeGoneError; any failure to ask leaves the
+// volume without locations, as before (no result, retried).
+func lookupWithMasterFallback(cached func(vid string) ([]wdclient.Location, error),
+	askMaster func(vids []string) (*master_pb.LookupVolumeResponse, error)) func(vids []string) (map[string]*operation.LookupResult, error) {
+	return func(vids []string) (map[string]*operation.LookupResult, error) {
+		m := make(map[string]*operation.LookupResult)
+		var missing []string
+		for _, vid := range vids {
+			locs, _ := cached(vid)
+			m[vid] = &operation.LookupResult{VolumeOrFileId: vid, Locations: toOperationLocations(locs)}
+			if len(m[vid].Locations) == 0 {
+				missing = append(missing, vid)
+			}
+		}
+		if len(missing) == 0 {
+			return m, nil
+		}
+		resp, err := askMaster(missing)
+		if err != nil || resp == nil {
+			glog.V(1).Infof("deletion retry: master lookup of %d uncached volumes: %v", len(missing), err)
+			return m, nil
+		}
+		for _, vl := range resp.VolumeIdLocations {
+			vid := vl.VolumeOrFileId
+			if i := strings.Index(vid, ","); i > 0 {
+				vid = vid[:i]
+			}
+			r, ok := m[vid]
+			if !ok || len(r.Locations) > 0 {
+				continue
+			}
+			for _, loc := range vl.Locations {
+				r.Locations = append(r.Locations, operation.Location{Url: loc.Url, PublicUrl: loc.PublicUrl, GrpcPort: int(loc.GrpcPort)})
+			}
+			if len(r.Locations) == 0 && strings.HasSuffix(vl.Error, "not found") {
+				r.Error = volumeGoneError + ": " + vl.Error
+			}
+		}
+		return m, nil
+	}
+}
+
+// volumeGoneConfirmed records one more "volume not found" answer for the item
+// and reports whether the answers have held long enough to treat the chunk as
+// gone with its volume. Any other outcome resets the streak.
+func volumeGoneConfirmed(item *DeletionRetryItem, now time.Time) bool {
+	if item.goneSeen == 0 {
+		item.goneSince = now
+	}
+	item.goneSeen++
+	return item.goneSeen >= VolumeGoneMinAnswers && now.Sub(item.goneSince) >= VolumeGoneGrace
 }
 
 func (f *Filer) loopProcessingDeletion() {
@@ -332,7 +432,7 @@ func (f *Filer) loopProcessingDeletion() {
 	lookupFunc := LookupByMasterClientFn(f.MasterClient)
 
 	// Start retry processor in a separate goroutine
-	go f.loopProcessingDeletionRetry(lookupFunc)
+	go f.loopProcessingDeletionRetry(retryLookupFn(f.MasterClient))
 
 	ticker := time.NewTicker(DeletionPollInterval)
 	defer ticker.Stop()
@@ -406,7 +506,7 @@ func (f *Filer) processDeletionBatch(ctx context.Context, toDeleteFileIds []stri
 		case deletionOutcomeNotFound:
 			notFoundCount++
 			f.forgetDeletion(fileId, fsynced) // already gone: drop from durable ledger
-		case deletionOutcomeRetryable, deletionOutcomeNoResult:
+		case deletionOutcomeRetryable, deletionOutcomeNoResult, deletionOutcomeVolumeGone:
 			retryableErrorCount++
 			// Keep in the durable ledger: not confirmed, must survive restarts.
 			f.DeletionRetryQueue.AddOrUpdate(fileId, outcome.errorMsg, f.deletionEpoch(fileId))
@@ -447,11 +547,12 @@ func (f *Filer) processDeletionBatch(ctx context.Context, toDeleteFileIds []stri
 }
 
 const (
-	deletionOutcomeSuccess   = "success"
-	deletionOutcomeNotFound  = "not_found"
-	deletionOutcomeRetryable = "retryable"
-	deletionOutcomePermanent = "permanent"
-	deletionOutcomeNoResult  = "no_result"
+	deletionOutcomeSuccess    = "success"
+	deletionOutcomeNotFound   = "not_found"
+	deletionOutcomeRetryable  = "retryable"
+	deletionOutcomePermanent  = "permanent"
+	deletionOutcomeNoResult   = "no_result"
+	deletionOutcomeVolumeGone = "volume_gone"
 )
 
 // deletionOutcome represents the result of classifying deletion results for a file
@@ -513,6 +614,9 @@ func classifyDeletionOutcome(fileId string, resultsByFileId map[string][]*volume
 	hasSuccess := false
 
 	for _, res := range fileIdResults {
+		if strings.HasPrefix(res.Error, volumeGoneError) {
+			return deletionOutcome{status: deletionOutcomeVolumeGone, errorMsg: res.Error}
+		}
 		if res.Error == "" {
 			hasSuccess = true
 			continue
@@ -638,11 +742,20 @@ func (f *Filer) processRetryBatch(readyItems []*DeletionRetryItem, lookupFunc fu
 	outcomes := deleteFilesAndClassify(context.Background(), f.volumeGrpcDialOption(), fileIds, fsyncIds, lookupFunc)
 
 	// Process outcomes - iterate over readyItems to ensure all items are accounted for
-	var successCount, notFoundCount, retryCount, permanentErrorCount int
+	var successCount, notFoundCount, retryCount, permanentErrorCount, volumeGoneCount int
 	for _, item := range readyItems {
 		outcome := outcomes[item.FileId]
 		_, fsynced := fsyncIds[item.FileId]
 
+		if outcome.status != deletionOutcomeVolumeGone {
+			item.goneSeen = 0
+		}
+		if outcome.status == deletionOutcomeVolumeGone && volumeGoneConfirmed(item, time.Now()) {
+			// the master has not known the volume for VolumeGoneGrace: the
+			// chunk went with it
+			volumeGoneCount++
+			outcome.status = deletionOutcomeNotFound
+		}
 		switch outcome.status {
 		case deletionOutcomeSuccess:
 			successCount++
@@ -653,7 +766,7 @@ func (f *Filer) processRetryBatch(readyItems []*DeletionRetryItem, lookupFunc fu
 			notFoundCount++
 			f.DeletionRetryQueue.Remove(item)      // Remove from queue (already deleted)
 			f.forgetDeletion(item.FileId, fsynced) // already gone: drop from durable ledger
-		case deletionOutcomeRetryable, deletionOutcomeNoResult:
+		case deletionOutcomeRetryable, deletionOutcomeNoResult, deletionOutcomeVolumeGone:
 			retryCount++
 			if outcome.status == deletionOutcomeNoResult {
 				glog.Warningf("no deletion result for retried file %s, re-queuing to avoid loss", item.FileId)
@@ -677,6 +790,9 @@ func (f *Filer) processRetryBatch(readyItems []*DeletionRetryItem, lookupFunc fu
 	}
 	if retryCount > 0 {
 		glog.V(1).Infof("retry: %d files still failing, will retry again later", retryCount)
+	}
+	if volumeGoneCount > 0 {
+		glog.V(0).Infof("retry: %d files were on volumes the master has not known for %v, dropped as deleted with their volume", volumeGoneCount, VolumeGoneGrace)
 	}
 	if permanentErrorCount > 0 {
 		glog.Warningf("retry: %d files failed with permanent errors", permanentErrorCount)
