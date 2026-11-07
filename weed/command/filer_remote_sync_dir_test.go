@@ -3274,11 +3274,15 @@ func TestAdmitUntilMountEndsDrainsBeforeTheExit(t *testing.T) {
 				ran <- resp.EventNotification.NewEntry.Name
 				return nil
 			}, 128, 0)
-			exits := make(chan *remote_pb.RemoteStorageLocation, 1)
+			type exitCall struct {
+				to       *remote_pb.RemoteStorageLocation
+				jobsDone int
+			}
+			exits := make(chan exitCall, 1)
 			defer func(exit func(string, *remote_pb.RemoteStorageLocation, *remote_pb.RemoteStorageLocation)) {
 				exitAtMountEnd = exit
 			}(exitAtMountEnd)
-			exitAtMountEnd = func(_ string, _, to *remote_pb.RemoteStorageLocation) { exits <- to }
+			exitAtMountEnd = func(_ string, _, to *remote_pb.RemoteStorageLocation) { exits <- exitCall{to, len(ran)} }
 
 			admit := admitUntilMountEnds(processor, mountedDir, loc)
 			if err := admit(&filer_pb.SubscribeMetadataResponse{Directory: mountedDir, TsNs: 1, EventNotification: &filer_pb.EventNotification{
@@ -3294,9 +3298,12 @@ func TestAdmitUntilMountEndsDrainsBeforeTheExit(t *testing.T) {
 			}
 			close(release)
 			select {
-			case to := <-exits:
-				if !proto.Equal(to, tt.wantMoved) {
-					t.Errorf("exit with %v, want %v", to, tt.wantMoved)
+			case exit := <-exits:
+				if exit.jobsDone != 1 {
+					t.Errorf("exited with %d of 1 admitted jobs finished", exit.jobsDone)
+				}
+				if !proto.Equal(exit.to, tt.wantMoved) {
+					t.Errorf("exit with %v, want %v", exit.to, tt.wantMoved)
 				}
 			case <-time.After(5 * time.Second):
 				t.Fatal("no exit after the admitted job finished")
