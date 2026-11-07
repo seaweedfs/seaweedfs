@@ -556,7 +556,7 @@ func (st *serverManifestStore) saveFile(ctx context.Context, location string, da
 	if err != nil {
 		return err
 	}
-	return st.server.saveMetadataBlob(ctx, bucket, tablePath, fileName, data, "application/avro", false)
+	return st.server.saveMetadataBlob(ctx, bucket, tablePath, fileName, data, "application/avro", false, nil)
 }
 
 // repairAddSnapshotManifests is the server entry point used by the commit
