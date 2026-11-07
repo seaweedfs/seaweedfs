@@ -112,6 +112,9 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
 		return err
 	}
+	if err := h.refuseClaimedLocation(w, r, filerClient, bucketName, tablePath, req.MetadataLocation); err != nil {
+		return err
+	}
 
 	// Create the table
 	now := time.Now()
@@ -279,6 +282,9 @@ func (h *S3TablesHandler) handleRegisterTable(w http.ResponseWriter, r *http.Req
 		return fmt.Errorf("table %s already exists", tableName)
 	} else if !errors.Is(err, filer_pb.ErrNotFound) && !errors.Is(err, ErrAttributeNotFound) {
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to check table: %v", err))
+		return err
+	}
+	if err := h.refuseClaimedLocation(w, r, filerClient, bucketName, tablePath, req.MetadataLocation); err != nil {
 		return err
 	}
 
@@ -1047,6 +1053,9 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 
 	// Delete the table
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		if err := checkLocationUnclaimed(r.Context(), client, bucketName, tablePath, metadata.MetadataLocation); err != nil {
+			return err
+		}
 		dataPath := TableDataDirFromMetadataLocation(metadata.MetadataLocation)
 		if dataPath != "" && dataPath != tablePath && strings.HasPrefix(dataPath+"/", GetTableBucketPath(bucketName)+"/") {
 			// Refuse to purge a data path that is an ancestor of the table's own
@@ -1216,6 +1225,10 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 		}
 		if errors.Is(err, ErrConcurrentUpdate) {
 			h.writeError(w, http.StatusConflict, ErrCodeConflict, "table changed during delete, retry the request")
+			return err
+		}
+		if errors.Is(err, ErrLocationInUse) {
+			h.writeError(w, http.StatusConflict, ErrCodeConflict, err.Error())
 			return err
 		}
 		if errors.Is(err, filer_pb.ErrNotFound) {
@@ -1688,6 +1701,11 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 	if err := h.refuseClaimedNamespace(w, r, filerClient, destNamespacePath, destNamespace, isDestNamespace); err != nil {
 		return err
 	}
+	if metadata.MetadataLocation == "" {
+		if err := h.refuseClaimedLocation(w, r, filerClient, bucketName, destPath, ""); err != nil {
+			return err
+		}
+	}
 
 	metadata.Name = destName
 	metadata.Namespace = destNamespace
@@ -2105,6 +2123,11 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 		metadata.Metadata.FullMetadata = nil
 	}
 	if req.MetadataLocation != "" {
+		if CatalogRecordRoot(target.bucketName, target.tablePath, req.MetadataLocation) != CatalogRecordRoot(target.bucketName, target.tablePath, metadata.MetadataLocation) {
+			if err := h.refuseClaimedLocation(w, r, filerClient, target.bucketName, target.tablePath, req.MetadataLocation); err != nil {
+				return err
+			}
+		}
 		metadata.MetadataLocation = req.MetadataLocation
 	}
 	if req.MetadataVersion > 0 {

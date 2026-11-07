@@ -138,6 +138,9 @@ func (h *S3TablesHandler) handleCreateView(w http.ResponseWriter, r *http.Reques
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
 		return err
 	}
+	if err := h.refuseClaimedLocation(w, r, filerClient, bucketName, viewPath, req.MetadataLocation); err != nil {
+		return err
+	}
 
 	now := time.Now()
 	versionToken := generateVersionToken()
@@ -552,6 +555,11 @@ func (h *S3TablesHandler) handleUpdateView(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	if req.MetadataLocation != "" {
+		if CatalogRecordRoot(target.bucketName, viewPath, req.MetadataLocation) != CatalogRecordRoot(target.bucketName, viewPath, metadata.MetadataLocation) {
+			if err := h.refuseClaimedLocation(w, r, filerClient, target.bucketName, viewPath, req.MetadataLocation); err != nil {
+				return err
+			}
+		}
 		metadata.MetadataLocation = req.MetadataLocation
 	}
 	if req.MetadataVersion > 0 {

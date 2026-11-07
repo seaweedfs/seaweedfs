@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -23,6 +25,7 @@ var (
 	ErrAttributeNotFound = errors.New("attribute not found")
 	ErrConcurrentUpdate  = errors.New("attribute changed concurrently")
 	ErrNameTaken         = errors.New("catalog name is taken")
+	ErrLocationInUse     = errors.New("location is in use by another table or view")
 )
 
 // extendedAttributeUpdateAttempts bounds the read-modify-write retry loop in
@@ -903,6 +906,135 @@ func (h *S3TablesHandler) dirHoldsFiles(ctx context.Context, client filer_pb.Sea
 		}
 	}
 	return false, nil
+}
+
+// eachDirEntry calls fn on the entries of dir page by page until fn returns
+// false. A missing dir has none.
+func eachDirEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, dir string, fn func(*filer_pb.Entry) bool) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	lastFileName := ""
+	for {
+		resp, err := client.ListEntries(ctx, &filer_pb.ListEntriesRequest{
+			Directory:          dir,
+			Limit:              dirListPageSize,
+			StartFromFileName:  lastFileName,
+			InclusiveStartFrom: lastFileName == "",
+		})
+		if err != nil {
+			if status.Code(err) == codes.NotFound || errors.Is(err, filer_pb.ErrNotFound) {
+				return nil
+			}
+			return err
+		}
+		received := false
+		for {
+			entry, err := resp.Recv()
+			if err != nil {
+				if err == io.EOF || status.Code(err) == codes.NotFound {
+					break
+				}
+				return err
+			}
+			if entry.Entry == nil {
+				continue
+			}
+			received = true
+			lastFileName = entry.Entry.Name
+			if !fn(entry.Entry) {
+				return nil
+			}
+		}
+		if !received {
+			return nil
+		}
+	}
+}
+
+// CatalogRecordRoot returns the directory the catalog record at recordPath
+// keeps its files under: the location it names inside the bucket, or its own
+// path.
+func CatalogRecordRoot(bucketName, recordPath, metadataLocation string) string {
+	if dir := TableDataDirFromMetadataLocation(metadataLocation); strings.HasPrefix(dir, GetTableBucketPath(bucketName)+"/") {
+		return dir
+	}
+	return recordPath
+}
+
+// CatalogRecordRoots maps every table and view record of the bucket, in any
+// namespace, to the directory it keeps its files under. A renamed record keeps
+// the directory of its old name.
+func CatalogRecordRoots(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketName string) (map[string]string, error) {
+	var namespaces []string
+	if err := eachDirEntry(ctx, client, GetTableBucketPath(bucketName), func(entry *filer_pb.Entry) bool {
+		if entry.IsDirectory && !strings.HasPrefix(entry.Name, ".") {
+			namespaces = append(namespaces, entry.Name)
+		}
+		return true
+	}); err != nil {
+		return nil, err
+	}
+	roots := map[string]string{}
+	for _, namespace := range namespaces {
+		namespacePath := GetNamespacePath(bucketName, namespace)
+		if err := eachDirEntry(ctx, client, namespacePath, func(entry *filer_pb.Entry) bool {
+			data, ok := entry.Extended[ExtendedKeyMetadata]
+			if !ok || !entry.IsDirectory {
+				return true
+			}
+			recordPath := path.Join(namespacePath, entry.Name)
+			var record struct {
+				MetadataLocation string `json:"metadataLocation"`
+			}
+			_ = json.Unmarshal(data, &record)
+			roots[recordPath] = CatalogRecordRoot(bucketName, recordPath, record.MetadataLocation)
+			return true
+		}); err != nil {
+			return nil, err
+		}
+	}
+	return roots, nil
+}
+
+// RootClaimed reports whether a record other than selfPath keeps its files at
+// root, above it or under it.
+func RootClaimed(roots map[string]string, selfPath, root string) bool {
+	for recordPath, other := range roots {
+		if recordPath == selfPath {
+			continue
+		}
+		if other == root || strings.HasPrefix(other, root+"/") || strings.HasPrefix(root, other+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// checkLocationUnclaimed returns ErrLocationInUse when the root the record at
+// recordPath would have with metadataLocation is claimed by another record.
+func checkLocationUnclaimed(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketName, recordPath, metadataLocation string) error {
+	roots, err := CatalogRecordRoots(ctx, client, bucketName)
+	if err != nil {
+		return err
+	}
+	if RootClaimed(roots, recordPath, CatalogRecordRoot(bucketName, recordPath, metadataLocation)) {
+		return ErrLocationInUse
+	}
+	return nil
+}
+
+// refuseClaimedLocation answers a request whose record would share its files
+// with another table or view of the bucket.
+func (h *S3TablesHandler) refuseClaimedLocation(w http.ResponseWriter, r *http.Request, filerClient FilerClient, bucketName, recordPath, metadataLocation string) error {
+	err := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return checkLocationUnclaimed(r.Context(), client, bucketName, recordPath, metadataLocation)
+	})
+	if errors.Is(err, ErrLocationInUse) {
+		h.writeError(w, http.StatusConflict, ErrCodeConflict, err.Error())
+	} else if err != nil {
+		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to check location")
+	}
+	return err
 }
 
 // claimTreeDirectory writes a fresh delete claim onto the directory at dirPath
