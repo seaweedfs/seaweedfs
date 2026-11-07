@@ -272,6 +272,7 @@ spec:
               --admin={{ template "seaweedfs.fullname" . }}-admin.{{ include "seaweedfs.namespace" . }}:{{ .Values.admin.port }}{{ if .Values.admin.grpcPort }}.{{ .Values.admin.grpcPort }}{{ end }} \
               {{- end }}
               --namespace="$LANCE_NAMESPACE_URL" \
+              --masters={{ include "seaweedfs.masterServerArg" . }} \
               {{- if .Values.global.seaweedfs.enableSecurity }}
               --tls-ca=/usr/local/share/ca-certificates/ca/tls.crt \
               --tls-cert=/usr/local/share/ca-certificates/worker/tls.crt \

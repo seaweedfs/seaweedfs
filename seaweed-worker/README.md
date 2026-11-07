@@ -89,19 +89,21 @@ running but is not going to do anything.
 
 ## Credentials
 
-The worker holds none. It asks the namespace to describe a table with
-`vend_credentials` and hands the `storage_options` that come back to lance. A
-gateway without STS configured vends no credentials at all, so `--access-key`
-and `--secret-key` supply a fallback; anything the namespace does vend wins over
-them.
+The worker holds no S3 credentials. The namespace tells it where a table is;
+its files are read and written on the cluster's filers and volume servers,
+which `--masters` names the masters of (`--filer-group` picks the filers). What
+that takes comes from the same security.toml the weed processes use:
+`grpc.client` for the filers, `https.client` for volume servers under HTTPS,
+`jwt.signing.read.key` where volume reads are signed, and `s3.sse.kek` or
+`s3.sse.key` where a bucket encrypts with SSE-S3. `-encryptVolumeData` encrypts
+every chunk the worker writes for the volume servers, as the gateway's flag does.
 
-In a vector bucket's `vector` namespace the gateway vends write credentials only
-to a caller that proves it holds `jwt.filer_signing.key`. The same key signs
-the admin stream when admin requires it. The worker reads it from where
-`weed worker` does: `WEED_JWT_FILER_SIGNING_KEY`, or `[jwt.filer_signing]` in
-the security.toml found in the working directory, `~/.seaweedfs`,
-`/usr/local/etc/seaweedfs` or `/etc/seaweedfs`. `--filer-signing-key` overrides
-both.
+The namespace authenticates the worker by the cluster token it derives from
+`jwt.filer_signing.key`; the same key signs the admin stream when admin requires
+it. The worker reads it from where `weed worker` does: `WEED_JWT_FILER_SIGNING_KEY`,
+or `[jwt.filer_signing]` in the security.toml found in the working directory,
+`~/.seaweedfs`, `/usr/local/etc/seaweedfs` or `/etc/seaweedfs`.
+`--filer-signing-key` overrides both.
 
 ## State
 
