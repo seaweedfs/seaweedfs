@@ -654,7 +654,7 @@ def test_query_without_writer(vectors, index, cluster):
 
 
 def test_engine_without_credentials(open_cluster):
-    """With no S3 identities, an engine given no credentials still serves an index."""
+    """A gateway with no S3 identities serves an index like one with."""
     client = boto3.client("s3vectors", endpoint_url=open_cluster["endpoint"], aws_access_key_id="any",
                           aws_secret_access_key="any", region_name="us-east-1",
                           config=Config(connect_timeout=3, read_timeout=20, retries={"max_attempts": 0}))

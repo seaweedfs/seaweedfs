@@ -182,9 +182,6 @@ func (e *TestEnvironment) startVectorEngine(t *testing.T, bin string) {
 	cmd := exec.Command(bin,
 		"--masters", masters,
 		"--listen", fmt.Sprintf("%s:%d", e.bindIP, e.vectorPort),
-		"--storage-option", "aws_access_key_id="+e.accessKey,
-		"--storage-option", "aws_secret_access_key="+e.secretKey,
-		"--storage-option", fmt.Sprintf("aws_endpoint=http://%s:%d", e.bindIP, e.s3Port),
 	)
 	cmd.Dir = e.dataDir
 	log, err := os.Create(filepath.Join(e.dataDir, "weed-vector.log"))

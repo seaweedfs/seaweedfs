@@ -98,7 +98,7 @@ def cluster(request, tmp_path_factory):
 
 @pytest.fixture(scope="module", params=combinations(), ids=lambda p: "-".join(p))
 def open_cluster(request, tmp_path_factory):
-    """A cluster with no S3 identities, and an engine given no credentials."""
+    """A cluster whose gateway has no S3 identities."""
     yield from run_cluster(request.param, tmp_path_factory, identities=False)
 
 
@@ -300,16 +300,11 @@ def run_cluster(param, tmp_path_factory, identities):
                         f"-defaultStoreDir={directory / 'filer'}"])
         wait_for(lambda: listening(filer_grpc), processes, "filer not ready")
         endpoint = f"http://127.0.0.1:{s3}"
-        # weed s3 turns AWS_ACCESS_KEY_ID into an admin identity, and the engine
-        # would find it as a credential.
+        # weed s3 turns AWS_ACCESS_KEY_ID into an admin identity.
         if identities:
             config, unset = [f"-config={HERE / 's3.json'}"], ()
-            # The engine uses its credentials only with the endpoint it is given.
-            credentials = ["--storage-option", "aws_access_key_id=test",
-                           "--storage-option", "aws_secret_access_key=test",
-                           "--storage-option", f"aws_endpoint={endpoint}"]
         else:
-            config, unset, credentials = [], ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"), []
+            config, unset = [], ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY")
         # VECTOR_ENCRYPT_VOLUMES=1 has the gateway encrypt every chunk it
         # stores, which direct reads must undo.
         encrypt = ["-encryptVolumeData"] if os.environ.get("VECTOR_ENCRYPT_VOLUMES") else []
@@ -320,7 +315,9 @@ def run_cluster(param, tmp_path_factory, identities):
         wait_for(lambda: listening(s3), processes, "s3 not ready")
         if os.environ.get("VECTOR_TLS") or read_jwt_key or encrypt:
             probe_hardening(endpoint, filer, vol, directory, read_jwt_key)
-        start("vector", [engine, "--masters", master_addr, "--listen", f"127.0.0.1:{vector}", *credentials], unset)
+        # The engine keeps tables on the filers and volume servers itself; it
+        # has no S3 credentials to be given.
+        start("vector", [engine, "--masters", master_addr, "--listen", f"127.0.0.1:{vector}"])
         wait_for(lambda: listening(vector), processes, "vector engine not ready")
         if os.environ.get("VECTOR_TLS"):
             wait_for(lambda: listening(s3_grpc), processes, "s3 gRPC not ready")
