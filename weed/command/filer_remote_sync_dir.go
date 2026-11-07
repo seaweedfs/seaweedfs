@@ -159,11 +159,12 @@ var exitAtMountEnd = func(mountedDir string, from, to *remote_pb.RemoteStorageLo
 
 // mountTableEnds reports whether a mount-table event ends the write-back of
 // mountedDir, which mountKey mounts at loc: a version in which another mount
-// or none covers the directory, replacing one in which this mount did.
-// moved is the location of the covering mount, nil for an unmount. A
-// version replacing one in which this mount did not cover the directory
-// predates the mount: without a saved offset the follow starts at the
-// directory's creation second and replays the table's earlier versions.
+// or none covers the directory. moved is the location of the covering mount,
+// nil for an unmount. A version in which no mount covers it, replacing one
+// in which none did, predates the mount: without a saved offset the follow
+// starts at the directory's creation second and replays the table's earlier
+// versions. Any earlier mount's unmount still ends it, since its purge
+// follows.
 func mountTableEnds(mountedDir, mountKey string, loc *remote_pb.RemoteStorageLocation, resp *filer_pb.SubscribeMetadataResponse) (ended bool, moved *remote_pb.RemoteStorageLocation, err error) {
 	message := resp.EventNotification
 	if isMountTable(filer_pb.MetadataEventTargetDirectory(resp), message.NewEntry) {
@@ -178,17 +179,17 @@ func mountTableEnds(mountedDir, mountKey string, loc *remote_pb.RemoteStorageLoc
 	} else if !isMountTable(resp.Directory, message.OldEntry) {
 		return false, nil, nil
 	}
-	if !replacedTableMapped(mountedDir, mountKey, loc, resp) {
+	if moved == nil && !replacedTableCovers(mountedDir, resp) {
 		return false, nil, nil
 	}
 	return true, moved, nil
 }
 
-// replacedTableMapped reports whether, in the mount table an event replaced,
-// mountKey covered mountedDir at loc. A created table replaced none; a
-// replaced version the event does not carry, or that does not unmarshal,
-// counts as covering it.
-func replacedTableMapped(mountedDir, mountKey string, loc *remote_pb.RemoteStorageLocation, resp *filer_pb.SubscribeMetadataResponse) bool {
+// replacedTableCovers reports whether a mount covered mountedDir in the
+// mount table an event replaced. A created table replaced none; a replaced
+// version the event does not carry, or that does not unmarshal, counts as
+// covering it.
+func replacedTableCovers(mountedDir string, resp *filer_pb.SubscribeMetadataResponse) bool {
 	oldEntry := resp.EventNotification.OldEntry
 	if oldEntry == nil {
 		return false
@@ -196,11 +197,8 @@ func replacedTableMapped(mountedDir, mountKey string, loc *remote_pb.RemoteStora
 	if !isMountTable(resp.Directory, oldEntry) {
 		return true
 	}
-	key, oldLoc, err := mountOf(oldEntry, mountedDir)
-	if err != nil {
-		return true
-	}
-	return key == mountKey && sameMountLocation(oldLoc, loc)
+	_, oldLoc, err := mountOf(oldEntry, mountedDir)
+	return err != nil || oldLoc != nil
 }
 
 // mountOf resolves the mount covering dir in a mount-table version, as

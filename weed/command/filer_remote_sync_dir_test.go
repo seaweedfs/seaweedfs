@@ -3204,13 +3204,14 @@ func TestMountTableEnds(t *testing.T) {
 		{"mounted elsewhere", mountTableEvent(t, 1, mapped, map[string]*remote_pb.RemoteStorageLocation{mountedDir: elsewhere}), true, elsewhere},
 		{"table deleted", mountTableEvent(t, 1, mapped, nil), true, nil},
 		{"mounted on another remote", mountTableEvent(t, 1, mapped, map[string]*remote_pb.RemoteStorageLocation{mountedDir: otherRemote}), true, otherRemote},
-		{"replayed unmount from another remote", mountTableEvent(t, 1, map[string]*remote_pb.RemoteStorageLocation{mountedDir: otherRemote}, map[string]*remote_pb.RemoteStorageLocation{}), false, nil},
+		{"remounted here from another remote", mountTableEvent(t, 1, map[string]*remote_pb.RemoteStorageLocation{mountedDir: otherRemote}, mapped), false, nil},
 		{"replayed version from before the mount", mountTableEvent(t, 1, map[string]*remote_pb.RemoteStorageLocation{"/buckets/c": other}, map[string]*remote_pb.RemoteStorageLocation{}), false, nil},
 		{"replayed creation of the table", mountTableEvent(t, 1, nil, map[string]*remote_pb.RemoteStorageLocation{"/buckets/c": other}), false, nil},
 		{"replayed deletion of the table", mountTableEvent(t, 1, map[string]*remote_pb.RemoteStorageLocation{"/buckets/c": other}, nil), false, nil},
 		{"the mount itself", mountTableEvent(t, 1, map[string]*remote_pb.RemoteStorageLocation{"/buckets/c": other}, mappedWithOther), false, nil},
-		{"replayed mount elsewhere", mountTableEvent(t, 1, map[string]*remote_pb.RemoteStorageLocation{}, map[string]*remote_pb.RemoteStorageLocation{mountedDir: elsewhere}), false, nil},
-		{"replayed unmount from elsewhere", mountTableEvent(t, 1, map[string]*remote_pb.RemoteStorageLocation{mountedDir: elsewhere}, map[string]*remote_pb.RemoteStorageLocation{}), false, nil},
+		{"replayed mount elsewhere", mountTableEvent(t, 1, map[string]*remote_pb.RemoteStorageLocation{}, map[string]*remote_pb.RemoteStorageLocation{mountedDir: elsewhere}), true, elsewhere},
+		{"replayed unmount from elsewhere: its purge follows", mountTableEvent(t, 1, map[string]*remote_pb.RemoteStorageLocation{mountedDir: elsewhere}, map[string]*remote_pb.RemoteStorageLocation{}), true, nil},
+		{"remounted here from elsewhere", mountTableEvent(t, 1, map[string]*remote_pb.RemoteStorageLocation{mountedDir: elsewhere}, mapped), false, nil},
 		{"table renamed away", renamedTable(mountTableEvent(t, 1, mapped, mapped), filer.DirectoryEtcRemote, filer.REMOTE_STORAGE_MOUNT_FILE+".bak"), true, nil},
 		{"table moved out of the directory", renamedTable(mountTableEvent(t, 1, mapped, mapped), "/etc", filer.REMOTE_STORAGE_MOUNT_FILE), true, nil},
 		{"a table-named file in a subdirectory", renamedTable(mountTableEvent(t, 1, nil, map[string]*remote_pb.RemoteStorageLocation{}), filer.DirectoryEtcRemote+"/old", filer.REMOTE_STORAGE_MOUNT_FILE), false, nil},
@@ -3239,7 +3240,7 @@ func TestMountTableEnds(t *testing.T) {
 		}
 	})
 
-	t.Run("a replaced version it cannot read counts as mapped", func(t *testing.T) {
+	t.Run("a replaced version it cannot read counts as covering", func(t *testing.T) {
 		unreadable := mountTableEvent(t, 1, mapped, map[string]*remote_pb.RemoteStorageLocation{})
 		unreadable.EventNotification.OldEntry.Content = []byte{0xff, 0xff, 0xff}
 		renamedOver := mountTableEvent(t, 1, mapped, map[string]*remote_pb.RemoteStorageLocation{})
@@ -3270,6 +3271,7 @@ func TestMountTableEndsBelowAMount(t *testing.T) {
 		{"the directory mounted itself", mountTableEvent(t, 1, mapped, map[string]*remote_pb.RemoteStorageLocation{mountKey: loc, dir: nested}), true, nested},
 		{"replayed nested unmount from before", mountTableEvent(t, 1, map[string]*remote_pb.RemoteStorageLocation{mountKey: loc, dir: nested}, mapped), false, nil},
 		{"replayed version from before the mount", mountTableEvent(t, 1, map[string]*remote_pb.RemoteStorageLocation{}, map[string]*remote_pb.RemoteStorageLocation{"/buckets/c": other}), false, nil},
+		{"replayed unmount of an earlier parent mount", mountTableEvent(t, 1, map[string]*remote_pb.RemoteStorageLocation{mountKey: other}, map[string]*remote_pb.RemoteStorageLocation{}), true, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
