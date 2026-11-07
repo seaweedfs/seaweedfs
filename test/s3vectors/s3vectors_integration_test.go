@@ -173,18 +173,18 @@ func vectorEngineBinary(t *testing.T) string {
 	return bin
 }
 
-// startVectorEngine spawns weed-vector against the environment's lance
-// namespace endpoint and waits for its listener to come up — mirroring the
-// cluster the pytest suite builds in conftest.py.
+// startVectorEngine spawns weed-vector against the environment's S3 endpoint
+// and waits for its listener to come up — mirroring the cluster the pytest
+// suite builds in conftest.py.
 func (e *TestEnvironment) startVectorEngine(t *testing.T, bin string) {
 	t.Helper()
 	masters := fmt.Sprintf("%s:%d.%d", e.bindIP, e.masterPort, e.masterPort+testutil.GrpcPortOffset)
 	cmd := exec.Command(bin,
-		"--namespace", fmt.Sprintf("http://%s:%d", e.bindIP, e.lancePort),
 		"--masters", masters,
 		"--listen", fmt.Sprintf("%s:%d", e.bindIP, e.vectorPort),
 		"--storage-option", "aws_access_key_id="+e.accessKey,
 		"--storage-option", "aws_secret_access_key="+e.secretKey,
+		"--storage-option", fmt.Sprintf("aws_endpoint=http://%s:%d", e.bindIP, e.s3Port),
 	)
 	cmd.Dir = e.dataDir
 	log, err := os.Create(filepath.Join(e.dataDir, "weed-vector.log"))

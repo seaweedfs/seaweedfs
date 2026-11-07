@@ -304,8 +304,7 @@ def run_cluster(param, tmp_path_factory, identities):
         # would find it as a credential.
         if identities:
             config, unset = [f"-config={HERE / 's3.json'}"], ()
-            # The engine uses its credentials only with the endpoint it is
-            # given, so a gateway-resolved table skips the catalog.
+            # The engine uses its credentials only with the endpoint it is given.
             credentials = ["--storage-option", "aws_access_key_id=test",
                            "--storage-option", "aws_secret_access_key=test",
                            "--storage-option", f"aws_endpoint={endpoint}"]
@@ -321,12 +320,7 @@ def run_cluster(param, tmp_path_factory, identities):
         wait_for(lambda: listening(s3), processes, "s3 not ready")
         if os.environ.get("VECTOR_TLS") or read_jwt_key or encrypt:
             probe_hardening(endpoint, filer, vol, directory, read_jwt_key)
-        # VECTOR_ENGINE_NO_CATALOG=1 gives the engine an unreachable catalog:
-        # the gateway resolves every table it sends, so the engine must not
-        # need one.
-        catalog = "http://127.0.0.1:1" if os.environ.get("VECTOR_ENGINE_NO_CATALOG") else f"http://127.0.0.1:{lance}"
-        start("vector", [engine, "--namespace", catalog,
-                         "--masters", master_addr, "--listen", f"127.0.0.1:{vector}", *credentials], unset)
+        start("vector", [engine, "--masters", master_addr, "--listen", f"127.0.0.1:{vector}", *credentials], unset)
         wait_for(lambda: listening(vector), processes, "vector engine not ready")
         if os.environ.get("VECTOR_TLS"):
             wait_for(lambda: listening(s3_grpc), processes, "s3 gRPC not ready")
