@@ -302,3 +302,15 @@ func TestDetectionUsesConfiguredGlobalCap(t *testing.T) {
 		}
 	}
 }
+
+// TestGlobalMaxMovesPerRackBoundedByMaxResults: a rack plans no more global moves than the
+// detection can keep.
+func TestGlobalMaxMovesPerRackBoundedByMaxResults(t *testing.T) {
+	config := &Config{GlobalMaxMovesPerRack: 5000}
+	if got := globalMaxMovesPerRack(config, 500); got != 500 {
+		t.Errorf("cap with 500 results = %d, want 500", got)
+	}
+	if got := globalMaxMovesPerRack(config, 0); got != 5000 {
+		t.Errorf("cap with unlimited results = %d, want 5000", got)
+	}
+}
