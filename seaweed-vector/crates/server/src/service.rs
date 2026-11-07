@@ -80,8 +80,10 @@ const CREDENTIAL_OPTIONS: [&str; 3] = [
 ];
 
 /// Whether a request's options may be used with the engine's fallback: known
-/// keys only, and an endpoint that is the configured one, or any when the
-/// engine holds no credentials a request could send there.
+/// keys only, and an endpoint that is the configured one, or any when no
+/// credential of the engine's can reach it: none configured, and the request
+/// either skips signing or brings its own, so the AWS default chain is never
+/// consulted.
 fn options_trusted(sent: &HashMap<String, String>, fallback: &FallbackOptions) -> bool {
     if sent.keys().any(|key| !SENT_OPTIONS.contains(&key.as_str())) {
         return false;
@@ -89,9 +91,14 @@ fn options_trusted(sent: &HashMap<String, String>, fallback: &FallbackOptions) -
     match (sent.get(ENDPOINT_OPTION), fallback.get(ENDPOINT_OPTION)) {
         (None, _) => true,
         (Some(sent), Some(pinned)) => sent == pinned,
-        (Some(_), None) => !CREDENTIAL_OPTIONS
-            .iter()
-            .any(|key| fallback.contains_key(*key)),
+        (Some(_), None) => {
+            let configured = CREDENTIAL_OPTIONS
+                .iter()
+                .any(|key| fallback.contains_key(*key));
+            let own = sent.get("aws_skip_signature").is_some_and(|v| v == "true")
+                || sent.contains_key("aws_access_key_id");
+            !configured && own
+        }
     }
 }
 
@@ -1123,21 +1130,37 @@ mod tests {
         ]);
         let gateway = options(&[(ENDPOINT_OPTION, "http://gw"), ("allow_http", "true")]);
         let elsewhere = options(&[(ENDPOINT_OPTION, "http://elsewhere")]);
+        let unsigned = options(&[
+            (ENDPOINT_OPTION, "http://gw"),
+            ("aws_skip_signature", "true"),
+        ]);
+        let vended = options(&[
+            (ENDPOINT_OPTION, "http://gw"),
+            ("aws_access_key_id", "v"),
+            ("aws_secret_access_key", "v"),
+        ]);
+        let none = FallbackOptions::new();
 
         assert!(options_trusted(&gateway, &pinned));
         assert!(!options_trusted(&elsewhere, &pinned));
         assert!(!options_trusted(&gateway, &creds), "no configured endpoint");
         assert!(
-            options_trusted(&gateway, &FallbackOptions::new()),
-            "nothing to send"
+            !options_trusted(&gateway, &none),
+            "the default chain could sign"
+        );
+        assert!(options_trusted(&unsigned, &none));
+        assert!(options_trusted(&vended, &none));
+        assert!(
+            !options_trusted(&vended, &creds),
+            "configured credentials stay home"
         );
         assert!(
             options_trusted(&options(&[("aws_region", "r")]), &creds),
             "no endpoint sent"
         );
         for key in ["proxy_url", "aws_endpoint_url_s3", "aws_endpoint_url"] {
-            let routed = options(&[(key, "http://elsewhere")]);
-            assert!(!options_trusted(&routed, &FallbackOptions::new()), "{key}");
+            let routed = options(&[(key, "http://elsewhere"), ("aws_skip_signature", "true")]);
+            assert!(!options_trusted(&routed, &none), "{key}");
         }
     }
 
