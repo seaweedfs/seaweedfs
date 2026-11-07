@@ -67,6 +67,12 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 	if err != nil {
 		return err
 	}
+	lastOffsetTs, err = startAfterMountOffset(lastOffsetTs, mountKey, mountedDir, *option.timeAgo, option.resumeTsNs, func() (int64, error) {
+		return remote_storage.GetSyncOffset(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountKey)
+	})
+	if err != nil {
+		return err
+	}
 	processor := NewMetadataProcessor(eachEntryFunc, 128, lastOffsetTs.UnixNano())
 
 	var lastLogTsNs = time.Now().UnixNano()
@@ -118,6 +124,28 @@ func dirRemoteLocation(mountKey, dir string, mountLocation *remote_pb.RemoteStor
 		return mountLocation
 	}
 	return filer.MapFullPathToRemoteStorageLocation(util.FullPath(mountKey), mountLocation, util.FullPath(dir))
+}
+
+// startAfterMountOffset keeps a write-back of a directory below the mount at
+// mountKey from starting before the offset saved for the mount itself.
+// remote.unmount saves that one after its purge and leaves the offsets of
+// directories below the mount alone, so resuming from the directory's own
+// offset after a remount would replay the unmount and stop there on every
+// start. Whatever it skips was purged, or was synced by a write-back of the
+// whole mount.
+func startAfterMountOffset(start time.Time, mountKey, dir string, timeAgo time.Duration, resumeTsNs int64, readMountOffset func() (int64, error)) (time.Time, error) {
+	if timeAgo != 0 || resumeTsNs > 0 || strings.TrimSuffix(dir, "/") == strings.TrimSuffix(mountKey, "/") {
+		return start, nil
+	}
+	mountOffsetTsNs, err := readMountOffset()
+	if err != nil {
+		return time.Time{}, fmt.Errorf("read the sync offset of %s: %w", mountKey, err)
+	}
+	if mountOffsetTs := time.Unix(0, mountOffsetTsNs); mountOffsetTsNs > 0 && mountOffsetTs.After(start) {
+		glog.V(0).Infof("resume %s from the offset of its mount %s: %v", dir, mountKey, mountOffsetTs)
+		return mountOffsetTs, nil
+	}
+	return start, nil
 }
 
 // saveResumeOffset records where the next subscription resumes once this one

@@ -3307,6 +3307,52 @@ func TestDirRemoteLocationBelowAMount(t *testing.T) {
 	}
 }
 
+func TestStartAfterMountOffset(t *testing.T) {
+	start := time.Unix(100, 5)
+	later, earlier := time.Unix(200, 7), time.Unix(50, 3)
+	tests := []struct {
+		name        string
+		dir         string
+		timeAgo     time.Duration
+		resumeTsNs  int64
+		mountOffset time.Time
+		want        time.Time
+		wantRead    bool
+	}{
+		{"below the mount, unmounted since", "/buckets/b/sub", 0, 0, later, later, true},
+		{"below the mount, mount offset older", "/buckets/b/sub", 0, 0, earlier, start, true},
+		{"below the mount, no mount offset", "/buckets/b/sub", 0, 0, time.Time{}, start, true},
+		{"the mount itself", "/buckets/b", 0, 0, later, start, false},
+		{"the mount with a trailing slash", "/buckets/b/", 0, 0, later, start, false},
+		{"a -timeAgo replay", "/buckets/b/sub", time.Hour, 0, later, start, false},
+		{"a retry in this process", "/buckets/b/sub", 0, start.UnixNano(), later, start, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			read := false
+			got, err := startAfterMountOffset(start, "/buckets/b", tt.dir, tt.timeAgo, tt.resumeTsNs, func() (int64, error) {
+				read = true
+				if tt.mountOffset.IsZero() {
+					return 0, nil
+				}
+				return tt.mountOffset.UnixNano(), nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !got.Equal(tt.want) || read != tt.wantRead {
+				t.Errorf("startAfterMountOffset = %v (read %v); want %v (read %v)", got, read, tt.want, tt.wantRead)
+			}
+		})
+	}
+
+	if _, err := startAfterMountOffset(start, "/buckets/b", "/buckets/b/sub", 0, 0, func() (int64, error) {
+		return 0, errors.New("filer unavailable")
+	}); err == nil || !strings.Contains(err.Error(), "filer unavailable") {
+		t.Errorf("an unread mount offset must fail the start, got %v", err)
+	}
+}
+
 func TestAdmitUntilMountEndsDrainsBeforeTheExit(t *testing.T) {
 	mountedDir := "/buckets/b"
 	loc := &remote_pb.RemoteStorageLocation{Name: "r", Bucket: "b", Path: "/"}
