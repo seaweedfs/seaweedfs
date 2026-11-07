@@ -9,6 +9,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/base"
 )
 
+// DefaultGlobalMaxMovesPerRack moves the global phase incrementally across detection cycles
+// rather than draining a rack in one batch; raise it to work off a large skew faster.
+const DefaultGlobalMaxMovesPerRack = 10
+
 // Config extends BaseConfig with EC balance specific settings
 type Config struct {
 	base.BaseConfig
@@ -19,7 +23,10 @@ type Config struct {
 	PreferredTags      []string `json:"preferred_tags"`
 	ReplicaPlacement   string   `json:"replica_placement"`  // e.g. "020"; empty falls back to the master default replication (even spread only when that default is empty or zero)
 	IoBytePerSecond    int64    `json:"io_byte_per_second"` // limit each shard copy's rate; 0 falls back to the volume server's maintenance rate
-	DataCenterFilter   string   `json:"-"`                  // per-detection-run, not persisted
+	// GlobalMaxMovesPerRack caps the cross-volume load-balancing moves planned per rack in one
+	// detection run. The plugin worker form sets it; the legacy task policy has no field for it.
+	GlobalMaxMovesPerRack int    `json:"global_max_moves_per_rack"`
+	DataCenterFilter      string `json:"-"` // per-detection-run, not persisted
 }
 
 // NewDefaultConfig creates a new default EC balance configuration
@@ -30,11 +37,12 @@ func NewDefaultConfig() *Config {
 			ScanIntervalSeconds: 60 * 60, // 1 hour
 			MaxConcurrent:       1,
 		},
-		ImbalanceThreshold: 0.2, // 20%
-		MinServerCount:     3,
-		CollectionFilter:   "",
-		DiskType:           "",
-		PreferredTags:      nil,
+		ImbalanceThreshold:    0.2, // 20%
+		MinServerCount:        3,
+		GlobalMaxMovesPerRack: DefaultGlobalMaxMovesPerRack,
+		CollectionFilter:      "",
+		DiskType:              "",
+		PreferredTags:         nil,
 	}
 }
 

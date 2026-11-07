@@ -253,3 +253,14 @@ func TestDetectionKeepsGlobalMovesUnderTheCap(t *testing.T) {
 		t.Errorf("kept %q, want a global move", results[0].Reason)
 	}
 }
+
+// TestGlobalMaxMovesPerRackFallsBackToDefault: an unset cap must not reach the planner as 0,
+// which it reads as unlimited.
+func TestGlobalMaxMovesPerRackFallsBackToDefault(t *testing.T) {
+	if got := globalMaxMovesPerRack(&Config{}); got != DefaultGlobalMaxMovesPerRack {
+		t.Errorf("unset cap = %d, want %d", got, DefaultGlobalMaxMovesPerRack)
+	}
+	if got := globalMaxMovesPerRack(&Config{GlobalMaxMovesPerRack: 200}); got != 200 {
+		t.Errorf("configured cap = %d, want 200", got)
+	}
+}
