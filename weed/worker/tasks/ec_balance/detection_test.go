@@ -3,6 +3,7 @@ package ec_balance
 import (
 	"context"
 	"net"
+	"slices"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -154,3 +155,24 @@ func TestMovePhasePriority(t *testing.T) {
 
 // keep the erasure_coding import meaningful for future adapter tests
 var _ = erasure_coding.DataShardsCount
+
+// TestSortMovesByPhaseKeepsGlobalAheadOfWithinRack: a long within-rack backlog
+// must not push the capped global moves past the detection cap.
+func TestSortMovesByPhaseKeepsGlobalAheadOfWithinRack(t *testing.T) {
+	moves := []ecbalancer.Move{
+		{VolumeID: 1, Phase: "within_rack"},
+		{VolumeID: 2, Phase: "dedup"},
+		{VolumeID: 3, Phase: "within_rack"},
+		{VolumeID: 4, Phase: "global"},
+		{VolumeID: 5, Phase: "cross_rack"},
+		{VolumeID: 6, Phase: "global"},
+	}
+	sortMovesByPhase(moves)
+	var got []uint32
+	for _, m := range moves {
+		got = append(got, m.VolumeID)
+	}
+	if want := []uint32{2, 5, 4, 6, 1, 3}; !slices.Equal(got, want) {
+		t.Errorf("order = %v, want %v", got, want)
+	}
+}

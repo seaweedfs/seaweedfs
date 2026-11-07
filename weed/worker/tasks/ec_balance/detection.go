@@ -97,6 +97,12 @@ func Detection(
 		return nil, false, nil
 	}
 
+	// The global phase is capped per rack while the per-volume phases are not,
+	// so order it ahead of the within-rack moves: otherwise a long within-rack
+	// backlog pushes every global move past the detection cap, and a server that
+	// holds far more shards than its peers never drains.
+	sortMovesByPhase(moves)
+
 	hasMore := false
 	if maxResults > 0 && len(moves) > maxResults {
 		moves = moves[:maxResults]
@@ -337,6 +343,28 @@ func countEcShards(ecShardInfos []*master_pb.VolumeEcShardInformationMessage) in
 		count += erasure_coding.GetShardCount(eci)
 	}
 	return count
+}
+
+// sortMovesByPhase orders a plan for truncation, keeping the planner's order
+// within a phase: dedup and cross-rack first, then the capped global phase,
+// then within-rack.
+func sortMovesByPhase(moves []ecbalancer.Move) {
+	slices.SortStableFunc(moves, func(x, y ecbalancer.Move) int {
+		return movePhaseOrder(x.Phase) - movePhaseOrder(y.Phase)
+	})
+}
+
+func movePhaseOrder(phase string) int {
+	switch phase {
+	case "dedup":
+		return 0
+	case "cross_rack":
+		return 1
+	case "global":
+		return 2
+	default:
+		return 3
+	}
 }
 
 func movePhasePriority(phase string) types.TaskPriority {
