@@ -3,8 +3,11 @@ package ec_balance
 import (
 	"context"
 	"net"
+	"slices"
+	"strings"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/admin/topology"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding/ecbalancer"
@@ -154,3 +157,99 @@ func TestMovePhasePriority(t *testing.T) {
 
 // keep the erasure_coding import meaningful for future adapter tests
 var _ = erasure_coding.DataShardsCount
+
+// TestSortMovesByPhaseKeepsGlobalAheadOfWithinRack: a long within-rack backlog
+// must not push the capped global moves past the detection cap.
+func TestSortMovesByPhaseKeepsGlobalAheadOfWithinRack(t *testing.T) {
+	moves := []ecbalancer.Move{
+		{VolumeID: 1, Phase: "within_rack"},
+		{VolumeID: 2, Phase: "dedup"},
+		{VolumeID: 3, Phase: "within_rack"},
+		{VolumeID: 4, Phase: "global"},
+		{VolumeID: 5, Phase: "cross_rack"},
+		{VolumeID: 6, Phase: "global"},
+	}
+	sortMovesByPhase(moves)
+	var got []uint32
+	for _, m := range moves {
+		got = append(got, m.VolumeID)
+	}
+	if want := []uint32{2, 5, 4, 6, 1, 3}; !slices.Equal(got, want) {
+		t.Errorf("order = %v, want %v", got, want)
+	}
+}
+
+// TestSortMovesByPhaseKeepsAVolumesMovesInPlanOrder: a global move of a shard
+// that a within-rack move placed must not run ahead of that move.
+func TestSortMovesByPhaseKeepsAVolumesMovesInPlanOrder(t *testing.T) {
+	moves := []ecbalancer.Move{
+		{VolumeID: 1, ShardID: 3, SourceNode: "within 1", Phase: "within_rack"},
+		{VolumeID: 2, SourceNode: "within 2", Phase: "within_rack"},
+		{VolumeID: 1, ShardID: 3, SourceNode: "global 1", Phase: "global"},
+		{VolumeID: 3, SourceNode: "global 3", Phase: "global"},
+		{VolumeID: 2, Collection: "other", SourceNode: "global other 2", Phase: "global"},
+	}
+	sortMovesByPhase(moves)
+	var got []string
+	for _, m := range moves {
+		got = append(got, m.SourceNode)
+	}
+	if want := []string{"global 3", "global other 2", "within 1", "within 2", "global 1"}; !slices.Equal(got, want) {
+		t.Errorf("order = %q, want %q", got, want)
+	}
+}
+
+// TestDetectionKeepsGlobalMovesUnderTheCap: the within-rack moves that come
+// first in plan order must not push every global move past maxResults.
+func TestDetectionKeepsGlobalMovesUnderTheCap(t *testing.T) {
+	disk := func(shards ...*master_pb.VolumeEcShardInformationMessage) map[string]*master_pb.DiskInfo {
+		return map[string]*master_pb.DiskInfo{"": {Type: "", MaxVolumeCount: 100, EcShardInfos: shards}}
+	}
+	// Volume 100 sits on one machine (within-rack moves); volumes 1-20 load one
+	// server (global moves).
+	var loaded []*master_pb.VolumeEcShardInformationMessage
+	for vid := uint32(1); vid <= 20; vid++ {
+		loaded = append(loaded, &master_pb.VolumeEcShardInformationMessage{Id: vid, Collection: "col1", EcIndexBits: 1})
+	}
+	topoInfo := &master_pb.TopologyInfo{
+		DataCenterInfos: []*master_pb.DataCenterInfo{{
+			Id: "dc1",
+			RackInfos: []*master_pb.RackInfo{{Id: "rack1", DataNodeInfos: []*master_pb.DataNodeInfo{
+				{Id: "10.0.0.1:8080", DiskInfos: disk(&master_pb.VolumeEcShardInformationMessage{Id: 100, Collection: "col1", EcIndexBits: 0x3FFF})},
+				{Id: "10.0.0.2:8080", DiskInfos: disk(loaded...)},
+				{Id: "10.0.0.3:8080", DiskInfos: disk()},
+				{Id: "10.0.0.4:8080", DiskInfos: disk()},
+			}}},
+		}},
+	}
+	at := topology.NewActiveTopology(0)
+	if err := at.UpdateTopology(topoInfo); err != nil {
+		t.Fatalf("UpdateTopology: %v", err)
+	}
+	clusterInfo := &types.ClusterInfo{ActiveTopology: at}
+
+	all, _, err := Detection(context.Background(), nil, clusterInfo, NewDefaultConfig(), 0)
+	if err != nil {
+		t.Fatalf("Detection: %v", err)
+	}
+	withinRack := 0
+	for _, r := range all {
+		if strings.Contains(r.Reason, " within_rack:") {
+			withinRack++
+		}
+	}
+	if withinRack < 2 {
+		t.Fatalf("fixture plans %d within-rack moves, want at least 2", withinRack)
+	}
+
+	results, hasMore, err := Detection(context.Background(), nil, clusterInfo, NewDefaultConfig(), 1)
+	if err != nil {
+		t.Fatalf("Detection: %v", err)
+	}
+	if len(results) != 1 || !hasMore {
+		t.Fatalf("got %d results (hasMore %v), want 1 and more", len(results), hasMore)
+	}
+	if !strings.Contains(results[0].Reason, " global:") {
+		t.Errorf("kept %q, want a global move", results[0].Reason)
+	}
+}
