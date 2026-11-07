@@ -686,19 +686,21 @@ func TestRegistrationRefused(t *testing.T) {
 		err  error
 		want bool
 	}{
-		"name taken":                     {typed(s3tables.ErrCodeTableAlreadyExists), true},
-		"conflict":                       {typed(s3tables.ErrCodeConflict), true},
-		"version mismatch":               {s3tables.ErrVersionTokenMismatch, true},
-		"published then changed":         {&s3tables.S3TablesError{Type: s3tables.ErrCodeConflict, Message: s3tables.PublishedTableChangedMessage}, false},
-		"wrapped published then changed": {fmt.Errorf("create: %w", s3tables.ErrPublishedRecordChanged), false},
-		"access denied":                  {typed(s3tables.ErrCodeAccessDenied), true},
-		"no such namespace":              {typed(s3tables.ErrCodeNoSuchNamespace), true},
-		"invalid request":                {typed(s3tables.ErrCodeInvalidRequest), true},
-		"internal error":                 {typed(s3tables.ErrCodeInternalError), false},
-		"transport error":                {errors.New("rpc error: code = Unavailable desc = filer unavailable"), false},
-		"wrapped name taken":             {fmt.Errorf("create: %w", typed(s3tables.ErrCodeTableAlreadyExists)), true},
-		"untyped name taken":             {errors.New("table orders already exists"), true},
-		"wrapped server fault":           {fmt.Errorf("create: %w", typed(s3tables.ErrCodeInternalError)), false},
+		"name taken":                            {typed(s3tables.ErrCodeTableAlreadyExists), true},
+		"conflict":                              {typed(s3tables.ErrCodeConflict), true},
+		"version mismatch":                      {s3tables.ErrVersionTokenMismatch, true},
+		"published then changed":                {&s3tables.S3TablesError{Type: s3tables.ErrCodeConflict, Message: s3tables.PublishedTableChangedMessage}, false},
+		"wrapped published then changed":        {fmt.Errorf("create: %w", s3tables.ErrPublishedRecordChanged), false},
+		"access denied":                         {typed(s3tables.ErrCodeAccessDenied), true},
+		"no such namespace":                     {typed(s3tables.ErrCodeNoSuchNamespace), true},
+		"invalid request":                       {typed(s3tables.ErrCodeInvalidRequest), true},
+		"internal error":                        {typed(s3tables.ErrCodeInternalError), false},
+		"transport error":                       {errors.New("rpc error: code = Unavailable desc = filer unavailable"), false},
+		"wrapped name taken":                    {fmt.Errorf("create: %w", typed(s3tables.ErrCodeTableAlreadyExists)), true},
+		"untyped name taken":                    {errors.New("table orders already exists"), true},
+		"wrapped server fault":                  {fmt.Errorf("create: %w", typed(s3tables.ErrCodeInternalError)), false},
+		"server fault naming an existing entry": {&s3tables.S3TablesError{Type: s3tables.ErrCodeInternalError, Message: "failed to check table: entry already exists"}, false},
+		"wrapped server fault naming an entry":  {fmt.Errorf("table already exists: %w", typed(s3tables.ErrCodeInternalError)), false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if got := registrationRefused(tc.err); got != tc.want {
@@ -820,5 +822,28 @@ func TestConcurrentFinalizeCreateOnCommitHasOneWinner(t *testing.T) {
 	}
 	if files := e.metadataFiles(); len(files) != 1 || files[0] != path.Base(record.MetadataLocation) {
 		t.Errorf("metadata files = %v, want only %s", files, path.Base(record.MetadataLocation))
+	}
+}
+
+// A create answers 409 AlreadyExists only for a typed name-taken code; a typed
+// server fault keeps its 500 whatever its message says.
+func TestIsS3TablesAlreadyExistsTrustsTypedCode(t *testing.T) {
+	for name, tc := range map[string]struct {
+		err  error
+		want bool
+	}{
+		"table taken":                {&s3tables.S3TablesError{Type: s3tables.ErrCodeTableAlreadyExists, Message: "table t already exists"}, true},
+		"namespace taken":            {&s3tables.S3TablesError{Type: s3tables.ErrCodeNamespaceAlreadyExists, Message: "ns"}, true},
+		"internal error mentions it": {&s3tables.S3TablesError{Type: s3tables.ErrCodeInternalError, Message: "failed to check table: entry already exists"}, false},
+		"conflict mentions it":       {&s3tables.S3TablesError{Type: s3tables.ErrCodeConflict, Message: "already exists"}, false},
+		"untyped":                    {errors.New("table orders already exists"), true},
+		"untyped other":              {errors.New("filer unavailable"), false},
+		"nil":                        {nil, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := isS3TablesAlreadyExists(tc.err); got != tc.want {
+				t.Errorf("isS3TablesAlreadyExists(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
 	}
 }

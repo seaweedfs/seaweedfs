@@ -150,16 +150,20 @@ func hasAssertCreateRequirement(requirements table.Requirements) bool {
 	return false
 }
 
+// isS3TablesAlreadyExists reports whether err says the name is already taken.
+// A typed error says so through its code alone: a server fault whose message
+// happens to mention an existing entry is still a server fault, and taking it
+// for a refusal would answer 409 and discard a file the catalog may point at.
+// Only an untyped error is read by its message.
 func isS3TablesAlreadyExists(err error) bool {
 	if err == nil {
 		return false
 	}
-	if strings.Contains(strings.ToLower(err.Error()), "already exists") {
-		return true
-	}
 	var tableErr *s3tables.S3TablesError
-	return errors.As(err, &tableErr) &&
-		(tableErr.Type == s3tables.ErrCodeTableAlreadyExists || tableErr.Type == s3tables.ErrCodeNamespaceAlreadyExists || strings.Contains(strings.ToLower(tableErr.Message), "already exists"))
+	if errors.As(err, &tableErr) {
+		return tableErr.Type == s3tables.ErrCodeTableAlreadyExists || tableErr.Type == s3tables.ErrCodeNamespaceAlreadyExists
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "already exists")
 }
 
 func (s *Server) finalizeCreateOnCommit(ctx context.Context, input createOnCommitInput) (*CommitTableResponse, *icebergRequestError) {
