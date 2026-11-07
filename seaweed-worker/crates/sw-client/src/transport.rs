@@ -105,6 +105,13 @@ pub trait VolumeTransport: Send + Sync {
             .await
     }
 
+    /// Delete needle `file_id` at `location`; `auth` is the write JWT its
+    /// assignment came with (`""` if none). A needle already gone is no error.
+    async fn delete(&self, location: &str, file_id: &str, auth: &str) -> Result<()> {
+        let _ = (location, file_id, auth);
+        bail!("{} transport cannot delete needles", self.name())
+    }
+
     /// Short label for logs/diagnostics (e.g. `"http"`, `"rdma"`).
     fn name(&self) -> &'static str;
 }
@@ -340,6 +347,19 @@ impl VolumeTransport for HttpTransport {
             return Err(error);
         }
         Ok(())
+    }
+
+    async fn delete(&self, location: &str, file_id: &str, auth: &str) -> Result<()> {
+        let url = format!("{}://{location}/{file_id}", self.scheme);
+        let mut req = self.http.delete(&url).timeout(self.write_timeout);
+        if !auth.is_empty() {
+            req = req.header(AUTHORIZATION, format!("BEARER {auth}"));
+        }
+        let resp = req.send().await.with_context(|| format!("delete {url}"))?;
+        if resp.status().is_success() || resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(());
+        }
+        bail!("delete {url} -> HTTP {}", resp.status())
     }
 
     fn name(&self) -> &'static str {
