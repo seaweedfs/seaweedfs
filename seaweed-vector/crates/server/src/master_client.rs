@@ -7,12 +7,10 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use tokio::time::sleep;
-use tonic::transport::{Channel, Endpoint};
 
-use crate::master_pb::{
-    KeepConnectedRequest, ListClusterNodesRequest, seaweed_client::SeaweedClient,
-};
+use crate::master_pb::{KeepConnectedRequest, seaweed_client::SeaweedClient};
 use crate::security::GrpcTls;
+pub use weed_lance_worker::cluster::{CONNECT_TIMEOUT, connect, grpc_addr};
 
 fn registration(client_addr: &str) -> KeepConnectedRequest {
     KeepConnectedRequest {
@@ -25,36 +23,6 @@ fn registration(client_addr: &str) -> KeepConnectedRequest {
         leave_lock_ring: false,
         ..Default::default()
     }
-}
-
-/// Masters are configured by their HTTP address; gRPC lives +10000 like the
-/// weed conventions (server_address.ToGrpcAddress).
-// A master address may carry an explicit gRPC port as `host:http.grpc` —
-// use it directly; otherwise the gRPC port is http + 10000.
-pub fn grpc_addr(master: &str) -> Result<String> {
-    let (scheme, rest) = master.split_once("://").unwrap_or(("http", master));
-    if let Some((host, port)) = rest.rsplit_once(':') {
-        if let Some((_, grpc)) = port.split_once('.') {
-            if let Ok(grpc) = grpc.parse::<u64>() {
-                let grpc = u16::try_from(grpc)
-                    .with_context(|| format!("master {master}: gRPC port {grpc} is past 65535"))?;
-                return Ok(format!("{scheme}://{host}:{grpc}"));
-            }
-        }
-        if let Ok(port) = port.parse::<u64>() {
-            let grpc = port
-                .checked_add(10000)
-                .and_then(|grpc| u16::try_from(grpc).ok())
-                .with_context(|| {
-                    format!(
-                        "master {master}: gRPC port {port}+10000 is past 65535; \
-                         give it explicitly as {host}:{port}.<grpc port>"
-                    )
-                })?;
-            return Ok(format!("{scheme}://{host}:{grpc}"));
-        }
-    }
-    Ok(format!("{scheme}://{rest}"))
 }
 
 // `host:http.grpc` normalizes to `host:http` so a leader hint naming the
@@ -110,31 +78,6 @@ where
             }
         }
     }
-}
-
-/// Bounds the credential reads and the connect, TLS handshake included, and
-/// then the master's first answer, the 5s wdclient gives a master call; a
-/// black-holed or silent master otherwise holds up the other masters.
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
-
-/// A channel to the master's gRPC, over TLS with `grpc.client`'s credentials
-/// when the cluster has them.
-pub async fn connect(master: &str, tls: Option<&GrpcTls>) -> Result<Channel> {
-    let addr = grpc_addr(master)?;
-    tokio::time::timeout(CONNECT_TIMEOUT, async {
-        Ok(match tls {
-            None => Endpoint::new(addr)?.connect().await?,
-            // The connector does the TLS; tonic adds its own only for an
-            // https URI, which it refuses without a tls_config.
-            Some(tls) => {
-                Endpoint::new(addr.replacen("https://", "http://", 1))?
-                    .connect_with_connector(crate::tls::connector(tls.clone()))
-                    .await?
-            }
-        })
-    })
-    .await
-    .context("master did not complete the connection")?
 }
 
 async fn stream_to(
@@ -261,11 +204,11 @@ mod tests {
         }
     }
 
-    /// `tests/tls`: a CA and the `engine-a` leaf it signed.
+    /// The worker crate's `tests/tls`: a CA and the `engine-a` leaf it signed.
     fn credentials() -> GrpcTls {
         let fixture = |name: &str| {
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/tls")
+                .join("../../../seaweed-worker/crates/lance/tests/tls")
                 .join(name)
                 .display()
                 .to_string()
@@ -341,69 +284,4 @@ mod tests {
         assert!(grpc_addr("m1:65536").is_err());
         assert!(grpc_addr("m1:9333.65536").is_err());
     }
-}
-
-/// The filers of `filer_group` registered with the masters, as gRPC
-/// `host:port`s, in registration order; the masters are all asked, since a
-/// follower may know fewer than the leader. An error means no master answered.
-pub async fn list_filers(
-    masters: &[String],
-    filer_group: &str,
-    tls: Option<&GrpcTls>,
-) -> Result<Vec<String>> {
-    let mut filers = Vec::new();
-    let mut answered = false;
-    let mut last = None;
-    for master in masters {
-        match filers_of(master, filer_group, tls).await {
-            Ok(found) => {
-                answered = true;
-                for filer in found {
-                    if !filers.contains(&filer) {
-                        filers.push(filer);
-                    }
-                }
-            }
-            Err(err) => {
-                tracing::warn!("master {master}: listing filers: {err:#}");
-                last = Some(err);
-            }
-        }
-    }
-    match (answered, last) {
-        (false, Some(err)) => Err(err),
-        (false, None) => Err(anyhow::anyhow!("no master given")),
-        _ => Ok(filers),
-    }
-}
-
-async fn filers_of(master: &str, filer_group: &str, tls: Option<&GrpcTls>) -> Result<Vec<String>> {
-    let channel = connect(master, tls).await?;
-    let request = ListClusterNodesRequest {
-        client_type: "filer".into(),
-        filer_group: filer_group.into(),
-        ..Default::default()
-    };
-    let nodes = tokio::time::timeout(
-        CONNECT_TIMEOUT,
-        SeaweedClient::new(channel).list_cluster_nodes(request),
-    )
-    .await
-    .context("master did not answer")??
-    .into_inner()
-    .cluster_nodes;
-    nodes
-        .iter()
-        .map(|node| filer_grpc_addr(&node.address))
-        .collect()
-}
-
-/// A filer registers as `host:port.grpc`, or `host:port` with its gRPC at
-/// port + 10000.
-pub fn filer_grpc_addr(address: &str) -> Result<String> {
-    let addr = grpc_addr(address)?;
-    Ok(addr
-        .split_once("://")
-        .map_or(addr.as_str(), |(_, rest)| rest)
-        .to_string())
 }

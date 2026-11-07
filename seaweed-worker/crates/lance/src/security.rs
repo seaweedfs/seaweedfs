@@ -4,9 +4,9 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::sse::SseConfig;
 use anyhow::{Context, Result, bail};
 use sw_client::HttpsTls;
-use weed_lance_worker::sse::SseConfig;
 
 const FILE_NAME: &str = "security.toml";
 

@@ -1,12 +1,10 @@
 use std::path::PathBuf;
-use std::sync::Arc;
-use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::Parser;
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::Server;
-use weed_lance_worker::direct_read::{Connection, DirectReads, FilerDialer};
+use weed_lance_worker::cluster::Cluster;
 use weed_vector_server::master_client;
 use weed_vector_server::pb::vector::vector_service_server::VectorServiceServer;
 use weed_vector_server::read_cache::ReadCache;
@@ -93,52 +91,6 @@ fn normalize_args(args: Vec<String>) -> Vec<String> {
 
 /// A wildcard listen address is not reachable for peers; derive the outbound
 /// IP toward the first master instead — the address the master sees anyway.
-/// How often the masters are asked for the filers.
-const FILER_REFRESH: Duration = Duration::from_secs(30);
-/// How long startup waits for a filer to be registered.
-const FILER_WAIT: Duration = Duration::from_secs(120);
-
-/// The filers the masters list, waiting for the first to register.
-async fn discover_filers(
-    masters: &[String],
-    filer_group: &str,
-    tls: Option<&weed_vector_server::security::GrpcTls>,
-) -> Result<Vec<String>> {
-    let deadline = tokio::time::Instant::now() + FILER_WAIT;
-    loop {
-        match master_client::list_filers(masters, filer_group, tls).await {
-            Ok(filers) if !filers.is_empty() => return Ok(filers),
-            Ok(_) => tracing::warn!("no filer is registered with the masters yet"),
-            Err(err) => tracing::warn!("listing filers: {err:#}"),
-        }
-        if tokio::time::Instant::now() >= deadline {
-            anyhow::bail!("no filer registered with the masters within {FILER_WAIT:?}");
-        }
-        tokio::time::sleep(Duration::from_secs(3)).await;
-    }
-}
-
-async fn follow_filers(
-    reads: DirectReads,
-    masters: Vec<String>,
-    filer_group: String,
-    tls: Option<weed_vector_server::security::GrpcTls>,
-) {
-    loop {
-        tokio::time::sleep(FILER_REFRESH).await;
-        match master_client::list_filers(&masters, &filer_group, tls.as_ref()).await {
-            Ok(filers) if !filers.is_empty() => {
-                if let Err(err) = reads.set_filers(&filers) {
-                    tracing::warn!("filers {}: {err:#}", filers.join(","));
-                }
-            }
-            // Keep the last known filers while the masters list none.
-            Ok(_) => tracing::warn!("the masters list no filer; keeping the known ones"),
-            Err(err) => tracing::warn!("listing filers: {err:#}"),
-        }
-    }
-}
-
 fn advertised_addr(listen: &str, masters: &[String]) -> String {
     let Some((host, _)) = listen.rsplit_once(':') else {
         return listen.to_string();
@@ -183,7 +135,6 @@ async fn main() -> Result<()> {
     if let Some(path) = security.path() {
         tracing::info!("security settings from {}", path.display());
     }
-    let master_tls = security.grpc_client_tls("grpc.client", "grpc.master")?;
     let server_tls = security
         .grpc_server_tls("grpc.vector")?
         .map(ServerTls::load)
@@ -193,66 +144,14 @@ async fn main() -> Result<()> {
     let listener = tokio::net::TcpListener::bind(&args.listen)
         .await
         .with_context(|| format!("listen on {}", args.listen))?;
-    let masters: Vec<String> = args
-        .masters
-        .split(',')
-        .map(|s| s.trim().to_string())
-        .collect();
-    for master in &masters {
-        master_client::grpc_addr(master)?;
-    }
-    let advertise = advertised_addr(&args.listen, &masters);
+    let cluster = Cluster::new(&args.masters, &args.filer_group, &security)?;
+    let advertise = advertised_addr(&args.listen, &cluster.masters);
     tokio::spawn(master_client::keep_connected(
-        masters.clone(),
+        cluster.masters.clone(),
         advertise,
-        master_tls.clone(),
+        cluster.master_tls.clone(),
     ));
-    // The filers are dialed as the masters are: grpc.client's credentials
-    // and server allowlist, through the engine's own connector.
-    let filer_dialer: Option<FilerDialer> = security
-        .grpc_client_tls("grpc.client", "grpc.filer")?
-        .map(|tls| {
-            Arc::new(move |addr: &str| {
-                let channel = tonic::transport::Endpoint::new(format!("http://{addr}"))?
-                    .connect_timeout(Duration::from_secs(10))
-                    .connect_with_connector_lazy(tls::connector(tls.clone()));
-                Ok(sw_client::FilerClient::from_channel(addr, channel))
-            }) as FilerDialer
-        });
-    let conn = Connection {
-        filers: discover_filers(&masters, &args.filer_group, master_tls.as_ref()).await?,
-        read_jwt_key: security.jwt_read_key(),
-        sse: security.sse(),
-        grpc_tls: None,
-        https_tls: security.https_client_tls()?,
-        filer_dialer,
-        encrypt_volume_data: args.encrypt_volume_data,
-    };
-    let reads = DirectReads::connect(&conn).await.context("direct reads")?;
-    tracing::info!(
-        "tables kept through {reads:?}; filer gRPC {}, volume servers {}; SSE-S3 objects {}",
-        if conn.filer_dialer.is_some() {
-            "over TLS"
-        } else {
-            "plaintext"
-        },
-        if conn.https_tls.is_some() {
-            "over HTTPS"
-        } else {
-            "over HTTP"
-        },
-        if reads.sse_s3_configured() {
-            "are readable"
-        } else {
-            "need s3.sse.kek or s3.sse.key"
-        },
-    );
-    tokio::spawn(follow_filers(
-        reads.clone(),
-        masters,
-        args.filer_group.clone(),
-        master_tls.clone(),
-    ));
+    let reads = cluster.storage(&security, args.encrypt_volume_data).await?;
     let mut service = VectorServer::new()
         .with_nprobes(args.nprobes.map(std::num::NonZeroUsize::get))
         .with_storage(reads);
@@ -269,7 +168,7 @@ async fn main() -> Result<()> {
             Some(_) => "over TLS with allowed client certificates required",
             None => "in plaintext",
         },
-        if master_tls.is_some() { "over TLS" } else { "in plaintext" },
+        if cluster.master_tls.is_some() { "over TLS" } else { "in plaintext" },
     );
     let router = Server::builder()
         // Match the gateway's 1 GiB cap — put batches over the tonic 4 MiB

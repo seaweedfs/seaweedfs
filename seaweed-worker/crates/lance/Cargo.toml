@@ -67,6 +67,23 @@ sha2 = "0.10"
 hkdf = "0.12"
 flate2 = "1"
 zstd = "0.13"
+# security.toml and the gRPC TLS weed processes use with it: the client
+# connector with the server allowlist, and the acceptor the engine serves with.
+toml = "0.8"
+rustls = "0.23"
+tokio-rustls = "0.26"
+x509-parser = "0.16"
+tower = "0.5"
+hyper-util = { version = "0.1", features = ["tokio"] }
+http = "1"
+tonic.workspace = true
+tonic-prost.workspace = true
+prost.workspace = true
+tokio-stream.workspace = true
+
+[build-dependencies]
+tonic-prost-build.workspace = true
+protoc-bin-vendored = "3"
 
 [dev-dependencies]
 tokio = { workspace = true }
@@ -75,6 +92,7 @@ arrow-array = "58"
 arrow-schema = "58"
 arrow-cast = "58"
 lance-linalg = "10"
+tempfile = "3"
 
 [lints]
 workspace = true
