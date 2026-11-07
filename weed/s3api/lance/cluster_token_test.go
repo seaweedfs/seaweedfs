@@ -149,6 +149,22 @@ func TestClusterTokenAloneAuthenticatesAClusterProcess(t *testing.T) {
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "lnc$ns$t") {
 		t.Fatalf("list with the cluster token = %d (%s)", rec.Code, rec.Body.String())
 	}
+
+	// The vector namespace, read-only to every other Lance caller, takes a
+	// cluster process's register and deregister.
+	h.seedVectorIndex(t, "vec", s3tables.FormatLance)
+	for _, tc := range []struct{ target, body string }{
+		{"/v1/table/vec$vector$idx/register", `{"location":"s3://vec/vector/idx","mode":"overwrite"}`},
+		{"/v1/table/vec$vector$idx/deregister", `{}`},
+	} {
+		req := httptest.NewRequest(http.MethodPost, tc.target, strings.NewReader(tc.body))
+		req.Header.Set(clusterTokenHeader, token)
+		rec = httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s with the cluster token = %d (%s)", tc.target, rec.Code, rec.Body.String())
+		}
+	}
 }
 
 // The Rust catalog client derives the same key; its tests pin this value too.

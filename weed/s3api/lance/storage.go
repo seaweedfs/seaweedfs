@@ -17,16 +17,21 @@ import (
 
 const defaultPageSize = 1000
 
+// manager is the S3 Tables manager a request runs through: a cluster process,
+// authenticated by the cluster token alone, has no identity of its own and is
+// trusted; every other caller is checked against its grants.
+func (s *Server) manager(r *http.Request) *s3tables.Manager {
+	if s3_constants.GetIdentityNameFromContext(r) == "" && isTrustedCaller(r.Context()) {
+		return s.internal
+	}
+	return s.tablesManager
+}
+
 // execute runs one S3 Tables operation as the request's authenticated caller.
-// A cluster process, authenticated by the cluster token alone, has no identity
-// of its own and runs through the trusted manager.
 func (s *Server) execute(r *http.Request, operation string, req, resp interface{}) error {
 	identityName := s3_constants.GetIdentityNameFromContext(r)
-	if identityName == "" && isTrustedCaller(r.Context()) {
-		return s.executeInternal(r, operation, req, resp)
-	}
 	return s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return s.tablesManager.Execute(r.Context(), s3tables.NewManagerClient(client), operation, req, resp, identityName)
+		return s.manager(r).Execute(r.Context(), s3tables.NewManagerClient(client), operation, req, resp, identityName)
 	})
 }
 

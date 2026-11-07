@@ -399,7 +399,7 @@ func (s *Server) handleRegisterTable(w http.ResponseWriter, r *http.Request) {
 			writeError(w, r, http.StatusConflict, codeTableAlreadyExists, "table already exists")
 			return
 		}
-		if err := s.tablesManager.CheckVectorNamespaceWrite(r.Context(), s.filerClient, bucket, ns); err != nil {
+		if err := s.manager(r).CheckVectorNamespaceWrite(r.Context(), s.filerClient, bucket, ns); err != nil {
 			writeStorageError(w, r, err)
 			return
 		}
@@ -458,7 +458,7 @@ func (s *Server) handleDeregisterTable(w http.ResponseWriter, r *http.Request) {
 		writeStorageError(w, r, err)
 		return
 	}
-	if err := s.tablesManager.CheckVectorNamespaceWrite(r.Context(), s.filerClient, bucket, ns); err != nil {
+	if err := s.manager(r).CheckVectorNamespaceWrite(r.Context(), s.filerClient, bucket, ns); err != nil {
 		writeStorageError(w, r, err)
 		return
 	}
