@@ -11,6 +11,7 @@ import (
 
 	"github.com/apache/iceberg-go"
 	"github.com/apache/iceberg-go/view"
+	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -99,7 +100,7 @@ func (s *Server) handleCreateView(w http.ResponseWriter, r *http.Request) {
 	bucketARN := buildTableBucketARN(bucketName)
 	identityName := s3_constants.GetIdentityNameFromContext(r)
 
-	viewPath := path.Join(flattenNamespacePath(namespace), req.Name)
+	viewPath := path.Join(flattenNamespacePath(namespace), req.Name+"-"+uuid.NewString())
 	location := strings.TrimSuffix(req.Location, "/")
 	if location == "" {
 		if req.Properties != nil {

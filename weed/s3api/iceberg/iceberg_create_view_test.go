@@ -200,7 +200,16 @@ func TestCreateViewDuplicateDoesNotClobberMetadata(t *testing.T) {
 		t.Fatalf("first create status = %d, want 200 (body: %s)", w.Code, w.Body.String())
 	}
 
-	metadataKey := path.Join(s3tables.GetTablePath(bucket, "ns", "v"), "metadata", "v1.metadata.json")
+	var created struct {
+		MetadataLocation string `json:"metadata-location"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	if !strings.HasPrefix(created.MetadataLocation, "s3://"+bucket+"/ns/v-") {
+		t.Fatalf("metadata-location = %q, want one under a directory of the view's own", created.MetadataLocation)
+	}
+	metadataKey := path.Join(s3tables.TablesPath, strings.TrimPrefix(created.MetadataLocation, "s3://"))
 	first, ok := fc.entries[metadataKey]
 	if !ok {
 		t.Fatalf("metadata file not written at %s", metadataKey)
