@@ -291,7 +291,6 @@ mod tests {
     use object_store::ObjectStoreExt;
     use object_store::memory::InMemory;
     use tonic::Request;
-    use weed_lance_worker::dataset::FallbackOptions;
 
     fn cached(inner: Arc<InMemory>) -> Arc<dyn ObjectStore> {
         ReadCache::new(1 << 20).wrap("memory", inner)
@@ -482,7 +481,7 @@ mod tests {
     async fn cached_reads_follow_writes_and_a_recreated_index() {
         let bucket = format!("cache-{}", uuid_like());
         let location = format!("shared-memory://{bucket}/vector/x");
-        let server = VectorServer::new(FallbackOptions::new())
+        let server = VectorServer::new()
             .with_schemes(&["shared-memory"])
             .with_read_cache(ReadCache::new(16 << 20));
         let table = pb::Table {

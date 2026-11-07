@@ -67,7 +67,6 @@ struct ListTablesResponse {
 pub struct NamespaceClient {
     base_url: String,
     http: reqwest::Client,
-    api_key: Option<String>,
     signing_key: Option<SigningKey>,
 }
 
@@ -104,27 +103,8 @@ impl NamespaceClient {
         Self {
             base_url: base_url.into().trim_end_matches('/').to_string(),
             http,
-            api_key: None,
             signing_key: None,
         }
-    }
-
-    /// The catalog accepts an S3 credential as `x-api-key`; where the worker
-    /// already holds one for storage it authenticates the namespace calls too.
-    pub fn with_fallback(mut self, fallback: &crate::dataset::FallbackOptions) -> Self {
-        if let (Some(access), Some(secret)) = (
-            fallback.get("aws_access_key_id"),
-            fallback.get("aws_secret_access_key"),
-        ) {
-            if !protected_transport(&self.base_url) {
-                tracing::warn!(
-                    "catalog url {} exposes the x-api-key credential in cleartext",
-                    self.base_url
-                );
-            }
-            self.api_key = Some(format!("{access}:{secret}"));
-        }
-        self
     }
 
     pub fn with_signing_key(mut self, signing_key: Option<&SigningKey>) -> Self {
@@ -139,10 +119,6 @@ impl NamespaceClient {
     }
 
     fn authed(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        let request = match &self.api_key {
-            Some(key) => request.header("x-api-key", key),
-            None => request,
-        };
         match self.signing_key.as_ref().and_then(SigningKey::token) {
             Some(token) => request.header(CLUSTER_TOKEN_HEADER, token),
             None => request,

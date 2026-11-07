@@ -24,6 +24,7 @@ use crate::storage::disk_location::is_read_only_mount;
 use crate::storage::idx;
 use crate::storage::io::read_exact_at;
 use crate::storage::io_error::{IoErrorTracker, StreakMark};
+use crate::storage::needle::crc::CRC;
 use crate::storage::needle::needle::{self, Needle, NeedleError, get_actual_size};
 use crate::storage::needle_map::sorted_file::SortedFileNeedleMap;
 use crate::storage::needle_map::{CompactNeedleMap, NeedleMap, NeedleMapKind, RedbNeedleMap};
@@ -845,6 +846,7 @@ pub(crate) struct NeedleReadPlan {
     data_file_access_control: Arc<DataFileAccessControl>,
     io_errors: Arc<IoErrorTracker>,
     io_unavailable: Arc<IoUnavailable>,
+    load_generation: u64,
 }
 
 impl NeedleReadPlan {
@@ -924,6 +926,8 @@ impl NeedleReadPlan {
             io_errors: self.io_errors,
             needle_id: self.needle_id,
             checksum: n.checksum.0,
+            append_at_ns: n.append_at_ns,
+            load_generation: self.load_generation,
         }
     }
 }
@@ -1205,6 +1209,224 @@ pub struct NeedleStreamInfo {
     /// Checksum stored in the needle tail, verified once the last chunk has
     /// been read — before that frame is emitted.
     pub checksum: u32,
+    pub(crate) append_at_ns: u64,
+    pub(crate) load_generation: u64,
+}
+
+/// A range carries no checksum of its own, so a ranged read checks the whole
+/// needle's CRC the first time any range of it is read, recording the CRC of
+/// each block on the way. `VERIFIED_NEEDLES` keeps those block CRCs, and later
+/// ranges check just the blocks they cover, so damage that appears after the
+/// first check is still caught. Entries are per volume load, so a remounted
+/// copy or a compaction is checked again, and concurrent first reads of a
+/// needle share one check.
+static VERIFIED_NEEDLES: LazyLock<Mutex<lru::LruCache<VerifiedNeedle, Arc<[u32]>>>> =
+    LazyLock::new(|| {
+        Mutex::new(lru::LruCache::new(
+            std::num::NonZeroUsize::new(64 * 1024).unwrap(),
+        ))
+    });
+static VERIFYING_NEEDLES: LazyLock<Mutex<HashMap<VerifiedNeedle, Arc<VerifyingNeedle>>>> =
+    LazyLock::new(Default::default);
+static VOLUME_LOADS: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct VerifiedNeedle {
+    load_generation: u64,
+    id: NeedleId,
+    append_at_ns: u64,
+    checksum: u32,
+}
+
+const RANGE_CHECK_BLOCKS: u64 = 64;
+const MIN_RANGE_CHECK_BLOCK_SIZE: u64 = 64 * 1024;
+const MAX_RANGE_CHECK_BLOCK_SIZE: u64 = 1024 * 1024;
+
+/// Keeps a needle to 64 blocks, each 64 KiB to 1 MiB, as Go's
+/// rangeCheckBlockSize.
+pub(crate) fn range_check_block_size(data_size: u64) -> u64 {
+    let mut block_size = MIN_RANGE_CHECK_BLOCK_SIZE;
+    while block_size < MAX_RANGE_CHECK_BLOCK_SIZE && data_size > RANGE_CHECK_BLOCKS * block_size {
+        block_size *= 2;
+    }
+    block_size
+}
+
+#[derive(Default)]
+struct VerifyingNeedle {
+    outcome: Mutex<Option<Result<Arc<[u32]>, (io::ErrorKind, String)>>>,
+    done: Condvar,
+}
+
+/// Publishes the check's outcome to the readers waiting on it, also when the
+/// check unwinds.
+struct VerifyingNeedleGuard {
+    key: VerifiedNeedle,
+    call: Arc<VerifyingNeedle>,
+}
+
+impl Drop for VerifyingNeedleGuard {
+    fn drop(&mut self) {
+        let mut outcome = self.call.outcome.lock().unwrap_or_else(|e| e.into_inner());
+        outcome.get_or_insert_with(|| {
+            Err((
+                io::ErrorKind::Other,
+                "needle checksum check did not finish".into(),
+            ))
+        });
+        drop(outcome);
+        self.call.done.notify_all();
+        VERIFYING_NEEDLES
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.key);
+    }
+}
+
+impl NeedleStreamInfo {
+    /// Whether `data`, the whole payload, matches the checksum in the tail.
+    pub(crate) fn checksum_matches(&self, data: &[u8]) -> bool {
+        let crc = CRC::new(data);
+        self.checksum == crc.0 || self.checksum == crc.legacy_value()
+    }
+
+    /// Check the whole needle's CRC before any byte of a range is sent, so a
+    /// damaged replica fails the read and the reader tries another copy, and
+    /// return the CRC of each block for `read_checked_range`.
+    pub(crate) fn verify_checksum(&self, chunk_size: usize) -> io::Result<Arc<[u32]>> {
+        let key = VerifiedNeedle {
+            load_generation: self.load_generation,
+            id: self.needle_id,
+            append_at_ns: self.append_at_ns,
+            checksum: self.checksum,
+        };
+        if let Some(crcs) = VERIFIED_NEEDLES
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&key)
+        {
+            return Ok(crcs.clone());
+        }
+        let (call, leader) = {
+            let mut calls = VERIFYING_NEEDLES.lock().unwrap_or_else(|e| e.into_inner());
+            match calls.get(&key) {
+                Some(call) => (call.clone(), false),
+                None => {
+                    let call = Arc::new(VerifyingNeedle::default());
+                    calls.insert(key, call.clone());
+                    (call, true)
+                }
+            }
+        };
+        if !leader {
+            let mut outcome = call.outcome.lock().unwrap_or_else(|e| e.into_inner());
+            while outcome.is_none() {
+                outcome = call.done.wait(outcome).unwrap_or_else(|e| e.into_inner());
+            }
+            return outcome
+                .clone()
+                .unwrap()
+                .map_err(|(kind, msg)| io::Error::new(kind, msg));
+        }
+        let guard = VerifyingNeedleGuard { key, call };
+        let result = self.read_checksum(chunk_size);
+        if let Ok(crcs) = &result {
+            VERIFIED_NEEDLES
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .put(key, crcs.clone());
+        }
+        *guard.call.outcome.lock().unwrap_or_else(|e| e.into_inner()) = Some(
+            result
+                .as_ref()
+                .map(Arc::clone)
+                .map_err(|e| (e.kind(), e.to_string())),
+        );
+        result
+    }
+
+    /// Read the whole payload in chunks and compare its CRC, recording the CRC
+    /// of each block. A read failure counts toward the io error streak; a pass
+    /// leaves the streak to the range read that follows.
+    fn read_checksum(&self, chunk_size: usize) -> io::Result<Arc<[u32]>> {
+        let total = self.data_size as usize;
+        let block_size = range_check_block_size(self.data_size as u64) as usize;
+        let mut buf = vec![0u8; chunk_size.clamp(1, total.max(1))];
+        let mut crc = CRC(0);
+        let mut block_crc = CRC(0);
+        let mut crcs = Vec::with_capacity(total.div_ceil(block_size));
+        let mut pos = 0;
+        while pos < total {
+            let len = buf
+                .len()
+                .min(total - pos)
+                .min(block_size - pos % block_size);
+            if let Err(e) = self
+                .source
+                .read_exact_at(&mut buf[..len], self.data_file_offset + pos as u64)
+            {
+                self.io_errors.check_read_write_error(Some(&e));
+                return Err(e);
+            }
+            crc = crc.update(&buf[..len]);
+            block_crc = block_crc.update(&buf[..len]);
+            pos += len;
+            if pos % block_size == 0 || pos == total {
+                crcs.push(block_crc.0);
+                block_crc = CRC(0);
+            }
+        }
+        if self.checksum != crc.0 && self.checksum != crc.legacy_value() {
+            crate::metrics::HANDLER_COUNTER
+                .with_label_values(&[crate::metrics::ERROR_CRC])
+                .inc();
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "needle data checksum {} expected {} for needle {}",
+                    crc.0, self.checksum, self.needle_id
+                ),
+            ));
+        }
+        Ok(crcs.into())
+    }
+
+    /// Read whole blocks around `[start, start + length)`, check each against
+    /// the CRC `verify_checksum` recorded, and return the range's bytes, so
+    /// damage that appears after the needle passed its check is not served.
+    pub(crate) fn read_checked_range(
+        &self,
+        crcs: &[u32],
+        start: u64,
+        length: u64,
+    ) -> io::Result<Vec<u8>> {
+        let block_size = range_check_block_size(self.data_size as u64);
+        let span_start = start / block_size * block_size;
+        let span_end = (start + length).div_ceil(block_size) * block_size;
+        let span_end = span_end.min(self.data_size as u64);
+        let mut buf = vec![0u8; (span_end - span_start) as usize];
+        self.source
+            .read_exact_at(&mut buf, self.data_file_offset + span_start)?;
+        for (i, block) in buf.chunks(block_size as usize).enumerate() {
+            let index = (span_start / block_size) as usize + i;
+            if crcs.get(index) != Some(&CRC::new(block).0) {
+                crate::metrics::HANDLER_COUNTER
+                    .with_label_values(&[crate::metrics::ERROR_CRC])
+                    .inc();
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "checksum mismatch in block {} of needle {}",
+                        index, self.needle_id
+                    ),
+                ));
+            }
+        }
+        let from = (start - span_start) as usize;
+        buf.truncate(from + length as usize);
+        buf.drain(..from);
+        Ok(buf)
+    }
 }
 
 #[derive(Clone)]
@@ -1442,6 +1664,9 @@ pub struct Volume {
     /// for volume health monitoring.
     io_errors: Arc<IoErrorTracker>,
 
+    /// Changes on every load, including a compaction commit.
+    load_generation: AtomicU64,
+
     /// Protobuf VolumeInfo for tiered storage (.vif file), Go's
     /// volumeInfoRWLock domain.
     ///
@@ -1574,6 +1799,7 @@ impl Volume {
             closed: AtomicBool::new(false),
             compaction_byte_per_second: AtomicI64::new(0),
             io_errors: Arc::default(),
+            load_generation: AtomicU64::new(0),
             volume_info: RwLock::new(PbVolumeInfo::default()),
         };
 
@@ -1628,6 +1854,7 @@ impl Volume {
             closed: AtomicBool::new(false),
             compaction_byte_per_second: AtomicI64::new(0),
             io_errors: Arc::default(),
+            load_generation: AtomicU64::new(0),
             volume_info: RwLock::new(PbVolumeInfo::default()),
         }
     }
@@ -1752,6 +1979,10 @@ impl Volume {
         preallocate: u64,
         version: Version,
     ) -> Result<(), VolumeError> {
+        self.load_generation.store(
+            VOLUME_LOADS.fetch_add(1, Ordering::Relaxed) + 1,
+            Ordering::Relaxed,
+        );
         let dat_path = self.file_name(".dat");
         let mut already_has_super_block = false;
 
@@ -2758,6 +2989,7 @@ impl Volume {
             data_file_access_control: self.data_file_access_control.clone(),
             io_errors: self.io_errors.clone(),
             io_unavailable: self.io_unavailable.clone(),
+            load_generation: self.load_generation.load(Ordering::Relaxed),
         })
     }
 

@@ -202,10 +202,19 @@ func DeclaredBucketEncryption(entry *filer_pb.Entry) string {
 		return ""
 	}
 	var metadata tableBucketMetadata
-	if json.Unmarshal(entry.Extended[ExtendedKeyMetadata], &metadata) != nil || !IsCatalogOnlyFormat(metadata.Format) {
+	if json.Unmarshal(entry.Extended[ExtendedKeyMetadata], &metadata) != nil {
 		return ""
 	}
-	if algorithm, _ := metadata.EncryptionConfiguration["sseAlgorithm"].(string); algorithm == "AES256" {
+	return DeclaredEncryption(metadata.Format, metadata.EncryptionConfiguration)
+}
+
+// DeclaredEncryption is DeclaredBucketEncryption for a bucket record already
+// read: its format and encryption configuration.
+func DeclaredEncryption(format string, encryption map[string]interface{}) string {
+	if !IsCatalogOnlyFormat(format) {
+		return ""
+	}
+	if algorithm, _ := encryption["sseAlgorithm"].(string); algorithm == "AES256" {
 		return algorithm
 	}
 	return ""

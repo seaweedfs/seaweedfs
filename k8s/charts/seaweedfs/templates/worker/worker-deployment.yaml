@@ -272,6 +272,10 @@ spec:
               --admin={{ template "seaweedfs.fullname" . }}-admin.{{ include "seaweedfs.namespace" . }}:{{ .Values.admin.port }}{{ if .Values.admin.grpcPort }}.{{ .Values.admin.grpcPort }}{{ end }} \
               {{- end }}
               --namespace="$LANCE_NAMESPACE_URL" \
+              --masters={{ include "seaweedfs.masterServerArg" . }} \
+              {{- if .Values.filer.filerGroup }}
+              --filer-group={{ .Values.filer.filerGroup }} \
+              {{- end }}
               {{- if .Values.global.seaweedfs.enableSecurity }}
               --tls-ca=/usr/local/share/ca-certificates/ca/tls.crt \
               --tls-cert=/usr/local/share/ca-certificates/worker/tls.crt \
@@ -294,6 +298,10 @@ spec:
             - name: ca-cert
               readOnly: true
               mountPath: /usr/local/share/ca-certificates/ca/
+            {{- /* grpc.client, which the worker dials the masters and filers with */}}
+            - name: client-cert
+              readOnly: true
+              mountPath: /usr/local/share/ca-certificates/client/
             - name: worker-cert
               readOnly: true
               mountPath: /usr/local/share/ca-certificates/worker/

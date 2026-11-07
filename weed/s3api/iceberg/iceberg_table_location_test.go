@@ -65,9 +65,8 @@ func TestTableLocation(t *testing.T) {
 }
 
 // Two creates can both find a name free. The one the catalog registers second
-// is answered with the registered table, not with metadata in a directory the
-// catalog never recorded.
-func TestCreateTableThatLosesTheRaceReturnsTheRegisteredTable(t *testing.T) {
+// is a conflict and leaves nothing in the directory the server picked for it.
+func TestCreateTableThatLosesTheRaceIsConflict(t *testing.T) {
 	const bucket = "warehouse"
 	fc := newMemFiler()
 	seedNamespace(fc, bucket, "finance", "alice")
@@ -79,9 +78,9 @@ func TestCreateTableThatLosesTheRaceReturnsTheRegisteredTable(t *testing.T) {
 	second := httptest.NewRecorder()
 	s.handleCreateTable(second, newCreateTableRequest(t, bucket, "finance", `{"name":"orders"}`, "alice"))
 
-	won, lost := decodeCreated(t, first), decodeCreated(t, second)
-	if lost != won {
-		t.Errorf("losing create answered %+v, want the registered table %+v", lost, won)
+	won := decodeCreated(t, first)
+	if second.Code != http.StatusConflict {
+		t.Fatalf("losing create = %d (%s), want 409", second.Code, second.Body.String())
 	}
 	wonDir := path.Join(s3tables.TablesPath, strings.TrimPrefix(won.Metadata.Location, "s3://"))
 	for p := range fc.entries {
@@ -91,9 +90,9 @@ func TestCreateTableThatLosesTheRaceReturnsTheRegisteredTable(t *testing.T) {
 	}
 }
 
-// Two commits of one staged table write the same metadata file. The one that
-// finds the table registered, and moved on to newer metadata, fails without
-// removing that file, which the registered table's history still names.
+// Two commits of one staged table pick the same metadata file name. The one
+// that finds the table registered, and moved on to newer metadata, fails
+// without removing the file the registered table's history still names.
 func TestStagedCommitThatLosesTheRaceFails(t *testing.T) {
 	const bucket = "warehouse"
 	fc := newMemFiler()

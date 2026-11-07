@@ -11,20 +11,20 @@ use futures::TryStreamExt;
 use seaweed_worker_core::{Preview, PreviewProvider};
 
 use crate::catalog::{NamespaceClient, SigningKey};
-use crate::dataset::{self, FallbackOptions};
+use crate::dataset::{self, Storage};
 use crate::jobs::FORMAT;
 
 pub struct LancePreview {
     namespace_url: String,
-    fallback: FallbackOptions,
+    storage: Storage,
     signing_key: Option<SigningKey>,
 }
 
 impl LancePreview {
-    pub fn new(namespace_url: String, fallback: FallbackOptions) -> Self {
+    pub fn new(namespace_url: String, storage: Storage) -> Self {
         Self {
             namespace_url,
-            fallback,
+            storage,
             signing_key: None,
         }
     }
@@ -43,9 +43,8 @@ impl PreviewProvider for LancePreview {
 
     async fn preview(&self, object_id: &[String], row_limit: usize) -> Result<Preview> {
         let client = NamespaceClient::new(self.namespace_url.clone())
-            .with_fallback(&self.fallback)
             .with_signing_key(self.signing_key.as_ref());
-        let table = dataset::open(&client, object_id, &self.fallback).await?;
+        let table = dataset::open(&client, object_id, &self.storage).await?;
 
         let total_rows = table.dataset.count_rows(None).await.unwrap_or(0) as i64;
         let mut scanner = table.dataset.scan();

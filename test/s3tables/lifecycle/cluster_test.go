@@ -101,6 +101,10 @@ type environment struct {
 	lancePort      int
 	adminPort      int
 
+	// The cluster's jwt.filer_signing.key, which the Lance namespace
+	// authenticates the Rust worker by.
+	clusterKey string
+
 	weedCancel context.CancelFunc
 	weedCmd    *exec.Cmd
 }
@@ -159,6 +163,7 @@ func newEnvironment() (*environment, error) {
 		icebergPort:    ports[8],
 		lancePort:      ports[9],
 		adminPort:      adminPorts[0],
+		clusterKey:     randomSuffix() + randomSuffix(),
 	}, nil
 }
 
@@ -197,6 +202,7 @@ func (env *environment) start() error {
 	cmd.Env = append(os.Environ(),
 		"AWS_ACCESS_KEY_ID="+accessKey,
 		"AWS_SECRET_ACCESS_KEY="+secretKey,
+		"WEED_JWT_FILER_SIGNING_KEY="+env.clusterKey,
 	)
 
 	if err := cmd.Start(); err != nil {

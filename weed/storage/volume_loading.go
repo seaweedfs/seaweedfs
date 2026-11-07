@@ -141,6 +141,7 @@ func (v *Volume) reopenIdxForWriteLocked() error {
 }
 
 func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind NeedleMapKind, preallocate int64, ver needle.Version) (err error) {
+	v.loadGeneration.Store(volumeLoads.Add(1))
 	alreadyHasSuperBlock := false
 
 	hasLoadedVolume := false

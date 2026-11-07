@@ -3,7 +3,11 @@ package storage
 import (
 	"fmt"
 	"io"
+	"sync/atomic"
 	"time"
+
+	lru "github.com/hashicorp/golang-lru/v2"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 
@@ -17,6 +21,40 @@ import (
 )
 
 const PagedReadLimit = 1024 * 1024
+
+// A range carries no checksum of its own, so a ranged read checks the whole
+// needle's CRC the first time any range of it is read, recording the CRC of
+// each block on the way. verifiedNeedles keeps those block CRCs, and later
+// ranges check just the blocks they cover, so damage that appears after the
+// first check is still caught. Entries are per volume load, so a remounted
+// copy or a compaction is checked again, and concurrent first reads of a
+// needle share one check.
+var (
+	verifiedNeedles, _ = lru.New[verifiedNeedle, []needle.CRC](64 * 1024)
+	verifyingNeedles   singleflight.Group
+	volumeLoads        atomic.Uint64
+)
+
+const (
+	rangeCheckBlocks       = 64
+	minRangeCheckBlockSize = 64 * 1024
+)
+
+// rangeCheckBlockSize keeps a needle to 64 blocks, each 64 KiB to 1 MiB.
+func rangeCheckBlockSize(dataSize int64) int64 {
+	blockSize := int64(minRangeCheckBlockSize)
+	for blockSize < PagedReadLimit && dataSize > rangeCheckBlocks*blockSize {
+		blockSize *= 2
+	}
+	return blockSize
+}
+
+type verifiedNeedle struct {
+	loadGeneration uint64
+	id             NeedleId
+	appendAtNs     uint64
+	checksum       needle.CRC
+}
 
 // read fills in Needle content by looking up n.Id from NeedleMapper
 func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption, onReadSizeFn func(size Size)) (count int, err error) {
@@ -157,7 +195,150 @@ func (v *Volume) verifyMovedRecord(n *needle.Needle, moved *needle_map.NeedleVal
 
 // read fills in Needle content by looking up n.Id from NeedleMapper
 func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, writer io.Writer, offset int64, size int64) (err error) {
+	dataSize := int64(n.DataSize)
+	if size <= 0 || (offset == 0 && size == dataSize) {
+		return v.streamNeedleData(n, readOption, writer, offset, size)
+	}
+	// Check the CRC before writing any byte of the range, so a damaged
+	// replica fails the read and the reader tries another copy.
+	crcs, err := v.verifiedNeedleBlocks(n, readOption)
+	if err != nil {
+		return err
+	}
+	blockSize := rangeCheckBlockSize(dataSize)
+	start := offset / blockSize * blockSize
+	end := (offset + size + blockSize - 1) / blockSize * blockSize
+	if end > dataSize {
+		end = dataSize
+	}
+	checker := &rangeBlockChecker{writer: writer, blockSize: blockSize, crcs: crcs, pos: start, from: offset, to: offset + size, end: end}
+	defer checker.free()
+	if err = v.streamNeedleData(n, readOption, checker, start, end-start); err != nil {
+		return err
+	}
+	if checker.pos != end {
+		return fmt.Errorf("ReadNeedleData: needle %v,%v ended at %d of %d", v.Id, n.Id, checker.pos, end)
+	}
+	return nil
+}
 
+func (v *Volume) verifiedNeedleBlocks(n *needle.Needle, readOption *ReadOption) ([]needle.CRC, error) {
+	key := verifiedNeedle{v.loadGeneration.Load(), n.Id, n.AppendAtNs, n.Checksum}
+	if crcs, ok := verifiedNeedles.Get(key); ok {
+		return crcs, nil
+	}
+	crcs, err, _ := verifyingNeedles.Do(fmt.Sprint(key), func() (any, error) {
+		dataSize := int64(n.DataSize)
+		blocks := &needleBlockCRCs{blockSize: rangeCheckBlockSize(dataSize)}
+		if err := v.streamNeedleData(n, readOption, blocks, 0, dataSize); err != nil {
+			return nil, err
+		}
+		if blocks.pos != dataSize {
+			return nil, fmt.Errorf("ReadNeedleData: needle %v,%v ended at %d of %d", v.Id, n.Id, blocks.pos, dataSize)
+		}
+		if blocks.pos%blocks.blockSize != 0 {
+			blocks.crcs = append(blocks.crcs, blocks.crc)
+		}
+		// A reload during the check may have swapped the data file.
+		if v.loadGeneration.Load() == key.loadGeneration {
+			verifiedNeedles.Add(key, blocks.crcs)
+		}
+		return blocks.crcs, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return crcs.([]needle.CRC), nil
+}
+
+// needleBlockCRCs records the CRC of each block the verification pass reads.
+type needleBlockCRCs struct {
+	blockSize int64
+	pos       int64
+	crc       needle.CRC
+	crcs      []needle.CRC
+}
+
+func (b *needleBlockCRCs) Write(p []byte) (int, error) {
+	written := len(p)
+	for len(p) > 0 {
+		k := len(p)
+		if left := b.blockSize - b.pos%b.blockSize; int64(k) > left {
+			k = int(left)
+		}
+		b.crc = b.crc.Update(p[:k])
+		b.pos += int64(k)
+		p = p[k:]
+		if b.pos%b.blockSize == 0 {
+			b.crcs = append(b.crcs, b.crc)
+			b.crc = 0
+		}
+	}
+	return written, nil
+}
+
+// rangeBlockChecker reads whole blocks around [from, to) and writes the bytes
+// of the range once their block matches the CRC the verification recorded.
+type rangeBlockChecker struct {
+	writer        io.Writer
+	blockSize     int64
+	crcs          []needle.CRC
+	pos, from, to int64
+	end           int64
+	crc           needle.CRC
+	held          []byte
+}
+
+func (c *rangeBlockChecker) Write(p []byte) (int, error) {
+	written := len(p)
+	for len(p) > 0 {
+		k := len(p)
+		if left := c.blockSize - c.pos%c.blockSize; int64(k) > left {
+			k = int(left)
+		}
+		if left := c.end - c.pos; int64(k) > left {
+			k = int(left)
+		}
+		if k <= 0 {
+			return 0, fmt.Errorf("ReadNeedleData: %d bytes past the range end %d", len(p), c.end)
+		}
+		c.crc = c.crc.Update(p[:k])
+		if lo, hi := max(c.pos, c.from), c.pos+int64(k); lo < c.to && hi > c.from {
+			if hi > c.to {
+				hi = c.to
+			}
+			if c.held == nil {
+				c.held = mem.Allocate(int(c.blockSize))[:0]
+			}
+			c.held = append(c.held, p[lo-c.pos:hi-c.pos]...)
+		}
+		c.pos += int64(k)
+		p = p[k:]
+		if c.pos%c.blockSize == 0 || c.pos == c.end {
+			block := (c.pos - 1) / c.blockSize
+			if block >= int64(len(c.crcs)) || c.crc != c.crcs[block] {
+				stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorCRC).Inc()
+				return 0, fmt.Errorf("checksum mismatch in block %d of the needle", block)
+			}
+			c.crc = 0
+			if len(c.held) > 0 {
+				if _, err := c.writer.Write(c.held); err != nil {
+					return 0, err
+				}
+				c.held = c.held[:0]
+			}
+		}
+	}
+	return written, nil
+}
+
+func (c *rangeBlockChecker) free() {
+	if c.held != nil {
+		mem.Free(c.held[:cap(c.held)])
+	}
+}
+
+func (v *Volume) streamNeedleData(n *needle.Needle, readOption *ReadOption, writer io.Writer, offset int64, size int64) (err error) {
 	if !readOption.HasSlowRead {
 		v.dataFileAccessLock.RLock()
 		defer v.dataFileAccessLock.RUnlock()
@@ -367,8 +548,12 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 		return fmt.Errorf("ReadNeedleData checksum %v expected %v for Needle: %v,%v", crc, n.Checksum, v.Id, n)
 	}
 	// The read succeeded only once the checksum passes; a failed needle
-	// leaves the io error streak untouched, matching the streamed path.
-	v.checkReadWriteError(nil)
+	// leaves the io error streak untouched, matching the streamed path. A
+	// ranged read's verification pass leaves it alone too: the range read
+	// that follows reports the outcome.
+	if _, verifying := writer.(*needleBlockCRCs); !verifying {
+		v.checkReadWriteError(nil)
+	}
 	if pending != nil {
 		if _, err = writer.Write(pending); err != nil {
 			return fmt.Errorf("ReadNeedleData write: %w", err)
