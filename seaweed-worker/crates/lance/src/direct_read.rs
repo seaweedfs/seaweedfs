@@ -192,11 +192,13 @@ impl Filers {
                     self.current.store(i, Ordering::Relaxed);
                     return Ok(value);
                 }
+                // A filer that fell away may have taken the request first.
                 Ok(Err(err)) if sw_client::is_unavailable(&err) => {
                     tracing::warn!(
                         "filer {} unavailable for {what}: {err:#}",
                         clients[i].addr()
                     );
+                    unanswered = true;
                     last = Some(err);
                 }
                 // A filer passed over without an answer may still apply it.
@@ -2438,6 +2440,18 @@ mod tests {
             })
         };
         let err = filers.with("create", silent).await.unwrap_err();
+        assert!(outcome_uncertain(&err), "{err:#}");
+        assert!(format!("{err:#}").contains("refused"), "{err:#}");
+
+        let fell_away = |c: FilerClient| -> BoxFuture<'static, anyhow::Result<()>> {
+            Box::pin(async move {
+                if c.addr() == "127.0.0.1:1" {
+                    return Err(tonic::Status::unavailable("connection reset").into());
+                }
+                bail!("refused")
+            })
+        };
+        let err = filers.with("create", fell_away).await.unwrap_err();
         assert!(outcome_uncertain(&err), "{err:#}");
         assert!(format!("{err:#}").contains("refused"), "{err:#}");
 
