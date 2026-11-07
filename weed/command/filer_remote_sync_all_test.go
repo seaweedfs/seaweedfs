@@ -67,10 +67,13 @@ func (f *fakeMounts) supervisor() *mountSupervisor {
 		}
 		return out, nil
 	}
-	m.hasOffset = func(dir string) (bool, error) {
+	m.readOffset = func(dir string) (int64, error) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
-		return !f.noOffset[dir], nil
+		if f.noOffset[dir] {
+			return 0, nil
+		}
+		return 100, nil
 	}
 	m.follow = func(o *RemoteSyncOptions, dir string, watch *mountWatch) error {
 		f.mu.Lock()
@@ -517,8 +520,9 @@ func TestAGuardsOwnWriteThatFailedIsNotAMove(t *testing.T) {
 }
 
 // A directory whose write-back keeps ending at an unmount while the live
-// table still mounts it at the same location is warned about once per run
-// of ends; nothing else changes (it is started again each time).
+// table still mounts it at the same location, and its stored offset stays
+// put, is warned about once per run of ends; nothing else changes (it is
+// started again each time).
 func TestAllMountsWarnsAboutAWriteBackThatKeepsEndingAtAnUnmount(t *testing.T) {
 	loc := &remote_pb.RemoteStorageLocation{Name: "r", Bucket: "zone", Path: "/a"}
 	table := &remote_pb.RemoteStorageMapping{Mappings: map[string]*remote_pb.RemoteStorageLocation{"/buckets/a": loc}}
@@ -528,7 +532,8 @@ func TestAllMountsWarnsAboutAWriteBackThatKeepsEndingAtAnUnmount(t *testing.T) {
 	interval := time.Hour
 	m := newMountSupervisor(&RemoteSyncOptions{mountsCheck: &interval}, nil)
 	m.readMappings = func() (*remote_pb.RemoteStorageMapping, error) { mu.Lock(); defer mu.Unlock(); return table, nil }
-	m.hasOffset = func(string) (bool, error) { return true, nil }
+	offset := int64(100)
+	m.readOffset = func(string) (int64, error) { mu.Lock(); defer mu.Unlock(); return offset, nil }
 	m.now = func() time.Time { mu.Lock(); defer mu.Unlock(); return clock }
 	m.warn = func(string, ...interface{}) { mu.Lock(); warns++; mu.Unlock() }
 	m.follow = func(*RemoteSyncOptions, string, *mountWatch) error {
@@ -588,8 +593,24 @@ func TestAllMountsWarnsAboutAWriteBackThatKeepsEndingAtAnUnmount(t *testing.T) {
 	mu.Unlock()
 	round()
 	mu.Lock()
-	defer mu.Unlock()
 	if warns != 2 {
 		t.Fatalf("warns = %d after the new run reached the count, want 2", warns)
+	}
+
+	// ends whose stored offset moves in between are not one replay: each
+	// follow saved progress, or a remote.unmount and remount ran between
+	table = &remote_pb.RemoteStorageMapping{Mappings: map[string]*remote_pb.RemoteStorageLocation{
+		"/buckets/a": {Name: "r", Bucket: "zone", Path: "/c"}}}
+	mu.Unlock()
+	for i := 0; i < 2*allMountsGoneWarnAfter; i++ {
+		mu.Lock()
+		offset += 10
+		mu.Unlock()
+		round()
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if warns != 2 {
+		t.Fatalf("warns = %d after ends from moving offsets, want still 2", warns)
 	}
 }

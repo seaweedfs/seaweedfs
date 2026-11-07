@@ -51,11 +51,11 @@ type mountSupervisor struct {
 	option      *RemoteSyncOptions
 	filerSource *source.FilerSource
 
-	// readMappings, follow, hasOffset, now and warn are the seams the tests
+	// readMappings, follow, readOffset, now and warn are the seams the tests
 	// replace.
 	readMappings func() (*remote_pb.RemoteStorageMapping, error)
 	follow       func(option *RemoteSyncOptions, dir string, watch *mountWatch) error
-	hasOffset    func(dir string) (bool, error)
+	readOffset   func(dir string) (int64, error)
 	now          func() time.Time
 	warn         func(format string, args ...interface{})
 
@@ -69,7 +69,8 @@ type mountSupervisor struct {
 	// read in the table (allMountsOffsetWait).
 	firstSeen map[string]time.Time
 	// gone counts, per directory, the write-backs in a row that ended at an
-	// unmount while each was started at the same location (goneStreak).
+	// unmount while each was started at the same location and stored offset
+	// (goneStreak).
 	gone map[string]*goneStreak
 	wake chan struct{}
 	// clientIds hands each follow its own non-zero client id.
@@ -77,9 +78,11 @@ type mountSupervisor struct {
 }
 
 // goneStreak is a directory's run of write-backs that ended at an unmount,
-// each started at loc; warned is set once the run has been reported.
+// each started at loc from the stored offset; warned is set once the run has
+// been reported.
 type goneStreak struct {
 	loc    *remote_pb.RemoteStorageLocation
+	offset int64
 	ends   int
 	warned bool
 }
@@ -107,9 +110,8 @@ func newMountSupervisor(option *RemoteSyncOptions, filerSource *source.FilerSour
 	m.follow = func(o *RemoteSyncOptions, dir string, watch *mountWatch) error {
 		return followMountedDir(o, filerSource, dir, watch)
 	}
-	m.hasOffset = func(dir string) (bool, error) {
-		ts, err := remote_storage.GetSyncOffset(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), dir)
-		return ts > 0, err
+	m.readOffset = func(dir string) (int64, error) {
+		return remote_storage.GetSyncOffset(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), dir)
 	}
 	return m
 }
@@ -178,33 +180,37 @@ func (m *mountSupervisor) reconcile() error {
 
 	sort.Strings(starting)
 	ready := starting[:0]
+	offsets := map[string]int64{}
 	for _, dir := range starting {
-		if m.offsetSettled(dir, now) {
+		if settled, offset := m.offsetSettled(dir, now); settled {
 			ready = append(ready, dir)
+			offsets[dir] = offset
 		}
 	}
 	for i, dir := range ready {
 		if i > 0 && i%allMountsStartBatch == 0 {
 			time.Sleep(allMountsStartPause)
 		}
-		m.noteStart(dir, mappings.Mappings[dir])
+		m.noteStart(dir, mappings.Mappings[dir], offsets[dir])
 		m.start(dir)
 	}
 	return nil
 }
 
 // noteStart keeps a directory's run of ends at an unmount going while it is
-// started again at the same location, and warns once when the run reaches
+// started again at the same location from the same stored offset (an end
+// saves none; a write-back that saved progress, or remote.unmount, moved
+// it), and warns once when the run reaches
 // allMountsGoneWarnAfter: a write-back that keeps replaying an unmount from
 // its saved offset ends there each time and never writes the directory back.
 // Nothing changes but the log; the operator decides (setting the directory's
 // sync offset to now skips the replay).
-func (m *mountSupervisor) noteStart(dir string, loc *remote_pb.RemoteStorageLocation) {
+func (m *mountSupervisor) noteStart(dir string, loc *remote_pb.RemoteStorageLocation, offset int64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	streak := m.gone[dir]
-	if streak == nil || !sameMountLocation(streak.loc, loc) {
-		m.gone[dir] = &goneStreak{loc: loc}
+	if streak == nil || !sameMountLocation(streak.loc, loc) || streak.offset != offset {
+		m.gone[dir] = &goneStreak{loc: loc, offset: offset}
 		return
 	}
 	if streak.ends >= allMountsGoneWarnAfter && !streak.warned {
@@ -213,16 +219,17 @@ func (m *mountSupervisor) noteStart(dir string, loc *remote_pb.RemoteStorageLoca
 	}
 }
 
-// offsetSettled reports whether a directory may start: it has a saved
-// offset, or has waited allMountsOffsetWait for one. An unreadable offset
-// waits too (the follow could not start from it anyway).
-func (m *mountSupervisor) offsetSettled(dir string, now time.Time) bool {
-	has, err := m.hasOffset(dir)
+// offsetSettled reports whether a directory may start, and its stored
+// offset: it has a saved offset, or has waited allMountsOffsetWait for one.
+// An unreadable offset waits too (the follow could not start from it
+// anyway).
+func (m *mountSupervisor) offsetSettled(dir string, now time.Time) (bool, int64) {
+	offset, err := m.readOffset(dir)
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if err == nil && has {
+	if err == nil && offset > 0 {
 		delete(m.firstSeen, dir)
-		return true
+		return true, offset
 	}
 	seen, ok := m.firstSeen[dir]
 	if !ok {
@@ -231,14 +238,14 @@ func (m *mountSupervisor) offsetSettled(dir string, now time.Time) bool {
 	}
 	if err != nil {
 		glog.Errorf("filer.remote.sync -allMounts: read sync offset of %s: %v", dir, err)
-		return false
+		return false, 0
 	}
 	if now.Sub(seen) >= allMountsOffsetWait {
 		glog.V(0).Infof("filer.remote.sync -allMounts: %s has no saved offset after %v; starting from its creation", dir, allMountsOffsetWait)
 		delete(m.firstSeen, dir)
-		return true
+		return true, 0
 	}
-	return false
+	return false, 0
 }
 
 func (m *mountSupervisor) poke() {
