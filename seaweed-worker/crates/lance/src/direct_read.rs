@@ -23,12 +23,12 @@ use futures::stream::BoxStream;
 use lance::io::WrappingObjectStore;
 use md5::{Digest, Md5};
 use object_store::path::Path;
+use object_store::{Attribute, Attributes, PutMode, UploadPart};
 use object_store::{
     CopyOptions, Error, GetOptions, GetRange, GetResult, GetResultPayload, ListResult,
     MultipartUpload, ObjectMeta, ObjectStore, PutMultipartOptions, PutOptions, PutPayload,
     PutResult, RenameOptions, Result,
 };
-use object_store::{PutMode, UploadPart};
 use sw_client::filer_pb::{Entry, FileChunk, FuseAttributes};
 use sw_client::{
     AssignVolumeOptions, Assignment, ChunkDecoder, FilerClient, GrpcTls, HttpTransport, HttpsTls,
@@ -1061,7 +1061,7 @@ impl ObjectStore for DirectStore {
                 });
             }
         };
-        let upload = Upload::start(self.clone(), location.clone())?;
+        let upload = Upload::start(self.clone(), location.clone(), &opts.attributes)?;
         let data: Bytes = payload.into();
         let md5 = Md5::digest(&data);
         if let Err(err) = upload.put(data).await {
@@ -1076,9 +1076,13 @@ impl ObjectStore for DirectStore {
     async fn put_multipart_opts(
         &self,
         location: &Path,
-        _opts: PutMultipartOptions,
+        opts: PutMultipartOptions,
     ) -> Result<Box<dyn MultipartUpload>> {
-        Ok(Box::new(Upload::start(self.clone(), location.clone())?))
+        Ok(Box::new(Upload::start(
+            self.clone(),
+            location.clone(),
+            &opts.attributes,
+        )?))
     }
 
     async fn get_opts(&self, location: &Path, options: GetOptions) -> Result<GetResult> {
@@ -1202,6 +1206,7 @@ struct Upload {
     path: String,
     /// The bucket's collection, as the gateway names it.
     collection: String,
+    mime: String,
     encoder: Arc<EntryEncoder>,
     state: Arc<std::sync::Mutex<UploadState>>,
 }
@@ -1220,7 +1225,7 @@ impl fmt::Debug for Upload {
 }
 
 impl Upload {
-    fn start(store: DirectStore, location: Path) -> Result<Self> {
+    fn start(store: DirectStore, location: Path, attributes: &Attributes) -> Result<Self> {
         let path = store.filer_path(&location);
         let encoder = EntryEncoder::new(store.reads.keys.clone(), store.sse_s3, store.reads.cipher)
             .with_context(|| format!("encoding {path}"))
@@ -1229,11 +1234,16 @@ impl Upload {
             "" => store.bucket.to_string(),
             group => format!("{group}_{}", store.bucket),
         };
+        let mime = attributes
+            .get(&Attribute::ContentType)
+            .map_or(OCTET_STREAM, |v| v.as_ref())
+            .to_string();
         Ok(Self {
             store,
             location,
             path,
             collection,
+            mime,
             encoder: Arc::new(encoder),
             state: Arc::default(),
         })
@@ -1303,7 +1313,7 @@ impl Upload {
                 crtime: now,
                 mtime: now,
                 file_mode: FILE_MODE,
-                mime: OCTET_STREAM.to_string(),
+                mime: self.mime.clone(),
                 file_size: size,
                 md5: md5.clone().unwrap_or_default(),
                 ..Default::default()
@@ -2630,6 +2640,30 @@ mod tests {
                 vec![&want.to_string()]
             );
         }
+    }
+
+    /// The content type a put carries becomes the entry's mime, as it does
+    /// through the gateway.
+    #[tokio::test]
+    async fn a_put_keeps_its_content_type() {
+        let fake = Arc::new(Fake::default());
+        let store = writing_store(fake.clone(), no_keys(), 4096, false, false);
+        let mut attributes = Attributes::new();
+        attributes.insert(Attribute::ContentType, "application/json".into());
+        let opts = PutOptions {
+            attributes,
+            ..Default::default()
+        };
+        store
+            .put_opts(
+                &Path::from("vector/idx/typed"),
+                Bytes::from_static(b"{}").into(),
+                opts,
+            )
+            .await
+            .unwrap();
+        let typed = entry_of(&fake, "vector/idx/typed");
+        assert_eq!(typed.attributes.unwrap().mime, "application/json");
     }
 
     /// A table path is removed only when every component is a plain name.
