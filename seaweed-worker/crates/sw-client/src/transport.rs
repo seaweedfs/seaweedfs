@@ -292,10 +292,23 @@ impl VolumeTransport for HttpTransport {
                 req = req.header(AUTHORIZATION, format!("BEARER {auth}"));
             }
             match req.send().await {
-                Ok(resp) if resp.status().is_success() => match resp.bytes().await {
-                    Ok(b) => return Ok(b.to_vec()),
-                    Err(e) => last_err = Some(e.into()),
-                },
+                Ok(resp) if resp.status().is_success() => {
+                    // A 200 to a ranged GET is the whole needle.
+                    let whole = resp.status() != reqwest::StatusCode::PARTIAL_CONTENT;
+                    match resp.bytes().await {
+                        Ok(b) => {
+                            return Ok(match range {
+                                Some((start, len)) if whole => {
+                                    let start = start.min(b.len() as u64) as usize;
+                                    let end = start + (len.min((b.len() - start) as u64) as usize);
+                                    b[start..end].to_vec()
+                                }
+                                _ => b.to_vec(),
+                            });
+                        }
+                        Err(e) => last_err = Some(e.into()),
+                    }
+                }
                 Ok(resp) => last_err = Some(anyhow!("GET {full} -> HTTP {}", resp.status())),
                 Err(e) => last_err = Some(e.into()),
             }
@@ -433,6 +446,38 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(bytes, b"abc");
+        server.await.unwrap();
+    }
+
+    /// A server that ignores Range and answers 200 with the whole needle
+    /// yields only the bytes asked for.
+    #[tokio::test]
+    async fn a_whole_needle_answer_to_a_ranged_read_is_sliced() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap().to_string();
+        let server = tokio::spawn(async move {
+            for _ in 0..3 {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = vec![0; 4096];
+                let _ = socket.read(&mut request).await.unwrap();
+                socket
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\n0123456789",
+                    )
+                    .await
+                    .unwrap();
+            }
+        });
+        let http = HttpTransport::new();
+        let at = std::slice::from_ref(&address);
+        assert_eq!(http.read(at, "7,abc", Some((3, 4))).await.unwrap(), b"3456");
+        assert_eq!(http.read(at, "7,abc", Some((8, 4))).await.unwrap(), b"89");
+        assert!(
+            http.read(at, "7,abc", Some((12, 4)))
+                .await
+                .unwrap()
+                .is_empty()
+        );
         server.await.unwrap();
     }
 
