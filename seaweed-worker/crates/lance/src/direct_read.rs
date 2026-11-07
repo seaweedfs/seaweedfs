@@ -197,29 +197,36 @@ impl Source for Filers {
     }
 
     async fn list(&self, dir: &str, prefix: &str) -> anyhow::Result<Vec<Entry>> {
-        self.with("list", |mut c| {
-            Box::pin(async move {
-                let mut entries = Vec::new();
-                let (mut cursor, mut snapshot) = (String::new(), 0);
-                loop {
-                    let page = match c
-                        .list_entries_page_prefixed(dir, prefix, &cursor, snapshot)
-                        .await
-                    {
-                        Ok(page) => page,
-                        Err(err) if is_not_found(&err) => return Ok(entries),
-                        Err(err) => return Err(err),
-                    };
-                    entries.extend(page.entries);
-                    if page.eof {
-                        return Ok(entries);
-                    }
-                    cursor = page.cursor;
-                    snapshot = page.snapshot_ts_ns;
-                }
-            })
-        })
-        .await
+        // One filer attempt per page, so the deadline bounds a page, not the
+        // whole listing of a large directory.
+        let mut entries = Vec::new();
+        let (mut cursor, mut snapshot) = (String::new(), 0);
+        loop {
+            let page = self
+                .with("list", |mut c| {
+                    let cursor = cursor.clone();
+                    Box::pin(async move {
+                        match c
+                            .list_entries_page_prefixed(dir, prefix, &cursor, snapshot)
+                            .await
+                        {
+                            Ok(page) => Ok(Some(page)),
+                            Err(err) if is_not_found(&err) => Ok(None),
+                            Err(err) => Err(err),
+                        }
+                    })
+                })
+                .await?;
+            let Some(page) = page else {
+                return Ok(entries);
+            };
+            entries.extend(page.entries);
+            if page.eof {
+                return Ok(entries);
+            }
+            cursor = page.cursor;
+            snapshot = page.snapshot_ts_ns;
+        }
     }
 
     async fn cache_remote(&self, dir: &str, name: &str) -> anyhow::Result<Entry> {

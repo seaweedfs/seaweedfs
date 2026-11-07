@@ -145,12 +145,6 @@ async fn main() -> Result<()> {
         .await
         .with_context(|| format!("listen on {}", args.listen))?;
     let cluster = Cluster::new(&args.masters, &args.filer_group, &security)?;
-    let advertise = advertised_addr(&args.listen, &cluster.masters);
-    tokio::spawn(master_client::keep_connected(
-        cluster.masters.clone(),
-        advertise,
-        cluster.master_tls.clone(),
-    ));
     let reads = cluster.storage(&security, args.encrypt_volume_data).await?;
     let mut service = VectorServer::new()
         .with_nprobes(args.nprobes.map(std::num::NonZeroUsize::get))
@@ -170,6 +164,14 @@ async fn main() -> Result<()> {
         },
         if cluster.master_tls.is_some() { "over TLS" } else { "in plaintext" },
     );
+    // Registered only now, with storage connected and the listener bound,
+    // so the gateway never finds an engine that cannot serve yet.
+    let advertise = advertised_addr(&args.listen, &cluster.masters);
+    tokio::spawn(master_client::keep_connected(
+        cluster.masters.clone(),
+        advertise,
+        cluster.master_tls.clone(),
+    ));
     let router = Server::builder()
         // Match the gateway's 1 GiB cap — put batches over the tonic 4 MiB
         // default otherwise get rejected before they reach the handler.
