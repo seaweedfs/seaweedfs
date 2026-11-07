@@ -286,7 +286,7 @@ func admitUntilMountEnds(processor *MetadataProcessor, mountedDir, mountKey stri
 // then it exits (unmounted) or dies (moved).
 func exitProcessAtMountEnd(processor *MetadataProcessor, mountedDir string, mountLocation *remote_pb.RemoteStorageLocation) func(*remote_pb.RemoteStorageLocation) {
 	return func(moved *remote_pb.RemoteStorageLocation) {
-		processor.Drain()
+		drainLogged(processor, mountedDir)
 		exitAtMountEnd(mountedDir, mountLocation, moved)
 	}
 }
