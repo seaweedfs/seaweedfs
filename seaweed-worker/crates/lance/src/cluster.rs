@@ -185,6 +185,23 @@ async fn follow_filers(
     }
 }
 
+/// The comma-separated masters, each with a valid gRPC address.
+pub fn master_addresses(masters: &str) -> Result<Vec<String>> {
+    let masters: Vec<String> = masters
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect();
+    if masters.is_empty() {
+        anyhow::bail!("the master list names no master address");
+    }
+    for master in &masters {
+        grpc_addr(master)?;
+    }
+    Ok(masters)
+}
+
 /// What the cluster's storage is reached with: the filers the masters list,
 /// dialed as the masters are, and the keys security.toml holds.
 pub struct Cluster {
@@ -196,12 +213,8 @@ pub struct Cluster {
 
 impl Cluster {
     pub fn new(masters: &str, filer_group: &str, security: &Security) -> Result<Self> {
-        let masters: Vec<String> = masters.split(',').map(|s| s.trim().to_string()).collect();
-        for master in &masters {
-            grpc_addr(master)?;
-        }
         Ok(Self {
-            masters,
+            masters: master_addresses(masters)?,
             filer_group: filer_group.to_string(),
             master_tls: security.grpc_client_tls("grpc.client", "grpc.master")?,
         })
@@ -263,5 +276,20 @@ impl Cluster {
             self.master_tls.clone(),
         ));
         Ok(storage)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_empty_master_list_is_refused() {
+        assert!(master_addresses("").is_err());
+        assert!(master_addresses(" , ").is_err());
+        assert_eq!(
+            master_addresses(" m1:9333,,m2:9333 ").unwrap(),
+            ["m1:9333", "m2:9333"]
+        );
     }
 }
