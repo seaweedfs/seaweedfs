@@ -214,22 +214,32 @@ impl Source for Filers {
             exact: true,
             decoder: Some(object.decoder.clone()),
         };
-        self.with("read", |mut c| {
-            let options = options.clone();
-            Box::pin(async move {
-                sw_client::read_resolved(
-                    &mut c,
-                    &self.volumes,
-                    &object.chunks,
-                    &object.entry,
-                    offset,
-                    len,
-                    &options,
-                )
-                .await
+        let read = || {
+            self.with("read", |mut c| {
+                let options = options.clone();
+                Box::pin(async move {
+                    sw_client::read_resolved(
+                        &mut c,
+                        &self.volumes,
+                        &object.chunks,
+                        &object.entry,
+                        offset,
+                        len,
+                        &options,
+                    )
+                    .await
+                })
             })
-        })
-        .await
+        };
+        match read().await {
+            Ok(bytes) => Ok(bytes),
+            // A failed fetch forgets the volume locations it was made
+            // against, so one more attempt looks them up afresh: a volume
+            // that moved is found where it is now.
+            Err(first) => read()
+                .await
+                .map_err(|again| again.context(format!("after a first attempt failed: {first:#}"))),
+        }
     }
 
     fn name(&self) -> String {
