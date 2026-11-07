@@ -1018,9 +1018,9 @@ func (b blockedPairs) forget(source, target *Node) {
 
 // planGlobalMove picks one shard to move from a fuller node to an emptier one in
 // the rack, or returns nil when no move would narrow the gap. Sources are tried
-// fullest first and destinations emptiest first, so a node whose shards cannot
-// go to the emptiest node still drains to the next one that can take them, such
-// as another disk on its own machine.
+// fullest first and destinations emptiest first once they hold the shard, so a
+// node whose shards cannot go to the emptiest node still drains to the next one
+// that can take them, such as another disk on its own machine.
 func planGlobalMove(r *rack, spread rackSpread, blocked blockedPairs, rackMachineCount int, counts, capacity map[string]int, diskType string, dataShardsByVolume, parityShardsByVolume map[volKey]int) *move {
 	util := func(n *Node, delta int) float64 {
 		return float64(counts[n.id]+delta) / float64(capacity[n.id])
@@ -1036,14 +1036,14 @@ func planGlobalMove(r *rack, spread rackSpread, blocked blockedPairs, rackMachin
 		}
 	}
 	sort.SliceStable(sources, func(i, j int) bool { return util(sources[i], 0) > util(sources[j], 0) })
-	sort.SliceStable(targets, func(i, j int) bool { return util(targets[i], 0) < util(targets[j], 0) })
+	sort.SliceStable(targets, func(i, j int) bool { return util(targets[i], 1) < util(targets[j], 1) })
 	for _, source := range sources {
 		for _, target := range targets {
 			if target.id == source.id {
 				continue
 			}
-			// Targets are emptiest first, so once one would end up fuller than the
-			// source, every later one would too.
+			// Targets are ordered by their fullness after taking the shard, so once
+			// one would end up fuller than the source, every later one would too.
 			if util(target, 1) > util(source, -1) {
 				break
 			}

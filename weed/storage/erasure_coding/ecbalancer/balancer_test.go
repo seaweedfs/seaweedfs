@@ -1036,3 +1036,32 @@ func TestGlobalDrainsToSameMachineWhenOtherMachinesAreBlocked(t *testing.T) {
 		}
 	}
 }
+
+// TestGlobalTriesTargetsByFullnessAfterTheMove: a one-slot server is the
+// emptiest but would be full after one shard, which must not stop the search
+// before a larger server that can take the shard.
+func TestGlobalTriesTargetsByFullnessAfterTheMove(t *testing.T) {
+	topo := NewTopology()
+	src := topo.AddNode("src", "dc1", "dc1:rack1", 2)
+	topo.AddNode("tiny", "dc1", "dc1:rack1", 1)
+	big := topo.AddNode("big", "dc1", "dc1:rack1", 9)
+	data, parity := map[volKey]int{}, map[volKey]int{}
+	for vid := uint32(1); vid <= 9; vid++ {
+		n := src
+		if vid == 9 {
+			n = big
+		}
+		n.AddShards(vid, "col1", 0, bits(0))
+		data[volKey{"col1", vid}], parity[volKey{"col1", vid}] = 2, 1
+	}
+
+	moves := detectGlobalImbalance(topo.nodes, buildRacks(topo.nodes), "", 0.2, data, parity, 10, true)
+	if len(moves) == 0 {
+		t.Fatal("no global moves: the one-slot server stopped the search")
+	}
+	for _, m := range moves {
+		if m.source != src || m.target != big {
+			t.Errorf("move %d.%d %s -> %s, want src -> big", m.volumeID, m.shardID, m.source.id, m.target.id)
+		}
+	}
+}
