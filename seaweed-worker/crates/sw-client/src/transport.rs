@@ -302,7 +302,43 @@ impl VolumeTransport for HttpTransport {
         filename: &str,
         data: Bytes,
     ) -> Result<()> {
-        let url = format!("{}://{location}/{file_id}", self.scheme);
+        self.upload(location, file_id, auth, filename, data, false)
+            .await
+    }
+
+    async fn write_synced(
+        &self,
+        location: &str,
+        file_id: &str,
+        auth: &str,
+        filename: &str,
+        data: Bytes,
+        fsync: bool,
+    ) -> Result<VolumeWriteReceipt> {
+        self.upload(location, file_id, auth, filename, data, fsync)
+            .await?;
+        Ok(VolumeWriteReceipt::default())
+    }
+
+    fn name(&self) -> &'static str {
+        "http"
+    }
+}
+
+impl HttpTransport {
+    async fn upload(
+        &self,
+        location: &str,
+        file_id: &str,
+        auth: &str,
+        filename: &str,
+        data: Bytes,
+        fsync: bool,
+    ) -> Result<()> {
+        let mut url = format!("{}://{location}/{file_id}", self.scheme);
+        if fsync {
+            url.push_str("?fsync=true");
+        }
         let size = data.len() as u64;
         let part = reqwest::multipart::Part::stream_with_length(data, size)
             .file_name(filename.to_string());
@@ -340,10 +376,6 @@ impl VolumeTransport for HttpTransport {
             return Err(error);
         }
         Ok(())
-    }
-
-    fn name(&self) -> &'static str {
-        "http"
     }
 }
 
@@ -472,6 +504,40 @@ mod tests {
         assert!(!is_not_written(&error));
         assert!(started.elapsed() >= bound && started.elapsed() < bound * 10);
         held.abort();
+    }
+
+    /// An assignment that wants the needle on disk asks the volume for it.
+    #[tokio::test]
+    async fn synced_write_asks_the_volume_to_fsync() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap().to_string();
+        let server = tokio::spawn(async move {
+            let mut lines = Vec::new();
+            for _ in 0..2 {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = vec![0; 4096];
+                let length = socket.read(&mut request).await.unwrap();
+                let request = String::from_utf8_lossy(&request[..length]).to_string();
+                lines.push(request.lines().next().unwrap_or_default().to_string());
+                socket
+                    .write_all(
+                        b"HTTP/1.1 201 Created\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    )
+                    .await
+                    .unwrap();
+            }
+            lines
+        });
+        let http = HttpTransport::new();
+        for fsync in [true, false] {
+            http.write_synced(&address, "7,abc", "", "k", Bytes::from_static(b"kv"), fsync)
+                .await
+                .unwrap();
+        }
+        assert_eq!(
+            server.await.unwrap(),
+            ["POST /7,abc?fsync=true HTTP/1.1", "POST /7,abc HTTP/1.1"]
+        );
     }
 
     /// A write that never reached the server (connection refused) is a plain
