@@ -24,9 +24,8 @@ const (
 	allMountsRetryMin   = time.Second
 	allMountsRetryMax   = 30 * time.Second
 	// A directory mounted while this process runs, with no offset saved yet,
-	// waits this long for one: whoever mounted it may still be writing it
-	// (a mount followed by a pull of the remote's listing sets the offset
-	// after the pull, so the pulled entries are not written back).
+	// waits this long for one: remote.mount saves it right after the
+	// mapping, and other mount tooling may save it later.
 	allMountsOffsetWait = 2 * time.Minute
 	// A directory whose write-back keeps ending at an unmount this many times
 	// in a row, while the live table still mounts it at the same location, is

@@ -123,10 +123,36 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 	}
 
 	// store a mount configuration in filer
+	mountedAt := time.Now()
 	if err = filer.InsertMountMapping(commandEnv, *dir, remoteStorageLocation); err != nil {
 		return fmt.Errorf("save mount mapping: %w", err)
 	}
 
+	return saveMountSyncOffset(commandEnv, *dir, mountedAt)
+}
+
+// saveMountSyncOffset starts the write-back of a new mount at mountedAt,
+// after the pulled listing. An offset already saved, by remote.unmount for a
+// remount, is kept.
+func saveMountSyncOffset(commandEnv *CommandEnv, dir string, mountedAt time.Time) error {
+	return saveMountSyncOffsetWith(func() (int64, error) {
+		return remote_storage.GetSyncOffset(commandEnv.option.GrpcDialOption, commandEnv.FilerAddress(), dir)
+	}, func(ts int64) error {
+		return remote_storage.SetSyncOffset(commandEnv.option.GrpcDialOption, commandEnv.FilerAddress(), dir, ts)
+	}, dir, mountedAt)
+}
+
+func saveMountSyncOffsetWith(read func() (int64, error), write func(ts int64) error, dir string, mountedAt time.Time) error {
+	saved, err := read()
+	if err != nil {
+		return fmt.Errorf("read remote.sync offset for %s: %v", dir, err)
+	}
+	if saved > 0 {
+		return nil
+	}
+	if err = write(mountedAt.UnixNano()); err != nil {
+		return fmt.Errorf("save remote.sync offset for %s: %v", dir, err)
+	}
 	return nil
 }
 
