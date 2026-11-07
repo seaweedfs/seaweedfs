@@ -739,7 +739,10 @@ func (s3opt *S3Options) vectorsRouter(s3ApiServer *s3api.S3ApiServer, grpcDialOp
 	vectorsServer.SetRegion(s3tables.DefaultRegion)
 	vectorsServer.SetAccountID(s3tables.DefaultAccountID)
 	vectorsServer.SetEncryptionChecker(s3api.GetSSES3KeyManager().IsConfigured)
-	vectorsServer.SetDescribe(describe)
+	// Without the catalog the engine resolves tables itself, as before.
+	if s3opt.lanceServer != nil {
+		vectorsServer.SetDescribe(describe)
+	}
 	vectorsServer.RegisterRoutes(vectorsRouter)
 	return vectorsRouter
 }
