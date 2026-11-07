@@ -282,3 +282,35 @@ func TestGetClusterVolumeServersDiskAccounting(t *testing.T) {
 		})
 	}
 }
+
+// The dashboard totals sum each server's disk usage and capacity, statfs or
+// fallback, while TotalSize stays the logical data size.
+func TestClusterTopologyDiskTotals(t *testing.T) {
+	admin := newVolumeServersTestAdmin(t, volumeAccessTestTopology(
+		&master_pb.DataNodeInfo{
+			Id: "node-a",
+			DiskInfos: map[string]*master_pb.DiskInfo{"hdd": {
+				MaxVolumeCount: 100,
+				DiskTotalBytes: 1_000_000_000_000,
+				DiskFreeBytes:  400_000_000_000,
+				VolumeInfos:    []*master_pb.VolumeInformationMessage{{Id: 1, Size: 590_000_000_000}},
+			}},
+		},
+		&master_pb.DataNodeInfo{
+			Id: "node-b",
+			DiskInfos: map[string]*master_pb.DiskInfo{"hdd": {
+				MaxVolumeCount: 10,
+				VolumeInfos: []*master_pb.VolumeInformationMessage{
+					{Id: 2, Size: 30_000_000_000},
+					{Id: 3, Size: 5_000_000_000, RemoteStorageName: "s3"},
+				},
+			}},
+		},
+	))
+
+	topology, err := admin.GetClusterTopology()
+	require.NoError(t, err)
+	require.Equal(t, int64(600_000_000_000+30_000_000_000), topology.DiskUsage)
+	require.Equal(t, int64(1_000_000_000_000+10*30000*1024*1024), topology.DiskCapacity)
+	require.Equal(t, int64(590_000_000_000+30_000_000_000+5_000_000_000), topology.TotalSize)
+}
