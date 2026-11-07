@@ -116,6 +116,27 @@ def index(vectors):
     vectors.delete_vector_bucket(vectorBucketName=bucket)
 
 
+def assert_engine_wrote_like_the_gateway(cluster, index):
+    """The engine writes the table's files itself: the filer holds entries the
+    gateway could have written (an ETag, chunks, no inline content), and under
+    VECTOR_ENCRYPT_VOLUMES every chunk carries a cipher key."""
+    import os
+    import urllib.request
+
+    table = f"/buckets/{index['vectorBucketName']}/vector/{index['indexName']}"
+    listing = urllib.request.Request(f"http://127.0.0.1:{cluster['filer']}{table}/data/", headers={"Accept": "application/json"})
+    with urllib.request.urlopen(listing, timeout=5) as response:
+        entries = json.load(response)["Entries"] or []
+    assert entries, "the engine wrote no data file"
+    for entry in entries:
+        with urllib.request.urlopen(f"http://127.0.0.1:{cluster['filer']}{table}/data/{entry['FullPath'].rsplit('/', 1)[1]}?metadata=true", timeout=5) as response:
+            meta = json.load(response)
+        assert meta["chunks"], meta
+        assert "Seaweed-X-Amz-ETag" in (meta.get("Extended") or {}), meta.get("Extended")
+        if os.environ.get("VECTOR_ENCRYPT_VOLUMES"):
+            assert all(chunk.get("cipher_key") for chunk in meta["chunks"]), meta["chunks"]
+
+
 def expect_error(code, operation, **kwargs):
     with pytest.raises(ClientError) as exc:
         operation(**kwargs)
@@ -140,10 +161,11 @@ def test_empty_index(vectors, index):
                  queryVector={"float32": [1, 0, 0]}, topK=3)
 
 
-def test_upsert_and_invalid_batch(vectors, index):
+def test_upsert_and_invalid_batch(vectors, index, cluster):
     vectors.put_vectors(**index, vectors=[{"key": "a", "data": {"float32": [1, 0, 0, 0]}, "metadata": {"revision": 1}}])
     vectors.put_vectors(**index, vectors=[{"key": "a", "data": {"float32": [0, 1, 0, 0]}, "metadata": {"revision": 2}}])
     expected = [{"key": "a", "data": {"float32": [0, 1, 0, 0]}, "metadata": {"revision": 2}}]
+    assert_engine_wrote_like_the_gateway(cluster, index)
     for invalid in (
         [{"key": "a", "data": {"float32": [1, 1, 1, 1]}}, {"key": "bad", "data": {"float32": [1, 2]}}],
         [{"key": "a", "data": {"float32": [1, 1, 1, 1]}}, {"key": "a", "data": {"float32": [2, 2, 2, 2]}}],
@@ -230,6 +252,41 @@ def test_euclidean_distance(vectors, index):
     result = vectors.query_vectors(**index, queryVector={"float32": [0, 0, 0, 0]}, topK=1, returnDistance=True)
     assert result["distanceMetric"] == "euclidean"
     assert result["vectors"][0]["distance"] == pytest.approx(5.0)
+
+
+def test_sse_s3_bucket(vectors, cluster):
+    """An index in a bucket that encrypts with SSE-S3 is written encrypted by
+    the engine, under keys the gateway can unwrap: the entries carry the
+    SSE-S3 attributes, the chunks hold ciphertext, and the gateway's own S3 API
+    serves the files decrypted."""
+    import urllib.request
+
+    bucket = "sealed-" + uuid.uuid4().hex[:16]
+    vectors.create_vector_bucket(vectorBucketName=bucket, encryptionConfiguration={"sseType": "AES256"})
+    args = {"vectorBucketName": bucket, "indexName": INDEX}
+    vectors.create_index(**args, dataType="float32", dimension=2, distanceMetric="euclidean")
+    vectors.put_vectors(**args, vectors=[{"key": "a", "data": {"float32": [1, 0]}},
+                                         {"key": "b", "data": {"float32": [0, 1]}}])
+    hits = vectors.query_vectors(**args, queryVector={"float32": [0, 1]}, topK=1)["vectors"]
+    assert [h["key"] for h in hits] == ["b"]
+
+    table = f"/buckets/{bucket}/vector/{INDEX}"
+    listing = urllib.request.Request(f"http://127.0.0.1:{cluster['filer']}{table}/data/", headers={"Accept": "application/json"})
+    with urllib.request.urlopen(listing, timeout=5) as response:
+        names = [e["FullPath"].rsplit("/", 1)[1] for e in json.load(response)["Entries"] or []]
+    assert names, "the engine wrote no data file"
+    for name in names:
+        with urllib.request.urlopen(f"http://127.0.0.1:{cluster['filer']}{table}/data/{name}?metadata=true", timeout=5) as response:
+            meta = json.load(response)
+        assert "x-seaweedfs-sse-s3-key" in meta["Extended"], meta["Extended"].keys()
+        assert all(chunk.get("sse_type") == 3 for chunk in meta["chunks"]), meta["chunks"]
+    s3 = boto3.client("s3", endpoint_url=cluster["endpoint"], aws_access_key_id="test", aws_secret_access_key="test",
+                      region_name="us-east-1", config=Config(s3={"addressing_style": "path"}))
+    through_gateway = s3.get_object(Bucket=bucket, Key=f"vector/{INDEX}/data/{names[0]}")["Body"].read()
+    assert through_gateway[:4] == b"LANC" or b"LANC" in through_gateway[-16:], through_gateway[:16]
+
+    vectors.delete_index(**args)
+    vectors.delete_vector_bucket(vectorBucketName=bucket)
 
 
 def test_cosine_metric(vectors):

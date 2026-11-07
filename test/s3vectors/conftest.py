@@ -316,8 +316,9 @@ def run_cluster(param, tmp_path_factory, identities):
         if os.environ.get("VECTOR_TLS") or read_jwt_key or encrypt:
             probe_hardening(endpoint, filer, vol, directory, read_jwt_key)
         # The engine keeps tables on the filers and volume servers itself; it
-        # has no S3 credentials to be given.
-        start("vector", [engine, "--masters", master_addr, "--listen", f"127.0.0.1:{vector}"])
+        # has no S3 credentials to be given, and encrypts its chunks for the
+        # volume servers as the gateway does.
+        start("vector", [engine, "--masters", master_addr, "--listen", f"127.0.0.1:{vector}", *encrypt])
         wait_for(lambda: listening(vector), processes, "vector engine not ready")
         if os.environ.get("VECTOR_TLS"):
             wait_for(lambda: listening(s3_grpc), processes, "s3 gRPC not ready")
@@ -360,7 +361,7 @@ def run_cluster(param, tmp_path_factory, identities):
                      [jt["job_type"] for jt in json.load(urllib.request.urlopen(f"{admin_url}/api/plugin/job-types", timeout=2))],
                      processes, "the Lance worker never registered with admin")
 
-        yield {"endpoint": endpoint, "mode": mode, "processes": processes, "directory": directory,
+        yield {"endpoint": endpoint, "mode": mode, "processes": processes, "directory": directory, "filer": filer,
                "catalog": f"http://127.0.0.1:{lance}", "admin": admin_url}
 
 
