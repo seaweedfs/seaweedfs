@@ -6,7 +6,6 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::Server;
-use weed_lance_worker::dataset::FallbackOptions;
 use weed_lance_worker::direct_read::{Connection, DirectReads, FilerDialer};
 use weed_vector_server::master_client;
 use weed_vector_server::pb::vector::vector_service_server::VectorServiceServer;
@@ -21,15 +20,18 @@ struct Args {
     /// gRPC listen address.
     #[arg(long, env = "WEED_VECTOR_LISTEN", default_value = "127.0.0.1:8090")]
     listen: String,
-    /// object_store options for deployments whose gateway vends no
-    /// credentials: key=value, repeatable. Credentials given here are used
-    /// only with the aws_endpoint given here.
-    #[arg(long = "storage-option", alias = "storage.option", value_parser = parse_option)]
-    storage_options: Vec<(String, String)>,
     /// Comma-separated master addresses. The engine registers with them, so
     /// the gateway finds it, and asks them for the filers it reads through.
     #[arg(long, alias = "master", env = "WEED_VECTOR_MASTERS")]
     masters: String,
+    /// Encrypt every chunk written for the volume servers, as `weed s3
+    /// -encryptVolumeData` does.
+    #[arg(
+        long = "encryptVolumeData",
+        alias = "encrypt-volume-data",
+        env = "WEED_VECTOR_ENCRYPT_VOLUME_DATA"
+    )]
+    encrypt_volume_data: bool,
     /// The filer group whose filers the engine reads through.
     #[arg(
         long,
@@ -62,12 +64,6 @@ struct Args {
     /// Ignored, like --namespace.
     #[arg(long, hide = true)]
     filer_signing_key: Option<String>,
-}
-
-fn parse_option(s: &str) -> Result<(String, String), String> {
-    s.split_once('=')
-        .map(|(k, v)| (k.to_string(), v.to_string()))
-        .ok_or_else(|| "expected key=value".to_string())
 }
 
 // weed tools take Go-style single-dash long flags; normalize_args converts
@@ -230,10 +226,11 @@ async fn main() -> Result<()> {
         grpc_tls: None,
         https_tls: security.https_client_tls()?,
         filer_dialer,
+        encrypt_volume_data: args.encrypt_volume_data,
     };
     let reads = DirectReads::connect(&conn).await.context("direct reads")?;
     tracing::info!(
-        "reading tables through {reads:?}; filer gRPC {}, volume servers {}; SSE-S3 objects {}",
+        "tables kept through {reads:?}; filer gRPC {}, volume servers {}; SSE-S3 objects {}",
         if conn.filer_dialer.is_some() {
             "over TLS"
         } else {
@@ -256,10 +253,9 @@ async fn main() -> Result<()> {
         args.filer_group.clone(),
         master_tls.clone(),
     ));
-    let fallback: FallbackOptions = args.storage_options.into_iter().collect();
-    let mut service = VectorServer::new(fallback)
+    let mut service = VectorServer::new()
         .with_nprobes(args.nprobes.map(std::num::NonZeroUsize::get))
-        .with_direct_reads(reads);
+        .with_storage(reads);
     if args.read_cache_mb > 0 {
         service = service.with_read_cache(ReadCache::new(args.read_cache_mb << 20));
     }
