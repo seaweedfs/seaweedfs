@@ -82,8 +82,13 @@ const CREDENTIAL_OPTIONS: [&str; 3] = [
 /// Whether a request's options may be used with the engine's fallback: known
 /// keys only, and an endpoint that is the configured one, or any when no
 /// credential of the engine's can reach it: none configured, and the request
-/// either skips signing or signs with its own credentials alone.
-fn options_trusted(sent: &HashMap<String, String>, fallback: &FallbackOptions) -> bool {
+/// either skips signing or signs with its own credentials alone. `env` names
+/// the engine's environment variables.
+fn options_trusted(
+    sent: &HashMap<String, String>,
+    fallback: &FallbackOptions,
+    env: impl IntoIterator<Item = OsString>,
+) -> bool {
     if sent.keys().any(|key| !SENT_OPTIONS.contains(&key.as_str())) {
         return false;
     }
@@ -95,8 +100,7 @@ fn options_trusted(sent: &HashMap<String, String>, fallback: &FallbackOptions) -
                 .iter()
                 .any(|key| fallback.contains_key(*key));
             let unsigned = sent.get("aws_skip_signature").is_some_and(|v| v == "true");
-            !configured
-                && (unsigned || signs_alone(sent, std::env::vars_os().map(|(name, _)| name)))
+            !configured && (unsigned || signs_alone(sent, env))
         }
     }
 }
@@ -500,7 +504,8 @@ impl VectorServer {
                 table.id.join("/")
             ))
         })?;
-        if !options_trusted(&description.storage_options, &self.fallback) {
+        let env = std::env::vars_os().map(|(name, _)| name);
+        if !options_trusted(&description.storage_options, &self.fallback, env) {
             return Err(Status::permission_denied(
                 "the storage options would send the engine's credentials elsewhere",
             ));
@@ -1164,38 +1169,42 @@ mod tests {
             ("aws_secret_access_key", "v"),
         ]);
         let none = FallbackOptions::new();
+        let trusted = |sent: &HashMap<String, String>, fallback: &FallbackOptions| {
+            options_trusted(sent, fallback, Vec::<OsString>::new())
+        };
 
-        assert!(options_trusted(&gateway, &pinned));
-        assert!(options_trusted(
+        assert!(trusted(&gateway, &pinned));
+        assert!(trusted(
             &options(&[(ENDPOINT_OPTION, "http://gw/")]),
             &pinned
         ));
-        assert!(!options_trusted(&elsewhere, &pinned));
-        assert!(!options_trusted(&gateway, &creds), "no configured endpoint");
+        assert!(!trusted(&elsewhere, &pinned));
+        assert!(!trusted(&gateway, &creds), "no configured endpoint");
+        assert!(!trusted(&gateway, &none), "the default chain could sign");
+        assert!(trusted(&unsigned, &none));
+        assert!(trusted(&vended, &none));
         assert!(
-            !options_trusted(&gateway, &none),
-            "the default chain could sign"
+            !options_trusted(&vended, &none, [OsString::from("AWS_SESSION_TOKEN")]),
+            "the environment would add its session token"
         );
-        assert!(options_trusted(&unsigned, &none));
-        assert!(options_trusted(&vended, &none));
         assert!(
-            !options_trusted(
+            !trusted(
                 &options(&[(ENDPOINT_OPTION, "http://gw"), ("aws_access_key_id", "v")]),
                 &none
             ),
             "a key without its secret is signed by the default chain"
         );
         assert!(
-            !options_trusted(&vended, &creds),
+            !trusted(&vended, &creds),
             "configured credentials stay home"
         );
         assert!(
-            options_trusted(&options(&[("aws_region", "r")]), &creds),
+            trusted(&options(&[("aws_region", "r")]), &creds),
             "no endpoint sent"
         );
         for key in ["proxy_url", "aws_endpoint_url_s3", "aws_endpoint_url"] {
             let routed = options(&[(key, "http://elsewhere"), ("aws_skip_signature", "true")]);
-            assert!(!options_trusted(&routed, &none), "{key}");
+            assert!(!trusted(&routed, &none), "{key}");
         }
     }
 
