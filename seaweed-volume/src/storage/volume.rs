@@ -1267,6 +1267,12 @@ impl Drop for VerifyingNeedleGuard {
 }
 
 impl NeedleStreamInfo {
+    /// Whether `data`, the whole payload, matches the checksum in the tail.
+    pub(crate) fn checksum_matches(&self, data: &[u8]) -> bool {
+        let crc = CRC::new(data);
+        self.checksum == crc.0 || self.checksum == crc.legacy_value()
+    }
+
     /// Check the whole needle's CRC before any byte of a range is sent, so a
     /// damaged replica fails the read and the reader tries another copy.
     pub(crate) fn verify_checksum(&self, chunk_size: usize) -> io::Result<()> {

@@ -2397,6 +2397,18 @@ fn handle_range_request_from_source(
             .source
             .read_exact_at(&mut buf, info.data_file_offset + start as u64)
         {
+            Ok(()) if length == total && !info.checksum_matches(&buf) => {
+                metrics::HANDLER_COUNTER
+                    .with_label_values(&[metrics::ERROR_CRC])
+                    .inc();
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "needle data checksum mismatch for needle {}",
+                        info.needle_id
+                    ),
+                ))
+            }
             // A finished range read clears the streak a failed meta read
             // counted, like readNeedleDataInto's terminal report.
             Ok(()) => {
@@ -7068,7 +7080,7 @@ mod tests {
         let damaged = payload(2);
         let path = put_test_needle(&state, 0x6e7a_0c02, &damaged);
         damage(&damaged);
-        for range in [&b"bytes=1000-1499"[..], b"bytes=0-1,1000-1001"] {
+        for range in [&b"bytes=1000-1499"[..], b"bytes=0-", b"bytes=0-1,1000-1001"] {
             let (status, _, body) = send_read(&state, Method::GET, &path, Some(range)).await;
             assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{range:?}");
             assert!(
