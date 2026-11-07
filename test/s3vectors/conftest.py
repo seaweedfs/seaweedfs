@@ -318,7 +318,11 @@ def run_cluster(param, tmp_path_factory, identities):
         wait_for(lambda: listening(s3), processes, "s3 not ready")
         if os.environ.get("VECTOR_TLS") or read_jwt_key or encrypt:
             probe_hardening(endpoint, filer, vol, directory, read_jwt_key)
-        start("vector", [engine, "--namespace", f"http://127.0.0.1:{lance}",
+        # VECTOR_ENGINE_NO_CATALOG=1 gives the engine an unreachable catalog:
+        # the gateway resolves every table it sends, so the engine must not
+        # need one.
+        catalog = "http://127.0.0.1:1" if os.environ.get("VECTOR_ENGINE_NO_CATALOG") else f"http://127.0.0.1:{lance}"
+        start("vector", [engine, "--namespace", catalog,
                          "--masters", master_addr, "--listen", f"127.0.0.1:{vector}", *credentials], unset)
         wait_for(lambda: listening(vector), processes, "vector engine not ready")
         if os.environ.get("VECTOR_TLS"):
