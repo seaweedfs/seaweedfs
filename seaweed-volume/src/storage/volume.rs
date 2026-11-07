@@ -1214,15 +1214,18 @@ pub struct NeedleStreamInfo {
 }
 
 /// A range carries no checksum of its own, so a ranged read checks the whole
-/// needle's CRC the first time any range of it is read. `VERIFIED_NEEDLES`
-/// remembers the needles that passed, so later ranges read only their bytes.
-/// Entries are per volume load, so a remounted copy or a compaction is checked
-/// again, and concurrent first reads of a needle share one check.
-static VERIFIED_NEEDLES: LazyLock<Mutex<lru::LruCache<VerifiedNeedle, ()>>> = LazyLock::new(|| {
-    Mutex::new(lru::LruCache::new(
-        std::num::NonZeroUsize::new(64 * 1024).unwrap(),
-    ))
-});
+/// needle's CRC the first time any range of it is read, recording the CRC of
+/// each block on the way. `VERIFIED_NEEDLES` keeps those block CRCs, and later
+/// ranges check just the blocks they cover, so damage that appears after the
+/// first check is still caught. Entries are per volume load, so a remounted
+/// copy or a compaction is checked again, and concurrent first reads of a
+/// needle share one check.
+static VERIFIED_NEEDLES: LazyLock<Mutex<lru::LruCache<VerifiedNeedle, Arc<[u32]>>>> =
+    LazyLock::new(|| {
+        Mutex::new(lru::LruCache::new(
+            std::num::NonZeroUsize::new(64 * 1024).unwrap(),
+        ))
+    });
 static VERIFYING_NEEDLES: LazyLock<Mutex<HashMap<VerifiedNeedle, Arc<VerifyingNeedle>>>> =
     LazyLock::new(Default::default);
 static VOLUME_LOADS: AtomicU64 = AtomicU64::new(0);
@@ -1235,9 +1238,23 @@ struct VerifiedNeedle {
     checksum: u32,
 }
 
+const RANGE_CHECK_BLOCKS: u64 = 64;
+const MIN_RANGE_CHECK_BLOCK_SIZE: u64 = 64 * 1024;
+const MAX_RANGE_CHECK_BLOCK_SIZE: u64 = 1024 * 1024;
+
+/// Keeps a needle to 64 blocks, each 64 KiB to 1 MiB, as Go's
+/// rangeCheckBlockSize.
+pub(crate) fn range_check_block_size(data_size: u64) -> u64 {
+    let mut block_size = MIN_RANGE_CHECK_BLOCK_SIZE;
+    while block_size < MAX_RANGE_CHECK_BLOCK_SIZE && data_size > RANGE_CHECK_BLOCKS * block_size {
+        block_size *= 2;
+    }
+    block_size
+}
+
 #[derive(Default)]
 struct VerifyingNeedle {
-    outcome: Mutex<Option<Result<(), (io::ErrorKind, String)>>>,
+    outcome: Mutex<Option<Result<Arc<[u32]>, (io::ErrorKind, String)>>>,
     done: Condvar,
 }
 
@@ -1274,21 +1291,21 @@ impl NeedleStreamInfo {
     }
 
     /// Check the whole needle's CRC before any byte of a range is sent, so a
-    /// damaged replica fails the read and the reader tries another copy.
-    pub(crate) fn verify_checksum(&self, chunk_size: usize) -> io::Result<()> {
+    /// damaged replica fails the read and the reader tries another copy, and
+    /// return the CRC of each block for `read_checked_range`.
+    pub(crate) fn verify_checksum(&self, chunk_size: usize) -> io::Result<Arc<[u32]>> {
         let key = VerifiedNeedle {
             load_generation: self.load_generation,
             id: self.needle_id,
             append_at_ns: self.append_at_ns,
             checksum: self.checksum,
         };
-        if VERIFIED_NEEDLES
+        if let Some(crcs) = VERIFIED_NEEDLES
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .get(&key)
-            .is_some()
         {
-            return Ok(());
+            return Ok(crcs.clone());
         }
         let (call, leader) = {
             let mut calls = VERIFYING_NEEDLES.lock().unwrap_or_else(|e| e.into_inner());
@@ -1313,31 +1330,37 @@ impl NeedleStreamInfo {
         }
         let guard = VerifyingNeedleGuard { key, call };
         let result = self.read_checksum(chunk_size);
-        if result.is_ok() {
+        if let Ok(crcs) = &result {
             VERIFIED_NEEDLES
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
-                .put(key, ());
+                .put(key, crcs.clone());
         }
         *guard.call.outcome.lock().unwrap_or_else(|e| e.into_inner()) = Some(
             result
                 .as_ref()
-                .map(|_| ())
+                .map(Arc::clone)
                 .map_err(|e| (e.kind(), e.to_string())),
         );
         result
     }
 
-    /// Read the whole payload in chunks and compare its CRC. A read failure
-    /// counts toward the io error streak; a pass leaves the streak to the
-    /// range read that follows.
-    fn read_checksum(&self, chunk_size: usize) -> io::Result<()> {
+    /// Read the whole payload in chunks and compare its CRC, recording the CRC
+    /// of each block. A read failure counts toward the io error streak; a pass
+    /// leaves the streak to the range read that follows.
+    fn read_checksum(&self, chunk_size: usize) -> io::Result<Arc<[u32]>> {
         let total = self.data_size as usize;
+        let block_size = range_check_block_size(self.data_size as u64) as usize;
         let mut buf = vec![0u8; chunk_size.clamp(1, total.max(1))];
         let mut crc = CRC(0);
+        let mut block_crc = CRC(0);
+        let mut crcs = Vec::with_capacity(total.div_ceil(block_size));
         let mut pos = 0;
         while pos < total {
-            let len = std::cmp::min(buf.len(), total - pos);
+            let len = buf
+                .len()
+                .min(total - pos)
+                .min(block_size - pos % block_size);
             if let Err(e) = self
                 .source
                 .read_exact_at(&mut buf[..len], self.data_file_offset + pos as u64)
@@ -1346,7 +1369,12 @@ impl NeedleStreamInfo {
                 return Err(e);
             }
             crc = crc.update(&buf[..len]);
+            block_crc = block_crc.update(&buf[..len]);
             pos += len;
+            if pos % block_size == 0 || pos == total {
+                crcs.push(block_crc.0);
+                block_crc = CRC(0);
+            }
         }
         if self.checksum != crc.0 && self.checksum != crc.legacy_value() {
             crate::metrics::HANDLER_COUNTER
@@ -1360,7 +1388,44 @@ impl NeedleStreamInfo {
                 ),
             ));
         }
-        Ok(())
+        Ok(crcs.into())
+    }
+
+    /// Read whole blocks around `[start, start + length)`, check each against
+    /// the CRC `verify_checksum` recorded, and return the range's bytes, so
+    /// damage that appears after the needle passed its check is not served.
+    pub(crate) fn read_checked_range(
+        &self,
+        crcs: &[u32],
+        start: u64,
+        length: u64,
+    ) -> io::Result<Vec<u8>> {
+        let block_size = range_check_block_size(self.data_size as u64);
+        let span_start = start / block_size * block_size;
+        let span_end = (start + length).div_ceil(block_size) * block_size;
+        let span_end = span_end.min(self.data_size as u64);
+        let mut buf = vec![0u8; (span_end - span_start) as usize];
+        self.source
+            .read_exact_at(&mut buf, self.data_file_offset + span_start)?;
+        for (i, block) in buf.chunks(block_size as usize).enumerate() {
+            let index = (span_start / block_size) as usize + i;
+            if crcs.get(index) != Some(&CRC::new(block).0) {
+                crate::metrics::HANDLER_COUNTER
+                    .with_label_values(&[crate::metrics::ERROR_CRC])
+                    .inc();
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "checksum mismatch in block {} of needle {}",
+                        index, self.needle_id
+                    ),
+                ));
+            }
+        }
+        let from = (start - span_start) as usize;
+        buf.truncate(from + length as usize);
+        buf.drain(..from);
+        Ok(buf)
     }
 }
 

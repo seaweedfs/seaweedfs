@@ -2378,26 +2378,38 @@ fn handle_range_request_from_source(
         return (StatusCode::OK, headers).into_response();
     }
 
-    if ranges.iter().any(|r| r.start != 0 || r.length != total)
-        && let Err(err) = info.verify_checksum(chunk_size)
-    {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("range read error: {}", err),
-        )
-            .into_response();
-    }
+    let block_crcs = if ranges.iter().any(|r| r.start != 0 || r.length != total) {
+        match info.verify_checksum(chunk_size) {
+            Ok(crcs) => Some(crcs),
+            Err(err) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("range read error: {}", err),
+                )
+                    .into_response();
+            }
+        }
+    } else {
+        None
+    };
 
     let read_slice = |start: i64, length: i64| -> Result<Vec<u8>, std::io::Error> {
         if length <= 0 {
             return Ok(Vec::new());
         }
-        let mut buf = vec![0u8; length as usize];
-        match info
-            .source
-            .read_exact_at(&mut buf, info.data_file_offset + start as u64)
-        {
-            Ok(()) if length == total && !info.checksum_matches(&buf) => {
+        let read = match &block_crcs {
+            Some(crcs) if length != total => {
+                info.read_checked_range(crcs, start as u64, length as u64)
+            }
+            _ => {
+                let mut buf = vec![0u8; length as usize];
+                info.source
+                    .read_exact_at(&mut buf, info.data_file_offset + start as u64)
+                    .map(|()| buf)
+            }
+        };
+        match read {
+            Ok(buf) if length == total && !info.checksum_matches(&buf) => {
                 metrics::HANDLER_COUNTER
                     .with_label_values(&[metrics::ERROR_CRC])
                     .inc();
@@ -2411,10 +2423,12 @@ fn handle_range_request_from_source(
             }
             // A finished range read clears the streak a failed meta read
             // counted, like readNeedleDataInto's terminal report.
-            Ok(()) => {
+            Ok(buf) => {
                 info.io_errors.check_read_write_error(None);
                 Ok(buf)
             }
+            // A block that fails its CRC leaves the streak alone, as Go's.
+            Err(e) if e.kind() == std::io::ErrorKind::InvalidData => Err(e),
             Err(e) => {
                 info.io_errors.check_read_write_error(Some(&e));
                 Err(e)
@@ -7120,14 +7134,60 @@ mod tests {
         let (status, _, _) = send_read(&state, Method::GET, &path, Some(b"bytes=10-19")).await;
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
 
-        let data = payload(6);
+        // Damage that appears after a needle passed its check is caught by
+        // the block it falls in, while ranges over intact blocks still read.
+        let block = 64 * 1024;
+        let data: Vec<u8> = (0..5 * block - 100)
+            .map(|i| (i * 7 + i / 251) as u8)
+            .collect();
         let path = put_test_needle(&state, 0x6e7a_0c06, &data);
-        let (status, _, _) = send_read(&state, Method::GET, &path, Some(b"bytes=10-19")).await;
-        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
-        damage(&data);
-        let (status, _, body) = send_read(&state, Method::GET, &path, Some(b"bytes=100-109")).await;
-        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
-        assert_eq!(body, &data[100..110]);
+        let range = |from: usize, to: usize| format!("bytes={}-{}", from, to - 1).into_bytes();
+        let damaged_ranges = [
+            (3 * block + 10, 3 * block + 110),
+            (block - 50, 4 * block - 50),
+        ];
+        for (from, to) in damaged_ranges {
+            let (status, _, body) =
+                send_read(&state, Method::GET, &path, Some(&range(from, to))).await;
+            assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+            assert_eq!(body, &data[from..to]);
+        }
+        let dat = tmp.path().join("1.dat");
+        let mut bytes = std::fs::read(&dat).unwrap();
+        let at = bytes.windows(64).position(|w| w == &data[..64]).unwrap();
+        bytes[at + 3 * block + 500] ^= 0xff;
+        std::fs::write(&dat, bytes).unwrap();
+        for (from, to) in damaged_ranges {
+            let (status, _, _) =
+                send_read(&state, Method::GET, &path, Some(&range(from, to))).await;
+            assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{from}-{to}");
+        }
+        for (from, to) in [
+            (10, 110),
+            (2 * block + 1, 3 * block),
+            (4 * block + 5, data.len()),
+        ] {
+            let (status, _, body) =
+                send_read(&state, Method::GET, &path, Some(&range(from, to))).await;
+            assert_eq!(status, StatusCode::PARTIAL_CONTENT, "{from}-{to}");
+            assert_eq!(body, &data[from..to]);
+        }
+    }
+
+    #[test]
+    fn test_range_check_block_size() {
+        use crate::storage::volume::range_check_block_size;
+        let block = 64 * 1024;
+        let mib = 1024 * 1024;
+        for (size, want) in [
+            (0, block),
+            (64 * block, block),
+            (64 * block + 1, 2 * block),
+            (64 * mib, mib),
+            (1 << 34, mib),
+        ] {
+            assert_eq!(range_check_block_size(size), want, "{size}");
+        }
     }
 
     /// Range is read as Go reads it: a byte its parseRange cannot parse is a
