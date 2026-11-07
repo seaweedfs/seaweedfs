@@ -77,6 +77,7 @@ func (h *Handler) scanTablesForMaintenance(
 
 		// List namespaces within the bucket
 		bucketPath := path.Join(bucketsPath, bucketName)
+		var recordRoots map[string]string
 		nsEntries, err := listFilerEntries(ctx, filerClient, bucketPath, "")
 		if err != nil {
 			glog.Warningf("iceberg maintenance: failed to list namespaces in bucket %s: %v", bucketName, err)
@@ -133,6 +134,18 @@ func (h *Handler) scanTablesForMaintenance(
 					} else {
 						glog.V(2).Infof("iceberg maintenance: skipping %s/%s/%s: cannot parse iceberg metadata: %v", bucketName, nsName, tblName, err)
 					}
+					continue
+				}
+				// Maintenance deletes what a table's metadata does not reference,
+				// so a table sharing its files with another record is left alone.
+				if recordRoots == nil {
+					if recordRoots, err = s3tables.CatalogRecordRoots(ctx, filerClient, bucketName); err != nil {
+						glog.V(2).Infof("iceberg maintenance: skipping %s/%s/%s: cannot list catalog records: %v", bucketName, nsName, tblName, err)
+						continue
+					}
+				}
+				if s3tables.RootClaimed(recordRoots, path.Join(bucketPath, tablePath), path.Join(bucketPath, state.DataPath)) {
+					glog.V(1).Infof("iceberg maintenance: skipping %s/%s/%s: its location is shared with another table or view", bucketName, nsName, tblName)
 					continue
 				}
 				if err := state.loadMetadata(ctx, filerClient, bucketName); err != nil {
