@@ -8,6 +8,8 @@ import (
 	"io"
 	"math"
 	"os"
+	"reflect"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -50,12 +52,46 @@ import (
 // and must change together: a guard added to one and not the other is how
 // the zero-byte re-upload on remote.uncache happened.
 
+// mountWatch lets a -allMounts supervisor end a follow: when stop closes, the
+// follow ends after its admitted jobs drain. A nil watch is the -dir process,
+// which exits (unmounted) or dies (moved) where the mount ends, as it always
+// has; under a watch the follow returns errMountGone there instead, and the
+// supervisor starts a successor, from the saved offset, while the directory
+// is still mounted.
+type mountWatch struct {
+	stop <-chan struct{}
+}
+
 func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *source.FilerSource, mountedDir string) error {
+	return followMountedDir(option, filerSource, mountedDir, nil)
+}
+
+// followMountedDir writes one mounted directory back.
+func followMountedDir(option *RemoteSyncOptions, filerSource *source.FilerSource, mountedDir string, watch *mountWatch) error {
+
+	// The offset as stored now, read once and before the mount table: it is
+	// both where this follow starts (without a resume position) and the
+	// value its offsetGuard may replace. Read after the table, a
+	// remote.unmount completing in between (its mapping write, its purge,
+	// then its offset) would start a follow that saw the directory mounted
+	// past the unmount's table, into its purge.
+	storedOffsetNs, err := remote_storage.GetSyncOffset(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir)
+	if err != nil {
+		return fmt.Errorf("read sync offset of %s: %w", mountedDir, err)
+	}
 
 	// read filer remote storage mount mappings
 	_, mountKey, remoteStorageMountLocation, remoteStorage, detectErr := filer.DetectMountInfo(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir)
-	if detectErr != nil {
-		return fmt.Errorf("read mount info: %w", detectErr)
+	if err := option.resumeFor(mountedDir, remoteStorageMountLocation, detectErr, storedOffsetNs); err != nil {
+		return err
+	}
+	guard := &offsetGuard{dir: mountedDir, last: storedOffsetNs,
+		read: func() (int64, error) {
+			return remote_storage.GetSyncOffset(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir)
+		},
+		write: func(ts int64) error {
+			return remote_storage.SetSyncOffset(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir, ts)
+		},
 	}
 
 	eachEntryFunc, err := option.makeEventProcessor(remoteStorage, mountedDir, dirRemoteLocation(mountKey, mountedDir, remoteStorageMountLocation), filerSource)
@@ -63,7 +99,7 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 		return err
 	}
 
-	lastOffsetTs, err := collectLastSyncOffset(option, option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir, *option.timeAgo, option.resumeTsNs)
+	lastOffsetTs, err := collectLastSyncOffsetFrom(option, mountedDir, *option.timeAgo, option.resumeTsNs, storedOffsetNs)
 	if err != nil {
 		return err
 	}
@@ -75,17 +111,34 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 	}
 	processor := NewMetadataProcessor(eachEntryFunc, 128, lastOffsetTs.UnixNano())
 
+	// Only the stream goroutine reads or writes mountEnded.
+	var mountEnded bool
+	mountGone := make(chan struct{})
+	onMountEnd := func(*remote_pb.RemoteStorageLocation) {
+		mountEnded = true
+		close(mountGone)
+	}
+	if watch == nil {
+		onMountEnd = exitProcessAtMountEnd(processor, mountedDir, remoteStorageMountLocation)
+	}
+	followDone := make(chan struct{})
+	defer close(followDone)
+
 	var lastLogTsNs = time.Now().UnixNano()
-	processEventFnWithOffset := pb.AddOffsetFunc(admitUntilMountEnds(processor, mountedDir, mountKey, remoteStorageMountLocation), 3*time.Second, func(counter int64, lastTsNs int64) error {
+	processEventFnWithOffset := pb.AddOffsetFunc(admitUntilMountEnds(processor, mountedDir, mountKey, remoteStorageMountLocation, onMountEnd), 3*time.Second, func(counter int64, lastTsNs int64) error {
+		if mountEnded {
+			// the offset remote.unmount sets after its purge must stay
+			return nil
+		}
 		offsetTsNs := processor.processedTsWatermark.Load()
 		if offsetTsNs == 0 {
 			return nil
 		}
 		// use processor.processedTsWatermark instead of the lastTsNs from the most recent job
 		now := time.Now().UnixNano()
-		glog.V(0).Infof("remote sync %s progressed to %v %0.2f/sec", *option.filerAddress, time.Unix(0, offsetTsNs), float64(counter)/(float64(now-lastLogTsNs)/1e9))
+		glog.V(0).Infof("remote sync %s progressed to %v %0.2f/sec", mountedDir, time.Unix(0, offsetTsNs), float64(counter)/(float64(now-lastLogTsNs)/1e9))
 		lastLogTsNs = now
-		return remote_storage.SetSyncOffset(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir, resumeTsNsFor(processor))
+		return guard.save(resumeTsNsFor(processor))
 	})
 
 	option.clientEpoch++
@@ -95,6 +148,10 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 		prefix = prefix + "/"
 	}
 
+	var stop <-chan struct{}
+	if watch != nil {
+		stop = watch.stop
+	}
 	metadataFollowOption := &pb.MetadataFollowOption{
 		ClientName:             "filer.remote.sync",
 		ClientId:               option.clientId,
@@ -109,12 +166,34 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 		GetResumeTsNs: func() int64 {
 			return resumeTsNsFor(processor)
 		},
-		Resubscribe: processor.ResubscribeCh(),
+		Resubscribe: anyClosed(followDone, processor.ResubscribeCh(), stop, mountGone),
 	}
 
-	err = pb.FollowMetadata(pb.ServerAddress(*option.filerAddress), option.grpcDialOption, metadataFollowOption, processEventFnWithOffset)
-	option.resumeTsNs = saveResumeOffset(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir, processor)
-	return err
+	followErr := pb.FollowMetadata(pb.ServerAddress(*option.filerAddress), option.grpcDialOption, metadataFollowOption, processEventFnWithOffset)
+	// however the follow ended, its admitted jobs finish before the caller
+	// starts another for the directory: a replayed event must not race a
+	// job still running for the same path
+	drainLogged(processor, mountedDir)
+	if mountEnded {
+		// No offset is saved past the end, and no resume position is kept:
+		// remote.unmount sets the offset after its purge, and a remount sets
+		// its own; a position saved here, behind them, would make the next
+		// write-back replay the unmount and stop there again.
+		option.clearResume()
+		return errMountGone
+	}
+	resumeTsNs := saveResumeOffsetWith(guard.save, mountedDir, processor)
+	if guard.moved {
+		// someone else set the offset (remote.unmount after its purge, a
+		// mount after its mapping write): the next attempt starts from theirs
+		option.clearResume()
+	} else {
+		option.resumeTsNs, option.resumeLoc, option.resumeStoredNs = resumeTsNs, remoteStorageMountLocation, guard.last
+	}
+	if isClosed(stop) {
+		return errFollowStopped
+	}
+	return followErr
 }
 
 // dirRemoteLocation is where dir, at or below the mount at mountKey, lives
@@ -154,11 +233,19 @@ func startAfterMountOffset(start time.Time, mountKey, dir string, timeAgo time.D
 // would otherwise start the retry after the event it failed on. The offset is
 // returned for the retry in this process, which must not depend on the write.
 func saveResumeOffset(grpcDialOption grpc.DialOption, filerAddress pb.ServerAddress, dir string, processor *MetadataProcessor) int64 {
+	return saveResumeOffsetWith(func(ts int64) error {
+		return remote_storage.SetSyncOffset(grpcDialOption, filerAddress, dir, ts)
+	}, dir, processor)
+}
+
+// saveResumeOffsetWith is saveResumeOffset through save: a mounted
+// directory's write-back saves through its offsetGuard.
+func saveResumeOffsetWith(save func(ts int64) error, dir string, processor *MetadataProcessor) int64 {
 	offsetTsNs := resumeTsNsFor(processor)
 	if offsetTsNs <= 0 {
 		return 0
 	}
-	if err := remote_storage.SetSyncOffset(grpcDialOption, filerAddress, dir, offsetTsNs); err != nil {
+	if err := save(offsetTsNs); err != nil {
 		glog.Errorf("save the sync offset of %s: %v", dir, err)
 	}
 	return offsetTsNs
@@ -167,22 +254,40 @@ func saveResumeOffset(grpcDialOption grpc.DialOption, filerAddress pb.ServerAddr
 // admitUntilMountEnds judges each mount-table version before the next event
 // is admitted. remote.unmount purges the directory right after writing the
 // table, and a purge delete admitted under a directory no longer mounted
-// deletes the remote objects. At the end nothing more is admitted and no
-// offset is saved, keeping the one remote.unmount writes after its purge;
-// the admitted jobs drain before the exit.
-func admitUntilMountEnds(processor *MetadataProcessor, mountedDir, mountKey string, mountLocation *remote_pb.RemoteStorageLocation) pb.ProcessMetadataFunc {
+// deletes the remote objects. At the end nothing more is admitted and onEnd
+// is called with the new location (nil for an unmount); the caller saves no
+// offset after it, keeping the one remote.unmount writes after its purge.
+func admitUntilMountEnds(processor *MetadataProcessor, mountedDir, mountKey string, mountLocation *remote_pb.RemoteStorageLocation, onEnd func(moved *remote_pb.RemoteStorageLocation)) pb.ProcessMetadataFunc {
+	ended := false
 	return func(resp *filer_pb.SubscribeMetadataResponse) error {
-		ended, moved, err := mountTableEnds(mountedDir, mountKey, mountLocation, resp)
+		if ended {
+			return nil
+		}
+		end, moved, err := mountTableEnds(mountedDir, mountKey, mountLocation, resp)
 		if err != nil {
 			return err
 		}
-		if !ended {
+		if !end {
 			processor.AddSyncJob(resp)
 			return nil
 		}
+		ended = true
+		if moved != nil {
+			glog.V(0).Infof("%s moved %+v => %+v at %d: its write-back stops", mountedDir, mountLocation, moved, resp.TsNs)
+		} else {
+			glog.V(0).Infof("%s unmounted at %d: its write-back stops", mountedDir, resp.TsNs)
+		}
+		onEnd(moved)
+		return nil
+	}
+}
+
+// exitProcessAtMountEnd is the -dir process's end: the admitted jobs drain,
+// then it exits (unmounted) or dies (moved).
+func exitProcessAtMountEnd(processor *MetadataProcessor, mountedDir string, mountLocation *remote_pb.RemoteStorageLocation) func(*remote_pb.RemoteStorageLocation) {
+	return func(moved *remote_pb.RemoteStorageLocation) {
 		processor.Drain()
 		exitAtMountEnd(mountedDir, mountLocation, moved)
-		return nil
 	}
 }
 
@@ -192,6 +297,123 @@ var exitAtMountEnd = func(mountedDir string, from, to *remote_pb.RemoteStorageLo
 	}
 	glog.V(0).Infof("unmounted %s exiting ...", mountedDir)
 	os.Exit(0)
+}
+
+// resumeFor checks the resume position a previous attempt in this process
+// kept against the mount and the stored offset as this attempt finds them.
+// The position is dropped when the mount cannot be read or maps the
+// directory to another location than the one it was earned under (a remount
+// elsewhere never resumes from the old mount's position), and when the
+// stored offset is no longer the one that attempt left, nor the position
+// itself (its own save at exit, which can land although the call failed):
+// someone else set it, remote.unmount after its purge or a mount after its
+// mapping write, and this attempt starts from theirs, as a follow whose
+// guard saw the offset move drops the position. Replaying the old position
+// across an unmount and remount would upload pre-unmount content after the
+// remount's pull.
+func (option *RemoteSyncOptions) resumeFor(dir string, loc *remote_pb.RemoteStorageLocation, detectErr error, storedNs int64) error {
+	if detectErr != nil {
+		option.clearResume()
+		return fmt.Errorf("read mount info: %w", detectErr)
+	}
+	if option.resumeTsNs <= 0 {
+		return nil
+	}
+	switch {
+	case !sameMountLocation(option.resumeLoc, loc):
+		glog.V(0).Infof("%s: mounted at %+v now, not %+v where it stopped: not resuming from %d", dir, loc, option.resumeLoc, option.resumeTsNs)
+		option.clearResume()
+	case storedNs != option.resumeStoredNs && storedNs != option.resumeTsNs:
+		glog.V(0).Infof("%s: its sync offset was moved to %d by someone else since it stopped: starting there, not at %d", dir, storedNs, option.resumeTsNs)
+		option.clearResume()
+	}
+	return nil
+}
+
+func (option *RemoteSyncOptions) clearResume() {
+	option.resumeTsNs, option.resumeLoc, option.resumeStoredNs = 0, nil, 0
+}
+
+// offsetGuard saves a follow's offset only over the value it last saved (or
+// found at its start). Someone else moved it otherwise: remote.unmount sets it
+// after its purge, a mount sets it after its own mapping write, and a
+// write-back still behind in the log that saved its older position over
+// those would make its successor replay the unmount, end there, and never
+// write the directory back again. Read then write, not atomic: it narrows the
+// window to one round trip. Once moved, it saves nothing more.
+//
+// pending is a value this guard wrote whose write reported an error: it may
+// have landed all the same (a timeout after the filer applied it), so read
+// back later it is this guard's own, not someone else's move.
+type offsetGuard struct {
+	dir     string
+	last    int64
+	pending int64
+	moved   bool
+	read    func() (int64, error)
+	write   func(ts int64) error
+}
+
+func (g *offsetGuard) save(ts int64) error {
+	if g.moved {
+		return nil
+	}
+	cur, err := g.read()
+	if err != nil {
+		return err
+	}
+	if cur != g.last && g.pending != 0 && cur == g.pending {
+		g.last = g.pending
+	}
+	g.pending = 0
+	if cur != g.last {
+		g.moved = true
+		glog.V(0).Infof("%s: its sync offset was moved to %d by someone else; this write-back no longer saves it", g.dir, cur)
+		return nil
+	}
+	if err := g.write(ts); err != nil {
+		g.pending = ts
+		return err
+	}
+	g.last = ts
+	return nil
+}
+
+// errFollowStopped ends a follow its mountWatch stopped; errMountGone one
+// whose directory the mount table no longer maps to its location.
+var (
+	errFollowStopped = errors.New("follow stopped")
+	errMountGone     = errors.New("unmounted or moved")
+)
+
+// anyClosed closes when any of chans does (nil ones never do), and gives up
+// when done closes, so its goroutine never outlives the follow.
+func anyClosed(done <-chan struct{}, chans ...<-chan struct{}) <-chan struct{} {
+	merged := make(chan struct{})
+	cases := []reflect.SelectCase{{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(done)}}
+	for _, ch := range chans {
+		if ch != nil {
+			cases = append(cases, reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ch)})
+		}
+	}
+	go func() {
+		if i, _, _ := reflect.Select(cases); i > 0 {
+			close(merged)
+		}
+	}()
+	return merged
+}
+
+func isClosed(ch <-chan struct{}) bool {
+	if ch == nil {
+		return false
+	}
+	select {
+	case <-ch:
+		return true
+	default:
+		return false
+	}
 }
 
 // mountTableEnds reports whether a mount-table event ends the write-back of
@@ -323,8 +545,48 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 
 		return nil
 	}
-	return eachEntryFunc, nil
+	return recoverJob(mountedDir, eachEntryFunc), nil
 }
+
+// recoverJob turns a panic in one directory's job into that job's error: the
+// processor pins the event and resubscribes this directory alone, instead of
+// the panic ending the process and, with -allMounts, every directory's
+// write-back with it.
+func recoverJob(dir string, fn pb.ProcessMetadataFunc) pb.ProcessMetadataFunc {
+	return func(resp *filer_pb.SubscribeMetadataResponse) (err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				glog.Errorf("%s: job at %d panicked: %v\n%s", dir, resp.GetTsNs(), r, debug.Stack())
+				err = fmt.Errorf("%s: job at %d panicked: %v", dir, resp.GetTsNs(), r)
+			}
+		}()
+		return fn(resp)
+	}
+}
+
+// drainLogged is processor.Drain, logged every drainWarnEvery while it waits:
+// a job hung on a remote call keeps its directory from resubscribing or
+// ending, and that must not be silent.
+func drainLogged(processor *MetadataProcessor, dir string) {
+	done := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(drainWarnEvery)
+		defer ticker.Stop()
+		began := time.Now()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				glog.Warningf("%s: still waiting for its admitted jobs after %v; its write-back is held until they finish", dir, time.Since(began).Round(time.Second))
+			}
+		}
+	}()
+	processor.Drain()
+	close(done)
+}
+
+const drainWarnEvery = 5 * time.Minute
 
 // reshapeCrossMountRename maps an update event onto the side of it the mount
 // covers. The subscription delivers a rename when either of its paths lies
@@ -1240,6 +1502,27 @@ func collectLastSyncOffset(filerClient filer_pb.FilerClient, grpcDialOption grpc
 			return entry, err
 		},
 		func() (int64, error) { return remote_storage.GetSyncOffset(grpcDialOption, filerAddress, mountedDir) })
+}
+
+// collectLastSyncOffsetFrom is collectLastSyncOffset with the saved offset
+// already read (storedNs): the caller uses the same value for its guard.
+func collectLastSyncOffsetFrom(filerClient filer_pb.FilerClient, mountedDir string, timeAgo time.Duration, resumeTsNs, storedNs int64) (time.Time, error) {
+	return startPosition(mountedDir, timeAgo, resumeTsNs, storedNs, func() (*filer_pb.Entry, error) {
+		ctx, cancel := lookupContext()
+		defer cancel()
+		entry, _, _, err := filer_pb.GetEntry(ctx, filerClient, util.FullPath(mountedDir))
+		return entry, err
+	})
+}
+
+// startPosition is where a follow subscribes from: the resume position when
+// one is kept, otherwise resolveLastSyncOffset over the stored offset.
+func startPosition(mountedDir string, timeAgo time.Duration, resumeTsNs, storedNs int64, lookupMount func() (*filer_pb.Entry, error)) (time.Time, error) {
+	if resumeTsNs > 0 {
+		glog.V(0).Infof("resuming previous attempt at %v", time.Unix(0, resumeTsNs))
+		return time.Unix(0, resumeTsNs), nil
+	}
+	return resolveLastSyncOffset(mountedDir, timeAgo, lookupMount, func() (int64, error) { return storedNs, nil })
 }
 
 // resolveLastSyncOffset picks the position to subscribe from:
