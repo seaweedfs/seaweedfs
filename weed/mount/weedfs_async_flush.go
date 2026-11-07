@@ -56,12 +56,11 @@ func (wfs *WFS) completeAsyncFlush(fh *FileHandle) {
 		fh.inode, fh.fh, fh.savedDir, fh.savedName, fh.dirtyMetadata, fh.isDeleted, fh.isRenamed)
 
 	// Phase 1: Flush dirty pages — seals writable chunks, uploads to volume servers, and waits.
-	// The underlying UploadWithRetry already retries transient HTTP/gRPC errors internally,
-	// so a failure here indicates a persistent issue; the chunk data has been freed.
+	// Writeback uploads retry transient errors until they succeed, so a failure here
+	// is a permanent one and the chunk data has been freed.
 	if err := fh.dirtyPages.FlushData(); err != nil {
 		glog.Errorf("completeAsyncFlush inode %d: data flush failed: %v", fh.inode, err)
-		// Data is lost at this point (chunks freed after internal retry exhaustion).
-		// Proceed to cleanup to avoid resource leaks and unmount hangs.
+		// Data is lost at this point. Proceed to cleanup to avoid resource leaks and unmount hangs.
 	} else if fh.dirtyMetadata {
 		// Phase 2: Flush metadata unless the file was explicitly unlinked.
 		//

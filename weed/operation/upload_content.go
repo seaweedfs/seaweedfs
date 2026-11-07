@@ -295,7 +295,7 @@ func (uploader *Uploader) UploadWithRetry(filerClient filer_pb.FilerClient, assi
 				return assignErr
 			}
 			if resp.Error != "" {
-				return fmt.Errorf("assign volume failure %v: %v", assignRequest, resp.Error)
+				return fmt.Errorf("assign volume failure %v: %w", assignRequest, filer_pb.AssignVolumeResponseError(resp))
 			}
 
 			fileId, auth = resp.FileId, security.EncodedJwt(resp.Auth)

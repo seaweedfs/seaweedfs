@@ -990,3 +990,17 @@ func TestCipherUploadKeepsPlaintextETag(t *testing.T) {
 		t.Fatalf("decrypted %d bytes, want %d", len(decrypted), len(payload))
 	}
 }
+
+// A read-only rule is the filer's verdict, not an outage: callers that retry
+// transient failures must still be able to tell it apart.
+func TestUploadWithRetryKeepsReadOnlyVerdict(t *testing.T) {
+	client := &fsyncAssignClient{response: &filer_pb.AssignVolumeResponse{
+		Error:     "assign volume: read only: /unavailable",
+		ErrorCode: filer_pb.FilerError_READ_ONLY,
+	}}
+	_, _, err, _ := newUploader(http.DefaultClient).UploadWithRetry(client,
+		&filer_pb.AssignVolumeRequest{Path: "/unavailable/object"}, &UploadOption{}, strings.NewReader("abc"))
+	if !errors.Is(err, filer_pb.ErrReadOnly) {
+		t.Fatalf("UploadWithRetry error = %v, want it to wrap filer_pb.ErrReadOnly", err)
+	}
+}

@@ -123,12 +123,9 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	host.Notify(seaweedFileSystem)
 
 	grace.OnInterrupt(func() {
-		// The signal handler exits the process as soon as the hooks return, so
-		// anything still queued has to be flushed here rather than after Serve.
-		// WaitForAsyncFlush is idempotent, so the post-Serve call below is
-		// harmless if both run.
+		// The filesystem's own hook runs next and drains queued writeback
+		// flushes for at most 30 s, keeping the write cache if they are not done.
 		host.Unmount()
-		seaweedFileSystem.WaitForAsyncFlush()
 	})
 
 	serveMountGrpc(seaweedFileSystem, mountSocketListener)
