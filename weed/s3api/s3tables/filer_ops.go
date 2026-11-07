@@ -366,6 +366,7 @@ var s3tablesExtendedKeys = []string{
 	ExtendedKeyMaintenanceStatus,
 	ExtendedKeyEntryType,
 	ExtendedKeyDeleting,
+	ExtendedKeyMoving,
 	ExtendedKeyVectorPolicy,
 }
 
@@ -969,9 +970,10 @@ func CatalogRecordRoot(bucketName, recordPath, metadataLocation string) string {
 }
 
 // CatalogRecordRoots maps every table and view record of the bucket, in any
-// namespace, to the directory it keeps its files under. A renamed record keeps
-// the directory of its old name.
-func CatalogRecordRoots(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketName string) (map[string]string, error) {
+// namespace, to the directories it keeps its files under: the one its metadata
+// gives it and, while an update moves it, the one it moves to. A renamed record
+// keeps the directory of its old name.
+func CatalogRecordRoots(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketName string) (map[string][]string, error) {
 	var namespaces []string
 	if err := eachDirEntry(ctx, client, GetTableBucketPath(bucketName), func(entry *filer_pb.Entry) bool {
 		if entry.IsDirectory && !strings.HasPrefix(entry.Name, ".") {
@@ -981,20 +983,25 @@ func CatalogRecordRoots(ctx context.Context, client filer_pb.SeaweedFilerClient,
 	}); err != nil {
 		return nil, err
 	}
-	roots := map[string]string{}
+	roots := map[string][]string{}
 	for _, namespace := range namespaces {
 		namespacePath := GetNamespacePath(bucketName, namespace)
 		if err := eachDirEntry(ctx, client, namespacePath, func(entry *filer_pb.Entry) bool {
-			data, ok := entry.Extended[ExtendedKeyMetadata]
-			if !ok || !entry.IsDirectory {
+			if _, ok := entry.Extended[ExtendedKeyMetadata]; !ok || !entry.IsDirectory {
 				return true
 			}
 			recordPath := path.Join(namespacePath, entry.Name)
-			var record struct {
-				MetadataLocation string `json:"metadataLocation"`
+			for _, key := range []string{ExtendedKeyMetadata, ExtendedKeyMoving} {
+				data, ok := entry.Extended[key]
+				if !ok {
+					continue
+				}
+				var record struct {
+					MetadataLocation string `json:"metadataLocation"`
+				}
+				_ = json.Unmarshal(data, &record)
+				roots[recordPath] = append(roots[recordPath], CatalogRecordRoot(bucketName, recordPath, record.MetadataLocation))
 			}
-			_ = json.Unmarshal(data, &record)
-			roots[recordPath] = CatalogRecordRoot(bucketName, recordPath, record.MetadataLocation)
 			return true
 		}); err != nil {
 			return nil, err
@@ -1010,10 +1017,18 @@ func PathsOverlap(a, b string) bool {
 
 // RootClaimed reports whether a record other than selfPath has its entry or its
 // files at root, above it or under it.
-func RootClaimed(roots map[string]string, selfPath, root string) bool {
-	for recordPath, other := range roots {
-		if recordPath != selfPath && (PathsOverlap(other, root) || PathsOverlap(recordPath, root)) {
+func RootClaimed(roots map[string][]string, selfPath, root string) bool {
+	for recordPath, others := range roots {
+		if recordPath == selfPath {
+			continue
+		}
+		if PathsOverlap(recordPath, root) {
 			return true
+		}
+		for _, other := range others {
+			if PathsOverlap(other, root) {
+				return true
+			}
 		}
 	}
 	return false
@@ -1045,24 +1060,46 @@ func (h *S3TablesHandler) claimCatalogEntryAt(ctx context.Context, client filer_
 	return nil
 }
 
-// revertClaimedMove checks again, once an update moved the record at path onto
-// the root metadataLocation gives it, that no other record took that root
-// meanwhile, and if one did, or the check fails, puts the previous metadata back.
-func (h *S3TablesHandler) revertClaimedMove(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketName, path, metadataLocation string, written, previous []byte) error {
-	checkErr := checkLocationUnclaimed(ctx, client, bucketName, path, metadataLocation)
-	if checkErr == nil {
-		return nil
-	}
-	if err := h.mutateCatalogRecord(context.WithoutCancel(ctx), client, path, func(extended map[string][]byte) error {
-		if !bytes.Equal(extended[ExtendedKeyMetadata], written) {
-			return ErrConcurrentUpdate
+// moveCatalogRecord applies write, which moves the record at path onto the
+// root of moving, only once that root is reserved: moving is first stored
+// beside the current metadata, so the record holds both roots while the new
+// one is checked again. Of two writers racing for it at least one sees the
+// other, and the old root stays held until the move lands. A move that backs
+// out drops the reservation and leaves the metadata as it was.
+func (h *S3TablesHandler) moveCatalogRecord(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketName, path, metadataLocation string, stored, moving []byte, write func(extended map[string][]byte) error) error {
+	if err := h.mutateCatalogRecord(ctx, client, path, func(extended map[string][]byte) error {
+		if !bytes.Equal(extended[ExtendedKeyMetadata], stored) {
+			return fmt.Errorf("%w: %s", ErrConcurrentUpdate, ExtendedKeyMetadata)
 		}
-		extended[ExtendedKeyMetadata] = previous
+		if _, ok := extended[ExtendedKeyMoving]; ok {
+			return fmt.Errorf("%w: %s", ErrConcurrentUpdate, ExtendedKeyMoving)
+		}
+		extended[ExtendedKeyMoving] = moving
 		return nil
 	}); err != nil {
-		glog.Warningf("revert move of %s: %v", path, err)
+		return err
 	}
-	return checkErr
+	err := checkLocationUnclaimed(ctx, client, bucketName, path, metadataLocation)
+	if err == nil {
+		err = h.mutateCatalogRecord(ctx, client, path, func(extended map[string][]byte) error {
+			if !bytes.Equal(extended[ExtendedKeyMoving], moving) {
+				return fmt.Errorf("%w: %s", ErrConcurrentUpdate, ExtendedKeyMoving)
+			}
+			return write(extended)
+		})
+	}
+	if err != nil {
+		if releaseErr := h.mutateCatalogRecord(context.WithoutCancel(ctx), client, path, func(extended map[string][]byte) error {
+			if !bytes.Equal(extended[ExtendedKeyMoving], moving) {
+				return ErrConcurrentUpdate
+			}
+			delete(extended, ExtendedKeyMoving)
+			return nil
+		}); releaseErr != nil && !errors.Is(releaseErr, ErrConcurrentUpdate) && !errors.Is(releaseErr, filer_pb.ErrNotFound) {
+			glog.Warningf("release move of %s: %v", path, releaseErr)
+		}
+	}
+	return err
 }
 
 // refuseClaimedLocation answers a request whose record would share its files

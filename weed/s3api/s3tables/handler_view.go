@@ -586,7 +586,7 @@ func (h *S3TablesHandler) handleUpdateView(w http.ResponseWriter, r *http.Reques
 	// and a view deleted and created again under the name would take a write
 	// nobody authorized for it.
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		if err := h.mutateCatalogRecord(r.Context(), client, viewPath, func(extended map[string][]byte) error {
+		write := func(extended map[string][]byte) error {
 			if !bytes.Equal(extended[ExtendedKeyMetadata], target.storedMetadata) {
 				return fmt.Errorf("%w: %s", ErrConcurrentUpdate, ExtendedKeyMetadata)
 			}
@@ -594,11 +594,13 @@ func (h *S3TablesHandler) handleUpdateView(w http.ResponseWriter, r *http.Reques
 				return fmt.Errorf("%w: %s", ErrConcurrentUpdate, ExtendedKeyPolicy)
 			}
 			extended[ExtendedKeyMetadata] = metadataBytes
+			delete(extended, ExtendedKeyMoving)
 			return nil
-		}); err != nil || !movesRoot {
-			return err
 		}
-		return h.revertClaimedMove(r.Context(), client, target.bucketName, viewPath, metadata.MetadataLocation, metadataBytes, target.storedMetadata)
+		if !movesRoot {
+			return h.mutateCatalogRecord(r.Context(), client, viewPath, write)
+		}
+		return h.moveCatalogRecord(r.Context(), client, target.bucketName, viewPath, metadata.MetadataLocation, target.storedMetadata, metadataBytes, write)
 	})
 	if err != nil {
 		if errors.Is(err, ErrLocationInUse) {

@@ -2168,7 +2168,7 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 	// snapshot. mutateEntryExtended retries on a changed entry, so the check
 	// lives in the mutation, where it sees the value that is current now.
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		if err := h.mutateCatalogRecord(r.Context(), client, target.tablePath, func(extended map[string][]byte) error {
+		write := func(extended map[string][]byte) error {
 			if !bytes.Equal(extended[ExtendedKeyMetadata], target.storedMetadata) {
 				return fmt.Errorf("%w: %s", ErrConcurrentUpdate, ExtendedKeyMetadata)
 			}
@@ -2180,11 +2180,13 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 				return fmt.Errorf("%w: %s", ErrConcurrentUpdate, ExtendedKeyPolicy)
 			}
 			extended[ExtendedKeyMetadata] = metadataBytes
+			delete(extended, ExtendedKeyMoving)
 			return nil
-		}); err != nil || !movesRoot {
-			return err
 		}
-		return h.revertClaimedMove(r.Context(), client, target.bucketName, target.tablePath, metadata.MetadataLocation, metadataBytes, target.storedMetadata)
+		if !movesRoot {
+			return h.mutateCatalogRecord(r.Context(), client, target.tablePath, write)
+		}
+		return h.moveCatalogRecord(r.Context(), client, target.bucketName, target.tablePath, metadata.MetadataLocation, target.storedMetadata, metadataBytes, write)
 	})
 
 	if err != nil {

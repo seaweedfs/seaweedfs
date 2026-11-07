@@ -77,7 +77,7 @@ func (h *Handler) scanTablesForMaintenance(
 
 		// List namespaces within the bucket
 		bucketPath := path.Join(bucketsPath, bucketName)
-		var recordRoots map[string]string
+		var recordRoots map[string][]string
 		nsEntries, err := listFilerEntries(ctx, filerClient, bucketPath, "")
 		if err != nil {
 			glog.Warningf("iceberg maintenance: failed to list namespaces in bucket %s: %v", bucketName, err)
@@ -201,10 +201,15 @@ func (h *Handler) scanTablesForMaintenance(
 // filesShared reports whether a record other than selfPath keeps its files at
 // root, above it or under it. A record that only sits on root, as one created
 // over a renamed table's old name does, keeps no files there.
-func filesShared(roots map[string]string, selfPath, root string) bool {
-	for recordPath, other := range roots {
-		if recordPath != selfPath && s3tables.PathsOverlap(other, root) {
-			return true
+func filesShared(roots map[string][]string, selfPath, root string) bool {
+	for recordPath, others := range roots {
+		if recordPath == selfPath {
+			continue
+		}
+		for _, other := range others {
+			if s3tables.PathsOverlap(other, root) {
+				return true
+			}
 		}
 	}
 	return false

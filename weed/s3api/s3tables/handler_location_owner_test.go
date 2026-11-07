@@ -113,6 +113,7 @@ type rootRaceClient struct {
 	name     string
 	location string
 	planted  bool
+	then     func()
 }
 
 func (c *rootRaceClient) plant() {
@@ -120,6 +121,9 @@ func (c *rootRaceClient) plant() {
 		return
 	}
 	c.planted = true
+	if c.then != nil {
+		defer c.then()
+	}
 	rival, _ := json.Marshal(tableMetadataInternal{Name: "rival", Namespace: "ns", Format: FormatIceberg, MetadataLocation: c.location})
 	c.f.Put(c.dir, "rival", map[string][]byte{
 		ExtendedKeyMetadata:  rival,
@@ -189,7 +193,37 @@ func TestLocationRaceBacksOut(t *testing.T) {
 		assert.Equal(t, http.StatusConflict, status, "%+v", resp)
 		require.True(t, client.planted)
 		assert.Equal(t, string(before), string(fs.Get(nsPath, "t").Extended[ExtendedKeyMetadata]))
+		assert.NotContains(t, fs.Get(nsPath, "t").Extended, ExtendedKeyMoving)
 	})
+
+	// A rival reading the old root while the move is checked still finds it
+	// held, so a move that backs out never hands back a root someone took.
+	for _, operation := range []string{"UpdateTable", "UpdateView"} {
+		t.Run(operation+" keeps its old root while moving", func(t *testing.T) {
+			fs, m := startRenameManager(t)
+			oldLocation := renameLocation("ns/old/metadata/v1.metadata.json")
+			var update interface{}
+			if operation == "UpdateTable" {
+				requireOK(t, m, fs, "CreateTable", &CreateTableRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"}, Name: "a", Format: FormatIceberg, MetadataLocation: oldLocation})
+				update = &UpdateTableRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"}, Name: "a", MetadataVersion: 2, MetadataLocation: location}
+			} else {
+				requireOK(t, m, fs, "CreateView", &CreateViewRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"}, Name: "a", MetadataLocation: oldLocation})
+				update = &UpdateViewRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"}, Name: "a", MetadataVersion: 2, MetadataLocation: location}
+			}
+			before := fs.Get(nsPath, "a").Extended[ExtendedKeyMetadata]
+			var oldRootErr error
+			client := &rootRaceClient{SeaweedFilerClient: fs.Client, f: fs, dir: nsPath, name: "a", location: location}
+			client.then = func() {
+				oldRootErr = checkLocationUnclaimed(context.Background(), fs.Client, renameTestBucket, path.Join(nsPath, "b"), oldLocation)
+			}
+			status, resp := runHandler(t, m, client, operation, update)
+			assert.Equal(t, http.StatusConflict, status, "%+v", resp)
+			require.True(t, client.planted)
+			assert.ErrorIs(t, oldRootErr, ErrLocationInUse)
+			assert.Equal(t, string(before), string(fs.Get(nsPath, "a").Extended[ExtendedKeyMetadata]))
+			assert.NotContains(t, fs.Get(nsPath, "a").Extended, ExtendedKeyMoving)
+		})
+	}
 
 	t.Run("update with a failed check", func(t *testing.T) {
 		fs, m := startRenameManager(t)
@@ -201,6 +235,7 @@ func TestLocationRaceBacksOut(t *testing.T) {
 		assert.NotEqual(t, http.StatusOK, status, "%+v", resp)
 		require.True(t, client.failing)
 		assert.Equal(t, string(before), string(fs.Get(nsPath, "t").Extended[ExtendedKeyMetadata]))
+		assert.NotContains(t, fs.Get(nsPath, "t").Extended, ExtendedKeyMoving)
 	})
 
 	t.Run("rename", func(t *testing.T) {
@@ -217,6 +252,38 @@ func TestLocationRaceBacksOut(t *testing.T) {
 			assert.NotContains(t, entry.Extended, ExtendedKeyMetadata)
 		}
 	})
+}
+
+// A move reserves its new root on the record, so a second move of the record
+// waits for it, and an update that keeps the root clears a reservation a
+// crashed move left behind.
+func TestMoveReservationLeftBehind(t *testing.T) {
+	fs, m := startRenameManager(t)
+	nsPath := GetNamespacePath(renameTestBucket, "ns")
+	bucketARN := mustBucketARN(t)
+	entry := fs.Get(nsPath, "t")
+	leftover, _ := json.Marshal(tableMetadataInternal{Name: "t", Namespace: "ns", MetadataLocation: renameLocation("ns/elsewhere/metadata/v4.metadata.json")})
+	entry.Extended[ExtendedKeyMoving] = leftover
+	fs.Put(nsPath, "t", entry.Extended)
+
+	refused := renameLocation("ns/moved/metadata/v1.metadata.json")
+	assert.True(t, RootClaimed(mustRoots(t, fs), path.Join(nsPath, "other"), path.Join(nsPath, "elsewhere")))
+	status, resp := runHandler(t, m, fs.Client, "UpdateTable", &UpdateTableRequest{TableBucketARN: bucketARN, Namespace: []string{"ns"}, Name: "t", MetadataVersion: 4, MetadataLocation: refused})
+	assert.Equal(t, http.StatusConflict, status, "%+v", resp)
+
+	requireOK(t, m, fs, "UpdateTable", &UpdateTableRequest{TableBucketARN: bucketARN, Namespace: []string{"ns"}, Name: "t", MetadataVersion: 4, MetadataLocation: renameLocation("ns/t/metadata/v4.metadata.json")})
+	assert.NotContains(t, fs.Get(nsPath, "t").Extended, ExtendedKeyMoving)
+	assert.False(t, RootClaimed(mustRoots(t, fs), path.Join(nsPath, "other"), path.Join(nsPath, "elsewhere")))
+
+	requireOK(t, m, fs, "UpdateTable", &UpdateTableRequest{TableBucketARN: bucketARN, Namespace: []string{"ns"}, Name: "t", MetadataVersion: 5, MetadataLocation: refused})
+	assert.NotContains(t, fs.Get(nsPath, "t").Extended, ExtendedKeyMoving)
+}
+
+func mustRoots(t *testing.T, fs *s3tablestest.MemFiler) map[string][]string {
+	t.Helper()
+	roots, err := CatalogRecordRoots(context.Background(), fs.Client, renameTestBucket)
+	require.NoError(t, err)
+	return roots
 }
 
 // A table that keeps its files elsewhere still owns its catalog entry: a view
