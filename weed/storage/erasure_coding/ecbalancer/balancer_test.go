@@ -1087,3 +1087,29 @@ func TestGlobalMoveFreesTheSourceDisk(t *testing.T) {
 		t.Errorf("source disk after the move: %d free, %d shards; want 1 free, 3 shards", d.freeSlots, d.shardCount)
 	}
 }
+
+// TestGlobalSameMachineMoveSkipsASiblingHoldingTheVolume: a same-machine move
+// must not put a second shard of a volume on a server that already holds one.
+func TestGlobalSameMachineMoveSkipsASiblingHoldingTheVolume(t *testing.T) {
+	topo := NewTopology()
+	a1 := topo.AddNode("a1", "dc1", "dc1:rack1", 1)
+	a2 := topo.AddNode("a2", "dc1", "dc1:rack1", 10)
+	a1.SetHost("boxA")
+	a2.SetHost("boxA")
+	data, parity := map[volKey]int{}, map[volKey]int{}
+	for vid := uint32(1); vid <= 3; vid++ {
+		a1.AddShards(vid, "col1", 0, bits(0))
+		data[volKey{"col1", vid}], parity[volKey{"col1", vid}] = 2, 1
+	}
+	a2.AddShards(1, "col1", 0, bits(1))
+
+	moves := detectGlobalImbalance(topo.nodes, buildRacks(topo.nodes), "", 0.2, data, parity, 10, true)
+	if len(moves) == 0 {
+		t.Fatal("no global moves")
+	}
+	for _, m := range moves {
+		if m.volumeID == 1 {
+			t.Errorf("moved shard 1.%d %s -> %s onto a server holding the volume", m.shardID, m.source.id, m.target.id)
+		}
+	}
+}
