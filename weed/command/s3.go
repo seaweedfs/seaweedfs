@@ -618,6 +618,21 @@ func (s3opt *S3Options) newShutdown(stopGrpc func(), s3ApiServer *s3api.S3ApiSer
 	return shutdown
 }
 
+// setCredentialRole hands -iceberg.credentialRole to the S3 server both
+// catalogs vend through, whichever of them runs, and reports whether vending
+// is on.
+func (s3opt *S3Options) setCredentialRole(s3ApiServer *s3api.S3ApiServer) bool {
+	if s3opt.icebergCredentialRole == nil || *s3opt.icebergCredentialRole == "" {
+		return false
+	}
+	duration := int64(0)
+	if s3opt.icebergCredentialDuration != nil {
+		duration = int64(*s3opt.icebergCredentialDuration)
+	}
+	s3ApiServer.SetIcebergCredentialRole(*s3opt.icebergCredentialRole, duration)
+	return true
+}
+
 // startIcebergServer starts the Iceberg REST Catalog server on a separate port.
 func (s3opt *S3Options) startIcebergServer(s3ApiServer *s3api.S3ApiServer, listenOnLocalhost bool) *http.Server {
 	icebergRouter := mux.NewRouter().SkipClean(true)
@@ -628,12 +643,7 @@ func (s3opt *S3Options) startIcebergServer(s3ApiServer *s3api.S3ApiServer, liste
 	// Create Iceberg server using the S3ApiServer as filer client
 	icebergServer := iceberg.NewServer(s3ApiServer, s3ApiServer)
 	icebergServer.SetCredentialValidator(s3ApiServer)
-	if s3opt.icebergCredentialRole != nil && *s3opt.icebergCredentialRole != "" {
-		duration := int64(0)
-		if s3opt.icebergCredentialDuration != nil {
-			duration = int64(*s3opt.icebergCredentialDuration)
-		}
-		s3ApiServer.SetIcebergCredentialRole(*s3opt.icebergCredentialRole, duration)
+	if s3opt.setCredentialRole(s3ApiServer) {
 		icebergServer.SetCredentialVendor(icebergCredentialVendor{s3ApiServer})
 	}
 	icebergServer.SetS3Endpoint(s3opt.deriveS3AdvertisedEndpoint())
@@ -676,7 +686,7 @@ func (s3opt *S3Options) newLanceServer(s3ApiServer *s3api.S3ApiServer) *lance.Se
 	lanceServer := lance.NewServer(s3ApiServer, s3ApiServer)
 	lanceServer.SetCredentialValidator(s3ApiServer)
 	lanceServer.SetSigningKey(s3ApiServer.FilerSigningKey)
-	if s3opt.icebergCredentialRole != nil && *s3opt.icebergCredentialRole != "" {
+	if s3opt.setCredentialRole(s3ApiServer) {
 		lanceServer.SetCredentialVendor(lanceCredentialVendor{s3ApiServer})
 	}
 	lanceServer.SetS3Endpoint(s3opt.deriveLanceStorageEndpoint())
