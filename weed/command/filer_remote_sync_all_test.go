@@ -232,7 +232,13 @@ func TestAllMountsRestartsAnEndedWriteBackWhileMounted(t *testing.T) {
 	waitFor(t, "a followed", func() bool { a, _, _, _ := f.snapshot(); return a["/buckets/a"] == 1 })
 
 	f.reachUnmount("/buckets/a")
-	waitFor(t, "a ended", func() bool { a, _, _, _ := f.snapshot(); return a["/buckets/a"] == 0 })
+	// its pause runs from when the supervisor recorded the end on the frozen clock
+	waitFor(t, "a ended", func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		_, paused := m.notBefore["/buckets/a"]
+		return paused
+	})
 	time.Sleep(60 * time.Millisecond)
 	if _, s, _, _ := f.snapshot(); s["/buckets/a"] != 1 {
 		t.Fatalf("restarted before its pause: %d starts", s["/buckets/a"])
@@ -268,6 +274,13 @@ func TestAllMountsGuards(t *testing.T) {
 	f.noOffset["/buckets/c"] = true
 	f.mu.Unlock()
 	f.mount("/buckets/c")
+	// the wait runs from when a reconcile first saw it on the frozen clock
+	waitFor(t, "c seen without an offset", func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		_, seen := m.firstSeen["/buckets/c"]
+		return seen
+	})
 	time.Sleep(60 * time.Millisecond)
 	if _, s, _, _ := f.snapshot(); s["/buckets/c"] != 0 {
 		t.Fatalf("started before its offset was written")
