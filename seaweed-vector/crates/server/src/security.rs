@@ -193,8 +193,11 @@ impl Security {
         self.raw(key).filter(|v| !v.is_empty())
     }
 
+    /// A boolean as weed reads one: viper accepts what Go's strconv.ParseBool
+    /// does, `1`, `t`, `T`, `TRUE`, `true` and `True`.
     pub fn get_bool(&self, key: &str) -> bool {
-        self.raw(key).is_some_and(|v| v.trim() == "true")
+        self.raw(key)
+            .is_some_and(|v| matches!(v.trim(), "1" | "t" | "T" | "TRUE" | "true" | "True"))
     }
 
     /// The file a key names, read whole.
