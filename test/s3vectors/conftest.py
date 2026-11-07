@@ -304,8 +304,11 @@ def run_cluster(param, tmp_path_factory, identities):
         # would find it as a credential.
         if identities:
             config, unset = [f"-config={HERE / 's3.json'}"], ()
+            # The engine uses its credentials only with the endpoint it is
+            # given, so a gateway-resolved table skips the catalog.
             credentials = ["--storage-option", "aws_access_key_id=test",
-                           "--storage-option", "aws_secret_access_key=test"]
+                           "--storage-option", "aws_secret_access_key=test",
+                           "--storage-option", f"aws_endpoint={endpoint}"]
         else:
             config, unset, credentials = [], ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"), []
         # VECTOR_ENCRYPT_VOLUMES=1 has the gateway encrypt every chunk it
