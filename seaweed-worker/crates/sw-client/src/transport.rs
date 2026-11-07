@@ -226,7 +226,7 @@ impl HttpTransport {
             .use_rustls_tls()
             .danger_accept_invalid_certs(tls.insecure_skip_verify);
         if let Some(ca) = &tls.ca_pem {
-            builder = builder.add_root_certificate(
+            builder = builder.tls_built_in_root_certs(false).add_root_certificate(
                 reqwest::Certificate::from_pem(ca).context("https.client.ca")?,
             );
         }
