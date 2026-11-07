@@ -273,6 +273,9 @@ spec:
               {{- end }}
               --namespace="$LANCE_NAMESPACE_URL" \
               --masters={{ include "seaweedfs.masterServerArg" . }} \
+              {{- if .Values.filer.filerGroup }}
+              --filer-group={{ .Values.filer.filerGroup }} \
+              {{- end }}
               {{- if .Values.global.seaweedfs.enableSecurity }}
               --tls-ca=/usr/local/share/ca-certificates/ca/tls.crt \
               --tls-cert=/usr/local/share/ca-certificates/worker/tls.crt \
