@@ -485,7 +485,7 @@ func TestDeleteTableBucketKeepsALeftoverTakenBackAfterItsClaimIsLifted(t *testin
 	assert.Contains(t, fs.Get(bucketPath, "ns").Extended, ExtendedKeyMetadata)
 	require.NotNil(t, fs.Get(nsPath, "t"), "the table the create answered for must survive")
 	assert.Contains(t, fs.Get(nsPath, "t").Extended, ExtendedKeyMetadata)
-	assert.NotNil(t, fs.Get(path.Join(nsPath, "t"), "data"), "and so must its data directory")
+	assert.NotNil(t, fs.Get(recordRoot(t, fs, nsPath, "t"), "data"), "and so must its data directory")
 	assert.NotNil(t, fs.Get(path.Join(bucketPath, "old"), keptDataFile), "the file under the other leftover must survive")
 	assert.NotNil(t, fs.Get(TablesPath, renameTestBucket), "the bucket must survive")
 }

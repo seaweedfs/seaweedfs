@@ -64,10 +64,7 @@ func TestLocationOwnedByOneRecord(t *testing.T) {
 		DestNamespace:   []string{"ns2"},
 		DestName:        "t",
 	})
-	t.Run("renamed table", func(t *testing.T) {
-		checkRefusals(t)
-		refused(t, "CreateTable", &CreateTableRequest{TableBucketARN: bucketARN, Namespace: []string{"ns"}, Name: "t", Format: FormatIceberg})
-	})
+	t.Run("renamed table", checkRefusals)
 
 	t.Run("free locations", func(t *testing.T) {
 		requireOK(t, m, fs, "UpdateTable", &UpdateTableRequest{TableBucketARN: bucketARN, Namespace: []string{"ns"}, Name: "own", MetadataVersion: 2, MetadataLocation: renameLocation("ns/own/metadata/v2.metadata.json")})
@@ -214,7 +211,7 @@ func TestLocationRaceBacksOut(t *testing.T) {
 			var oldRootErr error
 			client := &rootRaceClient{SeaweedFilerClient: fs.Client, f: fs, dir: nsPath, name: "a", location: location}
 			client.then = func() {
-				oldRootErr = checkLocationUnclaimed(context.Background(), fs.Client, renameTestBucket, path.Join(nsPath, "b"), oldLocation)
+				oldRootErr = checkLocationUnclaimed(context.Background(), fs.Client, renameTestBucket, path.Join(nsPath, "b"), CatalogRecordRoot(renameTestBucket, path.Join(nsPath, "b"), oldLocation, ""))
 			}
 			status, resp := runHandler(t, m, client, operation, update)
 			assert.Equal(t, http.StatusConflict, status, "%+v", resp)
@@ -259,6 +256,7 @@ func TestLocationRaceBacksOut(t *testing.T) {
 	t.Run("rename", func(t *testing.T) {
 		fs, m := startRenameManager(t)
 		requireOK(t, m, fs, "CreateTable", &CreateTableRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"}, Name: "c", Format: FormatIceberg})
+		dropWarehouseLocation(t, fs, nsPath, "c")
 		client := &rootRaceClient{SeaweedFilerClient: fs.Client, f: fs, dir: nsPath, name: "dest", location: renameLocation("ns/dest/metadata/v1.metadata.json")}
 		status, resp := runHandler(t, m, client, "RenameTable", &RenameTableRequest{
 			TableBucketARN: mustBucketARN(t), SourceNamespace: []string{"ns"}, SourceName: "c", DestNamespace: []string{"ns"}, DestName: "dest",
@@ -295,6 +293,30 @@ func TestMoveReservationLeftBehind(t *testing.T) {
 
 	requireOK(t, m, fs, "UpdateTable", &UpdateTableRequest{TableBucketARN: bucketARN, Namespace: []string{"ns"}, Name: "t", MetadataVersion: 5, MetadataLocation: refused})
 	assert.NotContains(t, fs.Get(nsPath, "t").Extended, ExtendedKeyMoving)
+}
+
+// recordRoot returns the directory the record at dir/name keeps its files under.
+func recordRoot(t *testing.T, fs *s3tablestest.MemFiler, dir, name string) string {
+	t.Helper()
+	entry := fs.Get(dir, name)
+	require.NotNil(t, entry)
+	var metadata tableMetadataInternal
+	require.NoError(t, json.Unmarshal(entry.Extended[ExtendedKeyMetadata], &metadata))
+	return metadata.root(renameTestBucket, path.Join(dir, name))
+}
+
+// dropWarehouseLocation turns the record at dir/name into one written before
+// tables got a directory of their own, which keeps its files under its path.
+func dropWarehouseLocation(t *testing.T, fs *s3tablestest.MemFiler, dir, name string) {
+	t.Helper()
+	entry := fs.Get(dir, name)
+	require.NotNil(t, entry)
+	var metadata tableMetadataInternal
+	require.NoError(t, json.Unmarshal(entry.Extended[ExtendedKeyMetadata], &metadata))
+	metadata.WarehouseLocation = ""
+	data, err := json.Marshal(&metadata)
+	require.NoError(t, err)
+	entry.Extended[ExtendedKeyMetadata] = data
 }
 
 func mustRoots(t *testing.T, fs *s3tablestest.MemFiler) map[string][]string {
