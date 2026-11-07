@@ -60,9 +60,9 @@ func TestAuxListenerBindFailureIsNonFatal(t *testing.T) {
 	}
 }
 
-// -iceberg.credentialRole reaches the S3 server through the Lance catalog
-// alone, for a gateway that serves no Iceberg port.
-func TestLanceCatalogSetsTheCredentialRole(t *testing.T) {
+// -iceberg.credentialRole reaches the S3 server once, before either catalog
+// is built, so a gateway that serves no Iceberg port vends too.
+func TestCredentialRoleIsSetForBothCatalogs(t *testing.T) {
 	bind := "127.0.0.1"
 	empty := ""
 	zero := 0
@@ -79,9 +79,12 @@ func TestLanceCatalogSetsTheCredentialRole(t *testing.T) {
 		tlsPrivateKey:         &empty,
 	}
 	s3a := &s3api.S3ApiServer{}
-	s3opt.newLanceServer(s3a)
+	s3opt.setCredentialRole(s3a)
+	if !s3opt.vendsCredentials() {
+		t.Fatal("a role is configured but vending is reported off")
+	}
 	// With no role, vending is off and answers nil without checking anything.
 	if _, err := s3a.VendTableCredentials(context.Background(), "", "bkt", "vector/x", true); err == nil {
-		t.Fatal("vending is off: the Lance catalog did not set the credential role")
+		t.Fatal("vending is off: the credential role was not set")
 	}
 }

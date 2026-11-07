@@ -426,6 +426,9 @@ func (s3opt *S3Options) startS3Server() bool {
 
 	var httpServers []*http.Server
 
+	// Once, before either catalog serves a request that reads it.
+	s3opt.setCredentialRole(s3ApiServer)
+
 	// Start Iceberg REST Catalog server if enabled
 	if *s3opt.portIceberg > 0 {
 		if httpS := s3opt.startIcebergServer(s3ApiServer, listenOnLocalhost); httpS != nil {
@@ -618,19 +621,22 @@ func (s3opt *S3Options) newShutdown(stopGrpc func(), s3ApiServer *s3api.S3ApiSer
 	return shutdown
 }
 
-// setCredentialRole hands -iceberg.credentialRole to the S3 server both
-// catalogs vend through, whichever of them runs, and reports whether vending
-// is on.
-func (s3opt *S3Options) setCredentialRole(s3ApiServer *s3api.S3ApiServer) bool {
-	if s3opt.icebergCredentialRole == nil || *s3opt.icebergCredentialRole == "" {
-		return false
+// vendsCredentials reports whether -iceberg.credentialRole is set, which
+// both catalogs vend through, whichever of them runs.
+func (s3opt *S3Options) vendsCredentials() bool {
+	return s3opt.icebergCredentialRole != nil && *s3opt.icebergCredentialRole != ""
+}
+
+// setCredentialRole hands -iceberg.credentialRole to the S3 server.
+func (s3opt *S3Options) setCredentialRole(s3ApiServer *s3api.S3ApiServer) {
+	if !s3opt.vendsCredentials() {
+		return
 	}
 	duration := int64(0)
 	if s3opt.icebergCredentialDuration != nil {
 		duration = int64(*s3opt.icebergCredentialDuration)
 	}
 	s3ApiServer.SetIcebergCredentialRole(*s3opt.icebergCredentialRole, duration)
-	return true
 }
 
 // startIcebergServer starts the Iceberg REST Catalog server on a separate port.
@@ -643,7 +649,7 @@ func (s3opt *S3Options) startIcebergServer(s3ApiServer *s3api.S3ApiServer, liste
 	// Create Iceberg server using the S3ApiServer as filer client
 	icebergServer := iceberg.NewServer(s3ApiServer, s3ApiServer)
 	icebergServer.SetCredentialValidator(s3ApiServer)
-	if s3opt.setCredentialRole(s3ApiServer) {
+	if s3opt.vendsCredentials() {
 		icebergServer.SetCredentialVendor(icebergCredentialVendor{s3ApiServer})
 	}
 	icebergServer.SetS3Endpoint(s3opt.deriveS3AdvertisedEndpoint())
@@ -686,7 +692,7 @@ func (s3opt *S3Options) newLanceServer(s3ApiServer *s3api.S3ApiServer) *lance.Se
 	lanceServer := lance.NewServer(s3ApiServer, s3ApiServer)
 	lanceServer.SetCredentialValidator(s3ApiServer)
 	lanceServer.SetSigningKey(s3ApiServer.FilerSigningKey)
-	if s3opt.setCredentialRole(s3ApiServer) {
+	if s3opt.vendsCredentials() {
 		lanceServer.SetCredentialVendor(lanceCredentialVendor{s3ApiServer})
 	}
 	lanceServer.SetS3Endpoint(s3opt.deriveLanceStorageEndpoint())
