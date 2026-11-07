@@ -2233,23 +2233,13 @@ func (h *S3TablesHandler) authorizeCreateTable(w http.ResponseWriter, r *http.Re
 		return nil, err
 	}
 
-	// Check if namespace exists
+	// A namespace that is missing or unreadable is authorized against the
+	// bucket alone, and reported only to a caller that passes.
 	namespacePath := GetNamespacePath(bucketName, namespaceName)
-	nsMetadata, err := h.loadNamespaceMetadata(r.Context(), filerClient, bucketName, namespaceName)
-	namespaceExists := err == nil
-	if err != nil {
-		if errors.Is(err, filer_pb.ErrNotFound) && allowMissingNamespace {
-			// An implicit namespace can be authorized before it is declared:
-			// evaluate the grant against the bucket alone.
-			err = nil
-		} else {
-			if errors.Is(err, filer_pb.ErrNotFound) {
-				h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, fmt.Sprintf("namespace %s not found", namespaceName))
-			} else {
-				h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to check namespace: %v", err))
-			}
-			return nil, err
-		}
+	nsMetadata, namespaceErr := h.loadNamespaceMetadata(r.Context(), filerClient, bucketName, namespaceName)
+	namespaceExists := namespaceErr == nil
+	if errors.Is(namespaceErr, filer_pb.ErrNotFound) && allowMissingNamespace {
+		namespaceErr = nil
 	}
 
 	// Authorize table creation using policy framework (namespace + bucket policies)
@@ -2261,6 +2251,11 @@ func (h *S3TablesHandler) authorizeCreateTable(w http.ResponseWriter, r *http.Re
 	var bucketMetadata tableBucketMetadata
 
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		if !namespaceExists {
+			if _, err := h.lookupEntry(r.Context(), client, bucketPath); errors.Is(err, filer_pb.ErrNotFound) {
+				return nil
+			}
+		}
 		// Fetch bucket metadata to use correct owner for bucket policy evaluation
 		data, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata)
 		if err == nil {
@@ -2331,6 +2326,14 @@ func (h *S3TablesHandler) authorizeCreateTable(w http.ResponseWriter, r *http.Re
 		bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, policyContext) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create table in this namespace")
 		return nil, ErrAccessDenied
+	}
+	if namespaceErr != nil {
+		if errors.Is(namespaceErr, filer_pb.ErrNotFound) {
+			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, fmt.Sprintf("namespace %s not found", namespaceName))
+		} else {
+			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to check namespace")
+		}
+		return nil, namespaceErr
 	}
 
 	if namespaceExists {
