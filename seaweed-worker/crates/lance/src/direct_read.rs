@@ -104,9 +104,9 @@ trait Source: Send + Sync {
     /// Creates `entry` in `dir`; `exclusive` refuses an entry already there
     /// with [`sw_client::EntryExists`].
     async fn create(&self, dir: &str, entry: Entry, exclusive: bool) -> anyhow::Result<()>;
-    /// Removes `name` in `dir` and its data, a directory's content too; a
-    /// missing entry is no error.
-    async fn delete(&self, dir: &str, name: &str) -> anyhow::Result<()>;
+    /// Removes `name` in `dir` and its data, a directory's content too when
+    /// `recursive`; a missing entry is no error.
+    async fn delete(&self, dir: &str, name: &str, recursive: bool) -> anyhow::Result<()>;
     /// Removes a needle whose entry was never created.
     async fn discard(&self, assignment: &Assignment) -> anyhow::Result<()>;
     fn name(&self) -> String;
@@ -121,6 +121,12 @@ struct Filers {
     volumes: VolumeReader,
     transport: Arc<dyn VolumeTransport>,
     writer: Writer,
+}
+
+/// Whether `name` is one path component: no separator, not empty, not `.`
+/// or `..`, which a filer path would resolve elsewhere.
+fn plain_name(name: &str) -> bool {
+    !name.is_empty() && name != "." && name != ".." && !name.contains('/')
 }
 
 /// Connects to a filer by its gRPC `host:port`.
@@ -322,11 +328,11 @@ impl Source for Filers {
         .await
     }
 
-    async fn delete(&self, dir: &str, name: &str) -> anyhow::Result<()> {
+    async fn delete(&self, dir: &str, name: &str, recursive: bool) -> anyhow::Result<()> {
         self.with("delete", |mut c| {
             let (dir, name) = (dir.to_string(), name.to_string());
             Box::pin(async move {
-                match c.delete_entry(&dir, &name, true, true, 0).await {
+                match c.delete_entry(&dir, &name, recursive, true, 0).await {
                     Err(err) if is_not_found(&err) => Ok(()),
                     other => other,
                 }
@@ -570,6 +576,9 @@ impl DirectReads {
         let (bucket, path) = rest
             .split_once('/')
             .with_context(|| format!("{location} names no table under its bucket"))?;
+        if !plain_name(bucket) || !path.split('/').all(plain_name) {
+            bail!("{location} is not a table path");
+        }
         let (parent, name) = match path.rsplit_once('/') {
             Some((parent, name)) => (
                 format!("{}/{bucket}/{parent}", self.shared.buckets_dir),
@@ -578,7 +587,7 @@ impl DirectReads {
             None => (format!("{}/{bucket}", self.shared.buckets_dir), path),
         };
         self.shared.stats.deletes.fetch_add(1, Ordering::Relaxed);
-        self.shared.source.delete(&parent, name).await?;
+        self.shared.source.delete(&parent, name, true).await?;
         let under = format!("{parent}/{name}/");
         self.shared
             .objects
@@ -989,7 +998,7 @@ impl DirectStore {
         self.reads.stats.deletes.fetch_add(1, Ordering::Relaxed);
         self.reads
             .source
-            .delete(dir, name)
+            .delete(dir, name, false)
             .await
             .with_context(|| format!("deleting {path}"))
             .map_err(generic)?;
@@ -1599,13 +1608,13 @@ mod tests {
             Ok(())
         }
 
-        async fn delete(&self, dir: &str, name: &str) -> anyhow::Result<()> {
+        async fn delete(&self, dir: &str, name: &str, recursive: bool) -> anyhow::Result<()> {
             let path = format!("{dir}/{name}");
             let under = format!("{path}/");
             self.entries
                 .lock()
                 .unwrap()
-                .retain(|key, _| key != &path && !key.starts_with(&under));
+                .retain(|key, _| key != &path && !(recursive && key.starts_with(&under)));
             Ok(())
         }
 
@@ -2555,5 +2564,19 @@ mod tests {
         assert_eq!(fake.discarded.load(Ordering::Relaxed), 1);
         assert!(fake.needles.lock().unwrap().is_empty());
         assert!(fake.entries.lock().unwrap().is_empty());
+    }
+
+    /// A table path is removed only when every component is a plain name.
+    #[tokio::test]
+    async fn removing_a_table_refuses_path_tricks() {
+        let reads = DirectReads::new(Arc::new(Fake::default()), "", no_keys());
+        for location in [
+            "s3://vb/vector/..",
+            "s3://vb/./idx",
+            "s3://../vector/idx",
+            "s3://vb",
+        ] {
+            reads.remove_table(location).await.expect_err(location);
+        }
     }
 }
