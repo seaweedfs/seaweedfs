@@ -384,12 +384,18 @@ impl EntryEncoder {
     }
 
     /// The bytes of the chunk at `offset` in the object, as they go to the
-    /// volume server.
+    /// volume server. Each chunk is its own CTR stream from the IV derived
+    /// for its offset, as the gateway encrypts a multipart part, which is how
+    /// the gateway and [`EntryDecoder`] read a chunk back.
     pub fn encode(&self, offset: u64, mut data: Vec<u8>) -> Result<EncodedChunk> {
         let (sse_type, sse_metadata) = match &self.object {
             Some((object, key_id)) => {
-                object.decrypt(offset, &mut data)?;
                 let iv = iv_at(object.iv.expect("a generated key has an IV"), offset);
+                ObjectKey {
+                    key: object.key,
+                    iv: Some(iv),
+                }
+                .decrypt(0, &mut data)?;
                 (SSE_S3, object.serialize(&self.keys, key_id, iv)?)
             }
             None => (0, Vec::new()),

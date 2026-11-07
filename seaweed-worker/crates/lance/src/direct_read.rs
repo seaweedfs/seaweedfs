@@ -2356,7 +2356,29 @@ mod tests {
                 sse_s3
             );
             let got = store.get(&path).await.unwrap().bytes().await.unwrap();
-            assert_eq!(got, Bytes::from(body), "cipher {cipher} sse {sse_s3}");
+            assert_eq!(
+                got,
+                Bytes::from(body.clone()),
+                "cipher {cipher} sse {sse_s3}"
+            );
+
+            // Parts of a multipart upload start wherever the previous one
+            // ended, inside a cipher block included.
+            let parts = Path::from("vector/idx/data/parts.lance");
+            let mut upload = store.put_multipart(&parts).await.unwrap();
+            for part in body.chunks(3000) {
+                upload
+                    .put_part(Bytes::from(part.to_vec()).into())
+                    .await
+                    .unwrap();
+            }
+            upload.complete().await.unwrap();
+            let got = store.get(&parts).await.unwrap().bytes().await.unwrap();
+            assert_eq!(
+                got,
+                Bytes::from(body),
+                "unaligned parts, cipher {cipher} sse {sse_s3}"
+            );
         }
     }
 
