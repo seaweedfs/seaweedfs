@@ -120,6 +120,7 @@ func (c *commandRemoteMountBuckets) Do(args []string, commandEnv *CommandEnv, wr
 			if err = filer.InsertMountMapping(commandEnv, string(dir), remoteStorageLocation); err != nil {
 				return fmt.Errorf("save mount mapping %s to %+v: %v", dir, remoteStorageLocation, err)
 			}
+			saveMountSyncOffset(commandEnv, writer, string(dir))
 
 		}
 	}

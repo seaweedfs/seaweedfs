@@ -3385,7 +3385,7 @@ func TestAdmitUntilMountEndsDrainsBeforeTheExit(t *testing.T) {
 			}(exitAtMountEnd)
 			exitAtMountEnd = func(_ string, _, to *remote_pb.RemoteStorageLocation) { exits <- exitCall{to, len(ran)} }
 
-			admit := admitUntilMountEnds(processor, mountedDir, mountedDir, loc)
+			admit := admitUntilMountEnds(processor, mountedDir, mountedDir, loc, exitProcessAtMountEnd(processor, mountedDir, loc))
 			if err := admit(&filer_pb.SubscribeMetadataResponse{Directory: mountedDir, TsNs: 1, EventNotification: &filer_pb.EventNotification{
 				NewParentPath: mountedDir, NewEntry: &filer_pb.Entry{Name: "a.txt"}}}); err != nil {
 				t.Fatal(err)

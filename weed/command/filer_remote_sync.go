@@ -7,6 +7,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -20,9 +21,15 @@ type RemoteSyncOptions struct {
 	readChunkFromFiler *bool
 	timeAgo            *time.Duration
 	dir                *string
+	allMounts          *bool
+	mountsCheck        *time.Duration
 	clientId           int32
 	clientEpoch        int32
 	resumeTsNs         int64
+	// what resumeTsNs was earned under: the directory's remote location, and
+	// the offset stored when it was kept (resumeFor)
+	resumeLoc      *remote_pb.RemoteStorageLocation
+	resumeStoredNs int64
 }
 
 var _ = filer_pb.FilerClient(&RemoteSyncOptions{})
@@ -48,6 +55,8 @@ func init() {
 	cmdFilerRemoteSynchronize.Run = runFilerRemoteSynchronize // break init cycle
 	remoteSyncOptions.filerAddress = cmdFilerRemoteSynchronize.Flag.String("filer", "localhost:8888", "filer of the SeaweedFS cluster")
 	remoteSyncOptions.dir = cmdFilerRemoteSynchronize.Flag.String("dir", "", "a mounted directory on filer")
+	remoteSyncOptions.allMounts = cmdFilerRemoteSynchronize.Flag.Bool("allMounts", false, "write back every mounted directory from this one process, following mounts and unmounts (instead of -dir)")
+	remoteSyncOptions.mountsCheck = cmdFilerRemoteSynchronize.Flag.Duration("mountsCheckInterval", 5*time.Second, "with -allMounts, how often the mount table is read for new and removed mounts")
 	remoteSyncOptions.storageClass = cmdFilerRemoteSynchronize.Flag.String("storageClass", "", "override amz storage class, empty to delete")
 	remoteSyncOptions.readChunkFromFiler = cmdFilerRemoteSynchronize.Flag.Bool("filerProxy", false, "read file chunks from filer instead of volume servers")
 	remoteSyncOptions.timeAgo = cmdFilerRemoteSynchronize.Flag.Duration("timeAgo", 0, "start time before now, skipping previous metadata changes. \"300ms\", \"1.5h\" or \"2h45m\". Valid time units are \"ns\", \"us\" (or \"µs\"), \"ms\", \"s\", \"m\", \"h\"")
@@ -69,6 +78,12 @@ var cmdFilerRemoteSynchronize = &Command{
 	remote keeps earlier versions only when versioning is enabled on it. A delete
 	marker over a version with a legal hold or retention keeps the remote object
 	until a later change to that version releases the lock.
+
+	With -allMounts, one process writes back every mounted directory, each
+	from its own position as a separate -dir process would, and starts or
+	stops a directory's write-back as it is mounted or unmounted:
+
+		weed filer.remote.sync -allMounts
 
 	The metadata sync starting time is determined with the following priority order:
 	1. specified by timeAgo
@@ -94,6 +109,15 @@ func runFilerRemoteSynchronize(cmd *Command, args []string) bool {
 		"/", // does not matter
 		*remoteSyncOptions.readChunkFromFiler,
 	)
+
+	if *remoteSyncOptions.allMounts {
+		if dir != "" {
+			glog.Fatalf("-dir and -allMounts are exclusive")
+		}
+		fmt.Printf("synchronize every mounted directory to remote storage...\n")
+		newMountSupervisor(&remoteSyncOptions, filerSource).run(nil)
+		return true
+	}
 
 	if dir != "" {
 		fmt.Printf("synchronize %s to remote storage...\n", dir)
