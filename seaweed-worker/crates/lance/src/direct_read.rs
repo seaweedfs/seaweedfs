@@ -129,6 +129,24 @@ struct Filers {
     writer: Writer,
 }
 
+/// Marks a filer call whose outcome is unknown: the filer took it and never
+/// answered. Detect it with [`outcome_uncertain`].
+#[derive(Debug)]
+struct NoAnswer;
+
+impl fmt::Display for NoAnswer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("the filer did not answer")
+    }
+}
+
+impl std::error::Error for NoAnswer {}
+
+/// Whether a failed filer write may have been applied all the same.
+fn outcome_uncertain(err: &anyhow::Error) -> bool {
+    err.downcast_ref::<NoAnswer>().is_some() || sw_client::is_unavailable(err)
+}
+
 /// Whether `name` is one path component: no separator, not empty, not `.`
 /// or `..`, which a filer path would resolve elsewhere.
 fn plain_name(name: &str) -> bool {
@@ -188,10 +206,13 @@ impl Filers {
                         "filer {} did not answer {what} within {FILER_TIMEOUT:?}",
                         clients[i].addr()
                     );
-                    last = Some(anyhow::anyhow!(
-                        "filer {} did not answer {what} within {FILER_TIMEOUT:?}",
-                        clients[i].addr()
-                    ));
+                    last = Some(
+                        anyhow::anyhow!(
+                            "filer {} did not answer {what} within {FILER_TIMEOUT:?}",
+                            clients[i].addr()
+                        )
+                        .context(NoAnswer),
+                    );
                 }
             }
         }
@@ -1216,6 +1237,9 @@ struct UploadState {
     chunks: Vec<Uploaded>,
     /// Where the next part starts.
     offset: u64,
+    /// The entry was created, or may have been: nothing more is done with
+    /// this upload, and nothing it uploaded is discarded.
+    done: bool,
 }
 
 impl fmt::Debug for Upload {
@@ -1296,7 +1320,17 @@ impl Upload {
     /// object's, known for a one-shot put; a multipart object's ETag derives
     /// from its chunks, as through the gateway.
     async fn finish(&self, exclusive: bool, md5: Option<Vec<u8>>) -> Result<PutResult> {
-        let mut chunks = std::mem::take(&mut self.state.lock().unwrap().chunks);
+        let mut chunks = {
+            let mut state = self.state.lock().unwrap();
+            if state.done {
+                return Err(generic(anyhow::anyhow!(
+                    "{} was already completed, or its completion is in doubt",
+                    self.path
+                )));
+            }
+            state.done = true;
+            std::mem::take(&mut state.chunks)
+        };
         chunks.sort_by_key(|u| u.chunk.offset);
         let size = chunks
             .iter()
@@ -1331,9 +1365,10 @@ impl Upload {
         let e_tag = etag(&entry);
         let created = self.store.reads.source.create(dir, entry, exclusive).await;
         if let Err(err) = created {
-            // The filer may have saved the entry and lost its answer, or a
-            // retried exclusive create may find this very upload in place:
-            // chunks the saved entry references, or may reference, are kept.
+            // A create the filer took and never answered may still be applied,
+            // and a retried exclusive create may find this very upload in
+            // place: chunks the entry references, or may yet reference, are
+            // kept. Only a create the filer refused has its chunks discarded.
             let saved = match self.store.reads.source.lookup(dir, name).await {
                 Ok(Some(saved)) => saved
                     .chunks
@@ -1352,6 +1387,14 @@ impl Upload {
             };
             if saved {
                 tracing::warn!("{}: created despite {err:#}", self.path);
+            } else if outcome_uncertain(&err) {
+                tracing::warn!("{}: keeping its chunks: {err:#}", self.path);
+                self.store
+                    .reads
+                    .stats
+                    .failures
+                    .fetch_add(1, Ordering::Relaxed);
+                return Err(generic(err.context(format!("creating {}", self.path))));
             } else {
                 for uploaded in &chunks {
                     if let Err(discard) =
@@ -1392,7 +1435,11 @@ impl Upload {
     }
 
     async fn discard_all(&self) -> Result<()> {
-        let chunks = std::mem::take(&mut self.state.lock().unwrap().chunks);
+        let chunks = {
+            let mut state = self.state.lock().unwrap();
+            state.done = true;
+            std::mem::take(&mut state.chunks)
+        };
         for uploaded in &chunks {
             self.store
                 .reads
@@ -1521,6 +1568,9 @@ mod tests {
         /// Creates save the entry and then answer with an error, as a filer
         /// whose reply was lost.
         lose_create_replies: bool,
+        /// Creates never answer and never save, as a filer that took the call
+        /// and went silent.
+        silent_creates: bool,
         /// Uploads after this many fail.
         uploads_allowed: Option<u64>,
         /// The collections uploads named.
@@ -1646,6 +1696,11 @@ mod tests {
         }
 
         async fn create(&self, dir: &str, entry: Entry, exclusive: bool) -> anyhow::Result<()> {
+            if self.silent_creates {
+                return Err(
+                    anyhow::anyhow!("filer took the create and went silent").context(NoAnswer)
+                );
+            }
             let mut entries = self.entries.lock().unwrap();
             let path = format!("{dir}/{}", entry.name);
             if exclusive && entries.contains_key(&path) {
@@ -2615,6 +2670,34 @@ mod tests {
         assert_eq!(fake.discarded.load(Ordering::Relaxed), 1);
         assert!(fake.needles.lock().unwrap().is_empty());
         assert!(fake.entries.lock().unwrap().is_empty());
+    }
+
+    /// A create the filer took and never answered keeps its chunks, since
+    /// it may still be applied; the upload can then be neither completed
+    /// again nor aborted into discarding them.
+    #[tokio::test]
+    async fn an_unanswered_create_keeps_its_chunks() {
+        let fake = Arc::new(Fake {
+            silent_creates: true,
+            ..Default::default()
+        });
+        let store = writing_store(fake.clone(), no_keys(), 4096, false, false);
+        let path = Path::from("vector/idx/data/silent.lance");
+        let mut upload = store.put_multipart(&path).await.unwrap();
+        upload
+            .put_part(Bytes::from(vec![3u8; 5000]).into())
+            .await
+            .unwrap();
+        upload.complete().await.unwrap_err();
+        assert_eq!(fake.discarded.load(Ordering::Relaxed), 0);
+        assert_eq!(fake.needles.lock().unwrap().len(), 2);
+        upload.complete().await.unwrap_err();
+        upload.abort().await.unwrap();
+        assert_eq!(
+            fake.discarded.load(Ordering::Relaxed),
+            0,
+            "kept through abort"
+        );
     }
 
     /// Chunks go to the bucket's collection as the gateway names it, with
