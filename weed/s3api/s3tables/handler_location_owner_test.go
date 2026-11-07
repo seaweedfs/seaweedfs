@@ -1,13 +1,17 @@
 package s3tables
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"path"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables/s3tablestest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 )
 
 func renameLocation(rel string) string {
@@ -96,6 +100,71 @@ func TestDeleteTableKeepsSharedFiles(t *testing.T) {
 	tablePath := GetTablePath(renameTestBucket, "ns", "t")
 	assert.NotNil(t, fs.Get(GetNamespacePath(renameTestBucket, "ns"), "t"))
 	assert.NotNil(t, fs.Get(path.Join(tablePath, "metadata"), "v3.metadata.json"))
+}
+
+// rootRaceClient lands a rival record over the same root the moment a write
+// reaches the record at dir/name, the way a second create that read the root
+// free before this record existed publishes its own.
+type rootRaceClient struct {
+	filer_pb.SeaweedFilerClient
+	f        *s3tablestest.MemFiler
+	dir      string
+	name     string
+	location string
+	planted  bool
+}
+
+func (c *rootRaceClient) plant() {
+	if c.planted {
+		return
+	}
+	c.planted = true
+	rival, _ := json.Marshal(tableMetadataInternal{Name: "rival", Namespace: "ns", Format: FormatIceberg, MetadataLocation: c.location})
+	c.f.Put(c.dir, "rival", map[string][]byte{
+		ExtendedKeyMetadata:  rival,
+		ExtendedKeyEntryType: []byte(EntryTypeTable),
+		ExtendedKeyDeleting:  []byte(createClaim),
+	})
+}
+
+func (c *rootRaceClient) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntryRequest, opts ...grpc.CallOption) (*filer_pb.UpdateEntryResponse, error) {
+	resp, err := c.SeaweedFilerClient.UpdateEntry(ctx, req, opts...)
+	if err == nil && req.Directory == c.dir && req.Entry.Name == c.name {
+		c.plant()
+	}
+	return resp, err
+}
+
+// Two writers that both read a root free each check it again once their record
+// is written, so the one that sees the other backs out instead of both landing.
+func TestLocationRaceBacksOut(t *testing.T) {
+	nsPath := GetNamespacePath(renameTestBucket, "ns")
+	location := renameLocation("ns/shared/metadata/v1.metadata.json")
+
+	t.Run("create", func(t *testing.T) {
+		fs, m := startRenameManager(t)
+		client := &rootRaceClient{SeaweedFilerClient: fs.Client, f: fs, dir: nsPath, name: "mine", location: location}
+		status, resp := runHandler(t, m, client, "CreateTable", &CreateTableRequest{
+			TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"}, Name: "mine", Format: FormatIceberg, MetadataLocation: location,
+		})
+		assert.Equal(t, http.StatusConflict, status, "%+v", resp)
+		require.True(t, client.planted)
+		if entry := fs.Get(nsPath, "mine"); entry != nil {
+			assert.NotContains(t, entry.Extended, ExtendedKeyMetadata)
+		}
+	})
+
+	t.Run("update", func(t *testing.T) {
+		fs, m := startRenameManager(t)
+		before := fs.Get(nsPath, "t").Extended[ExtendedKeyMetadata]
+		client := &rootRaceClient{SeaweedFilerClient: fs.Client, f: fs, dir: nsPath, name: "t", location: location}
+		status, resp := runHandler(t, m, client, "UpdateTable", &UpdateTableRequest{
+			TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"}, Name: "t", MetadataVersion: 4, MetadataLocation: location,
+		})
+		assert.Equal(t, http.StatusConflict, status, "%+v", resp)
+		require.True(t, client.planted)
+		assert.Equal(t, string(before), string(fs.Get(nsPath, "t").Extended[ExtendedKeyMetadata]))
+	})
 }
 
 // A table that keeps its files elsewhere still owns its catalog entry: a view

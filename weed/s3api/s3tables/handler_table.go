@@ -167,7 +167,7 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 		if len(tagsBytes) > 0 {
 			attrs[ExtendedKeyTags] = tagsBytes
 		}
-		if err := h.claimCatalogEntry(r.Context(), client, tablePath, attrs); err != nil {
+		if err := h.claimCatalogEntryAt(r.Context(), client, bucketName, tablePath, req.MetadataLocation, attrs, dataPath, tablePath); err != nil {
 			return err
 		}
 		return h.confirmParent(r.Context(), client, GetNamespacePath(bucketName, namespaceName), isNamespaceCreatedAt(target.namespaceCreatedAt), tablePath, attrs, dataPath, tablePath)
@@ -180,6 +180,10 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 		}
 		if errors.Is(err, ErrConcurrentUpdate) {
 			h.writeError(w, http.StatusConflict, ErrCodeConflict, "table changed during create, retry the request")
+			return err
+		}
+		if errors.Is(err, ErrLocationInUse) {
+			h.writeError(w, http.StatusConflict, ErrCodeConflict, err.Error())
 			return err
 		}
 		if h.writeNamespaceClosedError(w, err, namespaceName) {
@@ -317,7 +321,7 @@ func (h *S3TablesHandler) handleRegisterTable(w http.ResponseWriter, r *http.Req
 		if err := h.ensureDirectory(r.Context(), client, tablePath); err != nil {
 			return err
 		}
-		if err := h.claimCatalogEntry(r.Context(), client, tablePath, attrs); err != nil {
+		if err := h.claimCatalogEntryAt(r.Context(), client, bucketName, tablePath, req.MetadataLocation, attrs, tablePath); err != nil {
 			return err
 		}
 		return h.confirmParent(r.Context(), client, GetNamespacePath(bucketName, namespaceName), isNamespaceCreatedAt(target.namespaceCreatedAt), tablePath, attrs, tablePath)
@@ -329,6 +333,10 @@ func (h *S3TablesHandler) handleRegisterTable(w http.ResponseWriter, r *http.Req
 		}
 		if errors.Is(err, ErrConcurrentUpdate) {
 			h.writeError(w, http.StatusConflict, ErrCodeConflict, "table changed during register, retry the request")
+			return err
+		}
+		if errors.Is(err, ErrLocationInUse) {
+			h.writeError(w, http.StatusConflict, ErrCodeConflict, err.Error())
 			return err
 		}
 		if h.writeNamespaceClosedError(w, err, namespaceName) {
@@ -2122,12 +2130,13 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 	if req.ClearFullMetadata && metadata.Metadata != nil {
 		metadata.Metadata.FullMetadata = nil
 	}
-	if req.MetadataLocation != "" {
-		if CatalogRecordRoot(target.bucketName, target.tablePath, req.MetadataLocation) != CatalogRecordRoot(target.bucketName, target.tablePath, metadata.MetadataLocation) {
-			if err := h.refuseClaimedLocation(w, r, filerClient, target.bucketName, target.tablePath, req.MetadataLocation); err != nil {
-				return err
-			}
+	movesRoot := req.MetadataLocation != "" && CatalogRecordRoot(target.bucketName, target.tablePath, req.MetadataLocation) != CatalogRecordRoot(target.bucketName, target.tablePath, metadata.MetadataLocation)
+	if movesRoot {
+		if err := h.refuseClaimedLocation(w, r, filerClient, target.bucketName, target.tablePath, req.MetadataLocation); err != nil {
+			return err
 		}
+	}
+	if req.MetadataLocation != "" {
 		metadata.MetadataLocation = req.MetadataLocation
 	}
 	if req.MetadataVersion > 0 {
@@ -2150,7 +2159,7 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 	// snapshot. mutateEntryExtended retries on a changed entry, so the check
 	// lives in the mutation, where it sees the value that is current now.
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return h.mutateCatalogRecord(r.Context(), client, target.tablePath, func(extended map[string][]byte) error {
+		if err := h.mutateCatalogRecord(r.Context(), client, target.tablePath, func(extended map[string][]byte) error {
 			if !bytes.Equal(extended[ExtendedKeyMetadata], target.storedMetadata) {
 				return fmt.Errorf("%w: %s", ErrConcurrentUpdate, ExtendedKeyMetadata)
 			}
@@ -2163,10 +2172,17 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 			}
 			extended[ExtendedKeyMetadata] = metadataBytes
 			return nil
-		})
+		}); err != nil || !movesRoot {
+			return err
+		}
+		return h.revertClaimedMove(r.Context(), client, target.bucketName, target.tablePath, metadata.MetadataLocation, metadataBytes, target.storedMetadata)
 	})
 
 	if err != nil {
+		if errors.Is(err, ErrLocationInUse) {
+			h.writeError(w, http.StatusConflict, ErrCodeConflict, err.Error())
+			return err
+		}
 		if errors.Is(err, ErrConcurrentUpdate) {
 			h.writeError(w, http.StatusConflict, ErrCodeConflict, "table was updated concurrently")
 			return ErrVersionTokenMismatch

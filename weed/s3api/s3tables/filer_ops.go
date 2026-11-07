@@ -812,6 +812,16 @@ func (h *S3TablesHandler) confirmChild(ctx context.Context, client filer_pb.Seaw
 	if err == nil {
 		return nil
 	}
+	err = h.backOutChild(ctx, client, childPath, written, confirmed, emptyDirs, err)
+	if errors.Is(err, errParentGone) {
+		h.removeLeftoverDirectory(context.WithoutCancel(ctx), client, parentPath)
+	}
+	return err
+}
+
+// backOutChild removes what a create wrote onto childPath, after the create
+// failed with err, and returns err, or why the record stays.
+func (h *S3TablesHandler) backOutChild(ctx context.Context, client filer_pb.SeaweedFilerClient, childPath string, written map[string][]byte, confirmed bool, emptyDirs []string, err error) error {
 	ctx = context.WithoutCancel(ctx)
 	expected := written
 	keys := make([]string, 0, len(written))
@@ -841,9 +851,6 @@ func (h *S3TablesHandler) confirmChild(ctx context.Context, client filer_pb.Seaw
 	}
 	for _, dir := range emptyDirs {
 		h.removeLeftoverDirectory(ctx, client, dir)
-	}
-	if errors.Is(err, errParentGone) {
-		h.removeLeftoverDirectory(ctx, client, parentPath)
 	}
 	return err
 }
@@ -1023,6 +1030,38 @@ func checkLocationUnclaimed(ctx context.Context, client filer_pb.SeaweedFilerCli
 		return ErrLocationInUse
 	}
 	return nil
+}
+
+// claimCatalogEntryAt claims path like claimCatalogEntry, then checks the root
+// metadataLocation gives it again with the record written: of two creates
+// racing for one root, at least one sees the other and backs out.
+func (h *S3TablesHandler) claimCatalogEntryAt(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketName, path, metadataLocation string, attrs map[string][]byte, emptyDirs ...string) error {
+	if err := h.claimCatalogEntry(ctx, client, path, attrs); err != nil {
+		return err
+	}
+	if err := checkLocationUnclaimed(ctx, client, bucketName, path, metadataLocation); err != nil {
+		return h.backOutChild(ctx, client, path, attrs, false, emptyDirs, err)
+	}
+	return nil
+}
+
+// revertClaimedMove checks again, once an update moved the record at path onto
+// the root metadataLocation gives it, that no other record took that root
+// meanwhile, and if one did puts the previous metadata back.
+func (h *S3TablesHandler) revertClaimedMove(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketName, path, metadataLocation string, written, previous []byte) error {
+	if err := checkLocationUnclaimed(ctx, client, bucketName, path, metadataLocation); !errors.Is(err, ErrLocationInUse) {
+		return nil
+	}
+	if err := h.mutateCatalogRecord(context.WithoutCancel(ctx), client, path, func(extended map[string][]byte) error {
+		if !bytes.Equal(extended[ExtendedKeyMetadata], written) {
+			return ErrConcurrentUpdate
+		}
+		extended[ExtendedKeyMetadata] = previous
+		return nil
+	}); err != nil {
+		glog.Warningf("revert move of %s: %v", path, err)
+	}
+	return ErrLocationInUse
 }
 
 // refuseClaimedLocation answers a request whose record would share its files
