@@ -35,9 +35,11 @@ message Table {
   uint64 version = 2;
   // The table's Lance location, as the catalog describes it.
   string location = 3;
+  reserved 4;
+  reserved "storage_options";
   // The bucket encrypts its objects with SSE-S3; the engine writes the
   // table's files that way.
-  bool sse_s3 = 4;
+  bool sse_s3 = 5;
 }
 
 message CreateIndexRequest {

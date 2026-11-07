@@ -86,7 +86,7 @@ type Table struct {
 	Location string `protobuf:"bytes,3,opt,name=location,proto3" json:"location,omitempty"`
 	// The bucket encrypts its objects with SSE-S3; the engine writes the
 	// table's files that way.
-	SseS3         bool `protobuf:"varint,4,opt,name=sse_s3,json=sseS3,proto3" json:"sse_s3,omitempty"`
+	SseS3         bool `protobuf:"varint,5,opt,name=sse_s3,json=sseS3,proto3" json:"sse_s3,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1081,12 +1081,12 @@ var File_vector_proto protoreflect.FileDescriptor
 
 const file_vector_proto_rawDesc = "" +
 	"\n" +
-	"\fvector.proto\x12\tvector_pb\x1a\x1cgoogle/protobuf/struct.proto\"d\n" +
+	"\fvector.proto\x12\tvector_pb\x1a\x1cgoogle/protobuf/struct.proto\"{\n" +
 	"\x05Table\x12\x0e\n" +
 	"\x02id\x18\x01 \x03(\tR\x02id\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\x04R\aversion\x12\x1a\n" +
 	"\blocation\x18\x03 \x01(\tR\blocation\x12\x15\n" +
-	"\x06sse_s3\x18\x04 \x01(\bR\x05sseS3\"\xdf\x01\n" +
+	"\x06sse_s3\x18\x05 \x01(\bR\x05sseS3J\x04\b\x04\x10\x05R\x0fstorage_options\"\xdf\x01\n" +
 	"\x12CreateIndexRequest\x12&\n" +
 	"\x05table\x18\x01 \x01(\v2\x10.vector_pb.TableR\x05table\x12\x1c\n" +
 	"\tdimension\x18\x02 \x01(\rR\tdimension\x12B\n" +
