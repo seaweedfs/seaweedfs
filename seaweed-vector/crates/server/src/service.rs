@@ -506,6 +506,17 @@ impl VectorServer {
         })?;
         let env = std::env::vars_os().map(|(name, _)| name);
         if !options_trusted(&description.storage_options, &self.fallback, env) {
+            // The gateway answers AccessDenied without logging, so this is
+            // where an operator sees a pinned endpoint that does not match.
+            let endpoint = |options: &HashMap<String, String>| {
+                options.get(ENDPOINT_OPTION).cloned().unwrap_or_default()
+            };
+            tracing::warn!(
+                index = %table.id.join("/"),
+                sent = %endpoint(&description.storage_options),
+                pinned = %endpoint(&self.fallback),
+                "refused the request's storage options: an aws_endpoint other than the pinned one, a key other than the gateway's, or credentials the engine would have to complete"
+            );
             return Err(Status::permission_denied(
                 "the storage options would send the engine's credentials elsewhere",
             ));
