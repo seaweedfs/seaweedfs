@@ -203,6 +203,15 @@ func TestAllMountsWriteBackEndsAtTheUnmountNotBefore(t *testing.T) {
 	if _, s, _, _ := f.snapshot(); s["/buckets/a"] != 1 {
 		t.Errorf("an unmounted directory was started again (%d starts)", s["/buckets/a"])
 	}
+	// its restart pause goes with the mount, or the maps grow with every
+	// directory ever mounted
+	m.mu.Lock()
+	_, paused := m.notBefore["/buckets/a"]
+	_, counted := m.ends["/buckets/a"]
+	m.mu.Unlock()
+	if paused || counted {
+		t.Errorf("an unmounted directory keeps its retry state: notBefore=%v ends=%v", paused, counted)
+	}
 }
 
 // A write-back that ended at an unmount while the directory is mounted again

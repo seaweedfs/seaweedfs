@@ -157,6 +157,12 @@ func (m *mountSupervisor) reconcile() error {
 			delete(m.gone, dir)
 		}
 	}
+	for dir := range m.notBefore {
+		if _, running := m.followers[dir]; !running && (mappings == nil || mappings.Mappings[dir] == nil) {
+			delete(m.notBefore, dir)
+			delete(m.ends, dir)
+		}
+	}
 	if mappings != nil {
 		for dir := range mappings.Mappings {
 			if _, running := m.followers[dir]; running {
