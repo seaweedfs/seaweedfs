@@ -110,6 +110,9 @@ impl StreamingWriteBuffer {
     /// Stage `data` written at absolute `offset`, splitting across chunk
     /// boundaries. Grows the logical size to cover the write.
     pub fn write(&mut self, offset: u64, data: &[u8]) {
+        if data.is_empty() {
+            return;
+        }
         let mut off = offset;
         let mut rest = data;
         let cs = self.chunk_size as u64;
@@ -279,6 +282,14 @@ mod tests {
         assert_eq!(pieces.len(), 2);
         assert_eq!((pieces[0].offset, pieces[0].data.len()), (0, 100));
         assert_eq!((pieces[1].offset, pieces[1].data.len()), (1_000_000, 50));
+    }
+
+    #[test]
+    fn an_empty_write_past_the_end_keeps_the_size() {
+        let mut b = StreamingWriteBuffer::with_size(CS, 10);
+        b.write(1000, &[]);
+        assert_eq!(b.size(), 10);
+        assert!(b.is_empty());
     }
 
     #[test]
