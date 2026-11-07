@@ -287,8 +287,11 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		stagedMetadataLocation := fmt.Sprintf("s3://%s/%s/metadata/%s", metadataBucket, stagedTablePath, metadataFileName)
+		// The marker is how the commit finds the location handed out here.
 		if markerErr := s.writeStageCreateMarker(r.Context(), bucketName, namespace, tableName, tableUUID, location, stagedMetadataLocation); markerErr != nil {
 			glog.V(1).Infof("Iceberg: failed to persist stage-create marker for %s.%s: %v", flattenNamespacePath(namespace), tableName, markerErr)
+			writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to save stage-create marker")
+			return
 		}
 		// The staged table is not registered yet, so there is nothing to
 		// authorize an update against; the create gate above is the write
