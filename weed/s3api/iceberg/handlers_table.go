@@ -369,11 +369,12 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		// The file is named by this request alone, so it can go once the
-		// catalog refused the registration outright and no record references
-		// it. After a failure that may have committed the record (transport,
-		// 5xx) it stays: the record could point at it, and removing it would
-		// leave the table unreadable.
-		if registrationRefused(err) && !s.recordReferencesAt(r.Context(), bucketName, namespace, tableName, metadataLocation, tableUUID.String()) {
+		// catalog refused the registration before a record naming it became
+		// visible. After a failure that may have left one (a conflict on a
+		// record already published, transport, 5xx) it stays: the record,
+		// under this name or one it was renamed to, could point at it, and
+		// removing it would leave the table unreadable.
+		if registrationRefused(err) {
 			s.discardStagedMetadata(r.Context(), metadataBucket, metadataPath, metadataFileName, metadataLocation)
 		}
 		if isS3TablesAlreadyExists(err) {

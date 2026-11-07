@@ -535,12 +535,14 @@ func TestCreateTableStagedFileOnRegistrationFailure(t *testing.T) {
 	})
 }
 
+const renamedTable = "renamed"
+
 // armSurvivingConflict makes the next create of the test table end in a
 // conflict that leaves its record in place: once the catalog confirms the
-// record, another caller updates it without moving its metadata location, and
-// the namespace recheck that follows fails. The catalog then cannot back the
-// changed record out. It reports whether the update ran.
-func (e *conflictEnv) armSurvivingConflict() *bool {
+// record, compete changes it without moving its metadata location, and the
+// namespace recheck that follows fails. The catalog then cannot back the
+// changed record out. It reports whether compete ran.
+func (e *conflictEnv) armSurvivingConflict(compete func(e *conflictEnv)) *bool {
 	namespacePath := s3tables.GetNamespacePath(conflictBucket, conflictNamespace)
 	updated, failRecheck := false, false
 	e.hooks.afterUpdate = func(in *filer_pb.UpdateEntryRequest) {
@@ -548,9 +550,7 @@ func (e *conflictEnv) armSurvivingConflict() *bool {
 			return
 		}
 		updated = true
-		e.adminDo("UpdateTable", &s3tables.UpdateTableRequest{
-			TableBucketARN: e.arn, Namespace: []string{conflictNamespace}, Name: conflictTable,
-		}, nil)
+		compete(e)
 		failRecheck = true
 	}
 	e.hooks.lookupErr = func(in *filer_pb.LookupDirectoryEntryRequest) error {
@@ -564,89 +564,67 @@ func (e *conflictEnv) armSurvivingConflict() *bool {
 }
 
 // A conflict does not always mean the create left nothing behind: the record
-// it could not back out still points at the staged file, so the file stays.
+// it could not back out still points at the staged file, so the file stays —
+// also when the record was renamed away and the original name holds nothing.
 func TestCreateKeepsFileOfRecordThatSurvivedConflict(t *testing.T) {
-	for name, create := range map[string]func(e *conflictEnv) (int, string){
-		"create table": func(e *conflictEnv) (int, string) {
+	creates := map[string]func(t *testing.T, e *conflictEnv) (int, string){
+		"create table": func(t *testing.T, e *conflictEnv) (int, string) {
 			rec := e.createTable(conflictTableBody("col", `"location":"`+conflictLocation+`"`))
 			if rec.Code == http.StatusOK {
 				return rec.Code, ""
 			}
 			return rec.Code, decodeIcebergError(t, rec).Type
 		},
-		"create on commit": func(e *conflictEnv) (int, string) {
+		"create on commit": func(t *testing.T, e *conflictEnv) (int, string) {
 			_, reqErr := e.server.finalizeCreateOnCommit(t.Context(), e.finalizeInput(uuid.New()))
 			if reqErr == nil {
 				return http.StatusOK, ""
 			}
 			return reqErr.status, reqErr.errType
 		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			e := newConflictEnv(t)
-			updated := e.armSurvivingConflict()
-
-			code, errType := create(e)
-			if !*updated {
-				t.Fatal("the competing update never ran")
-			}
-			if code != http.StatusConflict || errType != "CommitFailedException" {
-				t.Fatalf("create = %d %s, want the catalog's 409 CommitFailedException", code, errType)
-			}
-			record := e.mustRecord()
-			if want := conflictLocation + "/metadata/v1.metadata.json"; record.MetadataLocation != want {
-				t.Fatalf("surviving record points at %s, want the staged %s", record.MetadataLocation, want)
-			}
-			if files := e.metadataFiles(); len(files) != 1 || files[0] != path.Base(record.MetadataLocation) {
-				t.Errorf("metadata files = %v, want the surviving record's %s kept", files, path.Base(record.MetadataLocation))
-			}
-		})
 	}
-}
-
-func TestRecordReferencesAt(t *testing.T) {
-	const staged = conflictLocation + "/metadata/v1.metadata.json"
-	stagedUUID := uuid.NewString()
-	tablePath := s3tables.GetTablePath(conflictBucket, conflictNamespace, conflictTable)
-	putEntry := func(e *conflictEnv, extended map[string][]byte) {
-		e.filer.Put(path.Dir(tablePath), path.Base(tablePath), extended)
-	}
-	for name, tc := range map[string]struct {
-		setup func(e *conflictEnv)
-		want  bool
+	competitors := map[string]struct {
+		compete func(e *conflictEnv)
+		name    string
 	}{
-		"no record":                  {func(e *conflictEnv) {}, false},
-		"directory without a record": {func(e *conflictEnv) { putEntry(e, nil) }, false},
-		"another table's record": {func(e *conflictEnv) {
-			e.registerWinner(conflictLocation+"/metadata/v1-other.metadata.json", uuid.NewString())
-		}, false},
-		"record names the file":      {func(e *conflictEnv) { e.registerWinner(staged, uuid.NewString()) }, true},
-		"record of this table moved": {func(e *conflictEnv) { e.registerWinner(conflictLocation+"/metadata/v2.metadata.json", stagedUUID) }, true},
-		"record still marked by an unfinished create": {func(e *conflictEnv) {
-			putEntry(e, map[string][]byte{
-				s3tables.ExtendedKeyMetadata: []byte(`{"metadataLocation":"` + staged + `"}`),
-				s3tables.ExtendedKeyDeleting: []byte("create"),
-			})
-		}, true},
-		"record undecodable": {func(e *conflictEnv) {
-			putEntry(e, map[string][]byte{s3tables.ExtendedKeyMetadata: []byte("{")})
-		}, true},
-		"record unreadable": {func(e *conflictEnv) {
-			e.hooks.lookupErr = func(in *filer_pb.LookupDirectoryEntryRequest) error {
-				if path.Join(in.Directory, in.Name) == tablePath {
-					return status.Error(codes.Unavailable, "filer unavailable")
+		"updated": {func(e *conflictEnv) {
+			e.adminDo("UpdateTable", &s3tables.UpdateTableRequest{
+				TableBucketARN: e.arn, Namespace: []string{conflictNamespace}, Name: conflictTable,
+			}, nil)
+		}, conflictTable},
+		"renamed": {func(e *conflictEnv) {
+			e.adminDo("RenameTable", &s3tables.RenameTableRequest{
+				TableBucketARN:  e.arn,
+				SourceNamespace: []string{conflictNamespace}, SourceName: conflictTable,
+				DestNamespace: []string{conflictNamespace}, DestName: renamedTable,
+			}, nil)
+		}, renamedTable},
+	}
+	for createName, create := range creates {
+		for competeName, competitor := range competitors {
+			t.Run(createName+"/"+competeName, func(t *testing.T) {
+				e := newConflictEnv(t)
+				ran := e.armSurvivingConflict(competitor.compete)
+
+				code, errType := create(t, e)
+				if !*ran {
+					t.Fatal("the competing write never ran")
 				}
-				return nil
-			}
-		}, true},
-	} {
-		t.Run(name, func(t *testing.T) {
-			e := newConflictEnv(t)
-			tc.setup(e)
-			if got := e.server.recordReferencesAt(t.Context(), conflictBucket, []string{conflictNamespace}, conflictTable, staged, stagedUUID); got != tc.want {
-				t.Errorf("recordReferencesAt = %v, want %v", got, tc.want)
-			}
-		})
+				if code != http.StatusConflict || errType != "CommitFailedException" {
+					t.Fatalf("create = %d %s, want the catalog's 409 CommitFailedException", code, errType)
+				}
+				var record s3tables.GetTableResponse
+				e.adminDo("GetTable", &s3tables.GetTableRequest{
+					TableBucketARN: e.arn, Namespace: []string{conflictNamespace}, Name: competitor.name,
+				}, &record)
+				if want := conflictLocation + "/metadata/v1.metadata.json"; record.MetadataLocation != want {
+					t.Fatalf("surviving record points at %s, want the staged %s", record.MetadataLocation, want)
+				}
+				if files := e.metadataFiles(); len(files) != 1 || files[0] != path.Base(record.MetadataLocation) {
+					t.Errorf("metadata files = %v, want the surviving record's %s kept", files, path.Base(record.MetadataLocation))
+				}
+			})
+		}
 	}
 }
 
@@ -656,17 +634,19 @@ func TestRegistrationRefused(t *testing.T) {
 		err  error
 		want bool
 	}{
-		"name taken":           {typed(s3tables.ErrCodeTableAlreadyExists), true},
-		"conflict":             {typed(s3tables.ErrCodeConflict), true},
-		"version mismatch":     {s3tables.ErrVersionTokenMismatch, true},
-		"access denied":        {typed(s3tables.ErrCodeAccessDenied), true},
-		"no such namespace":    {typed(s3tables.ErrCodeNoSuchNamespace), true},
-		"invalid request":      {typed(s3tables.ErrCodeInvalidRequest), true},
-		"internal error":       {typed(s3tables.ErrCodeInternalError), false},
-		"transport error":      {errors.New("rpc error: code = Unavailable desc = filer unavailable"), false},
-		"wrapped name taken":   {fmt.Errorf("create: %w", typed(s3tables.ErrCodeTableAlreadyExists)), true},
-		"untyped name taken":   {errors.New("table orders already exists"), true},
-		"wrapped server fault": {fmt.Errorf("create: %w", typed(s3tables.ErrCodeInternalError)), false},
+		"name taken":                     {typed(s3tables.ErrCodeTableAlreadyExists), true},
+		"conflict":                       {typed(s3tables.ErrCodeConflict), true},
+		"version mismatch":               {s3tables.ErrVersionTokenMismatch, true},
+		"published then changed":         {&s3tables.S3TablesError{Type: s3tables.ErrCodeConflict, Message: s3tables.PublishedTableChangedMessage}, false},
+		"wrapped published then changed": {fmt.Errorf("create: %w", s3tables.ErrPublishedRecordChanged), false},
+		"access denied":                  {typed(s3tables.ErrCodeAccessDenied), true},
+		"no such namespace":              {typed(s3tables.ErrCodeNoSuchNamespace), true},
+		"invalid request":                {typed(s3tables.ErrCodeInvalidRequest), true},
+		"internal error":                 {typed(s3tables.ErrCodeInternalError), false},
+		"transport error":                {errors.New("rpc error: code = Unavailable desc = filer unavailable"), false},
+		"wrapped name taken":             {fmt.Errorf("create: %w", typed(s3tables.ErrCodeTableAlreadyExists)), true},
+		"untyped name taken":             {errors.New("table orders already exists"), true},
+		"wrapped server fault":           {fmt.Errorf("create: %w", typed(s3tables.ErrCodeInternalError)), false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if got := registrationRefused(tc.err); got != tc.want {
