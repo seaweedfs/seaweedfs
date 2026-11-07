@@ -2572,13 +2572,18 @@ mod tests {
                 sse_s3
             );
             if sse_s3 {
-                // Every chunk under its own key: no two share a keystream.
-                let keys: std::collections::HashSet<&[u8]> = entry
+                // No two chunks share a keystream; the wrapped keys always
+                // differ, so the IVs are what is compared.
+                let ivs: std::collections::HashSet<String> = entry
                     .chunks
                     .iter()
-                    .map(|c| c.sse_metadata.as_slice())
+                    .map(|c| {
+                        let meta: serde_json::Value =
+                            serde_json::from_slice(&c.sse_metadata).unwrap();
+                        meta["iv"].as_str().unwrap().to_string()
+                    })
                     .collect();
-                assert_eq!(keys.len(), entry.chunks.len());
+                assert_eq!(ivs.len(), entry.chunks.len());
             }
             let got = store.get(&path).await.unwrap().bytes().await.unwrap();
             assert_eq!(
