@@ -9,7 +9,9 @@ use anyhow::{Context, Result};
 use tokio::time::sleep;
 use tonic::transport::{Channel, Endpoint};
 
-use crate::master_pb::{KeepConnectedRequest, seaweed_client::SeaweedClient};
+use crate::master_pb::{
+    KeepConnectedRequest, ListClusterNodesRequest, seaweed_client::SeaweedClient,
+};
 use crate::security::GrpcTls;
 
 fn registration(client_addr: &str) -> KeepConnectedRequest {
@@ -339,4 +341,69 @@ mod tests {
         assert!(grpc_addr("m1:65536").is_err());
         assert!(grpc_addr("m1:9333.65536").is_err());
     }
+}
+
+/// The filers of `filer_group` registered with the masters, as gRPC
+/// `host:port`s, in registration order; the masters are all asked, since a
+/// follower may know fewer than the leader. An error means no master answered.
+pub async fn list_filers(
+    masters: &[String],
+    filer_group: &str,
+    tls: Option<&GrpcTls>,
+) -> Result<Vec<String>> {
+    let mut filers = Vec::new();
+    let mut answered = false;
+    let mut last = None;
+    for master in masters {
+        match filers_of(master, filer_group, tls).await {
+            Ok(found) => {
+                answered = true;
+                for filer in found {
+                    if !filers.contains(&filer) {
+                        filers.push(filer);
+                    }
+                }
+            }
+            Err(err) => {
+                tracing::warn!("master {master}: listing filers: {err:#}");
+                last = Some(err);
+            }
+        }
+    }
+    match (answered, last) {
+        (false, Some(err)) => Err(err),
+        (false, None) => Err(anyhow::anyhow!("no master given")),
+        _ => Ok(filers),
+    }
+}
+
+async fn filers_of(master: &str, filer_group: &str, tls: Option<&GrpcTls>) -> Result<Vec<String>> {
+    let channel = connect(master, tls).await?;
+    let request = ListClusterNodesRequest {
+        client_type: "filer".into(),
+        filer_group: filer_group.into(),
+        ..Default::default()
+    };
+    let nodes = tokio::time::timeout(
+        CONNECT_TIMEOUT,
+        SeaweedClient::new(channel).list_cluster_nodes(request),
+    )
+    .await
+    .context("master did not answer")??
+    .into_inner()
+    .cluster_nodes;
+    nodes
+        .iter()
+        .map(|node| filer_grpc_addr(&node.address))
+        .collect()
+}
+
+/// A filer registers as `host:port.grpc`, or `host:port` with its gRPC at
+/// port + 10000.
+pub fn filer_grpc_addr(address: &str) -> Result<String> {
+    let addr = grpc_addr(address)?;
+    Ok(addr
+        .split_once("://")
+        .map_or(addr.as_str(), |(_, rest)| rest)
+        .to_string())
 }

@@ -77,10 +77,13 @@ trait Source: Send + Sync {
 /// unreachable one is passed over for the next.
 struct Filers {
     clients: RwLock<Vec<FilerClient>>,
-    tls: Option<GrpcTls>,
+    dial: FilerDialer,
     current: AtomicUsize,
     volumes: VolumeReader,
 }
+
+/// Connects to a filer by its gRPC `host:port`.
+pub type FilerDialer = Arc<dyn Fn(&str) -> anyhow::Result<FilerClient> + Send + Sync>;
 
 impl Filers {
     /// Follows the masters' list: known filers keep their connections, new
@@ -91,7 +94,7 @@ impl Filers {
         for addr in addresses {
             clients.push(match known.iter().find(|c| c.addr() == addr) {
                 Some(client) => client.clone(),
-                None => FilerClient::connect_lazy_with(addr, self.tls.as_ref())?,
+                None => (self.dial)(addr)?,
             });
         }
         let before: Vec<&str> = known.iter().map(|c| c.addr()).collect();
@@ -272,7 +275,7 @@ impl fmt::Debug for DirectReads {
 
 /// What direct reads connect to, as the cluster's security.toml configures
 /// weed processes.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct Connection {
     /// The filers' gRPC `host:port`s as the masters list them; see
     /// [`DirectReads::set_filers`] for later changes.
@@ -284,6 +287,22 @@ pub struct Connection {
     pub grpc_tls: Option<GrpcTls>,
     /// `https.client`, when volume servers serve HTTPS.
     pub https_tls: Option<HttpsTls>,
+    /// Dials the filers in place of `grpc_tls`, for a TLS setup sw-client
+    /// cannot express, such as a server allowlist.
+    pub filer_dialer: Option<FilerDialer>,
+}
+
+impl fmt::Debug for Connection {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Connection")
+            .field("filers", &self.filers)
+            .field("read_jwt", &self.read_jwt_key.is_some())
+            .field("sse", &self.sse)
+            .field("grpc_tls", &self.grpc_tls)
+            .field("https_tls", &self.https_tls)
+            .field("filer_dialer", &self.filer_dialer.is_some())
+            .finish()
+    }
 }
 
 impl DirectReads {
@@ -303,9 +322,16 @@ impl DirectReads {
                 }),
                 None => Arc::new(http),
             };
+        let dial: FilerDialer = match &conn.filer_dialer {
+            Some(dialer) => dialer.clone(),
+            None => {
+                let tls = conn.grpc_tls.clone();
+                Arc::new(move |addr| FilerClient::connect_lazy_with(addr, tls.as_ref()))
+            }
+        };
         let filers = Arc::new(Filers {
             clients: RwLock::new(Vec::new()),
-            tls: conn.grpc_tls.clone(),
+            dial,
             current: AtomicUsize::new(0),
             // Lance caches above this store, so needles are not kept here.
             volumes: VolumeReader::with_transport_capped(transport, 0),
@@ -1607,7 +1633,7 @@ mod tests {
     async fn filers_follow_the_masters_and_unreachable_ones_are_passed_over() {
         let filers = Filers {
             clients: RwLock::new(Vec::new()),
-            tls: None,
+            dial: Arc::new(|addr| FilerClient::connect_lazy_with(addr, None)),
             current: AtomicUsize::new(0),
             volumes: VolumeReader::with_transport_capped(Arc::new(HttpTransport::new()), 0),
         };

@@ -5,6 +5,8 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
+use sw_client::HttpsTls;
+use weed_lance_worker::sse::SseConfig;
 
 const FILE_NAME: &str = "security.toml";
 
@@ -284,6 +286,47 @@ impl Security {
             allowed_common_names: names(self.get(&allowed)),
             allowed_wildcard_domain: self.get("grpc.allowed_wildcard_domain").unwrap_or_default(),
         }))
+    }
+}
+
+impl Security {
+    /// `https.client` for volume servers; `None` unless enabled.
+    pub fn https_client_tls(&self) -> Result<Option<HttpsTls>> {
+        if !self.get_bool("https.client.enabled") {
+            return Ok(None);
+        }
+        let (cert, key) = match (self.get("https.client.cert"), self.get("https.client.key")) {
+            (Some(cert), Some(key)) => (
+                Some(self.read("https.client.cert", &cert)?),
+                Some(self.read("https.client.key", &key)?),
+            ),
+            (None, None) => (None, None),
+            _ => bail!("https.client.cert and https.client.key must both be set"),
+        };
+        Ok(Some(HttpsTls {
+            ca_pem: match self.get("https.client.ca") {
+                Some(ca) => Some(self.read("https.client.ca", &ca)?),
+                None => None,
+            },
+            cert_pem: cert,
+            key_pem: key,
+            insecure_skip_verify: self.get_bool("https.client.insecure_skip_verify"),
+        }))
+    }
+
+    /// `jwt.signing.read.key`, which volume reads must be signed with.
+    pub fn jwt_read_key(&self) -> Option<String> {
+        self.get("jwt.signing.read.key")
+    }
+
+    /// The S3 gateway's SSE-S3 settings.
+    pub fn sse(&self) -> SseConfig {
+        SseConfig {
+            kek_hex: self.get("s3.sse.kek"),
+            key: self.get("s3.sse.key"),
+            passphrase: self.get("s3.sse.kek.passphrase"),
+            require_commitment: self.get_bool("s3.require_key_commitment"),
+        }
     }
 }
 

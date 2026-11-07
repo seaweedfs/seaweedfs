@@ -405,6 +405,12 @@ impl FilerClient {
         ))
     }
 
+    /// A client over a channel the caller dialed, for a TLS setup this crate
+    /// does not know, such as a server allowlist.
+    pub fn from_channel(addr: &str, channel: Channel) -> Self {
+        Self::with_channel(addr, channel)
+    }
+
     fn endpoint(addr: &str, tls: Option<&GrpcTls>) -> Result<Endpoint> {
         let scheme = if tls.is_some() { "https" } else { "http" };
         let endpoint = Endpoint::from_shared(format!("{scheme}://{addr}"))
