@@ -233,7 +233,7 @@ impl HttpTransport {
             .use_rustls_tls()
             .danger_accept_invalid_certs(tls.insecure_skip_verify);
         if let Some(ca) = &tls.ca_pem {
-            builder = builder.add_root_certificate(
+            builder = builder.tls_built_in_root_certs(false).add_root_certificate(
                 reqwest::Certificate::from_pem(ca).context("https.client.ca")?,
             );
         }
@@ -278,22 +278,44 @@ impl VolumeTransport for HttpTransport {
         range: Option<(u64, u64)>,
         auth: &str,
     ) -> Result<Vec<u8>> {
+        let range_header = match range {
+            Some((_, 0)) => return Ok(Vec::new()),
+            Some((start, len)) => {
+                let end = start
+                    .checked_add(len - 1)
+                    .with_context(|| format!("range {start}+{len} of {file_id}"))?;
+                Some(format!("bytes={start}-{end}"))
+            }
+            None => None,
+        };
         let mut last_err = None;
         for url in locations {
             let full = format!("{}://{url}/{file_id}", self.scheme);
             let mut req = self.http.get(&full).timeout(self.read_timeout);
-            if let Some((start, len)) = range {
-                let end = start + len - 1;
-                req = req.header(RANGE, format!("bytes={start}-{end}"));
+            if let Some(range) = &range_header {
+                req = req.header(RANGE, range);
             }
             if !auth.is_empty() {
                 req = req.header(AUTHORIZATION, format!("BEARER {auth}"));
             }
             match req.send().await {
-                Ok(resp) if resp.status().is_success() => match resp.bytes().await {
-                    Ok(b) => return Ok(b.to_vec()),
-                    Err(e) => last_err = Some(e.into()),
-                },
+                Ok(resp) if resp.status().is_success() => {
+                    // A 200 to a ranged GET is the whole needle.
+                    let whole = resp.status() != reqwest::StatusCode::PARTIAL_CONTENT;
+                    match resp.bytes().await {
+                        Ok(b) => {
+                            return Ok(match range {
+                                Some((start, len)) if whole => {
+                                    let start = start.min(b.len() as u64) as usize;
+                                    let end = start + (len.min((b.len() - start) as u64) as usize);
+                                    b[start..end].to_vec()
+                                }
+                                _ => b.to_vec(),
+                            });
+                        }
+                        Err(e) => last_err = Some(e.into()),
+                    }
+                }
                 Ok(resp) => last_err = Some(anyhow!("GET {full} -> HTTP {}", resp.status())),
                 Err(e) => last_err = Some(e.into()),
             }
@@ -309,7 +331,56 @@ impl VolumeTransport for HttpTransport {
         filename: &str,
         data: Bytes,
     ) -> Result<()> {
+        self.upload(location, file_id, auth, filename, data, false)
+            .await
+    }
+
+    async fn write_synced(
+        &self,
+        location: &str,
+        file_id: &str,
+        auth: &str,
+        filename: &str,
+        data: Bytes,
+        fsync: bool,
+    ) -> Result<VolumeWriteReceipt> {
+        self.upload(location, file_id, auth, filename, data, fsync)
+            .await?;
+        Ok(VolumeWriteReceipt::default())
+    }
+
+    async fn delete(&self, location: &str, file_id: &str, auth: &str) -> Result<()> {
         let url = format!("{}://{location}/{file_id}", self.scheme);
+        let mut req = self.http.delete(&url).timeout(self.write_timeout);
+        if !auth.is_empty() {
+            req = req.header(AUTHORIZATION, format!("BEARER {auth}"));
+        }
+        let resp = req.send().await.with_context(|| format!("delete {url}"))?;
+        if resp.status().is_success() || resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(());
+        }
+        bail!("delete {url} -> HTTP {}", resp.status())
+    }
+
+    fn name(&self) -> &'static str {
+        "http"
+    }
+}
+
+impl HttpTransport {
+    async fn upload(
+        &self,
+        location: &str,
+        file_id: &str,
+        auth: &str,
+        filename: &str,
+        data: Bytes,
+        fsync: bool,
+    ) -> Result<()> {
+        let mut url = format!("{}://{location}/{file_id}", self.scheme);
+        if fsync {
+            url.push_str("?fsync=true");
+        }
         let size = data.len() as u64;
         let part = reqwest::multipart::Part::stream_with_length(data, size)
             .file_name(filename.to_string());
@@ -347,23 +418,6 @@ impl VolumeTransport for HttpTransport {
             return Err(error);
         }
         Ok(())
-    }
-
-    async fn delete(&self, location: &str, file_id: &str, auth: &str) -> Result<()> {
-        let url = format!("{}://{location}/{file_id}", self.scheme);
-        let mut req = self.http.delete(&url).timeout(self.write_timeout);
-        if !auth.is_empty() {
-            req = req.header(AUTHORIZATION, format!("BEARER {auth}"));
-        }
-        let resp = req.send().await.with_context(|| format!("delete {url}"))?;
-        if resp.status().is_success() || resp.status() == reqwest::StatusCode::NOT_FOUND {
-            return Ok(());
-        }
-        bail!("delete {url} -> HTTP {}", resp.status())
-    }
-
-    fn name(&self) -> &'static str {
-        "http"
     }
 }
 
@@ -413,6 +467,58 @@ mod tests {
             .unwrap();
         assert_eq!(bytes, b"abc");
         server.await.unwrap();
+    }
+
+    /// A server that ignores Range and answers 200 with the whole needle
+    /// yields only the bytes asked for.
+    #[tokio::test]
+    async fn a_whole_needle_answer_to_a_ranged_read_is_sliced() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap().to_string();
+        let server = tokio::spawn(async move {
+            for _ in 0..3 {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = vec![0; 4096];
+                let _ = socket.read(&mut request).await.unwrap();
+                socket
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\n0123456789",
+                    )
+                    .await
+                    .unwrap();
+            }
+        });
+        let http = HttpTransport::new();
+        let at = std::slice::from_ref(&address);
+        assert_eq!(http.read(at, "7,abc", Some((3, 4))).await.unwrap(), b"3456");
+        assert_eq!(http.read(at, "7,abc", Some((8, 4))).await.unwrap(), b"89");
+        assert!(
+            http.read(at, "7,abc", Some((12, 4)))
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        server.await.unwrap();
+    }
+
+    /// An empty range needs no request, and one past the end of the address
+    /// space sends none.
+    #[tokio::test]
+    async fn empty_and_overflowing_ranges_send_no_request() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let closed = listener.local_addr().unwrap().to_string();
+        drop(listener);
+        let http = HttpTransport::new();
+        let read = http
+            .read(std::slice::from_ref(&closed), "7,abc", Some((5, 0)))
+            .await
+            .unwrap();
+        assert!(read.is_empty());
+        let error = http
+            .read(&[closed], "7,abc", Some((u64::MAX, 2)))
+            .await
+            .expect_err("the range cannot be expressed");
+        assert!(format!("{error:#}").contains("range"), "{error:#}");
     }
 
     /// A server that accepts the connection and never answers: a silently
@@ -492,6 +598,40 @@ mod tests {
         assert!(!is_not_written(&error));
         assert!(started.elapsed() >= bound && started.elapsed() < bound * 10);
         held.abort();
+    }
+
+    /// An assignment that wants the needle on disk asks the volume for it.
+    #[tokio::test]
+    async fn synced_write_asks_the_volume_to_fsync() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap().to_string();
+        let server = tokio::spawn(async move {
+            let mut lines = Vec::new();
+            for _ in 0..2 {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = vec![0; 4096];
+                let length = socket.read(&mut request).await.unwrap();
+                let request = String::from_utf8_lossy(&request[..length]).to_string();
+                lines.push(request.lines().next().unwrap_or_default().to_string());
+                socket
+                    .write_all(
+                        b"HTTP/1.1 201 Created\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    )
+                    .await
+                    .unwrap();
+            }
+            lines
+        });
+        let http = HttpTransport::new();
+        for fsync in [true, false] {
+            http.write_synced(&address, "7,abc", "", "k", Bytes::from_static(b"kv"), fsync)
+                .await
+                .unwrap();
+        }
+        assert_eq!(
+            server.await.unwrap(),
+            ["POST /7,abc?fsync=true HTTP/1.1", "POST /7,abc HTTP/1.1"]
+        );
     }
 
     /// A write that never reached the server (connection refused) is a plain

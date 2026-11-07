@@ -479,7 +479,7 @@ async fn expand_chunks(
         let raw = volumes.get(&urls, &fid, None).await?;
         let raw = match decoder {
             Some(decoder) => decoder.decode(chunk, 0, raw)?,
-            None if !chunk.cipher_key.is_empty() => {
+            None if encoded(chunk) => {
                 bail!("encrypted manifest chunk {fid} needs a decoder")
             }
             None => raw,
@@ -744,7 +744,7 @@ pub async fn read_resolved(
     if offset >= file_size || size == 0 {
         return Ok(Vec::new());
     }
-    let end = (offset + size).min(file_size);
+    let end = offset.saturating_add(size).min(file_size);
     if end - offset > crate::MAX_READ_BYTES {
         bail!(
             "read span too large ({} bytes, cap {})",
@@ -1439,6 +1439,19 @@ mod tests {
             volumes.chunks.lock().unwrap().len_bytes() == 0,
             "exact reads cache nothing"
         );
+
+        let tail = read_resolved(
+            &mut client,
+            &volumes,
+            &resolved,
+            &entry,
+            19,
+            u64::MAX,
+            &options,
+        )
+        .await
+        .unwrap();
+        assert_eq!(tail, &plain[19..], "a size past u64::MAX reads to EOF");
     }
 
     #[tokio::test]
@@ -1457,6 +1470,13 @@ mod tests {
             &plain[..16],
             "plain chunks and manifests read without one"
         );
+
+        let mut sse_manifest = entry.clone();
+        sse_manifest.chunks[1].sse_type = 3;
+        let err = read_file(&mut client, &volumes, &sse_manifest, 0, 8)
+            .await
+            .unwrap_err();
+        assert!(format!("{err:#}").contains("needs a decoder"), "{err:#}");
     }
 
     #[tokio::test]

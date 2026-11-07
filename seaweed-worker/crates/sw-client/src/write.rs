@@ -297,6 +297,7 @@ pub async fn flush_file(
     // Upload chunks concurrently (bounded), preserving order in the chunk list.
     // FilerClient/Writer are cheap clones (h2 multiplexes), so parallel uploads
     // overlap their AssignVolume + needle-POST round-trips.
+    anyhow::ensure!(chunk_size > 0, "flushing {file_path}: chunk size is zero");
     let n = data.len().div_ceil(chunk_size);
     let shared = data;
     let sem = Arc::new(tokio::sync::Semaphore::new(MAX_PARALLEL_UPLOADS));
@@ -420,6 +421,27 @@ mod tests {
                 ("41,b2".to_string(), b"kv-bytes".to_vec()),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn a_zero_chunk_size_is_an_error() {
+        let mut client = FilerClient::connect_lazy("127.0.0.1:1").unwrap();
+        let mut entry = Entry {
+            name: "f".into(),
+            ..Default::default()
+        };
+        let err = flush_file(
+            &mut client,
+            &Writer::new(),
+            "/d",
+            &mut entry,
+            Arc::new(vec![1; 8]),
+            0,
+            0,
+        )
+        .await
+        .unwrap_err();
+        assert!(format!("{err:#}").contains("chunk size is zero"), "{err:#}");
     }
 
     #[tokio::test]
