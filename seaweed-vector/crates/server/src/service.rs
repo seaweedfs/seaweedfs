@@ -90,7 +90,7 @@ fn options_trusted(sent: &HashMap<String, String>, fallback: &FallbackOptions) -
     }
     match (sent.get(ENDPOINT_OPTION), fallback.get(ENDPOINT_OPTION)) {
         (None, _) => true,
-        (Some(sent), Some(pinned)) => sent == pinned,
+        (Some(sent), Some(pinned)) => sent.trim_end_matches('/') == pinned.trim_end_matches('/'),
         (Some(_), None) => {
             let configured = CREDENTIAL_OPTIONS
                 .iter()
@@ -469,8 +469,16 @@ impl VectorServer {
 
     /// The description a request carries, when the engine may act on it.
     fn trusted(&self, table: &pb::Table) -> Option<TableDescription> {
-        resolved(table)
-            .filter(|description| options_trusted(&description.storage_options, &self.fallback))
+        resolved(table).filter(|description| {
+            let trusted = options_trusted(&description.storage_options, &self.fallback);
+            if !trusted {
+                tracing::debug!(
+                    location = %description.location,
+                    "the request's storage options are not taken; describing through the catalog"
+                );
+            }
+            trusted
+        })
     }
 
     async fn open(&self, table: &pb::Table) -> Result<Dataset> {
@@ -1142,6 +1150,10 @@ mod tests {
         let none = FallbackOptions::new();
 
         assert!(options_trusted(&gateway, &pinned));
+        assert!(options_trusted(
+            &options(&[(ENDPOINT_OPTION, "http://gw/")]),
+            &pinned
+        ));
         assert!(!options_trusted(&elsewhere, &pinned));
         assert!(!options_trusted(&gateway, &creds), "no configured endpoint");
         assert!(
