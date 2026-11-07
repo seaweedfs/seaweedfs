@@ -144,7 +144,7 @@ func (h *Handler) scanTablesForMaintenance(
 						continue
 					}
 				}
-				if s3tables.RootClaimed(recordRoots, path.Join(bucketPath, tablePath), path.Join(bucketPath, state.DataPath)) {
+				if filesShared(recordRoots, path.Join(bucketPath, tablePath), path.Join(bucketPath, state.DataPath)) {
 					glog.V(1).Infof("iceberg maintenance: skipping %s/%s/%s: its location is shared with another table or view", bucketName, nsName, tblName)
 					continue
 				}
@@ -196,6 +196,18 @@ func (h *Handler) scanTablesForMaintenance(
 	}
 
 	return tables, nil
+}
+
+// filesShared reports whether a record other than selfPath keeps its files at
+// root, above it or under it. A record that only sits on root, as one created
+// over a renamed table's old name does, keeps no files there.
+func filesShared(roots map[string]string, selfPath, root string) bool {
+	for recordPath, other := range roots {
+		if recordPath != selfPath && s3tables.PathsOverlap(other, root) {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeDetectionConfig(config Config) Config {

@@ -50,3 +50,18 @@ func TestDetectSkipsSharedLocation(t *testing.T) {
 		t.Fatalf("tables sharing one location were scheduled: %+v", tables)
 	}
 }
+
+// A table created over a renamed table's old name sits on that table's files
+// but keeps its own elsewhere, so the renamed table is still maintained.
+func TestFilesSharedIgnoresAnEntryOverTheRoot(t *testing.T) {
+	roots := map[string]string{
+		"/buckets/b/ns2/moved": "/buckets/b/ns/old",
+		"/buckets/b/ns/old":    "/buckets/b/ns/old-1",
+	}
+	if filesShared(roots, "/buckets/b/ns2/moved", "/buckets/b/ns/old") {
+		t.Error("an entry over the root counted as sharing its files")
+	}
+	if !filesShared(roots, "/buckets/b/ns/other", "/buckets/b/ns/old/data") {
+		t.Error("a root inside another record's files was not shared")
+	}
+}

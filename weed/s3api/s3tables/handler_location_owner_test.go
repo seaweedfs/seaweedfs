@@ -97,3 +97,18 @@ func TestDeleteTableKeepsSharedFiles(t *testing.T) {
 	assert.NotNil(t, fs.Get(GetNamespacePath(renameTestBucket, "ns"), "t"))
 	assert.NotNil(t, fs.Get(path.Join(tablePath, "metadata"), "v3.metadata.json"))
 }
+
+// A table that keeps its files elsewhere still owns its catalog entry: a view
+// recorded at that entry would take it with the view's files on drop.
+func TestLocationRefusesAnotherRecordsEntry(t *testing.T) {
+	fs, m := startRenameManager(t)
+	bucketARN := mustBucketARN(t)
+	requireOK(t, m, fs, "CreateTable", &CreateTableRequest{
+		TableBucketARN: bucketARN, Namespace: []string{"ns"}, Name: "a", Format: FormatIceberg,
+		MetadataLocation: renameLocation("ns/storage/metadata/v1.metadata.json"),
+	})
+	status, resp := runHandler(t, m, fs.Client, "CreateView", &CreateViewRequest{
+		TableBucketARN: bucketARN, Namespace: []string{"ns"}, Name: "v", MetadataLocation: renameLocation("ns/a/metadata/v1.metadata.json"),
+	})
+	assert.Equal(t, http.StatusConflict, status, "%+v", resp)
+}

@@ -996,14 +996,16 @@ func CatalogRecordRoots(ctx context.Context, client filer_pb.SeaweedFilerClient,
 	return roots, nil
 }
 
-// RootClaimed reports whether a record other than selfPath keeps its files at
-// root, above it or under it.
+// PathsOverlap reports whether a and b are the same path or one holds the other.
+func PathsOverlap(a, b string) bool {
+	return a == b || strings.HasPrefix(a, b+"/") || strings.HasPrefix(b, a+"/")
+}
+
+// RootClaimed reports whether a record other than selfPath has its entry or its
+// files at root, above it or under it.
 func RootClaimed(roots map[string]string, selfPath, root string) bool {
 	for recordPath, other := range roots {
-		if recordPath == selfPath {
-			continue
-		}
-		if other == root || strings.HasPrefix(other, root+"/") || strings.HasPrefix(root, other+"/") {
+		if recordPath != selfPath && (PathsOverlap(other, root) || PathsOverlap(recordPath, root)) {
 			return true
 		}
 	}
