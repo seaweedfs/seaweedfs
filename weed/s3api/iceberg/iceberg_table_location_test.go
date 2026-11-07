@@ -89,17 +89,14 @@ func TestCreateTableThatLosesTheRaceReturnsTheRegisteredTable(t *testing.T) {
 	}
 }
 
-// A staged table's commit that finds its name registered by another create
-// fails, and removes its metadata, instead of reporting a table the catalog
-// does not hold.
+// Two commits of one staged table write the same metadata file. The one that
+// finds the table registered, and moved on to newer metadata, fails without
+// removing that file, which the registered table's history still names.
 func TestStagedCommitThatLosesTheRaceFails(t *testing.T) {
 	const bucket = "warehouse"
 	fc := newMemFiler()
 	seedNamespace(fc, bucket, "finance", "alice")
 	s := NewServer(fc, nil)
-	w := httptest.NewRecorder()
-	s.handleCreateTable(w, newCreateTableRequest(t, bucket, "finance", `{"name":"orders"}`, "alice"))
-	decodeCreated(t, w)
 
 	tableUUID := uuid.New()
 	location := "s3://" + bucket + "/finance/orders-" + tableUUID.String()
@@ -107,7 +104,7 @@ func TestStagedCommitThatLosesTheRaceFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, reqErr := s.finalizeCreateOnCommit(context.Background(), createOnCommitInput{
+	input := createOnCommitInput{
 		bucketARN:    buildTableBucketARN(bucket),
 		markerBucket: bucket,
 		namespace:    []string{"finance"},
@@ -116,13 +113,30 @@ func TestStagedCommitThatLosesTheRaceFails(t *testing.T) {
 		location:     location,
 		tableUUID:    tableUUID,
 		baseMetadata: base,
-	})
-	if reqErr == nil || reqErr.status != http.StatusConflict {
-		t.Fatalf("commit error = %+v, want a conflict", reqErr)
 	}
-	staged := path.Join(s3tables.TablesPath, strings.TrimPrefix(location, "s3://"), "metadata", "v1.metadata.json")
-	if _, ok := fc.entries[staged]; ok {
-		t.Errorf("losing commit left %s", staged)
+	if _, reqErr := s.finalizeCreateOnCommit(context.Background(), input); reqErr != nil {
+		t.Fatalf("first commit: %+v", reqErr)
+	}
+	ctx := context.Background()
+	mgr := s3tables.NewManagerClient(fc)
+	var registered s3tables.GetTableResponse
+	if err := s.tablesManager.Execute(ctx, mgr, "GetTable", &s3tables.GetTableRequest{TableBucketARN: input.bucketARN, Namespace: input.namespace, Name: "orders"}, &registered, "alice"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.tablesManager.Execute(ctx, mgr, "UpdateTable", &s3tables.UpdateTableRequest{
+		TableBucketARN: input.bucketARN, Namespace: input.namespace, Name: "orders", VersionToken: registered.VersionToken,
+		MetadataVersion: 2, MetadataLocation: location + "/metadata/v2.metadata.json",
+	}, nil, "alice"); err != nil {
+		t.Fatal(err)
+	}
+
+	_, reqErr := s.finalizeCreateOnCommit(ctx, input)
+	if reqErr == nil || reqErr.status != http.StatusConflict {
+		t.Fatalf("second commit error = %+v, want a conflict", reqErr)
+	}
+	published := path.Join(s3tables.TablesPath, strings.TrimPrefix(location, "s3://"), "metadata", "v1.metadata.json")
+	if _, ok := fc.entries[published]; !ok {
+		t.Errorf("losing commit removed %s", published)
 	}
 }
 
