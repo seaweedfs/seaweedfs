@@ -1453,6 +1453,29 @@ impl Upload {
     }
 }
 
+/// An upload dropped before it was completed or aborted, as when the request
+/// writing it was cancelled, discards what it uploaded; one completed, or
+/// whose completion is in doubt, has nothing left to discard.
+impl Drop for Upload {
+    fn drop(&mut self) {
+        let chunks = std::mem::take(&mut self.state.lock().unwrap().chunks);
+        if chunks.is_empty() {
+            return;
+        }
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let (source, path) = (self.store.reads.source.clone(), self.path.clone());
+        runtime.spawn(async move {
+            for uploaded in &chunks {
+                if let Err(err) = source.discard(&uploaded.assignment).await {
+                    tracing::warn!("{path}: discarding {}: {err:#}", uploaded.chunk.file_id);
+                }
+            }
+        });
+    }
+}
+
 #[async_trait::async_trait]
 impl MultipartUpload for Upload {
     fn put_part(&mut self, data: PutPayload) -> UploadPart {
@@ -2693,11 +2716,37 @@ mod tests {
         assert_eq!(fake.needles.lock().unwrap().len(), 2);
         upload.complete().await.unwrap_err();
         upload.abort().await.unwrap();
+        drop(upload);
+        tokio::task::yield_now().await;
         assert_eq!(
             fake.discarded.load(Ordering::Relaxed),
             0,
-            "kept through abort"
+            "kept through abort and drop"
         );
+    }
+
+    /// An upload dropped unfinished, as by a cancelled request, discards
+    /// what it uploaded.
+    #[tokio::test]
+    async fn a_dropped_upload_discards_its_chunks() {
+        let fake = Arc::new(Fake::default());
+        let store = writing_store(fake.clone(), no_keys(), 4096, false, false);
+        let mut upload = store
+            .put_multipart(&Path::from("vector/idx/data/gone.lance"))
+            .await
+            .unwrap();
+        upload
+            .put_part(Bytes::from(vec![4u8; 5000]).into())
+            .await
+            .unwrap();
+        drop(upload);
+        for _ in 0..50 {
+            if fake.discarded.load(Ordering::Relaxed) == 2 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(fake.discarded.load(Ordering::Relaxed), 2);
     }
 
     /// Chunks go to the bucket's collection as the gateway names it, with
