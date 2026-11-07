@@ -1037,7 +1037,14 @@ func (s *Server) cleanupStaleTableLocation(ctx context.Context, bucketName, tabl
 		return fmt.Errorf("cleanupStaleTableLocation: refusing unsafe table path %q", tablePath)
 	}
 	return s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		err := filer_pb.DoRemove(ctx, client, parentDir, name, true, true, true, false, nil)
+		roots, err := s3tables.CatalogRecordRoots(ctx, client, bucketName)
+		if err != nil {
+			return err
+		}
+		if s3tables.RootClaimed(roots, "", path.Join(parentDir, name)) {
+			return s3tables.ErrLocationInUse
+		}
+		err = filer_pb.DoRemove(ctx, client, parentDir, name, true, true, true, false, nil)
 		if err == nil || errors.Is(err, filer_pb.ErrNotFound) {
 			return nil
 		}
