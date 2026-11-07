@@ -320,6 +320,9 @@ func TestCreateTableOnExistingTableIsConflict(t *testing.T) {
 // Stage-create on a name that is taken is refused at once, rather than after
 // the engine has written its data: nothing is staged and no marker is left.
 func TestStageCreateOnExistingTableIsConflict(t *testing.T) {
+	// On by default; pinned so a disabling environment cannot turn the 409 into
+	// the 501 for a disabled stage-create.
+	t.Setenv("ICEBERG_ENABLE_STAGE_CREATE", "true")
 	e := newConflictEnv(t)
 	if rec := e.createTable(conflictTableBody("first_col", "")); rec.Code != http.StatusOK {
 		t.Fatalf("create = %d (%s)", rec.Code, rec.Body.String())
