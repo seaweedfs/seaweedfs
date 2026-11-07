@@ -328,8 +328,8 @@ impl Source for Filers {
     }
 
     async fn assign(&self, path: &str, collection: &str, size: u64) -> anyhow::Result<Assignment> {
-        // The filer picks replication from the path's storage rules; the
-        // collection is the bucket's, as the gateway names it.
+        // The filer picks replication from the path's storage rules, and the
+        // collection too when none is named, as it does for the gateway.
         let options = AssignVolumeOptions {
             collection: collection.to_string(),
             ..Default::default()
@@ -1237,7 +1237,8 @@ struct Upload {
     store: DirectStore,
     location: Path,
     path: String,
-    /// The bucket's collection, as the gateway names it.
+    /// The collection the gateway names for the bucket: its filer group's,
+    /// or none, so the filer's rules for the path pick it.
     collection: String,
     mime: String,
     encoder: Arc<EntryEncoder>,
@@ -1267,7 +1268,7 @@ impl Upload {
             .with_context(|| format!("encoding {path}"))
             .map_err(generic)?;
         let collection = match store.reads.filer_group.as_str() {
-            "" => store.bucket.to_string(),
+            "" => String::new(),
             group => format!("{group}_{}", store.bucket),
         };
         let mime = attributes
@@ -3009,11 +3010,11 @@ mod tests {
         assert_eq!(fake.discarded.load(Ordering::Relaxed), 1);
     }
 
-    /// Chunks go to the bucket's collection as the gateway names it, with
-    /// the filer group in front when the cluster has one.
+    /// Chunks name the collection the gateway names: the filer group's for
+    /// the bucket, or none, leaving it to the filer's rules for the path.
     #[tokio::test]
     async fn chunks_go_to_the_buckets_collection() {
-        for (group, want) in [("", "vb"), ("eu", "eu_vb")] {
+        for (group, want) in [("", ""), ("eu", "eu_vb")] {
             let fake = Arc::new(Fake::default());
             let mut reads = DirectReads::new(fake.clone(), "", no_keys());
             {
