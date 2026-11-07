@@ -392,10 +392,16 @@ async fn filers_of(master: &str, filer_group: &str, tls: Option<&GrpcTls>) -> Re
     .context("master did not answer")??
     .into_inner()
     .cluster_nodes;
-    nodes
+    Ok(nodes
         .iter()
-        .map(|node| filer_grpc_addr(&node.address))
-        .collect()
+        .filter_map(|node| match filer_grpc_addr(&node.address) {
+            Ok(addr) => Some(addr),
+            Err(err) => {
+                tracing::warn!("master {master} lists filer {:?}: {err:#}", node.address);
+                None
+            }
+        })
+        .collect())
 }
 
 /// A filer registers as `host:port.grpc`, or `host:port` with its gRPC at
