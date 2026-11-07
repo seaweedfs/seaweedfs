@@ -99,6 +99,38 @@ func TestFirstCommitIntoWarehouseLocationKeepsTheRoot(t *testing.T) {
 	assert.NotContains(t, fs.Get(nsPath, "w").Extended, ExtendedKeyMoving)
 }
 
+// A create that backs out after making the table's directory removes it, so
+// failed creates leave nothing behind under the namespace.
+func TestBackedOutCreateRemovesItsDirectory(t *testing.T) {
+	fs, m := startEmptyBucket(t)
+	requireOK(t, m, fs, "CreateNamespace", createNamespaceNsRequest(t))
+	bucketPath := GetTableBucketPath(renameTestBucket)
+	nsPath := GetNamespacePath(renameTestBucket, "ns")
+	recreated := recreatedNamespace(t, "ns")
+	swapped := false
+	fs.OnLookup = func(dir, name string) {
+		switch {
+		case dir == nsPath && name == "t" && !swapped:
+			swapped = true
+			fs.Put(bucketPath, "ns", recreated)
+		case path.Dir(dir) == nsPath && name == "data":
+			// The filer makes the parents of an entry it creates.
+			fs.Put(nsPath, path.Base(dir), nil)
+		}
+	}
+
+	code, resp := runHandler(t, m, fs.Client, "CreateTable", createTableRequest(t, "ns", "t"))
+	require.Equal(t, http.StatusNotFound, code, "%+v", resp)
+	fs.OnLookup = nil
+
+	var left []string
+	require.NoError(t, eachDirEntry(context.Background(), fs.Client, nsPath, func(entry *filer_pb.Entry) bool {
+		left = append(left, entry.Name)
+		return true
+	}))
+	assert.Empty(t, left)
+}
+
 func getTable(t *testing.T, m *Manager, fs *s3tablestest.MemFiler, bucketARN, name string, out *GetTableResponse) {
 	t.Helper()
 	require.NoError(t, m.Execute(context.Background(), NewManagerClient(fs.Client), "GetTable", &GetTableRequest{TableBucketARN: bucketARN, Namespace: []string{"ns"}, Name: name}, out, ""))

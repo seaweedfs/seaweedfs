@@ -183,10 +183,10 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 		if len(tagsBytes) > 0 {
 			attrs[ExtendedKeyTags] = tagsBytes
 		}
-		if err := h.claimCatalogEntryAt(r.Context(), client, bucketName, tablePath, root, attrs, dataPath, tablePath); err != nil {
+		if err := h.claimCatalogEntryAt(r.Context(), client, bucketName, tablePath, root, attrs, dataPath, dataParent, tablePath); err != nil {
 			return err
 		}
-		return h.confirmParent(r.Context(), client, GetNamespacePath(bucketName, namespaceName), isNamespaceCreatedAt(target.namespaceCreatedAt), tablePath, attrs, dataPath, tablePath)
+		return h.confirmParent(r.Context(), client, GetNamespacePath(bucketName, namespaceName), isNamespaceCreatedAt(target.namespaceCreatedAt), tablePath, attrs, dataPath, dataParent, tablePath)
 	})
 
 	if err != nil {
