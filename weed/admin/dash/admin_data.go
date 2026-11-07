@@ -25,6 +25,8 @@ type AdminData struct {
 	TotalVolumes      int                 `json:"total_volumes"`
 	TotalChunks       int64               `json:"total_chunks"`
 	TotalSize         int64               `json:"total_size"`
+	DiskUsage         int64               `json:"disk_usage"`
+	DiskCapacity      int64               `json:"disk_capacity"`
 	VolumeSizeLimitMB uint64              `json:"volume_size_limit_mb"`
 	MasterNodes       []MasterNode        `json:"master_nodes"`
 	VolumeServers     []VolumeServer      `json:"volume_servers"`
@@ -240,6 +242,8 @@ func (s *AdminServer) GetAdminData(username string) (AdminData, error) {
 		TotalVolumes:      topology.TotalVolumes,
 		TotalChunks:       topology.TotalChunks,
 		TotalSize:         topology.TotalSize,
+		DiskUsage:         topology.DiskUsage,
+		DiskCapacity:      topology.DiskCapacity,
 		VolumeSizeLimitMB: volumeSizeLimitMB,
 		MasterNodes:       masterNodes,
 		VolumeServers:     volumeServersData.VolumeServers,

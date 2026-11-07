@@ -169,7 +169,7 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
                                             <div class="d-flex align-items-center">
                                                 <div class="progress me-2" style="width: 60px; height: 16px;">
                                                     <div class="progress-bar" role="progressbar"
-                                                         style={fmt.Sprintf("width: %d%%", calculatePercent(int(host.DiskUsage), int(host.DiskCapacity)))}>
+                                                         style={fmt.Sprintf("width: %d%%", calculatePercent64(host.DiskUsage, host.DiskCapacity))}>
                                                     </div>
                                                 </div>
                                                 <small>{formatBytes(host.DiskUsage)}</small>

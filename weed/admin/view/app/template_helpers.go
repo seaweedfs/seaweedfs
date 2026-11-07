@@ -46,6 +46,15 @@ func formatNumber(num int64) string {
 	return result
 }
 
+// calculatePercent64 is calculatePercent for byte counts, which overflow
+// integer arithmetic once multiplied by 100.
+func calculatePercent64(current, max int64) int {
+	if max <= 0 {
+		return 0
+	}
+	return int(min(float64(current)/float64(max)*100, 100))
+}
+
 // calculatePercent calculates percentage for progress bars
 func calculatePercent(current, max int) int {
 	if max == 0 {
