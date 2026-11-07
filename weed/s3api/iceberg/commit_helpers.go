@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"net/http"
+	"path"
 	"strings"
 	"time"
 
@@ -47,6 +48,78 @@ func (s *Server) stageCommitMetadata(ctx context.Context, metadataBucket, metada
 		return "", "", err
 	}
 	return metadataFileName, fmt.Sprintf("%s/metadata/%s", strings.TrimSuffix(location, "/"), metadataFileName), nil
+}
+
+// discardStagedMetadata removes a metadata file this request staged and the
+// catalog will never point at. metadataFileName must be the name
+// stageCommitMetadata returned: it is exclusive to the caller, which is what
+// makes the delete safe against a concurrent writer's file.
+func (s *Server) discardStagedMetadata(ctx context.Context, metadataBucket, metadataPath, metadataFileName, metadataLocation string) {
+	if err := s.deleteMetadataFile(ctx, metadataBucket, metadataPath, metadataFileName); err != nil {
+		glog.V(1).Infof("Iceberg: failed to cleanup metadata file %s after the catalog refused it: %v", metadataLocation, err)
+	}
+}
+
+// registrationRefused reports whether a failed registration was refused
+// outright by the catalog (a conflict, a name already taken, any other 4xx), so
+// no record points at the staged file. A transport failure or 5xx is not a
+// refusal: the record may have been written before the error surfaced.
+func registrationRefused(err error) bool {
+	if isS3TablesConflict(err) || isS3TablesAlreadyExists(err) {
+		return true
+	}
+	status, _, _ := classifyManagerError(err)
+	return status >= 400 && status < 500
+}
+
+// recordReferencesAt reports whether the table's catalog record could still
+// reference a staged metadata file whose registration the catalog refused. A
+// refusal does not always remove the record: a create backs its record out
+// only while the record holds what the create wrote, and answers a conflict,
+// leaving the record in place, when an update reached it first. The record
+// keeps the file if it names it, or if it carries the table UUID this request
+// wrote, which makes it this request's own record that later commits built on.
+// A record still marked by an unfinished operation counts like any other, and
+// one that cannot be read or decoded keeps the file too.
+func (s *Server) recordReferencesAt(ctx context.Context, bucketName string, namespace []string, tableName, metadataLocation, tableUUID string) bool {
+	tablePath := s3tables.GetTablePath(bucketName, flattenNamespacePath(namespace), tableName)
+	var entry *filer_pb.Entry
+	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
+			Directory: path.Dir(tablePath),
+			Name:      path.Base(tablePath),
+		})
+		if err != nil {
+			return err
+		}
+		entry = resp.Entry
+		return nil
+	})
+	if errors.Is(err, filer_pb.ErrNotFound) {
+		return false
+	}
+	if err != nil || entry == nil {
+		glog.V(1).Infof("Iceberg: keeping metadata file %s, the record of %s could not be read: %v", metadataLocation, tableName, err)
+		return true
+	}
+	raw := entry.Extended[s3tables.ExtendedKeyMetadata]
+	if len(raw) == 0 {
+		// A directory with no record holds only files, such as data an engine
+		// wrote before the table was registered.
+		return false
+	}
+	var record struct {
+		MetadataLocation string                  `json:"metadataLocation"`
+		Metadata         *s3tables.TableMetadata `json:"metadata"`
+	}
+	if err := json.Unmarshal(raw, &record); err != nil {
+		glog.V(1).Infof("Iceberg: keeping metadata file %s, the record of %s could not be decoded: %v", metadataLocation, tableName, err)
+		return true
+	}
+	if record.MetadataLocation == metadataLocation {
+		return true
+	}
+	return record.Metadata != nil && record.Metadata.Iceberg != nil && record.Metadata.Iceberg.TableUUID == tableUUID
 }
 
 type icebergRequestError struct {
@@ -147,7 +220,6 @@ func (s *Server) finalizeCreateOnCommit(ctx context.Context, input createOnCommi
 		metadataVersion = 1
 	}
 	metadataFileName := fmt.Sprintf("v%d.metadata.json", metadataVersion)
-	newMetadataLocation := fmt.Sprintf("%s/metadata/%s", strings.TrimSuffix(input.location, "/"), metadataFileName)
 
 	metadataBytes, err := json.Marshal(newMetadata)
 	if err != nil {
@@ -194,7 +266,11 @@ func (s *Server) finalizeCreateOnCommit(ctx context.Context, input createOnCommi
 			message: err.Error(),
 		}
 	}
-	if err := s.saveMetadataFile(ctx, metadataBucket, metadataPath, metadataFileName, metadataBytes, false); err != nil {
+	// Two creators racing for the same table both pick this name. Staging it
+	// exclusively gives each its own file, so the loser can discard its file
+	// below without deleting the one the winner's record points at.
+	metadataFileName, newMetadataLocation, err := s.stageCommitMetadata(ctx, metadataBucket, metadataPath, input.location, metadataFileName, metadataBytes)
+	if err != nil {
 		return nil, &icebergRequestError{
 			status:  http.StatusInternalServerError,
 			errType: "InternalServerError",
@@ -216,20 +292,22 @@ func (s *Server) finalizeCreateOnCommit(ctx context.Context, input createOnCommi
 		MetadataVersion:  metadataVersion,
 		MetadataLocation: newMetadataLocation,
 	}
+	var createResp s3tables.CreateTableResponse
 	createErr := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		mgrClient := s3tables.NewManagerClient(client)
-		return s.tablesManager.Execute(ctx, mgrClient, "CreateTable", createReq, nil, input.identityName)
+		return s.tablesManager.Execute(ctx, mgrClient, "CreateTable", createReq, &createResp, input.identityName)
 	})
+	tableCreatedConcurrently := &icebergRequestError{
+		status:  http.StatusConflict,
+		errType: "CommitFailedException",
+		message: "Table was created concurrently",
+	}
 	if createErr != nil {
-		if cleanupErr := s.deleteMetadataFile(ctx, metadataBucket, metadataPath, metadataFileName); cleanupErr != nil {
-			glog.V(1).Infof("Iceberg: failed to cleanup metadata file %s after create-on-commit failure: %v", newMetadataLocation, cleanupErr)
+		if registrationRefused(createErr) && !s.recordReferencesAt(ctx, metadataBucket, input.namespace, input.tableName, newMetadataLocation, input.tableUUID.String()) {
+			s.discardStagedMetadata(ctx, metadataBucket, metadataPath, metadataFileName, newMetadataLocation)
 		}
 		if isS3TablesConflict(createErr) || isS3TablesAlreadyExists(createErr) {
-			return nil, &icebergRequestError{
-				status:  http.StatusConflict,
-				errType: "CommitFailedException",
-				message: "Table was created concurrently",
-			}
+			return nil, tableCreatedConcurrently
 		}
 		glog.Errorf("Iceberg: CommitTable CreateTable error: %v", createErr)
 		return nil, &icebergRequestError{
@@ -237,6 +315,13 @@ func (s *Server) finalizeCreateOnCommit(ctx context.Context, input createOnCommi
 			errType: "InternalServerError",
 			message: "Failed to commit table creation: " + createErr.Error(),
 		}
+	}
+	// A name that already holds a table is answered with that table's own
+	// location rather than an error: another creator won the race. That
+	// location is empty for a table registered without one.
+	if createResp.MetadataLocation != newMetadataLocation {
+		s.discardStagedMetadata(ctx, metadataBucket, metadataPath, metadataFileName, newMetadataLocation)
+		return nil, tableCreatedConcurrently
 	}
 
 	markerBucket := input.markerBucket
