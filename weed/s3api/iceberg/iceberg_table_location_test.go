@@ -1,12 +1,15 @@
 package iceberg
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path"
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 )
 
@@ -77,6 +80,43 @@ func TestCreateTableThatLosesTheRaceReturnsTheRegisteredTable(t *testing.T) {
 	won, lost := decodeCreated(t, first), decodeCreated(t, second)
 	if lost != won {
 		t.Errorf("losing create answered %+v, want the registered table %+v", lost, won)
+	}
+}
+
+// A staged table's commit that finds its name registered by another create
+// fails, and removes its metadata, instead of reporting a table the catalog
+// does not hold.
+func TestStagedCommitThatLosesTheRaceFails(t *testing.T) {
+	const bucket = "warehouse"
+	fc := newMemFiler()
+	seedNamespace(fc, bucket, "finance", "alice")
+	s := NewServer(fc, nil)
+	w := httptest.NewRecorder()
+	s.handleCreateTable(w, newCreateTableRequest(t, bucket, "finance", `{"name":"orders"}`, "alice"))
+	decodeCreated(t, w)
+
+	tableUUID := uuid.New()
+	location := "s3://" + bucket + "/finance/orders-" + tableUUID.String()
+	base, err := newTableMetadata(tableUUID, location, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, reqErr := s.finalizeCreateOnCommit(context.Background(), createOnCommitInput{
+		bucketARN:    buildTableBucketARN(bucket),
+		markerBucket: bucket,
+		namespace:    []string{"finance"},
+		tableName:    "orders",
+		identityName: "alice",
+		location:     location,
+		tableUUID:    tableUUID,
+		baseMetadata: base,
+	})
+	if reqErr == nil || reqErr.status != http.StatusConflict {
+		t.Fatalf("commit error = %+v, want a conflict", reqErr)
+	}
+	staged := path.Join(s3tables.TablesPath, strings.TrimPrefix(location, "s3://"), "metadata", "v1.metadata.json")
+	if _, ok := fc.entries[staged]; ok {
+		t.Errorf("losing commit left %s", staged)
 	}
 }
 
