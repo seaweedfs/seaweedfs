@@ -960,13 +960,30 @@ func eachDirEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, dir s
 }
 
 // CatalogRecordRoot returns the directory the catalog record at recordPath
-// keeps its files under: the location it names inside the bucket, or its own
-// path.
-func CatalogRecordRoot(bucketName, recordPath, metadataLocation string) string {
-	if dir := TableDataDirFromMetadataLocation(metadataLocation); strings.HasPrefix(dir, GetTableBucketPath(bucketName)+"/") {
+// keeps its files under: the one its metadata location names inside the
+// bucket, else the warehouse location assigned at create, else its own path.
+func CatalogRecordRoot(bucketName, recordPath, metadataLocation, warehouseLocation string) string {
+	bucketPath := GetTableBucketPath(bucketName) + "/"
+	if dir := TableDataDirFromMetadataLocation(metadataLocation); strings.HasPrefix(dir, bucketPath) {
+		return dir
+	}
+	if dir := warehouseDir(warehouseLocation); strings.HasPrefix(dir, bucketPath) {
 		return dir
 	}
 	return recordPath
+}
+
+func warehouseDir(warehouseLocation string) string {
+	loc := strings.TrimPrefix(strings.TrimSuffix(warehouseLocation, "/"), "s3://")
+	if loc == "" {
+		return ""
+	}
+	return path.Join(TablesPath, loc)
+}
+
+// root returns the directory the record at recordPath keeps its files under.
+func (m *tableMetadataInternal) root(bucketName, recordPath string) string {
+	return CatalogRecordRoot(bucketName, recordPath, m.MetadataLocation, m.WarehouseLocation)
 }
 
 // CatalogRecordRoots maps every table and view record of the bucket, in any
@@ -997,10 +1014,11 @@ func CatalogRecordRoots(ctx context.Context, client filer_pb.SeaweedFilerClient,
 					continue
 				}
 				var record struct {
-					MetadataLocation string `json:"metadataLocation"`
+					MetadataLocation  string `json:"metadataLocation"`
+					WarehouseLocation string `json:"warehouseLocation"`
 				}
 				_ = json.Unmarshal(data, &record)
-				roots[recordPath] = append(roots[recordPath], CatalogRecordRoot(bucketName, recordPath, record.MetadataLocation))
+				roots[recordPath] = append(roots[recordPath], CatalogRecordRoot(bucketName, recordPath, record.MetadataLocation, record.WarehouseLocation))
 			}
 			return true
 		}); err != nil {
@@ -1034,27 +1052,27 @@ func RootClaimed(roots map[string][]string, selfPath, root string) bool {
 	return false
 }
 
-// checkLocationUnclaimed returns ErrLocationInUse when the root the record at
-// recordPath would have with metadataLocation is claimed by another record.
-func checkLocationUnclaimed(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketName, recordPath, metadataLocation string) error {
+// checkLocationUnclaimed returns ErrLocationInUse when root, the one the record
+// at recordPath would have, is claimed by another record.
+func checkLocationUnclaimed(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketName, recordPath, root string) error {
 	roots, err := CatalogRecordRoots(ctx, client, bucketName)
 	if err != nil {
 		return err
 	}
-	if RootClaimed(roots, recordPath, CatalogRecordRoot(bucketName, recordPath, metadataLocation)) {
+	if RootClaimed(roots, recordPath, root) {
 		return ErrLocationInUse
 	}
 	return nil
 }
 
-// claimCatalogEntryAt claims path like claimCatalogEntry, then checks the root
-// metadataLocation gives it again with the record written: of two creates
-// racing for one root, at least one sees the other and backs out.
-func (h *S3TablesHandler) claimCatalogEntryAt(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketName, path, metadataLocation string, attrs map[string][]byte, emptyDirs ...string) error {
+// claimCatalogEntryAt claims path like claimCatalogEntry, then checks its root
+// again with the record written: of two creates racing for one root, at least
+// one sees the other and backs out.
+func (h *S3TablesHandler) claimCatalogEntryAt(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketName, path, root string, attrs map[string][]byte, emptyDirs ...string) error {
 	if err := h.claimCatalogEntry(ctx, client, path, attrs); err != nil {
 		return err
 	}
-	if err := checkLocationUnclaimed(ctx, client, bucketName, path, metadataLocation); err != nil {
+	if err := checkLocationUnclaimed(ctx, client, bucketName, path, root); err != nil {
 		return h.backOutChild(ctx, client, path, attrs, false, emptyDirs, err)
 	}
 	return nil
@@ -1066,7 +1084,7 @@ func (h *S3TablesHandler) claimCatalogEntryAt(ctx context.Context, client filer_
 // one is checked again. Of two writers racing for it at least one sees the
 // other, and the old root stays held until the move lands. A move that backs
 // out drops the reservation and leaves the metadata as it was.
-func (h *S3TablesHandler) moveCatalogRecord(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketName, path, metadataLocation string, stored, moving []byte, write func(extended map[string][]byte) error) error {
+func (h *S3TablesHandler) moveCatalogRecord(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketName, path, root string, stored, moving []byte, write func(extended map[string][]byte) error) error {
 	if err := h.mutateCatalogRecord(ctx, client, path, func(extended map[string][]byte) error {
 		if !bytes.Equal(extended[ExtendedKeyMetadata], stored) {
 			return fmt.Errorf("%w: %s", ErrConcurrentUpdate, ExtendedKeyMetadata)
@@ -1079,7 +1097,7 @@ func (h *S3TablesHandler) moveCatalogRecord(ctx context.Context, client filer_pb
 	}); err != nil {
 		return err
 	}
-	err := checkLocationUnclaimed(ctx, client, bucketName, path, metadataLocation)
+	err := checkLocationUnclaimed(ctx, client, bucketName, path, root)
 	if err == nil {
 		err = h.mutateCatalogRecord(ctx, client, path, func(extended map[string][]byte) error {
 			if !bytes.Equal(extended[ExtendedKeyMoving], moving) {
@@ -1104,9 +1122,9 @@ func (h *S3TablesHandler) moveCatalogRecord(ctx context.Context, client filer_pb
 
 // refuseClaimedLocation answers a request whose record would share its files
 // with another table or view of the bucket.
-func (h *S3TablesHandler) refuseClaimedLocation(w http.ResponseWriter, r *http.Request, filerClient FilerClient, bucketName, recordPath, metadataLocation string) error {
+func (h *S3TablesHandler) refuseClaimedLocation(w http.ResponseWriter, r *http.Request, filerClient FilerClient, bucketName, recordPath, root string) error {
 	err := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return checkLocationUnclaimed(r.Context(), client, bucketName, recordPath, metadataLocation)
+		return checkLocationUnclaimed(r.Context(), client, bucketName, recordPath, root)
 	})
 	if errors.Is(err, ErrLocationInUse) {
 		h.writeError(w, http.StatusConflict, ErrCodeConflict, err.Error())

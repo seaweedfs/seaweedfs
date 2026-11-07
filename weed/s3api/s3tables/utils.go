@@ -271,6 +271,9 @@ type tableMetadataInternal struct {
 	MetadataVersion  int            `json:"metadataVersion"`
 	MetadataLocation string         `json:"metadataLocation,omitempty"`
 	Metadata         *TableMetadata `json:"metadata,omitempty"`
+	// WarehouseLocation is where a table created without a location keeps
+	// its files. Records written before it existed keep them under their path.
+	WarehouseLocation string `json:"warehouseLocation,omitempty"`
 }
 
 // IsTableBucketEntry returns true when the entry is marked as a table bucket.

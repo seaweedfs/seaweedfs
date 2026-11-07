@@ -216,20 +216,27 @@ func (s *Server) finalizeCreateOnCommit(ctx context.Context, input createOnCommi
 		MetadataVersion:  metadataVersion,
 		MetadataLocation: newMetadataLocation,
 	}
+	var createResp s3tables.CreateTableResponse
 	createErr := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		mgrClient := s3tables.NewManagerClient(client)
-		return s.tablesManager.Execute(ctx, mgrClient, "CreateTable", createReq, nil, input.identityName)
+		return s.tablesManager.Execute(ctx, mgrClient, "CreateTable", createReq, &createResp, input.identityName)
 	})
+	if createErr == nil && createResp.MetadataLocation != newMetadataLocation {
+		// Another create registered the name first.
+		createErr = &s3tables.S3TablesError{Type: s3tables.ErrCodeTableAlreadyExists, Message: fmt.Sprintf("table %s already exists", input.tableName)}
+	}
 	if createErr != nil {
-		if cleanupErr := s.deleteMetadataFile(ctx, metadataBucket, metadataPath, metadataFileName); cleanupErr != nil {
-			glog.V(1).Infof("Iceberg: failed to cleanup metadata file %s after create-on-commit failure: %v", newMetadataLocation, cleanupErr)
-		}
 		if isS3TablesConflict(createErr) || isS3TablesAlreadyExists(createErr) {
+			// Another commit of the same staged table writes this same file,
+			// and the table it registered may still reference it.
 			return nil, &icebergRequestError{
 				status:  http.StatusConflict,
 				errType: "CommitFailedException",
 				message: "Table was created concurrently",
 			}
+		}
+		if cleanupErr := s.deleteMetadataFile(ctx, metadataBucket, metadataPath, metadataFileName); cleanupErr != nil {
+			glog.V(1).Infof("Iceberg: failed to cleanup metadata file %s after create-on-commit failure: %v", newMetadataLocation, cleanupErr)
 		}
 		glog.Errorf("Iceberg: CommitTable CreateTable error: %v", createErr)
 		return nil, &icebergRequestError{

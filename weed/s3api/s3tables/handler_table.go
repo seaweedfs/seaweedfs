@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
@@ -112,7 +114,16 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
 		return err
 	}
-	if err := h.refuseClaimedLocation(w, r, filerClient, bucketName, tablePath, req.MetadataLocation); err != nil {
+	// An Iceberg table created without a location gets a directory of its own,
+	// so its files never sit under a name a rename can hand to another table.
+	// A Lance dataset stays at its name path, where Lance clients and the
+	// vector engine look for it.
+	metadataLocation, warehouseLocation := req.MetadataLocation, ""
+	if metadataLocation == "" && req.Format == FormatIceberg {
+		warehouseLocation = fmt.Sprintf("s3://%s/%s/%s-%s", bucketName, namespaceName, tableName, uuid.NewString())
+	}
+	root := CatalogRecordRoot(bucketName, tablePath, metadataLocation, warehouseLocation)
+	if err := h.refuseClaimedLocation(w, r, filerClient, bucketName, tablePath, root); err != nil {
 		return err
 	}
 
@@ -121,16 +132,17 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 	versionToken := generateVersionToken()
 
 	metadata := &tableMetadataInternal{
-		Name:             tableName,
-		Namespace:        namespaceName,
-		Format:           req.Format,
-		CreatedAt:        now,
-		ModifiedAt:       now,
-		OwnerAccountID:   target.ownerAccountID, // Inherit namespace owner for consistency
-		VersionToken:     versionToken,
-		MetadataVersion:  max(req.MetadataVersion, 1),
-		MetadataLocation: req.MetadataLocation,
-		Metadata:         req.Metadata,
+		Name:              tableName,
+		Namespace:         namespaceName,
+		Format:            req.Format,
+		CreatedAt:         now,
+		ModifiedAt:        now,
+		OwnerAccountID:    target.ownerAccountID, // Inherit namespace owner for consistency
+		VersionToken:      versionToken,
+		MetadataVersion:   max(req.MetadataVersion, 1),
+		MetadataLocation:  metadataLocation,
+		Metadata:          req.Metadata,
+		WarehouseLocation: warehouseLocation,
 	}
 
 	metadataBytes, err := json.Marshal(metadata)
@@ -154,7 +166,11 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 		}
 
 		// Create data subdirectory for Iceberg files
-		dataPath := tablePath + "/data"
+		dataParent := tablePath
+		if warehouseLocation != "" {
+			dataParent = root
+		}
+		dataPath := dataParent + "/data"
 		if err := h.ensureDirectory(r.Context(), client, dataPath); err != nil {
 			return err
 		}
@@ -167,10 +183,10 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 		if len(tagsBytes) > 0 {
 			attrs[ExtendedKeyTags] = tagsBytes
 		}
-		if err := h.claimCatalogEntryAt(r.Context(), client, bucketName, tablePath, req.MetadataLocation, attrs, dataPath, tablePath); err != nil {
+		if err := h.claimCatalogEntryAt(r.Context(), client, bucketName, tablePath, root, attrs, dataPath, dataParent, tablePath); err != nil {
 			return err
 		}
-		return h.confirmParent(r.Context(), client, GetNamespacePath(bucketName, namespaceName), isNamespaceCreatedAt(target.namespaceCreatedAt), tablePath, attrs, dataPath, tablePath)
+		return h.confirmParent(r.Context(), client, GetNamespacePath(bucketName, namespaceName), isNamespaceCreatedAt(target.namespaceCreatedAt), tablePath, attrs, dataPath, dataParent, tablePath)
 	})
 
 	if err != nil {
@@ -288,7 +304,8 @@ func (h *S3TablesHandler) handleRegisterTable(w http.ResponseWriter, r *http.Req
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to check table: %v", err))
 		return err
 	}
-	if err := h.refuseClaimedLocation(w, r, filerClient, bucketName, tablePath, req.MetadataLocation); err != nil {
+	root := CatalogRecordRoot(bucketName, tablePath, req.MetadataLocation, "")
+	if err := h.refuseClaimedLocation(w, r, filerClient, bucketName, tablePath, root); err != nil {
 		return err
 	}
 
@@ -321,7 +338,7 @@ func (h *S3TablesHandler) handleRegisterTable(w http.ResponseWriter, r *http.Req
 		if err := h.ensureDirectory(r.Context(), client, tablePath); err != nil {
 			return err
 		}
-		if err := h.claimCatalogEntryAt(r.Context(), client, bucketName, tablePath, req.MetadataLocation, attrs, tablePath); err != nil {
+		if err := h.claimCatalogEntryAt(r.Context(), client, bucketName, tablePath, root, attrs, tablePath); err != nil {
 			return err
 		}
 		return h.confirmParent(r.Context(), client, GetNamespacePath(bucketName, namespaceName), isNamespaceCreatedAt(target.namespaceCreatedAt), tablePath, attrs, tablePath)
@@ -496,17 +513,18 @@ func (h *S3TablesHandler) handleGetTable(w http.ResponseWriter, r *http.Request,
 	}
 
 	resp := &GetTableResponse{
-		Name:             metadata.Name,
-		TableARN:         tableARN,
-		Namespace:        expandNamespace(metadata.Namespace),
-		Format:           metadata.Format,
-		CreatedAt:        metadata.CreatedAt,
-		ModifiedAt:       metadata.ModifiedAt,
-		OwnerAccountID:   metadata.OwnerAccountID,
-		MetadataLocation: metadata.MetadataLocation,
-		MetadataVersion:  metadata.MetadataVersion,
-		VersionToken:     metadata.VersionToken,
-		Metadata:         metadata.Metadata,
+		Name:              metadata.Name,
+		TableARN:          tableARN,
+		Namespace:         expandNamespace(metadata.Namespace),
+		Format:            metadata.Format,
+		CreatedAt:         metadata.CreatedAt,
+		ModifiedAt:        metadata.ModifiedAt,
+		OwnerAccountID:    metadata.OwnerAccountID,
+		MetadataLocation:  metadata.MetadataLocation,
+		MetadataVersion:   metadata.MetadataVersion,
+		VersionToken:      metadata.VersionToken,
+		Metadata:          metadata.Metadata,
+		WarehouseLocation: metadata.WarehouseLocation,
 	}
 
 	h.writeJSON(w, http.StatusOK, resp)
@@ -1061,11 +1079,11 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 
 	// Delete the table
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		if err := checkLocationUnclaimed(r.Context(), client, bucketName, tablePath, metadata.MetadataLocation); err != nil {
+		dataPath := metadata.root(bucketName, tablePath)
+		if err := checkLocationUnclaimed(r.Context(), client, bucketName, tablePath, dataPath); err != nil {
 			return err
 		}
-		dataPath := TableDataDirFromMetadataLocation(metadata.MetadataLocation)
-		if dataPath != "" && dataPath != tablePath && strings.HasPrefix(dataPath+"/", GetTableBucketPath(bucketName)+"/") {
+		if dataPath != tablePath {
 			// Refuse to purge a data path that is an ancestor of the table's own
 			// name path (e.g. corrupt metadata resolving to the bucket or
 			// namespace root): the bucket-scope check above still admits the
@@ -1377,11 +1395,7 @@ func tablePurgeDir(entry *filer_pb.Entry, tablePath, bucketName string) (string,
 	if err := json.Unmarshal(data, &metadata); err != nil {
 		return "", fmt.Errorf("failed to unmarshal table metadata: %w", err)
 	}
-	dataPath := TableDataDirFromMetadataLocation(metadata.MetadataLocation)
-	if dataPath != "" && dataPath != tablePath && strings.HasPrefix(dataPath+"/", GetTableBucketPath(bucketName)+"/") {
-		return dataPath, nil
-	}
-	return tablePath, nil
+	return metadata.root(bucketName, tablePath), nil
 }
 
 // canReadEntry reports whether the principal may read the catalog entry a
@@ -1711,8 +1725,8 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 	if err := h.refuseClaimedNamespace(w, r, filerClient, destNamespacePath, destNamespace, isDestNamespace); err != nil {
 		return err
 	}
-	if metadata.MetadataLocation == "" {
-		if err := h.refuseClaimedLocation(w, r, filerClient, bucketName, destPath, ""); err != nil {
+	if metadata.root(bucketName, srcPath) == srcPath {
+		if err := h.refuseClaimedLocation(w, r, filerClient, bucketName, destPath, destPath); err != nil {
 			return err
 		}
 	}
@@ -1795,8 +1809,8 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 			h.removeLeftoverDirectory(ctx, client, destPath)
 			return releaseClaim(err)
 		}
-		if metadata.MetadataLocation == "" {
-			if err := checkLocationUnclaimed(r.Context(), client, bucketName, destPath, ""); err != nil {
+		if metadata.root(bucketName, srcPath) == srcPath {
+			if err := checkLocationUnclaimed(r.Context(), client, bucketName, destPath, destPath); err != nil {
 				return backOutDest(err)
 			}
 		}
@@ -2141,9 +2155,10 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 	if req.ClearFullMetadata && metadata.Metadata != nil {
 		metadata.Metadata.FullMetadata = nil
 	}
-	movesRoot := req.MetadataLocation != "" && CatalogRecordRoot(target.bucketName, target.tablePath, req.MetadataLocation) != CatalogRecordRoot(target.bucketName, target.tablePath, metadata.MetadataLocation)
+	newRoot := CatalogRecordRoot(target.bucketName, target.tablePath, req.MetadataLocation, metadata.WarehouseLocation)
+	movesRoot := req.MetadataLocation != "" && newRoot != metadata.root(target.bucketName, target.tablePath)
 	if movesRoot {
-		if err := h.refuseClaimedLocation(w, r, filerClient, target.bucketName, target.tablePath, req.MetadataLocation); err != nil {
+		if err := h.refuseClaimedLocation(w, r, filerClient, target.bucketName, target.tablePath, newRoot); err != nil {
 			return err
 		}
 	}
@@ -2188,7 +2203,7 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 		if !movesRoot {
 			return h.mutateCatalogRecord(r.Context(), client, target.tablePath, write)
 		}
-		return h.moveCatalogRecord(r.Context(), client, target.bucketName, target.tablePath, metadata.MetadataLocation, target.storedMetadata, metadataBytes, write)
+		return h.moveCatalogRecord(r.Context(), client, target.bucketName, target.tablePath, newRoot, target.storedMetadata, metadataBytes, write)
 	})
 
 	if err != nil {

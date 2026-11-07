@@ -33,6 +33,8 @@ type memFiler struct {
 	// failFileCreate, when set, makes CreateEntry fail for non-directory entries,
 	// simulating a metadata-file write error.
 	failFileCreate error
+	// onLookup, when set, runs at the start of every LookupDirectoryEntry.
+	onLookup func(p string)
 }
 
 func newMemFiler() *memFiler {
@@ -48,6 +50,9 @@ func (m *memFiler) seed(p string, entry *filer_pb.Entry) {
 }
 
 func (m *memFiler) LookupDirectoryEntry(_ context.Context, in *filer_pb.LookupDirectoryEntryRequest, _ ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	if hook := m.onLookup; hook != nil {
+		hook(path.Join(in.Directory, in.Name))
+	}
 	entry, ok := m.entries[path.Join(in.Directory, in.Name)]
 	if !ok {
 		return nil, filer_pb.ErrNotFound
@@ -200,7 +205,16 @@ func TestCreateViewDuplicateDoesNotClobberMetadata(t *testing.T) {
 		t.Fatalf("first create status = %d, want 200 (body: %s)", w.Code, w.Body.String())
 	}
 
-	metadataKey := path.Join(s3tables.GetTablePath(bucket, "ns", "v"), "metadata", "v1.metadata.json")
+	var created struct {
+		MetadataLocation string `json:"metadata-location"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	if !strings.HasPrefix(created.MetadataLocation, "s3://"+bucket+"/ns/v-") {
+		t.Fatalf("metadata-location = %q, want one under a directory of the view's own", created.MetadataLocation)
+	}
+	metadataKey := path.Join(s3tables.TablesPath, strings.TrimPrefix(created.MetadataLocation, "s3://"))
 	first, ok := fc.entries[metadataKey]
 	if !ok {
 		t.Fatalf("metadata file not written at %s", metadataKey)
@@ -216,6 +230,31 @@ func TestCreateViewDuplicateDoesNotClobberMetadata(t *testing.T) {
 	}
 	if got := fc.entries[metadataKey].Content; !bytes.Equal(got, original) {
 		t.Fatalf("duplicate create clobbered stored metadata:\n got %s\nwant %s", got, original)
+	}
+}
+
+// A view create that loses the race for its name answers with the view the
+// catalog registered and writes no metadata of its own.
+func TestCreateViewThatLosesTheRaceReturnsTheRegisteredView(t *testing.T) {
+	const bucket = "warehouse"
+	fc := newMemFiler()
+	seedNamespace(fc, bucket, "ns", s3_constants.AccountAdminId)
+	s := NewServer(fc, nil)
+	first := httptest.NewRecorder()
+	raceAtSecondLookup(fc, s3tables.GetTablePath(bucket, "ns", "v"), func() {
+		s.handleCreateView(first, newCreateViewRequest(t, "ns", "v", "SELECT 1"))
+	})
+	second := httptest.NewRecorder()
+	s.handleCreateView(second, newCreateViewRequest(t, "ns", "v", "SELECT 2"))
+
+	won, lost := decodeCreated(t, first), decodeCreated(t, second)
+	if lost != won {
+		t.Errorf("losing create answered %+v, want the registered view %+v", lost, won)
+	}
+	for p, entry := range fc.entries {
+		if !entry.IsDirectory && strings.HasSuffix(p, ".metadata.json") && p != path.Join(s3tables.TablesPath, strings.TrimPrefix(won.MetadataLocation, "s3://")) {
+			t.Errorf("losing create wrote %s", p)
+		}
 	}
 }
 

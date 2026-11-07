@@ -14,20 +14,10 @@ import (
 )
 
 // TestDuckDBDeterministicLocationRead validates that DuckDB's iceberg
-// extension can resolve and scan a table that lives at the deterministic
-// <bucket>/<namespace>/<tableName> path produced when no client-side UUID
-// is appended to the table location. This is the layout produced by:
-//
-//   - iceberg-spark (no concept of UUID-suffixed locations)
-//   - pyiceberg (no concept of UUID-suffixed locations)
-//   - Trino with iceberg.unique-table-location=false
-//
-// Post-#9246, REST clients can resolve table locations under a namespace
-// because GetNamespace advertises a default `location` property. This
-// test creates a namespace + table via the REST API directly (so no
-// client-side UUID is added), then asks DuckDB to ATTACH the catalog and
-// describe the table — verifying DuckDB walks the catalog → metadata →
-// schema chain successfully against a deterministic on-disk path.
+// extension can resolve and scan a table created through the REST API with no
+// location. The catalog gives such a table the directory
+// <bucket>/<namespace>/<tableName>-<uuid>, and DuckDB has to reach its
+// metadata and schema through the catalog rather than by the table's name.
 //
 // The test does not insert data files — DuckDB scanning an empty table
 // is sufficient to validate the catalog/metadata resolution path. If
@@ -55,14 +45,11 @@ func TestDuckDBDeterministicLocationRead(t *testing.T) {
 	createNamespaceWithToken(t, env, token, bucketName, namespace)
 	createIcebergTableWithToken(t, env, token, bucketName, namespace, tableName)
 
-	// Sanity-check the catalog row exposes a deterministic location.
+	// The table gets a directory of its own, named after it and its UUID.
 	tableLoc := getTableLocation(t, env, token, bucketName, namespace, tableName)
-	wantPrefix := fmt.Sprintf("s3://%s/%s/%s", bucketName, namespace, tableName)
-	if !strings.HasPrefix(tableLoc, wantPrefix) {
-		t.Fatalf("table location %q should start with %q (deterministic, no UUID suffix)", tableLoc, wantPrefix)
-	}
-	if strings.Contains(strings.TrimPrefix(tableLoc, wantPrefix), "-") {
-		t.Fatalf("table location %q should not have a -<uuid> suffix after %q", tableLoc, wantPrefix)
+	wantPrefix := fmt.Sprintf("s3://%s/%s/%s-", bucketName, namespace, tableName)
+	if !strings.HasPrefix(tableLoc, wantPrefix) || strings.Contains(strings.TrimPrefix(tableLoc, wantPrefix), "/") {
+		t.Fatalf("table location %q should be a directory %s<uuid>", tableLoc, wantPrefix)
 	}
 
 	sqlContent := fmt.Sprintf(`
