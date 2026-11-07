@@ -37,26 +37,40 @@ struct Entry {
 
 /// Wraps each object store Lance opens; clones share one cache.
 #[derive(Clone)]
-pub struct ReadCache(moka::sync::Cache<Key, Entry>);
+pub struct ReadCache {
+    cache: moka::sync::Cache<Key, Entry>,
+    /// Keeps entries apart from those of another [`Self::scoped`] view, for
+    /// stores that share a prefix but not their bytes.
+    scope: Arc<str>,
+}
 
 impl ReadCache {
     pub fn new(capacity_bytes: u64) -> Self {
-        Self(
-            moka::sync::Cache::builder()
+        Self {
+            cache: moka::sync::Cache::builder()
                 .max_capacity(capacity_bytes)
                 .weigher(|key: &Key, entry: &Entry| {
                     u32::try_from(key.path.as_ref().len() + entry.bytes.len()).unwrap_or(u32::MAX)
                 })
                 .build(),
-        )
+            scope: "".into(),
+        }
+    }
+
+    /// The same cache, keyed apart under `scope`.
+    pub fn scoped(&self, scope: &str) -> Self {
+        Self {
+            cache: self.cache.clone(),
+            scope: scope.into(),
+        }
     }
 }
 
 impl fmt::Debug for ReadCache {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ReadCache")
-            .field("entries", &self.0.entry_count())
-            .field("bytes", &self.0.weighted_size())
+            .field("entries", &self.cache.entry_count())
+            .field("bytes", &self.cache.weighted_size())
             .finish()
     }
 }
@@ -65,8 +79,8 @@ impl WrappingObjectStore for ReadCache {
     fn wrap(&self, store_prefix: &str, original: Arc<dyn ObjectStore>) -> Arc<dyn ObjectStore> {
         Arc::new(CachedStore {
             inner: original,
-            store: store_prefix.into(),
-            cache: self.0.clone(),
+            store: format!("{}|{store_prefix}", self.scope).into(),
+            cache: self.cache.clone(),
         })
     }
 }
@@ -277,7 +291,6 @@ mod tests {
     use object_store::ObjectStoreExt;
     use object_store::memory::InMemory;
     use tonic::Request;
-    use weed_lance_worker::catalog::NamespaceClient;
     use weed_lance_worker::dataset::FallbackOptions;
 
     fn cached(inner: Arc<InMemory>) -> Arc<dyn ObjectStore> {
@@ -373,8 +386,8 @@ mod tests {
                 .unwrap();
             read(&store, &path, 0..(8 << 10)).await;
         }
-        cache.0.run_pending_tasks();
-        assert!(cache.0.weighted_size() <= 64 << 10, "{cache:?}");
+        cache.cache.run_pending_tasks();
+        assert!(cache.cache.weighted_size() <= 64 << 10, "{cache:?}");
     }
 
     #[tokio::test]
@@ -392,38 +405,13 @@ mod tests {
         let backing = whole.as_ptr_range();
         read(&store, &path, 10..20).await;
         let key = Key {
-            store: "memory".into(),
+            store: "|memory".into(),
             path,
             range: Some(10..20),
         };
-        let cached = cache.0.get(&key).unwrap().bytes;
+        let cached = cache.cache.get(&key).unwrap().bytes;
         assert_eq!(cached.len(), 10);
         assert!(!backing.contains(&cached.as_ptr()));
-    }
-
-    /// A catalog that answers every request with `location`.
-    async fn catalog_at(location: String) -> String {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}", listener.local_addr().unwrap());
-        let body = serde_json::json!({ "location": location }).to_string();
-        tokio::spawn(async move {
-            loop {
-                let (mut conn, _) = listener.accept().await.unwrap();
-                let body = body.clone();
-                tokio::spawn(async move {
-                    let mut request = [0u8; 8192];
-                    let _ = conn.read(&mut request).await;
-                    let response = format!(
-                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-                        body.len()
-                    );
-                    let _ = conn.write_all(response.as_bytes()).await;
-                    let _ = conn.shutdown().await;
-                });
-            }
-        });
-        url
     }
 
     fn vector(key: &str, data: Vec<f32>) -> pb::Vector {
@@ -492,15 +480,15 @@ mod tests {
     /// dropped and recreated at the same location answers with its new rows.
     #[tokio::test]
     async fn cached_reads_follow_writes_and_a_recreated_index() {
-        let location = format!("shared-memory://cache-{}/vector/x", uuid_like(),);
-        let server = VectorServer::new(
-            NamespaceClient::new(catalog_at(location.clone()).await),
-            FallbackOptions::new(),
-        )
-        .with_read_cache(ReadCache::new(16 << 20));
+        let bucket = format!("cache-{}", uuid_like());
+        let location = format!("shared-memory://{bucket}/vector/x");
+        let server = VectorServer::new(FallbackOptions::new())
+            .with_schemes(&["shared-memory"])
+            .with_read_cache(ReadCache::new(16 << 20));
         let table = pb::Table {
-            id: vec!["bkt".into(), "vector".into(), "x".into()],
-            version: 0,
+            id: vec![bucket, "vector".into(), "x".into()],
+            location: location.clone(),
+            ..Default::default()
         };
 
         create(&server, &table, 4).await;

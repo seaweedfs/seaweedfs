@@ -304,8 +304,10 @@ def run_cluster(param, tmp_path_factory, identities):
         # would find it as a credential.
         if identities:
             config, unset = [f"-config={HERE / 's3.json'}"], ()
+            # The engine uses its credentials only with the endpoint it is given.
             credentials = ["--storage-option", "aws_access_key_id=test",
-                           "--storage-option", "aws_secret_access_key=test"]
+                           "--storage-option", "aws_secret_access_key=test",
+                           "--storage-option", f"aws_endpoint={endpoint}"]
         else:
             config, unset, credentials = [], ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"), []
         # VECTOR_ENCRYPT_VOLUMES=1 has the gateway encrypt every chunk it
@@ -318,8 +320,7 @@ def run_cluster(param, tmp_path_factory, identities):
         wait_for(lambda: listening(s3), processes, "s3 not ready")
         if os.environ.get("VECTOR_TLS") or read_jwt_key or encrypt:
             probe_hardening(endpoint, filer, vol, directory, read_jwt_key)
-        start("vector", [engine, "--namespace", f"http://127.0.0.1:{lance}",
-                         "--masters", master_addr, "--listen", f"127.0.0.1:{vector}", *credentials], unset)
+        start("vector", [engine, "--masters", master_addr, "--listen", f"127.0.0.1:{vector}", *credentials], unset)
         wait_for(lambda: listening(vector), processes, "vector engine not ready")
         if os.environ.get("VECTOR_TLS"):
             wait_for(lambda: listening(s3_grpc), processes, "s3 gRPC not ready")

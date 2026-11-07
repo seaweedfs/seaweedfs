@@ -104,6 +104,7 @@ type S3Options struct {
 	// whatever process may hold the configured port.
 	icebergBound atomic.Bool
 	lanceBound   atomic.Bool
+	lanceServer  *lance.Server
 }
 
 func init() {
@@ -425,6 +426,9 @@ func (s3opt *S3Options) startS3Server() bool {
 
 	var httpServers []*http.Server
 
+	// Once, before either catalog serves a request that reads it.
+	s3opt.setCredentialRole(s3ApiServer)
+
 	// Start Iceberg REST Catalog server if enabled
 	if *s3opt.portIceberg > 0 {
 		if httpS := s3opt.startIcebergServer(s3ApiServer, listenOnLocalhost); httpS != nil {
@@ -432,9 +436,11 @@ func (s3opt *S3Options) startS3Server() bool {
 		}
 	}
 
-	// Start Lance Namespace server if enabled
+	// The S3 Vectors API resolves its tables through the catalog in process,
+	// whether or not the catalog's own port is served.
+	s3opt.lanceServer = s3opt.newLanceServer(s3ApiServer)
 	if s3opt.portLance != nil && *s3opt.portLance > 0 {
-		if httpS := s3opt.startLanceServer(s3ApiServer, listenOnLocalhost); httpS != nil {
+		if httpS := s3opt.startLanceServer(listenOnLocalhost); httpS != nil {
 			httpServers = append(httpServers, httpS)
 		}
 	}
@@ -615,6 +621,24 @@ func (s3opt *S3Options) newShutdown(stopGrpc func(), s3ApiServer *s3api.S3ApiSer
 	return shutdown
 }
 
+// vendsCredentials reports whether -iceberg.credentialRole is set, which
+// both catalogs vend through, whichever of them runs.
+func (s3opt *S3Options) vendsCredentials() bool {
+	return s3opt.icebergCredentialRole != nil && *s3opt.icebergCredentialRole != ""
+}
+
+// setCredentialRole hands -iceberg.credentialRole to the S3 server.
+func (s3opt *S3Options) setCredentialRole(s3ApiServer *s3api.S3ApiServer) {
+	if !s3opt.vendsCredentials() {
+		return
+	}
+	duration := int64(0)
+	if s3opt.icebergCredentialDuration != nil {
+		duration = int64(*s3opt.icebergCredentialDuration)
+	}
+	s3ApiServer.SetIcebergCredentialRole(*s3opt.icebergCredentialRole, duration)
+}
+
 // startIcebergServer starts the Iceberg REST Catalog server on a separate port.
 func (s3opt *S3Options) startIcebergServer(s3ApiServer *s3api.S3ApiServer, listenOnLocalhost bool) *http.Server {
 	icebergRouter := mux.NewRouter().SkipClean(true)
@@ -625,12 +649,7 @@ func (s3opt *S3Options) startIcebergServer(s3ApiServer *s3api.S3ApiServer, liste
 	// Create Iceberg server using the S3ApiServer as filer client
 	icebergServer := iceberg.NewServer(s3ApiServer, s3ApiServer)
 	icebergServer.SetCredentialValidator(s3ApiServer)
-	if s3opt.icebergCredentialRole != nil && *s3opt.icebergCredentialRole != "" {
-		duration := int64(0)
-		if s3opt.icebergCredentialDuration != nil {
-			duration = int64(*s3opt.icebergCredentialDuration)
-		}
-		s3ApiServer.SetIcebergCredentialRole(*s3opt.icebergCredentialRole, duration)
+	if s3opt.vendsCredentials() {
 		icebergServer.SetCredentialVendor(icebergCredentialVendor{s3ApiServer})
 	}
 	icebergServer.SetS3Endpoint(s3opt.deriveS3AdvertisedEndpoint())
@@ -666,22 +685,26 @@ func (s3opt *S3Options) startIcebergServer(s3ApiServer *s3api.S3ApiServer, liste
 	return httpS
 }
 
-// startLanceServer starts the Lance Namespace server on a separate port. It
-// shares the Iceberg catalog's credential role: one deployment vends table
-// credentials one way, whichever catalog the client speaks to.
-func (s3opt *S3Options) startLanceServer(s3ApiServer *s3api.S3ApiServer, listenOnLocalhost bool) *http.Server {
-	lanceRouter := mux.NewRouter().SkipClean(true)
-	lanceRouter.Use(util_http.EscapeSemicolonsInQuery)
-
+// newLanceServer builds the Lance Namespace catalog. It shares the Iceberg
+// catalog's credential role: one deployment vends table credentials one way,
+// whichever catalog the client speaks to.
+func (s3opt *S3Options) newLanceServer(s3ApiServer *s3api.S3ApiServer) *lance.Server {
 	lanceServer := lance.NewServer(s3ApiServer, s3ApiServer)
 	lanceServer.SetCredentialValidator(s3ApiServer)
 	lanceServer.SetSigningKey(s3ApiServer.FilerSigningKey)
-	if s3opt.icebergCredentialRole != nil && *s3opt.icebergCredentialRole != "" {
+	if s3opt.vendsCredentials() {
 		lanceServer.SetCredentialVendor(lanceCredentialVendor{s3ApiServer})
 	}
 	lanceServer.SetS3Endpoint(s3opt.deriveLanceStorageEndpoint())
 	lanceServer.SetS3Region(s3tables.DefaultRegion)
-	lanceServer.RegisterRoutes(lanceRouter)
+	return lanceServer
+}
+
+// startLanceServer serves the Lance Namespace catalog on its own port.
+func (s3opt *S3Options) startLanceServer(listenOnLocalhost bool) *http.Server {
+	lanceRouter := mux.NewRouter().SkipClean(true)
+	lanceRouter.Use(util_http.EscapeSemicolonsInQuery)
+	s3opt.lanceServer.RegisterRoutes(lanceRouter)
 
 	listenAddress := fmt.Sprintf("%s:%d", *s3opt.bindIp, *s3opt.portLance)
 	lanceListener, lanceLocalListener, err := util.NewIpAndLocalListeners(
@@ -719,12 +742,25 @@ func (s3opt *S3Options) vectorsRouter(s3ApiServer *s3api.S3ApiServer, grpcDialOp
 		return nil
 	}
 	backend := &vectorDiscovery{masters: masterAddresses, grpcDialOption: grpcDialOption, discover: discoverVectorWorkers}
+	// In-process describe — the router resolves locations and vended
+	// storage options through the catalog directly, never over HTTP. The
+	// lookup itself runs under the trusted identity: the caller's vector
+	// permission already authorized the query, and catalog grants must not
+	// gate an internal resolution.
+	describe := func(ctx context.Context, id []string) (string, map[string]string, error) {
+		if s3opt.lanceServer == nil {
+			return "", nil, fmt.Errorf("lance catalog is not running")
+		}
+		r := (&http.Request{Method: http.MethodPost, Header: make(http.Header)}).WithContext(ctx)
+		return s3opt.lanceServer.DescribeTableInternal(r, id)
+	}
 	vectorsRouter := mux.NewRouter().SkipClean(true)
 
 	vectorsServer := s3vectors.NewServer(s3ApiServer, s3ApiServer, backend)
 	vectorsServer.SetRegion(s3tables.DefaultRegion)
 	vectorsServer.SetAccountID(s3tables.DefaultAccountID)
 	vectorsServer.SetEncryptionChecker(s3api.GetSSES3KeyManager().IsConfigured)
+	vectorsServer.SetDescribe(describe)
 	vectorsServer.RegisterRoutes(vectorsRouter)
 	return vectorsRouter
 }

@@ -2,6 +2,7 @@ package lance
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables/s3tablestest"
@@ -488,5 +490,66 @@ func TestDeclareVendsWriteOnlyForATableItCreates(t *testing.T) {
 	}
 	if h.filer.Get("/buckets/lnc/ns/theirs", deregisteredMarker) == nil {
 		t.Error("a declare that may not write the table brought it back")
+	}
+}
+
+// An in-process describe for a trusted caller resolves the table without the
+// caller's catalog grants, and still refuses a deregistered one.
+func TestDescribeTableInternalIgnoresCatalogGrants(t *testing.T) {
+	h := newTestHarness(t)
+	h.createBucket(t, "lnc", s3tables.FormatLance)
+	h.mustDo(t, http.MethodPost, "/v1/namespace/lnc$ns/create", `{}`, http.StatusOK)
+	h.mustDo(t, http.MethodPost, "/v1/table/lnc$ns$t/declare", `{}`, http.StatusOK)
+
+	server := NewServer(s3tables.NewManagerClient(h.filer.Client), createOnlyAuthenticator{})
+	server.SetS3Endpoint("http://127.0.0.1:8333")
+	anonymous := httptest.NewRequest(http.MethodPost, "/", nil)
+	anonymous = anonymous.WithContext(s3_constants.SetIdentityNameInContext(anonymous.Context(), "stranger"))
+	if _, _, err := server.DescribeTable(anonymous, []string{"lnc", "ns", "t"}); err == nil {
+		t.Fatal("DescribeTable without grants resolved the table")
+	}
+	location, options, err := server.DescribeTableInternal(anonymous, []string{"lnc", "ns", "t"})
+	if err != nil {
+		t.Fatalf("DescribeTableInternal: %v", err)
+	}
+	if location != "s3://lnc/ns/t" || options["aws_endpoint"] != "http://127.0.0.1:8333" {
+		t.Fatalf("resolved %q %v", location, options)
+	}
+
+	h.mustDo(t, http.MethodPost, "/v1/table/lnc$ns$t/deregister", `{}`, http.StatusOK)
+	_, _, err = server.DescribeTableInternal(anonymous, []string{"lnc", "ns", "t"})
+	var apiErr *s3tables.S3TablesError
+	if !errors.As(err, &apiErr) || apiErr.Type != s3tables.ErrCodeNoSuchTable {
+		t.Fatalf("a deregistered table resolved: %v, want %s", err, s3tables.ErrCodeNoSuchTable)
+	}
+}
+
+// The options an internal describe vends may write a vector index, whose
+// writer is the engine, but not a table whose writes s3tables grants gate.
+func TestDescribeTableInternalVendsWriteForTheVectorNamespace(t *testing.T) {
+	h := newTestHarness(t)
+	h.seedVectorIndex(t, "vec", s3tables.FormatLance)
+	h.createBucket(t, "lnc", s3tables.FormatLance)
+	h.mustDo(t, http.MethodPost, "/v1/namespace/lnc$ns/create", `{}`, http.StatusOK)
+	h.mustDo(t, http.MethodPost, "/v1/table/lnc$ns$t/declare", `{}`, http.StatusOK)
+
+	server := NewServer(s3tables.NewManagerClient(h.filer.Client), createOnlyAuthenticator{})
+	server.SetCredentialVendor(recordingVendor{})
+	stranger := httptest.NewRequest(http.MethodPost, "/", nil)
+	stranger = stranger.WithContext(s3_constants.SetIdentityNameInContext(stranger.Context(), "stranger"))
+	for _, tc := range []struct {
+		id   []string
+		want string
+	}{
+		{[]string{"vec", "vector", "idx"}, "read-write"},
+		{[]string{"lnc", "ns", "t"}, "read-only"},
+	} {
+		_, options, err := server.DescribeTableInternal(stranger, tc.id)
+		if err != nil {
+			t.Fatalf("%v: %v", tc.id, err)
+		}
+		if got := options["aws_access_key_id"]; got != tc.want {
+			t.Errorf("%v: vended %q, want %q", tc.id, got, tc.want)
+		}
 	}
 }

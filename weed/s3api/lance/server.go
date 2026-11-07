@@ -61,6 +61,7 @@ type CredentialVendor interface {
 type Server struct {
 	filerClient         FilerClient
 	tablesManager       *s3tables.Manager
+	internal            *s3tables.Manager
 	authenticator       S3Authenticator
 	credentialValidator CredentialValidator
 	credentialVendor    CredentialVendor
@@ -77,9 +78,12 @@ func NewServer(filerClient FilerClient, authenticator S3Authenticator) *Server {
 	if authenticator != nil {
 		manager.SetDefaultAllow(authenticator.DefaultAllow())
 	}
+	internal := s3tables.NewManager()
+	internal.SetTrusted(true)
 	return &Server{
 		filerClient:   filerClient,
 		tablesManager: manager,
+		internal:      internal,
 		authenticator: authenticator,
 	}
 }

@@ -75,14 +75,19 @@ func (DistanceMetric) EnumDescriptor() ([]byte, []int) {
 }
 
 // Table addresses a Lance table through the namespace: the id parts as the
-// namespace catalog joins them.
+// namespace catalog joins them. The gateway resolves the table before it
+// calls, so the engine opens it without a catalog round trip of its own.
 type Table struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Id    []string               `protobuf:"bytes,1,rep,name=id,proto3" json:"id,omitempty"`
 	// Dataset version to pin reads to; 0 means latest.
-	Version       uint64 `protobuf:"varint,2,opt,name=version,proto3" json:"version,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Version uint64 `protobuf:"varint,2,opt,name=version,proto3" json:"version,omitempty"`
+	// The table's Lance location, as the catalog describes it.
+	Location string `protobuf:"bytes,3,opt,name=location,proto3" json:"location,omitempty"`
+	// object_store options from describe_table (vended creds / endpoint).
+	StorageOptions map[string]string `protobuf:"bytes,4,rep,name=storage_options,json=storageOptions,proto3" json:"storage_options,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *Table) Reset() {
@@ -127,6 +132,20 @@ func (x *Table) GetVersion() uint64 {
 		return x.Version
 	}
 	return 0
+}
+
+func (x *Table) GetLocation() string {
+	if x != nil {
+		return x.Location
+	}
+	return ""
+}
+
+func (x *Table) GetStorageOptions() map[string]string {
+	if x != nil {
+		return x.StorageOptions
+	}
+	return nil
 }
 
 type CreateIndexRequest struct {
@@ -1061,10 +1080,15 @@ var File_vector_proto protoreflect.FileDescriptor
 
 const file_vector_proto_rawDesc = "" +
 	"\n" +
-	"\fvector.proto\x12\tvector_pb\x1a\x1cgoogle/protobuf/struct.proto\"1\n" +
+	"\fvector.proto\x12\tvector_pb\x1a\x1cgoogle/protobuf/struct.proto\"\xdf\x01\n" +
 	"\x05Table\x12\x0e\n" +
 	"\x02id\x18\x01 \x03(\tR\x02id\x12\x18\n" +
-	"\aversion\x18\x02 \x01(\x04R\aversion\"\xdf\x01\n" +
+	"\aversion\x18\x02 \x01(\x04R\aversion\x12\x1a\n" +
+	"\blocation\x18\x03 \x01(\tR\blocation\x12M\n" +
+	"\x0fstorage_options\x18\x04 \x03(\v2$.vector_pb.Table.StorageOptionsEntryR\x0estorageOptions\x1aA\n" +
+	"\x13StorageOptionsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xdf\x01\n" +
 	"\x12CreateIndexRequest\x12&\n" +
 	"\x05table\x18\x01 \x01(\v2\x10.vector_pb.TableR\x05table\x12\x1c\n" +
 	"\tdimension\x18\x02 \x01(\rR\tdimension\x12B\n" +
@@ -1162,7 +1186,7 @@ func file_vector_proto_rawDescGZIP() []byte {
 }
 
 var file_vector_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_vector_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
+var file_vector_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
 var file_vector_proto_goTypes = []any{
 	(DistanceMetric)(0),           // 0: vector_pb.DistanceMetric
 	(*Table)(nil),                 // 1: vector_pb.Table
@@ -1182,42 +1206,44 @@ var file_vector_proto_goTypes = []any{
 	(*QueryVectorsRequest)(nil),   // 15: vector_pb.QueryVectorsRequest
 	(*QueryResult)(nil),           // 16: vector_pb.QueryResult
 	(*QueryVectorsResponse)(nil),  // 17: vector_pb.QueryVectorsResponse
-	(*structpb.Struct)(nil),       // 18: google.protobuf.Struct
+	nil,                           // 18: vector_pb.Table.StorageOptionsEntry
+	(*structpb.Struct)(nil),       // 19: google.protobuf.Struct
 }
 var file_vector_proto_depIdxs = []int32{
-	1,  // 0: vector_pb.CreateIndexRequest.table:type_name -> vector_pb.Table
-	0,  // 1: vector_pb.CreateIndexRequest.distance_metric:type_name -> vector_pb.DistanceMetric
-	1,  // 2: vector_pb.DropIndexRequest.table:type_name -> vector_pb.Table
-	18, // 3: vector_pb.Vector.metadata:type_name -> google.protobuf.Struct
-	1,  // 4: vector_pb.PutVectorsRequest.table:type_name -> vector_pb.Table
-	6,  // 5: vector_pb.PutVectorsRequest.vectors:type_name -> vector_pb.Vector
-	1,  // 6: vector_pb.GetVectorsRequest.table:type_name -> vector_pb.Table
-	6,  // 7: vector_pb.GetVectorsResponse.vectors:type_name -> vector_pb.Vector
-	1,  // 8: vector_pb.DeleteVectorsRequest.table:type_name -> vector_pb.Table
-	1,  // 9: vector_pb.ListVectorsRequest.table:type_name -> vector_pb.Table
-	6,  // 10: vector_pb.ListVectorsResponse.vectors:type_name -> vector_pb.Vector
-	1,  // 11: vector_pb.QueryVectorsRequest.table:type_name -> vector_pb.Table
-	18, // 12: vector_pb.QueryResult.metadata:type_name -> google.protobuf.Struct
-	16, // 13: vector_pb.QueryVectorsResponse.vectors:type_name -> vector_pb.QueryResult
-	2,  // 14: vector_pb.VectorService.CreateIndex:input_type -> vector_pb.CreateIndexRequest
-	4,  // 15: vector_pb.VectorService.DropIndex:input_type -> vector_pb.DropIndexRequest
-	7,  // 16: vector_pb.VectorService.PutVectors:input_type -> vector_pb.PutVectorsRequest
-	9,  // 17: vector_pb.VectorService.GetVectors:input_type -> vector_pb.GetVectorsRequest
-	11, // 18: vector_pb.VectorService.DeleteVectors:input_type -> vector_pb.DeleteVectorsRequest
-	13, // 19: vector_pb.VectorService.ListVectors:input_type -> vector_pb.ListVectorsRequest
-	15, // 20: vector_pb.VectorService.QueryVectors:input_type -> vector_pb.QueryVectorsRequest
-	3,  // 21: vector_pb.VectorService.CreateIndex:output_type -> vector_pb.CreateIndexResponse
-	5,  // 22: vector_pb.VectorService.DropIndex:output_type -> vector_pb.DropIndexResponse
-	8,  // 23: vector_pb.VectorService.PutVectors:output_type -> vector_pb.PutVectorsResponse
-	10, // 24: vector_pb.VectorService.GetVectors:output_type -> vector_pb.GetVectorsResponse
-	12, // 25: vector_pb.VectorService.DeleteVectors:output_type -> vector_pb.DeleteVectorsResponse
-	14, // 26: vector_pb.VectorService.ListVectors:output_type -> vector_pb.ListVectorsResponse
-	17, // 27: vector_pb.VectorService.QueryVectors:output_type -> vector_pb.QueryVectorsResponse
-	21, // [21:28] is the sub-list for method output_type
-	14, // [14:21] is the sub-list for method input_type
-	14, // [14:14] is the sub-list for extension type_name
-	14, // [14:14] is the sub-list for extension extendee
-	0,  // [0:14] is the sub-list for field type_name
+	18, // 0: vector_pb.Table.storage_options:type_name -> vector_pb.Table.StorageOptionsEntry
+	1,  // 1: vector_pb.CreateIndexRequest.table:type_name -> vector_pb.Table
+	0,  // 2: vector_pb.CreateIndexRequest.distance_metric:type_name -> vector_pb.DistanceMetric
+	1,  // 3: vector_pb.DropIndexRequest.table:type_name -> vector_pb.Table
+	19, // 4: vector_pb.Vector.metadata:type_name -> google.protobuf.Struct
+	1,  // 5: vector_pb.PutVectorsRequest.table:type_name -> vector_pb.Table
+	6,  // 6: vector_pb.PutVectorsRequest.vectors:type_name -> vector_pb.Vector
+	1,  // 7: vector_pb.GetVectorsRequest.table:type_name -> vector_pb.Table
+	6,  // 8: vector_pb.GetVectorsResponse.vectors:type_name -> vector_pb.Vector
+	1,  // 9: vector_pb.DeleteVectorsRequest.table:type_name -> vector_pb.Table
+	1,  // 10: vector_pb.ListVectorsRequest.table:type_name -> vector_pb.Table
+	6,  // 11: vector_pb.ListVectorsResponse.vectors:type_name -> vector_pb.Vector
+	1,  // 12: vector_pb.QueryVectorsRequest.table:type_name -> vector_pb.Table
+	19, // 13: vector_pb.QueryResult.metadata:type_name -> google.protobuf.Struct
+	16, // 14: vector_pb.QueryVectorsResponse.vectors:type_name -> vector_pb.QueryResult
+	2,  // 15: vector_pb.VectorService.CreateIndex:input_type -> vector_pb.CreateIndexRequest
+	4,  // 16: vector_pb.VectorService.DropIndex:input_type -> vector_pb.DropIndexRequest
+	7,  // 17: vector_pb.VectorService.PutVectors:input_type -> vector_pb.PutVectorsRequest
+	9,  // 18: vector_pb.VectorService.GetVectors:input_type -> vector_pb.GetVectorsRequest
+	11, // 19: vector_pb.VectorService.DeleteVectors:input_type -> vector_pb.DeleteVectorsRequest
+	13, // 20: vector_pb.VectorService.ListVectors:input_type -> vector_pb.ListVectorsRequest
+	15, // 21: vector_pb.VectorService.QueryVectors:input_type -> vector_pb.QueryVectorsRequest
+	3,  // 22: vector_pb.VectorService.CreateIndex:output_type -> vector_pb.CreateIndexResponse
+	5,  // 23: vector_pb.VectorService.DropIndex:output_type -> vector_pb.DropIndexResponse
+	8,  // 24: vector_pb.VectorService.PutVectors:output_type -> vector_pb.PutVectorsResponse
+	10, // 25: vector_pb.VectorService.GetVectors:output_type -> vector_pb.GetVectorsResponse
+	12, // 26: vector_pb.VectorService.DeleteVectors:output_type -> vector_pb.DeleteVectorsResponse
+	14, // 27: vector_pb.VectorService.ListVectors:output_type -> vector_pb.ListVectorsResponse
+	17, // 28: vector_pb.VectorService.QueryVectors:output_type -> vector_pb.QueryVectorsResponse
+	22, // [22:29] is the sub-list for method output_type
+	15, // [15:22] is the sub-list for method input_type
+	15, // [15:15] is the sub-list for extension type_name
+	15, // [15:15] is the sub-list for extension extendee
+	0,  // [0:15] is the sub-list for field type_name
 }
 
 func init() { file_vector_proto_init() }
@@ -1231,7 +1257,7 @@ func file_vector_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_vector_proto_rawDesc), len(file_vector_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   17,
+			NumMessages:   18,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

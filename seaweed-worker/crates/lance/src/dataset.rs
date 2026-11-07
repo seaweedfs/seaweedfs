@@ -88,7 +88,8 @@ pub fn table_options(
     options
 }
 
-async fn open_at(
+/// Open a table the caller has already resolved.
+pub async fn open_at(
     description: &TableDescription,
     fallback: &FallbackOptions,
     wrapper: Option<Arc<dyn WrappingObjectStore>>,
@@ -118,13 +119,22 @@ pub async fn drop(
         Err(err) if describe_not_found(&err) => return Ok(()),
         Err(err) => return Err(err),
     };
+    drop_at(id, &description, fallback).await
+}
+
+/// [`drop`] for a table the caller has already resolved.
+pub async fn drop_at(
+    id: &[String],
+    description: &TableDescription,
+    fallback: &FallbackOptions,
+) -> Result<()> {
     check_drop_location(id, &description.location)?;
     let (store, path) = ObjectStore::from_uri_and_params(
         Arc::new(ObjectStoreRegistry::default()),
         &description.location,
         &ObjectStoreParams {
             storage_options_accessor: Some(Arc::new(StorageOptionsAccessor::with_static_options(
-                table_options(&description, fallback),
+                table_options(description, fallback),
             ))),
             ..Default::default()
         },

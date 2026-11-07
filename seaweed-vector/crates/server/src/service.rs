@@ -12,12 +12,16 @@ use lance::io::ObjectStoreParams;
 use lance::io::StorageOptionsAccessor;
 use lance::io::WrappingObjectStore;
 use lance::table::format::Fragment;
+use object_store::aws::AmazonS3ConfigKey;
 use prost_types::{ListValue, Struct, Value, value::Kind};
 use std::collections::{BTreeMap, HashMap};
+use std::ffi::OsString;
+use std::str::FromStr;
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
-use weed_lance_worker::catalog::NamespaceClient;
+use weed_lance_worker::catalog::TableDescription;
 use weed_lance_worker::dataset::{self, FallbackOptions};
+use weed_lance_worker::jobs::vector_index::is_vector_table;
 use weed_vector_core::index;
 use weed_vector_core::query::{self, Query};
 use weed_vector_core::table::VectorTable;
@@ -35,17 +39,14 @@ fn invalid(err: impl Into<anyhow::Error>) -> Status {
 
 fn open_status(err: anyhow::Error) -> Status {
     let missing = err.chain().any(|cause| {
-        cause
-            .downcast_ref::<reqwest::Error>()
-            .is_some_and(|e| e.status() == Some(reqwest::StatusCode::NOT_FOUND))
-            || cause.downcast_ref::<lance::Error>().is_some_and(|e| {
-                matches!(
-                    e,
-                    lance::Error::DatasetNotFound { .. }
-                        | lance::Error::NotFound { .. }
-                        | lance::Error::VersionNotFound { .. }
-                )
-            })
+        cause.downcast_ref::<lance::Error>().is_some_and(|e| {
+            matches!(
+                e,
+                lance::Error::DatasetNotFound { .. }
+                    | lance::Error::NotFound { .. }
+                    | lance::Error::VersionNotFound { .. }
+            )
+        })
     });
     if missing {
         Status::not_found(format!("{:#}", err))
@@ -58,6 +59,69 @@ const KEY_COLUMN: &str = "key";
 const METADATA_COLUMN: &str = "metadata";
 const VECTOR_COLUMN: &str = "vector";
 const ROW_ID_COLUMN: &str = "_rowid";
+const ENDPOINT_OPTION: &str = "aws_endpoint";
+/// The options a gateway's describe produces. Any other key a request sends,
+/// such as a proxy or an endpoint alias, could route the engine's credentials
+/// elsewhere, so it is not taken from the request.
+const SENT_OPTIONS: [&str; 8] = [
+    ENDPOINT_OPTION,
+    "allow_http",
+    "aws_region",
+    "aws_skip_signature",
+    "aws_access_key_id",
+    "aws_secret_access_key",
+    "aws_session_token",
+    "expires_at_millis",
+];
+const CREDENTIAL_OPTIONS: [&str; 3] = [
+    "aws_access_key_id",
+    "aws_secret_access_key",
+    "aws_session_token",
+];
+
+/// Whether a request's options may be used with the engine's fallback: known
+/// keys only, and an endpoint that is the configured one, or any when no
+/// credential of the engine's can reach it: none configured, and the request
+/// either skips signing or signs with its own credentials alone. `env` names
+/// the engine's environment variables.
+fn options_trusted(
+    sent: &HashMap<String, String>,
+    fallback: &FallbackOptions,
+    env: impl IntoIterator<Item = OsString>,
+) -> bool {
+    if sent.keys().any(|key| !SENT_OPTIONS.contains(&key.as_str())) {
+        return false;
+    }
+    match (sent.get(ENDPOINT_OPTION), fallback.get(ENDPOINT_OPTION)) {
+        (None, _) => true,
+        (Some(sent), Some(pinned)) => sent.trim_end_matches('/') == pinned.trim_end_matches('/'),
+        (Some(_), None) => {
+            let configured = CREDENTIAL_OPTIONS
+                .iter()
+                .any(|key| fallback.contains_key(*key));
+            let unsigned = sent.get("aws_skip_signature").is_some_and(|v| v == "true");
+            !configured && (unsigned || signs_alone(sent, env))
+        }
+    }
+}
+
+/// Whether lance signs with the request's credentials alone. Lance fills an
+/// option the request leaves out from an environment variable under any of
+/// object_store's names for it, and asks the AWS default chain when the key
+/// pair is incomplete.
+fn signs_alone(sent: &HashMap<String, String>, env: impl IntoIterator<Item = OsString>) -> bool {
+    let has = |key: &str| sent.contains_key(key);
+    let env_token = || {
+        env.into_iter().any(|name| {
+            name.to_str()
+                .and_then(|name| AmazonS3ConfigKey::from_str(&name.to_ascii_lowercase()).ok())
+                == Some(AmazonS3ConfigKey::Token)
+        })
+    };
+    has("aws_access_key_id")
+        && has("aws_secret_access_key")
+        && (has("aws_session_token") || !env_token())
+}
 
 fn schema_for(
     dimension: usize,
@@ -370,21 +434,48 @@ fn rows_as_vectors(
     out
 }
 
+/// The description a gateway sent with the table. Only a vector index at its
+/// colocated path is taken, since the engine is that path's writer already;
+/// any other location would point the engine at storage the catalog does not
+/// know.
+fn resolved(table: &pb::Table, schemes: &[&str]) -> Option<TableDescription> {
+    let colocated = dataset::table_location(&table.id)?;
+    let path = colocated.strip_prefix("s3://")?;
+    let location = table.location.trim_end_matches('/');
+    let trusted = is_vector_table(&table.id)
+        && schemes
+            .iter()
+            .any(|scheme| location == format!("{scheme}://{path}"));
+    trusted.then(|| TableDescription {
+        location: location.to_string(),
+        storage_options: table.storage_options.clone(),
+        managed_versioning: false,
+    })
+}
+
 pub struct VectorServer {
-    client: NamespaceClient,
     fallback: FallbackOptions,
-    read_cache: Option<Arc<dyn WrappingObjectStore>>,
+    read_cache: Option<ReadCache>,
     nprobes: Option<usize>,
+    /// URI schemes a table's location may have.
+    schemes: &'static [&'static str],
 }
 
 impl VectorServer {
-    pub fn new(client: NamespaceClient, fallback: FallbackOptions) -> Self {
+    pub fn new(fallback: FallbackOptions) -> Self {
         Self {
-            client,
             fallback,
             read_cache: None,
             nprobes: None,
+            schemes: &["s3"],
         }
+    }
+
+    /// Tables on an in-process store, for tests.
+    #[cfg(test)]
+    pub(crate) fn with_schemes(mut self, schemes: &'static [&'static str]) -> Self {
+        self.schemes = schemes;
+        self
     }
 
     /// Partitions every query probes, instead of the index's own default.
@@ -395,21 +486,64 @@ impl VectorServer {
 
     /// Serve repeated reads of write-once table files from `cache`.
     pub fn with_read_cache(mut self, cache: ReadCache) -> Self {
-        self.read_cache = Some(Arc::new(cache));
+        self.read_cache = Some(cache);
         self
     }
 
-    async fn open(&self, table: &pb::Table) -> Result<Dataset> {
-        let opened = dataset::open_with(
-            &self.client,
-            &table.id,
-            &self.fallback,
-            self.read_cache.clone(),
-        )
-        .await?;
-        let mut dataset = opened.dataset;
+    /// The table as the gateway resolved it. A request that names no
+    /// location, another location than the index's own, or storage options
+    /// the engine's credentials must not be used with is refused.
+    fn describe(&self, table: &pb::Table) -> Result<TableDescription, Status> {
+        if table.location.is_empty() {
+            return Err(Status::invalid_argument("the table names no location"));
+        }
+        let description = resolved(table, self.schemes).ok_or_else(|| {
+            Status::permission_denied(format!(
+                "{} is not the location of index {}",
+                table.location,
+                table.id.join("/")
+            ))
+        })?;
+        let env = std::env::vars_os().map(|(name, _)| name);
+        if !options_trusted(&description.storage_options, &self.fallback, env) {
+            // The gateway answers AccessDenied without logging, so this is
+            // where an operator sees a pinned endpoint that does not match.
+            let endpoint = |options: &HashMap<String, String>| {
+                options.get(ENDPOINT_OPTION).cloned().unwrap_or_default()
+            };
+            tracing::warn!(
+                index = %table.id.join("/"),
+                sent = %endpoint(&description.storage_options),
+                pinned = %endpoint(&self.fallback),
+                "refused the request's storage options: an aws_endpoint other than the pinned one, a key other than the gateway's, or credentials the engine would have to complete"
+            );
+            return Err(Status::permission_denied(
+                "the storage options would send the engine's credentials elsewhere",
+            ));
+        }
+        Ok(description)
+    }
+
+    async fn open(&self, table: &pb::Table) -> Result<Dataset, Status> {
+        let description = self.describe(table)?;
+        // The options name the store the bytes come from; the cache is scoped
+        // by it so the same bucket and path on another endpoint never share.
+        let cache = self.read_cache.as_ref().map(|cache| {
+            let options = dataset::table_options(&description, &self.fallback);
+            let endpoint = options
+                .get(ENDPOINT_OPTION)
+                .map(String::as_str)
+                .unwrap_or("");
+            Arc::new(cache.scoped(endpoint)) as Arc<dyn WrappingObjectStore>
+        });
+        let mut dataset = dataset::open_at(&description, &self.fallback, cache)
+            .await
+            .map_err(open_status)?;
         if table.version != 0 {
-            dataset = dataset.checkout_version(table.version).await?;
+            dataset = dataset
+                .checkout_version(table.version)
+                .await
+                .map_err(|err| open_status(err.into()))?;
         }
         Ok(dataset)
     }
@@ -433,11 +567,7 @@ impl VectorService for VectorServer {
             return Err(Status::invalid_argument("dimension must be 1..=4096"));
         }
         // The gateway has already created the table through the catalog.
-        let description = self
-            .client
-            .describe_table(&table.id)
-            .await
-            .map_err(internal)?;
+        let description = self.describe(&table)?;
         let options = dataset::table_options(&description, &self.fallback);
         let schema = schema_for(dimension, metric, &req.non_filterable_metadata_keys);
         let empty = RecordBatch::new_empty(schema.clone());
@@ -470,7 +600,8 @@ impl VectorService for VectorServer {
         let table = req
             .table
             .ok_or_else(|| Status::invalid_argument("missing table"))?;
-        dataset::drop(&self.client, &table.id, &self.fallback)
+        let description = self.describe(&table)?;
+        dataset::drop_at(&table.id, &description, &self.fallback)
             .await
             .map_err(|err| {
                 if err.is::<dataset::DropRefused>() {
@@ -490,7 +621,7 @@ impl VectorService for VectorServer {
         let table = req
             .table
             .ok_or_else(|| Status::invalid_argument("missing table"))?;
-        let dataset = self.open(&table).await.map_err(open_status)?;
+        let dataset = self.open(&table).await?;
         if req.vectors.is_empty() {
             return Ok(Response::new(pb::PutVectorsResponse {
                 version: dataset.version().version,
@@ -532,7 +663,7 @@ impl VectorService for VectorServer {
         let table = req
             .table
             .ok_or_else(|| Status::invalid_argument("missing table"))?;
-        let dataset = self.open(&table).await.map_err(open_status)?;
+        let dataset = self.open(&table).await?;
         // Lease the resolved version so maintenance cannot reclaim its files
         // while this query runs against it.
         let _lease = weed_vector_core::maintenance::try_pin(&dataset)
@@ -556,7 +687,7 @@ impl VectorService for VectorServer {
         let table = req
             .table
             .ok_or_else(|| Status::invalid_argument("missing table"))?;
-        let mut dataset = self.open(&table).await.map_err(open_status)?;
+        let mut dataset = self.open(&table).await?;
         if !req.keys.is_empty() {
             dataset
                 .delete(&key_list(&req.keys))
@@ -582,7 +713,7 @@ impl VectorService for VectorServer {
                 "segment_index must be below segment_count, which is at most {MAX_SEGMENTS}"
             )));
         }
-        let dataset = self.open(&table).await.map_err(open_status)?;
+        let dataset = self.open(&table).await?;
         let offset: u64 = if req.next_token.is_empty() {
             0
         } else {
@@ -649,7 +780,7 @@ impl VectorService for VectorServer {
         let table = req
             .table
             .ok_or_else(|| Status::invalid_argument("missing table"))?;
-        let dataset = self.open(&table).await.map_err(open_status)?;
+        let dataset = self.open(&table).await?;
         // Lease the resolved version so maintenance cannot reclaim its files
         // while this query runs against it.
         let _lease = weed_vector_core::maintenance::try_pin(&dataset)
@@ -941,45 +1072,210 @@ mod tests {
         assert_eq!(next, None);
     }
 
-    /// A catalog that answers one describe with `location`.
-    async fn catalog_describing(location: &str) -> String {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}", listener.local_addr().unwrap());
-        let body = serde_json::json!({ "location": location }).to_string();
-        tokio::spawn(async move {
-            let (mut conn, _) = listener.accept().await.unwrap();
-            let mut request = [0u8; 8192];
-            let _ = conn.read(&mut request).await;
-            let response = format!(
-                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-                body.len()
-            );
-            conn.write_all(response.as_bytes()).await.unwrap();
-            let _ = conn.shutdown().await;
-            let _ = tokio::io::copy(&mut conn, &mut tokio::io::sink()).await;
-        });
-        url
-    }
-
+    /// A location that is not the index's own is refused before anything is
+    /// opened or removed.
     #[tokio::test]
     async fn drop_index_refuses_a_location_outside_the_table() {
-        for location in ["s3://bkt/vector", "s3://bkt/vector/prod"] {
-            let server = VectorServer::new(
-                NamespaceClient::new(catalog_describing(location).await),
-                FallbackOptions::new(),
-            );
+        let server = VectorServer::new(FallbackOptions::new());
+        for location in [
+            "s3://bkt/vector",
+            "s3://bkt/vector/prod",
+            "s3://other/vector/x",
+        ] {
             let request = pb::DropIndexRequest {
                 table: Some(pb::Table {
                     id: vec!["bkt".into(), "vector".into(), "x".into()],
-                    version: 0,
+                    location: location.into(),
+                    ..Default::default()
                 }),
             };
             let err = server
                 .drop_index(Request::new(request))
                 .await
                 .expect_err(location);
-            assert_eq!(err.code(), tonic::Code::FailedPrecondition, "{location}");
+            assert_eq!(err.code(), tonic::Code::PermissionDenied, "{location}");
         }
+    }
+
+    /// Only a vector index at its colocated path is taken from the request.
+    #[test]
+    fn resolved_takes_only_a_colocated_vector_index() {
+        let table = |id: &[&str], location: &str| pb::Table {
+            id: id.iter().map(|s| s.to_string()).collect(),
+            location: location.into(),
+            storage_options: HashMap::from([("aws_endpoint".to_string(), "http://gw".to_string())]),
+            ..Default::default()
+        };
+        let s3 = &["s3"];
+        let index = ["bkt", "vector", "x"];
+        for location in ["s3://bkt/vector/x", "s3://bkt/vector/x/"] {
+            let description = resolved(&table(&index, location), s3).expect(location);
+            assert_eq!(description.location, "s3://bkt/vector/x");
+            assert_eq!(
+                description
+                    .storage_options
+                    .get("aws_endpoint")
+                    .map(String::as_str),
+                Some("http://gw")
+            );
+        }
+        assert!(resolved(&table(&index, ""), s3).is_none());
+        assert!(resolved(&table(&index, "s3://other/vector/x"), s3).is_none());
+        assert!(resolved(&table(&index, "s3://bkt/vector/y"), s3).is_none());
+        assert!(resolved(&table(&index, "file://bkt/vector/x"), s3).is_none());
+        assert!(resolved(&table(&index, "memory://bkt/vector/x"), &["s3", "memory"]).is_some());
+        assert!(resolved(&table(&["bkt", "ns", "x"], "s3://bkt/ns/x"), s3).is_none());
+        assert!(resolved(&table(&["bkt", "x"], "s3://bkt/x"), s3).is_none());
+    }
+
+    /// A request names the table's location or is refused.
+    #[tokio::test]
+    async fn a_table_without_its_location_is_refused() {
+        let server = VectorServer::new(FallbackOptions::new());
+        for (location, code) in [
+            ("", tonic::Code::InvalidArgument),
+            ("s3://other/vector/x", tonic::Code::PermissionDenied),
+        ] {
+            let err = server
+                .get_vectors(Request::new(pb::GetVectorsRequest {
+                    table: Some(pb::Table {
+                        id: vec!["bkt".into(), "vector".into(), "x".into()],
+                        location: location.into(),
+                        ..Default::default()
+                    }),
+                    keys: vec!["k001".into()],
+                    ..Default::default()
+                }))
+                .await
+                .expect_err(location);
+            assert_eq!(err.code(), code, "{location}");
+        }
+    }
+
+    /// A request's options are used with the engine's credentials only when
+    /// they cannot send those credentials elsewhere.
+    #[test]
+    fn options_are_trusted_only_where_credentials_cannot_leave() {
+        let options = |pairs: &[(&str, &str)]| -> HashMap<String, String> {
+            pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect()
+        };
+        let creds = options(&[("aws_access_key_id", "k"), ("aws_secret_access_key", "s")]);
+        let pinned = options(&[
+            ("aws_access_key_id", "k"),
+            ("aws_secret_access_key", "s"),
+            (ENDPOINT_OPTION, "http://gw"),
+        ]);
+        let gateway = options(&[(ENDPOINT_OPTION, "http://gw"), ("allow_http", "true")]);
+        let elsewhere = options(&[(ENDPOINT_OPTION, "http://elsewhere")]);
+        let unsigned = options(&[
+            (ENDPOINT_OPTION, "http://gw"),
+            ("aws_skip_signature", "true"),
+        ]);
+        let vended = options(&[
+            (ENDPOINT_OPTION, "http://gw"),
+            ("aws_access_key_id", "v"),
+            ("aws_secret_access_key", "v"),
+        ]);
+        let none = FallbackOptions::new();
+        let trusted = |sent: &HashMap<String, String>, fallback: &FallbackOptions| {
+            options_trusted(sent, fallback, Vec::<OsString>::new())
+        };
+
+        assert!(trusted(&gateway, &pinned));
+        assert!(trusted(
+            &options(&[(ENDPOINT_OPTION, "http://gw/")]),
+            &pinned
+        ));
+        assert!(!trusted(&elsewhere, &pinned));
+        assert!(!trusted(&gateway, &creds), "no configured endpoint");
+        assert!(!trusted(&gateway, &none), "the default chain could sign");
+        assert!(trusted(&unsigned, &none));
+        assert!(trusted(&vended, &none));
+        assert!(
+            !options_trusted(&vended, &none, [OsString::from("AWS_SESSION_TOKEN")]),
+            "the environment would add its session token"
+        );
+        assert!(
+            !trusted(
+                &options(&[(ENDPOINT_OPTION, "http://gw"), ("aws_access_key_id", "v")]),
+                &none
+            ),
+            "a key without its secret is signed by the default chain"
+        );
+        assert!(
+            !trusted(&vended, &creds),
+            "configured credentials stay home"
+        );
+        assert!(
+            trusted(&options(&[("aws_region", "r")]), &creds),
+            "no endpoint sent"
+        );
+        for key in ["proxy_url", "aws_endpoint_url_s3", "aws_endpoint_url"] {
+            let routed = options(&[(key, "http://elsewhere"), ("aws_skip_signature", "true")]);
+            assert!(!trusted(&routed, &none), "{key}");
+        }
+    }
+
+    /// A request signs alone only with a full key pair, and with its own
+    /// session token whenever the environment would supply one.
+    #[test]
+    fn a_request_signs_alone_without_the_environment() {
+        let sent = |pairs: &[(&str, &str)]| -> HashMap<String, String> {
+            pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect()
+        };
+        let env = |names: &[&str]| -> Vec<OsString> { names.iter().map(OsString::from).collect() };
+        let pair = sent(&[("aws_access_key_id", "v"), ("aws_secret_access_key", "v")]);
+        let with_token = sent(&[
+            ("aws_access_key_id", "v"),
+            ("aws_secret_access_key", "v"),
+            ("aws_session_token", "t"),
+        ]);
+
+        assert!(signs_alone(&pair, env(&["AWS_REGION", "HOME"])));
+        assert!(!signs_alone(&sent(&[("aws_access_key_id", "v")]), env(&[])));
+        assert!(!signs_alone(
+            &sent(&[("aws_secret_access_key", "v")]),
+            env(&[])
+        ));
+        for name in [
+            "AWS_SESSION_TOKEN",
+            "aws_session_token",
+            "TOKEN",
+            "SESSION_TOKEN",
+        ] {
+            assert!(!signs_alone(&pair, env(&[name])), "{name}");
+            assert!(signs_alone(&with_token, env(&[name])), "{name}");
+        }
+    }
+
+    /// Options the engine must not use are refused, for a drop as for an open.
+    #[tokio::test]
+    async fn untrusted_options_are_refused() {
+        let sent = |endpoint: &str| pb::Table {
+            id: vec!["bkt".into(), "vector".into(), "x".into()],
+            location: "s3://bkt/vector/x".into(),
+            storage_options: HashMap::from([(ENDPOINT_OPTION.to_string(), endpoint.to_string())]),
+            ..Default::default()
+        };
+        let pinned =
+            FallbackOptions::from([(ENDPOINT_OPTION.to_string(), "http://gw".to_string())]);
+        let server = VectorServer::new(pinned);
+        let description = server.describe(&sent("http://gw")).unwrap();
+        assert_eq!(description.location, "s3://bkt/vector/x");
+        let err = server.describe(&sent("http://elsewhere")).unwrap_err();
+        assert_eq!(err.code(), tonic::Code::PermissionDenied);
+        let err = server
+            .drop_index(Request::new(pb::DropIndexRequest {
+                table: Some(sent("http://elsewhere")),
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::PermissionDenied);
     }
 }

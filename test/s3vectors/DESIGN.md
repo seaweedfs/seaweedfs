@@ -45,10 +45,10 @@ engine RPC, so they work against a plain `weed server`:
 ### Tier 2 — vector engine required (skipped when absent)
 
 `TestVectorDataPlaneLifecycle` spawns a real `weed-vector` against the
-environment's lance listener (`-s3.port.lance`), mirroring the cluster the
-pytest suite builds in `conftest.py`: `--namespace` points at the lance
-HTTP port, `--masters` at `master.http.grpc`, and the storage options carry
-the same test credentials the IAM config writes. The binary resolves as
+environment's S3 endpoint, mirroring the cluster the pytest suite builds in
+`conftest.py`: `--masters` points at `master.http.grpc`, and the storage
+options carry the same test credentials the IAM config writes, with
+`aws_endpoint` at the S3 port. The binary resolves as
 `VECTOR_BINARY` env → `./weed-vector` (the Makefile's output) → PATH; the
 test skips when none is found, and `waitForEngineDiscovery` polls a
 data-plane op until the gateway routes to the registered engine instead of
