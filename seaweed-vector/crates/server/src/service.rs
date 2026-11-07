@@ -60,6 +60,40 @@ const METADATA_COLUMN: &str = "metadata";
 const VECTOR_COLUMN: &str = "vector";
 const ROW_ID_COLUMN: &str = "_rowid";
 const ENDPOINT_OPTION: &str = "aws_endpoint";
+/// The options a gateway's describe produces. Any other key a request sends,
+/// such as a proxy or an endpoint alias, could route the engine's credentials
+/// elsewhere, so it is not taken from the request.
+const SENT_OPTIONS: [&str; 8] = [
+    ENDPOINT_OPTION,
+    "allow_http",
+    "aws_region",
+    "aws_skip_signature",
+    "aws_access_key_id",
+    "aws_secret_access_key",
+    "aws_session_token",
+    "expires_at_millis",
+];
+const CREDENTIAL_OPTIONS: [&str; 3] = [
+    "aws_access_key_id",
+    "aws_secret_access_key",
+    "aws_session_token",
+];
+
+/// Whether a request's options may be used with the engine's fallback: known
+/// keys only, and an endpoint that is the configured one, or any when the
+/// engine holds no credentials a request could send there.
+fn options_trusted(sent: &HashMap<String, String>, fallback: &FallbackOptions) -> bool {
+    if sent.keys().any(|key| !SENT_OPTIONS.contains(&key.as_str())) {
+        return false;
+    }
+    match (sent.get(ENDPOINT_OPTION), fallback.get(ENDPOINT_OPTION)) {
+        (None, _) => true,
+        (Some(sent), Some(pinned)) => sent == pinned,
+        (Some(_), None) => !CREDENTIAL_OPTIONS
+            .iter()
+            .any(|key| fallback.contains_key(*key)),
+    }
+}
 
 fn schema_for(
     dimension: usize,
@@ -417,19 +451,11 @@ impl VectorServer {
     }
 
     /// The table as the gateway resolved it, or through the catalog when the
-    /// request names no location. An endpoint the engine was configured with
-    /// is kept: a request may not send the engine's credentials elsewhere.
+    /// request names no location, or options the engine's credentials must
+    /// not be used with.
     async fn describe(&self, table: &pb::Table) -> Result<TableDescription> {
-        let pinned = self.fallback.get(ENDPOINT_OPTION);
         match resolved(table) {
-            Some(description)
-                if pinned.is_none_or(|pinned| {
-                    description
-                        .storage_options
-                        .get(ENDPOINT_OPTION)
-                        .is_none_or(|sent| sent == pinned)
-                }) =>
-            {
+            Some(description) if options_trusted(&description.storage_options, &self.fallback) => {
                 Ok(description)
             }
             _ => self.client.describe_table(&table.id).await,
@@ -1075,28 +1101,59 @@ mod tests {
         }
     }
 
-    /// A request may not send the engine's credentials to another endpoint
-    /// than the one it was configured with; such a table goes to the catalog.
+    /// A request's options are used with the engine's credentials only when
+    /// they cannot send those credentials elsewhere.
+    #[test]
+    fn options_are_trusted_only_where_credentials_cannot_leave() {
+        let options = |pairs: &[(&str, &str)]| -> HashMap<String, String> {
+            pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect()
+        };
+        let creds = options(&[("aws_access_key_id", "k"), ("aws_secret_access_key", "s")]);
+        let pinned = options(&[
+            ("aws_access_key_id", "k"),
+            ("aws_secret_access_key", "s"),
+            (ENDPOINT_OPTION, "http://gw"),
+        ]);
+        let gateway = options(&[(ENDPOINT_OPTION, "http://gw"), ("allow_http", "true")]);
+        let elsewhere = options(&[(ENDPOINT_OPTION, "http://elsewhere")]);
+
+        assert!(options_trusted(&gateway, &pinned));
+        assert!(!options_trusted(&elsewhere, &pinned));
+        assert!(!options_trusted(&gateway, &creds), "no configured endpoint");
+        assert!(
+            options_trusted(&gateway, &FallbackOptions::new()),
+            "nothing to send"
+        );
+        assert!(
+            options_trusted(&options(&[("aws_region", "r")]), &creds),
+            "no endpoint sent"
+        );
+        for key in ["proxy_url", "aws_endpoint_url_s3", "aws_endpoint_url"] {
+            let routed = options(&[(key, "http://elsewhere")]);
+            assert!(!options_trusted(&routed, &FallbackOptions::new()), "{key}");
+        }
+    }
+
+    /// Options the engine must not use send the table to the catalog.
     #[tokio::test]
-    async fn a_configured_endpoint_is_kept() {
+    async fn untrusted_options_go_to_the_catalog() {
         let sent = |endpoint: &str| pb::Table {
             id: vec!["bkt".into(), "vector".into(), "x".into()],
             location: "s3://bkt/vector/x".into(),
             storage_options: HashMap::from([(ENDPOINT_OPTION.to_string(), endpoint.to_string())]),
             ..Default::default()
         };
-        let unreachable = || NamespaceClient::new("http://127.0.0.1:1");
         let pinned =
             FallbackOptions::from([(ENDPOINT_OPTION.to_string(), "http://gw".to_string())]);
-        let server = VectorServer::new(unreachable(), pinned);
+        let server = VectorServer::new(NamespaceClient::new("http://127.0.0.1:1"), pinned);
         let description = server.describe(&sent("http://gw")).await.unwrap();
         assert_eq!(description.location, "s3://bkt/vector/x");
         server
             .describe(&sent("http://elsewhere"))
             .await
             .expect_err("another endpoint was taken from the request");
-
-        let unpinned = VectorServer::new(unreachable(), FallbackOptions::new());
-        unpinned.describe(&sent("http://elsewhere")).await.unwrap();
     }
 }
