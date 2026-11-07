@@ -90,8 +90,9 @@ func (s *Server) pruneExpiredStageCreateMarkers(ctx context.Context, bucketName 
 	})
 }
 
-// loadLatestStageCreateMarker returns the newest live marker for the table,
-// preferring the one staged with tableUUID, since each stage has its own location.
+// loadLatestStageCreateMarker returns the newest live marker for the table.
+// Each stage has a location of its own, so given the table UUID a commit
+// assigns, only the marker staged with that UUID is returned.
 func (s *Server) loadLatestStageCreateMarker(ctx context.Context, bucketName string, namespace []string, tableName string, tableUUID string) (*stageCreateMarker, error) {
 	opCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -101,7 +102,6 @@ func (s *Server) loadLatestStageCreateMarker(ctx context.Context, bucketName str
 
 	var latestMarker *stageCreateMarker
 	var latestCreatedAt time.Time
-	latestMatches := false
 
 	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		stream, err := client.ListEntries(opCtx, &filer_pb.ListEntriesRequest{
@@ -140,12 +140,13 @@ func (s *Server) loadLatestStageCreateMarker(ctx context.Context, bucketName str
 			if err != nil {
 				createdAt = time.Time{}
 			}
-			matches := tableUUID != "" && strings.EqualFold(marker.TableUUID, tableUUID)
-			if latestMarker == nil || matches && !latestMatches || matches == latestMatches && createdAt.After(latestCreatedAt) {
+			if tableUUID != "" && !strings.EqualFold(marker.TableUUID, tableUUID) {
+				continue
+			}
+			if latestMarker == nil || createdAt.After(latestCreatedAt) {
 				candidate := marker
 				latestMarker = &candidate
 				latestCreatedAt = createdAt
-				latestMatches = matches
 			}
 		}
 	})

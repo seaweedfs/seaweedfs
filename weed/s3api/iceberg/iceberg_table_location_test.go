@@ -142,34 +142,44 @@ func TestStagedCommitThatLosesTheRaceFails(t *testing.T) {
 	}
 }
 
-// Two clients can stage the same name, each at a location of its own. The
-// commit of the first lands at its own staged location, not at the location of
-// the stage that came after it.
+// Two clients can stage the same name, each at a location of its own. A commit
+// lands at the location of its own stage, never at the location of another
+// stage, even once its own marker is gone.
 func TestStagedCommitKeepsItsOwnLocation(t *testing.T) {
 	const bucket = "warehouse"
-	fc := newMemFiler()
-	seedNamespace(fc, bucket, "finance", "alice")
-	s := NewServer(fc, nil)
-	stage := func() createdResult {
+	for _, ownMarkerGone := range []bool{false, true} {
+		fc := newMemFiler()
+		seedNamespace(fc, bucket, "finance", "alice")
+		s := NewServer(fc, nil)
+		stage := func() createdResult {
+			w := httptest.NewRecorder()
+			s.handleCreateTable(w, newCreateTableRequest(t, bucket, "finance", `{"name":"orders","stage-create":true}`, "alice"))
+			return decodeCreated(t, w)
+		}
+		first, second := stage(), stage()
+		if ownMarkerGone {
+			markerDir := stageCreateMarkerDir(bucket, []string{"finance"}, "orders")
+			for p, entry := range fc.entries {
+				if path.Dir(p) == markerDir && strings.Contains(string(entry.Content), first.Metadata.TableUUID) {
+					delete(fc.entries, p)
+				}
+			}
+		}
+
+		body := `{"requirements":[{"type":"assert-create"}],"updates":[{"action":"assign-uuid","uuid":"` + first.Metadata.TableUUID + `"}]}`
+		r := httptest.NewRequest(http.MethodPost, "/v1/"+bucket+"/namespaces/finance/tables/orders", strings.NewReader(body))
+		r = mux.SetURLVars(r, map[string]string{"prefix": bucket, "namespace": "finance", "table": "orders"})
+		r = r.WithContext(s3_constants.SetIdentityNameInContext(r.Context(), "alice"))
 		w := httptest.NewRecorder()
-		s.handleCreateTable(w, newCreateTableRequest(t, bucket, "finance", `{"name":"orders","stage-create":true}`, "alice"))
-		return decodeCreated(t, w)
-	}
-	first, second := stage(), stage()
-	if first.Metadata.Location == second.Metadata.Location {
-		t.Fatalf("both stages got %s", first.Metadata.Location)
-	}
+		s.handleUpdateTable(w, r)
 
-	body := `{"requirements":[{"type":"assert-create"}],"updates":[{"action":"assign-uuid","uuid":"` + first.Metadata.TableUUID + `"}]}`
-	r := httptest.NewRequest(http.MethodPost, "/v1/"+bucket+"/namespaces/finance/tables/orders", strings.NewReader(body))
-	r = mux.SetURLVars(r, map[string]string{"prefix": bucket, "namespace": "finance", "table": "orders"})
-	r = r.WithContext(s3_constants.SetIdentityNameInContext(r.Context(), "alice"))
-	w := httptest.NewRecorder()
-	s.handleUpdateTable(w, r)
-
-	committed := decodeCreated(t, w)
-	if !strings.HasPrefix(committed.MetadataLocation, first.Metadata.Location+"/metadata/") || committed.Metadata.Location != first.Metadata.Location {
-		t.Errorf("commit landed at %s (location %s), want under %s", committed.MetadataLocation, committed.Metadata.Location, first.Metadata.Location)
+		committed := decodeCreated(t, w)
+		if strings.HasPrefix(committed.MetadataLocation, second.Metadata.Location+"/") {
+			t.Errorf("own marker gone %v: commit landed at the other stage's %s", ownMarkerGone, committed.MetadataLocation)
+		}
+		if !ownMarkerGone && (!strings.HasPrefix(committed.MetadataLocation, first.Metadata.Location+"/metadata/") || committed.Metadata.Location != first.Metadata.Location) {
+			t.Errorf("commit landed at %s (location %s), want under %s", committed.MetadataLocation, committed.Metadata.Location, first.Metadata.Location)
+		}
 	}
 }
 
