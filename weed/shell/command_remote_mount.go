@@ -123,26 +123,32 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 	}
 
 	// store a mount configuration in filer
-	mountedAt := time.Now()
 	if err = filer.InsertMountMapping(commandEnv, *dir, remoteStorageLocation); err != nil {
 		return fmt.Errorf("save mount mapping: %w", err)
 	}
 
-	return saveMountSyncOffset(commandEnv, *dir, mountedAt)
+	return saveMountSyncOffset(commandEnv, *dir)
 }
 
-// saveMountSyncOffset starts the write-back of a new mount at mountedAt,
-// after the pulled listing. An offset already saved, by remote.unmount for a
+// saveMountSyncOffset saves the directory's creation time as its sync
+// offset, where filer.remote.sync starts a mount without one, so -allMounts
+// need not wait for it. An offset already saved, by remote.unmount for a
 // remount, is kept.
-func saveMountSyncOffset(commandEnv *CommandEnv, dir string, mountedAt time.Time) error {
+func saveMountSyncOffset(commandEnv *CommandEnv, dir string) error {
 	return saveMountSyncOffsetWith(func() (int64, error) {
 		return remote_storage.GetSyncOffset(commandEnv.option.GrpcDialOption, commandEnv.FilerAddress(), dir)
+	}, func() (int64, error) {
+		entry, _, _, err := filer_pb.GetEntry(context.Background(), commandEnv, util.FullPath(dir))
+		if err != nil {
+			return 0, err
+		}
+		return entry.GetAttributes().GetCrtime(), nil
 	}, func(ts int64) error {
 		return remote_storage.SetSyncOffset(commandEnv.option.GrpcDialOption, commandEnv.FilerAddress(), dir, ts)
-	}, dir, mountedAt)
+	}, dir)
 }
 
-func saveMountSyncOffsetWith(read func() (int64, error), write func(ts int64) error, dir string, mountedAt time.Time) error {
+func saveMountSyncOffsetWith(read func() (int64, error), crtime func() (int64, error), write func(ts int64) error, dir string) error {
 	saved, err := read()
 	if err != nil {
 		return fmt.Errorf("read remote.sync offset for %s: %v", dir, err)
@@ -150,7 +156,14 @@ func saveMountSyncOffsetWith(read func() (int64, error), write func(ts int64) er
 	if saved > 0 {
 		return nil
 	}
-	if err = write(mountedAt.UnixNano()); err != nil {
+	created, err := crtime()
+	if err != nil {
+		return fmt.Errorf("look up %s: %v", dir, err)
+	}
+	if created <= 0 {
+		return nil
+	}
+	if err = write(time.Unix(created, 0).UnixNano()); err != nil {
 		return fmt.Errorf("save remote.sync offset for %s: %v", dir, err)
 	}
 	return nil

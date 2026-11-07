@@ -6,7 +6,6 @@ import (
 	"io"
 	"path/filepath"
 	"regexp"
-	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
@@ -118,11 +117,10 @@ func (c *commandRemoteMountBuckets) Do(args []string, commandEnv *CommandEnv, wr
 			}
 
 			// store a mount configuration in filer
-			mountedAt := time.Now()
 			if err = filer.InsertMountMapping(commandEnv, string(dir), remoteStorageLocation); err != nil {
 				return fmt.Errorf("save mount mapping %s to %+v: %v", dir, remoteStorageLocation, err)
 			}
-			if err = saveMountSyncOffset(commandEnv, string(dir), mountedAt); err != nil {
+			if err = saveMountSyncOffset(commandEnv, string(dir)); err != nil {
 				return err
 			}
 
