@@ -76,7 +76,7 @@ func TestDeriveECBalanceWorkerConfig(t *testing.T) {
 		{
 			name: "global moves per rack clamped to max",
 			values: map[string]*plugin_pb.ConfigValue{
-				"global_max_moves_per_rack": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1000000}},
+				"global_max_moves_per_rack": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1 << 31}},
 			},
 			check: func(t *testing.T, config *ecBalanceWorkerConfig) {
 				if got := config.TaskConfig.GlobalMaxMovesPerRack; got != 5000 {

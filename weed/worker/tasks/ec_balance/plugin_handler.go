@@ -443,9 +443,8 @@ func deriveECBalanceWorkerConfig(values map[string]*plugin_pb.ConfigValue) *ecBa
 	}
 	taskConfig.MinServerCount = minServerCount
 
-	globalMaxMoves := pluginworker.ReadIntConfig(values, "global_max_moves_per_rack", taskConfig.GlobalMaxMovesPerRack)
-	globalMaxMoves = min(max(globalMaxMoves, ecBalanceMinGlobalMaxMovesPerRack), ecBalanceMaxGlobalMaxMovesPerRack)
-	taskConfig.GlobalMaxMovesPerRack = globalMaxMoves
+	globalMaxMoves := pluginworker.ReadInt64Config(values, "global_max_moves_per_rack", int64(taskConfig.GlobalMaxMovesPerRack))
+	taskConfig.GlobalMaxMovesPerRack = int(min(max(globalMaxMoves, ecBalanceMinGlobalMaxMovesPerRack), ecBalanceMaxGlobalMaxMovesPerRack))
 
 	ioBytePerSecond := pluginworker.ReadInt64Config(values, "io_byte_per_second", taskConfig.IoBytePerSecond)
 	if ioBytePerSecond < 0 {
