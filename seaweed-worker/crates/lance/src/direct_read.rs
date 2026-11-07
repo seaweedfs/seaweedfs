@@ -1285,13 +1285,22 @@ impl Upload {
         if let Err(err) = created {
             // The filer may have saved the entry and lost its answer, or a
             // retried exclusive create may find this very upload in place:
-            // chunks the saved entry references are kept.
+            // chunks the saved entry references, or may reference, are kept.
             let saved = match self.store.reads.source.lookup(dir, name).await {
                 Ok(Some(saved)) => saved
                     .chunks
                     .first()
                     .is_some_and(|c| chunks.iter().any(|u| u.chunk.file_id == c.file_id)),
-                _ => false,
+                Ok(None) => false,
+                Err(lookup) => {
+                    tracing::warn!("{}: keeping its chunks: {lookup:#}", self.path);
+                    self.store
+                        .reads
+                        .stats
+                        .failures
+                        .fetch_add(1, Ordering::Relaxed);
+                    return Err(generic(err.context(format!("creating {}", self.path))));
+                }
             };
             if saved {
                 tracing::warn!("{}: created despite {err:#}", self.path);
@@ -1460,6 +1469,7 @@ mod tests {
         uploads: AtomicU64,
         discarded: AtomicU64,
         fail_reads: bool,
+        fail_lookups: bool,
         /// Creates save the entry and then answer with an error, as a filer
         /// whose reply was lost.
         lose_create_replies: bool,
@@ -1471,6 +1481,9 @@ mod tests {
     impl Source for Fake {
         async fn lookup(&self, dir: &str, name: &str) -> anyhow::Result<Option<Entry>> {
             self.lookups.fetch_add(1, Ordering::Relaxed);
+            if self.fail_lookups {
+                bail!("the filer is unreachable");
+            }
             Ok(self
                 .entries
                 .lock()
@@ -2508,6 +2521,24 @@ mod tests {
                 .len(),
             2
         );
+
+        // Nor are they discarded when the filer cannot be asked.
+        let fake = Arc::new(Fake {
+            lose_create_replies: true,
+            fail_lookups: true,
+            ..Default::default()
+        });
+        let store = writing_store(fake.clone(), no_keys(), 4096, false, false);
+        store
+            .put_opts(
+                &path,
+                Bytes::from(vec![1u8; 5000]).into(),
+                PutMode::Create.into(),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(fake.discarded.load(Ordering::Relaxed), 0);
+        assert_eq!(fake.needles.lock().unwrap().len(), 2);
 
         let fake = Arc::new(Fake {
             uploads_allowed: Some(1),
