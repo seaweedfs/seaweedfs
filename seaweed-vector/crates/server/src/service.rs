@@ -380,19 +380,9 @@ fn resolved(table: &pb::Table, schemes: &[&str]) -> Option<TableDescription> {
             .any(|scheme| location == format!("{scheme}://{path}"));
     trusted.then(|| TableDescription {
         location: location.to_string(),
-        storage_options: unsigned_options(),
+        storage_options: dataset::unsigned_options(),
         managed_versioning: false,
     })
-}
-
-/// What lance builds its own S3 store with. Every operation goes to the
-/// filers and volume servers instead, so the store is never dialed; unsigned,
-/// so lance does not look for credentials either.
-fn unsigned_options() -> HashMap<String, String> {
-    HashMap::from([
-        ("aws_skip_signature".to_string(), "true".to_string()),
-        ("aws_region".to_string(), "us-east-1".to_string()),
-    ])
 }
 
 pub struct VectorServer {
