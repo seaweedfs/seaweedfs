@@ -73,25 +73,17 @@ pub fn int_config(name: &str, value: i64) -> HashMap<String, ConfigValue> {
     values
 }
 
-/// What to reach the data with where the namespace vends nothing of its own -
-/// a gateway without STS vends no credentials, and one bound to a wildcard
-/// address vends no endpoint either. Taken from the environment so a harness
-/// can point these tests at a gateway that does check what it is given.
-pub fn fallback() -> weed_lance_worker::dataset::FallbackOptions {
-    let mut options = weed_lance_worker::dataset::FallbackOptions::new();
-    let from_env =
-        |name: &str, default: &str| std::env::var(name).unwrap_or_else(|_| default.to_string());
-    options.insert(
-        "aws_access_key_id".to_string(),
-        from_env("AWS_ACCESS_KEY_ID", "any"),
-    );
-    options.insert(
-        "aws_secret_access_key".to_string(),
-        from_env("AWS_SECRET_ACCESS_KEY", "any"),
-    );
-    if let Ok(endpoint) = std::env::var("AWS_ENDPOINT_URL") {
-        options.insert("aws_endpoint".to_string(), endpoint);
-        options.insert("allow_http".to_string(), "true".to_string());
-    }
-    options
+/// The cluster's storage, when WEED_MASTERS names the masters a harness
+/// started; otherwise none, and the tests that need storage are skipped by
+/// `namespace_url` being unset too.
+pub async fn storage() -> weed_lance_worker::dataset::Storage {
+    let Ok(masters) = std::env::var("WEED_MASTERS") else {
+        return weed_lance_worker::dataset::Storage::default();
+    };
+    let security = weed_lance_worker::security::Security::load(None, None).expect("security.toml");
+    let cluster =
+        weed_lance_worker::cluster::Cluster::new(&masters, "", &security).expect("masters");
+    weed_lance_worker::dataset::Storage(Some(
+        cluster.storage(&security, false).await.expect("storage"),
+    ))
 }

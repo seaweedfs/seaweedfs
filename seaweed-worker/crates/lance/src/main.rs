@@ -36,13 +36,30 @@ struct Args {
     #[arg(long, default_value = "1")]
     max_concurrency: i32,
 
-    /// Storage credentials to use where the namespace vends none. A gateway
-    /// with STS configured vends its own and these are ignored.
-    #[arg(long, env = "WEED_S3_ACCESS_KEY")]
-    access_key: Option<String>,
-
-    #[arg(long, env = "WEED_S3_SECRET_KEY")]
-    secret_key: Option<String>,
+    /// Comma-separated master addresses: the worker asks them for the filers
+    /// it keeps tables through.
+    #[arg(long, alias = "master", env = "WEED_MASTERS")]
+    masters: String,
+    /// The filer group whose filers the worker uses.
+    #[arg(
+        long,
+        alias = "filer.group",
+        env = "WEED_FILER_GROUP",
+        default_value = ""
+    )]
+    filer_group: String,
+    /// Encrypt every chunk written for the volume servers, as `weed s3
+    /// -encryptVolumeData` does.
+    #[arg(
+        long = "encryptVolumeData",
+        alias = "encrypt-volume-data",
+        env = "WEED_ENCRYPT_VOLUME_DATA"
+    )]
+    encrypt_volume_data: bool,
+    /// The cluster's security.toml; by default the file weed processes find
+    /// in -config_dir, ., ~/.seaweedfs and /etc/seaweedfs.
+    #[arg(long, env = "WEED_WORKER_SECURITY_TOML")]
+    security_toml: Option<std::path::PathBuf>,
 
     /// mTLS for the admin stream, the same certificates the Go worker reads
     /// from the [grpc.worker] section of security.toml. All three together, or
@@ -163,11 +180,13 @@ async fn main() -> Result<()> {
         ..Default::default()
     };
 
-    let mut fallback = weed_lance_worker::dataset::FallbackOptions::new();
-    if let (Some(access), Some(secret)) = (args.access_key, args.secret_key) {
-        fallback.insert("aws_access_key_id".to_string(), access);
-        fallback.insert("aws_secret_access_key".to_string(), secret);
-    }
+    let security =
+        weed_lance_worker::security::Security::load(args.security_toml.as_deref(), None)?;
+    let cluster =
+        weed_lance_worker::cluster::Cluster::new(&args.masters, &args.filer_group, &security)?;
+    let storage = weed_lance_worker::dataset::Storage(Some(
+        cluster.storage(&security, args.encrypt_volume_data).await?,
+    ));
 
     let metrics = Metrics::new(&options.worker_id, &options.worker_version)?;
     let lance_metrics = LanceMetrics::new(&metrics)?;
@@ -179,10 +198,10 @@ async fn main() -> Result<()> {
     }
 
     let mut registry = Registry::new().with_preview(Arc::new(
-        weed_lance_worker::preview::LancePreview::new(args.namespace.clone(), fallback.clone())
+        weed_lance_worker::preview::LancePreview::new(args.namespace.clone(), storage.clone())
             .with_signing_key(signing_key.clone()),
     ));
-    for handler in handlers(args.namespace, fallback, signing_key, Some(lance_metrics)) {
+    for handler in handlers(args.namespace, storage, signing_key, Some(lance_metrics)) {
         registry = registry.register(handler);
     }
 

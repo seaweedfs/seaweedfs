@@ -34,7 +34,7 @@ const MIN_FRAGMENTS_CEILING: i64 = 4096;
 /// accumulates small files the same way an Iceberg table does.
 pub struct CompactHandler {
     namespace_url: String,
-    fallback: dataset::FallbackOptions,
+    storage: dataset::Storage,
     signing_key: Option<SigningKey>,
     metrics: Option<crate::metrics::LanceMetrics>,
 }
@@ -43,7 +43,7 @@ impl CompactHandler {
     pub fn new(namespace_url: String) -> Self {
         Self {
             namespace_url,
-            fallback: dataset::FallbackOptions::new(),
+            storage: dataset::Storage::default(),
             signing_key: None,
             metrics: None,
         }
@@ -55,8 +55,8 @@ impl CompactHandler {
     }
 
     /// Storage options to use where the namespace vends none.
-    pub fn with_fallback(mut self, fallback: dataset::FallbackOptions) -> Self {
-        self.fallback = fallback;
+    pub fn with_storage(mut self, storage: dataset::Storage) -> Self {
+        self.storage = storage;
         self
     }
 
@@ -66,9 +66,7 @@ impl CompactHandler {
     }
 
     fn client(&self) -> NamespaceClient {
-        NamespaceClient::new(self.namespace_url.clone())
-            .with_fallback(&self.fallback)
-            .with_signing_key(self.signing_key.as_ref())
+        NamespaceClient::new(self.namespace_url.clone()).with_signing_key(self.signing_key.as_ref())
     }
 }
 
@@ -154,7 +152,7 @@ impl JobHandler for CompactHandler {
         let mut observations = Vec::new();
         for encoded in &tables {
             let id = parse_id(encoded);
-            let table = match dataset::open(&client, &id, &self.fallback).await {
+            let table = match dataset::open(&client, &id, &self.storage).await {
                 Ok(table) => table,
                 Err(err) => {
                     // A table that cannot be opened is the next run's problem,
@@ -271,7 +269,7 @@ impl JobHandler for CompactHandler {
         let client = self.client();
         // Re-resolve rather than trusting the location detection saw: the table
         // may have been repointed, and the vended credentials have expired.
-        let mut table = dataset::open(&client, &id, &self.fallback).await?;
+        let mut table = dataset::open(&client, &id, &self.storage).await?;
         let before = table.stats().await?;
 
         sender.send_progress(JobProgressUpdate {

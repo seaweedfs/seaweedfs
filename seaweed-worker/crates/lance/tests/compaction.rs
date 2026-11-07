@@ -4,8 +4,6 @@
 //! tests skip without Docker: compaction rewrites real files, and there is
 //! nothing to learn from it against a fake.
 
-use std::collections::HashMap;
-
 use anyhow::Result;
 use seaweed_worker_core::pb::{
     ExecuteJobRequest, JobSpec, RunDetectionRequest, config_value::Kind,
@@ -18,7 +16,7 @@ use weed_lance_worker::jobs::indices::OptimizeIndicesHandler;
 use weed_lance_worker::preview::LancePreview;
 
 mod common;
-use common::{Recorder, fallback, int_config, namespace_url};
+use common::{Recorder, int_config, namespace_url, storage};
 
 /// These tests drive one live gateway and one shared catalog: `list_all_tables`
 /// sweeps everything, so a table another test is writing shows up in this test's
@@ -47,7 +45,6 @@ async fn seed_table(
     };
     use arrow_schema::{DataType, Field, Schema};
     use lance::dataset::{Dataset, WriteMode, WriteParams};
-    use lance::io::{ObjectStoreParams, StorageOptionsAccessor};
     use std::sync::Arc;
 
     // Declaring is the namespace's job, not the worker's, so the test asks for
@@ -73,8 +70,7 @@ async fn seed_table(
     let id = vec!["vec".to_string(), "ml".to_string(), name.to_string()];
     let description = client.describe_table(&id).await?;
 
-    let mut options = description.storage_options.clone();
-    options.extend(fallback());
+    let wrapper = storage().await.wrapper(&description.location).await?;
     const DIM: i32 = 16;
     let schema = Arc::new(Schema::new(vec![
         Field::new("id", DataType::Int64, false),
@@ -108,12 +104,7 @@ async fn seed_table(
             } else {
                 WriteMode::Append
             },
-            store_params: Some(ObjectStoreParams {
-                storage_options_accessor: Some(std::sync::Arc::new(
-                    StorageOptionsAccessor::with_static_options(options.clone()),
-                )),
-                ..Default::default()
-            }),
+            store_params: Some(weed_lance_worker::dataset::store_params(wrapper.clone())),
             ..Default::default()
         };
         let dataset = Dataset::write(reader, description.location.as_str(), Some(params)).await?;
@@ -154,7 +145,7 @@ async fn compacts_a_fragmented_table() {
     let encoded = seed_fragmented_table(&url, "compactme", 12)
         .await
         .expect("seed a fragmented table");
-    let handler = CompactHandler::new(url).with_fallback(fallback());
+    let handler = CompactHandler::new(url).with_storage(storage().await);
     let recorder = Recorder::default();
 
     let request = RunDetectionRequest {
@@ -242,7 +233,7 @@ async fn cleans_up_old_versions() {
         .await
         .expect("seed a table with versions to clean");
 
-    let handler = CleanupVersionsHandler::new(url).with_fallback(fallback());
+    let handler = CleanupVersionsHandler::new(url).with_storage(storage().await);
     let recorder = Recorder::default();
 
     let request = RunDetectionRequest {
@@ -306,7 +297,7 @@ async fn skips_tables_without_indices() {
         .await
         .expect("seed a table without an index");
 
-    let handler = OptimizeIndicesHandler::new(url).with_fallback(fallback());
+    let handler = OptimizeIndicesHandler::new(url).with_storage(storage().await);
     let recorder = Recorder::default();
 
     let request = RunDetectionRequest {
@@ -345,7 +336,7 @@ async fn reindexes_rows_an_index_does_not_cover() {
     let encoded = seed_table(&url, "reindexme", 2, 512, true)
         .await
         .expect("seed an indexed table with uncovered rows");
-    let handler = OptimizeIndicesHandler::new(url).with_fallback(fallback());
+    let handler = OptimizeIndicesHandler::new(url).with_storage(storage().await);
     let recorder = Recorder::default();
 
     let request = RunDetectionRequest {
@@ -418,7 +409,7 @@ async fn previews_rows_of_a_table() {
         .await
         .expect("seed a table to preview");
 
-    let provider = LancePreview::new(url, fallback());
+    let provider = LancePreview::new(url, storage().await);
     let id = vec!["vec".to_string(), "ml".to_string(), "previewme".to_string()];
     let preview = provider.preview(&id, 4).await.expect("preview the table");
 
@@ -453,15 +444,16 @@ async fn concurrent_writers_keep_every_commit() {
     let client = NamespaceClient::new(url.clone());
     let id = vec!["vec".to_string(), "ml".to_string(), "racers".to_string()];
     let description = client.describe_table(&id).await.expect("describe");
-    let mut options = description.storage_options.clone();
-    options.extend(fallback());
+    let wrapper = storage()
+        .await
+        .wrapper(&description.location)
+        .await
+        .expect("storage for the table");
 
     let writes = (0..WRITERS).map(|writer| {
         let location = description.location.clone();
-        let options = options.clone();
-        tokio::spawn(
-            async move { append_rows(&location, &options, writer * 1000, ROWS_EACH).await },
-        )
+        let wrapper = wrapper.clone();
+        tokio::spawn(async move { append_rows(&location, wrapper, writer * 1000, ROWS_EACH).await })
     });
     for (writer, handle) in writes.enumerate() {
         handle
@@ -470,7 +462,7 @@ async fn concurrent_writers_keep_every_commit() {
             .unwrap_or_else(|err| panic!("writer {writer} failed to commit: {err:#}"));
     }
 
-    let table = weed_lance_worker::dataset::open(&client, &id, &fallback())
+    let table = weed_lance_worker::dataset::open(&client, &id, &storage().await)
         .await
         .expect("reopen the table");
     let rows = table.dataset.count_rows(None).await.expect("count rows");
@@ -484,7 +476,7 @@ async fn concurrent_writers_keep_every_commit() {
 /// Appends one batch to an existing dataset, the way an independent writer would.
 async fn append_rows(
     location: &str,
-    options: &HashMap<String, String>,
+    wrapper: Option<std::sync::Arc<dyn lance::io::WrappingObjectStore>>,
     first_id: i64,
     rows: i64,
 ) -> Result<()> {
@@ -493,7 +485,6 @@ async fn append_rows(
     };
     use arrow_schema::{DataType, Field, Schema};
     use lance::dataset::{Dataset, WriteMode, WriteParams};
-    use lance::io::{ObjectStoreParams, StorageOptionsAccessor};
     use std::sync::Arc;
 
     const DIM: i32 = 16;
@@ -522,12 +513,7 @@ async fn append_rows(
     )?;
     let params = WriteParams {
         mode: WriteMode::Append,
-        store_params: Some(ObjectStoreParams {
-            storage_options_accessor: Some(Arc::new(StorageOptionsAccessor::with_static_options(
-                options.clone(),
-            ))),
-            ..Default::default()
-        }),
+        store_params: Some(weed_lance_worker::dataset::store_params(wrapper)),
         ..Default::default()
     };
     Dataset::write(

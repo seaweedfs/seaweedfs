@@ -1,16 +1,16 @@
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 
-use weed_lance_worker::catalog::{NamespaceClient, parse_id};
-use weed_lance_worker::dataset::{self, FallbackOptions};
+use weed_lance_worker::catalog::{NamespaceClient, SigningKey, parse_id};
+use weed_lance_worker::dataset::{self, Storage};
 use weed_vector_core::coverage;
 use weed_vector_core::index;
 use weed_vector_core::query::{self, Query};
 use weed_vector_core::table::VectorTable;
 
 /// Mirrors `weed-worker`'s flags where the two touch the same thing: the
-/// namespace is WEED_LANCE_NAMESPACE and the fallback storage credentials are
-/// the same env vars.
+/// namespace that says where a table is, and the masters whose filers hold
+/// it.
 #[derive(Parser, Debug)]
 #[command(name = "weed-vector", about = "SeaweedFS vector query spike")]
 struct Args {
@@ -22,12 +22,29 @@ struct Args {
     )]
     namespace: String,
 
-    /// Storage credentials to use where the namespace vends none.
-    #[arg(long, env = "WEED_S3_ACCESS_KEY")]
-    access_key: Option<String>,
+    /// Comma-separated master addresses, whose filers the tables are kept
+    /// through. A table named by a local URI needs none.
+    #[arg(long, alias = "master", env = "WEED_MASTERS")]
+    masters: Option<String>,
 
-    #[arg(long, env = "WEED_S3_SECRET_KEY")]
-    secret_key: Option<String>,
+    /// The filer group whose filers hold the tables.
+    #[arg(
+        long,
+        alias = "filer.group",
+        env = "WEED_FILER_GROUP",
+        default_value = ""
+    )]
+    filer_group: String,
+
+    /// The `jwt.filer_signing.key` of the cluster, which the namespace
+    /// authenticates cluster processes with; security.toml's by default.
+    #[arg(long, env = "WEED_FILER_SIGNING_KEY")]
+    filer_signing_key: Option<String>,
+
+    /// The cluster's security.toml; by default the file weed processes find
+    /// in -config_dir, ., ~/.seaweedfs and /etc/seaweedfs.
+    #[arg(long, env = "WEED_VECTOR_SECURITY_TOML")]
+    security_toml: Option<std::path::PathBuf>,
 
     #[command(subcommand)]
     command: Command,
@@ -132,16 +149,18 @@ enum IndexAction {
 async fn open_dataset(
     client: &NamespaceClient,
     id: &str,
-    fallback: &FallbackOptions,
+    storage: &Storage,
 ) -> Result<lance::Dataset> {
     if id.contains("://") || id.starts_with('/') {
-        let mut builder = lance::dataset::builder::DatasetBuilder::from_uri(id);
-        if !fallback.is_empty() {
-            builder = builder.with_storage_options(fallback.clone());
-        }
-        return builder.load().await.with_context(|| format!("open {id}"));
+        return lance::dataset::builder::DatasetBuilder::from_uri(id)
+            .load()
+            .await
+            .with_context(|| format!("open {id}"));
     }
-    let table = dataset::open(client, &parse_id(id), fallback).await?;
+    if storage.0.is_none() {
+        bail!("a table named through the namespace needs --masters");
+    }
+    let table = dataset::open(client, &parse_id(id), storage).await?;
     Ok(table.dataset)
 }
 
@@ -157,12 +176,21 @@ async fn main() -> Result<()> {
         .init();
     let args = Args::parse();
 
-    let mut fallback = FallbackOptions::new();
-    if let (Some(access), Some(secret)) = (args.access_key, args.secret_key) {
-        fallback.insert("aws_access_key_id".to_string(), access);
-        fallback.insert("aws_secret_access_key".to_string(), secret);
-    }
-    let client = NamespaceClient::new(args.namespace).with_fallback(&fallback);
+    let security =
+        weed_lance_worker::security::Security::load(args.security_toml.as_deref(), None)?;
+    let signing_key = SigningKey::new(
+        args.filer_signing_key
+            .or_else(|| security.get("jwt.filer_signing.key")),
+    );
+    let client = NamespaceClient::new(args.namespace).with_signing_key(signing_key.as_ref());
+    let storage = match &args.masters {
+        Some(masters) => {
+            let cluster =
+                weed_lance_worker::cluster::Cluster::new(masters, &args.filer_group, &security)?;
+            Storage(Some(cluster.storage(&security, false).await?))
+        }
+        None => Storage::default(),
+    };
 
     match args.command {
         Command::Describe {
@@ -170,7 +198,7 @@ async fn main() -> Result<()> {
             vector_column,
             key_column,
         } => {
-            let dataset = open_dataset(&client, &id, &fallback).await?;
+            let dataset = open_dataset(&client, &id, &storage).await?;
             let schema: arrow_schema::Schema = dataset.schema().into();
             let resolved =
                 VectorTable::resolve(&dataset, vector_column.as_deref(), key_column.as_deref());
@@ -210,7 +238,7 @@ async fn main() -> Result<()> {
             vector_column,
             key_column,
         } => {
-            let dataset = open_dataset(&client, &id, &fallback).await?;
+            let dataset = open_dataset(&client, &id, &storage).await?;
             let vector =
                 VectorTable::resolve(&dataset, vector_column.as_deref(), key_column.as_deref())?;
             let coverages = coverage::coverage(&dataset, &vector.vector_column).await?;
@@ -222,7 +250,7 @@ async fn main() -> Result<()> {
             vector_column,
             key_column,
         } => {
-            let dataset = open_dataset(&client, &id, &fallback).await?;
+            let dataset = open_dataset(&client, &id, &storage).await?;
             let vector =
                 VectorTable::resolve(&dataset, vector_column.as_deref(), key_column.as_deref())?;
             for batch in query::get(&dataset, &vector, &keys, None).await? {
@@ -242,7 +270,7 @@ async fn main() -> Result<()> {
             key_column,
             nprobes,
         } => {
-            let opened = open_dataset(&client, &id, &fallback).await?;
+            let opened = open_dataset(&client, &id, &storage).await?;
             let dataset = match version {
                 Some(v) => opened.checkout_version(v).await?,
                 None => opened,
@@ -286,7 +314,7 @@ async fn main() -> Result<()> {
                     id, vector_column, ..
                 } => (id.clone(), vector_column.clone()),
             };
-            let mut dataset = open_dataset(&client, &id, &fallback).await?;
+            let mut dataset = open_dataset(&client, &id, &storage).await?;
             let table = VectorTable::resolve(&dataset, vector_column.as_deref(), None)?;
             let started = std::time::Instant::now();
             match action {

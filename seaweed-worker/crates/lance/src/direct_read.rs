@@ -54,6 +54,10 @@ const OCTET_STREAM: &str = "application/octet-stream";
 const FILE_MODE: u32 = 0o660;
 /// Chunk size when the filer names none.
 const DEFAULT_CHUNK_SIZE: usize = 4 << 20;
+/// The S3 Tables record of a table bucket, on the bucket's entry.
+const TABLE_BUCKET_METADATA: &str = "s3tables.metadata";
+/// How long a bucket's encryption setting is remembered.
+const BUCKET_SETTING_TTL: Duration = Duration::from_secs(60);
 
 #[derive(Clone)]
 pub struct DirectReads {
@@ -381,6 +385,8 @@ struct Shared {
     /// Write-once files, resolved once; everything else is looked up per
     /// request so reads follow writes.
     objects: moka::sync::Cache<String, Arc<Object>>,
+    /// Whether a bucket declares SSE-S3, by bucket.
+    encrypts: moka::sync::Cache<String, bool>,
     stats: Stats,
 }
 
@@ -503,11 +509,38 @@ impl DirectReads {
                 chunk_size: DEFAULT_CHUNK_SIZE,
                 cipher: false,
                 objects: moka::sync::Cache::new(OBJECT_CACHE_ENTRIES),
+                encrypts: moka::sync::Cache::builder()
+                    .time_to_live(BUCKET_SETTING_TTL)
+                    .build(),
                 stats: Stats::default(),
             }),
             filers: None,
             sse_s3: false,
         }
+    }
+
+    /// Whether `bucket` declares SSE-S3 for the files its clients write, as
+    /// the S3 write path decides it from the table bucket's record: a Lance
+    /// bucket with `sseAlgorithm` AES256.
+    pub async fn bucket_encrypts(&self, bucket: &str) -> anyhow::Result<bool> {
+        if let Some(known) = self.shared.encrypts.get(bucket) {
+            return Ok(known);
+        }
+        let entry = self
+            .shared
+            .source
+            .lookup(&self.shared.buckets_dir, bucket)
+            .await
+            .with_context(|| format!("looking up bucket {bucket}"))?;
+        let encrypts = entry
+            .and_then(|entry| entry.extended.get(TABLE_BUCKET_METADATA).cloned())
+            .and_then(|record| serde_json::from_slice::<serde_json::Value>(&record).ok())
+            .is_some_and(|record| {
+                record["format"] == "LANCE"
+                    && record["encryptionConfiguration"]["sseAlgorithm"] == "AES256"
+            });
+        self.shared.encrypts.insert(bucket.to_string(), encrypts);
+        Ok(encrypts)
     }
 
     /// The same storage, writing objects encrypted with SSE-S3 when `sse_s3`,

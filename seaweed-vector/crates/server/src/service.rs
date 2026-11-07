@@ -8,8 +8,6 @@ use lance::Dataset;
 use lance::dataset::ProjectionRequest;
 use lance::dataset::WriteParams;
 use lance::dataset::{MergeInsertBuilder, WhenMatched, WhenNotMatched};
-use lance::io::ObjectStoreParams;
-use lance::io::StorageOptionsAccessor;
 use lance::io::WrappingObjectStore;
 use lance::table::format::Fragment;
 use prost_types::{ListValue, Struct, Value, value::Kind};
@@ -17,7 +15,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
 use weed_lance_worker::catalog::TableDescription;
-use weed_lance_worker::dataset::{self, FallbackOptions};
+use weed_lance_worker::dataset;
 use weed_lance_worker::direct_read::{DirectReads, Wrappers};
 use weed_lance_worker::jobs::vector_index::is_vector_table;
 use weed_vector_core::index;
@@ -480,7 +478,7 @@ impl VectorServer {
     async fn open(&self, table: &pb::Table) -> Result<Dataset, Status> {
         let description = self.describe(table)?;
         let wrapper = self.wrapper(table);
-        let mut dataset = dataset::open_at(&description, &FallbackOptions::new(), wrapper)
+        let mut dataset = dataset::open_at(&description, wrapper)
             .await
             .map_err(open_status)?;
         if table.version != 0 {
@@ -512,7 +510,6 @@ impl VectorService for VectorServer {
         }
         // The gateway has already created the table through the catalog.
         let description = self.describe(&table)?;
-        let options = dataset::table_options(&description, &FallbackOptions::new());
         let schema = schema_for(dimension, metric, &req.non_filterable_metadata_keys);
         let empty = RecordBatch::new_empty(schema.clone());
         let reader = arrow_array::RecordBatchIterator::new(vec![Ok(empty)].into_iter(), schema);
@@ -520,13 +517,7 @@ impl VectorService for VectorServer {
             reader,
             &description.location,
             Some(WriteParams {
-                store_params: Some(ObjectStoreParams {
-                    storage_options_accessor: Some(Arc::new(
-                        StorageOptionsAccessor::with_static_options(options),
-                    )),
-                    object_store_wrapper: self.wrapper(&table),
-                    ..Default::default()
-                }),
+                store_params: Some(dataset::store_params(self.wrapper(&table))),
                 ..Default::default()
             }),
         )
@@ -553,9 +544,16 @@ impl VectorService for VectorServer {
                 .remove_table(&description.location)
                 .await
                 .map_err(internal)?,
-            None => dataset::drop_at(&table.id, &description, &FallbackOptions::new())
+            None => {
+                let (store, path) = lance::io::ObjectStore::from_uri_and_params(
+                    Arc::new(lance::io::ObjectStoreRegistry::default()),
+                    &description.location,
+                    &dataset::store_params(self.wrapper(&table)),
+                )
                 .await
-                .map_err(internal)?,
+                .map_err(internal)?;
+                store.remove_dir_all(path).await.map_err(internal)?;
+            }
         }
         Ok(Response::new(pb::DropIndexResponse {}))
     }
