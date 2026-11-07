@@ -143,6 +143,22 @@ async fn follow_filers(
     }
 }
 
+fn master_addresses(masters: &str) -> Result<Vec<String>> {
+    let masters: Vec<String> = masters
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect();
+    if masters.is_empty() {
+        anyhow::bail!("--masters (WEED_VECTOR_MASTERS) lists no master address");
+    }
+    for master in &masters {
+        master_client::grpc_addr(master)?;
+    }
+    Ok(masters)
+}
+
 fn advertised_addr(listen: &str, masters: &[String]) -> String {
     let Some((host, _)) = listen.rsplit_once(':') else {
         return listen.to_string();
@@ -197,14 +213,7 @@ async fn main() -> Result<()> {
     let listener = tokio::net::TcpListener::bind(&args.listen)
         .await
         .with_context(|| format!("listen on {}", args.listen))?;
-    let masters: Vec<String> = args
-        .masters
-        .split(',')
-        .map(|s| s.trim().to_string())
-        .collect();
-    for master in &masters {
-        master_client::grpc_addr(master)?;
-    }
+    let masters = master_addresses(&args.masters)?;
     // The filers are dialed as the masters are: grpc.client's credentials
     // and server allowlist, through the engine's own connector.
     let filer_dialer: Option<FilerDialer> = security
@@ -335,5 +344,11 @@ mod tests {
     #[test]
     fn the_masters_are_required() {
         assert!(Args::try_parse_from(["weed-vector"]).is_err());
+        assert!(master_addresses("").is_err());
+        assert!(master_addresses(" , ").is_err());
+        assert_eq!(
+            master_addresses(" m1:9333,,m2:9333 ").unwrap(),
+            ["m1:9333", "m2:9333"]
+        );
     }
 }
