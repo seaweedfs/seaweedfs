@@ -35,7 +35,7 @@ binary for the runner's platform, resolved from the version in `Cargo.lock`.
 
 ## Running
 
-    cargo run -p weed-lance-worker -- --admin 127.0.0.1:12535
+    cargo run -p weed-lance-worker -- --admin 127.0.0.1:12535 --masters 127.0.0.1:9333
 
 The admin's *HTTP* address is what an operator has; the gRPC port is derived
 from it the way the Go side does. Dialling the HTTP port fails as "frame with
@@ -49,7 +49,7 @@ Released builds do not need a toolchain. The worker ships inside the SeaweedFS
 image, beside the Rust volume server, under the verb that mirrors
 `volume-rust`:
 
-    docker run chrislusf/seaweedfs worker-rust --admin admin:12535
+    docker run chrislusf/seaweedfs worker-rust --admin admin:12535 --masters master:9333
 
 and as `weed-worker_linux_{amd64,arm64}.tar.gz` on each GitHub release. Both are
 linux amd64/arm64 only — lance, arrow and datafusion make every extra target an
@@ -59,7 +59,7 @@ entrypoint says so rather than failing as "not found".
 
 ## Metrics
 
-    cargo run -p weed-lance-worker -- --admin 127.0.0.1:12535 --metrics-port 9328
+    cargo run -p weed-lance-worker -- --admin 127.0.0.1:12535 --masters 127.0.0.1:9333 --metrics-port 9328
 
 Serves `/health`, `/ready` and `/metrics` on that port, the same three the Go
 worker serves under `weed worker -metricsPort`, so one scrape config covers
@@ -95,7 +95,7 @@ which `--masters` names the masters of (`--filer-group` picks the filers). What
 that takes comes from the same security.toml the weed processes use:
 `grpc.client` for the filers, `https.client` for volume servers under HTTPS,
 `jwt.signing.read.key` where volume reads are signed, and `s3.sse.kek` or
-`s3.sse.key` where a bucket encrypts with SSE-S3. `-encryptVolumeData` encrypts
+`s3.sse.key` where a bucket encrypts with SSE-S3. `--encryptVolumeData` encrypts
 every chunk the worker writes for the volume servers, as the gateway's flag does.
 
 The namespace authenticates the worker by the cluster token it derives from

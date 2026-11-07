@@ -359,7 +359,7 @@ def run_cluster(param, tmp_path_factory, identities):
             wait_for(lambda: http_ready(f"{admin_url}/api/plugin/job-types"), processes, "admin not ready")
             start("lance-worker", [lance_worker, "--admin", f"127.0.0.1:{admin}.{admin_grpc}",
                                    "--namespace", f"http://127.0.0.1:{lance}", "--id", "vectors-test-worker",
-                                   "--masters", master_addr, *encrypt])
+                                   "--masters", master_addr, *(["--encryptVolumeData"] if encrypt else [])])
             wait_for(lambda: "lance_vector_index" in
                      [jt["job_type"] for jt in json.load(urllib.request.urlopen(f"{admin_url}/api/plugin/job-types", timeout=2))],
                      processes, "the Lance worker never registered with admin")
