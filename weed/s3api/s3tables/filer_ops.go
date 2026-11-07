@@ -23,6 +23,11 @@ var (
 	ErrAttributeNotFound = errors.New("attribute not found")
 	ErrConcurrentUpdate  = errors.New("attribute changed concurrently")
 	ErrNameTaken         = errors.New("catalog name is taken")
+	// ErrPublishedRecordChanged is the ErrConcurrentUpdate a create returns
+	// when the record it wrote was already visible, and another caller changed
+	// it — updated it, or renamed it away — before the create could back it
+	// out. Whatever the create staged for that record may still be in use.
+	ErrPublishedRecordChanged = fmt.Errorf("published record changed before the create could back it out: %w", ErrConcurrentUpdate)
 )
 
 // extendedAttributeUpdateAttempts bounds the read-modify-write retry loop in
@@ -795,11 +800,15 @@ func (h *S3TablesHandler) confirmParentOnce(ctx context.Context, client filer_pb
 
 func (h *S3TablesHandler) confirmChild(ctx context.Context, client filer_pb.SeaweedFilerClient, parentPath string, isParent func(*filer_pb.Entry) bool, recheck bool, childPath string, written map[string][]byte, emptyDirs []string) error {
 	parent, err := h.openParent(ctx, client, parentPath, isParent)
-	confirmed := false
+	// mayBeVisible is whether the mark may have come off: it did, or the write
+	// taking it off failed in a way that does not say it was refused.
+	confirmed, mayBeVisible := false, false
 	if err == nil {
 		// The mark comes off only while the record still holds what this
 		// create wrote; a failed write backs the record out like a closed parent.
-		if err = h.removeExtendedAttributesIf(ctx, client, childPath, written, ExtendedKeyDeleting); err == nil {
+		err = h.removeExtendedAttributesIf(ctx, client, childPath, written, ExtendedKeyDeleting)
+		mayBeVisible = !errors.Is(err, ErrConcurrentUpdate) && !errors.Is(err, filer_pb.ErrNotFound)
+		if err == nil {
 			confirmed = true
 			if recheck {
 				err = h.parentStillOpen(ctx, client, parentPath, isParent, parent)
@@ -831,7 +840,12 @@ func (h *S3TablesHandler) confirmChild(ctx context.Context, client filer_pb.Seaw
 		glog.Warningf("back out %s: %v", childPath, backOutErr)
 		if errors.Is(backOutErr, ErrConcurrentUpdate) {
 			// The record moved past this create — adopted or rewritten — so
-			// there is nothing of its own left to remove.
+			// there is nothing of its own left to remove. While it was still
+			// marked, only another create could take it over; once readers
+			// could see it, an update or a rename may have built on it.
+			if mayBeVisible {
+				return fmt.Errorf("%w: %s", ErrPublishedRecordChanged, childPath)
+			}
 			return fmt.Errorf("%w: %s changed during create", ErrConcurrentUpdate, childPath)
 		}
 		return fmt.Errorf("%w: %s: %v (%v)", errBackOutFailed, childPath, backOutErr, err)

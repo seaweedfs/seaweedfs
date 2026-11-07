@@ -175,6 +175,10 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 			h.writeError(w, http.StatusConflict, ErrCodeTableAlreadyExists, fmt.Sprintf("table %s already exists", tableName))
 			return err
 		}
+		if errors.Is(err, ErrPublishedRecordChanged) {
+			h.writeError(w, http.StatusConflict, ErrCodeConflict, PublishedTableChangedMessage)
+			return err
+		}
 		if errors.Is(err, ErrConcurrentUpdate) {
 			h.writeError(w, http.StatusConflict, ErrCodeConflict, "table changed during create, retry the request")
 			return err

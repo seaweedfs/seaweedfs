@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"net/http"
-	"path"
 	"strings"
 	"time"
 
@@ -61,65 +60,24 @@ func (s *Server) discardStagedMetadata(ctx context.Context, metadataBucket, meta
 }
 
 // registrationRefused reports whether a failed registration was refused
-// outright by the catalog (a conflict, a name already taken, any other 4xx), so
-// no record points at the staged file. A transport failure or 5xx is not a
-// refusal: the record may have been written before the error surfaced.
+// before any record pointing at the staged file became visible, so the file can
+// go. A name already taken, a conflict, and any other 4xx are refused that way:
+// the create wrote nothing, or backed out what it wrote, or lost its
+// still-hidden record to another create. One conflict is not: a create whose
+// record was already visible, and was updated or renamed away before the
+// create could back it out, leaves that record in place — under the original
+// name or another — still pointing at the file. A transport failure or 5xx is
+// not a refusal either: the record may have been written before the error
+// surfaced.
 func registrationRefused(err error) bool {
+	if s3tables.IsPublishedTableChanged(err) {
+		return false
+	}
 	if isS3TablesConflict(err) || isS3TablesAlreadyExists(err) {
 		return true
 	}
 	status, _, _ := classifyManagerError(err)
 	return status >= 400 && status < 500
-}
-
-// recordReferencesAt reports whether the table's catalog record could still
-// reference a staged metadata file whose registration the catalog refused. A
-// refusal does not always remove the record: a create backs its record out
-// only while the record holds what the create wrote, and answers a conflict,
-// leaving the record in place, when an update reached it first. The record
-// keeps the file if it names it, or if it carries the table UUID this request
-// wrote, which makes it this request's own record that later commits built on.
-// A record still marked by an unfinished operation counts like any other, and
-// one that cannot be read or decoded keeps the file too.
-func (s *Server) recordReferencesAt(ctx context.Context, bucketName string, namespace []string, tableName, metadataLocation, tableUUID string) bool {
-	tablePath := s3tables.GetTablePath(bucketName, flattenNamespacePath(namespace), tableName)
-	var entry *filer_pb.Entry
-	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
-			Directory: path.Dir(tablePath),
-			Name:      path.Base(tablePath),
-		})
-		if err != nil {
-			return err
-		}
-		entry = resp.Entry
-		return nil
-	})
-	if errors.Is(err, filer_pb.ErrNotFound) {
-		return false
-	}
-	if err != nil || entry == nil {
-		glog.V(1).Infof("Iceberg: keeping metadata file %s, the record of %s could not be read: %v", metadataLocation, tableName, err)
-		return true
-	}
-	raw := entry.Extended[s3tables.ExtendedKeyMetadata]
-	if len(raw) == 0 {
-		// A directory with no record holds only files, such as data an engine
-		// wrote before the table was registered.
-		return false
-	}
-	var record struct {
-		MetadataLocation string                  `json:"metadataLocation"`
-		Metadata         *s3tables.TableMetadata `json:"metadata"`
-	}
-	if err := json.Unmarshal(raw, &record); err != nil {
-		glog.V(1).Infof("Iceberg: keeping metadata file %s, the record of %s could not be decoded: %v", metadataLocation, tableName, err)
-		return true
-	}
-	if record.MetadataLocation == metadataLocation {
-		return true
-	}
-	return record.Metadata != nil && record.Metadata.Iceberg != nil && record.Metadata.Iceberg.TableUUID == tableUUID
 }
 
 type icebergRequestError struct {
@@ -303,7 +261,7 @@ func (s *Server) finalizeCreateOnCommit(ctx context.Context, input createOnCommi
 		message: "Table was created concurrently",
 	}
 	if createErr != nil {
-		if registrationRefused(createErr) && !s.recordReferencesAt(ctx, metadataBucket, input.namespace, input.tableName, newMetadataLocation, input.tableUUID.String()) {
+		if registrationRefused(createErr) {
 			s.discardStagedMetadata(ctx, metadataBucket, metadataPath, metadataFileName, newMetadataLocation)
 		}
 		if isS3TablesConflict(createErr) || isS3TablesAlreadyExists(createErr) {
