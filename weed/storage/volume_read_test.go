@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -375,6 +376,49 @@ func TestReadNeedleDataIntoRangeChecksumMismatch(t *testing.T) {
 		got, err := read(damaged, at)
 		if err == nil || !strings.Contains(err.Error(), "checksum") || got.Len() != 0 {
 			t.Fatalf("page %d: damaged range read wrote %d bytes, err %v; want a checksum error and nothing written", page, got.Len(), err)
+		}
+
+		// Concurrent first ranges of a needle all see the outcome of the check.
+		for _, tc := range []struct {
+			id     uint64
+			damage bool
+		}{{uint64(10*i + 3), false}, {uint64(10*i + 4), true}} {
+			at, raw := write(tc.id)
+			if tc.damage {
+				if _, err := v.DataBackend.WriteAt([]byte{0xff}, raw+types.NeedleHeaderSize+types.DataSizeSize+10); err != nil {
+					t.Fatalf("damage needle: %v", err)
+				}
+			}
+			var wg sync.WaitGroup
+			errs := make([]error, 8)
+			for g := range errs {
+				wg.Add(1)
+				go func(g int) {
+					defer wg.Done()
+					_, errs[g] = read(tc.id, at)
+				}(g)
+			}
+			wg.Wait()
+			for _, err := range errs {
+				if (err != nil) != tc.damage {
+					t.Fatalf("page %d: concurrent range read of needle %d (damaged %v): %v", page, tc.id, tc.damage, err)
+				}
+			}
+		}
+
+		// A verified needle is checked again after a reload, as a remounted
+		// copy or a compaction commit gets.
+		reloaded := uint64(10*i + 5)
+		at, raw = write(reloaded)
+		if _, err := read(reloaded, at); err != nil {
+			t.Fatalf("page %d: first range read: %v", page, err)
+		}
+		if _, err := v.DataBackend.WriteAt([]byte{0xff}, raw+types.NeedleHeaderSize+types.DataSizeSize+10); err != nil {
+			t.Fatalf("damage needle: %v", err)
+		}
+		v.loadGeneration.Store(volumeLoads.Add(1))
+		if _, err := read(reloaded, at); err == nil || !strings.Contains(err.Error(), "checksum") {
+			t.Fatalf("page %d: range read after reload: %v; want a checksum error", page, err)
 		}
 	}
 }

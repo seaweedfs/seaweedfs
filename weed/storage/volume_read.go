@@ -3,9 +3,11 @@ package storage
 import (
 	"fmt"
 	"io"
+	"sync/atomic"
 	"time"
 
 	lru "github.com/hashicorp/golang-lru/v2"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 
@@ -23,14 +25,19 @@ const PagedReadLimit = 1024 * 1024
 // A range carries no checksum of its own, so a ranged read checks the whole
 // needle's CRC the first time any range of it is read. verifiedNeedles
 // remembers the needles that passed, so later ranges stream as before.
-var verifiedNeedles, _ = lru.New[verifiedNeedle, struct{}](64 * 1024)
+// Entries are per volume load, so a remounted copy or a compaction is
+// checked again, and concurrent first reads of a needle share one check.
+var (
+	verifiedNeedles, _ = lru.New[verifiedNeedle, struct{}](64 * 1024)
+	verifyingNeedles   singleflight.Group
+	volumeLoads        atomic.Uint64
+)
 
 type verifiedNeedle struct {
-	volumeId   needle.VolumeId
-	revision   uint16
-	id         NeedleId
-	appendAtNs uint64
-	checksum   needle.CRC
+	loadGeneration uint64
+	id             NeedleId
+	appendAtNs     uint64
+	checksum       needle.CRC
 }
 
 // read fills in Needle content by looking up n.Id from NeedleMapper
@@ -176,12 +183,21 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 	// Check the CRC before writing any byte of the range, so a damaged
 	// replica fails the read and the reader tries another copy.
 	if offset != 0 || size != int64(n.DataSize) {
-		key := verifiedNeedle{v.Id, v.SuperBlock.CompactionRevision, n.Id, n.AppendAtNs, n.Checksum}
+		key := verifiedNeedle{v.loadGeneration.Load(), n.Id, n.AppendAtNs, n.Checksum}
 		if !verifiedNeedles.Contains(key) {
-			if err = v.readNeedleDataInto(n, readOption, io.Discard, 0, int64(n.DataSize)); err != nil {
+			_, err, _ = verifyingNeedles.Do(fmt.Sprint(key), func() (any, error) {
+				if err := v.readNeedleDataInto(n, readOption, io.Discard, 0, int64(n.DataSize)); err != nil {
+					return nil, err
+				}
+				// A reload during the check may have swapped the data file.
+				if v.loadGeneration.Load() == key.loadGeneration {
+					verifiedNeedles.Add(key, struct{}{})
+				}
+				return nil, nil
+			})
+			if err != nil {
 				return err
 			}
-			verifiedNeedles.Add(key, struct{}{})
 		}
 	}
 
