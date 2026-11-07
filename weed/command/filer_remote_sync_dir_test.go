@@ -3286,6 +3286,27 @@ func TestMountTableEndsBelowAMount(t *testing.T) {
 	}
 }
 
+func TestDirRemoteLocationBelowAMount(t *testing.T) {
+	tests := []struct {
+		name, mountKey, dir, mountPath, want string
+	}{
+		{"the mount itself", "/buckets/b", "/buckets/b", "/", "/x.txt"},
+		{"the mount with a trailing slash", "/buckets/b", "/buckets/b/", "/", "/x.txt"},
+		{"a directory below the mount", "/buckets/b", "/buckets/b/sub", "/", "/sub/x.txt"},
+		{"a directory below a mount at a remote prefix", "/buckets/b", "/buckets/b/sub/deeper", "/prefix", "/prefix/sub/deeper/x.txt"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mountLoc := &remote_pb.RemoteStorageLocation{Name: "r", Bucket: "rb", Path: tt.mountPath}
+			dirLoc := dirRemoteLocation(tt.mountKey, tt.dir, mountLoc)
+			got := toRemoteStorageLocation(util.FullPath(tt.dir), util.FullPath(tt.dir).Child("x.txt"), dirLoc)
+			if got.Name != "r" || got.Bucket != "rb" || got.Path != tt.want {
+				t.Errorf("%s/x.txt maps to %s/%s%s; want r/rb%s", tt.dir, got.Name, got.Bucket, got.Path, tt.want)
+			}
+		})
+	}
+}
+
 func TestAdmitUntilMountEndsDrainsBeforeTheExit(t *testing.T) {
 	mountedDir := "/buckets/b"
 	loc := &remote_pb.RemoteStorageLocation{Name: "r", Bucket: "b", Path: "/"}

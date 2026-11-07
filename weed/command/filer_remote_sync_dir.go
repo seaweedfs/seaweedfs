@@ -58,7 +58,7 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 		return fmt.Errorf("read mount info: %w", detectErr)
 	}
 
-	eachEntryFunc, err := option.makeEventProcessor(remoteStorage, mountedDir, remoteStorageMountLocation, filerSource)
+	eachEntryFunc, err := option.makeEventProcessor(remoteStorage, mountedDir, dirRemoteLocation(mountKey, mountedDir, remoteStorageMountLocation), filerSource)
 	if err != nil {
 		return err
 	}
@@ -109,6 +109,15 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 	err = pb.FollowMetadata(pb.ServerAddress(*option.filerAddress), option.grpcDialOption, metadataFollowOption, processEventFnWithOffset)
 	option.resumeTsNs = saveResumeOffset(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir, processor)
 	return err
+}
+
+// dirRemoteLocation is where dir, at or below the mount at mountKey, lives
+// on the remote.
+func dirRemoteLocation(mountKey, dir string, mountLocation *remote_pb.RemoteStorageLocation) *remote_pb.RemoteStorageLocation {
+	if strings.TrimSuffix(dir, "/") == strings.TrimSuffix(mountKey, "/") {
+		return mountLocation
+	}
+	return filer.MapFullPathToRemoteStorageLocation(util.FullPath(mountKey), mountLocation, util.FullPath(dir))
 }
 
 // saveResumeOffset records where the next subscription resumes once this one
