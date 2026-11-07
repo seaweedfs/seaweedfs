@@ -13,11 +13,9 @@ import (
 
 // TestSparkDeterministicLocationCTAS exercises Spark's iceberg-spark
 // connector against the SeaweedFS REST catalog with no explicit `LOCATION`
-// clause and no UUID-suffixing. iceberg-spark does not implement Trino's
-// unique-table-location feature, so every CREATE TABLE here produces a
-// deterministic <namespace-location>/<tableName> path. The test asserts
-// the fresh-CTAS pattern works AND the resulting on-disk layout has no
-// UUID-suffixed sibling — i.e. one directory per table.
+// clause. The catalog picks the location, <namespace>/<tableName>-<uuid>, and
+// the test asserts the fresh-CTAS pattern works and each table's files sit in
+// that one directory, none under the bare table name.
 //
 // The fix in #9246 (advertise a default `location` namespace property)
 // is what allows iceberg-spark to resolve the table location at all when
@@ -82,13 +80,11 @@ print(f"ctas row count: {count}")
 		}
 	}
 
-	// Layout assertion: each table's data must land at the deterministic
-	// <namespace>/<tableName>/ path, with no UUID-suffixed sibling.
+	// Layout assertion: each table's files land in one <tableName>-<uuid>
+	// directory, and nothing sits under the bare table name.
 	keys := listSparkBucketKeysUnder(t, env, tableBucket, namespace+"/")
-	expectKeyAtSparkLocation(t, keys, namespace, srcTable)
-	expectKeyAtSparkLocation(t, keys, namespace, ctasTable)
-	rejectUUIDSuffixedSparkSibling(t, keys, namespace, srcTable)
-	rejectUUIDSuffixedSparkSibling(t, keys, namespace, ctasTable)
+	expectKeysInOneSparkLocation(t, keys, namespace, srcTable)
+	expectKeysInOneSparkLocation(t, keys, namespace, ctasTable)
 }
 
 func listSparkBucketKeysUnder(t *testing.T, env *TestEnvironment, bucket, prefix string) []string {
@@ -113,23 +109,18 @@ func listSparkBucketKeysUnder(t *testing.T, env *TestEnvironment, bucket, prefix
 	return keys
 }
 
-func expectKeyAtSparkLocation(t *testing.T, keys []string, namespace, table string) {
+func expectKeysInOneSparkLocation(t *testing.T, keys []string, namespace, table string) {
 	t.Helper()
-	want := namespace + "/" + table + "/"
+	dirs := map[string]bool{}
 	for _, k := range keys {
-		if strings.HasPrefix(k, want) {
-			return
+		if strings.HasPrefix(k, namespace+"/"+table+"/") {
+			t.Fatalf("found key %q under the bare table name %q", k, table)
+		}
+		if rest, ok := strings.CutPrefix(k, namespace+"/"+table+"-"); ok {
+			dirs[strings.SplitN(rest, "/", 2)[0]] = true
 		}
 	}
-	t.Fatalf("expected at least one object under %q; got keys: %v", want, keys)
-}
-
-func rejectUUIDSuffixedSparkSibling(t *testing.T, keys []string, namespace, table string) {
-	t.Helper()
-	prefix := namespace + "/" + table + "-"
-	for _, k := range keys {
-		if strings.HasPrefix(k, prefix) {
-			t.Fatalf("found UUID-suffixed sibling key %q for table %q (Spark should produce no -<uuid> suffix)", k, table)
-		}
+	if len(dirs) != 1 {
+		t.Fatalf("want the files of %q in one %s-<uuid> directory, found %d; keys: %v", table, table, len(dirs), keys)
 	}
 }

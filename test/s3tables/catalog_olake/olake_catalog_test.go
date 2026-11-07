@@ -476,12 +476,24 @@ func (env *TestEnvironment) readTable(t *testing.T, mode string) string {
 
 // listTableMetadata lists the table's metadata directory through the filer so
 // the repair assertion looks at real objects rather than at what the catalog
-// reports about itself.
+// reports about itself. A table created without a location sits in a
+// <table>-<uuid> directory, so every directory of the table's name is read.
 func (env *TestEnvironment) listTableMetadata(t *testing.T) []string {
 	t.Helper()
 
-	url := fmt.Sprintf("http://%s:%d/buckets/%s/%s/%s/metadata/?limit=200",
-		env.bindIP, env.filerPort, tableBucketName, expectedNamespace, expectedTable)
+	var names []string
+	for _, dir := range env.listFilerDir(t, fmt.Sprintf("/buckets/%s/%s/", tableBucketName, expectedNamespace)) {
+		if dir == expectedTable || strings.HasPrefix(dir, expectedTable+"-") {
+			names = append(names, env.listFilerDir(t, fmt.Sprintf("/buckets/%s/%s/%s/metadata/", tableBucketName, expectedNamespace, dir))...)
+		}
+	}
+	return names
+}
+
+func (env *TestEnvironment) listFilerDir(t *testing.T, dir string) []string {
+	t.Helper()
+
+	url := fmt.Sprintf("http://%s:%d%s?limit=200", env.bindIP, env.filerPort, dir)
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		t.Fatalf("Failed to build filer request: %v", err)
@@ -494,6 +506,9 @@ func (env *TestEnvironment) listTableMetadata(t *testing.T) []string {
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("filer listing returned %d: %s", resp.StatusCode, body)
 	}
