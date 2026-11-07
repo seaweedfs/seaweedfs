@@ -18,6 +18,7 @@ use std::sync::Arc;
 use tonic::{Request, Response, Status};
 use weed_lance_worker::catalog::{NamespaceClient, TableDescription};
 use weed_lance_worker::dataset::{self, FallbackOptions};
+use weed_lance_worker::jobs::vector_index::is_vector_table;
 use weed_vector_core::index;
 use weed_vector_core::query::{self, Query};
 use weed_vector_core::table::VectorTable;
@@ -370,10 +371,16 @@ fn rows_as_vectors(
     out
 }
 
-/// The description a gateway sent with the table, if it resolved it.
+/// The description a gateway sent with the table, if it resolved it. Only a
+/// vector index at its colocated path is taken on trust, since the engine is
+/// that path's writer already; any other location is looked up through the
+/// catalog, so a caller cannot point the engine at storage the catalog does
+/// not know.
 fn resolved(table: &pb::Table) -> Option<TableDescription> {
-    (!table.location.is_empty()).then(|| TableDescription {
-        location: table.location.clone(),
+    let colocated = dataset::table_location(&table.id)?;
+    let trusted = is_vector_table(&table.id) && table.location.trim_end_matches('/') == colocated;
+    trusted.then(|| TableDescription {
+        location: colocated,
         storage_options: table.storage_options.clone(),
         managed_versioning: false,
     })
@@ -994,54 +1001,56 @@ mod tests {
         }
     }
 
-    /// A table the gateway resolved is opened at the location it sent; the
-    /// catalog is not consulted.
+    /// Only a vector index at its colocated path is taken from the request;
+    /// anything else is left to the catalog.
+    #[test]
+    fn resolved_takes_only_a_colocated_vector_index() {
+        let table = |id: &[&str], location: &str| pb::Table {
+            id: id.iter().map(|s| s.to_string()).collect(),
+            location: location.into(),
+            storage_options: HashMap::from([("aws_endpoint".to_string(), "http://gw".to_string())]),
+            ..Default::default()
+        };
+        let index = ["bkt", "vector", "x"];
+        for location in ["s3://bkt/vector/x", "s3://bkt/vector/x/"] {
+            let description = resolved(&table(&index, location)).expect(location);
+            assert_eq!(description.location, "s3://bkt/vector/x");
+            assert_eq!(
+                description
+                    .storage_options
+                    .get("aws_endpoint")
+                    .map(String::as_str),
+                Some("http://gw")
+            );
+        }
+        assert!(resolved(&table(&index, "")).is_none());
+        assert!(resolved(&table(&index, "s3://other/vector/x")).is_none());
+        assert!(resolved(&table(&index, "s3://bkt/vector/y")).is_none());
+        assert!(resolved(&table(&["bkt", "ns", "x"], "s3://bkt/ns/x")).is_none());
+        assert!(resolved(&table(&["bkt", "x"], "s3://bkt/x")).is_none());
+    }
+
+    /// A table the request does not resolve is described through the
+    /// catalog, so without one the call fails rather than trusting the
+    /// request.
     #[tokio::test]
-    async fn a_resolved_table_needs_no_catalog() {
-        let dir = tempfile::tempdir().unwrap();
-        fragmented(&dir, &[0..3, 3..5], &[]).await;
+    async fn an_unresolved_table_needs_the_catalog() {
         let unreachable = NamespaceClient::new("http://127.0.0.1:1");
         let server = VectorServer::new(unreachable, FallbackOptions::new());
-        let resolved = pb::Table {
-            id: vec!["bkt".into(), "vector".into(), "x".into()],
-            location: dir.path().to_str().unwrap().to_string(),
-            ..Default::default()
-        };
-
-        let got = server
-            .get_vectors(Request::new(pb::GetVectorsRequest {
-                table: Some(resolved.clone()),
-                keys: vec!["k001".into(), "k004".into()],
-                return_data: true,
-                ..Default::default()
-            }))
-            .await
-            .unwrap()
-            .into_inner();
-        let mut keys: Vec<&str> = got.vectors.iter().map(|v| v.key.as_str()).collect();
-        keys.sort();
-        assert_eq!(keys, ["k001", "k004"]);
-
-        let err = server
-            .drop_index(Request::new(pb::DropIndexRequest {
-                table: Some(resolved),
-            }))
-            .await
-            .expect_err("a resolved location outside the table");
-        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
-
-        let unresolved = pb::Table {
-            id: vec!["bkt".into(), "vector".into(), "x".into()],
-            ..Default::default()
-        };
-        let err = server
-            .get_vectors(Request::new(pb::GetVectorsRequest {
-                table: Some(unresolved),
-                keys: vec!["k001".into()],
-                ..Default::default()
-            }))
-            .await
-            .expect_err("no location and no catalog");
-        assert_eq!(err.code(), tonic::Code::Unavailable);
+        for location in ["", "s3://other/vector/x"] {
+            let err = server
+                .get_vectors(Request::new(pb::GetVectorsRequest {
+                    table: Some(pb::Table {
+                        id: vec!["bkt".into(), "vector".into(), "x".into()],
+                        location: location.into(),
+                        ..Default::default()
+                    }),
+                    keys: vec!["k001".into()],
+                    ..Default::default()
+                }))
+                .await
+                .expect_err(location);
+            assert_eq!(err.code(), tonic::Code::Unavailable, "{location}");
+        }
     }
 }
