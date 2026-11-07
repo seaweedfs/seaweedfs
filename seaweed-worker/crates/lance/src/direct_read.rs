@@ -559,7 +559,10 @@ impl DirectReads {
                 chunk_size: DEFAULT_CHUNK_SIZE,
                 cipher: false,
                 filer_group: String::new(),
-                objects: moka::sync::Cache::new(OBJECT_CACHE_ENTRIES),
+                objects: moka::sync::Cache::builder()
+                    .max_capacity(OBJECT_CACHE_ENTRIES)
+                    .support_invalidation_closures()
+                    .build(),
                 stats: Stats::default(),
             }),
             filers: None,
@@ -625,7 +628,7 @@ impl DirectReads {
         self.shared
             .objects
             .invalidate_entries_if(move |key, _| key.starts_with(&under))
-            .ok();
+            .map_err(|err| anyhow::anyhow!("forgetting {location}: {err}"))?;
         Ok(())
     }
 
@@ -2591,16 +2594,19 @@ mod tests {
         let mut reads = DirectReads::new(fake.clone(), "", no_keys());
         Arc::get_mut(&mut reads.shared).unwrap().chunk_size = 4096;
         let store = reads.wrap("s3$vb", Arc::new(InMemory::new()));
-        for name in ["vector/idx/data/a.lance", "vector/idx/_versions/1.manifest"] {
+        for name in [
+            "vector/idx/data/a.lance",
+            "vector/idx/data/b.lance",
+            "vector/idx/_versions/1.manifest",
+        ] {
             store
                 .put(&Path::from(name), Bytes::from_static(b"bytes").into())
                 .await
                 .unwrap();
         }
-        store
-            .get(&Path::from("vector/idx/data/a.lance"))
-            .await
-            .unwrap();
+        for name in ["vector/idx/data/a.lance", "vector/idx/data/b.lance"] {
+            store.get(&Path::from(name)).await.unwrap();
+        }
         store
             .delete(&Path::from("vector/idx/data/a.lance"))
             .await
@@ -2617,11 +2623,10 @@ mod tests {
 
         reads.remove_table("s3://vb/vector/idx").await.unwrap();
         assert!(fake.entries.lock().unwrap().is_empty());
-        let err = store
-            .get(&Path::from("vector/idx/_versions/1.manifest"))
-            .await
-            .unwrap_err();
-        assert!(matches!(err, Error::NotFound { .. }), "{err}");
+        for name in ["vector/idx/_versions/1.manifest", "vector/idx/data/b.lance"] {
+            let err = store.get(&Path::from(name)).await.unwrap_err();
+            assert!(matches!(err, Error::NotFound { .. }), "{name}: {err}");
+        }
     }
 
     /// A create the filer saved but did not answer keeps its chunks and
