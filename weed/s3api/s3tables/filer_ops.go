@@ -15,6 +15,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -800,14 +801,17 @@ func (h *S3TablesHandler) confirmParentOnce(ctx context.Context, client filer_pb
 
 func (h *S3TablesHandler) confirmChild(ctx context.Context, client filer_pb.SeaweedFilerClient, parentPath string, isParent func(*filer_pb.Entry) bool, recheck bool, childPath string, written map[string][]byte, emptyDirs []string) error {
 	parent, err := h.openParent(ctx, client, parentPath, isParent)
-	// mayBeVisible is whether the mark may have come off: it did, or the write
-	// taking it off failed in a way that does not say it was refused.
+	// mayBeVisible is whether the mark may have come off: it did, or a write
+	// taking it off was sent and failed without the filer saying it refused
+	// it. A failure before any such write — the lookup that precedes it, say —
+	// leaves the mark on, and the record as invisible as it was.
 	confirmed, mayBeVisible := false, false
 	if err == nil {
 		// The mark comes off only while the record still holds what this
 		// create wrote; a failed write backs the record out like a closed parent.
-		err = h.removeExtendedAttributesIf(ctx, client, childPath, written, ExtendedKeyDeleting)
-		mayBeVisible = !errors.Is(err, ErrConcurrentUpdate) && !errors.Is(err, filer_pb.ErrNotFound)
+		writes := &markRemovalWrites{SeaweedFilerClient: client}
+		err = h.removeExtendedAttributesIf(ctx, writes, childPath, written, ExtendedKeyDeleting)
+		mayBeVisible = err == nil || writes.uncertain
 		if err == nil {
 			confirmed = true
 			if recheck {
@@ -857,6 +861,24 @@ func (h *S3TablesHandler) confirmChild(ctx context.Context, client filer_pb.Seaw
 		h.removeLeftoverDirectory(ctx, client, parentPath)
 	}
 	return err
+}
+
+// markRemovalWrites passes a create's mark-removal calls through to the filer
+// and records whether an UpdateEntry was sent whose outcome is not a refusal:
+// it succeeded, or it failed in a way that does not say whether it landed. A
+// compare the filer refused (FailedPrecondition) or an entry it no longer has
+// (NotFound) changed nothing.
+type markRemovalWrites struct {
+	filer_pb.SeaweedFilerClient
+	uncertain bool
+}
+
+func (w *markRemovalWrites) UpdateEntry(ctx context.Context, in *filer_pb.UpdateEntryRequest, opts ...grpc.CallOption) (*filer_pb.UpdateEntryResponse, error) {
+	resp, err := w.SeaweedFilerClient.UpdateEntry(ctx, in, opts...)
+	if code := status.Code(err); code != codes.FailedPrecondition && code != codes.NotFound {
+		w.uncertain = true
+	}
+	return resp, err
 }
 
 // dirListPageSize is how many entries dirHoldsFiles reads per ListEntries call.

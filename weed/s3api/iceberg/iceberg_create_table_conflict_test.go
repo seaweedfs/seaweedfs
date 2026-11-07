@@ -774,6 +774,76 @@ func TestCreateKeepsFileOfRecordThatSurvivedConflict(t *testing.T) {
 	}
 }
 
+// A create's record stays hidden until the mark comes off. When taking the
+// mark off fails and another create adopts the still-marked record, the first
+// create's file is unreferenced only if its write never went out: a lookup
+// failing before the write leaves the mark on, so the file goes. A write that
+// went out and failed without a refusal may have published the record first,
+// so the file stays.
+func TestCreateFailingToUnmarkRecordAnotherAdopted(t *testing.T) {
+	const winnerLocation = conflictLocation + "/metadata/v1-winner.metadata.json"
+	tablePath := s3tables.GetTablePath(conflictBucket, conflictNamespace, conflictTable)
+	for name, tc := range map[string]struct {
+		// arm fails the first create's mark removal, running adopt first.
+		arm      func(e *conflictEnv, adopt func())
+		keepFile bool
+	}{
+		"lookup fails before the write": {func(e *conflictEnv, adopt func()) {
+			e.hooks.lookupErr = func(in *filer_pb.LookupDirectoryEntryRequest) error {
+				if path.Join(in.Directory, in.Name) != tablePath {
+					return nil
+				}
+				e.hooks.lookupErr = nil
+				adopt()
+				return status.Error(codes.Unavailable, "filer unavailable")
+			}
+		}, false},
+		"write fails without a refusal": {func(e *conflictEnv, adopt func()) {
+			e.hooks.updateErr = func(in *filer_pb.UpdateEntryRequest) error {
+				if _, marked := in.Entry.Extended[s3tables.ExtendedKeyDeleting]; marked || in.Entry.Name != conflictTable {
+					return nil
+				}
+				e.hooks.updateErr = nil
+				adopt()
+				return status.Error(codes.Unavailable, "filer unavailable")
+			}
+		}, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := newConflictEnv(t)
+			winnerUUID := uuid.NewString()
+			adopted := false
+			adopt := func() {
+				adopted = true
+				e.registerWinner(winnerLocation, winnerUUID)
+			}
+			e.hooks.afterUpdate = func(in *filer_pb.UpdateEntryRequest) {
+				// The first create's claim has landed: its record is marked.
+				if in.Entry.Name == conflictTable && string(in.Entry.Extended[s3tables.ExtendedKeyDeleting]) == "create" {
+					e.hooks.afterUpdate = nil
+					tc.arm(e, adopt)
+				}
+			}
+
+			rec := e.createTable(conflictTableBody("col", `"location":"`+conflictLocation+`"`))
+			if !adopted {
+				t.Fatal("the competing create never adopted the marked record")
+			}
+			if rec.Code != http.StatusConflict {
+				t.Fatalf("create = %d (%s), want 409", rec.Code, rec.Body.String())
+			}
+			e.assertWinnerRecord(winnerLocation, winnerUUID)
+			files := e.metadataFiles()
+			if tc.keepFile && len(files) != 1 {
+				t.Errorf("metadata files = %v, want the staged file kept", files)
+			}
+			if !tc.keepFile && len(files) != 0 {
+				t.Errorf("metadata files = %v, want the unreferenced staged file removed", files)
+			}
+		})
+	}
+}
+
 func TestRegistrationRefused(t *testing.T) {
 	typed := func(code string) error { return &s3tables.S3TablesError{Type: code, Message: code} }
 	for name, tc := range map[string]struct {
