@@ -209,7 +209,7 @@ func isMountTable(dir string, entry *filer_pb.Entry) bool {
 }
 
 func sameMountLocation(a, b *remote_pb.RemoteStorageLocation) bool {
-	return a != nil && b != nil && a.Bucket == b.Bucket && a.Path == b.Path
+	return a != nil && b != nil && a.Name == b.Name && a.Bucket == b.Bucket && a.Path == b.Path
 }
 
 func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.RemoteConf, mountedDir string, remoteStorageMountLocation *remote_pb.RemoteStorageLocation, filerSource *source.FilerSource) (pb.ProcessMetadataFunc, error) {

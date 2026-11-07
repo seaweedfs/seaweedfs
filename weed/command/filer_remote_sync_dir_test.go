@@ -3189,6 +3189,7 @@ func TestMountTableEnds(t *testing.T) {
 	loc := &remote_pb.RemoteStorageLocation{Name: "r", Bucket: "b", Path: "/"}
 	elsewhere := &remote_pb.RemoteStorageLocation{Name: "r", Bucket: "other", Path: "/"}
 	other := &remote_pb.RemoteStorageLocation{Name: "r", Bucket: "c", Path: "/"}
+	otherRemote := &remote_pb.RemoteStorageLocation{Name: "r2", Bucket: "b", Path: "/"}
 	mapped := map[string]*remote_pb.RemoteStorageLocation{mountedDir: loc}
 	mappedWithOther := map[string]*remote_pb.RemoteStorageLocation{mountedDir: loc, "/buckets/c": other}
 
@@ -3202,6 +3203,8 @@ func TestMountTableEnds(t *testing.T) {
 		{"unmounted", mountTableEvent(t, 1, mappedWithOther, map[string]*remote_pb.RemoteStorageLocation{"/buckets/c": other}), true, nil},
 		{"mounted elsewhere", mountTableEvent(t, 1, mapped, map[string]*remote_pb.RemoteStorageLocation{mountedDir: elsewhere}), true, elsewhere},
 		{"table deleted", mountTableEvent(t, 1, mapped, nil), true, nil},
+		{"mounted on another remote", mountTableEvent(t, 1, mapped, map[string]*remote_pb.RemoteStorageLocation{mountedDir: otherRemote}), true, otherRemote},
+		{"replayed unmount from another remote", mountTableEvent(t, 1, map[string]*remote_pb.RemoteStorageLocation{mountedDir: otherRemote}, map[string]*remote_pb.RemoteStorageLocation{}), false, nil},
 		{"replayed version from before the mount", mountTableEvent(t, 1, map[string]*remote_pb.RemoteStorageLocation{"/buckets/c": other}, map[string]*remote_pb.RemoteStorageLocation{}), false, nil},
 		{"replayed creation of the table", mountTableEvent(t, 1, nil, map[string]*remote_pb.RemoteStorageLocation{"/buckets/c": other}), false, nil},
 		{"replayed deletion of the table", mountTableEvent(t, 1, map[string]*remote_pb.RemoteStorageLocation{"/buckets/c": other}, nil), false, nil},
