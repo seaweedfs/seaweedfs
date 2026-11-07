@@ -338,7 +338,7 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 	// earlier and since dropped, an unregistered file, or a request racing this
 	// one for the same name. Writing it exclusively keeps this request from
 	// replacing that file, and from deleting it below if registration fails.
-	metadataFileName, metadataLocation, err = s.stageCommitMetadata(r.Context(), metadataBucket, metadataPath, location, metadataFileName, metadataBytes)
+	metadataFileName, metadataLocation, stageToken, err := s.stageOwnedMetadata(r.Context(), metadataBucket, metadataPath, location, metadataFileName, metadataBytes)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to save metadata file: "+err.Error())
 		return
@@ -374,7 +374,7 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 		// under this name or one it was renamed to, could point at it, and
 		// removing it would leave the table unreadable.
 		if registrationRefused(err) {
-			s.discardStagedMetadata(r.Context(), metadataBucket, metadataPath, metadataFileName, metadataLocation)
+			s.discardStagedMetadata(r.Context(), metadataBucket, metadataPath, metadataFileName, metadataLocation, stageToken)
 		}
 		if isS3TablesAlreadyExists(err) {
 			writeTableAlreadyExists(w, namespace, tableName)
@@ -391,7 +391,7 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 	// registered without a location comes back empty, which is no match either:
 	// this request always sends one, and a fresh create echoes it.
 	if createResp.MetadataLocation != metadataLocation {
-		s.discardStagedMetadata(r.Context(), metadataBucket, metadataPath, metadataFileName, metadataLocation)
+		s.discardStagedMetadata(r.Context(), metadataBucket, metadataPath, metadataFileName, metadataLocation, stageToken)
 		writeTableAlreadyExists(w, namespace, tableName)
 		return
 	}

@@ -10,8 +10,17 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
+
+// stageTokenKey is the extended attribute stageOwnedMetadata tags a staged
+// metadata file with: a value unique to the request that wrote it, which the
+// request's own cleanup must find before it deletes the file. The internal
+// prefix keeps it out of the headers S3 reads return.
+const stageTokenKey = s3_constants.SeaweedFSInternalPrefix + "iceberg-stage-token"
 
 // metadataDirPath returns the filer directory holding a table's metadata files.
 func metadataDirPath(bucketName, tablePath string) string {
@@ -29,11 +38,16 @@ func metadataDirPath(bucketName, tablePath string) string {
 // same v{N} name, and letting the second overwrite the first would leave the
 // winner's catalog pointer aimed at the loser's metadata.
 func (s *Server) saveMetadataFile(ctx context.Context, bucketName, tablePath, metadataFileName string, content []byte, exclusive bool) error {
-	return s.saveMetadataBlob(ctx, bucketName, tablePath, metadataFileName, content, "application/json", exclusive)
+	return s.saveMetadataBlob(ctx, bucketName, tablePath, metadataFileName, content, "application/json", exclusive, nil)
 }
 
-// saveMetadataBlob saves a file into the table's metadata directory.
-func (s *Server) saveMetadataBlob(ctx context.Context, bucketName, tablePath, metadataFileName string, content []byte, mimeType string, exclusive bool) error {
+// saveMetadataBlob saves a file into the table's metadata directory, with
+// extended stored on the entry alongside its mime type.
+func (s *Server) saveMetadataBlob(ctx context.Context, bucketName, tablePath, metadataFileName string, content []byte, mimeType string, exclusive bool, extended map[string][]byte) error {
+	attrs := map[string][]byte{"Mime-Type": []byte(mimeType)}
+	for key, value := range extended {
+		attrs[key] = value
+	}
 
 	// Create context with timeout for file operations
 	opCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -115,10 +129,8 @@ func (s *Server) saveMetadataBlob(ctx context.Context, bucketName, tablePath, me
 					FileMode: uint32(0644),
 					FileSize: uint64(len(content)),
 				},
-				Content: content,
-				Extended: map[string][]byte{
-					"Mime-Type": []byte(mimeType),
-				},
+				Content:  content,
+				Extended: attrs,
 			},
 		})
 		if err != nil {
@@ -141,6 +153,39 @@ func (s *Server) deleteMetadataFile(ctx context.Context, bucketName, tablePath, 
 	metadataDir := metadataDirPath(bucketName, tablePath)
 	return s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		return filer_pb.DoRemove(opCtx, client, metadataDir, metadataFileName, true, false, true, false, nil)
+	})
+}
+
+// errStagedFileReplaced reports that the entry at a staged file's path no
+// longer carries the token it was staged with: it is another writer's file.
+var errStagedFileReplaced = errors.New("staged metadata file was replaced")
+
+// deleteStagedMetadataFile removes a file stageOwnedMetadata wrote, only while
+// the entry at its path still carries token. The filer checks the token under
+// the path lock the delete runs under, so a file that took the path since —
+// the table was dropped and another create staged the same name — is refused
+// with errStagedFileReplaced instead of deleted. A path that holds nothing is
+// not an error.
+func (s *Server) deleteStagedMetadataFile(ctx context.Context, bucketName, tablePath, metadataFileName, token string) error {
+	if token == "" {
+		return fmt.Errorf("%w: %s has no stage token", errStagedFileReplaced, metadataFileName)
+	}
+	opCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	metadataDir := metadataDirPath(bucketName, tablePath)
+	return s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		_, err := filer_pb.DoRemoveRequest(opCtx, client, &filer_pb.DeleteEntryRequest{
+			Directory:            metadataDir,
+			Name:                 metadataFileName,
+			IsDeleteData:         true,
+			IgnoreRecursiveError: true,
+			ExpectedExtended:     map[string][]byte{stageTokenKey: []byte(token)},
+		})
+		if status.Code(err) == codes.FailedPrecondition {
+			return fmt.Errorf("%w: %s/%s: %v", errStagedFileReplaced, metadataDir, metadataFileName, err)
+		}
+		return err
 	})
 }
 

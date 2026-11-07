@@ -1,6 +1,7 @@
 package iceberg
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -462,6 +463,57 @@ func TestCreateTableDiscardsFileWhenNameWasTakenMidFlight(t *testing.T) {
 				t.Errorf("the losing request left %v behind", files)
 			}
 			e.assertWinnerRecord(winnerLocation, winnerUUID)
+		})
+	}
+}
+
+// A losing create's cleanup removes its file by path, and the path can be
+// reused before the cleanup runs: the table is dropped, its directory purged,
+// and another create stages the same v1.metadata.json and registers it. The
+// cleanup must leave that replacement alone.
+func TestLosingCreateKeepsReplacementAtReusedPath(t *testing.T) {
+	for name, create := range map[string]func(t *testing.T, e *conflictEnv){
+		"create table": func(t *testing.T, e *conflictEnv) {
+			if rec := e.createTable(conflictTableBody("col", `"location":"`+conflictLocation+`"`)); rec.Code != http.StatusConflict {
+				t.Fatalf("create = %d (%s), want 409", rec.Code, rec.Body.String())
+			}
+		},
+		"create on commit": func(t *testing.T, e *conflictEnv) {
+			if _, reqErr := e.server.finalizeCreateOnCommit(t.Context(), e.finalizeInput(uuid.New())); reqErr == nil || reqErr.status != http.StatusConflict {
+				t.Fatalf("finalize = %+v, want a 409", reqErr)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := newConflictEnv(t)
+			replacement := []byte(`{"replacement":true}`)
+			registered, replaced := false, false
+			e.hooks.afterCreate = func(in *filer_pb.CreateEntryRequest) {
+				if registered || in.Entry.IsDirectory || in.Entry.Name != "v1.metadata.json" {
+					return
+				}
+				registered = true
+				e.registerWinner(conflictLocation+"/metadata/v1-winner.metadata.json", uuid.NewString())
+				e.filer.BeforeDelete = func() {
+					replaced = true
+					// Stands in for drop, purge and a new create staging the name.
+					if err := e.server.saveMetadataFile(t.Context(), conflictBucket, path.Join(conflictNamespace, conflictTable), "v1.metadata.json", replacement, false); err != nil {
+						t.Errorf("replace staged file: %v", err)
+					}
+				}
+			}
+
+			create(t, e)
+			if !registered || !replaced {
+				t.Fatalf("registered=%v replaced=%v, want the race to have run", registered, replaced)
+			}
+			entry := e.filer.Get(e.metadataDir(), "v1.metadata.json")
+			if entry == nil {
+				t.Fatal("the losing request deleted the replacement at its old path")
+			}
+			if !bytes.Equal(entry.Content, replacement) {
+				t.Errorf("v1.metadata.json = %s, want the replacement", entry.Content)
+			}
 		})
 	}
 }
