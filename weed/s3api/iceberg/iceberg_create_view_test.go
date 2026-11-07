@@ -233,6 +233,31 @@ func TestCreateViewDuplicateDoesNotClobberMetadata(t *testing.T) {
 	}
 }
 
+// A view create that loses the race for its name answers with the view the
+// catalog registered and writes no metadata of its own.
+func TestCreateViewThatLosesTheRaceReturnsTheRegisteredView(t *testing.T) {
+	const bucket = "warehouse"
+	fc := newMemFiler()
+	seedNamespace(fc, bucket, "ns", s3_constants.AccountAdminId)
+	s := NewServer(fc, nil)
+	first := httptest.NewRecorder()
+	raceAtSecondLookup(fc, s3tables.GetTablePath(bucket, "ns", "v"), func() {
+		s.handleCreateView(first, newCreateViewRequest(t, "ns", "v", "SELECT 1"))
+	})
+	second := httptest.NewRecorder()
+	s.handleCreateView(second, newCreateViewRequest(t, "ns", "v", "SELECT 2"))
+
+	won, lost := decodeCreated(t, first), decodeCreated(t, second)
+	if lost != won {
+		t.Errorf("losing create answered %+v, want the registered view %+v", lost, won)
+	}
+	for p, entry := range fc.entries {
+		if !entry.IsDirectory && strings.HasSuffix(p, ".metadata.json") && p != path.Join(s3tables.TablesPath, strings.TrimPrefix(won.MetadataLocation, "s3://")) {
+			t.Errorf("losing create wrote %s", p)
+		}
+	}
+}
+
 func TestCreateViewRollsBackEntryWhenMetadataWriteFails(t *testing.T) {
 	const bucket = "warehouse"
 	fc := newMemFiler()

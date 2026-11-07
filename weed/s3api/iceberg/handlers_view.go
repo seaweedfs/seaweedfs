@@ -203,6 +203,22 @@ func (s *Server) handleCreateView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if createResp.MetadataLocation != metadataLocation {
+		// Another create registered the name first; answer with its view.
+		existsResp, existsErr := s.getView(r, namespace, req.Name)
+		if existsErr != nil {
+			writeError(w, http.StatusConflict, "AlreadyExistsException", fmt.Sprintf("View already exists: %s", req.Name))
+			return
+		}
+		result, buildErr := s.buildViewResponse(r, existsResp, bucketName, namespace, req.Name)
+		if buildErr != nil {
+			writeError(w, http.StatusInternalServerError, "InternalServerError", buildErr.Error())
+			return
+		}
+		writeLoadResult(w, http.StatusOK, result)
+		return
+	}
+
 	// Persist the metadata file only after the catalog registers the view, so a
 	// missing namespace or name collision fails before any bytes hit storage.
 	if err := s.saveMetadataFile(r.Context(), metadataBucket, metadataPath, metadataFileName, metadataBytes, false); err != nil {
@@ -215,15 +231,11 @@ func (s *Server) handleCreateView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	finalLocation := createResp.MetadataLocation
-	if finalLocation == "" {
-		finalLocation = metadataLocation
-	}
 	config, _ := s.buildFileIOConfig(r, location, func() bool {
 		return s.mayUpdateView(r, bucketName, namespace, req.Name)
 	})
 	writeLoadResult(w, http.StatusOK, ViewResponse{
-		MetadataLocation: finalLocation,
+		MetadataLocation: metadataLocation,
 		Metadata:         metadata,
 		Config:           config,
 	})

@@ -85,6 +85,7 @@ type createdResult struct {
 	Metadata         struct {
 		Location  string `json:"location"`
 		TableUUID string `json:"table-uuid"`
+		ViewUUID  string `json:"view-uuid"`
 	} `json:"metadata"`
 }
 
