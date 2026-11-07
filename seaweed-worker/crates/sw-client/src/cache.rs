@@ -43,14 +43,14 @@ impl ChunkCache {
         self.map.contains_key(file_id)
     }
 
-    /// Insert a chunk (no-op if already present or larger than the whole cap).
-    /// Evicts least-recently-used entries until within capacity.
+    /// Insert a chunk (no-op if empty, already present or larger than the whole
+    /// cap). Evicts least-recently-used entries until within capacity.
     pub fn put(&mut self, file_id: String, data: Arc<Vec<u8>>) {
         if self.map.contains_key(&file_id) {
             return;
         }
         let len = data.len();
-        if len > self.cap {
+        if len == 0 || len > self.cap {
             return; // a single chunk bigger than the whole cache: don't churn
         }
         self.map.insert(file_id.clone(), data);
@@ -108,6 +108,15 @@ mod tests {
         assert!(!c.contains("b"));
         assert!(c.contains("c"));
         assert_eq!(c.len_bytes(), 200);
+    }
+
+    #[test]
+    fn empty_chunks_are_not_cached() {
+        let mut c = ChunkCache::new(0);
+        for i in 0..10 {
+            c.put(i.to_string(), chunk(0));
+        }
+        assert!(c.map.is_empty() && c.order.is_empty());
     }
 
     #[test]
