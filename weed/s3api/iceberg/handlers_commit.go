@@ -247,10 +247,7 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		location := tableLocationFromMetadataLocation(getResp.MetadataLocation)
-		if location == "" {
-			location = fmt.Sprintf("s3://%s/%s", bucketName, path.Join(flattenNamespacePath(namespace), tableName))
-		}
+		location := tableLocation(getResp, bucketName, namespace, tableName)
 		locBucket, locPath, locErr := parseS3Location(location)
 		if locErr != nil {
 			writeError(w, http.StatusInternalServerError, "InternalServerError", "Invalid table location: "+locErr.Error())

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"path"
 	"strings"
 
 	"github.com/apache/iceberg-go/table"
@@ -144,10 +143,7 @@ func (s *Server) prepareTableCommit(ctx context.Context, bucketName, bucketARN, 
 		return nil, reqErr
 	}
 
-	location := tableLocationFromMetadataLocation(getResp.MetadataLocation)
-	if location == "" {
-		location = fmt.Sprintf("s3://%s/%s", bucketName, path.Join(flattenNamespacePath(namespace), tableName))
-	}
+	location := tableLocation(getResp, bucketName, namespace, tableName)
 	locBucket, locPath, locErr := parseS3Location(location)
 	if locErr != nil {
 		return nil, &icebergRequestError{http.StatusInternalServerError, "InternalServerError", "Invalid table location: " + locErr.Error()}

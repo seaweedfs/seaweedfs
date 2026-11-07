@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 )
 
 // A table created without a location gets a directory named after it and its
@@ -38,6 +40,21 @@ func TestCreateTableWithoutLocationUsesItsOwnDirectory(t *testing.T) {
 		}
 		if !strings.HasPrefix(created.MetadataLocation, want+"/metadata/") {
 			t.Errorf("%s: metadata-location = %q, want one under %s", body, created.MetadataLocation, want)
+		}
+	}
+}
+
+func TestTableLocation(t *testing.T) {
+	for name, tc := range map[string]struct {
+		resp s3tables.GetTableResponse
+		want string
+	}{
+		"metadata":  {s3tables.GetTableResponse{MetadataLocation: "s3://b/ns/t-1/metadata/v2.metadata.json", WarehouseLocation: "s3://b/ns/t-0"}, "s3://b/ns/t-1"},
+		"warehouse": {s3tables.GetTableResponse{WarehouseLocation: "s3://b/ns/t-0/"}, "s3://b/ns/t-0"},
+		"legacy":    {s3tables.GetTableResponse{}, "s3://b/ns/t"},
+	} {
+		if got := tableLocation(tc.resp, "b", []string{"ns"}, "t"); got != tc.want {
+			t.Errorf("%s: tableLocation = %q, want %q", name, got, tc.want)
 		}
 	}
 }
