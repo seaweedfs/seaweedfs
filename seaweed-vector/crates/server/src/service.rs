@@ -21,6 +21,7 @@ use std::sync::Arc;
 use tonic::{Request, Response, Status};
 use weed_lance_worker::catalog::TableDescription;
 use weed_lance_worker::dataset::{self, FallbackOptions};
+use weed_lance_worker::direct_read::{DirectReads, Wrappers};
 use weed_lance_worker::jobs::vector_index::is_vector_table;
 use weed_vector_core::index;
 use weed_vector_core::query::{self, Query};
@@ -455,6 +456,7 @@ fn resolved(table: &pb::Table, schemes: &[&str]) -> Option<TableDescription> {
 
 pub struct VectorServer {
     fallback: FallbackOptions,
+    direct_reads: Option<DirectReads>,
     read_cache: Option<ReadCache>,
     nprobes: Option<usize>,
     /// URI schemes a table's location may have.
@@ -465,6 +467,7 @@ impl VectorServer {
     pub fn new(fallback: FallbackOptions) -> Self {
         Self {
             fallback,
+            direct_reads: None,
             read_cache: None,
             nprobes: None,
             schemes: &["s3"],
@@ -481,6 +484,12 @@ impl VectorServer {
     /// Partitions every query probes, instead of the index's own default.
     pub fn with_nprobes(mut self, nprobes: Option<usize>) -> Self {
         self.nprobes = nprobes;
+        self
+    }
+
+    /// Read tables from the filers and volume servers instead of the gateway.
+    pub fn with_direct_reads(mut self, reads: DirectReads) -> Self {
+        self.direct_reads = Some(reads);
         self
     }
 
@@ -526,17 +535,25 @@ impl VectorServer {
 
     async fn open(&self, table: &pb::Table) -> Result<Dataset, Status> {
         let description = self.describe(table)?;
-        // The options name the store the bytes come from; the cache is scoped
-        // by it so the same bucket and path on another endpoint never share.
-        let cache = self.read_cache.as_ref().map(|cache| {
+        // Direct reads innermost; the cache sits outside them, so a hit never
+        // reaches storage. The options name the store the bytes come from
+        // when reads go through the gateway, so the cache is scoped by it and
+        // the same bucket and path on another endpoint never share.
+        let mut wrappers: Vec<Arc<dyn WrappingObjectStore>> = Vec::new();
+        if let Some(reads) = &self.direct_reads {
+            wrappers.push(Arc::new(reads.clone()));
+        }
+        if let Some(cache) = &self.read_cache {
             let options = dataset::table_options(&description, &self.fallback);
             let endpoint = options
                 .get(ENDPOINT_OPTION)
                 .map(String::as_str)
                 .unwrap_or("");
-            Arc::new(cache.scoped(endpoint)) as Arc<dyn WrappingObjectStore>
-        });
-        let mut dataset = dataset::open_at(&description, &self.fallback, cache)
+            wrappers.push(Arc::new(cache.scoped(endpoint)));
+        }
+        let wrapper = (!wrappers.is_empty())
+            .then(|| Arc::new(Wrappers(wrappers)) as Arc<dyn WrappingObjectStore>);
+        let mut dataset = dataset::open_at(&description, &self.fallback, wrapper)
             .await
             .map_err(open_status)?;
         if table.version != 0 {

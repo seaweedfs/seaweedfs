@@ -180,7 +180,7 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 				}
 				// From here the commit creates the table, writing its metadata
 				// file before the create that authorizes it.
-				if authErr := s.authorizeCreateTable(r.Context(), bucketARN, namespace, tableName, identityName); authErr != nil {
+				if authErr := s.authorizeCreateTable(r.Context(), bucketARN, namespace, tableName, identityName, location); authErr != nil {
 					writeManagerError(w, authErr)
 					return
 				}

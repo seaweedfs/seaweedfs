@@ -128,7 +128,18 @@ func (m *Manager) AuthorizeCreateTable(ctx context.Context, filerClient FilerCli
 	recorder := httptest.NewRecorder()
 	target, authErr := m.handler.authorizeCreateTable(recorder, httpReq, filerClient, req.TableBucketARN, req.Namespace, req.Name, req.Tags, req.AllowMissingNamespace)
 	if authErr == nil {
-		return m.handler.checkVectorNamespaceWrite(ctx, filerClient, target.bucketName, req.Namespace)
+		if err := m.handler.checkVectorNamespaceWrite(ctx, filerClient, target.bucketName, req.Namespace); err != nil {
+			return err
+		}
+		if req.MetadataLocation == "" {
+			return nil
+		}
+		tablePath := GetTablePath(target.bucketName, target.namespaceName, target.tableName)
+		if authErr = ValidateMetadataLocation(req.MetadataLocation, target.bucketName, target.namespaceName); authErr != nil {
+			m.handler.writeError(recorder, http.StatusBadRequest, ErrCodeInvalidRequest, authErr.Error())
+		} else if authErr = m.handler.refuseClaimedLocation(recorder, httpReq, filerClient, target.bucketName, tablePath, req.MetadataLocation); authErr == nil {
+			return nil
+		}
 	}
 	if decoded := decodeS3TablesHTTPResponse(recorder, nil); decoded != nil {
 		return decoded

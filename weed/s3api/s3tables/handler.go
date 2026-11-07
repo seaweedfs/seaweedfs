@@ -38,6 +38,9 @@ const (
 	// a namespace being deleted carries the random claim token written by
 	// claimForDelete.
 	ExtendedKeyDeleting = s3_constants.ExtS3TablesPrefix + "deleting"
+	// ExtendedKeyMoving holds the metadata an update moving a record's root is
+	// about to write, so the record holds both roots until the move lands.
+	ExtendedKeyMoving = s3_constants.ExtS3TablesPrefix + "moving"
 
 	// ExtendedKeyVectorPolicy is written by the S3 Vectors service on table
 	// buckets. It lives here rather than in the vectors package so the catalog

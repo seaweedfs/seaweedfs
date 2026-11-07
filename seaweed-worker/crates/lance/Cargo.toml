@@ -22,6 +22,7 @@ path = "src/main.rs"
 seaweed-common = { path = "../../../seaweed-common" }
 seaweed-worker-core = { path = "../core" }
 seaweed-worker-sort = { path = "../sort" }
+sw-client = { path = "../sw-client" }
 prometheus.workspace = true
 # Only the S3 backend: the other object stores lance enables by default are
 # build time this worker never spends.
@@ -47,6 +48,25 @@ serde_json = "1"
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+# Reads straight from the filer and volume servers: object_store's trait,
+# the gateway's object attributes and ETags, and a read JWT per volume read.
+object_store = "0.13"
+bytes = "1"
+moka = { version = "0.12", features = ["sync"] }
+jsonwebtoken = { version = "10", features = ["rust_crypto"] }
+md-5 = "0.10"
+hex = "0.4"
+base64 = "0.22"
+# The S3 gateway's SSE-S3 envelope: AES-256-GCM wraps keys, AES-256-CTR wraps
+# bytes, HMAC-SHA256 commits them; the filer's volume encryption is AES-256-GCM.
+aes = "0.8"
+ctr = "0.9"
+aes-gcm = "0.10"
+hmac = "0.12"
+sha2 = "0.10"
+hkdf = "0.12"
+flate2 = "1"
+zstd = "0.13"
 
 [dev-dependencies]
 tokio = { workspace = true }

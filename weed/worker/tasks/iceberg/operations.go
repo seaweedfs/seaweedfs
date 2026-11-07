@@ -312,6 +312,14 @@ func (h *Handler) removeOrphans(
 	if err != nil {
 		return "", nil, fmt.Errorf("load metadata: %w", err)
 	}
+	roots, err := s3tables.CatalogRecordRoots(ctx, filerClient, bucketName)
+	if err != nil {
+		return "", nil, fmt.Errorf("list catalog records: %w", err)
+	}
+	bucketPath := path.Join(s3tables.TablesPath, bucketName)
+	if filesShared(roots, path.Join(bucketPath, tablePath), path.Join(bucketPath, state.DataPath)) {
+		return "skipped: location shared with another table or view", nil, nil
+	}
 
 	orphanCandidates, err := collectOrphanCandidates(ctx, filerClient, bucketName, state.DataPath, state.Metadata, state.MetadataFileName, config.OrphanOlderThanHours)
 	if err != nil {

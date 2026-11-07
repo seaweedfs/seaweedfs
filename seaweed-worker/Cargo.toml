@@ -6,7 +6,7 @@
 # sorting jobs share, so that two of them cannot drift on what an order means.
 [workspace]
 resolver = "2"
-members = ["crates/core", "crates/lance", "crates/sort"]
+members = ["crates/core", "crates/lance", "crates/sort", "crates/sw-client"]
 
 [workspace.package]
 version = "0.1.0"

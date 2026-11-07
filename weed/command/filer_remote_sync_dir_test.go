@@ -3158,3 +3158,268 @@ func TestKeptDeleteMarkerRetriesWhenTheLockIsReleased(t *testing.T) {
 		})
 	}
 }
+
+func mountTableEvent(t *testing.T, tsNs int64, old, new map[string]*remote_pb.RemoteStorageLocation) *filer_pb.SubscribeMetadataResponse {
+	t.Helper()
+	tableEntry := func(mappings map[string]*remote_pb.RemoteStorageLocation) *filer_pb.Entry {
+		if mappings == nil {
+			return nil
+		}
+		content, err := proto.Marshal(&remote_pb.RemoteStorageMapping{Mappings: mappings})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &filer_pb.Entry{Name: filer.REMOTE_STORAGE_MOUNT_FILE, Content: content}
+	}
+	message := &filer_pb.EventNotification{OldEntry: tableEntry(old), NewEntry: tableEntry(new)}
+	if message.NewEntry != nil {
+		message.NewParentPath = filer.DirectoryEtcRemote
+	}
+	return &filer_pb.SubscribeMetadataResponse{Directory: filer.DirectoryEtcRemote, TsNs: tsNs, EventNotification: message}
+}
+
+func renamedTable(resp *filer_pb.SubscribeMetadataResponse, newParent, newName string) *filer_pb.SubscribeMetadataResponse {
+	resp.EventNotification.NewParentPath = newParent
+	resp.EventNotification.NewEntry.Name = newName
+	return resp
+}
+
+func TestMountTableEnds(t *testing.T) {
+	mountedDir := "/buckets/b"
+	loc := &remote_pb.RemoteStorageLocation{Name: "r", Bucket: "b", Path: "/"}
+	elsewhere := &remote_pb.RemoteStorageLocation{Name: "r", Bucket: "other", Path: "/"}
+	other := &remote_pb.RemoteStorageLocation{Name: "r", Bucket: "c", Path: "/"}
+	otherRemote := &remote_pb.RemoteStorageLocation{Name: "r2", Bucket: "b", Path: "/"}
+	mapped := map[string]*remote_pb.RemoteStorageLocation{mountedDir: loc}
+	mappedWithOther := map[string]*remote_pb.RemoteStorageLocation{mountedDir: loc, "/buckets/c": other}
+
+	tests := []struct {
+		name      string
+		resp      *filer_pb.SubscribeMetadataResponse
+		wantEnded bool
+		wantMoved *remote_pb.RemoteStorageLocation
+	}{
+		{"another mount added", mountTableEvent(t, 1, mapped, mappedWithOther), false, nil},
+		{"unmounted", mountTableEvent(t, 1, mappedWithOther, map[string]*remote_pb.RemoteStorageLocation{"/buckets/c": other}), true, nil},
+		{"mounted elsewhere", mountTableEvent(t, 1, mapped, map[string]*remote_pb.RemoteStorageLocation{mountedDir: elsewhere}), true, elsewhere},
+		{"table deleted", mountTableEvent(t, 1, mapped, nil), true, nil},
+		{"mounted on another remote", mountTableEvent(t, 1, mapped, map[string]*remote_pb.RemoteStorageLocation{mountedDir: otherRemote}), true, otherRemote},
+		{"remounted here from another remote", mountTableEvent(t, 1, map[string]*remote_pb.RemoteStorageLocation{mountedDir: otherRemote}, mapped), false, nil},
+		{"replayed version from before the mount", mountTableEvent(t, 1, map[string]*remote_pb.RemoteStorageLocation{"/buckets/c": other}, map[string]*remote_pb.RemoteStorageLocation{}), false, nil},
+		{"replayed creation of the table", mountTableEvent(t, 1, nil, map[string]*remote_pb.RemoteStorageLocation{"/buckets/c": other}), false, nil},
+		{"replayed deletion of the table", mountTableEvent(t, 1, map[string]*remote_pb.RemoteStorageLocation{"/buckets/c": other}, nil), false, nil},
+		{"the mount itself", mountTableEvent(t, 1, map[string]*remote_pb.RemoteStorageLocation{"/buckets/c": other}, mappedWithOther), false, nil},
+		{"replayed mount elsewhere", mountTableEvent(t, 1, map[string]*remote_pb.RemoteStorageLocation{}, map[string]*remote_pb.RemoteStorageLocation{mountedDir: elsewhere}), true, elsewhere},
+		{"replayed unmount from elsewhere: its purge follows", mountTableEvent(t, 1, map[string]*remote_pb.RemoteStorageLocation{mountedDir: elsewhere}, map[string]*remote_pb.RemoteStorageLocation{}), true, nil},
+		{"remounted here from elsewhere", mountTableEvent(t, 1, map[string]*remote_pb.RemoteStorageLocation{mountedDir: elsewhere}, mapped), false, nil},
+		{"table renamed away", renamedTable(mountTableEvent(t, 1, mapped, mapped), filer.DirectoryEtcRemote, filer.REMOTE_STORAGE_MOUNT_FILE+".bak"), true, nil},
+		{"table moved out of the directory", renamedTable(mountTableEvent(t, 1, mapped, mapped), "/etc", filer.REMOTE_STORAGE_MOUNT_FILE), true, nil},
+		{"a table-named file in a subdirectory", renamedTable(mountTableEvent(t, 1, nil, map[string]*remote_pb.RemoteStorageLocation{}), filer.DirectoryEtcRemote+"/old", filer.REMOTE_STORAGE_MOUNT_FILE), false, nil},
+		{"remote conf updated", &filer_pb.SubscribeMetadataResponse{Directory: filer.DirectoryEtcRemote, EventNotification: &filer_pb.EventNotification{
+			NewParentPath: filer.DirectoryEtcRemote, NewEntry: &filer_pb.Entry{Name: "r" + filer.REMOTE_STORAGE_CONF_SUFFIX}}}, false, nil},
+		{"file under the mount", &filer_pb.SubscribeMetadataResponse{Directory: mountedDir, EventNotification: &filer_pb.EventNotification{
+			NewParentPath: mountedDir, NewEntry: &filer_pb.Entry{Name: filer.REMOTE_STORAGE_MOUNT_FILE}}}, false, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ended, moved, err := mountTableEnds(mountedDir, mountedDir, loc, tt.resp)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ended != tt.wantEnded || !proto.Equal(moved, tt.wantMoved) {
+				t.Errorf("mountTableEnds = %v, %v; want %v, %v", ended, moved, tt.wantEnded, tt.wantMoved)
+			}
+		})
+	}
+
+	t.Run("unreadable table", func(t *testing.T) {
+		resp := mountTableEvent(t, 1, mapped, mapped)
+		resp.EventNotification.NewEntry.Content = []byte{0xff, 0xff, 0xff}
+		if _, _, err := mountTableEnds(mountedDir, mountedDir, loc, resp); err == nil {
+			t.Error("want an error for a table that does not unmarshal")
+		}
+	})
+
+	t.Run("a replaced version it cannot read counts as covering", func(t *testing.T) {
+		unreadable := mountTableEvent(t, 1, mapped, map[string]*remote_pb.RemoteStorageLocation{})
+		unreadable.EventNotification.OldEntry.Content = []byte{0xff, 0xff, 0xff}
+		renamedOver := mountTableEvent(t, 1, mapped, map[string]*remote_pb.RemoteStorageLocation{})
+		renamedOver.EventNotification.OldEntry.Name = filer.REMOTE_STORAGE_MOUNT_FILE + ".new"
+		for _, resp := range []*filer_pb.SubscribeMetadataResponse{unreadable, renamedOver} {
+			if ended, _, err := mountTableEnds(mountedDir, mountedDir, loc, resp); err != nil || !ended {
+				t.Errorf("mountTableEnds(%s) = %v, %v; want the mount ended", resp.EventNotification.OldEntry.Name, ended, err)
+			}
+		}
+	})
+}
+
+func TestMountTableEndsBelowAMount(t *testing.T) {
+	dir, mountKey := "/buckets/b/sub", "/buckets/b"
+	loc := &remote_pb.RemoteStorageLocation{Name: "r", Bucket: "b", Path: "/"}
+	nested := &remote_pb.RemoteStorageLocation{Name: "r", Bucket: "nested", Path: "/"}
+	other := &remote_pb.RemoteStorageLocation{Name: "r", Bucket: "c", Path: "/"}
+	mapped := map[string]*remote_pb.RemoteStorageLocation{mountKey: loc}
+
+	tests := []struct {
+		name      string
+		resp      *filer_pb.SubscribeMetadataResponse
+		wantEnded bool
+		wantMoved *remote_pb.RemoteStorageLocation
+	}{
+		{"another mount added", mountTableEvent(t, 1, mapped, map[string]*remote_pb.RemoteStorageLocation{mountKey: loc, "/buckets/c": other}), false, nil},
+		{"the parent unmounted", mountTableEvent(t, 1, mapped, map[string]*remote_pb.RemoteStorageLocation{}), true, nil},
+		{"the directory mounted itself", mountTableEvent(t, 1, mapped, map[string]*remote_pb.RemoteStorageLocation{mountKey: loc, dir: nested}), true, nested},
+		{"replayed nested unmount from before", mountTableEvent(t, 1, map[string]*remote_pb.RemoteStorageLocation{mountKey: loc, dir: nested}, mapped), false, nil},
+		{"replayed version from before the mount", mountTableEvent(t, 1, map[string]*remote_pb.RemoteStorageLocation{}, map[string]*remote_pb.RemoteStorageLocation{"/buckets/c": other}), false, nil},
+		{"replayed unmount of an earlier parent mount", mountTableEvent(t, 1, map[string]*remote_pb.RemoteStorageLocation{mountKey: other}, map[string]*remote_pb.RemoteStorageLocation{}), true, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ended, moved, err := mountTableEnds(dir, mountKey, loc, tt.resp)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ended != tt.wantEnded || !proto.Equal(moved, tt.wantMoved) {
+				t.Errorf("mountTableEnds = %v, %v; want %v, %v", ended, moved, tt.wantEnded, tt.wantMoved)
+			}
+		})
+	}
+}
+
+func TestDirRemoteLocationBelowAMount(t *testing.T) {
+	tests := []struct {
+		name, mountKey, dir, mountPath, want string
+	}{
+		{"the mount itself", "/buckets/b", "/buckets/b", "/", "/x.txt"},
+		{"the mount with a trailing slash", "/buckets/b", "/buckets/b/", "/", "/x.txt"},
+		{"a directory below the mount", "/buckets/b", "/buckets/b/sub", "/", "/sub/x.txt"},
+		{"a directory below a mount at a remote prefix", "/buckets/b", "/buckets/b/sub/deeper", "/prefix", "/prefix/sub/deeper/x.txt"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mountLoc := &remote_pb.RemoteStorageLocation{Name: "r", Bucket: "rb", Path: tt.mountPath}
+			dirLoc := dirRemoteLocation(tt.mountKey, tt.dir, mountLoc)
+			got := toRemoteStorageLocation(util.FullPath(tt.dir), util.FullPath(tt.dir).Child("x.txt"), dirLoc)
+			if got.Name != "r" || got.Bucket != "rb" || got.Path != tt.want {
+				t.Errorf("%s/x.txt maps to %s/%s%s; want r/rb%s", tt.dir, got.Name, got.Bucket, got.Path, tt.want)
+			}
+		})
+	}
+}
+
+func TestStartAfterMountOffset(t *testing.T) {
+	start := time.Unix(100, 5)
+	later, earlier := time.Unix(200, 7), time.Unix(50, 3)
+	tests := []struct {
+		name        string
+		dir         string
+		timeAgo     time.Duration
+		resumeTsNs  int64
+		mountOffset time.Time
+		want        time.Time
+		wantRead    bool
+	}{
+		{"below the mount, unmounted since", "/buckets/b/sub", 0, 0, later, later, true},
+		{"below the mount, mount offset older", "/buckets/b/sub", 0, 0, earlier, start, true},
+		{"below the mount, no mount offset", "/buckets/b/sub", 0, 0, time.Time{}, start, true},
+		{"the mount itself", "/buckets/b", 0, 0, later, start, false},
+		{"the mount with a trailing slash", "/buckets/b/", 0, 0, later, start, false},
+		{"a -timeAgo replay", "/buckets/b/sub", time.Hour, 0, later, start, false},
+		{"a retry in this process", "/buckets/b/sub", 0, start.UnixNano(), later, start, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			read := false
+			got, err := startAfterMountOffset(start, "/buckets/b", tt.dir, tt.timeAgo, tt.resumeTsNs, func() (int64, error) {
+				read = true
+				if tt.mountOffset.IsZero() {
+					return 0, nil
+				}
+				return tt.mountOffset.UnixNano(), nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !got.Equal(tt.want) || read != tt.wantRead {
+				t.Errorf("startAfterMountOffset = %v (read %v); want %v (read %v)", got, read, tt.want, tt.wantRead)
+			}
+		})
+	}
+
+	if _, err := startAfterMountOffset(start, "/buckets/b", "/buckets/b/sub", 0, 0, func() (int64, error) {
+		return 0, errors.New("filer unavailable")
+	}); err == nil || !strings.Contains(err.Error(), "filer unavailable") {
+		t.Errorf("an unread mount offset must fail the start, got %v", err)
+	}
+}
+
+func TestAdmitUntilMountEndsDrainsBeforeTheExit(t *testing.T) {
+	mountedDir := "/buckets/b"
+	loc := &remote_pb.RemoteStorageLocation{Name: "r", Bucket: "b", Path: "/"}
+	elsewhere := &remote_pb.RemoteStorageLocation{Name: "r", Bucket: "other", Path: "/"}
+	mapped := map[string]*remote_pb.RemoteStorageLocation{mountedDir: loc}
+
+	for _, tt := range []struct {
+		name      string
+		end       *filer_pb.SubscribeMetadataResponse
+		wantMoved *remote_pb.RemoteStorageLocation
+	}{
+		{"unmount", mountTableEvent(t, 2, mapped, map[string]*remote_pb.RemoteStorageLocation{}), nil},
+		{"move", mountTableEvent(t, 2, mapped, map[string]*remote_pb.RemoteStorageLocation{mountedDir: elsewhere}), elsewhere},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			release := make(chan struct{})
+			ran := make(chan string, 4)
+			processor := NewMetadataProcessor(func(resp *filer_pb.SubscribeMetadataResponse) error {
+				<-release
+				ran <- resp.EventNotification.NewEntry.Name
+				return nil
+			}, 128, 0)
+			type exitCall struct {
+				to       *remote_pb.RemoteStorageLocation
+				jobsDone int
+			}
+			exits := make(chan exitCall, 1)
+			defer func(exit func(string, *remote_pb.RemoteStorageLocation, *remote_pb.RemoteStorageLocation)) {
+				exitAtMountEnd = exit
+			}(exitAtMountEnd)
+			exitAtMountEnd = func(_ string, _, to *remote_pb.RemoteStorageLocation) { exits <- exitCall{to, len(ran)} }
+
+			admit := admitUntilMountEnds(processor, mountedDir, mountedDir, loc)
+			if err := admit(&filer_pb.SubscribeMetadataResponse{Directory: mountedDir, TsNs: 1, EventNotification: &filer_pb.EventNotification{
+				NewParentPath: mountedDir, NewEntry: &filer_pb.Entry{Name: "a.txt"}}}); err != nil {
+				t.Fatal(err)
+			}
+			done := make(chan error, 1)
+			go func() { done <- admit(tt.end) }()
+			select {
+			case <-exits:
+				t.Fatal("exited while an admitted job was still running")
+			case <-time.After(100 * time.Millisecond):
+			}
+			close(release)
+			select {
+			case exit := <-exits:
+				if exit.jobsDone != 1 {
+					t.Errorf("exited with %d of 1 admitted jobs finished", exit.jobsDone)
+				}
+				if !proto.Equal(exit.to, tt.wantMoved) {
+					t.Errorf("exit with %v, want %v", exit.to, tt.wantMoved)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("no exit after the admitted job finished")
+			}
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+			close(ran)
+			var names []string
+			for name := range ran {
+				names = append(names, name)
+			}
+			if !slices.Equal(names, []string{"a.txt"}) {
+				t.Errorf("jobs run = %v, want only the write admitted before the mount table", names)
+			}
+		})
+	}
+}

@@ -112,6 +112,9 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
 		return err
 	}
+	if err := h.refuseClaimedLocation(w, r, filerClient, bucketName, tablePath, req.MetadataLocation); err != nil {
+		return err
+	}
 
 	// Create the table
 	now := time.Now()
@@ -164,7 +167,7 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 		if len(tagsBytes) > 0 {
 			attrs[ExtendedKeyTags] = tagsBytes
 		}
-		if err := h.claimCatalogEntry(r.Context(), client, tablePath, attrs); err != nil {
+		if err := h.claimCatalogEntryAt(r.Context(), client, bucketName, tablePath, req.MetadataLocation, attrs, dataPath, tablePath); err != nil {
 			return err
 		}
 		return h.confirmParent(r.Context(), client, GetNamespacePath(bucketName, namespaceName), isNamespaceCreatedAt(target.namespaceCreatedAt), tablePath, attrs, dataPath, tablePath)
@@ -181,6 +184,10 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 		}
 		if errors.Is(err, ErrConcurrentUpdate) {
 			h.writeError(w, http.StatusConflict, ErrCodeConflict, "table changed during create, retry the request")
+			return err
+		}
+		if errors.Is(err, ErrLocationInUse) {
+			h.writeError(w, http.StatusConflict, ErrCodeConflict, err.Error())
 			return err
 		}
 		if h.writeNamespaceClosedError(w, err, namespaceName) {
@@ -285,6 +292,9 @@ func (h *S3TablesHandler) handleRegisterTable(w http.ResponseWriter, r *http.Req
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to check table: %v", err))
 		return err
 	}
+	if err := h.refuseClaimedLocation(w, r, filerClient, bucketName, tablePath, req.MetadataLocation); err != nil {
+		return err
+	}
 
 	now := time.Now()
 	versionToken := generateVersionToken()
@@ -315,7 +325,7 @@ func (h *S3TablesHandler) handleRegisterTable(w http.ResponseWriter, r *http.Req
 		if err := h.ensureDirectory(r.Context(), client, tablePath); err != nil {
 			return err
 		}
-		if err := h.claimCatalogEntry(r.Context(), client, tablePath, attrs); err != nil {
+		if err := h.claimCatalogEntryAt(r.Context(), client, bucketName, tablePath, req.MetadataLocation, attrs, tablePath); err != nil {
 			return err
 		}
 		return h.confirmParent(r.Context(), client, GetNamespacePath(bucketName, namespaceName), isNamespaceCreatedAt(target.namespaceCreatedAt), tablePath, attrs, tablePath)
@@ -327,6 +337,10 @@ func (h *S3TablesHandler) handleRegisterTable(w http.ResponseWriter, r *http.Req
 		}
 		if errors.Is(err, ErrConcurrentUpdate) {
 			h.writeError(w, http.StatusConflict, ErrCodeConflict, "table changed during register, retry the request")
+			return err
+		}
+		if errors.Is(err, ErrLocationInUse) {
+			h.writeError(w, http.StatusConflict, ErrCodeConflict, err.Error())
 			return err
 		}
 		if h.writeNamespaceClosedError(w, err, namespaceName) {
@@ -1051,6 +1065,9 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 
 	// Delete the table
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		if err := checkLocationUnclaimed(r.Context(), client, bucketName, tablePath, metadata.MetadataLocation); err != nil {
+			return err
+		}
 		dataPath := TableDataDirFromMetadataLocation(metadata.MetadataLocation)
 		if dataPath != "" && dataPath != tablePath && strings.HasPrefix(dataPath+"/", GetTableBucketPath(bucketName)+"/") {
 			// Refuse to purge a data path that is an ancestor of the table's own
@@ -1120,7 +1137,7 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 				}
 				err := h.removeExtendedAttributesIf(context.WithoutCancel(r.Context()), client, tablePath, claimed,
 					ExtendedKeyMetadata, ExtendedKeyMetadataVersion, ExtendedKeyPolicy, ExtendedKeyTags, ExtendedKeyEntryType,
-					ExtendedKeyMaintenance, ExtendedKeyMaintenanceStatus, ExtendedKeyDeleting)
+					ExtendedKeyMaintenance, ExtendedKeyMaintenanceStatus, ExtendedKeyDeleting, ExtendedKeyMoving)
 				if err != nil {
 					if errors.Is(err, ErrConcurrentUpdate) {
 						return ErrVersionTokenMismatch
@@ -1163,7 +1180,7 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 			}
 			return h.removeExtendedAttributesIf(context.WithoutCancel(r.Context()), client, tablePath, claimed,
 				ExtendedKeyMetadata, ExtendedKeyMetadataVersion, ExtendedKeyPolicy, ExtendedKeyTags, ExtendedKeyEntryType,
-				ExtendedKeyMaintenance, ExtendedKeyMaintenanceStatus, ExtendedKeyDeleting)
+				ExtendedKeyMaintenance, ExtendedKeyMaintenanceStatus, ExtendedKeyDeleting, ExtendedKeyMoving)
 		}
 		// Colocated table: the name path holds the data. A token caller's
 		// delete carries the captured attributes as a filer precondition, so
@@ -1222,6 +1239,10 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 			h.writeError(w, http.StatusConflict, ErrCodeConflict, "table changed during delete, retry the request")
 			return err
 		}
+		if errors.Is(err, ErrLocationInUse) {
+			h.writeError(w, http.StatusConflict, ErrCodeConflict, err.Error())
+			return err
+		}
 		if errors.Is(err, filer_pb.ErrNotFound) {
 			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchTable, fmt.Sprintf("table %s not found", tableName))
 			return err
@@ -1234,8 +1255,9 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 	return nil
 }
 
-// renamedTableAttributes are the catalog attributes a rename carries to the new
-// name and clears from the old one.
+// renamedTableAttributes are the catalog attributes a rename clears from the
+// old name. All but a move's reservation, which the move can no longer clear
+// once the record is gone, are carried to the new name.
 var renamedTableAttributes = []string{
 	ExtendedKeyMetadata,
 	ExtendedKeyMetadataVersion,
@@ -1244,6 +1266,7 @@ var renamedTableAttributes = []string{
 	ExtendedKeyMaintenance,
 	ExtendedKeyMaintenanceStatus,
 	ExtendedKeyEntryType,
+	ExtendedKeyMoving,
 }
 
 // catalogEntryKind describes the entry a rename operates on, so tables and
@@ -1692,6 +1715,11 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 	if err := h.refuseClaimedNamespace(w, r, filerClient, destNamespacePath, destNamespace, isDestNamespace); err != nil {
 		return err
 	}
+	if metadata.MetadataLocation == "" {
+		if err := h.refuseClaimedLocation(w, r, filerClient, bucketName, destPath, ""); err != nil {
+			return err
+		}
+	}
 
 	metadata.Name = destName
 	metadata.Namespace = destNamespace
@@ -1771,6 +1799,11 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 			h.removeLeftoverDirectory(ctx, client, destPath)
 			return releaseClaim(err)
 		}
+		if metadata.MetadataLocation == "" {
+			if err := checkLocationUnclaimed(r.Context(), client, bucketName, destPath, ""); err != nil {
+				return backOutDest(err)
+			}
+		}
 		destParent, err := h.openParent(r.Context(), client, destNamespacePath, isDestNamespace)
 		if err != nil {
 			return backOutDest(err)
@@ -1836,7 +1869,7 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 					}
 				}
 				for key, data := range srcExtended {
-					if key != ExtendedKeyDeleting {
+					if key != ExtendedKeyDeleting && key != ExtendedKeyMoving {
 						extended[key] = data
 					}
 				}
@@ -1895,6 +1928,10 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 		}
 		if errors.Is(err, errSourceGone) {
 			h.writeError(w, http.StatusNotFound, kind.notFoundCode, fmt.Sprintf("%s %s not found", kind.noun, srcName))
+			return err
+		}
+		if errors.Is(err, ErrLocationInUse) {
+			h.writeError(w, http.StatusConflict, ErrCodeConflict, err.Error())
 			return err
 		}
 		if h.writeNamespaceClosedError(w, err, destNamespace) {
@@ -2108,6 +2145,12 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 	if req.ClearFullMetadata && metadata.Metadata != nil {
 		metadata.Metadata.FullMetadata = nil
 	}
+	movesRoot := req.MetadataLocation != "" && CatalogRecordRoot(target.bucketName, target.tablePath, req.MetadataLocation) != CatalogRecordRoot(target.bucketName, target.tablePath, metadata.MetadataLocation)
+	if movesRoot {
+		if err := h.refuseClaimedLocation(w, r, filerClient, target.bucketName, target.tablePath, req.MetadataLocation); err != nil {
+			return err
+		}
+	}
 	if req.MetadataLocation != "" {
 		metadata.MetadataLocation = req.MetadataLocation
 	}
@@ -2131,7 +2174,7 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 	// snapshot. mutateEntryExtended retries on a changed entry, so the check
 	// lives in the mutation, where it sees the value that is current now.
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return h.mutateCatalogRecord(r.Context(), client, target.tablePath, func(extended map[string][]byte) error {
+		write := func(extended map[string][]byte) error {
 			if !bytes.Equal(extended[ExtendedKeyMetadata], target.storedMetadata) {
 				return fmt.Errorf("%w: %s", ErrConcurrentUpdate, ExtendedKeyMetadata)
 			}
@@ -2143,11 +2186,20 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 				return fmt.Errorf("%w: %s", ErrConcurrentUpdate, ExtendedKeyPolicy)
 			}
 			extended[ExtendedKeyMetadata] = metadataBytes
+			delete(extended, ExtendedKeyMoving)
 			return nil
-		})
+		}
+		if !movesRoot {
+			return h.mutateCatalogRecord(r.Context(), client, target.tablePath, write)
+		}
+		return h.moveCatalogRecord(r.Context(), client, target.bucketName, target.tablePath, metadata.MetadataLocation, target.storedMetadata, metadataBytes, write)
 	})
 
 	if err != nil {
+		if errors.Is(err, ErrLocationInUse) {
+			h.writeError(w, http.StatusConflict, ErrCodeConflict, err.Error())
+			return err
+		}
 		if errors.Is(err, ErrConcurrentUpdate) {
 			h.writeError(w, http.StatusConflict, ErrCodeConflict, "table was updated concurrently")
 			return ErrVersionTokenMismatch
@@ -2214,23 +2266,13 @@ func (h *S3TablesHandler) authorizeCreateTable(w http.ResponseWriter, r *http.Re
 		return nil, err
 	}
 
-	// Check if namespace exists
+	// A namespace that is missing or unreadable is authorized against the
+	// bucket alone, and reported only to a caller that passes.
 	namespacePath := GetNamespacePath(bucketName, namespaceName)
-	nsMetadata, err := h.loadNamespaceMetadata(r.Context(), filerClient, bucketName, namespaceName)
-	namespaceExists := err == nil
-	if err != nil {
-		if errors.Is(err, filer_pb.ErrNotFound) && allowMissingNamespace {
-			// An implicit namespace can be authorized before it is declared:
-			// evaluate the grant against the bucket alone.
-			err = nil
-		} else {
-			if errors.Is(err, filer_pb.ErrNotFound) {
-				h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, fmt.Sprintf("namespace %s not found", namespaceName))
-			} else {
-				h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to check namespace: %v", err))
-			}
-			return nil, err
-		}
+	nsMetadata, namespaceErr := h.loadNamespaceMetadata(r.Context(), filerClient, bucketName, namespaceName)
+	namespaceExists := namespaceErr == nil
+	if errors.Is(namespaceErr, filer_pb.ErrNotFound) && allowMissingNamespace {
+		namespaceErr = nil
 	}
 
 	// Authorize table creation using policy framework (namespace + bucket policies)
@@ -2242,6 +2284,11 @@ func (h *S3TablesHandler) authorizeCreateTable(w http.ResponseWriter, r *http.Re
 	var bucketMetadata tableBucketMetadata
 
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		if !namespaceExists {
+			if _, err := h.lookupEntry(r.Context(), client, bucketPath); errors.Is(err, filer_pb.ErrNotFound) {
+				return nil
+			}
+		}
 		// Fetch bucket metadata to use correct owner for bucket policy evaluation
 		data, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata)
 		if err == nil {
@@ -2312,6 +2359,14 @@ func (h *S3TablesHandler) authorizeCreateTable(w http.ResponseWriter, r *http.Re
 		bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, policyContext) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create table in this namespace")
 		return nil, ErrAccessDenied
+	}
+	if namespaceErr != nil {
+		if errors.Is(namespaceErr, filer_pb.ErrNotFound) {
+			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, fmt.Sprintf("namespace %s not found", namespaceName))
+		} else {
+			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to check namespace")
+		}
+		return nil, namespaceErr
 	}
 
 	if namespaceExists {

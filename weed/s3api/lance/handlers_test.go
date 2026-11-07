@@ -235,8 +235,10 @@ func TestRegisterOverwriteKeepsTheOldDataset(t *testing.T) {
 	h.createBucket(t, "analytics", s3tables.FormatLance)
 	h.mustDo(t, http.MethodPost, "/v1/namespace/analytics$sales/create", `{}`, http.StatusOK)
 	h.mustDo(t, http.MethodPost, "/v1/table/analytics$sales$orders/declare", `{}`, http.StatusOK)
-	h.mustDo(t, http.MethodPost, "/v1/table/analytics$sales$archive/declare", `{}`, http.StatusOK)
+	h.mustDo(t, http.MethodPost, "/v1/table/analytics$sales$current/declare", `{}`, http.StatusOK)
 
+	h.mustDo(t, http.MethodPost, "/v1/table/analytics$sales$orders/register",
+		`{"location":"s3://analytics/sales/current","mode":"Overwrite"}`, http.StatusConflict)
 	h.mustDo(t, http.MethodPost, "/v1/table/analytics$sales$orders/register",
 		`{"location":"s3://analytics/sales/archive","mode":"Overwrite"}`, http.StatusOK)
 

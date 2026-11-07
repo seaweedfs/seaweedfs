@@ -77,6 +77,7 @@ func (h *Handler) scanTablesForMaintenance(
 
 		// List namespaces within the bucket
 		bucketPath := path.Join(bucketsPath, bucketName)
+		var recordRoots map[string][]string
 		nsEntries, err := listFilerEntries(ctx, filerClient, bucketPath, "")
 		if err != nil {
 			glog.Warningf("iceberg maintenance: failed to list namespaces in bucket %s: %v", bucketName, err)
@@ -135,6 +136,18 @@ func (h *Handler) scanTablesForMaintenance(
 					}
 					continue
 				}
+				// Maintenance deletes what a table's metadata does not reference,
+				// so a table sharing its files with another record is left alone.
+				if recordRoots == nil {
+					if recordRoots, err = s3tables.CatalogRecordRoots(ctx, filerClient, bucketName); err != nil {
+						glog.V(2).Infof("iceberg maintenance: skipping %s/%s/%s: cannot list catalog records: %v", bucketName, nsName, tblName, err)
+						continue
+					}
+				}
+				if filesShared(recordRoots, path.Join(bucketPath, tablePath), path.Join(bucketPath, state.DataPath)) {
+					glog.V(1).Infof("iceberg maintenance: skipping %s/%s/%s: its location is shared with another table or view", bucketName, nsName, tblName)
+					continue
+				}
 				if err := state.loadMetadata(ctx, filerClient, bucketName); err != nil {
 					glog.V(2).Infof("iceberg maintenance: skipping %s/%s/%s: cannot load iceberg metadata: %v", bucketName, nsName, tblName, err)
 					continue
@@ -183,6 +196,23 @@ func (h *Handler) scanTablesForMaintenance(
 	}
 
 	return tables, nil
+}
+
+// filesShared reports whether a record other than selfPath keeps its files at
+// root, above it or under it. A record that only sits on root, as one created
+// over a renamed table's old name does, keeps no files there.
+func filesShared(roots map[string][]string, selfPath, root string) bool {
+	for recordPath, others := range roots {
+		if recordPath == selfPath {
+			continue
+		}
+		for _, other := range others {
+			if s3tables.PathsOverlap(other, root) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func normalizeDetectionConfig(config Config) Config {
