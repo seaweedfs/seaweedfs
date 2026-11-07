@@ -73,13 +73,14 @@ pub fn int_config(name: &str, value: i64) -> HashMap<String, ConfigValue> {
     values
 }
 
-/// The cluster's storage, when WEED_MASTERS names the masters a harness
-/// started; otherwise none, and the tests that need storage are skipped by
-/// `namespace_url` being unset too.
+/// The cluster's storage, from the masters WEED_MASTERS names. A live
+/// namespace without them would have the tests seed tables through lance's
+/// own S3 store, which reaches nothing, so the pair is required together.
 pub async fn storage() -> weed_lance_worker::dataset::Storage {
-    let Ok(masters) = std::env::var("WEED_MASTERS") else {
-        return weed_lance_worker::dataset::Storage::default();
-    };
+    let masters = std::env::var("WEED_MASTERS")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .expect("WEED_LANCE_NAMESPACE names a live namespace; WEED_MASTERS must name its masters");
     let security = weed_lance_worker::security::Security::load(None, None).expect("security.toml");
     let cluster =
         weed_lance_worker::cluster::Cluster::new(&masters, "", &security).expect("masters");

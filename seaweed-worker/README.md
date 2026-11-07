@@ -114,8 +114,8 @@ All three jobs are implemented and tested end to end against a live gateway:
     cleanup result:    removed 14 versions and 24272 bytes
 
 `cargo test -p weed-lance-worker` runs them when `WEED_LANCE_NAMESPACE` names a
-live namespace and skips otherwise, the way the Go integration tests skip
-without Docker. Each test seeds the table it needs, including building a vector
+live namespace and `WEED_MASTERS` its cluster's masters, and skips otherwise,
+the way the Go integration tests skip without Docker. Each test seeds the table it needs, including building a vector
 index and then appending rows outside it, so a run does not depend on what the
 previous one left behind — the first version of these did, and quietly stopped
 testing anything once it had done its job.
