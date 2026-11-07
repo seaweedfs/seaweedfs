@@ -96,15 +96,18 @@ trait Source: Send + Sync {
         decoder: Arc<dyn ChunkDecoder>,
     ) -> anyhow::Result<ResolvedChunks>;
     async fn read(&self, object: &Object, offset: u64, len: u64) -> anyhow::Result<Vec<u8>>;
-    /// Uploads `data` as one needle for the file at `path`, on the volume
-    /// server the filer assigns, as the chunk at `offset`.
-    async fn upload(
+    /// Asks the filer for a volume server to hold a needle of `size` bytes
+    /// for the file at `path`, in `collection`.
+    async fn assign(&self, path: &str, collection: &str, size: u64) -> anyhow::Result<Assignment>;
+    /// Writes `data` to its assigned volume server as the chunk of `path` at
+    /// `offset`.
+    async fn write(
         &self,
+        assignment: &Assignment,
         path: &str,
-        collection: &str,
         offset: u64,
         data: Bytes,
-    ) -> anyhow::Result<Uploaded>;
+    ) -> anyhow::Result<FileChunk>;
     /// Creates `entry` in `dir`; `exclusive` refuses an entry already there
     /// with [`sw_client::EntryExists`].
     async fn create(&self, dir: &str, entry: Entry, exclusive: bool) -> anyhow::Result<()>;
@@ -324,45 +327,35 @@ impl Source for Filers {
         }
     }
 
-    async fn upload(
-        &self,
-        path: &str,
-        collection: &str,
-        offset: u64,
-        data: Bytes,
-    ) -> anyhow::Result<Uploaded> {
-        let size = data.len() as u64;
+    async fn assign(&self, path: &str, collection: &str, size: u64) -> anyhow::Result<Assignment> {
         // The filer picks replication from the path's storage rules; the
         // collection is the bucket's, as the gateway names it.
         let options = AssignVolumeOptions {
             collection: collection.to_string(),
             ..Default::default()
         };
-        let assignment = self
-            .with("assign", |mut c| {
-                let (path, options) = (path.to_string(), options.clone());
-                Box::pin(async move { c.assign_volume_with_options(&path, size, &options).await })
-            })
-            .await?;
+        self.with("assign", |mut c| {
+            let (path, options) = (path.to_string(), options.clone());
+            Box::pin(async move { c.assign_volume_with_options(&path, size, &options).await })
+        })
+        .await
+    }
+
+    async fn write(
+        &self,
+        assignment: &Assignment,
+        path: &str,
+        offset: u64,
+        data: Bytes,
+    ) -> anyhow::Result<FileChunk> {
         let name = path.rsplit('/').next().unwrap_or(path).to_string();
         let digest = BASE64_STANDARD.encode(Md5::digest(&data));
-        let written = self
+        let mut chunk = self
             .writer
-            .upload_assigned_chunk_bytes(&assignment, &name, offset as i64, data)
-            .await;
-        let mut chunk = match written {
-            Ok(chunk) => chunk,
-            Err(err) => {
-                // The volume server may hold the needle although its answer
-                // never arrived; nobody else will ever name it.
-                if let Err(discard) = Source::discard(self, &assignment).await {
-                    tracing::warn!("discarding {}: {discard:#}", assignment.file_id);
-                }
-                return Err(err);
-            }
-        };
+            .upload_assigned_chunk_bytes(assignment, &name, offset as i64, data)
+            .await?;
         chunk.e_tag = digest;
-        Ok(Uploaded { chunk, assignment })
+        Ok(chunk)
     }
 
     async fn create(&self, dir: &str, entry: Entry, exclusive: bool) -> anyhow::Result<()> {
@@ -1316,22 +1309,38 @@ impl Upload {
                     .with_context(|| format!("encoding {path} at {at}"))
                     .map_err(generic)?;
                 let size = piece.len() as u64;
-                let mut uploaded = store
-                    .reads
-                    .source
-                    .upload(&path, &collection, at, Bytes::from(encoded.data))
-                    .await
-                    .inspect_err(|_| {
-                        store.reads.stats.failures.fetch_add(1, Ordering::Relaxed);
-                    })
-                    .with_context(|| format!("uploading {path} at {at}"))
-                    .map_err(generic)?;
-                uploaded.chunk.size = size;
-                uploaded.chunk.cipher_key = encoded.cipher_key;
-                uploaded.chunk.sse_type = encoded.sse_type;
-                uploaded.chunk.sse_metadata = encoded.sse_metadata;
+                let data = Bytes::from(encoded.data);
+                let source = &store.reads.source;
+                let failed = |err: anyhow::Error, what: &str| {
+                    store.reads.stats.failures.fetch_add(1, Ordering::Relaxed);
+                    generic(err.context(format!("{what} {path} at {at}")))
+                };
+                let reserved = Reserved {
+                    source: source.clone(),
+                    path: path.clone(),
+                    assignment: Some(
+                        source
+                            .assign(&path, &collection, data.len() as u64)
+                            .await
+                            .map_err(|err| failed(err, "assigning"))?,
+                    ),
+                };
+                let mut chunk = match source.write(reserved.assignment(), &path, at, data).await {
+                    Ok(chunk) => chunk,
+                    Err(err) => {
+                        reserved.discard().await;
+                        return Err(failed(err, "uploading"));
+                    }
+                };
+                chunk.size = size;
+                chunk.cipher_key = encoded.cipher_key;
+                chunk.sse_type = encoded.sse_type;
+                chunk.sse_metadata = encoded.sse_metadata;
                 store.reads.stats.written.fetch_add(size, Ordering::Relaxed);
-                state.lock().unwrap().chunks.push(uploaded);
+                state.lock().unwrap().chunks.push(Uploaded {
+                    chunk,
+                    assignment: reserved.disarm(),
+                });
                 at += size;
             }
             Ok(())
@@ -1480,11 +1489,62 @@ async fn discard(source: &dyn Source, path: &str, chunks: Vec<Uploaded>) -> Vec<
     let mut kept = Vec::new();
     for uploaded in chunks {
         if let Err(err) = source.discard(&uploaded.assignment).await {
-            tracing::warn!("{path}: discarding {}: {err:#}", uploaded.chunk.file_id);
+            tracing::warn!(
+                "{path}: discarding {}: {err:#}",
+                uploaded.assignment.file_id
+            );
             kept.push(uploaded);
         }
     }
     kept
+}
+
+/// A needle assigned on a volume server while its write is in flight. The
+/// volume server may hold it although the write's answer never came, and
+/// nothing else will ever name it: a write abandoned, as when the request
+/// is cancelled, or failed gives the needle back.
+struct Reserved {
+    source: Arc<dyn Source>,
+    path: String,
+    assignment: Option<Assignment>,
+}
+
+impl Reserved {
+    fn assignment(&self) -> &Assignment {
+        self.assignment.as_ref().expect("reserved until disarmed")
+    }
+
+    /// The write succeeded: the entry will name the needle.
+    fn disarm(mut self) -> Assignment {
+        self.assignment.take().expect("reserved until disarmed")
+    }
+
+    async fn discard(mut self) {
+        if let Some(assignment) = self.assignment.take() {
+            discard_needle(&*self.source, &self.path, &assignment).await;
+        }
+    }
+}
+
+impl Drop for Reserved {
+    fn drop(&mut self) {
+        let Some(assignment) = self.assignment.take() else {
+            return;
+        };
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let (source, path) = (self.source.clone(), self.path.clone());
+        runtime.spawn(async move {
+            discard_needle(&*source, &path, &assignment).await;
+        });
+    }
+}
+
+async fn discard_needle(source: &dyn Source, path: &str, assignment: &Assignment) {
+    if let Err(err) = source.discard(assignment).await {
+        tracing::warn!("{path}: discarding {}: {err:#}", assignment.file_id);
+    }
 }
 
 /// An upload dropped before it was completed or aborted, as when the request
@@ -1624,8 +1684,11 @@ mod tests {
         /// Creates never answer and never save, as a filer that took the call
         /// and went silent.
         silent_creates: bool,
-        /// Uploads after this many fail.
+        /// Assignments after this many fail.
         uploads_allowed: Option<u64>,
+        /// Chunk writes never finish, as to a volume server that stopped
+        /// answering.
+        stall_writes: bool,
         fail_deletes: bool,
         /// This many discards fail before any succeeds.
         failing_discards: AtomicU64,
@@ -1713,13 +1776,12 @@ mod tests {
             Ok(out)
         }
 
-        async fn upload(
+        async fn assign(
             &self,
             _path: &str,
             collection: &str,
-            offset: u64,
-            data: Bytes,
-        ) -> anyhow::Result<Uploaded> {
+            _size: u64,
+        ) -> anyhow::Result<Assignment> {
             self.collections
                 .lock()
                 .unwrap()
@@ -1728,26 +1790,34 @@ mod tests {
             if self.uploads_allowed.is_some_and(|allowed| n > allowed) {
                 bail!("volume server unreachable");
             }
-            let file_id = format!("7,{n:08x}");
-            let chunk = FileChunk {
-                file_id: file_id.clone(),
+            Ok(Assignment {
+                file_id: format!("7,{n:08x}"),
+                url: "volume:8080".into(),
+                auth: String::new(),
+                fsync: false,
+            })
+        }
+
+        async fn write(
+            &self,
+            assignment: &Assignment,
+            _path: &str,
+            offset: u64,
+            data: Bytes,
+        ) -> anyhow::Result<FileChunk> {
+            if self.stall_writes {
+                std::future::pending::<()>().await;
+            }
+            self.needles
+                .lock()
+                .unwrap()
+                .insert(assignment.file_id.clone(), data.to_vec());
+            Ok(FileChunk {
+                file_id: assignment.file_id.clone(),
                 offset: offset as i64,
                 size: data.len() as u64,
                 e_tag: BASE64_STANDARD.encode(Md5::digest(&data)),
                 ..Default::default()
-            };
-            self.needles
-                .lock()
-                .unwrap()
-                .insert(file_id.clone(), data.to_vec());
-            Ok(Uploaded {
-                chunk,
-                assignment: Assignment {
-                    file_id,
-                    url: "volume:8080".into(),
-                    auth: String::new(),
-                    fsync: false,
-                },
             })
         }
 
@@ -2902,6 +2972,41 @@ mod tests {
         upload.abort().await.unwrap();
         assert_eq!(fake.discarded.load(Ordering::Relaxed), 3);
         assert!(fake.needles.lock().unwrap().is_empty());
+    }
+
+    /// A chunk write cancelled in flight, as when the request writing it is
+    /// dropped, gives its assigned needle back.
+    #[tokio::test]
+    async fn a_cancelled_chunk_write_gives_its_needle_back() {
+        let fake = Arc::new(Fake {
+            stall_writes: true,
+            ..Default::default()
+        });
+        let store = writing_store(fake.clone(), no_keys(), 4096, false, false);
+        let put = tokio::spawn(async move {
+            store
+                .put(
+                    &Path::from("vector/idx/data/cut.lance"),
+                    Bytes::from(vec![6u8; 100]).into(),
+                )
+                .await
+        });
+        for _ in 0..100 {
+            if fake.uploads.load(Ordering::Relaxed) == 1 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(fake.uploads.load(Ordering::Relaxed), 1, "assigned");
+        put.abort();
+        put.await.unwrap_err();
+        for _ in 0..100 {
+            if fake.discarded.load(Ordering::Relaxed) == 1 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(fake.discarded.load(Ordering::Relaxed), 1);
     }
 
     /// Chunks go to the bucket's collection as the gateway names it, with
