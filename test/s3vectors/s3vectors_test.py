@@ -137,11 +137,19 @@ def assert_engine_wrote_like_the_gateway(cluster, index):
             assert all(chunk.get("cipher_key") for chunk in meta["chunks"]), meta["chunks"]
 
 
-def cli_cluster_args(cluster):
-    """How weed-vector-cli reaches the cluster: the namespace that names the
-    tables, the masters whose filers hold them, and the cluster token's key."""
-    return ["--namespace", cluster["catalog"], "--masters", cluster["masters"],
-            "--filer-signing-key", cluster["filer_signing_key"]]
+def run_cli(cluster, *args):
+    """weed-vector-cli's JSON answer. It reaches the cluster through the
+    namespace that names the tables, the masters whose filers hold them and the
+    cluster token's key, and finds security.toml and the read key where the
+    weed processes do."""
+    import os
+    import subprocess
+    from pathlib import Path
+    cli = Path(os.environ.get("VECTOR_CLI_BINARY", Path(__file__).resolve().parent / "weed-vector-cli")).resolve()
+    command = [str(cli), "--namespace", cluster["catalog"], "--masters", cluster["masters"],
+               "--filer-signing-key", cluster["filer_signing_key"], *args]
+    return json.loads(subprocess.run(command, check=True, capture_output=True, text=True,
+                                     cwd=cluster["directory"], env=cluster["env"]).stdout)
 
 
 def expect_error(code, operation, **kwargs):
@@ -593,11 +601,8 @@ def test_vector_index_job(vectors, cluster):
     """The maintenance worker indexes a table past the row threshold through the
     admin server, queries then run through the index, and rows written after
     the build are still found."""
-    import os
     import random
-    import subprocess
     import urllib.request
-    from pathlib import Path
 
     bucket, index, dim = "vectors-indexed", "idx", 16
     vectors.create_vector_bucket(vectorBucketName=bucket)
@@ -634,19 +639,12 @@ def test_vector_index_job(vectors, cluster):
     run = call("/run", "POST", {"timeout_seconds": 110})
     assert run["success_count"] == 1 and run["error_count"] == 0, run
 
-    cli = Path(os.environ.get("VECTOR_CLI_BINARY", Path(__file__).resolve().parent / "weed-vector-cli"))
-    coverage = json.loads(subprocess.run(
-        [str(cli), *cli_cluster_args(cluster), "coverage", f"{bucket}$vector${index}"],
-        check=True, capture_output=True, text=True).stdout)
+    coverage = run_cli(cluster, "coverage", f"{bucket}$vector${index}")
     assert len(coverage) == 1 and coverage[0]["segments"] == 1 and coverage[0]["unindexed_rows"] == 0, coverage
     # A table named by its s3:// location is opened on the cluster as well.
-    uri = json.loads(subprocess.run(
-        [str(cli), *cli_cluster_args(cluster), "describe", f"{bucket}$vector${index}"],
-        check=True, capture_output=True, text=True).stdout)["uri"]
+    uri = run_cli(cluster, "describe", f"{bucket}$vector${index}")["uri"]
     assert uri.startswith("s3://"), uri
-    direct = json.loads(subprocess.run(
-        [str(cli), *cli_cluster_args(cluster), "coverage", uri],
-        check=True, capture_output=True, text=True).stdout)
+    direct = run_cli(cluster, "coverage", uri)
     assert direct == coverage, (direct, coverage)
 
     found = 0
@@ -667,9 +665,7 @@ def test_vector_index_job(vectors, cluster):
     assert again["detected_count"] == 0, again
 
     def coverage_now():
-        return json.loads(subprocess.run(
-            [str(cli), *cli_cluster_args(cluster), "coverage", f"{bucket}$vector${index}"],
-            check=True, capture_output=True, text=True).stdout)[0]
+        return run_cli(cluster, "coverage", f"{bucket}$vector${index}")[0]
 
     def optimize(expect_detected):
         request = urllib.request.Request(

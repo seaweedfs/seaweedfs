@@ -268,8 +268,7 @@ def run_cluster(param, tmp_path_factory, identities):
         if os.environ.get("VECTOR_TLS"):
             write_tls(directory)
 
-        def start(name, args, unset=()):
-            log = stack.enter_context((directory / f"{name}.log").open("w"))
+        def process_env(unset=()):
             env = dict(os.environ, AWS_ACCESS_KEY_ID="test", AWS_SECRET_ACCESS_KEY="test",
                        AWS_DEFAULT_REGION="us-east-1", AWS_EC2_METADATA_DISABLED="true",
                        WEED_S3_SSE_KEY="s3vectors-test", WEED_JWT_FILER_SIGNING_KEY=filer_signing_key,
@@ -279,7 +278,11 @@ def run_cluster(param, tmp_path_factory, identities):
                 env.pop("WEED_JWT_SIGNING_READ_KEY", None)
             for key in unset:
                 env.pop(key)
-            process = subprocess.Popen(args, cwd=directory, stdout=log, stderr=log, env=env)
+            return env
+
+        def start(name, args, unset=()):
+            log = stack.enter_context((directory / f"{name}.log").open("w"))
+            process = subprocess.Popen(args, cwd=directory, stdout=log, stderr=log, env=process_env(unset))
             processes[name] = process
             stack.callback(stop, process)
             return process
@@ -366,7 +369,7 @@ def run_cluster(param, tmp_path_factory, identities):
 
         yield {"endpoint": endpoint, "mode": mode, "processes": processes, "directory": directory, "filer": filer,
                "masters": master_addr, "filer_signing_key": filer_signing_key,
-               "catalog": f"http://127.0.0.1:{lance}", "admin": admin_url}
+               "catalog": f"http://127.0.0.1:{lance}", "admin": admin_url, "env": process_env()}
 
 
 @pytest.fixture(scope="module")

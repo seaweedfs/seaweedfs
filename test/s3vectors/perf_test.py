@@ -198,7 +198,8 @@ def test_build_index(perf):
                "index", "build", f"{perf['bucket']}$vector${INDEX}"]
     if os.environ.get("PERF_PARTITIONS"):
         command += ["--partitions", os.environ["PERF_PARTITIONS"]]
-    seconds, out = timed(lambda: subprocess.run(command, check=True, capture_output=True, text=True))
+    seconds, out = timed(lambda: subprocess.run(command, check=True, capture_output=True, text=True,
+                                                cwd=perf["cluster"]["directory"], env=perf["cluster"]["env"]))
     report = json.loads(out.stdout)
     coverage = report["coverage"]
     assert len(coverage) == 1 and coverage[0]["unindexed_rows"] == 0, coverage
