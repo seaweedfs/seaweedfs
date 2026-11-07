@@ -826,7 +826,7 @@ func (h *S3TablesHandler) confirmChild(ctx context.Context, client filer_pb.Seaw
 	if err == nil {
 		return nil
 	}
-	err = h.backOutChild(ctx, client, childPath, written, confirmed, emptyDirs, err)
+	err = h.backOutChild(ctx, client, childPath, written, confirmed, mayBeVisible, emptyDirs, err)
 	if errors.Is(err, errParentGone) {
 		h.removeLeftoverDirectory(context.WithoutCancel(ctx), client, parentPath)
 	}
@@ -834,8 +834,11 @@ func (h *S3TablesHandler) confirmChild(ctx context.Context, client filer_pb.Seaw
 }
 
 // backOutChild removes what a create wrote onto childPath, after the create
-// failed with err, and returns err, or why the record stays.
-func (h *S3TablesHandler) backOutChild(ctx context.Context, client filer_pb.SeaweedFilerClient, childPath string, written map[string][]byte, confirmed bool, emptyDirs []string, err error) error {
+// failed with err, and returns err, or why the record stays. mayBeVisible is
+// whether readers may have seen the record: a record that moved on is then
+// reported as ErrPublishedRecordChanged, since what was staged for it may
+// still be in use.
+func (h *S3TablesHandler) backOutChild(ctx context.Context, client filer_pb.SeaweedFilerClient, childPath string, written map[string][]byte, confirmed, mayBeVisible bool, emptyDirs []string, err error) error {
 	ctx = context.WithoutCancel(ctx)
 	expected := written
 	keys := make([]string, 0, len(written))
@@ -1091,7 +1094,8 @@ func (h *S3TablesHandler) claimCatalogEntryAt(ctx context.Context, client filer_
 		return err
 	}
 	if err := checkLocationUnclaimed(ctx, client, bucketName, path, metadataLocation); err != nil {
-		return h.backOutChild(ctx, client, path, attrs, false, emptyDirs, err)
+		// The claim still carries its mark, so no reader has seen the record.
+		return h.backOutChild(ctx, client, path, attrs, false, false, emptyDirs, err)
 	}
 	return nil
 }
