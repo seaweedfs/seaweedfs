@@ -26,7 +26,8 @@ struct Args {
     #[arg(long, env = "WEED_VECTOR_LISTEN", default_value = "127.0.0.1:8090")]
     listen: String,
     /// object_store option fallback for deployments that vend no credentials:
-    /// key=value, repeatable.
+    /// key=value, repeatable. An aws_endpoint given here is the only one a
+    /// request may name for a table it resolved.
     #[arg(long = "storage-option", alias = "storage.option", value_parser = parse_option)]
     storage_options: Vec<(String, String)>,
     /// Comma-separated master addresses to register this server with; the

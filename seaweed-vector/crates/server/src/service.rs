@@ -59,6 +59,7 @@ const KEY_COLUMN: &str = "key";
 const METADATA_COLUMN: &str = "metadata";
 const VECTOR_COLUMN: &str = "vector";
 const ROW_ID_COLUMN: &str = "_rowid";
+const ENDPOINT_OPTION: &str = "aws_endpoint";
 
 fn schema_for(
     dimension: usize,
@@ -416,11 +417,22 @@ impl VectorServer {
     }
 
     /// The table as the gateway resolved it, or through the catalog when the
-    /// request names no location.
+    /// request names no location. An endpoint the engine was configured with
+    /// is kept: a request may not send the engine's credentials elsewhere.
     async fn describe(&self, table: &pb::Table) -> Result<TableDescription> {
+        let pinned = self.fallback.get(ENDPOINT_OPTION);
         match resolved(table) {
-            Some(description) => Ok(description),
-            None => self.client.describe_table(&table.id).await,
+            Some(description)
+                if pinned.is_none_or(|pinned| {
+                    description
+                        .storage_options
+                        .get(ENDPOINT_OPTION)
+                        .is_none_or(|sent| sent == pinned)
+                }) =>
+            {
+                Ok(description)
+            }
+            _ => self.client.describe_table(&table.id).await,
         }
     }
 
@@ -431,7 +443,7 @@ impl VectorServer {
         let cache = self.read_cache.as_ref().map(|cache| {
             let options = dataset::table_options(&description, &self.fallback);
             let endpoint = options
-                .get("aws_endpoint")
+                .get(ENDPOINT_OPTION)
                 .map(String::as_str)
                 .unwrap_or("");
             Arc::new(cache.scoped(endpoint)) as Arc<dyn WrappingObjectStore>
@@ -1061,5 +1073,30 @@ mod tests {
                 .expect_err(location);
             assert_eq!(err.code(), tonic::Code::Unavailable, "{location}");
         }
+    }
+
+    /// A request may not send the engine's credentials to another endpoint
+    /// than the one it was configured with; such a table goes to the catalog.
+    #[tokio::test]
+    async fn a_configured_endpoint_is_kept() {
+        let sent = |endpoint: &str| pb::Table {
+            id: vec!["bkt".into(), "vector".into(), "x".into()],
+            location: "s3://bkt/vector/x".into(),
+            storage_options: HashMap::from([(ENDPOINT_OPTION.to_string(), endpoint.to_string())]),
+            ..Default::default()
+        };
+        let unreachable = || NamespaceClient::new("http://127.0.0.1:1");
+        let pinned =
+            FallbackOptions::from([(ENDPOINT_OPTION.to_string(), "http://gw".to_string())]);
+        let server = VectorServer::new(unreachable(), pinned);
+        let description = server.describe(&sent("http://gw")).await.unwrap();
+        assert_eq!(description.location, "s3://bkt/vector/x");
+        server
+            .describe(&sent("http://elsewhere"))
+            .await
+            .expect_err("another endpoint was taken from the request");
+
+        let unpinned = VectorServer::new(unreachable(), FallbackOptions::new());
+        unpinned.describe(&sent("http://elsewhere")).await.unwrap();
     }
 }
