@@ -36,6 +36,8 @@ const (
 // filerHooks lets a test land a competing write, or a failure, at a chosen RPC
 // of the handler under test while the in-memory filer still arbitrates them.
 type filerHooks struct {
+	// beforeCreate sees every CreateEntry, including those the filer refuses.
+	beforeCreate func(*filer_pb.CreateEntryRequest)
 	// afterCreate runs once the filer has accepted a CreateEntry.
 	afterCreate func(*filer_pb.CreateEntryRequest)
 	// updateErr fails an UpdateEntry, before it reaches the filer, when it
@@ -65,6 +67,9 @@ type hookedClient struct {
 }
 
 func (c *hookedClient) CreateEntry(ctx context.Context, in *filer_pb.CreateEntryRequest, opts ...grpc.CallOption) (*filer_pb.CreateEntryResponse, error) {
+	if c.hooks.beforeCreate != nil {
+		c.hooks.beforeCreate(in)
+	}
 	resp, err := c.SeaweedFilerClient.CreateEntry(ctx, in, opts...)
 	if err == nil && resp.GetErrorCode() == filer_pb.FilerError_OK && c.hooks.afterCreate != nil {
 		c.hooks.afterCreate(in)
@@ -430,6 +435,92 @@ func TestConcurrentCreateTableHasOneWinner(t *testing.T) {
 	}
 	if files := e.metadataFiles(); len(files) != 1 || files[0] != path.Base(record.MetadataLocation) {
 		t.Errorf("metadata files = %v, want only %s", files, path.Base(record.MetadataLocation))
+	}
+}
+
+// Two creates overlapping at the canonical name, in a fixed order rather than
+// at the scheduler's whim: the second stages while the first has staged
+// v1.metadata.json and not yet registered it. Both stage exclusively, the
+// second falls back to v1-<uuid>, and neither file is overwritten. The second
+// registers first and wins; the first loses and removes only its own file.
+func TestOverlappingCreatesStageApart(t *testing.T) {
+	e := newConflictEnv(t)
+	body := func(column string) string {
+		return conflictTableBody(column, `"location":"`+conflictLocation+`"`)
+	}
+	isMetadataFile := func(in *filer_pb.CreateEntryRequest) bool {
+		return !in.Entry.IsDirectory && strings.HasSuffix(in.Entry.Name, ".metadata.json")
+	}
+	columnIn := func(name, column string) bool {
+		entry := e.filer.Get(e.metadataDir(), name)
+		if entry == nil {
+			return false
+		}
+		metadata, err := table.ParseMetadataBytes(entry.Content)
+		return err == nil && hasColumn(metadata, column)
+	}
+
+	var attempts []*filer_pb.CreateEntryRequest
+	e.hooks.beforeCreate = func(in *filer_pb.CreateEntryRequest) {
+		if isMetadataFile(in) {
+			attempts = append(attempts, in)
+		}
+	}
+	var second *httptest.ResponseRecorder
+	fallback, started, overlapped := "", false, false
+	e.hooks.afterCreate = func(in *filer_pb.CreateEntryRequest) {
+		if !isMetadataFile(in) || overlapped {
+			return
+		}
+		if !started {
+			// The first create has staged the canonical name; the second runs
+			// to completion before the first registers. Only once, so a
+			// staging that stops being exclusive fails here instead of nesting.
+			started = true
+			second = e.createTable(body("second_col"))
+			return
+		}
+		// What the second create staged: both files are staged, none registered.
+		fallback, overlapped = in.Entry.Name, true
+		if !columnIn("v1.metadata.json", "first_col") {
+			t.Error("v1.metadata.json does not hold the first create's metadata while both are staged")
+		}
+		if !columnIn(fallback, "second_col") {
+			t.Errorf("%s does not hold the second create's metadata", fallback)
+		}
+	}
+
+	first := e.createTable(body("first_col"))
+	if !overlapped || second == nil {
+		t.Fatalf("overlapped=%v second ran=%v, want the second create staged inside the first", overlapped, second != nil)
+	}
+
+	if len(attempts) != 3 {
+		t.Fatalf("metadata staging attempts = %d, want 3 (first, second at the canonical name, second's fallback)", len(attempts))
+	}
+	for i, want := range []string{"v1.metadata.json", "v1.metadata.json", fallback} {
+		if got := attempts[i]; got.Entry.Name != want || !got.OExcl {
+			t.Errorf("attempt %d = %s exclusive=%v, want %s exclusive", i, got.Entry.Name, got.OExcl, want)
+		}
+	}
+	if !regexp.MustCompile(`^v1-[0-9a-f-]{36}\.metadata\.json$`).MatchString(fallback) {
+		t.Errorf("fallback name = %s, want v1-<uuid>.metadata.json", fallback)
+	}
+
+	if second.Code != http.StatusOK {
+		t.Fatalf("second create = %d (%s), want 200", second.Code, second.Body.String())
+	}
+	if first.Code != http.StatusConflict {
+		t.Fatalf("first create = %d (%s), want 409", first.Code, first.Body.String())
+	}
+	if record := e.mustRecord(); path.Base(record.MetadataLocation) != fallback {
+		t.Errorf("catalog points at %s, want the winner's %s", record.MetadataLocation, fallback)
+	}
+	if files := e.metadataFiles(); len(files) != 1 || files[0] != fallback {
+		t.Errorf("metadata files = %v, want only the winner's %s", files, fallback)
+	}
+	if !columnIn(fallback, "second_col") || columnIn(fallback, "first_col") {
+		t.Errorf("%s no longer holds only the winner's metadata", fallback)
 	}
 }
 
