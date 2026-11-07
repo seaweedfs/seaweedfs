@@ -1133,7 +1133,7 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 				}
 				err := h.removeExtendedAttributesIf(context.WithoutCancel(r.Context()), client, tablePath, claimed,
 					ExtendedKeyMetadata, ExtendedKeyMetadataVersion, ExtendedKeyPolicy, ExtendedKeyTags, ExtendedKeyEntryType,
-					ExtendedKeyMaintenance, ExtendedKeyMaintenanceStatus, ExtendedKeyDeleting)
+					ExtendedKeyMaintenance, ExtendedKeyMaintenanceStatus, ExtendedKeyDeleting, ExtendedKeyMoving)
 				if err != nil {
 					if errors.Is(err, ErrConcurrentUpdate) {
 						return ErrVersionTokenMismatch
@@ -1176,7 +1176,7 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 			}
 			return h.removeExtendedAttributesIf(context.WithoutCancel(r.Context()), client, tablePath, claimed,
 				ExtendedKeyMetadata, ExtendedKeyMetadataVersion, ExtendedKeyPolicy, ExtendedKeyTags, ExtendedKeyEntryType,
-				ExtendedKeyMaintenance, ExtendedKeyMaintenanceStatus, ExtendedKeyDeleting)
+				ExtendedKeyMaintenance, ExtendedKeyMaintenanceStatus, ExtendedKeyDeleting, ExtendedKeyMoving)
 		}
 		// Colocated table: the name path holds the data. A token caller's
 		// delete carries the captured attributes as a filer precondition, so
@@ -1251,8 +1251,9 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 	return nil
 }
 
-// renamedTableAttributes are the catalog attributes a rename carries to the new
-// name and clears from the old one.
+// renamedTableAttributes are the catalog attributes a rename clears from the
+// old name. All but a move's reservation, which the move can no longer clear
+// once the record is gone, are carried to the new name.
 var renamedTableAttributes = []string{
 	ExtendedKeyMetadata,
 	ExtendedKeyMetadataVersion,
@@ -1261,6 +1262,7 @@ var renamedTableAttributes = []string{
 	ExtendedKeyMaintenance,
 	ExtendedKeyMaintenanceStatus,
 	ExtendedKeyEntryType,
+	ExtendedKeyMoving,
 }
 
 // catalogEntryKind describes the entry a rename operates on, so tables and
@@ -1863,7 +1865,7 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 					}
 				}
 				for key, data := range srcExtended {
-					if key != ExtendedKeyDeleting {
+					if key != ExtendedKeyDeleting && key != ExtendedKeyMoving {
 						extended[key] = data
 					}
 				}

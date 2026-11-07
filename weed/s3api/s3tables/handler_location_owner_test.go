@@ -318,3 +318,44 @@ func TestLocationRefusesAnotherRecordsEntry(t *testing.T) {
 	})
 	assert.Equal(t, http.StatusConflict, status, "%+v", resp)
 }
+
+// A record taken away by a rename or a delete while a move holds its
+// reservation leaves the old name free: the move can no longer clear the
+// reservation once the record is gone.
+func TestRecordGoneDropsItsMoveReservation(t *testing.T) {
+	nsPath := GetNamespacePath(renameTestBucket, "ns")
+	reserve := func(t *testing.T, fs *s3tablestest.MemFiler, name string) {
+		t.Helper()
+		moving, _ := json.Marshal(tableMetadataInternal{Name: name, Namespace: "ns", Format: FormatIceberg, MetadataLocation: renameLocation("ns/target/metadata/v9.metadata.json")})
+		fs.Get(nsPath, name).Extended[ExtendedKeyMoving] = moving
+	}
+	reuse := func(t *testing.T, m *Manager, fs *s3tablestest.MemFiler, name string) {
+		t.Helper()
+		assert.NotContains(t, fs.Get(nsPath, name).Extended, ExtendedKeyMoving)
+		requireOK(t, m, fs, "CreateTable", &CreateTableRequest{
+			TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"}, Name: name, Format: FormatIceberg,
+			MetadataLocation: renameLocation("ns/fresh-" + name + "/metadata/v1.metadata.json"),
+		})
+	}
+
+	t.Run("rename", func(t *testing.T) {
+		fs, m := startRenameManager(t)
+		reserve(t, fs, "t")
+		requireOK(t, m, fs, "RenameTable", &RenameTableRequest{
+			TableBucketARN: mustBucketARN(t), SourceNamespace: []string{"ns"}, SourceName: "t", DestNamespace: []string{"ns"}, DestName: "u",
+		})
+		assert.NotContains(t, fs.Get(nsPath, "u").Extended, ExtendedKeyMoving)
+		reuse(t, m, fs, "t")
+	})
+
+	t.Run("delete", func(t *testing.T) {
+		fs, m := startRenameManager(t)
+		requireOK(t, m, fs, "CreateTable", &CreateTableRequest{
+			TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"}, Name: "d", Format: FormatIceberg,
+			MetadataLocation: renameLocation("ns/d-files/metadata/v1.metadata.json"),
+		})
+		reserve(t, fs, "d")
+		requireOK(t, m, fs, "DeleteTable", &DeleteTableRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"}, Name: "d"})
+		reuse(t, m, fs, "d")
+	})
+}
