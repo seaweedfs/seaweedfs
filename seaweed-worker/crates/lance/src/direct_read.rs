@@ -1428,23 +1428,35 @@ impl Upload {
         })
     }
 
+    /// Discards every chunk uploaded; those a volume server would not give up
+    /// are kept for another attempt, by a later abort or the drop.
     async fn discard_all(&self) -> Result<()> {
         let chunks = {
             let mut state = self.state.lock().unwrap();
             state.done = true;
             std::mem::take(&mut state.chunks)
         };
-        for uploaded in &chunks {
-            self.store
-                .reads
-                .source
-                .discard(&uploaded.assignment)
-                .await
-                .with_context(|| format!("discarding {}", uploaded.chunk.file_id))
-                .map_err(generic)?;
+        let kept = discard(&*self.store.reads.source, &self.path, chunks).await;
+        if kept.is_empty() {
+            return Ok(());
         }
-        Ok(())
+        let ids: Vec<_> = kept.iter().map(|u| u.chunk.file_id.as_str()).collect();
+        let err = anyhow::anyhow!("{}: still holding {}", self.path, ids.join(", "));
+        self.state.lock().unwrap().chunks.extend(kept);
+        Err(generic(err))
     }
+}
+
+/// Discards `chunks` on the volume servers and returns those still there.
+async fn discard(source: &dyn Source, path: &str, chunks: Vec<Uploaded>) -> Vec<Uploaded> {
+    let mut kept = Vec::new();
+    for uploaded in chunks {
+        if let Err(err) = source.discard(&uploaded.assignment).await {
+            tracing::warn!("{path}: discarding {}: {err:#}", uploaded.chunk.file_id);
+            kept.push(uploaded);
+        }
+    }
+    kept
 }
 
 /// An upload dropped before it was completed or aborted, as when the request
@@ -1461,11 +1473,7 @@ impl Drop for Upload {
         };
         let (source, path) = (self.store.reads.source.clone(), self.path.clone());
         runtime.spawn(async move {
-            for uploaded in &chunks {
-                if let Err(err) = source.discard(&uploaded.assignment).await {
-                    tracing::warn!("{path}: discarding {}: {err:#}", uploaded.chunk.file_id);
-                }
-            }
+            discard(&*source, &path, chunks).await;
         });
     }
 }
@@ -1590,6 +1598,8 @@ mod tests {
         silent_creates: bool,
         /// Uploads after this many fail.
         uploads_allowed: Option<u64>,
+        /// This many discards fail before any succeeds.
+        failing_discards: AtomicU64,
         /// The collections uploads named.
         collections: Mutex<std::collections::HashSet<String>>,
     }
@@ -1742,6 +1752,10 @@ mod tests {
         }
 
         async fn discard(&self, assignment: &Assignment) -> anyhow::Result<()> {
+            if self.failing_discards.load(Ordering::Relaxed) > 0 {
+                self.failing_discards.fetch_sub(1, Ordering::Relaxed);
+                bail!("volume server unreachable");
+            }
             self.discarded.fetch_add(1, Ordering::Relaxed);
             self.needles.lock().unwrap().remove(&assignment.file_id);
             Ok(())
@@ -2743,6 +2757,31 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         assert_eq!(fake.discarded.load(Ordering::Relaxed), 2);
+    }
+
+    /// An abort that cannot discard every chunk keeps the ones left for a
+    /// later attempt, and the upload cannot be completed any more.
+    #[tokio::test]
+    async fn an_abort_keeps_what_it_could_not_discard() {
+        let fake = Arc::new(Fake {
+            failing_discards: AtomicU64::new(1),
+            ..Default::default()
+        });
+        let store = writing_store(fake.clone(), no_keys(), 4096, false, false);
+        let mut upload = store
+            .put_multipart(&Path::from("vector/idx/data/kept.lance"))
+            .await
+            .unwrap();
+        upload
+            .put_part(Bytes::from(vec![5u8; 10_000]).into())
+            .await
+            .unwrap();
+        upload.abort().await.unwrap_err();
+        assert_eq!(fake.discarded.load(Ordering::Relaxed), 2);
+        upload.complete().await.unwrap_err();
+        upload.abort().await.unwrap();
+        assert_eq!(fake.discarded.load(Ordering::Relaxed), 3);
+        assert!(fake.needles.lock().unwrap().is_empty());
     }
 
     /// Chunks go to the bucket's collection as the gateway names it, with
