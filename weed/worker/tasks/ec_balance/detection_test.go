@@ -281,13 +281,14 @@ func TestDetectionUsesConfiguredGlobalCap(t *testing.T) {
 	}
 	clusterInfo := &types.ClusterInfo{ActiveTopology: at}
 
-	for _, tc := range []struct{ configured, want int }{
-		{0, DefaultGlobalMaxMovesPerRack},
-		{25, 25},
+	for _, tc := range []struct{ configured, maxResults, want int }{
+		{0, 0, DefaultGlobalMaxMovesPerRack},
+		{25, 0, 25},
+		{25, 20, 20},
 	} {
 		config := NewDefaultConfig()
 		config.GlobalMaxMovesPerRack = tc.configured
-		results, _, err := Detection(context.Background(), nil, clusterInfo, config, 0)
+		results, _, err := Detection(context.Background(), nil, clusterInfo, config, tc.maxResults)
 		if err != nil {
 			t.Fatalf("Detection: %v", err)
 		}
@@ -298,7 +299,7 @@ func TestDetectionUsesConfiguredGlobalCap(t *testing.T) {
 			}
 		}
 		if global != tc.want {
-			t.Errorf("cap %d planned %d global moves, want %d", tc.configured, global, tc.want)
+			t.Errorf("cap %d with %d results planned %d global moves, want %d", tc.configured, tc.maxResults, global, tc.want)
 		}
 	}
 }
