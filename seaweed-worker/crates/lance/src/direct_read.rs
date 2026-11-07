@@ -2394,6 +2394,15 @@ mod tests {
                 entry.extended.contains_key("X-Amz-Server-Side-Encryption"),
                 sse_s3
             );
+            if sse_s3 {
+                // Every chunk under its own key: no two share a keystream.
+                let keys: std::collections::HashSet<&[u8]> = entry
+                    .chunks
+                    .iter()
+                    .map(|c| c.sse_metadata.as_slice())
+                    .collect();
+                assert_eq!(keys.len(), entry.chunks.len());
+            }
             let got = store.get(&path).await.unwrap().bytes().await.unwrap();
             assert_eq!(
                 got,

@@ -257,21 +257,6 @@ struct ObjectKey {
     iv: Option<[u8; IV_SIZE]>,
 }
 
-/// The chunk's IV as the gateway derives it: the object's IV with the chunk's
-/// block offset added to the counter in its last eight bytes.
-fn iv_at(base: [u8; IV_SIZE], offset: u64) -> [u8; IV_SIZE] {
-    let mut iv = base;
-    let mut blocks = offset / 16;
-    let mut carry = 0u64;
-    for i in (8..IV_SIZE).rev() {
-        let sum = iv[i] as u64 + (blocks & 0xff) + carry;
-        iv[i] = (sum & 0xff) as u8;
-        carry = sum >> 8;
-        blocks >>= 8;
-    }
-    iv
-}
-
 impl ObjectKey {
     fn generate() -> Self {
         let mut key = [0u8; KEY_SIZE];
@@ -352,13 +337,21 @@ pub struct EncodedChunk {
     pub sse_metadata: Vec<u8>,
 }
 
-/// Encodes an object's chunks as the gateway would store them: SSE-S3 under a
-/// fresh object key when the bucket encrypts, then the filer's volume
-/// encryption when the cluster asks for it.
+/// Encodes an object's chunks as the gateway would store them: SSE-S3 when the
+/// bucket encrypts, then the filer's volume encryption when the cluster asks
+/// for it. The first chunk is under the object's key and IV, which is how the
+/// gateway reads an object of one chunk; every other chunk is under a key and
+/// IV of its own, as the gateway's multipart parts are and as it reads an
+/// object of several, so no two chunks share a keystream whatever their
+/// boundaries.
 pub struct EntryEncoder {
     keys: Arc<SseS3Keys>,
     object: Option<(ObjectKey, String)>,
     cipher: bool,
+}
+
+fn key_id() -> String {
+    format!("sse-s3-key-{}", OsRng.next_u64() >> 1)
 }
 
 impl EntryEncoder {
@@ -369,10 +362,7 @@ impl EntryEncoder {
                     "the bucket encrypts with SSE-S3, which needs s3.sse.kek or s3.sse.key for the engine as for the S3 gateway"
                 );
             }
-            Some((
-                ObjectKey::generate(),
-                format!("sse-s3-key-{}", OsRng.next_u64() >> 1),
-            ))
+            Some((ObjectKey::generate(), key_id()))
         } else {
             None
         };
@@ -384,19 +374,19 @@ impl EntryEncoder {
     }
 
     /// The bytes of the chunk at `offset` in the object, as they go to the
-    /// volume server. Each chunk is its own CTR stream from the IV derived
-    /// for its offset, as the gateway encrypts a multipart part, which is how
-    /// the gateway and [`EntryDecoder`] read a chunk back.
+    /// volume server, with the SSE-S3 metadata that reads them back.
     pub fn encode(&self, offset: u64, mut data: Vec<u8>) -> Result<EncodedChunk> {
         let (sse_type, sse_metadata) = match &self.object {
-            Some((object, key_id)) => {
-                let iv = iv_at(object.iv.expect("a generated key has an IV"), offset);
-                ObjectKey {
-                    key: object.key,
-                    iv: Some(iv),
-                }
-                .decrypt(0, &mut data)?;
+            Some((object, key_id)) if offset == 0 => {
+                let iv = object.iv.expect("a generated key has an IV");
+                object.decrypt(0, &mut data)?;
                 (SSE_S3, object.serialize(&self.keys, key_id, iv)?)
+            }
+            Some(_) => {
+                let chunk_key = ObjectKey::generate();
+                let iv = chunk_key.iv.expect("a generated key has an IV");
+                chunk_key.decrypt(0, &mut data)?;
+                (SSE_S3, chunk_key.serialize(&self.keys, &key_id(), iv)?)
             }
             None => (0, Vec::new()),
         };
