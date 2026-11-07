@@ -32,3 +32,10 @@ func TestAdminDashboardShowsDiskUsage(t *testing.T) {
 		t.Error("dashboard still shows the logical data size")
 	}
 }
+
+func TestCalculatePercent64PetabyteScale(t *testing.T) {
+	const pib = int64(1) << 50
+	if got := calculatePercent64(100*pib, 200*pib); got != 50 {
+		t.Errorf("100 of 200 PiB = %d%%, want 50%%", got)
+	}
+}
