@@ -33,6 +33,8 @@ type memFiler struct {
 	// failFileCreate, when set, makes CreateEntry fail for non-directory entries,
 	// simulating a metadata-file write error.
 	failFileCreate error
+	// onLookup, when set, runs at the start of every LookupDirectoryEntry.
+	onLookup func(p string)
 }
 
 func newMemFiler() *memFiler {
@@ -48,6 +50,9 @@ func (m *memFiler) seed(p string, entry *filer_pb.Entry) {
 }
 
 func (m *memFiler) LookupDirectoryEntry(_ context.Context, in *filer_pb.LookupDirectoryEntryRequest, _ ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	if hook := m.onLookup; hook != nil {
+		hook(path.Join(in.Directory, in.Name))
+	}
 	entry, ok := m.entries[path.Join(in.Directory, in.Name)]
 	if !ok {
 		return nil, filer_pb.ErrNotFound

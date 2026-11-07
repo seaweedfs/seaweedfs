@@ -332,6 +332,10 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 		mgrClient := s3tables.NewManagerClient(client)
 		return s.tablesManager.Execute(r.Context(), mgrClient, "CreateTable", createReq, &createResp, identityName)
 	})
+	if err == nil && createResp.MetadataLocation != metadataLocation {
+		// Another create registered the name first; answer with its table.
+		err = &s3tables.S3TablesError{Type: s3tables.ErrCodeTableAlreadyExists, Message: fmt.Sprintf("table %s already exists", tableName)}
+	}
 
 	if err != nil {
 		var tableErr *s3tables.S3TablesError
@@ -388,11 +392,6 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Use returned location if available, otherwise fallback to local one
-	finalLocation := createResp.MetadataLocation
-	if finalLocation == "" {
-		finalLocation = metadataLocation
-	}
 	if markerErr := s.deleteStageCreateMarkers(r.Context(), bucketName, namespace, tableName); markerErr != nil {
 		glog.V(1).Infof("Iceberg: failed to cleanup stage-create markers for %s.%s after create: %v", flattenNamespacePath(namespace), tableName, markerErr)
 	}
@@ -401,7 +400,7 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 		return s.mayUpdateTable(r, bucketName, namespace, req.Name)
 	})
 	result := LoadTableResult{
-		MetadataLocation:   finalLocation,
+		MetadataLocation:   metadataLocation,
 		Metadata:           metadata,
 		Config:             config,
 		StorageCredentials: storageCredentials,

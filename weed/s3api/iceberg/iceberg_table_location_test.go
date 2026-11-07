@@ -58,3 +58,60 @@ func TestTableLocation(t *testing.T) {
 		}
 	}
 }
+
+// Two creates can both find a name free. The one the catalog registers second
+// is answered with the registered table, not with metadata in a directory the
+// catalog never recorded.
+func TestCreateTableThatLosesTheRaceReturnsTheRegisteredTable(t *testing.T) {
+	const bucket = "warehouse"
+	fc := newMemFiler()
+	seedNamespace(fc, bucket, "finance", "alice")
+	s := NewServer(fc, nil)
+	first := httptest.NewRecorder()
+	raceAtSecondLookup(fc, s3tables.GetTablePath(bucket, "finance", "orders"), func() {
+		s.handleCreateTable(first, newCreateTableRequest(t, bucket, "finance", `{"name":"orders"}`, "alice"))
+	})
+	second := httptest.NewRecorder()
+	s.handleCreateTable(second, newCreateTableRequest(t, bucket, "finance", `{"name":"orders"}`, "alice"))
+
+	won, lost := decodeCreated(t, first), decodeCreated(t, second)
+	if lost != won {
+		t.Errorf("losing create answered %+v, want the registered table %+v", lost, won)
+	}
+}
+
+type createdResult struct {
+	MetadataLocation string `json:"metadata-location"`
+	Metadata         struct {
+		Location  string `json:"location"`
+		TableUUID string `json:"table-uuid"`
+	} `json:"metadata"`
+}
+
+func decodeCreated(t *testing.T, w *httptest.ResponseRecorder) createdResult {
+	t.Helper()
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d (body: %s)", w.Code, w.Body.String())
+	}
+	var created createdResult
+	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	return created
+}
+
+// raceAtSecondLookup runs create at the second lookup of record: after the
+// handler found the name free, as the catalog looks at it again.
+func raceAtSecondLookup(fc *memFiler, record string, create func()) {
+	seen := 0
+	fc.onLookup = func(p string) {
+		if p != record {
+			return
+		}
+		seen++
+		if seen == 2 {
+			fc.onLookup = nil
+			create()
+		}
+	}
+}
