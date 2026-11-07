@@ -371,6 +371,15 @@ fn rows_as_vectors(
 /// any other location would point the engine at storage the catalog does not
 /// know.
 fn resolved(table: &pb::Table, schemes: &[&str]) -> Option<TableDescription> {
+    // Each id part is one path component; `..` would resolve the colocated
+    // path elsewhere on the filer.
+    if !table
+        .id
+        .iter()
+        .all(|part| !part.is_empty() && part != "." && part != ".." && !part.contains('/'))
+    {
+        return None;
+    }
     let colocated = dataset::table_location(&table.id)?;
     let path = colocated.strip_prefix("s3://")?;
     let location = table.location.trim_end_matches('/');
@@ -526,9 +535,8 @@ impl VectorService for VectorServer {
         let table = req
             .table
             .ok_or_else(|| Status::invalid_argument("missing table"))?;
+        // describe() already refused any location but the index's own.
         let description = self.describe(&table)?;
-        dataset::check_drop_location(&table.id, &description.location)
-            .map_err(|err| Status::failed_precondition(format!("{err:#}")))?;
         match &self.storage {
             Some(storage) => storage
                 .remove_table(&description.location)
@@ -1059,6 +1067,8 @@ mod tests {
         assert!(resolved(&table(&index, "file://bkt/vector/x"), s3).is_none());
         assert!(resolved(&table(&index, "memory://bkt/vector/x"), &["s3", "memory"]).is_some());
         assert!(resolved(&table(&["bkt", "ns", "x"], "s3://bkt/ns/x"), s3).is_none());
+        assert!(resolved(&table(&["bkt", "vector", ".."], "s3://bkt/vector/.."), s3).is_none());
+        assert!(resolved(&table(&["bkt", "vector", "a/b"], "s3://bkt/vector/a/b"), s3).is_none());
         assert!(resolved(&table(&["bkt", "x"], "s3://bkt/x"), s3).is_none());
     }
 
