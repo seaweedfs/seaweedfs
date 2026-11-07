@@ -12,8 +12,11 @@ use lance::io::ObjectStoreParams;
 use lance::io::StorageOptionsAccessor;
 use lance::io::WrappingObjectStore;
 use lance::table::format::Fragment;
+use object_store::aws::AmazonS3ConfigKey;
 use prost_types::{ListValue, Struct, Value, value::Kind};
 use std::collections::{BTreeMap, HashMap};
+use std::ffi::OsString;
+use std::str::FromStr;
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
 use weed_lance_worker::catalog::TableDescription;
@@ -79,8 +82,7 @@ const CREDENTIAL_OPTIONS: [&str; 3] = [
 /// Whether a request's options may be used with the engine's fallback: known
 /// keys only, and an endpoint that is the configured one, or any when no
 /// credential of the engine's can reach it: none configured, and the request
-/// either skips signing or brings its own, so the AWS default chain is never
-/// consulted.
+/// either skips signing or signs with its own credentials alone.
 fn options_trusted(sent: &HashMap<String, String>, fallback: &FallbackOptions) -> bool {
     if sent.keys().any(|key| !SENT_OPTIONS.contains(&key.as_str())) {
         return false;
@@ -92,11 +94,29 @@ fn options_trusted(sent: &HashMap<String, String>, fallback: &FallbackOptions) -
             let configured = CREDENTIAL_OPTIONS
                 .iter()
                 .any(|key| fallback.contains_key(*key));
-            let own = sent.get("aws_skip_signature").is_some_and(|v| v == "true")
-                || sent.contains_key("aws_access_key_id");
-            !configured && own
+            let unsigned = sent.get("aws_skip_signature").is_some_and(|v| v == "true");
+            !configured
+                && (unsigned || signs_alone(sent, std::env::vars_os().map(|(name, _)| name)))
         }
     }
+}
+
+/// Whether lance signs with the request's credentials alone. Lance fills an
+/// option the request leaves out from an environment variable under any of
+/// object_store's names for it, and asks the AWS default chain when the key
+/// pair is incomplete.
+fn signs_alone(sent: &HashMap<String, String>, env: impl IntoIterator<Item = OsString>) -> bool {
+    let has = |key: &str| sent.contains_key(key);
+    let env_token = || {
+        env.into_iter().any(|name| {
+            name.to_str()
+                .and_then(|name| AmazonS3ConfigKey::from_str(&name.to_ascii_lowercase()).ok())
+                == Some(AmazonS3ConfigKey::Token)
+        })
+    };
+    has("aws_access_key_id")
+        && has("aws_secret_access_key")
+        && (has("aws_session_token") || !env_token())
 }
 
 fn schema_for(
@@ -1159,6 +1179,13 @@ mod tests {
         assert!(options_trusted(&unsigned, &none));
         assert!(options_trusted(&vended, &none));
         assert!(
+            !options_trusted(
+                &options(&[(ENDPOINT_OPTION, "http://gw"), ("aws_access_key_id", "v")]),
+                &none
+            ),
+            "a key without its secret is signed by the default chain"
+        );
+        assert!(
             !options_trusted(&vended, &creds),
             "configured credentials stay home"
         );
@@ -1169,6 +1196,41 @@ mod tests {
         for key in ["proxy_url", "aws_endpoint_url_s3", "aws_endpoint_url"] {
             let routed = options(&[(key, "http://elsewhere"), ("aws_skip_signature", "true")]);
             assert!(!options_trusted(&routed, &none), "{key}");
+        }
+    }
+
+    /// A request signs alone only with a full key pair, and with its own
+    /// session token whenever the environment would supply one.
+    #[test]
+    fn a_request_signs_alone_without_the_environment() {
+        let sent = |pairs: &[(&str, &str)]| -> HashMap<String, String> {
+            pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect()
+        };
+        let env = |names: &[&str]| -> Vec<OsString> { names.iter().map(OsString::from).collect() };
+        let pair = sent(&[("aws_access_key_id", "v"), ("aws_secret_access_key", "v")]);
+        let with_token = sent(&[
+            ("aws_access_key_id", "v"),
+            ("aws_secret_access_key", "v"),
+            ("aws_session_token", "t"),
+        ]);
+
+        assert!(signs_alone(&pair, env(&["AWS_REGION", "HOME"])));
+        assert!(!signs_alone(&sent(&[("aws_access_key_id", "v")]), env(&[])));
+        assert!(!signs_alone(
+            &sent(&[("aws_secret_access_key", "v")]),
+            env(&[])
+        ));
+        for name in [
+            "AWS_SESSION_TOKEN",
+            "aws_session_token",
+            "TOKEN",
+            "SESSION_TOKEN",
+        ] {
+            assert!(!signs_alone(&pair, env(&[name])), "{name}");
+            assert!(signs_alone(&with_token, env(&[name])), "{name}");
         }
     }
 
