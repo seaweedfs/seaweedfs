@@ -247,6 +247,7 @@ impl Cluster {
             https_tls: security.https_client_tls()?,
             filer_dialer,
             encrypt_volume_data,
+            filer_group: self.filer_group.clone(),
         };
         let storage = DirectReads::connect(&conn)
             .await

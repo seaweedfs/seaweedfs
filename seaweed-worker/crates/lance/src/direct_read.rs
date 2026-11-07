@@ -100,7 +100,13 @@ trait Source: Send + Sync {
     async fn read(&self, object: &Object, offset: u64, len: u64) -> anyhow::Result<Vec<u8>>;
     /// Uploads `data` as one needle for the file at `path`, on the volume
     /// server the filer assigns, as the chunk at `offset`.
-    async fn upload(&self, path: &str, offset: u64, data: Bytes) -> anyhow::Result<Uploaded>;
+    async fn upload(
+        &self,
+        path: &str,
+        collection: &str,
+        offset: u64,
+        data: Bytes,
+    ) -> anyhow::Result<Uploaded>;
     /// Creates `entry` in `dir`; `exclusive` refuses an entry already there
     /// with [`sw_client::EntryExists`].
     async fn create(&self, dir: &str, entry: Entry, exclusive: bool) -> anyhow::Result<()>;
@@ -293,17 +299,24 @@ impl Source for Filers {
         }
     }
 
-    async fn upload(&self, path: &str, offset: u64, data: Bytes) -> anyhow::Result<Uploaded> {
+    async fn upload(
+        &self,
+        path: &str,
+        collection: &str,
+        offset: u64,
+        data: Bytes,
+    ) -> anyhow::Result<Uploaded> {
         let size = data.len() as u64;
-        // The filer picks the collection and replication from the path's
-        // storage rules, as it does for the gateway.
+        // The filer picks replication from the path's storage rules; the
+        // collection is the bucket's, as the gateway names it.
+        let options = AssignVolumeOptions {
+            collection: collection.to_string(),
+            ..Default::default()
+        };
         let assignment = self
             .with("assign", |mut c| {
-                let path = path.to_string();
-                Box::pin(async move {
-                    c.assign_volume_with_options(&path, size, &AssignVolumeOptions::default())
-                        .await
-                })
+                let (path, options) = (path.to_string(), options.clone());
+                Box::pin(async move { c.assign_volume_with_options(&path, size, &options).await })
             })
             .await?;
         let name = path.rsplit('/').next().unwrap_or(path).to_string();
@@ -395,6 +408,9 @@ struct Shared {
     chunk_size: usize,
     /// Chunks are encrypted for the volume servers, as the cluster asks.
     cipher: bool,
+    /// The filer group, which prefixes a bucket's collection as the gateway
+    /// names it.
+    filer_group: String,
     /// Write-once files, resolved once; everything else is looked up per
     /// request so reads follow writes.
     objects: moka::sync::Cache<String, Arc<Object>>,
@@ -433,6 +449,8 @@ pub struct Connection {
     /// Encrypt every chunk written for the volume servers, as `weed s3
     /// -encryptVolumeData` does; the filer's own setting turns it on too.
     pub encrypt_volume_data: bool,
+    /// The filer group, which the gateway prefixes a bucket's collection with.
+    pub filer_group: String,
 }
 
 impl fmt::Debug for Connection {
@@ -445,6 +463,7 @@ impl fmt::Debug for Connection {
             .field("https_tls", &self.https_tls)
             .field("filer_dialer", &self.filer_dialer.is_some())
             .field("encrypt_volume_data", &self.encrypt_volume_data)
+            .field("filer_group", &self.filer_group)
             .finish()
     }
 }
@@ -504,6 +523,7 @@ impl DirectReads {
             let shared = Arc::get_mut(&mut reads.shared).expect("just created");
             shared.chunk_size = chunk_size;
             shared.cipher = config.cipher || conn.encrypt_volume_data;
+            shared.filer_group = conn.filer_group.clone();
         }
         reads.report_every(Duration::from_secs(30));
         Ok(reads)
@@ -521,6 +541,7 @@ impl DirectReads {
                 keys,
                 chunk_size: DEFAULT_CHUNK_SIZE,
                 cipher: false,
+                filer_group: String::new(),
                 objects: moka::sync::Cache::new(OBJECT_CACHE_ENTRIES),
                 encrypts: moka::sync::Cache::builder()
                     .time_to_live(BUCKET_SETTING_TTL)
@@ -1179,6 +1200,8 @@ struct Upload {
     store: DirectStore,
     location: Path,
     path: String,
+    /// The bucket's collection, as the gateway names it.
+    collection: String,
     encoder: Arc<EntryEncoder>,
     state: Arc<std::sync::Mutex<UploadState>>,
 }
@@ -1202,10 +1225,15 @@ impl Upload {
         let encoder = EntryEncoder::new(store.reads.keys.clone(), store.sse_s3, store.reads.cipher)
             .with_context(|| format!("encoding {path}"))
             .map_err(generic)?;
+        let collection = match store.reads.filer_group.as_str() {
+            "" => store.bucket.to_string(),
+            group => format!("{group}_{}", store.bucket),
+        };
         Ok(Self {
             store,
             location,
             path,
+            collection,
             encoder: Arc::new(encoder),
             state: Arc::default(),
         })
@@ -1219,9 +1247,10 @@ impl Upload {
             state.offset += data.len() as u64;
             offset
         };
-        let (store, path, encoder, state) = (
+        let (store, path, collection, encoder, state) = (
             self.store.clone(),
             self.path.clone(),
+            self.collection.clone(),
             self.encoder.clone(),
             self.state.clone(),
         );
@@ -1237,7 +1266,7 @@ impl Upload {
                 let mut uploaded = store
                     .reads
                     .source
-                    .upload(&path, at, Bytes::from(encoded.data))
+                    .upload(&path, &collection, at, Bytes::from(encoded.data))
                     .await
                     .with_context(|| format!("uploading {path} at {at}"))
                     .map_err(generic)?;
@@ -1484,6 +1513,8 @@ mod tests {
         lose_create_replies: bool,
         /// Uploads after this many fail.
         uploads_allowed: Option<u64>,
+        /// The collections uploads named.
+        collections: Mutex<std::collections::HashSet<String>>,
     }
 
     #[async_trait::async_trait]
@@ -1566,7 +1597,17 @@ mod tests {
             Ok(out)
         }
 
-        async fn upload(&self, _path: &str, offset: u64, data: Bytes) -> anyhow::Result<Uploaded> {
+        async fn upload(
+            &self,
+            _path: &str,
+            collection: &str,
+            offset: u64,
+            data: Bytes,
+        ) -> anyhow::Result<Uploaded> {
+            self.collections
+                .lock()
+                .unwrap()
+                .insert(collection.to_string());
             let n = self.uploads.fetch_add(1, Ordering::Relaxed) + 1;
             if self.uploads_allowed.is_some_and(|allowed| n > allowed) {
                 bail!("volume server unreachable");
@@ -2564,6 +2605,31 @@ mod tests {
         assert_eq!(fake.discarded.load(Ordering::Relaxed), 1);
         assert!(fake.needles.lock().unwrap().is_empty());
         assert!(fake.entries.lock().unwrap().is_empty());
+    }
+
+    /// Chunks go to the bucket's collection as the gateway names it, with
+    /// the filer group in front when the cluster has one.
+    #[tokio::test]
+    async fn chunks_go_to_the_buckets_collection() {
+        for (group, want) in [("", "vb"), ("eu", "eu_vb")] {
+            let fake = Arc::new(Fake::default());
+            let mut reads = DirectReads::new(fake.clone(), "", no_keys());
+            {
+                let shared = Arc::get_mut(&mut reads.shared).unwrap();
+                shared.chunk_size = 4096;
+                shared.filer_group = group.to_string();
+            }
+            let store = reads.wrap("s3$vb", Arc::new(InMemory::new()));
+            store
+                .put(&Path::from("vector/idx/x"), Bytes::from_static(b"x").into())
+                .await
+                .unwrap();
+            let collections = fake.collections.lock().unwrap();
+            assert_eq!(
+                collections.iter().collect::<Vec<_>>(),
+                vec![&want.to_string()]
+            );
+        }
     }
 
     /// A table path is removed only when every component is a plain name.
