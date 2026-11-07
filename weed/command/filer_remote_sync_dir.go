@@ -158,9 +158,11 @@ var exitAtMountEnd = func(mountedDir string, from, to *remote_pb.RemoteStorageLo
 }
 
 // mountTableEnds reports whether a mount-table event ends the write-back of
-// mountedDir at loc: a version that no longer maps the directory there.
-// moved is the new location of a directory mounted elsewhere, nil for an
-// unmount.
+// mountedDir at loc: a version that no longer maps the directory there,
+// replacing one that did. moved is the new location of a directory mounted
+// elsewhere, nil for an unmount. A version replacing one that did not map it
+// there predates the mount: without a saved offset the follow starts at the
+// directory's creation second and replays the table's earlier versions.
 func mountTableEnds(mountedDir string, loc *remote_pb.RemoteStorageLocation, resp *filer_pb.SubscribeMetadataResponse) (ended bool, moved *remote_pb.RemoteStorageLocation, err error) {
 	message := resp.EventNotification
 	switch {
@@ -177,7 +179,29 @@ func mountTableEnds(mountedDir string, loc *remote_pb.RemoteStorageLocation, res
 	default:
 		return false, nil, nil
 	}
+	if !replacedTableMapped(mountedDir, loc, resp) {
+		return false, nil, nil
+	}
 	return true, moved, nil
+}
+
+// replacedTableMapped reports whether the mount table an event replaced
+// mapped mountedDir to loc. A created table replaced none; a replaced
+// version the event does not carry, or that does not unmarshal, counts as
+// mapped.
+func replacedTableMapped(mountedDir string, loc *remote_pb.RemoteStorageLocation, resp *filer_pb.SubscribeMetadataResponse) bool {
+	oldEntry := resp.EventNotification.OldEntry
+	if oldEntry == nil {
+		return false
+	}
+	if resp.Directory != filer.DirectoryEtcRemote || oldEntry.Name != filer.REMOTE_STORAGE_MOUNT_FILE {
+		return true
+	}
+	mappings, err := filer.UnmarshalRemoteStorageMappings(oldEntry.Content)
+	if err != nil {
+		return true
+	}
+	return sameMountLocation(mappings.Mappings[mountedDir], loc)
 }
 
 func sameMountLocation(a, b *remote_pb.RemoteStorageLocation) bool {

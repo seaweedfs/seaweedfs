@@ -3196,6 +3196,12 @@ func TestMountTableEnds(t *testing.T) {
 		{"unmounted", mountTableEvent(t, 1, mappedWithOther, map[string]*remote_pb.RemoteStorageLocation{"/buckets/c": other}), true, nil},
 		{"mounted elsewhere", mountTableEvent(t, 1, mapped, map[string]*remote_pb.RemoteStorageLocation{mountedDir: elsewhere}), true, elsewhere},
 		{"table deleted", mountTableEvent(t, 1, mapped, nil), true, nil},
+		{"replayed version from before the mount", mountTableEvent(t, 1, map[string]*remote_pb.RemoteStorageLocation{"/buckets/c": other}, map[string]*remote_pb.RemoteStorageLocation{}), false, nil},
+		{"replayed creation of the table", mountTableEvent(t, 1, nil, map[string]*remote_pb.RemoteStorageLocation{"/buckets/c": other}), false, nil},
+		{"replayed deletion of the table", mountTableEvent(t, 1, map[string]*remote_pb.RemoteStorageLocation{"/buckets/c": other}, nil), false, nil},
+		{"the mount itself", mountTableEvent(t, 1, map[string]*remote_pb.RemoteStorageLocation{"/buckets/c": other}, mappedWithOther), false, nil},
+		{"replayed mount elsewhere", mountTableEvent(t, 1, map[string]*remote_pb.RemoteStorageLocation{}, map[string]*remote_pb.RemoteStorageLocation{mountedDir: elsewhere}), false, nil},
+		{"replayed unmount from elsewhere", mountTableEvent(t, 1, map[string]*remote_pb.RemoteStorageLocation{mountedDir: elsewhere}, map[string]*remote_pb.RemoteStorageLocation{}), false, nil},
 		{"remote conf updated", &filer_pb.SubscribeMetadataResponse{Directory: filer.DirectoryEtcRemote, EventNotification: &filer_pb.EventNotification{
 			NewParentPath: filer.DirectoryEtcRemote, NewEntry: &filer_pb.Entry{Name: "r" + filer.REMOTE_STORAGE_CONF_SUFFIX}}}, false, nil},
 		{"file under the mount", &filer_pb.SubscribeMetadataResponse{Directory: mountedDir, EventNotification: &filer_pb.EventNotification{
@@ -3218,6 +3224,18 @@ func TestMountTableEnds(t *testing.T) {
 		resp.EventNotification.NewEntry.Content = []byte{0xff, 0xff, 0xff}
 		if _, _, err := mountTableEnds(mountedDir, loc, resp); err == nil {
 			t.Error("want an error for a table that does not unmarshal")
+		}
+	})
+
+	t.Run("a replaced version it cannot read counts as mapped", func(t *testing.T) {
+		unreadable := mountTableEvent(t, 1, mapped, map[string]*remote_pb.RemoteStorageLocation{})
+		unreadable.EventNotification.OldEntry.Content = []byte{0xff, 0xff, 0xff}
+		renamedOver := mountTableEvent(t, 1, mapped, map[string]*remote_pb.RemoteStorageLocation{})
+		renamedOver.EventNotification.OldEntry.Name = filer.REMOTE_STORAGE_MOUNT_FILE + ".new"
+		for _, resp := range []*filer_pb.SubscribeMetadataResponse{unreadable, renamedOver} {
+			if ended, _, err := mountTableEnds(mountedDir, loc, resp); err != nil || !ended {
+				t.Errorf("mountTableEnds(%s) = %v, %v; want the mount ended", resp.EventNotification.OldEntry.Name, ended, err)
+			}
 		}
 	})
 }
