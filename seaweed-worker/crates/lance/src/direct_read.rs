@@ -340,10 +340,21 @@ impl Source for Filers {
             .await?;
         let name = path.rsplit('/').next().unwrap_or(path).to_string();
         let digest = BASE64_STANDARD.encode(Md5::digest(&data));
-        let mut chunk = self
+        let written = self
             .writer
             .upload_assigned_chunk_bytes(&assignment, &name, offset as i64, data)
-            .await?;
+            .await;
+        let mut chunk = match written {
+            Ok(chunk) => chunk,
+            Err(err) => {
+                // The volume server may hold the needle although its answer
+                // never arrived; nobody else will ever name it.
+                if let Err(discard) = Source::discard(self, &assignment).await {
+                    tracing::warn!("discarding {}: {discard:#}", assignment.file_id);
+                }
+                return Err(err);
+            }
+        };
         chunk.e_tag = digest;
         Ok(Uploaded { chunk, assignment })
     }
