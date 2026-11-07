@@ -295,6 +295,10 @@ spec:
             - name: ca-cert
               readOnly: true
               mountPath: /usr/local/share/ca-certificates/ca/
+            {{- /* grpc.client, which the worker dials the masters and filers with */}}
+            - name: client-cert
+              readOnly: true
+              mountPath: /usr/local/share/ca-certificates/client/
             - name: worker-cert
               readOnly: true
               mountPath: /usr/local/share/ca-certificates/worker/
