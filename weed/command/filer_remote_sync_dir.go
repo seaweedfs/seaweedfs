@@ -53,7 +53,7 @@ import (
 func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *source.FilerSource, mountedDir string) error {
 
 	// read filer remote storage mount mappings
-	_, _, remoteStorageMountLocation, remoteStorage, detectErr := filer.DetectMountInfo(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir)
+	_, mountKey, remoteStorageMountLocation, remoteStorage, detectErr := filer.DetectMountInfo(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir)
 	if detectErr != nil {
 		return fmt.Errorf("read mount info: %w", detectErr)
 	}
@@ -70,7 +70,7 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 	processor := NewMetadataProcessor(eachEntryFunc, 128, lastOffsetTs.UnixNano())
 
 	var lastLogTsNs = time.Now().UnixNano()
-	processEventFnWithOffset := pb.AddOffsetFunc(admitUntilMountEnds(processor, mountedDir, remoteStorageMountLocation), 3*time.Second, func(counter int64, lastTsNs int64) error {
+	processEventFnWithOffset := pb.AddOffsetFunc(admitUntilMountEnds(processor, mountKey, remoteStorageMountLocation), 3*time.Second, func(counter int64, lastTsNs int64) error {
 		offsetTsNs := processor.processedTsWatermark.Load()
 		if offsetTsNs == 0 {
 			return nil
@@ -128,7 +128,7 @@ func saveResumeOffset(grpcDialOption grpc.DialOption, filerAddress pb.ServerAddr
 }
 
 // admitUntilMountEnds judges each mount-table version before the next event
-// is admitted. remote.unmount purges the directory right after writing the
+// is admitted, by the mount's own key: -dir may lie below it. remote.unmount purges the directory right after writing the
 // table, and a purge delete admitted under a directory no longer mounted
 // deletes the remote objects. At the end nothing more is admitted and no
 // offset is saved, keeping the one remote.unmount writes after its purge;
