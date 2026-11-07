@@ -450,12 +450,16 @@ async fn concurrent_writers_keep_every_commit() {
         .await
         .expect("storage for the table");
 
-    let writes = (0..WRITERS).map(|writer| {
-        let location = description.location.clone();
-        let wrapper = wrapper.clone();
-        tokio::spawn(async move { append_rows(&location, wrapper, writer * 1000, ROWS_EACH).await })
-    });
-    for (writer, handle) in writes.enumerate() {
+    let writes: Vec<_> = (0..WRITERS)
+        .map(|writer| {
+            let location = description.location.clone();
+            let wrapper = wrapper.clone();
+            tokio::spawn(
+                async move { append_rows(&location, wrapper, writer * 1000, ROWS_EACH).await },
+            )
+        })
+        .collect();
+    for (writer, handle) in writes.into_iter().enumerate() {
         handle
             .await
             .expect("writer panicked")
