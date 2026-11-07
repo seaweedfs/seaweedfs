@@ -1065,3 +1065,25 @@ func TestGlobalTriesTargetsByFullnessAfterTheMove(t *testing.T) {
 		}
 	}
 }
+
+// TestGlobalMoveFreesTheSourceDisk: a shard moved off a server frees its disk
+// slot, so a later pick of that server can choose the disk again.
+func TestGlobalMoveFreesTheSourceDisk(t *testing.T) {
+	topo := NewTopology()
+	src := topo.AddNode("src", "dc1", "dc1:rack1", 0)
+	src.AddDisk(1, "", 0, 4)
+	topo.AddNode("dst", "dc1", "dc1:rack1", 10)
+	data, parity := map[volKey]int{}, map[volKey]int{}
+	for vid := uint32(1); vid <= 4; vid++ {
+		src.AddShards(vid, "col1", 1, bits(0))
+		data[volKey{"col1", vid}], parity[volKey{"col1", vid}] = 2, 1
+	}
+
+	moves := detectGlobalImbalance(topo.nodes, buildRacks(topo.nodes), "", 0.2, data, parity, 1, true)
+	if len(moves) != 1 {
+		t.Fatalf("got %d moves, want 1", len(moves))
+	}
+	if d := src.disks[1]; d.freeSlots != 1 || d.shardCount != 3 {
+		t.Errorf("source disk after the move: %d free, %d shards; want 1 free, 3 shards", d.freeSlots, d.shardCount)
+	}
+}

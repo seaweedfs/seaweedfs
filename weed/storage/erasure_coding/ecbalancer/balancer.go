@@ -945,14 +945,10 @@ func detectGlobalImbalance(nodes map[string]*Node, racks map[string]*rack, diskT
 				break
 			}
 			moves = append(moves, m)
-			info := m.source.shards[volKey{collection: m.collection, vid: m.volumeID}]
-			sid := erasure_coding.ShardId(m.shardID)
-			info.shardBits = info.shardBits.Clear(sid)
-			for diskID := range info.diskShardBits {
-				info.diskShardBits[diskID] = info.diskShardBits[diskID].Clear(sid)
-			}
-			reserveShard(m.target, volKey{collection: m.collection, vid: m.volumeID}, m.shardID, m.targetDisk)
-			spread.move(volKey{collection: m.collection, vid: m.volumeID}, m.source.host, m.target.host)
+			vk := volKey{collection: m.collection, vid: m.volumeID}
+			releaseShard(m.source, vk, m.shardID)
+			reserveShard(m.target, vk, m.shardID, m.targetDisk)
+			spread.move(vk, m.source.host, m.target.host)
 			blocked.forget(m.source, m.target)
 			nodeShardCounts[m.source.id]--
 			nodeShardCounts[m.target.id]++
