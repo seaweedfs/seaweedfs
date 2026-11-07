@@ -454,12 +454,16 @@ impl VectorServer {
     /// request names no location, or options the engine's credentials must
     /// not be used with.
     async fn describe(&self, table: &pb::Table) -> Result<TableDescription> {
-        match resolved(table) {
-            Some(description) if options_trusted(&description.storage_options, &self.fallback) => {
-                Ok(description)
-            }
-            _ => self.client.describe_table(&table.id).await,
+        match self.trusted(table) {
+            Some(description) => Ok(description),
+            None => self.client.describe_table(&table.id).await,
         }
+    }
+
+    /// The description a request carries, when the engine may act on it.
+    fn trusted(&self, table: &pb::Table) -> Option<TableDescription> {
+        resolved(table)
+            .filter(|description| options_trusted(&description.storage_options, &self.fallback))
     }
 
     async fn open(&self, table: &pb::Table) -> Result<Dataset> {
@@ -533,7 +537,7 @@ impl VectorService for VectorServer {
         let table = req
             .table
             .ok_or_else(|| Status::invalid_argument("missing table"))?;
-        let dropped = match resolved(&table) {
+        let dropped = match self.trusted(&table) {
             Some(description) => dataset::drop_at(&table.id, &description, &self.fallback).await,
             None => dataset::drop(&self.client, &table.id, &self.fallback).await,
         };
@@ -1137,7 +1141,8 @@ mod tests {
         }
     }
 
-    /// Options the engine must not use send the table to the catalog.
+    /// Options the engine must not use send the table to the catalog, for a
+    /// drop as for an open.
     #[tokio::test]
     async fn untrusted_options_go_to_the_catalog() {
         let sent = |endpoint: &str| pb::Table {
@@ -1147,13 +1152,27 @@ mod tests {
             ..Default::default()
         };
         let pinned =
-            FallbackOptions::from([(ENDPOINT_OPTION.to_string(), "http://gw".to_string())]);
-        let server = VectorServer::new(NamespaceClient::new("http://127.0.0.1:1"), pinned);
+            || FallbackOptions::from([(ENDPOINT_OPTION.to_string(), "http://gw".to_string())]);
+        let server = VectorServer::new(NamespaceClient::new("http://127.0.0.1:1"), pinned());
         let description = server.describe(&sent("http://gw")).await.unwrap();
         assert_eq!(description.location, "s3://bkt/vector/x");
         server
             .describe(&sent("http://elsewhere"))
             .await
             .expect_err("another endpoint was taken from the request");
+
+        // The catalog names a location outside the table, which only the
+        // catalog path refuses: the request's colocated one would have passed.
+        let server = VectorServer::new(
+            NamespaceClient::new(catalog_describing("s3://bkt/vector").await),
+            pinned(),
+        );
+        let err = server
+            .drop_index(Request::new(pb::DropIndexRequest {
+                table: Some(sent("http://elsewhere")),
+            }))
+            .await
+            .expect_err("a drop took another endpoint from the request");
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
     }
 }
