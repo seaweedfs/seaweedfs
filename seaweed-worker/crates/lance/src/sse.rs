@@ -1,16 +1,17 @@
 //! Decodes what the filer and the S3 gateway encrypt, for reads that bypass
-//! the gateway. The filer's volume encryption (`cipher_key`) is AES-256-GCM
-//! over the chunk, compressed first when `is_compressed`. The gateway's SSE-S3
-//! is AES-256-CTR per chunk under a per-object key, which the chunk's and the
-//! object's metadata carry wrapped (AES-256-GCM) by the cluster's KEK; the KEK
-//! comes from `s3.sse.kek`, `s3.sse.key` or the filer's `/etc/s3/sse_kek`, as
-//! for the gateway.
+//! the gateway, and encodes the same for writes that do. The filer's volume
+//! encryption (`cipher_key`) is AES-256-GCM over the chunk, compressed first
+//! when `is_compressed`. The gateway's SSE-S3 is AES-256-CTR per chunk under a
+//! per-object key, which the chunk's and the object's metadata carry wrapped
+//! (AES-256-GCM) by the cluster's KEK; the KEK comes from `s3.sse.kek`,
+//! `s3.sse.key` or the filer's `/etc/s3/sse_kek`, as for the gateway.
 
 use std::collections::HashMap;
 use std::io::Read;
 use std::sync::{Arc, Mutex};
 
-use aes_gcm::aead::Aead;
+use aes_gcm::aead::rand_core::RngCore;
+use aes_gcm::aead::{Aead, OsRng};
 use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
 use anyhow::{Context, Result, bail};
 use base64::prelude::{BASE64_STANDARD, Engine};
@@ -103,6 +104,22 @@ impl SseS3Keys {
         self.kek.is_some()
     }
 
+    /// Wraps an object key under the KEK, as the gateway's key manager does:
+    /// AES-256-GCM under a fresh nonce.
+    fn wrap_dek(&self, dek: &[u8; KEY_SIZE]) -> Result<(Vec<u8>, [u8; GCM_NONCE_SIZE])> {
+        let Some(kek) = &self.kek else {
+            bail!(
+                "SSE-S3 is not configured: set s3.sse.kek or s3.sse.key for the engine as for the S3 gateway"
+            );
+        };
+        let mut nonce = [0u8; GCM_NONCE_SIZE];
+        OsRng.fill_bytes(&mut nonce);
+        let wrapped = Aes256Gcm::new(kek.into())
+            .encrypt(&Nonce::from(nonce), dek.as_slice())
+            .map_err(|_| anyhow::anyhow!("wrapping the object key"))?;
+        Ok((wrapped, nonce))
+    }
+
     fn unwrap_dek(&self, wrapped: &[u8], nonce: &[u8]) -> Result<[u8; KEY_SIZE]> {
         let Some(kek) = &self.kek else {
             bail!(
@@ -177,6 +194,22 @@ fn gcm_open(key: &[u8; KEY_SIZE], nonce: &[u8], sealed: &[u8]) -> Result<Vec<u8>
         .map_err(|_| anyhow::anyhow!("AES-GCM authentication failed"))
 }
 
+/// The filer's volume encryption on the way in: `nonce || ciphertext` under a
+/// fresh chunk key, which the caller records as the chunk's `cipher_key`.
+fn encrypt_chunk(data: &[u8]) -> (Vec<u8>, Vec<u8>) {
+    let mut key = [0u8; KEY_SIZE];
+    OsRng.fill_bytes(&mut key);
+    let mut nonce = [0u8; GCM_NONCE_SIZE];
+    OsRng.fill_bytes(&mut nonce);
+    let mut out = nonce.to_vec();
+    out.extend(
+        Aes256Gcm::new((&key).into())
+            .encrypt(&Nonce::from(nonce), data)
+            .expect("AES-GCM encryption of a chunk"),
+    );
+    (out, key.to_vec())
+}
+
 /// The filer's volume encryption: `nonce || ciphertext` under the chunk's key.
 fn decrypt_chunk(cipher_key: &[u8], data: &[u8]) -> Result<Vec<u8>> {
     let key: &[u8; KEY_SIZE] = cipher_key
@@ -224,7 +257,47 @@ struct ObjectKey {
     iv: Option<[u8; IV_SIZE]>,
 }
 
+/// The chunk's IV as the gateway derives it: the object's IV with the chunk's
+/// block offset added to the counter in its last eight bytes.
+fn iv_at(base: [u8; IV_SIZE], offset: u64) -> [u8; IV_SIZE] {
+    let mut iv = base;
+    let mut blocks = offset / 16;
+    let mut carry = 0u64;
+    for i in (8..IV_SIZE).rev() {
+        let sum = iv[i] as u64 + (blocks & 0xff) + carry;
+        iv[i] = (sum & 0xff) as u8;
+        carry = sum >> 8;
+        blocks >>= 8;
+    }
+    iv
+}
+
 impl ObjectKey {
+    fn generate() -> Self {
+        let mut key = [0u8; KEY_SIZE];
+        OsRng.fill_bytes(&mut key);
+        let mut iv = [0u8; IV_SIZE];
+        OsRng.fill_bytes(&mut iv);
+        Self { key, iv: Some(iv) }
+    }
+
+    /// The key as the gateway serializes it, with `iv` as its IV.
+    fn serialize(&self, keys: &SseS3Keys, key_id: &str, iv: [u8; IV_SIZE]) -> Result<Vec<u8>> {
+        let (wrapped, nonce) = keys.wrap_dek(&self.key)?;
+        let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(&self.key).expect("any key length");
+        mac.update(&iv);
+        mac.update(AES256.as_bytes());
+        let commitment = mac.finalize().into_bytes();
+        Ok(serde_json::to_vec(&serde_json::json!({
+            "algorithm": AES256,
+            "keyId": key_id,
+            "encryptedDEK": BASE64_STANDARD.encode(&wrapped),
+            "nonce": BASE64_STANDARD.encode(nonce),
+            "iv": BASE64_STANDARD.encode(iv),
+            "keyCommitment": BASE64_STANDARD.encode(commitment),
+        }))?)
+    }
+
     fn parse(keys: &SseS3Keys, data: &[u8]) -> Result<Self> {
         let meta: SerializedKey = serde_json::from_slice(data).context("SSE-S3 metadata")?;
         let b64 = |field: &str| {
@@ -267,6 +340,87 @@ impl ObjectKey {
             .map_err(|e| anyhow::anyhow!("CTR position {position}: {e}"))?;
         ctr.apply_keystream(data);
         Ok(())
+    }
+}
+
+/// One chunk's bytes as the volume stores them, with what its `FileChunk`
+/// records about them.
+pub struct EncodedChunk {
+    pub data: Vec<u8>,
+    pub cipher_key: Vec<u8>,
+    pub sse_type: i32,
+    pub sse_metadata: Vec<u8>,
+}
+
+/// Encodes an object's chunks as the gateway would store them: SSE-S3 under a
+/// fresh object key when the bucket encrypts, then the filer's volume
+/// encryption when the cluster asks for it.
+pub struct EntryEncoder {
+    keys: Arc<SseS3Keys>,
+    object: Option<(ObjectKey, String)>,
+    cipher: bool,
+}
+
+impl EntryEncoder {
+    pub fn new(keys: Arc<SseS3Keys>, sse_s3: bool, cipher: bool) -> Result<Self> {
+        let object = if sse_s3 {
+            if !keys.configured() {
+                bail!(
+                    "the bucket encrypts with SSE-S3, which needs s3.sse.kek or s3.sse.key for the engine as for the S3 gateway"
+                );
+            }
+            Some((
+                ObjectKey::generate(),
+                format!("sse-s3-key-{}", OsRng.next_u64() >> 1),
+            ))
+        } else {
+            None
+        };
+        Ok(Self {
+            keys,
+            object,
+            cipher,
+        })
+    }
+
+    /// The bytes of the chunk at `offset` in the object, as they go to the
+    /// volume server.
+    pub fn encode(&self, offset: u64, mut data: Vec<u8>) -> Result<EncodedChunk> {
+        let (sse_type, sse_metadata) = match &self.object {
+            Some((object, key_id)) => {
+                object.decrypt(offset, &mut data)?;
+                let iv = iv_at(object.iv.expect("a generated key has an IV"), offset);
+                (SSE_S3, object.serialize(&self.keys, key_id, iv)?)
+            }
+            None => (0, Vec::new()),
+        };
+        let (data, cipher_key) = if self.cipher {
+            encrypt_chunk(&data)
+        } else {
+            (data, Vec::new())
+        };
+        Ok(EncodedChunk {
+            data,
+            cipher_key,
+            sse_type,
+            sse_metadata,
+        })
+    }
+
+    /// The attributes the entry carries for its chunks to be decodable: the
+    /// SSE-S3 header and the object key.
+    pub fn attributes(&self) -> Result<Vec<(String, Vec<u8>)>> {
+        let Some((object, key_id)) = &self.object else {
+            return Ok(Vec::new());
+        };
+        let iv = object.iv.expect("a generated key has an IV");
+        Ok(vec![
+            (SSE_HEADER_ATTRIBUTE.to_string(), AES256.as_bytes().to_vec()),
+            (
+                SSE_S3_KEY_ATTRIBUTE.to_string(),
+                object.serialize(&self.keys, key_id, iv)?,
+            ),
+        ])
     }
 }
 
