@@ -52,6 +52,7 @@ func createViewAt(t *testing.T, name, location string) *http.Request {
 // at the files of finance.orders, and gets no credentials or metadata file
 // written there.
 func TestCreatePathsRefuseAnotherTablesLocation(t *testing.T) {
+	t.Setenv("ICEBERG_ENABLE_STAGE_CREATE", "true")
 	ordersLocation := "s3://" + ownerTestBucket + "/finance/orders"
 	cases := map[string]func(s *Server, metadataLocation string) *httptest.ResponseRecorder{
 		"register": func(s *Server, metadataLocation string) *httptest.ResponseRecorder {
