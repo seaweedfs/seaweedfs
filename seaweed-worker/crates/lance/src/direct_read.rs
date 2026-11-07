@@ -1,8 +1,11 @@
-//! Reads of a table straight from the filer and the volume servers, skipping
-//! the S3 gateway: object bytes, metadata and listings alike, whatever the
-//! entry looks like (inline content, chunk manifests, sparse or overlapping
-//! chunks, encryption by the filer or by the gateway, objects tiered to
-//! remote storage). Writes, copies and deletes still go to the gateway.
+//! A table's storage straight on the filer and the volume servers, skipping
+//! the S3 gateway. Reads serve object bytes, metadata and listings alike,
+//! whatever the entry looks like (inline content, chunk manifests, sparse or
+//! overlapping chunks, encryption by the filer or by the gateway, objects
+//! tiered to remote storage). Writes upload chunks to the volume servers the
+//! filer assigns and create the entry as the gateway would, encrypting as the
+//! bucket and the cluster ask; a conditional create is the filer's exclusive
+//! create. Copies and renames are not needed by Lance and not offered.
 
 use std::fmt;
 use std::ops::Range;
@@ -25,13 +28,18 @@ use object_store::{
     MultipartUpload, ObjectMeta, ObjectStore, PutMultipartOptions, PutOptions, PutPayload,
     PutResult, RenameOptions, Result,
 };
-use sw_client::filer_pb::Entry;
+use object_store::{PutMode, UploadPart};
+use sw_client::filer_pb::{Entry, FileChunk, FuseAttributes};
 use sw_client::{
-    ChunkDecoder, FilerClient, GrpcTls, HttpTransport, HttpsTls, ReadOptions, ResolvedChunks,
-    VolumeReader, VolumeTransport,
+    AssignVolumeOptions, Assignment, ChunkDecoder, FilerClient, GrpcTls, HttpTransport, HttpsTls,
+    ReadOptions, ResolvedChunks, VolumeReader, VolumeTransport, VolumeWriteReceipt, Writer,
 };
 
-use crate::sse::{EntryDecoder, KEK_PATH, SseConfig, SseS3Keys};
+use crate::sse::{EntryDecoder, EntryEncoder, KEK_PATH, SseConfig, SseS3Keys};
+
+/// `filer_pb.SSEType.SSE_S3`, as the chunks of an SSE-S3 object record it.
+#[cfg(test)]
+const SSE_S3_TYPE: i32 = 3;
 
 const OBJECT_CACHE_ENTRIES: u64 = 1 << 16;
 const READ_JWT_TTL_SECS: u64 = 60;
@@ -41,12 +49,25 @@ const FILER_TIMEOUT: Duration = Duration::from_secs(30);
 /// The gateway's object-level ETag, set when it differs from the entry's md5.
 const ETAG_ATTRIBUTE: &str = "Seaweed-X-Amz-ETag";
 const PREFIX_OBJECT_ATTRIBUTE: &str = "x-seaweedfs-prefix-object";
+/// What the gateway records for an object it wrote.
+const OCTET_STREAM: &str = "application/octet-stream";
+const FILE_MODE: u32 = 0o660;
+/// Chunk size when the filer names none.
+const DEFAULT_CHUNK_SIZE: usize = 4 << 20;
 
 #[derive(Clone)]
 pub struct DirectReads {
     shared: Arc<Shared>,
     /// Set when the source is the cluster's filers, for [`Self::set_filers`].
     filers: Option<Arc<Filers>>,
+    /// Objects written are encrypted with SSE-S3, as the bucket asks.
+    sse_s3: bool,
+}
+
+/// A chunk uploaded to the volume server the filer assigned.
+struct Uploaded {
+    chunk: FileChunk,
+    assignment: Assignment,
 }
 
 /// An object as the filer holds it, ready to read.
@@ -73,6 +94,17 @@ trait Source: Send + Sync {
         decoder: Arc<dyn ChunkDecoder>,
     ) -> anyhow::Result<ResolvedChunks>;
     async fn read(&self, object: &Object, offset: u64, len: u64) -> anyhow::Result<Vec<u8>>;
+    /// Uploads `data` as one needle for the file at `path`, on the volume
+    /// server the filer assigns, as the chunk at `offset`.
+    async fn upload(&self, path: &str, offset: u64, data: Bytes) -> anyhow::Result<Uploaded>;
+    /// Creates `entry` in `dir`; `exclusive` refuses an entry already there
+    /// with [`sw_client::EntryExists`].
+    async fn create(&self, dir: &str, entry: Entry, exclusive: bool) -> anyhow::Result<()>;
+    /// Removes `name` in `dir` and its data, a directory's content too; a
+    /// missing entry is no error.
+    async fn delete(&self, dir: &str, name: &str) -> anyhow::Result<()>;
+    /// Removes a needle whose entry was never created.
+    async fn discard(&self, assignment: &Assignment) -> anyhow::Result<()>;
     fn name(&self) -> String;
 }
 
@@ -83,6 +115,8 @@ struct Filers {
     dial: FilerDialer,
     current: AtomicUsize,
     volumes: VolumeReader,
+    transport: Arc<dyn VolumeTransport>,
+    writer: Writer,
 }
 
 /// Connects to a filer by its gRPC `host:port`.
@@ -242,6 +276,60 @@ impl Source for Filers {
         }
     }
 
+    async fn upload(&self, path: &str, offset: u64, data: Bytes) -> anyhow::Result<Uploaded> {
+        let size = data.len() as u64;
+        // The filer picks the collection and replication from the path's
+        // storage rules, as it does for the gateway.
+        let assignment = self
+            .with("assign", |mut c| {
+                let path = path.to_string();
+                Box::pin(async move {
+                    c.assign_volume_with_options(&path, size, &AssignVolumeOptions::default())
+                        .await
+                })
+            })
+            .await?;
+        let name = path.rsplit('/').next().unwrap_or(path).to_string();
+        let digest = BASE64_STANDARD.encode(Md5::digest(&data));
+        let mut chunk = self
+            .writer
+            .upload_assigned_chunk_bytes(&assignment, &name, offset as i64, data)
+            .await?;
+        chunk.e_tag = digest;
+        Ok(Uploaded { chunk, assignment })
+    }
+
+    async fn create(&self, dir: &str, entry: Entry, exclusive: bool) -> anyhow::Result<()> {
+        self.with("create", |mut c| {
+            let (dir, entry) = (dir.to_string(), entry.clone());
+            Box::pin(async move {
+                c.create_entry(&dir, entry, 0, exclusive, false)
+                    .await
+                    .map(|_| ())
+            })
+        })
+        .await
+    }
+
+    async fn delete(&self, dir: &str, name: &str) -> anyhow::Result<()> {
+        self.with("delete", |mut c| {
+            let (dir, name) = (dir.to_string(), name.to_string());
+            Box::pin(async move {
+                match c.delete_entry(&dir, &name, true, true, 0).await {
+                    Err(err) if is_not_found(&err) => Ok(()),
+                    other => other,
+                }
+            })
+        })
+        .await
+    }
+
+    async fn discard(&self, assignment: &Assignment) -> anyhow::Result<()> {
+        self.transport
+            .delete(&assignment.url, &assignment.file_id, &assignment.auth)
+            .await
+    }
+
     fn name(&self) -> String {
         self.clients
             .read()
@@ -253,11 +341,14 @@ impl Source for Filers {
     }
 }
 
-/// The filer answers a listing of a missing directory with its missing-entry
-/// error; the filer client's tonic is not this crate's, so it is read as text.
+/// The filer answers a listing of a missing directory, or a delete of a
+/// missing entry, with its missing-entry error; the filer client's tonic is
+/// not this crate's, so it is read as text.
 fn is_not_found(err: &anyhow::Error) -> bool {
-    err.chain()
-        .any(|cause| cause.to_string().contains("no entry is found"))
+    err.chain().any(|cause| {
+        let text = cause.to_string();
+        text.contains("no entry is found") || text.contains("not found")
+    })
 }
 
 fn child(dir: &Path, name: &str) -> Path {
@@ -274,12 +365,19 @@ struct Stats {
     lookups: AtomicU64,
     listings: AtomicU64,
     failures: AtomicU64,
+    writes: AtomicU64,
+    written: AtomicU64,
+    deletes: AtomicU64,
 }
 
 struct Shared {
     source: Arc<dyn Source>,
     buckets_dir: String,
     keys: Arc<SseS3Keys>,
+    /// Bytes per uploaded chunk, as the filer configures writers.
+    chunk_size: usize,
+    /// Chunks are encrypted for the volume servers, as the cluster asks.
+    cipher: bool,
     /// Write-once files, resolved once; everything else is looked up per
     /// request so reads follow writes.
     objects: moka::sync::Cache<String, Arc<Object>>,
@@ -313,6 +411,9 @@ pub struct Connection {
     /// Dials the filers in place of `grpc_tls`, for a TLS setup sw-client
     /// cannot express, such as a server allowlist.
     pub filer_dialer: Option<FilerDialer>,
+    /// Encrypt every chunk written for the volume servers, as `weed s3
+    /// -encryptVolumeData` does; the filer's own setting turns it on too.
+    pub encrypt_volume_data: bool,
 }
 
 impl fmt::Debug for Connection {
@@ -324,6 +425,7 @@ impl fmt::Debug for Connection {
             .field("grpc_tls", &self.grpc_tls)
             .field("https_tls", &self.https_tls)
             .field("filer_dialer", &self.filer_dialer.is_some())
+            .field("encrypt_volume_data", &self.encrypt_volume_data)
             .finish()
     }
 }
@@ -357,7 +459,9 @@ impl DirectReads {
             dial,
             current: AtomicUsize::new(0),
             // Lance caches above this store, so needles are not kept here.
-            volumes: VolumeReader::with_transport_capped(transport, 0),
+            volumes: VolumeReader::with_transport_capped(transport.clone(), 0),
+            writer: Writer::with_transport(transport.clone()),
+            transport,
         });
         filers.set_addresses(&conn.filers)?;
         let config = filers
@@ -371,8 +475,17 @@ impl DirectReads {
             .context("looking up the filer's SSE-S3 KEK")?
             .map(|entry| entry.content);
         let keys = SseS3Keys::load(&conn.sse, kek_file.as_deref())?;
+        let chunk_size = match config.max_mb {
+            0 => DEFAULT_CHUNK_SIZE,
+            mb => (mb as usize) << 20,
+        };
         let mut reads = Self::new(filers.clone(), &config.dir_buckets, Arc::new(keys));
         reads.filers = Some(filers);
+        {
+            let shared = Arc::get_mut(&mut reads.shared).expect("just created");
+            shared.chunk_size = chunk_size;
+            shared.cipher = config.cipher || conn.encrypt_volume_data;
+        }
         reads.report_every(Duration::from_secs(30));
         Ok(reads)
     }
@@ -387,11 +500,51 @@ impl DirectReads {
                 source,
                 buckets_dir,
                 keys,
+                chunk_size: DEFAULT_CHUNK_SIZE,
+                cipher: false,
                 objects: moka::sync::Cache::new(OBJECT_CACHE_ENTRIES),
                 stats: Stats::default(),
             }),
             filers: None,
+            sse_s3: false,
         }
+    }
+
+    /// The same storage, writing objects encrypted with SSE-S3 when `sse_s3`,
+    /// as the bucket being written asks.
+    pub fn encrypting(&self, sse_s3: bool) -> Self {
+        Self {
+            shared: self.shared.clone(),
+            filers: self.filers.clone(),
+            sse_s3,
+        }
+    }
+
+    /// Removes the table at `location` (`s3://bucket/path`) with everything
+    /// under it.
+    pub async fn remove_table(&self, location: &str) -> anyhow::Result<()> {
+        let rest = location
+            .strip_prefix("s3://")
+            .with_context(|| format!("{location} is not an s3:// location"))?
+            .trim_end_matches('/');
+        let (bucket, path) = rest
+            .split_once('/')
+            .with_context(|| format!("{location} names no table under its bucket"))?;
+        let (parent, name) = match path.rsplit_once('/') {
+            Some((parent, name)) => (
+                format!("{}/{bucket}/{parent}", self.shared.buckets_dir),
+                name,
+            ),
+            None => (format!("{}/{bucket}", self.shared.buckets_dir), path),
+        };
+        self.shared.stats.deletes.fetch_add(1, Ordering::Relaxed);
+        self.shared.source.delete(&parent, name).await?;
+        let under = format!("{parent}/{name}/");
+        self.shared
+            .objects
+            .invalidate_entries_if(move |key, _| key.starts_with(&under))
+            .ok();
+        Ok(())
     }
 
     /// The filers as the masters now list them.
@@ -415,17 +568,22 @@ impl DirectReads {
                 tokio::time::sleep(period).await;
                 let Some(s) = shared.upgrade() else { return };
                 let now = (
-                    s.stats.reads.load(Ordering::Relaxed),
+                    s.stats.reads.load(Ordering::Relaxed)
+                        + s.stats.writes.load(Ordering::Relaxed)
+                        + s.stats.deletes.load(Ordering::Relaxed),
                     s.stats.lookups.load(Ordering::Relaxed),
                     s.stats.failures.load(Ordering::Relaxed),
                 );
                 if now != last {
                     tracing::info!(
-                        "direct reads: {} reads ({} MiB), {} lookups, {} listings, {} failures",
+                        "direct storage: {} reads ({} MiB), {} lookups, {} listings, {} writes ({} MiB), {} deletes, {} failures",
                         now.0,
                         s.stats.bytes.load(Ordering::Relaxed) >> 20,
                         now.1,
                         s.stats.listings.load(Ordering::Relaxed),
+                        s.stats.writes.load(Ordering::Relaxed),
+                        s.stats.written.load(Ordering::Relaxed) >> 20,
+                        s.stats.deletes.load(Ordering::Relaxed),
                         now.2
                     );
                     last = now;
@@ -442,6 +600,7 @@ impl WrappingObjectStore for DirectReads {
                 inner: original,
                 bucket: bucket.into(),
                 reads: self.shared.clone(),
+                sse_s3: self.sse_s3,
             }),
             _ => original,
         }
@@ -582,6 +741,14 @@ fn generic(err: anyhow::Error) -> Error {
     }
 }
 
+/// Lance commits with a conditional put and never copies or renames.
+fn not_implemented(operation: &str) -> Error {
+    Error::NotImplemented {
+        operation: operation.to_string(),
+        implementer: "DirectStorage".to_string(),
+    }
+}
+
 fn not_found(location: &Path) -> Error {
     Error::NotFound {
         path: location.to_string(),
@@ -589,11 +756,12 @@ fn not_found(location: &Path) -> Error {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct DirectStore {
     inner: Arc<dyn ObjectStore>,
     bucket: Arc<str>,
     reads: Arc<Shared>,
+    sse_s3: bool,
 }
 
 impl fmt::Display for DirectStore {
@@ -774,16 +942,27 @@ impl DirectStore {
         Ok(objects)
     }
 
+    /// Removes the object at `location`; a missing one is no error.
+    async fn remove(&self, location: &Path) -> Result<()> {
+        let path = self.filer_path(location);
+        let (dir, name) = path.rsplit_once('/').expect("paths are absolute");
+        self.reads.stats.deletes.fetch_add(1, Ordering::Relaxed);
+        self.reads
+            .source
+            .delete(dir, name)
+            .await
+            .with_context(|| format!("deleting {path}"))
+            .map_err(generic)?;
+        self.reads.objects.invalidate(&path);
+        Ok(())
+    }
+
     fn stream(
         &self,
         prefix: Option<&Path>,
         offset: Option<&Path>,
     ) -> BoxStream<'static, Result<ObjectMeta>> {
-        let store = DirectStore {
-            inner: self.inner.clone(),
-            bucket: self.bucket.clone(),
-            reads: self.reads.clone(),
-        };
+        let store = self.clone();
         let (prefix, offset) = (prefix.cloned(), offset.cloned());
         futures::stream::once(async move { store.list_all(prefix, offset).await })
             .flat_map(|listed| match listed {
@@ -803,15 +982,28 @@ impl ObjectStore for DirectStore {
         payload: PutPayload,
         opts: PutOptions,
     ) -> Result<PutResult> {
-        self.inner.put_opts(location, payload, opts).await
+        let exclusive = match opts.mode {
+            PutMode::Overwrite => false,
+            PutMode::Create => true,
+            PutMode::Update(_) => {
+                return Err(Error::NotSupported {
+                    source: "the filer keeps no object versions to update against".into(),
+                });
+            }
+        };
+        let upload = Upload::start(self.clone(), location.clone())?;
+        let data: Bytes = payload.into();
+        let md5 = Md5::digest(&data);
+        upload.put(data).await?;
+        upload.finish(exclusive, Some(md5.to_vec())).await
     }
 
     async fn put_multipart_opts(
         &self,
         location: &Path,
-        opts: PutMultipartOptions,
+        _opts: PutMultipartOptions,
     ) -> Result<Box<dyn MultipartUpload>> {
-        self.inner.put_multipart_opts(location, opts).await
+        Ok(Box::new(Upload::start(self.clone(), location.clone())?))
     }
 
     async fn get_opts(&self, location: &Path, options: GetOptions) -> Result<GetResult> {
@@ -876,16 +1068,14 @@ impl ObjectStore for DirectStore {
         &self,
         locations: BoxStream<'static, Result<Path>>,
     ) -> BoxStream<'static, Result<Path>> {
-        let store = DirectStore {
-            inner: self.inner.clone(),
-            bucket: self.bucket.clone(),
-            reads: self.reads.clone(),
-        };
-        self.inner
-            .delete_stream(locations)
-            .inspect(move |deleted| {
-                if let Ok(location) = deleted {
-                    store.reads.objects.invalidate(&store.filer_path(location));
+        let store = self.clone();
+        locations
+            .then(move |location| {
+                let store = store.clone();
+                async move {
+                    let location = location?;
+                    store.remove(&location).await?;
+                    Ok(location)
                 }
             })
             .boxed()
@@ -920,12 +1110,196 @@ impl ObjectStore for DirectStore {
         Ok(result)
     }
 
-    async fn copy_opts(&self, from: &Path, to: &Path, options: CopyOptions) -> Result<()> {
-        self.inner.copy_opts(from, to, options).await
+    async fn copy_opts(&self, _from: &Path, _to: &Path, _options: CopyOptions) -> Result<()> {
+        Err(not_implemented("copy"))
     }
 
-    async fn rename_opts(&self, from: &Path, to: &Path, options: RenameOptions) -> Result<()> {
-        self.inner.rename_opts(from, to, options).await
+    async fn rename_opts(&self, _from: &Path, _to: &Path, _options: RenameOptions) -> Result<()> {
+        Err(not_implemented("rename"))
+    }
+}
+
+/// An object being written: its chunks go to the volume servers as they
+/// arrive, the entry is created when they are all there.
+struct Upload {
+    store: DirectStore,
+    location: Path,
+    path: String,
+    encoder: Arc<EntryEncoder>,
+    state: Arc<std::sync::Mutex<UploadState>>,
+}
+
+#[derive(Default)]
+struct UploadState {
+    chunks: Vec<Uploaded>,
+    /// Where the next part starts.
+    offset: u64,
+}
+
+impl fmt::Debug for Upload {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Upload").field("path", &self.path).finish()
+    }
+}
+
+impl Upload {
+    fn start(store: DirectStore, location: Path) -> Result<Self> {
+        let path = store.filer_path(&location);
+        let encoder = EntryEncoder::new(store.reads.keys.clone(), store.sse_s3, store.reads.cipher)
+            .with_context(|| format!("encoding {path}"))
+            .map_err(generic)?;
+        Ok(Self {
+            store,
+            location,
+            path,
+            encoder: Arc::new(encoder),
+            state: Arc::default(),
+        })
+    }
+
+    /// Uploads `data` as the chunks following what was put before.
+    fn put(&self, data: Bytes) -> UploadPart {
+        let offset = {
+            let mut state = self.state.lock().unwrap();
+            let offset = state.offset;
+            state.offset += data.len() as u64;
+            offset
+        };
+        let (store, path, encoder, state) = (
+            self.store.clone(),
+            self.path.clone(),
+            self.encoder.clone(),
+            self.state.clone(),
+        );
+        Box::pin(async move {
+            let chunk_size = store.reads.chunk_size;
+            let mut at = offset;
+            for piece in data.chunks(chunk_size.max(1)) {
+                let encoded = encoder
+                    .encode(at, piece.to_vec())
+                    .with_context(|| format!("encoding {path} at {at}"))
+                    .map_err(generic)?;
+                let size = piece.len() as u64;
+                let mut uploaded = store
+                    .reads
+                    .source
+                    .upload(&path, at, Bytes::from(encoded.data))
+                    .await
+                    .with_context(|| format!("uploading {path} at {at}"))
+                    .map_err(generic)?;
+                uploaded.chunk.size = size;
+                uploaded.chunk.cipher_key = encoded.cipher_key;
+                uploaded.chunk.sse_type = encoded.sse_type;
+                uploaded.chunk.sse_metadata = encoded.sse_metadata;
+                store.reads.stats.written.fetch_add(size, Ordering::Relaxed);
+                state.lock().unwrap().chunks.push(uploaded);
+                at += size;
+            }
+            Ok(())
+        })
+    }
+
+    /// Creates the entry over the chunks uploaded so far. `md5` is the whole
+    /// object's, known for a one-shot put; a multipart object's ETag derives
+    /// from its chunks, as through the gateway.
+    async fn finish(&self, exclusive: bool, md5: Option<Vec<u8>>) -> Result<PutResult> {
+        let mut chunks = std::mem::take(&mut self.state.lock().unwrap().chunks);
+        chunks.sort_by_key(|u| u.chunk.offset);
+        let size = chunks
+            .iter()
+            .map(|u| u.chunk.offset as u64 + u.chunk.size)
+            .max()
+            .unwrap_or(0);
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs()) as i64;
+        let (dir, name) = self.path.rsplit_once('/').expect("paths are absolute");
+        let mut entry = Entry {
+            name: name.to_string(),
+            attributes: Some(FuseAttributes {
+                crtime: now,
+                mtime: now,
+                file_mode: FILE_MODE,
+                mime: OCTET_STREAM.to_string(),
+                file_size: size,
+                md5: md5.clone().unwrap_or_default(),
+                ..Default::default()
+            }),
+            chunks: chunks.iter().map(|u| u.chunk.clone()).collect(),
+            ..Default::default()
+        };
+        if let Some(md5) = &md5 {
+            entry
+                .extended
+                .insert(ETAG_ATTRIBUTE.to_string(), hex::encode(md5).into_bytes());
+        }
+        let attributes = self.encoder.attributes().map_err(generic)?;
+        entry.extended.extend(attributes);
+        let e_tag = etag(&entry);
+        let created = self.store.reads.source.create(dir, entry, exclusive).await;
+        if let Err(err) = created {
+            for uploaded in &chunks {
+                if let Err(discard) = self.store.reads.source.discard(&uploaded.assignment).await {
+                    tracing::warn!(
+                        "{}: discarding {}: {discard:#}",
+                        self.path,
+                        uploaded.chunk.file_id
+                    );
+                }
+            }
+            self.store
+                .reads
+                .stats
+                .failures
+                .fetch_add(1, Ordering::Relaxed);
+            return Err(if sw_client::is_entry_exists(&err) {
+                Error::AlreadyExists {
+                    path: self.location.to_string(),
+                    source: format!("{err:#}").into(),
+                }
+            } else {
+                generic(err.context(format!("creating {}", self.path)))
+            });
+        }
+        self.store
+            .reads
+            .stats
+            .writes
+            .fetch_add(1, Ordering::Relaxed);
+        self.store.reads.objects.invalidate(&self.path);
+        Ok(PutResult {
+            e_tag,
+            version: None,
+        })
+    }
+
+    async fn discard_all(&self) -> Result<()> {
+        let chunks = std::mem::take(&mut self.state.lock().unwrap().chunks);
+        for uploaded in &chunks {
+            self.store
+                .reads
+                .source
+                .discard(&uploaded.assignment)
+                .await
+                .with_context(|| format!("discarding {}", uploaded.chunk.file_id))
+                .map_err(generic)?;
+        }
+        Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl MultipartUpload for Upload {
+    fn put_part(&mut self, data: PutPayload) -> UploadPart {
+        self.put(data.into())
+    }
+
+    async fn complete(&mut self) -> Result<PutResult> {
+        self.finish(false, None).await
+    }
+
+    async fn abort(&mut self) -> Result<()> {
+        self.discard_all().await
     }
 }
 
@@ -969,13 +1343,33 @@ impl VolumeTransport for JwtTransport {
 
     async fn write(
         &self,
-        _location: &str,
-        _file_id: &str,
-        _auth: &str,
-        _filename: &str,
-        _data: Bytes,
+        location: &str,
+        file_id: &str,
+        auth: &str,
+        filename: &str,
+        data: Bytes,
     ) -> anyhow::Result<()> {
-        bail!("direct reads never write")
+        self.http
+            .write(location, file_id, auth, filename, data)
+            .await
+    }
+
+    async fn write_synced(
+        &self,
+        location: &str,
+        file_id: &str,
+        auth: &str,
+        filename: &str,
+        data: Bytes,
+        fsync: bool,
+    ) -> anyhow::Result<VolumeWriteReceipt> {
+        self.http
+            .write_synced(location, file_id, auth, filename, data, fsync)
+            .await
+    }
+
+    async fn delete(&self, location: &str, file_id: &str, auth: &str) -> anyhow::Result<()> {
+        self.http.delete(location, file_id, auth).await
     }
 
     fn name(&self) -> &'static str {
@@ -998,8 +1392,12 @@ mod tests {
     struct Fake {
         entries: Mutex<HashMap<String, Entry>>,
         bytes: Mutex<HashMap<String, Vec<u8>>>,
+        /// Needles uploaded through [`Source::upload`], by file id.
+        needles: Mutex<HashMap<String, Vec<u8>>>,
         lookups: AtomicU64,
         cached: AtomicU64,
+        uploads: AtomicU64,
+        discarded: AtomicU64,
         fail_reads: bool,
     }
 
@@ -1058,11 +1456,78 @@ mod tests {
             if self.fail_reads {
                 bail!("volume server unreachable");
             }
-            let bytes = self.bytes.lock().unwrap()[&object.entry.name].clone();
+            let bytes = match self.bytes.lock().unwrap().get(&object.entry.name) {
+                Some(bytes) => bytes.clone(),
+                // Written through the store: the needles, decoded as a volume
+                // read would be.
+                None => {
+                    let needles = self.needles.lock().unwrap();
+                    let mut whole = vec![0u8; object.size as usize];
+                    for chunk in &object.entry.chunks {
+                        let raw = needles[&chunk.file_id].clone();
+                        let plain = object.decoder.decode(chunk, 0, raw)?;
+                        let at = chunk.offset as usize;
+                        whole[at..at + plain.len()].copy_from_slice(&plain);
+                    }
+                    whole
+                }
+            };
             let end = ((offset + len) as usize).min(bytes.len());
             let mut out = vec![0u8; len as usize];
             out[..end - offset as usize].copy_from_slice(&bytes[offset as usize..end]);
             Ok(out)
+        }
+
+        async fn upload(&self, _path: &str, offset: u64, data: Bytes) -> anyhow::Result<Uploaded> {
+            let n = self.uploads.fetch_add(1, Ordering::Relaxed) + 1;
+            let file_id = format!("7,{n:08x}");
+            let chunk = FileChunk {
+                file_id: file_id.clone(),
+                offset: offset as i64,
+                size: data.len() as u64,
+                e_tag: BASE64_STANDARD.encode(Md5::digest(&data)),
+                ..Default::default()
+            };
+            self.needles
+                .lock()
+                .unwrap()
+                .insert(file_id.clone(), data.to_vec());
+            Ok(Uploaded {
+                chunk,
+                assignment: Assignment {
+                    file_id,
+                    url: "volume:8080".into(),
+                    auth: String::new(),
+                    fsync: false,
+                },
+            })
+        }
+
+        async fn create(&self, dir: &str, entry: Entry, exclusive: bool) -> anyhow::Result<()> {
+            let mut entries = self.entries.lock().unwrap();
+            let path = format!("{dir}/{}", entry.name);
+            if exclusive && entries.contains_key(&path) {
+                return Err(anyhow::anyhow!("CreateEntry: {path}: entry already exists")
+                    .context(sw_client::EntryExists));
+            }
+            entries.insert(path, entry);
+            Ok(())
+        }
+
+        async fn delete(&self, dir: &str, name: &str) -> anyhow::Result<()> {
+            let path = format!("{dir}/{name}");
+            let under = format!("{path}/");
+            self.entries
+                .lock()
+                .unwrap()
+                .retain(|key, _| key != &path && !key.starts_with(&under));
+            Ok(())
+        }
+
+        async fn discard(&self, assignment: &Assignment) -> anyhow::Result<()> {
+            self.discarded.fetch_add(1, Ordering::Relaxed);
+            self.needles.lock().unwrap().remove(&assignment.file_id);
+            Ok(())
         }
 
         fn name(&self) -> String {
@@ -1164,6 +1629,7 @@ mod tests {
                 inner: inner.clone(),
                 bucket: "vb".into(),
                 reads: reads.shared.clone(),
+                sse_s3: false,
             };
             assert_eq!(
                 store.filer_path(&Path::from("vector/idx/data/a.lance")),
@@ -1628,7 +2094,12 @@ mod tests {
         let (store, _) = store(fake.clone()).await;
         ranges(&store, DATA, &[0..5]).await;
         store.delete(&Path::from(DATA)).await.unwrap();
-        ranges(&store, DATA, &[0..5]).await;
+        // Written again at the same path: the next read looks it up afresh.
+        fake.add(&format!("/buckets/vb/{DATA}"), b"hello again", |_| {});
+        assert_eq!(
+            ranges(&store, DATA, &[6..11]).await[0],
+            Bytes::from_static(b"again")
+        );
         assert_eq!(fake.lookups.load(Ordering::Relaxed), 2);
     }
 
@@ -1654,11 +2125,14 @@ mod tests {
 
     #[tokio::test]
     async fn filers_follow_the_masters_and_unreachable_ones_are_passed_over() {
+        let transport: Arc<dyn VolumeTransport> = Arc::new(HttpTransport::new());
         let filers = Filers {
             clients: RwLock::new(Vec::new()),
             dial: Arc::new(|addr| FilerClient::connect_lazy_with(addr, None)),
             current: AtomicUsize::new(0),
-            volumes: VolumeReader::with_transport_capped(Arc::new(HttpTransport::new()), 0),
+            volumes: VolumeReader::with_transport_capped(transport.clone(), 0),
+            writer: Writer::with_transport(transport.clone()),
+            transport,
         };
         let err = filers.lookup("/buckets", "vb").await.unwrap_err();
         assert!(err.to_string().contains("no filer"), "{err:#}");
@@ -1676,5 +2150,232 @@ mod tests {
         assert_eq!(filers.name(), "127.0.0.1:2,127.0.0.1:3");
         filers.set_addresses(&[]).unwrap();
         assert!(filers.lookup("/buckets", "vb").await.is_err());
+    }
+
+    /// A store writing through `fake`, with `chunk_size` bytes per chunk.
+    fn writing_store(
+        fake: Arc<Fake>,
+        keys: Arc<SseS3Keys>,
+        chunk_size: usize,
+        cipher: bool,
+        sse_s3: bool,
+    ) -> Arc<dyn ObjectStore> {
+        let mut reads = DirectReads::new(fake, "", keys);
+        {
+            let shared = Arc::get_mut(&mut reads.shared).unwrap();
+            shared.chunk_size = chunk_size;
+            shared.cipher = cipher;
+        }
+        reads
+            .encrypting(sse_s3)
+            .wrap("s3$vb", Arc::new(InMemory::new()))
+    }
+
+    fn entry_of(fake: &Fake, path: &str) -> Entry {
+        fake.entries.lock().unwrap()[&format!("/buckets/vb/{path}")].clone()
+    }
+
+    /// A put creates the entry the gateway would, readable back through the
+    /// store; a conditional create of an existing object is a conflict that
+    /// leaves no needle behind.
+    #[tokio::test]
+    async fn writes_create_the_entry_the_gateway_would() {
+        let fake = Arc::new(Fake::default());
+        let store = writing_store(fake.clone(), no_keys(), 4096, false, false);
+        let path = Path::from("vector/idx/_versions/2.manifest");
+        let body = Bytes::from(vec![9u8; 10_000]);
+        let result = store
+            .put_opts(&path, body.clone().into(), PutMode::Create.into())
+            .await
+            .unwrap();
+        let md5 = hex::encode(Md5::digest(&body));
+        assert_eq!(result.e_tag.as_deref(), Some(format!("\"{md5}\"").as_str()));
+
+        let entry = entry_of(&fake, "vector/idx/_versions/2.manifest");
+        let attributes = entry.attributes.as_ref().unwrap();
+        assert_eq!(attributes.file_size, 10_000);
+        assert_eq!(hex::encode(&attributes.md5), md5);
+        assert_eq!(attributes.mime, OCTET_STREAM);
+        assert_eq!(entry.extended[ETAG_ATTRIBUTE], md5.as_bytes());
+        assert_eq!(entry.chunks.len(), 3, "4096-byte chunks");
+        assert_eq!(entry.chunks[2].offset, 8192);
+        assert!(
+            entry
+                .chunks
+                .iter()
+                .all(|c| c.cipher_key.is_empty() && c.sse_type == 0)
+        );
+
+        let got = store.get(&path).await.unwrap().bytes().await.unwrap();
+        assert_eq!(got, body);
+        let meta = store.head(&path).await.unwrap();
+        assert_eq!(meta.size, 10_000);
+        assert_eq!(meta.e_tag, result.e_tag);
+
+        let conflict = store
+            .put_opts(
+                &path,
+                Bytes::from_static(b"again").into(),
+                PutMode::Create.into(),
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(conflict, Error::AlreadyExists { .. }),
+            "{conflict}"
+        );
+        assert_eq!(fake.discarded.load(Ordering::Relaxed), 1);
+        assert_eq!(fake.needles.lock().unwrap().len(), 3);
+
+        store
+            .put_opts(
+                &path,
+                Bytes::from_static(b"again").into(),
+                PutMode::Overwrite.into(),
+            )
+            .await
+            .unwrap();
+        let got = store.get(&path).await.unwrap().bytes().await.unwrap();
+        assert_eq!(got, Bytes::from_static(b"again"));
+    }
+
+    /// A multipart upload's parts become chunks in order, its ETag derives
+    /// from them as the gateway's does, and an abort leaves no needle behind.
+    #[tokio::test]
+    async fn multipart_uploads_become_chunks_in_order() {
+        let fake = Arc::new(Fake::default());
+        let store = writing_store(fake.clone(), no_keys(), 1 << 20, false, false);
+        let path = Path::from("vector/idx/data/abcd.lance");
+        let mut upload = store.put_multipart(&path).await.unwrap();
+        let parts = [vec![1u8; 3000], vec![2u8; 3000], vec![3u8; 1000]];
+        for part in &parts {
+            upload
+                .put_part(Bytes::from(part.clone()).into())
+                .await
+                .unwrap();
+        }
+        let result = upload.complete().await.unwrap();
+        let entry = entry_of(&fake, "vector/idx/data/abcd.lance");
+        assert_eq!(entry.chunks.len(), 3);
+        assert_eq!(entry.chunks[1].offset, 3000);
+        assert!(entry.attributes.as_ref().unwrap().md5.is_empty());
+        assert!(!entry.extended.contains_key(ETAG_ATTRIBUTE));
+        let digests: Vec<Vec<u8>> = parts.iter().map(|p| Md5::digest(p).to_vec()).collect();
+        let want = format!("\"{}-3\"", hex::encode(Md5::digest(digests.concat())));
+        assert_eq!(result.e_tag.as_deref(), Some(want.as_str()));
+        let got = store.get(&path).await.unwrap().bytes().await.unwrap();
+        assert_eq!(got, Bytes::from(parts.concat()));
+
+        let mut aborted = store
+            .put_multipart(&Path::from("vector/idx/data/gone.lance"))
+            .await
+            .unwrap();
+        aborted
+            .put_part(Bytes::from_static(b"never").into())
+            .await
+            .unwrap();
+        aborted.abort().await.unwrap();
+        assert_eq!(fake.discarded.load(Ordering::Relaxed), 1);
+        assert!(
+            fake.entries
+                .lock()
+                .unwrap()
+                .keys()
+                .all(|k| !k.ends_with("gone.lance"))
+        );
+    }
+
+    /// With SSE-S3 the needles hold ciphertext under a per-object key the
+    /// entry carries, and with the cluster's volume encryption a per-chunk
+    /// key; both read back through the store, and a chunk is never plain.
+    #[tokio::test]
+    async fn encrypted_writes_read_back() {
+        let keys = Arc::new(
+            SseS3Keys::load(
+                &SseConfig {
+                    key: Some("secret".into()),
+                    ..Default::default()
+                },
+                None,
+            )
+            .unwrap(),
+        );
+        for (cipher, sse_s3) in [(false, true), (true, false), (true, true)] {
+            let fake = Arc::new(Fake::default());
+            let store = writing_store(fake.clone(), keys.clone(), 4096, cipher, sse_s3);
+            let path = Path::from("vector/idx/_versions/3.manifest");
+            let body: Vec<u8> = (0..10_000u32).map(|i| (i % 251) as u8).collect();
+            store
+                .put(&path, Bytes::from(body.clone()).into())
+                .await
+                .unwrap();
+            let entry = entry_of(&fake, "vector/idx/_versions/3.manifest");
+            for chunk in &entry.chunks {
+                let needle = &fake.needles.lock().unwrap()[&chunk.file_id];
+                let plain =
+                    &body[chunk.offset as usize..chunk.offset as usize + chunk.size as usize];
+                assert_ne!(needle, plain, "cipher {cipher} sse {sse_s3}");
+                assert_eq!(!chunk.cipher_key.is_empty(), cipher);
+                assert_eq!(chunk.sse_type == SSE_S3_TYPE, sse_s3);
+            }
+            assert_eq!(
+                entry.extended.contains_key("X-Amz-Server-Side-Encryption"),
+                sse_s3
+            );
+            let got = store.get(&path).await.unwrap().bytes().await.unwrap();
+            assert_eq!(got, Bytes::from(body), "cipher {cipher} sse {sse_s3}");
+        }
+    }
+
+    /// An SSE-S3 bucket cannot be written without the KEK.
+    #[tokio::test]
+    async fn sse_s3_writes_need_the_kek() {
+        let store = writing_store(Arc::new(Fake::default()), no_keys(), 4096, false, true);
+        let err = store
+            .put(&Path::from("vector/idx/x"), Bytes::from_static(b"x").into())
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("s3.sse.kek"), "{err}");
+    }
+
+    /// Deletes remove the entry and forget the cached object; a table is
+    /// removed with everything under it.
+    #[tokio::test]
+    async fn deletes_remove_entries_and_tables() {
+        let fake = Arc::new(Fake::default());
+        let mut reads = DirectReads::new(fake.clone(), "", no_keys());
+        Arc::get_mut(&mut reads.shared).unwrap().chunk_size = 4096;
+        let store = reads.wrap("s3$vb", Arc::new(InMemory::new()));
+        for name in ["vector/idx/data/a.lance", "vector/idx/_versions/1.manifest"] {
+            store
+                .put(&Path::from(name), Bytes::from_static(b"bytes").into())
+                .await
+                .unwrap();
+        }
+        store
+            .get(&Path::from("vector/idx/data/a.lance"))
+            .await
+            .unwrap();
+        store
+            .delete(&Path::from("vector/idx/data/a.lance"))
+            .await
+            .unwrap();
+        let err = store
+            .get(&Path::from("vector/idx/data/a.lance"))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, Error::NotFound { .. }), "{err}");
+        store
+            .delete(&Path::from("vector/idx/data/a.lance"))
+            .await
+            .unwrap();
+
+        reads.remove_table("s3://vb/vector/idx").await.unwrap();
+        assert!(fake.entries.lock().unwrap().is_empty());
+        let err = store
+            .get(&Path::from("vector/idx/_versions/1.manifest"))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, Error::NotFound { .. }), "{err}");
     }
 }
