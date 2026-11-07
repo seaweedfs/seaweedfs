@@ -65,3 +65,34 @@ func TestFilesSharedIgnoresAnEntryOverTheRoot(t *testing.T) {
 		t.Error("a root inside another record's files was not shared")
 	}
 }
+
+// A job scheduled before another record came to share the table's location
+// leaves the files alone when it runs.
+func TestRemoveOrphansSkipsSharedLocation(t *testing.T) {
+	fs, client := startFakeFiler(t)
+	setup := tableSetup{
+		BucketName: "test-bucket",
+		Namespace:  "analytics",
+		TableName:  "events",
+		DataPath:   "analytics/events",
+		Snapshots:  []table.Snapshot{{SnapshotID: 1, TimestampMs: time.Now().UnixMilli(), ManifestList: "metadata/snap-1.avro"}},
+	}
+	populateTable(t, fs, setup)
+	dataDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.tablePath(), "data")
+	fs.putEntry(dataDir, "other.parquet", &filer_pb.Entry{
+		Name:       "other.parquet",
+		Attributes: &filer_pb.FuseAttributes{Mtime: time.Now().Add(-200 * time.Hour).Unix()},
+	})
+	nsPath := path.Join(s3tables.TablesPath, setup.BucketName, setup.Namespace)
+	alias := proto.Clone(fs.getEntry(nsPath, setup.TableName)).(*filer_pb.Entry)
+	alias.Name = "alias"
+	fs.putEntry(nsPath, alias.Name, alias)
+
+	result, _, err := NewHandler(nil).removeOrphans(context.Background(), client, setup.BucketName, setup.tablePath(), Config{OrphanOlderThanHours: 72, MaxCommitRetries: 3})
+	if err != nil {
+		t.Fatalf("removeOrphans: %v", err)
+	}
+	if fs.getEntry(dataDir, "other.parquet") == nil {
+		t.Fatalf("a file under a shared location was removed (%q)", result)
+	}
+}
