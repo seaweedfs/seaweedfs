@@ -35,6 +35,9 @@ use crate::sse::{EntryDecoder, KEK_PATH, SseConfig, SseS3Keys};
 
 const OBJECT_CACHE_ENTRIES: u64 = 1 << 16;
 const READ_JWT_TTL_SECS: u64 = 60;
+/// Bound on one filer's answer, so a filer that accepts the connection and
+/// then says nothing is passed over like one that refused it.
+const FILER_TIMEOUT: Duration = Duration::from_secs(30);
 /// The gateway's object-level ETag, set when it differs from the entry's md5.
 const ETAG_ATTRIBUTE: &str = "Seaweed-X-Amz-ETag";
 const PREFIX_OBJECT_ATTRIBUTE: &str = "x-seaweedfs-prefix-object";
@@ -117,19 +120,29 @@ impl Filers {
         let mut last = None;
         for attempt in 0..clients.len() {
             let i = (start + attempt) % clients.len();
-            match op(clients[i].clone()).await {
-                Ok(value) => {
+            match tokio::time::timeout(FILER_TIMEOUT, op(clients[i].clone())).await {
+                Ok(Ok(value)) => {
                     self.current.store(i, Ordering::Relaxed);
                     return Ok(value);
                 }
-                Err(err) if sw_client::is_unavailable(&err) => {
+                Ok(Err(err)) if sw_client::is_unavailable(&err) => {
                     tracing::warn!(
                         "filer {} unavailable for {what}: {err:#}",
                         clients[i].addr()
                     );
                     last = Some(err);
                 }
-                Err(err) => return Err(err),
+                Ok(Err(err)) => return Err(err),
+                Err(_) => {
+                    tracing::warn!(
+                        "filer {} did not answer {what} within {FILER_TIMEOUT:?}",
+                        clients[i].addr()
+                    );
+                    last = Some(anyhow::anyhow!(
+                        "filer {} did not answer {what} within {FILER_TIMEOUT:?}",
+                        clients[i].addr()
+                    ));
+                }
             }
         }
         Err(last.expect("at least one filer"))
