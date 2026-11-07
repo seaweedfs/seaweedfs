@@ -70,10 +70,7 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 	processor := NewMetadataProcessor(eachEntryFunc, 128, lastOffsetTs.UnixNano())
 
 	var lastLogTsNs = time.Now().UnixNano()
-	processEventFnWithOffset := pb.AddOffsetFunc(func(resp *filer_pb.SubscribeMetadataResponse) error {
-		processor.AddSyncJob(resp)
-		return nil
-	}, 3*time.Second, func(counter int64, lastTsNs int64) error {
+	processEventFnWithOffset := pb.AddOffsetFunc(admitUntilMountEnds(processor, mountedDir, remoteStorageMountLocation), 3*time.Second, func(counter int64, lastTsNs int64) error {
 		offsetTsNs := processor.processedTsWatermark.Load()
 		if offsetTsNs == 0 {
 			return nil
@@ -130,6 +127,63 @@ func saveResumeOffset(grpcDialOption grpc.DialOption, filerAddress pb.ServerAddr
 	return offsetTsNs
 }
 
+// admitUntilMountEnds judges each mount-table version before the next event
+// is admitted. remote.unmount purges the directory right after writing the
+// table, and a purge delete admitted under a directory no longer mounted
+// deletes the remote objects. At the end nothing more is admitted and no
+// offset is saved, keeping the one remote.unmount writes after its purge;
+// the admitted jobs drain before the exit.
+func admitUntilMountEnds(processor *MetadataProcessor, mountedDir string, mountLocation *remote_pb.RemoteStorageLocation) pb.ProcessMetadataFunc {
+	return func(resp *filer_pb.SubscribeMetadataResponse) error {
+		ended, moved, err := mountTableEnds(mountedDir, mountLocation, resp)
+		if err != nil {
+			return err
+		}
+		if !ended {
+			processor.AddSyncJob(resp)
+			return nil
+		}
+		processor.Drain()
+		exitAtMountEnd(mountedDir, mountLocation, moved)
+		return nil
+	}
+}
+
+var exitAtMountEnd = func(mountedDir string, from, to *remote_pb.RemoteStorageLocation) {
+	if to != nil {
+		glog.Fatalf("Unexpected mount changes %+v => %+v", from, to)
+	}
+	glog.V(0).Infof("unmounted %s exiting ...", mountedDir)
+	os.Exit(0)
+}
+
+// mountTableEnds reports whether a mount-table event ends the write-back of
+// mountedDir at loc: a version that no longer maps the directory there.
+// moved is the new location of a directory mounted elsewhere, nil for an
+// unmount.
+func mountTableEnds(mountedDir string, loc *remote_pb.RemoteStorageLocation, resp *filer_pb.SubscribeMetadataResponse) (ended bool, moved *remote_pb.RemoteStorageLocation, err error) {
+	message := resp.EventNotification
+	switch {
+	case metadataEventUpdatesDirectory(resp, filer.DirectoryEtcRemote) && message.NewEntry.Name == filer.REMOTE_STORAGE_MOUNT_FILE:
+		mappings, readErr := filer.UnmarshalRemoteStorageMappings(message.NewEntry.Content)
+		if readErr != nil {
+			return false, nil, fmt.Errorf("unmarshal mappings: %w", readErr)
+		}
+		moved = mappings.Mappings[mountedDir]
+		if sameMountLocation(moved, loc) {
+			return false, nil, nil
+		}
+	case metadataEventRemovesFromDirectory(resp, filer.DirectoryEtcRemote) && message.OldEntry.Name == filer.REMOTE_STORAGE_MOUNT_FILE:
+	default:
+		return false, nil, nil
+	}
+	return true, moved, nil
+}
+
+func sameMountLocation(a, b *remote_pb.RemoteStorageLocation) bool {
+	return a != nil && b != nil && a.Bucket == b.Bucket && a.Path == b.Path
+}
+
 func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.RemoteConf, mountedDir string, remoteStorageMountLocation *remote_pb.RemoteStorageLocation, filerSource *source.FilerSource) (pb.ProcessMetadataFunc, error) {
 	client, err := remote_storage.GetRemoteStorage(remoteStorage)
 	if err != nil {
@@ -139,20 +193,6 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 	handleEtcRemoteChanges := func(resp *filer_pb.SubscribeMetadataResponse) error {
 		message := resp.EventNotification
 		if metadataEventUpdatesDirectory(resp, filer.DirectoryEtcRemote) {
-			if message.NewEntry.Name == filer.REMOTE_STORAGE_MOUNT_FILE {
-				mappings, readErr := filer.UnmarshalRemoteStorageMappings(message.NewEntry.Content)
-				if readErr != nil {
-					return fmt.Errorf("unmarshal mappings: %w", readErr)
-				}
-				if remoteLoc, found := mappings.Mappings[mountedDir]; found {
-					if remoteStorageMountLocation.Bucket != remoteLoc.Bucket || remoteStorageMountLocation.Path != remoteLoc.Path {
-						glog.Fatalf("Unexpected mount changes %+v => %+v", remoteStorageMountLocation, remoteLoc)
-					}
-				} else {
-					glog.V(0).Infof("unmounted %s exiting ...", mountedDir)
-					os.Exit(0)
-				}
-			}
 			if message.NewEntry.Name == remoteStorage.Name+filer.REMOTE_STORAGE_CONF_SUFFIX {
 				conf := &remote_pb.RemoteConf{}
 				if err := proto.Unmarshal(message.NewEntry.Content, conf); err != nil {
@@ -165,11 +205,6 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 					return err
 				}
 			}
-		}
-		if metadataEventRemovesFromDirectory(resp, filer.DirectoryEtcRemote) &&
-			message.OldEntry.Name == filer.REMOTE_STORAGE_MOUNT_FILE {
-			glog.V(0).Infof("unmounted %s exiting ...", mountedDir)
-			os.Exit(0)
 		}
 
 		return nil

@@ -3158,3 +3158,130 @@ func TestKeptDeleteMarkerRetriesWhenTheLockIsReleased(t *testing.T) {
 		})
 	}
 }
+
+func mountTableEvent(t *testing.T, tsNs int64, old, new map[string]*remote_pb.RemoteStorageLocation) *filer_pb.SubscribeMetadataResponse {
+	t.Helper()
+	tableEntry := func(mappings map[string]*remote_pb.RemoteStorageLocation) *filer_pb.Entry {
+		if mappings == nil {
+			return nil
+		}
+		content, err := proto.Marshal(&remote_pb.RemoteStorageMapping{Mappings: mappings})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &filer_pb.Entry{Name: filer.REMOTE_STORAGE_MOUNT_FILE, Content: content}
+	}
+	message := &filer_pb.EventNotification{OldEntry: tableEntry(old), NewEntry: tableEntry(new)}
+	if message.NewEntry != nil {
+		message.NewParentPath = filer.DirectoryEtcRemote
+	}
+	return &filer_pb.SubscribeMetadataResponse{Directory: filer.DirectoryEtcRemote, TsNs: tsNs, EventNotification: message}
+}
+
+func TestMountTableEnds(t *testing.T) {
+	mountedDir := "/buckets/b"
+	loc := &remote_pb.RemoteStorageLocation{Name: "r", Bucket: "b", Path: "/"}
+	elsewhere := &remote_pb.RemoteStorageLocation{Name: "r", Bucket: "other", Path: "/"}
+	other := &remote_pb.RemoteStorageLocation{Name: "r", Bucket: "c", Path: "/"}
+	mapped := map[string]*remote_pb.RemoteStorageLocation{mountedDir: loc}
+	mappedWithOther := map[string]*remote_pb.RemoteStorageLocation{mountedDir: loc, "/buckets/c": other}
+
+	tests := []struct {
+		name      string
+		resp      *filer_pb.SubscribeMetadataResponse
+		wantEnded bool
+		wantMoved *remote_pb.RemoteStorageLocation
+	}{
+		{"another mount added", mountTableEvent(t, 1, mapped, mappedWithOther), false, nil},
+		{"unmounted", mountTableEvent(t, 1, mappedWithOther, map[string]*remote_pb.RemoteStorageLocation{"/buckets/c": other}), true, nil},
+		{"mounted elsewhere", mountTableEvent(t, 1, mapped, map[string]*remote_pb.RemoteStorageLocation{mountedDir: elsewhere}), true, elsewhere},
+		{"table deleted", mountTableEvent(t, 1, mapped, nil), true, nil},
+		{"remote conf updated", &filer_pb.SubscribeMetadataResponse{Directory: filer.DirectoryEtcRemote, EventNotification: &filer_pb.EventNotification{
+			NewParentPath: filer.DirectoryEtcRemote, NewEntry: &filer_pb.Entry{Name: "r" + filer.REMOTE_STORAGE_CONF_SUFFIX}}}, false, nil},
+		{"file under the mount", &filer_pb.SubscribeMetadataResponse{Directory: mountedDir, EventNotification: &filer_pb.EventNotification{
+			NewParentPath: mountedDir, NewEntry: &filer_pb.Entry{Name: filer.REMOTE_STORAGE_MOUNT_FILE}}}, false, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ended, moved, err := mountTableEnds(mountedDir, loc, tt.resp)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ended != tt.wantEnded || !proto.Equal(moved, tt.wantMoved) {
+				t.Errorf("mountTableEnds = %v, %v; want %v, %v", ended, moved, tt.wantEnded, tt.wantMoved)
+			}
+		})
+	}
+
+	t.Run("unreadable table", func(t *testing.T) {
+		resp := mountTableEvent(t, 1, mapped, mapped)
+		resp.EventNotification.NewEntry.Content = []byte{0xff, 0xff, 0xff}
+		if _, _, err := mountTableEnds(mountedDir, loc, resp); err == nil {
+			t.Error("want an error for a table that does not unmarshal")
+		}
+	})
+}
+
+func TestAdmitUntilMountEndsDrainsBeforeTheExit(t *testing.T) {
+	mountedDir := "/buckets/b"
+	loc := &remote_pb.RemoteStorageLocation{Name: "r", Bucket: "b", Path: "/"}
+	elsewhere := &remote_pb.RemoteStorageLocation{Name: "r", Bucket: "other", Path: "/"}
+	mapped := map[string]*remote_pb.RemoteStorageLocation{mountedDir: loc}
+
+	for _, tt := range []struct {
+		name      string
+		end       *filer_pb.SubscribeMetadataResponse
+		wantMoved *remote_pb.RemoteStorageLocation
+	}{
+		{"unmount", mountTableEvent(t, 2, mapped, map[string]*remote_pb.RemoteStorageLocation{}), nil},
+		{"move", mountTableEvent(t, 2, mapped, map[string]*remote_pb.RemoteStorageLocation{mountedDir: elsewhere}), elsewhere},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			release := make(chan struct{})
+			ran := make(chan string, 4)
+			processor := NewMetadataProcessor(func(resp *filer_pb.SubscribeMetadataResponse) error {
+				<-release
+				ran <- resp.EventNotification.NewEntry.Name
+				return nil
+			}, 128, 0)
+			exits := make(chan *remote_pb.RemoteStorageLocation, 1)
+			defer func(exit func(string, *remote_pb.RemoteStorageLocation, *remote_pb.RemoteStorageLocation)) {
+				exitAtMountEnd = exit
+			}(exitAtMountEnd)
+			exitAtMountEnd = func(_ string, _, to *remote_pb.RemoteStorageLocation) { exits <- to }
+
+			admit := admitUntilMountEnds(processor, mountedDir, loc)
+			if err := admit(&filer_pb.SubscribeMetadataResponse{Directory: mountedDir, TsNs: 1, EventNotification: &filer_pb.EventNotification{
+				NewParentPath: mountedDir, NewEntry: &filer_pb.Entry{Name: "a.txt"}}}); err != nil {
+				t.Fatal(err)
+			}
+			done := make(chan error, 1)
+			go func() { done <- admit(tt.end) }()
+			select {
+			case <-exits:
+				t.Fatal("exited while an admitted job was still running")
+			case <-time.After(100 * time.Millisecond):
+			}
+			close(release)
+			select {
+			case to := <-exits:
+				if !proto.Equal(to, tt.wantMoved) {
+					t.Errorf("exit with %v, want %v", to, tt.wantMoved)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("no exit after the admitted job finished")
+			}
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+			close(ran)
+			var names []string
+			for name := range ran {
+				names = append(names, name)
+			}
+			if !slices.Equal(names, []string{"a.txt"}) {
+				t.Errorf("jobs run = %v, want only the write admitted before the mount table", names)
+			}
+		})
+	}
+}
