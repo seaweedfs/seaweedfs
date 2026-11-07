@@ -86,7 +86,7 @@ tonic-prost-build.workspace = true
 protoc-bin-vendored = "3"
 
 [dev-dependencies]
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }
 tonic.workspace = true
 arrow-array = "58"
 arrow-schema = "58"

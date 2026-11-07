@@ -184,6 +184,7 @@ impl Filers {
         }
         let start = self.current.load(Ordering::Relaxed);
         let mut last = None;
+        let mut unanswered = false;
         for attempt in 0..clients.len() {
             let i = (start + attempt) % clients.len();
             match tokio::time::timeout(FILER_TIMEOUT, op(clients[i].clone())).await {
@@ -198,8 +199,11 @@ impl Filers {
                     );
                     last = Some(err);
                 }
+                // A filer passed over without an answer may still apply it.
+                Ok(Err(err)) if unanswered => return Err(err.context(NoAnswer)),
                 Ok(Err(err)) => return Err(err),
                 Err(_) => {
+                    unanswered = true;
                     tracing::warn!(
                         "filer {} did not answer {what} within {FILER_TIMEOUT:?}",
                         clients[i].addr()
@@ -2391,6 +2395,41 @@ mod tests {
         assert_eq!(filers.name(), "127.0.0.1:2,127.0.0.1:3");
         filers.set_addresses(&[]).unwrap();
         assert!(filers.lookup("/buckets", "vb").await.is_err());
+    }
+
+    /// A filer that never answered may still apply the request, which the
+    /// error says even when the next filer refuses it.
+    #[tokio::test(start_paused = true)]
+    async fn filers_that_never_answer_leave_the_outcome_open() {
+        let transport: Arc<dyn VolumeTransport> = Arc::new(HttpTransport::new());
+        let filers = Filers {
+            clients: RwLock::new(Vec::new()),
+            dial: Arc::new(|addr| FilerClient::connect_lazy_with(addr, None)),
+            current: AtomicUsize::new(0),
+            volumes: VolumeReader::with_transport_capped(transport.clone(), 0),
+            writer: Writer::with_transport(transport.clone()),
+            transport,
+        };
+        filers
+            .set_addresses(&["127.0.0.1:1".into(), "127.0.0.1:2".into()])
+            .unwrap();
+        let silent = |c: FilerClient| -> BoxFuture<'static, anyhow::Result<()>> {
+            Box::pin(async move {
+                if c.addr() == "127.0.0.1:1" {
+                    std::future::pending::<()>().await;
+                }
+                bail!("refused")
+            })
+        };
+        let err = filers.with("create", silent).await.unwrap_err();
+        assert!(outcome_uncertain(&err), "{err:#}");
+        assert!(format!("{err:#}").contains("refused"), "{err:#}");
+
+        let answered = |_: FilerClient| -> BoxFuture<'static, anyhow::Result<()>> {
+            Box::pin(async { bail!("refused") })
+        };
+        let err = filers.with("create", answered).await.unwrap_err();
+        assert!(!outcome_uncertain(&err), "{err:#}");
     }
 
     #[test]
