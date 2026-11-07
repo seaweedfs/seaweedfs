@@ -156,12 +156,25 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
     let tls = args.tls()?;
+    // One security.toml for everything: the admin stream's and the catalog's
+    // signing key, and the cluster connection.
+    let security =
+        weed_lance_worker::security::Security::load(args.security_toml.as_deref(), None)?;
     let filer_signing = match args.filer_signing_key.filter(|key| !key.is_empty()) {
         Some(key) => Some((key, 0)),
-        None => seaweed_worker_core::security_config::filer_signing().map(|signing| {
-            tracing::info!(source = %signing.source, "using jwt.filer_signing.key");
-            (signing.key, signing.expires_after_seconds)
-        }),
+        None => security
+            .get("jwt.filer_signing.key")
+            .filter(|key| !key.is_empty())
+            .map(|key| {
+                if let Some(path) = security.path() {
+                    tracing::info!(source = %path.display(), "using jwt.filer_signing.key");
+                }
+                let expires = security
+                    .get("jwt.filer_signing.expires_after_seconds")
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(0);
+                (key, expires)
+            }),
     };
     let (filer_signing_key, configured_expiry) = filer_signing.unzip();
     let signing_key = weed_lance_worker::catalog::SigningKey::new(filer_signing_key.clone());
@@ -180,8 +193,6 @@ async fn main() -> Result<()> {
         ..Default::default()
     };
 
-    let security =
-        weed_lance_worker::security::Security::load(args.security_toml.as_deref(), None)?;
     let cluster =
         weed_lance_worker::cluster::Cluster::new(&args.masters, &args.filer_group, &security)?;
     let storage = weed_lance_worker::dataset::Storage(Some(
