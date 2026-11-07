@@ -176,3 +176,23 @@ func TestSortMovesByPhaseKeepsGlobalAheadOfWithinRack(t *testing.T) {
 		t.Errorf("order = %v, want %v", got, want)
 	}
 }
+
+// TestSortMovesByPhaseKeepsAVolumesMovesInPlanOrder: a global move of a shard
+// that a within-rack move placed must not run ahead of that move.
+func TestSortMovesByPhaseKeepsAVolumesMovesInPlanOrder(t *testing.T) {
+	moves := []ecbalancer.Move{
+		{VolumeID: 1, ShardID: 3, SourceNode: "within 1", Phase: "within_rack"},
+		{VolumeID: 2, SourceNode: "within 2", Phase: "within_rack"},
+		{VolumeID: 1, ShardID: 3, SourceNode: "global 1", Phase: "global"},
+		{VolumeID: 3, SourceNode: "global 3", Phase: "global"},
+		{VolumeID: 2, Collection: "other", SourceNode: "global other 2", Phase: "global"},
+	}
+	sortMovesByPhase(moves)
+	var got []string
+	for _, m := range moves {
+		got = append(got, m.SourceNode)
+	}
+	if want := []string{"global 3", "global other 2", "within 1", "within 2", "global 1"}; !slices.Equal(got, want) {
+		t.Errorf("order = %q, want %q", got, want)
+	}
+}
