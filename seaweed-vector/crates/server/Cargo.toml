@@ -36,13 +36,6 @@ moka = { version = "0.12", features = ["sync"] }
 object_store = { version = "0.13", features = ["aws"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-toml = "0.8"
-rustls = "0.23"
-tokio-rustls = "0.26"
-x509-parser = "0.16"
-tower = "0.5"
-hyper-util = { version = "0.1", features = ["tokio"] }
-http = "1"
 tokio.workspace = true
 tokio-stream.workspace = true
 tracing.workspace = true

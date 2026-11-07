@@ -53,7 +53,7 @@ const BYTES_PER_MB: u64 = 1024 * 1024;
 /// rewrite restores it once rows have been appended.
 pub struct SortHandler {
     namespace_url: String,
-    fallback: dataset::FallbackOptions,
+    storage: dataset::Storage,
     signing_key: Option<SigningKey>,
     metrics: Option<crate::metrics::LanceMetrics>,
 }
@@ -62,7 +62,7 @@ impl SortHandler {
     pub fn new(namespace_url: String) -> Self {
         Self {
             namespace_url,
-            fallback: dataset::FallbackOptions::new(),
+            storage: dataset::Storage::default(),
             signing_key: None,
             metrics: None,
         }
@@ -74,8 +74,8 @@ impl SortHandler {
     }
 
     /// Storage options to use where the namespace vends none.
-    pub fn with_fallback(mut self, fallback: dataset::FallbackOptions) -> Self {
-        self.fallback = fallback;
+    pub fn with_storage(mut self, storage: dataset::Storage) -> Self {
+        self.storage = storage;
         self
     }
 
@@ -85,9 +85,7 @@ impl SortHandler {
     }
 
     fn client(&self) -> NamespaceClient {
-        NamespaceClient::new(self.namespace_url.clone())
-            .with_fallback(&self.fallback)
-            .with_signing_key(self.signing_key.as_ref())
+        NamespaceClient::new(self.namespace_url.clone()).with_signing_key(self.signing_key.as_ref())
     }
 }
 
@@ -207,7 +205,7 @@ impl JobHandler for SortHandler {
         let mut observations = Vec::new();
         for encoded in &tables {
             let id = parse_id(encoded);
-            let table = match dataset::open(&client, &id, &self.fallback).await {
+            let table = match dataset::open(&client, &id, &self.storage).await {
                 Ok(table) => table,
                 Err(err) => {
                     // One unreadable table must not end the sweep: the tables
@@ -361,7 +359,7 @@ impl JobHandler for SortHandler {
         // Re-resolve rather than trusting what detection saw: the table may have
         // been repointed, its declared order changed, and the vended credentials
         // have expired.
-        let table = dataset::open(&client, &id, &self.fallback).await?;
+        let table = dataset::open(&client, &id, &self.storage).await?;
         let before = table.stats().await?;
         let config = table.dataset.config().clone();
         let spec = resolve(

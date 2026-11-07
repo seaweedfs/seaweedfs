@@ -9,11 +9,10 @@ use seaweed_worker_core::JobHandler;
 use seaweed_worker_core::pb::{
     ConfigValue, ExecuteJobRequest, JobSpec, RunDetectionRequest, config_value::Kind,
 };
-use weed_lance_worker::catalog::NamespaceClient;
 use weed_lance_worker::jobs::sort::{JOB_TYPE, SortHandler};
 
 mod common;
-use common::{Recorder, fallback, namespace_url};
+use common::{Recorder, client, namespace_url, signing_key, storage};
 
 /// One live gateway and one shared catalog, and `list_all_tables` sweeps
 /// everything, so these tests take a lock the way the compaction ones do.
@@ -52,7 +51,6 @@ async fn seed_unsorted_table(
     use arrow_array::{Int64Array, RecordBatch, RecordBatchIterator};
     use arrow_schema::{DataType, Field, Schema};
     use lance::dataset::{Dataset, WriteMode, WriteParams};
-    use lance::io::{ObjectStoreParams, StorageOptionsAccessor};
     use std::sync::Arc;
 
     let http = reqwest::Client::new();
@@ -70,11 +68,10 @@ async fn seed_unsorted_table(
         .await?
         .error_for_status()?;
 
-    let client = NamespaceClient::new(url.to_string());
+    let client = client(url);
     let id = vec!["vec".to_string(), "ml".to_string(), name.to_string()];
     let description = client.describe_table(&id).await?;
-    let mut options = description.storage_options.clone();
-    options.extend(fallback());
+    let wrapper = storage().await.wrapper(&description.location).await?;
 
     let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)]));
     let total = batches * rows_each;
@@ -92,12 +89,7 @@ async fn seed_unsorted_table(
             } else {
                 WriteMode::Append
             },
-            store_params: Some(ObjectStoreParams {
-                storage_options_accessor: Some(Arc::new(
-                    StorageOptionsAccessor::with_static_options(options.clone()),
-                )),
-                ..Default::default()
-            }),
+            store_params: Some(weed_lance_worker::dataset::store_params(wrapper.clone())),
             ..Default::default()
         };
         dataset = Some(
@@ -125,9 +117,9 @@ async fn stored_ids(url: &str, name: &str) -> Result<Vec<i64>> {
     use arrow_array::Int64Array;
     use futures::TryStreamExt;
 
-    let client = NamespaceClient::new(url.to_string());
+    let client = client(url);
     let id = vec!["vec".to_string(), "ml".to_string(), name.to_string()];
-    let table = weed_lance_worker::dataset::open(&client, &id, &fallback()).await?;
+    let table = weed_lance_worker::dataset::open(&client, &id, &storage().await).await?;
     let stream = table.dataset.scan().try_into_stream().await?;
     let batches: Vec<_> = stream.try_collect().await?;
     let mut ids = Vec::new();
@@ -164,7 +156,9 @@ async fn sorts_a_table_and_stops_proposing_it() {
         "the seeded table was already sorted, so the test proves nothing"
     );
 
-    let handler = SortHandler::new(url.clone()).with_fallback(fallback());
+    let handler = SortHandler::new(url.clone())
+        .with_storage(storage().await)
+        .with_signing_key(signing_key());
     let recorder = Recorder::default();
     let detection = RunDetectionRequest {
         request_id: "detect-sort".to_string(),
@@ -259,7 +253,9 @@ async fn leaves_a_table_that_declares_no_order_alone() {
         .await
         .expect("seed a table with no declared order");
 
-    let handler = SortHandler::new(url.clone()).with_fallback(fallback());
+    let handler = SortHandler::new(url.clone())
+        .with_storage(storage().await)
+        .with_signing_key(signing_key());
     let recorder = Recorder::default();
     handler
         .detect(
@@ -302,7 +298,9 @@ async fn proposes_a_replacement_that_barely_changes_the_row_count() {
         .await
         .expect("seed an unsorted table");
 
-    let handler = SortHandler::new(url.clone()).with_fallback(fallback());
+    let handler = SortHandler::new(url.clone())
+        .with_storage(storage().await)
+        .with_signing_key(signing_key());
     // A threshold no realistic append would cross, so nothing but the identity
     // of the data can be what proposes this table.
     let detection = RunDetectionRequest {
@@ -395,7 +393,9 @@ async fn deletions_do_not_hide_appended_rows() {
         .await
         .expect("seed an unsorted table");
 
-    let handler = SortHandler::new(url.clone()).with_fallback(fallback());
+    let handler = SortHandler::new(url.clone())
+        .with_storage(storage().await)
+        .with_signing_key(signing_key());
     let detection = RunDetectionRequest {
         request_id: "detect-delete".to_string(),
         job_type: JOB_TYPE.to_string(),
@@ -436,9 +436,9 @@ async fn deletions_do_not_hide_appended_rows() {
 
     // Delete 900 of the 1000 sorted rows, then append 200 unsorted ones. The
     // table is smaller than when it was sorted, so net growth reads as zero.
-    let client = NamespaceClient::new(url.clone());
+    let client = client(&url);
     let id = vec!["vec".to_string(), "ml".to_string(), "deleteme".to_string()];
-    let mut table = weed_lance_worker::dataset::open(&client, &id, &fallback())
+    let mut table = weed_lance_worker::dataset::open(&client, &id, &storage().await)
         .await
         .expect("reopen the sorted table");
     table
@@ -472,26 +472,19 @@ async fn append_ids(url: &str, name: &str, first_id: i64, rows: i64) -> Result<(
     use arrow_array::{Int64Array, RecordBatch, RecordBatchIterator};
     use arrow_schema::{DataType, Field, Schema};
     use lance::dataset::{Dataset, WriteMode, WriteParams};
-    use lance::io::{ObjectStoreParams, StorageOptionsAccessor};
     use std::sync::Arc;
 
-    let client = NamespaceClient::new(url.to_string());
+    let client = client(url);
     let id = vec!["vec".to_string(), "ml".to_string(), name.to_string()];
     let description = client.describe_table(&id).await?;
-    let mut options = description.storage_options.clone();
-    options.extend(fallback());
+    let wrapper = storage().await.wrapper(&description.location).await?;
 
     let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)]));
     let ids: Vec<i64> = (0..rows).map(|row| first_id + row).collect();
     let batch = RecordBatch::try_new(schema.clone(), vec![Arc::new(Int64Array::from(ids))])?;
     let params = WriteParams {
         mode: WriteMode::Append,
-        store_params: Some(ObjectStoreParams {
-            storage_options_accessor: Some(Arc::new(StorageOptionsAccessor::with_static_options(
-                options,
-            ))),
-            ..Default::default()
-        }),
+        store_params: Some(weed_lance_worker::dataset::store_params(wrapper)),
         ..Default::default()
     };
     Dataset::write(

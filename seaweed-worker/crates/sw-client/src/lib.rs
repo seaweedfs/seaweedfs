@@ -29,8 +29,8 @@ pub mod write;
 pub const MAX_READ_BYTES: u64 = 1 << 30; /* 1 GiB */
 
 pub use filer::{
-    AssignVolumeOptions, Assignment, EntryPage, FilerClient, FilerConfig, GrpcTls, LogPos, Seek,
-    VolumeLocation, is_unavailable, seek_page,
+    AssignVolumeOptions, Assignment, EntryExists, EntryPage, FilerClient, FilerConfig, GrpcTls,
+    LogPos, Seek, VolumeLocation, is_entry_exists, is_unavailable, seek_page,
 };
 pub use location_cache::{DEFAULT_RETAIN_GENERATIONS, LocationCache};
 pub use read::{

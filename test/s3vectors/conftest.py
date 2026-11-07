@@ -98,7 +98,7 @@ def cluster(request, tmp_path_factory):
 
 @pytest.fixture(scope="module", params=combinations(), ids=lambda p: "-".join(p))
 def open_cluster(request, tmp_path_factory):
-    """A cluster with no S3 identities, and an engine given no credentials."""
+    """A cluster whose gateway has no S3 identities."""
     yield from run_cluster(request.param, tmp_path_factory, identities=False)
 
 
@@ -260,23 +260,29 @@ def run_cluster(param, tmp_path_factory, identities):
         # VECTOR_READ_JWT=1 makes volume reads need a JWT; every weed process
         # and the workers sign with the key.
         read_jwt_key = os.environ.get("VECTOR_READ_JWT") and uuid.uuid4().hex
+        # The cluster's filer signing key: the gateway's catalog authenticates
+        # the worker and the CLI by the token they derive from it.
+        filer_signing_key = uuid.uuid4().hex
         # VECTOR_TLS=1 puts the volume servers behind HTTPS with client
         # certificates; every process finds security.toml in its cwd.
         if os.environ.get("VECTOR_TLS"):
             write_tls(directory)
 
-        def start(name, args, unset=()):
-            log = stack.enter_context((directory / f"{name}.log").open("w"))
+        def process_env(unset=()):
             env = dict(os.environ, AWS_ACCESS_KEY_ID="test", AWS_SECRET_ACCESS_KEY="test",
                        AWS_DEFAULT_REGION="us-east-1", AWS_EC2_METADATA_DISABLED="true",
-                       WEED_S3_SSE_KEY="s3vectors-test",
+                       WEED_S3_SSE_KEY="s3vectors-test", WEED_JWT_FILER_SIGNING_KEY=filer_signing_key,
                        **({"WEED_JWT_SIGNING_READ_KEY": read_jwt_key} if read_jwt_key else {}))
             env.pop("WEED_S3_SSE_KEK", None)
             if not read_jwt_key:
                 env.pop("WEED_JWT_SIGNING_READ_KEY", None)
             for key in unset:
                 env.pop(key)
-            process = subprocess.Popen(args, cwd=directory, stdout=log, stderr=log, env=env)
+            return env
+
+        def start(name, args, unset=()):
+            log = stack.enter_context((directory / f"{name}.log").open("w"))
+            process = subprocess.Popen(args, cwd=directory, stdout=log, stderr=log, env=process_env(unset))
             processes[name] = process
             stack.callback(stop, process)
             return process
@@ -300,16 +306,11 @@ def run_cluster(param, tmp_path_factory, identities):
                         f"-defaultStoreDir={directory / 'filer'}"])
         wait_for(lambda: listening(filer_grpc), processes, "filer not ready")
         endpoint = f"http://127.0.0.1:{s3}"
-        # weed s3 turns AWS_ACCESS_KEY_ID into an admin identity, and the engine
-        # would find it as a credential.
+        # weed s3 turns AWS_ACCESS_KEY_ID into an admin identity.
         if identities:
             config, unset = [f"-config={HERE / 's3.json'}"], ()
-            # The engine uses its credentials only with the endpoint it is given.
-            credentials = ["--storage-option", "aws_access_key_id=test",
-                           "--storage-option", "aws_secret_access_key=test",
-                           "--storage-option", f"aws_endpoint={endpoint}"]
         else:
-            config, unset, credentials = [], ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"), []
+            config, unset = [], ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY")
         # VECTOR_ENCRYPT_VOLUMES=1 has the gateway encrypt every chunk it
         # stores, which direct reads must undo.
         encrypt = ["-encryptVolumeData"] if os.environ.get("VECTOR_ENCRYPT_VOLUMES") else []
@@ -320,7 +321,10 @@ def run_cluster(param, tmp_path_factory, identities):
         wait_for(lambda: listening(s3), processes, "s3 not ready")
         if os.environ.get("VECTOR_TLS") or read_jwt_key or encrypt:
             probe_hardening(endpoint, filer, vol, directory, read_jwt_key)
-        start("vector", [engine, "--masters", master_addr, "--listen", f"127.0.0.1:{vector}", *credentials], unset)
+        # The engine keeps tables on the filers and volume servers itself; it
+        # has no S3 credentials to be given, and encrypts its chunks for the
+        # volume servers as the gateway does.
+        start("vector", [engine, "--masters", master_addr, "--listen", f"127.0.0.1:{vector}", *encrypt])
         wait_for(lambda: listening(vector), processes, "vector engine not ready")
         if os.environ.get("VECTOR_TLS"):
             wait_for(lambda: listening(s3_grpc), processes, "s3 gRPC not ready")
@@ -358,13 +362,14 @@ def run_cluster(param, tmp_path_factory, identities):
             wait_for(lambda: http_ready(f"{admin_url}/api/plugin/job-types"), processes, "admin not ready")
             start("lance-worker", [lance_worker, "--admin", f"127.0.0.1:{admin}.{admin_grpc}",
                                    "--namespace", f"http://127.0.0.1:{lance}", "--id", "vectors-test-worker",
-                                   "--access-key", "test", "--secret-key", "test"])
+                                   "--masters", master_addr, *(["--encryptVolumeData"] if encrypt else [])])
             wait_for(lambda: "lance_vector_index" in
                      [jt["job_type"] for jt in json.load(urllib.request.urlopen(f"{admin_url}/api/plugin/job-types", timeout=2))],
                      processes, "the Lance worker never registered with admin")
 
-        yield {"endpoint": endpoint, "mode": mode, "processes": processes, "directory": directory,
-               "catalog": f"http://127.0.0.1:{lance}", "admin": admin_url}
+        yield {"endpoint": endpoint, "mode": mode, "processes": processes, "directory": directory, "filer": filer,
+               "masters": master_addr, "filer_signing_key": filer_signing_key,
+               "catalog": f"http://127.0.0.1:{lance}", "admin": admin_url, "env": process_env()}
 
 
 @pytest.fixture(scope="module")

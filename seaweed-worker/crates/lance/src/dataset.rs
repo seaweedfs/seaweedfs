@@ -1,9 +1,9 @@
-//! Opening a Lance dataset with credentials the namespace vended.
+//! Opening a Lance dataset on the cluster's storage.
 //!
-//! The worker holds no storage credentials of its own: it asks the namespace to
-//! describe a table with `vend_credentials`, and the `storage_options` that come
-//! back are handed to lance as-is. They expire, so a job that runs longer than
-//! their lifetime re-describes rather than carrying one set throughout.
+//! The namespace says where a table is; its files are read and written on the
+//! filers and volume servers through [`DirectReads`]. The S3 store lance builds
+//! for the location is unsigned and never dialed, so no process here holds S3
+//! credentials. Tests on an in-process store open without storage.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -17,6 +17,7 @@ use lance::io::{
 };
 
 use crate::catalog::{NamespaceClient, TableDescription};
+use crate::direct_read::DirectReads;
 
 /// A table the worker is about to work on.
 pub struct OpenTable {
@@ -37,27 +38,43 @@ pub struct TableStats {
     pub schema: Option<String>,
 }
 
-/// Storage options an operator supplies for deployments that vend none.
-pub type FallbackOptions = HashMap<String, String>;
+/// Where tables are kept: the cluster's filers and volume servers, or, for
+/// tests on an in-process store, nowhere in particular.
+#[derive(Clone, Default)]
+pub struct Storage(pub Option<DirectReads>);
 
-/// Resolve a table through the namespace and open it.
-pub async fn open(
-    client: &NamespaceClient,
-    id: &[String],
-    fallback: &FallbackOptions,
-) -> Result<OpenTable> {
-    open_with(client, id, fallback, None).await
+impl Storage {
+    /// The store wrapper for a table at `location`, writing as the table's
+    /// bucket declares.
+    pub async fn wrapper(&self, location: &str) -> Result<Option<Arc<dyn WrappingObjectStore>>> {
+        let Some(direct) = &self.0 else {
+            return Ok(None);
+        };
+        let bucket = location
+            .strip_prefix("s3://")
+            .and_then(|rest| rest.split('/').next())
+            .with_context(|| format!("{location} names no bucket"))?;
+        let sse_s3 = direct.bucket_encrypts(bucket).await?;
+        Ok(Some(Arc::new(direct.encrypting(sse_s3))))
+    }
 }
 
-/// [`open`] with the dataset's object store wrapped, e.g. by a read cache.
-pub async fn open_with(
-    client: &NamespaceClient,
-    id: &[String],
-    fallback: &FallbackOptions,
-    wrapper: Option<Arc<dyn WrappingObjectStore>>,
-) -> Result<OpenTable> {
+/// What lance builds its own S3 store with: unsigned, so it looks for no
+/// credentials, and never dialed.
+pub fn unsigned_options() -> HashMap<String, String> {
+    HashMap::from([
+        ("aws_skip_signature".to_string(), "true".to_string()),
+        ("aws_region".to_string(), "us-east-1".to_string()),
+        ("aws_access_key_id".to_string(), String::new()),
+        ("aws_secret_access_key".to_string(), String::new()),
+    ])
+}
+
+/// Resolve a table through the namespace and open it.
+pub async fn open(client: &NamespaceClient, id: &[String], storage: &Storage) -> Result<OpenTable> {
     let description = client.describe_table(id).await?;
-    let dataset = open_at(&description, fallback, wrapper).await?;
+    let wrapper = storage.wrapper(&description.location).await?;
+    let dataset = open_at(&description, wrapper).await?;
     Ok(OpenTable {
         id: id.to_vec(),
         location: description.location,
@@ -65,83 +82,51 @@ pub async fn open_with(
     })
 }
 
-/// The object_store options for a table. The namespace vends object_store's own
-/// option names, so they pass straight through. What it vends always wins: the
-/// fallback exists because a deployment without STS vends no credentials at
-/// all, and then the worker has no other way to reach the data.
-pub fn table_options(
-    description: &TableDescription,
-    fallback: &FallbackOptions,
-) -> HashMap<String, String> {
-    let mut options: HashMap<String, String> = fallback.clone();
-    options.extend(description.storage_options.clone());
-    // A store that takes unsigned requests needs no credentials, but without
-    // any lance builds the AWS default chain, and that probes instance
-    // metadata on every open.
-    if options
-        .get("aws_skip_signature")
-        .is_some_and(|v| v == "true")
-    {
-        options.entry("aws_access_key_id".into()).or_default();
-        options.entry("aws_secret_access_key".into()).or_default();
-    }
-    options
-}
-
-/// Open a table the caller has already resolved.
+/// Open a table the caller has already resolved, with the store wrapped.
 pub async fn open_at(
     description: &TableDescription,
-    fallback: &FallbackOptions,
     wrapper: Option<Arc<dyn WrappingObjectStore>>,
 ) -> Result<Dataset> {
     DatasetBuilder::from_uri(&description.location)
-        .with_store_params(ObjectStoreParams {
-            storage_options_accessor: Some(Arc::new(StorageOptionsAccessor::with_static_options(
-                table_options(description, fallback),
-            ))),
-            object_store_wrapper: wrapper,
-            ..Default::default()
-        })
+        .with_store_params(store_params(wrapper))
         .load()
         .await
         .with_context(|| format!("open lance dataset at {}", description.location))
 }
 
+/// The store parameters every open and write uses.
+pub fn store_params(wrapper: Option<Arc<dyn WrappingObjectStore>>) -> ObjectStoreParams {
+    ObjectStoreParams {
+        storage_options_accessor: Some(Arc::new(StorageOptionsAccessor::with_static_options(
+            unsigned_options(),
+        ))),
+        object_store_wrapper: wrapper,
+        ..Default::default()
+    }
+}
+
 /// Remove every object under a table's location. A table the catalog can no
 /// longer describe is already dropped, so the call stays idempotent.
-pub async fn drop(
-    client: &NamespaceClient,
-    id: &[String],
-    fallback: &FallbackOptions,
-) -> Result<()> {
+pub async fn drop(client: &NamespaceClient, id: &[String], storage: &Storage) -> Result<()> {
     let description = match client.describe_table(id).await {
         Ok(description) => description,
         Err(err) if describe_not_found(&err) => return Ok(()),
         Err(err) => return Err(err),
     };
-    drop_at(id, &description, fallback).await
-}
-
-/// [`drop`] for a table the caller has already resolved.
-pub async fn drop_at(
-    id: &[String],
-    description: &TableDescription,
-    fallback: &FallbackOptions,
-) -> Result<()> {
     check_drop_location(id, &description.location)?;
-    let (store, path) = ObjectStore::from_uri_and_params(
-        Arc::new(ObjectStoreRegistry::default()),
-        &description.location,
-        &ObjectStoreParams {
-            storage_options_accessor: Some(Arc::new(StorageOptionsAccessor::with_static_options(
-                table_options(description, fallback),
-            ))),
-            ..Default::default()
-        },
-    )
-    .await?;
-    store.remove_dir_all(path).await?;
-    Ok(())
+    match &storage.0 {
+        Some(direct) => direct.remove_table(&description.location).await,
+        None => {
+            let (store, path) = ObjectStore::from_uri_and_params(
+                Arc::new(ObjectStoreRegistry::default()),
+                &description.location,
+                &store_params(None),
+            )
+            .await?;
+            store.remove_dir_all(path).await?;
+            Ok(())
+        }
+    }
 }
 
 /// Where the catalog puts a table it was given no location for, as the
@@ -228,43 +213,10 @@ fn schema_json(dataset: &Dataset) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{FallbackOptions, check_drop_location, table_location, table_options};
-    use crate::catalog::TableDescription;
+    use super::{check_drop_location, table_location};
 
     fn id(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|part| part.to_string()).collect()
-    }
-
-    fn options(pairs: &[(&str, &str)]) -> FallbackOptions {
-        pairs
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect()
-    }
-
-    #[test]
-    fn table_options_keep_an_unsigned_store_off_the_aws_default_chain() {
-        let described = |vended: &[(&str, &str)]| TableDescription {
-            location: "s3://bkt/vector/x".into(),
-            storage_options: options(vended),
-            managed_versioning: false,
-        };
-        let unsigned = described(&[("aws_skip_signature", "true")]);
-
-        let got = table_options(&unsigned, &FallbackOptions::new());
-        assert_eq!(got.get("aws_access_key_id").map(String::as_str), Some(""));
-        assert_eq!(
-            got.get("aws_secret_access_key").map(String::as_str),
-            Some("")
-        );
-
-        let fallback = options(&[("aws_access_key_id", "k"), ("aws_secret_access_key", "s")]);
-        let got = table_options(&unsigned, &fallback);
-        assert_eq!(got.get("aws_access_key_id").map(String::as_str), Some("k"));
-
-        let signed = described(&[("aws_endpoint", "http://s3:8333")]);
-        let got = table_options(&signed, &FallbackOptions::new());
-        assert!(!got.contains_key("aws_access_key_id"), "{got:?}");
     }
 
     #[test]

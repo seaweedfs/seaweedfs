@@ -45,7 +45,7 @@ pub(crate) fn declare_build_runtime(parameters: &mut HashMap<String, ConfigValue
 /// keeps the index covering.
 pub struct VectorIndexHandler {
     namespace_url: String,
-    fallback: dataset::FallbackOptions,
+    storage: dataset::Storage,
     signing_key: Option<SigningKey>,
     metrics: Option<crate::metrics::LanceMetrics>,
 }
@@ -54,7 +54,7 @@ impl VectorIndexHandler {
     pub fn new(namespace_url: String) -> Self {
         Self {
             namespace_url,
-            fallback: dataset::FallbackOptions::new(),
+            storage: dataset::Storage::default(),
             signing_key: None,
             metrics: None,
         }
@@ -65,8 +65,8 @@ impl VectorIndexHandler {
         self
     }
 
-    pub fn with_fallback(mut self, fallback: dataset::FallbackOptions) -> Self {
-        self.fallback = fallback;
+    pub fn with_storage(mut self, storage: dataset::Storage) -> Self {
+        self.storage = storage;
         self
     }
 
@@ -76,9 +76,7 @@ impl VectorIndexHandler {
     }
 
     fn client(&self) -> NamespaceClient {
-        NamespaceClient::new(self.namespace_url.clone())
-            .with_fallback(&self.fallback)
-            .with_signing_key(self.signing_key.as_ref())
+        NamespaceClient::new(self.namespace_url.clone()).with_signing_key(self.signing_key.as_ref())
     }
 }
 
@@ -179,7 +177,7 @@ impl JobHandler for VectorIndexHandler {
             if !is_vector_table(&id) {
                 continue;
             }
-            let table = match dataset::open(&client, &id, &self.fallback).await {
+            let table = match dataset::open(&client, &id, &self.storage).await {
                 Ok(table) => table,
                 Err(err) => {
                     if let Some(counters) = &self.metrics {
@@ -272,7 +270,7 @@ impl JobHandler for VectorIndexHandler {
             .ok_or_else(|| anyhow!("job {} carried no table_id", job.job_id))?;
 
         let client = self.client();
-        let mut table = dataset::open(&client, &id, &self.fallback).await?;
+        let mut table = dataset::open(&client, &id, &self.storage).await?;
         let rows = table.dataset.count_rows(None).await?;
         let partitions = partitions_for(rows);
         let mut output: HashMap<String, ConfigValue> = HashMap::new();

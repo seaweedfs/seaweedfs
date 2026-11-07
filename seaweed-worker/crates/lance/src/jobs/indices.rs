@@ -38,7 +38,7 @@ const MAX_UNINDEXED_CEILING: i64 = 100_000_000;
 /// slow one.
 pub struct OptimizeIndicesHandler {
     namespace_url: String,
-    fallback: dataset::FallbackOptions,
+    storage: dataset::Storage,
     signing_key: Option<SigningKey>,
     metrics: Option<crate::metrics::LanceMetrics>,
 }
@@ -47,7 +47,7 @@ impl OptimizeIndicesHandler {
     pub fn new(namespace_url: String) -> Self {
         Self {
             namespace_url,
-            fallback: dataset::FallbackOptions::new(),
+            storage: dataset::Storage::default(),
             signing_key: None,
             metrics: None,
         }
@@ -58,8 +58,8 @@ impl OptimizeIndicesHandler {
         self
     }
 
-    pub fn with_fallback(mut self, fallback: dataset::FallbackOptions) -> Self {
-        self.fallback = fallback;
+    pub fn with_storage(mut self, storage: dataset::Storage) -> Self {
+        self.storage = storage;
         self
     }
 
@@ -69,9 +69,7 @@ impl OptimizeIndicesHandler {
     }
 
     fn client(&self) -> NamespaceClient {
-        NamespaceClient::new(self.namespace_url.clone())
-            .with_fallback(&self.fallback)
-            .with_signing_key(self.signing_key.as_ref())
+        NamespaceClient::new(self.namespace_url.clone()).with_signing_key(self.signing_key.as_ref())
     }
 }
 
@@ -202,7 +200,7 @@ impl JobHandler for OptimizeIndicesHandler {
         let mut proposals = Vec::new();
         for encoded in &tables {
             let id = parse_id(encoded);
-            let table = match dataset::open(&client, &id, &self.fallback).await {
+            let table = match dataset::open(&client, &id, &self.storage).await {
                 Ok(table) => table,
                 Err(err) => {
                     if let Some(counters) = &self.metrics {
@@ -284,7 +282,7 @@ impl JobHandler for OptimizeIndicesHandler {
             .ok_or_else(|| anyhow!("job {} carried no table_id", job.job_id))?;
 
         let client = self.client();
-        let mut table = dataset::open(&client, &id, &self.fallback).await?;
+        let mut table = dataset::open(&client, &id, &self.storage).await?;
         let vector_table = is_vector_table(&id);
         let before = index_rows(&table, vector_table)
             .await?

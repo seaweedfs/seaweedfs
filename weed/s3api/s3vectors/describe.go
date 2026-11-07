@@ -20,25 +20,41 @@ type DescribeFn func(ctx context.Context, id []string) (string, map[string]strin
 // SetDescribe resolves every table this server sends to the engine, so the
 // engine opens it without a catalog round trip of its own.
 func (s *Server) SetDescribe(describe DescribeFn) {
-	s.vectors = &describedClient{VectorServiceClient: s.vectors, describe: describe}
+	s.vectors = &describedClient{VectorServiceClient: s.vectors, describe: describe, encrypts: s.bucketEncrypts}
 }
 
-// describedClient fills in the table's location and storage options before a
-// request reaches the engine.
+// bucketEncrypts reports whether the vector bucket declares SSE-S3, which the
+// S3 write path applies to every file of a Lance bucket and the engine must
+// apply to the files it writes itself.
+func (s *Server) bucketEncrypts(ctx context.Context, bucket string) (bool, error) {
+	record, err := s.vectorBucket(ctx, bucket)
+	if err != nil {
+		return false, err
+	}
+	return s3tables.DeclaredEncryption(record.Format, record.EncryptionConfiguration) != "", nil
+}
+
+// describedClient fills in the table's location and the bucket's encryption
+// before a request reaches the engine.
 type describedClient struct {
 	vector_pb.VectorServiceClient
 	describe DescribeFn
+	encrypts func(ctx context.Context, bucket string) (bool, error)
 }
 
 func (c *describedClient) resolve(ctx context.Context, table *vector_pb.Table) error {
-	if table == nil || table.Location != "" {
+	if table == nil || table.Location != "" || len(table.Id) == 0 {
 		return nil
 	}
-	location, options, err := c.describe(ctx, table.Id)
+	location, _, err := c.describe(ctx, table.Id)
 	if err != nil {
 		return describeErr(err)
 	}
-	table.Location, table.StorageOptions = location, options
+	sseS3, err := c.encrypts(ctx, table.Id[0])
+	if err != nil {
+		return describeErr(err)
+	}
+	table.Location, table.SseS3 = location, sseS3
 	return nil
 }
 

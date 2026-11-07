@@ -83,13 +83,14 @@ func (env *environment) maintainLanceTable(t *testing.T, bucket, namespace, tabl
 	cmd := exec.CommandContext(ctx, "cargo", "test",
 		"-p", "weed-lance-worker", "--test", "lifecycle", "--", "--nocapture")
 	cmd.Dir = filepath.Join(env.rootDir, "seaweed-worker")
+	// The worker keeps the table through the filers and volume servers the
+	// masters name, and the namespace knows it by the cluster key; it holds
+	// no S3 credentials.
 	cmd.Env = append(cmd.Environ(),
 		fmt.Sprintf("WEED_LANCE_NAMESPACE=http://127.0.0.1:%d", env.lancePort),
 		fmt.Sprintf("WEED_LANCE_TABLE=%s$%s$%s", bucket, namespace, table),
-		"AWS_ACCESS_KEY_ID="+accessKey,
-		"AWS_SECRET_ACCESS_KEY="+secretKey,
-		"AWS_REGION=us-east-1",
-		fmt.Sprintf("AWS_ENDPOINT_URL=http://127.0.0.1:%d", env.s3Port),
+		fmt.Sprintf("WEED_MASTERS=127.0.0.1:%d.%d", env.masterPort, env.masterGrpcPort),
+		"WEED_JWT_FILER_SIGNING_KEY="+env.clusterKey,
 	)
 	out, err := cmd.CombinedOutput()
 	t.Logf("lance worker:\n%s", out)

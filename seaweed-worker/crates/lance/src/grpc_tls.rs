@@ -220,7 +220,7 @@ fn build_config(files: &GrpcServerTls) -> Result<ServerConfig> {
 
 impl ServerTls {
     pub fn load(files: GrpcServerTls) -> Result<Arc<Self>> {
-        weed_lance_worker::tls::install_default_crypto_provider();
+        crate::tls::install_default_crypto_provider();
         let loaded = read_all(&files)?;
         let config = build_config(&files)?;
         Ok(Arc::new(Self {
@@ -400,7 +400,7 @@ fn client_config(
     files: &GrpcTls,
     (ca, cert, key): (Vec<u8>, Vec<u8>, Vec<u8>),
 ) -> Result<ClientConfig> {
-    weed_lance_worker::tls::install_default_crypto_provider();
+    crate::tls::install_default_crypto_provider();
     let verifier = ServerIdentityVerifier {
         roots: Arc::new(root_store(&files.ca_path, &ca)?),
         provider: Arc::new(aws_lc_rs::default_provider()),
@@ -676,7 +676,7 @@ mod tests {
     #[tokio::test]
     async fn a_silent_peer_does_not_hold_up_the_next_handshake() {
         use futures::StreamExt;
-        weed_lance_worker::tls::install_default_crypto_provider();
+        crate::tls::install_default_crypto_provider();
         let dir = tempfile::tempdir().unwrap();
         let tls = ServerTls::load(install(dir.path(), "a")).unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -722,7 +722,7 @@ mod tests {
 
     #[test]
     fn client_common_names_follow_the_allowlist() {
-        weed_lance_worker::tls::install_default_crypto_provider();
+        crate::tls::install_default_crypto_provider();
         let mut roots = RootCertStore::empty();
         for cert in CertificateDer::pem_file_iter(fixture("ca.pem")).unwrap() {
             roots.add(cert.unwrap()).unwrap();
@@ -756,7 +756,7 @@ mod tests {
 
     #[test]
     fn server_identities_follow_the_allowlist() {
-        weed_lance_worker::tls::install_default_crypto_provider();
+        crate::tls::install_default_crypto_provider();
         let leaf = |name: &str| CertificateDer::from_pem_file(fixture(name)).unwrap();
         let verifier = |allowed: &[&str], wildcard: &str| ServerIdentityVerifier {
             roots: Arc::new(
