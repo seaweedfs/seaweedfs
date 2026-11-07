@@ -21,6 +21,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // memFiler is a minimal in-memory SeaweedFilerClient backing the view handlers
@@ -64,12 +66,22 @@ func (m *memFiler) CreateEntry(_ context.Context, in *filer_pb.CreateEntryReques
 	if m.failFileCreate != nil && !in.Entry.IsDirectory {
 		return nil, m.failFileCreate
 	}
+	if _, taken := m.entries[path.Join(in.Directory, in.Entry.Name)]; taken && in.OExcl {
+		return &filer_pb.CreateEntryResponse{ErrorCode: filer_pb.FilerError_ENTRY_ALREADY_EXISTS}, nil
+	}
 	m.entries[path.Join(in.Directory, in.Entry.Name)] = in.Entry
 	return &filer_pb.CreateEntryResponse{}, nil
 }
 
 func (m *memFiler) DeleteEntry(_ context.Context, in *filer_pb.DeleteEntryRequest, _ ...grpc.CallOption) (*filer_pb.DeleteEntryResponse, error) {
 	prefix := path.Join(in.Directory, in.Name)
+	if entry, ok := m.entries[prefix]; ok {
+		for key, want := range in.ExpectedExtended {
+			if string(entry.Extended[key]) != string(want) {
+				return nil, status.Errorf(codes.FailedPrecondition, "%s: %s changed", prefix, key)
+			}
+		}
+	}
 	for p := range m.entries {
 		if p == prefix || strings.HasPrefix(p, prefix+"/") {
 			delete(m.entries, p)
