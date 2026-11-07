@@ -637,7 +637,13 @@ impl DirectReads {
             None => (format!("{}/{bucket}", self.shared.buckets_dir), path),
         };
         self.shared.stats.deletes.fetch_add(1, Ordering::Relaxed);
-        self.shared.source.delete(&parent, name, true).await?;
+        self.shared
+            .source
+            .delete(&parent, name, true)
+            .await
+            .inspect_err(|_| {
+                self.shared.stats.failures.fetch_add(1, Ordering::Relaxed);
+            })?;
         let under = format!("{parent}/{name}/");
         self.shared
             .objects
@@ -1050,6 +1056,9 @@ impl DirectStore {
             .source
             .delete(dir, name, false)
             .await
+            .inspect_err(|_| {
+                self.reads.stats.failures.fetch_add(1, Ordering::Relaxed);
+            })
             .with_context(|| format!("deleting {path}"))
             .map_err(generic)?;
         self.reads.objects.invalidate(&path);
@@ -1310,6 +1319,9 @@ impl Upload {
                     .source
                     .upload(&path, &collection, at, Bytes::from(encoded.data))
                     .await
+                    .inspect_err(|_| {
+                        store.reads.stats.failures.fetch_add(1, Ordering::Relaxed);
+                    })
                     .with_context(|| format!("uploading {path} at {at}"))
                     .map_err(generic)?;
                 uploaded.chunk.size = size;
@@ -1612,6 +1624,7 @@ mod tests {
         silent_creates: bool,
         /// Uploads after this many fail.
         uploads_allowed: Option<u64>,
+        fail_deletes: bool,
         /// This many discards fail before any succeeds.
         failing_discards: AtomicU64,
         /// The collections uploads named.
@@ -1756,6 +1769,9 @@ mod tests {
         }
 
         async fn delete(&self, dir: &str, name: &str, recursive: bool) -> anyhow::Result<()> {
+            if self.fail_deletes {
+                bail!("the filer is unreachable");
+            }
             let path = format!("{dir}/{name}");
             let under = format!("{path}/");
             self.entries
@@ -2438,6 +2454,34 @@ mod tests {
         assert!(is_not_found(&missing.context("ListEntries")));
         let remote = anyhow::anyhow!("resolve remote storage client for /buckets/vb/t: not found");
         assert!(!is_not_found(&remote.context("DeleteEntry")));
+    }
+
+    /// Failed uploads and deletes show in the storage report.
+    #[tokio::test]
+    async fn failed_writes_and_deletes_are_counted() {
+        let fake = Arc::new(Fake {
+            uploads_allowed: Some(0),
+            fail_deletes: true,
+            ..Default::default()
+        });
+        let reads = DirectReads::new(fake.clone(), "", no_keys());
+        let store = reads.wrap("s3$vb", Arc::new(InMemory::new()));
+        let failures = || reads.shared.stats.failures.load(Ordering::Relaxed);
+        store
+            .put(
+                &Path::from("vector/idx/data/a.lance"),
+                Bytes::from_static(b"x").into(),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(failures(), 1);
+        store
+            .delete(&Path::from("vector/idx/data/b.lance"))
+            .await
+            .unwrap_err();
+        assert_eq!(failures(), 2);
+        reads.remove_table("s3://vb/vector/idx").await.unwrap_err();
+        assert_eq!(failures(), 3);
     }
 
     /// A store writing through `fake`, with `chunk_size` bytes per chunk.
