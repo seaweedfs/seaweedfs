@@ -56,8 +56,6 @@ const FILE_MODE: u32 = 0o660;
 const DEFAULT_CHUNK_SIZE: usize = 4 << 20;
 /// The S3 Tables record of a table bucket, on the bucket's entry.
 const TABLE_BUCKET_METADATA: &str = "s3tables.metadata";
-/// How long a bucket's encryption setting is remembered.
-const BUCKET_SETTING_TTL: Duration = Duration::from_secs(60);
 
 #[derive(Clone)]
 pub struct DirectReads {
@@ -435,8 +433,6 @@ struct Shared {
     /// Write-once files, resolved once; everything else is looked up per
     /// request so reads follow writes.
     objects: moka::sync::Cache<String, Arc<Object>>,
-    /// Whether a bucket declares SSE-S3, by bucket.
-    encrypts: moka::sync::Cache<String, bool>,
     stats: Stats,
 }
 
@@ -564,9 +560,6 @@ impl DirectReads {
                 cipher: false,
                 filer_group: String::new(),
                 objects: moka::sync::Cache::new(OBJECT_CACHE_ENTRIES),
-                encrypts: moka::sync::Cache::builder()
-                    .time_to_live(BUCKET_SETTING_TTL)
-                    .build(),
                 stats: Stats::default(),
             }),
             filers: None,
@@ -576,26 +569,24 @@ impl DirectReads {
 
     /// Whether `bucket` declares SSE-S3 for the files its clients write, as
     /// the S3 write path decides it from the table bucket's record: a Lance
-    /// bucket with `sseAlgorithm` AES256.
+    /// bucket with `sseAlgorithm` AES256. Read from the filer each time, so a
+    /// bucket recreated with another setting is written as it now declares.
     pub async fn bucket_encrypts(&self, bucket: &str) -> anyhow::Result<bool> {
-        if let Some(known) = self.shared.encrypts.get(bucket) {
-            return Ok(known);
-        }
         let entry = self
             .shared
             .source
             .lookup(&self.shared.buckets_dir, bucket)
             .await
             .with_context(|| format!("looking up bucket {bucket}"))?;
-        let encrypts = entry
-            .and_then(|entry| entry.extended.get(TABLE_BUCKET_METADATA).cloned())
-            .and_then(|record| serde_json::from_slice::<serde_json::Value>(&record).ok())
-            .is_some_and(|record| {
-                record["format"] == "LANCE"
-                    && record["encryptionConfiguration"]["sseAlgorithm"] == "AES256"
-            });
-        self.shared.encrypts.insert(bucket.to_string(), encrypts);
-        Ok(encrypts)
+        let Some(record) =
+            entry.and_then(|entry| entry.extended.get(TABLE_BUCKET_METADATA).cloned())
+        else {
+            return Ok(false);
+        };
+        let record: serde_json::Value = serde_json::from_slice(&record)
+            .with_context(|| format!("bucket {bucket} has an unreadable S3 Tables record"))?;
+        Ok(record["format"] == "LANCE"
+            && record["encryptionConfiguration"]["sseAlgorithm"] == "AES256")
     }
 
     /// The same storage, writing objects encrypted with SSE-S3 when `sse_s3`,
@@ -2796,6 +2787,51 @@ mod tests {
             .unwrap();
         let typed = entry_of(&fake, "vector/idx/typed");
         assert_eq!(typed.attributes.unwrap().mime, "application/json");
+    }
+
+    /// A bucket encrypts when its S3 Tables record says LANCE and AES256,
+    /// is read afresh each time, and refuses a record that cannot be read.
+    #[tokio::test]
+    async fn bucket_encryption_follows_the_buckets_record() {
+        let fake = Arc::new(Fake::default());
+        let reads = DirectReads::new(fake.clone(), "", no_keys());
+        let record = |format: &str, sse: &str| {
+            format!(
+                r#"{{"format":"{format}","encryptionConfiguration":{{"sseAlgorithm":"{sse}"}}}}"#
+            )
+            .into_bytes()
+        };
+        fake.add("/buckets/plain", b"", |e| e.is_directory = true);
+        fake.add("/buckets/iceberg", b"", |e| {
+            e.is_directory = true;
+            e.extended
+                .insert(TABLE_BUCKET_METADATA.into(), record("ICEBERG", "AES256"));
+        });
+        fake.add("/buckets/lance", b"", |e| {
+            e.is_directory = true;
+            e.extended
+                .insert(TABLE_BUCKET_METADATA.into(), record("LANCE", "AES256"));
+        });
+        fake.add("/buckets/bad", b"", |e| {
+            e.is_directory = true;
+            e.extended
+                .insert(TABLE_BUCKET_METADATA.into(), b"{not json".to_vec());
+        });
+        assert!(!reads.bucket_encrypts("missing").await.unwrap());
+        assert!(!reads.bucket_encrypts("plain").await.unwrap());
+        assert!(!reads.bucket_encrypts("iceberg").await.unwrap());
+        assert!(reads.bucket_encrypts("lance").await.unwrap());
+        reads.bucket_encrypts("bad").await.unwrap_err();
+
+        fake.add("/buckets/lance", b"", |e| {
+            e.is_directory = true;
+            e.extended
+                .insert(TABLE_BUCKET_METADATA.into(), record("LANCE", ""));
+        });
+        assert!(
+            !reads.bucket_encrypts("lance").await.unwrap(),
+            "recreated bucket"
+        );
     }
 
     /// A table path is removed only when every component is a plain name.
