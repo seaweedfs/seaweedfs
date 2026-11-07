@@ -16,7 +16,7 @@ use prost_types::{ListValue, Struct, Value, value::Kind};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
-use weed_lance_worker::catalog::NamespaceClient;
+use weed_lance_worker::catalog::{NamespaceClient, TableDescription};
 use weed_lance_worker::dataset::{self, FallbackOptions};
 use weed_vector_core::index;
 use weed_vector_core::query::{self, Query};
@@ -370,6 +370,15 @@ fn rows_as_vectors(
     out
 }
 
+/// The description a gateway sent with the table, if it resolved it.
+fn resolved(table: &pb::Table) -> Option<TableDescription> {
+    (!table.location.is_empty()).then(|| TableDescription {
+        location: table.location.clone(),
+        storage_options: table.storage_options.clone(),
+        managed_versioning: false,
+    })
+}
+
 pub struct VectorServer {
     client: NamespaceClient,
     fallback: FallbackOptions,
@@ -399,15 +408,19 @@ impl VectorServer {
         self
     }
 
+    /// The table as the gateway resolved it, or through the catalog when the
+    /// request names no location.
+    async fn describe(&self, table: &pb::Table) -> Result<TableDescription> {
+        match resolved(table) {
+            Some(description) => Ok(description),
+            None => self.client.describe_table(&table.id).await,
+        }
+    }
+
     async fn open(&self, table: &pb::Table) -> Result<Dataset> {
-        let opened = dataset::open_with(
-            &self.client,
-            &table.id,
-            &self.fallback,
-            self.read_cache.clone(),
-        )
-        .await?;
-        let mut dataset = opened.dataset;
+        let description = self.describe(table).await?;
+        let mut dataset =
+            dataset::open_at(&description, &self.fallback, self.read_cache.clone()).await?;
         if table.version != 0 {
             dataset = dataset.checkout_version(table.version).await?;
         }
@@ -433,11 +446,7 @@ impl VectorService for VectorServer {
             return Err(Status::invalid_argument("dimension must be 1..=4096"));
         }
         // The gateway has already created the table through the catalog.
-        let description = self
-            .client
-            .describe_table(&table.id)
-            .await
-            .map_err(internal)?;
+        let description = self.describe(&table).await.map_err(internal)?;
         let options = dataset::table_options(&description, &self.fallback);
         let schema = schema_for(dimension, metric, &req.non_filterable_metadata_keys);
         let empty = RecordBatch::new_empty(schema.clone());
@@ -470,15 +479,17 @@ impl VectorService for VectorServer {
         let table = req
             .table
             .ok_or_else(|| Status::invalid_argument("missing table"))?;
-        dataset::drop(&self.client, &table.id, &self.fallback)
-            .await
-            .map_err(|err| {
-                if err.is::<dataset::DropRefused>() {
-                    Status::failed_precondition(format!("{err:#}"))
-                } else {
-                    internal(err)
-                }
-            })?;
+        let dropped = match resolved(&table) {
+            Some(description) => dataset::drop_at(&table.id, &description, &self.fallback).await,
+            None => dataset::drop(&self.client, &table.id, &self.fallback).await,
+        };
+        dropped.map_err(|err| {
+            if err.is::<dataset::DropRefused>() {
+                Status::failed_precondition(format!("{err:#}"))
+            } else {
+                internal(err)
+            }
+        })?;
         Ok(Response::new(pb::DropIndexResponse {}))
     }
 
@@ -972,7 +983,7 @@ mod tests {
             let request = pb::DropIndexRequest {
                 table: Some(pb::Table {
                     id: vec!["bkt".into(), "vector".into(), "x".into()],
-                    version: 0,
+                    ..Default::default()
                 }),
             };
             let err = server
@@ -981,5 +992,56 @@ mod tests {
                 .expect_err(location);
             assert_eq!(err.code(), tonic::Code::FailedPrecondition, "{location}");
         }
+    }
+
+    /// A table the gateway resolved is opened at the location it sent; the
+    /// catalog is not consulted.
+    #[tokio::test]
+    async fn a_resolved_table_needs_no_catalog() {
+        let dir = tempfile::tempdir().unwrap();
+        fragmented(&dir, &[0..3, 3..5], &[]).await;
+        let unreachable = NamespaceClient::new("http://127.0.0.1:1");
+        let server = VectorServer::new(unreachable, FallbackOptions::new());
+        let resolved = pb::Table {
+            id: vec!["bkt".into(), "vector".into(), "x".into()],
+            location: dir.path().to_str().unwrap().to_string(),
+            ..Default::default()
+        };
+
+        let got = server
+            .get_vectors(Request::new(pb::GetVectorsRequest {
+                table: Some(resolved.clone()),
+                keys: vec!["k001".into(), "k004".into()],
+                return_data: true,
+                ..Default::default()
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        let mut keys: Vec<&str> = got.vectors.iter().map(|v| v.key.as_str()).collect();
+        keys.sort();
+        assert_eq!(keys, ["k001", "k004"]);
+
+        let err = server
+            .drop_index(Request::new(pb::DropIndexRequest {
+                table: Some(resolved),
+            }))
+            .await
+            .expect_err("a resolved location outside the table");
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+
+        let unresolved = pb::Table {
+            id: vec!["bkt".into(), "vector".into(), "x".into()],
+            ..Default::default()
+        };
+        let err = server
+            .get_vectors(Request::new(pb::GetVectorsRequest {
+                table: Some(unresolved),
+                keys: vec!["k001".into()],
+                ..Default::default()
+            }))
+            .await
+            .expect_err("no location and no catalog");
+        assert_eq!(err.code(), tonic::Code::Unavailable);
     }
 }

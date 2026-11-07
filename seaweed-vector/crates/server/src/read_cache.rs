@@ -500,7 +500,7 @@ mod tests {
         .with_read_cache(ReadCache::new(16 << 20));
         let table = pb::Table {
             id: vec!["bkt".into(), "vector".into(), "x".into()],
-            version: 0,
+            ..Default::default()
         };
 
         create(&server, &table, 4).await;
