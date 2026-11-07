@@ -86,6 +86,25 @@ pub trait VolumeTransport: Send + Sync {
         Ok(VolumeWriteReceipt::default())
     }
 
+    /// [`Self::write_with_receipt`] with the volume told to sync the needle to
+    /// disk before it answers, when `fsync` is set. A transport that cannot ask
+    /// for that fails closed rather than acknowledge a write still in memory.
+    async fn write_synced(
+        &self,
+        location: &str,
+        file_id: &str,
+        auth: &str,
+        filename: &str,
+        data: Bytes,
+        fsync: bool,
+    ) -> Result<VolumeWriteReceipt> {
+        if fsync {
+            bail!("{} transport cannot request fsync", self.name());
+        }
+        self.write_with_receipt(location, file_id, auth, filename, data)
+            .await
+    }
+
     /// Short label for logs/diagnostics (e.g. `"http"`, `"rdma"`).
     fn name(&self) -> &'static str;
 }

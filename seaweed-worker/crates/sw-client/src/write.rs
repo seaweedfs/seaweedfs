@@ -162,7 +162,14 @@ impl Writer {
         let size = data.len() as u64;
         let receipt = self
             .transport
-            .write_with_receipt(&assign.url, &assign.file_id, &assign.auth, filename, data)
+            .write_synced(
+                &assign.url,
+                &assign.file_id,
+                &assign.auth,
+                filename,
+                data,
+                assign.fsync,
+            )
             .await
             .with_context(|| format!("upload {} to {}", assign.file_id, assign.url))?;
 
@@ -348,6 +355,7 @@ mod tests {
             file_id: fid.to_string(),
             url: "10.0.2.3:19601".to_string(),
             auth: String::new(),
+            fsync: false,
         }
     }
 
@@ -509,6 +517,7 @@ mod tests {
             file_id: "7,abc".to_string(),
             url: "10.0.0.2:8080".to_string(),
             auth: "write-token".to_string(),
+            fsync: false,
         };
 
         let chunk = writer

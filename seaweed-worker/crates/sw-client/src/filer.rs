@@ -274,6 +274,9 @@ pub struct Assignment {
     pub url: String,
     /// Per-fileId write JWT ("" if the cluster has no write signing key).
     pub auth: String,
+    /// The path's storage rule wants the needle on disk before the volume
+    /// answers.
+    pub fsync: bool,
 }
 
 /// Volume class hints passed to Seaweed's AssignVolume RPC.
@@ -788,6 +791,7 @@ impl FilerClient {
         }
         Ok(Assignment {
             file_id: resp.file_id,
+            fsync: resp.fsync,
             url,
             auth: resp.auth,
         })
