@@ -82,8 +82,7 @@ type Table struct {
 	Id    []string               `protobuf:"bytes,1,rep,name=id,proto3" json:"id,omitempty"`
 	// Dataset version to pin reads to; 0 means latest.
 	Version uint64 `protobuf:"varint,2,opt,name=version,proto3" json:"version,omitempty"`
-	// The table's Lance location, as the catalog describes it. Empty from a
-	// gateway that leaves the lookup to the engine.
+	// The table's Lance location, as the catalog describes it.
 	Location string `protobuf:"bytes,3,opt,name=location,proto3" json:"location,omitempty"`
 	// object_store options from describe_table (vended creds / endpoint).
 	StorageOptions map[string]string `protobuf:"bytes,4,rep,name=storage_options,json=storageOptions,proto3" json:"storage_options,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`

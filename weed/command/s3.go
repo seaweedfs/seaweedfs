@@ -433,9 +433,11 @@ func (s3opt *S3Options) startS3Server() bool {
 		}
 	}
 
-	// Start Lance Namespace server if enabled
+	// The S3 Vectors API resolves its tables through the catalog in process,
+	// whether or not the catalog's own port is served.
+	s3opt.lanceServer = s3opt.newLanceServer(s3ApiServer)
 	if s3opt.portLance != nil && *s3opt.portLance > 0 {
-		if httpS := s3opt.startLanceServer(s3ApiServer, listenOnLocalhost); httpS != nil {
+		if httpS := s3opt.startLanceServer(listenOnLocalhost); httpS != nil {
 			httpServers = append(httpServers, httpS)
 		}
 	}
@@ -667,13 +669,10 @@ func (s3opt *S3Options) startIcebergServer(s3ApiServer *s3api.S3ApiServer, liste
 	return httpS
 }
 
-// startLanceServer starts the Lance Namespace server on a separate port. It
-// shares the Iceberg catalog's credential role: one deployment vends table
-// credentials one way, whichever catalog the client speaks to.
-func (s3opt *S3Options) startLanceServer(s3ApiServer *s3api.S3ApiServer, listenOnLocalhost bool) *http.Server {
-	lanceRouter := mux.NewRouter().SkipClean(true)
-	lanceRouter.Use(util_http.EscapeSemicolonsInQuery)
-
+// newLanceServer builds the Lance Namespace catalog. It shares the Iceberg
+// catalog's credential role: one deployment vends table credentials one way,
+// whichever catalog the client speaks to.
+func (s3opt *S3Options) newLanceServer(s3ApiServer *s3api.S3ApiServer) *lance.Server {
 	lanceServer := lance.NewServer(s3ApiServer, s3ApiServer)
 	lanceServer.SetCredentialValidator(s3ApiServer)
 	lanceServer.SetSigningKey(s3ApiServer.FilerSigningKey)
@@ -682,8 +681,14 @@ func (s3opt *S3Options) startLanceServer(s3ApiServer *s3api.S3ApiServer, listenO
 	}
 	lanceServer.SetS3Endpoint(s3opt.deriveLanceStorageEndpoint())
 	lanceServer.SetS3Region(s3tables.DefaultRegion)
-	lanceServer.RegisterRoutes(lanceRouter)
-	s3opt.lanceServer = lanceServer
+	return lanceServer
+}
+
+// startLanceServer serves the Lance Namespace catalog on its own port.
+func (s3opt *S3Options) startLanceServer(listenOnLocalhost bool) *http.Server {
+	lanceRouter := mux.NewRouter().SkipClean(true)
+	lanceRouter.Use(util_http.EscapeSemicolonsInQuery)
+	s3opt.lanceServer.RegisterRoutes(lanceRouter)
 
 	listenAddress := fmt.Sprintf("%s:%d", *s3opt.bindIp, *s3opt.portLance)
 	lanceListener, lanceLocalListener, err := util.NewIpAndLocalListeners(
@@ -739,10 +744,7 @@ func (s3opt *S3Options) vectorsRouter(s3ApiServer *s3api.S3ApiServer, grpcDialOp
 	vectorsServer.SetRegion(s3tables.DefaultRegion)
 	vectorsServer.SetAccountID(s3tables.DefaultAccountID)
 	vectorsServer.SetEncryptionChecker(s3api.GetSSES3KeyManager().IsConfigured)
-	// Without the catalog the engine resolves tables itself, as before.
-	if s3opt.lanceServer != nil {
-		vectorsServer.SetDescribe(describe)
-	}
+	vectorsServer.SetDescribe(describe)
 	vectorsServer.RegisterRoutes(vectorsRouter)
 	return vectorsRouter
 }

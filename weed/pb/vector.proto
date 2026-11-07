@@ -33,8 +33,7 @@ message Table {
   repeated string id = 1;
   // Dataset version to pin reads to; 0 means latest.
   uint64 version = 2;
-  // The table's Lance location, as the catalog describes it. Empty from a
-  // gateway that leaves the lookup to the engine.
+  // The table's Lance location, as the catalog describes it.
   string location = 3;
   // object_store options from describe_table (vended creds / endpoint).
   map<string, string> storage_options = 4;
