@@ -596,13 +596,13 @@ impl DirectReads {
     fn report_every(&self, period: Duration) {
         let shared = Arc::downgrade(&self.shared);
         tokio::spawn(async move {
-            let mut last = (0, 0, 0);
+            let mut last = (0, 0, 0, 0);
             loop {
                 tokio::time::sleep(period).await;
                 let Some(s) = shared.upgrade() else { return };
                 let now = (
-                    s.stats.reads.load(Ordering::Relaxed)
-                        + s.stats.writes.load(Ordering::Relaxed)
+                    s.stats.reads.load(Ordering::Relaxed),
+                    s.stats.writes.load(Ordering::Relaxed)
                         + s.stats.deletes.load(Ordering::Relaxed),
                     s.stats.lookups.load(Ordering::Relaxed),
                     s.stats.failures.load(Ordering::Relaxed),
@@ -612,12 +612,12 @@ impl DirectReads {
                         "direct storage: {} reads ({} MiB), {} lookups, {} listings, {} writes ({} MiB), {} deletes, {} failures",
                         now.0,
                         s.stats.bytes.load(Ordering::Relaxed) >> 20,
-                        now.1,
+                        now.2,
                         s.stats.listings.load(Ordering::Relaxed),
                         s.stats.writes.load(Ordering::Relaxed),
                         s.stats.written.load(Ordering::Relaxed) >> 20,
                         s.stats.deletes.load(Ordering::Relaxed),
-                        now.2
+                        now.3
                     );
                     last = now;
                 }
@@ -1027,7 +1027,12 @@ impl ObjectStore for DirectStore {
         let upload = Upload::start(self.clone(), location.clone())?;
         let data: Bytes = payload.into();
         let md5 = Md5::digest(&data);
-        upload.put(data).await?;
+        if let Err(err) = upload.put(data).await {
+            if let Err(discard) = upload.discard_all().await {
+                tracing::warn!("{location}: discarding after a failed upload: {discard:#}");
+            }
+            return Err(err);
+        }
         upload.finish(exclusive, Some(md5.to_vec())).await
     }
 
@@ -1271,28 +1276,44 @@ impl Upload {
         let e_tag = etag(&entry);
         let created = self.store.reads.source.create(dir, entry, exclusive).await;
         if let Err(err) = created {
-            for uploaded in &chunks {
-                if let Err(discard) = self.store.reads.source.discard(&uploaded.assignment).await {
-                    tracing::warn!(
-                        "{}: discarding {}: {discard:#}",
-                        self.path,
-                        uploaded.chunk.file_id
-                    );
-                }
-            }
-            self.store
-                .reads
-                .stats
-                .failures
-                .fetch_add(1, Ordering::Relaxed);
-            return Err(if sw_client::is_entry_exists(&err) {
-                Error::AlreadyExists {
-                    path: self.location.to_string(),
-                    source: format!("{err:#}").into(),
-                }
+            // The filer may have saved the entry and lost its answer, or a
+            // retried exclusive create may find this very upload in place:
+            // chunks the saved entry references are kept.
+            let saved = match self.store.reads.source.lookup(dir, name).await {
+                Ok(Some(saved)) => saved
+                    .chunks
+                    .first()
+                    .is_some_and(|c| chunks.iter().any(|u| u.chunk.file_id == c.file_id)),
+                _ => false,
+            };
+            if saved {
+                tracing::warn!("{}: created despite {err:#}", self.path);
             } else {
-                generic(err.context(format!("creating {}", self.path)))
-            });
+                for uploaded in &chunks {
+                    if let Err(discard) =
+                        self.store.reads.source.discard(&uploaded.assignment).await
+                    {
+                        tracing::warn!(
+                            "{}: discarding {}: {discard:#}",
+                            self.path,
+                            uploaded.chunk.file_id
+                        );
+                    }
+                }
+                self.store
+                    .reads
+                    .stats
+                    .failures
+                    .fetch_add(1, Ordering::Relaxed);
+                return Err(if sw_client::is_entry_exists(&err) {
+                    Error::AlreadyExists {
+                        path: self.location.to_string(),
+                        source: format!("{err:#}").into(),
+                    }
+                } else {
+                    generic(err.context(format!("creating {}", self.path)))
+                });
+            }
         }
         self.store
             .reads
@@ -1432,6 +1453,11 @@ mod tests {
         uploads: AtomicU64,
         discarded: AtomicU64,
         fail_reads: bool,
+        /// Creates save the entry and then answer with an error, as a filer
+        /// whose reply was lost.
+        lose_create_replies: bool,
+        /// Uploads after this many fail.
+        uploads_allowed: Option<u64>,
     }
 
     #[async_trait::async_trait]
@@ -1513,6 +1539,9 @@ mod tests {
 
         async fn upload(&self, _path: &str, offset: u64, data: Bytes) -> anyhow::Result<Uploaded> {
             let n = self.uploads.fetch_add(1, Ordering::Relaxed) + 1;
+            if self.uploads_allowed.is_some_and(|allowed| n > allowed) {
+                bail!("volume server unreachable");
+            }
             let file_id = format!("7,{n:08x}");
             let chunk = FileChunk {
                 file_id: file_id.clone(),
@@ -1544,6 +1573,9 @@ mod tests {
                     .context(sw_client::EntryExists));
             }
             entries.insert(path, entry);
+            if self.lose_create_replies {
+                bail!("the filer did not answer");
+            }
             Ok(())
         }
 
@@ -2432,5 +2464,49 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, Error::NotFound { .. }), "{err}");
+    }
+
+    /// A create the filer saved but did not answer keeps its chunks and
+    /// counts as written; a put that fails midway leaves no needle behind.
+    #[tokio::test]
+    async fn uncertain_and_failed_writes_leave_nothing_wrong_behind() {
+        let fake = Arc::new(Fake {
+            lose_create_replies: true,
+            ..Default::default()
+        });
+        let store = writing_store(fake.clone(), no_keys(), 4096, false, false);
+        let path = Path::from("vector/idx/_versions/5.manifest");
+        store
+            .put_opts(
+                &path,
+                Bytes::from(vec![1u8; 5000]).into(),
+                PutMode::Create.into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(fake.discarded.load(Ordering::Relaxed), 0);
+        assert_eq!(fake.needles.lock().unwrap().len(), 2);
+        assert_eq!(
+            entry_of(&fake, "vector/idx/_versions/5.manifest")
+                .chunks
+                .len(),
+            2
+        );
+
+        let fake = Arc::new(Fake {
+            uploads_allowed: Some(1),
+            ..Default::default()
+        });
+        let store = writing_store(fake.clone(), no_keys(), 4096, false, false);
+        store
+            .put(
+                &Path::from("vector/idx/data/half.lance"),
+                Bytes::from(vec![2u8; 5000]).into(),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(fake.discarded.load(Ordering::Relaxed), 1);
+        assert!(fake.needles.lock().unwrap().is_empty());
+        assert!(fake.entries.lock().unwrap().is_empty());
     }
 }
