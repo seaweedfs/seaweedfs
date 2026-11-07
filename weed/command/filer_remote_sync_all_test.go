@@ -427,9 +427,10 @@ func TestAFollowNeverMovesAnOffsetSomeoneElseWrote(t *testing.T) {
 }
 
 // A resume position kept for the next attempt in this process is only good
-// for the mount and the offset it was earned under: a mount that cannot be
-// read, or that now maps the directory elsewhere, drops it, and so does an
-// offset someone else moved since (a same-location unmount and remount):
+// for the mount and the offset it was earned under: a mount that now maps
+// the directory elsewhere drops it (one that cannot be read leaves it to the
+// next attempt), and so does an offset someone else moved since (a
+// same-location unmount and remount):
 // the attempt then starts from the stored offset. Its own exit save, landed
 // although the call failed, is not someone else's.
 func TestAResumePositionStaysWithItsMount(t *testing.T) {
@@ -451,9 +452,15 @@ func TestAResumePositionStaysWithItsMount(t *testing.T) {
 	if err := o.resumeFor("/buckets/a", locB, nil, 100); err != nil || o.resumeTsNs != 0 {
 		t.Fatalf("remounted elsewhere: resume=%d err=%v", o.resumeTsNs, err)
 	}
+	// an unreadable mount keeps it: with -timeAgo and no checkpoint yet, the
+	// retry would otherwise start at a later now minus timeAgo, past the
+	// event the follow failed on
 	o = kept()
-	if err := o.resumeFor("/buckets/a", nil, errors.New("no table"), 100); err == nil || o.resumeTsNs != 0 {
+	if err := o.resumeFor("/buckets/a", nil, errors.New("no table"), 100); err == nil || o.resumeTsNs != 50 {
 		t.Fatalf("unreadable mount: resume=%d err=%v", o.resumeTsNs, err)
+	}
+	if err := o.resumeFor("/buckets/a", locB, nil, 100); err != nil || o.resumeTsNs != 0 {
+		t.Fatalf("remounted elsewhere while the table was unreadable: resume=%d err=%v", o.resumeTsNs, err)
 	}
 	o = kept()
 	if err := o.resumeFor("/buckets/a", locA, nil, 900); err != nil || o.resumeTsNs != 0 {

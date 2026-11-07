@@ -301,9 +301,10 @@ var exitAtMountEnd = func(mountedDir string, from, to *remote_pb.RemoteStorageLo
 
 // resumeFor checks the resume position a previous attempt in this process
 // kept against the mount and the stored offset as this attempt finds them.
-// The position is dropped when the mount cannot be read or maps the
-// directory to another location than the one it was earned under (a remount
-// elsewhere never resumes from the old mount's position), and when the
+// A mount that cannot be read keeps it for the next attempt to check. The
+// position is dropped when the mount maps the directory to another location
+// than the one it was earned under (a remount elsewhere never resumes from
+// the old mount's position), and when the
 // stored offset is no longer the one that attempt left, nor the position
 // itself (its own save at exit, which can land although the call failed):
 // someone else set it, remote.unmount after its purge or a mount after its
@@ -313,7 +314,6 @@ var exitAtMountEnd = func(mountedDir string, from, to *remote_pb.RemoteStorageLo
 // remount's pull.
 func (option *RemoteSyncOptions) resumeFor(dir string, loc *remote_pb.RemoteStorageLocation, detectErr error, storedNs int64) error {
 	if detectErr != nil {
-		option.clearResume()
 		return fmt.Errorf("read mount info: %w", detectErr)
 	}
 	if option.resumeTsNs <= 0 {
