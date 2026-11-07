@@ -7,9 +7,11 @@
 
 pub mod catalog;
 pub mod dataset;
+pub mod direct_read;
 pub mod jobs;
 pub mod metrics;
 pub mod preview;
+pub mod sse;
 pub mod tls;
 pub mod vector_index;
 
