@@ -218,6 +218,7 @@ async fn main() -> Result<()> {
         .map(|tls| {
             Arc::new(move |addr: &str| {
                 let channel = tonic::transport::Endpoint::new(format!("http://{addr}"))?
+                    .connect_timeout(Duration::from_secs(10))
                     .connect_with_connector_lazy(tls::connector(tls.clone()));
                 Ok(sw_client::FilerClient::from_channel(addr, channel))
             }) as FilerDialer
@@ -302,8 +303,11 @@ mod tests {
 
     #[test]
     fn nprobes_must_be_positive() {
-        assert!(Args::try_parse_from(["weed-vector", "--nprobes", "0"]).is_err());
-        let args = Args::try_parse_from(["weed-vector", "--nprobes", "12"]).unwrap();
+        let parse = |nprobes: &str| {
+            Args::try_parse_from(["weed-vector", "--masters", "m:9333", "--nprobes", nprobes])
+        };
+        assert!(parse("0").is_err());
+        let args = parse("12").unwrap();
         assert_eq!(args.nprobes.map(std::num::NonZeroUsize::get), Some(12));
     }
 
@@ -312,6 +316,8 @@ mod tests {
         let args = Args::try_parse_from(normalize_args(
             [
                 "weed-vector",
+                "-master",
+                "m:9333",
                 "--namespace",
                 "http://localhost:9101",
                 "-filer-signing-key",
@@ -322,5 +328,10 @@ mod tests {
         ))
         .unwrap();
         assert!(args.namespace.is_some() && args.filer_signing_key.is_some());
+    }
+
+    #[test]
+    fn the_masters_are_required() {
+        assert!(Args::try_parse_from(["weed-vector"]).is_err());
     }
 }
