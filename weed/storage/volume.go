@@ -73,7 +73,8 @@ type Volume struct {
 	ldbTimeout             int64
 
 	isCompactionInProgress atomic.Bool
-	lastDiskCheckNs        atomic.Int64 // unix time in nanoseconds for phantom volume detection
+	loadGeneration         atomic.Uint64 // changes on every load, including a compaction commit
+	lastDiskCheckNs        atomic.Int64  // unix time in nanoseconds for phantom volume detection
 
 	volumeInfoRWLock sync.RWMutex
 	volumeInfo       *volume_server_pb.VolumeInfo

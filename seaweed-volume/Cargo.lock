@@ -4608,6 +4608,7 @@ dependencies = [
  "jsonwebtoken",
  "kamadak-exif",
  "libc",
+ "lru",
  "md-5",
  "memmap2",
  "mime_guess",
