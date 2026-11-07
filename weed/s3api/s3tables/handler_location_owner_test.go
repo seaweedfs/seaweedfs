@@ -362,12 +362,16 @@ func TestRecordGoneDropsItsMoveReservation(t *testing.T) {
 
 	t.Run("rename", func(t *testing.T) {
 		fs, m := startRenameManager(t)
-		reserve(t, fs, "t")
+		requireOK(t, m, fs, "CreateTable", &CreateTableRequest{
+			TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"}, Name: "r", Format: FormatIceberg,
+			MetadataLocation: renameLocation("ns/r-files/metadata/v1.metadata.json"),
+		})
+		reserve(t, fs, "r")
 		requireOK(t, m, fs, "RenameTable", &RenameTableRequest{
-			TableBucketARN: mustBucketARN(t), SourceNamespace: []string{"ns"}, SourceName: "t", DestNamespace: []string{"ns"}, DestName: "u",
+			TableBucketARN: mustBucketARN(t), SourceNamespace: []string{"ns"}, SourceName: "r", DestNamespace: []string{"ns"}, DestName: "u",
 		})
 		assert.NotContains(t, fs.Get(nsPath, "u").Extended, ExtendedKeyMoving)
-		reuse(t, m, fs, "t")
+		reuse(t, m, fs, "r")
 	})
 
 	t.Run("delete", func(t *testing.T) {
