@@ -26,8 +26,8 @@ type RemoteSyncOptions struct {
 	clientId           int32
 	clientEpoch        int32
 	resumeTsNs         int64
-	// what resumeTsNs was earned under: the mount location, and the offset
-	// stored when it was kept (resumeFor)
+	// what resumeTsNs was earned under: the directory's remote location, and
+	// the offset stored when it was kept (resumeFor)
 	resumeLoc      *remote_pb.RemoteStorageLocation
 	resumeStoredNs int64
 }

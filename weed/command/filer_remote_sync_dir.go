@@ -82,9 +82,10 @@ func followMountedDir(option *RemoteSyncOptions, filerSource *source.FilerSource
 
 	// read filer remote storage mount mappings
 	_, mountKey, remoteStorageMountLocation, remoteStorage, detectErr := filer.DetectMountInfo(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir)
-	if err := option.resumeFor(mountedDir, remoteStorageMountLocation, detectErr, storedOffsetNs); err != nil {
+	if err := option.resumeFor(mountedDir, mountKey, remoteStorageMountLocation, detectErr, storedOffsetNs); err != nil {
 		return err
 	}
+	dirLoc := dirRemoteLocation(mountKey, mountedDir, remoteStorageMountLocation)
 	guard := &offsetGuard{dir: mountedDir, last: storedOffsetNs,
 		read: func() (int64, error) {
 			return remote_storage.GetSyncOffset(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir)
@@ -94,7 +95,7 @@ func followMountedDir(option *RemoteSyncOptions, filerSource *source.FilerSource
 		},
 	}
 
-	eachEntryFunc, err := option.makeEventProcessor(remoteStorage, mountedDir, dirRemoteLocation(mountKey, mountedDir, remoteStorageMountLocation), filerSource)
+	eachEntryFunc, err := option.makeEventProcessor(remoteStorage, mountedDir, dirLoc, filerSource)
 	if err != nil {
 		return err
 	}
@@ -188,7 +189,7 @@ func followMountedDir(option *RemoteSyncOptions, filerSource *source.FilerSource
 		// mount after its mapping write): the next attempt starts from theirs
 		option.clearResume()
 	} else {
-		option.resumeTsNs, option.resumeLoc, option.resumeStoredNs = resumeTsNs, remoteStorageMountLocation, guard.last
+		option.resumeTsNs, option.resumeLoc, option.resumeStoredNs = resumeTsNs, dirLoc, guard.last
 	}
 	if isClosed(stop) {
 		return errFollowStopped
@@ -302,8 +303,9 @@ var exitAtMountEnd = func(mountedDir string, from, to *remote_pb.RemoteStorageLo
 // resumeFor checks the resume position a previous attempt in this process
 // kept against the mount and the stored offset as this attempt finds them.
 // A mount that cannot be read keeps it for the next attempt to check. The
-// position is dropped when the mount maps the directory to another location
-// than the one it was earned under (a remount elsewhere never resumes from
+// position is dropped when the mount at mountKey maps the directory to
+// another remote location than the one it was earned under (a remount
+// elsewhere, or by a mount above or below the old one, never resumes from
 // the old mount's position), and when the
 // stored offset is no longer the one that attempt left, nor the position
 // itself (its own save at exit, which can land although the call failed):
@@ -312,13 +314,14 @@ var exitAtMountEnd = func(mountedDir string, from, to *remote_pb.RemoteStorageLo
 // guard saw the offset move drops the position. Replaying the old position
 // across an unmount and remount would upload pre-unmount content after the
 // remount's pull.
-func (option *RemoteSyncOptions) resumeFor(dir string, loc *remote_pb.RemoteStorageLocation, detectErr error, storedNs int64) error {
+func (option *RemoteSyncOptions) resumeFor(dir, mountKey string, mountLoc *remote_pb.RemoteStorageLocation, detectErr error, storedNs int64) error {
 	if detectErr != nil {
 		return fmt.Errorf("read mount info: %w", detectErr)
 	}
 	if option.resumeTsNs <= 0 {
 		return nil
 	}
+	loc := dirRemoteLocation(mountKey, dir, mountLoc)
 	switch {
 	case !sameMountLocation(option.resumeLoc, loc):
 		glog.V(0).Infof("%s: mounted at %+v now, not %+v where it stopped: not resuming from %d", dir, loc, option.resumeLoc, option.resumeTsNs)

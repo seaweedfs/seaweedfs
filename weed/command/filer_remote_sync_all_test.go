@@ -441,29 +441,38 @@ func TestAResumePositionStaysWithItsMount(t *testing.T) {
 	}
 
 	o := kept()
-	if err := o.resumeFor("/buckets/a", locA, nil, 100); err != nil || o.resumeTsNs != 50 {
+	if err := o.resumeFor("/buckets/a", "/buckets/a", locA, nil, 100); err != nil || o.resumeTsNs != 50 {
 		t.Fatalf("same mount, same offset: resume=%d err=%v", o.resumeTsNs, err)
 	}
 	o = kept()
-	if err := o.resumeFor("/buckets/a", locA, nil, 50); err != nil || o.resumeTsNs != 50 {
+	if err := o.resumeFor("/buckets/a", "/buckets/a", locA, nil, 50); err != nil || o.resumeTsNs != 50 {
 		t.Fatalf("its own exit save read back: resume=%d err=%v", o.resumeTsNs, err)
 	}
 	o = kept()
-	if err := o.resumeFor("/buckets/a", locB, nil, 100); err != nil || o.resumeTsNs != 0 {
+	if err := o.resumeFor("/buckets/a", "/buckets/a", locB, nil, 100); err != nil || o.resumeTsNs != 0 {
 		t.Fatalf("remounted elsewhere: resume=%d err=%v", o.resumeTsNs, err)
 	}
 	// an unreadable mount keeps it: with -timeAgo and no checkpoint yet, the
 	// retry would otherwise start at a later now minus timeAgo, past the
 	// event the follow failed on
 	o = kept()
-	if err := o.resumeFor("/buckets/a", nil, errors.New("no table"), 100); err == nil || o.resumeTsNs != 50 {
+	if err := o.resumeFor("/buckets/a", "", nil, errors.New("no table"), 100); err == nil || o.resumeTsNs != 50 {
 		t.Fatalf("unreadable mount: resume=%d err=%v", o.resumeTsNs, err)
 	}
-	if err := o.resumeFor("/buckets/a", locB, nil, 100); err != nil || o.resumeTsNs != 0 {
+	if err := o.resumeFor("/buckets/a", "/buckets/a", locB, nil, 100); err != nil || o.resumeTsNs != 0 {
 		t.Fatalf("remounted elsewhere while the table was unreadable: resume=%d err=%v", o.resumeTsNs, err)
 	}
+	// a directory below a mount is judged by its own remote location: the
+	// same remote mounted one level up maps it to another key
+	below := &RemoteSyncOptions{resumeTsNs: 50, resumeLoc: dirRemoteLocation("/buckets/a", "/buckets/a/x", locA), resumeStoredNs: 100}
+	if err := below.resumeFor("/buckets/a/x", "/buckets/a", locA, nil, 100); err != nil || below.resumeTsNs != 50 {
+		t.Fatalf("below the same mount: resume=%d err=%v", below.resumeTsNs, err)
+	}
+	if err := below.resumeFor("/buckets/a/x", "/buckets", locA, nil, 100); err != nil || below.resumeTsNs != 0 {
+		t.Fatalf("the same remote mounted above the old mount: resume=%d err=%v", below.resumeTsNs, err)
+	}
 	o = kept()
-	if err := o.resumeFor("/buckets/a", locA, nil, 900); err != nil || o.resumeTsNs != 0 {
+	if err := o.resumeFor("/buckets/a", "/buckets/a", locA, nil, 900); err != nil || o.resumeTsNs != 0 {
 		t.Fatalf("offset moved since, same mount: resume=%d err=%v", o.resumeTsNs, err)
 	}
 	// with the position dropped, the attempt starts at the stored offset
