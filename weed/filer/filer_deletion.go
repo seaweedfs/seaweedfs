@@ -318,11 +318,15 @@ func LookupByMasterClientFn(masterClient *wdclient.MasterClient) func(vids []str
 	return func(vids []string) (map[string]*operation.LookupResult, error) {
 		m := make(map[string]*operation.LookupResult)
 		for _, vid := range vids {
-			locs, _ := masterClient.GetVidLocations(vid)
-			m[vid] = &operation.LookupResult{
+			locs, err := masterClient.GetVidLocations(vid)
+			lookupRes := &operation.LookupResult{
 				VolumeOrFileId: vid,
 				Locations:      toOperationLocations(locs),
 			}
+			if err != nil {
+				lookupRes.Error = fmt.Sprintf("lookup error: %v", err)
+			}
+			m[vid] = lookupRes
 		}
 		return m, nil
 	}
