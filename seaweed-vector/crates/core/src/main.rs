@@ -12,7 +12,10 @@ use weed_vector_core::table::VectorTable;
 /// namespace that says where a table is, and the masters whose filers hold
 /// it.
 #[derive(Parser, Debug)]
-#[command(name = "weed-vector", about = "SeaweedFS vector query spike")]
+#[command(
+    name = "weed-vector",
+    about = "Describe, query and index S3 Vectors tables"
+)]
 struct Args {
     /// Lance namespace the tables live in.
     #[arg(
