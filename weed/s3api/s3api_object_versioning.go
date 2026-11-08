@@ -1262,13 +1262,26 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(ctx context.Context, bucket,
 		return fmt.Errorf("version ID is required for version-specific deletion")
 	}
 
+	// lookup retries transient filer errors and returns filer_pb.ErrNotFound
+	// unwrapped, so only a confirmed miss counts as the entry being gone.
+	lookup := func(dir, name string) (entry *filer_pb.Entry, err error) {
+		err = retryFilerOp(ctx, "deleteSpecificObjectVersion.getEntry "+dir+"/"+name, func() error {
+			var getErr error
+			entry, getErr = s3a.getEntry(dir, name)
+			return getErr
+		})
+		return entry, err
+	}
+
 	if versionId == "null" {
 		// Delete "null" version (pre-versioning object stored as regular file)
 		bucketDir := s3a.bucketDir(bucket)
 
 		// Check if the object exists
-		_, err := s3a.getEntry(bucketDir, normalizedObject)
-		if err != nil {
+		if _, err := lookup(bucketDir, normalizedObject); err != nil {
+			if !errors.Is(err, filer_pb.ErrNotFound) {
+				return fmt.Errorf("look up null version %s: %w", normalizedObject, err)
+			}
 			// Object doesn't exist - this is OK for delete operations (idempotent)
 			glog.V(2).Infof("deleteSpecificObjectVersion: null version object %s already deleted or doesn't exist", normalizedObject)
 			return nil
@@ -1280,10 +1293,15 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(ctx context.Context, bucket,
 		dir, name := util.NewFullPath(bucketDir, normalizedObject).DirAndName()
 		deleteErr := s3a.rmObject(ctx, dir, name, !metadataOnly, false)
 		if deleteErr != nil {
-			// Check if file was already deleted by another process
-			if _, checkErr := s3a.getEntry(bucketDir, normalizedObject); checkErr != nil {
+			// Check if file was already deleted by another process. Read once:
+			// if the recheck fails too, the error lets the caller retry the delete.
+			_, checkErr := s3a.getEntry(bucketDir, normalizedObject)
+			if errors.Is(checkErr, filer_pb.ErrNotFound) {
 				// File doesn't exist anymore, deletion was successful
 				return nil
+			}
+			if checkErr != nil {
+				return fmt.Errorf("failed to delete null version %s: %v (recheck failed: %v)", normalizedObject, deleteErr, checkErr)
 			}
 			return fmt.Errorf("failed to delete null version %s: %v", normalizedObject, deleteErr)
 		}
@@ -1294,7 +1312,13 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(ctx context.Context, bucket,
 	versionFile := s3a.getVersionFileName(versionId)
 
 	// Check if this is the latest version before attempting deletion (for potential metadata update)
-	versionsEntry, dirErr := s3a.getEntry(s3a.bucketDir(bucket), normalizedObject+s3_constants.VersionsFolder)
+	versionsEntry, dirErr := lookup(s3a.bucketDir(bucket), normalizedObject+s3_constants.VersionsFolder)
+	if dirErr != nil && !errors.Is(dirErr, filer_pb.ErrNotFound) {
+		// Without the pointer we cannot tell whether this is the latest
+		// version, and deleting the latest without repointing it first
+		// leaves the pointer dangling.
+		return fmt.Errorf("look up versions directory of %s: %w", normalizedObject, dirErr)
+	}
 	isLatestVersion := false
 	if dirErr == nil && versionsEntry.Extended != nil {
 		if latestVersionIdBytes, hasLatest := versionsEntry.Extended[s3_constants.ExtLatestVersionIdKey]; hasLatest {
@@ -1329,11 +1353,16 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(ctx context.Context, bucket,
 	// The deletion operation should be idempotent
 	deleteErr := s3a.rm(ctx, versionsDir, versionFile, !metadataOnly, false)
 	if deleteErr != nil {
-		// Check if file was already deleted by another process (race condition handling)
-		if _, checkErr := s3a.getEntry(versionsDir, versionFile); checkErr != nil {
+		// Check if file was already deleted by another process (race condition handling).
+		// Read once: if the recheck fails too, the error lets the caller retry the delete.
+		_, checkErr := s3a.getEntry(versionsDir, versionFile)
+		if errors.Is(checkErr, filer_pb.ErrNotFound) {
 			// File doesn't exist anymore, deletion was successful (another thread deleted it)
 			glog.V(2).Infof("deleteSpecificObjectVersion: version %s for %s/%s already deleted by another process", versionId, bucket, object)
 			return nil
+		}
+		if checkErr != nil {
+			return fmt.Errorf("failed to delete version %s: %v (recheck failed: %v)", versionId, deleteErr, checkErr)
 		}
 		// File still exists but deletion failed for another reason
 		return fmt.Errorf("failed to delete version %s: %v", versionId, deleteErr)
