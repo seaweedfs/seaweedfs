@@ -472,9 +472,6 @@ pub struct Connection {
     /// Dials the filers in place of `grpc_tls`, for a TLS setup sw-client
     /// cannot express, such as a server allowlist.
     pub filer_dialer: Option<FilerDialer>,
-    /// Encrypt every chunk written for the volume servers, as `weed s3
-    /// -encryptVolumeData` does; the filer's own setting turns it on too.
-    pub encrypt_volume_data: bool,
     /// The filer group, which the gateway prefixes a bucket's collection with.
     pub filer_group: String,
 }
@@ -488,7 +485,6 @@ impl fmt::Debug for Connection {
             .field("grpc_tls", &self.grpc_tls)
             .field("https_tls", &self.https_tls)
             .field("filer_dialer", &self.filer_dialer.is_some())
-            .field("encrypt_volume_data", &self.encrypt_volume_data)
             .field("filer_group", &self.filer_group)
             .finish()
     }
@@ -548,7 +544,7 @@ impl DirectReads {
         {
             let shared = Arc::get_mut(&mut reads.shared).expect("just created");
             shared.chunk_size = chunk_size;
-            shared.cipher = config.cipher || conn.encrypt_volume_data;
+            shared.cipher = config.cipher;
             shared.filer_group = conn.filer_group.clone();
         }
         reads.report_every(Duration::from_secs(30));

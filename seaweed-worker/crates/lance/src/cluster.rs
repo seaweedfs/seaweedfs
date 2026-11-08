@@ -221,11 +221,9 @@ impl Cluster {
     }
 
     /// Connects to the cluster's storage and follows the masters' filer list.
-    pub async fn storage(
-        &self,
-        security: &Security,
-        encrypt_volume_data: bool,
-    ) -> Result<DirectReads> {
+    /// Chunks are encrypted for the volume servers when the filer is
+    /// configured to (`weed filer -encryptVolumeData`), as `weed s3` does.
+    pub async fn storage(&self, security: &Security) -> Result<DirectReads> {
         // The filers are dialed as the masters are: grpc.client's credentials
         // and server allowlist, through this crate's own connector.
         let filer_dialer: Option<FilerDialer> = security
@@ -246,7 +244,6 @@ impl Cluster {
             grpc_tls: None,
             https_tls: security.https_client_tls()?,
             filer_dialer,
-            encrypt_volume_data,
             filer_group: self.filer_group.clone(),
         };
         let storage = DirectReads::connect(&conn)

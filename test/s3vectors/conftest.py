@@ -301,9 +301,13 @@ def run_cluster(param, tmp_path_factory, identities):
             "max": 64, "preStopSeconds": 0,
         }.items()])
         wait_for(lambda: listening(vol_grpc), processes, "volume not ready")
+        # VECTOR_ENCRYPT_VOLUMES=1 turns on the filer's volume encryption, which
+        # the gateway, the engine and the worker all follow: every chunk they
+        # store is encrypted, and direct reads must undo it.
+        encrypt = ["-encryptVolumeData"] if os.environ.get("VECTOR_ENCRYPT_VOLUMES") else []
         start("filer", [weed, "filer", f"-master={master_addr}", "-ip=127.0.0.1",
                         "-ip.bind=127.0.0.1", f"-port={filer}", f"-port.grpc={filer_grpc}",
-                        f"-defaultStoreDir={directory / 'filer'}"])
+                        f"-defaultStoreDir={directory / 'filer'}", *encrypt])
         wait_for(lambda: listening(filer_grpc), processes, "filer not ready")
         endpoint = f"http://127.0.0.1:{s3}"
         # weed s3 turns AWS_ACCESS_KEY_ID into an admin identity.
@@ -311,10 +315,7 @@ def run_cluster(param, tmp_path_factory, identities):
             config, unset = [f"-config={HERE / 's3.json'}"], ()
         else:
             config, unset = [], ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY")
-        # VECTOR_ENCRYPT_VOLUMES=1 has the gateway encrypt every chunk it
-        # stores, which direct reads must undo.
-        encrypt = ["-encryptVolumeData"] if os.environ.get("VECTOR_ENCRYPT_VOLUMES") else []
-        start("s3", [weed, "-v=1", "s3", f"-filer={filer_addr}", *config, *encrypt,
+        start("s3", [weed, "-v=1", "s3", f"-filer={filer_addr}", *config,
                      "-ip=127.0.0.1", "-ip.bind=127.0.0.1", f"-port={s3}",
                      f"-port.grpc={s3_grpc}", "-port.iceberg=0", f"-port.lance={lance}"], unset)
         wait_for(lambda: http_ready(f"http://127.0.0.1:{lance}/v1/namespace/root/list"), processes, "catalog not ready")
@@ -324,7 +325,7 @@ def run_cluster(param, tmp_path_factory, identities):
         # The engine keeps tables on the filers and volume servers itself; it
         # has no S3 credentials to be given, and encrypts its chunks for the
         # volume servers as the gateway does.
-        start("vector", [engine, "--masters", master_addr, "--listen", f"127.0.0.1:{vector}", *encrypt])
+        start("vector", [engine, "--masters", master_addr, "--listen", f"127.0.0.1:{vector}"])
         wait_for(lambda: listening(vector), processes, "vector engine not ready")
         if os.environ.get("VECTOR_TLS"):
             wait_for(lambda: listening(s3_grpc), processes, "s3 gRPC not ready")
@@ -362,7 +363,7 @@ def run_cluster(param, tmp_path_factory, identities):
             wait_for(lambda: http_ready(f"{admin_url}/api/plugin/job-types"), processes, "admin not ready")
             start("lance-worker", [lance_worker, "--admin", f"127.0.0.1:{admin}.{admin_grpc}",
                                    "--namespace", f"http://127.0.0.1:{lance}", "--id", "vectors-test-worker",
-                                   "--masters", master_addr, *(["--encryptVolumeData"] if encrypt else [])])
+                                   "--masters", master_addr])
             wait_for(lambda: "lance_vector_index" in
                      [jt["job_type"] for jt in json.load(urllib.request.urlopen(f"{admin_url}/api/plugin/job-types", timeout=2))],
                      processes, "the Lance worker never registered with admin")

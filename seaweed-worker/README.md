@@ -95,8 +95,9 @@ which `--masters` names the masters of (`--filer-group` picks the filers). What
 that takes comes from the same security.toml the weed processes use:
 `grpc.client` for the filers, `https.client` for volume servers under HTTPS,
 `jwt.signing.read.key` where volume reads are signed, and `s3.sse.kek` or
-`s3.sse.key` where a bucket encrypts with SSE-S3. `--encryptVolumeData` encrypts
-every chunk the worker writes for the volume servers, as the gateway's flag does.
+`s3.sse.key` where a bucket encrypts with SSE-S3. Chunks are encrypted for the
+volume servers when the filer is (`weed filer -encryptVolumeData`), as the S3
+gateway's are.
 
 The namespace authenticates the worker by the cluster token it derives from
 `jwt.filer_signing.key`; the same key signs the admin stream when admin requires

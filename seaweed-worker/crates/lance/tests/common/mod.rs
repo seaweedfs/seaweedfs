@@ -93,9 +93,7 @@ pub async fn storage() -> weed_lance_worker::dataset::Storage {
     let security = security();
     let cluster =
         weed_lance_worker::cluster::Cluster::new(&masters, "", &security).expect("masters");
-    weed_lance_worker::dataset::Storage(Some(
-        cluster.storage(&security, false).await.expect("storage"),
-    ))
+    weed_lance_worker::dataset::Storage(Some(cluster.storage(&security).await.expect("storage")))
 }
 
 fn security() -> weed_lance_worker::security::Security {

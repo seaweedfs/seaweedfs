@@ -23,14 +23,6 @@ struct Args {
     /// through.
     #[arg(long, alias = "master", env = "WEED_VECTOR_MASTERS")]
     masters: String,
-    /// Encrypt every chunk written for the volume servers, as `weed s3
-    /// -encryptVolumeData` does.
-    #[arg(
-        long = "encryptVolumeData",
-        alias = "encrypt-volume-data",
-        env = "WEED_VECTOR_ENCRYPT_VOLUME_DATA"
-    )]
-    encrypt_volume_data: bool,
     /// The filer group whose filers the engine keeps tables through.
     #[arg(
         long,
@@ -135,7 +127,7 @@ async fn main() -> Result<()> {
         .await
         .with_context(|| format!("listen on {}", args.listen))?;
     let cluster = Cluster::new(&args.masters, &args.filer_group, &security)?;
-    let reads = cluster.storage(&security, args.encrypt_volume_data).await?;
+    let reads = cluster.storage(&security).await?;
     let mut service = VectorServer::new()
         .with_nprobes(args.nprobes.map(std::num::NonZeroUsize::get))
         .with_storage(reads);
