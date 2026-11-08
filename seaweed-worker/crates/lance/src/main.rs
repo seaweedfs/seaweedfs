@@ -78,11 +78,11 @@ struct Args {
     #[arg(long)]
     tls_server_name: Option<String>,
 
-    /// Shared secret for the admin control stream, `jwt.filer_signing.key`.
-    /// Required by admins that authenticate the worker stream with a signing
-    /// key. The Lance namespace takes it too: only a holder gets write
-    /// credentials to vector indexes. When not given, read from where the Go
-    /// worker reads it: WEED_JWT_FILER_SIGNING_KEY, then security.toml.
+    /// The cluster's `jwt.filer_signing.key`. The Lance namespace knows the
+    /// worker by a token derived from it, and admins that authenticate the
+    /// worker stream with a signing key require it. When not given, read from
+    /// where the Go worker reads it: WEED_JWT_FILER_SIGNING_KEY, then
+    /// security.toml.
     #[arg(long, env = "WEED_FILER_SIGNING_KEY")]
     filer_signing_key: Option<String>,
 

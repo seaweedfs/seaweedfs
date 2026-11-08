@@ -19,7 +19,8 @@ struct Args {
     #[arg(long, env = "WEED_VECTOR_LISTEN", default_value = "127.0.0.1:8090")]
     listen: String,
     /// Comma-separated master addresses. The engine registers with them, so
-    /// the gateway finds it, and asks them for the filers it reads through.
+    /// the gateway finds it, and asks them for the filers it keeps tables
+    /// through.
     #[arg(long, alias = "master", env = "WEED_VECTOR_MASTERS")]
     masters: String,
     /// Encrypt every chunk written for the volume servers, as `weed s3
@@ -30,7 +31,7 @@ struct Args {
         env = "WEED_VECTOR_ENCRYPT_VOLUME_DATA"
     )]
     encrypt_volume_data: bool,
-    /// The filer group whose filers the engine reads through.
+    /// The filer group whose filers the engine keeps tables through.
     #[arg(
         long,
         alias = "filer.group",
@@ -45,10 +46,11 @@ struct Args {
     /// tenth of the index's partitions, at least 8; more under a filter.
     #[arg(long, env = "WEED_VECTOR_NPROBES")]
     nprobes: Option<std::num::NonZeroUsize>,
-    /// The cluster's security.toml, for gRPC TLS: this server's identity is
-    /// [grpc.vector], the masters are dialed with [grpc.client]. By default
-    /// the file weed processes find in -config_dir, ., ~/.seaweedfs and
-    /// /etc/seaweedfs.
+    /// The cluster's security.toml: [grpc.vector] for this server,
+    /// [grpc.client] for the masters and filers, https.client for volume
+    /// servers under HTTPS, jwt.signing.read.key for signed volume reads,
+    /// s3.sse.kek or s3.sse.key for SSE-S3 buckets. By default the file weed
+    /// processes find in -config_dir, ., ~/.seaweedfs and /etc/seaweedfs.
     #[arg(long, env = "WEED_VECTOR_SECURITY_TOML")]
     security_toml: Option<PathBuf>,
     /// The directory weed's -config_dir names, searched for security.toml
