@@ -39,15 +39,6 @@ struct Args {
     )]
     filer_group: String,
 
-    /// Encrypt every chunk written for the volume servers, as `weed s3
-    /// -encryptVolumeData` does.
-    #[arg(
-        long = "encryptVolumeData",
-        alias = "encrypt-volume-data",
-        env = "WEED_ENCRYPT_VOLUME_DATA"
-    )]
-    encrypt_volume_data: bool,
-
     /// The `jwt.filer_signing.key` of the cluster, which the namespace
     /// authenticates cluster processes with; security.toml's by default.
     #[arg(long, env = "WEED_FILER_SIGNING_KEY")]
@@ -208,9 +199,7 @@ async fn main() -> Result<()> {
         Some(masters) => {
             let cluster =
                 weed_lance_worker::cluster::Cluster::new(masters, &args.filer_group, &security)?;
-            Storage(Some(
-                cluster.storage(&security, args.encrypt_volume_data).await?,
-            ))
+            Storage(Some(cluster.storage(&security).await?))
         }
         None => Storage::default(),
     };
@@ -408,14 +397,16 @@ mod tests {
             "m:9333",
             "--filer-group",
             "eu",
-            "--encryptVolumeData",
             "describe",
             "t",
         ])
         .unwrap();
         assert_eq!(args.masters.as_deref(), Some("m:9333"));
         assert_eq!(args.filer_group, "eu");
-        assert!(args.encrypt_volume_data);
+        assert!(
+            Args::try_parse_from(["weed-vector", "--encryptVolumeData", "describe", "t"]).is_err(),
+            "volume encryption follows the filer"
+        );
     }
 
     #[test]

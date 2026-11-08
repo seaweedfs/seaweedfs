@@ -48,14 +48,6 @@ struct Args {
         default_value = ""
     )]
     filer_group: String,
-    /// Encrypt every chunk written for the volume servers, as `weed s3
-    /// -encryptVolumeData` does.
-    #[arg(
-        long = "encryptVolumeData",
-        alias = "encrypt-volume-data",
-        env = "WEED_ENCRYPT_VOLUME_DATA"
-    )]
-    encrypt_volume_data: bool,
     /// The cluster's security.toml; by default the file weed processes find
     /// in -config_dir, ., ~/.seaweedfs and /etc/seaweedfs.
     #[arg(long, env = "WEED_WORKER_SECURITY_TOML")]
@@ -195,9 +187,7 @@ async fn main() -> Result<()> {
 
     let cluster =
         weed_lance_worker::cluster::Cluster::new(&args.masters, &args.filer_group, &security)?;
-    let storage = weed_lance_worker::dataset::Storage(Some(
-        cluster.storage(&security, args.encrypt_volume_data).await?,
-    ));
+    let storage = weed_lance_worker::dataset::Storage(Some(cluster.storage(&security).await?));
 
     let metrics = Metrics::new(&options.worker_id, &options.worker_version)?;
     let lance_metrics = LanceMetrics::new(&metrics)?;
