@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 
@@ -94,6 +95,8 @@ func TestDeleteSpecificObjectVersionLookupErrors(t *testing.T) {
 		deleteResp  string
 		wantErr     bool
 		wantDeletes int
+		// wantErrText lists messages the returned error has to carry.
+		wantErrText []string
 	}{
 		{
 			name:      "null version lookup fails",
@@ -130,6 +133,7 @@ func TestDeleteSpecificObjectVersionLookupErrors(t *testing.T) {
 			deleteErr:   errDeleteTimedOut,
 			wantErr:     true,
 			wantDeletes: 1,
+			wantErrText: []string{"delete timed out", "filer store read failed"},
 		},
 		{
 			name:      "null version delete fails and the recheck finds it gone",
@@ -184,6 +188,7 @@ func TestDeleteSpecificObjectVersionLookupErrors(t *testing.T) {
 			deleteErr:   errDeleteTimedOut,
 			wantErr:     true,
 			wantDeletes: 1,
+			wantErrText: []string{"delete timed out", "filer store read failed"},
 		},
 		{
 			name:      "version is already gone",
@@ -218,6 +223,11 @@ func TestDeleteSpecificObjectVersionLookupErrors(t *testing.T) {
 			}
 			if !c.wantErr && err != nil {
 				t.Fatalf("delete failed: %v", err)
+			}
+			for _, want := range c.wantErrText {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q does not mention %q", err, want)
+				}
 			}
 			if len(fake.deletes) != c.wantDeletes {
 				t.Fatalf("got %d delete calls %v, want %d", len(fake.deletes), fake.deletes, c.wantDeletes)
