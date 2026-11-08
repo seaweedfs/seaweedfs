@@ -384,7 +384,15 @@ func runLakekeeperTableBucketRepro(t *testing.T, env *TestEnvironment) {
 		t.Fatalf("Create S3 client failed: %v", err)
 	}
 
-	objectKey := fmt.Sprintf("%s/%s/data/part-%d.parquet", namespaceName, tableName, time.Now().UnixNano())
+	table, err := client.GetTable(ctx, bucketARN, namespaceName, tableName)
+	if err != nil {
+		t.Fatalf("GetTable failed: %v", err)
+	}
+	tableDir := strings.TrimPrefix(table.WarehouseLocation, "s3://"+bucketName+"/")
+	if tableDir == "" || tableDir == table.WarehouseLocation {
+		t.Fatalf("unexpected warehouse location %q", table.WarehouseLocation)
+	}
+	objectKey := fmt.Sprintf("%s/data/part-%d.parquet", tableDir, time.Now().UnixNano())
 	createResp, err := s3Client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
 		Bucket: aws.String(bucketName),
 		Key:    aws.String(objectKey),
@@ -554,6 +562,18 @@ func (c *s3TablesClient) CreateTable(ctx context.Context, bucketARN, namespace, 
 	}
 	path := "/tables/" + url.PathEscape(bucketARN) + "/" + url.PathEscape(namespace)
 	return c.doRequest(ctx, "CreateTable", http.MethodPut, path, req, nil)
+}
+
+func (c *s3TablesClient) GetTable(ctx context.Context, bucketARN, namespace, name string) (*s3tables.GetTableResponse, error) {
+	query := url.Values{}
+	query.Set("tableBucketARN", bucketARN)
+	query.Set("namespace", namespace)
+	query.Set("name", name)
+	var resp s3tables.GetTableResponse
+	if err := c.doRequest(ctx, "GetTable", http.MethodGet, "/get-table?"+query.Encode(), nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }
 
 func (c *s3TablesClient) DeleteTable(ctx context.Context, bucketARN, namespace, name string) error {

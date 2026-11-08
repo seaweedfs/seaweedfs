@@ -138,7 +138,8 @@ func (h *S3TablesHandler) handleCreateView(w http.ResponseWriter, r *http.Reques
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
 		return err
 	}
-	if err := h.refuseClaimedLocation(w, r, filerClient, bucketName, viewPath, req.MetadataLocation); err != nil {
+	root := CatalogRecordRoot(bucketName, viewPath, req.MetadataLocation, "")
+	if err := h.refuseClaimedLocation(w, r, filerClient, bucketName, viewPath, root); err != nil {
 		return err
 	}
 
@@ -172,7 +173,7 @@ func (h *S3TablesHandler) handleCreateView(w http.ResponseWriter, r *http.Reques
 			ExtendedKeyEntryType: []byte(EntryTypeView),
 			ExtendedKeyDeleting:  []byte(createClaim),
 		}
-		if err := h.claimCatalogEntryAt(r.Context(), client, bucketName, viewPath, req.MetadataLocation, attrs, viewPath); err != nil {
+		if err := h.claimCatalogEntryAt(r.Context(), client, bucketName, viewPath, root, attrs, viewPath); err != nil {
 			return err
 		}
 		return h.confirmParent(r.Context(), client, namespacePath, isNamespace, viewPath, attrs, viewPath)
@@ -558,9 +559,10 @@ func (h *S3TablesHandler) handleUpdateView(w http.ResponseWriter, r *http.Reques
 			metadata.Metadata.FullMetadata = req.Metadata.FullMetadata
 		}
 	}
-	movesRoot := req.MetadataLocation != "" && CatalogRecordRoot(target.bucketName, viewPath, req.MetadataLocation) != CatalogRecordRoot(target.bucketName, viewPath, metadata.MetadataLocation)
+	newRoot := CatalogRecordRoot(target.bucketName, viewPath, req.MetadataLocation, metadata.WarehouseLocation)
+	movesRoot := req.MetadataLocation != "" && newRoot != metadata.root(target.bucketName, viewPath)
 	if movesRoot {
-		if err := h.refuseClaimedLocation(w, r, filerClient, target.bucketName, viewPath, req.MetadataLocation); err != nil {
+		if err := h.refuseClaimedLocation(w, r, filerClient, target.bucketName, viewPath, newRoot); err != nil {
 			return err
 		}
 	}
@@ -600,7 +602,7 @@ func (h *S3TablesHandler) handleUpdateView(w http.ResponseWriter, r *http.Reques
 		if !movesRoot {
 			return h.mutateCatalogRecord(r.Context(), client, viewPath, write)
 		}
-		return h.moveCatalogRecord(r.Context(), client, target.bucketName, viewPath, metadata.MetadataLocation, target.storedMetadata, metadataBytes, write)
+		return h.moveCatalogRecord(r.Context(), client, target.bucketName, viewPath, newRoot, target.storedMetadata, metadataBytes, write)
 	})
 	if err != nil {
 		if errors.Is(err, ErrLocationInUse) {

@@ -137,7 +137,7 @@ func (m *Manager) AuthorizeCreateTable(ctx context.Context, filerClient FilerCli
 		tablePath := GetTablePath(target.bucketName, target.namespaceName, target.tableName)
 		if authErr = ValidateMetadataLocation(req.MetadataLocation, target.bucketName, target.namespaceName); authErr != nil {
 			m.handler.writeError(recorder, http.StatusBadRequest, ErrCodeInvalidRequest, authErr.Error())
-		} else if authErr = m.handler.refuseClaimedLocation(recorder, httpReq, filerClient, target.bucketName, tablePath, req.MetadataLocation); authErr == nil {
+		} else if authErr = m.handler.refuseClaimedLocation(recorder, httpReq, filerClient, target.bucketName, tablePath, CatalogRecordRoot(target.bucketName, tablePath, req.MetadataLocation, "")); authErr == nil {
 			return nil
 		}
 	}

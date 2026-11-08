@@ -90,7 +90,10 @@ func (s *Server) pruneExpiredStageCreateMarkers(ctx context.Context, bucketName 
 	})
 }
 
-func (s *Server) loadLatestStageCreateMarker(ctx context.Context, bucketName string, namespace []string, tableName string) (*stageCreateMarker, error) {
+// loadLatestStageCreateMarker returns the newest live marker for the table.
+// Each stage has a location of its own, so given the table UUID a commit
+// assigns, only the marker staged with that UUID is returned.
+func (s *Server) loadLatestStageCreateMarker(ctx context.Context, bucketName string, namespace []string, tableName string, tableUUID string) (*stageCreateMarker, error) {
 	opCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
@@ -136,6 +139,9 @@ func (s *Server) loadLatestStageCreateMarker(ctx context.Context, bucketName str
 			createdAt, err := time.Parse(time.RFC3339Nano, marker.CreatedAt)
 			if err != nil {
 				createdAt = time.Time{}
+			}
+			if tableUUID != "" && !strings.EqualFold(marker.TableUUID, tableUUID) {
+				continue
 			}
 			if latestMarker == nil || createdAt.After(latestCreatedAt) {
 				candidate := marker
@@ -273,4 +279,18 @@ func isStageCreateEnabled() bool {
 	default:
 		return true
 	}
+}
+
+// assignedTableUUID returns the UUID a commit's assign-uuid update names.
+func assignedTableUUID(updates []json.RawMessage) string {
+	for _, raw := range updates {
+		var update struct {
+			Action string `json:"action"`
+			UUID   string `json:"uuid"`
+		}
+		if json.Unmarshal(raw, &update) == nil && update.Action == "assign-uuid" {
+			return update.UUID
+		}
+	}
+	return ""
 }

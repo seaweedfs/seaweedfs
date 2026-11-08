@@ -189,7 +189,11 @@ func (e *conflictEnv) metadataFiles() []string {
 // straight from the filer the way a client reading S3 directly would.
 func (e *conflictEnv) metadataFile(location string) table.Metadata {
 	e.t.Helper()
-	entry := e.filer.Get(e.metadataDir(), path.Base(location))
+	bucket, tablePath, err := parseS3Location(tableLocationFromMetadataLocation(location))
+	if err != nil {
+		e.t.Fatalf("parse %s: %v", location, err)
+	}
+	entry := e.filer.Get(metadataDirPath(bucket, tablePath), path.Base(location))
 	if entry == nil {
 		e.t.Fatalf("no metadata file behind %s", location)
 	}

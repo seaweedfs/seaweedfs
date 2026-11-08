@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 
@@ -73,6 +74,19 @@ func tableLocationFromMetadataLocation(metadataLocation string) string {
 		return trimmed[:idx]
 	}
 	return trimmed
+}
+
+// tableLocation is where the table GetTable answered for keeps its files: the
+// directory of its metadata, else the one assigned when it was created
+// without a location, else its name path.
+func tableLocation(getResp s3tables.GetTableResponse, bucketName string, namespace []string, tableName string) string {
+	if location := tableLocationFromMetadataLocation(getResp.MetadataLocation); location != "" {
+		return location
+	}
+	if location := strings.TrimSuffix(getResp.WarehouseLocation, "/"); location != "" {
+		return location
+	}
+	return fmt.Sprintf("s3://%s/%s", bucketName, path.Join(flattenNamespacePath(namespace), tableName))
 }
 
 // accessDelegationHeader is how a client asks the catalog to hand back storage

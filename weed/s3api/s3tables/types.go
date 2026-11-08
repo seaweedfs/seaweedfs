@@ -243,6 +243,8 @@ type GetTableResponse struct {
 	VersionToken     string         `json:"versionToken"`
 	MetadataVersion  int            `json:"metadataVersion"`
 	Metadata         *TableMetadata `json:"metadata,omitempty"`
+	// WarehouseLocation is set on tables created without a location.
+	WarehouseLocation string `json:"warehouseLocation,omitempty"`
 }
 
 type ListTablesRequest struct {

@@ -21,6 +21,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // memFiler is a minimal in-memory SeaweedFilerClient backing the view handlers
@@ -33,6 +35,8 @@ type memFiler struct {
 	// failFileCreate, when set, makes CreateEntry fail for non-directory entries,
 	// simulating a metadata-file write error.
 	failFileCreate error
+	// onLookup, when set, runs at the start of every LookupDirectoryEntry.
+	onLookup func(p string)
 }
 
 func newMemFiler() *memFiler {
@@ -48,6 +52,9 @@ func (m *memFiler) seed(p string, entry *filer_pb.Entry) {
 }
 
 func (m *memFiler) LookupDirectoryEntry(_ context.Context, in *filer_pb.LookupDirectoryEntryRequest, _ ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	if hook := m.onLookup; hook != nil {
+		hook(path.Join(in.Directory, in.Name))
+	}
 	entry, ok := m.entries[path.Join(in.Directory, in.Name)]
 	if !ok {
 		return nil, filer_pb.ErrNotFound
@@ -59,12 +66,22 @@ func (m *memFiler) CreateEntry(_ context.Context, in *filer_pb.CreateEntryReques
 	if m.failFileCreate != nil && !in.Entry.IsDirectory {
 		return nil, m.failFileCreate
 	}
+	if _, taken := m.entries[path.Join(in.Directory, in.Entry.Name)]; taken && in.OExcl {
+		return &filer_pb.CreateEntryResponse{ErrorCode: filer_pb.FilerError_ENTRY_ALREADY_EXISTS}, nil
+	}
 	m.entries[path.Join(in.Directory, in.Entry.Name)] = in.Entry
 	return &filer_pb.CreateEntryResponse{}, nil
 }
 
 func (m *memFiler) DeleteEntry(_ context.Context, in *filer_pb.DeleteEntryRequest, _ ...grpc.CallOption) (*filer_pb.DeleteEntryResponse, error) {
 	prefix := path.Join(in.Directory, in.Name)
+	if entry, ok := m.entries[prefix]; ok {
+		for key, want := range in.ExpectedExtended {
+			if string(entry.Extended[key]) != string(want) {
+				return nil, status.Errorf(codes.FailedPrecondition, "%s: %s changed", prefix, key)
+			}
+		}
+	}
 	for p := range m.entries {
 		if p == prefix || strings.HasPrefix(p, prefix+"/") {
 			delete(m.entries, p)
@@ -200,7 +217,16 @@ func TestCreateViewDuplicateDoesNotClobberMetadata(t *testing.T) {
 		t.Fatalf("first create status = %d, want 200 (body: %s)", w.Code, w.Body.String())
 	}
 
-	metadataKey := path.Join(s3tables.GetTablePath(bucket, "ns", "v"), "metadata", "v1.metadata.json")
+	var created struct {
+		MetadataLocation string `json:"metadata-location"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	if !strings.HasPrefix(created.MetadataLocation, "s3://"+bucket+"/ns/v-") {
+		t.Fatalf("metadata-location = %q, want one under a directory of the view's own", created.MetadataLocation)
+	}
+	metadataKey := path.Join(s3tables.TablesPath, strings.TrimPrefix(created.MetadataLocation, "s3://"))
 	first, ok := fc.entries[metadataKey]
 	if !ok {
 		t.Fatalf("metadata file not written at %s", metadataKey)
@@ -216,6 +242,31 @@ func TestCreateViewDuplicateDoesNotClobberMetadata(t *testing.T) {
 	}
 	if got := fc.entries[metadataKey].Content; !bytes.Equal(got, original) {
 		t.Fatalf("duplicate create clobbered stored metadata:\n got %s\nwant %s", got, original)
+	}
+}
+
+// A view create that loses the race for its name answers with the view the
+// catalog registered and writes no metadata of its own.
+func TestCreateViewThatLosesTheRaceReturnsTheRegisteredView(t *testing.T) {
+	const bucket = "warehouse"
+	fc := newMemFiler()
+	seedNamespace(fc, bucket, "ns", s3_constants.AccountAdminId)
+	s := NewServer(fc, nil)
+	first := httptest.NewRecorder()
+	raceAtSecondLookup(fc, s3tables.GetTablePath(bucket, "ns", "v"), func() {
+		s.handleCreateView(first, newCreateViewRequest(t, "ns", "v", "SELECT 1"))
+	})
+	second := httptest.NewRecorder()
+	s.handleCreateView(second, newCreateViewRequest(t, "ns", "v", "SELECT 2"))
+
+	won, lost := decodeCreated(t, first), decodeCreated(t, second)
+	if lost != won {
+		t.Errorf("losing create answered %+v, want the registered view %+v", lost, won)
+	}
+	for p, entry := range fc.entries {
+		if !entry.IsDirectory && strings.HasSuffix(p, ".metadata.json") && p != path.Join(s3tables.TablesPath, strings.TrimPrefix(won.MetadataLocation, "s3://")) {
+			t.Errorf("losing create wrote %s", p)
+		}
 	}
 }
 
