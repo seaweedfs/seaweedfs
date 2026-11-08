@@ -21,13 +21,15 @@ type offlineCollectionMaster struct {
 func (s *offlineCollectionMaster) CollectionList(context.Context, *master_pb.CollectionListRequest) (*master_pb.CollectionListResponse, error) {
 	return &master_pb.CollectionListResponse{Collections: []*master_pb.Collection{{Name: "live"}, {Name: "unrelated-offline"}, {Name: "prospective"}}}, nil
 }
-func (s *offlineCollectionMaster) VolumeList(context.Context, *master_pb.VolumeListRequest) (*master_pb.VolumeListResponse, error) {
+func (s *offlineCollectionMaster) VolumeList(_ context.Context, req *master_pb.VolumeListRequest) (*master_pb.VolumeListResponse, error) {
 	s.topologyCalls.Add(1)
+	volumes := []*master_pb.VolumeInformationMessage{{Id: 1, Collection: "live", Size: 100, FileCount: 3}}
+	if req.TopologyOnly {
+		volumes = nil
+	}
 	return &master_pb.VolumeListResponse{TopologyInfo: &master_pb.TopologyInfo{DataCenterInfos: []*master_pb.DataCenterInfo{{
 		RackInfos: []*master_pb.RackInfo{{DataNodeInfos: []*master_pb.DataNodeInfo{{
-			DiskInfos: map[string]*master_pb.DiskInfo{"": {VolumeInfos: []*master_pb.VolumeInformationMessage{
-				{Id: 1, Collection: "live", Size: 100, FileCount: 3},
-			}}},
+			DiskInfos: map[string]*master_pb.DiskInfo{"": {VolumeInfos: volumes}},
 		}}}},
 	}}}}, nil
 }
