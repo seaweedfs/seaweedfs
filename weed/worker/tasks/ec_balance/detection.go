@@ -86,7 +86,7 @@ func Detection(
 		VolumeRatio: volumeRatio,
 		// Move incrementally across detection cycles rather than draining a rack
 		// in one batch; the scheduler re-evaluates each cycle.
-		GlobalMaxMovesPerRack: 10,
+		GlobalMaxMovesPerRack: globalMaxMovesPerRack(ecConfig, maxResults),
 		// Balance heterogeneous-capacity racks by fractional fullness.
 		GlobalUtilizationBased: true,
 		RackTotalCapRaised: func(collection string, vid uint32, rackCap, evenCap int) {
@@ -385,6 +385,21 @@ func movePhaseOrder(phase string) int {
 	default:
 		return 3
 	}
+}
+
+// globalMaxMovesPerRack is the configured per-rack cap on global moves, or the default
+// when unset (0 would otherwise mean unlimited to the planner). It never exceeds
+// maxResults: the detection keeps at most that many moves, and each planned global move
+// costs a scan of the source node's volumes, so a larger cap only adds planning time.
+func globalMaxMovesPerRack(c *Config, maxResults int) int {
+	moves := c.GlobalMaxMovesPerRack
+	if moves <= 0 {
+		moves = DefaultGlobalMaxMovesPerRack
+	}
+	if maxResults > 0 {
+		moves = min(moves, maxResults)
+	}
+	return moves
 }
 
 func movePhasePriority(phase string) types.TaskPriority {

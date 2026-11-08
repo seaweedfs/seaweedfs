@@ -43,6 +43,48 @@ func TestDeriveECBalanceWorkerConfig(t *testing.T) {
 			},
 		},
 		{
+			name:   "global moves per rack defaults to 10",
+			values: nil,
+			check: func(t *testing.T, config *ecBalanceWorkerConfig) {
+				if got := config.TaskConfig.GlobalMaxMovesPerRack; got != 10 {
+					t.Errorf("expected default global_max_moves_per_rack 10, got %d", got)
+				}
+			},
+		},
+		{
+			name: "global moves per rack override",
+			values: map[string]*plugin_pb.ConfigValue{
+				"global_max_moves_per_rack": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 200}},
+			},
+			check: func(t *testing.T, config *ecBalanceWorkerConfig) {
+				if got := config.TaskConfig.GlobalMaxMovesPerRack; got != 200 {
+					t.Errorf("expected global_max_moves_per_rack 200, got %d", got)
+				}
+			},
+		},
+		{
+			name: "global moves per rack never 0, which the planner reads as unlimited",
+			values: map[string]*plugin_pb.ConfigValue{
+				"global_max_moves_per_rack": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
+			},
+			check: func(t *testing.T, config *ecBalanceWorkerConfig) {
+				if got := config.TaskConfig.GlobalMaxMovesPerRack; got != 1 {
+					t.Errorf("expected clamp to 1, got %d", got)
+				}
+			},
+		},
+		{
+			name: "global moves per rack clamped to max",
+			values: map[string]*plugin_pb.ConfigValue{
+				"global_max_moves_per_rack": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1 << 31}},
+			},
+			check: func(t *testing.T, config *ecBalanceWorkerConfig) {
+				if got := config.TaskConfig.GlobalMaxMovesPerRack; got != 5000 {
+					t.Errorf("expected clamp to 5000, got %d", got)
+				}
+			},
+		},
+		{
 			name: "threshold clamped to min",
 			values: map[string]*plugin_pb.ConfigValue{
 				"imbalance_threshold": {Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: 0.01}},

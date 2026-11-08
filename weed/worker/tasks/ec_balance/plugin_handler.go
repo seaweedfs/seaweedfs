@@ -21,7 +21,10 @@ import (
 const (
 	ecBalanceMinImbalanceThreshold = 0.05
 	ecBalanceMaxImbalanceThreshold = 0.5
-	ecBalanceMinServerCount        = 2
+	// The planner treats 0 as unlimited, which would plan a whole drain in one detection run.
+	ecBalanceMinGlobalMaxMovesPerRack = 1
+	ecBalanceMaxGlobalMaxMovesPerRack = 5000
+	ecBalanceMinServerCount           = 2
 )
 
 func init() {
@@ -150,6 +153,16 @@ func (h *ECBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: ecBalanceMinServerCount}},
 						},
 						{
+							Name:        "global_max_moves_per_rack",
+							Label:       "Global Moves Per Rack Per Detection",
+							Description: "Most cross-volume load-balancing moves planned per rack in one detection run. The default moves slowly; raise it to work off a server that holds far more shards than its peers.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
+							Required:    true,
+							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: ecBalanceMinGlobalMaxMovesPerRack}},
+							MaxValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: ecBalanceMaxGlobalMaxMovesPerRack}},
+						},
+						{
 							Name:        "io_byte_per_second",
 							Label:       "Shard Copy IO Limit (bytes/sec)",
 							Description: "Limit each EC shard copy's rate in bytes per second. 0 falls back to each volume server's own maintenance rate.",
@@ -169,10 +182,11 @@ func (h *ECBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 				},
 			},
 			DefaultValues: map[string]*plugin_pb.ConfigValue{
-				"imbalance_threshold": {Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: 0.2}},
-				"min_server_count":    {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 3}},
-				"io_byte_per_second":  {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
-				"preferred_tags":      {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
+				"imbalance_threshold":       {Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: 0.2}},
+				"min_server_count":          {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 3}},
+				"global_max_moves_per_rack": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: DefaultGlobalMaxMovesPerRack}},
+				"io_byte_per_second":        {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
+				"preferred_tags":            {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
 			},
 		},
 		AdminRuntimeDefaults: &plugin_pb.AdminRuntimeDefaults{
@@ -188,10 +202,11 @@ func (h *ECBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 			ExecutionTimeoutSeconds:       1800,
 		},
 		WorkerDefaultValues: map[string]*plugin_pb.ConfigValue{
-			"imbalance_threshold": {Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: 0.2}},
-			"min_server_count":    {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 3}},
-			"io_byte_per_second":  {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
-			"preferred_tags":      {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
+			"imbalance_threshold":       {Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: 0.2}},
+			"min_server_count":          {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 3}},
+			"global_max_moves_per_rack": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: DefaultGlobalMaxMovesPerRack}},
+			"io_byte_per_second":        {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
+			"preferred_tags":            {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
 		},
 	}
 }
@@ -427,6 +442,9 @@ func deriveECBalanceWorkerConfig(values map[string]*plugin_pb.ConfigValue) *ecBa
 		minServerCount = ecBalanceMinServerCount
 	}
 	taskConfig.MinServerCount = minServerCount
+
+	globalMaxMoves := pluginworker.ReadInt64Config(values, "global_max_moves_per_rack", int64(taskConfig.GlobalMaxMovesPerRack))
+	taskConfig.GlobalMaxMovesPerRack = int(min(max(globalMaxMoves, ecBalanceMinGlobalMaxMovesPerRack), ecBalanceMaxGlobalMaxMovesPerRack))
 
 	ioBytePerSecond := pluginworker.ReadInt64Config(values, "io_byte_per_second", taskConfig.IoBytePerSecond)
 	if ioBytePerSecond < 0 {
