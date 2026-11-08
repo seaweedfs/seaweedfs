@@ -55,13 +55,6 @@ struct Args {
     /// first.
     #[arg(long, alias = "config_dir", env = "WEED_VECTOR_CONFIG_DIR")]
     config_dir: Option<PathBuf>,
-    /// Ignored: the gateway resolves every table it sends. Still accepted so
-    /// an existing command line starts.
-    #[arg(long, hide = true)]
-    namespace: Option<String>,
-    /// Ignored, like --namespace.
-    #[arg(long, hide = true)]
-    filer_signing_key: Option<String>,
 }
 
 // weed tools take Go-style single-dash long flags; normalize_args converts
@@ -125,11 +118,6 @@ fn advertised_addr(listen: &str, masters: &[String]) -> String {
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     let args = Args::parse_from(normalize_args(std::env::args().collect()));
-    if args.namespace.is_some() || args.filer_signing_key.is_some() {
-        tracing::warn!(
-            "--namespace and --filer-signing-key are ignored: the gateway resolves every table it sends"
-        );
-    }
     weed_lance_worker::tls::install_default_crypto_provider();
     let security = Security::load(args.security_toml.as_deref(), args.config_dir.as_deref())?;
     if let Some(path) = security.path() {
@@ -209,22 +197,17 @@ mod tests {
     }
 
     #[test]
-    fn an_earlier_command_line_still_parses() {
-        let args = Args::try_parse_from(normalize_args(
-            [
-                "weed-vector",
-                "-master",
-                "m:9333",
-                "--namespace",
-                "http://localhost:9101",
-                "-filer-signing-key",
-                "k",
-            ]
-            .map(String::from)
-            .to_vec(),
-        ))
-        .unwrap();
-        assert!(args.namespace.is_some() && args.filer_signing_key.is_some());
+    fn the_catalog_flags_are_gone() {
+        let parse = |extra: &[&str]| {
+            let mut argv = vec!["weed-vector", "-master", "m:9333"];
+            argv.extend_from_slice(extra);
+            Args::try_parse_from(normalize_args(argv.into_iter().map(String::from).collect()))
+        };
+        assert_eq!(parse(&[]).unwrap().masters, "m:9333");
+        // The gateway resolves every table it sends; the engine has no
+        // catalog to name or authenticate to.
+        assert!(parse(&["--namespace", "http://localhost:9101"]).is_err());
+        assert!(parse(&["-filer-signing-key", "k"]).is_err());
     }
 
     #[test]
