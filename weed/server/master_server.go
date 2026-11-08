@@ -110,6 +110,8 @@ type MasterServer struct {
 	adminLocks *AdminLocks
 
 	Cluster *cluster.Cluster
+	// orders each stream's cluster list change with its lock ring change
+	clusterNodeLock sync.Mutex
 
 	LockRingManager *cluster.LockRingManager
 
