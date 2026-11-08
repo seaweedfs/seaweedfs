@@ -67,6 +67,7 @@ func (c *commandCollectionList) Do(args []string, commandEnv *CommandEnv, writer
 	for _, c := range collections {
 		cif, found := collectionInfos[c]
 		if !found {
+			fmt.Fprintf(writer, "collection:\"%s\"\tvolumeCount:UNKNOWN\n", c)
 			continue
 		}
 		fmt.Fprintf(writer, "collection:\"%s\"\tvolumeCount:%d\tsize:%.0f\tfileCount:%.0f\tdeletedBytes:%.0f\tdeletion:%.0f\n", c, cif.VolumeCount, cif.Size, cif.FileCount, cif.DeletedByteCount, cif.DeleteCount)
