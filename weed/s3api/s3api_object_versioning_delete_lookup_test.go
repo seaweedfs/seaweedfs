@@ -59,22 +59,54 @@ var (
 )
 
 func TestDeleteSpecificObjectVersionRetriesTransientLookup(t *testing.T) {
+	for _, versionId := range []string{"null", "672a75d526ef29c79fe6b5680cad4a0d"} {
+		t.Run(versionId, func(t *testing.T) {
+			fake := &deleteLookupFiler{
+				lookups: map[string]int{},
+				lookup: func(_ string, nth int) (*filer_pb.Entry, error) {
+					if nth == 0 {
+						return nil, errStoreFailed
+					}
+					return &filer_pb.Entry{Name: "o"}, nil
+				},
+			}
+			s3a := newPutTestServer(t, startFakeFiler(t, fake))
+
+			if err := s3a.deleteSpecificObjectVersion(context.Background(), "b", "o", versionId, false); err != nil {
+				t.Fatalf("delete failed: %v", err)
+			}
+			if len(fake.deletes) != 1 {
+				t.Fatalf("got %d delete calls, want 1", len(fake.deletes))
+			}
+			for path, n := range fake.lookups {
+				if n != 2 {
+					t.Errorf("%s looked up %d times, want 2", path, n)
+				}
+			}
+		})
+	}
+}
+
+// rm has already spent its retries by the time the recheck runs, so the
+// recheck reads once instead of stacking a second retry loop on top.
+func TestDeleteSpecificObjectVersionRecheckDoesNotRetry(t *testing.T) {
 	fake := &deleteLookupFiler{
-		lookups: map[string]int{},
+		lookups:   map[string]int{},
+		deleteErr: errDeleteTimedOut,
 		lookup: func(_ string, nth int) (*filer_pb.Entry, error) {
 			if nth == 0 {
-				return nil, errStoreFailed
+				return &filer_pb.Entry{Name: "o"}, nil
 			}
-			return &filer_pb.Entry{Name: "o"}, nil
+			return nil, errStoreFailed
 		},
 	}
 	s3a := newPutTestServer(t, startFakeFiler(t, fake))
 
-	if err := s3a.deleteSpecificObjectVersion(context.Background(), "b", "o", "null", false); err != nil {
-		t.Fatalf("delete failed: %v", err)
+	if err := s3a.deleteSpecificObjectVersion(context.Background(), "b", "o", "null", false); err == nil {
+		t.Fatal("delete reported success")
 	}
-	if len(fake.deletes) != 1 {
-		t.Fatalf("got %d delete calls, want 1", len(fake.deletes))
+	if got := fake.lookups["/buckets/b/o"]; got != 2 {
+		t.Fatalf("got %d lookups, want 2 (pre-check and one recheck)", got)
 	}
 }
 

@@ -1293,8 +1293,9 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(ctx context.Context, bucket,
 		dir, name := util.NewFullPath(bucketDir, normalizedObject).DirAndName()
 		deleteErr := s3a.rmObject(ctx, dir, name, !metadataOnly, false)
 		if deleteErr != nil {
-			// Check if file was already deleted by another process
-			_, checkErr := lookup(bucketDir, normalizedObject)
+			// Check if file was already deleted by another process. Read once:
+			// if the recheck fails too, the error lets the caller retry the delete.
+			_, checkErr := s3a.getEntry(bucketDir, normalizedObject)
 			if errors.Is(checkErr, filer_pb.ErrNotFound) {
 				// File doesn't exist anymore, deletion was successful
 				return nil
@@ -1352,8 +1353,9 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(ctx context.Context, bucket,
 	// The deletion operation should be idempotent
 	deleteErr := s3a.rm(ctx, versionsDir, versionFile, !metadataOnly, false)
 	if deleteErr != nil {
-		// Check if file was already deleted by another process (race condition handling)
-		_, checkErr := lookup(versionsDir, versionFile)
+		// Check if file was already deleted by another process (race condition handling).
+		// Read once: if the recheck fails too, the error lets the caller retry the delete.
+		_, checkErr := s3a.getEntry(versionsDir, versionFile)
 		if errors.Is(checkErr, filer_pb.ErrNotFound) {
 			// File doesn't exist anymore, deletion was successful (another thread deleted it)
 			glog.V(2).Infof("deleteSpecificObjectVersion: version %s for %s/%s already deleted by another process", versionId, bucket, object)
