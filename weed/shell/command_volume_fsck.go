@@ -277,7 +277,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 		var queuePurge func(purgeItem)
 		var finishPurge func()
 		if *applyPurging || *purgeAbsent {
-			queuePurge, finishPurge = startPurgeWorkers(*c.purgeConcurrency, c.httpDelete)
+			queuePurge, finishPurge = startPurgeBatchWorkers(*c.purgeConcurrency, defaultPurgeBatchSize, c.httpDeleteBatch)
 		}
 		err = func() error {
 			if err := c.collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo, *purgeAbsent, queuePurge, collectModifyFromAtNs, collectCutoffFromAtNs); err != nil {
@@ -329,6 +329,7 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 	}
 
 	files := make(map[uint32]*os.File)
+	writers := make(map[uint32]*bufio.Writer)
 	for _, volumeIdToServer := range dataNodeVolumeIdToVInfo {
 		for vid := range volumeIdToServer {
 			if _, ok := files[vid]; ok {
@@ -339,11 +340,13 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 				return fmt.Errorf("failed to create file %s: %v", getFilerFileIdFile(c.tempFolder, vid), openErr)
 			}
 			files[vid] = dst
+			writers[vid] = bufio.NewWriterSize(dst, 64*1024)
 		}
 	}
 	defer func() {
-		for _, f := range files {
-			f.Close()
+		for vid, w := range writers {
+			w.Flush()
+			files[vid].Close()
 		}
 	}()
 
@@ -415,21 +418,21 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 			buffer := make([]byte, readbufferSize)
 			for item := range outputChan {
 				i := item.(*Item)
-				if f, ok := files[i.vid]; ok {
+				if w, ok := writers[i.vid]; ok {
 					util.Uint64toBytes(buffer, i.fileKey)
 					util.Uint32toBytes(buffer[8:], i.cookie)
 					util.Uint32toBytes(buffer[12:], uint32(len(i.path)))
-					if _, err := f.Write(buffer); err != nil {
+					if _, err := w.Write(buffer); err != nil {
 						return err
 					}
-					if _, err := f.Write([]byte(i.path)); err != nil {
+					if _, err := w.Write([]byte(i.path)); err != nil {
 						return err
 					}
 					util.Uint32toBytes(buffer[:4], uint32(len(i.hardLinkId)))
-					if _, err := f.Write(buffer[:4]); err != nil {
+					if _, err := w.Write(buffer[:4]); err != nil {
 						return err
 					}
-					if _, err := f.Write(i.hardLinkId); err != nil {
+					if _, err := w.Write(i.hardLinkId); err != nil {
 						return err
 					}
 				} else if *c.findMissingChunksInFiler {
@@ -690,8 +693,9 @@ func (c *commandVolumeFsck) readFilerFileIdFile(volumeId uint32, fn func(needleI
 	}
 	defer fp.Close()
 
-	br := bufio.NewReader(fp)
+	br := bufio.NewReaderSize(fp, 64*1024)
 	buffer := make([]byte, readbufferSize)
+	pathBuf := make([]byte, 512)
 	var readSize int
 	var readErr error
 	item := &Item{vid: volumeId}
@@ -709,15 +713,17 @@ func (c *commandVolumeFsck) readFilerFileIdFile(volumeId uint32, fn func(needleI
 		item.fileKey = util.BytesToUint64(buffer[:8])
 		item.cookie = util.BytesToUint32(buffer[8:12])
 		pathSize := util.BytesToUint32(buffer[12:16])
-		pathBytes := make([]byte, int(pathSize))
-		n, err := io.ReadFull(br, pathBytes)
+		if int(pathSize) > len(pathBuf) {
+			pathBuf = make([]byte, pathSize)
+		}
+		n, err := io.ReadFull(br, pathBuf[:pathSize])
 		if err != nil {
 			return fmt.Errorf("read fid path for volume %d,%x%08x: %w", volumeId, item.fileKey, item.cookie, err)
 		}
 		if n != int(pathSize) {
 			return fmt.Errorf("read fid path size mismatch for volume %d,%x%08x: got %d want %d", volumeId, item.fileKey, item.cookie, n, pathSize)
 		}
-		item.path = util.FullPath(pathBytes)
+		item.path = util.FullPath(string(pathBuf[:pathSize]))
 		item.hardLinkId = nil
 		if _, err := io.ReadFull(br, buffer[:4]); err != nil {
 			return fmt.Errorf("read fid hard link id size for volume %d,%x%08x: %w", volumeId, item.fileKey, item.cookie, err)
@@ -745,8 +751,13 @@ func (c *commandVolumeFsck) oneVolumeFileIdsCheckOneVolume(dataNodeId string, vo
 	if err = db.LoadFromIdx(getVolumeFileIdFile(c.tempFolder, dataNodeId, volumeId)); err != nil {
 		return
 	}
+	seenPaths := make(map[util.FullPath]struct{})
 	if err = c.readFilerFileIdFile(volumeId, func(needleId types.NeedleId, itemPath util.FullPath, hardLinkId []byte) {
 		if _, found := db.Get(needleId); !found {
+			if _, seen := seenPaths[itemPath]; seen {
+				return
+			}
+			seenPaths[itemPath] = struct{}{}
 			fmt.Fprintf(c.writer, "%s\n", itemPath)
 			if queuePurge != nil {
 				queuePurge(purgeItem{path: itemPath, hardLinkId: hardLinkId})
@@ -763,25 +774,56 @@ type purgeItem struct {
 	hardLinkId []byte
 }
 
+const (
+	defaultPurgeBatchSize  = 64
+	purgeChannelBufferSize = 4096
+)
+
 // startPurgeWorkers fans deletes across at least one worker and returns a
 // queue function plus a finish function that closes the channels and waits
 // for in-flight deletes. Paths that share a hard link id always land on the
-// same worker, so their shared hard-link counter updates stay serialized —
-// concurrent deletes of the same id could both read count N and write N-1,
-// leaving the shared record behind after every path is gone.
+// same worker, so their shared hard-link counter updates stay serialized.
 func startPurgeWorkers(workers int, deleteFn func(util.FullPath)) (queue func(purgeItem), finish func()) {
+	return startPurgeBatchWorkers(workers, defaultPurgeBatchSize, func(batch []purgeItem) {
+		for _, it := range batch {
+			deleteFn(it.path)
+		}
+	})
+}
+
+// startPurgeBatchWorkers fans deletes across workers using buffered channels
+// and batch processing to eliminate producer stalls and channel contention.
+func startPurgeBatchWorkers(workers int, batchSize int, deleteBatchFn func([]purgeItem)) (queue func(purgeItem), finish func()) {
 	if workers < 1 {
 		workers = 1
+	}
+	if batchSize < 1 {
+		batchSize = 1
 	}
 	chans := make([]chan purgeItem, workers)
 	var wg sync.WaitGroup
 	for w := range chans {
-		chans[w] = make(chan purgeItem, 128)
+		chans[w] = make(chan purgeItem, purgeChannelBufferSize)
 		wg.Add(1)
 		go func(ch <-chan purgeItem) {
 			defer wg.Done()
+			batch := make([]purgeItem, 0, batchSize)
 			for it := range ch {
-				deleteFn(it.path)
+				batch = append(batch, it)
+			drain:
+				for len(batch) < batchSize {
+					select {
+					case next, ok := <-ch:
+						if !ok {
+							break drain
+						}
+						batch = append(batch, next)
+					default:
+						break drain
+					}
+				}
+				deleteBatchFn(batch)
+				batch = batch[:0]
 			}
 		}(chans[w])
 	}
@@ -799,11 +841,47 @@ func startPurgeWorkers(workers int, deleteFn func(util.FullPath)) (queue func(pu
 		}
 }
 
+func (c *commandVolumeFsck) httpDeleteBatch(items []purgeItem) {
+	if len(items) == 0 {
+		return
+	}
+	seen := make(map[util.FullPath]struct{}, len(items))
+	localPurgedDirs := make(map[util.FullPath]struct{})
+
+	for _, it := range items {
+		if _, ok := seen[it.path]; ok {
+			continue
+		}
+		seen[it.path] = struct{}{}
+		if c.doHttpDelete(it.path) {
+			dir, _ := it.path.DirAndName()
+			localPurgedDirs[util.FullPath(dir)] = struct{}{}
+		}
+	}
+
+	if len(localPurgedDirs) > 0 {
+		c.purgedDirsLock.Lock()
+		for dir := range localPurgedDirs {
+			c.purgedDirs[dir] = struct{}{}
+		}
+		c.purgedDirsLock.Unlock()
+	}
+}
+
 func (c *commandVolumeFsck) httpDelete(path util.FullPath) {
+	if c.doHttpDelete(path) {
+		dir, _ := path.DirAndName()
+		c.purgedDirsLock.Lock()
+		c.purgedDirs[util.FullPath(dir)] = struct{}{}
+		c.purgedDirsLock.Unlock()
+	}
+}
+
+func (c *commandVolumeFsck) doHttpDelete(path util.FullPath) bool {
 	req, err := http.NewRequest(http.MethodDelete, "", nil)
 	if err != nil {
 		fmt.Fprintf(c.writer, "HTTP delete request error: %v\n", err)
-		return
+		return false
 	}
 
 	req.URL = &url.URL{
@@ -824,28 +902,29 @@ func (c *commandVolumeFsck) httpDelete(path util.FullPath) {
 	resp, err := util_http.GetGlobalHttpClient().Do(req)
 	if err != nil {
 		fmt.Fprintf(c.writer, "DELETE fetch error: %v\n", err)
-		return
+		return false
 	}
 	defer resp.Body.Close()
 
-	_, err = io.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Fprintf(c.writer, "DELETE response error: %v\n", err)
-	}
-
 	if *c.verbose {
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			fmt.Fprintf(c.writer, "DELETE response error: %v\n", err)
+		}
 		fmt.Fprintln(c.writer, "delete response Status : ", resp.Status)
 		fmt.Fprintln(c.writer, "delete response Headers : ", resp.Header)
+		if len(body) > 0 {
+			fmt.Fprintln(c.writer, "delete response Body : ", string(body))
+		}
+	} else {
+		io.Copy(io.Discard, resp.Body)
 	}
 
 	if resp.StatusCode >= http.StatusMultipleChoices {
 		fmt.Fprintf(c.writer, "DELETE %s failed: %s\n", path, resp.Status)
-	} else {
-		dir, _ := path.DirAndName()
-		c.purgedDirsLock.Lock()
-		c.purgedDirs[util.FullPath(dir)] = struct{}{}
-		c.purgedDirsLock.Unlock()
+		return false
 	}
+	return true
 }
 
 // purgeEmptyDirectories removes the directories emptied by the purged entries, walking up while each parent is empty too.

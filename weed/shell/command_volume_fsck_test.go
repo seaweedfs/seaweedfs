@@ -514,3 +514,143 @@ func TestReadFilerFileIdFileRejectsTruncatedHardLinkId(t *testing.T) {
 		t.Fatal("expected an error for a truncated hard link id size")
 	}
 }
+
+func TestVolumeFsckPurgeBatchWorkersProcessesBatches(t *testing.T) {
+	var totalProcessed atomic.Int32
+	var maxBatchSeen atomic.Int32
+	var batchCount atomic.Int32
+
+	batchGate := make(chan struct{})
+	queue, finish := startPurgeBatchWorkers(1, 10, func(batch []purgeItem) {
+		<-batchGate
+		count := int32(len(batch))
+		totalProcessed.Add(count)
+		batchCount.Add(1)
+		for {
+			cur := maxBatchSeen.Load()
+			if count <= cur || maxBatchSeen.CompareAndSwap(cur, count) {
+				break
+			}
+		}
+	})
+
+	// Queue 10 items while worker is gated
+	for i := 0; i < 10; i++ {
+		queue(purgeItem{path: util.FullPath(fmt.Sprintf("/item/%d", i))})
+	}
+	close(batchGate)
+	finish()
+
+	if got := totalProcessed.Load(); got != 10 {
+		t.Fatalf("processed %d items, want 10", got)
+	}
+	if max := maxBatchSeen.Load(); max < 2 {
+		t.Fatalf("expected batch size >= 2 when draining queued items, got %d", max)
+	}
+}
+
+func TestVolumeFsckCheckOneVolumeDeduplicatesMissingChunksForSamePath(t *testing.T) {
+	tempDir := t.TempDir()
+	var verbose bool
+	var buf bytes.Buffer
+	c := &commandVolumeFsck{tempFolder: tempDir, verbose: &verbose, writer: &buf}
+
+	volumeId := uint32(8)
+	db := needle_map.NewMemDb()
+	if err := db.SaveToIdx(getVolumeFileIdFile(tempDir, "dn1", volumeId)); err != nil {
+		t.Fatalf("write empty volume idx: %v", err)
+	}
+	db.Close()
+
+	f, err := os.Create(getFilerFileIdFile(tempDir, volumeId))
+	if err != nil {
+		t.Fatalf("create fid file: %v", err)
+	}
+	writeFid := func(fileKey uint64, cookie uint32, p string, hardLinkId []byte) {
+		buffer := make([]byte, readbufferSize)
+		util.Uint64toBytes(buffer, fileKey)
+		util.Uint32toBytes(buffer[8:], cookie)
+		util.Uint32toBytes(buffer[12:], uint32(len(p)))
+		if _, err := f.Write(buffer); err != nil {
+			t.Fatalf("write fid header: %v", err)
+		}
+		if _, err := f.Write([]byte(p)); err != nil {
+			t.Fatalf("write fid path: %v", err)
+		}
+		util.Uint32toBytes(buffer[:4], uint32(len(hardLinkId)))
+		if _, err := f.Write(buffer[:4]); err != nil {
+			t.Fatalf("write fid hard link id size: %v", err)
+		}
+		if _, err := f.Write(hardLinkId); err != nil {
+			t.Fatalf("write fid hard link id: %v", err)
+		}
+	}
+
+	// Two chunks for the same file, both missing from volume idx
+	writeFid(101, 1, "/orphan/same_file.txt", nil)
+	writeFid(102, 1, "/orphan/same_file.txt", nil)
+	// Another file
+	writeFid(103, 1, "/orphan/another_file.txt", nil)
+	if err := f.Close(); err != nil {
+		t.Fatalf("close fid file: %v", err)
+	}
+
+	var queued []purgeItem
+	if err := c.oneVolumeFileIdsCheckOneVolume("dn1", volumeId, func(it purgeItem) {
+		queued = append(queued, it)
+	}); err != nil {
+		t.Fatalf("check volume: %v", err)
+	}
+
+	if len(queued) != 2 {
+		t.Fatalf("queued %d purges, want 2 (deduplicated): %v", len(queued), queued)
+	}
+	if queued[0].path != "/orphan/same_file.txt" || queued[1].path != "/orphan/another_file.txt" {
+		t.Fatalf("queued paths %v, want /orphan/same_file.txt and /orphan/another_file.txt", queued)
+	}
+}
+
+func TestVolumeFsckHttpDeleteBatchDeduplicatesAndRecordsDirs(t *testing.T) {
+	var requestCount atomic.Int32
+	filer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount.Add(1)
+		if strings.HasPrefix(r.URL.Path, "/fail/") {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer filer.Close()
+
+	verbose := false
+	var output bytes.Buffer
+	c := &commandVolumeFsck{
+		verbose:    &verbose,
+		writer:     &output,
+		purgedDirs: make(map[util.FullPath]struct{}),
+		env:        &CommandEnv{option: &ShellOptions{FilerAddress: pb.ServerAddress(strings.TrimPrefix(filer.URL, "http://"))}},
+	}
+
+	items := []purgeItem{
+		{path: "/dir1/file1.txt"},
+		{path: "/dir1/file1.txt"}, // duplicate within batch
+		{path: "/dir2/file2.txt"},
+		{path: "/fail/file3.txt"},
+	}
+
+	c.httpDeleteBatch(items)
+
+	// file1 should only be requested once, file2 once, fail/file3 once = 3 requests
+	if got := requestCount.Load(); got != 3 {
+		t.Fatalf("received %d requests, want 3 due to deduplication", got)
+	}
+	if _, found := c.purgedDirs["/dir1"]; !found {
+		t.Errorf("expected /dir1 to be recorded in purgedDirs")
+	}
+	if _, found := c.purgedDirs["/dir2"]; !found {
+		t.Errorf("expected /dir2 to be recorded in purgedDirs")
+	}
+	if _, found := c.purgedDirs["/fail"]; found {
+		t.Errorf("expected /fail not to be recorded in purgedDirs on 404")
+	}
+}
