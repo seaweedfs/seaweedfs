@@ -118,8 +118,9 @@ def index(vectors):
 
 def assert_engine_wrote_like_the_gateway(cluster, index):
     """The engine writes the table's files itself: the filer holds entries the
-    gateway could have written (an ETag, chunks, no inline content), and under
-    VECTOR_ENCRYPT_VOLUMES every chunk carries a cipher key."""
+    gateway could have written (an ETag, chunks, no inline content), and every
+    chunk carries a cipher key exactly when VECTOR_ENCRYPT_VOLUMES encrypts at
+    the filer."""
     import os
     import urllib.request
 
@@ -135,6 +136,8 @@ def assert_engine_wrote_like_the_gateway(cluster, index):
         assert "Seaweed-X-Amz-ETag" in (meta.get("Extended") or {}), meta.get("Extended")
         if os.environ.get("VECTOR_ENCRYPT_VOLUMES"):
             assert all(chunk.get("cipher_key") for chunk in meta["chunks"]), meta["chunks"]
+        else:
+            assert not any(chunk.get("cipher_key") for chunk in meta["chunks"]), meta["chunks"]
 
 
 def run_cli(cluster, *args):
