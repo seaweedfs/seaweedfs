@@ -64,8 +64,7 @@ func TestVolumeFsckHttpDeleteRecordsParentDirectory(t *testing.T) {
 		env:        &CommandEnv{option: &ShellOptions{FilerAddress: pb.ServerAddress(strings.TrimPrefix(filer.URL, "http://"))}},
 	}
 
-	c.httpDelete("/orphan/dir/deep/file.txt")
-	c.httpDelete("/locked/dir/file.txt")
+	c.httpDelete([]purgeItem{{path: "/orphan/dir/deep/file.txt"}, {path: "/locked/dir/file.txt"}})
 
 	if _, found := c.purgedDirs["/orphan/dir/deep"]; !found {
 		t.Errorf("expected /orphan/dir/deep to be recorded, got %v", c.purgedDirs)
@@ -267,10 +266,18 @@ func TestVolumeFsckPurgeEmptyDirectoriesKeepsChangedDirectory(t *testing.T) {
 
 // The purge pool may run at most `workers` deletes at once, and at least one
 // even when the flag is set to zero.
+func eachPurgePath(deleteFn func(util.FullPath)) func([]purgeItem) {
+	return func(batch []purgeItem) {
+		for _, it := range batch {
+			deleteFn(it.path)
+		}
+	}
+}
+
 func TestVolumeFsckPurgeWorkerLimit(t *testing.T) {
 	gate := make(chan struct{})
 	var inFlight, maxSeen, processed atomic.Int32
-	queue, finish := startPurgeWorkers(3, func(util.FullPath) {
+	queue, finish := startPurgeWorkers(3, eachPurgePath(func(util.FullPath) {
 		n := inFlight.Add(1)
 		for {
 			m := maxSeen.Load()
@@ -281,7 +288,7 @@ func TestVolumeFsckPurgeWorkerLimit(t *testing.T) {
 		<-gate
 		inFlight.Add(-1)
 		processed.Add(1)
-	})
+	}))
 
 	for i := 0; i < 10; i++ {
 		queue(purgeItem{path: util.FullPath(fmt.Sprintf("/p/%d", i))})
@@ -306,7 +313,7 @@ func TestVolumeFsckPurgeWorkerLimit(t *testing.T) {
 
 func TestVolumeFsckPurgeWorkersAtLeastOne(t *testing.T) {
 	var processed atomic.Int32
-	queue, finish := startPurgeWorkers(0, func(util.FullPath) { processed.Add(1) })
+	queue, finish := startPurgeWorkers(0, eachPurgePath(func(util.FullPath) { processed.Add(1) }))
 	for i := 0; i < 5; i++ {
 		queue(purgeItem{path: util.FullPath(fmt.Sprintf("/p/%d", i))})
 	}
@@ -322,7 +329,7 @@ func TestVolumeFsckPurgeWorkersAtLeastOne(t *testing.T) {
 func TestVolumeFsckPurgeHardLinksSerialized(t *testing.T) {
 	var inFlight, maxSeen, processed atomic.Int32
 	gate := make(chan struct{})
-	queue, finish := startPurgeWorkers(8, func(util.FullPath) {
+	queue, finish := startPurgeWorkers(8, eachPurgePath(func(util.FullPath) {
 		n := inFlight.Add(1)
 		for {
 			m := maxSeen.Load()
@@ -333,7 +340,7 @@ func TestVolumeFsckPurgeHardLinksSerialized(t *testing.T) {
 		<-gate
 		inFlight.Add(-1)
 		processed.Add(1)
-	})
+	}))
 	for i := 0; i < 8; i++ {
 		queue(purgeItem{path: util.FullPath(fmt.Sprintf("/hl/%d", i)), hardLinkId: []byte{9, 9, 9}})
 	}
@@ -512,5 +519,185 @@ func TestReadFilerFileIdFileRejectsTruncatedHardLinkId(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected an error for a truncated hard link id size")
+	}
+}
+
+func TestVolumeFsckPurgeBatchWorkersProcessesBatches(t *testing.T) {
+	var totalProcessed atomic.Int32
+	var maxBatchSeen atomic.Int32
+	var batchCount atomic.Int32
+
+	batchGate := make(chan struct{})
+	queue, finish := startPurgeWorkers(1, func(batch []purgeItem) {
+		<-batchGate
+		count := int32(len(batch))
+		totalProcessed.Add(count)
+		batchCount.Add(1)
+		for {
+			cur := maxBatchSeen.Load()
+			if count <= cur || maxBatchSeen.CompareAndSwap(cur, count) {
+				break
+			}
+		}
+	})
+
+	// Queue 10 items while worker is gated
+	for i := 0; i < 10; i++ {
+		queue(purgeItem{path: util.FullPath(fmt.Sprintf("/item/%d", i))})
+	}
+	close(batchGate)
+	finish()
+
+	if got := totalProcessed.Load(); got != 10 {
+		t.Fatalf("processed %d items, want 10", got)
+	}
+	if max := maxBatchSeen.Load(); max < 2 {
+		t.Fatalf("expected batch size >= 2 when draining queued items, got %d", max)
+	}
+}
+
+func TestVolumeFsckCheckOneVolumeDeduplicatesMissingChunksForSamePath(t *testing.T) {
+	tempDir := t.TempDir()
+	var verbose bool
+	var buf bytes.Buffer
+	c := &commandVolumeFsck{tempFolder: tempDir, verbose: &verbose, writer: &buf}
+
+	volumeId := uint32(8)
+	db := needle_map.NewMemDb()
+	if err := db.SaveToIdx(getVolumeFileIdFile(tempDir, "dn1", volumeId)); err != nil {
+		t.Fatalf("write empty volume idx: %v", err)
+	}
+	db.Close()
+
+	f, err := os.Create(getFilerFileIdFile(tempDir, volumeId))
+	if err != nil {
+		t.Fatalf("create fid file: %v", err)
+	}
+	writeFid := func(fileKey uint64, cookie uint32, p string, hardLinkId []byte) {
+		buffer := make([]byte, readbufferSize)
+		util.Uint64toBytes(buffer, fileKey)
+		util.Uint32toBytes(buffer[8:], cookie)
+		util.Uint32toBytes(buffer[12:], uint32(len(p)))
+		if _, err := f.Write(buffer); err != nil {
+			t.Fatalf("write fid header: %v", err)
+		}
+		if _, err := f.Write([]byte(p)); err != nil {
+			t.Fatalf("write fid path: %v", err)
+		}
+		util.Uint32toBytes(buffer[:4], uint32(len(hardLinkId)))
+		if _, err := f.Write(buffer[:4]); err != nil {
+			t.Fatalf("write fid hard link id size: %v", err)
+		}
+		if _, err := f.Write(hardLinkId); err != nil {
+			t.Fatalf("write fid hard link id: %v", err)
+		}
+	}
+
+	// Two chunks for the same file, both missing from volume idx
+	writeFid(101, 1, "/orphan/same_file.txt", nil)
+	writeFid(102, 1, "/orphan/same_file.txt", nil)
+	// Another file
+	writeFid(103, 1, "/orphan/another_file.txt", nil)
+	if err := f.Close(); err != nil {
+		t.Fatalf("close fid file: %v", err)
+	}
+
+	var queued []purgeItem
+	if err := c.oneVolumeFileIdsCheckOneVolume("dn1", volumeId, func(it purgeItem) {
+		queued = append(queued, it)
+	}); err != nil {
+		t.Fatalf("check volume: %v", err)
+	}
+
+	if len(queued) != 2 {
+		t.Fatalf("queued %d purges, want 2 (deduplicated): %v", len(queued), queued)
+	}
+	if queued[0].path != "/orphan/same_file.txt" || queued[1].path != "/orphan/another_file.txt" {
+		t.Fatalf("queued paths %v, want /orphan/same_file.txt and /orphan/another_file.txt", queued)
+	}
+}
+
+func TestVolumeFsckHttpDeleteBatchDeduplicatesAndRecordsDirs(t *testing.T) {
+	var requestCount, flakyCount atomic.Int32
+	filer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount.Add(1)
+		if strings.HasPrefix(r.URL.Path, "/fail/") {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/flaky/") && flakyCount.Add(1) == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer filer.Close()
+
+	verbose := false
+	var output bytes.Buffer
+	c := &commandVolumeFsck{
+		verbose:    &verbose,
+		writer:     &output,
+		purgedDirs: make(map[util.FullPath]struct{}),
+		env:        &CommandEnv{option: &ShellOptions{FilerAddress: pb.ServerAddress(strings.TrimPrefix(filer.URL, "http://"))}},
+	}
+
+	items := []purgeItem{
+		{path: "/dir1/file1.txt"},
+		{path: "/dir1/file1.txt"}, // duplicate within batch
+		{path: "/dir2/file2.txt"},
+		{path: "/fail/file3.txt"},
+		{path: "/flaky/file4.txt"},
+		{path: "/flaky/file4.txt"}, // retried after the first delete failed
+	}
+
+	c.httpDelete(items)
+
+	if got := requestCount.Load(); got != 5 {
+		t.Fatalf("received %d requests, want 5", got)
+	}
+	if _, found := c.purgedDirs["/flaky"]; !found {
+		t.Errorf("expected /flaky to be recorded after the retried delete")
+	}
+	if _, found := c.purgedDirs["/dir1"]; !found {
+		t.Errorf("expected /dir1 to be recorded in purgedDirs")
+	}
+	if _, found := c.purgedDirs["/dir2"]; !found {
+		t.Errorf("expected /dir2 to be recorded in purgedDirs")
+	}
+	if _, found := c.purgedDirs["/fail"]; found {
+		t.Errorf("expected /fail not to be recorded in purgedDirs on 404")
+	}
+}
+
+func TestVolumeFsckCollectFilerFileIdsReportsFailedFlush(t *testing.T) {
+	if _, err := os.Stat("/dev/full"); err != nil {
+		t.Skip("needs /dev/full")
+	}
+	tempDir := t.TempDir()
+	if err := os.Symlink("/dev/full", getFilerFileIdFile(tempDir, 7)); err != nil {
+		t.Fatalf("link fid file to /dev/full: %v", err)
+	}
+	directory := &filer_pb.Entry{IsDirectory: true}
+	stub := &stubFilerServer{entries: map[string]*filer_pb.Entry{
+		"/":     directory,
+		"/file": {Chunks: []*filer_pb.FileChunk{{Size: 1, Fid: &filer_pb.FileId{VolumeId: 7, FileKey: 11, Cookie: 1}}}},
+	}}
+
+	verbose, findMissing, verify, force := false, false, false, false
+	c := &commandVolumeFsck{
+		tempFolder:               tempDir,
+		verbose:                  &verbose,
+		findMissingChunksInFiler: &findMissing,
+		verifyNeedle:             &verify,
+		forcePurging:             &force,
+		writer:                   io.Discard,
+		bucketsPath:              "/buckets",
+		env:                      startStubFiler(t, stub),
+	}
+
+	vinfo := map[string]map[uint32]VInfo{"dn1": {7: {}}}
+	if err := c.collectFilerFileIdAndPaths(vinfo, false, func(purgeItem) {}, 0, 0); err == nil {
+		t.Fatal("expected the failed fid file write to be reported")
 	}
 }
