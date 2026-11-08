@@ -19,11 +19,19 @@ type offlineCollectionMaster struct {
 }
 
 func (s *offlineCollectionMaster) CollectionList(context.Context, *master_pb.CollectionListRequest) (*master_pb.CollectionListResponse, error) {
-	return &master_pb.CollectionListResponse{Collections: []*master_pb.Collection{{Name: "unrelated-offline"}, {Name: "prospective"}}}, nil
+	return &master_pb.CollectionListResponse{Collections: []*master_pb.Collection{{Name: "live"}, {Name: "unrelated-offline"}, {Name: "prospective"}}}, nil
 }
-func (s *offlineCollectionMaster) VolumeList(context.Context, *master_pb.VolumeListRequest) (*master_pb.VolumeListResponse, error) {
+func (s *offlineCollectionMaster) VolumeList(_ context.Context, req *master_pb.VolumeListRequest) (*master_pb.VolumeListResponse, error) {
 	s.topologyCalls.Add(1)
-	return &master_pb.VolumeListResponse{TopologyInfo: &master_pb.TopologyInfo{}}, nil
+	volumes := []*master_pb.VolumeInformationMessage{{Id: 1, Collection: "live", Size: 100, FileCount: 3}}
+	if req.TopologyOnly {
+		volumes = nil
+	}
+	return &master_pb.VolumeListResponse{TopologyInfo: &master_pb.TopologyInfo{DataCenterInfos: []*master_pb.DataCenterInfo{{
+		RackInfos: []*master_pb.RackInfo{{DataNodeInfos: []*master_pb.DataNodeInfo{{
+			DiskInfos: map[string]*master_pb.DiskInfo{"": {VolumeInfos: volumes}},
+		}}}},
+	}}}}, nil
 }
 func TestCollectionListIncludesOfflineNamespace(t *testing.T) {
 	lis, e := net.Listen("tcp", "127.0.0.1:0")
@@ -48,7 +56,10 @@ func TestCollectionListIncludesOfflineNamespace(t *testing.T) {
 			t.Fatalf("offline name omitted: %s", out.String())
 		}
 	}
-	if !strings.Contains(out.String(), "Total 2 collections.\n") || srv.topologyCalls.Load() != 1 {
+	if !strings.Contains(out.String(), "collection:\"live\"\tvolumeCount:1\tsize:100\tfileCount:3\t") {
+		t.Fatalf("live statistics missing: %s", out.String())
+	}
+	if !strings.Contains(out.String(), "Total 3 collections.\n") || srv.topologyCalls.Load() != 1 {
 		t.Fatalf("incomplete listing: %s calls%d", out.String(), srv.topologyCalls.Load())
 	}
 }
