@@ -920,8 +920,8 @@ func (c *commandVolumeFsck) doHttpDelete(path util.FullPath) bool {
 		if len(body) > 0 {
 			fmt.Fprintln(c.writer, "delete response Body : ", string(body))
 		}
-	} else {
-		io.Copy(io.Discard, resp.Body)
+	} else if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+		fmt.Fprintf(c.writer, "DELETE response error: %v\n", err)
 	}
 
 	if resp.StatusCode >= http.StatusMultipleChoices {
