@@ -813,11 +813,9 @@ func (t *Topology) ListCollections(includeNormalVolumes, includeEcVolumes bool) 
 	found := make(map[string]bool)
 
 	if includeNormalVolumes {
-		t.collectionMap.RLock()
 		for _, c := range t.collectionMap.Items() {
 			found[c.(*Collection).Name] = true
 		}
-		t.collectionMap.RUnlock()
 	}
 
 	if includeEcVolumes {

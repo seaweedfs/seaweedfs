@@ -641,6 +641,40 @@ func TestListCollections(t *testing.T) {
 	}
 }
 
+// A collection delete that queues for the write lock while ListCollections
+// reads the collections must not wedge both.
+func TestListCollectionsWithConcurrentCollectionDelete(t *testing.T) {
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+	topo := NewTopology("weedfs", sequence.NewMemorySequencer(), 32*1024, 5, false)
+
+	stop := make(chan struct{})
+	defer close(stop)
+	go func() {
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			topo.GetVolumeLayout("churn", rp, needle.EMPTY_TTL, types.HardDriveType)
+			topo.DeleteCollection("churn")
+		}
+	}()
+
+	listed := make(chan struct{})
+	go func() {
+		defer close(listed)
+		for i := 0; i < 100000; i++ {
+			topo.ListCollections(true, false)
+		}
+	}()
+	select {
+	case <-listed:
+	case <-time.After(10 * time.Second):
+		t.Fatal("ListCollections deadlocked with a concurrent DeleteCollection")
+	}
+}
+
 func TestDataNodeIdBasedIdentification(t *testing.T) {
 	topo := NewTopology("weedfs", sequence.NewMemorySequencer(), 32*1024, 5, false)
 	dc := topo.GetOrCreateDataCenter("dc1")
