@@ -1744,6 +1744,12 @@ worker:
 
   # The lance_* jobs run in their own container, /usr/bin/weed-worker.
   # amd64/arm64 only; pin mixed clusters with worker.affinity/nodeSelector.
+  # It keeps tables through the filers the masters list and reads
+  # security.toml. The Lance namespace knows it by a token derived from
+  # jwt.filer_signing.key, which the chart renders only with
+  # global.seaweedfs.securityConfig.jwtSigning.filerWrite: true. When S3 has
+  # identities, set it, or the namespace lists the worker no tables and the
+  # lance_* jobs find nothing to do.
 
   # Lance namespace URL override; empty derives it from s3.lancePort.
   namespaceUrl: ""
