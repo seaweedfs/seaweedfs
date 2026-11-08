@@ -518,14 +518,14 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 	// buffer by 1 so we don't end up getting stuck writing to stopChan forever
 	stopChan := make(chan bool, 1)
 
+	ms.clusterNodeLock.Lock()
 	clientName, messageChan := ms.addClient(req.FilerGroup, req.ClientType, peerAddress)
 	for _, update := range ms.Cluster.AddClusterNode(req.FilerGroup, req.ClientType, cluster.DataCenter(req.DataCenter), cluster.Rack(req.Rack), peerAddress, req.Version) {
 		glog.V(1).Infof("Cluster: %s node %s added to group '%s'", req.ClientType, peerAddress, req.FilerGroup)
 		ms.broadcastToClients(update)
 	}
-	if req.ClientType == cluster.FilerType && !req.LeaveLockRing {
-		ms.LockRingManager.AddServer(cluster.FilerGroupName(req.FilerGroup), peerAddress)
-	}
+	ms.updateLockRing(req, peerAddress)
+	ms.clusterNodeLock.Unlock()
 	if req.ClientType == cluster.MasterType {
 		// Only the leader gets this far, and a master that starts with no raft
 		// state cannot campaign its way in, so this registration is where it
@@ -535,12 +535,7 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 	}
 
 	defer func() {
-		for _, update := range ms.Cluster.RemoveClusterNode(req.FilerGroup, req.ClientType, peerAddress) {
-			ms.broadcastToClients(update)
-		}
-		if req.ClientType == cluster.FilerType {
-			ms.LockRingManager.RemoveServer(cluster.FilerGroupName(req.FilerGroup), peerAddress)
-		}
+		ms.removeClusterNode(req, peerAddress)
 		ms.deleteClient(clientName, messageChan)
 	}()
 
@@ -632,6 +627,33 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 		}
 	}
 
+}
+
+// A filer that reconnects while leaving may overlap a stream that has not ended
+// yet, so its registration takes the address out of the ring itself.
+func (ms *MasterServer) updateLockRing(req *master_pb.KeepConnectedRequest, peerAddress pb.ServerAddress) {
+	if req.ClientType != cluster.FilerType {
+		return
+	}
+	if req.LeaveLockRing {
+		ms.LockRingManager.RemoveServer(cluster.FilerGroupName(req.FilerGroup), peerAddress)
+		return
+	}
+	ms.LockRingManager.AddServer(cluster.FilerGroupName(req.FilerGroup), peerAddress)
+}
+
+func (ms *MasterServer) removeClusterNode(req *master_pb.KeepConnectedRequest, peerAddress pb.ServerAddress) {
+	ms.clusterNodeLock.Lock()
+	defer ms.clusterNodeLock.Unlock()
+	removed := ms.Cluster.RemoveClusterNode(req.FilerGroup, req.ClientType, peerAddress)
+	for _, update := range removed {
+		ms.broadcastToClients(update)
+	}
+	// A replacement that registered before this stream ended still holds the
+	// address, so only its last registration leaves the ring.
+	if req.ClientType == cluster.FilerType && len(removed) > 0 {
+		ms.LockRingManager.RemoveServer(cluster.FilerGroupName(req.FilerGroup), peerAddress)
+	}
 }
 
 func (ms *MasterServer) onKeepConnectedMessage(registered *master_pb.KeepConnectedRequest, peerAddress pb.ServerAddress, message *master_pb.KeepConnectedRequest) {
