@@ -849,15 +849,15 @@ func (c *commandVolumeFsck) httpDeleteBatch(items []purgeItem) {
 	if len(items) == 0 {
 		return
 	}
-	seen := make(map[util.FullPath]struct{}, len(items))
+	deleted := make(map[util.FullPath]struct{}, len(items))
 	localPurgedDirs := make(map[util.FullPath]struct{})
 
 	for _, it := range items {
-		if _, ok := seen[it.path]; ok {
+		if _, ok := deleted[it.path]; ok {
 			continue
 		}
-		seen[it.path] = struct{}{}
 		if c.doHttpDelete(it.path) {
+			deleted[it.path] = struct{}{}
 			dir, _ := it.path.DirAndName()
 			localPurgedDirs[util.FullPath(dir)] = struct{}{}
 		}

@@ -611,11 +611,15 @@ func TestVolumeFsckCheckOneVolumeDeduplicatesMissingChunksForSamePath(t *testing
 }
 
 func TestVolumeFsckHttpDeleteBatchDeduplicatesAndRecordsDirs(t *testing.T) {
-	var requestCount atomic.Int32
+	var requestCount, flakyCount atomic.Int32
 	filer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestCount.Add(1)
 		if strings.HasPrefix(r.URL.Path, "/fail/") {
 			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/flaky/") && flakyCount.Add(1) == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -636,13 +640,17 @@ func TestVolumeFsckHttpDeleteBatchDeduplicatesAndRecordsDirs(t *testing.T) {
 		{path: "/dir1/file1.txt"}, // duplicate within batch
 		{path: "/dir2/file2.txt"},
 		{path: "/fail/file3.txt"},
+		{path: "/flaky/file4.txt"},
+		{path: "/flaky/file4.txt"}, // retried after the first delete failed
 	}
 
 	c.httpDeleteBatch(items)
 
-	// file1 should only be requested once, file2 once, fail/file3 once = 3 requests
-	if got := requestCount.Load(); got != 3 {
-		t.Fatalf("received %d requests, want 3 due to deduplication", got)
+	if got := requestCount.Load(); got != 5 {
+		t.Fatalf("received %d requests, want 5", got)
+	}
+	if _, found := c.purgedDirs["/flaky"]; !found {
+		t.Errorf("expected /flaky to be recorded after the retried delete")
 	}
 	if _, found := c.purgedDirs["/dir1"]; !found {
 		t.Errorf("expected /dir1 to be recorded in purgedDirs")
