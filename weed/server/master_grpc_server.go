@@ -524,9 +524,7 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 		glog.V(1).Infof("Cluster: %s node %s added to group '%s'", req.ClientType, peerAddress, req.FilerGroup)
 		ms.broadcastToClients(update)
 	}
-	if req.ClientType == cluster.FilerType && !req.LeaveLockRing {
-		ms.LockRingManager.AddServer(cluster.FilerGroupName(req.FilerGroup), peerAddress)
-	}
+	ms.updateLockRing(req, peerAddress)
 	ms.clusterNodeLock.Unlock()
 	if req.ClientType == cluster.MasterType {
 		// Only the leader gets this far, and a master that starts with no raft
@@ -629,6 +627,19 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 		}
 	}
 
+}
+
+// A filer that reconnects while leaving may overlap a stream that has not ended
+// yet, so its registration takes the address out of the ring itself.
+func (ms *MasterServer) updateLockRing(req *master_pb.KeepConnectedRequest, peerAddress pb.ServerAddress) {
+	if req.ClientType != cluster.FilerType {
+		return
+	}
+	if req.LeaveLockRing {
+		ms.LockRingManager.RemoveServer(cluster.FilerGroupName(req.FilerGroup), peerAddress)
+		return
+	}
+	ms.LockRingManager.AddServer(cluster.FilerGroupName(req.FilerGroup), peerAddress)
 }
 
 func (ms *MasterServer) removeClusterNode(req *master_pb.KeepConnectedRequest, peerAddress pb.ServerAddress) {

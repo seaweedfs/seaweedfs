@@ -61,7 +61,7 @@ func TestOverlappedFilerRegistrationStaysInLockRing(t *testing.T) {
 	registered := &master_pb.KeepConnectedRequest{ClientType: cluster.FilerType, FilerGroup: "group-a"}
 	register := func(address pb.ServerAddress) {
 		ms.Cluster.AddClusterNode(registered.FilerGroup, registered.ClientType, "", "", address, "")
-		ms.LockRingManager.AddServer(cluster.FilerGroupName(registered.FilerGroup), address)
+		ms.updateLockRing(registered, address)
 	}
 	ringServers := func() []string {
 		ms.LockRingManager.FlushPending("group-a")
@@ -77,6 +77,38 @@ func TestOverlappedFilerRegistrationStaysInLockRing(t *testing.T) {
 	assert.ElementsMatch(t, []string{"filer0:8888", "filer1:8888"}, ringServers())
 
 	ms.removeClusterNode(registered, "filer0:8888")
+	assert.False(t, ms.Cluster.IsKnownNode(cluster.FilerType, "filer0:8888"))
+	assert.ElementsMatch(t, []string{"filer1:8888"}, ringServers())
+}
+
+// A leaving filer's reconnect can register before the master ends its broken
+// stream; the filer must leave the ring without waiting for either stream.
+func TestLeavingFilerReconnectLeavesLockRing(t *testing.T) {
+	ms := &MasterServer{
+		Cluster:         cluster.NewCluster(),
+		LockRingManager: cluster.NewLockRingManager(nil),
+	}
+	registered := &master_pb.KeepConnectedRequest{ClientType: cluster.FilerType, FilerGroup: "group-a"}
+	leaving := &master_pb.KeepConnectedRequest{ClientType: cluster.FilerType, FilerGroup: "group-a", LeaveLockRing: true}
+	register := func(req *master_pb.KeepConnectedRequest, address pb.ServerAddress) {
+		ms.Cluster.AddClusterNode(req.FilerGroup, req.ClientType, "", "", address, "")
+		ms.updateLockRing(req, address)
+	}
+	ringServers := func() []string {
+		ms.LockRingManager.FlushPending("group-a")
+		return ms.LockRingManager.GetServers("group-a")
+	}
+
+	register(registered, "filer0:8888")
+	register(registered, "filer1:8888")
+	register(leaving, "filer0:8888")
+	assert.ElementsMatch(t, []string{"filer1:8888"}, ringServers())
+
+	ms.removeClusterNode(registered, "filer0:8888")
+	assert.True(t, ms.Cluster.IsKnownNode(cluster.FilerType, "filer0:8888"))
+	assert.ElementsMatch(t, []string{"filer1:8888"}, ringServers())
+
+	ms.removeClusterNode(leaving, "filer0:8888")
 	assert.False(t, ms.Cluster.IsKnownNode(cluster.FilerType, "filer0:8888"))
 	assert.ElementsMatch(t, []string{"filer1:8888"}, ringServers())
 }
