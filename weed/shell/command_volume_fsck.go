@@ -277,7 +277,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 		var queuePurge func(purgeItem)
 		var finishPurge func()
 		if *applyPurging || *purgeAbsent {
-			queuePurge, finishPurge = startPurgeBatchWorkers(*c.purgeConcurrency, defaultPurgeBatchSize, c.httpDeleteBatch)
+			queuePurge, finishPurge = startPurgeWorkers(*c.purgeConcurrency, c.httpDelete)
 		}
 		err = func() error {
 			if err := c.collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo, *purgeAbsent, queuePurge, collectModifyFromAtNs, collectCutoffFromAtNs); err != nil {
@@ -779,30 +779,18 @@ type purgeItem struct {
 }
 
 const (
-	defaultPurgeBatchSize  = 64
+	purgeBatchSize         = 64
 	purgeChannelBufferSize = 4096
 )
 
-// startPurgeWorkers fans deletes across at least one worker and returns a
-// queue function plus a finish function that closes the channels and waits
-// for in-flight deletes. Paths that share a hard link id always land on the
+// startPurgeWorkers fans deletes across at least one worker, handing each
+// one batches of the paths already queued for it, and returns a queue
+// function plus a finish function that closes the channels and waits for
+// in-flight deletes. Paths that share a hard link id always land on the
 // same worker, so their shared hard-link counter updates stay serialized.
-func startPurgeWorkers(workers int, deleteFn func(util.FullPath)) (queue func(purgeItem), finish func()) {
-	return startPurgeBatchWorkers(workers, defaultPurgeBatchSize, func(batch []purgeItem) {
-		for _, it := range batch {
-			deleteFn(it.path)
-		}
-	})
-}
-
-// startPurgeBatchWorkers fans deletes across workers using buffered channels
-// and batch processing to eliminate producer stalls and channel contention.
-func startPurgeBatchWorkers(workers int, batchSize int, deleteBatchFn func([]purgeItem)) (queue func(purgeItem), finish func()) {
+func startPurgeWorkers(workers int, deleteFn func([]purgeItem)) (queue func(purgeItem), finish func()) {
 	if workers < 1 {
 		workers = 1
-	}
-	if batchSize < 1 {
-		batchSize = 1
 	}
 	chans := make([]chan purgeItem, workers)
 	var wg sync.WaitGroup
@@ -811,11 +799,11 @@ func startPurgeBatchWorkers(workers int, batchSize int, deleteBatchFn func([]pur
 		wg.Add(1)
 		go func(ch <-chan purgeItem) {
 			defer wg.Done()
-			batch := make([]purgeItem, 0, batchSize)
+			batch := make([]purgeItem, 0, purgeBatchSize)
 			for it := range ch {
 				batch = append(batch, it)
 			drain:
-				for len(batch) < batchSize {
+				for len(batch) < purgeBatchSize {
 					select {
 					case next, ok := <-ch:
 						if !ok {
@@ -826,7 +814,7 @@ func startPurgeBatchWorkers(workers int, batchSize int, deleteBatchFn func([]pur
 						break drain
 					}
 				}
-				deleteBatchFn(batch)
+				deleteFn(batch)
 				batch = batch[:0]
 			}
 		}(chans[w])
@@ -845,7 +833,7 @@ func startPurgeBatchWorkers(workers int, batchSize int, deleteBatchFn func([]pur
 		}
 }
 
-func (c *commandVolumeFsck) httpDeleteBatch(items []purgeItem) {
+func (c *commandVolumeFsck) httpDelete(items []purgeItem) {
 	if len(items) == 0 {
 		return
 	}
@@ -868,15 +856,6 @@ func (c *commandVolumeFsck) httpDeleteBatch(items []purgeItem) {
 		for dir := range localPurgedDirs {
 			c.purgedDirs[dir] = struct{}{}
 		}
-		c.purgedDirsLock.Unlock()
-	}
-}
-
-func (c *commandVolumeFsck) httpDelete(path util.FullPath) {
-	if c.doHttpDelete(path) {
-		dir, _ := path.DirAndName()
-		c.purgedDirsLock.Lock()
-		c.purgedDirs[util.FullPath(dir)] = struct{}{}
 		c.purgedDirsLock.Unlock()
 	}
 }

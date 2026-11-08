@@ -64,8 +64,7 @@ func TestVolumeFsckHttpDeleteRecordsParentDirectory(t *testing.T) {
 		env:        &CommandEnv{option: &ShellOptions{FilerAddress: pb.ServerAddress(strings.TrimPrefix(filer.URL, "http://"))}},
 	}
 
-	c.httpDelete("/orphan/dir/deep/file.txt")
-	c.httpDelete("/locked/dir/file.txt")
+	c.httpDelete([]purgeItem{{path: "/orphan/dir/deep/file.txt"}, {path: "/locked/dir/file.txt"}})
 
 	if _, found := c.purgedDirs["/orphan/dir/deep"]; !found {
 		t.Errorf("expected /orphan/dir/deep to be recorded, got %v", c.purgedDirs)
@@ -267,10 +266,18 @@ func TestVolumeFsckPurgeEmptyDirectoriesKeepsChangedDirectory(t *testing.T) {
 
 // The purge pool may run at most `workers` deletes at once, and at least one
 // even when the flag is set to zero.
+func eachPurgePath(deleteFn func(util.FullPath)) func([]purgeItem) {
+	return func(batch []purgeItem) {
+		for _, it := range batch {
+			deleteFn(it.path)
+		}
+	}
+}
+
 func TestVolumeFsckPurgeWorkerLimit(t *testing.T) {
 	gate := make(chan struct{})
 	var inFlight, maxSeen, processed atomic.Int32
-	queue, finish := startPurgeWorkers(3, func(util.FullPath) {
+	queue, finish := startPurgeWorkers(3, eachPurgePath(func(util.FullPath) {
 		n := inFlight.Add(1)
 		for {
 			m := maxSeen.Load()
@@ -281,7 +288,7 @@ func TestVolumeFsckPurgeWorkerLimit(t *testing.T) {
 		<-gate
 		inFlight.Add(-1)
 		processed.Add(1)
-	})
+	}))
 
 	for i := 0; i < 10; i++ {
 		queue(purgeItem{path: util.FullPath(fmt.Sprintf("/p/%d", i))})
@@ -306,7 +313,7 @@ func TestVolumeFsckPurgeWorkerLimit(t *testing.T) {
 
 func TestVolumeFsckPurgeWorkersAtLeastOne(t *testing.T) {
 	var processed atomic.Int32
-	queue, finish := startPurgeWorkers(0, func(util.FullPath) { processed.Add(1) })
+	queue, finish := startPurgeWorkers(0, eachPurgePath(func(util.FullPath) { processed.Add(1) }))
 	for i := 0; i < 5; i++ {
 		queue(purgeItem{path: util.FullPath(fmt.Sprintf("/p/%d", i))})
 	}
@@ -322,7 +329,7 @@ func TestVolumeFsckPurgeWorkersAtLeastOne(t *testing.T) {
 func TestVolumeFsckPurgeHardLinksSerialized(t *testing.T) {
 	var inFlight, maxSeen, processed atomic.Int32
 	gate := make(chan struct{})
-	queue, finish := startPurgeWorkers(8, func(util.FullPath) {
+	queue, finish := startPurgeWorkers(8, eachPurgePath(func(util.FullPath) {
 		n := inFlight.Add(1)
 		for {
 			m := maxSeen.Load()
@@ -333,7 +340,7 @@ func TestVolumeFsckPurgeHardLinksSerialized(t *testing.T) {
 		<-gate
 		inFlight.Add(-1)
 		processed.Add(1)
-	})
+	}))
 	for i := 0; i < 8; i++ {
 		queue(purgeItem{path: util.FullPath(fmt.Sprintf("/hl/%d", i)), hardLinkId: []byte{9, 9, 9}})
 	}
@@ -521,7 +528,7 @@ func TestVolumeFsckPurgeBatchWorkersProcessesBatches(t *testing.T) {
 	var batchCount atomic.Int32
 
 	batchGate := make(chan struct{})
-	queue, finish := startPurgeBatchWorkers(1, 10, func(batch []purgeItem) {
+	queue, finish := startPurgeWorkers(1, func(batch []purgeItem) {
 		<-batchGate
 		count := int32(len(batch))
 		totalProcessed.Add(count)
@@ -644,7 +651,7 @@ func TestVolumeFsckHttpDeleteBatchDeduplicatesAndRecordsDirs(t *testing.T) {
 		{path: "/flaky/file4.txt"}, // retried after the first delete failed
 	}
 
-	c.httpDeleteBatch(items)
+	c.httpDelete(items)
 
 	if got := requestCount.Load(); got != 5 {
 		t.Fatalf("received %d requests, want 5", got)
