@@ -1749,7 +1749,9 @@ worker:
   # jwt.filer_signing.key, which the chart renders only with
   # global.seaweedfs.securityConfig.jwtSigning.filerWrite: true. When S3 has
   # identities, set it, or the namespace lists the worker no tables and the
-  # lance_* jobs find nothing to do.
+  # lance_* jobs find nothing to do. It also makes the filer accept only signed
+  # HTTP writes, so clients writing to the filer's HTTP API directly need a JWT
+  # signed with that key.
 
   # Lance namespace URL override; empty derives it from s3.lancePort.
   namespaceUrl: ""
