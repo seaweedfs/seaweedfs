@@ -366,6 +366,7 @@ func (worker *FileCopyWorker) uploadFileAsOne(task FileCopyTask, f *os.File) err
 			},
 			&operation.UploadOption{
 				Filename:          fileName,
+				WantMd5:           true,
 				Cipher:            worker.options.cipher,
 				IsInputCompressed: false,
 				MimeType:          mimeType,
@@ -448,6 +449,7 @@ func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, 
 				},
 				&operation.UploadOption{
 					Filename:          fileName + "-" + strconv.FormatInt(i+1, 10),
+					WantMd5:           true,
 					Cipher:            worker.options.cipher,
 					IsInputCompressed: false,
 					MimeType:          "",
@@ -580,6 +582,7 @@ func (worker *FileCopyWorker) saveDataAsChunk(reader io.Reader, name string, off
 		},
 		&operation.UploadOption{
 			Filename:          name,
+			WantMd5:           true,
 			Cipher:            worker.options.cipher,
 			IsInputCompressed: false,
 			MimeType:          "",
