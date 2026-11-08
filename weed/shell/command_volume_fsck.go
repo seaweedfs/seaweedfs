@@ -323,13 +323,23 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	return nil
 }
 
-func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo map[string]map[uint32]VInfo, purgeAbsent bool, queuePurge func(purgeItem), collectModifyFromAtNs int64, cutoffFromAtNs int64) error {
+func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo map[string]map[uint32]VInfo, purgeAbsent bool, queuePurge func(purgeItem), collectModifyFromAtNs int64, cutoffFromAtNs int64) (err error) {
 	if *c.verbose {
 		fmt.Fprintf(c.writer, "checking each file from filer path /...\n")
 	}
 
 	files := make(map[uint32]*os.File)
 	writers := make(map[uint32]*bufio.Writer)
+	defer func() {
+		for vid, f := range files {
+			if flushErr := writers[vid].Flush(); flushErr != nil && err == nil {
+				err = fmt.Errorf("failed to write file %s: %w", f.Name(), flushErr)
+			}
+			if closeErr := f.Close(); closeErr != nil && err == nil {
+				err = fmt.Errorf("failed to close file %s: %w", f.Name(), closeErr)
+			}
+		}
+	}()
 	for _, volumeIdToServer := range dataNodeVolumeIdToVInfo {
 		for vid := range volumeIdToServer {
 			if _, ok := files[vid]; ok {
@@ -343,12 +353,6 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 			writers[vid] = bufio.NewWriterSize(dst, 64*1024)
 		}
 	}
-	defer func() {
-		for vid, w := range writers {
-			w.Flush()
-			files[vid].Close()
-		}
-	}()
 
 	return doTraverseAndSaving(c.env, c.writer, "/", false, false,
 		func(ctx context.Context, entry *filer_pb.FullEntry, outputChan chan interface{}) (err error) {

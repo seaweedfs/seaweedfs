@@ -654,3 +654,35 @@ func TestVolumeFsckHttpDeleteBatchDeduplicatesAndRecordsDirs(t *testing.T) {
 		t.Errorf("expected /fail not to be recorded in purgedDirs on 404")
 	}
 }
+
+func TestVolumeFsckCollectFilerFileIdsReportsFailedFlush(t *testing.T) {
+	if _, err := os.Stat("/dev/full"); err != nil {
+		t.Skip("needs /dev/full")
+	}
+	tempDir := t.TempDir()
+	if err := os.Symlink("/dev/full", getFilerFileIdFile(tempDir, 7)); err != nil {
+		t.Fatalf("link fid file to /dev/full: %v", err)
+	}
+	directory := &filer_pb.Entry{IsDirectory: true}
+	stub := &stubFilerServer{entries: map[string]*filer_pb.Entry{
+		"/":     directory,
+		"/file": {Chunks: []*filer_pb.FileChunk{{Size: 1, Fid: &filer_pb.FileId{VolumeId: 7, FileKey: 11, Cookie: 1}}}},
+	}}
+
+	verbose, findMissing, verify, force := false, false, false, false
+	c := &commandVolumeFsck{
+		tempFolder:               tempDir,
+		verbose:                  &verbose,
+		findMissingChunksInFiler: &findMissing,
+		verifyNeedle:             &verify,
+		forcePurging:             &force,
+		writer:                   io.Discard,
+		bucketsPath:              "/buckets",
+		env:                      startStubFiler(t, stub),
+	}
+
+	vinfo := map[string]map[uint32]VInfo{"dn1": {7: {}}}
+	if err := c.collectFilerFileIdAndPaths(vinfo, false, func(purgeItem) {}, 0, 0); err == nil {
+		t.Fatal("expected the failed fid file write to be reported")
+	}
+}
