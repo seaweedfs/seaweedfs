@@ -315,6 +315,8 @@ func (s3opt *S3Options) startS3Server() bool {
 
 	// chunk size for S3 uploads, read from the filer's -maxMB
 	var filerMaxMB int32
+	// the filer's -encryptVolumeData, which turns on chunk encryption here too
+	var filerCipher bool
 
 	for {
 		err := pb.WithOneOfGrpcFilerClients(false, filerAddresses, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
@@ -328,6 +330,7 @@ func (s3opt *S3Options) startS3Server() bool {
 			masterAddresses = pb.ServerAddresses(strings.Join(resp.Masters, ",")).ToAddresses()
 			metricsAddress, metricsIntervalSec = resp.MetricsAddress, int(resp.MetricsIntervalSec)
 			filerMaxMB = int32(resp.MaxMb)
+			filerCipher = resp.Cipher
 			glog.V(0).Infof("S3 read filer buckets dir: %s", filerBucketsPath)
 			glog.V(0).Infof("S3 read filer maxMB: %d", filerMaxMB)
 			if len(masterAddresses) > 0 {
@@ -406,7 +409,7 @@ func (s3opt *S3Options) startS3Server() bool {
 		ConcurrentFileUploadLimit: int64(*s3opt.concurrentFileUploadLimit),
 		EnableIam:                 *s3opt.enableIam, // Embedded IAM API (enabled by default)
 		IamReadOnly:               *s3opt.iamReadOnly,
-		Cipher:                    *s3opt.cipher, // encrypt data on volume servers
+		Cipher:                    *s3opt.cipher || filerCipher, // encrypt data on volume servers
 		Ip:                        *s3opt.ip,
 		BindIp:                    *s3opt.bindIp,
 		GrpcPort:                  *s3opt.portGrpc,
