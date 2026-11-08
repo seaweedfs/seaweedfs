@@ -630,10 +630,13 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 }
 
 func (ms *MasterServer) removeClusterNode(req *master_pb.KeepConnectedRequest, peerAddress pb.ServerAddress) {
-	for _, update := range ms.Cluster.RemoveClusterNode(req.FilerGroup, req.ClientType, peerAddress) {
+	removed := ms.Cluster.RemoveClusterNode(req.FilerGroup, req.ClientType, peerAddress)
+	for _, update := range removed {
 		ms.broadcastToClients(update)
 	}
-	if req.ClientType == cluster.FilerType {
+	// A replacement that registered before this stream ended still holds the
+	// address, so only its last registration leaves the ring.
+	if req.ClientType == cluster.FilerType && len(removed) > 0 {
 		ms.LockRingManager.RemoveServer(cluster.FilerGroupName(req.FilerGroup), peerAddress)
 	}
 }
