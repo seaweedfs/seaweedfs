@@ -366,6 +366,18 @@ fn rows_as_vectors(
     out
 }
 
+/// Refuses a table of an SSE-S3 bucket when the engine's storage has no key
+/// to read or write it with, rather than failing inside Lance.
+fn sse_s3_ready(sse_s3: bool, key_configured: Option<bool>) -> Result<(), Status> {
+    if sse_s3 && key_configured == Some(false) {
+        return Err(Status::failed_precondition(
+            "the bucket encrypts with SSE-S3, which needs s3.sse.kek or s3.sse.key for the \
+             engine as for the S3 gateway",
+        ));
+    }
+    Ok(())
+}
+
 /// The description a gateway sent with the table. Only a vector index at its
 /// colocated path is taken, since the engine is that path's writer already;
 /// any other location would point the engine at storage the catalog does not
@@ -458,6 +470,10 @@ impl VectorServer {
                 table.id.join("/")
             ))
         })?;
+        sse_s3_ready(
+            table.sse_s3,
+            self.storage.as_ref().map(|s| s.sse_s3_configured()),
+        )?;
         Ok(description)
     }
 
@@ -1038,6 +1054,21 @@ mod tests {
                 .expect_err(location);
             assert_eq!(err.code(), tonic::Code::PermissionDenied, "{location}");
         }
+    }
+
+    /// A table of an SSE-S3 bucket is refused before Lance opens it when the
+    /// storage holds no key.
+    #[test]
+    fn an_sse_s3_table_needs_the_key() {
+        assert!(sse_s3_ready(false, Some(false)).is_ok());
+        assert!(sse_s3_ready(true, Some(true)).is_ok());
+        assert!(
+            sse_s3_ready(true, None).is_ok(),
+            "in-process stores need no key"
+        );
+        let err = sse_s3_ready(true, Some(false)).unwrap_err();
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+        assert!(err.message().contains("s3.sse.kek or s3.sse.key"));
     }
 
     /// Only a vector index at its colocated path is taken from the request.
