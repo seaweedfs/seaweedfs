@@ -535,12 +535,7 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 	}
 
 	defer func() {
-		for _, update := range ms.Cluster.RemoveClusterNode(req.FilerGroup, req.ClientType, peerAddress) {
-			ms.broadcastToClients(update)
-		}
-		if req.ClientType == cluster.FilerType {
-			ms.LockRingManager.RemoveServer(cluster.FilerGroupName(req.FilerGroup), peerAddress)
-		}
+		ms.removeClusterNode(req, peerAddress)
 		ms.deleteClient(clientName, messageChan)
 	}()
 
@@ -632,6 +627,15 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 		}
 	}
 
+}
+
+func (ms *MasterServer) removeClusterNode(req *master_pb.KeepConnectedRequest, peerAddress pb.ServerAddress) {
+	for _, update := range ms.Cluster.RemoveClusterNode(req.FilerGroup, req.ClientType, peerAddress) {
+		ms.broadcastToClients(update)
+	}
+	if req.ClientType == cluster.FilerType {
+		ms.LockRingManager.RemoveServer(cluster.FilerGroupName(req.FilerGroup), peerAddress)
+	}
 }
 
 func (ms *MasterServer) onKeepConnectedMessage(registered *master_pb.KeepConnectedRequest, peerAddress pb.ServerAddress, message *master_pb.KeepConnectedRequest) {
