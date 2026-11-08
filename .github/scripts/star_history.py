@@ -9,6 +9,8 @@ logs a warning rather than under-reporting.
 import json
 import os
 import sys
+import time
+import urllib.error
 import urllib.request
 from datetime import datetime
 
@@ -22,6 +24,28 @@ REPO = "seaweedfs/seaweedfs"
 TOKEN = os.environ["GITHUB_TOKEN"]
 OUT = os.environ.get("OUT", "note/star_history.svg")
 PAGE_CAP = 400  # GitHub's hard limit on stargazer pagination
+REQUEST_ATTEMPTS = 5
+RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+
+
+def open_url(req):
+    for attempt in range(REQUEST_ATTEMPTS):
+        try:
+            return urllib.request.urlopen(req, timeout=30)
+        except urllib.error.HTTPError as error:
+            if error.code not in RETRYABLE_STATUS_CODES or attempt == REQUEST_ATTEMPTS - 1:
+                raise
+            retry_after = error.headers.get("Retry-After")
+            try:
+                delay = min(float(retry_after), 60) if retry_after else 2**attempt
+            except ValueError:
+                delay = 2**attempt
+            error.close()
+        except urllib.error.URLError:
+            if attempt == REQUEST_ATTEMPTS - 1:
+                raise
+            delay = 2**attempt
+        time.sleep(delay)
 
 
 def fetch_stargazers():
@@ -38,7 +62,7 @@ def fetch_stargazers():
                 "User-Agent": "seaweedfs-star-history",
             },
         )
-        with urllib.request.urlopen(req) as resp:
+        with open_url(req) as resp:
             batch = json.load(resp)
         if not batch:
             break
