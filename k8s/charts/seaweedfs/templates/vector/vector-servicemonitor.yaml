@@ -5,7 +5,10 @@ metadata:
   name: {{ include "seaweedfs.componentName" (list . "vector") }}
   namespace: {{ include "seaweedfs.namespace" . | quote }}
   labels:
-    {{- include "seaweedfs.vector.labels" . | nindent 4 }}
+    {{- include "seaweedfs.vector.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+    {{- with include "seaweedfs.commonLabels" (dict "context" $ "exclude" $.Values.global.seaweedfs.monitoring.additionalLabels) }}{{ . | nindent 4 }}{{ end }}
     {{- with .Values.global.seaweedfs.monitoring.additionalLabels }}{{ toYaml . | nindent 4 }}{{ end }}
   {{- with .Values.vector.serviceMonitor.annotations }}
   annotations:
