@@ -8,7 +8,9 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use tokio::time::sleep;
 
-use crate::master_pb::{KeepConnectedRequest, seaweed_client::SeaweedClient};
+use crate::master_pb::{
+    KeepConnectedRequest, ListClusterNodesRequest, seaweed_client::SeaweedClient,
+};
 use crate::security::GrpcTls;
 pub use weed_lance_worker::cluster::{CONNECT_TIMEOUT, connect, grpc_addr};
 
@@ -108,6 +110,8 @@ async fn stream_to(
     .context("master did not answer keep-connected")??
     .into_inner();
     let mut answered = false;
+    let interval = Duration::from_secs(5);
+    let mut heartbeat = tokio::time::interval_at(tokio::time::Instant::now() + interval, interval);
     // The master keeps the node live while the stream is open; resend the
     // registration periodically so a reconnect never leaves a stale entry.
     loop {
@@ -133,16 +137,50 @@ async fn stream_to(
             _ = tokio::time::sleep_until(answer_by), if !answered => {
                 anyhow::bail!("master did not answer keep-connected");
             }
-            _ = sleep(Duration::from_secs(5)) => {
-                tx.send(registration(client_addr)).await?;
+            _ = heartbeat.tick() => {
+                tokio::time::timeout(CONNECT_TIMEOUT, tx.send(registration(client_addr))).await
+                    .context("registration send stalled")??;
+                probe_registration(&mut client).await?;
             }
         }
     }
 }
 
+async fn probe_registration(client: &mut SeaweedClient<tonic::transport::Channel>) -> Result<()> {
+    tokio::time::timeout(
+        CONNECT_TIMEOUT,
+        client.list_cluster_nodes(ListClusterNodesRequest {
+            client_type: "vector".into(),
+            ..Default::default()
+        }),
+    )
+    .await
+    .context("registration heartbeat stalled")??;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn stalled_registration_heartbeat_is_bounded() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let hold = tokio::spawn(async move {
+            let (_connection, _) = listener.accept().await.unwrap();
+            std::future::pending::<()>().await;
+        });
+        let channel = tonic::transport::Endpoint::from_shared(format!("http://{address}"))
+            .unwrap()
+            .connect_lazy();
+        let mut client = SeaweedClient::new(channel);
+        let result = tokio::time::timeout(CONNECT_TIMEOUT * 3, probe_registration(&mut client))
+            .await
+            .unwrap();
+        assert!(format!("{:#}", result.unwrap_err()).contains("registration heartbeat stalled"));
+        hold.abort();
+    }
 
     /// Runs one pass against scripted masters and returns the dial order.
     async fn pass(masters: &[&str], answer: fn(&str) -> Result<Option<String>>) -> Vec<String> {
