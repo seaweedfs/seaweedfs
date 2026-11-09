@@ -22,7 +22,9 @@ func newS3VectorsTestServer(t *testing.T) (*AdminServer, *s3tables.ManagerClient
 	server := s3vectors.NewServer(client, nil, nil)
 	server.SetRegion(s3tables.DefaultRegion)
 	server.SetAccountID(s3tables.DefaultAccountID)
-	return &AdminServer{s3VectorsServer: server}, client
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{"sseS3":true}`)) }))
+	t.Cleanup(gateway.Close)
+	return &AdminServer{s3VectorsServer: server, s3PublicEndpoint: gateway.URL}, client
 }
 
 // createS3VectorsIndexRecord writes the catalog record CreateIndex leaves

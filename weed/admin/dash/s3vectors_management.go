@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"github.com/seaweedfs/seaweedfs/weed/s3api"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/lance"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
@@ -60,7 +59,6 @@ func newS3VectorsServer(s *AdminServer) *s3vectors.Server {
 		request := (&http.Request{Method: http.MethodPost, Header: make(http.Header)}).WithContext(ctx)
 		return catalog.DescribeTableInternal(request, id)
 	})
-	server.SetEncryptionChecker(s3api.GetSSES3KeyManager().IsConfigured)
 	server.SetRegion(s3tables.DefaultRegion)
 	server.SetAccountID(s3tables.DefaultAccountID)
 	return server
@@ -184,6 +182,10 @@ func (s *AdminServer) CreateS3VectorsBucket(w http.ResponseWriter, r *http.Reque
 	}
 	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
+		return
+	}
+	if req.EncryptionConfiguration["sseType"] == "AES256" && !s.vectorEncryptionConfigured(r.Context()) {
+		writeJSONError(w, http.StatusBadRequest, "Cannot verify SSE-S3 support on the S3 gateway; configure s3.public_endpoint and an SSE-S3 key on the gateway and vector engines")
 		return
 	}
 	var resp s3vectors.CreateVectorBucketResponse
