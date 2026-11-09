@@ -50,14 +50,17 @@ templ VectorTools(bucket, arn, policy string) {
    await run('CreateIndex',{vectorBucketName:bucket,indexName:document.getElementById('vectorIndexName').value,dimension:Number(document.getElementById('vectorDimension').value),distanceMetric:document.getElementById('vectorDistance').value,dataType:'float32'});
    location.reload();
   });
-  submit('vectorPolicyForm', () => {
+  submit('vectorPolicyForm', async () => {
    const policy=document.getElementById('vectorPolicy').value;
    JSON.parse(policy);
-   return run('PutVectorBucketPolicy',{vectorBucketName:bucket,policy});
+   await run('PutVectorBucketPolicy',{vectorBucketName:bucket,policy});
+   location.reload();
   });
   document.getElementById('vectorDeletePolicy').addEventListener('click',async () => {
    if (!confirm('Delete this bucket policy?')) return;
-   try {await run('DeleteVectorBucketPolicy',{vectorBucketName:bucket});document.getElementById('vectorPolicy').value='';} catch(error) {output.textContent=error.message;}
+   const controls=document.getElementById('vectorPolicyForm').querySelectorAll('button,textarea');
+   controls.forEach(control => control.disabled=true);
+   try {await run('DeleteVectorBucketPolicy',{vectorBucketName:bucket});location.reload();} catch(error) {output.textContent=error.message;} finally {controls.forEach(control => control.disabled=false);}
   });
   const operation=document.getElementById('vectorOperation');
   const request=document.getElementById('vectorRequest');
