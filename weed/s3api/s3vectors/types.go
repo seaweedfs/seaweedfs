@@ -49,6 +49,9 @@ func readJSON(r *http.Request, req interface{}) error {
 	if len(body) > maxRequestBodyBytes {
 		return errRequestBodyTooLarge
 	}
+	if info, ok := r.Context().Value(requestInfoKey{}).(*requestInfo); ok {
+		info.received += int64(len(body))
+	}
 	return json.NewDecoder(bytes.NewReader(body)).Decode(req)
 }
 

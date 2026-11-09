@@ -3,6 +3,7 @@
 package s3vectors
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"strings"
@@ -111,13 +112,23 @@ func (s *Server) instrument(next http.HandlerFunc) http.HandlerFunc {
 		inFlight := stats_collect.S3InFlightRequestsGauge.WithLabelValues(label)
 		inFlight.Inc()
 		defer inFlight.Dec()
-		recorder := stats_collect.NewStatusResponseWriter(w)
+		info := &requestInfo{}
+		r = s3_constants.EnsureIdentityHolder(r.WithContext(context.WithValue(r.Context(), requestInfoKey{}, info)))
+		recorder := &responseWriter{StatusRecorder: stats_collect.NewStatusResponseWriter(w), info: info}
 		start := time.Now()
 		next(recorder, r)
 		elapsed := time.Since(start)
-		stats_collect.S3RequestHistogram.WithLabelValues(label, "").Observe(elapsed.Seconds())
-		stats_collect.S3RequestCounter.WithLabelValues(label, strconv.Itoa(recorder.Status), "").Inc()
-		stats_collect.RecordBucketActiveTime("")
+		bucket := ""
+		if info.authorized && recorder.Status != http.StatusForbidden {
+			bucket = info.bucket
+		}
+		stats_collect.S3RequestHistogram.WithLabelValues(label, bucket).Observe(elapsed.Seconds())
+		stats_collect.S3RequestCounter.WithLabelValues(label, strconv.Itoa(recorder.Status), bucket).Inc()
+		if bucket != "" {
+			stats_collect.RecordBucketActiveTime(bucket)
+			stats_collect.S3BucketTrafficReceivedBytesCounter.WithLabelValues(bucket).Add(float64(info.received))
+			stats_collect.S3BucketTrafficSentBytesCounter.WithLabelValues(bucket).Add(float64(info.sent))
+		}
 	}
 }
 
@@ -155,4 +166,29 @@ func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
 			s3_constants.SetIdentityNameInContext(r.Context(), identity), identityObj))
 		handler(w, r)
 	}
+}
+
+type requestInfoKey struct{}
+
+type requestInfo struct {
+	bucket, index  string
+	authorized     bool
+	received, sent int64
+}
+
+func authorizeRequest(r *http.Request, bucket, index string) {
+	if info, ok := r.Context().Value(requestInfoKey{}).(*requestInfo); ok {
+		info.bucket, info.index, info.authorized = bucket, index, true
+	}
+}
+
+type responseWriter struct {
+	*stats_collect.StatusRecorder
+	info *requestInfo
+}
+
+func (w *responseWriter) Write(body []byte) (int, error) {
+	n, err := w.StatusRecorder.Write(body)
+	w.info.sent += int64(n)
+	return n, err
 }

@@ -314,6 +314,7 @@ func (s *Server) handleCreateVectorBucket(w http.ResponseWriter, r *http.Request
 		catalogErr(w, err)
 		return
 	}
+	authorizeRequest(r, req.VectorBucketName, "")
 	writeJSON(w, http.StatusOK, &CreateVectorBucketResponse{VectorBucketArn: s.vectorBucketArn(req.VectorBucketName)})
 }
 
@@ -924,6 +925,7 @@ func (s *Server) checkVectorPolicyDoc(r *http.Request, action, bucket string, re
 		vectorPolicyFromExt(ext), s.vectorBucketArn(bucket), s.policyContext(r, bucket, tags, tags, tagRequest{})) {
 		return errVectorDenied
 	}
+	authorizeRequest(r, bucket, "")
 	return nil
 }
 
@@ -966,6 +968,7 @@ func (s *Server) authorizeVectorTags(ctx context.Context, r *http.Request, actio
 		return nil, &s3tables.S3TablesError{Type: s3tables.ErrCodeNoSuchBucket,
 			Message: fmt.Sprintf("vector bucket %s not found", bucket)}
 	}
+	authorizeRequest(r, bucket, index)
 	return record, nil
 }
 
