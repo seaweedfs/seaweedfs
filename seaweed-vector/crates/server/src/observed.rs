@@ -14,161 +14,63 @@ impl VectorService for ObservedService {
         &self,
         request: Request<pb::CreateIndexRequest>,
     ) -> Result<Response<pb::CreateIndexResponse>, Status> {
-        let _in_flight = self.metrics.start("CreateIndex");
-        let timer = self
-            .metrics
-            .request_seconds
-            .with_label_values(&["CreateIndex"])
-            .start_timer();
+        let mut in_flight = self.metrics.start("CreateIndex");
         let result = self.inner.create_index(request).await;
-        timer.observe_duration();
-        let code = result
-            .as_ref()
-            .err()
-            .map(|e| format!("{:?}", e.code()))
-            .unwrap_or_else(|| "OK".into());
-        self.metrics
-            .requests
-            .with_label_values(&["CreateIndex", &code])
-            .inc();
+        in_flight.complete(result.as_ref().err().map(|e| e.code()));
         result
     }
     async fn drop_index(
         &self,
         request: Request<pb::DropIndexRequest>,
     ) -> Result<Response<pb::DropIndexResponse>, Status> {
-        let _in_flight = self.metrics.start("DropIndex");
-        let timer = self
-            .metrics
-            .request_seconds
-            .with_label_values(&["DropIndex"])
-            .start_timer();
+        let mut in_flight = self.metrics.start("DropIndex");
         let result = self.inner.drop_index(request).await;
-        timer.observe_duration();
-        let code = result
-            .as_ref()
-            .err()
-            .map(|e| format!("{:?}", e.code()))
-            .unwrap_or_else(|| "OK".into());
-        self.metrics
-            .requests
-            .with_label_values(&["DropIndex", &code])
-            .inc();
+        in_flight.complete(result.as_ref().err().map(|e| e.code()));
         result
     }
     async fn put_vectors(
         &self,
         request: Request<pb::PutVectorsRequest>,
     ) -> Result<Response<pb::PutVectorsResponse>, Status> {
-        let _in_flight = self.metrics.start("PutVectors");
-        let timer = self
-            .metrics
-            .request_seconds
-            .with_label_values(&["PutVectors"])
-            .start_timer();
+        let mut in_flight = self.metrics.start("PutVectors");
         let result = self.inner.put_vectors(request).await;
-        timer.observe_duration();
-        let code = result
-            .as_ref()
-            .err()
-            .map(|e| format!("{:?}", e.code()))
-            .unwrap_or_else(|| "OK".into());
-        self.metrics
-            .requests
-            .with_label_values(&["PutVectors", &code])
-            .inc();
+        in_flight.complete(result.as_ref().err().map(|e| e.code()));
         result
     }
     async fn get_vectors(
         &self,
         request: Request<pb::GetVectorsRequest>,
     ) -> Result<Response<pb::GetVectorsResponse>, Status> {
-        let _in_flight = self.metrics.start("GetVectors");
-        let timer = self
-            .metrics
-            .request_seconds
-            .with_label_values(&["GetVectors"])
-            .start_timer();
+        let mut in_flight = self.metrics.start("GetVectors");
         let result = self.inner.get_vectors(request).await;
-        timer.observe_duration();
-        let code = result
-            .as_ref()
-            .err()
-            .map(|e| format!("{:?}", e.code()))
-            .unwrap_or_else(|| "OK".into());
-        self.metrics
-            .requests
-            .with_label_values(&["GetVectors", &code])
-            .inc();
+        in_flight.complete(result.as_ref().err().map(|e| e.code()));
         result
     }
     async fn delete_vectors(
         &self,
         request: Request<pb::DeleteVectorsRequest>,
     ) -> Result<Response<pb::DeleteVectorsResponse>, Status> {
-        let _in_flight = self.metrics.start("DeleteVectors");
-        let timer = self
-            .metrics
-            .request_seconds
-            .with_label_values(&["DeleteVectors"])
-            .start_timer();
+        let mut in_flight = self.metrics.start("DeleteVectors");
         let result = self.inner.delete_vectors(request).await;
-        timer.observe_duration();
-        let code = result
-            .as_ref()
-            .err()
-            .map(|e| format!("{:?}", e.code()))
-            .unwrap_or_else(|| "OK".into());
-        self.metrics
-            .requests
-            .with_label_values(&["DeleteVectors", &code])
-            .inc();
+        in_flight.complete(result.as_ref().err().map(|e| e.code()));
         result
     }
     async fn list_vectors(
         &self,
         request: Request<pb::ListVectorsRequest>,
     ) -> Result<Response<pb::ListVectorsResponse>, Status> {
-        let _in_flight = self.metrics.start("ListVectors");
-        let timer = self
-            .metrics
-            .request_seconds
-            .with_label_values(&["ListVectors"])
-            .start_timer();
+        let mut in_flight = self.metrics.start("ListVectors");
         let result = self.inner.list_vectors(request).await;
-        timer.observe_duration();
-        let code = result
-            .as_ref()
-            .err()
-            .map(|e| format!("{:?}", e.code()))
-            .unwrap_or_else(|| "OK".into());
-        self.metrics
-            .requests
-            .with_label_values(&["ListVectors", &code])
-            .inc();
+        in_flight.complete(result.as_ref().err().map(|e| e.code()));
         result
     }
     async fn query_vectors(
         &self,
         request: Request<pb::QueryVectorsRequest>,
     ) -> Result<Response<pb::QueryVectorsResponse>, Status> {
-        let _in_flight = self.metrics.start("QueryVectors");
-        let timer = self
-            .metrics
-            .request_seconds
-            .with_label_values(&["QueryVectors"])
-            .start_timer();
+        let mut in_flight = self.metrics.start("QueryVectors");
         let result = self.inner.query_vectors(request).await;
-        timer.observe_duration();
-        let code = result
-            .as_ref()
-            .err()
-            .map(|e| format!("{:?}", e.code()))
-            .unwrap_or_else(|| "OK".into());
-        self.metrics
-            .requests
-            .with_label_values(&["QueryVectors", &code])
-            .inc();
+        in_flight.complete(result.as_ref().err().map(|e| e.code()));
         if let Ok(response) = &result {
             self.metrics
                 .query_results

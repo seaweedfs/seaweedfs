@@ -40,3 +40,51 @@ async fn immutable_reads_report_hits_misses_bytes_and_weight() {
     assert!(body.contains("SeaweedFS_vector_cache_bytes "));
     task.abort();
 }
+
+#[tokio::test]
+async fn cancelled_requests_are_counted_once() {
+    let metrics = Metrics::new().unwrap();
+    let guard = metrics.start("QueryVectors");
+    let task = tokio::spawn(async move {
+        let _guard = guard;
+        std::future::pending::<()>().await;
+    });
+    task.abort();
+    let _ = task.await;
+    assert_eq!(
+        metrics.in_flight.with_label_values(&["QueryVectors"]).get(),
+        0
+    );
+    assert_eq!(
+        metrics
+            .requests
+            .with_label_values(&["QueryVectors", "Cancelled"])
+            .get(),
+        1
+    );
+    assert_eq!(
+        metrics
+            .request_seconds
+            .with_label_values(&["QueryVectors"])
+            .get_sample_count(),
+        1
+    );
+    {
+        let mut guard = metrics.start("QueryVectors");
+        guard.complete(None);
+    }
+    assert_eq!(
+        metrics
+            .requests
+            .with_label_values(&["QueryVectors", "OK"])
+            .get(),
+        1
+    );
+    assert_eq!(
+        metrics
+            .requests
+            .with_label_values(&["QueryVectors", "Cancelled"])
+            .get(),
+        1
+    );
+}

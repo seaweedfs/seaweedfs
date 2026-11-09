@@ -126,7 +126,16 @@ impl Metrics {
     pub fn start(&self, operation: &str) -> InFlight {
         let gauge = self.in_flight.with_label_values(&[operation]);
         gauge.inc();
-        InFlight(gauge)
+        InFlight {
+            gauge,
+            requests: self.requests.clone(),
+            operation: operation.into(),
+            completed: false,
+            _timer: self
+                .request_seconds
+                .with_label_values(&[operation])
+                .start_timer(),
+        }
     }
 
     fn gather(&self, cache: Option<&ReadCache>) -> Result<String> {
@@ -141,11 +150,34 @@ impl Metrics {
     }
 }
 
-pub struct InFlight(IntGauge);
+pub struct InFlight {
+    gauge: IntGauge,
+    requests: IntCounterVec,
+    operation: String,
+    completed: bool,
+    _timer: prometheus::HistogramTimer,
+}
+
+impl InFlight {
+    pub fn complete(&mut self, error: Option<tonic::Code>) {
+        let code = error
+            .map(|c| format!("{c:?}"))
+            .unwrap_or_else(|| "OK".into());
+        self.requests
+            .with_label_values(&[&self.operation, &code])
+            .inc();
+        self.completed = true;
+    }
+}
 
 impl Drop for InFlight {
     fn drop(&mut self) {
-        self.0.dec();
+        self.gauge.dec();
+        if !self.completed {
+            self.requests
+                .with_label_values(&[&self.operation, "Cancelled"])
+                .inc();
+        }
     }
 }
 
