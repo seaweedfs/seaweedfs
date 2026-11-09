@@ -48,9 +48,10 @@ spec:
         - name: vector
           image: {{ .Values.vector.imageOverride | default (include "seaweedfs.image" .) | quote }}
           imagePullPolicy: {{ .Values.global.seaweedfs.imagePullPolicy }}
-          command: ["/usr/bin/weed-vector"]
+          command: ["/bin/sh", "-ec"]
           args:
-            - {{ printf "--listen=$(POD_IP):%d" (int .Values.vector.port) | quote }}
+            - 'case "$POD_IP" in *:*) POD_IP="[$POD_IP]";; esac; exec /usr/bin/weed-vector --listen="$POD_IP:{{ .Values.vector.port }}" "$@"'
+            - vector
             - {{ printf "--masters=%s" (.Values.vector.masters | default (include "seaweedfs.masterServerArg" .)) | quote }}
             - {{ printf "--read-cache-mb=%d" (int .Values.vector.readCacheMB) | quote }}
             {{- if .Values.filer.filerGroup }}

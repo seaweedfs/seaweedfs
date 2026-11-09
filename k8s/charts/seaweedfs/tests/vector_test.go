@@ -3,6 +3,7 @@ package tests
 import (
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -49,7 +50,7 @@ func TestVectorDeployment(t *testing.T) {
 	for _, secure := range []bool{false, true} {
 		t.Run(fmt.Sprintf("security-%v", secure), func(t *testing.T) {
 			output, documents := render(t, "vector.enabled=true", "vector.metricsPort=9329", "vector.port=8098", "global.seaweedfs.enableSecurity="+fmt.Sprint(secure), "global.seaweedfs.monitoring.enabled=true", "networkPolicy.enabled=true")
-			for _, want := range []string{"--listen=$(POD_IP):8098", "--metrics-port=9329", "path: /ready", "path: /health", "kind: ServiceMonitor"} {
+			for _, want := range []string{"--listen=\"$POD_IP:8098\"", "--metrics-port=9329", "path: /ready", "path: /health", "kind: ServiceMonitor"} {
 				if !strings.Contains(output, want) {
 					t.Fatalf("missing %s", want)
 				}
@@ -85,5 +86,35 @@ func TestVectorExistingImagesAndExternalCertificates(t *testing.T) {
 	output, _ = render(t, "vector.enabled=true", "global.seaweedfs.enableSecurity=true", "certificates.externalCertificates.enabled=true")
 	if strings.Contains(output, "kind: Certificate") || !strings.Contains(output, "mountPath: /usr/local/share/ca-certificates/vector") {
 		t.Fatal("external vector certificates are not mounted")
+	}
+}
+
+func TestVectorIPv6Listen(t *testing.T) {
+	_, docs := render(t, "vector.enabled=true")
+	var args []interface{}
+	for _, doc := range docs {
+		if doc["kind"] != "Deployment" {
+			continue
+		}
+		pod := doc["spec"].(map[string]interface{})["template"].(map[string]interface{})["spec"].(map[string]interface{})
+		c := pod["containers"].([]interface{})[0].(map[string]interface{})
+		if c["name"] == "vector" {
+			args = c["args"].([]interface{})
+		}
+	}
+	for _, ip := range []string{"10.0.0.20", "fd00::20"} {
+		dir := t.TempDir()
+		script := strings.ReplaceAll(args[0].(string), "/usr/bin/weed-vector", "printf '%s\\n'")
+		cmd := exec.Command("sh", "-ec", script, "vector", "--masters=master")
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "POD_IP="+ip)
+		out, err := cmd.CombinedOutput()
+		address := ip
+		if strings.Contains(ip, ":") {
+			address = "[" + ip + "]"
+		}
+		if err != nil || !strings.Contains(string(out), "--listen="+address+":8090") || !strings.Contains(string(out), "--masters=master") {
+			t.Fatalf("%s: %s %v", ip, out, err)
+		}
 	}
 }
