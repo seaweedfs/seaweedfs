@@ -1,0 +1,34 @@
+services:
+  seaweedfs:
+    image: ${SEAWEEDFS_IMAGE:-chrislusf/seaweedfs:4.53}
+    command: mini -dir=/data -ip=seaweedfs -ip.bind=0.0.0.0 -admin.password=vector-demo -admin.worker.ip=0.0.0.0 -tableBucket=embeddings:LANCE
+    environment: &environment
+      WEED_JWT_FILER_SIGNING_KEY: vector-demo-cluster-key
+      AWS_ACCESS_KEY_ID: vector-demo
+      AWS_SECRET_ACCESS_KEY: vector-demo-secret
+    ports:
+      - "127.0.0.1:8333:8333"
+      - "127.0.0.1:12535:12535"
+    volumes:
+      - data:/data
+    healthcheck:
+      test: [CMD-SHELL, "wget -q -O /dev/null http://127.0.0.1:9333/cluster/status"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+  vector:
+    image: ${SEAWEEDFS_IMAGE:-chrislusf/seaweedfs:4.53}
+    command: vector --listen=vector:8090 --masters=seaweedfs:9333
+    environment: *environment
+    depends_on:
+      seaweedfs:
+        condition: service_healthy
+  worker:
+    image: ${SEAWEEDFS_IMAGE:-chrislusf/seaweedfs:4.53}
+    command: worker-rust --admin=seaweedfs:12535 --masters=seaweedfs:9333 --namespace=http://seaweedfs:9101
+    environment: *environment
+    depends_on:
+      seaweedfs:
+        condition: service_healthy
+volumes:
+  data:
