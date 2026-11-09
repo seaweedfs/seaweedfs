@@ -100,7 +100,13 @@ fn normalize_args(args: Vec<String>) -> Vec<String> {
 
 /// A wildcard listen address is not reachable for peers; derive the outbound
 /// IP toward the first master instead — the address the master sees anyway.
-fn advertised_addr(listen: &str, masters: &[String]) -> String {
+fn advertised_addr(listen: &str, masters: &[String], advertise: Option<&str>) -> String {
+    if let Some(address) = advertise
+        .map(str::trim)
+        .filter(|address| !address.is_empty())
+    {
+        return address.to_string();
+    }
     let Some((host, _)) = listen.rsplit_once(':') else {
         return listen.to_string();
     };
@@ -190,10 +196,7 @@ async fn main() -> Result<()> {
     );
     // Registered only now, with storage connected and the listener bound,
     // so the gateway never finds an engine that cannot serve yet.
-    let advertise = args
-        .advertise
-        .clone()
-        .unwrap_or_else(|| advertised_addr(&args.listen, &cluster.masters));
+    let advertise = advertised_addr(&args.listen, &cluster.masters, args.advertise.as_deref());
     tokio::spawn(master_client::keep_connected(
         cluster.masters.clone(),
         advertise,
@@ -230,6 +233,20 @@ async fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_empty_advertise_uses_the_listen_address() {
+        for value in [None, Some(""), Some("  ")] {
+            assert_eq!(
+                advertised_addr("127.0.0.1:8090", &[], value),
+                "127.0.0.1:8090"
+            );
+        }
+        assert_eq!(
+            advertised_addr("127.0.0.1:8090", &[], Some("vector.example:8090")),
+            "vector.example:8090"
+        );
+    }
 
     #[test]
     fn nprobes_must_be_positive() {
