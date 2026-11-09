@@ -72,3 +72,34 @@ func TestVectorLimitsReturnJSONWithoutCallingHandler(t *testing.T) {
 		t.Fatalf("limit response: %d %v %s", w.Code, w.Header(), w.Body)
 	}
 }
+
+func TestVectorLimitsIgnoreUnrelatedResourceFields(t *testing.T) {
+	s := NewServer(nil, headerAuth{}, nil)
+	for _, tc := range []struct{ op, body, bucket string }{
+		{"PutVectors", `{"vectorBucketName":"bucket-a","indexName":"idx","resourceArn":"arn:aws:s3vectors:r:a:bucket/bucket-b"}`, "bucket-a"},
+		{"PutVectors", `{"vectorBucketName":"bucket-a","indexName":"idx","resourceArn":{"ignored":true}}`, "bucket-a"},
+		{"GetVectorBucket", `{"vectorBucketName":"bucket-a","indexArn":"invalid","indexName":42}`, "bucket-a"},
+		{"CreateIndex", `{"vectorBucketName":"bucket-a","indexName":"idx","resourceArn":"ignored"}`, "bucket-a"},
+		{"ListVectorBuckets", `{"vectorBucketName":"ignored","resourceArn":"ignored"}`, ""},
+	} {
+		t.Run(tc.op+tc.body, func(t *testing.T) {
+			called := false
+			s.SetLimiter(func(next http.HandlerFunc, action string) http.HandlerFunc {
+				return func(w http.ResponseWriter, r *http.Request) {
+					called = true
+					if got := mux.Vars(r)["bucket"]; got != tc.bucket {
+						t.Fatalf("limited bucket %q, want %q", got, tc.bucket)
+					}
+					next(w, r)
+				}
+			})
+			r := httptest.NewRequest(http.MethodPost, "/"+tc.op, bytes.NewBufferString(tc.body))
+			s.instrument(func(w http.ResponseWriter, r *http.Request) {
+				s.limitRequest(func(http.ResponseWriter, *http.Request) {}, w, r)
+			})(httptest.NewRecorder(), r)
+			if !called {
+				t.Fatal("limiter was not invoked")
+			}
+		})
+	}
+}

@@ -15,32 +15,46 @@ func (s *Server) SetLimiter(limit func(http.HandlerFunc, string) http.HandlerFun
 }
 
 func (s *Server) limitRequest(handler http.HandlerFunc, w http.ResponseWriter, r *http.Request) {
-	var target struct {
-		VectorBucketName string `json:"vectorBucketName"`
-		VectorBucketArn  string `json:"vectorBucketArn"`
-		IndexName        string `json:"indexName"`
-		IndexArn         string `json:"indexArn"`
-		ResourceArn      string `json:"resourceArn"`
+
+	op := operationFromRequest(r)
+	var target interface{} = &struct{}{}
+	resolve := func() (vectorBucketARNs, error) { return vectorBucketARNs{}, nil }
+	switch op {
+	case "TagResource", "UntagResource", "ListTagsForResource":
+		req := &struct {
+			ResourceArn string `json:"resourceArn"`
+		}{}
+		target = req
+		resolve = func() (vectorBucketARNs, error) { arns, _, err := s.tagTarget(r, req.ResourceArn); return arns, err }
+	case "CreateVectorBucket":
+		req := &struct {
+			VectorBucketName string `json:"vectorBucketName"`
+		}{}
+		target = req
+		resolve = func() (vectorBucketARNs, error) { return vectorBucketARNs{bucket: req.VectorBucketName}, nil }
+	case "GetVectorBucket", "DeleteVectorBucket", "PutVectorBucketPolicy", "GetVectorBucketPolicy", "DeleteVectorBucketPolicy", "ListIndexes":
+		req := &GetVectorBucketRequest{}
+		target = req
+		resolve = func() (vectorBucketARNs, error) { return s.bucketARNs(req.VectorBucketName, req.VectorBucketArn) }
+	case "CreateIndex", "GetIndex", "DeleteIndex", "PutVectors", "GetVectors", "DeleteVectors", "ListVectors", "QueryVectors":
+		req := &GetIndexRequest{}
+		target = req
+		resolve = func() (vectorBucketARNs, error) {
+			return s.resolveIndexARNs(req.VectorBucketName, req.VectorBucketArn, req.IndexName, req.IndexArn)
+		}
 	}
 	if r.Method == http.MethodPost {
-		if err := readJSON(r, &target); err != nil {
+		if err := readJSON(r, target); err != nil {
 			writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 			return
 		}
 	}
-	var arns vectorBucketARNs
-	var err error
-	if strings.HasPrefix(r.URL.Path, tagsPathPrefix) || target.ResourceArn != "" {
-		arns, _, err = s.tagTarget(r, target.ResourceArn)
-	} else if target.IndexArn != "" || target.IndexName != "" {
-		arns, err = s.resolveIndexARNs(target.VectorBucketName, target.VectorBucketArn, target.IndexName, target.IndexArn)
-	} else {
-		arns, err = s.bucketARNs(target.VectorBucketName, target.VectorBucketArn)
-	}
+	arns, err := resolve()
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
+
 	setRequestTarget(r, arns.bucket, arns.index)
 	vars := make(map[string]string, len(mux.Vars(r))+2)
 	for k, v := range mux.Vars(r) {
@@ -49,7 +63,6 @@ func (s *Server) limitRequest(handler http.HandlerFunc, w http.ResponseWriter, r
 	vars["bucket"], vars["object"] = arns.bucket, arns.index
 	r = mux.SetURLVars(r, vars)
 	action := s3_constants.ACTION_WRITE
-	op := operationFromRequest(r)
 	if strings.HasPrefix(op, "Get") || strings.HasPrefix(op, "List") || op == "QueryVectors" {
 		action = s3_constants.ACTION_READ
 	}
