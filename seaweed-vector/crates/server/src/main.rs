@@ -191,6 +191,7 @@ async fn main() -> Result<()> {
     tokio::spawn(master_client::keep_connected(
         cluster.masters.clone(),
         advertise,
+        args.filer_group.clone(),
         cluster.master_tls.clone(),
         metrics.clone(),
     ));
