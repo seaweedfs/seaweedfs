@@ -10,7 +10,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -20,10 +19,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_lifecycle_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
-	"github.com/seaweedfs/seaweedfs/weed/pb/vector_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/iceberg"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/lance"
@@ -37,8 +34,6 @@ import (
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 var (
@@ -452,7 +447,7 @@ func (s3opt *S3Options) startS3Server() bool {
 	// backend is reachable — /s3vectors/ in the SigV4 credential scope picks
 	// the vectors router.
 	vectorsHandler := http.Handler(router)
-	if vectorsRouter := s3opt.vectorsRouter(s3ApiServer, grpcDialOption, masterAddresses, filerGroup); vectorsRouter != nil {
+	if vectorsRouter := s3opt.vectorsRouter(s3ApiServer, grpcDialOption, masterAddresses); vectorsRouter != nil {
 		vr, mainRouter := vectorsRouter, router
 		vectorsHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if isVectorsRequest(r) {
@@ -739,14 +734,12 @@ func (s3opt *S3Options) startLanceServer(listenOnLocalhost bool) *http.Server {
 // vectorsRouter builds the S3 Vectors API router — workers register to the
 // master and the backend resolves them lazily, so a worker that comes up
 // after the gateway still gets picked up on first query.
-func (s3opt *S3Options) vectorsRouter(s3ApiServer *s3api.S3ApiServer, grpcDialOption grpc.DialOption, masterAddresses []pb.ServerAddress, filerGroup string) *mux.Router {
+func (s3opt *S3Options) vectorsRouter(s3ApiServer *s3api.S3ApiServer, grpcDialOption grpc.DialOption, masterAddresses []pb.ServerAddress) *mux.Router {
 	if len(masterAddresses) == 0 {
 		glog.Warningf("S3 Vectors API disabled: no weed-vector registered on master")
 		return nil
 	}
-	backend := &vectorDiscovery{masters: masterAddresses, grpcDialOption: grpcDialOption, discover: func(masters []pb.ServerAddress, opt grpc.DialOption) []string {
-		return discoverVectorWorkers(masters, opt, filerGroup)
-	}}
+	backend := s3vectors.NewVectorDiscovery(masterAddresses, grpcDialOption)
 	// In-process describe — the router resolves locations and vended
 	// storage options through the catalog directly, never over HTTP. The
 	// lookup itself runs under the trusted identity: the caller's vector
@@ -768,230 +761,6 @@ func (s3opt *S3Options) vectorsRouter(s3ApiServer *s3api.S3ApiServer, grpcDialOp
 	vectorsServer.SetDescribe(describe)
 	vectorsServer.RegisterRoutes(vectorsRouter)
 	return vectorsRouter
-}
-
-// vectorDiscovery resolves the currently registered weed-vector through the
-// master and caches the connection; workers joining after gateway startup
-// are picked up on first query.
-type vectorDiscovery struct {
-	masters        []pb.ServerAddress
-	grpcDialOption grpc.DialOption
-	discover       func([]pb.ServerAddress, grpc.DialOption) []string
-	mu             sync.Mutex
-	worker         string
-	conn           *grpc.ClientConn
-	client         vector_pb.VectorServiceClient
-	nextResolve    time.Time
-	resolving      chan struct{} // closed when the in-flight resolve lands
-}
-
-// reset drops the cached worker so the next call rediscovers — invoked on
-// transport errors only, and only when the failed client is still the
-// cached one (a concurrent request may have already re-resolved).
-func (d *vectorDiscovery) reset(c vector_pb.VectorServiceClient) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if c != d.client {
-		return
-	}
-	if d.conn != nil {
-		d.conn.Close()
-	}
-	d.worker, d.conn, d.client = "", nil, nil
-	d.nextResolve = time.Time{}
-}
-
-// Only Unavailable proves a transport failure — a request deadline or an
-// application-level error can fire on a healthy connection.
-func isTransportError(err error) bool {
-	return status.Code(err) == codes.Unavailable
-}
-
-// resolve runs without d.mu held so a slow master cannot stall cached-client callers.
-func (d *vectorDiscovery) resolve() {
-	workers := d.discover(d.masters, d.grpcDialOption)
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	// Measured from lookup end so a slow lookup cannot leave the next one already due.
-	defer func() {
-		interval := vectorRecheckInterval
-		if d.client != nil {
-			interval = vectorResolveInterval
-		}
-		d.nextResolve = time.Now().Add(interval)
-		close(d.resolving)
-		d.resolving = nil
-	}()
-	if len(workers) == 0 {
-		return
-	}
-	worker := workers[0]
-	for _, w := range workers {
-		if w == d.worker {
-			worker = w
-			break
-		}
-	}
-	if worker != d.worker {
-		conn, err := pb.GrpcDial(context.Background(), worker, false, d.grpcDialOption)
-		if err != nil {
-			glog.Warningf("S3 Vectors: dial weed-vector %s: %v", worker, err)
-			return
-		}
-		if d.conn != nil {
-			d.conn.Close()
-		}
-		d.worker, d.conn = worker, conn
-		d.client = vector_pb.NewVectorServiceClient(conn)
-	}
-}
-
-// A live client refreshes membership at most every vectorResolveInterval.
-// With no usable backend the recheck is much more frequent: a worker that
-// registers a moment after a lookup must surface inside a caller's retry
-// budget, while an absent one still cannot flood the master with lookups.
-const (
-	vectorResolveInterval = 5 * time.Second
-	vectorRecheckInterval = 500 * time.Millisecond
-)
-
-var errNoVectorWorker = status.Error(codes.Unavailable, "no weed-vector registered on master")
-
-func (d *vectorDiscovery) cli() (vector_pb.VectorServiceClient, error) {
-	d.mu.Lock()
-	if d.resolving == nil && !time.Now().Before(d.nextResolve) {
-		d.resolving = make(chan struct{})
-		go d.resolve()
-	}
-	cli, resolving := d.client, d.resolving
-	d.mu.Unlock()
-	if cli != nil {
-		return cli, nil
-	}
-	// No cached client: wait for the in-flight lookup instead of failing.
-	if resolving != nil {
-		<-resolving
-		d.mu.Lock()
-		cli = d.client
-		d.mu.Unlock()
-		if cli != nil {
-			return cli, nil
-		}
-	}
-	return nil, errNoVectorWorker
-}
-
-func (d *vectorDiscovery) CreateIndex(ctx context.Context, in *vector_pb.CreateIndexRequest, opts ...grpc.CallOption) (resp *vector_pb.CreateIndexResponse, err error) {
-	for attempt := 0; attempt < 2; attempt++ {
-		var c vector_pb.VectorServiceClient
-		if c, err = d.cli(); err != nil {
-			return nil, err
-		}
-		if resp, err = c.CreateIndex(ctx, in, opts...); err == nil {
-			return resp, nil
-		}
-		if !isTransportError(err) {
-			return nil, err
-		}
-		d.reset(c)
-	}
-	return nil, err
-}
-func (d *vectorDiscovery) DropIndex(ctx context.Context, in *vector_pb.DropIndexRequest, opts ...grpc.CallOption) (resp *vector_pb.DropIndexResponse, err error) {
-	for attempt := 0; attempt < 2; attempt++ {
-		var c vector_pb.VectorServiceClient
-		if c, err = d.cli(); err != nil {
-			return nil, err
-		}
-		if resp, err = c.DropIndex(ctx, in, opts...); err == nil {
-			return resp, nil
-		}
-		if !isTransportError(err) {
-			return nil, err
-		}
-		d.reset(c)
-	}
-	return nil, err
-}
-func (d *vectorDiscovery) PutVectors(ctx context.Context, in *vector_pb.PutVectorsRequest, opts ...grpc.CallOption) (resp *vector_pb.PutVectorsResponse, err error) {
-	for attempt := 0; attempt < 2; attempt++ {
-		var c vector_pb.VectorServiceClient
-		if c, err = d.cli(); err != nil {
-			return nil, err
-		}
-		if resp, err = c.PutVectors(ctx, in, opts...); err == nil {
-			return resp, nil
-		}
-		if !isTransportError(err) {
-			return nil, err
-		}
-		d.reset(c)
-	}
-	return nil, err
-}
-func (d *vectorDiscovery) GetVectors(ctx context.Context, in *vector_pb.GetVectorsRequest, opts ...grpc.CallOption) (resp *vector_pb.GetVectorsResponse, err error) {
-	for attempt := 0; attempt < 2; attempt++ {
-		var c vector_pb.VectorServiceClient
-		if c, err = d.cli(); err != nil {
-			return nil, err
-		}
-		if resp, err = c.GetVectors(ctx, in, opts...); err == nil {
-			return resp, nil
-		}
-		if !isTransportError(err) {
-			return nil, err
-		}
-		d.reset(c)
-	}
-	return nil, err
-}
-func (d *vectorDiscovery) DeleteVectors(ctx context.Context, in *vector_pb.DeleteVectorsRequest, opts ...grpc.CallOption) (resp *vector_pb.DeleteVectorsResponse, err error) {
-	for attempt := 0; attempt < 2; attempt++ {
-		var c vector_pb.VectorServiceClient
-		if c, err = d.cli(); err != nil {
-			return nil, err
-		}
-		if resp, err = c.DeleteVectors(ctx, in, opts...); err == nil {
-			return resp, nil
-		}
-		if !isTransportError(err) {
-			return nil, err
-		}
-		d.reset(c)
-	}
-	return nil, err
-}
-func (d *vectorDiscovery) ListVectors(ctx context.Context, in *vector_pb.ListVectorsRequest, opts ...grpc.CallOption) (resp *vector_pb.ListVectorsResponse, err error) {
-	for attempt := 0; attempt < 2; attempt++ {
-		var c vector_pb.VectorServiceClient
-		if c, err = d.cli(); err != nil {
-			return nil, err
-		}
-		if resp, err = c.ListVectors(ctx, in, opts...); err == nil {
-			return resp, nil
-		}
-		if !isTransportError(err) {
-			return nil, err
-		}
-		d.reset(c)
-	}
-	return nil, err
-}
-func (d *vectorDiscovery) QueryVectors(ctx context.Context, in *vector_pb.QueryVectorsRequest, opts ...grpc.CallOption) (resp *vector_pb.QueryVectorsResponse, err error) {
-	for attempt := 0; attempt < 2; attempt++ {
-		var c vector_pb.VectorServiceClient
-		if c, err = d.cli(); err != nil {
-			return nil, err
-		}
-		if resp, err = c.QueryVectors(ctx, in, opts...); err == nil {
-			return resp, nil
-		}
-		if !isTransportError(err) {
-			return nil, err
-		}
-		d.reset(c)
-	}
-	return nil, err
 }
 
 // isVectorsRequest routes by the SigV4 credential scope — the s3vectors
@@ -1135,33 +904,3 @@ func (v lanceCredentialVendor) VendTableCredentials(ctx context.Context, princip
 // discoverVectorWorkers returns every registered weed-vector address —
 // callers keep their current worker when it is still listed so
 // membership-order changes cannot churn live connections.
-func discoverVectorWorkers(masters []pb.ServerAddress, grpcDialOption grpc.DialOption, filerGroup string) []string {
-	for _, master := range masters {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		conn, err := pb.GrpcDial(ctx, master.ToGrpcAddress(), false, grpcDialOption)
-		if err != nil {
-			cancel()
-			continue
-		}
-		resp, err := master_pb.NewSeaweedClient(conn).ListClusterNodes(ctx, &master_pb.ListClusterNodesRequest{
-			ClientType: "vector",
-			FilerGroup: filerGroup,
-		})
-		conn.Close()
-		cancel()
-		if err != nil {
-			continue
-		}
-		workers := make([]string, 0, len(resp.ClusterNodes))
-		for _, node := range resp.ClusterNodes {
-			glog.V(0).Infof("S3 Vectors: discovered weed-vector at %s via master %s", node.Address, master)
-			workers = append(workers, node.Address)
-		}
-		// A follower can answer with an empty list — workers register with
-		// the leader, so keep looking rather than accept "none."
-		if len(workers) > 0 {
-			return workers
-		}
-	}
-	return nil
-}

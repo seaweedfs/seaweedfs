@@ -1,4 +1,4 @@
-package command
+package s3vectors
 
 import (
 	"fmt"

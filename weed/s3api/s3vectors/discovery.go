@@ -1,0 +1,259 @@
+package s3vectors
+
+import (
+	"context"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/vector_pb"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"sync"
+	"time"
+)
+
+func NewVectorDiscovery(masters []pb.ServerAddress, dialOption grpc.DialOption) vector_pb.VectorServiceClient {
+	return &vectorDiscovery{masters: masters, grpcDialOption: dialOption, discover: discoverVectorWorkers}
+}
+
+type vectorDiscovery struct {
+	masters        []pb.ServerAddress
+	grpcDialOption grpc.DialOption
+	discover       func([]pb.ServerAddress, grpc.DialOption) []string
+	mu             sync.Mutex
+	worker         string
+	conn           *grpc.ClientConn
+	client         vector_pb.VectorServiceClient
+	nextResolve    time.Time
+	resolving      chan struct{} // closed when the in-flight resolve lands
+}
+
+func (d *vectorDiscovery) reset(c vector_pb.VectorServiceClient) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if c != d.client {
+		return
+	}
+	if d.conn != nil {
+		d.conn.Close()
+	}
+	d.worker, d.conn, d.client = "", nil, nil
+	d.nextResolve = time.Time{}
+}
+
+func isTransportError(err error) bool {
+	return status.Code(err) == codes.Unavailable
+}
+
+func (d *vectorDiscovery) resolve() {
+	workers := d.discover(d.masters, d.grpcDialOption)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	// Measured from lookup end so a slow lookup cannot leave the next one already due.
+	defer func() {
+		interval := vectorRecheckInterval
+		if d.client != nil {
+			interval = vectorResolveInterval
+		}
+		d.nextResolve = time.Now().Add(interval)
+		close(d.resolving)
+		d.resolving = nil
+	}()
+	if len(workers) == 0 {
+		return
+	}
+	worker := workers[0]
+	for _, w := range workers {
+		if w == d.worker {
+			worker = w
+			break
+		}
+	}
+	if worker != d.worker {
+		conn, err := pb.GrpcDial(context.Background(), worker, false, d.grpcDialOption)
+		if err != nil {
+			glog.Warningf("S3 Vectors: dial weed-vector %s: %v", worker, err)
+			return
+		}
+		if d.conn != nil {
+			d.conn.Close()
+		}
+		d.worker, d.conn = worker, conn
+		d.client = vector_pb.NewVectorServiceClient(conn)
+	}
+}
+
+const (
+	vectorResolveInterval = 5 * time.Second
+	vectorRecheckInterval = 500 * time.Millisecond
+)
+
+var errNoVectorWorker = status.Error(codes.Unavailable, "no weed-vector registered on master")
+
+func (d *vectorDiscovery) cli() (vector_pb.VectorServiceClient, error) {
+	d.mu.Lock()
+	if d.resolving == nil && !time.Now().Before(d.nextResolve) {
+		d.resolving = make(chan struct{})
+		go d.resolve()
+	}
+	cli, resolving := d.client, d.resolving
+	d.mu.Unlock()
+	if cli != nil {
+		return cli, nil
+	}
+	// No cached client: wait for the in-flight lookup instead of failing.
+	if resolving != nil {
+		<-resolving
+		d.mu.Lock()
+		cli = d.client
+		d.mu.Unlock()
+		if cli != nil {
+			return cli, nil
+		}
+	}
+	return nil, errNoVectorWorker
+}
+
+func (d *vectorDiscovery) CreateIndex(ctx context.Context, in *vector_pb.CreateIndexRequest, opts ...grpc.CallOption) (resp *vector_pb.CreateIndexResponse, err error) {
+	for attempt := 0; attempt < 2; attempt++ {
+		var c vector_pb.VectorServiceClient
+		if c, err = d.cli(); err != nil {
+			return nil, err
+		}
+		if resp, err = c.CreateIndex(ctx, in, opts...); err == nil {
+			return resp, nil
+		}
+		if !isTransportError(err) {
+			return nil, err
+		}
+		d.reset(c)
+	}
+	return nil, err
+}
+func (d *vectorDiscovery) DropIndex(ctx context.Context, in *vector_pb.DropIndexRequest, opts ...grpc.CallOption) (resp *vector_pb.DropIndexResponse, err error) {
+	for attempt := 0; attempt < 2; attempt++ {
+		var c vector_pb.VectorServiceClient
+		if c, err = d.cli(); err != nil {
+			return nil, err
+		}
+		if resp, err = c.DropIndex(ctx, in, opts...); err == nil {
+			return resp, nil
+		}
+		if !isTransportError(err) {
+			return nil, err
+		}
+		d.reset(c)
+	}
+	return nil, err
+}
+func (d *vectorDiscovery) PutVectors(ctx context.Context, in *vector_pb.PutVectorsRequest, opts ...grpc.CallOption) (resp *vector_pb.PutVectorsResponse, err error) {
+	for attempt := 0; attempt < 2; attempt++ {
+		var c vector_pb.VectorServiceClient
+		if c, err = d.cli(); err != nil {
+			return nil, err
+		}
+		if resp, err = c.PutVectors(ctx, in, opts...); err == nil {
+			return resp, nil
+		}
+		if !isTransportError(err) {
+			return nil, err
+		}
+		d.reset(c)
+	}
+	return nil, err
+}
+func (d *vectorDiscovery) GetVectors(ctx context.Context, in *vector_pb.GetVectorsRequest, opts ...grpc.CallOption) (resp *vector_pb.GetVectorsResponse, err error) {
+	for attempt := 0; attempt < 2; attempt++ {
+		var c vector_pb.VectorServiceClient
+		if c, err = d.cli(); err != nil {
+			return nil, err
+		}
+		if resp, err = c.GetVectors(ctx, in, opts...); err == nil {
+			return resp, nil
+		}
+		if !isTransportError(err) {
+			return nil, err
+		}
+		d.reset(c)
+	}
+	return nil, err
+}
+func (d *vectorDiscovery) DeleteVectors(ctx context.Context, in *vector_pb.DeleteVectorsRequest, opts ...grpc.CallOption) (resp *vector_pb.DeleteVectorsResponse, err error) {
+	for attempt := 0; attempt < 2; attempt++ {
+		var c vector_pb.VectorServiceClient
+		if c, err = d.cli(); err != nil {
+			return nil, err
+		}
+		if resp, err = c.DeleteVectors(ctx, in, opts...); err == nil {
+			return resp, nil
+		}
+		if !isTransportError(err) {
+			return nil, err
+		}
+		d.reset(c)
+	}
+	return nil, err
+}
+func (d *vectorDiscovery) ListVectors(ctx context.Context, in *vector_pb.ListVectorsRequest, opts ...grpc.CallOption) (resp *vector_pb.ListVectorsResponse, err error) {
+	for attempt := 0; attempt < 2; attempt++ {
+		var c vector_pb.VectorServiceClient
+		if c, err = d.cli(); err != nil {
+			return nil, err
+		}
+		if resp, err = c.ListVectors(ctx, in, opts...); err == nil {
+			return resp, nil
+		}
+		if !isTransportError(err) {
+			return nil, err
+		}
+		d.reset(c)
+	}
+	return nil, err
+}
+func (d *vectorDiscovery) QueryVectors(ctx context.Context, in *vector_pb.QueryVectorsRequest, opts ...grpc.CallOption) (resp *vector_pb.QueryVectorsResponse, err error) {
+	for attempt := 0; attempt < 2; attempt++ {
+		var c vector_pb.VectorServiceClient
+		if c, err = d.cli(); err != nil {
+			return nil, err
+		}
+		if resp, err = c.QueryVectors(ctx, in, opts...); err == nil {
+			return resp, nil
+		}
+		if !isTransportError(err) {
+			return nil, err
+		}
+		d.reset(c)
+	}
+	return nil, err
+}
+
+func discoverVectorWorkers(masters []pb.ServerAddress, grpcDialOption grpc.DialOption) []string {
+	for _, master := range masters {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		conn, err := pb.GrpcDial(ctx, master.ToGrpcAddress(), false, grpcDialOption)
+		if err != nil {
+			cancel()
+			continue
+		}
+		resp, err := master_pb.NewSeaweedClient(conn).ListClusterNodes(ctx, &master_pb.ListClusterNodesRequest{
+			ClientType: "vector",
+		})
+		conn.Close()
+		cancel()
+		if err != nil {
+			continue
+		}
+		workers := make([]string, 0, len(resp.ClusterNodes))
+		for _, node := range resp.ClusterNodes {
+			glog.V(0).Infof("S3 Vectors: discovered weed-vector at %s via master %s", node.Address, master)
+			workers = append(workers, node.Address)
+		}
+		// A follower can answer with an empty list — workers register with
+		// the leader, so keep looking rather than accept "none."
+		if len(workers) > 0 {
+			return workers
+		}
+	}
+	return nil
+}
