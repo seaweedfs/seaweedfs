@@ -304,10 +304,11 @@ def run_cluster(param, tmp_path_factory, identities):
         # VECTOR_ENCRYPT_VOLUMES=1 turns on the filer's volume encryption, which
         # the gateway, the engine and the worker all follow: every chunk they
         # store is encrypted, and direct reads must undo it.
+        filer_group = os.environ.get("VECTOR_FILER_GROUP", "")
         encrypt = ["-encryptVolumeData"] if os.environ.get("VECTOR_ENCRYPT_VOLUMES") else []
         start("filer", [weed, "filer", f"-master={master_addr}", "-ip=127.0.0.1",
                         "-ip.bind=127.0.0.1", f"-port={filer}", f"-port.grpc={filer_grpc}",
-                        f"-defaultStoreDir={directory / 'filer'}", *encrypt])
+                        f"-defaultStoreDir={directory / 'filer'}", f"-filerGroup={filer_group}", *encrypt])
         wait_for(lambda: listening(filer_grpc), processes, "filer not ready")
         endpoint = f"http://127.0.0.1:{s3}"
         # weed s3 turns AWS_ACCESS_KEY_ID into an admin identity.
@@ -325,7 +326,7 @@ def run_cluster(param, tmp_path_factory, identities):
         # The engine keeps tables on the filers and volume servers itself; it
         # has no S3 credentials to be given, and encrypts its chunks for the
         # volume servers as the gateway does.
-        start("vector", [engine, "--masters", master_addr, "--listen", f"127.0.0.1:{vector}", "--metrics-port", str(vector_metrics)])
+        start("vector", [engine, "--masters", master_addr, "--listen", f"127.0.0.1:{vector}", "--metrics-port", str(vector_metrics), "--filer-group", filer_group])
         wait_for(lambda: listening(vector), processes, "vector engine not ready")
         def vector_ready():
             with urllib.request.urlopen(f"http://127.0.0.1:{vector_metrics}/ready", timeout=1) as response:
@@ -339,7 +340,7 @@ def run_cluster(param, tmp_path_factory, identities):
             probe_grpc_tls("engine", vector, directory, outsider=True)
 
         wait_for(
-            lambda: f"Cluster: vector node 127.0.0.1:{vector} added to group ''"
+            lambda: f"Cluster: vector node 127.0.0.1:{vector} added to group '{filer_group}'"
             in (directory / "master.log").read_text(),
             processes,
             "vector engine never registered with the master",
@@ -362,7 +363,7 @@ def run_cluster(param, tmp_path_factory, identities):
         if lance_worker:
             (directory / "admin").mkdir()
             admin_url = f"http://127.0.0.1:{admin}"
-            start("admin", [weed, "admin", "-ip=127.0.0.1", f"-port={admin}", f"-port.grpc={admin_grpc}",
+            start("admin", [weed, "admin", f"-filerGroup={filer_group}", "-ip=127.0.0.1", f"-port={admin}", f"-port.grpc={admin_grpc}",
                             "-port.legacy=0", f"-master={master_addr}", f"-dataDir={directory / 'admin'}"])
             wait_for(lambda: http_ready(f"{admin_url}/api/plugin/job-types"), processes, "admin not ready")
             tls_args = []
@@ -370,7 +371,7 @@ def run_cluster(param, tmp_path_factory, identities):
                 tls_args = ["--tls-ca", str(directory / "ca.pem"), "--tls-cert", str(directory / "cert.pem"), "--tls-key", str(directory / "key.pem"), "--tls-server-name", "localhost"]
             start("lance-worker", [lance_worker, "--admin", f"127.0.0.1:{admin}.{admin_grpc}",
                                    "--namespace", f"http://127.0.0.1:{lance}", "--id", "vectors-test-worker",
-                                   "--masters", master_addr, *tls_args])
+                                   "--masters", master_addr, "--filer-group", filer_group, *tls_args])
             wait_for(lambda: "lance_vector_index" in
                      [jt["job_type"] for jt in json.load(urllib.request.urlopen(f"{admin_url}/api/plugin/job-types", timeout=2))],
                      processes, "the Lance worker never registered with admin")

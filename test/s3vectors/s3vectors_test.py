@@ -151,7 +151,7 @@ def run_cli(cluster, *args):
     from pathlib import Path
     cli = Path(os.environ.get("VECTOR_CLI_BINARY", Path(__file__).resolve().parent / "weed-vector-cli")).resolve()
     command = [str(cli), "--namespace", cluster["catalog"], "--masters", cluster["masters"],
-               "--filer-signing-key", cluster["filer_signing_key"], *args]
+               "--filer-signing-key", cluster["filer_signing_key"], "--filer-group", os.environ.get("VECTOR_FILER_GROUP", ""), *args]
     return json.loads(subprocess.run(command, check=True, capture_output=True, text=True,
                                      cwd=cluster["directory"], env=cluster["env"]).stdout)
 
