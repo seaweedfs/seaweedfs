@@ -1680,8 +1680,14 @@ func runMini(cmd *Command, args []string) bool {
 	for _, name := range parseBucketList(vectorBuckets) {
 		vectorEntries = append(vectorEntries, tableBucketEntry{name: name, format: s3tables.FormatLance})
 	}
-	if _, err := ensureMiniTableBuckets(vectorEntries); err != nil {
-		glog.Errorf("create vector buckets: %v", err)
+	if len(vectorEntries) > 0 && !*miniEnableS3 {
+		glog.Errorf("vector buckets require the S3 gateway")
+		triggerMiniClientsShutdown(5 * time.Second)
+		return false
+	}
+	if ready, err := createMiniTableBuckets(vectorEntries); err != nil || len(ready) != len(vectorEntries) {
+		glog.Errorf("created %d of %d requested vector buckets: %v", len(ready), len(vectorEntries), err)
+		triggerMiniClientsShutdown(5 * time.Second)
 		return false
 	}
 	if *miniVector {
@@ -2470,6 +2476,14 @@ func ensureMiniTableBuckets(buckets []tableBucketEntry) ([]tableBucketEntry, err
 		}
 		servable = append(servable, bucket)
 	}
+	if len(servable) == 0 {
+		return nil, nil
+	}
+
+	return createMiniTableBuckets(servable)
+}
+
+func createMiniTableBuckets(servable []tableBucketEntry) ([]tableBucketEntry, error) {
 	if len(servable) == 0 {
 		return nil, nil
 	}
