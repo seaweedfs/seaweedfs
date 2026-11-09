@@ -90,3 +90,24 @@ func TestVectorBucketHookRejectsShellNames(t *testing.T) {
 		t.Fatalf("invalid bucket accepted: %v %s", err, output)
 	}
 }
+
+func TestVectorBucketHookGatewayModes(t *testing.T) {
+	for _, mode := range []string{"s3", "filer", "allInOne"} {
+		settings := []string{"vector.enabled=true", "vector.createBuckets[0]=embeddings"}
+		component := "s3"
+		switch mode {
+		case "s3":
+			settings = append(settings, "s3.enabled=true", "s3.enableAuth=true")
+		case "filer":
+			settings = append(settings, "s3.enabled=false", "filer.s3.enabled=true", "filer.s3.enableAuth=true")
+			component = "filer"
+		case "allInOne":
+			settings = append(settings, "s3.enabled=false", "allInOne.enabled=true", "allInOne.s3.enabled=true", "allInOne.s3.enableAuth=true")
+			component = "all-in-one"
+		}
+		output, _ := render(t, settings...)
+		if !strings.Contains(output, "http://vector-test-seaweedfs-"+component+".default:8333") || !strings.Contains(output, "key: \"admin_access_key_id\"") {
+			t.Fatalf("missing endpoint or auth for %s", mode)
+		}
+	}
+}

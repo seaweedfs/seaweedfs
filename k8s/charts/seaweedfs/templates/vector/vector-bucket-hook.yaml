@@ -1,8 +1,26 @@
 {{- include "seaweedfs.compat" . -}}
 {{- if and .Values.vector.enabled .Values.vector.createBuckets }}
 {{- $hook := .Values.vector.bucketHook }}
-{{- if and (not .Values.s3.enabled) (not $hook.endpoint) }}
-{{- fail "vector.createBuckets requires s3.enabled or vector.bucketHook.endpoint" }}
+{{- $component := "s3" }}
+{{- $port := .Values.s3.port }}
+{{- $enabled := .Values.s3.enabled }}
+{{- $auth := .Values.s3.enableAuth }}
+{{- $configSecret := .Values.s3.existingConfigSecret }}
+{{- if and .Values.allInOne.enabled .Values.allInOne.s3.enabled }}
+{{- $component = "all-in-one" }}
+{{- $port = .Values.allInOne.s3.port | default .Values.s3.port }}
+{{- $enabled = true }}
+{{- $auth = or .Values.allInOne.s3.enableAuth .Values.s3.enableAuth .Values.filer.s3.enableAuth }}
+{{- $configSecret = or .Values.allInOne.s3.existingConfigSecret .Values.s3.existingConfigSecret .Values.filer.s3.existingConfigSecret }}
+{{- else if and (not $enabled) .Values.filer.s3.enabled }}
+{{- $component = "filer" }}
+{{- $port = .Values.filer.s3.port }}
+{{- $enabled = true }}
+{{- $auth = .Values.filer.s3.enableAuth }}
+{{- $configSecret = .Values.filer.s3.existingConfigSecret }}
+{{- end }}
+{{- if and (not $enabled) (not $hook.endpoint) }}
+{{- fail "vector.createBuckets requires an enabled S3 gateway or vector.bucketHook.endpoint" }}
 {{- end }}
 {{- range .Values.vector.createBuckets }}
 {{- if not (kindIs "string" .) }}{{ fail "vector.createBuckets entries must be bucket names" }}{{ end }}
@@ -15,8 +33,8 @@
 {{- $secret := $hook.credentialsSecret }}
 {{- $accessKey := $hook.accessKeyKey }}
 {{- $secretKey := $hook.secretKeyKey }}
-{{- if and .Values.s3.enableAuth (not $secret) }}
-{{- if .Values.s3.existingConfigSecret }}{{ fail "vector.bucketHook.credentialsSecret is required with s3.existingConfigSecret" }}{{ end }}
+{{- if and $auth (not $secret) }}
+{{- if $configSecret }}{{ fail "vector.bucketHook.credentialsSecret is required with s3.existingConfigSecret" }}{{ end }}
 {{- $secret = $admin.existingSecret | default (printf "%s-s3-secret" (include "seaweedfs.fullname" .)) }}
 {{- $accessKey = $admin.accessKeyKey | default "admin_access_key_id" }}
 {{- $secretKey = $admin.secretKeyKey | default "admin_secret_access_key" }}
@@ -78,7 +96,7 @@ spec:
               done
           env:
             - name: S3_ENDPOINT
-              value: {{ $hook.endpoint | default (printf "http://%s.%s:%d" (include "seaweedfs.componentName" (list . "s3")) (include "seaweedfs.namespace" .) (int .Values.s3.port)) | quote }}
+              value: {{ $hook.endpoint | default (printf "http://%s.%s:%d" (include "seaweedfs.componentName" (list . $component)) (include "seaweedfs.namespace" .) (int $port)) | quote }}
             - name: AWS_DEFAULT_REGION
               value: {{ $hook.region | quote }}
             - name: AWS_EC2_METADATA_DISABLED
