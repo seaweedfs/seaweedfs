@@ -557,6 +557,16 @@ mod tests {
         };
 
         create(&server, &table, 4).await;
+        create(&server, &table, 4).await;
+        let mismatch = server
+            .create_index(Request::new(pb::CreateIndexRequest {
+                table: Some(table.clone()),
+                dimension: 3,
+                ..Default::default()
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(mismatch.code(), tonic::Code::AlreadyExists);
         put(
             &server,
             &table,
