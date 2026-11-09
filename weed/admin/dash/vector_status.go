@@ -89,7 +89,7 @@ func vectorNodeStatus(ctx context.Context, address string, dialOption grpc.DialO
 func (s *AdminServer) GetVectorOperationsData(ctx context.Context) VectorOperationsData {
 	data := s.getVectorNodesStatus(ctx)
 	for _, worker := range s.GetPluginWorkers() {
-		if capability := worker.Capabilities["lance_vector_index"]; capability != nil && (capability.CanDetect || capability.CanExecute) {
+		if capability := worker.Capabilities["lance_vector_index"]; capability != nil && capability.CanExecute {
 			data.MaintenanceWorkers++
 		}
 	}
