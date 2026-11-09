@@ -512,8 +512,7 @@ func (h *S3TablesHandler) authorizeUpdateView(w http.ResponseWriter, r *http.Req
 		return nil, NewAuthError("UpdateView", accountID, "not authorized to update view")
 	}
 
-	if err := validateUpdatedMetadataLocation(req.MetadataLocation, bucketName, namespaceName, viewPath, &metadata); err != nil {
-		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
+	if err := h.refuseUpdatedMetadataLocation(w, r, filerClient, bucketName, namespaceName, viewPath, &metadata, req.MetadataLocation); err != nil {
 		return nil, err
 	}
 

@@ -2111,8 +2111,7 @@ func (h *S3TablesHandler) authorizeUpdateTable(w http.ResponseWriter, r *http.Re
 
 	// After authorization, so a caller who may not update the table learns
 	// nothing about where its files live.
-	if err := validateUpdatedMetadataLocation(req.MetadataLocation, bucketName, namespaceName, tablePath, &metadata); err != nil {
-		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
+	if err := h.refuseUpdatedMetadataLocation(w, r, filerClient, bucketName, namespaceName, tablePath, &metadata, req.MetadataLocation); err != nil {
 		return nil, err
 	}
 

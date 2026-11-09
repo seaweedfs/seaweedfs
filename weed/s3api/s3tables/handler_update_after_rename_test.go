@@ -93,6 +93,38 @@ func TestUpdateAfterRenameAcrossNamespacesRefusesAnotherTablesDirectory(t *testi
 	require.Contains(t, s3TablesErrorText(err), ErrCodeConflict+": location is in use")
 }
 
+// A table created under the renamed table's old name has its entry on that
+// directory and its files in a directory of its own, so the renamed table still
+// keeps its files there alone.
+func TestUpdateAfterRenameAcrossNamespacesKeepsItsDirectoryUnderANewTableOfTheOldName(t *testing.T) {
+	ctx := context.Background()
+	fs, m := renamedAcrossNamespaces(t)
+	require.NoError(t, m.Execute(ctx, NewManagerClient(fs.Client), "CreateTable", &CreateTableRequest{TableBucketARN: mustBucketARN(t),
+		Namespace: []string{"ns"}, Name: "t", Format: "ICEBERG"}, nil, ""))
+
+	location := "s3://" + renameTestBucket + "/ns/t/metadata/v4.metadata.json"
+	require.NoError(t, updateTableAt(ctx, t, m, fs, "ns2", location))
+	got, err := runGetTable(t, m, fs, "ns2", "t")
+	require.NoError(t, err)
+	require.Equal(t, location, got.MetadataLocation)
+}
+
+// A record written before locations were confined to their namespace and
+// claimed can keep its files in another table's directory. It gets no
+// exception: it stays held to its namespace, as before.
+func TestUpdateRefusesADirectoryOutsideTheNamespaceThatAnotherTableShares(t *testing.T) {
+	fs, m := startRenameManager(t)
+	addRenameNamespace(t, fs, "ns2")
+	meta, err := json.Marshal(tableMetadataInternal{Name: "t", Namespace: "ns2", Format: "ICEBERG", OwnerAccountID: DefaultAccountID,
+		MetadataVersion: 3, MetadataLocation: "s3://" + renameTestBucket + "/ns/t/metadata/v3.metadata.json"})
+	require.NoError(t, err)
+	fs.Put(GetNamespacePath(renameTestBucket, "ns2"), "t", map[string][]byte{ExtendedKeyMetadata: meta})
+
+	err = updateTableAt(context.Background(), t, m, fs, "ns2", "s3://"+renameTestBucket+"/ns/t/metadata/v4.metadata.json")
+	require.Error(t, err)
+	require.Contains(t, s3TablesErrorText(err), "must be within namespace ns2")
+}
+
 func TestUpdateAfterRenameAcrossNamespacesMayMoveIntoItsNamespace(t *testing.T) {
 	fs, m := renamedAcrossNamespaces(t)
 	require.NoError(t, updateTableAt(context.Background(), t, m, fs, "ns2", "s3://"+renameTestBucket+"/ns2/t-moved/metadata/v4.metadata.json"))

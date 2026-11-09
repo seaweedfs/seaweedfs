@@ -150,29 +150,37 @@ func ValidateMetadataLocation(metadataLocation, bucketName, namespace string) er
 }
 
 // validateUpdatedMetadataLocation is ValidateMetadataLocation for an update of
-// the record at recordPath, whose stored metadata is current. A location that
-// keeps the record in the directory it already holds its files under is
-// accepted wherever that directory is: a rename across namespaces moves the
-// record and leaves its files behind, and that directory was confined to a
-// namespace when the record first took it. A location that moves the record to
-// another directory must lie inside the record's current namespace, and the
-// update still refuses one another record claims.
-func validateUpdatedMetadataLocation(metadataLocation, bucketName, namespace, recordPath string, current *tableMetadataInternal) error {
-	if metadataLocation == "" {
+// the record at recordPath, whose stored metadata is current. A location
+// outside the record's namespace is accepted only when it keeps the record in
+// the directory it already holds its files under and rootShared reports that
+// no other record keeps its files there: a rename across namespaces moves the
+// record and leaves its files behind, while a record written before locations
+// were confined and claimed may share another table's directory. A location
+// that moves the record to another directory must lie inside the namespace,
+// and the update still refuses one another record claims.
+func validateUpdatedMetadataLocation(metadataLocation, bucketName, namespace, recordPath string, current *tableMetadataInternal, rootShared func(root string) (bool, error)) error {
+	err := ValidateMetadataLocation(metadataLocation, bucketName, namespace)
+	if err == nil {
 		return nil
 	}
-	if _, err := validateMetadataLocationShape(metadataLocation, bucketName); err != nil {
-		return err
+	// A malformed location is refused whatever directory it cleans up to.
+	if _, shapeErr := validateMetadataLocationShape(metadataLocation, bucketName); shapeErr != nil {
+		return shapeErr
 	}
 	// The directory the location itself names, with no fallback: CatalogRecordRoot
 	// replaces a directory outside the bucket subtree (s3://bucket/metadata/...)
 	// with the record's warehouse or name path, which would match the current
 	// root and let a location no load can resolve skip the namespace check.
-	if dir := TableDataDirFromMetadataLocation(metadataLocation); strings.HasPrefix(dir, GetTableBucketPath(bucketName)+"/") &&
-		dir == current.root(bucketName, recordPath) {
-		return nil
+	dir := TableDataDirFromMetadataLocation(metadataLocation)
+	if !strings.HasPrefix(dir, GetTableBucketPath(bucketName)+"/") || dir != current.root(bucketName, recordPath) {
+		return err
 	}
-	return ValidateMetadataLocation(metadataLocation, bucketName, namespace)
+	if shared, sharedErr := rootShared(dir); sharedErr != nil {
+		return sharedErr
+	} else if shared {
+		return err
+	}
+	return nil
 }
 
 // validateMetadataLocationShape checks what a metadata location must satisfy
