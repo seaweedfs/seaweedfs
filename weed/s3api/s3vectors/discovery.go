@@ -13,8 +13,10 @@ import (
 	"time"
 )
 
-func NewVectorDiscovery(masters []pb.ServerAddress, dialOption grpc.DialOption) vector_pb.VectorServiceClient {
-	return &vectorDiscovery{masters: masters, grpcDialOption: dialOption, discover: discoverVectorWorkers}
+func NewVectorDiscovery(masters []pb.ServerAddress, dialOption grpc.DialOption, filerGroup string) vector_pb.VectorServiceClient {
+	return &vectorDiscovery{masters: masters, grpcDialOption: dialOption, discover: func(m []pb.ServerAddress, opt grpc.DialOption) []string {
+		return discoverVectorWorkers(m, opt, filerGroup)
+	}}
 }
 
 type vectorDiscovery struct {
@@ -228,7 +230,7 @@ func (d *vectorDiscovery) QueryVectors(ctx context.Context, in *vector_pb.QueryV
 	return nil, err
 }
 
-func discoverVectorWorkers(masters []pb.ServerAddress, grpcDialOption grpc.DialOption) []string {
+func discoverVectorWorkers(masters []pb.ServerAddress, grpcDialOption grpc.DialOption, filerGroup string) []string {
 	for _, master := range masters {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		conn, err := pb.GrpcDial(ctx, master.ToGrpcAddress(), false, grpcDialOption)
@@ -238,6 +240,7 @@ func discoverVectorWorkers(masters []pb.ServerAddress, grpcDialOption grpc.DialO
 		}
 		resp, err := master_pb.NewSeaweedClient(conn).ListClusterNodes(ctx, &master_pb.ListClusterNodesRequest{
 			ClientType: "vector",
+			FilerGroup: filerGroup,
 		})
 		conn.Close()
 		cancel()

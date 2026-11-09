@@ -32,7 +32,7 @@ func TestListClusterNodesRequestKeepsDefaultFilerGroupEmpty(t *testing.T) {
 func TestVectorDiscoveryUsesRegistrationGroup(t *testing.T) {
 	s := &AdminServer{filerGroup: "tenant-a"}
 	request := s.listClusterNodesRequest(cluster.VectorType)
-	if request.FilerGroup != "" {
-		t.Fatalf("vector registration group must be empty: %+v", request)
+	if request.FilerGroup != s.filerGroup {
+		t.Fatalf("vector registration group must match the filer: %+v", request)
 	}
 }

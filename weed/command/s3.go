@@ -447,7 +447,7 @@ func (s3opt *S3Options) startS3Server() bool {
 	// backend is reachable — /s3vectors/ in the SigV4 credential scope picks
 	// the vectors router.
 	vectorsHandler := http.Handler(router)
-	if vectorsRouter := s3opt.vectorsRouter(s3ApiServer, grpcDialOption, masterAddresses); vectorsRouter != nil {
+	if vectorsRouter := s3opt.vectorsRouter(s3ApiServer, grpcDialOption, masterAddresses, filerGroup); vectorsRouter != nil {
 		vr, mainRouter := vectorsRouter, router
 		vectorsHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if isVectorsRequest(r) {
@@ -734,12 +734,12 @@ func (s3opt *S3Options) startLanceServer(listenOnLocalhost bool) *http.Server {
 // vectorsRouter builds the S3 Vectors API router — workers register to the
 // master and the backend resolves them lazily, so a worker that comes up
 // after the gateway still gets picked up on first query.
-func (s3opt *S3Options) vectorsRouter(s3ApiServer *s3api.S3ApiServer, grpcDialOption grpc.DialOption, masterAddresses []pb.ServerAddress) *mux.Router {
+func (s3opt *S3Options) vectorsRouter(s3ApiServer *s3api.S3ApiServer, grpcDialOption grpc.DialOption, masterAddresses []pb.ServerAddress, filerGroup string) *mux.Router {
 	if len(masterAddresses) == 0 {
 		glog.Warningf("S3 Vectors API disabled: no weed-vector registered on master")
 		return nil
 	}
-	backend := s3vectors.NewVectorDiscovery(masterAddresses, grpcDialOption)
+	backend := s3vectors.NewVectorDiscovery(masterAddresses, grpcDialOption, filerGroup)
 	// In-process describe — the router resolves locations and vended
 	// storage options through the catalog directly, never over HTTP. The
 	// lookup itself runs under the trusted identity: the caller's vector
