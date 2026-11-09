@@ -290,7 +290,7 @@ func (s *AdminServer) ExecuteS3VectorsOperationAPI(w http.ResponseWriter, r *htt
 	switch req.Operation {
 	case "QueryVectors", "GetVectors", "ListVectors", "ListTagsForResource":
 	default:
-		if role := RoleFromContext(r.Context()); role != "" && role != "admin" {
+		if role := RoleFromContext(r.Context()); role != "admin" && (role != "" || UsernameFromContext(r.Context()) != "") {
 			writeJSONError(w, http.StatusForbidden, "This operation requires admin access")
 			return
 		}

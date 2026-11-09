@@ -232,19 +232,21 @@ func TestS3VectorsReadOnlyOperations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, operation := range []string{"ListTagsForResource", "TagResource", "CreateIndex", "DeleteVectors"} {
-		body := fmt.Sprintf(`{"operation":%q,"request":{"resourceArn":%q}}`, operation, summary.ARN)
-		request := httptest.NewRequest(http.MethodPost, "/api/s3vectors/operations", strings.NewReader(body))
-		request = request.WithContext(WithAuthContext(request.Context(), "viewer", "readonly", "token"))
-		request.Header.Set("X-CSRF-Token", "token")
-		w := httptest.NewRecorder()
-		s.ExecuteS3VectorsOperationAPI(w, request)
-		want := http.StatusForbidden
-		if operation == "ListTagsForResource" {
-			want = http.StatusOK
-		}
-		if w.Code != want {
-			t.Fatalf("%s: %d %s", operation, w.Code, w.Body)
+	for _, role := range []string{"readonly", ""} {
+		for _, operation := range []string{"ListTagsForResource", "TagResource", "CreateIndex", "DeleteVectors"} {
+			body := fmt.Sprintf(`{"operation":%q,"request":{"resourceArn":%q}}`, operation, summary.ARN)
+			request := httptest.NewRequest(http.MethodPost, "/api/s3vectors/operations", strings.NewReader(body))
+			request = request.WithContext(WithAuthContext(request.Context(), "viewer", role, "token"))
+			request.Header.Set("X-CSRF-Token", "token")
+			w := httptest.NewRecorder()
+			s.ExecuteS3VectorsOperationAPI(w, request)
+			want := http.StatusForbidden
+			if operation == "ListTagsForResource" {
+				want = http.StatusOK
+			}
+			if w.Code != want {
+				t.Fatalf("%s: %d %s", operation, w.Code, w.Body)
+			}
 		}
 	}
 }
