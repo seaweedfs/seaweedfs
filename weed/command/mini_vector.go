@@ -11,6 +11,8 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -72,6 +74,9 @@ func startMiniVector() error {
 			conn, err := net.DialTimeout("tcp", miniVectorLocalAddress(bindIP, *miniVectorPort), 100*time.Millisecond)
 			if err == nil {
 				_ = conn.Close()
+				if !miniVectorRegistered(ctx, address) {
+					continue
+				}
 				glog.V(0).Infof("vector engine ready on %s", address)
 				return nil
 			}
@@ -88,4 +93,25 @@ func miniVectorLocalAddress(bindIP string, port int) string {
 		}
 	}
 	return util.JoinHostPort(bindIP, port)
+}
+
+func miniVectorRegistered(ctx context.Context, address string) bool {
+	ctx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	master := pb.NewServerAddress(*miniIp, *miniMasterOptions.port, *miniMasterOptions.portGrpc)
+	ready := false
+	_ = pb.WithMasterClient(ctx, false, master, security.LoadClientTLS(util.GetViper(), "grpc.client"), false, func(client master_pb.SeaweedClient) error {
+		response, err := client.ListClusterNodes(ctx, &master_pb.ListClusterNodesRequest{ClientType: "vector", FilerGroup: *miniFilerOptions.filerGroup})
+		if err != nil {
+			return err
+		}
+		for _, node := range response.ClusterNodes {
+			if node.Address == address {
+				ready = true
+				break
+			}
+		}
+		return nil
+	})
+	return ready
 }
