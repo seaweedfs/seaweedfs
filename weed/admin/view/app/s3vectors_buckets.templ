@@ -25,6 +25,7 @@ templ S3VectorsBuckets(data dash.S3VectorsBucketsData) {
 		Vector buckets serve the Amazon S3 Vectors API on the S3 port. Each one is a LANCE table bucket that keeps its indexes in its <code>vector</code> namespace.
 		Indexes are created and filled with an S3 Vectors client, which needs a running <code>weed-vector</code> engine.
 	</div>
+ @VectorStatus(data.Operations)
 	<div class="card shadow mb-4">
 		<div class="card-header py-3">
 			<h6 class="m-0 font-weight-bold text-primary">

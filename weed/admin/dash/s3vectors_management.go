@@ -15,6 +15,7 @@ import (
 type S3VectorsBucketsData struct {
 	Username     string                   `json:"username"`
 	Buckets      []S3VectorsBucketSummary `json:"buckets"`
+	Operations   VectorOperationsData     `json:"operations"`
 	TotalBuckets int                      `json:"total_buckets"`
 	Truncated    bool                     `json:"truncated,omitempty"`
 	LastUpdated  time.Time                `json:"last_updated"`
@@ -33,6 +34,7 @@ type S3VectorsBucketData struct {
 	Bucket       S3VectorsBucketSummary `json:"bucket"`
 	Policy       string                 `json:"policy,omitempty"`
 	Indexes      []*s3vectors.Index     `json:"indexes"`
+	Operations   VectorOperationsData   `json:"operations"`
 	TotalIndexes int                    `json:"total_indexes"`
 	Truncated    bool                   `json:"truncated,omitempty"`
 	LastUpdated  time.Time              `json:"last_updated"`
@@ -103,6 +105,7 @@ func (s *AdminServer) GetS3VectorsBucketsData(ctx context.Context) (S3VectorsBuc
 		}
 		req.NextToken = resp.NextToken
 	}
+	data.Operations = s.GetVectorOperationsData(ctx)
 	data.TotalBuckets = len(data.Buckets)
 	data.LastUpdated = time.Now()
 	return data, nil
@@ -148,6 +151,7 @@ func (s *AdminServer) GetS3VectorsBucketData(ctx context.Context, bucket string)
 		}
 		req.NextToken = resp.NextToken
 	}
+	data.Operations = s.GetVectorOperationsData(ctx)
 	data.TotalIndexes = len(data.Indexes)
 	return data, nil
 }

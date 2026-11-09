@@ -1,0 +1,90 @@
+package dash
+
+import (
+	"context"
+	"sort"
+	"time"
+
+	adminplugin "github.com/seaweedfs/seaweedfs/weed/admin/plugin"
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/status"
+)
+
+type VectorNode struct {
+	Address string `json:"address"`
+	Version string `json:"version"`
+	Status  string `json:"status"`
+}
+
+type VectorOperationsData struct {
+	Engines            []VectorNode             `json:"engines"`
+	DiscoveryError     string                   `json:"discovery_error,omitempty"`
+	MaintenanceWorkers int                      `json:"maintenance_workers"`
+	MaintenanceJobs    []adminplugin.TrackedJob `json:"maintenance_jobs"`
+}
+
+func (s *AdminServer) getVectorNodesStatus(ctx context.Context) VectorOperationsData {
+	data := VectorOperationsData{Engines: []VectorNode{}}
+	if s.masterClient == nil {
+		data.DiscoveryError = "Master discovery unavailable"
+		return data
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	err := s.masterClient.WithClient(ctx, false, func(client master_pb.SeaweedClient) error {
+		resp, err := client.ListClusterNodes(ctx, s.listClusterNodesRequest(cluster.VectorType))
+		if err != nil {
+			return err
+		}
+		for _, node := range resp.ClusterNodes {
+			data.Engines = append(data.Engines, VectorNode{Address: node.Address, Version: node.Version, Status: "Registered"})
+		}
+		return nil
+	})
+	if err != nil {
+		data.DiscoveryError = err.Error()
+		return data
+	}
+	for i := range data.Engines {
+		data.Engines[i].Status = vectorNodeStatus(ctx, data.Engines[i].Address, s.grpcDialOption)
+	}
+	sort.Slice(data.Engines, func(i, j int) bool { return data.Engines[i].Address < data.Engines[j].Address })
+	return data
+}
+
+func vectorNodeStatus(ctx context.Context, address string, dialOption grpc.DialOption) string {
+	ctx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	conn, err := pb.GrpcDial(ctx, address, false, dialOption)
+	if err != nil {
+		return "Unreachable"
+	}
+	defer conn.Close()
+	response, err := grpc_health_v1.NewHealthClient(conn).Check(ctx, &grpc_health_v1.HealthCheckRequest{Service: "vector_pb.VectorService"})
+	if status.Code(err) == codes.Unimplemented {
+		return "Registered (health unavailable)"
+	}
+	if err != nil {
+		return "Unreachable"
+	}
+	if response.Status == grpc_health_v1.HealthCheckResponse_SERVING {
+		return "Ready"
+	}
+	return "Not ready"
+}
+
+func (s *AdminServer) GetVectorOperationsData(ctx context.Context) VectorOperationsData {
+	data := s.getVectorNodesStatus(ctx)
+	for _, worker := range s.GetPluginWorkers() {
+		if capability := worker.Capabilities["lance_vector_index"]; capability != nil && (capability.CanDetect || capability.CanExecute) {
+			data.MaintenanceWorkers++
+		}
+	}
+	data.MaintenanceJobs = s.ListPluginJobs("lance_vector_index", "", 5)
+	return data
+}

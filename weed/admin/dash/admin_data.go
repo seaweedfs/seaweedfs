@@ -32,6 +32,7 @@ type AdminData struct {
 	VolumeServers     []VolumeServer      `json:"volume_servers"`
 	FilerNodes        []FilerNode         `json:"filer_nodes"`
 	MessageBrokers    []MessageBrokerNode `json:"message_brokers"`
+	VectorNodes       []VectorNode        `json:"vector_nodes"`
 	S3Nodes           []S3Node            `json:"s3_nodes"`
 	DataCenters       []DataCenter        `json:"datacenters"`
 	LastUpdated       time.Time           `json:"last_updated"`
@@ -250,6 +251,7 @@ func (s *AdminServer) GetAdminData(username string) (AdminData, error) {
 		FilerNodes:        filerNodes,
 		MessageBrokers:    messageBrokers,
 		S3Nodes:           s3Nodes,
+		VectorNodes:       s.getVectorNodesStatus(context.Background()).Engines,
 		DataCenters:       topology.DataCenters,
 		LastUpdated:       topology.UpdatedAt,
 		TotalEcVolumes:    totalEcVolumes,
