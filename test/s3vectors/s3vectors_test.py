@@ -767,3 +767,40 @@ def test_engine_without_credentials(open_cluster):
     assert [h["key"] for h in hits] == ["a"]
 
 
+
+
+def test_attached_iam_vector_policies(vectors, cluster):
+    client = boto3.client("s3vectors", endpoint_url=cluster["endpoint"], region_name="us-east-1",
+                          aws_access_key_id="policy-reader", aws_secret_access_key="policy-reader-secret",
+                          config=vectors.meta.config)
+    bucket = "vector-iam"
+    vectors.create_vector_bucket(vectorBucketName=bucket)
+    target = {"vectorBucketName": bucket, "indexName": "docs"}
+    vectors.create_index(**target, dataType="float32", dimension=3, distanceMetric="cosine")
+    index_arn = vectors.get_index(**target)["index"]["indexArn"]
+    bucket_arn = vectors.get_vector_bucket(vectorBucketName=bucket)["vectorBucket"]["vectorBucketArn"]
+    query = {**target, "queryVector": {"float32": [1, 0, 0]}, "topK": 1}
+    try:
+        assert client.query_vectors(**query)["vectors"] == []
+        assert client.get_vectors(**target, keys=["missing"])["vectors"] == []
+        expect_error("AccessDeniedException", client.put_vectors, **target,
+                     vectors=[{"key": "blocked", "data": {"float32": [1, 0, 0]}}])
+        vectors.tag_resource(resourceArn=index_arn, tags={"classification": "private"})
+        expect_error("AccessDeniedException", client.query_vectors, **query)
+        vectors.untag_resource(resourceArn=index_arn, tagKeys=["classification"])
+        assert client.query_vectors(**query)["vectors"] == []
+        vectors.tag_resource(resourceArn=bucket_arn, tags={"environment": "production"})
+        expect_error("AccessDeniedException", client.query_vectors, **query)
+        vectors.untag_resource(resourceArn=bucket_arn, tagKeys=["environment"])
+        assert client.query_vectors(**query)["vectors"] == []
+        vectors.put_vector_bucket_policy(vectorBucketName=bucket, policy=json.dumps({"Version": "2012-10-17", "Statement": [
+            {"Effect": "Deny", "Principal": "*", "Action": "s3vectors:QueryVectors", "Resource": index_arn}]}))
+        expect_error("AccessDeniedException", client.query_vectors, **query)
+        expect_error("AccessDeniedException", client.create_vector_bucket,
+                     vectorBucketName="vector-iam-rejected", tags={"classification": "forbidden"})
+        expect_error("AccessDeniedException", client.create_vector_bucket,
+                     vectorBucketName="vector-iam-key-denied", tags={"forbidden-key": "value"})
+    finally:
+        vectors.delete_vector_bucket_policy(vectorBucketName=bucket)
+        vectors.delete_index(**target)
+        vectors.delete_vector_bucket(vectorBucketName=bucket)

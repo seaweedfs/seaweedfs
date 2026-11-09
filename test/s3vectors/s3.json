@@ -39,6 +39,24 @@
       "actions": [
         "Write"
       ]
+    },
+    {
+      "name": "policy-reader",
+      "credentials": [
+        {
+          "accessKey": "policy-reader",
+          "secretKey": "policy-reader-secret"
+        }
+      ],
+      "policyNames": [
+        "vector-policy"
+      ]
+    }
+  ],
+  "policies": [
+    {
+      "name": "vector-policy",
+      "content": "{\"Version\": \"2012-10-17\", \"Statement\": [{\"Effect\": \"Allow\", \"Action\": [\"s3vectors:GetVectors\", \"s3vectors:QueryVectors\"], \"Resource\": \"arn:aws:s3vectors:*:*:bucket/vector-iam/index/docs\"}, {\"Effect\": \"Allow\", \"Action\": \"s3vectors:CreateVectorBucket\", \"Resource\": \"*\"}, {\"Effect\": \"Allow\", \"Action\": \"s3vectors:TagResource\", \"Resource\": \"arn:aws:s3vectors:*:*:bucket/vector-iam-*\"}, {\"Effect\": \"Deny\", \"Action\": \"s3vectors:QueryVectors\", \"Resource\": \"*\", \"Condition\": {\"StringEquals\": {\"aws:ResourceTag/classification\": \"private\"}}}, {\"Effect\": \"Deny\", \"Action\": \"s3vectors:QueryVectors\", \"Resource\": \"*\", \"Condition\": {\"StringEquals\": {\"s3vectors:VectorBucketTag/environment\": \"production\"}}}, {\"Effect\": \"Deny\", \"Action\": \"s3vectors:CreateVectorBucket\", \"Resource\": \"*\", \"Condition\": {\"StringEquals\": {\"aws:RequestTag/classification\": \"forbidden\"}}}, {\"Effect\": \"Deny\", \"Action\": \"s3vectors:CreateVectorBucket\", \"Resource\": \"*\", \"Condition\": {\"ForAnyValue:StringEquals\": {\"aws:TagKeys\": \"forbidden-key\"}}}]}"
     }
   ]
 }
