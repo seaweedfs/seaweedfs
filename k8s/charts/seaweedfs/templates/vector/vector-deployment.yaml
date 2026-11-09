@@ -40,9 +40,9 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.vector.podSecurityContext }}
+      {{- if and .Values.vector.podSecurityContext (or (not (hasKey .Values.vector.podSecurityContext "enabled")) .Values.vector.podSecurityContext.enabled) }}
       securityContext:
-        {{- toYaml . | nindent 8 }}
+        {{- omit .Values.vector.podSecurityContext "enabled" | toYaml | nindent 8 }}
       {{- end }}
       containers:
         - name: vector
@@ -122,8 +122,10 @@ spec:
             {{- end }}
             initialDelaySeconds: 10
             periodSeconds: 10
+          {{- if or (not (hasKey .Values.vector.containerSecurityContext "enabled")) .Values.vector.containerSecurityContext.enabled }}
           securityContext:
-            {{- toYaml .Values.vector.containerSecurityContext | nindent 12 }}
+            {{- omit .Values.vector.containerSecurityContext "enabled" | toYaml | nindent 12 }}
+          {{- end }}
           {{- with .Values.vector.resources }}
           resources:
             {{- toYaml . | nindent 12 }}
