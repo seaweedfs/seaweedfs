@@ -248,12 +248,12 @@ def run_cluster(param, tmp_path_factory, identities):
     with contextlib.ExitStack() as stack:
         with contextlib.ExitStack() as reservations:
             ports = []
-            for _ in range(14):
+            for _ in range(15):
                 sock = reservations.enter_context(socket.socket())
                 sock.bind(("127.0.0.1", 0))
                 ports.append(sock.getsockname()[1])
         (master, master_grpc, vol, vol_grpc, filer, filer_grpc, s3, s3_grpc, lance, vector, worker1, worker2,
-         admin, admin_grpc) = ports
+         admin, admin_grpc, vector_metrics) = ports
         master_addr = f"127.0.0.1:{master}.{master_grpc}"
         filer_addr = f"127.0.0.1:{filer}.{filer_grpc}"
 
@@ -325,8 +325,12 @@ def run_cluster(param, tmp_path_factory, identities):
         # The engine keeps tables on the filers and volume servers itself; it
         # has no S3 credentials to be given, and encrypts its chunks for the
         # volume servers as the gateway does.
-        start("vector", [engine, "--masters", master_addr, "--listen", f"127.0.0.1:{vector}"])
+        start("vector", [engine, "--masters", master_addr, "--listen", f"127.0.0.1:{vector}", "--metrics-port", str(vector_metrics)])
         wait_for(lambda: listening(vector), processes, "vector engine not ready")
+        def vector_ready():
+            with urllib.request.urlopen(f"http://127.0.0.1:{vector_metrics}/ready", timeout=1) as response:
+                return response.status == 200
+        wait_for(vector_ready, processes, "vector engine did not register with master")
         if os.environ.get("VECTOR_TLS"):
             wait_for(lambda: listening(s3_grpc), processes, "s3 gRPC not ready")
             for name, port in (("master", master_grpc), ("volume", vol_grpc), ("filer", filer_grpc),
@@ -370,6 +374,7 @@ def run_cluster(param, tmp_path_factory, identities):
 
         yield {"endpoint": endpoint, "mode": mode, "processes": processes, "directory": directory, "filer": filer,
                "masters": master_addr, "filer_signing_key": filer_signing_key,
+               "vector_metrics": f"http://127.0.0.1:{vector_metrics}",
                "catalog": f"http://127.0.0.1:{lance}", "admin": admin_url, "env": process_env()}
 
 

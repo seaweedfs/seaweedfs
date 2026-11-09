@@ -1,3 +1,4 @@
+import urllib.request
 """Run the S3 Vectors API against Go/Rust volumes and single/distributed queries."""
 
 import contextlib
@@ -719,6 +720,18 @@ def test_invalid_credentials(cluster):
     assert exc.value.response["ResponseMetadata"]["HTTPStatusCode"] == 403
 
 
+def test_vector_engine_observability(vectors, index, cluster):
+    vectors.query_vectors(**index, queryVector={"float32": [1, 0, 0, 0]}, topK=1)
+    with urllib.request.urlopen(cluster["vector_metrics"] + "/ready", timeout=5) as response:
+        assert response.status == 200
+    with urllib.request.urlopen(cluster["vector_metrics"] + "/metrics", timeout=5) as response:
+        metrics = response.read().decode()
+    assert "SeaweedFS_vector_connected 1" in metrics
+    assert any(line.startswith("SeaweedFS_vector_request_total{") and 'type="QueryVectors"' in line
+               and 'code="OK"' in line for line in metrics.splitlines())
+    assert "SeaweedFS_vector_request_seconds_bucket" in metrics
+
+
 def test_query_without_writer(vectors, index, cluster):
     from conftest import stop
 
@@ -752,4 +765,5 @@ def test_engine_without_credentials(open_cluster):
                                          {"key": "b", "data": {"float32": [0, 1]}}])
     hits = client.query_vectors(**index, queryVector={"float32": [1, 0]}, topK=1)["vectors"]
     assert [h["key"] for h in hits] == ["a"]
+
 

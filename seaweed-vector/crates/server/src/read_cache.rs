@@ -57,6 +57,11 @@ impl ReadCache {
         }
     }
 
+    pub fn size(&self) -> (u64, u64) {
+        self.cache.run_pending_tasks();
+        (self.cache.entry_count(), self.cache.weighted_size())
+    }
+
     /// The same cache, keyed apart under `scope`.
     pub fn scoped(&self, scope: &str) -> Self {
         Self {

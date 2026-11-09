@@ -39,12 +39,20 @@ fn http_addr(master: &str) -> String {
 
 /// Retry forever: try each master until a stream opens, hold it until it
 /// errors, then rediscover — same shape as wdclient.KeepConnectedToMaster.
-pub async fn keep_connected(masters: Vec<String>, client_addr: String, tls: Option<GrpcTls>) {
+pub async fn keep_connected(
+    masters: Vec<String>,
+    client_addr: String,
+    tls: Option<GrpcTls>,
+    metrics: crate::metrics::Metrics,
+) {
     let client_addr = client_addr.as_str();
     let tls = tls.as_ref();
+    let metrics = &metrics;
     loop {
         try_all_masters(&masters, |master| async move {
-            stream_to(&master, client_addr, tls).await
+            let result = stream_to(&master, client_addr, tls, Some(&metrics)).await;
+            metrics.set_connected(false).await;
+            result
         })
         .await;
         sleep(Duration::from_secs(3)).await;
@@ -84,6 +92,7 @@ async fn stream_to(
     master: &str,
     client_addr: &str,
     tls: Option<&GrpcTls>,
+    metrics: Option<&crate::metrics::Metrics>,
 ) -> Result<Option<String>> {
     let channel = connect(master, tls).await?;
     // A master answers at once, a follower with its leader hint.
@@ -117,6 +126,7 @@ async fn stream_to(
                             return Ok(Some(loc.leader));
                         }
                     }
+                    if let Some(metrics) = metrics { metrics.set_connected(true).await; }
                 }
                 None => anyhow::bail!("master closed the keep-connected stream"),
             },
@@ -183,7 +193,7 @@ mod tests {
     #[tokio::test]
     async fn dial_to_a_black_holed_master_is_bounded() {
         // TEST-NET-1 (RFC 5737) is reserved, so nothing answers the SYN.
-        let dial = stream_to("192.0.2.1:9333", "127.0.0.1:8080", None);
+        let dial = stream_to("192.0.2.1:9333", "127.0.0.1:8080", None, None);
         let result = tokio::time::timeout(CONNECT_TIMEOUT * 3, dial).await;
         assert!(matches!(result, Ok(Err(_))), "dial was not bounded");
     }
@@ -197,7 +207,7 @@ mod tests {
             let _ = tokio::io::copy(&mut conn, &mut tokio::io::sink()).await;
         });
         let master = format!("127.0.0.1:9333.{port}");
-        let open = stream_to(&master, "127.0.0.1:8080", None);
+        let open = stream_to(&master, "127.0.0.1:8080", None, None);
         match tokio::time::timeout(CONNECT_TIMEOUT * 3, open).await {
             Ok(Err(e)) => assert!(format!("{e:#}").contains("did not answer"), "{e:#}"),
             other => panic!("open was not bounded: {other:?}"),
@@ -232,7 +242,7 @@ mod tests {
         });
         let master = format!("127.0.0.1:9333.{port}");
         let tls = credentials();
-        let open = stream_to(&master, "127.0.0.1:8080", Some(&tls));
+        let open = stream_to(&master, "127.0.0.1:8080", Some(&tls), None);
         match tokio::time::timeout(CONNECT_TIMEOUT * 3, open).await {
             Ok(Err(e)) => assert!(format!("{e:#}").contains("did not complete"), "{e:#}"),
             other => panic!("handshake was not bounded: {other:?}"),
@@ -258,7 +268,7 @@ mod tests {
         let mut tls = credentials();
         tls.ca_path = fifo.display().to_string();
         let master = format!("127.0.0.1:9333.{port}");
-        let open = stream_to(&master, "127.0.0.1:8080", Some(&tls));
+        let open = stream_to(&master, "127.0.0.1:8080", Some(&tls), None);
         let result = tokio::time::timeout(CONNECT_TIMEOUT * 3, open).await;
         // A read+write open of a FIFO does not block, and it lets the
         // blocked read finish so the runtime can shut down.
