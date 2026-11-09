@@ -345,9 +345,13 @@ func NewAdminServer(masters string, filerGroup string, templateFS http.FileSyste
 }
 
 func (s *AdminServer) listClusterNodesRequest(clientType string) *master_pb.ListClusterNodesRequest {
+	group := s.filerGroup
+	if clientType == cluster.VectorType {
+		group = ""
+	}
 	return &master_pb.ListClusterNodesRequest{
 		ClientType: clientType,
-		FilerGroup: s.filerGroup,
+		FilerGroup: group,
 	}
 }
 
