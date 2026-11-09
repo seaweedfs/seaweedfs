@@ -209,3 +209,16 @@ func TestS3VectorsManagementOperations(t *testing.T) {
 		t.Fatal("missing CSRF token accepted", recorder.Code)
 	}
 }
+
+func TestS3VectorsEncryptedCreationRequiresKey(t *testing.T) {
+	s, _ := newS3VectorsTestServer(t)
+	s.s3VectorsServer.SetEncryptionChecker(func() bool { return false })
+	w := s3VectorsRequest(t, s.CreateS3VectorsBucket, http.MethodPost, "/api/s3vectors/buckets", `{"name":"sealed","encryptionConfiguration":{"sseType":"AES256"}}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("encrypted bucket without key: %d %s", w.Code, w.Body)
+	}
+	data, err := s.GetS3VectorsBucketsData(t.Context())
+	if err != nil || len(data.Buckets) != 0 {
+		t.Fatalf("unusable bucket persisted: %+v %v", data, err)
+	}
+}

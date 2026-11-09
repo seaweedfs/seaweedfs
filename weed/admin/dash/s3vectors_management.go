@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/lance"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
@@ -59,6 +60,7 @@ func newS3VectorsServer(s *AdminServer) *s3vectors.Server {
 		request := (&http.Request{Method: http.MethodPost, Header: make(http.Header)}).WithContext(ctx)
 		return catalog.DescribeTableInternal(request, id)
 	})
+	server.SetEncryptionChecker(s3api.GetSSES3KeyManager().IsConfigured)
 	server.SetRegion(s3tables.DefaultRegion)
 	server.SetAccountID(s3tables.DefaultAccountID)
 	return server
