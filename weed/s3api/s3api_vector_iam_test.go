@@ -48,3 +48,15 @@ func TestEmbeddedIAMAcceptsVectorPoliciesWithoutFlattening(t *testing.T) {
 		require.Empty(t, actions)
 	}
 }
+
+func TestVectorIAMBucketTagDeny(t *testing.T) {
+	iam := &IdentityAccessManagement{isAuthEnabled: true}
+	require.NoError(t, iam.PutPolicy("vectors", `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3vectors:*","Resource":"*"},{"Effect":"Deny","Action":"s3vectors:QueryVectors","Resource":"*","Condition":{"StringEquals":{"s3vectors:VectorBucketTag/classification":"private"}}}]}`))
+	identity := &Identity{Name: "reader", PolicyNames: []string{"vectors"}}
+	r := httptest.NewRequest("POST", "/QueryVectors", nil)
+	r = r.WithContext(s3_constants.SetIdentityInContext(r.Context(), identity))
+	server := &S3ApiServer{iam: iam}
+	allowed, denied := server.EvaluateIAMPolicy(r, "s3vectors:QueryVectors", "arn:aws:s3vectors:us-east-1:000000000000:bucket/embeddings/index/docs", &s3tables.PolicyContext{TableBucketTags: map[string]string{"classification": "private"}})
+	require.False(t, allowed)
+	require.True(t, denied)
+}

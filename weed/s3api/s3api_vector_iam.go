@@ -18,6 +18,9 @@ func (s3a *S3ApiServer) EvaluateIAMPolicy(r *http.Request, action, resource stri
 	for key, value := range policyContext.ResourceTags {
 		conditions["aws:ResourceTag/"+key] = []string{value}
 	}
+	for key, value := range policyContext.TableBucketTags {
+		conditions["s3vectors:VectorBucketTag/"+key] = []string{value}
+	}
 	for key, value := range policyContext.RequestTags {
 		conditions["aws:RequestTag/"+key] = []string{value}
 	}
