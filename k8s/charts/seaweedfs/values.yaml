@@ -1733,6 +1733,40 @@ admin:
   serviceMonitor:
     annotations: {}
 
+vector:
+  enabled: false
+  imageOverride: null
+  replicas: 1
+  port: 8090
+  metricsPort: 0
+  masters: ""
+  readCacheMB: 512
+  nprobes: null
+  extraArgs: []
+  extraEnvironmentVars: {}
+  podLabels: {}
+  podAnnotations: {}
+  annotations: {}
+  nodeSelector:
+    kubernetes.io/os: linux
+  tolerations: []
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: kubernetes.io/arch
+                operator: In
+                values: [amd64, arm64]
+  resources: {}
+  podSecurityContext: {}
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: [ALL]
+  serviceMonitor:
+    annotations: {}
+
 worker:
   enabled: false
   imageOverride: null

@@ -687,3 +687,35 @@ generates a new UUID and the license stops matching. See
 [Master data](#master-data-hostpath-vs-a-claim). Check the binding with
 `kubectl exec <master-pod> -- curl -s localhost:9333/license/status`
 (`cluster_uuid` must equal `license_uuid`).
+
+
+## Vector buckets
+
+The S3 gateway serves the S3 Vectors API on its existing endpoint. Enable a vector engine and Lance maintenance worker alongside the cluster:
+
+```yaml
+s3:
+  enabled: true
+vector:
+  enabled: true
+  replicas: 1
+worker:
+  enabled: true
+admin:
+  enabled: true
+  secret:
+    adminPassword: change-me
+global:
+  seaweedfs:
+    securityConfig:
+      jwtSigning:
+        filerWrite: true
+```
+
+The engine registers its pod address with the masters and stores indexes through the filers and volume servers. Both Go and Rust volume servers use the same setup. The maintenance worker builds and updates ANN indexes; queries can scan data before indexing completes. Enabling filer write signing also requires clients writing directly to the filer HTTP API to supply a signed JWT.
+
+The bundled engine images support Linux amd64 and arm64. Use `vector.imageOverride` to select a compatible engine build, `vector.masters` for an external cluster, and `vector.resources` to set memory and CPU limits. The cache defaults to 512 MiB and is configured with `vector.readCacheMB`.
+
+`global.seaweedfs.enableSecurity` provisions and mounts the vector certificate and shared security configuration. With external certificates, provide the `<release>-vector-cert` secret alongside the existing CA and client secrets.
+
+The default `vector.metricsPort: 0` and TCP probes support existing engine images. For engine builds with `/metrics`, `/health`, and `/ready`, set `vector.metricsPort: 9329`; readiness then checks master registration. Enabling `global.seaweedfs.monitoring.enabled` also creates the vector ServiceMonitor. NetworkPolicy includes the configured gRPC and metrics ports.

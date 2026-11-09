@@ -1,0 +1,22 @@
+{{- if .Values.vector.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "seaweedfs.componentName" (list . "vector") }}
+  namespace: {{ include "seaweedfs.namespace" . | quote }}
+  labels:
+    {{- include "seaweedfs.vector.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "seaweedfs.vector.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: grpc
+      port: {{ .Values.vector.port }}
+      targetPort: grpc
+    {{- if .Values.vector.metricsPort }}
+    - name: metrics
+      port: {{ .Values.vector.metricsPort }}
+      targetPort: metrics
+    {{- end }}
+{{- end }}
