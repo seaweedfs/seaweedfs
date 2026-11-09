@@ -9,6 +9,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health/grpc_health_v1"
@@ -34,10 +35,10 @@ func (s *AdminServer) getVectorNodesStatus(ctx context.Context) VectorOperations
 		data.DiscoveryError = "Master discovery unavailable"
 		return data
 	}
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	discoveryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	err := s.masterClient.WithClient(ctx, false, func(client master_pb.SeaweedClient) error {
-		resp, err := client.ListClusterNodes(ctx, s.listClusterNodesRequest(cluster.VectorType))
+	err := s.masterClient.WithClient(discoveryCtx, false, func(client master_pb.SeaweedClient) error {
+		resp, err := client.ListClusterNodes(discoveryCtx, s.listClusterNodesRequest(cluster.VectorType))
 		if err != nil {
 			return err
 		}
@@ -50,9 +51,16 @@ func (s *AdminServer) getVectorNodesStatus(ctx context.Context) VectorOperations
 		data.DiscoveryError = err.Error()
 		return data
 	}
+	cancel()
+	var checks errgroup.Group
+	checks.SetLimit(8)
 	for i := range data.Engines {
-		data.Engines[i].Status = vectorNodeStatus(ctx, data.Engines[i].Address, s.grpcDialOption)
+		checks.Go(func() error {
+			data.Engines[i].Status = vectorNodeStatus(ctx, data.Engines[i].Address, s.grpcDialOption)
+			return nil
+		})
 	}
+	_ = checks.Wait()
 	sort.Slice(data.Engines, func(i, j int) bool { return data.Engines[i].Address < data.Engines[j].Address })
 	return data
 }
