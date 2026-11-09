@@ -516,14 +516,6 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 		return fmt.Errorf("apply admin.toml to plugin config: %w", err)
 	}
 
-	// Show discovered filers
-	filers := adminServer.GetAllFilers()
-	if len(filers) > 0 {
-		glog.Infof("Discovered filers: %s", strings.Join(filers, ", "))
-	} else {
-		glog.Infof("No filers discovered from masters")
-	}
-
 	// Start worker gRPC server for worker connections. The worker gRPC binds
 	// to its own address (workerGrpcBindIp) which, unlike the HTTP ip, does
 	// not auto-upgrade to 0.0.0.0 based on adminPassword, since the worker
