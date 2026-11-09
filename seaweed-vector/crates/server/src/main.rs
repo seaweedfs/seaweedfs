@@ -22,6 +22,9 @@ struct Args {
     /// gRPC listen address.
     #[arg(long, env = "WEED_VECTOR_LISTEN", default_value = "127.0.0.1:8090")]
     listen: String,
+    /// Address to register when it differs from the listen address.
+    #[arg(long, env = "WEED_VECTOR_ADVERTISE")]
+    advertise: Option<String>,
     /// Comma-separated master addresses. The engine registers with them, so
     /// the gateway finds it, and asks them for the filers it keeps tables
     /// through.
@@ -187,7 +190,10 @@ async fn main() -> Result<()> {
     );
     // Registered only now, with storage connected and the listener bound,
     // so the gateway never finds an engine that cannot serve yet.
-    let advertise = advertised_addr(&args.listen, &cluster.masters);
+    let advertise = args
+        .advertise
+        .clone()
+        .unwrap_or_else(|| advertised_addr(&args.listen, &cluster.masters));
     tokio::spawn(master_client::keep_connected(
         cluster.masters.clone(),
         advertise,
