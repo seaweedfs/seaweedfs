@@ -12,7 +12,7 @@ import (
 )
 
 func TestVectorNodeStatus(t *testing.T) {
-	for _, want := range []string{"Ready", "Not ready", "Registered (health unavailable)"} {
+	for _, want := range []string{"Ready", "Not ready", "Registered (health unavailable)", "Unknown service"} {
 		t.Run(want, func(t *testing.T) {
 			listener, err := net.Listen("tcp", "127.0.0.1:0")
 			if err != nil {
@@ -25,12 +25,18 @@ func TestVectorNodeStatus(t *testing.T) {
 				if want == "Ready" {
 					state = grpc_health_v1.HealthCheckResponse_SERVING
 				}
-				checker.SetServingStatus("vector_pb.VectorService", state)
+				if want != "Unknown service" {
+					checker.SetServingStatus("vector_pb.VectorService", state)
+				}
 				grpc_health_v1.RegisterHealthServer(server, checker)
 			}
 			go server.Serve(listener)
 			t.Cleanup(server.Stop)
-			if got := vectorNodeStatus(t.Context(), listener.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials())); got != want {
+			expected := want
+			if want == "Unknown service" {
+				expected = "Registered (health unavailable)"
+			}
+			if got := vectorNodeStatus(t.Context(), listener.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials())); got != expected {
 				t.Fatalf("got %s want %s", got, want)
 			}
 		})

@@ -74,7 +74,7 @@ func vectorNodeStatus(ctx context.Context, address string, dialOption grpc.DialO
 	}
 	defer conn.Close()
 	response, err := grpc_health_v1.NewHealthClient(conn).Check(ctx, &grpc_health_v1.HealthCheckRequest{Service: "vector_pb.VectorService"})
-	if status.Code(err) == codes.Unimplemented {
+	if status.Code(err) == codes.Unimplemented || status.Code(err) == codes.NotFound {
 		return "Registered (health unavailable)"
 	}
 	if err != nil {
