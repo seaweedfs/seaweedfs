@@ -773,7 +773,7 @@ on install.
 
 {{- define "seaweedfs.vector.selectorLabels" -}}
 app.kubernetes.io/name: {{ include "seaweedfs.name" . }}
-app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/instance: {{ .Release.Name | quote }}
 app.kubernetes.io/component: vector
 {{- end -}}
 {{- define "seaweedfs.vector.labels" -}}

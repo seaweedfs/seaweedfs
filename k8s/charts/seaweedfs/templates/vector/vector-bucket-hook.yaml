@@ -46,7 +46,7 @@ metadata:
   namespace: {{ include "seaweedfs.namespace" . | quote }}
   labels:
     app.kubernetes.io/name: {{ include "seaweedfs.name" . }}
-    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name | quote }}
     app.kubernetes.io/component: vector-bucket-hook
     {{- with include "seaweedfs.commonLabels" . }}{{ . | nindent 4 }}{{ end }}
   annotations:
@@ -60,7 +60,7 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: {{ include "seaweedfs.name" . }}
-        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/instance: {{ .Release.Name | quote }}
         app.kubernetes.io/component: vector-bucket-hook
     spec:
       restartPolicy: Never

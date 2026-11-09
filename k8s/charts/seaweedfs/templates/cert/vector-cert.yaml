@@ -9,7 +9,7 @@ metadata:
     app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
     helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
     app.kubernetes.io/managed-by: {{ .Release.Service }}
-    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name | quote }}
     app.kubernetes.io/component: vector
     {{- with include "seaweedfs.commonLabels" $ }}{{ . | nindent 4 }}{{ end }}
   {{- if .Values.vector.annotations }}
