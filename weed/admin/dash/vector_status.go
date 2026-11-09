@@ -35,23 +35,32 @@ func (s *AdminServer) getVectorNodesStatus(ctx context.Context) VectorOperations
 		data.DiscoveryError = "Master discovery unavailable"
 		return data
 	}
-	discoveryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	err := s.masterClient.WithClient(discoveryCtx, false, func(client master_pb.SeaweedClient) error {
-		resp, err := client.ListClusterNodes(discoveryCtx, s.listClusterNodesRequest(cluster.VectorType))
+	var discoveryErr error
+	for _, master := range s.masterClient.ListCachedMasters() {
+		discoveryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		conn, err := pb.GrpcDial(discoveryCtx, master.ToGrpcAddress(), false, s.grpcDialOption)
+		if err == nil {
+			response, callErr := master_pb.NewSeaweedClient(conn).ListClusterNodes(discoveryCtx, s.listClusterNodesRequest(cluster.VectorType))
+			_ = conn.Close()
+			err = callErr
+			if err == nil {
+				for _, node := range response.ClusterNodes {
+					data.Engines = append(data.Engines, VectorNode{Address: node.Address, Version: node.Version, Status: "Registered"})
+				}
+			}
+		}
+		cancel()
 		if err != nil {
-			return err
+			discoveryErr = err
 		}
-		for _, node := range resp.ClusterNodes {
-			data.Engines = append(data.Engines, VectorNode{Address: node.Address, Version: node.Version, Status: "Registered"})
+		if len(data.Engines) > 0 {
+			break
 		}
-		return nil
-	})
-	if err != nil {
-		data.DiscoveryError = err.Error()
+	}
+	if len(data.Engines) == 0 && discoveryErr != nil {
+		data.DiscoveryError = discoveryErr.Error()
 		return data
 	}
-	cancel()
 	var checks errgroup.Group
 	checks.SetLimit(8)
 	for i := range data.Engines {
