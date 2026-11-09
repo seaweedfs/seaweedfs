@@ -97,6 +97,7 @@ jobs:
       CARGO_TARGET_DIR: ${{ github.workspace }}/seaweed-vector/target
       VOLUME_SERVER_IMPL: ${{ matrix.volume }}
       VECTOR_QUERY_MODE: single
+      VECTOR_FILER_GROUP: vectors-ci
       VECTOR_TLS: ${{ matrix.hardened }}
       VECTOR_READ_JWT: ${{ matrix.hardened }}
       VECTOR_ENCRYPT_VOLUMES: ${{ matrix.hardened }}

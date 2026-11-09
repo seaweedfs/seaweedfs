@@ -452,7 +452,7 @@ func (s3opt *S3Options) startS3Server() bool {
 	// backend is reachable — /s3vectors/ in the SigV4 credential scope picks
 	// the vectors router.
 	vectorsHandler := http.Handler(router)
-	if vectorsRouter := s3opt.vectorsRouter(s3ApiServer, grpcDialOption, masterAddresses); vectorsRouter != nil {
+	if vectorsRouter := s3opt.vectorsRouter(s3ApiServer, grpcDialOption, masterAddresses, filerGroup); vectorsRouter != nil {
 		vr, mainRouter := vectorsRouter, router
 		vectorsHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if isVectorsRequest(r) {
@@ -739,12 +739,14 @@ func (s3opt *S3Options) startLanceServer(listenOnLocalhost bool) *http.Server {
 // vectorsRouter builds the S3 Vectors API router — workers register to the
 // master and the backend resolves them lazily, so a worker that comes up
 // after the gateway still gets picked up on first query.
-func (s3opt *S3Options) vectorsRouter(s3ApiServer *s3api.S3ApiServer, grpcDialOption grpc.DialOption, masterAddresses []pb.ServerAddress) *mux.Router {
+func (s3opt *S3Options) vectorsRouter(s3ApiServer *s3api.S3ApiServer, grpcDialOption grpc.DialOption, masterAddresses []pb.ServerAddress, filerGroup string) *mux.Router {
 	if len(masterAddresses) == 0 {
 		glog.Warningf("S3 Vectors API disabled: no weed-vector registered on master")
 		return nil
 	}
-	backend := &vectorDiscovery{masters: masterAddresses, grpcDialOption: grpcDialOption, discover: discoverVectorWorkers}
+	backend := &vectorDiscovery{masters: masterAddresses, grpcDialOption: grpcDialOption, discover: func(masters []pb.ServerAddress, opt grpc.DialOption) []string {
+		return discoverVectorWorkers(masters, opt, filerGroup)
+	}}
 	// In-process describe — the router resolves locations and vended
 	// storage options through the catalog directly, never over HTTP. The
 	// lookup itself runs under the trusted identity: the caller's vector
@@ -1133,7 +1135,7 @@ func (v lanceCredentialVendor) VendTableCredentials(ctx context.Context, princip
 // discoverVectorWorkers returns every registered weed-vector address —
 // callers keep their current worker when it is still listed so
 // membership-order changes cannot churn live connections.
-func discoverVectorWorkers(masters []pb.ServerAddress, grpcDialOption grpc.DialOption) []string {
+func discoverVectorWorkers(masters []pb.ServerAddress, grpcDialOption grpc.DialOption, filerGroup string) []string {
 	for _, master := range masters {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		conn, err := pb.GrpcDial(ctx, master.ToGrpcAddress(), false, grpcDialOption)
@@ -1143,6 +1145,7 @@ func discoverVectorWorkers(masters []pb.ServerAddress, grpcDialOption grpc.DialO
 		}
 		resp, err := master_pb.NewSeaweedClient(conn).ListClusterNodes(ctx, &master_pb.ListClusterNodesRequest{
 			ClientType: "vector",
+			FilerGroup: filerGroup,
 		})
 		conn.Close()
 		cancel()
