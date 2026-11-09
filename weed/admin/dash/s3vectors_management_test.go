@@ -172,3 +172,40 @@ func TestS3VectorsBucketsStopAtTheListLimit(t *testing.T) {
 		t.Fatalf("listed %d buckets (truncated %v), want the limit %d and truncated", data.TotalBuckets, data.Truncated, s3TablesAdminListLimit)
 	}
 }
+
+func TestS3VectorsManagementOperations(t *testing.T) {
+	s, _ := newS3VectorsTestServer(t)
+	w := s3VectorsRequest(t, s.CreateS3VectorsBucket, http.MethodPost, "/api/s3vectors/buckets", `{"name":"managed","encryptionConfiguration":{"sseType":"AES256"},"tags":{"env":"test"}}`)
+	if w.Code != http.StatusCreated {
+		t.Fatal(w.Code, w.Body)
+	}
+	summary, err := s.s3VectorsBucketSummary(t.Context(), "managed")
+	if err != nil || summary.Encryption != "AES256" {
+		t.Fatal(summary, err)
+	}
+	arn := summary.ARN
+	for _, body := range []string{
+		`{"operation":"TagResource","request":{"resourceArn":"` + arn + `","tags":{"team":"search"}}}`,
+		`{"operation":"ListTagsForResource","request":{"resourceArn":"` + arn + `"}}`,
+		`{"operation":"UntagResource","request":{"resourceArn":"` + arn + `","tagKeys":["team"]}}`,
+		`{"operation":"PutVectorBucketPolicy","request":{"vectorBucketName":"managed","policy":"{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":\"*\",\"Action\":\"s3vectors:QueryVectors\",\"Resource\":\"*\"}]}"}}`,
+		`{"operation":"DeleteVectorBucketPolicy","request":{"vectorBucketName":"managed"}}`,
+	} {
+		w := s3VectorsRequest(t, s.ExecuteS3VectorsOperationAPI, http.MethodPost, "/api/s3vectors/operations", body)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: %d %s", body, w.Code, w.Body)
+		}
+	}
+	for _, body := range []string{`{"operation":"Unknown","request":{}}`, `{bad json`} {
+		if w := s3VectorsRequest(t, s.ExecuteS3VectorsOperationAPI, http.MethodPost, "/api/s3vectors/operations", body); w.Code != http.StatusBadRequest {
+			t.Fatal(w.Code, w.Body)
+		}
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/s3vectors/operations", strings.NewReader(`{}`))
+	request = request.WithContext(WithAuthContext(request.Context(), "admin", "admin", "required-token"))
+	recorder := httptest.NewRecorder()
+	s.ExecuteS3VectorsOperationAPI(recorder, request)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatal("missing CSRF token accepted", recorder.Code)
+	}
+}

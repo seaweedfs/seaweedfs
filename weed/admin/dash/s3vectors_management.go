@@ -2,11 +2,13 @@ package dash
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/lance"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3vectors"
@@ -48,11 +50,15 @@ func (c s3VectorsFilerClient) WithFilerClient(_ bool, fn func(client filer_pb.Se
 	return c.s.WithFilerClient(fn)
 }
 
-// newS3VectorsServer serves the catalog side of S3 Vectors for the admin
-// console. It has no vector engine, so it never runs an operation that needs
-// one, such as CreateIndex.
 func newS3VectorsServer(s *AdminServer) *s3vectors.Server {
-	server := s3vectors.NewServer(s3VectorsFilerClient{s}, nil, nil)
+	client := s3VectorsFilerClient{s}
+	backend := s3vectors.NewVectorDiscovery(s.masterClient.GetMasters(context.Background()), s.grpcDialOption)
+	server := s3vectors.NewServer(client, nil, backend)
+	catalog := lance.NewServer(client, nil)
+	server.SetDescribe(func(ctx context.Context, id []string) (string, map[string]string, error) {
+		request := (&http.Request{Method: http.MethodPost, Header: make(http.Header)}).WithContext(ctx)
+		return catalog.DescribeTableInternal(request, id)
+	})
 	server.SetRegion(s3tables.DefaultRegion)
 	server.SetAccountID(s3tables.DefaultAccountID)
 	return server
@@ -170,14 +176,16 @@ func (s *AdminServer) CreateS3VectorsBucket(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	var req struct {
-		Name string `json:"name"`
+		Name                    string                 `json:"name"`
+		EncryptionConfiguration map[string]interface{} `json:"encryptionConfiguration,omitempty"`
+		Tags                    map[string]string      `json:"tags,omitempty"`
 	}
 	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
 		return
 	}
 	var resp s3vectors.CreateVectorBucketResponse
-	if err := s.executeS3VectorsOperation(r.Context(), "CreateVectorBucket", &s3vectors.CreateVectorBucketRequest{VectorBucketName: req.Name}, &resp); err != nil {
+	if err := s.executeS3VectorsOperation(r.Context(), "CreateVectorBucket", &s3vectors.CreateVectorBucketRequest{VectorBucketName: req.Name, EncryptionConfiguration: req.EncryptionConfiguration, Tags: req.Tags}, &resp); err != nil {
 		writeS3VectorsError(w, err)
 		return
 	}
@@ -255,4 +263,33 @@ func writeS3VectorsError(w http.ResponseWriter, err error) {
 		status = http.StatusServiceUnavailable
 	}
 	writeJSONError(w, status, e.Message)
+}
+
+func (s *AdminServer) ExecuteS3VectorsOperationAPI(w http.ResponseWriter, r *http.Request) {
+	if !requireSessionCSRFToken(w, r) {
+		return
+	}
+	var req struct {
+		Operation string          `json:"operation"`
+		Request   json.RawMessage `json:"request"`
+	}
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
+		return
+	}
+	switch req.Operation {
+	case "CreateIndex", "PutVectorBucketPolicy", "DeleteVectorBucketPolicy", "TagResource", "UntagResource", "ListTagsForResource", "PutVectors", "GetVectors", "ListVectors", "DeleteVectors", "QueryVectors":
+	default:
+		writeJSONError(w, http.StatusBadRequest, "Unsupported vector operation")
+		return
+	}
+	var resp json.RawMessage
+	if err := s.executeS3VectorsOperation(r.Context(), req.Operation, req.Request, &resp); err != nil {
+		writeS3VectorsError(w, err)
+		return
+	}
+	if len(resp) == 0 {
+		resp = json.RawMessage(`{}`)
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
