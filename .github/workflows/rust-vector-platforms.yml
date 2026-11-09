@@ -52,6 +52,7 @@ jobs:
         with:
           python-version: '3.13'
       - uses: actions/cache@v6
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         with:
           path: |
             ~/.cargo/registry
