@@ -123,7 +123,7 @@ def write_tls(directory):
             "-out", "outsider.pem", "-days", "2", "-extfile", "ext.cnf")
     cert, key, ca = (f'{key} = {json.dumps(str(directory / name), ensure_ascii=False)}\n' for key, name in (("cert", "cert.pem"), ("key", "key.pem"), ("ca", "ca.pem")))
     pem = cert + key + ca
-    grpc = "".join(f"[grpc.{component}]\n{cert}{key}\n" for component in ("master", "volume", "filer", "s3"))
+    grpc = "".join(f"[grpc.{component}]\n{cert}{key}\n" for component in ("master", "volume", "filer", "s3", "admin", "worker"))
     # Clients (the gateway, the engine) accept only servers named localhost;
     # the engine serves only clients named localhost.
     grpc += f"[grpc.client]\n{cert}{key}allowed_server_commonNames = \"localhost\"\n"
@@ -365,9 +365,12 @@ def run_cluster(param, tmp_path_factory, identities):
             start("admin", [weed, "admin", "-ip=127.0.0.1", f"-port={admin}", f"-port.grpc={admin_grpc}",
                             "-port.legacy=0", f"-master={master_addr}", f"-dataDir={directory / 'admin'}"])
             wait_for(lambda: http_ready(f"{admin_url}/api/plugin/job-types"), processes, "admin not ready")
+            tls_args = []
+            if os.environ.get("VECTOR_TLS"):
+                tls_args = ["--tls-ca", str(directory / "ca.pem"), "--tls-cert", str(directory / "cert.pem"), "--tls-key", str(directory / "key.pem"), "--tls-server-name", "localhost"]
             start("lance-worker", [lance_worker, "--admin", f"127.0.0.1:{admin}.{admin_grpc}",
                                    "--namespace", f"http://127.0.0.1:{lance}", "--id", "vectors-test-worker",
-                                   "--masters", master_addr])
+                                   "--masters", master_addr, *tls_args])
             wait_for(lambda: "lance_vector_index" in
                      [jt["job_type"] for jt in json.load(urllib.request.urlopen(f"{admin_url}/api/plugin/job-types", timeout=2))],
                      processes, "the Lance worker never registered with admin")
