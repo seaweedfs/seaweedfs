@@ -139,12 +139,55 @@ func ValidateMetadataLocation(metadataLocation, bucketName, namespace string) er
 	if metadataLocation == "" {
 		return nil
 	}
-	bucket, tablePath, err := parseS3Location(metadataLocation)
+	tablePath, err := validateMetadataLocationShape(metadataLocation, bucketName)
 	if err != nil {
 		return err
 	}
+	if !strings.HasPrefix(tablePath, namespace+"/") {
+		return fmt.Errorf("metadata location must be within namespace %s", namespace)
+	}
+	return nil
+}
+
+// validateUpdatedMetadataLocation is ValidateMetadataLocation for an update of
+// the record at recordPath, whose stored metadata is current. A location that
+// keeps the record in the directory it already holds its files under is
+// accepted wherever that directory is: a rename across namespaces moves the
+// record and leaves its files behind, and that directory was confined to a
+// namespace when the record first took it. A location that moves the record to
+// another directory must lie inside the record's current namespace, and the
+// update still refuses one another record claims.
+func validateUpdatedMetadataLocation(metadataLocation, bucketName, namespace, recordPath string, current *tableMetadataInternal) error {
+	if metadataLocation == "" {
+		return nil
+	}
+	if _, err := validateMetadataLocationShape(metadataLocation, bucketName); err != nil {
+		return err
+	}
+	// The directory the location itself names, with no fallback: CatalogRecordRoot
+	// replaces a directory outside the bucket subtree (s3://bucket/metadata/...)
+	// with the record's warehouse or name path, which would match the current
+	// root and let a location no load can resolve skip the namespace check.
+	if dir := TableDataDirFromMetadataLocation(metadataLocation); strings.HasPrefix(dir, GetTableBucketPath(bucketName)+"/") &&
+		dir == current.root(bucketName, recordPath) {
+		return nil
+	}
+	return ValidateMetadataLocation(metadataLocation, bucketName, namespace)
+}
+
+// validateMetadataLocationShape checks what a metadata location must satisfy
+// whatever record it belongs to: it names the table bucket and a table path of
+// safe segments. It returns that path. An empty location passes.
+func validateMetadataLocationShape(metadataLocation, bucketName string) (string, error) {
+	if metadataLocation == "" {
+		return "", nil
+	}
+	bucket, tablePath, err := parseS3Location(metadataLocation)
+	if err != nil {
+		return "", err
+	}
 	if bucket != bucketName {
-		return fmt.Errorf("metadata location must be within bucket %s", bucketName)
+		return "", fmt.Errorf("metadata location must be within bucket %s", bucketName)
 	}
 	hasSegment := false
 	for _, segment := range strings.Split(tablePath, "/") {
@@ -152,17 +195,14 @@ func ValidateMetadataLocation(metadataLocation, bucketName, namespace string) er
 			continue
 		}
 		if segment == "." || segment == ".." || strings.ContainsAny(segment, "\\\x00") {
-			return fmt.Errorf("invalid metadata location path")
+			return "", fmt.Errorf("invalid metadata location path")
 		}
 		hasSegment = true
 	}
 	if !hasSegment {
-		return fmt.Errorf("metadata location must include a table path")
+		return "", fmt.Errorf("metadata location must include a table path")
 	}
-	if !strings.HasPrefix(tablePath, namespace+"/") {
-		return fmt.Errorf("metadata location must be within namespace %s", namespace)
-	}
-	return nil
+	return tablePath, nil
 }
 
 // ValidateEncryptionConfiguration admits only the AES256 declaration, under the
