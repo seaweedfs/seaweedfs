@@ -319,7 +319,17 @@ mod tests {
         let master = format!("127.0.0.1:9333.{port}");
         let open = stream_to(&master, "127.0.0.1:8080", "", Some(&tls), None);
         let result = tokio::time::timeout(CONNECT_TIMEOUT * 3, open).await;
-        std::fs::write(&fifo, b"invalid CA").unwrap();
+        use std::io::Write;
+        let mut cleanup = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&fifo)
+            .unwrap();
+        let replacement = dir.path().join("ca.replacement");
+        std::fs::write(&replacement, b"invalid CA").unwrap();
+        std::fs::rename(&replacement, &fifo).unwrap();
+        cleanup.write_all(b"invalid CA").unwrap();
+        drop(cleanup);
         match result {
             Ok(Err(e)) => assert!(format!("{e:#}").contains("did not complete"), "{e:#}"),
             other => panic!("credential read was not bounded: {other:?}"),
