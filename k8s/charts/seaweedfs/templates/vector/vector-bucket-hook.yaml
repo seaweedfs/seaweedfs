@@ -65,6 +65,10 @@ spec:
     spec:
       restartPolicy: Never
       automountServiceAccountToken: false
+      {{- with $hook.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- with .Values.vector.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
@@ -136,10 +140,7 @@ spec:
               value: /etc/ssl/vector/ca.crt
             {{- end }}
           securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            capabilities:
-              drop: [ALL]
+            {{- toYaml $hook.containerSecurityContext | nindent 12 }}
           {{- with $hook.resources }}
           resources:
             {{- toYaml . | nindent 12 }}

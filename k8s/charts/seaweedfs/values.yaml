@@ -1768,6 +1768,14 @@ vector:
     annotations: {}
   createBuckets: []
   bucketHook:
+    podSecurityContext:
+      seccompProfile:
+        type: RuntimeDefault
+    containerSecurityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop: [ALL]
     image: amazon/aws-cli:2.39.6
     endpoint: ""
     region: us-east-1
