@@ -17,9 +17,9 @@ SeaweedFS is a simple and highly scalable distributed file system. There are two
 1. to store billions of files!
 2. to serve the files fast!
 
-One SeaweedFS cluster serves an S3 object store, a POSIX file system, a lakehouse with S3 Tables, and [vector search with S3 Vector Buckets](#vector-search-with-s3-vector-buckets), all on shared storage. Each blob is one disk read away, capacity grows by starting another volume server, and cloud storage can be cached or tiered transparently. Blob reads and writes have O(1) complexity and can run at the full speed supported by the underlying hardware.
+One SeaweedFS cluster serves an S3 object store, a POSIX file system, a lakehouse with S3 Tables and a built-in Iceberg REST Catalog, and [vector search with S3 Vector Buckets](#vector-search-with-s3-vector-buckets), all on shared storage. Each blob is one disk read away, capacity grows by starting another volume server, and cloud storage can be cached or tiered transparently. Blob reads and writes have O(1) complexity and can run at the full speed supported by the underlying hardware.
 
-![SeaweedFS feature overview: S3 objects, POSIX files, Iceberg and Lance tables, and S3 Vector Buckets share one cluster of masters, filers, and volume servers, with cloud caching, tiering, and cross-cluster replication.](note/seaweedfs-features.svg)
+![SeaweedFS feature overview: S3 objects, POSIX files, table buckets with an Iceberg REST Catalog and Lance namespace, and S3 Vector Buckets share one cluster of masters, filers, and volume servers, with cloud caching, tiering, and cross-cluster replication.](note/seaweedfs-features.svg)
 
 - [Download Binaries for different platforms](https://github.com/seaweedfs/seaweedfs/releases/latest)
 - [Wiki Documentation](https://github.com/seaweedfs/seaweedfs/wiki)
@@ -227,7 +227,7 @@ The full operation list is in [Amazon S3 API][AmazonS3API], and [Supported APIs 
 
 ## A data warehouse with S3 Tables ##
 
-SeaweedFS is a lakehouse in one system. [S3 Table Buckets][S3TableBucket] hold Apache Iceberg tables by default, or [Lance][LanceCatalog] tables for vectors and multimodal data, and the built-in [Iceberg REST Catalog][IcebergCatalog] and Lance namespace serve them directly. There is no Hive Metastore, Glue, or separate catalog service to deploy, secure, and back up.
+SeaweedFS is a lakehouse in one system. [S3 Table Buckets][S3TableBucket] hold Apache Iceberg tables by default, or [Lance][LanceCatalog] tables for vectors and multimodal data, and the built-in [Iceberg REST Catalog][IcebergCatalog] and Lance namespace serve them directly. The S3 Tables API and Iceberg REST Catalog share the same namespaces, table metadata, and permissions. There is no Hive Metastore, Glue, or separate catalog service to deploy, secure, and back up.
 
 * Query engines operate on the same tables at the same time: [Spark][SparkIceberg], [Trino][TrinoIceberg], [Dremio][DremioIceberg], [DuckDB][DuckDBIceberg], [Apache Doris][DorisIceberg], [RisingWave][RisingWaveIceberg], ClickHouse, and [LanceDB][LanceDB]. Catalog commits are atomic compare-and-swap, so concurrent writers are safe. [Lakekeeper][Lakekeeper] can front the same storage with STS-vended credentials. [OLake Go][OLake] is a high-performance, open-source EL (Extract–Load) platform that bridges operational databases and open lakehouse storage - writing Apache Iceberg tables or Parquet files on Amazon S3.
 * [Automated table maintenance][IcebergMaintenance]: compaction, snapshot expiration, orphan file removal, and manifest rewriting, configured per bucket or table through the S3 Tables maintenance APIs, and the same for [Lance][LanceMaintenance].
