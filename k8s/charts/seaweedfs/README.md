@@ -716,7 +716,7 @@ The engine registers its pod address with the masters and stores indexes through
 
 The bundled engine images support Linux amd64 and arm64. Use `vector.imageOverride` to select a compatible engine build, `vector.masters` for an external cluster, and `vector.resources` to set memory and CPU limits. The cache defaults to 512 MiB and is configured with `vector.readCacheMB`.
 
-`global.seaweedfs.enableSecurity` provisions and mounts the vector certificate and shared security configuration. With external certificates, provide the `<release>-vector-cert` secret alongside the existing CA and client secrets.
+`global.seaweedfs.enableSecurity` provisions and mounts the vector certificate and shared security configuration. With external certificates, provide the `<fullname>-vector-cert` secret (`my-seaweedfs-vector-cert` for release `my`). `fullname` follows `seaweedfs.fullname`, including `fullnameOverride`, `nameOverride`, and DNS-name truncation. Provide this secret alongside the existing CA and client secrets.
 
 The default `vector.metricsPort: 0` and TCP probes support existing engine images. For engine builds with `/metrics`, `/health`, and `/ready`, set `vector.metricsPort: 9329`; readiness then checks master registration. Enabling `global.seaweedfs.monitoring.enabled` also creates the vector ServiceMonitor. NetworkPolicy includes the configured gRPC and metrics ports.
 
