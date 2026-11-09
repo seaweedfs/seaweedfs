@@ -103,3 +103,23 @@ func TestVectorLimitsIgnoreUnrelatedResourceFields(t *testing.T) {
 		})
 	}
 }
+
+func TestVectorLimitsCountChunkedBodyBytes(t *testing.T) {
+	s := NewServer(nil, headerAuth{}, nil)
+	body := `{"vectorBucketName":"embeddings","indexName":"documents"}`
+	var got int64
+	s.SetLimiter(func(next http.HandlerFunc, action string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) { got = r.ContentLength; next(w, r) }
+	})
+	r := httptest.NewRequest(http.MethodPost, "/PutVectors", bytes.NewBufferString(body))
+	r.ContentLength = -1
+	s.instrument(func(w http.ResponseWriter, r *http.Request) {
+		s.limitRequest(func(http.ResponseWriter, *http.Request) {}, w, r)
+	})(httptest.NewRecorder(), r)
+	if got != int64(len(body)) {
+		t.Fatalf("limited body length = %d, want %d", got, len(body))
+	}
+	if r.ContentLength != -1 {
+		t.Fatal("mutated original request")
+	}
+}

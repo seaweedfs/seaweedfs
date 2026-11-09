@@ -1,7 +1,9 @@
 package s3vectors
 
 import (
+	"bytes"
 	"encoding/xml"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -48,6 +50,11 @@ func (s *Server) limitRequest(handler http.HandlerFunc, w http.ResponseWriter, r
 			writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 			return
 		}
+	}
+	if info, ok := r.Context().Value(requestInfoKey{}).(*requestInfo); ok && r.Method == http.MethodPost {
+		r = r.Clone(r.Context())
+		r.ContentLength = int64(len(info.body))
+		r.Body = io.NopCloser(bytes.NewReader(info.body))
 	}
 	arns, err := resolve()
 	if err != nil {
