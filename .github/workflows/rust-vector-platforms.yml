@@ -82,7 +82,10 @@ jobs:
         run: cargo test --locked --release --manifest-path seaweed-vector/Cargo.toml --workspace
       - name: Test installer
         run: |
-          if [ "$RUNNER_OS" = "Windows" ]; then export BASH_BINARY="$(cygpath -w "$BASH")"; fi
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            BASH_BINARY="$(cygpath -w "$BASH")"
+            export BASH_BINARY
+          fi
           python -m unittest discover -s test/installer
       - name: Package engine
         env:
