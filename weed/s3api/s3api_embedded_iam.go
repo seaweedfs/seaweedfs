@@ -1125,8 +1125,24 @@ func iamPolicyArn(policyName string) string {
 // res[5] contains the bucket and optional path after :::
 func (e *EmbeddedIamApi) getActions(policy *policy_engine.PolicyDocument) ([]string, error) {
 	var actions []string
+	hasVectorPolicy := false
 
 	for _, statement := range policy.Statement {
+		vectorOnly := len(statement.Action.Strings()) > 0
+		for _, action := range statement.Action.Strings() {
+			if !strings.HasPrefix(action, "s3vectors:") {
+				vectorOnly = false
+			}
+		}
+		if vectorOnly && (statement.Effect == policy_engine.PolicyEffectAllow || statement.Effect == policy_engine.PolicyEffectDeny) {
+			for _, resource := range statement.Resource.Strings() {
+				if resource == "*" || strings.HasPrefix(resource, "arn:aws:s3vectors:") {
+					hasVectorPolicy = true
+				}
+			}
+			continue
+		}
+
 		if statement.Effect != policy_engine.PolicyEffectAllow {
 			return nil, fmt.Errorf("not a valid effect: '%s'. Only 'Allow' is possible", statement.Effect)
 		}
@@ -1181,7 +1197,7 @@ func (e *EmbeddedIamApi) getActions(policy *policy_engine.PolicyDocument) ([]str
 		}
 	}
 
-	if len(actions) == 0 {
+	if len(actions) == 0 && !hasVectorPolicy {
 		return nil, fmt.Errorf("no valid actions found in policy document")
 	}
 	return actions, nil
