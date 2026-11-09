@@ -210,7 +210,7 @@ func PostLog(r *http.Request, HTTPStatusCode int, errorCode ErrorCode) {
 }
 
 func PostAccessLog(log AccessLog) {
-	if Logger == nil || len(log.Key) == 0 {
+	if Logger == nil {
 		return
 	}
 	if err := Logger.Post(tag, log); err != nil {

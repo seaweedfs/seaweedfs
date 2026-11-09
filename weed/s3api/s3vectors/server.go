@@ -4,6 +4,7 @@ package s3vectors
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -113,7 +114,7 @@ func (s *Server) instrument(next http.HandlerFunc) http.HandlerFunc {
 		inFlight.Inc()
 		defer inFlight.Dec()
 		info := &requestInfo{}
-		r = s3_constants.EnsureIdentityHolder(r.WithContext(context.WithValue(r.Context(), requestInfoKey{}, info)))
+		r = s3_constants.EnsureIdentityHolder(s3err.EnsureAuditTracking(r.WithContext(context.WithValue(r.Context(), requestInfoKey{}, info))))
 		recorder := &responseWriter{StatusRecorder: stats_collect.NewStatusResponseWriter(w), info: info}
 		start := time.Now()
 		next(recorder, r)
@@ -122,6 +123,9 @@ func (s *Server) instrument(next http.HandlerFunc) http.HandlerFunc {
 		if info.authorized && recorder.Status != http.StatusForbidden {
 			bucket = info.bucket
 		}
+		log := accessLog(r, recorder.Status, label, info)
+		s3err.PostAccessLog(*log)
+		s3err.MarkAuditLogged(r)
 		stats_collect.S3RequestHistogram.WithLabelValues(label, bucket).Observe(elapsed.Seconds())
 		stats_collect.S3RequestCounter.WithLabelValues(label, strconv.Itoa(recorder.Status), bucket).Inc()
 		if bucket != "" {
@@ -174,6 +178,7 @@ type requestInfo struct {
 	bucket, index  string
 	authorized     bool
 	received, sent int64
+	errorCode      string
 }
 
 func authorizeRequest(r *http.Request, bucket, index string) {
@@ -190,5 +195,24 @@ type responseWriter struct {
 func (w *responseWriter) Write(body []byte) (int, error) {
 	n, err := w.StatusRecorder.Write(body)
 	w.info.sent += int64(n)
+	if w.Status >= http.StatusBadRequest {
+		var response Error
+		if json.Unmarshal(body, &response) == nil {
+			w.info.errorCode = response.Code
+		}
+	}
 	return n, err
+}
+
+func setRequestTarget(r *http.Request, bucket, index string) {
+	if info, ok := r.Context().Value(requestInfoKey{}).(*requestInfo); ok {
+		info.bucket, info.index = bucket, index
+	}
+}
+
+func accessLog(r *http.Request, status int, operation string, info *requestInfo) *s3err.AccessLog {
+	log := s3err.GetAccessLog(r, status, s3err.ErrNone)
+	log.Operation, log.Bucket, log.Key = operation, info.bucket, info.index
+	log.ErrorCode = info.errorCode
+	return log
 }
