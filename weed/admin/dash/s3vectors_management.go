@@ -287,6 +287,14 @@ func (s *AdminServer) ExecuteS3VectorsOperationAPI(w http.ResponseWriter, r *htt
 		writeJSONError(w, http.StatusBadRequest, "Unsupported vector operation")
 		return
 	}
+	switch req.Operation {
+	case "QueryVectors", "GetVectors", "ListVectors", "ListTagsForResource":
+	default:
+		if role := RoleFromContext(r.Context()); role != "" && role != "admin" {
+			writeJSONError(w, http.StatusForbidden, "This operation requires admin access")
+			return
+		}
+	}
 	var resp json.RawMessage
 	if err := s.executeS3VectorsOperation(r.Context(), req.Operation, req.Request, &resp); err != nil {
 		writeS3VectorsError(w, err)
