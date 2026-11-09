@@ -214,6 +214,11 @@ impl ObjectStore for CachedStore {
             .map(|m| m.storage_read_seconds.start_timer());
         let result = self.inner.get_opts(location, options).await?;
         if result.meta.size > MAX_WHOLE_OBJECT {
+            if let Some(metrics) = &self.metrics {
+                metrics
+                    .storage_bytes
+                    .inc_by(result.range.end - result.range.start);
+            }
             return Ok(result);
         }
         let object = Arc::new((result.meta.clone(), result.attributes.clone()));

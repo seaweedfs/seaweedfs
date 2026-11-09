@@ -88,3 +88,24 @@ async fn cancelled_requests_are_counted_once() {
         1
     );
 }
+
+#[tokio::test]
+async fn large_immutable_reads_report_bytes_without_caching() {
+    let metrics = Metrics::new().unwrap();
+    let cache = ReadCache::new(16 * 1024 * 1024).with_metrics(metrics.clone());
+    let store = cache.wrap("memory", Arc::new(InMemory::new()));
+    let path = Path::from("data/large.lance");
+    let size = 5 * 1024 * 1024;
+    store
+        .put(&path, Bytes::from(vec![0; size]).into())
+        .await
+        .unwrap();
+    assert_eq!(
+        store.get(&path).await.unwrap().bytes().await.unwrap().len(),
+        size
+    );
+    assert_eq!(metrics.storage_bytes.get(), size as u64);
+    assert_eq!(metrics.cache_requests.with_label_values(&["miss"]).get(), 1);
+    assert_eq!(metrics.storage_read_seconds.get_sample_count(), 1);
+    assert_eq!(cache.size(), (0, 0));
+}
