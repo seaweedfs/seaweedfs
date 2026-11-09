@@ -4335,7 +4335,7 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "SeaweedFS_vector_connected{namespace=~\"$NAMESPACE\"} * on (namespace, instance, job) up{namespace=~\"$NAMESPACE\"}",
+              "expr": "last_over_time(SeaweedFS_vector_connected{namespace=~\"$NAMESPACE\"}[5m]) * on (cluster, namespace, instance, job) up{namespace=~\"$NAMESPACE\"}",
               "range": true,
               "refId": "A",
               "legendFormat": "{{instance}}"

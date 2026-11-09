@@ -13170,7 +13170,7 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "SeaweedFS_vector_connected{cluster=~\"$cluster\"} * on (cluster, instance, job) up{cluster=~\"$cluster\"}",
+              "expr": "last_over_time(SeaweedFS_vector_connected{cluster=~\"$cluster\"}[5m]) * on (cluster, namespace, instance, job) up{cluster=~\"$cluster\"}",
               "range": true,
               "refId": "A",
               "legendFormat": "{{instance}}"
