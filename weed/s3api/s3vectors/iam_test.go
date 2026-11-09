@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables/s3tablestest"
 )
 
 type iamAuthenticator struct {
@@ -34,5 +35,20 @@ func TestIAMGrantRespectsVectorResourceDenies(t *testing.T) {
 	auth.denied = true
 	if server.checkPermission(request, action, "owner", "owner", "", resource, ctx) {
 		t.Fatal("identity deny was overridden by ownership")
+	}
+}
+
+type requestTagAuthenticator struct{ fakeAuthenticator }
+
+func (*requestTagAuthenticator) EvaluateIAMPolicy(_ *http.Request, _, _ string, ctx *s3tables.PolicyContext) (bool, bool) {
+	return true, ctx.RequestTags["classification"] == "forbidden"
+}
+
+func TestIAMCreateBucketReceivesRequestTags(t *testing.T) {
+	fs := s3tablestest.Start(t)
+	server := NewServer(s3tables.NewManagerClient(fs.Client), &requestTagAuthenticator{}, nil)
+	response := postJSONAs(t, "", server.handleCreateVectorBucket, &CreateVectorBucketRequest{VectorBucketName: "blocked", Tags: map[string]string{"classification": "forbidden"}})
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("creation tag deny bypassed: %d %s", response.Code, response.Body)
 	}
 }

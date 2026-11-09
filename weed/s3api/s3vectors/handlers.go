@@ -298,7 +298,7 @@ func (s *Server) handleCreateVectorBucket(w http.ResponseWriter, r *http.Request
 		if bucket != "" {
 			resource = s.vectorBucketArn(bucket)
 		}
-		return s.checkPermission(r, action, principal, s.tables.PrincipalFor(nil), "", resource, s.tables.PolicyContext(r, bucket))
+		return s.checkPermission(r, action, principal, s.tables.PrincipalFor(nil), "", resource, s.policyContext(r, bucket, nil, nil, setTags(req.Tags)))
 	}
 	// Tagging names the new bucket, so a grant scoped to it applies.
 	if !allowed("s3vectors:CreateVectorBucket", "") ||
