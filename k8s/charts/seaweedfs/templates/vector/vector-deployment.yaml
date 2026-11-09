@@ -67,7 +67,7 @@ spec:
             {{- end }}
             {{- if .Values.vector.metricsPort }}
             - {{ printf "--metrics-port=%d" (int .Values.vector.metricsPort) | quote }}
-            - --metrics-ip=0.0.0.0
+            - --metrics-ip=$(POD_IP)
             {{- end }}
             {{- range .Values.vector.extraArgs }}
             - {{ . | quote }}
