@@ -4620,10 +4620,10 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "(sum by (instance) (rate(SeaweedFS_vector_cache_requests_total{namespace=~\"$NAMESPACE\",result=\"hit\"}[$__rate_interval])) or on (instance) (0 * sum by (instance) (rate(SeaweedFS_vector_cache_requests_total{namespace=~\"$NAMESPACE\"}[$__rate_interval])))) / sum by (instance) (rate(SeaweedFS_vector_cache_requests_total{namespace=~\"$NAMESPACE\"}[$__rate_interval]))",
+              "expr": "(sum by (cluster, namespace, job, instance) (rate(SeaweedFS_vector_cache_requests_total{namespace=~\"$NAMESPACE\",result=\"hit\"}[$__rate_interval])) or on (cluster, namespace, job, instance) (0 * sum by (cluster, namespace, job, instance) (rate(SeaweedFS_vector_cache_requests_total{namespace=~\"$NAMESPACE\"}[$__rate_interval])))) / sum by (cluster, namespace, job, instance) (rate(SeaweedFS_vector_cache_requests_total{namespace=~\"$NAMESPACE\"}[$__rate_interval]))",
               "range": true,
               "refId": "A",
-              "legendFormat": "{{instance}}"
+              "legendFormat": "{{cluster}} {{namespace}} {{instance}}"
             }
           ],
           "title": "Vector cache hit ratio",
