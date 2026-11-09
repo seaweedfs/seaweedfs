@@ -1766,6 +1766,18 @@ vector:
       drop: [ALL]
   serviceMonitor:
     annotations: {}
+  createBuckets: []
+  bucketHook:
+    image: amazon/aws-cli:2.39.6
+    endpoint: ""
+    region: us-east-1
+    credentialsSecret: ""
+    accessKeyKey: AWS_ACCESS_KEY_ID
+    secretKeyKey: AWS_SECRET_ACCESS_KEY
+    sessionTokenKey: AWS_SESSION_TOKEN
+    caBundleSecret: ""
+    caBundleKey: tls.crt
+    resources: {}
 
 worker:
   enabled: false

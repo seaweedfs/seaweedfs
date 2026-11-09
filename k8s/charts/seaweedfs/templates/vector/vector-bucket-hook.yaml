@@ -1,0 +1,148 @@
+{{- include "seaweedfs.compat" . -}}
+{{- if and .Values.vector.enabled .Values.vector.createBuckets }}
+{{- $hook := .Values.vector.bucketHook }}
+{{- if and (not .Values.s3.enabled) (not $hook.endpoint) }}
+{{- fail "vector.createBuckets requires s3.enabled or vector.bucketHook.endpoint" }}
+{{- end }}
+{{- range .Values.vector.createBuckets }}
+{{- if not (kindIs "string" .) }}{{ fail "vector.createBuckets entries must be bucket names" }}{{ end }}
+{{- if not (and (ge (len .) 3) (le (len .) 63) (regexMatch "^[a-z0-9][a-z0-9-]*[a-z0-9]$" .)) }}
+{{- fail "vector.createBuckets names must be 3-63 lowercase letters, digits or hyphens" }}
+{{- end }}
+{{- end }}
+{{- $credentials := .Values.s3.credentials | default dict }}
+{{- $admin := $credentials.admin | default dict }}
+{{- $secret := $hook.credentialsSecret }}
+{{- $accessKey := $hook.accessKeyKey }}
+{{- $secretKey := $hook.secretKeyKey }}
+{{- if and .Values.s3.enableAuth (not $secret) }}
+{{- if .Values.s3.existingConfigSecret }}{{ fail "vector.bucketHook.credentialsSecret is required with s3.existingConfigSecret" }}{{ end }}
+{{- $secret = $admin.existingSecret | default (printf "%s-s3-secret" (include "seaweedfs.fullname" .)) }}
+{{- $accessKey = $admin.accessKeyKey | default "admin_access_key_id" }}
+{{- $secretKey = $admin.secretKeyKey | default "admin_secret_access_key" }}
+{{- end }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "seaweedfs.fullname" . }}-vector-bucket-hook
+  namespace: {{ include "seaweedfs.namespace" . | quote }}
+  labels:
+    app.kubernetes.io/name: {{ include "seaweedfs.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: vector-bucket-hook
+    {{- with include "seaweedfs.commonLabels" . }}{{ . | nindent 4 }}{{ end }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 360
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "seaweedfs.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: vector-bucket-hook
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      {{- with .Values.vector.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.vector.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- include "seaweedfs.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: create-vector-buckets
+          image: {{ $hook.image | quote }}
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              for bucket in {{ range .Values.vector.createBuckets }}{{ . | quote }} {{ end }}; do
+                attempt=0
+                while ! aws --endpoint-url "$S3_ENDPOINT" s3vectors get-vector-bucket --vector-bucket-name "$bucket" >/dev/null 2>/tmp/bucket-error; do
+                  if grep -q NotFound /tmp/bucket-error; then
+                    aws --endpoint-url "$S3_ENDPOINT" s3vectors create-vector-bucket --vector-bucket-name "$bucket" ||
+                      aws --endpoint-url "$S3_ENDPOINT" s3vectors get-vector-bucket --vector-bucket-name "$bucket"
+                    break
+                  fi
+                  if grep -q AccessDenied /tmp/bucket-error; then cat /tmp/bucket-error >&2; exit 1; fi
+                  attempt=$((attempt + 1))
+                  if [ "$attempt" -ge 60 ]; then cat /tmp/bucket-error >&2; exit 1; fi
+                  sleep 5
+                done
+              done
+          env:
+            - name: S3_ENDPOINT
+              value: {{ $hook.endpoint | default (printf "http://%s.%s:%d" (include "seaweedfs.componentName" (list . "s3")) (include "seaweedfs.namespace" .) (int .Values.s3.port)) | quote }}
+            - name: AWS_DEFAULT_REGION
+              value: {{ $hook.region | quote }}
+            - name: AWS_EC2_METADATA_DISABLED
+              value: "true"
+            - name: AWS_PAGER
+              value: ""
+            - name: AWS_MAX_ATTEMPTS
+              value: "2"
+            - name: AWS_ACCESS_KEY_ID
+              {{- if $secret }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secret | quote }}
+                  key: {{ $accessKey | quote }}
+              {{- else }}
+              value: seaweedfs
+              {{- end }}
+            - name: AWS_SECRET_ACCESS_KEY
+              {{- if $secret }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secret | quote }}
+                  key: {{ $secretKey | quote }}
+              {{- else }}
+              value: seaweedfs
+              {{- end }}
+            {{- if $hook.credentialsSecret }}
+            - name: AWS_SESSION_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secret | quote }}
+                  key: {{ $hook.sessionTokenKey | quote }}
+                  optional: true
+            {{- end }}
+            {{- if $hook.caBundleSecret }}
+            - name: AWS_CA_BUNDLE
+              value: /etc/ssl/vector/ca.crt
+            {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          {{- with $hook.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            {{- if $hook.caBundleSecret }}
+            - name: ca
+              mountPath: /etc/ssl/vector
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- if $hook.caBundleSecret }}
+        - name: ca
+          secret:
+            secretName: {{ $hook.caBundleSecret | quote }}
+            items:
+              - key: {{ $hook.caBundleKey | quote }}
+                path: ca.crt
+        {{- end }}
+{{- end }}

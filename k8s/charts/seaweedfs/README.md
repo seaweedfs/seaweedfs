@@ -719,3 +719,15 @@ The bundled engine images support Linux amd64 and arm64. Use `vector.imageOverri
 `global.seaweedfs.enableSecurity` provisions and mounts the vector certificate and shared security configuration. With external certificates, provide the `<release>-vector-cert` secret alongside the existing CA and client secrets.
 
 The default `vector.metricsPort: 0` and TCP probes support existing engine images. For engine builds with `/metrics`, `/health`, and `/ready`, set `vector.metricsPort: 9329`; readiness then checks master registration. Enabling `global.seaweedfs.monitoring.enabled` also creates the vector ServiceMonitor. NetworkPolicy includes the configured gRPC and metrics ports.
+
+
+To provision vector buckets during installation and upgrades, set:
+
+```yaml
+vector:
+  enabled: true
+  createBuckets:
+    - embeddings
+```
+
+The hook uses the AWS CLI's S3 Vectors API and works with existing SeaweedFS vector releases. It creates missing buckets, preserves existing vector buckets, and fails if the name belongs to an Iceberg bucket. It uses the chart's generated S3 admin credentials, including `s3.credentials.admin.existingSecret`. With a custom `s3.existingConfigSecret` or an external endpoint, set `vector.bucketHook.credentialsSecret` to a Secret containing `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` (and optionally `AWS_SESSION_TOKEN`). Key names are configurable. `vector.bucketHook.endpoint` overrides the internal S3 service URL; `caBundleSecret` and `caBundleKey` configure a private HTTPS CA. The hook image and resource limits are configurable under `vector.bucketHook`.
