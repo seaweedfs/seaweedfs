@@ -21,8 +21,8 @@ func startMiniVector() error {
 	if binary == "weed-vector" {
 		if executable, err := os.Executable(); err == nil {
 			candidate := filepath.Join(filepath.Dir(executable), binary)
-			if _, err := os.Stat(candidate); err == nil {
-				binary = candidate
+			if resolved, err := exec.LookPath(candidate); err == nil {
+				binary = resolved
 			}
 		}
 	}
