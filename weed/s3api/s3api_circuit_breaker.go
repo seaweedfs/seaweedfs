@@ -260,3 +260,11 @@ func (cb *CircuitBreaker) loadCounterAndCompare(key string, inc int64, errCode s
 	}
 	return
 }
+
+func (s3a *S3ApiServer) Limit(handler http.HandlerFunc, action string) http.HandlerFunc {
+	if s3a.cb == nil {
+		return handler
+	}
+	limited, _ := s3a.cb.Limit(handler, action)
+	return limited
+}

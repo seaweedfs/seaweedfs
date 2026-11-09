@@ -273,6 +273,7 @@ func (s *Server) handleCreateVectorBucket(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
 		return
 	}
+	setRequestTarget(r, req.VectorBucketName, "")
 	if req.VectorBucketName == "" {
 		writeError(w, http.StatusBadRequest, "ValidationException", "vectorBucketName is required")
 		return
@@ -314,6 +315,7 @@ func (s *Server) handleCreateVectorBucket(w http.ResponseWriter, r *http.Request
 		catalogErr(w, err)
 		return
 	}
+	authorizeRequest(r, req.VectorBucketName, "")
 	writeJSON(w, http.StatusOK, &CreateVectorBucketResponse{VectorBucketArn: s.vectorBucketArn(req.VectorBucketName)})
 }
 
@@ -909,6 +911,7 @@ var errVectorBucketReplaced = &s3tables.S3TablesError{Type: s3tables.ErrCodeConf
 // compare-and-swap, so a grant revoked between reads never authorizes the
 // pending write, and the entry must still be the bucket record was read from.
 func (s *Server) checkVectorPolicyDoc(r *http.Request, action, bucket string, record *s3tables.GetTableBucketResponse, ext map[string][]byte) error {
+	setRequestTarget(r, bucket, "")
 	var meta struct {
 		CreatedAt time.Time `json:"createdAt"`
 	}
@@ -924,6 +927,7 @@ func (s *Server) checkVectorPolicyDoc(r *http.Request, action, bucket string, re
 		vectorPolicyFromExt(ext), s.vectorBucketArn(bucket), s.policyContext(r, bucket, tags, tags, tagRequest{})) {
 		return errVectorDenied
 	}
+	authorizeRequest(r, bucket, "")
 	return nil
 }
 
@@ -940,6 +944,7 @@ func (s *Server) authorizeVector(ctx context.Context, r *http.Request, action, b
 // authorizeVectorTags is authorizeVector for a request that sets or removes
 // tags.
 func (s *Server) authorizeVectorTags(ctx context.Context, r *http.Request, action, bucket, index string, req tagRequest) (*s3tables.GetTableBucketResponse, error) {
+	setRequestTarget(r, bucket, index)
 	record, err := s.vectorBucket(ctx, bucket)
 	if err != nil {
 		return nil, err
@@ -966,6 +971,7 @@ func (s *Server) authorizeVectorTags(ctx context.Context, r *http.Request, actio
 		return nil, &s3tables.S3TablesError{Type: s3tables.ErrCodeNoSuchBucket,
 			Message: fmt.Sprintf("vector bucket %s not found", bucket)}
 	}
+	authorizeRequest(r, bucket, index)
 	return record, nil
 }
 
