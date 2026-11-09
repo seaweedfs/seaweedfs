@@ -214,12 +214,27 @@ impl ObjectStore for CachedStore {
             .map(|m| m.storage_read_seconds.start_timer());
         let result = self.inner.get_opts(location, options).await?;
         if result.meta.size > MAX_WHOLE_OBJECT {
-            if let Some(metrics) = &self.metrics {
-                metrics
-                    .storage_bytes
-                    .inc_by(result.range.end - result.range.start);
-            }
-            return Ok(result);
+            let meta = result.meta.clone();
+            let range = result.range.clone();
+            let attributes = result.attributes.clone();
+            let metrics = self.metrics.clone();
+            let timer = _timer;
+            let stream = result
+                .into_stream()
+                .map(move |chunk| {
+                    let _timer = &timer;
+                    if let (Some(metrics), Ok(bytes)) = (&metrics, &chunk) {
+                        metrics.storage_bytes.inc_by(bytes.len() as u64);
+                    }
+                    chunk
+                })
+                .boxed();
+            return Ok(GetResult {
+                payload: GetResultPayload::Stream(stream),
+                meta,
+                range,
+                attributes,
+            });
         }
         let object = Arc::new((result.meta.clone(), result.attributes.clone()));
         let bytes = owned(result.bytes().await?);

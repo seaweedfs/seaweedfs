@@ -100,10 +100,10 @@ async fn large_immutable_reads_report_bytes_without_caching() {
         .put(&path, Bytes::from(vec![0; size]).into())
         .await
         .unwrap();
-    assert_eq!(
-        store.get(&path).await.unwrap().bytes().await.unwrap().len(),
-        size
-    );
+    let result = store.get(&path).await.unwrap();
+    assert_eq!(metrics.storage_bytes.get(), 0);
+    assert_eq!(metrics.storage_read_seconds.get_sample_count(), 0);
+    assert_eq!(result.bytes().await.unwrap().len(), size);
     assert_eq!(metrics.storage_bytes.get(), size as u64);
     assert_eq!(metrics.cache_requests.with_label_values(&["miss"]).get(), 1);
     assert_eq!(metrics.storage_read_seconds.get_sample_count(), 1);
