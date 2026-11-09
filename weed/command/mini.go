@@ -1129,6 +1129,13 @@ func initializeGrpcPortsOnIP(bindIp string, listenOnLocalhost bool) map[int]bool
 		}
 	}
 
+	if *miniVector {
+		allocatedPorts[*miniVectorPort] = true
+		if *miniVectorMetricsPort > 0 {
+			allocatedPorts[*miniVectorMetricsPort] = true
+		}
+	}
+
 	grpcConfigs := []struct {
 		httpPort  *int
 		grpcPort  *int
