@@ -28,12 +28,16 @@ func startMiniVector() error {
 		return fmt.Errorf("%s is unavailable: install the vector component or set -vector.binary: %w", binary, err)
 	}
 	address := util.JoinHostPort(*miniIp, *miniVectorPort)
-	args := []string{"--listen=" + address, "--masters=" + string(pb.NewServerAddress(*miniIp, *miniMasterOptions.port, *miniMasterOptions.portGrpc))}
+	bindIP := *miniBindIp
+	if bindIP == "" {
+		bindIP = *miniIp
+	}
+	args := []string{"--listen=" + util.JoinHostPort(bindIP, *miniVectorPort), "--advertise=" + address, "--masters=" + string(pb.NewServerAddress(*miniIp, *miniMasterOptions.port, *miniMasterOptions.portGrpc))}
 	if miniFilerOptions.filerGroup != nil && *miniFilerOptions.filerGroup != "" {
 		args = append(args, "--filer-group="+*miniFilerOptions.filerGroup)
 	}
 	if *miniVectorMetricsPort > 0 {
-		args = append(args, fmt.Sprintf("--metrics-port=%d", *miniVectorMetricsPort), "--metrics-ip="+*miniIp)
+		args = append(args, fmt.Sprintf("--metrics-port=%d", *miniVectorMetricsPort), "--metrics-ip="+bindIP)
 	}
 	if directory := util.ConfigurationFileDirectory.String(); directory != "" {
 		args = append(args, "--config-dir="+util.ResolvePath(directory))
@@ -65,7 +69,7 @@ func startMiniVector() error {
 			_ = command.Process.Kill()
 			return ctx.Err()
 		case <-ticker.C:
-			conn, err := net.DialTimeout("tcp", address, 100*time.Millisecond)
+			conn, err := net.DialTimeout("tcp", miniVectorLocalAddress(bindIP, *miniVectorPort), 100*time.Millisecond)
 			if err == nil {
 				_ = conn.Close()
 				glog.V(0).Infof("vector engine ready on %s", address)
@@ -73,4 +77,15 @@ func startMiniVector() error {
 			}
 		}
 	}
+}
+
+func miniVectorLocalAddress(bindIP string, port int) string {
+	if ip := net.ParseIP(bindIP); ip != nil && ip.IsUnspecified() {
+		if ip.To4() != nil {
+			bindIP = "127.0.0.1"
+		} else {
+			bindIP = "::1"
+		}
+	}
+	return util.JoinHostPort(bindIP, port)
 }
