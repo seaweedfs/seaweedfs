@@ -118,3 +118,13 @@ func TestVectorIPv6Listen(t *testing.T) {
 		}
 	}
 }
+func TestVectorAllInOneMasters(t *testing.T) {
+	output, _ := render(t, "vector.enabled=true", "allInOne.enabled=true", "master.enabled=false")
+	if !strings.Contains(output, "--masters=vector-test-seaweedfs-all-in-one.default:9333") {
+		t.Fatal("vector cannot discover all-in-one master")
+	}
+	output, _ = render(t, "vector.enabled=true", "allInOne.enabled=true", "master.enabled=false", "vector.masters=external:9333")
+	if !strings.Contains(output, "--masters=external:9333") {
+		t.Fatal("explicit master override lost")
+	}
+}
