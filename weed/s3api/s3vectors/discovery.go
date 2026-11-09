@@ -25,6 +25,7 @@ type vectorDiscovery struct {
 	discover       func([]pb.ServerAddress, grpc.DialOption) []string
 	mu             sync.Mutex
 	worker         string
+	failed         string
 	active         map[vector_pb.VectorServiceClient]int
 	retired        map[vector_pb.VectorServiceClient]*grpc.ClientConn
 	conn           *grpc.ClientConn
@@ -39,6 +40,7 @@ func (d *vectorDiscovery) reset(c vector_pb.VectorServiceClient) {
 	if c != d.client {
 		return
 	}
+	d.failed = d.worker
 	d.retire()
 	d.worker, d.conn, d.client = "", nil, nil
 	d.nextResolve = time.Time{}
@@ -94,7 +96,13 @@ func (d *vectorDiscovery) resolve() {
 	}
 	worker := workers[0]
 	for _, w := range workers {
-		if w == d.worker {
+		if w != d.failed {
+			worker = w
+			break
+		}
+	}
+	for _, w := range workers {
+		if w == d.worker && w != d.failed {
 			worker = w
 			break
 		}

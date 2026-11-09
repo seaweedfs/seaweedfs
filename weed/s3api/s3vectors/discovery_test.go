@@ -286,3 +286,23 @@ func TestVectorDiscoveryWaitingRespectsCancellation(t *testing.T) {
 	close(release)
 	waitResolved(d)
 }
+
+func TestVectorDiscoveryRetriesAnotherWorker(t *testing.T) {
+	d := &vectorDiscovery{grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()), discover: func([]pb.ServerAddress, grpc.DialOption) []string {
+		return []string{"127.0.0.1:9301", "127.0.0.1:9302"}
+	}}
+	first, err := d.cli(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.reset(first)
+	d.release(first)
+	second, err := d.cli(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.release(second)
+	if d.worker != "127.0.0.1:9302" {
+		t.Fatalf("retry selected failed worker: %s", d.worker)
+	}
+}
