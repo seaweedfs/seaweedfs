@@ -155,7 +155,7 @@
        every component the chart can produce rather than the ones enabled here,
        so one values file can still carry overrides for a component this release
        leaves off. */}}
-{{- $known := list "master" "filer" "s3" "sftp" "admin" "worker" "volume" "bucket-hook" "volume-resize-hook" "objectstorage-provisioner" "seaweedfs-all-in-one" }}
+{{- $known := list "vector" "vector-bucket-hook" "master" "filer" "s3" "sftp" "admin" "worker" "volume" "bucket-hook" "volume-resize-hook" "objectstorage-provisioner" "seaweedfs-all-in-one" }}
 {{- range $vname, $_ := (.Values.volumes | default dict) }}
 {{-   $known = append $known (trimSuffix "-" (printf "volume-%s" $vname)) }}
 {{- end }}

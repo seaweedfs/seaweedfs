@@ -128,3 +128,10 @@ func TestVectorAllInOneMasters(t *testing.T) {
 		t.Fatal("explicit master override lost")
 	}
 }
+
+func TestVectorNetworkPolicyOverrides(t *testing.T) {
+	output, _ := render(t, "vector.enabled=true", "s3.enabled=true", "vector.createBuckets[0]=embeddings", "networkPolicy.enabled=true", "networkPolicy.components.vector.extraIngress[0].ports[0].port=9329", "networkPolicy.egress.enabled=true", "networkPolicy.components.vector-bucket-hook.extraEgress[0].ports[0].port=443")
+	if !strings.Contains(output, "port: 9329") || !strings.Contains(output, "port: 443") {
+		t.Fatal("vector network overrides missing")
+	}
+}
