@@ -4,6 +4,8 @@ on:
     paths:
       - 'seaweed-vector/**'
       - 'seaweed-worker/**'
+      - 'seaweed-common/**'
+      - 'weed/pb/**'
       - '.github/workflows/rust-vector-platforms.yml'
       - 'install.sh'
       - 'test/installer/**'
