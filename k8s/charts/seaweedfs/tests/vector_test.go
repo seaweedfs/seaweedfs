@@ -137,6 +137,9 @@ func TestVectorNetworkPolicyOverrides(t *testing.T) {
 }
 
 func TestVectorMetricsImageCompatibility(t *testing.T) {
+	if _, err := exec.LookPath("helm"); err != nil {
+		t.Skip("helm is not installed")
+	}
 	out, err := exec.Command("helm", "template", "vector-test", "..", "--set", "vector.enabled=true", "--set", "vector.metricsPort=9329").CombinedOutput()
 	if err == nil || !strings.Contains(string(out), "default 4.53 image does not support metrics") {
 		t.Fatalf("incompatible image accepted: %v %s", err, out)
