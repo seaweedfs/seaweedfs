@@ -39,6 +39,7 @@ type Server struct {
 	authenticator S3Authenticator
 	region        string
 	accountID     string
+	limit         func(http.HandlerFunc, string) http.HandlerFunc
 }
 
 // NewServer creates an S3 Vectors server over the given filer and catalog.
@@ -113,6 +114,7 @@ func (s *Server) instrument(next http.HandlerFunc) http.HandlerFunc {
 		inFlight := stats_collect.S3InFlightRequestsGauge.WithLabelValues(label)
 		inFlight.Inc()
 		defer inFlight.Dec()
+		r = s3err.WithAccessLogOperation(r, label)
 		info := &requestInfo{}
 		r = s3_constants.EnsureIdentityHolder(s3err.EnsureAuditTracking(r.WithContext(context.WithValue(r.Context(), requestInfoKey{}, info))))
 		recorder := &responseWriter{StatusRecorder: stats_collect.NewStatusResponseWriter(w), info: info}
@@ -124,8 +126,10 @@ func (s *Server) instrument(next http.HandlerFunc) http.HandlerFunc {
 			bucket = info.bucket
 		}
 		log := accessLog(r, recorder.Status, label, info)
-		s3err.PostAccessLog(*log)
-		s3err.MarkAuditLogged(r)
+		if !s3err.AuditAlreadyLogged(r) {
+			s3err.PostAccessLog(*log)
+			s3err.MarkAuditLogged(r)
+		}
 		stats_collect.S3RequestHistogram.WithLabelValues(label, bucket).Observe(elapsed.Seconds())
 		stats_collect.S3RequestCounter.WithLabelValues(label, strconv.Itoa(recorder.Status), bucket).Inc()
 		if bucket != "" {
@@ -143,6 +147,10 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
 	handler, ok := handlers[op]
 	if !ok {
 		writeError(w, http.StatusBadRequest, "ValidationException", "unknown operation "+op)
+		return
+	}
+	if s.limit != nil {
+		s.limitRequest(func(w http.ResponseWriter, r *http.Request) { handler(s, w, r) }, w, r)
 		return
 	}
 	handler(s, w, r)
@@ -179,6 +187,7 @@ type requestInfo struct {
 	authorized     bool
 	received, sent int64
 	errorCode      string
+	body           []byte
 }
 
 func authorizeRequest(r *http.Request, bucket, index string) {

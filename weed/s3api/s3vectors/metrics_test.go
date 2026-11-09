@@ -17,6 +17,10 @@ import (
 func TestVectorMetricsAttributeAuthorizedBuckets(t *testing.T) {
 	fs := s3tablestest.Start(t)
 	s := NewServer(s3tables.NewManagerClient(fs.Client), headerAuth{}, newFakeVectors(0))
+	var limitCalls int
+	s.SetLimiter(func(next http.HandlerFunc, action string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) { limitCalls++; next(w, r) }
+	})
 	router := mux.NewRouter()
 	s.RegisterRoutes(router)
 	request := func(identity, operation string, payload interface{}) *httptest.ResponseRecorder {
@@ -65,5 +69,8 @@ func TestVectorMetricsAttributeAuthorizedBuckets(t *testing.T) {
 	router.ServeHTTP(w, r)
 	if w.Code != http.StatusOK || testutil.ToFloat64(stats.S3RequestCounter.WithLabelValues("s3vectors.ListTagsForResource", "200", bucket)) == 0 {
 		t.Fatalf("tag metrics: %d %s", w.Code, w.Body)
+	}
+	if limitCalls != 4 {
+		t.Fatalf("limiter calls = %d, want 4", limitCalls)
 	}
 }
