@@ -49,7 +49,7 @@ func TestVectorDeployment(t *testing.T) {
 	}
 	for _, secure := range []bool{false, true} {
 		t.Run(fmt.Sprintf("security-%v", secure), func(t *testing.T) {
-			output, documents := render(t, "vector.enabled=true", "vector.metricsPort=9329", "vector.port=8098", "global.seaweedfs.enableSecurity="+fmt.Sprint(secure), "global.seaweedfs.monitoring.enabled=true", "networkPolicy.enabled=true")
+			output, documents := render(t, "vector.enabled=true", "vector.metricsPort=9329", "vector.imageOverride=example/metrics-engine:test", "vector.port=8098", "global.seaweedfs.enableSecurity="+fmt.Sprint(secure), "global.seaweedfs.monitoring.enabled=true", "networkPolicy.enabled=true")
 			for _, want := range []string{"--listen=\"$POD_IP:8098\"", "--metrics-port=9329", "path: /ready", "path: /health", "kind: ServiceMonitor"} {
 				if !strings.Contains(output, want) {
 					t.Fatalf("missing %s", want)
@@ -134,4 +134,12 @@ func TestVectorNetworkPolicyOverrides(t *testing.T) {
 	if !strings.Contains(output, "port: 9329") || !strings.Contains(output, "port: 443") {
 		t.Fatal("vector network overrides missing")
 	}
+}
+
+func TestVectorMetricsImageCompatibility(t *testing.T) {
+	out, err := exec.Command("helm", "template", "vector-test", "..", "--set", "vector.enabled=true", "--set", "vector.metricsPort=9329").CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "default 4.53 image does not support metrics") {
+		t.Fatalf("incompatible image accepted: %v %s", err, out)
+	}
+	render(t, "vector.enabled=true", "vector.metricsPort=9329", "vector.imageOverride=example/metrics-engine:test")
 }
