@@ -153,7 +153,7 @@ require (
 	github.com/shirou/gopsutil/v4 v4.26.7
 	github.com/tarantool/go-option v1.1.0
 	github.com/tarantool/go-tarantool/v3 v3.0.2
-	github.com/testcontainers/testcontainers-go v0.44.0
+	github.com/testcontainers/testcontainers-go v0.45.0
 	github.com/tikv/client-go/v2 v2.0.7
 	github.com/twmb/avro v1.9.0
 	github.com/xeipuuv/gojsonschema v1.2.0
@@ -174,7 +174,7 @@ require (
 	dario.cat/mergo v1.0.2 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/keyvault/internal v0.7.1 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/storage/internal v0.1.0 // indirect
-	github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c // indirect
+	github.com/Azure/go-ansiterm v0.0.0-20261006220739-8c912ac31dd4 // indirect
 	github.com/FilenCloudDienste/filen-sdk-go v0.0.39 // indirect
 	github.com/ProtonMail/gopenpgp/v3 v3.4.1 // indirect
 	github.com/RoaringBitmap/roaring/v2 v2.26.0 // indirect
@@ -206,7 +206,7 @@ require (
 	github.com/dave/dst v0.27.2 // indirect
 	github.com/diskfs/go-diskfs v1.9.4 // indirect
 	github.com/distribution/reference v0.6.0 // indirect
-	github.com/docker/go-connections v0.7.0 // indirect
+	github.com/docker/go-connections v0.8.2 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/dromara/dongle v1.0.1 // indirect
 	github.com/geoarrow/geoarrow-go v0.0.0-20260403143023-f54751c3e3a1 // indirect
@@ -235,11 +235,11 @@ require (
 	github.com/lib/pq v1.12.3 // indirect
 	github.com/lithammer/shortuuid/v3 v3.0.7 // indirect
 	github.com/lpar/calendar v0.2.0 // indirect
-	github.com/magiconair/properties v1.8.10 // indirect
+	github.com/magiconair/properties v1.18.12 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
-	github.com/moby/go-archive v0.3.0 // indirect
-	github.com/moby/moby/api v1.55.0 // indirect
-	github.com/moby/moby/client v0.5.0 // indirect
+	github.com/moby/go-archive v0.3.3 // indirect
+	github.com/moby/moby/api v1.56.1 // indirect
+	github.com/moby/moby/client v0.6.2 // indirect
 	github.com/moby/patternmatcher v0.6.1 // indirect
 	github.com/moby/sys/sequential v0.7.0 // indirect
 	github.com/moby/sys/user v0.4.1 // indirect
