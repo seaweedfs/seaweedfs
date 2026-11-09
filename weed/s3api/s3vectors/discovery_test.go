@@ -306,3 +306,23 @@ func TestVectorDiscoveryRetriesAnotherWorker(t *testing.T) {
 		t.Fatalf("retry selected failed worker: %s", d.worker)
 	}
 }
+
+func TestVectorDiscoveryCloseDuringLookup(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	d := &vectorDiscovery{grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()), discover: func([]pb.ServerAddress, grpc.DialOption) []string {
+		close(entered)
+		<-release
+		return []string{"127.0.0.1:9301"}
+	}}
+	done := make(chan error, 1)
+	go func() { _, err := d.cli(t.Context()); done <- err }()
+	<-entered
+	_ = d.Close()
+	close(release)
+	if err := <-done; status.Code(err) != codes.Canceled {
+		t.Fatal(err)
+	}
+	if d.conn != nil {
+		t.Fatal("closed discovery opened a connection")
+	}
+}

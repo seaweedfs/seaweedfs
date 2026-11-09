@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-func NewVectorDiscovery(masters []pb.ServerAddress, dialOption grpc.DialOption, filerGroup string) vector_pb.VectorServiceClient {
+func NewVectorDiscovery(masters []pb.ServerAddress, dialOption grpc.DialOption, filerGroup string) *vectorDiscovery {
 	return &vectorDiscovery{masters: masters, grpcDialOption: dialOption, discover: func(m []pb.ServerAddress, opt grpc.DialOption) []string {
 		return discoverVectorWorkers(m, opt, filerGroup)
 	}}
@@ -24,6 +24,7 @@ type vectorDiscovery struct {
 	grpcDialOption grpc.DialOption
 	discover       func([]pb.ServerAddress, grpc.DialOption) []string
 	mu             sync.Mutex
+	closed         bool
 	worker         string
 	failed         string
 	active         map[vector_pb.VectorServiceClient]int
@@ -32,6 +33,15 @@ type vectorDiscovery struct {
 	client         vector_pb.VectorServiceClient
 	nextResolve    time.Time
 	resolving      chan struct{} // closed when the in-flight resolve lands
+}
+
+func (d *vectorDiscovery) Close() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.closed = true
+	d.retire()
+	d.worker, d.conn, d.client = "", nil, nil
+	return nil
 }
 
 func (d *vectorDiscovery) reset(c vector_pb.VectorServiceClient) {
@@ -91,7 +101,7 @@ func (d *vectorDiscovery) resolve() {
 		close(d.resolving)
 		d.resolving = nil
 	}()
-	if len(workers) == 0 {
+	if d.closed || len(workers) == 0 {
 		return
 	}
 	worker := workers[0]
@@ -131,6 +141,10 @@ func (d *vectorDiscovery) cli(ctx context.Context) (vector_pb.VectorServiceClien
 		return nil, status.FromContextError(err).Err()
 	}
 	d.mu.Lock()
+	if d.closed {
+		d.mu.Unlock()
+		return nil, status.Error(codes.Canceled, "vector discovery closed")
+	}
 	if d.resolving == nil && !time.Now().Before(d.nextResolve) {
 		d.resolving = make(chan struct{})
 		go d.resolve()
@@ -146,6 +160,9 @@ func (d *vectorDiscovery) cli(ctx context.Context) (vector_pb.VectorServiceClien
 		d.mu.Lock()
 	}
 	defer d.mu.Unlock()
+	if d.closed {
+		return nil, status.Error(codes.Canceled, "vector discovery closed")
+	}
 	if d.client == nil {
 		return nil, errNoVectorWorker
 	}
