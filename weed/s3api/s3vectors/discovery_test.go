@@ -1,6 +1,7 @@
 package s3vectors
 
 import (
+	"context"
 	"fmt"
 	"sync/atomic"
 	"testing"
@@ -264,4 +265,24 @@ func TestVectorDiscoveryDrainsRetiredConnections(t *testing.T) {
 	if conn.GetState() != connectivity.Shutdown {
 		t.Fatal("retired connection was not closed after the last RPC")
 	}
+}
+
+func TestVectorDiscoveryWaitingRespectsCancellation(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	d := &vectorDiscovery{discover: func([]pb.ServerAddress, grpc.DialOption) []string { close(entered); <-release; return nil }}
+	ctx, cancel := context.WithCancel(t.Context())
+	result := make(chan error, 1)
+	go func() { _, err := d.cli(ctx); result <- err }()
+	<-entered
+	cancel()
+	select {
+	case err := <-result:
+		if status.Code(err) != codes.Canceled {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("request remained blocked after cancellation")
+	}
+	close(release)
+	waitResolved(d)
 }

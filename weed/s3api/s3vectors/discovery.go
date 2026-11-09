@@ -119,6 +119,9 @@ const (
 var errNoVectorWorker = status.Error(codes.Unavailable, "no weed-vector registered on master")
 
 func (d *vectorDiscovery) cli(ctx context.Context) (vector_pb.VectorServiceClient, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, status.FromContextError(err).Err()
+	}
 	d.mu.Lock()
 	if d.resolving == nil && !time.Now().Before(d.nextResolve) {
 		d.resolving = make(chan struct{})
@@ -127,7 +130,11 @@ func (d *vectorDiscovery) cli(ctx context.Context) (vector_pb.VectorServiceClien
 	if d.client == nil && d.resolving != nil {
 		resolving := d.resolving
 		d.mu.Unlock()
-		<-resolving
+		select {
+		case <-resolving:
+		case <-ctx.Done():
+			return nil, status.FromContextError(ctx.Err()).Err()
+		}
 		d.mu.Lock()
 	}
 	defer d.mu.Unlock()
