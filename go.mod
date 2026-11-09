@@ -150,7 +150,7 @@ require (
 	github.com/redis/go-redis/v9 v9.23.0
 	github.com/schollz/progressbar/v3 v3.19.1
 	github.com/seaweedfs/go-fuse/v2 v2.9.4
-	github.com/shirou/gopsutil/v4 v4.26.7
+	github.com/shirou/gopsutil/v4 v4.26.10
 	github.com/tarantool/go-option v1.1.0
 	github.com/tarantool/go-tarantool/v3 v3.0.2
 	github.com/testcontainers/testcontainers-go v0.45.0
@@ -352,7 +352,7 @@ require (
 	github.com/d4l3k/messagediff v1.2.1 // indirect
 	github.com/dgryski/go-farm v0.0.0-20200201041132-a6ae2369ad13 // indirect
 	github.com/dropbox/dropbox-sdk-go-unofficial/v6 v6.4.0 // indirect
-	github.com/ebitengine/purego v0.10.2 // indirect
+	github.com/ebitengine/purego v0.11.2 // indirect
 	github.com/elastic/gosigar v0.14.3 // indirect
 	github.com/emersion/go-message v0.18.2 // indirect
 	github.com/emersion/go-vcard v0.0.0-20260618161152-d854b7e0e2d3 // indirect
@@ -441,7 +441,7 @@ require (
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/pkg/xattr v0.4.12 // indirect
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10
-	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
+	github.com/power-devops/perfstat v0.0.0-20260805114148-88456608a4f6 // indirect
 	github.com/putdotio/go-putio/putio v0.0.0-20200123120452-16d982cac2b8 // indirect
 	github.com/relvacode/iso8601 v1.7.0 // indirect
 	github.com/rfjakob/eme v1.2.0 // indirect
