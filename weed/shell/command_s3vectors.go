@@ -73,7 +73,7 @@ func (c *commandS3Vectors) Do(args []string, env *CommandEnv, writer io.Writer) 
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	backend := s3vectors.NewVectorDiscovery(env.MasterClient.ListCachedMasters(), env.option.GrpcDialOption, *env.option.FilerGroup)
+	backend := s3vectors.NewVectorDiscovery(env.MasterClient.ListCachedMasters, env.option.GrpcDialOption, *env.option.FilerGroup)
 	defer backend.Close()
 	server := s3vectors.NewServer(env, nil, backend)
 	server.SetRegion(s3tables.DefaultRegion)
