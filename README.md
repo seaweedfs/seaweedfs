@@ -17,7 +17,9 @@ SeaweedFS is a simple and highly scalable distributed file system. There are two
 1. to store billions of files!
 2. to serve the files fast!
 
-One `weed` binary serves an S3 object store, a POSIX file system, and a lakehouse with S3 Tables, all over the same data. Each blob is one disk read away, capacity grows by starting another volume server, and cloud storage can be cached or tiered transparently. Both read and write operations have O(1) complexity and can run at the full speed supported by the underlying hardware.
+One SeaweedFS cluster serves an S3 object store, a POSIX file system, a lakehouse with S3 Tables and a built-in Iceberg REST Catalog, and [vector search with S3 Vector Buckets](#vector-search-with-s3-vector-buckets), all on shared storage. Each blob is one disk read away, capacity grows by starting another volume server, and cloud storage can be cached or tiered transparently. Blob reads and writes have O(1) complexity and can run at the full speed supported by the underlying hardware.
+
+![SeaweedFS feature overview: S3 objects, POSIX files, table buckets with an Iceberg REST Catalog and Lance namespace, and S3 Vector Buckets share one cluster of masters, filers, and volume servers, with cloud caching, tiering, and cross-cluster replication.](note/seaweedfs-features.svg)
 
 - [Download Binaries for different platforms](https://github.com/seaweedfs/seaweedfs/releases/latest)
 - [Wiki Documentation](https://github.com/seaweedfs/seaweedfs/wiki)
@@ -40,6 +42,7 @@ Table of Contents
     * [Scalable](#scalable)
     * [The most complete S3 API](#the-most-complete-s3-api)
     * [A data warehouse with S3 Tables](#a-data-warehouse-with-s3-tables)
+    * [Vector search with S3 Vector Buckets](#vector-search-with-s3-vector-buckets)
     * [A fast cache for cloud storage](#a-fast-cache-for-cloud-storage)
     * [Active-active replication and more](#active-active-replication-and-more)
 * [Architecture](#architecture)
@@ -204,12 +207,13 @@ On one laptop, [`weed benchmark`][Benchmarks] writes 1KB files at 15,700 per sec
 
 ## The most complete S3 API ##
 
-The S3 gateway implements the object, bucket, S3 Tables, IAM, and STS APIs on one endpoint, so the AWS SDKs and CLI, rclone, restic, Spark, and Trino work unchanged.
+The S3 gateway implements the object, bucket, S3 Tables, S3 Vectors, IAM, and STS APIs on one endpoint, so the AWS SDKs and CLI, rclone, restic, Spark, and Trino work unchanged. S3 Vectors uses the `weed-vector` service described [below](#vector-search-with-s3-vector-buckets).
 
 | API | Operations |
 | --- | --- |
 | S3 bucket and object | 73 |
 | S3 Tables | 36 |
+| S3 Vectors | 19 |
 | IAM | 39 |
 | STS | 5 |
 
@@ -223,7 +227,7 @@ The full operation list is in [Amazon S3 API][AmazonS3API], and [Supported APIs 
 
 ## A data warehouse with S3 Tables ##
 
-SeaweedFS is a lakehouse in one system. [S3 Table Buckets][S3TableBucket] hold Apache Iceberg tables by default, or [Lance][LanceCatalog] tables for vectors and multimodal data, and the built-in [Iceberg REST Catalog][IcebergCatalog] and Lance namespace serve them directly. There is no Hive Metastore, Glue, or separate catalog service to deploy, secure, and back up.
+SeaweedFS is a lakehouse in one system. [S3 Table Buckets][S3TableBucket] hold Apache Iceberg tables by default, or [Lance][LanceCatalog] tables for vectors and multimodal data, and the built-in [Iceberg REST Catalog][IcebergCatalog] and Lance namespace serve them directly. The S3 Tables API and Iceberg REST Catalog share the same namespaces, table metadata, and permissions. There is no Hive Metastore, Glue, or separate catalog service to deploy, secure, and back up.
 
 * Query engines operate on the same tables at the same time: [Spark][SparkIceberg], [Trino][TrinoIceberg], [Dremio][DremioIceberg], [DuckDB][DuckDBIceberg], [Apache Doris][DorisIceberg], [RisingWave][RisingWaveIceberg], ClickHouse, and [LanceDB][LanceDB]. Catalog commits are atomic compare-and-swap, so concurrent writers are safe. [Lakekeeper][Lakekeeper] can front the same storage with STS-vended credentials. [OLake Go][OLake] is a high-performance, open-source EL (Extract–Load) platform that bridges operational databases and open lakehouse storage - writing Apache Iceberg tables or Parquet files on Amazon S3.
 * [Automated table maintenance][IcebergMaintenance]: compaction, snapshot expiration, orphan file removal, and manifest rewriting, configured per bucket or table through the S3 Tables maintenance APIs, and the same for [Lance][LanceMaintenance].
@@ -231,6 +235,22 @@ SeaweedFS is a lakehouse in one system. [S3 Table Buckets][S3TableBucket] hold A
 * A [Hadoop compatible file system][Hadoop] for Spark, Flink, and HBase.
 
 `S3_TABLE_BUCKET=warehouse ./weed mini -dir=./data` brings the whole stack up on a laptop.
+
+## Vector search with S3 Vector Buckets ##
+
+Keep embeddings alongside your objects and tables in the same SeaweedFS cluster. S3 Vector Buckets expose the AWS S3 Vectors API for semantic search, retrieval-augmented generation (RAG), and recommendations, using Lance tables on SeaweedFS storage.
+
+* Create vector buckets and indexes; insert, retrieve, list, and delete vectors with the AWS SDKs or CLI pointed at your S3 endpoint.
+* Find the nearest vectors with cosine or Euclidean distance, filter by metadata, and return distances and metadata with the results.
+* Control access with `s3vectors:*` IAM actions and vector bucket policies; tag buckets and indexes for organization and access control.
+
+Run the separate `weed-vector` binary alongside the cluster. For the local cluster started with `weed mini` above:
+
+```bash
+weed-vector --masters=localhost:9333
+```
+
+It registers with the master and the S3 gateway discovers it automatically. An AWS S3 Vectors client uses the same S3 endpoint at http://localhost:8333. The vector engine stores its data through the cluster's filers and volume servers, so embeddings share the storage layer's replication and erasure coding. See the [AWS SDK examples](test/s3vectors/s3vectors_test.py) for bucket, index, and query operations.
 
 ## A fast cache for cloud storage ##
 

@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="650" viewBox="0 0 1080 650" role="img" aria-labelledby="title description">
+  <title id="title">SeaweedFS: one cluster for objects, files, tables, and vectors</title>
+  <desc id="description">S3 object storage, a POSIX file system, table buckets with a built-in Iceberg REST Catalog and Lance namespace, and S3 Vector Buckets share one SeaweedFS storage cluster. Masters coordinate the cluster, filers manage namespaces and metadata, and volume servers store replicated or erasure-coded blobs. Cloud caching, cloud tiering, and cross-cluster replication extend the cluster.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#75928e"/>
+    </marker>
+  </defs>
+  <rect width="1080" height="650" rx="20" fill="#f5f9f8"/>
+  <g font-family="Arial, Helvetica, sans-serif">
+    <text x="40" y="43" fill="#0f766e" font-size="15" font-weight="700" letter-spacing="2">SEAWEEDFS</text>
+    <text x="40" y="86" fill="#163832" font-size="32" font-weight="700">One cluster. Objects, files, tables, vectors.</text>
+
+    <!-- Four ways to use the same storage cluster. -->
+    <g>
+      <rect x="40" y="116" width="238" height="184" rx="14" fill="#fff" stroke="#cbded8"/>
+      <g transform="translate(62 136)" fill="none" stroke="#187b67" stroke-width="2.2" stroke-linejoin="round">
+        <path d="m0 10 18-9 18 9-18 9z M0 10v21l18 9 18-9V10 M18 19v21"/>
+      </g>
+      <text x="62" y="207" fill="#163832" font-size="22" font-weight="700">Object storage</text>
+      <text x="62" y="237" fill="#48635e" font-size="18">S3 API</text>
+      <text x="62" y="261" fill="#48635e" font-size="17">Apps, backups, media</text>
+    </g>
+    <g>
+      <rect x="294" y="116" width="238" height="184" rx="14" fill="#fff" stroke="#cbded8"/>
+      <g transform="translate(316 140)" fill="none" stroke="#2676a3" stroke-width="2.2" stroke-linejoin="round">
+        <path d="M0 7V2h15l6 6h17v27H0V7z M0 12h38"/>
+      </g>
+      <text x="316" y="207" fill="#163832" font-size="22" font-weight="700">File system</text>
+      <text x="316" y="237" fill="#48635e" font-size="18">POSIX / FUSE</text>
+      <text x="316" y="261" fill="#48635e" font-size="17">WebDAV, SFTP, HDFS</text>
+    </g>
+    <g>
+      <rect x="548" y="116" width="238" height="184" rx="14" fill="#fff" stroke="#cbded8"/>
+      <g transform="translate(570 138)" fill="none" stroke="#7a62ab" stroke-width="2.2" stroke-linejoin="round">
+        <rect x="0" y="0" width="38" height="36" rx="3"/>
+        <path d="M0 12h38 M0 24h38 M13 12v24 M26 12v24"/>
+      </g>
+      <text x="570" y="207" fill="#163832" font-size="22" font-weight="700">Table buckets</text>
+      <text x="570" y="237" fill="#48635e" font-size="18">S3 Tables</text>
+      <text x="570" y="261" fill="#48635e" font-size="17">Iceberg REST Catalog</text>
+      <text x="570" y="285" fill="#48635e" font-size="17">Lance namespace</text>
+    </g>
+    <g>
+      <rect x="802" y="116" width="238" height="184" rx="14" fill="#e4f5ee" stroke="#187b67" stroke-width="1.5"/>
+      <g transform="translate(824 138)" fill="none" stroke="#187b67" stroke-width="2.2">
+        <path d="m5 29 13-22 18 22H5z M18 7v30 M5 29l13 8 18-8"/>
+        <g fill="#e4f5ee">
+          <circle cx="5" cy="29" r="4"/>
+          <circle cx="18" cy="7" r="4"/>
+          <circle cx="36" cy="29" r="4"/>
+          <circle cx="18" cy="37" r="4"/>
+        </g>
+      </g>
+      <text x="824" y="207" fill="#163832" font-size="22" font-weight="700">Vector buckets</text>
+      <text x="824" y="237" fill="#266354" font-size="18">S3 Vectors</text>
+      <text x="824" y="261" fill="#266354" font-size="17">Search, RAG, embeddings</text>
+    </g>
+
+    <!-- A shared connection expresses capabilities, not request routing. -->
+    <path d="M159 300v28h762v-28 M413 300v28 M667 300v28 M540 328v30" fill="none" stroke="#75928e" stroke-width="2" marker-end="url(#arrow)"/>
+    <rect x="40" y="362" width="1000" height="174" rx="16" fill="#163e35"/>
+    <text x="540" y="400" text-anchor="middle" fill="#fff" font-size="25" font-weight="700">One shared storage cluster</text>
+    <g fill="#fff" font-size="20" font-weight="700" text-anchor="middle">
+      <text x="213" y="445">Masters</text>
+      <text x="540" y="445">Filers</text>
+      <text x="867" y="445">Volume servers</text>
+    </g>
+    <path d="M376 425v51 M704 425v51" stroke="#497266"/>
+    <g fill="#cfe4dc" font-size="17" text-anchor="middle">
+      <text x="213" y="473">Coordination &amp; placement</text>
+      <text x="540" y="473">Namespaces &amp; metadata</text>
+      <text x="867" y="473">Replicated or erasure-coded blobs</text>
+    </g>
+    <text x="540" y="511" text-anchor="middle" fill="#cfe4dc" font-size="17">Add volume servers to grow capacity</text>
+
+    <path d="M284 536v23 M796 536v23" stroke="#75928e" stroke-width="2" stroke-dasharray="5 5"/>
+    <rect x="40" y="560" width="488" height="58" rx="12" fill="#fff" stroke="#cbded8"/>
+    <rect x="552" y="560" width="488" height="58" rx="12" fill="#fff" stroke="#cbded8"/>
+    <text x="284" y="596" text-anchor="middle" fill="#305c50" font-size="19">Cloud caching &amp; tiering</text>
+    <text x="796" y="596" text-anchor="middle" fill="#305c50" font-size="19">Cross-cluster replication</text>
+  </g>
+</svg>
