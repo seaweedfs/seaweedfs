@@ -13458,7 +13458,7 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "sum by (instance) (rate(SeaweedFS_vector_cache_requests_total{cluster=~\"$cluster\",result=\"hit\"}[$__rate_interval])) / sum by (instance) (rate(SeaweedFS_vector_cache_requests_total{cluster=~\"$cluster\"}[$__rate_interval]))",
+              "expr": "(sum by (instance) (rate(SeaweedFS_vector_cache_requests_total{cluster=~\"$cluster\",result=\"hit\"}[$__rate_interval])) or on (instance) (0 * sum by (instance) (rate(SeaweedFS_vector_cache_requests_total{cluster=~\"$cluster\"}[$__rate_interval])))) / sum by (instance) (rate(SeaweedFS_vector_cache_requests_total{cluster=~\"$cluster\"}[$__rate_interval]))",
               "range": true,
               "refId": "A",
               "legendFormat": "{{instance}}"
