@@ -419,6 +419,7 @@ var (
 	miniVectorBinary                = cmdMini.Flag.String("vector.binary", "weed-vector", "path to the vector engine binary")
 	miniVectorPort                  = cmdMini.Flag.Int("vector.port", 8090, "vector engine gRPC port")
 	miniVectorMetricsPort           = cmdMini.Flag.Int("vector.metricsPort", 0, "optional vector HTTP health and metrics port")
+	miniVectorBucket                = cmdMini.Flag.String("vectorBucket", "", "comma-separated vector buckets to create; falls back to S3_VECTOR_BUCKET")
 )
 
 // getBindIp determines the bind IP address based on miniIp and miniBindIp flags
@@ -1664,6 +1665,18 @@ func runMini(cmd *Command, args []string) bool {
 		os.Unsetenv("S3_TABLE_BUCKET")
 	}
 
+	vectorBuckets := *miniVectorBucket
+	if vectorBuckets == "" {
+		vectorBuckets = os.Getenv("S3_VECTOR_BUCKET")
+	}
+	var vectorEntries []tableBucketEntry
+	for _, name := range parseBucketList(vectorBuckets) {
+		vectorEntries = append(vectorEntries, tableBucketEntry{name: name, format: s3tables.FormatLance})
+	}
+	if _, err := ensureMiniTableBuckets(vectorEntries); err != nil {
+		glog.Errorf("create vector buckets: %v", err)
+		return false
+	}
 	if *miniVector {
 		if err := startMiniVector(); err != nil {
 			glog.Errorf("start vector engine: %v", err)
