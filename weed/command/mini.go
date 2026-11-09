@@ -415,6 +415,10 @@ var (
 	miniS3AutoCreateBucket          = cmdMini.Flag.Bool("s3.autoCreateBucket", true, "create the bucket on upload if it does not exist, for admin identities only")
 	miniBucket                      = cmdMini.Flag.String("bucket", "", "comma-separated S3 bucket names to create on startup if they do not already exist; leave empty to skip. Falls back to S3_BUCKET env var.")
 	miniTableBucket                 = cmdMini.Flag.String("tableBucket", "", "comma-separated S3 Tables buckets to create on startup if they do not already exist, each name[:FORMAT] with FORMAT one of ICEBERG (default) or LANCE, e.g. warehouse,vectors:LANCE; leave empty to skip. Falls back to S3_TABLE_BUCKET env var.")
+	miniVector                      = cmdMini.Flag.Bool("vector", false, "start the weed-vector engine for vector indexes and search")
+	miniVectorBinary                = cmdMini.Flag.String("vector.binary", "weed-vector", "path to the vector engine binary")
+	miniVectorPort                  = cmdMini.Flag.Int("vector.port", 8090, "vector engine gRPC port")
+	miniVectorMetricsPort           = cmdMini.Flag.Int("vector.metricsPort", 0, "optional vector HTTP health and metrics port")
 )
 
 // getBindIp determines the bind IP address based on miniIp and miniBindIp flags
@@ -950,6 +954,25 @@ func ensureAllPortsAvailableOnIP(bindIp string, listenOnLocalhost bool) error {
 			}{miniS3Options.portLance, "Lance", "s3.port.lance", nil, listenOnLocalhost})
 		}
 	}
+	if *miniVector {
+		portConfigs = append(portConfigs, struct {
+			port      *int
+			name      string
+			flagName  string
+			grpcPtr   *int
+			localhost bool
+		}{miniVectorPort, "Vector", "vector.port", nil, false})
+		if *miniVectorMetricsPort > 0 {
+			portConfigs = append(portConfigs, struct {
+				port      *int
+				name      string
+				flagName  string
+				grpcPtr   *int
+				localhost bool
+			}{miniVectorMetricsPort, "Vector metrics", "vector.metricsPort", nil, false})
+		}
+	}
+
 	// WebDAV and the Admin UI bind only -ip.bind; they never open a loopback
 	// companion listener, so ports held elsewhere cannot collide with them.
 	portConfigs = append(portConfigs, struct {
@@ -1639,6 +1662,14 @@ func runMini(cmd *Command, args []string) bool {
 		os.Setenv("S3_TABLE_BUCKET", strings.Join(names, ","))
 	} else {
 		os.Unsetenv("S3_TABLE_BUCKET")
+	}
+
+	if *miniVector {
+		if err := startMiniVector(); err != nil {
+			glog.Errorf("start vector engine: %v", err)
+			triggerMiniClientsShutdown(5 * time.Second)
+			return false
+		}
 	}
 
 	// Print welcome message after all services are running
