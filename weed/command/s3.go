@@ -739,7 +739,7 @@ func (s3opt *S3Options) vectorsRouter(s3ApiServer *s3api.S3ApiServer, grpcDialOp
 		glog.Warningf("S3 Vectors API disabled: no weed-vector registered on master")
 		return nil
 	}
-	backend := s3vectors.NewVectorDiscovery(masterAddresses, grpcDialOption, filerGroup)
+	backend := s3vectors.NewVectorDiscovery(func() []pb.ServerAddress { return masterAddresses }, grpcDialOption, filerGroup)
 	// In-process describe — the router resolves locations and vended
 	// storage options through the catalog directly, never over HTTP. The
 	// lookup itself runs under the trusted identity: the caller's vector

@@ -326,3 +326,27 @@ func TestVectorDiscoveryCloseDuringLookup(t *testing.T) {
 		t.Fatal("closed discovery opened a connection")
 	}
 }
+
+func TestVectorDiscoveryRefreshesMasterSnapshot(t *testing.T) {
+	masters := []pb.ServerAddress{}
+	d := NewVectorDiscovery(func() []pb.ServerAddress { return masters }, grpc.WithTransportCredentials(insecure.NewCredentials()), "")
+	d.discover = func(current []pb.ServerAddress, _ grpc.DialOption) []string {
+		if len(current) > 0 {
+			return []string{"127.0.0.1:9301"}
+		}
+		return nil
+	}
+	if _, err := d.cli(t.Context()); status.Code(err) != codes.Unavailable {
+		t.Fatal(err)
+	}
+	masters = []pb.ServerAddress{"master:9333"}
+	d.mu.Lock()
+	d.nextResolve = time.Time{}
+	d.mu.Unlock()
+	client, err := d.cli(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.release(client)
+	_ = d.Close()
+}

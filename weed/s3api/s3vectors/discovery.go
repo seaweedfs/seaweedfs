@@ -13,14 +13,14 @@ import (
 	"time"
 )
 
-func NewVectorDiscovery(masters []pb.ServerAddress, dialOption grpc.DialOption, filerGroup string) *vectorDiscovery {
+func NewVectorDiscovery(masters func() []pb.ServerAddress, dialOption grpc.DialOption, filerGroup string) *vectorDiscovery {
 	return &vectorDiscovery{masters: masters, grpcDialOption: dialOption, discover: func(m []pb.ServerAddress, opt grpc.DialOption) []string {
 		return discoverVectorWorkers(m, opt, filerGroup)
 	}}
 }
 
 type vectorDiscovery struct {
-	masters        []pb.ServerAddress
+	masters        func() []pb.ServerAddress
 	grpcDialOption grpc.DialOption
 	discover       func([]pb.ServerAddress, grpc.DialOption) []string
 	mu             sync.Mutex
@@ -88,7 +88,11 @@ func isTransportError(err error) bool {
 }
 
 func (d *vectorDiscovery) resolve() {
-	workers := d.discover(d.masters, d.grpcDialOption)
+	var masters []pb.ServerAddress
+	if d.masters != nil {
+		masters = d.masters()
+	}
+	workers := d.discover(masters, d.grpcDialOption)
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	// Measured from lookup end so a slow lookup cannot leave the next one already due.

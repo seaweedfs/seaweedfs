@@ -52,7 +52,7 @@ func (c s3VectorsFilerClient) WithFilerClient(_ bool, fn func(client filer_pb.Se
 
 func newS3VectorsServer(s *AdminServer) *s3vectors.Server {
 	client := s3VectorsFilerClient{s}
-	backend := s3vectors.NewVectorDiscovery(s.masterClient.ListCachedMasters(), s.grpcDialOption, s.filerGroup)
+	backend := s3vectors.NewVectorDiscovery(s.masterClient.ListCachedMasters, s.grpcDialOption, s.filerGroup)
 	server := s3vectors.NewServer(client, nil, backend)
 	catalog := lance.NewServer(client, nil)
 	server.SetDescribe(func(ctx context.Context, id []string) (string, map[string]string, error) {
