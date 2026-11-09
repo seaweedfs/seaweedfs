@@ -43,6 +43,7 @@ func (c *commandVolumeServerEvacuate) Help() string {
 	good destination to meet the replication requirement. 
 	E.g. a volume replication 001 in a cluster with 2 volume servers can not be moved.
 	You can use "-skipNonMoveable" to move the rest volumes.
+	You can use "-noLock" to run without cluster-wide lock.
 
 `
 }
@@ -62,6 +63,7 @@ func (c *commandVolumeServerEvacuate) Do(args []string, commandEnv *CommandEnv, 
 	// TODO: remove this alias
 	applyChangeAlias := vsEvacuateCommand.Bool("force", false, "actually apply the changes (alias for -apply)")
 	retryCount := vsEvacuateCommand.Int("retry", 0, "how many times to retry")
+	noLock := vsEvacuateCommand.Bool("noLock", false, "do not lock the admin shell at one's own risk")
 	if err = vsEvacuateCommand.Parse(args); err != nil {
 		return nil
 	}
@@ -69,7 +71,9 @@ func (c *commandVolumeServerEvacuate) Do(args []string, commandEnv *CommandEnv, 
 	handleDeprecatedForceFlag(writer, vsEvacuateCommand, applyChangeAlias, applyChange)
 	infoAboutSimulationMode(writer, *applyChange, "-apply")
 
-	if err = commandEnv.confirmIsLocked(args); err != nil && *applyChange {
+	if *noLock {
+		commandEnv.SetNoLock(true)
+	} else if err = commandEnv.confirmIsLocked(args); err != nil && *applyChange {
 		return
 	}
 	if *volumeServer == "" && *c.volumeRack == "" {

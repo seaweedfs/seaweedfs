@@ -1,8 +1,13 @@
 package shell
 
 import (
+	"io"
 	"os"
+	"strings"
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient/exclusive_locks"
 )
 
 func TestEvacuatePrefersLowerVolumeRatio(t *testing.T) {
@@ -35,4 +40,32 @@ func TestVolumeServerEvacuate(t *testing.T) {
 		t.Errorf("evacuate: %v", err)
 	}
 
+}
+
+func TestVolumeServerEvacuateNoLockFlag(t *testing.T) {
+	c := &commandVolumeServerEvacuate{}
+
+	// Test without -noLock: when -apply is set and shell is unlocked, Do must fail with lock error
+	unlockedEnv := &CommandEnv{locker: exclusive_locks.NewExclusiveLocker(nil, cluster.AdminShellLockName)}
+	err := c.Do([]string{"-apply"}, unlockedEnv, io.Discard)
+	if err == nil {
+		t.Fatalf("expected error when running with -apply without lock or -noLock")
+	}
+	if !strings.Contains(err.Error(), "need to run \"lock\" first to continue") {
+		t.Fatalf("expected lock error message, got: %v", err)
+	}
+
+	// Test with -noLock: should set commandEnv.noLock to true and bypass the lock requirement
+	noLockEnv := &CommandEnv{locker: exclusive_locks.NewExclusiveLocker(nil, cluster.AdminShellLockName)}
+	errNoLock := c.Do([]string{"-noLock", "-apply"}, noLockEnv, io.Discard)
+	if !noLockEnv.noLock {
+		t.Fatalf("expected commandEnv.noLock to be true when -noLock flag is provided")
+	}
+	if err := noLockEnv.confirmIsLocked([]string{"volumeServer.evacuate"}); err != nil {
+		t.Fatalf("confirmIsLocked should succeed when noLock is true: %v", err)
+	}
+	// The lock error should not be returned because -noLock bypassed it; it should reach node validation
+	if errNoLock == nil || !strings.Contains(errNoLock.Error(), "need to specify volume server") {
+		t.Fatalf("expected node validation error after bypassing lock check, got: %v", errNoLock)
+	}
 }
