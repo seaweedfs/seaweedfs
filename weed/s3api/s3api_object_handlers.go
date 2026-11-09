@@ -1218,7 +1218,10 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 			if written > 0 {
 				BucketTrafficSent(int64(written), r)
 			}
-			return err
+			if err != nil {
+				return newStreamErrorWithResponse(err)
+			}
+			return nil
 		}
 		// Non-range request for inline content
 		s3a.setResponseHeaders(w, r, entry, totalSize)
@@ -1227,7 +1230,10 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 		if written > 0 {
 			BucketTrafficSent(int64(written), r)
 		}
-		return err
+		if err != nil {
+			return newStreamErrorWithResponse(err)
+		}
+		return nil
 	}
 
 	// Get chunks and validate BEFORE setting headers

@@ -53,12 +53,24 @@ func TestIdleTimeoutCancelStillAnswersConnectedClient(t *testing.T) {
 	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// a first read stalled past the idle timeout
 		<-r.Context().Done()
+		// only the read side should be short; a write timing out would fail the
+		// test on a slow runner
+		if err := http.NewResponseController(w).SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+			t.Error(err)
+		}
 		writeStreamErrorResponse(w, r, r.Context().Err())
 	})}
 	go server.Serve(listener)
 	defer server.Close()
 
-	resp, err := http.Get("http://" + listener.Addr().String() + "/bucket/object")
+	// bounded so a broken idle cancel fails here instead of hanging the package
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+listener.Addr().String()+"/bucket/object", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
