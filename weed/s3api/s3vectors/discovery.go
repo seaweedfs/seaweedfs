@@ -25,6 +25,8 @@ type vectorDiscovery struct {
 	discover       func([]pb.ServerAddress, grpc.DialOption) []string
 	mu             sync.Mutex
 	worker         string
+	active         map[vector_pb.VectorServiceClient]int
+	retired        map[vector_pb.VectorServiceClient]*grpc.ClientConn
 	conn           *grpc.ClientConn
 	client         vector_pb.VectorServiceClient
 	nextResolve    time.Time
@@ -37,11 +39,36 @@ func (d *vectorDiscovery) reset(c vector_pb.VectorServiceClient) {
 	if c != d.client {
 		return
 	}
-	if d.conn != nil {
-		d.conn.Close()
-	}
+	d.retire()
 	d.worker, d.conn, d.client = "", nil, nil
 	d.nextResolve = time.Time{}
+}
+
+func (d *vectorDiscovery) retire() {
+	if d.conn == nil {
+		return
+	}
+	if d.active[d.client] == 0 {
+		_ = d.conn.Close()
+		return
+	}
+	if d.retired == nil {
+		d.retired = make(map[vector_pb.VectorServiceClient]*grpc.ClientConn)
+	}
+	d.retired[d.client] = d.conn
+}
+
+func (d *vectorDiscovery) release(c vector_pb.VectorServiceClient) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.active[c]--
+	if d.active[c] == 0 {
+		delete(d.active, c)
+		if conn := d.retired[c]; conn != nil {
+			_ = conn.Close()
+			delete(d.retired, c)
+		}
+	}
 }
 
 func isTransportError(err error) bool {
@@ -78,9 +105,7 @@ func (d *vectorDiscovery) resolve() {
 			glog.Warningf("S3 Vectors: dial weed-vector %s: %v", worker, err)
 			return
 		}
-		if d.conn != nil {
-			d.conn.Close()
-		}
+		d.retire()
 		d.worker, d.conn = worker, conn
 		d.client = vector_pb.NewVectorServiceClient(conn)
 	}
@@ -93,139 +118,166 @@ const (
 
 var errNoVectorWorker = status.Error(codes.Unavailable, "no weed-vector registered on master")
 
-func (d *vectorDiscovery) cli() (vector_pb.VectorServiceClient, error) {
+func (d *vectorDiscovery) cli(ctx context.Context) (vector_pb.VectorServiceClient, error) {
 	d.mu.Lock()
 	if d.resolving == nil && !time.Now().Before(d.nextResolve) {
 		d.resolving = make(chan struct{})
 		go d.resolve()
 	}
-	cli, resolving := d.client, d.resolving
-	d.mu.Unlock()
-	if cli != nil {
-		return cli, nil
-	}
-	// No cached client: wait for the in-flight lookup instead of failing.
-	if resolving != nil {
+	if d.client == nil && d.resolving != nil {
+		resolving := d.resolving
+		d.mu.Unlock()
 		<-resolving
 		d.mu.Lock()
-		cli = d.client
-		d.mu.Unlock()
-		if cli != nil {
-			return cli, nil
-		}
 	}
-	return nil, errNoVectorWorker
+	defer d.mu.Unlock()
+	if d.client == nil {
+		return nil, errNoVectorWorker
+	}
+	if d.active == nil {
+		d.active = make(map[vector_pb.VectorServiceClient]int)
+	}
+	d.active[d.client]++
+	return d.client, nil
 }
 
 func (d *vectorDiscovery) CreateIndex(ctx context.Context, in *vector_pb.CreateIndexRequest, opts ...grpc.CallOption) (resp *vector_pb.CreateIndexResponse, err error) {
 	for attempt := 0; attempt < 2; attempt++ {
 		var c vector_pb.VectorServiceClient
-		if c, err = d.cli(); err != nil {
+		if c, err = d.cli(ctx); err != nil {
 			return nil, err
 		}
-		if resp, err = c.CreateIndex(ctx, in, opts...); err == nil {
+		resp, err = c.CreateIndex(ctx, in, opts...)
+		if isTransportError(err) {
+			d.reset(c)
+		}
+		d.release(c)
+		if err == nil {
 			return resp, nil
 		}
 		if !isTransportError(err) {
 			return nil, err
 		}
-		d.reset(c)
 	}
 	return nil, err
 }
 func (d *vectorDiscovery) DropIndex(ctx context.Context, in *vector_pb.DropIndexRequest, opts ...grpc.CallOption) (resp *vector_pb.DropIndexResponse, err error) {
 	for attempt := 0; attempt < 2; attempt++ {
 		var c vector_pb.VectorServiceClient
-		if c, err = d.cli(); err != nil {
+		if c, err = d.cli(ctx); err != nil {
 			return nil, err
 		}
-		if resp, err = c.DropIndex(ctx, in, opts...); err == nil {
+		resp, err = c.DropIndex(ctx, in, opts...)
+		if isTransportError(err) {
+			d.reset(c)
+		}
+		d.release(c)
+		if err == nil {
 			return resp, nil
 		}
 		if !isTransportError(err) {
 			return nil, err
 		}
-		d.reset(c)
 	}
 	return nil, err
 }
 func (d *vectorDiscovery) PutVectors(ctx context.Context, in *vector_pb.PutVectorsRequest, opts ...grpc.CallOption) (resp *vector_pb.PutVectorsResponse, err error) {
 	for attempt := 0; attempt < 2; attempt++ {
 		var c vector_pb.VectorServiceClient
-		if c, err = d.cli(); err != nil {
+		if c, err = d.cli(ctx); err != nil {
 			return nil, err
 		}
-		if resp, err = c.PutVectors(ctx, in, opts...); err == nil {
+		resp, err = c.PutVectors(ctx, in, opts...)
+		if isTransportError(err) {
+			d.reset(c)
+		}
+		d.release(c)
+		if err == nil {
 			return resp, nil
 		}
 		if !isTransportError(err) {
 			return nil, err
 		}
-		d.reset(c)
 	}
 	return nil, err
 }
 func (d *vectorDiscovery) GetVectors(ctx context.Context, in *vector_pb.GetVectorsRequest, opts ...grpc.CallOption) (resp *vector_pb.GetVectorsResponse, err error) {
 	for attempt := 0; attempt < 2; attempt++ {
 		var c vector_pb.VectorServiceClient
-		if c, err = d.cli(); err != nil {
+		if c, err = d.cli(ctx); err != nil {
 			return nil, err
 		}
-		if resp, err = c.GetVectors(ctx, in, opts...); err == nil {
+		resp, err = c.GetVectors(ctx, in, opts...)
+		if isTransportError(err) {
+			d.reset(c)
+		}
+		d.release(c)
+		if err == nil {
 			return resp, nil
 		}
 		if !isTransportError(err) {
 			return nil, err
 		}
-		d.reset(c)
 	}
 	return nil, err
 }
 func (d *vectorDiscovery) DeleteVectors(ctx context.Context, in *vector_pb.DeleteVectorsRequest, opts ...grpc.CallOption) (resp *vector_pb.DeleteVectorsResponse, err error) {
 	for attempt := 0; attempt < 2; attempt++ {
 		var c vector_pb.VectorServiceClient
-		if c, err = d.cli(); err != nil {
+		if c, err = d.cli(ctx); err != nil {
 			return nil, err
 		}
-		if resp, err = c.DeleteVectors(ctx, in, opts...); err == nil {
+		resp, err = c.DeleteVectors(ctx, in, opts...)
+		if isTransportError(err) {
+			d.reset(c)
+		}
+		d.release(c)
+		if err == nil {
 			return resp, nil
 		}
 		if !isTransportError(err) {
 			return nil, err
 		}
-		d.reset(c)
 	}
 	return nil, err
 }
 func (d *vectorDiscovery) ListVectors(ctx context.Context, in *vector_pb.ListVectorsRequest, opts ...grpc.CallOption) (resp *vector_pb.ListVectorsResponse, err error) {
 	for attempt := 0; attempt < 2; attempt++ {
 		var c vector_pb.VectorServiceClient
-		if c, err = d.cli(); err != nil {
+		if c, err = d.cli(ctx); err != nil {
 			return nil, err
 		}
-		if resp, err = c.ListVectors(ctx, in, opts...); err == nil {
+		resp, err = c.ListVectors(ctx, in, opts...)
+		if isTransportError(err) {
+			d.reset(c)
+		}
+		d.release(c)
+		if err == nil {
 			return resp, nil
 		}
 		if !isTransportError(err) {
 			return nil, err
 		}
-		d.reset(c)
 	}
 	return nil, err
 }
 func (d *vectorDiscovery) QueryVectors(ctx context.Context, in *vector_pb.QueryVectorsRequest, opts ...grpc.CallOption) (resp *vector_pb.QueryVectorsResponse, err error) {
 	for attempt := 0; attempt < 2; attempt++ {
 		var c vector_pb.VectorServiceClient
-		if c, err = d.cli(); err != nil {
+		if c, err = d.cli(ctx); err != nil {
 			return nil, err
 		}
-		if resp, err = c.QueryVectors(ctx, in, opts...); err == nil {
+		resp, err = c.QueryVectors(ctx, in, opts...)
+		if isTransportError(err) {
+			d.reset(c)
+		}
+		d.release(c)
+		if err == nil {
 			return resp, nil
 		}
 		if !isTransportError(err) {
 			return nil, err
 		}
-		d.reset(c)
 	}
 	return nil, err
 }
