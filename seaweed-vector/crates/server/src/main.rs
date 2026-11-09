@@ -150,7 +150,8 @@ async fn main() -> Result<()> {
     let (health, health_service) = tonic_health::server::health_reporter();
     let metrics = Metrics::new()?.with_health(health);
     metrics.set_connected(false).await;
-    let cache = (args.read_cache_mb > 0).then(|| ReadCache::new(args.read_cache_mb << 20));
+    let cache = (args.read_cache_mb > 0)
+        .then(|| ReadCache::new(args.read_cache_mb << 20).with_metrics(metrics.clone()));
     let mut service = VectorServer::new()
         .with_nprobes(args.nprobes.map(std::num::NonZeroUsize::get))
         .with_storage(reads);
