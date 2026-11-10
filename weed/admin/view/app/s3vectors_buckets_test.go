@@ -78,3 +78,21 @@ func TestS3TablesBucketsLinksVectorBuckets(t *testing.T) {
 	require.Contains(t, page, `href="/object-store/vector-buckets/vectors"`)
 	require.NotContains(t, page, `href="/object-store/vector-buckets/warehouse"`)
 }
+
+func TestVectorOperationalStates(t *testing.T) {
+	for _, data := range []dash.VectorOperationsData{
+		{}, {DiscoveryError: "master unavailable"},
+		{Engines: []dash.VectorNode{{Address: "engine:8090", Status: "Ready"}}, MaintenanceWorkers: 1},
+	} {
+		var out bytes.Buffer
+		require.NoError(t, VectorStatus(data).Render(t.Context(), &out))
+		if data.DiscoveryError != "" {
+			require.Contains(t, out.String(), "Engine discovery failed")
+		} else if len(data.Engines) == 0 {
+			require.Contains(t, out.String(), "No vector engine is registered")
+		} else {
+			require.Contains(t, out.String(), "engine:8090")
+			require.Contains(t, out.String(), "Ready")
+		}
+	}
+}

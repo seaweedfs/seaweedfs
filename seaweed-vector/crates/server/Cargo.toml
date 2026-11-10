@@ -13,6 +13,9 @@ name = "weed-vector"
 path = "src/main.rs"
 
 [dependencies]
+axum = "0.8"
+prometheus = { version = "0.13", default-features = false }
+tonic-health = "0.14"
 weed-vector-core = { path = "../core" }
 weed-lance-worker = { path = "../../../seaweed-worker/crates/lance" }
 sw-client = { path = "../../../seaweed-worker/crates/sw-client" }

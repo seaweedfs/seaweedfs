@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math/bits"
 	"net"
 	"net/http"
@@ -415,6 +416,11 @@ var (
 	miniS3AutoCreateBucket          = cmdMini.Flag.Bool("s3.autoCreateBucket", true, "create the bucket on upload if it does not exist, for admin identities only")
 	miniBucket                      = cmdMini.Flag.String("bucket", "", "comma-separated S3 bucket names to create on startup if they do not already exist; leave empty to skip. Falls back to S3_BUCKET env var.")
 	miniTableBucket                 = cmdMini.Flag.String("tableBucket", "", "comma-separated S3 Tables buckets to create on startup if they do not already exist, each name[:FORMAT] with FORMAT one of ICEBERG (default) or LANCE, e.g. warehouse,vectors:LANCE; leave empty to skip. Falls back to S3_TABLE_BUCKET env var.")
+	miniVector                      = cmdMini.Flag.Bool("vector", false, "start the weed-vector engine for vector indexes and search")
+	miniVectorBinary                = cmdMini.Flag.String("vector.binary", "weed-vector", "path to the vector engine binary")
+	miniVectorPort                  = cmdMini.Flag.Int("vector.port", 8090, "vector engine gRPC port")
+	miniVectorMetricsPort           = cmdMini.Flag.Int("vector.metricsPort", 0, "optional vector HTTP health and metrics port")
+	miniVectorBucket                = cmdMini.Flag.String("vectorBucket", "", "comma-separated vector buckets to create; falls back to S3_VECTOR_BUCKET")
 )
 
 // getBindIp determines the bind IP address based on miniIp and miniBindIp flags
@@ -874,9 +880,9 @@ func ensurePortAvailableOnIP(portPtr *int, serviceName string, ip string, reserv
 	// Skip if this port is reserved for gRPC calculation
 	if reservedPorts[original] {
 		if isExplicitPort {
-			return fmt.Errorf("port %d for %s (specified by flag %s) is reserved for gRPC calculation and cannot be used", original, serviceName, flagName)
+			return fmt.Errorf("port %d for %s (specified by flag %s) is reserved by another mini service and cannot be used", original, serviceName, flagName)
 		}
-		glog.Warningf("Port %d for %s is reserved for gRPC calculation, finding alternative...", original, serviceName)
+		glog.Warningf("Port %d for %s is reserved by another mini service, finding alternative...", original, serviceName)
 		newPort := findAvailablePortOnIP(ip, original+1, 100, reservedPorts, listenOnLocalhost)
 		if newPort == 0 {
 			glog.Errorf("Could not find available port for %s starting from %d, will use original %d and fail on binding", serviceName, original+1, original)
@@ -950,22 +956,41 @@ func ensureAllPortsAvailableOnIP(bindIp string, listenOnLocalhost bool) error {
 			}{miniS3Options.portLance, "Lance", "s3.port.lance", nil, listenOnLocalhost})
 		}
 	}
-	// WebDAV and the Admin UI bind only -ip.bind; they never open a loopback
-	// companion listener, so ports held elsewhere cannot collide with them.
+	if *miniVector {
+		portConfigs = append(portConfigs, struct {
+			port      *int
+			name      string
+			flagName  string
+			grpcPtr   *int
+			localhost bool
+		}{miniVectorPort, "Vector", "vector.port", nil, false})
+		if *miniVectorMetricsPort > 0 {
+			portConfigs = append(portConfigs, struct {
+				port      *int
+				name      string
+				flagName  string
+				grpcPtr   *int
+				localhost bool
+			}{miniVectorMetricsPort, "Vector metrics", "vector.metricsPort", nil, false})
+		}
+	}
+
+	if *miniEnableWebDAV {
+		portConfigs = append(portConfigs, struct {
+			port      *int
+			name      string
+			flagName  string
+			grpcPtr   *int
+			localhost bool
+		}{miniWebDavOptions.port, "WebDAV", "webdav.port", nil, false})
+	}
 	portConfigs = append(portConfigs, struct {
 		port      *int
 		name      string
 		flagName  string
 		grpcPtr   *int
 		localhost bool
-	}{miniWebDavOptions.port, "WebDAV", "webdav.port", nil, false},
-		struct {
-			port      *int
-			name      string
-			flagName  string
-			grpcPtr   *int
-			localhost bool
-		}{miniAdminOptions.port, "Admin", "admin.port", miniAdminOptions.grpcPort, false})
+	}{miniAdminOptions.port, "Admin", "admin.port", miniAdminOptions.grpcPort, false})
 
 	// First, reserve all gRPC ports that will be calculated to prevent HTTP port allocation from using them
 	// This prevents collisions like: HTTP port moves to X, then gRPC port is calculated as Y where Y == X
@@ -975,6 +1000,16 @@ func ensureAllPortsAvailableOnIP(bindIp string, listenOnLocalhost bool) error {
 			// This gRPC port will be calculated as httpPort + GrpcPortOffset
 			calculatedGrpcPort := *config.port + GrpcPortOffset
 			reservedPorts[calculatedGrpcPort] = true
+		}
+	}
+
+	chosenPorts := make(map[int]string)
+	for _, config := range portConfigs {
+		if *config.port > 0 && explicitFlags[config.flagName] {
+			if previous, exists := chosenPorts[*config.port]; exists {
+				return fmt.Errorf("port %d is shared by explicit flags %s and %s", *config.port, previous, config.flagName)
+			}
+			chosenPorts[*config.port] = config.flagName
 		}
 	}
 
@@ -991,8 +1026,18 @@ func ensureAllPortsAvailableOnIP(bindIp string, listenOnLocalhost bool) error {
 			checkIP = adminBindIP
 		}
 		original := *config.port
-		if err := ensurePortAvailableOnIP(config.port, config.name, checkIP, reservedPorts, config.flagName, config.localhost); err != nil {
+		unavailablePorts := maps.Clone(reservedPorts)
+		for port, flag := range chosenPorts {
+			if flag != config.flagName {
+				unavailablePorts[port] = true
+			}
+		}
+
+		if err := ensurePortAvailableOnIP(config.port, config.name, checkIP, unavailablePorts, config.flagName, config.localhost); err != nil {
 			return err
+		}
+		if *config.port > 0 {
+			chosenPorts[*config.port] = config.flagName
 		}
 		// If port was changed, update the reserved gRPC ports mapping
 		if *config.port != original && config.grpcPtr != nil && *config.grpcPtr == 0 {
@@ -1102,6 +1147,13 @@ func initializeGrpcPortsOnIP(bindIp string, listenOnLocalhost bool) map[int]bool
 		}
 		if miniS3Options.portLance != nil && *miniS3Options.portLance > 0 {
 			allocatedPorts[*miniS3Options.portLance] = true
+		}
+	}
+
+	if *miniVector {
+		allocatedPorts[*miniVectorPort] = true
+		if *miniVectorMetricsPort > 0 {
+			allocatedPorts[*miniVectorMetricsPort] = true
 		}
 	}
 
@@ -1639,6 +1691,32 @@ func runMini(cmd *Command, args []string) bool {
 		os.Setenv("S3_TABLE_BUCKET", strings.Join(names, ","))
 	} else {
 		os.Unsetenv("S3_TABLE_BUCKET")
+	}
+
+	vectorBuckets := *miniVectorBucket
+	if vectorBuckets == "" {
+		vectorBuckets = os.Getenv("S3_VECTOR_BUCKET")
+	}
+	var vectorEntries []tableBucketEntry
+	for _, name := range parseBucketList(vectorBuckets) {
+		vectorEntries = append(vectorEntries, tableBucketEntry{name: name, format: s3tables.FormatLance})
+	}
+	if len(vectorEntries) > 0 && !*miniEnableS3 {
+		glog.Errorf("vector buckets require the S3 gateway")
+		triggerMiniClientsShutdown(5 * time.Second)
+		return false
+	}
+	if ready, err := createMiniTableBuckets(vectorEntries); err != nil || len(ready) != len(vectorEntries) {
+		glog.Errorf("created %d of %d requested vector buckets: %v", len(ready), len(vectorEntries), err)
+		triggerMiniClientsShutdown(5 * time.Second)
+		return false
+	}
+	if *miniVector {
+		if err := startMiniVector(); err != nil {
+			glog.Errorf("start vector engine: %v", err)
+			triggerMiniClientsShutdown(5 * time.Second)
+			return false
+		}
 	}
 
 	// Print welcome message after all services are running
@@ -2419,6 +2497,14 @@ func ensureMiniTableBuckets(buckets []tableBucketEntry) ([]tableBucketEntry, err
 		}
 		servable = append(servable, bucket)
 	}
+	if len(servable) == 0 {
+		return nil, nil
+	}
+
+	return createMiniTableBuckets(servable)
+}
+
+func createMiniTableBuckets(servable []tableBucketEntry) ([]tableBucketEntry, error) {
 	if len(servable) == 0 {
 		return nil, nil
 	}

@@ -23,8 +23,9 @@ templ S3VectorsBuckets(data dash.S3VectorsBucketsData) {
 	<div class="alert alert-info mb-4">
 		<i class="bi bi-info-circle me-2"></i>
 		Vector buckets serve the Amazon S3 Vectors API on the S3 port. Each one is a LANCE table bucket that keeps its indexes in its <code>vector</code> namespace.
-		Indexes are created and filled with an S3 Vectors client, which needs a running <code>weed-vector</code> engine.
+		Create indexes and manage vectors from a bucket page or an S3 Vectors client.
 	</div>
+ @VectorStatus(data.Operations)
 	<div class="card shadow mb-4">
 		<div class="card-header py-3">
 			<h6 class="m-0 font-weight-bold text-primary">
@@ -104,9 +105,10 @@ templ S3VectorsBuckets(data dash.S3VectorsBucketsData) {
 							<input type="text" class="form-control" id="s3vectorsBucketName" name="name" placeholder="vector-bucket-name" required/>
 							<div class="form-text">3 to 63 lowercase letters, digits and hyphens, starting and ending with a letter or digit.</div>
 						</div>
-						<div class="form-text">
-							The bucket is created without encryption. To encrypt it, create it with an S3 Vectors client and <code>encryptionConfiguration</code>, which the S3 gateway checks against its SSE-S3 key.
-						</div>
+<label for="s3vectorsEncryption" class="form-label">Encryption</label>
+ <select id="s3vectorsEncryption" class="form-select"><option value="">None</option><option value="AES256">SSE-S3 (AES256)</option></select>
+ <div class="form-text">SSE-S3 requires the encryption key on the S3 gateway and vector engines.</div>
+
 					</div>
 					<div class="modal-footer">
 						<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
@@ -172,7 +174,7 @@ templ S3VectorsBuckets(data dash.S3VectorsBucketsData) {
 					const response = await fetch(s3tBasePath('/api/s3vectors/buckets'), {
 						method: 'POST',
 						headers: s3tWriteHeaders({ 'Content-Type': 'application/json' }),
-						body: JSON.stringify({ name: name })
+						body: JSON.stringify({ name, encryptionConfiguration: document.getElementById('s3vectorsEncryption').value ? {sseType:'AES256'} : undefined })
 					});
 					const data = await response.json();
 					if (!response.ok) {

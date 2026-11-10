@@ -1,0 +1,85 @@
+package app
+
+
+templ VectorTools(bucket, arn, policy string) {
+ <div class="card shadow mb-4" id="vectorTools" data-bucket={ bucket } data-arn={ arn }>
+  <div class="card-header">Manage Indexes, Policies and Vectors</div>
+  <div class="card-body">
+   <form id="vectorIndexForm" class="row g-2 mb-3">
+    <div class="col"><label for="vectorIndexName" class="form-label">Index name</label><input id="vectorIndexName" class="form-control" required/></div>
+    <div class="col"><label for="vectorDimension" class="form-label">Dimension</label><input id="vectorDimension" class="form-control" type="number" min="1" max="4096" required/></div>
+    <div class="col"><label for="vectorDistance" class="form-label">Distance</label><select id="vectorDistance" class="form-select"><option value="cosine">Cosine</option><option value="euclidean">Euclidean</option></select></div>
+    <div class="col-auto align-self-end"><button class="btn btn-primary" type="submit">Create Index</button></div>
+   </form>
+   <form id="vectorPolicyForm" class="mb-3">
+    <label for="vectorPolicy" class="form-label">Bucket policy</label><textarea id="vectorPolicy" class="form-control font-monospace" rows="5">{ policy }</textarea>
+    <button class="btn btn-outline-primary mt-2" type="submit">Save Policy</button>
+    <button class="btn btn-outline-danger mt-2" type="button" id="vectorDeletePolicy">Delete Policy</button>
+   </form>
+   <form id="vectorOperationForm">
+    <label for="vectorOperation" class="form-label">Vector and tagging operations</label>
+    <select id="vectorOperation" class="form-select mb-2">
+     <option>QueryVectors</option><option>PutVectors</option><option>GetVectors</option><option>ListVectors</option><option>DeleteVectors</option><option>ListTagsForResource</option><option>TagResource</option><option>UntagResource</option>
+    </select>
+    <label for="vectorRequest" class="form-label">Request JSON</label><textarea id="vectorRequest" class="form-control font-monospace" rows="7" required></textarea>
+    <button class="btn btn-outline-primary mt-2" type="submit">Run</button>
+   </form>
+   <pre id="vectorResult" class="mt-3 mb-0" role="status"></pre>
+  </div>
+ </div>
+ <script>
+ document.addEventListener('DOMContentLoaded', () => {
+  const root = document.getElementById('vectorTools');
+  const bucket = root.dataset.bucket;
+  const output = document.getElementById('vectorResult');
+  const run = async (operation, request) => {
+   output.textContent = 'Running…';
+   const response = await fetch(s3tBasePath('/api/s3vectors/operations'), {method:'POST', headers:s3tWriteHeaders({'Content-Type':'application/json'}), body:JSON.stringify({operation,request})});
+   const result = await response.json();
+   output.textContent = JSON.stringify(result,null,2);
+   if (!response.ok) throw new Error(result.error || 'Operation failed');
+   return result;
+  };
+  const submit = (id, action) => document.getElementById(id).addEventListener('submit', async event => {
+   event.preventDefault();
+   const buttons = event.target.querySelectorAll('button');
+   buttons.forEach(button => button.disabled = true);
+   try { await action(); } catch(error) {output.textContent=error.message;} finally {buttons.forEach(button => button.disabled = false);}
+  });
+  submit('vectorIndexForm', async () => {
+   await run('CreateIndex',{vectorBucketName:bucket,indexName:document.getElementById('vectorIndexName').value,dimension:Number(document.getElementById('vectorDimension').value),distanceMetric:document.getElementById('vectorDistance').value,dataType:'float32'});
+   location.reload();
+  });
+  submit('vectorPolicyForm', async () => {
+   const policy=document.getElementById('vectorPolicy').value;
+   JSON.parse(policy);
+   await run('PutVectorBucketPolicy',{vectorBucketName:bucket,policy});
+   location.reload();
+  });
+  document.getElementById('vectorDeletePolicy').addEventListener('click',async () => {
+   if (!confirm('Delete this bucket policy?')) return;
+   const controls=document.getElementById('vectorPolicyForm').querySelectorAll('button,textarea');
+   controls.forEach(control => control.disabled=true);
+   try {await run('DeleteVectorBucketPolicy',{vectorBucketName:bucket});location.reload();} catch(error) {output.textContent=error.message;} finally {controls.forEach(control => control.disabled=false);}
+  });
+  const operation=document.getElementById('vectorOperation');
+  const request=document.getElementById('vectorRequest');
+  const example=() => {
+   const op=operation.value;
+   let value={vectorBucketName:bucket,indexName:document.getElementById('vectorIndexName').value || 'my-index'};
+   if (op==='QueryVectors') Object.assign(value,{queryVector:{float32:[0.1,0.2,0.3]},topK:5,returnDistance:true});
+   if (op==='PutVectors') value.vectors=[{key:'example',data:{float32:[0.1,0.2,0.3]}}];
+   if (op==='GetVectors' || op==='DeleteVectors') value.keys=['example'];
+   if (op.includes('Tag') || op==='UntagResource') {
+    value={resourceArn:root.dataset.arn};
+    if (op==='TagResource') value.tags={environment:'development'};
+    if (op==='UntagResource') value.tagKeys=['environment'];
+   }
+   request.value=JSON.stringify(value,null,2);
+  };
+  operation.addEventListener('change',example);
+  example();
+  submit('vectorOperationForm',()=>run(operation.value,JSON.parse(request.value)));
+ });
+ </script>
+}

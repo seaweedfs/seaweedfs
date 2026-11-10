@@ -8,16 +8,18 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use tokio::time::sleep;
 
-use crate::master_pb::{KeepConnectedRequest, seaweed_client::SeaweedClient};
+use crate::master_pb::{
+    KeepConnectedRequest, ListClusterNodesRequest, seaweed_client::SeaweedClient,
+};
 use crate::security::GrpcTls;
 pub use weed_lance_worker::cluster::{CONNECT_TIMEOUT, connect, grpc_addr};
 
-fn registration(client_addr: &str) -> KeepConnectedRequest {
+fn registration(client_addr: &str, filer_group: &str) -> KeepConnectedRequest {
     KeepConnectedRequest {
         client_type: "vector".into(),
         client_address: client_addr.into(),
         version: env!("CARGO_PKG_VERSION").into(),
-        filer_group: String::new(),
+        filer_group: filer_group.into(),
         data_center: String::new(),
         rack: String::new(),
         leave_lock_ring: false,
@@ -39,12 +41,22 @@ fn http_addr(master: &str) -> String {
 
 /// Retry forever: try each master until a stream opens, hold it until it
 /// errors, then rediscover — same shape as wdclient.KeepConnectedToMaster.
-pub async fn keep_connected(masters: Vec<String>, client_addr: String, tls: Option<GrpcTls>) {
+pub async fn keep_connected(
+    masters: Vec<String>,
+    client_addr: String,
+    filer_group: String,
+    tls: Option<GrpcTls>,
+    metrics: crate::metrics::Metrics,
+) {
     let client_addr = client_addr.as_str();
+    let filer_group = filer_group.as_str();
     let tls = tls.as_ref();
+    let metrics = &metrics;
     loop {
         try_all_masters(&masters, |master| async move {
-            stream_to(&master, client_addr, tls).await
+            let result = stream_to(&master, client_addr, filer_group, tls, Some(&metrics)).await;
+            metrics.set_connected(false).await;
+            result
         })
         .await;
         sleep(Duration::from_secs(3)).await;
@@ -83,14 +95,16 @@ where
 async fn stream_to(
     master: &str,
     client_addr: &str,
+    filer_group: &str,
     tls: Option<&GrpcTls>,
+    metrics: Option<&crate::metrics::Metrics>,
 ) -> Result<Option<String>> {
     let channel = connect(master, tls).await?;
     // A master answers at once, a follower with its leader hint.
     let answer_by = tokio::time::Instant::now() + CONNECT_TIMEOUT;
     let mut client = SeaweedClient::new(channel);
     let (tx, rx) = tokio::sync::mpsc::channel(8);
-    tx.send(registration(client_addr)).await?;
+    tx.send(registration(client_addr, filer_group)).await?;
     let mut stream = tokio::time::timeout_at(
         answer_by,
         client.keep_connected(tokio_stream::wrappers::ReceiverStream::new(rx)),
@@ -99,6 +113,8 @@ async fn stream_to(
     .context("master did not answer keep-connected")??
     .into_inner();
     let mut answered = false;
+    let interval = Duration::from_secs(5);
+    let mut heartbeat = tokio::time::interval_at(tokio::time::Instant::now() + interval, interval);
     // The master keeps the node live while the stream is open; resend the
     // registration periodically so a reconnect never leaves a stale entry.
     loop {
@@ -117,22 +133,65 @@ async fn stream_to(
                             return Ok(Some(loc.leader));
                         }
                     }
+                    if let Some(metrics) = metrics { metrics.set_connected(true).await; }
                 }
                 None => anyhow::bail!("master closed the keep-connected stream"),
             },
             _ = tokio::time::sleep_until(answer_by), if !answered => {
                 anyhow::bail!("master did not answer keep-connected");
             }
-            _ = sleep(Duration::from_secs(5)) => {
-                tx.send(registration(client_addr)).await?;
+            _ = heartbeat.tick() => {
+                tokio::time::timeout(CONNECT_TIMEOUT, tx.send(registration(client_addr, filer_group))).await
+                    .context("registration send stalled")??;
+                probe_registration(&mut client).await?;
             }
         }
     }
 }
 
+async fn probe_registration(client: &mut SeaweedClient<tonic::transport::Channel>) -> Result<()> {
+    tokio::time::timeout(
+        CONNECT_TIMEOUT,
+        client.list_cluster_nodes(ListClusterNodesRequest {
+            client_type: "vector".into(),
+            ..Default::default()
+        }),
+    )
+    .await
+    .context("registration heartbeat stalled")??;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn registration_preserves_filer_group() {
+        assert_eq!(
+            registration("vector:8090", "tenant-a").filer_group,
+            "tenant-a"
+        );
+    }
+
+    #[tokio::test]
+    async fn stalled_registration_heartbeat_is_bounded() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let hold = tokio::spawn(async move {
+            let (_connection, _) = listener.accept().await.unwrap();
+            std::future::pending::<()>().await;
+        });
+        let channel = tonic::transport::Endpoint::from_shared(format!("http://{address}"))
+            .unwrap()
+            .connect_lazy();
+        let mut client = SeaweedClient::new(channel);
+        let result = tokio::time::timeout(CONNECT_TIMEOUT * 3, probe_registration(&mut client))
+            .await
+            .unwrap();
+        assert!(format!("{:#}", result.unwrap_err()).contains("registration heartbeat stalled"));
+        hold.abort();
+    }
 
     /// Runs one pass against scripted masters and returns the dial order.
     async fn pass(masters: &[&str], answer: fn(&str) -> Result<Option<String>>) -> Vec<String> {
@@ -183,7 +242,7 @@ mod tests {
     #[tokio::test]
     async fn dial_to_a_black_holed_master_is_bounded() {
         // TEST-NET-1 (RFC 5737) is reserved, so nothing answers the SYN.
-        let dial = stream_to("192.0.2.1:9333", "127.0.0.1:8080", None);
+        let dial = stream_to("192.0.2.1:9333", "127.0.0.1:8080", "", None, None);
         let result = tokio::time::timeout(CONNECT_TIMEOUT * 3, dial).await;
         assert!(matches!(result, Ok(Err(_))), "dial was not bounded");
     }
@@ -197,7 +256,7 @@ mod tests {
             let _ = tokio::io::copy(&mut conn, &mut tokio::io::sink()).await;
         });
         let master = format!("127.0.0.1:9333.{port}");
-        let open = stream_to(&master, "127.0.0.1:8080", None);
+        let open = stream_to(&master, "127.0.0.1:8080", "", None, None);
         match tokio::time::timeout(CONNECT_TIMEOUT * 3, open).await {
             Ok(Err(e)) => assert!(format!("{e:#}").contains("did not answer"), "{e:#}"),
             other => panic!("open was not bounded: {other:?}"),
@@ -232,7 +291,7 @@ mod tests {
         });
         let master = format!("127.0.0.1:9333.{port}");
         let tls = credentials();
-        let open = stream_to(&master, "127.0.0.1:8080", Some(&tls));
+        let open = stream_to(&master, "127.0.0.1:8080", "", Some(&tls), None);
         match tokio::time::timeout(CONNECT_TIMEOUT * 3, open).await {
             Ok(Err(e)) => assert!(format!("{e:#}").contains("did not complete"), "{e:#}"),
             other => panic!("handshake was not bounded: {other:?}"),
@@ -258,16 +317,19 @@ mod tests {
         let mut tls = credentials();
         tls.ca_path = fifo.display().to_string();
         let master = format!("127.0.0.1:9333.{port}");
-        let open = stream_to(&master, "127.0.0.1:8080", Some(&tls));
+        let open = stream_to(&master, "127.0.0.1:8080", "", Some(&tls), None);
         let result = tokio::time::timeout(CONNECT_TIMEOUT * 3, open).await;
-        // A read+write open of a FIFO does not block, and it lets the
-        // blocked read finish so the runtime can shut down.
-        drop(
-            std::fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(&fifo),
-        );
+        use std::io::Write;
+        let mut cleanup = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&fifo)
+            .unwrap();
+        let replacement = dir.path().join("ca.replacement");
+        std::fs::write(&replacement, b"invalid CA").unwrap();
+        std::fs::rename(&replacement, &fifo).unwrap();
+        cleanup.write_all(b"invalid CA").unwrap();
+        drop(cleanup);
         match result {
             Ok(Err(e)) => assert!(format!("{e:#}").contains("did not complete"), "{e:#}"),
             other => panic!("credential read was not bounded: {other:?}"),

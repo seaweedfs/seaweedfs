@@ -1,6 +1,7 @@
-package command
+package s3vectors
 
 import (
+	"context"
 	"fmt"
 	"sync/atomic"
 	"testing"
@@ -26,10 +27,10 @@ func TestVectorDiscoveryRechecksRegistration(t *testing.T) {
 		},
 	}
 
-	if _, err := d.cli(); status.Code(err) != codes.Unavailable {
+	if _, err := d.cli(t.Context()); status.Code(err) != codes.Unavailable {
 		t.Fatalf("no registered worker: expected Unavailable, got %v", err)
 	}
-	if _, err := d.cli(); status.Code(err) != codes.Unavailable {
+	if _, err := d.cli(t.Context()); status.Code(err) != codes.Unavailable {
 		t.Fatalf("no registered worker: expected Unavailable, got %v", err)
 	}
 	if got := atomic.LoadInt32(&calls); got != 1 {
@@ -46,7 +47,7 @@ func TestVectorDiscoveryRechecksRegistration(t *testing.T) {
 	}
 	d.grpcDialOption = grpc.WithTransportCredentials(insecure.NewCredentials())
 
-	if _, err := d.cli(); err != nil {
+	if _, err := d.cli(t.Context()); err != nil {
 		t.Fatalf("worker registered: expected a client, got %v", err)
 	}
 	if got := atomic.LoadInt32(&calls); got != 2 {
@@ -54,7 +55,7 @@ func TestVectorDiscoveryRechecksRegistration(t *testing.T) {
 	}
 
 	// A live client rides out the refresh interval without rediscovery.
-	if _, err := d.cli(); err != nil {
+	if _, err := d.cli(t.Context()); err != nil {
 		t.Fatalf("cached client rejected: %v", err)
 	}
 	if got := atomic.LoadInt32(&calls); got != 2 {
@@ -77,10 +78,10 @@ func TestVectorDiscoveryThrottlesFromLookupEnd(t *testing.T) {
 		},
 	}
 
-	if _, err := d.cli(); status.Code(err) != codes.Unavailable {
+	if _, err := d.cli(t.Context()); status.Code(err) != codes.Unavailable {
 		t.Fatalf("no registered worker: expected Unavailable, got %v", err)
 	}
-	if _, err := d.cli(); status.Code(err) != codes.Unavailable {
+	if _, err := d.cli(t.Context()); status.Code(err) != codes.Unavailable {
 		t.Fatalf("no registered worker: expected Unavailable, got %v", err)
 	}
 	if got := atomic.LoadInt32(&calls); got != 1 {
@@ -95,7 +96,7 @@ func TestVectorDiscoveryThrottlesFromLookupEnd(t *testing.T) {
 		d.mu.Lock()
 		d.nextResolve = time.Time{}
 		d.mu.Unlock()
-		if _, err := d.cli(); err != nil {
+		if _, err := d.cli(t.Context()); err != nil {
 			t.Fatalf("worker registered: expected a client, got %v", err)
 		}
 		waitResolved(d)
@@ -126,7 +127,7 @@ func TestVectorDiscoveryLookupDoesNotBlockCachedClient(t *testing.T) {
 			return []string{"127.0.0.1:9301"}
 		},
 	}
-	cached, err := d.cli()
+	cached, err := d.cli(t.Context())
 	if err != nil {
 		t.Fatalf("worker registered: expected a client, got %v", err)
 	}
@@ -147,7 +148,7 @@ func TestVectorDiscoveryLookupDoesNotBlockCachedClient(t *testing.T) {
 	const callers = 8
 	got := make(chan error, callers+1)
 	call := func() {
-		c, err := d.cli()
+		c, err := d.cli(t.Context())
 		if err == nil && c != cached {
 			err = fmt.Errorf("got a different client")
 		}
@@ -195,7 +196,7 @@ func TestVectorDiscoveryUncachedCallersShareLookup(t *testing.T) {
 	got := make(chan error, callers)
 	for i := 0; i < callers; i++ {
 		go func() {
-			_, err := d.cli()
+			_, err := d.cli(t.Context())
 			got <- err
 		}()
 	}
@@ -219,7 +220,7 @@ func TestVectorDiscoveryKeepsConnOnDialError(t *testing.T) {
 			return []string{"127.0.0.1:9301"}
 		},
 	}
-	cached, err := d.cli()
+	cached, err := d.cli(t.Context())
 	if err != nil {
 		t.Fatalf("worker registered: expected a client, got %v", err)
 	}
@@ -232,7 +233,7 @@ func TestVectorDiscoveryKeepsConnOnDialError(t *testing.T) {
 	d.mu.Lock()
 	d.nextResolve = time.Time{}
 	d.mu.Unlock()
-	if c, err := d.cli(); err != nil || c != cached {
+	if c, err := d.cli(t.Context()); err != nil || c != cached {
 		t.Fatalf("cached client: got %v, %v", c, err)
 	}
 	waitResolved(d)
@@ -242,4 +243,110 @@ func TestVectorDiscoveryKeepsConnOnDialError(t *testing.T) {
 	if d.client != cached || d.conn.GetState() == connectivity.Shutdown {
 		t.Fatalf("failed dial dropped the cached connection")
 	}
+}
+
+func TestVectorDiscoveryDrainsRetiredConnections(t *testing.T) {
+	d := &vectorDiscovery{grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()), discover: func([]pb.ServerAddress, grpc.DialOption) []string { return []string{"127.0.0.1:9301"} }}
+	first, err := d.cli(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := d.cli(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn := d.conn
+	d.reset(first)
+	d.release(first)
+	if conn.GetState() == connectivity.Shutdown {
+		t.Fatal("active RPC lost its connection")
+	}
+	d.release(second)
+	if conn.GetState() != connectivity.Shutdown {
+		t.Fatal("retired connection was not closed after the last RPC")
+	}
+}
+
+func TestVectorDiscoveryWaitingRespectsCancellation(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	d := &vectorDiscovery{discover: func([]pb.ServerAddress, grpc.DialOption) []string { close(entered); <-release; return nil }}
+	ctx, cancel := context.WithCancel(t.Context())
+	result := make(chan error, 1)
+	go func() { _, err := d.cli(ctx); result <- err }()
+	<-entered
+	cancel()
+	select {
+	case err := <-result:
+		if status.Code(err) != codes.Canceled {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("request remained blocked after cancellation")
+	}
+	close(release)
+	waitResolved(d)
+}
+
+func TestVectorDiscoveryRetriesAnotherWorker(t *testing.T) {
+	d := &vectorDiscovery{grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()), discover: func([]pb.ServerAddress, grpc.DialOption) []string {
+		return []string{"127.0.0.1:9301", "127.0.0.1:9302"}
+	}}
+	first, err := d.cli(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.reset(first)
+	d.release(first)
+	second, err := d.cli(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.release(second)
+	if d.worker != "127.0.0.1:9302" {
+		t.Fatalf("retry selected failed worker: %s", d.worker)
+	}
+}
+
+func TestVectorDiscoveryCloseDuringLookup(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	d := &vectorDiscovery{grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()), discover: func([]pb.ServerAddress, grpc.DialOption) []string {
+		close(entered)
+		<-release
+		return []string{"127.0.0.1:9301"}
+	}}
+	done := make(chan error, 1)
+	go func() { _, err := d.cli(t.Context()); done <- err }()
+	<-entered
+	_ = d.Close()
+	close(release)
+	if err := <-done; status.Code(err) != codes.Canceled {
+		t.Fatal(err)
+	}
+	if d.conn != nil {
+		t.Fatal("closed discovery opened a connection")
+	}
+}
+
+func TestVectorDiscoveryRefreshesMasterSnapshot(t *testing.T) {
+	masters := []pb.ServerAddress{}
+	d := NewVectorDiscovery(func() []pb.ServerAddress { return masters }, grpc.WithTransportCredentials(insecure.NewCredentials()), "")
+	d.discover = func(current []pb.ServerAddress, _ grpc.DialOption) []string {
+		if len(current) > 0 {
+			return []string{"127.0.0.1:9301"}
+		}
+		return nil
+	}
+	if _, err := d.cli(t.Context()); status.Code(err) != codes.Unavailable {
+		t.Fatal(err)
+	}
+	masters = []pb.ServerAddress{"master:9333"}
+	d.mu.Lock()
+	d.nextResolve = time.Time{}
+	d.mu.Unlock()
+	client, err := d.cli(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.release(client)
+	_ = d.Close()
 }

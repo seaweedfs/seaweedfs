@@ -1,3 +1,4 @@
+import urllib.request
 """Run the S3 Vectors API against Go/Rust volumes and single/distributed queries."""
 
 import contextlib
@@ -150,7 +151,7 @@ def run_cli(cluster, *args):
     from pathlib import Path
     cli = Path(os.environ.get("VECTOR_CLI_BINARY", Path(__file__).resolve().parent / "weed-vector-cli")).resolve()
     command = [str(cli), "--namespace", cluster["catalog"], "--masters", cluster["masters"],
-               "--filer-signing-key", cluster["filer_signing_key"], *args]
+               "--filer-signing-key", cluster["filer_signing_key"], "--filer-group", os.environ.get("VECTOR_FILER_GROUP", ""), *args]
     return json.loads(subprocess.run(command, check=True, capture_output=True, text=True,
                                      cwd=cluster["directory"], env=cluster["env"]).stdout)
 
@@ -711,12 +712,61 @@ def test_vector_index_job(vectors, cluster):
     assert found >= 180, f"recall after retrain {found}/200"
 
 
+def test_attached_iam_vector_policies(vectors, cluster):
+    client = boto3.client("s3vectors", endpoint_url=cluster["endpoint"], region_name="us-east-1",
+                          aws_access_key_id="policy-reader", aws_secret_access_key="policy-reader-secret",
+                          config=vectors.meta.config)
+    bucket = "vector-iam"
+    vectors.create_vector_bucket(vectorBucketName=bucket)
+    target = {"vectorBucketName": bucket, "indexName": "docs"}
+    vectors.create_index(**target, dataType="float32", dimension=3, distanceMetric="cosine")
+    index_arn = vectors.get_index(**target)["index"]["indexArn"]
+    bucket_arn = vectors.get_vector_bucket(vectorBucketName=bucket)["vectorBucket"]["vectorBucketArn"]
+    query = {**target, "queryVector": {"float32": [1, 0, 0]}, "topK": 1}
+    try:
+        assert client.query_vectors(**query)["vectors"] == []
+        assert client.get_vectors(**target, keys=["missing"])["vectors"] == []
+        expect_error("AccessDeniedException", client.put_vectors, **target,
+                     vectors=[{"key": "blocked", "data": {"float32": [1, 0, 0]}}])
+        vectors.tag_resource(resourceArn=index_arn, tags={"classification": "private"})
+        expect_error("AccessDeniedException", client.query_vectors, **query)
+        vectors.untag_resource(resourceArn=index_arn, tagKeys=["classification"])
+        assert client.query_vectors(**query)["vectors"] == []
+        vectors.tag_resource(resourceArn=bucket_arn, tags={"environment": "production"})
+        expect_error("AccessDeniedException", client.query_vectors, **query)
+        vectors.untag_resource(resourceArn=bucket_arn, tagKeys=["environment"])
+        assert client.query_vectors(**query)["vectors"] == []
+        vectors.put_vector_bucket_policy(vectorBucketName=bucket, policy=json.dumps({"Version": "2012-10-17", "Statement": [
+            {"Effect": "Deny", "Principal": "*", "Action": "s3vectors:QueryVectors", "Resource": index_arn}]}))
+        expect_error("AccessDeniedException", client.query_vectors, **query)
+        expect_error("AccessDeniedException", client.create_vector_bucket,
+                     vectorBucketName="vector-iam-rejected", tags={"classification": "forbidden"})
+        expect_error("AccessDeniedException", client.create_vector_bucket,
+                     vectorBucketName="vector-iam-key-denied", tags={"forbidden-key": "value"})
+    finally:
+        vectors.delete_vector_bucket_policy(vectorBucketName=bucket)
+        vectors.delete_index(**target)
+        vectors.delete_vector_bucket(vectorBucketName=bucket)
+
+
 def test_invalid_credentials(cluster):
     client = boto3.client("s3vectors", endpoint_url=cluster["endpoint"], aws_access_key_id="unknown",
                           aws_secret_access_key="unknown", region_name="us-east-1")
     with pytest.raises(ClientError) as exc:
         client.list_vector_buckets()
     assert exc.value.response["ResponseMetadata"]["HTTPStatusCode"] == 403
+
+
+def test_vector_engine_observability(vectors, index, cluster):
+    vectors.query_vectors(**index, queryVector={"float32": [1, 0, 0, 0]}, topK=1)
+    with urllib.request.urlopen(cluster["vector_metrics"] + "/ready", timeout=5) as response:
+        assert response.status == 200
+    with urllib.request.urlopen(cluster["vector_metrics"] + "/metrics", timeout=5) as response:
+        metrics = response.read().decode()
+    assert "SeaweedFS_vector_connected 1" in metrics
+    assert any(line.startswith("SeaweedFS_vector_request_total{") and 'type="QueryVectors"' in line
+               and 'code="OK"' in line for line in metrics.splitlines())
+    assert "SeaweedFS_vector_request_seconds_bucket" in metrics
 
 
 def test_query_without_writer(vectors, index, cluster):
@@ -752,4 +802,6 @@ def test_engine_without_credentials(open_cluster):
                                          {"key": "b", "data": {"float32": [0, 1]}}])
     hits = client.query_vectors(**index, queryVector={"float32": [1, 0]}, topK=1)["vectors"]
     assert [h["key"] for h in hits] == ["a"]
+
+
 

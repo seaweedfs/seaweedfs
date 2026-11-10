@@ -95,6 +95,44 @@ fn schema_for(
     ]))
 }
 
+fn matches_index_schema(
+    dataset: &Dataset,
+    dimension: usize,
+    metric: pb::DistanceMetric,
+    non_filterable: &[String],
+) -> bool {
+    let Ok(layout) = VectorTable::resolve(dataset, Some(VECTOR_COLUMN), Some(KEY_COLUMN)) else {
+        return false;
+    };
+    let schema = Schema::from(dataset.schema());
+    let Ok(vector) = schema.field_with_name(VECTOR_COLUMN) else {
+        return false;
+    };
+    let Ok(metadata) = schema.field_with_name(METADATA_COLUMN) else {
+        return false;
+    };
+    let stored_keys = metadata
+        .metadata()
+        .get("non_filterable_metadata_keys")
+        .map(|keys| serde_json::from_str::<Vec<String>>(keys))
+        .transpose();
+    let Ok(stored_keys) = stored_keys else {
+        return false;
+    };
+    let mut stored_keys = stored_keys.unwrap_or_default();
+    let mut requested_keys = non_filterable.to_vec();
+    stored_keys.sort();
+    requested_keys.sort();
+    layout.dimension == dimension
+        && vector.metadata().get("distance_metric").map(String::as_str)
+            == Some(metric.as_str_name())
+        && stored_keys == requested_keys
+        && metadata
+            .metadata()
+            .get("ARROW:extension:name")
+            .is_some_and(|name| name == "lance.json")
+}
+
 fn batch_of(vectors: &[pb::Vector], dimension: usize, schema: Arc<Schema>) -> Result<RecordBatch> {
     let mut seen = std::collections::HashSet::new();
     for vector in vectors {
@@ -536,8 +574,28 @@ impl VectorService for VectorServer {
                 ..Default::default()
             }),
         )
-        .await
-        .map_err(internal)?;
+        .await;
+        let dataset = match dataset {
+            Ok(dataset) => dataset,
+            Err(error) => match self.open(&table).await {
+                Ok(existing)
+                    if matches_index_schema(
+                        &existing,
+                        dimension,
+                        metric,
+                        &req.non_filterable_metadata_keys,
+                    ) =>
+                {
+                    existing
+                }
+                Ok(_) => {
+                    return Err(Status::already_exists(
+                        "index exists with a different schema",
+                    ));
+                }
+                Err(_) => return Err(internal(error)),
+            },
+        };
         Ok(Response::new(pb::CreateIndexResponse {
             version: dataset.version().version,
         }))

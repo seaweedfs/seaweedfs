@@ -22,7 +22,9 @@ func newS3VectorsTestServer(t *testing.T) (*AdminServer, *s3tables.ManagerClient
 	server := s3vectors.NewServer(client, nil, nil)
 	server.SetRegion(s3tables.DefaultRegion)
 	server.SetAccountID(s3tables.DefaultAccountID)
-	return &AdminServer{s3VectorsServer: server}, client
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{"sseS3":true}`)) }))
+	t.Cleanup(gateway.Close)
+	return &AdminServer{s3VectorsServer: server, s3PublicEndpoint: gateway.URL}, client
 }
 
 // createS3VectorsIndexRecord writes the catalog record CreateIndex leaves
@@ -170,5 +172,81 @@ func TestS3VectorsBucketsStopAtTheListLimit(t *testing.T) {
 	}
 	if data.TotalBuckets != s3TablesAdminListLimit || !data.Truncated {
 		t.Fatalf("listed %d buckets (truncated %v), want the limit %d and truncated", data.TotalBuckets, data.Truncated, s3TablesAdminListLimit)
+	}
+}
+
+func TestS3VectorsManagementOperations(t *testing.T) {
+	s, _ := newS3VectorsTestServer(t)
+	w := s3VectorsRequest(t, s.CreateS3VectorsBucket, http.MethodPost, "/api/s3vectors/buckets", `{"name":"managed","encryptionConfiguration":{"sseType":"AES256"},"tags":{"env":"test"}}`)
+	if w.Code != http.StatusCreated {
+		t.Fatal(w.Code, w.Body)
+	}
+	summary, err := s.s3VectorsBucketSummary(t.Context(), "managed")
+	if err != nil || summary.Encryption != "AES256" {
+		t.Fatal(summary, err)
+	}
+	arn := summary.ARN
+	for _, body := range []string{
+		`{"operation":"TagResource","request":{"resourceArn":"` + arn + `","tags":{"team":"search"}}}`,
+		`{"operation":"ListTagsForResource","request":{"resourceArn":"` + arn + `"}}`,
+		`{"operation":"UntagResource","request":{"resourceArn":"` + arn + `","tagKeys":["team"]}}`,
+		`{"operation":"PutVectorBucketPolicy","request":{"vectorBucketName":"managed","policy":"{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":\"*\",\"Action\":\"s3vectors:QueryVectors\",\"Resource\":\"*\"}]}"}}`,
+		`{"operation":"DeleteVectorBucketPolicy","request":{"vectorBucketName":"managed"}}`,
+	} {
+		w := s3VectorsRequest(t, s.ExecuteS3VectorsOperationAPI, http.MethodPost, "/api/s3vectors/operations", body)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: %d %s", body, w.Code, w.Body)
+		}
+	}
+	for _, body := range []string{`{"operation":"Unknown","request":{}}`, `{bad json`} {
+		if w := s3VectorsRequest(t, s.ExecuteS3VectorsOperationAPI, http.MethodPost, "/api/s3vectors/operations", body); w.Code != http.StatusBadRequest {
+			t.Fatal(w.Code, w.Body)
+		}
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/s3vectors/operations", strings.NewReader(`{}`))
+	request = request.WithContext(WithAuthContext(request.Context(), "admin", "admin", "required-token"))
+	recorder := httptest.NewRecorder()
+	s.ExecuteS3VectorsOperationAPI(recorder, request)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatal("missing CSRF token accepted", recorder.Code)
+	}
+}
+
+func TestS3VectorsEncryptedCreationRequiresKey(t *testing.T) {
+	s, _ := newS3VectorsTestServer(t)
+	s.s3VectorsServer.SetEncryptionChecker(func() bool { return false })
+	w := s3VectorsRequest(t, s.CreateS3VectorsBucket, http.MethodPost, "/api/s3vectors/buckets", `{"name":"sealed","encryptionConfiguration":{"sseType":"AES256"}}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("encrypted bucket without key: %d %s", w.Code, w.Body)
+	}
+	data, err := s.GetS3VectorsBucketsData(t.Context())
+	if err != nil || len(data.Buckets) != 0 {
+		t.Fatalf("unusable bucket persisted: %+v %v", data, err)
+	}
+}
+
+func TestS3VectorsReadOnlyOperations(t *testing.T) {
+	s, _ := newS3VectorsTestServer(t)
+	s3VectorsRequest(t, s.CreateS3VectorsBucket, http.MethodPost, "/api/s3vectors/buckets", `{"name":"readable"}`)
+	summary, err := s.s3VectorsBucketSummary(t.Context(), "readable")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, role := range []string{"readonly", ""} {
+		for _, operation := range []string{"ListTagsForResource", "TagResource", "CreateIndex", "DeleteVectors"} {
+			body := fmt.Sprintf(`{"operation":%q,"request":{"resourceArn":%q}}`, operation, summary.ARN)
+			request := httptest.NewRequest(http.MethodPost, "/api/s3vectors/operations", strings.NewReader(body))
+			request = request.WithContext(WithAuthContext(request.Context(), "viewer", role, "token"))
+			request.Header.Set("X-CSRF-Token", "token")
+			w := httptest.NewRecorder()
+			s.ExecuteS3VectorsOperationAPI(w, request)
+			want := http.StatusForbidden
+			if operation == "ListTagsForResource" {
+				want = http.StatusOK
+			}
+			if w.Code != want {
+				t.Fatalf("%s: %d %s", operation, w.Code, w.Body)
+			}
+		}
 	}
 }

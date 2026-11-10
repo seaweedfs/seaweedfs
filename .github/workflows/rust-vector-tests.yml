@@ -87,22 +87,17 @@ jobs:
         # volume, filer, gateway, engine) under mutual TLS, read JWTs
         # required, and every chunk encrypted by the gateway.
         hardened: ["", "1"]
-        worker: [""]
+        worker: ["", "1"]
         # Worker: the admin server and the Lance maintenance worker join the
         # cluster, for the tests that build vector indexes through a job.
-        include:
-          - volume: go
-            hardened: ""
-            worker: "1"
-          - volume: rust
-            hardened: ""
-            worker: "1"
+
     env:
       CARGO_PROFILE_DEV_DEBUG: "0"
       CARGO_BUILD_JOBS: "2"
       CARGO_TARGET_DIR: ${{ github.workspace }}/seaweed-vector/target
       VOLUME_SERVER_IMPL: ${{ matrix.volume }}
       VECTOR_QUERY_MODE: single
+      VECTOR_FILER_GROUP: vectors-ci
       VECTOR_TLS: ${{ matrix.hardened }}
       VECTOR_READ_JWT: ${{ matrix.hardened }}
       VECTOR_ENCRYPT_VOLUMES: ${{ matrix.hardened }}
