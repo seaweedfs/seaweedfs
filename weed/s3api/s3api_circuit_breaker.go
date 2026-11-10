@@ -193,13 +193,17 @@ func (cb *CircuitBreaker) waitForUploadSlot(w http.ResponseWriter, r *http.Reque
 	if err == nil {
 		return true
 	}
+	// Reject without draining the body, which would also send an
+	// Expect: 100-continue client the go-ahead to upload it.
+	rejected := r.WithContext(r.Context())
+	rejected.Body = http.NoBody
 	if r.Context().Err() != nil {
 		glog.V(1).Infof("upload from %s cancelled while waiting for an upload slot: %v", r.RemoteAddr, err)
-		s3err.WriteErrorResponse(w, r, s3err.ErrClientDisconnected)
+		s3err.WriteErrorResponse(w, rejected, s3err.ErrClientDisconnected)
 		return false
 	}
 	glog.V(1).Infof("reject upload from %s: no upload slot within %v", r.RemoteAddr, s3a.option.InflightUploadDataTimeout)
-	s3err.WriteErrorResponse(w, r, s3err.ErrTooManyRequest)
+	s3err.WriteErrorResponse(w, rejected, s3err.ErrTooManyRequest)
 	return false
 }
 

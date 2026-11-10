@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -219,6 +220,18 @@ func putRequest(ctx context.Context, size int) *http.Request {
 	return httptest.NewRequest(http.MethodPut, "/bucket/object", strings.NewReader(strings.Repeat("x", size))).WithContext(ctx)
 }
 
+type readRecorder struct {
+	r    io.Reader
+	read bool
+}
+
+func (b *readRecorder) Read(p []byte) (int, error) {
+	b.read = true
+	return b.r.Read(p)
+}
+
+func (b *readRecorder) Close() error { return nil }
+
 func holdUploadSlot(t *testing.T, cb *CircuitBreaker, size int) (release func()) {
 	entered, done := make(chan struct{}), make(chan struct{})
 	finished := make(chan struct{})
@@ -250,10 +263,16 @@ func TestLimitUploadSlotWait(t *testing.T) {
 		ran := false
 		h, _ := cb.Limit(func(w http.ResponseWriter, r *http.Request) { ran = true }, s3_constants.ACTION_WRITE)
 		rec := httptest.NewRecorder()
+		body := &readRecorder{r: strings.NewReader("0123456789")}
+		req := putRequest(context.Background(), 10)
+		req.Body = body
 		start := time.Now()
-		h(rec, putRequest(context.Background(), 10))
+		h(rec, req)
 		if ran {
 			t.Fatal("upload ran without a free slot")
+		}
+		if body.read {
+			t.Fatal("rejected upload body was read")
 		}
 		if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "SlowDown") {
 			t.Fatalf("got %d %q, want 503 SlowDown", rec.Code, rec.Body.String())
