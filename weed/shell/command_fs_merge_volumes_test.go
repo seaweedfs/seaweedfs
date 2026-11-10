@@ -542,17 +542,60 @@ func TestRecordPlanSources(t *testing.T) {
 	plan := &mergePlan{targets: map[needle.VolumeId][]needle.VolumeId{
 		needle.VolumeId(203): {needle.VolumeId(187)},
 	}}
-	chunk := func(vid uint32) *filer_pb.FileChunk {
-		return &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: vid}}
+	c := newMergeCmd(250000,
+		&master_pb.VolumeInformationMessage{Id: 203, Collection: "b"},
+		&master_pb.VolumeInformationMessage{Id: 187, Collection: "b"},
+		&master_pb.VolumeInformationMessage{Id: 5, Collection: "other"})
+	planCollections := map[string]bool{"b": true}
+	chunk := func(vid uint32, key uint64) *filer_pb.FileChunk {
+		fid := &filer_pb.FileId{VolumeId: vid, FileKey: key, Cookie: 7}
+		return &filer_pb.FileChunk{Fid: fid, FileId: needle.NewFileId(needle.VolumeId(vid), key, 7).String(), Size: 10}
 	}
-	seen := newSourceNeedleCounter()
-	if recordPlanSources(plan, seen, []*filer_pb.FileChunk{chunk(187), chunk(5)}) {
-		t.Fatal("chunks off plan sources must not be reported")
+
+	blob, err := proto.Marshal(&filer_pb.FileChunkManifest{Chunks: []*filer_pb.FileChunk{chunk(203, 2)}})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !recordPlanSources(plan, seen, []*filer_pb.FileChunk{chunk(203), chunk(187), chunk(203)}) {
-		t.Fatal("chunks on a plan source must be reported")
+	volumeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(blob)
+	}))
+	defer volumeServer.Close()
+	lookupFn := func(_ context.Context, fileId string) ([]string, error) {
+		return []string{volumeServer.URL + "/" + fileId}, nil
 	}
-	if got := seen.count(needle.VolumeId(203)); got != 2 {
-		t.Fatalf("source 203 counted %d times, want 2", got)
+	manifest := func(vid uint32) *filer_pb.FileChunk {
+		m := chunk(vid, 1)
+		m.IsChunkManifest = true
+		return m
+	}
+
+	for _, tc := range []struct {
+		name   string
+		chunks []*filer_pb.FileChunk
+		found  bool
+		count  int
+	}{
+		{"off plan sources", []*filer_pb.FileChunk{chunk(187, 1), chunk(5, 1)}, false, 0},
+		{"on a plan source", []*filer_pb.FileChunk{chunk(203, 1), chunk(187, 2), chunk(203, 3)}, true, 2},
+		{"behind a manifest off the source", []*filer_pb.FileChunk{manifest(187)}, true, 1},
+		{"manifest outside the plan collections", []*filer_pb.FileChunk{manifest(5)}, false, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			seen := newSourceNeedleCounter()
+			found, err := c.recordPlanSources(context.Background(), lookupFn, plan, planCollections, seen, tc.chunks)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if found != tc.found || seen.count(needle.VolumeId(203)) != tc.count {
+				t.Fatalf("found %v with %d references to 203, want %v with %d", found, seen.count(needle.VolumeId(203)), tc.found, tc.count)
+			}
+		})
+	}
+
+	unreachable := func(_ context.Context, fileId string) ([]string, error) {
+		return nil, fmt.Errorf("volume of %s unavailable", fileId)
+	}
+	if _, err := c.recordPlanSources(context.Background(), unreachable, plan, planCollections, newSourceNeedleCounter(), []*filer_pb.FileChunk{manifest(187)}); err == nil {
+		t.Fatal("an unreadable manifest must be reported")
 	}
 }

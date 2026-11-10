@@ -180,7 +180,10 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 			// commit the object with them, so moving the chunk would leave the
 			// object pointing at the deleted source needle.
 			if isMultipartUploadFile(bucketsPath, parentPath) {
-				if recordPlanSources(plan, seen, entry.Chunks) {
+				found, rErr := c.recordPlanSources(context.Background(), lookupFn, plan, planCollections, seen, entry.Chunks)
+				if rErr != nil {
+					fmt.Printf("skip %s: part of an in-progress multipart upload, manifest unreadable: %v\n", entryPath, rErr)
+				} else if found {
 					fmt.Printf("skip %s: part of an in-progress multipart upload\n", entryPath)
 				}
 				return nil
@@ -314,9 +317,19 @@ func isMultipartUploadFile(bucketsPath string, dir util.FullPath) bool {
 	return parent == path.Clean(bucketsPath)
 }
 
-// recordPlanSources counts the chunks on plan sources as referenced and
-// reports whether there were any.
-func recordPlanSources(plan *mergePlan, seen *sourceNeedleCounter, chunks []*filer_pb.FileChunk) bool {
+// recordPlanSources counts the chunks on plan sources as referenced, including
+// those behind a manifest that may reference the plan, and reports whether
+// there were any.
+func (c *commandFsMergeVolumes) recordPlanSources(ctx context.Context, lookupFn wdclient.LookupFileIdFunctionType, plan *mergePlan, planCollections map[string]bool, seen *sourceNeedleCounter, chunks []*filer_pb.FileChunk) (bool, error) {
+	if slices.ContainsFunc(chunks, func(chunk *filer_pb.FileChunk) bool {
+		return chunk.IsChunkManifest && c.manifestMayReferencePlan(plan, planCollections, needle.VolumeId(chunk.Fid.GetVolumeId()))
+	}) {
+		dataChunks, manifestChunks, err := filer.ResolveChunkManifest(ctx, lookupFn, chunks, 0, math.MaxInt64, nil)
+		if err != nil {
+			return false, err
+		}
+		chunks = slices.Concat(chunks, dataChunks, manifestChunks)
+	}
 	found := false
 	for _, chunk := range chunks {
 		if vid := needle.VolumeId(chunk.Fid.GetVolumeId()); plan.isSource(vid) {
@@ -324,7 +337,7 @@ func recordPlanSources(plan *mergePlan, seen *sourceNeedleCounter, chunks []*fil
 			found = true
 		}
 	}
-	return found
+	return found, nil
 }
 
 // warnUnreferencedSources warns when a plan source's index still holds needles
