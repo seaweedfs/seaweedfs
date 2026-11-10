@@ -283,3 +283,55 @@ func TestLocateEcShardNeedleMatchesInterval(t *testing.T) {
 	expectedIntervals := ev.LocateEcShardNeedleInterval(needle.GetCurrentVersion(), offset.ToActualOffset(), size)
 	assert.Equal(t, expectedIntervals, intervals)
 }
+
+func TestLocateEcShardNeedleWithoutLocalShards(t *testing.T) {
+	ecxFile, err := os.OpenFile("./test_files/389.ecx", os.O_RDONLY, 0)
+	assert.NoError(t, err)
+	defer ecxFile.Close()
+
+	stat, err := ecxFile.Stat()
+	assert.NoError(t, err)
+	fileSize := stat.Size()
+
+	needleId, _ := types.ParseNeedleId("0f0edb92")
+
+	// Case 1: Volume with datFileSize > 0 has unmounted its last local shard (Shards is empty).
+	// Shard size is derived from datFileSize and does not require local shards to locate intervals.
+	evWithDatFileSize := &EcVolume{
+		VolumeId:    needle.VolumeId(389),
+		ecxFile:     ecxFile,
+		ecxFileSize: fileSize,
+		datFileSize: 1118830592 * 10,
+		Shards:      []*EcVolumeShard{},
+		ECContext:   NewDefaultECContext("", 389),
+	}
+
+	offset, size, intervals, err := evWithDatFileSize.LocateEcShardNeedle(needleId, needle.GetCurrentVersion())
+	assert.NoError(t, err)
+	assert.NotEmpty(t, intervals)
+
+	expectedIntervals := evWithDatFileSize.LocateEcShardNeedleInterval(needle.GetCurrentVersion(), offset.ToActualOffset(), size)
+	assert.Equal(t, expectedIntervals, intervals)
+
+	// Case 2: Legacy volume (datFileSize == 0) whose shards have all unmounted.
+	// It should return an error and nil intervals instead of panicking with index out of range.
+	evLegacyNoShards := &EcVolume{
+		VolumeId:    needle.VolumeId(389),
+		ecxFile:     ecxFile,
+		ecxFileSize: fileSize,
+		datFileSize: 0,
+		Shards:      []*EcVolumeShard{},
+		ECContext:   NewDefaultECContext("", 389),
+	}
+
+	assert.NotPanics(t, func() {
+		intervals := evLegacyNoShards.LocateEcShardNeedleInterval(needle.GetCurrentVersion(), offset.ToActualOffset(), size)
+		assert.Nil(t, intervals)
+	})
+
+	assert.NotPanics(t, func() {
+		_, _, intervals, err := evLegacyNoShards.LocateEcShardNeedle(needleId, needle.GetCurrentVersion())
+		assert.Error(t, err)
+		assert.Nil(t, intervals)
+	})
+}

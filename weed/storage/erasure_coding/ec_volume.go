@@ -1010,25 +1010,35 @@ func (ev *EcVolume) LocateEcShardNeedle(needleId types.NeedleId, version needle.
 	}
 
 	intervals = ev.LocateEcShardNeedleInterval(version, offset.ToActualOffset(), size)
+	if intervals == nil {
+		return offset, size, nil, fmt.Errorf("no mounted shards to locate interval")
+	}
 	return
 }
 
 func (ev *EcVolume) LocateEcShardNeedleInterval(version needle.Version, offset int64, size types.Size) (intervals []Interval) {
-	shard := ev.Shards[0]
+	ecContext := ev.ECContext
+	if ecContext == nil {
+		ecContext = NewDefaultECContext(ev.Collection, ev.VolumeId)
+	}
 	var shardSize int64
 	if ev.datFileSize > 0 {
 		// Use datFileSize to calculate the shardSize to match the EC encoding logic.
 		// This is the authoritative value stored in .vif during EC encoding.
-		shardSize = ev.datFileSize / int64(ev.ECContext.DataShards)
+		shardSize = ev.datFileSize / int64(ecContext.DataShards)
 	} else {
 		// Fallback for old EC volumes without datFileSize in .vif.
 		// Subtract 1 to handle the ambiguous case where ecdFileSize is an exact
 		// multiple of ErasureCodingLargeBlockSize but the data is actually in small
 		// blocks (e.g., datFileSize was just under DataShards*ErasureCodingLargeBlockSize).
+		if len(ev.Shards) == 0 {
+			return nil
+		}
+		shard := ev.Shards[0]
 		shardSize = shard.ecdFileSize - 1
 	}
 	// calculate the locations in the ec shards
-	intervals = LocateData(ev.ECContext.LargeBlockSize(), ev.ECContext.SmallBlockSize(), shardSize, offset, types.Size(needle.GetActualSize(size, version)))
+	intervals = LocateData(ecContext.LargeBlockSize(), ecContext.SmallBlockSize(), shardSize, offset, types.Size(needle.GetActualSize(size, version)))
 
 	return
 }
@@ -1036,7 +1046,11 @@ func (ev *EcVolume) LocateEcShardNeedleInterval(version needle.Version, offset i
 // IntervalToShardIdAndOffset resolves an interval against this volume's shard
 // block layout.
 func (ev *EcVolume) IntervalToShardIdAndOffset(interval Interval) (ShardId, int64) {
-	return interval.ToShardIdAndOffset(ev.ECContext.LargeBlockSize(), ev.ECContext.SmallBlockSize())
+	ecContext := ev.ECContext
+	if ecContext == nil {
+		ecContext = NewDefaultECContext(ev.Collection, ev.VolumeId)
+	}
+	return interval.ToShardIdAndOffset(ecContext.LargeBlockSize(), ecContext.SmallBlockSize())
 }
 
 func (ev *EcVolume) FindNeedleFromEcx(needleId types.NeedleId) (offset types.Offset, size types.Size, err error) {
