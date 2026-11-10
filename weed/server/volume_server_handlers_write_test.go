@@ -209,7 +209,12 @@ func TestPostHandlerForwardsAContentMd5TheReplicaAccepts(t *testing.T) {
 
 			resp := httptest.NewRecorder()
 			vs.PostHandler(resp, req)
-			forwarded := <-replicaResp
+			var forwarded *httptest.ResponseRecorder
+			select {
+			case forwarded = <-replicaResp:
+			default:
+				t.Fatalf("primary did not forward the write: %d %s", resp.Code, resp.Body.String())
+			}
 			require.Equal(t, http.StatusCreated, forwarded.Code, forwarded.Body.String())
 			require.Equal(t, http.StatusCreated, resp.Code, resp.Body.String())
 			require.Equal(t, clientMd5, resp.Header().Get("Content-MD5"))
