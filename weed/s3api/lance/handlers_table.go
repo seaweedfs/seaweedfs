@@ -383,6 +383,7 @@ func (s *Server) handleRegisterTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	restore := true
 	existing, err := s.loadLanceTable(r, bucket, ns, name)
 	switch {
 	case err != nil && !isNotFound(err):
@@ -435,11 +436,14 @@ func (s *Server) handleRegisterTable(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		restore = deregistered
 	}
 
 	// Registering a deregistered dataset brings it back.
-	if err := s.removeMarker(r, location, deregisteredMarker); err != nil {
-		glog.V(2).Infof("lance: could not clear %s for %s: %v", deregisteredMarker, location, err)
+	if restore {
+		if err := s.removeMarker(r, location, deregisteredMarker); err != nil {
+			glog.V(2).Infof("lance: could not clear %s for %s: %v", deregisteredMarker, location, err)
+		}
 	}
 
 	writeJSON(w, http.StatusOK, RegisterTableResponse{
