@@ -95,12 +95,15 @@ func TestUpdateAfterRenameAcrossNamespacesRefusesAnotherTablesDirectory(t *testi
 
 // A table created under the renamed table's old name has its entry on that
 // directory and its files in a directory of its own, so the renamed table still
-// keeps its files there alone.
+// keeps its files there alone. The record is seeded rather than created, since
+// a rename may keep the old name taken.
 func TestUpdateAfterRenameAcrossNamespacesKeepsItsDirectoryUnderANewTableOfTheOldName(t *testing.T) {
 	ctx := context.Background()
 	fs, m := renamedAcrossNamespaces(t)
-	require.NoError(t, m.Execute(ctx, NewManagerClient(fs.Client), "CreateTable", &CreateTableRequest{TableBucketARN: mustBucketARN(t),
-		Namespace: []string{"ns"}, Name: "t", Format: "ICEBERG"}, nil, ""))
+	meta, err := json.Marshal(tableMetadataInternal{Name: "t", Namespace: "ns", Format: "ICEBERG", OwnerAccountID: DefaultAccountID,
+		MetadataVersion: 1, WarehouseLocation: "s3://" + renameTestBucket + "/ns/t-fresh"})
+	require.NoError(t, err)
+	fs.Put(GetNamespacePath(renameTestBucket, "ns"), "t", map[string][]byte{ExtendedKeyMetadata: meta})
 
 	location := "s3://" + renameTestBucket + "/ns/t/metadata/v4.metadata.json"
 	require.NoError(t, updateTableAt(ctx, t, m, fs, "ns2", location))
