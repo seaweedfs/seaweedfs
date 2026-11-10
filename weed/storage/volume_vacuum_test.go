@@ -405,6 +405,9 @@ func TestCleanupCompactRemovesTempFiles(t *testing.T) {
 	if err := tempVolume.cleanupCompact(); err != nil {
 		t.Fatalf("cleanupCompact: %v", err)
 	}
+	if tempVolume.isCompactionInProgress.Load() {
+		t.Fatal("cleanupCompact kept the volume claimed")
+	}
 
 	if _, err := os.Stat(filepath.Join(dir, "1.cpd")); !os.IsNotExist(err) {
 		t.Fatalf("expected cleanup to remove .cpd, got err=%v", err)

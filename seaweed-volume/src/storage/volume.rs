@@ -6156,10 +6156,11 @@ impl Volume {
 
     /// Clean up leftover compaction files (.cpd, .cpx).
     pub fn cleanup_compact(&self) -> Result<(), VolumeError> {
-        // An in-flight copy is still writing .cpd/.cpx.
-        if self.is_compacting() {
+        // An in-flight copy is still writing .cpd/.cpx; claim the volume so
+        // none starts while the files are removed.
+        let Some(_claim) = CompactionClaim::try_claim(&self.is_compacting) else {
             return Err(self.compacting_error());
-        }
+        };
         // Refuse to unlink .cpd/.cpx while a .cpc marker exists: those temp files
         // are the only inputs reconcile can roll forward to, so removing them
         // mid-commit would strand a decided swap.

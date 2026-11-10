@@ -407,10 +407,12 @@ func (v *Volume) reconcileCompactState() error {
 func (v *Volume) cleanupCompact() error {
 	glog.V(0).Infof("Cleaning up volume %d vacuuming...", v.Id)
 
-	// An in-flight copy is still writing .cpd/.cpx.
-	if v.isCompactionInProgress.Load() {
+	// An in-flight copy is still writing .cpd/.cpx; claim the volume so
+	// none starts while the files are removed.
+	if !v.isCompactionInProgress.CompareAndSwap(false, true) {
 		return v.compactingError()
 	}
+	defer v.isCompactionInProgress.Store(false)
 
 	// Serialize with CommitCompact's swap and refuse to unlink .cpd/.cpx while a
 	// .cpc marker exists: those temp files are the only inputs reconcile can roll
