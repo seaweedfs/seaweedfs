@@ -242,3 +242,49 @@ func TestScanEntriesFailsWhenRevisionCompacted(t *testing.T) {
 		t.Fatalf("a compacted scan must fail, not fall back to the walk: %v", err)
 	}
 }
+
+func TestScanEntriesRejectsSanitizedPathOfAnotherEntry(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		paths   []util.FullPath
+		lateDup bool
+		wantErr bool
+	}{
+		{name: "free", paths: []util.FullPath{"/\xc3\x28xyz/name"}},
+		{name: "stored entry", paths: []util.FullPath{"/\xc3\x28xyz/name", "/_(xyz/name"}, wantErr: true},
+		{name: "two invalid directories", paths: []util.FullPath{"/a\xff/b", "/a\xfe/b"}, wantErr: true},
+		{name: "created after the scan revision", paths: []util.FullPath{"/\xc3\x28xyz/name"}, lateDup: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			withScanPageSize(t, 1)
+			m := newFakeMVCC()
+			for _, p := range tc.paths {
+				m.putEntry(t, p, false)
+			}
+			if tc.lateDup {
+				m.beforeGet = func(gets int) {
+					if gets == 2 {
+						m.putEntry(t, "/_(xyz/name", false)
+					}
+				}
+			}
+			var seen []util.FullPath
+			err := scanEntries(context.Background(), m, testKeyPrefix, "/", func(_ context.Context, entry *filer.Entry) error {
+				seen = append(seen, entry.FullPath)
+				return nil
+			})
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("scan succeeded with %v, want a collision error", seen)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(seen) != 1 || seen[0] != "/_(xyz/name" {
+				t.Fatalf("seen %v", seen)
+			}
+		})
+	}
+}

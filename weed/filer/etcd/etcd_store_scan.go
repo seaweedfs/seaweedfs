@@ -58,15 +58,16 @@ func scanEntries(ctx context.Context, kv clientv3.KV, keyPrefix string, dirPath 
 	if dirPath != "/" {
 		prefixes = []string{string(genDirectoryKeyPrefix(dirPath, "")), string(dirPath) + "/"}
 	}
+	sanitized := map[weed_util.FullPath]struct{}{}
 	for _, prefix := range prefixes {
-		if err := scanPrefix(scanCtx, kv, keyPrefix, prefix, dirPath, rev, fn); err != nil {
+		if err := scanPrefix(scanCtx, kv, keyPrefix, prefix, dirPath, rev, sanitized, fn); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func scanPrefix(ctx context.Context, kv clientv3.KV, keyPrefix, prefix string, dirPath weed_util.FullPath, rev int64, fn func(ctx context.Context, entry *filer.Entry) error) error {
+func scanPrefix(ctx context.Context, kv clientv3.KV, keyPrefix, prefix string, dirPath weed_util.FullPath, rev int64, sanitized map[weed_util.FullPath]struct{}, fn func(ctx context.Context, entry *filer.Entry) error) error {
 	end := clientv3.GetPrefixRangeEnd(keyPrefix + prefix)
 	for start := keyPrefix + prefix; ; {
 		resp, err := kv.Get(ctx, start, clientv3.WithRange(end), clientv3.WithLimit(scanPageSize), clientv3.WithRev(rev))
@@ -84,7 +85,8 @@ func scanPrefix(ctx context.Context, kv clientv3.KV, keyPrefix, prefix string, d
 			}
 			// Names are sanitized when stored, directories are not; the stream
 			// needs valid UTF-8, and fsck must still count the chunks.
-			dir := weed_util.SanitizeUTF8Name(string(key[:len(key)-len(name)-1]))
+			rawDir := string(key[:len(key)-len(name)-1])
+			dir := weed_util.SanitizeUTF8Name(rawDir)
 			entry := &filer.Entry{FullPath: weed_util.NewFullPath(dir, name)}
 			if err := entry.DecodeAttributesAndChunks(weed_util.MaybeDecompressData(item.Value)); err != nil {
 				return fmt.Errorf("scan decode %s: %v", entry.FullPath, err)
@@ -92,6 +94,11 @@ func scanPrefix(ctx context.Context, kv clientv3.KV, keyPrefix, prefix string, d
 			// A hard-link record is stored under its own id (filer.NewHardLinkId).
 			if bytes.Equal(entry.HardLinkId, key) {
 				continue
+			}
+			if dir != rawDir {
+				if err := claimSanitizedPath(ctx, kv, keyPrefix, rev, entry.FullPath, weed_util.NewFullPath(rawDir, name), sanitized); err != nil {
+					return err
+				}
 			}
 			if err := fn(ctx, entry); err != nil {
 				return err
@@ -102,4 +109,23 @@ func scanPrefix(ctx context.Context, kv clientv3.KV, keyPrefix, prefix string, d
 		}
 		start = string(resp.Kvs[len(resp.Kvs)-1].Key) + "\x00"
 	}
+}
+
+// claimSanitizedPath fails the scan when the path an entry is reported under
+// names a different entry, so acting on it (fsck deleting it) cannot reach
+// another file.
+func claimSanitizedPath(ctx context.Context, kv clientv3.KV, keyPrefix string, rev int64, p, rawPath weed_util.FullPath, sanitized map[weed_util.FullPath]struct{}) error {
+	_, taken := sanitized[p]
+	if !taken {
+		resp, err := kv.Get(ctx, keyPrefix+string(genKey(p.DirAndName())), clientv3.WithRev(rev), clientv3.WithKeysOnly())
+		if err != nil {
+			return fmt.Errorf("scan lookup %s: %w", p, err)
+		}
+		taken = len(resp.Kvs) > 0
+	}
+	if taken {
+		return fmt.Errorf("scan: entry %q has a directory that is not valid UTF-8 and would be reported as %s, which names another entry; rename or delete one of them", string(rawPath), p)
+	}
+	sanitized[p] = struct{}{}
+	return nil
 }
