@@ -34,6 +34,19 @@ func startMiniVector() error {
 	if bindIP == "" {
 		bindIP = *miniIp
 	}
+	if net.ParseIP(bindIP) == nil {
+		ctx, cancel := context.WithTimeout(miniClientsCtx(), 5*time.Second)
+		addresses, err := net.DefaultResolver.LookupIPAddr(ctx, bindIP)
+		cancel()
+		if err != nil {
+			return fmt.Errorf("resolve vector bind address %s: %w", bindIP, err)
+		}
+		if len(addresses) == 0 {
+			return fmt.Errorf("vector bind address %s has no IP addresses", bindIP)
+		}
+		bindIP = addresses[0].String()
+	}
+
 	args := []string{"--listen=" + util.JoinHostPort(bindIP, *miniVectorPort), "--advertise=" + address, "--masters=" + string(pb.NewServerAddress(*miniIp, *miniMasterOptions.port, *miniMasterOptions.portGrpc))}
 	if miniFilerOptions.filerGroup != nil && *miniFilerOptions.filerGroup != "" {
 		args = append(args, "--filer-group="+*miniFilerOptions.filerGroup)

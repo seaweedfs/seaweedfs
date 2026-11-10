@@ -180,8 +180,12 @@ func (d *vectorDiscovery) cli(ctx context.Context) (vector_pb.VectorServiceClien
 func (d *vectorDiscovery) CreateIndex(ctx context.Context, in *vector_pb.CreateIndexRequest, opts ...grpc.CallOption) (resp *vector_pb.CreateIndexResponse, err error) {
 	for attempt := 0; attempt < 2; attempt++ {
 		var c vector_pb.VectorServiceClient
-		if c, err = d.cli(ctx); err != nil {
-			return nil, err
+		var resolveErr error
+		if c, resolveErr = d.cli(ctx); resolveErr != nil {
+			if attempt > 0 {
+				return nil, err
+			}
+			return nil, resolveErr
 		}
 		resp, err = c.CreateIndex(ctx, in, opts...)
 		if isTransportError(err) {

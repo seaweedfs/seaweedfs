@@ -1202,10 +1202,16 @@ func (s *Server) handleCreateIndex(w http.ResponseWriter, r *http.Request) {
 		NonFilterableMetadataKeys: nonFilterable,
 	})
 	if err != nil {
-		// Roll the index record back so a half-created index does not linger.
-		// The delete runs past a client disconnect and only removes the record
-		// this request created: the nonce must match, and the versionToken
-		// compare-and-swap keeps a racing create from being erased.
+		if !errors.Is(err, errNoVectorWorker) {
+			switch status.Code(err) {
+			case codes.InvalidArgument, codes.PermissionDenied, codes.Unauthenticated, codes.FailedPrecondition, codes.AlreadyExists, codes.NotFound, codes.OutOfRange, codes.Unimplemented:
+			default:
+				vectorErr(w, r, arns, err)
+				return
+			}
+		}
+		// Only definite failures roll back; an unknown outcome may have committed.
+		// The nonce and version token protect a concurrent replacement.
 		ctx := context.WithoutCancel(r.Context())
 		var rec map[string]interface{}
 		if gerr := s.internalCatalog(ctx, "GetTable", &s3tables.GetTableRequest{
