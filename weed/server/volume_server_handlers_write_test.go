@@ -158,10 +158,14 @@ func TestPostHandlerForwardsAContentMd5TheReplicaAccepts(t *testing.T) {
 	tagged = append(tagged, plain[2:]...)
 
 	vid := needle.VolumeId(849300201)
-	replicaVs := &VolumeServer{store: newTraversalTestStore(t.TempDir()), fileSizeLimitBytes: 1 << 20}
-	t.Cleanup(replicaVs.store.Close)
-	_, err := replicaVs.AllocateVolume(context.Background(), &volume_server_pb.AllocateVolumeRequest{VolumeId: uint32(vid), Replication: "001", Version: uint32(needle.GetCurrentVersion())})
-	require.NoError(t, err)
+	allocate := func(vs *VolumeServer) {
+		vs.store = newTraversalTestStore(t.TempDir())
+		t.Cleanup(vs.store.Close)
+		_, err := vs.AllocateVolume(context.Background(), &volume_server_pb.AllocateVolumeRequest{VolumeId: uint32(vid), Replication: "001", Version: uint32(needle.GetCurrentVersion())})
+		require.NoError(t, err)
+	}
+	replicaVs := &VolumeServer{fileSizeLimitBytes: 1 << 20}
+	allocate(replicaVs)
 	replicaVs.guard = security.NewGuard(nil, "", 0, "", 0)
 	replicaResp := make(chan *httptest.ResponseRecorder, 1)
 	replica := newProxyTestHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -172,7 +176,10 @@ func TestPostHandlerForwardsAContentMd5TheReplicaAccepts(t *testing.T) {
 		_, _ = w.Write(rec.Body.Bytes())
 	}))
 
-	vs := newProxyTestVolumeServer(t, vid.String(), []*master_pb.Location{{Url: strings.TrimPrefix(replica.URL, "http://")}}, nil)
+	primary := &master_pb.Location{}
+	vs := newProxyTestVolumeServer(t, vid.String(), []*master_pb.Location{primary, {Url: strings.TrimPrefix(replica.URL, "http://")}}, nil)
+	allocate(vs)
+	primary.Url = util.JoinHostPort(vs.store.Ip, vs.store.Port)
 	vs.guard = security.NewGuard(nil, "", 0, "", 0)
 	vs.fileSizeLimitBytes = 1 << 20
 
@@ -224,10 +231,15 @@ func TestPostHandlerForwardsAContentMd5TheReplicaAccepts(t *testing.T) {
 				require.Equal(t, clientMd5, forwarded.Header().Get("Content-MD5"))
 			}
 
-			stored := &needle.Needle{Id: fid.Key, Cookie: fid.Cookie}
-			_, err = replicaVs.store.ReadVolumeNeedle(vid, stored, nil, nil)
-			require.NoError(t, err)
-			require.Equal(t, tc.rewritten, !bytes.Equal(stored.Data, tc.data))
+			stored := func(s *storage.Store) []byte {
+				n := &needle.Needle{Id: fid.Key, Cookie: fid.Cookie}
+				_, err := s.ReadVolumeNeedle(vid, n, nil, nil)
+				require.NoError(t, err)
+				return n.Data
+			}
+			replicaData := stored(replicaVs.store)
+			require.Equal(t, stored(vs.store), replicaData)
+			require.Equal(t, tc.rewritten, !bytes.Equal(replicaData, tc.data))
 		})
 	}
 }
