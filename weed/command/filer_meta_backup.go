@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/spf13/viper"
+	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -31,6 +32,7 @@ type FilerMetaBackupOptions struct {
 	excludePrefixes   *string
 	restart           *bool
 	backupFilerConfig *string
+	entriesPerSecond  *int
 
 	pathFilter  *util.PathPrefixFilter
 	store       filer.FilerStore
@@ -46,11 +48,12 @@ func init() {
 	metaBackup.excludePrefixes = cmdFilerMetaBackup.Flag.String("excludePrefixes", "", "comma-separated path prefixes to exclude from backup")
 	metaBackup.restart = cmdFilerMetaBackup.Flag.Bool("restart", false, "copy the full metadata before async incremental backup")
 	metaBackup.backupFilerConfig = cmdFilerMetaBackup.Flag.String("config", "", "path to filer.toml specifying backup filer store")
+	metaBackup.entriesPerSecond = cmdFilerMetaBackup.Flag.Int("entriesPerSecond", 0, "limit how many entries per second the full metadata copy reads from the filer, 0 means unlimited")
 	metaBackup.clientId = util.RandomInt32()
 }
 
 var cmdFilerMetaBackup = &Command{
-	UsageLine: "filer.meta.backup [-filer=localhost:8888] [-filerDir=/] [-includePrefixes=...] [-excludePrefixes=...] [-restart] -config=/path/to/backup_filer.toml",
+	UsageLine: "filer.meta.backup [-filer=localhost:8888] [-filerDir=/] [-includePrefixes=...] [-excludePrefixes=...] [-restart] [-entriesPerSecond=0] -config=/path/to/backup_filer.toml",
 	Short:     "continuously backup filer meta data changes to anther filer store specified in a backup_filer.toml",
 	Long: `continuously backup filer meta data changes.
 The backup writes to another filer store specified in a backup_filer.toml.
@@ -62,7 +65,8 @@ The -includePrefixes and -excludePrefixes flags accept comma-separated path pref
 Paths must be absolute (start with '/'). Matching is at directory boundaries.
 When both match, the deeper prefix wins.
 
-An interrupted metadata copy continues from where it stopped.
+An interrupted metadata copy continues from where it stopped. Use
+-entriesPerSecond to lighten the load the copy puts on the filer.
   `,
 }
 
@@ -217,8 +221,15 @@ func (metaBackup *FilerMetaBackupOptions) traverseMetadata() (err error) {
 	if err != nil && !errors.Is(err, filer.ErrKvNotFound) {
 		return fmt.Errorf("read metadata walk progress: %w", err)
 	}
+	limiter := rate.NewLimiter(rate.Inf, 0)
+	if *metaBackup.entriesPerSecond > 0 {
+		limiter = rate.NewLimiter(rate.Limit(*metaBackup.entriesPerSecond), *metaBackup.entriesPerSecond)
+	}
 	lastSaved := time.Now()
 	return filer_pb.TraverseDfs(ctx, metaBackup, util.FullPath(*metaBackup.filerDirectory), util.FullPath(resumeAfter), func(parentPath util.FullPath, entry *filer_pb.Entry) error {
+		if err := limiter.Wait(ctx); err != nil {
+			return err
+		}
 		fullpath := string(parentPath.Child(entry.Name))
 		if !metaBackup.shouldInclude(fullpath) {
 			return nil
