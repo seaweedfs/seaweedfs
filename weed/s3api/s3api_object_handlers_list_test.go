@@ -127,6 +127,15 @@ func (c *markerEchoFilerClient) ListEntries(ctx context.Context, in *filer_pb.Li
 	return &testListEntriesStream{entries: filtered}, nil
 }
 
+func (c *markerEchoFilerClient) LookupDirectoryEntry(ctx context.Context, in *filer_pb.LookupDirectoryEntryRequest, opts ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	for _, e := range c.entriesByDir[in.Directory] {
+		if e.Name == in.Name {
+			return &filer_pb.LookupDirectoryEntryResponse{Entry: e}, nil
+		}
+	}
+	return nil, filer_pb.ErrNotFound
+}
+
 func ensureEntryAttributes(entries []*filer_pb.Entry) {
 	for _, entry := range entries {
 		if entry == nil {
@@ -1477,4 +1486,78 @@ func TestDoListFilerEntries_DirKeyObjectBoundaryTruncates(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, []string{"/a/x"}, seen)
 	assert.False(t, cursor.isTruncated)
+}
+
+type requestRecordingFilerClient struct {
+	*testFilerClient
+	lastRequest *filer_pb.ListEntriesRequest
+}
+
+func (c *requestRecordingFilerClient) ListEntries(ctx context.Context, in *filer_pb.ListEntriesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[filer_pb.ListEntriesResponse], error) {
+	c.lastRequest = in
+	return c.testFilerClient.ListEntries(ctx, in, opts...)
+}
+
+func TestDoListFilerEntries_MarkerStartsDirectlyWithoutTruncation(t *testing.T) {
+	s3a := &S3ApiServer{}
+	file := func(name string) *filer_pb.Entry {
+		return &filer_pb.Entry{Name: name, Attributes: &filer_pb.FuseAttributes{}}
+	}
+	baseClient := &testFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/buckets/b": {
+				file("2026-11-01-a"),
+				file("2026-11-01-b"),
+				file("2026-11-02-a"),
+				file("2026-11-02-b"),
+			},
+		},
+	}
+	client := &requestRecordingFilerClient{testFilerClient: baseClient}
+
+	cursor := &ListingCursor{maxKeys: 1000}
+	var seen []string
+	nextMarker, err := s3a.doListFilerEntries(context.Background(), client, listDirectoryRequest{dir: "/buckets/b", marker: "2026-11-01-b", bucket: "b"}, cursor, func(dir string, entry *filer_pb.Entry) {
+		seen = append(seen, entry.Name)
+		cursor.maxKeys--
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"2026-11-02-a", "2026-11-02-b"}, seen)
+	assert.Equal(t, "2026-11-02-b", nextMarker)
+	assert.False(t, cursor.isTruncated)
+	assert.NotNil(t, client.lastRequest)
+	assert.Equal(t, "2026-11-01-b", client.lastRequest.StartFromFileName, "must start strictly from the marker rather than truncated prefix 2026")
+	assert.False(t, client.lastRequest.InclusiveStartFrom)
+}
+
+func TestDoListFilerEntries_CandidateDirectoryPrefixPastMarker(t *testing.T) {
+	s3a := &S3ApiServer{}
+	file := func(name string) *filer_pb.Entry {
+		return &filer_pb.Entry{Name: name, Attributes: &filer_pb.FuseAttributes{}}
+	}
+	dirObj := func(name string) *filer_pb.Entry {
+		return &filer_pb.Entry{Name: name, IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}}
+	}
+	client := &testFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/buckets/b": {
+				dirObj("a"),
+				file("a-c"),
+				file("a0"),
+			},
+			"/buckets/b/a": {
+				file("b"),
+			},
+		},
+	}
+
+	cursor := &ListingCursor{maxKeys: 1000}
+	var seen []string
+	_, err := s3a.doListFilerEntries(context.Background(), client, listDirectoryRequest{dir: "/buckets/b", marker: "a-c", bucket: "b"}, cursor, func(dir string, entry *filer_pb.Entry) {
+		seen = append(seen, strings.TrimPrefix(dir, "/buckets/b")+"/"+entry.Name)
+		cursor.maxKeys--
+	})
+	assert.NoError(t, err)
+	// Byte order: a-c < a/b < a0. Listing from marker "a-c" must find /a/b and /a0.
+	assert.Equal(t, []string{"/a/b", "/a0"}, seen)
 }
