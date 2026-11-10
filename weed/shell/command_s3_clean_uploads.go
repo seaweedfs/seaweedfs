@@ -93,12 +93,12 @@ func (c *commandS3CleanUploads) cleanupUploads(commandEnv *CommandEnv, writer io
 	}
 
 	for _, staleUpload := range staleUploads {
-		release, lockErr := lock(uploadObjectPath(bucketDir, staleUpload))
+		held, release, lockErr := lock(uploadObjectPath(bucketDir, staleUpload))
 		if lockErr != nil {
 			fmt.Fprintf(writer, "skip %s: %v\n", staleUpload.Name, lockErr)
 			continue
 		}
-		err := c.removeUploadDir(commandEnv, writer, bucketDir, uploadsDir, staleUpload)
+		err := c.removeUploadDir(commandEnv, writer, bucketDir, uploadsDir, staleUpload, held)
 		release()
 		if err != nil {
 			return err
@@ -109,26 +109,24 @@ func (c *commandS3CleanUploads) cleanupUploads(commandEnv *CommandEnv, writer io
 }
 
 // objectWriteLock takes the distributed lock the S3 gateway commits a
-// completion under when it is not routed to the object's owner filer.
-type objectWriteLock func(objectPath string) (release func(), err error)
+// completion under when it is not routed to the object's owner filer, and
+// renews it until release.
+type objectWriteLock func(objectPath string) (held func() bool, release func(), err error)
 
 func newObjectWriteLock(commandEnv *CommandEnv) objectWriteLock {
 	lockClient := cluster.NewLockClient(commandEnv.option.GrpcDialOption, commandEnv.FilerAddress())
 	owner := fmt.Sprintf("s3.clean.uploads-%d", util.RandomInt32())
-	return func(objectPath string) (func(), error) {
+	return func(objectPath string) (func() bool, func(), error) {
 		if objectPath == "" {
-			return func() {}, nil
+			return func() bool { return true }, func() {}, nil
 		}
 		key := objectRouteKey(objectPath)
-		lock := lockClient.NewShortLivedLock(key, owner)
+		lock := lockClient.NewBlockingLongLivedLock(key, owner, 15*time.Second)
 		if lock == nil {
-			return nil, fmt.Errorf("lock %s: no lock server", key)
+			return nil, nil, fmt.Errorf("lock %s: no lock server", key)
 		}
-		if err := lock.AttemptToLock(15 * time.Second); err != nil {
-			glog.Warningf("extend lock %s: %v", key, err)
-		}
-		return func() {
-			if err := lock.StopShortLivedLock(); err != nil {
+		return lock.IsLocked, func() {
+			if err := lock.Stop(); err != nil {
 				glog.Warningf("release lock %s: %v", key, err)
 			}
 		}, nil
@@ -138,11 +136,16 @@ func newObjectWriteLock(commandEnv *CommandEnv) objectWriteLock {
 // removeUploadDir mirrors the S3 gateway's abort, under the object write lock.
 // A completed upload's part entries share chunks with the finished object, so
 // only the metadata goes; an open upload's chunks are freed by
-// routedUploadDirDelete. An undecidable lookup is left for the next run.
-func (c *commandS3CleanUploads) removeUploadDir(filerClient filer_pb.FilerClient, writer io.Writer, bucketDir, uploadsDir string, upload *filer_pb.Entry) error {
+// routedUploadDirDelete. An undecidable lookup, or a lost lock, is left for
+// the next run.
+func (c *commandS3CleanUploads) removeUploadDir(filerClient filer_pb.FilerClient, writer io.Writer, bucketDir, uploadsDir string, upload *filer_pb.Entry, lockHeld func() bool) error {
 	completed, err := c.uploadCompleted(filerClient, bucketDir, upload)
 	if err != nil {
 		fmt.Fprintf(writer, "skip %s: %v\n", upload.Name, err)
+		return nil
+	}
+	if !lockHeld() {
+		fmt.Fprintf(writer, "skip %s: lost the object write lock\n", upload.Name)
 		return nil
 	}
 	if !completed {
