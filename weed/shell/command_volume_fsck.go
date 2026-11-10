@@ -100,10 +100,10 @@ func (c *commandVolumeFsck) Help() string {
 		The default 5h cutoff provides sufficient buffer for metadata commits.
 
 	Step 2 reads the filer from one consistent snapshot when its store supports
-	that (the SQL stores do), so a file renamed while the filer is being read is
-	still counted and its chunks are not mistaken for orphans. Other stores are
-	walked directory by directory; there, avoid running with -reallyDeleteFromVolume
-	while files are being renamed or moved.
+	that (the SQL stores and etcd do), so a file renamed while the filer is being
+	read is still counted and its chunks are not mistaken for orphans. Other
+	stores are walked directory by directory; there, avoid running with
+	-reallyDeleteFromVolume while files are being renamed or moved.
 
 	With -findMissingChunksInFiler, -volumeId may name a volume the master no
 	longer lists, to find the filer entries that still reference it. A volume is
