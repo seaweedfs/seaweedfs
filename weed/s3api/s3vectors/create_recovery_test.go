@@ -2,6 +2,7 @@ package s3vectors
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"testing"
 	"time"
@@ -17,12 +18,17 @@ import (
 
 type failingCreateVectors struct {
 	*fakeVectors
-	err error
+	err      error
+	onCreate func()
 }
 
 func (f *failingCreateVectors) CreateIndex(_ context.Context, request *vector_pb.CreateIndexRequest, _ ...grpc.CallOption) (*vector_pb.CreateIndexResponse, error) {
 	f.created = append(f.created, request)
-	return nil, f.err
+	err := f.err
+	if f.onCreate != nil {
+		f.onCreate()
+	}
+	return nil, err
 }
 
 func TestCreateIndexPreservesAnUnknownOutcome(t *testing.T) {
@@ -54,5 +60,81 @@ func TestCreateIndexRetainsTheWriteErrorIfRediscoveryFails(t *testing.T) {
 	_, err := discovery.CreateIndex(t.Context(), &vector_pb.CreateIndexRequest{})
 	if status.Convert(err).Message() != "response lost after commit" || len(engine.created) != 1 {
 		t.Fatalf("ambiguous result replaced by lookup failure: %v", err)
+	}
+}
+
+func TestCreateIndexResumesAnUnknownOutcome(t *testing.T) {
+	fs := s3tablestest.Start(t)
+	engine := &failingCreateVectors{fakeVectors: &fakeVectors{}, err: status.Error(codes.Unavailable, "request lost")}
+	server := NewServer(s3tables.NewManagerClient(fs.Client), allowAllAuth{}, engine)
+	postJSON(t, server.handleCreateVectorBucket, &CreateVectorBucketRequest{VectorBucketName: "vec-bucket"})
+	request := &CreateIndexRequest{VectorBucketName: "vec-bucket", IndexName: "idx", DataType: "float32", Dimension: 3, DistanceMetric: "cosine",
+		MetadataConfiguration: &MetadataConfiguration{NonFilterableMetadataKeys: []string{"b", "a"}}, Tags: map[string]string{"team": "search"}}
+	if result := postJSON(t, server.handleCreateIndex, request); result.Code == http.StatusOK {
+		t.Fatal("unavailable engine reported success")
+	}
+	before, err := server.indexRecord(t.Context(), "vec-bucket", "idx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, change := range []func(*CreateIndexRequest){
+		func(r *CreateIndexRequest) { r.Dimension++ },
+		func(r *CreateIndexRequest) { r.DistanceMetric = "euclidean" },
+		func(r *CreateIndexRequest) { r.MetadataConfiguration = nil },
+	} {
+		other := *request
+		change(&other)
+		if result := postJSON(t, server.handleCreateIndex, &other); result.Code != http.StatusConflict {
+			t.Fatalf("incompatible retry: %d %s", result.Code, result.Body)
+		}
+	}
+	if len(engine.created) != 1 {
+		t.Fatal("incompatible retry reached the engine")
+	}
+	engine.err = status.Error(codes.InvalidArgument, "retry refused")
+	postJSON(t, server.handleCreateIndex, request)
+	if _, err := server.indexRecord(t.Context(), "vec-bucket", "idx"); err != nil {
+		t.Fatalf("retry removed an uncertain dataset's catalog: %v", err)
+	}
+	engine.err = nil
+	request.MetadataConfiguration.NonFilterableMetadataKeys = []string{"a", "b"}
+	if result := postJSON(t, server.handleCreateIndex, request); result.Code != http.StatusOK {
+		t.Fatalf("resume: %d %s", result.Code, result.Body)
+	}
+	after, err := server.indexRecord(t.Context(), "vec-bucket", "idx")
+	if err != nil || recordNonce(before) != recordNonce(after) {
+		t.Fatalf("resume replaced the catalog: %v", err)
+	}
+	if result := postJSON(t, server.handleCreateIndex, request); result.Code != http.StatusConflict {
+		t.Fatalf("completed index was initialized again: %d %s", result.Code, result.Body)
+	}
+	result := postJSON(t, server.handleListTagsForResource, &ListTagsForResourceRequest{ResourceArn: server.indexArn("vec-bucket", "idx")})
+	var tags ListTagsForResourceResponse
+	if err := json.Unmarshal(result.Body.Bytes(), &tags); err != nil || tags.Tags["team"] != "search" {
+		t.Fatalf("resume lost tags: %s (%v)", result.Body, err)
+	}
+}
+
+func TestCreateIndexRollbackPreservesACompletedRetry(t *testing.T) {
+	fs := s3tablestest.Start(t)
+	engine := &failingCreateVectors{fakeVectors: &fakeVectors{}, err: status.Error(codes.InvalidArgument, "first attempt failed")}
+	server := NewServer(s3tables.NewManagerClient(fs.Client), allowAllAuth{}, engine)
+	postJSON(t, server.handleCreateVectorBucket, &CreateVectorBucketRequest{VectorBucketName: "vec-bucket"})
+	request := &CreateIndexRequest{VectorBucketName: "vec-bucket", IndexName: "idx", DataType: "float32", Dimension: 3, DistanceMetric: "cosine"}
+	engine.onCreate = func() {
+		engine.onCreate = nil
+		engine.err = nil
+		if result := postJSON(t, server.handleCreateIndex, request); result.Code != http.StatusOK {
+			t.Fatalf("concurrent retry: %d %s", result.Code, result.Body)
+		}
+	}
+	if result := postJSON(t, server.handleCreateIndex, request); result.Code == http.StatusOK {
+		t.Fatal("first attempt reported success")
+	}
+	if _, err := server.indexRecord(t.Context(), "vec-bucket", "idx"); err != nil {
+		t.Fatalf("rollback removed the completed retry: %v", err)
+	}
+	if result := postJSON(t, server.handleCreateIndex, request); result.Code != http.StatusConflict {
+		t.Fatalf("completed retry lost its state: %d %s", result.Code, result.Body)
 	}
 }

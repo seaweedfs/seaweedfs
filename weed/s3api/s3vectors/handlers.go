@@ -1152,47 +1152,64 @@ func (s *Server) handleCreateIndex(w http.ResponseWriter, r *http.Request) {
 		catalogErr(w, err)
 		return
 	}
-	// Only a caller who passed the create check may learn an index exists.
+	metadata := map[string]interface{}{
+		"dimension":      fmt.Sprint(req.Dimension),
+		"distanceMetric": strings.ToLower(req.DistanceMetric),
+		"createNonce":    uuid.NewString(),
+		"initializing":   "true",
+	}
+	var nonFilterable []string
+	if req.MetadataConfiguration != nil {
+		nonFilterable = slices.Clone(req.MetadataConfiguration.NonFilterableMetadataKeys)
+		keys, _ := json.Marshal(nonFilterable)
+		metadata["nonFilterableMetadataKeys"] = string(keys)
+	}
 	var existing map[string]interface{}
 	getErr := s.internalCatalog(r.Context(), "GetTable", &s3tables.GetTableRequest{
 		TableBucketARN: s.s3tablesArn(arns.bucket),
 		Namespace:      []string{indexNamespace},
 		Name:           arns.index,
 	}, &existing)
+	created := false
+	versionToken := ""
 	switch {
 	case getErr == nil:
-		writeError(w, http.StatusConflict, "ConflictException",
-			fmt.Sprintf("index %s already exists", arns.index))
-		return
-	case catalogErrCode(getErr) != s3tables.ErrCodeNoSuchTable:
-		catalogErr(w, getErr)
-		return
-	}
-	metadata := map[string]string{
-		"dimension":      fmt.Sprint(req.Dimension),
-		"distanceMetric": strings.ToLower(req.DistanceMetric),
-		// The nonce marks the record this request created, so a rollback after
-		// an engine failure can never erase a pre-existing index.
-		"createNonce": uuid.NewString(),
-	}
-	var nonFilterable []string
-	if req.MetadataConfiguration != nil {
-		nonFilterable = req.MetadataConfiguration.NonFilterableMetadataKeys
-		if keys, err := json.Marshal(nonFilterable); err == nil {
-			metadata["nonFilterableMetadataKeys"] = string(keys)
+		index := indexFromRecord(s, arns.bucket, arns.index, existing)
+		var storedKeys []string
+		if index.MetadataConfiguration != nil {
+			storedKeys = slices.Clone(index.MetadataConfiguration.NonFilterableMetadataKeys)
 		}
-	}
-	metadataJSON, _ := json.Marshal(metadata)
-	err = s.internalCatalog(bound, "CreateTable", &s3tables.CreateTableRequest{
-		TableBucketARN: s.s3tablesArn(arns.bucket),
-		Namespace:      []string{indexNamespace},
-		Name:           arns.index,
-		Format:         s3tables.FormatLance,
-		Metadata:       &s3tables.TableMetadata{FullMetadata: metadataJSON},
-		Tags:           req.Tags,
-	}, nil)
-	if err != nil {
-		catalogErr(w, err)
+		slices.Sort(storedKeys)
+		slices.Sort(nonFilterable)
+		meta, _ := existing["metadata"].(map[string]interface{})
+		full, _ := meta["fullMetadata"].(map[string]interface{})
+		if full["initializing"] != "true" || index.Dimension != req.Dimension ||
+			index.DistanceMetric != strings.ToLower(req.DistanceMetric) ||
+			!slices.Equal(slices.Compact(storedKeys), slices.Compact(nonFilterable)) {
+			writeError(w, http.StatusConflict, "ConflictException", fmt.Sprintf("index %s already exists", arns.index))
+			return
+		}
+		metadata = full
+		versionToken = recordVersionToken(existing)
+	case catalogErrCode(getErr) == s3tables.ErrCodeNoSuchTable:
+		metadataJSON, _ := json.Marshal(metadata)
+		var response s3tables.CreateTableResponse
+		err = s.internalCatalog(bound, "CreateTable", &s3tables.CreateTableRequest{
+			TableBucketARN: s.s3tablesArn(arns.bucket),
+			Namespace:      []string{indexNamespace},
+			Name:           arns.index,
+			Format:         s3tables.FormatLance,
+			Metadata:       &s3tables.TableMetadata{FullMetadata: metadataJSON},
+			Tags:           req.Tags,
+		}, &response)
+		if err != nil {
+			catalogErr(w, err)
+			return
+		}
+		created = true
+		versionToken = response.VersionToken
+	default:
+		catalogErr(w, getErr)
 		return
 	}
 	_, err = s.vectors.CreateIndex(r.Context(), &vector_pb.CreateIndexRequest{
@@ -1202,6 +1219,10 @@ func (s *Server) handleCreateIndex(w http.ResponseWriter, r *http.Request) {
 		NonFilterableMetadataKeys: nonFilterable,
 	})
 	if err != nil {
+		if !created {
+			vectorErr(w, r, arns, err)
+			return
+		}
 		if !errors.Is(err, errNoVectorWorker) {
 			switch status.Code(err) {
 			case codes.InvalidArgument, codes.PermissionDenied, codes.Unauthenticated, codes.FailedPrecondition, codes.AlreadyExists, codes.NotFound, codes.OutOfRange, codes.Unimplemented:
@@ -1218,7 +1239,7 @@ func (s *Server) handleCreateIndex(w http.ResponseWriter, r *http.Request) {
 			TableBucketARN: s.s3tablesArn(arns.bucket),
 			Namespace:      []string{indexNamespace},
 			Name:           arns.index,
-		}, &rec); gerr == nil && recordNonce(rec) == metadata["createNonce"] {
+		}, &rec); gerr == nil && recordNonce(rec) == metadata["createNonce"] && recordVersionToken(rec) == versionToken {
 			var delResp map[string]interface{}
 			if derr := s.internalCatalog(ctx, "DeleteTable", &s3tables.DeleteTableRequest{
 				TableBucketARN: s.s3tablesArn(arns.bucket),
@@ -1232,6 +1253,18 @@ func (s *Server) handleCreateIndex(w http.ResponseWriter, r *http.Request) {
 			glog.Errorf("S3 Vectors: rollback lookup for %s/%s failed: %v", arns.bucket, arns.index, gerr)
 		}
 		vectorErr(w, r, arns, err)
+		return
+	}
+	delete(metadata, "initializing")
+	metadataJSON, _ := json.Marshal(metadata)
+	if err := s.internalCatalog(r.Context(), "UpdateTable", &s3tables.UpdateTableRequest{
+		TableBucketARN: s.s3tablesArn(arns.bucket),
+		Namespace:      []string{indexNamespace},
+		Name:           arns.index,
+		VersionToken:   versionToken,
+		Metadata:       &s3tables.TableMetadata{FullMetadata: metadataJSON},
+	}, nil); err != nil {
+		catalogErr(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, &CreateIndexResponse{IndexArn: s.indexArn(arns.bucket, arns.index)})
