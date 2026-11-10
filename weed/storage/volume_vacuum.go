@@ -209,6 +209,10 @@ func (v *Volume) CommitCompact() error {
 		}
 		return errTieredVolumeCompact(v.Id)
 	}
+	// A duplicate commit must fail before it closes the live files.
+	if err := v.checkCompactFiles(); err != nil {
+		return err
+	}
 	if v.nm != nil {
 		v.nm.Close()
 		v.nm = nil
@@ -295,12 +299,19 @@ func (v *Volume) writeCompactCommitMarker() error {
 // marker and BOTH .cpd/.cpx to be present, so a stale or duplicate commit
 // returns an error without deleting the live .dat/.idx.
 func (v *Volume) applyCompactSwap() error {
-	// Normal commit: both temp files must be present, or a stale/duplicate
-	// commit could clobber the live .dat/.idx.
+	if err := v.checkCompactFiles(); err != nil {
+		return err
+	}
+	return v.finishCompactSwap()
+}
+
+// checkCompactFiles requires both temp files of a normal commit, or a
+// stale/duplicate commit could clobber the live .dat/.idx.
+func (v *Volume) checkCompactFiles() error {
 	if !util.FileExists(v.FileName(".cpd")) || !util.FileExists(v.FileName(".cpx")) {
 		return fmt.Errorf("volume %d compact swap aborted: missing .cpd/.cpx", v.Id)
 	}
-	return v.finishCompactSwap()
+	return nil
 }
 
 // finishCompactSwap renames whichever compaction temp file is still present

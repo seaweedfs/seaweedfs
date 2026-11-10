@@ -251,6 +251,41 @@ func TestCompactionInProgressRefusesOtherVacuumSteps(t *testing.T) {
 	}
 }
 
+// A commit that finds no .cpd/.cpx (another vacuum already committed them)
+// must leave the volume loaded, or it drops out of the heartbeat until restart.
+func TestCommitCompactWithoutTempFilesKeepsVolumeLoaded(t *testing.T) {
+	dir := t.TempDir()
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+	for i := uint64(1); i <= 3; i++ {
+		if _, _, _, err := v.writeNeedle2(newRandomNeedle(i), true, false, false); err != nil {
+			t.Fatalf("write %d: %v", i, err)
+		}
+	}
+	if err := v.CompactByIndex(nil); err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+	if err := v.CommitCompact(); err != nil {
+		t.Fatalf("first commit: %v", err)
+	}
+
+	if err := v.CommitCompact(); err == nil {
+		t.Fatal("second commit succeeded without .cpd/.cpx")
+	}
+	if _, _, _, _, _, _, ok := v.collectStatus(); !ok {
+		t.Fatal("volume dropped out of the heartbeat after the refused commit")
+	}
+	if _, err := os.Stat(v.FileName(".cpc")); !os.IsNotExist(err) {
+		t.Fatalf("refused commit left a commit marker: %v", err)
+	}
+	if _, _, _, err := v.writeNeedle2(newRandomNeedle(4), true, false, false); err != nil {
+		t.Fatalf("write after the refused commit: %v", err)
+	}
+}
+
 func TestCompactVolumeFilesOffline(t *testing.T) {
 	dir := t.TempDir()
 	location := NewDiskLocation(dir, 10, util.MinFreeSpace{}, dir, "", nil, stats.DefaultDiskIOProbeConfig())
