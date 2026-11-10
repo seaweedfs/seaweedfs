@@ -35,7 +35,7 @@ jobs:
             suffix: windows_amd64
             protoc: win32
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
+    timeout-minutes: 120
     env:
       CARGO_BUILD_JOBS: '2'
       CARGO_PROFILE_TEST_DEBUG: '0'
