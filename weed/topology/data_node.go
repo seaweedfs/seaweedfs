@@ -102,6 +102,15 @@ func (dn *DataNode) getOrCreateDisk(diskType string) *Disk {
 	return disk
 }
 
+// getOrCreateDiskWithLock is getOrCreateDisk for callers that do not hold
+// dn.Lock: linking a new disk writes dn.children, which readers range under
+// dn.RLock.
+func (dn *DataNode) getOrCreateDiskWithLock(diskType string) *Disk {
+	dn.Lock()
+	defer dn.Unlock()
+	return dn.getOrCreateDisk(diskType)
+}
+
 func (dn *DataNode) doAddOrUpdateVolume(v storage.VolumeInfo) (isNew, isChanged, tierTransition bool) {
 	disk := dn.getOrCreateDisk(v.DiskType)
 	return disk.AddOrUpdateVolume(v)
@@ -223,7 +232,7 @@ func (dn *DataNode) AdjustMaxVolumeCounts(maxVolumeCounts map[string]uint32) {
 		if currentDiskUsageMaxVolumeCount == int64(maxVolumeCount) {
 			continue
 		}
-		disk := dn.getOrCreateDisk(dt.String())
+		disk := dn.getOrCreateDiskWithLock(dt.String())
 		disk.UpAdjustDiskUsageDelta(dt, &DiskUsageCounts{
 			maxVolumeCount: int64(maxVolumeCount) - currentDiskUsageMaxVolumeCount,
 		})
@@ -249,7 +258,7 @@ func (dn *DataNode) AdjustDiskUsageBytes(diskTotalBytes, diskFreeBytes map[strin
 		if currentTotal == newTotal && currentFree == newFree {
 			continue
 		}
-		disk := dn.getOrCreateDisk(dt.String())
+		disk := dn.getOrCreateDiskWithLock(dt.String())
 		disk.UpAdjustDiskUsageDelta(dt, &DiskUsageCounts{
 			diskTotalBytes: newTotal - currentTotal,
 			diskFreeBytes:  newFree - currentFree,

@@ -216,12 +216,12 @@ func (dn *DataNode) DeltaUpdateEcShards(newShards, deletedShards []*erasure_codi
 }
 
 func (dn *DataNode) AddOrUpdateEcShard(s *erasure_coding.EcVolumeInfo) {
-	disk := dn.getOrCreateDisk(s.DiskType)
+	disk := dn.getOrCreateDiskWithLock(s.DiskType)
 	disk.AddOrUpdateEcShard(s)
 }
 
 func (dn *DataNode) DeleteEcShard(s *erasure_coding.EcVolumeInfo) {
-	disk := dn.getOrCreateDisk(s.DiskType)
+	disk := dn.getOrCreateDiskWithLock(s.DiskType)
 	disk.DeleteEcShard(s)
 }
 
