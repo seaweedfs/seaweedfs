@@ -585,10 +585,15 @@ func (s *PostgreSQLServer) handlePasswordAuth(session *PostgreSQLSession) error 
 	expectedPassword, exists := s.config.Users[session.username]
 	passwordStr := strings.TrimSuffix(string(password), "\x00")
 	if !exists || passwordStr != expectedPassword {
-		return s.sendError(session, "28P01", "authentication failed for user \""+session.username+"\"")
+		return s.rejectAuthentication(session)
 	}
 
 	return s.sendAuthenticationOk(session)
+}
+
+func (s *PostgreSQLServer) rejectAuthentication(session *PostgreSQLSession) error {
+	s.sendError(session, "28P01", "authentication failed for user \""+session.username+"\"")
+	return fmt.Errorf("authentication failed for user %q", session.username)
 }
 
 // handleMD5Auth handles MD5 password authentication
@@ -650,7 +655,7 @@ func (s *PostgreSQLServer) handleMD5Auth(session *PostgreSQLSession) error {
 	// Verify MD5 hash
 	expectedPassword, exists := s.config.Users[session.username]
 	if !exists {
-		return s.sendError(session, "28P01", "authentication failed for user \""+session.username+"\"")
+		return s.rejectAuthentication(session)
 	}
 
 	// Calculate expected hash: md5(md5(password + username) + salt)
@@ -658,7 +663,7 @@ func (s *PostgreSQLServer) handleMD5Auth(session *PostgreSQLSession) error {
 	expected := fmt.Sprintf("md5%x", md5.Sum(append([]byte(fmt.Sprintf("%x", inner)), salt...)))
 
 	if strings.TrimSuffix(string(response), "\x00") != expected {
-		return s.sendError(session, "28P01", "authentication failed for user \""+session.username+"\"")
+		return s.rejectAuthentication(session)
 	}
 
 	return s.sendAuthenticationOk(session)
