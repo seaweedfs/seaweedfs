@@ -244,7 +244,19 @@ Keep embeddings alongside your objects and tables in the same SeaweedFS cluster.
 * Find the nearest vectors with cosine or Euclidean distance, filter by metadata, and return distances and metadata with the results.
 * Control access with `s3vectors:*` IAM actions and vector bucket policies; tag buckets and indexes for organization and access control.
 
-Run the separate `weed-vector` binary alongside the cluster. For the local cluster started with `weed mini` above:
+Install the separate vector engine; the default installer installs only `weed`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/seaweedfs/seaweedfs/master/install.sh | bash -s -- --component vector
+```
+
+Release 4.53 provides vector binaries for Linux amd64 and arm64. If your release has no binary for your platform, build from [source](seaweed-vector):
+
+```bash
+cargo build --release --manifest-path seaweed-vector/Cargo.toml -p weed-vector-server
+```
+
+Run the installed `weed-vector` binary alongside the local cluster started with `weed mini` above (or use `seaweed-vector/target/release/weed-vector` after building from source):
 
 ```bash
 weed-vector --masters=localhost:9333
