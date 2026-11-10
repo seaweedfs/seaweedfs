@@ -33,3 +33,10 @@ func TestMergeEcRuntimesWithEmptiedRuntime(t *testing.T) {
 	assert.Same(t, holder.Shards[0], merged.Slots[2])
 	assert.Same(t, holder.Shards[1], merged.Slots[5])
 }
+
+func TestMergeEcRuntimesAllEmptiedIsVanished(t *testing.T) {
+	emptied := func() *EcVolume {
+		return &EcVolume{VolumeId: 7, ECContext: NewDefaultECContext("", 7), EncodeTsNs: 100}
+	}
+	assert.Nil(t, MergeEcRuntimes([]*EcVolume{emptied(), emptied()}))
+}

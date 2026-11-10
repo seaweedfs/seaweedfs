@@ -2,6 +2,7 @@ package erasure_coding
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 )
@@ -35,9 +36,10 @@ type MergedEcRuntimes struct {
 }
 
 // MergeEcRuntimes resolves runtimes (one vid's mounts, in location order) into
-// a merged view. Returns nil for an empty slice (the vanished-volume case).
+// a merged view. Returns nil when no runtime holds a shard (the vanished-volume
+// case).
 func MergeEcRuntimes(runtimes []*EcVolume) *MergedEcRuntimes {
-	if len(runtimes) == 0 {
+	if !slices.ContainsFunc(runtimes, func(v *EcVolume) bool { return len(v.Shards) > 0 }) {
 		return nil
 	}
 
