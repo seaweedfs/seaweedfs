@@ -1186,7 +1186,7 @@ func (s *Server) handleCreateIndex(w http.ResponseWriter, r *http.Request) {
 		full, _ := meta["fullMetadata"].(map[string]interface{})
 		if full["initializing"] != "true" || index.Dimension != req.Dimension ||
 			storedMetric != metric ||
-			!slices.Equal(slices.Compact(storedKeys), slices.Compact(nonFilterable)) {
+			!slices.Equal(storedKeys, nonFilterable) {
 			writeError(w, http.StatusConflict, "ConflictException", fmt.Sprintf("index %s already exists", arns.index))
 			return
 		}

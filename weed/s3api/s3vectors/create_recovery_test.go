@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -237,5 +238,29 @@ func TestCreateIndexResumesWithTheDefaultMetric(t *testing.T) {
 	}
 	if len(engine.created) != 2 || engine.created[1].DistanceMetric != vector_pb.DistanceMetric_L2 {
 		t.Fatal("recovery changed the default metric")
+	}
+}
+
+func TestCreateIndexRetryPreservesDuplicateMetadataKeys(t *testing.T) {
+	fs := s3tablestest.Start(t)
+	engine := &failingCreateVectors{fakeVectors: &fakeVectors{}, err: status.Error(codes.Unavailable, "response lost")}
+	server := NewServer(s3tables.NewManagerClient(fs.Client), allowAllAuth{}, engine)
+	postJSON(t, server.handleCreateVectorBucket, &CreateVectorBucketRequest{VectorBucketName: "vec-bucket"})
+	request := &CreateIndexRequest{VectorBucketName: "vec-bucket", IndexName: "idx", DataType: "float32", Dimension: 3, DistanceMetric: "cosine",
+		MetadataConfiguration: &MetadataConfiguration{NonFilterableMetadataKeys: []string{"b", "a", "a"}}}
+	postJSON(t, server.handleCreateIndex, request)
+	engine.err = nil
+	if result := postJSON(t, server.handleCreateIndex, request); result.Code != http.StatusOK {
+		t.Fatalf("duplicate-key recovery: %d %s", result.Code, result.Body)
+	}
+	if len(engine.created) != 2 {
+		t.Fatalf("engine calls: %d", len(engine.created))
+	}
+	for _, call := range engine.created {
+		keys := slices.Clone(call.NonFilterableMetadataKeys)
+		slices.Sort(keys)
+		if !slices.Equal(keys, []string{"a", "a", "b"}) {
+			t.Fatalf("initialization changed metadata keys: %q", keys)
+		}
 	}
 }
