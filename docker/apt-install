@@ -3,17 +3,15 @@
 # unreachable. See docker/Dockerfile.e2e.
 set -e
 
-# Every rewrite starts from the pristine list, so a mirror that just failed does
-# not become the pattern the next rewrite has to match.
-[ -f /etc/apt/sources.list.orig ] || cp /etc/apt/sources.list /etc/apt/sources.list.orig
-
 for mirror in azure.archive.ubuntu.com archive.ubuntu.com; do
-	# Any archive host, so this works whether the pristine list came from the
-	# base image (archive.ubuntu.com) or a CI runner (azure.archive.ubuntu.com).
-	sed "s|http://[a-z0-9.]*archive\.ubuntu\.com/ubuntu|http://$mirror/ubuntu|g; s|http://security\.ubuntu\.com/ubuntu|http://$mirror/ubuntu|g" \
-		/etc/apt/sources.list.orig > /etc/apt/sources.list
-	if apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 update && \
-		DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 install -y \
+	for apt_source in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+		[ -f "$apt_source" ] || continue
+		[ -f "$apt_source.orig" ] || cp "$apt_source" "$apt_source.orig"
+		sed -E "s|(https?://)[a-z0-9.]*archive\.ubuntu\.com/ubuntu|\1$mirror/ubuntu|g; s|(https?://)security\.ubuntu\.com/ubuntu|\1$mirror/ubuntu|g" \
+			"$apt_source.orig" > "$apt_source"
+	done
+	if timeout --kill-after=5s 120s apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 -o APT::Update::Error-Mode=any update && \
+		DEBIAN_FRONTEND=noninteractive timeout --kill-after=5s 180s apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 install -y \
 			--no-install-recommends --no-install-suggests "$@"; then
 		apt-get clean
 		rm -rf /var/lib/apt/lists/*

@@ -22,6 +22,7 @@ func identityOf(r *http.Request) string {
 
 func writeJSON(w http.ResponseWriter, status int, payload interface{}) {
 	w.Header().Set("Content-Type", "application/x-amz-json-1.1")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(status)
 	if payload != nil {
 		_ = json.NewEncoder(w).Encode(payload)

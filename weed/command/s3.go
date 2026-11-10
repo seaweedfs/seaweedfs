@@ -760,6 +760,7 @@ func (s3opt *S3Options) vectorsRouter(s3ApiServer *s3api.S3ApiServer, grpcDialOp
 	vectorsServer.SetEncryptionChecker(s3api.GetSSES3KeyManager().IsConfigured)
 	vectorsServer.SetDescribe(describe)
 	vectorsServer.SetLimiter(s3ApiServer.Limit)
+	vectorsServer.SetRequestLimits(int64(*s3opt.concurrentFileUploadLimit), int64(*s3opt.concurrentUploadLimitMB)*1024*1024)
 	vectorsServer.RegisterRoutes(vectorsRouter)
 	return vectorsRouter
 }

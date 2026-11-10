@@ -10,10 +10,23 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"golang.org/x/sync/semaphore"
 )
 
 func (s *Server) SetLimiter(limit func(http.HandlerFunc, string) http.HandlerFunc) {
 	s.limit = limit
+}
+
+func (s *Server) SetRequestLimits(maxRequests, maxBytes int64) {
+	if maxRequests <= 0 {
+		maxRequests = 16
+	}
+	if maxBytes <= 0 {
+		maxBytes = 8 * maxRequestBodyBytes
+	}
+	s.requestSlots = semaphore.NewWeighted(maxRequests)
+	s.requestBytes = semaphore.NewWeighted(maxBytes)
+	s.requestByteLimit = maxBytes
 }
 
 func (s *Server) limitRequest(handler http.HandlerFunc, w http.ResponseWriter, r *http.Request) {
