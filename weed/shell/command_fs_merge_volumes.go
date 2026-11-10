@@ -319,22 +319,32 @@ func isMultipartUploadFile(bucketsPath string, dir util.FullPath) bool {
 
 // recordPlanSources counts the chunks on plan sources as referenced, including
 // those behind a manifest that may reference the plan, and reports whether
-// there were any.
+// there were any. Direct references stay counted when a manifest is unreadable.
 func (c *commandFsMergeVolumes) recordPlanSources(ctx context.Context, lookupFn wdclient.LookupFileIdFunctionType, plan *mergePlan, planCollections map[string]bool, seen *sourceNeedleCounter, chunks []*filer_pb.FileChunk) (bool, error) {
-	if slices.ContainsFunc(chunks, func(chunk *filer_pb.FileChunk) bool {
-		return chunk.IsChunkManifest && c.manifestMayReferencePlan(plan, planCollections, needle.VolumeId(chunk.Fid.GetVolumeId()))
-	}) {
-		dataChunks, manifestChunks, err := filer.ResolveChunkManifest(ctx, lookupFn, chunks, 0, math.MaxInt64, nil)
-		if err != nil {
-			return false, err
-		}
-		chunks = slices.Concat(chunks, dataChunks, manifestChunks)
-	}
 	found := false
-	for _, chunk := range chunks {
+	record := func(chunk *filer_pb.FileChunk) {
 		if vid := needle.VolumeId(chunk.Fid.GetVolumeId()); plan.isSource(vid) {
 			seen.record(vid)
 			found = true
+		}
+	}
+	var manifests []*filer_pb.FileChunk
+	for _, chunk := range chunks {
+		record(chunk)
+		if chunk.IsChunkManifest && c.manifestMayReferencePlan(plan, planCollections, needle.VolumeId(chunk.Fid.GetVolumeId())) {
+			manifests = append(manifests, chunk)
+		}
+	}
+	if len(manifests) == 0 {
+		return found, nil
+	}
+	dataChunks, manifestChunks, err := filer.ResolveChunkManifest(ctx, lookupFn, manifests, 0, math.MaxInt64, nil)
+	if err != nil {
+		return found, err
+	}
+	for _, chunk := range slices.Concat(dataChunks, manifestChunks) {
+		if !slices.Contains(manifests, chunk) {
+			record(chunk)
 		}
 	}
 	return found, nil

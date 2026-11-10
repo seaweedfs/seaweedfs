@@ -595,7 +595,12 @@ func TestRecordPlanSources(t *testing.T) {
 	unreachable := func(_ context.Context, fileId string) ([]string, error) {
 		return nil, fmt.Errorf("volume of %s unavailable", fileId)
 	}
-	if _, err := c.recordPlanSources(context.Background(), unreachable, plan, planCollections, newSourceNeedleCounter(), []*filer_pb.FileChunk{manifest(187)}); err == nil {
+	seen := newSourceNeedleCounter()
+	found, err := c.recordPlanSources(context.Background(), unreachable, plan, planCollections, seen, []*filer_pb.FileChunk{chunk(203, 1), manifest(187)})
+	if err == nil {
 		t.Fatal("an unreadable manifest must be reported")
+	}
+	if !found || seen.count(needle.VolumeId(203)) != 1 {
+		t.Fatalf("direct reference lost with an unreadable manifest: found %v, %d references to 203", found, seen.count(needle.VolumeId(203)))
 	}
 }
