@@ -185,7 +185,7 @@ func TestScanEntriesFromRoot(t *testing.T) {
 	m.putEntry(t, "/\xc3\x28xyz/name", false)
 
 	seen := scanPaths(t, m, "/")
-	if len(seen) != 3 || seen["/a"] != 1 || seen["/a/x"] != 1 || seen["/top"] != 1 {
+	if len(seen) != 4 || seen["/a"] != 1 || seen["/a/x"] != 1 || seen["/top"] != 1 || seen["/_(xyz/name"] != 1 {
 		t.Fatalf("seen %v", seen)
 	}
 }

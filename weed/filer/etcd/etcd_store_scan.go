@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"unicode/utf8"
 
 	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -83,12 +82,10 @@ func scanPrefix(ctx context.Context, kv clientv3.KV, keyPrefix, prefix string, d
 			if name == "" || len(name) == len(key) {
 				continue
 			}
-			// The walk never reaches such a directory, and the stream cannot carry it.
-			dir := key[:len(key)-len(name)-1]
-			if !utf8.Valid(dir) {
-				continue
-			}
-			entry := &filer.Entry{FullPath: weed_util.NewFullPath(string(dir), name)}
+			// Names are sanitized when stored, directories are not; the stream
+			// needs valid UTF-8, and fsck must still count the chunks.
+			dir := weed_util.SanitizeUTF8Name(string(key[:len(key)-len(name)-1]))
+			entry := &filer.Entry{FullPath: weed_util.NewFullPath(dir, name)}
 			if err := entry.DecodeAttributesAndChunks(weed_util.MaybeDecompressData(item.Value)); err != nil {
 				return fmt.Errorf("scan decode %s: %v", entry.FullPath, err)
 			}
