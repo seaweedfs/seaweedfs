@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -163,5 +165,61 @@ func TestCreateIndexRetainsAnUnknownOutcomeAfterARefusedRetry(t *testing.T) {
 				t.Fatalf("refused retry erased a possibly committed dataset: %v", err)
 			}
 		})
+	}
+}
+
+type concurrentCreateVectors struct {
+	vector_pb.VectorServiceClient
+	create func() (*vector_pb.CreateIndexResponse, error)
+}
+
+func (f *concurrentCreateVectors) CreateIndex(context.Context, *vector_pb.CreateIndexRequest, ...grpc.CallOption) (*vector_pb.CreateIndexResponse, error) {
+	return f.create()
+}
+
+func TestCreateIndexRollbackPreservesAnActiveRetry(t *testing.T) {
+	fs := s3tablestest.Start(t)
+	firstStarted, retryStarted, finishRetry := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	var calls atomic.Int32
+	engine := &concurrentCreateVectors{create: func() (*vector_pb.CreateIndexResponse, error) {
+		if calls.Add(1) == 1 {
+			close(firstStarted)
+			select {
+			case <-retryStarted:
+				return nil, status.Error(codes.InvalidArgument, "first attempt refused")
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+		close(retryStarted)
+		select {
+		case <-finishRetry:
+			return &vector_pb.CreateIndexResponse{}, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}}
+	server := NewServer(s3tables.NewManagerClient(fs.Client), allowAllAuth{}, engine)
+	postJSON(t, server.handleCreateVectorBucket, &CreateVectorBucketRequest{VectorBucketName: "vec-bucket"})
+	request := &CreateIndexRequest{VectorBucketName: "vec-bucket", IndexName: "idx", DataType: "float32", Dimension: 3, DistanceMetric: "cosine"}
+	first, retry := make(chan *httptest.ResponseRecorder, 1), make(chan *httptest.ResponseRecorder, 1)
+	go func() { first <- postJSON(t, server.handleCreateIndex, request) }()
+	select {
+	case <-firstStarted:
+	case <-ctx.Done():
+		t.Fatal("first create did not reach the engine")
+	}
+	go func() { retry <- postJSON(t, server.handleCreateIndex, request) }()
+	if result := <-first; result.Code == http.StatusOK {
+		t.Fatal("first attempt reported success")
+	}
+	if _, err := server.indexRecord(t.Context(), "vec-bucket", "idx"); err != nil {
+		t.Fatalf("rollback removed an active retry: %v", err)
+	}
+	close(finishRetry)
+	if result := <-retry; result.Code != http.StatusOK {
+		t.Fatalf("retry could not finish: %d %s", result.Code, result.Body)
 	}
 }

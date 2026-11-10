@@ -1190,7 +1190,19 @@ func (s *Server) handleCreateIndex(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		metadata = full
-		versionToken = recordVersionToken(existing)
+		metadataJSON, _ := json.Marshal(metadata)
+		var response s3tables.UpdateTableResponse
+		if err := s.internalCatalog(bound, "UpdateTable", &s3tables.UpdateTableRequest{
+			TableBucketARN: s.s3tablesArn(arns.bucket),
+			Namespace:      []string{indexNamespace},
+			Name:           arns.index,
+			VersionToken:   recordVersionToken(existing),
+			Metadata:       &s3tables.TableMetadata{FullMetadata: metadataJSON},
+		}, &response); err != nil {
+			catalogErr(w, err)
+			return
+		}
+		versionToken = response.VersionToken
 	case catalogErrCode(getErr) == s3tables.ErrCodeNoSuchTable:
 		metadataJSON, _ := json.Marshal(metadata)
 		var response s3tables.CreateTableResponse
