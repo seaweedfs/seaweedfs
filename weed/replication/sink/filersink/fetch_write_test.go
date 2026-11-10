@@ -702,6 +702,96 @@ func TestMissingSourceChunkGate(t *testing.T) {
 	}
 }
 
+func TestMissingSourceChunkGateConfirmedNotFound(t *testing.T) {
+	confirmed := source.ErrChunkNotFound
+	fs := &FilerSink{}
+	gate := fs.newMissingSourceChunkGate("5617,01abc")
+	if gate.isPermanent(confirmed) {
+		t.Fatal("a first 404 must allow a brief recovery window")
+	}
+	// Only the short needle grace has elapsed, not the volume recovery grace.
+	fs.missingNeedles.Store("5617,01abc", time.Now().Add(-2*missingSourceNeedleGrace))
+	if gate.isPermanent(util_http.ErrNotFound) {
+		t.Fatal("an ambiguous 404 must retain the volume recovery grace")
+	}
+	if gate.isPermanent(source.ErrVolumeNotFound) {
+		t.Fatal("an unlocatable volume must retain its recovery grace")
+	}
+	fs.sourceServed("5617,02def")
+	if !gate.isPermanent(confirmed) {
+		t.Fatal("confirmed missing needle must expire without the 30-minute wait")
+	}
+	if !errors.Is(gate.wrap(confirmed), errSourceChunkMissing) {
+		t.Fatal("confirmed missing needle must be marked permanent")
+	}
+	if fs.newMissingSourceChunkGate("5617,03abc").isPermanent(confirmed) {
+		t.Fatal("a different needle must get its own recovery window")
+	}
+	fs.sourceServed("5617,01abc")
+	if fs.newMissingSourceChunkGate("5617,01abc").isPermanent(confirmed) {
+		t.Fatal("serving the missing needle must reset its recovery window")
+	}
+}
+
+// Unchanged source metadata can still reference vacuumed chunks. Each missing
+// file must finish after the short 404 grace so later events can advance, even
+// when the sink has not successfully read any other chunk yet.
+func TestCreateEntryConfirmedMissingChunksUseShortGrace(t *testing.T) {
+	prevGrace := missingSourceNeedleGrace
+	missingSourceNeedleGrace = 20 * time.Millisecond
+	t.Cleanup(func() { missingSourceNeedleGrace = prevGrace })
+
+	gone := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "Not Found", http.StatusNotFound)
+	}))
+	defer gone.Close()
+	entries := map[string]*filer_pb.Entry{}
+	for i, name := range []string{"x.bin", "y.bin"} {
+		entries[name] = &filer_pb.Entry{
+			Name:       name,
+			Attributes: &filer_pb.FuseAttributes{Mtime: 5},
+			Chunks:     []*filer_pb.FileChunk{{FileId: fmt.Sprintf("5617,0%dabc", i+1), Size: 10}},
+		}
+	}
+	filerSrc := startSourceFilerServer(t, &sourceFilerServer{
+		volumeUrl:  strings.TrimPrefix(gone.URL, "http://"),
+		resolvable: []string{"5617"},
+		lookupFn: func(dir, name string) (*filer_pb.Entry, error) {
+			return entries[name], nil
+		},
+	})
+	dst, dstAddr := startRecordingFiler(t, nil)
+	fs := &FilerSink{
+		filerSource:    filerSrc,
+		dir:            "/dst",
+		grpcAddress:    dstAddr,
+		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		executor:       util.NewLimitedConcurrentExecutor(1),
+	}
+	fs.SetUploader(operation.NewUploaderWithHttpClient(http.DefaultClient))
+	done := make(chan error, 1)
+	go func() {
+		for _, name := range []string{"x.bin", "y.bin"} {
+			if err := fs.CreateEntry("/dst/"+name, entries[name], nil); err != nil {
+				done <- err
+				return
+			}
+		}
+		done <- nil
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("confirmed missing files should be skipped: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("confirmed 404s waited for the volume recovery grace")
+	}
+	if dst.creates.Load() != 0 {
+		t.Fatal("missing chunk data must not be committed to the destination")
+	}
+}
+
 // Once the source has lost a chunk for good, holding the sync offset for its
 // entry only stops every later event from ever being checkpointed: the bytes are
 // not coming back. Skip it loudly instead — but only while the source is
@@ -1024,11 +1114,11 @@ func TestFetchAndWriteStopsWhenOlderLiveEntryDroppedChunk(t *testing.T) {
 // The child must keep retrying under the gate — its error must come back marked
 // permanent by the clock, not returned raw by the dropped-chunk check.
 func TestFetchAndWriteManifestChildKeepsRetrying(t *testing.T) {
-	prevRetryWaitTime, prevGrace := util.RetryWaitTime, missingSourceChunkGrace
+	prevRetryWaitTime, prevGrace := util.RetryWaitTime, missingSourceNeedleGrace
 	util.RetryWaitTime = 100 * time.Millisecond
-	missingSourceChunkGrace = 500 * time.Millisecond
+	missingSourceNeedleGrace = 500 * time.Millisecond
 	t.Cleanup(func() {
-		util.RetryWaitTime, missingSourceChunkGrace = prevRetryWaitTime, prevGrace
+		util.RetryWaitTime, missingSourceNeedleGrace = prevRetryWaitTime, prevGrace
 	})
 
 	gone := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1184,11 +1274,11 @@ func committedOverWithOlderMtime() (live, replayed *filer_pb.Entry) {
 // listed the replay's chunk. That lagging entry cannot prove the chunk dropped:
 // the 404 must be waited out like any other, not cut short.
 func TestFetchAndWriteLaggingLookupKeepsRetrying(t *testing.T) {
-	prevRetryWaitTime, prevGrace := util.RetryWaitTime, missingSourceChunkGrace
+	prevRetryWaitTime, prevGrace := util.RetryWaitTime, missingSourceNeedleGrace
 	util.RetryWaitTime = 100 * time.Millisecond
-	missingSourceChunkGrace = 500 * time.Millisecond
+	missingSourceNeedleGrace = 500 * time.Millisecond
 	t.Cleanup(func() {
-		util.RetryWaitTime, missingSourceChunkGrace = prevRetryWaitTime, prevGrace
+		util.RetryWaitTime, missingSourceNeedleGrace = prevRetryWaitTime, prevGrace
 	})
 
 	gone := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

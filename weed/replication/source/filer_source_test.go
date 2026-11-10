@@ -378,18 +378,90 @@ func TestReadPartSkipsNotFoundReplica(t *testing.T) {
 // Every replica gone: the caller must see a not-found error it can act on, and no
 // response left open behind it.
 func TestReadPartAllReplicasNotFound(t *testing.T) {
-	gone := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var hits atomic.Int32
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
 		http.Error(w, "Not Found", http.StatusNotFound)
-	}))
+	})
+	gone := httptest.NewServer(handler)
 	defer gone.Close()
+	second := httptest.NewServer(handler)
+	defer second.Close()
 
-	filerSource := startLookupFiler(t, strings.TrimPrefix(gone.URL, "http://"))
+	filerSource := startLookupFiler(t, strings.TrimPrefix(gone.URL, "http://"), strings.TrimPrefix(second.URL, "http://"))
 
 	_, _, resp, err := filerSource.ReadPart("5617,01abc", 0)
 	if !errors.Is(err, util_http.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
+	if !errors.Is(err, ErrChunkNotFound) {
+		t.Fatalf("all replicas answered 404, expected ErrChunkNotFound, got %v", err)
+	}
+	if hits.Load() != 2 {
+		t.Fatalf("expected every replica to be tried, got %d requests", hits.Load())
+	}
 	if resp != nil {
 		t.Fatal("expected no response alongside the error")
+	}
+}
+
+// A 404 from one replica cannot rule out a chunk held by another replica that
+// failed to answer. Preserve the other failure regardless of replica order.
+func TestReadPartPreservesReplicaFailure(t *testing.T) {
+	gone := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "Not Found", http.StatusNotFound)
+	}))
+	defer gone.Close()
+	for _, tc := range []struct {
+		name        string
+		status      int
+		unreachable bool
+	}{
+		{http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable, false},
+		{http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized, false},
+		{"connection refused", http.StatusServiceUnavailable, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			failed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.status)
+			}))
+			defer failed.Close()
+			if tc.unreachable {
+				failed.Close()
+			}
+			locations := []string{strings.TrimPrefix(failed.URL, "http://"), strings.TrimPrefix(gone.URL, "http://")}
+			for _, reverse := range []bool{false, true} {
+				if reverse {
+					locations[0], locations[1] = locations[1], locations[0]
+				}
+				filerSource := startLookupFiler(t, locations...)
+				_, _, resp, err := filerSource.ReadPart("5617,01abc", 0)
+				if err == nil || !strings.Contains(err.Error(), tc.name) {
+					t.Fatalf("expected replica failure %s, got %v", tc.name, err)
+				}
+				if errors.Is(err, ErrChunkNotFound) || errors.Is(err, util_http.ErrNotFound) {
+					t.Fatalf("a failed replica must not count as a missing chunk: %v", err)
+				}
+				if resp != nil {
+					t.Fatal("expected no response alongside the error")
+				}
+			}
+		})
+	}
+}
+
+func TestReadPartProxyNotFoundIsUnconfirmed(t *testing.T) {
+	gone := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "Not Found", http.StatusNotFound)
+	}))
+	defer gone.Close()
+	address := strings.TrimPrefix(gone.URL, "http://")
+	filerSource := &FilerSource{}
+	if err := filerSource.DoInitialize(address, address, "/", true); err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, err := filerSource.ReadPart("5617,01abc", 0)
+	if !errors.Is(err, util_http.ErrNotFound) || errors.Is(err, ErrChunkNotFound) {
+		t.Fatalf("a proxied 404 must remain ambiguous: %v", err)
 	}
 }
