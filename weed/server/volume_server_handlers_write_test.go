@@ -7,14 +7,17 @@ import (
 	"encoding/base64"
 	"image"
 	"image/jpeg"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/textproto"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/images"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
@@ -146,19 +149,34 @@ func TestBatchDeleteCancelsAWriteInItsFsyncWindow(t *testing.T) {
 }
 
 // A replica rejects a Content-MD5 that does not match the bytes it is sent.
-func TestReplicaContentMd5AfterOrientationFix(t *testing.T) {
+func TestPostHandlerForwardsAContentMd5TheReplicaAccepts(t *testing.T) {
 	var encoded bytes.Buffer
 	require.NoError(t, jpeg.Encode(&encoded, image.NewRGBA(image.Rect(0, 0, 3, 2)), nil))
 	plain := encoded.Bytes()
 	exif := []byte("Exif\x00\x00MM\x00\x2a\x00\x00\x00\x08\x00\x01\x01\x12\x00\x03\x00\x00\x00\x01\x00\x03\x00\x00\x00\x00\x00\x00")
 	tagged := append([]byte{0xFF, 0xD8, 0xFF, 0xE1, 0, byte(len(exif) + 2)}, exif...)
 	tagged = append(tagged, plain[2:]...)
-	digest := func(data []byte) string {
-		sum := md5.Sum(data)
-		return base64.StdEncoding.EncodeToString(sum[:])
-	}
 
-	for _, tc := range []struct {
+	vid := needle.VolumeId(849300201)
+	replicaVs := &VolumeServer{store: newTraversalTestStore(t.TempDir()), fileSizeLimitBytes: 1 << 20}
+	t.Cleanup(replicaVs.store.Close)
+	_, err := replicaVs.AllocateVolume(context.Background(), &volume_server_pb.AllocateVolumeRequest{VolumeId: uint32(vid), Replication: "001", Version: uint32(needle.GetCurrentVersion())})
+	require.NoError(t, err)
+	replicaVs.guard = security.NewGuard(nil, "", 0, "", 0)
+	replicaResp := make(chan *httptest.ResponseRecorder, 1)
+	replica := newProxyTestHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rec := httptest.NewRecorder()
+		replicaVs.PostHandler(rec, r)
+		replicaResp <- rec
+		w.WriteHeader(rec.Code)
+		_, _ = w.Write(rec.Body.Bytes())
+	}))
+
+	vs := newProxyTestVolumeServer(t, vid.String(), []*master_pb.Location{{Url: strings.TrimPrefix(replica.URL, "http://")}}, nil)
+	vs.guard = security.NewGuard(nil, "", 0, "", 0)
+	vs.fileSizeLimitBytes = 1 << 20
+
+	for i, tc := range []struct {
 		name      string
 		fix       bool
 		data      []byte
@@ -169,19 +187,42 @@ func TestReplicaContentMd5AfterOrientationFix(t *testing.T) {
 		{"not a jpeg", true, []byte("plain text"), false},
 		{"fix off", false, tagged, false},
 	} {
-		n := &needle.Needle{Data: tc.data}
-		if tc.fix {
-			n.Data = images.FixJpgOrientation(tc.data)
-		}
-		require.Equal(t, tc.rewritten, !bytes.Equal(n.Data, tc.data), tc.name)
+		t.Run(tc.name, func(t *testing.T) {
+			vs.FixJpgOrientation = tc.fix
+			sum := md5.Sum(tc.data)
+			clientMd5 := base64.StdEncoding.EncodeToString(sum[:])
 
-		clientMd5 := digest(tc.data)
-		replicaMd5 := (&VolumeServer{FixJpgOrientation: tc.fix}).replicaContentMd5(n, clientMd5)
-		if tc.rewritten {
-			require.Empty(t, replicaMd5, tc.name)
-		} else {
-			require.Equal(t, clientMd5, replicaMd5, tc.name)
-			require.Equal(t, digest(n.Data), replicaMd5, tc.name)
-		}
+			var body bytes.Buffer
+			form := multipart.NewWriter(&body)
+			part, err := form.CreatePart(textproto.MIMEHeader{
+				"Content-Disposition": {`form-data; name="file"; filename="photo.jpg"`},
+				"Content-Type":        {"image/jpeg"},
+				"Content-Md5":         {clientMd5},
+			})
+			require.NoError(t, err)
+			_, err = part.Write(tc.data)
+			require.NoError(t, err)
+			require.NoError(t, form.Close())
+			fid := needle.NewFileId(vid, uint64(i+1), 0x1234)
+			req := httptest.NewRequest(http.MethodPost, "/"+fid.String(), &body)
+			req.Header.Set("Content-Type", form.FormDataContentType())
+
+			resp := httptest.NewRecorder()
+			vs.PostHandler(resp, req)
+			forwarded := <-replicaResp
+			require.Equal(t, http.StatusCreated, forwarded.Code, forwarded.Body.String())
+			require.Equal(t, http.StatusCreated, resp.Code, resp.Body.String())
+			require.Equal(t, clientMd5, resp.Header().Get("Content-MD5"))
+			if tc.rewritten {
+				require.Empty(t, forwarded.Header().Get("Content-MD5"))
+			} else {
+				require.Equal(t, clientMd5, forwarded.Header().Get("Content-MD5"))
+			}
+
+			stored := &needle.Needle{Id: fid.Key, Cookie: fid.Cookie}
+			_, err = replicaVs.store.ReadVolumeNeedle(vid, stored, nil, nil)
+			require.NoError(t, err)
+			require.Equal(t, tc.rewritten, !bytes.Equal(stored.Data, tc.data))
+		})
 	}
 }
