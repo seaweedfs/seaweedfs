@@ -94,6 +94,10 @@ data:
     cert = "/usr/local/share/ca-certificates/admin/tls.crt"
     key  = "/usr/local/share/ca-certificates/admin/tls.key"
 
+    [grpc.vector]
+    cert = "/usr/local/share/ca-certificates/vector/tls.crt"
+    key  = "/usr/local/share/ca-certificates/vector/tls.key"
+
     [grpc.worker]
     cert = "/usr/local/share/ca-certificates/worker/tls.crt"
     key  = "/usr/local/share/ca-certificates/worker/tls.key"

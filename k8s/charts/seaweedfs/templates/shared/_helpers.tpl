@@ -770,3 +770,15 @@ on install.
 {{- $context := merge (dict "Values" (omit .Values "commonLabels")) (omit . "Values") -}}
 {{- include (print .Template.BasePath "/master/master-configmap.yaml") $context | sha256sum -}}
 {{- end -}}
+
+{{- define "seaweedfs.vector.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "seaweedfs.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name | quote }}
+app.kubernetes.io/component: vector
+{{- end -}}
+{{- define "seaweedfs.vector.labels" -}}
+{{ include "seaweedfs.vector.selectorLabels" . }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+{{- with include "seaweedfs.commonLabels" . }}{{ . | nindent 0 }}{{ end }}
+{{- end -}}
