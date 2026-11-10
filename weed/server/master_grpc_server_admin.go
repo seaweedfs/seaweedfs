@@ -87,6 +87,12 @@ func NewAdminLocks() *AdminLocks {
 func (locks *AdminLocks) isLocked(lockName string) (clientName string, message string, isLocked bool) {
 	locks.RLock()
 	defer locks.RUnlock()
+	return locks.lockStatusLocked(lockName)
+}
+
+// The *Locked helpers below expect the caller to hold locks, so that a lease
+// or release checks and changes the lock state in one critical section.
+func (locks *AdminLocks) lockStatusLocked(lockName string) (clientName string, message string, isLocked bool) {
 	adminLock, found := locks.locks[lockName]
 	if !found {
 		return "", "", false
@@ -95,9 +101,7 @@ func (locks *AdminLocks) isLocked(lockName string) (clientName string, message s
 	return adminLock.lastClient, adminLock.lastMessage, adminLock.accessLockTime.Add(LockDuration).After(time.Now())
 }
 
-func (locks *AdminLocks) isValidToken(lockName string, ts time.Time, token int64) bool {
-	locks.RLock()
-	defer locks.RUnlock()
+func (locks *AdminLocks) isValidTokenLocked(lockName string, ts time.Time, token int64) bool {
 	adminLock, found := locks.locks[lockName]
 	if !found {
 		return false
@@ -105,9 +109,7 @@ func (locks *AdminLocks) isValidToken(lockName string, ts time.Time, token int64
 	return adminLock.accessLockTime.Equal(ts) && adminLock.accessSecret == token
 }
 
-func (locks *AdminLocks) generateToken(lockName string, clientName string) (ts time.Time, token int64) {
-	locks.Lock()
-	defer locks.Unlock()
+func (locks *AdminLocks) generateTokenLocked(lockName string, clientName string) (ts time.Time, token int64) {
 	if existing, found := locks.locks[lockName]; found && existing.lastClient != clientName {
 		stats.MasterAdminLock.DeleteLabelValues(existing.lastClient)
 	}
@@ -121,11 +123,11 @@ func (locks *AdminLocks) generateToken(lockName string, clientName string) (ts t
 	return lock.accessLockTime, lock.accessSecret
 }
 
-func (locks *AdminLocks) deleteLock(lockName string) {
-	locks.Lock()
-	stats.MasterAdminLock.DeleteLabelValues(locks.locks[lockName].lastClient)
-	defer locks.Unlock()
-	delete(locks.locks, lockName)
+func (locks *AdminLocks) deleteLockLocked(lockName string) {
+	if adminLock, found := locks.locks[lockName]; found {
+		stats.MasterAdminLock.DeleteLabelValues(adminLock.lastClient)
+		delete(locks.locks, lockName)
+	}
 }
 
 func (ms *MasterServer) LeaseAdminToken(ctx context.Context, req *master_pb.LeaseAdminTokenRequest) (*master_pb.LeaseAdminTokenResponse, error) {
@@ -135,11 +137,13 @@ func (ms *MasterServer) LeaseAdminToken(ctx context.Context, req *master_pb.Leas
 		return resp, raft.NotLeaderError
 	}
 
-	if lastClient, lastMessage, isLocked := ms.adminLocks.isLocked(req.LockName); isLocked {
+	ms.adminLocks.Lock()
+	defer ms.adminLocks.Unlock()
+	if lastClient, lastMessage, isLocked := ms.adminLocks.lockStatusLocked(req.LockName); isLocked {
 		glog.V(4).Infof("LeaseAdminToken %v", lastClient)
-		if req.PreviousToken != 0 && ms.adminLocks.isValidToken(req.LockName, time.Unix(0, req.PreviousLockTime), req.PreviousToken) {
+		if req.PreviousToken != 0 && ms.adminLocks.isValidTokenLocked(req.LockName, time.Unix(0, req.PreviousLockTime), req.PreviousToken) {
 			// for renew
-			ts, token := ms.adminLocks.generateToken(req.LockName, req.ClientName)
+			ts, token := ms.adminLocks.generateTokenLocked(req.LockName, req.ClientName)
 			resp.Token, resp.LockTsNs = token, ts.UnixNano()
 			return resp, nil
 		}
@@ -147,7 +151,7 @@ func (ms *MasterServer) LeaseAdminToken(ctx context.Context, req *master_pb.Leas
 		return resp, fmt.Errorf("already locked by %v: %v", lastClient, lastMessage)
 	}
 	// for fresh lease request
-	ts, token := ms.adminLocks.generateToken(req.LockName, req.ClientName)
+	ts, token := ms.adminLocks.generateTokenLocked(req.LockName, req.ClientName)
 	resp.Token, resp.LockTsNs = token, ts.UnixNano()
 	return resp, nil
 }
@@ -159,8 +163,10 @@ func (ms *MasterServer) ReleaseAdminToken(ctx context.Context, req *master_pb.Re
 	if !ms.Topo.IsLeader() {
 		return resp, raft.NotLeaderError
 	}
-	if ms.adminLocks.isValidToken(req.LockName, time.Unix(0, req.PreviousLockTime), req.PreviousToken) {
-		ms.adminLocks.deleteLock(req.LockName)
+	ms.adminLocks.Lock()
+	defer ms.adminLocks.Unlock()
+	if ms.adminLocks.isValidTokenLocked(req.LockName, time.Unix(0, req.PreviousLockTime), req.PreviousToken) {
+		ms.adminLocks.deleteLockLocked(req.LockName)
 	}
 	return resp, nil
 }
