@@ -975,22 +975,22 @@ func ensureAllPortsAvailableOnIP(bindIp string, listenOnLocalhost bool) error {
 		}
 	}
 
-	// WebDAV and the Admin UI bind only -ip.bind; they never open a loopback
-	// companion listener, so ports held elsewhere cannot collide with them.
+	if *miniEnableWebDAV {
+		portConfigs = append(portConfigs, struct {
+			port      *int
+			name      string
+			flagName  string
+			grpcPtr   *int
+			localhost bool
+		}{miniWebDavOptions.port, "WebDAV", "webdav.port", nil, false})
+	}
 	portConfigs = append(portConfigs, struct {
 		port      *int
 		name      string
 		flagName  string
 		grpcPtr   *int
 		localhost bool
-	}{miniWebDavOptions.port, "WebDAV", "webdav.port", nil, false},
-		struct {
-			port      *int
-			name      string
-			flagName  string
-			grpcPtr   *int
-			localhost bool
-		}{miniAdminOptions.port, "Admin", "admin.port", miniAdminOptions.grpcPort, false})
+	}{miniAdminOptions.port, "Admin", "admin.port", miniAdminOptions.grpcPort, false})
 
 	// First, reserve all gRPC ports that will be calculated to prevent HTTP port allocation from using them
 	// This prevents collisions like: HTTP port moves to X, then gRPC port is calculated as Y where Y == X
