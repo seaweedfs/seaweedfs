@@ -73,7 +73,11 @@ func MergeEcRuntimes(runtimes []*EcVolume) *MergedEcRuntimes {
 	total := ecDataShards(anchor) + ecParityShards(anchor)
 	width := total
 	for _, v := range merged {
-		if n := int(v.Shards[len(v.Shards)-1].ShardId) + 1; n > width {
+		shards := v.Shards
+		if len(shards) == 0 {
+			continue
+		}
+		if n := int(shards[len(shards)-1].ShardId) + 1; n > width {
 			width = n
 		}
 	}
