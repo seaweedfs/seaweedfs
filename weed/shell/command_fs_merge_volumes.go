@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -310,7 +311,7 @@ func isMultipartUploadFile(bucketsPath string, dir util.FullPath) bool {
 		return false
 	}
 	parent, _ := util.FullPath(bucketDir).DirAndName()
-	return parent == strings.TrimRight(bucketsPath, "/")
+	return parent == path.Clean(bucketsPath)
 }
 
 // recordPlanSources counts the chunks on plan sources as referenced and

@@ -521,6 +521,8 @@ func TestIsMultipartUploadFile(t *testing.T) {
 		want         bool
 	}{
 		{"/buckets", "/buckets/b/.uploads/abc", true},
+		{"/", "/b/.uploads/abc", true},
+		{"/", "/buckets/b/.uploads/abc", false},
 		{"/buckets/", "/buckets/b/.uploads/abc", true},
 		{"/data/buckets", "/data/buckets/b/.uploads/abc", true},
 		{"/buckets", "/buckets/b/.uploads", false},
