@@ -190,7 +190,7 @@ func TestRemoveUploadDir(t *testing.T) {
 
 	t.Run("open upload is freed in a transaction on the object's lock", func(t *testing.T) {
 		svc := &stubFilerSvc{lookupErr: filer_pb.ErrNotFound, listErr: filer_pb.ErrNotFound, txnResp: &filer_pb.ObjectTransactionResponse{}}
-		if err := c.removeUploadDir(stubFilerClient{client: svc}, io.Discard, "/buckets/b", uploadsDir, uploadEntry("up1", "/dir//obj"), lockHeld); err != nil {
+		if err := c.removeUploadDir(stubFilerClient{client: svc}, io.Discard, "/buckets/b", uploadsDir, uploadEntry("up1", "/dir//obj"), false, lockHeld); err != nil {
 			t.Fatal(err)
 		}
 		if len(svc.txnReqs) != 1 || len(svc.deleteReqs) != 0 {
@@ -210,9 +210,28 @@ func TestRemoveUploadDir(t *testing.T) {
 		}
 	})
 
+	t.Run("trailing-slash key locks the entry its completion writes", func(t *testing.T) {
+		for _, tc := range []struct {
+			versioned bool
+			lockKey   string
+		}{
+			{false, "/buckets/b/dir/dir"},
+			{true, "/buckets/b/dir/"},
+		} {
+			svc := &stubFilerSvc{lookupErr: filer_pb.ErrNotFound, listErr: filer_pb.ErrNotFound, txnResp: &filer_pb.ObjectTransactionResponse{}}
+			if err := c.removeUploadDir(stubFilerClient{client: svc}, io.Discard, "/buckets/b", uploadsDir, uploadEntry("up1", "dir/"), tc.versioned, lockHeld); err != nil {
+				t.Fatal(err)
+			}
+			req := svc.txnReqs[0]
+			if req.LockKey != tc.lockKey || req.ConditionKey != tc.lockKey || req.RouteKey != s3_constants.ObjectWriteRouteKeyPrefix+"/buckets/b/dir" {
+				t.Fatalf("versioned=%v: lock %q condition %q route %q", tc.versioned, req.LockKey, req.ConditionKey, req.RouteKey)
+			}
+		}
+	})
+
 	t.Run("upload completed before the transaction keeps its chunks", func(t *testing.T) {
 		svc := &stubFilerSvc{lookupErr: filer_pb.ErrNotFound, listErr: filer_pb.ErrNotFound, txnResp: &filer_pb.ObjectTransactionResponse{ErrorCode: filer_pb.FilerError_PRECONDITION_FAILED}}
-		if err := c.removeUploadDir(stubFilerClient{client: svc}, io.Discard, "/buckets/b", uploadsDir, uploadEntry("up1", "obj"), lockHeld); err != nil {
+		if err := c.removeUploadDir(stubFilerClient{client: svc}, io.Discard, "/buckets/b", uploadsDir, uploadEntry("up1", "obj"), false, lockHeld); err != nil {
 			t.Fatal(err)
 		}
 		if len(svc.deleteReqs) != 1 || svc.deleteReqs[0].IsDeleteData || svc.deleteReqs[0].Name != "up1" {
@@ -222,7 +241,7 @@ func TestRemoveUploadDir(t *testing.T) {
 
 	t.Run("completed upload goes metadata-only without a transaction", func(t *testing.T) {
 		svc := &stubFilerSvc{lookupResp: &filer_pb.LookupDirectoryEntryResponse{Entry: completedEntry("up1")}}
-		if err := c.removeUploadDir(stubFilerClient{client: svc}, io.Discard, "/buckets/b", uploadsDir, uploadEntry("up1", "obj"), lockHeld); err != nil {
+		if err := c.removeUploadDir(stubFilerClient{client: svc}, io.Discard, "/buckets/b", uploadsDir, uploadEntry("up1", "obj"), false, lockHeld); err != nil {
 			t.Fatal(err)
 		}
 		if len(svc.txnReqs) != 0 || len(svc.deleteReqs) != 1 || svc.deleteReqs[0].IsDeleteData {
@@ -232,7 +251,7 @@ func TestRemoveUploadDir(t *testing.T) {
 
 	t.Run("undecidable lookup deletes nothing", func(t *testing.T) {
 		svc := &stubFilerSvc{lookupErr: errors.New("store unavailable")}
-		if err := c.removeUploadDir(stubFilerClient{client: svc}, io.Discard, "/buckets/b", uploadsDir, uploadEntry("up1", "obj"), lockHeld); err != nil {
+		if err := c.removeUploadDir(stubFilerClient{client: svc}, io.Discard, "/buckets/b", uploadsDir, uploadEntry("up1", "obj"), false, lockHeld); err != nil {
 			t.Fatal(err)
 		}
 		if len(svc.txnReqs) != 0 || len(svc.deleteReqs) != 0 {
@@ -242,7 +261,7 @@ func TestRemoveUploadDir(t *testing.T) {
 
 	t.Run("lost lock deletes nothing", func(t *testing.T) {
 		svc := &stubFilerSvc{lookupErr: filer_pb.ErrNotFound, listErr: filer_pb.ErrNotFound, txnResp: &filer_pb.ObjectTransactionResponse{}}
-		if err := c.removeUploadDir(stubFilerClient{client: svc}, io.Discard, "/buckets/b", uploadsDir, uploadEntry("up1", "obj"), func() bool { return false }); err != nil {
+		if err := c.removeUploadDir(stubFilerClient{client: svc}, io.Discard, "/buckets/b", uploadsDir, uploadEntry("up1", "obj"), false, func() bool { return false }); err != nil {
 			t.Fatal(err)
 		}
 		if len(svc.txnReqs) != 0 || len(svc.deleteReqs) != 0 {
@@ -252,7 +271,7 @@ func TestRemoveUploadDir(t *testing.T) {
 
 	t.Run("transaction error fails the purge", func(t *testing.T) {
 		svc := &stubFilerSvc{lookupErr: filer_pb.ErrNotFound, listErr: filer_pb.ErrNotFound, txnResp: &filer_pb.ObjectTransactionResponse{Error: "boom"}}
-		if err := c.removeUploadDir(stubFilerClient{client: svc}, io.Discard, "/buckets/b", uploadsDir, uploadEntry("up1", "obj"), lockHeld); err == nil {
+		if err := c.removeUploadDir(stubFilerClient{client: svc}, io.Discard, "/buckets/b", uploadsDir, uploadEntry("up1", "obj"), false, lockHeld); err == nil {
 			t.Fatal("want an error")
 		}
 		if len(svc.deleteReqs) != 0 {
@@ -262,7 +281,7 @@ func TestRemoveUploadDir(t *testing.T) {
 
 	t.Run("upload without an object key frees its chunks directly", func(t *testing.T) {
 		svc := &stubFilerSvc{}
-		if err := c.removeUploadDir(stubFilerClient{client: svc}, io.Discard, "/buckets/b", uploadsDir, &filer_pb.Entry{Name: "up1"}, lockHeld); err != nil {
+		if err := c.removeUploadDir(stubFilerClient{client: svc}, io.Discard, "/buckets/b", uploadsDir, &filer_pb.Entry{Name: "up1"}, false, lockHeld); err != nil {
 			t.Fatal(err)
 		}
 		if len(svc.txnReqs) != 0 || len(svc.deleteReqs) != 1 || !svc.deleteReqs[0].IsDeleteData {
