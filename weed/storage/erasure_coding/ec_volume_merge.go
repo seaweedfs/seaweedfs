@@ -2,7 +2,6 @@ package erasure_coding
 
 import (
 	"fmt"
-	"slices"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 )
@@ -37,9 +36,16 @@ type MergedEcRuntimes struct {
 
 // MergeEcRuntimes resolves runtimes (one vid's mounts, in location order) into
 // a merged view. Returns nil when no runtime holds a shard (the vanished-volume
-// case).
+// case). Each runtime's Shards is read once, so a concurrent unmount cannot
+// empty the view after that check.
 func MergeEcRuntimes(runtimes []*EcVolume) *MergedEcRuntimes {
-	if !slices.ContainsFunc(runtimes, func(v *EcVolume) bool { return len(v.Shards) > 0 }) {
+	held := make(map[*EcVolume][]*EcVolumeShard, len(runtimes))
+	for _, v := range runtimes {
+		if shards := v.Shards; len(shards) > 0 {
+			held[v] = shards
+		}
+	}
+	if len(held) == 0 {
 		return nil
 	}
 
@@ -59,7 +65,7 @@ func MergeEcRuntimes(runtimes []*EcVolume) *MergedEcRuntimes {
 
 	anchor := genMatches[0]
 	for _, v := range genMatches {
-		if len(v.Shards) > 0 {
+		if len(held[v]) > 0 {
 			anchor = v
 			break
 		}
@@ -75,7 +81,7 @@ func MergeEcRuntimes(runtimes []*EcVolume) *MergedEcRuntimes {
 	total := ecDataShards(anchor) + ecParityShards(anchor)
 	width := total
 	for _, v := range merged {
-		shards := v.Shards
+		shards := held[v]
 		if len(shards) == 0 {
 			continue
 		}
@@ -85,7 +91,7 @@ func MergeEcRuntimes(runtimes []*EcVolume) *MergedEcRuntimes {
 	}
 	slots := make([]*EcVolumeShard, width)
 	for _, v := range merged {
-		for _, shard := range v.Shards {
+		for _, shard := range held[v] {
 			id := int(shard.ShardId)
 			if id >= len(slots) {
 				continue
