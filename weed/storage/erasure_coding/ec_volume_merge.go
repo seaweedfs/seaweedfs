@@ -36,8 +36,8 @@ type MergedEcRuntimes struct {
 
 // MergeEcRuntimes resolves runtimes (one vid's mounts, in location order) into
 // a merged view. Returns nil when no runtime holds a shard (the vanished-volume
-// case). Each runtime's Shards is read once, so a concurrent unmount cannot
-// empty the view after that check.
+// case). Each runtime's Shards is read once, and a runtime emptied by a
+// concurrent unmount neither anchors the generation nor is reported skipped.
 func MergeEcRuntimes(runtimes []*EcVolume) *MergedEcRuntimes {
 	held := make(map[*EcVolume][]*EcVolumeShard, len(runtimes))
 	for _, v := range runtimes {
@@ -50,7 +50,7 @@ func MergeEcRuntimes(runtimes []*EcVolume) *MergedEcRuntimes {
 	}
 
 	anchorGen := int64(0)
-	for _, v := range runtimes {
+	for v := range held {
 		if v.EncodeTsNs > anchorGen {
 			anchorGen = v.EncodeTsNs
 		}
@@ -104,6 +104,9 @@ func MergeEcRuntimes(runtimes []*EcVolume) *MergedEcRuntimes {
 
 	var skipped []string
 	for pos, v := range runtimes {
+		if len(held[v]) == 0 {
+			continue
+		}
 		if v.EncodeTsNs != anchorGen {
 			skipped = append(skipped, fmt.Sprintf(
 				"EC volume %d shards at %s (position %d) belong to encode run %d but the scrub anchors on %d; they were not verified",
