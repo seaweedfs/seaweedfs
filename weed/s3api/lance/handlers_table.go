@@ -421,6 +421,19 @@ func (s *Server) handleRegisterTable(w http.ResponseWriter, r *http.Request) {
 			writeStorageError(w, r, err)
 			return
 		}
+		// CreateTable also answers for a table the caller cannot read, so
+		// bringing that one back still needs UpdateTable.
+		deregistered, _, stateErr := s.datasetState(r, location)
+		if stateErr != nil {
+			writeError(w, r, http.StatusInternalServerError, codeInternal, stateErr.Error())
+			return
+		}
+		if deregistered {
+			if err := s.authorizeUpdateTable(r, bucket, ns, name); err != nil {
+				writeStorageError(w, r, err)
+				return
+			}
+		}
 	}
 
 	// Registering a deregistered dataset brings it back.
