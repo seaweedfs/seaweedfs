@@ -86,6 +86,7 @@ type FilerOptions struct {
 	defaultLevelDbDirectory   *string
 	concurrentUploadLimitMB   *int
 	concurrentFileUploadLimit *int
+	inflightUploadDataTimeout *time.Duration
 	debug                     *bool
 	debugPort                 *int
 	localSocket               *string
@@ -144,6 +145,7 @@ func init() {
 	f.defaultLevelDbDirectory = cmdFiler.Flag.String("defaultStoreDir", ".", "if filer.toml is empty, use an embedded filer store in the directory")
 	f.concurrentUploadLimitMB = cmdFiler.Flag.Int("concurrentUploadLimitMB", 0, "limit total concurrent upload size, 0 means unlimited")
 	f.concurrentFileUploadLimit = cmdFiler.Flag.Int("concurrentFileUploadLimit", 0, "limit number of concurrent file uploads, 0 means unlimited")
+	f.inflightUploadDataTimeout = cmdFiler.Flag.Duration("inflightUploadDataTimeout", 60*time.Second, "how long an upload waits for a slot under the concurrent upload limits before it is rejected with 429, 0 means no limit")
 	f.debug = cmdFiler.Flag.Bool("debug", false, "serves runtime profiling data, e.g., http://localhost:<debug.port>/debug/pprof/goroutine?debug=2")
 	f.debugPort = cmdFiler.Flag.Int("debug.port", 6060, "http port for debugging")
 	f.localSocket = cmdFiler.Flag.String("localSocket", "", "default to /tmp/seaweedfs-filer-<port>.sock")
@@ -183,6 +185,7 @@ func init() {
 	filerS3Options.idleTimeout = cmdFiler.Flag.Int("s3.idleTimeout", 120, "connection idle seconds")
 	filerS3Options.concurrentUploadLimitMB = cmdFiler.Flag.Int("s3.concurrentUploadLimitMB", 0, "limit total concurrent upload size for S3, 0 means unlimited")
 	filerS3Options.concurrentFileUploadLimit = cmdFiler.Flag.Int("s3.concurrentFileUploadLimit", 0, "limit number of concurrent file uploads for S3, 0 means unlimited")
+	filerS3Options.inflightUploadDataTimeout = cmdFiler.Flag.Duration("s3.inflightUploadDataTimeout", 60*time.Second, "how long an upload waits for a slot under the concurrent upload limits before it is rejected with SlowDown, 0 means no limit")
 	filerS3Options.enableIam = cmdFiler.Flag.Bool("s3.iam", true, "enable embedded IAM API on the same S3 port")
 	filerS3Options.cipher = cmdFiler.Flag.Bool("s3.encryptVolumeData", false, "encrypt data on volume servers for S3 uploads; on whenever -encryptVolumeData is")
 	filerS3Options.iamReadOnly = cmdFiler.Flag.Bool("s3.iam.readOnly", true, "disable IAM write operations on this server")
@@ -438,6 +441,7 @@ func (fo *FilerOptions) startFiler() {
 		SaveToFilerLimit:           int64(*fo.saveToFilerLimit),
 		ConcurrentUploadLimit:      int64(*fo.concurrentUploadLimitMB) * 1024 * 1024,
 		ConcurrentFileUploadLimit:  int64(*fo.concurrentFileUploadLimit),
+		InflightUploadDataTimeout:  *fo.inflightUploadDataTimeout,
 		ShowUIDirectoryDelete:      *fo.showUIDirectoryDelete,
 		DownloadMaxBytesPs:         int64(*fo.downloadMaxMBps) * 1024 * 1024,
 		DiskType:                   *fo.diskType,
