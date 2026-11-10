@@ -63,7 +63,8 @@ func CheckGrpcAdminToken(ctx context.Context, signingKey SigningKey) error {
 }
 
 // IsFilerAdminToken reports whether token is an admin token signed by
-// signingKey. An STS session token signed with the same key does not count.
+// signingKey. An STS session token, or a filer token scoped to paths or
+// methods, signed with the same key does not count.
 func IsFilerAdminToken(signingKey SigningKey, token EncodedJwt) bool {
 	if len(signingKey) == 0 || token == "" {
 		return false
@@ -73,7 +74,7 @@ func IsFilerAdminToken(signingKey SigningKey, token EncodedJwt) bool {
 		return false
 	}
 	claims, ok := parsed.Claims.(*SeaweedFilerAdminClaims)
-	return ok && claims.SessionId == ""
+	return ok && claims.SessionId == "" && len(claims.AllowedPrefixes) == 0 && len(claims.AllowedMethods) == 0
 }
 
 // GrpcAdminPeerCredentials returns outgoing metadata carrying a Bearer token
