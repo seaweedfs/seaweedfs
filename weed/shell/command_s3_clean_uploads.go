@@ -71,7 +71,7 @@ func (c *commandS3CleanUploads) Do(args []string, commandEnv *CommandEnv, writer
 		versioning, lockEnabled := getBucketVersioningState(bucket)
 		versioned := versioning == s3_constants.VersioningEnabled || lockEnabled
 		if err := c.cleanupUploads(commandEnv, writer, filerBucketsPath, bucket.Name, versioned, *uploadedTimeAgo, lock); err != nil {
-			fmt.Fprintf(writer, "failed cleanup uploads for bucket %s: %v", bucket.Name, err)
+			fmt.Fprintf(writer, "failed cleanup uploads for bucket %s: %v\n", bucket.Name, err)
 		}
 	}
 
