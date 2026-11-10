@@ -59,7 +59,7 @@ func (c *commandS3BucketCreate) Do(args []string, commandEnv *CommandEnv, writer
 	bucketOwner := bucketCommand.String("owner", "", "bucket owner identity name (for S3 IAM authentication)")
 	withLock := bucketCommand.Bool("withLock", false, "enable Object Lock on the bucket (requires and enables versioning)")
 	if err = bucketCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	if *bucketName == "" {

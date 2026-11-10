@@ -62,6 +62,17 @@ func TestS3BucketCreateRequestsExclusiveCreate(t *testing.T) {
 	assert.Equal(t, "my-bucket", req.Entry.Name)
 }
 
+func TestS3BucketCreateReturnsFlagParseError(t *testing.T) {
+	filerServer := &bucketCreateTestFilerServer{}
+	commandEnv, cleanup := newBucketCreateTestCommandEnv(t, filerServer)
+	defer cleanup()
+
+	var output bytes.Buffer
+	err := (&commandS3BucketCreate{}).Do([]string{"-name", "my-bucket", "-withlock"}, commandEnv, &output)
+	require.EqualError(t, err, "flag provided but not defined: -withlock")
+	assert.Empty(t, filerServer.createRequests())
+}
+
 func newBucketCreateTestCommandEnv(t *testing.T, filerServer filer_pb.SeaweedFilerServer) (*CommandEnv, func()) {
 	t.Helper()
 
