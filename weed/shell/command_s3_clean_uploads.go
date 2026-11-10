@@ -137,7 +137,7 @@ func (c *commandS3CleanUploads) uploadCompleted(filerClient filer_pb.FilerClient
 	if dir == "." {
 		dir = ""
 	}
-	objectDir := util.FullPath(bucketDir + "/" + dir)
+	objectDir := util.FullPath(path.Join(bucketDir, dir))
 
 	completed := false
 	err := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
