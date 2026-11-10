@@ -256,6 +256,8 @@ Release 4.53 provides vector binaries for Linux amd64 and arm64. If your release
 (cd seaweed-vector && cargo build --release -p weed-vector-server)
 ```
 
+For Windows source builds, set `PROTOC` to a native `protoc.exe` before running Cargo; the [desktop build workflow](.github/workflows/rust-vector-platforms.yml) shows how to select the vendored executable.
+
 Run the installed `weed-vector` binary alongside the local cluster started with `weed mini` above (or use `seaweed-vector/target/release/weed-vector` after building from source):
 
 ```bash
