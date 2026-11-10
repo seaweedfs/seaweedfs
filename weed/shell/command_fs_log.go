@@ -22,6 +22,9 @@ func init() {
 type commandFsLogPurge struct {
 }
 
+// filerDiscoveryTimeout bounds the master round trip used to list the filers.
+const filerDiscoveryTimeout = 30 * time.Second
+
 func (c *commandFsLogPurge) Name() string {
 	return "fs.log.purge"
 }
@@ -51,7 +54,7 @@ func (c *commandFsLogPurge) Do(args []string, commandEnv *CommandEnv, writer io.
 		return err
 	}
 
-	filers, err := resolveLogPurgeFilers(*filerList, commandEnv)
+	filers, err := resolveLogPurgeFilers(*filerList, commandEnv, *verbose, writer)
 	if err != nil {
 		return err
 	}
@@ -77,7 +80,7 @@ func (c *commandFsLogPurge) Do(args []string, commandEnv *CommandEnv, writer io.
 
 // resolveLogPurgeFilers returns the filers to purge: the explicit -filer list
 // when given, otherwise every filer registered with the master.
-func resolveLogPurgeFilers(filerList string, commandEnv *CommandEnv) ([]pb.ServerAddress, error) {
+func resolveLogPurgeFilers(filerList string, commandEnv *CommandEnv, verbose bool, writer io.Writer) ([]pb.ServerAddress, error) {
 	if strings.TrimSpace(filerList) != "" {
 		var filers []pb.ServerAddress
 		for _, address := range strings.Split(filerList, ",") {
@@ -91,9 +94,15 @@ func resolveLogPurgeFilers(filerList string, commandEnv *CommandEnv) ([]pb.Serve
 	}
 
 	if commandEnv.MasterClient != nil && commandEnv.option.FilerGroup != nil {
+		// bound the master round trip: a shell whose master connection dropped
+		// must still fall back to the filer it is connected to instead of
+		// waiting forever before purging anything.
+		ctx, cancel := context.WithTimeout(context.Background(), filerDiscoveryTimeout)
+		defer cancel()
+
 		var filers []pb.ServerAddress
-		listErr := commandEnv.MasterClient.WithClient(context.Background(), false, func(client master_pb.SeaweedClient) error {
-			resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
+		listErr := commandEnv.MasterClient.WithClient(ctx, false, func(client master_pb.SeaweedClient) error {
+			resp, err := client.ListClusterNodes(ctx, &master_pb.ListClusterNodesRequest{
 				ClientType: cluster.FilerType,
 				FilerGroup: *commandEnv.option.FilerGroup,
 			})
@@ -105,11 +114,13 @@ func resolveLogPurgeFilers(filerList string, commandEnv *CommandEnv) ([]pb.Serve
 			}
 			return nil
 		})
-		if listErr != nil {
-			return nil, fmt.Errorf("list filers: %w", listErr)
-		}
-		if len(filers) > 0 {
+		if listErr == nil && len(filers) > 0 {
 			return filers, nil
+		}
+		// a master that cannot be reached or lists nothing is not fatal: the
+		// filer this shell talks to is still worth purging.
+		if listErr != nil && verbose {
+			fmt.Fprintf(writer, "cannot list filers from master: %v\n", listErr)
 		}
 	}
 

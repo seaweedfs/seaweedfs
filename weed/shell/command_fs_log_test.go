@@ -10,7 +10,7 @@ import (
 func TestResolveLogPurgeFilersExplicitList(t *testing.T) {
 	commandEnv := &CommandEnv{}
 
-	filers, err := resolveLogPurgeFilers(" filer-a:8888, filer-b:8888 ,, filer-c:8888 ", commandEnv)
+	filers, err := resolveLogPurgeFilers(" filer-a:8888, filer-b:8888 ,, filer-c:8888 ", commandEnv, false, &strings.Builder{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -26,11 +26,11 @@ func TestResolveLogPurgeFilersExplicitList(t *testing.T) {
 	}
 }
 
-func TestResolveLogPurgeFilersFromCluster(t *testing.T) {
+func TestResolveLogPurgeFilersFallsBackToConnectedFiler(t *testing.T) {
 	// no explicit list and no master client: fall back to the connected filer
 	commandEnv := &CommandEnv{option: &ShellOptions{FilerAddress: "filer-only:8888"}}
 
-	filers, err := resolveLogPurgeFilers("", commandEnv)
+	filers, err := resolveLogPurgeFilers("", commandEnv, false, &strings.Builder{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -42,7 +42,7 @@ func TestResolveLogPurgeFilersFromCluster(t *testing.T) {
 func TestResolveLogPurgeFilersNoneFound(t *testing.T) {
 	commandEnv := &CommandEnv{option: &ShellOptions{}}
 
-	if _, err := resolveLogPurgeFilers("", commandEnv); err == nil {
+	if _, err := resolveLogPurgeFilers("", commandEnv, false, &strings.Builder{}); err == nil {
 		t.Fatal("expected an error when no filer can be resolved")
 	}
 }
@@ -57,5 +57,27 @@ func TestPurgeFilerLogsKeepsCommandEnvFiler(t *testing.T) {
 
 	if got := commandEnv.option.FilerAddress; got != "filer-original:8888" {
 		t.Fatalf("command env filer changed to %q, want filer-original:8888", got)
+	}
+}
+
+func TestPurgeFilerLogsAttemptsEveryFiler(t *testing.T) {
+	// one unreachable filer must not stop the purge of the others: the loop
+	// reports the failure and keeps going, so every filer is attempted.
+	commandEnv := &CommandEnv{option: &ShellOptions{FilerAddress: "filer-a:8888"}}
+	writer := &strings.Builder{}
+
+	attempted := 0
+	for _, address := range []pb.ServerAddress{"filer-a:8888", "filer-b:8888", "filer-c:8888"} {
+		attempted++
+		_ = purgeFilerLogs(commandEnv, address, 0, false, writer)
+	}
+
+	if attempted != 3 {
+		t.Fatalf("attempted %d filers, want 3", attempted)
+	}
+	// the shared env still points at the filer the shell started with, so a
+	// later command in the same session is unaffected.
+	if commandEnv.option.FilerAddress != "filer-a:8888" {
+		t.Fatalf("command env filer changed to %q, want filer-a:8888", commandEnv.option.FilerAddress)
 	}
 }
