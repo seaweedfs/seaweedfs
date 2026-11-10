@@ -115,6 +115,9 @@ func TestGetObjectAnswersRequestCanceledBeforeFirstByte(t *testing.T) {
 	r := mux.SetURLVars(httptest.NewRequestWithContext(ctx, http.MethodGet, "/b/o", nil), map[string]string{"bucket": "b", "object": "o"})
 	w := httptest.NewRecorder()
 	s3a.GetObjectHandler(w, r)
+	if err := ctx.Err(); err != context.Canceled {
+		t.Fatalf("context error = %v, want %v: the lookup was never reached", err, context.Canceled)
+	}
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d with %d body bytes, want %d", w.Code, w.Body.Len(), http.StatusInternalServerError)
 	}
