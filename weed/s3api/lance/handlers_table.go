@@ -427,8 +427,7 @@ func (s *Server) handleRegisterTable(w http.ResponseWriter, r *http.Request) {
 		// bringing that one back still needs UpdateTable.
 		deregistered, _, stateErr := s.datasetState(r, location)
 		if stateErr != nil {
-			writeError(w, r, http.StatusInternalServerError, codeInternal, stateErr.Error())
-			return
+			glog.V(1).Infof("lance: could not check %s for %s: %v", deregisteredMarker, location, stateErr)
 		}
 		if deregistered {
 			if err := s.authorizeUpdateTable(r, bucket, ns, name); err != nil {
