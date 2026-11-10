@@ -69,3 +69,14 @@ func TestVolumeServerEvacuateNoLockFlag(t *testing.T) {
 		t.Fatalf("expected node validation error after bypassing lock check, got: %v", errNoLock)
 	}
 }
+
+func TestVolumeServerEvacuateReturnsFlagParseError(t *testing.T) {
+	env := &CommandEnv{locker: exclusive_locks.NewExclusiveLocker(nil, cluster.AdminShellLockName)}
+	err := (&commandVolumeServerEvacuate{}).Do([]string{"-noLock=invalid", "-apply"}, env, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "invalid boolean value") {
+		t.Fatalf("expected a flag parse error, got: %v", err)
+	}
+	if env.noLock {
+		t.Fatalf("a rejected -noLock must not unlock the shell")
+	}
+}
