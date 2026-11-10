@@ -12,11 +12,9 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
-	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 func init() {
@@ -49,8 +47,6 @@ func (c *commandS3CleanUploads) Do(args []string, commandEnv *CommandEnv, writer
 		return nil
 	}
 
-	signingKey := util.GetViper().GetString("jwt.filer_signing.key")
-
 	var filerBucketsPath string
 	filerBucketsPath, err = readFilerBucketsPath(commandEnv)
 	if err != nil {
@@ -67,7 +63,7 @@ func (c *commandS3CleanUploads) Do(args []string, commandEnv *CommandEnv, writer
 	}
 
 	for _, bucket := range buckets {
-		if err := c.cleanupUploads(commandEnv, writer, filerBucketsPath, bucket, *uploadedTimeAgo, signingKey); err != nil {
+		if err := c.cleanupUploads(commandEnv, writer, filerBucketsPath, bucket, *uploadedTimeAgo); err != nil {
 			fmt.Fprintf(writer, "failed cleanup uploads for bucket %s: %v", bucket, err)
 		}
 	}
@@ -75,7 +71,7 @@ func (c *commandS3CleanUploads) Do(args []string, commandEnv *CommandEnv, writer
 	return err
 }
 
-func (c *commandS3CleanUploads) cleanupUploads(commandEnv *CommandEnv, writer io.Writer, filerBucketsPath string, bucket string, timeAgo time.Duration, signingKey string) error {
+func (c *commandS3CleanUploads) cleanupUploads(commandEnv *CommandEnv, writer io.Writer, filerBucketsPath string, bucket string, timeAgo time.Duration) error {
 	uploadsDir := filerBucketsPath + "/" + bucket + "/" + s3_constants.MultipartUploadsFolder
 	var staleUploads []*filer_pb.Entry
 	now := time.Now()
@@ -90,11 +86,6 @@ func (c *commandS3CleanUploads) cleanupUploads(commandEnv *CommandEnv, writer io
 		return fmt.Errorf("list uploads under %v: %w", uploadsDir, err)
 	}
 
-	var encodedJwt security.EncodedJwt
-	if signingKey != "" {
-		encodedJwt = security.GenJwtForFilerServer(security.SigningKey(signingKey), 15*60)
-	}
-
 	for _, staleUpload := range staleUploads {
 		// A completed upload's part entries share chunks with the finished
 		// object, so purging their data corrupts it. Completion normally
@@ -106,14 +97,8 @@ func (c *commandS3CleanUploads) cleanupUploads(commandEnv *CommandEnv, writer io
 			fmt.Fprintf(writer, "skip %s: %v\n", staleUpload.Name, checkErr)
 			continue
 		}
-		deleteUrl := fmt.Sprintf("http://%s%s/%s?recursive=true&ignoreRecursiveError=true", commandEnv.FilerAddress().ToHttpAddress(), uploadsDir, staleUpload.Name)
-		if completed {
-			deleteUrl += "&skipChunkDeletion=true"
-		}
-		fmt.Fprintf(writer, "purge %s\n", deleteUrl)
-
-		err = util_http.Delete(deleteUrl, string(encodedJwt))
-		if err != nil && err.Error() != "" {
+		fmt.Fprintf(writer, "purge %s/%s (keep chunks: %v)\n", uploadsDir, staleUpload.Name, completed)
+		if err := filer_pb.Remove(context.Background(), commandEnv, uploadsDir, staleUpload.Name, !completed, true, true, false, nil); err != nil {
 			return fmt.Errorf("purge %s/%s: %v", uploadsDir, staleUpload.Name, err)
 		}
 	}
