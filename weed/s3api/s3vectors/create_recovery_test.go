@@ -138,3 +138,30 @@ func TestCreateIndexRollbackPreservesACompletedRetry(t *testing.T) {
 		t.Fatalf("completed retry lost its state: %d %s", result.Code, result.Body)
 	}
 }
+
+func TestCreateIndexRetainsAnUnknownOutcomeAfterARefusedRetry(t *testing.T) {
+	for _, code := range []codes.Code{codes.PermissionDenied, codes.FailedPrecondition} {
+		t.Run(code.String(), func(t *testing.T) {
+			fs := s3tablestest.Start(t)
+			first := &failingCreateVectors{fakeVectors: &fakeVectors{}, err: status.Error(codes.Unavailable, "response lost after commit")}
+			second := &failingCreateVectors{fakeVectors: &fakeVectors{}, err: status.Error(code, "retry refused")}
+			discovery := &vectorDiscovery{client: first, nextResolve: time.Now().Add(time.Hour)}
+			discovery.discover = func([]pb.ServerAddress, grpc.DialOption) []string {
+				discovery.mu.Lock()
+				discovery.client = second
+				discovery.mu.Unlock()
+				return nil
+			}
+			defer discovery.Close()
+			server := NewServer(s3tables.NewManagerClient(fs.Client), allowAllAuth{}, discovery)
+			postJSON(t, server.handleCreateVectorBucket, &CreateVectorBucketRequest{VectorBucketName: "vec-bucket"})
+			result := postJSON(t, server.handleCreateIndex, &CreateIndexRequest{VectorBucketName: "vec-bucket", IndexName: "idx", DataType: "float32", Dimension: 3, DistanceMetric: "cosine"})
+			if result.Code != http.StatusServiceUnavailable || len(first.created) != 1 || len(second.created) != 1 {
+				t.Fatalf("unknown outcome lost: %d %s (attempts %d, %d)", result.Code, result.Body, len(first.created), len(second.created))
+			}
+			if _, err := server.indexRecord(t.Context(), "vec-bucket", "idx"); err != nil {
+				t.Fatalf("refused retry erased a possibly committed dataset: %v", err)
+			}
+		})
+	}
+}

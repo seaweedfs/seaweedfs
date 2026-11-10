@@ -178,12 +178,13 @@ func (d *vectorDiscovery) cli(ctx context.Context) (vector_pb.VectorServiceClien
 }
 
 func (d *vectorDiscovery) CreateIndex(ctx context.Context, in *vector_pb.CreateIndexRequest, opts ...grpc.CallOption) (resp *vector_pb.CreateIndexResponse, err error) {
+	var firstErr error
 	for attempt := 0; attempt < 2; attempt++ {
 		var c vector_pb.VectorServiceClient
 		var resolveErr error
 		if c, resolveErr = d.cli(ctx); resolveErr != nil {
 			if attempt > 0 {
-				return nil, err
+				return nil, firstErr
 			}
 			return nil, resolveErr
 		}
@@ -195,11 +196,14 @@ func (d *vectorDiscovery) CreateIndex(ctx context.Context, in *vector_pb.CreateI
 		if err == nil {
 			return resp, nil
 		}
+		if firstErr == nil {
+			firstErr = err
+		}
 		if !isTransportError(err) {
-			return nil, err
+			return nil, firstErr
 		}
 	}
-	return nil, err
+	return nil, firstErr
 }
 func (d *vectorDiscovery) DropIndex(ctx context.Context, in *vector_pb.DropIndexRequest, opts ...grpc.CallOption) (resp *vector_pb.DropIndexResponse, err error) {
 	for attempt := 0; attempt < 2; attempt++ {
