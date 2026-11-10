@@ -2,12 +2,14 @@ package filer_pb
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"slices"
 	"sort"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -118,5 +120,40 @@ func TestTraverseDfsResumeAfterAMissingOrForeignPath(t *testing.T) {
 	_, progressed = traverseDfsForTest(t, filerClient, "/a", "/b")
 	if want := []string{"/a/x", "/a/y/1", "/a/y/2", "/a/y/3", "/a/y"}; !reflect.DeepEqual(progressed, want) {
 		t.Fatalf("after a path outside the walk: progress %v, want %v", progressed, want)
+	}
+}
+
+func TestTraverseDfsReportsFilesBeforeTheirPageFinishes(t *testing.T) {
+	filerClient := startTreeFiler(t, map[string][]string{
+		"/":  {"a", "b", "c", "d"},
+		"/d": {"x"},
+	})
+
+	var mu sync.Mutex
+	var progressed []string
+	reachedB := make(chan struct{})
+	err := TraverseDfs(context.Background(), filerClient, "/", "", func(parentPath util.FullPath, entry *Entry) error {
+		if entry.Name != "c" {
+			return nil
+		}
+		select {
+		case <-reachedB:
+			return nil
+		case <-time.After(5 * time.Second):
+			return fmt.Errorf("no progress while %s was in flight", entry.Name)
+		}
+	}, func(walked util.FullPath) {
+		mu.Lock()
+		defer mu.Unlock()
+		progressed = append(progressed, string(walked))
+		if walked == "/b" {
+			close(reachedB)
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"/a", "/b", "/c", "/d/x", "/d"}; !reflect.DeepEqual(progressed, want) {
+		t.Fatalf("progress %v, want %v", progressed, want)
 	}
 }

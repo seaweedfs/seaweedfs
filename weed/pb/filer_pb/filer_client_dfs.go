@@ -3,7 +3,9 @@ package filer_pb
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
+	"sync"
 
 	"golang.org/x/sync/errgroup"
 
@@ -17,7 +19,7 @@ var traverseDfsPageSize uint32 = 1024
 // one path tells how far it got: every entry before it was visited, and so was
 // the subtree of a directory it names. progress gets these paths in walk
 // order, and a walk given one as resumeAfter skips everything up to it. fn may
-// run concurrently for the entries of one listing page.
+// run concurrently for the files of one directory.
 func TraverseDfs(ctx context.Context, filerClient FilerClient, parentPath, resumeAfter util.FullPath, fn func(parentPath util.FullPath, entry *Entry) error, progress func(walked util.FullPath)) error {
 	parentPath = util.NormalizePath(string(parentPath))
 	var resume []string
@@ -54,36 +56,30 @@ func traverseDfsDirectory(ctx context.Context, filerClient FilerClient, dir util
 			}
 		}
 
-		toVisit := page
 		if resumeIn != nil {
-			toVisit = page[1:]
-		}
-		g, gctx := errgroup.WithContext(ctx)
-		g.SetLimit(5)
-		for _, entry := range toVisit {
-			g.Go(func() error {
-				if err := gctx.Err(); err != nil {
-					return err
-				}
-				return fn(dir, entry)
-			})
-		}
-		if err := g.Wait(); err != nil {
-			return err
-		}
-
-		for i, entry := range page {
-			child := dir.Child(entry.Name)
-			if entry.IsDirectory {
-				var in []string
-				if i == 0 {
-					in = resumeIn
-				}
-				if err := traverseDfsDirectory(ctx, filerClient, child, in, fn, progress); err != nil {
-					return err
-				}
+			child := dir.Child(page[0].Name)
+			if err := traverseDfsDirectory(ctx, filerClient, child, resumeIn, fn, progress); err != nil {
+				return err
 			}
 			progress(child)
+			page = page[1:]
+		}
+		for len(page) > 0 {
+			run := page
+			if i := slices.IndexFunc(page, func(entry *Entry) bool { return entry.IsDirectory }); i >= 0 {
+				run = page[:i+1]
+			}
+			if err := visitDfsRun(ctx, dir, run, fn, progress); err != nil {
+				return err
+			}
+			if last := run[len(run)-1]; last.IsDirectory {
+				child := dir.Child(last.Name)
+				if err := traverseDfsDirectory(ctx, filerClient, child, nil, fn, progress); err != nil {
+					return err
+				}
+				progress(child)
+			}
+			page = page[len(run):]
 		}
 
 		if uint32(len(listed)) < traverseDfsPageSize {
@@ -95,4 +91,34 @@ func traverseDfsDirectory(ctx context.Context, filerClient FilerClient, dir util
 		}
 		startFrom, inclusive = last, false
 	}
+}
+
+// visitDfsRun calls fn concurrently on entries that end at the first
+// directory, and reports each file once every entry before it is done. The
+// caller reports the directory after its subtree.
+func visitDfsRun(ctx context.Context, dir util.FullPath, run []*Entry, fn func(parentPath util.FullPath, entry *Entry) error, progress func(walked util.FullPath)) error {
+	var mu sync.Mutex
+	done := make([]bool, len(run))
+	next := 0
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(5)
+	for i, entry := range run {
+		g.Go(func() error {
+			if err := gctx.Err(); err != nil {
+				return err
+			}
+			if err := fn(dir, entry); err != nil {
+				return err
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			done[i] = true
+			for next < len(run) && done[next] && !run[next].IsDirectory {
+				progress(dir.Child(run[next].Name))
+				next++
+			}
+			return nil
+		})
+	}
+	return g.Wait()
 }
