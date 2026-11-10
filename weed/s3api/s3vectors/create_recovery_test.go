@@ -264,3 +264,30 @@ func TestCreateIndexRetryPreservesDuplicateMetadataKeys(t *testing.T) {
 		}
 	}
 }
+
+func TestCreateIndexDoesNotInitializeAConcurrentCatalogCreate(t *testing.T) {
+	fs := s3tablestest.Start(t)
+	engine := &fakeVectors{}
+	server := NewServer(s3tables.NewManagerClient(fs.Client), allowAllAuth{}, engine)
+	postJSON(t, server.handleCreateVectorBucket, &CreateVectorBucketRequest{VectorBucketName: "vec-bucket"})
+	postJSON(t, server.handleCreateIndex, &CreateIndexRequest{VectorBucketName: "vec-bucket", IndexName: "seed", DataType: "float32", Dimension: 7, DistanceMetric: "cosine"})
+	dir, name := splitEntryPath(s3tables.GetTablePath("vec-bucket", indexNamespace, "idx"))
+	seed := fs.Get(dir, "seed")
+	var lookups int
+	fs.OnLookup = func(d, n string) {
+		if d == dir && n == name {
+			lookups++
+			if lookups == 2 {
+				fs.Put(dir, name, seed.Extended)
+			}
+		}
+	}
+	result := postJSON(t, server.handleCreateIndex, &CreateIndexRequest{VectorBucketName: "vec-bucket", IndexName: "idx", DataType: "float32", Dimension: 3, DistanceMetric: "cosine"})
+	if result.Code != http.StatusConflict || len(engine.created) != 1 {
+		t.Fatalf("initialized a competing record: %d %s (%d engine calls)", result.Code, result.Body, len(engine.created))
+	}
+	record, err := server.indexRecord(t.Context(), "vec-bucket", "idx")
+	if err != nil || indexFromRecord(server, "vec-bucket", "idx", record).Dimension != 7 {
+		t.Fatalf("changed the competing record: %v", err)
+	}
+}

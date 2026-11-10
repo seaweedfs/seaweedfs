@@ -1219,6 +1219,19 @@ func (s *Server) handleCreateIndex(w http.ResponseWriter, r *http.Request) {
 			catalogErr(w, err)
 			return
 		}
+		var record map[string]interface{}
+		if err := s.internalCatalog(bound, "GetTable", &s3tables.GetTableRequest{
+			TableBucketARN: s.s3tablesArn(arns.bucket),
+			Namespace:      []string{indexNamespace},
+			Name:           arns.index,
+		}, &record); err != nil {
+			catalogErr(w, err)
+			return
+		}
+		if recordNonce(record) != metadata["createNonce"] || recordVersionToken(record) != response.VersionToken {
+			writeError(w, http.StatusConflict, "ConflictException", "index changed during creation; retry the request")
+			return
+		}
 		created = true
 		versionToken = response.VersionToken
 	default:
