@@ -1338,6 +1338,20 @@ jobs:
           echo "$FS_CONFIGURE" | grep -q -- '-ttl=7d -replication=001 -disk=ssd -apply' || { echo "FAIL: bucket fs.configure missing ttl/replication/disk: $FS_CONFIGURE"; exit 1; }
           echo "Bucket fs.configure: ttl, replication and disk render together"
 
+          FS_CONFIGURE=$(helm template test $CHART_DIR \
+            --set s3.enabled=true \
+            --set s3.createBuckets[0].name=replbucket \
+            --set-string s3.createBuckets[0].replication=002 | grep 'fs.configure -locationPrefix=/buckets/replbucket/' || true)
+          echo "$FS_CONFIGURE" | grep -q -- '/buckets/replbucket/ -replication=002 -apply' || { echo "FAIL: replication-only bucket did not render fs.configure: $FS_CONFIGURE"; exit 1; }
+          echo "Bucket fs.configure: replication without ttl"
+
+          FS_CONFIGURE=$(helm template test $CHART_DIR \
+            --set s3.enabled=true \
+            --set s3.createBuckets[0].name=diskbucket \
+            --set s3.createBuckets[0].disk=ssd | grep 'fs.configure -locationPrefix=/buckets/diskbucket/' || true)
+          echo "$FS_CONFIGURE" | grep -q -- '/buckets/diskbucket/ -disk=ssd -apply' || { echo "FAIL: disk-only bucket did not render fs.configure: $FS_CONFIGURE"; exit 1; }
+          echo "Bucket fs.configure: disk without ttl"
+
           echo ""
           echo "=== Testing hook Job labels ==="
           # The hook Jobs were the only pods in the chart without the standard
