@@ -2,10 +2,15 @@ package s3vectors
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -121,5 +126,81 @@ func TestVectorLimitsCountChunkedBodyBytes(t *testing.T) {
 	}
 	if r.ContentLength != -1 {
 		t.Fatal("mutated original request")
+	}
+}
+
+type admissionAuth struct {
+	started, release chan struct{}
+	calls            atomic.Int32
+}
+
+func (a *admissionAuth) DefaultAllow() bool { return true }
+func (a *admissionAuth) AuthenticateRequest(r *http.Request) (string, interface{}, s3err.ErrorCode) {
+	a.calls.Add(1)
+	_, _ = io.ReadAll(r.Body)
+	if r.Header.Get("Block") != "" {
+		close(a.started)
+		select {
+		case <-a.release:
+		case <-r.Context().Done():
+		}
+	}
+	if r.Header.Get("Deny") != "" {
+		return "", nil, s3err.ErrSignatureDoesNotMatch
+	}
+	return "tester", nil, s3err.ErrNone
+}
+
+func TestVectorAdmissionBoundsBufferingBeforeAuthentication(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		requests, bytes int64
+		chunked         bool
+	}{
+		{"request count", 1, 10, false},
+		{"byte count", 2, 2, false},
+		{"chunked body", 2, 2, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			auth := &admissionAuth{started: make(chan struct{}), release: make(chan struct{})}
+			server := NewServer(nil, auth, nil)
+			server.SetRequestLimits(tc.requests, tc.bytes)
+			handler := server.Auth(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
+			request := func() *http.Request {
+				r := httptest.NewRequest(http.MethodPost, "/PutVectors", strings.NewReader("{}"))
+				if tc.chunked {
+					r.ContentLength = -1
+				}
+				return r
+			}
+			first := request()
+			first.Header.Set("Block", "true")
+			firstCtx, cancelFirst := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancelFirst()
+			done := make(chan struct{})
+			go func() { defer close(done); handler(httptest.NewRecorder(), first.WithContext(firstCtx)) }()
+			select {
+			case <-auth.started:
+			case <-firstCtx.Done():
+				t.Fatal("first request did not enter authentication")
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+			defer cancel()
+			waiting := httptest.NewRecorder()
+			handler(waiting, request().WithContext(ctx))
+			if waiting.Code != http.StatusRequestTimeout || auth.calls.Load() != 1 {
+				t.Fatalf("waiting request buffered/authenticated: status %d, calls %d", waiting.Code, auth.calls.Load())
+			}
+			close(auth.release)
+			<-done
+			denied := request()
+			denied.Header.Set("Deny", "true")
+			handler(httptest.NewRecorder(), denied.WithContext(firstCtx))
+			after := httptest.NewRecorder()
+			handler(after, request().WithContext(firstCtx))
+			if after.Code != http.StatusNoContent || auth.calls.Load() != 3 {
+				t.Fatalf("capacity leaked after success/failure: status %d, calls %d", after.Code, auth.calls.Load())
+			}
+		})
 	}
 }
