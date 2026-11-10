@@ -1360,6 +1360,14 @@ jobs:
           fi
           echo "Bucket fs.configure: numeric replication is rejected"
 
+          if helm template test $CHART_DIR \
+            --set s3.enabled=true \
+            --set s3.createBuckets[0].name=badbucket \
+            --set-string s3.createBuckets[0].replication=00O >/dev/null 2>&1; then
+            echo "FAIL: a non-digit replication should fail to render"; exit 1
+          fi
+          echo "Bucket fs.configure: non-digit replication is rejected"
+
           FS_CONFIGURE=$(helm template test $CHART_DIR \
             --set s3.enabled=true \
             --set s3.createBuckets[0].name=nullbucket \
