@@ -1,6 +1,7 @@
 package etcd
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -79,7 +80,7 @@ func scanPrefix(ctx context.Context, kv clientv3.KV, keyPrefix, prefix string, d
 		for _, item := range resp.Kvs {
 			key := item.Key[len(keyPrefix):]
 			name := getNameFromKey(key)
-			if name == "" || len(name) == len(key) || isHardLinkKey(key) {
+			if name == "" || len(name) == len(key) {
 				continue
 			}
 			// The walk never reaches such a directory, and the stream cannot carry it.
@@ -91,6 +92,10 @@ func scanPrefix(ctx context.Context, kv clientv3.KV, keyPrefix, prefix string, d
 			if err := entry.DecodeAttributesAndChunks(weed_util.MaybeDecompressData(item.Value)); err != nil {
 				return fmt.Errorf("scan decode %s: %v", entry.FullPath, err)
 			}
+			// A hard-link record is stored under its own id (filer.NewHardLinkId).
+			if bytes.Equal(entry.HardLinkId, key) {
+				continue
+			}
 			if err := fn(ctx, entry); err != nil {
 				return err
 			}
@@ -100,11 +105,4 @@ func scanPrefix(ctx context.Context, kv clientv3.KV, keyPrefix, prefix string, d
 		}
 		start = string(resp.Kvs[len(resp.Kvs)-1].Key) + "\x00"
 	}
-}
-
-// isHardLinkKey recognizes a hard-link record stored beside the entries under
-// its raw id (filer.NewHardLinkId): entry keys are valid UTF-8, random ids
-// almost never are.
-func isHardLinkKey(key []byte) bool {
-	return len(key) == 17 && key[16] == filer.HARD_LINK_MARKER && !utf8.Valid(key)
 }
