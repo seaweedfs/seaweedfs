@@ -6,7 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
 func TestResolveLogPurgeFilersExplicitList(t *testing.T) {
@@ -118,24 +120,22 @@ func TestPurgeFilerLogsKeepsCommandEnvFiler(t *testing.T) {
 	}
 }
 
-func TestPurgeFilerLogsAttemptsEveryFiler(t *testing.T) {
-	// one unreachable filer must not stop the purge of the others: the loop
-	// reports the failure and keeps going, so every filer is attempted.
-	commandEnv := &CommandEnv{option: &ShellOptions{FilerAddress: "filer-a:8888"}}
-	writer := &strings.Builder{}
+func TestFsLogPurgeContinuesPastUnreachableFiler(t *testing.T) {
+	stub := &stubFilerServer{entries: map[string]*filer_pb.Entry{
+		filer.SystemLogDir + "/2020-01-01": {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Mtime: 1}},
+		filer.SystemLogDir + "/today":      {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Mtime: time.Now().Unix()}},
+	}}
+	commandEnv := startStubFiler(t, stub)
+	reachable := commandEnv.option.FilerAddress
 
-	attempted := 0
-	for _, address := range []pb.ServerAddress{"filer-a:8888", "filer-b:8888", "filer-c:8888"} {
-		attempted++
-		_ = purgeFilerLogs(commandEnv, address, 0, false, writer)
+	err := (&commandFsLogPurge{}).Do([]string{"-daysAgo=1", "-filer=127.0.0.1:1.1," + string(reachable) + ",127.0.0.1:2.2"}, commandEnv, &strings.Builder{})
+	if err == nil || !strings.Contains(err.Error(), "failed to purge 2 of 3 filers") {
+		t.Fatalf("got error %v, want both unreachable filers reported", err)
 	}
-
-	if attempted != 3 {
-		t.Fatalf("attempted %d filers, want 3", attempted)
+	if !slices.Equal(stub.deleted, []string{filer.SystemLogDir + "/2020-01-01"}) {
+		t.Fatalf("reachable filer deleted %v, want only the old log directory", stub.deleted)
 	}
-	// the shared env still points at the filer the shell started with, so a
-	// later command in the same session is unaffected.
-	if commandEnv.option.FilerAddress != "filer-a:8888" {
-		t.Fatalf("command env filer changed to %q, want filer-a:8888", commandEnv.option.FilerAddress)
+	if commandEnv.option.FilerAddress != reachable {
+		t.Fatalf("command env filer changed to %q, want %q", commandEnv.option.FilerAddress, reachable)
 	}
 }
