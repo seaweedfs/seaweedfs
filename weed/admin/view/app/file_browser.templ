@@ -451,11 +451,7 @@ templ FileBrowser(data dash.FileBrowserData) {
 			return value.map(escapeProperties);
 		}
 		if (value && typeof value === 'object') {
-			const escaped = {};
-			for (const [key, item] of Object.entries(value)) {
-				escaped[escapeHtml(key)] = escapeProperties(item);
-			}
-			return escaped;
+			return Object.fromEntries(Object.entries(value).map(([key, item]) => [escapeHtml(key), escapeProperties(item)]));
 		}
 		return value;
 	}
