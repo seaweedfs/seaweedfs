@@ -25,6 +25,10 @@ import (
 // still get past.
 var ErrVolumeNotFound = errors.New("volume not found")
 
+// ErrChunkNotFound reports that every located volume replica answered 404 for
+// the chunk. A failed request or a filer-proxied 404 cannot establish this.
+var ErrChunkNotFound = errors.New("chunk not found on any volume replica")
+
 type FilerSource struct {
 	grpcAddress    string
 	grpcDialOption grpc.DialOption
@@ -165,6 +169,7 @@ func (fs *FilerSource) ReadPart(fileId string, offset int64) (filename string, h
 		return "", nil, nil, err
 	}
 
+	var replicaErr error
 	for _, fileUrl := range fileUrls {
 		filename, header, resp, err = downloadFn(fileUrl, "", offset)
 		if err == nil {
@@ -172,11 +177,23 @@ func (fs *FilerSource) ReadPart(fileId string, offset int64) (filename string, h
 		}
 		if err != nil {
 			resp = nil
+			if !errors.Is(err, util_http.ErrNotFound) {
+				replicaErr = err
+			}
 			glog.V(0).Infof("fail to read part %s from %s offset %d: %v", fileId, fileUrl, offset, err)
 			continue
 		}
 		glog.V(4).Infof("read part %s from %s offset %d content-length:%s", fileId, fileUrl, offset, header.Get("Content-Length"))
 		break
+	}
+	if err != nil {
+		if replicaErr != nil {
+			// An unreachable replica may still hold the chunk. Its failure must
+			// not be hidden by another replica answering 404 later in the list.
+			err = replicaErr
+		} else if errors.Is(err, util_http.ErrNotFound) {
+			err = fmt.Errorf("%w: %w", ErrChunkNotFound, err)
+		}
 	}
 
 	return filename, header, resp, err

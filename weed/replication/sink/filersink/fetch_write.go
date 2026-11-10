@@ -29,11 +29,16 @@ import (
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
-// missingSourceChunkGrace is how long a chunk the source cannot produce keeps
-// being retried before it counts as gone for good. Long enough to outlast a
-// volume server restart or a master failover, after which every volume that
-// still exists is registered again.
-var missingSourceChunkGrace = 30 * time.Minute
+// sourceRecoveryGrace allows missing volume locations and ambiguous/proxied
+// 404s to recover from a volume server restart or master failover before the
+// chunk counts as permanently missing.
+var sourceRecoveryGrace = 30 * time.Minute
+
+// confirmedChunkMissingGrace bounds retries when every located volume replica
+// answers 404. Allow brief read/write races without stalling each vacuumed
+// needle for the volume recovery window. Keep the longer grace for missing
+// volume locations and ambiguous/proxied 404s.
+var confirmedChunkMissingGrace = 30 * time.Second
 
 // sourceLookupTimeout bounds a best-effort source entry probe: a source that
 // accepts the call but whose metadata store never answers must stall
@@ -58,7 +63,7 @@ var errSourceChunkMissing = errors.New("source chunk missing")
 // does. Both shapes also cover a volume that is merely offline, which is why the
 // gate below waits them out instead of trusting a single answer.
 func isSourceChunkMissing(err error) bool {
-	return errors.Is(err, source.ErrVolumeNotFound) || errors.Is(err, util_http.ErrNotFound)
+	return errors.Is(err, source.ErrVolumeNotFound) || errors.Is(err, source.ErrChunkNotFound) || errors.Is(err, util_http.ErrNotFound)
 }
 
 // missingSourceChunkGate decides when to stop retrying a chunk the source cannot
@@ -80,16 +85,23 @@ func (g *missingSourceChunkGate) isPermanent(err error) bool {
 	switch {
 	case errors.Is(err, source.ErrVolumeNotFound):
 		since = g.sink.sourceVolumeMissingSince(g.volumeId)
-	case errors.Is(err, util_http.ErrNotFound):
+	case errors.Is(err, source.ErrChunkNotFound), errors.Is(err, util_http.ErrNotFound):
 		since = g.sink.sourceNeedleMissingSince(g.fileId)
 	default:
 		return false
 	}
-	if time.Since(since) < missingSourceChunkGrace {
+	if time.Since(since) < g.gracePeriod(err) {
 		return false
 	}
 	g.gaveUp = true
 	return true
+}
+
+func (g *missingSourceChunkGate) gracePeriod(err error) time.Duration {
+	if errors.Is(err, source.ErrChunkNotFound) {
+		return confirmedChunkMissingGrace
+	}
+	return sourceRecoveryGrace
 }
 
 // wrap marks err permanent once the gate gave up, so the sink can tell a source
@@ -292,7 +304,7 @@ func (fs *FilerSink) manifestResolveRetryGate(path string, replayed *filer_pb.En
 		}
 		if missingGate.isPermanent(resolveErr) {
 			glog.Errorf("source has not had manifest %s for %s in %v, giving up on it: %v",
-				chunkName, path, missingSourceChunkGrace, resolveErr)
+				chunkName, path, missingGate.gracePeriod(resolveErr), resolveErr)
 			return false
 		}
 		if isSourceChunkMissing(resolveErr) && fs.sourceDroppedChunk(path, chunkName, replayed) {
@@ -530,7 +542,7 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string,
 		}
 		if missingGate.isPermanent(retryErr) {
 			glog.Errorf("source has not had %s for %s in %v, giving up on it: %v",
-				sourceChunk.GetFileIdString(), path, missingSourceChunkGrace, retryErr)
+				sourceChunk.GetFileIdString(), path, missingGate.gracePeriod(retryErr), retryErr)
 			return false
 		}
 		if isRetryableNetworkError(retryErr) {
