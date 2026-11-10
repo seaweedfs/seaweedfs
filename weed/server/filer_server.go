@@ -81,6 +81,7 @@ type FilerOption struct {
 	SaveToFilerLimit          int64
 	ConcurrentUploadLimit     int64
 	ConcurrentFileUploadLimit int64
+	InflightUploadDataTimeout time.Duration
 	ShowUIDirectoryDelete     bool
 	DownloadMaxBytesPs        int64
 	DiskType                  string
