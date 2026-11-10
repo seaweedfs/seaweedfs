@@ -26,6 +26,16 @@ func TestResolveLogPurgeFilersExplicitList(t *testing.T) {
 	}
 }
 
+func TestResolveLogPurgeFilersRejectsEmptyExplicitList(t *testing.T) {
+	commandEnv := &CommandEnv{option: &ShellOptions{FilerAddress: "filer-only:8888"}}
+
+	for _, filerList := range []string{" ", ",,", " , "} {
+		if filers, err := resolveLogPurgeFilers(filerList, commandEnv, false, &strings.Builder{}); err == nil {
+			t.Errorf("-filer=%q: got %v, want an error", filerList, filers)
+		}
+	}
+}
+
 func TestResolveLogPurgeFilersFallsBackToConnectedFiler(t *testing.T) {
 	// no explicit list and no master client: fall back to the connected filer
 	commandEnv := &CommandEnv{option: &ShellOptions{FilerAddress: "filer-only:8888"}}

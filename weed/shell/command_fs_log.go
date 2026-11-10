@@ -81,16 +81,17 @@ func (c *commandFsLogPurge) Do(args []string, commandEnv *CommandEnv, writer io.
 // resolveLogPurgeFilers returns the filers to purge: the explicit -filer list
 // when given, otherwise every filer registered with the master.
 func resolveLogPurgeFilers(filerList string, commandEnv *CommandEnv, verbose bool, writer io.Writer) ([]pb.ServerAddress, error) {
-	if strings.TrimSpace(filerList) != "" {
+	if filerList != "" {
 		var filers []pb.ServerAddress
 		for _, address := range strings.Split(filerList, ",") {
 			if address = strings.TrimSpace(address); address != "" {
 				filers = append(filers, pb.ServerAddress(address))
 			}
 		}
-		if len(filers) > 0 {
-			return filers, nil
+		if len(filers) == 0 {
+			return nil, fmt.Errorf("-filer %q lists no filer address", filerList)
 		}
+		return filers, nil
 	}
 
 	if commandEnv.MasterClient != nil && commandEnv.option.FilerGroup != nil {
