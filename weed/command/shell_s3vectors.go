@@ -1,4 +1,4 @@
-package shell
+package command
 
 import (
 	"context"
@@ -15,14 +15,15 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3vectors"
+	"github.com/seaweedfs/seaweedfs/weed/shell"
 )
 
-func init() { Commands = append(Commands, &commandS3Vectors{}) }
+func init() { shell.Commands = append(shell.Commands, &commandS3Vectors{}) }
 
 type commandS3Vectors struct{}
 
-func (c *commandS3Vectors) Name() string           { return "s3vectors" }
-func (c *commandS3Vectors) HasTag(CommandTag) bool { return false }
+func (c *commandS3Vectors) Name() string                 { return "s3vectors" }
+func (c *commandS3Vectors) HasTag(shell.CommandTag) bool { return false }
 func (c *commandS3Vectors) Help() string {
 	return `manage vector buckets, indexes, policies, tags and vectors
 
@@ -36,7 +37,7 @@ credentials. Index and vector operations require a registered vector engine.
 `
 }
 
-func (c *commandS3Vectors) Do(args []string, env *CommandEnv, writer io.Writer) error {
+func (c *commandS3Vectors) Do(args []string, env *shell.CommandEnv, writer io.Writer) error {
 	flags := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	operation := flags.String("operation", "", "S3 Vectors operation")
 	request := flags.String("request", "", "request JSON")
@@ -73,7 +74,7 @@ func (c *commandS3Vectors) Do(args []string, env *CommandEnv, writer io.Writer) 
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	backend := s3vectors.NewVectorDiscovery(env.MasterClient.ListCachedMasters, env.option.GrpcDialOption, *env.option.FilerGroup)
+	backend := s3vectors.NewVectorDiscovery(env.MasterClient.ListCachedMasters, env.GrpcDialOption(), env.MasterClient.FilerGroup)
 	defer backend.Close()
 	server := s3vectors.NewServer(env, nil, backend)
 	server.SetRegion(s3tables.DefaultRegion)

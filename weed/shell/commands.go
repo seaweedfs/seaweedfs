@@ -149,6 +149,10 @@ func (ce *CommandEnv) checkDirectory(path string) error {
 
 var _ = filer_pb.FilerClient(&CommandEnv{})
 
+func (ce *CommandEnv) GrpcDialOption() grpc.DialOption {
+	return ce.option.GrpcDialOption
+}
+
 func (ce *CommandEnv) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
 
 	return pb.WithGrpcFilerClient(streamingMode, 0, ce.FilerAddress(), ce.option.GrpcDialOption, fn)
