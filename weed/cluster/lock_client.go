@@ -182,7 +182,7 @@ func (lc *LockClient) NewShortLivedLock(key string, owner string) (lock *LiveLoc
 		self:           owner,
 		lc:             lc,
 	}
-	if err := lock.retryUntilLocked(5 * time.Second); err != nil {
+	if err := lock.retryUntilLocked(5*time.Second, 0); err != nil {
 		glog.Warningf("create lock %s: %v", key, err)
 		return nil
 	}
@@ -194,6 +194,17 @@ func (lc *LockClient) NewShortLivedLock(key string, owner string) (lock *LiveLoc
 // synchronous acquisition of NewShortLivedLock with the auto-renewal of
 // StartLongLivedLock. Release with Stop().
 func (lc *LockClient) NewBlockingLongLivedLock(key, owner string, lockTTL time.Duration) *LiveLock {
+	lock, err := lc.NewBlockingLongLivedLockWithin(key, owner, lockTTL, 0)
+	if err != nil {
+		glog.Warningf("create lock %s: %v", key, err)
+		return nil
+	}
+	return lock
+}
+
+// NewBlockingLongLivedLockWithin is NewBlockingLongLivedLock that gives up once
+// another owner has held the lock for maxWait. Zero waits without bound.
+func (lc *LockClient) NewBlockingLongLivedLockWithin(key, owner string, lockTTL, maxWait time.Duration) (*LiveLock, error) {
 	if lockTTL == 0 {
 		lockTTL = lock_manager.LiveLockTTL
 	}
@@ -207,10 +218,8 @@ func (lc *LockClient) NewBlockingLongLivedLock(key, owner string, lockTTL time.D
 		lc:             lc,
 		lockTTL:        lockTTL,
 	}
-	// Block until acquired
-	if err := lock.retryUntilLocked(lockTTL); err != nil {
-		glog.Warningf("create lock %s: %v", key, err)
-		return nil
+	if err := lock.retryUntilLocked(lockTTL, maxWait); err != nil {
+		return nil, err
 	}
 	// Start renewal goroutine using a ticker for interruptible sleep
 	lock.renewalDone = make(chan struct{})
@@ -231,7 +240,7 @@ func (lc *LockClient) NewBlockingLongLivedLock(key, owner string, lockTTL time.D
 			}
 		}
 	}()
-	return lock
+	return lock, nil
 }
 
 // StartLongLivedLock starts a goroutine to lock the key and returns immediately.
@@ -310,7 +319,8 @@ func (lc *LockClient) StartLongLivedLock(key string, owner string, onLockOwnerCh
 // several seconds): when a holder on another mount releases the lock, the
 // waiter must pick it up promptly, otherwise cross-mount write handoff stalls
 // long enough to time out clients.
-func (lock *LiveLock) retryUntilLocked(lockDuration time.Duration) error {
+func (lock *LiveLock) retryUntilLocked(lockDuration, maxWait time.Duration) error {
+	started := time.Now()
 	// The retry window bounds the attempts against one route: the clock
 	// starts before the first attempt and each attempt gets what is left
 	// of it. A spent window on a non-seed target falls back to the seed
@@ -356,7 +366,10 @@ func (lock *LiveLock) retryUntilLocked(lockDuration time.Duration) error {
 		glog.V(1).Infof("create lock %s: %v", lock.key, err)
 		if strings.Contains(err.Error(), "lock already owned") {
 			// Ordinary contention: a reachable server holds the lock, so
-			// waiting is the point and has no bound.
+			// waiting is the point and is bounded only by maxWait.
+			if maxWait > 0 && time.Since(started) >= maxWait {
+				return err
+			}
 			unavailableSince = time.Now()
 			continue
 		}

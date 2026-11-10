@@ -256,6 +256,36 @@ func TestNewShortLivedLockWaitsOutContention(t *testing.T) {
 	}
 }
 
+func TestNewBlockingLongLivedLockWithinGivesUpOnContention(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	grpcServer := grpc.NewServer()
+	filer_pb.RegisterSeaweedFilerServer(grpcServer, &contendedLockFiler{})
+	go grpcServer.Serve(listener)
+	defer grpcServer.Stop()
+
+	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+	host, port, err := net.SplitHostPort(listener.Addr().String())
+	if err != nil {
+		t.Fatalf("split host port: %v", err)
+	}
+	lc := NewLockClient(dialOption, pb.ServerAddress(fmt.Sprintf("%s:0.%s", host, port)))
+
+	maxWait := 1500 * time.Millisecond
+	start := time.Now()
+	lock, err := lc.NewBlockingLongLivedLockWithin("test-key", "test-owner", 15*time.Second, maxWait)
+	elapsed := time.Since(start)
+
+	if lock != nil || err == nil {
+		t.Fatalf("got lock %v err %v, want no lock and the contention error", lock, err)
+	}
+	if elapsed < maxWait || elapsed > maxWait+5*time.Second {
+		t.Fatalf("gave up after %v, want just past %v", elapsed, maxWait)
+	}
+}
+
 // A ring member that refuses connections is unavailability, not contention:
 // acquisition fails on the same bound as "no lock server found".
 func TestNewShortLivedLockFailsFastOnUnreachableFiler(t *testing.T) {
