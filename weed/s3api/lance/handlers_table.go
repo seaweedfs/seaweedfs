@@ -462,6 +462,10 @@ func (s *Server) handleDeregisterTable(w http.ResponseWriter, r *http.Request) {
 		writeStorageError(w, r, err)
 		return
 	}
+	if err := s.authorizeUpdateTable(r, bucket, ns, name); err != nil {
+		writeStorageError(w, r, err)
+		return
+	}
 
 	// Deregistering is a state, not a deletion. Dropping the catalog entry would
 	// take the dataset with it, because the entry is the dataset directory and
