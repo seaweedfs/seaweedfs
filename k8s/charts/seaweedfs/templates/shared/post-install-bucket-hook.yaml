@@ -215,8 +215,8 @@ spec:
           {{- end }}
           {{- end }}
           {{- range $createBuckets }}
-          {{- if .ttl }}
-            /bin/echo 'fs.configure -locationPrefix={{ $bucketsFolder }}/{{ .name }}/ -ttl={{ .ttl }} -apply' | /usr/bin/weed shell
+          {{- if or .ttl .replication .disk }}
+            /bin/echo 'fs.configure -locationPrefix={{ $bucketsFolder }}/{{ .name }}/{{- with .ttl }} -ttl={{ . }}{{- end }}{{- with .replication }} -replication={{ . }}{{- end }}{{- with .disk }} -disk={{ . }}{{- end }} -apply' | /usr/bin/weed shell
           {{- end }}
           {{- end }}
           {{- range $createBuckets }}

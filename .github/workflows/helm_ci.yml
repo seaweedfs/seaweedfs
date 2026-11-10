@@ -1328,6 +1328,16 @@ jobs:
           echo "$BOOL_FALSE" | grep -q -- '-status Suspended' || { echo "FAIL: bool false versioning did not Suspend the bucket"; exit 1; }
           echo "Bucket versioning: YAML bool false suspends consistently with string \"false\""
 
+          echo "=== Testing bucket ttl, replication and disk in one fs.configure ==="
+          FS_CONFIGURE=$(helm template test $CHART_DIR \
+            --set s3.enabled=true \
+            --set s3.createBuckets[0].name=cfgbucket \
+            --set s3.createBuckets[0].ttl=7d \
+            --set-string s3.createBuckets[0].replication=001 \
+            --set s3.createBuckets[0].disk=ssd | grep 'fs.configure -locationPrefix=/buckets/cfgbucket/' || true)
+          echo "$FS_CONFIGURE" | grep -q -- '-ttl=7d -replication=001 -disk=ssd -apply' || { echo "FAIL: bucket fs.configure missing ttl/replication/disk: $FS_CONFIGURE"; exit 1; }
+          echo "Bucket fs.configure: ttl, replication and disk render together"
+
           echo ""
           echo "=== Testing hook Job labels ==="
           # The hook Jobs were the only pods in the chart without the standard

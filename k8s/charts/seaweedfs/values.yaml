@@ -1083,12 +1083,15 @@ filer:
     # You may specify buckets to be created during the install or upgrade process.
     # Buckets may be exposed publicly by setting `anonymousRead` to `true`
     # ttl format: [1-255][m|h|d|w|M|y] (e.g., 7d)
+    # replication (e.g., 001) and disk (e.g., ssd) apply to writes into the bucket
     # objectLock enables S3 Object Lock (irreversible, forces versioning)
     # versioning: Enabled or Suspended (or bool true/false)
     # createBuckets:
     #   - name: bucket-a
     #     anonymousRead: true
     #     ttl: 7d
+    #     replication: "001"
+    #     disk: ssd
     #     objectLock: true
     #     versioning: Enabled
     #   - name: bucket-b
@@ -1165,12 +1168,15 @@ s3:
   # You may specify buckets to be created during the install or upgrade process.
   # Buckets may be exposed publicly by setting `anonymousRead` to `true`
   # ttl format: [1-255][m|h|d|w|M|y] (e.g., 7d)
+  # replication (e.g., 001) and disk (e.g., ssd) apply to writes into the bucket
   # objectLock enables S3 Object Lock (irreversible, forces versioning)
   # versioning: Enabled or Suspended (or bool true/false)
   # createBuckets:
   #   - name: bucket-a
   #     anonymousRead: true
   #     ttl: 7d
+  #     replication: "001"
+  #     disk: ssd
   #     objectLock: true
   #     versioning: Enabled
   #   - name: bucket-b
@@ -2007,12 +2013,15 @@ allInOne:
     # You may specify buckets to be created during the install process.
     # Buckets may be exposed publicly by setting `anonymousRead` to `true`
     # ttl format: [1-255][m|h|d|w|M|y] (e.g., 7d)
+    # replication (e.g., 001) and disk (e.g., ssd) apply to writes into the bucket
     # objectLock enables S3 Object Lock (irreversible, forces versioning)
     # versioning: Enabled or Suspended (or bool true/false)
     # createBuckets:
     #   - name: bucket-a
     #     anonymousRead: true
     #     ttl: 7d
+    #     replication: "001"
+    #     disk: ssd
     #     objectLock: true
     #     versioning: Enabled
     #   - name: bucket-b
