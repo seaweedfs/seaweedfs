@@ -495,6 +495,32 @@ func TestDeclareVendsWriteOnlyForATableItCreates(t *testing.T) {
 	}
 }
 
+// Deregistering hides a table and registering over one brings it back, so
+// both change its catalog state and need UpdateTable, not just GetTable.
+func TestDeregisterAndReregisterNeedUpdateTable(t *testing.T) {
+	h := newTestHarness(t)
+	h.createBucket(t, "lnc", s3tables.FormatLance)
+	h.mustDo(t, http.MethodPost, "/v1/namespace/lnc$ns/create", `{}`, http.StatusOK)
+	h.mustDo(t, http.MethodPost, "/v1/table/lnc$ns$theirs/declare", `{}`, http.StatusOK)
+
+	server := NewServer(s3tables.NewManagerClient(h.filer.Client), createOnlyAuthenticator{})
+	router := mux.NewRouter().SkipClean(true)
+	server.RegisterRoutes(router)
+	reader := &testHarness{router: router, filer: h.filer, admin: h.admin, server: server}
+
+	reader.mustDo(t, http.MethodPost, "/v1/table/lnc$ns$theirs/describe", `{}`, http.StatusOK)
+	reader.mustDo(t, http.MethodPost, "/v1/table/lnc$ns$theirs/deregister", `{}`, http.StatusForbidden)
+	if h.filer.Get("/buckets/lnc/ns/theirs", deregisteredMarker) != nil {
+		t.Fatal("a refused deregister left its marker")
+	}
+
+	h.mustDo(t, http.MethodPost, "/v1/table/lnc$ns$theirs/deregister", `{}`, http.StatusOK)
+	reader.mustDo(t, http.MethodPost, "/v1/table/lnc$ns$theirs/register", `{"location":"s3://lnc/ns/theirs"}`, http.StatusForbidden)
+	if h.filer.Get("/buckets/lnc/ns/theirs", deregisteredMarker) == nil {
+		t.Fatal("a refused register brought the table back")
+	}
+}
+
 // An in-process describe for a trusted caller resolves the table without the
 // caller's catalog grants, and still refuses a deregistered one.
 func TestDescribeTableInternalIgnoresCatalogGrants(t *testing.T) {
