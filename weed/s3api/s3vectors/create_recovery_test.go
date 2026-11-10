@@ -223,3 +223,19 @@ func TestCreateIndexRollbackPreservesAnActiveRetry(t *testing.T) {
 		t.Fatalf("retry could not finish: %d %s", result.Code, result.Body)
 	}
 }
+
+func TestCreateIndexResumesWithTheDefaultMetric(t *testing.T) {
+	fs := s3tablestest.Start(t)
+	engine := &failingCreateVectors{fakeVectors: &fakeVectors{}, err: status.Error(codes.Unavailable, "request lost")}
+	server := NewServer(s3tables.NewManagerClient(fs.Client), allowAllAuth{}, engine)
+	postJSON(t, server.handleCreateVectorBucket, &CreateVectorBucketRequest{VectorBucketName: "vec-bucket"})
+	request := &CreateIndexRequest{VectorBucketName: "vec-bucket", IndexName: "idx", DataType: "float32", Dimension: 3}
+	postJSON(t, server.handleCreateIndex, request)
+	engine.err = nil
+	if result := postJSON(t, server.handleCreateIndex, request); result.Code != http.StatusOK {
+		t.Fatalf("default-metric recovery: %d %s", result.Code, result.Body)
+	}
+	if len(engine.created) != 2 || engine.created[1].DistanceMetric != vector_pb.DistanceMetric_L2 {
+		t.Fatal("recovery changed the default metric")
+	}
+}

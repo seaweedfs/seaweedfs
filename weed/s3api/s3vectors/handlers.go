@@ -1175,6 +1175,7 @@ func (s *Server) handleCreateIndex(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case getErr == nil:
 		index := indexFromRecord(s, arns.bucket, arns.index, existing)
+		storedMetric, _ := distanceMetric(index.DistanceMetric)
 		var storedKeys []string
 		if index.MetadataConfiguration != nil {
 			storedKeys = slices.Clone(index.MetadataConfiguration.NonFilterableMetadataKeys)
@@ -1184,7 +1185,7 @@ func (s *Server) handleCreateIndex(w http.ResponseWriter, r *http.Request) {
 		meta, _ := existing["metadata"].(map[string]interface{})
 		full, _ := meta["fullMetadata"].(map[string]interface{})
 		if full["initializing"] != "true" || index.Dimension != req.Dimension ||
-			index.DistanceMetric != strings.ToLower(req.DistanceMetric) ||
+			storedMetric != metric ||
 			!slices.Equal(slices.Compact(storedKeys), slices.Compact(nonFilterable)) {
 			writeError(w, http.StatusConflict, "ConflictException", fmt.Sprintf("index %s already exists", arns.index))
 			return
