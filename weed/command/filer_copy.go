@@ -1,12 +1,14 @@
 package command
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -478,6 +480,10 @@ func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, 
 	for chunk := range chunksChan {
 		chunks = append(chunks, chunk)
 	}
+	// Chunks arrive in completion order, and the ETag hashes them in stored order.
+	slices.SortFunc(chunks, func(a, b *filer_pb.FileChunk) int {
+		return cmp.Compare(a.Offset, b.Offset)
+	})
 
 	if uploadError != nil {
 		var fileIds []string
