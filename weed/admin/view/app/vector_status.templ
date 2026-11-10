@@ -1,0 +1,38 @@
+package app
+
+import (
+ "fmt"
+ "github.com/seaweedfs/seaweedfs/weed/admin/dash"
+)
+
+templ VectorStatus(data dash.VectorOperationsData) {
+ <div class="card shadow mb-4">
+  <div class="card-header">Vector Engines and Maintenance</div>
+  <div class="card-body">
+   if data.DiscoveryError != "" {
+    <div class="alert alert-warning">Engine discovery failed: { data.DiscoveryError }</div>
+   } else if len(data.Engines)==0 {
+    <div class="alert alert-warning">No vector engine is registered. Index creation, ingestion and search need a running engine.</div>
+   } else {
+    <table class="table table-sm"><thead><tr><th>Engine</th><th>Version</th><th>Status</th></tr></thead><tbody>
+     for _,engine:=range data.Engines {
+      <tr><td>{ engine.Address }</td><td>{ engine.Version }</td><td>{ engine.Status }</td></tr>
+     }
+    </tbody></table>
+   }
+   if data.MaintenanceWorkers == 0 {
+    <p class="text-warning">No vector index maintenance worker is connected. Searches still work; enable a Lance worker to build and refresh ANN indexes as data grows.</p>
+   } else {
+    <p>{ fmt.Sprintf("%d vector maintenance workers connected",data.MaintenanceWorkers) }</p>
+   }
+   <a href={ dash.PUrl(ctx,"/plugin/monitoring") }>Maintenance jobs</a>
+   if len(data.MaintenanceJobs)>0 {
+    <table class="table table-sm mt-2"><thead><tr><th>Recent job</th><th>State</th><th>Result</th></tr></thead><tbody>
+     for _,job:=range data.MaintenanceJobs {
+      <tr><td>{ job.JobID }</td><td>{ job.State }</td><td>{ job.ResultSummary } { job.ErrorMessage }</td></tr>
+     }
+    </tbody></table>
+   }
+  </div>
+ </div>
+}

@@ -294,7 +294,11 @@ func (s *Server) handleCreateVectorBucket(w http.ResponseWriter, r *http.Request
 	// catalog does for CreateTableBucket.
 	principal := s.tables.PrincipalFor(r)
 	allowed := func(action, bucket string) bool {
-		return s3tables.CheckPermissionWithContext(action, principal, s.tables.PrincipalFor(nil), "", "", s.tables.PolicyContext(r, bucket))
+		resource := "*"
+		if bucket != "" {
+			resource = s.vectorBucketArn(bucket)
+		}
+		return s.checkPermission(r, action, principal, s.tables.PrincipalFor(nil), "", resource, s.policyContext(r, bucket, nil, nil, setTags(req.Tags)))
 	}
 	// Tagging names the new bucket, so a grant scoped to it applies.
 	if !allowed("s3vectors:CreateVectorBucket", "") ||
@@ -396,8 +400,8 @@ func (s *Server) handleListVectorBuckets(w http.ResponseWriter, r *http.Request)
 		}
 		arn := s.vectorBucketArn(b.Name)
 		pctx := s.policyContext(r, b.Name, tags, tags, tagRequest{})
-		if !s3tables.CheckPermissionWithContext("s3vectors:ListVectorBuckets", principal, owner, policy, arn, pctx) &&
-			!s3tables.CheckPermissionWithContext("s3vectors:GetVectorBucket", principal, owner, policy, arn, pctx) {
+		if !s.checkPermission(r, "s3vectors:ListVectorBuckets", principal, owner, policy, arn, pctx) &&
+			!s.checkPermission(r, "s3vectors:GetVectorBucket", principal, owner, policy, arn, pctx) {
 			continue
 		}
 		created, _ := time.Parse(time.RFC3339, b.CreatedAt)
@@ -920,7 +924,7 @@ func (s *Server) checkVectorPolicyDoc(r *http.Request, action, bucket string, re
 		return err
 	}
 	principal := s.tables.PrincipalFor(r)
-	if !s3tables.CheckPermissionWithContext(action, principal, record.OwnerAccountID,
+	if !s.checkPermission(r, action, principal, record.OwnerAccountID,
 		vectorPolicyFromExt(ext), s.vectorBucketArn(bucket), s.policyContext(r, bucket, tags, tags, tagRequest{})) {
 		return errVectorDenied
 	}
@@ -951,14 +955,14 @@ func (s *Server) authorizeVectorTags(ctx context.Context, r *http.Request, actio
 	resourceARN, resourceTags := s.vectorBucketArn(bucket), bucketTags
 	if index != "" {
 		resourceARN, resourceTags = s.indexArn(bucket, index), nil
-		if readsResourceTags(policy) {
+		if _, usesIAM := s.authenticator.(IAMAuthorizer); readsResourceTags(policy) || usesIAM {
 			if resourceTags, err = s.indexTags(ctx, bucket, index); err != nil {
 				return nil, err
 			}
 		}
 	}
 	principal := s.tables.PrincipalFor(r)
-	if !s3tables.CheckPermissionWithContext(action, principal, record.OwnerAccountID, policy, resourceARN,
+	if !s.checkPermission(r, action, principal, record.OwnerAccountID, policy, resourceARN,
 		s.policyContext(r, bucket, bucketTags, resourceTags, req)) {
 		return nil, &s3tables.S3TablesError{Type: s3tables.ErrCodeAccessDenied, Message: "access denied"}
 	}

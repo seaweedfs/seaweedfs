@@ -256,6 +256,7 @@ func (h *AdminHandlers) registerAPIRoutes(api *mux.Router, enforceWrite bool) {
 	s3TablesApi.Handle("/tags", wrapWrite(h.adminServer.UntagS3TablesResource)).Methods(http.MethodDelete)
 
 	s3VectorsApi := api.PathPrefix("/s3vectors").Subrouter()
+	s3VectorsApi.HandleFunc("/operations", h.adminServer.ExecuteS3VectorsOperationAPI).Methods(http.MethodPost)
 	s3VectorsApi.HandleFunc("/buckets", h.adminServer.ListS3VectorsBucketsAPI).Methods(http.MethodGet)
 	s3VectorsApi.Handle("/buckets", wrapWrite(h.adminServer.CreateS3VectorsBucket)).Methods(http.MethodPost)
 	s3VectorsApi.Handle("/buckets", wrapWrite(h.adminServer.DeleteS3VectorsBucket)).Methods(http.MethodDelete)

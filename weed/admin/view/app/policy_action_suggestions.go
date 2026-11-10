@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3vectors"
 )
 
 // PolicyActionSuggestions feeds the <datalist> used by the structured policy
@@ -26,7 +27,7 @@ var S3TablesPolicyActionSuggestions = func() []string {
 }()
 
 func buildPolicyActionSuggestions() []string {
-	return []string{
+	suggestions := []string{
 		// s3: actions, sourced from the constants used elsewhere for policy
 		// evaluation (weed/s3api/s3_constants/s3_action_strings.go) so the
 		// suggestion list can't drift from the strings the engine actually
@@ -120,4 +121,10 @@ func buildPolicyActionSuggestions() []string {
 		s3_constants.S3TABLES_ACTION_LIST_TAGS_FOR_RESOURCE,
 		s3_constants.S3TABLES_ACTION_UNTAG_RESOURCE,
 	}
+	suggestions = append(suggestions, "s3vectors:*")
+	for _, operation := range s3vectors.Operations() {
+		suggestions = append(suggestions, "s3vectors:"+operation)
+	}
+	return suggestions
+
 }

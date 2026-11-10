@@ -257,7 +257,6 @@ func (s3iam *S3IAMIntegration) AuthorizeAction(ctx context.Context, identity *IA
 	}
 
 	// Build resource ARN for the S3 operation
-	resourceArn := buildS3ResourceArn(bucket, resourceObjectKey)
 
 	// Add identity claims to request context for policy variables
 	// Only add claim keys if they don't already exist (to avoid overwriting request-derived context)
@@ -283,7 +282,7 @@ func (s3iam *S3IAMIntegration) AuthorizeAction(ctx context.Context, identity *IA
 	// Determine the specific S3 action based on the HTTP request details. The
 	// prefix promoted into objectKey is not part of the URL; resolve against
 	// the bucket-level object so ?versions and ?uploads keep their own action.
-	specificAction := ResolveS3Action(r, string(action), bucket, resourceObjectKey)
+	specificAction, resourceArn := resolveS3AuthTarget(action, bucket, resourceObjectKey, r)
 
 	// Create action request
 	actionRequest := &integration.ActionRequest{
@@ -397,6 +396,9 @@ func (s3iam *S3IAMIntegration) extractRequestContext(r *http.Request) map[string
 		context["referer"] = referer
 	}
 
+	for key, values := range vectorIAMConditions(r) {
+		context[key] = values
+	}
 	return context
 }
 

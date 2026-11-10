@@ -23,6 +23,8 @@ templ S3VectorsBucketDetails(data dash.S3VectorsBucketData) {
 			</nav>
 		</div>
 	</div>
+ @VectorStatus(data.Operations)
+ @VectorTools(data.Bucket.Name,data.Bucket.ARN,data.Policy)
 	<div class="card shadow mb-4">
 		<div class="card-body">
 			<dl class="row mb-0">
@@ -92,7 +94,7 @@ templ S3VectorsBucketDetails(data dash.S3VectorsBucketData) {
 						if len(data.Indexes) == 0 {
 							<tr>
 								<td colspan="7" class="text-center text-muted py-4">
-									No indexes. Create one with an S3 Vectors client, e.g. <code>aws s3vectors create-index</code>.
+									No indexes. Create one with the form above.
 								</td>
 							</tr>
 						}

@@ -33,165 +33,173 @@ func S3VectorsBuckets(data dash.S3VectorsBucketsData) templ.Component {
 		}
 		ctx = templ.InitializeContext(ctx)
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div class=\"d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom\"><h1 class=\"h2\"><i class=\"bi bi-bounding-box-circles me-2\"></i>Vector Buckets</h1><div class=\"btn-toolbar mb-2 mb-md-0\"><div class=\"btn-group me-2\"><button type=\"button\" class=\"btn btn-sm btn-primary\" data-bs-toggle=\"modal\" data-bs-target=\"#createS3VectorsBucketModal\"><i class=\"bi bi-plus me-1\"></i>Create Bucket</button></div></div></div><div class=\"alert alert-info mb-4\"><i class=\"bi bi-info-circle me-2\"></i> Vector buckets serve the Amazon S3 Vectors API on the S3 port. Each one is a LANCE table bucket that keeps its indexes in its <code>vector</code> namespace. Indexes are created and filled with an S3 Vectors client, which needs a running <code>weed-vector</code> engine.</div><div class=\"card shadow mb-4\"><div class=\"card-header py-3\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"bi bi-bounding-box-circles me-2\"></i>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div class=\"d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom\"><h1 class=\"h2\"><i class=\"bi bi-bounding-box-circles me-2\"></i>Vector Buckets</h1><div class=\"btn-toolbar mb-2 mb-md-0\"><div class=\"btn-group me-2\"><button type=\"button\" class=\"btn btn-sm btn-primary\" data-bs-toggle=\"modal\" data-bs-target=\"#createS3VectorsBucketModal\"><i class=\"bi bi-plus me-1\"></i>Create Bucket</button></div></div></div><div class=\"alert alert-info mb-4\"><i class=\"bi bi-info-circle me-2\"></i> Vector buckets serve the Amazon S3 Vectors API on the S3 port. Each one is a LANCE table bucket that keeps its indexes in its <code>vector</code> namespace. Create indexes and manage vectors from a bucket page or an S3 Vectors client.</div>")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		templ_7745c5c3_Err = VectorStatus(data.Operations).Render(ctx, templ_7745c5c3_Buffer)
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "<div class=\"card shadow mb-4\"><div class=\"card-header py-3\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"bi bi-bounding-box-circles me-2\"></i>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var2 string
 		templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d vector buckets", data.TotalBuckets))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_buckets.templ`, Line: 31, Col: 104}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_buckets.templ`, Line: 32, Col: 104}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var2))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, " ")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, " ")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		if data.Truncated {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "<span class=\"text-muted small ms-2\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "<span class=\"text-muted small ms-2\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var3 string
 			templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("showing the first %d; list the rest with an S3 Vectors client", data.TotalBuckets))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_buckets.templ`, Line: 33, Col: 138}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_buckets.templ`, Line: 34, Col: 138}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "</span>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "</span>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "</h6></div><div class=\"card-body\"><div class=\"table-responsive\"><table class=\"table table-hover\" width=\"100%\" cellspacing=\"0\" id=\"s3vectorsBucketsTable\"><thead><tr><th>Name</th><th>ARN</th><th>Encryption</th><th>Created</th><th>Actions</th></tr></thead> <tbody>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "</h6></div><div class=\"card-body\"><div class=\"table-responsive\"><table class=\"table table-hover\" width=\"100%\" cellspacing=\"0\" id=\"s3vectorsBucketsTable\"><thead><tr><th>Name</th><th>ARN</th><th>Encryption</th><th>Created</th><th>Actions</th></tr></thead> <tbody>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		for _, bucket := range data.Buckets {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "<tr><td><a href=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "<tr><td><a href=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var4 string
 			templ_7745c5c3_Var4, templ_7745c5c3_Err = templruntime.NewAttributeExpression(dash.PUrl(ctx, "/object-store/vector-buckets/"+url.PathEscape(bucket.Name))).ResolveURL(ctx)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_buckets.templ`, Line: 53, Col: 94}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_buckets.templ`, Line: 54, Col: 94}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var4)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var5 string
 			templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(bucket.Name)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_buckets.templ`, Line: 53, Col: 110}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_buckets.templ`, Line: 54, Col: 110}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "</a></td><td class=\"text-muted small\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "</a></td><td class=\"text-muted small\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var6 string
 			templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(bucket.ARN)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_buckets.templ`, Line: 55, Col: 49}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_buckets.templ`, Line: 56, Col: 49}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "</td><td>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, "</td><td>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			if bucket.Encryption != "" {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, "<span class=\"badge bg-success\">")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 11, "<span class=\"badge bg-success\">")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var7 string
 				templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(bucket.Encryption)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_buckets.templ`, Line: 58, Col: 60}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_buckets.templ`, Line: 59, Col: 60}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 11, "</span>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 12, "</span>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			} else {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 12, "<span class=\"text-muted\">None</span>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, "<span class=\"text-muted\">None</span>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, "</td><td>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 14, "</td><td>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var8 string
 			templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(bucket.CreatedAt.Format("2006-01-02 15:04"))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_buckets.templ`, Line: 63, Col: 57}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_buckets.templ`, Line: 64, Col: 57}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 14, "</td><td><div class=\"btn-group btn-group-sm\" role=\"group\"><a class=\"btn btn-outline-primary btn-sm\" href=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 15, "</td><td><div class=\"btn-group btn-group-sm\" role=\"group\"><a class=\"btn btn-outline-primary btn-sm\" href=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var9 string
 			templ_7745c5c3_Var9, templ_7745c5c3_Err = templruntime.NewAttributeExpression(dash.PUrl(ctx, "/object-store/vector-buckets/"+url.PathEscape(bucket.Name))).ResolveURL(ctx)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_buckets.templ`, Line: 66, Col: 134}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_buckets.templ`, Line: 67, Col: 134}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var9)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 15, "\" title=\"Indexes\"><i class=\"bi bi-folder2-open\"></i></a> <button type=\"button\" class=\"btn btn-outline-danger btn-sm s3vectors-delete-bucket-btn\" data-bucket-name=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, "\" title=\"Indexes\"><i class=\"bi bi-folder2-open\"></i></a> <button type=\"button\" class=\"btn btn-outline-danger btn-sm s3vectors-delete-bucket-btn\" data-bucket-name=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var10 string
 			templ_7745c5c3_Var10, templ_7745c5c3_Err = templruntime.NewAttributeExpression(bucket.Name).Resolve(ctx)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_buckets.templ`, Line: 69, Col: 128}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_buckets.templ`, Line: 70, Col: 128}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var10)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, "\" title=\"Delete\"><i class=\"bi bi-trash\"></i></button></div></td></tr>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 17, "\" title=\"Delete\"><i class=\"bi bi-trash\"></i></button></div></td></tr>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
 		if len(data.Buckets) == 0 {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 17, "<tr><td colspan=\"5\" class=\"text-center text-muted py-4\"><i class=\"bi bi-bounding-box-circles icon-3x mb-3 text-muted\"></i><div><h5>No vector buckets found</h5></div></td></tr>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 18, "<tr><td colspan=\"5\" class=\"text-center text-muted py-4\"><i class=\"bi bi-bounding-box-circles icon-3x mb-3 text-muted\"></i><div><h5>No vector buckets found</h5></div></td></tr>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 18, "</tbody></table></div></div></div><div class=\"modal fade\" id=\"createS3VectorsBucketModal\" tabindex=\"-1\" aria-labelledby=\"createS3VectorsBucketModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"createS3VectorsBucketModalLabel\"><i class=\"bi bi-plus me-2\"></i>Create Vector Bucket</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><form id=\"createS3VectorsBucketForm\"><div class=\"modal-body\"><div class=\"mb-3\"><label for=\"s3vectorsBucketName\" class=\"form-label\">Bucket Name</label> <input type=\"text\" class=\"form-control\" id=\"s3vectorsBucketName\" name=\"name\" placeholder=\"vector-bucket-name\" required><div class=\"form-text\">3 to 63 lowercase letters, digits and hyphens, starting and ending with a letter or digit.</div></div><div class=\"form-text\">The bucket is created without encryption. To encrypt it, create it with an S3 Vectors client and <code>encryptionConfiguration</code>, which the S3 gateway checks against its SSE-S3 key.</div></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"submit\" class=\"btn btn-primary\"><i class=\"bi bi-plus me-1\"></i>Create</button></div></form></div></div></div><div class=\"modal fade\" id=\"deleteS3VectorsBucketModal\" tabindex=\"-1\" aria-labelledby=\"deleteS3VectorsBucketModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"deleteS3VectorsBucketModalLabel\"><i class=\"bi bi-exclamation-triangle me-2 text-warning\"></i>Delete Vector Bucket</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><div class=\"modal-body\"><p>Delete the vector bucket <strong id=\"deleteS3VectorsBucketName\"></strong>? A bucket that still has indexes is not deleted.</p></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"button\" class=\"btn btn-danger\" id=\"deleteS3VectorsBucketBtn\"><i class=\"bi bi-trash me-1\"></i>Delete</button></div></div></div></div><script>\n\t\tdocument.addEventListener('DOMContentLoaded', function () {\n\t\t\tconst deleteModalEl = document.getElementById('deleteS3VectorsBucketModal');\n\t\t\tconst deleteModal = new bootstrap.Modal(deleteModalEl);\n\t\t\tdocument.querySelectorAll('.s3vectors-delete-bucket-btn').forEach(button => {\n\t\t\t\tbutton.addEventListener('click', function () {\n\t\t\t\t\tdeleteModalEl.dataset.bucketName = this.dataset.bucketName || '';\n\t\t\t\t\tdocument.getElementById('deleteS3VectorsBucketName').textContent = this.dataset.bucketName || '';\n\t\t\t\t\tdeleteModal.show();\n\t\t\t\t});\n\t\t\t});\n\t\t\tdocument.getElementById('deleteS3VectorsBucketBtn').addEventListener('click', async function () {\n\t\t\t\tconst bucket = deleteModalEl.dataset.bucketName;\n\t\t\t\tif (!bucket) return;\n\t\t\t\ttry {\n\t\t\t\t\tconst response = await fetch(s3tBasePath('/api/s3vectors/buckets?bucket=' + encodeURIComponent(bucket)), { method: 'DELETE', headers: s3tWriteHeaders() });\n\t\t\t\t\tconst data = await response.json();\n\t\t\t\t\tif (!response.ok) {\n\t\t\t\t\t\talert(data.error || 'Failed to delete vector bucket');\n\t\t\t\t\t\treturn;\n\t\t\t\t\t}\n\t\t\t\t\tlocation.reload();\n\t\t\t\t} catch (error) {\n\t\t\t\t\talert('Failed to delete vector bucket: ' + error.message);\n\t\t\t\t}\n\t\t\t});\n\t\t\tdocument.getElementById('createS3VectorsBucketForm').addEventListener('submit', async function (e) {\n\t\t\t\te.preventDefault();\n\t\t\t\tconst name = document.getElementById('s3vectorsBucketName').value.trim();\n\t\t\t\ttry {\n\t\t\t\t\tconst response = await fetch(s3tBasePath('/api/s3vectors/buckets'), {\n\t\t\t\t\t\tmethod: 'POST',\n\t\t\t\t\t\theaders: s3tWriteHeaders({ 'Content-Type': 'application/json' }),\n\t\t\t\t\t\tbody: JSON.stringify({ name: name })\n\t\t\t\t\t});\n\t\t\t\t\tconst data = await response.json();\n\t\t\t\t\tif (!response.ok) {\n\t\t\t\t\t\talert(data.error || 'Failed to create vector bucket');\n\t\t\t\t\t\treturn;\n\t\t\t\t\t}\n\t\t\t\t\tlocation.reload();\n\t\t\t\t} catch (error) {\n\t\t\t\t\talert('Failed to create vector bucket: ' + error.message);\n\t\t\t\t}\n\t\t\t});\n\t\t});\n\t</script>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 19, "</tbody></table></div></div></div><div class=\"modal fade\" id=\"createS3VectorsBucketModal\" tabindex=\"-1\" aria-labelledby=\"createS3VectorsBucketModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"createS3VectorsBucketModalLabel\"><i class=\"bi bi-plus me-2\"></i>Create Vector Bucket</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><form id=\"createS3VectorsBucketForm\"><div class=\"modal-body\"><div class=\"mb-3\"><label for=\"s3vectorsBucketName\" class=\"form-label\">Bucket Name</label> <input type=\"text\" class=\"form-control\" id=\"s3vectorsBucketName\" name=\"name\" placeholder=\"vector-bucket-name\" required><div class=\"form-text\">3 to 63 lowercase letters, digits and hyphens, starting and ending with a letter or digit.</div></div><label for=\"s3vectorsEncryption\" class=\"form-label\">Encryption</label> <select id=\"s3vectorsEncryption\" class=\"form-select\"><option value=\"\">None</option><option value=\"AES256\">SSE-S3 (AES256)</option></select><div class=\"form-text\">SSE-S3 requires the encryption key on the S3 gateway and vector engines.</div></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"submit\" class=\"btn btn-primary\"><i class=\"bi bi-plus me-1\"></i>Create</button></div></form></div></div></div><div class=\"modal fade\" id=\"deleteS3VectorsBucketModal\" tabindex=\"-1\" aria-labelledby=\"deleteS3VectorsBucketModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"deleteS3VectorsBucketModalLabel\"><i class=\"bi bi-exclamation-triangle me-2 text-warning\"></i>Delete Vector Bucket</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><div class=\"modal-body\"><p>Delete the vector bucket <strong id=\"deleteS3VectorsBucketName\"></strong>? A bucket that still has indexes is not deleted.</p></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"button\" class=\"btn btn-danger\" id=\"deleteS3VectorsBucketBtn\"><i class=\"bi bi-trash me-1\"></i>Delete</button></div></div></div></div><script>\n\t\tdocument.addEventListener('DOMContentLoaded', function () {\n\t\t\tconst deleteModalEl = document.getElementById('deleteS3VectorsBucketModal');\n\t\t\tconst deleteModal = new bootstrap.Modal(deleteModalEl);\n\t\t\tdocument.querySelectorAll('.s3vectors-delete-bucket-btn').forEach(button => {\n\t\t\t\tbutton.addEventListener('click', function () {\n\t\t\t\t\tdeleteModalEl.dataset.bucketName = this.dataset.bucketName || '';\n\t\t\t\t\tdocument.getElementById('deleteS3VectorsBucketName').textContent = this.dataset.bucketName || '';\n\t\t\t\t\tdeleteModal.show();\n\t\t\t\t});\n\t\t\t});\n\t\t\tdocument.getElementById('deleteS3VectorsBucketBtn').addEventListener('click', async function () {\n\t\t\t\tconst bucket = deleteModalEl.dataset.bucketName;\n\t\t\t\tif (!bucket) return;\n\t\t\t\ttry {\n\t\t\t\t\tconst response = await fetch(s3tBasePath('/api/s3vectors/buckets?bucket=' + encodeURIComponent(bucket)), { method: 'DELETE', headers: s3tWriteHeaders() });\n\t\t\t\t\tconst data = await response.json();\n\t\t\t\t\tif (!response.ok) {\n\t\t\t\t\t\talert(data.error || 'Failed to delete vector bucket');\n\t\t\t\t\t\treturn;\n\t\t\t\t\t}\n\t\t\t\t\tlocation.reload();\n\t\t\t\t} catch (error) {\n\t\t\t\t\talert('Failed to delete vector bucket: ' + error.message);\n\t\t\t\t}\n\t\t\t});\n\t\t\tdocument.getElementById('createS3VectorsBucketForm').addEventListener('submit', async function (e) {\n\t\t\t\te.preventDefault();\n\t\t\t\tconst name = document.getElementById('s3vectorsBucketName').value.trim();\n\t\t\t\ttry {\n\t\t\t\t\tconst response = await fetch(s3tBasePath('/api/s3vectors/buckets'), {\n\t\t\t\t\t\tmethod: 'POST',\n\t\t\t\t\t\theaders: s3tWriteHeaders({ 'Content-Type': 'application/json' }),\n\t\t\t\t\t\tbody: JSON.stringify({ name, encryptionConfiguration: document.getElementById('s3vectorsEncryption').value ? {sseType:'AES256'} : undefined })\n\t\t\t\t\t});\n\t\t\t\t\tconst data = await response.json();\n\t\t\t\t\tif (!response.ok) {\n\t\t\t\t\t\talert(data.error || 'Failed to create vector bucket');\n\t\t\t\t\t\treturn;\n\t\t\t\t\t}\n\t\t\t\t\tlocation.reload();\n\t\t\t\t} catch (error) {\n\t\t\t\t\talert('Failed to create vector bucket: ' + error.message);\n\t\t\t\t}\n\t\t\t});\n\t\t});\n\t</script>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
