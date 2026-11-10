@@ -1,11 +1,14 @@
 package s3api
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -201,5 +204,125 @@ func TestLimitInterceptor(t *testing.T) {
 		if !ran {
 			t.Fatal("interceptor set after Limit() must still run (request-time evaluation)")
 		}
+	})
+}
+
+func newUploadLimitedCircuitBreaker(option *S3ApiServerOption) *CircuitBreaker {
+	return &CircuitBreaker{
+		counters:    make(map[string]*int64),
+		limitations: make(map[string]int64),
+		s3a:         &S3ApiServer{option: option, inFlightDataLimitCond: sync.NewCond(new(sync.Mutex))},
+	}
+}
+
+func putRequest(ctx context.Context, size int) *http.Request {
+	return httptest.NewRequest(http.MethodPut, "/bucket/object", strings.NewReader(strings.Repeat("x", size))).WithContext(ctx)
+}
+
+func holdUploadSlot(t *testing.T, cb *CircuitBreaker, size int) (release func()) {
+	entered, done := make(chan struct{}), make(chan struct{})
+	finished := make(chan struct{})
+	h, _ := cb.Limit(func(w http.ResponseWriter, r *http.Request) {
+		close(entered)
+		<-done
+	}, s3_constants.ACTION_WRITE)
+	go func() {
+		defer close(finished)
+		h(httptest.NewRecorder(), putRequest(context.Background(), size))
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("first upload was not admitted")
+	}
+	return func() {
+		close(done)
+		<-finished
+	}
+}
+
+func TestLimitUploadSlotWait(t *testing.T) {
+	t.Run("wait for a slot times out with SlowDown", func(t *testing.T) {
+		cb := newUploadLimitedCircuitBreaker(&S3ApiServerOption{ConcurrentFileUploadLimit: 1, InflightUploadDataTimeout: 100 * time.Millisecond})
+		release := holdUploadSlot(t, cb, 10)
+		defer release()
+
+		ran := false
+		h, _ := cb.Limit(func(w http.ResponseWriter, r *http.Request) { ran = true }, s3_constants.ACTION_WRITE)
+		rec := httptest.NewRecorder()
+		start := time.Now()
+		h(rec, putRequest(context.Background(), 10))
+		if ran {
+			t.Fatal("upload ran without a free slot")
+		}
+		if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "SlowDown") {
+			t.Fatalf("got %d %q, want 503 SlowDown", rec.Code, rec.Body.String())
+		}
+		if elapsed := time.Since(start); elapsed < 100*time.Millisecond {
+			t.Fatalf("rejected after %v, before the wait timeout", elapsed)
+		}
+		if n := atomic.LoadInt64(&cb.s3a.inFlightUploads); n != 1 {
+			t.Fatalf("in-flight uploads %d, want 1", n)
+		}
+	})
+
+	t.Run("cancelled request stops waiting", func(t *testing.T) {
+		cb := newUploadLimitedCircuitBreaker(&S3ApiServerOption{ConcurrentFileUploadLimit: 1})
+		release := holdUploadSlot(t, cb, 10)
+		defer release()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		time.AfterFunc(50*time.Millisecond, cancel)
+		h, _ := cb.Limit(func(w http.ResponseWriter, r *http.Request) { t.Error("cancelled upload ran") }, s3_constants.ACTION_WRITE)
+		done := make(chan int)
+		go func() {
+			rec := httptest.NewRecorder()
+			h(rec, putRequest(ctx, 10))
+			done <- rec.Code
+		}()
+		select {
+		case code := <-done:
+			if code != 499 {
+				t.Fatalf("got %d, want 499", code)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("cancelled upload kept waiting for a slot")
+		}
+	})
+
+	t.Run("freed bytes admit every waiter that fits", func(t *testing.T) {
+		cb := newUploadLimitedCircuitBreaker(&S3ApiServerOption{ConcurrentUploadLimit: 100, InflightUploadDataTimeout: time.Minute})
+		release := holdUploadSlot(t, cb, 1000)
+
+		var admitted sync.WaitGroup
+		admitted.Add(2)
+		proceed := make(chan struct{})
+		h, _ := cb.Limit(func(w http.ResponseWriter, r *http.Request) {
+			admitted.Done()
+			<-proceed
+		}, s3_constants.ACTION_WRITE)
+		var finished sync.WaitGroup
+		for i := 0; i < 2; i++ {
+			finished.Add(1)
+			go func() {
+				defer finished.Done()
+				h(httptest.NewRecorder(), putRequest(context.Background(), 10))
+			}()
+		}
+		time.Sleep(50 * time.Millisecond)
+		release()
+
+		bothIn := make(chan struct{})
+		go func() {
+			admitted.Wait()
+			close(bothIn)
+		}()
+		select {
+		case <-bothIn:
+		case <-time.After(5 * time.Second):
+			t.Error("only some waiters were admitted after the large upload finished")
+		}
+		close(proceed)
+		finished.Wait()
 	})
 }

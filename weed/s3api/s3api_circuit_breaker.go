@@ -17,6 +17,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 type CircuitBreaker struct {
@@ -111,32 +112,9 @@ func (cb *CircuitBreaker) Limit(f func(w http.ResponseWriter, r *http.Request), 
 				contentLength = 0
 			}
 
-			// Wait until in flight data is less than the limit
-			cb.s3a.inFlightDataLimitCond.L.Lock()
-			inFlightDataSize := atomic.LoadInt64(&cb.s3a.inFlightDataSize)
-			inFlightUploads := atomic.LoadInt64(&cb.s3a.inFlightUploads)
-
-			// Wait if either data size limit or file count limit is exceeded
-			for (cb.s3a.option.ConcurrentUploadLimit != 0 && inFlightDataSize > cb.s3a.option.ConcurrentUploadLimit) ||
-				(cb.s3a.option.ConcurrentFileUploadLimit != 0 && inFlightUploads >= cb.s3a.option.ConcurrentFileUploadLimit) {
-				if cb.s3a.option.ConcurrentUploadLimit != 0 && inFlightDataSize > cb.s3a.option.ConcurrentUploadLimit {
-					glog.V(4).Infof("wait because inflight data %d > %d", inFlightDataSize, cb.s3a.option.ConcurrentUploadLimit)
-				}
-				if cb.s3a.option.ConcurrentFileUploadLimit != 0 && inFlightUploads >= cb.s3a.option.ConcurrentFileUploadLimit {
-					glog.V(4).Infof("wait because inflight uploads %d >= %d", inFlightUploads, cb.s3a.option.ConcurrentFileUploadLimit)
-				}
-				cb.s3a.inFlightDataLimitCond.Wait()
-				inFlightDataSize = atomic.LoadInt64(&cb.s3a.inFlightDataSize)
-				inFlightUploads = atomic.LoadInt64(&cb.s3a.inFlightUploads)
+			if !cb.waitForUploadSlot(w, r, contentLength) {
+				return
 			}
-			cb.s3a.inFlightDataLimitCond.L.Unlock()
-
-			// Increment counters
-			newUploads := atomic.AddInt64(&cb.s3a.inFlightUploads, 1)
-			newSize := atomic.AddInt64(&cb.s3a.inFlightDataSize, contentLength)
-			// Update metrics
-			stats.S3InFlightUploadCountGauge.Set(float64(newUploads))
-			stats.S3InFlightUploadBytesGauge.Set(float64(newSize))
 			defer func() {
 				// Decrement counters
 				newUploads := atomic.AddInt64(&cb.s3a.inFlightUploads, -1)
@@ -144,7 +122,7 @@ func (cb *CircuitBreaker) Limit(f func(w http.ResponseWriter, r *http.Request), 
 				// Update metrics
 				stats.S3InFlightUploadCountGauge.Set(float64(newUploads))
 				stats.S3InFlightUploadBytesGauge.Set(float64(newSize))
-				cb.s3a.inFlightDataLimitCond.Signal()
+				cb.s3a.inFlightDataLimitCond.Broadcast()
 			}()
 		}
 
@@ -184,6 +162,45 @@ func (cb *CircuitBreaker) Limit(f func(w http.ResponseWriter, r *http.Request), 
 		}
 		inner(w, r)
 	}, Action(action)
+}
+
+func (cb *CircuitBreaker) waitForUploadSlot(w http.ResponseWriter, r *http.Request, contentLength int64) bool {
+	s3a := cb.s3a
+	s3a.inFlightDataLimitCond.L.Lock()
+	err := util.WaitUntil(r.Context(), s3a.inFlightDataLimitCond, s3a.option.InflightUploadDataTimeout, func() bool {
+		inFlightDataSize := atomic.LoadInt64(&s3a.inFlightDataSize)
+		if s3a.option.ConcurrentUploadLimit != 0 && inFlightDataSize > s3a.option.ConcurrentUploadLimit {
+			glog.V(4).Infof("wait because inflight data %d > %d", inFlightDataSize, s3a.option.ConcurrentUploadLimit)
+			return false
+		}
+		inFlightUploads := atomic.LoadInt64(&s3a.inFlightUploads)
+		if s3a.option.ConcurrentFileUploadLimit != 0 && inFlightUploads >= s3a.option.ConcurrentFileUploadLimit {
+			glog.V(4).Infof("wait because inflight uploads %d >= %d", inFlightUploads, s3a.option.ConcurrentFileUploadLimit)
+			return false
+		}
+		return true
+	})
+	if err == nil {
+		// Increment counters
+		newUploads := atomic.AddInt64(&s3a.inFlightUploads, 1)
+		newSize := atomic.AddInt64(&s3a.inFlightDataSize, contentLength)
+		// Update metrics
+		stats.S3InFlightUploadCountGauge.Set(float64(newUploads))
+		stats.S3InFlightUploadBytesGauge.Set(float64(newSize))
+	}
+	s3a.inFlightDataLimitCond.L.Unlock()
+
+	if err == nil {
+		return true
+	}
+	if r.Context().Err() != nil {
+		glog.V(1).Infof("upload from %s cancelled while waiting for an upload slot: %v", r.RemoteAddr, err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrClientDisconnected)
+		return false
+	}
+	glog.V(1).Infof("reject upload from %s: no upload slot within %v", r.RemoteAddr, s3a.option.InflightUploadDataTimeout)
+	s3err.WriteErrorResponse(w, r, s3err.ErrTooManyRequest)
+	return false
 }
 
 func (cb *CircuitBreaker) limit(r *http.Request, bucket string, action string) (rollback []func(), errCode s3err.ErrorCode) {
