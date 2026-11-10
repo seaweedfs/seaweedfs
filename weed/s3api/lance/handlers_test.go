@@ -451,14 +451,18 @@ func TestDataPlaneIsUnsupported(t *testing.T) {
 }
 
 // createOnlyAuthenticator signs in an identity that may create and read tables
-// but not update them.
-type createOnlyAuthenticator struct{}
+// but not update them; noRead also takes away reading.
+type createOnlyAuthenticator struct{ noRead bool }
 
-func (createOnlyAuthenticator) AuthenticateRequest(*http.Request) (string, interface{}, s3err.ErrorCode) {
+func (a createOnlyAuthenticator) AuthenticateRequest(*http.Request) (string, interface{}, s3err.ErrorCode) {
+	actions := []string{"s3tables:CreateTable", "s3tables:GetTable"}
+	if a.noRead {
+		actions = actions[:1]
+	}
 	return "creator", &struct {
 		Name    string
 		Actions []string
-	}{Name: "creator", Actions: []string{"s3tables:CreateTable", "s3tables:GetTable"}}, s3err.ErrNone
+	}{Name: "creator", Actions: actions}, s3err.ErrNone
 }
 
 func (createOnlyAuthenticator) DefaultAllow() bool { return false }
@@ -518,6 +522,21 @@ func TestDeregisterAndReregisterNeedUpdateTable(t *testing.T) {
 	reader.mustDo(t, http.MethodPost, "/v1/table/lnc$ns$theirs/register", `{"location":"s3://lnc/ns/theirs"}`, http.StatusForbidden)
 	if h.filer.Get("/buckets/lnc/ns/theirs", deregisteredMarker) == nil {
 		t.Fatal("a refused register brought the table back")
+	}
+
+	// Without GetTable the table looks absent, but CreateTable still returns it.
+	blindServer := NewServer(s3tables.NewManagerClient(h.filer.Client), createOnlyAuthenticator{noRead: true})
+	blindServer.SetCredentialVendor(recordingVendor{})
+	blindRouter := mux.NewRouter().SkipClean(true)
+	blindServer.RegisterRoutes(blindRouter)
+	blind := &testHarness{router: blindRouter, filer: h.filer, admin: h.admin, server: blindServer}
+
+	blind.mustDo(t, http.MethodPost, "/v1/table/lnc$ns$theirs/register", `{"location":"s3://lnc/ns/theirs"}`, http.StatusNotFound)
+	if got := blind.vendedKey(t, "/v1/table/lnc$ns$theirs/declare", ""); got == "read-write" {
+		t.Error("a declare that found an unreadable table vended write credentials")
+	}
+	if h.filer.Get("/buckets/lnc/ns/theirs", deregisteredMarker) == nil {
+		t.Fatal("a caller without GetTable brought the table back")
 	}
 }
 
