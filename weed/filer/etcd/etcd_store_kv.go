@@ -20,7 +20,7 @@ func (store *EtcdStore) KvPut(ctx context.Context, key []byte, value []byte) (er
 
 func (store *EtcdStore) KvGet(ctx context.Context, key []byte) (value []byte, err error) {
 
-	resp, err := store.client.Get(ctx, store.etcdKeyPrefix+string(key))
+	resp, err := store.client.Get(ctx, store.etcdKeyPrefix+string(key), atScanRevision(ctx)...)
 
 	if err != nil {
 		return nil, fmt.Errorf("kv get: %w", err)

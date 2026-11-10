@@ -182,6 +182,38 @@ func TestScanEntriesFromRoot(t *testing.T) {
 	}
 }
 
+func TestScanEntriesReadsHardLinkAtScanRevision(t *testing.T) {
+	m := newFakeMVCC()
+	m.putEntry(t, "/d", true)
+	m.putEntry(t, "/d/f", false)
+	m.put(testKeyPrefix+"link", []byte("v1"))
+	m.beforeGet = func(gets int) {
+		if gets == 2 {
+			m.put(testKeyPrefix+"link", []byte("v2"))
+		}
+	}
+	var got []string
+	err := scanEntries(context.Background(), m, testKeyPrefix, "/d", func(ctx context.Context, entry *filer.Entry) error {
+		resp, err := m.Get(ctx, testKeyPrefix+"link", atScanRevision(ctx)...)
+		if err != nil {
+			return err
+		}
+		got = append(got, string(resp.Kvs[0].Value))
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range got {
+		if v != "v1" {
+			t.Fatalf("hard link read %q inside the scan, want the scan revision's v1", got)
+		}
+	}
+	if len(got) != 2 {
+		t.Fatalf("visited %d entries, want 2", len(got))
+	}
+}
+
 func TestScanEntriesFailsWhenRevisionCompacted(t *testing.T) {
 	withScanPageSize(t, 1)
 	m := newFakeMVCC()

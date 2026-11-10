@@ -16,6 +16,17 @@ var _ filer.EntryScanner = (*EtcdStore)(nil)
 
 var scanPageSize int64 = 1000
 
+type scanRevisionKey struct{}
+
+// atScanRevision pins a read made with a ScanEntries context to the scan's
+// revision, so hard-link records resolve as of the same instant.
+func atScanRevision(ctx context.Context, opts ...clientv3.OpOption) []clientv3.OpOption {
+	if rev, ok := ctx.Value(scanRevisionKey{}).(int64); ok {
+		opts = append(opts, clientv3.WithRev(rev))
+	}
+	return opts
+}
+
 // ScanEntries implements filer.EntryScanner. Every page is read at the
 // revision of the first read, so a rename committed meanwhile shows up under
 // exactly one of its names. If etcd compacts that revision before the scan
@@ -30,12 +41,13 @@ func scanEntries(ctx context.Context, kv clientv3.KV, keyPrefix string, dirPath 
 		return fmt.Errorf("scan %s: %v", dirPath, err)
 	}
 	rev := resp.Header.Revision
+	scanCtx := context.WithValue(ctx, scanRevisionKey{}, rev)
 	if dirPath != "/" && len(resp.Kvs) > 0 {
 		root := &filer.Entry{FullPath: dirPath}
 		if err := root.DecodeAttributesAndChunks(weed_util.MaybeDecompressData(resp.Kvs[0].Value)); err != nil {
 			return fmt.Errorf("scan decode %s: %v", dirPath, err)
 		}
-		if err := fn(ctx, root); err != nil {
+		if err := fn(scanCtx, root); err != nil {
 			return err
 		}
 	}
@@ -46,7 +58,7 @@ func scanEntries(ctx context.Context, kv clientv3.KV, keyPrefix string, dirPath 
 		prefixes = []string{string(genDirectoryKeyPrefix(dirPath, "")), string(dirPath) + "/"}
 	}
 	for _, prefix := range prefixes {
-		if err := scanPrefix(ctx, kv, keyPrefix, prefix, dirPath, rev, fn); err != nil {
+		if err := scanPrefix(scanCtx, kv, keyPrefix, prefix, dirPath, rev, fn); err != nil {
 			return err
 		}
 	}
