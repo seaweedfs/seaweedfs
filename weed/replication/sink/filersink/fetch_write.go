@@ -29,17 +29,16 @@ import (
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
-// missingSourceChunkGrace is how long a chunk the source cannot produce keeps
-// being retried before it counts as gone for good. Long enough to outlast a
-// volume server restart or a master failover, after which every volume that
-// still exists is registered again.
-var missingSourceChunkGrace = 30 * time.Minute
+// sourceRecoveryGrace allows missing volume locations and ambiguous/proxied
+// 404s to recover from a volume server restart or master failover before the
+// chunk counts as permanently missing.
+var sourceRecoveryGrace = 30 * time.Minute
 
-// missingSourceNeedleGrace bounds retries when every located volume replica
+// confirmedChunkMissingGrace bounds retries when every located volume replica
 // answers 404. Allow brief read/write races without stalling each vacuumed
 // needle for the volume recovery window. Keep the longer grace for missing
 // volume locations and ambiguous/proxied 404s.
-var missingSourceNeedleGrace = 30 * time.Second
+var confirmedChunkMissingGrace = 30 * time.Second
 
 // sourceLookupTimeout bounds a best-effort source entry probe: a source that
 // accepts the call but whose metadata store never answers must stall
@@ -100,9 +99,9 @@ func (g *missingSourceChunkGate) isPermanent(err error) bool {
 
 func (g *missingSourceChunkGate) gracePeriod(err error) time.Duration {
 	if errors.Is(err, source.ErrChunkNotFound) {
-		return missingSourceNeedleGrace
+		return confirmedChunkMissingGrace
 	}
-	return missingSourceChunkGrace
+	return sourceRecoveryGrace
 }
 
 // wrap marks err permanent once the gate gave up, so the sink can tell a source
