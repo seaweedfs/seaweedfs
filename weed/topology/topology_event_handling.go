@@ -76,7 +76,7 @@ func (t *Topology) SetVolumeCapacityFull(volumeInfo storage.VolumeInfo) bool {
 	for _, dn := range vidLocations.list {
 		if !volumeInfo.ReadOnly {
 
-			disk := dn.getOrCreateDisk(volumeInfo.DiskType)
+			disk := dn.getOrCreateDiskWithLock(volumeInfo.DiskType)
 			disk.UpAdjustDiskUsageDelta(types.ToDiskType(volumeInfo.DiskType), &DiskUsageCounts{
 				activeVolumeCount: -1,
 			})

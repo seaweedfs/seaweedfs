@@ -586,7 +586,7 @@ func (vl *VolumeLayout) adjustActiveVolumeCount(vid needle.VolumeId, delta int64
 
 	diskTypeStr := string(vl.diskType)
 	for _, dn := range nodes {
-		disk := dn.getOrCreateDisk(diskTypeStr)
+		disk := dn.getOrCreateDiskWithLock(diskTypeStr)
 		disk.UpAdjustDiskUsageDelta(vl.diskType, &DiskUsageCounts{
 			activeVolumeCount: delta,
 		})
