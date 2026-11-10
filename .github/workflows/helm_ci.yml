@@ -1352,6 +1352,14 @@ jobs:
           echo "$FS_CONFIGURE" | grep -q -- '/buckets/diskbucket/ -disk=ssd -apply' || { echo "FAIL: disk-only bucket did not render fs.configure: $FS_CONFIGURE"; exit 1; }
           echo "Bucket fs.configure: disk without ttl"
 
+          if helm template test $CHART_DIR \
+            --set s3.enabled=true \
+            --set s3.createBuckets[0].name=numbucket \
+            --set s3.createBuckets[0].replication=0 >/dev/null 2>&1; then
+            echo "FAIL: a numeric replication should fail to render"; exit 1
+          fi
+          echo "Bucket fs.configure: numeric replication is rejected"
+
           echo ""
           echo "=== Testing hook Job labels ==="
           # The hook Jobs were the only pods in the chart without the standard
