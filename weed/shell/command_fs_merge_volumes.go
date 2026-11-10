@@ -61,6 +61,9 @@ func (c *commandFsMergeVolumes) Help() string {
 
 	-apply needs the shell lock (run "lock" first), so two runs never move the
 	same chunks at once.
+
+	Parts of in-progress S3 multipart uploads are not moved, so a source volume
+	holding them is not cleared until those uploads complete or are cleaned up.
 `
 }
 
