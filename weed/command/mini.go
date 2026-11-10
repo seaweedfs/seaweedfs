@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math/bits"
 	"net"
 	"net/http"
@@ -879,9 +880,9 @@ func ensurePortAvailableOnIP(portPtr *int, serviceName string, ip string, reserv
 	// Skip if this port is reserved for gRPC calculation
 	if reservedPorts[original] {
 		if isExplicitPort {
-			return fmt.Errorf("port %d for %s (specified by flag %s) is reserved for gRPC calculation and cannot be used", original, serviceName, flagName)
+			return fmt.Errorf("port %d for %s (specified by flag %s) is reserved by another mini service and cannot be used", original, serviceName, flagName)
 		}
-		glog.Warningf("Port %d for %s is reserved for gRPC calculation, finding alternative...", original, serviceName)
+		glog.Warningf("Port %d for %s is reserved by another mini service, finding alternative...", original, serviceName)
 		newPort := findAvailablePortOnIP(ip, original+1, 100, reservedPorts, listenOnLocalhost)
 		if newPort == 0 {
 			glog.Errorf("Could not find available port for %s starting from %d, will use original %d and fail on binding", serviceName, original+1, original)
@@ -1002,6 +1003,16 @@ func ensureAllPortsAvailableOnIP(bindIp string, listenOnLocalhost bool) error {
 		}
 	}
 
+	chosenPorts := make(map[int]string)
+	for _, config := range portConfigs {
+		if *config.port > 0 && explicitFlags[config.flagName] {
+			if previous, exists := chosenPorts[*config.port]; exists {
+				return fmt.Errorf("port %d is shared by explicit flags %s and %s", *config.port, previous, config.flagName)
+			}
+			chosenPorts[*config.port] = config.flagName
+		}
+	}
+
 	applyMiniAdminCredentialFallback(&miniAdminOptions)
 	adminBindIP := miniAdminEffectiveBindIP(bindIp)
 
@@ -1015,8 +1026,18 @@ func ensureAllPortsAvailableOnIP(bindIp string, listenOnLocalhost bool) error {
 			checkIP = adminBindIP
 		}
 		original := *config.port
-		if err := ensurePortAvailableOnIP(config.port, config.name, checkIP, reservedPorts, config.flagName, config.localhost); err != nil {
+		unavailablePorts := maps.Clone(reservedPorts)
+		for port, flag := range chosenPorts {
+			if flag != config.flagName {
+				unavailablePorts[port] = true
+			}
+		}
+
+		if err := ensurePortAvailableOnIP(config.port, config.name, checkIP, unavailablePorts, config.flagName, config.localhost); err != nil {
 			return err
+		}
+		if *config.port > 0 {
+			chosenPorts[*config.port] = config.flagName
 		}
 		// If port was changed, update the reserved gRPC ports mapping
 		if *config.port != original && config.grpcPtr != nil && *config.grpcPtr == 0 {
