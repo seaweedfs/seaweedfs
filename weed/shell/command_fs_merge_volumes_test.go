@@ -13,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -511,5 +512,45 @@ func TestUnreferencedTargets(t *testing.T) {
 				t.Fatalf("looked up %v, want /dir f", fake.lookupReq)
 			}
 		})
+	}
+}
+
+func TestIsMultipartUploadFile(t *testing.T) {
+	cases := []struct {
+		buckets, dir string
+		want         bool
+	}{
+		{"/buckets", "/buckets/b/.uploads/abc", true},
+		{"/buckets/", "/buckets/b/.uploads/abc", true},
+		{"/data/buckets", "/data/buckets/b/.uploads/abc", true},
+		{"/buckets", "/buckets/b/.uploads", false},
+		{"/buckets", "/buckets/b/dir/.uploads/abc", false},
+		{"/buckets", "/buckets/b/.uploads/abc/sub", false},
+		{"/buckets", "/other/b/.uploads/abc", false},
+		{"/buckets", "/buckets/b/obj", false},
+	}
+	for _, tc := range cases {
+		if got := isMultipartUploadFile(tc.buckets, util.FullPath(tc.dir)); got != tc.want {
+			t.Errorf("isMultipartUploadFile(%q, %q) = %v, want %v", tc.buckets, tc.dir, got, tc.want)
+		}
+	}
+}
+
+func TestRecordPlanSources(t *testing.T) {
+	plan := &mergePlan{targets: map[needle.VolumeId][]needle.VolumeId{
+		needle.VolumeId(203): {needle.VolumeId(187)},
+	}}
+	chunk := func(vid uint32) *filer_pb.FileChunk {
+		return &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: vid}}
+	}
+	seen := newSourceNeedleCounter()
+	if recordPlanSources(plan, seen, []*filer_pb.FileChunk{chunk(187), chunk(5)}) {
+		t.Fatal("chunks off plan sources must not be reported")
+	}
+	if !recordPlanSources(plan, seen, []*filer_pb.FileChunk{chunk(203), chunk(187), chunk(203)}) {
+		t.Fatal("chunks on a plan source must be reported")
+	}
+	if got := seen.count(needle.VolumeId(203)); got != 2 {
+		t.Fatalf("source 203 counted %d times, want 2", got)
 	}
 }

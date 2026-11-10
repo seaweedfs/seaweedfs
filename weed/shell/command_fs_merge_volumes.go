@@ -17,6 +17,7 @@ import (
 	"slices"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
@@ -160,12 +161,26 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 
 	seen := newSourceNeedleCounter()
 
+	bucketsPath, err := readFilerBucketsPath(commandEnv)
+	if err != nil {
+		return err
+	}
+
 	if err := commandEnv.WithFilerClient(false, func(filerClient filer_pb.SeaweedFilerClient) error {
 		return filer_pb.TraverseBfs(context.Background(), commandEnv, util.FullPath(dir), func(parentPath util.FullPath, entry *filer_pb.Entry) error {
 			if entry.IsDirectory {
 				return nil
 			}
 			entryPath := parentPath.Child(entry.Name)
+			// A completion may already have read this part's fids and will
+			// commit the object with them, so moving the chunk would leave the
+			// object pointing at the deleted source needle.
+			if isMultipartUploadFile(bucketsPath, parentPath) {
+				if recordPlanSources(plan, seen, entry.Chunks) {
+					fmt.Printf("skip %s: part of an in-progress multipart upload\n", entryPath)
+				}
+				return nil
+			}
 			if len(entry.HardLinkId) > 0 {
 				if _, seen := processedHardLinks.LoadOrStore(string(entry.HardLinkId), struct{}{}); seen {
 					// Another sibling already carried the HardLinkId through
@@ -281,6 +296,31 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 
 	c.warnUnreferencedSources(writer, plan, seen, dir)
 	return nil
+}
+
+// isMultipartUploadFile reports whether entries in dir are the parts of an
+// in-progress multipart upload, <bucketsPath>/<bucket>/.uploads/<uploadId>.
+func isMultipartUploadFile(bucketsPath string, dir util.FullPath) bool {
+	uploadsDir, _ := dir.DirAndName()
+	bucketDir, uploads := util.FullPath(uploadsDir).DirAndName()
+	if uploads != s3_constants.MultipartUploadsFolder {
+		return false
+	}
+	parent, _ := util.FullPath(bucketDir).DirAndName()
+	return parent == strings.TrimRight(bucketsPath, "/")
+}
+
+// recordPlanSources counts the chunks on plan sources as referenced and
+// reports whether there were any.
+func recordPlanSources(plan *mergePlan, seen *sourceNeedleCounter, chunks []*filer_pb.FileChunk) bool {
+	found := false
+	for _, chunk := range chunks {
+		if vid := needle.VolumeId(chunk.Fid.GetVolumeId()); plan.isSource(vid) {
+			seen.record(vid)
+			found = true
+		}
+	}
+	return found
 }
 
 // warnUnreferencedSources warns when a plan source's index still holds needles
