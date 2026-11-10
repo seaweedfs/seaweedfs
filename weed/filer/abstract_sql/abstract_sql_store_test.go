@@ -99,7 +99,7 @@ type recordingDDLGen struct {
 
 func (g *recordingDDLGen) GetSqlCreateTable(tableName string) string {
 	g.calls = append(g.calls, "create "+tableName)
-	return ""
+	return "CREATE TABLE " + tableName
 }
 
 func (g *recordingDDLGen) GetSqlDropTable(tableName string) string {
@@ -113,7 +113,7 @@ func TestBucketHooksSkipInvalidBucketNames(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	mock.MatchExpectationsInOrder(false)
+	mock.ExpectExec("CREATE TABLE mybucket").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("DROP").WillReturnResult(sqlmock.NewResult(0, 0))
 
 	gen := &recordingDDLGen{}
@@ -135,5 +135,8 @@ func TestBucketHooksSkipInvalidBucketNames(t *testing.T) {
 
 	if want := []string{"create mybucket", "drop mybucket"}; !reflect.DeepEqual(gen.calls, want) {
 		t.Errorf("DDL calls = %q, want %q", gen.calls, want)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Error(err)
 	}
 }
