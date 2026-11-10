@@ -215,7 +215,7 @@ spec:
           {{- end }}
           {{- end }}
           {{- range $createBuckets }}
-          {{- if and (hasKey . "replication") (not (kindIs "string" .replication)) }}
+          {{- if not (or (kindIs "invalid" .replication) (kindIs "string" .replication)) }}
           {{- fail (printf "createBuckets %s: replication must be a quoted string such as \"001\" (use --set-string)" .name) }}
           {{- end }}
           {{- if or .ttl .replication .disk }}

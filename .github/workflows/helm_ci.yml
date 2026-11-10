@@ -1360,6 +1360,14 @@ jobs:
           fi
           echo "Bucket fs.configure: numeric replication is rejected"
 
+          FS_CONFIGURE=$(helm template test $CHART_DIR \
+            --set s3.enabled=true \
+            --set s3.createBuckets[0].name=nullbucket \
+            --set s3.createBuckets[0].ttl=7d \
+            --set s3.createBuckets[0].replication=null | grep 'fs.configure -locationPrefix=/buckets/nullbucket/' || true)
+          echo "$FS_CONFIGURE" | grep -q -- '/buckets/nullbucket/ -ttl=7d -apply' || { echo "FAIL: null replication should be treated as unset: $FS_CONFIGURE"; exit 1; }
+          echo "Bucket fs.configure: null replication is unset"
+
           echo ""
           echo "=== Testing hook Job labels ==="
           # The hook Jobs were the only pods in the chart without the standard
