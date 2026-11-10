@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -202,5 +203,40 @@ func TestVectorAdmissionBoundsBufferingBeforeAuthentication(t *testing.T) {
 				t.Fatalf("capacity leaked after success/failure: status %d, calls %d", after.Code, auth.calls.Load())
 			}
 		})
+	}
+}
+
+func TestVectorErrorResponsesEscapeHTML(t *testing.T) {
+	payload := "<script>alert(1)</script>"
+	for _, limited := range []bool{false, true} {
+		server := NewServer(nil, headerAuth{}, nil)
+		operation := payload
+		body := `{}`
+		if limited {
+			operation = "QueryVectors"
+			body = `{"vectorBucketName":"embeddings","indexName":"documents"}`
+			server.SetLimiter(func(http.HandlerFunc, string) http.HandlerFunc {
+				return func(w http.ResponseWriter, r *http.Request) {
+					w.WriteHeader(http.StatusTooManyRequests)
+					_ = xml.NewEncoder(w).Encode(struct {
+						XMLName       xml.Name `xml:"Error"`
+						Code, Message string
+					}{Code: "SlowDown", Message: payload})
+				}
+			})
+		}
+		router := mux.NewRouter()
+		server.RegisterRoutes(router)
+		request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+		request.Header.Set("X-Amz-Target", operation)
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		var failure Error
+		if response.Code < 400 || json.Unmarshal(response.Body.Bytes(), &failure) != nil || !strings.Contains(failure.Message, payload) {
+			t.Fatalf("error response lost message: %d %s", response.Code, response.Body)
+		}
+		if strings.Contains(response.Body.String(), "<") || response.Header().Get("X-Content-Type-Options") != "nosniff" || response.Header().Get("Content-Type") != "application/x-amz-json-1.1" {
+			t.Fatalf("unsafe error response: %v %s", response.Header(), response.Body)
+		}
 	}
 }
