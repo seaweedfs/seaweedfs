@@ -103,8 +103,7 @@ func (v *Volume) CompactByVolumeData(opts *CompactOptions) error {
 	//defer v.accessLock.Unlock()
 	//glog.V(3).Infof("Got Compaction lock...")
 	if !v.isCompactionInProgress.CompareAndSwap(false, true) {
-		glog.V(0).Infof("Volume %d is already compacting...", v.Id)
-		return nil
+		return v.compactingError()
 	}
 	defer v.isCompactionInProgress.Store(false)
 
@@ -148,8 +147,7 @@ func (v *Volume) CompactByIndex(opts *CompactOptions) error {
 	}
 
 	if !v.isCompactionInProgress.CompareAndSwap(false, true) {
-		glog.V(0).Infof("Volume %d is already compacting2 ...", v.Id)
-		return nil
+		return v.compactingError()
 	}
 	defer v.isCompactionInProgress.Store(false)
 
@@ -186,8 +184,7 @@ func (v *Volume) CommitCompact() error {
 	glog.V(0).Infof("Committing volume %d vacuuming...", v.Id)
 
 	if !v.isCompactionInProgress.CompareAndSwap(false, true) {
-		glog.V(0).Infof("Volume %d is already compacting ...", v.Id)
-		return nil
+		return v.compactingError()
 	}
 	defer v.isCompactionInProgress.Store(false)
 
@@ -268,6 +265,10 @@ func (v *Volume) CommitCompact() error {
 	}
 	glog.V(3).Infof("Finish committing volume %d", v.Id)
 	return nil
+}
+
+func (v *Volume) compactingError() error {
+	return fmt.Errorf("volume %d is compacting", v.Id)
 }
 
 // writeCompactCommitMarker writes and fsyncs the .cpc marker, then fsyncs the
@@ -394,6 +395,11 @@ func (v *Volume) reconcileCompactState() error {
 
 func (v *Volume) cleanupCompact() error {
 	glog.V(0).Infof("Cleaning up volume %d vacuuming...", v.Id)
+
+	// An in-flight copy is still writing .cpd/.cpx.
+	if v.isCompactionInProgress.Load() {
+		return v.compactingError()
+	}
 
 	// Serialize with CommitCompact's swap and refuse to unlink .cpd/.cpx while a
 	// .cpc marker exists: those temp files are the only inputs reconcile can roll

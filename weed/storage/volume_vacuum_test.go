@@ -204,6 +204,53 @@ func TestCommitCompactDeletionTailKeepsWritable(t *testing.T) {
 	}
 }
 
+// A second vacuum must not take a running compaction as its own: reporting
+// success would let it commit or delete the other run's .cpd/.cpx.
+func TestCompactionInProgressRefusesOtherVacuumSteps(t *testing.T) {
+	dir := t.TempDir()
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+	for i := uint64(1); i <= 3; i++ {
+		if _, _, _, err := v.writeNeedle2(newRandomNeedle(i), true, false, false); err != nil {
+			t.Fatalf("write %d: %v", i, err)
+		}
+	}
+	if err := v.CompactByIndex(nil); err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+
+	v.isCompactionInProgress.Store(true)
+	defer v.isCompactionInProgress.Store(false)
+	if err := v.CompactByIndex(nil); err == nil {
+		t.Fatal("CompactByIndex succeeded while another compaction is running")
+	}
+	if err := v.CompactByVolumeData(nil); err == nil {
+		t.Fatal("CompactByVolumeData succeeded while another compaction is running")
+	}
+	if err := v.CommitCompact(); err == nil {
+		t.Fatal("CommitCompact succeeded while another compaction is running")
+	}
+	if err := v.cleanupCompact(); err == nil {
+		t.Fatal("cleanupCompact succeeded while another compaction is running")
+	}
+	for _, ext := range []string{".cpd", ".cpx"} {
+		if _, err := os.Stat(v.FileName(ext)); err != nil {
+			t.Fatalf("%s of the running compaction: %v", ext, err)
+		}
+	}
+	v.isCompactionInProgress.Store(false)
+
+	if err := v.CommitCompact(); err != nil {
+		t.Fatalf("commit after the compaction finished: %v", err)
+	}
+	if v.SuperBlock.CompactionRevision != 1 {
+		t.Fatalf("compaction revision %d, want 1", v.SuperBlock.CompactionRevision)
+	}
+}
+
 func TestCompactVolumeFilesOffline(t *testing.T) {
 	dir := t.TempDir()
 	location := NewDiskLocation(dir, 10, util.MinFreeSpace{}, dir, "", nil, stats.DefaultDiskIOProbeConfig())

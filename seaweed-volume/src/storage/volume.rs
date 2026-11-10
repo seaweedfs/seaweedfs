@@ -1242,6 +1242,10 @@ const RANGE_CHECK_BLOCKS: u64 = 64;
 const MIN_RANGE_CHECK_BLOCK_SIZE: u64 = 64 * 1024;
 const MAX_RANGE_CHECK_BLOCK_SIZE: u64 = 1024 * 1024;
 
+pub(crate) fn compacting_error(id: VolumeId) -> VolumeError {
+    VolumeError::Io(io::Error::other(format!("volume {} is compacting", id)))
+}
+
 /// Keeps a needle to 64 blocks, each 64 KiB to 1 MiB, as Go's
 /// rangeCheckBlockSize.
 pub(crate) fn range_check_block_size(data_size: u64) -> u64 {
@@ -1913,10 +1917,7 @@ impl Volume {
     }
 
     pub(crate) fn compacting_error(&self) -> VolumeError {
-        VolumeError::Io(io::Error::other(format!(
-            "volume {} is compacting",
-            self.id
-        )))
+        compacting_error(self.id)
     }
 
     // ---- File naming (matching Go) ----
@@ -5843,7 +5844,7 @@ impl Volume {
     {
         match self.begin_compact_by_index()? {
             Some(job) => job.run(progress_fn),
-            None => Ok(()), // already compacting
+            None => Err(self.compacting_error()),
         }
     }
 
@@ -5948,7 +5949,7 @@ impl Volume {
             return Err(VolumeError::NotFound);
         }
         let Some(_claim) = CompactionClaim::try_claim(&self.is_compacting) else {
-            return Ok(()); // already compacting, silently skip (matches Go)
+            return Err(self.compacting_error());
         };
         // The reload would read the remote object through the compacted .idx.
         if self.has_remote_file() {

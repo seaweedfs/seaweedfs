@@ -1807,7 +1807,7 @@ impl Store {
     {
         match self.begin_compact_volume(vid, preallocate)? {
             Some(job) => job.run(progress_fn),
-            None => Ok(()),
+            None => Err(crate::storage::volume::compacting_error(vid)),
         }
     }
 
@@ -3671,8 +3671,8 @@ mod tests {
         assert!(store.cleanup_compact_volume(vid).is_err());
         let (_, v) = store.find_volume(vid).unwrap();
         assert!(v.relocate_index_to(other.path().to_str().unwrap()).is_err());
-        // Go parity: a commit that finds the volume compacting is a no-op.
-        store.commit_compact_volume(vid).unwrap();
+        assert!(store.commit_compact_volume(vid).is_err());
+        assert!(store.compact_volume(vid, 0, 0, |_| true).is_err());
 
         let (_, v) = store.find_volume(vid).expect("still mounted");
         assert!(v.is_compacting());
