@@ -175,6 +175,12 @@ func TestScanEntriesFromRoot(t *testing.T) {
 	m.putEntry(t, "/top", false)
 	m.put(testKeyPrefix+"filer.store.id", []byte{1, 2, 3, 4})
 	m.put(testKeyPrefix+"/\x00", []byte("root marker"))
+	link, err := (&filer.Entry{FullPath: "/top", HardLinkCounter: 2}).EncodeAttributesAndChunks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.put(testKeyPrefix+"/\x00\xff\xfe\x80abcdefghijk\x01", link)
+	m.put(testKeyPrefix+"/\xc3\x28xyz\x00name", link)
 
 	seen := scanPaths(t, m, "/")
 	if len(seen) != 3 || seen["/a"] != 1 || seen["/a/x"] != 1 || seen["/top"] != 1 {
