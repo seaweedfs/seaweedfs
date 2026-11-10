@@ -125,8 +125,10 @@ func resolveLogPurgeFilers(filerList string, commandEnv *CommandEnv, verbose boo
 		}
 	}
 
-	// no master to ask: fall back to the filer this shell is connected to
-	if address := commandEnv.FilerAddress(); address != "" {
+	commandEnv.filerMu.Lock()
+	address := commandEnv.option.FilerAddress
+	commandEnv.filerMu.Unlock()
+	if address != "" {
 		return []pb.ServerAddress{address}, nil
 	}
 	return nil, fmt.Errorf("no filer found to purge")

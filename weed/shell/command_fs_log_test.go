@@ -1,8 +1,10 @@
 package shell
 
 import (
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 )
@@ -46,6 +48,52 @@ func TestResolveLogPurgeFilersFallsBackToConnectedFiler(t *testing.T) {
 	}
 	if len(filers) != 1 || filers[0] != "filer-only:8888" {
 		t.Fatalf("got %v, want [filer-only:8888]", filers)
+	}
+}
+
+func TestResolveLogPurgeFilersFromMaster(t *testing.T) {
+	srv := &fakeDiscoveryServer{}
+	addr := startFakeDiscoveryMaster(t, srv)
+	srv.leader = addr
+	srv.filers.Store(3)
+
+	commandEnv, cancel := discoveryEnv(addr, 10*time.Second)
+	defer cancel()
+	commandEnv.option.FilerAddress = "filer-connected:8888"
+
+	filers, err := resolveLogPurgeFilers("", commandEnv, false, &strings.Builder{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []pb.ServerAddress{"127.0.0.1:8800", "127.0.0.1:8801", "127.0.0.1:8802"}
+	if !slices.Equal(filers, want) {
+		t.Fatalf("got %v, want %v", filers, want)
+	}
+}
+
+func TestResolveLogPurgeFilersEmptyMasterSkipsSecondLookup(t *testing.T) {
+	srv := &fakeDiscoveryServer{}
+	addr := startFakeDiscoveryMaster(t, srv)
+	srv.leader = addr
+
+	commandEnv, cancel := discoveryEnv(addr, 10*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	if filers, err := resolveLogPurgeFilers("", commandEnv, false, &strings.Builder{}); err == nil {
+		t.Fatalf("got %v, want an error", filers)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("resolve took %v, it should not wait out the shell's filer discovery", elapsed)
+	}
+
+	commandEnv.option.FilerAddress = "filer-connected:8888"
+	filers, err := resolveLogPurgeFilers("", commandEnv, false, &strings.Builder{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !slices.Equal(filers, []pb.ServerAddress{"filer-connected:8888"}) {
+		t.Fatalf("got %v, want [filer-connected:8888]", filers)
 	}
 }
 
