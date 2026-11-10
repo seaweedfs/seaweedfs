@@ -35,7 +35,7 @@ jobs:
             suffix: windows_amd64
             protoc: win32
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
+    timeout-minutes: 120
     env:
       CARGO_BUILD_JOBS: '2'
       CARGO_PROFILE_TEST_DEBUG: '0'
@@ -51,7 +51,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
-      - uses: actions/cache@v6
+      - uses: actions/cache/restore@v6
+        id: cargo-cache
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         with:
           path: |
@@ -77,6 +78,7 @@ jobs:
           with open(os.environ['GITHUB_ENV'],'a') as out: out.write(f'PROTOC={path}\n')
           PY
       - name: Build vector engine
+        id: cargo-build
         run: cargo build --locked --release --manifest-path seaweed-vector/Cargo.toml -p weed-vector-server
       - name: Test vector crates
         run: cargo test --locked --release --manifest-path seaweed-vector/Cargo.toml --workspace
@@ -87,6 +89,15 @@ jobs:
             export BASH_BINARY
           fi
           python -m unittest discover -s test/installer
+      - name: Save compiled dependencies
+        if: ${{ always() && !startsWith(github.ref, 'refs/tags/') && steps.cargo-build.outcome == 'success' && steps.cargo-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            seaweed-vector/target
+          key: vector-${{ matrix.suffix }}-${{ hashFiles('seaweed-vector/Cargo.lock') }}
       - name: Package engine
         env:
           ASSET_SUFFIX: ${{ matrix.suffix }}

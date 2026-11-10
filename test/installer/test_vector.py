@@ -13,8 +13,11 @@ BASH = os.environ.get('BASH_BINARY', 'bash')
 
 class VectorInstallerTest(unittest.TestCase):
     def shell(self, code, **env):
-        return subprocess.run([BASH, '-c', SOURCE + '\n' + code], env=dict(os.environ, **env),
-                              text=True, capture_output=True)
+        result = subprocess.run([BASH, '-s'], input=(SOURCE + '\n' + code + '\n').encode('utf-8'),
+                                env=dict(os.environ, **env), capture_output=True)
+        result.stdout = result.stdout.decode('utf-8', errors='replace')
+        result.stderr = result.stderr.decode('utf-8', errors='replace')
+        return result
 
     def test_platforms_and_asset_names(self):
         for system, arch, supported, suffix in [
