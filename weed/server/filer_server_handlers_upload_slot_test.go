@@ -1,7 +1,10 @@
 package weed_server
 
 import (
+	"bufio"
 	"context"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -43,6 +46,32 @@ func TestFilerWaitForUploadSlot(t *testing.T) {
 		}
 		if fs.inFlightUploads != 1 || fs.inFlightDataSize != 4 {
 			t.Fatalf("in-flight uploads %d bytes %d, want 1 and 4", fs.inFlightUploads, fs.inFlightDataSize)
+		}
+	})
+
+	t.Run("stalled body still gets the 429", func(t *testing.T) {
+		fs := newFiler(100 * time.Millisecond)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if fs.waitForUploadSlot(w, r, r.ContentLength) {
+				t.Error("upload admitted without a free slot")
+			}
+		}))
+		defer srv.Close()
+		conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Close()
+		conn.SetDeadline(time.Now().Add(3 * time.Second))
+		if _, err := io.WriteString(conn, "PUT /dir/file HTTP/1.1\r\nHost: filer\r\nContent-Length: 10\r\n\r\n"); err != nil {
+			t.Fatal(err)
+		}
+		resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+		if err != nil {
+			t.Fatalf("no reply while the body is unsent: %v", err)
+		}
+		if resp.StatusCode != http.StatusTooManyRequests || !resp.Close {
+			t.Fatalf("got %d close=%v, want 429 with Connection: close", resp.StatusCode, resp.Close)
 		}
 	})
 

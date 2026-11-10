@@ -1,8 +1,10 @@
 package s3api
 
 import (
+	"bufio"
 	"context"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -344,4 +346,35 @@ func TestLimitUploadSlotWait(t *testing.T) {
 		close(proceed)
 		finished.Wait()
 	})
+}
+
+func stalledPut(t *testing.T, h http.HandlerFunc) *http.Response {
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	conn.SetDeadline(time.Now().Add(3 * time.Second))
+	if _, err := io.WriteString(conn, "PUT /bucket/object HTTP/1.1\r\nHost: s3\r\nContent-Length: 10\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatalf("no reply while the body is unsent: %v", err)
+	}
+	return resp
+}
+
+func TestLimitUploadSlotRejectsStalledBody(t *testing.T) {
+	cb := newUploadLimitedCircuitBreaker(&S3ApiServerOption{ConcurrentFileUploadLimit: 1, InflightUploadDataTimeout: 100 * time.Millisecond})
+	release := holdUploadSlot(t, cb, 10)
+	defer release()
+
+	h, _ := cb.Limit(func(w http.ResponseWriter, r *http.Request) { t.Error("upload ran without a free slot") }, s3_constants.ACTION_WRITE)
+	resp := stalledPut(t, h)
+	if resp.StatusCode != http.StatusServiceUnavailable || !resp.Close {
+		t.Fatalf("got %d close=%v, want 503 with Connection: close", resp.StatusCode, resp.Close)
+	}
 }

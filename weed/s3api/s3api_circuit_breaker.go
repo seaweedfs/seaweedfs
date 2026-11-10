@@ -195,8 +195,12 @@ func (cb *CircuitBreaker) waitForUploadSlot(w http.ResponseWriter, r *http.Reque
 	if err == nil {
 		return true
 	}
-	// Reject without draining the body, which would also send an
-	// Expect: 100-continue client the go-ahead to upload it.
+	// Reject without reading the body: draining it would send an
+	// Expect: 100-continue client the go-ahead, and closing an HTTP/1
+	// connection stops net/http from reading it before the reply.
+	if r.ProtoMajor == 1 {
+		w.Header().Set("Connection", "close")
+	}
 	rejected := r.WithContext(r.Context())
 	rejected.Body = http.NoBody
 	if r.Context().Err() != nil {

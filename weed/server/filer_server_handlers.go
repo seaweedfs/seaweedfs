@@ -156,6 +156,11 @@ func (fs *FilerServer) waitForUploadSlot(w http.ResponseWriter, r *http.Request,
 	if err == nil {
 		return true
 	}
+	// Closing an HTTP/1 connection stops net/http from reading the unread
+	// body before the reply.
+	if r.ProtoMajor == 1 {
+		w.Header().Set("Connection", "close")
+	}
 	if r.Context().Err() != nil {
 		glog.V(1).Infof("upload from %s cancelled while waiting for an upload slot: %v", r.RemoteAddr, err)
 		writeJsonError(w, r, util.HttpStatusCancelled, r.Context().Err())
