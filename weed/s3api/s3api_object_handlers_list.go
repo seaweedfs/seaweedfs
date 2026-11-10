@@ -1197,6 +1197,10 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 		for i < len(pendingDirs) && pendingDirs[i].e.Name+"/" < blockKey {
 			i++
 		}
+		// A backend may echo a marker directory already queued by its lookup.
+		if i < len(pendingDirs) && pendingDirs[i].e.Name == pd.e.Name {
+			return
+		}
 		pendingDirs = append(pendingDirs, pendingDir{})
 		copy(pendingDirs[i+1:], pendingDirs[i:])
 		pendingDirs[i] = pd
@@ -1204,18 +1208,25 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 
 	// Look up candidate directory prefixes that could have their "<name>/" block
 	// sort past the marker or contain the marker, and queue them into pendingDirs.
+	// Only direct children belong here; recursion handles the rest of the marker.
 	if marker != "" {
-		for i := 1; i <= len(marker); i++ {
-			if i == len(marker) || marker[i] <= '/' {
-				candidate := marker[:i]
+		markerName, _, _ := strings.Cut(marker, "/")
+		for i := 1; i <= len(markerName); i++ {
+			if i == len(markerName) || markerName[i] <= '/' {
+				candidate := markerName[:i]
 				blockKey := candidate + "/"
-				if blockKey > marker || strings.HasPrefix(marker, blockKey) {
-					if resp, lookupErr := client.LookupDirectoryEntry(ctx, &filer_pb.LookupDirectoryEntryRequest{Directory: dir, Name: candidate}); lookupErr == nil && resp.GetEntry() != nil {
-						entry := resp.GetEntry()
-						if entry.IsDirectory || entry.IsPrefixObject() {
-							matchedPrefixDir := cursor.prefixEndsOnDelimiter && entry.Name == prefix
-							queueDir(pendingDir{e: entry, matchedPrefixDir: matchedPrefixDir})
-						}
+				if strings.HasPrefix(candidate, prefix) && (blockKey > marker || strings.HasPrefix(marker, blockKey)) {
+					resp, lookupErr := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{Directory: dir, Name: candidate})
+					if errors.Is(lookupErr, filer_pb.ErrNotFound) {
+						continue
+					}
+					if lookupErr != nil {
+						return "", fmt.Errorf("lookup marker candidate %s/%s: %w", dir, candidate, lookupErr)
+					}
+					entry := resp.Entry
+					if listWalkDescends(entry) {
+						matchedPrefixDir := cursor.prefixEndsOnDelimiter && entry.Name == prefix
+						queueDir(pendingDir{e: entry, matchedPrefixDir: matchedPrefixDir})
 					}
 				}
 			}

@@ -347,11 +347,14 @@ func TestListObjectsV1MarkerEchoStaysXMLSafe(t *testing.T) {
 // the marker's first path segment and descends only into blocks that can still
 // hold keys past it.
 func TestListObjectsV2ResumeXMLUnsafePrefixWithSiblingDir(t *testing.T) {
+	// A key with children is stored as one promoted directory entry, so direct
+	// lookups and streamed listings must both see its object and subtree.
+	prefixObject := listTokenTestFile("a\x01b")
+	prefixObject.MarkPrefixObject()
 	filer := &fakeBucketDeleteFiler{entriesByDir: map[string][]*filer_pb.Entry{
 		"/buckets/test/x": {
 			{Name: "a\x01", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
-			listTokenTestFile("a\x01b"),
-			{Name: "a\x01b", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+			prefixObject,
 			listTokenTestFile("a\x01b0"),
 		},
 		"/buckets/test/x/a\x01": {
