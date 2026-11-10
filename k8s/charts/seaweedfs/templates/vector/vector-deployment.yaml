@@ -1,0 +1,166 @@
+{{- include "seaweedfs.compat" . -}}
+{{- if .Values.vector.enabled }}
+{{- if and .Values.vector.metricsPort (not .Values.vector.imageOverride) (eq (toString (.Values.image.tag | default .Chart.AppVersion)) "4.53") }}
+{{- fail "vector.metricsPort requires vector.imageOverride selecting an engine with metrics support; the default 4.53 image does not support metrics" }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "seaweedfs.componentName" (list . "vector") }}
+  namespace: {{ include "seaweedfs.namespace" . | quote }}
+  labels:
+    {{- include "seaweedfs.vector.labels" . | nindent 4 }}
+  {{- with .Values.vector.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  replicas: {{ .Values.vector.replicas }}
+  selector:
+    matchLabels:
+      {{- include "seaweedfs.vector.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "seaweedfs.vector.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}{{ toYaml . | nindent 8 }}{{ end }}
+        {{- with .Values.vector.podLabels }}{{ toYaml . | nindent 8 }}{{ end }}
+      annotations:
+        {{- with .Values.podAnnotations }}{{ toYaml . | nindent 8 }}{{ end }}
+        {{- with .Values.vector.podAnnotations }}{{ toYaml . | nindent 8 }}{{ end }}
+    spec:
+      {{- include "seaweedfs.imagePullSecrets" . | nindent 6 }}
+      automountServiceAccountToken: {{ .Values.global.seaweedfs.automountServiceAccountToken }}
+      {{- with .Values.vector.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.vector.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.vector.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if and .Values.vector.podSecurityContext (or (not (hasKey .Values.vector.podSecurityContext "enabled")) .Values.vector.podSecurityContext.enabled) }}
+      securityContext:
+        {{- omit .Values.vector.podSecurityContext "enabled" | toYaml | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: vector
+          image: {{ .Values.vector.imageOverride | default (include "seaweedfs.image" .) | quote }}
+          imagePullPolicy: {{ .Values.global.seaweedfs.imagePullPolicy }}
+          {{- $masters := include "seaweedfs.masterServerArg" . }}
+          {{- if .Values.allInOne.enabled }}{{ $masters = include "seaweedfs.cluster.masterAddress" . }}{{ end }}
+          command: ["/bin/sh", "-ec"]
+          args:
+            - 'case "$POD_IP" in *:*) POD_IP="[$POD_IP]";; esac; exec /usr/bin/weed-vector --listen="$POD_IP:{{ .Values.vector.port }}" "$@"'
+            - vector
+            - {{ printf "--masters=%s" (.Values.vector.masters | default $masters) | quote }}
+            - {{ printf "--read-cache-mb=%d" (int .Values.vector.readCacheMB) | quote }}
+            {{- if .Values.filer.filerGroup }}
+            - {{ printf "--filer-group=%s" .Values.filer.filerGroup | quote }}
+            {{- end }}
+            {{- if .Values.vector.nprobes }}
+            - {{ printf "--nprobes=%d" (int .Values.vector.nprobes) | quote }}
+            {{- end }}
+            {{- if include "seaweedfs.securityConfigEnabled" . }}
+            - --security-toml=/etc/seaweedfs/security.toml
+            {{- end }}
+            {{- if .Values.vector.metricsPort }}
+            - {{ printf "--metrics-port=%d" (int .Values.vector.metricsPort) | quote }}
+            - --metrics-ip=$(POD_IP)
+            {{- end }}
+            {{- range .Values.vector.extraArgs }}
+            - {{ . | quote }}
+            {{- end }}
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            {{- $env := dict }}
+            {{- include "seaweedfs.mergeExtraEnvironmentVars" (dict "global" .Values.global.seaweedfs "component" .Values.vector "target" $env) }}
+            {{- range $key := keys $env | sortAlpha }}
+            - name: {{ $key }}
+              {{- $value := index $env $key }}
+              {{- if kindIs "map" $value }}
+              valueFrom:
+                {{- toYaml $value | nindent 16 }}
+              {{- else }}
+              value: {{ tpl (toString $value) $ | quote }}
+              {{- end }}
+            {{- end }}
+          ports:
+            - name: grpc
+              containerPort: {{ .Values.vector.port }}
+            {{- if .Values.vector.metricsPort }}
+            - name: metrics
+              containerPort: {{ .Values.vector.metricsPort }}
+            {{- end }}
+          startupProbe:
+            tcpSocket:
+              port: grpc
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            {{- if .Values.vector.metricsPort }}
+            httpGet:
+              path: /ready
+              port: metrics
+            {{- else }}
+            tcpSocket:
+              port: grpc
+            {{- end }}
+            periodSeconds: 5
+          livenessProbe:
+            {{- if .Values.vector.metricsPort }}
+            httpGet:
+              path: /health
+              port: metrics
+            {{- else }}
+            tcpSocket:
+              port: grpc
+            {{- end }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          {{- if or (not (hasKey .Values.vector.containerSecurityContext "enabled")) .Values.vector.containerSecurityContext.enabled }}
+          securityContext:
+            {{- omit .Values.vector.containerSecurityContext "enabled" | toYaml | nindent 12 }}
+          {{- end }}
+          {{- with .Values.vector.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            {{- if include "seaweedfs.securityConfigEnabled" . }}
+            - name: security-config
+              mountPath: /etc/seaweedfs
+              readOnly: true
+            {{- end }}
+            {{- if .Values.global.seaweedfs.enableSecurity }}
+            {{- range list "ca" "client" "vector" }}
+            - name: {{ . }}-cert
+              mountPath: /usr/local/share/ca-certificates/{{ . }}
+              readOnly: true
+            {{- end }}
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- if include "seaweedfs.securityConfigEnabled" . }}
+        - name: security-config
+          configMap:
+            name: {{ include "seaweedfs.fullname" . }}-security-config
+        {{- end }}
+        {{- if .Values.global.seaweedfs.enableSecurity }}
+        {{- range list "ca" "client" "vector" }}
+        - name: {{ . }}-cert
+          secret:
+            secretName: {{ include "seaweedfs.fullname" $ }}-{{ . }}-cert
+        {{- end }}
+        {{- end }}
+{{- end }}

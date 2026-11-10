@@ -1,0 +1,135 @@
+name: "rust: vector desktop platforms"
+on:
+  pull_request:
+    paths:
+      - 'seaweed-vector/**'
+      - 'seaweed-worker/**'
+      - 'seaweed-common/**'
+      - 'weed/pb/**'
+      - '.github/workflows/rust-vector-platforms.yml'
+      - 'install.sh'
+      - 'test/installer/**'
+  push:
+    tags: ['*']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: vector-platforms-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  vector:
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            suffix: darwin_amd64
+            protoc: macos-x86_64
+          - runner: macos-latest
+            suffix: darwin_arm64
+            protoc: macos-aarch_64
+          - runner: windows-latest
+            suffix: windows_amd64
+            protoc: win32
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      SEAWEEDFS_COMMIT: ${{ github.sha }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - uses: actions/cache/restore@v6
+        id: cargo-cache
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            seaweed-vector/target
+          key: vector-${{ matrix.suffix }}-${{ hashFiles('seaweed-vector/Cargo.lock') }}
+          restore-keys: vector-${{ matrix.suffix }}-
+      - name: Fetch dependencies
+        run: cargo fetch --locked --manifest-path seaweed-vector/Cargo.toml
+      - name: Select vendored protoc
+        env:
+          PROTOC_PACKAGE: protoc-bin-vendored-${{ matrix.protoc }}
+        run: |
+          python - <<'PY'
+          import os, pathlib, tomllib
+          lock=tomllib.loads(pathlib.Path('seaweed-vector/Cargo.lock').read_text())
+          name=os.environ['PROTOC_PACKAGE']
+          version=next(p['version'] for p in lock['package'] if p['name']==name)
+          cargo=pathlib.Path(os.environ.get('CARGO_HOME',pathlib.Path.home()/'.cargo'))
+          executable='protoc.exe' if os.name=='nt' else 'protoc'
+          path=next(cargo.glob(f'registry/src/*/{name}-{version}/bin/{executable}'))
+          with open(os.environ['GITHUB_ENV'],'a') as out: out.write(f'PROTOC={path}\n')
+          PY
+      - name: Build vector engine
+        id: cargo-build
+        run: cargo build --locked --release --manifest-path seaweed-vector/Cargo.toml -p weed-vector-server
+      - name: Test vector crates
+        run: cargo test --locked --release --manifest-path seaweed-vector/Cargo.toml --workspace
+      - name: Test installer
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            BASH_BINARY="$(cygpath -w "$BASH")"
+            export BASH_BINARY
+          fi
+          python -m unittest discover -s test/installer
+      - name: Save compiled dependencies
+        if: ${{ always() && !startsWith(github.ref, 'refs/tags/') && steps.cargo-build.outcome == 'success' && steps.cargo-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            seaweed-vector/target
+          key: vector-${{ matrix.suffix }}-${{ hashFiles('seaweed-vector/Cargo.lock') }}
+      - name: Package engine
+        env:
+          ASSET_SUFFIX: ${{ matrix.suffix }}
+        run: |
+          python - <<'PY'
+          import hashlib, os, pathlib, tarfile, zipfile
+          suffix=os.environ['ASSET_SUFFIX']
+          binary='weed-vector.exe' if os.name=='nt' else 'weed-vector'
+          source=pathlib.Path('seaweed-vector/target/release')/binary
+          asset=f'weed-vector_{suffix}'+('.zip' if os.name=='nt' else '.tar.gz')
+          if os.name=='nt':
+              with zipfile.ZipFile(asset,'w',zipfile.ZIP_DEFLATED) as archive: archive.write(source,binary)
+          else:
+              with tarfile.open(asset,'w:gz') as archive: archive.add(source,arcname=binary)
+          digest=hashlib.md5(pathlib.Path(asset).read_bytes()).hexdigest()
+          pathlib.Path(asset+'.md5').write_text(f'{digest}  {asset}\n')
+          PY
+      - uses: actions/upload-artifact@v7
+        with:
+          name: vector-${{ matrix.suffix }}
+          path: weed-vector_${{ matrix.suffix }}.*
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: vector
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: vector-*
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: weed-vector_*

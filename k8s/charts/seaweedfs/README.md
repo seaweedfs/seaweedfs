@@ -687,3 +687,47 @@ generates a new UUID and the license stops matching. See
 [Master data](#master-data-hostpath-vs-a-claim). Check the binding with
 `kubectl exec <master-pod> -- curl -s localhost:9333/license/status`
 (`cluster_uuid` must equal `license_uuid`).
+
+
+## Vector buckets
+
+The S3 gateway serves the S3 Vectors API on its existing endpoint. Enable a vector engine and Lance maintenance worker alongside the cluster:
+
+```yaml
+s3:
+  enabled: true
+vector:
+  enabled: true
+  replicas: 1
+worker:
+  enabled: true
+admin:
+  enabled: true
+  secret:
+    adminPassword: change-me
+global:
+  seaweedfs:
+    securityConfig:
+      jwtSigning:
+        filerWrite: true
+```
+
+The engine registers its pod address with the masters and stores indexes through the filers and volume servers. Both Go and Rust volume servers use the same setup. The maintenance worker builds and updates ANN indexes; queries can scan data before indexing completes. Enabling filer write signing also requires clients writing directly to the filer HTTP API to supply a signed JWT.
+
+The bundled engine images support Linux amd64 and arm64. Use `vector.imageOverride` to select a compatible engine build, `vector.masters` for an external cluster, and `vector.resources` to set memory and CPU limits. The cache defaults to 512 MiB and is configured with `vector.readCacheMB`.
+
+`global.seaweedfs.enableSecurity` provisions and mounts the vector certificate and shared security configuration. With external certificates, provide the `<fullname>-vector-cert` secret (`my-seaweedfs-vector-cert` for release `my`). `fullname` follows `seaweedfs.fullname`, including `fullnameOverride`, `nameOverride`, and DNS-name truncation. Provide this secret alongside the existing CA and client secrets.
+
+The default `vector.metricsPort: 0` and TCP probes support existing engine images. The default 4.53 image does not accept metrics flags; enabling metrics with it is rejected at render time. For engine builds with `/metrics`, `/health`, and `/ready`, set `vector.imageOverride` to that compatible image and `vector.metricsPort: 9329`; readiness then checks master registration. Enabling `global.seaweedfs.monitoring.enabled` also creates the vector ServiceMonitor. NetworkPolicy includes the configured gRPC and metrics ports.
+
+
+To provision vector buckets during installation and upgrades, set:
+
+```yaml
+vector:
+  enabled: true
+  createBuckets:
+    - embeddings
+```
+
+The hook uses the AWS CLI's S3 Vectors API and works with existing SeaweedFS vector releases. It creates missing buckets, preserves existing vector buckets, and fails if the name belongs to an Iceberg bucket. It uses the chart's generated S3 admin credentials, including `s3.credentials.admin.existingSecret`. With a custom `s3.existingConfigSecret` or an external endpoint, set `vector.bucketHook.credentialsSecret` to a Secret containing `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` (and optionally `AWS_SESSION_TOKEN`). Key names are configurable. `vector.bucketHook.endpoint` overrides the internal S3 service URL; `caBundleSecret` and `caBundleKey` configure a private HTTPS CA. The hook image and resource limits are configurable under `vector.bucketHook`. For restricted Pod Security, select a non-root-compatible image and configure `vector.bucketHook.podSecurityContext` and `containerSecurityContext`, including `runAsNonRoot` and the image user ID.

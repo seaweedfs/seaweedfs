@@ -37,6 +37,13 @@ jobs:
         with:
           version: v3.18.4
 
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Test vector chart resources
+        run: go test ./k8s/charts/seaweedfs/tests -count=1
+
       - uses: actions/setup-python@v7
         with:
           python-version: '3.10'
@@ -2131,7 +2138,7 @@ jobs:
           echo "IMAGE_TAG=$TAG" >> $GITHUB_ENV
 
       - name: Create kind cluster
-        uses: helm/kind-action@v1.15.1
+        uses: helm/kind-action@v1.15.2
 
       - name: Verify volume resize hook security contexts
         run: |

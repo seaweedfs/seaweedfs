@@ -3,6 +3,8 @@
 package s3vectors
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -37,6 +39,7 @@ type Server struct {
 	authenticator S3Authenticator
 	region        string
 	accountID     string
+	limit         func(http.HandlerFunc, string) http.HandlerFunc
 }
 
 // NewServer creates an S3 Vectors server over the given filer and catalog.
@@ -111,13 +114,29 @@ func (s *Server) instrument(next http.HandlerFunc) http.HandlerFunc {
 		inFlight := stats_collect.S3InFlightRequestsGauge.WithLabelValues(label)
 		inFlight.Inc()
 		defer inFlight.Dec()
-		recorder := stats_collect.NewStatusResponseWriter(w)
+		r = s3err.WithAccessLogOperation(r, label)
+		info := &requestInfo{}
+		r = s3_constants.EnsureIdentityHolder(s3err.EnsureAuditTracking(r.WithContext(context.WithValue(r.Context(), requestInfoKey{}, info))))
+		recorder := &responseWriter{StatusRecorder: stats_collect.NewStatusResponseWriter(w), info: info}
 		start := time.Now()
 		next(recorder, r)
 		elapsed := time.Since(start)
-		stats_collect.S3RequestHistogram.WithLabelValues(label, "").Observe(elapsed.Seconds())
-		stats_collect.S3RequestCounter.WithLabelValues(label, strconv.Itoa(recorder.Status), "").Inc()
-		stats_collect.RecordBucketActiveTime("")
+		bucket := ""
+		if info.authorized && recorder.Status != http.StatusForbidden {
+			bucket = info.bucket
+		}
+		log := accessLog(r, recorder.Status, label, info)
+		if !s3err.AuditAlreadyLogged(r) {
+			s3err.PostAccessLog(*log)
+			s3err.MarkAuditLogged(r)
+		}
+		stats_collect.S3RequestHistogram.WithLabelValues(label, bucket).Observe(elapsed.Seconds())
+		stats_collect.S3RequestCounter.WithLabelValues(label, strconv.Itoa(recorder.Status), bucket).Inc()
+		if bucket != "" {
+			stats_collect.RecordBucketActiveTime(bucket)
+			stats_collect.S3BucketTrafficReceivedBytesCounter.WithLabelValues(bucket).Add(float64(info.received))
+			stats_collect.S3BucketTrafficSentBytesCounter.WithLabelValues(bucket).Add(float64(info.sent))
+		}
 	}
 }
 
@@ -128,6 +147,10 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
 	handler, ok := handlers[op]
 	if !ok {
 		writeError(w, http.StatusBadRequest, "ValidationException", "unknown operation "+op)
+		return
+	}
+	if s.limit != nil {
+		s.limitRequest(func(w http.ResponseWriter, r *http.Request) { handler(s, w, r) }, w, r)
 		return
 	}
 	handler(s, w, r)
@@ -155,4 +178,50 @@ func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
 			s3_constants.SetIdentityNameInContext(r.Context(), identity), identityObj))
 		handler(w, r)
 	}
+}
+
+type requestInfoKey struct{}
+
+type requestInfo struct {
+	bucket, index  string
+	authorized     bool
+	received, sent int64
+	errorCode      string
+	body           []byte
+}
+
+func authorizeRequest(r *http.Request, bucket, index string) {
+	if info, ok := r.Context().Value(requestInfoKey{}).(*requestInfo); ok {
+		info.bucket, info.index, info.authorized = bucket, index, true
+	}
+}
+
+type responseWriter struct {
+	*stats_collect.StatusRecorder
+	info *requestInfo
+}
+
+func (w *responseWriter) Write(body []byte) (int, error) {
+	n, err := w.StatusRecorder.Write(body)
+	w.info.sent += int64(n)
+	if w.Status >= http.StatusBadRequest {
+		var response Error
+		if json.Unmarshal(body, &response) == nil {
+			w.info.errorCode = response.Code
+		}
+	}
+	return n, err
+}
+
+func setRequestTarget(r *http.Request, bucket, index string) {
+	if info, ok := r.Context().Value(requestInfoKey{}).(*requestInfo); ok {
+		info.bucket, info.index = bucket, index
+	}
+}
+
+func accessLog(r *http.Request, status int, operation string, info *requestInfo) *s3err.AccessLog {
+	log := s3err.GetAccessLog(r, status, s3err.ErrNone)
+	log.Operation, log.Bucket, log.Key = operation, info.bucket, info.index
+	log.ErrorCode = info.errorCode
+	return log
 }

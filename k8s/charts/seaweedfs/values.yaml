@@ -1733,6 +1733,60 @@ admin:
   serviceMonitor:
     annotations: {}
 
+vector:
+  enabled: false
+  imageOverride: null
+  replicas: 1
+  port: 8090
+  metricsPort: 0
+  masters: ""
+  readCacheMB: 512
+  nprobes: null
+  extraArgs: []
+  extraEnvironmentVars: {}
+  podLabels: {}
+  podAnnotations: {}
+  annotations: {}
+  nodeSelector:
+    kubernetes.io/os: linux
+  tolerations: []
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: kubernetes.io/arch
+                operator: In
+                values: [amd64, arm64]
+  resources: {}
+  podSecurityContext: {}
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: [ALL]
+  serviceMonitor:
+    annotations: {}
+  createBuckets: []
+  bucketHook:
+    podSecurityContext:
+      seccompProfile:
+        type: RuntimeDefault
+    containerSecurityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop: [ALL]
+    image: amazon/aws-cli:2.39.6
+    endpoint: ""
+    region: us-east-1
+    credentialsSecret: ""
+    accessKeyKey: AWS_ACCESS_KEY_ID
+    secretKeyKey: AWS_SECRET_ACCESS_KEY
+    sessionTokenKey: AWS_SESSION_TOKEN
+    caBundleSecret: ""
+    caBundleKey: tls.crt
+    resources: {}
+
 worker:
   enabled: false
   imageOverride: null

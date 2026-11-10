@@ -42,12 +42,24 @@ const maxRequestBodyBytes = s3_constants.S3VectorsMaxRequestBodyBytes
 var errRequestBodyTooLarge = fmt.Errorf("request body exceeds %d MiB", maxRequestBodyBytes>>20)
 
 func readJSON(r *http.Request, req interface{}) error {
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxRequestBodyBytes+1))
-	if err != nil {
-		return err
+	info, _ := r.Context().Value(requestInfoKey{}).(*requestInfo)
+	var body []byte
+	if info != nil {
+		body = info.body
 	}
-	if len(body) > maxRequestBodyBytes {
-		return errRequestBodyTooLarge
+	if body == nil {
+		var err error
+		body, err = io.ReadAll(io.LimitReader(r.Body, maxRequestBodyBytes+1))
+		if err != nil {
+			return err
+		}
+		if len(body) > maxRequestBodyBytes {
+			return errRequestBodyTooLarge
+		}
+		if info != nil {
+			info.received += int64(len(body))
+			info.body = body
+		}
 	}
 	return json.NewDecoder(bytes.NewReader(body)).Decode(req)
 }

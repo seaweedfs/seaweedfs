@@ -145,7 +145,16 @@ func getResourceType(object string, query_key string, method string) (string, bo
 	}
 }
 
+type accessLogOperationKey struct{}
+
+func WithAccessLogOperation(r *http.Request, operation string) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), accessLogOperationKey{}, operation))
+}
+
 func getOperation(object string, r *http.Request) string {
+	if operation, ok := r.Context().Value(accessLogOperationKey{}).(string); ok {
+		return operation
+	}
 	queries := r.URL.Query()
 	var operation string
 	var queryFound bool
@@ -210,7 +219,7 @@ func PostLog(r *http.Request, HTTPStatusCode int, errorCode ErrorCode) {
 }
 
 func PostAccessLog(log AccessLog) {
-	if Logger == nil || len(log.Key) == 0 {
+	if Logger == nil {
 		return
 	}
 	if err := Logger.Post(tag, log); err != nil {
