@@ -112,7 +112,7 @@ func (c *commandS3CleanUploads) cleanupUploads(commandEnv *CommandEnv, writer io
 
 // objectWriteLock takes the distributed lock the S3 gateway commits a
 // completion under when it is not routed to the object's owner filer, and
-// renews it until release.
+// renews it until release. It gives up after a minute of contention.
 type objectWriteLock func(objectPath string) (held func() bool, release func(), err error)
 
 func newObjectWriteLock(commandEnv *CommandEnv) objectWriteLock {
@@ -123,9 +123,9 @@ func newObjectWriteLock(commandEnv *CommandEnv) objectWriteLock {
 			return func() bool { return true }, func() {}, nil
 		}
 		key := objectRouteKey(objectPath)
-		lock := lockClient.NewBlockingLongLivedLock(key, owner, 15*time.Second)
-		if lock == nil {
-			return nil, nil, fmt.Errorf("lock %s: no lock server", key)
+		lock, err := lockClient.NewBlockingLongLivedLockWithin(key, owner, 15*time.Second, time.Minute)
+		if err != nil {
+			return nil, nil, fmt.Errorf("lock %s: %w", key, err)
 		}
 		return lock.IsLocked, func() {
 			if err := lock.Stop(); err != nil {
