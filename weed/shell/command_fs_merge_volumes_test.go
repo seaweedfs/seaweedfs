@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -602,5 +603,31 @@ func TestRecordPlanSources(t *testing.T) {
 	}
 	if !found || seen.count(needle.VolumeId(203)) != 1 {
 		t.Fatalf("direct reference lost with an unreadable manifest: found %v, %d references to 203", found, seen.count(needle.VolumeId(203)))
+	}
+
+	served := make(chan struct{})
+	var serveOnce sync.Once
+	partServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(blob)
+		serveOnce.Do(func() { close(served) })
+	}))
+	defer partServer.Close()
+	unreadable := chunk(187, 9)
+	unreadable.IsChunkManifest = true
+	failsLater := func(_ context.Context, fileId string) ([]string, error) {
+		if fileId != unreadable.GetFileIdString() {
+			return []string{partServer.URL + "/" + fileId}, nil
+		}
+		<-served
+		time.Sleep(50 * time.Millisecond)
+		return nil, fmt.Errorf("volume of %s unavailable", fileId)
+	}
+	seen = newSourceNeedleCounter()
+	found, err = c.recordPlanSources(context.Background(), failsLater, plan, planCollections, seen, []*filer_pb.FileChunk{manifest(187), unreadable})
+	if err == nil {
+		t.Fatal("an unreadable manifest must be reported")
+	}
+	if !found || seen.count(needle.VolumeId(203)) != 1 {
+		t.Fatalf("chunks behind a readable manifest lost when a later one is unreadable: found %v, %d references to 203", found, seen.count(needle.VolumeId(203)))
 	}
 }
