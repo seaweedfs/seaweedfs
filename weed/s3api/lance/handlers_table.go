@@ -135,7 +135,7 @@ func (s *Server) handleDeclareTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, lookupErr := s.loadLanceTable(r, bucket, ns, name)
+	_, lookupErr := s.loadLanceTableInternal(r, bucket, ns, name)
 	location, err = s.createTable(r, bucket, ns, name, location)
 	if err != nil {
 		writeStorageError(w, r, err)
@@ -143,7 +143,8 @@ func (s *Server) handleDeclareTable(w http.ResponseWriter, r *http.Request) {
 	}
 	// A declare that creates the table may write it: a Lance commit is a direct
 	// S3 write that never revisits the catalog, so the create authorization is
-	// the write evidence. One that only finds the table answers like describe.
+	// the write evidence. One that only finds the table answers like describe,
+	// including a table the caller cannot read, which CreateTable still returns.
 	var writable bool
 	if isNotFound(lookupErr) {
 		writable = s.mayWriteNamespace(r, bucket, ns)
