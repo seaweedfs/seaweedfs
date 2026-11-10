@@ -403,6 +403,10 @@ func (s *Server) handleRegisterTable(w http.ResponseWriter, r *http.Request) {
 			writeStorageError(w, r, err)
 			return
 		}
+		if err := s.authorizeUpdateTable(r, bucket, ns, name); err != nil {
+			writeStorageError(w, r, err)
+			return
+		}
 		if existing.location != location {
 			// Repointing the name at another dataset is an update. Dropping and
 			// recreating the entry would take the old dataset's files with it,
