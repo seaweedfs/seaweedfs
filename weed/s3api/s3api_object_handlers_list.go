@@ -1066,18 +1066,11 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 
 	// A directory's keys sort at "<name>/" among this level's children, not at
 	// the name itself: siblings like "a-c" and "a.txt" sort before "a/b" while
-	// "a0" sorts after. Start the window at the first child whose block can
-	// still hold keys past the marker — the shortest prefix of the marker
-	// followed by a byte no greater than "/" — and ask for it inclusively, so
-	// a marker-named directory's subtree is reached at all.
+	// "a0" sorts after. Any candidate directory whose prefix sorts before the marker
+	// but whose "<name>/" block extends past the marker is looked up and queued into
+	// pendingDirs below. The main window starts strictly after the marker.
 	startName := marker
-	for i := 0; i < len(marker); i++ {
-		if marker[i] <= '/' {
-			startName = marker[:i]
-			break
-		}
-	}
-	inclusiveStartFrom = startName != ""
+	inclusiveStartFrom = false
 
 	// now marker is also a direct child of dir
 	ctx, cancel := context.WithCancel(ctx)
@@ -1204,9 +1197,40 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 		for i < len(pendingDirs) && pendingDirs[i].e.Name+"/" < blockKey {
 			i++
 		}
+		// A backend may echo a marker directory already queued by its lookup.
+		if i < len(pendingDirs) && pendingDirs[i].e.Name == pd.e.Name {
+			return
+		}
 		pendingDirs = append(pendingDirs, pendingDir{})
 		copy(pendingDirs[i+1:], pendingDirs[i:])
 		pendingDirs[i] = pd
+	}
+
+	// Look up candidate directory prefixes that could have their "<name>/" block
+	// sort past the marker or contain the marker, and queue them into pendingDirs.
+	// Only direct children belong here; recursion handles the rest of the marker.
+	if marker != "" {
+		markerName, _, _ := strings.Cut(marker, "/")
+		for i := 1; i <= len(markerName); i++ {
+			if i == len(markerName) || markerName[i] <= '/' {
+				candidate := markerName[:i]
+				blockKey := candidate + "/"
+				if strings.HasPrefix(candidate, prefix) && (blockKey > marker || strings.HasPrefix(marker, blockKey)) {
+					resp, lookupErr := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{Directory: dir, Name: candidate})
+					if errors.Is(lookupErr, filer_pb.ErrNotFound) {
+						continue
+					}
+					if lookupErr != nil {
+						return "", fmt.Errorf("lookup marker candidate %s/%s: %w", dir, candidate, lookupErr)
+					}
+					entry := resp.Entry
+					if listWalkDescends(entry) {
+						matchedPrefixDir := cursor.prefixEndsOnDelimiter && entry.Name == prefix
+						queueDir(pendingDir{e: entry, matchedPrefixDir: matchedPrefixDir})
+					}
+				}
+			}
+		}
 	}
 
 	// Entries that emit nothing (empty directories, the .uploads folder, the marker

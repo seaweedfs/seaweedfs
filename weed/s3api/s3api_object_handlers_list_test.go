@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http/httptest"
 	"os"
+	"path"
 	"strings"
 	"testing"
 	"time"
@@ -14,7 +15,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/stretchr/testify/assert"
 	grpc "google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 )
 
 type testListEntriesStream struct {
@@ -75,8 +78,10 @@ func (c *testFilerClient) ListEntries(ctx context.Context, in *filer_pb.ListEntr
 }
 
 func (c *testFilerClient) LookupDirectoryEntry(ctx context.Context, in *filer_pb.LookupDirectoryEntryRequest, opts ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error) {
-	for _, e := range c.entriesByDir[in.Directory] {
-		if e.Name == in.Name {
+	// The real filer resolves the joined path and returns the entry's basename.
+	dir, name := path.Split(path.Join(in.Directory, in.Name))
+	for _, e := range c.entriesByDir[strings.TrimSuffix(dir, "/")] {
+		if e.Name == name {
 			return &filer_pb.LookupDirectoryEntryResponse{Entry: e}, nil
 		}
 	}
@@ -125,6 +130,15 @@ func (c *markerEchoFilerClient) ListEntries(ctx context.Context, in *filer_pb.Li
 		}
 	}
 	return &testListEntriesStream{entries: filtered}, nil
+}
+
+func (c *markerEchoFilerClient) LookupDirectoryEntry(ctx context.Context, in *filer_pb.LookupDirectoryEntryRequest, opts ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	for _, e := range c.entriesByDir[in.Directory] {
+		if e.Name == in.Name {
+			return &filer_pb.LookupDirectoryEntryResponse{Entry: e}, nil
+		}
+	}
+	return nil, filer_pb.ErrNotFound
 }
 
 func ensureEntryAttributes(entries []*filer_pb.Entry) {
@@ -1476,5 +1490,260 @@ func TestDoListFilerEntries_DirKeyObjectBoundaryTruncates(t *testing.T) {
 	})
 	assert.NoError(t, err)
 	assert.Equal(t, []string{"/a/x"}, seen)
+	assert.False(t, cursor.isTruncated)
+}
+
+type requestRecordingFilerClient struct {
+	*testFilerClient
+	lastRequest *filer_pb.ListEntriesRequest
+}
+
+func (c *requestRecordingFilerClient) ListEntries(ctx context.Context, in *filer_pb.ListEntriesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[filer_pb.ListEntriesResponse], error) {
+	c.lastRequest = in
+	return c.testFilerClient.ListEntries(ctx, in, opts...)
+}
+
+func TestDoListFilerEntries_MarkerStartsDirectlyWithoutTruncation(t *testing.T) {
+	s3a := &S3ApiServer{}
+	file := func(name string) *filer_pb.Entry {
+		return &filer_pb.Entry{Name: name, Attributes: &filer_pb.FuseAttributes{}}
+	}
+	baseClient := &testFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/buckets/b": {
+				file("2026-11-01-a"),
+				file("2026-11-01-b"),
+				file("2026-11-02-a"),
+				file("2026-11-02-b"),
+			},
+		},
+	}
+	client := &requestRecordingFilerClient{testFilerClient: baseClient}
+
+	cursor := &ListingCursor{maxKeys: 1000}
+	var seen []string
+	nextMarker, err := s3a.doListFilerEntries(context.Background(), client, listDirectoryRequest{dir: "/buckets/b", marker: "2026-11-01-b", bucket: "b"}, cursor, func(dir string, entry *filer_pb.Entry) {
+		seen = append(seen, entry.Name)
+		cursor.maxKeys--
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"2026-11-02-a", "2026-11-02-b"}, seen)
+	assert.Equal(t, "2026-11-02-b", nextMarker)
+	assert.False(t, cursor.isTruncated)
+	assert.NotNil(t, client.lastRequest)
+	assert.Equal(t, "2026-11-01-b", client.lastRequest.StartFromFileName, "must start strictly from the marker rather than truncated prefix 2026")
+	assert.False(t, client.lastRequest.InclusiveStartFrom)
+}
+
+func TestDoListFilerEntries_CandidateDirectoryPrefixPastMarker(t *testing.T) {
+	s3a := &S3ApiServer{}
+	file := func(name string) *filer_pb.Entry {
+		return &filer_pb.Entry{Name: name, Attributes: &filer_pb.FuseAttributes{}}
+	}
+	dirObj := func(name string) *filer_pb.Entry {
+		return &filer_pb.Entry{Name: name, IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}}
+	}
+	client := &testFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/buckets/b": {
+				dirObj("a"),
+				file("a-c"),
+				file("a0"),
+			},
+			"/buckets/b/a": {
+				file("b"),
+			},
+		},
+	}
+
+	cursor := &ListingCursor{maxKeys: 1000}
+	var seen []string
+	_, err := s3a.doListFilerEntries(context.Background(), client, listDirectoryRequest{dir: "/buckets/b", marker: "a-c", bucket: "b"}, cursor, func(dir string, entry *filer_pb.Entry) {
+		seen = append(seen, strings.TrimPrefix(dir, "/buckets/b")+"/"+entry.Name)
+		cursor.maxKeys--
+	})
+	assert.NoError(t, err)
+	// Byte order: a-c < a/b < a0. Listing from marker "a-c" must find /a/b and /a0.
+	assert.Equal(t, []string{"/a/b", "/a0"}, seen)
+}
+
+func TestDoListFilerEntries_CandidateRespectsPrefix(t *testing.T) {
+	for _, delimiter := range []string{"", "/"} {
+		t.Run("delimiter="+delimiter, func(t *testing.T) {
+			client := &testFilerClient{entriesByDir: map[string][]*filer_pb.Entry{
+				"/buckets/b": {
+					{Name: "a", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+					{Name: "a-bc", Attributes: &filer_pb.FuseAttributes{}},
+					{Name: "a-bd", Attributes: &filer_pb.FuseAttributes{}},
+					{Name: "a-be", Attributes: &filer_pb.FuseAttributes{}},
+				},
+				"/buckets/b/a": {{Name: "b", Attributes: &filer_pb.FuseAttributes{}}},
+			}}
+			cursor := &ListingCursor{maxKeys: 10}
+			var seen []string
+			s3a := &S3ApiServer{}
+			_, err := s3a.doListFilerEntries(context.Background(), client, listDirectoryRequest{
+				dir: "/buckets/b", prefix: "a-b", marker: "a-bc", delimiter: delimiter, bucket: "b",
+			}, cursor, func(dir string, entry *filer_pb.Entry) {
+				seen = append(seen, strings.TrimPrefix(dir, "/buckets/b")+"/"+entry.Name)
+				cursor.maxKeys--
+			})
+			assert.NoError(t, err)
+			assert.Equal(t, []string{"/a-bd", "/a-be"}, seen)
+			assert.Equal(t, uint16(8), cursor.maxKeys, "unrelated candidates must not consume quota")
+			assert.False(t, cursor.isTruncated)
+		})
+	}
+}
+
+func TestDoListFilerEntries_CandidateSkipsInternalDirectories(t *testing.T) {
+	for _, name := range []string{s3_constants.MultipartUploadsFolder, s3_constants.VersionsFolder, "foo" + s3_constants.VersionsFolder} {
+		for _, marker := range []string{name, name + "-cutoff", name + "/stored-version"} {
+			for _, delimiter := range []string{"", "/"} {
+				t.Run(marker+"/delimiter="+delimiter, func(t *testing.T) {
+					client := &testFilerClient{entriesByDir: map[string][]*filer_pb.Entry{
+						"/buckets/b": {
+							{Name: name, IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+							{Name: "z", Attributes: &filer_pb.FuseAttributes{}},
+						},
+						"/buckets/b/" + name: {
+							{Name: "stored-version", Attributes: &filer_pb.FuseAttributes{}},
+							{Name: "z-version", Attributes: &filer_pb.FuseAttributes{}},
+						},
+					}}
+					cursor := &ListingCursor{maxKeys: 1}
+					var seen []string
+					s3a := &S3ApiServer{}
+					_, err := s3a.doListFilerEntries(context.Background(), client, listDirectoryRequest{
+						dir: "/buckets/b", marker: marker, delimiter: delimiter, bucket: "b",
+					}, cursor, func(dir string, entry *filer_pb.Entry) {
+						seen = append(seen, strings.TrimPrefix(dir, "/buckets/b")+"/"+entry.Name)
+						cursor.maxKeys--
+					})
+					assert.NoError(t, err)
+					assert.Equal(t, []string{"/z"}, seen)
+					assert.False(t, cursor.isTruncated)
+				})
+			}
+		}
+	}
+}
+
+func TestDoListFilerEntries_CandidateOnlyLooksUpDirectChildren(t *testing.T) {
+	client := &testFilerClient{entriesByDir: map[string][]*filer_pb.Entry{
+		"/buckets/b": {
+			{Name: "a", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+			{Name: "b", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+			{Name: "z", Attributes: &filer_pb.FuseAttributes{}},
+		},
+		"/buckets/b/a": {
+			{Name: "b", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+			{Name: "c", Attributes: &filer_pb.FuseAttributes{}},
+		},
+		"/buckets/b/a/b": {
+			{Name: "x", Attributes: &filer_pb.FuseAttributes{}},
+			{Name: "y", Attributes: &filer_pb.FuseAttributes{}},
+		},
+		"/buckets/b/b": {{Name: "trap", Attributes: &filer_pb.FuseAttributes{}}},
+	}}
+	for _, marker := range []string{"a/", "a/b", "a/b/", "a/b/x"} {
+		t.Run(marker, func(t *testing.T) {
+			cursor := &ListingCursor{maxKeys: 1000}
+			var seen []string
+			s3a := &S3ApiServer{}
+			_, err := s3a.doListFilerEntries(context.Background(), client, listDirectoryRequest{
+				dir: "/buckets/b", marker: marker, bucket: "b",
+			}, cursor, func(dir string, entry *filer_pb.Entry) {
+				seen = append(seen, strings.TrimPrefix(dir, "/buckets/b")+"/"+entry.Name)
+				cursor.maxKeys--
+			})
+			want := []string{"/a/b/x", "/a/b/y", "/a/c", "/b/trap", "/z"}
+			if marker == "a/b/x" {
+				want = want[1:]
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, want, seen)
+			assert.False(t, cursor.isTruncated)
+		})
+	}
+}
+
+type candidateLookupErrorFilerClient struct {
+	*testFilerClient
+	lookupErr error
+}
+
+func (c *candidateLookupErrorFilerClient) LookupDirectoryEntry(ctx context.Context, in *filer_pb.LookupDirectoryEntryRequest, opts ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	if in.Directory == "/buckets/b" && in.Name == "a" {
+		return &filer_pb.LookupDirectoryEntryResponse{}, c.lookupErr
+	}
+	return c.testFilerClient.LookupDirectoryEntry(ctx, in, opts...)
+}
+
+func TestDoListFilerEntries_CandidateLookupErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		lookupErr error
+		wantError bool
+	}{
+		{name: "empty response"},
+		{name: "not found sentinel", lookupErr: filer_pb.ErrNotFound},
+		{name: "not found status", lookupErr: status.Error(codes.NotFound, "missing")},
+		{name: "legacy not found status", lookupErr: status.Error(codes.Unknown, filer_pb.ErrNotFound.Error())},
+		{name: "unavailable", lookupErr: status.Error(codes.Unavailable, "storage unavailable"), wantError: true},
+		{name: "unavailable with not found text", lookupErr: status.Error(codes.Unavailable, filer_pb.ErrNotFound.Error()), wantError: true},
+		{name: "deadline exceeded", lookupErr: context.DeadlineExceeded, wantError: true},
+		{name: "canceled", lookupErr: context.Canceled, wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &candidateLookupErrorFilerClient{
+				testFilerClient: &testFilerClient{entriesByDir: map[string][]*filer_pb.Entry{
+					"/buckets/b": {{Name: "a0", Attributes: &filer_pb.FuseAttributes{}}},
+				}},
+				lookupErr: tc.lookupErr,
+			}
+			cursor := &ListingCursor{maxKeys: 10}
+			var seen []string
+			s3a := &S3ApiServer{}
+			_, err := s3a.doListFilerEntries(context.Background(), client, listDirectoryRequest{
+				dir: "/buckets/b", marker: "a-c", bucket: "b",
+			}, cursor, func(dir string, entry *filer_pb.Entry) {
+				seen = append(seen, entry.Name)
+				cursor.maxKeys--
+			})
+			if tc.wantError {
+				assert.ErrorIs(t, err, tc.lookupErr)
+				assert.ErrorContains(t, err, "/buckets/b/a")
+				assert.Empty(t, seen, "a failed candidate must not produce a partial successful page")
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, []string{"a0"}, seen)
+			}
+		})
+	}
+}
+
+func TestDoListFilerEntries_CandidateDirectoryMarkerEcho(t *testing.T) {
+	client := &markerEchoFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/buckets/b": {
+				{Name: "a", IsDirectory: true},
+				{Name: "b"},
+			},
+			"/buckets/b/a": {{Name: "x"}},
+		},
+		returnFollowing: true,
+	}
+	cursor := &ListingCursor{maxKeys: 1000}
+	var seen []string
+	s3a := &S3ApiServer{}
+	_, err := s3a.doListFilerEntries(context.Background(), client, listDirectoryRequest{
+		dir: "/buckets/b", marker: "a", bucket: "b",
+	}, cursor, func(dir string, entry *filer_pb.Entry) {
+		seen = append(seen, strings.TrimPrefix(dir, "/buckets/b")+"/"+entry.Name)
+		cursor.maxKeys--
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"/a/x", "/b"}, seen)
 	assert.False(t, cursor.isTruncated)
 }
