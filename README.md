@@ -253,7 +253,7 @@ curl -fsSL https://raw.githubusercontent.com/seaweedfs/seaweedfs/master/install.
 Release 4.53 provides vector binaries for Linux amd64 and arm64. If your release has no binary for your platform, build from [source](seaweed-vector):
 
 ```bash
-cargo build --release --manifest-path seaweed-vector/Cargo.toml -p weed-vector-server
+(cd seaweed-vector && cargo build --release -p weed-vector-server)
 ```
 
 Run the installed `weed-vector` binary alongside the local cluster started with `weed mini` above (or use `seaweed-vector/target/release/weed-vector` after building from source):
