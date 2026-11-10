@@ -286,6 +286,54 @@ func TestCommitCompactWithoutTempFilesKeepsVolumeLoaded(t *testing.T) {
 	}
 }
 
+func TestCommitCompactMakeupDiffFailureKeepsVolumeLoaded(t *testing.T) {
+	dir := t.TempDir()
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+	written := map[uint64]*needle.Needle{}
+	for i := uint64(1); i <= 3; i++ {
+		written[i] = newRandomNeedle(i)
+		if _, _, _, err := v.writeNeedle2(written[i], true, false, false); err != nil {
+			t.Fatalf("write %d: %v", i, err)
+		}
+	}
+	// Moves needle 3 in the compacted copy, so reads through its map would miss.
+	if _, err := v.deleteNeedle2(newEmptyNeedle(1)); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	delete(written, 1)
+	if err := v.CompactByIndex(nil); err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+	written[4] = newRandomNeedle(4)
+	if _, _, _, err := v.writeNeedle2(written[4], true, false, false); err != nil {
+		t.Fatalf("write during compaction: %v", err)
+	}
+	v.lastCompactRevision++
+
+	if err := v.CommitCompact(); err == nil {
+		t.Fatal("commit succeeded with a mismatched compaction revision")
+	}
+	if _, _, _, _, _, _, ok := v.collectStatus(); !ok {
+		t.Fatal("volume dropped out of the heartbeat after a failed makeupDiff")
+	}
+	for i, want := range written {
+		got := &needle.Needle{Id: types.NeedleId(i)}
+		if _, err := v.readNeedle(got, nil, nil); err != nil {
+			t.Fatalf("read %d after the failed commit: %v", i, err)
+		}
+		if !bytes.Equal(got.Data, want.Data) {
+			t.Fatalf("needle %d data changed after the failed commit", i)
+		}
+	}
+	if _, _, _, err := v.writeNeedle2(newRandomNeedle(5), true, false, false); err != nil {
+		t.Fatalf("write after the failed commit: %v", err)
+	}
+}
+
 func TestCompactVolumeFilesOffline(t *testing.T) {
 	dir := t.TempDir()
 	location := NewDiskLocation(dir, 10, util.MinFreeSpace{}, dir, "", nil, stats.DefaultDiskIOProbeConfig())

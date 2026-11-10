@@ -213,18 +213,6 @@ func (v *Volume) CommitCompact() error {
 	if err := v.checkCompactFiles(); err != nil {
 		return err
 	}
-	if v.nm != nil {
-		v.nm.Close()
-		v.nm = nil
-	}
-	if v.DataBackend != nil {
-		if err := v.DataBackend.Close(); err != nil {
-			glog.V(0).Infof("failed to close volume %d", v.Id)
-		}
-	}
-	v.DataBackend = nil
-	stats.VolumeServerVolumeGauge.WithLabelValues(v.Collection, "volume").Dec()
-
 	if compactErr := v.makeupDiff(v.FileName(".cpd"), v.FileName(".cpx"), v.FileName(".dat"), v.FileName(".idx")); compactErr != nil {
 		glog.V(0).Infof("makeupDiff in CommitCompact volume %d failed %v", v.Id, compactErr)
 		if e := os.Remove(v.FileName(".cpd")); e != nil && !os.IsNotExist(e) {
@@ -237,6 +225,18 @@ func (v *Volume) CommitCompact() error {
 		// reconcile rolls back anyway, and never fall through to the reload.
 		return compactErr
 	}
+
+	if v.nm != nil {
+		v.nm.Close()
+		v.nm = nil
+	}
+	if v.DataBackend != nil {
+		if err := v.DataBackend.Close(); err != nil {
+			glog.V(0).Infof("failed to close volume %d", v.Id)
+		}
+	}
+	v.DataBackend = nil
+	stats.VolumeServerVolumeGauge.WithLabelValues(v.Collection, "volume").Dec()
 
 	// makeupDiff has fsynced the .cpd/.cpx contents. Persist a durable .cpc
 	// commit marker BEFORE renaming so the two renames are atomic across a
