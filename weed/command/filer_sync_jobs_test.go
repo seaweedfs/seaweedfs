@@ -1233,3 +1233,45 @@ func TestResumeStaysBelowNewestSeen(t *testing.T) {
 		t.Fatalf("resume = %d at the frontier, want 199", got)
 	}
 }
+
+func TestWatermarkAfterOutOfOrderCompletion(t *testing.T) {
+	gates := map[int64]chan struct{}{100: make(chan struct{}), 101: make(chan struct{}), 102: make(chan struct{})}
+	p := NewMetadataProcessor(func(resp *filer_pb.SubscribeMetadataResponse) error {
+		<-gates[resp.TsNs]
+		return nil
+	}, 10, 0)
+	for _, ts := range []int64{100, 101, 102} {
+		p.AddSyncJob(makeResp("/dir", fmt.Sprintf("f%d.txt", ts), false, ts, true))
+	}
+
+	waitForActive := func(n int) {
+		t.Helper()
+		deadline := time.Now().Add(10 * time.Second)
+		for time.Now().Before(deadline) {
+			p.activeJobsLock.Lock()
+			active := p.activeJobCount
+			p.activeJobsLock.Unlock()
+			if active == n {
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+		t.Fatalf("timed out waiting for %d active jobs", n)
+	}
+	close(gates[102])
+	waitForActive(2)
+	close(gates[101])
+	waitForActive(1)
+	if got := p.processedTsWatermark.Load(); got != 0 {
+		t.Fatalf("watermark = %d while the job at 100 runs, want 0", got)
+	}
+	close(gates[100])
+	waitForJobsToDrain(t, p)
+
+	if got := p.processedTsWatermark.Load(); got != 102 {
+		t.Fatalf("watermark = %d after every job finished, want 102", got)
+	}
+	if got := resumeTsNsFor(p); got != 101 {
+		t.Fatalf("resume = %d, want 101", got)
+	}
+}
