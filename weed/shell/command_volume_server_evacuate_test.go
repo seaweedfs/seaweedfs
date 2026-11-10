@@ -80,3 +80,10 @@ func TestVolumeServerEvacuateReturnsFlagParseError(t *testing.T) {
 		t.Fatalf("a rejected -noLock must not unlock the shell")
 	}
 }
+
+func TestVolumeServerEvacuateHelpIsNotAnError(t *testing.T) {
+	env := &CommandEnv{locker: exclusive_locks.NewExclusiveLocker(nil, cluster.AdminShellLockName)}
+	if err := (&commandVolumeServerEvacuate{}).Do([]string{"-h"}, env, io.Discard); err != nil {
+		t.Fatalf("-h should print usage without failing, got: %v", err)
+	}
+}

@@ -2,6 +2,7 @@ package shell
 
 import (
 	"cmp"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -65,6 +66,9 @@ func (c *commandVolumeServerEvacuate) Do(args []string, commandEnv *CommandEnv, 
 	retryCount := vsEvacuateCommand.Int("retry", 0, "how many times to retry")
 	noLock := vsEvacuateCommand.Bool("noLock", false, "do not lock the admin shell at one's own risk")
 	if err = vsEvacuateCommand.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
 	}
 
