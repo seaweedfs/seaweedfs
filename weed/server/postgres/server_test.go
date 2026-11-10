@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"testing"
 	"time"
 )
@@ -87,9 +88,15 @@ func runStartup(t *testing.T, method AuthMethod, user, password string) ([]byte,
 
 	var received []byte
 	for {
-		msgType, _, err := readPgMessage(reader)
-		if err != nil {
+		msgType, body, err := readPgMessage(reader)
+		if err == io.EOF {
 			break
+		}
+		if err != nil {
+			t.Fatalf("read after %q: %v", received, err)
+		}
+		if msgType == PG_RESP_ERROR && !strings.Contains(string(body), "\x00C28P01\x00") {
+			t.Fatalf("expected SQLSTATE 28P01, got %q", body)
 		}
 		received = append(received, msgType)
 	}
