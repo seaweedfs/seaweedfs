@@ -102,6 +102,8 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer func() {
+			fs.inFlightDataLimitCond.L.Lock()
+			defer fs.inFlightDataLimitCond.L.Unlock()
 			// Decrement counters
 			newUploads := atomic.AddInt64(&fs.inFlightUploads, -1)
 			newSize := atomic.AddInt64(&fs.inFlightDataSize, -contentLength)

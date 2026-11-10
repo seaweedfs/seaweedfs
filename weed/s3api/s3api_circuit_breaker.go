@@ -116,6 +116,8 @@ func (cb *CircuitBreaker) Limit(f func(w http.ResponseWriter, r *http.Request), 
 				return
 			}
 			defer func() {
+				cb.s3a.inFlightDataLimitCond.L.Lock()
+				defer cb.s3a.inFlightDataLimitCond.L.Unlock()
 				// Decrement counters
 				newUploads := atomic.AddInt64(&cb.s3a.inFlightUploads, -1)
 				newSize := atomic.AddInt64(&cb.s3a.inFlightDataSize, -contentLength)
