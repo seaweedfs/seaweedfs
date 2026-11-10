@@ -11,6 +11,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 
@@ -62,8 +66,9 @@ func (c *commandS3CleanUploads) Do(args []string, commandEnv *CommandEnv, writer
 		return fmt.Errorf("list buckets under %v: %w", filerBucketsPath, err)
 	}
 
+	lock := newObjectWriteLock(commandEnv)
 	for _, bucket := range buckets {
-		if err := c.cleanupUploads(commandEnv, writer, filerBucketsPath, bucket, *uploadedTimeAgo); err != nil {
+		if err := c.cleanupUploads(commandEnv, writer, filerBucketsPath, bucket, *uploadedTimeAgo, lock); err != nil {
 			fmt.Fprintf(writer, "failed cleanup uploads for bucket %s: %v", bucket, err)
 		}
 	}
@@ -71,8 +76,9 @@ func (c *commandS3CleanUploads) Do(args []string, commandEnv *CommandEnv, writer
 	return err
 }
 
-func (c *commandS3CleanUploads) cleanupUploads(commandEnv *CommandEnv, writer io.Writer, filerBucketsPath string, bucket string, timeAgo time.Duration) error {
-	uploadsDir := filerBucketsPath + "/" + bucket + "/" + s3_constants.MultipartUploadsFolder
+func (c *commandS3CleanUploads) cleanupUploads(commandEnv *CommandEnv, writer io.Writer, filerBucketsPath string, bucket string, timeAgo time.Duration, lock objectWriteLock) error {
+	bucketDir := filerBucketsPath + "/" + bucket
+	uploadsDir := bucketDir + "/" + s3_constants.MultipartUploadsFolder
 	var staleUploads []*filer_pb.Entry
 	now := time.Now()
 	err := filer_pb.List(context.Background(), commandEnv, uploadsDir, "", func(entry *filer_pb.Entry, isLast bool) error {
@@ -87,23 +93,130 @@ func (c *commandS3CleanUploads) cleanupUploads(commandEnv *CommandEnv, writer io
 	}
 
 	for _, staleUpload := range staleUploads {
-		// A completed upload's part entries share chunks with the finished
-		// object, so purging their data corrupts it. Completion normally
-		// removes this directory itself; a survivor means that cleanup failed
-		// and only the metadata should go. An undecidable lookup is left for
-		// the next run rather than risk live chunks.
-		completed, checkErr := c.uploadCompleted(commandEnv, filerBucketsPath+"/"+bucket, staleUpload)
-		if checkErr != nil {
-			fmt.Fprintf(writer, "skip %s: %v\n", staleUpload.Name, checkErr)
+		release, lockErr := lock(uploadObjectPath(bucketDir, staleUpload))
+		if lockErr != nil {
+			fmt.Fprintf(writer, "skip %s: %v\n", staleUpload.Name, lockErr)
 			continue
 		}
-		fmt.Fprintf(writer, "purge %s/%s (keep chunks: %v)\n", uploadsDir, staleUpload.Name, completed)
-		if err := filer_pb.Remove(context.Background(), commandEnv, uploadsDir, staleUpload.Name, !completed, true, true, false, nil); err != nil {
-			return fmt.Errorf("purge %s/%s: %v", uploadsDir, staleUpload.Name, err)
+		err := c.removeUploadDir(commandEnv, writer, bucketDir, uploadsDir, staleUpload)
+		release()
+		if err != nil {
+			return err
 		}
 	}
 
 	return nil
+}
+
+// objectWriteLock takes the distributed lock the S3 gateway commits a
+// completion under when it is not routed to the object's owner filer.
+type objectWriteLock func(objectPath string) (release func(), err error)
+
+func newObjectWriteLock(commandEnv *CommandEnv) objectWriteLock {
+	lockClient := cluster.NewLockClient(commandEnv.option.GrpcDialOption, commandEnv.FilerAddress())
+	owner := fmt.Sprintf("s3.clean.uploads-%d", util.RandomInt32())
+	return func(objectPath string) (func(), error) {
+		if objectPath == "" {
+			return func() {}, nil
+		}
+		key := objectRouteKey(objectPath)
+		lock := lockClient.NewShortLivedLock(key, owner)
+		if lock == nil {
+			return nil, fmt.Errorf("lock %s: no lock server", key)
+		}
+		if err := lock.AttemptToLock(15 * time.Second); err != nil {
+			glog.Warningf("extend lock %s: %v", key, err)
+		}
+		return func() {
+			if err := lock.StopShortLivedLock(); err != nil {
+				glog.Warningf("release lock %s: %v", key, err)
+			}
+		}, nil
+	}
+}
+
+// removeUploadDir mirrors the S3 gateway's abort, under the object write lock.
+// A completed upload's part entries share chunks with the finished object, so
+// only the metadata goes; an open upload's chunks are freed by
+// routedUploadDirDelete. An undecidable lookup is left for the next run.
+func (c *commandS3CleanUploads) removeUploadDir(filerClient filer_pb.FilerClient, writer io.Writer, bucketDir, uploadsDir string, upload *filer_pb.Entry) error {
+	completed, err := c.uploadCompleted(filerClient, bucketDir, upload)
+	if err != nil {
+		fmt.Fprintf(writer, "skip %s: %v\n", upload.Name, err)
+		return nil
+	}
+	if !completed {
+		freed, err := routedUploadDirDelete(filerClient, uploadObjectPath(bucketDir, upload), uploadsDir, upload.Name)
+		if err != nil {
+			return fmt.Errorf("purge %s/%s: %v", uploadsDir, upload.Name, err)
+		}
+		if freed {
+			fmt.Fprintf(writer, "purge %s/%s\n", uploadsDir, upload.Name)
+			return nil
+		}
+	}
+	fmt.Fprintf(writer, "purge %s/%s metadata only\n", uploadsDir, upload.Name)
+	if err := filer_pb.Remove(context.Background(), filerClient, uploadsDir, upload.Name, false, true, true, false, nil); err != nil {
+		return fmt.Errorf("purge %s/%s: %v", uploadsDir, upload.Name, err)
+	}
+	return nil
+}
+
+// routedUploadDirDelete frees an open upload's chunks in an ObjectTransaction
+// on the object's owner filer, where a routed completion commits under the
+// same path lock. It deletes nothing and reports false when the object
+// already carries the upload.
+func routedUploadDirDelete(filerClient filer_pb.FilerClient, objectPath, uploadsDir, uploadId string) (bool, error) {
+	if objectPath == "" {
+		return true, filer_pb.Remove(context.Background(), filerClient, uploadsDir, uploadId, true, true, true, false, nil)
+	}
+	var resp *filer_pb.ObjectTransactionResponse
+	err := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		var txnErr error
+		resp, txnErr = client.ObjectTransaction(context.Background(), &filer_pb.ObjectTransactionRequest{
+			LockKey:      objectPath,
+			RouteKey:     objectRouteKey(objectPath),
+			ConditionKey: objectPath,
+			Condition: &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{
+				Kind:     filer_pb.WriteCondition_IF_EXTENDED_NOT_EQUAL,
+				ExtKey:   s3_constants.SeaweedFSUploadId,
+				ExtValue: uploadId,
+			}}},
+			Mutations: []*filer_pb.ObjectMutation{{
+				Type:         filer_pb.ObjectMutation_DELETE,
+				Directory:    uploadsDir,
+				Name:         uploadId,
+				IsDeleteData: true,
+				IsRecursive:  true,
+			}},
+			RequestId: uuid.NewString(),
+		})
+		return txnErr
+	})
+	if err != nil {
+		return false, err
+	}
+	if resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED {
+		return false, nil
+	}
+	if resp.Error != "" {
+		return false, errors.New(resp.Error)
+	}
+	return true, nil
+}
+
+// uploadObjectPath is the filer path of the object the upload completes into, as
+// the gateway's toFilerPath derives it, or "" when the upload names none.
+func uploadObjectPath(bucketDir string, upload *filer_pb.Entry) string {
+	objectKey := string(upload.Extended[s3_constants.ExtMultipartObjectKey])
+	if objectKey == "" {
+		return ""
+	}
+	return bucketDir + "/" + s3_constants.NormalizeObjectKey(objectKey)
+}
+
+func objectRouteKey(objectPath string) string {
+	return s3_constants.ObjectWriteRouteKeyPrefix + strings.TrimSuffix(objectPath, "/")
 }
 
 // uploadCompleted reports whether the upload assembled into an object: the
