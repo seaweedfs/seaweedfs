@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -605,25 +604,30 @@ func TestRecordPlanSources(t *testing.T) {
 		t.Fatalf("direct reference lost with an unreadable manifest: found %v, %d references to 203", found, seen.count(needle.VolumeId(203)))
 	}
 
-	served := make(chan struct{})
-	var serveOnce sync.Once
+	unreadable := chunk(187, 10)
+	unreadable.IsChunkManifest = true
+	nestedBlob, err := proto.Marshal(&filer_pb.FileChunkManifest{Chunks: []*filer_pb.FileChunk{unreadable}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outer := chunk(187, 9)
+	outer.IsChunkManifest = true
 	partServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/"+outer.GetFileIdString() {
+			_, _ = w.Write(nestedBlob)
+			return
+		}
 		_, _ = w.Write(blob)
-		serveOnce.Do(func() { close(served) })
 	}))
 	defer partServer.Close()
-	unreadable := chunk(187, 9)
-	unreadable.IsChunkManifest = true
 	failsLater := func(_ context.Context, fileId string) ([]string, error) {
-		if fileId != unreadable.GetFileIdString() {
-			return []string{partServer.URL + "/" + fileId}, nil
+		if fileId == unreadable.GetFileIdString() {
+			return nil, fmt.Errorf("volume of %s unavailable", fileId)
 		}
-		<-served
-		time.Sleep(50 * time.Millisecond)
-		return nil, fmt.Errorf("volume of %s unavailable", fileId)
+		return []string{partServer.URL + "/" + fileId}, nil
 	}
 	seen = newSourceNeedleCounter()
-	found, err = c.recordPlanSources(context.Background(), failsLater, plan, planCollections, seen, []*filer_pb.FileChunk{manifest(187), unreadable})
+	found, err = c.recordPlanSources(context.Background(), failsLater, plan, planCollections, seen, []*filer_pb.FileChunk{manifest(187), outer})
 	if err == nil {
 		t.Fatal("an unreadable manifest must be reported")
 	}
