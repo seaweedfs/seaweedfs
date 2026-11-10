@@ -3,6 +3,8 @@ package command
 import (
 	"container/heap"
 	"path"
+	"slices"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -559,6 +561,9 @@ func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse)
 			heap.Pop(&t.doneTsHeap)
 			t.processedTsWatermark.Store(doneTsNs)
 		}
+		if len(t.doneTsHeap) > 2*(len(t.activeJobTs)+len(t.failedTs))+64 {
+			t.compactDoneTs()
+		}
 		if t.activeJobCount == 0 && t.filteredTsNs > t.processedTsWatermark.Load() &&
 			(t.oldestFailedTsNs == 0 || t.filteredTsNs < t.oldestFailedTsNs) {
 			t.processedTsWatermark.Store(t.filteredTsNs)
@@ -570,6 +575,36 @@ func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse)
 		}
 		t.activeJobsCond.Signal()
 	}()
+}
+
+// compactDoneTs keeps only the newest finished timestamp between two
+// consecutive running or failed ones, since the watermark only lands on the
+// newest one below the oldest of them. Without it a long job keeps every later
+// completion. Must be called under activeJobsLock.
+func (t *MetadataProcessor) compactDoneTs() {
+	bounds := make([]int64, 0, len(t.activeJobTs)+len(t.failedTs)+1)
+	for ts := range t.activeJobTs {
+		bounds = append(bounds, ts)
+	}
+	for k := range t.failedTs {
+		bounds = append(bounds, k.tsNs)
+	}
+	if t.oldestFailedTsNs != 0 {
+		bounds = append(bounds, t.oldestFailedTsNs)
+	}
+	slices.Sort(bounds)
+	newest := make(map[int]int64)
+	for _, ts := range t.doneTsHeap {
+		i := sort.Search(len(bounds), func(i int) bool { return bounds[i] > ts })
+		if prev, ok := newest[i]; !ok || ts > prev {
+			newest[i] = ts
+		}
+	}
+	t.doneTsHeap = t.doneTsHeap[:0]
+	for _, ts := range newest {
+		t.doneTsHeap = append(t.doneTsHeap, ts)
+	}
+	heap.Init(&t.doneTsHeap)
 }
 
 // eventDataSize is the chunk data this event will copy: chunks on the new

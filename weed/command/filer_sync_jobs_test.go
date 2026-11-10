@@ -1275,3 +1275,38 @@ func TestWatermarkAfterOutOfOrderCompletion(t *testing.T) {
 		t.Fatalf("resume = %d, want 101", got)
 	}
 }
+
+func TestDoneTimestampsStayBoundedBehindSlowJob(t *testing.T) {
+	release := make(chan struct{})
+	p := NewMetadataProcessor(func(resp *filer_pb.SubscribeMetadataResponse) error {
+		if resp.TsNs == 1 {
+			<-release
+		}
+		return nil
+	}, 4, 0)
+	p.AddSyncJob(makeResp("/dir", "slow.txt", false, 1, true))
+	for ts := int64(2); ts <= 2001; ts++ {
+		p.AddSyncJob(makeResp("/dir", fmt.Sprintf("f%d.txt", ts), false, ts, true))
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		p.activeJobsLock.Lock()
+		active, done := p.activeJobCount, len(p.doneTsHeap)
+		p.activeJobsLock.Unlock()
+		if active == 1 {
+			if done > 2*4+64+1 {
+				t.Fatalf("%d finished timestamps kept behind the slow job", done)
+			}
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if got := p.processedTsWatermark.Load(); got != 0 {
+		t.Fatalf("watermark = %d while the oldest job runs, want 0", got)
+	}
+	close(release)
+	waitForJobsToDrain(t, p)
+	if got := p.processedTsWatermark.Load(); got != 2001 {
+		t.Fatalf("watermark = %d after every job finished, want 2001", got)
+	}
+}
