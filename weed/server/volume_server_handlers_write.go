@@ -1,7 +1,10 @@
 package weed_server
 
 import (
+	"bytes"
 	"context"
+	"crypto/md5"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
@@ -17,6 +20,20 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/topology"
 	"github.com/seaweedfs/seaweedfs/weed/util/buffer_pool"
 )
+
+var jpegStart = []byte{0xFF, 0xD8, 0xFF}
+
+// replicaContentMd5 drops the client's digest once the orientation fix has
+// rewritten the JPEG: replicas check it against the bytes they are sent.
+func (vs *VolumeServer) replicaContentMd5(n *needle.Needle, contentMd5 string) string {
+	if !vs.FixJpgOrientation || contentMd5 == "" || !bytes.HasPrefix(n.Data, jpegStart) {
+		return contentMd5
+	}
+	if sum := md5.Sum(n.Data); base64.StdEncoding.EncodeToString(sum[:]) != contentMd5 {
+		return ""
+	}
+	return contentMd5
+}
 
 func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -52,7 +69,7 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 
 	ret := operation.UploadResult{}
 	// use context.WithoutCancel to avoid context cancellation when the client connection is closed
-	isUnchanged, writeError := topology.ReplicatedWrite(context.WithoutCancel(ctx), vs.GetMaster, vs.grpcDialOption, vs.store, volumeId, reqNeedle, r, contentMd5)
+	isUnchanged, writeError := topology.ReplicatedWrite(context.WithoutCancel(ctx), vs.GetMaster, vs.grpcDialOption, vs.store, volumeId, reqNeedle, r, vs.replicaContentMd5(reqNeedle, contentMd5))
 	if writeError != nil {
 		stats.VolumeServerFileWriteFailures.Inc()
 		status := http.StatusInternalServerError

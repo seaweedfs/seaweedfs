@@ -3,6 +3,10 @@ package weed_server
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
+	"encoding/base64"
+	"image"
+	"image/jpeg"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
@@ -10,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/images"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
@@ -137,5 +142,46 @@ func TestBatchDeleteCancelsAWriteInItsFsyncWindow(t *testing.T) {
 				require.NoError(t, err)
 			}
 		})
+	}
+}
+
+// A replica rejects a Content-MD5 that does not match the bytes it is sent.
+func TestReplicaContentMd5AfterOrientationFix(t *testing.T) {
+	var encoded bytes.Buffer
+	require.NoError(t, jpeg.Encode(&encoded, image.NewRGBA(image.Rect(0, 0, 3, 2)), nil))
+	plain := encoded.Bytes()
+	exif := []byte("Exif\x00\x00MM\x00\x2a\x00\x00\x00\x08\x00\x01\x01\x12\x00\x03\x00\x00\x00\x01\x00\x03\x00\x00\x00\x00\x00\x00")
+	tagged := append([]byte{0xFF, 0xD8, 0xFF, 0xE1, 0, byte(len(exif) + 2)}, exif...)
+	tagged = append(tagged, plain[2:]...)
+	digest := func(data []byte) string {
+		sum := md5.Sum(data)
+		return base64.StdEncoding.EncodeToString(sum[:])
+	}
+
+	for _, tc := range []struct {
+		name      string
+		fix       bool
+		data      []byte
+		rewritten bool
+	}{
+		{"rotated", true, tagged, true},
+		{"unchanged jpeg", true, plain, false},
+		{"not a jpeg", true, []byte("plain text"), false},
+		{"fix off", false, tagged, false},
+	} {
+		n := &needle.Needle{Data: tc.data}
+		if tc.fix {
+			n.Data = images.FixJpgOrientation(tc.data)
+		}
+		require.Equal(t, tc.rewritten, !bytes.Equal(n.Data, tc.data), tc.name)
+
+		clientMd5 := digest(tc.data)
+		replicaMd5 := (&VolumeServer{FixJpgOrientation: tc.fix}).replicaContentMd5(n, clientMd5)
+		if tc.rewritten {
+			require.Empty(t, replicaMd5, tc.name)
+		} else {
+			require.Equal(t, clientMd5, replicaMd5, tc.name)
+			require.Equal(t, digest(n.Data), replicaMd5, tc.name)
+		}
 	}
 }
