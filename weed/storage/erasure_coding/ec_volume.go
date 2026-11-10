@@ -624,8 +624,8 @@ func (ev *EcVolume) EcIndexBaseFileName() string {
 }
 
 func (ev *EcVolume) ShardSize() uint64 {
-	if len(ev.Shards) > 0 {
-		return uint64(ev.Shards[0].Size())
+	if shards := ev.Shards; len(shards) > 0 {
+		return uint64(shards[0].Size())
 	}
 	return 0
 }
