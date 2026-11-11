@@ -199,6 +199,10 @@ impl SharedLeases {
                             .map_or(true, |lease| lease.strong_count() > 0)
                     });
                     held.prune_at = (2 * held.slots.len()).max(64);
+                    // A burst's allocation would otherwise make every later
+                    // prune scan it.
+                    let capacity = held.prune_at;
+                    held.slots.shrink_to(capacity);
                 }
                 held.slots.entry(key).or_default().clone()
             }
