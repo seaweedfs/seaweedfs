@@ -114,6 +114,36 @@ func TestResolveS3Action_AttributesBeforeVersionId(t *testing.T) {
 	}
 }
 
+// An empty versionId is served as the current object, so it must be
+// authorized as the current-object action.
+func TestResolveS3Action_EmptyVersionIdIsCurrentObject(t *testing.T) {
+	tests := []struct {
+		name       string
+		method     string
+		baseAction string
+		query      string
+		want       string
+	}{
+		{"get empty", http.MethodGet, s3_constants.ACTION_READ, "versionId=", s3_constants.S3_ACTION_GET_OBJECT},
+		{"get bare", http.MethodGet, s3_constants.ACTION_READ, "versionId", s3_constants.S3_ACTION_GET_OBJECT},
+		{"head empty", http.MethodHead, s3_constants.ACTION_READ, "versionId=", s3_constants.S3_ACTION_GET_OBJECT},
+		{"delete empty", http.MethodDelete, s3_constants.ACTION_WRITE, "versionId=", s3_constants.S3_ACTION_DELETE_OBJECT},
+		{"delete bare", http.MethodDelete, s3_constants.ACTION_WRITE, "versionId", s3_constants.S3_ACTION_DELETE_OBJECT},
+		{"duplicate empty first", http.MethodGet, s3_constants.ACTION_READ, "versionId=&versionId=v1", s3_constants.S3_ACTION_GET_OBJECT},
+		{"get null version", http.MethodGet, s3_constants.ACTION_READ, "versionId=null", s3_constants.S3_ACTION_GET_OBJECT_VERSION},
+		{"head null version", http.MethodHead, s3_constants.ACTION_READ, "versionId=null", s3_constants.S3_ACTION_GET_OBJECT_VERSION},
+		{"delete null version", http.MethodDelete, s3_constants.ACTION_WRITE, "versionId=null", s3_constants.S3_ACTION_DELETE_OBJECT_VERSION},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r, _ := http.NewRequest(tt.method, "http://localhost/bucket/key?"+tt.query, nil)
+			if got := ResolveS3Action(r, tt.baseAction, "bucket", "key"); got != tt.want {
+				t.Errorf("ResolveS3Action() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 // A tagging request carrying versionId targets a specific version and must
 // resolve to the version-tagging action so a grant limited to current-object
 // tagging cannot reach historical versions.
