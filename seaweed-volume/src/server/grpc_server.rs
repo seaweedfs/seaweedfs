@@ -8068,7 +8068,7 @@ fn run_vacuum_compact(
         .begin_compact_volume(vid, preallocate);
     let result = match job {
         Ok(Some(job)) => job.run(progress),
-        Ok(None) => Ok(()), // already compacting
+        Ok(None) => Err(crate::storage::volume::compacting_error(vid)),
         Err(e) => Err(e),
     };
 

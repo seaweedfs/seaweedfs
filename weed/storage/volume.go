@@ -521,6 +521,7 @@ func (v *Volume) ToVolumeInformationMessage(into *master_pb.VolumeInformationMes
 	maxFileKey, volumeSize, modTime, fileCount, deletedCount, deletedSize, ok := v.collectStatus()
 
 	if !ok {
+		glog.Warningf("Volume %d: needle map or data file is closed - not reporting to master", v.Id)
 		return 0, nil
 	}
 

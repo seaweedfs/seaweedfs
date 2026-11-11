@@ -1242,6 +1242,10 @@ const RANGE_CHECK_BLOCKS: u64 = 64;
 const MIN_RANGE_CHECK_BLOCK_SIZE: u64 = 64 * 1024;
 const MAX_RANGE_CHECK_BLOCK_SIZE: u64 = 1024 * 1024;
 
+pub(crate) fn compacting_error(id: VolumeId) -> VolumeError {
+    VolumeError::Io(io::Error::other(format!("volume {} is compacting", id)))
+}
+
 /// Keeps a needle to 64 blocks, each 64 KiB to 1 MiB, as Go's
 /// rangeCheckBlockSize.
 pub(crate) fn range_check_block_size(data_size: u64) -> u64 {
@@ -1913,10 +1917,7 @@ impl Volume {
     }
 
     pub(crate) fn compacting_error(&self) -> VolumeError {
-        VolumeError::Io(io::Error::other(format!(
-            "volume {} is compacting",
-            self.id
-        )))
+        compacting_error(self.id)
     }
 
     // ---- File naming (matching Go) ----
@@ -5843,7 +5844,7 @@ impl Volume {
     {
         match self.begin_compact_by_index()? {
             Some(job) => job.run(progress_fn),
-            None => Ok(()), // already compacting
+            None => Err(self.compacting_error()),
         }
     }
 
@@ -5948,7 +5949,7 @@ impl Volume {
             return Err(VolumeError::NotFound);
         }
         let Some(_claim) = CompactionClaim::try_claim(&self.is_compacting) else {
-            return Ok(()); // already compacting, silently skip (matches Go)
+            return Err(self.compacting_error());
         };
         // The reload would read the remote object through the compacted .idx.
         if self.has_remote_file() {
@@ -5963,6 +5964,8 @@ impl Volume {
     }
 
     fn do_commit_compact(&self) -> Result<(), VolumeError> {
+        // A duplicate commit must fail before it closes the live files.
+        self.check_compact_files()?;
         if let Err(e) = self.makeup_diff() {
             warn!("makeup_diff failed: {}", e);
             // Match Go: clean up .cpd/.cpx on makeup_diff failure
@@ -6038,8 +6041,13 @@ impl Volume {
     /// requires BOTH .cpd/.cpx to be present, so a stale or duplicate commit
     /// returns an error without deleting the live .dat/.idx.
     fn apply_compact_swap(&self) -> Result<(), VolumeError> {
-        // Normal commit: both temp files must be present, or a stale/duplicate
-        // commit could clobber the live .dat/.idx.
+        self.check_compact_files()?;
+        self.finish_compact_swap()
+    }
+
+    /// Both temp files of a normal commit must be present, or a stale or
+    /// duplicate commit could clobber the live .dat/.idx.
+    fn check_compact_files(&self) -> Result<(), VolumeError> {
         if !Path::new(&self.file_name(".cpd")).exists()
             || !Path::new(&self.file_name(".cpx")).exists()
         {
@@ -6048,7 +6056,7 @@ impl Volume {
                 "compact files (.cpd/.cpx) not found",
             )));
         }
-        self.finish_compact_swap()
+        Ok(())
     }
 
     /// Renames whichever compaction temp file is still present (.cpd->.dat,
@@ -6148,10 +6156,11 @@ impl Volume {
 
     /// Clean up leftover compaction files (.cpd, .cpx).
     pub fn cleanup_compact(&self) -> Result<(), VolumeError> {
-        // An in-flight copy is still writing .cpd/.cpx.
-        if self.is_compacting() {
+        // An in-flight copy is still writing .cpd/.cpx; claim the volume so
+        // none starts while the files are removed.
+        let Some(_claim) = CompactionClaim::try_claim(&self.is_compacting) else {
             return Err(self.compacting_error());
-        }
+        };
         // Refuse to unlink .cpd/.cpx while a .cpc marker exists: those temp files
         // are the only inputs reconcile can roll forward to, so removing them
         // mid-commit would strand a decided swap.
@@ -12928,5 +12937,36 @@ mod tests {
             dat_len_before,
             "live .dat unchanged"
         );
+    }
+
+    /// A commit that finds no .cpd/.cpx (another vacuum already committed
+    /// them) must leave the volume loaded and writable.
+    #[test]
+    fn test_commit_compact_without_temp_files_keeps_volume_loaded() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let v = make_test_volume(dir);
+        let needle = |i: u64| Needle {
+            id: NeedleId(i),
+            cookie: Cookie(i as u32),
+            data: format!("data-{}", i).into_bytes(),
+            data_size: format!("data-{}", i).len() as u32,
+            ..Needle::default()
+        };
+        for i in 1..=3u64 {
+            v.write_needle(&mut needle(i), true, false).unwrap();
+        }
+        v.compact_by_index(0, 0, |_| true).unwrap();
+        v.commit_compact().unwrap();
+
+        assert!(v.commit_compact().is_err());
+        assert!(!Path::new(&v.file_name(".cpc")).exists());
+        v.write_needle(&mut needle(4), true, false).unwrap();
+        let mut n1 = Needle {
+            id: NeedleId(1),
+            ..Needle::default()
+        };
+        v.read_needle(&mut n1).unwrap();
+        assert_eq!(n1.data, b"data-1");
     }
 }

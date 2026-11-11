@@ -103,8 +103,7 @@ func (v *Volume) CompactByVolumeData(opts *CompactOptions) error {
 	//defer v.accessLock.Unlock()
 	//glog.V(3).Infof("Got Compaction lock...")
 	if !v.isCompactionInProgress.CompareAndSwap(false, true) {
-		glog.V(0).Infof("Volume %d is already compacting...", v.Id)
-		return nil
+		return v.compactingError()
 	}
 	defer v.isCompactionInProgress.Store(false)
 
@@ -148,8 +147,7 @@ func (v *Volume) CompactByIndex(opts *CompactOptions) error {
 	}
 
 	if !v.isCompactionInProgress.CompareAndSwap(false, true) {
-		glog.V(0).Infof("Volume %d is already compacting2 ...", v.Id)
-		return nil
+		return v.compactingError()
 	}
 	defer v.isCompactionInProgress.Store(false)
 
@@ -186,8 +184,7 @@ func (v *Volume) CommitCompact() error {
 	glog.V(0).Infof("Committing volume %d vacuuming...", v.Id)
 
 	if !v.isCompactionInProgress.CompareAndSwap(false, true) {
-		glog.V(0).Infof("Volume %d is already compacting ...", v.Id)
-		return nil
+		return v.compactingError()
 	}
 	defer v.isCompactionInProgress.Store(false)
 
@@ -212,18 +209,10 @@ func (v *Volume) CommitCompact() error {
 		}
 		return errTieredVolumeCompact(v.Id)
 	}
-	if v.nm != nil {
-		v.nm.Close()
-		v.nm = nil
+	// A duplicate commit must fail before it closes the live files.
+	if err := v.checkCompactFiles(); err != nil {
+		return err
 	}
-	if v.DataBackend != nil {
-		if err := v.DataBackend.Close(); err != nil {
-			glog.V(0).Infof("failed to close volume %d", v.Id)
-		}
-	}
-	v.DataBackend = nil
-	stats.VolumeServerVolumeGauge.WithLabelValues(v.Collection, "volume").Dec()
-
 	if compactErr := v.makeupDiff(v.FileName(".cpd"), v.FileName(".cpx"), v.FileName(".dat"), v.FileName(".idx")); compactErr != nil {
 		glog.V(0).Infof("makeupDiff in CommitCompact volume %d failed %v", v.Id, compactErr)
 		if e := os.Remove(v.FileName(".cpd")); e != nil && !os.IsNotExist(e) {
@@ -236,6 +225,18 @@ func (v *Volume) CommitCompact() error {
 		// reconcile rolls back anyway, and never fall through to the reload.
 		return compactErr
 	}
+
+	if v.nm != nil {
+		v.nm.Close()
+		v.nm = nil
+	}
+	if v.DataBackend != nil {
+		if err := v.DataBackend.Close(); err != nil {
+			glog.V(0).Infof("failed to close volume %d", v.Id)
+		}
+	}
+	v.DataBackend = nil
+	stats.VolumeServerVolumeGauge.WithLabelValues(v.Collection, "volume").Dec()
 
 	// makeupDiff has fsynced the .cpd/.cpx contents. Persist a durable .cpc
 	// commit marker BEFORE renaming so the two renames are atomic across a
@@ -270,6 +271,10 @@ func (v *Volume) CommitCompact() error {
 	return nil
 }
 
+func (v *Volume) compactingError() error {
+	return fmt.Errorf("volume %d is compacting", v.Id)
+}
+
 // writeCompactCommitMarker writes and fsyncs the .cpc marker, then fsyncs the
 // directory so the marker's existence survives a crash before applyCompactSwap.
 func (v *Volume) writeCompactCommitMarker() error {
@@ -294,12 +299,19 @@ func (v *Volume) writeCompactCommitMarker() error {
 // marker and BOTH .cpd/.cpx to be present, so a stale or duplicate commit
 // returns an error without deleting the live .dat/.idx.
 func (v *Volume) applyCompactSwap() error {
-	// Normal commit: both temp files must be present, or a stale/duplicate
-	// commit could clobber the live .dat/.idx.
+	if err := v.checkCompactFiles(); err != nil {
+		return err
+	}
+	return v.finishCompactSwap()
+}
+
+// checkCompactFiles requires both temp files of a normal commit, or a
+// stale/duplicate commit could clobber the live .dat/.idx.
+func (v *Volume) checkCompactFiles() error {
 	if !util.FileExists(v.FileName(".cpd")) || !util.FileExists(v.FileName(".cpx")) {
 		return fmt.Errorf("volume %d compact swap aborted: missing .cpd/.cpx", v.Id)
 	}
-	return v.finishCompactSwap()
+	return nil
 }
 
 // finishCompactSwap renames whichever compaction temp file is still present
@@ -394,6 +406,13 @@ func (v *Volume) reconcileCompactState() error {
 
 func (v *Volume) cleanupCompact() error {
 	glog.V(0).Infof("Cleaning up volume %d vacuuming...", v.Id)
+
+	// An in-flight copy is still writing .cpd/.cpx; claim the volume so
+	// none starts while the files are removed.
+	if !v.isCompactionInProgress.CompareAndSwap(false, true) {
+		return v.compactingError()
+	}
+	defer v.isCompactionInProgress.Store(false)
 
 	// Serialize with CommitCompact's swap and refuse to unlink .cpd/.cpx while a
 	// .cpc marker exists: those temp files are the only inputs reconcile can roll

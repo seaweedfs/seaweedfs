@@ -204,6 +204,136 @@ func TestCommitCompactDeletionTailKeepsWritable(t *testing.T) {
 	}
 }
 
+// A second vacuum must not take a running compaction as its own: reporting
+// success would let it commit or delete the other run's .cpd/.cpx.
+func TestCompactionInProgressRefusesOtherVacuumSteps(t *testing.T) {
+	dir := t.TempDir()
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+	for i := uint64(1); i <= 3; i++ {
+		if _, _, _, err := v.writeNeedle2(newRandomNeedle(i), true, false, false); err != nil {
+			t.Fatalf("write %d: %v", i, err)
+		}
+	}
+	if err := v.CompactByIndex(nil); err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+
+	v.isCompactionInProgress.Store(true)
+	defer v.isCompactionInProgress.Store(false)
+	if err := v.CompactByIndex(nil); err == nil {
+		t.Fatal("CompactByIndex succeeded while another compaction is running")
+	}
+	if err := v.CompactByVolumeData(nil); err == nil {
+		t.Fatal("CompactByVolumeData succeeded while another compaction is running")
+	}
+	if err := v.CommitCompact(); err == nil {
+		t.Fatal("CommitCompact succeeded while another compaction is running")
+	}
+	if err := v.cleanupCompact(); err == nil {
+		t.Fatal("cleanupCompact succeeded while another compaction is running")
+	}
+	for _, ext := range []string{".cpd", ".cpx"} {
+		if _, err := os.Stat(v.FileName(ext)); err != nil {
+			t.Fatalf("%s of the running compaction: %v", ext, err)
+		}
+	}
+	v.isCompactionInProgress.Store(false)
+
+	if err := v.CommitCompact(); err != nil {
+		t.Fatalf("commit after the compaction finished: %v", err)
+	}
+	if v.SuperBlock.CompactionRevision != 1 {
+		t.Fatalf("compaction revision %d, want 1", v.SuperBlock.CompactionRevision)
+	}
+}
+
+// A commit that finds no .cpd/.cpx (another vacuum already committed them)
+// must leave the volume loaded, or it drops out of the heartbeat until restart.
+func TestCommitCompactWithoutTempFilesKeepsVolumeLoaded(t *testing.T) {
+	dir := t.TempDir()
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+	for i := uint64(1); i <= 3; i++ {
+		if _, _, _, err := v.writeNeedle2(newRandomNeedle(i), true, false, false); err != nil {
+			t.Fatalf("write %d: %v", i, err)
+		}
+	}
+	if err := v.CompactByIndex(nil); err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+	if err := v.CommitCompact(); err != nil {
+		t.Fatalf("first commit: %v", err)
+	}
+
+	if err := v.CommitCompact(); err == nil {
+		t.Fatal("second commit succeeded without .cpd/.cpx")
+	}
+	if _, _, _, _, _, _, ok := v.collectStatus(); !ok {
+		t.Fatal("volume dropped out of the heartbeat after the refused commit")
+	}
+	if _, err := os.Stat(v.FileName(".cpc")); !os.IsNotExist(err) {
+		t.Fatalf("refused commit left a commit marker: %v", err)
+	}
+	if _, _, _, err := v.writeNeedle2(newRandomNeedle(4), true, false, false); err != nil {
+		t.Fatalf("write after the refused commit: %v", err)
+	}
+}
+
+func TestCommitCompactMakeupDiffFailureKeepsVolumeLoaded(t *testing.T) {
+	dir := t.TempDir()
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+	written := map[uint64]*needle.Needle{}
+	for i := uint64(1); i <= 3; i++ {
+		written[i] = newRandomNeedle(i)
+		if _, _, _, err := v.writeNeedle2(written[i], true, false, false); err != nil {
+			t.Fatalf("write %d: %v", i, err)
+		}
+	}
+	// Moves needle 3 in the compacted copy, so reads through its map would miss.
+	if _, err := v.deleteNeedle2(newEmptyNeedle(1)); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	delete(written, 1)
+	if err := v.CompactByIndex(nil); err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+	written[4] = newRandomNeedle(4)
+	if _, _, _, err := v.writeNeedle2(written[4], true, false, false); err != nil {
+		t.Fatalf("write during compaction: %v", err)
+	}
+	v.lastCompactRevision++
+
+	if err := v.CommitCompact(); err == nil {
+		t.Fatal("commit succeeded with a mismatched compaction revision")
+	}
+	if _, _, _, _, _, _, ok := v.collectStatus(); !ok {
+		t.Fatal("volume dropped out of the heartbeat after a failed makeupDiff")
+	}
+	for i, want := range written {
+		got := &needle.Needle{Id: types.NeedleId(i)}
+		if _, err := v.readNeedle(got, nil, nil); err != nil {
+			t.Fatalf("read %d after the failed commit: %v", i, err)
+		}
+		if !bytes.Equal(got.Data, want.Data) {
+			t.Fatalf("needle %d data changed after the failed commit", i)
+		}
+	}
+	if _, _, _, err := v.writeNeedle2(newRandomNeedle(5), true, false, false); err != nil {
+		t.Fatalf("write after the failed commit: %v", err)
+	}
+}
+
 func TestCompactVolumeFilesOffline(t *testing.T) {
 	dir := t.TempDir()
 	location := NewDiskLocation(dir, 10, util.MinFreeSpace{}, dir, "", nil, stats.DefaultDiskIOProbeConfig())
@@ -274,6 +404,9 @@ func TestCleanupCompactRemovesTempFiles(t *testing.T) {
 
 	if err := tempVolume.cleanupCompact(); err != nil {
 		t.Fatalf("cleanupCompact: %v", err)
+	}
+	if tempVolume.isCompactionInProgress.Load() {
+		t.Fatal("cleanupCompact kept the volume claimed")
 	}
 
 	if _, err := os.Stat(filepath.Join(dir, "1.cpd")); !os.IsNotExist(err) {
