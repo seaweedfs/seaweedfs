@@ -72,7 +72,7 @@ func ClusterMasters(data dash.ClusterMastersData) templ.Component {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "</div></div><div class=\"col-auto\"><i class=\"bi bi-activity icon-2x text-gray-300\"></i></div></div></div></div></div></div><!-- Masters Table --><div class=\"card shadow mb-4\"><div class=\"card-header py-3\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"bi bi-award me-2\"></i>Masters</h6></div><div class=\"card-body\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "</div></div><div class=\"col-auto\"><i class=\"bi bi-activity icon-2x text-gray-300\"></i></div></div></div></div></div></div><!-- Masters Table --><div class=\"card shadow mb-4\"><div class=\"card-body\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -89,7 +89,7 @@ func ClusterMasters(data dash.ClusterMastersData) templ.Component {
 				var templ_7745c5c3_Var4 string
 				templ_7745c5c3_Var4, templ_7745c5c3_Err = templruntime.NewAttributeExpression(templ.SafeURL(fmt.Sprintf("//%s", master.Address))).ResolveURL(ctx)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_masters.templ`, Line: 113, Col: 71}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_masters.templ`, Line: 108, Col: 71}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var4)
 				if templ_7745c5c3_Err != nil {
@@ -102,7 +102,7 @@ func ClusterMasters(data dash.ClusterMastersData) templ.Component {
 				var templ_7745c5c3_Var5 string
 				templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(master.Address)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_masters.templ`, Line: 114, Col: 28}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_masters.templ`, Line: 109, Col: 28}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 				if templ_7745c5c3_Err != nil {
@@ -135,7 +135,7 @@ func ClusterMasters(data dash.ClusterMastersData) templ.Component {
 					var templ_7745c5c3_Var6 string
 					templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(master.Suffrage)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_masters.templ`, Line: 132, Col: 30}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_masters.templ`, Line: 127, Col: 30}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 					if templ_7745c5c3_Err != nil {
@@ -158,7 +158,7 @@ func ClusterMasters(data dash.ClusterMastersData) templ.Component {
 				var templ_7745c5c3_Var7 string
 				templ_7745c5c3_Var7, templ_7745c5c3_Err = templruntime.NewAttributeExpression(master.Address).Resolve(ctx)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_masters.templ`, Line: 143, Col: 41}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_masters.templ`, Line: 138, Col: 41}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var7)
 				if templ_7745c5c3_Err != nil {
@@ -171,7 +171,7 @@ func ClusterMasters(data dash.ClusterMastersData) templ.Component {
 				var templ_7745c5c3_Var8 string
 				templ_7745c5c3_Var8, templ_7745c5c3_Err = templruntime.NewAttributeExpression(fmt.Sprintf("%t", master.IsLeader)).Resolve(ctx)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_masters.templ`, Line: 144, Col: 60}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_masters.templ`, Line: 139, Col: 60}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var8)
 				if templ_7745c5c3_Err != nil {
@@ -184,7 +184,7 @@ func ClusterMasters(data dash.ClusterMastersData) templ.Component {
 				var templ_7745c5c3_Var9 string
 				templ_7745c5c3_Var9, templ_7745c5c3_Err = templruntime.NewAttributeExpression(master.Suffrage).Resolve(ctx)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_masters.templ`, Line: 145, Col: 43}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_masters.templ`, Line: 140, Col: 43}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var9)
 				if templ_7745c5c3_Err != nil {
@@ -212,7 +212,7 @@ func ClusterMasters(data dash.ClusterMastersData) templ.Component {
 		var templ_7745c5c3_Var10 string
 		templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(data.LastUpdated.Format("2006-01-02 15:04:05"))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_masters.templ`, Line: 169, Col: 67}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_masters.templ`, Line: 164, Col: 67}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
 		if templ_7745c5c3_Err != nil {

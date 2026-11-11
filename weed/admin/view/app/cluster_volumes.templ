@@ -316,7 +316,7 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                                 for _, volume := range data.Volumes {
                                     <tr>
                                         <td>
-                                            <code class="volume-id-link" style="cursor: pointer; text-decoration: underline; color: #0d6efd;" 
+                                            <code class="volume-id-link" style="cursor: pointer; text-decoration: underline;" 
                                                   data-volume-id={fmt.Sprintf("%d", volume.Id)}
                                                   title="Click to view volume details">
                                                 {fmt.Sprintf("%d", volume.Id)}
@@ -354,7 +354,7 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                                                                 <td>{formatBytes(int64(volume.Size))}</td>
                         <td>
                             <div class="d-flex align-items-center">
-                                <div class="progress me-2" style="width: 80px; height: 16px; background-color: #e9ecef;">
+                                <div class="progress me-2" style="width: 80px; height: 16px;">
                                     <!-- Active data (green) -->
                                     <div class="progress-bar bg-success" role="progressbar" 
                                          style={fmt.Sprintf("width: %.1f%%", 

@@ -45,11 +45,6 @@ templ ClusterBrokers(data dash.ClusterBrokersData) {
 
 		<!-- Brokers Table -->
 		<div class="card shadow mb-4">
-			<div class="card-header py-3">
-				<h6 class="m-0 font-weight-bold text-primary">
-					<i class="bi bi-chat-dots me-2"></i>Message Brokers
-				</h6>
-			</div>
 			<div class="card-body">
 				if len(data.Brokers) > 0 {
 					<div class="table-responsive">

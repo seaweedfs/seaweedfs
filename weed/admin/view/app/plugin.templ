@@ -546,7 +546,7 @@ templ Plugin(page string, initialJob string, lane string) {
         }
 
         .plugin-form-root .card {
-            border: 1px solid #dee2e6;
+            border: 1px solid var(--bs-border-color);
         }
         .plugin-form-root textarea {
             min-height: 12rem;
@@ -566,11 +566,11 @@ templ Plugin(page string, initialJob string, lane string) {
         }
 
         .plugin-detection-item {
-            border: 1px solid #dee2e6;
+            border: 1px solid var(--bs-border-color);
             border-radius: 6px;
             padding: 0.5rem 0.75rem;
             margin-bottom: 0.5rem;
-            background: #fbfcfd;
+            background: var(--bs-tertiary-bg);
         }
 
         .plugin-job-link {
@@ -580,8 +580,8 @@ templ Plugin(page string, initialJob string, lane string) {
         .plugin-job-detail-json {
             max-height: 220px;
             overflow: auto;
-            background: #f8f9fa;
-            border: 1px solid #dee2e6;
+            background: var(--bs-tertiary-bg);
+            border: 1px solid var(--bs-border-color);
             border-radius: 6px;
             padding: 0.5rem;
             margin-bottom: 0;

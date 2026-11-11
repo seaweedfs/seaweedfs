@@ -55,6 +55,7 @@ templ Layout(view ViewContext, content templ.Component) {
     <meta name="csrf-token" content={ csrfToken }>
     <link rel="icon" href={ string(view.P("/static/favicon.ico")) } type="image/x-icon">
 
+    <script src={ string(view.P("/static/js/theme.js")) }></script>
     <!-- Bootstrap CSS -->
     <link href={ string(view.P("/static/css/bootstrap.min.css")) } rel="stylesheet">
     <!-- Bootstrap Icons CSS -->
@@ -69,10 +70,10 @@ templ Layout(view ViewContext, content templ.Component) {
 <body>
     <div class="container-fluid p-0">
         <!-- Header -->
-        <header class="navbar navbar-expand-lg navbar-dark bg-primary sticky-top">
+        <header class="navbar navbar-expand-lg sticky-top admin-toolbar">
             <div class="container-fluid">
-                <a class="navbar-brand fw-bold" href={ view.P("/admin") }>
-                    <i class="bi bi-server me-2"></i>
+                <a class="navbar-brand" href={ view.P("/admin") }>
+                    <span class="brand-mark"><i class="bi bi-server"></i></span>
                     SeaweedFS Admin
                 </a>
 
@@ -84,12 +85,19 @@ templ Layout(view ViewContext, content templ.Component) {
                 </button>
 
                 <div class="collapse navbar-collapse" id="navbarNav">
-                    <ul class="navbar-nav ms-auto">
+                    <ul class="navbar-nav ms-auto align-items-lg-center">
+                        <li class="nav-item">
+                            <button class="theme-toggle" type="button" data-theme-toggle title="Switch theme: auto, light, dark" aria-label="Switch color theme">
+                                <i class="bi bi-circle-half theme-icon theme-icon-auto"></i>
+                                <i class="bi bi-sun theme-icon theme-icon-light"></i>
+                                <i class="bi bi-moon-stars theme-icon theme-icon-dark"></i>
+                            </button>
+                        </li>
                         <li class="nav-item dropdown">
                             <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
                                 <i class="bi bi-person me-1"></i>{username}
                             </a>
-                            <ul class="dropdown-menu">
+                            <ul class="dropdown-menu dropdown-menu-end">
                                 <li><a class="dropdown-item" href={ view.P("/logout") }>
                                     <i class="bi bi-box-arrow-right me-2"></i>Logout
                                 </a></li>
@@ -391,17 +399,19 @@ templ LoginForm(title string, errorMessage string, csrfToken string) {
     <title>{title} - Login</title>
     <link rel="icon" href={ prefix + "/static/favicon.ico" } type="image/x-icon">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <script src={ prefix + "/static/js/theme.js" }></script>
     <link href={ prefix + "/static/css/bootstrap.min.css" } rel="stylesheet">
-        <link href={ prefix + "/static/css/bootstrap-icons.min.css" } rel="stylesheet">
+    <link href={ prefix + "/static/css/bootstrap-icons.min.css" } rel="stylesheet">
+    <link href={ prefix + "/static/css/admin.css" } rel="stylesheet">
 </head>
-<body class="bg-light">
+<body class="login-page">
     <div class="container">
         <div class="row justify-content-center min-vh-100 align-items-center">
             <div class="col-md-6 col-lg-4">
                 <div class="card shadow">
                     <div class="card-body p-5">
                         <div class="text-center mb-4">
-                            <i class="bi bi-server icon-3x text-primary mb-3"></i>
+                            <span class="brand-mark mb-3"><i class="bi bi-server"></i></span>
                             <h4 class="card-title">{title}</h4>
                             <p class="text-muted">Please sign in to continue</p>
                         </div>

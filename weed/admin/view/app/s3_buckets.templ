@@ -18,6 +18,9 @@ templ S3Buckets(data dash.S3BucketsData) {
                     <option value="200" if data.PageSize == 200 { selected="selected" }>200 per page</option>
                     <option value="500" if data.PageSize == 500 { selected="selected" }>500 per page</option>
                 </select>
+                <button type="button" class="btn btn-sm btn-outline-primary me-2" onclick="exportBucketList()">
+                    <i class="bi bi-download me-1"></i>Export
+                </button>
                 <button type="button" class="btn btn-sm btn-primary"
                         data-bs-toggle="modal"
                         data-bs-target="#createBucketModal">
@@ -70,48 +73,12 @@ templ S3Buckets(data dash.S3BucketsData) {
                 </div>
             </div>
 
-
-            <div class="col-xl-4 col-md-6 mb-4">
-                <div class="card border-left-warning shadow h-100 py-2">
-                    <div class="card-body">
-                        <div class="row no-gutters align-items-center">
-                            <div class="col mr-2">
-                                <div class="text-xs font-weight-bold text-warning text-uppercase mb-1">
-                                    Last Updated
-                                </div>
-                                <div class="h6 mb-0 font-weight-bold text-gray-800">
-                                    {data.LastUpdated.Format("15:04:05")}
-                                </div>
-                            </div>
-                            <div class="col-auto">
-                                <i class="bi bi-clock icon-2x text-gray-300"></i>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
         </div>
 
         <!-- Buckets Table -->
         <div class="row">
             <div class="col-12">
                 <div class="card shadow mb-4">
-                    <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
-                        <h6 class="m-0 font-weight-bold text-primary">
-                            <i class="bi bi-box me-2"></i>Object Store Buckets
-                        </h6>
-                        <div class="dropdown no-arrow">
-                            <a class="dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
-                                <i class="bi bi-three-dots-vertical icon-sm icon-fixed-width text-gray-400"></i>
-                            </a>
-                            <div class="dropdown-menu dropdown-menu-right shadow animated--fade-in">
-                                <div class="dropdown-header">Actions:</div>
-                                <a class="dropdown-item" href="#" onclick="exportBucketList()">
-                                    <i class="bi bi-download me-2"></i>Export List
-                                </a>
-                            </div>
-                        </div>
-                    </div>
                     <div class="card-body">
                         <div class="table-responsive">
                             <table class="table table-hover" width="100%" cellspacing="0" id="bucketsTable">
@@ -160,7 +127,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                                         <tr>
                                             <td>
                                                 <a href={dash.PUrl(ctx, fmt.Sprintf("/files?path=/buckets/%s", bucket.Name))}
-                                                   class="text-decoration-none">
+                                                   class="text-decoration-none text-nowrap">
                                                     <i class="bi bi-box me-2"></i>
                                                     {bucket.Name}
                                                 </a>
@@ -176,10 +143,10 @@ templ S3Buckets(data dash.S3BucketsData) {
                                                         <i class="bi bi-person me-1"></i>{bucket.Owner}
                                                     </span>
                                                 } else {
-                                                    <span class="text-muted small">No owner</span>
+                                                    @emptyValue("No owner")
                                                 }
                                             </td>
-                                            <td>{bucket.CreatedAt.Format("2006-01-02 15:04")}</td>
+                                            <td class="text-nowrap" title={bucket.CreatedAt.Format("2006-01-02 15:04")}>{bucket.CreatedAt.Format("2006-01-02")}</td>
                                             <td>
                                                 <div>{formatBytes(bucket.LogicalSize)}</div>
                                                 if bucket.PhysicalSize > 0 && bucket.LogicalSize > 0 && bucket.PhysicalSize > bucket.LogicalSize {
@@ -204,7 +171,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                                                         }
                                                     </div>
                                                 } else {
-                                                    <span class="text-muted">No quota</span>
+                                                    @emptyValue("No quota")
                                                 }
                                             </td>
                                             <td>
@@ -217,7 +184,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                                                         <i class="bi bi-pause me-1"></i>Suspended
                                                     </span>
                                                 } else {
-                                                    <span class="text-muted">Not configured</span>
+                                                    @emptyValue("Not configured")
                                                 }
                                             </td>
                                             <td>
@@ -231,7 +198,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                                                         </div>
                                                     </div>
                                                 } else {
-                                                    <span class="text-muted">Not configured</span>
+                                                    @emptyValue("Not configured")
                                                 }
                                             </td>
                                             <td>
@@ -253,7 +220,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                                                         }
                                                     </div>
                                                 } else {
-                                                    <span class="text-muted">Not configured</span>
+                                                    @emptyValue("Not configured")
                                                 }
                                             </td>
                                             <td>
@@ -268,7 +235,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                                                         }
                                                     </button>
                                                 } else {
-                                                    <span class="text-muted">Not configured</span>
+                                                    @emptyValue("Not configured")
                                                 }
                                             </td>
                                             <td>
@@ -2234,8 +2201,7 @@ function commitOpenLifecycleRuleForm() {
                 }
 
                 const buckets = data.buckets || [];
-                const csvContent = "data:text/csv;charset=utf-8," +
-                    "Name,Owner,Logical Size,Physical Size,Created,Quota,Versioning,Object Lock\n" +
+                const csvContent = "Name,Owner,Logical Size,Physical Size,Created,Quota,Versioning,Object Lock\n" +
                     buckets.map(b => [
                         escapeCsvField(b.name),
                         escapeCsvField(b.owner),
@@ -2247,13 +2213,7 @@ function commitOpenLifecycleRuleForm() {
                         escapeCsvField(b.object_lock_enabled ? 'Enabled' : 'Not configured')
                     ].join(',')).join("\n");
 
-                const encodedUri = encodeURI(csvContent);
-                const link = document.createElement("a");
-                link.setAttribute("href", encodedUri);
-                link.setAttribute("download", "buckets.csv");
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
+                downloadCSV(csvContent, "buckets.csv");
             })
             .catch(error => {
                 console.error('Error:', error);

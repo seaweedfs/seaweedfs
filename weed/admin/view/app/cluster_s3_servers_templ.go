@@ -44,7 +44,7 @@ func ClusterS3Servers(data dash.ClusterS3ServersData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "</div></div><div class=\"col-auto\"><i class=\"bi bi-cloud icon-2x text-gray-300\"></i></div></div></div></div></div></div><!-- S3 Servers Table --><div class=\"card shadow mb-4\"><div class=\"card-header py-3\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"bi bi-cloud me-2\"></i>S3 Servers</h6></div><div class=\"card-body\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "</div></div><div class=\"col-auto\"><i class=\"bi bi-cloud icon-2x text-gray-300\"></i></div></div></div></div></div></div><!-- S3 Servers Table --><div class=\"card shadow mb-4\"><div class=\"card-body\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -61,7 +61,7 @@ func ClusterS3Servers(data dash.ClusterS3ServersData) templ.Component {
 				var templ_7745c5c3_Var3 string
 				templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(s3Server.Address)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_s3_servers.templ`, Line: 69, Col: 29}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_s3_servers.templ`, Line: 64, Col: 29}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 				if templ_7745c5c3_Err != nil {
@@ -74,7 +74,7 @@ func ClusterS3Servers(data dash.ClusterS3ServersData) templ.Component {
 				var templ_7745c5c3_Var4 string
 				templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(s3Server.Version)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_s3_servers.templ`, Line: 72, Col: 68}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_s3_servers.templ`, Line: 67, Col: 68}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
 				if templ_7745c5c3_Err != nil {
@@ -87,7 +87,7 @@ func ClusterS3Servers(data dash.ClusterS3ServersData) templ.Component {
 				var templ_7745c5c3_Var5 string
 				templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(s3Server.DataCenter)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_s3_servers.templ`, Line: 75, Col: 71}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_s3_servers.templ`, Line: 70, Col: 71}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 				if templ_7745c5c3_Err != nil {
@@ -101,7 +101,7 @@ func ClusterS3Servers(data dash.ClusterS3ServersData) templ.Component {
 					var templ_7745c5c3_Var6 string
 					templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(s3Server.CreatedAt.Format("2006-01-02 15:04:05"))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_s3_servers.templ`, Line: 79, Col: 62}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_s3_servers.templ`, Line: 74, Col: 62}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 					if templ_7745c5c3_Err != nil {
@@ -135,7 +135,7 @@ func ClusterS3Servers(data dash.ClusterS3ServersData) templ.Component {
 		var templ_7745c5c3_Var7 string
 		templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(data.LastUpdated.Format("2006-01-02 15:04:05"))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_s3_servers.templ`, Line: 104, Col: 67}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_s3_servers.templ`, Line: 99, Col: 67}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 		if templ_7745c5c3_Err != nil {
