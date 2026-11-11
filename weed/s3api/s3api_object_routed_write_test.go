@@ -336,8 +336,18 @@ func startFakeFiler(t *testing.T, impl filer_pb.SeaweedFilerServer) pb.ServerAdd
 	filer_pb.RegisterSeaweedFilerServer(srv, impl)
 	go srv.Serve(lis)
 	t.Cleanup(srv.Stop)
-	port := lis.Addr().(*net.TCPAddr).Port
-	return pb.ServerAddress(fmt.Sprintf("127.0.0.1:1.%d", port))
+	return fakeFilerAddress(lis)
+}
+
+// fakeFilerAddress returns the S3-style filer address of lis. The gRPC
+// connection cache is process-wide and keyed by address, so it drops whatever
+// channel an earlier test left for this port: a failed one would fail the first
+// RPC with a stale "connection refused", and one to a stopped fake filer can
+// still look ready.
+func fakeFilerAddress(lis net.Listener) pb.ServerAddress {
+	address := pb.ServerAddress(fmt.Sprintf("127.0.0.1:1.%d", lis.Addr().(*net.TCPAddr).Port))
+	pb.InvalidateGrpcConnection(address.ToGrpcAddress())
+	return address
 }
 
 func TestRoutedDeleteSpecificVersionUsesWormCondition(t *testing.T) {
@@ -480,9 +490,42 @@ func closedFilerAddress(t *testing.T) pb.ServerAddress {
 	if err != nil {
 		t.Fatal(err)
 	}
-	port := lis.Addr().(*net.TCPAddr).Port
 	lis.Close()
-	return pb.ServerAddress(fmt.Sprintf("127.0.0.1:1.%d", port))
+	return fakeFilerAddress(lis)
+}
+
+// A fake filer that gets the port of a dead owner an earlier test dialed must
+// not inherit that owner's failed channel.
+func TestFakeFilerOnReusedPortIsReachable(t *testing.T) {
+	live := &fakeTxnFiler{}
+	liveAddr := startFakeFiler(t, live)
+	deadOwner := closedFilerAddress(t)
+	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+	s3a := &S3ApiServer{
+		option:      &S3ApiServerOption{GrpcDialOption: dialOption},
+		filerClient: wdclient.NewFilerClient([]pb.ServerAddress{liveAddr}, dialOption, ""),
+	}
+	if _, err := s3a.objectTxnOnFiler(deadOwner, &filer_pb.ObjectTransactionRequest{LockKey: "/buckets/b/o", RouteKey: "s3.object.write:/buckets/b/o"}); err != nil {
+		t.Fatalf("expected failover success, got %v", err)
+	}
+
+	lis, err := net.Listen("tcp", deadOwner.ToGrpcAddress())
+	if err != nil {
+		t.Skipf("port of the dead owner was taken: %v", err)
+	}
+	reused := &fakeTxnFiler{}
+	srv := grpc.NewServer()
+	filer_pb.RegisterSeaweedFilerServer(srv, reused)
+	go srv.Serve(lis)
+	t.Cleanup(srv.Stop)
+
+	direct := &S3ApiServer{option: &S3ApiServerOption{GrpcDialOption: dialOption}}
+	if _, err := direct.objectTxnOnFiler(fakeFilerAddress(lis), &filer_pb.ObjectTransactionRequest{LockKey: "/buckets/b/o"}); err != nil {
+		t.Fatalf("fake filer on a reused port: %v", err)
+	}
+	if got := atomic.LoadInt32(&reused.calls); got != 1 {
+		t.Fatalf("reused-port filer calls = %d, want 1", got)
+	}
 }
 
 // A routed write whose owner address is dead fails over to a live filer (which

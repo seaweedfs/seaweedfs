@@ -3,7 +3,6 @@ package s3api
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -260,7 +259,7 @@ func startRecordingFiler(t *testing.T, f *recordingFiler) pb.ServerAddress {
 	filer_pb.RegisterSeaweedFilerServer(srv, f)
 	go srv.Serve(lis)
 	t.Cleanup(srv.Stop)
-	return pb.ServerAddress(fmt.Sprintf("127.0.0.1:1.%d", lis.Addr().(*net.TCPAddr).Port))
+	return fakeFilerAddress(lis)
 }
 
 // newS3TablesServeTestServer builds the production router over a gateway whose
