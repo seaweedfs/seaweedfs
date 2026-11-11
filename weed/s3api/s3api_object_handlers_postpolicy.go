@@ -288,6 +288,10 @@ var postPolicyReservedFormFields = map[string]struct{}{
 // skipped. The acl form field is translated to the X-Amz-Acl header to match
 // how AWS promotes the form value to the underlying PUT.
 func applyPostPolicyFormHeaders(r *http.Request, formValues http.Header) {
+	// The policy signs form fields only, so the upload ACL comes from the form.
+	for _, header := range postAclHeaders {
+		r.Header.Del(header)
+	}
 	for k := range formValues {
 		if _, reserved := postPolicyReservedFormFields[k]; reserved {
 			continue
@@ -320,10 +324,11 @@ func validHeaderValues(h http.Header) bool {
 	return true
 }
 
-// postRequestsAcl reports whether the request carries ACL headers, whether
-// promoted from the POST form fields or supplied on the request itself.
+var postAclHeaders = []string{s3_constants.AmzCannedAcl, s3_constants.AmzAclFullControl, s3_constants.AmzAclRead, s3_constants.AmzAclReadAcp, s3_constants.AmzAclWrite, s3_constants.AmzAclWriteAcp}
+
+// postRequestsAcl reports whether the POST form fields promoted an ACL.
 func postRequestsAcl(r *http.Request) bool {
-	for _, header := range []string{s3_constants.AmzCannedAcl, s3_constants.AmzAclFullControl, s3_constants.AmzAclRead, s3_constants.AmzAclReadAcp, s3_constants.AmzAclWrite, s3_constants.AmzAclWriteAcp} {
+	for _, header := range postAclHeaders {
 		if r.Header.Get(header) != "" {
 			return true
 		}
