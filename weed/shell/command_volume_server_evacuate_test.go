@@ -349,3 +349,41 @@ func TestVolumeServerEvacuateEcReportsMovesPerExecWhenApplied(t *testing.T) {
 		t.Fatalf("expected 2 moves and the limit reported, counted %d:\n%s", c.movedCount, out.String())
 	}
 }
+
+// Every round moves or drops each planned shard, so planning again goes on for as
+// long as failed moves leave room: a readable shard behind many unreadable ones
+// still moves.
+func TestVolumeServerEvacuateEcPlansAgainUntilNoRoomIsLeft(t *testing.T) {
+	c := newEvacuateCommandForTest(0)
+	c.topologyInfo = tightTargetTopology()
+	const unreadable = 12
+	source := c.topologyInfo.DataCenterInfos[0].RackInfos[0].DataNodeInfos[0]
+	var shards []*master_pb.VolumeEcShardInformationMessage
+	for vid := uint32(1); vid <= unreadable+1; vid++ {
+		si := erasure_coding.NewShardsInfo()
+		si.Set(erasure_coding.NewShardInfo(0, 0))
+		shards = append(shards, &master_pb.VolumeEcShardInformationMessage{Id: vid, Collection: "c", EcIndexBits: si.Bitmap(), ShardSizes: si.SizesInt64()})
+	}
+	source.DiskInfos[""].EcShardInfos = shards
+	var moved []uint32
+	c.moveEcShards = func(moves []ecbalancer.Move, stopOnError bool) (result ec.EcShardMovesResult, err error) {
+		for _, m := range moves {
+			if m.VolumeID <= unreadable {
+				result.Failed++
+				result.FailedMoves = append(result.FailedMoves, m)
+				err = errors.New("input/output error")
+				continue
+			}
+			result.Moved++
+			moved = append(moved, m.VolumeID)
+		}
+		return result, err
+	}
+	var out bytes.Buffer
+	if err := c.evacuateEcVolumes(nil, "source:8080", true, true, &out); err != nil {
+		t.Fatalf("evacuate: %v", err)
+	}
+	if len(moved) != 1 || moved[0] != unreadable+1 {
+		t.Fatalf("expected volume %d to move after %d failed ones, moved %v:\n%s", unreadable+1, unreadable, moved, out.String())
+	}
+}

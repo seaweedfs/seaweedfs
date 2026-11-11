@@ -202,10 +202,6 @@ func (c *commandVolumeServerEvacuate) evacuateNormalVolumes(commandEnv *CommandE
 	return nil
 }
 
-// maxEcEvacuationRounds bounds how often evacuateEcVolumes plans again after
-// failed moves give their targets back.
-const maxEcEvacuationRounds = 10
-
 // ecShardOnServer names one EC shard on one source server.
 type ecShardOnServer struct {
 	server  string
@@ -263,7 +259,9 @@ func (c *commandVolumeServerEvacuate) evacuateEcVolumes(commandEnv *CommandEnv, 
 		source = "rack " + *c.volumeRack
 	}
 	failed := make(map[ecShardOnServer]bool)
-	for round := 1; ; round++ {
+	// Each round moves or fails every shard it plans, and a failed shard is not
+	// planned again, so the rounds end.
+	for {
 		planned, unplanned, planErr := c.planEcEvacuation(groups, volumeServer, skipNonMoveable, failed, writer)
 		reportUnplanned := func() {
 			for _, vid := range unplanned {
@@ -312,7 +310,7 @@ func (c *commandVolumeServerEvacuate) evacuateEcVolumes(commandEnv *CommandEnv, 
 			return planErr
 		}
 		limitReached := c.limitReached(writer)
-		if len(result.FailedMoves) == 0 || len(unplanned) == 0 || limitReached || round == maxEcEvacuationRounds {
+		if len(result.FailedMoves) == 0 || len(unplanned) == 0 || limitReached {
 			reportUnplanned()
 			return nil
 		}
