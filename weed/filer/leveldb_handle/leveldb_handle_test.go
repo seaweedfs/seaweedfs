@@ -193,6 +193,7 @@ func TestReopenWaitsForOpenIterator(t *testing.T) {
 
 func TestNestedReadWaitsOutTheDrain(t *testing.T) {
 	db, st := openFailing(t)
+	drainTimeout = 500 * time.Millisecond
 	if err := db.Put([]byte("a"), []byte("1"), nil); err != nil {
 		t.Fatal(err)
 	}
@@ -201,12 +202,19 @@ func TestNestedReadWaitsOutTheDrain(t *testing.T) {
 		t.Fatal("put while storage fails succeeded")
 	}
 	st.fail.Store(false)
+	st.probeStarted, st.probeRelease = make(chan struct{}, 1), make(chan struct{})
 
 	iter := db.NewIterator(nil, nil)
 	put := make(chan error, 1)
 	go func() { put <- db.Put([]byte("y"), []byte("y"), nil) }()
+	<-st.probeStarted
+	close(st.probeRelease)
 	for db.draining.Load() == nil {
-		time.Sleep(time.Millisecond)
+		select {
+		case err := <-put:
+			t.Fatalf("put returned before its drain was seen: %v", err)
+		case <-time.After(time.Millisecond):
+		}
 	}
 	expectValue(t, db, "a", "1")
 	iter.Release()
@@ -228,24 +236,29 @@ func TestReopenIsNotStarvedByOverlappingReaders(t *testing.T) {
 	st.fail.Store(false)
 
 	stop := make(chan struct{})
-	var readers sync.WaitGroup
+	var readers, started sync.WaitGroup
 	for i := 0; i < 4; i++ {
 		readers.Add(1)
+		started.Add(1)
 		go func() {
 			defer readers.Done()
-			for {
+			for first := true; ; first = false {
 				select {
 				case <-stop:
 					return
 				default:
 				}
 				iter := db.NewIterator(nil, nil)
+				if first {
+					started.Done()
+				}
 				time.Sleep(2 * time.Millisecond)
 				iter.Release()
 			}
 		}()
 		time.Sleep(500 * time.Microsecond)
 	}
+	started.Wait()
 	err := db.Put([]byte("y"), []byte("y"), nil)
 	close(stop)
 	readers.Wait()
