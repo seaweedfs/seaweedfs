@@ -7256,6 +7256,7 @@ dependencies = [
  "tonic-prost-build",
  "tracing",
  "tracing-subscriber",
+ "uuid",
  "weed-lance-worker",
  "weed-vector-core",
 ]
