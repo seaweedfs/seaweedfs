@@ -163,21 +163,6 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 			s3err.WriteErrorResponse(w, r, refineDenialForBucketName(r, identity, errCode))
 			return
 		}
-		config, errCode := s3a.getBucketConfig(bucket)
-		if errCode != s3err.ErrNone && errCode != s3err.ErrNoSuchBucket {
-			s3err.WriteErrorResponse(w, r, errCode)
-			return
-		}
-		if errCode == s3err.ErrNone && config.PublicAccessBlock.blocksPublicAcls() {
-			_, grants, aclCode := ParseAclHeaders(r, config.Ownership, config.Owner, "", false)
-			if aclCode == s3err.ErrNone {
-				aclCode = rejectPublicGrants(config, grants)
-			}
-			if aclCode != s3err.ErrNone {
-				s3err.WriteErrorResponse(w, r, aclCode)
-				return
-			}
-		}
 	}
 
 	versioningState, err := s3a.getVersioningState(bucket)
@@ -196,6 +181,11 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 			return
 		}
+	}
+	r, errCode = s3a.preparePostObjectACL(r, bucket)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
 	}
 	objectLockEnabled, err := s3a.isObjectLockEnabled(bucket)
 	if err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
