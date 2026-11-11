@@ -75,6 +75,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	}
 	removeMountSocket := mountSocketCleanup(*option.localSocket)
 	defer removeMountSocket()
+	grace.OnInterrupt(removeMountSocket)
 
 	uidGidMapper, err := meta_cache.NewUidGidMapper(*option.uidMap, *option.gidMap)
 	if err != nil {
@@ -128,7 +129,6 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		// The filesystem's own hook runs next and drains queued writeback
 		// flushes for at most 30 s, keeping the write cache if they are not done.
 		host.Unmount()
-		removeMountSocket()
 	})
 
 	serveMountGrpc(seaweedFileSystem, mountSocketListener)
