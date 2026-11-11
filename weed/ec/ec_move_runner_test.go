@@ -153,4 +153,7 @@ func TestRunEcShardMovesKeepsShardsOnTheTargetOutOfFailedMoves(t *testing.T) {
 	if result.Failed != 2 || len(result.FailedMoves) != 1 || result.FailedMoves[0] != moves[1] {
 		t.Fatalf("expected only the move without a target copy in FailedMoves, got %+v", result)
 	}
+	if len(result.LandedMoves) != 1 || result.LandedMoves[0] != moves[0] {
+		t.Fatalf("expected the move with a target copy in LandedMoves, got %+v", result)
+	}
 }

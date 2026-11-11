@@ -31,6 +31,8 @@ type EcShardMovesResult struct {
 	// FailedMoves are the failed moves whose target did not register the shard;
 	// their shards are still on the source.
 	FailedMoves []ecbalancer.Move
+	// LandedMoves are the failed moves whose target has the shard.
+	LandedMoves []ecbalancer.Move
 }
 
 // RunEcShardMoves applies planned shard moves, up to maxParallelization at once,
@@ -87,18 +89,20 @@ func runEcShardMoves(moves []ecbalancer.Move, maxParallelization int, stopOnErro
 	var moved, failed atomic.Int64
 	var mu sync.Mutex
 	var errs []error
-	var failedMoves []ecbalancer.Move
+	var failedMoves, landedMoves []ecbalancer.Move
 	err := runMovesSpreadingTargets(maxParallelization, moves, func(m ecbalancer.Move) error {
 		if stopped.Load() {
 			return nil
 		}
 		if err := move(m); err != nil {
 			failed.Add(1)
-			if !errors.Is(err, errShardOnTarget) {
-				mu.Lock()
+			mu.Lock()
+			if errors.Is(err, errShardOnTarget) {
+				landedMoves = append(landedMoves, m)
+			} else {
 				failedMoves = append(failedMoves, m)
-				mu.Unlock()
 			}
+			mu.Unlock()
 			if stopOnError || errors.Is(err, ErrLockLost) {
 				stopped.Store(true)
 				return err
@@ -116,6 +120,7 @@ func runEcShardMoves(moves []ecbalancer.Move, maxParallelization int, stopOnErro
 		Moved:       int(moved.Load()),
 		Failed:      int(failed.Load()),
 		FailedMoves: failedMoves,
+		LandedMoves: landedMoves,
 	}
 	// Moves skipped after a stop, and moves dropped together with a failed move
 	// of their volume, did not run.

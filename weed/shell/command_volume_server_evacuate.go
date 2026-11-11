@@ -300,8 +300,15 @@ func (c *commandVolumeServerEvacuate) evacuateEcVolumes(commandEnv *CommandEnv, 
 			fmt.Fprintf(writer, "skipped ec shards that failed to move: %v\n", err)
 		}
 		// The shard of a failed move is still on its source, and its target did
-		// not receive it.
-		for _, m := range result.FailedMoves {
+		// not receive it. A target that had the shard before reports it after
+		// any failure, and took no new slot for it.
+		undo := append([]ecbalancer.Move(nil), result.FailedMoves...)
+		for _, m := range result.LandedMoves {
+			if byShard[ecShardOnServer{m.SourceNode, m.VolumeID, m.ShardID}].dstHadShard {
+				undo = append(undo, m)
+			}
+		}
+		for _, m := range undo {
 			key := ecShardOnServer{m.SourceNode, m.VolumeID, m.ShardID}
 			if p, found := byShard[key]; found {
 				unplanEcMove(p)
@@ -312,7 +319,7 @@ func (c *commandVolumeServerEvacuate) evacuateEcVolumes(commandEnv *CommandEnv, 
 			return planErr
 		}
 		limitReached := c.limitReached(writer)
-		if len(result.FailedMoves) == 0 || len(unplanned) == 0 || limitReached {
+		if len(undo) == 0 || len(unplanned) == 0 || limitReached {
 			reportUnplanned()
 			return nil
 		}
