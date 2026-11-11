@@ -289,8 +289,32 @@ func isCanceledStreamingError(err error) bool {
 	return errors.Is(err, context.Canceled) || status.Code(err) == codes.Canceled
 }
 
-func shouldWriteStreamingErrorResponse(err error) bool {
-	return err != nil && !isCanceledStreamingError(err)
+// writeStreamErrorResponse answers a stream failure unless the stream already
+// wrote a response. A canceled error is answered too: the idle timeout and a
+// shared lookup canceled by another request both cancel it while the client is
+// still connected, and returning silently would send that client an empty 200.
+// A client that has gone away never sees the write.
+func writeStreamErrorResponse(w http.ResponseWriter, r *http.Request, err error) {
+	var streamErr *StreamError
+	if errors.As(err, &streamErr) && streamErr.ResponseWritten {
+		return
+	}
+	if errors.Is(err, util_http.ErrTooManyRequests) {
+		s3err.WriteErrorResponse(w, r, s3err.ErrRequestBytesExceed)
+		return
+	}
+	s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+}
+
+// logCanceledStream logs a canceled stream at V(3) when the request context is
+// canceled too, since that is usually the client leaving, and as a warning when
+// only shared work was canceled under a live request.
+func logCanceledStream(r *http.Request, caller, bucket, object string, err error) {
+	if r.Context().Err() != nil {
+		glog.V(3).Infof("%s: request canceled while streaming %s/%s: %v", caller, bucket, object, err)
+		return
+	}
+	glog.Warningf("%s: streaming %s/%s canceled under a live request: %v", caller, bucket, object, err)
 }
 
 func mimeDetect(r *http.Request, dataReader io.Reader) io.ReadCloser {
@@ -480,20 +504,12 @@ func (s3a *S3ApiServer) serveDirectoryContent(w http.ResponseWriter, r *http.Req
 	if r.Method != http.MethodHead && len(entry.Content) == 0 && len(entry.Chunks) > 0 {
 		sseType := s3a.detectPrimarySSEType(entry)
 		if err := s3a.streamFromVolumeServersWithSSE(w, r, entry, sseType, bucket, object, ""); err != nil {
-			var streamErr *StreamError
-			if errors.As(err, &streamErr) && streamErr.ResponseWritten {
-				return
-			}
 			if isCanceledStreamingError(err) {
-				glog.V(3).Infof("serveDirectoryContent: client disconnected while streaming %s/%s: %v", bucket, object, err)
-				return
+				logCanceledStream(r, "serveDirectoryContent", bucket, object, err)
+			} else {
+				glog.Errorf("serveDirectoryContent: failed to stream %s/%s: %v", bucket, object, err)
 			}
-			glog.Errorf("serveDirectoryContent: failed to stream %s/%s: %v", bucket, object, err)
-			if errors.Is(err, util_http.ErrTooManyRequests) {
-				s3err.WriteErrorResponse(w, r, s3err.ErrRequestBytesExceed)
-			} else if shouldWriteStreamingErrorResponse(err) {
-				s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-			}
+			writeStreamErrorResponse(w, r, err)
 		}
 		return
 	}
@@ -1127,27 +1143,13 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		switch {
 		case isCanceledStreamingError(err):
-			glog.V(3).Infof("GetObjectHandler: client disconnected while streaming %s/%s: %v", bucket, object, err)
-			return
+			logCanceledStream(r, "GetObjectHandler", bucket, object, err)
 		case errors.Is(err, context.DeadlineExceeded):
 			glog.Warningf("GetObjectHandler: deadline exceeded while streaming %s/%s: %v", bucket, object, err)
 		default:
 			glog.Errorf("GetObjectHandler: failed to stream %s/%s from volume servers: %v", bucket, object, err)
 		}
-		// Check if the streaming function already wrote an HTTP response
-		var streamErr *StreamError
-		if errors.As(err, &streamErr) && streamErr.ResponseWritten {
-			// Response already written (headers + status code), don't write again
-			// to avoid "superfluous response.WriteHeader call" and malformed S3 error bodies
-			return
-		}
-		// Response not yet written - safe to write S3 error response
-		// Check if error is due to volume server rate limiting (HTTP 429)
-		if errors.Is(err, util_http.ErrTooManyRequests) {
-			s3err.WriteErrorResponse(w, r, s3err.ErrRequestBytesExceed)
-		} else if shouldWriteStreamingErrorResponse(err) {
-			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-		}
+		writeStreamErrorResponse(w, r, err)
 		return
 	}
 }
@@ -1216,7 +1218,10 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 			if written > 0 {
 				BucketTrafficSent(int64(written), r)
 			}
-			return err
+			if err != nil {
+				return newStreamErrorWithResponse(err)
+			}
+			return nil
 		}
 		// Non-range request for inline content
 		s3a.setResponseHeaders(w, r, entry, totalSize)
@@ -1225,7 +1230,10 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 		if written > 0 {
 			BucketTrafficSent(int64(written), r)
 		}
-		return err
+		if err != nil {
+			return newStreamErrorWithResponse(err)
+		}
+		return nil
 	}
 
 	// Get chunks and validate BEFORE setting headers
@@ -1262,8 +1270,8 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 				// Authoritative: the entry vanished or its remote object is gone
 				return respondObjectGone(w, r, bucket, object, cacheErr)
 			} else {
-				// Client disconnected during the cache wait: report cancellation, not an
-				// error response, so we don't write to a closed connection.
+				// Request canceled during the cache wait: skip the origin and let the
+				// caller answer the cancellation.
 				if ctxErr := r.Context().Err(); ctxErr != nil {
 					return ctxErr
 				}
