@@ -182,6 +182,10 @@ func (s3a *S3ApiServer) preparePutObjectACL(r *http.Request, bucket string) (*ht
 			}
 		}
 	}
+	return s3a.attachPutObjectACL(r, aclRequest, metadata, accountID, canned, custom)
+}
+
+func (s3a *S3ApiServer) attachPutObjectACL(r, aclRequest *http.Request, metadata *BucketConfig, accountID, canned string, custom bool) (*http.Request, s3err.ErrorCode) {
 	if accountID == "" {
 		return r, s3err.ErrAccessDenied
 	}
