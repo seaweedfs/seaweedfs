@@ -1,0 +1,179 @@
+package leveldb_handle
+
+import (
+	"errors"
+	"sync/atomic"
+	"syscall"
+	"testing"
+	"time"
+
+	"github.com/syndtr/goleveldb/leveldb"
+	"github.com/syndtr/goleveldb/leveldb/storage"
+)
+
+type failingStorage struct {
+	storage.Storage
+	fail atomic.Bool
+}
+
+func (f *failingStorage) Create(fd storage.FileDesc) (storage.Writer, error) {
+	w, err := f.Storage.Create(fd)
+	if err != nil {
+		return nil, err
+	}
+	return &failingWriter{Writer: w, s: f}, nil
+}
+
+type failingWriter struct {
+	storage.Writer
+	s *failingStorage
+}
+
+func (w *failingWriter) Write(p []byte) (int, error) {
+	if w.s.fail.Load() {
+		return 0, syscall.ENOSPC
+	}
+	return w.Writer.Write(p)
+}
+
+func openFailing(t *testing.T) (*DB, *failingStorage) {
+	t.Helper()
+	interval, timeout := reopenInterval, drainTimeout
+	reopenInterval, drainTimeout = 0, 50*time.Millisecond
+	t.Cleanup(func() { reopenInterval, drainTimeout = interval, timeout })
+	st := &failingStorage{Storage: storage.NewMemStorage()}
+	db, err := Open(st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	return db, st
+}
+
+func expectValue(t *testing.T, db *DB, key, want string) {
+	t.Helper()
+	got, err := db.Get([]byte(key), nil)
+	if err != nil || string(got) != want {
+		t.Fatalf("get %s = %q, %v; want %q", key, got, err, want)
+	}
+}
+
+func TestWriteRecoversOnceStorageRecovers(t *testing.T) {
+	db, st := openFailing(t)
+	if err := db.Put([]byte("a"), []byte("1"), nil); err != nil {
+		t.Fatal(err)
+	}
+
+	st.fail.Store(true)
+	if err := db.Put([]byte("b"), []byte("2"), nil); !errors.Is(err, syscall.ENOSPC) {
+		t.Fatalf("put while storage fails: %v", err)
+	}
+	expectValue(t, db, "a", "1")
+
+	st.fail.Store(false)
+	if err := db.Put([]byte("c"), []byte("3"), nil); err != nil {
+		t.Fatalf("put after storage recovered: %v", err)
+	}
+	batch := new(leveldb.Batch)
+	batch.Delete([]byte("c"))
+	if err := db.Write(batch, nil); err != nil {
+		t.Fatalf("batch after storage recovered: %v", err)
+	}
+	expectValue(t, db, "a", "1")
+	if _, err := db.Get([]byte("c"), nil); err != leveldb.ErrNotFound {
+		t.Fatalf("get deleted key: %v", err)
+	}
+}
+
+func TestReopenWaitsForOpenIterator(t *testing.T) {
+	db, st := openFailing(t)
+	for _, k := range []string{"a", "b"} {
+		if err := db.Put([]byte(k), []byte(k), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	st.fail.Store(true)
+	if err := db.Put([]byte("x"), []byte("x"), nil); err == nil {
+		t.Fatal("put while storage fails succeeded")
+	}
+	st.fail.Store(false)
+
+	iter := db.NewIterator(nil, nil)
+	if !iter.Next() || string(iter.Key()) != "a" {
+		t.Fatalf("first key %q", iter.Key())
+	}
+	if err := db.Put([]byte("y"), []byte("y"), nil); !errors.Is(err, syscall.ENOSPC) {
+		t.Fatalf("put with an open iterator: %v", err)
+	}
+	if !iter.Next() || string(iter.Key()) != "b" || iter.Next() {
+		t.Fatalf("iterator after a refused reopen: key %q, err %v", iter.Key(), iter.Error())
+	}
+	iter.Release()
+	iter.Release()
+
+	if err := db.Put([]byte("y"), []byte("y"), nil); err != nil {
+		t.Fatalf("put after the iterator was released: %v", err)
+	}
+	expectValue(t, db, "b", "b")
+}
+
+func TestCloseIsNotUndoneByReopen(t *testing.T) {
+	db, st := openFailing(t)
+	st.fail.Store(true)
+	if err := db.Put([]byte("a"), []byte("1"), nil); err == nil {
+		t.Fatal("put while storage fails succeeded")
+	}
+	st.fail.Store(false)
+	db.Close()
+	if err := db.Put([]byte("a"), []byte("1"), nil); err != leveldb.ErrClosed {
+		t.Fatalf("put after close: %v", err)
+	}
+	if iter := db.NewIterator(nil, nil); iter.Next() || iter.Error() != leveldb.ErrClosed {
+		t.Fatalf("iterator after close: %v", iter.Error())
+	}
+}
+
+func TestReopenKeepsFileDatabase(t *testing.T) {
+	dir := t.TempDir()
+	db, err := OpenFile(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Put([]byte("a"), []byte("1"), nil); err != nil {
+		t.Fatal(err)
+	}
+	if !db.reopen(db.db) {
+		t.Fatal("reopen failed")
+	}
+	if err := db.Put([]byte("b"), []byte("2"), nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err = OpenFile(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	expectValue(t, db, "a", "1")
+	expectValue(t, db, "b", "2")
+}
+
+func TestReopenAttemptsAreRateLimited(t *testing.T) {
+	db, st := openFailing(t)
+	reopenInterval = time.Hour
+	st.fail.Store(true)
+	if err := db.Put([]byte("a"), []byte("1"), nil); err == nil {
+		t.Fatal("put while storage fails succeeded")
+	}
+	st.fail.Store(false)
+	if err := db.Put([]byte("a"), []byte("1"), nil); !errors.Is(err, syscall.ENOSPC) {
+		t.Fatalf("put within the reopen interval: %v", err)
+	}
+	db.lastReopen.Store(0)
+	if err := db.Put([]byte("a"), []byte("1"), nil); err != nil {
+		t.Fatalf("put after the reopen interval: %v", err)
+	}
+}
