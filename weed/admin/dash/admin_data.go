@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/iam"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // Access key status constants
@@ -290,6 +291,17 @@ func (s *AdminServer) ShowOverview(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, topology)
 }
 
+// raftMasterHttpAddress returns a raft member's HTTP address. Members are
+// named after their master address, while the raft address only carries the
+// gRPC port, which is not always the HTTP port + 10000.
+func raftMasterHttpAddress(server *master_pb.RaftListClusterServersResponse_ClusterServers) string {
+	httpAddress := pb.ServerAddress(server.Id).ToHttpAddress()
+	if _, port, err := util.ParseHostPort(httpAddress); err == nil && port > 0 && port < 65536 {
+		return httpAddress
+	}
+	return pb.GrpcAddressToServerAddress(server.Address)
+}
+
 // getMasterNodesStatus returns the full set of master nodes in the cluster.
 // It prefers the authoritative raft membership (RaftListClusterServers) and
 // falls back to the currently-connected master if the raft call fails, so the
@@ -313,7 +325,7 @@ func (s *AdminServer) getMasterNodesStatus() []MasterNode {
 				glog.Warningf("skip master with invalid raft address %q: %v", server.Address, splitErr)
 				continue
 			}
-			httpAddress := pb.GrpcAddressToServerAddress(server.Address)
+			httpAddress := raftMasterHttpAddress(server)
 			if httpAddress == "" {
 				glog.Warningf("skip master with invalid raft address %q", server.Address)
 				continue
