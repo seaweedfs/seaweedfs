@@ -434,7 +434,7 @@ templ FileBrowser(data dash.FileBrowserData) {
 				if (data.error) {
 					showAlert('Error loading file properties: ' + data.error, 'error');
 				} else {
-					displayFileProperties(data);
+					displayFileProperties(escapeProperties(data));
 				}
 			})
 			.catch(error => {
@@ -443,6 +443,19 @@ templ FileBrowser(data dash.FileBrowserData) {
 			});
 	}
 	
+	function escapeProperties(value) {
+		if (typeof value === 'string') {
+			return escapeHtml(value);
+		}
+		if (Array.isArray(value)) {
+			return value.map(escapeProperties);
+		}
+		if (value && typeof value === 'object') {
+			return Object.fromEntries(Object.entries(value).map(([key, item]) => [escapeHtml(key), escapeProperties(item)]));
+		}
+		return value;
+	}
+
 	function displayFileProperties(data) {
 		// Create a comprehensive modal for file properties
 		const modalHtml = '<div class="modal fade" id="filePropertiesModal" tabindex="-1">' +
