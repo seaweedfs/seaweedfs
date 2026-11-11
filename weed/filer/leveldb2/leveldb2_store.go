@@ -10,12 +10,12 @@ import (
 	"os"
 
 	"github.com/syndtr/goleveldb/leveldb"
-	leveldb_errors "github.com/syndtr/goleveldb/leveldb/errors"
 	"github.com/syndtr/goleveldb/leveldb/filter"
 	"github.com/syndtr/goleveldb/leveldb/opt"
 	leveldb_util "github.com/syndtr/goleveldb/leveldb/util"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/filer/leveldb_handle"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	weed_util "github.com/seaweedfs/seaweedfs/weed/util"
@@ -26,7 +26,7 @@ func init() {
 }
 
 type LevelDB2Store struct {
-	dbs      []*leveldb.DB
+	dbs      []*leveldb_handle.DB
 	dbCount  int
 	ReadOnly bool
 
@@ -108,10 +108,7 @@ func (store *LevelDB2Store) initialize(dir string, dbCount int) (err error) {
 	for d := 0; d < dbCount; d++ {
 		dbFolder := fmt.Sprintf("%s/%02d", dir, d)
 		os.MkdirAll(dbFolder, 0755)
-		db, dbErr := leveldb.OpenFile(dbFolder, opts)
-		if leveldb_errors.IsCorrupted(dbErr) {
-			db, dbErr = leveldb.RecoverFile(dbFolder, opts)
-		}
+		db, dbErr := leveldb_handle.OpenFile(dbFolder, opts)
 		if dbErr != nil {
 			glog.Errorf("filer store open dir %s: %v", dbFolder, dbErr)
 			return dbErr
@@ -226,7 +223,11 @@ func (store *LevelDB2Store) DeleteFolderChildren(ctx context.Context, fullpath w
 		}
 		batch.Delete(append(directoryPrefix, []byte(fileName)...))
 	}
+	iterErr := iter.Error()
 	iter.Release()
+	if iterErr != nil {
+		return fmt.Errorf("delete %s : %v", fullpath, iterErr)
+	}
 
 	err = store.dbs[partitionId].Write(batch, writeOptions(ctx))
 
@@ -287,6 +288,9 @@ func (store *LevelDB2Store) ListDirectoryPrefixedEntries(ctx context.Context, di
 		if !resEachEntryFunc {
 			break
 		}
+	}
+	if err == nil {
+		err = iter.Error()
 	}
 	iter.Release()
 

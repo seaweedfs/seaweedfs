@@ -13,13 +13,13 @@ import (
 	"sync"
 
 	"github.com/syndtr/goleveldb/leveldb"
-	leveldb_errors "github.com/syndtr/goleveldb/leveldb/errors"
 	"github.com/syndtr/goleveldb/leveldb/filter"
 	"github.com/syndtr/goleveldb/leveldb/opt"
 	"github.com/syndtr/goleveldb/leveldb/storage"
 	leveldb_util "github.com/syndtr/goleveldb/leveldb/util"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/filer/leveldb_handle"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	weed_util "github.com/seaweedfs/seaweedfs/weed/util"
@@ -35,10 +35,10 @@ func init() {
 
 type LevelDB3Store struct {
 	dir      string
-	dbs      map[string]*leveldb.DB
+	dbs      map[string]*leveldb_handle.DB
 	dbsLock  sync.RWMutex
 	ReadOnly bool
-	emptyDB  *leveldb.DB
+	emptyDB  *leveldb_handle.DB
 
 	blockCacheSizeMB      int
 	writeBufferSizeMB     int
@@ -122,21 +122,18 @@ func (store *LevelDB3Store) initialize(dir string) (err error) {
 	if loadDbErr != nil {
 		return loadDbErr
 	}
-	store.dbs = make(map[string]*leveldb.DB)
+	store.dbs = make(map[string]*leveldb_handle.DB)
 	store.dbs[DEFAULT] = db
 
 	return
 }
 
-func (store *LevelDB3Store) loadDB(name string) (*leveldb.DB, error) {
+func (store *LevelDB3Store) loadDB(name string) (*leveldb_handle.DB, error) {
 	opts := store.buildOptions(name)
 
 	dbFolder := fmt.Sprintf("%s/%s", store.dir, name)
 	os.MkdirAll(dbFolder, 0755)
-	db, dbErr := leveldb.OpenFile(dbFolder, opts)
-	if leveldb_errors.IsCorrupted(dbErr) {
-		db, dbErr = leveldb.RecoverFile(dbFolder, opts)
-	}
+	db, dbErr := leveldb_handle.OpenFile(dbFolder, opts)
 	if dbErr != nil {
 		glog.Errorf("filer store open dir %s: %v", dbFolder, dbErr)
 		return nil, dbErr
@@ -144,7 +141,7 @@ func (store *LevelDB3Store) loadDB(name string) (*leveldb.DB, error) {
 	return db, nil
 }
 
-func (store *LevelDB3Store) findDB(fullpath weed_util.FullPath, isForChildren bool) (*leveldb.DB, string, weed_util.FullPath, error) {
+func (store *LevelDB3Store) findDB(fullpath weed_util.FullPath, isForChildren bool) (*leveldb_handle.DB, string, weed_util.FullPath, error) {
 
 	store.dbsLock.RLock()
 
@@ -193,11 +190,11 @@ func (store *LevelDB3Store) findDB(fullpath weed_util.FullPath, isForChildren bo
 	return db, bucket, shortPath, err
 }
 
-func (store *LevelDB3Store) emptyBucketDB() (*leveldb.DB, error) {
+func (store *LevelDB3Store) emptyBucketDB() (*leveldb_handle.DB, error) {
 	store.dbsLock.Lock()
 	defer store.dbsLock.Unlock()
 	if store.emptyDB == nil {
-		db, err := leveldb.Open(storage.NewMemStorage(), nil)
+		db, err := leveldb_handle.Open(storage.NewMemStorage(), nil)
 		if err != nil {
 			return nil, err
 		}
@@ -214,7 +211,7 @@ func isBucketFolder(bucket string) bool {
 	return !strings.HasPrefix(bucket, ".") && filepath.IsLocal(bucket) && !strings.ContainsAny(bucket, "/"+string(os.PathSeparator))
 }
 
-func (store *LevelDB3Store) createDB(bucket string) (*leveldb.DB, error) {
+func (store *LevelDB3Store) createDB(bucket string) (*leveldb_handle.DB, error) {
 
 	store.dbsLock.Lock()
 	defer store.dbsLock.Unlock()
@@ -391,7 +388,11 @@ func (store *LevelDB3Store) DeleteFolderChildren(ctx context.Context, fullpath w
 		}
 		batch.Delete(append(directoryPrefix, []byte(fileName)...))
 	}
+	iterErr := iter.Error()
 	iter.Release()
+	if iterErr != nil {
+		return fmt.Errorf("delete %s : %v", fullpath, iterErr)
+	}
 
 	err = db.Write(batch, writeOptions(ctx))
 
@@ -457,6 +458,9 @@ func (store *LevelDB3Store) ListDirectoryPrefixedEntries(ctx context.Context, di
 		if !resEachEntryFunc {
 			break
 		}
+	}
+	if err == nil {
+		err = iter.Error()
 	}
 	iter.Release()
 
