@@ -589,6 +589,28 @@ main h2:has(> .bi:first-child) > .bi:first-child {
     color: var(--k-secondary) !important;
 }
 
+.health-dot {
+    font-size: .5rem;
+    vertical-align: middle;
+}
+
+.cluster-count {
+    padding: .5rem .25rem;
+    border-radius: 8px;
+    color: var(--k-label);
+    text-decoration: none;
+}
+
+.cluster-count .h5 {
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+}
+
+a.cluster-count:hover {
+    background-color: var(--k-raised);
+    color: var(--k-label);
+}
+
 /* Tables: dense rows, hairlines, tabular numbers */
 .table {
     --bs-table-bg: transparent;
