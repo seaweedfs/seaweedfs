@@ -105,16 +105,16 @@ func (s *AdminServer) GetDashboardTrends() DashboardTrends {
 	tasks := series(func(s dashSample) float64 { return s.tasks })
 	workers := series(func(s dashSample) float64 { return s.workers })
 
-	// Sparkline colors match the existing cards' border colors.
+	// Sparkline colors follow the data palette.
 	return DashboardTrends{
 		Samples:      len(samples),
-		Volumes:      sparklineSVG(series(func(s dashSample) float64 { return s.volumes }), "#1cc88a"),  // success
-		Chunks:       sparklineSVG(series(func(s dashSample) float64 { return s.chunks }), "#36b9cc"),   // info
-		DiskUsed:     sparklineSVG(series(func(s dashSample) float64 { return s.diskUsed }), "#f6c23e"), // warning
-		EcShards:     sparklineSVG(series(func(s dashSample) float64 { return s.ecShards }), "#5a5c69"), // dark
-		Tasks:        sparklineSVG(tasks, "#36b9cc"),
+		Volumes:      sparklineSVG(series(func(s dashSample) float64 { return s.volumes }), "#5552e0"),
+		Chunks:       sparklineSVG(series(func(s dashSample) float64 { return s.chunks }), "#00897a"),
+		DiskUsed:     sparklineSVG(series(func(s dashSample) float64 { return s.diskUsed }), "#c2541a"),
+		EcShards:     sparklineSVG(series(func(s dashSample) float64 { return s.ecShards }), "#9a45c2"),
+		Tasks:        sparklineSVG(tasks, "#8f6d10"),
 		TasksValue:   trendCount(last(tasks)),
-		Workers:      sparklineSVG(workers, "#4e73df"),
+		Workers:      sparklineSVG(workers, "#5552e0"),
 		WorkersValue: trendCount(last(workers)),
 	}
 }

@@ -462,7 +462,7 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 				return templ_7745c5c3_Err
 			}
 			for _, volume := range data.Volumes {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 54, "<tr><td><code class=\"volume-id-link\" style=\"cursor: pointer; text-decoration: underline; color: #0d6efd;\" data-volume-id=\"")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 54, "<tr><td><code class=\"volume-id-link\" style=\"cursor: pointer; text-decoration: underline;\" data-volume-id=\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
@@ -629,7 +629,7 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 71, "</td><td><div class=\"d-flex align-items-center\"><div class=\"progress me-2\" style=\"width: 80px; height: 16px; background-color: #e9ecef;\"><!-- Active data (green) --><div class=\"progress-bar bg-success\" role=\"progressbar\" style=\"")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 71, "</td><td><div class=\"d-flex align-items-center\"><div class=\"progress me-2\" style=\"width: 80px; height: 16px;\"><!-- Active data (green) --><div class=\"progress-bar bg-success\" role=\"progressbar\" style=\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
