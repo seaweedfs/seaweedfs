@@ -1328,6 +1328,67 @@ jobs:
           echo "$BOOL_FALSE" | grep -q -- '-status Suspended' || { echo "FAIL: bool false versioning did not Suspend the bucket"; exit 1; }
           echo "Bucket versioning: YAML bool false suspends consistently with string \"false\""
 
+          echo "=== Testing bucket ttl, replication and disk in one fs.configure ==="
+          FS_CONFIGURE=$(helm template test $CHART_DIR \
+            --set s3.enabled=true \
+            --set s3.createBuckets[0].name=cfgbucket \
+            --set s3.createBuckets[0].ttl=7d \
+            --set-string s3.createBuckets[0].replication=001 \
+            --set s3.createBuckets[0].disk=ssd | grep 'fs.configure -locationPrefix=/buckets/cfgbucket/' || true)
+          echo "$FS_CONFIGURE" | grep -q -- '-ttl=7d -replication=001 -disk=ssd -apply' || { echo "FAIL: bucket fs.configure missing ttl/replication/disk: $FS_CONFIGURE"; exit 1; }
+          echo "Bucket fs.configure: ttl, replication and disk render together"
+
+          FS_CONFIGURE=$(helm template test $CHART_DIR \
+            --set s3.enabled=true \
+            --set s3.createBuckets[0].name=replbucket \
+            --set-string s3.createBuckets[0].replication=002 | grep 'fs.configure -locationPrefix=/buckets/replbucket/' || true)
+          echo "$FS_CONFIGURE" | grep -q -- '/buckets/replbucket/ -replication=002 -apply' || { echo "FAIL: replication-only bucket did not render fs.configure: $FS_CONFIGURE"; exit 1; }
+          echo "Bucket fs.configure: replication without ttl"
+
+          FS_CONFIGURE=$(helm template test $CHART_DIR \
+            --set s3.enabled=true \
+            --set s3.createBuckets[0].name=diskbucket \
+            --set s3.createBuckets[0].disk=ssd | grep 'fs.configure -locationPrefix=/buckets/diskbucket/' || true)
+          echo "$FS_CONFIGURE" | grep -q -- '/buckets/diskbucket/ -disk=ssd -apply' || { echo "FAIL: disk-only bucket did not render fs.configure: $FS_CONFIGURE"; exit 1; }
+          echo "Bucket fs.configure: disk without ttl"
+
+          if helm template test $CHART_DIR \
+            --set s3.enabled=true \
+            --set s3.createBuckets[0].name=numbucket \
+            --set s3.createBuckets[0].replication=0 >/dev/null 2>&1; then
+            echo "FAIL: a numeric replication should fail to render"; exit 1
+          fi
+          echo "Bucket fs.configure: numeric replication is rejected"
+
+          if helm template test $CHART_DIR \
+            --set s3.enabled=true \
+            --set s3.createBuckets[0].name=badbucket \
+            --set-string s3.createBuckets[0].replication=00O >/dev/null 2>&1; then
+            echo "FAIL: a non-digit replication should fail to render"; exit 1
+          fi
+          echo "Bucket fs.configure: non-digit replication is rejected"
+
+          if helm template test $CHART_DIR \
+            --set s3.enabled=true \
+            --set s3.createBuckets[0].name=bigbucket \
+            --set-string s3.createBuckets[0].replication=256 >/dev/null 2>&1; then
+            echo "FAIL: a replication above 255 should fail to render"; exit 1
+          fi
+          FS_CONFIGURE=$(helm template test $CHART_DIR \
+            --set s3.enabled=true \
+            --set s3.createBuckets[0].name=maxbucket \
+            --set-string s3.createBuckets[0].replication=255 | grep 'fs.configure -locationPrefix=/buckets/maxbucket/' || true)
+          echo "$FS_CONFIGURE" | grep -q -- '/buckets/maxbucket/ -replication=255 -apply' || { echo "FAIL: replication 255 should render: $FS_CONFIGURE"; exit 1; }
+          echo "Bucket fs.configure: replication is limited to 000-255"
+
+          FS_CONFIGURE=$(helm template test $CHART_DIR \
+            --set s3.enabled=true \
+            --set s3.createBuckets[0].name=nullbucket \
+            --set s3.createBuckets[0].ttl=7d \
+            --set s3.createBuckets[0].replication=null | grep 'fs.configure -locationPrefix=/buckets/nullbucket/' || true)
+          echo "$FS_CONFIGURE" | grep -q -- '/buckets/nullbucket/ -ttl=7d -apply' || { echo "FAIL: null replication should be treated as unset: $FS_CONFIGURE"; exit 1; }
+          echo "Bucket fs.configure: null replication is unset"
+
           echo ""
           echo "=== Testing hook Job labels ==="
           # The hook Jobs were the only pods in the chart without the standard

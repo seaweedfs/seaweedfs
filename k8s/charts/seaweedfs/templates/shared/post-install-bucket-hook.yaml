@@ -215,8 +215,11 @@ spec:
           {{- end }}
           {{- end }}
           {{- range $createBuckets }}
-          {{- if .ttl }}
-            /bin/echo 'fs.configure -locationPrefix={{ $bucketsFolder }}/{{ .name }}/ -ttl={{ .ttl }} -apply' | /usr/bin/weed shell
+          {{- if not (or (kindIs "invalid" .replication) (and (kindIs "string" .replication) (or (eq .replication "") (regexMatch "^([01][0-9]{2}|2[0-4][0-9]|25[0-5])$" .replication)))) }}
+          {{- fail (printf "createBuckets %s: replication must be a quoted three-digit string from 000 to 255 such as \"001\" (use --set-string)" .name) }}
+          {{- end }}
+          {{- if or .ttl .replication .disk }}
+            /bin/echo 'fs.configure -locationPrefix={{ $bucketsFolder }}/{{ .name }}/{{- with .ttl }} -ttl={{ . }}{{- end }}{{- with .replication }} -replication={{ . }}{{- end }}{{- with .disk }} -disk={{ . }}{{- end }} -apply' | /usr/bin/weed shell
           {{- end }}
           {{- end }}
           {{- range $createBuckets }}
