@@ -540,3 +540,67 @@ func TestPostPolicyBucketHandlerBlocksPublicAcls(t *testing.T) {
 	defer filer.mu.Unlock()
 	assert.NotNil(t, filer.entries["/buckets/"+postAuthzBucket+"/"+key])
 }
+
+// A POST Object acl field is stored on the object like PUT's x-amz-acl, so a
+// private upload into a public-read bucket is not anonymously readable.
+func TestPostPolicyBucketHandlerStoresObjectAcl(t *testing.T) {
+	const key = "uploads/pic.png"
+	upload := func(t *testing.T, publicBucket bool, fields map[string]string) (*httptest.ResponseRecorder, *S3ApiServer, *filer_pb.Entry) {
+		bucketEntry := &filer_pb.Entry{
+			Name:        postAuthzBucket,
+			IsDirectory: true,
+			Attributes:  &filer_pb.FuseAttributes{},
+			Extended:    map[string][]byte{s3_constants.ExtAmzOwnerKey: []byte("000000000000")},
+		}
+		if publicBucket {
+			bucketEntry.Extended[s3_constants.ExtAmzAclKey] = anonymousReadGrant(s3_constants.PermissionRead)
+		}
+		filer := &ambiguousPutFiler{
+			volume:  startFakeVolumeServer(t),
+			entries: map[string]*filer_pb.Entry{"/buckets/" + postAuthzBucket: bucketEntry},
+			apply:   true,
+		}
+		s3a := newPostAutoCreateServer(t, filer)
+		rec := httptest.NewRecorder()
+		s3a.PostPolicyBucketHandler(rec, newSignedPostRequestFor(t, key, postAdminAccessKey, postAdminSecretKey, fields))
+		filer.mu.Lock()
+		defer filer.mu.Unlock()
+		return rec, s3a, filer.entries["/buckets/"+postAuthzBucket+"/"+key]
+	}
+	anonymousRead := func(s3a *S3ApiServer, entry *filer_pb.Entry) s3err.ErrorCode {
+		req := httptest.NewRequest(http.MethodGet, "/"+postAuthzBucket+"/"+key, nil)
+		return s3a.authorizeAnonymousObjectRead(req, postAuthzBucket, key, entry.Extended)
+	}
+
+	for _, tc := range []struct {
+		name         string
+		publicBucket bool
+		fields       map[string]string
+		want         s3err.ErrorCode
+	}{
+		{"private on public-read bucket", true, map[string]string{"acl": "private"}, s3err.ErrAccessDenied},
+		{"no acl on public-read bucket", true, nil, s3err.ErrAccessDenied},
+		{"public-read on private bucket", false, map[string]string{"acl": "public-read"}, s3err.ErrNone},
+		{"grant-read AllUsers on private bucket", false, map[string]string{"x-amz-grant-read": `uri="` + s3_constants.GranteeGroupAllUsers + `"`}, s3err.ErrNone},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec, s3a, entry := upload(t, tc.publicBucket, tc.fields)
+			require.Equal(t, http.StatusNoContent, rec.Code, "body: %s", rec.Body.String())
+			require.NotNil(t, entry)
+			assert.Equal(t, []byte("000000000000"), entry.Extended[s3_constants.ExtAmzOwnerKey])
+			assert.NotEmpty(t, entry.Extended[s3_constants.ExtAmzAclKey], "the upload ACL must be stored")
+			assert.Equal(t, tc.want, anonymousRead(s3a, entry))
+		})
+	}
+
+	t.Run("invalid canned acl", func(t *testing.T) {
+		rec, _, entry := upload(t, false, map[string]string{"acl": "bogus-acl"})
+		assert.Equal(t, http.StatusBadRequest, rec.Code, "body: %s", rec.Body.String())
+		assert.Nil(t, entry, "a rejected ACL must not write the object")
+	})
+	t.Run("canned and grant together", func(t *testing.T) {
+		rec, _, entry := upload(t, false, map[string]string{"acl": "private", "x-amz-grant-read": `uri="` + s3_constants.GranteeGroupAllUsers + `"`})
+		assert.Equal(t, http.StatusBadRequest, rec.Code, "body: %s", rec.Body.String())
+		assert.Nil(t, entry)
+	})
+}
