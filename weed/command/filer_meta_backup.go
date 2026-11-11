@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/spf13/viper"
+	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -31,6 +32,7 @@ type FilerMetaBackupOptions struct {
 	excludePrefixes   *string
 	restart           *bool
 	backupFilerConfig *string
+	entriesPerSecond  *int
 
 	pathFilter  *util.PathPrefixFilter
 	store       filer.FilerStore
@@ -46,11 +48,12 @@ func init() {
 	metaBackup.excludePrefixes = cmdFilerMetaBackup.Flag.String("excludePrefixes", "", "comma-separated path prefixes to exclude from backup")
 	metaBackup.restart = cmdFilerMetaBackup.Flag.Bool("restart", false, "copy the full metadata before async incremental backup")
 	metaBackup.backupFilerConfig = cmdFilerMetaBackup.Flag.String("config", "", "path to filer.toml specifying backup filer store")
+	metaBackup.entriesPerSecond = cmdFilerMetaBackup.Flag.Int("entriesPerSecond", 0, "limit how many entries per second the full metadata copy reads from the filer, 0 means unlimited")
 	metaBackup.clientId = util.RandomInt32()
 }
 
 var cmdFilerMetaBackup = &Command{
-	UsageLine: "filer.meta.backup [-filer=localhost:8888] [-filerDir=/] [-includePrefixes=...] [-excludePrefixes=...] [-restart] -config=/path/to/backup_filer.toml",
+	UsageLine: "filer.meta.backup [-filer=localhost:8888] [-filerDir=/] [-includePrefixes=...] [-excludePrefixes=...] [-restart] [-entriesPerSecond=0] -config=/path/to/backup_filer.toml",
 	Short:     "continuously backup filer meta data changes to anther filer store specified in a backup_filer.toml",
 	Long: `continuously backup filer meta data changes.
 The backup writes to another filer store specified in a backup_filer.toml.
@@ -61,6 +64,9 @@ The backup writes to another filer store specified in a backup_filer.toml.
 The -includePrefixes and -excludePrefixes flags accept comma-separated path prefixes.
 Paths must be absolute (start with '/'). Matching is at directory boundaries.
 When both match, the deeper prefix wins.
+
+An interrupted metadata copy continues from where it stopped. Use
+-entriesPerSecond to lighten the load the copy puts on the filer.
   `,
 }
 
@@ -175,6 +181,9 @@ func (metaBackup *FilerMetaBackupOptions) copyMetadata(traverse func() error) er
 	if err := metaBackup.store.KvDelete(context.Background(), MetaBackupWalkKey); err != nil {
 		glog.Warningf("clear metadata walk start: %v", err)
 	}
+	if err := metaBackup.store.KvDelete(context.Background(), MetaBackupWalkPathKey); err != nil {
+		glog.Warningf("clear metadata walk progress: %v", err)
+	}
 	glog.V(0).Infof("metadata copied up to %v", startTime)
 	return nil
 }
@@ -195,6 +204,9 @@ func (metaBackup *FilerMetaBackupOptions) walkStartTime() (time.Time, error) {
 	} else if !errors.Is(err, filer.ErrKvNotFound) {
 		return time.Time{}, fmt.Errorf("read metadata walk start: %w", err)
 	}
+	if err := metaBackup.store.KvDelete(context.Background(), MetaBackupWalkPathKey); err != nil && !errors.Is(err, filer.ErrKvNotFound) {
+		return time.Time{}, fmt.Errorf("clear metadata walk progress: %w", err)
+	}
 	now := time.Now()
 	if err := metaBackup.setTime(MetaBackupWalkKey, now); err != nil {
 		return time.Time{}, fmt.Errorf("save metadata walk start: %w", err)
@@ -202,24 +214,47 @@ func (metaBackup *FilerMetaBackupOptions) walkStartTime() (time.Time, error) {
 	return now, nil
 }
 
+// traverseMetadata continues from the last path an unfinished walk saved.
 func (metaBackup *FilerMetaBackupOptions) traverseMetadata() (err error) {
-	return filer_pb.TraverseBfs(context.Background(), metaBackup, util.FullPath(*metaBackup.filerDirectory), func(parentPath util.FullPath, entry *filer_pb.Entry) error {
+	ctx := context.Background()
+	resumeAfter, err := metaBackup.store.KvGet(ctx, MetaBackupWalkPathKey)
+	if err != nil && !errors.Is(err, filer.ErrKvNotFound) {
+		return fmt.Errorf("read metadata walk progress: %w", err)
+	}
+	limiter := rate.NewLimiter(rate.Inf, 0)
+	if *metaBackup.entriesPerSecond > 0 {
+		limiter = rate.NewLimiter(rate.Limit(*metaBackup.entriesPerSecond), *metaBackup.entriesPerSecond)
+	}
+	lastSaved := time.Now()
+	return filer_pb.TraverseDfs(ctx, metaBackup, util.FullPath(*metaBackup.filerDirectory), util.FullPath(resumeAfter), func(parentPath util.FullPath, entry *filer_pb.Entry) error {
+		if err := limiter.Wait(ctx); err != nil {
+			return err
+		}
 		fullpath := string(parentPath.Child(entry.Name))
 		if !metaBackup.shouldInclude(fullpath) {
 			return nil
 		}
 
 		println("+", fullpath)
-		if err := metaBackup.store.InsertEntry(context.Background(), filer.FromPbEntry(string(parentPath), entry)); err != nil {
+		if err := metaBackup.store.InsertEntry(ctx, filer.FromPbEntry(string(parentPath), entry)); err != nil {
 			return fmt.Errorf("insert entry error: %w", err)
 		}
 		return nil
+	}, func(walked util.FullPath) {
+		if time.Since(lastSaved) < 3*time.Second {
+			return
+		}
+		lastSaved = time.Now()
+		if err := metaBackup.store.KvPut(ctx, MetaBackupWalkPathKey, []byte(walked)); err != nil {
+			glog.Warningf("save metadata walk progress: %v", err)
+		}
 	})
 }
 
 var (
-	MetaBackupKey     = []byte("metaBackup")
-	MetaBackupWalkKey = []byte("metaBackupWalk")
+	MetaBackupKey         = []byte("metaBackup")
+	MetaBackupWalkKey     = []byte("metaBackupWalk")
+	MetaBackupWalkPathKey = []byte("metaBackupWalkPath")
 )
 
 func (metaBackup *FilerMetaBackupOptions) streamMetadataBackup(startTime time.Time) error {

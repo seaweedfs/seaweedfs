@@ -118,3 +118,52 @@ func TestCopyMetadataIgnoresAWalkStartTheStreamPassed(t *testing.T) {
 		t.Fatalf("offset = %v, want a fresh walk's start after %v", offset, beforeWalk)
 	}
 }
+
+// TestCopyMetadataResumesOnlyItsOwnWalk: the saved walk path belongs to the
+// walk whose start the stream replays from; a fresh walk must not skip ahead.
+func TestCopyMetadataResumesOnlyItsOwnWalk(t *testing.T) {
+	backup := &FilerMetaBackupOptions{store: &kvOnlyStore{kv: map[string][]byte{}}}
+	walkedTo := func() string {
+		value, err := backup.store.KvGet(context.Background(), MetaBackupWalkPathKey)
+		if errors.Is(err, filer.ErrKvNotFound) {
+			return ""
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(value)
+	}
+
+	interrupted := errors.New("killed")
+	if err := backup.copyMetadata(func() error {
+		return errors.Join(backup.store.KvPut(context.Background(), MetaBackupWalkPathKey, []byte("/a/b")), interrupted)
+	}); !errors.Is(err, interrupted) {
+		t.Fatalf("interrupted walk: err = %v", err)
+	}
+	if err := backup.copyMetadata(func() error {
+		if got := walkedTo(); got != "/a/b" {
+			t.Fatalf("resumed walk sees %q, want /a/b", got)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := walkedTo(); got != "" {
+		t.Fatalf("walk path after a finished walk = %q, want it cleared", got)
+	}
+
+	if err := backup.setTime(MetaBackupWalkKey, time.Now().Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := backup.store.KvPut(context.Background(), MetaBackupWalkPathKey, []byte("/x")); err != nil {
+		t.Fatal(err)
+	}
+	if err := backup.copyMetadata(func() error {
+		if got := walkedTo(); got != "" {
+			t.Fatalf("fresh walk sees %q left by a walk the stream passed", got)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
