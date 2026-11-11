@@ -69,10 +69,14 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	if err != nil {
 		glog.Fatalf("Failed to listen on %s: %v", *option.localSocket, err)
 	}
+	removeMountSocket := mountSocketCleanup(*option.localSocket)
+	defer removeMountSocket()
+	grace.OnInterrupt(removeMountSocket)
 
 	// detect mount folder mode
 	if *option.dirAutoCreate {
 		if err := os.MkdirAll(dir, os.FileMode(0777)&^umask); err != nil {
+			removeMountSocket()
 			glog.Fatalf("failed to create directory %s:%v", dir, err)
 		}
 	}
@@ -113,6 +117,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	// Ensure target mount point availability
 	skipAutofs := option.hasAutofs != nil && *option.hasAutofs
 	if isValid := checkMountPointAvailable(dir, skipAutofs); !isValid {
+		removeMountSocket()
 		glog.Fatalf("Target mount point is not available: %s, please check!", dir)
 		return true
 	}
@@ -231,6 +236,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	if err != nil {
 		// A failed mount is an environment problem (no /dev/fuse, fusermount not
 		// setuid, stale mount point); the goroutine dump Fatalf adds buries it.
+		removeMountSocket()
 		glog.Exitf("Mount fail: %v", err)
 	}
 	grace.OnInterrupt(func() {

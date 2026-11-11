@@ -73,6 +73,9 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	if err != nil {
 		glog.Fatalf("Failed to listen on %s: %v", *option.localSocket, err)
 	}
+	removeMountSocket := mountSocketCleanup(*option.localSocket)
+	defer removeMountSocket()
+	grace.OnInterrupt(removeMountSocket)
 
 	uidGidMapper, err := meta_cache.NewUidGidMapper(*option.uidMap, *option.gidMap)
 	if err != nil {
