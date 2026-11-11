@@ -29,6 +29,7 @@ type stubFilerSvc struct {
 	lookupResp *filer_pb.LookupDirectoryEntryResponse
 	lookupErr  error
 	listResp   []*filer_pb.Entry
+	listDir    string
 	listErr    error
 	lookupReq  *filer_pb.LookupDirectoryEntryRequest
 	listReq    *filer_pb.ListEntriesRequest
@@ -43,6 +44,9 @@ func (s *stubFilerSvc) ListEntries(ctx context.Context, req *filer_pb.ListEntrie
 	s.listReq = req
 	if s.listErr != nil {
 		return nil, s.listErr
+	}
+	if s.listDir != "" && req.Directory != s.listDir {
+		return &stubListStream{}, nil
 	}
 	return &stubListStream{entries: s.listResp}, nil
 }
@@ -78,6 +82,34 @@ func uploadEntry(uploadId, objectKey string) *filer_pb.Entry {
 func completedEntry(uploadId string) *filer_pb.Entry {
 	return &filer_pb.Entry{
 		Extended: map[string][]byte{s3_constants.SeaweedFSUploadId: []byte(uploadId)},
+	}
+}
+
+func TestUploadCompletedVersionPaths(t *testing.T) {
+	for _, tc := range []struct {
+		key       string
+		objectDir string
+		name      string
+	}{
+		{key: "obj", objectDir: "/buckets/b", name: "obj"},
+		{key: "dir/obj", objectDir: "/buckets/b/dir", name: "obj"},
+		{key: "dir/", objectDir: "/buckets/b/dir", name: "dir"},
+	} {
+		t.Run(tc.key, func(t *testing.T) {
+			svc := &stubFilerSvc{
+				lookupErr: filer_pb.ErrNotFound,
+				listDir:   tc.objectDir + "/" + tc.name + s3_constants.VersionsFolder,
+				listResp:  []*filer_pb.Entry{completedEntry("up1")},
+			}
+			c := &commandS3CleanUploads{}
+			completed, err := c.uploadCompleted(stubFilerClient{client: svc}, "/buckets/b", uploadEntry("up1", tc.key))
+			if err != nil || !completed {
+				t.Fatalf("got (%v, %v), want (true, nil)", completed, err)
+			}
+			if svc.lookupReq.Directory != tc.objectDir || svc.lookupReq.Name != tc.name {
+				t.Fatalf("lookup = %s/%s, want %s/%s", svc.lookupReq.Directory, svc.lookupReq.Name, tc.objectDir, tc.name)
+			}
+		})
 	}
 }
 
