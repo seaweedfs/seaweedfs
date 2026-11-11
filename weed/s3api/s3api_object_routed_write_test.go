@@ -339,10 +339,11 @@ func startFakeFiler(t *testing.T, impl filer_pb.SeaweedFilerServer) pb.ServerAdd
 	return fakeFilerAddress(lis)
 }
 
-// fakeFilerAddress returns the S3-style filer address of a fake filer's
-// listener. The gRPC connection cache is process-wide and keyed by address, so
-// a failed channel an earlier test left for a dead address that reused this
-// port would fail the first RPC with a stale "connection refused".
+// fakeFilerAddress returns the S3-style filer address of lis. The gRPC
+// connection cache is process-wide and keyed by address, so it drops whatever
+// channel an earlier test left for this port: a failed one would fail the first
+// RPC with a stale "connection refused", and one to a stopped fake filer can
+// still look ready.
 func fakeFilerAddress(lis net.Listener) pb.ServerAddress {
 	address := pb.ServerAddress(fmt.Sprintf("127.0.0.1:1.%d", lis.Addr().(*net.TCPAddr).Port))
 	pb.InvalidateGrpcConnection(address.ToGrpcAddress())
@@ -489,9 +490,8 @@ func closedFilerAddress(t *testing.T) pb.ServerAddress {
 	if err != nil {
 		t.Fatal(err)
 	}
-	port := lis.Addr().(*net.TCPAddr).Port
 	lis.Close()
-	return pb.ServerAddress(fmt.Sprintf("127.0.0.1:1.%d", port))
+	return fakeFilerAddress(lis)
 }
 
 // A fake filer that gets the port of a dead owner an earlier test dialed must
