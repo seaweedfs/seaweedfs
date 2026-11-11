@@ -683,6 +683,33 @@ func TestPostPolicyBucketHandlerAclPolicyWithAuthDisabled(t *testing.T) {
 	assert.Equal(t, http.StatusNoContent, rec.Code, "an upload without an ACL is not a PutObjectAcl, body: %s", rec.Body.String())
 }
 
+// With authentication on, a persisted bucket policy also governs a POST
+// upload ACL on the first request after start.
+func TestPostPolicyBucketHandlerAclPolicyOnColdBucket(t *testing.T) {
+	const key = "allowed/report.txt"
+	s3a, filer := newPostAclWriterServer(t)
+	s3a.policyEngine = NewBucketPolicyEngine()
+	s3a.iam.policyEngine = s3a.policyEngine
+	s3a.iam.primeBucketForIAM = func(bucket string) { s3a.getBucketConfig(bucket) }
+	filer.mu.Lock()
+	filer.entries["/buckets/"+postAuthzBucket].Extended[BUCKET_POLICY_METADATA_KEY] = []byte(fmt.Sprintf(`{
+		"Version": "2012-10-17",
+		"Statement": [{"Effect": "Deny", "Principal": {"AWS": "%s"}, "Action": ["s3:PutObjectAcl"], "Resource": ["arn:aws:s3:::%s/*"]}]
+	}`, postAclPrincipal, postAuthzBucket))
+	filer.mu.Unlock()
+
+	rec := httptest.NewRecorder()
+	s3a.PostPolicyBucketHandler(rec, newSignedPostRequestFor(t, key, postAclAccessKey, postAclSecretKey, map[string]string{"acl": "public-read"}))
+	assert.Equal(t, http.StatusForbidden, rec.Code, "body: %s", rec.Body.String())
+	filer.mu.Lock()
+	assert.Nil(t, filer.entries["/buckets/"+postAuthzBucket+"/"+key])
+	filer.mu.Unlock()
+
+	rec = httptest.NewRecorder()
+	s3a.PostPolicyBucketHandler(rec, newSignedPostRequestFor(t, key, postAclAccessKey, postAclSecretKey, nil))
+	assert.Equal(t, http.StatusNoContent, rec.Code, "an upload without an ACL is not a PutObjectAcl, body: %s", rec.Body.String())
+}
+
 func TestPostPolicyBucketHandlerRejectsConflictingAclFields(t *testing.T) {
 	for _, fields := range []map[string]string{
 		{"acl": "private", "x-amz-acl": "public-read"},
