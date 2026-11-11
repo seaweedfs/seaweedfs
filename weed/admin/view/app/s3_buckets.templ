@@ -18,6 +18,9 @@ templ S3Buckets(data dash.S3BucketsData) {
                     <option value="200" if data.PageSize == 200 { selected="selected" }>200 per page</option>
                     <option value="500" if data.PageSize == 500 { selected="selected" }>500 per page</option>
                 </select>
+                <button type="button" class="btn btn-sm btn-outline-primary me-2" onclick="exportBucketList()">
+                    <i class="bi bi-download me-1"></i>Export
+                </button>
                 <button type="button" class="btn btn-sm btn-primary"
                         data-bs-toggle="modal"
                         data-bs-target="#createBucketModal">
@@ -96,22 +99,6 @@ templ S3Buckets(data dash.S3BucketsData) {
         <div class="row">
             <div class="col-12">
                 <div class="card shadow mb-4">
-                    <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
-                        <h6 class="m-0 font-weight-bold text-primary">
-                            <i class="bi bi-box me-2"></i>Object Store Buckets
-                        </h6>
-                        <div class="dropdown no-arrow">
-                            <a class="dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
-                                <i class="bi bi-three-dots-vertical icon-sm icon-fixed-width text-gray-400"></i>
-                            </a>
-                            <div class="dropdown-menu dropdown-menu-right shadow animated--fade-in">
-                                <div class="dropdown-header">Actions:</div>
-                                <a class="dropdown-item" href="#" onclick="exportBucketList()">
-                                    <i class="bi bi-download me-2"></i>Export List
-                                </a>
-                            </div>
-                        </div>
-                    </div>
                     <div class="card-body">
                         <div class="table-responsive">
                             <table class="table table-hover" width="100%" cellspacing="0" id="bucketsTable">

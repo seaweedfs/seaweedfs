@@ -87,11 +87,6 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
 
         <!-- Hosts Table -->
         <div class="card shadow mb-4">
-            <div class="card-header py-3">
-                <h6 class="m-0 font-weight-bold text-primary">
-                    <i class="bi bi-server me-2"></i>Volume Servers
-                </h6>
-            </div>
             <div class="card-body">
                 if len(data.VolumeServers) > 0 {
                     <div class="table-responsive">
