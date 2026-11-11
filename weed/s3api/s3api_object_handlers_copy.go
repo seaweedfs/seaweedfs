@@ -1653,14 +1653,17 @@ func (s3a *S3ApiServer) copySingleChunkForRange(originalChunk, rangeChunk *filer
 	return dstChunk, nil
 }
 
-// assignNewVolume assigns a new volume for the chunk
+// assignNewVolume assigns a new volume for the chunk. The collection is passed
+// explicitly, like PutObject, so a copy does not depend on the filer's rule
+// precedence to resolve the destination bucket's collection.
 func (s3a *S3ApiServer) assignNewVolume(dstPath string, expectedDataSize uint64) (*filer_pb.AssignVolumeResponse, error) {
+	collection := s3a.collectionForCopyPath(dstPath)
 	var assignResult *filer_pb.AssignVolumeResponse
 	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		resp, err := client.AssignVolume(context.Background(), &filer_pb.AssignVolumeRequest{
 			Count:            1,
 			Replication:      "",
-			Collection:       "",
+			Collection:       collection,
 			DiskType:         "",
 			DataCenter:       s3a.option.DataCenter,
 			Path:             dstPath,

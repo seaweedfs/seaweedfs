@@ -87,6 +87,17 @@ func TestCheckGrpcAdminToken(t *testing.T) {
 	if signErr != nil {
 		t.Fatalf("sign session token: %v", signErr)
 	}
+	scoped := func(claims SeaweedFilerClaims) string {
+		claims.ExpiresAt = jwt.NewNumericDate(time.Now().Add(time.Hour))
+		signed, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(key))
+		if err != nil {
+			t.Fatalf("sign scoped token: %v", err)
+		}
+		return "Bearer " + signed
+	}
+	pathScoped := scoped(SeaweedFilerClaims{AllowedPrefixes: []string{"/tenants/t1"}})
+	methodScoped := scoped(SeaweedFilerClaims{AllowedMethods: []string{"GET"}})
+	unscoped := scoped(SeaweedFilerClaims{})
 
 	for name, tc := range map[string]struct {
 		values  []string
@@ -98,6 +109,10 @@ func TestCheckGrpcAdminToken(t *testing.T) {
 		"only expired":        {[]string{"Bearer " + expired}, "invalid admin token"},
 		"only stale":          {[]string{stale}, "invalid admin token"},
 		"same-key session":    {[]string{"Bearer " + session}, "invalid admin token"},
+		"path-scoped":         {[]string{pathScoped}, "invalid admin token"},
+		"method-scoped":       {[]string{methodScoped}, "invalid admin token"},
+		"scoped then fresh":   {[]string{pathScoped, fresh}, ""},
+		"unscoped filer":      {[]string{unscoped}, ""},
 		"basic then stale":    {[]string{"Basic dXNlcjpwYXNz", stale}, "invalid admin token"},
 		"no bearer value":     {[]string{"Basic dXNlcjpwYXNz", "garbage"}, "authorization header must use Bearer scheme"},
 		"lowercase scheme ok": {[]string{"bearer " + fresh[len("Bearer "):]}, ""},

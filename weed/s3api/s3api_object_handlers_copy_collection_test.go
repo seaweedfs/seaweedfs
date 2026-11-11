@@ -73,3 +73,28 @@ func TestMultipartStorageRuleFollowsDestinationObject(t *testing.T) {
 		t.Fatalf("destination path %q resolved ttl %q, want 30d", dstPath, got)
 	}
 }
+
+// Server-side copies pass the grouped bucket collection explicitly, matching
+// PutObject, instead of relying on the filer's rule precedence.
+func TestCollectionForCopyPath(t *testing.T) {
+	s3a := &S3ApiServer{option: &S3ApiServerOption{BucketsPath: "/buckets", FilerGroup: "group1"}}
+	cases := []struct {
+		path string
+		want string
+	}{
+		{"/buckets/bucket1/key", "group1_bucket1"},
+		{"/buckets/bucket1/.uploads/uploadid/1", "group1_bucket1"},
+		{"/buckets/", ""},
+		{"/other/path", ""},
+	}
+	for _, tc := range cases {
+		if got := s3a.collectionForCopyPath(tc.path); got != tc.want {
+			t.Fatalf("collectionForCopyPath(%q) = %q, want %q", tc.path, got, tc.want)
+		}
+	}
+
+	noGroup := &S3ApiServer{option: &S3ApiServerOption{BucketsPath: "/buckets"}}
+	if got := noGroup.collectionForCopyPath("/buckets/bucket1/key"); got != "" {
+		t.Fatalf("collectionForCopyPath without filer group = %q, want empty", got)
+	}
+}

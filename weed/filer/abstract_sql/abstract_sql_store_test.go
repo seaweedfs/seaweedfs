@@ -2,8 +2,10 @@ package abstract_sql
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -87,5 +89,54 @@ func TestSplitPoolForKv(t *testing.T) {
 		if mainOpen != c.mainOpen || kvOpen != c.kvOpen {
 			t.Errorf("splitPoolForKv(%d) = %d, %d, want %d, %d", c.maxOpen, mainOpen, kvOpen, c.mainOpen, c.kvOpen)
 		}
+	}
+}
+
+type recordingDDLGen struct {
+	SqlGenerator
+	calls []string
+}
+
+func (g *recordingDDLGen) GetSqlCreateTable(tableName string) string {
+	g.calls = append(g.calls, "create "+tableName)
+	return "CREATE TABLE " + tableName
+}
+
+func (g *recordingDDLGen) GetSqlDropTable(tableName string) string {
+	g.calls = append(g.calls, "drop "+tableName)
+	return "DROP"
+}
+
+func TestBucketHooksSkipInvalidBucketNames(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	mock.ExpectExec("CREATE TABLE mybucket").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("DROP").WillReturnResult(sqlmock.NewResult(0, 0))
+
+	gen := &recordingDDLGen{}
+	store := &AbstractSqlStore{SqlGenerator: gen, DB: db, SupportBucketTable: true}
+
+	for _, name := range []string{
+		`.x01" (a int);CREATE TABLE pwned(flag text);--`,
+		`.z01","marker`,
+		`b01" (a int); DROP TABLE filemeta; --`,
+		DEFAULT_TABLE,
+		".system",
+		"",
+	} {
+		store.OnBucketCreation(name)
+		store.OnBucketDeletion(name)
+	}
+	store.OnBucketCreation("mybucket")
+	store.OnBucketDeletion("mybucket")
+
+	if want := []string{"create mybucket", "drop mybucket"}; !reflect.DeepEqual(gen.calls, want) {
+		t.Errorf("DDL calls = %q, want %q", gen.calls, want)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Error(err)
 	}
 }

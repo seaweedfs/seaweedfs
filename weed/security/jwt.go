@@ -52,6 +52,9 @@ type SeaweedFilerAdminClaims struct {
 	// SessionId is present only on STS session tokens; a token carrying it is
 	// an S3 session credential, not a filer admin credential.
 	SessionId string `json:"sid,omitempty"`
+	// A filer token scoped to paths or methods is not an admin credential.
+	AllowedPrefixes []string `json:"allowed_prefixes,omitempty"`
+	AllowedMethods  []string `json:"allowed_methods,omitempty"`
 	jwt.RegisteredClaims
 }
 

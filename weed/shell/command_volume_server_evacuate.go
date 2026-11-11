@@ -2,6 +2,7 @@ package shell
 
 import (
 	"cmp"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -38,7 +39,7 @@ func (c *commandVolumeServerEvacuate) Name() string {
 func (c *commandVolumeServerEvacuate) Help() string {
 	return `move out all data on a volume server
 
-	volumeServer.evacuate -node <host:port> [-skipNonMoveable] [-maxParallelization 1] [-movesPerExec 0] [-apply]
+	volumeServer.evacuate -node <host:port> [-skipNonMoveable] [-maxParallelization 1] [-movesPerExec 0] [-noLock] [-apply]
 
 	This command moves all data away from the volume server.
 	The volumes on the volume servers will be redistributed.
@@ -58,6 +59,8 @@ func (c *commandVolumeServerEvacuate) Help() string {
 	-movesPerExec limits how many volumes and EC shards one run moves (default 0 for
 	unlimited), so a big server can be emptied in several runs.
 
+	You can use "-noLock" to run without cluster-wide lock.
+
 `
 }
 
@@ -76,10 +79,14 @@ func (c *commandVolumeServerEvacuate) Do(args []string, commandEnv *CommandEnv, 
 	// TODO: remove this alias
 	applyChangeAlias := vsEvacuateCommand.Bool("force", false, "actually apply the changes (alias for -apply)")
 	retryCount := vsEvacuateCommand.Int("retry", 0, "how many times to retry")
+	noLock := vsEvacuateCommand.Bool("noLock", false, "do not lock the admin shell at one's own risk")
 	maxParallelization := vsEvacuateCommand.Int("maxParallelization", 1, "run up to X EC shard moves in parallel")
 	movesPerExec := vsEvacuateCommand.Int("movesPerExec", 0, "how many volumes and EC shards to move in one run (default is 0 for unlimited)")
 	if err = vsEvacuateCommand.Parse(args); err != nil {
-		return nil
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
 	}
 	if *maxParallelization < 1 {
 		return fmt.Errorf("maxParallelization must be >= 1")
@@ -95,7 +102,9 @@ func (c *commandVolumeServerEvacuate) Do(args []string, commandEnv *CommandEnv, 
 	handleDeprecatedForceFlag(writer, vsEvacuateCommand, applyChangeAlias, applyChange)
 	infoAboutSimulationMode(writer, *applyChange, "-apply")
 
-	if err = commandEnv.confirmIsLocked(args); err != nil && *applyChange {
+	if *noLock {
+		commandEnv.SetNoLock(true)
+	} else if err = commandEnv.confirmIsLocked(args); err != nil && *applyChange {
 		return
 	}
 	if *volumeServer == "" && *c.volumeRack == "" {

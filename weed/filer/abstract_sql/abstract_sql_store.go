@@ -50,6 +50,9 @@ func (store *AbstractSqlStore) CanDropWholeBucket() bool {
 	return store.SupportBucketTable && !store.SkipDDL
 }
 func (store *AbstractSqlStore) OnBucketCreation(bucket string) {
+	if !isValidBucket(bucket) {
+		return
+	}
 	store.dbsLock.Lock()
 	defer store.dbsLock.Unlock()
 
@@ -61,6 +64,9 @@ func (store *AbstractSqlStore) OnBucketCreation(bucket string) {
 	store.dbs[bucket] = true
 }
 func (store *AbstractSqlStore) OnBucketDeletion(bucket string) {
+	if !isValidBucket(bucket) {
+		return
+	}
 	store.dbsLock.Lock()
 	defer store.dbsLock.Unlock()
 

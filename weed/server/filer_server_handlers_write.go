@@ -280,6 +280,21 @@ func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// bucketDefaultCollection returns the collection a write under the buckets
+// folder falls back to when neither the request nor a filer.conf rule names
+// one. S3 bucket collections are namespaced by filer group; S3 copy passes the
+// prefixed collection explicitly, so direct filer writes keep rule priority.
+func (fs *FilerServer) bucketDefaultCollection(requestURI string) string {
+	if !strings.HasPrefix(requestURI, fs.filer.DirBucketsPath+"/") {
+		return ""
+	}
+	bucket := fs.filer.DetectBucket(util.FullPath(requestURI))
+	if bucket == "" || fs.option.FilerGroup == "" {
+		return bucket
+	}
+	return fmt.Sprintf("%s_%s", fs.option.FilerGroup, bucket)
+}
+
 func (fs *FilerServer) detectStorageOption(ctx context.Context, requestURI, qCollection, qReplication string, ttlSeconds int32, diskType, dataCenter, rack, dataNode string) (*operation.StorageOption, error) {
 
 	rule := fs.filer.FilerConf.MatchStorageRule(requestURI)
@@ -300,11 +315,9 @@ func (fs *FilerServer) detectStorageOption(ctx context.Context, requestURI, qCol
 		maxFileNameLength = fs.filer.MaxFilenameLength
 	}
 
-	// required by buckets folder
-	bucketDefaultCollection := ""
-	if strings.HasPrefix(requestURI, fs.filer.DirBucketsPath+"/") {
-		bucketDefaultCollection = fs.filer.DetectBucket(util.FullPath(requestURI))
-	}
+	// required by buckets folder; direct writes keep path-rule precedence.
+	// S3 copy assigns the grouped bucket collection explicitly.
+	bucketDefaultCollection := fs.bucketDefaultCollection(requestURI)
 
 	if ttlSeconds == 0 {
 		ttl, err := needle.ReadTTL(rule.GetTtl())
