@@ -135,3 +135,28 @@ func TestListDirectoryPrefixedEntries_StartBelowPrefix(t *testing.T) {
 		t.Fatalf("want [item-b.versions], got %v", names)
 	}
 }
+
+func TestUnavailableDatabaseFailsListAndDelete(t *testing.T) {
+	dir := t.TempDir()
+	store := &LevelDBStore{}
+	if err := store.initialize(dir); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := store.InsertEntry(ctx, &filer.Entry{FullPath: "/dir/file"}); err != nil {
+		t.Fatal(err)
+	}
+	store.db.Close()
+
+	listed := 0
+	_, err := store.ListDirectoryEntries(ctx, "/dir", "", true, 10, func(*filer.Entry) (bool, error) {
+		listed++
+		return true, nil
+	})
+	if err == nil || listed != 0 {
+		t.Fatalf("list on a closed database: %d entries, err %v", listed, err)
+	}
+	if err := store.DeleteFolderChildren(ctx, "/dir"); err == nil {
+		t.Fatal("delete children on a closed database succeeded")
+	}
+}

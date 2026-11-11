@@ -196,7 +196,11 @@ func (store *LevelDBStore) DeleteFolderChildren(ctx context.Context, fullpath we
 		}
 		batch.Delete([]byte(genKey(string(fullpath), fileName)))
 	}
+	iterErr := iter.Error()
 	iter.Release()
+	if iterErr != nil {
+		return fmt.Errorf("delete %s : %v", fullpath, iterErr)
+	}
 
 	err = store.db.Write(batch, writeOptions(ctx))
 
@@ -255,6 +259,9 @@ func (store *LevelDBStore) ListDirectoryPrefixedEntries(ctx context.Context, dir
 		if !resEachEntryFunc {
 			break
 		}
+	}
+	if err == nil {
+		err = iter.Error()
 	}
 	iter.Release()
 

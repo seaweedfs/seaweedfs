@@ -388,7 +388,11 @@ func (store *LevelDB3Store) DeleteFolderChildren(ctx context.Context, fullpath w
 		}
 		batch.Delete(append(directoryPrefix, []byte(fileName)...))
 	}
+	iterErr := iter.Error()
 	iter.Release()
+	if iterErr != nil {
+		return fmt.Errorf("delete %s : %v", fullpath, iterErr)
+	}
 
 	err = db.Write(batch, writeOptions(ctx))
 
@@ -454,6 +458,9 @@ func (store *LevelDB3Store) ListDirectoryPrefixedEntries(ctx context.Context, di
 		if !resEachEntryFunc {
 			break
 		}
+	}
+	if err == nil {
+		err = iter.Error()
 	}
 	iter.Release()
 
