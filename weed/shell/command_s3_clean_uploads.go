@@ -68,9 +68,7 @@ func (c *commandS3CleanUploads) Do(args []string, commandEnv *CommandEnv, writer
 
 	lock := newObjectWriteLock(commandEnv)
 	for _, bucket := range buckets {
-		versioning, lockEnabled := getBucketVersioningState(bucket)
-		versioned := versioning == s3_constants.VersioningEnabled || lockEnabled
-		if err := c.cleanupUploads(commandEnv, writer, filerBucketsPath, bucket.Name, versioned, *uploadedTimeAgo, lock); err != nil {
+		if err := c.cleanupUploads(commandEnv, writer, filerBucketsPath, bucket.Name, *uploadedTimeAgo, lock); err != nil {
 			fmt.Fprintf(writer, "failed cleanup uploads for bucket %s: %v\n", bucket.Name, err)
 		}
 	}
@@ -78,7 +76,7 @@ func (c *commandS3CleanUploads) Do(args []string, commandEnv *CommandEnv, writer
 	return err
 }
 
-func (c *commandS3CleanUploads) cleanupUploads(commandEnv *CommandEnv, writer io.Writer, filerBucketsPath string, bucket string, versioned bool, timeAgo time.Duration, lock objectWriteLock) error {
+func (c *commandS3CleanUploads) cleanupUploads(commandEnv *CommandEnv, writer io.Writer, filerBucketsPath string, bucket string, timeAgo time.Duration, lock objectWriteLock) error {
 	bucketDir := filerBucketsPath + "/" + bucket
 	uploadsDir := bucketDir + "/" + s3_constants.MultipartUploadsFolder
 	var staleUploads []*filer_pb.Entry
@@ -100,7 +98,7 @@ func (c *commandS3CleanUploads) cleanupUploads(commandEnv *CommandEnv, writer io
 			fmt.Fprintf(writer, "skip %s: %v\n", staleUpload.Name, lockErr)
 			continue
 		}
-		err := c.removeUploadDir(commandEnv, writer, bucketDir, uploadsDir, staleUpload, versioned, held)
+		err := c.removeUploadDir(commandEnv, writer, bucketDir, uploadsDir, staleUpload, held)
 		release()
 		if err != nil {
 			return err
@@ -140,18 +138,25 @@ func newObjectWriteLock(commandEnv *CommandEnv) objectWriteLock {
 // only the metadata goes; an open upload's chunks are freed by
 // routedUploadDirDelete. An undecidable lookup, or a lost lock, is left for
 // the next run.
-func (c *commandS3CleanUploads) removeUploadDir(filerClient filer_pb.FilerClient, writer io.Writer, bucketDir, uploadsDir string, upload *filer_pb.Entry, versioned bool, lockHeld func() bool) error {
+func (c *commandS3CleanUploads) removeUploadDir(filerClient filer_pb.FilerClient, writer io.Writer, bucketDir, uploadsDir string, upload *filer_pb.Entry, lockHeld func() bool) error {
 	completed, err := c.uploadCompleted(filerClient, bucketDir, upload)
 	if err != nil {
 		fmt.Fprintf(writer, "skip %s: %v\n", upload.Name, err)
 		return nil
+	}
+	var commitPath string
+	if !completed {
+		if commitPath, err = uploadCommitPath(filerClient, bucketDir, upload); err != nil {
+			fmt.Fprintf(writer, "skip %s: %v\n", upload.Name, err)
+			return nil
+		}
 	}
 	if !lockHeld() {
 		fmt.Fprintf(writer, "skip %s: lost the object write lock\n", upload.Name)
 		return nil
 	}
 	if !completed {
-		freed, err := routedUploadDirDelete(filerClient, uploadObjectPath(bucketDir, upload), uploadCommitPath(bucketDir, upload, versioned), uploadsDir, upload.Name)
+		freed, err := routedUploadDirDelete(filerClient, uploadObjectPath(bucketDir, upload), commitPath, uploadsDir, upload.Name)
 		if err != nil {
 			return fmt.Errorf("purge %s/%s: %v", uploadsDir, upload.Name, err)
 		}
@@ -222,17 +227,25 @@ func uploadObjectPath(bucketDir string, upload *filer_pb.Entry) string {
 
 // uploadCommitPath is the path a routed completion of the upload locks: the
 // object path in a versioned bucket, else the entry it writes, which for a
-// trailing-slash key lies inside the directory the key names.
-func uploadCommitPath(bucketDir string, upload *filer_pb.Entry, versioned bool) string {
+// trailing-slash key lies inside the directory the key names. Like the
+// gateway's, it reads the bucket's versioning state just before the delete.
+func uploadCommitPath(filerClient filer_pb.FilerClient, bucketDir string, upload *filer_pb.Entry) (string, error) {
 	objectKey := string(upload.Extended[s3_constants.ExtMultipartObjectKey])
-	if objectKey == "" || versioned {
-		return uploadObjectPath(bucketDir, upload)
+	if objectKey == "" {
+		return "", nil
+	}
+	bucket, _, _, err := filer_pb.GetEntry(context.Background(), filerClient, util.FullPath(bucketDir))
+	if err != nil {
+		return "", fmt.Errorf("read bucket %s: %w", bucketDir, err)
+	}
+	if versioning, lockEnabled := getBucketVersioningState(bucket); versioning == s3_constants.VersioningEnabled || lockEnabled {
+		return uploadObjectPath(bucketDir, upload), nil
 	}
 	dir := path.Dir(objectKey)
 	if dir == "." {
 		dir = ""
 	}
-	return path.Join(bucketDir, dir, path.Base(objectKey))
+	return path.Join(bucketDir, dir, path.Base(objectKey)), nil
 }
 
 func objectRouteKey(objectPath string) string {
