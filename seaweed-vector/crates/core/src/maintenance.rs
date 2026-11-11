@@ -194,9 +194,12 @@ impl SharedLeases {
         let slot = match self.held.lock() {
             Ok(mut held) => {
                 if held.slots.len() >= held.prune_at {
+                    // A slot another read has taken but not yet locked stays.
                     held.slots.retain(|_, slot| {
-                        slot.try_lock()
-                            .map_or(true, |lease| lease.strong_count() > 0)
+                        Arc::strong_count(slot) > 1
+                            || slot
+                                .try_lock()
+                                .map_or(true, |lease| lease.strong_count() > 0)
                     });
                     held.prune_at = (2 * held.slots.len()).max(64);
                     // A burst's allocation would otherwise make every later
@@ -510,6 +513,26 @@ mod tests {
             testing::append_dataset(&mut dataset, &testing::vectors(1, 4), &["b"]).await;
         }
         assert!(leases.held.lock().unwrap().slots.len() <= 128);
+    }
+
+    /// A slot a read has taken but not yet locked survives a prune, so that
+    /// read and the next share the lease.
+    #[tokio::test]
+    async fn a_taken_slot_survives_a_prune() {
+        let dir = TempDir::new().unwrap();
+        let dataset = testing::write_dataset(&dir, &testing::vectors(1, 4), &["a"]).await;
+        let leases = SharedLeases::default();
+        let key: LeaseKey = ("elsewhere".into(), 1, None);
+        let taken = {
+            let mut held = leases.held.lock().unwrap();
+            held.prune_at = 0;
+            held.slots.entry(key.clone()).or_default().clone()
+        };
+        leases.try_pin(&dataset).await.unwrap().unwrap();
+        assert!(Arc::ptr_eq(
+            &leases.held.lock().unwrap().slots[&key],
+            &taken
+        ));
     }
 
     /// A shared lease is not handed out past SHARED_FOR, so a busy version
