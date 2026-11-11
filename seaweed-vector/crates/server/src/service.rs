@@ -20,6 +20,7 @@ use weed_lance_worker::dataset;
 use weed_lance_worker::direct_read::{DirectReads, Wrappers};
 use weed_lance_worker::jobs::vector_index::is_vector_table;
 use weed_vector_core::index;
+use weed_vector_core::maintenance::SharedLeases;
 use weed_vector_core::query::{self, Query};
 use weed_vector_core::table::VectorTable;
 
@@ -515,6 +516,7 @@ pub struct VectorServer {
     /// reads. Writes open in a session of their own.
     pub(crate) reads: Mutex<Reads>,
     lance_cache_bytes: (usize, usize),
+    leases: SharedLeases,
     nprobes: Option<usize>,
     /// URI schemes a table's location may have.
     schemes: &'static [&'static str],
@@ -536,6 +538,7 @@ impl VectorServer {
                 DEFAULT_METADATA_CACHE_BYTES,
             )),
             lance_cache_bytes: (DEFAULT_INDEX_CACHE_BYTES, DEFAULT_METADATA_CACHE_BYTES),
+            leases: SharedLeases::default(),
             nprobes: None,
             schemes: &["s3"],
         }
@@ -795,9 +798,7 @@ impl VectorService for VectorServer {
         let dataset = self.open_to_read(&table).await?;
         // Lease the resolved version so maintenance cannot reclaim its files
         // while this query runs against it.
-        let _lease = weed_vector_core::maintenance::try_pin(&dataset)
-            .await
-            .map_err(internal)?;
+        let _lease = self.leases.try_pin(&dataset).await.map_err(internal)?;
         let resolved = VectorTable::resolve(&dataset, None, Some(KEY_COLUMN)).map_err(invalid)?;
         let columns = projection(req.return_data, req.return_metadata);
         let batches = query::get(&dataset, &resolved, &req.keys, Some(&columns))
@@ -862,9 +863,7 @@ impl VectorService for VectorServer {
             // Data and metadata come from a second read of this version, so
             // lease it as get_vectors does.
             let _lease = if columns.len() > 1 {
-                weed_vector_core::maintenance::try_pin(&dataset)
-                    .await
-                    .map_err(internal)?
+                self.leases.try_pin(&dataset).await.map_err(internal)?
             } else {
                 None
             };
@@ -912,9 +911,7 @@ impl VectorService for VectorServer {
         let dataset = self.open_to_read(&table).await?;
         // Lease the resolved version so maintenance cannot reclaim its files
         // while this query runs against it.
-        let _lease = weed_vector_core::maintenance::try_pin(&dataset)
-            .await
-            .map_err(internal)?;
+        let _lease = self.leases.try_pin(&dataset).await.map_err(internal)?;
         let resolved = VectorTable::resolve(&dataset, None, Some(KEY_COLUMN)).map_err(invalid)?;
         if req.query_vector.len() != resolved.dimension {
             return Err(Status::invalid_argument(format!(
