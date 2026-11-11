@@ -224,6 +224,20 @@ func (s *Server) mayUpdateTable(r *http.Request, bucket string, ns []string, nam
 	return err == nil
 }
 
+// authorizeUpdateTable checks the grant a change to the table's catalog state
+// needs; a cluster process goes through the trusted manager.
+func (s *Server) authorizeUpdateTable(r *http.Request, bucket string, ns []string, name string) error {
+	req := &s3tables.UpdateTableRequest{
+		TableBucketARN: bucketARN(bucket),
+		Namespace:      ns,
+		Name:           name,
+	}
+	identityName := s3_constants.GetIdentityNameFromContext(r)
+	return s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return s.manager(r).AuthorizeUpdateTable(r.Context(), s3tables.NewManagerClient(client), req, identityName)
+	})
+}
+
 // mayWriteNamespace keeps the vector namespace of a vector bucket out of reach
 // of s3tables grants: its index data is written only by trusted callers, and
 // the vector bucket policy gates everyone else through S3 Vectors.
