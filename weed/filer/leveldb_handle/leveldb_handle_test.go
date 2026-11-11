@@ -13,13 +13,19 @@ import (
 
 type failingStorage struct {
 	storage.Storage
-	fail     atomic.Bool
-	failOpen atomic.Bool
+	fail         atomic.Bool
+	failOpen     atomic.Bool
+	probeStarted chan struct{}
+	probeRelease chan struct{}
 }
 
 func (f *failingStorage) Create(fd storage.FileDesc) (storage.Writer, error) {
 	if f.failOpen.Load() && fd.Type != storage.TypeTemp {
 		return nil, syscall.ENOSPC
+	}
+	if fd.Type == storage.TypeTemp && f.probeRelease != nil {
+		f.probeStarted <- struct{}{}
+		<-f.probeRelease
 	}
 	w, err := f.Storage.Create(fd)
 	if err != nil {
@@ -87,6 +93,35 @@ func TestWriteRecoversOnceStorageRecovers(t *testing.T) {
 	if _, err := db.Get([]byte("c"), nil); err != leveldb.ErrNotFound {
 		t.Fatalf("get deleted key: %v", err)
 	}
+}
+
+func TestStalledProbeKeepsReadsAvailable(t *testing.T) {
+	db, st := openFailing(t)
+	if err := db.Put([]byte("a"), []byte("1"), nil); err != nil {
+		t.Fatal(err)
+	}
+	st.probeStarted, st.probeRelease = make(chan struct{}, 1), make(chan struct{})
+	st.fail.Store(true)
+	put := make(chan error, 1)
+	go func() { put <- db.Put([]byte("b"), []byte("2"), nil) }()
+	<-st.probeStarted
+
+	read := make(chan struct{})
+	go func() {
+		defer close(read)
+		expectValue(t, db, "a", "1")
+		db.NewIterator(nil, nil).Release()
+	}()
+	select {
+	case <-read:
+	case <-time.After(5 * time.Second):
+		t.Error("reads blocked behind a stalled probe")
+	}
+	close(st.probeRelease)
+	if err := <-put; !errors.Is(err, syscall.ENOSPC) {
+		t.Fatalf("put while storage fails: %v", err)
+	}
+	<-read
 }
 
 func TestReopenWaitsForOpenIterator(t *testing.T) {

@@ -38,6 +38,7 @@ type DB struct {
 	opts        *opt.Options
 	closed      atomic.Bool
 	lastReopen  atomic.Int64
+	reopening   sync.Mutex
 
 	mu      sync.RWMutex
 	db      *leveldb.DB
@@ -164,29 +165,28 @@ func (d *DB) acquire() (*leveldb.DB, error) {
 // it, unless another caller already did. It reports whether a retry can use
 // an open database.
 func (d *DB) reopen(failed *leveldb.DB) bool {
+	d.reopening.Lock()
+	defer d.reopening.Unlock()
 	d.mu.RLock()
 	current := d.db
 	d.mu.RUnlock()
 	if current != failed {
 		return current != nil
 	}
-	if d.reopenedRecently() || !d.lockWhenIdle() {
-		return false
-	}
-	defer d.mu.Unlock()
-	if d.closed.Load() {
-		return false
-	}
-	if d.db != failed {
-		return d.db != nil
-	}
-	if d.reopenedRecently() {
+	if d.closed.Load() || d.reopenedRecently() {
 		return false
 	}
 	d.lastReopen.Store(time.Now().UnixNano())
 	// Reopening on storage that still fails would also lose reads.
 	if err := probe(d.stor); err != nil {
 		glog.Warningf("leveldb %s: storage still failing, not reopening: %v", d.name, err)
+		return false
+	}
+	if !d.lockWhenIdle() {
+		return false
+	}
+	defer d.mu.Unlock()
+	if d.closed.Load() {
 		return false
 	}
 	glog.Warningf("leveldb %s: reopening after a storage write error", d.name)
