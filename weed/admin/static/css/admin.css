@@ -248,6 +248,9 @@ pre code {
 .admin-toolbar .navbar-toggler {
     border: 0;
     color: var(--k-secondary);
+}
+
+.admin-toolbar .navbar-toggler:not(:focus-visible) {
     box-shadow: none;
 }
 
