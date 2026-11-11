@@ -311,7 +311,8 @@ func (c *commandVolumeServerEvacuate) evacuateEcVolumes(commandEnv *CommandEnv, 
 		if planErr != nil {
 			return planErr
 		}
-		if len(result.FailedMoves) == 0 || len(unplanned) == 0 || c.limitReached(writer) || round == maxEcEvacuationRounds {
+		limitReached := c.limitReached(writer)
+		if len(result.FailedMoves) == 0 || len(unplanned) == 0 || limitReached || round == maxEcEvacuationRounds {
 			reportUnplanned()
 			return nil
 		}

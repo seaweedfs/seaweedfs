@@ -334,3 +334,18 @@ func TestVolumeServerEvacuateEcLostLockFailsTheRun(t *testing.T) {
 		t.Fatalf("expected the lost lock to fail the run, got %v", err)
 	}
 }
+
+// An applied run that stops at -movesPerExec says so, so the operator runs it again.
+func TestVolumeServerEvacuateEcReportsMovesPerExecWhenApplied(t *testing.T) {
+	c := newEvacuateCommandForTest(2)
+	c.moveEcShards = func(moves []ecbalancer.Move, stopOnError bool) (ec.EcShardMovesResult, error) {
+		return ec.EcShardMovesResult{Moved: len(moves)}, nil
+	}
+	var out bytes.Buffer
+	if err := c.evacuateEcVolumes(nil, "172.19.0.10:8702", false, true, &out); err != nil {
+		t.Fatalf("evacuate: %v", err)
+	}
+	if c.movedCount != 2 || !strings.Contains(out.String(), "reached -movesPerExec=2") {
+		t.Fatalf("expected 2 moves and the limit reported, counted %d:\n%s", c.movedCount, out.String())
+	}
+}
