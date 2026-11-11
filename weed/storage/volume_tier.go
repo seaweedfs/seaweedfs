@@ -160,12 +160,17 @@ func (v *Volume) AttachRemoteDatFile(source backend.BackendStorageFile, remoteFi
 	if v.DataBackend != source {
 		return fmt.Errorf("volume %d data file changed during the copy (compacted or reloaded)", v.Id)
 	}
-	size, _, err := source.GetStat()
+	diskFile, ok := source.(*backend.DiskFile)
+	if !ok {
+		return fmt.Errorf("volume %d data file is not on local disk", v.Id)
+	}
+	// The physical size, as the copy read it: GetStat pads an unaligned tail.
+	stat, err := diskFile.File.Stat()
 	if err != nil {
 		return fmt.Errorf("stat volume %d data file: %w", v.Id, err)
 	}
-	if uint64(size) != remoteFile.FileSize {
-		return fmt.Errorf("volume %d data file is %d bytes, the copy holds %d: written during the copy", v.Id, size, remoteFile.FileSize)
+	if uint64(stat.Size()) != remoteFile.FileSize {
+		return fmt.Errorf("volume %d data file is %d bytes, the copy holds %d: written during the copy", v.Id, stat.Size(), remoteFile.FileSize)
 	}
 	files := v.volumeInfo.GetFiles()
 	v.volumeInfo.Files = append(files, remoteFile)
