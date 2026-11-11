@@ -122,6 +122,11 @@ templ Layout(view ViewContext, content templ.Component) {
                             </a>
                         </li>
                         <li class="nav-item">
+                            <a class="nav-link" href={ view.P("/metrics") } target="_blank" rel="noopener" title="Prometheus metrics of this admin server">
+                                <i class="bi bi-graph-up me-2"></i>Metrics<i class="bi bi-box-arrow-up-right ms-auto small text-body-tertiary"></i>
+                            </a>
+                        </li>
+                        <li class="nav-item">
                             <a class={ "nav-link", templ.KV("collapsed", !isClusterPage) } href="#" data-bs-toggle="collapse" data-bs-target="#clusterSubmenu" aria-expanded={ fmt.Sprintf("%t", isClusterPage) } aria-controls="clusterSubmenu">
                                 <i class="bi bi-diagram-3 me-2"></i>Cluster
                                 <i class="bi bi-chevron-down ms-auto"></i>
