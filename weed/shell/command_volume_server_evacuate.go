@@ -216,6 +216,8 @@ type plannedEcMove struct {
 	src, dst    *EcNode
 	diskType    types.DiskType
 	dstHadShard bool
+	// dstSlots are the free slots the plan took from dst.
+	dstSlots int
 }
 
 // ecEvacuationGroup holds the EC nodes of one disk type, collected once so the
@@ -403,8 +405,11 @@ func (c *commandVolumeServerEvacuate) planMoveAwayOneEcVolume(ecShardInfo *maste
 			}
 			shardIds := []erasure_coding.ShardId{shardId}
 			dstHadShard := ecNodeHasShard(emptyNode, ecShardInfo.Id, shardId)
+			dstFree := emptyNode.FreeEcSlot
 			emptyNode.AddEcVolumeShards(vid, ecShardInfo.Collection, shardIds, diskType)
 			thisNode.DeleteEcVolumeShards(vid, shardIds)
+			// Update the node's free slot count after the planned move
+			emptyNode.FreeEcSlot--
 			planned = append(planned, plannedEcMove{
 				move: ecbalancer.Move{
 					VolumeID:   ecShardInfo.Id,
@@ -418,10 +423,9 @@ func (c *commandVolumeServerEvacuate) planMoveAwayOneEcVolume(ecShardInfo *maste
 				dst:         emptyNode,
 				diskType:    diskType,
 				dstHadShard: dstHadShard,
+				dstSlots:    dstFree - emptyNode.FreeEcSlot,
 			})
 			shardPlanned = true
-			// Update the node's free slot count after the planned move
-			emptyNode.FreeEcSlot--
 			break
 		}
 		if !shardPlanned {
@@ -442,10 +446,11 @@ func (c *commandVolumeServerEvacuate) planMoveAwayOneEcVolume(ecShardInfo *maste
 func unplanEcMove(p plannedEcMove) {
 	vid := needle.VolumeId(p.move.VolumeID)
 	shardIds := []erasure_coding.ShardId{erasure_coding.ShardId(p.move.ShardID)}
+	free := p.dst.FreeEcSlot + p.dstSlots
 	if !p.dstHadShard {
 		p.dst.DeleteEcVolumeShards(vid, shardIds)
 	}
-	p.dst.FreeEcSlot++
+	p.dst.FreeEcSlot = free
 	p.src.AddEcVolumeShards(vid, p.move.Collection, shardIds, p.diskType)
 }
 

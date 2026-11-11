@@ -387,3 +387,45 @@ func TestVolumeServerEvacuateEcPlansAgainUntilNoRoomIsLeft(t *testing.T) {
 		t.Fatalf("expected volume %d to move after %d failed ones, moved %v:\n%s", unreadable+1, unreadable, moved, out.String())
 	}
 }
+
+// A failed move gives back every slot the plan took from its target, also when
+// the target holds the shard in another disk type, which the undo leaves alone.
+func TestVolumeServerEvacuateEcFailedMoveGivesBackItsSlots(t *testing.T) {
+	c := newEvacuateCommandForTest(0)
+	c.topologyInfo = tightTargetTopology()
+	target := c.topologyInfo.DataCenterInfos[0].RackInfos[1].DataNodeInfos[0]
+	// One free slot: volume 99 takes 9 of the 10.
+	disk := target.DiskInfos[""]
+	si := erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(disk.EcShardInfos[0])
+	si.Set(erasure_coding.NewShardInfo(8, 0))
+	disk.EcShardInfos[0].EcIndexBits, disk.EcShardInfos[0].ShardSizes = si.Bitmap(), si.SizesInt64()
+	ssd := erasure_coding.NewShardsInfo()
+	ssd.Set(erasure_coding.NewShardInfo(0, 0))
+	target.DiskInfos["ssd"] = &master_pb.DiskInfo{Type: "ssd", EcShardInfos: []*master_pb.VolumeEcShardInformationMessage{
+		{Id: 1, Collection: "c", DiskType: "ssd", EcIndexBits: ssd.Bitmap(), ShardSizes: ssd.SizesInt64()},
+	}}
+	var moved []uint32
+	c.moveEcShards = func(moves []ecbalancer.Move, stopOnError bool) (result ec.EcShardMovesResult, err error) {
+		for _, m := range moves {
+			if m.VolumeID == 1 {
+				result.Failed++
+				result.FailedMoves = append(result.FailedMoves, m)
+				err = errors.New("input/output error")
+				continue
+			}
+			result.Moved++
+			moved = append(moved, m.VolumeID)
+		}
+		return result, err
+	}
+	var out bytes.Buffer
+	if err := c.evacuateEcVolumes(nil, "source:8080", true, true, &out); err != nil {
+		t.Fatalf("evacuate: %v", err)
+	}
+	if len(moved) != 1 || moved[0] != 2 {
+		t.Fatalf("expected volume 2 to take the slot volume 1 gave back, moved %v:\n%s", moved, out.String())
+	}
+	if erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(target.DiskInfos["ssd"].EcShardInfos[0]).Count() != 1 {
+		t.Fatal("the undo removed the shard the target already had")
+	}
+}
