@@ -3,6 +3,7 @@ package weed_server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"path"
 	"strconv"
@@ -15,6 +16,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
 )
@@ -96,38 +98,19 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost, http.MethodPut:
 		// wait until in flight data is less than the limit
 		contentLength := getContentLength(r)
-		fs.inFlightDataLimitCond.L.Lock()
-		inFlightDataSize := atomic.LoadInt64(&fs.inFlightDataSize)
-		inFlightUploads := atomic.LoadInt64(&fs.inFlightUploads)
-
-		// Wait if either data size limit or file count limit is exceeded
-		for (fs.option.ConcurrentUploadLimit != 0 && inFlightDataSize > fs.option.ConcurrentUploadLimit) || (fs.option.ConcurrentFileUploadLimit != 0 && inFlightUploads >= fs.option.ConcurrentFileUploadLimit) {
-			if fs.option.ConcurrentUploadLimit != 0 && inFlightDataSize > fs.option.ConcurrentUploadLimit {
-				glog.V(4).Infof("wait because inflight data %d > %d", inFlightDataSize, fs.option.ConcurrentUploadLimit)
-			}
-			if fs.option.ConcurrentFileUploadLimit != 0 && inFlightUploads >= fs.option.ConcurrentFileUploadLimit {
-				glog.V(4).Infof("wait because inflight uploads %d >= %d", inFlightUploads, fs.option.ConcurrentFileUploadLimit)
-			}
-			fs.inFlightDataLimitCond.Wait()
-			inFlightDataSize = atomic.LoadInt64(&fs.inFlightDataSize)
-			inFlightUploads = atomic.LoadInt64(&fs.inFlightUploads)
+		if !fs.waitForUploadSlot(w, r, contentLength) {
+			return
 		}
-		fs.inFlightDataLimitCond.L.Unlock()
-
-		// Increment counters
-		newUploads := atomic.AddInt64(&fs.inFlightUploads, 1)
-		newSize := atomic.AddInt64(&fs.inFlightDataSize, contentLength)
-		// Update metrics
-		stats.FilerInFlightUploadCountGauge.Set(float64(newUploads))
-		stats.FilerInFlightUploadBytesGauge.Set(float64(newSize))
 		defer func() {
+			fs.inFlightDataLimitCond.L.Lock()
+			defer fs.inFlightDataLimitCond.L.Unlock()
 			// Decrement counters
 			newUploads := atomic.AddInt64(&fs.inFlightUploads, -1)
 			newSize := atomic.AddInt64(&fs.inFlightDataSize, -contentLength)
 			// Update metrics
 			stats.FilerInFlightUploadCountGauge.Set(float64(newUploads))
 			stats.FilerInFlightUploadBytesGauge.Set(float64(newSize))
-			fs.inFlightDataLimitCond.Signal()
+			fs.inFlightDataLimitCond.Broadcast()
 		}()
 
 		if r.Method == http.MethodPut {
@@ -143,6 +126,50 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 		requestMethod = "INVALID"
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
+}
+
+func (fs *FilerServer) waitForUploadSlot(w http.ResponseWriter, r *http.Request, contentLength int64) bool {
+	fs.inFlightDataLimitCond.L.Lock()
+	err := util.WaitUntil(r.Context(), fs.inFlightDataLimitCond, fs.option.InflightUploadDataTimeout, func() bool {
+		inFlightDataSize := atomic.LoadInt64(&fs.inFlightDataSize)
+		if fs.option.ConcurrentUploadLimit != 0 && inFlightDataSize > fs.option.ConcurrentUploadLimit {
+			glog.V(4).Infof("wait because inflight data %d > %d", inFlightDataSize, fs.option.ConcurrentUploadLimit)
+			return false
+		}
+		inFlightUploads := atomic.LoadInt64(&fs.inFlightUploads)
+		if fs.option.ConcurrentFileUploadLimit != 0 && inFlightUploads >= fs.option.ConcurrentFileUploadLimit {
+			glog.V(4).Infof("wait because inflight uploads %d >= %d", inFlightUploads, fs.option.ConcurrentFileUploadLimit)
+			return false
+		}
+		return true
+	})
+	if err == nil {
+		// Increment counters
+		newUploads := atomic.AddInt64(&fs.inFlightUploads, 1)
+		newSize := atomic.AddInt64(&fs.inFlightDataSize, contentLength)
+		// Update metrics
+		stats.FilerInFlightUploadCountGauge.Set(float64(newUploads))
+		stats.FilerInFlightUploadBytesGauge.Set(float64(newSize))
+	}
+	fs.inFlightDataLimitCond.L.Unlock()
+
+	if err == nil {
+		return true
+	}
+	// Closing an HTTP/1 connection stops net/http from reading the unread
+	// body before the reply.
+	if r.ProtoMajor == 1 {
+		w.Header().Set("Connection", "close")
+	}
+	if r.Context().Err() != nil {
+		glog.V(1).Infof("upload from %s cancelled while waiting for an upload slot: %v", r.RemoteAddr, err)
+		writeJsonError(w, r, util.HttpStatusCancelled, r.Context().Err())
+		return false
+	}
+	err = fmt.Errorf("reject because no upload slot freed within %v", fs.option.InflightUploadDataTimeout)
+	glog.V(1).Infof("too many requests from %s: %v", r.RemoteAddr, err)
+	writeJsonError(w, r, http.StatusTooManyRequests, err)
+	return false
 }
 
 func (fs *FilerServer) readonlyFilerHandler(w http.ResponseWriter, r *http.Request) {
