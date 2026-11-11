@@ -55,6 +55,7 @@ templ Layout(view ViewContext, content templ.Component) {
     <meta name="csrf-token" content={ csrfToken }>
     <link rel="icon" href={ string(view.P("/static/favicon.ico")) } type="image/x-icon">
 
+    <script src={ string(view.P("/static/js/theme.js")) }></script>
     <!-- Bootstrap CSS -->
     <link href={ string(view.P("/static/css/bootstrap.min.css")) } rel="stylesheet">
     <!-- Bootstrap Icons CSS -->
@@ -85,6 +86,13 @@ templ Layout(view ViewContext, content templ.Component) {
 
                 <div class="collapse navbar-collapse" id="navbarNav">
                     <ul class="navbar-nav ms-auto align-items-lg-center">
+                        <li class="nav-item">
+                            <button class="theme-toggle" type="button" data-theme-toggle title="Switch theme: auto, light, dark" aria-label="Switch color theme">
+                                <i class="bi bi-circle-half theme-icon theme-icon-auto"></i>
+                                <i class="bi bi-sun theme-icon theme-icon-light"></i>
+                                <i class="bi bi-moon-stars theme-icon theme-icon-dark"></i>
+                            </button>
+                        </li>
                         <li class="nav-item dropdown">
                             <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
                                 <i class="bi bi-person me-1"></i>{username}
@@ -391,6 +399,7 @@ templ LoginForm(title string, errorMessage string, csrfToken string) {
     <title>{title} - Login</title>
     <link rel="icon" href={ prefix + "/static/favicon.ico" } type="image/x-icon">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <script src={ prefix + "/static/js/theme.js" }></script>
     <link href={ prefix + "/static/css/bootstrap.min.css" } rel="stylesheet">
     <link href={ prefix + "/static/css/bootstrap-icons.min.css" } rel="stylesheet">
     <link href={ prefix + "/static/css/admin.css" } rel="stylesheet">
