@@ -35,14 +35,22 @@ type MergedEcRuntimes struct {
 }
 
 // MergeEcRuntimes resolves runtimes (one vid's mounts, in location order) into
-// a merged view. Returns nil for an empty slice (the vanished-volume case).
+// a merged view. Returns nil when no runtime holds a shard (the vanished-volume
+// case). Each runtime's Shards is read once, and a runtime emptied by a
+// concurrent unmount neither anchors the generation nor is reported skipped.
 func MergeEcRuntimes(runtimes []*EcVolume) *MergedEcRuntimes {
-	if len(runtimes) == 0 {
+	held := make(map[*EcVolume][]*EcVolumeShard, len(runtimes))
+	for _, v := range runtimes {
+		if shards := v.Shards; len(shards) > 0 {
+			held[v] = shards
+		}
+	}
+	if len(held) == 0 {
 		return nil
 	}
 
 	anchorGen := int64(0)
-	for _, v := range runtimes {
+	for v := range held {
 		if v.EncodeTsNs > anchorGen {
 			anchorGen = v.EncodeTsNs
 		}
@@ -57,7 +65,7 @@ func MergeEcRuntimes(runtimes []*EcVolume) *MergedEcRuntimes {
 
 	anchor := genMatches[0]
 	for _, v := range genMatches {
-		if len(v.Shards) > 0 {
+		if len(held[v]) > 0 {
 			anchor = v
 			break
 		}
@@ -73,13 +81,17 @@ func MergeEcRuntimes(runtimes []*EcVolume) *MergedEcRuntimes {
 	total := ecDataShards(anchor) + ecParityShards(anchor)
 	width := total
 	for _, v := range merged {
-		if n := int(v.Shards[len(v.Shards)-1].ShardId) + 1; n > width {
+		shards := held[v]
+		if len(shards) == 0 {
+			continue
+		}
+		if n := int(shards[len(shards)-1].ShardId) + 1; n > width {
 			width = n
 		}
 	}
 	slots := make([]*EcVolumeShard, width)
 	for _, v := range merged {
-		for _, shard := range v.Shards {
+		for _, shard := range held[v] {
 			id := int(shard.ShardId)
 			if id >= len(slots) {
 				continue
@@ -92,6 +104,9 @@ func MergeEcRuntimes(runtimes []*EcVolume) *MergedEcRuntimes {
 
 	var skipped []string
 	for pos, v := range runtimes {
+		if len(held[v]) == 0 {
+			continue
+		}
 		if v.EncodeTsNs != anchorGen {
 			skipped = append(skipped, fmt.Sprintf(
 				"EC volume %d shards at %s (position %d) belong to encode run %d but the scrub anchors on %d; they were not verified",

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -282,4 +283,66 @@ func TestLocateEcShardNeedleMatchesInterval(t *testing.T) {
 
 	expectedIntervals := ev.LocateEcShardNeedleInterval(needle.GetCurrentVersion(), offset.ToActualOffset(), size)
 	assert.Equal(t, expectedIntervals, intervals)
+}
+
+// A reader holds the EcVolume it got from FindEcVolume after the location lock
+// is released. If the last shard is unmounted in that window (ec.balance,
+// ec.decode, volumeServer.evacuate), ev.Shards is empty when the reader locates
+// the needle; indexing it panicked the volume server.
+func TestLocateEcShardNeedleIntervalAfterLastShardUnmounted(t *testing.T) {
+	const datFileSize = 10 * 1118830592
+	version := needle.GetCurrentVersion()
+	offset, size := int64(5_000_000_000), types.Size(1167)
+	withShard := []*EcVolumeShard{{ecdFileSize: datFileSize / DataShardsCount}}
+
+	newVolume := func(dat int64, shards []*EcVolumeShard) *EcVolume {
+		return &EcVolume{
+			VolumeId:    needle.VolumeId(389),
+			Shards:      shards,
+			ECContext:   NewDefaultECContext("", 389),
+			datFileSize: dat,
+		}
+	}
+
+	// datFileSize from .vif does not need any mounted shard.
+	want := newVolume(datFileSize, withShard).LocateEcShardNeedleInterval(version, offset, size)
+	assert.NotEmpty(t, want)
+	assert.Equal(t, want, newVolume(datFileSize, nil).LocateEcShardNeedleInterval(version, offset, size))
+	assert.Equal(t, want, newVolume(datFileSize, []*EcVolumeShard{}).LocateEcShardNeedleInterval(version, offset, size))
+
+	// Legacy volumes size the shards from a mounted one; with none left
+	// there is nothing to locate.
+	assert.NotEmpty(t, newVolume(0, withShard).LocateEcShardNeedleInterval(version, offset, size))
+	assert.Empty(t, newVolume(0, nil).LocateEcShardNeedleInterval(version, offset, size))
+	assert.Empty(t, newVolume(0, []*EcVolumeShard{}).LocateEcShardNeedleInterval(version, offset, size))
+}
+
+// The read and delete paths go through LocateEcShardNeedle. Without a mounted
+// shard to size a legacy volume they must get an error, not empty intervals
+// that the read path would parse as a needle header.
+func TestLocateEcShardNeedleWithoutMountedShards(t *testing.T) {
+	ecxFile, err := os.OpenFile("./test_files/389.ecx", os.O_RDONLY, 0)
+	require.NoError(t, err)
+	defer ecxFile.Close()
+	stat, err := ecxFile.Stat()
+	require.NoError(t, err)
+
+	needleId, _ := types.ParseNeedleId("0f0edb92")
+	newVolume := func(dat int64) *EcVolume {
+		return &EcVolume{
+			VolumeId:    needle.VolumeId(389),
+			ecxFile:     ecxFile,
+			ecxFileSize: stat.Size(),
+			ECContext:   NewDefaultECContext("", 389),
+			datFileSize: dat,
+		}
+	}
+
+	_, _, intervals, err := newVolume(0).LocateEcShardNeedle(needleId, needle.GetCurrentVersion())
+	assert.ErrorContains(t, err, "no mounted shard")
+	assert.Empty(t, intervals)
+
+	_, _, intervals, err = newVolume(10*1118830592).LocateEcShardNeedle(needleId, needle.GetCurrentVersion())
+	assert.NoError(t, err)
+	assert.NotEmpty(t, intervals)
 }

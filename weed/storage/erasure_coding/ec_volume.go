@@ -624,8 +624,8 @@ func (ev *EcVolume) EcIndexBaseFileName() string {
 }
 
 func (ev *EcVolume) ShardSize() uint64 {
-	if len(ev.Shards) > 0 {
-		return uint64(ev.Shards[0].Size())
+	if shards := ev.Shards; len(shards) > 0 {
+		return uint64(shards[0].Size())
 	}
 	return 0
 }
@@ -1010,11 +1010,13 @@ func (ev *EcVolume) LocateEcShardNeedle(needleId types.NeedleId, version needle.
 	}
 
 	intervals = ev.LocateEcShardNeedleInterval(version, offset.ToActualOffset(), size)
+	if len(intervals) == 0 && !size.IsDeleted() {
+		return types.Offset{}, 0, nil, fmt.Errorf("ec volume %d has no mounted shard to locate needle %s", ev.VolumeId, needleId)
+	}
 	return
 }
 
 func (ev *EcVolume) LocateEcShardNeedleInterval(version needle.Version, offset int64, size types.Size) (intervals []Interval) {
-	shard := ev.Shards[0]
 	var shardSize int64
 	if ev.datFileSize > 0 {
 		// Use datFileSize to calculate the shardSize to match the EC encoding logic.
@@ -1025,7 +1027,14 @@ func (ev *EcVolume) LocateEcShardNeedleInterval(version needle.Version, offset i
 		// Subtract 1 to handle the ambiguous case where ecdFileSize is an exact
 		// multiple of ErasureCodingLargeBlockSize but the data is actually in small
 		// blocks (e.g., datFileSize was just under DataShards*ErasureCodingLargeBlockSize).
-		shardSize = shard.ecdFileSize - 1
+		// A reader can still hold this EcVolume after its last shard was
+		// unmounted, so the slice may be empty. Return no intervals then;
+		// LocateEcShardNeedle reports it as an error.
+		shards := ev.Shards
+		if len(shards) == 0 {
+			return nil
+		}
+		shardSize = shards[0].ecdFileSize - 1
 	}
 	// calculate the locations in the ec shards
 	intervals = LocateData(ev.ECContext.LargeBlockSize(), ev.ECContext.SmallBlockSize(), shardSize, offset, types.Size(needle.GetActualSize(size, version)))
