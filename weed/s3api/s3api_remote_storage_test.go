@@ -537,8 +537,7 @@ func startFakeCacheFiler(t *testing.T, impl *fakeCacheFiler) pb.ServerAddress {
 	filer_pb.RegisterSeaweedFilerServer(srv, impl)
 	go srv.Serve(lis)
 	t.Cleanup(srv.Stop)
-	port := lis.Addr().(*net.TCPAddr).Port
-	return pb.ServerAddress(fmt.Sprintf("127.0.0.1:1.%d", port))
+	return fakeFilerAddress(lis)
 }
 
 func newRemoteCacheTestServer(filerAddr pb.ServerAddress) *S3ApiServer {

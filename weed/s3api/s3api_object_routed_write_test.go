@@ -336,8 +336,17 @@ func startFakeFiler(t *testing.T, impl filer_pb.SeaweedFilerServer) pb.ServerAdd
 	filer_pb.RegisterSeaweedFilerServer(srv, impl)
 	go srv.Serve(lis)
 	t.Cleanup(srv.Stop)
-	port := lis.Addr().(*net.TCPAddr).Port
-	return pb.ServerAddress(fmt.Sprintf("127.0.0.1:1.%d", port))
+	return fakeFilerAddress(lis)
+}
+
+// fakeFilerAddress returns the S3-style filer address of a fake filer's
+// listener. The gRPC connection cache is process-wide and keyed by address, so
+// a failed channel an earlier test left for a dead address that reused this
+// port would fail the first RPC with a stale "connection refused".
+func fakeFilerAddress(lis net.Listener) pb.ServerAddress {
+	address := pb.ServerAddress(fmt.Sprintf("127.0.0.1:1.%d", lis.Addr().(*net.TCPAddr).Port))
+	pb.InvalidateGrpcConnection(address.ToGrpcAddress())
+	return address
 }
 
 func TestRoutedDeleteSpecificVersionUsesWormCondition(t *testing.T) {
