@@ -698,28 +698,37 @@ main h2:has(> .bi:first-child) > .bi:first-child {
 }
 
 .btn-danger {
+    --bs-btn-color: var(--k-on-ink);
+    --bs-btn-hover-color: var(--k-on-ink);
+    --bs-btn-active-color: var(--k-on-ink);
     --bs-btn-bg: rgb(var(--k-critical-rgb));
     --bs-btn-border-color: rgb(var(--k-critical-rgb));
-    --bs-btn-hover-bg: rgba(var(--k-critical-rgb), .88);
-    --bs-btn-hover-border-color: rgba(var(--k-critical-rgb), .88);
-    --bs-btn-active-bg: rgba(var(--k-critical-rgb), .8);
-    --bs-btn-active-border-color: rgba(var(--k-critical-rgb), .8);
+    --bs-btn-hover-bg: color-mix(in srgb, rgb(var(--k-critical-rgb)) 88%, var(--k-ink));
+    --bs-btn-hover-border-color: color-mix(in srgb, rgb(var(--k-critical-rgb)) 88%, var(--k-ink));
+    --bs-btn-active-bg: color-mix(in srgb, rgb(var(--k-critical-rgb)) 80%, var(--k-ink));
+    --bs-btn-active-border-color: color-mix(in srgb, rgb(var(--k-critical-rgb)) 80%, var(--k-ink));
 }
 
 .btn-outline-danger {
     --bs-btn-color: rgb(var(--k-critical-rgb));
     --bs-btn-bg: var(--k-sheet);
     --bs-btn-border-color: var(--k-separator);
-    --bs-btn-hover-color: #fff;
+    --bs-btn-hover-color: var(--k-on-ink);
     --bs-btn-hover-bg: rgb(var(--k-critical-rgb));
     --bs-btn-hover-border-color: rgb(var(--k-critical-rgb));
+    --bs-btn-active-color: var(--k-on-ink);
+    --bs-btn-active-bg: rgb(var(--k-critical-rgb));
+    --bs-btn-active-border-color: rgb(var(--k-critical-rgb));
 }
 
 .btn-success {
+    --bs-btn-color: var(--k-on-ink);
+    --bs-btn-hover-color: var(--k-on-ink);
+    --bs-btn-active-color: var(--k-on-ink);
     --bs-btn-bg: rgb(var(--k-good-rgb));
     --bs-btn-border-color: rgb(var(--k-good-rgb));
-    --bs-btn-hover-bg: rgba(var(--k-good-rgb), .88);
-    --bs-btn-hover-border-color: rgba(var(--k-good-rgb), .88);
+    --bs-btn-hover-bg: color-mix(in srgb, rgb(var(--k-good-rgb)) 88%, var(--k-ink));
+    --bs-btn-hover-border-color: color-mix(in srgb, rgb(var(--k-good-rgb)) 88%, var(--k-ink));
 }
 
 .btn-outline-success,
