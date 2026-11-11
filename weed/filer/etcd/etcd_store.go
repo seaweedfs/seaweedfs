@@ -138,7 +138,7 @@ func (store *EtcdStore) UpdateEntry(ctx context.Context, entry *filer.Entry) (er
 func (store *EtcdStore) FindEntry(ctx context.Context, fullpath weed_util.FullPath) (entry *filer.Entry, err error) {
 	key := genKey(fullpath.DirAndName())
 
-	resp, err := store.client.Get(ctx, store.etcdKeyPrefix+string(key))
+	resp, err := store.client.Get(ctx, store.etcdKeyPrefix+string(key), atScanRevision(ctx)...)
 	if err != nil {
 		return nil, fmt.Errorf("get %s : %v", fullpath, err)
 	}
