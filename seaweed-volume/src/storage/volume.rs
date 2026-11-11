@@ -2497,9 +2497,15 @@ impl Volume {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn load_remote_dat_file(&self) -> Result<(), VolumeError> {
         let _sync_guard = self.data_file_sync_lock.lock().unwrap();
         let _guard = self.data_file_access_control.write_lock();
+        self.load_remote_dat_file_held()
+    }
+
+    /// `load_remote_dat_file` for callers already holding the write lease.
+    pub(crate) fn load_remote_dat_file_held(&self) -> Result<(), VolumeError> {
         let mut io = self.io.write().unwrap();
         self.load_remote_dat_file_io(&mut io)
     }
