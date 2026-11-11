@@ -2,6 +2,7 @@ package leveldb_handle
 
 import (
 	"errors"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -48,9 +49,9 @@ func (w *failingWriter) Write(p []byte) (int, error) {
 
 func openFailing(t *testing.T) (*DB, *failingStorage) {
 	t.Helper()
-	interval, timeout := reopenInterval, drainTimeout
-	reopenInterval, drainTimeout = 0, 50*time.Millisecond
-	t.Cleanup(func() { reopenInterval, drainTimeout = interval, timeout })
+	interval, busy, timeout := reopenInterval, busyReopenInterval, drainTimeout
+	reopenInterval, busyReopenInterval, drainTimeout = 0, 0, 50*time.Millisecond
+	t.Cleanup(func() { reopenInterval, busyReopenInterval, drainTimeout = interval, busy, timeout })
 	st := &failingStorage{Storage: storage.NewMemStorage()}
 	db, err := Open(st, nil)
 	if err != nil {
@@ -136,6 +137,7 @@ func TestReopenWaitsForOpenIterator(t *testing.T) {
 		t.Fatal("put while storage fails succeeded")
 	}
 	st.fail.Store(false)
+	busyReopenInterval = time.Hour
 
 	iter := db.NewIterator(nil, nil)
 	if !iter.Next() || string(iter.Key()) != "a" {
@@ -150,10 +152,78 @@ func TestReopenWaitsForOpenIterator(t *testing.T) {
 	iter.Release()
 	iter.Release()
 
+	if err := db.Put([]byte("y"), []byte("y"), nil); !errors.Is(err, syscall.ENOSPC) {
+		t.Fatalf("put right after a refused reopen: %v", err)
+	}
+	db.nextReopen.Store(0)
 	if err := db.Put([]byte("y"), []byte("y"), nil); err != nil {
 		t.Fatalf("put after the iterator was released: %v", err)
 	}
 	expectValue(t, db, "b", "b")
+}
+
+func TestNestedReadWaitsOutTheDrain(t *testing.T) {
+	db, st := openFailing(t)
+	if err := db.Put([]byte("a"), []byte("1"), nil); err != nil {
+		t.Fatal(err)
+	}
+	st.fail.Store(true)
+	if err := db.Put([]byte("x"), []byte("x"), nil); err == nil {
+		t.Fatal("put while storage fails succeeded")
+	}
+	st.fail.Store(false)
+
+	iter := db.NewIterator(nil, nil)
+	put := make(chan error, 1)
+	go func() { put <- db.Put([]byte("y"), []byte("y"), nil) }()
+	for db.draining.Load() == nil {
+		time.Sleep(time.Millisecond)
+	}
+	expectValue(t, db, "a", "1")
+	iter.Release()
+	if err := <-put; !errors.Is(err, syscall.ENOSPC) {
+		t.Fatalf("put with an open iterator: %v", err)
+	}
+}
+
+func TestReopenIsNotStarvedByOverlappingReaders(t *testing.T) {
+	db, st := openFailing(t)
+	drainTimeout = 5 * time.Second
+	if err := db.Put([]byte("a"), []byte("1"), nil); err != nil {
+		t.Fatal(err)
+	}
+	st.fail.Store(true)
+	if err := db.Put([]byte("x"), []byte("x"), nil); err == nil {
+		t.Fatal("put while storage fails succeeded")
+	}
+	st.fail.Store(false)
+
+	stop := make(chan struct{})
+	var readers sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		readers.Add(1)
+		go func() {
+			defer readers.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				iter := db.NewIterator(nil, nil)
+				time.Sleep(2 * time.Millisecond)
+				iter.Release()
+			}
+		}()
+		time.Sleep(500 * time.Microsecond)
+	}
+	err := db.Put([]byte("y"), []byte("y"), nil)
+	close(stop)
+	readers.Wait()
+	if err != nil {
+		t.Fatalf("put while readers overlap: %v", err)
+	}
+	expectValue(t, db, "y", "y")
 }
 
 func TestCloseIsNotUndoneByReopen(t *testing.T) {
@@ -211,7 +281,7 @@ func TestReopenAttemptsAreRateLimited(t *testing.T) {
 	if err := db.Put([]byte("a"), []byte("1"), nil); !errors.Is(err, syscall.ENOSPC) {
 		t.Fatalf("put within the reopen interval: %v", err)
 	}
-	db.lastReopen.Store(0)
+	db.nextReopen.Store(0)
 	if err := db.Put([]byte("a"), []byte("1"), nil); err != nil {
 		t.Fatalf("put after the reopen interval: %v", err)
 	}

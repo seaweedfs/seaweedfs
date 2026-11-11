@@ -22,23 +22,26 @@ import (
 )
 
 var (
-	reopenInterval = time.Second
-	drainTimeout   = 5 * time.Second
-	probeFile      = storage.FileDesc{Type: storage.TypeTemp, Num: 1 << 40}
-	probeData      = make([]byte, 64*1024)
+	reopenInterval     = time.Second
+	busyReopenInterval = 10 * time.Second
+	drainTimeout       = time.Second
+	probeFile          = storage.FileDesc{Type: storage.TypeTemp, Num: 1 << 40}
+	probeData          = make([]byte, 64*1024)
 )
 
 // DB offers the leveldb.DB methods the filer stores use. Every call holds mu
-// shared, an iterator until it is released; a reopen takes mu exclusively
-// with TryLock only, so a reader that nests another read never deadlocks.
+// shared, an iterator until it is released. A reopen stops admitting calls
+// for at most drainTimeout and takes mu with TryLock only, so a call that
+// nests another one delays the reopen instead of deadlocking.
 type DB struct {
 	name        string
 	stor        storage.Storage
 	ownsStorage bool
 	opts        *opt.Options
 	closed      atomic.Bool
-	lastReopen  atomic.Int64
+	nextReopen  atomic.Int64
 	reopening   sync.Mutex
+	draining    atomic.Pointer[chan struct{}]
 
 	mu      sync.RWMutex
 	db      *leveldb.DB
@@ -145,6 +148,9 @@ func (d *DB) write(fn func(*leveldb.DB) error) error {
 // acquire returns the open database with mu held shared.
 func (d *DB) acquire() (*leveldb.DB, error) {
 	for attempt := 0; ; attempt++ {
+		if draining := d.draining.Load(); draining != nil {
+			<-*draining
+		}
 		d.mu.RLock()
 		if d.closed.Load() {
 			d.mu.RUnlock()
@@ -173,16 +179,18 @@ func (d *DB) reopen(failed *leveldb.DB) bool {
 	if current != failed {
 		return current != nil
 	}
-	if d.closed.Load() || d.reopenedRecently() {
+	if d.closed.Load() || time.Now().UnixNano() < d.nextReopen.Load() {
 		return false
 	}
-	d.lastReopen.Store(time.Now().UnixNano())
+	d.holdOffReopen(reopenInterval)
 	// Reopening on storage that still fails would also lose reads.
 	if err := probe(d.stor); err != nil {
 		glog.Warningf("leveldb %s: storage still failing, not reopening: %v", d.name, err)
 		return false
 	}
 	if !d.lockWhenIdle() {
+		glog.Warningf("leveldb %s: calls still running after %v, not reopening", d.name, drainTimeout)
+		d.holdOffReopen(busyReopenInterval)
 		return false
 	}
 	defer d.mu.Unlock()
@@ -201,11 +209,19 @@ func (d *DB) reopen(failed *leveldb.DB) bool {
 	return true
 }
 
-func (d *DB) reopenedRecently() bool {
-	return time.Since(time.Unix(0, d.lastReopen.Load())) < reopenInterval
+func (d *DB) holdOffReopen(interval time.Duration) {
+	d.nextReopen.Store(time.Now().Add(interval).UnixNano())
 }
 
+// lockWhenIdle holds new calls back while the running ones finish, then
+// takes mu, giving up after drainTimeout.
 func (d *DB) lockWhenIdle() bool {
+	draining := make(chan struct{})
+	d.draining.Store(&draining)
+	defer func() {
+		d.draining.Store(nil)
+		close(draining)
+	}()
 	deadline := time.Now().Add(drainTimeout)
 	for !d.mu.TryLock() {
 		if time.Now().After(deadline) {
