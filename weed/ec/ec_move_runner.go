@@ -15,14 +15,17 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
 
-// errLockLost stops every move that has not started, whatever stopOnError says.
-var errLockLost = errors.New("lock is lost")
+// ErrLockLost stops every move that has not started, whatever stopOnError says,
+// and fails the whole run.
+var ErrLockLost = errors.New("lock is lost")
 
 // EcShardMovesResult counts what RunEcShardMoves did with the planned moves.
 type EcShardMovesResult struct {
 	Moved      int
 	Failed     int
 	NotStarted int
+	// FailedMoves are the moves that failed; their shards are still on the source.
+	FailedMoves []ecbalancer.Move
 }
 
 // RunEcShardMoves applies planned shard moves, up to maxParallelization at once,
@@ -47,7 +50,7 @@ func RunEcShardMoves(env *Env, nodes []*EcNode, moves []ecbalancer.Move, maxPara
 	mover := volume_move.NewMover(env.GrpcDialOption)
 	return runEcShardMoves(moves, maxParallelization, stopOnError, func(m ecbalancer.Move) error {
 		if !env.isLocked() {
-			return errLockLost
+			return ErrLockLost
 		}
 		src, dst := byID[m.SourceNode], byID[m.TargetNode]
 		if src == nil || dst == nil {
@@ -75,13 +78,17 @@ func runEcShardMoves(moves []ecbalancer.Move, maxParallelization int, stopOnErro
 	var moved, failed atomic.Int64
 	var mu sync.Mutex
 	var errs []error
+	var failedMoves []ecbalancer.Move
 	err := runMovesSpreadingTargets(maxParallelization, moves, func(m ecbalancer.Move) error {
 		if stopped.Load() {
 			return nil
 		}
 		if err := move(m); err != nil {
 			failed.Add(1)
-			if stopOnError || errors.Is(err, errLockLost) {
+			mu.Lock()
+			failedMoves = append(failedMoves, m)
+			mu.Unlock()
+			if stopOnError || errors.Is(err, ErrLockLost) {
 				stopped.Store(true)
 				return err
 			}
@@ -95,8 +102,9 @@ func runEcShardMoves(moves []ecbalancer.Move, maxParallelization int, stopOnErro
 		return nil
 	})
 	result := EcShardMovesResult{
-		Moved:  int(moved.Load()),
-		Failed: int(failed.Load()),
+		Moved:       int(moved.Load()),
+		Failed:      int(failed.Load()),
+		FailedMoves: failedMoves,
 	}
 	// Moves skipped after a stop, and moves dropped together with a failed move
 	// of their volume, did not run.

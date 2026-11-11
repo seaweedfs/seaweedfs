@@ -67,6 +67,9 @@ func TestRunEcShardMovesGoesOnAfterFailure(t *testing.T) {
 	if result.Moved != len(moves)-1 || result.Failed != 1 || result.NotStarted != 0 {
 		t.Fatalf("unexpected result %+v", result)
 	}
+	if len(result.FailedMoves) != 1 || result.FailedMoves[0] != broken {
+		t.Fatalf("expected the broken move to be reported, got %+v", result.FailedMoves)
+	}
 }
 
 func TestRunEcShardMovesInParallel(t *testing.T) {
@@ -121,11 +124,11 @@ func TestRunEcShardMovesStopsWhenLockIsLost(t *testing.T) {
 	result, err := runEcShardMoves(moves, 1, false, func(m ecbalancer.Move) error {
 		ran++
 		if ran == 2 {
-			return errLockLost
+			return ErrLockLost
 		}
 		return nil
 	})
-	if !errors.Is(err, errLockLost) {
+	if !errors.Is(err, ErrLockLost) {
 		t.Fatalf("expected the lost lock to be reported, got %v", err)
 	}
 	if ran != 2 || result.Moved != 1 || result.Failed != 1 || result.NotStarted != len(moves)-2 {

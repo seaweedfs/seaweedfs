@@ -2,14 +2,17 @@ package shell
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
+	"github.com/seaweedfs/seaweedfs/weed/ec"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding/ecbalancer"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient/exclusive_locks"
 )
 
@@ -228,5 +231,106 @@ func TestVolumeServerEvacuateEcMovesPerExecCutsInsideVolume(t *testing.T) {
 	}
 	if c.movedCount != shards || ecShardCount(c.topologyInfo, volumeServer) != 0 {
 		t.Fatalf("no limit: planned %d of %d shards", c.movedCount, shards)
+	}
+}
+
+// tightTargetTopology has a source holding shard 0 of volumes 1 and 2, and one
+// target with room for a single planned shard: two free slots, and the plan
+// takes two per shard.
+func tightTargetTopology() *master_pb.TopologyInfo {
+	ecShard := func(vid uint32, shardIds ...erasure_coding.ShardId) *master_pb.VolumeEcShardInformationMessage {
+		si := erasure_coding.NewShardsInfo()
+		for _, id := range shardIds {
+			si.Set(erasure_coding.NewShardInfo(id, 0))
+		}
+		return &master_pb.VolumeEcShardInformationMessage{Id: vid, Collection: "c", EcIndexBits: si.Bitmap(), ShardSizes: si.SizesInt64()}
+	}
+	node := func(id string, maxVolumes int64, shards ...*master_pb.VolumeEcShardInformationMessage) *master_pb.DataNodeInfo {
+		return &master_pb.DataNodeInfo{Id: id, DiskInfos: map[string]*master_pb.DiskInfo{
+			"": {MaxVolumeCount: maxVolumes, EcShardInfos: shards},
+		}}
+	}
+	source := node("source:8080", 10, ecShard(1, 0), ecShard(2, 0))
+	// 1 volume slot = 10 shard slots, 8 of them taken by volume 99.
+	target := node("target:8080", 1, ecShard(99, 0, 1, 2, 3, 4, 5, 6, 7))
+	return &master_pb.TopologyInfo{DataCenterInfos: []*master_pb.DataCenterInfo{{
+		Id: "dc1",
+		RackInfos: []*master_pb.RackInfo{
+			{Id: "rack1", DataNodeInfos: []*master_pb.DataNodeInfo{source}},
+			{Id: "rack2", DataNodeInfos: []*master_pb.DataNodeInfo{target}},
+		},
+	}}}
+}
+
+// A shard that fails to move must not keep the room it was planned on: the
+// readable shard that found no destination is planned again onto it.
+func TestVolumeServerEvacuateEcFailedMoveFreesItsTarget(t *testing.T) {
+	c := newEvacuateCommandForTest(0)
+	c.topologyInfo = tightTargetTopology()
+	var ran []ecbalancer.Move
+	c.moveEcShards = func(moves []ecbalancer.Move, stopOnError bool) (ec.EcShardMovesResult, error) {
+		var result ec.EcShardMovesResult
+		for _, m := range moves {
+			ran = append(ran, m)
+			if m.VolumeID == 1 {
+				result.Failed++
+				result.FailedMoves = append(result.FailedMoves, m)
+				continue
+			}
+			result.Moved++
+		}
+		if result.Failed > 0 {
+			return result, errors.New("input/output error")
+		}
+		return result, nil
+	}
+	var out bytes.Buffer
+	if err := c.evacuateEcVolumes(nil, "source:8080", true, true, &out); err != nil {
+		t.Fatalf("evacuate: %v", err)
+	}
+	if len(ran) != 2 || ran[0].VolumeID != 1 || ran[1].VolumeID != 2 {
+		t.Fatalf("expected volume 1 to fail and volume 2 to move after it, ran %+v\n%s", ran, out.String())
+	}
+	if c.movedCount != 1 {
+		t.Fatalf("expected 1 moved shard, counted %d", c.movedCount)
+	}
+	if strings.Contains(out.String(), "failed to move away ec volume 2") {
+		t.Fatalf("volume 2 should have found a destination:\n%s", out.String())
+	}
+}
+
+// When every move fails, planning again ends once no shard is left to plan.
+func TestVolumeServerEvacuateEcEndsWhenEveryMoveFails(t *testing.T) {
+	c := newEvacuateCommandForTest(0)
+	c.topologyInfo = tightTargetTopology()
+	rounds := 0
+	c.moveEcShards = func(moves []ecbalancer.Move, stopOnError bool) (ec.EcShardMovesResult, error) {
+		rounds++
+		return ec.EcShardMovesResult{Failed: len(moves), FailedMoves: moves}, errors.New("input/output error")
+	}
+	var out bytes.Buffer
+	if err := c.evacuateEcVolumes(nil, "source:8080", true, true, &out); err != nil {
+		t.Fatalf("evacuate: %v", err)
+	}
+	// Round 1 fails volume 1, round 2 fails volume 2; nothing is left to plan.
+	if rounds != 2 {
+		t.Fatalf("expected 2 rounds, got %d:\n%s", rounds, out.String())
+	}
+	if c.movedCount != 0 {
+		t.Fatalf("expected nothing moved, counted %d", c.movedCount)
+	}
+}
+
+// A lost lock fails the run even with -skipNonMoveable, so the caller does not
+// take an unfinished evacuation for a finished one.
+func TestVolumeServerEvacuateEcLostLockFailsTheRun(t *testing.T) {
+	c := newEvacuateCommandForTest(0)
+	c.topologyInfo = tightTargetTopology()
+	c.moveEcShards = func(moves []ecbalancer.Move, stopOnError bool) (ec.EcShardMovesResult, error) {
+		return ec.EcShardMovesResult{Failed: 1, NotStarted: len(moves) - 1, FailedMoves: moves[:1]}, errors.Join(ec.ErrLockLost)
+	}
+	err := c.evacuateEcVolumes(nil, "source:8080", true, true, io.Discard)
+	if !errors.Is(err, ec.ErrLockLost) {
+		t.Fatalf("expected the lost lock to fail the run, got %v", err)
 	}
 }

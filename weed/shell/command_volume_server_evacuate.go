@@ -30,6 +30,8 @@ type commandVolumeServerEvacuate struct {
 	movesPerExec       int
 	movedCount         int
 	limitReported      bool
+	// moveEcShards replaces the RPC moves in tests.
+	moveEcShards func(moves []ecbalancer.Move, stopOnError bool) (ec.EcShardMovesResult, error)
 }
 
 func (c *commandVolumeServerEvacuate) Name() string {
@@ -200,6 +202,34 @@ func (c *commandVolumeServerEvacuate) evacuateNormalVolumes(commandEnv *CommandE
 	return nil
 }
 
+// maxEcEvacuationRounds bounds how often evacuateEcVolumes plans again after
+// failed moves give their targets back.
+const maxEcEvacuationRounds = 10
+
+// ecShardOnServer names one EC shard on one source server.
+type ecShardOnServer struct {
+	server  string
+	vid     uint32
+	shardId int
+}
+
+// plannedEcMove is a shard move together with what the plan changed in the
+// in-memory model, so a failed move can be taken back out of it.
+type plannedEcMove struct {
+	move        ecbalancer.Move
+	src, dst    *EcNode
+	diskType    types.DiskType
+	dstHadShard bool
+}
+
+// ecEvacuationGroup holds the EC nodes of one disk type, collected once so the
+// model keeps its updates across planning rounds.
+type ecEvacuationGroup struct {
+	diskType   types.DiskType
+	thisNodes  []*EcNode
+	otherNodes []*EcNode
+}
+
 func (c *commandVolumeServerEvacuate) evacuateEcVolumes(commandEnv *CommandEnv, volumeServer string, skipNonMoveable, applyChange bool, writer io.Writer) error {
 	// Evacuate EC volumes for all disk types discovered from topology
 	// Disk types are free-form tags (e.g., "", "hdd", "ssd", "nvme", etc.)
@@ -208,14 +238,15 @@ func (c *commandVolumeServerEvacuate) evacuateEcVolumes(commandEnv *CommandEnv, 
 	// (via freeEcSlot decrement after each move) rather than repeatedly refreshing,
 	// which would give a false sense of correctness since topology could be stale.
 	//
-	// All moves are planned first, updating the in-memory model as the old
+	// Moves are planned first, updating the in-memory model as the old
 	// one-move-at-a-time loop did, then applied up to -maxParallelization at a time.
+	// A failed move gives its target back to the model; shards that found no
+	// target in the plan are then planned again, as the old loop would have
+	// placed them on the room the failed move did not use.
 	diskTypes := collectVolumeDiskTypes(c.topologyInfo)
 
-	var moves []ecbalancer.Move
+	var groups []ecEvacuationGroup
 	var allNodes []*EcNode
-	var planErr error
-planning:
 	for _, diskType := range diskTypes {
 		ecNodes, _ := collectEcVolumeServersByDc(c.topologyInfo, "", diskType)
 		allNodes = append(allNodes, ecNodes...)
@@ -224,72 +255,117 @@ planning:
 			// This server doesn't have EC shards for this disk type, skip
 			continue
 		}
+		groups = append(groups, ecEvacuationGroup{diskType: diskType, thisNodes: thisNodes, otherNodes: otherNodes})
+	}
 
-		// plan moving away ec volumes for this disk type
-		for _, thisNode := range thisNodes {
-			diskInfo, found := thisNode.Info.DiskInfos[string(diskType)]
+	source := volumeServer
+	if source == "" {
+		source = "rack " + *c.volumeRack
+	}
+	failed := make(map[ecShardOnServer]bool)
+	for round := 1; ; round++ {
+		planned, unplanned, planErr := c.planEcEvacuation(groups, volumeServer, skipNonMoveable, failed, writer)
+		reportUnplanned := func() {
+			for _, vid := range unplanned {
+				fmt.Fprintf(writer, "failed to move away ec volume %d from %s\n", vid, source)
+			}
+		}
+		if !applyChange {
+			c.movedCount += len(planned)
+			reportUnplanned()
+			c.limitReached(writer)
+			return planErr
+		}
+		if len(planned) == 0 {
+			reportUnplanned()
+			return planErr
+		}
+
+		moves := make([]ecbalancer.Move, len(planned))
+		byShard := make(map[ecShardOnServer]plannedEcMove, len(planned))
+		for i, p := range planned {
+			moves[i] = p.move
+			byShard[ecShardOnServer{p.move.SourceNode, p.move.VolumeID, p.move.ShardID}] = p
+		}
+		fmt.Fprintf(writer, "moving %d ec shard(s) from %s, up to %d at a time\n", len(moves), source, c.maxParallelization)
+		result, err := c.runEcShardMoves(commandEnv, allNodes, moves, !skipNonMoveable, writer)
+		c.movedCount += result.Moved
+		fmt.Fprintf(writer, "ec shards from %s: %d moved, %d failed, %d not started\n", source, result.Moved, result.Failed, result.NotStarted)
+		if err != nil {
+			// A lost lock stopped the moves that had not started: fail the run,
+			// even with -skipNonMoveable.
+			if !skipNonMoveable || errors.Is(err, ec.ErrLockLost) {
+				return err
+			}
+			fmt.Fprintf(writer, "skipped ec shards that failed to move: %v\n", err)
+		}
+		// The shard of a failed move is still on its source, and its target did
+		// not receive it.
+		for _, m := range result.FailedMoves {
+			key := ecShardOnServer{m.SourceNode, m.VolumeID, m.ShardID}
+			if p, found := byShard[key]; found {
+				unplanEcMove(p)
+				failed[key] = true
+			}
+		}
+		if planErr != nil {
+			return planErr
+		}
+		if len(result.FailedMoves) == 0 || len(unplanned) == 0 || c.limitReached(writer) || round == maxEcEvacuationRounds {
+			reportUnplanned()
+			return nil
+		}
+		fmt.Fprintf(writer, "planning again %d ec volume(s) that found no destination, now that failed moves left room\n", len(unplanned))
+	}
+}
+
+// planEcEvacuation plans the moves of the EC shards still on the evacuated
+// servers, leaving out the shards whose move failed before. unplanned lists the
+// volumes with a shard that found no destination; without -skipNonMoveable the
+// first one ends the plan with planErr, keeping the moves planned before it.
+func (c *commandVolumeServerEvacuate) planEcEvacuation(groups []ecEvacuationGroup, volumeServer string, skipNonMoveable bool, failed map[ecShardOnServer]bool, writer io.Writer) (planned []plannedEcMove, unplanned []uint32, planErr error) {
+	for _, group := range groups {
+		for _, thisNode := range group.thisNodes {
+			diskInfo, found := thisNode.Info.DiskInfos[string(group.diskType)]
 			if !found {
 				continue
 			}
 			for _, ecShardInfo := range diskInfo.EcShardInfos {
 				limit := 0
 				if c.movesPerExec > 0 {
-					limit = c.movesPerExec - c.movedCount - len(moves)
+					limit = c.movesPerExec - c.movedCount - len(planned)
 					if limit <= 0 {
 						break
 					}
 				}
-				volumeMoves, planned := c.planMoveAwayOneEcVolume(ecShardInfo, thisNode, otherNodes, diskType, limit, writer)
-				moves = append(moves, volumeMoves...)
-				if !planned {
-					if skipNonMoveable {
-						fmt.Fprintf(writer, "failed to move away ec volume %d from %s\n", ecShardInfo.Id, volumeServer)
-					} else {
+				volumeMoves, ok := c.planMoveAwayOneEcVolume(ecShardInfo, thisNode, group.otherNodes, group.diskType, limit, failed, writer)
+				planned = append(planned, volumeMoves...)
+				if !ok {
+					if !skipNonMoveable {
 						// Like the one-at-a-time loop did, still move what comes before it.
-						planErr = fmt.Errorf("failed to move away ec volume %d from %s", ecShardInfo.Id, volumeServer)
-						break planning
+						return planned, nil, fmt.Errorf("failed to move away ec volume %d from %s", ecShardInfo.Id, volumeServer)
 					}
+					unplanned = append(unplanned, ecShardInfo.Id)
 				}
 			}
 		}
 	}
-
-	if !applyChange {
-		c.movedCount += len(moves)
-		c.limitReached(writer)
-		return planErr
-	}
-	if len(moves) == 0 {
-		return planErr
-	}
-	source := volumeServer
-	if source == "" {
-		source = "rack " + *c.volumeRack
-	}
-	fmt.Fprintf(writer, "moving %d ec shard(s) from %s, up to %d at a time\n", len(moves), source, c.maxParallelization)
-	result, err := ec.RunEcShardMoves(commandEnv.ecEnv(), allNodes, moves, c.maxParallelization, 0, !skipNonMoveable, writer)
-	c.movedCount += result.Moved
-	fmt.Fprintf(writer, "ec shards from %s: %d moved, %d failed, %d not started\n", source, result.Moved, result.Failed, result.NotStarted)
-	if err != nil {
-		if skipNonMoveable {
-			fmt.Fprintf(writer, "skipped ec shards that failed to move: %v\n", err)
-		} else {
-			return err
-		}
-	}
-	c.limitReached(writer)
-	return planErr
+	return planned, unplanned, nil
 }
 
 // planMoveAwayOneEcVolume picks a destination for each shard of this EC volume on
 // thisNode, at most limit shards when limit > 0, and records the moves in the
-// in-memory model. planned is false when a shard has no destination; the shards
-// planned before it are still returned.
-func (c *commandVolumeServerEvacuate) planMoveAwayOneEcVolume(ecShardInfo *master_pb.VolumeEcShardInformationMessage, thisNode *EcNode, otherNodes []*EcNode, diskType types.DiskType, limit int, writer io.Writer) (moves []ecbalancer.Move, planned bool) {
+// in-memory model. Shards whose move failed before are left where they are. ok
+// is false when a shard has no destination; the shards planned before it are
+// still returned.
+func (c *commandVolumeServerEvacuate) planMoveAwayOneEcVolume(ecShardInfo *master_pb.VolumeEcShardInformationMessage, thisNode *EcNode, otherNodes []*EcNode, diskType types.DiskType, limit int, failed map[ecShardOnServer]bool, writer io.Writer) (planned []plannedEcMove, ok bool) {
 	si := erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(ecShardInfo)
 	for _, shardId := range si.Ids() {
-		if limit > 0 && len(moves) >= limit {
+		if limit > 0 && len(planned) >= limit {
 			break
+		}
+		if failed[ecShardOnServer{thisNode.Info.Id, ecShardInfo.Id, int(shardId)}] {
+			continue
 		}
 		// Sort by: 1) fewest shards of this volume, 2) most free EC slots
 		// This ensures we prefer nodes with capacity and balanced shard distribution
@@ -327,15 +403,22 @@ func (c *commandVolumeServerEvacuate) planMoveAwayOneEcVolume(ecShardInfo *maste
 				fmt.Fprintf(writer, "moving ec volume %s%d.%d %s => %s\n", collectionPrefix, ecShardInfo.Id, shardId, thisNode.Info.Id, emptyNode.Info.Id)
 			}
 			shardIds := []erasure_coding.ShardId{shardId}
+			dstHadShard := ecNodeHasShard(emptyNode, ecShardInfo.Id, shardId)
 			emptyNode.AddEcVolumeShards(vid, ecShardInfo.Collection, shardIds, diskType)
 			thisNode.DeleteEcVolumeShards(vid, shardIds)
-			moves = append(moves, ecbalancer.Move{
-				VolumeID:   ecShardInfo.Id,
-				ShardID:    int(shardId),
-				Collection: ecShardInfo.Collection,
-				SourceNode: thisNode.Info.Id,
-				TargetNode: emptyNode.Info.Id,
-				TargetDisk: destDiskId,
+			planned = append(planned, plannedEcMove{
+				move: ecbalancer.Move{
+					VolumeID:   ecShardInfo.Id,
+					ShardID:    int(shardId),
+					Collection: ecShardInfo.Collection,
+					SourceNode: thisNode.Info.Id,
+					TargetNode: emptyNode.Info.Id,
+					TargetDisk: destDiskId,
+				},
+				src:         thisNode,
+				dst:         emptyNode,
+				diskType:    diskType,
+				dstHadShard: dstHadShard,
 			})
 			shardPlanned = true
 			// Update the node's free slot count after the planned move
@@ -348,11 +431,46 @@ func (c *commandVolumeServerEvacuate) planMoveAwayOneEcVolume(ecShardInfo *maste
 					ecShardInfo.Id, shardId, skippedNodes)
 			}
 			// Ensure partial moves are reported as failures to prevent data loss
-			return moves, false
+			return planned, false
 		}
 	}
 
-	return moves, true
+	return planned, true
+}
+
+// unplanEcMove takes a failed move back out of the in-memory model: the shard is
+// on its source again and the target's slot is free.
+func unplanEcMove(p plannedEcMove) {
+	vid := needle.VolumeId(p.move.VolumeID)
+	shardIds := []erasure_coding.ShardId{erasure_coding.ShardId(p.move.ShardID)}
+	if !p.dstHadShard {
+		p.dst.DeleteEcVolumeShards(vid, shardIds)
+	}
+	p.dst.FreeEcSlot++
+	p.src.AddEcVolumeShards(vid, p.move.Collection, shardIds, p.diskType)
+}
+
+// ecNodeHasShard reports whether the in-memory model has the shard on the node.
+func ecNodeHasShard(node *EcNode, vid uint32, shardId erasure_coding.ShardId) bool {
+	for _, diskInfo := range node.Info.DiskInfos {
+		if diskInfo == nil {
+			continue
+		}
+		for _, eci := range diskInfo.EcShardInfos {
+			if eci.Id == vid && erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(eci).Has(shardId) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// runEcShardMoves applies the planned moves; tests replace it through moveEcShards.
+func (c *commandVolumeServerEvacuate) runEcShardMoves(commandEnv *CommandEnv, nodes []*EcNode, moves []ecbalancer.Move, stopOnError bool, writer io.Writer) (ec.EcShardMovesResult, error) {
+	if c.moveEcShards != nil {
+		return c.moveEcShards(moves, stopOnError)
+	}
+	return ec.RunEcShardMoves(commandEnv.ecEnv(), nodes, moves, c.maxParallelization, 0, stopOnError, writer)
 }
 
 // limitReached reports whether -movesPerExec moves have been made, and says so once.
