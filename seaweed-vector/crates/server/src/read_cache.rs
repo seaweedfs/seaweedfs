@@ -696,6 +696,14 @@ mod tests {
             .unwrap();
         let indexed = dataset.version().version;
         assert_eq!(query(&server, &table, vec![5.0, 1.0]).await[0], "k5");
+        let other = pb::Table {
+            id: vec![table.id[0].clone(), "vector".into(), "y".into()],
+            location: location.replace("/vector/x", "/vector/y"),
+            ..Default::default()
+        };
+        create(&server, &other, 2).await;
+        put(&server, &other, rows(0)).await;
+        assert_eq!(query(&server, &other, vec![5.0, 1.0]).await[0], "k5");
 
         let (store, path) = lance::io::ObjectStore::from_uri(&location).await.unwrap();
         store.remove_dir_all(path).await.unwrap();
@@ -712,6 +720,11 @@ mod tests {
             offset += 1000;
         }
         assert_eq!(query(&server, &table, vec![1005.0, 1.0]).await[0], "k1005");
+        server.handles.run_pending_tasks();
+        let session = server.reads.lock().unwrap().session.clone();
+        for (_, (_, dataset)) in server.handles.iter() {
+            assert!(Arc::ptr_eq(&dataset.session(), &session));
+        }
     }
 
     fn uuid_like() -> String {

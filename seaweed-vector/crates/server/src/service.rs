@@ -637,7 +637,10 @@ impl VectorServer {
                 Some(dataset) => dataset,
                 None => {
                     let dataset = self.open_in(table, Some(session)).await?;
-                    if table.version == 0 {
+                    // Under the lock, so no handle of a replaced session
+                    // lands after the replacement cleared them.
+                    let reads = self.reads.lock().unwrap();
+                    if table.version == 0 && reads.generation == generation {
                         self.handles
                             .insert(handle_key(table), (generation, dataset.clone()));
                     }
@@ -645,11 +648,14 @@ impl VectorServer {
                 }
             };
             let mut reads = self.reads.lock().unwrap();
-            if reads.generation == generation
-                && reads.admit(&table.location, table_id(&dataset), self.lance_cache_bytes)
-            {
+            if reads.generation != generation {
+                continue;
+            }
+            if reads.admit(&table.location, table_id(&dataset), self.lance_cache_bytes) {
                 return Ok(dataset);
             }
+            // The handles hold the replaced session and its caches.
+            self.handles.invalidate_all();
         }
     }
 
