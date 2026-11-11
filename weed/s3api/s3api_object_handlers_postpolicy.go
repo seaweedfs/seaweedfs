@@ -151,15 +151,20 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Authorize the object like the PUT path.
-	if errCode := s3a.iam.AuthorizeObjectWrite(r, identity, bucket, object); errCode != s3err.ErrNone {
+	// Authorize the object like the PUT path, with policies seeing the ACL as PutObject presents it.
+	policyReq, errCode := putObjectACLPolicyRequest(objectKeyPolicyRequest(r, http.MethodPut, bucket, object, ""), s3_constants.ACTION_WRITE, bucket, object)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+	if errCode := s3a.iam.AuthorizeObjectWrite(policyReq, identity, bucket, object); errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, refineDenialForBucketName(r, identity, errCode))
 		return
 	}
 	// An acl or x-amz-grant-* form field rides onto the upload as ACL headers,
 	// which the PUT path only applies under s3:PutObjectAcl.
 	if postRequestsAcl(r) {
-		if errCode := s3a.iam.AuthorizeObjectAclWrite(r, identity, bucket, object); errCode != s3err.ErrNone {
+		if errCode := s3a.iam.AuthorizeObjectAclWrite(policyReq, identity, bucket, object); errCode != s3err.ErrNone {
 			s3err.WriteErrorResponse(w, r, refineDenialForBucketName(r, identity, errCode))
 			return
 		}
