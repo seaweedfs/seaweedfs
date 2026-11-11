@@ -5,6 +5,9 @@ package command
 import (
 	"bytes"
 	"context"
+	"net"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -211,5 +214,44 @@ func Test_ensureBucketAllowEmptyFolders(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func Test_mountSocketCleanup(t *testing.T) {
+	dir, err := os.MkdirTemp("", "swmnt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	socketPath := filepath.Join(dir, "mount.sock")
+	listen := func() {
+		l, err := net.Listen("unix", socketPath)
+		if err != nil {
+			t.Skipf("unix sockets unavailable: %v", err)
+		}
+		t.Cleanup(func() { l.Close() })
+	}
+	exists := func() bool {
+		_, err := os.Lstat(socketPath)
+		return err == nil
+	}
+
+	listen()
+	removeMountSocket := mountSocketCleanup(socketPath)
+	removeMountSocket()
+	removeMountSocket()
+	if exists() {
+		t.Fatalf("%s is still there after the mount exited", socketPath)
+	}
+
+	listen()
+	removeMountSocket = mountSocketCleanup(socketPath)
+	if err := os.Remove(socketPath); err != nil {
+		t.Fatal(err)
+	}
+	listen()
+	removeMountSocket()
+	if !exists() {
+		t.Fatalf("exiting mount removed the socket of a later mount of the same directory")
 	}
 }

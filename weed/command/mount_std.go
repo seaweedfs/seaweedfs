@@ -69,6 +69,8 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	if err != nil {
 		glog.Fatalf("Failed to listen on %s: %v", *option.localSocket, err)
 	}
+	removeMountSocket := mountSocketCleanup(*option.localSocket)
+	defer removeMountSocket()
 
 	// detect mount folder mode
 	if *option.dirAutoCreate {
@@ -237,6 +239,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		if err := unmount.Unmount(dir); err != nil {
 			glog.Errorf("failed to unmount %s: %v", dir, err)
 		}
+		removeMountSocket()
 	})
 
 	if mountOptions.fuseCommandPid != 0 {

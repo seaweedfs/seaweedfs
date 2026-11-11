@@ -14,6 +14,7 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"google.golang.org/grpc"
@@ -267,6 +268,27 @@ func createMountRoot(wfs *mount.WFS, mountRoot, bucketRootPath string, filerAddr
 		return false
 	}
 	return true
+}
+
+// mountSocketCleanup returns a func that removes the control socket this mount
+// listens on, unless a later mount of the same directory has replaced it.
+func mountSocketCleanup(socketPath string) func() {
+	listened, err := os.Lstat(socketPath)
+	if err != nil {
+		return func() {}
+	}
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			current, err := os.Lstat(socketPath)
+			if err != nil || !os.SameFile(current, listened) {
+				return
+			}
+			if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
+				glog.Warningf("remove mount socket %s: %v", socketPath, err)
+			}
+		})
+	}
 }
 
 // serveMountGrpc exposes the local control socket used by "weed mount.stats".
