@@ -545,7 +545,7 @@ func TestPostPolicyBucketHandlerBlocksPublicAcls(t *testing.T) {
 // private upload into a public-read bucket is not anonymously readable.
 func TestPostPolicyBucketHandlerStoresObjectAcl(t *testing.T) {
 	const key = "uploads/pic.png"
-	upload := func(t *testing.T, publicBucket bool, fields map[string]string) (*httptest.ResponseRecorder, *S3ApiServer, *filer_pb.Entry) {
+	upload := func(t *testing.T, publicBucket bool, fields, headers map[string]string) (*httptest.ResponseRecorder, *S3ApiServer, *filer_pb.Entry) {
 		bucketEntry := &filer_pb.Entry{
 			Name:        postAuthzBucket,
 			IsDirectory: true,
@@ -561,8 +561,12 @@ func TestPostPolicyBucketHandlerStoresObjectAcl(t *testing.T) {
 			apply:   true,
 		}
 		s3a := newPostAutoCreateServer(t, filer)
+		req := newSignedPostRequestFor(t, key, postAdminAccessKey, postAdminSecretKey, fields)
+		for name, value := range headers {
+			req.Header.Set(name, value)
+		}
 		rec := httptest.NewRecorder()
-		s3a.PostPolicyBucketHandler(rec, newSignedPostRequestFor(t, key, postAdminAccessKey, postAdminSecretKey, fields))
+		s3a.PostPolicyBucketHandler(rec, req)
 		filer.mu.Lock()
 		defer filer.mu.Unlock()
 		return rec, s3a, filer.entries["/buckets/"+postAuthzBucket+"/"+key]
@@ -576,15 +580,19 @@ func TestPostPolicyBucketHandlerStoresObjectAcl(t *testing.T) {
 		name         string
 		publicBucket bool
 		fields       map[string]string
+		headers      map[string]string
 		want         s3err.ErrorCode
 	}{
-		{"private on public-read bucket", true, map[string]string{"acl": "private"}, s3err.ErrAccessDenied},
-		{"no acl on public-read bucket", true, nil, s3err.ErrAccessDenied},
-		{"public-read on private bucket", false, map[string]string{"acl": "public-read"}, s3err.ErrNone},
-		{"grant-read AllUsers on private bucket", false, map[string]string{"x-amz-grant-read": `uri="` + s3_constants.GranteeGroupAllUsers + `"`}, s3err.ErrNone},
+		{"private on public-read bucket", true, map[string]string{"acl": "private"}, nil, s3err.ErrAccessDenied},
+		{"no acl on public-read bucket", true, nil, nil, s3err.ErrAccessDenied},
+		{"public-read on private bucket", false, map[string]string{"acl": "public-read"}, nil, s3err.ErrNone},
+		{"grant-read AllUsers on private bucket", false, map[string]string{"x-amz-grant-read": `uri="` + s3_constants.GranteeGroupAllUsers + `"`}, nil, s3err.ErrNone},
+		{"unsigned acl header", false, nil, map[string]string{s3_constants.AmzCannedAcl: "public-read"}, s3err.ErrAccessDenied},
+		{"unsigned grant header", false, nil, map[string]string{s3_constants.AmzAclRead: `uri="` + s3_constants.GranteeGroupAllUsers + `"`}, s3err.ErrAccessDenied},
+		{"unsigned header beside signed acl", false, map[string]string{"acl": "private"}, map[string]string{s3_constants.AmzAclRead: `uri="` + s3_constants.GranteeGroupAllUsers + `"`}, s3err.ErrAccessDenied},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			rec, s3a, entry := upload(t, tc.publicBucket, tc.fields)
+			rec, s3a, entry := upload(t, tc.publicBucket, tc.fields, tc.headers)
 			require.Equal(t, http.StatusNoContent, rec.Code, "body: %s", rec.Body.String())
 			require.NotNil(t, entry)
 			assert.Equal(t, []byte("000000000000"), entry.Extended[s3_constants.ExtAmzOwnerKey])
@@ -594,12 +602,12 @@ func TestPostPolicyBucketHandlerStoresObjectAcl(t *testing.T) {
 	}
 
 	t.Run("invalid canned acl", func(t *testing.T) {
-		rec, _, entry := upload(t, false, map[string]string{"acl": "bogus-acl"})
+		rec, _, entry := upload(t, false, map[string]string{"acl": "bogus-acl"}, nil)
 		assert.Equal(t, http.StatusBadRequest, rec.Code, "body: %s", rec.Body.String())
 		assert.Nil(t, entry, "a rejected ACL must not write the object")
 	})
 	t.Run("canned and grant together", func(t *testing.T) {
-		rec, _, entry := upload(t, false, map[string]string{"acl": "private", "x-amz-grant-read": `uri="` + s3_constants.GranteeGroupAllUsers + `"`})
+		rec, _, entry := upload(t, false, map[string]string{"acl": "private", "x-amz-grant-read": `uri="` + s3_constants.GranteeGroupAllUsers + `"`}, nil)
 		assert.Equal(t, http.StatusBadRequest, rec.Code, "body: %s", rec.Body.String())
 		assert.Nil(t, entry)
 	})

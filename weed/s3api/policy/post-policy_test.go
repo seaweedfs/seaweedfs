@@ -347,3 +347,25 @@ func TestCheckPostPolicy_UnknownKeyErrorIncludesPolicyValue(t *testing.T) {
 		t.Fatalf("expected 'unknown condition key' suffix, got: %v", err)
 	}
 }
+
+// An acl form field sets the stored object ACL, so it needs a policy
+// condition like the X-Amz-* fields do.
+func TestCheckPostPolicy_AclFieldNeedsCondition(t *testing.T) {
+	form := http.Header{}
+	form.Set("Bucket", "mybucket")
+	form.Set("Acl", "public-read")
+
+	err := CheckPostPolicy(form, buildParsedPolicy(t, `["eq","$bucket","mybucket"]`))
+	if err == nil || !strings.Contains(err.Error(), "Extra input fields: Acl") {
+		t.Fatalf("expected 'Extra input fields: Acl' error, got: %v", err)
+	}
+	if err := CheckPostPolicy(form, buildParsedPolicy(t, `["eq","$bucket","mybucket"],["eq","$acl","public-read"]`)); err != nil {
+		t.Fatalf("expected an eq $acl condition to cover the field, got: %v", err)
+	}
+	if err := CheckPostPolicy(form, buildParsedPolicy(t, `["eq","$bucket","mybucket"],["starts-with","$acl","public-"]`)); err != nil {
+		t.Fatalf("expected a starts-with $acl condition to cover the field, got: %v", err)
+	}
+	if err := CheckPostPolicy(form, buildParsedPolicy(t, `["eq","$bucket","mybucket"],["eq","$acl","private"]`)); err == nil {
+		t.Fatalf("expected a mismatched $acl condition to fail")
+	}
+}
