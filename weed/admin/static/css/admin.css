@@ -793,8 +793,7 @@ main h2:has(> .bi:first-child) > .bi:first-child {
 
 .progress-bar:not([class*="bg-"]),
 .progress-bar.bg-primary,
-.progress-bar.bg-info,
-.progress-bar.bg-success {
+.progress-bar.bg-info {
     background: var(--k-spectrum) !important;
 }
 
