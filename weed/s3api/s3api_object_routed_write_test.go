@@ -494,6 +494,40 @@ func closedFilerAddress(t *testing.T) pb.ServerAddress {
 	return pb.ServerAddress(fmt.Sprintf("127.0.0.1:1.%d", port))
 }
 
+// A fake filer that gets the port of a dead owner an earlier test dialed must
+// not inherit that owner's failed channel.
+func TestFakeFilerOnReusedPortIsReachable(t *testing.T) {
+	live := &fakeTxnFiler{}
+	liveAddr := startFakeFiler(t, live)
+	deadOwner := closedFilerAddress(t)
+	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+	s3a := &S3ApiServer{
+		option:      &S3ApiServerOption{GrpcDialOption: dialOption},
+		filerClient: wdclient.NewFilerClient([]pb.ServerAddress{liveAddr}, dialOption, ""),
+	}
+	if _, err := s3a.objectTxnOnFiler(deadOwner, &filer_pb.ObjectTransactionRequest{LockKey: "/buckets/b/o", RouteKey: "s3.object.write:/buckets/b/o"}); err != nil {
+		t.Fatalf("expected failover success, got %v", err)
+	}
+
+	lis, err := net.Listen("tcp", deadOwner.ToGrpcAddress())
+	if err != nil {
+		t.Skipf("port of the dead owner was taken: %v", err)
+	}
+	reused := &fakeTxnFiler{}
+	srv := grpc.NewServer()
+	filer_pb.RegisterSeaweedFilerServer(srv, reused)
+	go srv.Serve(lis)
+	t.Cleanup(srv.Stop)
+
+	direct := &S3ApiServer{option: &S3ApiServerOption{GrpcDialOption: dialOption}}
+	if _, err := direct.objectTxnOnFiler(fakeFilerAddress(lis), &filer_pb.ObjectTransactionRequest{LockKey: "/buckets/b/o"}); err != nil {
+		t.Fatalf("fake filer on a reused port: %v", err)
+	}
+	if got := atomic.LoadInt32(&reused.calls); got != 1 {
+		t.Fatalf("reused-port filer calls = %d, want 1", got)
+	}
+}
+
 // A routed write whose owner address is dead fails over to a live filer (which
 // forwards to the real owner by route_key) instead of hanging on the dead owner,
 // so an object write survives a filer pod IP change without an S3 gateway restart.
