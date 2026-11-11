@@ -473,6 +473,13 @@ pub(crate) struct Reads {
     tables: HashMap<String, String>,
 }
 
+/// Opened tables kept for the next read of them.
+const MAX_HANDLES: u64 = 1024;
+
+fn handle_key(table: &pb::Table) -> (String, bool) {
+    (table.location.clone(), table.sse_s3)
+}
+
 /// Locations a session remembers before it starts over.
 const MAX_READ_TABLES: usize = 100_000;
 
@@ -515,6 +522,9 @@ pub struct VectorServer {
     /// Lance's index and metadata caches, shared by every request that only
     /// reads. Writes open in a session of their own.
     pub(crate) reads: Mutex<Reads>,
+    /// A table opened by an earlier read, by location and encryption, with
+    /// the generation of the session it was opened in.
+    pub(crate) handles: moka::sync::Cache<(String, bool), (u64, Dataset)>,
     lance_cache_bytes: (usize, usize),
     leases: SharedLeases,
     nprobes: Option<usize>,
@@ -538,6 +548,7 @@ impl VectorServer {
                 DEFAULT_METADATA_CACHE_BYTES,
             )),
             lance_cache_bytes: (DEFAULT_INDEX_CACHE_BYTES, DEFAULT_METADATA_CACHE_BYTES),
+            handles: moka::sync::Cache::new(MAX_HANDLES),
             leases: SharedLeases::default(),
             nprobes: None,
             schemes: &["s3"],
@@ -622,7 +633,17 @@ impl VectorServer {
                 let reads = self.reads.lock().unwrap();
                 (reads.session.clone(), reads.generation)
             };
-            let dataset = self.open_in(table, Some(session)).await?;
+            let dataset = match self.handle(table, generation).await? {
+                Some(dataset) => dataset,
+                None => {
+                    let dataset = self.open_in(table, Some(session)).await?;
+                    if table.version == 0 {
+                        self.handles
+                            .insert(handle_key(table), (generation, dataset.clone()));
+                    }
+                    dataset
+                }
+            };
             let mut reads = self.reads.lock().unwrap();
             if reads.generation == generation
                 && reads.admit(&table.location, table_id(&dataset), self.lance_cache_bytes)
@@ -630,6 +651,28 @@ impl VectorServer {
                 return Ok(dataset);
             }
         }
+    }
+
+    /// The table from the handle an earlier read of it left in this session,
+    /// moved to the version asked for: the latest costs a listing of its
+    /// versions, not a new store and manifest read.
+    async fn handle(&self, table: &pb::Table, generation: u64) -> Result<Option<Dataset>, Status> {
+        self.describe(table)?;
+        let key = handle_key(table);
+        let Some((at, mut dataset)) = self.handles.get(&key) else {
+            return Ok(None);
+        };
+        if at != generation {
+            return Ok(None);
+        }
+        let moved = match table.version {
+            0 => dataset.checkout_latest().await.map(|()| dataset),
+            version => dataset.checkout_version(version).await,
+        };
+        moved.map(Some).map_err(|err| {
+            self.handles.invalidate(&key);
+            open_status(err.into())
+        })
     }
 
     async fn open_in(

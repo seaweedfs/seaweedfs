@@ -648,6 +648,7 @@ mod tests {
         assert!(session.approx_num_items() > 0);
         assert_eq!(query(&server, &table, vec![7.0, 1.0]).await[0], "k7");
         let again = session.index_cache_stats().await;
+        assert!(server.handles.contains_key(&(location, false)));
         assert!(again.hits > loaded.hits, "{loaded:?} then {again:?}");
         assert_eq!(again.misses, loaded.misses, "{loaded:?} then {again:?}");
     }
