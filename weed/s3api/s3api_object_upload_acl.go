@@ -176,12 +176,45 @@ func (s3a *S3ApiServer) preparePutObjectACL(r *http.Request, bucket string) (*ht
 		if policyCode != s3err.ErrNone {
 			return r, policyCode
 		}
-		for _, action := range []Action{s3_constants.ACTION_WRITE, s3_constants.ACTION_WRITE_ACP} {
-			if policyCode, _ := s3a.checkPolicyWithEntry(policyRequest, bucket, object, string(action), "", nil); policyCode != s3err.ErrNone {
-				return r, policyCode
-			}
+		if policyCode = s3a.checkPutObjectACLPolicy(policyRequest, bucket, object); policyCode != s3err.ErrNone {
+			return r, policyCode
 		}
 	}
+	return s3a.attachPutObjectACL(r, aclRequest, metadata, accountID, canned, custom)
+}
+
+// checkPutObjectACLPolicy applies bucket policies to an upload ACL when
+// authentication is off and no IAM check covered it.
+func (s3a *S3ApiServer) checkPutObjectACLPolicy(policyRequest *http.Request, bucket, object string) s3err.ErrorCode {
+	for _, action := range []Action{s3_constants.ACTION_WRITE, s3_constants.ACTION_WRITE_ACP} {
+		if code, _ := s3a.checkPolicyWithEntry(policyRequest, bucket, object, string(action), "", nil); code != s3err.ErrNone {
+			return code
+		}
+	}
+	return s3err.ErrNone
+}
+
+// preparePostObjectACL builds the upload ACL from the acl and x-amz-grant-*
+// form fields promoted onto the request. PostPolicyBucketHandler has already
+// authorized them for the policy signer.
+func (s3a *S3ApiServer) preparePostObjectACL(r *http.Request, bucket string) (*http.Request, s3err.ErrorCode) {
+	metadata, code := s3a.getBucketConfig(bucket)
+	if code != s3err.ErrNone {
+		return r, code
+	}
+	if metadata == nil || s3a.iam == nil {
+		return r, s3err.ErrInternalError
+	}
+	custom := false
+	for _, header := range []string{s3_constants.AmzAclFullControl, s3_constants.AmzAclRead, s3_constants.AmzAclReadAcp, s3_constants.AmzAclWrite, s3_constants.AmzAclWriteAcp} {
+		if r.Header.Get(header) != "" {
+			custom = true
+		}
+	}
+	return s3a.attachPutObjectACL(r, r.Clone(r.Context()), metadata, s3a.requestAccountId(r), r.Header.Get(s3_constants.AmzCannedAcl), custom)
+}
+
+func (s3a *S3ApiServer) attachPutObjectACL(r, aclRequest *http.Request, metadata *BucketConfig, accountID, canned string, custom bool) (*http.Request, s3err.ErrorCode) {
 	if accountID == "" {
 		return r, s3err.ErrAccessDenied
 	}
@@ -253,7 +286,7 @@ func (s3a *S3ApiServer) preparePutObjectACL(r *http.Request, bucket string) (*ht
 }
 
 // applyPutObjectACL adds prevalidated ownership and grants before CreateEntry.
-// Multipart parts and POST form uploads do not carry this PutObject context.
+// Multipart parts do not carry this PutObject context.
 func applyPutObjectACL(r *http.Request, entry *filer_pb.Entry) {
 	metadata, _ := r.Context().Value(putObjectACLContextKey{}).(putObjectACLMetadata)
 	for key, value := range metadata.extended {

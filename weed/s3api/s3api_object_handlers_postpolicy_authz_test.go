@@ -540,3 +540,220 @@ func TestPostPolicyBucketHandlerBlocksPublicAcls(t *testing.T) {
 	defer filer.mu.Unlock()
 	assert.NotNil(t, filer.entries["/buckets/"+postAuthzBucket+"/"+key])
 }
+
+// A POST Object acl field is stored on the object like PUT's x-amz-acl, so a
+// private upload into a public-read bucket is not anonymously readable.
+func TestPostPolicyBucketHandlerStoresObjectAcl(t *testing.T) {
+	const key = "uploads/pic.png"
+	upload := func(t *testing.T, publicBucket bool, fields, headers map[string]string) (*httptest.ResponseRecorder, *S3ApiServer, *filer_pb.Entry) {
+		bucketEntry := &filer_pb.Entry{
+			Name:        postAuthzBucket,
+			IsDirectory: true,
+			Attributes:  &filer_pb.FuseAttributes{},
+			Extended:    map[string][]byte{s3_constants.ExtAmzOwnerKey: []byte("000000000000")},
+		}
+		if publicBucket {
+			bucketEntry.Extended[s3_constants.ExtAmzAclKey] = anonymousReadGrant(s3_constants.PermissionRead)
+		}
+		filer := &ambiguousPutFiler{
+			volume:  startFakeVolumeServer(t),
+			entries: map[string]*filer_pb.Entry{"/buckets/" + postAuthzBucket: bucketEntry},
+			apply:   true,
+		}
+		s3a := newPostAutoCreateServer(t, filer)
+		req := newSignedPostRequestFor(t, key, postAdminAccessKey, postAdminSecretKey, fields)
+		for name, value := range headers {
+			req.Header.Set(name, value)
+		}
+		rec := httptest.NewRecorder()
+		s3a.PostPolicyBucketHandler(rec, req)
+		filer.mu.Lock()
+		defer filer.mu.Unlock()
+		return rec, s3a, filer.entries["/buckets/"+postAuthzBucket+"/"+key]
+	}
+	anonymousRead := func(s3a *S3ApiServer, entry *filer_pb.Entry) s3err.ErrorCode {
+		req := httptest.NewRequest(http.MethodGet, "/"+postAuthzBucket+"/"+key, nil)
+		return s3a.authorizeAnonymousObjectRead(req, postAuthzBucket, key, entry.Extended)
+	}
+
+	for _, tc := range []struct {
+		name         string
+		publicBucket bool
+		fields       map[string]string
+		headers      map[string]string
+		want         s3err.ErrorCode
+	}{
+		{"private on public-read bucket", true, map[string]string{"acl": "private"}, nil, s3err.ErrAccessDenied},
+		{"no acl on public-read bucket", true, nil, nil, s3err.ErrAccessDenied},
+		{"public-read on private bucket", false, map[string]string{"acl": "public-read"}, nil, s3err.ErrNone},
+		{"grant-read AllUsers on private bucket", false, map[string]string{"x-amz-grant-read": `uri="` + s3_constants.GranteeGroupAllUsers + `"`}, nil, s3err.ErrNone},
+		{"unsigned acl header", false, nil, map[string]string{s3_constants.AmzCannedAcl: "public-read"}, s3err.ErrAccessDenied},
+		{"unsigned grant header", false, nil, map[string]string{s3_constants.AmzAclRead: `uri="` + s3_constants.GranteeGroupAllUsers + `"`}, s3err.ErrAccessDenied},
+		{"unsigned header beside signed acl", false, map[string]string{"acl": "private"}, map[string]string{s3_constants.AmzAclRead: `uri="` + s3_constants.GranteeGroupAllUsers + `"`}, s3err.ErrAccessDenied},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec, s3a, entry := upload(t, tc.publicBucket, tc.fields, tc.headers)
+			require.Equal(t, http.StatusNoContent, rec.Code, "body: %s", rec.Body.String())
+			require.NotNil(t, entry)
+			assert.Equal(t, []byte("000000000000"), entry.Extended[s3_constants.ExtAmzOwnerKey])
+			assert.NotEmpty(t, entry.Extended[s3_constants.ExtAmzAclKey], "the upload ACL must be stored")
+			assert.Equal(t, tc.want, anonymousRead(s3a, entry))
+		})
+	}
+
+	t.Run("invalid canned acl", func(t *testing.T) {
+		rec, _, entry := upload(t, false, map[string]string{"acl": "bogus-acl"}, nil)
+		assert.Equal(t, http.StatusBadRequest, rec.Code, "body: %s", rec.Body.String())
+		assert.Nil(t, entry, "a rejected ACL must not write the object")
+	})
+	t.Run("canned and grant together", func(t *testing.T) {
+		rec, _, entry := upload(t, false, map[string]string{"acl": "private", "x-amz-grant-read": `uri="` + s3_constants.GranteeGroupAllUsers + `"`}, nil)
+		assert.Equal(t, http.StatusBadRequest, rec.Code, "body: %s", rec.Body.String())
+		assert.Nil(t, entry)
+	})
+}
+
+// newPostAclWriterServer serves the policy-confined identities of
+// newPostAuthzServer against a fake filer holding the test bucket.
+func newPostAclWriterServer(t *testing.T) (*S3ApiServer, *ambiguousPutFiler) {
+	filer := &ambiguousPutFiler{
+		volume: startFakeVolumeServer(t),
+		entries: map[string]*filer_pb.Entry{"/buckets/" + postAuthzBucket: {
+			Name:        postAuthzBucket,
+			IsDirectory: true,
+			Attributes:  &filer_pb.FuseAttributes{},
+			Extended:    map[string][]byte{s3_constants.ExtAmzOwnerKey: []byte("000000000000")},
+		}},
+		apply: true,
+	}
+	s3a := newPostAutoCreateServer(t, filer)
+	authz := newPostAuthzServer(t)
+	s3a.iam, s3a.policyEngine = authz.iam, authz.policyEngine
+	return s3a, filer
+}
+
+// Policy conditions on a POST grant see the canonical grant list, as on PUT,
+// so a respelled grantee does not slip past a deny.
+func TestPostPolicyBucketHandlerCanonicalGrantCondition(t *testing.T) {
+	for _, grant := range []string{`id="000000000000"`, `id = "000000000000"`, `id="00000000000\u0030"`} {
+		s3a, filer := newPostAclWriterServer(t)
+		require.NoError(t, s3a.policyEngine.engine.SetBucketPolicy(postAuthzBucket, fmt.Sprintf(`{
+			"Version": "2012-10-17",
+			"Statement": [{
+				"Effect": "Deny",
+				"Principal": {"AWS": "%s"},
+				"Action": ["s3:PutObjectAcl"],
+				"Resource": ["arn:aws:s3:::%s/*"],
+				"Condition": {"StringEquals": {"s3:x-amz-grant-read": "id=\"000000000000\""}}
+			}]
+		}`, postAclPrincipal, postAuthzBucket)))
+		rec := httptest.NewRecorder()
+		s3a.PostPolicyBucketHandler(rec, newSignedPostRequestFor(t, "allowed/report.txt",
+			postAclAccessKey, postAclSecretKey, map[string]string{"x-amz-grant-read": grant}))
+		assert.Equal(t, http.StatusForbidden, rec.Code, "grant %s, body: %s", grant, rec.Body.String())
+		filer.mu.Lock()
+		assert.Nil(t, filer.entries["/buckets/"+postAuthzBucket+"/allowed/report.txt"], "grant %s", grant)
+		filer.mu.Unlock()
+	}
+}
+
+// With authentication off, a bucket policy still governs a POST upload ACL,
+// as it does a PutObject ACL, including on the first request after start.
+func TestPostPolicyBucketHandlerAclPolicyWithAuthDisabled(t *testing.T) {
+	const key = "uploads/pic.png"
+	s3a, filer := newPostAclWriterServer(t)
+	s3a.iam = &IdentityAccessManagement{}
+	s3a.policyEngine = NewBucketPolicyEngine()
+	filer.mu.Lock()
+	filer.entries["/buckets/"+postAuthzBucket].Extended[BUCKET_POLICY_METADATA_KEY] = []byte(fmt.Sprintf(`{
+		"Version": "2012-10-17",
+		"Statement": [{"Effect": "Deny", "Principal": "*", "Action": ["s3:PutObjectAcl"], "Resource": ["arn:aws:s3:::%s/*"]}]
+	}`, postAuthzBucket))
+	filer.mu.Unlock()
+
+	rec := httptest.NewRecorder()
+	s3a.PostPolicyBucketHandler(rec, newSignedPostRequestFor(t, key, postAdminAccessKey, postAdminSecretKey, map[string]string{"acl": "public-read"}))
+	assert.Equal(t, http.StatusForbidden, rec.Code, "body: %s", rec.Body.String())
+	filer.mu.Lock()
+	assert.Nil(t, filer.entries["/buckets/"+postAuthzBucket+"/"+key])
+	filer.mu.Unlock()
+
+	rec = httptest.NewRecorder()
+	s3a.PostPolicyBucketHandler(rec, newSignedPostRequestFor(t, key, postAdminAccessKey, postAdminSecretKey, nil))
+	assert.Equal(t, http.StatusNoContent, rec.Code, "an upload without an ACL is not a PutObjectAcl, body: %s", rec.Body.String())
+}
+
+// newColdPostAclWriterServer is newPostAclWriterServer with an empty policy
+// engine that only learns the bucket policy when the bucket loads.
+func newColdPostAclWriterServer(t *testing.T, policy string) (*S3ApiServer, *ambiguousPutFiler) {
+	s3a, filer := newPostAclWriterServer(t)
+	s3a.policyEngine = NewBucketPolicyEngine()
+	s3a.iam.policyEngine = s3a.policyEngine
+	s3a.iam.primeBucketForIAM = func(bucket string) s3err.ErrorCode {
+		_, code := s3a.getBucketConfig(bucket)
+		return code
+	}
+	if policy != "" {
+		filer.mu.Lock()
+		filer.entries["/buckets/"+postAuthzBucket].Extended[BUCKET_POLICY_METADATA_KEY] = []byte(policy)
+		filer.mu.Unlock()
+	}
+	return s3a, filer
+}
+
+// With authentication on, a persisted bucket policy also governs a POST
+// upload ACL on the first request after start.
+func TestPostPolicyBucketHandlerAclPolicyOnColdBucket(t *testing.T) {
+	const key = "allowed/report.txt"
+	aclField := map[string]string{"acl": "public-read"}
+
+	s3a, _ := newColdPostAclWriterServer(t, "")
+	rec := httptest.NewRecorder()
+	s3a.PostPolicyBucketHandler(rec, newSignedPostRequestFor(t, key, postAclAccessKey, postAclSecretKey, aclField))
+	assert.Equal(t, http.StatusNoContent, rec.Code, "body: %s", rec.Body.String())
+
+	s3a, filer := newColdPostAclWriterServer(t, fmt.Sprintf(`{
+		"Version": "2012-10-17",
+		"Statement": [{"Effect": "Deny", "Principal": {"AWS": "%s"}, "Action": ["s3:PutObjectAcl"], "Resource": ["arn:aws:s3:::%s/*"]}]
+	}`, postAclPrincipal, postAuthzBucket))
+	rec = httptest.NewRecorder()
+	s3a.PostPolicyBucketHandler(rec, newSignedPostRequestFor(t, key, postAclAccessKey, postAclSecretKey, aclField))
+	assert.Equal(t, http.StatusForbidden, rec.Code, "body: %s", rec.Body.String())
+	filer.mu.Lock()
+	assert.Nil(t, filer.entries["/buckets/"+postAuthzBucket+"/"+key])
+	filer.mu.Unlock()
+
+	rec = httptest.NewRecorder()
+	s3a.PostPolicyBucketHandler(rec, newSignedPostRequestFor(t, key, postAclAccessKey, postAclSecretKey, nil))
+	assert.Equal(t, http.StatusNoContent, rec.Code, "an upload without an ACL is not a PutObjectAcl, body: %s", rec.Body.String())
+}
+
+// A bucket that fails to load cannot have its policy evaluated, so the
+// upload stops instead of falling back to the identity's grants.
+func TestPostPolicyBucketHandlerStopsWhenBucketLoadFails(t *testing.T) {
+	const key = "allowed/report.txt"
+	s3a, filer := newColdPostAclWriterServer(t, "")
+	s3a.iam.primeBucketForIAM = func(string) s3err.ErrorCode { return s3err.ErrInternalError }
+	rec := httptest.NewRecorder()
+	s3a.PostPolicyBucketHandler(rec, newSignedPostRequestFor(t, key, postAclAccessKey, postAclSecretKey, nil))
+	assert.Equal(t, http.StatusInternalServerError, rec.Code, "body: %s", rec.Body.String())
+	filer.mu.Lock()
+	assert.Nil(t, filer.entries["/buckets/"+postAuthzBucket+"/"+key])
+	filer.mu.Unlock()
+}
+
+func TestPostPolicyBucketHandlerRejectsConflictingAclFields(t *testing.T) {
+	for _, fields := range []map[string]string{
+		{"acl": "private", "x-amz-acl": "public-read"},
+		{"acl": "public-read", "x-amz-acl": ""},
+		{"acl": "", "x-amz-acl": "public-read"},
+	} {
+		s3a, filer := newPostAclWriterServer(t)
+		rec := httptest.NewRecorder()
+		s3a.PostPolicyBucketHandler(rec, newSignedPostRequestFor(t, "allowed/report.txt", postAclAccessKey, postAclSecretKey, fields))
+		assert.Equal(t, http.StatusBadRequest, rec.Code, "fields %v, body: %s", fields, rec.Body.String())
+		filer.mu.Lock()
+		assert.Nil(t, filer.entries["/buckets/"+postAuthzBucket+"/allowed/report.txt"], "fields %v", fields)
+		filer.mu.Unlock()
+	}
+}

@@ -252,7 +252,7 @@ func CheckPostPolicy(formValues http.Header, postPolicyForm PostPolicyForm) erro
 	policyXAmzKeys := make(map[string]bool)
 	var policyXAmzPrefixes []xAmzPrefixRule
 	for _, policy := range postPolicyForm.Conditions.Policies {
-		if !strings.HasPrefix(policy.Key, "$x-amz-") {
+		if policy.Key != "$acl" && !strings.HasPrefix(policy.Key, "$x-amz-") {
 			continue
 		}
 		formCanonicalName := http.CanonicalHeaderKey(strings.TrimPrefix(policy.Key, "$"))
@@ -266,8 +266,8 @@ func CheckPostPolicy(formValues http.Header, postPolicyForm PostPolicyForm) erro
 		}
 		policyXAmzKeys[formCanonicalName] = true
 	}
-	// Reject any X-Amz-* form field that has no matching policy condition,
-	// except for the reserved auth/signing fields clients must always send.
+	// Reject any acl or X-Amz-* form field that has no matching policy
+	// condition, except for the reserved auth/signing fields clients must always send.
 	// A field may be covered by an exact-key condition, by any number of
 	// prefix-stem rules, or both. Check every applicable rule: AWS requires
 	// all matching conditions to be satisfied, so exact-match coverage does
@@ -276,7 +276,7 @@ func CheckPostPolicy(formValues http.Header, postPolicyForm PostPolicyForm) erro
 	// Prefix-stem conditions are then skipped in the main loop below because
 	// no single form field corresponds to the prefix itself.
 	for key := range formValues {
-		if !strings.HasPrefix(key, "X-Amz-") {
+		if key != "Acl" && !strings.HasPrefix(key, "X-Amz-") {
 			continue
 		}
 		if postPolicyAuthFields[key] {
