@@ -658,16 +658,18 @@ func TestPostPolicyBucketHandlerCanonicalGrantCondition(t *testing.T) {
 }
 
 // With authentication off, a bucket policy still governs a POST upload ACL,
-// as it does a PutObject ACL.
+// as it does a PutObject ACL, including on the first request after start.
 func TestPostPolicyBucketHandlerAclPolicyWithAuthDisabled(t *testing.T) {
 	const key = "uploads/pic.png"
 	s3a, filer := newPostAclWriterServer(t)
 	s3a.iam = &IdentityAccessManagement{}
 	s3a.policyEngine = NewBucketPolicyEngine()
-	require.NoError(t, s3a.policyEngine.engine.SetBucketPolicy(postAuthzBucket, fmt.Sprintf(`{
+	filer.mu.Lock()
+	filer.entries["/buckets/"+postAuthzBucket].Extended[BUCKET_POLICY_METADATA_KEY] = []byte(fmt.Sprintf(`{
 		"Version": "2012-10-17",
 		"Statement": [{"Effect": "Deny", "Principal": "*", "Action": ["s3:PutObjectAcl"], "Resource": ["arn:aws:s3:::%s/*"]}]
-	}`, postAuthzBucket)))
+	}`, postAuthzBucket))
+	filer.mu.Unlock()
 
 	rec := httptest.NewRecorder()
 	s3a.PostPolicyBucketHandler(rec, newSignedPostRequestFor(t, key, postAdminAccessKey, postAdminSecretKey, map[string]string{"acl": "public-read"}))
@@ -682,12 +684,17 @@ func TestPostPolicyBucketHandlerAclPolicyWithAuthDisabled(t *testing.T) {
 }
 
 func TestPostPolicyBucketHandlerRejectsConflictingAclFields(t *testing.T) {
-	s3a, filer := newPostAclWriterServer(t)
-	rec := httptest.NewRecorder()
-	s3a.PostPolicyBucketHandler(rec, newSignedPostRequestFor(t, "allowed/report.txt",
-		postAclAccessKey, postAclSecretKey, map[string]string{"acl": "private", "x-amz-acl": "public-read"}))
-	assert.Equal(t, http.StatusBadRequest, rec.Code, "body: %s", rec.Body.String())
-	filer.mu.Lock()
-	defer filer.mu.Unlock()
-	assert.Nil(t, filer.entries["/buckets/"+postAuthzBucket+"/allowed/report.txt"])
+	for _, fields := range []map[string]string{
+		{"acl": "private", "x-amz-acl": "public-read"},
+		{"acl": "public-read", "x-amz-acl": ""},
+		{"acl": "", "x-amz-acl": "public-read"},
+	} {
+		s3a, filer := newPostAclWriterServer(t)
+		rec := httptest.NewRecorder()
+		s3a.PostPolicyBucketHandler(rec, newSignedPostRequestFor(t, "allowed/report.txt", postAclAccessKey, postAclSecretKey, fields))
+		assert.Equal(t, http.StatusBadRequest, rec.Code, "fields %v, body: %s", fields, rec.Body.String())
+		filer.mu.Lock()
+		assert.Nil(t, filer.entries["/buckets/"+postAuthzBucket+"/allowed/report.txt"], "fields %v", fields)
+		filer.mu.Unlock()
+	}
 }
