@@ -163,6 +163,7 @@ func TestEmptyVersionIdDoesNotBypassCurrentObjectDeny(t *testing.T) {
 		{http.MethodGet, s3_constants.ACTION_READ, "?versionId=", s3err.ErrAccessDenied},
 		{http.MethodGet, s3_constants.ACTION_READ, "?versionId", s3err.ErrAccessDenied},
 		{http.MethodHead, s3_constants.ACTION_READ, "?versionId=", s3err.ErrAccessDenied},
+		{http.MethodHead, s3_constants.ACTION_READ, "?versionId", s3err.ErrAccessDenied},
 		{http.MethodDelete, s3_constants.ACTION_WRITE, "?versionId=", s3err.ErrAccessDenied},
 		{http.MethodDelete, s3_constants.ACTION_WRITE, "?versionId", s3err.ErrAccessDenied},
 		{http.MethodGet, s3_constants.ACTION_READ, "?versionId=v1", s3err.ErrNone},
