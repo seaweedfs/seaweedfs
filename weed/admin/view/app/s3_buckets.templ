@@ -127,7 +127,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                                         <tr>
                                             <td>
                                                 <a href={dash.PUrl(ctx, fmt.Sprintf("/files?path=/buckets/%s", bucket.Name))}
-                                                   class="text-decoration-none">
+                                                   class="text-decoration-none text-nowrap">
                                                     <i class="bi bi-box me-2"></i>
                                                     {bucket.Name}
                                                 </a>
@@ -143,10 +143,10 @@ templ S3Buckets(data dash.S3BucketsData) {
                                                         <i class="bi bi-person me-1"></i>{bucket.Owner}
                                                     </span>
                                                 } else {
-                                                    <span class="text-muted small">No owner</span>
+                                                    @emptyValue("No owner")
                                                 }
                                             </td>
-                                            <td>{bucket.CreatedAt.Format("2006-01-02 15:04")}</td>
+                                            <td class="text-nowrap" title={bucket.CreatedAt.Format("2006-01-02 15:04")}>{bucket.CreatedAt.Format("2006-01-02")}</td>
                                             <td>
                                                 <div>{formatBytes(bucket.LogicalSize)}</div>
                                                 if bucket.PhysicalSize > 0 && bucket.LogicalSize > 0 && bucket.PhysicalSize > bucket.LogicalSize {
@@ -171,7 +171,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                                                         }
                                                     </div>
                                                 } else {
-                                                    <span class="text-muted">No quota</span>
+                                                    @emptyValue("No quota")
                                                 }
                                             </td>
                                             <td>
@@ -184,7 +184,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                                                         <i class="bi bi-pause me-1"></i>Suspended
                                                     </span>
                                                 } else {
-                                                    <span class="text-muted">Not configured</span>
+                                                    @emptyValue("Not configured")
                                                 }
                                             </td>
                                             <td>
@@ -198,7 +198,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                                                         </div>
                                                     </div>
                                                 } else {
-                                                    <span class="text-muted">Not configured</span>
+                                                    @emptyValue("Not configured")
                                                 }
                                             </td>
                                             <td>
@@ -220,7 +220,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                                                         }
                                                     </div>
                                                 } else {
-                                                    <span class="text-muted">Not configured</span>
+                                                    @emptyValue("Not configured")
                                                 }
                                             </td>
                                             <td>
@@ -235,7 +235,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                                                         }
                                                     </button>
                                                 } else {
-                                                    <span class="text-muted">Not configured</span>
+                                                    @emptyValue("Not configured")
                                                 }
                                             </td>
                                             <td>
