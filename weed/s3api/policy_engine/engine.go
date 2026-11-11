@@ -404,14 +404,9 @@ func ExtractPrincipalVariables(principal string) map[string][]string {
 			vars["aws:username"] = []string{roleName}
 		}
 	case "assumed-role":
+		// The last segment is the session name, which the caller chose, so it
+		// names no user.
 		vars["aws:principaltype"] = []string{"AssumedRole"}
-		// For assumed roles: assumed-role/RoleName/SessionName or assumed-role/path/to/RoleName/SessionName
-		// The session name is always the last segment
-		if len(resourceParts) >= 3 {
-			sessionName := resourceParts[len(resourceParts)-1]
-			vars["aws:username"] = []string{sessionName}
-			vars["aws:userid"] = []string{sessionName}
-		}
 	}
 
 	// Note: principaltype is already set correctly in the switch above based on resource type

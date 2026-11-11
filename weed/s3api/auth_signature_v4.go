@@ -532,6 +532,13 @@ func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, se
 	for k, v := range sessionInfo.RequestContext {
 		claims[k] = v
 	}
+	// The session's user is the one it was issued to, never a claim the
+	// identity provider forwarded.
+	if sessionInfo.ExternalUserId != "" {
+		claims["aws:username"] = sessionInfo.ExternalUserId
+	} else {
+		delete(claims, "aws:username")
+	}
 
 	// Key the principal on the OIDC subject so a session resolves to the same
 	// identity on the SigV4 and JWT paths (see s3_iam_middleware.go); fall back to

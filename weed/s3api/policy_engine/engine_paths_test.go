@@ -36,8 +36,6 @@ func TestExtractPrincipalVariablesWithPaths(t *testing.T) {
 			expected: map[string][]string{
 				"aws:PrincipalAccount": {"123456789012"},
 				"aws:principaltype":    {"AssumedRole"},
-				"aws:username":         {"session-name"},
-				"aws:userid":           {"session-name"},
 			},
 		},
 	}

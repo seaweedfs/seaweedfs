@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
@@ -454,14 +455,23 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 	// travel into a session the caller assumed for itself — a legacy static admin
 	// carries no IAM policies for such a session to inherit. Assuming a named role
 	// scopes the session to that role's policies, admin caller or not.
-	var modifyClaims func(claims *sts.STSSessionClaims)
-	if assumesSelf && identity.isAdmin() {
-		modifyClaims = func(claims *sts.STSSessionClaims) {
-			if claims.RequestContext == nil {
-				claims.RequestContext = make(map[string]interface{})
-			}
-			claims.RequestContext["is_admin"] = true
+	// The session name is the caller's choice, so the session records the
+	// caller itself as the user it was issued to; an STS session caller
+	// passes on its own user, if it has one.
+	sessionUser := identity.Name
+	if strings.HasPrefix(identity.PrincipalArn, "arn:aws:sts::") {
+		sessionUser, _ = identity.Claims["aws:username"].(string)
+	}
+	sessionIsAdmin := assumesSelf && identity.isAdmin()
+	modifyClaims := func(claims *sts.STSSessionClaims) {
+		claims.ExternalUserId = sessionUser
+		if !sessionIsAdmin {
+			return
 		}
+		if claims.RequestContext == nil {
+			claims.RequestContext = make(map[string]interface{})
+		}
+		claims.RequestContext["is_admin"] = true
 	}
 
 	// Generate common STS components
