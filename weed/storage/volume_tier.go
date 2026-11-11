@@ -146,9 +146,11 @@ func (v *Volume) loadRemoteFileLocked() error {
 // AttachRemoteDatFile records remoteFile, a copy of the .dat read from source,
 // in the volume's .vif and switches the data backend to it. It refuses when
 // source is no longer the volume's data backend: a compaction commit since the
-// copy replaced the .dat and the index, and the copy has the old layout. The
-// check, the .vif write and the switch happen under the data-file locks, so a
-// commit either lands before (and is seen here) or after (and refuses a tiered
+// copy replaced the .dat and the index, and the copy has the old layout. It
+// also refuses when source is no longer the size of the copy: a write landed
+// after the copy read the file, and the copy does not hold it. The checks, the
+// .vif write and the switch happen under the data-file locks, so a commit or a
+// write either lands before (and is seen here) or after (and refuses a tiered
 // volume).
 func (v *Volume) AttachRemoteDatFile(source backend.BackendStorageFile, remoteFile *volume_server_pb.RemoteFile) error {
 	v.dataFileSyncLock.Lock()
@@ -157,6 +159,18 @@ func (v *Volume) AttachRemoteDatFile(source backend.BackendStorageFile, remoteFi
 	defer v.dataFileAccessLock.Unlock()
 	if v.DataBackend != source {
 		return fmt.Errorf("volume %d data file changed during the copy (compacted or reloaded)", v.Id)
+	}
+	diskFile, ok := source.(*backend.DiskFile)
+	if !ok {
+		return fmt.Errorf("volume %d data file is not on local disk", v.Id)
+	}
+	// The physical size, as the copy read it: GetStat pads an unaligned tail.
+	stat, err := diskFile.File.Stat()
+	if err != nil {
+		return fmt.Errorf("stat volume %d data file: %w", v.Id, err)
+	}
+	if uint64(stat.Size()) != remoteFile.FileSize {
+		return fmt.Errorf("volume %d data file is %d bytes, the copy holds %d: written during the copy", v.Id, stat.Size(), remoteFile.FileSize)
 	}
 	files := v.volumeInfo.GetFiles()
 	v.volumeInfo.Files = append(files, remoteFile)

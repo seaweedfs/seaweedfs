@@ -5052,13 +5052,18 @@ impl VolumeServer for VolumeGrpcService {
                 // for and referenced by nothing. Go does not gate here either:
                 // its progress callback only runs during the transfer.
                 // Update volume info with remote file reference, unless the
-                // volume was compacted, replaced or removed mid-upload: the
-                // object would not match what now holds this id.
+                // volume was compacted, replaced, removed or written to
+                // mid-upload: the object would not match what now holds this
+                // id. One write lease spans the checks, the .vif save and the
+                // backend swap, so no write or commit lands in between.
                 let abort = {
                     let store = state.store.read().unwrap();
-                    let abort = match store.find_volume(vid) {
+                    let vol = store.find_volume(vid).map(|(_, v)| v);
+                    let _sync_guard = vol.as_ref().map(|v| v.data_file_sync_lock().lock().unwrap());
+                    let _lease = vol.as_ref().map(|v| v.instance().write_lock());
+                    let abort = match &vol {
                         None => Some(Status::not_found(format!("volume {} not found", vid))),
-                        Some((_, v))
+                        Some(v)
                             if !v.is_instance(&instance)
                                 || v.super_block().compaction_revision != compaction_revision =>
                         {
@@ -5067,12 +5072,22 @@ impl VolumeServer for VolumeGrpcService {
                                 vid
                             )))
                         }
-                        Some(_) => None,
+                        Some(v) => match v.dat_file_size() {
+                            Ok(dat_size) if dat_size == size => None,
+                            Ok(dat_size) => Some(Status::failed_precondition(format!(
+                                "volume {} data file is {} bytes, the copy holds {}: written during the copy",
+                                vid, dat_size, size
+                            ))),
+                            Err(e) => Some(Status::internal(format!(
+                                "stat volume {} data file: {}",
+                                vid, e
+                            ))),
+                        },
                     };
                     if abort.is_none()
-                        && let Some((_, vol)) = store.find_volume(vid)
+                        && let Some(vol) = &vol
                     {
-                        vol.update_remote_files(|files| {
+                        vol.update_remote_files_held(|files| {
                             files.push(volume_server_pb::RemoteFile {
                                 backend_type: backend_type.clone(),
                                 backend_id: backend_id.clone(),
@@ -5100,7 +5115,7 @@ impl VolumeServer for VolumeGrpcService {
                         // Switch the data backend from the local .dat to the remote
                         // object so reads keep working after upload (matches Go's
                         // LoadRemoteFile).
-                        if let Err(e) = vol.load_remote_dat_file() {
+                        if let Err(e) = vol.load_remote_dat_file_held() {
                             return Err(Status::internal(format!(
                                 "volume {} failed to load remote file: {}",
                                 vid, e
@@ -9688,6 +9703,68 @@ mod tests {
             1,
             "the stale object must be deleted"
         );
+        let _ = s3.shutdown.send(());
+    }
+
+    // A write acknowledged while the upload runs is not in the object; the
+    // volume must keep serving the local .dat that holds it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_tier_move_to_remote_aborts_when_written_mid_upload() {
+        let (service, tmp) = make_local_service_with_volume("", None);
+        seed_compactable_volume(&service);
+        let mut s3 = spawn_multipart_s3_server();
+        register_tier_backend("s3.tier_up_written", s3.endpoint.clone());
+
+        let stream = start_parked_tier_move(&service, &mut s3, "s3.tier_up_written", false).await;
+        let data = b"needle-3".to_vec();
+        let mut n = Needle {
+            id: NeedleId(3),
+            cookie: Cookie(3),
+            data_size: data.len() as u32,
+            data: data.clone(),
+            ..Needle::default()
+        };
+        service
+            .state
+            .store
+            .read()
+            .unwrap()
+            .write_volume_needle(VolumeId(1), &mut n, true)
+            .expect("the write lands while the upload is parked");
+        s3.release.add_permits(1);
+
+        let terminal = tier_move_error(stream).await;
+        global_s3_tier_registry()
+            .write()
+            .unwrap()
+            .remove("s3.tier_up_written");
+        let err = terminal.expect("the tier move must fail once the volume was written");
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition, "{err:?}");
+        assert_eq!(
+            s3.delete_count.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "the stale object must be deleted"
+        );
+        {
+            let store = service.state.store.read().unwrap();
+            let (_, vol) = store.find_volume(VolumeId(1)).unwrap();
+            assert!(!vol.has_remote_file());
+            assert!(vol.volume_info().files.is_empty());
+        }
+        assert!(tmp.path().join("1.dat").exists());
+        let mut n = Needle {
+            id: NeedleId(3),
+            cookie: Cookie(3),
+            ..Needle::default()
+        };
+        service
+            .state
+            .store
+            .read()
+            .unwrap()
+            .read_volume_needle(VolumeId(1), &mut n)
+            .expect("the acknowledged write must stay readable");
+        assert_eq!(n.data, data);
         let _ = s3.shutdown.send(());
     }
 
