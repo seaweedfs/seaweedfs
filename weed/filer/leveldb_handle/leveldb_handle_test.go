@@ -49,9 +49,11 @@ func (w *failingWriter) Write(p []byte) (int, error) {
 
 func openFailing(t *testing.T) (*DB, *failingStorage) {
 	t.Helper()
-	interval, busy, timeout := reopenInterval, busyReopenInterval, drainTimeout
-	reopenInterval, busyReopenInterval, drainTimeout = 0, 0, 50*time.Millisecond
-	t.Cleanup(func() { reopenInterval, busyReopenInterval, drainTimeout = interval, busy, timeout })
+	interval, busy, timeout, wait := reopenInterval, busyReopenInterval, drainTimeout, reopenWait
+	reopenInterval, busyReopenInterval, drainTimeout, reopenWait = 0, 0, 50*time.Millisecond, 50*time.Millisecond
+	t.Cleanup(func() {
+		reopenInterval, busyReopenInterval, drainTimeout, reopenWait = interval, busy, timeout, wait
+	})
 	st := &failingStorage{Storage: storage.NewMemStorage()}
 	db, err := Open(st, nil)
 	if err != nil {
@@ -123,6 +125,33 @@ func TestStalledProbeKeepsReadsAvailable(t *testing.T) {
 		t.Fatalf("put while storage fails: %v", err)
 	}
 	<-read
+}
+
+func TestWritesDoNotQueueBehindAStalledProbe(t *testing.T) {
+	db, st := openFailing(t)
+	if err := db.Put([]byte("a"), []byte("1"), nil); err != nil {
+		t.Fatal(err)
+	}
+	st.probeStarted, st.probeRelease = make(chan struct{}, 1), make(chan struct{})
+	st.fail.Store(true)
+	first := make(chan error, 1)
+	go func() { first <- db.Put([]byte("b"), []byte("2"), nil) }()
+	<-st.probeStarted
+
+	second := make(chan error, 1)
+	go func() { second <- db.Put([]byte("c"), []byte("3"), nil) }()
+	select {
+	case err := <-second:
+		if !errors.Is(err, syscall.ENOSPC) {
+			t.Errorf("put behind a stalled probe: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Error("put queued behind a stalled probe")
+	}
+	close(st.probeRelease)
+	if err := <-first; !errors.Is(err, syscall.ENOSPC) {
+		t.Fatalf("put while storage fails: %v", err)
+	}
 }
 
 func TestReopenWaitsForOpenIterator(t *testing.T) {

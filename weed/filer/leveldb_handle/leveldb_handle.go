@@ -25,6 +25,7 @@ var (
 	reopenInterval     = time.Second
 	busyReopenInterval = 10 * time.Second
 	drainTimeout       = time.Second
+	reopenWait         = 5 * time.Second
 	probeFile          = storage.FileDesc{Type: storage.TypeTemp, Num: 1 << 40}
 	probeData          = make([]byte, 64*1024)
 )
@@ -40,7 +41,7 @@ type DB struct {
 	opts        *opt.Options
 	closed      atomic.Bool
 	nextReopen  atomic.Int64
-	reopening   sync.Mutex
+	reopening   chan struct{}
 	draining    atomic.Pointer[chan struct{}]
 
 	mu      sync.RWMutex
@@ -68,7 +69,7 @@ func Open(stor storage.Storage, o *opt.Options) (*DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &DB{stor: stor, opts: o, db: db}, nil
+	return &DB{stor: stor, opts: o, db: db, reopening: make(chan struct{}, 1)}, nil
 }
 
 func open(stor storage.Storage, o *opt.Options) (*leveldb.DB, error) {
@@ -168,11 +169,15 @@ func (d *DB) acquire() (*leveldb.DB, error) {
 }
 
 // reopen replaces failed with a freshly opened database once no call holds
-// it, unless another caller already did. It reports whether a retry can use
-// an open database.
+// it, unless another caller already did. It waits at most reopenWait for a
+// running reopen and reports whether a retry can use an open database.
 func (d *DB) reopen(failed *leveldb.DB) bool {
-	d.reopening.Lock()
-	defer d.reopening.Unlock()
+	select {
+	case d.reopening <- struct{}{}:
+	case <-time.After(reopenWait):
+		return false
+	}
+	defer func() { <-d.reopening }()
 	d.mu.RLock()
 	current := d.db
 	d.mu.RUnlock()
