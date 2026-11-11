@@ -147,10 +147,16 @@ fn untrack(tag: &str) {
 /// reads that follow reuse the tag, and the tag goes once no read has taken it
 /// for [`SHARED_LINGER`]. Spares a tag write and delete per read.
 pub struct SharedLeases {
-    held: Mutex<HashMap<(String, u64), Weak<SharedLease>>>,
+    /// By location, version and manifest ETag: a table dropped and created
+    /// again at its location reuses version numbers, not manifests.
+    held: Mutex<HashMap<LeaseKey, Slot>>,
     linger: Duration,
     share_for: Duration,
 }
+
+type LeaseKey = (String, u64, Option<String>);
+/// Reads of a version that find no lease wait here for the first to take it.
+type Slot = Arc<tokio::sync::Mutex<Weak<SharedLease>>>;
 
 impl Default for SharedLeases {
     fn default() -> Self {
@@ -172,14 +178,26 @@ pub struct SharedLease {
 impl SharedLeases {
     /// [`try_pin`], reusing a lease another read of this version holds.
     pub async fn try_pin(&self, dataset: &Dataset) -> Result<Option<Arc<SharedLease>>> {
-        let key = (dataset.uri().to_string(), dataset.version().version);
-        let held = self
-            .held
-            .lock()
-            .ok()
-            .and_then(|held| held.get(&key)?.upgrade())
-            .filter(|lease| lease.taken.elapsed() < self.share_for);
-        let lease = match held {
+        let key = (
+            dataset.uri().to_string(),
+            dataset.version().version,
+            dataset.manifest_location().e_tag.clone(),
+        );
+        let slot = match self.held.lock() {
+            Ok(mut held) => {
+                held.retain(|_, slot| {
+                    slot.try_lock()
+                        .map_or(true, |lease| lease.strong_count() > 0)
+                });
+                held.entry(key).or_default().clone()
+            }
+            Err(_) => Slot::default(),
+        };
+        let mut slot = slot.lock().await;
+        let lease = match slot
+            .upgrade()
+            .filter(|lease| lease.taken.elapsed() < self.share_for)
+        {
             Some(lease) => lease,
             None => {
                 let Some(lease) = try_pin(dataset).await? else {
@@ -189,13 +207,11 @@ impl SharedLeases {
                     _lease: lease,
                     taken: Instant::now(),
                 });
-                if let Ok(mut held) = self.held.lock() {
-                    held.retain(|_, lease| lease.strong_count() > 0);
-                    held.insert(key, Arc::downgrade(&lease));
-                }
+                *slot = Arc::downgrade(&lease);
                 lease
             }
         };
+        drop(slot);
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             let (lingering, linger) = (lease.clone(), self.linger);
             handle.spawn(async move {
@@ -418,13 +434,50 @@ mod tests {
         tokio::time::sleep(leases.linger).await;
         let mut left = usize::MAX;
         for _ in 0..1000 {
-            left = dataset.tags().list().await.unwrap().len();
+            // A listing that meets a tag as it is deleted fails; try again.
+            if let Ok(tags) = dataset.tags().list().await {
+                left = tags.len();
+            }
             if left == 0 {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         assert_eq!(left, 0);
+    }
+
+    /// Reads that arrive together, before any lease exists, share the one the
+    /// first takes.
+    #[tokio::test]
+    async fn concurrent_reads_take_one_lease() {
+        let dir = TempDir::new().unwrap();
+        let dataset =
+            testing::write_dataset(&dir, &testing::vectors(4, 4), &["a", "b", "c", "d"]).await;
+        let leases = SharedLeases::default();
+        let pins: Vec<_> = futures::future::join_all((0..8).map(|_| leases.try_pin(&dataset)))
+            .await
+            .into_iter()
+            .map(|lease| lease.unwrap().unwrap())
+            .collect();
+        assert!(pins.iter().all(|lease| Arc::ptr_eq(lease, &pins[0])));
+        assert_eq!(dataset.tags().list().await.unwrap().len(), 1);
+    }
+
+    /// A table dropped and written again at its location gets its own lease
+    /// for a version number the old table had.
+    #[tokio::test]
+    async fn a_recreated_table_takes_its_own_lease() {
+        let dir = TempDir::new().unwrap();
+        let rows = testing::vectors(4, 4);
+        let old = testing::write_dataset(&dir, &rows, &["a", "b", "c", "d"]).await;
+        let leases = SharedLeases::default();
+        let first = leases.try_pin(&old).await.unwrap().unwrap();
+        std::fs::remove_dir_all(dir.path()).unwrap();
+        let new = testing::write_dataset(&dir, &rows, &["e", "f", "g", "h"]).await;
+        assert_eq!(new.version().version, old.version().version);
+        let second = leases.try_pin(&new).await.unwrap().unwrap();
+        assert!(!Arc::ptr_eq(&first, &second));
+        assert_eq!(new.tags().list().await.unwrap().len(), 1);
     }
 
     /// A shared lease is not handed out past SHARED_FOR, so a busy version
