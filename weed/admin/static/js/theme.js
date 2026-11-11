@@ -20,11 +20,12 @@
         root.setAttribute('data-theme-choice', choice);
     }
 
-    apply(savedChoice());
+    var current = savedChoice();
+    apply(current);
 
     if (media && media.addEventListener) {
         media.addEventListener('change', function () {
-            apply(savedChoice());
+            apply(current);
         });
     }
 
@@ -33,10 +34,10 @@
         if (!toggle) {
             return;
         }
-        var next = choices[(choices.indexOf(savedChoice()) + 1) % choices.length];
+        current = choices[(choices.indexOf(current) + 1) % choices.length];
         try {
-            localStorage.setItem(storageKey, next);
+            localStorage.setItem(storageKey, current);
         } catch (e) {}
-        apply(next);
+        apply(current);
     });
 })();
