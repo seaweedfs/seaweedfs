@@ -3,9 +3,12 @@ package s3api
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_lifecycle_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -279,5 +282,54 @@ func TestLifecycleAbortUndecidableCheckRetriesLater(t *testing.T) {
 	}
 	if f.deleteReq != nil {
 		t.Fatalf("delete issued despite undecidable check: %+v", f.deleteReq)
+	}
+}
+
+type fakeRoutedAbortFiler struct {
+	fakeAbortFiler
+	txnReq *filer_pb.ObjectTransactionRequest
+}
+
+func (f *fakeRoutedAbortFiler) ObjectTransaction(ctx context.Context, req *filer_pb.ObjectTransactionRequest) (*filer_pb.ObjectTransactionResponse, error) {
+	f.txnReq = req
+	return &filer_pb.ObjectTransactionResponse{}, nil
+}
+
+// A routed abort must take the path lock the completion commits under. For a
+// trailing-slash key a non-versioned completion writes the entry inside the
+// directory the key names, while a versioned one locks the object path.
+func TestRoutedAbortLocksTheCompletionCommitPath(t *testing.T) {
+	for _, tc := range []struct {
+		versioning string
+		lockKey    string
+	}{
+		{"", "/dir/dir"},
+		{s3_constants.VersioningSuspended, "/dir/dir"},
+		{s3_constants.VersioningEnabled, "/dir/"},
+	} {
+		f := &fakeRoutedAbortFiler{}
+		ownerAddr := startFakeFiler(t, f)
+		s3a := newFailoverTestServer(t, ownerAddr)
+		bucketDir := s3a.bucketDir("b")
+		f.uploadsDir = bucketDir + "/" + s3_constants.MultipartUploadsFolder
+		f.uploadEntry = uploadRecordEntry("up1")
+		f.uploadEntry.Extended[s3_constants.ExtMultipartObjectKey] = []byte("dir/")
+		f.objectDir = bucketDir
+		f.versionsDir = bucketDir + "/dir/dir" + s3_constants.VersionsFolder
+		s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+		s3a.bucketConfigCache.Set("b", &BucketConfig{Name: "b", Versioning: tc.versioning})
+		s3a.objectWriteLockClient = cluster.NewLockClient(s3a.option.GrpcDialOption, ownerAddr)
+		s3a.objectWriteLockClient.SetRing([]pb.ServerAddress{ownerAddr}, 1)
+
+		if _, code := s3a.abortMultipartUpload(&s3.AbortMultipartUploadInput{Bucket: aws.String("b"), Key: aws.String("dir/"), UploadId: aws.String("up1")}); code != s3err.ErrNone {
+			t.Fatalf("versioning %q: code = %v", tc.versioning, code)
+		}
+		req := f.txnReq
+		if req == nil {
+			t.Fatalf("versioning %q: no transaction", tc.versioning)
+		}
+		if req.LockKey != bucketDir+tc.lockKey || req.ConditionKey != req.LockKey || req.RouteKey != s3a.objectRouteKey("b", "dir/") {
+			t.Fatalf("versioning %q: lock %q condition %q route %q", tc.versioning, req.LockKey, req.ConditionKey, req.RouteKey)
+		}
 	}
 }

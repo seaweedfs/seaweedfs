@@ -1246,11 +1246,15 @@ func (s3a *S3ApiServer) routedUploadDirDelete(bucket, uploadId, object string) s
 	if owner == "" {
 		return rmUploadDir(true)
 	}
-	objectPath := s3a.toFilerPath(bucket, object)
+	commitPath, err := s3a.uploadCommitPath(bucket, object)
+	if err != nil {
+		glog.Errorf("bucket %s abort upload %s: %v", bucket, uploadId, err)
+		return s3err.ErrInternalError
+	}
 	resp, err := s3a.objectTxnOnFiler(owner, &filer_pb.ObjectTransactionRequest{
-		LockKey:      objectPath,
+		LockKey:      commitPath,
 		RouteKey:     s3a.objectRouteKey(bucket, object),
-		ConditionKey: objectPath,
+		ConditionKey: commitPath,
 		Condition: &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{
 			Kind:     filer_pb.WriteCondition_IF_EXTENDED_NOT_EQUAL,
 			ExtKey:   s3_constants.SeaweedFSUploadId,
@@ -1276,6 +1280,21 @@ func (s3a *S3ApiServer) routedUploadDirDelete(bucket, uploadId, object string) s
 		return s3err.ErrInternalError
 	}
 	return s3err.ErrNone
+}
+
+// uploadCommitPath is the path a routed completion of object locks: the
+// object path in a versioned bucket, else the entry it writes, which for a
+// trailing-slash key lies inside the directory the key names.
+func (s3a *S3ApiServer) uploadCommitPath(bucket, object string) (string, error) {
+	versioningState, err := s3a.getVersioningState(bucket)
+	if err != nil {
+		return "", err
+	}
+	if versioningState == s3_constants.VersioningEnabled {
+		return s3a.toFilerPath(bucket, object), nil
+	}
+	entryName, dirName := s3a.getEntryNameAndDir(&s3.CompleteMultipartUploadInput{Bucket: &bucket, Key: &object})
+	return dirName + "/" + entryName, nil
 }
 
 // uploadCompleted reports whether the upload assembled into an object: the
