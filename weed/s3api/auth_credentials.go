@@ -3134,6 +3134,9 @@ func (iam *IdentityAccessManagement) authorizeObjectKeyAction(r *http.Request, i
 	keyReq := objectKeyPolicyRequest(r, method, bucket, objectKey, versionId)
 
 	if iam.policyEngine != nil {
+		if iam.primeBucketForIAM != nil {
+			iam.primeBucketForIAM(bucket)
+		}
 		principal := buildPrincipalARN(identity, keyReq)
 		allowed, evaluated, err := iam.policyEngine.EvaluatePolicy(bucket, objectKey, string(action), principal, keyReq, identity.Claims, nil)
 		if err != nil {
