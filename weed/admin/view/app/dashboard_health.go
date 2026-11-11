@@ -31,10 +31,10 @@ func clusterHealthIssues(data dash.AdminData) []string {
 }
 
 func clusterHealthSummary(data dash.AdminData) string {
-	nodes := fmt.Sprintf("%s, %s and %s reporting.",
-		countNoun(len(data.MasterNodes), "master"),
+	nodes := fmt.Sprintf("%s and %s reporting, %s configured.",
 		countNoun(len(data.VolumeServers), "volume server"),
-		countNoun(len(data.FilerNodes), "filer"))
+		countNoun(len(data.FilerNodes), "filer"),
+		countNoun(len(data.MasterNodes), "master"))
 	issues := clusterHealthIssues(data)
 	if len(issues) == 0 {
 		return "Healthy. " + nodes

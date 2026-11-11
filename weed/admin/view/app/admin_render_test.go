@@ -48,14 +48,14 @@ func TestClusterHealthSummary(t *testing.T) {
 		DiskUsage:     50,
 		DiskCapacity:  100,
 	}
-	if got, want := clusterHealthSummary(healthy), "Healthy. 1 master, 2 volume servers and 1 filer reporting."; got != want {
+	if got, want := clusterHealthSummary(healthy), "Healthy. 2 volume servers and 1 filer reporting, 1 master configured."; got != want {
 		t.Errorf("healthy summary = %q, want %q", got, want)
 	}
 
 	degraded := healthy
 	degraded.MasterNodes = []dash.MasterNode{{Address: "m1:9333"}}
 	degraded.DiskUsage = 95
-	want := "Needs attention: no master leader, disks 95% full. 1 master, 2 volume servers and 1 filer reporting."
+	want := "Needs attention: no master leader, disks 95% full. 2 volume servers and 1 filer reporting, 1 master configured."
 	if got := clusterHealthSummary(degraded); got != want {
 		t.Errorf("degraded summary = %q, want %q", got, want)
 	}
