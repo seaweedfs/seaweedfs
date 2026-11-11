@@ -398,8 +398,9 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	// lazy bucket load (and with it the mirror backfill): a grant carried
 	// only by a not-yet-mirrored policy would otherwise deny forever, and
 	// the denied request never reaches the handlers that load the bucket.
-	iam.primeBucketForIAM = func(bucket string) {
-		s3ApiServer.getBucketConfig(bucket)
+	iam.primeBucketForIAM = func(bucket string) s3err.ErrorCode {
+		_, code := s3ApiServer.getBucketConfig(bucket)
+		return code
 	}
 
 	// Initialize advanced IAM system if config is provided or explicitly enabled

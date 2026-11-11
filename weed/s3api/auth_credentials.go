@@ -85,7 +85,7 @@ type IdentityAccessManagement struct {
 	// primeBucketForIAM loads a bucket's config (and with it the advanced-IAM
 	// bucket-policy mirror backfill) before an IAM authorization that will
 	// evaluate that mirror. Set by NewS3ApiServer; nil in tests.
-	primeBucketForIAM func(bucket string)
+	primeBucketForIAM func(bucket string) s3err.ErrorCode
 
 	// Cached policy engine for IAM policy fallback evaluation.
 	// Keyed by policy name, kept in sync by PutPolicy/DeletePolicy.
@@ -3135,7 +3135,9 @@ func (iam *IdentityAccessManagement) authorizeObjectKeyAction(r *http.Request, i
 
 	if iam.policyEngine != nil {
 		if iam.primeBucketForIAM != nil {
-			iam.primeBucketForIAM(bucket)
+			if code := iam.primeBucketForIAM(bucket); code != s3err.ErrNone && code != s3err.ErrNoSuchBucket {
+				return code
+			}
 		}
 		principal := buildPrincipalARN(identity, keyReq)
 		allowed, evaluated, err := iam.policyEngine.EvaluatePolicy(bucket, objectKey, string(action), principal, keyReq, identity.Claims, nil)
