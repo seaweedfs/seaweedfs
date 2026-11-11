@@ -2,6 +2,7 @@ package ec
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -133,5 +134,23 @@ func TestRunEcShardMovesStopsWhenLockIsLost(t *testing.T) {
 	}
 	if ran != 2 || result.Moved != 1 || result.Failed != 1 || result.NotStarted != len(moves)-2 {
 		t.Fatalf("expected no move after the lock was lost even with skipping on: ran %d, %+v", ran, result)
+	}
+}
+
+// A move that failed after its target registered the shard counts as failed but
+// is not reported for planning again: the target's slot is taken.
+func TestRunEcShardMovesKeepsShardsOnTheTargetOutOfFailedMoves(t *testing.T) {
+	moves := evacuationMoves(2, 1)
+	result, err := runEcShardMoves(moves, 1, false, func(m ecbalancer.Move) error {
+		if m.VolumeID == moves[0].VolumeID {
+			return fmt.Errorf("move ec shard: %w: delete: input/output error", errShardOnTarget)
+		}
+		return errors.New("copy: input/output error")
+	})
+	if err == nil {
+		t.Fatal("expected the failed moves' errors")
+	}
+	if result.Failed != 2 || len(result.FailedMoves) != 1 || result.FailedMoves[0] != moves[1] {
+		t.Fatalf("expected only the move without a target copy in FailedMoves, got %+v", result)
 	}
 }

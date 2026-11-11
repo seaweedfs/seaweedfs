@@ -19,12 +19,17 @@ import (
 // and fails the whole run.
 var ErrLockLost = errors.New("lock is lost")
 
+// errShardOnTarget marks a failed move whose target registered the shard: only
+// the source cleanup failed, so the shard takes a slot on the target.
+var errShardOnTarget = errors.New("the target has the shard")
+
 // EcShardMovesResult counts what RunEcShardMoves did with the planned moves.
 type EcShardMovesResult struct {
 	Moved      int
 	Failed     int
 	NotStarted int
-	// FailedMoves are the moves that failed; their shards are still on the source.
+	// FailedMoves are the failed moves whose target did not register the shard;
+	// their shards are still on the source.
 	FailedMoves []ecbalancer.Move
 }
 
@@ -56,15 +61,19 @@ func RunEcShardMoves(env *Env, nodes []*EcNode, moves []ecbalancer.Move, maxPara
 		if src == nil || dst == nil {
 			return fmt.Errorf("move ec shard %d.%d %s => %s: unknown volume server", m.VolumeID, m.ShardID, m.SourceNode, m.TargetNode)
 		}
-		err := mover.MoveEcShards(context.Background(), volume_move.EcShardMove{
+		move := volume_move.EcShardMove{
 			VolumeId:   needle.VolumeId(m.VolumeID),
 			Collection: m.Collection,
 			ShardIds:   []erasure_coding.ShardId{erasure_coding.ShardId(m.ShardID)},
 			Source:     pb.NewServerAddressFromDataNode(src.Info),
 			Target:     pb.NewServerAddressFromDataNode(dst.Info),
 			TargetDisk: m.TargetDisk,
-		}, volume_move.EcMoveOptions{IoBytePerSecond: ioBytePerSecond, Writer: out})
+		}
+		err := mover.MoveEcShards(context.Background(), move, volume_move.EcMoveOptions{IoBytePerSecond: ioBytePerSecond, Writer: out})
 		if err != nil {
+			if mover.VerifyEcShards(context.Background(), move.VolumeId, move.Target, move.ShardIds) == nil {
+				err = fmt.Errorf("%w: %w", errShardOnTarget, err)
+			}
 			return fmt.Errorf("move ec shard %d.%d %s => %s: %w", m.VolumeID, m.ShardID, m.SourceNode, m.TargetNode, err)
 		}
 		fmt.Fprintf(out, "moved ec shard %d.%d %s => %s\n", m.VolumeID, m.ShardID, m.SourceNode, m.TargetNode)
@@ -85,9 +94,11 @@ func runEcShardMoves(moves []ecbalancer.Move, maxParallelization int, stopOnErro
 		}
 		if err := move(m); err != nil {
 			failed.Add(1)
-			mu.Lock()
-			failedMoves = append(failedMoves, m)
-			mu.Unlock()
+			if !errors.Is(err, errShardOnTarget) {
+				mu.Lock()
+				failedMoves = append(failedMoves, m)
+				mu.Unlock()
+			}
 			if stopOnError || errors.Is(err, ErrLockLost) {
 				stopped.Store(true)
 				return err
