@@ -145,7 +145,9 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 	r.Header.Set("Content-Type", contentType)
 
 	// acl and x-amz-acl both set the canned ACL; differing values are ambiguous.
-	if acl, amzAcl := formValues.Get("Acl"), formValues.Get(s3_constants.AmzCannedAcl); acl != "" && amzAcl != "" && acl != amzAcl {
+	_, hasAcl := formValues["Acl"]
+	_, hasAmzAcl := formValues[s3_constants.AmzCannedAcl]
+	if hasAcl && hasAmzAcl && formValues.Get("Acl") != formValues.Get(s3_constants.AmzCannedAcl) {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
 		return
 	}
