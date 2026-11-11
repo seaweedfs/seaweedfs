@@ -2004,7 +2004,9 @@ func (h *S3TablesHandler) authorizeUpdateTable(w http.ResponseWriter, r *http.Re
 		return nil, err
 	}
 
-	if err := ValidateMetadataLocation(req.MetadataLocation, bucketName, namespaceName); err != nil {
+	// Where the location may point depends on the stored record, so only its
+	// shape is checked here; the rest waits for authorization below.
+	if _, err := validateMetadataLocationShape(req.MetadataLocation, bucketName); err != nil {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
 		return nil, err
 	}
@@ -2105,6 +2107,12 @@ func (h *S3TablesHandler) authorizeUpdateTable(w http.ResponseWriter, r *http.Re
 			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchTable, "table not found")
 		}
 		return nil, NewAuthError("UpdateTable", principal, "not authorized to update table")
+	}
+
+	// After authorization, so a caller who may not update the table learns
+	// nothing about where its files live.
+	if err := h.refuseUpdatedMetadataLocation(w, r, filerClient, bucketName, namespaceName, tablePath, &metadata, req.MetadataLocation); err != nil {
+		return nil, err
 	}
 
 	return &updateTableTarget{

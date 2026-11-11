@@ -1091,6 +1091,24 @@ func RootClaimed(roots map[string][]string, selfPath, root string) bool {
 	return false
 }
 
+// rootFilesShared reports whether a record other than selfPath keeps its files
+// at root, above it or under it. Unlike RootClaimed it ignores where the other
+// records themselves sit: a table created under a renamed table's old name has
+// its entry on that directory and its files elsewhere.
+func rootFilesShared(roots map[string][]string, selfPath, root string) bool {
+	for recordPath, others := range roots {
+		if recordPath == selfPath {
+			continue
+		}
+		for _, other := range others {
+			if PathsOverlap(other, root) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // checkLocationUnclaimed returns ErrLocationInUse when root, the one the record
 // at recordPath would have, is claimed by another record.
 func checkLocationUnclaimed(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketName, recordPath, root string) error {
@@ -1170,6 +1188,27 @@ func (h *S3TablesHandler) refuseClaimedLocation(w http.ResponseWriter, r *http.R
 		h.writeError(w, http.StatusConflict, ErrCodeConflict, err.Error())
 	} else if err != nil {
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to check location")
+	}
+	return err
+}
+
+// refuseUpdatedMetadataLocation answers an update whose metadata location the
+// record at recordPath, whose stored metadata is current, may not take; see
+// validateUpdatedMetadataLocation.
+func (h *S3TablesHandler) refuseUpdatedMetadataLocation(w http.ResponseWriter, r *http.Request, filerClient FilerClient, bucketName, namespace, recordPath string, current *tableMetadataInternal, metadataLocation string) error {
+	var checkErr error
+	err := validateUpdatedMetadataLocation(metadataLocation, bucketName, namespace, recordPath, current, func(root string) (shared bool, err error) {
+		checkErr = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+			roots, err := CatalogRecordRoots(r.Context(), client, bucketName)
+			shared = err == nil && rootFilesShared(roots, recordPath, root)
+			return err
+		})
+		return shared, checkErr
+	})
+	if checkErr != nil {
+		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to check location")
+	} else if err != nil {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
 	}
 	return err
 }
