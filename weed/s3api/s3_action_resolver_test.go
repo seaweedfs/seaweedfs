@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
 // TestMapBaseActionToS3Format_ServicePrefixPassthrough verifies that actions
@@ -139,6 +140,40 @@ func TestResolveS3Action_EmptyVersionIdIsCurrentObject(t *testing.T) {
 			r, _ := http.NewRequest(tt.method, "http://localhost/bucket/key?"+tt.query, nil)
 			if got := ResolveS3Action(r, tt.baseAction, "bucket", "key"); got != tt.want {
 				t.Errorf("ResolveS3Action() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestEmptyVersionIdDoesNotBypassCurrentObjectDeny(t *testing.T) {
+	iam := &IdentityAccessManagement{isAuthEnabled: true}
+	if err := iam.PutPolicy("VersionOnly", `{"Version":"2012-10-17","Statement":[
+		{"Effect":"Allow","Action":["s3:GetObjectVersion","s3:DeleteObjectVersion"],"Resource":"arn:aws:s3:::abc/*"},
+		{"Effect":"Deny","Action":["s3:GetObject","s3:DeleteObject"],"Resource":"arn:aws:s3:::abc/*"}]}`); err != nil {
+		t.Fatal(err)
+	}
+	identity := &Identity{Name: "versioner", PolicyNames: []string{"VersionOnly"}, Account: &Account{Id: "test-account"}}
+	tests := []struct {
+		method string
+		action Action
+		query  string
+		want   s3err.ErrorCode
+	}{
+		{http.MethodGet, s3_constants.ACTION_READ, "", s3err.ErrAccessDenied},
+		{http.MethodGet, s3_constants.ACTION_READ, "?versionId=", s3err.ErrAccessDenied},
+		{http.MethodGet, s3_constants.ACTION_READ, "?versionId", s3err.ErrAccessDenied},
+		{http.MethodHead, s3_constants.ACTION_READ, "?versionId=", s3err.ErrAccessDenied},
+		{http.MethodDelete, s3_constants.ACTION_WRITE, "?versionId=", s3err.ErrAccessDenied},
+		{http.MethodDelete, s3_constants.ACTION_WRITE, "?versionId", s3err.ErrAccessDenied},
+		{http.MethodGet, s3_constants.ACTION_READ, "?versionId=v1", s3err.ErrNone},
+		{http.MethodHead, s3_constants.ACTION_READ, "?versionId=null", s3err.ErrNone},
+		{http.MethodDelete, s3_constants.ACTION_WRITE, "?versionId=v1", s3err.ErrNone},
+	}
+	for _, tt := range tests {
+		t.Run(tt.method+tt.query, func(t *testing.T) {
+			r, _ := http.NewRequest(tt.method, "http://localhost/abc/key"+tt.query, nil)
+			if got := iam.VerifyActionPermission(r, identity, tt.action, "abc", "key"); got != tt.want {
+				t.Errorf("VerifyActionPermission() = %v, want %v", got, tt.want)
 			}
 		})
 	}
