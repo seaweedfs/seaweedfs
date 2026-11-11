@@ -53,6 +53,28 @@ func (s3a *S3ApiServer) bucketDir(bucket string) string {
 	return path.Join(s3a.bucketRoot(bucket), bucket)
 }
 
+// collectionForCopyPath returns the collection a server-side copy must assign
+// its destination chunks to. It mirrors PutObject: with a filer group the
+// bucket's prefixed collection wins over a path rule, so a copy and a put of
+// the same bucket cannot split into two collections.
+func (s3a *S3ApiServer) collectionForCopyPath(dstPath string) string {
+	if s3a.option.FilerGroup == "" || s3a.option.BucketsPath == "" {
+		return ""
+	}
+	prefix := strings.TrimSuffix(s3a.option.BucketsPath, "/") + "/"
+	if !strings.HasPrefix(dstPath, prefix) {
+		return ""
+	}
+	bucket := strings.TrimPrefix(dstPath, prefix)
+	if i := strings.Index(bucket, "/"); i >= 0 {
+		bucket = bucket[:i]
+	}
+	if bucket == "" {
+		return ""
+	}
+	return s3a.getCollectionName(bucket)
+}
+
 func (s3a *S3ApiServer) validateTableBucketObjectPath(bucket, object string) error {
 	if !s3a.isTableBucket(bucket) {
 		return nil
