@@ -13,10 +13,14 @@ import (
 
 type failingStorage struct {
 	storage.Storage
-	fail atomic.Bool
+	fail     atomic.Bool
+	failOpen atomic.Bool
 }
 
 func (f *failingStorage) Create(fd storage.FileDesc) (storage.Writer, error) {
+	if f.failOpen.Load() && fd.Type != storage.TypeTemp {
+		return nil, syscall.ENOSPC
+	}
 	w, err := f.Storage.Create(fd)
 	if err != nil {
 		return nil, err
@@ -175,5 +179,35 @@ func TestReopenAttemptsAreRateLimited(t *testing.T) {
 	db.lastReopen.Store(0)
 	if err := db.Put([]byte("a"), []byte("1"), nil); err != nil {
 		t.Fatalf("put after the reopen interval: %v", err)
+	}
+}
+
+func TestFailedReopenReportsErrorsUntilOpen(t *testing.T) {
+	db, st := openFailing(t)
+	if err := db.Put([]byte("a"), []byte("1"), nil); err != nil {
+		t.Fatal(err)
+	}
+	st.fail.Store(true)
+	if err := db.Put([]byte("b"), []byte("2"), nil); err == nil {
+		t.Fatal("put while storage fails succeeded")
+	}
+	st.fail.Store(false)
+	st.failOpen.Store(true)
+	if err := db.Put([]byte("b"), []byte("2"), nil); err == nil {
+		t.Fatal("put with a failed reopen succeeded")
+	}
+	if _, err := db.Get([]byte("a"), nil); !errors.Is(err, syscall.ENOSPC) {
+		t.Fatalf("get with a failed reopen: %v", err)
+	}
+	iter := db.NewIterator(nil, nil)
+	if iter.Next() || !errors.Is(iter.Error(), syscall.ENOSPC) {
+		t.Fatalf("iterator with a failed reopen: %v", iter.Error())
+	}
+	iter.Release()
+
+	st.failOpen.Store(false)
+	expectValue(t, db, "a", "1")
+	if err := db.Put([]byte("b"), []byte("2"), nil); err != nil {
+		t.Fatalf("put after the reopen succeeded: %v", err)
 	}
 }
