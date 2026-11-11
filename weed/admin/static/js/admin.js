@@ -834,7 +834,9 @@ function exportUsers() {
             const email = cells[1].textContent.trim();
             const accessKey = cells[2].textContent.trim();
 
-            csvContent += `"${username}","${email}","${accessKey}"\n`;
+            csvContent += [username, email, accessKey]
+                .map(value => `"${value.replace(/"/g, '""')}"`)
+                .join(',') + '\n';
         }
     });
 
