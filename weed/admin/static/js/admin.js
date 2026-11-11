@@ -871,19 +871,16 @@ function exportUsers() {
         return;
     }
 
-    let csvContent = 'Username,Email,Access Key,Status,Created,Last Login\n';
+    let csvContent = 'Username,Email,Access Key\n';
 
     rows.forEach(row => {
         const cells = row.querySelectorAll('td');
-        if (cells.length >= 6) {
-            const username = cells[0].textContent.trim();
+        if (cells.length >= 3) {
+            const username = (cells[0].querySelector('strong') || cells[0]).textContent.trim();
             const email = cells[1].textContent.trim();
             const accessKey = cells[2].textContent.trim();
-            const status = cells[3].textContent.trim();
-            const created = cells[4].textContent.trim();
-            const lastLogin = cells[5].textContent.trim();
 
-            csvContent += `"${username}","${email}","${accessKey}","${status}","${created}","${lastLogin}"\n`;
+            csvContent += `"${username}","${email}","${accessKey}"\n`;
         }
     });
 
