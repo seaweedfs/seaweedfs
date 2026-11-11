@@ -454,14 +454,18 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 	// travel into a session the caller assumed for itself — a legacy static admin
 	// carries no IAM policies for such a session to inherit. Assuming a named role
 	// scopes the session to that role's policies, admin caller or not.
-	var modifyClaims func(claims *sts.STSSessionClaims)
-	if assumesSelf && identity.isAdmin() {
-		modifyClaims = func(claims *sts.STSSessionClaims) {
-			if claims.RequestContext == nil {
-				claims.RequestContext = make(map[string]interface{})
-			}
-			claims.RequestContext["is_admin"] = true
+	// The session name is the caller's choice, so the session records the
+	// caller itself as the user it was issued to.
+	sessionIsAdmin := assumesSelf && identity.isAdmin()
+	modifyClaims := func(claims *sts.STSSessionClaims) {
+		claims.ExternalUserId = identity.Name
+		if !sessionIsAdmin {
+			return
 		}
+		if claims.RequestContext == nil {
+			claims.RequestContext = make(map[string]interface{})
+		}
+		claims.RequestContext["is_admin"] = true
 	}
 
 	// Generate common STS components
