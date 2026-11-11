@@ -61,26 +61,6 @@ templ Policies(data dash.PoliciesData) {
                     </div>
                 </div>
             </div>
-
-            <div class="col-xl-4 col-md-6 mb-4">
-                <div class="card border-left-info shadow h-100 py-2">
-                    <div class="card-body">
-                        <div class="row no-gutters align-items-center">
-                            <div class="col mr-2">
-                                <div class="text-xs font-weight-bold text-info text-uppercase mb-1">
-                                    Last Updated
-                                </div>
-                                <div class="h5 mb-0 font-weight-bold text-gray-800">
-                                    {data.LastUpdated.Format("15:04")}
-                                </div>
-                            </div>
-                            <div class="col-auto">
-                                <i class="bi bi-clock icon-2x text-gray-300"></i>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
         </div>
 
         <!-- Policies Table -->
@@ -152,6 +132,15 @@ templ Policies(data dash.PoliciesData) {
                         </div>
                     </div>
                 </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col-12">
+                <small class="text-muted">
+                    <i class="bi bi-clock me-1"></i>
+                    Last updated: {data.LastUpdated.Format("2006-01-02 15:04:05")}
+                </small>
             </div>
         </div>
     </div>
