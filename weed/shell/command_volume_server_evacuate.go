@@ -8,8 +8,10 @@ import (
 
 	"slices"
 
+	"github.com/seaweedfs/seaweedfs/weed/ec"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding/ecbalancer"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -20,9 +22,13 @@ func init() {
 }
 
 type commandVolumeServerEvacuate struct {
-	topologyInfo *master_pb.TopologyInfo
-	targetServer *string
-	volumeRack   *string
+	topologyInfo       *master_pb.TopologyInfo
+	targetServer       *string
+	volumeRack         *string
+	maxParallelization int
+	movesPerExec       int
+	movedCount         int
+	limitReported      bool
 }
 
 func (c *commandVolumeServerEvacuate) Name() string {
@@ -32,7 +38,7 @@ func (c *commandVolumeServerEvacuate) Name() string {
 func (c *commandVolumeServerEvacuate) Help() string {
 	return `move out all data on a volume server
 
-	volumeServer.evacuate -node <host:port>
+	volumeServer.evacuate -node <host:port> [-skipNonMoveable] [-maxParallelization 1] [-movesPerExec 0] [-apply]
 
 	This command moves all data away from the volume server.
 	The volumes on the volume servers will be redistributed.
@@ -43,6 +49,14 @@ func (c *commandVolumeServerEvacuate) Help() string {
 	good destination to meet the replication requirement. 
 	E.g. a volume replication 001 in a cluster with 2 volume servers can not be moved.
 	You can use "-skipNonMoveable" to move the rest volumes.
+	It also skips EC shards that fail to move (a read error on a failing disk, for
+	example) and goes on with the rest, the other shards of the same volume included.
+
+	EC shards are moved up to -maxParallelization at a time (default 1), never two
+	shards of one volume at once. Normal volumes are moved one at a time.
+
+	-movesPerExec limits how many volumes and EC shards one run moves (default 0 for
+	unlimited), so a big server can be emptied in several runs.
 
 `
 }
@@ -62,9 +76,21 @@ func (c *commandVolumeServerEvacuate) Do(args []string, commandEnv *CommandEnv, 
 	// TODO: remove this alias
 	applyChangeAlias := vsEvacuateCommand.Bool("force", false, "actually apply the changes (alias for -apply)")
 	retryCount := vsEvacuateCommand.Int("retry", 0, "how many times to retry")
+	maxParallelization := vsEvacuateCommand.Int("maxParallelization", 1, "run up to X EC shard moves in parallel")
+	movesPerExec := vsEvacuateCommand.Int("movesPerExec", 0, "how many volumes and EC shards to move in one run (default is 0 for unlimited)")
 	if err = vsEvacuateCommand.Parse(args); err != nil {
 		return nil
 	}
+	if *maxParallelization < 1 {
+		return fmt.Errorf("maxParallelization must be >= 1")
+	}
+	if *movesPerExec < 0 {
+		return fmt.Errorf("movesPerExec must be >= 0")
+	}
+	c.maxParallelization = *maxParallelization
+	c.movesPerExec = *movesPerExec
+	c.movedCount = 0
+	c.limitReported = false
 
 	handleDeprecatedForceFlag(writer, vsEvacuateCommand, applyChangeAlias, applyChange)
 	infoAboutSimulationMode(writer, *applyChange, "-apply")
@@ -141,9 +167,15 @@ func (c *commandVolumeServerEvacuate) evacuateNormalVolumes(commandEnv *CommandE
 			// this disk's VolumeInfos in place. Iterate over a snapshot so removals
 			// don't leave nil holes in the slice we are ranging over.
 			for _, vol := range slices.Clone(diskInfo.VolumeInfos) {
+				if c.limitReached(writer) {
+					return nil
+				}
 				hasMoved, err := moveAwayOneNormalVolume(commandEnv, volumeReplicas, vol, thisNode, otherNodes, applyChange)
 				if err != nil {
 					fmt.Fprintf(writer, "move away volume %d from %s: %v\n", vol.Id, volumeServer, err)
+				}
+				if hasMoved {
+					c.movedCount++
 				}
 				if !hasMoved {
 					if skipNonMoveable {
@@ -166,43 +198,90 @@ func (c *commandVolumeServerEvacuate) evacuateEcVolumes(commandEnv *CommandEnv, 
 	// We collect topology once at the start and track capacity changes ourselves
 	// (via freeEcSlot decrement after each move) rather than repeatedly refreshing,
 	// which would give a false sense of correctness since topology could be stale.
+	//
+	// All moves are planned first, updating the in-memory model as the old
+	// one-move-at-a-time loop did, then applied up to -maxParallelization at a time.
 	diskTypes := collectVolumeDiskTypes(c.topologyInfo)
 
+	var moves []ecbalancer.Move
+	var allNodes []*EcNode
+	var planErr error
+planning:
 	for _, diskType := range diskTypes {
 		ecNodes, _ := collectEcVolumeServersByDc(c.topologyInfo, "", diskType)
+		allNodes = append(allNodes, ecNodes...)
 		thisNodes, otherNodes := c.ecNodesOtherThan(ecNodes, volumeServer)
 		if len(thisNodes) == 0 {
 			// This server doesn't have EC shards for this disk type, skip
 			continue
 		}
 
-		// move away ec volumes for this disk type
+		// plan moving away ec volumes for this disk type
 		for _, thisNode := range thisNodes {
 			diskInfo, found := thisNode.Info.DiskInfos[string(diskType)]
 			if !found {
 				continue
 			}
 			for _, ecShardInfo := range diskInfo.EcShardInfos {
-				hasMoved, err := c.moveAwayOneEcVolume(commandEnv, ecShardInfo, thisNode, otherNodes, applyChange, diskType, writer)
-				if err != nil {
-					fmt.Fprintf(writer, "move away volume %d from %s: %v\n", ecShardInfo.Id, volumeServer, err)
+				limit := 0
+				if c.movesPerExec > 0 {
+					limit = c.movesPerExec - c.movedCount - len(moves)
+					if limit <= 0 {
+						break
+					}
 				}
-				if !hasMoved {
+				volumeMoves, planned := c.planMoveAwayOneEcVolume(ecShardInfo, thisNode, otherNodes, diskType, limit, writer)
+				moves = append(moves, volumeMoves...)
+				if !planned {
 					if skipNonMoveable {
 						fmt.Fprintf(writer, "failed to move away ec volume %d from %s\n", ecShardInfo.Id, volumeServer)
 					} else {
-						return fmt.Errorf("failed to move away ec volume %d from %s", ecShardInfo.Id, volumeServer)
+						// Like the one-at-a-time loop did, still move what comes before it.
+						planErr = fmt.Errorf("failed to move away ec volume %d from %s", ecShardInfo.Id, volumeServer)
+						break planning
 					}
 				}
 			}
 		}
 	}
-	return nil
+
+	if !applyChange {
+		c.movedCount += len(moves)
+		c.limitReached(writer)
+		return planErr
+	}
+	if len(moves) == 0 {
+		return planErr
+	}
+	source := volumeServer
+	if source == "" {
+		source = "rack " + *c.volumeRack
+	}
+	fmt.Fprintf(writer, "moving %d ec shard(s) from %s, up to %d at a time\n", len(moves), source, c.maxParallelization)
+	result, err := ec.RunEcShardMoves(commandEnv.ecEnv(), allNodes, moves, c.maxParallelization, 0, !skipNonMoveable, writer)
+	c.movedCount += result.Moved
+	fmt.Fprintf(writer, "ec shards from %s: %d moved, %d failed, %d not started\n", source, result.Moved, result.Failed, result.NotStarted)
+	if err != nil {
+		if skipNonMoveable {
+			fmt.Fprintf(writer, "skipped ec shards that failed to move: %v\n", err)
+		} else {
+			return err
+		}
+	}
+	c.limitReached(writer)
+	return planErr
 }
 
-func (c *commandVolumeServerEvacuate) moveAwayOneEcVolume(commandEnv *CommandEnv, ecShardInfo *master_pb.VolumeEcShardInformationMessage, thisNode *EcNode, otherNodes []*EcNode, applyChange bool, diskType types.DiskType, writer io.Writer) (hasMoved bool, err error) {
+// planMoveAwayOneEcVolume picks a destination for each shard of this EC volume on
+// thisNode, at most limit shards when limit > 0, and records the moves in the
+// in-memory model. planned is false when a shard has no destination; the shards
+// planned before it are still returned.
+func (c *commandVolumeServerEvacuate) planMoveAwayOneEcVolume(ecShardInfo *master_pb.VolumeEcShardInformationMessage, thisNode *EcNode, otherNodes []*EcNode, diskType types.DiskType, limit int, writer io.Writer) (moves []ecbalancer.Move, planned bool) {
 	si := erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(ecShardInfo)
 	for _, shardId := range si.Ids() {
+		if limit > 0 && len(moves) >= limit {
+			break
+		}
 		// Sort by: 1) fewest shards of this volume, 2) most free EC slots
 		// This ensures we prefer nodes with capacity and balanced shard distribution
 		slices.SortFunc(otherNodes, func(a, b *EcNode) int {
@@ -214,7 +293,7 @@ func (c *commandVolumeServerEvacuate) moveAwayOneEcVolume(commandEnv *CommandEnv
 			return b.FreeEcSlot - a.FreeEcSlot // Then prefer more free slots
 		})
 
-		shardMoved := false
+		shardPlanned := false
 		skippedNodes := 0
 		for i := 0; i < len(otherNodes); i++ {
 			emptyNode := otherNodes[i]
@@ -238,30 +317,45 @@ func (c *commandVolumeServerEvacuate) moveAwayOneEcVolume(commandEnv *CommandEnv
 			} else {
 				fmt.Fprintf(writer, "moving ec volume %s%d.%d %s => %s\n", collectionPrefix, ecShardInfo.Id, shardId, thisNode.Info.Id, emptyNode.Info.Id)
 			}
-			err = moveMountedShardToEcNode(commandEnv, thisNode, ecShardInfo.Collection, vid, shardId, emptyNode, destDiskId, applyChange, diskType)
-			if err != nil {
-				hasMoved = false
-				return
-			} else {
-				hasMoved = true
-				shardMoved = true
-				// Update the node's free slot count after successful move
-				emptyNode.FreeEcSlot--
-				break
-			}
+			shardIds := []erasure_coding.ShardId{shardId}
+			emptyNode.AddEcVolumeShards(vid, ecShardInfo.Collection, shardIds, diskType)
+			thisNode.DeleteEcVolumeShards(vid, shardIds)
+			moves = append(moves, ecbalancer.Move{
+				VolumeID:   ecShardInfo.Id,
+				ShardID:    int(shardId),
+				Collection: ecShardInfo.Collection,
+				SourceNode: thisNode.Info.Id,
+				TargetNode: emptyNode.Info.Id,
+				TargetDisk: destDiskId,
+			})
+			shardPlanned = true
+			// Update the node's free slot count after the planned move
+			emptyNode.FreeEcSlot--
+			break
 		}
-		if !shardMoved {
+		if !shardPlanned {
 			if skippedNodes > 0 {
 				fmt.Fprintf(writer, "no available destination for ec shard %d.%d: %d nodes have no free slots\n",
 					ecShardInfo.Id, shardId, skippedNodes)
 			}
 			// Ensure partial moves are reported as failures to prevent data loss
-			hasMoved = false
-			return
+			return moves, false
 		}
 	}
 
-	return
+	return moves, true
+}
+
+// limitReached reports whether -movesPerExec moves have been made, and says so once.
+func (c *commandVolumeServerEvacuate) limitReached(writer io.Writer) bool {
+	if c.movesPerExec == 0 || c.movedCount < c.movesPerExec {
+		return false
+	}
+	if !c.limitReported {
+		c.limitReported = true
+		fmt.Fprintf(writer, "reached -movesPerExec=%d, stopping; run the command again to move the rest\n", c.movesPerExec)
+	}
+	return true
 }
 
 func moveAwayOneNormalVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][]*VolumeReplica, vol *master_pb.VolumeInformationMessage, thisNode *Node, otherNodes []*Node, applyChange bool) (hasMoved bool, err error) {
