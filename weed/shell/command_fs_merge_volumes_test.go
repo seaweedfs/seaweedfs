@@ -13,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -511,5 +512,126 @@ func TestUnreferencedTargets(t *testing.T) {
 				t.Fatalf("looked up %v, want /dir f", fake.lookupReq)
 			}
 		})
+	}
+}
+
+func TestIsMultipartUploadFile(t *testing.T) {
+	cases := []struct {
+		buckets, dir string
+		want         bool
+	}{
+		{"/buckets", "/buckets/b/.uploads/abc", true},
+		{"/", "/b/.uploads/abc", true},
+		{"/", "/buckets/b/.uploads/abc", false},
+		{"/buckets/", "/buckets/b/.uploads/abc", true},
+		{"/data/buckets", "/data/buckets/b/.uploads/abc", true},
+		{"/buckets", "/buckets/b/.uploads", false},
+		{"/buckets", "/buckets/b/dir/.uploads/abc", false},
+		{"/buckets", "/buckets/b/.uploads/abc/sub", false},
+		{"/buckets", "/other/b/.uploads/abc", false},
+		{"/buckets", "/buckets/b/obj", false},
+	}
+	for _, tc := range cases {
+		if got := isMultipartUploadFile(tc.buckets, util.FullPath(tc.dir)); got != tc.want {
+			t.Errorf("isMultipartUploadFile(%q, %q) = %v, want %v", tc.buckets, tc.dir, got, tc.want)
+		}
+	}
+}
+
+func TestRecordPlanSources(t *testing.T) {
+	plan := &mergePlan{targets: map[needle.VolumeId][]needle.VolumeId{
+		needle.VolumeId(203): {needle.VolumeId(187)},
+	}}
+	c := newMergeCmd(250000,
+		&master_pb.VolumeInformationMessage{Id: 203, Collection: "b"},
+		&master_pb.VolumeInformationMessage{Id: 187, Collection: "b"},
+		&master_pb.VolumeInformationMessage{Id: 5, Collection: "other"})
+	planCollections := map[string]bool{"b": true}
+	chunk := func(vid uint32, key uint64) *filer_pb.FileChunk {
+		fid := &filer_pb.FileId{VolumeId: vid, FileKey: key, Cookie: 7}
+		return &filer_pb.FileChunk{Fid: fid, FileId: needle.NewFileId(needle.VolumeId(vid), key, 7).String(), Size: 10}
+	}
+
+	blob, err := proto.Marshal(&filer_pb.FileChunkManifest{Chunks: []*filer_pb.FileChunk{chunk(203, 2)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	volumeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(blob)
+	}))
+	defer volumeServer.Close()
+	lookupFn := func(_ context.Context, fileId string) ([]string, error) {
+		return []string{volumeServer.URL + "/" + fileId}, nil
+	}
+	manifest := func(vid uint32) *filer_pb.FileChunk {
+		m := chunk(vid, 1)
+		m.IsChunkManifest = true
+		return m
+	}
+
+	for _, tc := range []struct {
+		name   string
+		chunks []*filer_pb.FileChunk
+		found  bool
+		count  int
+	}{
+		{"off plan sources", []*filer_pb.FileChunk{chunk(187, 1), chunk(5, 1)}, false, 0},
+		{"on a plan source", []*filer_pb.FileChunk{chunk(203, 1), chunk(187, 2), chunk(203, 3)}, true, 2},
+		{"behind a manifest off the source", []*filer_pb.FileChunk{manifest(187)}, true, 1},
+		{"manifest outside the plan collections", []*filer_pb.FileChunk{manifest(5)}, false, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			seen := newSourceNeedleCounter()
+			found, err := c.recordPlanSources(context.Background(), lookupFn, plan, planCollections, seen, tc.chunks)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if found != tc.found || seen.count(needle.VolumeId(203)) != tc.count {
+				t.Fatalf("found %v with %d references to 203, want %v with %d", found, seen.count(needle.VolumeId(203)), tc.found, tc.count)
+			}
+		})
+	}
+
+	unreachable := func(_ context.Context, fileId string) ([]string, error) {
+		return nil, fmt.Errorf("volume of %s unavailable", fileId)
+	}
+	seen := newSourceNeedleCounter()
+	found, err := c.recordPlanSources(context.Background(), unreachable, plan, planCollections, seen, []*filer_pb.FileChunk{chunk(203, 1), manifest(187)})
+	if err == nil {
+		t.Fatal("an unreadable manifest must be reported")
+	}
+	if !found || seen.count(needle.VolumeId(203)) != 1 {
+		t.Fatalf("direct reference lost with an unreadable manifest: found %v, %d references to 203", found, seen.count(needle.VolumeId(203)))
+	}
+
+	unreadable := chunk(187, 10)
+	unreadable.IsChunkManifest = true
+	nestedBlob, err := proto.Marshal(&filer_pb.FileChunkManifest{Chunks: []*filer_pb.FileChunk{unreadable}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outer := chunk(187, 9)
+	outer.IsChunkManifest = true
+	partServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/"+outer.GetFileIdString() {
+			_, _ = w.Write(nestedBlob)
+			return
+		}
+		_, _ = w.Write(blob)
+	}))
+	defer partServer.Close()
+	failsLater := func(_ context.Context, fileId string) ([]string, error) {
+		if fileId == unreadable.GetFileIdString() {
+			return nil, fmt.Errorf("volume of %s unavailable", fileId)
+		}
+		return []string{partServer.URL + "/" + fileId}, nil
+	}
+	seen = newSourceNeedleCounter()
+	found, err = c.recordPlanSources(context.Background(), failsLater, plan, planCollections, seen, []*filer_pb.FileChunk{manifest(187), outer})
+	if err == nil {
+		t.Fatal("an unreadable manifest must be reported")
+	}
+	if !found || seen.count(needle.VolumeId(203)) != 1 {
+		t.Fatalf("chunks behind a readable manifest lost when a later one is unreadable: found %v, %d references to 203", found, seen.count(needle.VolumeId(203)))
 	}
 }

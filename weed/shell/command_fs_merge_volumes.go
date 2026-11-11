@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"slices"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
@@ -60,6 +62,9 @@ func (c *commandFsMergeVolumes) Help() string {
 
 	-apply needs the shell lock (run "lock" first), so two runs never move the
 	same chunks at once.
+
+	Parts of in-progress S3 multipart uploads are not moved, so a source volume
+	holding them is not cleared until those uploads complete or are cleaned up.
 `
 }
 
@@ -160,12 +165,29 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 
 	seen := newSourceNeedleCounter()
 
+	bucketsPath, err := readFilerBucketsPath(commandEnv)
+	if err != nil {
+		return err
+	}
+
 	if err := commandEnv.WithFilerClient(false, func(filerClient filer_pb.SeaweedFilerClient) error {
 		return filer_pb.TraverseBfs(context.Background(), commandEnv, util.FullPath(dir), func(parentPath util.FullPath, entry *filer_pb.Entry) error {
 			if entry.IsDirectory {
 				return nil
 			}
 			entryPath := parentPath.Child(entry.Name)
+			// A completion may already have read this part's fids and will
+			// commit the object with them, so moving the chunk would leave the
+			// object pointing at the deleted source needle.
+			if isMultipartUploadFile(bucketsPath, parentPath) {
+				found, rErr := c.recordPlanSources(context.Background(), lookupFn, plan, planCollections, seen, entry.Chunks)
+				if rErr != nil {
+					fmt.Printf("skip %s: part of an in-progress multipart upload, manifest unreadable: %v\n", entryPath, rErr)
+				} else if found {
+					fmt.Printf("skip %s: part of an in-progress multipart upload\n", entryPath)
+				}
+				return nil
+			}
 			if len(entry.HardLinkId) > 0 {
 				if _, seen := processedHardLinks.LoadOrStore(string(entry.HardLinkId), struct{}{}); seen {
 					// Another sibling already carried the HardLinkId through
@@ -281,6 +303,48 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 
 	c.warnUnreferencedSources(writer, plan, seen, dir)
 	return nil
+}
+
+// isMultipartUploadFile reports whether entries in dir are the parts of an
+// in-progress multipart upload, <bucketsPath>/<bucket>/.uploads/<uploadId>.
+func isMultipartUploadFile(bucketsPath string, dir util.FullPath) bool {
+	uploadsDir, _ := dir.DirAndName()
+	bucketDir, uploads := util.FullPath(uploadsDir).DirAndName()
+	if uploads != s3_constants.MultipartUploadsFolder {
+		return false
+	}
+	parent, _ := util.FullPath(bucketDir).DirAndName()
+	return parent == path.Clean(bucketsPath)
+}
+
+// recordPlanSources counts the chunks on plan sources as referenced, including
+// those behind a manifest that may reference the plan, and reports whether
+// there were any. References read before an unreadable manifest stay counted.
+func (c *commandFsMergeVolumes) recordPlanSources(ctx context.Context, lookupFn wdclient.LookupFileIdFunctionType, plan *mergePlan, planCollections map[string]bool, seen *sourceNeedleCounter, chunks []*filer_pb.FileChunk) (bool, error) {
+	found := false
+	record := func(chunk *filer_pb.FileChunk) {
+		if vid := needle.VolumeId(chunk.Fid.GetVolumeId()); plan.isSource(vid) {
+			seen.record(vid)
+			found = true
+		}
+	}
+	var manifests []*filer_pb.FileChunk
+	for _, chunk := range chunks {
+		record(chunk)
+		if chunk.IsChunkManifest && c.manifestMayReferencePlan(plan, planCollections, needle.VolumeId(chunk.Fid.GetVolumeId())) {
+			manifests = append(manifests, chunk)
+		}
+	}
+	if len(manifests) == 0 {
+		return found, nil
+	}
+	dataChunks, manifestChunks, err := filer.ResolveChunkManifest(ctx, lookupFn, manifests, 0, math.MaxInt64, nil)
+	for _, chunk := range slices.Concat(dataChunks, manifestChunks) {
+		if !slices.Contains(manifests, chunk) {
+			record(chunk)
+		}
+	}
+	return found, err
 }
 
 // warnUnreferencedSources warns when a plan source's index still holds needles
