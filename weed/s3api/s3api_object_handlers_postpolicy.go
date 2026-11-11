@@ -168,6 +168,12 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 			s3err.WriteErrorResponse(w, r, refineDenialForBucketName(r, identity, errCode))
 			return
 		}
+		if !s3a.iam.isEnabled() {
+			if errCode := s3a.checkPutObjectACLPolicy(policyReq, bucket, object); errCode != s3err.ErrNone {
+				s3err.WriteErrorResponse(w, r, errCode)
+				return
+			}
+		}
 	}
 
 	versioningState, err := s3a.getVersioningState(bucket)

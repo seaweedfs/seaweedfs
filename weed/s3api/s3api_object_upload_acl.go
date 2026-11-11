@@ -176,13 +176,22 @@ func (s3a *S3ApiServer) preparePutObjectACL(r *http.Request, bucket string) (*ht
 		if policyCode != s3err.ErrNone {
 			return r, policyCode
 		}
-		for _, action := range []Action{s3_constants.ACTION_WRITE, s3_constants.ACTION_WRITE_ACP} {
-			if policyCode, _ := s3a.checkPolicyWithEntry(policyRequest, bucket, object, string(action), "", nil); policyCode != s3err.ErrNone {
-				return r, policyCode
-			}
+		if policyCode = s3a.checkPutObjectACLPolicy(policyRequest, bucket, object); policyCode != s3err.ErrNone {
+			return r, policyCode
 		}
 	}
 	return s3a.attachPutObjectACL(r, aclRequest, metadata, accountID, canned, custom)
+}
+
+// checkPutObjectACLPolicy applies bucket policies to an upload ACL when
+// authentication is off and no IAM check covered it.
+func (s3a *S3ApiServer) checkPutObjectACLPolicy(policyRequest *http.Request, bucket, object string) s3err.ErrorCode {
+	for _, action := range []Action{s3_constants.ACTION_WRITE, s3_constants.ACTION_WRITE_ACP} {
+		if code, _ := s3a.checkPolicyWithEntry(policyRequest, bucket, object, string(action), "", nil); code != s3err.ErrNone {
+			return code
+		}
+	}
+	return s3err.ErrNone
 }
 
 // preparePostObjectACL builds the upload ACL from the acl and x-amz-grant-*
