@@ -149,12 +149,20 @@ fn untrack(tag: &str) {
 pub struct SharedLeases {
     /// By location, version and manifest ETag: a table dropped and created
     /// again at its location reuses version numbers, not manifests.
-    held: Mutex<HashMap<LeaseKey, Slot>>,
+    held: Mutex<Held>,
     linger: Duration,
     share_for: Duration,
 }
 
 type LeaseKey = (String, u64, Option<String>);
+
+#[derive(Default)]
+struct Held {
+    slots: HashMap<LeaseKey, Slot>,
+    /// Slots are pruned once they reach this many, so a lookup does not
+    /// scan them all.
+    prune_at: usize,
+}
 /// Reads of a version that find no lease wait here for the first to take it.
 type Slot = Arc<tokio::sync::Mutex<Weak<SharedLease>>>;
 
@@ -185,11 +193,14 @@ impl SharedLeases {
         );
         let slot = match self.held.lock() {
             Ok(mut held) => {
-                held.retain(|_, slot| {
-                    slot.try_lock()
-                        .map_or(true, |lease| lease.strong_count() > 0)
-                });
-                held.entry(key).or_default().clone()
+                if held.slots.len() >= held.prune_at {
+                    held.slots.retain(|_, slot| {
+                        slot.try_lock()
+                            .map_or(true, |lease| lease.strong_count() > 0)
+                    });
+                    held.prune_at = (2 * held.slots.len()).max(64);
+                }
+                held.slots.entry(key).or_default().clone()
             }
             Err(_) => Slot::default(),
         };
@@ -478,6 +489,23 @@ mod tests {
         let second = leases.try_pin(&new).await.unwrap().unwrap();
         assert!(!Arc::ptr_eq(&first, &second));
         assert_eq!(new.tags().list().await.unwrap().len(), 1);
+    }
+
+    /// Slots of released leases are pruned as new versions come in.
+    #[tokio::test]
+    async fn released_lease_slots_are_pruned() {
+        let dir = TempDir::new().unwrap();
+        let mut dataset = testing::write_dataset(&dir, &testing::vectors(1, 4), &["a"]).await;
+        let leases = SharedLeases {
+            linger: Duration::ZERO,
+            ..Default::default()
+        };
+        for _ in 0..200 {
+            drop(leases.try_pin(&dataset).await.unwrap());
+            tokio::task::yield_now().await;
+            testing::append_dataset(&mut dataset, &testing::vectors(1, 4), &["b"]).await;
+        }
+        assert!(leases.held.lock().unwrap().slots.len() <= 128);
     }
 
     /// A shared lease is not handed out past SHARED_FOR, so a busy version
