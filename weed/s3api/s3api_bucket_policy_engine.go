@@ -149,7 +149,7 @@ func (bpe *BucketPolicyEngine) EvaluatePolicy(bucket, object, action, principal 
 		args.Conditions = bpe.engine.ExtractConditionValuesFromRequest(r)
 
 		// Extract principal-related variables (aws:username, etc.) from principal ARN
-		principalVars := policy_engine.ExtractPrincipalVariables(principal)
+		principalVars := principalVariables(principal, claims)
 		for k, v := range principalVars {
 			args.Conditions[k] = v
 		}
@@ -190,4 +190,18 @@ func (bpe *BucketPolicyEngine) EvaluatePolicy(bucket, object, action, principal 
 	default:
 		return false, false, fmt.Errorf("unknown policy result: %v", result)
 	}
+}
+
+// principalVariables resolves the policy variables of a principal. A role
+// session's ARN ends in the session name the caller chose, so its user comes
+// from the session itself: the user the session was issued to.
+func principalVariables(principal string, claims map[string]interface{}) map[string][]string {
+	vars := policy_engine.ExtractPrincipalVariables(principal)
+	if types := vars["aws:principaltype"]; len(types) == 1 && types[0] == "AssumedRole" {
+		if user, ok := claims["aws:username"].(string); ok && user != "" {
+			vars["aws:username"] = []string{user}
+			vars["aws:userid"] = []string{user}
+		}
+	}
+	return vars
 }

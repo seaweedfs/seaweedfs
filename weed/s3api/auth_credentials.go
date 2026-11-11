@@ -2755,7 +2755,7 @@ func (iam *IdentityAccessManagement) evaluateAttachedIAMPolicies(r *http.Request
 	for key, values := range vectorIAMConditions(r) {
 		conditions[key] = values
 	}
-	for k, v := range policy_engine.ExtractPrincipalVariables(principal) {
+	for k, v := range principalVariables(principal, identity.Claims) {
 		conditions[k] = v
 	}
 

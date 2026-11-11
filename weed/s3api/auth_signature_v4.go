@@ -528,9 +528,16 @@ func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, se
 	// Create claims map from request context
 	// The request context contains user information from the original OIDC token
 	// that was used in AssumeRoleWithWebIdentity (e.g., preferred_username, email, etc.)
-	claims := make(map[string]interface{}, len(sessionInfo.RequestContext))
+	claims := make(map[string]interface{}, len(sessionInfo.RequestContext)+1)
 	for k, v := range sessionInfo.RequestContext {
 		claims[k] = v
+	}
+	// The session's user is the one it was issued to, never a claim the
+	// identity provider forwarded.
+	if sessionInfo.ExternalUserId != "" {
+		claims["aws:username"] = sessionInfo.ExternalUserId
+	} else {
+		delete(claims, "aws:username")
 	}
 
 	// Key the principal on the OIDC subject so a session resolves to the same
