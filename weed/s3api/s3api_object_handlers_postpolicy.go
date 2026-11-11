@@ -173,12 +173,6 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 			s3err.WriteErrorResponse(w, r, refineDenialForBucketName(r, identity, errCode))
 			return
 		}
-		if !s3a.iam.isEnabled() {
-			if errCode := s3a.checkPutObjectACLPolicy(policyReq, bucket, object); errCode != s3err.ErrNone {
-				s3err.WriteErrorResponse(w, r, errCode)
-				return
-			}
-		}
 	}
 
 	versioningState, err := s3a.getVersioningState(bucket)
@@ -195,6 +189,13 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 		if err != nil {
 			glog.Errorf("PostPolicyBucketHandler: versioning state for bucket %s: %v", bucket, err)
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return
+		}
+	}
+	// The bucket load above brings its policy into the engine.
+	if !s3a.iam.isEnabled() && postRequestsAcl(r) {
+		if errCode := s3a.checkPutObjectACLPolicy(policyReq, bucket, object); errCode != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, errCode)
 			return
 		}
 	}
