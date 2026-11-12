@@ -379,6 +379,17 @@ func (uploader *Uploader) retriedUploadData(ctx context.Context, data []byte, op
 	return
 }
 
+// isGenericBinaryMimeType reports a content type that says nothing about the bytes,
+// such as the application/octet-stream most S3 clients send for unknown files.
+func isGenericBinaryMimeType(mimeType string) bool {
+	mediaType, _, _ := strings.Cut(mimeType, ";")
+	switch strings.ToLower(strings.TrimSpace(mediaType)) {
+	case "", "application/octet-stream", "binary/octet-stream":
+		return true
+	}
+	return false
+}
+
 func (uploader *Uploader) doUploadData(ctx context.Context, data []byte, option *UploadOption) (uploadResult *UploadResult, err error) {
 	contentIsGzipped := option.IsInputCompressed
 	shouldGzipNow := false
@@ -392,7 +403,7 @@ func (uploader *Uploader) doUploadData(ctx context.Context, data []byte, option 
 		}
 		if shouldBeCompressed, iAmSure := util.IsCompressableFileType(filepath.Ext(option.Filename), option.MimeType); iAmSure && shouldBeCompressed {
 			shouldGzipNow = true
-		} else if !iAmSure && option.MimeType == "" && len(data) > 16*1024 {
+		} else if !iAmSure && isGenericBinaryMimeType(option.MimeType) && len(data) > 16*1024 {
 			var compressed []byte
 			compressed, err = util.GzipData(data[0:128])
 			if err != nil {
