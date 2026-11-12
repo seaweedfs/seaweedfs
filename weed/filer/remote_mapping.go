@@ -2,6 +2,7 @@ package filer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -28,12 +29,19 @@ func FindMountedRemoteMapping(mappings *remote_pb.RemoteStorageMapping, dir stri
 }
 
 func ReadMountMappings(grpcDialOption grpc.DialOption, filerAddress pb.ServerAddress) (mappings *remote_pb.RemoteStorageMapping, readErr error) {
-	var oldContent []byte
-	if readErr = pb.WithFilerClient(false, 0, filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-		oldContent, readErr = ReadInsideFiler(context.Background(), client, DirectoryEtcRemote, REMOTE_STORAGE_MOUNT_FILE)
+	readErr = pb.WithFilerClient(false, 0, filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		mappings, readErr = ReadMountMappingsWithClient(context.Background(), client)
 		return readErr
-	}); readErr != nil {
-		if readErr != filer_pb.ErrNotFound {
+	})
+	return
+}
+
+// ReadMountMappingsWithClient reads the remote mount table over an open filer
+// connection; a filer with no mount table has an empty one.
+func ReadMountMappingsWithClient(ctx context.Context, client filer_pb.SeaweedFilerClient) (mappings *remote_pb.RemoteStorageMapping, readErr error) {
+	oldContent, readErr := ReadInsideFiler(ctx, client, DirectoryEtcRemote, REMOTE_STORAGE_MOUNT_FILE)
+	if readErr != nil {
+		if !errors.Is(readErr, filer_pb.ErrNotFound) {
 			return nil, fmt.Errorf("read existing mapping: %w", readErr)
 		}
 		oldContent = nil

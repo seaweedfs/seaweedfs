@@ -59,6 +59,12 @@ const s3PreStopSecondsUsage = "seconds to keep serving after SIGTERM, with /stat
 // allowBackslashInKeyUsage documents the S3 flag keeping '\' a literal
 // object-key character instead of normalizing it to '/'. Repeated '//' in a
 // key still collapses: a filer entry name cannot contain an empty segment.
+// quotaFilerSizeIntervalUsage documents the S3 flag bounding how often quota
+// enforcement re-walks a remote-mounted bucket to size it.
+const quotaFilerSizeIntervalUsage = "about how often quota enforcement re-sizes each remote-mounted bucket with a quota from a full filer listing (its local volumes are only a cache); walks run in the background, one bucket at a time, spread over the interval; 0 walks back to back. Other buckets are sized from their collection every pass."
+
+const defaultQuotaFilerSizeInterval = 5 * time.Minute
+
 const allowBackslashInKeyUsage = "treat backslash as a regular object-key character instead of converting it to '/' (aws-compatible; '//' still collapses)"
 
 // The S3 gateway's filer timeouts, shared by every command that runs it. They
@@ -219,6 +225,7 @@ func init() {
 	filerS3Options.unreachableOwnerTTL = cmdFiler.Flag.Duration("s3.unreachableOwnerTTL", defaultS3UnreachableOwnerTTL, s3UnreachableOwnerTTLUsage)
 	filerS3Options.volumeLookupTimeout = cmdFiler.Flag.Duration("s3.volumeLookupTimeout", defaultS3VolumeLookupTimeout, s3VolumeLookupTimeoutUsage)
 	filerS3Options.preStopSeconds = cmdFiler.Flag.Int("s3.preStopSeconds", 0, s3PreStopSecondsUsage)
+	filerS3Options.quotaFilerSizeInterval = cmdFiler.Flag.Duration("s3.quota.filerSizeInterval", defaultQuotaFilerSizeInterval, quotaFilerSizeIntervalUsage)
 
 	// start webdav on filer
 	filerStartWebDav = cmdFiler.Flag.Bool("webdav", false, "whether to start webdav gateway")

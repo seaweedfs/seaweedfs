@@ -98,6 +98,11 @@ type S3ApiServerOption struct {
 	// VolumeLookupTimeout bounds each filer's answer to a volume location
 	// lookup before the next filer is asked. 0 uses the FilerClient default.
 	VolumeLookupTimeout time.Duration
+	// QuotaFilerSizeInterval is about how often quota enforcement's
+	// background sizer re-walks each remote-mounted bucket's filer listing;
+	// 0 walks back to back. Buckets that are not remote-mounted are sized
+	// from their collection on every pass, as before.
+	QuotaFilerSizeInterval time.Duration
 }
 
 // s3ChunkCacheChunkSizeMB is the assumed chunk size (in MiB) used to convert
@@ -153,6 +158,7 @@ type S3ApiServer struct {
 	// ownerIndexReady caches the presence of the owner index backfill marker.
 	ownerIndexReady atomic.Bool
 
+	quotaSizer             *filerQuotaSizer // sizes remote-mounted buckets for the quota loop
 	versionsHealQueue      *versionsHealQueue
 	versionsReconcilerStop func()
 }

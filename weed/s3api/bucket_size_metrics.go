@@ -14,7 +14,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/bucketsize"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 const (
@@ -71,6 +74,11 @@ func (s3a *S3ApiServer) startBucketSizeMetricsLoop(ctx context.Context) {
 	}, bucketSizeMetricsInterval)
 	defer lock.Stop()
 
+	// remote-mounted buckets are sized from the filer in the background, so a
+	// long walk never holds up a pass; the passes give it its buckets
+	s3a.quotaSizer = newFilerQuotaSizer(s3a, bucketsize.Size, s3a.option.QuotaFilerSizeInterval)
+	go s3a.quotaSizer.run(ctx)
+
 	ticker := time.NewTicker(bucketSizeMetricsInterval)
 	defer ticker.Stop()
 
@@ -83,13 +91,17 @@ func (s3a *S3ApiServer) startBucketSizeMetricsLoop(ctx context.Context) {
 			// Only collect metrics if we hold the lock
 			if lock.IsLocked() {
 				s3a.collectAndUpdateBucketSizeMetrics(ctx)
+			} else {
+				// another instance enforces quotas: stop walking
+				s3a.quotaSizer.setTargets(nil)
 			}
 		}
 	}
 }
 
 // collectAndUpdateBucketSizeMetrics collects bucket sizes from master topology
-// and updates Prometheus metrics. Uses the same approach as quota enforcement.
+// and updates Prometheus metrics. Uses the same approach as quota enforcement:
+// a remote-mounted bucket's size is its walked filer size once known.
 func (s3a *S3ApiServer) collectAndUpdateBucketSizeMetrics(ctx context.Context) {
 	// Collect collection info from master topology (same as quota enforcement)
 	collectionInfos, err := s3a.collectCollectionInfoFromMaster(ctx)
@@ -105,25 +117,58 @@ func (s3a *S3ApiServer) collectAndUpdateBucketSizeMetrics(ctx context.Context) {
 		return
 	}
 
-	// Map collections to buckets and update metrics
+	// Map collections to buckets and update metrics; a remote-mounted bucket
+	// publishes its walked size while that is fresh (the size its quota uses)
 	for _, bucket := range buckets {
-		collection := s3a.getCollectionName(bucket.Name)
-		if info, found := collectionInfos[collection]; found {
-			stats.UpdateBucketSizeMetrics(bucket.Name, info.LogicalSize(), info.PhysicalSize, info.FileCount)
-			glog.V(3).Infof("Updated bucket size metrics: bucket=%s, logicalSize=%.0f, physicalSize=%.0f, objects=%.0f",
-				bucket.Name, info.LogicalSize(), info.PhysicalSize, info.FileCount)
-		} else {
-			// Bucket exists but no collection data (empty bucket)
-			stats.UpdateBucketSizeMetrics(bucket.Name, 0, 0, 0)
+		var logicalSize, physicalSize, fileCount float64
+		if info, found := collectionInfos[s3a.getCollectionName(bucket.Name)]; found {
+			logicalSize, physicalSize, fileCount = info.LogicalSize(), info.PhysicalSize, info.FileCount
 		}
+		if walked, fresh, _ := s3a.quotaSizer.size(bucket.Name); fresh {
+			logicalSize = float64(walked)
+		}
+		stats.UpdateBucketSizeMetrics(bucket.Name, logicalSize, physicalSize, fileCount)
+		glog.V(3).Infof("Updated bucket size metrics: bucket=%s, logicalSize=%.0f, physicalSize=%.0f, objects=%.0f",
+			bucket.Name, logicalSize, physicalSize, fileCount)
 	}
 
-	s3a.enforceBucketQuotas(ctx, buckets, collectionInfos)
+	var mappings *remote_pb.RemoteStorageMapping
+	mountErr := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) (err error) {
+		mappings, err = filer.ReadMountMappingsWithClient(ctx, client)
+		return err
+	})
+	if mounted, ok := s3a.refreshQuotaMounts(buckets, mappings, mountErr); ok {
+		s3a.enforceBucketQuotas(ctx, buckets, collectionInfos, mounted)
+	}
+}
+
+// refreshQuotaMounts classifies each bucket as remote-mounted or not and
+// hands the mounted ones with a quota to the background sizer. When the
+// mount table cannot be read it reports !ok and changes nothing: no bucket
+// is enforced on a guess at its mount state, and the sizer keeps its targets.
+func (s3a *S3ApiServer) refreshQuotaMounts(buckets []*filer_pb.Entry, mappings *remote_pb.RemoteStorageMapping, readErr error) (mounted map[string]bool, ok bool) {
+	if readErr != nil {
+		glog.V(1).Infof("quota enforcement skipped: read remote mount table: %v", readErr)
+		return nil, false
+	}
+	mounted = make(map[string]bool, len(buckets))
+	targets := make(map[string]util.FullPath)
+	for _, bucket := range buckets {
+		dir := util.FullPath(s3a.option.BucketsPath).Child(bucket.Name)
+		mounted[bucket.Name] = bucketsize.IsMounted(mappings, string(dir))
+		if mounted[bucket.Name] && bucket.Quota > 0 {
+			targets[bucket.Name] = dir
+		}
+	}
+	s3a.quotaSizer.setTargets(targets)
+	return mounted, true
 }
 
 // enforceBucketQuotas flips each bucket's read-only flag to match its quota,
-// rewriting filer.conf only when a flag changes.
-func (s3a *S3ApiServer) enforceBucketQuotas(ctx context.Context, buckets []*filer_pb.Entry, collectionInfos map[string]*CollectionInfo) {
+// rewriting filer.conf only when a flag changes. filer.conf is read right
+// before it is changed and saved, with no sizing in between, and the buckets
+// are listed again after it, so a quota changed meanwhile is not applied stale.
+func (s3a *S3ApiServer) enforceBucketQuotas(ctx context.Context, buckets []*filer_pb.Entry, collectionInfos map[string]*CollectionInfo, mounted map[string]bool) {
 	if len(s3a.option.Filers) == 0 {
 		return
 	}
@@ -133,23 +178,13 @@ func (s3a *S3ApiServer) enforceBucketQuotas(ctx context.Context, buckets []*file
 		glog.V(1).Infof("read filer.conf for quota enforcement: %v", err)
 		return
 	}
-
-	changed := false
-	for _, bucket := range buckets {
-		var size float64
-		if info, found := collectionInfos[s3a.getCollectionName(bucket.Name)]; found {
-			size = info.LogicalSize()
-		}
-		locPrefix := s3a.option.BucketsPath + "/" + bucket.Name + "/"
-		readOnly, flipped := fc.ApplyBucketQuotaReadOnly(locPrefix, size, float64(bucket.Quota))
-		stats.UpdateBucketQuotaMetrics(bucket.Name, float64(bucket.Quota), readOnly)
-		if flipped {
-			changed = true
-			glog.V(0).Infof("bucket %s quota enforcement: readOnly=%v (size=%.0f quota=%d)", bucket.Name, readOnly, size, bucket.Quota)
-		}
+	current, err := s3a.listBuckets(ctx)
+	if err != nil {
+		glog.V(1).Infof("list buckets for quota enforcement: %v", err)
+		return
 	}
 
-	if !changed {
+	if !s3a.applyBucketQuotas(fc, buckets, current, collectionInfos, mounted) {
 		return
 	}
 
@@ -163,6 +198,49 @@ func (s3a *S3ApiServer) enforceBucketQuotas(ctx context.Context, buckets []*file
 	}); err != nil {
 		glog.Errorf("save filer.conf for quota enforcement: %v", err)
 	}
+}
+
+// applyBucketQuotas sets each bucket's read-only flag in fc and reports
+// whether any changed. It does no I/O: a remote-mounted bucket (bucket mode,
+// its local volumes only a cache) is sized from the background sizer's last
+// walk, every other bucket from its collection. A bucket is left as it is
+// when its walked size is unknown (never walked, last walk failed, or older
+// than the sizer's age limit), or when current, the buckets as listed after
+// filer.conf was read, no longer has it with the same quota.
+func (s3a *S3ApiServer) applyBucketQuotas(fc *filer.FilerConf, buckets, current []*filer_pb.Entry, collectionInfos map[string]*CollectionInfo, mounted map[string]bool) (changed bool) {
+	currentQuota := make(map[string]int64, len(current))
+	for _, bucket := range current {
+		currentQuota[bucket.Name] = bucket.Quota
+	}
+	for _, bucket := range buckets {
+		locPrefix := s3a.option.BucketsPath + "/" + bucket.Name + "/"
+		if quota, found := currentQuota[bucket.Name]; !found || quota != bucket.Quota {
+			glog.V(1).Infof("bucket %s quota enforcement skipped: its quota changed during the pass", bucket.Name)
+			continue
+		}
+
+		var size float64
+		if info, found := collectionInfos[s3a.getCollectionName(bucket.Name)]; found {
+			size = info.LogicalSize()
+		}
+		if bucket.Quota > 0 && mounted[bucket.Name] {
+			walked, fresh, lastOK := s3a.quotaSizer.size(bucket.Name)
+			if !fresh || !lastOK {
+				// neither strand it read-only nor clear it on a size we do not have
+				stats.UpdateBucketQuotaMetrics(bucket.Name, float64(bucket.Quota), fc.MatchStorageRule(locPrefix).ReadOnly)
+				continue
+			}
+			size = float64(walked)
+		}
+
+		readOnly, flipped := fc.ApplyBucketQuotaReadOnly(locPrefix, size, float64(bucket.Quota))
+		stats.UpdateBucketQuotaMetrics(bucket.Name, float64(bucket.Quota), readOnly)
+		if flipped {
+			changed = true
+			glog.V(0).Infof("bucket %s quota enforcement: readOnly=%v (size=%.0f quota=%d)", bucket.Name, readOnly, size, bucket.Quota)
+		}
+	}
+	return changed
 }
 
 // collectCollectionInfoFromMaster queries the master for topology info and extracts collection sizes.

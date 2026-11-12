@@ -94,6 +94,7 @@ type S3Options struct {
 	routedLookupTimeout           *time.Duration
 	unreachableOwnerTTL           *time.Duration
 	volumeLookupTimeout           *time.Duration
+	quotaFilerSizeInterval        *time.Duration
 	// shutdownCtx, when non-nil, tells startS3Server to gracefully shut down
 	// its HTTP/gRPC servers once the ctx is cancelled, in addition to on
 	// interrupt. Used by weed mini to orchestrate an ordered shutdown.
@@ -158,6 +159,7 @@ func init() {
 	s3StandaloneOptions.routedLookupTimeout = cmdS3.Flag.Duration("routedLookupTimeout", defaultS3RoutedLookupTimeout, s3RoutedLookupTimeoutUsage)
 	s3StandaloneOptions.unreachableOwnerTTL = cmdS3.Flag.Duration("unreachableOwnerTTL", defaultS3UnreachableOwnerTTL, s3UnreachableOwnerTTLUsage)
 	s3StandaloneOptions.volumeLookupTimeout = cmdS3.Flag.Duration("volumeLookupTimeout", defaultS3VolumeLookupTimeout, s3VolumeLookupTimeoutUsage)
+	s3StandaloneOptions.quotaFilerSizeInterval = cmdS3.Flag.Duration("quota.filerSizeInterval", defaultQuotaFilerSizeInterval, quotaFilerSizeIntervalUsage)
 }
 
 var cmdS3 = &Command{
@@ -434,6 +436,7 @@ func (s3opt *S3Options) startS3Server() bool {
 		RoutedLookupTimeout:           *s3opt.routedLookupTimeout,
 		UnreachableOwnerTTL:           *s3opt.unreachableOwnerTTL,
 		VolumeLookupTimeout:           *s3opt.volumeLookupTimeout,
+		QuotaFilerSizeInterval:        s3opt.resolveQuotaFilerSizeInterval(),
 	})
 	if s3ApiServer_err != nil {
 		glog.Fatalf("S3 API Server startup error: %v", s3ApiServer_err)
@@ -953,4 +956,13 @@ func (v lanceCredentialVendor) VendTableCredentials(ctx context.Context, princip
 		SessionToken:    credentials.SessionToken,
 		Expiration:      credentials.Expiration,
 	}, nil
+}
+
+// resolveQuotaFilerSizeInterval reads -quota.filerSizeInterval, falling back to
+// its default for options built without the flag (tests, embedders).
+func (s3opt *S3Options) resolveQuotaFilerSizeInterval() time.Duration {
+	if s3opt.quotaFilerSizeInterval == nil {
+		return defaultQuotaFilerSizeInterval
+	}
+	return *s3opt.quotaFilerSizeInterval
 }

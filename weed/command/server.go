@@ -216,6 +216,7 @@ func init() {
 	s3Options.unreachableOwnerTTL = cmdServer.Flag.Duration("s3.unreachableOwnerTTL", defaultS3UnreachableOwnerTTL, s3UnreachableOwnerTTLUsage)
 	s3Options.volumeLookupTimeout = cmdServer.Flag.Duration("s3.volumeLookupTimeout", defaultS3VolumeLookupTimeout, s3VolumeLookupTimeoutUsage)
 	s3Options.preStopSeconds = cmdServer.Flag.Int("s3.preStopSeconds", 0, s3PreStopSecondsUsage)
+	s3Options.quotaFilerSizeInterval = cmdServer.Flag.Duration("s3.quota.filerSizeInterval", defaultQuotaFilerSizeInterval, quotaFilerSizeIntervalUsage)
 
 	sftpOptions.port = cmdServer.Flag.Int("sftp.port", 2022, "SFTP server listen port")
 	sftpOptions.idleTimeout = cmdServer.Flag.Int("sftp.idleTimeout", 10, "connection idle seconds")
