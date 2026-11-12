@@ -10,6 +10,8 @@ import (
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -49,6 +51,15 @@ func (s *contentFlushConditionFiler) CreateEntry(ctx context.Context, r *filer_p
 		},
 	}}, nil
 }
+func (s *contentFlushConditionFiler) LookupDirectoryEntry(ctx context.Context, r *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.entry == nil {
+		return nil, status.Error(codes.NotFound, filer_pb.ErrNotFound.Error())
+	}
+	return &filer_pb.LookupDirectoryEntryResponse{Entry: proto.Clone(s.entry).(*filer_pb.Entry)}, nil
+}
+
 func flushConditionEntry(ids ...uint64) *filer_pb.Entry {
 	e := &filer_pb.Entry{Name: "file", Attributes: &filer_pb.FuseAttributes{Inode: 42, FileMode: 0644, Uid: 2000, Gid: 20, FileSize: 3}}
 	for i, id := range ids {
@@ -192,5 +203,46 @@ func TestPeriodicMetadataFlushPreservesPeerChunks(t *testing.T) {
 	}
 	if !fh.dirtyMetadata {
 		t.Fatal("refused periodic flush lost dirty metadata")
+	}
+}
+
+// A miss on state no peer changed is republished once against the stored
+// entry: a rename while open, or a filer uid the local id mapping cannot
+// reproduce (newInvalidateTestWFS maps local 1000 to filer 2000).
+func TestContentFlushRepublishesUnchangedEntry(t *testing.T) {
+	for _, name := range []string{"renamed", "colliding-uid"} {
+		t.Run(name, func(t *testing.T) {
+			wfs := newInvalidateTestWFS(t)
+			stored := flushConditionEntry(1)
+			stored.CommitTsNs = 7
+			observed := proto.Clone(stored).(*filer_pb.Entry)
+			path := util.FullPath("/dir/file")
+			switch name {
+			case "renamed":
+				wfs.mapPbIdFromFilerToLocal(observed)
+				stored.Name, stored.CommitTsNs = "moved", 8
+				path = "/dir/moved"
+			case "colliding-uid":
+				stored.Attributes.Uid, observed.Attributes.Uid = 1000, 1000
+			}
+			fake := &contentFlushConditionFiler{entry: proto.Clone(stored).(*filer_pb.Entry)}
+			startFakeFiler(t, wfs, fake)
+			live := proto.Clone(observed).(*filer_pb.Entry)
+			live.Name = stored.Name
+			live.Chunks = append(live.Chunks, &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 1, FileKey: 3, Cookie: 1}, Offset: 1, Size: 1, ModifiedTsNs: 3})
+			fh := newFileHandle(wfs, 1, 42, live)
+			t.Cleanup(func() { fh.dirtyPages.Destroy() })
+			fh.baseEntry.Store(observed)
+			fh.dirtyMetadata = true
+			fh.RememberPath(path)
+			if code := wfs.doFlush(context.Background(), fh, 1000, 20, false); code != fuse.OK {
+				t.Fatal(code)
+			}
+			fake.mu.Lock()
+			defer fake.mu.Unlock()
+			if len(fake.entry.Chunks) != 2 || fake.calls != 2 {
+				t.Fatalf("stored %d chunks after %d calls", len(fake.entry.Chunks), fake.calls)
+			}
+		})
 	}
 }

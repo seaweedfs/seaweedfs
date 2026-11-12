@@ -3,6 +3,7 @@ package mount
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"syscall"
@@ -311,20 +312,55 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 // Deferred creates expect no entry; existing handles compare the full base,
 // including inode identity. The unary call keeps a refused condition apart
 // from an I/O failure; the mutation stream reduces it to EIO.
+//
+// A miss is retried once, against the stored entry, only when that entry is
+// still the observed state: renamed, restamped, or encoded with filer ids the
+// local mapping cannot reproduce.
 func (wfs *WFS) createContentEntry(ctx context.Context, fh *FileHandle, request *filer_pb.CreateEntryRequest) (resp *filer_pb.CreateEntryResponse, err error) {
+	base := fh.baseEntry.Load()
 	guard := &filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_NOT_EXISTS}
-	if base := fh.baseEntry.Load(); base != nil {
+	if base != nil {
 		expected := proto.Clone(base).(*filer_pb.Entry)
 		wfs.mapPbIdFromLocalToFiler(expected)
 		guard = &filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_ENTRY_EQUAL, ExpectedEntry: expected}
 	}
-	request.Condition = &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{guard}}
-	err = wfs.withFilerClient(ctx, false, wfs.filerRPCWait(), func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
-		var callErr error
-		resp, callErr = filer_pb.CreateEntryWithResponse(ctx, client, request)
-		return callErr
-	})
+	for attempt := 0; attempt < 2; attempt++ {
+		request.Condition = &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{guard}}
+		var stored *filer_pb.Entry
+		err = wfs.withFilerClient(ctx, false, wfs.filerRPCWait(), func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
+			var callErr error
+			resp, callErr = filer_pb.CreateEntryWithResponse(ctx, client, request)
+			if base == nil || attempt > 0 || !errors.Is(callErr, filer_pb.ErrPreconditionFailed) {
+				return callErr
+			}
+			if found, lookupErr := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{Directory: request.Directory, Name: request.Entry.Name}); lookupErr == nil {
+				stored = found.Entry
+			}
+			return callErr
+		})
+		if stored == nil || !wfs.sameObservedEntry(stored, base) {
+			return resp, err
+		}
+		guard = &filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_ENTRY_EQUAL, ExpectedEntry: stored}
+	}
 	return resp, err
+}
+
+// sameObservedEntry reports whether the filer's stored entry still holds the
+// state the handle observed, ignoring what no peer write is carried by: the
+// name, the commit stamp, the id encoding and the derived file size.
+func (wfs *WFS) sameObservedEntry(stored, base *filer_pb.Entry) bool {
+	current := proto.Clone(stored).(*filer_pb.Entry)
+	wfs.mapPbIdFromFilerToLocal(current)
+	observed := proto.Clone(base).(*filer_pb.Entry)
+	for _, e := range []*filer_pb.Entry{current, observed} {
+		e.Name, e.CommitTsNs = "", 0
+		if e.Attributes != nil {
+			e.Attributes.FileSize = filer.FileSize(e)
+		}
+		filer_pb.BeforeEntrySerialization(e.Chunks)
+	}
+	return proto.Equal(current, observed)
 }
 
 // ackedBase is the base an acknowledged create leaves: the entry the filer
