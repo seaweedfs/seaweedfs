@@ -382,6 +382,18 @@ func (c *commandVolumeFixReplication) deleteOneVolume(commandEnv *CommandEnv, wr
 					break
 				}
 			}
+			// A survivor can go away while the indexes are read.
+			for _, replicaB := range replicas {
+				if checkErr != nil {
+					break
+				}
+				if replicaB.location.dataNode == replica.location.dataNode {
+					continue
+				}
+				if _, checkErr = readVolumeStatus(commandEnv.option.GrpcDialOption, pb.NewServerAddressFromDataNode(replicaB.location.dataNode), needle.VolumeId(replicaB.info.Id)); checkErr != nil {
+					fmt.Fprintf(writer, "skip deleting volume %d from %s: %s no longer serves it: %v\n", replica.info.Id, replica.location.dataNode.Id, replicaB.location.dataNode.Id, checkErr)
+				}
+			}
 			if checkErr != nil {
 				continue
 			}
