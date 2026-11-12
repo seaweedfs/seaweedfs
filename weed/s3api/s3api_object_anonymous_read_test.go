@@ -251,6 +251,7 @@ func TestSignedReadOfVersionFileKey(t *testing.T) {
 	for _, method := range []string{http.MethodGet, http.MethodHead} {
 		require.Equal(t, 200, serve(method, "o", "versionId=v1", nil))
 		require.Equal(t, 403, serve(method, "o.versions/v_v1", "", nil))
+		require.Equal(t, 403, serve(method, "o.versions/v_v1", "", map[string]string{"If-None-Match": "*"}))
 		require.Equal(t, 200, serve(method, "u.versions/v_literal", "", nil))
 	}
 	r := httptest.NewRequest(http.MethodPut, "/b/dst", nil)

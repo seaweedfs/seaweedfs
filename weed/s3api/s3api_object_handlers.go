@@ -789,7 +789,7 @@ func (s3a *S3ApiServer) processConditionalHeaders(w http.ResponseWriter, r *http
 	}
 
 	result := s3a.checkConditionalHeadersForReads(r, bucket, object)
-	if isAnonymousObjectRead(r) && result.Entry != nil {
+	if result.Entry != nil && (isAnonymousObjectRead(r) || s3a.isVersionFileKey(object, result.Entry.Extended)) {
 		// 304/412 are responses too: authorize before exposing the ETag or the
 		// outcome of a condition on an entry the caller cannot read.
 		if code := s3a.recheckPolicyWithObjectEntry(r, bucket, object, string(s3_constants.ACTION_READ), result.Entry.Extended, handlerName); code != s3err.ErrNone {
