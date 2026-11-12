@@ -34,17 +34,33 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
-// Whitelist resource list that will be used in query string for signature-V2 calculation.
-// The list should be alphabetically sorted
+// Query keys covered by a signature V2, in byte order. Every subresource that
+// selects an operation must be listed, or a signature issued for one operation
+// also authorizes the others.
 var resourceList = []string{
+	"accelerate",
 	"acl",
+	"analytics",
+	"attributes",
+	"cors",
 	"delete",
+	"encryption",
+	"intelligent-tiering",
+	"inventory",
+	"legal-hold",
 	"lifecycle",
 	"location",
 	"logging",
+	"metrics",
 	"notification",
+	"object-lock",
+	"ownershipControls",
 	"partNumber",
 	"policy",
+	"policyStatus",
+	"publicAccessBlock",
+	"renameObject",
+	"replication",
 	"requestPayment",
 	"response-cache-control",
 	"response-content-disposition",
@@ -52,6 +68,9 @@ var resourceList = []string{
 	"response-content-language",
 	"response-content-type",
 	"response-expires",
+	"retention",
+	"seaweedfs-quota",
+	"tagging",
 	"torrent",
 	"uploadId",
 	"uploads",
