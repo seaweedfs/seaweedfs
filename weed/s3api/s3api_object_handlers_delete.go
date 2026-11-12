@@ -438,7 +438,7 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 
 	deleteXMLBytes, err := io.ReadAll(r.Body)
 	if err != nil {
-		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		s3err.WriteErrorResponse(w, r, requestBodyErrorCode(err, s3err.ErrInternalError))
 		return
 	}
 

@@ -132,3 +132,21 @@ func TestGetRequestDataReaderStreamsSignedUploads(t *testing.T) {
 	_, err := io.ReadAll(dataReader)
 	assert.ErrorContains(t, err, s3err.ErrMsgContentSha256Mismatch)
 }
+
+func TestDeleteObjectsRefusesReplacedBody(t *testing.T) {
+	iam := newSignedPayloadTestIAM(t)
+	s3a := &S3ApiServer{iam: iam}
+	approved := deleteObjectsBody("tables/a/own.txt")
+	swapped := deleteObjectsBody("tables/b/victim.txt")
+	req := mustNewSignedRequest(http.MethodPost, "http://127.0.0.1:9000/warehouse?delete", int64(len(approved)), bytes.NewReader(approved), t)
+	req.Body = io.NopCloser(bytes.NewReader(swapped))
+	req.ContentLength = int64(len(swapped))
+	_, errCode := iam.reqSignatureV4Verify(req)
+	require.Equal(t, s3err.ErrNone, errCode)
+
+	rec := httptest.NewRecorder()
+	s3a.DeleteMultipleObjectsHandler(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "XAmzContentSHA256Mismatch")
+}

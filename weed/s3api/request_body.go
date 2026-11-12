@@ -105,3 +105,15 @@ func bindSignedPayload(r *http.Request, hashedPayload string) s3err.ErrorCode {
 	}
 	return s3err.ErrNone
 }
+
+// requestBodyErrorCode names the check a failed body read tripped, or returns
+// fallback for any other read error.
+func requestBodyErrorCode(err error, fallback s3err.ErrorCode) s3err.ErrorCode {
+	switch {
+	case errors.Is(err, errContentSha256Mismatch):
+		return s3err.ErrContentSHA256Mismatch
+	case errors.Is(err, errRequestBodyTooLarge):
+		return s3err.ErrEntityTooLarge
+	}
+	return fallback
+}
