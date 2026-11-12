@@ -270,31 +270,12 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 		SkipCheckParentDirectory: true,
 	}
 
-	// Publish only against the authoritative entry this handle observed. Never
-	// refresh the guard and replay a stale whole entry after a conflict: that
-	// would discard a peer's acknowledged chunks. Deferred creates expect no
-	// entry; existing handles compare the full base, including inode identity.
-	guard := &filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_NOT_EXISTS}
-	if base := fh.baseEntry.Load(); base != nil {
-		expected := proto.Clone(base).(*filer_pb.Entry)
-		wfs.mapPbIdFromLocalToFiler(expected)
-		guard = &filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_ENTRY_EQUAL, ExpectedEntry: expected}
-	}
-	request.Condition = &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{guard}}
-
 	// Snapshot with local ids before the request mapping mutates the clone:
 	// on ack this becomes the handle's base, judged against future events.
 	baseSnapshot := proto.Clone(requestEntry).(*filer_pb.Entry)
 	wfs.mapPbIdFromLocalToFiler(request.Entry)
 
-	// Keep FailedPrecondition typed so the outer flush retry loop stops.
-	// The streaming mutation response currently reduces it to plain EIO.
-	var resp *filer_pb.CreateEntryResponse
-	err = wfs.withFilerClient(ctx, false, wfs.filerRPCWait(), func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
-		var callErr error
-		resp, callErr = filer_pb.CreateEntryWithResponse(ctx, client, request)
-		return callErr
-	})
+	resp, err := wfs.createContentEntry(ctx, fh, request)
 	if err != nil {
 		glog.Errorf("fh flush create %s: %v", fileFullPath, err)
 		return fmt.Errorf("fh flush create %s: %w", fileFullPath, err)
@@ -322,6 +303,28 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 	}
 
 	return err
+}
+
+// createContentEntry publishes a handle's whole entry only over the filer
+// state the handle observed. Never refresh the guard and replay a stale whole
+// entry after a conflict: that would discard a peer's acknowledged chunks.
+// Deferred creates expect no entry; existing handles compare the full base,
+// including inode identity. The unary call keeps a refused condition apart
+// from an I/O failure; the mutation stream reduces it to EIO.
+func (wfs *WFS) createContentEntry(ctx context.Context, fh *FileHandle, request *filer_pb.CreateEntryRequest) (resp *filer_pb.CreateEntryResponse, err error) {
+	guard := &filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_NOT_EXISTS}
+	if base := fh.baseEntry.Load(); base != nil {
+		expected := proto.Clone(base).(*filer_pb.Entry)
+		wfs.mapPbIdFromLocalToFiler(expected)
+		guard = &filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_ENTRY_EQUAL, ExpectedEntry: expected}
+	}
+	request.Condition = &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{guard}}
+	err = wfs.withFilerClient(ctx, false, wfs.filerRPCWait(), func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
+		var callErr error
+		resp, callErr = filer_pb.CreateEntryWithResponse(ctx, client, request)
+		return callErr
+	})
+	return resp, err
 }
 
 // ackedBase is the base an acknowledged create leaves: the entry the filer

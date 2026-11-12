@@ -164,3 +164,33 @@ func TestContentFlushRepeatsOnOneHandle(t *testing.T) {
 		t.Fatalf("stored %d chunks after %d calls", len(fake.entry.Chunks), fake.calls)
 	}
 }
+
+// The periodic metadata flush publishes the same whole entry, so it must not
+// overwrite a peer's append either.
+func TestPeriodicMetadataFlushPreservesPeerChunks(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+	current := flushConditionEntry(1, 2)
+	fake := &contentFlushConditionFiler{entry: proto.Clone(current).(*filer_pb.Entry)}
+	startFakeFiler(t, wfs, fake)
+	observed := flushConditionEntry(1)
+	wfs.mapPbIdFromFilerToLocal(observed)
+	live := flushConditionEntry(1, 3)
+	live.Chunks[1].Offset = 2
+	wfs.mapPbIdFromFilerToLocal(live)
+	fh := newFileHandle(wfs, 1, 42, live)
+	t.Cleanup(func() { fh.dirtyPages.Destroy() })
+	fh.baseEntry.Store(observed)
+	fh.dirtyMetadata = true
+	fh.RememberPath(util.FullPath("/dir/file"))
+	if err := wfs.flushFileMetadata(fh); err == nil {
+		t.Fatal("periodic flush overwrote a peer's append")
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if !proto.Equal(fake.entry, current) || fake.calls != 1 {
+		t.Fatalf("peer entry changed after %d calls: %v", fake.calls, fake.entry)
+	}
+	if !fh.dirtyMetadata {
+		t.Fatal("refused periodic flush lost dirty metadata")
+	}
+}
