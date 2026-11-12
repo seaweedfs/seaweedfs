@@ -257,6 +257,9 @@ func (s3a *S3ApiServer) getObjectEntryForUpdate(bucket, object, versionId string
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to get version %s for object %s/%s: %w", versionId, bucket, object, missAs(err, ErrVersionNotFound))
 		}
+		if isDeleteMarkerEntry(entry) {
+			return nil, "", fmt.Errorf("version %s of object %s/%s is a delete marker: %w", versionId, bucket, object, ErrVersionNotFound)
+		}
 		if versionId != "null" {
 			entryPath = object + ".versions/" + s3a.getVersionFileName(versionId)
 		}
@@ -279,6 +282,9 @@ func (s3a *S3ApiServer) getObjectEntryForUpdate(bucket, object, versionId string
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to get latest version for object %s/%s: %w", bucket, object, missAs(err, ErrLatestVersionNotFound))
 	}
+	if isDeleteMarkerEntry(entry) {
+		return nil, "", fmt.Errorf("latest version of object %s/%s is a delete marker: %w", bucket, object, ErrLatestVersionNotFound)
+	}
 	if entry.Extended != nil {
 		if versionIdBytes, exists := entry.Extended[s3_constants.ExtVersionIdKey]; exists {
 			if storedVersionId := string(versionIdBytes); storedVersionId != "null" && isValidVersionID(storedVersionId) {
@@ -298,6 +304,9 @@ func (s3a *S3ApiServer) getObjectRetention(bucket, object, versionId string) (*O
 	entry, err := s3a.getObjectEntry(bucket, object, versionId)
 	if err != nil {
 		return nil, err
+	}
+	if isDeleteMarkerEntry(entry) {
+		return nil, fmt.Errorf("object %s/%s is a delete marker: %w", bucket, object, ErrObjectNotFound)
 	}
 
 	if entry.Extended == nil {
@@ -413,6 +422,9 @@ func (s3a *S3ApiServer) getObjectLegalHold(bucket, object, versionId string) (*O
 	entry, err := s3a.getObjectEntry(bucket, object, versionId)
 	if err != nil {
 		return nil, err
+	}
+	if isDeleteMarkerEntry(entry) {
+		return nil, fmt.Errorf("object %s/%s is a delete marker: %w", bucket, object, ErrObjectNotFound)
 	}
 
 	if entry.Extended == nil {

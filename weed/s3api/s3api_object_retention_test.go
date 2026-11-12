@@ -1164,3 +1164,63 @@ func TestPutObjectLegalHoldFailedReadIsNotNoSuchKey(t *testing.T) {
 		t.Fatalf("PutObjectLegalHold on a failed read = %d, want 500", got)
 	}
 }
+
+func deleteMarkerTestFiler(markerExtended map[string][]byte) *retentionTestFiler {
+	marker := map[string][]byte{
+		s3_constants.ExtDeleteMarkerKey: []byte("true"),
+		s3_constants.ExtVersionIdKey:    []byte("m1"),
+	}
+	for k, v := range markerExtended {
+		marker[k] = v
+	}
+	return &retentionTestFiler{entries: map[string]*filer_pb.Entry{
+		"/buckets/b": {
+			Name:        "b",
+			IsDirectory: true,
+			Extended:    map[string][]byte{s3_constants.ExtVersioningKey: []byte(s3_constants.VersioningEnabled)},
+		},
+		"/buckets/b/key.versions": {
+			Name:        "key.versions",
+			IsDirectory: true,
+			Extended: map[string][]byte{
+				s3_constants.ExtLatestVersionIdKey:       []byte("m1"),
+				s3_constants.ExtLatestVersionFileNameKey: []byte("v_m1"),
+			},
+		},
+		"/buckets/b/key.versions/v_m1": {Name: "v_m1", Extended: marker},
+	}}
+}
+
+// A key whose current version is a delete marker does not exist, and a marker
+// takes no lock of its own: reading or writing its legal hold is NoSuchKey.
+func TestLegalHoldOnDeleteMarkerIsNoSuchKey(t *testing.T) {
+	f := deleteMarkerTestFiler(nil)
+	s3a := newRetentionTestServer(t, f)
+
+	if got := putLegalHoldStatus(t, s3a, "key", ""); got != http.StatusNotFound {
+		t.Fatalf("PutObjectLegalHold on a deleted key = %d, want 404", got)
+	}
+	if got := putLegalHoldStatus(t, s3a, "key", "m1"); got != http.StatusNotFound {
+		t.Fatalf("PutObjectLegalHold on a delete marker version = %d, want 404", got)
+	}
+	if len(f.updates) != 0 {
+		t.Fatalf("delete marker must not be written, got %v", f.updates)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "http://localhost:8333/b/key?legal-hold", nil)
+	req = mux.SetURLVars(req, map[string]string{"bucket": "b", "object": "key"})
+	rec := httptest.NewRecorder()
+	s3a.GetObjectLegalHoldHandler(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("GetObjectLegalHold on a deleted key = %d, want 404", rec.Code)
+	}
+
+	retainUntil := time.Now().Add(time.Hour)
+	err := s3a.setObjectRetention("b", "key", "", &ObjectRetention{Mode: s3_constants.RetentionModeGovernance, RetainUntilDate: &retainUntil}, false)
+	if !errors.Is(err, ErrLatestVersionNotFound) {
+		t.Fatalf("setObjectRetention on a deleted key = %v, want ErrLatestVersionNotFound", err)
+	}
+	if _, err := s3a.getObjectRetention("b", "key", "m1"); !errors.Is(err, ErrObjectNotFound) {
+		t.Fatalf("getObjectRetention on a delete marker = %v, want ErrObjectNotFound", err)
+	}
+}

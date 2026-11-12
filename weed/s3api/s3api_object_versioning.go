@@ -32,6 +32,10 @@ import (
 // ErrDeleteMarker is returned when the latest version is a delete marker (expected condition)
 var ErrDeleteMarker = errors.New("latest version is a delete marker")
 
+func isDeleteMarkerEntry(entry *filer_pb.Entry) bool {
+	return entry != nil && string(entry.Extended[s3_constants.ExtDeleteMarkerKey]) == "true"
+}
+
 // clearCachedVersionMetadata clears only the version metadata fields (not ID/filename).
 // Used by setCachedListMetadata to prevent stale values when updating.
 func clearCachedVersionMetadata(extended map[string][]byte) {
