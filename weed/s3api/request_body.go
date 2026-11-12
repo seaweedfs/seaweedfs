@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"bytes"
+	"crypto/md5"
 	"crypto/sha256"
 	"errors"
 	"io"
@@ -14,6 +15,7 @@ import (
 var (
 	errRequestBodyTooLarge   = errors.New("request body too large")
 	errContentSha256Mismatch = errors.New(s3err.ErrMsgContentSha256Mismatch)
+	errContentMd5Mismatch    = errors.New("the Content-MD5 you specified did not match what was received")
 )
 
 func readRequestBody(r *http.Request, limit int64) ([]byte, error) {
@@ -31,13 +33,15 @@ func readRequestBody(r *http.Request, limit int64) ([]byte, error) {
 }
 
 // signedPayloadBody hands out a signed request body only after all of it has
-// been read and matched against the payload hash the signature covered, so a
-// handler that stops reading early never acts on unverified bytes.
+// been read and matched against the payload hash the signature covered and
+// any Content-MD5, so a handler that stops reading early never acts on
+// unverified bytes.
 type signedPayloadBody struct {
 	body   io.ReadCloser
 	size   int64
 	limit  int64
 	sha256 []byte
+	md5    []byte
 	data   *bytes.Reader
 	err    error
 }
@@ -63,8 +67,15 @@ func (b *signedPayloadBody) load() (*bytes.Reader, error) {
 	if int64(len(data)) > b.limit {
 		return nil, errRequestBodyTooLarge
 	}
-	if sum := sha256.Sum256(data); !bytes.Equal(sum[:], b.sha256) {
-		return nil, errContentSha256Mismatch
+	if b.sha256 != nil {
+		if sum := sha256.Sum256(data); !bytes.Equal(sum[:], b.sha256) {
+			return nil, errContentSha256Mismatch
+		}
+	}
+	if b.md5 != nil {
+		if sum := md5.Sum(data); !bytes.Equal(sum[:], b.md5) {
+			return nil, errContentMd5Mismatch
+		}
 	}
 	return bytes.NewReader(data), nil
 }
@@ -74,10 +85,15 @@ func (b *signedPayloadBody) Close() error {
 }
 
 // bindSignedPayload ties the request body to hashedPayload, the payload hash a
-// V4 signature covered. Uploads read through getRequestDataReader, which
-// verifies the body as it streams instead.
+// V4 signature covered (UNSIGNED-PAYLOAD for V2), and to any Content-MD5.
+// Uploads read through getRequestDataReader, which verifies the body as it
+// streams instead.
 func bindSignedPayload(r *http.Request, hashedPayload string) s3err.ErrorCode {
 	if _, bound := r.Body.(*signedPayloadBody); bound {
+		return s3err.ErrNone
+	}
+	switch hashedPayload {
+	case streamingContentSHA256, streamingContentSHA256Trailer, streamingUnsignedPayload:
 		return s3err.ErrNone
 	}
 	expected, valid := decodeContentSha256(hashedPayload)
@@ -88,12 +104,23 @@ func bindSignedPayload(r *http.Request, hashedPayload string) s3err.ErrorCode {
 		}
 		return s3err.ErrNone
 	}
-	if expected == nil {
+	var contentMd5 []byte
+	if _, present := r.Header["Content-Md5"]; present {
+		decoded, err := validateContentMd5(r.Header)
+		if err != nil || len(decoded) != md5.Size {
+			return s3err.ErrInvalidDigest
+		}
+		contentMd5 = decoded
+	}
+	if expected == nil && contentMd5 == nil {
 		return s3err.ErrNone
 	}
 	if !hasBody {
-		if emptySum := sha256.Sum256(nil); !bytes.Equal(expected, emptySum[:]) {
+		if emptySum := sha256.Sum256(nil); expected != nil && !bytes.Equal(expected, emptySum[:]) {
 			return s3err.ErrContentSHA256Mismatch
+		}
+		if emptySum := md5.Sum(nil); contentMd5 != nil && !bytes.Equal(contentMd5, emptySum[:]) {
+			return s3err.ErrBadDigest
 		}
 		return s3err.ErrNone
 	}
@@ -102,6 +129,7 @@ func bindSignedPayload(r *http.Request, hashedPayload string) s3err.ErrorCode {
 		size:   r.ContentLength,
 		limit:  s3_constants.GetRequestBodyLimitFromContext(r, iamRequestBodyLimit),
 		sha256: expected,
+		md5:    contentMd5,
 	}
 	return s3err.ErrNone
 }
@@ -112,6 +140,8 @@ func requestBodyErrorCode(err error, fallback s3err.ErrorCode) s3err.ErrorCode {
 	switch {
 	case errors.Is(err, errContentSha256Mismatch):
 		return s3err.ErrContentSHA256Mismatch
+	case errors.Is(err, errContentMd5Mismatch):
+		return s3err.ErrBadDigest
 	case errors.Is(err, errRequestBodyTooLarge):
 		return s3err.ErrEntityTooLarge
 	}

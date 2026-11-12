@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -149,4 +150,59 @@ func TestDeleteObjectsRefusesReplacedBody(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 	assert.Contains(t, rec.Body.String(), "XAmzContentSHA256Mismatch")
+}
+
+func TestSignedRequestBodyIsBoundToContentMd5(t *testing.T) {
+	approved := deleteObjectsBody("tables/a/own.txt")
+	swapped := deleteObjectsBody("tables/b/victim.txt")
+	const url = "http://127.0.0.1:9000/warehouse?delete"
+
+	t.Run("v4 unsigned payload", func(t *testing.T) {
+		iam := newSignedPayloadTestIAM(t)
+		req := mustNewRequest(http.MethodPost, url, int64(len(approved)), bytes.NewReader(approved), t)
+		req.Header.Set("X-Amz-Content-Sha256", unsignedPayload)
+		require.NoError(t, signRequestV4(req, "access_key_1", "secret_key_1"))
+		req.Body = io.NopCloser(bytes.NewReader(swapped))
+		req.ContentLength = int64(len(swapped))
+
+		_, errCode := iam.reqSignatureV4Verify(req)
+		require.Equal(t, s3err.ErrNone, errCode)
+		_, err := io.ReadAll(req.Body)
+		assert.ErrorIs(t, err, errContentMd5Mismatch)
+		assert.Equal(t, s3err.ErrBadDigest, requestBodyErrorCode(err, s3err.ErrInternalError))
+	})
+
+	t.Run("v2", func(t *testing.T) {
+		iam := setupTestIAMForV2Auth()
+		cred := iam.identities[0].Credentials[0]
+		newV2Request := func(body []byte) *http.Request {
+			req := httptest.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+			req.Header.Set("Date", time.Now().UTC().Format(http.TimeFormat))
+			req.Header.Set("Content-Md5", getMD5HashBase64(approved))
+			req.Header.Set("Authorization", signatureV2(cred, req.Method, req.URL.Path, req.URL.Query().Encode(), req.Header))
+			return req
+		}
+
+		req := newV2Request(approved)
+		_, errCode := iam.isReqAuthenticatedV2(req)
+		require.Equal(t, s3err.ErrNone, errCode)
+		body, err := io.ReadAll(req.Body)
+		require.NoError(t, err)
+		assert.Equal(t, approved, body)
+
+		req = newV2Request(swapped)
+		_, errCode = iam.isReqAuthenticatedV2(req)
+		require.Equal(t, s3err.ErrNone, errCode)
+		_, err = io.ReadAll(req.Body)
+		assert.ErrorIs(t, err, errContentMd5Mismatch)
+	})
+
+	t.Run("malformed digest", func(t *testing.T) {
+		iam := newSignedPayloadTestIAM(t)
+		req := mustNewRequest(http.MethodPost, url, int64(len(approved)), bytes.NewReader(approved), t)
+		req.Header.Set("Content-Md5", "bm90LWFuLW1kNQ==")
+		require.NoError(t, signRequestV4(req, "access_key_1", "secret_key_1"))
+		_, errCode := iam.reqSignatureV4Verify(req)
+		assert.Equal(t, s3err.ErrInvalidDigest, errCode)
+	})
 }
