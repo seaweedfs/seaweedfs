@@ -1,10 +1,18 @@
 package shell
 
 import (
+	"context"
+	"io"
+	"sync/atomic"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type testcase struct {
@@ -727,6 +735,74 @@ func TestClassifyReplicaSet(t *testing.T) {
 			if got := classifyReplicaSet(replicaPlacement, tt.replicas); got != tt.expected {
 				t.Errorf("%s: expect %v got %v for %v %+v",
 					tt.name, tt.expected, got, tt.replication, tt.replicas)
+			}
+		})
+	}
+}
+
+type trimTestVolumeServer struct {
+	volume_server_pb.UnimplementedVolumeServerServer
+	afterIndex func()
+	gone       atomic.Bool
+	deletes    atomic.Int32
+}
+
+func (s *trimTestVolumeServer) CopyFile(_ *volume_server_pb.CopyFileRequest, stream volume_server_pb.VolumeServer_CopyFileServer) error {
+	if s.gone.Load() {
+		return status.Error(codes.NotFound, "volume not found")
+	}
+	if err := stream.Send(&volume_server_pb.CopyFileResponse{FileContent: needle_map.ToBytes(1, types.ToOffset(8), 4)}); err != nil {
+		return err
+	}
+	if s.afterIndex != nil {
+		s.afterIndex()
+	}
+	return nil
+}
+
+func (s *trimTestVolumeServer) VolumeStatus(context.Context, *volume_server_pb.VolumeStatusRequest) (*volume_server_pb.VolumeStatusResponse, error) {
+	if s.gone.Load() {
+		return nil, status.Error(codes.NotFound, "volume not found")
+	}
+	return &volume_server_pb.VolumeStatusResponse{}, nil
+}
+
+func (s *trimTestVolumeServer) VolumeDelete(context.Context, *volume_server_pb.VolumeDeleteRequest) (*volume_server_pb.VolumeDeleteResponse, error) {
+	s.deletes.Add(1)
+	return &volume_server_pb.VolumeDeleteResponse{}, nil
+}
+
+func TestDeleteOneVolumeRechecksSurvivorsBeforeDelete(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		survivorGoes bool
+		wantDeleted  int
+	}{
+		{name: "survivor stays", wantDeleted: 1},
+		{name: "survivor gone after its index read", survivorGoes: true, wantDeleted: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doomed, survivor := &trimTestVolumeServer{}, &trimTestVolumeServer{}
+			if tc.survivorGoes {
+				survivor.afterIndex = func() { survivor.gone.Store(true) }
+			}
+			commandEnv, _ := configureReplicationTestEnv()
+			replicas := []*VolumeReplica{
+				{location: &location{dataNode: startConfigureReplicationTestVolumeServer(t, doomed, 1)}, info: &master_pb.VolumeInformationMessage{Id: 1}},
+				{location: &location{dataNode: startConfigureReplicationTestVolumeServer(t, survivor, 1)}, info: &master_pb.VolumeInformationMessage{Id: 1}},
+			}
+			pickDoomed := func([]*VolumeReplica, *super_block.ReplicaPlacement) *VolumeReplica { return replicas[0] }
+
+			c := &commandVolumeFixReplication{}
+			deleted, err := c.deleteOneVolume(commandEnv, io.Discard, true, true, []uint32{1}, map[uint32][]*VolumeReplica{1: replicas}, pickDoomed)
+			if err != nil {
+				t.Fatalf("deleteOneVolume: %v", err)
+			}
+			if tc.survivorGoes && !survivor.gone.Load() {
+				t.Fatal("the survivor never served its index")
+			}
+			if deleted != tc.wantDeleted || int(doomed.deletes.Load()) != tc.wantDeleted {
+				t.Fatalf("deleted=%d VolumeDelete calls=%d, want %d", deleted, doomed.deletes.Load(), tc.wantDeleted)
 			}
 		})
 	}
