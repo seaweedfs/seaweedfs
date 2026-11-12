@@ -593,3 +593,63 @@ func waitFlushPublication(t *testing.T, done <-chan fuse.Status) (bool, fuse.Sta
 	t.Error("flush neither blocked at publication nor settled")
 	return false, fuse.EIO
 }
+
+// The filer applies the update even though the caller's syscall was
+// interrupted while the RPC was in flight.
+type interruptingAttributeFiler struct {
+	*attributeCASFiler
+	once      sync.Once
+	interrupt chan struct{}
+}
+
+func (s *interruptingAttributeFiler) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
+	s.once.Do(func() { close(s.interrupt) })
+	select {
+	case <-ctx.Done():
+	case <-time.After(100 * time.Millisecond):
+	}
+	return s.attributeCASFiler.UpdateEntry(context.Background(), req)
+}
+
+func TestAttributeSaveSurvivesInterrupt(t *testing.T) {
+	for _, op := range []string{"chmod", "setxattr"} {
+		t.Run(op, func(t *testing.T) {
+			wfs := newInvalidateTestWFS(t)
+			wfs.atimeMap = make(map[uint64]time.Time)
+			current := attributeAppendEntry(300)
+			fake := &interruptingAttributeFiler{attributeCASFiler: &attributeCASFiler{entry: proto.Clone(current).(*filer_pb.Entry)}, interrupt: make(chan struct{})}
+			startFakeFiler(t, wfs, fake)
+			path := util.FullPath("/dir/file")
+			wfs.inodeToPath.Lookup(util.FullPath("/dir"), 1, true, false, 0, false)
+			wfs.inodeToPath.Lookup(path, 1, false, false, 42, true)
+			wfs.inodeToPath.MarkChildrenCached(util.FullPath("/dir"))
+			if err := wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry("/dir", current), 1); err != nil {
+				t.Fatal(err)
+			}
+			var code fuse.Status
+			if op == "setxattr" {
+				in := &fuse.SetXAttrIn{}
+				in.NodeId = 42
+				code = wfs.SetXAttr(fake.interrupt, in, "user.test", []byte("new"))
+			} else {
+				in := &fuse.SetAttrIn{}
+				in.NodeId = 42
+				in.Valid, in.Mode = fuse.FATTR_MODE, 0600
+				code = wfs.SetAttr(fake.interrupt, in, &fuse.AttrOut{})
+			}
+			if code != fuse.OK {
+				t.Fatalf("interrupted %s reported %v for an update the filer applied", op, code)
+			}
+			cached, _, err := wfs.metaCache.FindEntry(context.Background(), path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if op == "chmod" && cached.Attr.Mode.Perm() != 0600 {
+				t.Fatalf("local cache mode %v, want 0600", cached.Attr.Mode.Perm())
+			}
+			if op == "setxattr" && string(cached.Extended["xattr-user.test"]) != "new" {
+				t.Fatal("local cache missing the saved xattr")
+			}
+		})
+	}
+}

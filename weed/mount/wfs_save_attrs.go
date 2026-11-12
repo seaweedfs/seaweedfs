@@ -36,7 +36,9 @@ func (wfs *WFS) attributeEntrySnapshot(fh *FileHandle, entry *filer_pb.Entry) (*
 // the syscall's attribute change on the new entry. In particular, the cached
 // chunks, size, inline content and unrelated attributes never win a conflict.
 func (wfs *WFS) saveEntryAttributes(ctx context.Context, path util.FullPath, base *filer_pb.Entry, change func(*filer_pb.Entry) fuse.Status, retain func(live, acked *filer_pb.Entry)) (*filer_pb.Entry, fuse.Status) {
-	ctx, cancel := context.WithTimeout(ctx, metadataFlushTimeout)
+	// Like the other metadata mutations, ignore a FUSE interrupt: the owner
+	// may already have applied the update the caller would be told failed.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), metadataFlushTimeout)
 	defer cancel()
 	dir, name := path.DirAndName()
 	inode := base.GetAttributes().GetInode()
