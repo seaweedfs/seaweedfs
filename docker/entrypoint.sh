@@ -64,7 +64,7 @@ case "$1" in
   'master')
   	ARGS="-mdir=/data -volumeSizeLimitMB=1024"
   	shift
-  	exec /usr/bin/weed -logtostderr=true master $ARGS $@
+  	exec /usr/bin/weed -logtostderr=true master $ARGS "$@"
 	;;
 
   'volume')
@@ -73,7 +73,7 @@ case "$1" in
   	  ARGS="-dir=/data"
   	fi
   	shift
-  	exec /usr/bin/weed -logtostderr=true volume $ARGS $@
+  	exec /usr/bin/weed -logtostderr=true volume $ARGS "$@"
 	;;
 
   'volume-rust')
@@ -87,7 +87,7 @@ case "$1" in
   	  echo "Use 'volume' for the Go volume server instead." >&2
   	  exit 1
   	fi
-  	exec /usr/bin/weed-volume $ARGS $@
+  	exec /usr/bin/weed-volume $ARGS "$@"
 	;;
 
   'worker-rust')
@@ -119,7 +119,7 @@ case "$1" in
   	  ARGS="-dir=/data -master.volumeSizeLimitMB=1024"
   	fi
  	shift
-  	exec /usr/bin/weed -logtostderr=true server $ARGS $@
+  	exec /usr/bin/weed -logtostderr=true server $ARGS "$@"
   	;;
 
   'mini')
@@ -128,19 +128,19 @@ case "$1" in
   	  ARGS=""
   	fi
   	shift
-  	exec /usr/bin/weed -logtostderr=true mini $ARGS $@
+  	exec /usr/bin/weed -logtostderr=true mini $ARGS "$@"
   	;;
 
   'filer')
   	ARGS=""
   	shift
-  	exec /usr/bin/weed -logtostderr=true filer $ARGS $@
+  	exec /usr/bin/weed -logtostderr=true filer $ARGS "$@"
 	;;
 
   's3')
   	ARGS="-domainName=$S3_DOMAIN_NAME -key.file=$S3_KEY_FILE -cert.file=$S3_CERT_FILE"
   	shift
-  	exec /usr/bin/weed -logtostderr=true s3 $ARGS $@
+  	exec /usr/bin/weed -logtostderr=true s3 $ARGS "$@"
 	;;
 
   'shell')
@@ -150,6 +150,6 @@ case "$1" in
   ;;
 
   *)
-  	exec /usr/bin/weed $@
+  	exec /usr/bin/weed "$@"
 	;;
 esac
