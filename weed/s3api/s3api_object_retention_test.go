@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -19,6 +20,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -1222,5 +1224,72 @@ func TestLegalHoldOnDeleteMarkerIsNoSuchKey(t *testing.T) {
 	}
 	if _, err := s3a.getObjectRetention("b", "key", "m1"); !errors.Is(err, ErrObjectNotFound) {
 		t.Fatalf("getObjectRetention on a delete marker = %v, want ErrObjectNotFound", err)
+	}
+}
+
+// A lock left on a delete marker by an older server must not keep the marker
+// from being removed: markers are never WORM-protected.
+func TestLockOnDeleteMarkerDoesNotBlockRemoval(t *testing.T) {
+	retainUntil := strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10)
+	f := deleteMarkerTestFiler(map[string][]byte{
+		s3_constants.ExtLegalHoldKey:          []byte(s3_constants.LegalHoldOn),
+		s3_constants.ExtObjectLockModeKey:     []byte(s3_constants.RetentionModeCompliance),
+		s3_constants.ExtRetentionUntilDateKey: []byte(retainUntil),
+	})
+	f.entries["/buckets/b"].Extended[s3_constants.ExtObjectLockEnabledKey] = []byte(s3_constants.ObjectLockEnabled)
+	s3a := newRetentionTestServer(t, f)
+
+	for _, versionId := range []string{"m1", ""} {
+		if err := s3a.enforceObjectLockProtections(nil, "b", "key", versionId, false); err != nil {
+			t.Fatalf("enforceObjectLockProtections(versionId=%q) on a locked delete marker = %v, want nil", versionId, err)
+		}
+	}
+}
+
+type deleteMarkerTxnFiler struct {
+	*retentionTestFiler
+	txns []*filer_pb.ObjectTransactionRequest
+}
+
+func (f *deleteMarkerTxnFiler) ObjectTransaction(_ context.Context, req *filer_pb.ObjectTransactionRequest) (*filer_pb.ObjectTransactionResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.txns = append(f.txns, req)
+	return &filer_pb.ObjectTransactionResponse{}, nil
+}
+
+// The routed version delete carries the WORM guards to the owner filer, which
+// would refuse a marker that holds a lock; a marker is deleted without them.
+func TestRoutedDeleteOfLockedDeleteMarkerSkipsWormGuard(t *testing.T) {
+	retainUntil := strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10)
+	base := deleteMarkerTestFiler(map[string][]byte{
+		s3_constants.ExtLegalHoldKey:          []byte(s3_constants.LegalHoldOn),
+		s3_constants.ExtObjectLockModeKey:     []byte(s3_constants.RetentionModeCompliance),
+		s3_constants.ExtRetentionUntilDateKey: []byte(retainUntil),
+	})
+	base.entries["/buckets/b"].Extended[s3_constants.ExtObjectLockEnabledKey] = []byte(s3_constants.ObjectLockEnabled)
+	f := &deleteMarkerTxnFiler{retentionTestFiler: base}
+	addr := startFakeFiler(t, f)
+	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+	s3a := &S3ApiServer{
+		option:            &S3ApiServerOption{Filers: []pb.ServerAddress{addr}, GrpcDialOption: dialOption, BucketsPath: "/buckets"},
+		filerClient:       wdclient.NewFilerClient([]pb.ServerAddress{addr}, dialOption, ""),
+		bucketConfigCache: NewBucketConfigCache(time.Minute),
+	}
+	s3a.objectWriteLockClient = cluster.NewLockClient(dialOption, addr)
+	s3a.objectWriteLockClient.SetRing([]pb.ServerAddress{addr}, 1)
+
+	req := httptest.NewRequest(http.MethodDelete, "http://localhost:8333/b/key?versionId=m1", nil)
+	req = mux.SetURLVars(req, map[string]string{"bucket": "b", "object": "key"})
+	rec := httptest.NewRecorder()
+	s3a.DeleteObjectHandler(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("DeleteObject of a locked delete marker = %d, want 204: %s", rec.Code, rec.Body.String())
+	}
+	if len(f.txns) != 1 {
+		t.Fatalf("expected one routed delete, got %d", len(f.txns))
+	}
+	if cond := f.txns[0].GetCondition(); cond != nil {
+		t.Fatalf("delete marker removal must not carry WORM guards, got %+v", cond)
 	}
 }

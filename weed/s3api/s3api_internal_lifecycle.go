@@ -186,7 +186,7 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 						versionDeleted = true
 					}
 				} else {
-					switch code := s3a.routedDeleteSpecificVersion(owner, req.Bucket, req.ObjectPath, req.VersionId, worm, false, metadataOnly); code {
+					switch code := s3a.routedDeleteSpecificVersion(owner, req.Bucket, req.ObjectPath, req.VersionId, worm && !isDeleteMarkerEntry(entry), false, metadataOnly); code {
 					case s3err.ErrNone:
 						versionDeleted = true
 					case s3err.ErrAccessDenied:

@@ -613,6 +613,11 @@ func (s3a *S3ApiServer) enforceObjectLockProtections(request *http.Request, buck
 // of its own, or the one a write is about to replace -- use it directly, so that
 // the decision lives in one place.
 func (s3a *S3ApiServer) enforceObjectLockOnEntry(entry *filer_pb.Entry, bucket, object, versionId string, governanceBypassAllowed bool) error {
+	// Delete markers are never WORM-protected; a lock recorded on one must
+	// not keep it from being removed.
+	if isDeleteMarkerEntry(entry) {
+		return nil
+	}
 	retention, retentionActive, err := s3a.getRetentionFromEntry(entry)
 	if err != nil {
 		glog.Warningf("Error parsing retention for %s/%s (versionId: %s): %v", bucket, object, versionId, err)
