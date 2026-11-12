@@ -317,7 +317,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		// after server.Serve() would never execute.  Drain here first.
 		//
 		// Use a timeout to avoid hanging on Ctrl-C if the filer is
-		// unreachable (metadata retry can take up to 7 seconds).
+		// unreachable: writeback flushes retry until it answers.
 		// If the timeout expires, skip the write-cache removal so that
 		// still-running goroutines can finish reading swap files.
 		asyncDrained := true

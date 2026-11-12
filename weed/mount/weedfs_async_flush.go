@@ -110,13 +110,21 @@ func (wfs *WFS) completeAsyncFlush(fh *FileHandle) {
 	fh.ReleaseHandle()
 }
 
-// flushMetadataWithRetry attempts to flush file metadata to the filer, retrying
-// with exponential backoff on transient errors. The chunk data is already on the
-// volume servers at this point; only the filer metadata reference needs persisting.
+// flushMetadataWithRetry persists the chunk references of a closed file. The
+// chunk data is already on the volume servers and close() has returned, so
+// nothing else holds these references: like the writeback chunk uploads, it
+// keeps retrying for as long as the filer is unreachable.
 func (wfs *WFS) flushMetadataWithRetry(fh *FileHandle, dir, name string, fileFullPath util.FullPath) {
-	err := retryMetadataFlush(context.Background(), func() error {
+	attempts := 0
+	err := retryMetadataFlushUntil(context.Background(), func() error {
+		attempts++
 		return wfs.flushMetadataToFiler(context.Background(), fh, dir, name, fh.asyncFlushUid, fh.asyncFlushGid)
-	}, func(nextAttempt, totalAttempts int, backoff time.Duration, err error) {
+	}, util.IsTransientError, func(nextAttempt, totalAttempts int, backoff time.Duration, err error) {
+		if totalAttempts == 0 {
+			glog.Warningf("completeAsyncFlush %s: filer unreachable, retrying metadata flush (attempt %d) after %v: %v",
+				fileFullPath, nextAttempt, backoff, err)
+			return
+		}
 		glog.Warningf("completeAsyncFlush %s: retrying metadata flush (attempt %d/%d) after %v: %v",
 			fileFullPath, nextAttempt, totalAttempts, backoff, err)
 	})
@@ -124,7 +132,7 @@ func (wfs *WFS) flushMetadataWithRetry(fh *FileHandle, dir, name string, fileFul
 		glog.Errorf("completeAsyncFlush %s: metadata flush failed after %d attempts: %v - "+
 			"chunks are uploaded but NOT referenced in filer metadata; "+
 			"they will appear as orphans in volume.fsck",
-			fileFullPath, metadataFlushRetries+1, err)
+			fileFullPath, attempts, err)
 	}
 }
 
