@@ -155,35 +155,34 @@ type WFS struct {
 	fuseServer            *fuse.Server
 	IsOverQuota           bool
 	fhLockTable           *util.LockTable[FileHandleId]
+	hardLinkLockTable     *util.LockTable[string]
+	posixLocks            *PosixLockTable
+	posixSid              uint64             // this mount's session id, for routed-lock owner identity
+	posixHint             *posixLockHint     // local fcntl-lock hint for routed mode
+	posixOwn              *posixlock.Manager // mirror of locks this mount holds, re-asserted via keepalive
+	fhLocks               fhLockOwners       // non-flock lock owners per open fh, drained at release
+	peerRegistrar         *PeerRegistrar
+	peerDirectory         *PeerDirectory
+	peerGrpcServer        *PeerGrpcServer
+	peerAnnouncer         *PeerAnnouncer
+	peerConnPool          *PeerConnPool
+	peerDirectoryStop     chan struct{} // closed on unmount to stop the sweeper goroutine
+	FilerConf             *filer.FilerConf
+	filerClient           *wdclient.FilerClient // Cached volume location client
+	refreshMu             sync.Mutex
+	refreshingDirs        map[util.FullPath]struct{}
+	atimeMu               sync.Mutex
+	atimeMap              map[uint64]time.Time // inode -> atime, in-memory only, bounded
+	dirMtimeMu            sync.Mutex
+	dirMtimeMap           map[uint64]time.Time // inode -> mtime/ctime, in-memory overlay for dirs
+	removedDirMu          sync.Mutex
+	removedDirs           map[uint64]*filer_pb.Entry // inode -> last-known entry of a directory removed while still referenced
+	entryValidSec         uint64                     // kernel FUSE entry cache TTL in seconds
+	attrValidSec          uint64                     // kernel FUSE attr cache TTL in seconds
+	dirIdleEvict          time.Duration
 
 	metadataPublicationOnce  sync.Once
 	metadataPublicationLocks *util.LockTable[util.FullPath]
-
-	hardLinkLockTable *util.LockTable[string]
-	posixLocks        *PosixLockTable
-	posixSid          uint64             // this mount's session id, for routed-lock owner identity
-	posixHint         *posixLockHint     // local fcntl-lock hint for routed mode
-	posixOwn          *posixlock.Manager // mirror of locks this mount holds, re-asserted via keepalive
-	fhLocks           fhLockOwners       // non-flock lock owners per open fh, drained at release
-	peerRegistrar     *PeerRegistrar
-	peerDirectory     *PeerDirectory
-	peerGrpcServer    *PeerGrpcServer
-	peerAnnouncer     *PeerAnnouncer
-	peerConnPool      *PeerConnPool
-	peerDirectoryStop chan struct{} // closed on unmount to stop the sweeper goroutine
-	FilerConf         *filer.FilerConf
-	filerClient       *wdclient.FilerClient // Cached volume location client
-	refreshMu         sync.Mutex
-	refreshingDirs    map[util.FullPath]struct{}
-	atimeMu           sync.Mutex
-	atimeMap          map[uint64]time.Time // inode -> atime, in-memory only, bounded
-	dirMtimeMu        sync.Mutex
-	dirMtimeMap       map[uint64]time.Time // inode -> mtime/ctime, in-memory overlay for dirs
-	removedDirMu      sync.Mutex
-	removedDirs       map[uint64]*filer_pb.Entry // inode -> last-known entry of a directory removed while still referenced
-	entryValidSec     uint64                     // kernel FUSE entry cache TTL in seconds
-	attrValidSec      uint64                     // kernel FUSE attr cache TTL in seconds
-	dirIdleEvict      time.Duration
 
 	// openMtimeCache maps inode -> [mtime_sec, mtime_ns] from the last Open.
 	// Used to decide whether to set FOPEN_KEEP_CACHE on subsequent opens.
