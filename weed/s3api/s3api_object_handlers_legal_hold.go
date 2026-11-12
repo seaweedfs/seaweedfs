@@ -50,7 +50,7 @@ func (s3a *S3ApiServer) PutObjectLegalHoldHandler(w http.ResponseWriter, r *http
 		glog.Errorf("PutObjectLegalHoldHandler: failed to set legal hold: %v", err)
 
 		// Handle specific error cases
-		if errors.Is(err, ErrObjectNotFound) || errors.Is(err, ErrVersionNotFound) {
+		if errors.Is(err, ErrObjectNotFound) || errors.Is(err, ErrVersionNotFound) || errors.Is(err, ErrLatestVersionNotFound) {
 			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 			return
 		}

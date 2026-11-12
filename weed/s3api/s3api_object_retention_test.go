@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/gorilla/mux"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -1100,5 +1102,39 @@ func TestGetObjectEntryMissStillNotFound(t *testing.T) {
 	_, err := s3a.getObjectEntry("b", "missing", "")
 	if !errors.Is(err, ErrObjectNotFound) {
 		t.Fatalf("missing object must report ErrObjectNotFound, got: %v", err)
+	}
+}
+
+func putLegalHoldStatus(t *testing.T, s3a *S3ApiServer, object, versionId string) int {
+	t.Helper()
+	target := "http://localhost:8333/b/" + object + "?legal-hold"
+	if versionId != "" {
+		target += "&versionId=" + versionId
+	}
+	body := `<LegalHold xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Status>ON</Status></LegalHold>`
+	req := httptest.NewRequest(http.MethodPut, target, strings.NewReader(body))
+	req = mux.SetURLVars(req, map[string]string{"bucket": "b", "object": object})
+	rec := httptest.NewRecorder()
+	s3a.PutObjectLegalHoldHandler(rec, req)
+	return rec.Code
+}
+
+// PutObjectLegalHold on a key with no version in a versioned bucket is a miss,
+// answered like PutObjectRetention with NoSuchKey rather than InternalError.
+func TestPutObjectLegalHoldMissingObjectIsNoSuchKey(t *testing.T) {
+	f := &retentionTestFiler{entries: map[string]*filer_pb.Entry{
+		"/buckets/b": {
+			Name:        "b",
+			IsDirectory: true,
+			Extended:    map[string][]byte{s3_constants.ExtVersioningKey: []byte(s3_constants.VersioningEnabled)},
+		},
+	}}
+	s3a := newRetentionTestServer(t, f)
+
+	if got := putLegalHoldStatus(t, s3a, "missing", ""); got != http.StatusNotFound {
+		t.Fatalf("PutObjectLegalHold on a missing key = %d, want 404", got)
+	}
+	if len(f.updates) != 0 {
+		t.Fatalf("missing key must not be written, got %v", f.updates)
 	}
 }
