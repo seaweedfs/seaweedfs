@@ -62,6 +62,14 @@ func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, o
 		if dlmLock == nil {
 			return fuse.Status(syscall.EAGAIN)
 		}
+		// A deferred create does not ask the filer, so find a file the
+		// previous lock holder created while this create waited.
+		if !wfs.option.EagerFilerCreate {
+			if peerEntry, _, err := wfs.lookupFilerEntry(ctx, entryFullPath); err == nil {
+				dlmLock.Stop()
+				return wfs.openExistingForCreate(ctx, in, entryFullPath, peerEntry, out)
+			}
+		}
 	}
 
 	inode, newEntry, code = wfs.createRegularFile(ctx, dirFullPath, name, in.Mode, in.Uid, in.Gid, 0, !wfs.option.EagerFilerCreate, true)
