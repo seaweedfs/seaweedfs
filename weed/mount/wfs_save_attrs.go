@@ -20,10 +20,11 @@ func (wfs *WFS) attributeEntrySnapshot(fh *FileHandle, entry *filer_pb.Entry) (*
 	if fh == nil {
 		return entry, true
 	}
-	fh.entryLock.Lock()
-	defer fh.entryLock.Unlock()
+	// Match Read: the handle's active lock precedes entryLock.
 	lock := wfs.fhLockTable.AcquireLock("attributeEntrySnapshot", fh.fh, util.SharedLock)
 	defer wfs.fhLockTable.ReleaseLock(fh.fh, lock)
+	fh.entryLock.Lock()
+	defer fh.entryLock.Unlock()
 	if fh.dirtyMetadata {
 		return nil, false
 	}

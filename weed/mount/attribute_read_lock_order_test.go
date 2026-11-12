@@ -121,6 +121,45 @@ func attributeReadLockScenario(t *testing.T) {
 	}
 }
 
+// The attribute snapshot must queue for the handle lock before it takes
+// entryLock. Otherwise a Read holding the shared lock waits on entryLock, the
+// snapshot waits behind a queued exclusive (an invalidation or Write), and
+// that waits on the Read.
+func TestAttributeSnapshotReadLockOrder(t *testing.T) {
+	w := newInvalidateTestWFS(t)
+	entry := attributeAppendEntry(0)
+	fh := newFileHandle(w, 1, 42, entry)
+	t.Cleanup(fh.dirtyPages.Destroy)
+
+	read := w.fhLockTable.AcquireLock("test read", fh.fh, util.SharedLock)
+	exclusiveDone := make(chan struct{})
+	go func() {
+		lock := w.fhLockTable.AcquireLock("test invalidate", fh.fh, util.ExclusiveLock)
+		w.fhLockTable.ReleaseLock(fh.fh, lock)
+		close(exclusiveDone)
+	}()
+	waitAttributeReadFrame(t, "TestAttributeSnapshotReadLockOrder.func1", "sync.(*Cond).Wait")
+	snapshotDone := make(chan bool, 1)
+	go func() {
+		_, ok := w.attributeEntrySnapshot(fh, entry)
+		snapshotDone <- ok
+	}()
+	waitAttributeReadFrame(t, "(*WFS).attributeEntrySnapshot", "sync.(*Cond).Wait")
+
+	readerCanProceed := fh.entryLock.TryRLock()
+	if readerCanProceed {
+		fh.entryLock.RUnlock()
+	}
+	w.fhLockTable.ReleaseLock(fh.fh, read)
+	<-exclusiveDone
+	if ok := <-snapshotDone; !ok {
+		t.Fatal("clean handle snapshot was refused")
+	}
+	if !readerCanProceed {
+		t.Fatal("snapshot holds entryLock while queued for the handle lock behind an exclusive waiter")
+	}
+}
+
 // Stack frames are arrival/blocked witnesses, not an elapsed-time performance
 // assertion. Channel/lock gates define the order; timeout only refuses a broken
 // test arrangement. No sleep is used to make either handler win a race.
