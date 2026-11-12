@@ -2,11 +2,14 @@ package localsink
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -17,6 +20,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
+
+var sourceLookupTimeout = 30 * time.Second
 
 type LocalSink struct {
 	Dir           string
@@ -94,7 +99,15 @@ func (localsink *LocalSink) IsIncremental() bool {
 }
 
 func (localsink *LocalSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool, signatures []int32) error {
-	key = sanitizeFsKey(key)
+	return localsink.deleteEntry(key, nil)
+}
+
+func (localsink *LocalSink) DeleteEntryVersion(key string, oldEntry *filer_pb.Entry, deleteIncludeChunks bool, signatures []int32) error {
+	return localsink.deleteEntry(key, oldEntry)
+}
+
+func (localsink *LocalSink) deleteEntry(sourceKey string, oldEntry *filer_pb.Entry) error {
+	key := sanitizeFsKey(sourceKey)
 	if localsink.isMultiPartEntry(key) {
 		return nil
 	}
@@ -104,14 +117,72 @@ func (localsink *LocalSink) DeleteEntry(key string, isDirectory, deleteIncludeCh
 	}
 	glog.V(4).Infof("Delete Entry key: %s", key)
 	root, err := os.OpenRoot(localsink.Dir)
-	if err == nil {
-		err = root.Remove(localsink.resolveInsideDir(rel))
-		root.Close()
-	}
 	if err != nil {
+		glog.V(0).Infof("remove entry key %s: %s", key, err)
+		return nil
+	}
+	defer root.Close()
+	rel = localsink.resolveInsideDir(rel)
+	if oldEntry != nil {
+		if _, statErr := root.Lstat(rel); errors.Is(statErr, fs.ErrNotExist) {
+			return nil
+		}
+		recreated, lookupErr := localsink.sourceRecreated(sourceKey, oldEntry)
+		if lookupErr != nil {
+			return lookupErr
+		}
+		if recreated {
+			glog.V(1).Infof("keep %s: the source recreated it after the deleted version", key)
+			return nil
+		}
+	}
+	if err := root.Remove(rel); err != nil {
 		glog.V(0).Infof("remove entry key %s: %s", key, err)
 	}
 	return nil
+}
+
+// sourceRecreated reports whether the live source holds an entry of the same
+// kind at key's source path committed after oldEntry. A live entry that is
+// oldEntry itself, or older, only means the source store lags the delete event.
+func (localsink *LocalSink) sourceRecreated(key string, oldEntry *filer_pb.Entry) (bool, error) {
+	sourcePath, ok := localsink.sourcePath(key)
+	if !ok {
+		return false, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), sourceLookupTimeout)
+	defer cancel()
+	live, _, _, err := filer_pb.GetEntry(ctx, localsink.filerSource, sourcePath)
+	if errors.Is(err, filer_pb.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("look up source %s before deleting %s: %w", sourcePath, key, err)
+	}
+	if live == nil || live.IsDirectory != oldEntry.IsDirectory {
+		return false, nil
+	}
+	if oldEntry.GetCommitTsNs() > 0 {
+		return live.GetCommitTsNs() > oldEntry.GetCommitTsNs(), nil
+	}
+	return mtimeNs(live) > mtimeNs(oldEntry), nil
+}
+
+// sourcePath maps a sink key back to the source path it replicates. Incremental
+// keys carry a date directory and do not map back.
+func (localsink *LocalSink) sourcePath(key string) (util.FullPath, bool) {
+	if localsink.filerSource == nil || localsink.isIncremental {
+		return "", false
+	}
+	rel, err := filepath.Rel(filepath.Clean(localsink.Dir), filepath.Clean(key))
+	if err != nil || rel == "." || !filepath.IsLocal(rel) {
+		return "", false
+	}
+	return util.FullPath(localsink.filerSource.Dir).Child(filepath.ToSlash(rel)), true
+}
+
+func mtimeNs(entry *filer_pb.Entry) int64 {
+	return entry.GetAttributes().GetMtime()*int64(time.Second) + int64(entry.GetAttributes().GetMtimeNs())
 }
 
 func (localsink *LocalSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []int32) error {
