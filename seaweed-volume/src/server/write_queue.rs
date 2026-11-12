@@ -376,9 +376,10 @@ fn process_batch(state: Arc<VolumeServerState>, batch: Vec<WriteRequest>) {
         for (needle, fsync, response_tx, pending) in entries {
             // A delete reaching a remounted volume cannot cancel a write
             // queued for the old one.
-            if let (Ok(vol), Some(pending)) = (&vol, &pending)
-                && !vol.tracks_pending_write(pending)
+            if let (Ok(vol), Some(tracked)) = (&vol, &pending)
+                && !vol.tracks_pending_write(tracked)
             {
+                drop(pending);
                 let _ = response_tx.send(Err(VolumeError::NotFound));
                 continue;
             }
