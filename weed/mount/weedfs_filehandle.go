@@ -115,19 +115,26 @@ func (wfs *WFS) AcquireHandle(ctx context.Context, inode uint64, flags, uid, gid
 }
 
 // lookupFilerEntry reads path from the filer, bypassing the local cache, in
-// local ids and with the log position the answer reflects.
+// local ids and with the log position the answer reflects. It asks the filer
+// that checks path's write conditions, since another filer may lag it.
 func (wfs *WFS) lookupFilerEntry(ctx context.Context, path util.FullPath) (*filer_pb.Entry, entryVersion, error) {
 	dir, name := path.DirAndName()
 	var entry *filer_pb.Entry
 	var version entryVersion
-	err := wfs.withFilerClient(ctx, false, wfs.filerRPCWait(), func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
+	lookup := func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 		resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{Directory: dir, Name: name})
 		if err != nil {
 			return err
 		}
 		entry, version = resp.Entry, entryVersion{tsNs: resp.LogTsNs, signature: resp.LogSignature}
 		return nil
-	})
+	}
+	var err error
+	if owner := wfs.entryWriteOwner(path); owner != "" {
+		err = wfs.callFiler(ctx, false, wfs.filerRPCWait(), owner.ToGrpcAddress(), lookup)
+	} else {
+		err = wfs.withFilerClient(ctx, false, wfs.filerRPCWait(), lookup)
+	}
 	if err != nil {
 		return nil, entryVersion{}, err
 	}

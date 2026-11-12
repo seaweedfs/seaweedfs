@@ -10,6 +10,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
 
@@ -56,4 +58,18 @@ func (wfs *WFS) followLockRing() {
 			return
 		}
 	}
+}
+
+// entryWriteOwner is the filer that serializes path's writes per this mount's
+// ring view, matching the filer's routing: the prior owner while a rebalance
+// cools off, else the primary. "" before a ring arrives.
+func (wfs *WFS) entryWriteOwner(path util.FullPath) pb.ServerAddress {
+	if wfs.lockClient == nil {
+		return ""
+	}
+	key := s3_constants.ObjectWriteRouteKeyPrefix + string(path)
+	if prior := wfs.lockClient.PriorOwnerForKey(key); prior != "" {
+		return prior
+	}
+	return wfs.lockClient.PrimaryForKey(key)
 }
