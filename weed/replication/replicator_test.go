@@ -452,7 +452,7 @@ type versionedSink struct {
 
 var _ sink.VersionedDeleter = (*versionedSink)(nil)
 
-func (s *versionedSink) DeleteEntryVersion(key string, oldEntry *filer_pb.Entry, deleteIncludeChunks bool, signatures []int32) error {
+func (s *versionedSink) DeleteEntryVersion(key string, oldEntry *filer_pb.Entry, tsNs int64, deleteIncludeChunks bool, signatures []int32) error {
 	s.versionCalls = append(s.versionCalls, oldEntry)
 	return s.DeleteEntry(key, oldEntry.IsDirectory, deleteIncludeChunks, signatures)
 }

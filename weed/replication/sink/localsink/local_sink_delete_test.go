@@ -73,17 +73,21 @@ func TestDeleteEntryVersionAgainstLiveSource(t *testing.T) {
 		live     *filer_pb.Entry
 		lookup   error
 		oldEntry *filer_pb.Entry
+		tsNs     int64
 		wantKept bool
 		wantErr  bool
 	}{
-		{name: "source recreated the path", live: stampedEntry("x", 300, 5, false), oldEntry: deleted, wantKept: true},
-		{name: "source deleted the path", oldEntry: deleted},
-		{name: "source store lags the delete", live: stampedEntry("x", 100, 10, false), oldEntry: deleted},
-		{name: "source holds an older version", live: stampedEntry("x", 50, 20, false), oldEntry: deleted},
-		{name: "source recreated a directory", live: stampedEntry("x", 300, 30, true), oldEntry: deleted},
-		{name: "unstamped newer mtime", live: stampedEntry("x", 0, 20, false), oldEntry: stampedEntry("x", 0, 10, false), wantKept: true},
-		{name: "unstamped same mtime", live: stampedEntry("x", 0, 10, false), oldEntry: stampedEntry("x", 0, 10, false)},
-		{name: "source lookup fails", lookup: status.Error(codes.Unavailable, "down"), oldEntry: deleted, wantKept: true, wantErr: true},
+		{name: "source recreated the path", live: stampedEntry("x", 300, 5, false), oldEntry: deleted, tsNs: 200, wantKept: true},
+		{name: "source deleted the path", oldEntry: deleted, tsNs: 200},
+		{name: "source store lags the delete", live: stampedEntry("x", 100, 10, false), oldEntry: deleted, tsNs: 200},
+		{name: "source holds a version written before the delete", live: stampedEntry("x", 200, 20, false), oldEntry: deleted, tsNs: 300},
+		{name: "source recreated a directory", live: stampedEntry("x", 300, 30, true), oldEntry: deleted, tsNs: 200},
+		{name: "stamped replacement of an unstamped entry", live: stampedEntry("x", 300, 5, false), oldEntry: stampedEntry("x", 0, 10, false), tsNs: 200, wantKept: true},
+		{name: "no delete time, newer than the deleted stamp", live: stampedEntry("x", 300, 5, false), oldEntry: deleted, wantKept: true},
+		{name: "no delete time, the deleted version", live: stampedEntry("x", 100, 10, false), oldEntry: deleted},
+		{name: "nothing stamped, newer mtime", live: stampedEntry("x", 0, 20, false), oldEntry: stampedEntry("x", 0, 10, false), wantKept: true},
+		{name: "nothing stamped, same mtime", live: stampedEntry("x", 0, 10, false), oldEntry: stampedEntry("x", 0, 10, false)},
+		{name: "source lookup fails", lookup: status.Error(codes.Unavailable, "down"), oldEntry: deleted, tsNs: 200, wantKept: true, wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -101,7 +105,7 @@ func TestDeleteEntryVersionAgainstLiveSource(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			err := localSink.DeleteEntryVersion(key, tt.oldEntry, true, nil)
+			err := localSink.DeleteEntryVersion(key, tt.oldEntry, tt.tsNs, true, nil)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("DeleteEntryVersion err = %v, want error %v", err, tt.wantErr)
 			}
@@ -127,7 +131,7 @@ func TestDeleteEntryVersionSkipsLookupWhenDestinationIsGone(t *testing.T) {
 	localSink.initialize(dir, false)
 	localSink.SetSourceFiler(startLiveSourceFiler(t, sourceFiler))
 
-	if err := localSink.DeleteEntryVersion(filepath.Join(dir, "x"), stampedEntry("x", 100, 10, false), true, nil); err != nil {
+	if err := localSink.DeleteEntryVersion(filepath.Join(dir, "x"), stampedEntry("x", 100, 10, false), 200, true, nil); err != nil {
 		t.Fatalf("duplicate delete: %v", err)
 	}
 	if n := sourceFiler.lookups.Load(); n != 0 {

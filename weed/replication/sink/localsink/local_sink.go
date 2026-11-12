@@ -99,14 +99,14 @@ func (localsink *LocalSink) IsIncremental() bool {
 }
 
 func (localsink *LocalSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool, signatures []int32) error {
-	return localsink.deleteEntry(key, nil)
+	return localsink.deleteEntry(key, nil, 0)
 }
 
-func (localsink *LocalSink) DeleteEntryVersion(key string, oldEntry *filer_pb.Entry, deleteIncludeChunks bool, signatures []int32) error {
-	return localsink.deleteEntry(key, oldEntry)
+func (localsink *LocalSink) DeleteEntryVersion(key string, oldEntry *filer_pb.Entry, tsNs int64, deleteIncludeChunks bool, signatures []int32) error {
+	return localsink.deleteEntry(key, oldEntry, tsNs)
 }
 
-func (localsink *LocalSink) deleteEntry(sourceKey string, oldEntry *filer_pb.Entry) error {
+func (localsink *LocalSink) deleteEntry(sourceKey string, oldEntry *filer_pb.Entry, tsNs int64) error {
 	key := sanitizeFsKey(sourceKey)
 	if localsink.isMultiPartEntry(key) {
 		return nil
@@ -127,7 +127,7 @@ func (localsink *LocalSink) deleteEntry(sourceKey string, oldEntry *filer_pb.Ent
 		if _, statErr := root.Lstat(rel); errors.Is(statErr, fs.ErrNotExist) {
 			return nil
 		}
-		recreated, lookupErr := localsink.sourceRecreated(sourceKey, oldEntry)
+		recreated, lookupErr := localsink.sourceRecreated(sourceKey, oldEntry, tsNs)
 		if lookupErr != nil {
 			return lookupErr
 		}
@@ -143,9 +143,11 @@ func (localsink *LocalSink) deleteEntry(sourceKey string, oldEntry *filer_pb.Ent
 }
 
 // sourceRecreated reports whether the live source holds an entry of the same
-// kind at key's source path committed after oldEntry. A live entry that is
-// oldEntry itself, or older, only means the source store lags the delete event.
-func (localsink *LocalSink) sourceRecreated(key string, oldEntry *filer_pb.Entry) (bool, error) {
+// kind at key's source path committed after the delete at tsNs, the order the
+// source's own replay keeps. Without tsNs the deleted entry's commit stamp is
+// the bound, and mtime only when neither is known. An older live entry means
+// the source store lags the delete event or will apply it next.
+func (localsink *LocalSink) sourceRecreated(key string, oldEntry *filer_pb.Entry, tsNs int64) (bool, error) {
 	sourcePath, ok := localsink.sourcePath(key)
 	if !ok {
 		return false, nil
@@ -162,8 +164,11 @@ func (localsink *LocalSink) sourceRecreated(key string, oldEntry *filer_pb.Entry
 	if live == nil || live.IsDirectory != oldEntry.IsDirectory {
 		return false, nil
 	}
-	if oldEntry.GetCommitTsNs() > 0 {
-		return live.GetCommitTsNs() > oldEntry.GetCommitTsNs(), nil
+	if tsNs <= 0 {
+		tsNs = oldEntry.GetCommitTsNs()
+	}
+	if tsNs > 0 {
+		return live.GetCommitTsNs() > tsNs, nil
 	}
 	return mtimeNs(live) > mtimeNs(oldEntry), nil
 }

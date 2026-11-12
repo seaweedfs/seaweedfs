@@ -66,17 +66,18 @@ func DeleteEntry(s ReplicationSink, key string, isDirectory, deleteIncludeChunks
 // VersionedDeleter is an optional capability for sinks that check a delete
 // against the live source before removing the destination: a delete that
 // reaches the sink after the source recreated the path must not remove the
-// newer destination, since no later event brings it back.
+// newer destination, since no later event brings it back. tsNs is the
+// delete's mutation time, or 0 when the event does not carry one.
 type VersionedDeleter interface {
-	DeleteEntryVersion(key string, oldEntry *filer_pb.Entry, deleteIncludeChunks bool, signatures []int32) error
+	DeleteEntryVersion(key string, oldEntry *filer_pb.Entry, tsNs int64, deleteIncludeChunks bool, signatures []int32) error
 }
 
-func DeleteEntryVersion(s ReplicationSink, key string, oldEntry *filer_pb.Entry, deleteIncludeChunks, keepRemoteObject bool, signatures []int32) error {
+func DeleteEntryVersion(s ReplicationSink, key string, oldEntry *filer_pb.Entry, tsNs int64, deleteIncludeChunks, keepRemoteObject bool, signatures []int32) error {
 	if _, ok := s.(MetadataOnlyDeleter); ok && keepRemoteObject {
 		return DeleteEntry(s, key, oldEntry.IsDirectory, deleteIncludeChunks, keepRemoteObject, signatures)
 	}
 	if deleter, ok := s.(VersionedDeleter); ok {
-		return deleter.DeleteEntryVersion(key, oldEntry, deleteIncludeChunks, signatures)
+		return deleter.DeleteEntryVersion(key, oldEntry, tsNs, deleteIncludeChunks, signatures)
 	}
 	return DeleteEntry(s, key, oldEntry.IsDirectory, deleteIncludeChunks, keepRemoteObject, signatures)
 }

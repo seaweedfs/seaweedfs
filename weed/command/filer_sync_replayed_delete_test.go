@@ -36,8 +36,10 @@ func TestGenProcessFunctionLocalSinkKeepsPathTheSourceRecreated(t *testing.T) {
 	}
 	server := grpc.NewServer()
 	filer_pb.RegisterSeaweedFilerServer(server, &liveEntriesFiler{entries: map[string]*filer_pb.Entry{
-		"/src/dir/recreated": {Name: "recreated", CommitTsNs: 300, Attributes: &filer_pb.FuseAttributes{}},
-		"/src/dir/renamed":   {Name: "renamed", CommitTsNs: 300, Attributes: &filer_pb.FuseAttributes{}},
+		"/src/dir/recreated":  {Name: "recreated", CommitTsNs: 300, Attributes: &filer_pb.FuseAttributes{}},
+		"/src/dir/renamed":    {Name: "renamed", CommitTsNs: 300, Attributes: &filer_pb.FuseAttributes{}},
+		"/src/dir/peer":       {Name: "peer", CommitTsNs: 350, Attributes: &filer_pb.FuseAttributes{}},
+		"/src/dir/concurrent": {Name: "concurrent", CommitTsNs: 200, Attributes: &filer_pb.FuseAttributes{}},
 	}})
 	go server.Serve(listener)
 	t.Cleanup(server.Stop)
@@ -53,7 +55,7 @@ func TestGenProcessFunctionLocalSinkKeepsPathTheSourceRecreated(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(target, "dir"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"recreated", "renamed", "deleted"} {
+	for _, name := range []string{"recreated", "renamed", "deleted", "peer", "concurrent"} {
 		if err := os.WriteFile(filepath.Join(target, "dir", name), []byte("newer"), 0644); err != nil {
 			t.Fatal(err)
 		}
@@ -63,25 +65,30 @@ func TestGenProcessFunctionLocalSinkKeepsPathTheSourceRecreated(t *testing.T) {
 		return &filer_pb.Entry{Name: name, CommitTsNs: 100, Attributes: &filer_pb.FuseAttributes{FileMode: 0644}}
 	}
 
-	events := []*filer_pb.EventNotification{
-		{OldEntry: stale("recreated")},
-		{OldEntry: stale("deleted")},
-		{OldEntry: stale("renamed"), NewParentPath: "/src/dir", NewEntry: &filer_pb.Entry{
+	events := []*filer_pb.SubscribeMetadataResponse{
+		{TsNs: 200, EventNotification: &filer_pb.EventNotification{OldEntry: stale("recreated")}},
+		{TsNs: 200, EventNotification: &filer_pb.EventNotification{OldEntry: stale("deleted")}},
+		{TsNs: 200, EventNotification: &filer_pb.EventNotification{OldEntry: stale("renamed"), NewParentPath: "/src/dir", NewEntry: &filer_pb.Entry{
 			Name: "moved", Content: []byte("moved"), Attributes: &filer_pb.FuseAttributes{FileMode: 0644, FileSize: 5},
-		}},
+		}}},
+		{TsNs: 400, MutationTsNs: 300, EventNotification: &filer_pb.EventNotification{OldEntry: stale("peer")}},
+		{TsNs: 300, EventNotification: &filer_pb.EventNotification{OldEntry: stale("concurrent")}},
 	}
 	for _, event := range events {
-		if err := processFn(&filer_pb.SubscribeMetadataResponse{Directory: "/src/dir", EventNotification: event}); err != nil {
-			t.Fatalf("process %s: %v", event.OldEntry.Name, err)
+		event.Directory = "/src/dir"
+		if err := processFn(event); err != nil {
+			t.Fatalf("process %s: %v", event.EventNotification.OldEntry.Name, err)
 		}
 	}
 
-	for _, name := range []string{"recreated", "renamed", "moved"} {
+	for _, name := range []string{"recreated", "renamed", "moved", "peer"} {
 		if _, err := os.Stat(filepath.Join(target, "dir", name)); err != nil {
 			t.Errorf("%s missing: %v", name, err)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(target, "dir", "deleted")); !os.IsNotExist(err) {
-		t.Errorf("deleted path kept: %v", err)
+	for _, name := range []string{"deleted", "concurrent"} {
+		if _, err := os.Stat(filepath.Join(target, "dir", name)); !os.IsNotExist(err) {
+			t.Errorf("%s kept: %v", name, err)
+		}
 	}
 }
