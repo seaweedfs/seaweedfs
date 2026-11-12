@@ -63,10 +63,17 @@ var resourceList = []string{
 
 // Verify if request has AWS Signature Version '2'.
 func (iam *IdentityAccessManagement) isReqAuthenticatedV2(r *http.Request) (*Identity, s3err.ErrorCode) {
+	var identity *Identity
+	var errCode s3err.ErrorCode
 	if isRequestSignatureV2(r) {
-		return iam.doesSignV2Match(r)
+		identity, errCode = iam.doesSignV2Match(r)
+	} else {
+		identity, errCode = iam.doesPresignV2SignatureMatch(r)
 	}
-	return iam.doesPresignV2SignatureMatch(r)
+	if errCode != s3err.ErrNone {
+		return identity, errCode
+	}
+	return identity, bindSignedPayload(r, unsignedPayload)
 }
 
 func (iam *IdentityAccessManagement) doesPolicySignatureV2Match(ctx context.Context, formValues http.Header) (*Identity, s3err.ErrorCode) {

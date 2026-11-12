@@ -19,6 +19,7 @@ import (
 // newChunkedReader.
 func getRequestDataReader(s3a *S3ApiServer, r *http.Request) (io.ReadCloser, s3err.ErrorCode) {
 	var s3ErrCode s3err.ErrorCode
+	signedSha256 := unwrapSignedPayload(&r.Body)
 	dataReader := r.Body
 	rAuthType := getRequestAuthType(r)
 	if rAuthType == authTypeStreamingSigned || rAuthType == authTypeStreamingUnsigned {
@@ -31,6 +32,9 @@ func getRequestDataReader(s3a *S3ApiServer, r *http.Request) (io.ReadCloser, s3e
 	expected, valid := expectedContentSha256(r)
 	if !valid {
 		return nil, s3err.ErrInvalidArgument
+	}
+	if signedSha256 != nil {
+		expected = signedSha256
 	}
 	if expected != nil && dataReader != nil {
 		if r.ContentLength == 0 {
@@ -51,7 +55,10 @@ func getRequestDataReader(s3a *S3ApiServer, r *http.Request) (io.ReadCloser, s3e
 // streams. Sentinel values (streaming, unsigned) carry no hash and are skipped;
 // anything that decodes to neither returns valid=false.
 func expectedContentSha256(r *http.Request) (expected []byte, valid bool) {
-	v := r.Header.Get("X-Amz-Content-Sha256")
+	return decodeContentSha256(r.Header.Get("X-Amz-Content-Sha256"))
+}
+
+func decodeContentSha256(v string) (expected []byte, valid bool) {
 	if v == "" || v == unsignedPayload || v == streamingContentSHA256 ||
 		v == streamingContentSHA256Trailer || v == streamingUnsignedPayload {
 		return nil, true

@@ -164,7 +164,7 @@ func (s3a *S3ApiServer) CompleteMultipartUploadHandler(w http.ResponseWriter, r 
 
 	parts := &CompleteMultipartUpload{}
 	if err := xmlDecoder(r.Body, parts, r.ContentLength); err != nil {
-		s3err.WriteErrorResponse(w, r, s3err.ErrMalformedXML)
+		s3err.WriteErrorResponse(w, r, requestBodyErrorCode(err, s3err.ErrMalformedXML))
 		return
 	}
 
