@@ -1,9 +1,11 @@
 package weed_server
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"testing"
 	"time"
 
@@ -75,7 +77,15 @@ func TestVolumeDeleteCancelledWhileQueuedBehindGuard(t *testing.T) {
 		_, err := vs.VolumeDelete(ctx, &volume_server_pb.VolumeDeleteRequest{VolumeId: uint32(vid)})
 		done <- err
 	}()
-	time.Sleep(50 * time.Millisecond)
+	require.Eventually(t, func() bool {
+		buf := make([]byte, 1<<20)
+		for _, g := range bytes.Split(buf[:runtime.Stack(buf, true)], []byte("\n\n")) {
+			if bytes.Contains(g, []byte("(*VolumeServer).VolumeDelete")) && bytes.Contains(g, []byte("sync.(*Mutex).Lock")) {
+				return true
+			}
+		}
+		return false
+	}, 10*time.Second, time.Millisecond)
 	cancel()
 	guard.Unlock()
 
