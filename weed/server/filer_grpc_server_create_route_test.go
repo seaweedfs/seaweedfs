@@ -18,7 +18,34 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-// createRouteServer builds a filer whose ring holds two unreachable peers, so a
+// deadAddress returns a peer whose gRPC port this test holds and drops every
+// connection on, so a forward to it fails even on a host where a fixed port
+// could reach a live filer.
+func deadAddress(t *testing.T) pb.ServerAddress {
+	t.Helper()
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	go func() {
+		for {
+			conn, err := lis.Accept()
+			if err != nil {
+				return
+			}
+			conn.Close()
+		}
+	}()
+	address := pb.NewServerAddress("127.0.0.1", 1, lis.Addr().(*net.TCPAddr).Port)
+	pb.InvalidateGrpcConnection(address.ToGrpcAddress())
+	t.Cleanup(func() {
+		lis.Close()
+		pb.InvalidateGrpcConnection(address.ToGrpcAddress())
+	})
+	return address
+}
+
+// createRouteServer builds a filer whose ring holds an unreachable peer, so a
 // forwarded create fails at the dial and is distinguishable from a local apply.
 func createRouteServer(t *testing.T) (*FilerServer, *renameTestStore) {
 	t.Helper()
@@ -27,7 +54,7 @@ func createRouteServer(t *testing.T) (*FilerServer, *renameTestStore) {
 	f := newRenameTestFiler(t, store)
 	f.DirBucketsPath = "/buckets"
 	f.Dlm = lock_manager.NewDistributedLockManager(self)
-	f.Dlm.LockRing.SetSnapshot([]pb.ServerAddress{self, "127.0.0.1:18889"}, 1)
+	f.Dlm.LockRing.SetSnapshot([]pb.ServerAddress{self, deadAddress(t)}, 1)
 	return &FilerServer{
 		filer:          f,
 		option:         &FilerOption{Host: self},
@@ -194,13 +221,13 @@ func TestCreateEntryExclusiveAppliedByOwner(t *testing.T) {
 // down, and applying here would be the second serialization point on the key.
 func TestCreateEntryFailsWhenPriorOwnerIsUnreachable(t *testing.T) {
 	const self = pb.ServerAddress("127.0.0.1:28888")
-	const peer = pb.ServerAddress("127.0.0.1:28889")
+	peer := deadAddress(t)
 	store := newRenameTestStore()
 	f := newRenameTestFiler(t, store)
 	f.DirBucketsPath = "/buckets"
 	f.Dlm = lock_manager.NewDistributedLockManager(self)
 	// Dropping the peer moves every key it owned to this filer, with the peer as
-	// their prior owner — and nothing is listening on it.
+	// their prior owner — and it answers no RPC.
 	f.Dlm.LockRing.SetSnapshot([]pb.ServerAddress{self, peer}, 1)
 	f.Dlm.LockRing.SetSnapshot([]pb.ServerAddress{self}, 2)
 	fs := &FilerServer{
