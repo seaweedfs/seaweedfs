@@ -272,20 +272,6 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Cache remote-only sources before copying; otherwise the copy path below
-	// writes a destination with FileSize > 0 but no chunks/content.
-	if entry.IsInRemoteOnly() {
-		cacheVersionId := resolvedSourceVersionId(srcVersionId, entry)
-		cachedEntry := s3a.cacheRemoteObjectForCopy(r.Context(), entry, srcBucket, srcObject, cacheVersionId)
-		if cachedEntry == nil {
-			glog.Errorf("CopyObjectHandler: failed to cache remote-only source %s/%s (version %q)", srcBucket, srcObject, cacheVersionId)
-			w.Header().Set("Retry-After", "5")
-			s3err.WriteErrorResponse(w, r, s3err.ErrServiceUnavailable)
-			return
-		}
-		entry = cachedEntry
-	}
-
 	sameDestination := srcBucket == dstBucket && srcObject == dstObject
 	changesStorageClass := s3a.copyChangesStorageClass(r.Header, entry)
 	// A self-copy into a versioned bucket writes a new version instead of overwriting in
@@ -295,10 +281,19 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// A remote-only source is filled only after every check that refuses with
+	// its own status, right before the data moves, under the keep-alive: on a
+	// cell whose disk is a cache that fill is the slow part of the copy. Only
+	// its source conditions wait for the fill, as they read the filled entry's
+	// ETag and times (as they always did).
+	remoteOnly := entry.IsInRemoteOnly()
+
 	// Validate conditional copy headers
-	if err := s3a.validateConditionalCopyHeaders(r, entry); err != s3err.ErrNone {
-		s3err.WriteErrorResponse(w, r, err)
-		return
+	if !remoteOnly {
+		if err := s3a.validateConditionalCopyHeaders(r, entry); err != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, err)
+			return
+		}
 	}
 	if errCode := s3a.checkConditionalHeaders(r, dstBucket, dstObject); errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
@@ -321,12 +316,34 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	replacesSource := copyReplacesSourceEntry(sameDestination, dstVersioningState, srcVersionId)
+	storageClassOnlySelfCopy := replacesSource && changesStorageClass && !(replaceMeta || replaceTagging)
 
 	// A self-copy that only changes the storage class updates the object in
 	// place and has to keep its encryption as stored. The direct strategy
 	// compares only KMS key IDs, so SSE-KMS requests stay rejected too.
-	if replacesSource && changesStorageClass && !(replaceMeta || replaceTagging) &&
-		(IsSSEKMSRequest(r) || !s3a.canUseMetadataOnlySelfCopy(entry, r, dstBucket, dstObject)) {
+	if storageClassOnlySelfCopy && IsSSEKMSRequest(r) {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopyDest)
+		return
+	}
+
+	// The metadata-only self-copy moves no data and is never kept alive; it
+	// decides on the filled entry, so a remote-only source it may take is
+	// filled first, as it always was.
+	if remoteOnly && replacesSource && (replaceMeta || replaceTagging || changesStorageClass) {
+		cachedEntry, errCode := s3a.fillCopySource(r, entry, srcBucket, srcObject, srcVersionId, "CopyObjectHandler")
+		if errCode != s3err.ErrNone {
+			w.Header().Set("Retry-After", "5")
+			s3err.WriteErrorResponse(w, r, errCode)
+			return
+		}
+		entry, remoteOnly = cachedEntry, false
+		if err := s3a.validateConditionalCopyHeaders(r, entry); err != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, err)
+			return
+		}
+	}
+
+	if storageClassOnlySelfCopy && !s3a.canUseMetadataOnlySelfCopy(entry, r, dstBucket, dstObject) {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopyDest)
 		return
 	}
@@ -458,34 +475,6 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Determine whether we can reuse the source MD5 (direct copy without encryption changes).
-	canReuseSourceMd5 := false
-	var sourceMd5 []byte
-	if entry.Attributes != nil && len(entry.Attributes.Md5) > 0 {
-		sourceMd5 = append([]byte(nil), entry.Attributes.Md5...)
-		srcPath := fmt.Sprintf("%s/%s", s3a.bucketDir(srcBucket), srcObject)
-		dstPath := fmt.Sprintf("%s/%s", s3a.bucketDir(dstBucket), dstObject)
-		state := DetectEncryptionStateWithEntry(entry, r, srcPath, dstPath)
-		s3a.applyCopyBucketDefaultEncryption(state, dstBucket)
-		if strategy, err := DetermineUnifiedCopyStrategy(state, entry.Extended, r); err == nil && strategy == CopyStrategyDirect {
-			canReuseSourceMd5 = true
-		}
-	}
-
-	// Create new entry for destination
-	dstEntry := &filer_pb.Entry{
-		Attributes: &filer_pb.FuseAttributes{
-			FileSize: entry.Attributes.FileSize,
-			Mtime:    t.Unix(),
-			Crtime:   entry.Attributes.Crtime,
-			Mime:     resolveDestinationMime(r.Header, entry.Attributes.Mime, replaceMeta),
-			FileMode: s3a.resolveFileMode(r),
-			Uid:      filer_pb.OS_UID,
-			Gid:      filer_pb.OS_GID,
-		},
-		Extended: make(map[string][]byte),
-	}
-
 	// Copy extended attributes from source, filtering out conflicting encryption metadata
 	// Pre-compute encryption state once for efficiency
 	srcHasSSEC := IsSSECEncrypted(entry.Extended)
@@ -495,6 +484,10 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	dstWantsSSEKMS := IsSSEKMSRequest(r)
 	dstWantsSSES3 := IsSSES3RequestInternal(r)
 
+	// dstMeta carries the destination's metadata, tags and lock fields; they
+	// come from the source's metadata and the request, which a remote fill
+	// does not change, so they are settled (and refused) before it.
+	dstMeta := &filer_pb.Entry{Extended: make(map[string][]byte)}
 	for k, v := range entry.Extended {
 		// Object ACLs and ownership are not copied, regardless of the metadata directive.
 		if k == s3_constants.ExtAmzOwnerKey || k == s3_constants.ExtAmzAclKey {
@@ -524,14 +517,14 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		}
 
 		if !skipHeader {
-			dstEntry.Extended[k] = v
+			dstMeta.Extended[k] = v
 		}
 	}
 
 	// Process metadata and tags and apply to destination
-	// Use dstEntry.Extended (already filtered) as the source, not entry.Extended,
+	// Use dstMeta.Extended (already filtered) as the source, not entry.Extended,
 	// to preserve the encryption header filtering. Fixes GitHub #7562.
-	processedMetadata, tagErr := processMetadataBytes(r.Header, dstEntry.Extended, replaceMeta, replaceTagging)
+	processedMetadata, tagErr := processMetadataBytes(r.Header, dstMeta.Extended, replaceMeta, replaceTagging)
 	if tagErr != nil {
 		glog.Errorf("CopyObjectHandler ValidateTags error %s: %v", r.URL, tagErr)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidTag)
@@ -540,11 +533,64 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 
 	// mergeCopyMetadata drops stale managed keys before applying the new set,
 	// so REPLACE doesn't leak source values through the merge, as on self-copies.
-	dstEntry.Extended = mergeCopyMetadata(dstEntry.Extended, processedMetadata)
+	dstMeta.Extended = mergeCopyMetadata(dstMeta.Extended, processedMetadata)
 
-	if errCode := s3a.applyCopyObjectLockHeaders(r, dstBucket, dstObject, dstEntry); errCode != s3err.ErrNone {
+	if errCode := s3a.applyCopyObjectLockHeaders(r, dstBucket, dstObject, dstMeta); errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
+	}
+
+	// Every check that refuses with its own status has run; from here the copy
+	// fills and moves data, which on a slow volume outlasts a client's
+	// patience for a silent response (#2705), so a long copy commits to 200
+	// and keeps the connection alive. x-amz-version-id is minted only when the
+	// copy is finalized, so a versioning destination keeps the single answer
+	// sent at the end rather than lose that header.
+	keepAlive := startCopyKeepAlive(w, r, dstVersioningState != s3_constants.VersioningEnabled, copySourceVersionHeader(copySourceVersionId))
+	defer keepAlive.halt()
+
+	// Cache remote-only sources before copying; otherwise the copy path below
+	// writes a destination with FileSize > 0 but no chunks/content. Its source
+	// conditions read the filled entry's ETag and times, as they always did.
+	if remoteOnly {
+		cachedEntry, errCode := s3a.fillCopySource(r, entry, srcBucket, srcObject, srcVersionId, "CopyObjectHandler")
+		if errCode != s3err.ErrNone {
+			keepAlive.writeErrorHeaders(errCode, func(h http.Header) { h.Set("Retry-After", "5") })
+			return
+		}
+		entry = cachedEntry
+		if err := s3a.validateConditionalCopyHeaders(r, entry); err != s3err.ErrNone {
+			keepAlive.writeError(err)
+			return
+		}
+	}
+
+	// Determine whether we can reuse the source MD5 (direct copy without encryption changes).
+	canReuseSourceMd5 := false
+	var sourceMd5 []byte
+	if entry.Attributes != nil && len(entry.Attributes.Md5) > 0 {
+		sourceMd5 = append([]byte(nil), entry.Attributes.Md5...)
+		srcPath := fmt.Sprintf("%s/%s", s3a.bucketDir(srcBucket), srcObject)
+		dstPath := fmt.Sprintf("%s/%s", s3a.bucketDir(dstBucket), dstObject)
+		state := DetectEncryptionStateWithEntry(entry, r, srcPath, dstPath)
+		s3a.applyCopyBucketDefaultEncryption(state, dstBucket)
+		if strategy, err := DetermineUnifiedCopyStrategy(state, entry.Extended, r); err == nil && strategy == CopyStrategyDirect {
+			canReuseSourceMd5 = true
+		}
+	}
+
+	// Create new entry for destination
+	dstEntry := &filer_pb.Entry{
+		Attributes: &filer_pb.FuseAttributes{
+			FileSize: entry.Attributes.FileSize,
+			Mtime:    t.Unix(),
+			Crtime:   entry.Attributes.Crtime,
+			Mime:     resolveDestinationMime(r.Header, entry.Attributes.Mime, replaceMeta),
+			FileMode: s3a.resolveFileMode(r),
+			Uid:      filer_pb.OS_UID,
+			Gid:      filer_pb.OS_GID,
+		},
+		Extended: dstMeta.Extended,
 	}
 
 	// For zero-size files or files without chunks, handle inline content
@@ -562,7 +608,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 				dstWantsSSEC, dstWantsSSEKMS, dstWantsSSES3)
 			if inlineErr != nil {
 				glog.Errorf("CopyObjectHandler inline content error: %v", inlineErr)
-				s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+				keepAlive.writeError(s3err.ErrInternalError)
 				return
 			}
 			dstEntry.Content = inlineContent
@@ -584,12 +630,12 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		}
 	} else {
 		// Use unified copy strategy approach
-		dstChunks, dstMetadata, copyErr := s3a.executeUnifiedCopyStrategy(entry, r, srcBucket, dstBucket, srcObject, dstObject, replacesSource)
+		dstChunks, dstMetadata, copyErr := copyObjectData(s3a, entry, r, srcBucket, dstBucket, srcObject, dstObject, replacesSource)
 		if copyErr != nil {
 			glog.Errorf("CopyObjectHandler unified copy error: %v", copyErr)
 			// Map errors to appropriate S3 errors
 			errCode := s3a.mapCopyErrorToS3Error(copyErr)
-			s3err.WriteErrorResponse(w, r, errCode)
+			keepAlive.writeError(errCode)
 			return
 		}
 
@@ -624,24 +670,32 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		return s3err.ErrNone
 	})
 	if finalizeCode != s3err.ErrNone {
-		s3err.WriteErrorResponse(w, r, finalizeCode)
+		keepAlive.writeError(finalizeCode)
 		return
 	}
 
-	if dstVersionId != "" {
-		w.Header().Set("x-amz-version-id", dstVersionId)
-	}
-	setCopySourceVersionId(w, copySourceVersionId)
-
-	setEtag(w, etag)
-
-	response := CopyObjectResult{
+	keepAlive.writeSuccess(func() {
+		if dstVersionId != "" {
+			w.Header().Set("x-amz-version-id", dstVersionId)
+		}
+		setEtag(w, etag)
+	}, CopyObjectResult{
 		ETag:         quoteETag(etag),
 		LastModified: t,
+	})
+}
+
+// fillCopySource caches a remote-only copy source on the cluster, the way a
+// copy has to read it; ErrServiceUnavailable (answer with Retry-After) when
+// it cannot.
+func (s3a *S3ApiServer) fillCopySource(r *http.Request, entry *filer_pb.Entry, srcBucket, srcObject, srcVersionId, handler string) (*filer_pb.Entry, s3err.ErrorCode) {
+	cacheVersionId := resolvedSourceVersionId(srcVersionId, entry)
+	cachedEntry := copyRemoteFill(s3a, r.Context(), entry, srcBucket, srcObject, cacheVersionId)
+	if cachedEntry == nil {
+		glog.Errorf("%s: failed to cache remote-only source %s/%s (version %q)", handler, srcBucket, srcObject, cacheVersionId)
+		return nil, s3err.ErrServiceUnavailable
 	}
-
-	writeSuccessResponseXML(w, r, response)
-
+	return cachedEntry, s3err.ErrNone
 }
 
 // copyReplacesSourceEntry reports whether a copy writes back to the very entry it
@@ -1123,48 +1177,40 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	}
 	copySourceVersionId := resolveCopySourceVersionId(srcVersionId, srcVersioningState, entry)
 
-	// Cache remote-only sources before copying; the part-copy paths below
-	// iterate entry.GetChunks() and would otherwise produce an empty part.
-	if entry.IsInRemoteOnly() {
-		cacheVersionId := resolvedSourceVersionId(srcVersionId, entry)
-		cachedEntry := s3a.cacheRemoteObjectForCopy(r.Context(), entry, srcBucket, srcObject, cacheVersionId)
-		if cachedEntry == nil {
-			glog.Errorf("CopyObjectPartHandler: failed to cache remote-only source %s/%s (version %q)", srcBucket, srcObject, cacheVersionId)
-			w.Header().Set("Retry-After", "5")
-			s3err.WriteErrorResponse(w, r, s3err.ErrServiceUnavailable)
+	// A remote-only source is filled after the keep-alive is armed: on a cell
+	// whose disk is a cache that fill is the slow part of the copy. Its
+	// manifests and source conditions are resolved on the filled entry, as
+	// they always were; everything else is checked first.
+	remoteOnly := entry.IsInRemoteOnly()
+	if !remoteOnly {
+		// per-chunk part-copy needs a flat source; resolved manifests stay with the source
+		if _, err := s3a.flattenManifestChunks(r.Context(), entry); err != nil {
+			glog.Errorf("CopyObjectPartHandler: resolve source manifest chunks %s/%s: %v", srcBucket, srcObject, err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 			return
 		}
-		entry = cachedEntry
+
+		// Validate conditional copy headers
+		if err := s3a.validateConditionalCopyHeaders(r, entry); err != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, err)
+			return
+		}
 	}
 
-	// per-chunk part-copy needs a flat source; resolved manifests stay with the source
-	if _, err := s3a.flattenManifestChunks(r.Context(), entry); err != nil {
-		glog.Errorf("CopyObjectPartHandler: resolve source manifest chunks %s/%s: %v", srcBucket, srcObject, err)
-		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-		return
-	}
-
-	// Validate conditional copy headers
-	if err := s3a.validateConditionalCopyHeaders(r, entry); err != s3err.ErrNone {
-		s3err.WriteErrorResponse(w, r, err)
-		return
-	}
-
-	// Handle range header if present
+	// Handle range header if present. An unfilled remote-only source's local
+	// attributes can be stale; its size is the remote object's, the bytes the
+	// fill brings in.
 	rangeHeader := r.Header.Get("x-amz-copy-source-range")
 	var startOffset, endOffset int64
 	if rangeHeader != "" {
-		startOffset, endOffset, err = parseRangeHeader(rangeHeader, int64(filer.FileSize(entry)))
+		sourceSize := int64(filer.FileSize(entry))
+		if remoteOnly {
+			sourceSize = entry.GetRemoteEntry().GetRemoteSize()
+		}
+		startOffset, endOffset, err = parseRangeHeader(rangeHeader, sourceSize)
 		if err != nil {
 			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
 			return
-		}
-	} else {
-		startOffset = 0
-		if entry.Attributes.FileSize == 0 {
-			endOffset = -1 // For zero-size files, use -1 as endOffset
-		} else {
-			endOffset = int64(entry.Attributes.FileSize) - 1
 		}
 	}
 
@@ -1202,25 +1248,64 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	// Everything the request alone decides is validated; a long copy keeps
+	// the connection alive from here, as CopyObject does (#2705). A part
+	// copy that answers x-amz-server-side-encryption* headers learns them
+	// only once the part is written, so it keeps the single answer sent at
+	// the end rather than lose them. A checksum needs no such care: it is in
+	// the CopyPartResult body too, which is where AWS puts it.
+	keepAlive := startCopyKeepAlive(w, r, !partCopyAnswersSSEHeaders(r, uploadEntry), copySourceVersionHeader(copySourceVersionId))
+	defer keepAlive.halt()
+
+	// Cache remote-only sources before copying; the part-copy paths below
+	// iterate entry.GetChunks() and would otherwise produce an empty part.
+	if remoteOnly {
+		cachedEntry, errCode := s3a.fillCopySource(r, entry, srcBucket, srcObject, srcVersionId, "CopyObjectPartHandler")
+		if errCode != s3err.ErrNone {
+			keepAlive.writeErrorHeaders(errCode, func(h http.Header) { h.Set("Retry-After", "5") })
+			return
+		}
+		entry = cachedEntry
+		if _, err := s3a.flattenManifestChunks(r.Context(), entry); err != nil {
+			glog.Errorf("CopyObjectPartHandler: resolve source manifest chunks %s/%s: %v", srcBucket, srcObject, err)
+			keepAlive.writeError(s3err.ErrInternalError)
+			return
+		}
+		if err := s3a.validateConditionalCopyHeaders(r, entry); err != s3err.ErrNone {
+			keepAlive.writeError(err)
+			return
+		}
+	}
+
+	if rangeHeader == "" {
+		startOffset = 0
+		if entry.Attributes.FileSize == 0 {
+			endOffset = -1 // For zero-size files, use -1 as endOffset
+		} else {
+			endOffset = int64(entry.Attributes.FileSize) - 1
+		}
+	}
+
 	// Inline-Content sources have no chunks for the raw-byte path to copy;
 	// the plaintext stream serves their range instead.
 	if uploadEntryHasSSE(uploadEntry) || sourceEntryIsEncrypted(entry) || uploadEntryHasChecksum(uploadEntry) || len(entry.Content) > 0 {
-		etag, sseMetadata, errCode := s3a.copyObjectPartViaReencryption(r, entry, startOffset, endOffset, dstBucket, dstObject, uploadID, partID, uploadEntry)
+		etag, sseMetadata, errCode := copyPartReencrypt(s3a, r, entry, startOffset, endOffset, dstBucket, dstObject, uploadID, partID, uploadEntry)
 		if errCode != s3err.ErrNone {
-			s3err.WriteErrorResponse(w, r, errCode)
+			keepAlive.writeError(errCode)
 			return
 		}
 		// the copy above re-creates a directory an abort removed mid-copy
-		if !s3a.checkUploadStillOpen(w, r, dstBucket, dstObject, uploadID) {
+		if code := s3a.uploadStillOpen(dstBucket, dstObject, uploadID); code != s3err.ErrNone {
+			keepAlive.writeError(code)
 			return
 		}
-		setCopySourceVersionId(w, copySourceVersionId)
-		setEtag(w, etag)
-		// Mirror PutObjectPartHandler: write x-amz-server-side-encryption /
-		// x-amz-server-side-encryption-aws-kms-key-id headers on the response
-		// so clients can see the destination's encryption state.
-		s3a.setSSEResponseHeaders(w, r, sseMetadata)
-		writeSuccessResponseXML(w, r, buildCopyPartResult(etag, t, sseMetadata))
+		keepAlive.writeSuccess(func() {
+			setEtag(w, etag)
+			// Mirror PutObjectPartHandler: write x-amz-server-side-encryption /
+			// x-amz-server-side-encryption-aws-kms-key-id headers on the response
+			// so clients can see the destination's encryption state.
+			s3a.setSSEResponseHeaders(w, r, sseMetadata)
+		}, buildCopyPartResult(etag, t, sseMetadata))
 		return
 	}
 
@@ -1266,10 +1351,10 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		dstEntry.Attributes.Md5 = md5.New().Sum(nil)
 	} else {
 		// Copy chunks that overlap with the range
-		dstChunks, partMd5, err := s3a.copyChunksForRange(entry, startOffset, endOffset, dstAssignPath)
+		dstChunks, partMd5, err := copyPartData(s3a, entry, startOffset, endOffset, dstAssignPath)
 		if err != nil {
 			glog.Errorf("CopyObjectPartHandler copy chunks error: %v", err)
-			s3err.WriteErrorResponse(w, r, s3a.mapCopyErrorToS3Error(err))
+			keepAlive.writeError(s3a.mapCopyErrorToS3Error(err))
 			return
 		}
 		dstEntry.Chunks = dstChunks
@@ -1288,7 +1373,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	upload := s3a.uploadFiler(dstBucket, dstObject)
 	if exists, _ := upload.exists(uploadDir, partName, false); exists {
 		if err := upload.rm(r.Context(), uploadDir, partName, false, false); err != nil {
-			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			keepAlive.writeError(s3err.ErrInternalError)
 			return
 		}
 	}
@@ -1297,21 +1382,19 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		entry.Attributes = dstEntry.Attributes
 		entry.Extended = dstEntry.Extended
 	}); err != nil {
-		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		keepAlive.writeError(s3err.ErrInternalError)
 		return
 	}
 
 	// the copy above re-creates a directory an abort removed mid-copy
-	if !s3a.checkUploadStillOpen(w, r, dstBucket, dstObject, uploadID) {
+	if code := s3a.uploadStillOpen(dstBucket, dstObject, uploadID); code != s3err.ErrNone {
+		keepAlive.writeError(code)
 		return
 	}
 
 	// Calculate ETag for the part
 	etag := copyEntryETag(dstEntry)
-	setCopySourceVersionId(w, copySourceVersionId)
-	setEtag(w, etag)
-
-	writeSuccessResponseXML(w, r, buildCopyPartResult(etag, t, SSEResponseMetadata{}))
+	keepAlive.writeSuccess(func() { setEtag(w, etag) }, buildCopyPartResult(etag, t, SSEResponseMetadata{}))
 }
 
 // resolveCopySourceVersionId reports which source version a copy read: an
@@ -1331,9 +1414,7 @@ func resolveCopySourceVersionId(requested, versioningState string, entry *filer_
 // setCopySourceVersionId reports which source version a copy read, as AWS does —
 // the null version is a real version id and is echoed like any other.
 func setCopySourceVersionId(w http.ResponseWriter, versionId string) {
-	if versionId != "" {
-		w.Header().Set("x-amz-copy-source-version-id", versionId)
-	}
+	copySourceVersionHeader(versionId)(w.Header())
 }
 
 func replaceDirective(reqHeader http.Header) (replaceMeta, replaceTagging bool) {

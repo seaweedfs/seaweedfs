@@ -554,14 +554,23 @@ func isMultipartUploadEntry(entry *filer_pb.Entry) bool {
 // part along with the directory it resurrected when an abort was answered while
 // the part was in flight. It reports whether the caller may answer success.
 func (s3a *S3ApiServer) checkUploadStillOpen(w http.ResponseWriter, r *http.Request, bucket, object, uploadID string) bool {
+	if code := s3a.uploadStillOpen(bucket, object, uploadID); code != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, code)
+		return false
+	}
+	return true
+}
+
+// uploadStillOpen is checkUploadStillOpen for a caller that writes its own
+// answer: ErrNone, or the error the client must hear.
+func (s3a *S3ApiServer) uploadStillOpen(bucket, object, uploadID string) s3err.ErrorCode {
 	entry, err := s3a.uploadFiler(bucket, object).getEntry(s3a.genUploadsFolder(bucket), uploadID)
 	if err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
 		glog.Errorf("checkUploadStillOpen %s/%s: %v", bucket, uploadID, err)
-		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-		return false
+		return s3err.ErrInternalError
 	}
 	if isMultipartUploadEntry(entry) {
-		return true
+		return s3err.ErrNone
 	}
 	// the upload is gone either way, so the client still hears NoSuchUpload
 	if _, code := s3a.abortMultipartUpload(&s3.AbortMultipartUploadInput{
@@ -571,8 +580,7 @@ func (s3a *S3ApiServer) checkUploadStillOpen(w http.ResponseWriter, r *http.Requ
 	}); code != s3err.ErrNone && code != s3err.ErrNoSuchUpload {
 		glog.Warningf("checkUploadStillOpen %s/%s: part left behind, cleanup failed", bucket, uploadID)
 	}
-	s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchUpload)
-	return false
+	return s3err.ErrNoSuchUpload
 }
 
 // getMultipartSSEAlgorithm returns the canonical SSE algorithm ("AES256" or
