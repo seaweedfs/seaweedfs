@@ -2,6 +2,8 @@ package s3api
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/xml"
 	"io"
 	"net/http"
@@ -205,4 +207,23 @@ func TestSignedRequestBodyIsBoundToContentMd5(t *testing.T) {
 		_, errCode := iam.reqSignatureV4Verify(req)
 		assert.Equal(t, s3err.ErrInvalidDigest, errCode)
 	})
+}
+
+func TestGetRequestDataReaderVerifiesPresignedPayloadHash(t *testing.T) {
+	iam := newSignedPayloadTestIAM(t)
+	s3a := &S3ApiServer{iam: iam}
+	signed := []byte("object data")
+	sum := sha256.Sum256(signed)
+	req := mustNewRequest(http.MethodPut, "http://127.0.0.1:9000/bucket/key?X-Amz-Content-Sha256="+hex.EncodeToString(sum[:]), int64(len(signed)), bytes.NewReader(signed), t)
+	req.Header.Del("X-Amz-Content-Sha256")
+	req.Header.Del("Content-Md5")
+	require.NoError(t, preSignV4(iam, req, "access_key_1", "secret_key_1", 600))
+	req.Body = io.NopCloser(bytes.NewReader([]byte("other data!")))
+
+	_, errCode := iam.reqSignatureV4Verify(req)
+	require.Equal(t, s3err.ErrNone, errCode)
+	dataReader, errCode := getRequestDataReader(s3a, req)
+	require.Equal(t, s3err.ErrNone, errCode)
+	_, err := io.ReadAll(dataReader)
+	assert.ErrorContains(t, err, s3err.ErrMsgContentSha256Mismatch)
 }

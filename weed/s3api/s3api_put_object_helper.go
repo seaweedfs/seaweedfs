@@ -19,8 +19,10 @@ import (
 // newChunkedReader.
 func getRequestDataReader(s3a *S3ApiServer, r *http.Request) (io.ReadCloser, s3err.ErrorCode) {
 	var s3ErrCode s3err.ErrorCode
+	var signedSha256 []byte
 	if signed, ok := r.Body.(*signedPayloadBody); ok && signed.data == nil && signed.err == nil {
 		r.Body = signed.body
+		signedSha256 = signed.sha256
 	}
 	dataReader := r.Body
 	rAuthType := getRequestAuthType(r)
@@ -34,6 +36,9 @@ func getRequestDataReader(s3a *S3ApiServer, r *http.Request) (io.ReadCloser, s3e
 	expected, valid := expectedContentSha256(r)
 	if !valid {
 		return nil, s3err.ErrInvalidArgument
+	}
+	if signedSha256 != nil {
+		expected = signedSha256
 	}
 	if expected != nil && dataReader != nil {
 		if r.ContentLength == 0 {
