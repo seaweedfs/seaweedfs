@@ -227,3 +227,39 @@ func TestGetRequestDataReaderVerifiesPresignedPayloadHash(t *testing.T) {
 	_, err := io.ReadAll(dataReader)
 	assert.ErrorContains(t, err, s3err.ErrMsgContentSha256Mismatch)
 }
+
+func TestPrebufferedSignedBodyChecksContentMd5(t *testing.T) {
+	iam := newSignedPayloadTestIAM(t)
+	newIAMRequest := func(contentMd5 string) *http.Request {
+		body := []byte("Action=ListUsers&Version=2010-05-08")
+		req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:9000/", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Content-Md5", contentMd5)
+		now := time.Now().UTC()
+		req.Header.Set("X-Amz-Date", now.Format(iso8601Format))
+		scope := now.Format(yyyymmdd) + "/us-east-1/iam/aws4_request"
+		signed := http.Header{
+			"content-md5":  {contentMd5},
+			"content-type": {req.Header.Get("Content-Type")},
+			"host":         {req.Host},
+			"x-amz-date":   {req.Header.Get("X-Amz-Date")},
+		}
+		sum := sha256.Sum256(body)
+		canonical := getCanonicalRequest(signed, hex.EncodeToString(sum[:]), "", "/", http.MethodPost)
+		signature := getSignature(getSigningKey("secret_key_1", now.Format(yyyymmdd), "us-east-1", "iam"), getStringToSign(canonical, now, scope))
+		req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=access_key_1/"+scope+", SignedHeaders=content-md5;content-type;host;x-amz-date, Signature="+signature)
+		return req
+	}
+
+	req := newIAMRequest(getMD5HashBase64([]byte("Action=ListUsers&Version=2010-05-08")))
+	_, errCode := iam.reqSignatureV4Verify(req)
+	require.Equal(t, s3err.ErrNone, errCode)
+	_, err := io.ReadAll(req.Body)
+	assert.NoError(t, err)
+
+	req = newIAMRequest(getMD5HashBase64([]byte("other")))
+	_, errCode = iam.reqSignatureV4Verify(req)
+	require.Equal(t, s3err.ErrNone, errCode)
+	_, err = io.ReadAll(req.Body)
+	assert.ErrorIs(t, err, errContentMd5Mismatch)
+}

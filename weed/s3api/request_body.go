@@ -89,8 +89,13 @@ func (b *signedPayloadBody) Close() error {
 // Uploads read through getRequestDataReader, which verifies the body as it
 // streams instead.
 func bindSignedPayload(r *http.Request, hashedPayload string) s3err.ErrorCode {
-	if _, bound := r.Body.(*signedPayloadBody); bound {
-		return s3err.ErrNone
+	if bound, ok := r.Body.(*signedPayloadBody); ok {
+		if bound.sha256 != nil || bound.md5 != nil {
+			return s3err.ErrNone
+		}
+		// streamHashRequestBody buffered it and signed its hash; only
+		// Content-MD5 is left to check.
+		hashedPayload = unsignedPayload
 	}
 	switch hashedPayload {
 	case streamingContentSHA256, streamingContentSHA256Trailer, streamingUnsignedPayload:
