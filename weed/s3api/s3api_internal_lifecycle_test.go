@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_lifecycle_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -467,4 +469,54 @@ func TestLifecycleDelete_CurrentExpirationRequiresLatestVersion(t *testing.T) {
 			})
 		}
 	}
+}
+
+// Expired-marker cleanup removes a marker that a lock was recorded on: markers
+// are never WORM-protected, so the routed delete carries no WORM guard.
+func TestLifecycleDelete_LockedExpiredDeleteMarkerSkipsWormGuard(t *testing.T) {
+	marker := &filer_pb.Entry{
+		Name:       "v_m1",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 1_700_000_000},
+		Extended: map[string][]byte{
+			s3_constants.ExtVersionIdKey:    []byte("m1"),
+			s3_constants.ExtDeleteMarkerKey: []byte("true"),
+			s3_constants.ExtLegalHoldKey:    []byte(s3_constants.LegalHoldOn),
+		},
+	}
+	fake := &ambiguousPutFiler{apply: true, entries: map[string]*filer_pb.Entry{
+		"/buckets/b/obj.versions": {
+			Name:        "obj" + s3_constants.VersionsFolder,
+			IsDirectory: true,
+			Attributes:  &filer_pb.FuseAttributes{},
+			Extended: map[string][]byte{
+				s3_constants.ExtLatestVersionIdKey:       []byte("m1"),
+				s3_constants.ExtLatestVersionFileNameKey: []byte("v_m1"),
+			},
+		},
+		"/buckets/b/obj.versions/v_m1": proto.Clone(marker).(*filer_pb.Entry),
+	}}
+	var conditions []*filer_pb.WriteCondition
+	fake.txnCheck = func(req *filer_pb.ObjectTransactionRequest) { conditions = append(conditions, req.GetCondition()) }
+	addr := startFakeFiler(t, fake)
+	s3a := newPutTestServer(t, addr)
+	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+	s3a.bucketConfigCache.Set("b", &BucketConfig{
+		Name:             "b",
+		Versioning:       s3_constants.VersioningEnabled,
+		ObjectLockConfig: &ObjectLockConfiguration{ObjectLockEnabled: s3_constants.ObjectLockEnabled},
+	})
+	s3a.objectWriteLockClient = cluster.NewLockClient(s3a.option.GrpcDialOption, addr)
+	s3a.objectWriteLockClient.SetRing([]pb.ServerAddress{addr}, 1)
+
+	resp, err := s3a.LifecycleDelete(s3LocalPeerCtx(), &s3_lifecycle_pb.LifecycleDeleteRequest{
+		Bucket:           "b",
+		ObjectPath:       "obj",
+		VersionId:        "m1",
+		ActionKind:       s3_lifecycle_pb.ActionKind_EXPIRED_DELETE_MARKER,
+		ExpectedIdentity: computeEntryIdentity(marker),
+	})
+	require.NoError(t, err)
+	require.Equal(t, s3_lifecycle_pb.LifecycleDeleteOutcome_DONE, resp.Outcome, resp.Reason)
+	require.Len(t, conditions, 1)
+	require.Nil(t, conditions[0], "marker delete must not carry WORM guards")
 }
