@@ -667,10 +667,10 @@ func (ms *MasterServer) initialLockRingUpdate(clientType string, filerGroup stri
 	if ms.LockRingManager == nil {
 		return nil
 	}
-	// Filers are ring members; S3 gateways are lock clients that need the same
-	// view to dial a key's primary directly. Both get the initial snapshot;
-	// later membership changes already broadcast to every connected client.
-	if clientType != cluster.FilerType && clientType != cluster.S3Type {
+	// Filers are ring members; S3 gateways and mounts are lock clients that
+	// need the same view to dial a key's primary directly. All get the initial
+	// snapshot; later membership changes already broadcast to every client.
+	if clientType != cluster.FilerType && clientType != cluster.S3Type && clientType != cluster.MountType {
 		return nil
 	}
 
