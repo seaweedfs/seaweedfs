@@ -49,6 +49,9 @@ type SingleChunkCacher struct {
 	wg             sync.WaitGroup
 	cacheStartedCh chan struct{}
 	done           chan struct{} // signals when download is complete
+	// ctx is cancelled when removeConsumedLocked drops the cacher or the download ends
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 func NewReaderCache(limit int, chunkCache chunk_cache.ChunkCache, lookupFileIdFn wdclient.LookupFileIdFunctionType, cacheInvalidator CacheInvalidator, budgets ...*ReaderCacheBudget) *ReaderCache {
@@ -392,9 +395,11 @@ func (rc *ReaderCache) removeConsumed(downloader *SingleChunkCacher) {
 	}
 }
 
+// removeConsumedLocked also cancels a running download, as no reader can attach to it any more.
 func (rc *ReaderCache) removeConsumedLocked(downloader *SingleChunkCacher) (removed bool) {
 	if rc.downloaders[downloader.chunkFileId] == downloader && downloader.consumable() {
 		delete(rc.downloaders, downloader.chunkFileId)
+		downloader.cancel()
 		return true
 	}
 	return false
@@ -411,7 +416,10 @@ func (rc *ReaderCache) destroy() {
 }
 
 func newSingleChunkCacher(parent *ReaderCache, fileId string, cipherKey []byte, isGzipped bool, chunkSize int, shouldCache bool) *SingleChunkCacher {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &SingleChunkCacher{
+		ctx:            ctx,
+		cancel:         cancel,
 		parent:         parent,
 		chunkFileId:    fileId,
 		cipherKey:      cipherKey,
@@ -428,6 +436,7 @@ func newSingleChunkCacher(parent *ReaderCache, fileId string, cipherKey []byte, 
 // downloaders map, so a removal can never observe the fetch as absent.
 func (s *SingleChunkCacher) startCaching() {
 	defer func() {
+		s.cancel()
 		close(s.done)
 		s.wg.Done()
 		if s.hasCompletedError() {
@@ -443,12 +452,7 @@ func (s *SingleChunkCacher) startCaching() {
 		return
 	}
 
-	// Intentionally use context.Background(), not a request-specific context.
-	// The downloaded chunk is a shared resource: multiple concurrent readers may
-	// wait on this same download via s.done. A request-scoped context that got
-	// cancelled would abort the download and error every other waiting reader.
-	// The download always runs to completion once started; readers that cancel
-	// individually drop out via readChunkAt's select on ctx.Done().
+	// the lookup is shared with other cachers of the volume, so it must not take s.ctx
 	urlStrings, err := s.parent.lookupFileIdFn(context.Background(), s.chunkFileId)
 	if err != nil {
 		s.setError(fmt.Errorf("operation LookupFileId %s failed, err: %v", s.chunkFileId, err))
@@ -459,9 +463,16 @@ func (s *SingleChunkCacher) startCaching() {
 		return
 	}
 
-	data, fetchErr := s.fetchChunkData(context.Background(), urlStrings)
+	// not a request's context: other readers may wait on this download via s.done
+	// and it is cancelled only when removeConsumedLocked drops the cacher
+	data, fetchErr := s.fetchChunkData(s.ctx, urlStrings)
 	if fetchErr != nil {
-		data, fetchErr = s.retryFetchAfterCacheInvalidation(context.Background(), urlStrings, fetchErr)
+		data, fetchErr = s.retryFetchAfterCacheInvalidation(s.ctx, urlStrings, fetchErr)
+	}
+	// a cancelled fetch can return a partly filled buffer without an error
+	if fetchErr == nil && s.ctx.Err() != nil {
+		mem.Free(data)
+		data, fetchErr = nil, s.ctx.Err()
 	}
 
 	// Now acquire lock to update state
@@ -533,8 +544,8 @@ func (s *SingleChunkCacher) destroy() {
 
 // readChunkAt reads data from the cached chunk.
 // It waits for the download to complete if it's still in progress.
-// The ctx parameter allows the reader to cancel its wait (but the download continues
-// for other readers - see comment in startCaching about shared resource semantics).
+// The ctx parameter allows the reader to cancel its wait; the download continues
+// for the other readers and streams that still wait on it.
 // The caller must s.wg.Add(1) under the ReaderCache lock before calling; this only releases it.
 func (s *SingleChunkCacher) readChunkAt(ctx context.Context, buf []byte, offset int64) (n int, err error) {
 	defer func() {
