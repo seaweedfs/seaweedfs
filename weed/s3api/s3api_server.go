@@ -688,6 +688,9 @@ func (s3a *S3ApiServer) recheckPolicyWithObjectEntry(r *http.Request, bucket, ob
 		identity, _ := GetIdentityFromContext(r).(*Identity)
 		return refineDenialForBucketName(r, identity, s3a.authorizeAnonymousObjectRead(r, bucket, object, objectEntry))
 	}
+	if s3a.isVersionFileKey(object, objectEntry) {
+		return s3err.ErrAccessDenied
+	}
 	identityRaw := GetIdentityFromContext(r)
 	var identity *Identity
 	if identityRaw != nil {
