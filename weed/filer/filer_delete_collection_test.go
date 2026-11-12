@@ -77,8 +77,15 @@ func (s *hookedStore) DeleteEntry(ctx context.Context, p util.FullPath) error {
 // MasterClient connected to a fake master the test can observe.
 func newFilerWithFakeMaster(t *testing.T) (*Filer, *hookedStore, *collectionDeleteMaster) {
 	t.Helper()
-
 	master := &collectionDeleteMaster{calls: make(chan collectionDeleteCall, 4)}
+	f, store := newFilerWithMaster(t, master)
+	return f, store, master
+}
+
+// newFilerWithMaster connects a filer's MasterClient to master, which must
+// answer KeepConnected the way collectionDeleteMaster does.
+func newFilerWithMaster(t *testing.T, master master_pb.SeaweedServer) (*Filer, *hookedStore) {
+	t.Helper()
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -129,7 +136,7 @@ func newFilerWithFakeMaster(t *testing.T) (*Filer, *hookedStore, *collectionDele
 		f.LocalMetaLogBuffer.ShutdownLogBuffer()
 		f.LocalMetaLogBuffer.WaitForShutdown()
 	})
-	return f, store, master
+	return f, store
 }
 
 // Deleting a bucket entry deletes its collection, and the request hanging up
