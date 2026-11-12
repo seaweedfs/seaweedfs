@@ -62,7 +62,7 @@ func (s3a *S3ApiServer) isVersionFileKey(object string, extended map[string][]by
 }
 
 func (s3a *S3ApiServer) hasVersionFileShape(object string) bool {
-	key := s3_constants.NormalizeObjectKey(object)
+	key := strings.TrimSuffix(s3_constants.NormalizeObjectKey(object), "/")
 	return strings.HasSuffix(path.Dir(key), s3_constants.VersionsFolder) && strings.HasPrefix(path.Base(key), s3a.getVersionFileName(""))
 }
 

@@ -251,6 +251,7 @@ func TestSignedReadOfVersionFileKey(t *testing.T) {
 	for _, method := range []string{http.MethodGet, http.MethodHead} {
 		require.Equal(t, 200, serve(method, "o", "versionId=v1", nil))
 		require.Equal(t, 403, serve(method, "o.versions/v_v1", "", nil))
+		require.NotEqual(t, 200, serve(method, "o.versions/v_v1/", "", nil))
 		require.Equal(t, 403, serve(method, "o.versions/v_v1", "", map[string]string{"If-None-Match": "*"}))
 		require.Equal(t, 200, serve(method, "u.versions/v_literal", "", nil))
 	}
@@ -263,6 +264,8 @@ func TestSignedReadOfVersionFileKey(t *testing.T) {
 		require.Equal(t, s3err.ErrNone, s3a.recheckTagConditionedPolicyWithLookup(r, "b", "o", "v1", action, "t"))
 		require.Equal(t, s3err.ErrNone, s3a.recheckTagConditionedPolicyWithLookup(r, "b", "u.versions/v_literal", "", action, "t"))
 	}
+	require.Equal(t, s3err.ErrAccessDenied, s3a.deleteDirectoryMarker(r, "b", "o.versions/v_v1/"))
+	require.Contains(t, f.entries, "/buckets/b/o.versions/v_v1")
 }
 
 func TestAnonymousObjectACLDoesNotReplaceAuthentication(t *testing.T) {
