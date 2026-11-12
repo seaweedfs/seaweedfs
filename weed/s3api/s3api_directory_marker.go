@@ -45,6 +45,8 @@ func (s3a *S3ApiServer) deleteDirectoryMarker(r *http.Request, bucket, object st
 		// A promoted file, not a marker: "dir/" does not name its data.
 		glog.V(2).Infof("deleteDirectoryMarker: %s/%s holds uploaded data, leaving it alone", bucket, object)
 		return s3err.ErrNone
+	case s3a.isVersionFileKey(trimmedObject, entry.Extended):
+		return s3err.ErrAccessDenied
 	}
 
 	// The key is deleted the unversioned way, but Object Lock still covers it: the

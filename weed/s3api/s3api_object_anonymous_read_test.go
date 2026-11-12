@@ -223,6 +223,51 @@ func TestAnonymousObjectACLVersionAndDirectory(t *testing.T) {
 	require.Equal(t, 403, rr.Code)
 }
 
+func TestSignedReadOfVersionFileKey(t *testing.T) {
+	s3a, f := newAnonymousReadTestServer(t)
+	config, _ := s3a.getBucketConfig("b")
+	config.Versioning = "Enabled"
+	version := anonymousReadEntry(nil)
+	version.Name = "v_v1"
+	version.Extended[s3_constants.ExtVersionIdKey] = []byte("v1")
+	f.entries["/buckets/b/o.versions/v_v1"] = version
+	f.entries["/buckets/b/u.versions/v_literal"] = anonymousReadEntry(nil)
+	identity := &Identity{Name: "reader", Actions: []Action{s3_constants.ACTION_READ}}
+	serve := func(method, object, query string, headers map[string]string) int {
+		r := httptest.NewRequest(method, "/b/"+object+"?"+query, nil)
+		r = mux.SetURLVars(r, map[string]string{"bucket": "b", "object": object})
+		r = r.WithContext(s3_constants.SetIdentityInContext(r.Context(), identity))
+		for name, value := range headers {
+			r.Header.Set(name, value)
+		}
+		handler := s3a.GetObjectHandler
+		if method == http.MethodHead {
+			handler = s3a.HeadObjectHandler
+		}
+		rr := httptest.NewRecorder()
+		handler(rr, r)
+		return rr.Code
+	}
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		require.Equal(t, 200, serve(method, "o", "versionId=v1", nil))
+		require.Equal(t, 403, serve(method, "o.versions/v_v1", "", nil))
+		require.NotEqual(t, 200, serve(method, "o.versions/v_v1/", "", nil))
+		require.Equal(t, 403, serve(method, "o.versions/v_v1", "", map[string]string{"If-None-Match": "*"}))
+		require.Equal(t, 200, serve(method, "u.versions/v_literal", "", nil))
+	}
+	r := httptest.NewRequest(http.MethodPut, "/b/dst", nil)
+	r = r.WithContext(s3_constants.SetIdentityInContext(r.Context(), identity))
+	require.Equal(t, s3err.ErrAccessDenied, s3a.recheckCopySourcePolicy(r, "b", "o.versions/v_v1", "", version.Extended, "CopyObjectHandler"))
+	require.Equal(t, s3err.ErrNone, s3a.recheckCopySourcePolicy(r, "b", "o", "v1", version.Extended, "CopyObjectHandler"))
+	for _, action := range []string{s3_constants.ACTION_GET_OBJECT_RETENTION, s3_constants.ACTION_PUT_OBJECT_LEGAL_HOLD, string(s3_constants.ACTION_WRITE)} {
+		require.Equal(t, s3err.ErrAccessDenied, s3a.recheckTagConditionedPolicyWithLookup(r, "b", "o.versions/v_v1", "", action, "t"))
+		require.Equal(t, s3err.ErrNone, s3a.recheckTagConditionedPolicyWithLookup(r, "b", "o", "v1", action, "t"))
+		require.Equal(t, s3err.ErrNone, s3a.recheckTagConditionedPolicyWithLookup(r, "b", "u.versions/v_literal", "", action, "t"))
+	}
+	require.Equal(t, s3err.ErrAccessDenied, s3a.deleteDirectoryMarker(r, "b", "o.versions/v_v1/"))
+	require.Contains(t, f.entries, "/buckets/b/o.versions/v_v1")
+}
+
 func TestAnonymousObjectACLDoesNotReplaceAuthentication(t *testing.T) {
 	s3a, f := newAnonymousReadTestServer(t)
 	f.entries["/buckets/b/o"] = anonymousReadEntry(anonymousReadGrant("READ"))
