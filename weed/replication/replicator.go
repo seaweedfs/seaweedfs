@@ -101,7 +101,7 @@ func (r *Replicator) Replicate(ctx context.Context, key string, message *filer_p
 
 	if oldEntry != nil && newEntry == nil {
 		glog.V(4).Infof("deleting %v", oldSinkKey)
-		return sink.DeleteEntry(r.sink, oldSinkKey, oldEntry.IsDirectory, message.DeleteChunks, filer.IsMetadataOnlyDelete(oldEntry), message.Signatures)
+		return sink.DeleteEntryVersion(r.sink, oldSinkKey, oldEntry, 0, message.DeleteChunks, filer.IsMetadataOnlyDelete(oldEntry), message.Signatures)
 	}
 	if oldEntry == nil && newEntry != nil {
 		glog.V(4).Infof("creating %v", oldSinkKey)
@@ -125,7 +125,7 @@ func (r *Replicator) Replicate(ctx context.Context, key string, message *filer_p
 		if err := r.sink.CreateEntry(newSinkKey, newEntry, message.Signatures); err != nil {
 			return fmt.Errorf("create renamed entry %v: %w", newSinkKey, err)
 		}
-		return r.sink.DeleteEntry(oldSinkKey, oldEntry.IsDirectory, false, message.Signatures)
+		return sink.DeleteEntryVersion(r.sink, oldSinkKey, oldEntry, 0, false, false, message.Signatures)
 	}
 
 	// oldSinkKey == newSinkKey: pure in-place update (same path, content/attrs changed).
