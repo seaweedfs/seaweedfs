@@ -213,7 +213,7 @@ func TestPruneOnANonOwnerLeavesTheDeleteToTheOwner(t *testing.T) {
 	fs.option.Host = self
 	fs.grpcDialOption = grpc.WithTransportCredentials(insecure.NewCredentials())
 	fs.filer.Dlm = lock_manager.NewDistributedLockManager(self)
-	fs.filer.Dlm.LockRing.SetSnapshot([]pb.ServerAddress{self, "127.0.0.1:18889"}, 1)
+	fs.filer.Dlm.LockRing.SetSnapshot([]pb.ServerAddress{self, deadAddress(t)}, 1)
 	var entry *filer.Entry
 	for i := 0; i < 4000 && entry == nil; i++ {
 		p := util.FullPath(fmt.Sprintf("/buckets/b/obj-%d.bin", i))
