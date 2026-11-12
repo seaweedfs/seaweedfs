@@ -11,6 +11,8 @@ import (
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
 // Regression: wfs_save.go used to wrap the gRPC error with fmt.Errorf(... %v ...)
@@ -97,6 +99,7 @@ func TestIsRetryableFilerError(t *testing.T) {
 		{"permission_denied", status.Error(codes.PermissionDenied, "no access"), false},
 		{"unauthenticated", status.Error(codes.Unauthenticated, "missing creds"), false},
 		{"failed_precondition", status.Error(codes.FailedPrecondition, "not empty"), false},
+		{"create_condition_failed", fmt.Errorf("fh flush create /f: CreateEntry /f: %w", filer_pb.ErrPreconditionFailed), false},
 		{"plain_error_retries", errors.New("random network glitch"), true},
 		{"wrapped_canceled_still_retries", fmt.Errorf("ctx: %w", status.Error(codes.Canceled, "closing")), true},
 		{"wrapped_not_found_still_skipped", fmt.Errorf("ctx: %w", status.Error(codes.NotFound, "gone")), false},

@@ -10,8 +10,6 @@ import (
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -35,7 +33,7 @@ func (s *contentFlushConditionFiler) CreateEntry(ctx context.Context, r *filer_p
 			matches = s.entry == nil
 		}
 		if !matches {
-			return nil, status.Error(codes.FailedPrecondition, "entry changed")
+			return &filer_pb.CreateEntryResponse{Error: "precondition failed", ErrorCode: filer_pb.FilerError_PRECONDITION_FAILED}, nil
 		}
 	}
 	s.entry = proto.Clone(r.Entry).(*filer_pb.Entry)
