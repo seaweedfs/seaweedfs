@@ -3,6 +3,8 @@ package mount
 import (
 	"context"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 const metadataFlushRetries = 3
@@ -19,6 +21,24 @@ var metadataFlushSleep = func(ctx context.Context, d time.Duration) {
 
 func retryMetadataFlush(ctx context.Context, flush func() error, onRetry func(nextAttempt, totalAttempts int, backoff time.Duration, err error)) error {
 	return retryMetadataFlushIf(ctx, flush, nil, onRetry)
+}
+
+// retryMetadataFlushUntil runs retryMetadataFlush, then keeps retrying every
+// util.RetryWaitTime for as long as keepRetrying accepts the error. A zero
+// totalAttempts in onRetry marks those unbounded attempts.
+func retryMetadataFlushUntil(ctx context.Context, flush func() error, keepRetrying func(error) bool, onRetry func(nextAttempt, totalAttempts int, backoff time.Duration, err error)) error {
+	err := retryMetadataFlush(ctx, flush, onRetry)
+	for attempt := metadataFlushRetries + 2; err != nil && keepRetrying(err) && ctx.Err() == nil; attempt++ {
+		if onRetry != nil {
+			onRetry(attempt, 0, util.RetryWaitTime, err)
+		}
+		metadataFlushSleep(ctx, util.RetryWaitTime)
+		if ctx.Err() != nil {
+			break
+		}
+		err = flush()
+	}
+	return err
 }
 
 // retryMetadataFlushIf retries flush with exponential backoff, stopping early
