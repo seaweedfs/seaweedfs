@@ -657,3 +657,51 @@ func TestAttributeSaveSurvivesInterrupt(t *testing.T) {
 		})
 	}
 }
+
+// The test mount maps local uid 1000 to filer uid 2000, so a file the filer
+// records as uid 1000 reads back as local 1000 and maps forward to 2000.
+func TestAttributeSaveKeepsCollidingFilerIds(t *testing.T) {
+	for _, op := range []string{"chmod", "setxattr"} {
+		t.Run(op, func(t *testing.T) {
+			wfs := newInvalidateTestWFS(t)
+			wfs.atimeMap = make(map[uint64]time.Time)
+			current := attributeAppendEntry(3)
+			current.Attributes.Uid = 1000
+			fake := &attributeCASFiler{entry: proto.Clone(current).(*filer_pb.Entry)}
+			startFakeFiler(t, wfs, fake)
+			path := util.FullPath("/dir/file")
+			wfs.inodeToPath.Lookup(util.FullPath("/dir"), 1, true, false, 0, false)
+			wfs.inodeToPath.Lookup(path, 1, false, false, 42, true)
+			wfs.inodeToPath.MarkChildrenCached(util.FullPath("/dir"))
+			if err := wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry("/dir", current), 1); err != nil {
+				t.Fatal(err)
+			}
+			var code fuse.Status
+			if op == "setxattr" {
+				in := &fuse.SetXAttrIn{}
+				in.NodeId = 42
+				code = wfs.SetXAttr(nil, in, "user.test", []byte("new"))
+			} else {
+				in := &fuse.SetAttrIn{}
+				in.NodeId = 42
+				in.Valid, in.Mode = fuse.FATTR_MODE, 0600
+				code = wfs.SetAttr(nil, in, &fuse.AttrOut{})
+			}
+			if code != fuse.OK {
+				t.Fatalf("%s on a colliding uid: %v", op, code)
+			}
+			fake.mu.Lock()
+			defer fake.mu.Unlock()
+			if fake.entry.Attributes.Uid != 1000 {
+				t.Fatalf("%s rewrote the filer uid to %d", op, fake.entry.Attributes.Uid)
+			}
+			cached, _, err := wfs.metaCache.FindEntry(context.Background(), path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cached.Attr.Uid != 1000 {
+				t.Fatalf("local cache uid %d, want 1000", cached.Attr.Uid)
+			}
+		})
+	}
+}

@@ -42,6 +42,10 @@ func (wfs *WFS) saveEntryAttributes(ctx context.Context, path util.FullPath, bas
 	defer cancel()
 	dir, name := path.DirAndName()
 	inode := base.GetAttributes().GetInode()
+	localUid, localGid := base.GetAttributes().GetUid(), base.GetAttributes().GetGid()
+	// The snapshot has local ids only. Where the id mapping is not one-to-one
+	// the filer ids derived from them can miss; the re-read supplies the real ones.
+	filerUid, filerGid := wfs.option.UidGidMapper.LocalToFiler(localUid, localGid)
 	for attempt := 0; attempt < 3; attempt++ {
 		if attempt > 0 {
 			// Bypass the mount cache: it supplied the snapshot just refused.
@@ -61,7 +65,9 @@ func (wfs *WFS) saveEntryAttributes(ctx context.Context, path util.FullPath, bas
 			if base == nil {
 				return nil, fuse.ENOENT
 			}
+			filerUid, filerGid = base.GetAttributes().GetUid(), base.GetAttributes().GetGid()
 			wfs.mapPbIdFromFilerToLocal(base)
+			localUid, localGid = base.GetAttributes().GetUid(), base.GetAttributes().GetGid()
 			if inode != 0 && base.GetAttributes().GetInode() != inode {
 				return nil, fuse.Status(syscall.ESTALE)
 			}
@@ -71,7 +77,18 @@ func (wfs *WFS) saveEntryAttributes(ctx context.Context, path util.FullPath, bas
 			return nil, code
 		}
 		// Whole-entry clones are as large as the chunk list; switch ids in place.
-		restoreBase, restoreNext := wfs.mapIdsToFiler(base), wfs.mapIdsToFiler(next)
+		// An id the syscall left alone keeps the filer's own value.
+		toFiler := func(uid, gid uint32) (uint32, uint32) {
+			mappedUid, mappedGid := wfs.option.UidGidMapper.LocalToFiler(uid, gid)
+			if uid == localUid {
+				mappedUid = filerUid
+			}
+			if gid == localGid {
+				mappedGid = filerGid
+			}
+			return mappedUid, mappedGid
+		}
+		restoreBase, restoreNext := mapIdsToFiler(base, toFiler), mapIdsToFiler(next, toFiler)
 		req := &filer_pb.UpdateEntryRequest{Directory: dir, Entry: next, Condition: &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{Kind: filer_pb.WriteCondition_IF_ENTRY_EQUAL, ExpectedEntry: base}}}, Signatures: []int32{wfs.signature}}
 		var resp *filer_pb.UpdateEntryResponse
 		// The stream currently reduces FailedPrecondition to EIO. Use the unary
@@ -98,13 +115,13 @@ func (wfs *WFS) saveEntryAttributes(ctx context.Context, path util.FullPath, bas
 
 // mapIdsToFiler maps entry's uid/gid to the filer's and returns a func that
 // puts the local ids back exactly; mapping back can differ when the ids collide.
-func (wfs *WFS) mapIdsToFiler(entry *filer_pb.Entry) (restore func()) {
+func mapIdsToFiler(entry *filer_pb.Entry, toFiler func(uid, gid uint32) (uint32, uint32)) (restore func()) {
 	attr := entry.GetAttributes()
 	if attr == nil {
 		return func() {}
 	}
 	uid, gid := attr.Uid, attr.Gid
-	wfs.mapPbIdFromLocalToFiler(entry)
+	attr.Uid, attr.Gid = toFiler(uid, gid)
 	return func() { attr.Uid, attr.Gid = uid, gid }
 }
 
