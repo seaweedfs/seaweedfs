@@ -7,6 +7,7 @@ import (
 	"io"
 	"math/rand"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -144,6 +145,53 @@ func TestUploadKeepsMarginalGzipUncompressed(t *testing.T) {
 	}
 	assert.False(t, stored.IsCompressed(), "gzip saved less than 10%, data should stay uncompressed")
 	assert.Equal(t, data, stored.Data)
+}
+
+type storingClient struct {
+	stored *needle.Needle
+}
+
+func (c *storingClient) Do(req *http.Request) (*http.Response, error) {
+	n, _, _, err := needle.CreateNeedleFromRequest(req, false, 1024*1024, &bytes.Buffer{})
+	if err != nil {
+		return nil, err
+	}
+	c.stored = n
+	return &http.Response{StatusCode: http.StatusCreated, Body: io.NopCloser(strings.NewReader("{}"))}, nil
+}
+
+func TestUploadProbesGenericBinaryMimeTypes(t *testing.T) {
+	zeros := make([]byte, 64*1024)
+	random := make([]byte, 64*1024)
+	rand.New(rand.NewSource(1)).Read(random)
+	for _, tc := range []struct {
+		mimeType string
+		data     []byte
+		gzipped  bool
+	}{
+		{"", zeros, true},
+		{"application/octet-stream", zeros, true},
+		{"binary/octet-stream", zeros, true},
+		{"Application/Octet-Stream; charset=binary", zeros, true},
+		{"application/octet-stream", random, false},
+		{"video/mp4", zeros, false},
+	} {
+		client := &storingClient{}
+		result, err := newUploader(client).UploadData(context.Background(), tc.data, &UploadOption{
+			UploadUrl: "http://localhost:8080/389,0f084d17353afda0",
+			MimeType:  tc.mimeType,
+		})
+		if err != nil || client.stored == nil {
+			t.Fatalf("%q: upload: %v", tc.mimeType, err)
+		}
+		assert.Equal(t, tc.gzipped, client.stored.IsCompressed(), "mime %q", tc.mimeType)
+		assert.Equal(t, tc.gzipped, result.Gzip > 0, "mime %q", tc.mimeType)
+		if tc.gzipped {
+			unzipped, err := util.DecompressData(client.stored.Data)
+			assert.NoError(t, err)
+			assert.Equal(t, tc.data, unzipped)
+		}
+	}
 }
 
 func TestReplicationKeepsTheSourceMime(t *testing.T) {
