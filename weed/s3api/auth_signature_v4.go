@@ -78,7 +78,7 @@ func streamHashRequestBody(r *http.Request, sizeLimit int64) (string, error) {
 		return "", err
 	}
 
-	r.Body = &signedPayloadBody{body: r.Body, data: bytes.NewReader(body)}
+	(&signedPayloadBody{data: bytes.NewReader(body)}).wrap(&r.Body)
 
 	if len(body) == 0 {
 		return emptySHA256, nil

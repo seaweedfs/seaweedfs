@@ -84,6 +84,22 @@ func (b *signedPayloadBody) Close() error {
 	return b.body.Close()
 }
 
+func (b *signedPayloadBody) wrap(body *io.ReadCloser) {
+	b.body = *body
+	*body = b
+}
+
+// unwrapSignedPayload puts back the raw body of a signedPayloadBody nothing has
+// read yet, for readers that verify it as it streams, and returns the hash it
+// was bound to.
+func unwrapSignedPayload(body *io.ReadCloser) []byte {
+	if b, ok := (*body).(*signedPayloadBody); ok && b.data == nil && b.err == nil {
+		*body = b.body
+		return b.sha256
+	}
+	return nil
+}
+
 // bindSignedPayload ties the request body to hashedPayload, the payload hash a
 // V4 signature covered (UNSIGNED-PAYLOAD for V2), and to any Content-MD5.
 // Uploads read through getRequestDataReader, which verifies the body as it
@@ -129,13 +145,13 @@ func bindSignedPayload(r *http.Request, hashedPayload string) s3err.ErrorCode {
 		}
 		return s3err.ErrNone
 	}
-	r.Body = &signedPayloadBody{
-		body:   r.Body,
+	signed := &signedPayloadBody{
 		size:   r.ContentLength,
 		limit:  s3_constants.GetRequestBodyLimitFromContext(r, iamRequestBodyLimit),
 		sha256: expected,
 		md5:    contentMd5,
 	}
+	signed.wrap(&r.Body)
 	return s3err.ErrNone
 }
 
