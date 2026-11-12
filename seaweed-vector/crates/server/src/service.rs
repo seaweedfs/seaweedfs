@@ -9,16 +9,18 @@ use lance::dataset::ProjectionRequest;
 use lance::dataset::WriteParams;
 use lance::dataset::{MergeInsertBuilder, WhenMatched, WhenNotMatched};
 use lance::io::WrappingObjectStore;
+use lance::session::Session;
 use lance::table::format::Fragment;
 use prost_types::{ListValue, Struct, Value, value::Kind};
 use std::collections::{BTreeMap, HashMap};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tonic::{Request, Response, Status};
 use weed_lance_worker::catalog::TableDescription;
 use weed_lance_worker::dataset;
 use weed_lance_worker::direct_read::{DirectReads, Wrappers};
 use weed_lance_worker::jobs::vector_index::is_vector_table;
 use weed_vector_core::index;
+use weed_vector_core::maintenance::SharedLeases;
 use weed_vector_core::query::{self, Query};
 use weed_vector_core::table::VectorTable;
 
@@ -55,7 +57,9 @@ const KEY_COLUMN: &str = "key";
 const METADATA_COLUMN: &str = "metadata";
 const VECTOR_COLUMN: &str = "vector";
 const ROW_ID_COLUMN: &str = "_rowid";
-fn schema_for(
+const DEFAULT_INDEX_CACHE_BYTES: usize = 1 << 30;
+const DEFAULT_METADATA_CACHE_BYTES: usize = 256 << 20;
+pub(crate) fn schema_for(
     dimension: usize,
     metric: pb::DistanceMetric,
     non_filterable: &[String],
@@ -444,9 +448,85 @@ fn resolved(table: &pb::Table, schemes: &[&str]) -> Option<TableDescription> {
     })
 }
 
+/// Marks the table an index was created as, in its schema metadata, which
+/// every later version keeps.
+const TABLE_ID_KEY: &str = "weed_vector_table_id";
+
+/// The table a dataset was created as; empty for one created before tables
+/// were marked.
+pub(crate) fn table_id(dataset: &Dataset) -> &str {
+    dataset
+        .schema()
+        .metadata
+        .get(TABLE_ID_KEY)
+        .map_or("", String::as_str)
+}
+
+/// The session reads share, and the table each location held when this
+/// session first read it. Lance keys some of its caches by location and
+/// version alone, and an index dropped and created again at its location
+/// numbers its versions from 1 again, so a session that sees a location hold
+/// another table starts over.
+pub(crate) struct Reads {
+    pub(crate) session: Arc<Session>,
+    generation: u64,
+    tables: HashMap<String, String>,
+}
+
+/// Opened tables kept for the next read of them.
+const MAX_HANDLES: u64 = 1024;
+
+fn handle_key(table: &pb::Table) -> (String, bool) {
+    (table.location.clone(), table.sse_s3)
+}
+
+/// Locations a session remembers before it starts over.
+const MAX_READ_TABLES: usize = 100_000;
+
+impl Reads {
+    fn new(index_bytes: usize, metadata_bytes: usize) -> Self {
+        Self {
+            session: Arc::new(Session::new(
+                index_bytes,
+                metadata_bytes,
+                Default::default(),
+            )),
+            generation: 0,
+            tables: HashMap::new(),
+        }
+    }
+
+    /// Whether a dataset of `table_id` at `location`, opened in this session,
+    /// may be read. Otherwise the session was replaced and the caller opens
+    /// the table again.
+    fn admit(&mut self, location: &str, table_id: &str, (index, metadata): (usize, usize)) -> bool {
+        match self.tables.get(location) {
+            Some(seen) if seen == table_id => return true,
+            None if self.tables.len() < MAX_READ_TABLES => {
+                self.tables
+                    .insert(location.to_string(), table_id.to_string());
+                return true;
+            }
+            _ => {}
+        }
+        let generation = self.generation + 1;
+        *self = Self::new(index, metadata);
+        self.generation = generation;
+        false
+    }
+}
+
 pub struct VectorServer {
     storage: Option<DirectReads>,
     read_cache: Option<ReadCache>,
+    /// Lance's index and metadata caches, shared by every request that only
+    /// reads. Writes open in a session of their own.
+    pub(crate) reads: Mutex<Reads>,
+    /// A table opened by an earlier read, by location and encryption, with
+    /// the generation of the session it was opened in.
+    pub(crate) handles: moka::sync::Cache<(String, bool), (u64, Dataset)>,
+    lance_cache_bytes: (usize, usize),
+    leases: SharedLeases,
     nprobes: Option<usize>,
     /// URI schemes a table's location may have.
     schemes: &'static [&'static str],
@@ -463,6 +543,13 @@ impl VectorServer {
         Self {
             storage: None,
             read_cache: None,
+            reads: Mutex::new(Reads::new(
+                DEFAULT_INDEX_CACHE_BYTES,
+                DEFAULT_METADATA_CACHE_BYTES,
+            )),
+            lance_cache_bytes: (DEFAULT_INDEX_CACHE_BYTES, DEFAULT_METADATA_CACHE_BYTES),
+            handles: moka::sync::Cache::new(MAX_HANDLES),
+            leases: SharedLeases::default(),
             nprobes: None,
             schemes: &["s3"],
         }
@@ -485,6 +572,13 @@ impl VectorServer {
     /// Unset only for tests on an in-process store.
     pub fn with_storage(mut self, storage: DirectReads) -> Self {
         self.storage = Some(storage);
+        self
+    }
+
+    /// Bytes of loaded indexes and of table metadata kept across reads.
+    pub fn with_lance_caches(mut self, index_bytes: usize, metadata_bytes: usize) -> Self {
+        self.reads = Mutex::new(Reads::new(index_bytes, metadata_bytes));
+        self.lance_cache_bytes = (index_bytes, metadata_bytes);
         self
     }
 
@@ -529,9 +623,72 @@ impl VectorServer {
     }
 
     async fn open(&self, table: &pb::Table) -> Result<Dataset, Status> {
+        self.open_in(table, None).await
+    }
+
+    /// [`Self::open`] in the shared session, for a request that only reads.
+    async fn open_to_read(&self, table: &pb::Table) -> Result<Dataset, Status> {
+        loop {
+            let (session, generation) = {
+                let reads = self.reads.lock().unwrap();
+                (reads.session.clone(), reads.generation)
+            };
+            let dataset = match self.handle(table, generation).await? {
+                Some(dataset) => dataset,
+                None => {
+                    let dataset = self.open_in(table, Some(session)).await?;
+                    // Under the lock, so no handle of a replaced session
+                    // lands after the replacement cleared them.
+                    let reads = self.reads.lock().unwrap();
+                    if table.version == 0 && reads.generation == generation {
+                        self.handles
+                            .insert(handle_key(table), (generation, dataset.clone()));
+                    }
+                    dataset
+                }
+            };
+            let mut reads = self.reads.lock().unwrap();
+            if reads.generation != generation {
+                continue;
+            }
+            if reads.admit(&table.location, table_id(&dataset), self.lance_cache_bytes) {
+                return Ok(dataset);
+            }
+            // The handles hold the replaced session and its caches.
+            self.handles.invalidate_all();
+        }
+    }
+
+    /// The table from the handle an earlier read of it left in this session,
+    /// moved to the version asked for: the latest costs a listing of its
+    /// versions, not a new store and manifest read.
+    async fn handle(&self, table: &pb::Table, generation: u64) -> Result<Option<Dataset>, Status> {
+        self.describe(table)?;
+        let key = handle_key(table);
+        let Some((at, mut dataset)) = self.handles.get(&key) else {
+            return Ok(None);
+        };
+        if at != generation {
+            return Ok(None);
+        }
+        let moved = match table.version {
+            0 => dataset.checkout_latest().await.map(|()| dataset),
+            version => dataset.checkout_version(version).await,
+        };
+        moved.map(Some).map_err(|err| {
+            self.handles.invalidate(&key);
+            open_status(err.into())
+        })
+    }
+
+    async fn open_in(
+        &self,
+        table: &pb::Table,
+        session: Option<Arc<Session>>,
+    ) -> Result<Dataset, Status> {
         let description = self.describe(table)?;
         let wrapper = self.wrapper(table);
-        let mut dataset = dataset::open_at(&description, wrapper)
+        let mut dataset = dataset::open_at(&description, wrapper, session)
             .await
             .map_err(open_status)?;
         if table.version != 0 {
@@ -564,6 +721,13 @@ impl VectorService for VectorServer {
         // The gateway has already created the table through the catalog.
         let description = self.describe(&table)?;
         let schema = schema_for(dimension, metric, &req.non_filterable_metadata_keys);
+        let schema = Arc::new(Schema::new_with_metadata(
+            schema.fields().clone(),
+            HashMap::from([(
+                TABLE_ID_KEY.to_string(),
+                uuid::Uuid::new_v4().simple().to_string(),
+            )]),
+        ));
         let empty = RecordBatch::new_empty(schema.clone());
         let reader = arrow_array::RecordBatchIterator::new(vec![Ok(empty)].into_iter(), schema);
         let dataset = Dataset::write(
@@ -680,12 +844,10 @@ impl VectorService for VectorServer {
         let table = req
             .table
             .ok_or_else(|| Status::invalid_argument("missing table"))?;
-        let dataset = self.open(&table).await?;
+        let dataset = self.open_to_read(&table).await?;
         // Lease the resolved version so maintenance cannot reclaim its files
         // while this query runs against it.
-        let _lease = weed_vector_core::maintenance::try_pin(&dataset)
-            .await
-            .map_err(internal)?;
+        let _lease = self.leases.try_pin(&dataset).await.map_err(internal)?;
         let resolved = VectorTable::resolve(&dataset, None, Some(KEY_COLUMN)).map_err(invalid)?;
         let columns = projection(req.return_data, req.return_metadata);
         let batches = query::get(&dataset, &resolved, &req.keys, Some(&columns))
@@ -730,7 +892,7 @@ impl VectorService for VectorServer {
                 "segment_index must be below segment_count, which is at most {MAX_SEGMENTS}"
             )));
         }
-        let dataset = self.open(&table).await?;
+        let dataset = self.open_to_read(&table).await?;
         let offset: u64 = if req.next_token.is_empty() {
             0
         } else {
@@ -750,9 +912,7 @@ impl VectorService for VectorServer {
             // Data and metadata come from a second read of this version, so
             // lease it as get_vectors does.
             let _lease = if columns.len() > 1 {
-                weed_vector_core::maintenance::try_pin(&dataset)
-                    .await
-                    .map_err(internal)?
+                self.leases.try_pin(&dataset).await.map_err(internal)?
             } else {
                 None
             };
@@ -797,12 +957,10 @@ impl VectorService for VectorServer {
         let table = req
             .table
             .ok_or_else(|| Status::invalid_argument("missing table"))?;
-        let dataset = self.open(&table).await?;
+        let dataset = self.open_to_read(&table).await?;
         // Lease the resolved version so maintenance cannot reclaim its files
         // while this query runs against it.
-        let _lease = weed_vector_core::maintenance::try_pin(&dataset)
-            .await
-            .map_err(internal)?;
+        let _lease = self.leases.try_pin(&dataset).await.map_err(internal)?;
         let resolved = VectorTable::resolve(&dataset, None, Some(KEY_COLUMN)).map_err(invalid)?;
         if req.query_vector.len() != resolved.dimension {
             return Err(Status::invalid_argument(format!(

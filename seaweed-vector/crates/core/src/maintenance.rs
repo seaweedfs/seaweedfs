@@ -2,8 +2,8 @@
 //! and version tags act as the lease maintenance must respect.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{LazyLock, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, LazyLock, Mutex, Weak};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use lance::Dataset;
@@ -21,6 +21,11 @@ const FOREIGN_TTL: Duration = Duration::from_secs(24 * 3600);
 /// Expired-lease scans run at most once per interval per dataset, not per
 /// request.
 const REAP_INTERVAL: Duration = Duration::from_secs(60);
+/// How long a shared lease stays after the last read that took it.
+const SHARED_LINGER: Duration = Duration::from_secs(10);
+/// A shared lease is handed out for this long after it was taken, then
+/// replaced, so a busy version's tag never ages into a reaper's TTL.
+const SHARED_FOR: Duration = Duration::from_secs(300);
 /// A process-unique owner id embedded in lease tags so a reaper only applies
 /// the short TTL to its own leases.
 static INSTANCE: LazyLock<String> = LazyLock::new(|| Uuid::new_v4().simple().to_string());
@@ -135,6 +140,104 @@ async fn release(dataset: &Dataset, tag: &str) -> Result<()> {
 fn untrack(tag: &str) {
     if let Ok(mut live) = LIVE_TAGS.lock() {
         live.remove(tag);
+    }
+}
+
+/// Leases that reads of one version share: the first read tags the version,
+/// reads that follow reuse the tag, and the tag goes once no read has taken it
+/// for [`SHARED_LINGER`]. Spares a tag write and delete per read.
+pub struct SharedLeases {
+    /// By location, version and manifest ETag: a table dropped and created
+    /// again at its location reuses version numbers, not manifests.
+    held: Mutex<Held>,
+    linger: Duration,
+    share_for: Duration,
+}
+
+type LeaseKey = (String, u64, Option<String>);
+
+#[derive(Default)]
+struct Held {
+    slots: HashMap<LeaseKey, Slot>,
+    /// Slots are pruned once they reach this many, so a lookup does not
+    /// scan them all.
+    prune_at: usize,
+}
+/// Reads of a version that find no lease wait here for the first to take it.
+type Slot = Arc<tokio::sync::Mutex<Weak<SharedLease>>>;
+
+impl Default for SharedLeases {
+    fn default() -> Self {
+        Self {
+            held: Mutex::default(),
+            linger: SHARED_LINGER,
+            share_for: SHARED_FOR,
+        }
+    }
+}
+
+/// A lease held for as long as any read, or the linger after the last one,
+/// keeps it.
+pub struct SharedLease {
+    _lease: Lease,
+    taken: Instant,
+}
+
+impl SharedLeases {
+    /// [`try_pin`], reusing a lease another read of this version holds.
+    pub async fn try_pin(&self, dataset: &Dataset) -> Result<Option<Arc<SharedLease>>> {
+        let key = (
+            dataset.uri().to_string(),
+            dataset.version().version,
+            dataset.manifest_location().e_tag.clone(),
+        );
+        let slot = match self.held.lock() {
+            Ok(mut held) => {
+                if held.slots.len() >= held.prune_at {
+                    // A slot another read has taken but not yet locked stays.
+                    held.slots.retain(|_, slot| {
+                        Arc::strong_count(slot) > 1
+                            || slot
+                                .try_lock()
+                                .map_or(true, |lease| lease.strong_count() > 0)
+                    });
+                    held.prune_at = (2 * held.slots.len()).max(64);
+                    // A burst's allocation would otherwise make every later
+                    // prune scan it.
+                    let capacity = held.prune_at;
+                    held.slots.shrink_to(capacity);
+                }
+                held.slots.entry(key).or_default().clone()
+            }
+            Err(_) => Slot::default(),
+        };
+        let mut slot = slot.lock().await;
+        let lease = match slot
+            .upgrade()
+            .filter(|lease| lease.taken.elapsed() < self.share_for)
+        {
+            Some(lease) => lease,
+            None => {
+                let Some(lease) = try_pin(dataset).await? else {
+                    return Ok(None);
+                };
+                let lease = Arc::new(SharedLease {
+                    _lease: lease,
+                    taken: Instant::now(),
+                });
+                *slot = Arc::downgrade(&lease);
+                lease
+            }
+        };
+        drop(slot);
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            let (lingering, linger) = (lease.clone(), self.linger);
+            handle.spawn(async move {
+                tokio::time::sleep(linger).await;
+                drop(lingering);
+            });
+        }
+        Ok(Some(lease))
     }
 }
 
@@ -322,6 +425,131 @@ mod tests {
         assert_eq!(dataset.tags().list().await.unwrap().len(), 2);
         a.release().await.unwrap();
         b.release().await.unwrap();
+    }
+
+    /// Reads of one version share a tag, another version gets its own, and
+    /// the tags go once the linger after the last read has passed.
+    #[tokio::test]
+    async fn reads_of_a_version_share_one_lease() {
+        let dir = TempDir::new().unwrap();
+        let mut dataset =
+            testing::write_dataset(&dir, &testing::vectors(4, 4), &["a", "b", "c", "d"]).await;
+        let leases = SharedLeases {
+            linger: Duration::from_millis(50),
+            ..Default::default()
+        };
+        let a = leases.try_pin(&dataset).await.unwrap().unwrap();
+        let b = leases.try_pin(&dataset).await.unwrap().unwrap();
+        assert!(Arc::ptr_eq(&a, &b));
+        assert_eq!(dataset.tags().list().await.unwrap().len(), 1);
+
+        testing::append_dataset(&mut dataset, &testing::vectors(1, 4), &["e"]).await;
+        let c = leases.try_pin(&dataset).await.unwrap().unwrap();
+        assert!(!Arc::ptr_eq(&a, &c));
+        assert_eq!(dataset.tags().list().await.unwrap().len(), 2);
+
+        drop((a, b, c));
+        tokio::time::sleep(leases.linger).await;
+        let mut left = usize::MAX;
+        for _ in 0..1000 {
+            // A listing that meets a tag as it is deleted fails; try again.
+            if let Ok(tags) = dataset.tags().list().await {
+                left = tags.len();
+            }
+            if left == 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(left, 0);
+    }
+
+    /// Reads that arrive together, before any lease exists, share the one the
+    /// first takes.
+    #[tokio::test]
+    async fn concurrent_reads_take_one_lease() {
+        let dir = TempDir::new().unwrap();
+        let dataset =
+            testing::write_dataset(&dir, &testing::vectors(4, 4), &["a", "b", "c", "d"]).await;
+        let leases = SharedLeases::default();
+        let pins: Vec<_> = futures::future::join_all((0..8).map(|_| leases.try_pin(&dataset)))
+            .await
+            .into_iter()
+            .map(|lease| lease.unwrap().unwrap())
+            .collect();
+        assert!(pins.iter().all(|lease| Arc::ptr_eq(lease, &pins[0])));
+        assert_eq!(dataset.tags().list().await.unwrap().len(), 1);
+    }
+
+    /// A table dropped and written again at its location gets its own lease
+    /// for a version number the old table had.
+    #[tokio::test]
+    async fn a_recreated_table_takes_its_own_lease() {
+        let dir = TempDir::new().unwrap();
+        let rows = testing::vectors(4, 4);
+        let old = testing::write_dataset(&dir, &rows, &["a", "b", "c", "d"]).await;
+        let leases = SharedLeases::default();
+        let first = leases.try_pin(&old).await.unwrap().unwrap();
+        std::fs::remove_dir_all(dir.path()).unwrap();
+        let new = testing::write_dataset(&dir, &rows, &["e", "f", "g", "h"]).await;
+        assert_eq!(new.version().version, old.version().version);
+        let second = leases.try_pin(&new).await.unwrap().unwrap();
+        assert!(!Arc::ptr_eq(&first, &second));
+        assert_eq!(new.tags().list().await.unwrap().len(), 1);
+    }
+
+    /// Slots of released leases are pruned as new versions come in.
+    #[tokio::test]
+    async fn released_lease_slots_are_pruned() {
+        let dir = TempDir::new().unwrap();
+        let mut dataset = testing::write_dataset(&dir, &testing::vectors(1, 4), &["a"]).await;
+        let leases = SharedLeases {
+            linger: Duration::ZERO,
+            ..Default::default()
+        };
+        for _ in 0..200 {
+            drop(leases.try_pin(&dataset).await.unwrap());
+            tokio::task::yield_now().await;
+            testing::append_dataset(&mut dataset, &testing::vectors(1, 4), &["b"]).await;
+        }
+        assert!(leases.held.lock().unwrap().slots.len() <= 128);
+    }
+
+    /// A slot a read has taken but not yet locked survives a prune, so that
+    /// read and the next share the lease.
+    #[tokio::test]
+    async fn a_taken_slot_survives_a_prune() {
+        let dir = TempDir::new().unwrap();
+        let dataset = testing::write_dataset(&dir, &testing::vectors(1, 4), &["a"]).await;
+        let leases = SharedLeases::default();
+        let key: LeaseKey = ("elsewhere".into(), 1, None);
+        let taken = {
+            let mut held = leases.held.lock().unwrap();
+            held.prune_at = 0;
+            held.slots.entry(key.clone()).or_default().clone()
+        };
+        leases.try_pin(&dataset).await.unwrap().unwrap();
+        assert!(Arc::ptr_eq(
+            &leases.held.lock().unwrap().slots[&key],
+            &taken
+        ));
+    }
+
+    /// A shared lease is not handed out past SHARED_FOR, so a busy version
+    /// moves to a fresh tag.
+    #[tokio::test]
+    async fn a_shared_lease_is_replaced_when_old() {
+        let dir = TempDir::new().unwrap();
+        let dataset =
+            testing::write_dataset(&dir, &testing::vectors(4, 4), &["a", "b", "c", "d"]).await;
+        let leases = SharedLeases {
+            share_for: Duration::from_millis(50),
+            ..Default::default()
+        };
+        let a = leases.try_pin(&dataset).await.unwrap().unwrap();
+        tokio::time::sleep(leases.share_for).await;
+        let b = leases.try_pin(&dataset).await.unwrap().unwrap();
+        assert!(!Arc::ptr_eq(&a, &b));
     }
 
     /// A stale lease tag left behind is reaped by the next pin; a stale-named

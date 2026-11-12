@@ -41,6 +41,13 @@ struct Args {
     /// Memory for caching reads of write-once table files, in MiB; 0 disables.
     #[arg(long, env = "WEED_VECTOR_READ_CACHE_MB", default_value_t = 512)]
     read_cache_mb: u64,
+    /// Memory for indexes loaded by queries, kept for the next query, in MiB.
+    #[arg(long, env = "WEED_VECTOR_INDEX_CACHE_MB", default_value_t = 1024)]
+    index_cache_mb: usize,
+    /// Memory for table metadata (manifests, file footers) kept across
+    /// queries, in MiB.
+    #[arg(long, env = "WEED_VECTOR_METADATA_CACHE_MB", default_value_t = 256)]
+    metadata_cache_mb: usize,
     /// Partitions each query probes in a table's vector index. Default: a
     /// tenth of the index's partitions, at least 8; more under a filter.
     #[arg(long, env = "WEED_VECTOR_NPROBES")]
@@ -163,6 +170,7 @@ async fn main() -> Result<()> {
         .then(|| ReadCache::new(args.read_cache_mb << 20).with_metrics(metrics.clone()));
     let mut service = VectorServer::new()
         .with_nprobes(args.nprobes.map(std::num::NonZeroUsize::get))
+        .with_lance_caches(args.index_cache_mb << 20, args.metadata_cache_mb << 20)
         .with_storage(reads);
     if let Some(cache) = &cache {
         service = service.with_read_cache(cache.clone());
