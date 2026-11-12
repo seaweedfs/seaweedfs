@@ -10,6 +10,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/dustin/go-humanize"
@@ -307,9 +308,11 @@ var postPolicyReservedFormFields = map[string]struct{}{
 // skipped. The acl form field is translated to the X-Amz-Acl header to match
 // how AWS promotes the form value to the underlying PUT.
 func applyPostPolicyFormHeaders(r *http.Request, formValues http.Header) {
-	// The policy signs form fields only, so the upload ACL comes from the form.
-	for _, header := range postAclHeaders {
-		r.Header.Del(header)
+	// The policy signs form fields only, so object settings come from the form.
+	for k := range r.Header {
+		if ck := http.CanonicalHeaderKey(k); strings.HasPrefix(ck, "X-Amz-") || slices.Contains(postObjectHeaders, ck) || ck == "Response-Content-Disposition" {
+			delete(r.Header, k)
+		}
 	}
 	for k := range formValues {
 		if _, reserved := postPolicyReservedFormFields[k]; reserved {
@@ -318,17 +321,14 @@ func applyPostPolicyFormHeaders(r *http.Request, formValues http.Header) {
 		switch {
 		case k == "Acl":
 			r.Header.Set(s3_constants.AmzCannedAcl, formValues.Get(k))
-		case k == "Cache-Control",
-			k == "Expires",
-			k == "Content-Disposition",
-			k == "Content-Encoding",
-			k == "Content-Language":
-			r.Header.Set(k, formValues.Get(k))
-		case strings.HasPrefix(k, "X-Amz-"):
+		case slices.Contains(postObjectHeaders, k), strings.HasPrefix(k, "X-Amz-"):
 			r.Header.Set(k, formValues.Get(k))
 		}
 	}
 }
+
+// postObjectHeaders are the standard headers the upload stores on the object.
+var postObjectHeaders = []string{"Cache-Control", "Expires", "Content-Disposition", "Content-Encoding", "Content-Language"}
 
 // validHeaderValues rejects form values carrying control characters, which a
 // real PUT could not send and which would corrupt the volume upload framing.
