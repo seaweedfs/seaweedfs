@@ -170,6 +170,7 @@ func TestAttributeOnlyOpsPreserveAcknowledgedAppends(t *testing.T) {
 						t.Cleanup(func() { fh.dirtyPages.Destroy() })
 					}
 					var code fuse.Status
+					out := &fuse.AttrOut{}
 					if op == "removexattr" {
 						code = wfs.RemoveXAttr(nil, &fuse.InHeader{NodeId: 42}, "user.remove")
 					} else if op == "setxattr" {
@@ -187,10 +188,13 @@ func TestAttributeOnlyOpsPreserveAcknowledgedAppends(t *testing.T) {
 						case "utimes":
 							in.Valid, in.Mtime, in.Mtimensec = fuse.FATTR_MTIME|fuse.FATTR_ATIME, 123, 456
 						}
-						code = wfs.SetAttr(nil, in, &fuse.AttrOut{})
+						code = wfs.SetAttr(nil, in, out)
 					}
 					if code != fuse.OK {
 						t.Fatalf("attribute syscall: %v", code)
+					}
+					if (op == "chmod" || op == "utimes") && out.Attr.Uid != 1000 {
+						t.Fatalf("reply uid %d, want the local id 1000", out.Attr.Uid)
 					}
 					if open {
 						if code := wfs.doFlush(context.Background(), fh, 1000, 20, false); code != fuse.OK {

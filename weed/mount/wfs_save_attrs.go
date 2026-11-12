@@ -70,11 +70,9 @@ func (wfs *WFS) saveEntryAttributes(ctx context.Context, path util.FullPath, bas
 		if code := change(next); code != fuse.OK {
 			return nil, code
 		}
-		expected := proto.Clone(base).(*filer_pb.Entry)
-		requestEntry := proto.Clone(next).(*filer_pb.Entry)
-		wfs.mapPbIdFromLocalToFiler(expected)
-		wfs.mapPbIdFromLocalToFiler(requestEntry)
-		req := &filer_pb.UpdateEntryRequest{Directory: dir, Entry: requestEntry, Condition: &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{Kind: filer_pb.WriteCondition_IF_ENTRY_EQUAL, ExpectedEntry: expected}}}, Signatures: []int32{wfs.signature}}
+		// Whole-entry clones are as large as the chunk list; switch ids in place.
+		restoreBase, restoreNext := wfs.mapIdsToFiler(base), wfs.mapIdsToFiler(next)
+		req := &filer_pb.UpdateEntryRequest{Directory: dir, Entry: next, Condition: &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{Kind: filer_pb.WriteCondition_IF_ENTRY_EQUAL, ExpectedEntry: base}}}, Signatures: []int32{wfs.signature}}
 		var resp *filer_pb.UpdateEntryResponse
 		// The stream currently reduces FailedPrecondition to EIO. Use the unary
 		// RPC so a comparison miss remains distinguishable from an I/O failure.
@@ -83,17 +81,31 @@ func (wfs *WFS) saveEntryAttributes(ctx context.Context, path util.FullPath, bas
 			resp, err = client.UpdateEntry(ctx, req)
 			return err
 		})
+		restoreBase()
 		if status.Code(err) == codes.FailedPrecondition {
 			continue
 		}
 		if err != nil {
 			return nil, grpcErrorToFuseStatus(err)
 		}
-		wfs.applySavedEntry(path, requestEntry, resp)
+		wfs.applySavedEntry(path, next, resp)
+		restoreNext()
 		wfs.retainAcknowledgedAttributes(path, next, retain)
 		return next, fuse.OK
 	}
 	return nil, fuse.Status(syscall.EAGAIN)
+}
+
+// mapIdsToFiler maps entry's uid/gid to the filer's and returns a func that
+// puts the local ids back exactly; mapping back can differ when the ids collide.
+func (wfs *WFS) mapIdsToFiler(entry *filer_pb.Entry) (restore func()) {
+	attr := entry.GetAttributes()
+	if attr == nil {
+		return func() {}
+	}
+	uid, gid := attr.Uid, attr.Gid
+	wfs.mapPbIdFromLocalToFiler(entry)
+	return func() { attr.Uid, attr.Gid = uid, gid }
 }
 
 // A background WRITE may dirty the handle while the attribute RPC is in
