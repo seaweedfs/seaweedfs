@@ -237,6 +237,11 @@ func (vs *VolumeServer) VolumeDelete(ctx context.Context, req *volume_server_pb.
 	if guard.copying {
 		return resp, status.Errorf(codes.Unavailable, "volume %d is being copied", req.VolumeId)
 	}
+	// Match the Rust server, which drops a cancelled RPC before it runs.
+	if err := ctx.Err(); err != nil {
+		glog.Warningf("volume delete %v not started: %v", req, err)
+		return resp, status.FromContextError(err).Err()
+	}
 
 	err := vs.store.DeleteVolume(needle.VolumeId(req.VolumeId), req.OnlyEmpty, req.OnlyGarbage, req.KeepRemoteData)
 
