@@ -180,9 +180,9 @@ func (wfs *WFS) doFlush(ctx context.Context, fh *FileHandle, uid, gid uint32, al
 		return fuse.Status(syscall.ENOSPC)
 	}
 
-	if err := retryMetadataFlush(ctx, func() error {
+	if err := retryMetadataFlushIf(ctx, func() error {
 		return wfs.flushMetadataToFiler(ctx, fh, dir, name, uid, gid)
-	}, func(nextAttempt, totalAttempts int, backoff time.Duration, err error) {
+	}, isRetryableFilerError, func(nextAttempt, totalAttempts int, backoff time.Duration, err error) {
 		glog.Warningf("%v fh %d flush: retrying metadata flush (attempt %d/%d) after %v: %v",
 			fileFullPath, fh.fh, nextAttempt, totalAttempts, backoff, err)
 	}); err != nil {
@@ -270,12 +270,31 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 		SkipCheckParentDirectory: true,
 	}
 
+	// Publish only against the authoritative entry this handle observed. Never
+	// refresh the guard and replay a stale whole entry after a conflict: that
+	// would discard a peer's acknowledged chunks. Deferred creates expect no
+	// entry; existing handles compare the full base, including inode identity.
+	guard := &filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_NOT_EXISTS}
+	if base := fh.baseEntry.Load(); base != nil {
+		expected := proto.Clone(base).(*filer_pb.Entry)
+		wfs.mapPbIdFromLocalToFiler(expected)
+		guard = &filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_ENTRY_EQUAL, ExpectedEntry: expected}
+	}
+	request.Condition = &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{guard}}
+
 	// Snapshot with local ids before the request mapping mutates the clone:
 	// on ack this becomes the handle's base, judged against future events.
 	baseSnapshot := proto.Clone(requestEntry).(*filer_pb.Entry)
 	wfs.mapPbIdFromLocalToFiler(request.Entry)
 
-	resp, err := wfs.streamCreateEntry(ctx, request)
+	// Keep FailedPrecondition typed so the outer flush retry loop stops.
+	// The streaming mutation response currently reduces it to plain EIO.
+	var resp *filer_pb.CreateEntryResponse
+	err = wfs.withFilerClient(ctx, false, wfs.filerRPCWait(), func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
+		var callErr error
+		resp, callErr = filer_pb.CreateEntryWithResponse(ctx, client, request)
+		return callErr
+	})
 	if err != nil {
 		glog.Errorf("fh flush create %s: %v", fileFullPath, err)
 		return fmt.Errorf("fh flush create %s: %w", fileFullPath, err)
