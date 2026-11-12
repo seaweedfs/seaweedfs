@@ -1175,7 +1175,7 @@ fn parse_security_config_with_env(path: &str, env: EnvLookup<'_>) -> SecurityCon
 
         if let Some((key, value)) = trimmed.split_once('=') {
             let key = key.trim();
-            let value = value.trim().trim_matches('"');
+            let value: &str = &toml_value_text(value);
             match section {
                 Section::JwtSigningRead => match key {
                     "key" => cfg.jwt_read_signing_key = value.as_bytes().to_vec(),
@@ -1263,6 +1263,20 @@ fn parse_security_config_with_env(path: &str, env: EnvLookup<'_>) -> SecurityCon
     apply_env_overrides(&mut cfg, env);
 
     cfg
+}
+
+/// Reads the right-hand side of `key = value` the way TOML (and so Go) does:
+/// escapes decoded, literal strings kept as written, a trailing comment
+/// dropped. Text TOML rejects keeps the plain quote trimming.
+fn toml_value_text(raw: &str) -> String {
+    match format!("v = {raw}").parse::<toml::Table>() {
+        Ok(mut table) => match table.remove("v") {
+            Some(toml::Value::String(text)) => text,
+            Some(other) => other.to_string(),
+            None => String::new(),
+        },
+        Err(_) => raw.trim().trim_matches('"').to_string(),
+    }
 }
 
 fn resolve_security_config_path(path: &str, env: EnvLookup<'_>) -> Option<PathBuf> {
@@ -1866,6 +1880,34 @@ ui = true
         let cfg = parse_security_config_with_env(tmp.path().to_str().unwrap(), &|_| None);
         assert_eq!(cfg.jwt_signing_key, b"secret");
         assert!(cfg.access_ui);
+    }
+
+    #[test]
+    fn test_parse_security_config_reads_toml_strings() {
+        for (encoded, expected) in [
+            (r#""plain""#, "plain"),
+            (r#""key\n""#, "key\n"),
+            (r#""quote\"slash\\tab\t""#, "quote\"slash\\tab\t"),
+            (r#""key""#, "key"),
+            ("'literal\\key'", "literal\\key"),
+            (r#""key" # comment"#, "key"),
+            (r#""YWJj==""#, "YWJj=="),
+            ("unquoted", "unquoted"),
+        ] {
+            let tmp = tempfile::NamedTempFile::new().unwrap();
+            std::fs::write(
+                tmp.path(),
+                format!(
+                    "[jwt.signing]\nkey = {encoded}\n\n[jwt.signing.read]\nkey = {encoded}\n\
+                     expires_after_seconds = 30 # seconds\n"
+                ),
+            )
+            .unwrap();
+            let cfg = parse_security_config_with_env(tmp.path().to_str().unwrap(), &|_| None);
+            assert_eq!(cfg.jwt_signing_key, expected.as_bytes(), "{encoded}");
+            assert_eq!(cfg.jwt_read_signing_key, expected.as_bytes(), "{encoded}");
+            assert_eq!(cfg.jwt_read_signing_expires, 30, "{encoded}");
+        }
     }
 
     #[test]
