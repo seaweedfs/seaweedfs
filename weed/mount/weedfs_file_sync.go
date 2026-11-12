@@ -310,7 +310,7 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 	// The filer acknowledged this state at the event's log position (or, for
 	// a no-op create, at the response's log position); older queued
 	// subscription events must not roll the handle back.
-	fh.setAuthoritativeBase(baseSnapshot)
+	fh.setAuthoritativeBase(wfs.ackedBase(resp, baseSnapshot))
 	fh.advanceEntryVersion(ackVersionTsNs(resp), resp.GetLogSignature())
 	if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
 		glog.Warningf("flush %s: best-effort metadata apply failed: %v", fileFullPath, applyErr)
@@ -322,6 +322,20 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 	}
 
 	return err
+}
+
+// ackedBase is the base an acknowledged create leaves: the entry the filer
+// stored, in local ids. The filer stamps commit_ts_ns, crtime, inode and atime
+// and may rewrite chunks, so the requested entry would never match it again.
+// A filer that sends no event leaves the requested entry.
+func (wfs *WFS) ackedBase(resp *filer_pb.CreateEntryResponse, requested *filer_pb.Entry) *filer_pb.Entry {
+	stored := resp.GetMetadataEvent().GetEventNotification().GetNewEntry()
+	if stored == nil {
+		return requested
+	}
+	base := proto.Clone(stored).(*filer_pb.Entry)
+	wfs.mapPbIdFromFilerToLocal(base)
+	return base
 }
 
 // shouldMergeChunks reports whether the non-manifest chunks are bloated

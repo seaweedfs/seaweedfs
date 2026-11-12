@@ -479,7 +479,7 @@ func (wfs *WFS) createRegularFile(ctx context.Context, dirFullPath util.FullPath
 		return 0, nil, grpcErrorToFuseStatus(err)
 	}
 
-	return inode, newEntry, fuse.OK
+	return inode, wfs.ackedBase(resp, newEntry), fuse.OK
 }
 
 // markHandleDeleted flags the inode's open handle so its flushes stop writing
