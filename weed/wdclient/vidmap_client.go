@@ -209,7 +209,7 @@ func (vc *vidMapClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 	sort.Strings(needsLookup)
 	batchKey := strings.Join(needsLookup, ",")
 
-	sfResult, err, _ := vc.vidLookupGroup.Do(batchKey, func() (interface{}, error) {
+	sfResult, err := vc.doSharedLookup(ctx, batchKey, func(ctx context.Context) (interface{}, error) {
 		// Double-check cache for volumes that might have been populated while waiting
 		stillNeedLookup := make([]string, 0, len(needsLookup))
 		batchResult := make(map[string][]Location)
@@ -278,6 +278,21 @@ func (vc *vidMapClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 
 	// Return aggregated errors
 	return result, errors.Join(lookupErrors...)
+}
+
+// doSharedLookup runs fn once for all concurrent callers of key. fn gets a
+// context no single caller can cancel, since one caller leaving must not fail
+// the others; each caller stops waiting when its own context ends.
+func (vc *vidMapClient) doSharedLookup(ctx context.Context, key string, fn func(context.Context) (interface{}, error)) (interface{}, error) {
+	resultCh := vc.vidLookupGroup.DoChan(key, func() (interface{}, error) {
+		return fn(context.WithoutCancel(ctx))
+	})
+	select {
+	case res := <-resultCh:
+		return res.Val, res.Err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 // LookupVolumeIdsAuthoritative bypasses the asynchronously maintained vid map.
