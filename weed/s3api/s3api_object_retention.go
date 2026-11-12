@@ -238,6 +238,14 @@ func isObjectEntryMiss(err error) bool {
 		errors.Is(err, errInvalidVersionID)
 }
 
+// missAs reports a genuine miss as sentinel and keeps any other failure as is.
+func missAs(err, sentinel error) error {
+	if isObjectEntryMiss(err) {
+		return sentinel
+	}
+	return err
+}
+
 // getObjectEntryForUpdate resolves the entry a metadata update targets and the
 // filer path it is written under. It applies the same version resolution as
 // getSpecificObjectVersion - "null" names the plain pre-versioning entry, not a
@@ -247,7 +255,7 @@ func (s3a *S3ApiServer) getObjectEntryForUpdate(bucket, object, versionId string
 	if versionId != "" {
 		entry, err = s3a.getSpecificObjectVersion(bucket, object, versionId)
 		if err != nil {
-			return nil, "", fmt.Errorf("failed to get version %s for object %s/%s: %w", versionId, bucket, object, ErrVersionNotFound)
+			return nil, "", fmt.Errorf("failed to get version %s for object %s/%s: %w", versionId, bucket, object, missAs(err, ErrVersionNotFound))
 		}
 		if versionId != "null" {
 			entryPath = object + ".versions/" + s3a.getVersionFileName(versionId)
@@ -262,14 +270,14 @@ func (s3a *S3ApiServer) getObjectEntryForUpdate(bucket, object, versionId string
 	if !versioningEnabled {
 		entry, err = s3a.fetchObjectEntryRequired(bucket, object)
 		if err != nil {
-			return nil, "", fmt.Errorf("failed to get object %s/%s: %w", bucket, object, ErrObjectNotFound)
+			return nil, "", fmt.Errorf("failed to get object %s/%s: %w", bucket, object, missAs(err, ErrObjectNotFound))
 		}
 		return entry, entryPath, nil
 	}
 
 	entry, err = s3a.getLatestObjectVersion(bucket, object)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to get latest version for object %s/%s: %w", bucket, object, ErrLatestVersionNotFound)
+		return nil, "", fmt.Errorf("failed to get latest version for object %s/%s: %w", bucket, object, missAs(err, ErrLatestVersionNotFound))
 	}
 	if entry.Extended != nil {
 		if versionIdBytes, exists := entry.Extended[s3_constants.ExtVersionIdKey]; exists {

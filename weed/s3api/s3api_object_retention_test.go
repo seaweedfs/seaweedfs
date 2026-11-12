@@ -1138,3 +1138,29 @@ func TestPutObjectLegalHoldMissingObjectIsNoSuchKey(t *testing.T) {
 		t.Fatalf("missing key must not be written, got %v", f.updates)
 	}
 }
+
+// A failed read of the target version is not a miss: the lock write must
+// surface it as a server error the client can retry, not NoSuchKey.
+func TestPutObjectLegalHoldFailedReadIsNotNoSuchKey(t *testing.T) {
+	f := &retentionTestFiler{
+		entries: map[string]*filer_pb.Entry{
+			"/buckets/b": {
+				Name:        "b",
+				IsDirectory: true,
+				Extended:    map[string][]byte{s3_constants.ExtVersioningKey: []byte(s3_constants.VersioningEnabled)},
+			},
+		},
+		lookupErrs: map[string]error{
+			"/buckets/b/key.versions/v_v1": status.Error(codes.Internal, "disk read failed"),
+		},
+	}
+	s3a := newRetentionTestServer(t, f)
+
+	err := s3a.setObjectLegalHold("b", "key", "v1", &ObjectLegalHold{Status: "ON"})
+	if err == nil || errors.Is(err, ErrVersionNotFound) {
+		t.Fatalf("failed read must not report ErrVersionNotFound, got: %v", err)
+	}
+	if got := putLegalHoldStatus(t, s3a, "key", "v1"); got != http.StatusInternalServerError {
+		t.Fatalf("PutObjectLegalHold on a failed read = %d, want 500", got)
+	}
+}
