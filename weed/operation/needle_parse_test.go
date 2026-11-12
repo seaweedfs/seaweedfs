@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"strings"
 	"testing"
@@ -148,10 +150,22 @@ func TestUploadKeepsMarginalGzipUncompressed(t *testing.T) {
 }
 
 type storingClient struct {
-	stored *needle.Needle
+	stored      *needle.Needle
+	contentType string
 }
 
 func (c *storingClient) Do(req *http.Request) (*http.Response, error) {
+	body, err := io.ReadAll(req.Body)
+	if err != nil {
+		return nil, err
+	}
+	_, params, _ := mime.ParseMediaType(req.Header.Get("Content-Type"))
+	part, err := multipart.NewReader(bytes.NewReader(body), params["boundary"]).NextPart()
+	if err != nil {
+		return nil, err
+	}
+	c.contentType = part.Header.Get("Content-Type")
+	req.Body = io.NopCloser(bytes.NewReader(body))
 	n, _, _, err := needle.CreateNeedleFromRequest(req, false, 1024*1024, &bytes.Buffer{})
 	if err != nil {
 		return nil, err
@@ -186,6 +200,9 @@ func TestUploadProbesGenericBinaryMimeTypes(t *testing.T) {
 		}
 		assert.Equal(t, tc.gzipped, client.stored.IsCompressed(), "mime %q", tc.mimeType)
 		assert.Equal(t, tc.gzipped, result.Gzip > 0, "mime %q", tc.mimeType)
+		if tc.mimeType != "" {
+			assert.Equal(t, tc.mimeType, client.contentType)
+		}
 		if tc.gzipped {
 			unzipped, err := util.DecompressData(client.stored.Data)
 			assert.NoError(t, err)
