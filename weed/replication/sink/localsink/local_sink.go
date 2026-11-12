@@ -144,9 +144,11 @@ func (localsink *LocalSink) deleteEntry(sourceKey string, oldEntry *filer_pb.Ent
 
 // sourceRecreated reports whether the live source holds an entry of the same
 // kind at key's source path committed after the delete at tsNs, the order the
-// source's own replay keeps. Without tsNs the deleted entry's commit stamp is
-// the bound, and mtime only when neither is known. An older live entry means
-// the source store lags the delete event or will apply it next.
+// source's own replay keeps; an unstamped live entry, written by a filer that
+// predates commit stamps, counts from its mtime. Without tsNs the deleted
+// entry's commit stamp is the bound, and its mtime when neither is known. An
+// older live entry means the source store lags the delete event or will apply
+// it next.
 func (localsink *LocalSink) sourceRecreated(key string, oldEntry *filer_pb.Entry, tsNs int64) (bool, error) {
 	sourcePath, ok := localsink.sourcePath(key)
 	if !ok {
@@ -168,7 +170,11 @@ func (localsink *LocalSink) sourceRecreated(key string, oldEntry *filer_pb.Entry
 		tsNs = oldEntry.GetCommitTsNs()
 	}
 	if tsNs > 0 {
-		return live.GetCommitTsNs() > tsNs, nil
+		liveTsNs := live.GetCommitTsNs()
+		if liveTsNs == 0 {
+			liveTsNs = mtimeNs(live)
+		}
+		return liveTsNs > tsNs, nil
 	}
 	return mtimeNs(live) > mtimeNs(oldEntry), nil
 }

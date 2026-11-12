@@ -85,6 +85,8 @@ func TestDeleteEntryVersionAgainstLiveSource(t *testing.T) {
 		{name: "stamped replacement of an unstamped entry", live: stampedEntry("x", 300, 5, false), oldEntry: stampedEntry("x", 0, 10, false), tsNs: 200, wantKept: true},
 		{name: "no delete time, newer than the deleted stamp", live: stampedEntry("x", 300, 5, false), oldEntry: deleted, wantKept: true},
 		{name: "no delete time, the deleted version", live: stampedEntry("x", 100, 10, false), oldEntry: deleted},
+		{name: "unstamped source, replacement written after the delete", live: stampedEntry("x", 0, 30, false), oldEntry: stampedEntry("x", 0, 10, false), tsNs: 20e9, wantKept: true},
+		{name: "unstamped source, entry written before the delete", live: stampedEntry("x", 0, 15, false), oldEntry: stampedEntry("x", 0, 10, false), tsNs: 20e9},
 		{name: "nothing stamped, newer mtime", live: stampedEntry("x", 0, 20, false), oldEntry: stampedEntry("x", 0, 10, false), wantKept: true},
 		{name: "nothing stamped, same mtime", live: stampedEntry("x", 0, 10, false), oldEntry: stampedEntry("x", 0, 10, false)},
 		{name: "source lookup fails", lookup: status.Error(codes.Unavailable, "down"), oldEntry: deleted, tsNs: 200, wantKept: true, wantErr: true},
