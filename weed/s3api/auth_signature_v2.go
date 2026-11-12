@@ -328,21 +328,16 @@ func getStringToSignV2(method string, encodedResource, encodedQuery string, head
 // canonicalizedResourceV2 - canonicalize the resource string for signature V2.
 func canonicalizedResourceV2(encodedResource, encodedQuery string) string {
 	queries := strings.Split(encodedQuery, "&")
-	keyval := make(map[string]string)
+	keyval := make(map[string][]string)
 	for _, query := range queries {
-		key := query
-		val := ""
-		index := strings.Index(query, "=")
-		if index != -1 {
-			key = query[:index]
-			val = query[index+1:]
-		}
-		keyval[key] = val
+		key, val, _ := strings.Cut(query, "=")
+		keyval[key] = append(keyval[key], val)
 	}
 
+	// Every value of a repeated key is signed: handlers read the first one.
 	var canonicalQueries []string
 	for _, resource := range resourceList {
-		if val, ok := keyval[resource]; ok {
+		for _, val := range keyval[resource] {
 			if val == "" {
 				canonicalQueries = append(canonicalQueries, resource)
 				continue

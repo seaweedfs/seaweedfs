@@ -478,3 +478,43 @@ func TestPresignV2AcceptsClientSignedSubresource(t *testing.T) {
 		})
 	}
 }
+
+func TestSignatureV2RejectsRepeatedSubresource(t *testing.T) {
+	iam := setupTestIAMForV2Auth()
+	cred := &Credential{
+		AccessKey: "AKIAIOSFODNN7EXAMPLE",
+		SecretKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+	}
+
+	if _, errCode := iam.doesPresignV2SignatureMatch(presignV2ForTest(t, cred, http.MethodPut, "/bucket/key", "retention&versionId=v1")); errCode != s3err.ErrNone {
+		t.Fatalf("presigned PUT as issued: %v", errCode)
+	}
+
+	for name, edit := range map[string]func(string) string{
+		"prepended": func(q string) string { return "versionId=v2&" + q },
+		"appended":  func(q string) string { return q + "&versionId=v2" },
+	} {
+		t.Run("presigned_"+name, func(t *testing.T) {
+			req := presignV2ForTest(t, cred, http.MethodPut, "/bucket/key", "retention&versionId=v1")
+			req.URL.RawQuery = edit(req.URL.RawQuery)
+			if _, errCode := iam.doesPresignV2SignatureMatch(req); errCode != s3err.ErrSignatureDoesNotMatch {
+				t.Fatalf("presigned PUT with a second versionId: got %v, want %v", errCode, s3err.ErrSignatureDoesNotMatch)
+			}
+		})
+		t.Run("header_"+name, func(t *testing.T) {
+			req, err := http.NewRequest(http.MethodPut, "http://example.com/bucket/key?retention&versionId=v1", nil)
+			if err != nil {
+				t.Fatalf("new request: %v", err)
+			}
+			req.Header.Set("Date", time.Now().UTC().Format(http.TimeFormat))
+			req.Header.Set("Authorization", signatureV2(cred, req.Method, req.URL.EscapedPath(), req.URL.Query().Encode(), req.Header))
+			if _, errCode := iam.doesSignV2Match(req); errCode != s3err.ErrNone {
+				t.Fatalf("signed PUT as issued: %v", errCode)
+			}
+			req.URL.RawQuery = edit(req.URL.RawQuery)
+			if _, errCode := iam.doesSignV2Match(req); errCode != s3err.ErrSignatureDoesNotMatch {
+				t.Fatalf("signed PUT with a second versionId: got %v, want %v", errCode, s3err.ErrSignatureDoesNotMatch)
+			}
+		})
+	}
+}
