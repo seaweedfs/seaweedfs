@@ -734,10 +734,10 @@ func (s3a *S3ApiServer) recheckCopySourcePolicy(r *http.Request, bucket, object,
 // recheckTagConditionedPolicyWithLookup repeats policy evaluation with the
 // object's entry in hand so s3:ExistingObjectTag conditions apply to
 // operations that did not otherwise fetch the entry. It only does the extra
-// lookup when the bucket has a policy; entry misses return ErrNone because
-// the handler reports its own NoSuchKey.
+// lookup when the bucket has a policy or the key may name a version file;
+// entry misses return ErrNone because the handler reports its own NoSuchKey.
 func (s3a *S3ApiServer) recheckTagConditionedPolicyWithLookup(r *http.Request, bucket, object, versionId, action, handlerName string) s3err.ErrorCode {
-	if s3a.policyEngine == nil || !s3a.policyEngine.HasPolicyForBucket(bucket) {
+	if (s3a.policyEngine == nil || !s3a.policyEngine.HasPolicyForBucket(bucket)) && !s3a.hasVersionFileShape(object) {
 		return s3err.ErrNone
 	}
 	entry, err := s3a.resolveObjectEntry(bucket, object, versionId)

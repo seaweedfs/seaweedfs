@@ -258,6 +258,11 @@ func TestSignedReadOfVersionFileKey(t *testing.T) {
 	r = r.WithContext(s3_constants.SetIdentityInContext(r.Context(), identity))
 	require.Equal(t, s3err.ErrAccessDenied, s3a.recheckCopySourcePolicy(r, "b", "o.versions/v_v1", "", version.Extended, "CopyObjectHandler"))
 	require.Equal(t, s3err.ErrNone, s3a.recheckCopySourcePolicy(r, "b", "o", "v1", version.Extended, "CopyObjectHandler"))
+	for _, action := range []string{s3_constants.ACTION_GET_OBJECT_RETENTION, s3_constants.ACTION_PUT_OBJECT_LEGAL_HOLD, string(s3_constants.ACTION_WRITE)} {
+		require.Equal(t, s3err.ErrAccessDenied, s3a.recheckTagConditionedPolicyWithLookup(r, "b", "o.versions/v_v1", "", action, "t"))
+		require.Equal(t, s3err.ErrNone, s3a.recheckTagConditionedPolicyWithLookup(r, "b", "o", "v1", action, "t"))
+		require.Equal(t, s3err.ErrNone, s3a.recheckTagConditionedPolicyWithLookup(r, "b", "u.versions/v_literal", "", action, "t"))
+	}
 }
 
 func TestAnonymousObjectACLDoesNotReplaceAuthentication(t *testing.T) {

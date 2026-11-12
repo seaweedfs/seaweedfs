@@ -57,9 +57,13 @@ func (s3a *S3ApiServer) deferAnonymousObjectRead(r *http.Request, action Action,
 // GetObjectVersion policies and key-scoped denies on the logical key. Ordinary
 // user keys containing ".versions" without version metadata are unaffected.
 func (s3a *S3ApiServer) isVersionFileKey(object string, extended map[string][]byte) bool {
-	key := s3_constants.NormalizeObjectKey(object)
 	version := string(extended[s3_constants.ExtVersionIdKey])
-	return version != "" && strings.HasSuffix(path.Dir(key), s3_constants.VersionsFolder) && path.Base(key) == s3a.getVersionFileName(version)
+	return version != "" && s3a.hasVersionFileShape(object) && path.Base(s3_constants.NormalizeObjectKey(object)) == s3a.getVersionFileName(version)
+}
+
+func (s3a *S3ApiServer) hasVersionFileShape(object string) bool {
+	key := s3_constants.NormalizeObjectKey(object)
+	return strings.HasSuffix(path.Dir(key), s3_constants.VersionsFolder) && strings.HasPrefix(path.Base(key), s3a.getVersionFileName(""))
 }
 
 // authorizeAnonymousObjectRead evaluates policies and ACLs against the same
