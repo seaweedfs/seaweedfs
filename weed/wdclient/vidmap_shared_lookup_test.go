@@ -29,6 +29,19 @@ func (p *blockingLookupProvider) LookupVolumeIds(ctx context.Context, volumeIds 
 	}
 }
 
+// joinSignalCtx closes joined the first time Done is read. doSharedLookup reads
+// it only after DoChan has registered the caller with the flight.
+type joinSignalCtx struct {
+	context.Context
+	once   sync.Once
+	joined chan struct{}
+}
+
+func (c *joinSignalCtx) Done() <-chan struct{} {
+	c.once.Do(func() { close(c.joined) })
+	return c.Context.Done()
+}
+
 func TestSharedLookupSurvivesFirstCallerCancel(t *testing.T) {
 	provider := &blockingLookupProvider{started: make(chan struct{}), release: make(chan struct{})}
 	vc := newVidMapClient(provider, "", DefaultVidMapCacheSize)
@@ -46,11 +59,16 @@ func TestSharedLookupSurvivesFirstCallerCancel(t *testing.T) {
 		err       error
 	}
 	second := make(chan lookupResult, 1)
+	secondCtx := &joinSignalCtx{Context: context.Background(), joined: make(chan struct{})}
 	go func() {
-		locations, err := vc.LookupVolumeIdsWithFallback(context.Background(), []string{"7"})
+		locations, err := vc.LookupVolumeIdsWithFallback(secondCtx, []string{"7"})
 		second <- lookupResult{locations, err}
 	}()
-	time.Sleep(50 * time.Millisecond)
+	select {
+	case <-secondCtx.joined:
+	case <-time.After(5 * time.Second):
+		t.Fatal("second caller never joined the shared lookup on its own context")
+	}
 
 	cancelFirst()
 	select {
