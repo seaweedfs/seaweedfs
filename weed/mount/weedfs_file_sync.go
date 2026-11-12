@@ -278,7 +278,7 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 	resp, err := wfs.streamCreateEntry(ctx, request)
 	if err != nil {
 		glog.Errorf("fh flush create %s: %v", fileFullPath, err)
-		return fmt.Errorf("fh flush create %s: %v", fileFullPath, err)
+		return fmt.Errorf("fh flush create %s: %w", fileFullPath, err)
 	}
 
 	event := resp.GetMetadataEvent()
