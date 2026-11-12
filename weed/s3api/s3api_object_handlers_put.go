@@ -231,6 +231,10 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 		// Compute MD5 for ETag (md5.Sum of nil/empty = MD5 of empty content)
 		dirMd5 := md5.Sum(dirContent)
+		if expectedMd5, _ := validateContentMd5(r.Header); len(expectedMd5) > 0 && !bytes.Equal(dirMd5[:], expectedMd5) {
+			s3err.WriteErrorResponse(w, r, s3err.ErrBadDigest)
+			return
+		}
 		dirEtag := fmt.Sprintf("%x", dirMd5)
 
 		// SSE applies to marker content too — it is stored in entry.Content
