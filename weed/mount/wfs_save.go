@@ -53,6 +53,13 @@ func (wfs *WFS) saveEntry(path util.FullPath, entry *filer_pb.Entry) (code fuse.
 		return fuseStatus
 	}
 
+	wfs.applySavedEntry(path, entry, resp)
+	return fuse.OK
+}
+
+// applySavedEntry publishes an acknowledged entry with filer-side uid/gid.
+func (wfs *WFS) applySavedEntry(path util.FullPath, entry *filer_pb.Entry, resp *filer_pb.UpdateEntryResponse) {
+	parentDir, _ := path.DirAndName()
 	// The mutation is acknowledged; bring any open handle for this path up
 	// to the acknowledged state — a handle opened while this save was in
 	// flight holds an older entry, and advancing its version alone would
@@ -79,7 +86,6 @@ func (wfs *WFS) saveEntry(path util.FullPath, entry *filer_pb.Entry) (code fuse.
 		wfs.inodeToPath.InvalidateChildrenCache(util.FullPath(parentDir))
 	}
 
-	return fuse.OK
 }
 
 func (wfs *WFS) mapPbIdFromFilerToLocal(entry *filer_pb.Entry) {

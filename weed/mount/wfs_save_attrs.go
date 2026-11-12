@@ -1,0 +1,139 @@
+package mount
+
+import (
+	"context"
+	"errors"
+	"syscall"
+
+	"github.com/seaweedfs/go-fuse/v2/fuse"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
+)
+
+// A clean open handle must not become a dirty whole-entry write merely from
+// chmod or setxattr. Pending content writes and deferred creates still use the
+// handle's existing flush path, which owns their unsaved data.
+func (wfs *WFS) attributeEntrySnapshot(fh *FileHandle, entry *filer_pb.Entry) (*filer_pb.Entry, bool) {
+	if fh == nil {
+		return entry, true
+	}
+	fh.entryLock.Lock()
+	defer fh.entryLock.Unlock()
+	lock := wfs.fhLockTable.AcquireLock("attributeEntrySnapshot", fh.fh, util.SharedLock)
+	defer wfs.fhLockTable.ReleaseLock(fh.fh, lock)
+	if fh.dirtyMetadata {
+		return nil, false
+	}
+	fh.entry.RLock()
+	defer fh.entry.RUnlock()
+	return proto.Clone(fh.entry.Entry).(*filer_pb.Entry), true
+}
+
+// saveEntryAttributes retries only an entry comparison miss, always replaying
+// the syscall's attribute change on the new entry. In particular, the cached
+// chunks, size, inline content and unrelated attributes never win a conflict.
+func (wfs *WFS) saveEntryAttributes(ctx context.Context, path util.FullPath, base *filer_pb.Entry, change func(*filer_pb.Entry) fuse.Status, retain func(live, acked *filer_pb.Entry)) (*filer_pb.Entry, fuse.Status) {
+	ctx, cancel := context.WithTimeout(ctx, metadataFlushTimeout)
+	defer cancel()
+	dir, name := path.DirAndName()
+	inode := base.GetAttributes().GetInode()
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			// Bypass the mount cache: it supplied the snapshot just refused.
+			err := wfs.withFilerClient(ctx, false, wfs.filerRPCWait(), func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
+				resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{Directory: dir, Name: name})
+				if err == nil {
+					base = resp.Entry
+				}
+				return err
+			})
+			if errors.Is(err, filer_pb.ErrNotFound) {
+				return nil, fuse.ENOENT
+			}
+			if err != nil {
+				return nil, grpcErrorToFuseStatus(err)
+			}
+			if base == nil {
+				return nil, fuse.ENOENT
+			}
+			wfs.mapPbIdFromFilerToLocal(base)
+			if inode != 0 && base.GetAttributes().GetInode() != inode {
+				return nil, fuse.Status(syscall.ESTALE)
+			}
+		}
+		next := proto.Clone(base).(*filer_pb.Entry)
+		if code := change(next); code != fuse.OK {
+			return nil, code
+		}
+		expected := proto.Clone(base).(*filer_pb.Entry)
+		requestEntry := proto.Clone(next).(*filer_pb.Entry)
+		wfs.mapPbIdFromLocalToFiler(expected)
+		wfs.mapPbIdFromLocalToFiler(requestEntry)
+		req := &filer_pb.UpdateEntryRequest{Directory: dir, Entry: requestEntry, Condition: &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{Kind: filer_pb.WriteCondition_IF_ENTRY_EQUAL, ExpectedEntry: expected}}}, Signatures: []int32{wfs.signature}}
+		var resp *filer_pb.UpdateEntryResponse
+		// The stream currently reduces FailedPrecondition to EIO. Use the unary
+		// RPC so a comparison miss remains distinguishable from an I/O failure.
+		err := wfs.withFilerClient(ctx, false, wfs.filerRPCWait(), func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
+			var err error
+			resp, err = client.UpdateEntry(ctx, req)
+			return err
+		})
+		if status.Code(err) == codes.FailedPrecondition {
+			continue
+		}
+		if err != nil {
+			return nil, grpcErrorToFuseStatus(err)
+		}
+		wfs.applySavedEntry(path, requestEntry, resp)
+		wfs.retainAcknowledgedAttributes(path, next, retain)
+		return next, fuse.OK
+	}
+	return nil, fuse.Status(syscall.EAGAIN)
+}
+
+// A background WRITE may dirty the handle while the attribute RPC is in
+// flight. installAckedEntry intentionally leaves its content alone. Retain
+// only the acknowledged attribute delta there, so the next content flush
+// cannot undo a successful syscall. Do not recheck CREATE/REPLACE or WORM:
+// those preconditions were already validated by the acknowledged mutation.
+func (wfs *WFS) retainAcknowledgedAttributes(path util.FullPath, acked *filer_pb.Entry, retain func(live, acked *filer_pb.Entry)) {
+	inode, found := wfs.inodeToPath.GetInode(path)
+	if !found {
+		return
+	}
+	fh, found := wfs.fhMap.FindFileHandle(inode)
+	if !found {
+		return
+	}
+	// Match the read path: entryLock precedes the handle's active lock.
+	fh.entryLock.Lock()
+	defer fh.entryLock.Unlock()
+	lock := wfs.fhLockTable.AcquireLock("retainAcknowledgedAttributes", fh.fh, util.ExclusiveLock)
+	defer wfs.fhLockTable.ReleaseLock(fh.fh, lock)
+	if !fh.dirtyMetadata || fh.isDeleted {
+		return
+	}
+	fh.entry.Lock()
+	defer fh.entry.Unlock()
+	live := fh.entry.Entry
+	if acked.GetAttributes().GetInode() != 0 && live.GetAttributes().GetInode() != acked.GetAttributes().GetInode() {
+		return
+	}
+	retain(live, acked)
+}
+
+// A path lock covers the owner RPC through local installation/retention, and
+// whole-entry metadata publication. WRITE and chunk upload remain independent.
+// Keying by path also covers a handle opened while the RPC is in flight.
+func (wfs *WFS) metadataPublicationTable() *util.LockTable[util.FullPath] {
+	wfs.metadataPublicationOnce.Do(func() { wfs.metadataPublicationLocks = util.NewLockTable[util.FullPath]() })
+	return wfs.metadataPublicationLocks
+}
+func (wfs *WFS) lockMetadataPublication(path util.FullPath) func() {
+	table := wfs.metadataPublicationTable()
+	lock := table.AcquireLock("metadata publication", path, util.ExclusiveLock)
+	return func() { table.ReleaseLock(path, lock) }
+}

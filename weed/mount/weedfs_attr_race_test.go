@@ -45,6 +45,9 @@ func TestAttrChunkRace(t *testing.T) {
 		wfs:             wfs,
 		entry:           &LockedEntry{Entry: entry},
 		entryChunkGroup: chunkGroup,
+		// The upload worker below represents pending local content writes,
+		// so metadata remains on the handle until their normal flush.
+		dirtyMetadata: true,
 	}
 	fh.dirtyPages = newPageWriter(fh, 1<<20)
 	wfs.fhMap.inode2fh[inode] = fh
