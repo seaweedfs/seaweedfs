@@ -1,13 +1,19 @@
 package s3api
 
 import (
+	"bytes"
+	"encoding/xml"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestReadRequestBodyLeavesOversizedBodyDrainable(t *testing.T) {
@@ -21,4 +27,108 @@ func TestReadRequestBodyLeavesOversizedBodyDrainable(t *testing.T) {
 	assert.Nil(t, body)
 	assert.NoError(t, readErr)
 	assert.Equal(t, "ef", string(remaining))
+}
+
+func newSignedPayloadTestIAM(t *testing.T) *IdentityAccessManagement {
+	iam := &IdentityAccessManagement{
+		hashes:       make(map[string]*sync.Pool),
+		hashCounters: make(map[string]*int32),
+	}
+	err := iam.loadS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{{
+			Name:        "signer",
+			Credentials: []*iam_pb.Credential{{AccessKey: "access_key_1", SecretKey: "secret_key_1"}},
+			Actions:     []string{"Read", "Write"},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return iam
+}
+
+func deleteObjectsBody(keys ...string) []byte {
+	var b strings.Builder
+	b.WriteString("<Delete>")
+	for _, k := range keys {
+		b.WriteString("<Object><Key>" + k + "</Key></Object>")
+	}
+	b.WriteString("</Delete>")
+	return []byte(b.String())
+}
+
+func TestSignedRequestBodyIsBoundToPayloadHash(t *testing.T) {
+	iam := newSignedPayloadTestIAM(t)
+	approved := deleteObjectsBody("tables/a/own.txt")
+	swapped := deleteObjectsBody("tables/b/victim.txt")
+
+	newSwapped := func(body []byte) *http.Request {
+		req := mustNewSignedRequest(http.MethodPost, "http://127.0.0.1:9000/warehouse?delete", int64(len(approved)), bytes.NewReader(approved), t)
+		req.Body = io.NopCloser(bytes.NewReader(body))
+		req.ContentLength = int64(len(body))
+		return req
+	}
+
+	t.Run("signed body is readable", func(t *testing.T) {
+		req := mustNewSignedRequest(http.MethodPost, "http://127.0.0.1:9000/warehouse?delete", int64(len(approved)), bytes.NewReader(approved), t)
+		_, errCode := iam.reqSignatureV4Verify(req)
+		require.Equal(t, s3err.ErrNone, errCode)
+		body, err := io.ReadAll(req.Body)
+		require.NoError(t, err)
+		assert.Equal(t, approved, body)
+	})
+
+	t.Run("replaced body is refused", func(t *testing.T) {
+		req := newSwapped(swapped)
+		_, errCode := iam.reqSignatureV4Verify(req)
+		require.Equal(t, s3err.ErrNone, errCode)
+		body, err := io.ReadAll(req.Body)
+		assert.ErrorIs(t, err, errContentSha256Mismatch)
+		assert.Empty(t, body)
+	})
+
+	t.Run("decoder that stops early sees no replaced bytes", func(t *testing.T) {
+		padded := append(append([]byte{}, swapped...), bytes.Repeat([]byte(" "), 64<<10)...)
+		req := newSwapped(padded)
+		_, errCode := iam.reqSignatureV4Verify(req)
+		require.Equal(t, s3err.ErrNone, errCode)
+		var parsed DeleteObjectsRequest
+		err := xml.NewDecoder(req.Body).Decode(&parsed)
+		assert.ErrorIs(t, err, errContentSha256Mismatch)
+		assert.Empty(t, parsed.Objects)
+	})
+
+	t.Run("emptied body is refused", func(t *testing.T) {
+		req := newSwapped(nil)
+		req.Body = http.NoBody
+		_, errCode := iam.reqSignatureV4Verify(req)
+		assert.Equal(t, s3err.ErrContentSHA256Mismatch, errCode)
+	})
+
+	t.Run("oversized body is refused before it is read", func(t *testing.T) {
+		req := newSwapped(swapped)
+		req.ContentLength = iamRequestBodyLimit + 1
+		_, errCode := iam.reqSignatureV4Verify(req)
+		require.Equal(t, s3err.ErrNone, errCode)
+		_, err := io.ReadAll(req.Body)
+		assert.ErrorIs(t, err, errRequestBodyTooLarge)
+	})
+}
+
+func TestGetRequestDataReaderStreamsSignedUploads(t *testing.T) {
+	iam := newSignedPayloadTestIAM(t)
+	s3a := &S3ApiServer{iam: iam}
+	signed := []byte("object data")
+	req := mustNewSignedRequest(http.MethodPut, "http://127.0.0.1:9000/bucket/key", int64(len(signed)), bytes.NewReader(signed), t)
+	raw := io.NopCloser(bytes.NewReader([]byte("other data!")))
+	req.Body = raw
+
+	_, errCode := iam.reqSignatureV4Verify(req)
+	require.Equal(t, s3err.ErrNone, errCode)
+	dataReader, errCode := getRequestDataReader(s3a, req)
+	require.Equal(t, s3err.ErrNone, errCode)
+
+	assert.Equal(t, raw, req.Body)
+	_, err := io.ReadAll(dataReader)
+	assert.ErrorContains(t, err, s3err.ErrMsgContentSha256Mismatch)
 }
