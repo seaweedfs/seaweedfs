@@ -96,6 +96,13 @@ func (f *Filer) metaLogReplicationFor(ruleReplication string) string {
 }
 
 func (f *Filer) assignAndUpload(ctx context.Context, targetFile string, data []byte) (*operation.AssignResult, *operation.UploadResult, error) {
+	// Consecutive events repeat whole chunk lists, but the uploader only
+	// samples the first bytes before deciding to compress.
+	isCompressed := false
+	if compressed, err := util.GzipData(data); err == nil && len(compressed)*10 < len(data)*9 {
+		data, isCompressed = compressed, true
+	}
+
 	// assign a volume location
 	diskType, rule := f.resolveMetadataLogAssignDiskType(targetFile)
 	assignRequest := &operation.VolumeAssignRequest{
@@ -121,7 +128,7 @@ func (f *Filer) assignAndUpload(ctx context.Context, targetFile string, data []b
 		UploadUrl:         targetUrl,
 		Filename:          "",
 		Cipher:            f.Cipher,
-		IsInputCompressed: false,
+		IsInputCompressed: isCompressed,
 		MimeType:          "",
 		PairMap:           nil,
 		Jwt:               assignResult.Auth,
