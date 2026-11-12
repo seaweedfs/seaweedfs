@@ -396,6 +396,9 @@ fn process_batch(state: Arc<VolumeServerState>, batch: Vec<WriteRequest>) {
                 })
                 .collect(),
         };
+        // Untrack before replying, as Go does: a caller that sees its write
+        // finish must not still find it pending.
+        drop(pendings);
         for (response_tx, result) in senders.into_iter().zip(results) {
             // Send result back; ignore error if receiver dropped.
             let _ = response_tx.send(result);
