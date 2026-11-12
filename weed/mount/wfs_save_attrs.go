@@ -139,11 +139,11 @@ func (wfs *WFS) retainAcknowledgedAttributes(path util.FullPath, acked *filer_pb
 	if !found {
 		return
 	}
-	// Match the read path: entryLock precedes the handle's active lock.
-	fh.entryLock.Lock()
-	defer fh.entryLock.Unlock()
+	// Match Read: the handle's active lock precedes entryLock.
 	lock := wfs.fhLockTable.AcquireLock("retainAcknowledgedAttributes", fh.fh, util.ExclusiveLock)
 	defer wfs.fhLockTable.ReleaseLock(fh.fh, lock)
+	fh.entryLock.Lock()
+	defer fh.entryLock.Unlock()
 	if !fh.dirtyMetadata || fh.isDeleted {
 		return
 	}
