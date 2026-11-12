@@ -757,3 +757,81 @@ func TestPostPolicyBucketHandlerRejectsConflictingAclFields(t *testing.T) {
 		filer.mu.Unlock()
 	}
 }
+
+// Object settings sent as request headers are outside the signed policy, so
+// only the matching form fields reach the stored object.
+func TestPostPolicyBucketHandlerIgnoresUnsignedHeaders(t *testing.T) {
+	const key = "uploads/header.txt"
+	upload := func(t *testing.T, fields, headers map[string]string) (*httptest.ResponseRecorder, *filer_pb.Entry) {
+		filer := &ambiguousPutFiler{
+			volume: startFakeVolumeServer(t),
+			entries: map[string]*filer_pb.Entry{"/buckets/" + postAuthzBucket: {
+				Name:        postAuthzBucket,
+				IsDirectory: true,
+				Attributes:  &filer_pb.FuseAttributes{},
+				Extended:    map[string][]byte{s3_constants.ExtAmzOwnerKey: []byte("000000000000")},
+			}},
+			apply: true,
+		}
+		s3a := newPostAutoCreateServer(t, filer)
+		req := newSignedPostRequestFor(t, key, postAdminAccessKey, postAdminSecretKey, fields)
+		for name, value := range headers {
+			req.Header.Set(name, value)
+		}
+		rec := httptest.NewRecorder()
+		s3a.PostPolicyBucketHandler(rec, req)
+		filer.mu.Lock()
+		defer filer.mu.Unlock()
+		return rec, filer.entries["/buckets/"+postAuthzBucket+"/"+key]
+	}
+	settings := map[string]string{
+		s3_constants.AmzObjectTagging: "scan=clean",
+		"X-Amz-Meta-Role":             "from-form-holder",
+		s3_constants.AmzStorageClass:  "STANDARD_IA",
+		"Cache-Control":               "max-age=60",
+		"Content-Disposition":         "inline",
+		"Expires":                     "Wed, 21 Oct 2026 07:28:00 GMT",
+	}
+	stored := map[string]string{
+		s3_constants.AmzObjectTaggingPrefix + "scan": "clean",
+		"X-Amz-Meta-Role":            "from-form-holder",
+		s3_constants.AmzStorageClass: "STANDARD_IA",
+		"Cache-Control":              "max-age=60",
+		"Content-Disposition":        "inline",
+		"Expires":                    "Wed, 21 Oct 2026 07:28:00 GMT",
+	}
+
+	t.Run("request headers", func(t *testing.T) {
+		headers := map[string]string{"Content-Language": "fr", "Response-Content-Disposition": "inline"}
+		for k, v := range settings {
+			headers[k] = v
+		}
+		rec, entry := upload(t, nil, headers)
+		require.Equal(t, http.StatusNoContent, rec.Code, "body: %s", rec.Body.String())
+		require.NotNil(t, entry)
+		for k := range stored {
+			assert.Empty(t, entry.Extended[k], k)
+		}
+		assert.Empty(t, entry.Extended["Content-Language"])
+	})
+	t.Run("object lock request headers", func(t *testing.T) {
+		rec, entry := upload(t, nil, map[string]string{
+			s3_constants.AmzObjectLockMode:            "COMPLIANCE",
+			s3_constants.AmzObjectLockRetainUntilDate: time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339),
+			s3_constants.AmzObjectLockLegalHold:       "ON",
+		})
+		require.Equal(t, http.StatusNoContent, rec.Code, "body: %s", rec.Body.String())
+		require.NotNil(t, entry)
+		assert.Empty(t, entry.Extended[s3_constants.ExtObjectLockModeKey])
+		assert.Empty(t, entry.Extended[s3_constants.ExtRetentionUntilDateKey])
+		assert.Empty(t, entry.Extended[s3_constants.ExtLegalHoldKey])
+	})
+	t.Run("signed form fields", func(t *testing.T) {
+		rec, entry := upload(t, settings, nil)
+		require.Equal(t, http.StatusNoContent, rec.Code, "body: %s", rec.Body.String())
+		require.NotNil(t, entry)
+		for k, v := range stored {
+			assert.Equal(t, v, string(entry.Extended[k]), k)
+		}
+	})
+}
