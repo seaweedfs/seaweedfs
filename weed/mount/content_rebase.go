@@ -24,8 +24,10 @@ func (wfs *WFS) publishPendingContent(ctx context.Context, fh *FileHandle, req *
 	if wfs.option.WritebackCache && (failure == nil || failure.Load()) {
 		return nil, fmt.Errorf("writeback inode awaits Forget after content refusal: %w", filer_pb.ErrPreconditionFailed)
 	}
+	// A refresh/transport error cannot undo an earlier content refusal.
+	refused := false
 	defer func() {
-		if failure != nil && errors.Is(resultErr, filer_pb.ErrPreconditionFailed) {
+		if failure != nil && resultErr != nil && (refused || errors.Is(resultErr, filer_pb.ErrPreconditionFailed)) {
 			failure.Store(true)
 		}
 	}()
@@ -71,6 +73,7 @@ func (wfs *WFS) publishPendingContent(ctx context.Context, fh *FileHandle, req *
 				// A provider refusal is final for this attempt, not a transport
 				// failure to replay on another filer address.
 				refusal = callErr
+				refused = true
 				return nil
 			}
 			return callErr

@@ -772,3 +772,73 @@ func TestAsyncClosePublishesAfterFilerOutage(t *testing.T) {
 		t.Fatal("successful outage drain retained a handle")
 	}
 }
+
+// A refresh deadline after a real refusal must not turn a terminal flock close
+// into a transport-only publication and let a coalesced write hide the gap.
+type g6RefreshDeadlineFiler struct {
+	*g6ConditionalPeer
+	unavailable atomic.Bool
+}
+
+func (s *g6RefreshDeadlineFiler) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	if s.unavailable.Load() {
+		<-ctx.Done()
+		return nil, status.Error(codes.DeadlineExceeded, "refresh deadline")
+	}
+	return s.g6ConditionalPeer.LookupDirectoryEntry(ctx, req)
+}
+func TestRefusalThenRefreshDeadlineFencesFlockClose(t *testing.T) {
+	base := attributeAppendEntry(1)
+	peer := &g6ConditionalPeer{entry: proto.Clone(base).(*filer_pb.Entry)}
+	w, handle := g6AppendHandle(t, peer, base, 1700, true)
+	fake := &g6RefreshDeadlineFiler{g6ConditionalPeer: peer}
+	fake.unavailable.Store(true)
+	startFakeFiler(t, w, fake)
+	oldSleep := metadataFlushSleep
+	metadataFlushSleep = func(context.Context, time.Duration) {}
+	t.Cleanup(func() { metadataFlushSleep = oldSleep })
+	peer.mu.Lock()
+	peer.entry.Attributes.FileMode = 0600
+	peer.entry.Extended = map[string][]byte{"user.peer": []byte("acknowledged")}
+	peer.entry.CommitTsNs = 20000
+	peer.refuse = true
+	committed := proto.Clone(peer.entry).(*filer_pb.Entry)
+	peer.mu.Unlock()
+	if n, code := w.Write(nil, &fuse.WriteIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: handle, Offset: 256, Size: 256}, bytes.Repeat([]byte{'A'}, 256)); n != 256 || code != fuse.OK {
+		t.Fatal(n, code)
+	}
+	w.Release(nil, &fuse.ReleaseIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: handle, ReleaseFlags: fuse.FUSE_RELEASE_FLOCK_UNLOCK})
+	if _, found := w.fhMap.FindFileHandle(42); found {
+		t.Fatal("terminal close retained the handle")
+	}
+	peer.mu.Lock()
+	peer.refuse = false
+	refused := peer.rejected
+	peer.mu.Unlock()
+	fake.unavailable.Store(false)
+	if refused == 0 {
+		t.Fatal("fixture never sent a provider refusal")
+	}
+	if err := w.metaCache.InsertEntry(context.Background(), filer.FromPbEntry("/dir", committed), 20000); err != nil {
+		t.Fatal(err)
+	}
+	out := &fuse.OpenOut{}
+	if code := w.Open(nil, &fuse.OpenIn{InHeader: fuse.InHeader{NodeId: 42}, Flags: syscall.O_WRONLY | syscall.O_APPEND}, out); code != fuse.OK {
+		t.Fatal(code)
+	}
+	g6AppendUploader(t, w.GetHandle(FileHandleId(out.Fh)), 1800, peer)
+	payload := append(bytes.Repeat([]byte{'O'}, 256), make([]byte, 256)...)
+	payload = append(payload, bytes.Repeat([]byte{'B'}, 256)...)
+	if n, code := w.Write(nil, &fuse.WriteIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: out.Fh, Offset: 0, Size: uint32(len(payload))}, payload); n != uint32(len(payload)) || code != fuse.OK {
+		t.Fatal(n, code)
+	}
+	if code := w.Fsync(nil, &fuse.FsyncIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: out.Fh}); code != fuse.EIO {
+		t.Fatalf("coalesced append published after refusal plus refresh deadline: %v", code)
+	}
+	w.Release(nil, &fuse.ReleaseIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: out.Fh, ReleaseFlags: fuse.FUSE_RELEASE_FLOCK_UNLOCK})
+	peer.mu.Lock()
+	defer peer.mu.Unlock()
+	if !g6EntryEqual(peer.entry, committed) || !bytes.Equal(g6StoredBytes(t, peer), bytes.Repeat([]byte{'O'}, 256)) {
+		t.Fatal("refusal changed committed bytes, size, chunks or peer attributes")
+	}
+}
