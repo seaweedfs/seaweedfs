@@ -71,6 +71,7 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 		}
 		if !CheckPermissionWithContext("CreateTableBucket", principal, owner, "", "", &PolicyContext{
 			TrustedIssuers:   h.trustedIssuers(r),
+			Subject:          callerSubject(r),
 			IsLocalAccountID: h.localAccountIDs,
 			IdentityActions:  identityActions,
 			DefaultAllow:     h.defaultAllowFor(r),

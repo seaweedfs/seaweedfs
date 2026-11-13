@@ -402,6 +402,22 @@ func claimString(claims map[string]interface{}, key string) string {
 // checkPermission: those the auth layer asserted into a bearer token's claims,
 // else, for a federated STS session, the configured set.
 func (h *S3TablesHandler) trustedIssuers(r *http.Request) []string {
+	claims := requestClaims(r)
+	if _, asserted := claims["seaweed:oidc-issuers"]; asserted {
+		return strings.Fields(claimString(claims, "seaweed:oidc-issuers"))
+	}
+	if h.oidcIssuers != nil && sts.IsParentUserID(claimString(claims, "aws:userid")) {
+		return h.oidcIssuers(r.Context())
+	}
+	return nil
+}
+
+// callerSubject returns the OIDC subject in the request identity's claims.
+func callerSubject(r *http.Request) string {
+	return claimString(requestClaims(r), "sub")
+}
+
+func requestClaims(r *http.Request) map[string]interface{} {
 	identityRaw := s3_constants.GetIdentityFromContext(r)
 	if identityRaw == nil {
 		return nil
@@ -413,14 +429,7 @@ func (h *S3TablesHandler) trustedIssuers(r *http.Request) []string {
 	if val.Kind() != reflect.Struct {
 		return nil
 	}
-	claims := identityClaimsMap(val)
-	if _, asserted := claims["seaweed:oidc-issuers"]; asserted {
-		return strings.Fields(claimString(claims, "seaweed:oidc-issuers"))
-	}
-	if h.oidcIssuers != nil && sts.IsParentUserID(claimString(claims, "aws:userid")) {
-		return h.oidcIssuers(r.Context())
-	}
-	return nil
+	return identityClaimsMap(val)
 }
 
 // normalizePrincipalID collapses ARN and identity strings to a key that is stable within a single account.
@@ -596,6 +605,7 @@ func (h *S3TablesHandler) authorizeAbsentTarget(r *http.Request, filerClient Fil
 	}
 	ctx := &PolicyContext{
 		TrustedIssuers:   h.trustedIssuers(r),
+		Subject:          callerSubject(r),
 		IsLocalAccountID: h.localAccountIDs,
 		TableBucketName:  bucketName,
 		Namespace:        namespace,

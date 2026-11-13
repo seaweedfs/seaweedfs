@@ -80,7 +80,7 @@ func (m *Manager) PrincipalFor(r *http.Request) string {
 // action scoped to that bucket apply, as the handlers do.
 func (m *Manager) PolicyContext(r *http.Request, bucket string) *PolicyContext {
 	ctx := &PolicyContext{IsLocalAccountID: m.handler.localAccountIDs, IdentityActions: getIdentityActions(r),
-		TrustedIssuers: m.handler.trustedIssuers(r), TableBucketName: bucket}
+		TrustedIssuers: m.handler.trustedIssuers(r), Subject: callerSubject(r), TableBucketName: bucket}
 	if m.handler.trusted || (m.handler.defaultAllow && s3_constants.GetIdentityNameFromContext(r) == "") {
 		ctx.DefaultAllow = true
 	}

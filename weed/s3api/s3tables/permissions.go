@@ -159,6 +159,9 @@ type PolicyContext struct {
 	// be re-anchored; a nil predicate exempts nothing beyond the built-in
 	// reserved, ARN, and scoped-id checks.
 	IsLocalAccountID func(string) bool
+	// Subject is the caller's OIDC subject, matched against subject patterns
+	// written before issuer scoping once it is shown to hash to the principal.
+	Subject string
 }
 
 // CheckPermissionWithContext checks permission with optional resource and condition context.
@@ -565,10 +568,10 @@ func matchCaller(principalSpec interface{}, principal string, ctx *PolicyContext
 	}
 	switch p := principalSpec.(type) {
 	case string:
-		return matchesLegacySubject(p, principal, ctx)
+		return matchesLegacyPrincipal(p, principal, ctx)
 	case []interface{}:
 		for _, item := range p {
-			if str, ok := item.(string); ok && matchesLegacySubject(str, principal, ctx) {
+			if str, ok := item.(string); ok && matchesLegacyPrincipal(str, principal, ctx) {
 				return true
 			}
 		}
@@ -602,6 +605,17 @@ func matchesLegacySubject(legacy, principal string, ctx *PolicyContext) bool {
 		return false
 	}
 	return sts.ComputeParentUser(legacy, ctx.TrustedIssuers[0]) == principal
+}
+
+// matchesLegacyPrincipal is matchesLegacySubject for a policy principal, which
+// may also be a subject pattern: it matches the caller's subject only when that
+// subject itself resolves to the principal.
+func matchesLegacyPrincipal(spec, principal string, ctx *PolicyContext) bool {
+	if matchesLegacySubject(spec, principal, ctx) {
+		return true
+	}
+	return ctx != nil && strings.ContainsAny(spec, "*?") && !strings.HasPrefix(spec, "arn:") &&
+		wildcard.MatchesWildcard(spec, ctx.Subject) && matchesLegacySubject(ctx.Subject, principal, ctx)
 }
 
 // matchesPrincipal checks if the principal matches the statement's principal
