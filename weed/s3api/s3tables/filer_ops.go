@@ -72,7 +72,9 @@ func (h *S3TablesHandler) createDirectoryEntry(ctx context.Context, client filer
 	})
 }
 
-// ensureDirectory ensures a directory exists at the specified path
+// ensureDirectory ensures a directory exists at the specified path. The create
+// is exclusive: a directory another writer made since the lookup may already
+// carry a record, which a plain create would replace with a bare directory.
 func (h *S3TablesHandler) ensureDirectory(ctx context.Context, client filer_pb.SeaweedFilerClient, path string) error {
 	dir, name := splitPath(path)
 	_, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
@@ -83,7 +85,9 @@ func (h *S3TablesHandler) ensureDirectory(ctx context.Context, client filer_pb.S
 		return nil
 	}
 	if errors.Is(err, filer_pb.ErrNotFound) {
-		return h.createDirectory(ctx, client, path)
+		if err = h.createDirectoryExclusive(ctx, client, path, nil); errors.Is(err, filer_pb.ErrEntryAlreadyExists) {
+			return nil
+		}
 	}
 	return err
 }
