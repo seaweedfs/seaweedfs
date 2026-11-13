@@ -940,6 +940,26 @@ func TestFinalizeCreateOnCommitLosesToTableWithoutLocation(t *testing.T) {
 	e.assertWinnerRecord("", winnerUUID)
 }
 
+// A table directory another create made and wrote its record onto after this
+// writer's lookup missed it keeps that record when a metadata file is staged.
+func TestSaveMetadataBlobKeepsATableDirectoryCreatedSinceTheLookup(t *testing.T) {
+	e := newConflictEnv(t)
+	namespaceDir := path.Join(s3tables.TablesPath, conflictBucket, conflictNamespace)
+	record := `{"Name":"` + conflictTable + `"}`
+	e.hooks.beforeCreate = func(req *filer_pb.CreateEntryRequest) {
+		if req.Directory == namespaceDir && req.Entry.Name == conflictTable {
+			e.hooks.beforeCreate = nil
+			e.filer.Put(namespaceDir, conflictTable, map[string][]byte{s3tables.ExtendedKeyMetadata: []byte(record)})
+		}
+	}
+	if err := e.server.saveMetadataBlob(t.Context(), conflictBucket, path.Join(conflictNamespace, conflictTable), "v1.metadata.json", []byte("{}"), "application/json", true, nil); err != nil {
+		t.Fatalf("save metadata: %v", err)
+	}
+	if got := e.filer.Get(namespaceDir, conflictTable); got == nil || string(got.Extended[s3tables.ExtendedKeyMetadata]) != record {
+		t.Errorf("table record replaced by the directory create: %+v", got)
+	}
+}
+
 // Two stage-create commits for one name: one creates the table and the other is
 // told it lost, and the file the catalog points at belongs to the winner.
 func TestConcurrentFinalizeCreateOnCommitHasOneWinner(t *testing.T) {

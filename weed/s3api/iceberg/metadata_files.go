@@ -68,9 +68,11 @@ func (s *Server) saveMetadataBlob(ctx context.Context, bucketName, tablePath, me
 				return fmt.Errorf("lookup %s failed: %w", errorContext, err)
 			}
 
-			// If lookup fails with ErrNotFound, try to create the directory.
+			// Exclusive, so a directory created since the lookup keeps the
+			// record a table create may have written onto it.
 			resp, createErr := client.CreateEntry(opCtx, &filer_pb.CreateEntryRequest{
 				Directory: parent,
+				OExcl:     true,
 				Entry: &filer_pb.Entry{
 					Name:        name,
 					IsDirectory: true,
