@@ -209,6 +209,7 @@ async fn main() -> Result<()> {
         cluster.masters.clone(),
         advertise,
         args.filer_group.clone(),
+        args.metrics_port,
         cluster.master_tls.clone(),
         metrics.clone(),
     ));
