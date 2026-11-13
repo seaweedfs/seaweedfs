@@ -1181,7 +1181,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                 
                 // Update modal title
                 document.getElementById('bucketDetailsModalLabel').innerHTML = 
-                    '<i class="bi bi-box me-2"></i>Bucket Details - ' + bucketName;
+                    '<i class="bi bi-box me-2"></i>Bucket Details - ' + escapeHtml(bucketName);
                 
                 // Show loading spinner
                 document.getElementById('bucketDetailsContent').innerHTML = 
@@ -1202,7 +1202,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                             document.getElementById('bucketDetailsContent').innerHTML = 
                                 '<div class="alert alert-danger">' +
                                 '<i class="bi bi-exclamation-triangle me-2"></i>' +
-                                'Error loading bucket details: ' + data.error +
+                                'Error loading bucket details: ' + escapeHtml(data.error) +
                                 '<\\/div>';
                         } else {
                             displayBucketDetails(data);
@@ -1213,7 +1213,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                         document.getElementById('bucketDetailsContent').innerHTML = 
                             '<div class="alert alert-danger">' +
                             '<i class="bi bi-exclamation-triangle me-2"></i>' +
-                            'Error loading bucket details: ' + error.message +
+                            'Error loading bucket details: ' + escapeHtml(error.message) +
                             '<\\/div>';
                     });
             });
@@ -1229,7 +1229,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                 lifecycleEditor = { bucket: null, rules: [], editingIndex: null, editingRule: null, rawXml: '', hasTransition: false };
 
                 document.getElementById('bucketLifecycleModalLabel').innerHTML =
-                    '<i class="bi bi-recycle me-2"></i>Lifecycle - ' + bucketName;
+                    '<i class="bi bi-recycle me-2"></i>Lifecycle - ' + escapeHtml(bucketName);
 
                 document.getElementById('bucketLifecycleContent').innerHTML =
                     '<div class="text-center py-4">' +
@@ -1251,7 +1251,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                             document.getElementById('bucketLifecycleContent').innerHTML =
                                 '<div class="alert alert-danger">' +
                                 '<i class="bi bi-exclamation-triangle me-2"></i>' +
-                                'Error loading lifecycle rules: ' + (data.error || 'unknown error') +
+                                'Error loading lifecycle rules: ' + escapeHtml(data.error || 'unknown error') +
                                 '<\/div>';
                         } else {
                             displayBucketLifecycle(data);
@@ -1263,7 +1263,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                         document.getElementById('bucketLifecycleContent').innerHTML =
                             '<div class="alert alert-danger">' +
                             '<i class="bi bi-exclamation-triangle me-2"></i>' +
-                            'Error loading lifecycle rules: ' + error.message +
+                            'Error loading lifecycle rules: ' + escapeHtml(error.message) +
                             '<\/div>';
                     });
             });

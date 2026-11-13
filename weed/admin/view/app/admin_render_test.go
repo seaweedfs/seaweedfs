@@ -33,6 +33,26 @@ func TestAdminDashboardShowsDiskUsage(t *testing.T) {
 	}
 }
 
+func TestS3BucketModalsEscapeDynamicHTMLText(t *testing.T) {
+	var buf bytes.Buffer
+	if err := S3Buckets(dash.S3BucketsData{}).Render(context.Background(), &buf); err != nil {
+		t.Fatalf("render bucket page: %v", err)
+	}
+
+	for _, want := range []string{
+		"Bucket Details - ' + escapeHtml(bucketName)",
+		"Lifecycle - ' + escapeHtml(bucketName)",
+		"Error loading bucket details: ' + escapeHtml(data.error)",
+		"Error loading bucket details: ' + escapeHtml(error.message)",
+		"Error loading lifecycle rules: ' + escapeHtml(data.error || 'unknown error')",
+		"Error loading lifecycle rules: ' + escapeHtml(error.message)",
+	} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("rendered bucket page is missing escaped text expression %q", want)
+		}
+	}
+}
+
 func TestCalculatePercent64PetabyteScale(t *testing.T) {
 	const pib = int64(1) << 50
 	if got := calculatePercent64(100*pib, 200*pib); got != 50 {
