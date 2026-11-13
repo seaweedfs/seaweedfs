@@ -194,7 +194,7 @@ func downloadAndReplicateFromRemoteTier(grpcDialOption grpc.DialOption, writer i
 	if restore != nil {
 		defer func() {
 			if restoreErr := restore(); restoreErr != nil {
-				err = errors.Join(err, fmt.Errorf("restore volume %d state on %s: %v", vid, source, restoreErr))
+				err = errors.Join(err, fmt.Errorf("restore volume %d state on %s: %w", vid, source, restoreErr))
 			}
 		}()
 	}
