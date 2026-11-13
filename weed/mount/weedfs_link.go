@@ -241,6 +241,11 @@ func (fh *FileHandle) adoptLinkChangeLocked(stored *filer_pb.Entry, versionTsNs 
 	if stored == nil {
 		return
 	}
+	handleSignature := fh.entryVersionSignature.Load()
+	provablyOtherClock := signature != 0 && handleSignature != 0 && signature != handleSignature
+	if versionTsNs != 0 && !provablyOtherClock && versionTsNs <= fh.entryVersionTsNs.Load() {
+		return
+	}
 	if base := fh.baseEntry.Load(); base != nil && !fh.wfs.sameApartFromLink(stored, base) {
 		return
 	}
