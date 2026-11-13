@@ -1,5 +1,3 @@
-//go:build !freebsd
-
 package mount
 
 import (
