@@ -530,6 +530,8 @@ func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, se
 	for k, v := range sessionInfo.RequestContext {
 		claims[k] = v
 	}
+	// Token attributes reach the request context; only the bearer path asserts trusted issuers.
+	delete(claims, "seaweed:oidc-issuers")
 	// The session's user is the one it was issued to, never a claim the
 	// identity provider forwarded.
 	if sessionInfo.ExternalUserId != "" {
