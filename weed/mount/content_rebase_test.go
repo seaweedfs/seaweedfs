@@ -1070,3 +1070,46 @@ func TestCanonicalChunkComparisonRefusesChangedContent(t *testing.T) {
 		}
 	})
 }
+
+func TestAppendRebaseKeepsOverwriteBelowCommittedTail(t *testing.T) {
+	base := attributeAppendEntry(2)
+	current := attributeAppendEntry(3)
+	current.Attributes.FileMode, current.CommitTsNs = 0600, 20000
+	pending := attributeAppendEntry(3)
+	x := &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 1, FileKey: 9, Cookie: 1}, Offset: 16, Size: 32, ModifiedTsNs: 9}
+	pending.Chunks = append(pending.Chunks, x)
+	if !appendCompatible(base, current, pending) {
+		t.Fatal("an overwrite below the committed tail refused a compatible rebase")
+	}
+	replaced := proto.Clone(pending).(*filer_pb.Entry)
+	replaced.Chunks[2].Fid.FileKey = 10
+	if appendCompatible(base, current, replaced) {
+		t.Fatal("a pending list without a committed chunk passed as compatible")
+	}
+	w := newInvalidateTestWFS(t)
+	blobs := map[string][]byte{x.GetFileIdString(): bytes.Repeat([]byte{'X'}, 32)}
+	for i, c := range current.Chunks {
+		blobs[c.GetFileIdString()] = bytes.Repeat([]byte{byte('A' + i)}, 256)
+	}
+	peer := &g6ConditionalPeer{entry: proto.Clone(current).(*filer_pb.Entry), blobs: blobs}
+	startFakeFiler(t, w, peer)
+	w.mapPbIdFromFilerToLocal(base)
+	w.mapPbIdFromFilerToLocal(pending)
+	fh := newFileHandle(w, 1, 42, pending)
+	t.Cleanup(fh.dirtyPages.Destroy)
+	fh.RememberPath("/dir/file")
+	fh.baseEntry.Store(base)
+	fh.dirtyMetadata = true
+	if code := w.doFlush(context.Background(), fh, 1000, 20, false); code != fuse.OK {
+		t.Fatal("overwrite below the committed tail failed publication", code)
+	}
+	peer.mu.Lock()
+	defer peer.mu.Unlock()
+	want := bytes.Repeat([]byte{'A'}, 256)
+	copy(want[16:], bytes.Repeat([]byte{'X'}, 32))
+	want = append(want, bytes.Repeat([]byte{'B'}, 256)...)
+	want = append(want, bytes.Repeat([]byte{'C'}, 256)...)
+	if peer.rejected != 1 || peer.entry.Attributes.FileSize != 768 || peer.entry.Attributes.FileMode != 0600 || !bytes.Equal(g6StoredBytes(t, peer), want) {
+		t.Fatal("rebase lost exact bytes, size or peer attributes")
+	}
+}

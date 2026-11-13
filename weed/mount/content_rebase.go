@@ -188,13 +188,15 @@ func chunkPrefix(prefix, chunks []*filer_pb.FileChunk) bool {
 	if len(prefix) > len(chunks) {
 		return false
 	}
+	// Later chunks may sort anywhere, e.g. an overwrite below the stored tail.
 	left, right := canonicalChunkCopies(prefix), canonicalChunkCopies(chunks)
-	for i, c := range left {
-		if !proto.Equal(c, right[i]) {
-			return false
+	i := 0
+	for _, c := range right {
+		if i < len(left) && proto.Equal(left[i], c) {
+			i++
 		}
 	}
-	return true
+	return i == len(left)
 }
 
 // Only attribute differences may be reconciled here. A replacement, truncate,
