@@ -325,6 +325,16 @@ func TestWriteToVersionFileKeyReadsLogicalOwner(t *testing.T) {
 	version.Extended[s3_constants.ExtVersionIdKey] = []byte("v1")
 	owner.entries["/buckets/b/"+object+".versions/v_v1"] = version
 	require.Equal(t, s3err.ErrAccessDenied, s3a.checkVersionFileWrite("b", object+".versions/v_v1", "t"))
+
+	s3a.markOwnerUnreachable(ownerAddr)
+	require.Equal(t, s3err.ErrAccessDenied, s3a.checkVersionFileWrite("b", object+".versions/v_v1", "t"))
+	s3a.markOwnerUnreachable(ownerAddr)
+	require.Equal(t, s3err.ErrNone, s3a.checkVersionFileWrite("b", object+".versions/v_v2", "t"))
+	owner.mu.Lock()
+	owner.lookupErr = status.Error(codes.Unavailable, "owner down")
+	owner.mu.Unlock()
+	s3a.markOwnerUnreachable(ownerAddr)
+	require.Equal(t, s3err.ErrInternalError, s3a.checkVersionFileWrite("b", object+".versions/v_v2", "t"))
 }
 
 func TestAnonymousObjectACLDoesNotReplaceAuthentication(t *testing.T) {
