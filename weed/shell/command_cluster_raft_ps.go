@@ -35,7 +35,7 @@ func (c *commandRaftClusterPs) Do(args []string, commandEnv *CommandEnv, writer 
 
 	raftClusterPsCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	if err = raftClusterPsCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	err = commandEnv.MasterClient.WithClient(context.Background(), false, func(client master_pb.SeaweedClient) error {

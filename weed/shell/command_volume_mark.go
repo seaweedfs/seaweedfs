@@ -53,7 +53,7 @@ func (c *commandVolumeMark) Do(args []string, commandEnv *CommandEnv, writer io.
 	readonly := volMarkCommand.Bool("readonly", false, "volume mark readonly")
 	readonlyCanDelete := volMarkCommand.Bool("readonlyCanDelete", false, "volume mark readonly but still accepting deletes")
 	if err = volMarkCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 	collectionSet, nodeSet, volumeIdSet := false, false, false
 	volMarkCommand.Visit(func(f *flag.Flag) {

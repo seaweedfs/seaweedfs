@@ -52,7 +52,7 @@ func (c *commandVacuum) Do(args []string, commandEnv *CommandEnv, writer io.Writ
 	collection := volumeVacuumCommand.String("collection", "", "comma-separated collection names, wildcards, or regex patterns; empty or \"*\" matches all, \""+CollectionDefault+"\" the collection with no name")
 	volumeIds := volumeVacuumCommand.String("volumeId", "", "comma-separated list of volume IDs")
 	if err = volumeVacuumCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	collectionMatcher, err := wildcard.CompileCollectionMatcher(*collection)

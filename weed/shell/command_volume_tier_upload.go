@@ -97,7 +97,7 @@ func (c *commandVolumeTierUpload) Do(args []string, commandEnv *CommandEnv, writ
 	disk := tierCommand.String("disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
 	concurrency := tierCommand.Int("concurrency", 0, "multipart upload concurrency (0 = backend default)")
 	if err = tierCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	if err = validateTierConcurrency(*concurrency); err != nil {

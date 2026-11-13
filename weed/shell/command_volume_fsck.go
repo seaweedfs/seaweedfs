@@ -141,7 +141,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	c.verifyNeedle = fsckCommand.Bool("verifyNeedles", false, "check needles status from volume server")
 
 	if err = fsckCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	// The command struct is a singleton registered in init(), so any state

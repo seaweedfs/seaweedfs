@@ -37,7 +37,7 @@ func (c *commandS3BucketList) Do(args []string, commandEnv *CommandEnv, writer i
 
 	bucketCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	if err = bucketCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	// collect collection information

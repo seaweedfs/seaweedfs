@@ -39,7 +39,7 @@ func (c *commandRaftServerAdd) Do(args []string, commandEnv *CommandEnv, writer 
 	serverAddress := raftServerAddCommand.String("address", "", "server grpc address")
 	serverVoter := raftServerAddCommand.Bool("voter", true, "assign it a vote")
 	if err = raftServerAddCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	if *serverId == "" || *serverAddress == "" {

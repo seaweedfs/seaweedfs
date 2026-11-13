@@ -37,7 +37,7 @@ func (c *commandRaftServerRemove) Do(args []string, commandEnv *CommandEnv, writ
 	raftServerAddCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	serverId := raftServerAddCommand.String("id", "", "server id")
 	if err = raftServerAddCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	if *serverId == "" {

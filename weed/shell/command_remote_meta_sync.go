@@ -67,7 +67,7 @@ func (c *commandRemoteMetaSync) Do(args []string, commandEnv *CommandEnv, writer
 	statFiles := remoteMetaSyncCommand.Bool("statFiles", false, "stat each new or changed file when the listing does not report all metadata (S3 listings lack Content-Encoding); costs one extra remote request per file")
 
 	if err = remoteMetaSyncCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	mappings, localMountedDir, remoteStorageMountedLocation, remoteStorageConf, detectErr := detectMountInfo(commandEnv, writer, *dir)

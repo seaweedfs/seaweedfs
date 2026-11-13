@@ -74,7 +74,7 @@ func (c *commandRemoteCache) Do(args []string, commandEnv *CommandEnv, writer io
 	fileFiler := newFileFilter(remoteCacheCommand)
 
 	if err = remoteCacheCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	if *dir == "" {

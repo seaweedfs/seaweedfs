@@ -88,7 +88,7 @@ func (c *commandEcRebuild) Do(args []string, commandEnv *CommandEnv, writer io.W
 	// TODO: remove this alias
 	applyChangesAlias := fixCommand.Bool("force", false, "apply the changes (alias for -apply)")
 	if err = fixCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 	handleDeprecatedForceFlag(writer, fixCommand, applyChangesAlias, applyChanges)
 	infoAboutSimulationMode(writer, *applyChanges, "-apply")

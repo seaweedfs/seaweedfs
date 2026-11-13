@@ -43,7 +43,7 @@ func (c *commandS3BucketQuota) Do(args []string, commandEnv *CommandEnv, writer 
 	operationName := bucketCommand.String("op", "set", "operation name [set|get|remove|enable|disable]")
 	sizeMB := bucketCommand.Int64("sizeMB", 0, "bucket quota size in MiB")
 	if err = bucketCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	if *bucketName == "" {

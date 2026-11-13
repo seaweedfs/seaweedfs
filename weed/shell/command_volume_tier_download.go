@@ -66,7 +66,7 @@ func (c *commandVolumeTierDownload) Do(args []string, commandEnv *CommandEnv, wr
 	collection := tierCommand.String("collection", "", "comma-separated collection names, wildcards, or regex patterns; empty matches the collection with no name")
 	concurrency := tierCommand.Int("concurrency", 0, "multipart download concurrency (0 = backend default)")
 	if err = tierCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	if err = validateTierConcurrency(*concurrency); err != nil {

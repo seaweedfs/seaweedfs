@@ -60,7 +60,7 @@ func (c *commandEcDecode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	checkMinFreeSpace := decodeCommand.Bool("checkMinFreeSpace", true, "check min free space when selecting the decode target")
 	batchSize := decodeCommand.Int("batchSize", DefaultEcBatchSize, "decode up to this many volumes per topology refresh (0 = one snapshot for all volumes)")
 	if err = decodeCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 	if *batchSize < 0 {
 		return fmt.Errorf("-batchSize must be >= 0")

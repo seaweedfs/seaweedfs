@@ -41,7 +41,7 @@ func (c *commandClusterCheck) Do(args []string, commandEnv *CommandEnv, writer i
 
 	clusterPsCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	if err = clusterPsCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	// collect topology information
