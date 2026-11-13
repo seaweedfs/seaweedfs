@@ -288,21 +288,19 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 	// Fast path: route the delete to the owner filer under its per-path lock;
 	// routedObjectOwner excludes versioned/object-lock buckets.
 	if !deleteHandled && !versioningConfigured {
-		if cond, condOk := buildDeleteCondition(r); condOk {
-			if owner, ownerOk := s3a.routedObjectOwner(bucket, object); ownerOk {
-				resp, err := s3a.routedDelete(owner, bucket, object, cond)
-				switch {
-				case err != nil:
-					glog.Warningf("DeleteObjectHandler: routed delete to %s failed for %s/%s, falling back to lock: %v", owner, bucket, object, err)
-				case resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED:
-					deleteCode, deleteHandled = s3err.ErrPreconditionFailed, true
-				case resp.Error != "":
-					// Non-precondition error: fall back (the lock path handles cases
-					// the raw delete cannot, e.g. a non-empty directory marker).
-					glog.Warningf("DeleteObjectHandler: routed delete to %s returned %q for %s/%s, falling back to lock", owner, resp.Error, bucket, object)
-				default:
-					deleteCode, deleteHandled = s3err.ErrNone, true
-				}
+		if owner, ownerOk := s3a.routedObjectOwner(bucket, object); ownerOk {
+			resp, err := s3a.routedDelete(owner, bucket, object, buildDeleteCondition(r))
+			switch {
+			case err != nil:
+				glog.Warningf("DeleteObjectHandler: routed delete to %s failed for %s/%s, falling back to lock: %v", owner, bucket, object, err)
+			case resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED:
+				deleteCode, deleteHandled = s3err.ErrPreconditionFailed, true
+			case resp.Error != "":
+				// Non-precondition error: fall back (the lock path handles cases
+				// the raw delete cannot, e.g. a non-empty directory marker).
+				glog.Warningf("DeleteObjectHandler: routed delete to %s returned %q for %s/%s, falling back to lock", owner, resp.Error, bucket, object)
+			default:
+				deleteCode, deleteHandled = s3err.ErrNone, true
 			}
 		}
 	}
@@ -325,12 +323,12 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 	// allows a governance-mode delete while still denying compliance and legal
 	// hold, without the gateway reading the version. If-Match rides the same
 	// transaction, so concurrent conditional deletes of one version cannot both
-	// pass; one the filer cannot express stays on the lock path.
+	// pass.
 	if !deleteHandled && versionId != "" {
 		worm, lockErr := s3a.isObjectLockEnabled(bucket)
 		bypass := worm && s3a.evaluateGovernanceBypassRequest(r, bucket, object)
-		ifMatch, ifMatchOk := buildDeleteCondition(r)
-		if lockErr == nil && ifMatchOk {
+		ifMatch := buildDeleteCondition(r)
+		if lockErr == nil {
 			if owner := s3a.objectWriteOwner(bucket, object); owner != "" {
 				deleteResult.versionId = versionId
 				if ve, vErr := s3a.getSpecificObjectVersion(bucket, object, versionId); vErr == nil && ve != nil && ve.Extended != nil {

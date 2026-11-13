@@ -252,55 +252,26 @@ func TestValidateConditionalCopyHeadersAcceptsHTTPDateFormats(t *testing.T) {
 
 func TestBuildDeleteCondition(t *testing.T) {
 	t.Run("no If-Match is unconditional", func(t *testing.T) {
-		cond, ok := buildDeleteCondition(reqWith(nil))
-		if !ok || cond != nil {
-			t.Fatalf("want (nil, true), got (%v, %v)", cond, ok)
+		if cond := buildDeleteCondition(reqWith(nil)); cond != nil {
+			t.Fatalf("want nil, got %v", cond)
 		}
 	})
 	t.Run("If-Match * to IF_EXISTS", func(t *testing.T) {
-		cond, ok := buildDeleteCondition(reqWith(map[string]string{s3_constants.IfMatch: "*"}))
-		if !ok {
-			t.Fatal("want ok")
-		}
-		if c := oneClause(t, cond); c.Kind != filer_pb.WriteCondition_IF_EXISTS {
+		if c := oneClause(t, buildDeleteCondition(reqWith(map[string]string{s3_constants.IfMatch: "*"}))); c.Kind != filer_pb.WriteCondition_IF_EXISTS {
 			t.Fatalf("kind = %v", c.Kind)
 		}
 	})
 	t.Run("If-Match etag to IF_ETAG_MATCH", func(t *testing.T) {
-		cond, ok := buildDeleteCondition(reqWith(map[string]string{s3_constants.IfMatch: `"e"`}))
-		if !ok {
-			t.Fatal("want ok")
-		}
-		if c := oneClause(t, cond); c.Kind != filer_pb.WriteCondition_IF_ETAG_MATCH || c.Etags[0] != "e" {
+		if c := oneClause(t, buildDeleteCondition(reqWith(map[string]string{s3_constants.IfMatch: `"e"`}))); c.Kind != filer_pb.WriteCondition_IF_ETAG_MATCH || len(c.Etags) != 1 || c.Etags[0] != `"e"` {
 			t.Fatalf("clause = %+v", c)
 		}
 	})
-	t.Run("weak etag falls back", func(t *testing.T) {
-		if _, ok := buildDeleteCondition(reqWith(map[string]string{s3_constants.IfMatch: `W/"e"`})); ok {
-			t.Fatal("weak etag must not take the fast path")
+	t.Run("an ETag list carries every candidate", func(t *testing.T) {
+		c := oneClause(t, buildDeleteCondition(reqWith(map[string]string{s3_constants.IfMatch: `"a", W/"b"`})))
+		if c.Kind != filer_pb.WriteCondition_IF_ETAG_MATCH || len(c.Etags) != 2 || c.Etags[0] != `"a"` || c.Etags[1] != `W/"b"` {
+			t.Fatalf("clause = %+v", c)
 		}
 	})
-}
-
-func TestSingleStrongETag(t *testing.T) {
-	cases := []struct {
-		in     string
-		want   string
-		single bool
-	}{
-		{`"abc"`, "abc", true},
-		{` "abc" `, "abc", true},
-		{`abc`, "abc", true},
-		{`W/"abc"`, "", false},
-		{`w/"abc"`, "", false},
-		{`"a","b"`, "", false},
-	}
-	for _, c := range cases {
-		got, single := singleStrongETag(c.in)
-		if single != c.single || (single && got != c.want) {
-			t.Errorf("singleStrongETag(%q) = (%q, %v), want (%q, %v)", c.in, got, single, c.want, c.single)
-		}
-	}
 }
 
 // fakeTxnFiler is a minimal SeaweedFiler gRPC server that records ObjectTransaction
@@ -746,7 +717,7 @@ func TestRouteWriteCondition(t *testing.T) {
 // precondition rather than an object-lock denial.
 func TestRoutedVersionDeleteCarriesIfMatch(t *testing.T) {
 	versionId := "672a75d526ef29c79fe6b5680cad4a0d"
-	ifMatch := etagClause(filer_pb.WriteCondition_IF_ETAG_MATCH, "abc")
+	ifMatch := &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{Kind: filer_pb.WriteCondition_IF_ETAG_MATCH, Etags: []string{"abc"}}}}
 	newS3a := func() *S3ApiServer {
 		return &S3ApiServer{option: &S3ApiServerOption{
 			BucketsPath:    "/buckets",
