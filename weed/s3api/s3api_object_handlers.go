@@ -2325,7 +2325,7 @@ func (s3a *S3ApiServer) readChunkRange(ctx context.Context, fileId string, offse
 		return nil, err
 	}
 
-	return resp.Body, nil
+	return &rc{Reader: io.LimitReader(resp.Body, size), Closer: resp.Body}, nil
 }
 
 // getEncryptedStreamFromVolumes gets a raw encrypted data stream from volume
