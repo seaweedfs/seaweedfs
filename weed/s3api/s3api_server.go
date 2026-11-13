@@ -757,12 +757,16 @@ func (s3a *S3ApiServer) recheckTagConditionedPolicyWithLookup(r *http.Request, b
 }
 
 // checkVersionFileWrite refuses a write whose key is a stored version's
-// physical path, which would replace that version's content in place.
+// physical path, which would replace that version's content in place. The
+// physical entry is read on the logical object's owner, where versions commit.
 func (s3a *S3ApiServer) checkVersionFileWrite(bucket, object, handlerName string) s3err.ErrorCode {
 	if !s3a.hasVersionFileShape(object) {
 		return s3err.ErrNone
 	}
-	entry, err := s3a.resolveObjectEntry(bucket, object, "")
+	key := strings.TrimSuffix(NormalizeObjectKey(object), "/")
+	dir, name := util.NewFullPath(s3a.bucketDir(bucket), key).DirAndName()
+	logicalObject := strings.TrimSuffix(strings.TrimSuffix(key, "/"+name), VersionsFolder)
+	entry, err := s3a.getObjectScopedEntryRoutedByKey(bucket, logicalObject, dir, name)
 	if err != nil {
 		if errors.Is(err, filer_pb.ErrNotFound) || status.Code(err) == codes.NotFound {
 			return s3err.ErrNone
