@@ -223,6 +223,11 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 		glog.V(3).Infof("flushMetadataToFiler %s fh %d: file was unlinked, skipping", fileFullPath, fh.fh)
 		return nil
 	}
+	if fh.linkRefresh != nil {
+		if err := wfs.adoptStoredLink(ctx, fh, util.NewFullPath(dir, name), fh.linkRefresh); err != nil {
+			return err
+		}
+	}
 
 	entry := fh.GetEntry()
 	entry.Name = name // this flush may be just after a rename operation

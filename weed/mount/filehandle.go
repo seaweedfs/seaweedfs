@@ -49,6 +49,9 @@ type FileHandle struct {
 	// nothing to delete after all can tell its own mark from a later one.
 	deleteEpoch uint64
 	isRenamed   bool // set by Rename before waiting for async flush; skips old-path metadata flush
+	// linkRefresh is the hard link id of a link change whose stored entry
+	// could not be read; the next flush reads it before publishing.
+	linkRefresh []byte
 
 	// entryVersionTsNs is the filer log position the handle's entry reflects.
 	// State at or below it must not replace the entry — that rolls it back.

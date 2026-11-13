@@ -3,6 +3,7 @@ package mount
 import (
 	"bytes"
 	"context"
+	"errors"
 	"syscall"
 	"time"
 
@@ -227,11 +228,15 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 // fields and times is left alone, so a peer's write is still refused. Pending
 // content stays pending.
 func (fh *FileHandle) adoptLinkChange(stored *filer_pb.Entry, versionTsNs int64, signature int32) {
+	fhActiveLock := fh.wfs.fhLockTable.AcquireLock("adoptLinkChange", fh.fh, util.ExclusiveLock)
+	defer fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
+	fh.adoptLinkChangeLocked(stored, versionTsNs, signature)
+}
+
+func (fh *FileHandle) adoptLinkChangeLocked(stored *filer_pb.Entry, versionTsNs int64, signature int32) {
 	if stored == nil {
 		return
 	}
-	fhActiveLock := fh.wfs.fhLockTable.AcquireLock("adoptLinkChange", fh.fh, util.ExclusiveLock)
-	defer fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
 	if base := fh.baseEntry.Load(); base != nil && !fh.wfs.sameApartFromLink(stored, base) {
 		return
 	}
@@ -247,6 +252,23 @@ func (fh *FileHandle) adoptLinkChange(stored *filer_pb.Entry, versionTsNs int64,
 	}
 	fh.setAuthoritativeBase(linked)
 	fh.advanceEntryVersion(versionTsNs, signature)
+}
+
+// adoptStoredLink reads the entry stored at path and adopts it as a change of
+// hardLinkId. A failed read leaves the id on the handle, so its next flush
+// reads again instead of publishing over a base the change made stale. The
+// caller holds the handle's lock.
+func (wfs *WFS) adoptStoredLink(ctx context.Context, fh *FileHandle, path util.FullPath, hardLinkId []byte) error {
+	stored, tsNs, signature, err := filer_pb.GetEntry(ctx, wfs, path)
+	if err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+		fh.linkRefresh = hardLinkId
+		return err
+	}
+	fh.linkRefresh = nil
+	if bytes.Equal(stored.GetHardLinkId(), hardLinkId) {
+		fh.adoptLinkChangeLocked(stored, tsNs, signature)
+	}
+	return nil
 }
 
 // sameApartFromLink reports whether stored, in filer ids, still holds base

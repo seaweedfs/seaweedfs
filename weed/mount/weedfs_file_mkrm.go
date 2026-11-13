@@ -1,7 +1,6 @@
 package mount
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"syscall"
@@ -363,9 +362,11 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 	if isHardLink && markedInode != 0 {
 		if survivor, status := wfs.inodeToPath.GetPath(markedInode); status == fuse.OK {
 			if fh, found := wfs.fhMap.FindFileHandle(markedInode); found {
-				if stored, tsNs, signature, err := filer_pb.GetEntry(ctx, wfs, survivor); err == nil && bytes.Equal(stored.GetHardLinkId(), entry.HardLinkId) {
-					fh.adoptLinkChange(stored, tsNs, signature)
+				lock := wfs.fhLockTable.AcquireLock("Unlink", fh.fh, util.ExclusiveLock)
+				if err := wfs.adoptStoredLink(ctx, fh, survivor, entry.HardLinkId); err != nil {
+					glog.V(1).Infof("unlink %s: read %s again at the next flush: %v", entryFullPath, survivor, err)
 				}
+				wfs.fhLockTable.ReleaseLock(fh.fh, lock)
 			}
 			wfs.clearHandleDeleted(markedInode, deleteEpoch)
 		}

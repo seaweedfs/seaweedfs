@@ -24,6 +24,10 @@ type hardLinkFiler struct {
 	records map[string]*filer_pb.Entry
 	blobs   map[string]*filer_pb.Entry
 	stamp   int64
+	// failLookups fails that many lookups of failName once a delete ran.
+	failName    string
+	failLookups int
+	deleted     bool
 }
 
 func (s *hardLinkFiler) resolve(name string) *filer_pb.Entry {
@@ -68,6 +72,10 @@ func (s *hardLinkFiler) unlinkBlob(id []byte) {
 func (s *hardLinkFiler) LookupDirectoryEntry(ctx context.Context, r *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.deleted && r.Name == s.failName && s.failLookups > 0 {
+		s.failLookups--
+		return nil, status.Error(codes.Internal, "store read failed")
+	}
 	entry := s.resolve(r.Name)
 	if entry == nil {
 		return nil, status.Error(codes.NotFound, filer_pb.ErrNotFound.Error())
@@ -124,6 +132,7 @@ func (s *hardLinkFiler) DeleteEntry(ctx context.Context, r *filer_pb.DeleteEntry
 		return &filer_pb.DeleteEntryResponse{}, nil
 	}
 	delete(s.records, r.Name)
+	s.deleted = true
 	if len(record.HardLinkId) > 0 {
 		s.unlinkBlob(record.HardLinkId)
 	}
@@ -241,6 +250,27 @@ func TestUnlinkedAliasKeepsOpenHandlePublishing(t *testing.T) {
 				t.Fatal("the flush recreated the unlinked name")
 			}
 		})
+	}
+}
+
+// The read of the surviving entry right after the delete can fail; the next
+// flush has to read it again rather than publish over the stale base forever.
+func TestUnlinkedAliasRereadsLostEntryAtFlush(t *testing.T) {
+	wfs, fake, fh, inode := openLinkTestFile(t)
+	linkInRoot(t, wfs, inode, "final")
+	fake.mu.Lock()
+	fake.failName, fake.failLookups = "final", 1
+	fake.mu.Unlock()
+	unlinkInRoot(t, wfs, "tmp")
+	if fh.linkRefresh == nil {
+		t.Fatal("a failed read of the surviving entry was not left for the next flush")
+	}
+	if code := appendAndFlush(t, wfs, fh, 2); code != fuse.OK {
+		t.Fatalf("flush after the lost read: %v", code)
+	}
+	wantStored(t, fake, "final", 2, 1)
+	if fh.linkRefresh != nil {
+		t.Fatal("the pending read survived a successful flush")
 	}
 }
 
