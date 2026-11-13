@@ -64,3 +64,22 @@ func TestClusterHealthSummary(t *testing.T) {
 		t.Errorf("empty cluster issues = %q", got)
 	}
 }
+
+func TestAdminDashboardListsVectorServers(t *testing.T) {
+	var out bytes.Buffer
+	data := dash.AdminData{VectorNodes: []dash.VectorNode{{Address: "10.0.0.6:18888", Kind: "engine", Version: "0.1.0", Status: "Ready"}}}
+	if err := Admin(data).Render(context.Background(), &out); err != nil {
+		t.Fatal(err)
+	}
+	page := out.String()
+	if !strings.Contains(page, "Vector servers") || !strings.Contains(page, "<td>10.0.0.6:18888</td><td>engine</td>") || strings.Contains(page, "No vector servers found") {
+		t.Fatal("the dashboard does not list the vector engine")
+	}
+	out.Reset()
+	if err := Admin(dash.AdminData{}).Render(context.Background(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "No vector servers found") {
+		t.Fatal("no empty state without vector servers")
+	}
+}

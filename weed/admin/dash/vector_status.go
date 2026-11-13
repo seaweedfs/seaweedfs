@@ -18,6 +18,8 @@ import (
 
 type VectorNode struct {
 	Address string `json:"address"`
+	// Kind is "engine" for a weed-vector engine.
+	Kind    string `json:"kind"`
 	Version string `json:"version"`
 	Status  string `json:"status"`
 }
@@ -45,7 +47,7 @@ func (s *AdminServer) getVectorNodesStatus(ctx context.Context) VectorOperations
 			err = callErr
 			if err == nil {
 				for _, node := range response.ClusterNodes {
-					data.Engines = append(data.Engines, VectorNode{Address: node.Address, Version: node.Version, Status: "Registered"})
+					data.Engines = append(data.Engines, VectorNode{Address: node.Address, Kind: "engine", Version: node.Version, Status: "Registered"})
 				}
 			}
 		}

@@ -335,6 +335,10 @@ templ Admin(data dash.AdminData) {
                                 <div class="h5 mb-0">{fmt.Sprintf("%d", len(data.S3Nodes))}</div>
                                 <small class="text-muted">S3 servers</small>
                             </a>
+                            <a class="col cluster-count" href={ dash.PUrl(ctx, "/cluster/vector-servers") }>
+                                <div class="h5 mb-0">{fmt.Sprintf("%d", len(data.VectorNodes))}</div>
+                                <small class="text-muted">Vector servers</small>
+                            </a>
                             <a class="col cluster-count" href={ dash.PUrl(ctx, "/cluster/mount-clients") }>
                                 <div class="h5 mb-0">{fmt.Sprintf("%d", data.TotalMountClients)}</div>
                                 <small class="text-muted">Mount clients</small>
@@ -538,6 +542,54 @@ templ Admin(data dash.AdminData) {
                                             <td colspan="4" class="text-center text-muted py-4">
                                                 <i class="bi bi-info-circle me-2"></i>
                                                 No S3 servers found
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Vector Servers -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card shadow mb-4">
+                    <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
+                        <h6 class="m-0 font-weight-bold text-primary">
+                            <i class="bi bi-arrow-up-right me-2"></i>Vector Servers
+                        </h6>
+                        <a href={ dash.PUrl(ctx, "/cluster/vector-servers") } class="btn btn-sm btn-outline-primary">
+                            View all <i class="bi bi-arrow-right ms-1"></i>
+                        </a>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-hover" width="100%" cellspacing="0">
+                                <thead>
+                                    <tr>
+                                        <th>Address</th>
+                                        <th>Kind</th>
+                                        <th>Version</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    for _, vectorNode := range data.VectorNodes {
+                                        <tr>
+                                            <td>{vectorNode.Address}</td>
+                                            <td>{vectorNode.Kind}</td>
+                                            <td title={vectorNode.Version}>{dash.ShortVersion(vectorNode.Version)}</td>
+                                            <td>{vectorNode.Status}</td>
+                                        </tr>
+                                    }
+                                    if len(data.VectorNodes) == 0 {
+                                        <tr>
+                                            <td colspan="4" class="text-center text-muted py-4">
+                                                <i class="bi bi-info-circle me-2"></i>
+                                                No vector servers found
                                             </td>
                                         </tr>
                                     }
