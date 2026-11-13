@@ -141,7 +141,7 @@ func (m *Mover) LiveMoveVolume(ctx context.Context, volumeId needle.VolumeId, so
 		return fmt.Errorf("mark volume %d readonly on %s: %v", volumeId, source, err)
 	}
 	if sourceWasWritable {
-		fmt.Fprintf(opts.Writer, "volume %d on %s stays readonly across restarts until the move ends; if the move is interrupted, volume.mark -node %s -volumeId %d -writable reopens it\n", volumeId, source, source, volumeId)
+		fmt.Fprintf(opts.Writer, "volume %d on %s stays readonly across restarts until the move ends; if the move is interrupted and %s has no copy of it, volume.mark -node %s -volumeId %d -writable reopens it, otherwise delete one copy before reopening the other\n", volumeId, source, target, source, volumeId)
 	}
 
 	targetHadVolume, targetStateKnown = m.probeVolume(ctx, volumeId, target)
