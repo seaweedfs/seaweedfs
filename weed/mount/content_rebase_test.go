@@ -508,8 +508,8 @@ func testAsyncRefusalAfterForget(t *testing.T, publicationBlocked bool) {
 		t.Fatal("async refusal did not finish")
 	}
 	peer.mu.Lock()
-	if peer.rejected != 1 {
-		t.Errorf("refusals = %d, want one no-progress refusal", peer.rejected)
+	if peer.rejected != 4 {
+		t.Errorf("refusals = %d, want four bounded async attempts before retirement", peer.rejected)
 	}
 	peer.refuse = false
 	peer.mu.Unlock()
@@ -683,7 +683,9 @@ func testContentRebaseStopsProgress(t *testing.T, cancelCaller bool) {
 	fh := w.GetHandle(FileHandleId(handle))
 	fh.dirtyPages.FlushData()
 	done := make(chan error, 1)
-	go func() { done <- w.flushMetadataToFiler(ctx, fh, "/dir", "file", 0, 0) }()
+	go func() {
+		done <- w.flushMetadataToFiler(ctx, fh, "/dir", "file", 0, 0, &contentPublication{failure: fh.writebackContentError})
+	}()
 	select {
 	case <-blocked:
 	case <-time.After(10 * time.Second):
@@ -840,5 +842,64 @@ func TestRefusalThenRefreshDeadlineFencesFlockClose(t *testing.T) {
 	defer peer.mu.Unlock()
 	if !g6EntryEqual(peer.entry, committed) || !bytes.Equal(g6StoredBytes(t, peer), bytes.Repeat([]byte{'O'}, 256)) {
 		t.Fatal("refusal changed committed bytes, size, chunks or peer attributes")
+	}
+}
+
+func TestAsyncCompatibleRefusalThenRefreshOutageRecovers(t *testing.T) {
+	base := attributeAppendEntry(1)
+	peer := &g6ConditionalPeer{entry: proto.Clone(base).(*filer_pb.Entry)}
+	w, handle := g6AppendHandle(t, peer, base, 1900, true)
+	fake := &g6RefreshDeadlineFiler{g6ConditionalPeer: peer}
+	fake.unavailable.Store(true)
+	startFakeFiler(t, w, fake)
+	peer.mu.Lock()
+	peer.entry.Attributes.FileMode = 0600
+	peer.entry.CommitTsNs = 20000
+	peer.refuse = true
+	peer.mu.Unlock()
+	var restored atomic.Int32
+	oldSleep := metadataFlushSleep
+	metadataFlushSleep = func(context.Context, time.Duration) {
+		if restored.Add(1) == 1 {
+			peer.mu.Lock()
+			peer.refuse = false
+			peer.mu.Unlock()
+			fake.unavailable.Store(false)
+		}
+	}
+	t.Cleanup(func() { metadataFlushSleep = oldSleep })
+	w.pendingAsyncFlush = make(map[uint64]chan struct{})
+	w.startAsyncFlushWorkers(1)
+	t.Cleanup(func() {
+		fake.unavailable.Store(false)
+		peer.mu.Lock()
+		peer.refuse = false
+		peer.mu.Unlock()
+		w.WaitForAsyncFlush()
+	})
+	cell := w.GetHandle(FileHandleId(handle)).writebackContentError
+	if n, code := w.Write(nil, &fuse.WriteIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: handle, Offset: 256, Size: 256}, bytes.Repeat([]byte{'A'}, 256)); n != 256 || code != fuse.OK {
+		t.Fatal(n, code)
+	}
+	w.Release(nil, &fuse.ReleaseIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: handle})
+	w.pendingAsyncFlushMu.Lock()
+	done := w.pendingAsyncFlush[42]
+	w.pendingAsyncFlushMu.Unlock()
+	if done == nil {
+		t.Fatal("Release did not queue publication")
+	}
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("async publication did not finish after restore")
+	}
+	peer.mu.Lock()
+	defer peer.mu.Unlock()
+	want := append(bytes.Repeat([]byte{'O'}, 256), bytes.Repeat([]byte{'A'}, 256)...)
+	if restored.Load() == 0 || peer.rejected == 0 || cell.Load() || peer.entry.Attributes.FileSize != 512 || peer.entry.Attributes.FileMode != 0600 || !bytes.Equal(g6StoredBytes(t, peer), want) {
+		t.Fatalf("retryable refresh error discarded pending content: restored=%d refused=%d fenced=%v size=%d", restored.Load(), peer.rejected, cell.Load(), peer.entry.Attributes.FileSize)
+	}
+	if _, found := w.fhMap.FindFileHandle(42); found {
+		t.Fatal("successful async close retained handle")
 	}
 }

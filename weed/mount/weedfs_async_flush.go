@@ -127,9 +127,10 @@ func isFilerUnreachable(err error) bool {
 // keeps retrying for as long as the filer is unreachable.
 func (wfs *WFS) flushMetadataWithRetry(fh *FileHandle, dir, name string, fileFullPath util.FullPath) {
 	attempts := 0
+	publication := &contentPublication{failure: fh.writebackContentError}
 	err := retryMetadataFlushUntil(context.Background(), func() error {
 		attempts++
-		return wfs.flushMetadataToFiler(context.Background(), fh, dir, name, fh.asyncFlushUid, fh.asyncFlushGid)
+		return wfs.flushMetadataToFiler(context.Background(), fh, dir, name, fh.asyncFlushUid, fh.asyncFlushGid, publication)
 	}, isFilerUnreachable, func(nextAttempt, totalAttempts int, backoff time.Duration, err error) {
 		if totalAttempts == 0 {
 			glog.Warningf("completeAsyncFlush %s: filer unreachable, retrying metadata flush (attempt %d) after %v: %v",
@@ -140,6 +141,7 @@ func (wfs *WFS) flushMetadataWithRetry(fh *FileHandle, dir, name string, fileFul
 			fileFullPath, nextAttempt, totalAttempts, backoff, err)
 	})
 	if err != nil {
+		publication.retire(err)
 		glog.Errorf("completeAsyncFlush %s: metadata flush failed after %d attempts: %v - "+
 			"chunks are uploaded but NOT referenced in filer metadata; "+
 			"they will appear as orphans in volume.fsck",

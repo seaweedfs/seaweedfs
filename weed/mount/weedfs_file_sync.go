@@ -180,12 +180,14 @@ func (wfs *WFS) doFlush(ctx context.Context, fh *FileHandle, uid, gid uint32, al
 		return fuse.Status(syscall.ENOSPC)
 	}
 
+	publication := &contentPublication{failure: fh.writebackContentError}
 	if err := retryMetadataFlushIf(ctx, func() error {
-		return wfs.flushMetadataToFiler(ctx, fh, dir, name, uid, gid)
+		return wfs.flushMetadataToFiler(ctx, fh, dir, name, uid, gid, publication)
 	}, isRetryableFilerError, func(nextAttempt, totalAttempts int, backoff time.Duration, err error) {
 		glog.Warningf("%v fh %d flush: retrying metadata flush (attempt %d/%d) after %v: %v",
 			fileFullPath, fh.fh, nextAttempt, totalAttempts, backoff, err)
 	}); err != nil {
+		publication.retire(err)
 		glog.Errorf("%v fh %d flush: %v", fileFullPath, fh.fh, err)
 		return grpcErrorToFuseStatus(err)
 	}
@@ -203,7 +205,7 @@ func (wfs *WFS) doFlush(ctx context.Context, fh *FileHandle, uid, gid uint32, al
 // When -dlm is enabled, the distributed lock is already held by the FileHandle
 // from open-for-write through close, so no additional distributed lock is
 // needed here. The local fhLockTable lock below serializes within this mount.
-func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, name string, uid, gid uint32) error {
+func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, name string, uid, gid uint32, publication *contentPublication) error {
 	fileFullPath := fh.FullPath()
 	// Attribute acknowledgement and local retention must complete before a
 	// whole-entry flush can publish. Take this before the handle's active lock.
@@ -279,7 +281,7 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 	// on ack this becomes the handle's base, judged against future events.
 	wfs.mapPbIdFromLocalToFiler(request.Entry)
 
-	resp, err := wfs.publishPendingContent(ctx, fh, request)
+	resp, err := wfs.publishPendingContent(ctx, fh, request, publication)
 	if err != nil {
 		glog.Errorf("fh flush create %s: %v", fileFullPath, err)
 		return fmt.Errorf("fh flush create %s: %w", fileFullPath, err)

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -14,21 +15,32 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// One owner carries refusal evidence across all of its helper retries. The
+// lifetime cell is marked only when that owner returns a final error.
+type contentPublication struct {
+	refused bool
+	failure *atomic.Bool
+}
+
+func (p *contentPublication) retire(err error) {
+	if err != nil && p.refused && p.failure != nil {
+		p.failure.Store(true)
+	}
+}
+
 // A flush owns its pending content until publication succeeds. An attribute
 // race is retried against the latest entry, never by replacing the guard alone.
 // Callers hold the handle's active lock before touching its live entry/base.
-func (wfs *WFS) publishPendingContent(ctx context.Context, fh *FileHandle, req *filer_pb.CreateEntryRequest) (result *filer_pb.CreateEntryResponse, resultErr error) {
+func (wfs *WFS) publishPendingContent(ctx context.Context, fh *FileHandle, req *filer_pb.CreateEntryRequest, publication *contentPublication) (result *filer_pb.CreateEntryResponse, resultErr error) {
 	// The handle was bound before any async work or publication-lock wait.
 	// Never recapture here: Forget may already have started a new lifetime.
 	failure := fh.writebackContentError
 	if wfs.option.WritebackCache && (failure == nil || failure.Load()) {
 		return nil, fmt.Errorf("writeback inode awaits Forget after content refusal: %w", filer_pb.ErrPreconditionFailed)
 	}
-	// A refresh/transport error cannot undo an earlier content refusal.
-	refused := false
 	defer func() {
-		if failure != nil && resultErr != nil && (refused || errors.Is(resultErr, filer_pb.ErrPreconditionFailed)) {
-			failure.Store(true)
+		if errors.Is(resultErr, filer_pb.ErrPreconditionFailed) {
+			publication.refused = true
 		}
 	}()
 	base := fh.baseEntry.Load()
@@ -73,7 +85,7 @@ func (wfs *WFS) publishPendingContent(ctx context.Context, fh *FileHandle, req *
 				// A provider refusal is final for this attempt, not a transport
 				// failure to replay on another filer address.
 				refusal = callErr
-				refused = true
+				publication.refused = true
 				return nil
 			}
 			return callErr

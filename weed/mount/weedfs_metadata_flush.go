@@ -180,8 +180,10 @@ func (wfs *WFS) flushFileMetadata(fh *FileHandle) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), metadataFlushTimeout)
 	defer cancel()
-	resp, err := wfs.publishPendingContent(ctx, fh, request)
+	publication := &contentPublication{failure: fh.writebackContentError}
+	resp, err := wfs.publishPendingContent(ctx, fh, request, publication)
 	if err != nil {
+		publication.retire(err)
 		return err
 	}
 
