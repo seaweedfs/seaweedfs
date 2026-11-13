@@ -2119,3 +2119,43 @@ func TestPeerAppendMergesIntoDirtyHandle(t *testing.T) {
 		t.Fatalf("base %v, want the peer's entry", base)
 	}
 }
+
+// A peer change that cannot be merged (inline content over the handle's new
+// chunk) leaves the dirty handle alone, so its flush fails instead of the
+// event silently dropping the writes.
+func TestUnmergeablePeerChangeKeepsDirtyHandle(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+
+	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+	fh, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, flushConditionEntry(1), 0, 0)
+	fh.AddChunks([]*filer_pb.FileChunk{{FileId: "1,0300000001", Offset: 2, Size: 1, ModifiedTsNs: 3}})
+	fh.dirtyMetadata = true
+	pagesBefore := fh.dirtyPages
+
+	peer := flushConditionEntry()
+	peer.Content = []byte("peer")
+	peer.Attributes.FileSize = 4
+	resp := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		TsNs:      1500,
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:      flushConditionEntry(1),
+			NewEntry:      peer,
+			NewParentPath: "/dir",
+		},
+	}
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), resp, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	wfs.metaCache.WaitForEntryInvalidations()
+
+	if fh.dirtyPages != pagesBefore {
+		t.Fatal("dirty pages destroyed by an unmergeable peer change")
+	}
+	if got := len(fh.GetEntry().GetEntry().Chunks); got != 2 {
+		t.Fatalf("handle has %d chunks, want its own 2", got)
+	}
+	if base := fh.baseEntry.Load(); len(base.GetChunks()) != 1 || len(base.GetContent()) != 0 {
+		t.Fatalf("base %v moved to the peer's entry", base)
+	}
+}

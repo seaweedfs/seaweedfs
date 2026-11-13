@@ -380,10 +380,7 @@ const maxContentFlushMerges = 3
 // whole-file rewrite (maybeMergeChunks, unstamped chunks) over a peer's chunk
 // change cannot be merged: the rewrite carries the handle's stale view.
 func mergeContentEntry(stored, base, local, sent *filer_pb.Entry, truncatedTo int64) (*filer_pb.Entry, bool) {
-	if stored == nil || base == nil || stored.IsDirectory || !bytes.Equal(stored.HardLinkId, base.HardLinkId) {
-		return nil, false
-	}
-	if inode := base.GetAttributes().GetInode(); inode != 0 && stored.GetAttributes().GetInode() != inode {
+	if !sameContentFile(stored, base) {
 		return nil, false
 	}
 	merged := proto.Clone(stored).(*filer_pb.Entry)
@@ -482,6 +479,15 @@ func mergeContentEntry(stored, base, local, sent *filer_pb.Entry, truncatedTo in
 	}
 	merged.Attributes.FileSize = uint64(size)
 	return merged, true
+}
+
+// sameContentFile reports whether stored is still the regular file base was.
+func sameContentFile(stored, base *filer_pb.Entry) bool {
+	if stored == nil || base == nil || stored.IsDirectory || !bytes.Equal(stored.HardLinkId, base.HardLinkId) {
+		return false
+	}
+	inode := base.GetAttributes().GetInode()
+	return inode == 0 || stored.GetAttributes().GetInode() == inode
 }
 
 // contentChunkKey identifies a chunk reference: truncation shrinks a chunk in
