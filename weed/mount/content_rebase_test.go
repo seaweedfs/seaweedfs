@@ -507,8 +507,8 @@ func testAsyncRefusalAfterForget(t *testing.T, publicationBlocked bool) {
 		t.Fatal("async refusal did not finish")
 	}
 	peer.mu.Lock()
-	if peer.rejected != 3 {
-		t.Errorf("refusals = %d, want bounded three", peer.rejected)
+	if peer.rejected != 1 {
+		t.Errorf("refusals = %d, want one no-progress refusal", peer.rejected)
 	}
 	peer.refuse = false
 	peer.mu.Unlock()
@@ -532,5 +532,174 @@ func testAsyncRefusalAfterForget(t *testing.T, publicationBlocked bool) {
 	want := append(bytes.Repeat([]byte{'O'}, 256), bytes.Repeat([]byte{'B'}, 256)...)
 	if peer.entry.Attributes.FileSize != 512 || !bytes.Equal(g6StoredBytes(t, peer), want) {
 		t.Fatal("relookup publication changed original/new bytes or size")
+	}
+}
+
+// The peer uses the real attribute handlers at 100ms ticks. Gate the first
+// four publication attempts per append after guard capture, making contention
+// reproducible without asserting on scheduler timing.
+func TestPeerAttributeLoopDoesNotRejectAppends(t *testing.T) {
+	for _, writeback := range []bool{false, true} {
+		t.Run(map[bool]string{false: "normal", true: "writeback"}[writeback], func(t *testing.T) {
+			base := attributeAppendEntry(1)
+			peer := &g6ConditionalPeer{entry: proto.Clone(base).(*filer_pb.Entry)}
+			w, handle := g6AppendHandle(t, peer, base, 1300, writeback)
+			fh := w.GetHandle(FileHandleId(handle))
+			attr := newInvalidateTestWFS(t)
+			attr.atimeMap = make(map[uint64]time.Time)
+			startFakeFiler(t, attr, peer)
+			attr.inodeToPath.Lookup("/dir", 1, true, false, 0, false)
+			attr.inodeToPath.Lookup("/dir/file", 1, false, false, 42, true)
+			attr.inodeToPath.MarkChildrenCached("/dir")
+			if err := attr.metaCache.InsertEntry(context.Background(), filer.FromPbEntry("/dir", proto.Clone(base).(*filer_pb.Entry)), 1); err != nil {
+				t.Fatal(err)
+			}
+			requests := make(chan chan fuse.Status)
+			stop, stopped := make(chan struct{}), make(chan struct{})
+			go func() {
+				defer close(stopped)
+				ticker := time.NewTicker(100 * time.Millisecond)
+				defer ticker.Stop()
+				for tick := uint32(1); ; tick++ {
+					select {
+					case <-stop:
+						return
+					case ack := <-requests:
+						select {
+						case <-ticker.C:
+						case <-stop:
+							return
+						}
+						in := &fuse.SetAttrIn{}
+						in.NodeId, in.Valid, in.Mode = 42, fuse.FATTR_MODE, 0600|(tick&1)*0040
+						code := attr.SetAttr(nil, in, &fuse.AttrOut{})
+						if code == fuse.OK {
+							code = attr.SetXAttr(nil, &fuse.SetXAttrIn{InHeader: fuse.InHeader{NodeId: 42}}, "user.tick", []byte{byte(tick)})
+						}
+						ack <- code
+					}
+				}
+			}()
+			t.Cleanup(func() { close(stop); <-stopped })
+			var attempts atomic.Int32
+			peer.beforeCreate = func(ctx context.Context) {
+				if attempts.Add(1) > 4 {
+					return
+				}
+				ack := make(chan fuse.Status, 1)
+				select {
+				case requests <- ack:
+				case <-ctx.Done():
+					return
+				}
+				select {
+				case code := <-ack:
+					if code != fuse.OK {
+						t.Errorf("peer attribute loop: %v", code)
+					}
+				case <-ctx.Done():
+				}
+			}
+			want := bytes.Repeat([]byte{'O'}, 256)
+			for n := 0; n < 4; n++ {
+				attempts.Store(0)
+				body := bytes.Repeat([]byte{byte('A' + n)}, 256)
+				if got, code := w.Write(nil, &fuse.WriteIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: handle, Offset: uint64(len(want)), Size: 256}, body); got != 256 || code != fuse.OK {
+					t.Fatal(got, code)
+				}
+				if code := w.Fsync(nil, &fuse.FsyncIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: handle}); code != fuse.OK {
+					peer.mu.Lock()
+					observed := proto.Clone(fh.baseEntry.Load()).(*filer_pb.Entry)
+					w.mapPbIdFromLocalToFiler(observed)
+					compatible := sameContentIdentity(observed, peer.entry)
+					rejected := peer.rejected
+					peer.mu.Unlock()
+					t.Fatalf("append %d under peer attribute loop: %v; refusals=%d compatible=%v", n, code, rejected, compatible)
+				}
+				want = append(want, body...)
+				peer.mu.Lock()
+				correct := peer.entry.Attributes.FileSize == uint64(len(want)) && bytes.Equal(g6StoredBytes(t, peer), want)
+				peer.mu.Unlock()
+				if !correct {
+					t.Fatal("attribute contention lost acknowledged append bytes/size")
+				}
+			}
+			w.Release(nil, &fuse.ReleaseIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: handle, ReleaseFlags: fuse.FUSE_RELEASE_FLOCK_UNLOCK})
+			peer.mu.Lock()
+			defer peer.mu.Unlock()
+			if peer.rejected != 16 || !bytes.Equal(peer.entry.Extended[XATTR_PREFIX+"user.tick"], []byte{16}) {
+				t.Fatal("fixture missed contention or rolled back peer xattr", peer.rejected)
+			}
+		})
+	}
+}
+
+func TestContentRebaseStopsWithoutProgress(t *testing.T) {
+	base := attributeAppendEntry(1)
+	peer := &g6ConditionalPeer{entry: proto.Clone(base).(*filer_pb.Entry), refuse: true}
+	w, handle := g6AppendHandle(t, peer, base, 1400)
+	if n, code := w.Write(nil, &fuse.WriteIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: handle, Offset: 256, Size: 256}, bytes.Repeat([]byte{'A'}, 256)); n != 256 || code != fuse.OK {
+		t.Fatal(n, code)
+	}
+	if code := w.Fsync(nil, &fuse.FsyncIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: handle}); code != fuse.EIO {
+		t.Fatal("refusal falsely succeeded", code)
+	}
+	peer.mu.Lock()
+	defer peer.mu.Unlock()
+	if peer.rejected != 1 || peer.entry.Attributes.FileSize != 256 || !bytes.Equal(g6StoredBytes(t, peer), bytes.Repeat([]byte{'O'}, 256)) {
+		t.Fatal("no-progress refusal retried or published", peer.rejected)
+	}
+}
+
+func TestContentRebaseCancellationStopsProgress(t *testing.T) {
+	testContentRebaseStopsProgress(t, true)
+}
+
+func TestContentRebaseBudgetStopsProgress(t *testing.T) { testContentRebaseStopsProgress(t, false) }
+
+func testContentRebaseStopsProgress(t *testing.T, cancelCaller bool) {
+	base := attributeAppendEntry(1)
+	peer := &g6ConditionalPeer{entry: proto.Clone(base).(*filer_pb.Entry)}
+	w, handle := g6AppendHandle(t, peer, base, 1500)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	blocked := make(chan struct{})
+	var calls atomic.Int32
+	peer.beforeCreate = func(serverCtx context.Context) {
+		n := calls.Add(1)
+		peer.mu.Lock()
+		peer.entry.Attributes.FileMode = 0600 | uint32(n&1)*0040
+		peer.entry.CommitTsNs = 10000 + int64(n)
+		peer.mu.Unlock()
+		if n == 4 {
+			close(blocked)
+			<-serverCtx.Done()
+		}
+	}
+	if n, code := w.Write(nil, &fuse.WriteIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: handle, Offset: 256, Size: 256}, bytes.Repeat([]byte{'A'}, 256)); n != 256 || code != fuse.OK {
+		t.Fatal(n, code)
+	}
+	done := make(chan fuse.Status, 1)
+	go func() { done <- w.doFlush(ctx, w.GetHandle(FileHandleId(handle)), 0, 0, false) }()
+	select {
+	case <-blocked:
+	case <-time.After(10 * time.Second):
+		t.Fatal("progress did not reach fourth attempt")
+	}
+	if cancelCaller {
+		cancel()
+	}
+	select {
+	case code := <-done:
+		if code != fuse.EIO {
+			t.Fatal("cancelled publication did not fail closed", code)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("bounded rebase did not stop")
+	}
+	peer.mu.Lock()
+	defer peer.mu.Unlock()
+	if calls.Load() != 4 || peer.entry.Attributes.FileSize != 256 || !bytes.Equal(g6StoredBytes(t, peer), bytes.Repeat([]byte{'O'}, 256)) {
+		t.Fatal("cancelled rebase retried or published content", calls.Load())
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -34,9 +35,14 @@ func (wfs *WFS) publishPendingContent(ctx context.Context, fh *FileHandle, req *
 		base = proto.Clone(base).(*filer_pb.Entry)
 		wfs.mapPbIdFromLocalToFiler(base)
 	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
 	var resp *filer_pb.CreateEntryResponse
 	var err error
-	for attempt := 0; attempt < 3; attempt++ {
+	for {
+		if ctx.Err() != nil {
+			return resp, fmt.Errorf("content rebase budget exhausted: %w", filer_pb.ErrPreconditionFailed)
+		}
 		var storedEOF uint64
 		if base != nil {
 			storedEOF = filer.FileSize(base)
@@ -71,7 +77,10 @@ func (wfs *WFS) publishPendingContent(ctx context.Context, fh *FileHandle, req *
 		if err == nil {
 			return resp, nil
 		}
-		if !errors.Is(err, filer_pb.ErrPreconditionFailed) || base == nil || attempt == 2 {
+		if ctx.Err() != nil {
+			return resp, fmt.Errorf("content rebase budget exhausted: %w", filer_pb.ErrPreconditionFailed)
+		}
+		if !errors.Is(err, filer_pb.ErrPreconditionFailed) || base == nil {
 			return resp, err
 		}
 		var latest *filer_pb.Entry
@@ -86,15 +95,29 @@ func (wfs *WFS) publishPendingContent(ctx context.Context, fh *FileHandle, req *
 			return e
 		})
 		if lookupErr != nil {
+			if ctx.Err() != nil {
+				return resp, fmt.Errorf("content rebase budget exhausted: %w", filer_pb.ErrPreconditionFailed)
+			}
 			return resp, lookupErr
 		}
 		if !sameContentIdentity(base, latest) && !appendCompatible(base, latest, req.Entry) {
-			return resp, err
+			return resp, fmt.Errorf("content conflict during rebase: %w", err)
+		}
+		if samePublicationVersion(base, latest) {
+			return resp, fmt.Errorf("content rebase made no progress: %w", err)
 		}
 		rebaseContentAttributes(req.Entry, base, latest)
 		base = latest
 	}
-	return resp, err
+}
+
+// Match the filer's serialized-entry comparison, including the commit stamp.
+// A representation-only fid change is not progress towards a new CAS guard.
+func samePublicationVersion(a, b *filer_pb.Entry) bool {
+	left, right := proto.Clone(a).(*filer_pb.Entry), proto.Clone(b).(*filer_pb.Entry)
+	filer_pb.BeforeEntrySerialization(left.Chunks)
+	filer_pb.BeforeEntrySerialization(right.Chunks)
+	return proto.Equal(filer.FromPbEntry("", left).ToProtoEntry(), filer.FromPbEntry("", right).ToProtoEntry())
 }
 
 // A stored prefix is safe only along the same append chain: the observed
