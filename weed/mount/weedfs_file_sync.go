@@ -373,9 +373,10 @@ const maxContentFlushMerges = 3
 // content it changed, taking those values from sent (local in stored's id
 // space). Everything else keeps the stored value. A local truncation keeps
 // its size and clips stored chunks to it; otherwise the larger size wins.
-// A different file at the path, inline content changed on both sides, or
-// inline content next to chunks (reads stop at the inline bytes) cannot be
-// merged.
+// A different file at the path, inline content changed on both sides,
+// inline content next to chunks (reads stop at the inline bytes), or a local
+// whole-file rewrite (maybeMergeChunks, unstamped chunks) over a peer's chunk
+// change cannot be merged: the rewrite carries the handle's stale view.
 func mergeContentEntry(stored, base, local, sent *filer_pb.Entry) (*filer_pb.Entry, bool) {
 	if stored == nil || base == nil || stored.IsDirectory || !bytes.Equal(stored.HardLinkId, base.HardLinkId) {
 		return nil, false
@@ -400,14 +401,20 @@ func mergeContentEntry(stored, base, local, sent *filer_pb.Entry) (*filer_pb.Ent
 	for _, c := range local.Chunks {
 		inLocal[contentChunkKey(c)] = true
 	}
+	peerChanged := len(stored.Chunks) != len(base.Chunks)
 	merged.Chunks = merged.Chunks[:0]
 	for _, c := range stored.Chunks {
-		if key := contentChunkKey(c); !inBase[key] || inLocal[key] {
+		key := contentChunkKey(c)
+		peerChanged = peerChanged || !inBase[key]
+		if !inBase[key] || inLocal[key] {
 			merged.Chunks = append(merged.Chunks, proto.Clone(c).(*filer_pb.FileChunk))
 		}
 	}
 	for _, c := range local.Chunks {
 		if !inBase[contentChunkKey(c)] {
+			if peerChanged && c.ModifiedTsNs == 0 && !c.IsChunkManifest {
+				return nil, false
+			}
 			merged.Chunks = append(merged.Chunks, proto.Clone(c).(*filer_pb.FileChunk))
 		}
 	}

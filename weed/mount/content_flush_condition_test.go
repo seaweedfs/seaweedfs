@@ -308,6 +308,15 @@ func TestMergeContentEntry(t *testing.T) {
 		t.Fatal("merged into a replaced file")
 	}
 
+	rewritten := proto.Clone(base).(*filer_pb.Entry)
+	rewritten.Chunks = []*filer_pb.FileChunk{{Fid: &filer_pb.FileId{VolumeId: 1, FileKey: 8, Cookie: 1}, Size: 2}}
+	if _, ok := mergeContentEntry(stored, base, rewritten, rewritten); ok {
+		t.Fatal("merged a stale whole-file rewrite over a peer append")
+	}
+	if _, ok := mergeContentEntry(proto.Clone(base).(*filer_pb.Entry), base, rewritten, rewritten); !ok {
+		t.Fatal("refused a rewrite with no peer chunk change")
+	}
+
 	empty := flushConditionEntry()
 	inline := proto.Clone(empty).(*filer_pb.Entry)
 	inline.Content = []byte("peer")
