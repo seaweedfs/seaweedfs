@@ -215,6 +215,10 @@ func downloadAndReplicateFromRemoteTier(grpcDialOption grpc.DialOption, writer i
 				fmt.Fprintf(writer, "volume %d: only %d of %d replicas are listed, the remote object is kept\n", vid, listed, copies)
 				return nil
 			}
+			if server, found := serverListedTwice(remote, local); found {
+				fmt.Fprintf(writer, "volume %d is listed twice on %s, the remote object is kept\n", vid, server)
+				return nil
+			}
 			last := pending[0]
 			fmt.Fprintf(writer, "delete remote-backed replica of volume %d on %s with its remote object\n", vid, last.server)
 			if err = deleteVolume(context.Background(), grpcDialOption, vid, last.server, false, false, false); err != nil {
@@ -282,6 +286,17 @@ func replicateTierDownloadedVolume(grpcDialOption grpc.DialOption, writer io.Wri
 		return fmt.Errorf("replicate volume %d from %s to %s: %v", vid, source, target.server, err)
 	}
 	return nil
+}
+
+func serverListedTwice(remote, local []tierDownloadReplica) (pb.ServerAddress, bool) {
+	seen := make(map[pb.ServerAddress]bool)
+	for _, replica := range append(append([]tierDownloadReplica{}, remote...), local...) {
+		if seen[replica.server] {
+			return replica.server, true
+		}
+		seen[replica.server] = true
+	}
+	return "", false
 }
 
 type tierDownloadReplica struct {

@@ -42,6 +42,8 @@ type tierDownloadCluster struct {
 	writable     map[pb.ServerAddress]bool
 	remounts     map[pb.ServerAddress]int
 	placement    uint32
+	// staleTwin lists a remote-backed twin of the volume on another disk
+	staleTwin map[pb.ServerAddress]bool
 }
 
 type tierDownloadTestServer struct {
@@ -162,6 +164,7 @@ func newTierDownloadCluster(t *testing.T, states ...string) *tierDownloadCluster
 		frozen:       make(map[pb.ServerAddress]bool),
 		writable:     make(map[pb.ServerAddress]bool),
 		remounts:     make(map[pb.ServerAddress]int),
+		staleTwin:    make(map[pb.ServerAddress]bool),
 	}
 	for _, state := range states {
 		lis, err := net.Listen("tcp", "127.0.0.1:0")
@@ -209,10 +212,16 @@ func (c *tierDownloadCluster) readTopology() (*master_pb.TopologyInfo, error) {
 			vi.RemoteStorageName = "s3.default"
 			vi.RemoteStorageKey = "key"
 		}
+		disks := map[string]*master_pb.DiskInfo{"": {VolumeInfos: []*master_pb.VolumeInformationMessage{vi}}}
+		if c.staleTwin[server] {
+			disks["twin"] = &master_pb.DiskInfo{VolumeInfos: []*master_pb.VolumeInformationMessage{{
+				Id: 7, Collection: "c", RemoteStorageName: "s3.default", RemoteStorageKey: "key", ReplicaPlacement: c.placement,
+			}}}
+		}
 		dns = append(dns, &master_pb.DataNodeInfo{
 			Id:        fmt.Sprintf("127.0.0.1:%d", c.ports[server]),
 			GrpcPort:  uint32(c.ports[server]),
-			DiskInfos: map[string]*master_pb.DiskInfo{"": {VolumeInfos: []*master_pb.VolumeInformationMessage{vi}}},
+			DiskInfos: disks,
 		})
 	}
 	return &master_pb.TopologyInfo{DataCenterInfos: []*master_pb.DataCenterInfo{{
@@ -363,5 +372,16 @@ func TestTierDownloadFailsWhenNoReplicaIsListed(t *testing.T) {
 	c.hide(0, c.servers[0])
 	if err := c.run(t); err == nil {
 		t.Fatalf("tier download should fail when no replica is listed")
+	}
+}
+
+func TestTierDownloadKeepsRemoteObjectForStaleTwinOnSource(t *testing.T) {
+	c := newTierDownloadCluster(t, tierReplicaLocal, tierReplicaRemote)
+	c.staleTwin[c.servers[0]] = true
+	if err := c.run(t); err != nil {
+		t.Fatalf("tier download: %v", err)
+	}
+	if !c.objectExists {
+		t.Errorf("remote object deleted while a twin on %s still references it", c.servers[0])
 	}
 }
