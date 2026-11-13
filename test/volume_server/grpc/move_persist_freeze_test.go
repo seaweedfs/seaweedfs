@@ -79,8 +79,8 @@ func TestLiveMoveFreezeSurvivesSourceReload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LiveMoveVolume: %v", err)
 	}
-	if reloadedSourceWrite == http.StatusCreated {
-		t.Fatalf("reloaded source accepted a write the move then deleted")
+	if reloadedSourceWrite != http.StatusConflict {
+		t.Fatalf("reloaded source write: status %d, want %d", reloadedSourceWrite, http.StatusConflict)
 	}
 	if targetWrite != http.StatusCreated {
 		t.Fatalf("copied target refused a write before the tail: status %d", targetWrite)
