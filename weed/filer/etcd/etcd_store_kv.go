@@ -8,8 +8,10 @@ import (
 )
 
 func (store *EtcdStore) KvPut(ctx context.Context, key []byte, value []byte) (err error) {
+	opCtx, cancel := store.withTimeout(ctx)
+	defer cancel()
 
-	_, err = store.client.Put(ctx, store.etcdKeyPrefix+string(key), string(value))
+	_, err = store.client.Put(opCtx, store.etcdKeyPrefix+string(key), string(value))
 
 	if err != nil {
 		return fmt.Errorf("kv put: %w", err)
@@ -19,8 +21,10 @@ func (store *EtcdStore) KvPut(ctx context.Context, key []byte, value []byte) (er
 }
 
 func (store *EtcdStore) KvGet(ctx context.Context, key []byte) (value []byte, err error) {
+	opCtx, cancel := store.withTimeout(ctx)
+	defer cancel()
 
-	resp, err := store.client.Get(ctx, store.etcdKeyPrefix+string(key), atScanRevision(ctx)...)
+	resp, err := store.client.Get(opCtx, store.etcdKeyPrefix+string(key), atScanRevision(ctx)...)
 
 	if err != nil {
 		return nil, fmt.Errorf("kv get: %w", err)
@@ -34,8 +38,10 @@ func (store *EtcdStore) KvGet(ctx context.Context, key []byte) (value []byte, er
 }
 
 func (store *EtcdStore) KvDelete(ctx context.Context, key []byte) (err error) {
+	opCtx, cancel := store.withTimeout(ctx)
+	defer cancel()
 
-	_, err = store.client.Delete(ctx, store.etcdKeyPrefix+string(key))
+	_, err = store.client.Delete(opCtx, store.etcdKeyPrefix+string(key))
 
 	if err != nil {
 		return fmt.Errorf("kv delete: %w", err)
