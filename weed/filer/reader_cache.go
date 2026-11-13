@@ -395,14 +395,18 @@ func (rc *ReaderCache) removeConsumed(downloader *SingleChunkCacher) {
 	}
 }
 
-// removeConsumedLocked also cancels a running download, as no reader can attach to it any more.
+// removeConsumedLocked also cancels a running download, as no reader can attach to it any more,
+// including one destroy already dropped from the map.
 func (rc *ReaderCache) removeConsumedLocked(downloader *SingleChunkCacher) (removed bool) {
-	if rc.downloaders[downloader.chunkFileId] == downloader && downloader.consumable() {
-		delete(rc.downloaders, downloader.chunkFileId)
-		downloader.cancel()
-		return true
+	if !downloader.consumable() {
+		return false
 	}
-	return false
+	downloader.cancel()
+	if rc.downloaders[downloader.chunkFileId] != downloader {
+		return false
+	}
+	delete(rc.downloaders, downloader.chunkFileId)
+	return true
 }
 
 func (rc *ReaderCache) destroy() {
@@ -410,9 +414,11 @@ func (rc *ReaderCache) destroy() {
 	downloaders := rc.downloaders
 	rc.downloaders = make(map[string]*SingleChunkCacher)
 	rc.Unlock()
-	// out of the map, a download with no reader or stream on it has nobody left to wait for it
+	// out of the map no stream can come back to a download, so it is cancelled
+	// now or once its last reader or stream leaves
 	for _, downloader := range downloaders {
-		if atomic.LoadInt32(&downloader.readers) == 0 && atomic.LoadInt32(&downloader.pins) == 0 {
+		atomic.StoreInt32(&downloader.left, 1)
+		if downloader.consumable() {
 			downloader.cancel()
 		}
 	}
