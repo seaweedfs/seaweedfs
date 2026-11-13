@@ -90,11 +90,15 @@ func TestContentAsyncConflictKeepsRecoveryRecord(t *testing.T) {
 	oldSleep := metadataFlushSleep
 	metadataFlushSleep = func(context.Context, time.Duration) {}
 	defer func() { metadataFlushSleep = oldSleep }()
+	peer := proto.Clone(s.entry).(*filer_pb.Entry)
 	w.processAsyncFlushItem(&asyncFlushItem{fh: fh, done: done})
 	select {
 	case <-done:
 	default:
 		t.Fatal("async completion not signalled")
+	}
+	if !proto.Equal(peer, s.entry) {
+		t.Fatal("refused async flush changed the peer entry")
 	}
 	files, err := globFailedContent(t, w)
 	if err != nil || len(files) != 1 {
