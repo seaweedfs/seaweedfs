@@ -148,6 +148,21 @@ func TestInitialLockRingUpdateSkipsNonFilers(t *testing.T) {
 	assert.Nil(t, ms.initialLockRingUpdate(cluster.BrokerType, "group-a"))
 }
 
+func TestInitialLockRingUpdateReachesLockClients(t *testing.T) {
+	ms := &MasterServer{
+		LockRingManager: cluster.NewLockRingManager(nil),
+	}
+
+	ms.LockRingManager.AddServer("group-a", "filer1:8888")
+	ms.LockRingManager.FlushPending("group-a")
+
+	for _, clientType := range []string{cluster.S3Type, cluster.MountType} {
+		resp := ms.initialLockRingUpdate(clientType, "group-a")
+		require.NotNil(t, resp, clientType)
+		assert.Equal(t, []string{"filer1:8888"}, resp.LockRingUpdate.Servers, clientType)
+	}
+}
+
 // TestReconnectedClientSurvivesOldHandlerCleanup covers a client reconnecting
 // KeepConnected under the same name before the old handler has exited: the old
 // handler's deferred cleanup must not close the channel the reconnected stream

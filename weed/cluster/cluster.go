@@ -13,6 +13,7 @@ const (
 	VolumeServerType = "volumeServer"
 	FilerType        = "filer"
 	BrokerType       = "broker"
+	MountType        = "mount"
 	S3Type           = "s3"
 	VectorType       = "vector"
 )
