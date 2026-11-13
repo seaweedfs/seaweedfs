@@ -875,25 +875,59 @@ func TestRoutedVersionDeleteCarriesIfMatch(t *testing.T) {
 			t.Fatalf("nested delete returned (%v, %v) after %d transactions, want a demote", code, settled, len(nested.reqs))
 		}
 		objectKind(t, nested.reqs[0].Mutations[0])
-		objectKind(t, nested.reqs[1].Mutations[0])
 		if star.Clauses[0].Kind != filer_pb.WriteCondition_IF_EXISTS {
 			t.Fatalf("caller's condition changed to %v", star.Clauses[0].Kind)
+		}
+		// A filer that predates IF_OBJECT_EXISTS fails it closed; the delete is
+		// then settled on the entry as read, under IF_EXISTS and that entry.
+		guardFailed := &filer_pb.ObjectTransactionResponse{ErrorCode: filer_pb.FilerError_PRECONDITION_FAILED, FailedMutation: &firstMutation}
+		file := &filer_pb.Entry{Name: "obj", Attributes: &filer_pb.FuseAttributes{FileSize: 3}}
+		for _, tc := range []struct {
+			name  string
+			entry *filer_pb.Entry
+			want  s3err.ErrorCode
+			kind  filer_pb.ObjectMutation_Type
+		}{
+			{"file", file, s3err.ErrNone, filer_pb.ObjectMutation_DELETE},
+			{"nested object", nested.entry, s3err.ErrNone, filer_pb.ObjectMutation_PUT},
+			{"plain directory", &filer_pb.Entry{Name: "obj", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}}, s3err.ErrPreconditionFailed, 0},
+			{"absent", nil, s3err.ErrPreconditionFailed, 0},
+		} {
+			old := &fakeNestedFiler{entry: tc.entry, first: guardFailed}
+			if code, settled := newS3a().routedDeleteNullVersion(startFakeFiler(t, old), "b", "obj", false, false, false, star); !settled || code != tc.want {
+				t.Fatalf("older filer, %s: delete returned (%v, %v), want (%v, true)", tc.name, code, settled, tc.want)
+			}
+			if tc.want != s3err.ErrNone {
+				if len(old.reqs) != 1 {
+					t.Fatalf("older filer, %s: %d transactions, want 1", tc.name, len(old.reqs))
+				}
+				continue
+			}
+			m := old.reqs[1].Mutations[0]
+			if c := m.GetCondition().GetClauses(); m.Type != tc.kind || len(c) != 2 || c[0].Kind != filer_pb.WriteCondition_IF_EXISTS ||
+				c[1].Kind != filer_pb.WriteCondition_IF_ENTRY_EQUAL || !proto.Equal(c[1].ExpectedEntry, tc.entry) {
+				t.Fatalf("older filer, %s: retry = %+v, want a %v under IF_EXISTS and the entry read", tc.name, m, tc.kind)
+			}
 		}
 	})
 }
 
-// fakeNestedFiler refuses the first transaction's delete because other keys are
-// nested under the entry, serves entry to lookups, and answers later
-// transactions with demote.
+// fakeNestedFiler answers the first transaction with first, else refuses its
+// delete because other keys are nested under the entry, serves entry to
+// lookups, and answers later transactions with demote.
 type fakeNestedFiler struct {
 	filer_pb.UnimplementedSeaweedFilerServer
 	entry  *filer_pb.Entry
+	first  *filer_pb.ObjectTransactionResponse
 	demote *filer_pb.ObjectTransactionResponse
 	reqs   []*filer_pb.ObjectTransactionRequest
 }
 
 func (f *fakeNestedFiler) ObjectTransaction(ctx context.Context, req *filer_pb.ObjectTransactionRequest) (*filer_pb.ObjectTransactionResponse, error) {
 	f.reqs = append(f.reqs, req)
+	if len(f.reqs) == 1 && f.first != nil {
+		return f.first, nil
+	}
 	if len(f.reqs) == 1 {
 		failed := int32(0)
 		return &filer_pb.ObjectTransactionResponse{Error: fmt.Sprintf("mutation 0: %v", fmt.Errorf("%w: %s", filer.ErrNonEmptyFolder, req.LockKey)), FailedMutation: &failed}, nil
