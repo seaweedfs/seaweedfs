@@ -53,6 +53,17 @@ func (s *contentFlushConditionFiler) CreateEntry(ctx context.Context, r *filer_p
 		},
 	}}, nil
 }
+func (s *contentFlushConditionFiler) UpdateEntry(ctx context.Context, r *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if clauses := r.GetCondition().GetClauses(); len(clauses) > 0 && !proto.Equal(clauses[0].GetExpectedEntry(), s.entry) {
+		return nil, status.Error(codes.FailedPrecondition, "entry changed")
+	}
+	s.calls++
+	s.entry = proto.Clone(r.Entry).(*filer_pb.Entry)
+	s.entry.CommitTsNs = 1000 + int64(s.calls)
+	return &filer_pb.UpdateEntryResponse{LogTsNs: 2000}, nil
+}
 func (s *contentFlushConditionFiler) LookupDirectoryEntry(ctx context.Context, r *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
