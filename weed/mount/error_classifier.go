@@ -1,12 +1,15 @@
 package mount
 
 import (
+	"errors"
 	"strings"
 	"syscall"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
 func grpcErrorToFuseStatus(err error) fuse.Status {
@@ -79,6 +82,10 @@ func writeErrorToFuseStatus(err error) fuse.Status {
 // gRPC status — is treated as potentially transient and retried.
 func isRetryableFilerError(err error) bool {
 	if err == nil {
+		return false
+	}
+	// CreateEntry reports a failed write condition in its response, not as a status.
+	if errors.Is(err, filer_pb.ErrPreconditionFailed) {
 		return false
 	}
 	if s, ok := status.FromError(err); ok {

@@ -179,7 +179,7 @@ func (wfs *WFS) flushFileMetadata(fh *FileHandle) error {
 	baseSnapshot := proto.Clone(requestEntry).(*filer_pb.Entry)
 	wfs.mapPbIdFromLocalToFiler(request.Entry)
 
-	resp, err := wfs.streamCreateEntry(context.Background(), request)
+	resp, err := wfs.createContentEntry(context.Background(), fh, request)
 	if err != nil {
 		return err
 	}
@@ -191,7 +191,7 @@ func (wfs *WFS) flushFileMetadata(fh *FileHandle) error {
 			event.TsNs = ackVersionTsNs(resp)
 		}
 	}
-	fh.setAuthoritativeBase(baseSnapshot)
+	fh.setAuthoritativeBase(wfs.ackedBase(resp, baseSnapshot))
 	fh.advanceEntryVersion(ackVersionTsNs(resp), resp.GetLogSignature())
 	if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
 		glog.Warningf("flushFileMetadata %s: best-effort metadata apply failed: %v", fileFullPath, applyErr)
