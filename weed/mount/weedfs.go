@@ -1052,7 +1052,7 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 	if contentChanged && fh.dirtyMetadata && sameContentFile(candidate, base) {
 		// An unmergeable change keeps the writes; the flush reports it.
 		if fh.mergePeerContent(candidate, base) {
-			fh.baseEntry.Store(proto.Clone(candidate).(*filer_pb.Entry))
+			fh.adoptPeerBase(proto.Clone(candidate).(*filer_pb.Entry))
 			fh.advanceEntryVersion(candidateTsNs, 0)
 		}
 		return
@@ -1063,8 +1063,10 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 	}
 	if contentChanged || !fh.dirtyMetadata {
 		fh.SetEntry(candidate)
+		fh.baseEntry.Store(proto.Clone(candidate).(*filer_pb.Entry))
+	} else {
+		fh.adoptPeerBase(proto.Clone(candidate).(*filer_pb.Entry))
 	}
-	fh.baseEntry.Store(proto.Clone(candidate).(*filer_pb.Entry))
 	fh.advanceEntryVersion(candidateTsNs, 0)
 	return
 }

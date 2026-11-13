@@ -2159,3 +2159,38 @@ func TestUnmergeablePeerChangeKeepsDirtyHandle(t *testing.T) {
 		t.Fatalf("base %v moved to the peer's entry", base)
 	}
 }
+
+// A peer event that moves a dirty handle's base keeps its unpublished
+// truncate, so a later merge still clips peer chunks at it.
+func TestPeerEventKeepsPendingTruncate(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+
+	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+	fh, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, flushConditionEntry(1, 2), 0, 0)
+	fh.dirtyMetadata = true
+	fh.noteTruncate(1)
+
+	chmod := flushConditionEntry(1, 2)
+	chmod.Attributes.FileMode = 0600
+	resp := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		TsNs:      1500,
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:      flushConditionEntry(1, 2),
+			NewEntry:      chmod,
+			NewParentPath: "/dir",
+		},
+	}
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), resp, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	wfs.metaCache.WaitForEntryInvalidations()
+
+	base := fh.baseEntry.Load()
+	if base.GetAttributes().GetFileMode() != 0600 {
+		t.Fatalf("base %v did not move to the peer's entry", base)
+	}
+	if got := fh.truncatedSince(base); got != 1 {
+		t.Fatalf("pending truncate %d after the base moved, want 1", got)
+	}
+}

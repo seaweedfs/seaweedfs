@@ -250,6 +250,15 @@ func (fh *FileHandle) noteTruncate(size uint64) {
 	fh.truncatedTo.Store(&truncateMark{base: base, size: int64(size)})
 }
 
+// adoptPeerBase moves a dirty handle's base to a peer's entry. A truncate the
+// handle has not published yet still applies over the new base.
+func (fh *FileHandle) adoptPeerBase(base *filer_pb.Entry) {
+	old := fh.baseEntry.Swap(base)
+	if m := fh.truncatedTo.Load(); m != nil && m.base == old {
+		fh.truncatedTo.Store(&truncateMark{base: base, size: m.size})
+	}
+}
+
 // truncatedSince is the lowest size truncated to over base, or -1.
 func (fh *FileHandle) truncatedSince(base *filer_pb.Entry) int64 {
 	if m := fh.truncatedTo.Load(); m != nil && m.base == base {
