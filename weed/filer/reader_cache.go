@@ -49,7 +49,7 @@ type SingleChunkCacher struct {
 	wg             sync.WaitGroup
 	cacheStartedCh chan struct{}
 	done           chan struct{} // signals when download is complete
-	// ctx is cancelled when removeConsumedLocked drops the cacher or the download ends
+	// ctx is cancelled once no reader can use the download, or when it ends
 	ctx    context.Context
 	cancel context.CancelFunc
 }
@@ -410,6 +410,12 @@ func (rc *ReaderCache) destroy() {
 	downloaders := rc.downloaders
 	rc.downloaders = make(map[string]*SingleChunkCacher)
 	rc.Unlock()
+	// out of the map, a download with no reader or stream on it has nobody left to wait for it
+	for _, downloader := range downloaders {
+		if atomic.LoadInt32(&downloader.readers) == 0 && atomic.LoadInt32(&downloader.pins) == 0 {
+			downloader.cancel()
+		}
+	}
 	for _, downloader := range downloaders {
 		downloader.destroy()
 	}
