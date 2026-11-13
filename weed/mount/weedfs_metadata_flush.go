@@ -180,10 +180,11 @@ func (wfs *WFS) flushFileMetadata(fh *FileHandle) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), metadataFlushTimeout)
 	defer cancel()
-	publication := &contentPublication{failure: fh.writebackContentError}
+	// Periodic flush never owns or retires the pending content. The open
+	// handle remains responsible for publication after this helper returns.
+	publication := &contentPublication{}
 	resp, err := wfs.publishPendingContent(ctx, fh, request, publication)
 	if err != nil {
-		publication.retire(err)
 		return err
 	}
 

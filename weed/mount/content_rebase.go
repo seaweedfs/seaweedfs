@@ -22,6 +22,8 @@ type contentPublication struct {
 	failure *atomic.Bool
 }
 
+// Only a final sync error or actual async abandonment may retire content.
+// Periodic publication never owns it and must not call this.
 func (p *contentPublication) retire(err error) {
 	if err != nil && p.refused && p.failure != nil {
 		p.failure.Store(true)

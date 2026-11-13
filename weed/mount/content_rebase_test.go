@@ -933,3 +933,48 @@ func TestAppendAfterPendingPositionalExtensionPublishes(t *testing.T) {
 		t.Fatal("pending extension or append bytes changed")
 	}
 }
+
+func TestPeriodicRefusalThenRefreshOutageKeepsPendingContent(t *testing.T) {
+	base := attributeAppendEntry(1)
+	peer := &g6ConditionalPeer{entry: proto.Clone(base).(*filer_pb.Entry)}
+	w, handle := g6AppendHandle(t, peer, base, 2000, true)
+	fake := &g6RefreshDeadlineFiler{g6ConditionalPeer: peer}
+	fake.unavailable.Store(true)
+	startFakeFiler(t, w, fake)
+	fh := w.GetHandle(FileHandleId(handle))
+	peer.mu.Lock()
+	peer.entry.Attributes.FileMode = 0600
+	peer.entry.CommitTsNs = 20000
+	peer.refuse = true
+	peer.mu.Unlock()
+	if n, code := w.Write(nil, &fuse.WriteIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: handle, Offset: 256, Size: 256}, bytes.Repeat([]byte{'A'}, 256)); n != 256 || code != fuse.OK {
+		t.Fatal(n, code)
+	}
+	// Periodic metadata publication only sees chunks already uploaded. Stage
+	// those bytes without retiring the dirty, still-open handle.
+	if err := fh.dirtyPages.FlushData(); err != nil {
+		t.Fatal(err)
+	}
+	w.flushAllDirtyMetadata()
+	if w.GetHandle(FileHandleId(handle)) != fh || !fh.dirtyMetadata {
+		t.Fatal("periodic failure did not retain the dirty open owner")
+	}
+	peer.mu.Lock()
+	peer.refuse = false
+	refused := peer.rejected
+	peer.mu.Unlock()
+	fake.unavailable.Store(false)
+	if refused == 0 {
+		t.Fatal("periodic fixture never received a content refusal")
+	}
+	if code := w.Fsync(nil, &fuse.FsyncIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: handle}); code != fuse.OK {
+		t.Fatalf("periodic helper fenced still-owned content before recovery: %v", code)
+	}
+	w.Release(nil, &fuse.ReleaseIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: handle, ReleaseFlags: fuse.FUSE_RELEASE_FLOCK_UNLOCK})
+	peer.mu.Lock()
+	defer peer.mu.Unlock()
+	want := append(bytes.Repeat([]byte{'O'}, 256), bytes.Repeat([]byte{'A'}, 256)...)
+	if fh.writebackContentError.Load() || peer.entry.Attributes.FileSize != 512 || peer.entry.Attributes.FileMode != 0600 || !bytes.Equal(g6StoredBytes(t, peer), want) {
+		t.Fatal("periodic recovery lost bytes, size or peer attributes")
+	}
+}
