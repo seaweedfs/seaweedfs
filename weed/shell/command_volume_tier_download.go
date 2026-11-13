@@ -179,6 +179,12 @@ func downloadAndReplicateFromRemoteTier(grpcDialOption grpc.DialOption, writer i
 		}
 	}
 
+	restore, err := freezeTierDownloadSource(grpcDialOption, vid, source)
+	if err != nil {
+		return fmt.Errorf("block deletes on volume %d at %s: %v", vid, source, err)
+	}
+	defer restore(writer)
+
 	// Copy over all remote-backed replicas but one, re-reading the topology
 	// so a replica that was offline or created meanwhile is replaced too. The
 	// last one is deleted together with the remote object and then replaced.
@@ -217,6 +223,43 @@ func downloadAndReplicateFromRemoteTier(grpcDialOption grpc.DialOption, writer i
 		remote, _ = collectVolumeTierDownloadLocations(topoInfo, vid, collection)
 		fresh = true
 	}
+}
+
+// freezeTierDownloadSource blocks deletes on the copy source: a delete applied
+// after VolumeCopy read the source index would be lost on the replaced replica.
+// restore brings back the writable mark, or reloads the persisted state.
+func freezeTierDownloadSource(grpcDialOption grpc.DialOption, vid needle.VolumeId, source pb.ServerAddress) (restore func(io.Writer), err error) {
+	var wasWritable bool
+	err = operation.WithVolumeServerClient(false, source, grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+		resp, statusErr := client.VolumeStatus(context.Background(), &volume_server_pb.VolumeStatusRequest{VolumeId: uint32(vid)})
+		if statusErr != nil {
+			return statusErr
+		}
+		wasWritable = !resp.IsReadOnly
+		_, markErr := client.VolumeMarkReadonly(context.Background(), &volume_server_pb.VolumeMarkReadonlyRequest{VolumeId: uint32(vid)})
+		return markErr
+	})
+	restore = func(writer io.Writer) {
+		restoreErr := operation.WithVolumeServerClient(false, source, grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+			if wasWritable {
+				_, markErr := client.VolumeMarkWritable(context.Background(), &volume_server_pb.VolumeMarkWritableRequest{VolumeId: uint32(vid)})
+				return markErr
+			}
+			return remountVolume(client, vid)
+		})
+		if restoreErr != nil {
+			fmt.Fprintf(writer, "restore volume %d state on %s: %v\n", vid, source, restoreErr)
+		}
+	}
+	return
+}
+
+func remountVolume(client volume_server_pb.VolumeServerClient, vid needle.VolumeId) error {
+	if _, err := client.VolumeUnmount(context.Background(), &volume_server_pb.VolumeUnmountRequest{VolumeId: uint32(vid)}); err != nil {
+		return err
+	}
+	_, err := client.VolumeMount(context.Background(), &volume_server_pb.VolumeMountRequest{VolumeId: uint32(vid)})
+	return err
 }
 
 func replicateTierDownloadedVolume(grpcDialOption grpc.DialOption, writer io.Writer, vid needle.VolumeId, source pb.ServerAddress, target tierDownloadReplica) error {
@@ -284,21 +327,7 @@ func downloadDatFromRemoteTier(grpcDialOption grpc.DialOption, writer io.Writer,
 			return downloadErr
 		}
 
-		_, unmountErr := volumeServerClient.VolumeUnmount(context.Background(), &volume_server_pb.VolumeUnmountRequest{
-			VolumeId: uint32(volumeId),
-		})
-		if unmountErr != nil {
-			return unmountErr
-		}
-
-		_, mountErr := volumeServerClient.VolumeMount(context.Background(), &volume_server_pb.VolumeMountRequest{
-			VolumeId: uint32(volumeId),
-		})
-		if mountErr != nil {
-			return mountErr
-		}
-
-		return nil
+		return remountVolume(volumeServerClient, volumeId)
 	})
 
 	return err

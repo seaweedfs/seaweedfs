@@ -38,6 +38,9 @@ type tierDownloadCluster struct {
 	// hiddenOnRead hides servers from the n-th topology read (0-based)
 	hiddenOnRead map[int]map[pb.ServerAddress]bool
 	reads        int
+	frozen       map[pb.ServerAddress]bool
+	writable     map[pb.ServerAddress]bool
+	remounts     map[pb.ServerAddress]int
 }
 
 type tierDownloadTestServer struct {
@@ -78,11 +81,36 @@ func (s *tierDownloadTestServer) VolumeUnmount(context.Context, *volume_server_p
 }
 
 func (s *tierDownloadTestServer) VolumeMount(context.Context, *volume_server_pb.VolumeMountRequest) (*volume_server_pb.VolumeMountResponse, error) {
+	c := s.cluster
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.frozen[s.addr] = false
+	c.remounts[s.addr]++
 	return &volume_server_pb.VolumeMountResponse{}, nil
 }
 
 func (s *tierDownloadTestServer) VolumeStatus(context.Context, *volume_server_pb.VolumeStatusRequest) (*volume_server_pb.VolumeStatusResponse, error) {
-	return &volume_server_pb.VolumeStatusResponse{IsReadOnly: true}, nil
+	c := s.cluster
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return &volume_server_pb.VolumeStatusResponse{IsReadOnly: !c.writable[s.addr] || c.frozen[s.addr]}, nil
+}
+
+func (s *tierDownloadTestServer) VolumeMarkReadonly(_ context.Context, req *volume_server_pb.VolumeMarkReadonlyRequest) (*volume_server_pb.VolumeMarkReadonlyResponse, error) {
+	c := s.cluster
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.frozen[s.addr] = !req.CanDelete
+	return &volume_server_pb.VolumeMarkReadonlyResponse{}, nil
+}
+
+func (s *tierDownloadTestServer) VolumeMarkWritable(context.Context, *volume_server_pb.VolumeMarkWritableRequest) (*volume_server_pb.VolumeMarkWritableResponse, error) {
+	c := s.cluster
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.frozen[s.addr] = false
+	c.writable[s.addr] = true
+	return &volume_server_pb.VolumeMarkWritableResponse{}, nil
 }
 
 func (s *tierDownloadTestServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, _ volume_server_pb.VolumeServer_VolumeCopyServer) error {
@@ -96,6 +124,9 @@ func (s *tierDownloadTestServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequ
 	}
 	if got != want {
 		return fmt.Errorf("copy volume %d onto disk type %q, replica is on %q", req.VolumeId, got, want)
+	}
+	if !c.frozen[pb.ServerAddress(req.SourceDataNode)] {
+		return fmt.Errorf("volume %d on %s still accepts deletes during the copy", req.VolumeId, req.SourceDataNode)
 	}
 	switch c.replicas[pb.ServerAddress(req.SourceDataNode)] {
 	case tierReplicaLocal:
@@ -127,6 +158,9 @@ func newTierDownloadCluster(t *testing.T, states ...string) *tierDownloadCluster
 		diskTypes:    make(map[pb.ServerAddress]string),
 		objectExists: true,
 		hiddenOnRead: make(map[int]map[pb.ServerAddress]bool),
+		frozen:       make(map[pb.ServerAddress]bool),
+		writable:     make(map[pb.ServerAddress]bool),
+		remounts:     make(map[pb.ServerAddress]int),
 	}
 	for _, state := range states {
 		lis, err := net.Listen("tcp", "127.0.0.1:0")
@@ -276,4 +310,25 @@ func TestTierDownloadCopiesFromSsdSourceOntoHddReplica(t *testing.T) {
 		t.Fatalf("tier download: %v", err)
 	}
 	c.assertAllLocal(t)
+}
+
+func TestTierDownloadRestoresSourceAfterBlockingDeletes(t *testing.T) {
+	for _, writable := range []bool{false, true} {
+		c := newTierDownloadCluster(t, tierReplicaLocal, tierReplicaRemote, tierReplicaRemote)
+		source := c.servers[0]
+		c.writable[source] = writable
+		if err := c.run(t); err != nil {
+			t.Fatalf("tier download (writable=%v): %v", writable, err)
+		}
+		c.assertAllLocal(t)
+		if c.frozen[source] {
+			t.Errorf("writable=%v: source still blocks deletes after the command", writable)
+		}
+		if c.writable[source] != writable {
+			t.Errorf("writable=%v: source writable state changed to %v", writable, c.writable[source])
+		}
+		if !writable && c.remounts[source] != 1 {
+			t.Errorf("readonly source should reload its persisted state once, got %d remounts", c.remounts[source])
+		}
+	}
 }
