@@ -286,13 +286,20 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 	// before Unlink sets the flag).  By waiting here, any in-flight flush
 	// finishes first; even if it recreated the entry, the filer delete below
 	// will remove it again.
+	isHardLink := entry != nil && entry.Attributes != nil && len(entry.HardLinkId) > 0 && entry.HardLinkCounter > 1
+	var markedInode, deleteEpoch uint64
 	if inode, found := wfs.inodeToPath.GetInode(entryFullPath); found {
-		wfs.markHandleDeleted(inode)
-		wfs.waitForPendingAsyncFlush(context.Background(), inode)
+		markedInode = inode
 	} else if entry != nil && entry.Attributes != nil && entry.Attributes.Inode != 0 {
-		inodeFromEntry := entry.Attributes.Inode
-		wfs.markHandleDeleted(inodeFromEntry)
-		wfs.waitForPendingAsyncFlush(context.Background(), inodeFromEntry)
+		markedInode = entry.Attributes.Inode
+	}
+	if markedInode != 0 {
+		if isHardLink {
+			// Another link keeps the content, so a queued close publishes it.
+			wfs.waitForPendingAsyncFlush(context.Background(), markedInode)
+		}
+		deleteEpoch = wfs.markHandleDeleted(markedInode)
+		wfs.waitForPendingAsyncFlush(context.Background(), markedInode)
 	}
 
 	// first, ensure the filer store can correctly delete
@@ -333,7 +340,6 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 	// to every sibling cache entry and invalidate the kernel attr cache
 	// so subsequent lstats on other links see the new nlink — pjdfstest
 	// link/00.t asserts this after `unlink n0` leaves n1/n2 behind.
-	isHardLink := entry != nil && entry.Attributes != nil && len(entry.HardLinkId) > 0 && entry.HardLinkCounter > 1
 	var sharedInode uint64
 	if isHardLink {
 		sharedInode = entry.Attributes.Inode
@@ -353,6 +359,21 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 		decremented.Attributes.Ctime = now.Unix()
 		decremented.Attributes.CtimeNs = int32(now.Nanosecond())
 		wfs.syncHardLinkSiblings(ctx, sharedInode, decremented, event.GetTsNs(), entryFullPath)
+	}
+
+	// Another link still names the inode, so its open handle keeps flushing
+	// through that name, over the count and ctime the filer stored there.
+	if isHardLink && markedInode != 0 {
+		if survivor, status := wfs.inodeToPath.GetPath(markedInode); status == fuse.OK {
+			if fh, found := wfs.fhMap.FindFileHandle(markedInode); found {
+				lock := wfs.fhLockTable.AcquireLock("Unlink", fh.fh, util.ExclusiveLock)
+				if err := wfs.adoptStoredLink(ctx, fh, survivor, entry.HardLinkId); err != nil {
+					glog.V(1).Infof("unlink %s: read %s again at the next flush: %v", entryFullPath, survivor, err)
+				}
+				wfs.fhLockTable.ReleaseLock(fh.fh, lock)
+			}
+			wfs.clearHandleDeleted(markedInode, deleteEpoch)
+		}
 	}
 
 	return fuse.OK
