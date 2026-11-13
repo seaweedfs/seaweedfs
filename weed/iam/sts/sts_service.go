@@ -699,6 +699,8 @@ func (s *STSService) AssumeRoleWithWebIdentity(ctx context.Context, request *Ass
 		// Surface as aws:userid so policies can reference it directly without
 		// caring about token-rotation churn.
 		requestContext["aws:userid"] = parentUser
+	} else {
+		delete(requestContext, "aws:userid")
 	}
 
 	// Surface principal session tags as aws:PrincipalTag/<key>. The OIDC
