@@ -43,7 +43,7 @@ func (c *commandVolumeMount) Do(args []string, commandEnv *CommandEnv, writer io
 	volumeIdInt := volMountCommand.Int("volumeId", 0, "the volume id")
 	nodeStr := volMountCommand.String("node", "", "the volume server <host>:<port>")
 	if err = volMountCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	if err = commandEnv.confirmIsLocked(args); err != nil {

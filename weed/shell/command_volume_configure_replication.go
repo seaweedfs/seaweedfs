@@ -52,7 +52,7 @@ func (c *commandVolumeConfigureReplication) Do(args []string, commandEnv *Comman
 	collectionPattern := configureReplicationCommand.String("collectionPattern", "", "comma-separated collection names, with '*' and '?' wildcards; empty matches all")
 	maxParallelization := configureReplicationCommand.Int("maxParallelization", DefaultMaxParallelization, "run up to X tasks in parallel, whenever possible")
 	if err = configureReplicationCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	if err = commandEnv.confirmIsLocked(args); err != nil {

@@ -95,7 +95,7 @@ func (c *commandVolumeTierMove) Do(args []string, commandEnv *CommandEnv, writer
 	replicationString := tierCommand.String("toReplication", "", "the new target replication setting")
 
 	if err = tierCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	handleDeprecatedForceFlag(writer, tierCommand, applyChangeAlias, applyChange)

@@ -44,7 +44,7 @@ func (c *commandVolumeUnmount) Do(args []string, commandEnv *CommandEnv, writer 
 	volumeIdInt := volUnmountCommand.Int("volumeId", 0, "the volume id")
 	nodeStr := volUnmountCommand.String("node", "", "the volume server <host>:<port>")
 	if err = volUnmountCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 	if *nodeStr == "" {
 		return fmt.Errorf("-node option is required")

@@ -68,7 +68,7 @@ func (c *commandVolumeTierCompact) Do(args []string, commandEnv *CommandEnv, wri
 	garbageThreshold := tierCommand.Float64("garbageThreshold", 0.3, "compact when garbage ratio exceeds this value")
 	concurrency := tierCommand.Int("concurrency", 0, "multipart transfer concurrency (0 = backend default)")
 	if err = tierCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	if err = validateTierConcurrency(*concurrency); err != nil {

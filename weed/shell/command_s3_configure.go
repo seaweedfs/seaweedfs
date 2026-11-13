@@ -63,7 +63,7 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 	isDelete := s3ConfigureCommand.Bool("delete", false, "delete users, actions, access keys or policies")
 	apply := s3ConfigureCommand.Bool("apply", false, "update and apply s3 configuration")
 	if err = s3ConfigureCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	// Case 1: List configuration (no user specified)

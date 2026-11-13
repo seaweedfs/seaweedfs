@@ -114,7 +114,7 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	verbose := encodeCommand.Bool("verbose", false, "show detailed reasons why volumes are not selected for encoding")
 
 	if err = encodeCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 	if err = commandEnv.confirmIsLocked(args); err != nil {
 		return

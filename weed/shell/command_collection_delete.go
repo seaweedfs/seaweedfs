@@ -41,7 +41,7 @@ func (c *commandCollectionDelete) Do(args []string, commandEnv *CommandEnv, writ
 	applyBalancingAlias := colDeleteCommand.Bool("force", false, "apply the collection (alias for -apply)")
 
 	if err = colDeleteCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	handleDeprecatedForceFlag(writer, colDeleteCommand, applyBalancingAlias, applyBalancing)

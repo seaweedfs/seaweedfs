@@ -48,7 +48,7 @@ func (c *commandVolumeServerLeave) Do(args []string, commandEnv *CommandEnv, wri
 	// TODO: remove this alias
 	applyChangesAlias := vsLeaveCommand.Bool("force", false, "apply the changes (alias for -apply)")
 	if err = vsLeaveCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	handleDeprecatedForceFlag(writer, vsLeaveCommand, applyChangesAlias, applyChanges)

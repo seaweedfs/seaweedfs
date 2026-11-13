@@ -52,7 +52,7 @@ func (c *commandVolumeDeleteEmpty) Do(args []string, commandEnv *CommandEnv, wri
 	// TODO: remove this alias
 	applyBalancingAlias := volDeleteCommand.Bool("force", false, "apply to delete empty volumes (alias for -apply)")
 	if err = volDeleteCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	handleDeprecatedForceFlag(writer, volDeleteCommand, applyBalancingAlias, applyBalancing)

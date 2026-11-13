@@ -49,7 +49,7 @@ func (c *commandRemoteUnmount) Do(args []string, commandEnv *CommandEnv, writer 
 	dir := remoteMountCommand.String("dir", "", "a directory in filer")
 
 	if err = remoteMountCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	mappings, listErr := filer.ReadMountMappings(commandEnv.option.GrpcDialOption, commandEnv.FilerAddress())

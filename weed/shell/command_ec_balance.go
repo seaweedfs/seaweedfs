@@ -55,7 +55,7 @@ func (c *commandEcBalance) Do(args []string, commandEnv *CommandEnv, writer io.W
 	applyBalancingAlias := balanceCommand.Bool("force", false, "apply the balancing plan (alias for -apply)")
 
 	if err = balanceCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	handleDeprecatedForceFlag(writer, balanceCommand, applyBalancingAlias, applyBalancing)

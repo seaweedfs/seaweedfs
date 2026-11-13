@@ -76,7 +76,7 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 	cacheWait := remoteMountCommand.Duration("cacheWait", -1, "how long a read of an uncached object waits for the local cache, ex. 0 or 500ms (default: by object size)")
 
 	if err = remoteMountCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	if *dir == "" {
