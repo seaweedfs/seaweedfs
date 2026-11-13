@@ -70,6 +70,10 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
 		return
 	}
+	if errCode := s3a.checkVersionFileWrite(bucket, object, "PostPolicyBucketHandler"); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
 
 	successRedirect := formValues.Get("success_action_redirect")
 	successStatus := formValues.Get("success_action_status")

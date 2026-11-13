@@ -156,6 +156,10 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 			return
 		}
 	}
+	if errCode := s3a.checkVersionFileWrite(dstBucket, dstObject, "CopyObjectHandler"); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
 
 	// Validate copy source and destination
 	if err := validateCopySource(cpSrcPath, srcBucket, srcObject, srcVersionId); err != nil {
