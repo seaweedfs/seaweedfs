@@ -40,6 +40,8 @@ func committedContentHandle(t *testing.T, peer bool) (*WFS, *FileHandle, *commit
 	base.CommitTsNs = 100
 	current := proto.Clone(base).(*filer_pb.Entry)
 	if peer {
+		// A compatible peer append merges under #12596; force a real replacement.
+		current.Attributes.Inode = 99
 		current.Chunks = append(current.Chunks, flushConditionEntry(1, 2).Chunks[1])
 		current.CommitTsNs = 101
 	}

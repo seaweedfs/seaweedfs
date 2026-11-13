@@ -10,6 +10,14 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
+// isAppendWrite honors current F_SETFL flags; adapters without flags use the open.
+func (wfs *WFS) isAppendWrite(in *fuse.WriteIn) bool {
+	if in.Flags != 0 {
+		return in.Flags&syscall.O_APPEND != 0
+	}
+	return wfs.fhMap.isAppendHandle(FileHandleId(in.Fh))
+}
+
 /**
  * Write data
  *
@@ -60,6 +68,13 @@ func (wfs *WFS) Write(cancel <-chan struct{}, in *fuse.WriteIn, data []byte) (wr
 		return 0, fuse.OK
 	}
 
+	// Only an append past all locally owned bytes needs the stored EOF guard.
+	if in.Offset > entry.Attributes.FileSize && wfs.isAppendWrite(in) {
+		if !fh.pendingAppend || in.Offset < fh.pendingAppendOffset {
+			fh.pendingAppendOffset = in.Offset
+		}
+		fh.pendingAppend = true
+	}
 	entry.Content = nil
 	offset := int64(in.Offset)
 	oldFileSize := int64(entry.Attributes.FileSize)

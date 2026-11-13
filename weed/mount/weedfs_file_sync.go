@@ -181,12 +181,14 @@ func (wfs *WFS) doFlush(ctx context.Context, fh *FileHandle, uid, gid uint32, al
 		return fuse.Status(syscall.ENOSPC)
 	}
 
+	publication := &contentPublication{failure: fh.writebackContentError}
 	if err := retryMetadataFlushIf(ctx, func() error {
-		return wfs.flushMetadataToFiler(ctx, fh, dir, name, uid, gid)
+		return wfs.flushMetadataToFiler(ctx, fh, dir, name, uid, gid, publication)
 	}, isRetryableFilerError, func(nextAttempt, totalAttempts int, backoff time.Duration, err error) {
 		glog.Warningf("%v fh %d flush: retrying metadata flush (attempt %d/%d) after %v: %v",
 			fileFullPath, fh.fh, nextAttempt, totalAttempts, backoff, err)
 	}); err != nil {
+		publication.retire(err)
 		glog.Errorf("%v fh %d flush: %v", fileFullPath, fh.fh, err)
 		return grpcErrorToFuseStatus(err)
 	}
@@ -204,7 +206,11 @@ func (wfs *WFS) doFlush(ctx context.Context, fh *FileHandle, uid, gid uint32, al
 // When -dlm is enabled, the distributed lock is already held by the FileHandle
 // from open-for-write through close, so no additional distributed lock is
 // needed here. The local fhLockTable lock below serializes within this mount.
-func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, name string, uid, gid uint32) error {
+func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, name string, uid, gid uint32, publications ...*contentPublication) error {
+	publication := &contentPublication{}
+	if len(publications) > 0 {
+		publication = publications[0]
+	}
 	fileFullPath, dir, name := wfs.flushTarget(fh, dir, name)
 	var unlock func()
 	var fhActiveLock *util.ActiveLock
@@ -303,7 +309,7 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 	baseSnapshot := proto.Clone(requestEntry).(*filer_pb.Entry)
 	wfs.mapPbIdFromLocalToFiler(request.Entry)
 
-	resp, merged, err := wfs.createContentEntry(ctx, fh, request, baseSnapshot, false)
+	resp, merged, err := wfs.createContentEntry(ctx, fh, request, baseSnapshot, false, publication)
 	if err != nil {
 		glog.Errorf("fh flush create %s: %v", fileFullPath, err)
 		return &contentPublicationError{cause: fmt.Errorf("fh flush create %s: %w", fileFullPath, err), request: proto.Clone(request).(*filer_pb.CreateEntryRequest)}
@@ -331,6 +337,7 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 	}
 
 	if err == nil {
+		fh.pendingAppend = false
 		fh.dirtyMetadata = false
 	}
 
@@ -360,7 +367,7 @@ func (wfs *WFS) flushTarget(fh *FileHandle, dir, name string) (util.FullPath, st
 // replayed onto it and published against it, so a peer's acknowledged chunks
 // survive. merged is that entry in local ids; nil when the request went as is.
 // With writes still buffered, the merge must keep room for them.
-func (wfs *WFS) createContentEntry(ctx context.Context, fh *FileHandle, request *filer_pb.CreateEntryRequest, local *filer_pb.Entry, buffered bool) (resp *filer_pb.CreateEntryResponse, merged *filer_pb.Entry, err error) {
+func (wfs *WFS) createContentEntry(ctx context.Context, fh *FileHandle, request *filer_pb.CreateEntryRequest, local *filer_pb.Entry, buffered bool, publication *contentPublication) (resp *filer_pb.CreateEntryResponse, merged *filer_pb.Entry, err error) {
 	base := fh.baseEntry.Load()
 	guard := &filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_NOT_EXISTS}
 	if base != nil {
@@ -370,12 +377,18 @@ func (wfs *WFS) createContentEntry(ctx context.Context, fh *FileHandle, request 
 	}
 	sent := request.Entry
 	for attempt := 0; ; attempt++ {
+		if guardErr := wfs.checkContentPublication(fh, guard.ExpectedEntry); guardErr != nil {
+			return nil, nil, guardErr
+		}
 		request.Condition = &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{guard}}
 		var stored *filer_pb.Entry
 		err = wfs.withFilerClient(ctx, false, wfs.filerRPCWait(), func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 			var callErr error
 			stored = nil
 			resp, callErr = filer_pb.CreateEntryWithResponse(ctx, client, request)
+			if errors.Is(callErr, filer_pb.ErrPreconditionFailed) {
+				publication.refused = true
+			}
 			if base == nil || attempt >= maxContentFlushMerges || !errors.Is(callErr, filer_pb.ErrPreconditionFailed) {
 				return callErr
 			}
@@ -519,6 +532,10 @@ func mergeContentEntry(stored, base, local, sent *filer_pb.Entry, truncatedTo in
 		size = int64(localSize)
 	}
 	merged.Attributes.FileSize = uint64(size)
+	// A peer truncate must not turn local pending data into a successful hole.
+	if filer.FileSize(stored) < filer.FileSize(base) && contentGapAfter(merged, filer.FileSize(stored)) {
+		return nil, false
+	}
 	return merged, true
 }
 

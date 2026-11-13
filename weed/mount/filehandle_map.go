@@ -2,6 +2,7 @@ package mount
 
 import (
 	"sync"
+	"sync/atomic"
 
 	"github.com/seaweedfs/seaweedfs/weed/util"
 
@@ -65,12 +66,26 @@ func (i *FileHandleToInode) MarkInodeRenamed(inode uint64) {
 // open — reads on it return ENOENT, which the kernel reports to read() as EIO.
 // Callers must treat a draining report as "wait for the pending flush, then
 // retry the whole acquire", not as success.
-func (i *FileHandleToInode) AcquireFileHandle(wfs *WFS, inode uint64, entry *filer_pb.Entry, versionTsNs int64, signature int32) (*FileHandle, FileHandleId, bool, bool) {
+func (i *FileHandleToInode) AcquireFileHandle(wfs *WFS, inode uint64, entry *filer_pb.Entry, versionTsNs int64, signature int32, appendMode ...bool) (*FileHandle, FileHandleId, bool, bool) {
+	// Bind before publishing the handle or queuing any async close. Capture
+	// under the inode-table lock, but release it before taking the fhMap lock.
+	var writebackError *atomic.Bool
+	if wfs.option.WritebackCache {
+		wfs.inodeToPath.RLock()
+		state, found := wfs.writebackContentErrors.Load(inode)
+		if !found {
+			state, _ = wfs.writebackContentErrors.LoadOrStore(inode, new(atomic.Bool))
+		}
+		writebackError = state.(*atomic.Bool)
+		wfs.inodeToPath.RUnlock()
+	}
 	i.Lock()
 	defer i.Unlock()
 	fh, found := i.inode2fh[inode]
 	if !found {
 		fh = newFileHandle(wfs, FileHandleId(util.RandomUint64()), inode, entry)
+		fh.writebackContentError = writebackError
+		fh.fhs[fh.fh] = len(appendMode) > 0 && appendMode[0]
 		fh.entryVersionTsNs.Store(versionTsNs)
 		fh.entryVersionSignature.Store(signature)
 		i.inode2fh[inode] = fh
@@ -82,9 +97,18 @@ func (i *FileHandleToInode) AcquireFileHandle(wfs *WFS, inode uint64, entry *fil
 	}
 	fh.counter++
 	openFh := FileHandleId(util.RandomUint64())
-	fh.fhs[openFh] = struct{}{}
+	fh.fhs[openFh] = len(appendMode) > 0 && appendMode[0]
 	i.fh2inode[openFh] = inode
 	return fh, openFh, true, false
+}
+
+func (i *FileHandleToInode) isAppendHandle(openFh FileHandleId) bool {
+	i.RLock()
+	defer i.RUnlock()
+	if fh := i.inode2fh[i.fh2inode[openFh]]; fh != nil {
+		return fh.fhs[openFh]
+	}
+	return false
 }
 
 func (i *FileHandleToInode) ReleaseByHandle(fh FileHandleId) *FileHandle {

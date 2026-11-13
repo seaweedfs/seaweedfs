@@ -179,7 +179,7 @@ func (wfs *WFS) flushFileMetadata(fh *FileHandle) error {
 	baseSnapshot := proto.Clone(requestEntry).(*filer_pb.Entry)
 	wfs.mapPbIdFromLocalToFiler(request.Entry)
 
-	resp, merged, err := wfs.createContentEntry(context.Background(), fh, request, baseSnapshot, true)
+	resp, merged, err := wfs.createContentEntry(context.Background(), fh, request, baseSnapshot, true, &contentPublication{})
 	if err != nil {
 		return err
 	}
