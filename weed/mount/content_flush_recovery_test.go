@@ -40,7 +40,9 @@ func committedContentHandle(t *testing.T, peer bool) (*WFS, *FileHandle, *commit
 	base.CommitTsNs = 100
 	current := proto.Clone(base).(*filer_pb.Entry)
 	if peer {
-		current.Chunks = append(current.Chunks, flushConditionEntry(1, 2).Chunks[1])
+		// A peer replaced the file: the flush cannot merge into it.
+		current = flushConditionEntry(4)
+		current.Attributes.Inode = 99
 		current.CommitTsNs = 101
 	}
 	s := &committedContentFiler{contentFlushConditionFiler: contentFlushConditionFiler{entry: current}}
