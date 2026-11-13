@@ -45,6 +45,11 @@ func (b *ReaderCacheBudget) reserve(s *SingleChunkCacher) error {
 		return fmt.Errorf("chunk buffer needs %d bytes, exceeding reader cache budget %d; increase the readerCacheSizeMB budget", size, b.limit)
 	}
 	for {
+		// a cancelled download must not evict a chunk for itself
+		if err := s.ctx.Err(); err != nil {
+			return err
+		}
+
 		b.Lock()
 		if size <= b.limit-b.used {
 			b.used += size
@@ -89,7 +94,11 @@ func (b *ReaderCacheBudget) reserve(s *SingleChunkCacher) error {
 		}
 		changed := b.changed
 		b.Unlock()
-		<-changed
+		select {
+		case <-changed:
+		case <-s.ctx.Done():
+			return s.ctx.Err()
+		}
 	}
 }
 
