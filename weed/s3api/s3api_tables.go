@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -63,6 +64,12 @@ func (st *S3TablesApiServer) SetEncryptionChecker(fn func() bool) {
 	st.handler.SetEncryptionChecker(fn)
 }
 
+// SetTrustedIssuerSource injects the configured OIDC issuer set for S3 Tables
+// legacy-owner checks of federated STS sessions.
+func (st *S3TablesApiServer) SetTrustedIssuerSource(fn func(context.Context) []string) {
+	st.handler.SetTrustedIssuerSource(fn)
+}
+
 // S3TablesHandler handles S3 Tables API requests
 func (st *S3TablesApiServer) S3TablesHandler(w http.ResponseWriter, r *http.Request) {
 	st.handler.HandleRequest(w, r, st)
@@ -85,6 +92,7 @@ func (s3a *S3ApiServer) registerS3TablesRoutes(router *mux.Router) {
 		s3TablesApi.SetDefaultAllow(s3a.iam.iamIntegration.DefaultAllow())
 		if s3Integration, ok := s3a.iam.iamIntegration.(*S3IAMIntegration); ok && s3Integration.iamManager != nil {
 			s3TablesApi.SetIAMAuthorizer(s3Integration.iamManager)
+			s3TablesApi.SetTrustedIssuerSource(s3Integration.trustedOIDCIssuers)
 		}
 	} else {
 		// If IAM is not configured, allow all access by default

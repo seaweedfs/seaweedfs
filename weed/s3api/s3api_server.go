@@ -1558,6 +1558,22 @@ func (s3a *S3ApiServer) DefaultAllow() bool {
 	return s3a.iam.iamIntegration.DefaultAllow()
 }
 
+// IsConfiguredAccountID reports whether id is the account of a configured identity.
+func (s3a *S3ApiServer) IsConfiguredAccountID(id string) bool {
+	return s3a.iam != nil && s3a.iam.isConfiguredAccountID(id)
+}
+
+// TrustedOIDCIssuers returns the configured OIDC issuer set.
+func (s3a *S3ApiServer) TrustedOIDCIssuers(ctx context.Context) []string {
+	if s3a.iam == nil {
+		return nil
+	}
+	if s3iam, ok := s3a.iam.iamIntegration.(*S3IAMIntegration); ok {
+		return s3iam.trustedOIDCIssuers(ctx)
+	}
+	return nil
+}
+
 // ValidateS3Credential validates an S3 access key / secret key pair.
 // Returns the identity name and identity object on success.
 func (s3a *S3ApiServer) ValidateS3Credential(accessKey, secretKey string) (string, interface{}, error) {

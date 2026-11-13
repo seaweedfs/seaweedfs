@@ -394,3 +394,41 @@ func newTestIdentity(policyNames []string) *Identity {
 		PolicyNames:  policyNames,
 	}
 }
+
+func TestSTSSessionClaimsKeepOnlyServerAssertedUserID(t *testing.T) {
+	stsService, config := setupTestSTSService(t)
+	iam := NewIdentityAccessManagementWithStore(&S3ApiServerOption{}, nil, "memory")
+	iam.SetIAMIntegration(&S3IAMIntegration{stsService: stsService})
+	victim := sts.ComputeParentUser("alice", "https://idp.example")
+	attacker := sts.ComputeParentUser("mallory", "https://idp.example")
+
+	for name, tc := range map[string]struct{ parentUser, want string }{
+		"no parent user": {"", ""},
+		"parent user":    {attacker, attacker},
+	} {
+		t.Run(name, func(t *testing.T) {
+			claims := sts.NewSTSSessionClaims("userid-"+strings.ReplaceAll(name, " ", "-"), config.Issuer, time.Now().Add(time.Hour)).
+				WithSessionName("userid").
+				WithRoleInfo("arn:aws:iam::role/testRole", "arn:aws:sts::assumed-role/testRole/userid", "arn:aws:sts::assumed-role/testRole/userid").
+				WithRequestContext(map[string]interface{}{"aws:userid": victim, "seaweed:oidc-issuers": "https://idp.example"})
+			if tc.parentUser != "" {
+				claims.WithParentUser(tc.parentUser)
+			}
+			token, err := sts.NewTokenGenerator(config.SigningKey, config.Issuer).GenerateJWTWithClaims(claims)
+			require.NoError(t, err)
+			sessionInfo, err := stsService.ValidateSessionToken(context.Background(), token)
+			require.NoError(t, err)
+			req, err := http.NewRequest(http.MethodGet, "/lake/key", nil)
+			require.NoError(t, err)
+
+			identity, _, errCode := iam.validateSTSSessionToken(req, token, sessionInfo.Credentials.AccessKeyId)
+			require.Equal(t, s3err.ErrNone, errCode)
+			_, hasUserID := identity.Claims["aws:userid"]
+			assert.Equal(t, tc.want != "", hasUserID)
+			if tc.want != "" {
+				assert.Equal(t, tc.want, identity.Claims["aws:userid"])
+			}
+			assert.NotContains(t, identity.Claims, "seaweed:oidc-issuers")
+		})
+	}
+}

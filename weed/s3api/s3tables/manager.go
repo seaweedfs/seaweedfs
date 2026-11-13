@@ -47,6 +47,16 @@ func (m *Manager) SetTrusted(trusted bool) {
 	m.handler.SetTrusted(trusted)
 }
 
+// SetLocalAccountChecker sets the handler's configured local account predicate.
+func (m *Manager) SetLocalAccountChecker(fn func(string) bool) {
+	m.handler.SetLocalAccountChecker(fn)
+}
+
+// SetTrustedIssuerSource sets the handler's configured OIDC issuer source.
+func (m *Manager) SetTrustedIssuerSource(fn func(context.Context) []string) {
+	m.handler.SetTrustedIssuerSource(fn)
+}
+
 // SetEncryptionChecker sets the handler's SSE-S3 availability predicate.
 func (m *Manager) SetEncryptionChecker(fn func() bool) {
 	m.handler.SetEncryptionChecker(fn)
@@ -70,7 +80,7 @@ func (m *Manager) PrincipalFor(r *http.Request) string {
 // action scoped to that bucket apply, as the handlers do.
 func (m *Manager) PolicyContext(r *http.Request, bucket string) *PolicyContext {
 	ctx := &PolicyContext{IsLocalAccountID: m.handler.localAccountIDs, IdentityActions: getIdentityActions(r),
-		TrustedIssuers: m.handler.trustedIssuers(r), TableBucketName: bucket}
+		TrustedIssuers: m.handler.trustedIssuers(r), Subject: callerSubject(r), TableBucketName: bucket}
 	if m.handler.trusted || (m.handler.defaultAllow && s3_constants.GetIdentityNameFromContext(r) == "") {
 		ctx.DefaultAllow = true
 	}
