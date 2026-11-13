@@ -309,8 +309,9 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 	// Versioned/suspended delete with no specific version: route off the lock when
 	// the bucket has an owner. createDeleteMarker routes its own pointer flip; a
 	// delete marker never removes a locked version, so object-lock buckets route
-	// here too. The If-Match precondition was already checked above.
-	if !deleteHandled && versioningConfigured && versionId == "" {
+	// here too. A conditional delete stays on the lock path, which re-checks
+	// If-Match under the lock, so concurrent ones cannot all pass the check above.
+	if !deleteHandled && versioningConfigured && versionId == "" && r.Header.Get(s3_constants.IfMatch) == "" {
 		if owner := s3a.routableWriteOwner(bucket, object); owner != "" {
 			deleteResult, deleteCode = s3a.deleteVersionedObject(r, bucket, object, versionId, versioningState)
 			deleteHandled = true
