@@ -45,7 +45,8 @@ type tierDownloadCluster struct {
 	// staleTwin lists a remote-backed twin of the volume on another disk
 	staleTwin map[pb.ServerAddress]bool
 	// markFails applies the readonly mark, then fails as a lost master notification does
-	markFails map[pb.ServerAddress]bool
+	markFails  map[pb.ServerAddress]bool
+	mountFails map[pb.ServerAddress]bool
 }
 
 type tierDownloadTestServer struct {
@@ -89,6 +90,9 @@ func (s *tierDownloadTestServer) VolumeMount(context.Context, *volume_server_pb.
 	c := s.cluster
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.mountFails[s.addr] {
+		return nil, fmt.Errorf("mount volume: disk error")
+	}
 	c.frozen[s.addr] = false
 	c.remounts[s.addr]++
 	return &volume_server_pb.VolumeMountResponse{}, nil
@@ -171,6 +175,7 @@ func newTierDownloadCluster(t *testing.T, states ...string) *tierDownloadCluster
 		remounts:     make(map[pb.ServerAddress]int),
 		staleTwin:    make(map[pb.ServerAddress]bool),
 		markFails:    make(map[pb.ServerAddress]bool),
+		mountFails:   make(map[pb.ServerAddress]bool),
 	}
 	for _, state := range states {
 		lis, err := net.Listen("tcp", "127.0.0.1:0")
@@ -411,4 +416,15 @@ func TestTierDownloadRestoresSourceWhenMarkFailsAfterApplying(t *testing.T) {
 			t.Errorf("writable=%v: remote object deleted although no replica was replaced", writable)
 		}
 	}
+}
+
+func TestTierDownloadReportsSourceRestoreFailure(t *testing.T) {
+	c := newTierDownloadCluster(t, tierReplicaLocal, tierReplicaRemote, tierReplicaRemote)
+	source := c.servers[0]
+	c.mountFails[source] = true
+	err := c.run(t)
+	if err == nil || !strings.Contains(err.Error(), "restore volume 7 state") {
+		t.Fatalf("tier download should report the failed source restore, got %v", err)
+	}
+	c.assertAllLocal(t)
 }

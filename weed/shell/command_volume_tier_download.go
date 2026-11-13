@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -151,7 +152,7 @@ func doVolumeTierDownload(commandEnv *CommandEnv, writer io.Writer, topoInfo *ma
 // one replica, copies that local volume over every other replica, and only
 // then deletes the remote object, so no replica is ever left referencing a
 // deleted object.
-func downloadAndReplicateFromRemoteTier(grpcDialOption grpc.DialOption, writer io.Writer, readTopology func() (*master_pb.TopologyInfo, error), vid needle.VolumeId, collection string, concurrency int) error {
+func downloadAndReplicateFromRemoteTier(grpcDialOption grpc.DialOption, writer io.Writer, readTopology func() (*master_pb.TopologyInfo, error), vid needle.VolumeId, collection string, concurrency int) (err error) {
 	topoInfo, err := readTopology()
 	if err != nil {
 		return err
@@ -191,7 +192,11 @@ func downloadAndReplicateFromRemoteTier(grpcDialOption grpc.DialOption, writer i
 
 	restore, err := freezeTierDownloadSource(grpcDialOption, vid, source)
 	if restore != nil {
-		defer restore(writer)
+		defer func() {
+			if restoreErr := restore(); restoreErr != nil {
+				err = errors.Join(err, fmt.Errorf("restore volume %d state on %s: %v", vid, source, restoreErr))
+			}
+		}()
 	}
 	if err != nil {
 		return fmt.Errorf("block deletes on volume %d at %s: %v", vid, source, err)
@@ -249,7 +254,7 @@ func downloadAndReplicateFromRemoteTier(grpcDialOption grpc.DialOption, writer i
 // after VolumeCopy read the source index would be lost on the replaced replica.
 // restore brings back the writable mark, or reloads the persisted state. It is
 // also returned when the mark fails, since the server may have applied it.
-func freezeTierDownloadSource(grpcDialOption grpc.DialOption, vid needle.VolumeId, source pb.ServerAddress) (restore func(io.Writer), err error) {
+func freezeTierDownloadSource(grpcDialOption grpc.DialOption, vid needle.VolumeId, source pb.ServerAddress) (restore func() error, err error) {
 	var wasWritable, statusRead bool
 	err = operation.WithVolumeServerClient(false, source, grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
 		resp, statusErr := client.VolumeStatus(context.Background(), &volume_server_pb.VolumeStatusRequest{VolumeId: uint32(vid)})
@@ -263,17 +268,14 @@ func freezeTierDownloadSource(grpcDialOption grpc.DialOption, vid needle.VolumeI
 	if !statusRead {
 		return nil, err
 	}
-	restore = func(writer io.Writer) {
-		restoreErr := operation.WithVolumeServerClient(false, source, grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+	restore = func() error {
+		return operation.WithVolumeServerClient(false, source, grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
 			if wasWritable {
 				_, markErr := client.VolumeMarkWritable(context.Background(), &volume_server_pb.VolumeMarkWritableRequest{VolumeId: uint32(vid)})
 				return markErr
 			}
 			return remountVolume(client, vid)
 		})
-		if restoreErr != nil {
-			fmt.Fprintf(writer, "restore volume %d state on %s: %v\n", vid, source, restoreErr)
-		}
 	}
 	return
 }
