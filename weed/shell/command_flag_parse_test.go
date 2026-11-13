@@ -2,6 +2,7 @@ package shell
 
 import (
 	"bytes"
+	"flag"
 	"strings"
 	"testing"
 )
@@ -37,4 +38,14 @@ func doWithoutCommandEnv(c command, args []string) (err error, needsEnv bool) {
 	}()
 	var out bytes.Buffer
 	return c.Do(args, nil, &out), false
+}
+
+func TestProcessEachCmdTreatsHelpAsSuccess(t *testing.T) {
+	Commands = append(Commands, &fakeCommand{name: "test.help.command", err: flag.ErrHelp})
+	t.Cleanup(func() { Commands = Commands[:len(Commands)-1] })
+
+	exit, err := processEachCmd("test.help.command -h", nil)
+	if exit || err != nil {
+		t.Errorf("-h must not count as a failure, got exit=%v err=%v", exit, err)
+	}
 }
