@@ -367,7 +367,7 @@ func TestRoutedDeleteSpecificVersionUsesWormCondition(t *testing.T) {
 		},
 	}
 
-	if code := s3a.routedDeleteSpecificVersion(owner, "b", "obj", versionId, true, false, false); code != s3err.ErrAccessDenied {
+	if code := s3a.routedDeleteSpecificVersion(owner, "b", "obj", versionId, true, false, false, nil); code != s3err.ErrAccessDenied {
 		t.Fatalf("locked version delete returned %v, want %v", code, s3err.ErrAccessDenied)
 	}
 
@@ -438,7 +438,7 @@ func TestRoutedDeleteSpecificVersionGuardsRepoint(t *testing.T) {
 	t.Run("one transaction behind the version's lock checks", func(t *testing.T) {
 		filer := &fakeTxnFiler{}
 		owner := startFakeFiler(t, filer)
-		if code := newS3a().routedDeleteSpecificVersion(owner, "b", "obj", versionId, false, false, false); code != s3err.ErrNone {
+		if code := newS3a().routedDeleteSpecificVersion(owner, "b", "obj", versionId, false, false, false, nil); code != s3err.ErrNone {
 			t.Fatalf("delete returned %v, want %v", code, s3err.ErrNone)
 		}
 		if len(filer.reqs) != 1 {
@@ -459,7 +459,7 @@ func TestRoutedDeleteSpecificVersionGuardsRepoint(t *testing.T) {
 	t.Run("metadata-only delete keeps the data", func(t *testing.T) {
 		filer := &fakeTxnFiler{}
 		owner := startFakeFiler(t, filer)
-		if code := newS3a().routedDeleteSpecificVersion(owner, "b", "obj", versionId, false, false, true); code != s3err.ErrNone {
+		if code := newS3a().routedDeleteSpecificVersion(owner, "b", "obj", versionId, false, false, true, nil); code != s3err.ErrNone {
 			t.Fatalf("delete returned %v, want %v", code, s3err.ErrNone)
 		}
 		if filer.lastReq.Mutations[1].IsDeleteData {
@@ -738,5 +738,61 @@ func TestRouteWriteCondition(t *testing.T) {
 	// An unparseable condition bails regardless.
 	if _, ok := routeWriteCondition(reqWith(map[string]string{"If-Modified-Since": "not a date"}), false); ok {
 		t.Fatal("unparseable headers must not route")
+	}
+}
+
+// A conditional version delete guards the version inside its own transaction,
+// ahead of the repoint, and reports that guard failing as a failed
+// precondition rather than an object-lock denial.
+func TestRoutedVersionDeleteCarriesIfMatch(t *testing.T) {
+	versionId := "672a75d526ef29c79fe6b5680cad4a0d"
+	ifMatch := etagClause(filer_pb.WriteCondition_IF_ETAG_MATCH, "abc")
+	newS3a := func() *S3ApiServer {
+		return &S3ApiServer{option: &S3ApiServerOption{
+			BucketsPath:    "/buckets",
+			GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		}}
+	}
+	guarded := func(t *testing.T, m *filer_pb.ObjectMutation, conditionKey string) {
+		t.Helper()
+		clauses := m.GetCondition().GetClauses()
+		if len(clauses) != 1 || clauses[0].Kind != filer_pb.WriteCondition_IF_ETAG_MATCH || len(clauses[0].Etags) != 1 || clauses[0].Etags[0] != "abc" {
+			t.Fatalf("mutation condition = %+v, want If-Match abc", m.GetCondition())
+		}
+		if m.ConditionKey != conditionKey {
+			t.Fatalf("mutation condition key = %q, want %q", m.ConditionKey, conditionKey)
+		}
+	}
+	firstMutation := int32(0)
+	cases := []struct {
+		name string
+		resp *filer_pb.ObjectTransactionResponse
+		want s3err.ErrorCode
+	}{
+		{"applied", nil, s3err.ErrNone},
+		{"if-match failed", &filer_pb.ObjectTransactionResponse{ErrorCode: filer_pb.FilerError_PRECONDITION_FAILED, FailedMutation: &firstMutation}, s3err.ErrPreconditionFailed},
+		{"object lock denied", &filer_pb.ObjectTransactionResponse{ErrorCode: filer_pb.FilerError_PRECONDITION_FAILED}, s3err.ErrAccessDenied},
+	}
+	for _, tc := range cases {
+		t.Run("version/"+tc.name, func(t *testing.T) {
+			filer := &fakeTxnFiler{resp: tc.resp}
+			owner := startFakeFiler(t, filer)
+			if code := newS3a().routedDeleteSpecificVersion(owner, "b", "obj", versionId, true, false, false, ifMatch); code != tc.want {
+				t.Fatalf("delete returned %v, want %v", code, tc.want)
+			}
+			if filer.lastReq.Mutations[0].Type != filer_pb.ObjectMutation_RECOMPUTE_LATEST {
+				t.Fatalf("first mutation = %v, want the repoint", filer.lastReq.Mutations[0].Type)
+			}
+			guarded(t, filer.lastReq.Mutations[0], "/buckets/b/obj.versions/v_"+versionId)
+		})
+		t.Run("null/"+tc.name, func(t *testing.T) {
+			filer := &fakeTxnFiler{resp: tc.resp}
+			owner := startFakeFiler(t, filer)
+			code, settled := newS3a().routedDeleteNullVersion(owner, "b", "obj", true, false, false, ifMatch)
+			if !settled || code != tc.want {
+				t.Fatalf("delete returned (%v, %v), want (%v, true)", code, settled, tc.want)
+			}
+			guarded(t, filer.lastReq.Mutations[0], "")
+		})
 	}
 }

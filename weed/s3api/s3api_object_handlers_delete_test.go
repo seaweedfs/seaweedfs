@@ -230,3 +230,54 @@ func TestVersionedConditionalDeleteRechecksUnderLock(t *testing.T) {
 		}
 	}
 }
+
+// A conditional delete of a specific version carries If-Match into the owner's
+// transaction; an If-Match the filer cannot evaluate stays on the lock path.
+func TestVersionIdConditionalDeleteGuardsOnOwner(t *testing.T) {
+	for _, tc := range []struct {
+		ifMatch string
+		routed  bool
+	}{{`"abc123"`, true}, {`"other", "abc123"`, false}} {
+		t.Run(tc.ifMatch, func(t *testing.T) {
+			filerImpl, s3a := newVersionedPutFiler(t)
+			s3a.iam = &IdentityAccessManagement{}
+			filerAddr := s3a.option.Filers[0]
+			s3a.objectWriteLockClient = cluster.NewLockClient(s3a.option.GrpcDialOption, filerAddr)
+			s3a.objectWriteLockClient.SetRing([]pb.ServerAddress{filerAddr}, 1)
+			versionId := latestVersionId(filerImpl)
+			versionKey := "/buckets/b/k.versions/v_" + versionId
+
+			var txns []*filer_pb.ObjectTransactionRequest
+			filerImpl.mu.Lock()
+			filerImpl.txnCheck = func(req *filer_pb.ObjectTransactionRequest) { txns = append(txns, req) }
+			filerImpl.mu.Unlock()
+			locked := false
+			s3a.newObjectWriteLock = func(bucket, object string) (objectWriteLock, error) {
+				locked = true
+				return nil, errors.New("lock unavailable")
+			}
+
+			r := httptest.NewRequest(http.MethodDelete, "/b/k?versionId="+versionId, nil)
+			r = mux.SetURLVars(r, map[string]string{"bucket": "b", "object": "k"})
+			r.Header.Set(s3_constants.IfMatch, tc.ifMatch)
+			w := httptest.NewRecorder()
+			s3a.DeleteObjectHandler(w, r)
+
+			require.Equal(t, !tc.routed, locked)
+			if !tc.routed {
+				require.Equal(t, http.StatusServiceUnavailable, w.Code, w.Body.String())
+			} else {
+				require.Equal(t, http.StatusNoContent, w.Code, w.Body.String())
+				filerImpl.mu.Lock()
+				defer filerImpl.mu.Unlock()
+				require.Nil(t, filerImpl.entries[versionKey], "the version must be deleted")
+				require.Len(t, txns, 1)
+				guard := txns[0].Mutations[0]
+				require.Equal(t, versionKey, guard.ConditionKey)
+				require.Len(t, guard.GetCondition().GetClauses(), 1)
+				require.Equal(t, filer_pb.WriteCondition_IF_ETAG_MATCH, guard.GetCondition().GetClauses()[0].Kind)
+				require.Equal(t, []string{"abc123"}, guard.GetCondition().GetClauses()[0].Etags)
+			}
+		})
+	}
+}

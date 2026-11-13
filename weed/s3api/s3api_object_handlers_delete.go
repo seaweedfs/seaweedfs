@@ -173,7 +173,7 @@ func (s3a *S3ApiServer) deleteVersionedObject(r *http.Request, bucket, object, v
 		if owner := s3a.routableWriteOwner(bucket, object); owner != "" {
 			worm, lockErr := s3a.isObjectLockEnabled(bucket)
 			if lockErr == nil {
-				code, settled := s3a.routedDeleteNullVersion(owner, bucket, object, worm, worm && governanceBypassAllowed, false)
+				code, settled := s3a.routedDeleteNullVersion(owner, bucket, object, worm, worm && governanceBypassAllowed, false, nil)
 				if settled {
 					if code != s3err.ErrNone {
 						return result, code
@@ -323,11 +323,14 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 	// gate the delete on the version's WORM guards, evaluated on the owner — for
 	// governance bypass the retention guard is scoped to COMPLIANCE so the filer
 	// allows a governance-mode delete while still denying compliance and legal
-	// hold, without the gateway reading the version.
+	// hold, without the gateway reading the version. If-Match rides the same
+	// transaction, so concurrent conditional deletes of one version cannot both
+	// pass; one the filer cannot express stays on the lock path.
 	if !deleteHandled && versionId != "" {
 		worm, lockErr := s3a.isObjectLockEnabled(bucket)
 		bypass := worm && s3a.evaluateGovernanceBypassRequest(r, bucket, object)
-		if lockErr == nil {
+		ifMatch, ifMatchOk := buildDeleteCondition(r)
+		if lockErr == nil && ifMatchOk {
 			if owner := s3a.objectWriteOwner(bucket, object); owner != "" {
 				deleteResult.versionId = versionId
 				if ve, vErr := s3a.getSpecificObjectVersion(bucket, object, versionId); vErr == nil && ve != nil && ve.Extended != nil {
@@ -336,11 +339,11 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 					}
 				}
 				if versionId == "null" {
-					deleteCode, deleteHandled = s3a.routedDeleteNullVersion(owner, bucket, object, worm, bypass, false)
+					deleteCode, deleteHandled = s3a.routedDeleteNullVersion(owner, bucket, object, worm, bypass, false, ifMatch)
 				} else {
 					// A version id never changes kind, so a marker read here is
 					// the one deleted; markers carry no WORM guard.
-					deleteCode, deleteHandled = s3a.routedDeleteSpecificVersion(owner, bucket, object, versionId, worm && !deleteResult.deleteMarker, bypass, false), true
+					deleteCode, deleteHandled = s3a.routedDeleteSpecificVersion(owner, bucket, object, versionId, worm && !deleteResult.deleteMarker, bypass, false, ifMatch), true
 				}
 			}
 		}
