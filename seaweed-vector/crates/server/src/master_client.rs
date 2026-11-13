@@ -14,7 +14,7 @@ use crate::master_pb::{
 use crate::security::GrpcTls;
 pub use weed_lance_worker::cluster::{CONNECT_TIMEOUT, connect, grpc_addr};
 
-fn registration(client_addr: &str, filer_group: &str) -> KeepConnectedRequest {
+fn registration(client_addr: &str, filer_group: &str, metrics_port: u16) -> KeepConnectedRequest {
     KeepConnectedRequest {
         client_type: "vector".into(),
         client_address: client_addr.into(),
@@ -23,7 +23,7 @@ fn registration(client_addr: &str, filer_group: &str) -> KeepConnectedRequest {
         data_center: String::new(),
         rack: String::new(),
         leave_lock_ring: false,
-        ..Default::default()
+        metrics_port: metrics_port.into(),
     }
 }
 
@@ -45,16 +45,16 @@ pub async fn keep_connected(
     masters: Vec<String>,
     client_addr: String,
     filer_group: String,
+    metrics_port: u16,
     tls: Option<GrpcTls>,
     metrics: crate::metrics::Metrics,
 ) {
-    let client_addr = client_addr.as_str();
-    let filer_group = filer_group.as_str();
+    let registration = &registration(&client_addr, &filer_group, metrics_port);
     let tls = tls.as_ref();
     let metrics = &metrics;
     loop {
         try_all_masters(&masters, |master| async move {
-            let result = stream_to(&master, client_addr, filer_group, tls, Some(&metrics)).await;
+            let result = stream_to(&master, registration, tls, Some(&metrics)).await;
             metrics.set_connected(false).await;
             result
         })
@@ -94,8 +94,7 @@ where
 
 async fn stream_to(
     master: &str,
-    client_addr: &str,
-    filer_group: &str,
+    registration: &KeepConnectedRequest,
     tls: Option<&GrpcTls>,
     metrics: Option<&crate::metrics::Metrics>,
 ) -> Result<Option<String>> {
@@ -104,7 +103,7 @@ async fn stream_to(
     let answer_by = tokio::time::Instant::now() + CONNECT_TIMEOUT;
     let mut client = SeaweedClient::new(channel);
     let (tx, rx) = tokio::sync::mpsc::channel(8);
-    tx.send(registration(client_addr, filer_group)).await?;
+    tx.send(registration.clone()).await?;
     let mut stream = tokio::time::timeout_at(
         answer_by,
         client.keep_connected(tokio_stream::wrappers::ReceiverStream::new(rx)),
@@ -141,7 +140,7 @@ async fn stream_to(
                 anyhow::bail!("master did not answer keep-connected");
             }
             _ = heartbeat.tick() => {
-                tokio::time::timeout(CONNECT_TIMEOUT, tx.send(registration(client_addr, filer_group))).await
+                tokio::time::timeout(CONNECT_TIMEOUT, tx.send(registration.clone())).await
                     .context("registration send stalled")??;
                 probe_registration(&mut client).await?;
             }
@@ -169,9 +168,15 @@ mod tests {
     #[test]
     fn registration_preserves_filer_group() {
         assert_eq!(
-            registration("vector:8090", "tenant-a").filer_group,
+            registration("vector:8090", "tenant-a", 0).filer_group,
             "tenant-a"
         );
+    }
+
+    #[test]
+    fn registration_advertises_metrics_port() {
+        assert_eq!(registration("vector:8090", "", 9327).metrics_port, 9327);
+        assert_eq!(registration("vector:8090", "", 0).metrics_port, 0);
     }
 
     #[tokio::test]
@@ -242,7 +247,8 @@ mod tests {
     #[tokio::test]
     async fn dial_to_a_black_holed_master_is_bounded() {
         // TEST-NET-1 (RFC 5737) is reserved, so nothing answers the SYN.
-        let dial = stream_to("192.0.2.1:9333", "127.0.0.1:8080", "", None, None);
+        let registration = registration("127.0.0.1:8080", "", 0);
+        let dial = stream_to("192.0.2.1:9333", &registration, None, None);
         let result = tokio::time::timeout(CONNECT_TIMEOUT * 3, dial).await;
         assert!(matches!(result, Ok(Err(_))), "dial was not bounded");
     }
@@ -256,7 +262,8 @@ mod tests {
             let _ = tokio::io::copy(&mut conn, &mut tokio::io::sink()).await;
         });
         let master = format!("127.0.0.1:9333.{port}");
-        let open = stream_to(&master, "127.0.0.1:8080", "", None, None);
+        let registration = registration("127.0.0.1:8080", "", 0);
+        let open = stream_to(&master, &registration, None, None);
         match tokio::time::timeout(CONNECT_TIMEOUT * 3, open).await {
             Ok(Err(e)) => assert!(format!("{e:#}").contains("did not answer"), "{e:#}"),
             other => panic!("open was not bounded: {other:?}"),
@@ -291,7 +298,8 @@ mod tests {
         });
         let master = format!("127.0.0.1:9333.{port}");
         let tls = credentials();
-        let open = stream_to(&master, "127.0.0.1:8080", "", Some(&tls), None);
+        let registration = registration("127.0.0.1:8080", "", 0);
+        let open = stream_to(&master, &registration, Some(&tls), None);
         match tokio::time::timeout(CONNECT_TIMEOUT * 3, open).await {
             Ok(Err(e)) => assert!(format!("{e:#}").contains("did not complete"), "{e:#}"),
             other => panic!("handshake was not bounded: {other:?}"),
@@ -317,7 +325,8 @@ mod tests {
         let mut tls = credentials();
         tls.ca_path = fifo.display().to_string();
         let master = format!("127.0.0.1:9333.{port}");
-        let open = stream_to(&master, "127.0.0.1:8080", "", Some(&tls), None);
+        let registration = registration("127.0.0.1:8080", "", 0);
+        let open = stream_to(&master, &registration, Some(&tls), None);
         let result = tokio::time::timeout(CONNECT_TIMEOUT * 3, open).await;
         use std::io::Write;
         let mut cleanup = std::fs::OpenOptions::new()
