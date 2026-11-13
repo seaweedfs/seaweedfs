@@ -112,6 +112,11 @@ func (wfs *WFS) flushFileMetadata(fh *FileHandle) error {
 	if fh.GetEntry() == nil {
 		return nil
 	}
+	if fh.linkRefresh != nil {
+		if err := wfs.adoptStoredLink(context.Background(), fh, fileFullPath, fh.linkRefresh); err != nil {
+			return err
+		}
+	}
 
 	// Snapshot the current chunk list. Async uploader goroutines call
 	// entry.AppendChunks while we run CompactFileChunks / MaybeManifestize
