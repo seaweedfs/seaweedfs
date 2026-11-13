@@ -6,10 +6,12 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
@@ -66,7 +68,8 @@ func (s *hardLinkFiler) unlinkBlob(id []byte) {
 		delete(s.blobs, string(id))
 		return
 	}
-	blob.Attributes.Ctime = 777
+	now := time.Now()
+	blob.Attributes.Ctime, blob.Attributes.CtimeNs = now.Unix(), int32(now.Nanosecond())
 }
 
 func (s *hardLinkFiler) LookupDirectoryEntry(ctx context.Context, r *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
@@ -116,6 +119,9 @@ func (s *hardLinkFiler) UpdateEntry(ctx context.Context, r *filer_pb.UpdateEntry
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	current := s.resolve(r.Entry.Name)
+	if current == nil {
+		return nil, status.Error(codes.NotFound, filer_pb.ErrNotFound.Error())
+	}
 	stored := s.store(r.Entry)
 	return &filer_pb.UpdateEntryResponse{MetadataEvent: &filer_pb.SubscribeMetadataResponse{
 		Directory:         r.Directory,
@@ -143,6 +149,16 @@ func (s *hardLinkFiler) stored(name string) *filer_pb.Entry {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.resolve(name)
+}
+
+// failSurvivorReads fails every lookup of "final" once a delete ran.
+func failSurvivorReads(fake *hardLinkFiler, fail bool) {
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	fake.failName, fake.failLookups = "final", 0
+	if fail {
+		fake.failLookups = 1 << 30
+	}
 }
 
 func linkHandleChunk(key uint64, offset int64) *filer_pb.FileChunk {
@@ -178,6 +194,28 @@ func appendAndFlush(t *testing.T, wfs *WFS, fh *FileHandle, key uint64) fuse.Sta
 	})
 	fh.dirtyMetadata = true
 	return wfs.doFlush(context.Background(), fh, 1000, 20, false)
+}
+
+// queueClose closes fh the way a writeback mount does. Its flush starts once
+// the handle is marked deleted, or a moment later, so callers that do not wait
+// for it run first.
+func queueClose(wfs *WFS, fh *FileHandle) {
+	fh.asyncFlushPending = true
+	wfs.pendingAsyncFlush = map[uint64]chan struct{}{}
+	wfs.asyncFlushCh = make(chan *asyncFlushItem, 1)
+	wfs.ReleaseHandle(fh.fh)
+	markedDeleted := func() bool {
+		lock := wfs.fhLockTable.AcquireLock("test", fh.fh, util.SharedLock)
+		defer wfs.fhLockTable.ReleaseLock(fh.fh, lock)
+		return fh.isDeleted
+	}
+	go func() {
+		item := <-wfs.asyncFlushCh
+		for deadline := time.Now().Add(200 * time.Millisecond); !markedDeleted() && time.Now().Before(deadline); {
+			time.Sleep(time.Millisecond)
+		}
+		wfs.processAsyncFlushItem(item)
+	}()
 }
 
 func linkInRoot(t *testing.T, wfs *WFS, inode uint64, name string) {
@@ -238,6 +276,7 @@ func TestUnlinkedAliasKeepsOpenHandlePublishing(t *testing.T) {
 			if fh.isDeleted {
 				t.Fatal("the handle of a file that still has a name is marked deleted")
 			}
+			unlinked := fake.stored("final").Attributes
 			if code := appendAndFlush(t, wfs, fh, 2); code != fuse.OK {
 				t.Fatalf("flush after unlinking the alias: %v", code)
 			}
@@ -246,6 +285,9 @@ func TestUnlinkedAliasKeepsOpenHandlePublishing(t *testing.T) {
 				chunks = 3
 			}
 			wantStored(t, fake, "final", chunks, 1)
+			if got := fake.stored("final").Attributes; got.Ctime != unlinked.Ctime || got.CtimeNs != unlinked.CtimeNs {
+				t.Fatalf("the flush moved the ctime from the unlink's %d.%09d back to %d.%09d", unlinked.Ctime, unlinked.CtimeNs, got.Ctime, got.CtimeNs)
+			}
 			if fake.stored("tmp") != nil {
 				t.Fatal("the flush recreated the unlinked name")
 			}
@@ -258,10 +300,9 @@ func TestUnlinkedAliasKeepsOpenHandlePublishing(t *testing.T) {
 func TestUnlinkedAliasRereadsLostEntryAtFlush(t *testing.T) {
 	wfs, fake, fh, inode := openLinkTestFile(t)
 	linkInRoot(t, wfs, inode, "final")
-	fake.mu.Lock()
-	fake.failName, fake.failLookups = "final", 1
-	fake.mu.Unlock()
+	failSurvivorReads(fake, true)
 	unlinkInRoot(t, wfs, "tmp")
+	failSurvivorReads(fake, false)
 	if fh.linkRefresh == nil {
 		t.Fatal("a failed read of the surviving entry was not left for the next flush")
 	}
@@ -272,6 +313,77 @@ func TestUnlinkedAliasRereadsLostEntryAtFlush(t *testing.T) {
 	if fh.linkRefresh != nil {
 		t.Fatal("the pending read survived a successful flush")
 	}
+}
+
+// A flush that resolved the alias before the unlink removed it reaches the
+// surviving name, and still reads it again when the unlink could not.
+func TestFlushResolvedBeforeAliasUnlinkReachesSurvivor(t *testing.T) {
+	wfs, fake, fh, inode := openLinkTestFile(t)
+	linkInRoot(t, wfs, inode, "final")
+	failSurvivorReads(fake, true)
+	unlinkInRoot(t, wfs, "tmp")
+	failSurvivorReads(fake, false)
+	lock := wfs.fhLockTable.AcquireLock("test", fh.fh, util.ExclusiveLock)
+	err := wfs.adoptStoredLink(context.Background(), fh, "/tmp", fh.linkRefresh)
+	wfs.fhLockTable.ReleaseLock(fh.fh, lock)
+	if err != nil || fh.linkRefresh == nil {
+		t.Fatalf("reading the removed name dropped the pending read: %v", err)
+	}
+	fh.UpdateEntry(func(e *filer_pb.Entry) {
+		e.Chunks = append(e.Chunks, linkHandleChunk(2, 100))
+		e.Attributes.FileSize = 200
+	})
+	fh.dirtyMetadata = true
+	if err := wfs.flushMetadataToFiler(context.Background(), fh, "/", "tmp", 1000, 20); err != nil {
+		t.Fatalf("flush resolved before the unlink: %v", err)
+	}
+	wantStored(t, fake, "final", 2, 1)
+	if fake.stored("tmp") != nil || fh.linkRefresh != nil {
+		t.Fatal("the flush recreated the unlinked name or left the read pending")
+	}
+}
+
+// With writeback caching close only queues the flush. Unlinking the alias,
+// found in a listed directory, before that flush runs must not drop the
+// content the other link keeps.
+func TestUnlinkedAliasPublishesQueuedClose(t *testing.T) {
+	wfs, fake, fh, inode := openLinkTestFile(t)
+	wfs.inodeToPath.MarkChildrenCached("/")
+	linkInRoot(t, wfs, inode, "final")
+	fh.UpdateEntry(func(e *filer_pb.Entry) {
+		e.Chunks = append(e.Chunks, linkHandleChunk(2, 100))
+		e.Attributes.FileSize = 200
+	})
+	fh.dirtyMetadata = true
+	queueClose(wfs, fh)
+	unlinkInRoot(t, wfs, "tmp")
+	wantStored(t, fake, "final", 2, 1)
+	if fake.stored("tmp") != nil {
+		t.Fatal("the queued flush recreated the unlinked name")
+	}
+}
+
+// With writeback caching the filer create of a new file waits for its queued
+// close, so a link made right after the close has to wait for it too.
+func TestLinkWaitsForQueuedClose(t *testing.T) {
+	wfs, fake, fh, inode := openLinkTestFile(t)
+	wfs.inodeToPath.MarkChildrenCached("/")
+	fake.mu.Lock()
+	delete(fake.records, "tmp")
+	fake.mu.Unlock()
+	if err := wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry("/", fh.GetEntry().GetEntry()), 0); err != nil {
+		t.Fatalf("cache the local entry: %v", err)
+	}
+	fh.baseEntry.Store(nil)
+	fh.UpdateEntry(func(e *filer_pb.Entry) {
+		e.Chunks = append(e.Chunks, linkHandleChunk(2, 100))
+		e.Attributes.FileSize = 200
+	})
+	fh.dirtyMetadata = true
+	queueClose(wfs, fh)
+	linkInRoot(t, wfs, inode, "final")
+	wantStored(t, fake, "tmp", 2, 2)
+	wantStored(t, fake, "final", 2, 2)
 }
 
 // Unlinking the last name still stops the handle from writing it back.
@@ -310,5 +422,24 @@ func TestAdoptLinkChangeKeepsBaseOnPeerWrite(t *testing.T) {
 	fh.adoptLinkChange(stored, 99, 0)
 	if got := fh.GetEntry().GetEntry(); string(got.HardLinkId) != "link" || got.HardLinkCounter != 2 {
 		t.Fatalf("handle did not adopt the link: %v", got)
+	}
+}
+
+// A link change no newer than what the handle holds must not move its base
+// back; one stamped by another filer's clock says nothing about it and lands.
+func TestAdoptLinkChangeSkipsOlderVersion(t *testing.T) {
+	wfs, _, fh, _ := openLinkTestFile(t)
+	base := fh.baseEntry.Load()
+	fh.advanceEntryVersion(100, 5)
+	stored := proto.Clone(base).(*filer_pb.Entry)
+	wfs.mapPbIdFromLocalToFiler(stored)
+	stored.HardLinkId, stored.HardLinkCounter = []byte("link"), 2
+	fh.adoptLinkChange(stored, 100, 5)
+	if fh.baseEntry.Load() != base || len(fh.GetEntry().GetEntry().HardLinkId) != 0 {
+		t.Fatal("a link change older than the handle's version was adopted")
+	}
+	fh.adoptLinkChange(stored, 99, 7)
+	if got := fh.GetEntry().GetEntry(); string(got.HardLinkId) != "link" || got.HardLinkCounter != 2 {
+		t.Fatalf("a link change from another filer's clock was not adopted: %v", got)
 	}
 }
