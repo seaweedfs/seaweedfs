@@ -284,7 +284,7 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 	resp, err := wfs.createContentEntry(ctx, fh, request)
 	if err != nil {
 		glog.Errorf("fh flush create %s: %v", fileFullPath, err)
-		return fmt.Errorf("fh flush create %s: %w", fileFullPath, err)
+		return &contentPublicationError{cause: fmt.Errorf("fh flush create %s: %w", fileFullPath, err), request: proto.Clone(request).(*filer_pb.CreateEntryRequest)}
 	}
 
 	event := resp.GetMetadataEvent()
