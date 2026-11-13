@@ -344,6 +344,15 @@ func TestMergeContentEntry(t *testing.T) {
 	if _, ok := mergeContentEntry(proto.Clone(base).(*filer_pb.Entry), base, rewritten, rewritten, -1); !ok {
 		t.Fatal("refused a rewrite with no peer chunk change")
 	}
+	unstamped := flushConditionEntry(4)
+	unstamped.Chunks[0].Size, unstamped.Chunks[0].ModifiedTsNs = 3, 0
+	shortened := proto.Clone(unstamped).(*filer_pb.Entry)
+	shortened.Chunks[0].Size, shortened.Attributes.FileSize = 2, 2
+	peerAppend := proto.Clone(unstamped).(*filer_pb.Entry)
+	peerAppend.Chunks = append(peerAppend.Chunks, &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 1, FileKey: 9, Cookie: 1}, Offset: 3, Size: 1, ModifiedTsNs: 9})
+	if _, ok := mergeContentEntry(peerAppend, unstamped, shortened, shortened, 2); !ok {
+		t.Fatal("refused a truncate that shortened an unstamped base chunk")
+	}
 
 	empty := flushConditionEntry()
 	inline := proto.Clone(empty).(*filer_pb.Entry)

@@ -395,8 +395,10 @@ func mergeContentEntry(stored, base, local, sent *filer_pb.Entry, truncatedTo in
 	}
 
 	inBase := make(map[string]bool, len(base.Chunks))
+	baseFileIds := make(map[string]bool, len(base.Chunks))
 	for _, c := range base.Chunks {
 		inBase[contentChunkKey(c)] = true
+		baseFileIds[contentFileIdKey(c)] = true
 	}
 	inLocal := make(map[string]bool, len(local.Chunks))
 	for _, c := range local.Chunks {
@@ -426,7 +428,7 @@ func mergeContentEntry(stored, base, local, sent *filer_pb.Entry, truncatedTo in
 	}
 	for _, c := range local.Chunks {
 		if !inBase[contentChunkKey(c)] {
-			if peerChanged && c.ModifiedTsNs == 0 && !c.IsChunkManifest {
+			if peerChanged && c.ModifiedTsNs == 0 && !c.IsChunkManifest && !baseFileIds[contentFileIdKey(c)] {
 				return nil, false
 			}
 			merged.Chunks = append(merged.Chunks, proto.Clone(c).(*filer_pb.FileChunk))
@@ -496,15 +498,19 @@ func sameContentFile(stored, base *filer_pb.Entry) bool {
 // place, so the same file id at another size is a different reference. Both
 // file id encodings give one key, and the chunk is left as is.
 func contentChunkKey(c *filer_pb.FileChunk) string {
+	return fmt.Sprintf("%s@%d+%d", contentFileIdKey(c), c.Offset, c.Size)
+}
+
+func contentFileIdKey(c *filer_pb.FileChunk) string {
 	fid := c.Fid
 	if fid == nil {
 		if parsed, err := filer_pb.ToFileIdObject(c.FileId); err == nil {
 			fid = parsed
 		} else {
-			return fmt.Sprintf("%s@%d+%d", c.FileId, c.Offset, c.Size)
+			return c.FileId
 		}
 	}
-	return fmt.Sprintf("%d,%x,%x@%d+%d", fid.VolumeId, fid.FileKey, fid.Cookie, c.Offset, c.Size)
+	return fmt.Sprintf("%d,%x,%x", fid.VolumeId, fid.FileKey, fid.Cookie)
 }
 
 // ackedBase is the base an acknowledged create leaves: the entry the filer
