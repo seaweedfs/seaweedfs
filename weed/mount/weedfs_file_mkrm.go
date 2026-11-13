@@ -286,13 +286,15 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 	// before Unlink sets the flag).  By waiting here, any in-flight flush
 	// finishes first; even if it recreated the entry, the filer delete below
 	// will remove it again.
+	var markedInode, deleteEpoch uint64
 	if inode, found := wfs.inodeToPath.GetInode(entryFullPath); found {
-		wfs.markHandleDeleted(inode)
-		wfs.waitForPendingAsyncFlush(context.Background(), inode)
+		markedInode = inode
 	} else if entry != nil && entry.Attributes != nil && entry.Attributes.Inode != 0 {
-		inodeFromEntry := entry.Attributes.Inode
-		wfs.markHandleDeleted(inodeFromEntry)
-		wfs.waitForPendingAsyncFlush(context.Background(), inodeFromEntry)
+		markedInode = entry.Attributes.Inode
+	}
+	if markedInode != 0 {
+		deleteEpoch = wfs.markHandleDeleted(markedInode)
+		wfs.waitForPendingAsyncFlush(context.Background(), markedInode)
 	}
 
 	// first, ensure the filer store can correctly delete
@@ -353,6 +355,14 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 		decremented.Attributes.Ctime = now.Unix()
 		decremented.Attributes.CtimeNs = int32(now.Nanosecond())
 		wfs.syncHardLinkSiblings(ctx, sharedInode, decremented, event.GetTsNs(), entryFullPath)
+	}
+
+	// Another link still names the inode, so its open handle keeps flushing
+	// through that name.
+	if isHardLink && markedInode != 0 {
+		if _, status := wfs.inodeToPath.GetPath(markedInode); status == fuse.OK {
+			wfs.clearHandleDeleted(markedInode, deleteEpoch)
+		}
 	}
 
 	return fuse.OK
