@@ -54,16 +54,18 @@ func (wfs *WFS) Write(cancel <-chan struct{}, in *fuse.WriteIn, data []byte) (wr
 
 	fhActiveLock := fh.wfs.fhLockTable.AcquireLock("Write", fh.fh, util.ExclusiveLock)
 	defer fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
-	if wfs.fhMap.isAppendHandle(FileHandleId(in.Fh)) {
-		if !fh.pendingAppend || in.Offset < fh.pendingAppendOffset {
-			fh.pendingAppendOffset = in.Offset
-		}
-		fh.pendingAppend = true
-	}
 
 	entry := fh.GetEntry()
 	if entry == nil {
 		return 0, fuse.OK
+	}
+	// An append onto this handle's own pending bytes leaves no hole; only one
+	// placed past every byte the handle holds needs the committed-EOF check.
+	if in.Offset > entry.Attributes.FileSize && wfs.fhMap.isAppendHandle(FileHandleId(in.Fh)) {
+		if !fh.pendingAppend || in.Offset < fh.pendingAppendOffset {
+			fh.pendingAppendOffset = in.Offset
+		}
+		fh.pendingAppend = true
 	}
 
 	entry.Content = nil

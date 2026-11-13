@@ -1241,16 +1241,17 @@ func TestCommittedCopyWithFailedReadbackAdoptsItsEvent(t *testing.T) {
 		t.Fatalf("handle version = %d, want 1500", got)
 	}
 
-	// The adoption is one-shot: a genuinely foreign event still invalidates.
+	// The adoption is one-shot: a foreign event does not become the base, and
+	// the dirty handle keeps its writes for the publisher to refuse.
 	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), updateEventFor("file", 300, 1600), meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
 		t.Fatalf("apply foreign event: %v", err)
 	}
 	wfs.metaCache.WaitForEntryInvalidations()
-	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 300 {
-		t.Fatalf("live entry file size = %d, want 300 (foreign event after adoption must install)", size)
+	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 205 || fh.dirtyPages != pagesBefore {
+		t.Fatalf("foreign event discarded pending writes: live size %d", size)
 	}
-	if fh.dirtyPages == pagesBefore {
-		t.Fatal("foreign event after adoption must invalidate dirty pages")
+	if base := fh.baseEntry.Load(); base.GetAttributes().GetFileSize() != 200 {
+		t.Fatalf("foreign event after adoption replaced the base: %v", base)
 	}
 }
 
