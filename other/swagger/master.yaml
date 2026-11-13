@@ -1,0 +1,141 @@
+openapi: 3.1.0
+info:
+  title: Seaweedfs Master Server API
+  description: |-
+    The Seaweedfs Master Server API allows you to store blobs
+  version: 3.43.0
+servers:
+  - url: https://127.0.0.1:9333/
+paths:
+  /dir/assign:
+    get:
+      summary: Assign a file key
+      description: This operation is very cheap. Just increase a number in master server's memory.
+      operationId: dirAssign
+      parameters:
+        - name: count
+          in: query
+          description: how many file ids to assign. Use <fid>_1, <fid>_2 for the assigned additional file ids. e.g. 3,01637037d6_1, 3,01637037d6_2
+          schema:
+            type: integer
+            format: int32
+        - name: collection
+          in: query
+          description: required collection name
+          schema:
+            type: string
+        - name: dataCenter
+          in: query
+          description: preferred data center	
+          schema:
+            type: string
+        - name: rack
+          in: query
+          description: preferred rack
+          schema:
+            type: string
+        - name: dataNode
+          in: query
+          description: preferred volume server, e.g. 127.0.0.1:8080	
+          schema:
+            type: string
+        - name: disk
+          in: query
+          description: If you have disks labelled, this must be supplied to specify the disk type to allocate on.	
+          schema:
+            type: string
+        - name: replication
+          in: query
+          description: replica placement strategy	
+          schema:
+            type: string
+        - name: ttl
+          in: query
+          description: "file expiration time limit, example: 3m for 3 minutes. units: m-minute, h-hour, d-day, w-week, M-month, y-year"
+          schema:
+            type: string
+        - name: preallocate
+          in: query
+          description: If no matching volumes, pre-allocate this number of bytes on disk for new volumes.	
+          schema:
+            type: integer
+            format: int64
+        - name: memoryMapMaxSizeMb
+          in: query
+          description: Only implemented for windows. Use memory mapped files with specified size for new volumes.
+          schema:
+            type: integer
+            format: int32
+        - name: writableVolumeCount
+          in: query
+          description: If no matching volumes, create specified number of new volumes.
+          schema:
+            type: integer
+            format: int32
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileKey'
+  /dir/lookup:
+    get:
+      summary: Lookup volume
+      description: We would need to find out whether the volumes have moved.
+      operationId: dirLookup
+      parameters:
+        - name: volumeId
+          in: query
+          description: volume id
+          schema:
+            type: integer
+            format: int32
+        - name: collection
+          in: query
+          description: optionally to speed up the lookup	
+          schema:
+            type: string
+        - name: fileId
+          in: query
+          description: If provided, this returns the fileId location and a JWT to update or delete the file.
+          schema:
+            type: string
+        - name: read
+          in: query
+          description: works together with "fileId", if read=yes, JWT is generated for reads.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Location'     
+components:
+  schemas:
+    FileKey:
+      type: object
+      properties:
+        count:
+          type: integer
+          format: int64
+          example: 10
+        fid:
+          type: string
+          example: 3,01637037d6
+        url:
+          type: string
+          example: 127.0.0.1:8080
+    Location:
+      type: object
+      properties:
+        publicUrl:
+          type: string
+          example: localhost:8080
+        url:
+          type: string
+          example: localhost:8080
