@@ -206,21 +206,24 @@ func (wfs *WFS) doFlush(ctx context.Context, fh *FileHandle, uid, gid uint32, al
 // needed here. The local fhLockTable lock below serializes within this mount.
 func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, name string, uid, gid uint32) error {
 	fileFullPath, dir, name := wfs.flushTarget(fh, dir, name)
-	// Attribute acknowledgement and local retention must complete before a
-	// whole-entry flush can publish. Take this before the handle's active lock.
-	unlock := wfs.lockMetadataPublication(fileFullPath)
-	fhActiveLock := fh.wfs.fhLockTable.AcquireLock("doFlush", fh.fh, util.ExclusiveLock)
-	// An unlink or rename can land before the locks are held.
-	for attempt := 0; attempt < 3; attempt++ {
+	var unlock func()
+	var fhActiveLock *util.ActiveLock
+	// An unlink or rename can land while the flush waits for its locks.
+	for attempt := 0; ; attempt++ {
+		// Attribute acknowledgement and local retention must complete before a
+		// whole-entry flush can publish. Take this before the handle's active lock.
+		unlock = wfs.lockMetadataPublication(fileFullPath)
+		fhActiveLock = fh.wfs.fhLockTable.AcquireLock("doFlush", fh.fh, util.ExclusiveLock)
 		nowPath, nowDir, nowName := wfs.flushTarget(fh, dir, name)
 		if nowPath == fileFullPath && nowDir == dir && nowName == name {
 			break
 		}
 		fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
 		unlock()
+		if attempt == 3 {
+			return fmt.Errorf("flush %s: name changed while waiting for its locks, now %s", fileFullPath, nowPath)
+		}
 		fileFullPath, dir, name = nowPath, nowDir, nowName
-		unlock = wfs.lockMetadataPublication(fileFullPath)
-		fhActiveLock = fh.wfs.fhLockTable.AcquireLock("doFlush", fh.fh, util.ExclusiveLock)
 	}
 	defer func() {
 		fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
