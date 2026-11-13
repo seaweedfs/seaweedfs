@@ -473,6 +473,10 @@ func (wfs *WFS) StartBackgroundTasks() error {
 		glog.V(0).Infof("writebackCache enabled: async flush on close() for improved small file performance")
 	}
 
+	// The later attribute-CAS owner lookup still depends on this ring follower.
+	if wfs.lockClient != nil {
+		wfs.followLockRing()
+	}
 	follower, err := wfs.subscribeFilerConfEvents()
 	if err != nil {
 		return err
@@ -1045,6 +1049,11 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 	// against an approximate base) leaves them valid. A dirty handle likewise
 	// keeps its diverged entry unless foreign content supersedes it.
 	contentChanged := base == nil || !sameEntryContent(candidate, base)
+	if contentChanged && fh.dirtyMetadata {
+		// A subscription event cannot discard pending writes. Keep their base
+		// for the publisher to detect/refuse the content conflict explicitly.
+		return
+	}
 	if contentChanged {
 		fh.dirtyPages.Destroy()
 		fh.dirtyPages = newPageWriter(fh, wfs.option.ChunkSizeLimit)

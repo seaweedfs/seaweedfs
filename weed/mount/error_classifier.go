@@ -1,15 +1,20 @@
 package mount
 
 import (
+	"errors"
 	"strings"
 	"syscall"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
 func grpcErrorToFuseStatus(err error) fuse.Status {
+	if errors.Is(err, filer_pb.ErrPreconditionFailed) {
+		return fuse.EAGAIN
+	}
 	if err == nil {
 		return fuse.OK
 	}
@@ -78,6 +83,9 @@ func writeErrorToFuseStatus(err error) fuse.Status {
 // transport errors, Canceled/Unavailable/ResourceExhausted, or errors with no
 // gRPC status — is treated as potentially transient and retried.
 func isRetryableFilerError(err error) bool {
+	if errors.Is(err, filer_pb.ErrPreconditionFailed) {
+		return false
+	}
 	if err == nil {
 		return false
 	}

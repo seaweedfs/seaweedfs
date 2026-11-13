@@ -156,6 +156,10 @@ func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, o
 	// file is closed without any writes. An eager create has already
 	// persisted the entry, so its handle starts clean.
 	fileHandle.dirtyMetadata = !wfs.option.EagerFilerCreate
+	if !wfs.option.EagerFilerCreate {
+		// The local placeholder is not a committed entry to compare against.
+		fileHandle.baseEntry.Store(nil)
+	}
 
 	// Create bypasses AcquireHandle, so attach the lock acquired above.
 	// A surviving handle may already hold one; ours is redundant then.

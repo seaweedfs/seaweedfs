@@ -37,7 +37,9 @@ func (wfs *WFS) processAsyncFlushItem(item *asyncFlushItem) {
 	defer wfs.asyncFlushWg.Done()
 	defer func() {
 		// Remove from fhMap first (so AcquireFileHandle creates a fresh handle).
-		wfs.fhMap.RemoveFileHandle(item.fh.fh, item.fh.inode)
+		if !item.fh.publicationFailed.Load() {
+			wfs.fhMap.RemoveFileHandle(item.fh.fh, item.fh.inode)
+		}
 		// Then signal completion (unblocks waitForPendingAsyncFlush).
 		close(item.done)
 		wfs.pendingAsyncFlushMu.Lock()
@@ -108,7 +110,9 @@ func (wfs *WFS) completeAsyncFlush(fh *FileHandle) {
 	glog.V(3).Infof("completeAsyncFlush done inode %d fh %d", fh.inode, fh.fh)
 
 	// Phase 3: Destroy the upload pipeline and free resources.
-	fh.ReleaseHandle()
+	if !fh.publicationFailed.Load() {
+		fh.ReleaseHandle()
+	}
 }
 
 // isFilerUnreachable reports a filer call that failed without the filer

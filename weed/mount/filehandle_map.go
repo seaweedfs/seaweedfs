@@ -77,7 +77,7 @@ func (i *FileHandleToInode) AcquireFileHandle(wfs *WFS, inode uint64, entry *fil
 		i.fh2inode[fh.fh] = inode
 		return fh, fh.fh, false, false
 	}
-	if fh.counter <= 0 {
+	if fh.counter <= 0 && !fh.publicationFailed.Load() {
 		return nil, 0, true, true
 	}
 	fh.counter++
@@ -113,6 +113,11 @@ func (i *FileHandleToInode) ReleaseByHandle(fh FileHandleId) *FileHandle {
 
 	fhHandle.counter--
 	if fhHandle.counter <= 0 {
+		if fhHandle.publicationFailed.Load() {
+			// Keep failed content reachable by inode. A later open reuses it;
+			// it must not start beyond an unpublished append with a clean base.
+			return nil
+		}
 		if fhHandle.asyncFlushPending {
 			// Handle stays in fhMap so rename/unlink can still find it
 			// via FindFileHandle during the background drain.

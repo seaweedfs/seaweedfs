@@ -65,6 +65,8 @@ type FileHandle struct {
 	// Local writes move the live entry away from it, so "is this event new"
 	// must be judged here, not against the live entry. Always store a clone.
 	baseEntry atomic.Pointer[filer_pb.Entry]
+	// Failed publication retains the pending entry across the last close.
+	publicationFailed atomic.Bool
 
 	// dlmLock holds the distributed lock for cross-mount write coordination.
 	// Non-nil only when -dlm is enabled and the file was opened for writing.
