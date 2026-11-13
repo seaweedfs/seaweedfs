@@ -306,7 +306,7 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 	resp, merged, err := wfs.createContentEntry(ctx, fh, request, baseSnapshot, false)
 	if err != nil {
 		glog.Errorf("fh flush create %s: %v", fileFullPath, err)
-		return fmt.Errorf("fh flush create %s: %w", fileFullPath, err)
+		return &contentPublicationError{cause: fmt.Errorf("fh flush create %s: %w", fileFullPath, err), request: proto.Clone(request).(*filer_pb.CreateEntryRequest)}
 	}
 	if merged != nil {
 		fh.rebaseEntry(merged, requestEntry)
