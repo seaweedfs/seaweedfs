@@ -255,6 +255,9 @@ func (fh *FileHandle) adoptLinkChangeLocked(stored *filer_pb.Entry, versionTsNs 
 		fh.UpdateEntry(func(entry *filer_pb.Entry) {
 			entry.Name = linked.Name
 			entry.HardLinkId, entry.HardLinkCounter = linked.HardLinkId, linked.HardLinkCounter
+			if a, b := entry.Attributes, linked.Attributes; a != nil && b != nil && (b.Ctime > a.Ctime || b.Ctime == a.Ctime && b.CtimeNs > a.CtimeNs) {
+				a.Ctime, a.CtimeNs = b.Ctime, b.CtimeNs
+			}
 		})
 	} else {
 		fh.SetEntry(proto.Clone(linked).(*filer_pb.Entry))
