@@ -4,8 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -254,9 +256,10 @@ func (s3a *S3ApiServer) routedDeleteSpecificVersion(owner pb.ServerAddress, buck
 // (condition defaults to lock_key). The second return reports whether the delete
 // was settled here: the raw delete cannot remove an entry other keys are nested
 // under, which the lock path handles by stripping the object off it instead.
-// ifMatch, when set, guards the delete itself; a transport error then settles
-// as a failure, since the transaction may have committed and the lock path does
-// not exclude routed deletes.
+// ifMatch, when set, guards the delete itself; any other failure then settles
+// as one, since the transaction may have committed or a concurrent routed
+// delete may pass the same check, and the lock path does not exclude routed
+// deletes.
 func (s3a *S3ApiServer) routedDeleteNullVersion(owner pb.ServerAddress, bucket, object string, worm, bypass, metadataOnly bool, ifMatch *filer_pb.WriteCondition) (s3err.ErrorCode, bool) {
 	fullpath := util.NewFullPath(s3a.bucketDir(bucket), object)
 	dir, name := fullpath.DirAndName()
@@ -280,12 +283,25 @@ func (s3a *S3ApiServer) routedDeleteNullVersion(owner pb.ServerAddress, bucket, 
 			return s3err.ErrPreconditionFailed, true
 		}
 		return s3err.ErrAccessDenied, true
+	case resp.Error != "" && ifMatch != nil && !ownerRefusedNonEmpty(resp):
+		glog.Errorf("routedDeleteNullVersion: %s/%s on %s returned %q", bucket, object, owner, resp.Error)
+		return s3err.ErrInternalError, true
 	case resp.Error != "":
 		glog.Warningf("routedDeleteNullVersion: %s/%s returned %q, falling back to lock", bucket, object, resp.Error)
 		return s3err.ErrNone, false
 	default:
 		return s3err.ErrNone, true
 	}
+}
+
+// ownerRefusedNonEmpty reports a transaction whose delete mutation the owner
+// refused because other keys are nested under the entry, before applying it.
+func ownerRefusedNonEmpty(resp *filer_pb.ObjectTransactionResponse) bool {
+	if resp.FailedMutation == nil {
+		return false
+	}
+	msg := strings.TrimPrefix(resp.Error, fmt.Sprintf("mutation %d: ", *resp.FailedMutation))
+	return errors.Is(filer.DeleteEntryError(msg), filer.ErrNonEmptyFolder)
 }
 
 // versionedFinalize flips the .versions latest pointer for a versioned PutObject:

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -776,6 +777,29 @@ func TestRoutedVersionDeleteCarriesIfMatch(t *testing.T) {
 		}
 		if code, settled := newS3a().routedDeleteNullVersion(owner, "b", "obj", false, false, false, nil); settled || code != s3err.ErrNone {
 			t.Fatalf("unconditional delete returned (%v, %v), want a lock-path fallback", code, settled)
+		}
+	})
+	// Only the nested-entry refusal applies nothing; after any other owner
+	// failure a conditional null delete must not re-check on the lock path.
+	t.Run("null/owner error", func(t *testing.T) {
+		nested := fmt.Sprintf("mutation 0: %v", fmt.Errorf("%w: %s", filer.ErrNonEmptyFolder, "/buckets/b/obj"))
+		for _, tc := range []struct {
+			msg     string
+			code    s3err.ErrorCode
+			settled bool
+		}{
+			{"mutation 0: delete file /buckets/b/obj: store unavailable", s3err.ErrInternalError, true},
+			{"mutation 0: delete file /buckets/b/" + filer.MsgFailDelNonEmptyFolder + ": store unavailable", s3err.ErrInternalError, true},
+			{nested, s3err.ErrNone, false},
+		} {
+			fake := &fakeTxnFiler{resp: &filer_pb.ObjectTransactionResponse{Error: tc.msg, FailedMutation: &firstMutation}}
+			owner := startFakeFiler(t, fake)
+			if code, settled := newS3a().routedDeleteNullVersion(owner, "b", "obj", false, false, false, ifMatch); settled != tc.settled || code != tc.code {
+				t.Fatalf("%q: conditional delete returned (%v, %v), want (%v, %v)", tc.msg, code, settled, tc.code, tc.settled)
+			}
+			if code, settled := newS3a().routedDeleteNullVersion(owner, "b", "obj", false, false, false, nil); settled || code != s3err.ErrNone {
+				t.Fatalf("%q: unconditional delete returned (%v, %v), want a lock-path fallback", tc.msg, code, settled)
+			}
 		}
 	})
 }
