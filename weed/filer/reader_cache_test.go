@@ -904,6 +904,75 @@ func TestAbandonedChunkDownloadKeepsRunningForOtherStream(t *testing.T) {
 	rc.releaseStream(&staying)
 }
 
+func TestAbandonedChunkDownloadKeepsRunningForWaitingReader(t *testing.T) {
+	content := []byte("gzipped chunk 01")
+	fileId := "3077,02c3475d67aaf564"
+	lookupFn := func(ctx context.Context, fileId string) ([]string, error) {
+		return []string{"http://volume/" + fileId}, nil
+	}
+	rc := NewReaderCache(10, newMockChunkCacheForReaderCache(), lookupFn, nil)
+	defer rc.destroy()
+
+	fetchStarted := make(chan struct{})
+	finishFetch := make(chan struct{})
+	rc.fetchChunkDataFn = func(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, fileId string, refreshUrls util_http.RefreshUrlsFunc) (int, error) {
+		close(fetchStarted)
+		select {
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		case <-finishFetch:
+			return copy(buffer, content), nil
+		}
+	}
+
+	var leaving chunkStream
+	leavingCtx, cancel := context.WithCancel(context.Background())
+	leavingDone, waitingDone := make(chan error, 1), make(chan error, 1)
+	go func() {
+		_, err := rc.readChunkAt(leavingCtx, &leaving, make([]byte, len(content)), fileId, nil, true, 0, len(content), false)
+		leavingDone <- err
+	}()
+	<-fetchStarted
+	waitingBuffer := make([]byte, len(content))
+	go func() {
+		_, err := rc.ReadChunkAt(context.Background(), waitingBuffer, fileId, nil, true, 0, len(content), false)
+		waitingDone <- err
+	}()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		rc.RLock()
+		cacher := rc.downloaders[fileId]
+		rc.RUnlock()
+		if cacher != nil && atomic.LoadInt32(&cacher.readers) == 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("waiting reader never attached to the download")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	cancel()
+	if err := <-leavingDone; err != context.Canceled {
+		t.Fatalf("cancelled read: got %v, want context.Canceled", err)
+	}
+	rc.releaseStream(&leaving)
+
+	close(finishFetch)
+	select {
+	case err := <-waitingDone:
+		if err != nil {
+			t.Fatalf("waiting reader: got %v, want the chunk", err)
+		}
+		if string(waitingBuffer) != string(content) {
+			t.Fatalf("waiting reader read %q, want %q", waitingBuffer, content)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("waiting reader never got its data")
+	}
+}
+
 // A download cancelled mid-copy must not cache the partly filled buffer.
 func TestAbandonedChunkDownloadIsNotCached(t *testing.T) {
 	fileId := "3077,02c3475d67aaf564"
