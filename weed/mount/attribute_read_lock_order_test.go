@@ -183,3 +183,114 @@ func waitAttributeReadFrame(t *testing.T, caller string, blocked ...string) {
 	}
 	t.Fatalf("did not observe %s blocked at %v", caller, blocked)
 }
+
+// FATTR_SIZE bypasses the attribute publication fence but must not reverse
+// the handle locks while an acknowledged chmod is retaining its local delta.
+func TestAttributeTruncateRetainLockOrder(t *testing.T) {
+	if os.Getenv("MOUNT_ATTR_TRUNCATE_LOCK_CHILD") == "1" {
+		attributeTruncateLockScenario(t)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestAttributeTruncateRetainLockOrder$", "-test.count=1", "-test.timeout=12s")
+	cmd.Env = append(os.Environ(), "MOUNT_ATTR_TRUNCATE_LOCK_CHILD=1")
+	output, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		t.Fatalf("truncate lock control exceeded bounded child: %v\n%s", ctx.Err(), output)
+	}
+	if err != nil {
+		t.Fatalf("concurrent truncate/acked chmod did not finish: %v\n%s", err, output)
+	}
+}
+func attributeTruncateLockScenario(t *testing.T) {
+	w := newInvalidateTestWFS(t)
+	w.atimeMap = make(map[uint64]time.Time)
+	current := attributeAppendEntry(3)
+	fake := &attributeCASFiler{entry: proto.Clone(current).(*filer_pb.Entry)}
+	committed, resume := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	t.Cleanup(func() { once.Do(func() { close(resume) }) })
+	fake.afterCommit = func() { close(committed); <-resume }
+	startFakeFiler(t, w, fake)
+	path := util.FullPath("/dir/file")
+	w.inodeToPath.Lookup(path, 1, false, false, 42, true)
+	local := proto.Clone(current).(*filer_pb.Entry)
+	w.mapPbIdFromFilerToLocal(local)
+	fh := newFileHandle(w, 1, 42, local)
+	fh.RememberPath(path)
+	w.fhMap.inode2fh[42], w.fhMap.fh2inode[1] = fh, 42
+	t.Cleanup(fh.dirtyPages.Destroy)
+	chmodDone := make(chan fuse.Status, 1)
+	go func() {
+		in := &fuse.SetAttrIn{}
+		in.NodeId = 42
+		in.Valid = fuse.FATTR_MODE
+		in.Mode = 0600
+		chmodDone <- w.SetAttr(nil, in, &fuse.AttrOut{})
+	}()
+	select {
+	case <-committed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("chmod did not reach owner commit hook")
+	}
+	active := w.fhLockTable.AcquireLock("test pending content", fh.fh, util.ExclusiveLock)
+	fh.dirtyMetadata = true
+	w.fhLockTable.ReleaseLock(fh.fh, active)
+	fh.entryLock.RLock()
+	truncateDone := make(chan fuse.Status, 1)
+	go func() {
+		in := &fuse.SetAttrIn{}
+		in.NodeId = 42
+		in.Valid = fuse.FATTR_SIZE
+		in.Size = 256
+		truncateDone <- w.SetAttr(nil, in, &fuse.AttrOut{})
+	}()
+	// Truncate queued its entryLock writer before the chmod response is released.
+	waitAttributeLockPair(t, [][2]string{{"(*WFS).attributeEntrySnapshot", "sync.(*RWMutex).Lock"}})
+	once.Do(func() { close(resume) })
+	// Rejected head: retention owns active-exclusive and waits for entryLock.
+	// Corrected head: truncate owns active-shared and installation waits for it.
+	waitAttributeLockPair(t, [][2]string{{"(*WFS).retainAcknowledgedAttributes", "sync.(*RWMutex).Lock"}, {"(*FileHandle).installAckedEntry", "AcquireLock"}})
+	fh.entryLock.RUnlock()
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
+	for _, done := range []chan fuse.Status{chmodDone, truncateDone} {
+		select {
+		case status := <-done:
+			if status != fuse.OK {
+				t.Fatalf("handler returned %v", status)
+			}
+		case <-timer.C:
+			fmt.Fprintln(os.Stderr, "TRUNCATE_RETENTION_CYCLE: FATTR_SIZE snapshot and acknowledged chmod retention cannot finish")
+			os.Exit(24)
+		}
+	}
+	fh.entry.RLock()
+	defer fh.entry.RUnlock()
+	e := fh.entry.Entry
+	if e.Attributes.FileMode&0777 != 0600 || e.Attributes.FileSize != 256 || len(e.Chunks) != 1 || !proto.Equal(e.Chunks[0], current.Chunks[0]) {
+		t.Fatalf("lost acknowledged chmod or pending truncate: %v", e)
+	}
+}
+func waitAttributeLockPair(t *testing.T, pairs [][2]string) {
+	t.Helper()
+	end := time.Now().Add(5 * time.Second)
+	for time.Now().Before(end) {
+		buf := make([]byte, 1<<20)
+		n := runtime.Stack(buf, true)
+		for _, stack := range strings.Split(string(buf[:n]), "\n\n") {
+			header, _, _ := strings.Cut(stack, "\n")
+			if !strings.Contains(header, "[sync.") && !strings.Contains(header, "[semacquire") {
+				continue
+			}
+			for _, pair := range pairs {
+				if strings.Contains(stack, pair[0]) && strings.Contains(stack, pair[1]) {
+					return
+				}
+			}
+		}
+		runtime.Gosched()
+	}
+	t.Fatalf("did not observe actual blocked lock pair %v", pairs)
+}

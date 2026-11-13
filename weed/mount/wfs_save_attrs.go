@@ -36,7 +36,7 @@ func (wfs *WFS) attributeEntrySnapshot(fh *FileHandle, entry *filer_pb.Entry) (*
 // saveEntryAttributes retries only an entry comparison miss, always replaying
 // the syscall's attribute change on the new entry. In particular, the cached
 // chunks, size, inline content and unrelated attributes never win a conflict.
-func (wfs *WFS) saveEntryAttributes(ctx context.Context, path util.FullPath, base *filer_pb.Entry, change func(*filer_pb.Entry) fuse.Status, retain func(live, acked *filer_pb.Entry)) (*filer_pb.Entry, fuse.Status) {
+func (wfs *WFS) saveEntryAttributes(ctx context.Context, path util.FullPath, base *filer_pb.Entry, idFields uint32, change func(*filer_pb.Entry) fuse.Status, retain func(live, acked *filer_pb.Entry)) (*filer_pb.Entry, fuse.Status) {
 	// Like the other metadata mutations, ignore a FUSE interrupt: the owner
 	// may already have applied the update the caller would be told failed.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), metadataFlushTimeout)
@@ -68,7 +68,6 @@ func (wfs *WFS) saveEntryAttributes(ctx context.Context, path util.FullPath, bas
 			}
 			filerUid, filerGid = base.GetAttributes().GetUid(), base.GetAttributes().GetGid()
 			wfs.mapPbIdFromFilerToLocal(base)
-			localUid, localGid = base.GetAttributes().GetUid(), base.GetAttributes().GetGid()
 			if inode != 0 && base.GetAttributes().GetInode() != inode {
 				return nil, fuse.Status(syscall.ESTALE)
 			}
@@ -78,18 +77,20 @@ func (wfs *WFS) saveEntryAttributes(ctx context.Context, path util.FullPath, bas
 			return nil, code
 		}
 		// Whole-entry clones are as large as the chunk list; switch ids in place.
-		// An id the syscall left alone keeps the filer's own value.
+		// Only fields absent from the syscall keep the filer's raw ids.
+		// Equal local values still express an explicit chown/chgrp intent.
 		toFiler := func(uid, gid uint32) (uint32, uint32) {
 			mappedUid, mappedGid := wfs.option.UidGidMapper.LocalToFiler(uid, gid)
-			if uid == localUid {
+			if idFields&fuse.FATTR_UID == 0 {
 				mappedUid = filerUid
 			}
-			if gid == localGid {
+			if idFields&fuse.FATTR_GID == 0 {
 				mappedGid = filerGid
 			}
 			return mappedUid, mappedGid
 		}
-		restoreBase, restoreNext := mapIdsToFiler(base, toFiler), mapIdsToFiler(next, toFiler)
+		restoreBase := mapIdsToFiler(base, func(_, _ uint32) (uint32, uint32) { return filerUid, filerGid })
+		restoreNext := mapIdsToFiler(next, toFiler)
 		req := &filer_pb.UpdateEntryRequest{Directory: dir, Entry: next, Condition: &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{Kind: filer_pb.WriteCondition_IF_ENTRY_EQUAL, ExpectedEntry: base}}}, Signatures: []int32{wfs.signature}}
 		var resp *filer_pb.UpdateEntryResponse
 		// The stream currently reduces FailedPrecondition to EIO. Use the unary

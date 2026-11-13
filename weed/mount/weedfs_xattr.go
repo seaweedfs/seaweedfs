@@ -9,6 +9,7 @@ import (
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 const (
@@ -122,7 +123,7 @@ func (wfs *WFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn, attr st
 		defer unlock()
 	}
 	if snapshot, ok := wfs.attributeEntrySnapshot(fh, entry); ok && path != "" {
-		_, code := wfs.saveEntryAttributes(ctx, path, snapshot, func(next *filer_pb.Entry) fuse.Status {
+		_, code := wfs.saveEntryAttributes(ctx, path, snapshot, 0, func(next *filer_pb.Entry) fuse.Status {
 			return applyXAttr(next, input.Flags, attr, data)
 		}, func(live, acked *filer_pb.Entry) {
 			if live.Extended == nil {
@@ -133,6 +134,8 @@ func (wfs *WFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn, attr st
 		return code
 	}
 	if fh != nil {
+		active := wfs.fhLockTable.AcquireLock("xattr", fh.fh, util.ExclusiveLock)
+		defer wfs.fhLockTable.ReleaseLock(fh.fh, active)
 		fh.entryLock.Lock()
 		defer fh.entryLock.Unlock()
 	}
@@ -217,7 +220,7 @@ func (wfs *WFS) RemoveXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr 
 		defer unlock()
 	}
 	if snapshot, ok := wfs.attributeEntrySnapshot(fh, entry); ok && path != "" {
-		_, code := wfs.saveEntryAttributes(ctx, path, snapshot, func(next *filer_pb.Entry) fuse.Status {
+		_, code := wfs.saveEntryAttributes(ctx, path, snapshot, 0, func(next *filer_pb.Entry) fuse.Status {
 			return removeXAttr(next, attr)
 		}, func(live, _ *filer_pb.Entry) {
 			delete(live.Extended, XATTR_PREFIX+attr)
@@ -225,6 +228,8 @@ func (wfs *WFS) RemoveXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr 
 		return code
 	}
 	if fh != nil {
+		active := wfs.fhLockTable.AcquireLock("xattr", fh.fh, util.ExclusiveLock)
+		defer wfs.fhLockTable.ReleaseLock(fh.fh, active)
 		fh.entryLock.Lock()
 		defer fh.entryLock.Unlock()
 	}

@@ -78,7 +78,7 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 		defer unlock()
 	}
 	if snapshot, ok := wfs.attributeEntrySnapshot(fh, entry); ok && input.Valid&fuse.FATTR_SIZE == 0 && path != "" {
-		entry, status = wfs.saveEntryAttributes(ctx, path, snapshot, func(next *filer_pb.Entry) fuse.Status {
+		entry, status = wfs.saveEntryAttributes(ctx, path, snapshot, input.Valid&(fuse.FATTR_UID|fuse.FATTR_GID), func(next *filer_pb.Entry) fuse.Status {
 			return wfs.applySetAttr(path, input, next)
 		}, func(live, acked *filer_pb.Entry) {
 			retainSetAttr(input, live, acked)
@@ -107,6 +107,8 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 		}
 	}
 	if fh != nil {
+		active := wfs.fhLockTable.AcquireLock("SetAttr", fh.fh, util.ExclusiveLock)
+		defer wfs.fhLockTable.ReleaseLock(fh.fh, active)
 		fh.entryLock.Lock()
 		defer fh.entryLock.Unlock()
 		// entry is the handle's shared LockedEntry.Entry. Async upload workers
