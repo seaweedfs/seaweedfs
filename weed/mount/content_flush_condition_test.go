@@ -316,6 +316,13 @@ func TestMergeContentEntry(t *testing.T) {
 		t.Fatalf("truncate then write kept %v, size %d", got, merged.Attributes.FileSize)
 	}
 
+	// Shortening a manifest reference leaves its members whole.
+	peerManifest := proto.Clone(base).(*filer_pb.Entry)
+	peerManifest.Chunks = append(peerManifest.Chunks, &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 1, FileKey: 5, Cookie: 1}, Offset: 0, Size: 10, IsChunkManifest: true})
+	if _, ok := mergeContentEntry(peerManifest, base, regrown, regrown, 1, false); ok {
+		t.Fatal("merged a peer manifest across the truncate")
+	}
+
 	// A peer truncate stands when the handle only overwrote inside it.
 	peerTruncated := proto.Clone(base).(*filer_pb.Entry)
 	peerTruncated.Chunks, peerTruncated.Attributes.FileSize = peerTruncated.Chunks[:1], 1

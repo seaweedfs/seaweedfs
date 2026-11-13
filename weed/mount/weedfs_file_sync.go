@@ -379,7 +379,8 @@ const maxContentFlushMerges = 3
 // (truncatedTo, or -1); otherwise the stored size stands unless the handle
 // changed its size or wrote past it.
 // A different file at the path, inline content changed on both sides,
-// inline content next to chunks (reads stop at the inline bytes), or a local
+// inline content next to chunks (reads stop at the inline bytes), a manifest
+// across the truncate (its members keep their sizes), or a local
 // whole-file rewrite (rewrote) over a peer's chunk change cannot be merged:
 // the rewrite carries the handle's stale view.
 func mergeContentEntry(stored, base, local, sent *filer_pb.Entry, truncatedTo int64, rewrote bool) (*filer_pb.Entry, bool) {
@@ -417,6 +418,9 @@ func mergeContentEntry(stored, base, local, sent *filer_pb.Entry, truncatedTo in
 		}
 		c = proto.Clone(c).(*filer_pb.FileChunk)
 		if truncatedTo >= 0 && c.Offset+int64(c.Size) > truncatedTo {
+			if c.IsChunkManifest {
+				return nil, false
+			}
 			c.Size = uint64(truncatedTo - c.Offset)
 		}
 		merged.Chunks = append(merged.Chunks, c)
