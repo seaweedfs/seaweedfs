@@ -11,8 +11,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -105,17 +104,10 @@ func (wfs *WFS) publishPendingContent(ctx context.Context, fh *FileHandle, req *
 		if !errors.Is(err, filer_pb.ErrPreconditionFailed) || base == nil {
 			return resp, err
 		}
-		var latest *filer_pb.Entry
-		lookupErr := wfs.withFilerClient(ctx, false, wfs.filerRPCWait(), func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
-			found, e := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{Directory: req.Directory, Name: req.Entry.Name})
-			if errors.Is(e, filer_pb.ErrNotFound) || status.Code(e) == codes.NotFound {
-				return nil
-			}
-			if e == nil {
-				latest = found.Entry
-			}
-			return e
-		})
+		latest, _, lookupErr := wfs.lookupOwnerEntry(ctx, util.NewFullPath(req.Directory, req.Entry.Name))
+		if errors.Is(lookupErr, filer_pb.ErrNotFound) {
+			latest, lookupErr = nil, nil
+		}
 		if lookupErr != nil {
 			return resp, lookupErr
 		}
