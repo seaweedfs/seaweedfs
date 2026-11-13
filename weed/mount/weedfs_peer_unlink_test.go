@@ -132,3 +132,22 @@ func TestPeerUnlinkLastNameKeepsHandleDeleted(t *testing.T) {
 		t.Fatal("a peer unlinking the only name did not mark the handle deleted")
 	}
 }
+
+// The periodic metadata flush publishes through the survivor as well.
+func TestPeerUnlinkedAliasKeepsPeriodicFlushPublishing(t *testing.T) {
+	wfs, fake, fh, inode := openLinkTestFile(t)
+	linkInRoot(t, wfs, inode, "final")
+	peerUnlink(t, wfs, fake, "tmp")
+	fh.UpdateEntry(func(e *filer_pb.Entry) {
+		e.Chunks = append(e.Chunks, linkHandleChunk(2, 100))
+		e.Attributes.FileSize = 200
+	})
+	fh.dirtyMetadata = true
+	if err := wfs.flushFileMetadata(fh); err != nil {
+		t.Fatalf("periodic flush after the peer unlink: %v", err)
+	}
+	wantStored(t, fake, "final", 2, 1)
+	if fake.stored("tmp") != nil {
+		t.Fatal("the periodic flush recreated tmp")
+	}
+}
