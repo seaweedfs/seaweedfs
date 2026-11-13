@@ -285,12 +285,24 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 	// before Unlink sets the flag).  By waiting here, any in-flight flush
 	// finishes first; even if it recreated the entry, the filer delete below
 	// will remove it again.
+	//
+	// A hard-link alias unlink does not delete the inode: another name still
+	// refers to it. Marking its handle deleted would make doFlush silently skip
+	// every later metadata commit for the surviving file, so the entry on the
+	// remaining name would never advance (and the next append would overwrite
+	// the uncommitted tail). Only mark when this unlink removes the last link.
+	survivingLinks := entry != nil && entry.Attributes != nil &&
+		len(entry.HardLinkId) > 0 && entry.HardLinkCounter > 1
 	if inode, found := wfs.inodeToPath.GetInode(entryFullPath); found {
-		wfs.markHandleDeleted(inode)
+		if !survivingLinks {
+			wfs.markHandleDeleted(inode)
+		}
 		wfs.waitForPendingAsyncFlush(context.Background(), inode)
 	} else if entry != nil && entry.Attributes != nil && entry.Attributes.Inode != 0 {
 		inodeFromEntry := entry.Attributes.Inode
-		wfs.markHandleDeleted(inodeFromEntry)
+		if !survivingLinks {
+			wfs.markHandleDeleted(inodeFromEntry)
+		}
 		wfs.waitForPendingAsyncFlush(context.Background(), inodeFromEntry)
 	}
 

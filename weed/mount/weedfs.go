@@ -1012,9 +1012,33 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 		// updating the renamed file. An actual delete instead marks the handle
 		// so no flush recreates the unlinked name. Either way the entry and
 		// dirty pages stay, so the open fd still reads its buffered writes.
+		//
+		// Only a delete that vacated the inode's last name makes the handle
+		// deleted. Deleting a hard-link alias leaves the inode alive under
+		// another path in this mount; marking the shared handle would make
+		// every later flush silently skip the metadata commit for the surviving
+		// file, and its entry would never advance.
 		if invalidation.Deleted {
-			fh.isDeleted = true
-			fh.deleteEpoch++
+			remainingPaths := 0
+			var survivingPath util.FullPath
+			for _, p := range wfs.inodeToPath.GetAllPaths(inode) {
+				if p != filePath {
+					remainingPaths++
+					survivingPath = p
+				}
+			}
+			if remainingPaths == 0 {
+				fh.isDeleted = true
+				fh.deleteEpoch++
+			} else {
+				// A hard-link alias was deleted elsewhere (another mount or
+				// client). The inode lives on under a surviving name, so drop
+				// the vacated path from this mount's table and point the handle
+				// at the survivor: the next flush must update that name instead
+				// of recreating the deleted one.
+				wfs.inodeToPath.RemovePath(filePath, nil)
+				fh.RememberPath(survivingPath)
+			}
 		}
 		if !fh.dirtyMetadata {
 			fh.dirtyPages.Destroy()
