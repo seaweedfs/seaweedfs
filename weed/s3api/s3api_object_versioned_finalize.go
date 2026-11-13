@@ -264,6 +264,7 @@ func (s3a *S3ApiServer) routedDeleteSpecificVersion(owner pb.ServerAddress, buck
 // is stripped there under the same guard, and any other failure settles as
 // one, since the transaction may have committed.
 func (s3a *S3ApiServer) routedDeleteNullVersion(owner pb.ServerAddress, bucket, object string, worm, bypass, metadataOnly bool, ifMatch *filer_pb.WriteCondition) (s3err.ErrorCode, bool) {
+	ifMatch = nullVersionCondition(ifMatch)
 	fullpath := util.NewFullPath(s3a.bucketDir(bucket), object)
 	dir, name := fullpath.DirAndName()
 	resp, err := s3a.objectTxnOnFiler(owner, &filer_pb.ObjectTransactionRequest{
@@ -343,6 +344,22 @@ func (s3a *S3ApiServer) routedDemoteNullVersion(owner pb.ServerAddress, bucket, 
 	default:
 		return s3err.ErrNone
 	}
+}
+
+// nullVersionCondition narrows If-Match: * to an entry that carries an
+// object: a nested entry stripped of its null version stays behind as a plain
+// directory, which IF_EXISTS still matches.
+func nullVersionCondition(ifMatch *filer_pb.WriteCondition) *filer_pb.WriteCondition {
+	if ifMatch == nil {
+		return nil
+	}
+	cond := proto.Clone(ifMatch).(*filer_pb.WriteCondition)
+	for _, c := range cond.Clauses {
+		if c.Kind == filer_pb.WriteCondition_IF_EXISTS {
+			c.Kind = filer_pb.WriteCondition_IF_OBJECT_EXISTS
+		}
+	}
+	return cond
 }
 
 // ownerRefusedNonEmpty reports a transaction whose delete mutation the owner

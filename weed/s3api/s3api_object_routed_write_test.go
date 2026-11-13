@@ -855,6 +855,31 @@ func TestRoutedVersionDeleteCarriesIfMatch(t *testing.T) {
 			t.Fatalf("unconditional delete returned (%v, %v) after %d transactions, want a lock-path fallback", code, settled, len(fake.reqs))
 		}
 	})
+	// A stripped nested entry stays behind as a plain directory, which
+	// IF_EXISTS still matches, so If-Match: * asks the owner for an object.
+	t.Run("null/If-Match *", func(t *testing.T) {
+		star := &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{Kind: filer_pb.WriteCondition_IF_EXISTS}}}
+		objectKind := func(t *testing.T, m *filer_pb.ObjectMutation) {
+			t.Helper()
+			if c := m.GetCondition().GetClauses(); len(c) == 0 || c[0].Kind != filer_pb.WriteCondition_IF_OBJECT_EXISTS {
+				t.Fatalf("mutation condition = %+v, want IF_OBJECT_EXISTS first", m.GetCondition())
+			}
+		}
+		del := &fakeTxnFiler{}
+		if code, settled := newS3a().routedDeleteNullVersion(startFakeFiler(t, del), "b", "obj", false, false, false, star); !settled || code != s3err.ErrNone {
+			t.Fatalf("delete returned (%v, %v), want (%v, true)", code, settled, s3err.ErrNone)
+		}
+		objectKind(t, del.lastReq.Mutations[0])
+		nested := &fakeNestedFiler{entry: &filer_pb.Entry{Name: "obj", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Mime: "text/plain"}}}
+		if code, settled := newS3a().routedDeleteNullVersion(startFakeFiler(t, nested), "b", "obj", false, false, false, star); !settled || code != s3err.ErrNone || len(nested.reqs) != 2 {
+			t.Fatalf("nested delete returned (%v, %v) after %d transactions, want a demote", code, settled, len(nested.reqs))
+		}
+		objectKind(t, nested.reqs[0].Mutations[0])
+		objectKind(t, nested.reqs[1].Mutations[0])
+		if star.Clauses[0].Kind != filer_pb.WriteCondition_IF_EXISTS {
+			t.Fatalf("caller's condition changed to %v", star.Clauses[0].Kind)
+		}
+	})
 }
 
 // fakeNestedFiler refuses the first transaction's delete because other keys are
