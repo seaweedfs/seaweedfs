@@ -70,6 +70,10 @@ type FileHandle struct {
 	// writes can grow the file past it; a merge still clips peer chunks there.
 	truncatedTo atomic.Pointer[truncateMark]
 
+	// chunkViewStale marks a read view whose manifest resolution failed; the
+	// next read or lseek resolves the entry's chunks again.
+	chunkViewStale atomic.Bool
+
 	// dlmLock holds the distributed lock for cross-mount write coordination.
 	// Non-nil only when -dlm is enabled and the file was opened for writing.
 	// Acquired in AcquireHandle, released in ReleaseHandle.
@@ -145,6 +149,7 @@ func (fh *FileHandle) SetEntry(entry *filer_pb.Entry) {
 		if resolveManifestErr != nil {
 			glog.Warningf("failed to resolve manifest chunks in %+v", filer_pb.ScrubCipherKeys(entry))
 		}
+		fh.chunkViewStale.Store(resolveManifestErr != nil)
 	} else {
 		glog.Fatalf("setting file handle entry to nil")
 	}
@@ -199,7 +204,21 @@ func (fh *FileHandle) rebaseEntry(merged, sent *filer_pb.Entry) {
 			attrs.FileSize = size
 		}
 		e.Attributes, e.Extended, e.Content, e.Chunks = attrs, merged.Extended, merged.Content, chunks
-		fh.entryChunkGroup.SetChunks(chunks)
+		err := fh.entryChunkGroup.SetChunks(chunks)
+		if err != nil {
+			glog.Warningf("rebase %s: resolve chunks: %v", fh.FullPath(), err)
+		}
+		fh.chunkViewStale.Store(err != nil)
+	})
+}
+
+// refreshChunkView retries a read view whose manifest resolution failed.
+func (fh *FileHandle) refreshChunkView() {
+	if !fh.chunkViewStale.Load() {
+		return
+	}
+	fh.UpdateEntry(func(e *filer_pb.Entry) {
+		fh.chunkViewStale.Store(fh.entryChunkGroup.SetChunks(e.Chunks) != nil)
 	})
 }
 

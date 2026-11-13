@@ -4,12 +4,14 @@ package mount
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc/codes"
@@ -416,5 +418,39 @@ func TestRebaseEntryKeepsMergedSize(t *testing.T) {
 	fh.rebaseEntry(merged, sent)
 	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 5 {
 		t.Fatalf("size %d after a write grew the handle, want 5", size)
+	}
+}
+
+// A merged entry whose manifest cannot be resolved yet leaves the read view
+// marked, and the next read resolves it again instead of failing for good.
+func TestRebaseEntryRetriesUnresolvedChunkView(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+	fh, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, flushConditionEntry(1), 0, 0)
+	lookupDown := true
+	group, err := filer.NewChunkGroup(func(ctx context.Context, fileId string) ([]string, error) {
+		if lookupDown {
+			return nil, errors.New("volume lookup down")
+		}
+		return nil, nil
+	}, nil, nil, 1, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fh.entryChunkGroup = group
+
+	sent := proto.Clone(fh.GetEntry().GetEntry()).(*filer_pb.Entry)
+	merged := flushConditionEntry(1, 2)
+	merged.Chunks[1].IsChunkManifest = true
+	fh.rebaseEntry(merged, sent)
+	if !fh.chunkViewStale.Load() {
+		t.Fatal("unresolved manifest not marked")
+	}
+
+	lookupDown = false
+	fh.UpdateEntry(func(e *filer_pb.Entry) { e.Chunks = e.Chunks[:1] })
+	fh.refreshChunkView()
+	if fh.chunkViewStale.Load() {
+		t.Fatal("read view still marked after the chunks resolved")
 	}
 }
