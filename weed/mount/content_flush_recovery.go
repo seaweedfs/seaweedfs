@@ -30,10 +30,7 @@ func (e *contentPublicationError) Unwrap() error { return e.cause }
 // or removed: chunk references may include cipher keys. They do not prevent a
 // volume.fsck run from collecting unreferenced chunks; recover before that sweep.
 func (wfs *WFS) retainFailedContent(fh *FileHandle, dir, name string, cause error) (string, error) {
-	if wfs.option.CacheDirForWrite == "" {
-		return "", fmt.Errorf("write cache root unavailable for failed metadata retention")
-	}
-	root, err := filepath.Abs(filepath.Join(wfs.option.CacheDirForWrite, "failed-metadata"))
+	root, err := wfs.failedContentDir()
 	if err != nil {
 		return "", err
 	}
@@ -100,6 +97,19 @@ func (wfs *WFS) retainFailedContent(fh *FileHandle, dir, name string, cause erro
 	}
 	saved = true
 	return path, nil
+}
+
+// failedContentDir is per user: the write cache root defaults to the shared
+// temp directory, where another user's private directory would refuse every save.
+func (wfs *WFS) failedContentDir() (string, error) {
+	if wfs.option.CacheDirForWrite == "" {
+		return "", fmt.Errorf("write cache root unavailable for failed metadata retention")
+	}
+	name := "failed-metadata"
+	if uid := os.Getuid(); uid >= 0 {
+		name = fmt.Sprintf("%s-%d", name, uid)
+	}
+	return filepath.Abs(filepath.Join(wfs.option.CacheDirForWrite, name))
 }
 
 // Used only when failure happened before a publication request existed.

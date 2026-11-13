@@ -6,7 +6,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/protobuf/proto"
-	"path/filepath"
 	"testing"
 )
 
@@ -48,7 +47,7 @@ func TestAsyncConflictRetainsPendingReferenceProbe(t *testing.T) {
 	if _, kept := w.fhMap.FindFileHandle(fh.inode); kept {
 		return
 	}
-	files, err := filepath.Glob(filepath.Join(w.option.CacheDirForWrite, "failed-metadata", "*.json"))
+	files, err := globFailedContent(t, w)
 	if err != nil || len(files) == 0 {
 		t.Fatalf("async conflict completed, removed handle and retained no pending-reference recovery: %v %v", files, err)
 	}

@@ -69,7 +69,7 @@ func TestContentAsyncSuccessReleasesHandle(t *testing.T) {
 	if _, kept := w.fhMap.FindFileHandle(fh.inode); kept {
 		t.Fatal("successful drain retained handle")
 	}
-	files, err := filepath.Glob(filepath.Join(w.option.CacheDirForWrite, "failed-metadata", "*.json"))
+	files, err := globFailedContent(t, w)
 	if err != nil || len(files) != 0 || s.calls != 1 {
 		t.Fatalf("successful drain: recovery=%v error=%v calls=%d", files, err, s.calls)
 	}
@@ -96,7 +96,7 @@ func TestContentAsyncConflictKeepsRecoveryRecord(t *testing.T) {
 	default:
 		t.Fatal("async completion not signalled")
 	}
-	files, err := filepath.Glob(filepath.Join(w.option.CacheDirForWrite, "failed-metadata", "*.json"))
+	files, err := globFailedContent(t, w)
 	if err != nil || len(files) != 1 {
 		t.Fatalf("failed close discarded pending refs: recovery files %v, error %v", files, err)
 	}
@@ -196,11 +196,41 @@ func TestContentAsyncRetentionWriteFailureKeepsDrainPending(t *testing.T) {
 		}
 	}
 	w.processAsyncFlushItem(&asyncFlushItem{fh: fh, done: done})
-	files, err := filepath.Glob(filepath.Join(cache, "failed-metadata", "*.json"))
+	files, err := globFailedContent(t, w)
 	if failures != 1 || err != nil || len(files) != 1 {
 		t.Fatalf("expected one retention failure then saved record: %d %v %v", failures, files, err)
 	}
 	if s.calls != metadataFlushRetries+1 {
 		t.Fatalf("retention retry added publication attempts: %d", s.calls)
+	}
+}
+
+func globFailedContent(t *testing.T, w *WFS) ([]string, error) {
+	t.Helper()
+	root, err := w.failedContentDir()
+	if err != nil {
+		return nil, err
+	}
+	return filepath.Glob(filepath.Join(root, "*.json"))
+}
+
+func TestContentRecoverySkipsAnotherUsersDirectory(t *testing.T) {
+	if os.Getuid() <= 0 {
+		t.Skip("needs a non-root uid to model another user's private directory")
+	}
+	w, fh, _ := committedContentHandle(t, true)
+	w.option.CacheDirForWrite = t.TempDir()
+	if err := os.Mkdir(filepath.Join(w.option.CacheDirForWrite, "failed-metadata"), 0500); err != nil {
+		t.Fatal(err)
+	}
+	err := w.flushMetadataToFiler(context.Background(), fh, "/dir", "file", 1000, 20)
+	if err == nil {
+		t.Fatal("expected refusal")
+	}
+	if _, saveErr := w.retainFailedContent(fh, "/dir", "file", err); saveErr != nil {
+		t.Fatalf("retention blocked by a directory this user cannot write: %v", saveErr)
+	}
+	if files, globErr := globFailedContent(t, w); globErr != nil || len(files) != 1 {
+		t.Fatalf("recovery records %v, error %v", files, globErr)
 	}
 }
