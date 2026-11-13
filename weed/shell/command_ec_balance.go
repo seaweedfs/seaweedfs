@@ -24,7 +24,7 @@ func (c *commandEcBalance) Name() string {
 func (c *commandEcBalance) Help() string {
 	return `balance all ec shards among all racks and volume servers
 
-	ec.balance [-c EACH_COLLECTION|<collection_name>] [-apply] [-dataCenter <data_center>] [-shardReplicaPlacement <replica_placement>] [-diskType <disk_type>] [-volumeIds <id>[,<id>...]]
+	ec.balance [-collection EACH_COLLECTION|<collection_name>] [-apply] [-dataCenter <data_center>] [-shardReplicaPlacement <replica_placement>] [-diskType <disk_type>] [-volumeIds <id>[,<id>...]]
 
 	Options:
 	  -diskType: the disk type for EC shards (hdd, ssd, or empty for default hdd)

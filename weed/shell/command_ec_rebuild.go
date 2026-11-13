@@ -27,7 +27,7 @@ func (c *commandEcRebuild) Name() string {
 func (c *commandEcRebuild) Help() string {
 	return `find and rebuild missing ec shards among volume servers
 
-	ec.rebuild [-c EACH_COLLECTION|<collection_name>] [-apply] [-maxParallelization N] [-diskType=<disk_type>] [-checksum]
+	ec.rebuild [-collection EACH_COLLECTION|<collection_name>] [-apply] [-maxParallelization N] [-diskType=<disk_type>] [-checksum]
 
 	Before rebuilding, asks volume servers to recover any shards left unmounted by
 	a missing .ecx index (the index resides only on a peer server). Such shards are
