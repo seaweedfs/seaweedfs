@@ -960,6 +960,26 @@ func TestSaveMetadataBlobKeepsATableDirectoryCreatedSinceTheLookup(t *testing.T)
 	}
 }
 
+// A stage-create marker write keeps the attributes of a directory on its path
+// that another writer created after the marker's lookup missed it.
+func TestStageCreateMarkerKeepsADirectoryCreatedSinceTheLookup(t *testing.T) {
+	e := newConflictEnv(t)
+	bucketDir := path.Join(s3tables.TablesPath, conflictBucket)
+	attrs := map[string][]byte{"probe": []byte("kept")}
+	e.hooks.beforeCreate = func(req *filer_pb.CreateEntryRequest) {
+		if req.Directory == bucketDir && req.Entry.Name == stageCreateMarkerDirName {
+			e.hooks.beforeCreate = nil
+			e.filer.Put(bucketDir, stageCreateMarkerDirName, attrs)
+		}
+	}
+	if err := e.server.writeStageCreateMarker(t.Context(), conflictBucket, []string{conflictNamespace}, conflictTable, uuid.New(), conflictLocation, ""); err != nil {
+		t.Fatalf("write stage-create marker: %v", err)
+	}
+	if got := e.filer.Get(bucketDir, stageCreateMarkerDirName); got == nil || string(got.Extended["probe"]) != "kept" {
+		t.Errorf("directory replaced by the marker's directory create: %+v", got)
+	}
+}
+
 // Two stage-create commits for one name: one creates the table and the other is
 // told it lost, and the file the catalog points at belongs to the winner.
 func TestConcurrentFinalizeCreateOnCommitHasOneWinner(t *testing.T) {

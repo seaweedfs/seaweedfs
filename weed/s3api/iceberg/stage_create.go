@@ -191,6 +191,7 @@ func (s *Server) writeStageCreateMarker(ctx context.Context, bucketName string, 
 
 			resp, createErr := client.CreateEntry(opCtx, &filer_pb.CreateEntryRequest{
 				Directory: parent,
+				OExcl:     true,
 				Entry: &filer_pb.Entry{
 					Name:        name,
 					IsDirectory: true,
