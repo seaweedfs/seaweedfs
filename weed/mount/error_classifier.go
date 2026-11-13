@@ -13,7 +13,7 @@ import (
 
 func grpcErrorToFuseStatus(err error) fuse.Status {
 	if errors.Is(err, filer_pb.ErrPreconditionFailed) {
-		return fuse.EAGAIN
+		return fuse.EIO
 	}
 	if err == nil {
 		return fuse.OK

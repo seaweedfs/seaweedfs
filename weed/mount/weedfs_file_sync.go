@@ -304,6 +304,7 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 
 	if err == nil {
 		fh.dirtyMetadata = false
+		fh.pendingAppend = false
 	}
 
 	return err

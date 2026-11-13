@@ -65,27 +65,36 @@ func (i *FileHandleToInode) MarkInodeRenamed(inode uint64) {
 // open — reads on it return ENOENT, which the kernel reports to read() as EIO.
 // Callers must treat a draining report as "wait for the pending flush, then
 // retry the whole acquire", not as success.
-func (i *FileHandleToInode) AcquireFileHandle(wfs *WFS, inode uint64, entry *filer_pb.Entry, versionTsNs int64, signature int32) (*FileHandle, FileHandleId, bool, bool) {
+func (i *FileHandleToInode) AcquireFileHandle(wfs *WFS, inode uint64, entry *filer_pb.Entry, versionTsNs int64, signature int32, appendMode ...bool) (*FileHandle, FileHandleId, bool, bool) {
 	i.Lock()
 	defer i.Unlock()
 	fh, found := i.inode2fh[inode]
 	if !found {
 		fh = newFileHandle(wfs, FileHandleId(util.RandomUint64()), inode, entry)
+		fh.fhs[fh.fh] = len(appendMode) > 0 && appendMode[0]
 		fh.entryVersionTsNs.Store(versionTsNs)
 		fh.entryVersionSignature.Store(signature)
 		i.inode2fh[inode] = fh
 		i.fh2inode[fh.fh] = inode
 		return fh, fh.fh, false, false
 	}
-	if fh.counter <= 0 && !fh.retainedPublication {
+	if fh.counter <= 0 {
 		return nil, 0, true, true
 	}
 	fh.counter++
-	fh.retainedPublication = false
 	openFh := FileHandleId(util.RandomUint64())
-	fh.fhs[openFh] = struct{}{}
+	fh.fhs[openFh] = len(appendMode) > 0 && appendMode[0]
 	i.fh2inode[openFh] = inode
 	return fh, openFh, true, false
+}
+
+func (i *FileHandleToInode) isAppendHandle(openFh FileHandleId) bool {
+	i.RLock()
+	defer i.RUnlock()
+	if fh := i.inode2fh[i.fh2inode[openFh]]; fh != nil {
+		return fh.fhs[openFh]
+	}
+	return false
 }
 
 func (i *FileHandleToInode) ReleaseByHandle(fh FileHandleId) *FileHandle {
@@ -114,12 +123,6 @@ func (i *FileHandleToInode) ReleaseByHandle(fh FileHandleId) *FileHandle {
 
 	fhHandle.counter--
 	if fhHandle.counter <= 0 {
-		if fhHandle.publicationFailed.Load() {
-			// Keep failed content reachable by inode. A later open reuses it;
-			// it must not start beyond an unpublished append with a clean base.
-			fhHandle.retainedPublication = true
-			return fhHandle
-		}
 		if fhHandle.asyncFlushPending {
 			// Handle stays in fhMap so rename/unlink can still find it
 			// via FindFileHandle during the background drain.
@@ -133,27 +136,6 @@ func (i *FileHandleToInode) ReleaseByHandle(fh FileHandleId) *FileHandle {
 		return fhHandle
 	}
 	return nil
-}
-
-func (i *FileHandleToInode) retainFailedPublication(fh *FileHandle) {
-	i.Lock()
-	defer i.Unlock()
-	if i.inode2fh[fh.inode] == fh && fh.counter == 0 {
-		fh.retainedPublication = true
-	}
-}
-
-// Called after releasing the active handle lock. Open and retirement arbitrate
-// under the map lock, so a successful recovery cannot leave a draining zombie.
-func (i *FileHandleToInode) retireRecoveredPublication(fh *FileHandle) bool {
-	i.Lock()
-	defer i.Unlock()
-	if i.inode2fh[fh.inode] != fh || fh.counter != 0 || !fh.retainedPublication || fh.publicationFailed.Load() {
-		return false
-	}
-	delete(i.inode2fh, fh.inode)
-	fh.fhs = nil
-	return true
 }
 
 // RemoveFileHandle removes a handle from both maps.  Called after an async

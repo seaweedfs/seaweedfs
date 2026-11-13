@@ -22,7 +22,7 @@ var IsDebugFileReadWrite = false
 type FileHandle struct {
 	fh      FileHandleId
 	counter int64
-	fhs     map[FileHandleId]struct{} // live fh values, one per open; guarded by fhMap's lock
+	fhs     map[FileHandleId]bool // live fh values, one per open; guarded by fhMap's lock
 	entry   *LockedEntry
 	// Nested handle lock order: wfs.fhLockTable[fh.fh] -> entryLock ->
 	// LockedEntry.RWMutex. Paths may use a subset, but must never acquire an
@@ -33,15 +33,17 @@ type FileHandle struct {
 	wfs             *WFS
 
 	// cache file has been written to
-	dirtyMetadata     bool
-	dirtyPages        *PageWriter
-	reader            *filer.ChunkReadAt
-	contentType       string
-	asyncFlushPending bool   // set in writebackCache mode to defer flush to Release
-	asyncFlushUid     uint32 // saved uid for deferred metadata flush
-	asyncFlushGid     uint32 // saved gid for deferred metadata flush
-	savedDir          string // last known parent path if inode-to-path state is forgotten
-	savedName         string // last known file name if inode-to-path state is forgotten
+	dirtyMetadata       bool
+	pendingAppend       bool
+	pendingAppendOffset uint64
+	dirtyPages          *PageWriter
+	reader              *filer.ChunkReadAt
+	contentType         string
+	asyncFlushPending   bool   // set in writebackCache mode to defer flush to Release
+	asyncFlushUid       uint32 // saved uid for deferred metadata flush
+	asyncFlushGid       uint32 // saved gid for deferred metadata flush
+	savedDir            string // last known parent path if inode-to-path state is forgotten
+	savedName           string // last known file name if inode-to-path state is forgotten
 
 	isDeleted bool
 	// deleteEpoch counts the times isDeleted was raised, all of them under the
@@ -65,10 +67,6 @@ type FileHandle struct {
 	// Local writes move the live entry away from it, so "is this event new"
 	// must be judged here, not against the live entry. Always store a clone.
 	baseEntry atomic.Pointer[filer_pb.Entry]
-	// Failed publication retains the pending entry across the last close.
-	publicationFailed atomic.Bool
-	// Guarded by fhMap: zero descriptors, pending publication still owned.
-	retainedPublication bool
 
 	// dlmLock holds the distributed lock for cross-mount write coordination.
 	// Non-nil only when -dlm is enabled and the file was opened for writing.
@@ -87,7 +85,7 @@ func newFileHandle(wfs *WFS, handleId FileHandleId, inode uint64, entry *filer_p
 	fh := &FileHandle{
 		fh:      handleId,
 		counter: 1,
-		fhs:     map[FileHandleId]struct{}{handleId: {}},
+		fhs:     map[FileHandleId]bool{handleId: false},
 		inode:   inode,
 		wfs:     wfs,
 	}

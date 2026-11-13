@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -15,7 +16,16 @@ import (
 // A flush owns its pending content until publication succeeds. An attribute
 // race is retried against the latest entry, never by replacing the guard alone.
 // Callers hold the handle's active lock before touching its live entry/base.
-func (wfs *WFS) publishPendingContent(ctx context.Context, fh *FileHandle, req *filer_pb.CreateEntryRequest) (*filer_pb.CreateEntryResponse, error) {
+func (wfs *WFS) publishPendingContent(ctx context.Context, fh *FileHandle, req *filer_pb.CreateEntryRequest) (result *filer_pb.CreateEntryResponse, resultErr error) {
+	if _, failed := wfs.writebackContentErrors.Load(fh.inode); failed {
+		return nil, fmt.Errorf("writeback inode awaits Forget after content refusal: %w", filer_pb.ErrPreconditionFailed)
+	}
+	refused := false
+	defer func() {
+		if wfs.option.WritebackCache && refused && resultErr != nil {
+			wfs.writebackContentErrors.Store(fh.inode, struct{}{})
+		}
+	}()
 	base := fh.baseEntry.Load()
 	if base != nil {
 		base = proto.Clone(base).(*filer_pb.Entry)
@@ -24,6 +34,16 @@ func (wfs *WFS) publishPendingContent(ctx context.Context, fh *FileHandle, req *
 	var resp *filer_pb.CreateEntryResponse
 	var err error
 	for attempt := 0; attempt < 3; attempt++ {
+		var storedEOF uint64
+		if base != nil {
+			storedEOF = filer.FileSize(base)
+		}
+		// The conditional write below makes this EOF check atomic with the
+		// stored version. Check the original WRITE frontier, not a manifest's
+		// bounding range, which could conceal an abandoned append's gap.
+		if !wfs.option.WritebackCache && fh.pendingAppend && fh.pendingAppendOffset > storedEOF {
+			return nil, fmt.Errorf("append offset %d exceeds committed EOF %d: %w", fh.pendingAppendOffset, storedEOF, filer_pb.ErrPreconditionFailed)
+		}
 		clause := &filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_NOT_EXISTS}
 		if base != nil {
 			clause.Kind, clause.ExpectedEntry = filer_pb.WriteCondition_IF_ENTRY_EQUAL, base
@@ -37,6 +57,7 @@ func (wfs *WFS) publishPendingContent(ctx context.Context, fh *FileHandle, req *
 				// A provider refusal is final for this attempt, not a transport
 				// failure to replay on another filer address.
 				refusal = callErr
+				refused = true
 				return nil
 			}
 			return callErr
@@ -45,10 +66,8 @@ func (wfs *WFS) publishPendingContent(ctx context.Context, fh *FileHandle, req *
 			err = refusal
 		}
 		if err == nil {
-			fh.publicationFailed.Store(false)
 			return resp, nil
 		}
-		fh.publicationFailed.Store(true)
 		if !errors.Is(err, filer_pb.ErrPreconditionFailed) || base == nil || attempt == 2 {
 			return resp, err
 		}
@@ -66,13 +85,43 @@ func (wfs *WFS) publishPendingContent(ctx context.Context, fh *FileHandle, req *
 		if lookupErr != nil {
 			return resp, lookupErr
 		}
-		if !sameContentIdentity(base, latest) {
+		if !sameContentIdentity(base, latest) && !appendCompatible(base, latest, req.Entry) {
 			return resp, err
 		}
 		rebaseContentAttributes(req.Entry, base, latest)
 		base = latest
 	}
 	return resp, err
+}
+
+// A stored prefix is safe only along the same append chain: the observed
+// content is itself a prefix of the stored content, which is a prefix of ours.
+// Never shift a pending offset or undo a peer truncate/replacement.
+func appendCompatible(base, stored, pending *filer_pb.Entry) bool {
+	if base == nil || stored == nil || pending == nil || stored.Attributes == nil || pending.Attributes == nil {
+		return false
+	}
+	identity := proto.Clone(stored).(*filer_pb.Entry)
+	identity.Chunks = proto.Clone(base).(*filer_pb.Entry).Chunks
+	identity.Attributes.FileSize = base.GetAttributes().GetFileSize()
+	if !sameContentIdentity(base, identity) || filer.FileSize(stored) < filer.FileSize(base) || filer.FileSize(pending) < filer.FileSize(stored) {
+		return false
+	}
+	return chunkPrefix(base.Chunks, stored.Chunks) && chunkPrefix(stored.Chunks, pending.Chunks)
+}
+
+func chunkPrefix(prefix, chunks []*filer_pb.FileChunk) bool {
+	if len(prefix) > len(chunks) {
+		return false
+	}
+	for i, c := range prefix {
+		a, b := proto.Clone(c).(*filer_pb.FileChunk), proto.Clone(chunks[i]).(*filer_pb.FileChunk)
+		filer_pb.BeforeEntrySerialization([]*filer_pb.FileChunk{a, b})
+		if !proto.Equal(a, b) {
+			return false
+		}
+	}
+	return true
 }
 
 // Only attribute differences may be reconciled here. A replacement, truncate,

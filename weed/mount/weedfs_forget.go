@@ -68,7 +68,10 @@ func (wfs *WFS) Forget(nodeid, nlookup uint64) {
 	wfs.inodeToPath.Forget(nodeid, nlookup,
 		// Runs at the release, under the table's lock, so a lookup that
 		// rebuilds the same inode number afterwards keeps the times it sets.
-		wfs.forgetInMemoryTimes,
+		func(inode uint64) {
+			wfs.forgetInMemoryTimes(inode)
+			wfs.writebackContentErrors.Delete(inode)
+		},
 		func(dir util.FullPath) {
 			// Runs after Forget releases its lock; a concurrent lookup+rebuild can
 			// re-cache the directory in that window, so purge through the apply loop

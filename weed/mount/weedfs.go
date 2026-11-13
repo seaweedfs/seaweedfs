@@ -182,6 +182,10 @@ type WFS struct {
 	attrValidSec      uint64                     // kernel FUSE attr cache TTL in seconds
 	dirIdleEvict      time.Duration
 
+	// Metadata-only terminal content errors; no handle or write resources retained.
+	// Writeback page merging hides append frontiers. Only final Forget clears this.
+	writebackContentErrors sync.Map // inode -> struct{}
+
 	metadataPublicationOnce  sync.Once
 	metadataPublicationLocks *util.LockTable[util.FullPath]
 
