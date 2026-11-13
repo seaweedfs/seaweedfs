@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -17,13 +18,29 @@ import (
 // race is retried against the latest entry, never by replacing the guard alone.
 // Callers hold the handle's active lock before touching its live entry/base.
 func (wfs *WFS) publishPendingContent(ctx context.Context, fh *FileHandle, req *filer_pb.CreateEntryRequest) (result *filer_pb.CreateEntryResponse, resultErr error) {
-	if _, failed := wfs.writebackContentErrors.Load(fh.inode); failed {
-		return nil, fmt.Errorf("writeback inode awaits Forget after content refusal: %w", filer_pb.ErrPreconditionFailed)
+	var failure *atomic.Bool
+	if wfs.option.WritebackCache {
+		// Capture once for this handle's publication, including outer retries.
+		// Forget detaches the cell; a late refusal can only mark the old cell,
+		// never insert an error into the next lookup's inode lifetime.
+		if fh.writebackContentError == nil {
+			wfs.inodeToPath.RLock()
+			state, found := wfs.writebackContentErrors.Load(fh.inode)
+			if !found {
+				state, _ = wfs.writebackContentErrors.LoadOrStore(fh.inode, new(atomic.Bool))
+			}
+			fh.writebackContentError = state.(*atomic.Bool)
+			wfs.inodeToPath.RUnlock()
+		}
+		failure = fh.writebackContentError
+		if failure.Load() {
+			return nil, fmt.Errorf("writeback inode awaits Forget after content refusal: %w", filer_pb.ErrPreconditionFailed)
+		}
 	}
 	refused := false
 	defer func() {
-		if wfs.option.WritebackCache && refused && resultErr != nil {
-			wfs.writebackContentErrors.Store(fh.inode, struct{}{})
+		if failure != nil && refused && resultErr != nil {
+			failure.Store(true)
 		}
 	}()
 	base := fh.baseEntry.Load()

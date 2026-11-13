@@ -7,6 +7,7 @@ import (
 	"context"
 	"io"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -134,12 +135,13 @@ func TestAppendAfterRefusedFlushHasNoHole(t *testing.T) {
 // write condition and returns the server's committed entry/stamp.
 type g6ConditionalPeer struct {
 	filer_pb.UnimplementedSeaweedFilerServer
-	mu       sync.Mutex
-	entry    *filer_pb.Entry
-	rejected int
-	refuse   bool
-	blobs    map[string][]byte
-	clock    int64
+	mu           sync.Mutex
+	entry        *filer_pb.Entry
+	rejected     int
+	refuse       bool
+	blobs        map[string][]byte
+	clock        int64
+	beforeCreate func(context.Context)
 }
 
 func g6EntryEqual(current, expected *filer_pb.Entry) bool {
@@ -181,7 +183,10 @@ func (s *g6ConditionalPeer) UpdateEntry(_ context.Context, r *filer_pb.UpdateEnt
 	s.entry.CommitTsNs = s.clock
 	return &filer_pb.UpdateEntryResponse{LogTsNs: s.clock, MetadataEvent: &filer_pb.SubscribeMetadataResponse{Directory: r.Directory, TsNs: s.clock, EventNotification: &filer_pb.EventNotification{NewEntry: proto.Clone(s.entry).(*filer_pb.Entry)}}}, nil
 }
-func (s *g6ConditionalPeer) CreateEntry(_ context.Context, r *filer_pb.CreateEntryRequest) (*filer_pb.CreateEntryResponse, error) {
+func (s *g6ConditionalPeer) CreateEntry(ctx context.Context, r *filer_pb.CreateEntryRequest) (*filer_pb.CreateEntryResponse, error) {
+	if s.beforeCreate != nil {
+		s.beforeCreate(ctx)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.refuse {
@@ -373,12 +378,12 @@ func TestRealConflictCannotPublishAppendGap(t *testing.T) {
 			}
 			w.Release(nil, &fuse.ReleaseIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: next, ReleaseFlags: fuse.FUSE_RELEASE_FLOCK_UNLOCK})
 			if mode.writeback {
-				if _, failed := w.writebackContentErrors.Load(uint64(42)); !failed {
+				if state, found := w.writebackContentErrors.Load(uint64(42)); !found || !state.(*atomic.Bool).Load() {
 					t.Fatal("close cleared the writeback content error")
 				}
 				w.inodeToPath.Lookup("/dir/file", 1, false, false, 42, true)
 				w.Forget(42, 1)
-				if _, failed := w.writebackContentErrors.Load(uint64(42)); !failed {
+				if state, found := w.writebackContentErrors.Load(uint64(42)); !found || !state.(*atomic.Bool).Load() {
 					t.Fatal("partial Forget cleared the writeback content error")
 				}
 				w.Forget(42, 1)
@@ -424,5 +429,80 @@ func TestPositionalSparseWriteStillPublishes(t *testing.T) {
 	want = append(want, bytes.Repeat([]byte{'S'}, 256)...)
 	if !bytes.Equal(g6StoredBytes(t, peer), want) {
 		t.Fatal("sparse positional data changed")
+	}
+}
+
+// Force a real background Release publication to finish after final Forget
+// and a new lookup of the same inode number.
+func TestAsyncRefusalAfterForgetDoesNotPoisonRelookup(t *testing.T) {
+	base := attributeAppendEntry(1)
+	peer := &g6ConditionalPeer{entry: proto.Clone(base).(*filer_pb.Entry), refuse: true}
+	entered, resume := make(chan struct{}), make(chan struct{})
+	var once, resumeOnce sync.Once
+	release := func() { resumeOnce.Do(func() { close(resume) }) }
+	peer.beforeCreate = func(ctx context.Context) {
+		once.Do(func() {
+			close(entered)
+			select {
+			case <-resume:
+			case <-ctx.Done():
+			}
+		})
+	}
+	w, handle := g6AppendHandle(t, peer, base, 1000)
+	w.option.WritebackCache = true
+	w.pendingAsyncFlush = make(map[uint64]chan struct{})
+	w.startAsyncFlushWorkers(1)
+	t.Cleanup(w.WaitForAsyncFlush)
+	t.Cleanup(release)
+	if n, code := w.Write(nil, &fuse.WriteIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: handle, Offset: 256, Size: 256}, bytes.Repeat([]byte{'A'}, 256)); n != 256 || code != fuse.OK {
+		t.Fatal(n, code)
+	}
+	w.Release(nil, &fuse.ReleaseIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: handle})
+	w.pendingAsyncFlushMu.Lock()
+	done := w.pendingAsyncFlush[42]
+	w.pendingAsyncFlushMu.Unlock()
+	if done == nil {
+		t.Fatal("Release did not queue an async publication")
+	}
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("async publication did not reach the filer")
+	}
+	w.Forget(42, 1)
+	w.inodeToPath.Lookup("/dir/file", 1, false, false, 42, true)
+	release()
+	select {
+	case <-done:
+	case <-time.After(15 * time.Second):
+		t.Fatal("async refusal did not finish")
+	}
+	peer.mu.Lock()
+	if peer.rejected != 3 {
+		t.Errorf("refusals = %d, want bounded three", peer.rejected)
+	}
+	peer.refuse = false
+	peer.mu.Unlock()
+	if _, found := w.fhMap.FindFileHandle(42); found {
+		t.Fatal("async close retained a handle")
+	}
+	out := &fuse.OpenOut{}
+	if code := w.Open(nil, &fuse.OpenIn{InHeader: fuse.InHeader{NodeId: 42}, Flags: syscall.O_WRONLY | syscall.O_APPEND}, out); code != fuse.OK {
+		t.Fatal(code)
+	}
+	g6AppendUploader(t, w.GetHandle(FileHandleId(out.Fh)), 1100, peer)
+	if n, code := w.Write(nil, &fuse.WriteIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: out.Fh, Offset: 256, Size: 256}, bytes.Repeat([]byte{'B'}, 256)); n != 256 || code != fuse.OK {
+		t.Fatal(n, code)
+	}
+	if code := w.Fsync(nil, &fuse.FsyncIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: out.Fh}); code != fuse.OK {
+		t.Fatalf("new inode lifetime inherited stale EIO: %v", code)
+	}
+	w.Release(nil, &fuse.ReleaseIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: out.Fh, ReleaseFlags: fuse.FUSE_RELEASE_FLOCK_UNLOCK})
+	peer.mu.Lock()
+	defer peer.mu.Unlock()
+	want := append(bytes.Repeat([]byte{'O'}, 256), bytes.Repeat([]byte{'B'}, 256)...)
+	if peer.entry.Attributes.FileSize != 512 || !bytes.Equal(g6StoredBytes(t, peer), want) {
+		t.Fatal("relookup publication changed original/new bytes or size")
 	}
 }
