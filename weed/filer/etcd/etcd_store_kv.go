@@ -7,11 +7,12 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 )
 
+// KvPut has no request deadline, like InsertEntry: the filer stores a hard-linked
+// file's chunk list here, so a timed-out Put that was saved would leave it
+// pointing at chunks the upload handler deletes.
 func (store *EtcdStore) KvPut(ctx context.Context, key []byte, value []byte) (err error) {
-	opCtx, cancel := store.withTimeout(ctx)
-	defer cancel()
 
-	_, err = store.client.Put(opCtx, store.etcdKeyPrefix+string(key), string(value))
+	_, err = store.client.Put(ctx, store.etcdKeyPrefix+string(key), string(value))
 
 	if err != nil {
 		return fmt.Errorf("kv put: %w", err)
