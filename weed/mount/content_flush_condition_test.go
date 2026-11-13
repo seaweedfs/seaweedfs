@@ -4,6 +4,7 @@ package mount
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"testing"
 
@@ -68,9 +69,9 @@ func flushConditionEntry(ids ...uint64) *filer_pb.Entry {
 	return e
 }
 
-// Exercise the actual mount content-publication caller. A peer's successful
-// append or replacement is authoritative; refusing our stale flush must retain
-// our dirty entry, instead of refreshing a guard and replaying stale content.
+// Exercise the actual mount content-publication caller. A peer's append is
+// merged with ours; a replaced or deleted file is not ours to merge into, so
+// the refused flush keeps our dirty entry instead of overwriting the peer.
 func TestContentFlushPreservesPeerChunks(t *testing.T) {
 	for _, name := range []string{"single-writer", "peer-append", "replaced", "deleted", "deferred-create", "deferred-create-race"} {
 		t.Run(name, func(t *testing.T) {
@@ -79,11 +80,11 @@ func TestContentFlushPreservesPeerChunks(t *testing.T) {
 			live := flushConditionEntry(1, 3)
 			live.Chunks[1].Offset = 2
 			current := flushConditionEntry(1)
-			wantError := false
+			wantError, wantCalls := false, 1
 			switch name {
 			case "peer-append":
 				current = flushConditionEntry(1, 2)
-				wantError = true
+				wantCalls = 2
 			case "replaced":
 				current = flushConditionEntry(4)
 				current.Attributes.Inode = 99
@@ -135,11 +136,18 @@ func TestContentFlushPreservesPeerChunks(t *testing.T) {
 				if fh.dirtyMetadata {
 					t.Fatal("successful flush remains dirty")
 				}
-				if len(fake.entry.Chunks) != 2 || fake.entry.Chunks[1].Offset != 2 || fake.entry.Chunks[1].Size != 1 {
-					t.Fatalf("normal flush lost content: %v", fake.entry)
+				want := []uint64{1, 3}
+				if name == "peer-append" {
+					want = []uint64{1, 2, 3}
+				}
+				if got := chunkFileKeys(fake.entry); !slices.Equal(got, want) {
+					t.Fatalf("stored chunks %v, want %v", got, want)
+				}
+				if got := chunkFileKeys(fh.GetEntry().GetEntry()); !slices.Equal(got, want) {
+					t.Fatalf("handle chunks %v, want %v", got, want)
 				}
 			}
-			if fake.calls != 1 {
+			if fake.calls != wantCalls {
 				t.Fatalf("unexpected replay: %d calls", fake.calls)
 			}
 		})
@@ -176,6 +184,13 @@ func TestContentFlushRepeatsOnOneHandle(t *testing.T) {
 	}
 }
 
+func chunkFileKeys(e *filer_pb.Entry) (keys []uint64) {
+	for _, c := range e.GetChunks() {
+		keys = append(keys, c.GetFid().GetFileKey())
+	}
+	return keys
+}
+
 // The periodic metadata flush publishes the same whole entry, so it must not
 // overwrite a peer's append either.
 func TestPeriodicMetadataFlushPreservesPeerChunks(t *testing.T) {
@@ -193,16 +208,104 @@ func TestPeriodicMetadataFlushPreservesPeerChunks(t *testing.T) {
 	fh.baseEntry.Store(observed)
 	fh.dirtyMetadata = true
 	fh.RememberPath(util.FullPath("/dir/file"))
-	if err := wfs.flushFileMetadata(fh); err == nil {
-		t.Fatal("periodic flush overwrote a peer's append")
+	if err := wfs.flushFileMetadata(fh); err != nil {
+		t.Fatal(err)
 	}
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
-	if !proto.Equal(fake.entry, current) || fake.calls != 1 {
-		t.Fatalf("peer entry changed after %d calls: %v", fake.calls, fake.entry)
+	if got := chunkFileKeys(fake.entry); !slices.Equal(got, []uint64{1, 2, 3}) || fake.calls != 2 {
+		t.Fatalf("stored chunks %v after %d calls", got, fake.calls)
+	}
+	if got := chunkFileKeys(fh.GetEntry().GetEntry()); !slices.Equal(got, []uint64{1, 2, 3}) {
+		t.Fatalf("handle chunks %v", got)
 	}
 	if !fh.dirtyMetadata {
-		t.Fatal("refused periodic flush lost dirty metadata")
+		t.Fatal("periodic flush cleared dirty metadata")
+	}
+}
+
+// Every merged flush is followed by a flush that matches what it stored, so
+// the peer's chunk is not dropped by the next publication from this handle.
+func TestContentFlushMergeThenRepeat(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+	fake := &contentFlushConditionFiler{entry: flushConditionEntry(1, 2)}
+	startFakeFiler(t, wfs, fake)
+	observed := flushConditionEntry(1)
+	wfs.mapPbIdFromFilerToLocal(observed)
+	live := flushConditionEntry(1, 3)
+	live.Chunks[1].Offset = 2
+	wfs.mapPbIdFromFilerToLocal(live)
+	fh := newFileHandle(wfs, 1, 42, live)
+	t.Cleanup(func() { fh.dirtyPages.Destroy() })
+	fh.baseEntry.Store(observed)
+	fh.RememberPath(util.FullPath("/dir/file"))
+	for i := uint64(4); i <= 5; i++ {
+		fh.dirtyMetadata = true
+		if code := wfs.doFlush(context.Background(), fh, 1000, 20, false); code != fuse.OK {
+			t.Fatalf("flush before chunk %d: %v", i, code)
+		}
+		fh.UpdateEntry(func(e *filer_pb.Entry) {
+			e.Chunks = append(e.Chunks, &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 1, FileKey: i, Cookie: 1}, Offset: int64(i - 1), Size: 1, ModifiedTsNs: int64(i)})
+			e.Attributes.FileSize = i
+		})
+	}
+	fh.dirtyMetadata = true
+	if code := wfs.doFlush(context.Background(), fh, 1000, 20, false); code != fuse.OK {
+		t.Fatal(code)
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if got := chunkFileKeys(fake.entry); !slices.Equal(got, []uint64{1, 2, 3, 4, 5}) || fake.calls != 4 {
+		t.Fatalf("stored chunks %v after %d calls", got, fake.calls)
+	}
+}
+
+// The merge keeps a peer's attribute and extended changes the handle did not
+// make, applies the ones it did, and lets a local truncation clip the peer's
+// chunks past the new end.
+func TestMergeContentEntry(t *testing.T) {
+	base := flushConditionEntry(1, 2)
+	base.Extended = map[string][]byte{"user.a": []byte("1"), "user.b": []byte("1")}
+	stored := proto.Clone(base).(*filer_pb.Entry)
+	stored.Chunks = append(stored.Chunks, &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 1, FileKey: 9, Cookie: 1}, Offset: 2, Size: 4})
+	stored.Attributes.FileMode, stored.Attributes.FileSize = 0600, 6
+	stored.Extended["user.b"] = []byte("peer")
+	stored.CommitTsNs = 77
+
+	local := proto.Clone(base).(*filer_pb.Entry)
+	local.Attributes.Mtime = 123
+	local.Extended["user.a"] = []byte("mine")
+	delete(local.Extended, "user.b")
+	local.Chunks = append(local.Chunks, &filer_pb.FileChunk{FileId: "1,0300000001", Offset: 2, Size: 1, ModifiedTsNs: 3})
+
+	merged, ok := mergeContentEntry(stored, base, local, local)
+	if !ok {
+		t.Fatal("not merged")
+	}
+	if got := len(merged.Chunks); got != 4 || merged.Attributes.FileSize != 6 {
+		t.Fatalf("merged %d chunks, size %d", got, merged.Attributes.FileSize)
+	}
+	if merged.Attributes.FileMode != 0600 || merged.Attributes.Mtime != 123 || merged.CommitTsNs != 77 {
+		t.Fatalf("attributes %v", merged.Attributes)
+	}
+	if string(merged.Extended["user.a"]) != "mine" || merged.Extended["user.b"] != nil {
+		t.Fatalf("extended %v", merged.Extended)
+	}
+
+	truncated := proto.Clone(base).(*filer_pb.Entry)
+	truncated.Chunks = truncated.Chunks[:1]
+	truncated.Attributes.FileSize = 1
+	merged, ok = mergeContentEntry(stored, base, truncated, truncated)
+	if !ok {
+		t.Fatal("truncation not merged")
+	}
+	if got := chunkFileKeys(merged); !slices.Equal(got, []uint64{1}) || merged.Attributes.FileSize != 1 {
+		t.Fatalf("truncated merge kept %v, size %d", got, merged.Attributes.FileSize)
+	}
+
+	stored.Attributes.Inode = 99
+	if _, ok := mergeContentEntry(stored, base, local, local); ok {
+		t.Fatal("merged into a replaced file")
 	}
 }
 

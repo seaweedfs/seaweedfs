@@ -174,6 +174,30 @@ func (fh *FileHandle) installAckedEntry(entry *filer_pb.Entry, versionTsNs int64
 	fh.advanceEntryVersion(versionTsNs, signature)
 }
 
+// rebaseEntry installs an entry merged with a peer's changes, keeping the
+// chunks uploaders attached after sent was taken, and refreshes the read view.
+func (fh *FileHandle) rebaseEntry(merged *filer_pb.Entry, sent []*filer_pb.FileChunk) {
+	inSent := make(map[string]bool, len(sent))
+	for _, c := range sent {
+		inSent[contentChunkKey(c)] = true
+	}
+	merged = proto.Clone(merged).(*filer_pb.Entry)
+	fh.UpdateEntry(func(e *filer_pb.Entry) {
+		chunks := merged.Chunks
+		for _, c := range e.Chunks {
+			if !inSent[contentChunkKey(c)] {
+				chunks = append(chunks, c)
+			}
+		}
+		attrs := merged.Attributes
+		if size := e.GetAttributes().GetFileSize(); size > attrs.FileSize {
+			attrs.FileSize = size
+		}
+		e.Attributes, e.Extended, e.Content, e.Chunks = attrs, merged.Extended, merged.Content, chunks
+		fh.entryChunkGroup.SetChunks(chunks)
+	})
+}
+
 // setAuthoritativeBase installs the base snapshot a local ack acknowledged.
 func (fh *FileHandle) setAuthoritativeBase(base *filer_pb.Entry) {
 	fh.baseEntry.Store(base)
