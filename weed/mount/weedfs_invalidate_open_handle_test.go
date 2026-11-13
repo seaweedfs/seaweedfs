@@ -1241,7 +1241,8 @@ func TestCommittedCopyWithFailedReadbackAdoptsItsEvent(t *testing.T) {
 		t.Fatalf("handle version = %d, want 1500", got)
 	}
 
-	// The adoption is one-shot: a genuinely foreign event still invalidates.
+	// The adoption is one-shot: a genuinely foreign event still installs,
+	// merged under the handle's own writes.
 	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), updateEventFor("file", 300, 1600), meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
 		t.Fatalf("apply foreign event: %v", err)
 	}
@@ -1249,8 +1250,11 @@ func TestCommittedCopyWithFailedReadbackAdoptsItsEvent(t *testing.T) {
 	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 300 {
 		t.Fatalf("live entry file size = %d, want 300 (foreign event after adoption must install)", size)
 	}
-	if fh.dirtyPages == pagesBefore {
-		t.Fatal("foreign event after adoption must invalidate dirty pages")
+	if base := fh.baseEntry.Load(); base.GetAttributes().GetFileSize() != 300 {
+		t.Fatalf("base %v, want the foreign entry", base)
+	}
+	if fh.dirtyPages != pagesBefore {
+		t.Fatal("dirty pages destroyed by a mergeable foreign event")
 	}
 }
 
@@ -2073,5 +2077,45 @@ func TestAckFromAnotherFilerIsNotDroppedBehindForeignFence(t *testing.T) {
 	fh.installAckedEntry(older, 500, fh.entryVersionSignature.Load())
 	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size == 300 {
 		t.Fatal("an older ack from the fencing filer was installed; within one clock domain it must be refused")
+	}
+}
+
+// A peer's append reaching a dirty handle is merged under the handle's own
+// writes: the uploaded chunk and the unflushed pages both survive.
+func TestPeerAppendMergesIntoDirtyHandle(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+
+	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+	fh, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, flushConditionEntry(1), 0, 0)
+	fh.AddChunks([]*filer_pb.FileChunk{{FileId: "1,0300000001", Offset: 2, Size: 1, ModifiedTsNs: 3}})
+	fh.dirtyMetadata = true
+	pagesBefore := fh.dirtyPages
+
+	peer := flushConditionEntry(1, 2)
+	peer.Attributes.FileSize = 4
+	peer.Chunks[1].Offset, peer.Chunks[1].Size = 3, 1
+	appendResp := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		TsNs:      1500,
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:      flushConditionEntry(1),
+			NewEntry:      peer,
+			NewParentPath: "/dir",
+		},
+	}
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), appendResp, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply append: %v", err)
+	}
+	wfs.metaCache.WaitForEntryInvalidations()
+
+	if fh.dirtyPages != pagesBefore {
+		t.Fatal("dirty pages destroyed by a peer append")
+	}
+	entry := fh.GetEntry().GetEntry()
+	if got := len(entry.Chunks); got != 3 || entry.Attributes.FileSize != 4 {
+		t.Fatalf("handle has %d chunks, size %d; want the peer's and its own", got, entry.Attributes.FileSize)
+	}
+	if base := fh.baseEntry.Load(); len(base.GetChunks()) != 2 {
+		t.Fatalf("base %v, want the peer's entry", base)
 	}
 }

@@ -198,6 +198,20 @@ func (fh *FileHandle) rebaseEntry(merged *filer_pb.Entry, sent []*filer_pb.FileC
 	})
 }
 
+// mergePeerContent folds a peer's content change into a dirty handle, so its
+// own writes stay on top of the peer's instead of being discarded.
+func (fh *FileHandle) mergePeerContent(peer, base *filer_pb.Entry) bool {
+	var local *filer_pb.Entry
+	fh.UpdateEntry(func(e *filer_pb.Entry) {
+		local = proto.Clone(e).(*filer_pb.Entry)
+	})
+	merged, ok := mergeContentEntry(peer, base, local, local)
+	if ok {
+		fh.rebaseEntry(merged, local.Chunks)
+	}
+	return ok
+}
+
 // setAuthoritativeBase installs the base snapshot a local ack acknowledged.
 func (fh *FileHandle) setAuthoritativeBase(base *filer_pb.Entry) {
 	fh.baseEntry.Store(base)
