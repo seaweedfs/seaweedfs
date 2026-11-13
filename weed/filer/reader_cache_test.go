@@ -943,3 +943,68 @@ func TestAbandonedChunkDownloadIsNotCached(t *testing.T) {
 		t.Fatal("the partly filled buffer of a cancelled download was cached")
 	}
 }
+
+// Other readers can join a re-lookup through FilerClient, so cancelling the download must not cancel it.
+func TestAbandonedChunkDownloadKeepsItsRelookupAlive(t *testing.T) {
+	fileId := "3077,02c3475d67aaf564"
+	var lookups int32
+	relookupStarted := make(chan struct{})
+	downloadCancelled := make(chan struct{})
+	relookupErr := make(chan error, 1)
+	lookupFn := func(ctx context.Context, fileId string) ([]string, error) {
+		if atomic.AddInt32(&lookups, 1) > 1 {
+			close(relookupStarted)
+			<-downloadCancelled
+			relookupErr <- ctx.Err()
+		}
+		return []string{"http://volume/" + fileId}, nil
+	}
+	rc := NewReaderCache(10, newMockChunkCacheForReaderCache(), lookupFn, &mockCacheInvalidatorForReaderCache{})
+	defer rc.destroy()
+	rc.fetchChunkDataFn = func(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, fileId string, refreshUrls util_http.RefreshUrlsFunc) (int, error) {
+		return 0, fmt.Errorf("connection reset by peer")
+	}
+
+	var stream chunkStream
+	ctx, cancel := context.WithCancel(context.Background())
+	readDone := make(chan error, 1)
+	go func() {
+		_, err := rc.readChunkAt(ctx, &stream, make([]byte, 100), fileId, nil, true, 0, 100, false)
+		readDone <- err
+	}()
+
+	<-relookupStarted
+	cancel()
+	if err := <-readDone; err != context.Canceled {
+		t.Fatalf("cancelled read: got %v, want context.Canceled", err)
+	}
+	released := make(chan struct{})
+	go func() {
+		rc.releaseStream(&stream)
+		close(released)
+	}()
+	// the cacher leaves the map under the same lock that cancels it
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		rc.RLock()
+		_, found := rc.downloaders[fileId]
+		rc.RUnlock()
+		if !found {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("releasing the last stream never dropped the download")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	close(downloadCancelled)
+
+	if err := <-relookupErr; err != nil {
+		t.Fatalf("re-lookup context: got %v, want it independent of the download", err)
+	}
+	select {
+	case <-released:
+	case <-time.After(2 * time.Second):
+		t.Fatal("releasing the stream never returned")
+	}
+}
