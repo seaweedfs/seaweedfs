@@ -286,6 +286,7 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 	// before Unlink sets the flag).  By waiting here, any in-flight flush
 	// finishes first; even if it recreated the entry, the filer delete below
 	// will remove it again.
+	isHardLink := entry != nil && entry.Attributes != nil && len(entry.HardLinkId) > 0 && entry.HardLinkCounter > 1
 	var markedInode, deleteEpoch uint64
 	if inode, found := wfs.inodeToPath.GetInode(entryFullPath); found {
 		markedInode = inode
@@ -293,6 +294,10 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 		markedInode = entry.Attributes.Inode
 	}
 	if markedInode != 0 {
+		if isHardLink {
+			// Another link keeps the content, so a queued close publishes it.
+			wfs.waitForPendingAsyncFlush(context.Background(), markedInode)
+		}
 		deleteEpoch = wfs.markHandleDeleted(markedInode)
 		wfs.waitForPendingAsyncFlush(context.Background(), markedInode)
 	}
@@ -335,7 +340,6 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 	// to every sibling cache entry and invalidate the kernel attr cache
 	// so subsequent lstats on other links see the new nlink — pjdfstest
 	// link/00.t asserts this after `unlink n0` leaves n1/n2 behind.
-	isHardLink := entry != nil && entry.Attributes != nil && len(entry.HardLinkId) > 0 && entry.HardLinkCounter > 1
 	var sharedInode uint64
 	if isHardLink {
 		sharedInode = entry.Attributes.Inode
