@@ -268,6 +268,23 @@ func TestSignedReadOfVersionFileKey(t *testing.T) {
 	require.Contains(t, f.entries, "/buckets/b/o.versions/v_v1")
 }
 
+func TestWriteToVersionFileKey(t *testing.T) {
+	for _, state := range []string{"Suspended", "Enabled"} {
+		s3a, f := newAnonymousReadTestServer(t)
+		config, _ := s3a.getBucketConfig("b")
+		config.Versioning = state
+		version := anonymousReadEntry(nil)
+		version.Name = "v_v1"
+		version.Extended[s3_constants.ExtVersionIdKey] = []byte("v1")
+		f.entries["/buckets/b/o.versions/v_v1"] = version
+		f.entries["/buckets/b/u.versions/v_literal"] = anonymousReadEntry(nil)
+		require.Equal(t, s3err.ErrAccessDenied, s3a.checkVersionFileWrite("b", "o.versions/v_v1", "t"), state)
+		require.Equal(t, s3err.ErrNone, s3a.checkVersionFileWrite("b", "o.versions/v_v2", "t"), state)
+		require.Equal(t, s3err.ErrNone, s3a.checkVersionFileWrite("b", "u.versions/v_literal", "t"), state)
+		require.Equal(t, s3err.ErrNone, s3a.checkVersionFileWrite("b", "o", "t"), state)
+	}
+}
+
 func TestAnonymousObjectACLDoesNotReplaceAuthentication(t *testing.T) {
 	s3a, f := newAnonymousReadTestServer(t)
 	f.entries["/buckets/b/o"] = anonymousReadEntry(anonymousReadGrant("READ"))

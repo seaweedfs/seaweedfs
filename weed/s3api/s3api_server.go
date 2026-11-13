@@ -756,6 +756,26 @@ func (s3a *S3ApiServer) recheckTagConditionedPolicyWithLookup(r *http.Request, b
 	return s3a.recheckPolicyWithObjectEntry(r, bucket, object, action, entry.Extended, handlerName)
 }
 
+// checkVersionFileWrite refuses a write whose key is a stored version's
+// physical path, which would replace that version's content in place.
+func (s3a *S3ApiServer) checkVersionFileWrite(bucket, object, handlerName string) s3err.ErrorCode {
+	if !s3a.hasVersionFileShape(object) {
+		return s3err.ErrNone
+	}
+	entry, err := s3a.resolveObjectEntry(bucket, object, "")
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) || status.Code(err) == codes.NotFound {
+			return s3err.ErrNone
+		}
+		glog.Errorf("%s: version file lookup for %s/%s failed: %v", handlerName, bucket, object, err)
+		return s3err.ErrInternalError
+	}
+	if entry != nil && s3a.isVersionFileKey(object, entry.Extended) {
+		return s3err.ErrAccessDenied
+	}
+	return s3err.ErrNone
+}
+
 // recheckPolicyForKeyWithLookup re-decides a first-phase deny on one key for a
 // synthesized method, resolving the entry the way the read path does (versions
 // included) so s3:ExistingObjectTag conditions see the object's real tags.
