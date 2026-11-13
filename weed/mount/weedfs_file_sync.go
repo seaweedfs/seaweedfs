@@ -205,23 +205,29 @@ func (wfs *WFS) doFlush(ctx context.Context, fh *FileHandle, uid, gid uint32, al
 // from open-for-write through close, so no additional distributed lock is
 // needed here. The local fhLockTable lock below serializes within this mount.
 func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, name string, uid, gid uint32) error {
-	fileFullPath := fh.FullPath()
-	// The caller's name may have been unlinked or renamed away since it
-	// resolved it; the file is reached through the name it has now.
-	if resolved := util.FullPath(dir).Child(name); fileFullPath != "" && fileFullPath != resolved {
-		if inode, found := wfs.inodeToPath.GetInode(resolved); !found || inode != fh.inode {
-			dir, name = fileFullPath.DirAndName()
-		}
-	}
+	fileFullPath, dir, name := wfs.flushTarget(fh, dir, name)
 	// Attribute acknowledgement and local retention must complete before a
 	// whole-entry flush can publish. Take this before the handle's active lock.
 	unlock := wfs.lockMetadataPublication(fileFullPath)
-	defer unlock()
+	fhActiveLock := fh.wfs.fhLockTable.AcquireLock("doFlush", fh.fh, util.ExclusiveLock)
+	// An unlink or rename can land before the locks are held.
+	for attempt := 0; attempt < 3; attempt++ {
+		nowPath, nowDir, nowName := wfs.flushTarget(fh, dir, name)
+		if nowPath == fileFullPath && nowDir == dir && nowName == name {
+			break
+		}
+		fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
+		unlock()
+		fileFullPath, dir, name = nowPath, nowDir, nowName
+		unlock = wfs.lockMetadataPublication(fileFullPath)
+		fhActiveLock = fh.wfs.fhLockTable.AcquireLock("doFlush", fh.fh, util.ExclusiveLock)
+	}
+	defer func() {
+		fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
+		unlock()
+	}()
 
 	glog.V(4).Infof("flushMetadataToFiler %s/%s inode %d fh %d", dir, name, fh.inode, fh.fh)
-
-	fhActiveLock := fh.wfs.fhLockTable.AcquireLock("doFlush", fh.fh, util.ExclusiveLock)
-	defer fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
 
 	// Re-check under the lock: Unlink sets the flag under it, so a flush that
 	// was already past the earlier check cannot write the entry back after
@@ -321,6 +327,19 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 	}
 
 	return err
+}
+
+// flushTarget returns the lock path and the name a flush of fh publishes
+// through: the caller's name while it still names the file, else the name the
+// file has now.
+func (wfs *WFS) flushTarget(fh *FileHandle, dir, name string) (util.FullPath, string, string) {
+	fileFullPath := fh.FullPath()
+	if resolved := util.FullPath(dir).Child(name); fileFullPath != "" && fileFullPath != resolved {
+		if inode, found := wfs.inodeToPath.GetInode(resolved); !found || inode != fh.inode {
+			dir, name = fileFullPath.DirAndName()
+		}
+	}
+	return fileFullPath, dir, name
 }
 
 // createContentEntry publishes a handle's whole entry only over the filer
