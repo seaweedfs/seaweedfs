@@ -158,12 +158,13 @@ func downloadAndReplicateFromRemoteTier(grpcDialOption grpc.DialOption, writer i
 		return nil
 	}
 
-	source, fresh := pb.ServerAddress(""), true
+	var source pb.ServerAddress
+	fresh := true
 	if len(local) > 0 {
 		// a previous run already downloaded this replica
-		source = local[0]
+		source = local[0].server
 	} else {
-		source, remote, fresh = remote[0], remote[1:], false
+		source, remote, fresh = remote[0].server, remote[1:], false
 		// a lone replica is the only reference, so it may delete the object itself
 		keepRemote := len(remote) > 0
 		if err = downloadDatFromRemoteTier(grpcDialOption, writer, vid, collection, source, keepRemote, concurrency); err != nil {
@@ -182,10 +183,10 @@ func downloadAndReplicateFromRemoteTier(grpcDialOption grpc.DialOption, writer i
 	// last one is deleted together with the remote object and then replaced.
 	replaced := map[pb.ServerAddress]bool{source: true}
 	for {
-		var pending []pb.ServerAddress
-		for _, server := range remote {
-			if !replaced[server] {
-				pending = append(pending, server)
+		var pending []tierDownloadReplica
+		for _, replica := range remote {
+			if !replaced[replica.server] {
+				pending = append(pending, replica)
 			}
 		}
 		if len(pending) == 0 {
@@ -194,9 +195,9 @@ func downloadAndReplicateFromRemoteTier(grpcDialOption grpc.DialOption, writer i
 		}
 		if len(pending) == 1 && fresh {
 			last := pending[0]
-			fmt.Fprintf(writer, "delete remote-backed replica of volume %d on %s with its remote object\n", vid, last)
-			if err = deleteVolume(context.Background(), grpcDialOption, vid, last, false, false, false); err != nil {
-				return fmt.Errorf("delete volume %d with its remote object on %s: %v", vid, last, err)
+			fmt.Fprintf(writer, "delete remote-backed replica of volume %d on %s with its remote object\n", vid, last.server)
+			if err = deleteVolume(context.Background(), grpcDialOption, vid, last.server, false, false, false); err != nil {
+				return fmt.Errorf("delete volume %d with its remote object on %s: %v", vid, last.server, err)
 			}
 			if err = replicateTierDownloadedVolume(grpcDialOption, writer, vid, source, last); err != nil {
 				return fmt.Errorf("%v; run volume.fix.replication to restore the replica", err)
@@ -207,7 +208,7 @@ func downloadAndReplicateFromRemoteTier(grpcDialOption grpc.DialOption, writer i
 			if err = replicateTierDownloadedVolume(grpcDialOption, writer, vid, source, target); err != nil {
 				return err
 			}
-			replaced[target] = true
+			replaced[target.server] = true
 		}
 		if topoInfo, err = readTopology(); err != nil {
 			return err
@@ -217,27 +218,33 @@ func downloadAndReplicateFromRemoteTier(grpcDialOption grpc.DialOption, writer i
 	}
 }
 
-func replicateTierDownloadedVolume(grpcDialOption grpc.DialOption, writer io.Writer, vid needle.VolumeId, source, target pb.ServerAddress) error {
-	fmt.Fprintf(writer, "replicate downloaded volume %d from %s to %s\n", vid, source, target)
-	if _, err := copyVolume(context.Background(), grpcDialOption, writer, vid, source, target, "", 0, true); err != nil {
-		return fmt.Errorf("replicate volume %d from %s to %s: %v", vid, source, target, err)
+func replicateTierDownloadedVolume(grpcDialOption grpc.DialOption, writer io.Writer, vid needle.VolumeId, source pb.ServerAddress, target tierDownloadReplica) error {
+	fmt.Fprintf(writer, "replicate downloaded volume %d from %s to %s\n", vid, source, target.server)
+	if _, err := copyVolume(context.Background(), grpcDialOption, writer, vid, source, target.server, target.diskType, 0, true); err != nil {
+		return fmt.Errorf("replicate volume %d from %s to %s: %v", vid, source, target.server, err)
 	}
 	return nil
 }
 
+type tierDownloadReplica struct {
+	server   pb.ServerAddress
+	diskType string
+}
+
 // collectVolumeTierDownloadLocations splits the replicas of a volume into the
 // ones still reading the remote object and the ones already on local disk.
-func collectVolumeTierDownloadLocations(topoInfo *master_pb.TopologyInfo, vid needle.VolumeId, collection string) (remote, local []pb.ServerAddress) {
+func collectVolumeTierDownloadLocations(topoInfo *master_pb.TopologyInfo, vid needle.VolumeId, collection string) (remote, local []tierDownloadReplica) {
 	eachDataNode(topoInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
 		for _, disk := range dn.DiskInfos {
 			for _, vi := range disk.VolumeInfos {
 				if needle.VolumeId(vi.Id) != vid || vi.Collection != collection {
 					continue
 				}
+				replica := tierDownloadReplica{server: pb.NewServerAddressFromDataNode(dn), diskType: vi.DiskType}
 				if vi.RemoteStorageName != "" {
-					remote = append(remote, pb.NewServerAddressFromDataNode(dn))
+					remote = append(remote, replica)
 				} else {
-					local = append(local, pb.NewServerAddressFromDataNode(dn))
+					local = append(local, replica)
 				}
 			}
 		}
