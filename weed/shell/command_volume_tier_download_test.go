@@ -44,6 +44,8 @@ type tierDownloadCluster struct {
 	placement    uint32
 	// staleTwin lists a remote-backed twin of the volume on another disk
 	staleTwin map[pb.ServerAddress]bool
+	// markFails applies the readonly mark, then fails as a lost master notification does
+	markFails map[pb.ServerAddress]bool
 }
 
 type tierDownloadTestServer struct {
@@ -104,6 +106,9 @@ func (s *tierDownloadTestServer) VolumeMarkReadonly(_ context.Context, req *volu
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.frozen[s.addr] = !req.CanDelete
+	if c.markFails[s.addr] {
+		return nil, fmt.Errorf("notify master: leader changed")
+	}
 	return &volume_server_pb.VolumeMarkReadonlyResponse{}, nil
 }
 
@@ -165,6 +170,7 @@ func newTierDownloadCluster(t *testing.T, states ...string) *tierDownloadCluster
 		writable:     make(map[pb.ServerAddress]bool),
 		remounts:     make(map[pb.ServerAddress]int),
 		staleTwin:    make(map[pb.ServerAddress]bool),
+		markFails:    make(map[pb.ServerAddress]bool),
 	}
 	for _, state := range states {
 		lis, err := net.Listen("tcp", "127.0.0.1:0")
@@ -383,5 +389,26 @@ func TestTierDownloadKeepsRemoteObjectForStaleTwinOnSource(t *testing.T) {
 	}
 	if !c.objectExists {
 		t.Errorf("remote object deleted while a twin on %s still references it", c.servers[0])
+	}
+}
+
+func TestTierDownloadRestoresSourceWhenMarkFailsAfterApplying(t *testing.T) {
+	for _, writable := range []bool{false, true} {
+		c := newTierDownloadCluster(t, tierReplicaLocal, tierReplicaRemote, tierReplicaRemote)
+		source := c.servers[0]
+		c.writable[source] = writable
+		c.markFails[source] = true
+		if err := c.run(t); err == nil {
+			t.Fatalf("writable=%v: tier download should fail when the readonly mark fails", writable)
+		}
+		if c.frozen[source] {
+			t.Errorf("writable=%v: source still blocks deletes after the failed mark", writable)
+		}
+		if c.writable[source] != writable {
+			t.Errorf("writable=%v: source writable state changed to %v", writable, c.writable[source])
+		}
+		if !c.objectExists {
+			t.Errorf("writable=%v: remote object deleted although no replica was replaced", writable)
+		}
 	}
 }

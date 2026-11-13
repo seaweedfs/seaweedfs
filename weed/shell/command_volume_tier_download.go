@@ -190,10 +190,12 @@ func downloadAndReplicateFromRemoteTier(grpcDialOption grpc.DialOption, writer i
 	}
 
 	restore, err := freezeTierDownloadSource(grpcDialOption, vid, source)
+	if restore != nil {
+		defer restore(writer)
+	}
 	if err != nil {
 		return fmt.Errorf("block deletes on volume %d at %s: %v", vid, source, err)
 	}
-	defer restore(writer)
 
 	// Copy over all remote-backed replicas but one, re-reading the topology
 	// so a replica that was offline or created meanwhile is replaced too. The
@@ -245,18 +247,22 @@ func downloadAndReplicateFromRemoteTier(grpcDialOption grpc.DialOption, writer i
 
 // freezeTierDownloadSource blocks deletes on the copy source: a delete applied
 // after VolumeCopy read the source index would be lost on the replaced replica.
-// restore brings back the writable mark, or reloads the persisted state.
+// restore brings back the writable mark, or reloads the persisted state. It is
+// also returned when the mark fails, since the server may have applied it.
 func freezeTierDownloadSource(grpcDialOption grpc.DialOption, vid needle.VolumeId, source pb.ServerAddress) (restore func(io.Writer), err error) {
-	var wasWritable bool
+	var wasWritable, statusRead bool
 	err = operation.WithVolumeServerClient(false, source, grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
 		resp, statusErr := client.VolumeStatus(context.Background(), &volume_server_pb.VolumeStatusRequest{VolumeId: uint32(vid)})
 		if statusErr != nil {
 			return statusErr
 		}
-		wasWritable = !resp.IsReadOnly
+		wasWritable, statusRead = !resp.IsReadOnly, true
 		_, markErr := client.VolumeMarkReadonly(context.Background(), &volume_server_pb.VolumeMarkReadonlyRequest{VolumeId: uint32(vid)})
 		return markErr
 	})
+	if !statusRead {
+		return nil, err
+	}
 	restore = func(writer io.Writer) {
 		restoreErr := operation.WithVolumeServerClient(false, source, grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
 			if wasWritable {
