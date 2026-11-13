@@ -45,31 +45,7 @@ func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, o
 	defer cancelFunc()
 	newEntry, _, code := wfs.maybeLoadEntry(ctx, entryFullPath)
 	if code == fuse.OK {
-		if newEntry == nil || newEntry.Attributes == nil {
-			return fuse.EIO
-		}
-		if in.Flags&syscall.O_EXCL != 0 {
-			glog.V(0).Infof("Create O_EXCL %s: already exists (uid=%d gid=%d mode=%o)",
-				entryFullPath, newEntry.Attributes.Uid, newEntry.Attributes.Gid, newEntry.Attributes.FileMode)
-			return fuse.Status(syscall.EEXIST)
-		}
-		inode = wfs.inodeToPath.Lookup(entryFullPath, newEntry.Attributes.Crtime, false, len(newEntry.HardLinkId) > 0, newEntry.Attributes.Inode, true)
-		fileHandle, openFh, status := wfs.AcquireHandle(ctx, inode, in.Flags, in.Uid, in.Gid)
-		if status != fuse.OK {
-			return status
-		}
-		if in.Flags&syscall.O_TRUNC != 0 && in.Flags&fuse.O_ANYWRITE != 0 {
-			if code = wfs.truncateEntry(entryFullPath, newEntry); code != fuse.OK {
-				wfs.ReleaseHandle(openFh)
-				return code
-			}
-			newEntry = fileHandle.GetEntry().GetEntry()
-		}
-
-		wfs.outputPbEntry(&out.EntryOut, inode, newEntry)
-		out.Fh = uint64(openFh)
-		out.OpenFlags = 0
-		return fuse.OK
+		return wfs.openExistingForCreate(ctx, in, entryFullPath, newEntry, out)
 	}
 	if code != fuse.ENOENT {
 		return code
@@ -86,6 +62,14 @@ func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, o
 		if dlmLock == nil {
 			return fuse.Status(syscall.EAGAIN)
 		}
+		// A deferred create does not ask the filer, so find a file the
+		// previous lock holder created while this create waited.
+		if !wfs.option.EagerFilerCreate {
+			if peerEntry, _, err := wfs.lookupFilerEntry(ctx, entryFullPath); err == nil {
+				dlmLock.Stop()
+				return wfs.openExistingForCreate(ctx, in, entryFullPath, peerEntry, out)
+			}
+		}
 	}
 
 	inode, newEntry, code = wfs.createRegularFile(ctx, dirFullPath, name, in.Mode, in.Uid, in.Gid, 0, !wfs.option.EagerFilerCreate, true)
@@ -99,25 +83,7 @@ func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, o
 		if code != fuse.OK {
 			return code
 		}
-		if newEntry == nil || newEntry.Attributes == nil {
-			return fuse.EIO
-		}
-		inode = wfs.inodeToPath.Lookup(entryFullPath, newEntry.Attributes.Crtime, false, len(newEntry.HardLinkId) > 0, newEntry.Attributes.Inode, true)
-		fileHandle, openFh, status := wfs.AcquireHandle(ctx, inode, in.Flags, in.Uid, in.Gid)
-		if status != fuse.OK {
-			return status
-		}
-		if in.Flags&syscall.O_TRUNC != 0 && in.Flags&fuse.O_ANYWRITE != 0 {
-			if code = wfs.truncateEntry(entryFullPath, newEntry); code != fuse.OK {
-				wfs.ReleaseHandle(openFh)
-				return code
-			}
-			newEntry = fileHandle.GetEntry().GetEntry()
-		}
-		wfs.outputPbEntry(&out.EntryOut, inode, newEntry)
-		out.Fh = uint64(openFh)
-		out.OpenFlags = 0
-		return fuse.OK
+		return wfs.openExistingForCreate(ctx, in, entryFullPath, newEntry, out)
 	} else if code != fuse.OK {
 		if dlmLock != nil {
 			dlmLock.Stop()
@@ -175,6 +141,35 @@ func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, o
 	out.Fh = uint64(openFh)
 	out.OpenFlags = 0
 
+	return fuse.OK
+}
+
+// openExistingForCreate answers a create whose name already exists: an
+// exclusive create fails, any other opens the entry, truncating it if asked.
+func (wfs *WFS) openExistingForCreate(ctx context.Context, in *fuse.CreateIn, entryFullPath util.FullPath, entry *filer_pb.Entry, out *fuse.CreateOut) fuse.Status {
+	if entry == nil || entry.Attributes == nil {
+		return fuse.EIO
+	}
+	if in.Flags&syscall.O_EXCL != 0 {
+		glog.V(0).Infof("Create O_EXCL %s: already exists (uid=%d gid=%d mode=%o)",
+			entryFullPath, entry.Attributes.Uid, entry.Attributes.Gid, entry.Attributes.FileMode)
+		return fuse.Status(syscall.EEXIST)
+	}
+	inode := wfs.inodeToPath.Lookup(entryFullPath, entry.Attributes.Crtime, false, len(entry.HardLinkId) > 0, entry.Attributes.Inode, true)
+	fileHandle, openFh, status := wfs.AcquireHandle(ctx, inode, in.Flags, in.Uid, in.Gid)
+	if status != fuse.OK {
+		return status
+	}
+	if in.Flags&syscall.O_TRUNC != 0 && in.Flags&fuse.O_ANYWRITE != 0 {
+		if code := wfs.truncateEntry(entryFullPath, entry); code != fuse.OK {
+			wfs.ReleaseHandle(openFh)
+			return code
+		}
+		entry = fileHandle.GetEntry().GetEntry()
+	}
+	wfs.outputPbEntry(&out.EntryOut, inode, entry)
+	out.Fh = uint64(openFh)
+	out.OpenFlags = 0
 	return fuse.OK
 }
 
