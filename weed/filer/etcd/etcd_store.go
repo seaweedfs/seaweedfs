@@ -19,6 +19,11 @@ import (
 
 const (
 	DIR_FILE_SEPARATOR = byte(0x00)
+
+	// keepaliveTime is how long a connection with calls in flight may go
+	// without receiving anything before the client pings the member. It is
+	// gRPC's minimum: grpc.WithKeepaliveParams raises anything lower to 10s.
+	keepaliveTime = 10 * time.Second
 )
 
 func init() {
@@ -26,9 +31,11 @@ func init() {
 }
 
 type EtcdStore struct {
-	client        *clientv3.Client
-	etcdKeyPrefix string
-	timeout       time.Duration
+	client           *clientv3.Client
+	etcdKeyPrefix    string
+	timeout          time.Duration
+	requestTimeout   time.Duration
+	keepaliveTimeout time.Duration
 }
 
 func (store *EtcdStore) GetName() string {
@@ -38,6 +45,8 @@ func (store *EtcdStore) GetName() string {
 func (store *EtcdStore) Initialize(configuration weed_util.Configuration, prefix string) error {
 	configuration.SetDefault(prefix+"servers", "localhost:2379")
 	configuration.SetDefault(prefix+"timeout", "3s")
+	configuration.SetDefault(prefix+"request_timeout", "3s")
+	configuration.SetDefault(prefix+"keepalive_timeout", "3s")
 
 	servers := configuration.GetString(prefix + "servers")
 
@@ -51,6 +60,13 @@ func (store *EtcdStore) Initialize(configuration weed_util.Configuration, prefix
 		return fmt.Errorf("parse etcd store timeout: %w", err)
 	}
 	store.timeout = timeout
+
+	if store.requestTimeout, err = time.ParseDuration(configuration.GetString(prefix + "request_timeout")); err != nil {
+		return fmt.Errorf("parse etcd store request_timeout: %w", err)
+	}
+	if store.keepaliveTimeout, err = time.ParseDuration(configuration.GetString(prefix + "keepalive_timeout")); err != nil {
+		return fmt.Errorf("parse etcd store keepalive_timeout: %w", err)
+	}
 
 	certFile := configuration.GetString(prefix + "tls_client_crt_file")
 	keyFile := configuration.GetString(prefix + "tls_client_key_file")
@@ -76,13 +92,23 @@ func (store *EtcdStore) Initialize(configuration weed_util.Configuration, prefix
 func (store *EtcdStore) initialize(servers, username, password string, timeout time.Duration, tlsConfig *tls.Config) error {
 	glog.Infof("filer store etcd: %s", servers)
 
-	client, err := clientv3.New(clientv3.Config{
+	config := clientv3.Config{
 		Endpoints:   strings.Split(servers, ","),
 		Username:    username,
 		Password:    password,
 		DialTimeout: timeout,
 		TLS:         tlsConfig,
-	})
+	}
+	// Keepalive closes the connection to a member that stops answering, so the
+	// balancer stops sending requests to it. gRPC also sets TCP_USER_TIMEOUT to
+	// keepaliveTimeout on Linux: a connection whose sent data stays
+	// unacknowledged that long is closed by the kernel, which catches a dead
+	// node or a network partition without waiting for keepaliveTime.
+	if store.keepaliveTimeout > 0 {
+		config.DialKeepAliveTime = keepaliveTime
+		config.DialKeepAliveTimeout = store.keepaliveTimeout
+	}
+	client, err := clientv3.New(config)
 	if err != nil {
 		return fmt.Errorf("connect to etcd %s: %s", servers, err)
 	}
@@ -112,6 +138,17 @@ func (store *EtcdStore) RollbackTransaction(ctx context.Context) error {
 	return nil
 }
 
+// withTimeout bounds one etcd call by the store's request timeout, unless the
+// caller has set a deadline of its own. A call without a deadline that is balanced
+// onto a member that stops answering waits until keepalive closes the
+// connection, or forever if keepalive is off.
+func (store *EtcdStore) withTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	if _, hasDeadline := ctx.Deadline(); hasDeadline || store.requestTimeout <= 0 {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, store.requestTimeout)
+}
+
 func (store *EtcdStore) InsertEntry(ctx context.Context, entry *filer.Entry) (err error) {
 	key := genKey(entry.DirAndName())
 
@@ -124,6 +161,11 @@ func (store *EtcdStore) InsertEntry(ctx context.Context, entry *filer.Entry) (er
 		meta = weed_util.MaybeGzipData(meta)
 	}
 
+	// No request deadline here: a Put that times out on the client may still
+	// have been committed, and callers such as the filer's upload handler treat
+	// the error as a failed write and delete the chunks the saved entry points
+	// at. etcd's own request timeout still ends a Put that a live member cannot
+	// commit, and keepalive ends one on a member that goes silent.
 	if _, err := store.client.Put(ctx, store.etcdKeyPrefix+string(key), string(meta)); err != nil {
 		return fmt.Errorf("persisting %s : %v", entry.FullPath, err)
 	}
@@ -138,7 +180,9 @@ func (store *EtcdStore) UpdateEntry(ctx context.Context, entry *filer.Entry) (er
 func (store *EtcdStore) FindEntry(ctx context.Context, fullpath weed_util.FullPath) (entry *filer.Entry, err error) {
 	key := genKey(fullpath.DirAndName())
 
-	resp, err := store.client.Get(ctx, store.etcdKeyPrefix+string(key), atScanRevision(ctx)...)
+	opCtx, cancel := store.withTimeout(ctx)
+	defer cancel()
+	resp, err := store.client.Get(opCtx, store.etcdKeyPrefix+string(key), atScanRevision(ctx)...)
 	if err != nil {
 		return nil, fmt.Errorf("get %s : %v", fullpath, err)
 	}
@@ -161,13 +205,19 @@ func (store *EtcdStore) FindEntry(ctx context.Context, fullpath weed_util.FullPa
 func (store *EtcdStore) DeleteEntry(ctx context.Context, fullpath weed_util.FullPath) (err error) {
 	key := genKey(fullpath.DirAndName())
 
-	if _, err := store.client.Delete(ctx, store.etcdKeyPrefix+string(key)); err != nil {
+	opCtx, cancel := store.withTimeout(ctx)
+	defer cancel()
+	if _, err := store.client.Delete(opCtx, store.etcdKeyPrefix+string(key)); err != nil {
 		return fmt.Errorf("delete %s : %v", fullpath, err)
 	}
 
 	return nil
 }
 
+// DeleteFolderChildren removes every entry under fullpath in one DeleteRange.
+// It runs without the store's timeout: the range grows with the directory
+// (about 3.5 s for 600,000 entries), and keepalive still fails the call if the
+// member stops answering.
 func (store *EtcdStore) DeleteFolderChildren(ctx context.Context, fullpath weed_util.FullPath) (err error) {
 	directoryPrefix := genDirectoryKeyPrefix(fullpath, "")
 
@@ -185,7 +235,9 @@ func (store *EtcdStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPat
 		lastFileStart = genDirectoryKeyPrefix(dirPath, startFileName)
 	}
 
-	resp, err := store.client.Get(ctx, store.etcdKeyPrefix+string(lastFileStart),
+	opCtx, cancel := store.withTimeout(ctx)
+	defer cancel()
+	resp, err := store.client.Get(opCtx, store.etcdKeyPrefix+string(lastFileStart),
 		clientv3.WithRange(clientv3.GetPrefixRangeEnd(store.etcdKeyPrefix+string(directoryPrefix))),
 		clientv3.WithLimit(limit+1))
 	if err != nil {
