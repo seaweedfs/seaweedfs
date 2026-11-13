@@ -355,7 +355,7 @@ func (wfs *WFS) createContentEntry(ctx context.Context, fh *FileHandle, request 
 		if err == nil || stored == nil {
 			return resp, merged, err
 		}
-		next, ok := mergeContentEntry(stored, base, local, sent)
+		next, ok := mergeContentEntry(stored, base, local, sent, fh.truncatedSince(base))
 		if !ok {
 			return resp, nil, err
 		}
@@ -372,12 +372,13 @@ const maxContentFlushMerges = 3
 // chunks it added or dropped, and the attributes, extended keys and inline
 // content it changed, taking those values from sent (local in stored's id
 // space). Everything else keeps the stored value. A local truncation keeps
-// its size and clips stored chunks to it; otherwise the larger size wins.
+// the handle's size and clips stored chunks at the lowest size truncated to
+// (truncatedTo, or -1); otherwise the larger size wins.
 // A different file at the path, inline content changed on both sides,
 // inline content next to chunks (reads stop at the inline bytes), or a local
 // whole-file rewrite (maybeMergeChunks, unstamped chunks) over a peer's chunk
 // change cannot be merged: the rewrite carries the handle's stale view.
-func mergeContentEntry(stored, base, local, sent *filer_pb.Entry) (*filer_pb.Entry, bool) {
+func mergeContentEntry(stored, base, local, sent *filer_pb.Entry, truncatedTo int64) (*filer_pb.Entry, bool) {
 	if stored == nil || base == nil || stored.IsDirectory || !bytes.Equal(stored.HardLinkId, base.HardLinkId) {
 		return nil, false
 	}
@@ -401,14 +402,23 @@ func mergeContentEntry(stored, base, local, sent *filer_pb.Entry) (*filer_pb.Ent
 	for _, c := range local.Chunks {
 		inLocal[contentChunkKey(c)] = true
 	}
+	localSize := filer.FileSize(local)
+	if truncatedTo < 0 && localSize < filer.FileSize(base) {
+		truncatedTo = int64(localSize)
+	}
 	peerChanged := len(stored.Chunks) != len(base.Chunks)
 	merged.Chunks = merged.Chunks[:0]
 	for _, c := range stored.Chunks {
 		key := contentChunkKey(c)
 		peerChanged = peerChanged || !inBase[key]
-		if !inBase[key] || inLocal[key] {
-			merged.Chunks = append(merged.Chunks, proto.Clone(c).(*filer_pb.FileChunk))
+		if inBase[key] && !inLocal[key] || truncatedTo >= 0 && c.Offset >= truncatedTo {
+			continue
 		}
+		c = proto.Clone(c).(*filer_pb.FileChunk)
+		if truncatedTo >= 0 && c.Offset+int64(c.Size) > truncatedTo {
+			c.Size = uint64(truncatedTo - c.Offset)
+		}
+		merged.Chunks = append(merged.Chunks, c)
 	}
 	for _, c := range local.Chunks {
 		if !inBase[contentChunkKey(c)] {
@@ -461,19 +471,7 @@ func mergeContentEntry(stored, base, local, sent *filer_pb.Entry) (*filer_pb.Ent
 		}
 	}
 
-	localSize := filer.FileSize(local)
-	if localSize < filer.FileSize(base) {
-		clipped := merged.Chunks[:0]
-		for _, c := range merged.Chunks {
-			if c.Offset >= int64(localSize) {
-				continue
-			}
-			if c.Offset+int64(c.Size) > int64(localSize) {
-				c.Size = localSize - uint64(c.Offset)
-			}
-			clipped = append(clipped, c)
-		}
-		merged.Chunks = clipped
+	if truncatedTo >= 0 {
 		merged.Attributes.FileSize = localSize
 	} else {
 		merged.Attributes.FileSize = uint64(max(int64(localSize), int64(filer.FileSize(stored))))

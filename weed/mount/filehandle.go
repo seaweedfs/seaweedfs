@@ -66,6 +66,10 @@ type FileHandle struct {
 	// must be judged here, not against the live entry. Always store a clone.
 	baseEntry atomic.Pointer[filer_pb.Entry]
 
+	// truncatedTo is the lowest size a truncate set over baseEntry. Later
+	// writes can grow the file past it; a merge still clips peer chunks there.
+	truncatedTo atomic.Pointer[truncateMark]
+
 	// dlmLock holds the distributed lock for cross-mount write coordination.
 	// Non-nil only when -dlm is enabled and the file was opened for writing.
 	// Acquired in AcquireHandle, released in ReleaseHandle.
@@ -205,11 +209,33 @@ func (fh *FileHandle) mergePeerContent(peer, base *filer_pb.Entry) bool {
 	fh.UpdateEntry(func(e *filer_pb.Entry) {
 		local = proto.Clone(e).(*filer_pb.Entry)
 	})
-	merged, ok := mergeContentEntry(peer, base, local, local)
+	merged, ok := mergeContentEntry(peer, base, local, local, fh.truncatedSince(base))
 	if ok {
 		fh.rebaseEntry(merged, local.Chunks)
 	}
 	return ok
+}
+
+type truncateMark struct {
+	base *filer_pb.Entry
+	size int64
+}
+
+// noteTruncate records a truncate to size over the current base.
+func (fh *FileHandle) noteTruncate(size uint64) {
+	base := fh.baseEntry.Load()
+	if m := fh.truncatedTo.Load(); m != nil && m.base == base && m.size <= int64(size) {
+		return
+	}
+	fh.truncatedTo.Store(&truncateMark{base: base, size: int64(size)})
+}
+
+// truncatedSince is the lowest size truncated to over base, or -1.
+func (fh *FileHandle) truncatedSince(base *filer_pb.Entry) int64 {
+	if m := fh.truncatedTo.Load(); m != nil && m.base == base {
+		return m.size
+	}
+	return -1
 }
 
 // setAuthoritativeBase installs the base snapshot a local ack acknowledged.

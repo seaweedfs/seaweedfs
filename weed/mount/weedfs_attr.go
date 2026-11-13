@@ -134,6 +134,9 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 		wfs.invalidateOpenMtimeCache(input.NodeId)
 		oldFileSize := filer.FileSize(entry)
 		if size < oldFileSize {
+			if fh != nil {
+				fh.noteTruncate(size)
+			}
 			// fmt.Printf("truncate %v \n", fullPath)
 			var chunks []*filer_pb.FileChunk
 			var truncatedChunks []*filer_pb.FileChunk
