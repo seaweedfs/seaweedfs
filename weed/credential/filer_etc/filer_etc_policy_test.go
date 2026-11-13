@@ -96,8 +96,27 @@ func (s *policyTestFilerServer) CreateEntry(_ context.Context, req *filer_pb.Cre
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.entries[filerEntryKey(req.Directory, req.Entry.Name)] = cloneEntry(req.Entry)
+	key := filerEntryKey(req.Directory, req.Entry.Name)
+	if _, found := s.entries[key]; found && req.OExcl {
+		return &filer_pb.CreateEntryResponse{Error: filer_pb.ErrEntryAlreadyExists.Error(), ErrorCode: filer_pb.FilerError_ENTRY_ALREADY_EXISTS}, nil
+	}
+	s.entries[key] = cloneEntry(req.Entry)
 	return &filer_pb.CreateEntryResponse{}, nil
+}
+
+func (s *policyTestFilerServer) AtomicRenameEntry(_ context.Context, req *filer_pb.AtomicRenameEntryRequest) (*filer_pb.AtomicRenameEntryResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	oldKey := filerEntryKey(req.OldDirectory, req.OldName)
+	entry, found := s.entries[oldKey]
+	if !found {
+		return nil, status.Error(codes.NotFound, filer_pb.ErrNotFound.Error())
+	}
+	delete(s.entries, oldKey)
+	entry.Name = req.NewName
+	s.entries[filerEntryKey(req.NewDirectory, req.NewName)] = entry
+	return &filer_pb.AtomicRenameEntryResponse{}, nil
 }
 
 func (s *policyTestFilerServer) UpdateEntry(_ context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
