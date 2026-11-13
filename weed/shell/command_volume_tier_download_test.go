@@ -357,3 +357,11 @@ func TestTierDownloadKeepsRemoteObjectWhileReplicasAreUnlisted(t *testing.T) {
 		}
 	}
 }
+
+func TestTierDownloadFailsWhenNoReplicaIsListed(t *testing.T) {
+	c := newTierDownloadCluster(t, tierReplicaRemote)
+	c.hide(0, c.servers[0])
+	if err := c.run(t); err == nil {
+		t.Fatalf("tier download should fail when no replica is listed")
+	}
+}

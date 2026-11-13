@@ -159,6 +159,9 @@ func downloadAndReplicateFromRemoteTier(grpcDialOption grpc.DialOption, writer i
 	remote, local, copies := collectVolumeTierDownloadLocations(topoInfo, vid, collection)
 	listed := len(remote) + len(local)
 	if len(remote) == 0 {
+		if len(local) == 0 {
+			return fmt.Errorf("volume %d is not listed on any volume server", vid)
+		}
 		fmt.Fprintf(writer, "volume %d is already on local disk\n", vid)
 		return nil
 	}
@@ -215,7 +218,7 @@ func downloadAndReplicateFromRemoteTier(grpcDialOption grpc.DialOption, writer i
 			last := pending[0]
 			fmt.Fprintf(writer, "delete remote-backed replica of volume %d on %s with its remote object\n", vid, last.server)
 			if err = deleteVolume(context.Background(), grpcDialOption, vid, last.server, false, false, false); err != nil {
-				return fmt.Errorf("delete volume %d with its remote object on %s: %v", vid, last.server, err)
+				return fmt.Errorf("delete volume %d with its remote object on %s: %v; if the delete was applied, run volume.fix.replication to restore the replica", vid, last.server, err)
 			}
 			if err = replicateTierDownloadedVolume(grpcDialOption, writer, vid, source, last); err != nil {
 				return fmt.Errorf("%v; run volume.fix.replication to restore the replica", err)
