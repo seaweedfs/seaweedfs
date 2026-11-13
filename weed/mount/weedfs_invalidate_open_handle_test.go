@@ -20,6 +20,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/proto"
 )
 
 func newInvalidateTestWFS(t *testing.T) *WFS {
@@ -2234,23 +2235,30 @@ func TestPeerTruncateWaitsForBufferedWrites(t *testing.T) {
 }
 
 // A peer replacing the file at the handle's path (another inode) leaves the
-// dirty handle's writes and base alone instead of installing the newcomer.
+// dirty handle's writes and base alone instead of installing the newcomer,
+// and the handle's flush then fails without touching the replacement.
 func TestPeerReplacementKeepsDirtyHandle(t *testing.T) {
 	for _, name := range []string{"new-content", "same-content"} {
 		t.Run(name, func(t *testing.T) {
 			wfs := newInvalidateTestWFS(t)
-
-			inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-			fh, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, flushConditionEntry(1), 0, 0)
-			fh.AddChunks([]*filer_pb.FileChunk{{FileId: "1,0300000001", Offset: 2, Size: 1, ModifiedTsNs: 3}})
-			fh.dirtyMetadata = true
-			pagesBefore := fh.dirtyPages
 
 			replacement := flushConditionEntry(7)
 			if name == "same-content" {
 				replacement = flushConditionEntry(1)
 			}
 			replacement.Attributes.Inode = 99
+			fake := &contentFlushConditionFiler{entry: proto.Clone(replacement).(*filer_pb.Entry)}
+			startFakeFiler(t, wfs, fake)
+
+			inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+			base := flushConditionEntry(1)
+			wfs.mapPbIdFromFilerToLocal(base)
+			fh, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, base, 0, 0)
+			t.Cleanup(func() { fh.dirtyPages.Destroy() })
+			fh.AddChunks([]*filer_pb.FileChunk{{FileId: "1,0300000001", Offset: 2, Size: 1, ModifiedTsNs: 3}})
+			fh.dirtyMetadata = true
+			pagesBefore := fh.dirtyPages
+
 			resp := &filer_pb.SubscribeMetadataResponse{
 				Directory: "/dir",
 				TsNs:      1500,
@@ -2273,6 +2281,18 @@ func TestPeerReplacementKeepsDirtyHandle(t *testing.T) {
 			}
 			if base := fh.baseEntry.Load(); base.GetAttributes().GetInode() != 42 {
 				t.Fatalf("base %v moved to the replacement", base)
+			}
+
+			if code := wfs.doFlush(context.Background(), fh, 1000, 20, false); code == fuse.OK {
+				t.Fatal("flush into the replacement acknowledged")
+			}
+			fake.mu.Lock()
+			defer fake.mu.Unlock()
+			if !proto.Equal(fake.entry, replacement) {
+				t.Fatalf("replacement changed: %v", fake.entry)
+			}
+			if !fh.dirtyMetadata {
+				t.Fatal("refused flush lost dirty metadata")
 			}
 		})
 	}
