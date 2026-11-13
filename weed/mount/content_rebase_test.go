@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -1111,5 +1112,59 @@ func TestAppendRebaseKeepsOverwriteBelowCommittedTail(t *testing.T) {
 	want = append(want, bytes.Repeat([]byte{'C'}, 256)...)
 	if peer.rejected != 1 || peer.entry.Attributes.FileSize != 768 || peer.entry.Attributes.FileMode != 0600 || !bytes.Equal(g6StoredBytes(t, peer), want) {
 		t.Fatal("rebase lost exact bytes, size or peer attributes")
+	}
+}
+
+// The filer fills in a path rule's TTL when the entry carries none.
+type g6TtlRuleFiler struct{ *g6ConditionalPeer }
+
+func (s *g6TtlRuleFiler) CreateEntry(ctx context.Context, r *filer_pb.CreateEntryRequest) (*filer_pb.CreateEntryResponse, error) {
+	if r.Entry.IsDirectory {
+		return &filer_pb.CreateEntryResponse{}, nil
+	}
+	r = proto.Clone(r).(*filer_pb.CreateEntryRequest)
+	if r.Entry.Attributes.TtlSec == 0 {
+		r.Entry.Attributes.TtlSec = 3600
+	}
+	return s.g6ConditionalPeer.CreateEntry(ctx, r)
+}
+
+func (s *g6TtlRuleFiler) UpdateEntry(ctx context.Context, r *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
+	if r.Entry.IsDirectory {
+		return &filer_pb.UpdateEntryResponse{}, nil
+	}
+	return s.g6ConditionalPeer.UpdateEntry(ctx, r)
+}
+
+func TestEagerCreateWriteKeepsFilerDefaults(t *testing.T) {
+	peer := &g6ConditionalPeer{blobs: make(map[string][]byte)}
+	w := newInvalidateTestWFS(t)
+	w.option.EagerFilerCreate = true
+	w.option.ConcurrentWriters = 1
+	w.concurrentWriters = util.NewLimitedConcurrentExecutor(1)
+	startFakeFiler(t, w, &g6TtlRuleFiler{peer})
+	dir := w.inodeToPath.Lookup("/dir", 1, true, false, 0, false)
+	w.inodeToPath.MarkChildrenCached("/")
+	w.inodeToPath.MarkChildrenCached("/dir")
+	dirEntry := &filer_pb.Entry{Name: "dir", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{FileMode: uint32(os.ModeDir | 0777), Inode: dir}}
+	if err := w.metaCache.InsertEntry(context.Background(), filer.FromPbEntry("/", dirEntry), 1); err != nil {
+		t.Fatal(err)
+	}
+	out := &fuse.CreateOut{}
+	if code := w.Create(nil, &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: dir, Caller: fuse.Caller{Owner: fuse.Owner{Uid: 1000, Gid: 20}}}, Flags: syscall.O_WRONLY, Mode: 0644}, "file", out); code != fuse.OK {
+		t.Fatal("create", code)
+	}
+	g6AppendUploader(t, w.GetHandle(FileHandleId(out.Fh)), 2100, peer)
+	payload := bytes.Repeat([]byte{'E'}, 256)
+	if n, code := w.Write(nil, &fuse.WriteIn{InHeader: fuse.InHeader{NodeId: out.NodeId}, Fh: out.Fh, Size: 256}, payload); n != 256 || code != fuse.OK {
+		t.Fatal(n, code)
+	}
+	if code := w.Fsync(nil, &fuse.FsyncIn{InHeader: fuse.InHeader{NodeId: out.NodeId}, Fh: out.Fh}); code != fuse.OK {
+		t.Fatal("write after an eager create", code)
+	}
+	peer.mu.Lock()
+	defer peer.mu.Unlock()
+	if peer.entry.Attributes.TtlSec != 3600 || !bytes.Equal(g6StoredBytes(t, peer), payload) {
+		t.Fatal("eager create lost the stored defaults or the written bytes")
 	}
 }

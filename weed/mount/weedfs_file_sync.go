@@ -312,6 +312,20 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 	return err
 }
 
+// ackedBase is the base an acknowledged create leaves: the entry the filer
+// stored, in local ids. The filer stamps commit_ts_ns, crtime, inode and atime
+// and may rewrite chunks, so the requested entry would never match it again.
+// A filer that sends no event leaves the requested entry.
+func (wfs *WFS) ackedBase(resp *filer_pb.CreateEntryResponse, requested *filer_pb.Entry) *filer_pb.Entry {
+	stored := resp.GetMetadataEvent().GetEventNotification().GetNewEntry()
+	if stored == nil {
+		return requested
+	}
+	base := proto.Clone(stored).(*filer_pb.Entry)
+	wfs.mapPbIdFromFilerToLocal(base)
+	return base
+}
+
 // shouldMergeChunks reports whether the non-manifest chunks are bloated
 // enough to justify re-reading and re-uploading the file. The condition
 // is: sum of compacted chunk sizes > 2 * logical file size.

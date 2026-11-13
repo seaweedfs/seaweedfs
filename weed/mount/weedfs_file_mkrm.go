@@ -125,6 +125,8 @@ func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, o
 	if !wfs.option.EagerFilerCreate {
 		// The local placeholder is not a committed entry to compare against.
 		fileHandle.baseEntry.Store(nil)
+	} else {
+		fileHandle.setAuthoritativeBase(proto.Clone(newEntry).(*filer_pb.Entry))
 	}
 
 	// Create bypasses AcquireHandle, so attach the lock acquired above.
@@ -472,7 +474,7 @@ func (wfs *WFS) createRegularFile(ctx context.Context, dirFullPath util.FullPath
 		return 0, nil, grpcErrorToFuseStatus(err)
 	}
 
-	return inode, newEntry, fuse.OK
+	return inode, wfs.ackedBase(resp, newEntry), fuse.OK
 }
 
 // markHandleDeleted flags the inode's open handle so its flushes stop writing
