@@ -373,8 +373,9 @@ const maxContentFlushMerges = 3
 // content it changed, taking those values from sent (local in stored's id
 // space). Everything else keeps the stored value. A local truncation keeps
 // its size and clips stored chunks to it; otherwise the larger size wins.
-// A different file at the path, or inline content changed on both sides,
-// cannot be merged.
+// A different file at the path, inline content changed on both sides, or
+// inline content next to chunks (reads stop at the inline bytes) cannot be
+// merged.
 func mergeContentEntry(stored, base, local, sent *filer_pb.Entry) (*filer_pb.Entry, bool) {
 	if stored == nil || base == nil || stored.IsDirectory || !bytes.Equal(stored.HardLinkId, base.HardLinkId) {
 		return nil, false
@@ -409,6 +410,9 @@ func mergeContentEntry(stored, base, local, sent *filer_pb.Entry) (*filer_pb.Ent
 		if !inBase[contentChunkKey(c)] {
 			merged.Chunks = append(merged.Chunks, proto.Clone(c).(*filer_pb.FileChunk))
 		}
+	}
+	if len(merged.Content) > 0 && len(merged.Chunks) > 0 {
+		return nil, false
 	}
 
 	if merged.Attributes == nil {

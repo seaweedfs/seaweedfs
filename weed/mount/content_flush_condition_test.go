@@ -307,6 +307,18 @@ func TestMergeContentEntry(t *testing.T) {
 	if _, ok := mergeContentEntry(stored, base, local, local); ok {
 		t.Fatal("merged into a replaced file")
 	}
+
+	empty := flushConditionEntry()
+	inline := proto.Clone(empty).(*filer_pb.Entry)
+	inline.Content = []byte("peer")
+	appended := proto.Clone(empty).(*filer_pb.Entry)
+	appended.Chunks = flushConditionEntry(5).Chunks
+	if _, ok := mergeContentEntry(inline, empty, appended, appended); ok {
+		t.Fatal("merged chunks next to inline content")
+	}
+	if _, ok := mergeContentEntry(appended, empty, inline, inline); ok {
+		t.Fatal("merged inline content next to chunks")
+	}
 }
 
 // A miss on state no peer changed is republished once against the stored
