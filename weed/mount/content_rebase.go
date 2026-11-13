@@ -126,7 +126,7 @@ func (wfs *WFS) publishPendingContent(ctx context.Context, fh *FileHandle, req *
 			return resp, fmt.Errorf("content rebase made no progress: %w", err)
 		}
 		rebaseContentAttributes(req.Entry, base, latest)
-		base = latest
+		base, err = latest, nil
 	}
 }
 
