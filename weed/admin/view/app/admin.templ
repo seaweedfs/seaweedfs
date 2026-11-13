@@ -571,7 +571,6 @@ templ Admin(data dash.AdminData) {
                                 <thead>
                                     <tr>
                                         <th>Address</th>
-                                        <th>Kind</th>
                                         <th>Version</th>
                                         <th>Status</th>
                                     </tr>
@@ -580,14 +579,13 @@ templ Admin(data dash.AdminData) {
                                     for _, vectorNode := range data.VectorNodes {
                                         <tr>
                                             <td>{vectorNode.Address}</td>
-                                            <td>{vectorNode.Kind}</td>
                                             <td title={vectorNode.Version}>{dash.ShortVersion(vectorNode.Version)}</td>
                                             <td>{vectorNode.Status}</td>
                                         </tr>
                                     }
                                     if len(data.VectorNodes) == 0 {
                                         <tr>
-                                            <td colspan="4" class="text-center text-muted py-4">
+                                            <td colspan="3" class="text-center text-muted py-4">
                                                 <i class="bi bi-info-circle me-2"></i>
                                                 No vector servers found
                                             </td>

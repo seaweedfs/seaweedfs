@@ -67,12 +67,12 @@ func TestClusterHealthSummary(t *testing.T) {
 
 func TestAdminDashboardListsVectorServers(t *testing.T) {
 	var out bytes.Buffer
-	data := dash.AdminData{VectorNodes: []dash.VectorNode{{Address: "10.0.0.6:18888", Kind: "engine", Version: "0.1.0", Status: "Ready"}}}
+	data := dash.AdminData{VectorNodes: []dash.VectorNode{{Address: "10.0.0.6:18888", Version: "0.1.0", Status: "Ready"}}}
 	if err := Admin(data).Render(context.Background(), &out); err != nil {
 		t.Fatal(err)
 	}
 	page := out.String()
-	if !strings.Contains(page, "Vector servers") || !strings.Contains(page, "<td>10.0.0.6:18888</td><td>engine</td>") || strings.Contains(page, "No vector servers found") {
+	if !strings.Contains(page, "Vector servers") || !strings.Contains(page, "<td>10.0.0.6:18888</td>") || strings.Contains(page, "No vector servers found") {
 		t.Fatal("the dashboard does not list the vector engine")
 	}
 	out.Reset()
