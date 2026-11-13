@@ -254,7 +254,9 @@ func (s3a *S3ApiServer) routedDeleteSpecificVersion(owner pb.ServerAddress, buck
 // (condition defaults to lock_key). The second return reports whether the delete
 // was settled here: the raw delete cannot remove an entry other keys are nested
 // under, which the lock path handles by stripping the object off it instead.
-// ifMatch, when set, guards the delete itself.
+// ifMatch, when set, guards the delete itself; a transport error then settles
+// as a failure, since the transaction may have committed and the lock path does
+// not exclude routed deletes.
 func (s3a *S3ApiServer) routedDeleteNullVersion(owner pb.ServerAddress, bucket, object string, worm, bypass, metadataOnly bool, ifMatch *filer_pb.WriteCondition) (s3err.ErrorCode, bool) {
 	fullpath := util.NewFullPath(s3a.bucketDir(bucket), object)
 	dir, name := fullpath.DirAndName()
@@ -267,6 +269,9 @@ func (s3a *S3ApiServer) routedDeleteNullVersion(owner pb.ServerAddress, bucket, 
 		},
 	})
 	switch {
+	case err != nil && ifMatch != nil:
+		glog.Errorf("routedDeleteNullVersion: %s/%s on %s: %v", bucket, object, owner, err)
+		return s3err.ErrInternalError, true
 	case err != nil:
 		glog.Warningf("routedDeleteNullVersion: %s/%s on %s, falling back to lock: %v", bucket, object, owner, err)
 		return s3err.ErrNone, false

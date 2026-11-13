@@ -766,4 +766,16 @@ func TestRoutedVersionDeleteCarriesIfMatch(t *testing.T) {
 			guarded(t, filer.lastReq.Mutations[0], "")
 		})
 	}
+	// The owner may have committed before the error, so only an unconditional
+	// null delete may retry on the lock path.
+	t.Run("null/transport error", func(t *testing.T) {
+		filer := &fakeTxnFiler{err: status.Error(codes.Unavailable, "response lost")}
+		owner := startFakeFiler(t, filer)
+		if code, settled := newS3a().routedDeleteNullVersion(owner, "b", "obj", false, false, false, ifMatch); !settled || code != s3err.ErrInternalError {
+			t.Fatalf("conditional delete returned (%v, %v), want (%v, true)", code, settled, s3err.ErrInternalError)
+		}
+		if code, settled := newS3a().routedDeleteNullVersion(owner, "b", "obj", false, false, false, nil); settled || code != s3err.ErrNone {
+			t.Fatalf("unconditional delete returned (%v, %v), want a lock-path fallback", code, settled)
+		}
+	})
 }
