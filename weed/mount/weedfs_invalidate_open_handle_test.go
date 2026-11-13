@@ -2276,3 +2276,52 @@ func TestPeerReplacementKeepsDirtyHandle(t *testing.T) {
 		})
 	}
 }
+
+// A peer's metadata-only change reaches a dirty handle's live entry, so its
+// next flush does not publish the stale value back; the handle's own edits
+// stay on top.
+func TestPeerChmodReachesDirtyHandle(t *testing.T) {
+	for _, name := range []string{"peer-only", "both-changed"} {
+		t.Run(name, func(t *testing.T) {
+			wfs := newInvalidateTestWFS(t)
+
+			inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+			fh, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, flushConditionEntry(1), 0, 0)
+			fh.AddChunks([]*filer_pb.FileChunk{{FileId: "1,0300000001", Offset: 2, Size: 1, ModifiedTsNs: 3}})
+			want := uint32(0600)
+			if name == "both-changed" {
+				fh.UpdateEntry(func(e *filer_pb.Entry) { e.Attributes.FileMode = 0640 })
+				want = 0640
+			}
+			fh.dirtyMetadata = true
+			pagesBefore := fh.dirtyPages
+
+			peer := flushConditionEntry(1)
+			peer.Attributes.FileMode = 0600
+			resp := &filer_pb.SubscribeMetadataResponse{
+				Directory: "/dir",
+				TsNs:      1500,
+				EventNotification: &filer_pb.EventNotification{
+					OldEntry:      flushConditionEntry(1),
+					NewEntry:      peer,
+					NewParentPath: "/dir",
+				},
+			}
+			if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), resp, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+				t.Fatalf("apply: %v", err)
+			}
+			wfs.metaCache.WaitForEntryInvalidations()
+
+			if fh.dirtyPages != pagesBefore {
+				t.Fatal("dirty pages destroyed by a peer chmod")
+			}
+			entry := fh.GetEntry().GetEntry()
+			if got := entry.Attributes.FileMode; got != want || len(entry.Chunks) != 2 {
+				t.Fatalf("handle mode %o with %d chunks, want %o with its own chunk", got, len(entry.Chunks), want)
+			}
+			if base := fh.baseEntry.Load(); base.GetAttributes().GetFileMode() != 0600 {
+				t.Fatalf("base %v, want the peer's entry", base)
+			}
+		})
+	}
+}

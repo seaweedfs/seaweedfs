@@ -1044,30 +1044,25 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 		fh.advanceEntryVersion(candidateTsNs, 0)
 		return
 	}
-	// Dirty pages overlay content, so only a content change invalidates them:
-	// a metadata-only event (chmod, touch, or a committed copy's own event
-	// against an approximate base) leaves them valid. A dirty handle likewise
-	// keeps its diverged entry unless foreign content supersedes it.
-	contentChanged := base == nil || !sameEntryContent(candidate, base)
-	if fh.dirtyMetadata && base != nil && (contentChanged || !sameContentFile(candidate, base)) {
-		// An unmergeable change or a replaced file keeps the writes; the
-		// flush reports the conflict.
-		if contentChanged && sameContentFile(candidate, base) && fh.mergePeerContent(candidate, base) {
+	// A dirty handle replays its own changes onto the peer's entry, keeping
+	// its pages. An unmergeable change or a replaced file keeps the writes;
+	// the flush reports the conflict.
+	if fh.dirtyMetadata && base != nil {
+		if sameContentFile(candidate, base) && fh.mergePeerContent(candidate, base) {
 			fh.adoptPeerBase(proto.Clone(candidate).(*filer_pb.Entry))
 			fh.advanceEntryVersion(candidateTsNs, 0)
 		}
 		return
 	}
-	if contentChanged {
+	// Dirty pages overlay content, so only a content change invalidates them:
+	// a metadata-only event (chmod, touch, or a committed copy's own event
+	// against an approximate base) leaves them valid.
+	if base == nil || !sameEntryContent(candidate, base) {
 		fh.dirtyPages.Destroy()
 		fh.dirtyPages = newPageWriter(fh, wfs.option.ChunkSizeLimit)
 	}
-	if contentChanged || !fh.dirtyMetadata {
-		fh.SetEntry(candidate)
-		fh.baseEntry.Store(proto.Clone(candidate).(*filer_pb.Entry))
-	} else {
-		fh.adoptPeerBase(proto.Clone(candidate).(*filer_pb.Entry))
-	}
+	fh.SetEntry(candidate)
+	fh.baseEntry.Store(proto.Clone(candidate).(*filer_pb.Entry))
 	fh.advanceEntryVersion(candidateTsNs, 0)
 	return
 }
