@@ -1188,3 +1188,35 @@ func TestEagerCreateWriteKeepsFilerDefaults(t *testing.T) {
 		t.Fatal("eager create lost the stored defaults or the written bytes")
 	}
 }
+
+// A refused append leaves its range pending. An O_TRUNC open that reuses the
+// handle discards it, so a rewrite from offset zero must publish.
+func TestTruncatingOpenDiscardsRefusedAppend(t *testing.T) {
+	base := attributeAppendEntry(1)
+	peer := &g6ConditionalPeer{entry: proto.Clone(base).(*filer_pb.Entry)}
+	w, handle := g6AppendHandle(t, peer, base, 1700)
+	if n, code := w.Write(nil, &fuse.WriteIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: handle, Offset: 512, Size: 256}, bytes.Repeat([]byte{'A'}, 256)); n != 256 || code != fuse.OK {
+		t.Fatal(n, code)
+	}
+	if code := w.Fsync(nil, &fuse.FsyncIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: handle}); code == fuse.OK {
+		t.Fatal("append past the committed EOF published")
+	}
+	dir, _ := w.inodeToPath.GetInode("/dir")
+	out := &fuse.CreateOut{}
+	if code := w.Create(nil, &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: dir}, Flags: syscall.O_WRONLY | syscall.O_CREAT | syscall.O_TRUNC, Mode: 0644}, "file", out); code != fuse.OK {
+		t.Fatal("O_TRUNC create", code)
+	}
+	g6AppendUploader(t, w.GetHandle(FileHandleId(out.Fh)), 1800, peer)
+	payload := bytes.Repeat([]byte{'Z'}, 256)
+	if n, code := w.Write(nil, &fuse.WriteIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: out.Fh, Size: 256}, payload); n != 256 || code != fuse.OK {
+		t.Fatal(n, code)
+	}
+	if code := w.Fsync(nil, &fuse.FsyncIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: out.Fh}); code != fuse.OK {
+		t.Fatal("rewrite after an O_TRUNC open", code)
+	}
+	peer.mu.Lock()
+	defer peer.mu.Unlock()
+	if !bytes.Equal(g6StoredBytes(t, peer), payload) {
+		t.Fatal("truncate and rewrite did not publish the new bytes")
+	}
+}

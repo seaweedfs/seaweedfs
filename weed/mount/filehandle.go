@@ -208,6 +208,7 @@ func (fh *FileHandle) ResetDirtyPages() {
 	fh.dirtyPages.Destroy()
 	fh.dirtyPages = newPageWriter(fh, fh.wfs.option.ChunkSizeLimit)
 	fh.dirtyMetadata = false
+	fh.pendingAppend = false
 	fh.contentType = ""
 }
 
