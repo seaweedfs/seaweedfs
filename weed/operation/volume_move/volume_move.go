@@ -65,7 +65,7 @@ func (m *Mover) LiveMoveVolume(ctx context.Context, volumeId needle.VolumeId, so
 	}
 
 	opts.Progress(10, fmt.Sprintf("marking volume %d readonly on %s", volumeId, source))
-	sourceWasWritable, err := m.ensureVolumeReadonly(ctx, volumeId, source, true)
+	sourceWasWritable, err := m.ensureVolumeReadonly(ctx, volumeId, source, true, true)
 	// The source stays authoritative until its delete succeeds; on any earlier
 	// failure undo the freeze this move added and clean up the target copy.
 	// Installed before the error check: the marking RPC itself can fail after
@@ -130,14 +130,18 @@ func (m *Mover) LiveMoveVolume(ctx context.Context, volumeId needle.VolumeId, so
 				m.restoreVolumeWritable(volumeId, source)
 			} else {
 				// The hard freeze added on top of a readonly-reporting status is
-				// kept: it is indistinguishable from an operator's mark. It is
-				// not persisted, so a volume server restart clears it.
+				// kept: it is indistinguishable from an operator's mark. Only a
+				// freeze of a writable volume is persisted, so a volume server
+				// restart clears this one.
 				fmt.Fprintf(opts.Writer, "volume %d on %s keeps the readonly mark the move added; volume.mark -writable clears it if the prior readonly state was transient\n", volumeId, source)
 			}
 		}
 	}()
 	if err != nil {
 		return fmt.Errorf("mark volume %d readonly on %s: %v", volumeId, source, err)
+	}
+	if sourceWasWritable {
+		fmt.Fprintf(opts.Writer, "volume %d on %s stays readonly across restarts until the move ends; if the move is interrupted and %s has no copy of it, volume.mark -node %s -volumeId %d -writable reopens it, otherwise delete one copy before reopening the other\n", volumeId, source, target, source, volumeId)
 	}
 
 	targetHadVolume, targetStateKnown = m.probeVolume(ctx, volumeId, target)
@@ -168,6 +172,13 @@ func (m *Mover) LiveMoveVolume(ctx context.Context, volumeId needle.VolumeId, so
 		return fmt.Errorf("copy volume %d from %s to %s: %v", volumeId, source, target, err)
 	}
 	copyCompleted = true
+	if sourceWasWritable {
+		// The copy carries the source's persisted freeze; the target must take
+		// the tailed writes and serve as the moved volume.
+		if err = m.MarkVolumeWritable(ctx, volumeId, target, true, false); err != nil {
+			return fmt.Errorf("mark volume %d writable on %s: %v", volumeId, target, err)
+		}
+	}
 
 	opts.Progress(70, fmt.Sprintf("tailing volume %d from %s to %s", volumeId, source, target))
 	fmt.Fprintf(opts.Writer, "tailing volume %d from %s to %s\n", volumeId, source, target)
@@ -273,7 +284,7 @@ func (m *Mover) CopyVolume(ctx context.Context, volumeId needle.VolumeId, source
 	// is (force=false): missed concurrent deletes only make the new replica
 	// trivially stale, and hard-marking here could pin a transiently readonly
 	// (e.g. low-disk) source readonly with nothing to gate on it.
-	sourceWasWritable, err := m.ensureVolumeReadonly(ctx, volumeId, source, false)
+	sourceWasWritable, err := m.ensureVolumeReadonly(ctx, volumeId, source, false, false)
 	defer func() {
 		if sourceWasWritable && (err != nil || restoreWritable) {
 			m.restoreVolumeWritable(volumeId, source)
@@ -293,7 +304,9 @@ func (m *Mover) CopyVolume(ctx context.Context, volumeId needle.VolumeId, source
 // readonly-but-can-delete flag, and neither blocks needle deletes, so only the
 // hard mark makes the volume immutable — required before deleting the source
 // of a move. Without force, a readonly-reporting volume is left untouched.
-func (m *Mover) ensureVolumeReadonly(ctx context.Context, volumeId needle.VolumeId, server pb.ServerAddress, force bool) (wasWritable bool, err error) {
+// persist keeps the freeze of a writable volume across a volume reload or
+// server restart; a mark over an already-readonly volume is never persisted.
+func (m *Mover) ensureVolumeReadonly(ctx context.Context, volumeId needle.VolumeId, server pb.ServerAddress, force, persist bool) (wasWritable bool, err error) {
 	err = m.withClient(false, server, func(client volume_server_pb.VolumeServerClient) error {
 		resp, statusErr := client.VolumeStatus(ctx, &volume_server_pb.VolumeStatusRequest{
 			VolumeId: uint32(volumeId),
@@ -307,7 +320,7 @@ func (m *Mover) ensureVolumeReadonly(ctx context.Context, volumeId needle.Volume
 		}
 		_, readonlyErr := client.VolumeMarkReadonly(ctx, &volume_server_pb.VolumeMarkReadonlyRequest{
 			VolumeId: uint32(volumeId),
-			Persist:  false,
+			Persist:  persist && wasWritable,
 		})
 		return readonlyErr
 	})
@@ -331,7 +344,8 @@ func (m *Mover) probeVolume(ctx context.Context, volumeId needle.VolumeId, serve
 	return false, false
 }
 
-// restoreVolumeWritable undoes a readonly mark after a failed move. It runs on
+// restoreVolumeWritable undoes a readonly mark after a failed move, including
+// a persisted one: the volume servers always persist a writable mark. It runs on
 // its own deadline so an abort via cancelled context still restores the source,
 // and only logs a failure — the caller is already returning the move error.
 func (m *Mover) restoreVolumeWritable(volumeId needle.VolumeId, server pb.ServerAddress) {

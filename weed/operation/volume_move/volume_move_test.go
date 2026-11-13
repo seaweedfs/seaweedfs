@@ -147,11 +147,18 @@ func TestLiveMoveVolumeSequence(t *testing.T) {
 		"src:8080 VolumeMarkReadonly",
 		"dst:8080 ReadVolumeFileStatus",
 		"dst:8080 VolumeCopy",
+		"dst:8080 VolumeMarkWritable",
 		"dst:8080 VolumeTailReceiver",
 		"src:8080 ReadVolumeFileStatus",
 		"dst:8080 ReadVolumeFileStatus",
 		"src:8080 VolumeDelete",
 	})
+
+	// The freeze survives a reload of the source; the copy inherits it, so the
+	// target is reopened before the tail writes to it.
+	if !cluster.readonlyReqs[0].Persist {
+		t.Errorf("freeze of a writable source not persisted: %+v", cluster.readonlyReqs[0])
+	}
 
 	copyReq := cluster.copyReqs[0]
 	if copyReq.DiskType != "ssd" || copyReq.IoBytePerSecond != 42 || copyReq.SourceDataNode != string(srcAddr) {
@@ -629,5 +636,61 @@ func TestCopyVolumeRestoreWritable(t *testing.T) {
 		if restored != restoreWritable {
 			t.Errorf("restoreWritable=%v but writability restored=%v", restoreWritable, restored)
 		}
+	}
+}
+
+func TestLiveMoveVolumeReadonlySourceFreezeNotPersisted(t *testing.T) {
+	// A readonly-reporting source may be only transiently so (e.g. low disk);
+	// the hard mark over it must not outlive a restart, and the copy keeps
+	// whatever state the source had.
+	cluster := newFakeCluster()
+	cluster.readonly[string(srcAddr)] = true
+	cluster.status[string(srcAddr)] = volumeStatus(1000, 100, 10)
+	cluster.status[string(dstAddr)] = volumeStatus(1000, 100, 10)
+	cluster.statusFailures[string(dstAddr)] = 1
+
+	if err := cluster.mover().LiveMoveVolume(context.Background(), 7, srcAddr, dstAddr, VolumeMoveOptions{}); err != nil {
+		t.Fatalf("LiveMoveVolume: %v", err)
+	}
+	if cluster.readonlyReqs[0].Persist {
+		t.Errorf("freeze of an already-readonly source persisted: %+v", cluster.readonlyReqs[0])
+	}
+	for _, call := range cluster.callList() {
+		if call == "dst:8080 VolumeMarkWritable" {
+			t.Fatalf("copy of a readonly source made writable: %v", cluster.callList())
+		}
+	}
+}
+
+func TestLiveMoveVolumeTargetReopenFailureRestores(t *testing.T) {
+	// A target left with the copied freeze would refuse the tailed writes;
+	// abort, drop the copy and reopen the source.
+	cluster := newFakeCluster()
+	cluster.status[string(srcAddr)] = volumeStatus(1000, 100, 10)
+	cluster.errs["dst:8080 VolumeMarkWritable"] = errors.New("target unreachable")
+
+	err := cluster.mover().LiveMoveVolume(context.Background(), 7, srcAddr, dstAddr, VolumeMoveOptions{})
+	if err == nil || !strings.Contains(err.Error(), "mark volume 7 writable on dst:8080") {
+		t.Fatalf("expected target reopen error, got: %v", err)
+	}
+	calls := cluster.callList()
+	for _, call := range calls {
+		if call == "dst:8080 VolumeTailReceiver" {
+			t.Fatalf("tailed into a target that is still frozen: %v", calls)
+		}
+	}
+	if fmt.Sprint(calls[len(calls)-2:]) != fmt.Sprint([]string{"dst:8080 VolumeDelete", "src:8080 VolumeMarkWritable"}) {
+		t.Fatalf("expected target cleanup then source restore, got: %v", calls)
+	}
+}
+
+func TestCopyVolumeFreezeNotPersisted(t *testing.T) {
+	// A copy leaves the source serving, so its freeze must not outlive a crash.
+	cluster := newFakeCluster()
+	if _, err := cluster.mover().CopyVolume(context.Background(), 7, srcAddr, dstAddr, "", 0, false, nil); err != nil {
+		t.Fatalf("CopyVolume: %v", err)
+	}
+	if cluster.readonlyReqs[0].Persist {
+		t.Errorf("copy freeze persisted: %+v", cluster.readonlyReqs[0])
 	}
 }
