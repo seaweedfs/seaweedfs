@@ -34,6 +34,9 @@ func TestSetXAttrCopiesValueBuffer(t *testing.T) {
 		},
 	}, 0, 0)
 	fh.RememberPath(path)
+	// Model a newly copied file whose data has not reached the filer yet;
+	// this is the deferred persistence path whose buffer ownership we test.
+	fh.dirtyMetadata = true
 
 	// Caller buffer aliases a pool that the kernel will overwrite on
 	// the very next request. SetXAttr must defensively copy.

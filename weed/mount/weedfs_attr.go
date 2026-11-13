@@ -73,6 +73,27 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 	if status != fuse.OK || entry == nil {
 		return status
 	}
+	if input.Valid&fuse.FATTR_SIZE == 0 && path != "" {
+		unlock := wfs.lockMetadataPublication(path)
+		defer unlock()
+	}
+	if snapshot, ok := wfs.attributeEntrySnapshot(fh, entry); ok && input.Valid&fuse.FATTR_SIZE == 0 && path != "" {
+		entry, status = wfs.saveEntryAttributes(ctx, path, snapshot, input.Valid&(fuse.FATTR_UID|fuse.FATTR_GID), func(next *filer_pb.Entry) fuse.Status {
+			return wfs.applySetAttr(path, input, next)
+		}, func(live, acked *filer_pb.Entry) {
+			retainSetAttr(input, live, acked)
+		})
+		if status != fuse.OK {
+			return status
+		}
+		if atime, ok := input.GetATime(); ok {
+			wfs.setAtime(input.NodeId, atime)
+		}
+		out.AttrValid = wfs.attrValidSec
+		wfs.setAttrByPbEntry(&out.Attr, input.NodeId, entry, true)
+		wfs.applyInMemoryAtime(&out.Attr, input.NodeId)
+		return fuse.OK
+	}
 	if size, ok := input.GetSize(); ok && fh != nil && fh.dirtyPages.HasWrites() && size < filer.FileSize(entry) {
 		// The truncation below trims chunks; dirty pages it cannot see. Left
 		// alone, pages beyond the new size come back with the next flush and
@@ -86,6 +107,8 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 		}
 	}
 	if fh != nil {
+		active := wfs.fhLockTable.AcquireLock("SetAttr", fh.fh, util.ExclusiveLock)
+		defer wfs.fhLockTable.ReleaseLock(fh.fh, active)
 		fh.entryLock.Lock()
 		defer fh.entryLock.Unlock()
 		// entry is the handle's shared LockedEntry.Entry. Async upload workers
@@ -99,7 +122,7 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 		entry = fh.entry.Entry
 	}
 
-	wormEnforced, wormEnabled := wfs.wormEnforcedForEntry(path, entry)
+	wormEnforced, _ := wfs.wormEnforcedForEntry(path, entry)
 	if wormEnforced {
 		return fuse.EPERM
 	}
@@ -150,6 +173,63 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 
 	}
 
+	if code := wfs.applySetAttr(path, input, entry); code != fuse.OK {
+		return code
+	}
+	if atime, ok := input.GetATime(); ok {
+		wfs.setAtime(input.NodeId, atime)
+	}
+
+	out.AttrValid = wfs.attrValidSec
+	size, includeSize := input.GetSize()
+	if includeSize {
+		out.Attr.Size = size
+	}
+	wfs.setAttrByPbEntry(&out.Attr, input.NodeId, entry, !includeSize)
+	wfs.applyInMemoryAtime(&out.Attr, input.NodeId)
+	applyUnlinkedNlink(&out.Attr, path)
+
+	if fh != nil {
+		fh.dirtyMetadata = true
+		return fuse.OK
+	}
+	if path == "" {
+		// removed while open: the remembered entry is all there is to update
+		wfs.rememberRemovedDir(input.NodeId, entry)
+		return fuse.OK
+	}
+
+	return wfs.saveEntry(path, entry)
+
+}
+
+func retainSetAttr(input *fuse.SetAttrIn, live, acked *filer_pb.Entry) {
+	if _, ok := input.GetMode(); ok {
+		live.Attributes.FileMode = chmod(live.Attributes.FileMode, acked.Attributes.FileMode)
+		live.WormEnforcedAtTsNs = acked.WormEnforcedAtTsNs
+	}
+	_, uidSet := input.GetUID()
+	_, gidSet := input.GetGID()
+	if uidSet {
+		live.Attributes.Uid = acked.Attributes.Uid
+	}
+	if gidSet {
+		live.Attributes.Gid = acked.Attributes.Gid
+	}
+	if (uidSet || gidSet) && input.Uid != 0 {
+		live.Attributes.FileMode &^= 0o6000
+	}
+	if _, ok := input.GetMTime(); ok {
+		live.Attributes.Mtime, live.Attributes.MtimeNs = acked.Attributes.Mtime, acked.Attributes.MtimeNs
+	}
+	live.Attributes.Ctime, live.Attributes.CtimeNs = acked.Attributes.Ctime, acked.Attributes.CtimeNs
+}
+
+func (wfs *WFS) applySetAttr(path util.FullPath, input *fuse.SetAttrIn, entry *filer_pb.Entry) fuse.Status {
+	wormEnforced, wormEnabled := wfs.wormEnforcedForEntry(path, entry)
+	if wormEnforced {
+		return fuse.EPERM
+	}
 	if mode, ok := input.GetMode(); ok {
 		// commit the file to worm when it is set to readonly at the first time
 		if entry.WormEnforcedAtTsNs == 0 && wormEnabled && !hasWritePermission(mode) {
@@ -185,10 +265,6 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 		entry.Attributes.FileMode &^= 0o6000
 	}
 
-	if atime, ok := input.GetATime(); ok {
-		wfs.setAtime(input.NodeId, atime)
-	}
-
 	if mtime, ok := input.GetMTime(); ok {
 		entry.Attributes.Mtime = mtime.Unix()
 		entry.Attributes.MtimeNs = int32(mtime.Nanosecond())
@@ -199,27 +275,7 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 	entry.Attributes.Ctime = now.Unix()
 	entry.Attributes.CtimeNs = int32(now.Nanosecond())
 
-	out.AttrValid = wfs.attrValidSec
-	size, includeSize := input.GetSize()
-	if includeSize {
-		out.Attr.Size = size
-	}
-	wfs.setAttrByPbEntry(&out.Attr, input.NodeId, entry, !includeSize)
-	wfs.applyInMemoryAtime(&out.Attr, input.NodeId)
-	applyUnlinkedNlink(&out.Attr, path)
-
-	if fh != nil {
-		fh.dirtyMetadata = true
-		return fuse.OK
-	}
-	if path == "" {
-		// removed while open: the remembered entry is all there is to update
-		wfs.rememberRemovedDir(input.NodeId, entry)
-		return fuse.OK
-	}
-
-	return wfs.saveEntry(path, entry)
-
+	return fuse.OK
 }
 
 func (wfs *WFS) setRootAttr(out *fuse.AttrOut) {
