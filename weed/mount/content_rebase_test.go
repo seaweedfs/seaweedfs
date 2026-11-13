@@ -842,3 +842,33 @@ func TestRefusalThenRefreshDeadlineFencesFlockClose(t *testing.T) {
 		t.Fatal("refusal changed committed bytes, size, chunks or peer attributes")
 	}
 }
+
+// An append landing on another open's uncommitted extension leaves no hole.
+func TestAppendAfterPendingPositionalExtensionPublishes(t *testing.T) {
+	base := attributeAppendEntry(1)
+	peer := &g6ConditionalPeer{entry: proto.Clone(base).(*filer_pb.Entry)}
+	w, appendHandle := g6AppendHandle(t, peer, base, 1000)
+	out := &fuse.OpenOut{}
+	if code := w.Open(nil, &fuse.OpenIn{InHeader: fuse.InHeader{NodeId: 42}, Flags: syscall.O_WRONLY}, out); code != fuse.OK {
+		t.Fatal(code)
+	}
+	write := func(h, offset uint64, value byte) {
+		t.Helper()
+		n, code := w.Write(nil, &fuse.WriteIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: h, Offset: offset, Size: 256}, bytes.Repeat([]byte{value}, 256))
+		if n != 256 || code != fuse.OK {
+			t.Fatal("write", n, code)
+		}
+	}
+	write(out.Fh, 256, 'A')
+	write(appendHandle, 512, 'B') // the kernel appends at its EOF, which includes A
+	if code := w.Fsync(nil, &fuse.FsyncIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: appendHandle}); code != fuse.OK {
+		t.Fatal("append over a pending extension", code)
+	}
+	peer.mu.Lock()
+	defer peer.mu.Unlock()
+	want := append(bytes.Repeat([]byte{'O'}, 256), bytes.Repeat([]byte{'A'}, 256)...)
+	want = append(want, bytes.Repeat([]byte{'B'}, 256)...)
+	if !bytes.Equal(g6StoredBytes(t, peer), want) {
+		t.Fatal("pending extension or append bytes changed")
+	}
+}
