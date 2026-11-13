@@ -33,7 +33,7 @@ func S3VectorsBuckets(data dash.S3VectorsBucketsData) templ.Component {
 		}
 		ctx = templ.InitializeContext(ctx)
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div class=\"d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom\"><h1 class=\"h2\"><i class=\"bi bi-bounding-box-circles me-2\"></i>Vector Buckets</h1><div class=\"btn-toolbar mb-2 mb-md-0\"><div class=\"btn-group me-2\"><button type=\"button\" class=\"btn btn-sm btn-primary\" data-bs-toggle=\"modal\" data-bs-target=\"#createS3VectorsBucketModal\"><i class=\"bi bi-plus me-1\"></i>Create Bucket</button></div></div></div><div class=\"alert alert-info mb-4\"><i class=\"bi bi-info-circle me-2\"></i> Vector buckets serve the Amazon S3 Vectors API on the S3 port. Each one is a LANCE table bucket that keeps its indexes in its <code>vector</code> namespace. Create indexes and manage vectors from a bucket page or an S3 Vectors client.</div>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div class=\"d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom\"><h1 class=\"h2\"><i class=\"bi bi-arrow-up-right me-2\"></i>Vector Buckets</h1><div class=\"btn-toolbar mb-2 mb-md-0\"><div class=\"btn-group me-2\"><button type=\"button\" class=\"btn btn-sm btn-primary\" data-bs-toggle=\"modal\" data-bs-target=\"#createS3VectorsBucketModal\"><i class=\"bi bi-plus me-1\"></i>Create Bucket</button></div></div></div><div class=\"alert alert-info mb-4\"><i class=\"bi bi-info-circle me-2\"></i> Vector buckets serve the Amazon S3 Vectors API on the S3 port. Each one is a LANCE table bucket that keeps its indexes in its <code>vector</code> namespace. Create indexes and manage vectors from a bucket page or an S3 Vectors client.</div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -41,14 +41,14 @@ func S3VectorsBuckets(data dash.S3VectorsBucketsData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "<div class=\"card shadow mb-4\"><div class=\"card-header py-3\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"bi bi-bounding-box-circles me-2\"></i>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "<div class=\"card shadow mb-4\"><div class=\"card-header py-3\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"bi bi-arrow-up-right me-2\"></i>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var2 string
 		templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d vector buckets", data.TotalBuckets))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_buckets.templ`, Line: 32, Col: 104}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_buckets.templ`, Line: 32, Col: 98}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var2))
 		if templ_7745c5c3_Err != nil {
@@ -194,7 +194,7 @@ func S3VectorsBuckets(data dash.S3VectorsBucketsData) templ.Component {
 			}
 		}
 		if len(data.Buckets) == 0 {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 18, "<tr><td colspan=\"5\" class=\"text-center text-muted py-4\"><i class=\"bi bi-bounding-box-circles icon-3x mb-3 text-muted\"></i><div><h5>No vector buckets found</h5></div></td></tr>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 18, "<tr><td colspan=\"5\" class=\"text-center text-muted py-4\"><i class=\"bi bi-arrow-up-right icon-3x mb-3 text-muted\"></i><div><h5>No vector buckets found</h5></div></td></tr>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
