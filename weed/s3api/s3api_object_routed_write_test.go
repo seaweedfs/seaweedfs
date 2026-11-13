@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -18,6 +19,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 func reqWith(headers map[string]string) *http.Request {
@@ -252,55 +254,26 @@ func TestValidateConditionalCopyHeadersAcceptsHTTPDateFormats(t *testing.T) {
 
 func TestBuildDeleteCondition(t *testing.T) {
 	t.Run("no If-Match is unconditional", func(t *testing.T) {
-		cond, ok := buildDeleteCondition(reqWith(nil))
-		if !ok || cond != nil {
-			t.Fatalf("want (nil, true), got (%v, %v)", cond, ok)
+		if cond := buildDeleteCondition(reqWith(nil)); cond != nil {
+			t.Fatalf("want nil, got %v", cond)
 		}
 	})
 	t.Run("If-Match * to IF_EXISTS", func(t *testing.T) {
-		cond, ok := buildDeleteCondition(reqWith(map[string]string{s3_constants.IfMatch: "*"}))
-		if !ok {
-			t.Fatal("want ok")
-		}
-		if c := oneClause(t, cond); c.Kind != filer_pb.WriteCondition_IF_EXISTS {
+		if c := oneClause(t, buildDeleteCondition(reqWith(map[string]string{s3_constants.IfMatch: "*"}))); c.Kind != filer_pb.WriteCondition_IF_EXISTS {
 			t.Fatalf("kind = %v", c.Kind)
 		}
 	})
 	t.Run("If-Match etag to IF_ETAG_MATCH", func(t *testing.T) {
-		cond, ok := buildDeleteCondition(reqWith(map[string]string{s3_constants.IfMatch: `"e"`}))
-		if !ok {
-			t.Fatal("want ok")
-		}
-		if c := oneClause(t, cond); c.Kind != filer_pb.WriteCondition_IF_ETAG_MATCH || c.Etags[0] != "e" {
+		if c := oneClause(t, buildDeleteCondition(reqWith(map[string]string{s3_constants.IfMatch: `"e"`}))); c.Kind != filer_pb.WriteCondition_IF_ETAG_MATCH || len(c.Etags) != 1 || c.Etags[0] != `"e"` {
 			t.Fatalf("clause = %+v", c)
 		}
 	})
-	t.Run("weak etag falls back", func(t *testing.T) {
-		if _, ok := buildDeleteCondition(reqWith(map[string]string{s3_constants.IfMatch: `W/"e"`})); ok {
-			t.Fatal("weak etag must not take the fast path")
+	t.Run("an ETag list carries every candidate", func(t *testing.T) {
+		c := oneClause(t, buildDeleteCondition(reqWith(map[string]string{s3_constants.IfMatch: `"a", W/"b"`})))
+		if c.Kind != filer_pb.WriteCondition_IF_ETAG_MATCH || len(c.Etags) != 2 || c.Etags[0] != `"a"` || c.Etags[1] != `W/"b"` {
+			t.Fatalf("clause = %+v", c)
 		}
 	})
-}
-
-func TestSingleStrongETag(t *testing.T) {
-	cases := []struct {
-		in     string
-		want   string
-		single bool
-	}{
-		{`"abc"`, "abc", true},
-		{` "abc" `, "abc", true},
-		{`abc`, "abc", true},
-		{`W/"abc"`, "", false},
-		{`w/"abc"`, "", false},
-		{`"a","b"`, "", false},
-	}
-	for _, c := range cases {
-		got, single := singleStrongETag(c.in)
-		if single != c.single || (single && got != c.want) {
-			t.Errorf("singleStrongETag(%q) = (%q, %v), want (%q, %v)", c.in, got, single, c.want, c.single)
-		}
-	}
 }
 
 // fakeTxnFiler is a minimal SeaweedFiler gRPC server that records ObjectTransaction
@@ -367,7 +340,7 @@ func TestRoutedDeleteSpecificVersionUsesWormCondition(t *testing.T) {
 		},
 	}
 
-	if code := s3a.routedDeleteSpecificVersion(owner, "b", "obj", versionId, true, false, false); code != s3err.ErrAccessDenied {
+	if code := s3a.routedDeleteSpecificVersion(owner, "b", "obj", versionId, true, false, false, nil); code != s3err.ErrAccessDenied {
 		t.Fatalf("locked version delete returned %v, want %v", code, s3err.ErrAccessDenied)
 	}
 
@@ -438,7 +411,7 @@ func TestRoutedDeleteSpecificVersionGuardsRepoint(t *testing.T) {
 	t.Run("one transaction behind the version's lock checks", func(t *testing.T) {
 		filer := &fakeTxnFiler{}
 		owner := startFakeFiler(t, filer)
-		if code := newS3a().routedDeleteSpecificVersion(owner, "b", "obj", versionId, false, false, false); code != s3err.ErrNone {
+		if code := newS3a().routedDeleteSpecificVersion(owner, "b", "obj", versionId, false, false, false, nil); code != s3err.ErrNone {
 			t.Fatalf("delete returned %v, want %v", code, s3err.ErrNone)
 		}
 		if len(filer.reqs) != 1 {
@@ -459,7 +432,7 @@ func TestRoutedDeleteSpecificVersionGuardsRepoint(t *testing.T) {
 	t.Run("metadata-only delete keeps the data", func(t *testing.T) {
 		filer := &fakeTxnFiler{}
 		owner := startFakeFiler(t, filer)
-		if code := newS3a().routedDeleteSpecificVersion(owner, "b", "obj", versionId, false, false, true); code != s3err.ErrNone {
+		if code := newS3a().routedDeleteSpecificVersion(owner, "b", "obj", versionId, false, false, true, nil); code != s3err.ErrNone {
 			t.Fatalf("delete returned %v, want %v", code, s3err.ErrNone)
 		}
 		if filer.lastReq.Mutations[1].IsDeleteData {
@@ -739,4 +712,235 @@ func TestRouteWriteCondition(t *testing.T) {
 	if _, ok := routeWriteCondition(reqWith(map[string]string{"If-Modified-Since": "not a date"}), false); ok {
 		t.Fatal("unparseable headers must not route")
 	}
+}
+
+// A conditional version delete guards the version inside its own transaction,
+// ahead of the repoint, and reports that guard failing as a failed
+// precondition rather than an object-lock denial.
+func TestRoutedVersionDeleteCarriesIfMatch(t *testing.T) {
+	versionId := "672a75d526ef29c79fe6b5680cad4a0d"
+	ifMatch := &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{Kind: filer_pb.WriteCondition_IF_ETAG_MATCH, Etags: []string{"abc"}}}}
+	newS3a := func() *S3ApiServer {
+		return &S3ApiServer{option: &S3ApiServerOption{
+			BucketsPath:    "/buckets",
+			GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		}}
+	}
+	guarded := func(t *testing.T, m *filer_pb.ObjectMutation, conditionKey string) {
+		t.Helper()
+		clauses := m.GetCondition().GetClauses()
+		if len(clauses) != 1 || clauses[0].Kind != filer_pb.WriteCondition_IF_ETAG_MATCH || len(clauses[0].Etags) != 1 || clauses[0].Etags[0] != "abc" {
+			t.Fatalf("mutation condition = %+v, want If-Match abc", m.GetCondition())
+		}
+		if m.ConditionKey != conditionKey {
+			t.Fatalf("mutation condition key = %q, want %q", m.ConditionKey, conditionKey)
+		}
+	}
+	firstMutation := int32(0)
+	cases := []struct {
+		name string
+		resp *filer_pb.ObjectTransactionResponse
+		want s3err.ErrorCode
+	}{
+		{"applied", nil, s3err.ErrNone},
+		{"if-match failed", &filer_pb.ObjectTransactionResponse{ErrorCode: filer_pb.FilerError_PRECONDITION_FAILED, FailedMutation: &firstMutation}, s3err.ErrPreconditionFailed},
+		{"object lock denied", &filer_pb.ObjectTransactionResponse{ErrorCode: filer_pb.FilerError_PRECONDITION_FAILED}, s3err.ErrAccessDenied},
+	}
+	for _, tc := range cases {
+		t.Run("version/"+tc.name, func(t *testing.T) {
+			filer := &fakeTxnFiler{resp: tc.resp}
+			owner := startFakeFiler(t, filer)
+			if code := newS3a().routedDeleteSpecificVersion(owner, "b", "obj", versionId, true, false, false, ifMatch); code != tc.want {
+				t.Fatalf("delete returned %v, want %v", code, tc.want)
+			}
+			if filer.lastReq.Mutations[0].Type != filer_pb.ObjectMutation_RECOMPUTE_LATEST {
+				t.Fatalf("first mutation = %v, want the repoint", filer.lastReq.Mutations[0].Type)
+			}
+			guarded(t, filer.lastReq.Mutations[0], "/buckets/b/obj.versions/v_"+versionId)
+		})
+		t.Run("null/"+tc.name, func(t *testing.T) {
+			filer := &fakeTxnFiler{resp: tc.resp}
+			owner := startFakeFiler(t, filer)
+			code, settled := newS3a().routedDeleteNullVersion(owner, "b", "obj", true, false, false, ifMatch)
+			if !settled || code != tc.want {
+				t.Fatalf("delete returned (%v, %v), want (%v, true)", code, settled, tc.want)
+			}
+			guarded(t, filer.lastReq.Mutations[0], "")
+		})
+	}
+	// The owner may have committed before the error, so only an unconditional
+	// null delete may retry on the lock path.
+	t.Run("null/transport error", func(t *testing.T) {
+		filer := &fakeTxnFiler{err: status.Error(codes.Unavailable, "response lost")}
+		owner := startFakeFiler(t, filer)
+		if code, settled := newS3a().routedDeleteNullVersion(owner, "b", "obj", false, false, false, ifMatch); !settled || code != s3err.ErrInternalError {
+			t.Fatalf("conditional delete returned (%v, %v), want (%v, true)", code, settled, s3err.ErrInternalError)
+		}
+		if code, settled := newS3a().routedDeleteNullVersion(owner, "b", "obj", false, false, false, nil); settled || code != s3err.ErrNone {
+			t.Fatalf("unconditional delete returned (%v, %v), want a lock-path fallback", code, settled)
+		}
+	})
+	// After an owner failure other than the nested-entry refusal, a
+	// conditional null delete must not re-check on the lock path.
+	t.Run("null/owner error", func(t *testing.T) {
+		for _, msg := range []string{
+			"mutation 0: delete file /buckets/b/obj: store unavailable",
+			"mutation 0: delete file /buckets/b/" + filer.MsgFailDelNonEmptyFolder + ": store unavailable",
+		} {
+			fake := &fakeTxnFiler{resp: &filer_pb.ObjectTransactionResponse{Error: msg, FailedMutation: &firstMutation}}
+			owner := startFakeFiler(t, fake)
+			if code, settled := newS3a().routedDeleteNullVersion(owner, "b", "obj", false, false, false, ifMatch); !settled || code != s3err.ErrInternalError {
+				t.Fatalf("%q: conditional delete returned (%v, %v), want (%v, true)", msg, code, settled, s3err.ErrInternalError)
+			}
+			if code, settled := newS3a().routedDeleteNullVersion(owner, "b", "obj", false, false, false, nil); settled || code != s3err.ErrNone {
+				t.Fatalf("%q: unconditional delete returned (%v, %v), want a lock-path fallback", msg, code, settled)
+			}
+		}
+	})
+	// An entry other keys are nested under is stripped on the owner under the
+	// same guard plus the entry it was read as, so a routed delete that runs
+	// once the last nested key is gone cannot pass the check as well.
+	t.Run("null/nested entry", func(t *testing.T) {
+		object := &filer_pb.Entry{
+			Name:        "obj",
+			IsDirectory: true,
+			Attributes:  &filer_pb.FuseAttributes{Mime: "text/plain", FileSize: 3, Md5: []byte{0xab}},
+			Chunks:      []*filer_pb.FileChunk{{FileId: "1,ab", Size: 3}},
+			Extended:    map[string][]byte{s3_constants.ExtETagKey: []byte(`"abc"`), "xattr-user.k": []byte("v")},
+		}
+		for _, tc := range []struct {
+			name   string
+			entry  *filer_pb.Entry
+			demote *filer_pb.ObjectTransactionResponse
+			want   s3err.ErrorCode
+			txns   int
+		}{
+			{"demoted", object, nil, s3err.ErrNone, 2},
+			{"guard failed", object, &filer_pb.ObjectTransactionResponse{ErrorCode: filer_pb.FilerError_PRECONDITION_FAILED, FailedMutation: &firstMutation}, s3err.ErrPreconditionFailed, 2},
+			{"object lock denied", object, &filer_pb.ObjectTransactionResponse{ErrorCode: filer_pb.FilerError_PRECONDITION_FAILED}, s3err.ErrAccessDenied, 2},
+			{"deleted by a routed delete", nil, nil, s3err.ErrPreconditionFailed, 1},
+			{"already demoted", &filer_pb.Entry{Name: "obj", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}}, nil, s3err.ErrPreconditionFailed, 1},
+		} {
+			fake := &fakeNestedFiler{entry: tc.entry, demote: tc.demote}
+			owner := startFakeFiler(t, fake)
+			if code, settled := newS3a().routedDeleteNullVersion(owner, "b", "obj", true, false, false, ifMatch); !settled || code != tc.want {
+				t.Fatalf("%s: delete returned (%v, %v), want (%v, true)", tc.name, code, settled, tc.want)
+			}
+			if len(fake.reqs) != tc.txns {
+				t.Fatalf("%s: %d transactions, want %d", tc.name, len(fake.reqs), tc.txns)
+			}
+			if tc.txns < 2 {
+				continue
+			}
+			req := fake.reqs[1]
+			if len(req.GetCondition().GetClauses()) == 0 || req.LockKey != "/buckets/b/obj" {
+				t.Fatalf("%s: demote request = %+v, want the object lock guards on its key", tc.name, req)
+			}
+			m := req.Mutations[0]
+			if m.Type != filer_pb.ObjectMutation_PUT || m.Directory != "/buckets/b" || m.Entry.GetName() != "obj" || !m.Entry.IsDirectory {
+				t.Fatalf("%s: demote mutation = %+v", tc.name, m)
+			}
+			if m.Entry.IsDirectoryKeyObject() || len(m.Entry.Attributes.Md5) > 0 || m.Entry.Extended[s3_constants.ExtETagKey] != nil || string(m.Entry.Extended["xattr-user.k"]) != "v" {
+				t.Fatalf("%s: demoted entry %+v still holds the object or lost the directory xattr", tc.name, m.Entry)
+			}
+			clauses := m.GetCondition().GetClauses()
+			if len(clauses) != 2 || clauses[0].Kind != filer_pb.WriteCondition_IF_ETAG_MATCH ||
+				clauses[1].Kind != filer_pb.WriteCondition_IF_ENTRY_EQUAL || !proto.Equal(clauses[1].ExpectedEntry, tc.entry) {
+				t.Fatalf("%s: demote condition = %+v, want If-Match and the entry it was read as", tc.name, m.GetCondition())
+			}
+		}
+		fake := &fakeNestedFiler{entry: object}
+		owner := startFakeFiler(t, fake)
+		if code, settled := newS3a().routedDeleteNullVersion(owner, "b", "obj", false, false, false, nil); settled || code != s3err.ErrNone || len(fake.reqs) != 1 {
+			t.Fatalf("unconditional delete returned (%v, %v) after %d transactions, want a lock-path fallback", code, settled, len(fake.reqs))
+		}
+	})
+	// A stripped nested entry stays behind as a plain directory, which
+	// IF_EXISTS still matches, so If-Match: * asks the owner for an object.
+	t.Run("null/If-Match *", func(t *testing.T) {
+		star := &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{Kind: filer_pb.WriteCondition_IF_EXISTS}}}
+		objectKind := func(t *testing.T, m *filer_pb.ObjectMutation) {
+			t.Helper()
+			if c := m.GetCondition().GetClauses(); len(c) == 0 || c[0].Kind != filer_pb.WriteCondition_IF_OBJECT_EXISTS {
+				t.Fatalf("mutation condition = %+v, want IF_OBJECT_EXISTS first", m.GetCondition())
+			}
+		}
+		del := &fakeTxnFiler{}
+		if code, settled := newS3a().routedDeleteNullVersion(startFakeFiler(t, del), "b", "obj", false, false, false, star); !settled || code != s3err.ErrNone {
+			t.Fatalf("delete returned (%v, %v), want (%v, true)", code, settled, s3err.ErrNone)
+		}
+		objectKind(t, del.lastReq.Mutations[0])
+		nested := &fakeNestedFiler{entry: &filer_pb.Entry{Name: "obj", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Mime: "text/plain"}}}
+		if code, settled := newS3a().routedDeleteNullVersion(startFakeFiler(t, nested), "b", "obj", false, false, false, star); !settled || code != s3err.ErrNone || len(nested.reqs) != 2 {
+			t.Fatalf("nested delete returned (%v, %v) after %d transactions, want a demote", code, settled, len(nested.reqs))
+		}
+		objectKind(t, nested.reqs[0].Mutations[0])
+		if star.Clauses[0].Kind != filer_pb.WriteCondition_IF_EXISTS {
+			t.Fatalf("caller's condition changed to %v", star.Clauses[0].Kind)
+		}
+		// A filer that predates IF_OBJECT_EXISTS fails it closed; the delete is
+		// then settled on the entry as read, under IF_EXISTS and that entry.
+		guardFailed := &filer_pb.ObjectTransactionResponse{ErrorCode: filer_pb.FilerError_PRECONDITION_FAILED, FailedMutation: &firstMutation}
+		file := &filer_pb.Entry{Name: "obj", Attributes: &filer_pb.FuseAttributes{FileSize: 3}}
+		for _, tc := range []struct {
+			name  string
+			entry *filer_pb.Entry
+			want  s3err.ErrorCode
+			kind  filer_pb.ObjectMutation_Type
+		}{
+			{"file", file, s3err.ErrNone, filer_pb.ObjectMutation_DELETE},
+			{"nested object", nested.entry, s3err.ErrNone, filer_pb.ObjectMutation_PUT},
+			{"plain directory", &filer_pb.Entry{Name: "obj", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}}, s3err.ErrPreconditionFailed, 0},
+			{"absent", nil, s3err.ErrPreconditionFailed, 0},
+		} {
+			old := &fakeNestedFiler{entry: tc.entry, first: guardFailed}
+			if code, settled := newS3a().routedDeleteNullVersion(startFakeFiler(t, old), "b", "obj", false, false, false, star); !settled || code != tc.want {
+				t.Fatalf("older filer, %s: delete returned (%v, %v), want (%v, true)", tc.name, code, settled, tc.want)
+			}
+			if tc.want != s3err.ErrNone {
+				if len(old.reqs) != 1 {
+					t.Fatalf("older filer, %s: %d transactions, want 1", tc.name, len(old.reqs))
+				}
+				continue
+			}
+			m := old.reqs[1].Mutations[0]
+			if c := m.GetCondition().GetClauses(); m.Type != tc.kind || len(c) != 2 || c[0].Kind != filer_pb.WriteCondition_IF_EXISTS ||
+				c[1].Kind != filer_pb.WriteCondition_IF_ENTRY_EQUAL || !proto.Equal(c[1].ExpectedEntry, tc.entry) {
+				t.Fatalf("older filer, %s: retry = %+v, want a %v under IF_EXISTS and the entry read", tc.name, m, tc.kind)
+			}
+		}
+	})
+}
+
+// fakeNestedFiler answers the first transaction with first, else refuses its
+// delete because other keys are nested under the entry, serves entry to
+// lookups, and answers later transactions with demote.
+type fakeNestedFiler struct {
+	filer_pb.UnimplementedSeaweedFilerServer
+	entry  *filer_pb.Entry
+	first  *filer_pb.ObjectTransactionResponse
+	demote *filer_pb.ObjectTransactionResponse
+	reqs   []*filer_pb.ObjectTransactionRequest
+}
+
+func (f *fakeNestedFiler) ObjectTransaction(ctx context.Context, req *filer_pb.ObjectTransactionRequest) (*filer_pb.ObjectTransactionResponse, error) {
+	f.reqs = append(f.reqs, req)
+	if len(f.reqs) == 1 && f.first != nil {
+		return f.first, nil
+	}
+	if len(f.reqs) == 1 {
+		failed := int32(0)
+		return &filer_pb.ObjectTransactionResponse{Error: fmt.Sprintf("mutation 0: %v", fmt.Errorf("%w: %s", filer.ErrNonEmptyFolder, req.LockKey)), FailedMutation: &failed}, nil
+	}
+	if f.demote != nil {
+		return f.demote, nil
+	}
+	return &filer_pb.ObjectTransactionResponse{}, nil
+}
+
+func (f *fakeNestedFiler) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	if f.entry == nil {
+		return nil, status.Error(codes.NotFound, filer_pb.ErrNotFound.Error())
+	}
+	return &filer_pb.LookupDirectoryEntryResponse{Entry: f.entry}, nil
 }

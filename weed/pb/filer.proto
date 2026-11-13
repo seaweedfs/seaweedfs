@@ -286,6 +286,7 @@ message WriteCondition {
         IF_EXTENDED_TIME_ELAPSED = 8; // fail if present and extended[ext_key] (unix seconds) is in the future
         IF_CHUNKS_EQUAL       = 9; // fail unless the stored chunk fid multiset equals fids (absent entry = no chunks)
         IF_ENTRY_EQUAL        = 10; // fail unless the stored entry equals expected_entry
+        IF_OBJECT_EXISTS      = 11; // fail if absent or a plain directory, one holding no object of its own (If-Match: * on a null version)
     }
     // Clause is one primitive comparison. IF_ETAG_MATCH holds when the current
     // entry's ETag equals any value in etags; IF_ETAG_NOT_MATCH holds when it

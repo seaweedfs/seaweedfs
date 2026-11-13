@@ -173,7 +173,7 @@ func (s3a *S3ApiServer) deleteVersionedObject(r *http.Request, bucket, object, v
 		if owner := s3a.routableWriteOwner(bucket, object); owner != "" {
 			worm, lockErr := s3a.isObjectLockEnabled(bucket)
 			if lockErr == nil {
-				code, settled := s3a.routedDeleteNullVersion(owner, bucket, object, worm, worm && governanceBypassAllowed, false)
+				code, settled := s3a.routedDeleteNullVersion(owner, bucket, object, worm, worm && governanceBypassAllowed, false, nil)
 				if settled {
 					if code != s3err.ErrNone {
 						return result, code
@@ -288,29 +288,28 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 	// Fast path: route the delete to the owner filer under its per-path lock;
 	// routedObjectOwner excludes versioned/object-lock buckets.
 	if !deleteHandled && !versioningConfigured {
-		if cond, condOk := buildDeleteCondition(r); condOk {
-			if owner, ownerOk := s3a.routedObjectOwner(bucket, object); ownerOk {
-				resp, err := s3a.routedDelete(owner, bucket, object, cond)
-				switch {
-				case err != nil:
-					glog.Warningf("DeleteObjectHandler: routed delete to %s failed for %s/%s, falling back to lock: %v", owner, bucket, object, err)
-				case resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED:
-					deleteCode, deleteHandled = s3err.ErrPreconditionFailed, true
-				case resp.Error != "":
-					// Non-precondition error: fall back (the lock path handles cases
-					// the raw delete cannot, e.g. a non-empty directory marker).
-					glog.Warningf("DeleteObjectHandler: routed delete to %s returned %q for %s/%s, falling back to lock", owner, resp.Error, bucket, object)
-				default:
-					deleteCode, deleteHandled = s3err.ErrNone, true
-				}
+		if owner, ownerOk := s3a.routedObjectOwner(bucket, object); ownerOk {
+			resp, err := s3a.routedDelete(owner, bucket, object, buildDeleteCondition(r))
+			switch {
+			case err != nil:
+				glog.Warningf("DeleteObjectHandler: routed delete to %s failed for %s/%s, falling back to lock: %v", owner, bucket, object, err)
+			case resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED:
+				deleteCode, deleteHandled = s3err.ErrPreconditionFailed, true
+			case resp.Error != "":
+				// Non-precondition error: fall back (the lock path handles cases
+				// the raw delete cannot, e.g. a non-empty directory marker).
+				glog.Warningf("DeleteObjectHandler: routed delete to %s returned %q for %s/%s, falling back to lock", owner, resp.Error, bucket, object)
+			default:
+				deleteCode, deleteHandled = s3err.ErrNone, true
 			}
 		}
 	}
 	// Versioned/suspended delete with no specific version: route off the lock when
 	// the bucket has an owner. createDeleteMarker routes its own pointer flip; a
 	// delete marker never removes a locked version, so object-lock buckets route
-	// here too. The If-Match precondition was already checked above.
-	if !deleteHandled && versioningConfigured && versionId == "" {
+	// here too. A conditional delete stays on the lock path, which re-checks
+	// If-Match under the lock, so concurrent ones cannot all pass the check above.
+	if !deleteHandled && versioningConfigured && versionId == "" && r.Header.Get(s3_constants.IfMatch) == "" {
 		if owner := s3a.routableWriteOwner(bucket, object); owner != "" {
 			deleteResult, deleteCode = s3a.deleteVersionedObject(r, bucket, object, versionId, versioningState)
 			deleteHandled = true
@@ -322,10 +321,13 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 	// gate the delete on the version's WORM guards, evaluated on the owner — for
 	// governance bypass the retention guard is scoped to COMPLIANCE so the filer
 	// allows a governance-mode delete while still denying compliance and legal
-	// hold, without the gateway reading the version.
+	// hold, without the gateway reading the version. If-Match rides the same
+	// transaction, so concurrent conditional deletes of one version cannot both
+	// pass.
 	if !deleteHandled && versionId != "" {
 		worm, lockErr := s3a.isObjectLockEnabled(bucket)
 		bypass := worm && s3a.evaluateGovernanceBypassRequest(r, bucket, object)
+		ifMatch := buildDeleteCondition(r)
 		if lockErr == nil {
 			if owner := s3a.objectWriteOwner(bucket, object); owner != "" {
 				deleteResult.versionId = versionId
@@ -335,11 +337,11 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 					}
 				}
 				if versionId == "null" {
-					deleteCode, deleteHandled = s3a.routedDeleteNullVersion(owner, bucket, object, worm, bypass, false)
+					deleteCode, deleteHandled = s3a.routedDeleteNullVersion(owner, bucket, object, worm, bypass, false, ifMatch)
 				} else {
 					// A version id never changes kind, so a marker read here is
 					// the one deleted; markers carry no WORM guard.
-					deleteCode, deleteHandled = s3a.routedDeleteSpecificVersion(owner, bucket, object, versionId, worm && !deleteResult.deleteMarker, bypass, false), true
+					deleteCode, deleteHandled = s3a.routedDeleteSpecificVersion(owner, bucket, object, versionId, worm && !deleteResult.deleteMarker, bypass, false, ifMatch), true
 				}
 			}
 		}

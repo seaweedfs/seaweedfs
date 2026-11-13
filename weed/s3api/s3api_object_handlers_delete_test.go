@@ -3,6 +3,7 @@ package s3api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -174,4 +175,102 @@ func TestVersionedDeleteMarkerCommitsOnOwner(t *testing.T) {
 	replica.mu.Lock()
 	require.Nil(t, replica.entries[markerKey], "the replica must still be behind")
 	replica.mu.Unlock()
+}
+
+// Two If-Match deletes can both pass the check made before the object write
+// lock. The one that takes the lock second must see the first one's delete and
+// fail its precondition instead of reporting a second successful delete.
+func TestVersionedConditionalDeleteRechecksUnderLock(t *testing.T) {
+	for _, state := range []string{s3_constants.VersioningEnabled, s3_constants.VersioningSuspended} {
+		for _, raced := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/raced=%v", state, raced), func(t *testing.T) {
+				filerImpl, s3a := newVersionedPutFiler(t)
+				s3a.iam = &IdentityAccessManagement{}
+				filerImpl.mu.Lock()
+				filerImpl.entries["/buckets/b"].Extended[s3_constants.ExtVersioningKey] = []byte(state)
+				filerImpl.mu.Unlock()
+				filerAddr := s3a.option.Filers[0]
+				s3a.objectWriteLockClient = cluster.NewLockClient(s3a.option.GrpcDialOption, filerAddr)
+				s3a.objectWriteLockClient.SetRing([]pb.ServerAddress{filerAddr}, 1)
+
+				locked := false
+				s3a.newObjectWriteLock = func(bucket, object string) (objectWriteLock, error) {
+					if raced && !locked {
+						other := httptest.NewRequest(http.MethodDelete, "/b/k", nil)
+						if _, code := s3a.deleteVersionedObject(other, bucket, object, "", state); code != s3err.ErrNone {
+							t.Fatalf("competing delete: %v", code)
+						}
+					}
+					locked = true
+					return noopObjectWriteLock{}, nil
+				}
+
+				r := httptest.NewRequest(http.MethodDelete, "/b/k", nil)
+				r = mux.SetURLVars(r, map[string]string{"bucket": "b", "object": "k"})
+				r.Header.Set(s3_constants.IfMatch, `"abc123"`)
+				w := httptest.NewRecorder()
+				s3a.DeleteObjectHandler(w, r)
+
+				require.True(t, locked, "the conditional delete must take the object write lock")
+				want := http.StatusNoContent
+				if raced {
+					want = http.StatusPreconditionFailed
+				}
+				require.Equal(t, want, w.Code, w.Body.String())
+				markers := 0
+				filerImpl.mu.Lock()
+				for key, entry := range filerImpl.entries {
+					if strings.HasPrefix(key, "/buckets/b/k.versions/") && string(entry.Extended[s3_constants.ExtDeleteMarkerKey]) == "true" {
+						markers++
+					}
+				}
+				filerImpl.mu.Unlock()
+				require.Equal(t, 1, markers, "exactly one delete may leave a marker")
+			})
+		}
+	}
+}
+
+// A conditional delete of a specific version carries If-Match, ETag lists
+// included, into the owner's transaction.
+func TestVersionIdConditionalDeleteGuardsOnOwner(t *testing.T) {
+	for _, tc := range []struct {
+		ifMatch string
+		etags   []string
+	}{{`"abc123"`, []string{`"abc123"`}}, {`"other", "abc123"`, []string{`"other"`, `"abc123"`}}} {
+		t.Run(tc.ifMatch, func(t *testing.T) {
+			filerImpl, s3a := newVersionedPutFiler(t)
+			s3a.iam = &IdentityAccessManagement{}
+			filerAddr := s3a.option.Filers[0]
+			s3a.objectWriteLockClient = cluster.NewLockClient(s3a.option.GrpcDialOption, filerAddr)
+			s3a.objectWriteLockClient.SetRing([]pb.ServerAddress{filerAddr}, 1)
+			s3a.newObjectWriteLock = func(bucket, object string) (objectWriteLock, error) {
+				return nil, errors.New("a conditional version delete must not take the gateway lock")
+			}
+			versionId := latestVersionId(filerImpl)
+			versionKey := "/buckets/b/k.versions/v_" + versionId
+
+			var txns []*filer_pb.ObjectTransactionRequest
+			filerImpl.mu.Lock()
+			filerImpl.txnCheck = func(req *filer_pb.ObjectTransactionRequest) { txns = append(txns, req) }
+			filerImpl.mu.Unlock()
+
+			r := httptest.NewRequest(http.MethodDelete, "/b/k?versionId="+versionId, nil)
+			r = mux.SetURLVars(r, map[string]string{"bucket": "b", "object": "k"})
+			r.Header.Set(s3_constants.IfMatch, tc.ifMatch)
+			w := httptest.NewRecorder()
+			s3a.DeleteObjectHandler(w, r)
+
+			require.Equal(t, http.StatusNoContent, w.Code, w.Body.String())
+			filerImpl.mu.Lock()
+			defer filerImpl.mu.Unlock()
+			require.Nil(t, filerImpl.entries[versionKey], "the version must be deleted")
+			require.Len(t, txns, 1)
+			guard := txns[0].Mutations[0]
+			require.Equal(t, versionKey, guard.ConditionKey)
+			require.Len(t, guard.GetCondition().GetClauses(), 1)
+			require.Equal(t, filer_pb.WriteCondition_IF_ETAG_MATCH, guard.GetCondition().GetClauses()[0].Kind)
+			require.Equal(t, tc.etags, guard.GetCondition().GetClauses()[0].Etags)
+		})
+	}
 }
