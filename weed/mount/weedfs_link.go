@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -154,6 +155,8 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 		}
 	}
 	var linkVersionTsNs int64
+	var linkSignature int32
+	var linkedEntry *filer_pb.Entry
 	if err == nil {
 		var createResp *filer_pb.CreateEntryResponse
 		createResp, err = wfs.streamCreateEntry(context.Background(), request)
@@ -171,12 +174,17 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 			}
 		} else {
 			linkVersionTsNs = ackVersionTsNs(createResp)
+			linkSignature = createResp.GetLogSignature()
 			createEvent := createResp.GetMetadataEvent()
 			if createEvent == nil {
 				createEvent = metadataCreateEvent(string(newParentPath), request.Entry)
 				if createEvent != nil {
 					createEvent.TsNs = linkVersionTsNs
 				}
+			}
+			if stored := createEvent.GetEventNotification().GetNewEntry(); stored != nil {
+				linkedEntry = proto.Clone(stored).(*filer_pb.Entry)
+				linkedEntry.Name = oldEntry.Name
 			}
 			if applyErr := wfs.applyLocalMetadataEvent(context.Background(), createEvent); applyErr != nil {
 				glog.Warningf("link %s: best-effort metadata apply failed: %v", newParentPath.Child(name), applyErr)
@@ -197,6 +205,9 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 	}
 
 	wfs.inodeToPath.AddPath(sourceInode, newEntryPath)
+	if fh, found := wfs.fhMap.FindFileHandle(sourceInode); found {
+		fh.adoptLinkChange(linkedEntry, linkVersionTsNs, linkSignature)
+	}
 
 	// Propagate the new HardLinkCounter to sibling cache entries and
 	// invalidate the kernel's inode attr cache. Without this, `stat` on any
@@ -208,6 +219,53 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 	wfs.outputPbEntry(out, sourceInode, request.Entry)
 
 	return fuse.OK
+}
+
+// adoptLinkChange moves the handle past a hard link change this mount made,
+// stored being the entry the filer now holds at the name the handle flushes
+// through, in filer ids. A base that differs from it in more than the link
+// fields and times is left alone, so a peer's write is still refused. Pending
+// content stays pending.
+func (fh *FileHandle) adoptLinkChange(stored *filer_pb.Entry, versionTsNs int64, signature int32) {
+	if stored == nil {
+		return
+	}
+	fhActiveLock := fh.wfs.fhLockTable.AcquireLock("adoptLinkChange", fh.fh, util.ExclusiveLock)
+	defer fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
+	if base := fh.baseEntry.Load(); base != nil && !fh.wfs.sameApartFromLink(stored, base) {
+		return
+	}
+	linked := proto.Clone(stored).(*filer_pb.Entry)
+	fh.wfs.mapPbIdFromFilerToLocal(linked)
+	if fh.dirtyMetadata {
+		fh.UpdateEntry(func(entry *filer_pb.Entry) {
+			entry.Name = linked.Name
+			entry.HardLinkId, entry.HardLinkCounter = linked.HardLinkId, linked.HardLinkCounter
+		})
+	} else {
+		fh.SetEntry(proto.Clone(linked).(*filer_pb.Entry))
+	}
+	fh.setAuthoritativeBase(linked)
+	fh.advanceEntryVersion(versionTsNs, signature)
+}
+
+// sameApartFromLink reports whether stored, in filer ids, still holds base
+// apart from what a link or unlink rewrites: the link fields, the times, the
+// name, the commit stamp and the derived size.
+func (wfs *WFS) sameApartFromLink(stored, base *filer_pb.Entry) bool {
+	current, observed := proto.Clone(stored).(*filer_pb.Entry), proto.Clone(base).(*filer_pb.Entry)
+	wfs.mapPbIdFromFilerToLocal(current)
+	for _, e := range []*filer_pb.Entry{current, observed} {
+		e.Name, e.CommitTsNs = "", 0
+		e.HardLinkId, e.HardLinkCounter = nil, 0
+		if e.Attributes != nil {
+			e.Attributes.Mtime, e.Attributes.MtimeNs = 0, 0
+			e.Attributes.Ctime, e.Attributes.CtimeNs = 0, 0
+			e.Attributes.FileSize = filer.FileSize(e)
+		}
+		filer_pb.BeforeEntrySerialization(e.Chunks)
+	}
+	return proto.Equal(current, observed)
 }
 
 // syncHardLinkSiblings refreshes every sibling link of the given inode from
