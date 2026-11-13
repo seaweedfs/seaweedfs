@@ -1,6 +1,7 @@
 package mount
 
 import (
+	"bytes"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -222,21 +223,26 @@ func (fh *FileHandle) refreshChunkView() {
 	})
 }
 
-// mergePeerContent folds a peer's content change into a dirty handle, so its
-// own writes stay on top of the peer's instead of being discarded. Buffered
-// writes are not chunks yet, so a merge that would shrink the file waits for
-// the flush.
+// mergePeerContent folds a peer's change into a dirty handle, so its own
+// writes stay on top of the peer's instead of being discarded.
 func (fh *FileHandle) mergePeerContent(peer, base *filer_pb.Entry) bool {
 	var local *filer_pb.Entry
 	fh.UpdateEntry(func(e *filer_pb.Entry) {
 		local = proto.Clone(e).(*filer_pb.Entry)
 	})
 	merged, ok := mergeContentEntry(peer, base, local, local, fh.truncatedSince(base))
-	ok = ok && merged.Attributes.FileSize >= filer.FileSize(local)
+	ok = ok && mergeKeepsBuffered(merged, local)
 	if ok {
 		fh.rebaseEntry(merged, local)
 	}
 	return ok
+}
+
+// mergeKeepsBuffered reports whether merged leaves room for writes still
+// buffered over local. They are not chunks yet, so a merge that shrinks the
+// file or brings in inline content (read ahead of chunks) waits for the flush.
+func mergeKeepsBuffered(merged, local *filer_pb.Entry) bool {
+	return merged.Attributes.FileSize >= filer.FileSize(local) && bytes.Equal(merged.Content, local.Content)
 }
 
 type truncateMark struct {

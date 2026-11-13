@@ -2325,3 +2325,42 @@ func TestPeerChmodReachesDirtyHandle(t *testing.T) {
 		})
 	}
 }
+
+// Inline content from a peer would be read ahead of the chunk a buffered
+// write becomes, so it waits for the flush instead of merging.
+func TestPeerInlineContentWaitsForBufferedWrite(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+
+	empty := func() *filer_pb.Entry {
+		e := flushConditionEntry()
+		e.Attributes.FileSize = 0
+		return e
+	}
+	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+	fh, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, empty(), 0, 0)
+	fh.UpdateEntry(func(e *filer_pb.Entry) { e.Attributes.FileSize = 4 })
+	fh.dirtyMetadata = true
+
+	peer := empty()
+	peer.Content, peer.Attributes.FileSize = []byte("peer"), 4
+	resp := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		TsNs:      1500,
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:      empty(),
+			NewEntry:      peer,
+			NewParentPath: "/dir",
+		},
+	}
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), resp, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	wfs.metaCache.WaitForEntryInvalidations()
+
+	if content := fh.GetEntry().GetEntry().Content; len(content) != 0 {
+		t.Fatalf("handle took the peer's inline content %q over a buffered write", content)
+	}
+	if base := fh.baseEntry.Load(); len(base.GetContent()) != 0 {
+		t.Fatalf("base %v moved to the peer's entry", base)
+	}
+}
