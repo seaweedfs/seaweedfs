@@ -1008,3 +1008,34 @@ func TestAbandonedChunkDownloadKeepsItsRelookupAlive(t *testing.T) {
 		t.Fatal("releasing the stream never returned")
 	}
 }
+
+// Closing the reader cache cancels a stalled prefetch nobody reads instead of waiting for it.
+func TestReaderCacheDestroyCancelsUnreadPrefetch(t *testing.T) {
+	lookupFn := func(ctx context.Context, fileId string) ([]string, error) {
+		return []string{"http://volume/" + fileId}, nil
+	}
+	rc := NewReaderCache(10, newMockChunkCacheForReaderCache(), lookupFn, nil)
+	fetchStarted := make(chan struct{})
+	rc.fetchChunkDataFn = func(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, fileId string, refreshUrls util_http.RefreshUrlsFunc) (int, error) {
+		close(fetchStarted)
+		select {
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		case <-time.After(10 * time.Second):
+			return 0, fmt.Errorf("volume server never answered")
+		}
+	}
+	rc.MaybeCache(&Interval[*ChunkView]{Value: &ChunkView{FileId: "3077,02c3475d67aaf564", ViewSize: 1024, ChunkSize: 1024}}, 1)
+	<-fetchStarted
+
+	destroyed := make(chan struct{})
+	go func() {
+		rc.destroy()
+		close(destroyed)
+	}()
+	select {
+	case <-destroyed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("destroy waited for a prefetch nobody reads")
+	}
+}
