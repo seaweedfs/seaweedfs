@@ -555,7 +555,7 @@ func Layout(view ViewContext, content templ.Component) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 38, "\"><i class=\"bi bi-bounding-box-circles me-2\"></i>Vector Buckets</a></li><li class=\"nav-item\"><a class=\"nav-link\" href=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 38, "\"><i class=\"bi bi-arrow-up-right me-2\"></i>Vector Buckets</a></li><li class=\"nav-item\"><a class=\"nav-link\" href=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

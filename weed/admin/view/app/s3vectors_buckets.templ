@@ -10,7 +10,7 @@ import (
 templ S3VectorsBuckets(data dash.S3VectorsBucketsData) {
 	<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
 		<h1 class="h2">
-			<i class="bi bi-bounding-box-circles me-2"></i>Vector Buckets
+			<i class="bi bi-arrow-up-right me-2"></i>Vector Buckets
 		</h1>
 		<div class="btn-toolbar mb-2 mb-md-0">
 			<div class="btn-group me-2">
@@ -29,7 +29,7 @@ templ S3VectorsBuckets(data dash.S3VectorsBucketsData) {
 	<div class="card shadow mb-4">
 		<div class="card-header py-3">
 			<h6 class="m-0 font-weight-bold text-primary">
-				<i class="bi bi-bounding-box-circles me-2"></i>{ fmt.Sprintf("%d vector buckets", data.TotalBuckets) }
+				<i class="bi bi-arrow-up-right me-2"></i>{ fmt.Sprintf("%d vector buckets", data.TotalBuckets) }
 				if data.Truncated {
 					<span class="text-muted small ms-2">{ fmt.Sprintf("showing the first %d; list the rest with an S3 Vectors client", data.TotalBuckets) }</span>
 				}
@@ -77,7 +77,7 @@ templ S3VectorsBuckets(data dash.S3VectorsBucketsData) {
 						if len(data.Buckets) == 0 {
 							<tr>
 								<td colspan="5" class="text-center text-muted py-4">
-									<i class="bi bi-bounding-box-circles icon-3x mb-3 text-muted"></i>
+									<i class="bi bi-arrow-up-right icon-3x mb-3 text-muted"></i>
 									<div>
 										<h5>No vector buckets found</h5>
 									</div>
