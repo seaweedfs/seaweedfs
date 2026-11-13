@@ -217,6 +217,20 @@ func TestMigrationKeepsChangesMadeAfterTheLoad(t *testing.T) {
 		assert.NotNil(t, storedIdentity(t, server, "alice"))
 	})
 
+	t.Run("removed identity file also in the legacy file", func(t *testing.T) {
+		store, server := newPolicyTestStoreWithServer(t)
+		setEntry(server, filer.IamConfigDirectory, IamLegacyIdentityFile, legacy(`{"name":"alice"},{"name":"bob","actions":["Read:b"]}`))
+		setEntry(server, identDir, "bob.json", []byte(`{"name":"bob","actions":["Read:b"]}`))
+		changeAfterLoad(server, func() {
+			_, _ = server.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{Directory: identDir, Name: "bob.json"})
+		})
+
+		_, err := store.LoadConfiguration(ctx)
+		require.NoError(t, err)
+		assert.Nil(t, storedIdentity(t, server, "bob"))
+		assert.NotNil(t, storedIdentity(t, server, "alice"))
+	})
+
 	t.Run("rewritten legacy file", func(t *testing.T) {
 		store, server := newPolicyTestStoreWithServer(t)
 		setEntry(server, filer.IamConfigDirectory, IamLegacyIdentityFile, legacy(string(granted)))
