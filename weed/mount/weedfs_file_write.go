@@ -10,6 +10,15 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
+// isAppendWrite reads the open file's current flags, which fcntl(F_SETFL) can
+// change after open. Kernels and adapters that report none use the open's.
+func (wfs *WFS) isAppendWrite(in *fuse.WriteIn) bool {
+	if in.Flags != 0 {
+		return in.Flags&syscall.O_APPEND != 0
+	}
+	return wfs.fhMap.isAppendHandle(FileHandleId(in.Fh))
+}
+
 /**
  * Write data
  *
@@ -61,7 +70,7 @@ func (wfs *WFS) Write(cancel <-chan struct{}, in *fuse.WriteIn, data []byte) (wr
 	}
 	// An append onto this handle's own pending bytes leaves no hole; only one
 	// placed past every byte the handle holds needs the committed-EOF check.
-	if in.Offset > entry.Attributes.FileSize && wfs.fhMap.isAppendHandle(FileHandleId(in.Fh)) {
+	if in.Offset > entry.Attributes.FileSize && wfs.isAppendWrite(in) {
 		if !fh.pendingAppend || in.Offset < fh.pendingAppendOffset {
 			fh.pendingAppendOffset = in.Offset
 		}

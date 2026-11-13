@@ -425,6 +425,26 @@ func TestPositionalSparseWriteStillPublishes(t *testing.T) {
 	if code = w.Fsync(nil, &fuse.FsyncIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: out.Fh}); code != fuse.OK {
 		t.Fatal("positional sparse write", code)
 	}
+	assertSparseWrite(t, peer)
+}
+
+// fcntl(F_SETFL) cleared O_APPEND on an append open before the sparse write.
+func TestSparseWriteAfterAppendFlagClearedPublishes(t *testing.T) {
+	base := attributeAppendEntry(1)
+	peer := &g6ConditionalPeer{entry: proto.Clone(base).(*filer_pb.Entry)}
+	w, handle := g6AppendHandle(t, peer, base, 950)
+	n, code := w.Write(nil, &fuse.WriteIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: handle, Offset: 512, Size: 256, Flags: syscall.O_WRONLY}, bytes.Repeat([]byte{'S'}, 256))
+	if n != 256 || code != fuse.OK {
+		t.Fatal(n, code)
+	}
+	if code = w.Fsync(nil, &fuse.FsyncIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: handle}); code != fuse.OK {
+		t.Fatal("sparse write after clearing O_APPEND", code)
+	}
+	assertSparseWrite(t, peer)
+}
+
+func assertSparseWrite(t *testing.T, peer *g6ConditionalPeer) {
+	t.Helper()
 	peer.mu.Lock()
 	defer peer.mu.Unlock()
 	want := append(bytes.Repeat([]byte{'O'}, 256), make([]byte, 256)...)
