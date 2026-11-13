@@ -267,14 +267,18 @@ func (fh *FileHandle) adoptLinkChangeLocked(stored *filer_pb.Entry, versionTsNs 
 }
 
 // adoptStoredLink reads the entry stored at path and adopts it as a change of
-// hardLinkId. A failed read leaves the id on the handle, so its next flush
-// reads again instead of publishing over a base the change made stale. The
-// caller holds the handle's lock.
+// hardLinkId. A failed read, or a path already gone, leaves the id on the
+// handle, so its next flush reads again instead of publishing over a base the
+// change made stale. The caller holds the handle's lock.
 func (wfs *WFS) adoptStoredLink(ctx context.Context, fh *FileHandle, path util.FullPath, hardLinkId []byte) error {
 	stored, tsNs, signature, err := filer_pb.GetEntry(ctx, wfs, path)
 	if err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
 		fh.linkRefresh = hardLinkId
 		return err
+	}
+	if stored == nil {
+		fh.linkRefresh = hardLinkId
+		return nil
 	}
 	fh.linkRefresh = nil
 	if bytes.Equal(stored.GetHardLinkId(), hardLinkId) {
