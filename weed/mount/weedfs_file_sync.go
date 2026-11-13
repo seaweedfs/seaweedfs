@@ -206,6 +206,13 @@ func (wfs *WFS) doFlush(ctx context.Context, fh *FileHandle, uid, gid uint32, al
 // needed here. The local fhLockTable lock below serializes within this mount.
 func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, name string, uid, gid uint32) error {
 	fileFullPath := fh.FullPath()
+	// The caller's name may have been unlinked or renamed away since it
+	// resolved it; the file is reached through the name it has now.
+	if resolved := util.FullPath(dir).Child(name); fileFullPath != "" && fileFullPath != resolved {
+		if inode, found := wfs.inodeToPath.GetInode(resolved); !found || inode != fh.inode {
+			dir, name = fileFullPath.DirAndName()
+		}
+	}
 	// Attribute acknowledgement and local retention must complete before a
 	// whole-entry flush can publish. Take this before the handle's active lock.
 	unlock := wfs.lockMetadataPublication(fileFullPath)
