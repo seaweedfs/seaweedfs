@@ -232,8 +232,8 @@ message KeepConnectedRequest {
   bool leave_lock_ring = 8;
   // Port of this node's Prometheus /metrics listener (-metricsPort), or 0 when
   // it is not enabled. Advertised so the admin server can scrape it without
-  // exposing metrics on the client-facing service port. [enterprise]
-  uint32 metrics_port = 1000; // [enterprise]
+  // exposing metrics on the client-facing service port.
+  uint32 metrics_port = 9;
 }
 
 message VolumeLocation {

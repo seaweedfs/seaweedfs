@@ -1042,8 +1042,8 @@ type KeepConnectedRequest struct {
 	LeaveLockRing bool `protobuf:"varint,8,opt,name=leave_lock_ring,json=leaveLockRing,proto3" json:"leave_lock_ring,omitempty"`
 	// Port of this node's Prometheus /metrics listener (-metricsPort), or 0 when
 	// it is not enabled. Advertised so the admin server can scrape it without
-	// exposing metrics on the client-facing service port. [enterprise]
-	MetricsPort   uint32 `protobuf:"varint,1000,opt,name=metrics_port,json=metricsPort,proto3" json:"metrics_port,omitempty"` // [enterprise]
+	// exposing metrics on the client-facing service port.
+	MetricsPort   uint32 `protobuf:"varint,9,opt,name=metrics_port,json=metricsPort,proto3" json:"metrics_port,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5314,7 +5314,7 @@ const file_master_proto_rawDesc = "" +
 	"\x04data\x18\x01 \x01(\rR\x04data\x12\x16\n" +
 	"\x06parity\x18\x02 \x01(\rR\x06parity\x12\x1d\n" +
 	"\n" +
-	"volume_ids\x18\x03 \x03(\rR\tvolumeIds\"\x9a\x02\n" +
+	"volume_ids\x18\x03 \x03(\rR\tvolumeIds\"\x99\x02\n" +
 	"\x14KeepConnectedRequest\x12\x1f\n" +
 	"\vclient_type\x18\x01 \x01(\tR\n" +
 	"clientType\x12%\n" +
@@ -5325,8 +5325,8 @@ const file_master_proto_rawDesc = "" +
 	"\vdata_center\x18\x06 \x01(\tR\n" +
 	"dataCenter\x12\x12\n" +
 	"\x04rack\x18\a \x01(\tR\x04rack\x12&\n" +
-	"\x0fleave_lock_ring\x18\b \x01(\bR\rleaveLockRing\x12\"\n" +
-	"\fmetrics_port\x18\xe8\a \x01(\rR\vmetricsPort\"\x9e\x03\n" +
+	"\x0fleave_lock_ring\x18\b \x01(\bR\rleaveLockRing\x12!\n" +
+	"\fmetrics_port\x18\t \x01(\rR\vmetricsPort\"\x9e\x03\n" +
 	"\x0eVolumeLocation\x12\x10\n" +
 	"\x03url\x18\x01 \x01(\tR\x03url\x12\x1d\n" +
 	"\n" +
