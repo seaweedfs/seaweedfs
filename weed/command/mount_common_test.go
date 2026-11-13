@@ -5,9 +5,11 @@ package command
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -254,4 +256,159 @@ func Test_mountSocketCleanup(t *testing.T) {
 	if !exists() {
 		t.Fatalf("exiting mount removed the socket of a later mount of the same directory")
 	}
+}
+
+// mountRootFiler serves the filer calls a mount start makes on its root path.
+// Like the filer, it answers a non-exclusive create of an existing path by
+// replacing the entry, keeping only its crtime and inode.
+type mountRootFiler struct {
+	filer_pb.SeaweedFilerClient
+	entry          *filer_pb.Entry // nil while the path is missing
+	textOnlyErrors bool            // a filer that predates error codes
+	beforeCreate   func(f *mountRootFiler)
+	lookups        int
+	creates        []*filer_pb.CreateEntryRequest
+	updates        int
+}
+
+func (f *mountRootFiler) WithFilerClient(_ bool, fn func(filer_pb.SeaweedFilerClient) error) error {
+	return fn(f)
+}
+func (f *mountRootFiler) AdjustedUrl(_ *filer_pb.Location) string { return "" }
+func (f *mountRootFiler) GetDataCenter() string                   { return "" }
+
+func (f *mountRootFiler) LookupDirectoryEntry(_ context.Context, _ *filer_pb.LookupDirectoryEntryRequest, _ ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	f.lookups++
+	if f.entry == nil {
+		return nil, status.Error(codes.NotFound, filer_pb.ErrNotFound.Error())
+	}
+	return &filer_pb.LookupDirectoryEntryResponse{Entry: proto.Clone(f.entry).(*filer_pb.Entry)}, nil
+}
+
+func (f *mountRootFiler) CreateEntry(_ context.Context, in *filer_pb.CreateEntryRequest, _ ...grpc.CallOption) (*filer_pb.CreateEntryResponse, error) {
+	f.creates = append(f.creates, proto.Clone(in).(*filer_pb.CreateEntryRequest))
+	if f.beforeCreate != nil {
+		f.beforeCreate(f)
+	}
+	failed := func(code filer_pb.FilerError, text string) (*filer_pb.CreateEntryResponse, error) {
+		resp := &filer_pb.CreateEntryResponse{Error: text}
+		if !f.textOnlyErrors {
+			resp.ErrorCode = code
+		}
+		return resp, nil
+	}
+	next := proto.Clone(in.Entry).(*filer_pb.Entry)
+	if f.entry != nil {
+		if in.OExcl {
+			return failed(filer_pb.FilerError_ENTRY_ALREADY_EXISTS, "EEXIST: entry already exists")
+		}
+		if !f.entry.IsDirectory && next.IsDirectory {
+			return failed(filer_pb.FilerError_EXISTING_IS_FILE, "existing entry is a file")
+		}
+		next.Attributes.Crtime = f.entry.Attributes.Crtime
+		next.Attributes.Inode = f.entry.Attributes.Inode
+	}
+	f.entry = next
+	return &filer_pb.CreateEntryResponse{}, nil
+}
+
+func (f *mountRootFiler) UpdateEntry(_ context.Context, in *filer_pb.UpdateEntryRequest, _ ...grpc.CallOption) (*filer_pb.UpdateEntryResponse, error) {
+	for key, expected := range in.ExpectedExtended {
+		actual, found := f.entry.Extended[key]
+		if found && !bytes.Equal(actual, expected) || !found && len(expected) > 0 {
+			return nil, status.Error(codes.FailedPrecondition, "extended attribute changed")
+		}
+	}
+	f.updates++
+	f.entry = proto.Clone(in.Entry).(*filer_pb.Entry)
+	return &filer_pb.UpdateEntryResponse{}, nil
+}
+
+func Test_ensureMountRootDirectory(t *testing.T) {
+	bucket := func() *filer_pb.Entry {
+		return &filer_pb.Entry{
+			Name:        "b1",
+			IsDirectory: true,
+			Quota:       1 << 30,
+			Attributes:  &filer_pb.FuseAttributes{FileMode: uint32(os.ModeDir | 0750), Uid: 1000, Gid: 1000, Crtime: 1, Inode: 7},
+			Extended: map[string][]byte{
+				s3_constants.ExtAllowEmptyFolders: []byte("false"),
+				s3_constants.ExtAmzOwnerKey:       []byte("alice"),
+				s3_constants.ExtVersioningKey:     []byte("Enabled"),
+			},
+		}
+	}
+	file := func() *filer_pb.Entry {
+		return &filer_pb.Entry{Name: "b1", Attributes: &filer_pb.FuseAttributes{FileMode: 0644, Crtime: 1, Inode: 7}}
+	}
+
+	t.Run("an existing bucket root survives the mount start", func(t *testing.T) {
+		f := &mountRootFiler{entry: bucket()}
+		if err := ensureMountRootDirectory(context.Background(), f, "/buckets/b1"); err != nil {
+			t.Fatalf("ensureMountRootDirectory: %v", err)
+		}
+		if err := ensureBucketAllowEmptyFolders(context.Background(), f, "/buckets/b1", "/buckets"); err != nil {
+			t.Fatalf("ensureBucketAllowEmptyFolders: %v", err)
+		}
+		if len(f.creates) != 0 || f.updates != 0 {
+			t.Errorf("creates = %d, updates = %d, want none", len(f.creates), f.updates)
+		}
+		if !proto.Equal(f.entry, bucket()) {
+			t.Errorf("bucket entry changed:\n got %v\nwant %v", f.entry, bucket())
+		}
+	})
+
+	t.Run("a missing root is created exclusively", func(t *testing.T) {
+		f := &mountRootFiler{}
+		if err := ensureMountRootDirectory(context.Background(), f, "/buckets/b1/data"); err != nil {
+			t.Fatalf("ensureMountRootDirectory: %v", err)
+		}
+		if len(f.creates) != 1 || !f.creates[0].OExcl {
+			t.Fatalf("creates = %v, want one exclusive create", f.creates)
+		}
+		if got := f.creates[0]; got.Directory != "/buckets/b1" || got.Entry.Name != "data" || !got.Entry.IsDirectory {
+			t.Errorf("created %s/%s (directory %v), want directory /buckets/b1/data", got.Directory, got.Entry.Name, got.Entry.IsDirectory)
+		}
+	})
+
+	t.Run("a file at the root path is refused", func(t *testing.T) {
+		f := &mountRootFiler{entry: file()}
+		err := ensureMountRootDirectory(context.Background(), f, "/buckets/b1")
+		if !errors.Is(err, filer_pb.ErrExistingIsFile) {
+			t.Fatalf("err = %v, want %v", err, filer_pb.ErrExistingIsFile)
+		}
+		if len(f.creates) != 0 {
+			t.Errorf("creates = %d, want none", len(f.creates))
+		}
+	})
+
+	for _, textOnly := range []bool{false, true} {
+		f := &mountRootFiler{textOnlyErrors: textOnly, beforeCreate: func(f *mountRootFiler) { f.entry = bucket() }}
+		t.Run("a root created meanwhile is kept, text-only errors "+strconv.FormatBool(textOnly), func(t *testing.T) {
+			if err := ensureMountRootDirectory(context.Background(), f, "/buckets/b1"); err != nil {
+				t.Fatalf("ensureMountRootDirectory: %v", err)
+			}
+			if len(f.creates) != 1 || !proto.Equal(f.entry, bucket()) {
+				t.Errorf("creates = %d, entry %v; want one refused exclusive create and the other client's entry", len(f.creates), f.entry)
+			}
+		})
+	}
+
+	t.Run("a file created meanwhile is refused", func(t *testing.T) {
+		f := &mountRootFiler{beforeCreate: func(f *mountRootFiler) { f.entry = file() }}
+		err := ensureMountRootDirectory(context.Background(), f, "/buckets/b1")
+		if !errors.Is(err, filer_pb.ErrExistingIsFile) {
+			t.Fatalf("err = %v, want %v", err, filer_pb.ErrExistingIsFile)
+		}
+	})
+
+	t.Run("the filer root is never created", func(t *testing.T) {
+		f := &mountRootFiler{}
+		if err := ensureMountRootDirectory(context.Background(), f, "/"); err != nil {
+			t.Fatalf("ensureMountRootDirectory: %v", err)
+		}
+		if f.lookups != 0 || len(f.creates) != 0 {
+			t.Errorf("lookups = %d, creates = %d, want none", f.lookups, len(f.creates))
+		}
+	})
 }
