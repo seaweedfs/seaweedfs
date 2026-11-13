@@ -184,7 +184,7 @@ func (wfs *WFS) flushFileMetadata(fh *FileHandle) error {
 		return err
 	}
 	if merged != nil {
-		fh.rebaseEntry(merged, requestEntry.Chunks)
+		fh.rebaseEntry(merged, requestEntry)
 		baseSnapshot = merged
 	}
 

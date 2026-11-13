@@ -7,6 +7,7 @@ import (
 	"slices"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -315,6 +316,19 @@ func TestMergeContentEntry(t *testing.T) {
 		t.Fatalf("truncate then write kept %v, size %d", got, merged.Attributes.FileSize)
 	}
 
+	// A peer truncate stands when the handle only overwrote inside it.
+	peerTruncated := proto.Clone(base).(*filer_pb.Entry)
+	peerTruncated.Chunks, peerTruncated.Attributes.FileSize = peerTruncated.Chunks[:1], 1
+	overwrote := proto.Clone(base).(*filer_pb.Entry)
+	overwrote.Chunks = append(overwrote.Chunks, &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 1, FileKey: 6, Cookie: 1}, Size: 1, ModifiedTsNs: 6})
+	merged, ok = mergeContentEntry(peerTruncated, base, overwrote, overwrote, -1)
+	if !ok {
+		t.Fatal("overwrite over a peer truncate not merged")
+	}
+	if got := chunkFileKeys(merged); !slices.Equal(got, []uint64{1, 6}) || merged.Attributes.FileSize != 1 {
+		t.Fatalf("overwrite over a peer truncate kept %v, size %d", got, merged.Attributes.FileSize)
+	}
+
 	stored.Attributes.Inode = 99
 	if _, ok := mergeContentEntry(stored, base, local, local, -1); ok {
 		t.Fatal("merged into a replaced file")
@@ -380,5 +394,27 @@ func TestContentFlushRepublishesUnchangedEntry(t *testing.T) {
 				t.Fatalf("stored %d chunks after %d calls", len(fake.entry.Chunks), fake.calls)
 			}
 		})
+	}
+}
+
+// Rebasing keeps a size the handle reached after the flush was taken, not the
+// size it sent: a peer's truncate merged in must stand.
+func TestRebaseEntryKeepsMergedSize(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+	fh, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, flushConditionEntry(1, 2), 0, 0)
+	sent := proto.Clone(fh.GetEntry().GetEntry()).(*filer_pb.Entry)
+	merged := flushConditionEntry(1)
+	merged.Attributes.FileSize = 1
+
+	fh.rebaseEntry(merged, sent)
+	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 1 {
+		t.Fatalf("size %d after rebasing onto a truncate, want 1", size)
+	}
+
+	fh.GetEntry().GetEntry().Attributes.FileSize = 5
+	fh.rebaseEntry(merged, sent)
+	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 5 {
+		t.Fatalf("size %d after a write grew the handle, want 5", size)
 	}
 }

@@ -179,10 +179,11 @@ func (fh *FileHandle) installAckedEntry(entry *filer_pb.Entry, versionTsNs int64
 }
 
 // rebaseEntry installs an entry merged with a peer's changes, keeping the
-// chunks uploaders attached after sent was taken, and refreshes the read view.
-func (fh *FileHandle) rebaseEntry(merged *filer_pb.Entry, sent []*filer_pb.FileChunk) {
-	inSent := make(map[string]bool, len(sent))
-	for _, c := range sent {
+// chunks and growth writers added after sent was taken, and refreshes the
+// read view.
+func (fh *FileHandle) rebaseEntry(merged, sent *filer_pb.Entry) {
+	inSent := make(map[string]bool, len(sent.Chunks))
+	for _, c := range sent.Chunks {
 		inSent[contentChunkKey(c)] = true
 	}
 	merged = proto.Clone(merged).(*filer_pb.Entry)
@@ -194,7 +195,7 @@ func (fh *FileHandle) rebaseEntry(merged *filer_pb.Entry, sent []*filer_pb.FileC
 			}
 		}
 		attrs := merged.Attributes
-		if size := e.GetAttributes().GetFileSize(); size > attrs.FileSize {
+		if size := e.GetAttributes().GetFileSize(); size > sent.GetAttributes().GetFileSize() && size > attrs.FileSize {
 			attrs.FileSize = size
 		}
 		e.Attributes, e.Extended, e.Content, e.Chunks = attrs, merged.Extended, merged.Content, chunks
@@ -211,7 +212,7 @@ func (fh *FileHandle) mergePeerContent(peer, base *filer_pb.Entry) bool {
 	})
 	merged, ok := mergeContentEntry(peer, base, local, local, fh.truncatedSince(base))
 	if ok {
-		fh.rebaseEntry(merged, local.Chunks)
+		fh.rebaseEntry(merged, local)
 	}
 	return ok
 }

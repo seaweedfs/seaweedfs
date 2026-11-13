@@ -287,7 +287,7 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 		return fmt.Errorf("fh flush create %s: %w", fileFullPath, err)
 	}
 	if merged != nil {
-		fh.rebaseEntry(merged, requestEntry.Chunks)
+		fh.rebaseEntry(merged, requestEntry)
 		baseSnapshot = merged
 	}
 
@@ -373,7 +373,8 @@ const maxContentFlushMerges = 3
 // content it changed, taking those values from sent (local in stored's id
 // space). Everything else keeps the stored value. A local truncation keeps
 // the handle's size and clips stored chunks at the lowest size truncated to
-// (truncatedTo, or -1); otherwise the larger size wins.
+// (truncatedTo, or -1); otherwise the stored size stands unless the handle
+// changed its size or wrote past it.
 // A different file at the path, inline content changed on both sides,
 // inline content next to chunks (reads stop at the inline bytes), or a local
 // whole-file rewrite (maybeMergeChunks, unstamped chunks) over a peer's chunk
@@ -420,12 +421,17 @@ func mergeContentEntry(stored, base, local, sent *filer_pb.Entry, truncatedTo in
 		}
 		merged.Chunks = append(merged.Chunks, c)
 	}
+	size := int64(filer.FileSize(stored))
+	if localSize != filer.FileSize(base) {
+		size = max(size, int64(localSize))
+	}
 	for _, c := range local.Chunks {
 		if !inBase[contentChunkKey(c)] {
 			if peerChanged && c.ModifiedTsNs == 0 && !c.IsChunkManifest {
 				return nil, false
 			}
 			merged.Chunks = append(merged.Chunks, proto.Clone(c).(*filer_pb.FileChunk))
+			size = max(size, c.Offset+int64(c.Size))
 		}
 	}
 	if len(merged.Content) > 0 && len(merged.Chunks) > 0 {
@@ -472,10 +478,9 @@ func mergeContentEntry(stored, base, local, sent *filer_pb.Entry, truncatedTo in
 	}
 
 	if truncatedTo >= 0 {
-		merged.Attributes.FileSize = localSize
-	} else {
-		merged.Attributes.FileSize = uint64(max(int64(localSize), int64(filer.FileSize(stored))))
+		size = int64(localSize)
 	}
+	merged.Attributes.FileSize = uint64(size)
 	return merged, true
 }
 
