@@ -91,21 +91,11 @@ func (wfs *WFS) retainFailedContent(fh *FileHandle, dir, name string, cause erro
 	if err = os.Rename(temporary, path); err != nil {
 		return "", err
 	}
-	directory, err := os.Open(root)
-	if err != nil {
-		return "", err
-	}
-	defer directory.Close()
-	if err = directory.Sync(); err != nil {
+	if err = util.FsyncDir(root); err != nil {
 		return "", err
 	}
 	// Persist creation of failed-metadata itself when this is its first record.
-	parent, err := os.Open(filepath.Dir(root))
-	if err != nil {
-		return "", err
-	}
-	defer parent.Close()
-	if err = parent.Sync(); err != nil {
+	if err = util.FsyncDir(filepath.Dir(root)); err != nil {
 		return "", err
 	}
 	saved = true
