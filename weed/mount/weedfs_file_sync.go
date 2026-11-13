@@ -281,7 +281,7 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 	baseSnapshot := proto.Clone(requestEntry).(*filer_pb.Entry)
 	wfs.mapPbIdFromLocalToFiler(request.Entry)
 
-	resp, merged, err := wfs.createContentEntry(ctx, fh, request, baseSnapshot)
+	resp, merged, err := wfs.createContentEntry(ctx, fh, request, baseSnapshot, false)
 	if err != nil {
 		glog.Errorf("fh flush create %s: %v", fileFullPath, err)
 		return fmt.Errorf("fh flush create %s: %w", fileFullPath, err)
@@ -324,7 +324,9 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 // When the stored entry moved on, the handle's own changes since its base are
 // replayed onto it and published against it, so a peer's acknowledged chunks
 // survive. merged is that entry in local ids; nil when the request went as is.
-func (wfs *WFS) createContentEntry(ctx context.Context, fh *FileHandle, request *filer_pb.CreateEntryRequest, local *filer_pb.Entry) (resp *filer_pb.CreateEntryResponse, merged *filer_pb.Entry, err error) {
+// With writes still buffered, a merge that would shrink the file is refused:
+// the buffered range is not in local's chunks yet.
+func (wfs *WFS) createContentEntry(ctx context.Context, fh *FileHandle, request *filer_pb.CreateEntryRequest, local *filer_pb.Entry, buffered bool) (resp *filer_pb.CreateEntryResponse, merged *filer_pb.Entry, err error) {
 	base := fh.baseEntry.Load()
 	guard := &filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_NOT_EXISTS}
 	if base != nil {
@@ -356,7 +358,7 @@ func (wfs *WFS) createContentEntry(ctx context.Context, fh *FileHandle, request 
 			return resp, merged, err
 		}
 		next, ok := mergeContentEntry(stored, base, local, sent, fh.truncatedSince(base))
-		if !ok {
+		if !ok || buffered && next.Attributes.FileSize < filer.FileSize(local) {
 			return resp, nil, err
 		}
 		glog.V(1).Infof("content flush %s/%s: entry changed since the handle's base, merging", request.Directory, request.Entry.Name)

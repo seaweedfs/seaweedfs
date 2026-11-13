@@ -2194,3 +2194,40 @@ func TestPeerEventKeepsPendingTruncate(t *testing.T) {
 		t.Fatalf("pending truncate %d after the base moved, want 1", got)
 	}
 }
+
+// A peer truncate below a dirty handle's size waits for the flush: the
+// handle's buffered writes past the new end are not chunks yet.
+func TestPeerTruncateWaitsForBufferedWrites(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+
+	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+	fh, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, flushConditionEntry(1, 2), 0, 0)
+	fh.dirtyMetadata = true
+	pagesBefore := fh.dirtyPages
+
+	peer := flushConditionEntry(1)
+	peer.Attributes.FileSize = 1
+	resp := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		TsNs:      1500,
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:      flushConditionEntry(1, 2),
+			NewEntry:      peer,
+			NewParentPath: "/dir",
+		},
+	}
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), resp, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	wfs.metaCache.WaitForEntryInvalidations()
+
+	if fh.dirtyPages != pagesBefore {
+		t.Fatal("dirty pages destroyed by a peer truncate")
+	}
+	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 3 {
+		t.Fatalf("handle size %d, want its own 3 until the flush", size)
+	}
+	if base := fh.baseEntry.Load(); len(base.GetChunks()) != 2 {
+		t.Fatalf("base %v moved to the peer's truncate", base)
+	}
+}
