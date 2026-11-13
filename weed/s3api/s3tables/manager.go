@@ -47,6 +47,16 @@ func (m *Manager) SetTrusted(trusted bool) {
 	m.handler.SetTrusted(trusted)
 }
 
+// SetLocalAccountChecker sets the handler's configured local account predicate.
+func (m *Manager) SetLocalAccountChecker(fn func(string) bool) {
+	m.handler.SetLocalAccountChecker(fn)
+}
+
+// SetTrustedIssuerSource sets the handler's configured OIDC issuer source.
+func (m *Manager) SetTrustedIssuerSource(fn func(context.Context) []string) {
+	m.handler.SetTrustedIssuerSource(fn)
+}
+
 // SetEncryptionChecker sets the handler's SSE-S3 availability predicate.
 func (m *Manager) SetEncryptionChecker(fn func() bool) {
 	m.handler.SetEncryptionChecker(fn)
