@@ -99,6 +99,10 @@ func (wfs *WFS) flushFileMetadata(fh *FileHandle) error {
 	if !fh.dirtyMetadata {
 		return nil
 	}
+	// Unlink marks under this lock; publishing would recreate the name.
+	if fh.isDeleted {
+		return nil
+	}
 
 	fileFullPath := fh.FullPath()
 	dir, name := fileFullPath.DirAndName()
