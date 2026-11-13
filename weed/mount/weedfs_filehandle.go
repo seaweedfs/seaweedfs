@@ -105,11 +105,6 @@ func (wfs *WFS) AcquireHandle(ctx context.Context, inode uint64, flags, uid, gid
 			return nil, 0, fuse.Status(syscall.EAGAIN)
 		}
 		glog.V(1).Infof("DLM lock acquired for %s", path)
-		// The previous holder's flush may not have reached the local cache,
-		// and the lock orders this writer after it: take the filer's entry.
-		if entry, version, err := wfs.lookupFilerEntry(ctx, path); err == nil {
-			fileHandle.installAckedEntry(entry, version.tsNs, version.signature)
-		}
 	}
 	return fileHandle, openFh, fuse.OK
 }
@@ -210,3 +205,4 @@ func (wfs *WFS) waitForPendingAsyncFlush(ctx context.Context, inode uint64) bool
 func (wfs *WFS) GetHandle(handleId FileHandleId) *FileHandle {
 	return wfs.fhMap.GetFileHandle(handleId)
 }
+

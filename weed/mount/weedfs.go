@@ -473,10 +473,6 @@ func (wfs *WFS) StartBackgroundTasks() error {
 		glog.V(0).Infof("writebackCache enabled: async flush on close() for improved small file performance")
 	}
 
-	if wfs.lockClient != nil {
-		wfs.followLockRing()
-	}
-
 	follower, err := wfs.subscribeFilerConfEvents()
 	if err != nil {
 		return err
