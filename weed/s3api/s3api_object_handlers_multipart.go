@@ -61,6 +61,10 @@ func (s3a *S3ApiServer) NewMultipartUploadHandler(w http.ResponseWriter, r *http
 		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
 		return
 	}
+	if errCode := s3a.checkVersionFileWrite(bucket, object, "NewMultipartUploadHandler"); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
 
 	// Check if versioning is enabled for the bucket (needed for object lock)
 	versioningEnabled, err := s3a.isVersioningEnabled(bucket)
@@ -159,6 +163,10 @@ func (s3a *S3ApiServer) CompleteMultipartUploadHandler(w http.ResponseWriter, r 
 	}
 	if err := s3a.validateTableBucketObjectPath(bucket, object); err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+		return
+	}
+	if errCode := s3a.checkVersionFileWrite(bucket, object, "CompleteMultipartUploadHandler"); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
 
