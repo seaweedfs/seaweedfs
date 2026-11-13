@@ -30,6 +30,7 @@ type tierDownloadCluster struct {
 	servers      []pb.ServerAddress
 	ports        map[pb.ServerAddress]int
 	replicas     map[pb.ServerAddress]string
+	diskTypes    map[pb.ServerAddress]string
 	objectExists bool
 	downloads    int
 	dangling     []string
@@ -87,6 +88,9 @@ func (s *tierDownloadTestServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequ
 	c := s.cluster
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if req.DiskType != c.diskTypes[s.addr] {
+		return fmt.Errorf("copy volume %d onto disk type %q, replica is on %q", req.VolumeId, req.DiskType, c.diskTypes[s.addr])
+	}
 	switch c.replicas[pb.ServerAddress(req.SourceDataNode)] {
 	case tierReplicaLocal:
 		c.replicas[s.addr] = tierReplicaLocal
@@ -114,6 +118,7 @@ func newTierDownloadCluster(t *testing.T, states ...string) *tierDownloadCluster
 	c := &tierDownloadCluster{
 		ports:        make(map[pb.ServerAddress]int),
 		replicas:     make(map[pb.ServerAddress]string),
+		diskTypes:    make(map[pb.ServerAddress]string),
 		objectExists: true,
 		hiddenOnRead: make(map[int]map[pb.ServerAddress]bool),
 	}
@@ -131,6 +136,9 @@ func newTierDownloadCluster(t *testing.T, states ...string) *tierDownloadCluster
 		c.servers = append(c.servers, addr)
 		c.ports[addr] = port
 		c.replicas[addr] = state
+		if len(c.servers)%2 == 0 {
+			c.diskTypes[addr] = "ssd"
+		}
 	}
 	return c
 }
@@ -155,7 +163,7 @@ func (c *tierDownloadCluster) readTopology() (*master_pb.TopologyInfo, error) {
 		if !found || hidden[server] {
 			continue
 		}
-		vi := &master_pb.VolumeInformationMessage{Id: 7, Collection: "c"}
+		vi := &master_pb.VolumeInformationMessage{Id: 7, Collection: "c", DiskType: c.diskTypes[server]}
 		if state == tierReplicaRemote {
 			vi.RemoteStorageName = "s3.default"
 			vi.RemoteStorageKey = "key"
