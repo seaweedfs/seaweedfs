@@ -24,9 +24,8 @@ func (wfs *WFS) publishPendingContent(ctx context.Context, fh *FileHandle, req *
 	if wfs.option.WritebackCache && (failure == nil || failure.Load()) {
 		return nil, fmt.Errorf("writeback inode awaits Forget after content refusal: %w", filer_pb.ErrPreconditionFailed)
 	}
-	refused := false
 	defer func() {
-		if failure != nil && refused && resultErr != nil {
+		if failure != nil && errors.Is(resultErr, filer_pb.ErrPreconditionFailed) {
 			failure.Store(true)
 		}
 	}()
@@ -37,11 +36,17 @@ func (wfs *WFS) publishPendingContent(ctx context.Context, fh *FileHandle, req *
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
+	budgetError := func(cause error) error {
+		if cause != nil {
+			return cause
+		}
+		return ctx.Err()
+	}
 	var resp *filer_pb.CreateEntryResponse
 	var err error
 	for {
 		if ctx.Err() != nil {
-			return resp, fmt.Errorf("content rebase budget exhausted: %w", filer_pb.ErrPreconditionFailed)
+			return resp, budgetError(err)
 		}
 		var storedEOF uint64
 		if base != nil {
@@ -66,7 +71,6 @@ func (wfs *WFS) publishPendingContent(ctx context.Context, fh *FileHandle, req *
 				// A provider refusal is final for this attempt, not a transport
 				// failure to replay on another filer address.
 				refusal = callErr
-				refused = true
 				return nil
 			}
 			return callErr
@@ -78,7 +82,7 @@ func (wfs *WFS) publishPendingContent(ctx context.Context, fh *FileHandle, req *
 			return resp, nil
 		}
 		if ctx.Err() != nil {
-			return resp, fmt.Errorf("content rebase budget exhausted: %w", filer_pb.ErrPreconditionFailed)
+			return resp, budgetError(err)
 		}
 		if !errors.Is(err, filer_pb.ErrPreconditionFailed) || base == nil {
 			return resp, err
@@ -95,9 +99,6 @@ func (wfs *WFS) publishPendingContent(ctx context.Context, fh *FileHandle, req *
 			return e
 		})
 		if lookupErr != nil {
-			if ctx.Err() != nil {
-				return resp, fmt.Errorf("content rebase budget exhausted: %w", filer_pb.ErrPreconditionFailed)
-			}
 			return resp, lookupErr
 		}
 		if !sameContentIdentity(base, latest) && !appendCompatible(base, latest, req.Entry) {

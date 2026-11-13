@@ -2,6 +2,7 @@ package mount
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
@@ -117,7 +118,7 @@ func (wfs *WFS) completeAsyncFlush(fh *FileHandle) {
 // response has none, and its message carries the file path.
 func isFilerUnreachable(err error) bool {
 	st, ok := util.ServerStatus(err)
-	return ok && st.Code() == codes.Unavailable
+	return errors.Is(err, context.DeadlineExceeded) || ok && (st.Code() == codes.Unavailable || st.Code() == codes.DeadlineExceeded)
 }
 
 // flushMetadataWithRetry persists the chunk references of a closed file. The

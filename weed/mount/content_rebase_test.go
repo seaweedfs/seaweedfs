@@ -5,6 +5,7 @@ package mount
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"sync"
 	"sync/atomic"
@@ -679,8 +680,10 @@ func testContentRebaseStopsProgress(t *testing.T, cancelCaller bool) {
 	if n, code := w.Write(nil, &fuse.WriteIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: handle, Offset: 256, Size: 256}, bytes.Repeat([]byte{'A'}, 256)); n != 256 || code != fuse.OK {
 		t.Fatal(n, code)
 	}
-	done := make(chan fuse.Status, 1)
-	go func() { done <- w.doFlush(ctx, w.GetHandle(FileHandleId(handle)), 0, 0, false) }()
+	fh := w.GetHandle(FileHandleId(handle))
+	fh.dirtyPages.FlushData()
+	done := make(chan error, 1)
+	go func() { done <- w.flushMetadataToFiler(ctx, fh, "/dir", "file", 0, 0) }()
 	select {
 	case <-blocked:
 	case <-time.After(10 * time.Second):
@@ -690,9 +693,13 @@ func testContentRebaseStopsProgress(t *testing.T, cancelCaller bool) {
 		cancel()
 	}
 	select {
-	case code := <-done:
-		if code != fuse.EIO {
-			t.Fatal("cancelled publication did not fail closed", code)
+	case err := <-done:
+		want := codes.DeadlineExceeded
+		if cancelCaller {
+			want = codes.Canceled
+		}
+		if err == nil || errors.Is(err, filer_pb.ErrPreconditionFailed) || !(status.Code(err) == want || cancelCaller && errors.Is(err, context.Canceled) || !cancelCaller && errors.Is(err, context.DeadlineExceeded)) {
+			t.Fatal("publication did not preserve the underlying context error", err)
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("bounded rebase did not stop")
@@ -701,5 +708,67 @@ func testContentRebaseStopsProgress(t *testing.T, cancelCaller bool) {
 	defer peer.mu.Unlock()
 	if calls.Load() != 4 || peer.entry.Attributes.FileSize != 256 || !bytes.Equal(g6StoredBytes(t, peer), bytes.Repeat([]byte{'O'}, 256)) {
 		t.Fatal("cancelled rebase retried or published content", calls.Load())
+	}
+}
+
+// No provider refusal is sent: each unavailable RPC lasts until its publication
+// budget expires. Restore only after the outer four-attempt retry is exhausted.
+type g6OutageFiler struct {
+	*g6ConditionalPeer
+	online       atomic.Bool
+	offlineCalls atomic.Int32
+}
+
+func (s *g6OutageFiler) CreateEntry(ctx context.Context, req *filer_pb.CreateEntryRequest) (*filer_pb.CreateEntryResponse, error) {
+	if !s.online.Load() {
+		s.offlineCalls.Add(1)
+		<-ctx.Done()
+		return nil, status.Error(codes.Unavailable, "filer offline")
+	}
+	return s.g6ConditionalPeer.CreateEntry(ctx, req)
+}
+
+func TestAsyncClosePublishesAfterFilerOutage(t *testing.T) {
+	base := attributeAppendEntry(1)
+	peer := &g6ConditionalPeer{entry: proto.Clone(base).(*filer_pb.Entry)}
+	w, handle := g6AppendHandle(t, peer, base, 1600, true)
+	fake := &g6OutageFiler{g6ConditionalPeer: peer}
+	startFakeFiler(t, w, fake)
+	originalSleep := metadataFlushSleep
+	var restored atomic.Int32
+	metadataFlushSleep = func(_ context.Context, d time.Duration) {
+		if d == util.RetryWaitTime {
+			restored.Add(1)
+			fake.online.Store(true)
+		}
+	}
+	t.Cleanup(func() { metadataFlushSleep = originalSleep })
+	w.pendingAsyncFlush = make(map[uint64]chan struct{})
+	w.startAsyncFlushWorkers(1)
+	t.Cleanup(func() { fake.online.Store(true); w.WaitForAsyncFlush() })
+	cell := w.GetHandle(FileHandleId(handle)).writebackContentError
+	if n, code := w.Write(nil, &fuse.WriteIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: handle, Offset: 256, Size: 256}, bytes.Repeat([]byte{'A'}, 256)); n != 256 || code != fuse.OK {
+		t.Fatal(n, code)
+	}
+	w.Release(nil, &fuse.ReleaseIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: handle})
+	w.pendingAsyncFlushMu.Lock()
+	done := w.pendingAsyncFlush[42]
+	w.pendingAsyncFlushMu.Unlock()
+	if done == nil {
+		t.Fatal("Release did not queue the outage flush")
+	}
+	select {
+	case <-done:
+	case <-time.After(40 * time.Second):
+		t.Fatal("outage recovery did not finish")
+	}
+	peer.mu.Lock()
+	defer peer.mu.Unlock()
+	want := append(bytes.Repeat([]byte{'O'}, 256), bytes.Repeat([]byte{'A'}, 256)...)
+	if restored.Load() != 1 || fake.offlineCalls.Load() < 4 || peer.rejected != 0 || cell.Load() || peer.entry.Attributes.FileSize != 512 || !bytes.Equal(g6StoredBytes(t, peer), want) {
+		t.Fatalf("async outage discarded pending bytes: restored=%d offline=%d refusals=%d fenced=%v size=%d", restored.Load(), fake.offlineCalls.Load(), peer.rejected, cell.Load(), peer.entry.Attributes.FileSize)
+	}
+	if _, found := w.fhMap.FindFileHandle(42); found {
+		t.Fatal("successful outage drain retained a handle")
 	}
 }
