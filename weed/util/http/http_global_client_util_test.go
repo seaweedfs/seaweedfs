@@ -154,6 +154,29 @@ func TestReadUrlAsStreamStopsAtChunkSize(t *testing.T) {
 	}
 }
 
+func TestReadUrlAsStreamReportsAbortPastChunkSize(t *testing.T) {
+	InitGlobalHttpClient()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "300")
+		_, _ = w.Write(bytes.Repeat([]byte("t"), 200))
+		w.(http.Flusher).Flush()
+		panic(http.ErrAbortHandler)
+	}))
+	defer server.Close()
+
+	var got int
+	retryable, err := ReadUrlAsStream(context.Background(), server.URL, "", nil, false, true, 0, 100, func(data []byte) {
+		got += len(data)
+	})
+	if err == nil || !retryable {
+		t.Fatalf("aborted response read as retryable=%v err=%v, want a retryable error", retryable, err)
+	}
+	if got != 100 {
+		t.Fatalf("delivered %d bytes, want 100", got)
+	}
+}
+
 func TestReadErrorsCarryTheServerMessage(t *testing.T) {
 	InitGlobalHttpClient()
 

@@ -455,6 +455,10 @@ func ReadUrlAsStream(ctx context.Context, fileUrl, jwt string, cipherKey []byte,
 			fn(buf[:m])
 		}
 		if err == io.EOF {
+			// a needle that fails its checksum aborts the response at the end
+			if _, err = io.Copy(io.Discard, reader); err != nil {
+				return true, err
+			}
 			return false, nil
 		}
 		if err != nil {
