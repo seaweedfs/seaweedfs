@@ -230,6 +230,10 @@ message KeepConnectedRequest {
   // A draining filer leaves the lock ring but stays a cluster member, so peers
   // keep following its metadata until the stream closes.
   bool leave_lock_ring = 8;
+  // Port of this node's Prometheus /metrics listener (-metricsPort), or 0 when
+  // it is not enabled. Advertised so the admin server can scrape it without
+  // exposing metrics on the client-facing service port.
+  uint32 metrics_port = 9;
 }
 
 message VolumeLocation {
