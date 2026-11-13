@@ -93,7 +93,12 @@ func (wfs *WFS) flushAllDirtyMetadata() {
 func (wfs *WFS) flushFileMetadata(fh *FileHandle) error {
 	// Acquire exclusive lock on the file handle
 	fhActiveLock := fh.wfs.fhLockTable.AcquireLock("flushMetadata", fh.fh, util.ExclusiveLock)
-	defer fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
+	defer func() {
+		fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
+		if wfs.fhMap.retireRecoveredPublication(fh) {
+			fh.ReleaseHandle()
+		}
+	}()
 
 	// Double-check dirty flag under lock
 	if !fh.dirtyMetadata {

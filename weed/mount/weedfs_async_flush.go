@@ -39,6 +39,8 @@ func (wfs *WFS) processAsyncFlushItem(item *asyncFlushItem) {
 		// Remove from fhMap first (so AcquireFileHandle creates a fresh handle).
 		if !item.fh.publicationFailed.Load() {
 			wfs.fhMap.RemoveFileHandle(item.fh.fh, item.fh.inode)
+		} else {
+			wfs.fhMap.retainFailedPublication(item.fh)
 		}
 		// Then signal completion (unblocks waitForPendingAsyncFlush).
 		close(item.done)
@@ -112,6 +114,8 @@ func (wfs *WFS) completeAsyncFlush(fh *FileHandle) {
 	// Phase 3: Destroy the upload pipeline and free resources.
 	if !fh.publicationFailed.Load() {
 		fh.ReleaseHandle()
+	} else {
+		fh.releaseDlmLock()
 	}
 }
 

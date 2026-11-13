@@ -178,6 +178,10 @@ func (wfs *WFS) ReleaseHandle(handleId FileHandleId) {
 	wfs.pendingAsyncFlushMu.Unlock()
 
 	if fhToRelease != nil {
+		if fhToRelease.publicationFailed.Load() {
+			fhToRelease.releaseDlmLock()
+			return
+		}
 		fhToRelease.ReleaseHandle()
 	}
 }
@@ -205,4 +209,3 @@ func (wfs *WFS) waitForPendingAsyncFlush(ctx context.Context, inode uint64) bool
 func (wfs *WFS) GetHandle(handleId FileHandleId) *FileHandle {
 	return wfs.fhMap.GetFileHandle(handleId)
 }
-

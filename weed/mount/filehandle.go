@@ -67,6 +67,8 @@ type FileHandle struct {
 	baseEntry atomic.Pointer[filer_pb.Entry]
 	// Failed publication retains the pending entry across the last close.
 	publicationFailed atomic.Bool
+	// Guarded by fhMap: zero descriptors, pending publication still owned.
+	retainedPublication bool
 
 	// dlmLock holds the distributed lock for cross-mount write coordination.
 	// Non-nil only when -dlm is enabled and the file was opened for writing.
@@ -225,11 +227,7 @@ func (fh *FileHandle) ReleaseHandle() {
 
 	// Release distributed lock before cleaning up, so other mounts can
 	// proceed as soon as this handle is done flushing.
-	if fh.dlmLock != nil {
-		fh.dlmLock.Stop()
-		fh.dlmLock = nil
-		glog.V(1).Infof("DLM lock released for inode %d", fh.inode)
-	}
+	fh.releaseDlmLockLocked()
 
 	if fh.entryChunkGroup != nil {
 		_ = fh.entryChunkGroup.Close()
@@ -237,5 +235,20 @@ func (fh *FileHandle) ReleaseHandle() {
 	fh.dirtyPages.Destroy()
 	if IsDebugFileReadWrite {
 		fh.mirrorFile.Close()
+	}
+}
+
+// A closed description relinquishes its lease even if its pending bytes stay.
+func (fh *FileHandle) releaseDlmLock() {
+	lock := fh.wfs.fhLockTable.AcquireLock("releaseDlmLock", fh.fh, util.ExclusiveLock)
+	defer fh.wfs.fhLockTable.ReleaseLock(fh.fh, lock)
+	fh.releaseDlmLockLocked()
+}
+
+func (fh *FileHandle) releaseDlmLockLocked() {
+	if fh.dlmLock != nil {
+		fh.dlmLock.Stop()
+		fh.dlmLock = nil
+		glog.V(1).Infof("DLM lock released for inode %d", fh.inode)
 	}
 }
