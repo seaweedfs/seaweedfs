@@ -1,6 +1,7 @@
 package mount
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"syscall"
@@ -358,9 +359,14 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 	}
 
 	// Another link still names the inode, so its open handle keeps flushing
-	// through that name.
+	// through that name, over the count and ctime the filer stored there.
 	if isHardLink && markedInode != 0 {
-		if _, status := wfs.inodeToPath.GetPath(markedInode); status == fuse.OK {
+		if survivor, status := wfs.inodeToPath.GetPath(markedInode); status == fuse.OK {
+			if fh, found := wfs.fhMap.FindFileHandle(markedInode); found {
+				if stored, tsNs, signature, err := filer_pb.GetEntry(ctx, wfs, survivor); err == nil && bytes.Equal(stored.GetHardLinkId(), entry.HardLinkId) {
+					fh.adoptLinkChange(stored, tsNs, signature)
+				}
+			}
 			wfs.clearHandleDeleted(markedInode, deleteEpoch)
 		}
 	}
