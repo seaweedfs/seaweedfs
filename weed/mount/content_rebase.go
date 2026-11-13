@@ -111,7 +111,9 @@ func (wfs *WFS) publishPendingContent(ctx context.Context, fh *FileHandle, req *
 		if lookupErr != nil {
 			return resp, lookupErr
 		}
-		if !sameContentIdentity(base, latest) && !appendCompatible(base, latest, req.Entry) {
+		// A replay after a lost answer is refused by its own commit: content
+		// already equal to ours is no conflict, whoever stored it.
+		if !sameContentIdentity(base, latest) && !appendCompatible(base, latest, req.Entry) && !sameContentIdentity(req.Entry, latest) {
 			return resp, fmt.Errorf("content conflict during rebase: %w", err)
 		}
 		if samePublicationVersion(base, latest) {

@@ -1220,3 +1220,41 @@ func TestTruncatingOpenDiscardsRefusedAppend(t *testing.T) {
 		t.Fatal("truncate and rewrite did not publish the new bytes")
 	}
 }
+
+// The filer commits a flush but its answer is lost, so the replay is refused
+// against that commit.
+type g6LostAnswerFiler struct {
+	*g6ConditionalPeer
+	lost atomic.Bool
+}
+
+func (s *g6LostAnswerFiler) CreateEntry(ctx context.Context, r *filer_pb.CreateEntryRequest) (*filer_pb.CreateEntryResponse, error) {
+	resp, err := s.g6ConditionalPeer.CreateEntry(ctx, r)
+	if err == nil && resp.Error == "" && s.lost.CompareAndSwap(false, true) {
+		return nil, status.Error(codes.Unavailable, "answer lost after commit")
+	}
+	return resp, err
+}
+
+func TestLostAnswerToOwnShrinkingFlushIsNotAConflict(t *testing.T) {
+	base := attributeAppendEntry(2)
+	peer := &g6ConditionalPeer{entry: proto.Clone(base).(*filer_pb.Entry)}
+	w, handle := g6AppendHandle(t, peer, base, 2200)
+	fake := &g6LostAnswerFiler{g6ConditionalPeer: peer}
+	startFakeFiler(t, w, fake)
+	if code := w.SetAttr(nil, &fuse.SetAttrIn{SetAttrInCommon: fuse.SetAttrInCommon{InHeader: fuse.InHeader{NodeId: 42}, Valid: fuse.FATTR_SIZE | fuse.FATTR_FH, Fh: handle}}, &fuse.AttrOut{}); code != fuse.OK {
+		t.Fatal("ftruncate", code)
+	}
+	payload := bytes.Repeat([]byte{'N'}, 128)
+	if n, code := w.Write(nil, &fuse.WriteIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: handle, Size: 128}, payload); n != 128 || code != fuse.OK {
+		t.Fatal(n, code)
+	}
+	if code := w.Fsync(nil, &fuse.FsyncIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: handle}); code != fuse.OK {
+		t.Fatal("own committed overwrite reported as a conflict", code)
+	}
+	peer.mu.Lock()
+	defer peer.mu.Unlock()
+	if !fake.lost.Load() || !bytes.Equal(g6StoredBytes(t, peer), payload) {
+		t.Fatal("lost answer was not exercised or the overwrite did not land")
+	}
+}
