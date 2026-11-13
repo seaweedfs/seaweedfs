@@ -2235,37 +2235,44 @@ func TestPeerTruncateWaitsForBufferedWrites(t *testing.T) {
 // A peer replacing the file at the handle's path (another inode) leaves the
 // dirty handle's writes and base alone instead of installing the newcomer.
 func TestPeerReplacementKeepsDirtyHandle(t *testing.T) {
-	wfs := newInvalidateTestWFS(t)
+	for _, name := range []string{"new-content", "same-content"} {
+		t.Run(name, func(t *testing.T) {
+			wfs := newInvalidateTestWFS(t)
 
-	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, flushConditionEntry(1), 0, 0)
-	fh.AddChunks([]*filer_pb.FileChunk{{FileId: "1,0300000001", Offset: 2, Size: 1, ModifiedTsNs: 3}})
-	fh.dirtyMetadata = true
-	pagesBefore := fh.dirtyPages
+			inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+			fh, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, flushConditionEntry(1), 0, 0)
+			fh.AddChunks([]*filer_pb.FileChunk{{FileId: "1,0300000001", Offset: 2, Size: 1, ModifiedTsNs: 3}})
+			fh.dirtyMetadata = true
+			pagesBefore := fh.dirtyPages
 
-	replacement := flushConditionEntry(7)
-	replacement.Attributes.Inode = 99
-	resp := &filer_pb.SubscribeMetadataResponse{
-		Directory: "/dir",
-		TsNs:      1500,
-		EventNotification: &filer_pb.EventNotification{
-			OldEntry:      flushConditionEntry(1),
-			NewEntry:      replacement,
-			NewParentPath: "/dir",
-		},
-	}
-	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), resp, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
-		t.Fatalf("apply: %v", err)
-	}
-	wfs.metaCache.WaitForEntryInvalidations()
+			replacement := flushConditionEntry(7)
+			if name == "same-content" {
+				replacement = flushConditionEntry(1)
+			}
+			replacement.Attributes.Inode = 99
+			resp := &filer_pb.SubscribeMetadataResponse{
+				Directory: "/dir",
+				TsNs:      1500,
+				EventNotification: &filer_pb.EventNotification{
+					OldEntry:      flushConditionEntry(1),
+					NewEntry:      replacement,
+					NewParentPath: "/dir",
+				},
+			}
+			if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), resp, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+				t.Fatalf("apply: %v", err)
+			}
+			wfs.metaCache.WaitForEntryInvalidations()
 
-	if fh.dirtyPages != pagesBefore {
-		t.Fatal("dirty pages destroyed by a replacement")
-	}
-	if got := chunkFileKeys(fh.GetEntry().GetEntry()); len(got) != 2 || got[0] != 1 {
-		t.Fatalf("handle chunks %v, want its own", got)
-	}
-	if base := fh.baseEntry.Load(); base.GetAttributes().GetInode() != 42 {
-		t.Fatalf("base %v moved to the replacement", base)
+			if fh.dirtyPages != pagesBefore {
+				t.Fatal("dirty pages destroyed by a replacement")
+			}
+			if got := chunkFileKeys(fh.GetEntry().GetEntry()); len(got) != 2 || got[0] != 1 {
+				t.Fatalf("handle chunks %v, want its own", got)
+			}
+			if base := fh.baseEntry.Load(); base.GetAttributes().GetInode() != 42 {
+				t.Fatalf("base %v moved to the replacement", base)
+			}
+		})
 	}
 }

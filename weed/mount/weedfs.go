@@ -1049,10 +1049,10 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 	// against an approximate base) leaves them valid. A dirty handle likewise
 	// keeps its diverged entry unless foreign content supersedes it.
 	contentChanged := base == nil || !sameEntryContent(candidate, base)
-	if contentChanged && fh.dirtyMetadata && base != nil {
+	if fh.dirtyMetadata && base != nil && (contentChanged || !sameContentFile(candidate, base)) {
 		// An unmergeable change or a replaced file keeps the writes; the
 		// flush reports the conflict.
-		if sameContentFile(candidate, base) && fh.mergePeerContent(candidate, base) {
+		if contentChanged && sameContentFile(candidate, base) && fh.mergePeerContent(candidate, base) {
 			fh.adoptPeerBase(proto.Clone(candidate).(*filer_pb.Entry))
 			fh.advanceEntryVersion(candidateTsNs, 0)
 		}
