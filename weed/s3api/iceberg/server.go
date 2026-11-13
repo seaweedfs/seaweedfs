@@ -73,6 +73,14 @@ func NewServer(filerClient FilerClient, authenticator S3Authenticator) *Server {
 	if authenticator != nil {
 		manager.SetDefaultAllow(authenticator.DefaultAllow())
 	}
+	if checker, ok := authenticator.(interface{ IsConfiguredAccountID(string) bool }); ok {
+		manager.SetLocalAccountChecker(checker.IsConfiguredAccountID)
+	}
+	if source, ok := authenticator.(interface {
+		TrustedOIDCIssuers(context.Context) []string
+	}); ok {
+		manager.SetTrustedIssuerSource(source.TrustedOIDCIssuers)
+	}
 	return &Server{
 		filerClient:   filerClient,
 		tablesManager: manager,
