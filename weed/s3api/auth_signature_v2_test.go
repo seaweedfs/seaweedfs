@@ -2,7 +2,9 @@ package s3api
 
 import (
 	"net/http"
+	"sort"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -363,5 +365,156 @@ func TestDoesPresignV2MatchUnicodePath(t *testing.T) {
 	}
 	if identity == nil {
 		t.Fatal("Expected non-nil identity")
+	}
+}
+
+func presignV2ForTest(t *testing.T, cred *Credential, method, path, signedQuery string) *http.Request {
+	t.Helper()
+	req, err := http.NewRequest(method, "http://example.com"+path, nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.URL.RawQuery = signedQuery
+	expires := strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10)
+	query := req.URL.Query()
+	query.Set("AWSAccessKeyId", cred.AccessKey)
+	query.Set("Expires", expires)
+	query.Set("Signature", preSignatureV2(cred, method, req.URL.EscapedPath(), req.URL.Query().Encode(), req.Header, expires))
+	req.URL.RawQuery = query.Encode()
+	return req
+}
+
+func TestSignatureV2CoversOperationSubresources(t *testing.T) {
+	if !sort.StringsAreSorted(resourceList) {
+		t.Fatal("resourceList must stay in byte order")
+	}
+	signed := make(map[string]bool, len(resourceList))
+	for _, key := range resourceList {
+		signed[key] = true
+	}
+	// list-type picks ListObjectsV2 over V1, the same action, and V2 clients never sign it.
+	for key := range operationSubresources {
+		if key != "list-type" && !signed[key] {
+			t.Errorf("operation subresource %q is not covered by signature V2", key)
+		}
+	}
+	for key := range bucketQueryActions {
+		if !signed[key] {
+			t.Errorf("bucket subresource %q is not covered by signature V2", key)
+		}
+	}
+}
+
+func TestSignatureV2RejectsAppendedSubresource(t *testing.T) {
+	iam := setupTestIAMForV2Auth()
+	cred := &Credential{
+		AccessKey: "AKIAIOSFODNN7EXAMPLE",
+		SecretKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+	}
+
+	if _, errCode := iam.doesPresignV2SignatureMatch(presignV2ForTest(t, cred, http.MethodPut, "/bucket/key", "")); errCode != s3err.ErrNone {
+		t.Fatalf("presigned PUT as issued: %v", errCode)
+	}
+
+	for key := range operationSubresources {
+		if key == "list-type" {
+			continue
+		}
+		t.Run("presigned_"+key, func(t *testing.T) {
+			req := presignV2ForTest(t, cred, http.MethodPut, "/bucket/key", "")
+			req.URL.RawQuery += "&" + key
+			if _, errCode := iam.doesPresignV2SignatureMatch(req); errCode != s3err.ErrSignatureDoesNotMatch {
+				t.Fatalf("presigned PUT with unsigned %q: got %v, want %v", key, errCode, s3err.ErrSignatureDoesNotMatch)
+			}
+		})
+		t.Run("header_"+key, func(t *testing.T) {
+			req, err := http.NewRequest(http.MethodPut, "http://example.com/bucket/key", nil)
+			if err != nil {
+				t.Fatalf("new request: %v", err)
+			}
+			req.Header.Set("Date", time.Now().UTC().Format(http.TimeFormat))
+			req.Header.Set("Authorization", signatureV2(cred, req.Method, req.URL.EscapedPath(), req.URL.Query().Encode(), req.Header))
+			req.URL.RawQuery = key
+			if _, errCode := iam.doesSignV2Match(req); errCode != s3err.ErrSignatureDoesNotMatch {
+				t.Fatalf("signed PUT with unsigned %q: got %v, want %v", key, errCode, s3err.ErrSignatureDoesNotMatch)
+			}
+		})
+	}
+}
+
+func TestPresignV2AcceptsClientSignedSubresource(t *testing.T) {
+	iam := setupTestIAMForV2Auth()
+	cred := &Credential{
+		AccessKey: "AKIAIOSFODNN7EXAMPLE",
+		SecretKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+	}
+	expires := strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10)
+
+	tests := []struct {
+		method, rawQuery, resource string
+	}{
+		{http.MethodPut, "tagging", "/bucket/key?tagging"},
+		{http.MethodGet, "tagging&versionId=v1", "/bucket/key?tagging&versionId=v1"},
+		{http.MethodGet, "cors", "/bucket?cors"},
+		{http.MethodPut, "retention", "/bucket/key?retention"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.method+"_"+tt.rawQuery, func(t *testing.T) {
+			// The string to sign a V2 client builds: verb, MD5, type, expiry, resource.
+			signature := calculateSignatureV2(tt.method+"\n\n\n"+expires+"\n"+tt.resource, cred.SecretKey)
+			path := tt.resource[:strings.Index(tt.resource, "?")]
+			req, err := http.NewRequest(tt.method, "http://example.com"+path+"?"+tt.rawQuery, nil)
+			if err != nil {
+				t.Fatalf("new request: %v", err)
+			}
+			query := req.URL.Query()
+			query.Set("AWSAccessKeyId", cred.AccessKey)
+			query.Set("Expires", expires)
+			query.Set("Signature", signature)
+			req.URL.RawQuery = query.Encode()
+			if _, errCode := iam.doesPresignV2SignatureMatch(req); errCode != s3err.ErrNone {
+				t.Fatalf("client-signed %s: got %v", tt.resource, errCode)
+			}
+		})
+	}
+}
+
+func TestSignatureV2RejectsRepeatedSubresource(t *testing.T) {
+	iam := setupTestIAMForV2Auth()
+	cred := &Credential{
+		AccessKey: "AKIAIOSFODNN7EXAMPLE",
+		SecretKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+	}
+
+	if _, errCode := iam.doesPresignV2SignatureMatch(presignV2ForTest(t, cred, http.MethodPut, "/bucket/key", "retention&versionId=v1")); errCode != s3err.ErrNone {
+		t.Fatalf("presigned PUT as issued: %v", errCode)
+	}
+
+	for name, edit := range map[string]func(string) string{
+		"prepended": func(q string) string { return "versionId=v2&" + q },
+		"appended":  func(q string) string { return q + "&versionId=v2" },
+	} {
+		t.Run("presigned_"+name, func(t *testing.T) {
+			req := presignV2ForTest(t, cred, http.MethodPut, "/bucket/key", "retention&versionId=v1")
+			req.URL.RawQuery = edit(req.URL.RawQuery)
+			if _, errCode := iam.doesPresignV2SignatureMatch(req); errCode != s3err.ErrSignatureDoesNotMatch {
+				t.Fatalf("presigned PUT with a second versionId: got %v, want %v", errCode, s3err.ErrSignatureDoesNotMatch)
+			}
+		})
+		t.Run("header_"+name, func(t *testing.T) {
+			req, err := http.NewRequest(http.MethodPut, "http://example.com/bucket/key?retention&versionId=v1", nil)
+			if err != nil {
+				t.Fatalf("new request: %v", err)
+			}
+			req.Header.Set("Date", time.Now().UTC().Format(http.TimeFormat))
+			req.Header.Set("Authorization", signatureV2(cred, req.Method, req.URL.EscapedPath(), req.URL.Query().Encode(), req.Header))
+			if _, errCode := iam.doesSignV2Match(req); errCode != s3err.ErrNone {
+				t.Fatalf("signed PUT as issued: %v", errCode)
+			}
+			req.URL.RawQuery = edit(req.URL.RawQuery)
+			if _, errCode := iam.doesSignV2Match(req); errCode != s3err.ErrSignatureDoesNotMatch {
+				t.Fatalf("signed PUT with a second versionId: got %v, want %v", errCode, s3err.ErrSignatureDoesNotMatch)
+			}
+		})
 	}
 }
