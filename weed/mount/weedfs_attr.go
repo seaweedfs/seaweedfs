@@ -396,6 +396,14 @@ func (wfs *WFS) touchDirMtimeCtimeBest(dirPath util.FullPath) {
 // touchDirMtimeCtime updates a directory's mtime and ctime on the filer.
 // POSIX requires this when entries are created or removed in the directory.
 func (wfs *WFS) touchDirMtimeCtime(dirPath util.FullPath) {
+	// The mount root reports its own times (setRootAttr), and maybeLoadEntry
+	// synthesizes its entry from the mount options instead of reading the
+	// filer. Saving that entry would replace the real directory on the filer,
+	// dropping what only the filer holds: its extended attributes and, when the
+	// root is a bucket, the bucket's quota and the settings S3 keeps on it.
+	if string(dirPath) == wfs.option.FilerMountRootPath {
+		return
+	}
 	dirEntry, _, code := wfs.maybeLoadEntry(context.Background(), dirPath)
 	if code != fuse.OK || dirEntry == nil || dirEntry.Attributes == nil {
 		return
