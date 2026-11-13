@@ -2,6 +2,7 @@ package shell
 
 import (
 	"errors"
+	"flag"
 	"io"
 	"strings"
 	"testing"
@@ -81,5 +82,15 @@ func TestProcessEachCmdPreservesRegisteredCommandError(t *testing.T) {
 	exit, err = processEachCmd("test.succeeding.command", nil)
 	if exit || err != nil {
 		t.Errorf("a succeeding command must return no error, got exit=%v err=%v", exit, err)
+	}
+}
+
+func TestProcessEachCmdTreatsHelpAsSuccess(t *testing.T) {
+	Commands = append(Commands, &fakeCommand{name: "test.help.command", err: flag.ErrHelp})
+	t.Cleanup(func() { Commands = Commands[:len(Commands)-1] })
+
+	exit, err := processEachCmd("test.help.command -h", nil)
+	if exit || err != nil {
+		t.Errorf("-h must not count as a failure, got exit=%v err=%v", exit, err)
 	}
 }
