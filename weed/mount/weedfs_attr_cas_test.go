@@ -138,6 +138,82 @@ func attributeAppendEntry(records int) *filer_pb.Entry {
 	return e
 }
 
+// A peer's acknowledged attribute change leaves the content alone, so our
+// append's conditional flush must still publish, keeping the peer's change.
+func TestAppendFlushAfterPeerAttributeChange(t *testing.T) {
+	for _, op := range []string{"none", "chmod", "chown", "utimes", "setxattr"} {
+		t.Run(op, func(t *testing.T) {
+			writer, peer := newInvalidateTestWFS(t), newInvalidateTestWFS(t)
+			peer.atimeMap = make(map[uint64]time.Time)
+			base := attributeAppendEntry(1)
+			base.CommitTsNs = 100
+			fake := &contentFlushConditionFiler{entry: proto.Clone(base).(*filer_pb.Entry)}
+			startFakeFiler(t, writer, fake)
+			startFakeFiler(t, peer, fake)
+			path := util.FullPath("/dir/file")
+			local := proto.Clone(base).(*filer_pb.Entry)
+			writer.mapPbIdFromFilerToLocal(local)
+			fh := newFileHandle(writer, 1, 42, local)
+			fh.RememberPath(path)
+			t.Cleanup(fh.dirtyPages.Destroy)
+			writer.fhMap.inode2fh[42], writer.fhMap.fh2inode[1] = fh, 42
+			appended := attributeAppendEntry(2).Chunks[1]
+			fh.UpdateEntry(func(e *filer_pb.Entry) {
+				e.Chunks = append(e.Chunks, appended)
+				e.Attributes.FileSize = 512
+			})
+			fh.dirtyMetadata = true
+
+			peer.inodeToPath.Lookup("/dir", 1, true, false, 0, false)
+			peer.inodeToPath.Lookup(path, 1, false, false, 42, true)
+			peer.inodeToPath.MarkChildrenCached("/dir")
+			if err := peer.metaCache.InsertEntry(context.Background(), filer.FromPbEntry("/dir", base), 1); err != nil {
+				t.Fatal(err)
+			}
+			code := fuse.OK
+			in := &fuse.SetAttrIn{}
+			in.NodeId = 42
+			switch op {
+			case "chmod":
+				in.Valid, in.Mode = fuse.FATTR_MODE, 0600
+			case "chown":
+				in.Valid, in.Owner.Uid, in.Owner.Gid = fuse.FATTR_UID|fuse.FATTR_GID, 1001, 21
+			case "utimes":
+				in.Valid, in.Mtime = fuse.FATTR_MTIME, 123
+			case "setxattr":
+				code = peer.SetXAttr(nil, &fuse.SetXAttrIn{InHeader: fuse.InHeader{NodeId: 42}}, "user.test", []byte("peer"))
+			}
+			if in.Valid != 0 {
+				code = peer.SetAttr(nil, in, &fuse.AttrOut{})
+			}
+			if code != fuse.OK {
+				t.Fatalf("peer %s: %v", op, code)
+			}
+
+			if code = writer.Fsync(nil, &fuse.FsyncIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: 1}); code != fuse.OK {
+				t.Fatalf("append fsync after peer %s: %v", op, code)
+			}
+			fake.mu.Lock()
+			defer fake.mu.Unlock()
+			got := fake.entry
+			if len(got.Chunks) != 2 || got.Attributes.FileSize != 512 {
+				t.Fatalf("append not published after peer %s: %v", op, got)
+			}
+			a := got.Attributes
+			kept := map[string]bool{
+				"none":     true,
+				"chmod":    a.FileMode&0777 == 0600,
+				"chown":    a.Uid == 1001 && a.Gid == 21,
+				"utimes":   a.Mtime == 123,
+				"setxattr": string(got.Extended["xattr-user.test"]) == "peer",
+			}[op]
+			if !kept {
+				t.Fatalf("append flush dropped the peer's %s: %v", op, got)
+			}
+		})
+	}
+}
+
 func TestAttributeOnlyOpsPreserveAcknowledgedAppends(t *testing.T) {
 	for _, op := range []string{"chmod", "chown", "utimes", "setxattr", "removexattr"} {
 		for _, stale := range []bool{false, true} {

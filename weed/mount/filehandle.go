@@ -1,6 +1,7 @@
 package mount
 
 import (
+	"bytes"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -65,6 +66,15 @@ type FileHandle struct {
 	// Local writes move the live entry away from it, so "is this event new"
 	// must be judged here, not against the live entry. Always store a clone.
 	baseEntry atomic.Pointer[filer_pb.Entry]
+
+	// sinceBase marks a truncate or chunk rewrite over baseEntry that a
+	// merge must honor: later writes can grow the file past a truncate, and
+	// rewritten chunks carry the handle's view of the base.
+	sinceBase atomic.Pointer[baseMark]
+
+	// chunkViewStale marks a read view whose manifest resolution failed; the
+	// next read or lseek resolves the entry's chunks again.
+	chunkViewStale atomic.Bool
 
 	// dlmLock holds the distributed lock for cross-mount write coordination.
 	// Non-nil only when -dlm is enabled and the file was opened for writing.
@@ -141,6 +151,7 @@ func (fh *FileHandle) SetEntry(entry *filer_pb.Entry) {
 		if resolveManifestErr != nil {
 			glog.Warningf("failed to resolve manifest chunks in %+v", filer_pb.ScrubCipherKeys(entry))
 		}
+		fh.chunkViewStale.Store(resolveManifestErr != nil)
 	} else {
 		glog.Fatalf("setting file handle entry to nil")
 	}
@@ -172,6 +183,125 @@ func (fh *FileHandle) installAckedEntry(entry *filer_pb.Entry, versionTsNs int64
 	fh.SetEntry(entry)
 	fh.setAuthoritativeBase(proto.Clone(entry).(*filer_pb.Entry))
 	fh.advanceEntryVersion(versionTsNs, signature)
+}
+
+// rebaseEntry installs an entry merged with a peer's changes, keeping the
+// chunks and growth writers added after sent was taken, and refreshes the
+// read view.
+func (fh *FileHandle) rebaseEntry(merged, sent *filer_pb.Entry) {
+	inSent := make(map[string]bool, len(sent.Chunks))
+	for _, c := range sent.Chunks {
+		inSent[contentChunkKey(c)] = true
+	}
+	merged = proto.Clone(merged).(*filer_pb.Entry)
+	fh.UpdateEntry(func(e *filer_pb.Entry) {
+		chunks := merged.Chunks
+		for _, c := range e.Chunks {
+			if !inSent[contentChunkKey(c)] {
+				chunks = append(chunks, c)
+			}
+		}
+		attrs := merged.Attributes
+		if size := e.GetAttributes().GetFileSize(); size > sent.GetAttributes().GetFileSize() && size > attrs.FileSize {
+			attrs.FileSize = size
+		}
+		e.Attributes, e.Extended, e.Content, e.Chunks = attrs, merged.Extended, merged.Content, chunks
+		err := fh.entryChunkGroup.SetChunks(chunks)
+		if err != nil {
+			glog.Warningf("rebase %s: resolve chunks: %v", fh.FullPath(), err)
+		}
+		fh.chunkViewStale.Store(err != nil)
+	})
+}
+
+// refreshChunkView retries a read view whose manifest resolution failed.
+func (fh *FileHandle) refreshChunkView() {
+	if !fh.chunkViewStale.Load() {
+		return
+	}
+	fh.UpdateEntry(func(e *filer_pb.Entry) {
+		fh.chunkViewStale.Store(fh.entryChunkGroup.SetChunks(e.Chunks) != nil)
+	})
+}
+
+// mergePeerContent folds a peer's change into a dirty handle, so its own
+// writes stay on top of the peer's instead of being discarded.
+func (fh *FileHandle) mergePeerContent(peer, base *filer_pb.Entry) bool {
+	var local *filer_pb.Entry
+	fh.UpdateEntry(func(e *filer_pb.Entry) {
+		local = proto.Clone(e).(*filer_pb.Entry)
+	})
+	mark := fh.markSince(base)
+	merged, ok := mergeContentEntry(peer, base, local, local, mark.truncatedTo, mark.rewrote)
+	ok = ok && mergeKeepsBuffered(merged, local)
+	if ok {
+		fh.rebaseEntry(merged, local)
+	}
+	return ok
+}
+
+// mergeKeepsBuffered reports whether merged leaves room for writes still
+// buffered over local. They are not chunks yet, so a merge that shrinks the
+// file or brings in inline content (read ahead of chunks) waits for the flush.
+func mergeKeepsBuffered(merged, local *filer_pb.Entry) bool {
+	return merged.Attributes.FileSize >= filer.FileSize(local) && bytes.Equal(merged.Content, local.Content)
+}
+
+// baseMark records what the handle did over base that its entry does not
+// show: the lowest size a truncate set (-1 for none), and a whole-file
+// rewrite of its chunks.
+type baseMark struct {
+	base        *filer_pb.Entry
+	truncatedTo int64
+	rewrote     bool
+}
+
+func (fh *FileHandle) markBase(update func(m *baseMark)) {
+	for {
+		base, old := fh.baseEntry.Load(), fh.sinceBase.Load()
+		next := baseMark{base: base, truncatedTo: -1}
+		if old != nil && old.base == base {
+			next = *old
+		}
+		update(&next)
+		if fh.sinceBase.CompareAndSwap(old, &next) {
+			return
+		}
+	}
+}
+
+// noteTruncate records a truncate to size over the current base.
+func (fh *FileHandle) noteTruncate(size uint64) {
+	fh.markBase(func(m *baseMark) {
+		if m.truncatedTo < 0 || int64(size) < m.truncatedTo {
+			m.truncatedTo = int64(size)
+		}
+	})
+}
+
+// noteRewrite records that the handle's chunks were rewritten from its view
+// of the current base.
+func (fh *FileHandle) noteRewrite() {
+	fh.markBase(func(m *baseMark) { m.rewrote = true })
+}
+
+// adoptPeerBase moves a dirty handle's base to a peer's entry. What the
+// handle has not published yet still applies over the new base.
+func (fh *FileHandle) adoptPeerBase(base *filer_pb.Entry) {
+	old := fh.baseEntry.Swap(base)
+	if m := fh.sinceBase.Load(); m != nil && m.base == old {
+		moved := *m
+		moved.base = base
+		fh.sinceBase.CompareAndSwap(m, &moved)
+	}
+}
+
+// markSince is what the handle did over base.
+func (fh *FileHandle) markSince(base *filer_pb.Entry) baseMark {
+	if m := fh.sinceBase.Load(); m != nil && m.base == base {
+		return *m
+	}
+	return baseMark{base: base, truncatedTo: -1}
 }
 
 // setAuthoritativeBase installs the base snapshot a local ack acknowledged.
