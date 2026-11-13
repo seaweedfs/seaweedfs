@@ -161,9 +161,12 @@ func (store *EtcdStore) InsertEntry(ctx context.Context, entry *filer.Entry) (er
 		meta = weed_util.MaybeGzipData(meta)
 	}
 
-	opCtx, cancel := store.withTimeout(ctx)
-	defer cancel()
-	if _, err := store.client.Put(opCtx, store.etcdKeyPrefix+string(key), string(meta)); err != nil {
+	// No request deadline here: a Put that times out on the client may still
+	// have been committed, and callers such as the filer's upload handler treat
+	// the error as a failed write and delete the chunks the saved entry points
+	// at. etcd's own request timeout still ends a Put that a live member cannot
+	// commit, and keepalive ends one on a member that goes silent.
+	if _, err := store.client.Put(ctx, store.etcdKeyPrefix+string(key), string(meta)); err != nil {
 		return fmt.Errorf("persisting %s : %v", entry.FullPath, err)
 	}
 
