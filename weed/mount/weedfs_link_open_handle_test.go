@@ -357,16 +357,7 @@ func TestFlushWaitingThroughAliasUnlinkReachesSurvivor(t *testing.T) {
 	held := table.AcquireLock("test", "/tmp", util.SharedLock)
 	done := make(chan error, 1)
 	go func() { done <- wfs.flushMetadataToFiler(context.Background(), fh, "/", "tmp", 1000, 20) }()
-	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
-		probe, free := table.TryAcquireLock("probe", "/tmp", util.SharedLock)
-		if !free {
-			break
-		}
-		table.ReleaseLock("/tmp", probe)
-		if time.Now().After(deadline) {
-			t.Fatal("the flush never waited for the alias's publication lock")
-		}
-	}
+	waitForPublicationWaiter(t, table, "/tmp")
 	unlinkInRoot(t, wfs, "tmp")
 	table.ReleaseLock("/tmp", held)
 	if err := <-done; err != nil {
@@ -375,6 +366,69 @@ func TestFlushWaitingThroughAliasUnlinkReachesSurvivor(t *testing.T) {
 	wantStored(t, fake, "final", 2, 1)
 	if fake.stored("tmp") != nil {
 		t.Fatal("the flush recreated the unlinked name")
+	}
+}
+
+// A flush whose name is unlinked during every lock wait gives up with a
+// retryable error instead of publishing to a name it has not checked.
+func TestFlushWhoseNameKeepsChangingRetries(t *testing.T) {
+	wfs, fake, fh, inode := openLinkTestFile(t)
+	for _, name := range []string{"a", "b", "c", "final"} {
+		linkInRoot(t, wfs, inode, name)
+	}
+	fh.UpdateEntry(func(e *filer_pb.Entry) {
+		e.Chunks = append(e.Chunks, linkHandleChunk(2, 100))
+		e.Attributes.FileSize = 200
+	})
+	fh.dirtyMetadata = true
+	table := wfs.metadataPublicationTable()
+	current := util.FullPath("/tmp")
+	held := table.AcquireLock("test", current, util.SharedLock)
+	done := make(chan error, 1)
+	go func() { done <- wfs.flushMetadataToFiler(context.Background(), fh, "/", "tmp", 1000, 20) }()
+	var removed []string
+	for i := 0; i < 4; i++ {
+		waitForPublicationWaiter(t, table, current)
+		_, name := current.DirAndName()
+		unlinkInRoot(t, wfs, name)
+		removed = append(removed, name)
+		next := fh.FullPath()
+		nextHeld := table.AcquireLock("test", next, util.SharedLock)
+		table.ReleaseLock(current, held)
+		current, held = next, nextHeld
+	}
+	err := <-done
+	table.ReleaseLock(current, held)
+	if current != "/final" {
+		t.Fatalf("the surviving name is %s, want /final", current)
+	}
+	if err == nil || !isRetryableFilerError(err) {
+		t.Fatalf("flush whose name changed during every lock wait: %v, want a retryable error", err)
+	}
+	if err := wfs.flushMetadataToFiler(context.Background(), fh, "/", "tmp", 1000, 20); err != nil {
+		t.Fatalf("retried flush: %v", err)
+	}
+	wantStored(t, fake, "final", 2, 1)
+	for _, name := range removed {
+		if fake.stored(name) != nil {
+			t.Fatalf("the flush recreated the unlinked name %s", name)
+		}
+	}
+}
+
+// waitForPublicationWaiter returns once a writer is queued behind the shared
+// publication lock the test holds on path.
+func waitForPublicationWaiter(t *testing.T, table *util.LockTable[util.FullPath], path util.FullPath) {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
+		probe, free := table.TryAcquireLock("probe", path, util.SharedLock)
+		if !free {
+			return
+		}
+		table.ReleaseLock(path, probe)
+		if time.Now().After(deadline) {
+			t.Fatalf("the flush never waited for the publication lock on %s", path)
+		}
 	}
 }
 
