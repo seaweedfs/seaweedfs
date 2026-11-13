@@ -343,6 +343,41 @@ func TestFlushResolvedBeforeAliasUnlinkReachesSurvivor(t *testing.T) {
 	}
 }
 
+// A flush that picked the alias and waits for its publication lock while the
+// alias is unlinked publishes through the surviving name.
+func TestFlushWaitingThroughAliasUnlinkReachesSurvivor(t *testing.T) {
+	wfs, fake, fh, inode := openLinkTestFile(t)
+	linkInRoot(t, wfs, inode, "final")
+	fh.UpdateEntry(func(e *filer_pb.Entry) {
+		e.Chunks = append(e.Chunks, linkHandleChunk(2, 100))
+		e.Attributes.FileSize = 200
+	})
+	fh.dirtyMetadata = true
+	table := wfs.metadataPublicationTable()
+	held := table.AcquireLock("test", "/tmp", util.SharedLock)
+	done := make(chan error, 1)
+	go func() { done <- wfs.flushMetadataToFiler(context.Background(), fh, "/", "tmp", 1000, 20) }()
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
+		probe, free := table.TryAcquireLock("probe", "/tmp", util.SharedLock)
+		if !free {
+			break
+		}
+		table.ReleaseLock("/tmp", probe)
+		if time.Now().After(deadline) {
+			t.Fatal("the flush never waited for the alias's publication lock")
+		}
+	}
+	unlinkInRoot(t, wfs, "tmp")
+	table.ReleaseLock("/tmp", held)
+	if err := <-done; err != nil {
+		t.Fatalf("flush that waited through the unlink: %v", err)
+	}
+	wantStored(t, fake, "final", 2, 1)
+	if fake.stored("tmp") != nil {
+		t.Fatal("the flush recreated the unlinked name")
+	}
+}
+
 // With writeback caching close only queues the flush. Unlinking the alias,
 // found in a listed directory, before that flush runs must not drop the
 // content the other link keeps.
