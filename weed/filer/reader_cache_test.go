@@ -1078,6 +1078,19 @@ func TestReaderCacheDestroyCancelsDownloadAfterItsLastStream(t *testing.T) {
 		rc.destroy()
 		close(destroyed)
 	}()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		rc.RLock()
+		mapped := len(rc.downloaders)
+		rc.RUnlock()
+		if mapped == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("destroy never dropped the download from the map")
+		}
+		time.Sleep(time.Millisecond)
+	}
 	select {
 	case err := <-fetchEnded:
 		t.Fatalf("destroy cancelled a download a stream still holds: %v", err)
