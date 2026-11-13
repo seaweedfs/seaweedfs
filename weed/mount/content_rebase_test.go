@@ -21,10 +21,11 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-func g6AppendHandle(t *testing.T, peer *g6ConditionalPeer, base *filer_pb.Entry, key uint64) (*WFS, uint64) {
+func g6AppendHandle(t *testing.T, peer *g6ConditionalPeer, base *filer_pb.Entry, key uint64, writeback ...bool) (*WFS, uint64) {
 	t.Helper()
 	w := newInvalidateTestWFS(t)
 	w.option.DefaultPermissions = true
+	w.option.WritebackCache = len(writeback) > 0 && writeback[0]
 	w.posixLocks = NewPosixLockTable()
 	w.option.ConcurrentWriters = 1
 	w.concurrentWriters = util.NewLimitedConcurrentExecutor(1)
@@ -316,8 +317,7 @@ func TestRealConflictCannotPublishAppendGap(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			base := attributeAppendEntry(1)
 			peer := &g6ConditionalPeer{entry: proto.Clone(base).(*filer_pb.Entry)}
-			w, handle := g6AppendHandle(t, peer, base, 600)
-			w.option.WritebackCache = mode.writeback
+			w, handle := g6AppendHandle(t, peer, base, 600, mode.writeback)
 			write := func(h, offset uint64, value byte) {
 				t.Helper()
 				n, code := w.Write(nil, &fuse.WriteIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: h, Offset: offset, Size: 256}, bytes.Repeat([]byte{value}, 256))
@@ -435,6 +435,14 @@ func TestPositionalSparseWriteStillPublishes(t *testing.T) {
 // Force a real background Release publication to finish after final Forget
 // and a new lookup of the same inode number.
 func TestAsyncRefusalAfterForgetDoesNotPoisonRelookup(t *testing.T) {
+	testAsyncRefusalAfterForget(t, false)
+}
+
+func TestAsyncPublicationBlockedBeforeCaptureDoesNotPoisonRelookup(t *testing.T) {
+	testAsyncRefusalAfterForget(t, true)
+}
+
+func testAsyncRefusalAfterForget(t *testing.T, publicationBlocked bool) {
 	base := attributeAppendEntry(1)
 	peer := &g6ConditionalPeer{entry: proto.Clone(base).(*filer_pb.Entry), refuse: true}
 	entered, resume := make(chan struct{}), make(chan struct{})
@@ -449,12 +457,18 @@ func TestAsyncRefusalAfterForgetDoesNotPoisonRelookup(t *testing.T) {
 			}
 		})
 	}
-	w, handle := g6AppendHandle(t, peer, base, 1000)
-	w.option.WritebackCache = true
+	w, handle := g6AppendHandle(t, peer, base, 1000, true)
 	w.pendingAsyncFlush = make(map[uint64]chan struct{})
 	w.startAsyncFlushWorkers(1)
 	t.Cleanup(w.WaitForAsyncFlush)
 	t.Cleanup(release)
+	unlockPublication := func() {}
+	if publicationBlocked {
+		unlock := w.lockMetadataPublication("/dir/file")
+		var unlockOnce sync.Once
+		unlockPublication = func() { unlockOnce.Do(unlock) }
+		t.Cleanup(unlockPublication)
+	}
 	if n, code := w.Write(nil, &fuse.WriteIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: handle, Offset: 256, Size: 256}, bytes.Repeat([]byte{'A'}, 256)); n != 256 || code != fuse.OK {
 		t.Fatal(n, code)
 	}
@@ -465,13 +479,27 @@ func TestAsyncRefusalAfterForgetDoesNotPoisonRelookup(t *testing.T) {
 	if done == nil {
 		t.Fatal("Release did not queue an async publication")
 	}
-	select {
-	case <-entered:
-	case <-time.After(2 * time.Second):
-		t.Fatal("async publication did not reach the filer")
+	waitEntered := func() {
+		t.Helper()
+		select {
+		case <-entered:
+		case <-time.After(2 * time.Second):
+			t.Fatal("async publication did not reach the filer")
+		}
+	}
+	if publicationBlocked {
+		if blocked, _ := waitFlushPublication(t, make(chan fuse.Status)); !blocked {
+			t.Fatal("worker was not blocked before publication capture")
+		}
+	} else {
+		waitEntered()
 	}
 	w.Forget(42, 1)
 	w.inodeToPath.Lookup("/dir/file", 1, false, false, 42, true)
+	if publicationBlocked {
+		unlockPublication()
+		waitEntered()
+	}
 	release()
 	select {
 	case <-done:

@@ -2,6 +2,7 @@ package mount
 
 import (
 	"sync"
+	"sync/atomic"
 
 	"github.com/seaweedfs/seaweedfs/weed/util"
 
@@ -66,11 +67,24 @@ func (i *FileHandleToInode) MarkInodeRenamed(inode uint64) {
 // Callers must treat a draining report as "wait for the pending flush, then
 // retry the whole acquire", not as success.
 func (i *FileHandleToInode) AcquireFileHandle(wfs *WFS, inode uint64, entry *filer_pb.Entry, versionTsNs int64, signature int32, appendMode ...bool) (*FileHandle, FileHandleId, bool, bool) {
+	// Bind before publishing the handle or queuing any async close. Capture
+	// under the inode-table lock, but release it before taking the fhMap lock.
+	var writebackError *atomic.Bool
+	if wfs.option.WritebackCache {
+		wfs.inodeToPath.RLock()
+		state, found := wfs.writebackContentErrors.Load(inode)
+		if !found {
+			state, _ = wfs.writebackContentErrors.LoadOrStore(inode, new(atomic.Bool))
+		}
+		writebackError = state.(*atomic.Bool)
+		wfs.inodeToPath.RUnlock()
+	}
 	i.Lock()
 	defer i.Unlock()
 	fh, found := i.inode2fh[inode]
 	if !found {
 		fh = newFileHandle(wfs, FileHandleId(util.RandomUint64()), inode, entry)
+		fh.writebackContentError = writebackError
 		fh.fhs[fh.fh] = len(appendMode) > 0 && appendMode[0]
 		fh.entryVersionTsNs.Store(versionTsNs)
 		fh.entryVersionSignature.Store(signature)

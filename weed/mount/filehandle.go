@@ -67,7 +67,7 @@ type FileHandle struct {
 	// Local writes move the live entry away from it, so "is this event new"
 	// must be judged here, not against the live entry. Always store a clone.
 	baseEntry atomic.Pointer[filer_pb.Entry]
-	// Metadata-only lifetime token, captured under the active lock; no resource ownership.
+	// Metadata-only lifetime token, bound before exposing the handle; no resource ownership.
 	writebackContentError *atomic.Bool
 
 	// dlmLock holds the distributed lock for cross-mount write coordination.
