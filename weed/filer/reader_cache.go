@@ -452,8 +452,7 @@ func (s *SingleChunkCacher) startCaching() {
 		return
 	}
 
-	// the lookup is shared with other cachers of the volume, so it must not take s.ctx
-	urlStrings, err := s.parent.lookupFileIdFn(context.Background(), s.chunkFileId)
+	urlStrings, err := s.lookupFileId(s.ctx, s.chunkFileId)
 	if err != nil {
 		s.setError(fmt.Errorf("operation LookupFileId %s failed, err: %v", s.chunkFileId, err))
 		return
@@ -509,7 +508,7 @@ func (s *SingleChunkCacher) fetchChunkData(ctx context.Context, urlStrings []str
 	// Allocate buffer and download without holding the lock.
 	// This allows multiple downloads to proceed in parallel.
 	data := mem.Allocate(s.chunkSize)
-	_, fetchErr := s.parent.fetchChunkDataFn(ctx, data, urlStrings, s.cipherKey, s.isGzipped, true, 0, s.chunkFileId, refreshUrls(ctx, s.parent.cacheInvalidator, s.parent.lookupFileIdFn, s.chunkFileId))
+	_, fetchErr := s.parent.fetchChunkDataFn(ctx, data, urlStrings, s.cipherKey, s.isGzipped, true, 0, s.chunkFileId, refreshUrls(ctx, s.parent.cacheInvalidator, s.lookupFileId, s.chunkFileId))
 	if fetchErr != nil {
 		mem.Free(data)
 		return nil, fetchErr
@@ -519,7 +518,7 @@ func (s *SingleChunkCacher) fetchChunkData(ctx context.Context, urlStrings []str
 
 func (s *SingleChunkCacher) retryFetchAfterCacheInvalidation(ctx context.Context, oldUrlStrings []string, originalErr error) ([]byte, error) {
 	var data []byte
-	err := retryFetchWithFreshLocations(ctx, s.parent.cacheInvalidator, s.parent.lookupFileIdFn, s.chunkFileId, oldUrlStrings, originalErr, func(newUrls []string) error {
+	err := retryFetchWithFreshLocations(ctx, s.parent.cacheInvalidator, s.lookupFileId, s.chunkFileId, oldUrlStrings, originalErr, func(newUrls []string) error {
 		var fetchErr error
 		data, fetchErr = s.fetchChunkData(ctx, newUrls)
 		return fetchErr
@@ -528,6 +527,12 @@ func (s *SingleChunkCacher) retryFetchAfterCacheInvalidation(ctx context.Context
 		return nil, err
 	}
 	return data, nil
+}
+
+// lookupFileId ignores the download's context: FilerClient coalesces concurrent
+// lookups of a volume, so a cancelled download must not fail other readers' lookups.
+func (s *SingleChunkCacher) lookupFileId(_ context.Context, fileId string) ([]string, error) {
+	return s.parent.lookupFileIdFn(context.Background(), fileId)
 }
 
 func (s *SingleChunkCacher) destroy() {
