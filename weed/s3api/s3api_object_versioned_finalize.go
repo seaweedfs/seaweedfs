@@ -1,8 +1,10 @@
 package s3api
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -14,6 +16,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/protobuf/proto"
 )
 
 // objectWriteOwner resolves the filer that owns all of an object's writes,
@@ -256,10 +259,10 @@ func (s3a *S3ApiServer) routedDeleteSpecificVersion(owner pb.ServerAddress, buck
 // (condition defaults to lock_key). The second return reports whether the delete
 // was settled here: the raw delete cannot remove an entry other keys are nested
 // under, which the lock path handles by stripping the object off it instead.
-// ifMatch, when set, guards the delete itself; any other failure then settles
-// as one, since the transaction may have committed or a concurrent routed
-// delete may pass the same check, and the lock path does not exclude routed
-// deletes.
+// ifMatch, when set, guards the delete itself and keeps the whole decision on
+// the owner: the lock path does not exclude routed deletes, so a nested entry
+// is stripped there under the same guard, and any other failure settles as
+// one, since the transaction may have committed.
 func (s3a *S3ApiServer) routedDeleteNullVersion(owner pb.ServerAddress, bucket, object string, worm, bypass, metadataOnly bool, ifMatch *filer_pb.WriteCondition) (s3err.ErrorCode, bool) {
 	fullpath := util.NewFullPath(s3a.bucketDir(bucket), object)
 	dir, name := fullpath.DirAndName()
@@ -283,7 +286,9 @@ func (s3a *S3ApiServer) routedDeleteNullVersion(owner pb.ServerAddress, bucket, 
 			return s3err.ErrPreconditionFailed, true
 		}
 		return s3err.ErrAccessDenied, true
-	case resp.Error != "" && ifMatch != nil && !ownerRefusedNonEmpty(resp):
+	case resp.Error != "" && ifMatch != nil && ownerRefusedNonEmpty(resp):
+		return s3a.routedDemoteNullVersion(owner, bucket, object, worm, bypass, ifMatch), true
+	case resp.Error != "" && ifMatch != nil:
 		glog.Errorf("routedDeleteNullVersion: %s/%s on %s returned %q", bucket, object, owner, resp.Error)
 		return s3err.ErrInternalError, true
 	case resp.Error != "":
@@ -291,6 +296,52 @@ func (s3a *S3ApiServer) routedDeleteNullVersion(owner pb.ServerAddress, bucket, 
 		return s3err.ErrNone, false
 	default:
 		return s3err.ErrNone, true
+	}
+}
+
+// routedDemoteNullVersion strips the null version off an entry other keys are
+// nested under, as the lock path's demote does, but on the owner: the write is
+// guarded by ifMatch and by the entry it was derived from, so once the last
+// nested key is gone a concurrent routed delete cannot pass the same check.
+func (s3a *S3ApiServer) routedDemoteNullVersion(owner pb.ServerAddress, bucket, object string, worm, bypass bool, ifMatch *filer_pb.WriteCondition) s3err.ErrorCode {
+	fullpath := util.NewFullPath(s3a.bucketDir(bucket), object)
+	dir, name := fullpath.DirAndName()
+	entry, err := s3a.lookupEntryOnFiler(context.Background(), owner, dir, name)
+	switch {
+	case errors.Is(err, filer_pb.ErrNotFound):
+		return s3err.ErrPreconditionFailed
+	case err != nil:
+		glog.Errorf("routedDemoteNullVersion: %s/%s on %s: %v", bucket, object, owner, err)
+		return s3err.ErrInternalError
+	case !entry.IsDirectoryKeyObject():
+		return s3err.ErrPreconditionFailed
+	}
+	expected := proto.Clone(entry).(*filer_pb.Entry)
+	clearDirectoryMarkerMetadata(entry)
+	guard := &filer_pb.WriteCondition{Clauses: append(slices.Clone(ifMatch.GetClauses()),
+		&filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_ENTRY_EQUAL, ExpectedEntry: expected})}
+	resp, err := s3a.objectTxnOnFiler(owner, &filer_pb.ObjectTransactionRequest{
+		LockKey:   string(fullpath),
+		RouteKey:  s3a.objectRouteKey(bucket, object),
+		Condition: wormDeleteCondition(worm, bypass),
+		Mutations: []*filer_pb.ObjectMutation{
+			{Type: filer_pb.ObjectMutation_PUT, Directory: dir, Entry: entry, Condition: guard},
+		},
+	})
+	switch {
+	case err != nil:
+		glog.Errorf("routedDemoteNullVersion: %s/%s on %s: %v", bucket, object, owner, err)
+		return s3err.ErrInternalError
+	case resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED:
+		if resp.FailedMutation != nil {
+			return s3err.ErrPreconditionFailed
+		}
+		return s3err.ErrAccessDenied
+	case resp.Error != "":
+		glog.Errorf("routedDemoteNullVersion: %s/%s on %s returned %q", bucket, object, owner, resp.Error)
+		return s3err.ErrInternalError
+	default:
+		return s3err.ErrNone
 	}
 }
 
