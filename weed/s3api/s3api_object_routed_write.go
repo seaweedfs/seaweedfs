@@ -113,42 +113,23 @@ func buildWriteCondition(r *http.Request) (*filer_pb.WriteCondition, bool) {
 	return &filer_pb.WriteCondition{Clauses: clauses}, true
 }
 
-// buildDeleteCondition reduces a DeleteObject's If-Match header to a condition;
-// DeleteObject honors only If-Match, matching checkDeleteIfMatch.
-func buildDeleteCondition(r *http.Request) (*filer_pb.WriteCondition, bool) {
+// buildDeleteCondition reduces a DeleteObject's If-Match header to a condition,
+// nil when unconditional; DeleteObject honors only If-Match, matching
+// checkDeleteIfMatch, whose comparison the filer applies to every listed ETag.
+func buildDeleteCondition(r *http.Request) *filer_pb.WriteCondition {
 	ifMatch := strings.TrimSpace(r.Header.Get(s3_constants.IfMatch))
 	switch {
 	case ifMatch == "":
-		return nil, true
+		return nil
 	case ifMatch == "*":
-		return clause(filer_pb.WriteCondition_IF_EXISTS), true
+		return clause(filer_pb.WriteCondition_IF_EXISTS)
 	default:
-		if etag, single := singleStrongETag(ifMatch); single {
-			return etagClause(filer_pb.WriteCondition_IF_ETAG_MATCH, etag), true
-		}
-		return nil, false
+		return &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{Kind: filer_pb.WriteCondition_IF_ETAG_MATCH, Etags: etagList(ifMatch)}}}
 	}
 }
 
 func clause(kind filer_pb.WriteCondition_Kind) *filer_pb.WriteCondition {
 	return &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{Kind: kind}}}
-}
-
-func etagClause(kind filer_pb.WriteCondition_Kind, etag string) *filer_pb.WriteCondition {
-	return &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{Kind: kind, Etags: []string{etag}}}}
-}
-
-// singleStrongETag returns the normalized ETag when v carries exactly one strong
-// ETag, and false for ETag lists or weak ("W/") ETags.
-func singleStrongETag(v string) (string, bool) {
-	v = strings.TrimSpace(v)
-	if strings.Contains(v, ",") {
-		return "", false
-	}
-	if strings.HasPrefix(v, "W/") || strings.HasPrefix(v, "w/") {
-		return "", false
-	}
-	return strings.Trim(v, `"`), true
 }
 
 // etagList splits a conditional ETag header into its candidates, each kept

@@ -178,6 +178,9 @@ func (s3a *S3ApiServer) extractZipObject(w http.ResponseWriter, r *http.Request,
 		if err := s3a.validateTableBucketObjectPath(bucket, memberKey); err != nil {
 			return s3err.ErrAccessDenied
 		}
+		if code := s3a.checkVersionFileWrite(bucket, memberKey, "extractZipObject"); code != s3err.ErrNone {
+			return code
+		}
 		if code, _ := s3a.checkPolicyWithEntry(r, bucket, memberKey, string(s3_constants.ACTION_WRITE), "", nil); code != s3err.ErrNone {
 			return code
 		}

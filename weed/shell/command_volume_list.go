@@ -63,7 +63,7 @@ func (c *commandVolumeList) Do(args []string, commandEnv *CommandEnv, writer io.
 	c.dataNode = volumeListCommand.String("dataNode", "", "show volumes only from the specified data node")
 
 	if err = volumeListCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	if c.collectionMatcher, err = wildcard.CompileCollectionMatcher(*collectionPattern); err != nil {

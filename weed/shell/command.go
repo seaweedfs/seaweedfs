@@ -1,6 +1,10 @@
 package shell
 
-import "io"
+import (
+	"errors"
+	"flag"
+	"io"
+)
 
 type command interface {
 	Name() string
@@ -19,3 +23,10 @@ const (
 	ResourceHeavy CommandTag = "resourceHeavy"
 	Hidden        CommandTag = "hidden"
 )
+
+// isHelpError reports whether a command only stopped because it was run
+// with -h: the flag package has already printed its usage, so this is not a
+// failure.
+func isHelpError(err error) bool {
+	return errors.Is(err, flag.ErrHelp)
+}

@@ -43,7 +43,7 @@ func (c *commandVolumeDelete) Do(args []string, commandEnv *CommandEnv, writer i
 	nodeStr := volDeleteCommand.String("node", "", "the volume server <host>:<port>")
 	timeout := volDeleteCommand.Duration("timeout", 0, "wall-clock cap on the deletion; 0 = no timeout")
 	if err = volDeleteCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	if err = commandEnv.confirmIsLocked(args); err != nil {

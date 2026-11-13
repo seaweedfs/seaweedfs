@@ -56,7 +56,7 @@ func (c *commandS3BucketOwner) Do(args []string, commandEnv *CommandEnv, writer 
 	bucketOwner := bucketCommand.String("owner", "", "new bucket owner identity name")
 	deleteOwner := bucketCommand.Bool("delete", false, "remove the bucket owner (make admin-only)")
 	if err = bucketCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	if *bucketName == "" {

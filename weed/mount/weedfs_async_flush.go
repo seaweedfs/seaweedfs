@@ -101,7 +101,21 @@ func (wfs *WFS) completeAsyncFlush(fh *FileHandle) {
 				fileFullPath = resolvedPath
 			}
 
-			wfs.flushMetadataWithRetry(fh, dir, name, fileFullPath)
+			if err := wfs.flushMetadataWithRetry(fh, dir, name, fileFullPath); err != nil {
+				// close already returned. Do not discard the only pending
+				// references until a private recovery record is durable.
+				// Disk failures keep this drain pending; retry retention only,
+				// never replay the refused publication against a new base.
+				for {
+					path, saveErr := wfs.retainFailedContent(fh, dir, name, err)
+					if saveErr == nil {
+						glog.Errorf("completeAsyncFlush %s: publication failed: %v; recovery request retained at %s (no automatic replay)", fileFullPath, err, path)
+						break
+					}
+					glog.Errorf("completeAsyncFlush %s: retaining pending references in memory: %v; publication failure: %v", fileFullPath, saveErr, err)
+					metadataFlushSleep(context.Background(), util.RetryWaitTime)
+				}
+			}
 		}
 	}
 
@@ -124,7 +138,7 @@ func isFilerUnreachable(err error) bool {
 // chunk data is already on the volume servers and close() has returned, so
 // nothing else holds these references: like the writeback chunk uploads, it
 // keeps retrying for as long as the filer is unreachable.
-func (wfs *WFS) flushMetadataWithRetry(fh *FileHandle, dir, name string, fileFullPath util.FullPath) {
+func (wfs *WFS) flushMetadataWithRetry(fh *FileHandle, dir, name string, fileFullPath util.FullPath) error {
 	attempts := 0
 	err := retryMetadataFlushUntil(context.Background(), func() error {
 		attempts++
@@ -144,6 +158,7 @@ func (wfs *WFS) flushMetadataWithRetry(fh *FileHandle, dir, name string, fileFul
 			"they will appear as orphans in volume.fsck",
 			fileFullPath, attempts, err)
 	}
+	return err
 }
 
 // WaitForAsyncFlush waits for all pending background flush work items to complete.

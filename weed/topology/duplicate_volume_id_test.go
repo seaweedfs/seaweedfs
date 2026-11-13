@@ -73,6 +73,30 @@ func TestSameLayoutReplicaIsNotDuplicate(t *testing.T) {
 	}
 }
 
+func TestSameLayoutReplicaWithoutTtlIsNotDuplicate(t *testing.T) {
+	topo := NewTopology("topo", nil, 128, 3, false)
+	rp, _ := super_block.NewReplicaPlacementFromString("001")
+
+	dn1 := NewDataNode("server1")
+	dn1.Ip = "10.0.0.1"
+	dn1.Port = 8080
+	dn2 := NewDataNode("server2")
+	dn2.Ip = "10.0.0.2"
+	dn2.Port = 8080
+
+	v1 := storage.VolumeInfo{Id: 7, Collection: "a", ReplicaPlacement: rp, Ttl: needle.EMPTY_TTL}
+	v2 := storage.VolumeInfo{Id: 7, Collection: "a", ReplicaPlacement: rp}
+	dn1.UpdateVolumes([]storage.VolumeInfo{v1})
+	dn2.UpdateVolumes([]storage.VolumeInfo{v2})
+	topo.RegisterVolumeLayout(v1, dn1)
+	topo.RegisterVolumeLayout(v2, dn2)
+	topo.duplicateFlagChecks.Wait()
+
+	if topo.isQuarantined(dn1, v1.Id) || topo.isQuarantined(dn2, v2.Id) {
+		t.Fatal("a nil ttl and the empty ttl share one layout, so the replica is not a duplicate")
+	}
+}
+
 func TestSameNodeVolumeMoveIsNotDuplicate(t *testing.T) {
 	topo := NewTopology("topo", nil, 128, 3, false)
 	rp, _ := super_block.NewReplicaPlacementFromString("000")

@@ -3,10 +3,12 @@ package mount
 import (
 	"bytes"
 	"context"
+	"errors"
 	"syscall"
 	"time"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -59,6 +61,10 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 
 	ctx, cancelFunc := ctxFromCancel(cancel)
 	defer cancelFunc()
+	// A queued close may not have created or updated the source on the filer.
+	if !wfs.waitForPendingAsyncFlush(ctx, sourceInode) {
+		return fuse.EINTR
+	}
 	oldEntry, _, status := wfs.maybeLoadEntry(ctx, oldEntryPath)
 	if status != fuse.OK {
 		return status
@@ -154,6 +160,8 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 		}
 	}
 	var linkVersionTsNs int64
+	var linkSignature int32
+	var linkedEntry *filer_pb.Entry
 	if err == nil {
 		var createResp *filer_pb.CreateEntryResponse
 		createResp, err = wfs.streamCreateEntry(context.Background(), request)
@@ -171,12 +179,17 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 			}
 		} else {
 			linkVersionTsNs = ackVersionTsNs(createResp)
+			linkSignature = createResp.GetLogSignature()
 			createEvent := createResp.GetMetadataEvent()
 			if createEvent == nil {
 				createEvent = metadataCreateEvent(string(newParentPath), request.Entry)
 				if createEvent != nil {
 					createEvent.TsNs = linkVersionTsNs
 				}
+			}
+			if stored := createEvent.GetEventNotification().GetNewEntry(); stored != nil {
+				linkedEntry = proto.Clone(stored).(*filer_pb.Entry)
+				linkedEntry.Name = oldEntry.Name
 			}
 			if applyErr := wfs.applyLocalMetadataEvent(context.Background(), createEvent); applyErr != nil {
 				glog.Warningf("link %s: best-effort metadata apply failed: %v", newParentPath.Child(name), applyErr)
@@ -197,6 +210,9 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 	}
 
 	wfs.inodeToPath.AddPath(sourceInode, newEntryPath)
+	if fh, found := wfs.fhMap.FindFileHandle(sourceInode); found {
+		fh.adoptLinkChange(linkedEntry, linkVersionTsNs, linkSignature)
+	}
 
 	// Propagate the new HardLinkCounter to sibling cache entries and
 	// invalidate the kernel's inode attr cache. Without this, `stat` on any
@@ -208,6 +224,86 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 	wfs.outputPbEntry(out, sourceInode, request.Entry)
 
 	return fuse.OK
+}
+
+// adoptLinkChange moves the handle past a hard link change this mount made,
+// stored being the entry the filer now holds at the name the handle flushes
+// through, in filer ids. A base that differs from it in more than the link
+// fields and times is left alone, so a peer's write is still refused. Pending
+// content stays pending.
+func (fh *FileHandle) adoptLinkChange(stored *filer_pb.Entry, versionTsNs int64, signature int32) {
+	fhActiveLock := fh.wfs.fhLockTable.AcquireLock("adoptLinkChange", fh.fh, util.ExclusiveLock)
+	defer fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
+	fh.adoptLinkChangeLocked(stored, versionTsNs, signature)
+}
+
+func (fh *FileHandle) adoptLinkChangeLocked(stored *filer_pb.Entry, versionTsNs int64, signature int32) {
+	if stored == nil {
+		return
+	}
+	handleSignature := fh.entryVersionSignature.Load()
+	provablyOtherClock := signature != 0 && handleSignature != 0 && signature != handleSignature
+	if versionTsNs != 0 && !provablyOtherClock && versionTsNs <= fh.entryVersionTsNs.Load() {
+		return
+	}
+	if base := fh.baseEntry.Load(); base != nil && !fh.wfs.sameApartFromLink(stored, base) {
+		return
+	}
+	linked := proto.Clone(stored).(*filer_pb.Entry)
+	fh.wfs.mapPbIdFromFilerToLocal(linked)
+	if fh.dirtyMetadata {
+		fh.UpdateEntry(func(entry *filer_pb.Entry) {
+			entry.Name = linked.Name
+			entry.HardLinkId, entry.HardLinkCounter = linked.HardLinkId, linked.HardLinkCounter
+			if a, b := entry.Attributes, linked.Attributes; a != nil && b != nil && (b.Ctime > a.Ctime || b.Ctime == a.Ctime && b.CtimeNs > a.CtimeNs) {
+				a.Ctime, a.CtimeNs = b.Ctime, b.CtimeNs
+			}
+		})
+	} else {
+		fh.SetEntry(proto.Clone(linked).(*filer_pb.Entry))
+	}
+	fh.setAuthoritativeBase(linked)
+	fh.advanceEntryVersion(versionTsNs, signature)
+}
+
+// adoptStoredLink reads the entry stored at path and adopts it as a change of
+// hardLinkId. A failed read, or a path already gone, leaves the id on the
+// handle, so its next flush reads again instead of publishing over a base the
+// change made stale. The caller holds the handle's lock.
+func (wfs *WFS) adoptStoredLink(ctx context.Context, fh *FileHandle, path util.FullPath, hardLinkId []byte) error {
+	stored, tsNs, signature, err := filer_pb.GetEntry(ctx, wfs, path)
+	if err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+		fh.linkRefresh = hardLinkId
+		return err
+	}
+	if stored == nil {
+		fh.linkRefresh = hardLinkId
+		return nil
+	}
+	fh.linkRefresh = nil
+	if bytes.Equal(stored.GetHardLinkId(), hardLinkId) {
+		fh.adoptLinkChangeLocked(stored, tsNs, signature)
+	}
+	return nil
+}
+
+// sameApartFromLink reports whether stored, in filer ids, still holds base
+// apart from what a link or unlink rewrites: the link fields, the times, the
+// name, the commit stamp and the derived size.
+func (wfs *WFS) sameApartFromLink(stored, base *filer_pb.Entry) bool {
+	current, observed := proto.Clone(stored).(*filer_pb.Entry), proto.Clone(base).(*filer_pb.Entry)
+	wfs.mapPbIdFromFilerToLocal(current)
+	for _, e := range []*filer_pb.Entry{current, observed} {
+		e.Name, e.CommitTsNs = "", 0
+		e.HardLinkId, e.HardLinkCounter = nil, 0
+		if e.Attributes != nil {
+			e.Attributes.Mtime, e.Attributes.MtimeNs = 0, 0
+			e.Attributes.Ctime, e.Attributes.CtimeNs = 0, 0
+			e.Attributes.FileSize = filer.FileSize(e)
+		}
+		filer_pb.BeforeEntrySerialization(e.Chunks)
+	}
+	return proto.Equal(current, observed)
 }
 
 // syncHardLinkSiblings refreshes every sibling link of the given inode from

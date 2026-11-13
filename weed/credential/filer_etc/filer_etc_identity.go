@@ -1,10 +1,14 @@
 package filer_etc
 
 import (
+	"bytes"
 	"context"
+	"crypto/md5"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -35,6 +39,17 @@ func (store *FilerEtcStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3Ap
 		}
 	}
 
+	fromLegacy := map[any]bool{}
+	for _, identity := range s3cfg.Identities {
+		fromLegacy[identity] = true
+	}
+	for _, sa := range s3cfg.ServiceAccounts {
+		fromLegacy[sa] = true
+	}
+	for _, g := range s3cfg.Groups {
+		fromLegacy[g] = true
+	}
+
 	// 2. Load from multi-file structure (high priority, overrides legacy details)
 	if _, err := store.loadFromMultiFile(ctx, s3cfg); err != nil {
 		return s3cfg, err
@@ -54,7 +69,23 @@ func (store *FilerEtcStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3Ap
 	// This ensures that all identities (including legacy ones) are written to individual files
 	// and the legacy file is renamed.
 	if foundLegacy {
-		if err := store.migrateToMultiFile(ctx, s3cfg); err != nil {
+		loaded := map[string]bool{}
+		for _, identity := range s3cfg.Identities {
+			if !fromLegacy[identity] {
+				loaded[IamIdentitiesDirectory+"/"+identity.Name] = true
+			}
+		}
+		for _, sa := range s3cfg.ServiceAccounts {
+			if !fromLegacy[sa] {
+				loaded[IamServiceAccountsDirectory+"/"+sa.Id] = true
+			}
+		}
+		for _, g := range s3cfg.Groups {
+			if !fromLegacy[g] {
+				loaded[IamGroupsDirectory+"/"+g.Name] = true
+			}
+		}
+		if err := store.migrateToMultiFile(ctx, content, loaded); err != nil {
 			glog.Errorf("Failed to migrate IAM configuration to multi-file layout: %v", err)
 			return s3cfg, nil
 		}
@@ -137,26 +168,49 @@ func (store *FilerEtcStore) loadFromMultiFile(ctx context.Context, s3cfg *iam_pb
 	return hasIdentities, nil
 }
 
-func (store *FilerEtcStore) migrateToMultiFile(ctx context.Context, s3cfg *iam_pb.S3ApiConfiguration) error {
+func (store *FilerEtcStore) migrateToMultiFile(ctx context.Context, legacyContent []byte, loaded map[string]bool) error {
+	current, found, err := store.readInsideFiler(ctx, filer.IamConfigDirectory, IamLegacyIdentityFile)
+	if err != nil {
+		return err
+	}
+	if !found || !bytes.Equal(current, legacyContent) {
+		glog.V(0).Infof("%s changed during the IAM load, migrating it at the next load", IamLegacyIdentityFile)
+		return nil
+	}
+	legacy := &iam_pb.S3ApiConfiguration{}
+	if err := filer.ParseS3ConfigurationFromBytes(current, legacy); err != nil {
+		return err
+	}
+
 	glog.Infof("Migrating IAM configuration to multi-file layout...")
 
-	// 1. Save all identities
-	for _, identity := range s3cfg.Identities {
-		if err := store.saveIdentity(ctx, identity); err != nil {
+	// A per-entry file is newer than the legacy copy, and may have been
+	// rewritten or removed after this load read it: never write it back.
+	createIfAbsent := func(subDir, name string, v any) error {
+		if loaded[subDir+"/"+name] {
+			return nil
+		}
+		return store.createIfAbsent(ctx, subDir, name, v)
+	}
+	for _, identity := range legacy.Identities {
+		if err := createIfAbsent(IamIdentitiesDirectory, identity.Name, identity); err != nil {
 			return err
 		}
 	}
-
-	// 2. Save all service accounts
-	for _, sa := range s3cfg.ServiceAccounts {
-		if err := store.saveServiceAccount(ctx, sa); err != nil {
+	for _, sa := range legacy.ServiceAccounts {
+		if err := validateServiceAccountId(sa.Id); err != nil {
+			return err
+		}
+		if err := createIfAbsent(IamServiceAccountsDirectory, sa.Id, sa); err != nil {
 			return err
 		}
 	}
-
-	// 3. Save all groups
-	for _, g := range s3cfg.Groups {
-		if err := store.saveGroup(ctx, g); err != nil {
+	for _, g := range legacy.Groups {
+		g.Name = strings.TrimSpace(g.Name)
+		if g.Name == "" {
+			return fmt.Errorf("group name is required")
+		}
+		if err := createIfAbsent(IamGroupsDirectory, g.Name, g); err != nil {
 			return err
 		}
 	}
@@ -484,6 +538,35 @@ func (store *FilerEtcStore) saveIdentity(ctx context.Context, identity *iam_pb.I
 			return err
 		}
 		return filer.SaveInsideFiler(context.Background(), client, filer.IamConfigDirectory+"/"+IamIdentitiesDirectory, identity.Name+".json", data)
+	})
+}
+
+func (store *FilerEtcStore) createIfAbsent(ctx context.Context, subDir, name string, v any) error {
+	data, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return err
+	}
+	contentMd5 := md5.Sum(data)
+	return store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		err := filer_pb.CreateEntry(ctx, client, &filer_pb.CreateEntryRequest{
+			Directory: filer.IamConfigDirectory + "/" + subDir,
+			Entry: &filer_pb.Entry{
+				Name:    name + ".json",
+				Content: data,
+				Attributes: &filer_pb.FuseAttributes{
+					Mtime:    time.Now().Unix(),
+					Crtime:   time.Now().Unix(),
+					FileMode: uint32(0644),
+					FileSize: uint64(len(data)),
+					Md5:      contentMd5[:],
+				},
+			},
+			OExcl: true,
+		})
+		if errors.Is(err, filer_pb.ErrEntryAlreadyExists) {
+			return nil
+		}
+		return err
 	})
 }
 

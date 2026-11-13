@@ -75,7 +75,7 @@ func (c *commandS3CircuitBreaker) Do(args []string, commandEnv *CommandEnv, writ
 	apply := s3CircuitBreakerCommand.Bool("apply", false, "update and apply current configuration")
 
 	if err = s3CircuitBreakerCommand.Parse(args); err != nil {
-		return nil
+		return err
 
 	}
 

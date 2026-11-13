@@ -361,6 +361,7 @@ func (h *S3TablesHandler) authorizeMaintenanceBucket(r *http.Request, filerClien
 	principal := h.getAccountID(r)
 	if !CheckPermissionWithContext(operation, principal, bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
 		TrustedIssuers:   h.trustedIssuers(r),
+		Subject:          callerSubject(r),
 		IsLocalAccountID: h.localAccountIDs,
 		TableBucketName:  bucketName,
 		IdentityActions:  getIdentityActions(r),
@@ -410,6 +411,7 @@ func (h *S3TablesHandler) authorizeMaintenanceTable(r *http.Request, filerClient
 	principal := h.getAccountID(r)
 	ctx := &PolicyContext{
 		TrustedIssuers:   h.trustedIssuers(r),
+		Subject:          callerSubject(r),
 		IsLocalAccountID: h.localAccountIDs,
 		TableBucketName:  bucketName,
 		Namespace:        namespaceName,

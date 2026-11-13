@@ -46,7 +46,7 @@ func (c *commandGrow) Do(args []string, commandEnv *CommandEnv, writer io.Writer
 	diskType := volumeVacuumCommand.String("diskType", "", "grow volumes only from the specified disk type")
 
 	if err = volumeVacuumCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 	if *collection == "" {
 		return fmt.Errorf("collection option is required")

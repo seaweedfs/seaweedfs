@@ -69,7 +69,7 @@ func (c *commandRemoteConfigure) Do(args []string, commandEnv *CommandEnv, write
 
 	fs, isDelete, uploadConcurrency, downloadConcurrency := c.configureFlagSet(conf, false)
 	if err = fs.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	if conf.Name == "" {
@@ -110,7 +110,7 @@ func (c *commandRemoteConfigure) Do(args []string, commandEnv *CommandEnv, write
 		}
 		fs, isDelete, uploadConcurrency, downloadConcurrency = c.configureFlagSet(conf, true)
 		if err = fs.Parse(args); err != nil {
-			return nil
+			return err
 		}
 	}
 

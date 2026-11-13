@@ -112,7 +112,7 @@ func (c *commandVolumeCheckDisk) Do(args []string, commandEnv *CommandEnv, write
 	nonRepairThreshold := fsckCommand.Float64("nonRepairThreshold", 0.3, "repair when missing keys is not more than this limit")
 	resurrectMissingNeedles := fsckCommand.Bool("resurrectMissingNeedles", false, "copy needles absent on one replica back from the other, only into never-vacuumed replicas (compaction revision 0)")
 	if err = fsckCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	handleDeprecatedForceFlag(writer, fsckCommand, applyChangesAlias, applyChanges)

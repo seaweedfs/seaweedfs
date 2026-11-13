@@ -756,6 +756,36 @@ func (s3a *S3ApiServer) recheckTagConditionedPolicyWithLookup(r *http.Request, b
 	return s3a.recheckPolicyWithObjectEntry(r, bucket, object, action, entry.Extended, handlerName)
 }
 
+// checkVersionFileWrite refuses a write whose key is a stored version's
+// physical path, which would replace that version's content in place. The
+// physical entry is read on the logical object's owner, where versions commit.
+func (s3a *S3ApiServer) checkVersionFileWrite(bucket, object, handlerName string) s3err.ErrorCode {
+	if !s3a.hasVersionFileShape(object) {
+		return s3err.ErrNone
+	}
+	key := strings.TrimSuffix(NormalizeObjectKey(object), "/")
+	dir, name := util.NewFullPath(s3a.bucketDir(bucket), key).DirAndName()
+	logicalObject := strings.TrimSuffix(strings.TrimSuffix(key, "/"+name), VersionsFolder)
+	entry, err := s3a.getObjectScopedEntryRoutedByKey(bucket, logicalObject, dir, name)
+	if errors.Is(err, filer_pb.ErrNotFound) || status.Code(err) == codes.NotFound {
+		// The routed lookup may have answered from a replica, whose miss proves nothing.
+		if owner := s3a.routableWriteOwner(bucket, logicalObject); owner != "" {
+			entry, err = s3a.lookupEntryOnFiler(context.Background(), owner, dir, name)
+		}
+	}
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) || status.Code(err) == codes.NotFound {
+			return s3err.ErrNone
+		}
+		glog.Errorf("%s: version file lookup for %s/%s failed: %v", handlerName, bucket, object, err)
+		return s3err.ErrInternalError
+	}
+	if entry != nil && s3a.isVersionFileKey(object, entry.Extended) {
+		return s3err.ErrAccessDenied
+	}
+	return s3err.ErrNone
+}
+
 // recheckPolicyForKeyWithLookup re-decides a first-phase deny on one key for a
 // synthesized method, resolving the entry the way the read path does (versions
 // included) so s3:ExistingObjectTag conditions see the object's real tags.
@@ -1526,6 +1556,22 @@ func (s3a *S3ApiServer) DefaultAllow() bool {
 		return false
 	}
 	return s3a.iam.iamIntegration.DefaultAllow()
+}
+
+// IsConfiguredAccountID reports whether id is the account of a configured identity.
+func (s3a *S3ApiServer) IsConfiguredAccountID(id string) bool {
+	return s3a.iam != nil && s3a.iam.isConfiguredAccountID(id)
+}
+
+// TrustedOIDCIssuers returns the configured OIDC issuer set.
+func (s3a *S3ApiServer) TrustedOIDCIssuers(ctx context.Context) []string {
+	if s3a.iam == nil {
+		return nil
+	}
+	if s3iam, ok := s3a.iam.iamIntegration.(*S3IAMIntegration); ok {
+		return s3iam.trustedOIDCIssuers(ctx)
+	}
+	return nil
 }
 
 // ValidateS3Credential validates an S3 access key / secret key pair.

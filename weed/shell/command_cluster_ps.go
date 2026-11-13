@@ -44,7 +44,7 @@ func (c *commandClusterPs) Do(args []string, commandEnv *CommandEnv, writer io.W
 
 	clusterPsCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	if err = clusterPsCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	listClusterNodes := func(clientType string) ([]*master_pb.ListClusterNodesResponse_ClusterNode, error) {

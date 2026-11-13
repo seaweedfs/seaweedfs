@@ -365,7 +365,15 @@ servers = "localhost:2379"
 username = ""
 password = ""
 key_prefix = "seaweedfs."
+# how long connecting to etcd may take
 timeout = "3s"
+# how long an etcd read or delete may take, unless the filer already set a deadline for it;
+# "0s" sets none. Writes have no such deadline, since a timed-out write may still be saved.
+request_timeout = "3s"
+# drop the connection to an etcd member that leaves sent data unacknowledged (Linux only),
+# or a keepalive ping unanswered, for this long, so requests go to the other members.
+# The ping goes out after 10s without traffic from the member. "0s" turns keepalive off.
+keepalive_timeout = "3s"
 # Set the CA certificate path
 tls_ca_file=""
 # Set the client certificate path

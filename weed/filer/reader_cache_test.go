@@ -773,3 +773,406 @@ func TestReaderCacheBookkeepingOffCacheLock(t *testing.T) {
 	}
 	rc.Unlock()
 }
+
+// Releasing the last stream of an unfinished download cancels it without waiting for it.
+func TestAbandonedChunkDownloadStopsWithItsLastStream(t *testing.T) {
+	lookupFn := func(ctx context.Context, fileId string) ([]string, error) {
+		return []string{"http://volume/" + fileId}, nil
+	}
+	rc := NewReaderCache(10, newMockChunkCacheForReaderCache(), lookupFn, nil)
+	defer rc.destroy()
+
+	fetchStarted := make(chan struct{})
+	fetchEnded := make(chan error, 1)
+	rc.fetchChunkDataFn = func(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, fileId string, refreshUrls util_http.RefreshUrlsFunc) (int, error) {
+		close(fetchStarted)
+		select {
+		case <-ctx.Done():
+			fetchEnded <- ctx.Err()
+			return 0, ctx.Err()
+		case <-time.After(10 * time.Second):
+			fetchEnded <- nil
+			return 0, fmt.Errorf("volume server never answered")
+		}
+	}
+
+	// a gzipped chunk is read through the shared whole-chunk download
+	var stream chunkStream
+	ctx, cancel := context.WithCancel(context.Background())
+	readDone := make(chan error, 1)
+	go func() {
+		_, err := rc.readChunkAt(ctx, &stream, make([]byte, 100), "3077,02c3475d67aaf564", nil, true, 0, 4<<20, false)
+		readDone <- err
+	}()
+
+	<-fetchStarted
+	cancel()
+	if err := <-readDone; err != context.Canceled {
+		t.Fatalf("cancelled read: got %v, want context.Canceled", err)
+	}
+
+	released := make(chan struct{})
+	go func() {
+		rc.releaseStream(&stream)
+		close(released)
+	}()
+
+	select {
+	case <-released:
+	case <-time.After(2 * time.Second):
+		t.Fatal("releasing the stream waited for a download nobody wants")
+	}
+
+	select {
+	case err := <-fetchEnded:
+		if err != context.Canceled {
+			t.Fatalf("abandoned download: got %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the abandoned download kept running")
+	}
+}
+
+// One stream leaving a shared download must not cancel it for another stream.
+func TestAbandonedChunkDownloadKeepsRunningForOtherStream(t *testing.T) {
+	content := []byte("gzipped chunk 01")
+	fileId := "3077,02c3475d67aaf564"
+	lookupFn := func(ctx context.Context, fileId string) ([]string, error) {
+		return []string{"http://volume/" + fileId}, nil
+	}
+	rc := NewReaderCache(10, newMockChunkCacheForReaderCache(), lookupFn, nil)
+	defer rc.destroy()
+
+	fetchStarted := make(chan struct{})
+	finishFetch := make(chan struct{})
+	rc.fetchChunkDataFn = func(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, fileId string, refreshUrls util_http.RefreshUrlsFunc) (int, error) {
+		close(fetchStarted)
+		select {
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		case <-finishFetch:
+			return copy(buffer, content), nil
+		}
+	}
+
+	read := func(ctx context.Context, stream *chunkStream, done chan<- error, buffer []byte) {
+		_, err := rc.readChunkAt(ctx, stream, buffer, fileId, nil, true, 0, len(content), false)
+		done <- err
+	}
+
+	var leaving, staying chunkStream
+	leavingCtx, cancel := context.WithCancel(context.Background())
+	leavingDone, stayingDone := make(chan error, 1), make(chan error, 1)
+	stayingBuffer := make([]byte, len(content))
+	go read(leavingCtx, &leaving, leavingDone, make([]byte, len(content)))
+	<-fetchStarted
+	go read(context.Background(), &staying, stayingDone, stayingBuffer)
+
+	// wait until the second stream is attached to the same download
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		rc.RLock()
+		cacher := rc.downloaders[fileId]
+		rc.RUnlock()
+		if cacher != nil && atomic.LoadInt32(&cacher.pins) == 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("second stream never attached to the download")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	cancel()
+	if err := <-leavingDone; err != context.Canceled {
+		t.Fatalf("cancelled read: got %v, want context.Canceled", err)
+	}
+	rc.releaseStream(&leaving)
+
+	close(finishFetch)
+	select {
+	case err := <-stayingDone:
+		if err != nil {
+			t.Fatalf("staying stream: got %v, want the chunk", err)
+		}
+		if string(stayingBuffer) != string(content) {
+			t.Fatalf("staying stream read %q, want %q", stayingBuffer, content)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("staying stream never got its data")
+	}
+	rc.releaseStream(&staying)
+}
+
+func TestAbandonedChunkDownloadKeepsRunningForWaitingReader(t *testing.T) {
+	content := []byte("gzipped chunk 01")
+	fileId := "3077,02c3475d67aaf564"
+	lookupFn := func(ctx context.Context, fileId string) ([]string, error) {
+		return []string{"http://volume/" + fileId}, nil
+	}
+	rc := NewReaderCache(10, newMockChunkCacheForReaderCache(), lookupFn, nil)
+	defer rc.destroy()
+
+	fetchStarted := make(chan struct{})
+	finishFetch := make(chan struct{})
+	rc.fetchChunkDataFn = func(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, fileId string, refreshUrls util_http.RefreshUrlsFunc) (int, error) {
+		close(fetchStarted)
+		select {
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		case <-finishFetch:
+			return copy(buffer, content), nil
+		}
+	}
+
+	var leaving chunkStream
+	leavingCtx, cancel := context.WithCancel(context.Background())
+	leavingDone, waitingDone := make(chan error, 1), make(chan error, 1)
+	go func() {
+		_, err := rc.readChunkAt(leavingCtx, &leaving, make([]byte, len(content)), fileId, nil, true, 0, len(content), false)
+		leavingDone <- err
+	}()
+	<-fetchStarted
+	waitingBuffer := make([]byte, len(content))
+	go func() {
+		_, err := rc.ReadChunkAt(context.Background(), waitingBuffer, fileId, nil, true, 0, len(content), false)
+		waitingDone <- err
+	}()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		rc.RLock()
+		cacher := rc.downloaders[fileId]
+		rc.RUnlock()
+		if cacher != nil && atomic.LoadInt32(&cacher.readers) == 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("waiting reader never attached to the download")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	cancel()
+	if err := <-leavingDone; err != context.Canceled {
+		t.Fatalf("cancelled read: got %v, want context.Canceled", err)
+	}
+	rc.releaseStream(&leaving)
+
+	close(finishFetch)
+	select {
+	case err := <-waitingDone:
+		if err != nil {
+			t.Fatalf("waiting reader: got %v, want the chunk", err)
+		}
+		if string(waitingBuffer) != string(content) {
+			t.Fatalf("waiting reader read %q, want %q", waitingBuffer, content)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("waiting reader never got its data")
+	}
+}
+
+// A download cancelled mid-copy must not cache the partly filled buffer.
+func TestAbandonedChunkDownloadIsNotCached(t *testing.T) {
+	fileId := "3077,02c3475d67aaf564"
+	lookupFn := func(ctx context.Context, fileId string) ([]string, error) {
+		return []string{"http://volume/" + fileId}, nil
+	}
+	cache := newMockChunkCacheForReaderCache()
+	rc := NewReaderCache(10, cache, lookupFn, nil)
+	defer rc.destroy()
+
+	fetchStarted := make(chan struct{})
+	rc.fetchChunkDataFn = func(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, fileId string, refreshUrls util_http.RefreshUrlsFunc) (int, error) {
+		close(fetchStarted)
+		<-ctx.Done()
+		// like readEncryptedUrl: the body was read, the copy was skipped, no error
+		return 0, nil
+	}
+
+	var stream chunkStream
+	ctx, cancel := context.WithCancel(context.Background())
+	readDone := make(chan error, 1)
+	go func() {
+		_, err := rc.readChunkAt(ctx, &stream, make([]byte, 100), fileId, nil, true, 0, 100, true)
+		readDone <- err
+	}()
+
+	<-fetchStarted
+	cancel()
+	if err := <-readDone; err != context.Canceled {
+		t.Fatalf("cancelled read: got %v, want context.Canceled", err)
+	}
+	rc.releaseStream(&stream)
+
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	if _, cached := cache.data[fileId]; cached {
+		t.Fatal("the partly filled buffer of a cancelled download was cached")
+	}
+}
+
+// Other readers can join a re-lookup through FilerClient, so cancelling the download must not cancel it.
+func TestAbandonedChunkDownloadKeepsItsRelookupAlive(t *testing.T) {
+	fileId := "3077,02c3475d67aaf564"
+	var lookups int32
+	relookupStarted := make(chan struct{})
+	downloadCancelled := make(chan struct{})
+	relookupErr := make(chan error, 1)
+	lookupFn := func(ctx context.Context, fileId string) ([]string, error) {
+		if atomic.AddInt32(&lookups, 1) > 1 {
+			close(relookupStarted)
+			<-downloadCancelled
+			relookupErr <- ctx.Err()
+		}
+		return []string{"http://volume/" + fileId}, nil
+	}
+	rc := NewReaderCache(10, newMockChunkCacheForReaderCache(), lookupFn, &mockCacheInvalidatorForReaderCache{})
+	defer rc.destroy()
+	rc.fetchChunkDataFn = func(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, fileId string, refreshUrls util_http.RefreshUrlsFunc) (int, error) {
+		return 0, fmt.Errorf("connection reset by peer")
+	}
+
+	var stream chunkStream
+	ctx, cancel := context.WithCancel(context.Background())
+	readDone := make(chan error, 1)
+	go func() {
+		_, err := rc.readChunkAt(ctx, &stream, make([]byte, 100), fileId, nil, true, 0, 100, false)
+		readDone <- err
+	}()
+
+	<-relookupStarted
+	cancel()
+	if err := <-readDone; err != context.Canceled {
+		t.Fatalf("cancelled read: got %v, want context.Canceled", err)
+	}
+	released := make(chan struct{})
+	go func() {
+		rc.releaseStream(&stream)
+		close(released)
+	}()
+	// the cacher leaves the map under the same lock that cancels it
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		rc.RLock()
+		_, found := rc.downloaders[fileId]
+		rc.RUnlock()
+		if !found {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("releasing the last stream never dropped the download")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	close(downloadCancelled)
+
+	if err := <-relookupErr; err != nil {
+		t.Fatalf("re-lookup context: got %v, want it independent of the download", err)
+	}
+	select {
+	case <-released:
+	case <-time.After(2 * time.Second):
+		t.Fatal("releasing the stream never returned")
+	}
+}
+
+// Closing the reader cache cancels a stalled prefetch nobody reads instead of waiting for it.
+func TestReaderCacheDestroyCancelsUnreadPrefetch(t *testing.T) {
+	lookupFn := func(ctx context.Context, fileId string) ([]string, error) {
+		return []string{"http://volume/" + fileId}, nil
+	}
+	rc := NewReaderCache(10, newMockChunkCacheForReaderCache(), lookupFn, nil)
+	fetchStarted := make(chan struct{})
+	rc.fetchChunkDataFn = func(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, fileId string, refreshUrls util_http.RefreshUrlsFunc) (int, error) {
+		close(fetchStarted)
+		select {
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		case <-time.After(10 * time.Second):
+			return 0, fmt.Errorf("volume server never answered")
+		}
+	}
+	rc.MaybeCache(&Interval[*ChunkView]{Value: &ChunkView{FileId: "3077,02c3475d67aaf564", ViewSize: 1024, ChunkSize: 1024}}, 1)
+	<-fetchStarted
+
+	destroyed := make(chan struct{})
+	go func() {
+		rc.destroy()
+		close(destroyed)
+	}()
+	select {
+	case <-destroyed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("destroy waited for a prefetch nobody reads")
+	}
+}
+
+// A download destroy dropped while a stream still held it is cancelled once that stream leaves.
+func TestReaderCacheDestroyCancelsDownloadAfterItsLastStream(t *testing.T) {
+	lookupFn := func(ctx context.Context, fileId string) ([]string, error) {
+		return []string{"http://volume/" + fileId}, nil
+	}
+	rc := NewReaderCache(10, newMockChunkCacheForReaderCache(), lookupFn, nil)
+	fetchStarted := make(chan struct{})
+	fetchEnded := make(chan error, 1)
+	rc.fetchChunkDataFn = func(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, fileId string, refreshUrls util_http.RefreshUrlsFunc) (int, error) {
+		close(fetchStarted)
+		select {
+		case <-ctx.Done():
+			fetchEnded <- ctx.Err()
+			return 0, ctx.Err()
+		case <-time.After(10 * time.Second):
+			fetchEnded <- nil
+			return 0, fmt.Errorf("volume server never answered")
+		}
+	}
+
+	var stream chunkStream
+	ctx, cancel := context.WithCancel(context.Background())
+	readDone := make(chan error, 1)
+	go func() {
+		_, err := rc.readChunkAt(ctx, &stream, make([]byte, 100), "3077,02c3475d67aaf564", nil, true, 0, 4<<20, false)
+		readDone <- err
+	}()
+	<-fetchStarted
+	cancel()
+	if err := <-readDone; err != context.Canceled {
+		t.Fatalf("cancelled read: got %v, want context.Canceled", err)
+	}
+
+	destroyed := make(chan struct{})
+	go func() {
+		rc.destroy()
+		close(destroyed)
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		rc.RLock()
+		mapped := len(rc.downloaders)
+		rc.RUnlock()
+		if mapped == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("destroy never dropped the download from the map")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	select {
+	case err := <-fetchEnded:
+		t.Fatalf("destroy cancelled a download a stream still holds: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	rc.releaseStream(&stream)
+	select {
+	case <-destroyed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("destroy kept waiting for a download its last stream left")
+	}
+	if err := <-fetchEnded; err != context.Canceled {
+		t.Fatalf("orphaned download: got %v, want context.Canceled", err)
+	}
+}

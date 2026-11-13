@@ -58,6 +58,10 @@ func (s3a *S3ApiServer) RenameObjectHandler(w http.ResponseWriter, r *http.Reque
 		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
 		return
 	}
+	if errCode := s3a.checkVersionFileWrite(bucket, dstObject, "RenameObjectHandler"); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
 	// A trailing slash names a directory, and renaming one would move a whole
 	// subtree rather than an object.
 	if strings.HasSuffix(dstObject, "/") {

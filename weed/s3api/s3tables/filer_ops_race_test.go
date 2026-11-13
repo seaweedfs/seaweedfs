@@ -87,3 +87,16 @@ func TestCreateNamespaceLostRaceKeepsTheFirstCreate(t *testing.T) {
 	require.NotNil(t, survivor)
 	assert.Equal(t, `{"OwnerAccountID":"competitor"}`, string(survivor.Extended[ExtendedKeyMetadata]))
 }
+
+func TestEnsureDirectoryKeepsADirectoryCreatedSinceTheLookup(t *testing.T) {
+	fs := s3tablestest.Start(t)
+	tablePath := GetTablePath("bucket", "ns", "orders")
+	dir, name := splitPath(tablePath)
+	client := &competingCreateClient{SeaweedFilerClient: fs.Client, f: fs, dir: dir, name: name, plant: true}
+
+	require.NoError(t, NewS3TablesHandler().ensureDirectory(context.Background(), client, tablePath))
+
+	survivor := fs.Get(dir, name)
+	require.NotNil(t, survivor)
+	assert.Equal(t, `{"OwnerAccountID":"competitor"}`, string(survivor.Extended[ExtendedKeyMetadata]))
+}

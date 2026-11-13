@@ -807,6 +807,7 @@ func (h *S3TablesHandler) authorizeViewOp(r *http.Request, operation, principal,
 	identityActions := getIdentityActions(r)
 	ctx := &PolicyContext{
 		TrustedIssuers:   h.trustedIssuers(r),
+		Subject:          callerSubject(r),
 		IsLocalAccountID: h.localAccountIDs,
 		TableBucketName:  bucketName,
 		Namespace:        namespace,

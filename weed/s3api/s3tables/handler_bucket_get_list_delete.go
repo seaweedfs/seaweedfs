@@ -72,6 +72,7 @@ func (h *S3TablesHandler) handleGetTableBucket(w http.ResponseWriter, r *http.Re
 	identityActions := getIdentityActions(r)
 	if !CheckPermissionWithContext("GetTableBucket", principal, metadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
 		TrustedIssuers:   h.trustedIssuers(r),
+		Subject:          callerSubject(r),
 		IsLocalAccountID: h.localAccountIDs,
 		TableBucketName:  bucketName,
 		IdentityActions:  identityActions,
@@ -197,6 +198,7 @@ func (h *S3TablesHandler) handleListTableBuckets(w http.ResponseWriter, r *http.
 				identityActions := getIdentityActions(r)
 				if !CheckPermissionWithContext("GetTableBucket", accountID, metadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
 					TrustedIssuers:   h.trustedIssuers(r),
+					Subject:          callerSubject(r),
 					IsLocalAccountID: h.localAccountIDs,
 					TableBucketName:  entry.Entry.Name,
 					IdentityActions:  identityActions,
@@ -332,6 +334,7 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 		identityActions := getIdentityActions(r)
 		if !CheckPermissionWithContext("DeleteTableBucket", principal, metadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
 			TrustedIssuers:   h.trustedIssuers(r),
+			Subject:          callerSubject(r),
 			IsLocalAccountID: h.localAccountIDs,
 			TableBucketName:  bucketName,
 			IdentityActions:  identityActions,

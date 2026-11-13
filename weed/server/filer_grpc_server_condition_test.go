@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"os"
 	"strconv"
 	"testing"
 	"time"
@@ -31,6 +32,8 @@ func one(c *filer_pb.WriteCondition_Clause) *filer_pb.WriteCondition {
 func TestWriteConditionSatisfied(t *testing.T) {
 	base := time.Unix(1700000000, 0)
 	present := entryWithETag("abc", base)
+	plainDir := &filer.Entry{FullPath: "/test/obj", Attr: filer.Attr{Mode: os.ModeDir | 0755}}
+	objectDir := &filer.Entry{FullPath: "/test/obj", Attr: filer.Attr{Mode: os.ModeDir | 0755, Mime: "text/plain"}}
 
 	cases := []struct {
 		name string
@@ -43,6 +46,11 @@ func TestWriteConditionSatisfied(t *testing.T) {
 		{"ifnotexists-present", one(&filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_NOT_EXISTS}), present, false},
 		{"ifexists-absent", one(&filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_EXISTS}), nil, false},
 		{"ifexists-present", one(&filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_EXISTS}), present, true},
+		{"ifexists-plain-dir", one(&filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_EXISTS}), plainDir, true},
+		{"ifobjectexists-absent", one(&filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_OBJECT_EXISTS}), nil, false},
+		{"ifobjectexists-present", one(&filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_OBJECT_EXISTS}), present, true},
+		{"ifobjectexists-plain-dir", one(&filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_OBJECT_EXISTS}), plainDir, false},
+		{"ifobjectexists-object-dir", one(&filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_OBJECT_EXISTS}), objectDir, true},
 		{"etagmatch-hit", one(&filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_ETAG_MATCH, Etags: []string{`"abc"`}}), present, true},
 		{"etagmatch-miss", one(&filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_ETAG_MATCH, Etags: []string{`"zzz"`}}), present, false},
 		{"etagmatch-absent", one(&filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_ETAG_MATCH, Etags: []string{`"abc"`}}), nil, false},

@@ -64,7 +64,7 @@ func (c *commandVolumeMove) Do(args []string, commandEnv *CommandEnv, writer io.
 	noLock := volMoveCommand.Bool("noLock", false, "do not lock the admin shell at one's own risk")
 
 	if err = volMoveCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	if *noLock {

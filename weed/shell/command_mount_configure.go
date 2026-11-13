@@ -45,7 +45,7 @@ func (c *commandMountConfigure) Do(args []string, commandEnv *CommandEnv, writer
 	mountDir := mountConfigureCommand.String("dir", "", "the mount directory same as how \"weed mount -dir=<mount_directory>\" was started")
 	mountQuota := mountConfigureCommand.Int("quotaMB", 0, "the quota in MB")
 	if err = mountConfigureCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	mountDirHash := util.HashToInt32([]byte(*mountDir))

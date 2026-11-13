@@ -43,6 +43,8 @@ func clauseSatisfied(c *filer_pb.WriteCondition_Clause, current *filer.Entry) bo
 		return !exists
 	case filer_pb.WriteCondition_IF_EXISTS:
 		return exists
+	case filer_pb.WriteCondition_IF_OBJECT_EXISTS:
+		return exists && (!current.IsDirectory() || current.ToProtoEntry().IsDirectoryKeyObject())
 	case filer_pb.WriteCondition_IF_ETAG_MATCH:
 		return exists && etagInSet(storedEntryETag(current), c.Etags, c.AllowWeak)
 	case filer_pb.WriteCondition_IF_ETAG_NOT_MATCH:

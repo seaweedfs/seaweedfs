@@ -428,3 +428,60 @@ func TestReaderCacheReReadAfterEviction(t *testing.T) {
 		t.Fatalf("fetchCount=%d, want 3 (a, b, a-re-read)", got)
 	}
 }
+
+// A download still waiting for budget is cancelled when its last stream leaves.
+func TestReaderCacheBudgetWaitStopsWithItsLastStream(t *testing.T) {
+	budget := NewReaderCacheBudget(4 << 10)
+	var lookups sync.Map
+	rc := NewReaderCache(256, newMockChunkCacheForReaderCache(), func(_ context.Context, fileId string) ([]string, error) {
+		lookups.Store(fileId, true)
+		return []string{"unused"}, nil
+	}, nil, budget)
+	defer rc.destroy()
+
+	holding := make(chan struct{})
+	var holdingOnce sync.Once
+	finish := make(chan struct{})
+	rc.fetchChunkDataFn = func(ctx context.Context, buffer []byte, _ []string, _ []byte, _ bool, _ bool, _ int64, _ string, _ util_http.RefreshUrlsFunc) (int, error) {
+		holdingOnce.Do(func() { close(holding) })
+		select {
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		case <-finish:
+			return len(buffer), nil
+		}
+	}
+	defer close(finish)
+
+	// "a" takes the whole budget and its download does not finish
+	go rc.ReadChunkAt(context.Background(), make([]byte, 1), "a", nil, false, 0, 3<<10, false)
+	<-holding
+
+	var stream chunkStream
+	ctx, cancel := context.WithCancel(context.Background())
+	readDone := make(chan error, 1)
+	go func() {
+		_, err := rc.readChunkAt(ctx, &stream, make([]byte, 1), "b", nil, true, 0, 3<<10, false)
+		readDone <- err
+	}()
+	time.Sleep(50 * time.Millisecond)
+	if _, looked := lookups.Load("b"); looked {
+		t.Fatal(`"b" did not wait for budget`)
+	}
+
+	cancel()
+	if err := <-readDone; err != context.Canceled {
+		t.Fatalf("cancelled read: got %v, want context.Canceled", err)
+	}
+
+	released := make(chan struct{})
+	go func() {
+		rc.releaseStream(&stream)
+		close(released)
+	}()
+	select {
+	case <-released:
+	case <-time.After(2 * time.Second):
+		t.Fatal("releasing the stream waited for budget nobody needs")
+	}
+}

@@ -37,7 +37,7 @@ func (c *commandS3BucketDelete) Do(args []string, commandEnv *CommandEnv, writer
 	bucketCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	bucketName := bucketCommand.String("name", "", "bucket name")
 	if err = bucketCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	if *bucketName == "" {

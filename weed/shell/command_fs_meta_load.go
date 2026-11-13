@@ -57,7 +57,7 @@ func (c *commandFsMetaLoad) Do(args []string, commandEnv *CommandEnv, writer io.
 	concurrency := metaLoadCommand.Int("concurrency", 1, "number of parallel meta load to filer")
 	verbose := metaLoadCommand.Bool("v", true, "verbose mode")
 	if err = metaLoadCommand.Parse(args[0 : len(args)-1]); err != nil {
-		return nil
+		return err
 	}
 
 	var dst io.Reader

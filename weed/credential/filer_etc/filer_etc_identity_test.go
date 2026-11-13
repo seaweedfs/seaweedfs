@@ -2,10 +2,13 @@ package filer_etc
 
 import (
 	"context"
+	"encoding/json"
+	"sync/atomic"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -141,4 +144,112 @@ func TestLoadConfigurationSucceedsOnValidFiles(t *testing.T) {
 		names = append(names, id.Name)
 	}
 	assert.ElementsMatch(t, []string{"alice", "bob"}, names)
+}
+
+// changeAfterLoad runs change once, at the first filer lookup after the load
+// read the legacy file, so it lands before the migration writes anything.
+func changeAfterLoad(server *policyTestFilerServer, change func()) {
+	var lookups atomic.Int32
+	server.beforeLookup = func(context.Context, string, string) error {
+		if lookups.Add(1) == 2 {
+			change()
+		}
+		return nil
+	}
+}
+
+func setEntry(server *policyTestFilerServer, dir, name string, content []byte) {
+	_, _ = server.CreateEntry(context.Background(), &filer_pb.CreateEntryRequest{Directory: dir, Entry: &filer_pb.Entry{Name: name, Content: content, Attributes: &filer_pb.FuseAttributes{}}})
+}
+
+func storedIdentity(t *testing.T, server *policyTestFilerServer, name string) *iam_pb.Identity {
+	t.Helper()
+	server.mu.RLock()
+	entry, found := server.entries[filerEntryKey(filer.IamConfigDirectory+"/"+IamIdentitiesDirectory, name+".json")]
+	server.mu.RUnlock()
+	if !found {
+		return nil
+	}
+	identity := &iam_pb.Identity{}
+	require.NoError(t, json.Unmarshal(entry.Content, identity))
+	return identity
+}
+
+func storedFile(server *policyTestFilerServer, dir, name string) bool {
+	server.mu.RLock()
+	defer server.mu.RUnlock()
+	_, found := server.entries[filerEntryKey(dir, name)]
+	return found
+}
+
+// The legacy-file migration runs after the load read every IAM file. A
+// revoke that lands in between must not be undone by the migration.
+func TestMigrationKeepsChangesMadeAfterTheLoad(t *testing.T) {
+	ctx := context.Background()
+	identDir := filer.IamConfigDirectory + "/" + IamIdentitiesDirectory
+	granted := []byte(`{"name":"anonymous","actions":["Read:b"]}`)
+	revoked := []byte(`{"name":"anonymous","actions":["Read:c"]}`)
+	legacy := func(identities string) []byte { return []byte(`{"identities":[` + identities + `]}`) }
+
+	t.Run("rewritten identity file", func(t *testing.T) {
+		store, server := newPolicyTestStoreWithServer(t)
+		setEntry(server, filer.IamConfigDirectory, IamLegacyIdentityFile, legacy(string(granted)))
+		setEntry(server, identDir, "anonymous.json", granted)
+		changeAfterLoad(server, func() { setEntry(server, identDir, "anonymous.json", revoked) })
+
+		_, err := store.LoadConfiguration(ctx)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"Read:c"}, storedIdentity(t, server, "anonymous").GetActions())
+		assert.True(t, storedFile(server, filer.IamConfigDirectory, IamLegacyIdentityOldFile))
+	})
+
+	t.Run("removed identity file", func(t *testing.T) {
+		store, server := newPolicyTestStoreWithServer(t)
+		setEntry(server, filer.IamConfigDirectory, IamLegacyIdentityFile, legacy(`{"name":"alice"}`))
+		setEntry(server, identDir, "bob.json", []byte(`{"name":"bob"}`))
+		changeAfterLoad(server, func() {
+			_, _ = server.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{Directory: identDir, Name: "bob.json"})
+		})
+
+		_, err := store.LoadConfiguration(ctx)
+		require.NoError(t, err)
+		assert.Nil(t, storedIdentity(t, server, "bob"))
+		assert.NotNil(t, storedIdentity(t, server, "alice"))
+	})
+
+	t.Run("removed identity file also in the legacy file", func(t *testing.T) {
+		store, server := newPolicyTestStoreWithServer(t)
+		setEntry(server, filer.IamConfigDirectory, IamLegacyIdentityFile, legacy(`{"name":"alice"},{"name":"bob","actions":["Read:b"]}`))
+		setEntry(server, identDir, "bob.json", []byte(`{"name":"bob","actions":["Read:b"]}`))
+		changeAfterLoad(server, func() {
+			_, _ = server.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{Directory: identDir, Name: "bob.json"})
+		})
+
+		_, err := store.LoadConfiguration(ctx)
+		require.NoError(t, err)
+		assert.Nil(t, storedIdentity(t, server, "bob"))
+		assert.NotNil(t, storedIdentity(t, server, "alice"))
+	})
+
+	t.Run("rewritten legacy file", func(t *testing.T) {
+		store, server := newPolicyTestStoreWithServer(t)
+		setEntry(server, filer.IamConfigDirectory, IamLegacyIdentityFile, legacy(string(granted)))
+		changeAfterLoad(server, func() {
+			setEntry(server, filer.IamConfigDirectory, IamLegacyIdentityFile, legacy(string(revoked)))
+		})
+
+		_, err := store.LoadConfiguration(ctx)
+		require.NoError(t, err)
+		if identity := storedIdentity(t, server, "anonymous"); identity != nil {
+			assert.Equal(t, []string{"Read:c"}, identity.GetActions())
+		}
+
+		s3cfg, err := store.LoadConfiguration(ctx)
+		require.NoError(t, err)
+		require.Len(t, s3cfg.Identities, 1)
+		assert.Equal(t, []string{"Read:c"}, s3cfg.Identities[0].GetActions())
+		assert.Equal(t, []string{"Read:c"}, storedIdentity(t, server, "anonymous").GetActions())
+		assert.False(t, storedFile(server, filer.IamConfigDirectory, IamLegacyIdentityFile))
+		assert.True(t, storedFile(server, filer.IamConfigDirectory, IamLegacyIdentityOldFile))
+	})
 }

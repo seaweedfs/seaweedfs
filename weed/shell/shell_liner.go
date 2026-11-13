@@ -137,7 +137,7 @@ func processEachCmd(cmd string, commandEnv *CommandEnv) (exit bool, cmdErr error
 					// every later command in the session unlocked, so a real
 					// mutation right after a simulation would skip its lock.
 					commandEnv.SetNoLock(false)
-					if err := c.Do(args, commandEnv, os.Stdout); err != nil {
+					if err := c.Do(args, commandEnv, os.Stdout); err != nil && !isHelpError(err) {
 						fmt.Fprintf(os.Stderr, "error: %v\n", err)
 						cmdErr = err
 					}

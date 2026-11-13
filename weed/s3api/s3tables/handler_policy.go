@@ -167,6 +167,7 @@ func (h *S3TablesHandler) handlePutTableBucketPolicy(w http.ResponseWriter, r *h
 	identityActions := getIdentityActions(r)
 	ctx := &PolicyContext{
 		TrustedIssuers:   h.trustedIssuers(r),
+		Subject:          callerSubject(r),
 		IsLocalAccountID: h.localAccountIDs,
 		TableBucketName:  bucketName,
 		TableBucketTags:  bucketTags,
@@ -267,6 +268,7 @@ func (h *S3TablesHandler) handleGetTableBucketPolicy(w http.ResponseWriter, r *h
 	identityActions := getIdentityActions(r)
 	if !CheckPermissionWithContext("GetTableBucketPolicy", principal, bucketMetadata.OwnerAccountID, string(policy), bucketARN, &PolicyContext{
 		TrustedIssuers:   h.trustedIssuers(r),
+		Subject:          callerSubject(r),
 		IsLocalAccountID: h.localAccountIDs,
 		TableBucketName:  bucketName,
 		IdentityActions:  identityActions,
@@ -345,6 +347,7 @@ func (h *S3TablesHandler) handleDeleteTableBucketPolicy(w http.ResponseWriter, r
 	identityActions := getIdentityActions(r)
 	if !CheckPermissionWithContext("DeleteTableBucketPolicy", principal, bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
 		TrustedIssuers:   h.trustedIssuers(r),
+		Subject:          callerSubject(r),
 		IsLocalAccountID: h.localAccountIDs,
 		TableBucketName:  bucketName,
 		IdentityActions:  identityActions,
@@ -466,6 +469,7 @@ func (h *S3TablesHandler) handlePutTablePolicy(w http.ResponseWriter, r *http.Re
 	identityActions := getIdentityActions(r)
 	ctx := &PolicyContext{
 		TrustedIssuers:   h.trustedIssuers(r),
+		Subject:          callerSubject(r),
 		IsLocalAccountID: h.localAccountIDs,
 		TableBucketName:  bucketName,
 		Namespace:        namespaceName,
@@ -591,6 +595,7 @@ func (h *S3TablesHandler) handleGetTablePolicy(w http.ResponseWriter, r *http.Re
 	identityActions := getIdentityActions(r)
 	ctx := &PolicyContext{
 		TrustedIssuers:   h.trustedIssuers(r),
+		Subject:          callerSubject(r),
 		IsLocalAccountID: h.localAccountIDs,
 		TableBucketName:  bucketName,
 		Namespace:        namespaceName,
@@ -687,6 +692,7 @@ func (h *S3TablesHandler) handleDeleteTablePolicy(w http.ResponseWriter, r *http
 	identityActions := getIdentityActions(r)
 	ctx := &PolicyContext{
 		TrustedIssuers:   h.trustedIssuers(r),
+		Subject:          callerSubject(r),
 		IsLocalAccountID: h.localAccountIDs,
 		TableBucketName:  bucketName,
 		Namespace:        namespaceName,
@@ -825,6 +831,7 @@ func (h *S3TablesHandler) handleTagResource(w http.ResponseWriter, r *http.Reque
 		identityActions := getIdentityActions(r)
 		ctx := &PolicyContext{
 			TrustedIssuers:   h.trustedIssuers(r),
+			Subject:          callerSubject(r),
 			IsLocalAccountID: h.localAccountIDs,
 			TableBucketName:  bucketName,
 			Namespace:        tableNamespace,
@@ -988,6 +995,7 @@ func (h *S3TablesHandler) handleListTagsForResource(w http.ResponseWriter, r *ht
 		identityActions := getIdentityActions(r)
 		ctx := &PolicyContext{
 			TrustedIssuers:   h.trustedIssuers(r),
+			Subject:          callerSubject(r),
 			IsLocalAccountID: h.localAccountIDs,
 			TableBucketName:  bucketName,
 			Namespace:        tableNamespace,
@@ -1117,6 +1125,7 @@ func (h *S3TablesHandler) handleUntagResource(w http.ResponseWriter, r *http.Req
 		identityActions := getIdentityActions(r)
 		ctx := &PolicyContext{
 			TrustedIssuers:   h.trustedIssuers(r),
+			Subject:          callerSubject(r),
 			IsLocalAccountID: h.localAccountIDs,
 			TableBucketName:  bucketName,
 			Namespace:        tableNamespace,
