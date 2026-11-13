@@ -143,7 +143,7 @@ func (store *EtcdStore) RollbackTransaction(ctx context.Context) error {
 // onto a member that stops answering waits until keepalive closes the
 // connection, or forever if keepalive is off.
 func (store *EtcdStore) withTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
-	if _, hasDeadline := ctx.Deadline(); hasDeadline {
+	if _, hasDeadline := ctx.Deadline(); hasDeadline || store.requestTimeout <= 0 {
 		return ctx, func() {}
 	}
 	return context.WithTimeout(ctx, store.requestTimeout)
