@@ -35,11 +35,15 @@ type anonymousReadFiler struct {
 	mu        sync.Mutex
 	entries   map[string]*filer_pb.Entry
 	lookupErr error
+	onLookup  func()
 }
 
 func (f *anonymousReadFiler) LookupDirectoryEntry(_ context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.onLookup != nil {
+		f.onLookup()
+	}
 	if f.lookupErr != nil {
 		return nil, f.lookupErr
 	}
@@ -328,6 +332,14 @@ func TestWriteToVersionFileKeyReadsLogicalOwner(t *testing.T) {
 
 	s3a.markOwnerUnreachable(ownerAddr)
 	require.Equal(t, s3err.ErrAccessDenied, s3a.checkVersionFileWrite("b", object+".versions/v_v1", "t"))
+	gateway.mu.Lock()
+	gateway.onLookup = func() { s3a.unreachableOwners.Delete(ownerAddr) }
+	gateway.mu.Unlock()
+	s3a.markOwnerUnreachable(ownerAddr)
+	require.Equal(t, s3err.ErrAccessDenied, s3a.checkVersionFileWrite("b", object+".versions/v_v1", "t"))
+	gateway.mu.Lock()
+	gateway.onLookup = nil
+	gateway.mu.Unlock()
 	s3a.markOwnerUnreachable(ownerAddr)
 	require.Equal(t, s3err.ErrNone, s3a.checkVersionFileWrite("b", object+".versions/v_v2", "t"))
 	owner.mu.Lock()

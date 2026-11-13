@@ -768,8 +768,8 @@ func (s3a *S3ApiServer) checkVersionFileWrite(bucket, object, handlerName string
 	logicalObject := strings.TrimSuffix(strings.TrimSuffix(key, "/"+name), VersionsFolder)
 	entry, err := s3a.getObjectScopedEntryRoutedByKey(bucket, logicalObject, dir, name)
 	if errors.Is(err, filer_pb.ErrNotFound) || status.Code(err) == codes.NotFound {
-		// A replica's miss proves nothing while the owner is being skipped.
-		if owner := s3a.routableWriteOwner(bucket, logicalObject); owner != "" && s3a.ownerRecentlyUnreachable(owner) {
+		// The routed lookup may have answered from a replica, whose miss proves nothing.
+		if owner := s3a.routableWriteOwner(bucket, logicalObject); owner != "" {
 			entry, err = s3a.lookupEntryOnFiler(context.Background(), owner, dir, name)
 		}
 	}
