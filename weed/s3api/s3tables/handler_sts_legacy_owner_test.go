@@ -80,3 +80,62 @@ func TestTrustedIssuersSourceOnlyForFederatedSessions(t *testing.T) {
 	assert.Empty(t, issuersFor(map[string]interface{}{"aws:userid": "alice"}))
 	assert.Empty(t, issuersFor(map[string]interface{}{"sub": "alice"}))
 }
+
+// A table bucket policy written before issuer scoping names role sessions by
+// a pattern over their bare subjects. A session whose subject matches it keeps
+// the grant; a subject that does not hash to the session's aws:userid does not.
+func TestSTSSessionMatchesLegacySubjectPatternPrincipal(t *testing.T) {
+	const (
+		bucket = "lake-norm"
+		sub    = "project_path:dev/infra/datalake/normalisation:ref_type:branch:ref:main"
+		issuer = "https://gitlab.example.com"
+	)
+	arn, err := BuildBucketARN(DefaultRegion, DefaultAccountID, bucket)
+	require.NoError(t, err)
+	body, err := json.Marshal(&CreateNamespaceRequest{TableBucketARN: arn, Namespace: []string{"some_ns"}})
+	require.NoError(t, err)
+	policy := func(principal string) []byte {
+		return []byte(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":["` + principal +
+			`"],"Action":["s3tables:CreateNamespace"],"Resource":"*"}]}`)
+	}
+
+	createNamespace := func(t *testing.T, principalSpec, claimedSub, scopedSub, sessionIssuer string, configured ...string) int {
+		fs := s3tablestest.Start(t)
+		metadata, err := json.Marshal(&tableBucketMetadata{Name: bucket, CreatedAt: time.Now(), OwnerAccountID: s3_constants.AccountAdminId})
+		require.NoError(t, err)
+		fs.Put(TablesPath, bucket, map[string][]byte{
+			ExtendedKeyTableBucket: []byte("true"),
+			ExtendedKeyMetadata:    metadata,
+			ExtendedKeyPolicy:      policy(principalSpec),
+		})
+		m := NewManager()
+		m.SetDefaultAllow(false)
+		if configured != nil {
+			m.SetTrustedIssuerSource(func(context.Context) []string { return configured })
+		}
+		scoped := sts.ComputeParentUser(scopedSub, sessionIssuer)
+		identity := &testIdentity{
+			Name:    scoped,
+			Account: &testIdentityAccount{Id: scoped},
+			Claims:  map[string]interface{}{"sub": claimedSub, "aws:userid": scoped},
+		}
+		req, err := newManagerRequest(s3_constants.SetIdentityInContext(context.Background(), identity), "CreateNamespace", body, scoped)
+		require.NoError(t, err)
+		recorder := httptest.NewRecorder()
+		m.handler.HandleRequest(recorder, req, NewManagerClient(fs.Client))
+		return recorder.Code
+	}
+
+	const pattern = "project_path:dev/infra/datalake/normalisation:*"
+	assert.Equal(t, http.StatusOK, createNamespace(t, pattern, sub, sub, issuer, issuer), "the subject pattern no longer grants")
+	assert.Equal(t, http.StatusOK, createNamespace(t, sub, sub, sub, issuer, issuer), "the exact subject no longer grants")
+	assert.Equal(t, http.StatusForbidden, createNamespace(t, pattern, sub, sub, issuer), "no configured issuer set must not re-anchor")
+	assert.Equal(t, http.StatusForbidden, createNamespace(t, pattern, sub, sub, issuer, issuer, "https://other.example.com"),
+		"a subject pattern is ambiguous once two issuers are configured")
+	assert.Equal(t, http.StatusForbidden, createNamespace(t, pattern, sub, sub, "https://other.example.com", issuer),
+		"another issuer's user with the same subject must not match")
+	assert.Equal(t, http.StatusForbidden, createNamespace(t, pattern, sub, "project_path:other/repo:ref_type:branch:ref:main", issuer, issuer),
+		"a subject claim the session's aws:userid was not derived from must not match")
+	assert.Equal(t, http.StatusForbidden, createNamespace(t, "arn:aws:iam::*", sub, sub, issuer, issuer),
+		"an ARN pattern is not a subject pattern")
+}
