@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func TestAppendQueryParameter(t *testing.T) {
@@ -91,6 +93,64 @@ func TestReadUrlAsStreamReturnsGzipReaderError(t *testing.T) {
 	_, err := ReadUrlAsStream(context.Background(), server.URL, "", nil, false, true, 0, 0, func(data []byte) {})
 	if err == nil {
 		t.Fatal("ReadUrlAsStream returned nil error for invalid gzip response")
+	}
+}
+
+// A truncated chunk keeps its needle, so a full-chunk read must stop at the
+// chunk's recorded size instead of returning every stored byte.
+func TestReadUrlAsStreamStopsAtChunkSize(t *testing.T) {
+	InitGlobalHttpClient()
+
+	stored := bytes.Repeat([]byte("t"), 300)
+	cipherKey := util.GenCipherKey()
+	encrypted, err := util.Encrypt(stored, cipherKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var gzipped bytes.Buffer
+	zw := gzip.NewWriter(&gzipped)
+	zw.Write(stored)
+	zw.Close()
+
+	for _, tc := range []struct {
+		name      string
+		body      []byte
+		encoding  string
+		cipherKey []byte
+	}{
+		{name: "plain", body: stored},
+		{name: "gzip", body: gzipped.Bytes(), encoding: "gzip"},
+		{name: "cipher", body: encrypted, cipherKey: cipherKey},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if tc.encoding != "" {
+					w.Header().Set("Content-Encoding", tc.encoding)
+				}
+				_, _ = w.Write(tc.body)
+			}))
+			defer server.Close()
+
+			var got []byte
+			if _, err := ReadUrlAsStream(context.Background(), server.URL, "", tc.cipherKey, false, true, 0, 100, func(data []byte) {
+				got = append(got, data...)
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(got, stored[:100]) {
+				t.Fatalf("full-chunk read returned %d bytes, want 100", len(got))
+			}
+
+			got = nil
+			if _, err := ReadUrlAsStream(context.Background(), server.URL, "", tc.cipherKey, false, true, 0, 0, func(data []byte) {
+				got = append(got, data...)
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(got, stored) {
+				t.Fatalf("whole-needle read returned %d bytes, want %d", len(got), len(stored))
+			}
+		})
 	}
 }
 

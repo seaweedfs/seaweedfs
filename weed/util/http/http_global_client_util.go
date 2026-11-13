@@ -430,6 +430,11 @@ func ReadUrlAsStream(ctx context.Context, fileUrl, jwt string, cipherKey []byte,
 	default:
 		reader = r.Body
 	}
+	var body io.Reader = reader
+	if size > 0 {
+		// a truncated chunk's needle can hold more than the chunk's recorded size
+		body = io.LimitReader(reader, int64(size))
+	}
 
 	var (
 		m int
@@ -445,7 +450,7 @@ func ReadUrlAsStream(ctx context.Context, fileUrl, jwt string, cipherKey []byte,
 		default:
 		}
 
-		m, err = reader.Read(buf)
+		m, err = body.Read(buf)
 		if m > 0 {
 			fn(buf[:m])
 		}
@@ -477,7 +482,7 @@ func readEncryptedUrl(ctx context.Context, fileUrl, jwt string, cipherKey []byte
 	if len(decryptedData) < int(offset)+size {
 		return false, fmt.Errorf("read decrypted %s size %d [%d, %d)", fileUrl, len(decryptedData), offset, int(offset)+size)
 	}
-	if isFullChunk {
+	if isFullChunk && size == 0 {
 		fn(decryptedData)
 	} else {
 		sliceEnd := int(offset) + size
