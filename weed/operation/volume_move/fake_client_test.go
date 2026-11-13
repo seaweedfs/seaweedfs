@@ -40,9 +40,10 @@ type fakeCluster struct {
 
 	lastAppendAtNs uint64
 
-	copyReqs   []*volume_server_pb.VolumeCopyRequest
-	deleteReqs []*volume_server_pb.VolumeDeleteRequest
-	ecCopyReqs []*volume_server_pb.VolumeEcShardsCopyRequest
+	copyReqs     []*volume_server_pb.VolumeCopyRequest
+	readonlyReqs []*volume_server_pb.VolumeMarkReadonlyRequest
+	deleteReqs   []*volume_server_pb.VolumeDeleteRequest
+	ecCopyReqs   []*volume_server_pb.VolumeEcShardsCopyRequest
 }
 
 func newFakeCluster() *fakeCluster {
@@ -94,6 +95,9 @@ func (f *fakeClient) VolumeMarkReadonly(ctx context.Context, req *volume_server_
 	if err := f.cluster.record(f.addr, "VolumeMarkReadonly"); err != nil {
 		return nil, err
 	}
+	f.cluster.mu.Lock()
+	f.cluster.readonlyReqs = append(f.cluster.readonlyReqs, req)
+	f.cluster.mu.Unlock()
 	return &volume_server_pb.VolumeMarkReadonlyResponse{}, nil
 }
 
