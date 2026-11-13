@@ -41,6 +41,7 @@ type tierDownloadCluster struct {
 	frozen       map[pb.ServerAddress]bool
 	writable     map[pb.ServerAddress]bool
 	remounts     map[pb.ServerAddress]int
+	placement    uint32
 }
 
 type tierDownloadTestServer struct {
@@ -203,7 +204,7 @@ func (c *tierDownloadCluster) readTopology() (*master_pb.TopologyInfo, error) {
 		if !found || hidden[server] {
 			continue
 		}
-		vi := &master_pb.VolumeInformationMessage{Id: 7, Collection: "c", DiskType: c.diskTypes[server]}
+		vi := &master_pb.VolumeInformationMessage{Id: 7, Collection: "c", DiskType: c.diskTypes[server], ReplicaPlacement: c.placement}
 		if state == tierReplicaRemote {
 			vi.RemoteStorageName = "s3.default"
 			vi.RemoteStorageKey = "key"
@@ -329,6 +330,30 @@ func TestTierDownloadRestoresSourceAfterBlockingDeletes(t *testing.T) {
 		}
 		if !writable && c.remounts[source] != 1 {
 			t.Errorf("readonly source should reload its persisted state once, got %d remounts", c.remounts[source])
+		}
+	}
+}
+
+func TestTierDownloadKeepsRemoteObjectWhileReplicasAreUnlisted(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		states []string
+	}{
+		{"lone listed replica", []string{tierReplicaRemote, tierReplicaRemote}},
+		{"local source and one remote replica", []string{tierReplicaLocal, tierReplicaRemote, tierReplicaRemote}},
+		{"three remote replicas", []string{tierReplicaRemote, tierReplicaRemote, tierReplicaRemote, tierReplicaRemote}},
+	} {
+		c := newTierDownloadCluster(t, tc.states...)
+		c.placement = uint32(len(tc.states) - 1) // "00n": n+1 copies, one more than listed
+		offline := c.servers[len(c.servers)-1]
+		for read := 0; read < 4; read++ {
+			c.hide(read, offline)
+		}
+		if err := c.run(t); err != nil {
+			t.Fatalf("%s: tier download: %v", tc.name, err)
+		}
+		if !c.objectExists {
+			t.Errorf("%s: remote object deleted while the replica on %s is unlisted", tc.name, offline)
 		}
 	}
 }

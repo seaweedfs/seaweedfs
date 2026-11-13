@@ -15,6 +15,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
@@ -45,8 +46,10 @@ func (c *commandVolumeTierDownload) Help() string {
 	volume.tier.download -volumeId=7 -concurrency=1
 
 	This command downloads the dat file of a volume from a remote tier onto one replica, copies
-	that replica over every other replica, and only then deletes the remote object. A replica on a
-	volume server that is offline during the command keeps referencing the deleted object.
+	that replica over every other replica, and only then deletes the remote object. The object is
+	kept while fewer replicas are listed than the replica placement expects; rerun the command once
+	they are back. A replica on an offline volume server that the placement does not account for
+	keeps referencing the deleted object: delete that replica and run volume.fix.replication.
 
 `
 }
@@ -153,7 +156,8 @@ func downloadAndReplicateFromRemoteTier(grpcDialOption grpc.DialOption, writer i
 	if err != nil {
 		return err
 	}
-	remote, local := collectVolumeTierDownloadLocations(topoInfo, vid, collection)
+	remote, local, copies := collectVolumeTierDownloadLocations(topoInfo, vid, collection)
+	listed := len(remote) + len(local)
 	if len(remote) == 0 {
 		fmt.Fprintf(writer, "volume %d is already on local disk\n", vid)
 		return nil
@@ -167,14 +171,17 @@ func downloadAndReplicateFromRemoteTier(grpcDialOption grpc.DialOption, writer i
 	} else {
 		source, remote, fresh = remote[0].server, remote[1:], false
 		// a lone replica is the only reference, so it may delete the object itself
-		keepRemote := len(remote) > 0
+		keepRemote := len(remote) > 0 || listed < copies
 		if err = downloadDatFromRemoteTier(grpcDialOption, writer, vid, collection, source, keepRemote, concurrency); err != nil {
 			if !strings.Contains(err.Error(), "already on local disk") {
 				return fmt.Errorf("download dat file for volume %d to %s: %v", vid, source, err)
 			}
 			fmt.Fprintf(writer, "volume %d on %s is already on local disk\n", vid, source)
 		}
-		if !keepRemote {
+		if len(remote) == 0 {
+			if keepRemote {
+				fmt.Fprintf(writer, "volume %d: only %d of %d replicas are listed, the remote object is kept\n", vid, listed, copies)
+			}
 			return nil
 		}
 	}
@@ -201,6 +208,10 @@ func downloadAndReplicateFromRemoteTier(grpcDialOption grpc.DialOption, writer i
 			return nil
 		}
 		if len(pending) == 1 && fresh {
+			if listed < copies {
+				fmt.Fprintf(writer, "volume %d: only %d of %d replicas are listed, the remote object is kept\n", vid, listed, copies)
+				return nil
+			}
 			last := pending[0]
 			fmt.Fprintf(writer, "delete remote-backed replica of volume %d on %s with its remote object\n", vid, last.server)
 			if err = deleteVolume(context.Background(), grpcDialOption, vid, last.server, false, false, false); err != nil {
@@ -220,8 +231,8 @@ func downloadAndReplicateFromRemoteTier(grpcDialOption grpc.DialOption, writer i
 		if topoInfo, err = readTopology(); err != nil {
 			return err
 		}
-		remote, _ = collectVolumeTierDownloadLocations(topoInfo, vid, collection)
-		fresh = true
+		remote, local, copies = collectVolumeTierDownloadLocations(topoInfo, vid, collection)
+		listed, fresh = len(remote)+len(local), true
 	}
 }
 
@@ -276,13 +287,17 @@ type tierDownloadReplica struct {
 }
 
 // collectVolumeTierDownloadLocations splits the replicas of a volume into the
-// ones still reading the remote object and the ones already on local disk.
-func collectVolumeTierDownloadLocations(topoInfo *master_pb.TopologyInfo, vid needle.VolumeId, collection string) (remote, local []tierDownloadReplica) {
+// ones still reading the remote object and the ones already on local disk, and
+// reports how many replicas the replica placement expects.
+func collectVolumeTierDownloadLocations(topoInfo *master_pb.TopologyInfo, vid needle.VolumeId, collection string) (remote, local []tierDownloadReplica, copies int) {
 	eachDataNode(topoInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
 		for _, disk := range dn.DiskInfos {
 			for _, vi := range disk.VolumeInfos {
 				if needle.VolumeId(vi.Id) != vid || vi.Collection != collection {
 					continue
+				}
+				if rp, rpErr := super_block.NewReplicaPlacementFromByte(byte(vi.ReplicaPlacement)); rpErr == nil {
+					copies = max(copies, rp.GetCopyCount())
 				}
 				replica := tierDownloadReplica{server: pb.NewServerAddressFromDataNode(dn), diskType: vi.DiskType}
 				if vi.RemoteStorageName != "" {
