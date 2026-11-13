@@ -539,6 +539,11 @@ func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, se
 	} else {
 		delete(claims, "aws:username")
 	}
+	if sessionInfo.ParentUser != "" {
+		claims["aws:userid"] = sessionInfo.ParentUser
+	} else {
+		delete(claims, "aws:userid")
+	}
 
 	// Key the principal on the OIDC subject so a session resolves to the same
 	// identity on the SigV4 and JWT paths (see s3_iam_middleware.go); fall back to
