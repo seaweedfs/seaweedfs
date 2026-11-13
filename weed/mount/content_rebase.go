@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"sync/atomic"
 	"time"
 
@@ -154,14 +155,42 @@ func appendCompatible(base, stored, pending *filer_pb.Entry) bool {
 	return chunkPrefix(base.Chunks, stored.Chunks) && chunkPrefix(stored.Chunks, pending.Chunks)
 }
 
+// Canonicalize copies only. Equal-time overlapping chunks are order-sensitive
+// (the later descriptor wins), so keep their original ordering fail-closed.
+func canonicalChunkCopies(chunks []*filer_pb.FileChunk) []*filer_pb.FileChunk {
+	copies := make([]*filer_pb.FileChunk, len(chunks))
+	for i, c := range chunks {
+		copies[i] = proto.Clone(c).(*filer_pb.FileChunk)
+	}
+	filer_pb.BeforeEntrySerialization(copies)
+	ordered := append([]*filer_pb.FileChunk(nil), copies...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		a, b := ordered[i], ordered[j]
+		if a.Offset != b.Offset {
+			return a.Offset < b.Offset
+		}
+		if a.ModifiedTsNs != b.ModifiedTsNs {
+			return a.ModifiedTsNs < b.ModifiedTsNs
+		}
+		return a.GetFileIdString() < b.GetFileIdString()
+	})
+	last := make(map[int64]*filer_pb.FileChunk)
+	for _, c := range ordered {
+		if prev := last[c.ModifiedTsNs]; prev != nil && uint64(c.Offset)-uint64(prev.Offset) < prev.Size {
+			return copies
+		}
+		last[c.ModifiedTsNs] = c
+	}
+	return ordered
+}
+
 func chunkPrefix(prefix, chunks []*filer_pb.FileChunk) bool {
 	if len(prefix) > len(chunks) {
 		return false
 	}
-	for i, c := range prefix {
-		a, b := proto.Clone(c).(*filer_pb.FileChunk), proto.Clone(chunks[i]).(*filer_pb.FileChunk)
-		filer_pb.BeforeEntrySerialization([]*filer_pb.FileChunk{a, b})
-		if !proto.Equal(a, b) {
+	left, right := canonicalChunkCopies(prefix), canonicalChunkCopies(chunks)
+	for i, c := range left {
+		if !proto.Equal(c, right[i]) {
 			return false
 		}
 	}
@@ -178,7 +207,7 @@ func sameContentIdentity(base, latest *filer_pb.Entry) bool {
 	rebaseContentAttributes(a, base, latest)
 	for _, e := range []*filer_pb.Entry{a, b} {
 		e.Name, e.CommitTsNs = "", 0
-		filer_pb.BeforeEntrySerialization(e.Chunks)
+		e.Chunks = canonicalChunkCopies(e.Chunks)
 		e.Attributes.FileSize = filer.FileSize(e)
 	}
 	return proto.Equal(a, b)

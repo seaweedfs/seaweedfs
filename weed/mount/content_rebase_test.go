@@ -978,3 +978,95 @@ func TestPeriodicRefusalThenRefreshOutageKeepsPendingContent(t *testing.T) {
 		t.Fatal("periodic recovery lost bytes, size or peer attributes")
 	}
 }
+
+func TestMergedChunkOrderPreservesAppendRebase(t *testing.T) {
+	base := attributeAppendEntry(3)
+	merged := proto.Clone(base.Chunks[0]).(*filer_pb.FileChunk)
+	merged.Size, merged.ModifiedTsNs = 65536, 0
+	a, b := base.Chunks[1], base.Chunks[2]
+	a.Offset, b.Offset = 65536, 65792
+	base.Chunks = []*filer_pb.FileChunk{a, b, merged}
+	base.Attributes.FileSize = 66048
+	current := proto.Clone(base).(*filer_pb.Entry)
+	current.Chunks = []*filer_pb.FileChunk{current.Chunks[2], current.Chunks[0], current.Chunks[1]}
+	current.Attributes.FileMode, current.CommitTsNs = 0600, 20000
+	pending := proto.Clone(base).(*filer_pb.Entry)
+	c := proto.Clone(a).(*filer_pb.FileChunk)
+	c.Fid.FileKey, c.Offset, c.ModifiedTsNs = 4, 66048, 4
+	pending.Chunks = []*filer_pb.FileChunk{pending.Chunks[0], pending.Chunks[1], c, pending.Chunks[2]}
+	pending.Attributes.FileSize = 66304
+	before := []*filer_pb.Entry{proto.Clone(base).(*filer_pb.Entry), proto.Clone(current).(*filer_pb.Entry), proto.Clone(pending).(*filer_pb.Entry)}
+	if !sameContentIdentity(base, current) || !chunkPrefix(base.Chunks, current.Chunks) || !appendCompatible(base, current, pending) {
+		t.Fatal("merged-last versus canonical merged-first rejects the same content")
+	}
+	for i, e := range []*filer_pb.Entry{base, current, pending} {
+		if !proto.Equal(e, before[i]) {
+			t.Fatal("comparison mutated a caller's chunk list", i)
+		}
+	}
+	w := newInvalidateTestWFS(t)
+	peer := &g6ConditionalPeer{entry: proto.Clone(current).(*filer_pb.Entry), blobs: map[string][]byte{
+		merged.GetFileIdString(): bytes.Repeat([]byte{'O'}, 65536), a.GetFileIdString(): bytes.Repeat([]byte{'A'}, 256), b.GetFileIdString(): bytes.Repeat([]byte{'B'}, 256), c.GetFileIdString(): bytes.Repeat([]byte{'C'}, 256),
+	}}
+	startFakeFiler(t, w, peer)
+	w.mapPbIdFromFilerToLocal(base)
+	w.mapPbIdFromFilerToLocal(pending)
+	fh := newFileHandle(w, 1, 42, pending)
+	t.Cleanup(fh.dirtyPages.Destroy)
+	fh.RememberPath("/dir/file")
+	fh.baseEntry.Store(base)
+	fh.dirtyMetadata = true
+	if code := w.doFlush(context.Background(), fh, 1000, 20, false); code != fuse.OK {
+		t.Fatal("reordered committed chunks reject actual append publication", code)
+	}
+	peer.mu.Lock()
+	defer peer.mu.Unlock()
+	want := append(bytes.Repeat([]byte{'O'}, 65536), bytes.Repeat([]byte{'A'}, 256)...)
+	want = append(want, bytes.Repeat([]byte{'B'}, 256)...)
+	want = append(want, bytes.Repeat([]byte{'C'}, 256)...)
+	if peer.rejected != 1 || peer.entry.Attributes.FileSize != 66304 || peer.entry.Attributes.FileMode != 0600 || !bytes.Equal(g6StoredBytes(t, peer), want) {
+		t.Fatal("canonical rebase lost exact bytes, size or peer attributes")
+	}
+}
+
+func TestCanonicalChunkComparisonRefusesChangedContent(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(*filer_pb.Entry)
+	}{
+		{"different-fid", func(e *filer_pb.Entry) { e.Chunks[0].Fid.FileKey += 100 }},
+		{"different-offset", func(e *filer_pb.Entry) { e.Chunks[0].Offset++ }},
+		{"different-size", func(e *filer_pb.Entry) { e.Chunks[0].Size-- }},
+		{"different-timestamp", func(e *filer_pb.Entry) { e.Chunks[0].ModifiedTsNs++ }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			base := attributeAppendEntry(2)
+			stored := proto.Clone(base).(*filer_pb.Entry)
+			stored.Chunks[0], stored.Chunks[1] = stored.Chunks[1], stored.Chunks[0]
+			tc.change(stored)
+			if sameContentIdentity(base, stored) || appendCompatible(base, stored, attributeAppendEntry(3)) {
+				t.Fatal("reorder hid a changed content descriptor")
+			}
+		})
+	}
+	t.Run("order-sensitive-overlap", func(t *testing.T) {
+		base := attributeAppendEntry(2)
+		base.Chunks[1].Offset = 0
+		base.Chunks[1].ModifiedTsNs = base.Chunks[0].ModifiedTsNs
+		base.Attributes.FileSize = 256
+		stored := proto.Clone(base).(*filer_pb.Entry)
+		stored.Chunks[0], stored.Chunks[1] = stored.Chunks[1], stored.Chunks[0]
+		peer := &g6ConditionalPeer{entry: base, blobs: map[string][]byte{
+			base.Chunks[0].GetFileIdString(): bytes.Repeat([]byte{'L'}, 256),
+			base.Chunks[1].GetFileIdString(): bytes.Repeat([]byte{'R'}, 256),
+		}}
+		originalBytes := g6StoredBytes(t, peer)
+		peer.entry = stored
+		if bytes.Equal(originalBytes, g6StoredBytes(t, peer)) {
+			t.Fatal("negative fixture did not change visible bytes")
+		}
+		if sameContentIdentity(base, stored) || appendCompatible(base, stored, attributeAppendEntry(3)) {
+			t.Fatal("equal-time overlapping chunks changed visible bytes when reordered")
+		}
+	})
+}
