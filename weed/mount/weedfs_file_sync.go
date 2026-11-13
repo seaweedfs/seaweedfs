@@ -338,6 +338,7 @@ func (wfs *WFS) createContentEntry(ctx context.Context, fh *FileHandle, request 
 		var stored *filer_pb.Entry
 		err = wfs.withFilerClient(ctx, false, wfs.filerRPCWait(), func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 			var callErr error
+			stored = nil
 			resp, callErr = filer_pb.CreateEntryWithResponse(ctx, client, request)
 			if base == nil || attempt >= maxContentFlushMerges || !errors.Is(callErr, filer_pb.ErrPreconditionFailed) {
 				return callErr
@@ -351,7 +352,7 @@ func (wfs *WFS) createContentEntry(ctx context.Context, fh *FileHandle, request 
 			merged = proto.Clone(request.Entry).(*filer_pb.Entry)
 			wfs.mapPbIdFromFilerToLocal(merged)
 		}
-		if stored == nil {
+		if err == nil || stored == nil {
 			return resp, merged, err
 		}
 		next, ok := mergeContentEntry(stored, base, local, sent)
