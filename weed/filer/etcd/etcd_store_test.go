@@ -35,4 +35,11 @@ func TestWithTimeout(t *testing.T) {
 	if ctx != callerCtx {
 		t.Fatal("the caller's deadline was replaced")
 	}
+
+	store.requestTimeout = 0
+	ctx, cancel = store.withTimeout(context.Background())
+	defer cancel()
+	if _, ok := ctx.Deadline(); ok {
+		t.Fatal(`request_timeout "0s" set a deadline`)
+	}
 }
