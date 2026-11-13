@@ -41,7 +41,7 @@ func (wfs *WFS) saveEntryAttributes(ctx context.Context, path util.FullPath, bas
 	// may already have applied the update the caller would be told failed.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), metadataFlushTimeout)
 	defer cancel()
-	dir, name := path.DirAndName()
+	dir, _ := path.DirAndName()
 	inode := base.GetAttributes().GetInode()
 	localUid, localGid := base.GetAttributes().GetUid(), base.GetAttributes().GetGid()
 	// The snapshot has local ids only. Where the id mapping is not one-to-one
@@ -50,22 +50,14 @@ func (wfs *WFS) saveEntryAttributes(ctx context.Context, path util.FullPath, bas
 	for attempt := 0; attempt < 3; attempt++ {
 		if attempt > 0 {
 			// Bypass the mount cache: it supplied the snapshot just refused.
-			err := wfs.withFilerClient(ctx, false, wfs.filerRPCWait(), func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
-				resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{Directory: dir, Name: name})
-				if err == nil {
-					base = resp.Entry
-				}
-				return err
-			})
+			entry, _, err := wfs.lookupOwnerEntry(ctx, path)
 			if errors.Is(err, filer_pb.ErrNotFound) {
 				return nil, fuse.ENOENT
 			}
 			if err != nil {
 				return nil, grpcErrorToFuseStatus(err)
 			}
-			if base == nil {
-				return nil, fuse.ENOENT
-			}
+			base = entry
 			filerUid, filerGid = base.GetAttributes().GetUid(), base.GetAttributes().GetGid()
 			wfs.mapPbIdFromFilerToLocal(base)
 			if inode != 0 && base.GetAttributes().GetInode() != inode {

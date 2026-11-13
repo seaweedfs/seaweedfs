@@ -13,7 +13,9 @@ import (
 	"time"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc/codes"
@@ -703,5 +705,52 @@ func TestAttributeSaveKeepsCollidingFilerIds(t *testing.T) {
 				t.Fatalf("local cache uid %d, want 1000", cached.Attr.Uid)
 			}
 		})
+	}
+}
+
+// The seed filer has not applied the owner's latest update yet and forwards
+// conditional writes to the owner, as filers do under the lock ring.
+type laggingSeedFiler struct {
+	filer_pb.UnimplementedSeaweedFilerServer
+	stale *filer_pb.Entry
+	owner *attributeCASFiler
+}
+
+func (s *laggingSeedFiler) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	return &filer_pb.LookupDirectoryEntryResponse{Entry: proto.Clone(s.stale).(*filer_pb.Entry)}, nil
+}
+
+func (s *laggingSeedFiler) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
+	return s.owner.UpdateEntry(ctx, req)
+}
+
+func TestAttributeRetryReadsOwnerFiler(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+	wfs.atimeMap = make(map[uint64]time.Time)
+	stale := attributeAppendEntry(1)
+	owner := &attributeCASFiler{entry: attributeAppendEntry(300)}
+	startFakeFiler(t, wfs, owner)
+	ownerAddress := wfs.option.FilerAddresses[0]
+	startFakeFiler(t, wfs, &laggingSeedFiler{stale: stale, owner: owner})
+	wfs.lockClient = cluster.NewLockClient(nil, wfs.option.FilerAddresses[0])
+	wfs.lockClient.SetRing([]pb.ServerAddress{ownerAddress}, 1)
+
+	path := util.FullPath("/dir/file")
+	wfs.inodeToPath.Lookup(util.FullPath("/dir"), 1, true, false, 0, false)
+	wfs.inodeToPath.Lookup(path, 1, false, false, 42, true)
+	wfs.inodeToPath.MarkChildrenCached(util.FullPath("/dir"))
+	if err := wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry("/dir", stale), 1); err != nil {
+		t.Fatal(err)
+	}
+	in := &fuse.SetAttrIn{}
+	in.NodeId = 42
+	in.Valid, in.Mode = fuse.FATTR_MODE, 0600
+	if code := wfs.SetAttr(nil, in, &fuse.AttrOut{}); code != fuse.OK {
+		t.Fatalf("chmod behind a lagging seed filer: %v", code)
+	}
+	owner.mu.Lock()
+	defer owner.mu.Unlock()
+	if len(owner.entry.Chunks) != 300 || owner.entry.Attributes.FileMode&0777 != 0600 {
+		t.Fatalf("owner entry: %d chunks, mode %o", len(owner.entry.Chunks), owner.entry.Attributes.FileMode)
 	}
 }
