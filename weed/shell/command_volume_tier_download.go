@@ -15,6 +15,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
 func init() {
@@ -220,7 +221,7 @@ func downloadAndReplicateFromRemoteTier(grpcDialOption grpc.DialOption, writer i
 
 func replicateTierDownloadedVolume(grpcDialOption grpc.DialOption, writer io.Writer, vid needle.VolumeId, source pb.ServerAddress, target tierDownloadReplica) error {
 	fmt.Fprintf(writer, "replicate downloaded volume %d from %s to %s\n", vid, source, target.server)
-	if _, err := copyVolume(context.Background(), grpcDialOption, writer, vid, source, target.server, target.diskType, 0, true); err != nil {
+	if _, err := copyVolume(context.Background(), grpcDialOption, writer, vid, source, target.server, types.ToDiskType(target.diskType).ReadableString(), 0, true); err != nil {
 		return fmt.Errorf("replicate volume %d from %s to %s: %v", vid, source, target.server, err)
 	}
 	return nil

@@ -16,6 +16,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
 const (
@@ -88,8 +89,13 @@ func (s *tierDownloadTestServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequ
 	c := s.cluster
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if req.DiskType != c.diskTypes[s.addr] {
-		return fmt.Errorf("copy volume %d onto disk type %q, replica is on %q", req.VolumeId, req.DiskType, c.diskTypes[s.addr])
+	// an empty disk type means the source's, as on the real servers
+	want, got := types.ToDiskType(c.diskTypes[s.addr]), types.ToDiskType(c.diskTypes[pb.ServerAddress(req.SourceDataNode)])
+	if req.DiskType != "" {
+		got = types.ToDiskType(req.DiskType)
+	}
+	if got != want {
+		return fmt.Errorf("copy volume %d onto disk type %q, replica is on %q", req.VolumeId, got, want)
 	}
 	switch c.replicas[pb.ServerAddress(req.SourceDataNode)] {
 	case tierReplicaLocal:
@@ -261,4 +267,13 @@ func TestTierDownloadRerunReusesLocalReplica(t *testing.T) {
 	if c.downloads != 0 {
 		t.Errorf("want no download when a replica is already local, got %d", c.downloads)
 	}
+}
+
+func TestTierDownloadCopiesFromSsdSourceOntoHddReplica(t *testing.T) {
+	c := newTierDownloadCluster(t, tierReplicaRemote, tierReplicaRemote, tierReplicaRemote)
+	c.hide(0, c.servers[0])
+	if err := c.run(t); err != nil {
+		t.Fatalf("tier download: %v", err)
+	}
+	c.assertAllLocal(t)
 }
