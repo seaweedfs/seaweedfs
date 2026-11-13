@@ -254,6 +254,7 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 	} else if mergedChunks != nil {
 		chunks = mergedChunks
 		manifestChunks = nil
+		fh.noteRewrite()
 	}
 
 	// no chunk deleter here: a failed fold reports the blobs it saved
@@ -356,7 +357,8 @@ func (wfs *WFS) createContentEntry(ctx context.Context, fh *FileHandle, request 
 		if err == nil || stored == nil {
 			return resp, merged, err
 		}
-		next, ok := mergeContentEntry(stored, base, local, sent, fh.truncatedSince(base))
+		mark := fh.markSince(base)
+		next, ok := mergeContentEntry(stored, base, local, sent, mark.truncatedTo, mark.rewrote)
 		if !ok || buffered && !mergeKeepsBuffered(next, local) {
 			return resp, nil, err
 		}
@@ -378,9 +380,9 @@ const maxContentFlushMerges = 3
 // changed its size or wrote past it.
 // A different file at the path, inline content changed on both sides,
 // inline content next to chunks (reads stop at the inline bytes), or a local
-// whole-file rewrite (maybeMergeChunks, unstamped chunks) over a peer's chunk
-// change cannot be merged: the rewrite carries the handle's stale view.
-func mergeContentEntry(stored, base, local, sent *filer_pb.Entry, truncatedTo int64) (*filer_pb.Entry, bool) {
+// whole-file rewrite (rewrote) over a peer's chunk change cannot be merged:
+// the rewrite carries the handle's stale view.
+func mergeContentEntry(stored, base, local, sent *filer_pb.Entry, truncatedTo int64, rewrote bool) (*filer_pb.Entry, bool) {
 	if !sameContentFile(stored, base) {
 		return nil, false
 	}
@@ -394,10 +396,8 @@ func mergeContentEntry(stored, base, local, sent *filer_pb.Entry, truncatedTo in
 	}
 
 	inBase := make(map[string]bool, len(base.Chunks))
-	baseFileIds := make(map[string]bool, len(base.Chunks))
 	for _, c := range base.Chunks {
 		inBase[contentChunkKey(c)] = true
-		baseFileIds[contentFileIdKey(c)] = true
 	}
 	inLocal := make(map[string]bool, len(local.Chunks))
 	for _, c := range local.Chunks {
@@ -421,15 +421,15 @@ func mergeContentEntry(stored, base, local, sent *filer_pb.Entry, truncatedTo in
 		}
 		merged.Chunks = append(merged.Chunks, c)
 	}
+	if rewrote && peerChanged {
+		return nil, false
+	}
 	size := int64(filer.FileSize(stored))
 	if localSize != filer.FileSize(base) {
 		size = max(size, int64(localSize))
 	}
 	for _, c := range local.Chunks {
 		if !inBase[contentChunkKey(c)] {
-			if peerChanged && c.ModifiedTsNs == 0 && !c.IsChunkManifest && !baseFileIds[contentFileIdKey(c)] {
-				return nil, false
-			}
 			merged.Chunks = append(merged.Chunks, proto.Clone(c).(*filer_pb.FileChunk))
 			size = max(size, c.Offset+int64(c.Size))
 		}

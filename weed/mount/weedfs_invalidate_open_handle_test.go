@@ -2161,7 +2161,7 @@ func TestUnmergeablePeerChangeKeepsDirtyHandle(t *testing.T) {
 }
 
 // A peer event that moves a dirty handle's base keeps its unpublished
-// truncate, so a later merge still clips peer chunks at it.
+// truncate and chunk rewrite, so a later merge still honors them.
 func TestPeerEventKeepsPendingTruncate(t *testing.T) {
 	wfs := newInvalidateTestWFS(t)
 
@@ -2169,6 +2169,7 @@ func TestPeerEventKeepsPendingTruncate(t *testing.T) {
 	fh, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, flushConditionEntry(1, 2), 0, 0)
 	fh.dirtyMetadata = true
 	fh.noteTruncate(1)
+	fh.noteRewrite()
 
 	chmod := flushConditionEntry(1, 2)
 	chmod.Attributes.FileMode = 0600
@@ -2190,8 +2191,8 @@ func TestPeerEventKeepsPendingTruncate(t *testing.T) {
 	if base.GetAttributes().GetFileMode() != 0600 {
 		t.Fatalf("base %v did not move to the peer's entry", base)
 	}
-	if got := fh.truncatedSince(base); got != 1 {
-		t.Fatalf("pending truncate %d after the base moved, want 1", got)
+	if got := fh.markSince(base); got.truncatedTo != 1 || !got.rewrote {
+		t.Fatalf("pending truncate %d, rewrite %v after the base moved", got.truncatedTo, got.rewrote)
 	}
 }
 

@@ -279,7 +279,7 @@ func TestMergeContentEntry(t *testing.T) {
 	delete(local.Extended, "user.b")
 	local.Chunks = append(local.Chunks, &filer_pb.FileChunk{FileId: "1,0300000001", Offset: 2, Size: 1, ModifiedTsNs: 3})
 
-	merged, ok := mergeContentEntry(stored, base, local, local, -1)
+	merged, ok := mergeContentEntry(stored, base, local, local, -1, false)
 	if !ok {
 		t.Fatal("not merged")
 	}
@@ -296,7 +296,7 @@ func TestMergeContentEntry(t *testing.T) {
 	truncated := proto.Clone(base).(*filer_pb.Entry)
 	truncated.Chunks = truncated.Chunks[:1]
 	truncated.Attributes.FileSize = 1
-	merged, ok = mergeContentEntry(stored, base, truncated, truncated, -1)
+	merged, ok = mergeContentEntry(stored, base, truncated, truncated, -1, false)
 	if !ok {
 		t.Fatal("truncation not merged")
 	}
@@ -308,7 +308,7 @@ func TestMergeContentEntry(t *testing.T) {
 	regrown := proto.Clone(truncated).(*filer_pb.Entry)
 	regrown.Chunks = append(regrown.Chunks, &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 1, FileKey: 7, Cookie: 1}, Offset: 7, Size: 1, ModifiedTsNs: 7})
 	regrown.Attributes.FileSize = 8
-	merged, ok = mergeContentEntry(stored, base, regrown, regrown, 1)
+	merged, ok = mergeContentEntry(stored, base, regrown, regrown, 1, false)
 	if !ok {
 		t.Fatal("truncate then write not merged")
 	}
@@ -321,7 +321,7 @@ func TestMergeContentEntry(t *testing.T) {
 	peerTruncated.Chunks, peerTruncated.Attributes.FileSize = peerTruncated.Chunks[:1], 1
 	overwrote := proto.Clone(base).(*filer_pb.Entry)
 	overwrote.Chunks = append(overwrote.Chunks, &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 1, FileKey: 6, Cookie: 1}, Size: 1, ModifiedTsNs: 6})
-	merged, ok = mergeContentEntry(peerTruncated, base, overwrote, overwrote, -1)
+	merged, ok = mergeContentEntry(peerTruncated, base, overwrote, overwrote, -1, false)
 	if !ok {
 		t.Fatal("overwrite over a peer truncate not merged")
 	}
@@ -329,18 +329,22 @@ func TestMergeContentEntry(t *testing.T) {
 		t.Fatalf("overwrite over a peer truncate kept %v, size %d", got, merged.Attributes.FileSize)
 	}
 
-	stored.Attributes.Inode = 99
-	if _, ok := mergeContentEntry(stored, base, local, local, -1); ok {
-		t.Fatal("merged into a replaced file")
-	}
-
+	// A rewrite folded into a manifest is still a rewrite.
 	rewritten := proto.Clone(base).(*filer_pb.Entry)
-	rewritten.Chunks = []*filer_pb.FileChunk{{Fid: &filer_pb.FileId{VolumeId: 1, FileKey: 8, Cookie: 1}, Size: 2}}
-	if _, ok := mergeContentEntry(stored, base, rewritten, rewritten, -1); ok {
+	rewritten.Chunks = []*filer_pb.FileChunk{{Fid: &filer_pb.FileId{VolumeId: 1, FileKey: 8, Cookie: 1}, Size: 2, IsChunkManifest: true}}
+	if _, ok := mergeContentEntry(stored, base, rewritten, rewritten, -1, true); ok {
 		t.Fatal("merged a stale whole-file rewrite over a peer append")
 	}
-	if _, ok := mergeContentEntry(proto.Clone(base).(*filer_pb.Entry), base, rewritten, rewritten, -1); !ok {
+	if _, ok := mergeContentEntry(stored, base, rewritten, rewritten, -1, false); !ok {
+		t.Fatal("refused new chunks the handle did not rewrite")
+	}
+	if _, ok := mergeContentEntry(proto.Clone(base).(*filer_pb.Entry), base, rewritten, rewritten, -1, true); !ok {
 		t.Fatal("refused a rewrite with no peer chunk change")
+	}
+
+	stored.Attributes.Inode = 99
+	if _, ok := mergeContentEntry(stored, base, local, local, -1, false); ok {
+		t.Fatal("merged into a replaced file")
 	}
 	unstamped := flushConditionEntry(4)
 	unstamped.Chunks[0].Size, unstamped.Chunks[0].ModifiedTsNs = 3, 0
@@ -348,7 +352,7 @@ func TestMergeContentEntry(t *testing.T) {
 	shortened.Chunks[0].Size, shortened.Attributes.FileSize = 2, 2
 	peerAppend := proto.Clone(unstamped).(*filer_pb.Entry)
 	peerAppend.Chunks = append(peerAppend.Chunks, &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 1, FileKey: 9, Cookie: 1}, Offset: 3, Size: 1, ModifiedTsNs: 9})
-	if _, ok := mergeContentEntry(peerAppend, unstamped, shortened, shortened, 2); !ok {
+	if _, ok := mergeContentEntry(peerAppend, unstamped, shortened, shortened, 2, false); !ok {
 		t.Fatal("refused a truncate that shortened an unstamped base chunk")
 	}
 
@@ -356,11 +360,11 @@ func TestMergeContentEntry(t *testing.T) {
 	noInode.Attributes.Inode, noInode.Attributes.Crtime = 0, 5
 	sameFile := proto.Clone(noInode).(*filer_pb.Entry)
 	sameFile.Chunks = append(sameFile.Chunks, stored.Chunks[2])
-	if _, ok := mergeContentEntry(sameFile, noInode, local, local, -1); !ok {
+	if _, ok := mergeContentEntry(sameFile, noInode, local, local, -1, false); !ok {
 		t.Fatal("refused an inode-less file with the same creation time")
 	}
 	sameFile.Attributes.Crtime = 6
-	if _, ok := mergeContentEntry(sameFile, noInode, local, local, -1); ok {
+	if _, ok := mergeContentEntry(sameFile, noInode, local, local, -1, false); ok {
 		t.Fatal("merged into an inode-less replacement")
 	}
 
@@ -369,10 +373,10 @@ func TestMergeContentEntry(t *testing.T) {
 	inline.Content = []byte("peer")
 	appended := proto.Clone(empty).(*filer_pb.Entry)
 	appended.Chunks = flushConditionEntry(5).Chunks
-	if _, ok := mergeContentEntry(inline, empty, appended, appended, -1); ok {
+	if _, ok := mergeContentEntry(inline, empty, appended, appended, -1, false); ok {
 		t.Fatal("merged chunks next to inline content")
 	}
-	if _, ok := mergeContentEntry(appended, empty, inline, inline, -1); ok {
+	if _, ok := mergeContentEntry(appended, empty, inline, inline, -1, false); ok {
 		t.Fatal("merged inline content next to chunks")
 	}
 }

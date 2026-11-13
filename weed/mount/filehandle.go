@@ -67,9 +67,10 @@ type FileHandle struct {
 	// must be judged here, not against the live entry. Always store a clone.
 	baseEntry atomic.Pointer[filer_pb.Entry]
 
-	// truncatedTo is the lowest size a truncate set over baseEntry. Later
-	// writes can grow the file past it; a merge still clips peer chunks there.
-	truncatedTo atomic.Pointer[truncateMark]
+	// sinceBase marks a truncate or chunk rewrite over baseEntry that a
+	// merge must honor: later writes can grow the file past a truncate, and
+	// rewritten chunks carry the handle's view of the base.
+	sinceBase atomic.Pointer[baseMark]
 
 	// chunkViewStale marks a read view whose manifest resolution failed; the
 	// next read or lseek resolves the entry's chunks again.
@@ -230,7 +231,8 @@ func (fh *FileHandle) mergePeerContent(peer, base *filer_pb.Entry) bool {
 	fh.UpdateEntry(func(e *filer_pb.Entry) {
 		local = proto.Clone(e).(*filer_pb.Entry)
 	})
-	merged, ok := mergeContentEntry(peer, base, local, local, fh.truncatedSince(base))
+	mark := fh.markSince(base)
+	merged, ok := mergeContentEntry(peer, base, local, local, mark.truncatedTo, mark.rewrote)
 	ok = ok && mergeKeepsBuffered(merged, local)
 	if ok {
 		fh.rebaseEntry(merged, local)
@@ -245,35 +247,61 @@ func mergeKeepsBuffered(merged, local *filer_pb.Entry) bool {
 	return merged.Attributes.FileSize >= filer.FileSize(local) && bytes.Equal(merged.Content, local.Content)
 }
 
-type truncateMark struct {
-	base *filer_pb.Entry
-	size int64
+// baseMark records what the handle did over base that its entry does not
+// show: the lowest size a truncate set (-1 for none), and a whole-file
+// rewrite of its chunks.
+type baseMark struct {
+	base        *filer_pb.Entry
+	truncatedTo int64
+	rewrote     bool
+}
+
+func (fh *FileHandle) markBase(update func(m *baseMark)) {
+	for {
+		base, old := fh.baseEntry.Load(), fh.sinceBase.Load()
+		next := baseMark{base: base, truncatedTo: -1}
+		if old != nil && old.base == base {
+			next = *old
+		}
+		update(&next)
+		if fh.sinceBase.CompareAndSwap(old, &next) {
+			return
+		}
+	}
 }
 
 // noteTruncate records a truncate to size over the current base.
 func (fh *FileHandle) noteTruncate(size uint64) {
-	base := fh.baseEntry.Load()
-	if m := fh.truncatedTo.Load(); m != nil && m.base == base && m.size <= int64(size) {
-		return
-	}
-	fh.truncatedTo.Store(&truncateMark{base: base, size: int64(size)})
+	fh.markBase(func(m *baseMark) {
+		if m.truncatedTo < 0 || int64(size) < m.truncatedTo {
+			m.truncatedTo = int64(size)
+		}
+	})
 }
 
-// adoptPeerBase moves a dirty handle's base to a peer's entry. A truncate the
+// noteRewrite records that the handle's chunks were rewritten from its view
+// of the current base.
+func (fh *FileHandle) noteRewrite() {
+	fh.markBase(func(m *baseMark) { m.rewrote = true })
+}
+
+// adoptPeerBase moves a dirty handle's base to a peer's entry. What the
 // handle has not published yet still applies over the new base.
 func (fh *FileHandle) adoptPeerBase(base *filer_pb.Entry) {
 	old := fh.baseEntry.Swap(base)
-	if m := fh.truncatedTo.Load(); m != nil && m.base == old {
-		fh.truncatedTo.Store(&truncateMark{base: base, size: m.size})
+	if m := fh.sinceBase.Load(); m != nil && m.base == old {
+		moved := *m
+		moved.base = base
+		fh.sinceBase.CompareAndSwap(m, &moved)
 	}
 }
 
-// truncatedSince is the lowest size truncated to over base, or -1.
-func (fh *FileHandle) truncatedSince(base *filer_pb.Entry) int64 {
-	if m := fh.truncatedTo.Load(); m != nil && m.base == base {
-		return m.size
+// markSince is what the handle did over base.
+func (fh *FileHandle) markSince(base *filer_pb.Entry) baseMark {
+	if m := fh.sinceBase.Load(); m != nil && m.base == base {
+		return *m
 	}
-	return -1
+	return baseMark{base: base, truncatedTo: -1}
 }
 
 // setAuthoritativeBase installs the base snapshot a local ack acknowledged.
