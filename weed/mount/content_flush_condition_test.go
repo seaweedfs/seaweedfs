@@ -354,6 +354,18 @@ func TestMergeContentEntry(t *testing.T) {
 		t.Fatal("refused a truncate that shortened an unstamped base chunk")
 	}
 
+	noInode := proto.Clone(base).(*filer_pb.Entry)
+	noInode.Attributes.Inode, noInode.Attributes.Crtime = 0, 5
+	sameFile := proto.Clone(noInode).(*filer_pb.Entry)
+	sameFile.Chunks = append(sameFile.Chunks, stored.Chunks[2])
+	if _, ok := mergeContentEntry(sameFile, noInode, local, local, -1); !ok {
+		t.Fatal("refused an inode-less file with the same creation time")
+	}
+	sameFile.Attributes.Crtime = 6
+	if _, ok := mergeContentEntry(sameFile, noInode, local, local, -1); ok {
+		t.Fatal("merged into an inode-less replacement")
+	}
+
 	empty := flushConditionEntry()
 	inline := proto.Clone(empty).(*filer_pb.Entry)
 	inline.Content = []byte("peer")

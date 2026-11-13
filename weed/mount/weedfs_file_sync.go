@@ -485,13 +485,18 @@ func mergeContentEntry(stored, base, local, sent *filer_pb.Entry, truncatedTo in
 	return merged, true
 }
 
-// sameContentFile reports whether stored is still the regular file base was.
+// sameContentFile reports whether stored is still the regular file base was:
+// the same inode, or for an entry without one, the same creation time. A
+// synthesized base with neither cannot tell.
 func sameContentFile(stored, base *filer_pb.Entry) bool {
 	if stored == nil || base == nil || stored.IsDirectory || !bytes.Equal(stored.HardLinkId, base.HardLinkId) {
 		return false
 	}
-	inode := base.GetAttributes().GetInode()
-	return inode == 0 || stored.GetAttributes().GetInode() == inode
+	if inode := base.GetAttributes().GetInode(); inode != 0 {
+		return stored.GetAttributes().GetInode() == inode
+	}
+	crtime := base.GetAttributes().GetCrtime()
+	return crtime == 0 || stored.GetAttributes().GetCrtime() == crtime
 }
 
 // contentChunkKey identifies a chunk reference: truncation shrinks a chunk in
