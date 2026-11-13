@@ -61,6 +61,10 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 
 	ctx, cancelFunc := ctxFromCancel(cancel)
 	defer cancelFunc()
+	// A queued close may not have created or updated the source on the filer.
+	if !wfs.waitForPendingAsyncFlush(ctx, sourceInode) {
+		return fuse.EINTR
+	}
 	oldEntry, _, status := wfs.maybeLoadEntry(ctx, oldEntryPath)
 	if status != fuse.OK {
 		return status
