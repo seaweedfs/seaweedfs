@@ -58,6 +58,7 @@ var retryablePatterns = []string{
 	"lookup failed",             // Volume server discovery issues
 	"too many requests",         // Rate limiting / backpressure
 	"try again",                 // Explicit retry suggestion
+	"no active locations",       // Volume replicas temporarily offline
 }
 
 // DeletionRetryItem represents a file deletion that failed and needs to be retried
@@ -283,7 +284,7 @@ func LookupByMasterClientFn(masterClient *wdclient.MasterClient) func(vids []str
 	return func(vids []string) (map[string]*operation.LookupResult, error) {
 		m := make(map[string]*operation.LookupResult)
 		for _, vid := range vids {
-			locs, _ := masterClient.GetVidLocations(vid)
+			locs, err := masterClient.GetVidLocations(vid)
 			var locations []operation.Location
 			for _, loc := range locs {
 				locations = append(locations, operation.Location{
@@ -292,10 +293,14 @@ func LookupByMasterClientFn(masterClient *wdclient.MasterClient) func(vids []str
 					GrpcPort:  loc.GrpcPort,
 				})
 			}
-			m[vid] = &operation.LookupResult{
+			lookupRes := &operation.LookupResult{
 				VolumeOrFileId: vid,
 				Locations:      locations,
 			}
+			if err != nil {
+				lookupRes.Error = fmt.Sprintf("lookup error: %v", err)
+			}
+			m[vid] = lookupRes
 		}
 		return m, nil
 	}

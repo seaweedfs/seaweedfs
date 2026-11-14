@@ -88,15 +88,36 @@ func DeleteFileIdsWithLookupVolumeId(ctx context.Context, grpcDialOption grpc.Di
 	}
 
 	server_to_fileIds := make(map[pb.ServerAddress][]string)
-	for vid, result := range lookupResults {
+	for vid, fids := range vid_to_fileIds {
+		result, ok := lookupResults[vid]
+		if !ok || result == nil {
+			for _, fileId := range fids {
+				ret = append(ret, &volume_server_pb.DeleteResult{
+					FileId: fileId,
+					Status: http.StatusNotFound,
+					Error:  fmt.Sprintf("lookup error: volume %s not found", vid),
+				})
+			}
+			continue
+		}
 		if result.Error != "" {
 			// Lookup error for this volume - mark all its files as failed
-			for _, fileId := range vid_to_fileIds[vid] {
+			for _, fileId := range fids {
 				ret = append(ret, &volume_server_pb.DeleteResult{
 					FileId: fileId,
 					Status: http.StatusBadRequest,
-					Error:  result.Error},
-				)
+					Error:  result.Error,
+				})
+			}
+			continue
+		}
+		if len(result.Locations) == 0 {
+			for _, fileId := range fids {
+				ret = append(ret, &volume_server_pb.DeleteResult{
+					FileId: fileId,
+					Status: http.StatusNotFound,
+					Error:  fmt.Sprintf("lookup error: volume %s has no active locations", vid),
+				})
 			}
 			continue
 		}
@@ -106,7 +127,7 @@ func DeleteFileIdsWithLookupVolumeId(ctx context.Context, grpcDialOption grpc.Di
 				server_to_fileIds[serverAddress] = make([]string, 0)
 			}
 			server_to_fileIds[serverAddress] = append(
-				server_to_fileIds[serverAddress], vid_to_fileIds[vid]...)
+				server_to_fileIds[serverAddress], fids...)
 		}
 	}
 
