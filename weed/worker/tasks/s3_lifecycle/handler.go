@@ -112,7 +112,7 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 						{
 							Name:        DeleteTimeoutSecondsAdminKey,
 							Label:       "Delete RPC Timeout (seconds)",
-							Description: "Deadline for each lifecycle delete RPC to an S3 server, counted after the rate-limit wait. A replay delete gets up to 3 attempts, then its shard stops at that event and resumes there on the next run. A walker delete gets 1 attempt; a timeout fails that walk, which runs again from the start on the next run. 0 = 60 seconds.",
+							Description: "Deadline for each lifecycle delete RPC to an S3 server, counted after the rate-limit wait. Replay and walker deletes get up to 3 attempts. After that a replay shard stops at that event and resumes there on the next run, and a walk fails and runs again from the start on the next run. 0 = 60 seconds.",
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
 							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},

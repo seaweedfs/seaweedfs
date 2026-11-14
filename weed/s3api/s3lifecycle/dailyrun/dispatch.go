@@ -2,6 +2,7 @@ package dailyrun
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand"
 	"time"
@@ -9,13 +10,15 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_lifecycle_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/router"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/util"
+	"golang.org/x/time/rate"
+	"google.golang.org/grpc/codes"
 )
 
-// transportRetryAttempts is the in-run retry budget for transport
-// errors (RPC dial failures, stream resets). Server-side outcomes
-// (RETRY_LATER, BLOCKED) are NOT retried in-run — the server already
-// classified them as "wait until next run." The retry exists only to
-// paper over a single flake from the network.
+// transportRetryAttempts is the in-run retry budget shared by the walker
+// and replay deletes. Only transport failures and attempt timeouts are
+// retried; server outcomes (RETRY_LATER, BLOCKED) wait for the next run.
 const transportRetryAttempts = 3
 
 // transportRetryInitial is the first sleep after a failed attempt.
@@ -30,6 +33,11 @@ const (
 // caller sets no timeout.
 const DefaultDeleteTimeout = time.Minute
 
+var (
+	errDeleteAttemptTimedOut = errors.New("lifecycle delete attempt timed out")
+	errNilDeleteResponse     = errors.New("nil response")
+)
+
 // deleteOnce sends one LifecycleDelete attempt under its own deadline,
 // so a stalled RPC fails that attempt instead of holding the shard for
 // the job's lifetime.
@@ -41,47 +49,69 @@ func deleteOnce(ctx context.Context, client LifecycleClient, req *s3_lifecycle_p
 	defer cancel()
 	resp, err := client.LifecycleDelete(attemptCtx, req)
 	if err != nil && ctx.Err() == nil && attemptCtx.Err() != nil {
-		err = fmt.Errorf("lifecycle delete attempt timed out after %s: %w", timeout, err)
+		err = fmt.Errorf("%w after %s: %w", errDeleteAttemptTimedOut, timeout, err)
+	}
+	if err == nil && resp == nil {
+		err = errNilDeleteResponse
 	}
 	return resp, err
 }
 
-// dispatchWithRetry sends one LifecycleDelete request, retrying on
-// transport errors and attempt timeouts up to transportRetryAttempts
-// times with exponential backoff. Returns the server's outcome on
-// success, or an error if all retries exhausted. Server outcomes
-// (RETRY_LATER / BLOCKED) bypass the retry — the daily run's
-// halt-on-failure semantics handles them.
-func dispatchWithRetry(ctx context.Context, client LifecycleClient, m router.Match, timeout time.Duration) (s3_lifecycle_pb.LifecycleDeleteOutcome, error) {
-	req := buildDeleteRequest(m)
+// isRetryableDeleteError reports whether a failed attempt may be resent.
+// Authentication, permission and argument errors fail the same way
+// again, so they surface at once.
+func isRetryableDeleteError(err error) bool {
+	if errors.Is(err, errDeleteAttemptTimedOut) || util.IsTransientError(err) {
+		return true
+	}
+	st, ok := util.ServerStatus(err)
+	return ok && st.Code() == codes.DeadlineExceeded
+}
+
+// deleteWithRetry sends req, retrying transport failures and attempt
+// timeouts up to transportRetryAttempts times with jittered exponential
+// backoff. Every attempt waits on limiter, so retries stay inside the
+// shared delete budget. The resent request keeps its version and identity
+// witness, so a delete that committed before its reply was lost resolves
+// as NOOP_RESOLVED on the retry.
+func deleteWithRetry(ctx context.Context, client LifecycleClient, limiter *rate.Limiter, req *s3_lifecycle_pb.LifecycleDeleteRequest, timeout time.Duration) (*s3_lifecycle_pb.LifecycleDeleteResponse, error) {
 	backoff := transportRetryInitial
-	var lastErr error
-	for attempt := 1; attempt <= transportRetryAttempts; attempt++ {
+	for attempt := 1; ; attempt++ {
+		if limiter != nil {
+			waitStart := time.Now()
+			if err := limiter.Wait(ctx); err != nil {
+				return nil, fmt.Errorf("limiter: %w", err)
+			}
+			stats.S3LifecycleDispatchLimiterWaitSeconds.Observe(time.Since(waitStart).Seconds())
+		}
 		resp, err := deleteOnce(ctx, client, req, timeout)
 		if err == nil {
-			return resp.Outcome, nil
+			return resp, nil
 		}
 		// Parent cancellation is shutdown, not a transport flake.
-		// Surface it immediately so the caller halts and tomorrow
-		// resumes from the same cursor.
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return s3_lifecycle_pb.LifecycleDeleteOutcome_LIFECYCLE_DELETE_OUTCOME_UNSPECIFIED, ctxErr
+			return nil, ctxErr
 		}
-		lastErr = err
-		if attempt == transportRetryAttempts {
-			break
+		if attempt >= transportRetryAttempts || !isRetryableDeleteError(err) {
+			return nil, err
 		}
 		select {
 		case <-ctx.Done():
-			return s3_lifecycle_pb.LifecycleDeleteOutcome_LIFECYCLE_DELETE_OUTCOME_UNSPECIFIED, ctx.Err()
+			return nil, ctx.Err()
 		case <-time.After(jitter(backoff)):
 		}
-		backoff *= 2
-		if backoff > transportRetryMax {
-			backoff = transportRetryMax
-		}
+		backoff = min(backoff*2, transportRetryMax)
 	}
-	return s3_lifecycle_pb.LifecycleDeleteOutcome_LIFECYCLE_DELETE_OUTCOME_UNSPECIFIED, lastErr
+}
+
+// dispatchWithRetry sends the LifecycleDelete for m under the shared
+// retry policy and returns the server's outcome.
+func dispatchWithRetry(ctx context.Context, client LifecycleClient, limiter *rate.Limiter, m router.Match, timeout time.Duration) (s3_lifecycle_pb.LifecycleDeleteOutcome, error) {
+	resp, err := deleteWithRetry(ctx, client, limiter, buildDeleteRequest(m), timeout)
+	if err != nil {
+		return s3_lifecycle_pb.LifecycleDeleteOutcome_LIFECYCLE_DELETE_OUTCOME_UNSPECIFIED, err
+	}
+	return resp.Outcome, nil
 }
 
 // jitter returns a duration in the range [d/2, d) using equal jitter.

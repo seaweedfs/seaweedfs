@@ -777,14 +777,7 @@ func processMatches(ctx context.Context, cfg Config, runNow time.Time, ev *reade
 			skippedAny = true
 			continue
 		}
-		if cfg.Limiter != nil {
-			waitStart := time.Now()
-			if waitErr := cfg.Limiter.Wait(ctx); waitErr != nil {
-				return skippedAny, true, waitErr
-			}
-			stats.S3LifecycleDispatchLimiterWaitSeconds.Observe(time.Since(waitStart).Seconds())
-		}
-		outcome, dispatchErr := dispatchWithRetry(ctx, cfg.Client, m, cfg.DeleteTimeout)
+		outcome, dispatchErr := dispatchWithRetry(ctx, cfg.Client, cfg.Limiter, m, cfg.DeleteTimeout)
 		if dispatchErr != nil {
 			glog.V(1).Infof("daily_run: transport error on %s/%s %s: %v",
 				m.Bucket, m.ObjectKey, m.Key.ActionKind, dispatchErr)

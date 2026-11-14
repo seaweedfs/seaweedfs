@@ -67,26 +67,12 @@ func (d *WalkerDispatcher) Delete(ctx context.Context, action *engine.CompiledAc
 		ExpectedIdentity: toProtoIdentity(entry.Identity),
 	}
 	kindLabel := action.Key.ActionKind.String()
-	if d.Limiter != nil {
-		waitStart := time.Now()
-		if waitErr := d.Limiter.Wait(ctx); waitErr != nil {
-			return fmt.Errorf("walker dispatch %s/%s %s: limiter: %w", action.Bucket, objectPath, action.Key.ActionKind, waitErr)
-		}
-		stats.S3LifecycleDispatchLimiterWaitSeconds.Observe(time.Since(waitStart).Seconds())
-	}
-	resp, err := deleteOnce(ctx, d.Client, req, d.DeleteTimeout)
+	resp, err := deleteWithRetry(ctx, d.Client, d.Limiter, req, d.DeleteTimeout)
 	if err != nil {
 		// "RPC_ERROR" matches the streaming dispatcher and processMatches
 		// labels so transport-class failures aggregate under one key.
 		stats.S3LifecycleDispatchCounter.WithLabelValues(action.Bucket, kindLabel, "RPC_ERROR").Inc()
 		return fmt.Errorf("walker dispatch %s/%s %s: %w", action.Bucket, objectPath, action.Key.ActionKind, err)
-	}
-	if resp == nil {
-		// A misbehaving server stub returning (nil, nil) would panic on
-		// the switch below. Bucket under RPC_ERROR rather than a new
-		// label — operationally it's the same class of failure.
-		stats.S3LifecycleDispatchCounter.WithLabelValues(action.Bucket, kindLabel, "RPC_ERROR").Inc()
-		return fmt.Errorf("walker dispatch %s/%s %s: nil response", action.Bucket, objectPath, action.Key.ActionKind)
 	}
 	stats.S3LifecycleDispatchCounter.WithLabelValues(action.Bucket, kindLabel, resp.Outcome.String()).Inc()
 	switch resp.Outcome {
