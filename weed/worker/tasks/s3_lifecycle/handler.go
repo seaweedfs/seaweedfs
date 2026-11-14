@@ -19,6 +19,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/dispatcher"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/scheduler"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
 )
@@ -257,25 +258,27 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 	defer s3Conn.Close()
 	rpc := s3_lifecycle_pb.NewSeaweedS3LifecycleInternalClient(s3Conn)
 
-	if err := h.executeDailyReplay(runCtx, request, bucketsPath, filerClient, rpc, cfg, sender); err != nil {
+	report, err := h.executeDailyReplay(runCtx, request, bucketsPath, filerClient, rpc, cfg, sender)
+	if err != nil {
 		return err
 	}
 
-	return sendSuccessCompletion(request, sender)
+	return sendCompletion(request, sender, report)
 }
-
-const dailyReplaySuccessSummary = "s3 lifecycle daily replay completed"
 
 // JobCompleted must set JobType to the handler's jobType constant;
 // routed requests may leave request.Job.JobType empty, and the admin
-// ignores completions with empty JobType.
-func sendSuccessCompletion(request *plugin_pb.ExecuteJobRequest, sender pluginworker.ExecutionSender) error {
+// ignores completions with empty JobType. Failed passes carry their
+// result too, so every bucket failure stays in the job record.
+func sendCompletion(request *plugin_pb.ExecuteJobRequest, sender pluginworker.ExecutionSender, report *runReport) error {
 	return sender.SendCompleted(&plugin_pb.JobCompleted{
-		JobId:   request.Job.JobId,
-		JobType: jobType,
-		Success: true,
+		JobId:        request.Job.JobId,
+		JobType:      jobType,
+		Success:      report.err == nil,
+		ErrorMessage: report.errorMessage(),
 		Result: &plugin_pb.JobResult{
-			Summary: dailyReplaySuccessSummary,
+			Summary:      report.summaryLine(),
+			OutputValues: report.outputValues(),
 		},
 	})
 }
@@ -283,14 +286,17 @@ func sendSuccessCompletion(request *plugin_pb.ExecuteJobRequest, sender pluginwo
 // executeDailyReplay runs one bounded daily-replay pass via
 // dailyrun.Run. The walker fires inside runShard on rule-content edits
 // and against the steady-state walk view; all rule kinds are serviced.
-func (h *Handler) executeDailyReplay(ctx context.Context, request *plugin_pb.ExecuteJobRequest, bucketsPath string, filerClient filer_pb.SeaweedFilerClient, rpc s3_lifecycle_pb.SeaweedS3LifecycleInternalClient, cfg Config, sender pluginworker.ExecutionSender) error {
+// The returned error covers setup only; the pass's own error is in the
+// report.
+func (h *Handler) executeDailyReplay(ctx context.Context, request *plugin_pb.ExecuteJobRequest, bucketsPath string, filerClient filer_pb.SeaweedFilerClient, rpc s3_lifecycle_pb.SeaweedS3LifecycleInternalClient, cfg Config, sender pluginworker.ExecutionSender) (*runReport, error) {
+	startedAt := time.Now()
 	eng := engine.New()
 	inputs, parseErrors, err := scheduler.LoadCompileInputs(ctx, filerClient, bucketsPath)
 	if err != nil {
-		return fmt.Errorf("daily_replay: load lifecycle inputs: %w", err)
+		return nil, fmt.Errorf("daily_replay: load lifecycle inputs: %w", err)
 	}
 	for _, pe := range parseErrors {
-		glog.V(1).Infof("daily_replay: %s: %v", pe.Bucket, pe.Err)
+		glog.Warningf("daily_replay: invalid lifecycle policy on bucket %s: %v", pe.Bucket, pe.Err)
 	}
 	eng.Compile(inputs, engine.CompileOptions{PriorStates: scheduler.AllActivePriorStates(inputs)})
 
@@ -313,28 +319,33 @@ func (h *Handler) executeDailyReplay(ctx context.Context, request *plugin_pb.Exe
 			buckets = append(buckets, in.Bucket)
 		}
 	}
+	persister := &dailyrun.FilerCursorPersister{Store: dispatcher.NewFilerStoreClient(filerClient)}
+	report := &runReport{bucketsTotal: len(buckets) + len(parseErrors), invalidPolicies: parseErrors}
+	loadLastFullPass(ctx, persister, report)
+
+	runStats := &dailyrun.RunStats{}
 	// Share the limiter with processMatches so walker + replay can't
 	// combine to burst past the cluster cap.
-	walkerDispatch := &dailyrun.WalkerDispatcher{Client: client, Limiter: limiter}
+	walkerDispatch := &dailyrun.WalkerDispatcher{Client: client, Limiter: limiter, Stats: runStats}
 	walker := dailyrun.WalkerFunc(func(walkCtx context.Context, view *engine.Snapshot, shards []int) error {
 		return dailyrun.WalkBuckets(walkCtx, view, shards, buckets,
-			dailyrun.FilerListFunc(filerClient, bucketsPath, view), walkerDispatch)
+			dailyrun.FilerListFunc(filerClient, bucketsPath, view), walkerDispatch, runStats)
 	})
 
 	_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
 		JobId: request.Job.JobId, JobType: jobType,
 		State: plugin_pb.JobState_JOB_STATE_RUNNING, Stage: "starting",
-		Message: fmt.Sprintf("daily_replay shards=%d workers=%d rate=%s buckets=%d walker=on",
-			len(shards), cfg.Workers, limiterDesc, len(buckets)),
+		Message: fmt.Sprintf("daily_replay shards=%d workers=%d rate=%s buckets=%d invalid_policies=%d walker=on",
+			len(shards), cfg.Workers, limiterDesc, len(buckets), len(parseErrors)),
 	})
 
-	runErr := dailyrun.Run(ctx, dailyrun.Config{
+	report.err = dailyrun.Run(ctx, dailyrun.Config{
 		Shards:          shards,
 		BucketsPath:     bucketsPath,
 		Engine:          eng,
 		FilerClient:     filerClient,
 		Client:          client,
-		Persister:       &dailyrun.FilerCursorPersister{Store: dispatcher.NewFilerStoreClient(filerClient)},
+		Persister:       persister,
 		Lister:          dispatcher.NewFilerSiblingLister(filerClient, bucketsPath),
 		Workers:         cfg.Workers,
 		Limiter:         limiter,
@@ -342,12 +353,50 @@ func (h *Handler) executeDailyReplay(ctx context.Context, request *plugin_pb.Exe
 		Walker:          walker,
 		WalkerInterval:  cfg.WalkerInterval,
 		ClientName:      "worker-s3-lifecycle-daily",
+		Stats:           runStats,
 	})
-	if runErr != nil {
-		glog.Warningf("daily_replay: %v", runErr)
-		return runErr
+	report.canceled = ctx.Err() != nil
+	report.elapsed = time.Since(startedAt)
+	report.summary = runStats.Summary()
+	if report.err != nil {
+		glog.Warningf("daily_replay: %v", report.err)
 	}
-	return nil
+	recordFullPass(ctx, persister, report, startedAt)
+	return report, nil
+}
+
+func loadLastFullPass(ctx context.Context, persister *dailyrun.FilerCursorPersister, report *runReport) {
+	fp, found, err := persister.LoadFullPass(ctx)
+	if err != nil {
+		glog.Warningf("daily_replay: %v", err)
+		return
+	}
+	if found {
+		report.lastFullPass = fp.CompletedAt
+		publishFullPass(fp)
+	}
+}
+
+// recordFullPass advances the full-pass record only when the pass
+// covered every shard and every policy.
+func recordFullPass(ctx context.Context, persister *dailyrun.FilerCursorPersister, report *runReport, startedAt time.Time) {
+	if !report.fullPass() {
+		return
+	}
+	fp := dailyrun.FullPass{StartedAt: startedAt.UTC(), CompletedAt: time.Now().UTC()}
+	saveCtx, saveCancel := context.WithTimeout(ctx, 10*time.Second)
+	defer saveCancel()
+	if err := persister.SaveFullPass(saveCtx, fp); err != nil {
+		glog.Warningf("daily_replay: %v", err)
+		report.fullPassSaveErr = err
+		return
+	}
+	report.lastFullPass = fp.CompletedAt
+	publishFullPass(fp)
+}
+
+func publishFullPass(fp dailyrun.FullPass) {
+	stats.S3LifecycleDailyRunLastFullPassTimestampSeconds.Set(float64(fp.CompletedAt.UnixNano()) / 1e9)
 }
 
 // buildLimiterFromClusterContext parses the per-worker share the admin

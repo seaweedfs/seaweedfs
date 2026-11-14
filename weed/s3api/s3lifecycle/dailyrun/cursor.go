@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/dispatcher"
@@ -158,6 +159,61 @@ func (p *FilerCursorPersister) Save(ctx context.Context, shardID int, c Cursor) 
 	}
 	if err := p.Store.Save(ctx, CursorDir, cursorFileName(shardID), buf.Bytes()); err != nil {
 		return fmt.Errorf("cursor save shard=%d: %w", shardID, err)
+	}
+	return nil
+}
+
+const fullPassFileName = "full-pass.json"
+
+// FullPass is the last pass that covered every shard and every lifecycle
+// policy without an error. Shard cursors advance on partial passes too,
+// so they cannot answer that.
+type FullPass struct {
+	StartedAt   time.Time
+	CompletedAt time.Time
+}
+
+type fullPassFile struct {
+	Version       int   `json:"version"`
+	StartedAtNs   int64 `json:"started_at_ns"`
+	CompletedAtNs int64 `json:"completed_at_ns"`
+}
+
+func (p *FilerCursorPersister) LoadFullPass(ctx context.Context) (FullPass, bool, error) {
+	if p.Store == nil {
+		return FullPass{}, false, errors.New("FilerCursorPersister: nil Store")
+	}
+	content, err := p.Store.Read(ctx, CursorDir, fullPassFileName)
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			return FullPass{}, false, nil
+		}
+		return FullPass{}, false, fmt.Errorf("full pass read: %w", err)
+	}
+	var f fullPassFile
+	if err := json.Unmarshal(content, &f); err != nil {
+		return FullPass{}, false, fmt.Errorf("full pass decode: %w", err)
+	}
+	if f.Version != cursorFileVersion {
+		return FullPass{}, false, fmt.Errorf("full pass version: got %d, want %d", f.Version, cursorFileVersion)
+	}
+	return FullPass{StartedAt: time.Unix(0, f.StartedAtNs).UTC(), CompletedAt: time.Unix(0, f.CompletedAtNs).UTC()}, true, nil
+}
+
+func (p *FilerCursorPersister) SaveFullPass(ctx context.Context, fp FullPass) error {
+	if p.Store == nil {
+		return errors.New("FilerCursorPersister: nil Store")
+	}
+	content, err := json.Marshal(fullPassFile{
+		Version:       cursorFileVersion,
+		StartedAtNs:   fp.StartedAt.UnixNano(),
+		CompletedAtNs: fp.CompletedAt.UnixNano(),
+	})
+	if err != nil {
+		return fmt.Errorf("full pass encode: %w", err)
+	}
+	if err := p.Store.Save(ctx, CursorDir, fullPassFileName, content); err != nil {
+		return fmt.Errorf("full pass save: %w", err)
 	}
 	return nil
 }

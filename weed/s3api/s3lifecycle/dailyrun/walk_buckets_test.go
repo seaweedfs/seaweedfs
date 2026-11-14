@@ -105,7 +105,7 @@ func TestWalkBuckets_DispatchesOnlyShardMatchingEntries(t *testing.T) {
 	snap := snapshotForBucketRule(t, bucket, 7) // 30-day-old objects expire
 	d := &recordingDispatcher{}
 	err := WalkBuckets(context.Background(), snap, []int{targetShard}, []string{bucket},
-		bootstrap.EntryCallback(all), d)
+		bootstrap.EntryCallback(all), d, nil)
 	require.NoError(t, err)
 
 	gotPaths := make([]string, 0, len(d.calls))
@@ -124,9 +124,9 @@ func TestWalkBuckets_DispatchesOnlyShardMatchingEntries(t *testing.T) {
 }
 
 func TestWalkBuckets_NilGuards(t *testing.T) {
-	require.Error(t, WalkBuckets(context.Background(), nil, []int{0}, nil, bootstrap.EntryCallback(nil), &recordingDispatcher{}))
-	require.Error(t, WalkBuckets(context.Background(), snapshotForBucketRule(t, "b", 7), []int{0}, nil, nil, &recordingDispatcher{}))
-	require.Error(t, WalkBuckets(context.Background(), snapshotForBucketRule(t, "b", 7), []int{0}, nil, bootstrap.EntryCallback(nil), nil))
+	require.Error(t, WalkBuckets(context.Background(), nil, []int{0}, nil, bootstrap.EntryCallback(nil), &recordingDispatcher{}, nil))
+	require.Error(t, WalkBuckets(context.Background(), snapshotForBucketRule(t, "b", 7), []int{0}, nil, nil, &recordingDispatcher{}, nil))
+	require.Error(t, WalkBuckets(context.Background(), snapshotForBucketRule(t, "b", 7), []int{0}, nil, bootstrap.EntryCallback(nil), nil, nil))
 }
 
 func TestWalkBuckets_OneBucketErrorDoesNotStopOthers(t *testing.T) {
@@ -141,7 +141,7 @@ func TestWalkBuckets_OneBucketErrorDoesNotStopOthers(t *testing.T) {
 	}
 
 	snap := snapshotForBucketRule(t, "good", 7)
-	err := WalkBuckets(context.Background(), snap, []int{0}, []string{"bad", "good"}, list, &recordingDispatcher{})
+	err := WalkBuckets(context.Background(), snap, []int{0}, []string{"bad", "good"}, list, &recordingDispatcher{}, nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, listErr)
 }
@@ -153,7 +153,7 @@ func TestWalkBuckets_HonorsContextCancellationBetweenBuckets(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	err := WalkBuckets(ctx, snapshotForBucketRule(t, "b", 7), []int{0}, []string{"b"},
-		bootstrap.EntryCallback(nil), &recordingDispatcher{})
+		bootstrap.EntryCallback(nil), &recordingDispatcher{}, nil)
 	assert.ErrorIs(t, err, context.Canceled)
 }
 

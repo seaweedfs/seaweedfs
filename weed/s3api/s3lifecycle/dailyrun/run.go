@@ -91,6 +91,10 @@ type Config struct {
 
 	// 0 -> defaultSubscriptionReceiveTimeout.
 	SubscriptionReceiveTimeout time.Duration
+
+	// nil -> no per-pass summary. Share it with the walker's
+	// WalkBuckets and WalkerDispatcher to cover both paths.
+	Stats *RunStats
 }
 
 // Above the filer's 15m maxGapStall, so a subscriber parked on a gap is
@@ -240,6 +244,7 @@ func Run(ctx context.Context, cfg Config) error {
 			first = readerErr
 		}
 	}
+	cfg.Stats.setShardErrors(errCount)
 	status := "ok"
 	if first != nil {
 		status = "error"
@@ -562,6 +567,8 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 				lastWalkedNs = runNow.UnixNano()
 				walkedThisPass = true
 			}
+		} else if cfg.Walker != nil {
+			countDeferredWalk(cfg.Stats, snap, shardID, retentionWindow)
 		}
 		_ = walkedThisPass // empty-replay branch returns; no downstream walker.
 		return saveCursorAndPublish(ctx, cfg.Persister, shardID, Cursor{
@@ -625,6 +632,8 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 			}
 			lastWalkedNs = runNow.UnixNano()
 		}
+	} else if cfg.Walker != nil && !walkedThisPass {
+		countDeferredWalk(cfg.Stats, snap, shardID, retentionWindow)
 	}
 
 	// Cold start: scan from now-maxTTL so already-due objects within
@@ -644,7 +653,10 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 	// Walk-bound rules are never due inside the retention window; keep them
 	// out of the drain so their matches don't pin the cursor.
 	replayView := snap.ReplayView(retentionWindow)
-	lastOK, _, drainErr := drainShardEvents(ctx, cfg, runNow, shardID, replayView, startTsNs, events)
+	lastOK, halted, drainErr := drainShardEvents(ctx, cfg, runNow, shardID, replayView, startTsNs, events)
+	if halted && drainErr == nil {
+		cfg.Stats.shardHalted()
+	}
 	// Fresh ctx: a wall-clock cap on the pass (the shell driver's
 	// -runtime) cancels the drain's, and saving with it would drop the
 	// cursor and re-replay from the same floor next pass.
@@ -684,6 +696,17 @@ func saveCursorAndPublish(ctx context.Context, p CursorPersister, shardID int, c
 	return nil
 }
 
+// countDeferredWalk counts a shard whose walk-only rules waited for
+// WalkerInterval, so the pass left them unevaluated.
+func countDeferredWalk(s *RunStats, snap *engine.Snapshot, shardID int, retentionWindow time.Duration) {
+	if s == nil {
+		return
+	}
+	if _, walkView := snap.RulesForShard(shardID, retentionWindow); walkView != nil && len(walkView.AllActions()) > 0 {
+		s.walkDeferred()
+	}
+}
+
 // walkerDue answers the persisted-state throttle: has enough time
 // elapsed since the last walker fire on this shard? interval == 0
 // means "fire every pass" (the prior, unconditional behavior).
@@ -719,6 +742,7 @@ func drainShardEvents(ctx context.Context, cfg Config, runNow time.Time, shardID
 	cursorAdvanceTo := startTsNs
 	stuck := false
 	halted := false
+	cfg.Stats.startReplay()
 
 drain:
 	for {
@@ -739,6 +763,7 @@ drain:
 				continue
 			}
 			stats.S3LifecycleDailyRunEventsScanned.WithLabelValues(strconv.Itoa(shardID)).Inc()
+			cfg.Stats.scanEvent()
 			matches := router.Route(ctx, snap, ev, runNow, cfg.Lister)
 			eventSkipped, eventHalted, eventErr := processMatches(ctx, cfg, runNow, ev, matches)
 			if eventErr != nil {
@@ -786,10 +811,10 @@ func processMatches(ctx context.Context, cfg Config, runNow time.Time, ev *reade
 			// "RPC_ERROR" matches the streaming dispatcher's label
 			// (dispatcher/dispatcher.go) so transport failures
 			// aggregate under one outcome key across paths.
-			stats.S3LifecycleDispatchCounter.WithLabelValues(m.Bucket, m.Key.ActionKind.String(), "RPC_ERROR").Inc()
+			countDispatch(cfg.Stats, m.Bucket, m.Key.ActionKind.String(), "RPC_ERROR")
 			return skippedAny, true, nil
 		}
-		stats.S3LifecycleDispatchCounter.WithLabelValues(m.Bucket, m.Key.ActionKind.String(), outcome.String()).Inc()
+		countDispatch(cfg.Stats, m.Bucket, m.Key.ActionKind.String(), outcome.String())
 		switch outcome {
 		case s3_lifecycle_pb.LifecycleDeleteOutcome_DONE,
 			s3_lifecycle_pb.LifecycleDeleteOutcome_NOOP_RESOLVED,

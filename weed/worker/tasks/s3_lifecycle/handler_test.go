@@ -4,10 +4,16 @@ import (
 	"context"
 	"errors"
 	"math"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/dailyrun"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/scheduler"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -468,15 +474,15 @@ func TestExecute_EmptyJobTypeAccepted(t *testing.T) {
 	assert.Contains(t, err.Error(), "no s3 servers", "validation flowed past the type check")
 }
 
-// ---------- sendSuccessCompletion ----------
+// ---------- sendCompletion ----------
 
-func TestSendSuccessCompletion_EmitsCanonicalCompletion(t *testing.T) {
+func TestSendCompletion_EmitsCanonicalCompletion(t *testing.T) {
 	sender := &recordingExecSender{}
 	request := &plugin_pb.ExecuteJobRequest{
 		Job: &plugin_pb.JobSpec{JobId: "job-123"}, // empty JobType (broadcast routing)
 	}
 
-	require.NoError(t, sendSuccessCompletion(request, sender))
+	require.NoError(t, sendCompletion(request, sender, &runReport{bucketsTotal: 2}))
 
 	require.Len(t, sender.completed, 1, "exactly one completion must be sent")
 	c := sender.completed[0]
@@ -484,18 +490,138 @@ func TestSendSuccessCompletion_EmitsCanonicalCompletion(t *testing.T) {
 	assert.NotEmpty(t, c.JobType, "an empty JobType is dropped by the admin")
 	assert.Equal(t, "job-123", c.JobId, "completion must echo the original JobId")
 	assert.True(t, c.Success, "a clean replay is a success completion")
+	assert.Empty(t, c.ErrorMessage)
 	require.NotNil(t, c.Result)
-	assert.NotEmpty(t, c.Result.Summary, "admin UI surfaces a non-empty Result.Summary")
+	assert.True(t, strings.HasPrefix(c.Result.Summary, "s3 lifecycle daily replay completed:"), c.Result.Summary)
+	assert.Equal(t, runStatusComplete, c.Result.OutputValues["status"].GetStringValue())
+	assert.Equal(t, int64(2), c.Result.OutputValues["buckets_total"].GetInt64Value())
 }
 
-func TestSendSuccessCompletion_PropagatesSendError(t *testing.T) {
+func TestSendCompletion_PropagatesSendError(t *testing.T) {
 	sentinel := errors.New("stream closed")
 	sender := &recordingExecSender{completedErr: sentinel}
 	request := &plugin_pb.ExecuteJobRequest{Job: &plugin_pb.JobSpec{JobId: "job-456"}}
 
-	err := sendSuccessCompletion(request, sender)
+	err := sendCompletion(request, sender, &runReport{})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, sentinel)
+}
+
+func TestSendCompletion_FailedPassKeepsEveryBucketFailure(t *testing.T) {
+	sender := &recordingExecSender{}
+	report := &runReport{
+		err:          errors.New("shard=3: steady walk: walk bad-a: filer down"),
+		bucketsTotal: 3,
+		summary: dailyrun.RunSummary{
+			BucketsWalked: 1,
+			BucketsFailed: 2,
+			BucketFailures: []dailyrun.BucketFailure{
+				{Bucket: "bad-a", Error: "filer down"},
+				{Bucket: "bad-b", Error: "outcome=BLOCKED"},
+			},
+			Outcomes: map[string]int64{"DONE": 4, "RPC_ERROR": 1},
+		},
+	}
+	require.NoError(t, sendCompletion(&plugin_pb.ExecuteJobRequest{Job: &plugin_pb.JobSpec{JobId: "j"}}, sender, report))
+
+	require.Len(t, sender.completed, 1)
+	c := sender.completed[0]
+	assert.False(t, c.Success)
+	assert.Contains(t, c.ErrorMessage, "walk bad-a: filer down")
+	assert.Contains(t, c.ErrorMessage, "2 of 3 buckets failed")
+	require.NotNil(t, c.Result, "a failed pass still reports its result")
+	values := c.Result.OutputValues
+	assert.Equal(t, runStatusFailed, values["status"].GetStringValue())
+	assert.Equal(t, int64(2), values["buckets_failed"].GetInt64Value())
+	assert.Equal(t, []string{"bad-a: filer down", "bad-b: outcome=BLOCKED"}, values["bucket_failures"].GetStringList().GetValues())
+	assert.Equal(t, int64(4), values["rpc_done"].GetInt64Value())
+	assert.Equal(t, int64(1), values["rpc_error"].GetInt64Value())
+	assert.True(t, strings.HasPrefix(c.Result.Summary, "s3 lifecycle daily replay failed:"), c.Result.Summary)
+}
+
+func TestRunReport_InvalidPolicyIsPartial(t *testing.T) {
+	report := &runReport{
+		bucketsTotal:    2,
+		invalidPolicies: []scheduler.ParseError{{Bucket: "broken", Err: errors.New("bad xml")}},
+	}
+	assert.Equal(t, runStatusPartial, report.status())
+	assert.True(t, strings.HasPrefix(report.summaryLine(), "s3 lifecycle daily replay partial:"), report.summaryLine())
+	assert.Contains(t, report.summaryLine(), "invalid_policies=1")
+	values := report.outputValues()
+	assert.Equal(t, int64(1), values["invalid_policies"].GetInt64Value())
+	assert.Equal(t, []string{"broken: bad xml"}, values["invalid_policy_buckets"].GetStringList().GetValues())
+}
+
+func TestRunReport_CanceledWinsOverError(t *testing.T) {
+	report := &runReport{canceled: true, err: context.Canceled}
+	assert.Equal(t, runStatusCanceled, report.status())
+	report.err = nil
+	assert.Equal(t, runStatusCanceled, report.status(), "a drain cut short returns no error")
+}
+
+// ---------- full pass record ----------
+
+type memFilerStore struct {
+	files   map[string][]byte
+	saveErr error
+}
+
+func (s *memFilerStore) Read(_ context.Context, dir, name string) ([]byte, error) {
+	b, ok := s.files[dir+"/"+name]
+	if !ok {
+		return nil, filer_pb.ErrNotFound
+	}
+	return b, nil
+}
+
+func (s *memFilerStore) Save(_ context.Context, dir, name string, content []byte) error {
+	if s.saveErr != nil {
+		return s.saveErr
+	}
+	s.files[dir+"/"+name] = content
+	return nil
+}
+
+func TestRecordFullPass_OnlyACompletePassAdvances(t *testing.T) {
+	previous := dailyrun.FullPass{StartedAt: time.Unix(1_700_000_000, 0).UTC(), CompletedAt: time.Unix(1_700_000_600, 0).UTC()}
+	for name, report := range map[string]*runReport{
+		"failed":   {err: errors.New("walk failed")},
+		"canceled": {canceled: true},
+		"partial":  {invalidPolicies: []scheduler.ParseError{{Bucket: "b", Err: errors.New("bad")}}},
+		"halted":   {summary: dailyrun.RunSummary{ShardsHalted: 1}},
+		"deferred": {summary: dailyrun.RunSummary{WalksDeferred: 16}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			persister := &dailyrun.FilerCursorPersister{Store: &memFilerStore{files: map[string][]byte{}}}
+			require.NoError(t, persister.SaveFullPass(context.Background(), previous))
+			loadLastFullPass(context.Background(), persister, report)
+			recordFullPass(context.Background(), persister, report, time.Now())
+
+			got, found, err := persister.LoadFullPass(context.Background())
+			require.NoError(t, err)
+			require.True(t, found)
+			assert.Equal(t, previous, got)
+			assert.Equal(t, previous.CompletedAt, report.lastFullPass)
+			assert.Equal(t, "2023-11-14T22:23:20Z", report.outputValues()["last_full_pass_at"].GetStringValue())
+		})
+	}
+
+	t.Run("complete", func(t *testing.T) {
+		persister := &dailyrun.FilerCursorPersister{Store: &memFilerStore{files: map[string][]byte{}}}
+		require.NoError(t, persister.SaveFullPass(context.Background(), previous))
+		report := &runReport{}
+		startedAt := time.Now().Add(-time.Minute)
+		recordFullPass(context.Background(), persister, report, startedAt)
+
+		got, found, err := persister.LoadFullPass(context.Background())
+		require.NoError(t, err)
+		require.True(t, found)
+		assert.True(t, got.CompletedAt.After(previous.CompletedAt))
+		assert.Equal(t, startedAt.UTC(), got.StartedAt)
+		assert.Equal(t, got.CompletedAt, report.lastFullPass)
+		assert.InDelta(t, float64(got.CompletedAt.UnixNano())/1e9,
+			testutil.ToFloat64(stats.S3LifecycleDailyRunLastFullPassTimestampSeconds), 1e-3)
+	})
 }
 
 // ---------- lookupBucketsPath ----------
@@ -547,4 +673,20 @@ func TestLookupBucketsPath_EmptyDirBucketsFallsBackToDefault(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "/buckets", got)
+}
+
+func TestRecordFullPass_FailedSaveKeepsThePreviousTimestamp(t *testing.T) {
+	store := &memFilerStore{files: map[string][]byte{}}
+	persister := &dailyrun.FilerCursorPersister{Store: store}
+	previous := dailyrun.FullPass{StartedAt: time.Unix(1_700_000_000, 0).UTC(), CompletedAt: time.Unix(1_700_000_600, 0).UTC()}
+	require.NoError(t, persister.SaveFullPass(context.Background(), previous))
+
+	report := &runReport{}
+	loadLastFullPass(context.Background(), persister, report)
+	store.saveErr = errors.New("filer unavailable")
+	recordFullPass(context.Background(), persister, report, time.Now())
+
+	assert.Equal(t, previous.CompletedAt, report.lastFullPass, "an unsaved pass must not replace the saved timestamp")
+	assert.InDelta(t, float64(previous.CompletedAt.Unix()), testutil.ToFloat64(stats.S3LifecycleDailyRunLastFullPassTimestampSeconds), 1e-3)
+	assert.Contains(t, report.outputValues()["full_pass_save_error"].GetStringValue(), "filer unavailable")
 }
