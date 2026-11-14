@@ -78,6 +78,14 @@ class EnterpriseInstallerTest(unittest.TestCase):
             'weed-volume-enterprise_large_disk_linux_amd64.tar.gz',
         ])
 
+    def test_open_source_go_asset_names(self):
+        result = self.shell('go_asset_name linux amd64; go_asset_name windows amd64; '
+                            'LARGE_DISK=true; go_asset_name windows amd64')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.split(), [
+            'linux_amd64.tar.gz', 'windows_amd64.zip', 'windows_amd64_large_disk.zip',
+        ])
+
     def test_rust_binaries_linux_only(self):
         for system, arch, supported in [
             ('linux', 'amd64', True), ('linux', 'arm64', True),

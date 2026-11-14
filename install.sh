@@ -124,12 +124,13 @@ go_asset_name() {
     if [ "$LARGE_DISK" = true ]; then
         suffix="${suffix}_large_disk"
     fi
-    if [ "$ENTERPRISE" != true ]; then
-        echo "${suffix}.tar.gz"
-    elif [ "$os" = "windows" ]; then
-        echo "weed-enterprise-${suffix}.zip"
+    if [ "$ENTERPRISE" = true ]; then
+        suffix="weed-enterprise-${suffix}"
+    fi
+    if [ "$os" = "windows" ]; then
+        echo "${suffix}.zip"
     else
-        echo "weed-enterprise-${suffix}.tar.gz"
+        echo "${suffix}.tar.gz"
     fi
 }
 
