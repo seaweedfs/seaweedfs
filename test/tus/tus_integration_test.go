@@ -983,11 +983,21 @@ func TestTusAbortedPatchKeepsStoredChunks(t *testing.T) {
 	require.Equal(t, http.StatusNoContent, patchResp.StatusCode)
 
 	// A vacuum reclaims whatever the filer deleted, so the file survives this
-	// only if the chunks the session kept are still stored.
-	vacuumResp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%s/vol/vacuum?garbageThreshold=0.001", testMasterPort))
-	require.NoError(t, err)
-	vacuumResp.Body.Close()
-	require.Equal(t, http.StatusOK, vacuumResp.StatusCode)
+	// only if the chunks the session kept are still stored. The master answers
+	// 409 to a request it dropped because its automatic vacuum was running, so
+	// ask until ours runs.
+	vacuumDeadline := time.Now().Add(time.Minute)
+	for {
+		vacuumResp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%s/vol/vacuum?garbageThreshold=0.001", testMasterPort))
+		require.NoError(t, err)
+		vacuumResp.Body.Close()
+		if vacuumResp.StatusCode == http.StatusConflict && time.Now().Before(vacuumDeadline) {
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+		require.Equal(t, http.StatusOK, vacuumResp.StatusCode)
+		break
+	}
 
 	getResp, err := client.Get(cluster.FilerURL() + targetPath)
 	require.NoError(t, err)

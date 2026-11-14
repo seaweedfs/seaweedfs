@@ -2,6 +2,7 @@ package topology
 
 import (
 	"context"
+	"errors"
 	"io"
 	"sync"
 	"sync/atomic"
@@ -255,13 +256,22 @@ func (t *Topology) batchVacuumVolumeCleanup(grpcDialOption grpc.DialOption, vl *
 	}
 }
 
-func (t *Topology) Vacuum(grpcDialOption grpc.DialOption, garbageThreshold float64, maxParallelVacuumPerServer int, maxParallelVacuumPerRack int, volumeId uint32, collection string, preallocate int64, automatic bool, deleteEmptyAfter time.Duration) {
+// ErrVacuumRunning is what Vacuum returns when another vacuum holds the
+// topology-wide guard. The request was dropped, not queued: nothing waits for
+// the running vacuum, so the caller has to ask again.
+var ErrVacuumRunning = errors.New("another vacuum is running, try again later")
+
+// Vacuum runs one vacuum at a time. A call that finds another one running,
+// the automatic vacuum or an earlier request, does nothing and returns
+// ErrVacuumRunning, so that a request for a volume cannot look done when it
+// never started.
+func (t *Topology) Vacuum(grpcDialOption grpc.DialOption, garbageThreshold float64, maxParallelVacuumPerServer int, maxParallelVacuumPerRack int, volumeId uint32, collection string, preallocate int64, automatic bool, deleteEmptyAfter time.Duration) error {
 
 	// if there is vacuum going on, return immediately
 	swapped := atomic.CompareAndSwapInt64(&t.vacuumLockCounter, 0, 1)
 	if !swapped {
 		glog.V(0).Infof("Vacuum is already running")
-		return
+		return ErrVacuumRunning
 	}
 	defer atomic.StoreInt64(&t.vacuumLockCounter, 0)
 
@@ -301,6 +311,7 @@ func (t *Topology) Vacuum(grpcDialOption grpc.DialOption, garbageThreshold float
 			break
 		}
 	}
+	return nil
 }
 
 func (t *Topology) vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeLayout *VolumeLayout, c *Collection, garbageThreshold float64, maxParallelVacuumPerServer int, maxParallelVacuumPerRack int, preallocate int64, automatic bool, deleteEmptyAfter time.Duration) {
