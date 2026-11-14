@@ -167,7 +167,7 @@ func (c *commandS3LifecycleRunShard) Do(args []string, env *CommandEnv, writer i
 			}
 			walker := dailyrun.WalkerFunc(func(walkCtx context.Context, view *engine.Snapshot, shards []int) error {
 				return dailyrun.WalkBuckets(walkCtx, view, shards, buckets,
-					dailyrun.FilerListFunc(filerClient, bucketsPath, view), walkerDispatch)
+					dailyrun.FilerListFunc(filerClient, bucketsPath, view), walkerDispatch, nil)
 			})
 			return dailyrun.Run(passCtx, dailyrun.Config{
 				Shards:      shards,

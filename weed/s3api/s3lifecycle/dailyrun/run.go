@@ -91,6 +91,10 @@ type Config struct {
 
 	// 0 -> defaultSubscriptionReceiveTimeout.
 	SubscriptionReceiveTimeout time.Duration
+
+	// nil -> no per-pass summary. Share it with the walker's
+	// WalkBuckets and WalkerDispatcher to cover both paths.
+	Stats *RunStats
 }
 
 // Above the filer's 15m maxGapStall, so a subscriber parked on a gap is
@@ -240,6 +244,7 @@ func Run(ctx context.Context, cfg Config) error {
 			first = readerErr
 		}
 	}
+	cfg.Stats.setShardErrors(errCount)
 	status := "ok"
 	if first != nil {
 		status = "error"
@@ -719,6 +724,7 @@ func drainShardEvents(ctx context.Context, cfg Config, runNow time.Time, shardID
 	cursorAdvanceTo := startTsNs
 	stuck := false
 	halted := false
+	cfg.Stats.startReplay()
 
 drain:
 	for {
@@ -739,6 +745,7 @@ drain:
 				continue
 			}
 			stats.S3LifecycleDailyRunEventsScanned.WithLabelValues(strconv.Itoa(shardID)).Inc()
+			cfg.Stats.scanEvent()
 			matches := router.Route(ctx, snap, ev, runNow, cfg.Lister)
 			eventSkipped, eventHalted, eventErr := processMatches(ctx, cfg, runNow, ev, matches)
 			if eventErr != nil {
@@ -786,10 +793,10 @@ func processMatches(ctx context.Context, cfg Config, runNow time.Time, ev *reade
 			// "RPC_ERROR" matches the streaming dispatcher's label
 			// (dispatcher/dispatcher.go) so transport failures
 			// aggregate under one outcome key across paths.
-			stats.S3LifecycleDispatchCounter.WithLabelValues(m.Bucket, m.Key.ActionKind.String(), "RPC_ERROR").Inc()
+			countDispatch(cfg.Stats, m.Bucket, m.Key.ActionKind.String(), "RPC_ERROR")
 			return skippedAny, true, nil
 		}
-		stats.S3LifecycleDispatchCounter.WithLabelValues(m.Bucket, m.Key.ActionKind.String(), outcome.String()).Inc()
+		countDispatch(cfg.Stats, m.Bucket, m.Key.ActionKind.String(), outcome.String())
 		switch outcome {
 		case s3_lifecycle_pb.LifecycleDeleteOutcome_DONE,
 			s3_lifecycle_pb.LifecycleDeleteOutcome_NOOP_RESOLVED,
