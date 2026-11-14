@@ -140,7 +140,7 @@ func isFilerUnreachable(err error) bool {
 // nothing else holds these references: like the writeback chunk uploads, it
 // keeps retrying for as long as the filer is unreachable.
 func (wfs *WFS) flushMetadataWithRetry(fh *FileHandle, dir, name string, fileFullPath util.FullPath) error {
-	publication := &contentPublication{failure: fh.writebackContentError}
+	publication := &contentPublication{failure: fh.writebackContentError, writes: fh.pageWrites.Load()}
 	attempts := 0
 	err := retryMetadataFlushUntil(context.Background(), func() error {
 		attempts++

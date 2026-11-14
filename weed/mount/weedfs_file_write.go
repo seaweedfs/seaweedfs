@@ -102,6 +102,7 @@ func (wfs *WFS) Write(cancel <-chan struct{}, in *fuse.WriteIn, data []byte) (wr
 		glog.Errorf("AddPage error: %v", err)
 		return 0, writeErrorToFuseStatus(err)
 	}
+	fh.pageWrites.Add(1)
 
 	written = uint32(len(data))
 

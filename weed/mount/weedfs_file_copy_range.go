@@ -188,6 +188,7 @@ func (wfs *WFS) CopyFileRange(cancel <-chan struct{}, in *fuse.CopyFileRangeIn) 
 			glog.Errorf("AddPage error: %v", err)
 			return 0, writeErrorToFuseStatus(err)
 		}
+		fhOut.pageWrites.Add(1)
 
 		// Accumulate for the next loop iteration
 		totalCopied += numBytesRead

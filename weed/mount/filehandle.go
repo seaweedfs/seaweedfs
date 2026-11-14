@@ -57,6 +57,9 @@ type FileHandle struct {
 	// could not be read; the next flush reads it before publishing.
 	linkRefresh []byte
 
+	// pageWrites counts the pages added to dirtyPages, under the handle lock.
+	pageWrites atomic.Uint64
+
 	// entryVersionTsNs is the filer log position the handle's entry reflects.
 	// State at or below it must not replace the entry — that rolls it back.
 	entryVersionTsNs atomic.Int64
