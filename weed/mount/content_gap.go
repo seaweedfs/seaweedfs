@@ -14,6 +14,9 @@ import (
 type contentPublication struct {
 	refused bool
 	failure *atomic.Bool
+	// writes is the handle's pageWrites before its pages were flushed. A
+	// later write is not in the published chunks, so it keeps the handle dirty.
+	writes uint64
 }
 
 func (p *contentPublication) retire(err error) {
