@@ -2,6 +2,7 @@ package s3_lifecycle
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -248,13 +249,20 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 		return fmt.Errorf("buckets path: %w", err)
 	}
 
-	dialCtx, dialCancel = context.WithTimeout(runCtx, 30*time.Second)
-	s3Conn, err := pb.GrpcDial(dialCtx, s3Endpoints[0], false, h.grpcDialOption)
-	dialCancel()
-	if err != nil {
-		return fmt.Errorf("dial s3 %s: %w", s3Endpoints[0], err)
+	s3Conn, s3Endpoint, skipped := h.selectS3Front(runCtx, s3Endpoints)
+	if s3Conn == nil {
+		return noReadyS3Error(skipped)
 	}
 	defer s3Conn.Close()
+	if len(skipped) > 0 {
+		skippedErr := errors.Join(skipped...)
+		glog.Warningf("s3 lifecycle: using s3 %s, skipped: %v", s3Endpoint, skippedErr)
+		_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
+			JobId: request.Job.JobId, JobType: jobType,
+			State: plugin_pb.JobState_JOB_STATE_RUNNING, Stage: "starting",
+			Message: fmt.Sprintf("using s3 %s, skipped: %v", s3Endpoint, skippedErr),
+		})
+	}
 	rpc := s3_lifecycle_pb.NewSeaweedS3LifecycleInternalClient(s3Conn)
 
 	if err := h.executeDailyReplay(runCtx, request, bucketsPath, filerClient, rpc, cfg, sender); err != nil {
@@ -404,8 +412,9 @@ func parsePositiveInt(s string) (int, bool) {
 }
 
 // clusterS3Endpoints returns the master-discovered S3 gRPC addresses for the
-// cluster. The handler dials the first reachable one; the master refreshes
-// the list on KeepConnected so a stale entry self-heals on the next run.
+// cluster. The handler uses the first one that passes checkLifecycleReady;
+// the master refreshes the list on KeepConnected so a stale entry self-heals
+// on the next run.
 func clusterS3Endpoints(cc *plugin_pb.ClusterContext) []string {
 	if cc == nil {
 		return nil
