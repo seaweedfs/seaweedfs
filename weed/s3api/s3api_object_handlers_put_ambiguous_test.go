@@ -1072,6 +1072,36 @@ func TestFetchChunkDataDecryptsVolumeCipher(t *testing.T) {
 	}
 }
 
+// A truncated chunk keeps its longer needle; full-chunk reads stop at the
+// chunk's recorded size.
+func TestFetchChunkDataStopsAtChunkSize(t *testing.T) {
+	volume := startFakeVolumeServer(t)
+	filerImpl := &ambiguousPutFiler{volume: volume, entries: map[string]*filer_pb.Entry{}}
+	s3a := newPutTestServer(t, startFakeFiler(t, filerImpl))
+
+	stored := bytes.Repeat([]byte("t"), 300)
+	fid := "3,01637037d6"
+	volume.mu.Lock()
+	volume.stored[fid] = stored
+	volume.mu.Unlock()
+
+	view := &filer.ChunkView{FileId: fid, ViewSize: 100, ChunkSize: 100}
+	for name, fetch := range map[string]func(context.Context, *filer.ChunkView) (io.ReadCloser, error){
+		"full": s3a.fetchFullChunk,
+		"view": s3a.fetchChunkViewData,
+	} {
+		r, err := fetch(context.Background(), view)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, _ := io.ReadAll(r)
+		r.Close()
+		if !bytes.Equal(got, stored[:100]) {
+			t.Fatalf("%s chunk read returned %d bytes, want 100", name, len(got))
+		}
+	}
+}
+
 // A suspended-versioning overwrite resolves the conditional check against the
 // entry the read path serves: the null slot when present, else the latest
 // version under .versions/. The routed transaction carries that version as the
