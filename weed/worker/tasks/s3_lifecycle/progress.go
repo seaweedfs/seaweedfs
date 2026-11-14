@@ -15,7 +15,7 @@ import (
 const progressInterval = 5 * time.Minute
 
 func runWork(s dailyrun.RunSummary) int64 {
-	work := s.EntriesVisited + s.EventsScanned
+	work := s.EntriesVisited + s.EntriesListed + s.EventsScanned
 	for _, n := range s.Outcomes {
 		work += n
 	}
@@ -23,8 +23,8 @@ func runWork(s dailyrun.RunSummary) int64 {
 }
 
 func progressMessage(s dailyrun.RunSummary) string {
-	return fmt.Sprintf("s3 lifecycle daily replay running: last_phase=%s last_bucket=%s entries=%d objects=%d events=%d rpc_done=%d rpc_errors=%d",
-		s.Phase, s.Bucket, s.EntriesVisited, s.ObjectsVisited, s.EventsScanned, s.Outcomes["DONE"], s.Outcomes["RPC_ERROR"])
+	return fmt.Sprintf("s3 lifecycle daily replay running: last_phase=%s last_bucket=%s entries=%d objects=%d listed=%d events=%d rpc_done=%d rpc_errors=%d",
+		s.Phase, s.Bucket, s.EntriesVisited, s.ObjectsVisited, s.EntriesListed, s.EventsScanned, s.Outcomes["DONE"], s.Outcomes["RPC_ERROR"])
 }
 
 // startProgressReporter returns stop, which returns only once no further
