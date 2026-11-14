@@ -18,7 +18,8 @@ import (
 )
 
 // A write the swap file cannot buffer fails, and must not grow the file: the
-// next flush would publish that size with a hole where its data should be.
+// next flush would publish that size with a hole where its data should be. A
+// write that buffers only its first chunk is a short write of those bytes.
 func TestFailedWriteDoesNotGrowFile(t *testing.T) {
 	base := attributeAppendEntry(1)
 	base.CommitTsNs = 100
@@ -49,19 +50,25 @@ func TestFailedWriteDoesNotGrowFile(t *testing.T) {
 	fh := w.GetHandle(FileHandleId(out.Fh))
 	g6AppendUploader(t, fh, 100, peer)
 
-	write := func(offset uint64, value byte) fuse.Status {
-		_, code := w.Write(nil, &fuse.WriteIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: out.Fh, Offset: offset, Size: 256}, bytes.Repeat([]byte{value}, 256))
-		return code
+	write := func(offset uint64, size int, value byte) (uint32, fuse.Status) {
+		return w.Write(nil, &fuse.WriteIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: out.Fh, Offset: offset, Size: uint32(size)}, bytes.Repeat([]byte{value}, size))
 	}
-	if code := write(256, 'A'); code != fuse.OK {
+	if _, code := write(256, 256, 'A'); code != fuse.OK {
 		t.Fatalf("buffered write: %v", code)
 	}
 	// The only writable chunk slot is taken, so this write needs the swap file.
-	if code := write(4096, 'B'); code == fuse.OK {
+	if _, code := write(4096, 256, 'B'); code == fuse.OK {
 		t.Fatal("write through an unusable swap directory succeeded")
 	}
 	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 512 {
 		t.Fatalf("file size after the failed write = %d, want 512", size)
+	}
+	// The first 24 bytes fit the existing chunk; the next chunk needs the swap file.
+	if n, code := write(1000, 48, 'C'); code != fuse.OK || n != 24 {
+		t.Fatalf("boundary-crossing write = %d, %v; want a short write of 24", n, code)
+	}
+	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 1024 {
+		t.Fatalf("file size after the short write = %d, want 1024", size)
 	}
 	if code := w.Fsync(nil, &fuse.FsyncIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: out.Fh}); code != fuse.OK {
 		t.Fatal(code)
@@ -70,7 +77,9 @@ func TestFailedWriteDoesNotGrowFile(t *testing.T) {
 	peer.mu.Lock()
 	defer peer.mu.Unlock()
 	want := append(bytes.Repeat([]byte{'O'}, 256), bytes.Repeat([]byte{'A'}, 256)...)
-	if got := g6StoredBytes(t, peer); peer.entry.Attributes.FileSize != 512 || !bytes.Equal(got, want) {
-		t.Fatalf("stored size %d, want 512 with the original and buffered bytes", peer.entry.Attributes.FileSize)
+	want = append(want, make([]byte, 1000-512)...)
+	want = append(want, bytes.Repeat([]byte{'C'}, 24)...)
+	if got := g6StoredBytes(t, peer); peer.entry.Attributes.FileSize != 1024 || !bytes.Equal(got, want) {
+		t.Fatalf("stored size %d, want 1024 with the original and buffered bytes", peer.entry.Attributes.FileSize)
 	}
 }

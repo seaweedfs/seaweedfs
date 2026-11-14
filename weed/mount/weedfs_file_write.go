@@ -68,12 +68,17 @@ func (wfs *WFS) Write(cancel <-chan struct{}, in *fuse.WriteIn, data []byte) (wr
 		return 0, fuse.OK
 	}
 
-	// A write that was not buffered must leave the size and times alone, or
-	// the next flush publishes a hole where its data should be.
+	// Size and times cover only the bytes buffered, or the next flush
+	// publishes a hole where the data should be. A partly buffered write
+	// is reported as a short write.
 	offset := int64(in.Offset)
-	if err := fh.dirtyPages.AddPage(offset, data, fh.dirtyPages.writerPattern.IsSequentialMode(), tsNs); err != nil {
+	buffered, err := fh.dirtyPages.AddPage(offset, data, fh.dirtyPages.writerPattern.IsSequentialMode(), tsNs)
+	if err != nil {
 		glog.Errorf("AddPage error: %v", err)
-		return 0, writeErrorToFuseStatus(err)
+		if buffered == 0 {
+			return 0, writeErrorToFuseStatus(err)
+		}
+		data = data[:buffered]
 	}
 	fh.pageWrites.Add(1)
 
