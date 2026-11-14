@@ -19,8 +19,14 @@ import (
 
 // A write the swap file cannot buffer fails, and must not grow the file: the
 // next flush would publish that size with a hole where its data should be. A
-// write that buffers only its first chunk is a short write of those bytes.
+// write that buffers only its first chunk is a short write of those bytes, or
+// an error for kernel writeback, which would drop the rest silently.
 func TestFailedWriteDoesNotGrowFile(t *testing.T) {
+	t.Run("short write", func(t *testing.T) { testFailedWriteDoesNotGrowFile(t, 0) })
+	t.Run("kernel writeback", func(t *testing.T) { testFailedWriteDoesNotGrowFile(t, fuse.WRITE_CACHE) })
+}
+
+func testFailedWriteDoesNotGrowFile(t *testing.T, writeFlags uint32) {
 	base := attributeAppendEntry(1)
 	base.CommitTsNs = 100
 	peer := &g6ConditionalPeer{entry: proto.Clone(base).(*filer_pb.Entry)}
@@ -51,7 +57,7 @@ func TestFailedWriteDoesNotGrowFile(t *testing.T) {
 	g6AppendUploader(t, fh, 100, peer)
 
 	write := func(offset uint64, size int, value byte) (uint32, fuse.Status) {
-		return w.Write(nil, &fuse.WriteIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: out.Fh, Offset: offset, Size: uint32(size)}, bytes.Repeat([]byte{value}, size))
+		return w.Write(nil, &fuse.WriteIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: out.Fh, Offset: offset, Size: uint32(size), WriteFlags: writeFlags}, bytes.Repeat([]byte{value}, size))
 	}
 	if _, code := write(256, 256, 'A'); code != fuse.OK {
 		t.Fatalf("buffered write: %v", code)
@@ -64,8 +70,12 @@ func TestFailedWriteDoesNotGrowFile(t *testing.T) {
 		t.Fatalf("file size after the failed write = %d, want 512", size)
 	}
 	// The first 24 bytes fit the existing chunk; the next chunk needs the swap file.
-	if n, code := write(1000, 48, 'C'); code != fuse.OK || n != 24 {
+	n, code := write(1000, 48, 'C')
+	if writeFlags == 0 && (code != fuse.OK || n != 24) {
 		t.Fatalf("boundary-crossing write = %d, %v; want a short write of 24", n, code)
+	}
+	if writeFlags != 0 && code == fuse.OK {
+		t.Fatalf("boundary-crossing writeback = %d, OK; want an error", n)
 	}
 	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 1024 {
 		t.Fatalf("file size after the short write = %d, want 1024", size)

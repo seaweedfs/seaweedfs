@@ -70,7 +70,8 @@ func (wfs *WFS) Write(cancel <-chan struct{}, in *fuse.WriteIn, data []byte) (wr
 
 	// Size and times cover only the bytes buffered, or the next flush
 	// publishes a hole where the data should be. A partly buffered write
-	// is reported as a short write.
+	// is reported as a short write, or as an error to kernel writeback,
+	// which ignores the count.
 	offset := int64(in.Offset)
 	buffered, err := fh.dirtyPages.AddPage(offset, data, fh.dirtyPages.writerPattern.IsSequentialMode(), tsNs)
 	if err != nil {
@@ -132,5 +133,8 @@ func (wfs *WFS) Write(cancel <-chan struct{}, in *fuse.WriteIn, data []byte) (wr
 		fh.mirrorFile.WriteAt(data, offset)
 	}
 
+	if err != nil && in.WriteFlags&fuse.WRITE_CACHE != 0 {
+		return 0, writeErrorToFuseStatus(err)
+	}
 	return written, fuse.OK
 }
