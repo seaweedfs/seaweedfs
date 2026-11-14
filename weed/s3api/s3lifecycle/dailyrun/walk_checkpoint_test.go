@@ -32,9 +32,10 @@ func (d *scriptedDispatcher) Delete(_ context.Context, a *engine.CompiledAction,
 
 type savingStore struct {
 	*fakeStore
-	saves    [][]byte
-	attempts int
-	failAll  bool
+	saves     [][]byte
+	attempts  int
+	failAll   bool
+	lostReply bool
 }
 
 func (s *savingStore) Read(ctx context.Context, dir, name string) ([]byte, error) {
@@ -50,7 +51,13 @@ func (s *savingStore) Save(ctx context.Context, dir, name string, content []byte
 		return errors.New("filer down")
 	}
 	s.saves = append(s.saves, content)
-	return s.fakeStore.Save(ctx, dir, name, content)
+	if err := s.fakeStore.Save(ctx, dir, name, content); err != nil {
+		return err
+	}
+	if s.lostReply {
+		return errors.New("response lost")
+	}
+	return nil
 }
 
 var allShards = func() []int {
@@ -268,4 +275,20 @@ func TestWalkProgress_FailedPeriodicSaveWaitsForTheInterval(t *testing.T) {
 	w.bucketDone(context.Background(), "a")
 	w.bucketDone(context.Background(), "a")
 	assert.Equal(t, 1, h.store.attempts, "a failed save is retried a full interval later, not on the next entry")
+}
+
+func TestWalkProgress_SaveWithLostReplyIsClearedOnCompletion(t *testing.T) {
+	h := newCheckpointHarness(t)
+	h.store.lostReply = true
+	w := loadWalkProgress(context.Background(), h.p, checkpointTestView(t, ""), allShards, []string{"a", "b"})
+	w.savedAt = time.Now().Add(-time.Hour)
+	w.bucketDone(context.Background(), "a")
+	require.Equal(t, []string{"a"}, h.saved(allShards).Done)
+
+	h.store.lostReply = false
+	w.bucketDone(context.Background(), "b")
+	require.NoError(t, w.finish(context.Background(), nil))
+	cp := h.saved(allShards)
+	assert.Empty(t, cp.Done, "the completed walk clears the record its failed save wrote")
+	assert.Empty(t, cp.Resume)
 }
