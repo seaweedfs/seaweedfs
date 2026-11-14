@@ -201,9 +201,13 @@ func TestListDirectoryEntriesStoppedByCallbackWithCanceledContext(t *testing.T) 
 	store := &AbstractSqlStore{SqlGenerator: listGen{}, DB: db}
 	_, err = store.ListDirectoryEntries(ctx, "/dir", "", true, 100, func(entry *filer.Entry) (bool, error) {
 		cancel()
-		// database/sql notices the cancellation on a background goroutine;
-		// give it time so rows.Err would report it.
-		time.Sleep(100 * time.Millisecond)
+		// database/sql closes the rows on a background goroutine; once the
+		// connection is back in the pool, rows.Err reports the cancellation.
+		for deadline := time.Now().Add(5 * time.Second); db.Stats().InUse > 0; time.Sleep(time.Millisecond) {
+			if time.Now().After(deadline) {
+				t.Fatal("the canceled listing still holds its connection")
+			}
+		}
 		return false, nil
 	})
 	if err != nil {
