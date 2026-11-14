@@ -15,7 +15,8 @@ import (
 
 // failoverClient sends LifecycleDelete to one S3 front and, when that front
 // becomes unreachable, moves the pass to the next front that passes
-// checkLifecycleReady. A front that failed is not selected again in the pass.
+// checkLifecycleReady. A front that failed, including one selectS3Front
+// skipped before addr, is not selected again in the pass.
 type failoverClient struct {
 	ctx       context.Context
 	h         *Handler
@@ -32,6 +33,12 @@ type failoverClient struct {
 
 func (h *Handler) newFailoverClient(ctx context.Context, conn *grpc.ClientConn, addr string, endpoints []string, report func(string)) *failoverClient {
 	f := &failoverClient{ctx: ctx, h: h, endpoints: endpoints, report: report, failed: map[string]bool{}}
+	for _, e := range endpoints {
+		if e == addr {
+			break
+		}
+		f.failed[e] = true
+	}
 	f.use(conn, addr)
 	return f
 }

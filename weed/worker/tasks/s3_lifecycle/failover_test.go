@@ -287,3 +287,26 @@ func TestFailoverClient_SecondFrontLostMovesToThird(t *testing.T) {
 		t.Fatalf("want switches to b then c, got %q", msgs)
 	}
 }
+
+func TestFailoverClient_SkipsFrontSkippedAtStartup(t *testing.T) {
+	setWorkerKey(t, frontKey)
+	prev := lifecycleReadyTimeout
+	lifecycleReadyTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { lifecycleReadyTimeout = prev })
+	stuck := &failoverFront{testFront: testFront{key: frontKey, block: true}}
+	b := &failoverFront{testFront: testFront{key: frontKey}, dieOn: 1}
+	c := &failoverFront{testFront: testFront{key: frontKey}}
+	stuckAddr, bAddr, cAddr := startFailoverFront(t, stuck), startFailoverFront(t, b), startFailoverFront(t, c)
+	r := &reports{}
+	f := newTestFailoverClient(t, context.Background(), []string{stuckAddr, bAddr, cAddr}, r)
+
+	if _, err := f.LifecycleDelete(context.Background(), deleteReq(1)); err != nil {
+		t.Fatal(err)
+	}
+	if n := stuck.readies.Load(); n != 1 {
+		t.Fatalf("front skipped at startup checked %d times, want once", n)
+	}
+	if msgs := r.all(); len(msgs) != 1 || !strings.Contains(msgs[0], "switched to s3 "+cAddr) || strings.Contains(msgs[0], "skipped") {
+		t.Fatalf("want a direct switch to %s, got %q", cAddr, msgs)
+	}
+}
