@@ -198,11 +198,21 @@ func TestWalkBuckets_StuckResumeStartsOver(t *testing.T) {
 	view := checkpointTestView(t, "")
 	_, err := h.walk(context.Background(), view, allShards, "b/obj@v2")
 	require.Error(t, err)
+	before := h.saved(allShards)
 
 	calls, err := h.walk(context.Background(), view, allShards, "b/obj@v2")
 	require.Error(t, err)
 	assert.Equal(t, []string{"b/obj@v3", "b/obj@v2"}, calls)
-	assert.Empty(t, h.saved(allShards).Done, "a resume without progress is dropped")
+	assert.Equal(t, before, h.saved(allShards), "a recent record survives a resume without progress")
+
+	var f walkCheckpointFile
+	require.NoError(t, json.Unmarshal(h.store.files[CursorDir+"/walk-00-15.json"], &f))
+	f.SavedNs = time.Now().Add(-walkCheckpointStallLimit - time.Hour).UnixNano()
+	h.store.files[CursorDir+"/walk-00-15.json"], _ = json.Marshal(f)
+	calls, err = h.walk(context.Background(), view, allShards, "b/obj@v2")
+	require.Error(t, err)
+	assert.Equal(t, []string{"b/obj@v3", "b/obj@v2"}, calls)
+	assert.Empty(t, h.saved(allShards).Done, "a resume stuck for too long is dropped")
 
 	calls, err = h.walk(context.Background(), view, allShards, "b/obj@v2")
 	require.Error(t, err)
