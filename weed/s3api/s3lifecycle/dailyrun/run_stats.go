@@ -54,6 +54,8 @@ type RunSummary struct {
 	// Shards whose replay stopped on an unresolved delete; their due
 	// events wait for a later pass.
 	ShardsHalted int
+	// Shards whose walk-only rules waited for WalkerInterval.
+	WalksDeferred int
 }
 
 // RunStats collects one pass's work. Safe for concurrent use; a nil
@@ -71,6 +73,7 @@ type RunStats struct {
 	outcomes     map[string]int64
 	shardErrors  int
 	shardsHalted int
+	deferred     int
 }
 
 func (s *RunStats) startBucket(bucket string) {
@@ -157,6 +160,15 @@ func (s *RunStats) shardHalted() {
 	s.mu.Unlock()
 }
 
+func (s *RunStats) walkDeferred() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.deferred++
+	s.mu.Unlock()
+}
+
 func (s *RunStats) Summary() RunSummary {
 	if s == nil {
 		return RunSummary{}
@@ -188,6 +200,7 @@ func (s *RunStats) Summary() RunSummary {
 	}
 	out.ShardErrors = s.shardErrors
 	out.ShardsHalted = s.shardsHalted
+	out.WalksDeferred = s.deferred
 	return out
 }
 

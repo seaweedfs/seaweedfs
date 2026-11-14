@@ -47,6 +47,12 @@ func (r *runReport) status() string {
 	return runStatusComplete
 }
 
+// fullPass also needs every walk-only rule evaluated: a walk deferred by
+// WalkerInterval is by design, but it leaves those rules unchecked.
+func (r *runReport) fullPass() bool {
+	return r.status() == runStatusComplete && r.summary.WalksDeferred == 0
+}
+
 func (r *runReport) summaryLine() string {
 	verb := r.status()
 	if verb == runStatusComplete {
@@ -82,6 +88,8 @@ func (r *runReport) outputValues() map[string]*plugin_pb.ConfigValue {
 		"events_scanned":   int64Value(s.EventsScanned),
 		"shard_errors":     int64Value(int64(s.ShardErrors)),
 		"shards_halted":    int64Value(int64(s.ShardsHalted)),
+		"walks_deferred":   int64Value(int64(s.WalksDeferred)),
+		"full_pass":        {Kind: &plugin_pb.ConfigValue_BoolValue{BoolValue: r.fullPass()}},
 		"elapsed":          {Kind: &plugin_pb.ConfigValue_DurationValue{DurationValue: durationpb.New(r.elapsed.Round(time.Millisecond))}},
 	}
 	for outcome, n := range s.Outcomes {

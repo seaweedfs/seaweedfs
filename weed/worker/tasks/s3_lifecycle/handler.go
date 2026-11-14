@@ -380,7 +380,7 @@ func loadLastFullPass(ctx context.Context, persister *dailyrun.FilerCursorPersis
 // recordFullPass advances the full-pass record only when the pass
 // covered every shard and every policy.
 func recordFullPass(ctx context.Context, persister *dailyrun.FilerCursorPersister, report *runReport, startedAt time.Time) {
-	if report.status() != runStatusComplete {
+	if !report.fullPass() {
 		return
 	}
 	fp := dailyrun.FullPass{StartedAt: startedAt.UTC(), CompletedAt: time.Now().UTC()}

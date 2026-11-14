@@ -567,6 +567,8 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 				lastWalkedNs = runNow.UnixNano()
 				walkedThisPass = true
 			}
+		} else if cfg.Walker != nil {
+			countDeferredWalk(cfg.Stats, snap, shardID, retentionWindow)
 		}
 		_ = walkedThisPass // empty-replay branch returns; no downstream walker.
 		return saveCursorAndPublish(ctx, cfg.Persister, shardID, Cursor{
@@ -630,6 +632,8 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 			}
 			lastWalkedNs = runNow.UnixNano()
 		}
+	} else if cfg.Walker != nil && !walkedThisPass {
+		countDeferredWalk(cfg.Stats, snap, shardID, retentionWindow)
 	}
 
 	// Cold start: scan from now-maxTTL so already-due objects within
@@ -690,6 +694,17 @@ func saveCursorAndPublish(ctx context.Context, p CursorPersister, shardID int, c
 	stats.S3LifecycleCursorMinTsNs.WithLabelValues(label).Set(float64(c.TsNs))
 	stats.S3LifecycleDailyRunLastWalkedNs.WithLabelValues(label).Set(float64(c.LastWalkedNs))
 	return nil
+}
+
+// countDeferredWalk counts a shard whose walk-only rules waited for
+// WalkerInterval, so the pass left them unevaluated.
+func countDeferredWalk(s *RunStats, snap *engine.Snapshot, shardID int, retentionWindow time.Duration) {
+	if s == nil {
+		return
+	}
+	if _, walkView := snap.RulesForShard(shardID, retentionWindow); walkView != nil && len(walkView.AllActions()) > 0 {
+		s.walkDeferred()
+	}
 }
 
 // walkerDue answers the persisted-state throttle: has enough time
