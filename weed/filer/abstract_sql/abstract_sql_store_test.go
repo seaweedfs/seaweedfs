@@ -2,10 +2,13 @@ package abstract_sql
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -138,5 +141,72 @@ func TestBucketHooksSkipInvalidBucketNames(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Error(err)
+	}
+}
+
+type listGen struct{ SqlGenerator }
+
+func (listGen) GetSqlListExclusive(string) string { return "SELECT name, meta" }
+func (listGen) GetSqlListInclusive(string) string { return "SELECT name, meta" }
+
+// A listing that loses its connection partway through must report the error,
+// not return the rows read so far as if the directory ended there.
+func TestListDirectoryEntriesReportsRowIterationError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	meta, err := (&filer.Entry{}).EncodeAttributesAndChunks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	connLost := errors.New("connection reset by peer")
+	mock.ExpectQuery("SELECT name, meta").WillReturnRows(
+		sqlmock.NewRows([]string{"name", "meta"}).
+			AddRow("a.txt", meta).
+			AddRow("b.txt", meta).
+			RowError(1, connLost))
+
+	store := &AbstractSqlStore{SqlGenerator: listGen{}, DB: db}
+	var listed []string
+	_, err = store.ListDirectoryEntries(context.Background(), "/dir", "", true, 100, func(entry *filer.Entry) (bool, error) {
+		listed = append(listed, entry.Name())
+		return true, nil
+	})
+	if !errors.Is(err, connLost) {
+		t.Fatalf("ListDirectoryEntries error = %v, want %v (listed %v)", err, connLost, listed)
+	}
+}
+
+// A listing the callback stops on purpose is not a failure, even if the
+// request context is canceled before the rows are closed.
+func TestListDirectoryEntriesStoppedByCallbackWithCanceledContext(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	meta, err := (&filer.Entry{}).EncodeAttributesAndChunks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mock.ExpectQuery("SELECT name, meta").WillReturnRows(
+		sqlmock.NewRows([]string{"name", "meta"}).AddRow("a.txt", meta).AddRow("b.txt", meta))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	store := &AbstractSqlStore{SqlGenerator: listGen{}, DB: db}
+	_, err = store.ListDirectoryEntries(ctx, "/dir", "", true, 100, func(entry *filer.Entry) (bool, error) {
+		cancel()
+		// database/sql notices the cancellation on a background goroutine;
+		// give it time so rows.Err would report it.
+		time.Sleep(100 * time.Millisecond)
+		return false, nil
+	})
+	if err != nil {
+		t.Fatalf("ListDirectoryEntries error = %v, want nil", err)
 	}
 }
