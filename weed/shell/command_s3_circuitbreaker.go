@@ -289,7 +289,7 @@ func (c *commandS3CircuitBreaker) initActionsAndValues(buckets, actions, limitTy
 				}
 			}
 			if !found {
-				return nil, nil, nil, fmt.Errorf("value(%s) of flag[-action] not valid, allowed actions: %v", *actions, s3_constants.AllowedActions)
+				return nil, nil, nil, fmt.Errorf("value(%s) of flag[-actions] not valid, allowed actions: %v", action, s3_constants.AllowedActions)
 			}
 		}
 	}

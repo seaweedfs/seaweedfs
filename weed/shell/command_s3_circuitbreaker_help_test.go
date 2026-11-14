@@ -36,3 +36,18 @@ func TestCircuitBreakerHelpExamplesRun(t *testing.T) {
 		t.Fatal("found no examples in the help text")
 	}
 }
+
+func TestCircuitBreakerInvalidActionError(t *testing.T) {
+	originalLoadConfig := LoadConfig
+	t.Cleanup(func() { LoadConfig = originalLoadConfig })
+	LoadConfig = func(*CommandEnv, string, string, *bytes.Buffer) error { return nil }
+
+	cmd := &commandS3CircuitBreaker{}
+	err := cmd.Do([]string{"-global", "-type", "Count", "-actions", "Read,Bogus", "-values", "1,2"}, nil, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected an error for an unknown action")
+	}
+	if msg := err.Error(); !strings.Contains(msg, "value(Bogus)") || !strings.Contains(msg, "flag[-actions]") {
+		t.Errorf("error should name the bad action and -actions: %v", err)
+	}
+}
