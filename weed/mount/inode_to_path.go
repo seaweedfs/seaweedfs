@@ -201,9 +201,13 @@ func (i *InodeToPath) Lookup(path util.FullPath, unixTime int64, isDirectory boo
 	}
 	i.path2inode[path] = inode
 
-	if _, found := i.inode2path[inode]; found {
+	if ie, known := i.inode2path[inode]; known {
+		// Another name of a hard link the table already holds.
+		if !found {
+			ie.addPath(path)
+		}
 		if isLookup {
-			i.inode2path[inode].nlookup++
+			ie.nlookup++
 		}
 	} else {
 		nlookup := uint64(0)
