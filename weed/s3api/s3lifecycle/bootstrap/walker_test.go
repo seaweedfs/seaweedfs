@@ -429,3 +429,39 @@ func TestWalk_MPUInitDoesNotFireNoncurrent(t *testing.T) {
 		t.Fatalf("kind=%v, want AbortMPU", rec.calls[0].kind)
 	}
 }
+
+type failVersion string
+
+func (f failVersion) Delete(_ context.Context, _ *engine.CompiledAction, entry *Entry) error {
+	if entry.VersionID == string(f) {
+		return errors.New("dispatch boom")
+	}
+	return nil
+}
+
+func TestWalk_CheckpointStaysBeforeUnfinishedVersionGroup(t *testing.T) {
+	rule := &s3lifecycle.Rule{ID: "r", Status: s3lifecycle.StatusEnabled, ExpirationDays: 1}
+	snap := compileEvDriven(t, "bk", rule)
+	mod := mustTime(t, "2024-01-01T00:00:00Z")
+	list := func(_ context.Context, _, _ string, cb func(*Entry) error) error {
+		for _, e := range []*Entry{
+			{Path: "a", IsLatest: true, ModTime: mod, Resume: "after-a"},
+			{Path: "obj", VersionID: "v2", IsLatest: true, ModTime: mod},
+			{Path: "obj", VersionID: "v1", ModTime: mod, Resume: "after-obj"},
+		} {
+			if err := cb(e); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	cp, err := Walk(context.Background(), snap, "bk", list, failVersion("v2"), WalkOptions{Now: mod.AddDate(0, 0, 10)})
+	if err == nil || cp.LastScannedPath != "after-a" {
+		t.Fatalf("failure inside the group: got cp=%+v err=%v, want after-a and an error", cp, err)
+	}
+	cp, err = Walk(context.Background(), snap, "bk", list, failVersion("none"), WalkOptions{Now: mod.AddDate(0, 0, 10)})
+	if err != nil || !cp.Completed || cp.LastScannedPath != "after-obj" {
+		t.Fatalf("finished walk: got cp=%+v err=%v, want after-obj", cp, err)
+	}
+}
