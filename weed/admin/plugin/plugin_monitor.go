@@ -1122,6 +1122,8 @@ func (r *Plugin) trackExecutionCompletion(completed *plugin_pb.JobCompleted) *Tr
 	}
 	if completed.Result != nil {
 		tracked.ResultSummary = completed.Result.Summary
+	} else {
+		tracked.ResultSummary = ""
 	}
 	if completed.Success {
 		tracked.State = strings.ToLower(plugin_pb.JobState_JOB_STATE_SUCCEEDED.String())

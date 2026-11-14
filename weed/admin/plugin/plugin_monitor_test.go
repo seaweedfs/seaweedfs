@@ -641,6 +641,48 @@ func TestBuildJobDetailKeepsFailedJobResult(t *testing.T) {
 	}
 }
 
+func TestRetryWithoutResultDropsFailedAttemptSummary(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{DataDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	job := &plugin_pb.JobSpec{JobId: "job-retry", JobType: "s3_lifecycle"}
+	pluginSvc.trackExecutionStart("req-retry", "worker-r", job, 1)
+	pluginSvc.handleJobCompleted(&plugin_pb.JobCompleted{
+		RequestId:    "req-retry",
+		JobId:        "job-retry",
+		JobType:      "s3_lifecycle",
+		Success:      false,
+		ErrorMessage: "walk bad-a: filer down",
+		Result:       &plugin_pb.JobResult{Summary: "pass failed"},
+		CompletedAt:  timestamppb.Now(),
+	})
+	pluginSvc.trackExecutionStart("req-retry", "worker-r", job, 2)
+	pluginSvc.handleJobCompleted(&plugin_pb.JobCompleted{
+		RequestId:   "req-retry",
+		JobId:       "job-retry",
+		JobType:     "s3_lifecycle",
+		Success:     true,
+		CompletedAt: timestamppb.Now(),
+	})
+	pluginSvc.Shutdown()
+
+	detail, found, err := pluginSvc.BuildJobDetail("job-retry", 100, 5)
+	if err != nil {
+		t.Fatalf("BuildJobDetail error: %v", err)
+	}
+	if !found || detail == nil || detail.Job == nil {
+		t.Fatalf("expected job detail")
+	}
+	if detail.Job.ResultSummary != "" || detail.Job.Message != "completed" {
+		t.Fatalf("expected the failed attempt's summary to be dropped, got summary=%q message=%q", detail.Job.ResultSummary, detail.Job.Message)
+	}
+}
+
 func TestBuildJobDetailLoadsFromDiskWhenMemoryCleared(t *testing.T) {
 	t.Parallel()
 
