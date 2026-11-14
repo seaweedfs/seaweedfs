@@ -204,9 +204,10 @@ func (f *Filer) LocalFlushedThroughTsNs(nowNs int64) int64 {
 }
 
 // LocalDeliveredThroughTsNs caps a delivery-freshness claim (an idle
-// heartbeat's timestamp) by the oldest in-flight stamp: a stamped-but-
-// unappended event has not been streamed to anyone, and a peer aggregator
-// turns the claim into its delivery low-watermark.
+// heartbeat's timestamp, a listing snapshot) by the oldest in-flight stamp: a
+// stamped-but-unappended event has not been streamed to anyone, nor is its
+// write certain to be visible yet, and a peer aggregator turns the claim into
+// its delivery low-watermark.
 func (f *Filer) LocalDeliveredThroughTsNs(nowNs int64) int64 {
 	return f.metaLogInflight.claimThrough(nowNs)
 }
