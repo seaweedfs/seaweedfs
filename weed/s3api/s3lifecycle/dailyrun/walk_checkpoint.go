@@ -26,6 +26,9 @@ type WalkCheckpoint struct {
 	// to its bootstrap.Checkpoint.LastScannedPath.
 	Done   []string
 	Resume map[string]string
+	// When the walk that began this record started; every bucket in it
+	// was listed after that.
+	StartedAt time.Time
 	// Set by LoadWalk; SaveWalk stamps the current time.
 	SavedAt time.Time
 }
@@ -37,12 +40,13 @@ type WalkCheckpointPersister interface {
 }
 
 type walkCheckpointFile struct {
-	Version  int               `json:"version"`
-	Shards   []int             `json:"shards"`
-	ViewHash []byte            `json:"view_hash,omitempty"`
-	Done     []string          `json:"done,omitempty"`
-	Resume   map[string]string `json:"resume,omitempty"`
-	SavedNs  int64             `json:"saved_ns,omitempty"`
+	Version   int               `json:"version"`
+	Shards    []int             `json:"shards"`
+	ViewHash  []byte            `json:"view_hash,omitempty"`
+	Done      []string          `json:"done,omitempty"`
+	Resume    map[string]string `json:"resume,omitempty"`
+	StartedNs int64             `json:"started_ns,omitempty"`
+	SavedNs   int64             `json:"saved_ns,omitempty"`
 }
 
 func walkCheckpointFileName(shards []int) string {
@@ -82,6 +86,9 @@ func (p *FilerCursorPersister) LoadWalk(ctx context.Context, shards []int) (Walk
 		return WalkCheckpoint{}, false, fmt.Errorf("walk checkpoint view_hash: got %d bytes, want 32", len(f.ViewHash))
 	}
 	cp := WalkCheckpoint{Shards: f.Shards, Done: f.Done, Resume: f.Resume, SavedAt: time.Unix(0, f.SavedNs)}
+	if f.StartedNs != 0 {
+		cp.StartedAt = time.Unix(0, f.StartedNs)
+	}
 	copy(cp.ViewHash[:], f.ViewHash)
 	return cp, true, nil
 }
@@ -91,6 +98,9 @@ func (p *FilerCursorPersister) SaveWalk(ctx context.Context, cp WalkCheckpoint) 
 		return errors.New("FilerCursorPersister: nil Store")
 	}
 	f := walkCheckpointFile{Version: cursorFileVersion, Shards: cp.Shards, Done: cp.Done, Resume: cp.Resume, SavedNs: time.Now().UnixNano()}
+	if !cp.StartedAt.IsZero() {
+		f.StartedNs = cp.StartedAt.UnixNano()
+	}
 	if cp.ViewHash != ([32]byte{}) {
 		f.ViewHash = cp.ViewHash[:]
 	}
@@ -132,11 +142,12 @@ type walkProgress struct {
 func loadWalkProgress(ctx context.Context, store WalkCheckpointPersister, view *engine.Snapshot, shards []int, buckets []string) *walkProgress {
 	sorted := slices.Clone(shards)
 	slices.Sort(sorted)
+	now := time.Now()
 	w := &walkProgress{
 		store:   store,
-		cp:      WalkCheckpoint{ViewHash: engine.WalkContentHash(view), Shards: sorted, Resume: map[string]string{}},
+		cp:      WalkCheckpoint{ViewHash: engine.WalkContentHash(view), Shards: sorted, Resume: map[string]string{}, StartedAt: now},
 		done:    map[string]bool{},
-		savedAt: time.Now(),
+		savedAt: now,
 	}
 	if store == nil {
 		return w
@@ -151,7 +162,7 @@ func loadWalkProgress(ctx context.Context, store WalkCheckpointPersister, view *
 		return w
 	}
 	w.onDisk = len(saved.Done) > 0 || len(saved.Resume) > 0
-	if saved.ViewHash != w.cp.ViewHash || !slices.Equal(saved.Shards, sorted) || time.Since(saved.SavedAt) > walkCheckpointMaxAge {
+	if saved.ViewHash != w.cp.ViewHash || !slices.Equal(saved.Shards, sorted) || saved.StartedAt.IsZero() || time.Since(saved.SavedAt) > walkCheckpointMaxAge {
 		return w
 	}
 	listed := make(map[string]bool, len(buckets))
@@ -171,6 +182,7 @@ func loadWalkProgress(ctx context.Context, store WalkCheckpointPersister, view *
 	w.cp.SavedAt = saved.SavedAt
 	w.resumed = len(w.done) > 0 || len(w.cp.Resume) > 0
 	if w.resumed {
+		w.cp.StartedAt = saved.StartedAt
 		glog.V(0).Infof("walker: shards %v resume with %d bucket(s) done and %d partly walked", sorted, len(w.done), len(w.cp.Resume))
 	}
 	return w

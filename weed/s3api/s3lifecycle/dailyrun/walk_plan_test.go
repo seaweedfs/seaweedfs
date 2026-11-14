@@ -44,11 +44,11 @@ func TestRun_SharesBucketWalkAcrossShards(t *testing.T) {
 		Client:      stubLifecycleClient{},
 		Persister:   p,
 		Lister:      stubSiblingLister{},
-		Walker: func(_ context.Context, _ *engine.Snapshot, shards []int) error {
+		Walker: func(_ context.Context, _ *engine.Snapshot, shards []int) (time.Time, error) {
 			mu.Lock()
 			defer mu.Unlock()
 			calls = append(calls, append([]int{}, shards...))
-			return nil
+			return time.Time{}, nil
 		},
 	}
 	runNow := time.Unix(1_700_000_000, 0).UTC()
@@ -118,12 +118,12 @@ func TestRun_RecoveryAndSteadyGroupsWalkSeparately(t *testing.T) {
 		Client:      stubLifecycleClient{},
 		Persister:   p,
 		Lister:      stubSiblingLister{},
-		Walker: func(_ context.Context, view *engine.Snapshot, shards []int) error {
+		Walker: func(_ context.Context, view *engine.Snapshot, shards []int) (time.Time, error) {
 			mu.Lock()
 			defer mu.Unlock()
 			calls = append(calls, append([]int{}, shards...))
 			actions = append(actions, len(view.AllActions()))
-			return nil
+			return time.Time{}, nil
 		},
 	}
 	require.NoError(t, Run(context.Background(), cfg))
@@ -161,8 +161,8 @@ func TestRun_SharedWalkErrorFailsCoveredShards(t *testing.T) {
 		Client:      stubLifecycleClient{},
 		Persister:   newMemPersister(),
 		Lister:      stubSiblingLister{},
-		Walker: func(_ context.Context, _ *engine.Snapshot, _ []int) error {
-			return errors.New("walk boom")
+		Walker: func(_ context.Context, _ *engine.Snapshot, _ []int) (time.Time, error) {
+			return time.Time{}, errors.New("walk boom")
 		},
 	}
 	err := Run(context.Background(), cfg)
@@ -212,10 +212,10 @@ func TestRun_JoinsPlannedWalkWhenShardExitsEarly(t *testing.T) {
 		Client:      stubLifecycleClient{},
 		Persister:   &countingPersister{inner: newMemPersister(), failAfter: 1},
 		Lister:      stubSiblingLister{},
-		Walker: func(context.Context, *engine.Snapshot, []int) error {
+		Walker: func(context.Context, *engine.Snapshot, []int) (time.Time, error) {
 			close(walkStarted)
 			<-walkRelease
-			return nil
+			return time.Time{}, nil
 		},
 	}
 	runDone := make(chan error, 1)

@@ -166,7 +166,7 @@ func (c *commandS3LifecycleRunShard) Do(args []string, env *CommandEnv, writer i
 				}
 			}
 			persister := &dailyrun.FilerCursorPersister{Store: dispatcher.NewFilerStoreClient(filerClient)}
-			walker := dailyrun.WalkerFunc(func(walkCtx context.Context, view *engine.Snapshot, shards []int) error {
+			walker := dailyrun.WalkerFunc(func(walkCtx context.Context, view *engine.Snapshot, shards []int) (time.Time, error) {
 				return dailyrun.WalkBuckets(walkCtx, view, shards, buckets,
 					dailyrun.FilerListFunc(filerClient, bucketsPath, view), walkerDispatch, nil, persister)
 			})

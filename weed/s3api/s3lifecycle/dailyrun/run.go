@@ -29,8 +29,9 @@ type LifecycleClient interface {
 
 // WalkerFunc runs one bucket walk covering every shard in shards under
 // the given engine view, so a whole pass costs at most a couple of
-// bucket listings rather than one listing per shard.
-type WalkerFunc func(ctx context.Context, view *engine.Snapshot, shards []int) error
+// bucket listings rather than one listing per shard. It returns when the
+// earliest bucket it covers was listed (see WalkBuckets).
+type WalkerFunc func(ctx context.Context, view *engine.Snapshot, shards []int) (time.Time, error)
 
 type Config struct {
 	Shards      []int
@@ -561,7 +562,7 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 		// the bug TestLifecycleExpirationDateInThePast caught.
 		if cfg.Walker != nil && walkerDue(lastWalkedNs, runNow, cfg.WalkerInterval) {
 			if _, walkView := snap.RulesForShard(shardID, retentionWindow); walkView != nil && len(walkView.AllActions()) > 0 {
-				if werr := walkForShard(ctx, cfg.Walker, walks, shardID, false, walkView); werr != nil {
+				if _, werr := walkForShard(ctx, cfg.Walker, walks, shardID, false, walkView); werr != nil {
 					return fmt.Errorf("shard=%d: steady walk (empty replay): %w", shardID, werr)
 				}
 				lastWalkedNs = runNow.UnixNano()
@@ -590,10 +591,17 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 	//     via BucketBootstrapper; daily-replay needs the same.
 	mustWalkRecovery := found && (persisted.RuleSetHash != rsh || persisted.PromotedHash != promoted)
 	mustWalkColdStart := !found
+	// A resumed walk listed its earlier buckets before this pass; objects
+	// there that were not due yet must stay inside the replay window.
+	replayFrom := runNow
 	if mustWalkRecovery || mustWalkColdStart {
 		if cfg.Walker != nil {
-			if werr := walkForShard(ctx, cfg.Walker, walks, shardID, true, engine.RecoveryView(snap)); werr != nil {
+			since, werr := walkForShard(ctx, cfg.Walker, walks, shardID, true, engine.RecoveryView(snap))
+			if werr != nil {
 				return fmt.Errorf("shard=%d: recovery walk: %w", shardID, werr)
+			}
+			if !since.IsZero() && since.Before(replayFrom) {
+				replayFrom = since
 			}
 			lastWalkedNs = runNow.UnixNano()
 			walkedThisPass = true
@@ -603,7 +611,7 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 			// the new max-TTL window and the persisted hashes match the
 			// new rule set.
 			next := Cursor{
-				TsNs:         runNow.Add(-maxTTL).UnixNano(),
+				TsNs:         replayFrom.Add(-maxTTL).UnixNano(),
 				RuleSetHash:  rsh,
 				PromotedHash: promoted,
 				LastWalkedNs: lastWalkedNs,
@@ -627,7 +635,7 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 	// where this is a normal pass that didn't trigger cold-start.
 	if cfg.Walker != nil && !walkedThisPass && walkerDue(lastWalkedNs, runNow, cfg.WalkerInterval) {
 		if _, walkView := snap.RulesForShard(shardID, retentionWindow); walkView != nil && len(walkView.AllActions()) > 0 {
-			if werr := walkForShard(ctx, cfg.Walker, walks, shardID, false, walkView); werr != nil {
+			if _, werr := walkForShard(ctx, cfg.Walker, walks, shardID, false, walkView); werr != nil {
 				return fmt.Errorf("shard=%d: steady walk: %w", shardID, werr)
 			}
 			lastWalkedNs = runNow.UnixNano()
@@ -647,7 +655,7 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 	// equals PUT — bumping past the expire3 event itself).
 	startTsNs := persisted.TsNs
 	if !found {
-		startTsNs = runNow.Add(-maxTTL).UnixNano()
+		startTsNs = replayFrom.Add(-maxTTL).UnixNano()
 	}
 
 	// Walk-bound rules are never due inside the retention window; keep them

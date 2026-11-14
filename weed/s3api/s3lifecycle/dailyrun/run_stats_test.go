@@ -33,7 +33,7 @@ func TestWalkBuckets_RecordsEveryBucketFailure(t *testing.T) {
 		return nil
 	}
 	runStats := &RunStats{}
-	err := WalkBuckets(context.Background(), snapshotForBucketRule(t, "good", 7), []int{0},
+	_, err := WalkBuckets(context.Background(), snapshotForBucketRule(t, "good", 7), []int{0},
 		[]string{"bad-a", "good", "bad-b"}, list, &recordingDispatcher{}, runStats, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "bad-a", "the returned error stays the first bucket's")
@@ -61,7 +61,7 @@ func TestWalkBuckets_CancelMarksRemainingBucketsSkipped(t *testing.T) {
 		return nil
 	}
 	runStats := &RunStats{}
-	err := WalkBuckets(ctx, snapshotForBucketRule(t, "first", 7), []int{0},
+	_, err := WalkBuckets(ctx, snapshotForBucketRule(t, "first", 7), []int{0},
 		[]string{"first", "second", "third"}, list, &recordingDispatcher{}, runStats, nil)
 	assert.ErrorIs(t, err, context.Canceled)
 
@@ -110,8 +110,9 @@ func TestWalkBuckets_CountsEntriesAndObjects(t *testing.T) {
 		{Path: ".uploads/u1", DestKey: "c", IsDirectory: true, IsMPUInit: true, ModTime: old},
 	}
 	runStats := &RunStats{}
-	require.NoError(t, WalkBuckets(context.Background(), snapshotForBucketRule(t, "bkt", 7), allShards(),
-		[]string{"bkt"}, bootstrap.EntryCallback(entries), &recordingDispatcher{}, runStats, nil))
+	_, err := WalkBuckets(context.Background(), snapshotForBucketRule(t, "bkt", 7), allShards(),
+		[]string{"bkt"}, bootstrap.EntryCallback(entries), &recordingDispatcher{}, runStats, nil)
+	require.NoError(t, err)
 
 	sum := runStats.Summary()
 	assert.Equal(t, int64(5), sum.EntriesVisited, "versions and upload records count, plain directories do not")

@@ -118,7 +118,7 @@ func (h *checkpointHarness) walk(ctx context.Context, view *engine.Snapshot, sha
 	for _, f := range fail {
 		d.fail[f] = true
 	}
-	err := WalkBuckets(ctx, view, shards, []string{"a", "b", "c"}, FilerListFunc(h.client, "/buckets", view), d, h.stats, h.p)
+	_, err := WalkBuckets(ctx, view, shards, []string{"a", "b", "c"}, FilerListFunc(h.client, "/buckets", view), d, h.stats, h.p)
 	return d.calls, err
 }
 
@@ -166,6 +166,49 @@ func TestWalkBuckets_ResumesAfterFailureInsideVersionGroup(t *testing.T) {
 	calls, err = h.walk(context.Background(), view, allShards())
 	require.NoError(t, err)
 	assert.Equal(t, fullWalk, calls, "after a completed walk the next one is full")
+}
+
+func TestWalkBuckets_ResumedWalkReportsTheRecordStart(t *testing.T) {
+	h := newCheckpointHarness(t)
+	view := checkpointTestView(t, "")
+	walk := func(fail ...string) (time.Time, error) {
+		d := &scriptedDispatcher{fail: map[string]bool{}}
+		for _, f := range fail {
+			d.fail[f] = true
+		}
+		return WalkBuckets(context.Background(), view, allShards(), []string{"a", "b", "c"}, FilerListFunc(h.client, "/buckets", view), d, nil, h.p)
+	}
+
+	before := time.Now()
+	since, err := walk("b/obj@v1")
+	require.Error(t, err)
+	assert.False(t, since.Before(before))
+	assert.Equal(t, since.UnixNano(), h.saved(allShards()).StartedAt.UnixNano())
+
+	name := CursorDir + "/walk-00-15.json"
+	var f walkCheckpointFile
+	require.NoError(t, json.Unmarshal(h.store.files[name], &f))
+	started := time.Now().Add(-48 * time.Hour)
+	f.StartedNs = started.UnixNano()
+	h.store.files[name], _ = json.Marshal(f)
+	since, err = walk()
+	require.NoError(t, err)
+	assert.Equal(t, started.UnixNano(), since.UnixNano(), "a resumed walk dates from the walk that listed its earlier buckets")
+
+	before = time.Now()
+	since, err = walk()
+	require.NoError(t, err)
+	assert.False(t, since.Before(before), "a full walk dates from its own start")
+
+	_, err = walk("b/obj@v1")
+	require.Error(t, err)
+	require.NoError(t, json.Unmarshal(h.store.files[name], &f))
+	f.StartedNs = 0
+	h.store.files[name], _ = json.Marshal(f)
+	before = time.Now()
+	since, err = walk()
+	require.NoError(t, err)
+	assert.False(t, since.Before(before), "a record without a start is not resumed")
 }
 
 func TestWalkBuckets_CheckpointBoundToViewAndShards(t *testing.T) {

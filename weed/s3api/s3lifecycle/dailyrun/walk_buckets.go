@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
@@ -20,19 +21,21 @@ import (
 // A non-nil progress keeps an unfinished walk's finished buckets and
 // positions, and the next call for the same view and shards resumes
 // from them; a completed walk clears them, so the next one is full.
+// The returned time is when the earliest bucket the walk covers was
+// listed: its own start, or the start of the record it resumed.
 //
 // Composable shape: callers (the worker handler) supply a real
 // filer-backed ListFunc and a real Dispatcher (WalkerDispatcher).
 // Tests pass bootstrap.EntryCallback and a stub Dispatcher.
-func WalkBuckets(ctx context.Context, view *engine.Snapshot, shards []int, buckets []string, list bootstrap.ListFunc, dispatch bootstrap.Dispatcher, runStats *RunStats, progress WalkCheckpointPersister) error {
+func WalkBuckets(ctx context.Context, view *engine.Snapshot, shards []int, buckets []string, list bootstrap.ListFunc, dispatch bootstrap.Dispatcher, runStats *RunStats, progress WalkCheckpointPersister) (time.Time, error) {
 	if view == nil {
-		return errors.New("WalkBuckets: nil view")
+		return time.Time{}, errors.New("WalkBuckets: nil view")
 	}
 	if list == nil {
-		return errors.New("WalkBuckets: nil list")
+		return time.Time{}, errors.New("WalkBuckets: nil list")
 	}
 	if dispatch == nil {
-		return errors.New("WalkBuckets: nil dispatch")
+		return time.Time{}, errors.New("WalkBuckets: nil dispatch")
 	}
 	shardSet := make(map[int]bool, len(shards))
 	for _, sh := range shards {
@@ -47,7 +50,7 @@ func WalkBuckets(ctx context.Context, view *engine.Snapshot, shards []int, bucke
 				runStats.finishBucket(rest, bucketSkipped, nil)
 			}
 			_ = walk.finish(ctx, err)
-			return err
+			return walk.cp.StartedAt, err
 		}
 		if walk.done[b] {
 			runStats.finishBucket(b, bucketWalked, nil)
@@ -72,9 +75,9 @@ func WalkBuckets(ctx context.Context, view *engine.Snapshot, shards []int, bucke
 		}
 	}
 	if err := walk.finish(ctx, firstErr); err != nil {
-		return err
+		return walk.cp.StartedAt, err
 	}
-	return firstErr
+	return walk.cp.StartedAt, firstErr
 }
 
 // perShardListFunc wraps an inner ListFunc so only entries whose

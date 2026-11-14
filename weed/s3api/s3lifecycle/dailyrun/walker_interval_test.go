@@ -84,9 +84,9 @@ func TestRunShard_WalkerThrottle(t *testing.T) {
 			calls := 0
 			cfg := Config{
 				Persister: p,
-				Walker: func(_ context.Context, _ *engine.Snapshot, _ []int) error {
+				Walker: func(_ context.Context, _ *engine.Snapshot, _ []int) (time.Time, error) {
 					calls++
-					return nil
+					return time.Time{}, nil
 				},
 				RetentionWindow: -1, // negative sentinel: falls back to maxTTL — leaves walkView empty
 				WalkerInterval:  tc.interval,
@@ -224,9 +224,9 @@ func TestRunShard_ColdStartDoesNotDoubleWalk(t *testing.T) {
 	calls := 0
 	cfg := Config{
 		Persister: p,
-		Walker: func(_ context.Context, _ *engine.Snapshot, _ []int) error {
+		Walker: func(_ context.Context, _ *engine.Snapshot, _ []int) (time.Time, error) {
 			calls++
-			return nil
+			return time.Time{}, nil
 		},
 		WalkerInterval: 0,
 	}
@@ -259,9 +259,9 @@ func TestRunShard_RecoveryWalkerSetsLastWalkedAnchor(t *testing.T) {
 	calls := 0
 	cfg := Config{
 		Persister: p,
-		Walker: func(_ context.Context, _ *engine.Snapshot, _ []int) error {
+		Walker: func(_ context.Context, _ *engine.Snapshot, _ []int) (time.Time, error) {
 			calls++
-			return nil
+			return time.Time{}, nil
 		},
 		WalkerInterval: time.Hour,
 	}

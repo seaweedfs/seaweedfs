@@ -27,6 +27,7 @@ func loadShardCursors(ctx context.Context, cfg Config) map[int]cursorLoad {
 // runShard goroutines wait on done instead of running their own listing.
 type pendingWalk struct {
 	done     chan struct{}
+	since    time.Time
 	err      error
 	recovery bool
 }
@@ -76,7 +77,7 @@ func planWalks(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow ti
 		}
 		go func() {
 			defer close(pw.done)
-			pw.err = cfg.Walker(ctx, view, shards)
+			pw.since, pw.err = cfg.Walker(ctx, view, shards)
 		}()
 	}
 	if len(recovery) > 0 {
@@ -92,13 +93,13 @@ func planWalks(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow ti
 // this branch (same recovery/steady kind), or runs a per-shard walk when
 // the plan missed — a cursor drift between the plan load and runShard's
 // own load — or no plan exists (direct runShard calls, tests).
-func walkForShard(ctx context.Context, walker WalkerFunc, walks map[int]*pendingWalk, shardID int, recovery bool, view *engine.Snapshot) error {
+func walkForShard(ctx context.Context, walker WalkerFunc, walks map[int]*pendingWalk, shardID int, recovery bool, view *engine.Snapshot) (time.Time, error) {
 	if pw := walks[shardID]; pw != nil && pw.recovery == recovery {
 		select {
 		case <-pw.done:
-			return pw.err
+			return pw.since, pw.err
 		case <-ctx.Done():
-			return ctx.Err()
+			return time.Time{}, ctx.Err()
 		}
 	}
 	return walker(ctx, view, []int{shardID})
