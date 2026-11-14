@@ -108,11 +108,13 @@ func init() { walkCheckpointInterval.Store(int64(30 * time.Second)) }
 
 // walkProgress tracks one WalkBuckets call against its checkpoint.
 type walkProgress struct {
-	store   WalkCheckpointPersister
-	cp      WalkCheckpoint
-	done    map[string]bool
-	onDisk  bool // a saved record a finished walk must clear
-	savedAt time.Time
+	store      WalkCheckpointPersister
+	cp         WalkCheckpoint
+	done       map[string]bool
+	onDisk     bool // a saved record a finished walk must clear
+	resumed    bool
+	progressed bool
+	savedAt    time.Time
 }
 
 func loadWalkProgress(ctx context.Context, store WalkCheckpointPersister, view *engine.Snapshot, shards []int, buckets []string) *walkProgress {
@@ -154,7 +156,8 @@ func loadWalkProgress(ctx context.Context, store WalkCheckpointPersister, view *
 			w.cp.Resume[b] = pos
 		}
 	}
-	if len(w.done) > 0 || len(w.cp.Resume) > 0 {
+	w.resumed = len(w.done) > 0 || len(w.cp.Resume) > 0
+	if w.resumed {
 		glog.V(0).Infof("walker: shards %v resume with %d bucket(s) done and %d partly walked", sorted, len(w.done), len(w.cp.Resume))
 	}
 	return w
@@ -173,6 +176,7 @@ func (w *walkProgress) track(bucket string, list bootstrap.ListFunc) bootstrap.L
 			}
 			if e != nil && e.Resume != "" {
 				w.cp.Resume[bucket] = e.Resume
+				w.progressed = true
 				w.maybeSave(ctx)
 			}
 			return nil
@@ -183,6 +187,7 @@ func (w *walkProgress) track(bucket string, list bootstrap.ListFunc) bootstrap.L
 func (w *walkProgress) bucketDone(ctx context.Context, bucket string) {
 	w.done[bucket] = true
 	delete(w.cp.Resume, bucket)
+	w.progressed = true
 	w.maybeSave(ctx)
 }
 
@@ -211,12 +216,17 @@ func (w *walkProgress) save(ctx context.Context) error {
 }
 
 // finish saves where the walk stopped, or clears the checkpoint when it
-// completed.
+// completed. A resumed walk that failed again without progress is
+// cleared too, so one stuck bucket cannot keep the finished ones from
+// ever being walked again.
 func (w *walkProgress) finish(ctx context.Context, walkErr error) error {
 	if w.store == nil {
 		return nil
 	}
-	if walkErr == nil {
+	if walkErr == nil || (ctx.Err() == nil && w.resumed && !w.progressed) {
+		if walkErr != nil {
+			glog.Warningf("walker: shards %v made no progress on a resumed walk; the next walk starts over", w.cp.Shards)
+		}
 		w.done = map[string]bool{}
 		w.cp.Resume = map[string]string{}
 	}
