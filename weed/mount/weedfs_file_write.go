@@ -75,6 +75,7 @@ func (wfs *WFS) Write(cancel <-chan struct{}, in *fuse.WriteIn, data []byte) (wr
 		glog.Errorf("AddPage error: %v", err)
 		return 0, writeErrorToFuseStatus(err)
 	}
+	fh.pageWrites.Add(1)
 
 	// Only an append past all locally owned bytes needs the stored EOF guard.
 	if in.Offset > entry.Attributes.FileSize && wfs.isAppendWrite(in) {
@@ -111,6 +112,7 @@ func (wfs *WFS) Write(cancel <-chan struct{}, in *fuse.WriteIn, data []byte) (wr
 	}
 
 	fh.dirtyMetadata = true
+	fh.dirtyContent = true
 
 	// Invalidate the mtime cache so the next Open will not set FOPEN_KEEP_CACHE.
 	wfs.invalidateOpenMtimeCache(in.NodeId)

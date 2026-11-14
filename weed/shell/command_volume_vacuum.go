@@ -38,6 +38,10 @@ func (c *commandVacuum) Help() string {
 	Without -volumeId this runs the same sweep as the automatic vacuum, which skips
 	read-only volumes. Name a read-only volume with -volumeId to vacuum it anyway.
 
+	The master runs one vacuum at a time. While the automatic vacuum or another
+	request is running, this command fails instead of waiting for its turn. Run it
+	again later, or pause the automatic vacuum first with volume.vacuum.disable.
+
 `
 }
 
@@ -157,11 +161,25 @@ func (c *commandVacuum) Do(args []string, commandEnv *CommandEnv, writer io.Writ
 			return err
 		})
 		if err != nil {
-			return err
+			// A list of volumes or collections is several requests, and a vacuum
+			// that starts in between only fails the ones after it.
+			return fmt.Errorf("vacuum %s: %w", describeVacuumRequest(req), err)
 		}
 	}
 
 	return nil
+}
+
+func describeVacuumRequest(req *master_pb.VacuumVolumeRequest) string {
+	switch {
+	case req.VolumeId != 0 && req.Collection != "":
+		return fmt.Sprintf("volume %d in collection %s", req.VolumeId, req.Collection)
+	case req.VolumeId != 0:
+		return fmt.Sprintf("volume %d", req.VolumeId)
+	case req.Collection != "":
+		return "collection " + req.Collection
+	}
+	return "all volumes"
 }
 
 // vidReplica pairs a volume replica's read-only state with the server that

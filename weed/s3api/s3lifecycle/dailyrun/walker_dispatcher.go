@@ -24,6 +24,8 @@ type WalkerDispatcher struct {
 	// daily-run's processMatches uses so the walker and replay paths
 	// can't combine to burst past the cap. nil disables throttling.
 	Limiter *rate.Limiter
+	// nil skips per-pass outcome counts.
+	Stats *RunStats
 }
 
 // Compile-time check.
@@ -75,17 +77,17 @@ func (d *WalkerDispatcher) Delete(ctx context.Context, action *engine.CompiledAc
 	if err != nil {
 		// "RPC_ERROR" matches the streaming dispatcher and processMatches
 		// labels so transport-class failures aggregate under one key.
-		stats.S3LifecycleDispatchCounter.WithLabelValues(action.Bucket, kindLabel, "RPC_ERROR").Inc()
+		countDispatch(d.Stats, action.Bucket, kindLabel, "RPC_ERROR")
 		return fmt.Errorf("walker dispatch %s/%s %s: %w", action.Bucket, objectPath, action.Key.ActionKind, err)
 	}
 	if resp == nil {
 		// A misbehaving server stub returning (nil, nil) would panic on
 		// the switch below. Bucket under RPC_ERROR rather than a new
 		// label — operationally it's the same class of failure.
-		stats.S3LifecycleDispatchCounter.WithLabelValues(action.Bucket, kindLabel, "RPC_ERROR").Inc()
+		countDispatch(d.Stats, action.Bucket, kindLabel, "RPC_ERROR")
 		return fmt.Errorf("walker dispatch %s/%s %s: nil response", action.Bucket, objectPath, action.Key.ActionKind)
 	}
-	stats.S3LifecycleDispatchCounter.WithLabelValues(action.Bucket, kindLabel, resp.Outcome.String()).Inc()
+	countDispatch(d.Stats, action.Bucket, kindLabel, resp.Outcome.String())
 	switch resp.Outcome {
 	case s3_lifecycle_pb.LifecycleDeleteOutcome_DONE,
 		s3_lifecycle_pb.LifecycleDeleteOutcome_NOOP_RESOLVED,

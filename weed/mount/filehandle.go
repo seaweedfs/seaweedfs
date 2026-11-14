@@ -38,6 +38,7 @@ type FileHandle struct {
 	pendingAppendOffset   uint64
 	writebackContentError *atomic.Bool
 	dirtyMetadata         bool
+	dirtyContent          bool
 	dirtyPages            *PageWriter
 	reader                *filer.ChunkReadAt
 	contentType           string
@@ -56,6 +57,9 @@ type FileHandle struct {
 	// linkRefresh is the hard link id of a link change whose stored entry
 	// could not be read; the next flush reads it before publishing.
 	linkRefresh []byte
+
+	// pageWrites counts the pages added to dirtyPages, under the handle lock.
+	pageWrites atomic.Uint64
 
 	// entryVersionTsNs is the filer log position the handle's entry reflects.
 	// State at or below it must not replace the entry — that rolls it back.
@@ -340,6 +344,7 @@ func (fh *FileHandle) ResetDirtyPages() {
 	fh.dirtyPages.Destroy()
 	fh.dirtyPages = newPageWriter(fh, fh.wfs.option.ChunkSizeLimit)
 	fh.dirtyMetadata = false
+	fh.dirtyContent = false
 	fh.pendingAppend = false
 	fh.contentType = ""
 }

@@ -59,6 +59,15 @@ func (s3a *S3ApiServer) LifecycleDelete(ctx context.Context, req *s3_lifecycle_p
 	return s3a.lifecycleDispatch(ctx, req, entry)
 }
 
+// LifecycleReady authorizes the caller as LifecycleDelete does and touches
+// no bucket or object metadata.
+func (s3a *S3ApiServer) LifecycleReady(ctx context.Context, _ *s3_lifecycle_pb.LifecycleReadyRequest) (*s3_lifecycle_pb.LifecycleReadyResponse, error) {
+	if err := s3a.checkAdminAuth(ctx); err != nil {
+		return nil, err
+	}
+	return &s3_lifecycle_pb.LifecycleReadyResponse{}, nil
+}
+
 func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle_pb.LifecycleDeleteRequest, entry *filer_pb.Entry) (*s3_lifecycle_pb.LifecycleDeleteResponse, error) {
 	metadataOnly := entryUsesMetadataOnlyDelete(entry)
 	switch req.ActionKind {
