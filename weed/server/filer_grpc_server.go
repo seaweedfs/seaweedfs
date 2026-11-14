@@ -78,7 +78,7 @@ func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream file
 	includeLastFile := req.InclusiveStartFrom
 	snapshotTsNs := req.SnapshotTsNs
 	if snapshotTsNs == 0 {
-		snapshotTsNs = time.Now().UnixNano()
+		snapshotTsNs = fs.filer.LocalDeliveredThroughTsNs(time.Now().UnixNano())
 	}
 	sentSnapshot := false
 	var listErr error
