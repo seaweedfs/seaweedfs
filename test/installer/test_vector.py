@@ -57,3 +57,61 @@ class VectorInstallerTest(unittest.TestCase):
                                     ARCHIVE=archive.as_posix(), DEST=dest.as_posix(), SYSTEM=system)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertEqual((dest / name).read_bytes(), contents)
+
+
+class EnterpriseInstallerTest(unittest.TestCase):
+    shell = VectorInstallerTest.shell
+
+    def enterprise(self, code, **env):
+        return self.shell('ENTERPRISE=true; REPO=seaweedfs/artifactory; EDITION=-enterprise; ' + code, **env)
+
+    def test_asset_names(self):
+        result = self.enterprise('go_asset_name linux amd64; go_asset_name windows amd64; '
+                                 'rust_asset_name linux arm64; worker_asset_name linux amd64; '
+                                 'vector_asset_name linux arm64; LARGE_DISK=true; '
+                                 'go_asset_name darwin arm64; rust_asset_name linux amd64')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.split(), [
+            'weed-enterprise-linux_amd64.tar.gz', 'weed-enterprise-windows_amd64.zip',
+            'weed-volume-enterprise_linux_arm64.tar.gz', 'weed-worker-enterprise_linux_amd64.tar.gz',
+            'weed-vector-enterprise_linux_arm64.tar.gz', 'weed-enterprise-darwin_arm64_large_disk.tar.gz',
+            'weed-volume-enterprise_large_disk_linux_amd64.tar.gz',
+        ])
+
+    def test_open_source_go_asset_names(self):
+        result = self.shell('go_asset_name linux amd64; go_asset_name windows amd64; '
+                            'LARGE_DISK=true; go_asset_name windows amd64')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.split(), [
+            'linux_amd64.tar.gz', 'windows_amd64.zip', 'windows_amd64_large_disk.zip',
+        ])
+
+    def test_windows_weed_keeps_exe(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            archive = directory / 'weed.zip'
+            with zipfile.ZipFile(archive, 'w') as output:
+                output.writestr('weed.exe', b'weed fixture')
+            dest = directory / 'bin'
+            result = self.shell('download() { cp "$ARCHIVE" "$2"; }; VERSION=test; '
+                                'INSTALL_DIR="$DEST"; install_component weed windows amd64',
+                                ARCHIVE=archive.as_posix(), DEST=dest.as_posix())
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual((dest / 'weed.exe').read_bytes(), b'weed fixture')
+
+    def test_rust_binaries_linux_only(self):
+        for system, arch, supported in [
+            ('linux', 'amd64', True), ('linux', 'arm64', True),
+            ('darwin', 'arm64', False), ('windows', 'amd64', False),
+        ]:
+            with self.subTest(system=system, arch=arch):
+                for check in ['vector_platform_supported', 'rust_volume_platform_supported']:
+                    result = self.enterprise(f'{check} "$SYSTEM" "$ARCH"', SYSTEM=system, ARCH=arch)
+                    self.assertEqual(result.returncode == 0, supported, check)
+
+    def test_latest_version_skips_other_releases(self):
+        tags = ['vfs-0.2.5', 'kvcache-filer-native-v0.1.0-preview.1', '4.54-rc1', '4.53', '4.52']
+        listing = ''.join(f'  "tag_name": "{tag}",\\n' for tag in tags)
+        result = self.enterprise(f"curl() {{ printf '{listing}'; }}; get_latest_version")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), '4.53')
