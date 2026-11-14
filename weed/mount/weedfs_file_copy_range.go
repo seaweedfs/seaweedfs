@@ -179,7 +179,6 @@ func (wfs *WFS) CopyFileRange(cancel <-chan struct{}, in *fuse.CopyFileRangeIn) 
 		}
 
 		// Perform the write
-		fhOut.dirtyContent = true
 		fhOut.dirtyPages.writerPattern.MonitorWriteAt(offsetOut, int(numBytesRead))
 		if err := fhOut.dirtyPages.AddPage(
 			offsetOut,
@@ -192,6 +191,7 @@ func (wfs *WFS) CopyFileRange(cancel <-chan struct{}, in *fuse.CopyFileRangeIn) 
 
 		// Accumulate for the next loop iteration
 		totalCopied += numBytesRead
+		fhOut.dirtyContent = true
 	}
 
 	if totalCopied == 0 {
@@ -204,7 +204,6 @@ func (wfs *WFS) CopyFileRange(cancel <-chan struct{}, in *fuse.CopyFileRangeIn) 
 	))
 	fhOut.entry.Content = nil
 	fhOut.dirtyMetadata = true
-	fhOut.dirtyContent = true
 
 	written = uint32(totalCopied)
 	return written, fuse.OK
