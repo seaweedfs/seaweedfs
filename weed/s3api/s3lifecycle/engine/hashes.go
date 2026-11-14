@@ -171,6 +171,40 @@ func PromotedHash(s *Snapshot, retentionWindow time.Duration) [32]byte {
 	return w.sum()
 }
 
+// WalkContentHash identifies the walk a view drives: every non-disabled
+// action and each of their buckets' versioning, which shapes the
+// listing. Empty for a nil or empty view.
+func WalkContentHash(s *Snapshot) [32]byte {
+	var empty [32]byte
+	if s == nil {
+		return empty
+	}
+	var items []hashItem
+	for k, a := range s.actions {
+		if a == nil || a.Mode == ModeDisabled {
+			continue
+		}
+		items = append(items, hashItem{key: k, action: a})
+	}
+	if len(items) == 0 {
+		return empty
+	}
+	sortHashItems(items)
+
+	w := newHashWriter()
+	for _, it := range items {
+		w.writeField(0x01, []byte(it.key.Bucket))
+		w.writeField(0x02, it.key.RuleHash[:])
+		w.writeInt(0x03, int64(it.key.ActionKind))
+		versioned := int64(0)
+		if s.BucketVersioned(it.key.Bucket) {
+			versioned = 1
+		}
+		w.writeInt(0x04, versioned)
+	}
+	return w.sum()
+}
+
 // MaxEffectiveTTL returns the maximum effective TTL across the *active*
 // replay-eligible actions in s. Returns 0 for a nil snapshot or one with no
 // active replay actions; the caller is expected to be in the empty-replay

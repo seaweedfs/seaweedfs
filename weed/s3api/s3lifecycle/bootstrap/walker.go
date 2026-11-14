@@ -52,10 +52,15 @@ type Entry struct {
 	// Identity is the listed entry's fingerprint; the server refuses the
 	// delete when the live entry no longer matches it.
 	Identity *router.EntryIdentity
+
+	// Resume is the ListFunc start value that continues the walk after
+	// this entry. Empty keeps the previous position, as for every
+	// version of an object but its last.
+	Resume string
 }
 
-// ListFunc must skip entries with Path <= start so kill-resume picks up
-// where the previous run stopped.
+// ListFunc lists the bucket, starting after start: "" or the Resume of
+// an entry an earlier walk finished.
 type ListFunc func(ctx context.Context, bucket, start string, cb func(*Entry) error) error
 
 // Dispatcher executes one (action, entry) verdict. An error halts the walk;
@@ -64,8 +69,8 @@ type Dispatcher interface {
 	Delete(ctx context.Context, action *engine.CompiledAction, entry *Entry) error
 }
 
-// Checkpoint is the resume state. Caller persists it under
-// /etc/s3/lifecycle/<bucket>/_bootstrap.
+// Checkpoint is the resume state: LastScannedPath is the Resume of the
+// last finished entry, to pass back as WalkOptions.Resume.
 type Checkpoint struct {
 	LastScannedPath string
 	Completed       bool
@@ -97,14 +102,14 @@ func Walk(ctx context.Context, snap *engine.Snapshot, bucket string, list ListFu
 		}
 		// MPU init directories at .uploads/<id> are the one directory
 		// shape lifecycle cares about; everything else stays out.
-		if entry.IsDirectory && !entry.IsMPUInit {
-			cp.LastScannedPath = entry.Path
-			return nil
+		if !entry.IsDirectory || entry.IsMPUInit {
+			if err := walkEntry(ctx, snap, bucket, entry, dispatch, now, &info); err != nil {
+				return err
+			}
 		}
-		if err := walkEntry(ctx, snap, bucket, entry, dispatch, now, &info); err != nil {
-			return err
+		if entry.Resume != "" {
+			cp.LastScannedPath = entry.Resume
 		}
-		cp.LastScannedPath = entry.Path
 		return nil
 	})
 	if err != nil {
@@ -184,12 +189,16 @@ func walkEntry(ctx context.Context, snap *engine.Snapshot, bucket string, entry 
 	return nil
 }
 
-// EntryCallback wraps an in-memory slice as a ListFunc; useful for tests.
+// EntryCallback wraps an in-memory slice as a ListFunc that resumes by
+// Path; useful for tests.
 func EntryCallback(entries []*Entry) ListFunc {
 	return func(ctx context.Context, bucket, start string, cb func(*Entry) error) error {
 		for _, e := range entries {
 			if start != "" && e.Path <= start {
 				continue
+			}
+			if e != nil && e.Resume == "" {
+				e.Resume = e.Path
 			}
 			if err := cb(e); err != nil {
 				return err

@@ -86,7 +86,7 @@ func (c *fakeFiler) ListEntries(ctx context.Context, in *filer_pb.ListEntriesReq
 		if e == nil {
 			continue
 		}
-		if in.StartFromFileName != "" && !in.InclusiveStartFrom && e.Name <= in.StartFromFileName {
+		if in.StartFromFileName != "" && (e.Name < in.StartFromFileName || (!in.InclusiveStartFrom && e.Name == in.StartFromFileName)) {
 			continue
 		}
 		filtered = append(filtered, e)
@@ -461,18 +461,105 @@ func TestFilerListFunc_VersionedDeleteMarkerPropagates(t *testing.T) {
 }
 
 func TestFilerListFunc_HonorsStart(t *testing.T) {
-	// The walker's kill-resume contract: skip entries whose Path <= start.
 	mtime := time.Now()
 	client := &fakeFiler{tree: map[string][]*filer_pb.Entry{
 		"/buckets/bkt": {file("a", mtime, 1), file("b", mtime, 1), file("c", mtime, 1)},
 	}}
 	listFn := FilerListFunc(client, "/buckets", nil)
 	var got []string
-	require.NoError(t, listFn(context.Background(), "bkt", "a", func(e *bootstrap.Entry) error {
+	require.NoError(t, listFn(context.Background(), "bkt", "2:a", func(e *bootstrap.Entry) error {
 		got = append(got, e.Path)
 		return nil
 	}))
 	assert.Equal(t, []string{"b", "c"}, got)
+
+	got = nil
+	require.NoError(t, listFn(context.Background(), "bkt", "a", func(e *bootstrap.Entry) error {
+		got = append(got, e.Path)
+		return nil
+	}))
+	assert.Equal(t, []string{"a", "b", "c"}, got, "an unreadable position walks the whole bucket")
+}
+
+func resumeTestTree() *fakeFiler {
+	t1 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	t2 := t1.Add(time.Hour)
+	ver := func(id string, mtime time.Time) *filer_pb.Entry {
+		return fileWithExt(id, mtime, 1, map[string][]byte{s3_constants.ExtVersionIdKey: []byte(id)})
+	}
+	mpu := dir("u1")
+	mpu.Extended = map[string][]byte{s3_constants.ExtMultipartObjectKey: []byte("foo/big")}
+	vs := s3_constants.VersionsFolder
+	return &fakeFiler{tree: map[string][]*filer_pb.Entry{
+		"/buckets/bkt": {
+			dir(s3_constants.MultipartUploadsFolder),
+			file("alpha", t1, 1),
+			dir("foo"),
+			file("foo.txt", t1, 1),
+			fileWithExt("zeta", t2, 1, map[string][]byte{s3_constants.ExtVersionIdKey: []byte("null")}),
+			versionsDir("zeta"+vs, ""),
+			file("zz", t1, 1),
+		},
+		"/buckets/bkt/" + s3_constants.MultipartUploadsFolder: {mpu},
+		"/buckets/bkt/zeta" + vs:                              {ver("z1", t1)},
+		"/buckets/bkt/foo": {
+			versionsDir("v"+vs, "v2"),
+			file("x", t1, 1),
+		},
+		"/buckets/bkt/foo/v" + vs: {ver("v1", t1), ver("v2", t2)},
+	}}
+}
+
+type listedEntry struct{ Path, VersionID, Resume string }
+
+func listFrom(t *testing.T, listFn bootstrap.ListFunc, start string) []listedEntry {
+	t.Helper()
+	var got []listedEntry
+	require.NoError(t, listFn(context.Background(), "bkt", start, func(e *bootstrap.Entry) error {
+		got = append(got, listedEntry{e.Path, e.VersionID, e.Resume})
+		return nil
+	}))
+	return got
+}
+
+func TestFilerListFunc_ResumeFollowsTraversalOrder(t *testing.T) {
+	prev := listPageSize.Load()
+	listPageSize.Store(2)
+	defer listPageSize.Store(prev)
+
+	client := resumeTestTree()
+	listFn := FilerListFunc(client, "/buckets", nil)
+	full := listFrom(t, listFn, "")
+	fullCalls := client.listCalls
+	var order []string
+	for _, e := range full {
+		order = append(order, e.Path+"@"+e.VersionID)
+	}
+	// Pass 1 groups come before pass 2 at each level, and foo's
+	// children before foo.txt; the null version is part of zeta's group.
+	require.Equal(t, []string{
+		"zeta@null", "zeta@z1",
+		".uploads/u1@",
+		"alpha@",
+		"foo/v@v2", "foo/v@v1",
+		"foo/x@",
+		"foo.txt@",
+		"zz@",
+	}, order)
+
+	for i, e := range full {
+		if e.Resume == "" {
+			continue
+		}
+		assert.Equal(t, append([]listedEntry(nil), full[i+1:]...), listFrom(t, listFn, e.Resume), "resume after %s", e.Resume)
+	}
+	assert.Equal(t, "", full[0].Resume, "only a group's last version moves the position")
+	assert.Equal(t, "1:zeta.versions", full[1].Resume)
+	assert.Equal(t, "2:foo/1:v.versions", full[5].Resume)
+
+	client.listCalls = 0
+	listFrom(t, listFn, "2:foo.txt")
+	assert.Less(t, client.listCalls, fullCalls/2, "a resume skips listing what it already finished")
 }
 
 func TestFilerListFunc_NilClient(t *testing.T) {

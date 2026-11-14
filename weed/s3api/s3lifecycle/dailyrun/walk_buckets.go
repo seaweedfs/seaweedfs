@@ -16,10 +16,14 @@ import (
 // Returns the first bucket error; remaining buckets log and continue
 // so one bucket's filer error doesn't kill the whole walk.
 //
+// A non-nil progress keeps an unfinished walk's finished buckets and
+// positions, and the next call for the same view and shards resumes
+// from them; a completed walk clears them, so the next one is full.
+//
 // Composable shape: callers (the worker handler) supply a real
 // filer-backed ListFunc and a real Dispatcher (WalkerDispatcher).
 // Tests pass bootstrap.EntryCallback and a stub Dispatcher.
-func WalkBuckets(ctx context.Context, view *engine.Snapshot, shards []int, buckets []string, list bootstrap.ListFunc, dispatch bootstrap.Dispatcher) error {
+func WalkBuckets(ctx context.Context, view *engine.Snapshot, shards []int, buckets []string, list bootstrap.ListFunc, dispatch bootstrap.Dispatcher, progress WalkCheckpointPersister) error {
 	if view == nil {
 		return errors.New("WalkBuckets: nil view")
 	}
@@ -34,18 +38,29 @@ func WalkBuckets(ctx context.Context, view *engine.Snapshot, shards []int, bucke
 		shardSet[sh] = true
 	}
 	filtered := perShardListFunc(list, shardSet)
+	walk := loadWalkProgress(ctx, progress, view, shards, buckets)
 	var firstErr error
 	for _, b := range buckets {
 		if err := ctx.Err(); err != nil {
+			_ = walk.finish(ctx, err)
 			return err
 		}
-		if _, err := bootstrap.Walk(ctx, view, b, filtered, dispatch, bootstrap.WalkOptions{}); err != nil {
-			if firstErr == nil {
-				firstErr = fmt.Errorf("walk %s: %w", b, err)
-			} else {
-				glog.V(1).Infof("walker: additional bucket %s: %v", b, err)
-			}
+		if walk.done[b] {
+			continue
 		}
+		_, err := bootstrap.Walk(ctx, view, b, walk.track(b, filtered), dispatch, bootstrap.WalkOptions{Resume: walk.cp.Resume[b]})
+		if err == nil {
+			walk.bucketDone(ctx, b)
+			continue
+		}
+		if firstErr == nil {
+			firstErr = fmt.Errorf("walk %s: %w", b, err)
+		} else {
+			glog.V(1).Infof("walker: additional bucket %s: %v", b, err)
+		}
+	}
+	if err := walk.finish(ctx, firstErr); err != nil {
+		return err
 	}
 	return firstErr
 }
