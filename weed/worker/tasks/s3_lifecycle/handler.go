@@ -388,6 +388,8 @@ func recordFullPass(ctx context.Context, persister *dailyrun.FilerCursorPersiste
 	defer saveCancel()
 	if err := persister.SaveFullPass(saveCtx, fp); err != nil {
 		glog.Warningf("daily_replay: %v", err)
+		report.fullPassSaveErr = err
+		return
 	}
 	report.lastFullPass = fp.CompletedAt
 	publishFullPass(fp)

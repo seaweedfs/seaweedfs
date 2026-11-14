@@ -562,7 +562,8 @@ func TestRunReport_CanceledWinsOverError(t *testing.T) {
 // ---------- full pass record ----------
 
 type memFilerStore struct {
-	files map[string][]byte
+	files   map[string][]byte
+	saveErr error
 }
 
 func (s *memFilerStore) Read(_ context.Context, dir, name string) ([]byte, error) {
@@ -574,6 +575,9 @@ func (s *memFilerStore) Read(_ context.Context, dir, name string) ([]byte, error
 }
 
 func (s *memFilerStore) Save(_ context.Context, dir, name string, content []byte) error {
+	if s.saveErr != nil {
+		return s.saveErr
+	}
 	s.files[dir+"/"+name] = content
 	return nil
 }
@@ -669,4 +673,20 @@ func TestLookupBucketsPath_EmptyDirBucketsFallsBackToDefault(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "/buckets", got)
+}
+
+func TestRecordFullPass_FailedSaveKeepsThePreviousTimestamp(t *testing.T) {
+	store := &memFilerStore{files: map[string][]byte{}}
+	persister := &dailyrun.FilerCursorPersister{Store: store}
+	previous := dailyrun.FullPass{StartedAt: time.Unix(1_700_000_000, 0).UTC(), CompletedAt: time.Unix(1_700_000_600, 0).UTC()}
+	require.NoError(t, persister.SaveFullPass(context.Background(), previous))
+
+	report := &runReport{}
+	loadLastFullPass(context.Background(), persister, report)
+	store.saveErr = errors.New("filer unavailable")
+	recordFullPass(context.Background(), persister, report, time.Now())
+
+	assert.Equal(t, previous.CompletedAt, report.lastFullPass, "an unsaved pass must not replace the saved timestamp")
+	assert.InDelta(t, float64(previous.CompletedAt.Unix()), testutil.ToFloat64(stats.S3LifecycleDailyRunLastFullPassTimestampSeconds), 1e-3)
+	assert.Contains(t, report.outputValues()["full_pass_save_error"].GetStringValue(), "filer unavailable")
 }

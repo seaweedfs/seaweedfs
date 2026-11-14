@@ -30,6 +30,7 @@ type runReport struct {
 	invalidPolicies []scheduler.ParseError
 	summary         dailyrun.RunSummary
 	lastFullPass    time.Time
+	fullPassSaveErr error
 }
 
 // Bucket walk and shard failures always surface as err. A pass without
@@ -118,6 +119,9 @@ func (r *runReport) outputValues() map[string]*plugin_pb.ConfigValue {
 	}
 	if s.Bucket != "" {
 		out["last_bucket"] = stringValue(s.Bucket)
+	}
+	if r.fullPassSaveErr != nil {
+		out["full_pass_save_error"] = stringValue(r.fullPassSaveErr.Error())
 	}
 	if !r.lastFullPass.IsZero() {
 		out["last_full_pass_at"] = stringValue(r.lastFullPass.UTC().Format(time.RFC3339))
