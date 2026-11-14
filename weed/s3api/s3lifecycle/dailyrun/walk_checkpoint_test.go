@@ -159,20 +159,28 @@ func TestWalkBuckets_CheckpointBoundToViewAndShards(t *testing.T) {
 	assert.Contains(t, calls, "b/k1@k1b", "another shard set walks from the start")
 	assert.Equal(t, map[string]string{"b": "1:k1.versions"}, h.saved(allShards()).Resume, "and keeps its own record")
 	assert.Contains(t, h.store.files, CursorDir+"/walk-00-15.json")
+
+	var f walkCheckpointFile
+	require.NoError(t, json.Unmarshal(h.store.files[CursorDir+"/walk-00-15.json"], &f))
+	f.SavedNs = time.Now().Add(-walkCheckpointMaxAge - time.Hour).UnixNano()
+	h.store.files[CursorDir+"/walk-00-15.json"], _ = json.Marshal(f)
+	calls, err = h.walk(context.Background(), view, allShards())
+	require.NoError(t, err)
+	assert.Equal(t, fullWalk, calls, "a record nobody saved for too long is not resumed")
 }
 
 func TestWalkBuckets_StuckResumeStartsOver(t *testing.T) {
 	h := newCheckpointHarness(t)
 	view := checkpointTestView(t, "")
-	_, err := h.walk(context.Background(), view, allShards, "b/obj@v2")
+	_, err := h.walk(context.Background(), view, allShards(), "b/obj@v2")
 	require.Error(t, err)
 
-	calls, err := h.walk(context.Background(), view, allShards, "b/obj@v2")
+	calls, err := h.walk(context.Background(), view, allShards(), "b/obj@v2")
 	require.Error(t, err)
 	assert.Equal(t, []string{"b/obj@v3", "b/obj@v2"}, calls)
-	assert.Empty(t, h.saved(allShards).Done, "a resume without progress is dropped")
+	assert.Empty(t, h.saved(allShards()).Done, "a resume without progress is dropped")
 
-	calls, err = h.walk(context.Background(), view, allShards, "b/obj@v2")
+	calls, err = h.walk(context.Background(), view, allShards(), "b/obj@v2")
 	require.Error(t, err)
 	assert.Equal(t, fullWalk[:6], calls[:6], "so the finished buckets get walked again")
 }
@@ -188,7 +196,9 @@ func TestWalkBuckets_CanceledResumeKeepsCheckpoint(t *testing.T) {
 	cancel()
 	_, err = h.walk(ctx, view, allShards())
 	require.ErrorIs(t, err, context.Canceled)
-	assert.Equal(t, before, h.saved(allShards()))
+	after := h.saved(allShards())
+	assert.Equal(t, before.Done, after.Done)
+	assert.Equal(t, before.Resume, after.Resume)
 }
 
 func TestWalkBuckets_ClearFailureFailsTheWalk(t *testing.T) {

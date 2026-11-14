@@ -26,6 +26,8 @@ type WalkCheckpoint struct {
 	// to its bootstrap.Checkpoint.LastScannedPath.
 	Done   []string
 	Resume map[string]string
+	// Set by LoadWalk; SaveWalk stamps the current time.
+	SavedAt time.Time
 }
 
 // WalkCheckpointPersister keeps one WalkCheckpoint per shard set.
@@ -40,6 +42,7 @@ type walkCheckpointFile struct {
 	ViewHash []byte            `json:"view_hash,omitempty"`
 	Done     []string          `json:"done,omitempty"`
 	Resume   map[string]string `json:"resume,omitempty"`
+	SavedNs  int64             `json:"saved_ns,omitempty"`
 }
 
 func walkCheckpointFileName(shards []int) string {
@@ -78,7 +81,7 @@ func (p *FilerCursorPersister) LoadWalk(ctx context.Context, shards []int) (Walk
 	if len(f.ViewHash) != 0 && len(f.ViewHash) != 32 {
 		return WalkCheckpoint{}, false, fmt.Errorf("walk checkpoint view_hash: got %d bytes, want 32", len(f.ViewHash))
 	}
-	cp := WalkCheckpoint{Shards: f.Shards, Done: f.Done, Resume: f.Resume}
+	cp := WalkCheckpoint{Shards: f.Shards, Done: f.Done, Resume: f.Resume, SavedAt: time.Unix(0, f.SavedNs)}
 	copy(cp.ViewHash[:], f.ViewHash)
 	return cp, true, nil
 }
@@ -87,7 +90,7 @@ func (p *FilerCursorPersister) SaveWalk(ctx context.Context, cp WalkCheckpoint) 
 	if p.Store == nil {
 		return errors.New("FilerCursorPersister: nil Store")
 	}
-	f := walkCheckpointFile{Version: cursorFileVersion, Shards: cp.Shards, Done: cp.Done, Resume: cp.Resume}
+	f := walkCheckpointFile{Version: cursorFileVersion, Shards: cp.Shards, Done: cp.Done, Resume: cp.Resume, SavedNs: time.Now().UnixNano()}
 	if cp.ViewHash != ([32]byte{}) {
 		f.ViewHash = cp.ViewHash[:]
 	}
@@ -103,6 +106,11 @@ func (p *FilerCursorPersister) SaveWalk(ctx context.Context, cp WalkCheckpoint) 
 
 // walkCheckpointInterval spaces the saves of a running walk, in ns.
 var walkCheckpointInterval atomic.Int64
+
+// A walk that keeps failing saves on every attempt; a record this old
+// belongs to a shard set that stopped walking, and resuming it would
+// skip buckets walked long ago.
+const walkCheckpointMaxAge = 7 * 24 * time.Hour
 
 func init() { walkCheckpointInterval.Store(int64(30 * time.Second)) }
 
@@ -139,7 +147,7 @@ func loadWalkProgress(ctx context.Context, store WalkCheckpointPersister, view *
 		return w
 	}
 	w.onDisk = len(saved.Done) > 0 || len(saved.Resume) > 0
-	if saved.ViewHash != w.cp.ViewHash || !slices.Equal(saved.Shards, sorted) {
+	if saved.ViewHash != w.cp.ViewHash || !slices.Equal(saved.Shards, sorted) || time.Since(saved.SavedAt) > walkCheckpointMaxAge {
 		return w
 	}
 	listed := make(map[string]bool, len(buckets))
