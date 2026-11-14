@@ -2,10 +2,13 @@ package shell
 
 import (
 	"bytes"
-	"encoding/json"
-	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 )
 
 type Case struct {
@@ -256,6 +259,8 @@ var (
 func TestCircuitBreakerShell(t *testing.T) {
 	var writeBuf bytes.Buffer
 	cmd := &commandS3CircuitBreaker{}
+	originalLoadConfig := LoadConfig
+	t.Cleanup(func() { LoadConfig = originalLoadConfig })
 	LoadConfig = func(commandEnv *CommandEnv, dir string, file string, buf *bytes.Buffer) error {
 		_, err := buf.Write(writeBuf.Bytes())
 		if err != nil {
@@ -270,23 +275,20 @@ func TestCircuitBreakerShell(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if i != 0 {
-			result := writeBuf.String()
 
-			actual := make(map[string]interface{})
-			err := json.Unmarshal([]byte(result), &actual)
-			if err != nil {
-				t.Error(err)
-			}
-
-			expect := make(map[string]interface{})
-			err = json.Unmarshal([]byte(result), &expect)
-			if err != nil {
-				t.Error(err)
-			}
-			if !reflect.DeepEqual(actual, expect) {
-				t.Fatal("result of s3 circuit breaker shell command is unexpected!")
-			}
+		// Compare as configs: the command writes default fields such as
+		// "enabled": false that the expected JSON leaves out.
+		actual := &s3_pb.S3CircuitBreakerConfig{}
+		if err := filer.ParseS3ConfigurationFromBytes(writeBuf.Bytes(), actual); err != nil {
+			t.Fatalf("case %d %v: parse output: %v", i, tc.args, err)
+		}
+		// Strict parsing, so a misspelled field in the expected JSON fails.
+		expect := &s3_pb.S3CircuitBreakerConfig{}
+		if err := protojson.Unmarshal([]byte(tc.result), expect); err != nil {
+			t.Fatalf("case %d: parse expected result: %v", i, err)
+		}
+		if !proto.Equal(actual, expect) {
+			t.Fatalf("case %d %v:\ngot  %v\nwant %v", i, tc.args, actual, expect)
 		}
 	}
 }
