@@ -657,8 +657,9 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 	if drainErr != nil {
 		_ = saveCursorAndPublish(saveCtx, cfg.Persister, shardID, Cursor{TsNs: lastOK, RuleSetHash: rsh, PromotedHash: promoted, LastWalkedNs: lastWalkedNs})
 		// Cut short by its wall-clock cap: truncated, not failed — the
-		// cursor above carries progress forward.
-		if errors.Is(drainErr, context.DeadlineExceeded) || errors.Is(drainErr, context.Canceled) {
+		// cursor above carries progress forward. A timed-out delete
+		// attempt also wraps DeadlineExceeded, so judge by ctx itself.
+		if ctx.Err() != nil {
 			return nil
 		}
 		return fmt.Errorf("shard=%d: drain: %w", shardID, drainErr)
@@ -791,7 +792,7 @@ func processMatches(ctx context.Context, cfg Config, runNow time.Time, ev *reade
 			// (dispatcher/dispatcher.go) so transport failures
 			// aggregate under one outcome key across paths.
 			stats.S3LifecycleDispatchCounter.WithLabelValues(m.Bucket, m.Key.ActionKind.String(), "RPC_ERROR").Inc()
-			return skippedAny, true, nil
+			return skippedAny, true, fmt.Errorf("%s/%s %s: %w", m.Bucket, m.ObjectKey, m.Key.ActionKind, dispatchErr)
 		}
 		stats.S3LifecycleDispatchCounter.WithLabelValues(m.Bucket, m.Key.ActionKind.String(), outcome.String()).Inc()
 		switch outcome {

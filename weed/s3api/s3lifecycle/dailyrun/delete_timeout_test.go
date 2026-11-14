@@ -111,14 +111,14 @@ func TestDispatch_ParentCancelInterruptsBackoff(t *testing.T) {
 	assert.Equal(t, int32(1), c.calls, "cancellation during backoff must stop before the next attempt")
 }
 
-func TestProcessMatches_AttemptTimeoutHaltsShard(t *testing.T) {
+func TestProcessMatches_AttemptTimeoutFailsShard(t *testing.T) {
 	runNow := time.Now()
 	m := sampleMatch()
 	m.DueTime = runNow.Add(-time.Hour)
 	c := &stallingClient{}
 	cfg := Config{Client: c, DeleteTimeout: 10 * time.Millisecond}
 	_, halted, err := processMatches(context.Background(), cfg, runNow, &reader.Event{TsNs: runNow.UnixNano()}, []router.Match{m})
-	require.NoError(t, err)
+	require.ErrorIs(t, err, context.DeadlineExceeded, "exhausted attempts must fail the pass, not report it clean")
 	assert.True(t, halted, "an unresolved delete must hold the cursor")
 }
 
