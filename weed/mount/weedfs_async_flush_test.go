@@ -139,10 +139,12 @@ func TestFailedFlockReleaseFencesInode(t *testing.T) {
 	for _, c := range []struct {
 		name       string
 		content    bool
+		truncate   bool
 		wantFenced bool
 	}{
-		{"content", true, true},
-		{"metadata only", false, false},
+		{"content", true, false, true},
+		{"metadata only", false, false, false},
+		{"truncate", false, true, true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			const name = "flock-release.log"
@@ -170,6 +172,17 @@ func TestFailedFlockReleaseFencesInode(t *testing.T) {
 			fh.writebackContentError = fenced
 			fh.dirtyMetadata = true
 			fh.dirtyContent = c.content
+			if c.truncate {
+				if code := wfs.SetAttr(make(chan struct{}), &fuse.SetAttrIn{SetAttrInCommon: fuse.SetAttrInCommon{
+					InHeader: fuse.InHeader{NodeId: out.NodeId},
+					Valid:    fuse.FATTR_SIZE | fuse.FATTR_FH,
+					Fh:       out.Fh,
+					Size:     64,
+				}}, &fuse.AttrOut{}); code != fuse.OK {
+					t.Fatalf("SetAttr size = %v, want OK", code)
+				}
+			}
+
 			wfs.Release(make(chan struct{}), &fuse.ReleaseIn{
 				InHeader:     fuse.InHeader{NodeId: out.NodeId},
 				Fh:           out.Fh,
