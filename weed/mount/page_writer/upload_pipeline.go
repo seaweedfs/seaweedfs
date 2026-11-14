@@ -144,12 +144,15 @@ func (up *UploadPipeline) SaveDataAt(p []byte, off int64, isSequential bool, tsN
 			pageChunk = NewMemChunk(logicChunkIndex, up.ChunkSize)
 			// fmt.Printf(" create mem  chunk %d\n", logicChunkIndex)
 		} else {
-			pageChunk = up.swapFile.NewSwapFileChunk(logicChunkIndex)
+			// Check the *SwapFileChunk before it becomes a PageChunk: a nil
+			// pointer inside the interface would not compare equal to nil.
+			swapChunk := up.swapFile.NewSwapFileChunk(logicChunkIndex)
 			// fmt.Printf(" create file chunk %d\n", logicChunkIndex)
-			if pageChunk == nil {
+			if swapChunk == nil {
 				up.accountant.Release(up.ChunkSize)
 				return 0, fmt.Errorf("failed to create swap file chunk")
 			}
+			pageChunk = swapChunk
 		}
 		up.writableChunks[logicChunkIndex] = pageChunk
 	}
