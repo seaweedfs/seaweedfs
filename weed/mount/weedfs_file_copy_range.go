@@ -180,19 +180,23 @@ func (wfs *WFS) CopyFileRange(cancel <-chan struct{}, in *fuse.CopyFileRangeIn) 
 
 		// Perform the write
 		fhOut.dirtyPages.writerPattern.MonitorWriteAt(offsetOut, int(numBytesRead))
-		if _, err := fhOut.dirtyPages.AddPage(
+		buffered, err := fhOut.dirtyPages.AddPage(
 			offsetOut,
 			buff[:numBytesRead],
 			fhOut.dirtyPages.writerPattern.IsSequentialMode(),
-			nowUnixNano); err != nil {
-			glog.Errorf("AddPage error: %v", err)
-			return 0, writeErrorToFuseStatus(err)
+			nowUnixNano)
+		if buffered > 0 {
+			fhOut.pageWrites.Add(1)
+			totalCopied += buffered
+			fhOut.dirtyContent = true
 		}
-		fhOut.pageWrites.Add(1)
-
-		// Accumulate for the next loop iteration
-		totalCopied += numBytesRead
-		fhOut.dirtyContent = true
+		if err != nil {
+			glog.Errorf("AddPage error: %v", err)
+			if totalCopied == 0 {
+				return 0, writeErrorToFuseStatus(err)
+			}
+			break
+		}
 	}
 
 	if totalCopied == 0 {
