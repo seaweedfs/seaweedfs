@@ -67,7 +67,7 @@ Download the latest binary from the [releases](https://github.com/seaweedfs/seaw
 curl -fsSL https://raw.githubusercontent.com/seaweedfs/seaweedfs/master/install.sh | bash
 ```
 
-Add `--enterprise` to install SeaweedFS Enterprise binaries instead.
+For SeaweedFS Enterprise binaries, pass `--enterprise` to the script: `... | bash -s -- --enterprise`.
 
 Then start a ready-to-use S3 object store:
 
