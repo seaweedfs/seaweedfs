@@ -1120,13 +1120,15 @@ func (r *Plugin) trackExecutionCompletion(completed *plugin_pb.JobCompleted) *Tr
 	if completed.RequestId != "" {
 		tracked.RequestID = completed.RequestId
 	}
+	if completed.Result != nil {
+		tracked.ResultSummary = completed.Result.Summary
+	} else {
+		tracked.ResultSummary = ""
+	}
 	if completed.Success {
 		tracked.State = strings.ToLower(plugin_pb.JobState_JOB_STATE_SUCCEEDED.String())
 		tracked.Progress = 100
 		tracked.Stage = "completed"
-		if completed.Result != nil {
-			tracked.ResultSummary = completed.Result.Summary
-		}
 		tracked.Message = tracked.ResultSummary
 		if tracked.Message == "" {
 			tracked.Message = "completed"
@@ -1159,7 +1161,7 @@ func (r *Plugin) trackExecutionCompletion(completed *plugin_pb.JobCompleted) *Tr
 		detail.Message = clone.Message
 		detail.ErrorMessage = clone.ErrorMessage
 		detail.ResultSummary = clone.ResultSummary
-		if completed.Success && completed.Result != nil {
+		if completed.Result != nil {
 			detail.ResultOutputValues = configValueMapToPlain(completed.Result.OutputValues)
 		} else {
 			detail.ResultOutputValues = nil

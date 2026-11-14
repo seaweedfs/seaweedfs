@@ -594,6 +594,95 @@ func TestBuildJobDetailIncludesActivitiesAndRunRecord(t *testing.T) {
 	}
 }
 
+func TestBuildJobDetailKeepsFailedJobResult(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{DataDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	pluginSvc.trackExecutionStart("req-failed", "worker-f", &plugin_pb.JobSpec{
+		JobId:   "job-failed",
+		JobType: "s3_lifecycle",
+	}, 1)
+	pluginSvc.handleJobCompleted(&plugin_pb.JobCompleted{
+		RequestId:    "req-failed",
+		JobId:        "job-failed",
+		JobType:      "s3_lifecycle",
+		Success:      false,
+		ErrorMessage: "walk bad-a: filer down",
+		Result: &plugin_pb.JobResult{
+			Summary: "pass failed",
+			OutputValues: map[string]*plugin_pb.ConfigValue{
+				"buckets_failed": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 2}},
+			},
+		},
+		CompletedAt: timestamppb.Now(),
+	})
+	pluginSvc.Shutdown()
+
+	detail, found, err := pluginSvc.BuildJobDetail("job-failed", 100, 5)
+	if err != nil {
+		t.Fatalf("BuildJobDetail error: %v", err)
+	}
+	if !found || detail == nil || detail.Job == nil {
+		t.Fatalf("expected job detail")
+	}
+	if detail.Job.State != "job_state_failed" || detail.Job.ErrorMessage != "walk bad-a: filer down" {
+		t.Fatalf("expected the failure to be kept, got state=%q error=%q", detail.Job.State, detail.Job.ErrorMessage)
+	}
+	if detail.Job.ResultSummary != "pass failed" {
+		t.Fatalf("expected the failed job's result summary, got %q", detail.Job.ResultSummary)
+	}
+	if detail.Job.ResultOutputValues["buckets_failed"] == nil {
+		t.Fatalf("expected the failed job's result output values, got %+v", detail.Job.ResultOutputValues)
+	}
+}
+
+func TestRetryWithoutResultDropsFailedAttemptSummary(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{DataDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	job := &plugin_pb.JobSpec{JobId: "job-retry", JobType: "s3_lifecycle"}
+	pluginSvc.trackExecutionStart("req-retry", "worker-r", job, 1)
+	pluginSvc.handleJobCompleted(&plugin_pb.JobCompleted{
+		RequestId:    "req-retry",
+		JobId:        "job-retry",
+		JobType:      "s3_lifecycle",
+		Success:      false,
+		ErrorMessage: "walk bad-a: filer down",
+		Result:       &plugin_pb.JobResult{Summary: "pass failed"},
+		CompletedAt:  timestamppb.Now(),
+	})
+	pluginSvc.trackExecutionStart("req-retry", "worker-r", job, 2)
+	pluginSvc.handleJobCompleted(&plugin_pb.JobCompleted{
+		RequestId:   "req-retry",
+		JobId:       "job-retry",
+		JobType:     "s3_lifecycle",
+		Success:     true,
+		CompletedAt: timestamppb.Now(),
+	})
+	pluginSvc.Shutdown()
+
+	detail, found, err := pluginSvc.BuildJobDetail("job-retry", 100, 5)
+	if err != nil {
+		t.Fatalf("BuildJobDetail error: %v", err)
+	}
+	if !found || detail == nil || detail.Job == nil {
+		t.Fatalf("expected job detail")
+	}
+	if detail.Job.ResultSummary != "" || detail.Job.Message != "completed" {
+		t.Fatalf("expected the failed attempt's summary to be dropped, got summary=%q message=%q", detail.Job.ResultSummary, detail.Job.Message)
+	}
+}
+
 func TestBuildJobDetailLoadsFromDiskWhenMemoryCleared(t *testing.T) {
 	t.Parallel()
 
@@ -702,6 +791,64 @@ func TestExpireStaleJobsCancelsTheJobOnItsWorker(t *testing.T) {
 		t.Fatalf("expected the stale job to be failed, got %+v", got)
 	}
 	expectCancelFor(t, session, "req-stale")
+}
+
+// A job older than the stale limit stays active while its worker reports
+// progress for it; the worker's heartbeat alone does not keep it alive.
+func TestExpireStaleJobsKeepsAJobThatReportsProgress(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	const workerID = "worker-1"
+	session := &streamSession{workerID: workerID, outgoing: make(chan *plugin_pb.AdminToWorkerMessage, 8), done: make(chan struct{})}
+	pluginSvc.putSession(session)
+	pluginSvc.handleWorkerMessage(session, &plugin_pb.WorkerToAdminMessage{
+		Body: &plugin_pb.WorkerToAdminMessage_Hello{Hello: &plugin_pb.WorkerHello{WorkerId: workerID}},
+	})
+	pluginSvc.trackExecutionStart("req-working", workerID, &plugin_pb.JobSpec{JobId: "job-working", JobType: "s3_lifecycle"}, 1)
+	pluginSvc.trackExecutionStart("req-stalled", workerID, &plugin_pb.JobSpec{JobId: "job-stalled", JobType: "s3_lifecycle"}, 1)
+
+	startedAt := time.Now().UTC().Add(-defaultStaleActiveJobTimeout - time.Hour)
+	pluginSvc.jobsMu.Lock()
+	for _, job := range pluginSvc.jobs {
+		job.CreatedAt = timeToPtr(startedAt)
+		job.UpdatedAt = timeToPtr(startedAt)
+	}
+	pluginSvc.jobsMu.Unlock()
+
+	pluginSvc.handleWorkerMessage(session, &plugin_pb.WorkerToAdminMessage{
+		Body: &plugin_pb.WorkerToAdminMessage_Heartbeat{Heartbeat: &plugin_pb.WorkerHeartbeat{
+			WorkerId:            workerID,
+			ExecutionSlotsTotal: 4,
+			ExecutionSlotsUsed:  2,
+			RunningWork: []*plugin_pb.RunningWork{
+				{WorkId: "job-working", Kind: plugin_pb.WorkKind_WORK_KIND_EXECUTION, JobType: "s3_lifecycle"},
+				{WorkId: "job-stalled", Kind: plugin_pb.WorkKind_WORK_KIND_EXECUTION, JobType: "s3_lifecycle"},
+			},
+		}},
+	})
+	pluginSvc.handleWorkerMessage(session, &plugin_pb.WorkerToAdminMessage{
+		Body: &plugin_pb.WorkerToAdminMessage_JobProgressUpdate{JobProgressUpdate: &plugin_pb.JobProgressUpdate{
+			JobId: "job-working", JobType: "s3_lifecycle", RequestId: "req-working",
+			State: plugin_pb.JobState_JOB_STATE_RUNNING, Stage: "walk", Message: "entries=10",
+		}},
+	})
+
+	if n := pluginSvc.expireStaleJobs(time.Now().UTC()); n != 1 {
+		t.Fatalf("expired %d jobs, want only the stalled one", n)
+	}
+	if got, _ := pluginSvc.GetTrackedJob("job-working"); got == nil || got.State != "job_state_running" {
+		t.Fatalf("expected the job reporting progress to stay running, got %+v", got)
+	}
+	if got, _ := pluginSvc.GetTrackedJob("job-stalled"); got == nil || got.State != StateFailed {
+		t.Fatalf("expected the heartbeat-only job to be failed, got %+v", got)
+	}
+	expectCancelFor(t, session, "req-stalled")
 }
 
 func expectNoCancel(t *testing.T, session *streamSession) {

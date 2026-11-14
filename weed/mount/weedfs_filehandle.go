@@ -70,7 +70,7 @@ func (wfs *WFS) AcquireHandle(ctx context.Context, inode uint64, flags, uid, gid
 		}
 		// need to AcquireFileHandle again to ensure correct handle counter
 		var existed, draining bool
-		fileHandle, openFh, existed, draining = wfs.fhMap.AcquireFileHandle(wfs, inode, entry, entryVersionTsNs.tsNs, entryVersionTsNs.signature)
+		fileHandle, openFh, existed, draining = wfs.fhMap.AcquireFileHandle(wfs, inode, entry, entryVersionTsNs.tsNs, entryVersionTsNs.signature, flags&syscall.O_APPEND != 0)
 		if draining {
 			// A RELEASE slipped between waitForPendingAsyncFlush and this
 			// attach: the handle's last open closed and its deferred flush

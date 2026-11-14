@@ -133,6 +133,8 @@ type Option struct {
 }
 
 type WFS struct {
+	// Metadata-only refusal token, detached at final Forget; no live resources retained.
+	writebackContentErrors sync.Map
 	// https://dl.acm.org/doi/fullHtml/10.1145/3310148
 	// follow https://github.com/hanwen/go-fuse/blob/master/fuse/api.go
 	fuse.RawFileSystem
