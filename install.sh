@@ -192,15 +192,16 @@ worker_asset_name() {
 vector_asset_name() {
     local os="$1" arch="$2"
     if [ "$os" = "windows" ]; then
-        echo "weed-vector_${os}_${arch}.zip"
+        echo "weed-vector${EDITION}_${os}_${arch}.zip"
     else
-        echo "weed-vector_${os}_${arch}.tar.gz"
+        echo "weed-vector${EDITION}_${os}_${arch}.tar.gz"
     fi
 }
 
 vector_platform_supported() {
     case "$1/$2" in
-        linux/amd64|linux/arm64|darwin/amd64|darwin/arm64|windows/amd64) return 0 ;;
+        linux/amd64|linux/arm64) return 0 ;;
+        darwin/amd64|darwin/arm64|windows/amd64) [ "$ENTERPRISE" != true ] ;;
         *) return 1 ;;
     esac
 }
