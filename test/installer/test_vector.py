@@ -86,6 +86,19 @@ class EnterpriseInstallerTest(unittest.TestCase):
             'linux_amd64.tar.gz', 'windows_amd64.zip', 'windows_amd64_large_disk.zip',
         ])
 
+    def test_windows_weed_keeps_exe(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            archive = directory / 'weed.zip'
+            with zipfile.ZipFile(archive, 'w') as output:
+                output.writestr('weed.exe', b'weed fixture')
+            dest = directory / 'bin'
+            result = self.shell('download() { cp "$ARCHIVE" "$2"; }; VERSION=test; '
+                                'INSTALL_DIR="$DEST"; install_component weed windows amd64',
+                                ARCHIVE=archive.as_posix(), DEST=dest.as_posix())
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual((dest / 'weed.exe').read_bytes(), b'weed fixture')
+
     def test_rust_binaries_linux_only(self):
         for system, arch, supported in [
             ('linux', 'amd64', True), ('linux', 'arm64', True),

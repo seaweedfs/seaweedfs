@@ -238,8 +238,12 @@ install_component() {
             fi
 
             chmod +x "$weed_bin"
-            install_binary "$weed_bin" "weed"
-            ok "Installed weed to ${INSTALL_DIR}/weed"
+            local dest_name="weed"
+            if [ "$os" = "windows" ]; then
+                dest_name="weed.exe"
+            fi
+            install_binary "$weed_bin" "$dest_name"
+            ok "Installed weed to ${INSTALL_DIR}/${dest_name}"
             ;;
 
         volume-rust)
