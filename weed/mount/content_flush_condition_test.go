@@ -226,7 +226,7 @@ func TestContentFlushRefusalWithStalledLookup(t *testing.T) {
 	fh.dirtyMetadata = true
 	fh.RememberPath(util.FullPath("/dir/file"))
 	start := time.Now()
-	code := wfs.doFlush(context.Background(), fh, 1000, 20, false)
+	code := wfs.doFlush(context.Background(), fh, 1000, 20, false, 0)
 	elapsed := time.Since(start)
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
