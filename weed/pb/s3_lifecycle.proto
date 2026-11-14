@@ -41,6 +41,9 @@ enum ActionKind {
 // to the appropriate internal helper.
 service SeaweedS3LifecycleInternal {
   rpc LifecycleDelete(LifecycleDeleteRequest) returns (LifecycleDeleteResponse);
+  // LifecycleReady runs LifecycleDelete's authorization and nothing else,
+  // so a worker can check a front before it starts a pass.
+  rpc LifecycleReady(LifecycleReadyRequest) returns (LifecycleReadyResponse);
 }
 
 // LifecycleDeleteOutcome captures every per-event verdict the worker needs.
@@ -92,6 +95,10 @@ message LifecycleDeleteResponse {
   // unavailable". Echoed into BlockerRecord.last_error on FATAL.
   string reason = 2;
 }
+
+message LifecycleReadyRequest {}
+
+message LifecycleReadyResponse {}
 
 // MessagePosition mirrors weed/util/log_buffer.MessagePosition for durable
 // storage. ts_ns + offset uniquely identifies a position within a per-filer
