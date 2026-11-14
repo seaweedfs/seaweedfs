@@ -275,7 +275,7 @@ func TestAttributeOnlyOpsPreserveAcknowledgedAppends(t *testing.T) {
 						t.Fatalf("reply uid %d, want the local id 1000", out.Attr.Uid)
 					}
 					if open {
-						if code := wfs.doFlush(context.Background(), fh, 1000, 20, false); code != fuse.OK {
+						if code := wfs.doFlush(context.Background(), fh, 1000, 20, false, 0); code != fuse.OK {
 							t.Fatalf("flush after attribute syscall: %v", code)
 						}
 					}
@@ -395,7 +395,7 @@ func TestAcknowledgedAttributeSurvivesWriteDuringRPC(t *testing.T) {
 			case <-time.After(10 * time.Second):
 				t.Fatal("attribute RPC did not finish")
 			}
-			if code := wfs.doFlush(context.Background(), fh, 1000, 20, false); code != fuse.OK {
+			if code := wfs.doFlush(context.Background(), fh, 1000, 20, false, 0); code != fuse.OK {
 				t.Fatalf("flush: %v", code)
 			}
 			fake.mu.Lock()
@@ -506,7 +506,7 @@ func TestAttributePublicationBeforeResponse(t *testing.T) {
 				}
 				flushDone := make(chan fuse.Status, 1)
 				flushSettled, publicationEscaped := false, false
-				flush := func() { flushDone <- wfs.doFlush(context.Background(), fh, 1000, 20, false) }
+				flush := func() { flushDone <- wfs.doFlush(context.Background(), fh, 1000, 20, false, 0) }
 				// Probe ownership while the committed response is held. On the old caller
 				// no publication boundary exists, so force its whole-entry flush to commit
 				// BEFORE releasing the response. With coordination, queue that same flush

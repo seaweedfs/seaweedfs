@@ -125,7 +125,7 @@ func TestContentFlushPreservesPeerChunks(t *testing.T) {
 			fh.dirtyMetadata = true
 			fh.RememberPath(util.FullPath("/dir/file"))
 			before := proto.Clone(current)
-			code := wfs.doFlush(context.Background(), fh, 1000, 20, false)
+			code := wfs.doFlush(context.Background(), fh, 1000, 20, false, 0)
 			fake.mu.Lock()
 			defer fake.mu.Unlock()
 			if wantError {
@@ -185,7 +185,7 @@ func TestContentFlushRepeatsOnOneHandle(t *testing.T) {
 			e.Attributes.FileSize = i
 		})
 		fh.dirtyMetadata = true
-		if code := wfs.doFlush(context.Background(), fh, 1000, 20, false); code != fuse.OK {
+		if code := wfs.doFlush(context.Background(), fh, 1000, 20, false, 0); code != fuse.OK {
 			t.Fatalf("flush %d: %v", i-1, code)
 		}
 	}
@@ -226,7 +226,7 @@ func TestContentFlushRefusalWithStalledLookup(t *testing.T) {
 	fh.dirtyMetadata = true
 	fh.RememberPath(util.FullPath("/dir/file"))
 	start := time.Now()
-	code := wfs.doFlush(context.Background(), fh, 1000, 20, false)
+	code := wfs.doFlush(context.Background(), fh, 1000, 20, false, 0)
 	elapsed := time.Since(start)
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
@@ -298,7 +298,7 @@ func TestContentFlushMergeThenRepeat(t *testing.T) {
 	fh.RememberPath(util.FullPath("/dir/file"))
 	for i := uint64(4); i <= 5; i++ {
 		fh.dirtyMetadata = true
-		if code := wfs.doFlush(context.Background(), fh, 1000, 20, false); code != fuse.OK {
+		if code := wfs.doFlush(context.Background(), fh, 1000, 20, false, 0); code != fuse.OK {
 			t.Fatalf("flush before chunk %d: %v", i, code)
 		}
 		fh.UpdateEntry(func(e *filer_pb.Entry) {
@@ -307,7 +307,7 @@ func TestContentFlushMergeThenRepeat(t *testing.T) {
 		})
 	}
 	fh.dirtyMetadata = true
-	if code := wfs.doFlush(context.Background(), fh, 1000, 20, false); code != fuse.OK {
+	if code := wfs.doFlush(context.Background(), fh, 1000, 20, false, 0); code != fuse.OK {
 		t.Fatal(code)
 	}
 	fake.mu.Lock()
@@ -473,7 +473,7 @@ func TestContentFlushRepublishesUnchangedEntry(t *testing.T) {
 			fh.baseEntry.Store(observed)
 			fh.dirtyMetadata = true
 			fh.RememberPath(path)
-			if code := wfs.doFlush(context.Background(), fh, 1000, 20, false); code != fuse.OK {
+			if code := wfs.doFlush(context.Background(), fh, 1000, 20, false, 0); code != fuse.OK {
 				t.Fatal(code)
 			}
 			fake.mu.Lock()

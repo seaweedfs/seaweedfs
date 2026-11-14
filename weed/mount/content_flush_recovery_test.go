@@ -141,7 +141,7 @@ func TestContentAsyncConflictKeepsRecoveryRecord(t *testing.T) {
 func TestContentRecoveryUsesFailedRequestNotLaterHandle(t *testing.T) {
 	w, fh, _ := committedContentHandle(t, true)
 	w.option.CacheDirForWrite = t.TempDir()
-	err := w.flushMetadataToFiler(context.Background(), fh, "/dir", "file", 1000, 20)
+	err := w.flushMetadataToFiler(context.Background(), fh, "/dir", "file", 1000, 20, nil)
 	if err == nil {
 		t.Fatal("expected refusal")
 	}
@@ -229,7 +229,7 @@ func TestContentRecoverySkipsAnotherUsersDirectory(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(w.option.CacheDirForWrite, "failed-metadata"), 0500); err != nil {
 		t.Fatal(err)
 	}
-	err := w.flushMetadataToFiler(context.Background(), fh, "/dir", "file", 1000, 20)
+	err := w.flushMetadataToFiler(context.Background(), fh, "/dir", "file", 1000, 20, nil)
 	if err == nil {
 		t.Fatal("expected refusal")
 	}
