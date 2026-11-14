@@ -15,7 +15,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// A worker that registers a moment after a failed lookup must surface inside
+// A server that registers a moment after a failed lookup must surface inside
 // a caller's retry budget: the no-client recheck window is much shorter than
 // the live-client membership refresh.
 func TestVectorDiscoveryRechecksRegistration(t *testing.T) {
@@ -28,10 +28,10 @@ func TestVectorDiscoveryRechecksRegistration(t *testing.T) {
 	}
 
 	if _, err := d.cli(t.Context()); status.Code(err) != codes.Unavailable {
-		t.Fatalf("no registered worker: expected Unavailable, got %v", err)
+		t.Fatalf("no registered server: expected Unavailable, got %v", err)
 	}
 	if _, err := d.cli(t.Context()); status.Code(err) != codes.Unavailable {
-		t.Fatalf("no registered worker: expected Unavailable, got %v", err)
+		t.Fatalf("no registered server: expected Unavailable, got %v", err)
 	}
 	if got := atomic.LoadInt32(&calls); got != 1 {
 		t.Fatalf("lookup inside the recheck window hit master again: %d lookups", got)
@@ -48,7 +48,7 @@ func TestVectorDiscoveryRechecksRegistration(t *testing.T) {
 	d.grpcDialOption = grpc.WithTransportCredentials(insecure.NewCredentials())
 
 	if _, err := d.cli(t.Context()); err != nil {
-		t.Fatalf("worker registered: expected a client, got %v", err)
+		t.Fatalf("server registered: expected a client, got %v", err)
 	}
 	if got := atomic.LoadInt32(&calls); got != 2 {
 		t.Fatalf("expired recheck window did not rediscover: %d lookups", got)
@@ -79,10 +79,10 @@ func TestVectorDiscoveryThrottlesFromLookupEnd(t *testing.T) {
 	}
 
 	if _, err := d.cli(t.Context()); status.Code(err) != codes.Unavailable {
-		t.Fatalf("no registered worker: expected Unavailable, got %v", err)
+		t.Fatalf("no registered server: expected Unavailable, got %v", err)
 	}
 	if _, err := d.cli(t.Context()); status.Code(err) != codes.Unavailable {
-		t.Fatalf("no registered worker: expected Unavailable, got %v", err)
+		t.Fatalf("no registered server: expected Unavailable, got %v", err)
 	}
 	if got := atomic.LoadInt32(&calls); got != 1 {
 		t.Fatalf("slow lookup was repeated right away: %d lookups", got)
@@ -97,7 +97,7 @@ func TestVectorDiscoveryThrottlesFromLookupEnd(t *testing.T) {
 		d.nextResolve = time.Time{}
 		d.mu.Unlock()
 		if _, err := d.cli(t.Context()); err != nil {
-			t.Fatalf("worker registered: expected a client, got %v", err)
+			t.Fatalf("server registered: expected a client, got %v", err)
 		}
 		waitResolved(d)
 	}
@@ -105,7 +105,7 @@ func TestVectorDiscoveryThrottlesFromLookupEnd(t *testing.T) {
 	left := time.Until(d.nextResolve)
 	d.mu.Unlock()
 	if left < vectorResolveInterval-lookup/2 {
-		t.Fatalf("refresh of a live worker is due in %v, want ~%v", left, vectorResolveInterval)
+		t.Fatalf("refresh of a live server is due in %v, want ~%v", left, vectorResolveInterval)
 	}
 }
 
@@ -119,7 +119,7 @@ func waitResolved(d *vectorDiscovery) {
 }
 
 // A lookup stuck on an unreachable master must not hold up requests that
-// already have a live worker, and concurrent callers start only one lookup.
+// already have a live server, and concurrent callers start only one lookup.
 func TestVectorDiscoveryLookupDoesNotBlockCachedClient(t *testing.T) {
 	d := &vectorDiscovery{
 		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
@@ -129,7 +129,7 @@ func TestVectorDiscoveryLookupDoesNotBlockCachedClient(t *testing.T) {
 	}
 	cached, err := d.cli(t.Context())
 	if err != nil {
-		t.Fatalf("worker registered: expected a client, got %v", err)
+		t.Fatalf("server registered: expected a client, got %v", err)
 	}
 
 	var calls int32
@@ -179,7 +179,7 @@ func TestVectorDiscoveryLookupDoesNotBlockCachedClient(t *testing.T) {
 	}
 }
 
-// Callers with no worker wait for the in-flight lookup and share its result
+// Callers with no server wait for the in-flight lookup and share its result
 // rather than failing while it runs.
 func TestVectorDiscoveryUncachedCallersShareLookup(t *testing.T) {
 	var calls int32
@@ -212,7 +212,7 @@ func TestVectorDiscoveryUncachedCallersShareLookup(t *testing.T) {
 	}
 }
 
-// A failed dial to a new worker must leave the cached connection open.
+// A failed dial to a new server must leave the cached connection open.
 func TestVectorDiscoveryKeepsConnOnDialError(t *testing.T) {
 	d := &vectorDiscovery{
 		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
@@ -222,7 +222,7 @@ func TestVectorDiscoveryKeepsConnOnDialError(t *testing.T) {
 	}
 	cached, err := d.cli(t.Context())
 	if err != nil {
-		t.Fatalf("worker registered: expected a client, got %v", err)
+		t.Fatalf("server registered: expected a client, got %v", err)
 	}
 
 	// Without transport credentials the dial fails synchronously.
@@ -287,7 +287,7 @@ func TestVectorDiscoveryWaitingRespectsCancellation(t *testing.T) {
 	waitResolved(d)
 }
 
-func TestVectorDiscoveryRetriesAnotherWorker(t *testing.T) {
+func TestVectorDiscoveryRetriesAnotherServer(t *testing.T) {
 	d := &vectorDiscovery{grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()), discover: func([]pb.ServerAddress, grpc.DialOption) []string {
 		return []string{"127.0.0.1:9301", "127.0.0.1:9302"}
 	}}
@@ -302,8 +302,8 @@ func TestVectorDiscoveryRetriesAnotherWorker(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer d.release(second)
-	if d.worker != "127.0.0.1:9302" {
-		t.Fatalf("retry selected failed worker: %s", d.worker)
+	if d.server != "127.0.0.1:9302" {
+		t.Fatalf("retry selected failed server: %s", d.server)
 	}
 }
 

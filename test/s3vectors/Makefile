@@ -1,10 +1,7 @@
 WEED := ./weed
 VEC := ./weed-vector
 CLI := ./weed-vector-cli
-WORKER_MANIFEST := ../../rust/sw-vector-distributed/Cargo.toml
-ifneq ($(wildcard $(WORKER_MANIFEST)),)
-WORKER := ./weed-vector-worker
-endif
+ENGINE_MANIFEST := ../../rust/sw-vector-distributed/Cargo.toml
 VOLUME := ./weed-volume
 LANCE_WORKER := ./weed-worker
 CARGO_PROFILE ?= release
@@ -21,7 +18,11 @@ $(WEED): FORCE
 	go build -o $(WEED) ../../weed
 
 $(VEC): FORCE
+ifneq ($(wildcard $(ENGINE_MANIFEST)),)
+	cargo build --locked --profile $(CARGO_PROFILE) --manifest-path ../../rust/Cargo.toml -p sw-vector-distributed --bin weed-vector
+else
 	cd ../../seaweed-vector && cargo build --locked --profile $(CARGO_PROFILE) -p weed-vector-server
+endif
 	cp $(CARGO_OUTPUT)/weed-vector $(VEC)
 
 $(CLI): FORCE
@@ -32,19 +33,13 @@ $(LANCE_WORKER): FORCE
 	cargo build --locked --profile $(CARGO_PROFILE) --manifest-path ../../seaweed-worker/Cargo.toml -p weed-lance-worker --bin weed-worker
 	cp $(CARGO_OUTPUT)/weed-worker $(LANCE_WORKER)
 
-ifneq ($(WORKER),)
-$(WORKER): $(VEC) FORCE
-	cargo build --locked --profile $(CARGO_PROFILE) --manifest-path ../../rust/Cargo.toml -p sw-vector-distributed --bin weed-vector
-	cp $(CARGO_OUTPUT)/weed-vector $(WORKER)
-endif
-
-$(VOLUME): $(VEC) $(WORKER) FORCE
+$(VOLUME): $(VEC) FORCE
 	cargo build --locked --profile $(CARGO_PROFILE) --manifest-path ../../seaweed-volume/Cargo.toml --bin weed-volume
 	cp $(CARGO_OUTPUT)/weed-volume $(VOLUME)
 
 FORCE:
 
-build: $(WEED) $(VEC) $(WORKER) $(VOLUME)
+build: $(WEED) $(VEC) $(VOLUME)
 ifneq ($(VECTOR_WORKER),)
 build: $(CLI) $(LANCE_WORKER)
 endif
@@ -56,4 +51,4 @@ perf: build $(CLI)
 	./run_perf.sh
 
 clean:
-	rm -f $(WEED) $(VEC) $(CLI) $(LANCE_WORKER) ./weed-vector-worker $(VOLUME)
+	rm -f $(WEED) $(VEC) $(CLI) $(LANCE_WORKER) $(VOLUME)

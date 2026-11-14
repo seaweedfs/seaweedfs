@@ -388,6 +388,16 @@ func (h *ClusterHandlers) ShowClusterS3Servers(w http.ResponseWriter, r *http.Re
 	}
 }
 
+// ShowClusterVectorServers renders the vector engines registered with the master
+func (h *ClusterHandlers) ShowClusterVectorServers(w http.ResponseWriter, r *http.Request) {
+	data := h.adminServer.GetVectorOperationsData(r.Context())
+	w.Header().Set("Content-Type", "text/html")
+	viewCtx := layout.NewViewContext(r, usernameOrDefault(r), dash.CSRFTokenFromContext(r.Context()))
+	if err := layout.Layout(viewCtx, app.ClusterVectorServers(data)).Render(r.Context(), w); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "Failed to render template: "+err.Error())
+	}
+}
+
 // GetClusterTopology returns the cluster topology as JSON
 func (h *ClusterHandlers) GetClusterTopology(w http.ResponseWriter, r *http.Request) {
 	topology, err := h.adminServer.GetClusterTopology()

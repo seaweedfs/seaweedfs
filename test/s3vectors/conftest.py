@@ -242,7 +242,6 @@ def run_cluster(param, tmp_path_factory, identities):
     # VECTOR_WORKER=1 adds the admin server and the Lance maintenance worker,
     # for the tests that build vector indexes through a plugin job.
     lance_worker = binary("LANCE_WORKER_BINARY", "weed-worker") if os.environ.get("VECTOR_WORKER") else None
-    worker = binary("VECTOR_WORKER_BINARY", "weed-vector-worker") if mode == "distributed" else None
     volume_binary = binary("RUST_VOLUME_SERVER_BINARY", "weed-volume") if volume == "rust" else weed
     processes = {}
     with contextlib.ExitStack() as stack:
@@ -252,13 +251,13 @@ def run_cluster(param, tmp_path_factory, identities):
                 sock = reservations.enter_context(socket.socket())
                 sock.bind(("127.0.0.1", 0))
                 ports.append(sock.getsockname()[1])
-        (master, master_grpc, vol, vol_grpc, filer, filer_grpc, s3, s3_grpc, lance, vector, worker1, worker2,
+        (master, master_grpc, vol, vol_grpc, filer, filer_grpc, s3, s3_grpc, lance, vector, engine1, engine2,
          admin, admin_grpc, vector_metrics) = ports
         master_addr = f"127.0.0.1:{master}.{master_grpc}"
         filer_addr = f"127.0.0.1:{filer}.{filer_grpc}"
 
         # VECTOR_READ_JWT=1 makes volume reads need a JWT; every weed process
-        # and the workers sign with the key.
+        # and the engines sign with the key.
         read_jwt_key = os.environ.get("VECTOR_READ_JWT") and uuid.uuid4().hex
         # The cluster's filer signing key: the gateway's catalog authenticates
         # the worker and the CLI by the token they derive from it.
@@ -346,18 +345,19 @@ def run_cluster(param, tmp_path_factory, identities):
             "vector engine never registered with the master",
         )
 
-        if worker:
-            for i, port in enumerate((worker1, worker2)):
-                start(f"worker-{i}", [worker, "--masters", master_addr, "--listen", f"127.0.0.1:{port}"])
-                wait_for(lambda: listening(port), processes, "vector worker not ready")
+        # Distributed mode needs the Enterprise weed-vector, whose engines all
+        # join the masters' placement controller.
+        if mode == "distributed":
+            for i, port in enumerate((engine1, engine2), 1):
+                start(f"vector-{i}", [engine, "--masters", master_addr, "--listen", f"127.0.0.1:{port}",
+                                      "--filer-group", filer_group, "--state-dir", str(directory / f"vector-{i}"),
+                                      "--capacity-bytes", str(1 << 30), "--drain-timeout", "5s"])
+                wait_for(lambda: listening(port), processes, f"vector-{i} not ready")
             wait_for(
-                lambda: all(
-                    f"S3 Vectors: discovered search worker 127.0.0.1:{port}"
-                    in (directory / "s3.log").read_text()
-                    for port in (worker1, worker2)
-                ),
+                lambda: all(f"joined at 127.0.0.1:{port}" in (directory / "master.log").read_text()
+                            for port in (engine1, engine2)),
                 processes,
-                "gateway did not discover both search workers",
+                "the engines never joined the placement controller",
             )
         admin_url = None
         if lance_worker:
