@@ -2,6 +2,7 @@ package page_writer
 
 import (
 	"fmt"
+	"io"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -164,6 +165,9 @@ func (up *UploadPipeline) SaveDataAt(p []byte, off int64, isSequential bool, tsN
 	//}
 	n = pageChunk.WriteDataAt(p, off, tsNs)
 	up.maybeMoveToSealed(pageChunk, logicChunkIndex)
+	if n < len(p) {
+		err = fmt.Errorf("chunk %d stored %d of %d bytes: %w", logicChunkIndex, n, len(p), io.ErrShortWrite)
+	}
 
 	return
 }

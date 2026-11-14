@@ -38,3 +38,19 @@ func TestSaveDataAtFailsWhenSwapFileCannotBeCreated(t *testing.T) {
 		})
 	}
 }
+
+// A swap chunk whose file write fails stores nothing, so SaveDataAt must
+// report the short write instead of claiming the bytes.
+func TestSaveDataAtReportsFailedSwapWrite(t *testing.T) {
+	up := NewUploadPipeline(nil, 1024, nil, 16, t.TempDir(), nil)
+	defer up.Shutdown()
+	if n, err := up.SaveDataAt([]byte("data"), 0, false, 0); err != nil || n != 4 {
+		t.Fatalf("first write = %d, %v", n, err)
+	}
+	if err := up.swapFile.file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := up.SaveDataAt([]byte("more"), 4, false, 0); err == nil || n != 0 {
+		t.Fatalf("write through a closed swap file = %d, %v; want 0 and an error", n, err)
+	}
+}
