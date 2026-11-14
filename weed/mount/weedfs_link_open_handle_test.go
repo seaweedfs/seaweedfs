@@ -193,7 +193,7 @@ func appendAndFlush(t *testing.T, wfs *WFS, fh *FileHandle, key uint64) fuse.Sta
 		e.Attributes.FileSize = uint64(len(e.Chunks)) * 100
 	})
 	fh.dirtyMetadata = true
-	return wfs.doFlush(context.Background(), fh, 1000, 20, false)
+	return wfs.doFlush(context.Background(), fh, 1000, 20, false, 0)
 }
 
 // queueClose closes fh the way a writeback mount does. Its flush starts once

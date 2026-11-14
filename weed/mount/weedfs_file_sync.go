@@ -17,11 +17,14 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// metadataFlushTimeout bounds a close()/fsync metadata flush so an overwhelmed
-// filer cannot wedge the calling process forever. It is deliberately generous:
-// a healthy CreateEntry completes in well under a second, so this only fires on
-// a genuinely stuck filer, never on a normal flush.
-const metadataFlushTimeout = 30 * time.Second
+// metadataFlushTimeout bounds the metadata commit of a close()/fsync flush
+// (CreateEntry and its retries) so an overwhelmed filer cannot wedge the
+// calling process forever. It is deliberately generous: a healthy CreateEntry
+// completes in well under a second, so this only fires on a genuinely stuck
+// filer, never on a normal flush. It does not cover the data upload that comes
+// first, which has its own timeouts and retries. A variable so tests can
+// shorten it.
+var metadataFlushTimeout = 30 * time.Second
 
 /**
  * Flush method
@@ -79,17 +82,15 @@ func (wfs *WFS) Flush(cancel <-chan struct{}, in *fuse.FlushIn) fuse.Status {
 	hasPosixLocks := wfs.hasPosixOwner(in.NodeId, in.LockOwner)
 	allowAsync := !hasPosixLocks
 
-	// Bound the flush with a deadline instead of tying it to the FUSE cancel
-	// channel. A FUSE interrupt is not a process kill: Go's async preemption
-	// (SIGURG) makes a close() under load emit an interrupt on nearly every
-	// flush (see go-fuse RawFileSystem docs), so cancelling the in-flight
+	// Bound the metadata commit with a deadline instead of tying it to the FUSE
+	// cancel channel. A FUSE interrupt is not a process kill: Go's async
+	// preemption (SIGURG) makes a close() under load emit an interrupt on nearly
+	// every flush (see go-fuse RawFileSystem docs), so cancelling the in-flight
 	// metadata CreateEntry on that interrupt turned healthy concurrent close()s
 	// into EIO. The deadline still keeps close() from hanging forever against an
-	// overwhelmed filer without failing benign flushes.
-	ctx, cancelFunc := context.WithTimeout(context.Background(), metadataFlushTimeout)
-	defer cancelFunc()
-
-	status := wfs.doFlush(ctx, fh, in.Uid, in.Gid, allowAsync)
+	// overwhelmed filer without failing benign flushes. doFlush starts it once
+	// the data is uploaded, so a slow upload cannot use it up.
+	status := wfs.doFlush(context.Background(), fh, in.Uid, in.Gid, allowAsync, metadataFlushTimeout)
 	if in.LockOwner != 0 && wfs.releasePosixOwner(in.NodeId, in.LockOwner) {
 		wfs.forgetLockOwner(in.NodeId, in.LockOwner)
 	}
@@ -122,15 +123,17 @@ func (wfs *WFS) Fsync(cancel <-chan struct{}, in *fuse.FsyncIn) (code fuse.Statu
 		return fuse.ENOENT
 	}
 
-	ctx, cancelFunc := context.WithTimeout(context.Background(), metadataFlushTimeout)
-	defer cancelFunc()
-
 	// Fsync is an explicit sync request — always flush synchronously
-	return wfs.doFlush(ctx, fh, in.Uid, in.Gid, false)
+	return wfs.doFlush(context.Background(), fh, in.Uid, in.Gid, false, metadataFlushTimeout)
 
 }
 
-func (wfs *WFS) doFlush(ctx context.Context, fh *FileHandle, uid, gid uint32, allowAsync bool) fuse.Status {
+// doFlush uploads the handle's dirty data, then commits its metadata to the
+// filer. metadataTimeout bounds the commit alone (CreateEntry and its retries)
+// and starts once the data is uploaded; 0 sets no overall bound, leaving only
+// the per-call filer timeouts. ctx should carry no deadline of its own: one
+// started before the upload would again spend the commit's budget on it.
+func (wfs *WFS) doFlush(ctx context.Context, fh *FileHandle, uid, gid uint32, allowAsync bool, metadataTimeout time.Duration) fuse.Status {
 
 	// flush works at fh level
 	fileFullPath := fh.FullPath()
@@ -179,6 +182,17 @@ func (wfs *WFS) doFlush(ctx context.Context, fh *FileHandle, uid, gid uint32, al
 
 	if isOverQuota {
 		return fuse.Status(syscall.ENOSPC)
+	}
+
+	// Start the commit deadline only now that the data is stored. Started at
+	// the top of Flush, it also ran through the upload, and a slow assign or a
+	// slow volume server could spend all of it: CreateEntry then failed at once
+	// with "context deadline exceeded", and close() returned EIO for data that
+	// was already written.
+	if metadataTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, metadataTimeout)
+		defer cancel()
 	}
 
 	if err := retryMetadataFlushIf(ctx, func() error {

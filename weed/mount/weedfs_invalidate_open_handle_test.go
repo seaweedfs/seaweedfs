@@ -1326,7 +1326,7 @@ func TestFlushAckCancelsPendingCopyEventAdoption(t *testing.T) {
 
 	// A local flush lands: the ack at 3000 becomes the authoritative base.
 	fh.dirtyMetadata = true
-	if status := wfs.doFlush(context.Background(), fh, 0, 0, false); status != fuse.OK {
+	if status := wfs.doFlush(context.Background(), fh, 0, 0, false, 0); status != fuse.OK {
 		t.Fatalf("doFlush status = %v, want OK", status)
 	}
 
@@ -2283,7 +2283,7 @@ func TestPeerReplacementKeepsDirtyHandle(t *testing.T) {
 				t.Fatalf("base %v moved to the replacement", base)
 			}
 
-			if code := wfs.doFlush(context.Background(), fh, 1000, 20, false); code == fuse.OK {
+			if code := wfs.doFlush(context.Background(), fh, 1000, 20, false, 0); code == fuse.OK {
 				t.Fatal("flush into the replacement acknowledged")
 			}
 			fake.mu.Lock()
