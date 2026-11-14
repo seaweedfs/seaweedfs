@@ -112,6 +112,10 @@ var walkCheckpointInterval atomic.Int64
 // skip buckets walked long ago.
 const walkCheckpointMaxAge = 7 * 24 * time.Hour
 
+// A resumed walk that keeps failing without progress is treated as stuck
+// once its record has not advanced for this long.
+const walkCheckpointStallLimit = 24 * time.Hour
+
 func init() { walkCheckpointInterval.Store(int64(30 * time.Second)) }
 
 // walkProgress tracks one WalkBuckets call against its checkpoint.
@@ -164,6 +168,7 @@ func loadWalkProgress(ctx context.Context, store WalkCheckpointPersister, view *
 			w.cp.Resume[b] = pos
 		}
 	}
+	w.cp.SavedAt = saved.SavedAt
 	w.resumed = len(w.done) > 0 || len(w.cp.Resume) > 0
 	if w.resumed {
 		glog.V(0).Infof("walker: shards %v resume with %d bucket(s) done and %d partly walked", sorted, len(w.done), len(w.cp.Resume))
@@ -227,20 +232,21 @@ func (w *walkProgress) save(ctx context.Context) error {
 }
 
 // finish saves where the walk stopped, or clears the checkpoint when it
-// completed. A resumed walk that failed again without progress is
-// cleared too, so one stuck bucket cannot keep the finished ones from
-// ever being walked again. Any other failed walk without progress has
-// nothing new to record and leaves the file, read or not, alone.
+// completed. A resumed walk that failed without progress on a record
+// older than walkCheckpointStallLimit is cleared too, so one stuck
+// bucket cannot keep the finished ones from ever being walked again.
+// Any other failed walk without progress has nothing new to record and
+// leaves the file, read or not, alone.
 func (w *walkProgress) finish(ctx context.Context, walkErr error) error {
 	if w.store == nil {
 		return nil
 	}
 	reset := walkErr == nil
 	if walkErr != nil && !w.progressed {
-		if ctx.Err() != nil || !w.resumed {
+		if ctx.Err() != nil || !w.resumed || time.Since(w.cp.SavedAt) < walkCheckpointStallLimit {
 			return nil
 		}
-		glog.Warningf("walker: shards %v made no progress on a resumed walk; the next walk starts over", w.cp.Shards)
+		glog.Warningf("walker: shards %v made no progress since %v; the next walk starts over", w.cp.Shards, w.cp.SavedAt.Format(time.RFC3339))
 		reset = true
 	}
 	if reset {
