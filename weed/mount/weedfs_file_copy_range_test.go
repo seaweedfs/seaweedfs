@@ -72,11 +72,13 @@ func TestWholeFileServerCopyCandidate(t *testing.T) {
 	}
 	srcHandle.dirtyMetadata = false
 
-	dstHandle.dirtyContent = true
-	if _, ok := wholeFileServerCopyCandidate(srcHandle, dstHandle, in); ok {
-		t.Fatal("destination with unpublished content should disable whole-file server copy")
+	for _, h := range []*FileHandle{srcHandle, dstHandle} {
+		h.dirtyContent = true
+		if _, ok := wholeFileServerCopyCandidate(srcHandle, dstHandle, in); ok {
+			t.Fatal("handle with unpublished content should disable whole-file server copy")
+		}
+		h.dirtyContent = false
 	}
-	dstHandle.dirtyContent = false
 
 	in.Len = 4
 	if _, ok := wholeFileServerCopyCandidate(srcHandle, dstHandle, in); ok {

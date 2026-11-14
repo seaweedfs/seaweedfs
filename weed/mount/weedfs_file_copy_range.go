@@ -318,8 +318,8 @@ func wholeFileServerCopyCandidate(fhIn, fhOut *FileHandle, in *fuse.CopyFileRang
 		glog.V(4).Infof("server-side copy: skipped (same file handle)")
 		return wholeFileServerCopyRequest{}, false
 	}
-	if fhIn.dirtyMetadata || fhOut.dirtyMetadata || fhOut.dirtyContent {
-		glog.V(4).Infof("server-side copy: skipped (dirty handle: in=%v out=%v content=%v)", fhIn.dirtyMetadata, fhOut.dirtyMetadata, fhOut.dirtyContent)
+	if fhIn.dirtyMetadata || fhIn.dirtyContent || fhOut.dirtyMetadata || fhOut.dirtyContent {
+		glog.V(4).Infof("server-side copy: skipped (dirty handle: in=%v/%v out=%v/%v)", fhIn.dirtyMetadata, fhIn.dirtyContent, fhOut.dirtyMetadata, fhOut.dirtyContent)
 		return wholeFileServerCopyRequest{}, false
 	}
 	if in.OffIn != 0 || in.OffOut != 0 {
