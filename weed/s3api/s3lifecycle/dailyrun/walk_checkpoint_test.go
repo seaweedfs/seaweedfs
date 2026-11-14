@@ -169,6 +169,22 @@ func TestWalkBuckets_CheckpointBoundToViewAndShards(t *testing.T) {
 	assert.Contains(t, h.store.files, CursorDir+"/walk-00-15.json")
 }
 
+func TestWalkBuckets_StuckResumeStartsOver(t *testing.T) {
+	h := newCheckpointHarness(t)
+	view := checkpointTestView(t, "")
+	_, err := h.walk(context.Background(), view, allShards, "b/obj@v2")
+	require.Error(t, err)
+
+	calls, err := h.walk(context.Background(), view, allShards, "b/obj@v2")
+	require.Error(t, err)
+	assert.Equal(t, []string{"b/obj@v3", "b/obj@v2"}, calls)
+	assert.Empty(t, h.saved(allShards).Done, "a resume without progress is dropped")
+
+	calls, err = h.walk(context.Background(), view, allShards, "b/obj@v2")
+	require.Error(t, err)
+	assert.Equal(t, fullWalk[:6], calls[:6], "so the finished buckets get walked again")
+}
+
 func TestWalkBuckets_CanceledResumeKeepsCheckpoint(t *testing.T) {
 	h := newCheckpointHarness(t)
 	view := checkpointTestView(t, "")
