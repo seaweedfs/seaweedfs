@@ -13,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"golang.org/x/time/rate"
+	"google.golang.org/grpc/codes"
 )
 
 // transportRetryAttempts is the in-run retry budget shared by the walker
@@ -60,7 +61,11 @@ func deleteOnce(ctx context.Context, client LifecycleClient, req *s3_lifecycle_p
 // Authentication, permission and argument errors fail the same way
 // again, so they surface at once.
 func isRetryableDeleteError(err error) bool {
-	return errors.Is(err, errDeleteAttemptTimedOut) || util.IsTransientError(err)
+	if errors.Is(err, errDeleteAttemptTimedOut) || util.IsTransientError(err) {
+		return true
+	}
+	st, ok := util.ServerStatus(err)
+	return ok && st.Code() == codes.DeadlineExceeded
 }
 
 // deleteWithRetry sends req, retrying transport failures and attempt

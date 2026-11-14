@@ -29,6 +29,17 @@ func TestDispatch_UnavailableThenSuccess(t *testing.T) {
 	assert.Equal(t, int32(2), c.calls)
 }
 
+func TestDispatch_ServerDeadlineIsRetried(t *testing.T) {
+	c := &fakeLifecycleClient{scripted: []scriptedResp{
+		{err: status.Error(codes.DeadlineExceeded, "context deadline exceeded")},
+		{outcome: s3_lifecycle_pb.LifecycleDeleteOutcome_DONE},
+	}}
+	out, err := dispatchWithRetry(context.Background(), c, nil, sampleMatch(), time.Minute)
+	require.NoError(t, err)
+	assert.Equal(t, s3_lifecycle_pb.LifecycleDeleteOutcome_DONE, out)
+	assert.Equal(t, int32(2), c.calls)
+}
+
 func TestDispatch_PermanentErrorsAreNotRetried(t *testing.T) {
 	for _, code := range []codes.Code{codes.Unauthenticated, codes.PermissionDenied, codes.InvalidArgument, codes.Unimplemented} {
 		t.Run(code.String(), func(t *testing.T) {
