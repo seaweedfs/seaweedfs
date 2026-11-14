@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/stretchr/testify/assert"
@@ -152,4 +153,33 @@ func TestFilerCursorPersister_NilStoreErrors(t *testing.T) {
 	_, _, err := p.Load(context.Background(), 0)
 	require.Error(t, err)
 	require.Error(t, p.Save(context.Background(), 0, Cursor{}))
+}
+
+func TestFilerCursorPersister_FullPassRoundTrip(t *testing.T) {
+	store := newFakeStore()
+	p := &FilerCursorPersister{Store: store}
+	_, found, err := p.LoadFullPass(context.Background())
+	require.NoError(t, err)
+	assert.False(t, found)
+
+	want := FullPass{
+		StartedAt:   time.Unix(1_700_000_000, 123).UTC(),
+		CompletedAt: time.Unix(1_700_003_600, 456).UTC(),
+	}
+	require.NoError(t, p.SaveFullPass(context.Background(), want))
+	got, found, err := p.LoadFullPass(context.Background())
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, want, got)
+
+	_, found, err = p.Load(context.Background(), 0)
+	require.NoError(t, err)
+	assert.False(t, found, "the full-pass record must not read as a shard cursor")
+}
+
+func TestFilerCursorPersister_FullPassRejectsUnknownVersion(t *testing.T) {
+	store := newFakeStore()
+	require.NoError(t, store.Save(context.Background(), CursorDir, fullPassFileName, []byte(`{"version":99,"completed_at_ns":1}`)))
+	_, _, err := (&FilerCursorPersister{Store: store}).LoadFullPass(context.Background())
+	assert.Error(t, err)
 }

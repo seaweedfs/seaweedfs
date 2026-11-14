@@ -954,6 +954,18 @@ var (
 			Help:      "Per-shard timestamp (UnixNano) of the most recent successful walker fire. 0 means the shard hasn't completed a walk yet.",
 		}, []string{"shard"})
 
+	// S3LifecycleDailyRunLastFullPassTimestampSeconds is when the last
+	// lifecycle pass that covered every shard and every lifecycle policy
+	// without an error finished. Partial, failed and cancelled passes leave
+	// it alone, unlike the per-shard cursor and walk gauges.
+	S3LifecycleDailyRunLastFullPassTimestampSeconds = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemS3Lifecycle,
+			Name:      "daily_run_last_full_pass_timestamp_seconds",
+			Help:      "Unix time the last fully successful lifecycle pass finished. 0 means none is known yet.",
+		})
+
 	AdminMaintenanceTasksByStatus = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
@@ -1141,6 +1153,7 @@ func init() {
 	Gather.MustRegister(S3LifecycleDailyRunShardDurationSeconds)
 	Gather.MustRegister(S3LifecycleDailyRunEventsScanned)
 	Gather.MustRegister(S3LifecycleDailyRunLastWalkedNs)
+	Gather.MustRegister(S3LifecycleDailyRunLastFullPassTimestampSeconds)
 
 	Gather.MustRegister(UploadErrorCounter)
 
