@@ -80,11 +80,11 @@
 [maintenance.s3_lifecycle]
 # enabled = true
 # How far back the filer meta-log subscription can reliably reach, in days.
-# Rules whose TTL exceeds this window are partitioned into the walk set and
-# scanned in full on every run; 0 means unbounded, which promotes every rule
-# to the walk set. Set this to 0 when bucket rules must expire pre-existing
-# objects (a bounded window only replays events inside it, so anything
-# written before the job was enabled is never seen).
+# Rules whose TTL exceeds this window cannot be serviced by replay alone and
+# are partitioned into the walk set, which scans the whole bucket each run.
+# 0 means "no retention info supplied": the run then falls back to the longest
+# rule TTL, which keeps every replay rule in replay and promotes nothing.
+# Set this to the window the filer meta-log actually retains.
 # meta_log_retention_days = 0
 # Minimum minutes between full bucket walks. 0 walks on every run.
 # walker_interval_minutes = 0
