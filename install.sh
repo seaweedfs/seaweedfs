@@ -7,12 +7,14 @@
 #   curl -fsSL https://raw.githubusercontent.com/seaweedfs/seaweedfs/master/install.sh | bash
 #   curl -fsSL ... | bash -s -- --component volume-rust --large-disk
 #   curl -fsSL ... | bash -s -- --version 4.34 --dir /usr/local/bin
+#   curl -fsSL ... | bash -s -- --enterprise --component all
 #
 # Options:
 #   --component COMP   Which binary to install: weed, volume-rust, worker-rust, vector, all (default: weed)
 #   --version VER      Release version tag (default: latest)
 #   --large-disk       Use large disk variant (5-byte offset, 8TB max volume)
 #   --dir DIR          Installation directory (default: /usr/local/bin)
+#   --enterprise       Install SeaweedFS Enterprise binaries (from seaweedfs/artifactory)
 #   --help             Show this help message
 
 set -euo pipefail
@@ -24,6 +26,10 @@ LARGE_DISK=false
 INSTALL_DIR="/usr/local/bin"
 WORKER_INSTALLED=false
 VECTOR_INSTALLED=false
+VOLUME_INSTALLED=false
+ENTERPRISE=false
+# Enterprise assets carry this after the binary name, e.g. weed-vector-enterprise_linux_amd64.tar.gz.
+EDITION=""
 
 # Colors (if terminal supports them)
 if [ -t 1 ]; then
@@ -53,6 +59,7 @@ while [ $# -gt 0 ]; do
         --version)    VERSION="$2"; shift 2 ;;
         --large-disk) LARGE_DISK=true; shift ;;
         --dir)        INSTALL_DIR="$2"; shift 2 ;;
+        --enterprise) ENTERPRISE=true; REPO="seaweedfs/artifactory"; EDITION="-enterprise"; shift ;;
         --help|-h)    usage ;;
         *)            error "Unknown option: $1. Use --help for usage." ;;
     esac
@@ -81,15 +88,22 @@ detect_platform() {
 }
 
 # Get latest release tag from GitHub API
+# The Enterprise repo also releases seaweed-vfs under vfs-* tags, which can be
+# its latest release, so take the newest other tag.
 get_latest_version() {
     local url="https://api.github.com/repos/${REPO}/releases/latest"
+    if [ "$ENTERPRISE" = true ]; then
+        url="https://api.github.com/repos/${REPO}/releases?per_page=30"
+    fi
+    local body
     if command -v curl &>/dev/null; then
-        curl -fsSL "$url" | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/'
+        body="$(curl -fsSL "$url")"
     elif command -v wget &>/dev/null; then
-        wget -qO- "$url" | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/'
+        body="$(wget -qO- "$url")"
     else
         error "Neither curl nor wget found. Please install one."
     fi
+    echo "$body" | grep '"tag_name"' | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/' | grep -v '^vfs-' | head -1 || true
 }
 
 # Download a file
@@ -110,17 +124,21 @@ go_asset_name() {
     if [ "$LARGE_DISK" = true ]; then
         suffix="${suffix}_large_disk"
     fi
-    echo "${suffix}.tar.gz"
+    if [ "$ENTERPRISE" != true ]; then
+        echo "${suffix}.tar.gz"
+    elif [ "$os" = "windows" ]; then
+        echo "weed-enterprise-${suffix}.zip"
+    else
+        echo "weed-enterprise-${suffix}.tar.gz"
+    fi
 }
 
 # Build Rust volume server asset name
 rust_asset_name() {
     local os="$1" arch="$2"
-    local prefix="weed-volume"
+    local prefix="weed-volume${EDITION}"
     if [ "$LARGE_DISK" = true ]; then
-        prefix="weed-volume_large_disk"
-    else
-        prefix="weed-volume"
+        prefix="${prefix}_large_disk"
     fi
     local suffix="${os}_${arch}"
     if [ "$os" = "windows" ]; then
@@ -128,6 +146,19 @@ rust_asset_name() {
     else
         echo "${prefix}_${suffix}.tar.gz"
     fi
+}
+
+# Enterprise publishes the Rust volume server for linux only.
+rust_volume_platform_supported() {
+    case "$2" in
+        amd64|arm64) ;;
+        *) return 1 ;;
+    esac
+    case "$1" in
+        linux) return 0 ;;
+        darwin|windows) [ "$ENTERPRISE" != true ] ;;
+        *) return 1 ;;
+    esac
 }
 
 # Does a release carry this asset? Answers 0 for yes and 1 for a 404, and stops
@@ -154,14 +185,14 @@ asset_exists() {
 # maintains tables through the namespace and never opens a volume file.
 worker_asset_name() {
     local os="$1" arch="$2"
-    echo "weed-worker_${os}_${arch}.tar.gz"
+    echo "weed-worker${EDITION}_${os}_${arch}.tar.gz"
 }
 
 # The vector engine behind the S3 Vectors API, published for linux only like
 # the worker.
 vector_asset_name() {
     local os="$1" arch="$2"
-    echo "weed-vector_${os}_${arch}.tar.gz"
+    echo "weed-vector${EDITION}_${os}_${arch}.tar.gz"
 }
 
 vector_platform_supported() {
@@ -186,7 +217,10 @@ install_component() {
             download "$download_url" "${tmpdir}/${asset_name}"
 
             info "Extracting ${asset_name}..."
-            tar xzf "${tmpdir}/${asset_name}" -C "$tmpdir"
+            case "$asset_name" in
+                *.zip) unzip -q "${tmpdir}/${asset_name}" -d "$tmpdir" ;;
+                *)     tar xzf "${tmpdir}/${asset_name}" -C "$tmpdir" ;;
+            esac
 
             # The Go release action puts the binary inside a directory
             local weed_bin
@@ -204,15 +238,7 @@ install_component() {
             ;;
 
         volume-rust)
-            # Check platform support for Rust volume server
-            case "$os" in
-                linux|darwin|windows) ;;
-                *) error "Rust volume server is not available for ${os}. Supported: linux, darwin, windows" ;;
-            esac
-            case "$arch" in
-                amd64|arm64) ;;
-                *) error "Rust volume server is not available for ${arch}. Supported: amd64, arm64" ;;
-            esac
+            rust_volume_platform_supported "$os" "$arch" || error "The Rust volume server is not available for ${os}/${arch}"
 
             asset_name="$(rust_asset_name "$os" "$arch")"
             download_url="https://github.com/${REPO}/releases/download/${VERSION}/${asset_name}"
@@ -244,6 +270,7 @@ install_component() {
                 dest_name="weed-volume.exe"
             fi
             install_binary "$rust_bin" "$dest_name"
+            VOLUME_INSTALLED=true
             ok "Installed weed-volume to ${INSTALL_DIR}/${dest_name}"
             ;;
 
@@ -349,7 +376,11 @@ main() {
     case "$COMPONENT" in
         all)
             install_component "weed" "$os" "$arch"
-            install_component "volume-rust" "$os" "$arch"
+            if rust_volume_platform_supported "$os" "$arch"; then
+                install_component "volume-rust" "$os" "$arch"
+            else
+                warn "Skipping the Rust volume server: no build for ${os}/${arch}"
+            fi
             # The worker is published for linux amd64/arm64 only, and only by
             # releases new enough to carry it; skip either case rather than fail
             # an install that has already put two binaries in place.
@@ -378,7 +409,7 @@ main() {
     if [ "$COMPONENT" = "weed" ] || [ "$COMPONENT" = "all" ]; then
         info "  weed:            ${INSTALL_DIR}/weed"
     fi
-    if [ "$COMPONENT" = "volume-rust" ] || [ "$COMPONENT" = "all" ]; then
+    if [ "$VOLUME_INSTALLED" = true ]; then
         info "  weed-volume:  ${INSTALL_DIR}/weed-volume"
     fi
     if [ "$WORKER_INSTALLED" = true ]; then
