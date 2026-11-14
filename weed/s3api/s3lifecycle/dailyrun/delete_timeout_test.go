@@ -65,7 +65,7 @@ func versionedMatch() router.Match {
 func TestDispatch_StalledAttemptsTimeOutAndFail(t *testing.T) {
 	c := &stallingClient{}
 	start := time.Now()
-	_, err := dispatchWithRetry(context.Background(), c, sampleMatch(), 20*time.Millisecond)
+	_, err := dispatchWithRetry(context.Background(), c, nil, sampleMatch(), 20*time.Millisecond)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, context.DeadlineExceeded)
 	assert.Contains(t, err.Error(), "timed out after 20ms")
@@ -75,7 +75,7 @@ func TestDispatch_StalledAttemptsTimeOutAndFail(t *testing.T) {
 
 func TestDispatch_SlowAttemptWithinTimeoutSucceeds(t *testing.T) {
 	c := &stallingClient{answerAfter: map[int]time.Duration{1: 30 * time.Millisecond}}
-	out, err := dispatchWithRetry(context.Background(), c, sampleMatch(), time.Second)
+	out, err := dispatchWithRetry(context.Background(), c, nil, sampleMatch(), time.Second)
 	require.NoError(t, err)
 	assert.Equal(t, s3_lifecycle_pb.LifecycleDeleteOutcome_DONE, out)
 	assert.Equal(t, 1, c.calls())
@@ -83,7 +83,7 @@ func TestDispatch_SlowAttemptWithinTimeoutSucceeds(t *testing.T) {
 
 func TestDispatch_RetryAfterTimeoutResendsSameRequest(t *testing.T) {
 	c := &stallingClient{answerAfter: map[int]time.Duration{2: 0}}
-	out, err := dispatchWithRetry(context.Background(), c, versionedMatch(), 20*time.Millisecond)
+	out, err := dispatchWithRetry(context.Background(), c, nil, versionedMatch(), 20*time.Millisecond)
 	require.NoError(t, err)
 	assert.Equal(t, s3_lifecycle_pb.LifecycleDeleteOutcome_DONE, out)
 	require.Len(t, c.requests, 2)
@@ -96,7 +96,7 @@ func TestDispatch_ParentCancelInterruptsActiveAttempt(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &stallingClient{onCall: func(int) { time.AfterFunc(20*time.Millisecond, cancel) }}
 	start := time.Now()
-	_, err := dispatchWithRetry(ctx, c, sampleMatch(), time.Hour)
+	_, err := dispatchWithRetry(ctx, c, nil, sampleMatch(), time.Hour)
 	require.ErrorIs(t, err, context.Canceled)
 	assert.Equal(t, 1, c.calls(), "parent cancellation must not be retried")
 	assert.Less(t, time.Since(start), 5*time.Second)
@@ -106,7 +106,7 @@ func TestDispatch_ParentCancelInterruptsBackoff(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &fakeLifecycleClient{scripted: []scriptedResp{{err: errors.New("transport boom")}}}
 	time.AfterFunc(10*time.Millisecond, cancel)
-	_, err := dispatchWithRetry(ctx, c, sampleMatch(), time.Hour)
+	_, err := dispatchWithRetry(ctx, c, nil, sampleMatch(), time.Hour)
 	require.ErrorIs(t, err, context.Canceled)
 	assert.Equal(t, int32(1), c.calls, "cancellation during backoff must stop before the next attempt")
 }

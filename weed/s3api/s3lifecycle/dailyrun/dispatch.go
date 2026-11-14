@@ -10,7 +10,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_lifecycle_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/router"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"golang.org/x/time/rate"
 )
 
 // transportRetryAttempts is the in-run retry budget shared by the walker
@@ -61,33 +63,50 @@ func isRetryableDeleteError(err error) bool {
 	return errors.Is(err, errDeleteAttemptTimedOut) || util.IsTransientError(err)
 }
 
-// dispatchWithRetry sends one LifecycleDelete request, retrying
-// transport failures and attempt timeouts up to transportRetryAttempts
-// times with jittered exponential backoff. The resent request keeps its
-// version and identity witness, so a delete that committed before its
-// reply was lost resolves as NOOP_RESOLVED on the retry.
-func dispatchWithRetry(ctx context.Context, client LifecycleClient, m router.Match, timeout time.Duration) (s3_lifecycle_pb.LifecycleDeleteOutcome, error) {
-	req := buildDeleteRequest(m)
+// deleteWithRetry sends req, retrying transport failures and attempt
+// timeouts up to transportRetryAttempts times with jittered exponential
+// backoff. Every attempt waits on limiter, so retries stay inside the
+// shared delete budget. The resent request keeps its version and identity
+// witness, so a delete that committed before its reply was lost resolves
+// as NOOP_RESOLVED on the retry.
+func deleteWithRetry(ctx context.Context, client LifecycleClient, limiter *rate.Limiter, req *s3_lifecycle_pb.LifecycleDeleteRequest, timeout time.Duration) (*s3_lifecycle_pb.LifecycleDeleteResponse, error) {
 	backoff := transportRetryInitial
 	for attempt := 1; ; attempt++ {
+		if limiter != nil {
+			waitStart := time.Now()
+			if err := limiter.Wait(ctx); err != nil {
+				return nil, fmt.Errorf("limiter: %w", err)
+			}
+			stats.S3LifecycleDispatchLimiterWaitSeconds.Observe(time.Since(waitStart).Seconds())
+		}
 		resp, err := deleteOnce(ctx, client, req, timeout)
 		if err == nil {
-			return resp.Outcome, nil
+			return resp, nil
 		}
 		// Parent cancellation is shutdown, not a transport flake.
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return s3_lifecycle_pb.LifecycleDeleteOutcome_LIFECYCLE_DELETE_OUTCOME_UNSPECIFIED, ctxErr
+			return nil, ctxErr
 		}
 		if attempt >= transportRetryAttempts || !isRetryableDeleteError(err) {
-			return s3_lifecycle_pb.LifecycleDeleteOutcome_LIFECYCLE_DELETE_OUTCOME_UNSPECIFIED, err
+			return nil, err
 		}
 		select {
 		case <-ctx.Done():
-			return s3_lifecycle_pb.LifecycleDeleteOutcome_LIFECYCLE_DELETE_OUTCOME_UNSPECIFIED, ctx.Err()
+			return nil, ctx.Err()
 		case <-time.After(jitter(backoff)):
 		}
 		backoff = min(backoff*2, transportRetryMax)
 	}
+}
+
+// dispatchWithRetry sends the LifecycleDelete for m under the shared
+// retry policy and returns the server's outcome.
+func dispatchWithRetry(ctx context.Context, client LifecycleClient, limiter *rate.Limiter, m router.Match, timeout time.Duration) (s3_lifecycle_pb.LifecycleDeleteOutcome, error) {
+	resp, err := deleteWithRetry(ctx, client, limiter, buildDeleteRequest(m), timeout)
+	if err != nil {
+		return s3_lifecycle_pb.LifecycleDeleteOutcome_LIFECYCLE_DELETE_OUTCOME_UNSPECIFIED, err
+	}
+	return resp.Outcome, nil
 }
 
 // jitter returns a duration in the range [d/2, d) using equal jitter.
