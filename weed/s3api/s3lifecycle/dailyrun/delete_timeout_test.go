@@ -142,7 +142,7 @@ func TestWalkerDispatcher_AttemptTimeoutHaltsWalk(t *testing.T) {
 	err := d.Delete(context.Background(), sampleAction(t, s3lifecycle.ActionKindExpirationDays), &bootstrap.Entry{Path: "obj"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "timed out after 10ms")
-	assert.Equal(t, 1, c.calls())
+	assert.Equal(t, transportRetryAttempts, c.calls(), "the walker shares the replay retry budget")
 }
 
 func TestWalkerDispatcher_LimiterWaitDoesNotSpendDeleteTimeout(t *testing.T) {

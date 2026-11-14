@@ -2,10 +2,13 @@ package dailyrun
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_lifecycle_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/bootstrap"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/reader"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/router"
 	"github.com/stretchr/testify/assert"
@@ -70,4 +73,34 @@ func TestProcessMatches_RetryExhaustionHoldsCursorBeforeTheMatch(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, halted)
 	assert.Equal(t, int32(1+transportRetryAttempts), c.calls)
+}
+
+func TestWalkerDispatcher_TransientErrorIsRetried(t *testing.T) {
+	c := &fakeLifecycleClient{scripted: []scriptedResp{
+		{err: status.Error(codes.Unavailable, "connection reset")},
+		{outcome: s3_lifecycle_pb.LifecycleDeleteOutcome_DONE},
+	}}
+	d := &WalkerDispatcher{Client: c}
+	err := d.Delete(context.Background(), sampleAction(t, s3lifecycle.ActionKindExpirationDays), &bootstrap.Entry{Path: "obj"})
+	require.NoError(t, err)
+	assert.Equal(t, int32(2), c.calls)
+}
+
+func TestWalkerDispatcher_AuthErrorSurfacesAtOnce(t *testing.T) {
+	c := &fakeLifecycleClient{scripted: []scriptedResp{{err: status.Error(codes.Unauthenticated, "invalid admin token")}}}
+	d := &WalkerDispatcher{Client: c}
+	err := d.Delete(context.Background(), sampleAction(t, s3lifecycle.ActionKindExpirationDays), &bootstrap.Entry{Path: "obj"})
+	require.Error(t, err)
+	assert.Equal(t, codes.Unauthenticated, status.Code(err))
+	assert.Equal(t, int32(1), c.calls)
+}
+
+func TestWalkerDispatcher_ParentCancelDuringBackoffStops(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	c := &fakeLifecycleClient{scripted: []scriptedResp{{err: errors.New("transport: connection refused")}}}
+	time.AfterFunc(10*time.Millisecond, cancel)
+	d := &WalkerDispatcher{Client: c}
+	err := d.Delete(ctx, sampleAction(t, s3lifecycle.ActionKindExpirationDays), &bootstrap.Entry{Path: "obj"})
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, int32(1), c.calls)
 }
