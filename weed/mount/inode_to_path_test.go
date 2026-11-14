@@ -208,3 +208,25 @@ func TestMovePathWithNoSourceLeavesTheTarget(t *testing.T) {
 		t.Errorf("/a/g.txt resolves to %d (found %v), want %d", got, found, inode)
 	}
 }
+
+// A second hard link name found by a lookup belongs to the inode, so it is
+// reported with the others and released by the final forget.
+func TestLookupRecordsHardLinkNames(t *testing.T) {
+	table := NewInodeToPath(util.FullPath("/"), 0)
+	inode := table.Lookup("/a", 1, false, true, 42, true)
+	if got := table.Lookup("/b", 1, false, true, 42, true); got != inode {
+		t.Fatalf("second name got inode %d, want %d", got, inode)
+	}
+	table.Lookup("/b", 1, false, true, 42, true)
+	if got := table.GetAllPaths(inode); len(got) != 2 || got[0] != "/a" || got[1] != "/b" {
+		t.Fatalf("paths %v, want [/a /b]", got)
+	}
+	table.RemovePath("/a", nil)
+	if got, status := table.GetPath(inode); status != fuse.OK || got != "/b" {
+		t.Fatalf("after removing /a the inode answers to %q (%v), want /b", got, status)
+	}
+	table.Forget(inode, 3, nil, nil)
+	if _, found := table.GetInode("/b"); found {
+		t.Fatal("the final forget left /b mapped to a released inode")
+	}
+}

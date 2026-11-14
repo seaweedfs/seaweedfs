@@ -937,6 +937,9 @@ type EntryInvalidation struct {
 	// once the path is empty, so this is the only thing left saying whether a
 	// directory or a file went away.
 	WasDirectory bool
+	// LiveHardLinkId is set on a delete that left other names holding the
+	// hard-linked file, by the count the filer kept its chunks on.
+	LiveHardLinkId []byte
 }
 
 type metadataResponseSideEffects struct {
@@ -1440,7 +1443,11 @@ func collectEntryInvalidations(resp *filer_pb.SubscribeMetadataResponse) []Entry
 
 	if filer_pb.IsDelete(resp) && message.OldEntry != nil {
 		oldKey := util.NewFullPath(resp.Directory, message.OldEntry.Name)
-		invalidations = append(invalidations, EntryInvalidation{Path: oldKey, TsNs: resp.TsNs, Deleted: true, Signatures: signatures, WasDirectory: message.OldEntry.IsDirectory})
+		invalidation := EntryInvalidation{Path: oldKey, TsNs: resp.TsNs, Deleted: true, Signatures: signatures, WasDirectory: message.OldEntry.IsDirectory}
+		if len(message.OldEntry.HardLinkId) > 0 && message.OldEntry.HardLinkCounter > 1 {
+			invalidation.LiveHardLinkId = message.OldEntry.HardLinkId
+		}
+		invalidations = append(invalidations, invalidation)
 	}
 
 	return invalidations

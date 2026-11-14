@@ -99,6 +99,10 @@ func (wfs *WFS) flushFileMetadata(fh *FileHandle) error {
 	if !fh.dirtyMetadata {
 		return nil
 	}
+	// Unlink marks under this lock; publishing would recreate the name.
+	if fh.isDeleted {
+		return nil
+	}
 
 	fileFullPath := fh.FullPath()
 	dir, name := fileFullPath.DirAndName()
@@ -107,6 +111,11 @@ func (wfs *WFS) flushFileMetadata(fh *FileHandle) error {
 
 	if fh.GetEntry() == nil {
 		return nil
+	}
+	if fh.linkRefresh != nil {
+		if err := wfs.adoptStoredLink(context.Background(), fh, fileFullPath, fh.linkRefresh); err != nil {
+			return err
+		}
 	}
 
 	// Snapshot the current chunk list. Async uploader goroutines call

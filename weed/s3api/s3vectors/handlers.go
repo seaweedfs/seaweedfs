@@ -1255,7 +1255,7 @@ func (s *Server) handleCreateIndex(w http.ResponseWriter, r *http.Request) {
 			vectorErr(w, r, arns, err)
 			return
 		}
-		if !errors.Is(err, errNoVectorWorker) {
+		if !errors.Is(err, errNoVectorServer) {
 			switch status.Code(err) {
 			case codes.InvalidArgument, codes.PermissionDenied, codes.Unauthenticated, codes.FailedPrecondition, codes.AlreadyExists, codes.NotFound, codes.OutOfRange, codes.Unimplemented:
 			default:

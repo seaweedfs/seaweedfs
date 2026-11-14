@@ -147,14 +147,15 @@ fn untrack(tag: &str) {
 /// reads that follow reuse the tag, and the tag goes once no read has taken it
 /// for [`SHARED_LINGER`]. Spares a tag write and delete per read.
 pub struct SharedLeases {
-    /// By location, version and manifest ETag: a table dropped and created
-    /// again at its location reuses version numbers, not manifests.
+    /// By location, version, manifest ETag and commit time: a table dropped
+    /// and created again at its location reuses version numbers, not
+    /// manifests. A rename commit leaves no ETag.
     held: Mutex<Held>,
     linger: Duration,
     share_for: Duration,
 }
 
-type LeaseKey = (String, u64, Option<String>);
+type LeaseKey = (String, u64, Option<String>, u128);
 
 #[derive(Default)]
 struct Held {
@@ -190,6 +191,7 @@ impl SharedLeases {
             dataset.uri().to_string(),
             dataset.version().version,
             dataset.manifest_location().e_tag.clone(),
+            dataset.manifest().timestamp_nanos,
         );
         let slot = match self.held.lock() {
             Ok(mut held) => {
@@ -522,7 +524,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let dataset = testing::write_dataset(&dir, &testing::vectors(1, 4), &["a"]).await;
         let leases = SharedLeases::default();
-        let key: LeaseKey = ("elsewhere".into(), 1, None);
+        let key: LeaseKey = ("elsewhere".into(), 1, None, 0);
         let taken = {
             let mut held = leases.held.lock().unwrap();
             held.prune_at = 0;
