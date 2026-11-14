@@ -46,7 +46,7 @@ func (s *progressSender) tries() int {
 }
 
 type fakeRun struct {
-	entries, events, done, rpcErrors atomic.Int64
+	entries, listed, events, done, rpcErrors atomic.Int64
 }
 
 func (f *fakeRun) summary() dailyrun.RunSummary {
@@ -54,6 +54,7 @@ func (f *fakeRun) summary() dailyrun.RunSummary {
 		Phase:          dailyrun.PhaseWalk,
 		Bucket:         "b1",
 		EntriesVisited: f.entries.Load(),
+		EntriesListed:  f.listed.Load(),
 		EventsScanned:  f.events.Load(),
 		Outcomes:       map[string]int64{"DONE": f.done.Load(), "RPC_ERROR": f.rpcErrors.Load()},
 	}
@@ -80,7 +81,7 @@ func TestProgressReporter_ReportsEachKindOfWork(t *testing.T) {
 	stop := startProgressReporter(progressRequest(), sender, run.summary, testInterval)
 	defer stop()
 
-	bumps := []*atomic.Int64{&run.entries, &run.events, &run.done, &run.rpcErrors}
+	bumps := []*atomic.Int64{&run.entries, &run.listed, &run.events, &run.done, &run.rpcErrors}
 	for i, counter := range bumps {
 		counter.Add(1)
 		require.Eventually(t, func() bool { return len(sender.sent()) == i+1 }, time.Second, testInterval)
@@ -96,6 +97,7 @@ func TestProgressReporter_ReportsEachKindOfWork(t *testing.T) {
 	require.Equal(t, "running", last.Stage)
 	require.Contains(t, last.Message, "last_phase=walk last_bucket=b1")
 	require.Contains(t, last.Message, "entries=1")
+	require.Contains(t, last.Message, "listed=1")
 	require.Contains(t, last.Message, "events=1")
 	require.Contains(t, last.Message, "rpc_done=1")
 	require.Contains(t, last.Message, "rpc_errors=1")
