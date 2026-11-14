@@ -42,6 +42,9 @@ const (
 	// the per-shard walk budget — typically 60 (1h) for small clusters,
 	// 360+ (6h+) for large ones.
 	WalkerIntervalMinutesAdminKey = "walker_interval_minutes"
+	// DeleteTimeoutSecondsAdminKey bounds each LifecycleDelete attempt.
+	// 0 = dailyrun.DefaultDeleteTimeout.
+	DeleteTimeoutSecondsAdminKey = "delete_timeout_seconds"
 
 	// MetadataKeyDeletesPerSecond is the per-worker share value the
 	// admin writes into ClusterContext.Metadata at ExecuteJob time.

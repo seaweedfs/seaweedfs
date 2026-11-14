@@ -21,6 +21,9 @@ type Config struct {
 	// behavior; positive values gate the walker via Cursor.LastWalkedNs
 	// inside dailyrun.runShard.
 	WalkerInterval time.Duration
+	// DeleteTimeout bounds each LifecycleDelete attempt; 0 uses
+	// dailyrun.DefaultDeleteTimeout.
+	DeleteTimeout time.Duration
 }
 
 func ParseConfig(adminValues map[string]*plugin_pb.ConfigValue, workerValues map[string]*plugin_pb.ConfigValue) Config {
@@ -41,6 +44,9 @@ func ParseConfig(adminValues map[string]*plugin_pb.ConfigValue, workerValues map
 	// values throttle the steady-state walker per shard.
 	if mins := readInt64(adminValues, WalkerIntervalMinutesAdminKey, 0); mins > 0 {
 		cfg.WalkerInterval = time.Duration(mins) * time.Minute
+	}
+	if secs := readInt64(adminValues, DeleteTimeoutSecondsAdminKey, 0); secs > 0 {
+		cfg.DeleteTimeout = time.Duration(secs) * time.Second
 	}
 	return cfg
 }
