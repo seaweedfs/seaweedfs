@@ -649,7 +649,10 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 	// Walk-bound rules are never due inside the retention window; keep them
 	// out of the drain so their matches don't pin the cursor.
 	replayView := snap.ReplayView(retentionWindow)
-	lastOK, _, drainErr := drainShardEvents(ctx, cfg, runNow, shardID, replayView, startTsNs, events)
+	lastOK, halted, drainErr := drainShardEvents(ctx, cfg, runNow, shardID, replayView, startTsNs, events)
+	if halted && drainErr == nil {
+		cfg.Stats.shardHalted()
+	}
 	// Fresh ctx: a wall-clock cap on the pass (the shell driver's
 	// -runtime) cancels the drain's, and saving with it would drop the
 	// cursor and re-replay from the same floor next pass.

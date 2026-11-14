@@ -584,6 +584,7 @@ func TestRecordFullPass_OnlyACompletePassAdvances(t *testing.T) {
 		"failed":   {err: errors.New("walk failed")},
 		"canceled": {canceled: true},
 		"partial":  {invalidPolicies: []scheduler.ParseError{{Bucket: "b", Err: errors.New("bad")}}},
+		"halted":   {summary: dailyrun.RunSummary{ShardsHalted: 1}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			persister := &dailyrun.FilerCursorPersister{Store: &memFilerStore{files: map[string][]byte{}}}

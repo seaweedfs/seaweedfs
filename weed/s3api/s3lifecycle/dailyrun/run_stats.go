@@ -51,6 +51,9 @@ type RunSummary struct {
 	// They count RPC results, not reclaimed space.
 	Outcomes    map[string]int64
 	ShardErrors int
+	// Shards whose replay stopped on an unresolved delete; their due
+	// events wait for a later pass.
+	ShardsHalted int
 }
 
 // RunStats collects one pass's work. Safe for concurrent use; a nil
@@ -60,13 +63,14 @@ type RunStats struct {
 	objects atomic.Int64
 	events  atomic.Int64
 
-	mu          sync.Mutex
-	phase       string
-	bucket      string
-	buckets     map[string]bucketState
-	failures    []BucketFailure
-	outcomes    map[string]int64
-	shardErrors int
+	mu           sync.Mutex
+	phase        string
+	bucket       string
+	buckets      map[string]bucketState
+	failures     []BucketFailure
+	outcomes     map[string]int64
+	shardErrors  int
+	shardsHalted int
 }
 
 func (s *RunStats) startBucket(bucket string) {
@@ -144,6 +148,15 @@ func (s *RunStats) setShardErrors(n int) {
 	s.mu.Unlock()
 }
 
+func (s *RunStats) shardHalted() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.shardsHalted++
+	s.mu.Unlock()
+}
+
 func (s *RunStats) Summary() RunSummary {
 	if s == nil {
 		return RunSummary{}
@@ -174,6 +187,7 @@ func (s *RunStats) Summary() RunSummary {
 		}
 	}
 	out.ShardErrors = s.shardErrors
+	out.ShardsHalted = s.shardsHalted
 	return out
 }
 

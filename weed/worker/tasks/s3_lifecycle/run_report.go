@@ -32,15 +32,16 @@ type runReport struct {
 	lastFullPass    time.Time
 }
 
-// Bucket walk and shard failures always surface as err, so a pass without
-// one is complete unless a policy could not be loaded.
+// Bucket walk and shard failures always surface as err. A pass without
+// one is still partial when a policy could not be loaded or a shard's
+// replay halted on an unresolved delete.
 func (r *runReport) status() string {
 	switch {
 	case r.canceled:
 		return runStatusCanceled
 	case r.err != nil:
 		return runStatusFailed
-	case len(r.invalidPolicies) > 0:
+	case len(r.invalidPolicies) > 0, r.summary.ShardsHalted > 0:
 		return runStatusPartial
 	}
 	return runStatusComplete
@@ -80,6 +81,7 @@ func (r *runReport) outputValues() map[string]*plugin_pb.ConfigValue {
 		"objects_visited":  int64Value(s.ObjectsVisited),
 		"events_scanned":   int64Value(s.EventsScanned),
 		"shard_errors":     int64Value(int64(s.ShardErrors)),
+		"shards_halted":    int64Value(int64(s.ShardsHalted)),
 		"elapsed":          {Kind: &plugin_pb.ConfigValue_DurationValue{DurationValue: durationpb.New(r.elapsed.Round(time.Millisecond))}},
 	}
 	for outcome, n := range s.Outcomes {
