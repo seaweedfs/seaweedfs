@@ -203,6 +203,7 @@ func (wfs *WFS) CopyFileRange(cancel <-chan struct{}, in *fuse.CopyFileRangeIn) 
 	))
 	fhOut.entry.Content = nil
 	fhOut.dirtyMetadata = true
+	fhOut.dirtyContent = true
 
 	written = uint32(totalCopied)
 	return written, fuse.OK
@@ -256,6 +257,7 @@ func (wfs *WFS) applyServerSideWholeFileCopyResult(fhIn, fhOut *FileHandle, dstP
 		fhOut.contentType = entry.Attributes.Mime
 	}
 	fhOut.dirtyMetadata = false
+	fhOut.dirtyContent = false
 	wfs.updateServerSideWholeFileCopyMetaCache(dstPath, entry)
 	// Note: we intentionally skip fuseServer.InodeNotify/EntryNotify here.
 	// This runs inside the CopyFileRange request handler; those notifies

@@ -183,7 +183,7 @@ func (wfs *WFS) ReleaseHandle(handleId FileHandleId) {
 	wfs.pendingAsyncFlushMu.Unlock()
 
 	if fhToRelease != nil {
-		if fhToRelease.dirtyMetadata && !fhToRelease.isDeleted {
+		if fhToRelease.dirtyContent && !fhToRelease.isDeleted {
 			(&contentPublication{failure: fhToRelease.writebackContentError}).abandon()
 		}
 		fhToRelease.ReleaseHandle()

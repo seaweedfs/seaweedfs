@@ -38,6 +38,7 @@ type FileHandle struct {
 	pendingAppendOffset   uint64
 	writebackContentError *atomic.Bool
 	dirtyMetadata         bool
+	dirtyContent          bool
 	dirtyPages            *PageWriter
 	reader                *filer.ChunkReadAt
 	contentType           string
@@ -340,6 +341,7 @@ func (fh *FileHandle) ResetDirtyPages() {
 	fh.dirtyPages.Destroy()
 	fh.dirtyPages = newPageWriter(fh, fh.wfs.option.ChunkSizeLimit)
 	fh.dirtyMetadata = false
+	fh.dirtyContent = false
 	fh.pendingAppend = false
 	fh.contentType = ""
 }
