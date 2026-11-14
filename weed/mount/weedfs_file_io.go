@@ -160,8 +160,9 @@ func (wfs *WFS) Release(cancel <-chan struct{}, in *fuse.ReleaseIn) {
 	if fh := wfs.GetHandle(FileHandleId(in.Fh)); fh != nil {
 		allowAsync := in.ReleaseFlags&fuse.FUSE_RELEASE_FLOCK_UNLOCK == 0
 		// Release is the last chance to persist the handle, so it must finish
-		// even if the triggering syscall was interrupted: non-cancellable context.
-		if status := wfs.doFlush(context.Background(), fh, in.Uid, in.Gid, allowAsync); status != fuse.OK {
+		// even if the triggering syscall was interrupted: non-cancellable context
+		// and no commit deadline.
+		if status := wfs.doFlush(context.Background(), fh, in.Uid, in.Gid, allowAsync, 0); status != fuse.OK {
 			glog.Warningf("release fh %d inode %d: fallback flush failed: %v", in.Fh, in.NodeId, status)
 		}
 	}

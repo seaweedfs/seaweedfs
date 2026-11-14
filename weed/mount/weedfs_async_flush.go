@@ -144,7 +144,7 @@ func (wfs *WFS) flushMetadataWithRetry(fh *FileHandle, dir, name string, fileFul
 	attempts := 0
 	err := retryMetadataFlushUntil(context.Background(), func() error {
 		attempts++
-		return wfs.flushMetadataToFiler(context.Background(), fh, dir, name, fh.asyncFlushUid, fh.asyncFlushGid, publication)
+		return wfs.flushMetadataToFiler(context.Background(), fh, dir, name, fh.asyncFlushUid, fh.asyncFlushGid, nil, publication)
 	}, isFilerUnreachable, func(nextAttempt, totalAttempts int, backoff time.Duration, err error) {
 		if totalAttempts == 0 {
 			glog.Warningf("completeAsyncFlush %s: filer unreachable, retrying metadata flush (attempt %d) after %v: %v",

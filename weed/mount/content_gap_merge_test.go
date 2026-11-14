@@ -61,7 +61,7 @@ func masterAssertPeerMergeOutcome(t *testing.T, periodic bool) {
 					t.Logf("periodic error: %v", err)
 				}
 			} else {
-				code = w.doFlush(context.Background(), fh, 1000, 20, false)
+				code = w.doFlush(context.Background(), fh, 1000, 20, false, 0)
 			}
 			peer.mu.Lock()
 			defer peer.mu.Unlock()

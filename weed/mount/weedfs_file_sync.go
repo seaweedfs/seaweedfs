@@ -17,11 +17,45 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// metadataFlushTimeout bounds a close()/fsync metadata flush so an overwhelmed
-// filer cannot wedge the calling process forever. It is deliberately generous:
-// a healthy CreateEntry completes in well under a second, so this only fires on
-// a genuinely stuck filer, never on a normal flush.
-const metadataFlushTimeout = 30 * time.Second
+// metadataFlushTimeout bounds the metadata commit of a close()/fsync flush
+// (CreateEntry and its retries) so an overwhelmed filer cannot wedge the
+// calling process forever. It is deliberately generous: a healthy CreateEntry
+// completes in well under a second, so this only fires on a genuinely stuck
+// filer, never on a normal flush. It is the flush's commitBudget, so it does
+// not cover the uploads that come first. A variable so tests can shorten it.
+var metadataFlushTimeout = 30 * time.Second
+
+// commitBudget is the time one flush may spend in the filer calls of its
+// metadata commit, added up over its attempts. Nothing else is charged to it:
+// the data upload, the wait for the handle's locks, the merge of bloated
+// chunks and the manifest upload can each outlast the whole budget. A deadline
+// that also ran through that work was spent by it; CreateEntry then failed at
+// once with "context deadline exceeded", and close() returned an error for
+// data that was already stored. A nil budget sets no bound. The attempts run
+// one after another, so it needs no lock.
+type commitBudget struct {
+	left time.Duration
+}
+
+// begin returns ctx limited to what is left of the budget, for one filer call.
+// The returned func ends the call and charges the budget the time it took.
+func (b *commitBudget) begin(ctx context.Context) (context.Context, func()) {
+	if b == nil {
+		return ctx, func() {}
+	}
+	start := time.Now()
+	ctx, cancel := context.WithTimeout(ctx, b.left)
+	return ctx, func() {
+		cancel()
+		b.left -= time.Since(start)
+	}
+}
+
+// spent reports whether the budget has run out, so that another attempt could
+// only fail.
+func (b *commitBudget) spent() bool {
+	return b != nil && b.left <= 0
+}
 
 /**
  * Flush method
@@ -79,17 +113,15 @@ func (wfs *WFS) Flush(cancel <-chan struct{}, in *fuse.FlushIn) fuse.Status {
 	hasPosixLocks := wfs.hasPosixOwner(in.NodeId, in.LockOwner)
 	allowAsync := !hasPosixLocks
 
-	// Bound the flush with a deadline instead of tying it to the FUSE cancel
-	// channel. A FUSE interrupt is not a process kill: Go's async preemption
-	// (SIGURG) makes a close() under load emit an interrupt on nearly every
-	// flush (see go-fuse RawFileSystem docs), so cancelling the in-flight
+	// Bound the metadata commit with a deadline instead of tying it to the FUSE
+	// cancel channel. A FUSE interrupt is not a process kill: Go's async
+	// preemption (SIGURG) makes a close() under load emit an interrupt on nearly
+	// every flush (see go-fuse RawFileSystem docs), so cancelling the in-flight
 	// metadata CreateEntry on that interrupt turned healthy concurrent close()s
 	// into EIO. The deadline still keeps close() from hanging forever against an
-	// overwhelmed filer without failing benign flushes.
-	ctx, cancelFunc := context.WithTimeout(context.Background(), metadataFlushTimeout)
-	defer cancelFunc()
-
-	status := wfs.doFlush(ctx, fh, in.Uid, in.Gid, allowAsync)
+	// overwhelmed filer without failing benign flushes. doFlush charges it only
+	// for the commit's filer calls, so a slow upload cannot use it up.
+	status := wfs.doFlush(context.Background(), fh, in.Uid, in.Gid, allowAsync, metadataFlushTimeout)
 	if in.LockOwner != 0 && wfs.releasePosixOwner(in.NodeId, in.LockOwner) {
 		wfs.forgetLockOwner(in.NodeId, in.LockOwner)
 	}
@@ -122,15 +154,18 @@ func (wfs *WFS) Fsync(cancel <-chan struct{}, in *fuse.FsyncIn) (code fuse.Statu
 		return fuse.ENOENT
 	}
 
-	ctx, cancelFunc := context.WithTimeout(context.Background(), metadataFlushTimeout)
-	defer cancelFunc()
-
 	// Fsync is an explicit sync request — always flush synchronously
-	return wfs.doFlush(ctx, fh, in.Uid, in.Gid, false)
+	return wfs.doFlush(context.Background(), fh, in.Uid, in.Gid, false, metadataFlushTimeout)
 
 }
 
-func (wfs *WFS) doFlush(ctx context.Context, fh *FileHandle, uid, gid uint32, allowAsync bool) fuse.Status {
+// doFlush uploads the handle's dirty data, then commits its metadata to the
+// filer. metadataTimeout is the commitBudget of that commit: what its filer
+// calls may take over all attempts, whatever the uploads before and between
+// them took. 0 sets no overall bound, leaving only the per-call filer
+// timeouts. ctx should carry no deadline of its own: it would run through the
+// uploads as well.
+func (wfs *WFS) doFlush(ctx context.Context, fh *FileHandle, uid, gid uint32, allowAsync bool, metadataTimeout time.Duration) fuse.Status {
 
 	// flush works at fh level
 	fileFullPath := fh.FullPath()
@@ -181,10 +216,18 @@ func (wfs *WFS) doFlush(ctx context.Context, fh *FileHandle, uid, gid uint32, al
 		return fuse.Status(syscall.ENOSPC)
 	}
 
+	// The attempts share one budget, charged only for their filer calls.
+	var commit *commitBudget
+	if metadataTimeout > 0 {
+		commit = &commitBudget{left: metadataTimeout}
+	}
+
 	publication := &contentPublication{failure: fh.writebackContentError}
 	if err := retryMetadataFlushIf(ctx, func() error {
-		return wfs.flushMetadataToFiler(ctx, fh, dir, name, uid, gid, publication)
-	}, isRetryableFilerError, func(nextAttempt, totalAttempts int, backoff time.Duration, err error) {
+		return wfs.flushMetadataToFiler(ctx, fh, dir, name, uid, gid, commit, publication)
+	}, func(err error) bool {
+		return !commit.spent() && isRetryableFilerError(err)
+	}, func(nextAttempt, totalAttempts int, backoff time.Duration, err error) {
 		glog.Warningf("%v fh %d flush: retrying metadata flush (attempt %d/%d) after %v: %v",
 			fileFullPath, fh.fh, nextAttempt, totalAttempts, backoff, err)
 	}); err != nil {
@@ -206,7 +249,10 @@ func (wfs *WFS) doFlush(ctx context.Context, fh *FileHandle, uid, gid uint32, al
 // When -dlm is enabled, the distributed lock is already held by the FileHandle
 // from open-for-write through close, so no additional distributed lock is
 // needed here. The local fhLockTable lock below serializes within this mount.
-func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, name string, uid, gid uint32, publications ...*contentPublication) error {
+//
+// commit bounds the filer calls made here, over all attempts of one flush; nil
+// leaves them to the per-call filer timeouts.
+func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, name string, uid, gid uint32, commit *commitBudget, publications ...*contentPublication) error {
 	publication := &contentPublication{}
 	if len(publications) > 0 {
 		publication = publications[0]
@@ -246,7 +292,10 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 		return nil
 	}
 	if fh.linkRefresh != nil {
-		if err := wfs.adoptStoredLink(ctx, fh, util.NewFullPath(dir, name), fh.linkRefresh); err != nil {
+		linkCtx, end := commit.begin(ctx)
+		err := wfs.adoptStoredLink(linkCtx, fh, util.NewFullPath(dir, name), fh.linkRefresh)
+		end()
+		if err != nil {
 			return err
 		}
 	}
@@ -309,7 +358,11 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 	baseSnapshot := proto.Clone(requestEntry).(*filer_pb.Entry)
 	wfs.mapPbIdFromLocalToFiler(request.Entry)
 
-	resp, merged, err := wfs.createContentEntry(ctx, fh, request, baseSnapshot, false, publication)
+	// The chunk merge and the manifest above read and upload chunks, which can
+	// take longer than the whole commit budget. It is charged only from here.
+	commitCtx, end := commit.begin(ctx)
+	resp, merged, err := wfs.createContentEntry(commitCtx, fh, request, baseSnapshot, false, publication)
+	end()
 	if err != nil {
 		glog.Errorf("fh flush create %s: %v", fileFullPath, err)
 		return &contentPublicationError{cause: fmt.Errorf("fh flush create %s: %w", fileFullPath, err), request: proto.Clone(request).(*filer_pb.CreateEntryRequest)}

@@ -193,7 +193,7 @@ func appendAndFlush(t *testing.T, wfs *WFS, fh *FileHandle, key uint64) fuse.Sta
 		e.Attributes.FileSize = uint64(len(e.Chunks)) * 100
 	})
 	fh.dirtyMetadata = true
-	return wfs.doFlush(context.Background(), fh, 1000, 20, false)
+	return wfs.doFlush(context.Background(), fh, 1000, 20, false, 0)
 }
 
 // queueClose closes fh the way a writeback mount does. Its flush starts once
@@ -334,7 +334,7 @@ func TestFlushResolvedBeforeAliasUnlinkReachesSurvivor(t *testing.T) {
 		e.Attributes.FileSize = 200
 	})
 	fh.dirtyMetadata = true
-	if err := wfs.flushMetadataToFiler(context.Background(), fh, "/", "tmp", 1000, 20); err != nil {
+	if err := wfs.flushMetadataToFiler(context.Background(), fh, "/", "tmp", 1000, 20, nil); err != nil {
 		t.Fatalf("flush resolved before the unlink: %v", err)
 	}
 	wantStored(t, fake, "final", 2, 1)
@@ -356,7 +356,7 @@ func TestFlushWaitingThroughAliasUnlinkReachesSurvivor(t *testing.T) {
 	table := wfs.metadataPublicationTable()
 	held := table.AcquireLock("test", "/tmp", util.SharedLock)
 	done := make(chan error, 1)
-	go func() { done <- wfs.flushMetadataToFiler(context.Background(), fh, "/", "tmp", 1000, 20) }()
+	go func() { done <- wfs.flushMetadataToFiler(context.Background(), fh, "/", "tmp", 1000, 20, nil) }()
 	waitForPublicationWaiter(t, table, "/tmp")
 	unlinkInRoot(t, wfs, "tmp")
 	table.ReleaseLock("/tmp", held)
@@ -385,7 +385,7 @@ func TestFlushWhoseNameKeepsChangingRetries(t *testing.T) {
 	current := util.FullPath("/tmp")
 	held := table.AcquireLock("test", current, util.SharedLock)
 	done := make(chan error, 1)
-	go func() { done <- wfs.flushMetadataToFiler(context.Background(), fh, "/", "tmp", 1000, 20) }()
+	go func() { done <- wfs.flushMetadataToFiler(context.Background(), fh, "/", "tmp", 1000, 20, nil) }()
 	var removed []string
 	for i := 0; i < 4; i++ {
 		waitForPublicationWaiter(t, table, current)
@@ -405,7 +405,7 @@ func TestFlushWhoseNameKeepsChangingRetries(t *testing.T) {
 	if err == nil || !isRetryableFilerError(err) {
 		t.Fatalf("flush whose name changed during every lock wait: %v, want a retryable error", err)
 	}
-	if err := wfs.flushMetadataToFiler(context.Background(), fh, "/", "tmp", 1000, 20); err != nil {
+	if err := wfs.flushMetadataToFiler(context.Background(), fh, "/", "tmp", 1000, 20, nil); err != nil {
 		t.Fatalf("retried flush: %v", err)
 	}
 	wantStored(t, fake, "final", 2, 1)

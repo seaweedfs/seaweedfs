@@ -295,7 +295,7 @@ func TestAppendCompatibleCommittedPrefix(t *testing.T) {
 	fh.RememberPath("/dir/file")
 	fh.baseEntry.Store(base)
 	fh.dirtyMetadata = true
-	if code := w.doFlush(context.Background(), fh, 1000, 20, false); code != fuse.OK {
+	if code := w.doFlush(context.Background(), fh, 1000, 20, false, 0); code != fuse.OK {
 		t.Fatal(code)
 	}
 	peer.mu.Lock()
