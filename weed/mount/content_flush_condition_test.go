@@ -196,6 +196,51 @@ func TestContentFlushRepeatsOnOneHandle(t *testing.T) {
 	}
 }
 
+type refusedThenStalledFiler struct {
+	*contentFlushConditionFiler
+}
+
+func (s *refusedThenStalledFiler) LookupDirectoryEntry(ctx context.Context, r *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	<-ctx.Done()
+	return nil, status.FromContextError(ctx.Err()).Err()
+}
+
+// A refused create stays refused when reading the stored entry stalls: the
+// flush must not resend the create as if the filer had timed out.
+func TestContentFlushRefusalWithStalledLookup(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+	wfs.filerCallTimeout = 200 * time.Millisecond
+	fake := &contentFlushConditionFiler{entry: flushConditionEntry(1, 2)}
+	startFakeFiler(t, wfs, &refusedThenStalledFiler{fake})
+	oldSleep := metadataFlushSleep
+	metadataFlushSleep = func(context.Context, time.Duration) {}
+	t.Cleanup(func() { metadataFlushSleep = oldSleep })
+	observed := flushConditionEntry(1)
+	wfs.mapPbIdFromFilerToLocal(observed)
+	live := flushConditionEntry(1, 3)
+	live.Chunks[1].Offset = 2
+	wfs.mapPbIdFromFilerToLocal(live)
+	fh := newFileHandle(wfs, 1, 42, live)
+	t.Cleanup(func() { fh.dirtyPages.Destroy() })
+	fh.baseEntry.Store(observed)
+	fh.dirtyMetadata = true
+	fh.RememberPath(util.FullPath("/dir/file"))
+	start := time.Now()
+	code := wfs.doFlush(context.Background(), fh, 1000, 20, false)
+	elapsed := time.Since(start)
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if code == fuse.OK || !fh.dirtyMetadata {
+		t.Fatalf("refused flush reported %v, dirty=%v", code, fh.dirtyMetadata)
+	}
+	if fake.calls != 1 || elapsed > 2*time.Second {
+		t.Fatalf("refused create sent %d times over %v", fake.calls, elapsed)
+	}
+	if got := chunkFileKeys(fake.entry); !slices.Equal(got, []uint64{1, 2}) {
+		t.Fatalf("stored chunks %v", got)
+	}
+}
+
 func chunkFileKeys(e *filer_pb.Entry) (keys []uint64) {
 	for _, c := range e.GetChunks() {
 		keys = append(keys, c.GetFid().GetFileKey())

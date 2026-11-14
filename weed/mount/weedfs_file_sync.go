@@ -371,25 +371,21 @@ func (wfs *WFS) createContentEntry(ctx context.Context, fh *FileHandle, request 
 	sent := request.Entry
 	for attempt := 0; ; attempt++ {
 		request.Condition = &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{guard}}
-		var stored *filer_pb.Entry
 		err = wfs.withFilerClient(ctx, false, wfs.filerRPCWait(), func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 			var callErr error
-			stored = nil
 			resp, callErr = filer_pb.CreateEntryWithResponse(ctx, client, request)
-			if base == nil || attempt >= maxContentFlushMerges || !errors.Is(callErr, filer_pb.ErrPreconditionFailed) {
-				return callErr
-			}
-			if found, lookupErr := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{Directory: request.Directory, Name: request.Entry.Name}); lookupErr == nil {
-				stored = found.Entry
-			}
 			return callErr
 		})
 		if err == nil && request.Entry != sent {
 			merged = proto.Clone(request.Entry).(*filer_pb.Entry)
 			wfs.mapPbIdFromFilerToLocal(merged)
 		}
-		if err == nil || stored == nil {
+		if err == nil || base == nil || attempt >= maxContentFlushMerges || !errors.Is(err, filer_pb.ErrPreconditionFailed) {
 			return resp, merged, err
+		}
+		stored := wfs.lookupRefusedEntry(ctx, request.Directory, request.Entry.Name)
+		if stored == nil {
+			return resp, nil, err
 		}
 		mark := fh.markSince(base)
 		next, ok := mergeContentEntry(stored, base, local, sent, mark.truncatedTo, mark.rewrote)
@@ -400,6 +396,21 @@ func (wfs *WFS) createContentEntry(ctx context.Context, fh *FileHandle, request 
 		request.Entry = next
 		guard = &filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_ENTRY_EQUAL, ExpectedEntry: stored}
 	}
+}
+
+// lookupRefusedEntry reads the entry a refused create ran into, within one
+// filer call: a read that stalls must not hold or replay the refusal.
+func (wfs *WFS) lookupRefusedEntry(ctx context.Context, dir, name string) (stored *filer_pb.Entry) {
+	ctx, cancel := context.WithTimeout(ctx, wfs.filerRPCWait())
+	defer cancel()
+	_ = wfs.withFilerClient(ctx, false, wfs.filerRPCWait(), func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
+		found, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{Directory: dir, Name: name})
+		if err == nil {
+			stored = found.Entry
+		}
+		return err
+	})
+	return stored
 }
 
 // maxContentFlushMerges bounds how often one flush rebases onto a moving entry.
