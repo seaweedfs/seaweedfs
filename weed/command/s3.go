@@ -734,9 +734,9 @@ func (s3opt *S3Options) startLanceServer(listenOnLocalhost bool) *http.Server {
 	return httpS
 }
 
-// vectorsRouter builds the S3 Vectors API router — workers register to the
-// master and the backend resolves them lazily, so a worker that comes up
-// after the gateway still gets picked up on first query.
+// vectorsRouter builds the S3 Vectors API router — weed-vector servers
+// register to the master and the backend resolves them lazily, so a server
+// that comes up after the gateway still gets picked up on first query.
 func (s3opt *S3Options) vectorsRouter(s3ApiServer *s3api.S3ApiServer, grpcDialOption grpc.DialOption, masterAddresses []pb.ServerAddress, filerGroup string) *mux.Router {
 	if len(masterAddresses) == 0 {
 		glog.Warningf("S3 Vectors API disabled: no weed-vector registered on master")
@@ -902,10 +902,3 @@ func (v lanceCredentialVendor) VendTableCredentials(ctx context.Context, princip
 		Expiration:      credentials.Expiration,
 	}, nil
 }
-
-// discoverVectorWorker resolves one registered weed-vector server through the
-// master's cluster-nodes list; OSS fans every vector call to that single
-// backend.
-// discoverVectorWorkers returns every registered weed-vector address —
-// callers keep their current worker when it is still listed so
-// membership-order changes cannot churn live connections.

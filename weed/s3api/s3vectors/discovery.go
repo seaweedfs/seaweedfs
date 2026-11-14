@@ -15,7 +15,7 @@ import (
 
 func NewVectorDiscovery(masters func() []pb.ServerAddress, dialOption grpc.DialOption, filerGroup string) *vectorDiscovery {
 	return &vectorDiscovery{masters: masters, grpcDialOption: dialOption, discover: func(m []pb.ServerAddress, opt grpc.DialOption) []string {
-		return discoverVectorWorkers(m, opt, filerGroup)
+		return discoverVectorServers(m, opt, filerGroup)
 	}}
 }
 
@@ -25,7 +25,7 @@ type vectorDiscovery struct {
 	discover       func([]pb.ServerAddress, grpc.DialOption) []string
 	mu             sync.Mutex
 	closed         bool
-	worker         string
+	server         string
 	failed         string
 	active         map[vector_pb.VectorServiceClient]int
 	retired        map[vector_pb.VectorServiceClient]*grpc.ClientConn
@@ -40,7 +40,7 @@ func (d *vectorDiscovery) Close() error {
 	defer d.mu.Unlock()
 	d.closed = true
 	d.retire()
-	d.worker, d.conn, d.client = "", nil, nil
+	d.server, d.conn, d.client = "", nil, nil
 	return nil
 }
 
@@ -50,9 +50,9 @@ func (d *vectorDiscovery) reset(c vector_pb.VectorServiceClient) {
 	if c != d.client {
 		return
 	}
-	d.failed = d.worker
+	d.failed = d.server
 	d.retire()
-	d.worker, d.conn, d.client = "", nil, nil
+	d.server, d.conn, d.client = "", nil, nil
 	d.nextResolve = time.Time{}
 }
 
@@ -92,7 +92,7 @@ func (d *vectorDiscovery) resolve() {
 	if d.masters != nil {
 		masters = d.masters()
 	}
-	workers := d.discover(masters, d.grpcDialOption)
+	servers := d.discover(masters, d.grpcDialOption)
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	// Measured from lookup end so a slow lookup cannot leave the next one already due.
@@ -105,30 +105,30 @@ func (d *vectorDiscovery) resolve() {
 		close(d.resolving)
 		d.resolving = nil
 	}()
-	if d.closed || len(workers) == 0 {
+	if d.closed || len(servers) == 0 {
 		return
 	}
-	worker := workers[0]
-	for _, w := range workers {
+	server := servers[0]
+	for _, w := range servers {
 		if w != d.failed {
-			worker = w
+			server = w
 			break
 		}
 	}
-	for _, w := range workers {
-		if w == d.worker && w != d.failed {
-			worker = w
+	for _, w := range servers {
+		if w == d.server && w != d.failed {
+			server = w
 			break
 		}
 	}
-	if worker != d.worker {
-		conn, err := pb.GrpcDial(context.Background(), worker, false, d.grpcDialOption)
+	if server != d.server {
+		conn, err := pb.GrpcDial(context.Background(), server, false, d.grpcDialOption)
 		if err != nil {
-			glog.Warningf("S3 Vectors: dial weed-vector %s: %v", worker, err)
+			glog.Warningf("S3 Vectors: dial weed-vector %s: %v", server, err)
 			return
 		}
 		d.retire()
-		d.worker, d.conn = worker, conn
+		d.server, d.conn = server, conn
 		d.client = vector_pb.NewVectorServiceClient(conn)
 	}
 }
@@ -138,7 +138,7 @@ const (
 	vectorRecheckInterval = 500 * time.Millisecond
 )
 
-var errNoVectorWorker = status.Error(codes.Unavailable, "no weed-vector registered on master")
+var errNoVectorServer = status.Error(codes.Unavailable, "no weed-vector registered on master")
 
 func (d *vectorDiscovery) cli(ctx context.Context) (vector_pb.VectorServiceClient, error) {
 	if err := ctx.Err(); err != nil {
@@ -168,7 +168,7 @@ func (d *vectorDiscovery) cli(ctx context.Context) (vector_pb.VectorServiceClien
 		return nil, status.Error(codes.Canceled, "vector discovery closed")
 	}
 	if d.client == nil {
-		return nil, errNoVectorWorker
+		return nil, errNoVectorServer
 	}
 	if d.active == nil {
 		d.active = make(map[vector_pb.VectorServiceClient]int)
@@ -326,7 +326,7 @@ func (d *vectorDiscovery) QueryVectors(ctx context.Context, in *vector_pb.QueryV
 	return nil, err
 }
 
-func discoverVectorWorkers(masters []pb.ServerAddress, grpcDialOption grpc.DialOption, filerGroup string) []string {
+func discoverVectorServers(masters []pb.ServerAddress, grpcDialOption grpc.DialOption, filerGroup string) []string {
 	for _, master := range masters {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		conn, err := pb.GrpcDial(ctx, master.ToGrpcAddress(), false, grpcDialOption)
@@ -343,15 +343,15 @@ func discoverVectorWorkers(masters []pb.ServerAddress, grpcDialOption grpc.DialO
 		if err != nil {
 			continue
 		}
-		workers := make([]string, 0, len(resp.ClusterNodes))
+		servers := make([]string, 0, len(resp.ClusterNodes))
 		for _, node := range resp.ClusterNodes {
 			glog.V(0).Infof("S3 Vectors: discovered weed-vector at %s via master %s", node.Address, master)
-			workers = append(workers, node.Address)
+			servers = append(servers, node.Address)
 		}
-		// A follower can answer with an empty list — workers register with
+		// A follower can answer with an empty list — servers register with
 		// the leader, so keep looking rather than accept "none."
-		if len(workers) > 0 {
-			return workers
+		if len(servers) > 0 {
+			return servers
 		}
 	}
 	return nil
