@@ -263,3 +263,27 @@ func TestFailoverClient_ParentCancelDoesNotSwitch(t *testing.T) {
 		t.Fatalf("current front %q, want %q", current, aAddr)
 	}
 }
+
+func TestFailoverClient_SecondFrontLostMovesToThird(t *testing.T) {
+	setWorkerKey(t, frontKey)
+	a := &failoverFront{testFront: testFront{key: frontKey}, dieOn: 1}
+	b := &failoverFront{testFront: testFront{key: frontKey}, dieOn: 1}
+	c := &failoverFront{testFront: testFront{key: frontKey}}
+	aAddr, bAddr, cAddr := startFailoverFront(t, a), startFailoverFront(t, b), startFailoverFront(t, c)
+	r := &reports{}
+	f := newTestFailoverClient(t, context.Background(), []string{aAddr, bAddr, cAddr}, r)
+
+	resp, err := f.LifecycleDelete(context.Background(), deleteReq(1))
+	if err != nil || resp.Outcome != s3_lifecycle_pb.LifecycleDeleteOutcome_DONE {
+		t.Fatalf("resp %v err %v", resp, err)
+	}
+	for name, front := range map[string]*failoverFront{"a": a, "b": b, "c": c} {
+		got := front.received()
+		if len(got) != 1 || !proto.Equal(got[0], deleteReq(1)) {
+			t.Fatalf("front %s got %v, want the one request", name, got)
+		}
+	}
+	if msgs := r.all(); len(msgs) != 2 || !strings.Contains(msgs[1], "switched to s3 "+cAddr) {
+		t.Fatalf("want switches to b then c, got %q", msgs)
+	}
+}
