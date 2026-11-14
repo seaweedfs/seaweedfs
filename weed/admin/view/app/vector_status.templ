@@ -25,7 +25,7 @@ templ VectorStatus(data dash.VectorOperationsData) {
    } else {
     <p>{ fmt.Sprintf("%d vector maintenance workers connected",data.MaintenanceWorkers) }</p>
    }
-   <a href={ dash.PUrl(ctx,"/plugin/monitoring") }>Maintenance jobs</a>
+   <a href={ dash.PUrl(ctx,"/plugin/lanes/lance") }>Maintenance jobs</a>
    if len(data.MaintenanceJobs)>0 {
     <table class="table table-sm mt-2"><thead><tr><th>Recent job</th><th>State</th><th>Result</th></tr></thead><tbody>
      for _,job:=range data.MaintenanceJobs {
