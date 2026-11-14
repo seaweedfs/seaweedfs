@@ -407,3 +407,37 @@ func TestStreamingCopyMarksOnlyAcceptedContentDirty(t *testing.T) {
 		})
 	}
 }
+
+func TestServerSideCopySkipsFencedDestination(t *testing.T) {
+	wfs := newCopyRangeTestWFS()
+	wfs.option.WritebackCache = true
+	srcInode := wfs.inodeToPath.Lookup(util.FullPath("/src.txt"), 1, false, false, 0, true)
+	dstInode := wfs.inodeToPath.Lookup(util.FullPath("/dst.txt"), 1, false, false, 0, true)
+	srcHandle, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, srcInode, &filer_pb.Entry{
+		Name:       "src.txt",
+		Attributes: &filer_pb.FuseAttributes{FileMode: 0100644, FileSize: 5, Inode: srcInode},
+		Content:    []byte("hello"),
+	}, 0, 0)
+	dstHandle, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, dstInode, &filer_pb.Entry{
+		Name:       "dst.txt",
+		Attributes: &filer_pb.FuseAttributes{FileMode: 0100644, Inode: dstInode},
+	}, 0, 0)
+	srcHandle.RememberPath("/src.txt")
+	dstHandle.RememberPath("/dst.txt")
+	dstHandle.writebackContentError.Store(true)
+
+	originalCopy := performServerSideWholeFileCopy
+	t.Cleanup(func() { performServerSideWholeFileCopy = originalCopy })
+	performServerSideWholeFileCopy = func(<-chan struct{}, *WFS, wholeFileServerCopyRequest) (*filer_pb.Entry, entryVersion, serverSideWholeFileCopyOutcome, error) {
+		t.Fatal("fenced destination must not publish through the filer copy")
+		return nil, entryVersion{}, serverSideWholeFileCopyCommitted, nil
+	}
+
+	if _, handled, _ := wfs.tryServerSideWholeFileCopy(make(chan struct{}), &fuse.CopyFileRangeIn{
+		FhIn:  uint64(srcHandle.fh),
+		FhOut: uint64(dstHandle.fh),
+		Len:   8,
+	}, srcHandle, dstHandle); handled {
+		t.Fatal("fenced destination should fall back to the streaming copy")
+	}
+}

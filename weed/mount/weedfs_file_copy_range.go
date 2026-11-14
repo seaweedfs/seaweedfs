@@ -210,6 +210,10 @@ func (wfs *WFS) CopyFileRange(cancel <-chan struct{}, in *fuse.CopyFileRangeIn) 
 }
 
 func (wfs *WFS) tryServerSideWholeFileCopy(cancel <-chan struct{}, in *fuse.CopyFileRangeIn, fhIn, fhOut *FileHandle) (written uint32, handled bool, code fuse.Status) {
+	if err := wfs.checkContentPublication(fhOut, nil); err != nil {
+		glog.V(4).Infof("server-side copy: skipped (%v)", err)
+		return 0, false, fuse.OK
+	}
 	copyRequest, ok := wholeFileServerCopyCandidate(fhIn, fhOut, in)
 	if !ok {
 		return 0, false, fuse.OK
