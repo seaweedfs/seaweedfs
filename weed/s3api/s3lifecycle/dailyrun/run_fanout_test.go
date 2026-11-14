@@ -126,6 +126,7 @@ func TestRun_HaltedShardDoesNotStarveOthers(t *testing.T) {
 		Persister:   persister,
 		Lister:      stubSiblingLister{},
 		Now:         func() time.Time { return runNow },
+		Stats:       &RunStats{},
 	}
 
 	done := make(chan error, 1)
@@ -145,4 +146,11 @@ func TestRun_HaltedShardDoesNotStarveOthers(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, found)
 	assert.Greater(t, starvedCursor.TsNs, seeded.TsNs, "starved shard's cursor must advance")
+
+	sum := cfg.Stats.Summary()
+	assert.Equal(t, PhaseReplay, sum.Phase)
+	assert.Equal(t, int64(2), sum.EventsScanned, "the halted shard stops after its first event")
+	assert.Equal(t, map[string]int64{"BLOCKED": 1, "DONE": 1}, sum.Outcomes)
+	assert.Zero(t, sum.ShardErrors)
+	assert.Equal(t, 1, sum.ShardsHalted, "a BLOCKED delete halts its shard without an error")
 }

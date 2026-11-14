@@ -102,7 +102,7 @@ func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, o
 	var openFh FileHandleId
 	var existed, draining bool
 	for {
-		fileHandle, openFh, existed, draining = wfs.fhMap.AcquireFileHandle(wfs, inode, newEntry, 0, 0)
+		fileHandle, openFh, existed, draining = wfs.fhMap.AcquireFileHandle(wfs, inode, newEntry, 0, 0, in.Flags&syscall.O_APPEND != 0)
 		if !draining {
 			break
 		}

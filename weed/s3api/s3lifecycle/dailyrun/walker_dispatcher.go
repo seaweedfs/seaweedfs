@@ -8,7 +8,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_lifecycle_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/bootstrap"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/engine"
-	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"golang.org/x/time/rate"
 )
 
@@ -27,6 +26,8 @@ type WalkerDispatcher struct {
 	// DeleteTimeout bounds each LifecycleDelete, applied after the
 	// limiter wait. <= 0 uses DefaultDeleteTimeout.
 	DeleteTimeout time.Duration
+	// nil skips per-pass outcome counts.
+	Stats *RunStats
 }
 
 // Compile-time check.
@@ -71,10 +72,10 @@ func (d *WalkerDispatcher) Delete(ctx context.Context, action *engine.CompiledAc
 	if err != nil {
 		// "RPC_ERROR" matches the streaming dispatcher and processMatches
 		// labels so transport-class failures aggregate under one key.
-		stats.S3LifecycleDispatchCounter.WithLabelValues(action.Bucket, kindLabel, "RPC_ERROR").Inc()
+		countDispatch(d.Stats, action.Bucket, kindLabel, "RPC_ERROR")
 		return fmt.Errorf("walker dispatch %s/%s %s: %w", action.Bucket, objectPath, action.Key.ActionKind, err)
 	}
-	stats.S3LifecycleDispatchCounter.WithLabelValues(action.Bucket, kindLabel, resp.Outcome.String()).Inc()
+	countDispatch(d.Stats, action.Bucket, kindLabel, resp.Outcome.String())
 	switch resp.Outcome {
 	case s3_lifecycle_pb.LifecycleDeleteOutcome_DONE,
 		s3_lifecycle_pb.LifecycleDeleteOutcome_NOOP_RESOLVED,

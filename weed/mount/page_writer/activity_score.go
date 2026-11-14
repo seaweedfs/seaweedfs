@@ -17,7 +17,8 @@ func NewActivityScore() *ActivityScore {
 func (as *ActivityScore) MarkRead() {
 	now := time.Now().UnixNano()
 	last := atomic.SwapInt64(&as.lastActiveTsNs, now)
-	deltaTime := (now - last) >> 30 // about number of seconds
+	// Concurrent timestamp swaps or a clock adjustment can make last newer than now.
+	deltaTime := max(0, min(63, (now-last)>>30)) // about number of seconds
 	for {
 		old := atomic.LoadInt64(&as.decayedActivenessScore)
 		score := old>>deltaTime + 256
@@ -33,7 +34,7 @@ func (as *ActivityScore) MarkRead() {
 func (as *ActivityScore) MarkWrite() {
 	now := time.Now().UnixNano()
 	last := atomic.SwapInt64(&as.lastActiveTsNs, now)
-	deltaTime := (now - last) >> 30 // about number of seconds
+	deltaTime := max(0, min(63, (now-last)>>30)) // about number of seconds
 	for {
 		old := atomic.LoadInt64(&as.decayedActivenessScore)
 		score := old>>deltaTime + 1024
@@ -47,6 +48,6 @@ func (as *ActivityScore) MarkWrite() {
 }
 
 func (as *ActivityScore) ActivityScore() int64 {
-	deltaTime := (time.Now().UnixNano() - atomic.LoadInt64(&as.lastActiveTsNs)) >> 30
+	deltaTime := max(0, min(63, (time.Now().UnixNano()-atomic.LoadInt64(&as.lastActiveTsNs))>>30))
 	return atomic.LoadInt64(&as.decayedActivenessScore) >> deltaTime
 }
