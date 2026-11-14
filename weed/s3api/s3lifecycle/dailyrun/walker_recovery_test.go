@@ -143,6 +143,18 @@ func TestRunShard_ColdStartWithResumedWalkReplaysNextPass(t *testing.T) {
 	assert.Equal(t, engine.ReplayContentHash(snap), got.RuleSetHash)
 }
 
+func TestComputeGlobalStartTsNs_SavedCursorBelowTheFloor(t *testing.T) {
+	runNow := time.Unix(1_700_000_000, 0).UTC()
+	maxTTL := 30 * 24 * time.Hour
+	floor := runNow.Add(-maxTTL).UnixNano()
+	saved := runNow.Add(-maxTTL - 48*time.Hour).UnixNano()
+	cfg := Config{Shards: []int{1, 3}}
+	cursors := map[int]cursorLoad{3: {cursor: Cursor{TsNs: saved}, found: true}}
+	assert.Equal(t, saved, computeGlobalStartTsNs(cursors, cfg, runNow, maxTTL),
+		"a cursor a resumed cold start saved below runNow - maxTTL opens the next subscription")
+	assert.Equal(t, floor, computeGlobalStartTsNs(map[int]cursorLoad{}, cfg, runNow, maxTTL))
+}
+
 func TestRunShard_NilWalkerOnRecoveryIsNoop(t *testing.T) {
 	// Phase 4a behavior: a nil Walker must not crash and must still
 	// rewind the cursor.
