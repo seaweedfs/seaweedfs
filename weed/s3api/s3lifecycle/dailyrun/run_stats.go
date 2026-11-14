@@ -1,10 +1,14 @@
 package dailyrun
 
 import (
+	"context"
 	"strings"
 	"sync"
 	"sync/atomic"
 
+	"google.golang.org/grpc"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 )
 
@@ -46,7 +50,10 @@ type RunSummary struct {
 	EntriesVisited int64
 	// Distinct object keys among the listed entries.
 	ObjectsVisited int64
-	EventsScanned  int64
+	// Every entry read from the filer, including the ones a walk skips
+	// without visiting (versioned pre-pass, resume start, other shards).
+	EntriesListed int64
+	EventsScanned int64
 	// LifecycleDelete outcomes keyed by the dispatch_total outcome label.
 	// They count RPC results, not reclaimed space.
 	Outcomes    map[string]int64
@@ -63,6 +70,7 @@ type RunSummary struct {
 type RunStats struct {
 	entries atomic.Int64
 	objects atomic.Int64
+	listed  atomic.Int64
 	events  atomic.Int64
 
 	mu           sync.Mutex
@@ -123,6 +131,41 @@ func (s *RunStats) visitEntry(newObject bool) {
 	}
 }
 
+// CountListed returns client with its ListEntries results counted as
+// EntriesListed.
+func (s *RunStats) CountListed(client filer_pb.SeaweedFilerClient) filer_pb.SeaweedFilerClient {
+	if s == nil || client == nil {
+		return client
+	}
+	return &listCountingClient{SeaweedFilerClient: client, stats: s}
+}
+
+type listCountingClient struct {
+	filer_pb.SeaweedFilerClient
+	stats *RunStats
+}
+
+func (c *listCountingClient) ListEntries(ctx context.Context, in *filer_pb.ListEntriesRequest, opts ...grpc.CallOption) (filer_pb.SeaweedFiler_ListEntriesClient, error) {
+	stream, err := c.SeaweedFilerClient.ListEntries(ctx, in, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &listCountingStream{SeaweedFiler_ListEntriesClient: stream, stats: c.stats}, nil
+}
+
+type listCountingStream struct {
+	filer_pb.SeaweedFiler_ListEntriesClient
+	stats *RunStats
+}
+
+func (s *listCountingStream) Recv() (*filer_pb.ListEntriesResponse, error) {
+	resp, err := s.SeaweedFiler_ListEntriesClient.Recv()
+	if err == nil && resp.GetEntry() != nil {
+		s.stats.listed.Add(1)
+	}
+	return resp, err
+}
+
 func (s *RunStats) scanEvent() {
 	if s == nil {
 		return
@@ -176,6 +219,7 @@ func (s *RunStats) Summary() RunSummary {
 	out := RunSummary{
 		EntriesVisited: s.entries.Load(),
 		ObjectsVisited: s.objects.Load(),
+		EntriesListed:  s.listed.Load(),
 		EventsScanned:  s.events.Load(),
 	}
 	s.mu.Lock()
