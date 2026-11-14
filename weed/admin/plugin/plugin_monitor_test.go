@@ -594,6 +594,53 @@ func TestBuildJobDetailIncludesActivitiesAndRunRecord(t *testing.T) {
 	}
 }
 
+func TestBuildJobDetailKeepsFailedJobResult(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{DataDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	pluginSvc.trackExecutionStart("req-failed", "worker-f", &plugin_pb.JobSpec{
+		JobId:   "job-failed",
+		JobType: "s3_lifecycle",
+	}, 1)
+	pluginSvc.handleJobCompleted(&plugin_pb.JobCompleted{
+		RequestId:    "req-failed",
+		JobId:        "job-failed",
+		JobType:      "s3_lifecycle",
+		Success:      false,
+		ErrorMessage: "walk bad-a: filer down",
+		Result: &plugin_pb.JobResult{
+			Summary: "pass failed",
+			OutputValues: map[string]*plugin_pb.ConfigValue{
+				"buckets_failed": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 2}},
+			},
+		},
+		CompletedAt: timestamppb.Now(),
+	})
+	pluginSvc.Shutdown()
+
+	detail, found, err := pluginSvc.BuildJobDetail("job-failed", 100, 5)
+	if err != nil {
+		t.Fatalf("BuildJobDetail error: %v", err)
+	}
+	if !found || detail == nil || detail.Job == nil {
+		t.Fatalf("expected job detail")
+	}
+	if detail.Job.State != "job_state_failed" || detail.Job.ErrorMessage != "walk bad-a: filer down" {
+		t.Fatalf("expected the failure to be kept, got state=%q error=%q", detail.Job.State, detail.Job.ErrorMessage)
+	}
+	if detail.Job.ResultSummary != "pass failed" {
+		t.Fatalf("expected the failed job's result summary, got %q", detail.Job.ResultSummary)
+	}
+	if detail.Job.ResultOutputValues["buckets_failed"] == nil {
+		t.Fatalf("expected the failed job's result output values, got %+v", detail.Job.ResultOutputValues)
+	}
+}
+
 func TestBuildJobDetailLoadsFromDiskWhenMemoryCleared(t *testing.T) {
 	t.Parallel()
 
