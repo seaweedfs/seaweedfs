@@ -216,10 +216,13 @@ func (w *walkProgress) save(ctx context.Context) error {
 		cp.Done = append(cp.Done, b)
 	}
 	slices.Sort(cp.Done)
+	kept := len(cp.Done) > 0 || len(cp.Resume) > 0
+	// A save that reports an error may still have been written.
+	w.onDisk = w.onDisk || kept
 	if err := w.store.SaveWalk(ctx, cp); err != nil {
 		return err
 	}
-	w.onDisk = len(cp.Done) > 0 || len(cp.Resume) > 0
+	w.onDisk = kept
 	return nil
 }
 
