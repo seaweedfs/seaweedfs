@@ -76,3 +76,24 @@
 # retry_limit = 1
 # seconds to wait between retry attempts
 # retry_backoff_seconds = 30
+
+[maintenance.s3_lifecycle]
+# enabled = true
+# How far back the filer meta-log subscription can reliably reach, in days.
+# Rules whose TTL exceeds this window are partitioned into the walk set and
+# scanned in full on every run; 0 means unbounded, which promotes every rule
+# to the walk set. Set this to 0 when bucket rules must expire pre-existing
+# objects (a bounded window only replays events inside it, so anything
+# written before the job was enabled is never seen).
+# meta_log_retention_days = 0
+# Minimum minutes between full bucket walks. 0 walks on every run.
+# walker_interval_minutes = 0
+# Cluster-wide delete budget in delete RPCs per second, divided across
+# execute-capable workers at dispatch time. 0 means unlimited.
+# cluster_deletes_per_second = 0
+# Token-bucket burst for the delete budget. 0 means 2 x per-second.
+# cluster_deletes_burst = 0
+# max retry attempts for a failed lifecycle run
+# retry_limit = 1
+# seconds to wait between retry attempts
+# retry_backoff_seconds = 10

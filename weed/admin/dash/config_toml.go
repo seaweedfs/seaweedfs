@@ -256,6 +256,20 @@ var pluginConfigSections = []pluginConfigSection{
 			"collection_filter": stringValue,
 		},
 	},
+	{
+		// s3_lifecycle reads all four knobs from the admin values: the
+		// retention window and walker cadence drive the engine partition
+		// computed on the admin side, and the delete budget is divided by
+		// the admin across execute-capable workers at dispatch time.
+		jobType: "s3_lifecycle",
+		prefix:  "maintenance.s3_lifecycle",
+		adminKeys: map[string]func(v TomlConfig, key string) *plugin_pb.ConfigValue{
+			"meta_log_retention_days":    int64Value,
+			"walker_interval_minutes":    int64Value,
+			"cluster_deletes_per_second": int64Value,
+			"cluster_deletes_burst":      int64Value,
+		},
+	},
 }
 
 func doubleValue(v TomlConfig, key string) *plugin_pb.ConfigValue {
