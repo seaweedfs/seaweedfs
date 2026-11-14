@@ -88,8 +88,8 @@ detect_platform() {
 }
 
 # Get latest release tag from GitHub API
-# The Enterprise repo also releases seaweed-vfs under vfs-* tags, which can be
-# its latest release, so take the newest other tag.
+# The Enterprise repo also releases other products (vfs-*, previews), which can
+# be its latest release, so take the newest plain version tag like 4.53.
 get_latest_version() {
     local url="https://api.github.com/repos/${REPO}/releases/latest"
     if [ "$ENTERPRISE" = true ]; then
@@ -103,7 +103,7 @@ get_latest_version() {
     else
         error "Neither curl nor wget found. Please install one."
     fi
-    echo "$body" | grep '"tag_name"' | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/' | grep -v '^vfs-' | head -1 || true
+    echo "$body" | grep '"tag_name"' | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/' | grep -E '^[0-9]+(\.[0-9]+)+$' | head -1 || true
 }
 
 # Download a file

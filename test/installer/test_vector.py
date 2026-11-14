@@ -88,8 +88,9 @@ class EnterpriseInstallerTest(unittest.TestCase):
                     result = self.enterprise(f'{check} "$SYSTEM" "$ARCH"', SYSTEM=system, ARCH=arch)
                     self.assertEqual(result.returncode == 0, supported, check)
 
-    def test_latest_version_skips_vfs_releases(self):
-        result = self.enterprise('curl() { printf \'  "tag_name": "vfs-0.2.5",\\n  "tag_name": "4.53",\\n\'; }; '
-                                 'get_latest_version')
+    def test_latest_version_skips_other_releases(self):
+        tags = ['vfs-0.2.5', 'kvcache-filer-native-v0.1.0-preview.1', '4.54-rc1', '4.53', '4.52']
+        listing = ''.join(f'  "tag_name": "{tag}",\\n' for tag in tags)
+        result = self.enterprise(f"curl() {{ printf '{listing}'; }}; get_latest_version")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), '4.53')
