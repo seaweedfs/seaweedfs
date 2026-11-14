@@ -154,7 +154,7 @@ func (wfs *WFS) flushMetadataWithRetry(fh *FileHandle, dir, name string, fileFul
 			fileFullPath, nextAttempt, totalAttempts, backoff, err)
 	})
 	if err != nil {
-		publication.retire(err)
+		publication.abandon()
 		glog.Errorf("completeAsyncFlush %s: metadata flush failed after %d attempts: %v - "+
 			"chunks are uploaded but NOT referenced in filer metadata; "+
 			"they will appear as orphans in volume.fsck",

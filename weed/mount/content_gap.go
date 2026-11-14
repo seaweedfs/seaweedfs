@@ -17,7 +17,15 @@ type contentPublication struct {
 }
 
 func (p *contentPublication) retire(err error) {
-	if err != nil && p.refused && p.failure != nil {
+	if err != nil && p.refused {
+		p.abandon()
+	}
+}
+
+// An abandoned writeback drain leaves the kernel EOF past the stored one,
+// whatever the filer answered.
+func (p *contentPublication) abandon() {
+	if p.failure != nil {
 		p.failure.Store(true)
 	}
 }
