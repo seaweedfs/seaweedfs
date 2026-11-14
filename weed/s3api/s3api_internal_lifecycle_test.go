@@ -384,6 +384,38 @@ func TestLifecycleDelete_NoSigningKey_LocalPeerOnly(t *testing.T) {
 	}
 }
 
+func TestLifecycleReady_AuthorizesLikeLifecycleDelete(t *testing.T) {
+	good := security.GenJwtForFilerAdmin(security.SigningKey(testS3IamCacheSigningKey), 60)
+	bad := security.GenJwtForFilerAdmin(security.SigningKey("a-different-key"), 60)
+	remoteCtx := peer.NewContext(context.Background(),
+		&peer.Peer{Addr: &net.TCPAddr{IP: net.ParseIP("203.0.113.7"), Port: 11111}})
+	cases := []struct {
+		name       string
+		signingKey string
+		ctx        context.Context
+		want       codes.Code
+	}{
+		{"key, no token", testS3IamCacheSigningKey, context.Background(), codes.Unauthenticated},
+		{"key, mis-signed token", testS3IamCacheSigningKey, s3IamCacheBearerCtx(string(bad)), codes.Unauthenticated},
+		{"key, valid token", testS3IamCacheSigningKey, s3IamCacheBearerCtx(string(good)), codes.OK},
+		{"no key, remote peer", "", remoteCtx, codes.Unauthenticated},
+		{"no key, loopback peer", "", s3LocalPeerCtx(), codes.OK},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestS3IamCacheServer(t, tc.signingKey)
+			_, err := s.LifecycleReady(tc.ctx, &s3_lifecycle_pb.LifecycleReadyRequest{})
+			if got := status.Code(err); got != tc.want {
+				t.Fatalf("LifecycleReady: got code %v, want %v (err=%v)", got, tc.want, err)
+			}
+			_, deleteErr := s.LifecycleDelete(tc.ctx, &s3_lifecycle_pb.LifecycleDeleteRequest{})
+			if got := status.Code(deleteErr); got != tc.want {
+				t.Fatalf("LifecycleDelete disagrees: got code %v, want %v (err=%v)", got, tc.want, deleteErr)
+			}
+		})
+	}
+}
+
 func TestLifecycleDelete_CurrentExpirationRequiresLatestVersion(t *testing.T) {
 	listed := &filer_pb.Entry{
 		Name:       "v_old",
