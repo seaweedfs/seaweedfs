@@ -179,6 +179,7 @@ func (wfs *WFS) CopyFileRange(cancel <-chan struct{}, in *fuse.CopyFileRangeIn) 
 		}
 
 		// Perform the write
+		fhOut.dirtyContent = true
 		fhOut.dirtyPages.writerPattern.MonitorWriteAt(offsetOut, int(numBytesRead))
 		if err := fhOut.dirtyPages.AddPage(
 			offsetOut,
