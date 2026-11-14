@@ -165,9 +165,10 @@ func (c *commandS3LifecycleRunShard) Do(args []string, env *CommandEnv, writer i
 					buckets = append(buckets, in.Bucket)
 				}
 			}
+			persister := &dailyrun.FilerCursorPersister{Store: dispatcher.NewFilerStoreClient(filerClient)}
 			walker := dailyrun.WalkerFunc(func(walkCtx context.Context, view *engine.Snapshot, shards []int) error {
 				return dailyrun.WalkBuckets(walkCtx, view, shards, buckets,
-					dailyrun.FilerListFunc(filerClient, bucketsPath, view), walkerDispatch)
+					dailyrun.FilerListFunc(filerClient, bucketsPath, view), walkerDispatch, persister)
 			})
 			return dailyrun.Run(passCtx, dailyrun.Config{
 				Shards:      shards,
@@ -175,7 +176,7 @@ func (c *commandS3LifecycleRunShard) Do(args []string, env *CommandEnv, writer i
 				Engine:      eng,
 				FilerClient: filerClient,
 				Client:      client,
-				Persister:   &dailyrun.FilerCursorPersister{Store: dispatcher.NewFilerStoreClient(filerClient)},
+				Persister:   persister,
 				Lister:      dispatcher.NewFilerSiblingLister(filerClient, bucketsPath),
 				// The shell command is used for bounded one-shot sweeps in
 				// integration tests and CI. Fan out across the selected shards
