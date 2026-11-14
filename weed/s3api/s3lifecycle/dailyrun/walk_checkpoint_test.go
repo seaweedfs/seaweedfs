@@ -36,6 +36,13 @@ type savingStore struct {
 	failAll bool
 }
 
+func (s *savingStore) Read(ctx context.Context, dir, name string) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return s.fakeStore.Read(ctx, dir, name)
+}
+
 func (s *savingStore) Save(ctx context.Context, dir, name string, content []byte) error {
 	if s.failAll {
 		return errors.New("filer down")
@@ -204,9 +211,7 @@ func TestWalkBuckets_CanceledResumeKeepsCheckpoint(t *testing.T) {
 	cancel()
 	_, err = h.walk(ctx, view, allShards)
 	require.ErrorIs(t, err, context.Canceled)
-	after := h.saved(allShards)
-	assert.Equal(t, before.Done, after.Done)
-	assert.Equal(t, before.Resume, after.Resume)
+	assert.Equal(t, before, h.saved(allShards), "a walk that could not read the record leaves it alone")
 }
 
 func TestWalkBuckets_ClearFailureFailsTheWalk(t *testing.T) {
