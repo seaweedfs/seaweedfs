@@ -1,0 +1,42 @@
+package app
+
+import "github.com/seaweedfs/seaweedfs/weed/admin/dash"
+
+templ ClusterVectorServers(data dash.VectorOperationsData) {
+	<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+		<h1 class="h2">
+			<i class="bi bi-arrow-up-right me-2"></i>Vector Servers
+		</h1>
+	</div>
+	<div class="card shadow mb-4">
+		<div class="card-header">Vector engines</div>
+		<div class="card-body">
+			if data.DiscoveryError != "" {
+				<div class="alert alert-warning mb-0">Engine discovery failed: { data.DiscoveryError }</div>
+			} else if len(data.Engines) == 0 {
+				<p class="mb-0 text-muted">No weed-vector engine is registered with the master.</p>
+			} else {
+				<div class="table-responsive">
+					<table class="table table-hover mb-0" id="vectorServersTable">
+						<thead>
+							<tr>
+								<th>Address</th>
+								<th>Version</th>
+								<th>Status</th>
+							</tr>
+						</thead>
+						<tbody>
+							for _, engine := range data.Engines {
+								<tr>
+									<td>{ engine.Address }</td>
+									<td><span class="badge bg-light text-dark">{ engine.Version }</span></td>
+									<td>{ engine.Status }</td>
+								</tr>
+							}
+						</tbody>
+					</table>
+				</div>
+			}
+		</div>
+	</div>
+}
