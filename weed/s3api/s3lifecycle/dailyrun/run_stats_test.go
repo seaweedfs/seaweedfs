@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_lifecycle_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/bootstrap"
@@ -166,4 +167,25 @@ func TestRunStats_NilIsANoOp(t *testing.T) {
 	runStats.recordOutcome("DONE")
 	runStats.setShardErrors(1)
 	assert.Equal(t, RunSummary{}, runStats.Summary())
+}
+
+// A walk can read a bucket without visiting anything: the versioned
+// pre-pass reads plain files without emitting them, and a resumed walk
+// skips every key up to its start.
+func TestRunStats_CountListedCountsSkippedEntries(t *testing.T) {
+	mtime := time.Now().Add(-7 * 24 * time.Hour)
+	client := &fakeFiler{tree: map[string][]*filer_pb.Entry{
+		"/buckets/bkt": {file("a.txt", mtime, 1), file("b.txt", mtime, 1), file("c.txt", mtime, 1)},
+	}}
+	stats := &RunStats{}
+	emitted := 0
+	require.NoError(t, FilerListFunc(stats.CountListed(client), "/buckets", nil)(context.Background(), "bkt", "c.txt", func(*bootstrap.Entry) error {
+		emitted++
+		return nil
+	}))
+
+	assert.Zero(t, emitted)
+	assert.Equal(t, int64(6), stats.Summary().EntriesListed, "both passes over the versioned bucket")
+	var nilStats *RunStats
+	assert.Same(t, client, nilStats.CountListed(client))
 }
