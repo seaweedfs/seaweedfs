@@ -606,7 +606,9 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 			lastWalkedNs = runNow.UnixNano()
 			walkedThisPass = true
 		}
-		if mustWalkRecovery {
+		// The shared subscription began at runNow - maxTTL, so a cold
+		// start whose walk resumed an earlier attempt replays next pass.
+		if mustWalkRecovery || replayFrom.Before(runNow) {
 			// Rule changed: rewind cursor so the sliding replay re-scans
 			// the new max-TTL window and the persisted hashes match the
 			// new rule set.
@@ -655,7 +657,7 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 	// equals PUT — bumping past the expire3 event itself).
 	startTsNs := persisted.TsNs
 	if !found {
-		startTsNs = replayFrom.Add(-maxTTL).UnixNano()
+		startTsNs = runNow.Add(-maxTTL).UnixNano()
 	}
 
 	// Walk-bound rules are never due inside the retention window; keep them
