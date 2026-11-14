@@ -86,6 +86,7 @@ func TestVectorOperationalStates(t *testing.T) {
 	} {
 		var out bytes.Buffer
 		require.NoError(t, VectorStatus(data).Render(t.Context(), &out))
+		require.Contains(t, out.String(), `<a href="/plugin/lanes/lance">Maintenance jobs</a>`)
 		if data.DiscoveryError != "" {
 			require.Contains(t, out.String(), "Engine discovery failed")
 		} else if len(data.Engines) == 0 {
