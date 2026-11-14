@@ -88,6 +88,11 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 				return resp, nil
 			}
 		}
+		// Past the attempt deadline the worker may already be resending
+		// this request, so a late marker write would stack a second one.
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		switch state {
 		case s3_constants.VersioningEnabled:
 			if _, err := s3a.createDeleteMarker(req.Bucket, req.ObjectPath); err != nil {

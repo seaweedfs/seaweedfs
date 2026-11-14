@@ -504,6 +504,42 @@ func TestLifecycleDelete_CurrentExpirationRequiresLatestVersion(t *testing.T) {
 	}
 }
 
+func TestLifecycleDelete_ExpiredAttemptWritesNoMarker(t *testing.T) {
+	latest := &filer_pb.Entry{
+		Name:       "v_old",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 1_700_000_000, FileSize: 3},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "3,01637037d6", Size: 3}},
+		Extended:   map[string][]byte{s3_constants.ExtVersionIdKey: []byte("old")},
+	}
+	for _, versioning := range []string{s3_constants.VersioningEnabled, s3_constants.VersioningSuspended} {
+		t.Run(versioning, func(t *testing.T) {
+			entries := map[string]*filer_pb.Entry{
+				"/buckets/b/obj.versions": {Name: "obj" + s3_constants.VersionsFolder, IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}, Extended: map[string][]byte{
+					s3_constants.ExtLatestVersionIdKey:       []byte("old"),
+					s3_constants.ExtLatestVersionFileNameKey: []byte("v_old"),
+				}},
+				"/buckets/b/obj.versions/v_old": proto.Clone(latest).(*filer_pb.Entry),
+			}
+			fake := &ambiguousPutFiler{entries: entries, apply: true}
+			s3a := newPutTestServer(t, startFakeFiler(t, fake))
+			s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+			s3a.bucketConfigCache.Set("b", &BucketConfig{Name: "b", Versioning: versioning})
+			ctx, cancel := context.WithCancel(s3LocalPeerCtx())
+			cancel()
+			_, err := s3a.LifecycleDelete(ctx, &s3_lifecycle_pb.LifecycleDeleteRequest{
+				Bucket:           "b",
+				ObjectPath:       "obj",
+				VersionId:        "old",
+				ActionKind:       s3_lifecycle_pb.ActionKind_EXPIRATION_DAYS,
+				ExpectedIdentity: computeEntryIdentity(latest),
+			})
+			require.ErrorIs(t, err, context.Canceled)
+			require.Zero(t, fake.txnCount, "an attempt past its deadline must not write a delete marker")
+			require.Len(t, fake.entries, 2)
+		})
+	}
+}
+
 // Expired-marker cleanup removes a marker that a lock was recorded on: markers
 // are never WORM-protected, so the routed delete carries no WORM guard.
 func TestLifecycleDelete_LockedExpiredDeleteMarkerSkipsWormGuard(t *testing.T) {
