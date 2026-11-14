@@ -431,6 +431,7 @@ func TestStreamingCopyReportsPartlyBufferedCopy(t *testing.T) {
 		Name:       "dst.txt",
 		Attributes: &filer_pb.FuseAttributes{FileMode: 0100644, Inode: dstInode},
 	}, 0, 0)
+	t.Cleanup(dstHandle.dirtyPages.Destroy)
 
 	// The destination range crosses into a second chunk, which needs the swap file.
 	written, status := wfs.CopyFileRange(make(chan struct{}), &fuse.CopyFileRangeIn{
