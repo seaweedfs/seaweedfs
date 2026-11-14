@@ -68,6 +68,14 @@ func (wfs *WFS) Write(cancel <-chan struct{}, in *fuse.WriteIn, data []byte) (wr
 		return 0, fuse.OK
 	}
 
+	// A write that was not buffered must leave the size and times alone, or
+	// the next flush publishes a hole where its data should be.
+	offset := int64(in.Offset)
+	if err := fh.dirtyPages.AddPage(offset, data, fh.dirtyPages.writerPattern.IsSequentialMode(), tsNs); err != nil {
+		glog.Errorf("AddPage error: %v", err)
+		return 0, writeErrorToFuseStatus(err)
+	}
+
 	// Only an append past all locally owned bytes needs the stored EOF guard.
 	if in.Offset > entry.Attributes.FileSize && wfs.isAppendWrite(in) {
 		if !fh.pendingAppend || in.Offset < fh.pendingAppendOffset {
@@ -76,7 +84,6 @@ func (wfs *WFS) Write(cancel <-chan struct{}, in *fuse.WriteIn, data []byte) (wr
 		fh.pendingAppend = true
 	}
 	entry.Content = nil
-	offset := int64(in.Offset)
 	oldFileSize := int64(entry.Attributes.FileSize)
 	newFileSize := max(offset+int64(len(data)), oldFileSize)
 	entry.Attributes.FileSize = uint64(newFileSize)
@@ -94,13 +101,6 @@ func (wfs *WFS) Write(cancel <-chan struct{}, in *fuse.WriteIn, data []byte) (wr
 	// Only count the new bytes being added beyond the current file size.
 	if newFileSize > oldFileSize {
 		wfs.AddUncommittedBytes(newFileSize - oldFileSize)
-	}
-
-	// glog.V(4).Infof("%v write [%d,%d) %d", fh.f.fullpath(), req.Offset, req.Offset+int64(len(req.Data)), len(req.Data))
-
-	if err := fh.dirtyPages.AddPage(offset, data, fh.dirtyPages.writerPattern.IsSequentialMode(), tsNs); err != nil {
-		glog.Errorf("AddPage error: %v", err)
-		return 0, writeErrorToFuseStatus(err)
 	}
 
 	written = uint32(len(data))
