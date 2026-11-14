@@ -23,7 +23,7 @@ func runWork(s dailyrun.RunSummary) int64 {
 }
 
 func progressMessage(s dailyrun.RunSummary) string {
-	return fmt.Sprintf("s3 lifecycle daily replay running: phase=%s bucket=%s entries=%d objects=%d events=%d rpc_done=%d rpc_errors=%d",
+	return fmt.Sprintf("s3 lifecycle daily replay running: last_phase=%s last_bucket=%s entries=%d objects=%d events=%d rpc_done=%d rpc_errors=%d",
 		s.Phase, s.Bucket, s.EntriesVisited, s.ObjectsVisited, s.EventsScanned, s.Outcomes["DONE"], s.Outcomes["RPC_ERROR"])
 }
 
@@ -55,7 +55,7 @@ func startProgressReporter(request *plugin_pb.ExecuteJobRequest, sender pluginwo
 			}
 			if err := sender.SendProgress(&plugin_pb.JobProgressUpdate{
 				JobId: request.Job.JobId, JobType: jobType,
-				State: plugin_pb.JobState_JOB_STATE_RUNNING, Stage: summary.Phase,
+				State: plugin_pb.JobState_JOB_STATE_RUNNING, Stage: "running",
 				Message: progressMessage(summary),
 			}); err != nil {
 				glog.V(1).Infof("s3 lifecycle job %s: send progress: %v", request.Job.JobId, err)
