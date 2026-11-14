@@ -518,6 +518,83 @@ func TestVacuumStalledVolumeServerReleasesGuard(t *testing.T) {
 	}
 }
 
+// A request that finds another vacuum running is dropped, not queued. It has
+// to say so: returning as if it had run leaves the caller believing its volume
+// was compacted.
+func TestVacuumReportsAnotherVacuumRunning(t *testing.T) {
+	fake := &fakeVacuumServer{
+		checks: map[uint32]*volume_server_pb.VacuumVolumeCheckResponse{
+			1: {GarbageRatio: 0.9},
+			2: {GarbageRatio: 0.9},
+		},
+		entered:        make(chan string, 1),
+		compactGate:    make(chan struct{}),
+		compactTracker: &compactTracker{},
+	}
+	grpcPort, dialOption := startFakeVolumeServer(t, fake)
+
+	topo := NewTopology("weedfs", sequence.NewMemorySequencer(), 32*1024, 5, false)
+	dn := topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1").
+		GetOrCreateDataNode("127.0.0.1", 8080, grpcPort, "127.0.0.1", "dn", map[string]uint32{"": 10})
+	var volumes []storage.VolumeInfo
+	for vid := 1; vid <= 2; vid++ {
+		volumes = append(volumes, storage.VolumeInfo{
+			Id:               needle.VolumeId(vid),
+			Size:             1 << 20,
+			Collection:       "c",
+			ModifiedAtSecond: time.Now().Unix(),
+			Version:          needle.GetCurrentVersion(),
+			ReplicaPlacement: &super_block.ReplicaPlacement{},
+			Ttl:              needle.EMPTY_TTL,
+		})
+	}
+	dn.UpdateVolumes(volumes)
+	for _, v := range volumes {
+		topo.RegisterVolumeLayout(v, dn)
+	}
+	committed := func() []uint32 {
+		fake.mu.Lock()
+		defer fake.mu.Unlock()
+		return append([]uint32(nil), fake.committed...)
+	}
+
+	// the first request holds the guard for as long as its compaction is gated
+	first := make(chan error, 1)
+	go func() {
+		first <- topo.Vacuum(dialOption, 0.3, 1, 0, 1, "c", 0, false, 0)
+	}()
+	select {
+	case <-fake.entered:
+	case <-time.After(15 * time.Second):
+		t.Fatal("the first vacuum never reached the compact phase")
+	}
+
+	if err := topo.Vacuum(dialOption, 0.3, 1, 0, 2, "c", 0, false, 0); !errors.Is(err, ErrVacuumRunning) {
+		t.Fatalf("vacuum of volume 2 while volume 1 is compacting: err = %v, want ErrVacuumRunning", err)
+	}
+	if got := committed(); len(got) != 0 {
+		t.Fatalf("committed volumes = %v, want none while the first vacuum is gated", got)
+	}
+
+	close(fake.compactGate)
+	select {
+	case err := <-first:
+		if err != nil {
+			t.Fatalf("the first vacuum: %v", err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("the first vacuum did not finish after the gate opened")
+	}
+
+	// with the guard free again, the same request runs
+	if err := topo.Vacuum(dialOption, 0.3, 1, 0, 2, "c", 0, false, 0); err != nil {
+		t.Fatalf("vacuum of volume 2 after the first one finished: %v", err)
+	}
+	if got := committed(); len(got) != 2 || got[0] != 1 || got[1] != 2 {
+		t.Fatalf("committed volumes = %v, want [1 2]", got)
+	}
+}
+
 // A replica tiered to remote storage is never compacted by a vacuum, not even
 // on an explicit request with a zero threshold: its .dat is the remote object.
 // volume.tier.compact is the way to reclaim its garbage.
