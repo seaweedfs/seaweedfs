@@ -111,6 +111,7 @@ func (wfs *WFS) Write(cancel <-chan struct{}, in *fuse.WriteIn, data []byte) (wr
 	}
 
 	fh.dirtyMetadata = true
+	fh.dirtyContent = true
 
 	// Invalidate the mtime cache so the next Open will not set FOPEN_KEEP_CACHE.
 	wfs.invalidateOpenMtimeCache(in.NodeId)

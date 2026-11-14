@@ -89,37 +89,43 @@ func TestAbandonedWritebackFlushFencesInode(t *testing.T) {
 	})
 	metadataFlushSleep = func(ctx context.Context, d time.Duration) {}
 
-	const name = "abandoned-writeback.log"
-	wfs, _ := newCreateTestWFS(t)
-	fake := &rejectingCreateFiler{rejections: 1 << 20, refuse: func(req *filer_pb.CreateEntryRequest) (*filer_pb.CreateEntryResponse, error) {
-		return nil, status.Error(codes.PermissionDenied, "denied")
-	}}
-	startFakeFiler(t, wfs, fake)
+	for _, content := range []bool{true, false} {
+		const name = "abandoned-writeback.log"
+		wfs, _ := newCreateTestWFS(t)
+		fake := &rejectingCreateFiler{rejections: 1 << 20, refuse: func(req *filer_pb.CreateEntryRequest) (*filer_pb.CreateEntryResponse, error) {
+			return nil, status.Error(codes.PermissionDenied, "denied")
+		}}
+		startFakeFiler(t, wfs, fake)
 
-	out := &fuse.CreateOut{}
-	if code := wfs.Create(make(chan struct{}), &fuse.CreateIn{
-		InHeader: fuse.InHeader{NodeId: 1},
-		Flags:    syscall.O_WRONLY | syscall.O_CREAT,
-		Mode:     0o644,
-	}, name, out); code != fuse.OK {
-		t.Fatalf("Create status = %v, want OK", code)
-	}
-	fh := wfs.GetHandle(FileHandleId(out.Fh))
-	if fh == nil {
-		t.Fatal("Create did not register an open file handle")
-	}
-	wfs.option.WritebackCache = true
-	fh.writebackContentError = new(atomic.Bool)
-	fh.dirtyMetadata = true
+		out := &fuse.CreateOut{}
+		if code := wfs.Create(make(chan struct{}), &fuse.CreateIn{
+			InHeader: fuse.InHeader{NodeId: 1},
+			Flags:    syscall.O_WRONLY | syscall.O_CREAT,
+			Mode:     0o644,
+		}, name, out); code != fuse.OK {
+			t.Fatalf("Create status = %v, want OK", code)
+		}
+		fh := wfs.GetHandle(FileHandleId(out.Fh))
+		if fh == nil {
+			t.Fatal("Create did not register an open file handle")
+		}
+		wfs.option.WritebackCache = true
+		fh.writebackContentError = new(atomic.Bool)
+		fh.dirtyMetadata = true
+		fh.dirtyContent = content
 
-	if err := wfs.flushMetadataWithRetry(fh, "/", name, util.FullPath("/").Child(name)); err == nil {
-		t.Fatal("flush against a refusing filer succeeded")
-	}
-	if !fh.writebackContentError.Load() {
-		t.Fatal("abandoned writeback flush left the inode unfenced")
-	}
-	if err := wfs.checkContentPublication(fh, nil); !errors.Is(err, filer_pb.ErrPreconditionFailed) {
-		t.Fatalf("checkContentPublication after abandonment = %v, want a precondition refusal", err)
+		if err := wfs.flushMetadataWithRetry(fh, "/", name, util.FullPath("/").Child(name)); err == nil {
+			t.Fatal("flush against a refusing filer succeeded")
+		}
+		if got := fh.writebackContentError.Load(); got != content {
+			t.Fatalf("content=%v: fenced after abandoned writeback flush = %v, want %v", content, got, content)
+		}
+		if !content {
+			continue
+		}
+		if err := wfs.checkContentPublication(fh, nil); !errors.Is(err, filer_pb.ErrPreconditionFailed) {
+			t.Fatalf("checkContentPublication after abandonment = %v, want a precondition refusal", err)
+		}
 	}
 }
 
@@ -130,42 +136,89 @@ func TestFailedFlockReleaseFencesInode(t *testing.T) {
 	})
 	metadataFlushSleep = func(ctx context.Context, d time.Duration) {}
 
-	const name = "flock-release.log"
+	for _, c := range []struct {
+		name       string
+		content    bool
+		truncate   bool
+		wantFenced bool
+	}{
+		{"content", true, false, true},
+		{"metadata only", false, false, false},
+		{"truncate", false, true, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			const name = "flock-release.log"
+			wfs, _ := newCreateTestWFS(t)
+			wfs.posixLocks = NewPosixLockTable()
+			fake := &rejectingCreateFiler{rejections: 1 << 20, refuse: func(req *filer_pb.CreateEntryRequest) (*filer_pb.CreateEntryResponse, error) {
+				return nil, status.Error(codes.PermissionDenied, "denied")
+			}}
+			startFakeFiler(t, wfs, fake)
+
+			out := &fuse.CreateOut{}
+			if code := wfs.Create(make(chan struct{}), &fuse.CreateIn{
+				InHeader: fuse.InHeader{NodeId: 1},
+				Flags:    syscall.O_WRONLY | syscall.O_CREAT,
+				Mode:     0o644,
+			}, name, out); code != fuse.OK {
+				t.Fatalf("Create status = %v, want OK", code)
+			}
+			fh := wfs.GetHandle(FileHandleId(out.Fh))
+			if fh == nil {
+				t.Fatal("Create did not register an open file handle")
+			}
+			wfs.option.WritebackCache = true
+			fenced := new(atomic.Bool)
+			fh.writebackContentError = fenced
+			fh.dirtyMetadata = true
+			fh.dirtyContent = c.content
+			if c.truncate {
+				if code := wfs.SetAttr(make(chan struct{}), &fuse.SetAttrIn{SetAttrInCommon: fuse.SetAttrInCommon{
+					InHeader: fuse.InHeader{NodeId: out.NodeId},
+					Valid:    fuse.FATTR_SIZE | fuse.FATTR_FH,
+					Fh:       out.Fh,
+					Size:     64,
+				}}, &fuse.AttrOut{}); code != fuse.OK {
+					t.Fatalf("SetAttr size = %v, want OK", code)
+				}
+			}
+
+			wfs.Release(make(chan struct{}), &fuse.ReleaseIn{
+				InHeader:     fuse.InHeader{NodeId: out.NodeId},
+				Fh:           out.Fh,
+				ReleaseFlags: fuse.FUSE_RELEASE_FLOCK_UNLOCK,
+			})
+			if fake.calls.Load() == 0 {
+				t.Fatal("synchronous release did not attempt the flush")
+			}
+			if got := fenced.Load(); got != c.wantFenced {
+				t.Fatalf("fenced after failed release = %v, want %v", got, c.wantFenced)
+			}
+		})
+	}
+}
+
+func TestReleaseFencesBeforeReopenSeesInode(t *testing.T) {
 	wfs, _ := newCreateTestWFS(t)
-	wfs.posixLocks = NewPosixLockTable()
-	fake := &rejectingCreateFiler{rejections: 1 << 20, refuse: func(req *filer_pb.CreateEntryRequest) (*filer_pb.CreateEntryResponse, error) {
-		return nil, status.Error(codes.PermissionDenied, "denied")
-	}}
-	startFakeFiler(t, wfs, fake)
-
-	out := &fuse.CreateOut{}
-	if code := wfs.Create(make(chan struct{}), &fuse.CreateIn{
-		InHeader: fuse.InHeader{NodeId: 1},
-		Flags:    syscall.O_WRONLY | syscall.O_CREAT,
-		Mode:     0o644,
-	}, name, out); code != fuse.OK {
-		t.Fatalf("Create status = %v, want OK", code)
-	}
-	fh := wfs.GetHandle(FileHandleId(out.Fh))
-	if fh == nil {
-		t.Fatal("Create did not register an open file handle")
-	}
 	wfs.option.WritebackCache = true
-	fenced := new(atomic.Bool)
-	fh.writebackContentError = fenced
+	const inode = 42
+	entry := &filer_pb.Entry{Name: "f", Attributes: &filer_pb.FuseAttributes{}}
+	fh, id, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, entry, 1, 0)
 	fh.dirtyMetadata = true
+	fh.dirtyContent = true
 
-	wfs.Release(make(chan struct{}), &fuse.ReleaseIn{
-		InHeader:     fuse.InHeader{NodeId: out.NodeId},
-		Fh:           out.Fh,
-		ReleaseFlags: fuse.FUSE_RELEASE_FLOCK_UNLOCK,
-	})
-	if fake.calls.Load() == 0 {
-		t.Fatal("synchronous release did not attempt the flush")
+	released := wfs.fhMap.ReleaseByHandle(id)
+	if released != fh {
+		t.Fatal("last release did not hand back the handle")
 	}
-	if !fenced.Load() {
-		t.Fatal("release dropped uncommitted writeback content without fencing the inode")
+	reopened, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, entry, 1, 0)
+	if reopened == fh {
+		t.Fatal("reopen reused the released handle")
 	}
+	if err := wfs.checkContentPublication(reopened, nil); !errors.Is(err, filer_pb.ErrPreconditionFailed) {
+		t.Fatalf("publication on a reopen after an abandoned release = %v, want a precondition refusal", err)
+	}
+	released.ReleaseHandle()
 }
 
 func TestIsFilerUnreachable(t *testing.T) {

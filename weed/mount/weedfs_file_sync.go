@@ -231,7 +231,9 @@ func (wfs *WFS) doFlush(ctx context.Context, fh *FileHandle, uid, gid uint32, al
 		glog.Warningf("%v fh %d flush: retrying metadata flush (attempt %d/%d) after %v: %v",
 			fileFullPath, fh.fh, nextAttempt, totalAttempts, backoff, err)
 	}); err != nil {
-		publication.retire(err)
+		if fh.dirtyContent {
+			publication.retire(err)
+		}
 		glog.Errorf("%v fh %d flush: %v", fileFullPath, fh.fh, err)
 		return grpcErrorToFuseStatus(err)
 	}
@@ -392,6 +394,7 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 	if err == nil {
 		fh.pendingAppend = false
 		fh.dirtyMetadata = false
+		fh.dirtyContent = false
 	}
 
 	return err

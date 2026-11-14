@@ -191,6 +191,9 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 
 	if fh != nil {
 		fh.dirtyMetadata = true
+		if includeSize {
+			fh.dirtyContent = true
+		}
 		return fuse.OK
 	}
 	if path == "" {
