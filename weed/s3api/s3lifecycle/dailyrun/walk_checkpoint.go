@@ -226,17 +226,23 @@ func (w *walkProgress) save(ctx context.Context) error {
 // finish saves where the walk stopped, or clears the checkpoint when it
 // completed. A resumed walk that failed again without progress is
 // cleared too, so one stuck bucket cannot keep the finished ones from
-// ever being walked again.
+// ever being walked again. Any other failed walk without progress has
+// nothing new to record and leaves the file, read or not, alone.
 func (w *walkProgress) finish(ctx context.Context, walkErr error) error {
 	if w.store == nil {
 		return nil
 	}
-	if walkErr == nil || (ctx.Err() == nil && w.resumed && !w.progressed) {
-		if walkErr != nil {
-			glog.Warningf("walker: shards %v made no progress on a resumed walk; the next walk starts over", w.cp.Shards)
+	reset := walkErr == nil
+	if walkErr != nil && !w.progressed {
+		if ctx.Err() != nil || !w.resumed {
+			return nil
 		}
-		w.done = map[string]bool{}
-		w.cp.Resume = map[string]string{}
+		glog.Warningf("walker: shards %v made no progress on a resumed walk; the next walk starts over", w.cp.Shards)
+		reset = true
+	}
+	if reset {
+		clear(w.done)
+		clear(w.cp.Resume)
 	}
 	if !w.onDisk && len(w.done) == 0 && len(w.cp.Resume) == 0 {
 		return nil
