@@ -203,6 +203,7 @@ func (w *walkProgress) maybeSave(ctx context.Context) {
 	if w.store == nil || time.Since(w.savedAt) < time.Duration(walkCheckpointInterval.Load()) {
 		return
 	}
+	w.savedAt = time.Now()
 	if err := w.save(ctx); err != nil {
 		glog.Warningf("walker: shards %v: %v", w.cp.Shards, err)
 	}
@@ -218,7 +219,6 @@ func (w *walkProgress) save(ctx context.Context) error {
 	if err := w.store.SaveWalk(ctx, cp); err != nil {
 		return err
 	}
-	w.savedAt = time.Now()
 	w.onDisk = len(cp.Done) > 0 || len(cp.Resume) > 0
 	return nil
 }

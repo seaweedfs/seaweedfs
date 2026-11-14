@@ -32,8 +32,9 @@ func (d *scriptedDispatcher) Delete(_ context.Context, a *engine.CompiledAction,
 
 type savingStore struct {
 	*fakeStore
-	saves   [][]byte
-	failAll bool
+	saves    [][]byte
+	attempts int
+	failAll  bool
 }
 
 func (s *savingStore) Read(ctx context.Context, dir, name string) ([]byte, error) {
@@ -44,6 +45,7 @@ func (s *savingStore) Read(ctx context.Context, dir, name string) ([]byte, error
 }
 
 func (s *savingStore) Save(ctx context.Context, dir, name string, content []byte) error {
+	s.attempts++
 	if s.failAll {
 		return errors.New("filer down")
 	}
@@ -256,4 +258,14 @@ func TestWalkBuckets_ResumesFromPeriodicSave(t *testing.T) {
 		assert.Equal(t, append([]string(nil), fullWalk[len(fullWalk)-left:]...), calls, "resume after %s", content)
 	}
 	assert.Zero(t, left)
+}
+
+func TestWalkProgress_FailedPeriodicSaveWaitsForTheInterval(t *testing.T) {
+	h := newCheckpointHarness(t)
+	h.store.failAll = true
+	w := loadWalkProgress(context.Background(), h.p, checkpointTestView(t, ""), allShards, []string{"a"})
+	w.savedAt = time.Now().Add(-time.Hour)
+	w.bucketDone(context.Background(), "a")
+	w.bucketDone(context.Background(), "a")
+	assert.Equal(t, 1, h.store.attempts, "a failed save is retried a full interval later, not on the next entry")
 }
