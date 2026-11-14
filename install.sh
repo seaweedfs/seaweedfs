@@ -157,19 +157,16 @@ worker_asset_name() {
     echo "weed-worker_${os}_${arch}.tar.gz"
 }
 
-# The vector engine behind the S3 Vectors API, built like the worker.
+# The vector engine behind the S3 Vectors API, published for linux only like
+# the worker.
 vector_asset_name() {
     local os="$1" arch="$2"
-    if [ "$os" = "windows" ]; then
-        echo "weed-vector_${os}_${arch}.zip"
-    else
-        echo "weed-vector_${os}_${arch}.tar.gz"
-    fi
+    echo "weed-vector_${os}_${arch}.tar.gz"
 }
 
 vector_platform_supported() {
     case "$1/$2" in
-        linux/amd64|linux/arm64|darwin/amd64|darwin/arm64|windows/amd64) return 0 ;;
+        linux/amd64|linux/arm64) return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -283,26 +280,19 @@ install_component() {
             ;;
 
         vector)
-            vector_platform_supported "$os" "$arch" || error "The vector engine is not available for ${os}/${arch}"
+            vector_platform_supported "$os" "$arch" || error "The vector engine is not available for ${os}/${arch}. Supported: linux/amd64, linux/arm64"
 
             asset_name="$(vector_asset_name "$os" "$arch")"
             download_url="https://github.com/${REPO}/releases/download/${VERSION}/${asset_name}"
             download "$download_url" "${tmpdir}/${asset_name}"
 
             info "Extracting ${asset_name}..."
-            local vector_name="weed-vector"
-            if [ "$os" = "windows" ]; then
-                command -v unzip >/dev/null || error "unzip is required for Windows vector archives"
-                unzip -q "${tmpdir}/${asset_name}" -d "$tmpdir"
-                vector_name="weed-vector.exe"
-            else
-                tar xzf "${tmpdir}/${asset_name}" -C "$tmpdir"
-            fi
+            tar xzf "${tmpdir}/${asset_name}" -C "$tmpdir"
             local vector_bin
-            vector_bin="$(find "$tmpdir" -name "$vector_name" -type f | head -1)"
-            [ -n "$vector_bin" ] || error "Could not find $vector_name binary in archive"
+            vector_bin="$(find "$tmpdir" -name weed-vector -type f | head -1)"
+            [ -n "$vector_bin" ] || error "Could not find weed-vector binary in archive"
             chmod +x "$vector_bin"
-            install_binary "$vector_bin" "$vector_name"
+            install_binary "$vector_bin" weed-vector
             VECTOR_INSTALLED=true
             ok "Installed weed-vector to ${INSTALL_DIR}/weed-vector"
             ;;
