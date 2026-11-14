@@ -24,6 +24,9 @@ type WalkerDispatcher struct {
 	// daily-run's processMatches uses so the walker and replay paths
 	// can't combine to burst past the cap. nil disables throttling.
 	Limiter *rate.Limiter
+	// DeleteTimeout bounds each LifecycleDelete, applied after the
+	// limiter wait. <= 0 uses DefaultDeleteTimeout.
+	DeleteTimeout time.Duration
 }
 
 // Compile-time check.
@@ -71,7 +74,7 @@ func (d *WalkerDispatcher) Delete(ctx context.Context, action *engine.CompiledAc
 		}
 		stats.S3LifecycleDispatchLimiterWaitSeconds.Observe(time.Since(waitStart).Seconds())
 	}
-	resp, err := d.Client.LifecycleDelete(ctx, req)
+	resp, err := deleteOnce(ctx, d.Client, req, d.DeleteTimeout)
 	if err != nil {
 		// "RPC_ERROR" matches the streaming dispatcher and processMatches
 		// labels so transport-class failures aggregate under one key.

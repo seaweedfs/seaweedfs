@@ -47,6 +47,10 @@ type Config struct {
 	// nil -> no rate limit. Shared across all shard goroutines.
 	Limiter *rate.Limiter
 
+	// DeleteTimeout bounds each LifecycleDelete attempt, applied after
+	// the limiter wait. <= 0 uses DefaultDeleteTimeout.
+	DeleteTimeout time.Duration
+
 	// Meta-log retention boundary. Rules whose effective TTL exceeds
 	// this can't be serviced by replay alone and get partitioned into
 	// the walk view (engine.PromotedHash). 0 falls back to maxTTL,
@@ -779,7 +783,7 @@ func processMatches(ctx context.Context, cfg Config, runNow time.Time, ev *reade
 			}
 			stats.S3LifecycleDispatchLimiterWaitSeconds.Observe(time.Since(waitStart).Seconds())
 		}
-		outcome, dispatchErr := dispatchWithRetry(ctx, cfg.Client, m)
+		outcome, dispatchErr := dispatchWithRetry(ctx, cfg.Client, m, cfg.DeleteTimeout)
 		if dispatchErr != nil {
 			glog.V(1).Infof("daily_run: transport error on %s/%s %s: %v",
 				m.Bucket, m.ObjectKey, m.Key.ActionKind, dispatchErr)

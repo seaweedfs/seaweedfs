@@ -2,7 +2,7 @@ package dailyrun
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"math/rand"
 	"time"
 
@@ -26,25 +26,46 @@ const (
 	transportRetryMax     = 5 * time.Second
 )
 
+// DefaultDeleteTimeout bounds one LifecycleDelete attempt when the
+// caller sets no timeout.
+const DefaultDeleteTimeout = time.Minute
+
+// deleteOnce sends one LifecycleDelete attempt under its own deadline,
+// so a stalled RPC fails that attempt instead of holding the shard for
+// the job's lifetime.
+func deleteOnce(ctx context.Context, client LifecycleClient, req *s3_lifecycle_pb.LifecycleDeleteRequest, timeout time.Duration) (*s3_lifecycle_pb.LifecycleDeleteResponse, error) {
+	if timeout <= 0 {
+		timeout = DefaultDeleteTimeout
+	}
+	attemptCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	resp, err := client.LifecycleDelete(attemptCtx, req)
+	if err != nil && ctx.Err() == nil && attemptCtx.Err() != nil {
+		err = fmt.Errorf("lifecycle delete attempt timed out after %s: %w", timeout, err)
+	}
+	return resp, err
+}
+
 // dispatchWithRetry sends one LifecycleDelete request, retrying on
-// transport errors up to transportRetryAttempts times with exponential
-// backoff. Returns the server's outcome on success, or an error if all
-// retries exhausted. Server outcomes (RETRY_LATER / BLOCKED) bypass
-// the retry — the daily run's halt-on-failure semantics handles them.
-func dispatchWithRetry(ctx context.Context, client LifecycleClient, m router.Match) (s3_lifecycle_pb.LifecycleDeleteOutcome, error) {
+// transport errors and attempt timeouts up to transportRetryAttempts
+// times with exponential backoff. Returns the server's outcome on
+// success, or an error if all retries exhausted. Server outcomes
+// (RETRY_LATER / BLOCKED) bypass the retry — the daily run's
+// halt-on-failure semantics handles them.
+func dispatchWithRetry(ctx context.Context, client LifecycleClient, m router.Match, timeout time.Duration) (s3_lifecycle_pb.LifecycleDeleteOutcome, error) {
 	req := buildDeleteRequest(m)
 	backoff := transportRetryInitial
 	var lastErr error
 	for attempt := 1; attempt <= transportRetryAttempts; attempt++ {
-		resp, err := client.LifecycleDelete(ctx, req)
+		resp, err := deleteOnce(ctx, client, req, timeout)
 		if err == nil {
 			return resp.Outcome, nil
 		}
-		// Context cancellation is shutdown, not a transport flake.
+		// Parent cancellation is shutdown, not a transport flake.
 		// Surface it immediately so the caller halts and tomorrow
 		// resumes from the same cursor.
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return s3_lifecycle_pb.LifecycleDeleteOutcome_LIFECYCLE_DELETE_OUTCOME_UNSPECIFIED, err
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return s3_lifecycle_pb.LifecycleDeleteOutcome_LIFECYCLE_DELETE_OUTCOME_UNSPECIFIED, ctxErr
 		}
 		lastErr = err
 		if attempt == transportRetryAttempts {
