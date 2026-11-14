@@ -10263,6 +10263,102 @@
             }
           ],
           "pluginVersion": "10.3.1"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "title": "Time Since Last Full Lifecycle Pass",
+          "description": "Time since a pass covered every shard and lifecycle policy without an error; never excluded",
+          "type": "timeseries",
+          "id": 261,
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 51
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "insertNulls": false,
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 4,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "never",
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "unit": "s",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${DS_PROMETHEUS}"
+              },
+              "editorMode": "code",
+              "expr": "time() - max(SeaweedFS_s3_lifecycle_daily_run_last_full_pass_timestamp_seconds{cluster=~\"$cluster\"} > 0)",
+              "range": true,
+              "refId": "A",
+              "legendFormat": "last full pass"
+            }
+          ],
+          "pluginVersion": "10.3.1"
         }
       ]
     },
