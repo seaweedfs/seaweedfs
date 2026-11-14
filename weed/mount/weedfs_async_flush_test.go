@@ -180,6 +180,29 @@ func TestFailedFlockReleaseFencesInode(t *testing.T) {
 	}
 }
 
+func TestReleaseFencesBeforeReopenSeesInode(t *testing.T) {
+	wfs, _ := newCreateTestWFS(t)
+	wfs.option.WritebackCache = true
+	const inode = 42
+	entry := &filer_pb.Entry{Name: "f", Attributes: &filer_pb.FuseAttributes{}}
+	fh, id, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, entry, 1, 0)
+	fh.dirtyMetadata = true
+	fh.dirtyContent = true
+
+	released := wfs.fhMap.ReleaseByHandle(id)
+	if released != fh {
+		t.Fatal("last release did not hand back the handle")
+	}
+	reopened, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, entry, 1, 0)
+	if reopened == fh {
+		t.Fatal("reopen reused the released handle")
+	}
+	if err := wfs.checkContentPublication(reopened, nil); !errors.Is(err, filer_pb.ErrPreconditionFailed) {
+		t.Fatalf("publication on a reopen after an abandoned release = %v, want a precondition refusal", err)
+	}
+	released.ReleaseHandle()
+}
+
 func TestIsFilerUnreachable(t *testing.T) {
 	path := "/unavailable/transport.log"
 	cases := []struct {
