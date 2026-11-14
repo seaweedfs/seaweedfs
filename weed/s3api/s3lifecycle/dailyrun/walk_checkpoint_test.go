@@ -105,6 +105,7 @@ type checkpointHarness struct {
 	client *fakeFiler
 	store  *savingStore
 	p      *FilerCursorPersister
+	stats  *RunStats
 }
 
 func newCheckpointHarness(t *testing.T) *checkpointHarness {
@@ -117,7 +118,7 @@ func (h *checkpointHarness) walk(ctx context.Context, view *engine.Snapshot, sha
 	for _, f := range fail {
 		d.fail[f] = true
 	}
-	err := WalkBuckets(ctx, view, shards, []string{"a", "b", "c"}, FilerListFunc(h.client, "/buckets", view), d, nil, h.p)
+	err := WalkBuckets(ctx, view, shards, []string{"a", "b", "c"}, FilerListFunc(h.client, "/buckets", view), d, h.stats, h.p)
 	return d.calls, err
 }
 
@@ -126,6 +127,21 @@ func (h *checkpointHarness) saved(shards []int) WalkCheckpoint {
 	require.NoError(h.t, err)
 	require.True(h.t, found)
 	return cp
+}
+
+func TestWalkBuckets_ResumedWalkCountsEarlierBucketsAsWalked(t *testing.T) {
+	h := newCheckpointHarness(t)
+	view := checkpointTestView(t, "")
+	_, err := h.walk(context.Background(), view, allShards(), "b/obj@v1")
+	require.Error(t, err)
+
+	h.stats = &RunStats{}
+	_, err = h.walk(context.Background(), view, allShards())
+	require.NoError(t, err)
+	s := h.stats.Summary()
+	assert.Equal(t, 3, s.BucketsWalked)
+	assert.Zero(t, s.BucketsFailed)
+	assert.Equal(t, int64(5), s.EntriesVisited, "only the rest of b is visited")
 }
 
 func TestWalkBuckets_ResumesAfterFailureInsideVersionGroup(t *testing.T) {
