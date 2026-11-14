@@ -438,7 +438,9 @@ main() {
     info "Quick start:"
     info "  weed master                          # Start master server"
     info "  weed volume -mserver=localhost:9333   # Start Go volume server"
-    info "  weed-volume -mserver localhost:9333 # Start Rust volume server"
+    if [ "$VOLUME_INSTALLED" = true ]; then
+        info "  weed-volume -mserver localhost:9333 # Start Rust volume server"
+    fi
     if [ "$WORKER_INSTALLED" = true ]; then
         info "  weed-worker --admin localhost:12535  # Start the Rust maintenance worker"
     fi
