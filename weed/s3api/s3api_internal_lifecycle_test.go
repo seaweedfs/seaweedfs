@@ -540,6 +540,35 @@ func TestLifecycleDelete_ExpiredAttemptWritesNoMarker(t *testing.T) {
 	}
 }
 
+func TestLifecycleDelete_DeadlineDuringNullDeleteWritesNoMarker(t *testing.T) {
+	latest := &filer_pb.Entry{
+		Name:       "obj",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 1_700_000_000, FileSize: 3},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "3,01637037d6", Size: 3}},
+		Extended:   map[string][]byte{s3_constants.ExtVersionIdKey: []byte("null")},
+	}
+	fake := &ambiguousPutFiler{apply: true, entries: map[string]*filer_pb.Entry{
+		"/buckets/b/obj": proto.Clone(latest).(*filer_pb.Entry),
+	}}
+	ctx, cancel := context.WithCancel(s3LocalPeerCtx())
+	defer cancel()
+	fake.txnCheck = func(*filer_pb.ObjectTransactionRequest) { cancel() }
+	addr := startFakeFiler(t, fake)
+	s3a := newPutTestServer(t, addr)
+	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+	s3a.bucketConfigCache.Set("b", &BucketConfig{Name: "b", Versioning: s3_constants.VersioningSuspended})
+	s3a.objectWriteLockClient = cluster.NewLockClient(s3a.option.GrpcDialOption, addr)
+	s3a.objectWriteLockClient.SetRing([]pb.ServerAddress{addr}, 1)
+	_, err := s3a.LifecycleDelete(ctx, &s3_lifecycle_pb.LifecycleDeleteRequest{
+		Bucket:           "b",
+		ObjectPath:       "obj",
+		ActionKind:       s3_lifecycle_pb.ActionKind_EXPIRATION_DAYS,
+		ExpectedIdentity: computeEntryIdentity(latest),
+	})
+	require.ErrorIs(t, err, context.Canceled)
+	require.Equal(t, 1, fake.txnCount, "only the null delete may be written once the attempt expired")
+}
+
 // Expired-marker cleanup removes a marker that a lock was recorded on: markers
 // are never WORM-protected, so the routed delete carries no WORM guard.
 func TestLifecycleDelete_LockedExpiredDeleteMarkerSkipsWormGuard(t *testing.T) {
