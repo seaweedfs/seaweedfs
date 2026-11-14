@@ -329,7 +329,7 @@ func (h *Handler) executeDailyReplay(ctx context.Context, request *plugin_pb.Exe
 	walkerDispatch := &dailyrun.WalkerDispatcher{Client: client, Limiter: limiter, Stats: runStats}
 	walker := dailyrun.WalkerFunc(func(walkCtx context.Context, view *engine.Snapshot, shards []int) error {
 		return dailyrun.WalkBuckets(walkCtx, view, shards, buckets,
-			dailyrun.FilerListFunc(filerClient, bucketsPath, view), walkerDispatch, runStats)
+			dailyrun.FilerListFunc(runStats.CountListed(filerClient), bucketsPath, view), walkerDispatch, runStats)
 	})
 
 	_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
