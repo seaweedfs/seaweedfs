@@ -41,40 +41,42 @@ func (f *failoverClient) use(conn *grpc.ClientConn, addr string) {
 	f.client = lifecycleRPCAdapter{c: s3_lifecycle_pb.NewSeaweedS3LifecycleInternalClient(conn)}
 }
 
+// LifecycleDelete resends the same request after each switch: the server's
+// identity check resolves a delete that landed before the reply was lost
+// instead of applying it twice. Every switch retires a front, which bounds
+// the loop.
 func (f *failoverClient) LifecycleDelete(ctx context.Context, req *s3_lifecycle_pb.LifecycleDeleteRequest) (*s3_lifecycle_pb.LifecycleDeleteResponse, error) {
-	f.mu.Lock()
-	conn, client, exhausted := f.conn, f.client, f.exhausted
-	f.mu.Unlock()
-	if exhausted != nil {
-		return nil, exhausted
+	for {
+		f.mu.Lock()
+		conn, client, exhausted := f.conn, f.client, f.exhausted
+		f.mu.Unlock()
+		if exhausted != nil {
+			return nil, exhausted
+		}
+		resp, err := client.LifecycleDelete(ctx, req)
+		if code := status.Code(err); err == nil || ctx.Err() != nil || (code != codes.Unavailable && code != codes.Canceled) {
+			return resp, err
+		}
+		if err := f.failover(conn, err); err != nil {
+			return nil, err
+		}
 	}
-	resp, err := client.LifecycleDelete(ctx, req)
-	if code := status.Code(err); err == nil || ctx.Err() != nil || (code != codes.Unavailable && code != codes.Canceled) {
-		return resp, err
-	}
-	next, ferr := f.failover(conn, err)
-	if ferr != nil {
-		return nil, ferr
-	}
-	return next.LifecycleDelete(ctx, req)
 }
 
 // failover replaces the front behind failing when it is unavailable; a call
-// cut off by an earlier switch closing its connection just moves on. The same
-// request is then resent: the server's identity check resolves a delete that
-// landed before the reply was lost instead of applying it twice.
-func (f *failoverClient) failover(failing *grpc.ClientConn, cause error) (lifecycleRPCAdapter, error) {
+// cut off by an earlier switch closing its connection just moves on.
+func (f *failoverClient) failover(failing *grpc.ClientConn, cause error) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.exhausted != nil {
-		return lifecycleRPCAdapter{}, f.exhausted
+		return f.exhausted
 	}
 	if f.conn != failing {
-		return f.client, nil
+		return nil
 	}
 	code := status.Code(cause)
 	if code != codes.Unavailable {
-		return lifecycleRPCAdapter{}, cause
+		return cause
 	}
 	from := f.addr
 	f.failed[from] = true
@@ -101,7 +103,7 @@ func (f *failoverClient) failover(failing *grpc.ClientConn, cause error) (lifecy
 		f.exhausted = noReadyS3Error(append([]error{lost}, skipped...))
 		glog.Warningf("s3 lifecycle: %v", f.exhausted)
 		f.report(f.exhausted.Error())
-		return lifecycleRPCAdapter{}, f.exhausted
+		return f.exhausted
 	}
 	f.use(conn, addr)
 	msg := fmt.Sprintf("switched to s3 %s, %v", addr, lost)
@@ -110,7 +112,7 @@ func (f *failoverClient) failover(failing *grpc.ClientConn, cause error) (lifecy
 	}
 	glog.Warningf("s3 lifecycle: %s", msg)
 	f.report(msg)
-	return f.client, nil
+	return nil
 }
 
 func (f *failoverClient) Close() {
