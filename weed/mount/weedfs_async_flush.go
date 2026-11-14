@@ -61,6 +61,7 @@ func (wfs *WFS) completeAsyncFlush(fh *FileHandle) {
 	// is a permanent one and the chunk data has been freed.
 	if err := fh.dirtyPages.FlushData(); err != nil {
 		glog.Errorf("completeAsyncFlush inode %d: data flush failed: %v", fh.inode, err)
+		(&contentPublication{failure: fh.writebackContentError}).abandon()
 		// Data is lost at this point. Proceed to cleanup to avoid resource leaks and unmount hangs.
 	} else if fh.dirtyMetadata {
 		// Phase 2: Flush metadata unless the file was explicitly unlinked.
