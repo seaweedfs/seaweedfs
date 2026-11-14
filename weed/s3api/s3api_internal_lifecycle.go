@@ -127,9 +127,8 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 					}
 				}
 			}
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
+			// The null delete is done, so the marker must follow even past
+			// the deadline: without it a retry finds an older version latest.
 			if _, err := s3a.createDeleteMarker(req.Bucket, req.ObjectPath); err != nil {
 				return retryLater("TRANSPORT_ERROR: createDeleteMarker: " + err.Error()), nil
 			}

@@ -540,7 +540,14 @@ func TestLifecycleDelete_ExpiredAttemptWritesNoMarker(t *testing.T) {
 	}
 }
 
-func TestLifecycleDelete_DeadlineDuringNullDeleteWritesNoMarker(t *testing.T) {
+func TestLifecycleDelete_DeadlineDuringNullDeleteStillWritesMarker(t *testing.T) {
+	olderId := generateVersionId(true)
+	older := &filer_pb.Entry{
+		Name:       "v_" + olderId,
+		Attributes: &filer_pb.FuseAttributes{Mtime: 1_600_000_000, FileSize: 3},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "3,02637037d6", Size: 3}},
+		Extended:   map[string][]byte{s3_constants.ExtVersionIdKey: []byte(olderId)},
+	}
 	latest := &filer_pb.Entry{
 		Name:       "obj",
 		Attributes: &filer_pb.FuseAttributes{Mtime: 1_700_000_000, FileSize: 3},
@@ -548,7 +555,9 @@ func TestLifecycleDelete_DeadlineDuringNullDeleteWritesNoMarker(t *testing.T) {
 		Extended:   map[string][]byte{s3_constants.ExtVersionIdKey: []byte("null")},
 	}
 	fake := &ambiguousPutFiler{apply: true, entries: map[string]*filer_pb.Entry{
-		"/buckets/b/obj": proto.Clone(latest).(*filer_pb.Entry),
+		"/buckets/b/obj":                        proto.Clone(latest).(*filer_pb.Entry),
+		"/buckets/b/obj.versions":               {Name: "obj" + s3_constants.VersionsFolder, IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+		"/buckets/b/obj.versions/" + older.Name: proto.Clone(older).(*filer_pb.Entry),
 	}}
 	ctx, cancel := context.WithCancel(s3LocalPeerCtx())
 	defer cancel()
@@ -559,14 +568,18 @@ func TestLifecycleDelete_DeadlineDuringNullDeleteWritesNoMarker(t *testing.T) {
 	s3a.bucketConfigCache.Set("b", &BucketConfig{Name: "b", Versioning: s3_constants.VersioningSuspended})
 	s3a.objectWriteLockClient = cluster.NewLockClient(s3a.option.GrpcDialOption, addr)
 	s3a.objectWriteLockClient.SetRing([]pb.ServerAddress{addr}, 1)
-	_, err := s3a.LifecycleDelete(ctx, &s3_lifecycle_pb.LifecycleDeleteRequest{
+	resp, err := s3a.LifecycleDelete(ctx, &s3_lifecycle_pb.LifecycleDeleteRequest{
 		Bucket:           "b",
 		ObjectPath:       "obj",
 		ActionKind:       s3_lifecycle_pb.ActionKind_EXPIRATION_DAYS,
 		ExpectedIdentity: computeEntryIdentity(latest),
 	})
-	require.ErrorIs(t, err, context.Canceled)
-	require.Equal(t, 1, fake.txnCount, "only the null delete may be written once the attempt expired")
+	require.NoError(t, err)
+	require.Equal(t, s3_lifecycle_pb.LifecycleDeleteOutcome_DONE, resp.Outcome, resp.Reason)
+	require.Equal(t, 2, fake.txnCount, "the null delete and the marker")
+	got, err := s3a.getLatestObjectVersion("b", "obj")
+	require.NoError(t, err)
+	require.Equal(t, "true", string(got.Extended[s3_constants.ExtDeleteMarkerKey]), "the older version must stay hidden behind the marker")
 }
 
 // Expired-marker cleanup removes a marker that a lock was recorded on: markers
