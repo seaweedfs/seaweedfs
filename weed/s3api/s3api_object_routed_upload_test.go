@@ -17,6 +17,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // The gateway's own filer never receives the owner's metadata here, so every
@@ -263,4 +265,50 @@ func TestListPartsMergesPriorOwnerParts(t *testing.T) {
 		&s3.CompleteMultipartUploadInput{Bucket: aws.String("b"), Key: aws.String("dir/object"), UploadId: out.UploadId},
 		&CompleteMultipartUpload{Parts: []CompletedPart{{ETag: etags[1], PartNumber: 1}, {ETag: etags[2], PartNumber: 2}}})
 	require.Equal(t, s3err.ErrNone, code)
+}
+
+type failingListFiler struct {
+	*ambiguousPutFiler
+}
+
+func (f failingListFiler) ListEntries(*filer_pb.ListEntriesRequest, filer_pb.SeaweedFiler_ListEntriesServer) error {
+	return status.Error(codes.Unavailable, "store unavailable")
+}
+
+// With no parts on the new owner yet, a prior owner that cannot be listed may
+// hold all of them, so completion must not read the upload as empty.
+func TestCompleteFailsWhenPriorOwnerListingFails(t *testing.T) {
+	util_http.InitGlobalHttpClient()
+	volume := startFakeVolumeServer(t)
+	prior := &ambiguousPutFiler{volume: volume, apply: true, entries: map[string]*filer_pb.Entry{}}
+	next := &ambiguousPutFiler{volume: volume, apply: true, entries: map[string]*filer_pb.Entry{}}
+	priorAddr := startFakeFiler(t, failingListFiler{prior})
+	nextAddr := startFakeFiler(t, next)
+	s3a := newPutTestServer(t, startFakeFiler(t, &ambiguousPutFiler{volume: volume, entries: map[string]*filer_pb.Entry{}}))
+	s3a.iam = &IdentityAccessManagement{}
+	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+	s3a.bucketConfigCache.Set("b", &BucketConfig{Name: "b"})
+	s3a.objectWriteLockClient = cluster.NewLockClient(s3a.option.GrpcDialOption, priorAddr)
+	s3a.objectWriteLockClient.SetRing([]pb.ServerAddress{priorAddr}, 1)
+
+	out, code := s3a.createMultipartUpload(httptest.NewRequest(http.MethodPost, "/b/dir/object?uploads", nil),
+		&s3.CreateMultipartUploadInput{Bucket: aws.String("b"), Key: aws.String("dir/object")})
+	require.Equal(t, s3err.ErrNone, code)
+	r := httptest.NewRequest(http.MethodPut, "/b/dir/object?partNumber=1&uploadId="+*out.UploadId, strings.NewReader("data"))
+	r = mux.SetURLVars(r, map[string]string{"bucket": "b", "object": "dir/object"})
+	w := httptest.NewRecorder()
+	s3a.PutObjectPartHandler(w, r)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Len(t, w.Header()["ETag"], 1)
+
+	uploadDir := "/buckets/b/.uploads/" + *out.UploadId
+	prior.mu.Lock()
+	next.entries[uploadDir] = prior.entries[uploadDir]
+	prior.mu.Unlock()
+	s3a.objectWriteLockClient.SetRing([]pb.ServerAddress{nextAddr}, 2)
+
+	_, code = s3a.completeMultipartUpload(httptest.NewRequest(http.MethodPost, "/b/dir/object?uploadId="+*out.UploadId, nil),
+		&s3.CompleteMultipartUploadInput{Bucket: aws.String("b"), Key: aws.String("dir/object"), UploadId: out.UploadId},
+		&CompleteMultipartUpload{Parts: []CompletedPart{{ETag: w.Header()["ETag"][0], PartNumber: 1}}})
+	require.Equal(t, s3err.ErrInternalError, code)
 }

@@ -79,6 +79,10 @@ func (u uploadFilerClient) list(parentDirectoryPath, prefix, startFrom string, i
 			return nil
 		}, startFrom, inclusive, limit)
 	})
+	if priorErr != nil && !isFilerNotFound(priorErr) && len(entries) == 0 {
+		// with nothing on the owner yet, every part may be on the prior owner
+		return nil, false, priorErr
+	}
 	if priorErr != nil || len(priorEntries) == 0 {
 		return entries, isLast, err
 	}
