@@ -329,7 +329,7 @@ func txnConditionHolds(cond *filer_pb.WriteCondition, current *filer_pb.Entry) b
 	for _, clause := range cond.GetClauses() {
 		var etag string
 		if v := current.GetExtended()[s3_constants.ExtETagKey]; len(v) > 0 {
-			etag = string(v)
+			etag = strings.Trim(string(v), `"`)
 		} else if current != nil && current.Attributes != nil {
 			etag = fmt.Sprintf("%x", current.Attributes.Md5)
 		}
@@ -1307,5 +1307,14 @@ func TestSuspendedPutIfMatchRecheckedWhenAltKeyIgnored(t *testing.T) {
 	}
 	if len(conditionKeys) != 2 || conditionKeys[0] != "" || conditionKeys[1] != "/buckets/b/k.versions/v_v1" {
 		t.Fatalf("condition keys = %v, want [\"\" \"/buckets/b/k.versions/v_v1\"]", conditionKeys)
+	}
+}
+
+func TestTxnConditionHoldsQuotedStoredETag(t *testing.T) {
+	stored := &filer_pb.Entry{Extended: map[string][]byte{s3_constants.ExtETagKey: []byte(`"abc123"`)}}
+	match := &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{Kind: filer_pb.WriteCondition_IF_ETAG_MATCH, Etags: []string{`"abc123"`}}}}
+	notMatch := &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{Kind: filer_pb.WriteCondition_IF_ETAG_NOT_MATCH, Etags: []string{"abc123"}}}}
+	if !txnConditionHolds(match, stored) || txnConditionHolds(notMatch, stored) {
+		t.Fatalf("a quoted stored ETag must compare equal to the same ETag")
 	}
 }
