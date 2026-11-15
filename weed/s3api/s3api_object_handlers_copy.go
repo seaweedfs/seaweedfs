@@ -1285,14 +1285,15 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 
 	// Save the part entry to the multipart uploads folder
 	// Check if part exists and remove it first (allow re-copying same part)
-	if exists, _ := s3a.exists(uploadDir, partName, false); exists {
-		if err := s3a.rm(r.Context(), uploadDir, partName, false, false); err != nil {
+	upload := s3a.uploadFiler(dstBucket, dstObject)
+	if exists, _ := upload.exists(uploadDir, partName, false); exists {
+		if err := upload.rm(r.Context(), uploadDir, partName, false, false); err != nil {
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 			return
 		}
 	}
 
-	if err := s3a.mkFile(uploadDir, partName, dstEntry.Chunks, func(entry *filer_pb.Entry) {
+	if err := upload.mkFile(uploadDir, partName, dstEntry.Chunks, func(entry *filer_pb.Entry) {
 		entry.Attributes = dstEntry.Attributes
 		entry.Extended = dstEntry.Extended
 	}); err != nil {

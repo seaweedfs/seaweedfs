@@ -442,7 +442,7 @@ func TestWriteEmptyCopyPartStoresMd5(t *testing.T) {
 	s3a := newPutTestServer(t, startFakeFiler(t, filerImpl))
 	util_http.InitGlobalHttpClient()
 
-	etag, code := s3a.writeEmptyCopyPart("b", "u1", 3)
+	etag, code := s3a.writeEmptyCopyPart("b", "dst", "u1", 3)
 	if code != s3err.ErrNone {
 		t.Fatalf("writeEmptyCopyPart: %v", code)
 	}

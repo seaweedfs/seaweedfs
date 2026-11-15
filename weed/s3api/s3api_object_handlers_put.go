@@ -540,13 +540,14 @@ func (s3a *S3ApiServer) uploadChunkSize() int32 {
 }
 
 // multipartPartContextKey marks a putToFiler request as writing a staged
-// multipart part. Encryption for the upload is decided at
-// CreateMultipartUpload and replayed through request headers, so bucket
-// default encryption must not be re-evaluated for part writes.
+// multipart part, carrying the filer the upload's directory lives on.
+// Encryption for the upload is decided at CreateMultipartUpload and replayed
+// through request headers, so bucket default encryption must not be
+// re-evaluated for part writes.
 type multipartPartContextKey struct{}
 
-func withMultipartPart(r *http.Request) *http.Request {
-	return r.WithContext(context.WithValue(r.Context(), multipartPartContextKey{}, true))
+func withMultipartPart(r *http.Request, upload uploadFilerClient) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), multipartPartContextKey{}, upload))
 }
 
 // validatePutHeaders checks x-amz-storage-class and x-amz-tagging, so the
@@ -572,8 +573,13 @@ func validatePutHeaders(r *http.Request) (map[string]string, s3err.ErrorCode) {
 }
 
 func isMultipartPartRequest(r *http.Request) bool {
-	marked, _ := r.Context().Value(multipartPartContextKey{}).(bool)
+	_, marked := multipartPartUpload(r)
 	return marked
+}
+
+func multipartPartUpload(r *http.Request) (uploadFilerClient, bool) {
+	upload, marked := r.Context().Value(multipartPartContextKey{}).(uploadFilerClient)
+	return upload, marked
 }
 
 // putToFiler writes one chunk of object bytes (a full PutObject body, a
@@ -1076,6 +1082,8 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 			case codes.Unavailable, codes.Canceled, codes.DeadlineExceeded:
 				s3a.markOwnerUnreachable(owner)
 			}
+		} else if upload, ok := multipartPartUpload(r); ok && cond == nil {
+			createErr = upload.WithFilerClient(false, create)
 		} else if s3a.filerClient != nil {
 			createErr = s3a.withFilerClientFailover(context.Background(), "", false, cond == nil, create)
 		} else {

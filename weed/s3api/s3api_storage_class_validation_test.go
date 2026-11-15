@@ -51,7 +51,7 @@ func TestPutToFilerStorageClass(t *testing.T) {
 			}
 			filePath, object, dest := "/buckets/b/o", "o", ""
 			if tt.part {
-				r = withMultipartPart(r)
+				r = withMultipartPart(r, s3a.uploadFiler("b", "o"))
 				filePath, object, dest = "/buckets/b/.uploads/u/0001.part", "", "/buckets/b/o"
 			}
 			_, code, _ := s3a.putToFiler(r, filePath, strings.NewReader("hello world"), "b", object, 1, 0, nil, false, dest)
