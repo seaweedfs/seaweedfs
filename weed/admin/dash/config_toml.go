@@ -257,10 +257,7 @@ var pluginConfigSections = []pluginConfigSection{
 		},
 	},
 	{
-		// s3_lifecycle reads all four knobs from the admin values: the
-		// retention window and walker cadence drive the engine partition
-		// computed on the admin side, and the delete budget is divided by
-		// the admin across execute-capable workers at dispatch time.
+		// s3_lifecycle has no worker config form; its knobs are admin values
 		jobType: "s3_lifecycle",
 		prefix:  "maintenance.s3_lifecycle",
 		adminKeys: map[string]func(v TomlConfig, key string) *plugin_pb.ConfigValue{
