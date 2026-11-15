@@ -96,6 +96,6 @@
 # Token-bucket burst for the delete budget. 0 means 2 x per-second.
 # cluster_deletes_burst = 0
 # max retry attempts for a failed lifecycle run
-# retry_limit = 1
+# retry_limit = 0
 # seconds to wait between retry attempts
-# retry_backoff_seconds = 10
+# retry_backoff_seconds = 5
