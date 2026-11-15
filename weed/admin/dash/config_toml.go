@@ -256,6 +256,17 @@ var pluginConfigSections = []pluginConfigSection{
 			"collection_filter": stringValue,
 		},
 	},
+	{
+		// s3_lifecycle has no worker config form; its knobs are admin values
+		jobType: "s3_lifecycle",
+		prefix:  "maintenance.s3_lifecycle",
+		adminKeys: map[string]func(v TomlConfig, key string) *plugin_pb.ConfigValue{
+			"meta_log_retention_days":    int64Value,
+			"walker_interval_minutes":    int64Value,
+			"cluster_deletes_per_second": int64Value,
+			"cluster_deletes_burst":      int64Value,
+		},
+	},
 }
 
 func doubleValue(v TomlConfig, key string) *plugin_pb.ConfigValue {

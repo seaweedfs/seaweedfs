@@ -401,3 +401,56 @@ max_shard_transfers = 0
 		t.Fatalf("max_shard_transfers = %d, want 0", got.GetInt64Value())
 	}
 }
+
+func TestApplyPluginConfigFromTomlS3Lifecycle(t *testing.T) {
+	s := newPluginServer(t)
+	seed := &plugin_pb.PersistedJobTypeConfig{
+		JobType:      "s3_lifecycle",
+		AdminRuntime: &plugin_pb.AdminRuntimeConfig{Enabled: true, RetryLimit: 1},
+		AdminConfigValues: map[string]*plugin_pb.ConfigValue{
+			"meta_log_retention_days": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 7}},
+		},
+	}
+	if err := s.GetPlugin().SaveJobTypeConfig(seed); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	v := tomlConfig(t, `
+[maintenance.s3_lifecycle]
+meta_log_retention_days = 0
+walker_interval_minutes = 30
+cluster_deletes_per_second = 50
+cluster_deletes_burst = 200
+retry_limit = 3
+`)
+	if err := s.ApplyPluginConfigFromToml(v); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	cfg, err := s.GetPlugin().LoadJobTypeConfig("s3_lifecycle")
+	if err != nil || cfg == nil {
+		t.Fatalf("load: %v %v", cfg, err)
+	}
+	// an explicit 0 must replace the saved value, not read as unset
+	if got, ok := cfg.AdminConfigValues["meta_log_retention_days"].GetKind().(*plugin_pb.ConfigValue_Int64Value); !ok || got.Int64Value != 0 {
+		t.Errorf("meta_log_retention_days = %v, want int64 0", cfg.AdminConfigValues["meta_log_retention_days"])
+	}
+	if got := cfg.AdminConfigValues["walker_interval_minutes"].GetInt64Value(); got != 30 {
+		t.Errorf("walker_interval_minutes = %d, want 30", got)
+	}
+	if got := cfg.AdminConfigValues["cluster_deletes_per_second"].GetInt64Value(); got != 50 {
+		t.Errorf("cluster_deletes_per_second = %d, want 50", got)
+	}
+	if got := cfg.AdminConfigValues["cluster_deletes_burst"].GetInt64Value(); got != 200 {
+		t.Errorf("cluster_deletes_burst = %d, want 200", got)
+	}
+	if cfg.AdminRuntime.RetryLimit != 3 {
+		t.Errorf("retry_limit = %d, want 3", cfg.AdminRuntime.RetryLimit)
+	}
+	if !cfg.AdminRuntime.Enabled {
+		t.Errorf("enabled flipped off by unrelated toml keys")
+	}
+	if cfg.UpdatedBy != "admin.toml" {
+		t.Errorf("updated_by = %q, want admin.toml", cfg.UpdatedBy)
+	}
+}
