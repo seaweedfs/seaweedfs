@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_lifecycle_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/bootstrap"
@@ -32,8 +33,8 @@ func TestWalkBuckets_RecordsEveryBucketFailure(t *testing.T) {
 		return nil
 	}
 	runStats := &RunStats{}
-	err := WalkBuckets(context.Background(), snapshotForBucketRule(t, "good", 7), []int{0},
-		[]string{"bad-a", "good", "bad-b"}, list, &recordingDispatcher{}, runStats)
+	_, err := WalkBuckets(context.Background(), snapshotForBucketRule(t, "good", 7), []int{0},
+		[]string{"bad-a", "good", "bad-b"}, list, &recordingDispatcher{}, runStats, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "bad-a", "the returned error stays the first bucket's")
 
@@ -60,8 +61,8 @@ func TestWalkBuckets_CancelMarksRemainingBucketsSkipped(t *testing.T) {
 		return nil
 	}
 	runStats := &RunStats{}
-	err := WalkBuckets(ctx, snapshotForBucketRule(t, "first", 7), []int{0},
-		[]string{"first", "second", "third"}, list, &recordingDispatcher{}, runStats)
+	_, err := WalkBuckets(ctx, snapshotForBucketRule(t, "first", 7), []int{0},
+		[]string{"first", "second", "third"}, list, &recordingDispatcher{}, runStats, nil)
 	assert.ErrorIs(t, err, context.Canceled)
 
 	sum := runStats.Summary()
@@ -109,8 +110,9 @@ func TestWalkBuckets_CountsEntriesAndObjects(t *testing.T) {
 		{Path: ".uploads/u1", DestKey: "c", IsDirectory: true, IsMPUInit: true, ModTime: old},
 	}
 	runStats := &RunStats{}
-	require.NoError(t, WalkBuckets(context.Background(), snapshotForBucketRule(t, "bkt", 7), allShards(),
-		[]string{"bkt"}, bootstrap.EntryCallback(entries), &recordingDispatcher{}, runStats))
+	_, err := WalkBuckets(context.Background(), snapshotForBucketRule(t, "bkt", 7), allShards(),
+		[]string{"bkt"}, bootstrap.EntryCallback(entries), &recordingDispatcher{}, runStats, nil)
+	require.NoError(t, err)
 
 	sum := runStats.Summary()
 	assert.Equal(t, int64(5), sum.EntriesVisited, "versions and upload records count, plain directories do not")
@@ -166,4 +168,25 @@ func TestRunStats_NilIsANoOp(t *testing.T) {
 	runStats.recordOutcome("DONE")
 	runStats.setShardErrors(1)
 	assert.Equal(t, RunSummary{}, runStats.Summary())
+}
+
+// A walk reads entries it does not visit: the versioned pre-pass reads
+// plain files without emitting them, and a resumed walk re-reads its
+// start entry.
+func TestRunStats_CountListedCountsSkippedEntries(t *testing.T) {
+	mtime := time.Now().Add(-7 * 24 * time.Hour)
+	client := &fakeFiler{tree: map[string][]*filer_pb.Entry{
+		"/buckets/bkt": {file("a.txt", mtime, 1), file("b.txt", mtime, 1), file("c.txt", mtime, 1)},
+	}}
+	stats := &RunStats{}
+	emitted := 0
+	require.NoError(t, FilerListFunc(stats.CountListed(client), "/buckets", nil)(context.Background(), "bkt", "2:b.txt", func(*bootstrap.Entry) error {
+		emitted++
+		return nil
+	}))
+
+	assert.Equal(t, 1, emitted)
+	assert.Equal(t, int64(3), stats.Summary().EntriesListed, "c.txt in the pre-pass, b.txt and c.txt in pass 2")
+	var nilStats *RunStats
+	assert.Same(t, client, nilStats.CountListed(client))
 }

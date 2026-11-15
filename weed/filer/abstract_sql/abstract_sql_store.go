@@ -428,6 +428,7 @@ func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context,
 	}
 	defer rows.Close()
 
+	stoppedEarly := false
 	for rows.Next() {
 		var name string
 		var data []byte
@@ -452,9 +453,19 @@ func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context,
 		}
 
 		if !resEachEntryFunc {
+			stoppedEarly = true
 			break
 		}
 
+	}
+	// rows.Next also returns false when the result set fails partway, for
+	// example on a lost connection; that must not read as the end of the
+	// directory. A listing the callback stopped on purpose has no such error
+	// to report (rows.Err would return a canceled context's error instead).
+	if err == nil && !stoppedEarly {
+		if rowsErr := rows.Err(); rowsErr != nil {
+			err = fmt.Errorf("list %s: %w", dirPath, rowsErr)
+		}
 	}
 
 	return lastFileName, err

@@ -68,6 +68,21 @@ func (wfs *WFS) Write(cancel <-chan struct{}, in *fuse.WriteIn, data []byte) (wr
 		return 0, fuse.OK
 	}
 
+	// Size and times cover only the bytes buffered, or the next flush
+	// publishes a hole where the data should be. A partly buffered write
+	// is reported as a short write, or as an error to kernel writeback,
+	// which ignores the count.
+	offset := int64(in.Offset)
+	buffered, err := fh.dirtyPages.AddPage(offset, data, fh.dirtyPages.writerPattern.IsSequentialMode(), tsNs)
+	if err != nil {
+		glog.Errorf("AddPage error: %v", err)
+		if buffered == 0 {
+			return 0, writeErrorToFuseStatus(err)
+		}
+		data = data[:buffered]
+	}
+	fh.pageWrites.Add(1)
+
 	// Only an append past all locally owned bytes needs the stored EOF guard.
 	if in.Offset > entry.Attributes.FileSize && wfs.isAppendWrite(in) {
 		if !fh.pendingAppend || in.Offset < fh.pendingAppendOffset {
@@ -76,7 +91,6 @@ func (wfs *WFS) Write(cancel <-chan struct{}, in *fuse.WriteIn, data []byte) (wr
 		fh.pendingAppend = true
 	}
 	entry.Content = nil
-	offset := int64(in.Offset)
 	oldFileSize := int64(entry.Attributes.FileSize)
 	newFileSize := max(offset+int64(len(data)), oldFileSize)
 	entry.Attributes.FileSize = uint64(newFileSize)
@@ -94,13 +108,6 @@ func (wfs *WFS) Write(cancel <-chan struct{}, in *fuse.WriteIn, data []byte) (wr
 	// Only count the new bytes being added beyond the current file size.
 	if newFileSize > oldFileSize {
 		wfs.AddUncommittedBytes(newFileSize - oldFileSize)
-	}
-
-	// glog.V(4).Infof("%v write [%d,%d) %d", fh.f.fullpath(), req.Offset, req.Offset+int64(len(req.Data)), len(req.Data))
-
-	if err := fh.dirtyPages.AddPage(offset, data, fh.dirtyPages.writerPattern.IsSequentialMode(), tsNs); err != nil {
-		glog.Errorf("AddPage error: %v", err)
-		return 0, writeErrorToFuseStatus(err)
 	}
 
 	written = uint32(len(data))
@@ -126,5 +133,8 @@ func (wfs *WFS) Write(cancel <-chan struct{}, in *fuse.WriteIn, data []byte) (wr
 		fh.mirrorFile.WriteAt(data, offset)
 	}
 
+	if err != nil && in.WriteFlags&fuse.WRITE_CACHE != 0 {
+		return 0, writeErrorToFuseStatus(err)
+	}
 	return written, fuse.OK
 }

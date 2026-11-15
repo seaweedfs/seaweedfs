@@ -263,7 +263,14 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 	if s3Conn == nil {
 		return noReadyS3Error(skipped)
 	}
-	defer s3Conn.Close()
+	client := h.newFailoverClient(runCtx, s3Conn, s3Endpoint, s3Endpoints, func(msg string) {
+		_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
+			JobId: request.Job.JobId, JobType: jobType,
+			State: plugin_pb.JobState_JOB_STATE_RUNNING, Stage: "running",
+			Message: msg,
+		})
+	})
+	defer client.Close()
 	if len(skipped) > 0 {
 		skippedErr := errors.Join(skipped...)
 		glog.Warningf("s3 lifecycle: using s3 %s, skipped: %v", s3Endpoint, skippedErr)
@@ -273,9 +280,8 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 			Message: fmt.Sprintf("using s3 %s, skipped: %v", s3Endpoint, skippedErr),
 		})
 	}
-	rpc := s3_lifecycle_pb.NewSeaweedS3LifecycleInternalClient(s3Conn)
 
-	report, err := h.executeDailyReplay(runCtx, request, bucketsPath, filerClient, rpc, cfg, sender)
+	report, err := h.executeDailyReplay(runCtx, request, bucketsPath, filerClient, client, cfg, sender)
 	if err != nil {
 		return err
 	}
@@ -305,7 +311,7 @@ func sendCompletion(request *plugin_pb.ExecuteJobRequest, sender pluginworker.Ex
 // and against the steady-state walk view; all rule kinds are serviced.
 // The returned error covers setup only; the pass's own error is in the
 // report.
-func (h *Handler) executeDailyReplay(ctx context.Context, request *plugin_pb.ExecuteJobRequest, bucketsPath string, filerClient filer_pb.SeaweedFilerClient, rpc s3_lifecycle_pb.SeaweedS3LifecycleInternalClient, cfg Config, sender pluginworker.ExecutionSender) (*runReport, error) {
+func (h *Handler) executeDailyReplay(ctx context.Context, request *plugin_pb.ExecuteJobRequest, bucketsPath string, filerClient filer_pb.SeaweedFilerClient, client dailyrun.LifecycleClient, cfg Config, sender pluginworker.ExecutionSender) (*runReport, error) {
 	startedAt := time.Now()
 	eng := engine.New()
 	inputs, parseErrors, err := scheduler.LoadCompileInputs(ctx, filerClient, bucketsPath)
@@ -324,10 +330,6 @@ func (h *Handler) executeDailyReplay(ctx context.Context, request *plugin_pb.Exe
 
 	limiter, limiterDesc := buildLimiterFromClusterContext(request.GetClusterContext())
 
-	// Reuse one LifecycleClient across the replay drain and the
-	// walker's per-entry dispatch.
-	client := lifecycleRPCAdapter{c: rpc}
-
 	// Bucket list for the walker — derived from inputs so it matches
 	// the snapshot the engine compiled.
 	buckets := make([]string, 0, len(inputs))
@@ -344,9 +346,9 @@ func (h *Handler) executeDailyReplay(ctx context.Context, request *plugin_pb.Exe
 	// Share the limiter with processMatches so walker + replay can't
 	// combine to burst past the cluster cap.
 	walkerDispatch := &dailyrun.WalkerDispatcher{Client: client, Limiter: limiter, DeleteTimeout: cfg.DeleteTimeout, Stats: runStats}
-	walker := dailyrun.WalkerFunc(func(walkCtx context.Context, view *engine.Snapshot, shards []int) error {
+	walker := dailyrun.WalkerFunc(func(walkCtx context.Context, view *engine.Snapshot, shards []int) (time.Time, error) {
 		return dailyrun.WalkBuckets(walkCtx, view, shards, buckets,
-			dailyrun.FilerListFunc(filerClient, bucketsPath, view), walkerDispatch, runStats)
+			dailyrun.FilerListFunc(runStats.CountListed(filerClient), bucketsPath, view), walkerDispatch, runStats, persister)
 	})
 
 	_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
@@ -473,9 +475,9 @@ func parsePositiveInt(s string) (int, bool) {
 }
 
 // clusterS3Endpoints returns the master-discovered S3 gRPC addresses for the
-// cluster. The handler uses the first one that passes checkLifecycleReady;
-// the master refreshes the list on KeepConnected so a stale entry self-heals
-// on the next run.
+// cluster. The handler uses the first one that passes checkLifecycleReady and
+// moves to the next ready one if it becomes unavailable during the pass; the
+// master refreshes the list on KeepConnected.
 func clusterS3Endpoints(cc *plugin_pb.ClusterContext) []string {
 	if cc == nil {
 		return nil

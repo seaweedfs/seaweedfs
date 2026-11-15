@@ -270,7 +270,7 @@ func TestTruncateEntryClearsDirtyPagesForOpenHandle(t *testing.T) {
 	fh, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, entry, 0, 0)
 	fh.RememberPath(fullPath)
 
-	if err := fh.dirtyPages.AddPage(0, []byte("hello"), true, time.Now().UnixNano()); err != nil {
+	if _, err := fh.dirtyPages.AddPage(0, []byte("hello"), true, time.Now().UnixNano()); err != nil {
 		t.Fatalf("AddPage: %v", err)
 	}
 	oldDirtyPages := fh.dirtyPages

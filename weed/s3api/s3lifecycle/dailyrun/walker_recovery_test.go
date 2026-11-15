@@ -70,11 +70,11 @@ func TestRunShard_WalkerInvokedOnRecoveryBranch(t *testing.T) {
 	calls := 0
 	cfg := Config{
 		Persister: p,
-		Walker: func(_ context.Context, view *engine.Snapshot, shards []int) error {
+		Walker: func(_ context.Context, view *engine.Snapshot, shards []int) (time.Time, error) {
 			calls++
 			gotView = view
 			gotShards = shards
-			return nil
+			return time.Time{}, nil
 		},
 	}
 	runNow := time.Unix(1_700_000_000, 0).UTC()
@@ -91,6 +91,68 @@ func TestRunShard_WalkerInvokedOnRecoveryBranch(t *testing.T) {
 	expectedFloor := runNow.Add(-engine.MaxEffectiveTTL(snap)).UnixNano()
 	assert.Equal(t, expectedFloor, got.TsNs, "cursor must rewind to runNow - maxTTL after recovery walk")
 	assert.NotEqual(t, stale, got.RuleSetHash, "stale hash must be replaced")
+}
+
+func TestRunShard_RecoveryReplaysFromResumedWalkStart(t *testing.T) {
+	snap := snapshotWithRule(t, 30)
+	p := newMemPersister()
+	var stale [32]byte
+	for i := range stale {
+		stale[i] = 0xAD
+	}
+	require.NoError(t, p.Save(context.Background(), 3, Cursor{TsNs: 1234, RuleSetHash: stale}))
+
+	runNow := time.Unix(1_700_000_000, 0).UTC()
+	walkedFrom := runNow.Add(-48 * time.Hour)
+	cfg := Config{
+		Persister: p,
+		Walker: func(context.Context, *engine.Snapshot, []int) (time.Time, error) {
+			return walkedFrom, nil
+		},
+	}
+	require.NoError(t, runShard(context.Background(), cfg, snap, runNow, 3, nil, nil))
+
+	got, ok, err := p.Load(context.Background(), 3)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, walkedFrom.Add(-engine.MaxEffectiveTTL(snap)).UnixNano(), got.TsNs,
+		"objects in buckets a resumed walk listed earlier must stay in the replay window")
+	assert.Equal(t, runNow.UnixNano(), got.LastWalkedNs)
+}
+
+func TestRunShard_ColdStartWithResumedWalkReplaysNextPass(t *testing.T) {
+	snap := snapshotWithRule(t, 30)
+	p := newMemPersister()
+	runNow := time.Unix(1_700_000_000, 0).UTC()
+	walkedFrom := runNow.Add(-48 * time.Hour)
+	cfg := Config{
+		Persister: p,
+		Walker: func(context.Context, *engine.Snapshot, []int) (time.Time, error) {
+			return walkedFrom, nil
+		},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, runShard(ctx, cfg, snap, runNow, 3, nil, nil))
+
+	got, ok, err := p.Load(context.Background(), 3)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, walkedFrom.Add(-engine.MaxEffectiveTTL(snap)).UnixNano(), got.TsNs,
+		"this pass's subscription began at runNow - maxTTL, so the next pass replays from the walk start")
+	assert.Equal(t, engine.ReplayContentHash(snap), got.RuleSetHash)
+}
+
+func TestComputeGlobalStartTsNs_SavedCursorBelowTheFloor(t *testing.T) {
+	runNow := time.Unix(1_700_000_000, 0).UTC()
+	maxTTL := 30 * 24 * time.Hour
+	floor := runNow.Add(-maxTTL).UnixNano()
+	saved := runNow.Add(-maxTTL - 48*time.Hour).UnixNano()
+	cfg := Config{Shards: []int{1, 3}}
+	cursors := map[int]cursorLoad{3: {cursor: Cursor{TsNs: saved}, found: true}}
+	assert.Equal(t, saved, computeGlobalStartTsNs(cursors, cfg, runNow, maxTTL),
+		"a cursor a resumed cold start saved below runNow - maxTTL opens the next subscription")
+	assert.Equal(t, floor, computeGlobalStartTsNs(map[int]cursorLoad{}, cfg, runNow, maxTTL))
 }
 
 func TestRunShard_NilWalkerOnRecoveryIsNoop(t *testing.T) {
@@ -128,8 +190,8 @@ func TestRunShard_WalkerErrorPropagates(t *testing.T) {
 
 	cfg := Config{
 		Persister: p,
-		Walker: func(_ context.Context, _ *engine.Snapshot, _ []int) error {
-			return errors.New("walker boom")
+		Walker: func(_ context.Context, _ *engine.Snapshot, _ []int) (time.Time, error) {
+			return time.Time{}, errors.New("walker boom")
 		},
 	}
 	runNow := time.Unix(1_700_000_000, 0).UTC()

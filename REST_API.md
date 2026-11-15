@@ -271,6 +271,10 @@ curl "http://localhost:9333/vol/vacuum?garbageThreshold=0.4"
 Vacuuming makes a volume read-only, copies live needles to a new volume, and
 swaps it in.
 
+The master runs one vacuum at a time. A request that arrives while the
+automatic vacuum or another request is running does nothing and gets
+`409 Conflict` with `{"error":"another vacuum is running, try again later"}`.
+
 ### Delete a collection
 
 ```bash

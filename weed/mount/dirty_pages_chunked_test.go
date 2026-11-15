@@ -32,7 +32,7 @@ func TestChunkedDirtyPagesFailWritesAfterUploadError(t *testing.T) {
 	uploadErr := errors.New("assign volume failure: no writable volumes")
 	pages.setLastError(uploadErr)
 
-	if err := pages.AddPage(0, []byte("x"), true, 1); !errors.Is(err, uploadErr) {
+	if _, err := pages.AddPage(0, []byte("x"), true, 1); !errors.Is(err, uploadErr) {
 		t.Fatalf("AddPage after upload failure = %v, want sticky %v", err, uploadErr)
 	}
 	if err := pages.FlushData(); !errors.Is(err, uploadErr) {

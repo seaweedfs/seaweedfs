@@ -15,10 +15,6 @@ type PageWriter struct {
 	randomWriter page_writer.DirtyPages
 }
 
-var (
-	_ = page_writer.DirtyPages(&PageWriter{})
-)
-
 func newPageWriter(fh *FileHandle, chunkSize int64) *PageWriter {
 	pw := &PageWriter{
 		fh:            fh,
@@ -29,23 +25,27 @@ func newPageWriter(fh *FileHandle, chunkSize int64) *PageWriter {
 	return pw
 }
 
-func (pw *PageWriter) AddPage(offset int64, data []byte, isSequential bool, tsNs int64) error {
+// AddPage returns how many leading bytes of data it buffered; on error those
+// bytes stay buffered.
+func (pw *PageWriter) AddPage(offset int64, data []byte, isSequential bool, tsNs int64) (buffered int64, err error) {
 
 	glog.V(4).Infof("%v AddPage [%d, %d)", pw.fh.fh, offset, offset+int64(len(data)))
 
 	chunkIndex := offset / pw.chunkSize
 	for i := chunkIndex; len(data) > 0; i++ {
 		writeSize := min(int64(len(data)), (i+1)*pw.chunkSize-offset)
-		if err := pw.addToOneChunk(i, offset, data[:writeSize], isSequential, tsNs); err != nil {
-			return err
+		n, err := pw.addToOneChunk(i, offset, data[:writeSize], isSequential, tsNs)
+		buffered += int64(n)
+		if err != nil {
+			return buffered, err
 		}
 		offset += writeSize
 		data = data[writeSize:]
 	}
-	return nil
+	return buffered, nil
 }
 
-func (pw *PageWriter) addToOneChunk(chunkIndex, offset int64, data []byte, isSequential bool, tsNs int64) error {
+func (pw *PageWriter) addToOneChunk(chunkIndex, offset int64, data []byte, isSequential bool, tsNs int64) (int, error) {
 	return pw.randomWriter.AddPage(offset, data, isSequential, tsNs)
 }
 

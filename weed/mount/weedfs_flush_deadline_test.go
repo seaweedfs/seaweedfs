@@ -121,7 +121,7 @@ func newSlowDataFlush(t *testing.T, assignDelay, deadline time.Duration, stuckCo
 		Chunks:     stored,
 	}, 0, 0)
 	t.Cleanup(func() { wfs.ReleaseHandle(fh.fh) })
-	if err := fh.dirtyPages.AddPage(offset, data, true, time.Now().UnixNano()); err != nil {
+	if _, err := fh.dirtyPages.AddPage(offset, data, true, time.Now().UnixNano()); err != nil {
 		t.Fatalf("AddPage: %v", err)
 	}
 	fh.dirtyMetadata = true

@@ -191,6 +191,7 @@ func (wfs *WFS) doFlush(ctx context.Context, fh *FileHandle, uid, gid uint32, al
 
 	// Synchronous flush path (normal mode, fsync, or no dirty data)
 	fh.asyncFlushPending = false
+	publication := &contentPublication{failure: fh.writebackContentError, writes: fh.pageWrites.Load()}
 
 	// Check quota including uncommitted writes for real-time enforcement
 	isOverQuota := wfs.IsOverQuotaWithUncommitted()
@@ -222,7 +223,6 @@ func (wfs *WFS) doFlush(ctx context.Context, fh *FileHandle, uid, gid uint32, al
 		commit = &commitBudget{left: metadataTimeout}
 	}
 
-	publication := &contentPublication{failure: fh.writebackContentError}
 	if err := retryMetadataFlushIf(ctx, func() error {
 		return wfs.flushMetadataToFiler(ctx, fh, dir, name, uid, gid, commit, publication)
 	}, func(err error) bool {
@@ -255,7 +255,7 @@ func (wfs *WFS) doFlush(ctx context.Context, fh *FileHandle, uid, gid uint32, al
 // commit bounds the filer calls made here, over all attempts of one flush; nil
 // leaves them to the per-call filer timeouts.
 func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, name string, uid, gid uint32, commit *commitBudget, publications ...*contentPublication) error {
-	publication := &contentPublication{}
+	publication := &contentPublication{writes: fh.pageWrites.Load()}
 	if len(publications) > 0 {
 		publication = publications[0]
 	}
@@ -391,7 +391,7 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 		wfs.inodeToPath.InvalidateChildrenCache(util.FullPath(dir))
 	}
 
-	if err == nil {
+	if err == nil && fh.pageWrites.Load() == publication.writes {
 		fh.pendingAppend = false
 		fh.dirtyMetadata = false
 		fh.dirtyContent = false

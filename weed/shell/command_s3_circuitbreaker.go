@@ -34,13 +34,13 @@ func (c *commandS3CircuitBreaker) Help() string {
 
 	# examples
 	# add circuit breaker config for global
-	s3.circuitBreaker -global -type count -actions Read,Write -values 500,200 -apply
+	s3.circuitBreaker -global -type Count -actions Read,Write -values 500,200 -apply
 
 	# disable global config
 	s3.circuitBreaker -global -disable -apply
 
 	# add circuit breaker config for buckets x,y,z
-	s3.circuitBreaker -buckets x,y,z -type count -actions Read,Write -values 200,100 -apply
+	s3.circuitBreaker -buckets x,y,z -type Count -actions Read,Write -values 200,100 -apply
 
 	# disable circuit breaker config of x
 	s3.circuitBreaker -buckets x -disable -apply
@@ -207,7 +207,7 @@ func loadConfig(commandEnv *CommandEnv, dir string, file string, buf *bytes.Buff
 
 func insertOrUpdateValues(cbOptions *s3_pb.S3CircuitBreakerOptions, cmdActions []string, cmdValues []int64, limitType *string) error {
 	if len(*limitType) == 0 {
-		return fmt.Errorf("type not valid, only 'count' and 'bytes' are allowed")
+		return fmt.Errorf("type not valid, only 'Count' and 'MB' are allowed")
 	}
 
 	if cbOptions.Actions == nil {
@@ -289,7 +289,7 @@ func (c *commandS3CircuitBreaker) initActionsAndValues(buckets, actions, limitTy
 				}
 			}
 			if !found {
-				return nil, nil, nil, fmt.Errorf("value(%s) of flag[-action] not valid, allowed actions: %v", *actions, s3_constants.AllowedActions)
+				return nil, nil, nil, fmt.Errorf("value(%s) of flag[-actions] not valid, allowed actions: %v", action, s3_constants.AllowedActions)
 			}
 		}
 	}
@@ -307,7 +307,7 @@ func (c *commandS3CircuitBreaker) initActionsAndValues(buckets, actions, limitTy
 				elements := strings.Split(*values, ",")
 				if len(cmdActions) != len(elements) {
 					if len(elements) != 1 || len(elements) == 0 {
-						return nil, nil, nil, fmt.Errorf("count of flag[-actions] and flag[-counts] not equal")
+						return nil, nil, nil, fmt.Errorf("count of flag[-actions] and flag[-values] not equal")
 					}
 					v, err := strconv.Atoi(elements[0])
 					if err != nil {
@@ -333,7 +333,7 @@ func (c *commandS3CircuitBreaker) initActionsAndValues(buckets, actions, limitTy
 					}
 					v, err := parseMBToBytes(elements[0])
 					if err != nil {
-						return nil, nil, nil, fmt.Errorf("value of -max must be a legal number(s)")
+						return nil, nil, nil, fmt.Errorf("value of -values must be a legal number(s)")
 					}
 					for range cmdActions {
 						cmdValues = append(cmdValues, v)
@@ -342,13 +342,13 @@ func (c *commandS3CircuitBreaker) initActionsAndValues(buckets, actions, limitTy
 					for _, value := range elements {
 						v, err := parseMBToBytes(value)
 						if err != nil {
-							return nil, nil, nil, fmt.Errorf("value of -max must be a legal number(s)")
+							return nil, nil, nil, fmt.Errorf("value of -values must be a legal number(s)")
 						}
 						cmdValues = append(cmdValues, v)
 					}
 				}
 			default:
-				return nil, nil, nil, fmt.Errorf("type not valid, only 'count' and 'bytes' are allowed")
+				return nil, nil, nil, fmt.Errorf("type not valid, only 'Count' and 'MB' are allowed")
 			}
 		} else {
 			*limitType = ""

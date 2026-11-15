@@ -1,8 +1,10 @@
 package mount
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -405,6 +407,47 @@ func TestStreamingCopyMarksOnlyAcceptedContentDirty(t *testing.T) {
 				t.Fatalf("dirtyContent = %v, want %v", dstHandle.dirtyContent, c.wantDirty)
 			}
 		})
+	}
+}
+
+// Bytes the copy buffered before a page failed stay in the handle, so the
+// copy reports them and grows the destination over them.
+func TestStreamingCopyReportsPartlyBufferedCopy(t *testing.T) {
+	wfs := newCopyRangeTestWFS()
+	wfs.option.ConcurrentWriters = 1
+	notADir := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(notADir, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	wfs.option.uniqueCacheDirForWrite = filepath.Join(notADir, "swap")
+	srcInode := wfs.inodeToPath.Lookup(util.FullPath("/src.txt"), 1, false, false, 0, true)
+	dstInode := wfs.inodeToPath.Lookup(util.FullPath("/dst.txt"), 1, false, false, 0, true)
+	srcHandle, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, srcInode, &filer_pb.Entry{
+		Name:       "src.txt",
+		Attributes: &filer_pb.FuseAttributes{FileMode: 0100644, FileSize: 1024, Inode: srcInode},
+		Content:    bytes.Repeat([]byte{'s'}, 1024),
+	}, 0, 0)
+	dstHandle, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, dstInode, &filer_pb.Entry{
+		Name:       "dst.txt",
+		Attributes: &filer_pb.FuseAttributes{FileMode: 0100644, Inode: dstInode},
+	}, 0, 0)
+	t.Cleanup(dstHandle.dirtyPages.Destroy)
+
+	// The destination range crosses into a second chunk, which needs the swap file.
+	written, status := wfs.CopyFileRange(make(chan struct{}), &fuse.CopyFileRangeIn{
+		FhIn:   uint64(srcHandle.fh),
+		FhOut:  uint64(dstHandle.fh),
+		OffOut: 512,
+		Len:    1024,
+	})
+	if status != fuse.OK || written != 512 {
+		t.Fatalf("CopyFileRange = %d, %v; want a short copy of 512", written, status)
+	}
+	if size := dstHandle.GetEntry().GetEntry().GetAttributes().GetFileSize(); size != 1024 {
+		t.Fatalf("destination size = %d, want 1024", size)
+	}
+	if !dstHandle.dirtyContent || !dstHandle.dirtyMetadata {
+		t.Fatal("the buffered prefix must leave the destination dirty")
 	}
 }
 

@@ -44,12 +44,22 @@ func vacuumVolumes(t *testing.T) {
 	require.NotEmpty(t, defaultConfig.MasterEndpoint, "vacuum needs a master endpoint; set MASTER_ENDPOINT")
 	endpoint := strings.TrimRight(defaultConfig.MasterEndpoint, "/") + "/vol/vacuum?garbageThreshold=0.001"
 	httpClient := &http.Client{Timeout: 30 * time.Second}
-	resp, err := httpClient.Get(endpoint)
-	require.NoError(t, err, "vacuum request to %s", endpoint)
-	defer resp.Body.Close()
-	_, err = io.Copy(io.Discard, resp.Body)
-	require.NoError(t, err, "reading the vacuum response")
-	require.Equal(t, http.StatusOK, resp.StatusCode, "vacuum request to %s", endpoint)
+	// The master runs one vacuum at a time and answers 409 to a request it
+	// dropped because its automatic vacuum was running. Ask until ours runs.
+	deadline := time.Now().Add(time.Minute)
+	for {
+		resp, err := httpClient.Get(endpoint)
+		require.NoError(t, err, "vacuum request to %s", endpoint)
+		_, err = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		require.NoError(t, err, "reading the vacuum response")
+		if resp.StatusCode == http.StatusConflict && time.Now().Before(deadline) {
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+		require.Equal(t, http.StatusOK, resp.StatusCode, "vacuum request to %s", endpoint)
+		return
+	}
 }
 
 func requireVersionBody(t *testing.T, client *s3.Client, bucketName, objectKey, versionId string, want []byte, msg string) {
