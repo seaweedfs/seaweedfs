@@ -718,7 +718,7 @@ func TestLifecycleDelete_SuspendedNullRewrittenBeforeDeleteSurvives(t *testing.T
 			require.Contains(t, fake.entries, "/buckets/b/obj")
 			require.Equal(t, "3,03637037d6", fake.entries["/buckets/b/obj"].Chunks[0].GetFileIdString())
 			if !routed {
-				require.Equal(t, []string{"b/obj"}, locked, "the recheck and the delete must hold the object write lock")
+				require.Equal(t, []string{"b/obj", "b/obj"}, locked, "the marker, then the recheck and the delete, must hold the object write lock")
 			}
 		})
 	}
