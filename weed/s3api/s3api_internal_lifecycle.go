@@ -297,19 +297,21 @@ func (s3a *S3ApiServer) lifecycleNullVersion(req *s3_lifecycle_pb.LifecycleDelet
 // bypasses retention.
 func (s3a *S3ApiServer) lifecycleDeleteNullVersion(req *s3_lifecycle_pb.LifecycleDeleteRequest, nullEntry *filer_pb.Entry, metadataOnly bool) *s3_lifecycle_pb.LifecycleDeleteResponse {
 	if owner := s3a.routableWriteOwner(req.Bucket, req.ObjectPath); owner != "" {
-		if worm, lockErr := s3a.isObjectLockEnabled(req.Bucket); lockErr == nil {
-			guard := &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{
-				Kind:          filer_pb.WriteCondition_IF_ENTRY_EQUAL,
-				ExpectedEntry: nullEntry,
-			}}}
-			switch code, _ := s3a.routedDeleteNullVersion(owner, req.Bucket, req.ObjectPath, worm, false, metadataOnly, guard); code {
-			case s3err.ErrNone, s3err.ErrPreconditionFailed:
-				return done()
-			case s3err.ErrAccessDenied:
-				return retryLater("ACCESS_DENIED: deleteNullVersion: object lock")
-			default:
-				return retryLater("TRANSPORT_ERROR: routedDeleteNullVersion: " + s3err.GetAPIError(code).Code)
-			}
+		worm, lockErr := s3a.isObjectLockEnabled(req.Bucket)
+		if lockErr != nil {
+			return retryLater("TRANSPORT_ERROR: object lock lookup: " + lockErr.Error())
+		}
+		guard := &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{
+			Kind:          filer_pb.WriteCondition_IF_ENTRY_EQUAL,
+			ExpectedEntry: nullEntry,
+		}}}
+		switch code, _ := s3a.routedDeleteNullVersion(owner, req.Bucket, req.ObjectPath, worm, false, metadataOnly, guard); code {
+		case s3err.ErrNone, s3err.ErrPreconditionFailed:
+			return done()
+		case s3err.ErrAccessDenied:
+			return retryLater("ACCESS_DENIED: deleteNullVersion: object lock")
+		default:
+			return retryLater("TRANSPORT_ERROR: routedDeleteNullVersion: " + s3err.GetAPIError(code).Code)
 		}
 	}
 	// Off the ring, writers serialize on the object write lock instead.

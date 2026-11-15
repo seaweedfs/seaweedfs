@@ -667,6 +667,26 @@ func TestLifecycleDelete_RoutedNullDeleteFailureRetries(t *testing.T) {
 	requireLatestIsMarker(t, s3a)
 }
 
+func TestLifecycleDelete_RoutedNullDeleteObjectLockLookupFailureRetries(t *testing.T) {
+	s3a, fake, null := suspendedNullServer(t, true)
+	fake.txnCheck = func(req *filer_pb.ObjectTransactionRequest) {
+		if isMarkerTxn(req) {
+			s3a.bucketConfigCache.Remove("b")
+			fake.lookupErr, fake.lookupFailKey = status.Error(codes.Unavailable, "filer unavailable"), "/buckets/b"
+		}
+	}
+	resp, err := s3a.LifecycleDelete(s3LocalPeerCtx(), &s3_lifecycle_pb.LifecycleDeleteRequest{
+		Bucket:           "b",
+		ObjectPath:       "obj",
+		ActionKind:       s3_lifecycle_pb.ActionKind_EXPIRATION_DAYS,
+		ExpectedIdentity: computeEntryIdentity(null),
+	})
+	require.NoError(t, err)
+	require.Equal(t, s3_lifecycle_pb.LifecycleDeleteOutcome_RETRY_LATER, resp.Outcome, resp.Reason)
+	require.Equal(t, 1, fake.txnCount, "only the marker")
+	require.Contains(t, fake.entries, "/buckets/b/obj")
+}
+
 // A null object written after the expiration read the old one is not deleted.
 func TestLifecycleDelete_SuspendedNullRewrittenBeforeDeleteSurvives(t *testing.T) {
 	for _, routed := range []bool{true, false} {
