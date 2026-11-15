@@ -110,3 +110,86 @@ func TestScanMetadataEventSkeletonEmptyPayload(t *testing.T) {
 		t.Fatalf("empty payload: %+v ok=%v", skeleton, ok)
 	}
 }
+
+func TestMetadataDirectoryMayMatchSubscriptionCoversMatches(t *testing.T) {
+	dirs := []string{"/", "/data", "/data/pvc-7", "/data/pvc-70", "/data/pvc-7/sub", "/data/pvc-1", "/other", "/data/./pvc-7", "/data//pvc-7", "/data/pvc-1/../pvc-7"}
+	names := []string{"pvc-7", "pvc-70", "a.log", "sub", ""}
+	filters := []struct {
+		prefix   string
+		prefixes []string
+		dirs     []string
+	}{
+		{prefix: "/data/pvc-7/"},
+		{prefix: "/data/pvc-7"},
+		{prefix: "/data/"},
+		{prefix: "/"},
+		{prefix: "/data/pvc-7/sub/deeper/"},
+		{prefix: "/x", prefixes: []string{"/other/", "/data/pvc-7/"}},
+		{prefix: "/x", dirs: []string{"/data/pvc-1"}},
+	}
+	for _, dir := range dirs {
+		for _, target := range append([]string{""}, dirs...) {
+			for _, name := range names {
+				event := &SubscribeMetadataResponse{Directory: dir, EventNotification: &EventNotification{
+					OldEntry: &Entry{Name: name}, NewEntry: &Entry{Name: name}, NewParentPath: target}}
+				for _, f := range filters {
+					if !MetadataEventMatchesSubscription(event, f.prefix, f.prefixes, f.dirs) {
+						continue
+					}
+					if !MetadataDirectoryMayMatchSubscription([]byte(dir), f.prefix, f.prefixes, f.dirs) &&
+						(target == "" || !MetadataDirectoryMayMatchSubscription([]byte(target), f.prefix, f.prefixes, f.dirs)) {
+						t.Errorf("event %q/%q -> %q matches %+v but neither directory may match", dir, name, target, f)
+					}
+				}
+			}
+		}
+	}
+
+	for _, c := range []struct {
+		dir, prefix string
+		want        bool
+	}{
+		{"/data/pvc-1", "/data/pvc-7/", false},
+		{"/data/pvc-70", "/data/pvc-7/", false},
+		{"/other", "/data/", false},
+		{"/data/pvc-7", "/data/pvc-7/", true},
+		{"/data/pvc-7/sub", "/data/pvc-7/", true},
+		{"/data", "/data/pvc-7", true},
+		{"/", "/data/", true},
+	} {
+		if got := MetadataDirectoryMayMatchSubscription([]byte(c.dir), c.prefix, nil, nil); got != c.want {
+			t.Errorf("dir %q prefix %q: got %v, want %v", c.dir, c.prefix, got, c.want)
+		}
+	}
+}
+
+func TestScanMetadataEventDirectories(t *testing.T) {
+	for _, event := range []*SubscribeMetadataResponse{
+		{Directory: "/data/pvc-7", EventNotification: &EventNotification{NewEntry: bigEntry("a.log")}},
+		{Directory: "/data/pvc-7", EventNotification: &EventNotification{OldEntry: bigEntry("a.log"), NewEntry: bigEntry("a.log"), NewParentPath: "/data/pvc-9"}},
+		{Directory: "/data/pvc-7"},
+		{},
+	} {
+		dir, target, ok := ScanMetadataEventDirectories(marshalEvent(t, event))
+		if !ok || string(dir) != event.Directory || string(target) != event.GetEventNotification().GetNewParentPath() {
+			t.Errorf("scan of %+v: dir %q target %q ok %v", event, dir, target, ok)
+		}
+	}
+
+	// repeated event_notification fields merge: the last new_parent_path wins
+	first := marshalEvent(t, &SubscribeMetadataResponse{Directory: "/a", EventNotification: &EventNotification{NewParentPath: "/b"}})
+	second := marshalEvent(t, &SubscribeMetadataResponse{EventNotification: &EventNotification{NewEntry: &Entry{Name: "x"}, NewParentPath: "/c"}})
+	merged := append(append([]byte{}, first...), second...)
+	full := &SubscribeMetadataResponse{}
+	if err := proto.Unmarshal(merged, full); err != nil {
+		t.Fatal(err)
+	}
+	dir, target, ok := ScanMetadataEventDirectories(merged)
+	if !ok || string(dir) != full.Directory || string(target) != full.EventNotification.NewParentPath {
+		t.Errorf("merged: dir %q target %q ok %v, full decode %q %q", dir, target, ok, full.Directory, full.EventNotification.NewParentPath)
+	}
+
+	if _, _, ok := ScanMetadataEventDirectories([]byte{0xff, 0xff, 0xff}); ok {
+		t.Error("malformed payload must not scan")
+	}
+}

@@ -414,6 +414,44 @@ func metadataEventMatchesPath(fullPath, dirPath, pathPrefix string, pathPrefixes
 	return strings.HasPrefix(fullPath, pathPrefix)
 }
 
+// MetadataDirectoryMayMatchSubscription reports whether an event in dir could
+// match the subscription, before the event is decoded. It errs toward true.
+func MetadataDirectoryMayMatchSubscription(dir []byte, pathPrefix string, pathPrefixes []string, directories []string) bool {
+	if pathPrefix == "" || len(dir) == 0 || directoryMayHavePrefix(dir, pathPrefix) {
+		return true
+	}
+	for _, p := range pathPrefixes {
+		if directoryMayHavePrefix(dir, p) {
+			return true
+		}
+	}
+	for _, d := range directories {
+		if string(dir) == d {
+			return true
+		}
+	}
+	// matching cleans the joined path, so only a clean dir can be ruled out
+	for i := 0; i+1 < len(dir); i++ {
+		if dir[i] == '/' && (dir[i+1] == '/' || dir[i+1] == '.') {
+			return true
+		}
+	}
+	return false
+}
+
+// directoryMayHavePrefix reports whether some path dir/<name> can start with
+// prefix: dir+"/" and prefix agree on their common length.
+func directoryMayHavePrefix(dir []byte, prefix string) bool {
+	n := min(len(dir), len(prefix))
+	if string(dir[:n]) != prefix[:n] {
+		return false
+	}
+	if len(prefix) <= len(dir) || dir[len(dir)-1] == '/' {
+		return true
+	}
+	return prefix[len(dir)] == '/'
+}
+
 func hasPrefixIn(text string, prefixes []string) bool {
 	for _, p := range prefixes {
 		if strings.HasPrefix(text, p) {
