@@ -158,3 +158,33 @@ func TestEachLogEntryFnFilteredHeartbeatUsesStreamPosition(t *testing.T) {
 		t.Fatalf("heartbeat ts = %+v, want stream position 101", sender.sent)
 	}
 }
+
+func TestEachLogEntryFnPrefilterKeepsMovesIntoPrefix(t *testing.T) {
+	req := &filer_pb.SubscribeMetadataRequest{PathPrefix: "/data/pvc-7/"}
+	var delivered []string
+	var unsyncedEvents int64
+	fn := eachLogEntryFn(context.Background(), req, &recordingSender{}, func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64, mutationTsNs int64) error {
+		delivered = append(delivered, eventNotification.NewParentPath)
+		return nil
+	}, &unsyncedEvents)
+
+	for i, target := range []string{"/data/pvc-7", "/data/pvc-1/sub"} {
+		data, err := proto.Marshal(&filer_pb.SubscribeMetadataResponse{
+			Directory: "/data/pvc-1",
+			EventNotification: &filer_pb.EventNotification{
+				OldEntry:      &filer_pb.Entry{Name: "a.log"},
+				NewEntry:      &filer_pb.Entry{Name: "a.log"},
+				NewParentPath: target,
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fn(&filer_pb.LogEntry{TsNs: int64(i + 1), Data: data}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(delivered) != 1 || delivered[0] != "/data/pvc-7" {
+		t.Fatalf("only the move into the prefix must reach the notification fn, got %v", delivered)
+	}
+}
