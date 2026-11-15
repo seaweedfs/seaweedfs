@@ -531,3 +531,49 @@ func TestLoadClientTLSForTargetFallsBackToClientAllowlist(t *testing.T) {
 		t.Fatalf("health check with client component allowlist failed: %v", err)
 	}
 }
+
+func TestLoadClientTLSRejectsUnappliedTargetAllowlist(t *testing.T) {
+	dir := t.TempDir()
+	ca := newTestCA(t, dir)
+	certFile, keyFile := ca.issue(t, dir, "client", []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
+
+	v := util.NewViperProxy(viper.New())
+	v.Set("grpc.ca", ca.file)
+	v.Set("grpc.client.cert", certFile)
+	v.Set("grpc.client.key", keyFile)
+	v.Set("grpc.client.filer_allowed_server_commonNames", "seaweed-filer")
+	v.Set("grpc.client.master_allowed_server_wildcard_domain", ".master.example.com")
+
+	if _, err := loadClientTLS(v, "grpc.client", "grpc.client"); err == nil {
+		t.Fatal("expected error when per-target allowlists are the only allowlist of a single-option client")
+	}
+
+	v.Set("grpc.client.allowed_server_commonNames", "seaweed-filer,seaweed-master")
+	if _, err := loadClientTLS(v, "grpc.client", "grpc.client"); err != nil {
+		t.Fatalf("component allowlist must be enough: %v", err)
+	}
+}
+
+func TestLoadClientTLSFilerKeepsTargetAllowlists(t *testing.T) {
+	dir := t.TempDir()
+	ca := newTestCA(t, dir)
+	serverCert, serverKey := ca.issue(t, dir, "seaweed-volume", []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth})
+	clientCert, clientKey := ca.issue(t, dir, "client", []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
+
+	v := util.NewViperProxy(viper.New())
+	v.Set("grpc.ca", ca.file)
+	v.Set("grpc.volume.cert", serverCert)
+	v.Set("grpc.volume.key", serverKey)
+	v.Set("grpc.filer.client_cert", clientCert)
+	v.Set("grpc.filer.client_key", clientKey)
+	v.Set("grpc.filer.volume_allowed_server_commonNames", "seaweed-volume")
+	v.Set("grpc.filer.master_allowed_server_commonNames", "seaweed-master")
+
+	if _, err := loadClientTLS(v, "grpc.filer", "grpc.filer"); err != nil {
+		t.Fatalf("the filer applies its per-target keys through LoadClientTLSForTarget: %v", err)
+	}
+	addr := startTestGrpcServer(t, v, "grpc.volume")
+	if err := healthCheck(t, addr, LoadClientTLSForTarget(v, "grpc.filer", "grpc.master")); err == nil {
+		t.Fatal("expected the master allowlist to reject a volume certificate")
+	}
+}
