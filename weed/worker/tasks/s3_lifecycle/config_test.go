@@ -93,3 +93,21 @@ func TestParseConfigWalkerIntervalNegativeStaysZero(t *testing.T) {
 		t.Errorf("negative WalkerInterval should stay 0, got %v", cfg.WalkerInterval)
 	}
 }
+
+func TestParseConfig_DeleteTimeout(t *testing.T) {
+	if cfg := ParseConfig(nil, nil); cfg.DeleteTimeout != 0 {
+		t.Errorf("DeleteTimeout default=%v, want 0 (dailyrun default)", cfg.DeleteTimeout)
+	}
+	cfg := ParseConfig(map[string]*plugin_pb.ConfigValue{
+		DeleteTimeoutSecondsAdminKey: {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 45}},
+	}, nil)
+	if want := 45 * time.Second; cfg.DeleteTimeout != want {
+		t.Errorf("DeleteTimeout=%v, want %v", cfg.DeleteTimeout, want)
+	}
+	cfg = ParseConfig(map[string]*plugin_pb.ConfigValue{
+		DeleteTimeoutSecondsAdminKey: {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: -5}},
+	}, nil)
+	if cfg.DeleteTimeout != 0 {
+		t.Errorf("negative DeleteTimeout should stay 0, got %v", cfg.DeleteTimeout)
+	}
+}

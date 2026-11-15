@@ -201,8 +201,18 @@ type ObjectVersion struct {
 	StorageClass   string
 }
 
+// errLatestVersionChanged reports a delete marker refused by its latestGuard.
+var errLatestVersionChanged = errors.New("latest version changed")
+
 // createDeleteMarker creates a delete marker for versioned delete operations
 func (s3a *S3ApiServer) createDeleteMarker(bucket, object string) (string, error) {
+	return s3a.createDeleteMarkerIf(bucket, object, nil)
+}
+
+// createDeleteMarkerIf is createDeleteMarker whose routed commit also requires
+// latestGuard to hold on the .versions directory entry. The unrouted path
+// has no transaction to check it in and writes unconditionally.
+func (s3a *S3ApiServer) createDeleteMarkerIf(bucket, object string, latestGuard *filer_pb.WriteCondition) (string, error) {
 	// Clean up the object path first
 	cleanObject := strings.TrimPrefix(object, "/")
 
@@ -239,7 +249,11 @@ func (s3a *S3ApiServer) createDeleteMarker(bucket, object string) (string, error
 			},
 			Extended: deleteMarkerExtended,
 		}
-		if code := s3a.routedVersionedFinalize(owner, bucket, cleanObject, useInvertedFormat, deleteMarkerEntry); code != s3err.ErrNone {
+		code := s3a.routedVersionedFinalize(owner, bucket, cleanObject, useInvertedFormat, deleteMarkerEntry, latestGuard)
+		if code == s3err.ErrPreconditionFailed {
+			return "", errLatestVersionChanged
+		}
+		if code != s3err.ErrNone {
 			return "", fmt.Errorf("createDeleteMarker: routed finalize failed for %s/%s: code %d", bucket, object, code)
 		}
 		glog.V(2).Infof("createDeleteMarker: successfully created delete marker %s for %s/%s", versionId, bucket, object)

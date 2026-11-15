@@ -48,6 +48,10 @@ type Config struct {
 	// nil -> no rate limit. Shared across all shard goroutines.
 	Limiter *rate.Limiter
 
+	// DeleteTimeout bounds each LifecycleDelete attempt, applied after
+	// the limiter wait. <= 0 uses DefaultDeleteTimeout.
+	DeleteTimeout time.Duration
+
 	// Meta-log retention boundary. Rules whose effective TTL exceeds
 	// this can't be serviced by replay alone and get partitioned into
 	// the walk view (engine.PromotedHash). 0 falls back to maxTTL,
@@ -675,8 +679,9 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 	if drainErr != nil {
 		_ = saveCursorAndPublish(saveCtx, cfg.Persister, shardID, Cursor{TsNs: lastOK, RuleSetHash: rsh, PromotedHash: promoted, LastWalkedNs: lastWalkedNs})
 		// Cut short by its wall-clock cap: truncated, not failed — the
-		// cursor above carries progress forward.
-		if errors.Is(drainErr, context.DeadlineExceeded) || errors.Is(drainErr, context.Canceled) {
+		// cursor above carries progress forward. A timed-out delete
+		// attempt also wraps DeadlineExceeded, so judge by ctx itself.
+		if ctx.Err() != nil {
 			return nil
 		}
 		return fmt.Errorf("shard=%d: drain: %w", shardID, drainErr)
@@ -807,14 +812,7 @@ func processMatches(ctx context.Context, cfg Config, runNow time.Time, ev *reade
 			skippedAny = true
 			continue
 		}
-		if cfg.Limiter != nil {
-			waitStart := time.Now()
-			if waitErr := cfg.Limiter.Wait(ctx); waitErr != nil {
-				return skippedAny, true, waitErr
-			}
-			stats.S3LifecycleDispatchLimiterWaitSeconds.Observe(time.Since(waitStart).Seconds())
-		}
-		outcome, dispatchErr := dispatchWithRetry(ctx, cfg.Client, m)
+		outcome, dispatchErr := dispatchWithRetry(ctx, cfg.Client, cfg.Limiter, m, cfg.DeleteTimeout)
 		if dispatchErr != nil {
 			glog.V(1).Infof("daily_run: transport error on %s/%s %s: %v",
 				m.Bucket, m.ObjectKey, m.Key.ActionKind, dispatchErr)
@@ -822,7 +820,7 @@ func processMatches(ctx context.Context, cfg Config, runNow time.Time, ev *reade
 			// (dispatcher/dispatcher.go) so transport failures
 			// aggregate under one outcome key across paths.
 			countDispatch(cfg.Stats, m.Bucket, m.Key.ActionKind.String(), "RPC_ERROR")
-			return skippedAny, true, nil
+			return skippedAny, true, fmt.Errorf("%s/%s %s: %w", m.Bucket, m.ObjectKey, m.Key.ActionKind, dispatchErr)
 		}
 		countDispatch(cfg.Stats, m.Bucket, m.Key.ActionKind.String(), outcome.String())
 		switch outcome {

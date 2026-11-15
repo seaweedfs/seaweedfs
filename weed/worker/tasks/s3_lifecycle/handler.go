@@ -111,6 +111,14 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
 							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
 						},
+						{
+							Name:        DeleteTimeoutSecondsAdminKey,
+							Label:       "Delete RPC Timeout (seconds)",
+							Description: "Deadline for each lifecycle delete RPC to an S3 server, counted after the rate-limit wait. Replay and walker deletes get up to 3 attempts. After that a replay shard stops at that event and resumes there on the next run, and a walk fails and runs again from the start on the next run. 0 = 60 seconds.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
+							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
+						},
 					},
 				},
 			},
@@ -119,6 +127,7 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 				ClusterDeletesBurstAdminKey:     {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
 				MetaLogRetentionDaysAdminKey:    {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
 				WalkerIntervalMinutesAdminKey:   {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
+				DeleteTimeoutSecondsAdminKey:    {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
 			},
 		},
 		// WorkerConfigForm intentionally absent — the prior
@@ -336,7 +345,7 @@ func (h *Handler) executeDailyReplay(ctx context.Context, request *plugin_pb.Exe
 	runStats := &dailyrun.RunStats{}
 	// Share the limiter with processMatches so walker + replay can't
 	// combine to burst past the cluster cap.
-	walkerDispatch := &dailyrun.WalkerDispatcher{Client: client, Limiter: limiter, Stats: runStats}
+	walkerDispatch := &dailyrun.WalkerDispatcher{Client: client, Limiter: limiter, DeleteTimeout: cfg.DeleteTimeout, Stats: runStats}
 	walker := dailyrun.WalkerFunc(func(walkCtx context.Context, view *engine.Snapshot, shards []int) (time.Time, error) {
 		return dailyrun.WalkBuckets(walkCtx, view, shards, buckets,
 			dailyrun.FilerListFunc(runStats.CountListed(filerClient), bucketsPath, view), walkerDispatch, runStats, persister)
@@ -360,6 +369,7 @@ func (h *Handler) executeDailyReplay(ctx context.Context, request *plugin_pb.Exe
 		Lister:          dispatcher.NewFilerSiblingLister(filerClient, bucketsPath),
 		Workers:         cfg.Workers,
 		Limiter:         limiter,
+		DeleteTimeout:   cfg.DeleteTimeout,
 		RetentionWindow: cfg.MetaLogRetention,
 		Walker:          walker,
 		WalkerInterval:  cfg.WalkerInterval,

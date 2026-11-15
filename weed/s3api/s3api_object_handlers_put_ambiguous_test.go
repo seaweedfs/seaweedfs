@@ -294,6 +294,8 @@ func (f *ambiguousPutFiler) ObjectTransaction(_ context.Context, req *filer_pb.O
 			ok = current != nil && etagCandidateMatch(clause.Etags, md5Hex)
 		case filer_pb.WriteCondition_IF_ETAG_NOT_MATCH:
 			ok = current == nil || !etagCandidateMatch(clause.Etags, md5Hex)
+		case filer_pb.WriteCondition_IF_ENTRY_EQUAL:
+			ok = (current == nil) == (clause.ExpectedEntry == nil) && (current == nil || proto.Equal(current, clause.ExpectedEntry))
 		}
 		if !ok {
 			return &filer_pb.ObjectTransactionResponse{ErrorCode: filer_pb.FilerError_PRECONDITION_FAILED}, nil
