@@ -4,6 +4,8 @@ import (
 	"context"
 	"io"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -153,4 +155,91 @@ func TestRun_HaltedShardDoesNotStarveOthers(t *testing.T) {
 	assert.Equal(t, map[string]int64{"BLOCKED": 1, "DONE": 1}, sum.Outcomes)
 	assert.Zero(t, sum.ShardErrors)
 	assert.Equal(t, 1, sum.ShardsHalted, "a BLOCKED delete halts its shard without an error")
+}
+
+// flooredSubscribeClient serves only the events past the request's
+// SinceNs, as the filer does, and records each floor it was asked for.
+type flooredSubscribeClient struct {
+	filer_pb.SeaweedFilerClient
+	mu        sync.Mutex
+	responses []*filer_pb.SubscribeMetadataResponse
+	floors    []int64
+}
+
+func (c *flooredSubscribeClient) SubscribeMetadata(_ context.Context, req *filer_pb.SubscribeMetadataRequest, _ ...grpc.CallOption) (filer_pb.SeaweedFiler_SubscribeMetadataClient, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.floors = append(c.floors, req.SinceNs)
+	var served []*filer_pb.SubscribeMetadataResponse
+	for _, r := range c.responses {
+		if r.TsNs > req.SinceNs {
+			served = append(served, r)
+		}
+	}
+	return &scriptedSubscribeStream{responses: served}, nil
+}
+
+func TestRun_ColdStartResumedWalkReplaysOlderEventNextPass(t *testing.T) {
+	const bucket = "bk"
+	const shard = 2
+	rule := &s3lifecycle.Rule{ID: "r", Status: s3lifecycle.StatusEnabled, ExpirationDays: 1}
+	prior := map[s3lifecycle.ActionKey]engine.PriorState{}
+	ruleHash := s3lifecycle.RuleHash(rule)
+	for _, k := range s3lifecycle.RuleActionKinds(rule) {
+		prior[s3lifecycle.ActionKey{Bucket: bucket, RuleHash: ruleHash, ActionKind: k}] = engine.PriorState{
+			BootstrapComplete: true,
+			Mode:              engine.ModeEventDriven,
+		}
+	}
+	e := engine.New()
+	snap := e.Compile([]engine.CompileInput{{Bucket: bucket, Rules: []*s3lifecycle.Rule{rule}}},
+		engine.CompileOptions{PriorStates: prior})
+	maxTTL := engine.MaxEffectiveTTL(snap)
+
+	runNow := time.Now().UTC()
+	walkedFrom := runNow.Add(-3 * maxTTL)
+	evTime := runNow.Add(-2 * maxTTL)
+	key := keyForShard(t, bucket, shard)
+	laterKey := ""
+	for i := 0; laterKey == ""; i++ {
+		if k := "later" + strconv.Itoa(i); s3lifecycle.ShardID(bucket, k) == shard {
+			laterKey = k
+		}
+	}
+	// The later event is inside the cold-start window; draining it in the
+	// first pass would move the cursor past the older one for good.
+	filer := &flooredSubscribeClient{responses: []*filer_pb.SubscribeMetadataResponse{
+		subscribeResponse(bucket, key, evTime, evTime.UnixNano()),
+		subscribeResponse(bucket, laterKey, evTime, runNow.Add(-maxTTL/2).UnixNano()),
+	}}
+	client := &recordingClient{}
+	var walks atomic.Int32
+	cfg := Config{
+		Shards:      []int{shard},
+		BucketsPath: "/buckets",
+		Engine:      e,
+		FilerClient: filer,
+		Client:      client,
+		Persister:   newMemPersister(),
+		Lister:      stubSiblingLister{},
+		Walker: func(context.Context, *engine.Snapshot, []int) (time.Time, error) {
+			if walks.Add(1) == 1 {
+				return walkedFrom, nil
+			}
+			return time.Time{}, nil
+		},
+	}
+
+	cfg.Now = func() time.Time { return runNow }
+	require.NoError(t, Run(context.Background(), cfg))
+	assert.Empty(t, client.seenObjects(), "a cold start that resumed a walk leaves its window to the next pass")
+
+	cfg.Now = func() time.Time { return runNow.Add(time.Minute) }
+	require.NoError(t, Run(context.Background(), cfg))
+	require.Len(t, filer.floors, 2)
+	assert.Equal(t, runNow.Add(-maxTTL).UnixNano(), filer.floors[0])
+	assert.Equal(t, walkedFrom.Add(-maxTTL).UnixNano(), filer.floors[1],
+		"the next pass subscribes from the resumed walk start")
+	assert.Contains(t, client.seenObjects(), key,
+		"the event older than the cold-start floor is replayed on the next pass")
 }

@@ -271,3 +271,26 @@ func TestMaxEffectiveTTL_IgnoresInactiveActions(t *testing.T) {
 	assert.Equal(t, time.Duration(0), MaxEffectiveTTL(snap),
 		"inactive replay actions must not contribute to MaxEffectiveTTL")
 }
+
+func TestWalkContentHash_SeparatesWalksAndEdits(t *testing.T) {
+	var empty [32]byte
+	assert.Equal(t, empty, WalkContentHash(nil))
+
+	rules := []*s3lifecycle.Rule{
+		{ID: "days", Status: s3lifecycle.StatusEnabled, ExpirationDays: 30},
+		{ID: "date", Status: s3lifecycle.StatusEnabled, Prefix: "d/", ExpirationDate: time.Now().Add(24 * time.Hour)},
+	}
+	snap := buildSnapshotForViews(t, "b1", rules...)
+	_, walk := snap.RulesForShard(0, s3lifecycle.DaysToDuration(365))
+	require.NotNil(t, walk)
+	recovery := RecoveryView(snap)
+	assert.NotEqual(t, WalkContentHash(walk), WalkContentHash(recovery), "steady and recovery walks cover different rules")
+	assert.Equal(t, WalkContentHash(recovery), WalkContentHash(RecoveryView(buildSnapshotForViews(t, "b1", rules[1], rules[0]))))
+
+	edited := buildSnapshotForViews(t, "b1", rules[0], &s3lifecycle.Rule{ID: "date", Status: s3lifecycle.StatusEnabled, Prefix: "e/", ExpirationDate: rules[1].ExpirationDate})
+	assert.NotEqual(t, WalkContentHash(recovery), WalkContentHash(RecoveryView(edited)))
+
+	e := New()
+	versioned := e.Compile([]CompileInput{{Bucket: "b1", Versioned: true, Rules: rules}}, CompileOptions{})
+	assert.NotEqual(t, WalkContentHash(recovery), WalkContentHash(RecoveryView(versioned)), "versioning changes the listing")
+}
