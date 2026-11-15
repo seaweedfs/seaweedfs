@@ -266,6 +266,8 @@ func loadClientTLS(config *util.ViperProxy, component, targetComponent string) (
 	}
 	if len(auther.AllowedCommonNames) != 0 || auther.AllowedWildcardDomain != "" {
 		options.AdditionalPeerVerification = auther.AuthenticateServer
+	} else if key := unappliedTargetAllowlist(config, component, targetComponent); key != "" {
+		return nil, fmt.Errorf("%s is set, but %s dials every server with one allowlist: set %s.allowed_server_commonNames", key, component, component)
 	} else {
 		options.AdditionalPeerVerification = func(params *advancedtls.HandshakeVerificationInfo) (*advancedtls.PostHandshakeVerificationResults, error) {
 			return &advancedtls.PostHandshakeVerificationResults{}, nil
@@ -347,6 +349,44 @@ func checkTLSFiles(certFile, keyFile, caFile string) error {
 		return fmt.Errorf("no CA certificates found in %s", caFile)
 	}
 	return nil
+}
+
+// targetAllowlistClients are the components that dial some targets through
+// LoadClientTLSForTarget, so their <target>_allowed_server_* keys apply.
+var targetAllowlistClients = map[string]bool{"grpc.filer": true}
+
+// unappliedTargetAllowlist returns a per-target server allowlist key set under
+// a component that only dials with one option, which would otherwise leave
+// that component accepting any CA-signed server.
+func unappliedTargetAllowlist(config *util.ViperProxy, component, targetComponent string) string {
+	if targetComponent != component || targetAllowlistClients[component] {
+		return ""
+	}
+	prefix := strings.ToLower(component) + "."
+	candidates := config.AllKeys()
+	envPrefix := "WEED_" + strings.ToUpper(strings.ReplaceAll(component, ".", "_")) + "_"
+	for _, env := range os.Environ() {
+		if name, _, ok := strings.Cut(env, "="); ok && strings.HasPrefix(name, envPrefix) {
+			candidates = append(candidates, prefix+strings.ToLower(strings.TrimPrefix(name, envPrefix)))
+		}
+	}
+	var keys []string
+	for _, key := range candidates {
+		name, ok := strings.CutPrefix(key, prefix)
+		if !ok || strings.Contains(name, ".") || config.GetString(key) == "" {
+			continue
+		}
+		for _, suffix := range []string{"_allowed_server_commonnames", "_allowed_server_wildcard_domain"} {
+			if target, ok := strings.CutSuffix(name, suffix); ok && target != "" {
+				keys = append(keys, key)
+			}
+		}
+	}
+	if len(keys) == 0 {
+		return ""
+	}
+	slices.Sort(keys)
+	return keys[0]
 }
 
 func parseAllowedCommonNames(commonNames string) map[string]bool {
