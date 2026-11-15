@@ -359,9 +359,16 @@ func unappliedTargetAllowlist(config *util.ViperProxy, component, targetComponen
 	if targetComponent != component || targetAllowlistClients[component] {
 		return ""
 	}
-	var keys []string
 	prefix := strings.ToLower(component) + "."
-	for _, key := range config.AllKeys() {
+	candidates := config.AllKeys()
+	envPrefix := "WEED_" + strings.ToUpper(strings.ReplaceAll(component, ".", "_")) + "_"
+	for _, env := range os.Environ() {
+		if name, _, ok := strings.Cut(env, "="); ok && strings.HasPrefix(name, envPrefix) {
+			candidates = append(candidates, prefix+strings.ToLower(strings.TrimPrefix(name, envPrefix)))
+		}
+	}
+	var keys []string
+	for _, key := range candidates {
 		name, ok := strings.CutPrefix(key, prefix)
 		if !ok || strings.Contains(name, ".") || config.GetString(key) == "" {
 			continue

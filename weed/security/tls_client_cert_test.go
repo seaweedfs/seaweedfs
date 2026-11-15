@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -551,6 +552,33 @@ func TestLoadClientTLSRejectsUnappliedTargetAllowlist(t *testing.T) {
 	v.Set("grpc.client.allowed_server_commonNames", "seaweed-filer,seaweed-master")
 	if _, err := loadClientTLS(v, "grpc.client", "grpc.client"); err != nil {
 		t.Fatalf("component allowlist must be enough: %v", err)
+	}
+}
+
+func TestLoadClientTLSRejectsUnappliedTargetAllowlistFromEnv(t *testing.T) {
+	dir := t.TempDir()
+	ca := newTestCA(t, dir)
+	certFile, keyFile := ca.issue(t, dir, "client", []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
+
+	raw := viper.New()
+	raw.AutomaticEnv()
+	raw.SetEnvPrefix("weed")
+	raw.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	v := util.NewViperProxy(raw)
+	v.Set("grpc.ca", ca.file)
+	v.Set("grpc.client.cert", certFile)
+	v.Set("grpc.client.key", keyFile)
+	t.Setenv("WEED_GRPC_CLIENT_FILER_ALLOWED_SERVER_COMMONNAMES", "seaweed-filer")
+
+	if _, err := loadClientTLS(v, "grpc.client", "grpc.client"); err == nil {
+		t.Fatal("expected error when a per-target allowlist comes only from the environment")
+	}
+	fileOnly := util.NewViperProxy(viper.New())
+	fileOnly.Set("grpc.ca", ca.file)
+	fileOnly.Set("grpc.client.cert", certFile)
+	fileOnly.Set("grpc.client.key", keyFile)
+	if _, err := loadClientTLS(fileOnly, "grpc.client", "grpc.client"); err != nil {
+		t.Fatalf("a config that does not read the environment must ignore it: %v", err)
 	}
 }
 
