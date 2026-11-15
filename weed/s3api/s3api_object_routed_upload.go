@@ -2,7 +2,9 @@ package s3api
 
 import (
 	"context"
+	"errors"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
@@ -43,8 +45,31 @@ func (u uploadFilerClient) getEntry(parentDirectoryPath, entryName string) (*fil
 	return u.s3a.getObjectScopedEntryRoutedByKey(u.bucket, u.object, parentDirectoryPath, entryName)
 }
 
+// list reads the owner's listing, and while a ring change is in its cooling-off
+// window falls back to the prior owner when the new one has nothing yet, the
+// way getEntry finds the upload record there.
 func (u uploadFilerClient) list(parentDirectoryPath, prefix, startFrom string, inclusive bool, limit uint32) ([]*filer_pb.Entry, bool, error) {
-	return u.s3a.listObjectScopedEntriesRoutedByKey(u.bucket, u.object, parentDirectoryPath, prefix, startFrom, inclusive, limit)
+	entries, isLast, err := u.s3a.listObjectScopedEntriesRoutedByKey(u.bucket, u.object, parentDirectoryPath, prefix, startFrom, inclusive, limit)
+	if len(entries) > 0 || (err != nil && !errors.Is(err, filer_pb.ErrNotFound)) {
+		return entries, isLast, err
+	}
+	prior := u.s3a.priorWriteOwner(u.bucket, u.object)
+	if prior == "" || prior == u.s3a.routableWriteOwner(u.bucket, u.object) {
+		return entries, isLast, err
+	}
+	var priorEntries []*filer_pb.Entry
+	priorLast := false
+	priorErr := pb.WithFilerClient(true, 0, prior, u.s3a.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		return filer_pb.SeaweedList(context.Background(), client, parentDirectoryPath, prefix, func(entry *filer_pb.Entry, isLastEntry bool) error {
+			priorEntries = append(priorEntries, entry)
+			priorLast = priorLast || isLastEntry
+			return nil
+		}, startFrom, inclusive, limit)
+	})
+	if priorErr != nil || len(priorEntries) == 0 {
+		return entries, isLast, err
+	}
+	return priorEntries, priorLast, nil
 }
 
 func (u uploadFilerClient) exists(parentDirectoryPath, entryName string, isDirectory bool) (bool, error) {
