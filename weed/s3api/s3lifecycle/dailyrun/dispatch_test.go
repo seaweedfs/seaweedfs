@@ -56,7 +56,7 @@ func dispatchWithRetryFast(t *testing.T, ctx context.Context, c LifecycleClient,
 	// We can't override the package-private constants, but every test
 	// path here uses small attempt counts so even the production
 	// backoff is fine.
-	return dispatchWithRetry(ctx, c, m, 0)
+	return dispatchWithRetry(ctx, c, nil, m, 0)
 }
 
 func TestDispatch_FirstAttemptSucceeds(t *testing.T) {
