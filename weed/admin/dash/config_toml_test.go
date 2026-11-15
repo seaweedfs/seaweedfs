@@ -420,6 +420,7 @@ func TestApplyPluginConfigFromTomlS3Lifecycle(t *testing.T) {
 meta_log_retention_days = 0
 walker_interval_minutes = 30
 cluster_deletes_per_second = 50
+cluster_deletes_burst = 200
 retry_limit = 3
 `)
 	if err := s.ApplyPluginConfigFromToml(v); err != nil {
@@ -430,8 +431,7 @@ retry_limit = 3
 	if err != nil || cfg == nil {
 		t.Fatalf("load: %v %v", cfg, err)
 	}
-	// retention=0 means unbounded and must survive as an explicit 0, not be
-	// mistaken for "unset" and left at the previous value.
+	// an explicit 0 must replace the saved value, not read as unset
 	if got := cfg.AdminConfigValues["meta_log_retention_days"].GetInt64Value(); got != 0 {
 		t.Errorf("meta_log_retention_days = %d, want 0", got)
 	}
@@ -440,6 +440,9 @@ retry_limit = 3
 	}
 	if got := cfg.AdminConfigValues["cluster_deletes_per_second"].GetInt64Value(); got != 50 {
 		t.Errorf("cluster_deletes_per_second = %d, want 50", got)
+	}
+	if got := cfg.AdminConfigValues["cluster_deletes_burst"].GetInt64Value(); got != 200 {
+		t.Errorf("cluster_deletes_burst = %d, want 200", got)
 	}
 	if cfg.AdminRuntime.RetryLimit != 3 {
 		t.Errorf("retry_limit = %d, want 3", cfg.AdminRuntime.RetryLimit)
