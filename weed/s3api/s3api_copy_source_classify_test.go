@@ -65,12 +65,12 @@ func TestCopyAfterRoutedPut(t *testing.T) {
 				var uploadID string
 				if multipart {
 					uploadID = s3a.generateUploadID("final/object")
-					replica.mu.Lock()
-					replica.entries["/buckets/destination/.uploads/"+uploadID] = &filer_pb.Entry{
+					owner.mu.Lock()
+					owner.entries["/buckets/destination/.uploads/"+uploadID] = &filer_pb.Entry{
 						Name: uploadID, IsDirectory: true,
 						Extended: map[string][]byte{s3_constants.ExtMultipartObjectKey: []byte("final/object")},
 					}
-					replica.mu.Unlock()
+					owner.mu.Unlock()
 					copyURL += "?partNumber=1&uploadId=" + uploadID
 				}
 				copyRequest := httptest.NewRequest(http.MethodPut, copyURL, nil)
@@ -87,15 +87,17 @@ func TestCopyAfterRoutedPut(t *testing.T) {
 
 				replica.mu.Lock()
 				if multipart {
+					replica.mu.Unlock()
+					owner.mu.Lock()
 					var part *filer_pb.Entry
-					for key, entry := range replica.entries {
+					for key, entry := range owner.entries {
 						if strings.HasPrefix(key, "/buckets/destination/.uploads/"+uploadID+"/") && !entry.IsDirectory {
 							part = entry
 						}
 					}
-					require.NotNil(t, part, "copy must persist the part")
+					owner.mu.Unlock()
+					require.NotNil(t, part, "copy must persist the part next to the upload")
 					require.Equal(t, stored.Attributes.Md5, part.Attributes.Md5)
-					replica.mu.Unlock()
 				} else {
 					// The destination commits on its write owner, the same filer a
 					// later copy resolves it from before replication.

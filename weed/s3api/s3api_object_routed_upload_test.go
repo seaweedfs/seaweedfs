@@ -1,0 +1,104 @@
+package s3api
+
+import (
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/gorilla/mux"
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
+	"github.com/stretchr/testify/require"
+)
+
+// The gateway's own filer never receives the owner's metadata here, so every
+// multipart step after CreateMultipartUpload must find the upload and its
+// parts on the object's write owner.
+func TestMultipartUploadOnOwnerFiler(t *testing.T) {
+	util_http.InitGlobalHttpClient()
+	volume := startFakeVolumeServer(t)
+	owner := &ambiguousPutFiler{volume: volume, apply: true, entries: map[string]*filer_pb.Entry{}}
+	replica := &ambiguousPutFiler{volume: volume, apply: true, entries: map[string]*filer_pb.Entry{}}
+	ownerAddr := startFakeFiler(t, owner)
+	replicaAddr := startFakeFiler(t, replica)
+	s3a := newPutTestServer(t, replicaAddr)
+	s3a.iam = &IdentityAccessManagement{}
+	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+	s3a.bucketConfigCache.Set("b", &BucketConfig{Name: "b"})
+	s3a.objectWriteLockClient = cluster.NewLockClient(s3a.option.GrpcDialOption, ownerAddr)
+	s3a.objectWriteLockClient.SetRing([]pb.ServerAddress{ownerAddr}, 1)
+
+	has := func(f *ambiguousPutFiler, path string) bool {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		return f.entries[path] != nil
+	}
+	partsUnder := func(f *ambiguousPutFiler, dir string) int {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		n := 0
+		for key, entry := range f.entries {
+			if strings.HasPrefix(key, dir+"/") && !entry.IsDirectory {
+				n++
+			}
+		}
+		return n
+	}
+	initiate := func() string {
+		r := httptest.NewRequest(http.MethodPost, "/b/dir/object?uploads", nil)
+		out, code := s3a.createMultipartUpload(r, &s3.CreateMultipartUploadInput{Bucket: aws.String("b"), Key: aws.String("dir/object")})
+		require.Equal(t, s3err.ErrNone, code)
+		uploadDir := "/buckets/b/.uploads/" + *out.UploadId
+		require.True(t, has(owner, uploadDir), "the upload must be created on the owner")
+		require.False(t, has(replica, uploadDir), "the gateway's filer must still be behind")
+		return *out.UploadId
+	}
+	uploadPart := func(uploadID string, partNumber int, body string) string {
+		r := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/b/dir/object?partNumber=%d&uploadId=%s", partNumber, uploadID), strings.NewReader(body))
+		r = mux.SetURLVars(r, map[string]string{"bucket": "b", "object": "dir/object"})
+		w := httptest.NewRecorder()
+		s3a.PutObjectPartHandler(w, r)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		etag := w.Header()["ETag"]
+		require.Len(t, etag, 1)
+		return etag[0]
+	}
+
+	uploadID := initiate()
+	uploadDir := "/buckets/b/.uploads/" + uploadID
+	etag1 := uploadPart(uploadID, 1, strings.Repeat("a", 5*1024*1024))
+	etag2 := uploadPart(uploadID, 2, "tail")
+	require.Equal(t, 2, partsUnder(owner, uploadDir), "parts must be stored next to the upload")
+	require.Equal(t, 0, partsUnder(replica, uploadDir))
+
+	listed, code := s3a.listObjectParts(&s3.ListPartsInput{
+		Bucket: aws.String("b"), Key: aws.String("dir/object"), UploadId: aws.String(uploadID),
+		MaxParts: aws.Int64(1000), PartNumberMarker: aws.Int64(0),
+	})
+	require.Equal(t, s3err.ErrNone, code)
+	require.Len(t, listed.Part, 2)
+
+	complete := httptest.NewRequest(http.MethodPost, "/b/dir/object?uploadId="+uploadID, nil)
+	_, code = s3a.completeMultipartUpload(complete, &s3.CompleteMultipartUploadInput{
+		Bucket: aws.String("b"), Key: aws.String("dir/object"), UploadId: aws.String(uploadID),
+	}, &CompleteMultipartUpload{Parts: []CompletedPart{{ETag: etag1, PartNumber: 1}, {ETag: etag2, PartNumber: 2}}})
+	require.Equal(t, s3err.ErrNone, code)
+	require.True(t, has(owner, "/buckets/b/dir/object"), "the object must commit on the owner")
+	require.False(t, has(owner, uploadDir), "completion must remove the upload")
+
+	aborted := initiate()
+	uploadPart(aborted, 1, "data")
+	_, code = s3a.abortMultipartUpload(&s3.AbortMultipartUploadInput{
+		Bucket: aws.String("b"), Key: aws.String("dir/object"), UploadId: aws.String(aborted),
+	})
+	require.Equal(t, s3err.ErrNone, code)
+	require.False(t, has(owner, "/buckets/b/.uploads/"+aborted), "abort must remove the upload")
+}
