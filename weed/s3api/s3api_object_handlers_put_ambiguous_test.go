@@ -155,7 +155,7 @@ type ambiguousPutFiler struct {
 	// beforeLookup runs inside LookupDirectoryEntry, letting a test delete a
 	// just-committed entry before recovery reads it.
 	beforeCreate func()
-	beforeLookup func()
+	beforeLookup func(key string)
 	beforeAssign func()
 	stores       int
 	conds        []*filer_pb.WriteCondition
@@ -243,7 +243,7 @@ func (f *ambiguousPutFiler) LookupDirectoryEntry(_ context.Context, req *filer_p
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.beforeLookup != nil {
-		f.beforeLookup()
+		f.beforeLookup(req.Directory + "/" + req.Name)
 	}
 	if f.lookupErr != nil && req.Directory+"/"+req.Name == f.lookupFailKey {
 		return nil, f.lookupErr
@@ -985,7 +985,7 @@ func TestPutToFilerRoutedAmbiguousEmptyPutAbsentNotRecreated(t *testing.T) {
 		txnErr:  status.Error(codes.Unavailable, "response lost after commit"),
 	}
 	// The committed empty object is deleted before recovery looks it up.
-	filerImpl.beforeLookup = func() {
+	filerImpl.beforeLookup = func(string) {
 		delete(filerImpl.entries, "/buckets/b/o")
 	}
 	filerAddr := startFakeFiler(t, filerImpl)
