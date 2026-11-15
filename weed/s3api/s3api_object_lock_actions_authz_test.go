@@ -91,6 +91,38 @@ func TestGovernanceBypassDoesNotInheritDeleteObjectVersion(t *testing.T) {
 	}
 }
 
+func TestEvaluateGovernanceBypassRequestHeaderCase(t *testing.T) {
+	iam := &IdentityAccessManagement{}
+	require.NoError(t, iam.PutPolicy("BypassGovernance",
+		`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:DeleteObjectVersion","s3:BypassGovernanceRetention"],"Resource":"arn:aws:s3:::worm/*"}]}`))
+	s3a := &S3ApiServer{iam: iam}
+
+	for _, tc := range []struct {
+		header string
+		want   bool
+	}{
+		{"true", true},
+		{"True", true},
+		{"TRUE", true},
+		{"false", false},
+		{"", false},
+	} {
+		req := httptest.NewRequest(http.MethodDelete, "http://localhost:8333/worm/doc.txt?versionId=abc123", nil)
+		req = mux.SetURLVars(req, map[string]string{"bucket": "worm", "object": "doc.txt"})
+		if tc.header != "" {
+			req.Header.Set(s3_constants.AmzBypassGovernanceRetention, tc.header)
+		}
+		req = req.WithContext(s3_constants.SetIdentityInContext(req.Context(), &Identity{
+			Name:        "breaker",
+			PolicyNames: []string{"BypassGovernance"},
+			Account:     &Account{Id: "test-account"},
+		}))
+		if got := s3a.evaluateGovernanceBypassRequest(req, "worm", "/doc.txt"); got != tc.want {
+			t.Errorf("header %q: evaluateGovernanceBypassRequest() = %v, want %v", tc.header, got, tc.want)
+		}
+	}
+}
+
 // The object-lock request headers on PutObject/CreateMultipartUpload must be
 // authorized as s3:PutObjectRetention / s3:PutObjectLegalHold; s3:PutObject
 // alone used to set retention and legal hold on new versions.

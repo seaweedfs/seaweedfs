@@ -82,6 +82,7 @@ const (
 	AmzObjectLockMode            = "X-Amz-Object-Lock-Mode"
 	AmzObjectLockRetainUntilDate = "X-Amz-Object-Lock-Retain-Until-Date"
 	AmzObjectLockLegalHold       = "X-Amz-Object-Lock-Legal-Hold"
+	AmzBypassGovernanceRetention = "X-Amz-Bypass-Governance-Retention"
 
 	// S3 checksum headers
 	AmzChecksumAlgorithm    = "X-Amz-Checksum-Algorithm"
