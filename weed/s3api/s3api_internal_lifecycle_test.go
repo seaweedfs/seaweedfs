@@ -608,6 +608,41 @@ func TestLifecycleDelete_DeadlineDuringMarkerStillDeletesNull(t *testing.T) {
 	requireLatestIsMarker(t, s3a)
 }
 
+func TestLifecycleDelete_DeadlineDuringNullReadWritesNoMarker(t *testing.T) {
+	nullReads := func(cancelAt int, cancel func()) int {
+		s3a, fake, null := suspendedNullServer(t, true)
+		reads := 0
+		fake.beforeLookup = func(key string) {
+			if key != "/buckets/b/obj" || fake.txnCount > 0 {
+				return
+			}
+			if reads++; reads == cancelAt {
+				cancel()
+			}
+		}
+		ctx, stop := context.WithCancel(s3LocalPeerCtx())
+		defer stop()
+		if cancel == nil {
+			cancel = stop
+		}
+		_, err := s3a.LifecycleDelete(ctx, &s3_lifecycle_pb.LifecycleDeleteRequest{
+			Bucket:           "b",
+			ObjectPath:       "obj",
+			ActionKind:       s3_lifecycle_pb.ActionKind_EXPIRATION_DAYS,
+			ExpectedIdentity: computeEntryIdentity(null),
+		})
+		if cancelAt > 0 {
+			require.ErrorIs(t, err, context.Canceled)
+			require.Zero(t, fake.txnCount, "an attempt past its deadline must not write a delete marker")
+			require.Contains(t, fake.entries, "/buckets/b/obj")
+		}
+		return reads
+	}
+	last := nullReads(0, nil)
+	require.Positive(t, last)
+	nullReads(last, nil)
+}
+
 // A marker write that fails leaves the null version in place, so the retry
 // still finds it latest and finishes the expiration.
 func TestLifecycleDelete_SuspendedMarkerFailureLeavesNullForRetry(t *testing.T) {

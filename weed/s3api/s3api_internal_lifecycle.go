@@ -113,6 +113,9 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 			if resp != nil {
 				return resp, nil
 			}
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			if _, resp := s3a.lifecycleDeleteMarker(req.Bucket, req.ObjectPath, lifecycleAddressedVersion(req, entry)); resp != nil {
 				return resp, nil
 			}
