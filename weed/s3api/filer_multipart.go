@@ -388,14 +388,14 @@ func applyMultipartSSES3HeadersFromUploadEntry(dst *filer_pb.Entry, sses3Info *m
 
 func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *s3.CompleteMultipartUploadInput, parts *CompleteMultipartUpload, uploadDirectory, entryName, dirName string, completedPartNumbers []int, completedPartMap map[int][]string, maxPartNo int) (*multipartCompletionState, *CompleteMultipartUploadResult, s3err.ErrorCode) {
 	if output, _ := s3a.committedCompletion(r, input); output != nil {
-		cleanupEntries, _, cleanupErr := s3a.list(uploadDirectory, "", "", false, s3_constants.MaxS3MultipartParts+1)
+		cleanupEntries, _, cleanupErr := s3a.uploadFiler(*input.Bucket, *input.Key).list(uploadDirectory, "", "", false, s3_constants.MaxS3MultipartParts+1)
 		if cleanupErr != nil && !errors.Is(cleanupErr, filer_pb.ErrNotFound) {
 			glog.Warningf("completeMultipartUpload: failed to list stale upload directory %s for cleanup: %v", uploadDirectory, cleanupErr)
 		}
 		return &multipartCompletionState{deleteEntries: cleanupEntries, metadataOnlyCleanup: true}, output, s3err.ErrNone
 	}
 
-	entries, _, err := s3a.list(uploadDirectory, "", "", false, s3_constants.MaxS3MultipartParts+1)
+	entries, _, err := s3a.uploadFiler(*input.Bucket, *input.Key).list(uploadDirectory, "", "", false, s3_constants.MaxS3MultipartParts+1)
 	if err != nil {
 		glog.Errorf("completeMultipartUpload %s %s error: %v", *input.Bucket, *input.UploadId, err)
 		if isFilerNotFound(err) {
@@ -796,7 +796,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				// The transaction removes the upload directory metadata-only,
 				// so the part entries the object does not reference are freed
 				// first or their chunks leak.
-				if err := s3a.deleteUnusedPartEntries(r.Context(), uploadDirectory, *input.Bucket, *input.UploadId, completionState); err != nil {
+				if err := s3a.deleteUnusedPartEntries(r.Context(), uploadDirectory, *input.Bucket, *input.Key, *input.UploadId, completionState); err != nil {
 					glog.Errorf("completeMultipartUpload %s upload %s unused part cleanup: %v", *input.Bucket, *input.UploadId, err)
 					return s3err.ErrInternalError
 				}
@@ -849,7 +849,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 
 		if versioningState == s3_constants.VersioningSuspended {
 			// For suspended versioning, add "null" version ID metadata and return "null" version ID
-			removal, err := s3a.routedUploadRemoval(r.Context(), owner, uploadDirectory, *input.Bucket, *input.UploadId, completionState)
+			removal, err := s3a.routedUploadRemoval(r.Context(), owner, uploadDirectory, *input.Bucket, *input.Key, *input.UploadId, completionState)
 			if err != nil {
 				glog.Errorf("completeMultipartUpload %s upload %s unused part cleanup: %v", *input.Bucket, *input.UploadId, err)
 				return s3err.ErrInternalError
@@ -945,7 +945,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 		}
 
 		// For non-versioned buckets, create main object file
-		removal, err := s3a.routedUploadRemoval(r.Context(), owner, uploadDirectory, *input.Bucket, *input.UploadId, completionState)
+		removal, err := s3a.routedUploadRemoval(r.Context(), owner, uploadDirectory, *input.Bucket, *input.Key, *input.UploadId, completionState)
 		if err != nil {
 			glog.Errorf("completeMultipartUpload %s upload %s unused part cleanup: %v", *input.Bucket, *input.UploadId, err)
 			return s3err.ErrInternalError
@@ -1073,9 +1073,9 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			cleanupCtx := withFilerRetryBudget(context.Background(), filerRetryRequestBudget)
 			// Keep the directory when an entry delete failed so its metadata
 			// still references the chunks; removing it metadata-only orphans them.
-			if err := s3a.deleteUnusedPartEntries(cleanupCtx, uploadDirectory, *input.Bucket, *input.UploadId, completionState); err != nil {
+			if err := s3a.deleteUnusedPartEntries(cleanupCtx, uploadDirectory, *input.Bucket, *input.Key, *input.UploadId, completionState); err != nil {
 				glog.V(1).Infof("completeMultipartUpload cleanup %s upload %s: %v", *input.Bucket, *input.UploadId, err)
-			} else if err := s3a.rm(cleanupCtx, s3a.genUploadsFolder(*input.Bucket), *input.UploadId, false, true); err != nil {
+			} else if err := s3a.uploadFiler(*input.Bucket, *input.Key).rm(cleanupCtx, s3a.genUploadsFolder(*input.Bucket), *input.UploadId, false, true); err != nil {
 				glog.V(1).Infof("completeMultipartUpload cleanup %s upload %s: %v", *input.Bucket, *input.UploadId, err)
 			}
 		}
@@ -1091,10 +1091,10 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 // reference. A finalize that removes the whole upload directory metadata-only
 // frees them first, or their chunks leak; a failure here must abort the
 // completion, since the surviving entries keep the upload retriable.
-func (s3a *S3ApiServer) deleteUnusedPartEntries(ctx context.Context, uploadDirectory, bucket, uploadId string, completionState *multipartCompletionState) error {
+func (s3a *S3ApiServer) deleteUnusedPartEntries(ctx context.Context, uploadDirectory, bucket, object, uploadId string, completionState *multipartCompletionState) error {
 	var lastErr error
 	for _, deleteEntry := range completionState.deleteEntries {
-		if err := s3a.rm(ctx, uploadDirectory, deleteEntry.Name, !completionState.metadataOnlyCleanup, true); err != nil {
+		if err := s3a.uploadFiler(bucket, object).rm(ctx, uploadDirectory, deleteEntry.Name, !completionState.metadataOnlyCleanup, true); err != nil {
 			glog.Warningf("completeMultipartUpload cleanup %s upload %s unused %s : %v", bucket, uploadId, deleteEntry.Name, err)
 			lastErr = err
 		}
@@ -1215,7 +1215,7 @@ func (s3a *S3ApiServer) removeUploadDir(bucket, uploadId, object string) s3err.E
 		return s3err.ErrInternalError
 	}
 	if completed {
-		if err := s3a.rm(context.Background(), s3a.genUploadsFolder(bucket), uploadId, false, true); err != nil {
+		if err := s3a.uploadFiler(bucket, object).rm(context.Background(), s3a.genUploadsFolder(bucket), uploadId, false, true); err != nil {
 			glog.V(1).Infof("bucket %s remove upload %s: %v", bucket, uploadId, err)
 			return s3err.ErrInternalError
 		}
@@ -1233,7 +1233,7 @@ func (s3a *S3ApiServer) removeUploadDir(bucket, uploadId, object string) s3err.E
 func (s3a *S3ApiServer) routedUploadDirDelete(bucket, uploadId, object string) s3err.ErrorCode {
 	uploadsFolder := s3a.genUploadsFolder(bucket)
 	rmUploadDir := func(isDeleteData bool) s3err.ErrorCode {
-		if err := s3a.rm(context.Background(), uploadsFolder, uploadId, isDeleteData, true); err != nil {
+		if err := s3a.uploadFiler(bucket, object).rm(context.Background(), uploadsFolder, uploadId, isDeleteData, true); err != nil {
 			glog.V(1).Infof("bucket %s remove upload %s: %v", bucket, uploadId, err)
 			return s3err.ErrInternalError
 		}
@@ -1618,7 +1618,7 @@ func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListP
 		output.IsTruncated = aws.Bool(false)
 		return output, s3err.ErrNone
 	}
-	entries, isLast, err := s3a.list(s3a.genUploadsFolder(*input.Bucket)+"/"+*input.UploadId, "", fmt.Sprintf("%04d", *input.PartNumberMarker+1), true, uint32(*input.MaxParts))
+	entries, isLast, err := s3a.uploadFiler(*input.Bucket, *input.Key).list(s3a.genUploadsFolder(*input.Bucket)+"/"+*input.UploadId, "", fmt.Sprintf("%04d", *input.PartNumberMarker+1), true, uint32(*input.MaxParts))
 	if err != nil {
 		// A store that reports the missing upload directory as not-found means
 		// the upload is gone (completed or aborted), not a store error.
