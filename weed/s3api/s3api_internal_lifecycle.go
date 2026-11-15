@@ -255,10 +255,8 @@ func (s3a *S3ApiServer) lifecycleDeleteMarker(bucket, object, expected string) (
 		if pointer != nil && string(pointer.Extended[s3_constants.ExtLatestVersionIsDeleteMarker]) == "true" && !nullVersionIsLatest(pointer) {
 			return false, nil
 		}
-		// A named pointer outranks the null object, as in getLatestObjectVersion.
 		if expected != "" && pointer != nil {
-			latest := string(pointer.Extended[s3_constants.ExtLatestVersionIdKey])
-			if latest != "" && latest != expected {
+			if latest := pointerLatestVersion(pointer); latest != "" && latest != expected {
 				return false, noopResolved("VERSION_NOT_LATEST")
 			}
 		}
@@ -275,6 +273,21 @@ func (s3a *S3ApiServer) lifecycleDeleteMarker(bucket, object, expected string) (
 		return true, nil
 	}
 	return false, retryLater("LATEST_CHANGED: createDeleteMarker")
+}
+
+// pointerLatestVersion reads the latest version off a .versions pointer the
+// way getLatestObjectVersion does: a named pointer with its file outranks the
+// null object, the null-is-latest signal names the null version, and anything
+// else leaves the latest to the caller's earlier read.
+func pointerLatestVersion(pointer *filer_pb.Entry) string {
+	id := string(pointer.Extended[s3_constants.ExtLatestVersionIdKey])
+	if id != "" && len(pointer.Extended[s3_constants.ExtLatestVersionFileNameKey]) > 0 {
+		return id
+	}
+	if nullVersionIsLatest(pointer) {
+		return "null"
+	}
+	return ""
 }
 
 // lifecycleRequireLatest refuses a current-version expiration whose version
