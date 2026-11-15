@@ -3,6 +3,8 @@ package s3api
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"net"
 	"strconv"
 	"testing"
@@ -540,7 +542,9 @@ func TestLifecycleDelete_ExpiredAttemptWritesNoMarker(t *testing.T) {
 	}
 }
 
-func TestLifecycleDelete_DeadlineDuringNullDeleteStillWritesMarker(t *testing.T) {
+// suspendedNullServer serves a suspended bucket whose latest is the null
+// object, with an older version that a lost delete marker would expose.
+func suspendedNullServer(t *testing.T, routed bool) (*S3ApiServer, *ambiguousPutFiler, *filer_pb.Entry) {
 	olderId := generateVersionId(true)
 	older := &filer_pb.Entry{
 		Name:       "v_" + olderId,
@@ -548,38 +552,290 @@ func TestLifecycleDelete_DeadlineDuringNullDeleteStillWritesMarker(t *testing.T)
 		Chunks:     []*filer_pb.FileChunk{{FileId: "3,02637037d6", Size: 3}},
 		Extended:   map[string][]byte{s3_constants.ExtVersionIdKey: []byte(olderId)},
 	}
-	latest := &filer_pb.Entry{
+	null := &filer_pb.Entry{
 		Name:       "obj",
 		Attributes: &filer_pb.FuseAttributes{Mtime: 1_700_000_000, FileSize: 3},
 		Chunks:     []*filer_pb.FileChunk{{FileId: "3,01637037d6", Size: 3}},
 		Extended:   map[string][]byte{s3_constants.ExtVersionIdKey: []byte("null")},
 	}
 	fake := &ambiguousPutFiler{apply: true, entries: map[string]*filer_pb.Entry{
-		"/buckets/b/obj":                        proto.Clone(latest).(*filer_pb.Entry),
+		"/buckets/b/obj":                        proto.Clone(null).(*filer_pb.Entry),
 		"/buckets/b/obj.versions":               {Name: "obj" + s3_constants.VersionsFolder, IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
 		"/buckets/b/obj.versions/" + older.Name: proto.Clone(older).(*filer_pb.Entry),
 	}}
-	ctx, cancel := context.WithCancel(s3LocalPeerCtx())
-	defer cancel()
-	fake.txnCheck = func(*filer_pb.ObjectTransactionRequest) { cancel() }
 	addr := startFakeFiler(t, fake)
 	s3a := newPutTestServer(t, addr)
 	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
 	s3a.bucketConfigCache.Set("b", &BucketConfig{Name: "b", Versioning: s3_constants.VersioningSuspended})
-	s3a.objectWriteLockClient = cluster.NewLockClient(s3a.option.GrpcDialOption, addr)
-	s3a.objectWriteLockClient.SetRing([]pb.ServerAddress{addr}, 1)
+	if routed {
+		s3a.objectWriteLockClient = cluster.NewLockClient(s3a.option.GrpcDialOption, addr)
+		s3a.objectWriteLockClient.SetRing([]pb.ServerAddress{addr}, 1)
+	}
+	return s3a, fake, null
+}
+
+func isMarkerTxn(req *filer_pb.ObjectTransactionRequest) bool {
+	for _, m := range req.Mutations {
+		if m.Type == filer_pb.ObjectMutation_PUT {
+			return true
+		}
+	}
+	return false
+}
+
+func requireLatestIsMarker(t *testing.T, s3a *S3ApiServer) {
+	t.Helper()
+	got, err := s3a.getLatestObjectVersion("b", "obj")
+	require.NoError(t, err)
+	require.Equal(t, "true", string(got.Extended[s3_constants.ExtDeleteMarkerKey]), "the older version must stay hidden behind the marker")
+}
+
+func TestLifecycleDelete_DeadlineDuringMarkerStillDeletesNull(t *testing.T) {
+	s3a, fake, null := suspendedNullServer(t, true)
+	ctx, cancel := context.WithCancel(s3LocalPeerCtx())
+	defer cancel()
+	fake.txnCheck = func(*filer_pb.ObjectTransactionRequest) { cancel() }
 	resp, err := s3a.LifecycleDelete(ctx, &s3_lifecycle_pb.LifecycleDeleteRequest{
 		Bucket:           "b",
 		ObjectPath:       "obj",
 		ActionKind:       s3_lifecycle_pb.ActionKind_EXPIRATION_DAYS,
-		ExpectedIdentity: computeEntryIdentity(latest),
+		ExpectedIdentity: computeEntryIdentity(null),
 	})
 	require.NoError(t, err)
 	require.Equal(t, s3_lifecycle_pb.LifecycleDeleteOutcome_DONE, resp.Outcome, resp.Reason)
-	require.Equal(t, 2, fake.txnCount, "the null delete and the marker")
-	got, err := s3a.getLatestObjectVersion("b", "obj")
+	require.Equal(t, 2, fake.txnCount, "the marker and the null delete")
+	require.NotContains(t, fake.entries, "/buckets/b/obj")
+	requireLatestIsMarker(t, s3a)
+}
+
+func TestLifecycleDelete_DeadlineDuringNullReadWritesNoMarker(t *testing.T) {
+	nullReads := func(cancelAt int, cancel func()) int {
+		s3a, fake, null := suspendedNullServer(t, true)
+		reads := 0
+		fake.beforeLookup = func(key string) {
+			if key != "/buckets/b/obj" || fake.txnCount > 0 {
+				return
+			}
+			if reads++; reads == cancelAt {
+				cancel()
+			}
+		}
+		ctx, stop := context.WithCancel(s3LocalPeerCtx())
+		defer stop()
+		if cancel == nil {
+			cancel = stop
+		}
+		_, err := s3a.LifecycleDelete(ctx, &s3_lifecycle_pb.LifecycleDeleteRequest{
+			Bucket:           "b",
+			ObjectPath:       "obj",
+			ActionKind:       s3_lifecycle_pb.ActionKind_EXPIRATION_DAYS,
+			ExpectedIdentity: computeEntryIdentity(null),
+		})
+		if cancelAt > 0 {
+			require.ErrorIs(t, err, context.Canceled)
+			require.Zero(t, fake.txnCount, "an attempt past its deadline must not write a delete marker")
+			require.Contains(t, fake.entries, "/buckets/b/obj")
+		}
+		return reads
+	}
+	last := nullReads(0, nil)
+	require.Positive(t, last)
+	nullReads(last, nil)
+}
+
+// A marker write that fails leaves the null version in place, so the retry
+// still finds it latest and finishes the expiration.
+func TestLifecycleDelete_SuspendedMarkerFailureLeavesNullForRetry(t *testing.T) {
+	for _, routed := range []bool{true, false} {
+		t.Run(fmt.Sprintf("routed=%v", routed), func(t *testing.T) {
+			s3a, fake, null := suspendedNullServer(t, routed)
+			failMarker := true
+			fake.txnCheck = func(req *filer_pb.ObjectTransactionRequest) {
+				fake.txnNoApply = failMarker && isMarkerTxn(req)
+				fake.txnErr = nil
+				if fake.txnNoApply {
+					fake.txnErr = errors.New("owner unavailable")
+				}
+			}
+			fake.createErr = errors.New("filer unavailable")
+			req := &s3_lifecycle_pb.LifecycleDeleteRequest{
+				Bucket:           "b",
+				ObjectPath:       "obj",
+				ActionKind:       s3_lifecycle_pb.ActionKind_EXPIRATION_DAYS,
+				ExpectedIdentity: computeEntryIdentity(null),
+			}
+			resp, err := s3a.LifecycleDelete(s3LocalPeerCtx(), req)
+			require.NoError(t, err)
+			require.Equal(t, s3_lifecycle_pb.LifecycleDeleteOutcome_RETRY_LATER, resp.Outcome, resp.Reason)
+			require.Contains(t, fake.entries, "/buckets/b/obj", "the null version must outlive a failed marker")
+
+			failMarker, fake.createErr = false, nil
+			resp, err = s3a.LifecycleDelete(s3LocalPeerCtx(), req)
+			require.NoError(t, err)
+			require.Equal(t, s3_lifecycle_pb.LifecycleDeleteOutcome_DONE, resp.Outcome, resp.Reason)
+			require.NotContains(t, fake.entries, "/buckets/b/obj")
+			requireLatestIsMarker(t, s3a)
+		})
+	}
+}
+
+// A routed null delete that fails retries rather than deleting through the
+// default filer, which may not have the owner's newer null object yet.
+func TestLifecycleDelete_RoutedNullDeleteFailureRetries(t *testing.T) {
+	s3a, fake, null := suspendedNullServer(t, true)
+	fake.txnCheck = func(req *filer_pb.ObjectTransactionRequest) {
+		fake.txnNoApply = !isMarkerTxn(req)
+		fake.txnErr = nil
+		if fake.txnNoApply {
+			fake.txnErr = errors.New("owner unavailable")
+		}
+	}
+	resp, err := s3a.LifecycleDelete(s3LocalPeerCtx(), &s3_lifecycle_pb.LifecycleDeleteRequest{
+		Bucket:           "b",
+		ObjectPath:       "obj",
+		ActionKind:       s3_lifecycle_pb.ActionKind_EXPIRATION_DAYS,
+		ExpectedIdentity: computeEntryIdentity(null),
+	})
 	require.NoError(t, err)
-	require.Equal(t, "true", string(got.Extended[s3_constants.ExtDeleteMarkerKey]), "the older version must stay hidden behind the marker")
+	require.Equal(t, s3_lifecycle_pb.LifecycleDeleteOutcome_RETRY_LATER, resp.Outcome, resp.Reason)
+	require.Contains(t, fake.entries, "/buckets/b/obj")
+	requireLatestIsMarker(t, s3a)
+}
+
+func TestLifecycleDelete_RoutedNullDeleteObjectLockLookupFailureRetries(t *testing.T) {
+	s3a, fake, null := suspendedNullServer(t, true)
+	fake.txnCheck = func(req *filer_pb.ObjectTransactionRequest) {
+		if isMarkerTxn(req) {
+			s3a.bucketConfigCache.Remove("b")
+			fake.lookupErr, fake.lookupFailKey = status.Error(codes.Unavailable, "filer unavailable"), "/buckets/b"
+		}
+	}
+	resp, err := s3a.LifecycleDelete(s3LocalPeerCtx(), &s3_lifecycle_pb.LifecycleDeleteRequest{
+		Bucket:           "b",
+		ObjectPath:       "obj",
+		ActionKind:       s3_lifecycle_pb.ActionKind_EXPIRATION_DAYS,
+		ExpectedIdentity: computeEntryIdentity(null),
+	})
+	require.NoError(t, err)
+	require.Equal(t, s3_lifecycle_pb.LifecycleDeleteOutcome_RETRY_LATER, resp.Outcome, resp.Reason)
+	require.Equal(t, 1, fake.txnCount, "only the marker")
+	require.Contains(t, fake.entries, "/buckets/b/obj")
+}
+
+// A null object written after the expiration read the old one is not deleted.
+func TestLifecycleDelete_SuspendedNullRewrittenBeforeDeleteSurvives(t *testing.T) {
+	for _, routed := range []bool{true, false} {
+		t.Run(fmt.Sprintf("routed=%v", routed), func(t *testing.T) {
+			s3a, fake, null := suspendedNullServer(t, routed)
+			rewritten := proto.Clone(null).(*filer_pb.Entry)
+			rewritten.Attributes.Mtime++
+			rewritten.Chunks = []*filer_pb.FileChunk{{FileId: "3,03637037d6", Size: 3}}
+			rewrite := func() { fake.entries["/buckets/b/obj"] = proto.Clone(rewritten).(*filer_pb.Entry) }
+			fake.txnCheck = func(*filer_pb.ObjectTransactionRequest) {
+				if fake.txnCount == 1 {
+					rewrite()
+				}
+			}
+			fake.beforeCreate = rewrite
+			var locked []string
+			s3a.newObjectWriteLock = func(bucket, object string) (objectWriteLock, error) {
+				locked = append(locked, bucket+"/"+object)
+				return noopObjectWriteLock{}, nil
+			}
+			resp, err := s3a.LifecycleDelete(s3LocalPeerCtx(), &s3_lifecycle_pb.LifecycleDeleteRequest{
+				Bucket:           "b",
+				ObjectPath:       "obj",
+				ActionKind:       s3_lifecycle_pb.ActionKind_EXPIRATION_DAYS,
+				ExpectedIdentity: computeEntryIdentity(null),
+			})
+			require.NoError(t, err)
+			require.Equal(t, s3_lifecycle_pb.LifecycleDeleteOutcome_DONE, resp.Outcome, resp.Reason)
+			require.Contains(t, fake.entries, "/buckets/b/obj")
+			require.Equal(t, "3,03637037d6", fake.entries["/buckets/b/obj"].Chunks[0].GetFileIdString())
+			if !routed {
+				require.Equal(t, []string{"b/obj", "b/obj"}, locked, "the marker, then the recheck and the delete, must hold the object write lock")
+			}
+		})
+	}
+}
+
+// A null PUT that lands after a suspended expiration validated a named version
+// is neither hidden nor deleted, whether it lands before the null read or
+// before the routed marker commit.
+func TestLifecycleDelete_SuspendedPutOverNamedVersionSurvives(t *testing.T) {
+	old := &filer_pb.Entry{
+		Name:       "v_old",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 1_700_000_000, FileSize: 3},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "3,01637037d6", Size: 3}},
+		Extended:   map[string][]byte{s3_constants.ExtVersionIdKey: []byte("old")},
+	}
+	fresh := &filer_pb.Entry{
+		Name:       "obj",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 1_700_000_100, FileSize: 5},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "3,02637037d6", Size: 5}},
+		Extended:   map[string][]byte{s3_constants.ExtVersionIdKey: []byte("null")},
+	}
+	cases := []struct {
+		name   string
+		routed bool
+		atRead bool
+	}{
+		{"routed/at-null-read", true, true},
+		{"routed/at-marker", true, false},
+		{"unrouted/at-null-read", false, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &ambiguousPutFiler{apply: true, entries: map[string]*filer_pb.Entry{
+				"/buckets/b/obj.versions/v_old": proto.Clone(old).(*filer_pb.Entry),
+				"/buckets/b/obj.versions": {Name: "obj" + s3_constants.VersionsFolder, IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}, Extended: map[string][]byte{
+					s3_constants.ExtLatestVersionIdKey:       []byte("old"),
+					s3_constants.ExtLatestVersionFileNameKey: []byte("v_old"),
+				}},
+			}}
+			put := func() {
+				if _, ok := fake.entries["/buckets/b/obj"]; ok {
+					return
+				}
+				fake.entries["/buckets/b/obj"] = proto.Clone(fresh).(*filer_pb.Entry)
+				pointer := fake.entries["/buckets/b/obj.versions"]
+				delete(pointer.Extended, s3_constants.ExtLatestVersionIdKey)
+				delete(pointer.Extended, s3_constants.ExtLatestVersionFileNameKey)
+				pointer.Extended[s3_constants.ExtNullVersionIsLatestKey] = []byte("true")
+			}
+			if tc.atRead {
+				fake.beforeLookup = func(key string) {
+					if key == "/buckets/b/obj" {
+						put()
+					}
+				}
+			} else {
+				fake.txnCheck = func(*filer_pb.ObjectTransactionRequest) { put() }
+			}
+			addr := startFakeFiler(t, fake)
+			s3a := newPutTestServer(t, addr)
+			s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+			s3a.bucketConfigCache.Set("b", &BucketConfig{Name: "b", Versioning: s3_constants.VersioningSuspended})
+			if tc.routed {
+				s3a.objectWriteLockClient = cluster.NewLockClient(s3a.option.GrpcDialOption, addr)
+				s3a.objectWriteLockClient.SetRing([]pb.ServerAddress{addr}, 1)
+			}
+			resp, err := s3a.LifecycleDelete(s3LocalPeerCtx(), &s3_lifecycle_pb.LifecycleDeleteRequest{
+				Bucket:           "b",
+				ObjectPath:       "obj",
+				VersionId:        "old",
+				ActionKind:       s3_lifecycle_pb.ActionKind_EXPIRATION_DAYS,
+				ExpectedIdentity: computeEntryIdentity(old),
+			})
+			require.NoError(t, err)
+			require.Equal(t, s3_lifecycle_pb.LifecycleDeleteOutcome_NOOP_RESOLVED, resp.Outcome, resp.Reason)
+			require.Equal(t, "VERSION_NOT_LATEST", resp.Reason)
+			require.Contains(t, fake.entries, "/buckets/b/obj")
+			for key, e := range fake.entries {
+				require.NotEqual(t, "true", string(e.Extended[s3_constants.ExtDeleteMarkerKey]), key)
+			}
+		})
+	}
 }
 
 // A timed-out attempt can still be running when its retry writes the marker;
@@ -605,7 +861,7 @@ func TestLifecycleDelete_OverlappingAttemptWritesOneMarker(t *testing.T) {
 		outcome    s3_lifecycle_pb.LifecycleDeleteOutcome
 	}{
 		{s3_constants.VersioningEnabled, 1, s3_lifecycle_pb.LifecycleDeleteOutcome_NOOP_RESOLVED},
-		{s3_constants.VersioningSuspended, 2, s3_lifecycle_pb.LifecycleDeleteOutcome_DONE},
+		{s3_constants.VersioningSuspended, 1, s3_lifecycle_pb.LifecycleDeleteOutcome_DONE},
 	}
 	for _, tc := range cases {
 		t.Run(tc.versioning, func(t *testing.T) {
