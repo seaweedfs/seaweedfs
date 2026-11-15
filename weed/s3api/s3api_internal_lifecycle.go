@@ -242,8 +242,24 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 // running while its retry writes, so whichever commits second sees the marker.
 // A non-empty expected is the version that passed the expiration checks; a
 // different latest resolves the request as stale instead of hiding it.
-func (s3a *S3ApiServer) lifecycleDeleteMarker(bucket, object, expected string) (bool, *s3_lifecycle_pb.LifecycleDeleteResponse) {
+func (s3a *S3ApiServer) lifecycleDeleteMarker(bucket, object, expected string) (written bool, resp *s3_lifecycle_pb.LifecycleDeleteResponse) {
 	normalized := s3_constants.NormalizeObjectKey(object)
+	if s3a.objectWriteOwner(bucket, normalized) != "" {
+		return s3a.lifecycleDeleteMarkerIf(bucket, object, normalized, expected)
+	}
+	// Off the ring the marker commits without the guard, so the pointer read
+	// and the write serialize with other writers on the object write lock.
+	code := s3a.withObjectWriteLock(bucket, normalized, nil, func() s3err.ErrorCode {
+		written, resp = s3a.lifecycleDeleteMarkerIf(bucket, object, normalized, expected)
+		return s3err.ErrNone
+	})
+	if code != s3err.ErrNone {
+		return false, retryLater("TRANSPORT_ERROR: object write lock: " + s3err.GetAPIError(code).Code)
+	}
+	return written, resp
+}
+
+func (s3a *S3ApiServer) lifecycleDeleteMarkerIf(bucket, object, normalized, expected string) (bool, *s3_lifecycle_pb.LifecycleDeleteResponse) {
 	for range 3 {
 		pointer, err := s3a.getObjectScopedEntryRoutedByKey(bucket, normalized, s3a.bucketDir(bucket), normalized+s3_constants.VersionsFolder)
 		if err != nil {

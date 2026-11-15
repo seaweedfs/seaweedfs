@@ -855,6 +855,85 @@ func TestLifecycleDelete_NullUnderIdOnlyPointerExpires(t *testing.T) {
 	}
 }
 
+type releaseObjectWriteLock func()
+
+func (r releaseObjectWriteLock) StopShortLivedLock() error {
+	r()
+	return nil
+}
+
+// Off the ring a PUT that commits between the marker's pointer read and its
+// write would be hidden; holding the object write lock makes it wait and land
+// after the marker instead.
+func TestLifecycleDelete_UnroutedMarkerHoldsObjectWriteLock(t *testing.T) {
+	old := &filer_pb.Entry{
+		Name:       "v_old",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 1_700_000_000, FileSize: 3},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "3,01637037d6", Size: 3}},
+		Extended:   map[string][]byte{s3_constants.ExtVersionIdKey: []byte("old")},
+	}
+	fake := &ambiguousPutFiler{apply: true, entries: map[string]*filer_pb.Entry{
+		"/buckets/b/obj.versions/v_old": proto.Clone(old).(*filer_pb.Entry),
+		"/buckets/b/obj.versions": {Name: "obj" + s3_constants.VersionsFolder, IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}, Extended: map[string][]byte{
+			s3_constants.ExtLatestVersionIdKey:       []byte("old"),
+			s3_constants.ExtLatestVersionFileNameKey: []byte("v_old"),
+		}},
+	}}
+	interleavedId := generateVersionId(true)
+	put := func(id string) {
+		fake.entries["/buckets/b/obj.versions/v_"+id] = &filer_pb.Entry{
+			Name:       "v_" + id,
+			Attributes: &filer_pb.FuseAttributes{Mtime: 1_700_000_100, FileSize: 5},
+			Chunks:     []*filer_pb.FileChunk{{FileId: "3,02637037d6", Size: 5}},
+			Extended:   map[string][]byte{s3_constants.ExtVersionIdKey: []byte(id)},
+		}
+		pointer := fake.entries["/buckets/b/obj.versions"]
+		pointer.Extended[s3_constants.ExtLatestVersionIdKey] = []byte(id)
+		pointer.Extended[s3_constants.ExtLatestVersionFileNameKey] = []byte("v_" + id)
+		delete(pointer.Extended, s3_constants.ExtLatestVersionIsDeleteMarker)
+	}
+	held, waiting, putDone := false, false, false
+	fake.beforeCreate = func() {
+		switch {
+		case putDone || waiting:
+		case held:
+			waiting = true
+		default:
+			put(interleavedId)
+			putDone = true
+		}
+	}
+	addr := startFakeFiler(t, fake)
+	s3a := newPutTestServer(t, addr)
+	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+	s3a.bucketConfigCache.Set("b", &BucketConfig{Name: "b", Versioning: s3_constants.VersioningEnabled})
+	s3a.newObjectWriteLock = func(bucket, object string) (objectWriteLock, error) {
+		held = true
+		return releaseObjectWriteLock(func() {
+			fake.mu.Lock()
+			defer fake.mu.Unlock()
+			held = false
+			if waiting {
+				put(generateVersionId(true))
+				putDone = true
+			}
+		}), nil
+	}
+	resp, err := s3a.LifecycleDelete(s3LocalPeerCtx(), &s3_lifecycle_pb.LifecycleDeleteRequest{
+		Bucket:           "b",
+		ObjectPath:       "obj",
+		VersionId:        "old",
+		ActionKind:       s3_lifecycle_pb.ActionKind_EXPIRATION_DAYS,
+		ExpectedIdentity: computeEntryIdentity(old),
+	})
+	require.NoError(t, err)
+	require.Equal(t, s3_lifecycle_pb.LifecycleDeleteOutcome_DONE, resp.Outcome, resp.Reason)
+	require.True(t, putDone)
+	latest, err := s3a.getLatestObjectVersion("b", "obj")
+	require.NoError(t, err)
+	require.NotEqual(t, "true", string(latest.Extended[s3_constants.ExtDeleteMarkerKey]), "the PUT must not be hidden by the marker")
+}
+
 // Expired-marker cleanup removes a marker that a lock was recorded on: markers
 // are never WORM-protected, so the routed delete carries no WORM guard.
 func TestLifecycleDelete_LockedExpiredDeleteMarkerSkipsWormGuard(t *testing.T) {
