@@ -178,6 +178,42 @@ func TestLoadClientTLSFallsBackToServingCert(t *testing.T) {
 
 // A serverAuth-only cert presented as the client identity fails the peer's
 // clientAuth EKU verification — the failure mode client_cert exists to fix.
+func TestLoadClientTLSVerifyServerHost(t *testing.T) {
+	dir := t.TempDir()
+	ca := newTestCA(t, dir)
+	serverCert, serverKey := ca.issueWithSANs(t, dir, "seaweed-master", []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, []string{"master.invalid"}, nil)
+	clientCert, clientKey := ca.issue(t, dir, "client", []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
+
+	v := util.NewViperProxy(viper.New())
+	v.Set("grpc.ca", ca.file)
+	v.Set("grpc.master.cert", serverCert)
+	v.Set("grpc.master.key", serverKey)
+	v.Set("grpc.client.cert", clientCert)
+	v.Set("grpc.client.key", clientKey)
+	v.Set("grpc.client.allowed_server_commonNames", "seaweed-master")
+
+	addr := startTestGrpcServer(t, v, "grpc.master")
+	_, port, _ := net.SplitHostPort(addr)
+	byName := net.JoinHostPort("localhost", port)
+	if err := healthCheck(t, byName, LoadClientTLS(v, "grpc.client")); err != nil {
+		t.Fatalf("the dialed host is not checked by default: %v", err)
+	}
+
+	v.Set("grpc.verify_server_host", true)
+	if err := healthCheck(t, byName, LoadClientTLS(v, "grpc.client")); err == nil {
+		t.Fatal("expected a certificate for master.invalid to be rejected on a connection to localhost")
+	}
+	if err := healthCheck(t, addr, LoadClientTLS(v, "grpc.client")); err != nil {
+		t.Fatalf("the certificate's IP SAN matches the dialed address: %v", err)
+	}
+
+	v.Set("grpc.verify_server_host", false)
+	v.Set("grpc.client.verify_server_host", true)
+	if err := healthCheck(t, byName, LoadClientTLSForTarget(v, "grpc.client", "grpc.master")); err == nil {
+		t.Fatal("expected the component setting to check the dialed host")
+	}
+}
+
 func TestLoadClientTLSServerOnlyEkuRejected(t *testing.T) {
 	dir := t.TempDir()
 	ca := newTestCA(t, dir)
