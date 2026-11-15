@@ -232,6 +232,13 @@ func putConditionSatisfied(cond *filer_pb.WriteCondition, current *filer_pb.Entr
 	return true
 }
 
+func (f *ambiguousPutFiler) DeleteEntry(_ context.Context, req *filer_pb.DeleteEntryRequest) (*filer_pb.DeleteEntryResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.entries, req.Directory+"/"+req.Name)
+	return &filer_pb.DeleteEntryResponse{}, nil
+}
+
 func (f *ambiguousPutFiler) LookupDirectoryEntry(_ context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -279,30 +286,23 @@ func (f *ambiguousPutFiler) ObjectTransaction(_ context.Context, req *filer_pb.O
 			}
 		}
 	}
-	for _, clause := range req.GetCondition().GetClauses() {
-		var md5Hex string
-		if current != nil && current.Attributes != nil {
-			md5Hex = fmt.Sprintf("%x", current.Attributes.Md5)
-		}
-		ok := true
-		switch clause.Kind {
-		case filer_pb.WriteCondition_IF_NOT_EXISTS:
-			ok = current == nil
-		case filer_pb.WriteCondition_IF_EXISTS:
-			ok = current != nil
-		case filer_pb.WriteCondition_IF_ETAG_MATCH:
-			ok = current != nil && etagCandidateMatch(clause.Etags, md5Hex)
-		case filer_pb.WriteCondition_IF_ETAG_NOT_MATCH:
-			ok = current == nil || !etagCandidateMatch(clause.Etags, md5Hex)
-		case filer_pb.WriteCondition_IF_ENTRY_EQUAL:
-			ok = (current == nil) == (clause.ExpectedEntry == nil) && (current == nil || proto.Equal(current, clause.ExpectedEntry))
-		}
-		if !ok {
-			return &filer_pb.ObjectTransactionResponse{ErrorCode: filer_pb.FilerError_PRECONDITION_FAILED}, nil
-		}
+	if !txnConditionHolds(req.GetCondition(), current) {
+		return &filer_pb.ObjectTransactionResponse{ErrorCode: filer_pb.FilerError_PRECONDITION_FAILED}, nil
 	}
 	if !f.txnNoApply {
-		for _, m := range req.Mutations {
+		for i, m := range req.Mutations {
+			if m.Condition != nil {
+				target := m.ConditionKey
+				if target == "" && m.Type == filer_pb.ObjectMutation_PUT {
+					target = m.Directory + "/" + m.Entry.Name
+				} else if target == "" {
+					target = m.Directory + "/" + m.Name
+				}
+				if !txnConditionHolds(m.Condition, f.entries[target]) {
+					failed := int32(i)
+					return &filer_pb.ObjectTransactionResponse{ErrorCode: filer_pb.FilerError_PRECONDITION_FAILED, FailedMutation: &failed}, nil
+				}
+			}
 			switch m.Type {
 			case filer_pb.ObjectMutation_PUT:
 				entry := proto.Clone(m.Entry).(*filer_pb.Entry)
@@ -321,6 +321,36 @@ func (f *ambiguousPutFiler) ObjectTransaction(_ context.Context, req *filer_pb.O
 		f.supersede = nil
 	}
 	return &filer_pb.ObjectTransactionResponse{}, f.txnErr
+}
+
+// txnConditionHolds evaluates an ObjectTransaction condition, request-level or
+// on one mutation, the way the filer does for the kinds the tests send.
+func txnConditionHolds(cond *filer_pb.WriteCondition, current *filer_pb.Entry) bool {
+	for _, clause := range cond.GetClauses() {
+		var etag string
+		if v := current.GetExtended()[s3_constants.ExtETagKey]; len(v) > 0 {
+			etag = string(v)
+		} else if current != nil && current.Attributes != nil {
+			etag = fmt.Sprintf("%x", current.Attributes.Md5)
+		}
+		ok := true
+		switch clause.Kind {
+		case filer_pb.WriteCondition_IF_NOT_EXISTS:
+			ok = current == nil
+		case filer_pb.WriteCondition_IF_EXISTS:
+			ok = current != nil
+		case filer_pb.WriteCondition_IF_ETAG_MATCH:
+			ok = current != nil && etagCandidateMatch(clause.Etags, etag)
+		case filer_pb.WriteCondition_IF_ETAG_NOT_MATCH:
+			ok = current == nil || !etagCandidateMatch(clause.Etags, etag)
+		case filer_pb.WriteCondition_IF_ENTRY_EQUAL:
+			ok = (current == nil) == (clause.ExpectedEntry == nil) && (current == nil || proto.Equal(current, clause.ExpectedEntry))
+		}
+		if !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // etagCandidateMatch mirrors the filer's strong-comparison canonicalization:
