@@ -102,3 +102,24 @@ func TestMultipartUploadOnOwnerFiler(t *testing.T) {
 	require.Equal(t, s3err.ErrNone, code)
 	require.False(t, has(owner, "/buckets/b/.uploads/"+aborted), "abort must remove the upload")
 }
+
+// A part create the owner stored but answered with an error must be found
+// there before its chunks are freed, even though the owner is not one of the
+// gateway's own filers.
+func TestMultipartPartCreateErrorChecksUploadOwner(t *testing.T) {
+	util_http.InitGlobalHttpClient()
+	volume := startFakeVolumeServer(t)
+	owner := &ambiguousPutFiler{volume: volume, apply: true, entries: map[string]*filer_pb.Entry{},
+		respError: "create parent directories: i/o timeout"}
+	replica := &ambiguousPutFiler{volume: volume, entries: map[string]*filer_pb.Entry{}}
+	ownerAddr := startFakeFiler(t, owner)
+	s3a := newPutTestServer(t, startFakeFiler(t, replica))
+	s3a.objectWriteLockClient = cluster.NewLockClient(s3a.option.GrpcDialOption, ownerAddr)
+	s3a.objectWriteLockClient.SetRing([]pb.ServerAddress{ownerAddr}, 1)
+
+	r := withMultipartPart(httptest.NewRequest(http.MethodPut, "/b/dir/object?partNumber=1&uploadId=up1", nil), s3a.uploadFiler("b", "dir/object"))
+	etag, code, _ := s3a.putToFiler(r, "/buckets/b/.uploads/up1/0001_x.part", strings.NewReader("part data"), "b", "", 1, 0, nil, false, "/buckets/b/dir/object")
+	require.Equal(t, s3err.ErrNone, code)
+	require.NotEmpty(t, etag)
+	require.Empty(t, volume.deleted(), "chunks under the stored part must survive")
+}
