@@ -74,8 +74,9 @@ func (s3a *S3ApiServer) latestPointerRecompute(bucket, object string, useInverte
 // owner filer, via a single RECOMPUTE_LATEST. versionEntry, when set, is PUT
 // into .versions in the same transaction, so the recompute's scan sees it even
 // when the gateway's own filer is not the owner; otherwise the version file is
-// already written on the owner.
-func (s3a *S3ApiServer) routedVersionedFinalize(owner pb.ServerAddress, bucket, object string, useInvertedFormat bool, versionEntry *filer_pb.Entry) s3err.ErrorCode {
+// already written on the owner. latestGuard, when set, must hold on the
+// .versions directory entry under the same lock.
+func (s3a *S3ApiServer) routedVersionedFinalize(owner pb.ServerAddress, bucket, object string, useInvertedFormat bool, versionEntry *filer_pb.Entry, latestGuard *filer_pb.WriteCondition) s3err.ErrorCode {
 	mutations := []*filer_pb.ObjectMutation{s3a.latestPointerRecompute(bucket, object, useInvertedFormat, "", true)}
 	if versionEntry != nil {
 		mutations = append([]*filer_pb.ObjectMutation{{
@@ -89,11 +90,17 @@ func (s3a *S3ApiServer) routedVersionedFinalize(owner pb.ServerAddress, bucket, 
 		RouteKey:  s3a.objectRouteKey(bucket, object),
 		Mutations: mutations,
 	}
+	if latestGuard != nil {
+		req.Condition = latestGuard
+		req.ConditionKey = s3a.toFilerPath(bucket, object+s3_constants.VersionsFolder)
+	}
 	resp, err := s3a.objectTxnOnFiler(owner, req)
 	switch {
 	case err != nil:
 		glog.Errorf("routedVersionedFinalize: %s/%s on %s: %v", bucket, object, owner, err)
 		return s3err.ErrInternalError
+	case resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED:
+		return s3err.ErrPreconditionFailed
 	case resp.Error != "":
 		glog.Errorf("routedVersionedFinalize: %s/%s: %s", bucket, object, resp.Error)
 		return s3err.ErrInternalError
