@@ -255,13 +255,9 @@ func (s3a *S3ApiServer) lifecycleDeleteMarker(bucket, object, expected string) (
 		if pointer != nil && string(pointer.Extended[s3_constants.ExtLatestVersionIsDeleteMarker]) == "true" && !nullVersionIsLatest(pointer) {
 			return false, nil
 		}
-		// A null object without the explicit signal can still win over the
-		// pointer by mtime, so only a named version is compared.
-		if expected != "" && expected != "null" && pointer != nil {
+		// A named pointer outranks the null object, as in getLatestObjectVersion.
+		if expected != "" && pointer != nil {
 			latest := string(pointer.Extended[s3_constants.ExtLatestVersionIdKey])
-			if nullVersionIsLatest(pointer) {
-				latest = "null"
-			}
 			if latest != "" && latest != expected {
 				return false, noopResolved("VERSION_NOT_LATEST")
 			}
