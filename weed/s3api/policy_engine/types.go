@@ -623,6 +623,9 @@ func compilePattern(pattern string) (*regexp.Regexp, error) {
 
 // normalizeToStringSlice converts various types to string slice - kept for backward compatibility
 func normalizeToStringSlice(value interface{}) []string {
+	if value == nil {
+		return nil
+	}
 	result, err := normalizeToStringSliceWithError(value)
 	if err != nil {
 		glog.Warningf("unexpected type for policy value: %T, error: %v", value, err)
