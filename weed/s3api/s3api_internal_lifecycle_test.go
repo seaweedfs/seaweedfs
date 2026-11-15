@@ -682,6 +682,11 @@ func TestLifecycleDelete_SuspendedNullRewrittenBeforeDeleteSurvives(t *testing.T
 				}
 			}
 			fake.beforeCreate = rewrite
+			var locked []string
+			s3a.newObjectWriteLock = func(bucket, object string) (objectWriteLock, error) {
+				locked = append(locked, bucket+"/"+object)
+				return noopObjectWriteLock{}, nil
+			}
 			resp, err := s3a.LifecycleDelete(s3LocalPeerCtx(), &s3_lifecycle_pb.LifecycleDeleteRequest{
 				Bucket:           "b",
 				ObjectPath:       "obj",
@@ -692,6 +697,9 @@ func TestLifecycleDelete_SuspendedNullRewrittenBeforeDeleteSurvives(t *testing.T
 			require.Equal(t, s3_lifecycle_pb.LifecycleDeleteOutcome_DONE, resp.Outcome, resp.Reason)
 			require.Contains(t, fake.entries, "/buckets/b/obj")
 			require.Equal(t, "3,03637037d6", fake.entries["/buckets/b/obj"].Chunks[0].GetFileIdString())
+			if !routed {
+				require.Equal(t, []string{"b/obj"}, locked, "the recheck and the delete must hold the object write lock")
+			}
 		})
 	}
 }

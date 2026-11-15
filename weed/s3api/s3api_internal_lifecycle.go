@@ -312,17 +312,35 @@ func (s3a *S3ApiServer) lifecycleDeleteNullVersion(req *s3_lifecycle_pb.Lifecycl
 			}
 		}
 	}
-	current, err := s3a.getEntry(util.NewFullPath(s3a.bucketDir(req.Bucket), req.ObjectPath).DirAndName())
-	if errors.Is(err, filer_pb.ErrNotFound) || (err == nil && !identityMatches(computeEntryIdentity(current), computeEntryIdentity(nullEntry))) {
+	// Off the ring, writers serialize on the object write lock instead.
+	dir, name := util.NewFullPath(s3a.bucketDir(req.Bucket), req.ObjectPath).DirAndName()
+	var opErr error
+	code := s3a.withObjectWriteLock(req.Bucket, req.ObjectPath, func() s3err.ErrorCode {
+		current, err := s3a.getEntry(dir, name)
+		switch {
+		case errors.Is(err, filer_pb.ErrNotFound):
+			return s3err.ErrPreconditionFailed
+		case err != nil:
+			opErr = err
+			return s3err.ErrInternalError
+		case !identityMatches(computeEntryIdentity(current), computeEntryIdentity(nullEntry)):
+			return s3err.ErrPreconditionFailed
+		}
+		return s3err.ErrNone
+	}, func() s3err.ErrorCode {
+		if opErr = s3a.deleteSpecificObjectVersion(context.Background(), req.Bucket, req.ObjectPath, "null", metadataOnly); opErr != nil {
+			return s3err.ErrInternalError
+		}
+		return s3err.ErrNone
+	})
+	switch {
+	case code == s3err.ErrNone || code == s3err.ErrPreconditionFailed:
 		return done()
+	case opErr != nil:
+		return retryLater("TRANSPORT_ERROR: deleteNullVersion: " + opErr.Error())
+	default:
+		return retryLater("TRANSPORT_ERROR: deleteNullVersion: " + s3err.GetAPIError(code).Code)
 	}
-	if err != nil {
-		return retryLater("TRANSPORT_ERROR: null version lookup: " + err.Error())
-	}
-	if err := s3a.deleteSpecificObjectVersion(context.Background(), req.Bucket, req.ObjectPath, "null", metadataOnly); err != nil {
-		return retryLater("TRANSPORT_ERROR: deleteNullVersion: " + err.Error())
-	}
-	return done()
 }
 
 // pointerLatestVersion reads the latest version off a .versions pointer the
