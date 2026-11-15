@@ -416,7 +416,7 @@ func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *
 		return nil, nil, s3err.ErrNoSuchUpload
 	}
 
-	pentry, err := s3a.getEntry(s3a.genUploadsFolder(*input.Bucket), *input.UploadId)
+	pentry, err := s3a.uploadFiler(*input.Bucket, *input.Key).getEntry(s3a.genUploadsFolder(*input.Bucket), *input.UploadId)
 	if err != nil {
 		glog.Errorf("completeMultipartUpload %s %s error: %v", *input.Bucket, *input.UploadId, err)
 		if errors.Is(err, filer_pb.ErrNotFound) {
@@ -807,7 +807,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 					// Roll back only while the upload directory survives: once the
 					// transaction removed it, the version file is the only record
 					// left and deleting it would make a retry impossible.
-					if exists, _ := s3a.exists(s3a.genUploadsFolder(*input.Bucket), *input.UploadId, true); exists {
+					if exists, _ := s3a.uploadFiler(*input.Bucket, *input.Key).exists(s3a.genUploadsFolder(*input.Bucket), *input.UploadId, true); exists {
 						if rollbackErr := s3a.rollbackMultipartVersion(versionDir, versionFileName); rollbackErr != nil {
 							glog.Errorf("completeMultipartUpload: failed to rollback version %s for %s/%s after routed finalize error: %v", versionId, *input.Bucket, *input.Key, rollbackErr)
 							completionState.manifestsReferenced = true
@@ -1182,7 +1182,7 @@ func (s3a *S3ApiServer) abortMultipartUpload(input *s3.AbortMultipartUploadInput
 	glog.V(2).Infof("abortMultipartUpload input %v", input)
 
 	uploadsFolder := s3a.genUploadsFolder(*input.Bucket)
-	uploadEntry, err := s3a.getEntry(uploadsFolder, *input.UploadId)
+	uploadEntry, err := s3a.uploadFiler(*input.Bucket, aws.StringValue(input.Key)).getEntry(uploadsFolder, *input.UploadId)
 	// complete and abort both remove .uploads/<id>; a missing record is an upload
 	// that does not exist (NoSuchUpload on AWS), not one this call discarded
 	if err != nil {
@@ -1588,7 +1588,7 @@ func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListP
 	// directory as empty instead of erroring, so listing alone cannot tell a
 	// completed upload (NoSuchUpload on AWS) from an open upload with no parts
 	// yet (200 with an empty list). Probe the upload record instead.
-	pentry, err := s3a.getEntry(s3a.genUploadsFolder(*input.Bucket), *input.UploadId)
+	pentry, err := s3a.uploadFiler(*input.Bucket, *input.Key).getEntry(s3a.genUploadsFolder(*input.Bucket), *input.UploadId)
 	if err != nil {
 		if errors.Is(err, filer_pb.ErrNotFound) {
 			return nil, s3err.ErrNoSuchUpload

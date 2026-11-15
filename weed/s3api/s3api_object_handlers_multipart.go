@@ -413,7 +413,7 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 	glog.V(2).Infof("PutObjectPartHandler %s %s %04d", bucket, uploadID, partID)
 
 	// Verify the multipart upload exists (rejects parts after abort)
-	uploadEntry, err := s3a.getEntry(s3a.genUploadsFolder(bucket), uploadID)
+	uploadEntry, err := s3a.uploadFiler(bucket, object).getEntry(s3a.genUploadsFolder(bucket), uploadID)
 	if errors.Is(err, filer_pb.ErrNotFound) {
 		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchUpload)
 		return
@@ -554,7 +554,7 @@ func isMultipartUploadEntry(entry *filer_pb.Entry) bool {
 // part along with the directory it resurrected when an abort was answered while
 // the part was in flight. It reports whether the caller may answer success.
 func (s3a *S3ApiServer) checkUploadStillOpen(w http.ResponseWriter, r *http.Request, bucket, object, uploadID string) bool {
-	entry, err := s3a.getEntry(s3a.genUploadsFolder(bucket), uploadID)
+	entry, err := s3a.uploadFiler(bucket, object).getEntry(s3a.genUploadsFolder(bucket), uploadID)
 	if err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
 		glog.Errorf("checkUploadStillOpen %s/%s: %v", bucket, uploadID, err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
@@ -580,8 +580,8 @@ func (s3a *S3ApiServer) checkUploadStillOpen(w http.ResponseWriter, r *http.Requ
 // if the upload entry is not found or had no SSE. It is used by the bucket
 // policy engine to evaluate s3:x-amz-server-side-encryption conditions for
 // UploadPart and UploadPartCopy, which do not re-send the SSE header.
-func (s3a *S3ApiServer) getMultipartSSEAlgorithm(bucket, uploadID string) string {
-	entry, err := s3a.getEntry(s3a.genUploadsFolder(bucket), uploadID)
+func (s3a *S3ApiServer) getMultipartSSEAlgorithm(bucket, object, uploadID string) string {
+	entry, err := s3a.uploadFiler(bucket, object).getEntry(s3a.genUploadsFolder(bucket), uploadID)
 	if err != nil || entry == nil || entry.Extended == nil {
 		return ""
 	}
