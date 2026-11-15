@@ -245,6 +245,9 @@ func loadClientTLS(config *util.ViperProxy, component, targetComponent string) (
 		},
 		VerificationType: advancedtls.CertVerification,
 	}
+	if config.GetBool(component+".verify_server_host") || config.GetBool("grpc.verify_server_host") {
+		options.VerificationType = advancedtls.CertAndHostVerification
+	}
 	targetPrefix := ""
 	if targetComponent != component {
 		targetPrefix = strings.TrimPrefix(targetComponent, "grpc.") + "_"
