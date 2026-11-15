@@ -159,3 +159,44 @@ func TestListPartsAfterOwnerChange(t *testing.T) {
 	require.Equal(t, s3err.ErrNone, code)
 	require.Len(t, listed.Part, 1)
 }
+
+// A part routed to a new owner that has not received the upload yet makes that
+// filer create a bare .uploads/<id> directory; the upload must stay open.
+func TestUploadPartAfterOwnerChange(t *testing.T) {
+	util_http.InitGlobalHttpClient()
+	volume := startFakeVolumeServer(t)
+	prior := &ambiguousPutFiler{volume: volume, apply: true, entries: map[string]*filer_pb.Entry{}}
+	next := &ambiguousPutFiler{volume: volume, apply: true, entries: map[string]*filer_pb.Entry{}}
+	priorAddr := startFakeFiler(t, prior)
+	nextAddr := startFakeFiler(t, next)
+	s3a := newPutTestServer(t, startFakeFiler(t, &ambiguousPutFiler{volume: volume, entries: map[string]*filer_pb.Entry{}}))
+	s3a.iam = &IdentityAccessManagement{}
+	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+	s3a.bucketConfigCache.Set("b", &BucketConfig{Name: "b"})
+	s3a.objectWriteLockClient = cluster.NewLockClient(s3a.option.GrpcDialOption, priorAddr)
+	s3a.objectWriteLockClient.SetRing([]pb.ServerAddress{priorAddr}, 1)
+
+	out, code := s3a.createMultipartUpload(httptest.NewRequest(http.MethodPost, "/b/dir/object?uploads", nil),
+		&s3.CreateMultipartUploadInput{Bucket: aws.String("b"), Key: aws.String("dir/object")})
+	require.Equal(t, s3err.ErrNone, code)
+	uploadDir := "/buckets/b/.uploads/" + *out.UploadId
+	next.beforeCreate = func() {
+		if next.entries[uploadDir] == nil {
+			next.entries[uploadDir] = &filer_pb.Entry{Name: *out.UploadId, IsDirectory: true}
+		}
+	}
+	s3a.objectWriteLockClient.SetRing([]pb.ServerAddress{nextAddr}, 2)
+
+	r := httptest.NewRequest(http.MethodPut, "/b/dir/object?partNumber=1&uploadId="+*out.UploadId, strings.NewReader("data"))
+	r = mux.SetURLVars(r, map[string]string{"bucket": "b", "object": "dir/object"})
+	w := httptest.NewRecorder()
+	s3a.PutObjectPartHandler(w, r)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	listed, code := s3a.listObjectParts(&s3.ListPartsInput{
+		Bucket: aws.String("b"), Key: aws.String("dir/object"), UploadId: out.UploadId,
+		MaxParts: aws.Int64(1000), PartNumberMarker: aws.Int64(0),
+	})
+	require.Equal(t, s3err.ErrNone, code)
+	require.Len(t, listed.Part, 1)
+}

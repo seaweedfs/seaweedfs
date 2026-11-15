@@ -41,8 +41,20 @@ func (u uploadFilerClient) GetDataCenter() string {
 	return u.s3a.GetDataCenter()
 }
 
+// getEntry reads the upload record. Right after a ring change a part write can
+// leave the new owner a bare directory before the record replicated there, so
+// the prior owner's record wins over one without the upload's key.
 func (u uploadFilerClient) getEntry(parentDirectoryPath, entryName string) (*filer_pb.Entry, error) {
-	return u.s3a.getObjectScopedEntryRoutedByKey(u.bucket, u.object, parentDirectoryPath, entryName)
+	entry, err := u.s3a.getObjectScopedEntryRoutedByKey(u.bucket, u.object, parentDirectoryPath, entryName)
+	if err != nil || isMultipartUploadEntry(entry) {
+		return entry, err
+	}
+	if prior := u.s3a.priorWriteOwner(u.bucket, u.object); prior != "" {
+		if priorEntry, priorErr := u.s3a.lookupEntryOnFiler(context.Background(), prior, parentDirectoryPath, entryName); priorErr == nil && isMultipartUploadEntry(priorEntry) {
+			return priorEntry, nil
+		}
+	}
+	return entry, err
 }
 
 // list reads the owner's listing, and while a ring change is in its cooling-off
