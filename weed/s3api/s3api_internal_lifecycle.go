@@ -95,7 +95,7 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 		}
 		switch state {
 		case s3_constants.VersioningEnabled:
-			written, resp := s3a.lifecycleDeleteMarker(req.Bucket, req.ObjectPath)
+			written, resp := s3a.lifecycleDeleteMarker(req.Bucket, req.ObjectPath, lifecycleAddressedVersion(req, entry))
 			if resp != nil {
 				return resp, nil
 			}
@@ -133,7 +133,7 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 			}
 			// The null delete is done, so the marker must follow even past
 			// the deadline: without it a retry finds an older version latest.
-			if _, resp := s3a.lifecycleDeleteMarker(req.Bucket, req.ObjectPath); resp != nil {
+			if _, resp := s3a.lifecycleDeleteMarker(req.Bucket, req.ObjectPath, ""); resp != nil {
 				return resp, nil
 			}
 			return done(), nil
@@ -236,14 +236,13 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 	}
 }
 
-// lifecycleRequireLatest refuses a current-version expiration whose version
-// is no longer the key's latest. A version file never changes, so the identity
-// check cannot see a newer write.
 // lifecycleDeleteMarker writes an expiration's delete marker as a
 // compare-and-set on the .versions pointer, skipping it when the latest is
 // already a delete marker. An attempt the worker gave up on may still be
 // running while its retry writes, so whichever commits second sees the marker.
-func (s3a *S3ApiServer) lifecycleDeleteMarker(bucket, object string) (bool, *s3_lifecycle_pb.LifecycleDeleteResponse) {
+// A non-empty expected is the version that passed the expiration checks; a
+// different latest resolves the request as stale instead of hiding it.
+func (s3a *S3ApiServer) lifecycleDeleteMarker(bucket, object, expected string) (bool, *s3_lifecycle_pb.LifecycleDeleteResponse) {
 	normalized := s3_constants.NormalizeObjectKey(object)
 	for range 3 {
 		pointer, err := s3a.getObjectScopedEntryRoutedByKey(bucket, normalized, s3a.bucketDir(bucket), normalized+s3_constants.VersionsFolder)
@@ -255,6 +254,17 @@ func (s3a *S3ApiServer) lifecycleDeleteMarker(bucket, object string) (bool, *s3_
 		}
 		if pointer != nil && string(pointer.Extended[s3_constants.ExtLatestVersionIsDeleteMarker]) == "true" && !nullVersionIsLatest(pointer) {
 			return false, nil
+		}
+		// A null object without the explicit signal can still win over the
+		// pointer by mtime, so only a named version is compared.
+		if expected != "" && expected != "null" && pointer != nil {
+			latest := string(pointer.Extended[s3_constants.ExtLatestVersionIdKey])
+			if nullVersionIsLatest(pointer) {
+				latest = "null"
+			}
+			if latest != "" && latest != expected {
+				return false, noopResolved("VERSION_NOT_LATEST")
+			}
 		}
 		guard := &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{
 			Kind:          filer_pb.WriteCondition_IF_ENTRY_EQUAL,
@@ -271,6 +281,9 @@ func (s3a *S3ApiServer) lifecycleDeleteMarker(bucket, object string) (bool, *s3_
 	return false, retryLater("LATEST_CHANGED: createDeleteMarker")
 }
 
+// lifecycleRequireLatest refuses a current-version expiration whose version
+// is no longer the key's latest. A version file never changes, so the identity
+// check cannot see a newer write.
 func (s3a *S3ApiServer) lifecycleRequireLatest(req *s3_lifecycle_pb.LifecycleDeleteRequest, entry *filer_pb.Entry) *s3_lifecycle_pb.LifecycleDeleteResponse {
 	latest, err := s3a.getLatestObjectVersion(req.Bucket, req.ObjectPath)
 	if err != nil {
@@ -279,20 +292,24 @@ func (s3a *S3ApiServer) lifecycleRequireLatest(req *s3_lifecycle_pb.LifecycleDel
 		}
 		return retryLater("TRANSPORT_ERROR: latest-version lookup: " + err.Error())
 	}
-	versionIdOrNull := func(e *filer_pb.Entry) string {
-		if id := string(e.Extended[s3_constants.ExtVersionIdKey]); id != "" {
-			return id
-		}
-		return "null"
-	}
-	addressed := req.VersionId
-	if addressed == "" {
-		addressed = versionIdOrNull(entry)
-	}
-	if versionIdOrNull(latest) != addressed {
+	if versionIdOrNull(latest) != lifecycleAddressedVersion(req, entry) {
 		return noopResolved("VERSION_NOT_LATEST")
 	}
 	return nil
+}
+
+func versionIdOrNull(e *filer_pb.Entry) string {
+	if id := string(e.Extended[s3_constants.ExtVersionIdKey]); id != "" {
+		return id
+	}
+	return "null"
+}
+
+func lifecycleAddressedVersion(req *s3_lifecycle_pb.LifecycleDeleteRequest, entry *filer_pb.Entry) string {
+	if req.VersionId != "" {
+		return req.VersionId
+	}
+	return versionIdOrNull(entry)
 }
 
 func (s3a *S3ApiServer) lifecycleAbortMPU(ctx context.Context, req *s3_lifecycle_pb.LifecycleDeleteRequest) (*s3_lifecycle_pb.LifecycleDeleteResponse, error) {
