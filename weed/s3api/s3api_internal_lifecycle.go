@@ -95,8 +95,12 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 		}
 		switch state {
 		case s3_constants.VersioningEnabled:
-			if _, err := s3a.createDeleteMarker(req.Bucket, req.ObjectPath); err != nil {
-				return retryLater("TRANSPORT_ERROR: createDeleteMarker: " + err.Error()), nil
+			written, resp := s3a.lifecycleDeleteMarker(req.Bucket, req.ObjectPath)
+			if resp != nil {
+				return resp, nil
+			}
+			if !written {
+				return noopResolved("LATEST_IS_DELETE_MARKER"), nil
 			}
 			return done(), nil
 		case s3_constants.VersioningSuspended:
@@ -129,8 +133,8 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 			}
 			// The null delete is done, so the marker must follow even past
 			// the deadline: without it a retry finds an older version latest.
-			if _, err := s3a.createDeleteMarker(req.Bucket, req.ObjectPath); err != nil {
-				return retryLater("TRANSPORT_ERROR: createDeleteMarker: " + err.Error()), nil
+			if _, resp := s3a.lifecycleDeleteMarker(req.Bucket, req.ObjectPath); resp != nil {
+				return resp, nil
 			}
 			return done(), nil
 		default:
@@ -235,6 +239,38 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 // lifecycleRequireLatest refuses a current-version expiration whose version
 // is no longer the key's latest. A version file never changes, so the identity
 // check cannot see a newer write.
+// lifecycleDeleteMarker writes an expiration's delete marker as a
+// compare-and-set on the .versions pointer, skipping it when the latest is
+// already a delete marker. An attempt the worker gave up on may still be
+// running while its retry writes, so whichever commits second sees the marker.
+func (s3a *S3ApiServer) lifecycleDeleteMarker(bucket, object string) (bool, *s3_lifecycle_pb.LifecycleDeleteResponse) {
+	normalized := s3_constants.NormalizeObjectKey(object)
+	for range 3 {
+		pointer, err := s3a.getObjectScopedEntryRoutedByKey(bucket, normalized, s3a.bucketDir(bucket), normalized+s3_constants.VersionsFolder)
+		if err != nil {
+			if !isObjectEntryMiss(err) {
+				return false, retryLater("TRANSPORT_ERROR: latest-pointer lookup: " + err.Error())
+			}
+			pointer = nil
+		}
+		if pointer != nil && string(pointer.Extended[s3_constants.ExtLatestVersionIsDeleteMarker]) == "true" && !nullVersionIsLatest(pointer) {
+			return false, nil
+		}
+		guard := &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{
+			Kind:          filer_pb.WriteCondition_IF_ENTRY_EQUAL,
+			ExpectedEntry: pointer,
+		}}}
+		if _, err := s3a.createDeleteMarkerIf(bucket, object, guard); err != nil {
+			if errors.Is(err, errLatestVersionChanged) {
+				continue
+			}
+			return false, retryLater("TRANSPORT_ERROR: createDeleteMarker: " + err.Error())
+		}
+		return true, nil
+	}
+	return false, retryLater("LATEST_CHANGED: createDeleteMarker")
+}
+
 func (s3a *S3ApiServer) lifecycleRequireLatest(req *s3_lifecycle_pb.LifecycleDeleteRequest, entry *filer_pb.Entry) *s3_lifecycle_pb.LifecycleDeleteResponse {
 	latest, err := s3a.getLatestObjectVersion(req.Bucket, req.ObjectPath)
 	if err != nil {
