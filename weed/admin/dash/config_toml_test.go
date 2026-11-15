@@ -432,8 +432,8 @@ retry_limit = 3
 		t.Fatalf("load: %v %v", cfg, err)
 	}
 	// an explicit 0 must replace the saved value, not read as unset
-	if got := cfg.AdminConfigValues["meta_log_retention_days"].GetInt64Value(); got != 0 {
-		t.Errorf("meta_log_retention_days = %d, want 0", got)
+	if got, ok := cfg.AdminConfigValues["meta_log_retention_days"].GetKind().(*plugin_pb.ConfigValue_Int64Value); !ok || got.Int64Value != 0 {
+		t.Errorf("meta_log_retention_days = %v, want int64 0", cfg.AdminConfigValues["meta_log_retention_days"])
 	}
 	if got := cfg.AdminConfigValues["walker_interval_minutes"].GetInt64Value(); got != 30 {
 		t.Errorf("walker_interval_minutes = %d, want 30", got)
