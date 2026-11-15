@@ -644,6 +644,29 @@ func TestLifecycleDelete_SuspendedMarkerFailureLeavesNullForRetry(t *testing.T) 
 	}
 }
 
+// A routed null delete that fails retries rather than deleting through the
+// default filer, which may not have the owner's newer null object yet.
+func TestLifecycleDelete_RoutedNullDeleteFailureRetries(t *testing.T) {
+	s3a, fake, null := suspendedNullServer(t, true)
+	fake.txnCheck = func(req *filer_pb.ObjectTransactionRequest) {
+		fake.txnNoApply = !isMarkerTxn(req)
+		fake.txnErr = nil
+		if fake.txnNoApply {
+			fake.txnErr = errors.New("owner unavailable")
+		}
+	}
+	resp, err := s3a.LifecycleDelete(s3LocalPeerCtx(), &s3_lifecycle_pb.LifecycleDeleteRequest{
+		Bucket:           "b",
+		ObjectPath:       "obj",
+		ActionKind:       s3_lifecycle_pb.ActionKind_EXPIRATION_DAYS,
+		ExpectedIdentity: computeEntryIdentity(null),
+	})
+	require.NoError(t, err)
+	require.Equal(t, s3_lifecycle_pb.LifecycleDeleteOutcome_RETRY_LATER, resp.Outcome, resp.Reason)
+	require.Contains(t, fake.entries, "/buckets/b/obj")
+	requireLatestIsMarker(t, s3a)
+}
+
 // A null object written after the expiration read the old one is not deleted.
 func TestLifecycleDelete_SuspendedNullRewrittenBeforeDeleteSurvives(t *testing.T) {
 	for _, routed := range []bool{true, false} {

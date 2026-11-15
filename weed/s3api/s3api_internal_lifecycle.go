@@ -307,6 +307,8 @@ func (s3a *S3ApiServer) lifecycleDeleteNullVersion(req *s3_lifecycle_pb.Lifecycl
 				return done()
 			case s3err.ErrAccessDenied:
 				return retryLater("ACCESS_DENIED: deleteNullVersion: object lock")
+			default:
+				return retryLater("TRANSPORT_ERROR: routedDeleteNullVersion: " + s3err.GetAPIError(code).Code)
 			}
 		}
 	}
