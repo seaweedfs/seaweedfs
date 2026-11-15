@@ -520,6 +520,14 @@ func TestValidateObjectLockHeaders(t *testing.T) {
 		assert.True(t, errors.Is(err, ErrGovernanceBypassVersioningRequired))
 	})
 
+	t.Run("Title-case governance bypass header on non-versioned bucket", func(t *testing.T) {
+		req := httptest.NewRequest("PUT", "/bucket/object", nil)
+		req.Header.Set("x-amz-bypass-governance-retention", "True")
+
+		err := s3a.validateObjectLockHeaders(req, "bucket", "object", false)
+		assert.True(t, errors.Is(err, ErrGovernanceBypassVersioningRequired))
+	})
+
 	t.Run("Governance bypass header on versioned bucket should pass", func(t *testing.T) {
 		req := httptest.NewRequest("PUT", "/bucket/object", nil)
 		req.Header.Set("x-amz-bypass-governance-retention", "true")

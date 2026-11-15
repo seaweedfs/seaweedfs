@@ -240,6 +240,18 @@ func TestGovernanceBypassHeader(t *testing.T) {
 			description:    "Header with 'true' value should enable bypass",
 		},
 		{
+			name:           "bypass_header_title_case",
+			headerValue:    "True",
+			expectedResult: true,
+			description:    "botocore and the AWS CLI send 'True'",
+		},
+		{
+			name:           "bypass_header_upper_case",
+			headerValue:    "TRUE",
+			expectedResult: true,
+			description:    "Header value is case-insensitive",
+		},
+		{
 			name:           "bypass_header_false",
 			headerValue:    "false",
 			expectedResult: false,
@@ -266,7 +278,7 @@ func TestGovernanceBypassHeader(t *testing.T) {
 				req.Header.Set("x-amz-bypass-governance-retention", tt.headerValue)
 			}
 
-			result := req.Header.Get("x-amz-bypass-governance-retention") == "true"
+			result := governanceBypassRequested(req)
 
 			if result != tt.expectedResult {
 				t.Errorf("bypass header check = %v, want %v. %s", result, tt.expectedResult, tt.description)
@@ -450,7 +462,7 @@ func TestGovernancePermissionHTTPFlow(t *testing.T) {
 			}
 
 			// Test the header processing logic used in handlers
-			bypassGovernance := req.Header.Get("x-amz-bypass-governance-retention") == "true"
+			bypassGovernance := governanceBypassRequested(req)
 
 			if bypassGovernance != tt.expectedBypassGovernance {
 				t.Errorf("Expected bypassGovernance to be %v, got %v", tt.expectedBypassGovernance, bypassGovernance)
@@ -471,7 +483,7 @@ func TestGovernancePermissionMethodCalls(t *testing.T) {
 		// Extract parameters as done in the handler
 		bucket, object := s3_constants.GetBucketAndObject(req)
 		versionId := req.URL.Query().Get("versionId")
-		bypassGovernance := req.Header.Get("x-amz-bypass-governance-retention") == "true"
+		bypassGovernance := governanceBypassRequested(req)
 
 		// Verify the parameters are extracted correctly
 		// Note: The actual bucket and object extraction depends on the URL structure
@@ -491,7 +503,7 @@ func TestGovernancePermissionMethodCalls(t *testing.T) {
 
 		// Extract parameters as done in the handler
 		bucket, object := s3_constants.GetBucketAndObject(req)
-		bypassGovernance := req.Header.Get("x-amz-bypass-governance-retention") == "true"
+		bypassGovernance := governanceBypassRequested(req)
 		versioningEnabled := true // Would be determined by isVersioningEnabled(bucket)
 
 		// Verify the parameters are extracted correctly
