@@ -2594,11 +2594,8 @@ func (s3a *S3ApiServer) validateObjectLockHeaders(r *http.Request, bucket, objec
 		}
 	}
 
-	// Check for governance bypass header - only valid for buckets with Object Lock enabled
-	bypassGovernance := r.Header.Get("x-amz-bypass-governance-retention") == "true"
-
 	// Governance bypass headers are only valid for buckets with Object Lock enabled
-	if bypassGovernance && !objectLockEnabled {
+	if governanceBypassRequested(r) && !objectLockEnabled {
 		return ErrGovernanceBypassVersioningRequired
 	}
 

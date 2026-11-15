@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -543,11 +544,15 @@ func (s3a *S3ApiServer) checkGovernanceBypassPermission(request *http.Request, b
 	return true
 }
 
+// AWS SDKs send the boolean as "true" or "True".
+func governanceBypassRequested(r *http.Request) bool {
+	return strings.EqualFold(r.Header.Get(s3_constants.AmzBypassGovernanceRetention), "true")
+}
+
 // evaluateGovernanceBypassRequest evaluates if governance bypass is requested and permitted
 func (s3a *S3ApiServer) evaluateGovernanceBypassRequest(r *http.Request, bucket, object string) bool {
 	// Step 1: Check if governance bypass was requested via header
-	bypassRequested := r.Header.Get("x-amz-bypass-governance-retention") == "true"
-	if !bypassRequested {
+	if !governanceBypassRequested(r) {
 		// No bypass requested - normal retention enforcement applies
 		return false
 	}
