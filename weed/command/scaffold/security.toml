@@ -78,7 +78,10 @@ expires_after_seconds = 10           # seconds
 # gRPC mTLS configuration
 # All gRPC TLS authentications are mutual (mTLS)
 # The values for ca, cert, and key are paths to the certificate/key files
-# The host name is not checked, so the certificate files can be shared
+# The host name is not checked, so the certificate files can be shared.
+# Set verify_server_host = true under [grpc] or a [grpc.<component>] section to
+# require that a server certificate is valid for the host or IP that component
+# dials, as the Rust volume server always does.
 # Each [grpc.<component>] section also accepts optional client_cert/client_key,
 # presented when that component dials other servers. Set them when your CA
 # issues separate serverAuth-only and clientAuth-only certificates; when unset,
@@ -89,6 +92,7 @@ expires_after_seconds = 10           # seconds
 # fatal: the component never falls back to plaintext.
 [grpc]
 ca = ""
+verify_server_host = false
 # Set wildcard domain for enable TLS authentication by common names
 allowed_wildcard_domain = "" # .mycompany.com
 # Optional allowlist a client checks the dialed server's certificate against:
