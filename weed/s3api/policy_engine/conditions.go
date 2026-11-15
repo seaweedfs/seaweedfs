@@ -3,158 +3,14 @@ package policy_engine
 import (
 	"fmt"
 	"net"
-	"reflect"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 )
-
-// LRUNode represents a node in the doubly-linked list for efficient LRU operations
-type LRUNode struct {
-	key   string
-	value []string
-	prev  *LRUNode
-	next  *LRUNode
-}
-
-// NormalizedValueCache provides size-limited caching for normalized values with efficient LRU eviction
-type NormalizedValueCache struct {
-	mu      sync.RWMutex
-	cache   map[string]*LRUNode
-	maxSize int
-	head    *LRUNode // Most recently used
-	tail    *LRUNode // Least recently used
-}
-
-// NewNormalizedValueCache creates a new normalized value cache with configurable size
-func NewNormalizedValueCache(maxSize int) *NormalizedValueCache {
-	if maxSize <= 0 {
-		maxSize = 1000 // Default size
-	}
-
-	// Create dummy head and tail nodes for easier list manipulation
-	head := &LRUNode{}
-	tail := &LRUNode{}
-	head.next = tail
-	tail.prev = head
-
-	return &NormalizedValueCache{
-		cache:   make(map[string]*LRUNode),
-		maxSize: maxSize,
-		head:    head,
-		tail:    tail,
-	}
-}
-
-// Get retrieves a cached value and updates access order in O(1) time
-func (c *NormalizedValueCache) Get(key string) ([]string, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if node, exists := c.cache[key]; exists {
-		// Move to head (most recently used) - O(1) operation
-		c.moveToHead(node)
-		return node.value, true
-	}
-	return nil, false
-}
-
-// Set stores a value in the cache with size limit enforcement in O(1) time
-func (c *NormalizedValueCache) Set(key string, value []string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if node, exists := c.cache[key]; exists {
-		// Update existing node and move to head
-		node.value = value
-		c.moveToHead(node)
-		return
-	}
-
-	// Create new node
-	newNode := &LRUNode{
-		key:   key,
-		value: value,
-	}
-
-	// If at max size, evict least recently used
-	if len(c.cache) >= c.maxSize {
-		c.evictLeastRecentlyUsed()
-	}
-
-	// Add to cache and move to head
-	c.cache[key] = newNode
-	c.addToHead(newNode)
-}
-
-// moveToHead moves a node to the head of the list (most recently used) - O(1)
-func (c *NormalizedValueCache) moveToHead(node *LRUNode) {
-	c.removeNode(node)
-	c.addToHead(node)
-}
-
-// addToHead adds a node right after the head - O(1)
-func (c *NormalizedValueCache) addToHead(node *LRUNode) {
-	node.prev = c.head
-	node.next = c.head.next
-	c.head.next.prev = node
-	c.head.next = node
-}
-
-// removeNode removes a node from the list - O(1)
-func (c *NormalizedValueCache) removeNode(node *LRUNode) {
-	node.prev.next = node.next
-	node.next.prev = node.prev
-}
-
-// removeTail removes the last node before tail (least recently used) - O(1)
-func (c *NormalizedValueCache) removeTail() *LRUNode {
-	lastNode := c.tail.prev
-	c.removeNode(lastNode)
-	return lastNode
-}
-
-// evictLeastRecentlyUsed removes the least recently used item in O(1) time
-func (c *NormalizedValueCache) evictLeastRecentlyUsed() {
-	tail := c.removeTail()
-	delete(c.cache, tail.key)
-}
-
-// Global cache instance with size limit
-var normalizedValueCache = NewNormalizedValueCache(1000)
-
-// getCachedNormalizedValues returns cached normalized values or caches new ones
-func getCachedNormalizedValues(value interface{}) []string {
-	if value == nil {
-		return nil // no expected values; never reach reflect.TypeOf(nil)
-	}
-	// Create a string key for caching - more efficient than fmt.Sprintf
-	typeStr := reflect.TypeOf(value).String()
-	cacheKey := typeStr + ":" + fmt.Sprint(value)
-
-	// Try to get from cache
-	if cached, exists := normalizedValueCache.Get(cacheKey); exists {
-		return cached
-	}
-
-	// Not in cache, normalize and store
-	// Use the error-handling version for better error reporting
-	normalized, err := normalizeToStringSliceWithError(value)
-	if err != nil {
-		glog.Warningf("Failed to normalize policy value %v: %v", value, err)
-		// Fallback to string conversion for backward compatibility
-		normalized = []string{fmt.Sprintf("%v", value)}
-	}
-
-	normalizedValueCache.Set(cacheKey, normalized)
-
-	return normalized
-}
 
 // ConditionEvaluator evaluates policy conditions
 type ConditionEvaluator interface {
@@ -165,7 +21,7 @@ type ConditionEvaluator interface {
 type StringEqualsEvaluator struct{}
 
 func (e *StringEqualsEvaluator) Evaluate(conditionValue interface{}, contextValues []string) bool {
-	expectedValues := getCachedNormalizedValues(conditionValue)
+	expectedValues := normalizeToStringSlice(conditionValue)
 	for _, expected := range expectedValues {
 		for _, contextValue := range contextValues {
 			if expected == contextValue {
@@ -180,7 +36,7 @@ func (e *StringEqualsEvaluator) Evaluate(conditionValue interface{}, contextValu
 type StringNotEqualsEvaluator struct{}
 
 func (e *StringNotEqualsEvaluator) Evaluate(conditionValue interface{}, contextValues []string) bool {
-	expectedValues := getCachedNormalizedValues(conditionValue)
+	expectedValues := normalizeToStringSlice(conditionValue)
 	for _, expected := range expectedValues {
 		for _, contextValue := range contextValues {
 			if expected == contextValue {
@@ -195,7 +51,7 @@ func (e *StringNotEqualsEvaluator) Evaluate(conditionValue interface{}, contextV
 type StringLikeEvaluator struct{}
 
 func (e *StringLikeEvaluator) Evaluate(conditionValue interface{}, contextValues []string) bool {
-	patterns := getCachedNormalizedValues(conditionValue)
+	patterns := normalizeToStringSlice(conditionValue)
 	for _, pattern := range patterns {
 		for _, contextValue := range contextValues {
 			if wildcard.MatchesWildcard(pattern, contextValue) {
@@ -210,7 +66,7 @@ func (e *StringLikeEvaluator) Evaluate(conditionValue interface{}, contextValues
 type StringNotLikeEvaluator struct{}
 
 func (e *StringNotLikeEvaluator) Evaluate(conditionValue interface{}, contextValues []string) bool {
-	patterns := getCachedNormalizedValues(conditionValue)
+	patterns := normalizeToStringSlice(conditionValue)
 	for _, pattern := range patterns {
 		for _, contextValue := range contextValues {
 			if wildcard.MatchesWildcard(pattern, contextValue) {
@@ -225,7 +81,7 @@ func (e *StringNotLikeEvaluator) Evaluate(conditionValue interface{}, contextVal
 type StringEqualsIgnoreCaseEvaluator struct{}
 
 func (e *StringEqualsIgnoreCaseEvaluator) Evaluate(conditionValue interface{}, contextValues []string) bool {
-	expectedValues := getCachedNormalizedValues(conditionValue)
+	expectedValues := normalizeToStringSlice(conditionValue)
 	for _, expected := range expectedValues {
 		for _, contextValue := range contextValues {
 			if strings.EqualFold(expected, contextValue) {
@@ -240,7 +96,7 @@ func (e *StringEqualsIgnoreCaseEvaluator) Evaluate(conditionValue interface{}, c
 type StringNotEqualsIgnoreCaseEvaluator struct{}
 
 func (e *StringNotEqualsIgnoreCaseEvaluator) Evaluate(conditionValue interface{}, contextValues []string) bool {
-	expectedValues := getCachedNormalizedValues(conditionValue)
+	expectedValues := normalizeToStringSlice(conditionValue)
 	for _, expected := range expectedValues {
 		for _, contextValue := range contextValues {
 			if strings.EqualFold(expected, contextValue) {
@@ -255,7 +111,7 @@ func (e *StringNotEqualsIgnoreCaseEvaluator) Evaluate(conditionValue interface{}
 type NumericEqualsEvaluator struct{}
 
 func (e *NumericEqualsEvaluator) Evaluate(conditionValue interface{}, contextValues []string) bool {
-	expectedValues := getCachedNormalizedValues(conditionValue)
+	expectedValues := normalizeToStringSlice(conditionValue)
 	for _, expected := range expectedValues {
 		expectedFloat, err := strconv.ParseFloat(expected, 64)
 		if err != nil {
@@ -278,7 +134,7 @@ func (e *NumericEqualsEvaluator) Evaluate(conditionValue interface{}, contextVal
 type NumericNotEqualsEvaluator struct{}
 
 func (e *NumericNotEqualsEvaluator) Evaluate(conditionValue interface{}, contextValues []string) bool {
-	expectedValues := getCachedNormalizedValues(conditionValue)
+	expectedValues := normalizeToStringSlice(conditionValue)
 	for _, expected := range expectedValues {
 		expectedFloat, err := strconv.ParseFloat(expected, 64)
 		if err != nil {
@@ -301,7 +157,7 @@ func (e *NumericNotEqualsEvaluator) Evaluate(conditionValue interface{}, context
 type NumericLessThanEvaluator struct{}
 
 func (e *NumericLessThanEvaluator) Evaluate(conditionValue interface{}, contextValues []string) bool {
-	expectedValues := getCachedNormalizedValues(conditionValue)
+	expectedValues := normalizeToStringSlice(conditionValue)
 	for _, expected := range expectedValues {
 		expectedFloat, err := strconv.ParseFloat(expected, 64)
 		if err != nil {
@@ -324,7 +180,7 @@ func (e *NumericLessThanEvaluator) Evaluate(conditionValue interface{}, contextV
 type NumericLessThanEqualsEvaluator struct{}
 
 func (e *NumericLessThanEqualsEvaluator) Evaluate(conditionValue interface{}, contextValues []string) bool {
-	expectedValues := getCachedNormalizedValues(conditionValue)
+	expectedValues := normalizeToStringSlice(conditionValue)
 	for _, expected := range expectedValues {
 		expectedFloat, err := strconv.ParseFloat(expected, 64)
 		if err != nil {
@@ -347,7 +203,7 @@ func (e *NumericLessThanEqualsEvaluator) Evaluate(conditionValue interface{}, co
 type NumericGreaterThanEvaluator struct{}
 
 func (e *NumericGreaterThanEvaluator) Evaluate(conditionValue interface{}, contextValues []string) bool {
-	expectedValues := getCachedNormalizedValues(conditionValue)
+	expectedValues := normalizeToStringSlice(conditionValue)
 	for _, expected := range expectedValues {
 		expectedFloat, err := strconv.ParseFloat(expected, 64)
 		if err != nil {
@@ -370,7 +226,7 @@ func (e *NumericGreaterThanEvaluator) Evaluate(conditionValue interface{}, conte
 type NumericGreaterThanEqualsEvaluator struct{}
 
 func (e *NumericGreaterThanEqualsEvaluator) Evaluate(conditionValue interface{}, contextValues []string) bool {
-	expectedValues := getCachedNormalizedValues(conditionValue)
+	expectedValues := normalizeToStringSlice(conditionValue)
 	for _, expected := range expectedValues {
 		expectedFloat, err := strconv.ParseFloat(expected, 64)
 		if err != nil {
@@ -393,7 +249,7 @@ func (e *NumericGreaterThanEqualsEvaluator) Evaluate(conditionValue interface{},
 type DateEqualsEvaluator struct{}
 
 func (e *DateEqualsEvaluator) Evaluate(conditionValue interface{}, contextValues []string) bool {
-	expectedValues := getCachedNormalizedValues(conditionValue)
+	expectedValues := normalizeToStringSlice(conditionValue)
 	for _, expected := range expectedValues {
 		expectedTime, err := time.Parse(time.RFC3339, expected)
 		if err != nil {
@@ -416,7 +272,7 @@ func (e *DateEqualsEvaluator) Evaluate(conditionValue interface{}, contextValues
 type DateNotEqualsEvaluator struct{}
 
 func (e *DateNotEqualsEvaluator) Evaluate(conditionValue interface{}, contextValues []string) bool {
-	expectedValues := getCachedNormalizedValues(conditionValue)
+	expectedValues := normalizeToStringSlice(conditionValue)
 	for _, expected := range expectedValues {
 		expectedTime, err := time.Parse(time.RFC3339, expected)
 		if err != nil {
@@ -439,7 +295,7 @@ func (e *DateNotEqualsEvaluator) Evaluate(conditionValue interface{}, contextVal
 type DateLessThanEvaluator struct{}
 
 func (e *DateLessThanEvaluator) Evaluate(conditionValue interface{}, contextValues []string) bool {
-	expectedValues := getCachedNormalizedValues(conditionValue)
+	expectedValues := normalizeToStringSlice(conditionValue)
 	for _, expected := range expectedValues {
 		expectedTime, err := time.Parse(time.RFC3339, expected)
 		if err != nil {
@@ -462,7 +318,7 @@ func (e *DateLessThanEvaluator) Evaluate(conditionValue interface{}, contextValu
 type DateLessThanEqualsEvaluator struct{}
 
 func (e *DateLessThanEqualsEvaluator) Evaluate(conditionValue interface{}, contextValues []string) bool {
-	expectedValues := getCachedNormalizedValues(conditionValue)
+	expectedValues := normalizeToStringSlice(conditionValue)
 	for _, expected := range expectedValues {
 		expectedTime, err := time.Parse(time.RFC3339, expected)
 		if err != nil {
@@ -485,7 +341,7 @@ func (e *DateLessThanEqualsEvaluator) Evaluate(conditionValue interface{}, conte
 type DateGreaterThanEvaluator struct{}
 
 func (e *DateGreaterThanEvaluator) Evaluate(conditionValue interface{}, contextValues []string) bool {
-	expectedValues := getCachedNormalizedValues(conditionValue)
+	expectedValues := normalizeToStringSlice(conditionValue)
 	for _, expected := range expectedValues {
 		expectedTime, err := time.Parse(time.RFC3339, expected)
 		if err != nil {
@@ -508,7 +364,7 @@ func (e *DateGreaterThanEvaluator) Evaluate(conditionValue interface{}, contextV
 type DateGreaterThanEqualsEvaluator struct{}
 
 func (e *DateGreaterThanEqualsEvaluator) Evaluate(conditionValue interface{}, contextValues []string) bool {
-	expectedValues := getCachedNormalizedValues(conditionValue)
+	expectedValues := normalizeToStringSlice(conditionValue)
 	for _, expected := range expectedValues {
 		expectedTime, err := time.Parse(time.RFC3339, expected)
 		if err != nil {
@@ -531,7 +387,7 @@ func (e *DateGreaterThanEqualsEvaluator) Evaluate(conditionValue interface{}, co
 type BoolEvaluator struct{}
 
 func (e *BoolEvaluator) Evaluate(conditionValue interface{}, contextValues []string) bool {
-	expectedValues := getCachedNormalizedValues(conditionValue)
+	expectedValues := normalizeToStringSlice(conditionValue)
 	for _, expected := range expectedValues {
 		for _, contextValue := range contextValues {
 			if strings.ToLower(expected) == strings.ToLower(contextValue) {
@@ -546,7 +402,7 @@ func (e *BoolEvaluator) Evaluate(conditionValue interface{}, contextValues []str
 type IpAddressEvaluator struct{}
 
 func (e *IpAddressEvaluator) Evaluate(conditionValue interface{}, contextValues []string) bool {
-	expectedValues := getCachedNormalizedValues(conditionValue)
+	expectedValues := normalizeToStringSlice(conditionValue)
 	for _, expected := range expectedValues {
 		_, expectedNet, err := net.ParseCIDR(expected)
 		if err != nil {
@@ -587,7 +443,7 @@ func (e *IpAddressEvaluator) Evaluate(conditionValue interface{}, contextValues 
 type NotIpAddressEvaluator struct{}
 
 func (e *NotIpAddressEvaluator) Evaluate(conditionValue interface{}, contextValues []string) bool {
-	expectedValues := getCachedNormalizedValues(conditionValue)
+	expectedValues := normalizeToStringSlice(conditionValue)
 	for _, expected := range expectedValues {
 		_, expectedNet, err := net.ParseCIDR(expected)
 		if err != nil {
@@ -628,7 +484,7 @@ func (e *NotIpAddressEvaluator) Evaluate(conditionValue interface{}, contextValu
 type ArnEqualsEvaluator struct{}
 
 func (e *ArnEqualsEvaluator) Evaluate(conditionValue interface{}, contextValues []string) bool {
-	expectedValues := getCachedNormalizedValues(conditionValue)
+	expectedValues := normalizeToStringSlice(conditionValue)
 	for _, expected := range expectedValues {
 		for _, contextValue := range contextValues {
 			if expected == contextValue {
@@ -643,7 +499,7 @@ func (e *ArnEqualsEvaluator) Evaluate(conditionValue interface{}, contextValues 
 type ArnLikeEvaluator struct{}
 
 func (e *ArnLikeEvaluator) Evaluate(conditionValue interface{}, contextValues []string) bool {
-	patterns := getCachedNormalizedValues(conditionValue)
+	patterns := normalizeToStringSlice(conditionValue)
 	for _, pattern := range patterns {
 		for _, contextValue := range contextValues {
 			if wildcard.MatchesWildcard(pattern, contextValue) {
@@ -658,7 +514,7 @@ func (e *ArnLikeEvaluator) Evaluate(conditionValue interface{}, contextValues []
 type NullEvaluator struct{}
 
 func (e *NullEvaluator) Evaluate(conditionValue interface{}, contextValues []string) bool {
-	expectedValues := getCachedNormalizedValues(conditionValue)
+	expectedValues := normalizeToStringSlice(conditionValue)
 	for _, expected := range expectedValues {
 		expectedBool := strings.ToLower(expected) == "true"
 		contextExists := len(contextValues) > 0
@@ -851,8 +707,6 @@ func evaluateConditions(conditions PolicyConditions, contextValues map[string][]
 				substitutedValues[i] = SubstituteVariables(v, contextValues, claims)
 			}
 
-			// Pass substituted values (casted to interface{} to match signature if needed, or update evaluators to accept []string)
-			// The evaluators take interface{}, but getCachedNormalizedValues handles []string.
 			if !conditionEvaluator.Evaluate(substitutedValues, contextVals) {
 				return false // If any condition fails, the whole condition block fails
 			}
