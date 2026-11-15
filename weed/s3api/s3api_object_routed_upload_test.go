@@ -200,3 +200,67 @@ func TestUploadPartAfterOwnerChange(t *testing.T) {
 	require.Equal(t, s3err.ErrNone, code)
 	require.Len(t, listed.Part, 1)
 }
+
+// A new owner that received only some of the parts so far lists them together
+// with the rest still on the prior owner.
+func TestListPartsMergesPriorOwnerParts(t *testing.T) {
+	util_http.InitGlobalHttpClient()
+	volume := startFakeVolumeServer(t)
+	prior := &ambiguousPutFiler{volume: volume, apply: true, entries: map[string]*filer_pb.Entry{}}
+	next := &ambiguousPutFiler{volume: volume, apply: true, entries: map[string]*filer_pb.Entry{}}
+	priorAddr := startFakeFiler(t, prior)
+	nextAddr := startFakeFiler(t, next)
+	s3a := newPutTestServer(t, startFakeFiler(t, &ambiguousPutFiler{volume: volume, entries: map[string]*filer_pb.Entry{}}))
+	s3a.iam = &IdentityAccessManagement{}
+	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+	s3a.bucketConfigCache.Set("b", &BucketConfig{Name: "b"})
+	s3a.objectWriteLockClient = cluster.NewLockClient(s3a.option.GrpcDialOption, priorAddr)
+	s3a.objectWriteLockClient.SetRing([]pb.ServerAddress{priorAddr}, 1)
+
+	out, code := s3a.createMultipartUpload(httptest.NewRequest(http.MethodPost, "/b/dir/object?uploads", nil),
+		&s3.CreateMultipartUploadInput{Bucket: aws.String("b"), Key: aws.String("dir/object")})
+	require.Equal(t, s3err.ErrNone, code)
+	uploadDir := "/buckets/b/.uploads/" + *out.UploadId
+	etags := map[int]string{}
+	for partNumber, body := range []string{strings.Repeat("a", 5*1024*1024), "tail"} {
+		r := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/b/dir/object?partNumber=%d&uploadId=%s", partNumber+1, *out.UploadId), strings.NewReader(body))
+		r = mux.SetURLVars(r, map[string]string{"bucket": "b", "object": "dir/object"})
+		w := httptest.NewRecorder()
+		s3a.PutObjectPartHandler(w, r)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		require.Len(t, w.Header()["ETag"], 1)
+		etags[partNumber+1] = w.Header()["ETag"][0]
+	}
+
+	prior.mu.Lock()
+	for key, entry := range prior.entries {
+		if key == uploadDir || strings.HasPrefix(key, uploadDir+"/0001") {
+			next.entries[key] = entry
+		}
+	}
+	prior.mu.Unlock()
+	s3a.objectWriteLockClient.SetRing([]pb.ServerAddress{nextAddr}, 2)
+
+	listParts := func(maxParts, marker int64) *ListPartsResult {
+		listed, code := s3a.listObjectParts(&s3.ListPartsInput{
+			Bucket: aws.String("b"), Key: aws.String("dir/object"), UploadId: out.UploadId,
+			MaxParts: aws.Int64(maxParts), PartNumberMarker: aws.Int64(marker),
+		})
+		require.Equal(t, s3err.ErrNone, code)
+		return listed
+	}
+	require.Len(t, listParts(1000, 0).Part, 2)
+	first := listParts(1, 0)
+	require.Len(t, first.Part, 1)
+	require.Equal(t, int64(1), *first.Part[0].PartNumber)
+	require.True(t, *first.IsTruncated)
+	second := listParts(1, 1)
+	require.Len(t, second.Part, 1)
+	require.Equal(t, int64(2), *second.Part[0].PartNumber)
+	require.False(t, *second.IsTruncated)
+
+	_, code = s3a.completeMultipartUpload(httptest.NewRequest(http.MethodPost, "/b/dir/object?uploadId="+*out.UploadId, nil),
+		&s3.CompleteMultipartUploadInput{Bucket: aws.String("b"), Key: aws.String("dir/object"), UploadId: out.UploadId},
+		&CompleteMultipartUpload{Parts: []CompletedPart{{ETag: etags[1], PartNumber: 1}, {ETag: etags[2], PartNumber: 2}}})
+	require.Equal(t, s3err.ErrNone, code)
+}

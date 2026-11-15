@@ -3,6 +3,7 @@ package s3api
 import (
 	"context"
 	"errors"
+	"sort"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -57,16 +58,16 @@ func (u uploadFilerClient) getEntry(parentDirectoryPath, entryName string) (*fil
 	return entry, err
 }
 
-// list reads the owner's listing, and while a ring change is in its cooling-off
-// window falls back to the prior owner when the new one has nothing yet, the
-// way getEntry finds the upload record there.
+// list reads the owner's listing. While a ring change is in its cooling-off
+// window the prior owner may still hold parts the new owner has not received,
+// so its listing is merged in, the owner's entry winning a name both hold.
 func (u uploadFilerClient) list(parentDirectoryPath, prefix, startFrom string, inclusive bool, limit uint32) ([]*filer_pb.Entry, bool, error) {
 	entries, isLast, err := u.s3a.listObjectScopedEntriesRoutedByKey(u.bucket, u.object, parentDirectoryPath, prefix, startFrom, inclusive, limit)
-	if len(entries) > 0 || (err != nil && !errors.Is(err, filer_pb.ErrNotFound)) {
+	if err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
 		return entries, isLast, err
 	}
 	prior := u.s3a.priorWriteOwner(u.bucket, u.object)
-	if prior == "" || prior == u.s3a.routableWriteOwner(u.bucket, u.object) {
+	if prior == "" {
 		return entries, isLast, err
 	}
 	var priorEntries []*filer_pb.Entry
@@ -81,7 +82,31 @@ func (u uploadFilerClient) list(parentDirectoryPath, prefix, startFrom string, i
 	if priorErr != nil || len(priorEntries) == 0 {
 		return entries, isLast, err
 	}
-	return priorEntries, priorLast, nil
+	merged, mergedLast := mergeEntryListings(entries, isLast, priorEntries, priorLast, limit)
+	return merged, mergedLast, nil
+}
+
+// mergeEntryListings merges two pages of one directory listed from the same
+// cursor, taking primary's entry for a name both hold. Each page holds the
+// first limit names past the cursor, so the merged first limit are exact.
+func mergeEntryListings(primary []*filer_pb.Entry, primaryLast bool, secondary []*filer_pb.Entry, secondaryLast bool, limit uint32) ([]*filer_pb.Entry, bool) {
+	byName := make(map[string]*filer_pb.Entry, len(primary)+len(secondary))
+	for _, entry := range secondary {
+		byName[entry.Name] = entry
+	}
+	for _, entry := range primary {
+		byName[entry.Name] = entry
+	}
+	merged := make([]*filer_pb.Entry, 0, len(byName))
+	for _, entry := range byName {
+		merged = append(merged, entry)
+	}
+	sort.Slice(merged, func(i, j int) bool { return merged[i].Name < merged[j].Name })
+	isLast := primaryLast && secondaryLast
+	if limit > 0 && uint32(len(merged)) > limit {
+		merged, isLast = merged[:limit], false
+	}
+	return merged, isLast
 }
 
 func (u uploadFilerClient) exists(parentDirectoryPath, entryName string, isDirectory bool) (bool, error) {
