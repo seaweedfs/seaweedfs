@@ -718,7 +718,7 @@ The bundled engine images support Linux amd64 and arm64. Use `vector.imageOverri
 
 `global.seaweedfs.enableSecurity` provisions and mounts the vector certificate and shared security configuration. With external certificates, provide the `<fullname>-vector-cert` secret (`my-seaweedfs-vector-cert` for release `my`). `fullname` follows `seaweedfs.fullname`, including `fullnameOverride`, `nameOverride`, and DNS-name truncation. Provide this secret alongside the existing CA and client secrets.
 
-The default `vector.metricsPort: 0` and TCP probes support existing engine images. The default 4.53 image does not accept metrics flags; enabling metrics with it is rejected at render time. For engine builds with `/metrics`, `/health`, and `/ready`, set `vector.imageOverride` to that compatible image and `vector.metricsPort: 9329`; readiness then checks master registration. Enabling `global.seaweedfs.monitoring.enabled` also creates the vector ServiceMonitor. NetworkPolicy includes the configured gRPC and metrics ports.
+The default `vector.metricsPort: 0` and TCP probes support existing engine images. The 4.53 image does not accept metrics flags; enabling metrics with it is rejected at render time. Images from 4.54 on serve `/metrics`, `/health`, and `/ready`: set `vector.metricsPort: 9329` (with `vector.imageOverride` for an older or custom engine build); readiness then checks master registration. Enabling `global.seaweedfs.monitoring.enabled` also creates the vector ServiceMonitor. NetworkPolicy includes the configured gRPC and metrics ports.
 
 
 To provision vector buckets during installation and upgrades, set:
