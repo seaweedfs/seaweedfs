@@ -471,6 +471,76 @@ mod tests {
         assert_eq!(ec_vol.encode_ts_ns, 1_700_000_000_000_000_042);
     }
 
+    /// With a shared `-dir.idx` every disk sees the `.ecx`, and only the disk
+    /// that received it holds the encode's `.vif`. A disk loaded first that
+    /// still holds the source volume's config-free `.vif` must take that
+    /// identity from its sibling.
+    #[test]
+    fn shared_index_disk_takes_sibling_vif_on_startup() {
+        let tmp = TempDir::new().unwrap();
+        let dir0 = tmp.path().join("data0");
+        let dir1 = tmp.path().join("data1");
+        let idx = tmp.path().join("idx");
+        for d in [&dir0, &dir1, &idx] {
+            fs::create_dir_all(d).unwrap();
+        }
+
+        let collection = "c";
+        let vid = 4123u32;
+        plant_shard(&dir0, collection, vid, 2);
+        plant_shard(&dir1, collection, vid, 0);
+        fs::write(
+            dir0.join(format!("{}_{}.vif", collection, vid)),
+            r#"{"version":3,"readOnly":true}"#,
+        )
+        .unwrap();
+        plant_ecx(&idx, collection, vid, &[0xA1u8; 20]);
+        let vif = VifVolumeInfo {
+            version: 3,
+            ec_shard_config: Some(VifEcShardConfig {
+                data_shards: 10,
+                parity_shards: 4,
+                encode_ts_ns: 1_700_000_000_000_000_043,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        fs::write(
+            dir1.join(format!("{}_{}.vif", collection, vid)),
+            serde_json::to_string(&vif).unwrap(),
+        )
+        .unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store.store_dirs = vec![
+            dir0.to_str().unwrap().to_string(),
+            dir1.to_str().unwrap().to_string(),
+        ];
+        for dir in [&dir0, &dir1] {
+            store
+                .add_location(
+                    dir.to_str().unwrap(),
+                    idx.to_str().unwrap(),
+                    100,
+                    DiskType::HardDrive,
+                    MinFreeSpace::Percent(0.0),
+                    Vec::new(),
+                )
+                .unwrap();
+        }
+
+        for loc in &store.locations {
+            let ec_vol = loc
+                .find_ec_volume(VolumeId(vid))
+                .unwrap_or_else(|| panic!("{} ec volume mounted", loc.directory));
+            assert_eq!(
+                ec_vol.encode_ts_ns, 1_700_000_000_000_000_043,
+                "{}",
+                loc.directory
+            );
+        }
+    }
+
     #[test]
     fn mirror_preserves_existing_destination_sidecars() {
         let tmp = TempDir::new().unwrap();

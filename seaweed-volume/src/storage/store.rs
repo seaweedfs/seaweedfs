@@ -122,6 +122,9 @@ pub struct Store {
     /// The copy-claim set installed on every location by
     /// set_volume_load_guard, kept here so a later add_location gets it too.
     load_guard: Option<Arc<Mutex<HashSet<VolumeId>>>>,
+    /// The data directory of every disk this server loads, set before the
+    /// first `add_location` so a disk's EC mounts can see its siblings.
+    pub store_dirs: Vec<String>,
 }
 
 impl Store {
@@ -148,6 +151,7 @@ impl Store {
             disk_stats_of: super::disk_location::get_disk_stats,
             load_guard: None,
             preallocate_supported: PREALLOCATE_SUPPORTED,
+            store_dirs: Vec::new(),
         }
     }
 
@@ -170,6 +174,7 @@ impl Store {
             tags,
         )?;
         loc.load_guard = self.load_guard.clone();
+        loc.store_dirs = self.store_dirs.clone();
         loc.load_existing_volumes(self.needle_map_kind)?;
 
         // Check for duplicate volume IDs across existing locations

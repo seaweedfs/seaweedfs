@@ -58,6 +58,8 @@ pub struct DiskLocation {
     /// skips a claimed vid outright and claims any other through its load,
     /// so a VolumeCopy's .note sweep cannot unlink files it still writes.
     pub(crate) load_guard: Option<Arc<Mutex<HashSet<VolumeId>>>>,
+    /// The data directory of every disk on this server.
+    pub(crate) store_dirs: Vec<String>,
 }
 
 /// Keeps `vid` in the copy-claim set through one scan load so a VolumeCopy
@@ -123,6 +125,7 @@ impl DiskLocation {
             disk_free_bytes: AtomicU64::new(0),
             min_free_space,
             load_guard: None,
+            store_dirs: Vec::new(),
         })
     }
 
@@ -1020,7 +1023,9 @@ impl DiskLocation {
         // propagate the error to the caller.
         let created = !self.ec_volumes.contains_key(&vid);
         if created {
-            let ec_vol = EcVolume::new(&dir, idx_dir, collection, vid).map_err(VolumeError::Io)?;
+            let ec_vol =
+                EcVolume::new_with_vif_dirs(&dir, idx_dir, &self.store_dirs, collection, vid)
+                    .map_err(VolumeError::Io)?;
             self.ec_volumes.insert(vid, ec_vol);
         }
         let ec_vol = self.ec_volumes.get_mut(&vid).expect("just inserted above");

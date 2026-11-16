@@ -450,6 +450,7 @@ async fn run(
 
     {
         let mut store = state.store.write().unwrap();
+        store.store_dirs = config.folders.clone();
         for (i, dir) in config.folders.iter().enumerate() {
             let idx_dir = if config.idx_folder.is_empty() {
                 dir.as_str()
