@@ -283,3 +283,98 @@ func TestMirrorEcMetadataOnStartup_NoOpWhenAlreadyMirrored(t *testing.T) {
 		t.Errorf("dir0 .ecx resolved at %q, want %q", got, want)
 	}
 }
+
+// Shards on a disk that still holds the source volume's config-free .vif must
+// mount with the owner's encode identity after a restart: mirroring the index
+// next to that .vif would make the disk mount through it.
+func TestMirrorEcMetadataOnStartup_KeepsConfigFreeVifDiskCrossDisk(t *testing.T) {
+	tempDir := t.TempDir()
+	dir0 := filepath.Join(tempDir, "data1")
+	dir1 := filepath.Join(tempDir, "data2")
+	for _, d := range []string{dir0, dir1} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", d, err)
+		}
+	}
+
+	collection := "c"
+	vid := needle.VolumeId(4122)
+	const dataShards, parityShards = 10, 4
+	const datSize int64 = 10 * 1024 * 1024
+	const encodeTsNs = int64(1_700_000_000_000_000_042)
+	expectedShardSize := calculateExpectedShardSize(datSize, dataShards)
+	base0 := erasure_coding.EcShardFileName(collection, dir0, int(vid))
+	base1 := erasure_coding.EcShardFileName(collection, dir1, int(vid))
+	for base, shardId := range map[string]int{base0: 2, base1: 0} {
+		if err := os.WriteFile(base+erasure_coding.ToExt(shardId), nil, 0o644); err != nil {
+			t.Fatalf("create shard: %v", err)
+		}
+		if err := os.Truncate(base+erasure_coding.ToExt(shardId), expectedShardSize); err != nil {
+			t.Fatalf("size shard: %v", err)
+		}
+	}
+	if err := volume_info.SaveVolumeInfo(base0+".vif", &volume_server_pb.VolumeInfo{
+		Version:  uint32(needle.Version3),
+		ReadOnly: true,
+	}); err != nil {
+		t.Fatalf("save source .vif: %v", err)
+	}
+	if err := os.WriteFile(base1+".ecx", bytes.Repeat([]byte{0xA1}, 20), 0o644); err != nil {
+		t.Fatalf("write .ecx: %v", err)
+	}
+	if err := volume_info.SaveVolumeInfo(base1+".vif", &volume_server_pb.VolumeInfo{
+		Version:     uint32(needle.Version3),
+		DatFileSize: datSize,
+		EcShardConfig: &volume_server_pb.EcShardConfig{
+			DataShards:   dataShards,
+			ParityShards: parityShards,
+			EncodeTsNs:   encodeTsNs,
+		},
+	}); err != nil {
+		t.Fatalf("save .vif: %v", err)
+	}
+
+	store := NewStore(nil, "localhost", 8080, 18080, "http://localhost:8080", "store-id",
+		[]string{dir0, dir1},
+		[]int32{100, 100},
+		[]util.MinFreeSpace{{}, {}},
+		"",
+		NeedleMapInMemory,
+		[]types.DiskType{types.HardDriveType, types.HardDriveType},
+		nil,
+		3,
+		stats.DefaultDiskIOProbeConfig(),
+	)
+	done := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-store.NewEcShardsChan:
+			case <-store.NewVolumesChan:
+			case <-store.DeletedVolumesChan:
+			case <-store.DeletedEcShardsChan:
+			case <-store.StateUpdateChan:
+			case <-done:
+				return
+			}
+		}
+	}()
+	t.Cleanup(func() {
+		store.Close()
+		close(done)
+	})
+
+	if _, err := os.Stat(base0 + ".ecx"); !os.IsNotExist(err) {
+		t.Errorf(".ecx mirrored next to the config-free .vif: %v", err)
+	}
+	ev0, found := store.Locations[0].FindEcVolume(vid)
+	if !found {
+		t.Fatalf("dir0 EcVolume %d not loaded", vid)
+	}
+	if _, ok := ev0.FindEcVolumeShard(2); !ok {
+		t.Errorf("shard 2 not registered on dir0")
+	}
+	if ev0.EncodeTsNs != encodeTsNs {
+		t.Errorf("dir0 EncodeTsNs = %d, want %d", ev0.EncodeTsNs, encodeTsNs)
+	}
+}

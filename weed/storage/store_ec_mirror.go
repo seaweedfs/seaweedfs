@@ -101,6 +101,15 @@ func (l *DiskLocation) mirrorEcSidecarsFrom(owner ecxOwnerInfo, collection strin
 	srcIdxBase := erasure_coding.EcShardFileName(collection, owner.idxDir, int(vid))
 	srcDataBase := erasure_coding.EcShardFileName(collection, owner.location.Directory, int(vid))
 
+	// A local .vif with no EC config (a source volume's own) would shadow the
+	// owner's once the index is copied next to it; keep mounting across disks.
+	if dstVif := l.ecSidecarDestPath(collection, vid, ".vif"); statRegular(dstVif) && !vifIsEcVolume(dstVif) &&
+		(vifIsEcVolume(srcIdxBase+".vif") || vifIsEcVolume(srcDataBase+".vif")) {
+		glog.V(0).Infof("ec volume %d (collection=%q): %s records no EC config; not mirroring sidecars from %s",
+			vid, collection, dstVif, owner.location.Directory)
+		return 0, nil
+	}
+
 	copied := 0
 	for _, ext := range ecMirroredSidecars {
 		dst := l.ecSidecarDestPath(collection, vid, ext)
