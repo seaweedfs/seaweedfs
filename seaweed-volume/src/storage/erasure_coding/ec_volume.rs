@@ -317,7 +317,7 @@ fn prefer_ec_config_vif(local: String, alt: String) -> String {
 /// The `.vif` a disk mounting against a shared `-dir.idx` takes from a sibling
 /// data dir in `vif_dirs`: its own records no EC config, the index is not its
 /// own, and every sibling `.vif` recording an EC config names the same run.
-fn sibling_ec_config_vif(
+pub(crate) fn sibling_ec_config_vif(
     dir: &str,
     dir_idx: &str,
     vif_dirs: &[String],

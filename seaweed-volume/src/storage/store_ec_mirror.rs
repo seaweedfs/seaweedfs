@@ -541,6 +541,82 @@ mod tests {
         }
     }
 
+    /// A disk still holding the source `.dat` sizes its shards by the
+    /// sibling's encode `.vif` before the startup check decides whether they
+    /// are leftovers of an interrupted encode.
+    #[test]
+    fn shared_index_startup_validation_uses_sibling_vif_ratio() {
+        let tmp = TempDir::new().unwrap();
+        let dir0 = tmp.path().join("data0");
+        let dir1 = tmp.path().join("data1");
+        let idx = tmp.path().join("idx");
+        for d in [&dir0, &dir1, &idx] {
+            fs::create_dir_all(d).unwrap();
+        }
+
+        let collection = "c";
+        let vid = 4124u32;
+        let base0 = dir0.join(format!("{}_{}", collection, vid));
+        let dat = format!("{}.dat", base0.display());
+        let shard = format!("{}.ec02", base0.display());
+        fs::File::create(&dat)
+            .unwrap()
+            .set_len(11 * 1024 * 1024)
+            .unwrap();
+        fs::File::create(&shard)
+            .unwrap()
+            .set_len(1024 * 1024)
+            .unwrap();
+        fs::write(
+            format!("{}.vif", base0.display()),
+            r#"{"version":3,"readOnly":true}"#,
+        )
+        .unwrap();
+        plant_ecx(&idx, collection, vid, &[0xA1u8; 20]);
+        let vif = VifVolumeInfo {
+            version: 3,
+            ec_shard_config: Some(VifEcShardConfig {
+                data_shards: 12,
+                parity_shards: 4,
+                encode_ts_ns: 1_700_000_000_000_000_044,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        fs::write(
+            dir1.join(format!("{}_{}.vif", collection, vid)),
+            serde_json::to_string(&vif).unwrap(),
+        )
+        .unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store.store_dirs = vec![
+            dir0.to_str().unwrap().to_string(),
+            dir1.to_str().unwrap().to_string(),
+        ];
+        for dir in [&dir0, &dir1] {
+            store
+                .add_location(
+                    dir.to_str().unwrap(),
+                    idx.to_str().unwrap(),
+                    100,
+                    DiskType::HardDrive,
+                    MinFreeSpace::Percent(0.0),
+                    Vec::new(),
+                )
+                .unwrap();
+        }
+
+        let ecx = idx.join(format!("{}_{}.ecx", collection, vid));
+        for path in [dat.as_str(), shard.as_str(), ecx.to_str().unwrap()] {
+            assert!(Path::new(path).exists(), "{} removed at startup", path);
+        }
+        let ec_vol = store.locations[0]
+            .find_ec_volume(VolumeId(vid))
+            .expect("dir0 ec volume mounted");
+        assert!(ec_vol.has_shard(2), "shard 2 not mounted on dir0");
+    }
+
     #[test]
     fn mirror_preserves_existing_destination_sidecars() {
         let tmp = TempDir::new().unwrap();

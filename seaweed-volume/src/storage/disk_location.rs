@@ -489,8 +489,13 @@ impl DiskLocation {
 
         // Custom ratio comes from the volume's own .vif; the server holds no
         // cluster EC config in memory.
-        let data_shards =
-            ec_data_shards_from_vif(&self.directory, &self.idx_directory, collection, vid);
+        let data_shards = ec_data_shards_from_vif(
+            &self.directory,
+            &self.idx_directory,
+            &self.store_dirs,
+            collection,
+            vid,
+        );
 
         // On-disk .dat: an empty <= superblock one is a stub; a transient stat
         // error keeps the shards rather than deleting.
@@ -1446,6 +1451,7 @@ fn rm_if_present(path: String) -> io::Result<()> {
 fn ec_data_shards_from_vif(
     directory: &str,
     idx_directory: &str,
+    store_dirs: &[String],
     collection: &str,
     vid: VolumeId,
 ) -> usize {
@@ -1463,6 +1469,19 @@ fn ec_data_shards_from_vif(
         if directory == idx_directory {
             break;
         }
+    }
+    if let Some(ds) = crate::storage::erasure_coding::ec_volume::sibling_ec_config_vif(
+        directory,
+        idx_directory,
+        store_dirs,
+        collection,
+        vid,
+    )
+    .and_then(|vi| vi.ec_shard_config)
+    .map(|c| c.data_shards as usize)
+        && ds > 0
+    {
+        return ds;
     }
     DATA_SHARDS_COUNT
 }
