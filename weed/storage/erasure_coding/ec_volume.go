@@ -175,6 +175,21 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 	return newEcVolumeWith(diskType, dir, dirIdx, collection, vid, realEcjFsOps)
 }
 
+// preferEcConfigVif returns alt when local records no EC config but alt does.
+// A source volume's own .vif stays on a disk that later receives shards of the
+// same volume id, while the encode's .vif lands with the index on a sibling.
+func preferEcConfigVif(local, alt string) string {
+	localInfo, _, found, err := volume_info.MaybeLoadVolumeInfo(local)
+	if err != nil || (found && localInfo.EcShardConfig != nil) {
+		return local
+	}
+	altInfo, _, altFound, altErr := volume_info.MaybeLoadVolumeInfo(alt)
+	if altErr != nil || !altFound || altInfo.EcShardConfig == nil {
+		return local
+	}
+	return alt
+}
+
 // newEcVolumeWith is NewEcVolume with the journal-compaction filesystem steps
 // supplied, so tests can drive a failing load or publish through the real
 // mount.
@@ -311,6 +326,9 @@ func newEcVolumeWith(diskType types.DiskType, dir string, dirIdx string, collect
 				vifFileName = altVif
 			}
 		}
+	}
+	if dirIdx != dir && vifFileName == dataBaseFileName+".vif" {
+		vifFileName = preferEcConfigVif(vifFileName, EcShardFileName(collection, dirIdx, int(vid))+".vif")
 	}
 	ev.Version = needle.Version3
 	// A present-but-unreadable or malformed .vif FAILS the mount: every new
