@@ -350,3 +350,31 @@ func TestSubscribeLoop_AggregatedRingServesPastDiskHold(t *testing.T) {
 	r := h.subscribeAggregated(now.Add(-25 * time.Second).UnixNano())
 	waitForEvents(t, r, []int64{onDisk, live}, 3*time.Second)
 }
+
+// TestSubscribeLoop_AggregatedNewPeerHistoryReadFromDisk: a peer first
+// followed after the cursor streams into the ring only from its start, so what
+// it logged before then is on disk alone and the ring cannot serve the cursor.
+func TestSubscribeLoop_AggregatedNewPeerHistoryReadFromDisk(t *testing.T) {
+	h := newSubscribeHarness(t)
+	prevRetry := unflushedGapRetryInterval
+	unflushedGapRetryInterval = 30 * time.Second
+	t.Cleanup(func() { unflushedGapRetryInterval = prevRetry })
+
+	now := time.Now()
+	onDisk := now.Add(-20 * time.Second).UnixNano()
+	h.append(onDisk)
+	h.f.LocalMetaLogBuffer.ForceFlush()
+	waitForFlushedFiles(t, h, onDisk)
+
+	ma := h.startAggregator()
+	newPeer := pb.ServerAddress("new-peer:8888")
+	ma.StartPeerForTesting(newPeer, now.Add(-15*time.Second))
+	h.appendAggregated(now.Add(-30 * time.Second).UnixNano())
+	live := now.Add(-10 * time.Second).UnixNano()
+	h.appendAggregated(live)
+	reportPeersAt(ma, live, live)
+	ma.ReportPeerWatermarksForTesting(newPeer, live, live)
+
+	r := h.subscribeAggregated(now.Add(-25 * time.Second).UnixNano())
+	waitForEvents(t, r, []int64{onDisk, live}, 3*time.Second)
+}

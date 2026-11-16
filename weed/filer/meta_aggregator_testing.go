@@ -1,6 +1,8 @@
 package filer
 
 import (
+	"time"
+
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 )
 
@@ -15,6 +17,13 @@ func (ma *MetaAggregator) TrackPeerForTesting(peer pb.ServerAddress) {
 	}
 	ma.peerChansLock.Unlock()
 	ma.initPeerWatermark(peer)
+}
+
+// StartPeerForTesting is TrackPeerForTesting for a peer first followed from
+// startFrom, as OnPeerUpdate records it. Test support only.
+func (ma *MetaAggregator) StartPeerForTesting(peer pb.ServerAddress, startFrom time.Time) {
+	ma.TrackPeerForTesting(peer)
+	ma.peerResumeStartFrom(peer, startFrom)
 }
 
 // ReportPeerWatermarksForTesting stands in for what a peer's stream reports:

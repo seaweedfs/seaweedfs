@@ -99,6 +99,9 @@ func TestPeerResumeStartFromSurvivesRemoval(t *testing.T) {
 	if got := nextSubscribeStart(); got != firstStart.UnixNano() {
 		t.Fatalf("expecting first subscribe at %d, got %d", firstStart.UnixNano(), got)
 	}
+	if got := ma.NewPeerStartTsNs(); got != firstStart.UnixNano() {
+		t.Fatalf("expecting a first-seen peer to mark its start %d, got %d", firstStart.UnixNano(), got)
+	}
 
 	deliveredThrough := time.Now().Add(-time.Hour).UnixNano()
 	ma.advancePeerWatermark(peer, deliveredThrough)
@@ -117,6 +120,9 @@ func TestPeerResumeStartFromSurvivesRemoval(t *testing.T) {
 	if got := nextSubscribeStart(); got != deliveredThrough {
 		t.Fatalf("expecting re-added peer to resume at %d, got %d", deliveredThrough, got)
 	}
+	if got := ma.NewPeerStartTsNs(); got != firstStart.UnixNano() {
+		t.Fatalf("expecting a resumed peer to leave the new-peer start at %d, got %d", firstStart.UnixNano(), got)
+	}
 
 	// A peer gone past the retention is forgotten and starts afresh.
 	ma.OnPeerUpdate(&master_pb.ClusterNodeUpdate{Address: string(peer)}, time.Now())
@@ -132,6 +138,9 @@ func TestPeerResumeStartFromSurvivesRemoval(t *testing.T) {
 	ma.OnPeerUpdate(add, freshStart)
 	if got := nextSubscribeStart(); got != freshStart.UnixNano() {
 		t.Fatalf("expecting forgotten peer to start at %d, got %d", freshStart.UnixNano(), got)
+	}
+	if got := ma.NewPeerStartTsNs(); got != freshStart.UnixNano() {
+		t.Fatalf("expecting a forgotten peer to mark its start %d, got %d", freshStart.UnixNano(), got)
 	}
 
 	// A first-seen peer, or a caller start already behind the recorded

@@ -302,12 +302,13 @@ func memoryHoldsGap(currentTsNs, lastEvictedTsNs int64) bool {
 }
 
 // ringServesCursor reports whether the aggregated ring alone can serve a read
-// from the cursor: it was already filling at the cursor and evicted nothing
-// after it (lastEvictedTsNs in pre-bump timestamps, as the gap checks take it).
-// An empty ring, or one that starts past the cursor, proves nothing about what
-// only the persisted logs hold.
-func ringServesCursor(cursorTsNs int64, earliest time.Time, lastEvictedTsNs int64) bool {
-	if earliest.IsZero() || earliest.UnixNano() > cursorTsNs {
+// from the cursor: it was already filling at the cursor, evicted nothing
+// after it (lastEvictedTsNs in pre-bump timestamps, as the gap checks take it),
+// and every peer was streaming into it by then (newPeerStartTsNs). An empty
+// ring, or one that starts past the cursor, proves nothing about what only the
+// persisted logs hold.
+func ringServesCursor(cursorTsNs int64, earliest time.Time, lastEvictedTsNs, newPeerStartTsNs int64) bool {
+	if earliest.IsZero() || earliest.UnixNano() > cursorTsNs || cursorTsNs < newPeerStartTsNs {
 		return false
 	}
 	return memoryHoldsGap(cursorTsNs, lastEvictedTsNs)
@@ -871,7 +872,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 					processedTsNs, isDone, readPersistedLogErr = 0, false, nil
 				}
 			} else if cursorTsNs := lastReadTime.Time.UnixNano(); !errors.Is(readInMemoryLogErr, log_buffer.ResumeFromDiskError) &&
-				ringServesCursor(cursorTsNs, aggBuffer.GetEarliestTime(), aggBuffer.GetLastEvictedOriginalTsNs()) {
+				ringServesCursor(cursorTsNs, aggBuffer.GetEarliestTime(), aggBuffer.GetLastEvictedOriginalTsNs(), fs.filer.MetaAggregator.NewPeerStartTsNs()) {
 				// The ring holds everything after the cursor (every peer's log
 				// reaches it through this aggregator), so read it there, held at
 				// the delivery low-watermark. The persisted logs are complete only

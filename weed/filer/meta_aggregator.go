@@ -68,7 +68,10 @@ type MetaAggregator struct {
 	// the grace, but a rejoining peer still needs it to resume. Forgotten
 	// peerResumeRetention after the removal so addresses that never return,
 	// such as restarted pods' IPs, do not accumulate.
-	peerResumeTsNs     map[pb.ServerAddress]int64
+	peerResumeTsNs map[pb.ServerAddress]int64
+	// newPeerStartTsNs is the newest start of a peer subscription that had no
+	// resume point: the ring holds nothing that peer logged at or before it.
+	newPeerStartTsNs   int64
 	peerWatermarksLock sync.Mutex
 	peerWg             sync.WaitGroup
 	// peerSubscribeLoop is replaceable so a test can observe the subscribe
@@ -245,7 +248,19 @@ func (ma *MetaAggregator) peerResumeStartFrom(peer pb.ServerAddress, startFrom t
 	if prev := ma.peerResumeTsNs[peer]; prev > 0 && prev < startFrom.UnixNano() {
 		return time.Unix(0, prev)
 	}
+	if startTsNs := startFrom.UnixNano(); startTsNs > ma.newPeerStartTsNs {
+		ma.newPeerStartTsNs = startTsNs
+	}
 	return startFrom
+}
+
+// NewPeerStartTsNs returns the newest start of a peer subscription that had
+// no resume point. What that peer logged at or before it is only on disk, so
+// a cursor below it cannot be served from the ring alone.
+func (ma *MetaAggregator) NewPeerStartTsNs() int64 {
+	ma.peerWatermarksLock.Lock()
+	defer ma.peerWatermarksLock.Unlock()
+	return ma.newPeerStartTsNs
 }
 
 // advancePeerFlushWatermark records the peer's reported flush watermark.
