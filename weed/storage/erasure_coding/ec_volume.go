@@ -190,9 +190,17 @@ func preferEcConfigVif(local, alt string) string {
 	return alt
 }
 
-// siblingEcConfigVif returns the .vif in dirs, other than dir, that records an
-// EC config, or "" when none does or they name different encode runs.
-func siblingEcConfigVif(collection string, vid needle.VolumeId, dir string, dirs []string) string {
+// SiblingEcConfigVif returns the encode's .vif that a disk mounting against a
+// shared -dir.idx takes from another data dir in dirs: dir holds no non-empty
+// .ecx, dirIdx is not a data dir, and every sibling .vif recording an EC config
+// names the same encode run. It returns "" otherwise.
+func SiblingEcConfigVif(collection string, vid needle.VolumeId, dir, dirIdx string, dirs []string) string {
+	if dirIdx == dir || slices.Contains(dirs, dirIdx) {
+		return ""
+	}
+	if size, err := statEcxSize(EcShardFileName(collection, dir, int(vid)) + ".ecx"); err == nil && size > 0 {
+		return ""
+	}
 	found, foundTsNs := "", int64(0)
 	for _, d := range dirs {
 		if d == dir {
@@ -355,8 +363,8 @@ func newEcVolumeWith(diskType types.DiskType, dir string, dirIdx string, collect
 	if dirIdx != dir && vifFileName == dataBaseFileName+".vif" {
 		vifFileName = preferEcConfigVif(vifFileName, EcShardFileName(collection, dirIdx, int(vid))+".vif")
 		// A shared -dir.idx holds no .vif: the encode's sits in a sibling data dir.
-		if vifFileName == dataBaseFileName+".vif" && (localErr != nil || localSize == 0) && !slices.Contains(vifDirs, dirIdx) {
-			if alt := siblingEcConfigVif(collection, vid, dir, vifDirs); alt != "" {
+		if vifFileName == dataBaseFileName+".vif" {
+			if alt := SiblingEcConfigVif(collection, vid, dir, dirIdx, vifDirs); alt != "" {
 				vifFileName = preferEcConfigVif(vifFileName, alt)
 			}
 		}

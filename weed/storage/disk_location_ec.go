@@ -715,7 +715,8 @@ func (l *DiskLocation) validateEcVolume(collection string, vid needle.VolumeId) 
 }
 
 // ecDataShardsFromVif resolves the data-shard count for an EC volume from
-// its own .vif (EcShardConfig), checking the data dir then the idx dir. The
+// its own .vif (EcShardConfig), checking the data dir, the idx dir, then the
+// sibling data dir the mount takes the .vif from under a shared idx dir. The
 // .vif is the source of truth for custom ratios on the volume server, which
 // never holds the cluster EC config in memory. Falls back to the default
 // ratio when the .vif carries no EC shard config.
@@ -731,6 +732,11 @@ func (l *DiskLocation) ecDataShardsFromVif(collection string, vid needle.VolumeI
 		if ds := ecDataShardsFromVifDir(collection, l.IdxDirectory, vid); ds > 0 {
 			return ds
 		}
+		if vif := erasure_coding.SiblingEcConfigVif(collection, vid, l.Directory, l.IdxDirectory, l.storeDirs); vif != "" {
+			if ds := ecDataShardsFromVifPath(vif); ds > 0 {
+				return ds
+			}
+		}
 	}
 	return erasure_coding.DataShardsCount
 }
@@ -738,7 +744,12 @@ func (l *DiskLocation) ecDataShardsFromVif(collection string, vid needle.VolumeI
 // ecDataShardsFromVifDir returns the .vif EcShardConfig data-shard count for
 // (collection, vid) under dir, or 0 when absent / not custom.
 func ecDataShardsFromVifDir(collection, dir string, vid needle.VolumeId) int {
-	vifName := erasure_coding.EcShardFileName(collection, dir, int(vid)) + ".vif"
+	return ecDataShardsFromVifPath(erasure_coding.EcShardFileName(collection, dir, int(vid)) + ".vif")
+}
+
+// ecDataShardsFromVifPath returns the EcShardConfig data-shard count recorded
+// in one .vif, or 0 when absent / not custom.
+func ecDataShardsFromVifPath(vifName string) int {
 	if vi, _, found, _ := volume_info.MaybeLoadVolumeInfo(vifName); found && vi.EcShardConfig != nil {
 		if ds := int(vi.EcShardConfig.DataShards); ds > 0 {
 			return ds
