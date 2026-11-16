@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -109,27 +110,30 @@ func (vs *VolumeServer) tryProxyToReplica(w http.ResponseWriter, r *http.Request
 //   - 429 Too Many Requests: Wait timeout exceeded
 //   - 499 Client Closed Request: Request cancelled by client
 func (vs *VolumeServer) waitForDownloadSlot(w http.ResponseWriter, r *http.Request) bool {
-	timerDownload := time.NewTimer(vs.inflightDownloadDataTimeout)
-	defer timerDownload.Stop()
+	ctx, cancel := context.WithTimeout(r.Context(), vs.inflightDownloadDataTimeout)
+	defer cancel()
 
-	inFlightDownloadSize := atomic.LoadInt64(&vs.inFlightDownloadDataSize)
-	for inFlightDownloadSize > vs.concurrentDownloadLimit {
-		switch util.WaitWithTimeout(r.Context(), vs.inFlightDownloadDataLimitCond, timerDownload) {
-		case http.StatusTooManyRequests:
-			err := fmt.Errorf("request %s because inflight download data %d > %d, and wait timeout",
-				r.URL.Path, inFlightDownloadSize, vs.concurrentDownloadLimit)
-			glog.V(1).Infof("too many requests: %v", err)
-			writeJsonError(w, r, http.StatusTooManyRequests, err)
-			return false
-		case util.HttpStatusCancelled:
-			glog.V(1).Infof("request %s cancelled from %s: %v", r.URL.Path, r.RemoteAddr, r.Context().Err())
-			w.WriteHeader(util.HttpStatusCancelled)
-			return false
-		}
+	var inFlightDownloadSize int64
+	vs.inFlightDownloadDataLimitCond.L.Lock()
+	err := util.WaitUntil(ctx, vs.inFlightDownloadDataLimitCond, 0, func() bool {
 		inFlightDownloadSize = atomic.LoadInt64(&vs.inFlightDownloadDataSize)
 		stats.VolumeServerInFlightDownloadSize.Set(float64(inFlightDownloadSize))
+		return inFlightDownloadSize <= vs.concurrentDownloadLimit
+	})
+	vs.inFlightDownloadDataLimitCond.L.Unlock()
+	if err == nil {
+		return true
 	}
-	return true
+	if r.Context().Err() != nil {
+		glog.V(1).Infof("request %s cancelled from %s: %v", r.URL.Path, r.RemoteAddr, r.Context().Err())
+		w.WriteHeader(util.HttpStatusCancelled)
+		return false
+	}
+	err = fmt.Errorf("request %s because inflight download data %d > %d, and wait timeout",
+		r.URL.Path, inFlightDownloadSize, vs.concurrentDownloadLimit)
+	glog.V(1).Infof("too many requests: %v", err)
+	writeJsonError(w, r, http.StatusTooManyRequests, err)
+	return false
 }
 
 // checkUploadLimit handles upload concurrency limiting with timeout.

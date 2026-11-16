@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -57,4 +58,30 @@ func TestCheckDownloadLimitLocalReadModeWaitsInsteadOfProxying(t *testing.T) {
 
 	require.False(t, vs.checkDownloadLimit(w, r))
 	require.Equal(t, http.StatusTooManyRequests, w.Code)
+}
+
+func TestWaitForDownloadSlotSeesReleaseBeforeWaiting(t *testing.T) {
+	vs := &VolumeServer{
+		concurrentDownloadLimit:       1,
+		inFlightDownloadDataSize:      2,
+		inflightDownloadDataTimeout:   5 * time.Second,
+		inFlightDownloadDataLimitCond: sync.NewCond(new(sync.Mutex)),
+	}
+	r := httptest.NewRequest(http.MethodGet, "/1,0123456789abcdef", nil)
+	w := httptest.NewRecorder()
+
+	vs.inFlightDownloadDataLimitCond.L.Lock()
+	got := make(chan bool, 1)
+	go func() { got <- vs.waitForDownloadSlot(w, r) }()
+	time.Sleep(100 * time.Millisecond)
+	atomic.AddInt64(&vs.inFlightDownloadDataSize, -2)
+	vs.inFlightDownloadDataLimitCond.Broadcast()
+	vs.inFlightDownloadDataLimitCond.L.Unlock()
+
+	select {
+	case ok := <-got:
+		require.True(t, ok)
+	case <-time.After(2 * time.Second):
+		t.Fatal("waiter missed the released download slot")
+	}
 }
