@@ -44,8 +44,8 @@ security settings:
 // Control Flow:
 //   - No limit configured → return true (proceed normally)
 //   - Within limit → return true (proceed normally)
-//   - Over limit + has replicas → proxy to replica, return false (already handled)
-//   - Over limit + no replicas → wait with timeout:
+//   - Over limit + has replicas + readMode not local → proxy to replica, return false (already handled)
+//   - Over limit otherwise → wait with timeout:
 //   - Timeout → send 429 response, return false (already handled)
 //   - Cancelled → send 499 response, return false (already handled)
 //   - Capacity available → return true (proceed normally)
@@ -73,10 +73,10 @@ func (vs *VolumeServer) checkDownloadLimit(w http.ResponseWriter, r *http.Reques
 // tryProxyToReplica attempts to proxy the request to a replica server if the volume has replication.
 // Returns:
 //   - true:  Request was handled (either proxied successfully or failed with error response)
-//   - false: No proxy available (volume has no replicas or request already proxied)
+//   - false: No proxy available (readMode is local, volume has no replicas, or request already proxied)
 func (vs *VolumeServer) tryProxyToReplica(w http.ResponseWriter, r *http.Request) bool {
-	if r.URL.Query().Get(reqIsProxied) == "true" {
-		return false // already proxied
+	if vs.ReadMode == "local" || r.URL.Query().Get(reqIsProxied) == "true" {
+		return false
 	}
 
 	vid, _, _, _, _ := parseURLPath(r.URL.Path)
