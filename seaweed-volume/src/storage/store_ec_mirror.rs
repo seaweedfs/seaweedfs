@@ -541,22 +541,23 @@ mod tests {
         }
     }
 
-    /// A disk still holding the source `.dat` sizes its shards by the
-    /// sibling's encode `.vif` before the startup check decides whether they
-    /// are leftovers of an interrupted encode.
-    #[test]
-    fn shared_index_startup_validation_uses_sibling_vif_ratio() {
+    /// Starts a store whose first disk still holds the source `.dat`, its
+    /// config-free `.vif` and one 12+4 shard, with the `.ecx` in a shared
+    /// index dir and one sibling encode `.vif` per entry of `sibling_runs`.
+    /// Asserts the source `.dat`, the shard and the `.ecx` survive startup.
+    fn start_with_sibling_encode_vifs(sibling_runs: &[i64]) -> Store {
         let tmp = TempDir::new().unwrap();
-        let dir0 = tmp.path().join("data0");
-        let dir1 = tmp.path().join("data1");
+        let dirs: Vec<_> = (0..=sibling_runs.len())
+            .map(|i| tmp.path().join(format!("data{}", i)))
+            .collect();
         let idx = tmp.path().join("idx");
-        for d in [&dir0, &dir1, &idx] {
+        for d in dirs.iter().chain([&idx]) {
             fs::create_dir_all(d).unwrap();
         }
 
         let collection = "c";
         let vid = 4124u32;
-        let base0 = dir0.join(format!("{}_{}", collection, vid));
+        let base0 = dirs[0].join(format!("{}_{}", collection, vid));
         let dat = format!("{}.dat", base0.display());
         let shard = format!("{}.ec02", base0.display());
         fs::File::create(&dat)
@@ -573,28 +574,30 @@ mod tests {
         )
         .unwrap();
         plant_ecx(&idx, collection, vid, &[0xA1u8; 20]);
-        let vif = VifVolumeInfo {
-            version: 3,
-            ec_shard_config: Some(VifEcShardConfig {
-                data_shards: 12,
-                parity_shards: 4,
-                encode_ts_ns: 1_700_000_000_000_000_044,
+        for (dir, run) in dirs[1..].iter().zip(sibling_runs) {
+            let vif = VifVolumeInfo {
+                version: 3,
+                ec_shard_config: Some(VifEcShardConfig {
+                    data_shards: 12,
+                    parity_shards: 4,
+                    encode_ts_ns: *run,
+                    ..Default::default()
+                }),
                 ..Default::default()
-            }),
-            ..Default::default()
-        };
-        fs::write(
-            dir1.join(format!("{}_{}.vif", collection, vid)),
-            serde_json::to_string(&vif).unwrap(),
-        )
-        .unwrap();
+            };
+            fs::write(
+                dir.join(format!("{}_{}.vif", collection, vid)),
+                serde_json::to_string(&vif).unwrap(),
+            )
+            .unwrap();
+        }
 
         let mut store = Store::new(NeedleMapKind::InMemory);
-        store.store_dirs = vec![
-            dir0.to_str().unwrap().to_string(),
-            dir1.to_str().unwrap().to_string(),
-        ];
-        for dir in [&dir0, &dir1] {
+        store.store_dirs = dirs
+            .iter()
+            .map(|d| d.to_str().unwrap().to_string())
+            .collect();
+        for dir in &dirs {
             store
                 .add_location(
                     dir.to_str().unwrap(),
@@ -611,10 +614,26 @@ mod tests {
         for path in [dat.as_str(), shard.as_str(), ecx.to_str().unwrap()] {
             assert!(Path::new(path).exists(), "{} removed at startup", path);
         }
+        store
+    }
+
+    /// A disk still holding the source `.dat` sizes its shards by the
+    /// sibling's encode `.vif` before the startup check decides whether they
+    /// are leftovers of an interrupted encode.
+    #[test]
+    fn shared_index_startup_validation_uses_sibling_vif_ratio() {
+        let store = start_with_sibling_encode_vifs(&[1_700_000_000_000_000_044]);
         let ec_vol = store.locations[0]
-            .find_ec_volume(VolumeId(vid))
+            .find_ec_volume(VolumeId(4124))
             .expect("dir0 ec volume mounted");
         assert!(ec_vol.has_shard(2), "shard 2 not mounted on dir0");
+    }
+
+    /// Sibling `.vif` files naming different encode runs leave the ratio
+    /// unknown, so the startup check keeps the shards.
+    #[test]
+    fn shared_index_startup_validation_keeps_shards_on_disagreeing_siblings() {
+        start_with_sibling_encode_vifs(&[1_700_000_000_000_000_044, 1_700_000_000_000_000_045]);
     }
 
     #[test]

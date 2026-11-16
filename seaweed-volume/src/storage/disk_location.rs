@@ -496,6 +496,13 @@ impl DiskLocation {
             collection,
             vid,
         );
+        if data_shards == 0 {
+            warn!(
+                volume_id = vid.0,
+                "sibling .vif files disagree on the encode; keeping EC shards"
+            );
+            return true;
+        }
 
         // On-disk .dat: an empty <= superblock one is a stub; a transient stat
         // error keeps the shards rather than deleting.
@@ -1470,18 +1477,22 @@ fn ec_data_shards_from_vif(
             break;
         }
     }
-    if let Some(ds) = crate::storage::erasure_coding::ec_volume::sibling_ec_config_vif(
+    match crate::storage::erasure_coding::ec_volume::sibling_ec_config_vif(
         directory,
         idx_directory,
         store_dirs,
         collection,
         vid,
-    )
-    .and_then(|vi| vi.ec_shard_config)
-    .map(|c| c.data_shards as usize)
-        && ds > 0
-    {
-        return ds;
+    ) {
+        Err(()) => return 0,
+        Ok(Some(vi)) => {
+            if let Some(ds) = vi.ec_shard_config.map(|c| c.data_shards as usize)
+                && ds > 0
+            {
+                return ds;
+            }
+        }
+        Ok(None) => {}
     }
     DATA_SHARDS_COUNT
 }

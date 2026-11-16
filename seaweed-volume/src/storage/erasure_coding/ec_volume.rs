@@ -317,13 +317,14 @@ fn prefer_ec_config_vif(local: String, alt: String) -> String {
 /// The `.vif` a disk mounting against a shared `-dir.idx` takes from a sibling
 /// data dir in `vif_dirs`: its own records no EC config, the index is not its
 /// own, and every sibling `.vif` recording an EC config names the same run.
+/// `Err` when a sibling `.vif` cannot be read or the siblings name different runs.
 pub(crate) fn sibling_ec_config_vif(
     dir: &str,
     dir_idx: &str,
     vif_dirs: &[String],
     collection: &str,
     volume_id: VolumeId,
-) -> Option<crate::storage::volume::VifVolumeInfo> {
+) -> Result<Option<crate::storage::volume::VifVolumeInfo>, ()> {
     let data_base = crate::storage::volume::volume_file_name(dir, collection, volume_id);
     let data_vif = format!("{}.vif", data_base);
     if dir_idx == dir
@@ -331,11 +332,11 @@ pub(crate) fn sibling_ec_config_vif(
         || matches!(ecx_file_size(&format!("{}.ecx", data_base)), Some(n) if n > 0)
         || resolve_vif_path(dir, dir_idx, collection, volume_id) != data_vif
     {
-        return None;
+        return Ok(None);
     }
     match read_vif_file(&data_vif) {
-        Ok(Some(info)) if info.ec_shard_config.is_some() => return None,
-        Err(()) => return None,
+        Ok(Some(info)) if info.ec_shard_config.is_some() => return Ok(None),
+        Err(()) => return Ok(None),
         _ => {}
     }
     let mut found: Option<crate::storage::volume::VifVolumeInfo> = None;
@@ -347,18 +348,18 @@ pub(crate) fn sibling_ec_config_vif(
         let info = match read_vif_file(&path) {
             Ok(Some(info)) if info.ec_shard_config.is_some() => info,
             Ok(_) => continue,
-            Err(()) => return None,
+            Err(()) => return Err(()),
         };
         let run = |v: &crate::storage::volume::VifVolumeInfo| {
             v.ec_shard_config.as_ref().map(|c| c.encode_ts_ns)
         };
         match &found {
             None => found = Some(info),
-            Some(f) if run(f) != run(&info) => return None,
+            Some(f) if run(f) != run(&info) => return Err(()),
             Some(_) => {}
         }
     }
-    found
+    Ok(found)
 }
 
 /// Load the volume's `.vif` (data dir first, then idx dir, then the active
@@ -693,7 +694,10 @@ impl EcVolume {
         // One load of the volume's `.vif`, used for both the shard config and
         // the version / dat-size fields below.
         let vif = load_vif_info(dir, dir_idx, collection, volume_id)?;
-        let vif = sibling_ec_config_vif(dir, dir_idx, vif_dirs, collection, volume_id).or(vif);
+        let vif = sibling_ec_config_vif(dir, dir_idx, vif_dirs, collection, volume_id)
+            .ok()
+            .flatten()
+            .or(vif);
         // Both directories: a split -dir/-dir.idx layout keeps the .ecsum with
         // the INDEX, and it is the only layout record a volume whose vif is
         // absent or config-free still has.
