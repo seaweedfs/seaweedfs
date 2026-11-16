@@ -161,29 +161,6 @@ function setupSubmenuBehavior() {
         });
     });
 
-    // Handle the main cluster toggle
-    const clusterToggle = document.querySelector('[data-bs-target="#clusterSubmenu"]');
-    if (clusterToggle) {
-        clusterToggle.addEventListener('click', function (e) {
-            e.preventDefault();
-
-            const submenu = document.getElementById('clusterSubmenu');
-            const isExpanded = submenu.classList.contains('show');
-
-            if (isExpanded) {
-                // Collapse
-                submenu.classList.remove('show');
-                this.classList.add('collapsed');
-                this.setAttribute('aria-expanded', 'false');
-            } else {
-                // Expand
-                submenu.classList.add('show');
-                this.classList.remove('collapsed');
-                this.setAttribute('aria-expanded', 'true');
-            }
-        });
-    }
-
     // Handle the main object store toggle
     const objectStoreToggle = document.querySelector('[data-bs-target="#objectStoreSubmenu"]');
     if (objectStoreToggle) {
