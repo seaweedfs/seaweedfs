@@ -683,6 +683,8 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	aggReaderName := fmt.Sprintf("aggMeta:%s:%d:%d", clientName, req.ClientId, req.ClientEpoch)
 	aggNotifyChan := fs.filer.MetaAggregator.MetaLogBuffer.RegisterSubscriber(aggNotifyName)
 	defer fs.filer.MetaAggregator.MetaLogBuffer.UnregisterSubscriber(aggNotifyName)
+	fs.filer.MetaAggregator.MetaLogBuffer.SetSubscriberWakeFilter(aggReaderName, subscriptionWakeFilter(req))
+	defer fs.filer.MetaAggregator.MetaLogBuffer.SetSubscriberWakeFilter(aggReaderName, nil)
 
 	gapStall := &gapStallReporter{scope: "aggregated", clientName: clientName, pathPrefix: req.PathPrefix}
 	defer gapStall.close()
@@ -1127,6 +1129,8 @@ func (fs *FilerServer) subscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 	localReaderName := fmt.Sprintf("localMeta:%s:%d:%d", clientName, req.ClientId, req.ClientEpoch)
 	localFlushChan := fs.filer.LocalMetaLogBuffer.RegisterFlushSubscriber(localNotifyName)
 	defer fs.filer.LocalMetaLogBuffer.UnregisterFlushSubscriber(localNotifyName)
+	fs.filer.LocalMetaLogBuffer.SetSubscriberWakeFilter(localReaderName, subscriptionWakeFilter(req))
+	defer fs.filer.LocalMetaLogBuffer.SetSubscriberWakeFilter(localReaderName, nil)
 
 	gapStall := &gapStallReporter{scope: "local", clientName: clientName, pathPrefix: req.PathPrefix}
 	defer gapStall.close()
@@ -1305,11 +1309,32 @@ func (fs *FilerServer) subscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 
 }
 
+// subscriptionWakeFilter lets a reader sleep through appends in directories
+// the subscription cannot match; it reads them on its next poll instead.
+func subscriptionWakeFilter(req *filer_pb.SubscribeMetadataRequest) func(key []byte) bool {
+	if req.PathPrefix == "" {
+		return nil
+	}
+	return func(key []byte) bool {
+		return filer_pb.MetadataDirectoryMayMatchSubscription(key, req.PathPrefix, req.PathPrefixes, req.Directories)
+	}
+}
+
 func eachLogEntryFn(ctx context.Context, req *filer_pb.SubscribeMetadataRequest, sender metadataStreamSender, eachEventNotificationFn func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64, mutationTsNs int64) error, filtered *int64) log_buffer.EachLogEntryFuncType {
 	// A shallow scan of the path fields skips unmarshaling chunk-heavy events
 	// this subscriber would filter out anyway; scan surprises fall back to the
 	// full decode. Only a delivery resets the shared unsynced-events counter.
 	prefilter := req.PathPrefix != "" || len(req.PathPrefixes) > 0 || len(req.Directories) > 0
+	mayMatch := subscriptionWakeFilter(req)
+	skip := func(data []byte) bool {
+		if mayMatch != nil {
+			if dir, target, ok := filer_pb.ScanMetadataEventDirectories(data); ok && !mayMatch(dir) && (len(target) == 0 || !mayMatch(target)) {
+				return true
+			}
+		}
+		skeleton, ok := filer_pb.ScanMetadataEventSkeleton(data)
+		return ok && !filer_pb.MetadataEventMatchesSubscription(skeleton, req.PathPrefix, req.PathPrefixes, req.Directories)
+	}
 	return func(logEntry *filer_pb.LogEntry) (bool, error) {
 		// A cancelled context ends the pass here: neither loop checks it
 		// per entry, and the send path alone cannot cover filtered entries.
@@ -1317,8 +1342,7 @@ func eachLogEntryFn(ctx context.Context, req *filer_pb.SubscribeMetadataRequest,
 			return true, nil
 		}
 		if prefilter {
-			if skeleton, ok := filer_pb.ScanMetadataEventSkeleton(logEntry.Data); ok &&
-				!filer_pb.MetadataEventMatchesSubscription(skeleton, req.PathPrefix, req.PathPrefixes, req.Directories) {
+			if skip(logEntry.Data) {
 				*filtered++
 				if *filtered > MaxUnsyncedEvents {
 					if err := sender.Send(&filer_pb.SubscribeMetadataResponse{

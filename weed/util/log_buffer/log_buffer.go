@@ -194,8 +194,11 @@ type LogBuffer struct {
 	subscribers   map[string]*subscription // subscriberID -> shared notification channel
 	// Notified only when a flush lands, for readers that cannot act on an append
 	flushSubscribers map[string]*subscription
-	isStopping       *atomic.Bool
-	shutdownCh       chan struct{} // closed by ShutdownLogBuffer to wake blocked subscribers
+	// wakeFilters skip a subscriber's append wake-up when the entry's partition
+	// key cannot interest it; it still reads the entry on its next poll.
+	wakeFilters map[string]func(key []byte) bool
+	isStopping  *atomic.Bool
+	shutdownCh  chan struct{} // closed by ShutdownLogBuffer to wake blocked subscribers
 	// flushDroppedBytes counts bytes the flushFn gave up on during shutdown.
 	// loopFlush reads it after each window so an abandoned flush does not
 	// advance the flushed watermark or wake subscribers as if it had landed.
@@ -232,6 +235,7 @@ func NewLogBuffer(name string, flushInterval time.Duration, flushFn LogFlushFunc
 		notifyFn:         notifyFn,
 		subscribers:      make(map[string]*subscription),
 		flushSubscribers: make(map[string]*subscription),
+		wakeFilters:      make(map[string]func(key []byte) bool),
 		flushChan:        make(chan *dataToFlush, flushQueueDepth),
 		isStopping:       new(atomic.Bool),
 		shutdownCh:       make(chan struct{}),
@@ -259,6 +263,7 @@ func NewLogBuffer(name string, flushInterval time.Duration, flushFn LogFlushFunc
 type subscription struct {
 	notifyChan chan struct{}
 	refCount   int
+	wants      func(key []byte) bool
 }
 
 func registerSubscription(subscriptions map[string]*subscription, subscriberID string) chan struct{} {
@@ -292,7 +297,9 @@ func (logBuffer *LogBuffer) RegisterSubscriber(subscriberID string) chan struct{
 	logBuffer.subscribersMu.Lock()
 	defer logBuffer.subscribersMu.Unlock()
 
-	return registerSubscription(logBuffer.subscribers, subscriberID)
+	notifyChan := registerSubscription(logBuffer.subscribers, subscriberID)
+	logBuffer.subscribers[subscriberID].wants = logBuffer.wakeFilters[subscriberID]
+	return notifyChan
 }
 
 // UnregisterSubscriber removes a subscriber and closes its notification channel
@@ -374,23 +381,42 @@ func (logBuffer *LogBuffer) IsOffsetInMemory(offset int64) bool {
 	return false
 }
 
-// notifySubscribers sends notifications to all registered subscribers
-// Non-blocking: uses select with default to avoid blocking on full channels
-func (logBuffer *LogBuffer) notifySubscribers() {
+// SetSubscriberWakeFilter limits append wake-ups of the subscriber registered
+// as subscriberID to entries whose partition key satisfies wants; a nil wants
+// removes the filter. Flushes and keyless appends still wake every subscriber.
+func (logBuffer *LogBuffer) SetSubscriberWakeFilter(subscriberID string, wants func(key []byte) bool) {
+	logBuffer.subscribersMu.Lock()
+	defer logBuffer.subscribersMu.Unlock()
+
+	if wants == nil {
+		delete(logBuffer.wakeFilters, subscriberID)
+	} else {
+		logBuffer.wakeFilters[subscriberID] = wants
+	}
+	if sub, ok := logBuffer.subscribers[subscriberID]; ok {
+		sub.wants = wants
+	}
+}
+
+// NotifySubscribers wakes the subscribers interested in key, for entries that
+// also concern a key other than the partition key they were appended under.
+func (logBuffer *LogBuffer) NotifySubscribers(key []byte) {
+	logBuffer.notifySubscribers(key)
+}
+
+// notifySubscribers wakes the subscribers interested in key, or all of them
+// for an empty key. Non-blocking: a full channel already holds a wake-up.
+func (logBuffer *LogBuffer) notifySubscribers(key []byte) {
 	logBuffer.subscribersMu.RLock()
 	defer logBuffer.subscribersMu.RUnlock()
 
-	if len(logBuffer.subscribers) == 0 {
-		return // No subscribers, skip notification
-	}
-
 	for _, sub := range logBuffer.subscribers {
+		if len(key) > 0 && sub.wants != nil && !sub.wants(key) {
+			continue
+		}
 		select {
 		case sub.notifyChan <- struct{}{}:
-			// Notification sent successfully
 		default:
-			// Channel full - subscriber hasn't consumed previous notification yet
-			// This is OK because one notification is sufficient to wake the subscriber
 		}
 	}
 }
@@ -468,7 +494,7 @@ func (logBuffer *LogBuffer) AddLogEntryToBuffer(logEntry *filer_pb.LogEntry) err
 				logBuffer.notifyFn()
 			}
 			// Notify all registered subscribers instantly (<1ms latency)
-			logBuffer.notifySubscribers()
+			logBuffer.notifySubscribers(logEntry.Key)
 		}
 	}()
 
@@ -607,7 +633,7 @@ func (logBuffer *LogBuffer) AddDataToBufferAndGetTs(partitionKey, data []byte, p
 				logBuffer.notifyFn()
 			}
 			// Notify all registered subscribers instantly (<1ms latency)
-			logBuffer.notifySubscribers()
+			logBuffer.notifySubscribers(partitionKey)
 		}
 	}()
 
@@ -823,7 +849,7 @@ func (logBuffer *LogBuffer) loopFlush() {
 		if logBuffer.notifyFn != nil {
 			logBuffer.notifyFn()
 		}
-		logBuffer.notifySubscribers()
+		logBuffer.notifySubscribers(nil)
 		logBuffer.notifyFlushSubscribers()
 
 		// Signal completion if there's a callback channel

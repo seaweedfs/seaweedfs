@@ -57,6 +57,54 @@ func ScanMetadataEventSkeleton(data []byte) (skeleton *SubscribeMetadataResponse
 	return skeleton, true
 }
 
+// ScanMetadataEventDirectories extracts an event's directory and its
+// new_parent_path without allocating. ok=false means the data is malformed.
+func ScanMetadataEventDirectories(data []byte) (directory, newParentPath []byte, ok bool) {
+	rest := data
+	for len(rest) > 0 {
+		num, typ, n := protowire.ConsumeTag(rest)
+		if n < 0 {
+			return nil, nil, false
+		}
+		rest = rest[n:]
+		if typ != protowire.BytesType || (num != 1 && num != 2) {
+			m := protowire.ConsumeFieldValue(num, typ, rest)
+			if m < 0 {
+				return nil, nil, false
+			}
+			rest = rest[m:]
+			continue
+		}
+		v, m := protowire.ConsumeBytes(rest)
+		if m < 0 {
+			return nil, nil, false
+		}
+		rest = rest[m:]
+		if num == 1 { // directory
+			directory = v
+			continue
+		}
+		// event_notification: repeated occurrences merge, so the last
+		// new_parent_path wins
+		for len(v) > 0 {
+			fnum, ftyp, fn := protowire.ConsumeTag(v)
+			if fn < 0 {
+				return nil, nil, false
+			}
+			v = v[fn:]
+			fm := protowire.ConsumeFieldValue(fnum, ftyp, v)
+			if fm < 0 {
+				return nil, nil, false
+			}
+			if fnum == 4 && ftyp == protowire.BytesType { // new_parent_path
+				newParentPath, _ = protowire.ConsumeBytes(v)
+			}
+			v = v[fm:]
+		}
+	}
+	return directory, newParentPath, true
+}
+
 func scanEventNotificationSkeleton(data []byte) (*EventNotification, bool) {
 	notification := &EventNotification{}
 	rest := data

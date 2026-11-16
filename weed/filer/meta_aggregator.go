@@ -628,6 +628,7 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 			glog.Errorf("failed to add data to log buffer for %s: %v", dir, err)
 			return err
 		}
+		notifyRenameTarget(ma.MetaLogBuffer, event)
 		// The event now sits at tsNs in the local stream; offset tracking
 		// still needs the peer's own position, so it is passed separately.
 		event.TsNs = tsNs

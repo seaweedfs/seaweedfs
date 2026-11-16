@@ -288,6 +288,14 @@ func (f *Filer) newMetadataEvent(oldEntry, newEntry *Entry, deleteChunks, isFrom
 	}
 }
 
+// notifyRenameTarget wakes the subscribers of a move's destination directory,
+// which the partition key (the source directory) does not cover.
+func notifyRenameTarget(logBuffer *log_buffer.LogBuffer, event *filer_pb.SubscribeMetadataResponse) {
+	if target := filer_pb.MetadataEventTargetDirectory(event); target != event.Directory {
+		logBuffer.NotifySubscribers([]byte(target))
+	}
+}
+
 func (f *Filer) logMetaEvent(ctx context.Context, event *filer_pb.SubscribeMetadataResponse) {
 	data, err := proto.Marshal(event)
 	if err != nil {
@@ -300,6 +308,7 @@ func (f *Filer) logMetaEvent(ctx context.Context, event *filer_pb.SubscribeMetad
 		glog.Errorf("failed to add data to log buffer for %s: %v", event.Directory, err)
 		return
 	}
+	notifyRenameTarget(f.LocalMetaLogBuffer, event)
 	// The in-memory copy now carries the position the stream assigns it, the
 	// same value subscribers will see delivered.
 	event.TsNs = tsNs
