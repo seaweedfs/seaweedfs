@@ -1181,7 +1181,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	// uploadEntry=nil would silently skip the SSE check on the destination
 	// side and could send a plain-source copy through the raw-byte fast
 	// path even though the destination's encryption state is unknown.
-	uploadEntry, uploadEntryErr := s3a.getEntry(s3a.genUploadsFolder(dstBucket), uploadID)
+	uploadEntry, uploadEntryErr := s3a.uploadFiler(dstBucket, dstObject).getEntry(s3a.genUploadsFolder(dstBucket), uploadID)
 	if uploadEntryErr != nil {
 		if errors.Is(uploadEntryErr, filer_pb.ErrNotFound) {
 			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchUpload)
@@ -1285,14 +1285,15 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 
 	// Save the part entry to the multipart uploads folder
 	// Check if part exists and remove it first (allow re-copying same part)
-	if exists, _ := s3a.exists(uploadDir, partName, false); exists {
-		if err := s3a.rm(r.Context(), uploadDir, partName, false, false); err != nil {
+	upload := s3a.uploadFiler(dstBucket, dstObject)
+	if exists, _ := upload.exists(uploadDir, partName, false); exists {
+		if err := upload.rm(r.Context(), uploadDir, partName, false, false); err != nil {
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 			return
 		}
 	}
 
-	if err := s3a.mkFile(uploadDir, partName, dstEntry.Chunks, func(entry *filer_pb.Entry) {
+	if err := upload.mkFile(uploadDir, partName, dstEntry.Chunks, func(entry *filer_pb.Entry) {
 		entry.Attributes = dstEntry.Attributes
 		entry.Extended = dstEntry.Extended
 	}); err != nil {

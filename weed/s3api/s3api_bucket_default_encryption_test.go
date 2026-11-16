@@ -138,7 +138,7 @@ func TestPutObjectPartSkipsBucketDefaultEncryption(t *testing.T) {
 	})
 
 	filePath := "/buckets/b/.uploads/up1/0002_deadbeef.part"
-	r := withMultipartPart(httptest.NewRequest(http.MethodPut, "/b/o?partNumber=2&uploadId=up1", nil))
+	r := withMultipartPart(httptest.NewRequest(http.MethodPut, "/b/o?partNumber=2&uploadId=up1", nil), s3a.uploadFiler("b", "o"))
 	etag, code, sseMeta := s3a.putToFiler(r, filePath, strings.NewReader("part data"), "b", "", 2, 0, nil, false, "")
 	if code != s3err.ErrNone {
 		t.Fatalf("putToFiler = %v, want %v", code, s3err.ErrNone)

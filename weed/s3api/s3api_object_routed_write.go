@@ -323,17 +323,17 @@ type uploadRemovalTxn struct {
 // upload's directory inside the object's commit, after freeing the part
 // entries the object does not reference. It is nil when the write is not
 // routed and the upload directory still needs post-commit cleanup.
-func (s3a *S3ApiServer) routedUploadRemoval(ctx context.Context, owner pb.ServerAddress, uploadDirectory, bucket, uploadId string, completionState *multipartCompletionState) (*uploadRemovalTxn, error) {
+func (s3a *S3ApiServer) routedUploadRemoval(ctx context.Context, owner pb.ServerAddress, uploadDirectory, bucket, object, uploadId string, completionState *multipartCompletionState) (*uploadRemovalTxn, error) {
 	if owner == "" {
 		return nil, nil
 	}
 	// Older filers ignore the mutation's upload-exists condition, so during an
 	// upgrade this gateway-side check keeps the same guard window the
 	// pre-transaction code had.
-	if exists, err := s3a.exists(s3a.genUploadsFolder(bucket), uploadId, true); err == nil && !exists {
+	if _, err := s3a.lookupEntryPreferringOwner(owner, s3a.genUploadsFolder(bucket), uploadId); errors.Is(err, filer_pb.ErrNotFound) {
 		return nil, errUploadRemoved
 	}
-	if err := s3a.deleteUnusedPartEntries(ctx, uploadDirectory, bucket, uploadId, completionState); err != nil {
+	if err := s3a.deleteUnusedPartEntries(ctx, uploadDirectory, bucket, object, uploadId, completionState); err != nil {
 		return nil, err
 	}
 	conditionKey, condition := uploadExistsCondition(uploadDirectory)

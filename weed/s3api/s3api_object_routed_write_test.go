@@ -649,10 +649,10 @@ func TestWriteMultipartObjectRemovesUploadDir(t *testing.T) {
 		},
 	}
 
-	if removal, err := s3a.routedUploadRemoval(context.Background(), "", "/buckets/b/.uploads/up1", "b", "up1", &multipartCompletionState{}); removal != nil || err != nil {
+	if removal, err := s3a.routedUploadRemoval(context.Background(), "", "/buckets/b/.uploads/up1", "b", "o", "up1", &multipartCompletionState{}); removal != nil || err != nil {
 		t.Fatalf("unrouted write should not carry the removal, got %+v, %v", removal, err)
 	}
-	removal, err := s3a.routedUploadRemoval(context.Background(), owner, "/buckets/b/.uploads/up1", "b", "up1", &multipartCompletionState{})
+	removal, err := s3a.routedUploadRemoval(context.Background(), owner, "/buckets/b/.uploads/up1", "b", "o", "up1", &multipartCompletionState{})
 	if err != nil {
 		t.Fatalf("routedUploadRemoval: %v", err)
 	}

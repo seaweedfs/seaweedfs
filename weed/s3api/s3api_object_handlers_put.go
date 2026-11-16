@@ -540,13 +540,14 @@ func (s3a *S3ApiServer) uploadChunkSize() int32 {
 }
 
 // multipartPartContextKey marks a putToFiler request as writing a staged
-// multipart part. Encryption for the upload is decided at
-// CreateMultipartUpload and replayed through request headers, so bucket
-// default encryption must not be re-evaluated for part writes.
+// multipart part, carrying the filer the upload's directory lives on.
+// Encryption for the upload is decided at CreateMultipartUpload and replayed
+// through request headers, so bucket default encryption must not be
+// re-evaluated for part writes.
 type multipartPartContextKey struct{}
 
-func withMultipartPart(r *http.Request) *http.Request {
-	return r.WithContext(context.WithValue(r.Context(), multipartPartContextKey{}, true))
+func withMultipartPart(r *http.Request, upload uploadFilerClient) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), multipartPartContextKey{}, upload))
 }
 
 // validatePutHeaders checks x-amz-storage-class and x-amz-tagging, so the
@@ -572,8 +573,13 @@ func validatePutHeaders(r *http.Request) (map[string]string, s3err.ErrorCode) {
 }
 
 func isMultipartPartRequest(r *http.Request) bool {
-	marked, _ := r.Context().Value(multipartPartContextKey{}).(bool)
+	_, marked := multipartPartUpload(r)
 	return marked
+}
+
+func multipartPartUpload(r *http.Request) (uploadFilerClient, bool) {
+	upload, marked := r.Context().Value(multipartPartContextKey{}).(uploadFilerClient)
+	return upload, marked
 }
 
 // putToFiler writes one chunk of object bytes (a full PutObject body, a
@@ -1076,6 +1082,8 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 			case codes.Unavailable, codes.Canceled, codes.DeadlineExceeded:
 				s3a.markOwnerUnreachable(owner)
 			}
+		} else if upload, ok := multipartPartUpload(r); ok && cond == nil {
+			createErr = upload.WithFilerClient(false, create)
 		} else if s3a.filerClient != nil {
 			createErr = s3a.withFilerClientFailover(context.Background(), "", false, cond == nil, create)
 		} else {
@@ -1184,7 +1192,11 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 			// can hide a commit (issue #11366) and the filer can fail after
 			// inserting the entry (issue #11387), so the entry's presence — not
 			// the error class — decides the chunks' fate.
-			landed, absent := s3a.confirmCreateLanded(filePath, bucket, object, entry, chunkResult.FileChunks, finalize)
+			routeObject := object
+			if upload, ok := multipartPartUpload(r); ok {
+				routeObject = upload.object
+			}
+			landed, absent := s3a.confirmCreateLanded(filePath, bucket, object, routeObject, entry, chunkResult.FileChunks, finalize)
 			if landed {
 				createCode = s3err.ErrNone
 			}
@@ -1397,16 +1409,17 @@ func chunkNeedleExists(ctx context.Context, fileUrl, jwt string) bool {
 // finalization the error skipped then runs under the object write lock, and
 // landed reports success — while absent requires every filer the create could
 // have committed on to lack the entry, the only outcome where the uploaded
-// chunks are orphaned.
-func (s3a *S3ApiServer) confirmCreateLanded(filePath, bucket, object string, entry *filer_pb.Entry, uploaded []*filer_pb.FileChunk, finalize *putFinalize) (landed, absent bool) {
+// chunks are orphaned. routeObject picks the owner filers to check: the object
+// itself, or for a staged part the object its upload completes into.
+func (s3a *S3ApiServer) confirmCreateLanded(filePath, bucket, object, routeObject string, entry *filer_pb.Entry, uploaded []*filer_pb.FileChunk, finalize *putFinalize) (landed, absent bool) {
 	dir, name := path.Dir(filePath), path.Base(filePath)
-	owner := s3a.routableWriteOwner(bucket, object)
+	owner := s3a.routableWriteOwner(bucket, routeObject)
 	lookupCtx, cancel := context.WithTimeout(context.Background(), createLookupTimeout)
 	defer cancel()
 	// Verify, finalize, and roll back inside one critical section: a concurrent
 	// write to the same key must not slip in between them.
 	s3a.withObjectWriteLock(bucket, object, nil, func() s3err.ErrorCode {
-		targets := s3a.createTargetFilers(owner, bucket, object)
+		targets := s3a.createTargetFilers(owner, bucket, routeObject)
 		existing, uncertain := s3a.lookupCommittedEntry(lookupCtx, targets, dir, name)
 		if existing == nil {
 			absent = len(targets) > 0 && !uncertain
