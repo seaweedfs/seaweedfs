@@ -46,7 +46,7 @@ Rule of thumb: start with 3 masters, then grow volume servers with data.
 - Run **3 filers** for HA
 - Filers are stateless relative to each other — state lives in the DB
 - No quorum among filers: 2 already survive one failure; the third keeps a spare while one is down for upgrades
-- Give clients every filer address (e.g. `-filer=f1:8888,f2:8888,f3:8888`) or put a load balancer in front
+- Give clients every filer address (e.g. `-filer=f1:8888,f2:8888,f3:8888`) or a load balancer that forwards both the HTTP and gRPC ports (8888 and 18888)
 
 **S3 Servers**
 
