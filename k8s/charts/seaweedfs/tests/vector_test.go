@@ -140,9 +140,12 @@ func TestVectorMetricsImageCompatibility(t *testing.T) {
 	if _, err := exec.LookPath("helm"); err != nil {
 		t.Skip("helm is not installed")
 	}
-	out, err := exec.Command("helm", "template", "vector-test", "..", "--set", "vector.enabled=true", "--set", "vector.metricsPort=9329").CombinedOutput()
+	out, err := exec.Command("helm", "template", "vector-test", "..", "--set", "vector.enabled=true", "--set", "vector.metricsPort=9329", "--set", "image.tag=4.53").CombinedOutput()
 	if err == nil || !strings.Contains(string(out), "default 4.53 image does not support metrics") {
 		t.Fatalf("incompatible image accepted: %v %s", err, out)
 	}
-	render(t, "vector.enabled=true", "vector.metricsPort=9329", "vector.imageOverride=example/metrics-engine:test")
+	render(t, "vector.enabled=true", "vector.metricsPort=9329", "image.tag=4.53", "vector.imageOverride=example/metrics-engine:test")
+	if output, _ := render(t, "vector.enabled=true", "vector.metricsPort=9329"); !strings.Contains(output, "--metrics-port=9329") {
+		t.Fatal("default image metrics port missing")
+	}
 }
