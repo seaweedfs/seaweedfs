@@ -171,8 +171,8 @@ func statEcxSize(path string) (int64, error) {
 	return info.Size(), nil
 }
 
-func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection string, vid needle.VolumeId) (ev *EcVolume, err error) {
-	return newEcVolumeWith(diskType, dir, dirIdx, collection, vid, realEcjFsOps)
+func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection string, vid needle.VolumeId, vifDirs ...string) (ev *EcVolume, err error) {
+	return newEcVolumeWith(diskType, dir, dirIdx, collection, vid, realEcjFsOps, vifDirs...)
 }
 
 // preferEcConfigVif returns alt when local records no EC config but alt does.
@@ -190,10 +190,35 @@ func preferEcConfigVif(local, alt string) string {
 	return alt
 }
 
+// siblingEcConfigVif returns the .vif in dirs, other than dir, that records an
+// EC config, or "" when none does or they name different encode runs.
+func siblingEcConfigVif(collection string, vid needle.VolumeId, dir string, dirs []string) string {
+	found, foundTsNs := "", int64(0)
+	for _, d := range dirs {
+		if d == dir {
+			continue
+		}
+		vif := EcShardFileName(collection, d, int(vid)) + ".vif"
+		info, _, ok, err := volume_info.MaybeLoadVolumeInfo(vif)
+		if err != nil {
+			return ""
+		}
+		if !ok || info.EcShardConfig == nil {
+			continue
+		}
+		if found == "" {
+			found, foundTsNs = vif, info.EcShardConfig.EncodeTsNs
+		} else if info.EcShardConfig.EncodeTsNs != foundTsNs {
+			return ""
+		}
+	}
+	return found
+}
+
 // newEcVolumeWith is NewEcVolume with the journal-compaction filesystem steps
 // supplied, so tests can drive a failing load or publish through the real
 // mount.
-func newEcVolumeWith(diskType types.DiskType, dir string, dirIdx string, collection string, vid needle.VolumeId, ecjOps ecjFsOps) (ev *EcVolume, err error) {
+func newEcVolumeWith(diskType types.DiskType, dir string, dirIdx string, collection string, vid needle.VolumeId, ecjOps ecjFsOps, vifDirs ...string) (ev *EcVolume, err error) {
 	ev = &EcVolume{dir: dir, dirIdx: dirIdx, Collection: collection, VolumeId: vid, diskType: diskType}
 
 	dataBaseFileName := EcShardFileName(collection, dir, int(vid))
@@ -329,6 +354,12 @@ func newEcVolumeWith(diskType types.DiskType, dir string, dirIdx string, collect
 	}
 	if dirIdx != dir && vifFileName == dataBaseFileName+".vif" {
 		vifFileName = preferEcConfigVif(vifFileName, EcShardFileName(collection, dirIdx, int(vid))+".vif")
+		// A shared -dir.idx holds no .vif: the encode's sits in a sibling data dir.
+		if vifFileName == dataBaseFileName+".vif" && (localErr != nil || localSize == 0) && !slices.Contains(vifDirs, dirIdx) {
+			if alt := siblingEcConfigVif(collection, vid, dir, vifDirs); alt != "" {
+				vifFileName = preferEcConfigVif(vifFileName, alt)
+			}
+		}
 	}
 	ev.Version = needle.Version3
 	// A present-but-unreadable or malformed .vif FAILS the mount: every new
