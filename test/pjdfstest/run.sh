@@ -104,7 +104,9 @@ for i in $(seq 1 60); do
   if mountpoint -q "${MOUNT_DIR}"; then
     break
   fi
-  if ! kill -0 "${mount_pid}" 2>/dev/null; then
+  # Not kill -0: sudo briefly runs with a root real uid while starting, so
+  # signalling it fails with EPERM even though it is alive.
+  if ! ps -p "${mount_pid}" >/dev/null; then
     echo "weed mount exited early; log tail:" >&2
     tail -n 100 "${LOG_DIR}/mount.log" >&2 || true
     exit 1
