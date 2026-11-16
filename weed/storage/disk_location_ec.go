@@ -658,6 +658,10 @@ func (l *DiskLocation) validateEcVolume(collection string, vid needle.VolumeId) 
 	// Custom ratio comes from the volume's own .vif; the server holds no
 	// cluster EC config in memory.
 	dataShards := l.ecDataShardsFromVif(collection, vid)
+	if dataShards == 0 {
+		glog.Warningf("EC volume %d: sibling .vif files disagree on the encode; keeping EC shards", vid)
+		return true
+	}
 
 	// On-disk .dat size, or -1 when absent (an empty <= superblock .dat is a
 	// stub). A transient stat error keeps the shards rather than deleting.
@@ -732,7 +736,11 @@ func (l *DiskLocation) ecDataShardsFromVif(collection string, vid needle.VolumeI
 		if ds := ecDataShardsFromVifDir(collection, l.IdxDirectory, vid); ds > 0 {
 			return ds
 		}
-		if vif := erasure_coding.SiblingEcConfigVif(collection, vid, l.Directory, l.IdxDirectory, l.storeDirs); vif != "" {
+		vif, ambiguous := erasure_coding.SiblingEcConfigVif(collection, vid, l.Directory, l.IdxDirectory, l.storeDirs)
+		if ambiguous {
+			return 0
+		}
+		if vif != "" {
 			if ds := ecDataShardsFromVifPath(vif); ds > 0 {
 				return ds
 			}

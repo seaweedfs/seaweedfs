@@ -193,13 +193,14 @@ func preferEcConfigVif(local, alt string) string {
 // SiblingEcConfigVif returns the encode's .vif that a disk mounting against a
 // shared -dir.idx takes from another data dir in dirs: dir holds no non-empty
 // .ecx, dirIdx is not a data dir, and every sibling .vif recording an EC config
-// names the same encode run. It returns "" otherwise.
-func SiblingEcConfigVif(collection string, vid needle.VolumeId, dir, dirIdx string, dirs []string) string {
+// names the same encode run. It returns "" otherwise, with ambiguous set when
+// a sibling .vif cannot be read or the siblings name different encode runs.
+func SiblingEcConfigVif(collection string, vid needle.VolumeId, dir, dirIdx string, dirs []string) (vif string, ambiguous bool) {
 	if dirIdx == dir || slices.Contains(dirs, dirIdx) {
-		return ""
+		return "", false
 	}
 	if size, err := statEcxSize(EcShardFileName(collection, dir, int(vid)) + ".ecx"); err == nil && size > 0 {
-		return ""
+		return "", false
 	}
 	found, foundTsNs := "", int64(0)
 	for _, d := range dirs {
@@ -209,7 +210,7 @@ func SiblingEcConfigVif(collection string, vid needle.VolumeId, dir, dirIdx stri
 		vif := EcShardFileName(collection, d, int(vid)) + ".vif"
 		info, _, ok, err := volume_info.MaybeLoadVolumeInfo(vif)
 		if err != nil {
-			return ""
+			return "", true
 		}
 		if !ok || info.EcShardConfig == nil {
 			continue
@@ -217,10 +218,10 @@ func SiblingEcConfigVif(collection string, vid needle.VolumeId, dir, dirIdx stri
 		if found == "" {
 			found, foundTsNs = vif, info.EcShardConfig.EncodeTsNs
 		} else if info.EcShardConfig.EncodeTsNs != foundTsNs {
-			return ""
+			return "", true
 		}
 	}
-	return found
+	return found, false
 }
 
 // newEcVolumeWith is NewEcVolume with the journal-compaction filesystem steps
@@ -364,7 +365,7 @@ func newEcVolumeWith(diskType types.DiskType, dir string, dirIdx string, collect
 		vifFileName = preferEcConfigVif(vifFileName, EcShardFileName(collection, dirIdx, int(vid))+".vif")
 		// A shared -dir.idx holds no .vif: the encode's sits in a sibling data dir.
 		if vifFileName == dataBaseFileName+".vif" {
-			if alt := SiblingEcConfigVif(collection, vid, dir, dirIdx, vifDirs); alt != "" {
+			if alt, _ := SiblingEcConfigVif(collection, vid, dir, dirIdx, vifDirs); alt != "" {
 				vifFileName = preferEcConfigVif(vifFileName, alt)
 			}
 		}
