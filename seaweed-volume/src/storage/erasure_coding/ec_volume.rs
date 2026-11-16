@@ -292,25 +292,73 @@ fn resolve_vif_path(dir: &str, dir_idx: &str, collection: &str, volume_id: Volum
     prefer_ec_config_vif(path, idx_vif)
 }
 
+fn read_vif_file(path: &str) -> Result<Option<crate::storage::volume::VifVolumeInfo>, ()> {
+    match std::fs::read_to_string(path) {
+        Ok(content) if content.trim().is_empty() => Ok(None),
+        Ok(content) => serde_json::from_str(&content).map(Some).map_err(|_| ()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(_) => Err(()),
+    }
+}
+
 /// Returns `alt` when `local` records no EC config but `alt` does.
 fn prefer_ec_config_vif(local: String, alt: String) -> String {
-    let read = |path: &str| -> Result<Option<crate::storage::volume::VifVolumeInfo>, ()> {
-        match std::fs::read_to_string(path) {
-            Ok(content) if content.trim().is_empty() => Ok(None),
-            Ok(content) => serde_json::from_str(&content).map(Some).map_err(|_| ()),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
-            Err(_) => Err(()),
-        }
-    };
-    match read(&local) {
+    match read_vif_file(&local) {
         Ok(Some(info)) if info.ec_shard_config.is_some() => return local,
         Err(()) => return local,
         _ => {}
     }
-    match read(&alt) {
+    match read_vif_file(&alt) {
         Ok(Some(info)) if info.ec_shard_config.is_some() => alt,
         _ => local,
     }
+}
+
+/// The `.vif` a disk mounting against a shared `-dir.idx` takes from a sibling
+/// data dir in `vif_dirs`: its own records no EC config, the index is not its
+/// own, and every sibling `.vif` recording an EC config names the same run.
+fn sibling_ec_config_vif(
+    dir: &str,
+    dir_idx: &str,
+    vif_dirs: &[String],
+    collection: &str,
+    volume_id: VolumeId,
+) -> Option<crate::storage::volume::VifVolumeInfo> {
+    let data_base = crate::storage::volume::volume_file_name(dir, collection, volume_id);
+    let data_vif = format!("{}.vif", data_base);
+    if dir_idx == dir
+        || vif_dirs.iter().any(|d| d == dir_idx)
+        || matches!(ecx_file_size(&format!("{}.ecx", data_base)), Some(n) if n > 0)
+        || resolve_vif_path(dir, dir_idx, collection, volume_id) != data_vif
+    {
+        return None;
+    }
+    match read_vif_file(&data_vif) {
+        Ok(Some(info)) if info.ec_shard_config.is_some() => return None,
+        Err(()) => return None,
+        _ => {}
+    }
+    let mut found: Option<crate::storage::volume::VifVolumeInfo> = None;
+    for other in vif_dirs.iter().filter(|d| d.as_str() != dir) {
+        let path = format!(
+            "{}.vif",
+            crate::storage::volume::volume_file_name(other, collection, volume_id)
+        );
+        let info = match read_vif_file(&path) {
+            Ok(Some(info)) if info.ec_shard_config.is_some() => info,
+            Ok(_) => continue,
+            Err(()) => return None,
+        };
+        let run = |v: &crate::storage::volume::VifVolumeInfo| {
+            v.ec_shard_config.as_ref().map(|c| c.encode_ts_ns)
+        };
+        match &found {
+            None => found = Some(info),
+            Some(f) if run(f) != run(&info) => return None,
+            Some(_) => {}
+        }
+    }
+    found
 }
 
 /// Load the volume's `.vif` (data dir first, then idx dir, then the active
@@ -611,7 +659,25 @@ impl EcVolume {
         collection: &str,
         volume_id: VolumeId,
     ) -> io::Result<Self> {
-        Self::open_with(dir, dir_idx, collection, volume_id, EcjFsOps::REAL)
+        Self::open_with(dir, dir_idx, collection, volume_id, EcjFsOps::REAL, &[])
+    }
+
+    /// [`Self::new`] for a disk whose server's data directories are `vif_dirs`.
+    pub fn new_with_vif_dirs(
+        dir: &str,
+        dir_idx: &str,
+        vif_dirs: &[String],
+        collection: &str,
+        volume_id: VolumeId,
+    ) -> io::Result<Self> {
+        Self::open_with(
+            dir,
+            dir_idx,
+            collection,
+            volume_id,
+            EcjFsOps::REAL,
+            vif_dirs,
+        )
     }
 
     /// [`Self::new`] with the journal-compaction filesystem steps supplied, so
@@ -622,10 +688,12 @@ impl EcVolume {
         collection: &str,
         volume_id: VolumeId,
         ecj_ops: EcjFsOps,
+        vif_dirs: &[String],
     ) -> io::Result<Self> {
         // One load of the volume's `.vif`, used for both the shard config and
         // the version / dat-size fields below.
         let vif = load_vif_info(dir, dir_idx, collection, volume_id)?;
+        let vif = sibling_ec_config_vif(dir, dir_idx, vif_dirs, collection, volume_id).or(vif);
         // Both directories: a split -dir/-dir.idx layout keeps the .ecsum with
         // the INDEX, and it is the only layout record a volume whose vif is
         // absent or config-free still has.
@@ -3622,7 +3690,7 @@ mod tests {
         );
         let before = std::fs::read(&ecj_path).unwrap();
         (
-            EcVolume::open_with(dir, dir, "", vid, ops),
+            EcVolume::open_with(dir, dir, "", vid, ops, &[]),
             ecj_path,
             before,
         )
@@ -3843,7 +3911,7 @@ mod tests {
             read_at: rewrite_after_last_read,
             ..EcjFsOps::REAL
         };
-        let vol = EcVolume::open_with(dir, dir, "", vid, ops).unwrap();
+        let vol = EcVolume::open_with(dir, dir, "", vid, ops, &[]).unwrap();
         assert!(
             IN_PLACE_REWRITE.with(|r| r.borrow().is_none()),
             "the rewrite never ran"
@@ -4224,6 +4292,67 @@ mod tests {
 
         let vol = EcVolume::new(dir, dir_idx, "pics", VolumeId(1)).unwrap();
         assert_eq!(vol.encode_ts_ns, 11);
+    }
+
+    /// With a shared `-dir.idx` the encode's `.vif` sits in the data dir of the
+    /// disk that received the index, so a disk holding a source volume's
+    /// config-free `.vif` takes it from that sibling, but only when the
+    /// siblings agree on one run.
+    #[test]
+    fn test_ec_volume_takes_sibling_vif_with_shared_index() {
+        const RUN_A: i64 = 1_700_000_000_000_000_011;
+        const RUN_B: i64 = 1_700_000_000_000_000_022;
+        let cases: [(&str, &[i64], bool, i64); 4] = [
+            ("one sibling", &[RUN_A], false, RUN_A),
+            ("siblings agree", &[RUN_A, RUN_A], false, RUN_A),
+            ("siblings disagree", &[RUN_A, RUN_B], false, 0),
+            ("local index", &[RUN_A], true, 0),
+        ];
+        for (name, sibling_ts, local_index, want) in cases {
+            let data_tmp = TempDir::new().unwrap();
+            let idx_tmp = TempDir::new().unwrap();
+            let dir = data_tmp.path().to_str().unwrap();
+            let dir_idx = idx_tmp.path().to_str().unwrap();
+            let entry = [(NeedleId(1), Offset::from_actual_offset(8), Size(10))];
+            write_ecx_file(dir_idx, "c", VolumeId(1), &entry);
+            if local_index {
+                write_ecx_file(dir, "c", VolumeId(1), &entry);
+            }
+            let data_base = crate::storage::volume::volume_file_name(dir, "c", VolumeId(1));
+            std::fs::write(
+                format!("{}.vif", data_base),
+                r#"{"version":3,"readOnly":true}"#,
+            )
+            .unwrap();
+            let mut dirs = vec![dir.to_string()];
+            let mut siblings = Vec::new();
+            for &ts in sibling_ts {
+                let sibling = TempDir::new().unwrap();
+                let sibling_dir = sibling.path().to_str().unwrap().to_string();
+                let vif = crate::storage::volume::VifVolumeInfo {
+                    version: 3,
+                    dat_file_size: 4096,
+                    ec_shard_config: Some(crate::storage::volume::VifEcShardConfig {
+                        data_shards: 10,
+                        parity_shards: 4,
+                        encode_ts_ns: ts,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                };
+                let base = crate::storage::volume::volume_file_name(&sibling_dir, "c", VolumeId(1));
+                std::fs::write(
+                    format!("{}.vif", base),
+                    serde_json::to_string(&vif).unwrap(),
+                )
+                .unwrap();
+                dirs.push(sibling_dir);
+                siblings.push(sibling);
+            }
+
+            let vol = EcVolume::new_with_vif_dirs(dir, dir_idx, &dirs, "c", VolumeId(1)).unwrap();
+            assert_eq!(vol.encode_ts_ns, want, "{}", name);
+        }
     }
 
     #[test]
