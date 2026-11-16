@@ -217,7 +217,7 @@ func (l *DiskLocation) loadEcShardWithIdxDir(collection string, vid needle.Volum
 	ecVolume, found := l.ecVolumes[vid]
 	if !found {
 		var err error
-		ecVolume, err = erasure_coding.NewEcVolume(l.DiskType, l.Directory, idxDir, collection, vid)
+		ecVolume, err = erasure_coding.NewEcVolume(l.DiskType, l.Directory, idxDir, collection, vid, l.storeDirs...)
 		if err != nil {
 			// Wrap with %w so MountEcShards / startup reconcile can use
 			// errors.Is(err, os.ErrNotExist) to decide whether to try the

@@ -156,6 +156,10 @@ func NewStore(
 		DeletedEcShardsChan: make(chan *master_pb.VolumeEcShardInformationMessage, HEARTBEAT_CHAN_SIZE),
 	}
 
+	storeDirs := make([]string, len(dirnames))
+	for i, dir := range dirnames {
+		storeDirs[i] = util.ResolvePath(dir)
+	}
 	var wg sync.WaitGroup
 	for i := 0; i < len(dirnames); i++ {
 		var tags []string
@@ -163,6 +167,7 @@ func NewStore(
 			tags = diskTags[i]
 		}
 		location := NewDiskLocation(dirnames[i], int32(maxVolumeCounts[i]), minFreeSpaces[i], idxFolder, diskTypes[i], tags, diskProbeConfig)
+		location.storeDirs = storeDirs
 		s.Locations = append(s.Locations, location)
 		stats.VolumeServerMaxVolumeCounter.Add(float64(maxVolumeCounts[i]))
 
