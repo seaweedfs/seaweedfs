@@ -272,6 +272,47 @@ fn locate_vif_path(dir: &str, dir_idx: &str, collection: &str, volume_id: Volume
     data_vif
 }
 
+/// [`locate_vif_path`], except that a data-dir `.vif` recording no EC config
+/// yields to the idx dir's when that one records it: a source volume's own
+/// `.vif` stays on a disk that later receives shards of the same volume id,
+/// while the encode's `.vif` lands with the index on a sibling.
+fn resolve_vif_path(dir: &str, dir_idx: &str, collection: &str, volume_id: VolumeId) -> String {
+    let path = locate_vif_path(dir, dir_idx, collection, volume_id);
+    let data_vif = format!(
+        "{}.vif",
+        crate::storage::volume::volume_file_name(dir, collection, volume_id),
+    );
+    if dir_idx == dir || path != data_vif {
+        return path;
+    }
+    let idx_vif = format!(
+        "{}.vif",
+        crate::storage::volume::volume_file_name(dir_idx, collection, volume_id),
+    );
+    prefer_ec_config_vif(path, idx_vif)
+}
+
+/// Returns `alt` when `local` records no EC config but `alt` does.
+fn prefer_ec_config_vif(local: String, alt: String) -> String {
+    let read = |path: &str| -> Result<Option<crate::storage::volume::VifVolumeInfo>, ()> {
+        match std::fs::read_to_string(path) {
+            Ok(content) if content.trim().is_empty() => Ok(None),
+            Ok(content) => serde_json::from_str(&content).map(Some).map_err(|_| ()),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(_) => Err(()),
+        }
+    };
+    match read(&local) {
+        Ok(Some(info)) if info.ec_shard_config.is_some() => return local,
+        Err(()) => return local,
+        _ => {}
+    }
+    match read(&alt) {
+        Ok(Some(info)) if info.ec_shard_config.is_some() => alt,
+        _ => local,
+    }
+}
+
 /// Load the volume's `.vif` (data dir first, then idx dir, then the active
 /// generation's versioned sidecar — see [`locate_vif_path`]). Absent
 /// everywhere is legal — legacy volumes predate the sidecar — and returns
@@ -286,7 +327,7 @@ pub fn load_vif_info(
     collection: &str,
     volume_id: VolumeId,
 ) -> io::Result<Option<crate::storage::volume::VifVolumeInfo>> {
-    let vif_path = locate_vif_path(dir, dir_idx, collection, volume_id);
+    let vif_path = resolve_vif_path(dir, dir_idx, collection, volume_id);
     match std::fs::read_to_string(&vif_path) {
         Ok(content) if content.trim().is_empty() => Ok(None),
         Ok(content) => serde_json::from_str(&content).map(Some).map_err(|e| {
@@ -336,15 +377,16 @@ pub fn load_vif_info_across_dirs(
         // pointed callers at the wrong disk whenever the vif lived with the
         // index — and a caller resolving the rest of the volume's metadata
         // against that answer would look in a directory holding none of it.
-        let data_vif = format!(
+        let idx_vif = format!(
             "{}.vif",
-            crate::storage::volume::volume_file_name(dir, collection, volume_id)
+            crate::storage::volume::volume_file_name(dir_idx, collection, volume_id)
         );
-        let found_in = if std::path::Path::new(&data_vif).exists() {
-            dir.to_string()
-        } else {
-            dir_idx.to_string()
-        };
+        let found_in =
+            if dir_idx != dir && resolve_vif_path(dir, dir_idx, collection, volume_id) == idx_vif {
+                dir_idx.to_string()
+            } else {
+                dir.to_string()
+            };
         return Ok(Some((vif, found_in)));
     }
     for other in other_dirs {
@@ -4106,6 +4148,82 @@ mod tests {
         assert_eq!(vol.data_shards, DATA_SHARDS_COUNT as u32);
         assert_eq!(vol.parity_shards, PARITY_SHARDS_COUNT as u32);
         assert_eq!(vol.block_size, 0, "legacy layout for a pre-record volume");
+    }
+
+    /// Shards placed on the disk that still holds the source volume's `.vif`
+    /// mount against an index on a sibling disk; the encode identity and
+    /// layout come from the sibling's `.vif`, not the source's config-free one.
+    #[test]
+    fn test_ec_volume_prefers_idx_vif_over_config_free_data_vif() {
+        let data_tmp = TempDir::new().unwrap();
+        let idx_tmp = TempDir::new().unwrap();
+        let dir = data_tmp.path().to_str().unwrap();
+        let dir_idx = idx_tmp.path().to_str().unwrap();
+        write_ecx_file(dir_idx, "pics", VolumeId(1), &[]);
+        let data_base = crate::storage::volume::volume_file_name(dir, "pics", VolumeId(1));
+        std::fs::write(
+            format!("{}.vif", data_base),
+            r#"{"version":3,"readOnly":true}"#,
+        )
+        .unwrap();
+        let vif = crate::storage::volume::VifVolumeInfo {
+            version: 3,
+            dat_file_size: 4096,
+            ec_shard_config: Some(crate::storage::volume::VifEcShardConfig {
+                data_shards: 12,
+                parity_shards: 4,
+                encode_ts_ns: 1_700_000_000_123_456_789,
+                block_size: 3 * 1024 * 1024,
+            }),
+            ..Default::default()
+        };
+        let idx_base = crate::storage::volume::volume_file_name(dir_idx, "pics", VolumeId(1));
+        std::fs::write(
+            format!("{}.vif", idx_base),
+            serde_json::to_string_pretty(&vif).unwrap(),
+        )
+        .unwrap();
+
+        let vol = EcVolume::new(dir, dir_idx, "pics", VolumeId(1)).unwrap();
+        assert_eq!(vol.encode_ts_ns, 1_700_000_000_123_456_789);
+        assert_eq!((vol.data_shards, vol.parity_shards), (12, 4));
+        assert_eq!(vol.block_size, 3 * 1024 * 1024);
+        assert_eq!(vol.dat_file_size, 4096);
+        let (_, found_in) = load_vif_info_across_dirs(dir, dir_idx, &[], "pics", VolumeId(1))
+            .unwrap()
+            .unwrap();
+        assert_eq!(found_in, dir_idx);
+    }
+
+    /// A data-dir `.vif` that records an EC config stays authoritative.
+    #[test]
+    fn test_ec_volume_keeps_data_vif_with_ec_config() {
+        let data_tmp = TempDir::new().unwrap();
+        let idx_tmp = TempDir::new().unwrap();
+        let dir = data_tmp.path().to_str().unwrap();
+        let dir_idx = idx_tmp.path().to_str().unwrap();
+        write_ecx_file(dir_idx, "pics", VolumeId(1), &[]);
+        for (d, ts) in [(dir, 11), (dir_idx, 22)] {
+            let vif = crate::storage::volume::VifVolumeInfo {
+                version: 3,
+                ec_shard_config: Some(crate::storage::volume::VifEcShardConfig {
+                    data_shards: 10,
+                    parity_shards: 4,
+                    encode_ts_ns: ts,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            let base = crate::storage::volume::volume_file_name(d, "pics", VolumeId(1));
+            std::fs::write(
+                format!("{}.vif", base),
+                serde_json::to_string_pretty(&vif).unwrap(),
+            )
+            .unwrap();
+        }
+
+        let vol = EcVolume::new(dir, dir_idx, "pics", VolumeId(1)).unwrap();
+        assert_eq!(vol.encode_ts_ns, 11);
     }
 
     #[test]
