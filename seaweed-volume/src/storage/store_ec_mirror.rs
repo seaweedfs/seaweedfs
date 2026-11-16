@@ -8,7 +8,9 @@ use std::path::Path;
 
 use tracing::{info, warn};
 
-use crate::storage::disk_location::{DiskLocation, parse_collection_volume_id_pub};
+use crate::storage::disk_location::{
+    DiskLocation, parse_collection_volume_id_pub, vif_is_ec_volume,
+};
 use crate::storage::store::Store;
 use crate::storage::types::VolumeId;
 
@@ -207,6 +209,33 @@ fn mirror_sidecars_for_volume(
     collection: &str,
     vid: VolumeId,
 ) -> io::Result<usize> {
+    // A local .vif with no EC config (a source volume's own) would shadow the
+    // owner's once the index is copied next to it; keep mounting across disks.
+    let dst_vif = sidecar_dest_path(dst_data_dir, dst_idx_dir, collection, vid, ".vif");
+    if path_is_regular_file(&dst_vif)
+        && !vif_is_ec_volume(&dst_vif)
+        && (vif_is_ec_volume(&sidecar_dest_path(
+            src_data_dir,
+            src_idx_dir,
+            collection,
+            vid,
+            ".vif",
+        )) || vif_is_ec_volume(&sidecar_dest_path(
+            src_idx_dir,
+            src_data_dir,
+            collection,
+            vid,
+            ".vif",
+        )))
+    {
+        info!(
+            volume_id = vid.0,
+            collection = %collection,
+            vif = %dst_vif,
+            "local .vif records no EC config; not mirroring EC sidecars",
+        );
+        return Ok(0);
+    }
     let mut copied = 0usize;
     for ext in EC_MIRRORED_SIDECARS {
         let dst = sidecar_dest_path(dst_data_dir, dst_idx_dir, collection, vid, ext);
@@ -389,6 +418,57 @@ mod tests {
         assert_eq!(ecx_dst, ecx, ".ecx mirrored bytes differ from source");
         let ecj_dst = fs::read(dir0.join(format!("{}_{}.ecj", collection, vid))).unwrap();
         assert_eq!(ecj_dst, ecj, ".ecj mirrored bytes differ from source");
+    }
+
+    /// Shards on a disk that still holds the source volume's config-free
+    /// `.vif` must mount with the owner's encode identity: mirroring the index
+    /// next to that `.vif` would make the disk mount through it.
+    #[test]
+    fn mirror_skips_disk_with_config_free_vif() {
+        let tmp = TempDir::new().unwrap();
+        let dir0 = tmp.path().join("data0");
+        let dir1 = tmp.path().join("data1");
+        fs::create_dir_all(&dir0).unwrap();
+        fs::create_dir_all(&dir1).unwrap();
+
+        let collection = "c";
+        let vid = 4122u32;
+        plant_shard(&dir0, collection, vid, 2);
+        plant_shard(&dir1, collection, vid, 0);
+        fs::write(
+            dir0.join(format!("{}_{}.vif", collection, vid)),
+            r#"{"version":3,"readOnly":true}"#,
+        )
+        .unwrap();
+        plant_ecx(&dir1, collection, vid, &[0xA1u8; 20]);
+        let vif = VifVolumeInfo {
+            version: 3,
+            ec_shard_config: Some(VifEcShardConfig {
+                data_shards: 10,
+                parity_shards: 4,
+                encode_ts_ns: 1_700_000_000_000_000_042,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        fs::write(
+            dir1.join(format!("{}_{}.vif", collection, vid)),
+            serde_json::to_string(&vif).unwrap(),
+        )
+        .unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        add_loc(&mut store, &dir0);
+        add_loc(&mut store, &dir1);
+
+        assert!(
+            !dir0.join(format!("{}_{}.ecx", collection, vid)).exists(),
+            ".ecx mirrored next to the config-free .vif"
+        );
+        let ec_vol = store.locations[0]
+            .find_ec_volume(VolumeId(vid))
+            .expect("dir0 ec volume mounted");
+        assert_eq!(ec_vol.encode_ts_ns, 1_700_000_000_000_000_042);
     }
 
     #[test]

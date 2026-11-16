@@ -1542,7 +1542,7 @@ pub(crate) fn vif_references_remote_file(vif_path: &str) -> bool {
 /// True when a `.vif` records an EC shard config, i.e. the volume was
 /// erasure-coded. Such a volume keeps no local `.dat`, so an empty `.dat`
 /// alongside it is a leftover stub safe to remove.
-fn vif_is_ec_volume(vif_path: &str) -> bool {
+pub(crate) fn vif_is_ec_volume(vif_path: &str) -> bool {
     fs::read_to_string(vif_path)
         .ok()
         .and_then(|s| serde_json::from_str::<VifVolumeInfo>(&s).ok())
