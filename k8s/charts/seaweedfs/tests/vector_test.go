@@ -136,13 +136,11 @@ func TestVectorNetworkPolicyOverrides(t *testing.T) {
 	}
 }
 
-func TestVectorMetricsImageCompatibility(t *testing.T) {
-	if _, err := exec.LookPath("helm"); err != nil {
-		t.Skip("helm is not installed")
+func TestVectorMetricsDefaultImage(t *testing.T) {
+	output, _ := render(t, "vector.enabled=true", "vector.metricsPort=9329")
+	for _, want := range []string{"--metrics-port=9329", "path: /ready", "path: /health"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("default image missing %q", want)
+		}
 	}
-	out, err := exec.Command("helm", "template", "vector-test", "..", "--set", "vector.enabled=true", "--set", "vector.metricsPort=9329").CombinedOutput()
-	if err == nil || !strings.Contains(string(out), "default 4.53 image does not support metrics") {
-		t.Fatalf("incompatible image accepted: %v %s", err, out)
-	}
-	render(t, "vector.enabled=true", "vector.metricsPort=9329", "vector.imageOverride=example/metrics-engine:test")
 }
