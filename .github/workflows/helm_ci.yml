@@ -37,7 +37,7 @@ jobs:
         with:
           version: v3.18.4
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
 
