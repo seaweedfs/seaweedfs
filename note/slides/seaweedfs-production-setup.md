@@ -45,6 +45,8 @@ Rule of thumb: start with 3 masters, then grow volume servers with data.
 - Metadata store options: PostgreSQL, MySQL, Redis, Cassandra, TiKV, etc.
 - Run **3 filers** for HA
 - Filers are stateless relative to each other — state lives in the DB
+- No quorum among filers: 2 already survive one failure; the third keeps a spare while one is down for upgrades
+- Give clients every filer address (e.g. `-filer=f1:8888,f2:8888,f3:8888`) or a load balancer that forwards both the HTTP and gRPC ports (8888 and 18888)
 
 **S3 Servers**
 
@@ -77,7 +79,7 @@ Keeps housekeeping off the hot path.
 |----------------|----------------------|-----------------------------------|
 | Master         | 3                    | Raft quorum, topology, volume map |
 | Volume Server  | N (scale out)        | Stores data needles               |
-| Filer          | 3                    | Metadata gateway                  |
+| Filer          | 3 (2 minimum)        | Metadata gateway, no quorum       |
 | Metadata DB    | HA cluster           | Persists filer metadata           |
 | S3 Server      | N (by throughput)    | S3 API frontend                   |
 | Admin          | 1                    | Background job coordinator        |
