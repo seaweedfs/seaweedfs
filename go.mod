@@ -84,8 +84,8 @@ require (
 	github.com/xdg-go/scram v1.2.0
 	github.com/xdg-go/stringprep v1.0.4 // indirect
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect
-	go.etcd.io/etcd/api/v3 v3.7.1
-	go.etcd.io/etcd/client/v3 v3.7.1
+	go.etcd.io/etcd/api/v3 v3.7.3
+	go.etcd.io/etcd/client/v3 v3.7.3
 	go.mongodb.org/mongo-driver v1.17.9
 	go.opencensus.io v0.24.0 // indirect
 	gocloud.dev v0.47.0
