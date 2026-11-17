@@ -180,6 +180,11 @@ var localSocketCheckInterval = time.Minute
 func serveGrpcOnLocalListener(grpcServer *grpc.Server, socketPath string, listener net.Listener) {
 	served := make(chan error, 1)
 	serve := func(l net.Listener) {
+		// A replaced listener must not unlink the path its successor binds;
+		// every exit below removes the socket file itself.
+		if unixListener, ok := l.(*net.UnixListener); ok {
+			unixListener.SetUnlinkOnClose(false)
+		}
 		go func() { served <- grpcServer.Serve(&localSocketListener{Listener: l}) }()
 	}
 	serve(listener)
@@ -204,12 +209,10 @@ func serveGrpcOnLocalListener(grpcServer *grpc.Server, socketPath string, listen
 				continue
 			}
 			glog.Warningf("gRPC Unix socket %s was removed and has been recreated", socketPath)
-			if unixListener, ok := listener.(*net.UnixListener); ok {
-				unixListener.SetUnlinkOnClose(false)
-			}
 			listener.Close()
 			if err := <-served; err == nil || err == grpc.ErrServerStopped {
 				replacement.Close()
+				os.Remove(socketPath)
 				return
 			}
 			listener = replacement
