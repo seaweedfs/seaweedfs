@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -409,11 +410,10 @@ func (fs *FilerServer) lockRingHealthy() bool {
 			return true
 		}
 	}
-	for _, s := range dlm.LockRing.Ring.GetServers() {
-		if s == dlm.Host {
-			fs.lockRingUnhealthySince.Store(0)
-			return true
-		}
+	inRing := func() bool { return slices.Contains(dlm.LockRing.Ring.GetServers(), dlm.Host) }
+	if inRing() {
+		fs.lockRingUnhealthySince.Store(0)
+		return true
 	}
 	now := time.Now().UnixNano()
 	since := now
@@ -421,6 +421,11 @@ func (fs *FilerServer) lockRingHealthy() bool {
 		if s := fs.lockRingUnhealthySince.Load(); s != 0 {
 			since = s
 		}
+	}
+	// A rejoin installed after the first read may already have reset the clock.
+	if inRing() {
+		fs.lockRingUnhealthySince.CompareAndSwap(now, 0)
+		return true
 	}
 	absent := time.Duration(now - since)
 	if absent < lockRingUnhealthyGracePeriod {
