@@ -449,20 +449,7 @@ func (s3opt *S3Options) startS3Server() bool {
 	// The Vectors API rides the main -port listener whenever a weed-vector
 	// backend is reachable — /s3vectors/ in the SigV4 credential scope picks
 	// the vectors router.
-	// mux matches Queries() before any router middleware runs, so the escape
-	// has to wrap the router for routing and authorization to read one query.
-	mainHandler := util_http.EscapeSemicolonsInQuery(router)
-	vectorsHandler := mainHandler
-	if vectorsRouter := s3opt.vectorsRouter(s3ApiServer, grpcDialOption, masterAddresses, filerGroup); vectorsRouter != nil {
-		vr := vectorsRouter
-		vectorsHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if isVectorsRequest(r) {
-				vr.ServeHTTP(w, r)
-				return
-			}
-			mainHandler.ServeHTTP(w, r)
-		})
-	}
+	vectorsHandler := s3Handler(router, s3opt.vectorsRouter(s3ApiServer, grpcDialOption, masterAddresses, filerGroup))
 
 	if runtime.GOOS != "windows" {
 		localSocket := *s3opt.localSocket
@@ -773,6 +760,23 @@ func (s3opt *S3Options) vectorsRouter(s3ApiServer *s3api.S3ApiServer, grpcDialOp
 
 // isVectorsRequest routes by the SigV4 credential scope — the s3vectors
 // service name lives there, not in the path.
+// s3Handler serves router, and vectors for Vectors API requests when set. mux
+// matches Queries() before router middleware runs, so the escape wraps the
+// router for routing and authorization to read one query.
+func s3Handler(router, vectors *mux.Router) http.Handler {
+	main := util_http.EscapeSemicolonsInQuery(router)
+	if vectors == nil {
+		return main
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isVectorsRequest(r) {
+			vectors.ServeHTTP(w, r)
+			return
+		}
+		main.ServeHTTP(w, r)
+	})
+}
+
 func isVectorsRequest(r *http.Request) bool {
 	if v := r.Header.Get("Authorization"); v != "" {
 		return strings.Contains(v, "/s3vectors/")
