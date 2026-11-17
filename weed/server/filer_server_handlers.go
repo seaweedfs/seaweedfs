@@ -410,10 +410,21 @@ func (fs *FilerServer) lockRingHealthy() bool {
 			return true
 		}
 	}
-	inRing := func() bool { return slices.Contains(dlm.LockRing.Ring.GetServers(), dlm.Host) }
+	absent := fs.lockRingAbsence(func() bool { return slices.Contains(dlm.LockRing.Ring.GetServers(), dlm.Host) })
+	if absent < lockRingUnhealthyGracePeriod {
+		return true
+	}
+	glog.Warningf("filerHealthz: %s absent from lock ring for %v (ring v%d: %v)",
+		dlm.Host, absent.Round(time.Second), dlm.LockRing.Version(), dlm.LockRing.Ring.GetServers())
+	return false
+}
+
+// lockRingAbsence returns how long inRing has reported this filer missing,
+// or 0 while it is in the ring.
+func (fs *FilerServer) lockRingAbsence(inRing func() bool) time.Duration {
 	if inRing() {
 		fs.lockRingUnhealthySince.Store(0)
-		return true
+		return 0
 	}
 	now := time.Now().UnixNano()
 	since := now
@@ -426,15 +437,9 @@ func (fs *FilerServer) lockRingHealthy() bool {
 	// the clock: the reset runs before the next ring update is installed.
 	if inRing() || fs.lockRingUnhealthySince.Load() != since {
 		fs.lockRingUnhealthySince.CompareAndSwap(now, 0)
-		return true
+		return 0
 	}
-	absent := time.Duration(now - since)
-	if absent < lockRingUnhealthyGracePeriod {
-		return true
-	}
-	glog.Warningf("filerHealthz: %s absent from lock ring for %v (ring v%d: %v)",
-		dlm.Host, absent.Round(time.Second), dlm.LockRing.Version(), dlm.LockRing.Ring.GetServers())
-	return false
+	return time.Duration(now - since)
 }
 
 func (fs *FilerServer) filerHealthzHandler(w http.ResponseWriter, r *http.Request) {

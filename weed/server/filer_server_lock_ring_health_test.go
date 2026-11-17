@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"slices"
 	"testing"
 	"time"
 
@@ -77,5 +78,44 @@ func TestLockRingHealthyRestartsGraceAfterUnprobedRejoin(t *testing.T) {
 	dlm.LockRing.SetSnapshot([]pb.ServerAddress{"filer-1:8888"}, 2)
 	if !fs.lockRingHealthy() {
 		t.Fatal("expected a fresh grace period after rejoining the ring between probes")
+	}
+}
+
+func TestLockRingAbsenceRingUpdatesDuringProbe(t *testing.T) {
+	self := pb.ServerAddress("filer-0:8888")
+	other := pb.ServerAddress("filer-1:8888")
+	dlm := lock_manager.NewDistributedLockManager(self)
+	fs := &FilerServer{filer: &filer.Filer{Dlm: dlm}, option: &FilerOption{Host: self}}
+	dlm.LockRing.SetTakeSnapshotCallback(fs.OnDlmChangeSnapshot)
+	var version int64
+	install := func(servers ...pb.ServerAddress) {
+		version++
+		dlm.LockRing.SetSnapshot(servers, version)
+	}
+	probe := func(afterFirstRead, beforeSecondRead func()) time.Duration {
+		reads := 0
+		return fs.lockRingAbsence(func() bool {
+			reads++
+			if reads == 2 && beforeSecondRead != nil {
+				beforeSecondRead()
+			}
+			in := slices.Contains(dlm.LockRing.Ring.GetServers(), self)
+			if reads == 1 && afterFirstRead != nil {
+				afterFirstRead()
+			}
+			return in
+		})
+	}
+	install(other)
+
+	fs.lockRingUnhealthySince.Store(time.Now().Add(-lockRingUnhealthyGracePeriod - time.Second).UnixNano())
+	if absent := probe(func() { install(self, other) }, nil); absent != 0 || fs.lockRingUnhealthySince.Load() != 0 {
+		t.Fatalf("rejoin after the first read: absent %v, clock %d; want 0, 0", absent, fs.lockRingUnhealthySince.Load())
+	}
+
+	install(other)
+	fs.lockRingUnhealthySince.Store(time.Now().Add(-lockRingUnhealthyGracePeriod - time.Second).UnixNano())
+	if absent := probe(nil, func() { install(self, other); install(other) }); absent >= lockRingUnhealthyGracePeriod {
+		t.Fatalf("rejoin and removal between the reads: absent %v, want a fresh grace period", absent)
 	}
 }
