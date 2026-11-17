@@ -278,6 +278,9 @@ spec:
               {{- if .Values.filer.s3.auditLogConfig }}
               -s3.auditLogConfig=/etc/sw/filer_s3_auditLogConfig.json \
               {{- end }}
+              {{- if .Values.filer.s3.preStopSeconds }}
+              -s3.preStopSeconds={{ .Values.filer.s3.preStopSeconds }} \
+              {{- end }}
               {{- end }}
               -master={{ include "seaweedfs.masterServerArg" . }} \
               {{- range .Values.filer.extraArgs }}

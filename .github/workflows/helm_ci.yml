@@ -104,6 +104,13 @@ jobs:
           grep -A 4 "^  strategy:" /tmp/s3-rollout.yaml | grep -q "maxUnavailable: 0"
           grep -A 4 "^  strategy:" /tmp/s3-rollout.yaml | grep -q "type: RollingUpdate"
           grep -A 5 "^          lifecycle:" /tmp/s3-rollout.yaml | grep -q -- "- sleep"
+          ! grep -q -- "-preStopSeconds" /tmp/s3-rollout-defaults.yaml
+          helm template test $CHART_DIR --show-only templates/s3/s3-deployment.yaml \
+            --set s3.enabled=true --set s3.preStopSeconds=20 \
+            | grep -q -- "-preStopSeconds=20 "
+          helm template test $CHART_DIR --show-only templates/filer/filer-statefulset.yaml \
+            --set filer.s3.enabled=true --set filer.s3.preStopSeconds=20 \
+            | grep -q -- "-s3.preStopSeconds=20 "
           echo "S3 rollout settings render correctly"
 
           echo "=== Testing the S3 config checksum is stable across renders ==="

@@ -100,6 +100,7 @@ type S3ApiServer struct {
 	s3_pb.UnimplementedSeaweedS3IamCacheServer
 	s3_lifecycle_pb.UnimplementedSeaweedS3LifecycleInternalServer
 	option                *S3ApiServerOption
+	draining              atomic.Bool
 	iam                   *IdentityAccessManagement
 	iamIntegration        *S3IAMIntegration // Advanced IAM integration for JWT authentication
 	cb                    *CircuitBreaker

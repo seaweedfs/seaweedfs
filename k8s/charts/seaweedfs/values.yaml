@@ -1070,6 +1070,9 @@ filer:
     httpsPort: 0
     # Suffix of the host name, {bucket}.{domainName}
     domainName: ""
+    # Seconds the gateway keeps serving after SIGTERM while its health checks
+    # return 503 (see s3.preStopSeconds). The filer pod's grace period is 60s.
+    preStopSeconds: 0
     # enable user & permission to s3 (need to inject to all services)
     enableAuth: false
     # set to the name of an existing kubernetes Secret with the s3 json config file
@@ -1118,8 +1121,14 @@ s3:
   #     maxUnavailable: 0
   #     maxSurge: 25%
   updateStrategy: {}
-  # Time the s3 pod is given to shut down, including any preStop hook
+  # Time the s3 pod is given to shut down, including any preStop hook.
+  # With preStopSeconds set, keep it above preStopSeconds plus 15 seconds
+  # for in-flight requests to finish.
   terminationGracePeriodSeconds: 10
+  # Seconds the gateway keeps serving after SIGTERM while its health checks
+  # return 503, so the pod leaves the Service endpoints before it stops
+  # listening. 0 stops at once.
+  preStopSeconds: 0
   bindAddress: 0.0.0.0
   port: 8333
   # add additional https port

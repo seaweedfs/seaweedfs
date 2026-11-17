@@ -54,6 +54,8 @@ const allowUntrustedRemoteEndpointsUsage = "if true, a read of a remote-only ent
 // that runs the embedded IAM API.
 const iamSelfServiceRequiresGrantUsage = "if true, an identity needs an explicit iam: grant to manage its own access keys (CreateAccessKey, DeleteAccessKey, UpdateAccessKey, ListAccessKeys, GetUser), as on AWS. Default allows it to every authenticated identity."
 
+const s3PreStopSecondsUsage = "seconds to keep serving after SIGTERM, with /status, /healthz and /readyz returning 503, before the S3 gateway shuts down. Gives load balancers and Kubernetes Services time to stop routing to it. 0 shuts down at once"
+
 // allowBackslashInKeyUsage documents the S3 flag keeping '\' a literal
 // object-key character instead of normalizing it to '/'. Repeated '//' in a
 // key still collapses: a filer entry name cannot contain an empty segment.
@@ -198,6 +200,7 @@ func init() {
 	filerS3Options.allowUntrustedRemoteEndpoints = cmdFiler.Flag.Bool("s3.allowUntrustedRemoteEndpoints", false, allowUntrustedRemoteEndpointsUsage)
 	filerS3Options.allowBackslashInKey = cmdFiler.Flag.Bool("s3.allowBackslashInKey", false, allowBackslashInKeyUsage)
 	filerS3Options.iamSelfServiceRequiresGrant = cmdFiler.Flag.Bool("s3.iam.selfServiceRequiresGrant", false, iamSelfServiceRequiresGrantUsage)
+	filerS3Options.preStopSeconds = cmdFiler.Flag.Int("s3.preStopSeconds", 0, s3PreStopSecondsUsage)
 
 	// start webdav on filer
 	filerStartWebDav = cmdFiler.Flag.Bool("webdav", false, "whether to start webdav gateway")
