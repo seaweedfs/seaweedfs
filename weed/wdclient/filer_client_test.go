@@ -670,3 +670,18 @@ func TestDisjointAnswerDoesNotUndoAdoption(t *testing.T) {
 		t.Fatalf("cache holds %v, want only %v", cached, a)
 	}
 }
+
+// With nothing cached there is no adopted entry to protect, so a disjoint
+// answer fills the cache instead of costing a lookup per read.
+func TestDisjointAnswerFillsEmptyCache(t *testing.T) {
+	a := Location{Url: "a:8080"}
+	b := Location{Url: "b:8080"}
+	mc := moveClient()
+	fc := hookedFilerClient(mc, &testLocationProvider{locations: map[string][]Location{"5": {b}}})
+	pushVolumeLocation(mc, a.Url, []uint32{5}, nil, nil, nil)
+
+	expectServed(t, fc, "5", b)
+	if cached, _ := fc.GetLocations(5); len(cached) != 1 || cached[0].Url != b.Url {
+		t.Fatalf("cache holds %v, want %v", cached, b)
+	}
+}

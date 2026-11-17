@@ -455,7 +455,7 @@ func (vc *vidMapClient) fillLocations(vid uint32, locations []Location, epoch ui
 		if current, found := vc.authority.GetCurrentLocations(vid); found {
 			if listed := listedLocations(locations, current); len(listed) > 0 {
 				locations = listed
-			} else {
+			} else if _, cached := vc.vidMap.GetLocations(vid); cached {
 				// Served, but not merged into what a pushed add adopted.
 				cache = false
 			}
