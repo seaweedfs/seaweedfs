@@ -105,10 +105,12 @@ func TestStageSameFilesWithoutDLM(t *testing.T) {
 
 	var broken []string
 	for _, name := range names {
-		resp, err := filer_pb.LookupEntry(context.Background(), client, &filer_pb.LookupDirectoryEntryRequest{
+		ctx, cancel := context.WithTimeout(context.Background(), checkTimeout)
+		resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
 			Directory: "/" + dir,
 			Name:      name,
 		})
+		cancel()
 		if err != nil {
 			broken = append(broken, fmt.Sprintf("%s: lookup: %v", name, err))
 			continue
@@ -127,10 +129,14 @@ func TestStageSameFilesWithoutDLM(t *testing.T) {
 	require.Empty(t, broken, "%d of %d staged files are broken", len(broken), files)
 }
 
+const checkTimeout = 30 * time.Second
+
+var checkClient = &http.Client{Timeout: checkTimeout}
+
 // needleExists reports whether the volume server still has the needle; a
 // deleted one answers 404 (only readDeleted=true would serve it).
 func (c *dlmTestCluster) needleExists(t testing.TB, fid string) bool {
-	resp, err := http.Head(fmt.Sprintf("http://127.0.0.1:%d/%s", c.volumePort, fid))
+	resp, err := checkClient.Head(fmt.Sprintf("http://127.0.0.1:%d/%s", c.volumePort, fid))
 	require.NoError(t, err)
 	resp.Body.Close()
 	return resp.StatusCode == http.StatusOK
@@ -138,7 +144,7 @@ func (c *dlmTestCluster) needleExists(t testing.TB, fid string) bool {
 
 // readFromFiler reads a file whole through filer0's HTTP API.
 func (c *dlmTestCluster) readFromFiler(path string) ([]byte, error) {
-	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d%s", c.filerPorts[0], path))
+	resp, err := checkClient.Get(fmt.Sprintf("http://127.0.0.1:%d%s", c.filerPorts[0], path))
 	if err != nil {
 		return nil, err
 	}
