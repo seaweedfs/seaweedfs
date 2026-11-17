@@ -3,6 +3,7 @@ package filer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -96,5 +97,48 @@ func waitForWebhook(t *testing.T, cond func() bool) {
 			t.Fatal("timed out")
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func TestManagedNotificationWebhooksRetryAfterReadError(t *testing.T) {
+	retry := notificationWebhooksRetry
+	t.Cleanup(func() { notificationWebhooksRetry = retry })
+	notificationWebhooksRetry = 10 * time.Millisecond
+
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, nil)
+	t.Cleanup(func() {
+		f.webhooks.reloadMu.Lock()
+		if f.webhooks.retry != nil {
+			f.webhooks.retry.Stop()
+		}
+		f.webhooks.reloadMu.Unlock()
+		if q := f.webhooks.queue.Load(); q != nil {
+			q.Close(time.Second)
+		}
+	})
+
+	store.mu.Lock()
+	store.entries[NotificationWebhooksConfPath] = &Entry{
+		FullPath: util.FullPath(NotificationWebhooksConfPath),
+		Content:  []byte(`{"targets":[{"name":"data","enabled":true,"endpoint":"http://127.0.0.1:1/hook"}]}`),
+	}
+	store.findErr = errors.New("store unavailable")
+	store.mu.Unlock()
+
+	f.LoadNotificationWebhooks()
+	if f.webhooks.queue.Load() != nil {
+		t.Fatal("expected no webhook queue while the stored targets cannot be read")
+	}
+
+	store.mu.Lock()
+	store.findErr = nil
+	store.mu.Unlock()
+	deadline := time.Now().Add(5 * time.Second)
+	for f.webhooks.queue.Load() == nil {
+		if time.Now().After(deadline) {
+			t.Fatal("stored webhook targets were not applied after the read recovered")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

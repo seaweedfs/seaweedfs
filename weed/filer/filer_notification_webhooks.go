@@ -19,6 +19,8 @@ const (
 	notificationWebhooksDrain    = 30 * time.Second
 )
 
+var notificationWebhooksRetry = 5 * time.Second
+
 var NotificationWebhooksConfPath = string(util.NewFullPath(DirectoryEtcSeaweedFS, NotificationWebhooksConfName))
 
 // managedWebhooks runs the webhook targets edited from the admin UI, next to
@@ -26,6 +28,7 @@ var NotificationWebhooksConfPath = string(util.NewFullPath(DirectoryEtcSeaweedFS
 type managedWebhooks struct {
 	reloadMu sync.Mutex
 	applied  []byte
+	retry    *time.Timer
 	queue    atomic.Pointer[webhook.Queue]
 }
 
@@ -59,12 +62,14 @@ func (f *Filer) reloadNotificationWebhooks() {
 	case err == filer_pb.ErrNotFound:
 	case err != nil:
 		glog.Errorf("read %s: %v", NotificationWebhooksConfPath, err)
+		f.retryNotificationWebhooks()
 		return
 	case len(entry.Content) > 0:
 		content = entry.Content
 	default:
 		if content, err = f.readEntry(entry.GetChunks(), entry.Size()); err != nil {
 			glog.Errorf("read %s: %v", NotificationWebhooksConfPath, err)
+			f.retryNotificationWebhooks()
 			return
 		}
 	}
@@ -87,6 +92,21 @@ func (f *Filer) reloadNotificationWebhooks() {
 	if old := f.webhooks.queue.Swap(queue); old != nil {
 		go old.Close(notificationWebhooksDrain)
 	}
+}
+
+// retryNotificationWebhooks keeps at most one pending retry, since no later
+// event replays the change whose read failed.
+func (f *Filer) retryNotificationWebhooks() {
+	if f.webhooks.retry != nil {
+		f.webhooks.retry.Stop()
+	}
+	f.webhooks.retry = time.AfterFunc(notificationWebhooksRetry, func() {
+		select {
+		case <-f.deletionQuit:
+		default:
+			f.reloadNotificationWebhooks()
+		}
+	})
 }
 
 // sendToNotificationWebhooks hands a send that raced a reload to the queue
