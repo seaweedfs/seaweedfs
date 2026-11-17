@@ -1788,6 +1788,17 @@ mod tests {
         assert!(!should_compact_old_floor(0, false));
     }
 
+    fn reload_redb(db_path: &std::path::Path, idx_path: &std::path::Path) -> RedbNeedleMap {
+        let mut idx = std::fs::File::open(idx_path).unwrap();
+        RedbNeedleMap::load_from_idx(
+            db_path.to_str().unwrap(),
+            &mut idx,
+            Version::current(),
+            redb_test_cache(),
+        )
+        .unwrap()
+    }
+
     /// Open a redb map on an empty .idx with an append writer attached, the
     /// way `Volume::load_index_redb` opens a writable volume.
     fn open_writable_redb(
@@ -2497,5 +2508,165 @@ mod tests {
                     .is_none_or(|v| v.size.is_deleted())
             );
         }
+    }
+
+    #[test]
+    fn test_redb_fresh_reuse_does_not_record_floor_compact() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut nm, db_path, idx_path) = open_writable_redb(dir.path());
+        let len = std::fs::metadata(&db_path).unwrap().len();
+        assert!(len <= REDB_SMALL_FILE_BYTES, "fresh file is {len} bytes");
+        nm.close();
+        drop(nm);
+        let loaded = reload_redb(&db_path, &idx_path);
+        assert_eq!(loaded.live_floor_compact(), None);
+        assert!(loaded.get(NeedleId(1)).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_redb_in_band_file_is_compacted_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut nm, db_path, idx_path) = open_writable_redb(dir.path());
+        let mut n = 0u64;
+        loop {
+            n += 1;
+            nm.put(
+                NeedleId(n),
+                Offset::from_actual_offset((n as i64).saturating_mul(8)),
+                Size(8),
+            )
+            .unwrap();
+            let len = std::fs::metadata(&db_path).unwrap().len();
+            if should_compact_old_floor(len, false) {
+                break;
+            }
+            assert!(
+                n < 2_000_000,
+                "file grew to {len} bytes without entering the old-floor band"
+            );
+        }
+        nm.checkpoint(true).unwrap();
+        nm.close();
+        drop(nm);
+
+        let mut loaded = reload_redb(&db_path, &idx_path);
+        let len = std::fs::metadata(&db_path).unwrap().len();
+        let flag = loaded.live_floor_compact();
+        if should_compact_old_floor(len, false) {
+            assert_eq!(flag, Some(1));
+        } else {
+            assert!(len <= REDB_SMALL_FILE_BYTES, "compacted file is {len} bytes");
+            assert_eq!(flag, None);
+        }
+        let first = loaded.get(NeedleId(1)).unwrap();
+        assert!(first.is_some());
+        let last = loaded.get(NeedleId(n)).unwrap();
+        assert!(last.is_some());
+        // close checkpoints the non-durable floor_compact flag, then drop
+        // releases the exclusive lock before the second open.
+        loaded.close();
+        drop(loaded);
+
+        let again = reload_redb(&db_path, &idx_path);
+        assert_eq!(std::fs::metadata(&db_path).unwrap().len(), len);
+        assert_eq!(again.live_floor_compact(), flag);
+    }
+
+    #[test]
+    fn test_redb_sparse_old_floor_shrinks_on_reuse() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut nm, db_path, idx_path) = open_writable_redb(dir.path());
+        let mut n = 0u64;
+        loop {
+            n += 1;
+            nm.put(
+                NeedleId(n),
+                Offset::from_actual_offset((n as i64).saturating_mul(8)),
+                Size(8),
+            )
+            .unwrap();
+            let len = std::fs::metadata(&db_path).unwrap().len();
+            if should_compact_old_floor(len, false) {
+                break;
+            }
+            assert!(n < 2_000_000, "file is {len} bytes and never entered the band");
+        }
+        assert!(n > 32, "band was reached with only {n} keys");
+        nm.checkpoint(true).unwrap();
+        nm.close();
+        drop(nm);
+
+        let keep = 32u64;
+        let idx = std::fs::OpenOptions::new().write(true).open(&idx_path).unwrap();
+        idx.set_len(keep * NEEDLE_MAP_ENTRY_SIZE as u64).unwrap();
+        drop(idx);
+
+        let db = redb::Database::builder()
+            .set_cache_size(redb_test_cache())
+            .open(db_path.to_str().unwrap())
+            .unwrap();
+        let txn = db.begin_write().unwrap();
+        {
+            let mut table = txn.open_table(NEEDLE_TABLE).unwrap();
+            for key in (keep + 1)..=n {
+                table.remove(key).unwrap();
+            }
+        }
+        {
+            let mut meta = txn.open_table(META_TABLE).unwrap();
+            meta.insert(META_IDX_SIZE, keep * NEEDLE_MAP_ENTRY_SIZE as u64)
+                .unwrap();
+        }
+        txn.commit().unwrap();
+        drop(db);
+
+        let before = std::fs::metadata(&db_path).unwrap().len();
+        let loaded = reload_redb(&db_path, &idx_path);
+        let after = std::fs::metadata(&db_path).unwrap().len();
+        assert!(after < before, "reuse left the file at {after} bytes, was {before}");
+        assert!(
+            after <= REDB_SMALL_FILE_BYTES,
+            "32 live keys still occupy {after} bytes"
+        );
+        assert!(loaded.get(NeedleId(1)).unwrap().is_some());
+        assert!(loaded.get(NeedleId(keep)).unwrap().is_some());
+        assert!(loaded.get(NeedleId(keep + 1)).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_compact_follow_up_reopens_only_on_storage_error() {
+        use redb::{CompactionError, StorageError};
+        let storage = CompactionError::Storage(StorageError::Io(std::io::Error::other("sync")));
+        assert_eq!(
+            compact_follow_up(&storage),
+            CompactFollowUp::ReopenSkipCompact
+        );
+        assert_eq!(
+            compact_follow_up(&CompactionError::TransactionInProgress),
+            CompactFollowUp::KeepHandle
+        );
+        assert_eq!(
+            compact_follow_up(&CompactionError::PersistentSavepointExists),
+            CompactFollowUp::KeepHandle
+        );
+        assert_eq!(
+            compact_follow_up(&CompactionError::EphemeralSavepointExists),
+            CompactFollowUp::KeepHandle
+        );
+    }
+
+    #[test]
+    fn test_redb_reopen_database_reads_committed_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut nm, _db_path, _idx_path) = open_writable_redb(dir.path());
+        nm.put(NeedleId(7), Offset::from_actual_offset(64), Size(9))
+            .unwrap();
+        nm.reopen_database().unwrap();
+        let nv = nm.get(NeedleId(7)).unwrap().unwrap();
+        assert_eq!(nv.size, Size(9));
+        nm.put(NeedleId(8), Offset::from_actual_offset(128), Size(10))
+            .unwrap();
+        let nv = nm.get(NeedleId(8)).unwrap().unwrap();
+        assert_eq!(nv.size, Size(10));
     }
 }
