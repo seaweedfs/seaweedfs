@@ -57,7 +57,7 @@ type Conn struct {
 	externalReadDeadline  bool
 	externalWriteDeadline bool
 
-	peerGone atomic.Bool
+	readEndedByServer atomic.Bool
 }
 
 func (c *Conn) SetDeadline(t time.Time) error {
@@ -113,15 +113,12 @@ func (c *Conn) extendDeadline() error {
 
 func (c *Conn) Read(b []byte) (count int, e error) {
 	// Extend deadline before reading - any activity keeps connection alive
-	if err := c.extendDeadline(); err != nil {
-		return 0, err
+	if e = c.extendDeadline(); e == nil {
+		if count, e = c.Conn.Read(b); e == nil {
+			stats.BytesIn(int64(count))
+		}
 	}
-	count, e = c.Conn.Read(b)
-	if e == nil {
-		stats.BytesIn(int64(count))
-	} else if !errors.Is(e, os.ErrDeadlineExceeded) {
-		c.peerGone.Store(true)
-	}
+	c.readEndedByServer.Store(errors.Is(e, os.ErrDeadlineExceeded) || errors.Is(e, net.ErrClosed))
 	return
 }
 
@@ -162,12 +159,13 @@ func ConnContext(ctx context.Context, c net.Conn) context.Context {
 	return ctx
 }
 
-// ClientGone reports whether the client closed or reset the connection serving
-// ctx. A canceled request context does not tell on its own: the idle timeout
-// cancels it too, while the client is still connected.
+// ClientGone reports whether the client is why the request context ctx is
+// canceled. net/http cancels it when a read of the connection fails or the
+// HTTP/2 stream is reset; a read the server ended itself, by the idle timeout
+// or by closing the connection, is not the client's doing.
 func ClientGone(ctx context.Context) bool {
 	tc, _ := ctx.Value(connContextKey{}).(*Conn)
-	return tc != nil && tc.peerGone.Load()
+	return tc != nil && ctx.Err() == context.Canceled && !tc.readEndedByServer.Load()
 }
 
 func NewListener(addr string, timeout time.Duration) (ipListener net.Listener, err error) {

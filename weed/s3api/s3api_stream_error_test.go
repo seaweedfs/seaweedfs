@@ -3,7 +3,6 @@ package s3api
 import (
 	"context"
 	"fmt"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -87,43 +86,75 @@ func TestIdleTimeoutCancelStillAnswersConnectedClient(t *testing.T) {
 }
 
 // TestClientGoneBeforeFirstByteIsNotAnInternalError checks that a canceled
-// stream whose client closed the connection is answered ClientDisconnected, so
-// an aborted download does not count as a server error.
+// stream whose client went away is answered ClientDisconnected, so an aborted
+// download does not count as a server error.
 func TestClientGoneBeforeFirstByteIsNotAnInternalError(t *testing.T) {
-	listener, err := util.NewListener("127.0.0.1:0", time.Minute)
-	if err != nil {
-		t.Fatal(err)
+	clientCancels := func(cancel context.CancelFunc, _ *httptest.Server) { cancel() }
+	serverCloses := func(_ context.CancelFunc, server *httptest.Server) { server.CloseClientConnections() }
+	clientDisconnected := s3err.GetAPIError(s3err.ErrClientDisconnected).HTTPStatusCode
+	tests := []struct {
+		name  string
+		start func(*httptest.Server)
+		abort func(context.CancelFunc, *httptest.Server)
+		want  int
+	}{
+		{"client closes the connection", (*httptest.Server).Start, clientCancels, clientDisconnected},
+		{"client closes the TLS connection", (*httptest.Server).StartTLS, clientCancels, clientDisconnected},
+		{"client resets the HTTP/2 stream", func(server *httptest.Server) {
+			server.EnableHTTP2 = true
+			server.StartTLS()
+		}, clientCancels, clientDisconnected},
+		{"server closes the connection", (*httptest.Server).Start, serverCloses, http.StatusInternalServerError},
 	}
-	status := make(chan int, 1)
-	server := &http.Server{
-		ConnContext: util.ConnContext,
-		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			<-r.Context().Done()
-			rec := httptest.NewRecorder()
-			writeStreamErrorResponse(rec, r, r.Context().Err())
-			status <- rec.Code
-		}),
-	}
-	go server.Serve(listener)
-	defer server.Close()
 
-	conn, err := net.Dial("tcp", listener.Addr().String())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := conn.Write([]byte("GET /bucket/object HTTP/1.1\r\nHost: s3\r\n\r\n")); err != nil {
-		t.Fatal(err)
-	}
-	conn.Close()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			listener, err := util.NewListener("127.0.0.1:0", time.Minute)
+			if err != nil {
+				t.Fatal(err)
+			}
+			entered := make(chan struct{})
+			status := make(chan int, 1)
+			server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				close(entered)
+				<-r.Context().Done()
+				rec := httptest.NewRecorder()
+				writeStreamErrorResponse(rec, r, r.Context().Err())
+				status <- rec.Code
+			}))
+			server.Listener.Close()
+			server.Listener = listener
+			server.Config.ConnContext = util.ConnContext
+			tt.start(server)
+			defer server.Close()
 
-	want := s3err.GetAPIError(s3err.ErrClientDisconnected).HTTPStatusCode
-	select {
-	case got := <-status:
-		if got != want {
-			t.Fatalf("status = %d, want %d", got, want)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("the request context was never canceled")
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/bucket/object", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			go func() {
+				if resp, err := server.Client().Do(req); err == nil {
+					resp.Body.Close()
+				}
+			}()
+			select {
+			case <-entered:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the request never reached the handler")
+			}
+			tt.abort(cancel, server)
+
+			select {
+			case got := <-status:
+				if got != tt.want {
+					t.Fatalf("status = %d, want %d", got, tt.want)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("the request context was never canceled")
+			}
+		})
 	}
 }
 
