@@ -1,8 +1,12 @@
 package util
 
 import (
+	"context"
+	"errors"
 	"net"
+	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -52,6 +56,8 @@ type Conn struct {
 	mu                    sync.Mutex
 	externalReadDeadline  bool
 	externalWriteDeadline bool
+
+	peerGone atomic.Bool
 }
 
 func (c *Conn) SetDeadline(t time.Time) error {
@@ -113,6 +119,8 @@ func (c *Conn) Read(b []byte) (count int, e error) {
 	count, e = c.Conn.Read(b)
 	if e == nil {
 		stats.BytesIn(int64(count))
+	} else if !errors.Is(e, os.ErrDeadlineExceeded) {
+		c.peerGone.Store(true)
 	}
 	return
 }
@@ -138,6 +146,28 @@ func (c *Conn) Close() error {
 		}
 	}
 	return err
+}
+
+type connContextKey struct{}
+
+// ConnContext is an http.Server.ConnContext hook that lets ClientGone see the
+// connection serving a request.
+func ConnContext(ctx context.Context, c net.Conn) context.Context {
+	if tlsConn, ok := c.(interface{ NetConn() net.Conn }); ok {
+		c = tlsConn.NetConn()
+	}
+	if tc, ok := c.(*Conn); ok {
+		return context.WithValue(ctx, connContextKey{}, tc)
+	}
+	return ctx
+}
+
+// ClientGone reports whether the client closed or reset the connection serving
+// ctx. A canceled request context does not tell on its own: the idle timeout
+// cancels it too, while the client is still connected.
+func ClientGone(ctx context.Context) bool {
+	tc, _ := ctx.Value(connContextKey{}).(*Conn)
+	return tc != nil && tc.peerGone.Load()
 }
 
 func NewListener(addr string, timeout time.Duration) (ipListener net.Listener, err error) {

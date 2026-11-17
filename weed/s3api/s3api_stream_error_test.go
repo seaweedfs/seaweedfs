@@ -3,6 +3,7 @@ package s3api
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/chunk_cache"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
@@ -54,7 +56,7 @@ func TestIdleTimeoutCancelStillAnswersConnectedClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := &http.Server{ConnContext: util.ConnContext, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// a first read stalled past the idle timeout
 		<-r.Context().Done()
 		// only the read side should be short; a write timing out would fail the
@@ -81,6 +83,47 @@ func TestIdleTimeoutCancelStillAnswersConnectedClient(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusInternalServerError)
+	}
+}
+
+// TestClientGoneBeforeFirstByteIsNotAnInternalError checks that a canceled
+// stream whose client closed the connection is answered ClientDisconnected, so
+// an aborted download does not count as a server error.
+func TestClientGoneBeforeFirstByteIsNotAnInternalError(t *testing.T) {
+	listener, err := util.NewListener("127.0.0.1:0", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := make(chan int, 1)
+	server := &http.Server{
+		ConnContext: util.ConnContext,
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			<-r.Context().Done()
+			rec := httptest.NewRecorder()
+			writeStreamErrorResponse(rec, r, r.Context().Err())
+			status <- rec.Code
+		}),
+	}
+	go server.Serve(listener)
+	defer server.Close()
+
+	conn, err := net.Dial("tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Write([]byte("GET /bucket/object HTTP/1.1\r\nHost: s3\r\n\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	conn.Close()
+
+	want := s3err.GetAPIError(s3err.ErrClientDisconnected).HTTPStatusCode
+	select {
+	case got := <-status:
+		if got != want {
+			t.Fatalf("status = %d, want %d", got, want)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the request context was never canceled")
 	}
 }
 
