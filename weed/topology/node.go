@@ -331,7 +331,10 @@ func (n *NodeImpl) AvailableSpaceFor(option *VolumeGrowOption) int64 {
 	}
 	freeVolumeSlotCount := atomic.LoadInt64(&t.maxVolumeCount) + atomic.LoadInt64(&t.remoteVolumeCount) - atomic.LoadInt64(&t.volumeCount)
 	freeVolumeSlotCount -= erasure_coding.VolumeSlots(atomic.LoadInt64(&t.ecShardCount))
-	return freeVolumeSlotCount
+	// An over-committed node (phantom or over-registered volumes) can report a
+	// negative count. Clamp to zero so it cannot drag the rolled-up cluster
+	// total below the slots healthy servers can still offer.
+	return max(0, freeVolumeSlotCount)
 }
 
 // CapacityFor is the total registered volume slots for the option's disk type;
@@ -439,10 +442,10 @@ func (n *NodeImpl) reserveOneVolumeInternal(r int64, option *VolumeGrowOption, u
 		return node.AvailableSpaceFor(option)
 	}
 	// The caller draws r from this node's rolled-up free slots, which still
-	// count children the walk below skips: a data node in maintenance mode
-	// reports no space, and an over-committed one reports less than zero. Fold
-	// r into the space that is actually on offer so it cannot walk off the end
-	// and fail with slots still free.
+	// count children the walk below skips: a data node in maintenance mode or
+	// an over-committed one reports no space. Fold r into the space that is
+	// actually on offer so it cannot walk off the end and fail with slots still
+	// free.
 	var eligible int64
 	for _, node := range n.children {
 		if freeSpace := freeSpaceOf(node); freeSpace > 0 {
