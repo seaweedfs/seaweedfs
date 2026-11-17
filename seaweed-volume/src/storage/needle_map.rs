@@ -1759,6 +1759,19 @@ mod tests {
         drop(nm);
     }
 
+    #[test]
+    fn test_should_compact_old_floor_bounds() {
+        let small = 72 * 1024;
+        let floor = 1024 * 1024 + 8 * 1024;
+        assert!(!should_compact_old_floor(small, false));
+        assert!(should_compact_old_floor(small + 1, false));
+        assert!(should_compact_old_floor(floor, false));
+        assert!(!should_compact_old_floor(floor + 1, false));
+        assert!(!should_compact_old_floor(small + 1, true));
+        assert!(!should_compact_old_floor(floor, true));
+        assert!(!should_compact_old_floor(0, false));
+    }
+
     /// Open a redb map on an empty .idx with an append writer attached, the
     /// way `Volume::load_index_redb` opens a writable volume.
     fn open_writable_redb(
