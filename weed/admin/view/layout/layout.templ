@@ -12,6 +12,55 @@ script setBasePath(prefix string) {
     window.__BASE_PATH__ = prefix;
 }
 
+// themeScript applies the saved color theme (auto, light or dark) inline, so
+// the root is themed before any external script or stylesheet is fetched.
+templ themeScript() {
+    <script>
+        (function () {
+            var storageKey = 'admin-theme';
+            var choices = ['auto', 'light', 'dark'];
+            var media = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+            var root = document.documentElement;
+
+            function savedChoice() {
+                try {
+                    var value = localStorage.getItem(storageKey);
+                    return choices.indexOf(value) >= 0 ? value : 'auto';
+                } catch (e) {
+                    return 'auto';
+                }
+            }
+
+            function apply(choice) {
+                var dark = choice === 'dark' || (choice === 'auto' && media && media.matches);
+                root.setAttribute('data-bs-theme', dark ? 'dark' : 'light');
+                root.setAttribute('data-theme-choice', choice);
+            }
+
+            var current = savedChoice();
+            apply(current);
+
+            if (media && media.addEventListener) {
+                media.addEventListener('change', function () {
+                    apply(current);
+                });
+            }
+
+            document.addEventListener('click', function (event) {
+                var toggle = event.target.closest && event.target.closest('[data-theme-toggle]');
+                if (!toggle) {
+                    return;
+                }
+                current = choices[(choices.indexOf(current) + 1) % choices.length];
+                try {
+                    localStorage.setItem(storageKey, current);
+                } catch (e) {}
+                apply(current);
+            });
+        })();
+    </script>
+}
+
 templ Layout(view ViewContext, content templ.Component) {
 {{
   username := view.Username
@@ -55,7 +104,7 @@ templ Layout(view ViewContext, content templ.Component) {
     <meta name="csrf-token" content={ csrfToken }>
     <link rel="icon" href={ string(view.P("/static/favicon.ico")) } type="image/x-icon">
 
-    <script src={ string(view.P("/static/js/theme.js")) }></script>
+    @themeScript()
     <!-- Bootstrap CSS -->
     <link href={ string(view.P("/static/css/bootstrap.min.css")) } rel="stylesheet">
     <!-- Bootstrap Icons CSS -->
@@ -404,7 +453,7 @@ templ LoginForm(title string, errorMessage string, csrfToken string) {
     <title>{title} - Login</title>
     <link rel="icon" href={ prefix + "/static/favicon.ico" } type="image/x-icon">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <script src={ prefix + "/static/js/theme.js" }></script>
+    @themeScript()
     <link href={ prefix + "/static/css/bootstrap.min.css" } rel="stylesheet">
     <link href={ prefix + "/static/css/bootstrap-icons.min.css" } rel="stylesheet">
     <link href={ prefix + "/static/css/admin.css" } rel="stylesheet">
