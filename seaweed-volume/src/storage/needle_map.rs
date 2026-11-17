@@ -13,7 +13,6 @@ use std::io::{self, Read, Seek, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 
-#[cfg(feature = "redb-experimental-cursor")]
 use std::ops::Bound;
 
 mod compact_map;
@@ -796,8 +795,8 @@ impl RedbNeedleMap {
     /// `Database::create` opens an existing file (`truncate(false)`). Unlink
     /// is best-effort: if it fails (sticky bit, foreign owner) but the path is
     /// still writable, clear the leftover needles table before inserting.
-    /// Live keys come from a `BTreeMap` so inserts are in needle-id order and
-    /// redb 4.2.0 packs leaves, without a second Vec + sort scratch.
+    /// Live keys come from a `BTreeMap` so `insert_before` walks them in
+    /// needle-id order and packs leaves, without a second Vec + sort scratch.
     fn full_rebuild<R: Read + Seek>(
         db_path: &str,
         reader: &mut R,
@@ -849,43 +848,26 @@ impl RedbNeedleMap {
                         .map_err(|e| io::Error::other(format!("redb retain: {}", e)))?;
                 }
 
-                #[cfg(not(feature = "redb-experimental-cursor"))]
-                {
-                    for (key, nv) in &entries {
-                        let key_u64: u64 = (*key).into();
-                        let packed = pack_needle_value(nv);
-                        table
-                            .insert(key_u64, packed.as_slice())
-                            .map_err(|e| io::Error::other(format!("redb insert: {}", e)))?;
-                    }
-                }
-                #[cfg(feature = "redb-experimental-cursor")]
-                {
-                    let mut cursor =
-                        table
-                            .upper_bound_mut(Bound::<u64>::Unbounded)
-                            .map_err(|e| {
-                                io::Error::new(
-                                    io::ErrorKind::Other,
-                                    format!("redb upper_bound_mut: {}", e),
-                                )
-                            })?;
-                    for (key, nv) in &entries {
-                        let key_u64: u64 = (*key).into();
-                        let packed = pack_needle_value(nv);
-                        cursor
-                            .insert_before(key_u64, packed.as_slice())
-                            .map_err(|e| {
-                                io::Error::new(
-                                    io::ErrorKind::Other,
-                                    format!("redb insert_before: {}", e),
-                                )
-                            })?;
-                    }
-                    cursor.close().map_err(|e| {
-                        io::Error::new(io::ErrorKind::Other, format!("redb cursor close: {}", e))
+                let mut cursor = table
+                    .upper_bound_mut(Bound::<u64>::Unbounded)
+                    .map_err(|e| {
+                        io::Error::new(io::ErrorKind::Other, format!("redb upper_bound_mut: {}", e))
                     })?;
+                for (key, nv) in &entries {
+                    let key_u64: u64 = (*key).into();
+                    let packed = pack_needle_value(nv);
+                    cursor
+                        .insert_before(key_u64, packed.as_slice())
+                        .map_err(|e| {
+                            io::Error::new(
+                                io::ErrorKind::Other,
+                                format!("redb insert_before: {}", e),
+                            )
+                        })?;
                 }
+                cursor.close().map_err(|e| {
+                    io::Error::new(io::ErrorKind::Other, format!("redb cursor close: {}", e))
+                })?;
             }
             txn.commit()
                 .map_err(|e| io::Error::other(format!("redb commit: {}", e)))?;
@@ -1181,7 +1163,7 @@ impl RedbNeedleMap {
     /// Reopen the database from `.idx` after a non-`TransactionPoisoned`
     /// commit error.
     ///
-    /// redb 4.2.0 can make a `Durability::None` commit visible *before*
+    /// redb can make a `Durability::None` commit visible *before*
     /// returning `Err(CommitError::Storage(..))`. In that state the database
     /// refuses further write transactions, so the map cannot be used as-is.
     /// The `.idx` row that triggered the commit is **not** truncated — the
@@ -1603,9 +1585,10 @@ pub(crate) mod test_support {
     /// every `put`/`delete` also commits non-durably, so before the first
     /// checkpoint this is the load-time value (`Some(0)` for a fresh map) —
     /// NOT the crash-durable `None` a copy of the open `.rdb` would show.
-    /// A live read is the only portable observation: redb 4.2.0 takes an
-    /// exclusive whole-file lock, which is advisory on Unix but mandatory
-    /// on Windows, so copying the open `.rdb` fails there with OS error 33.
+    /// A live read is the only portable observation: redb's default
+    /// `ExclusiveWriter` takes an exclusive whole-file lock, which is
+    /// advisory on Unix but mandatory on Windows, so copying the open
+    /// `.rdb` fails there with OS error 33.
     ///
     /// It still pins the property under test: the only *durable* META
     /// writer is `checkpoint`, so any value other than the load-time one
@@ -1908,7 +1891,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "redb-experimental-cursor")]
     #[test]
     fn test_redb_full_rebuild_insert_before_reads_back_thousands_of_shuffled_keys() {
         // Enough keys to split leaves. insert_before vs table.insert only
