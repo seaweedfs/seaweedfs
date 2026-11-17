@@ -79,3 +79,58 @@ func TestGrpcDialFallsBackToTcpWhenLocalSocketIsMissing(t *testing.T) {
 
 	checkGrpcHealth(t, net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 }
+
+func TestServeGrpcOnLocalSocketRecreatesRemovedSocket(t *testing.T) {
+	isolateLocalGrpcSockets(t)
+	prevInterval := localSocketCheckInterval
+	localSocketCheckInterval = 10 * time.Millisecond
+	t.Cleanup(func() { localSocketCheckInterval = prevInterval })
+
+	grpcServer, port := startHealthGrpcServer(t)
+	socketPath := filepath.Join(localSocketDir(t), "grpc.sock")
+	RegisterLocalGrpcSocket("127.0.0.1", port, socketPath)
+	ServeGrpcOnLocalSocket(grpcServer, port)
+	waitForSocketFile(t, socketPath)
+
+	if err := os.Remove(socketPath); err != nil {
+		t.Fatalf("remove socket: %v", err)
+	}
+	waitForSocketFile(t, socketPath)
+
+	conn, err := grpc.NewClient("unix:"+socketPath, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("dial recreated socket: %v", err)
+	}
+	defer conn.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := healthpb.NewHealthClient(conn).Check(ctx, &healthpb.HealthCheckRequest{}); err != nil {
+		t.Fatalf("health check over the recreated socket: %v", err)
+	}
+
+	grpcServer.Stop()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Lstat(socketPath); os.IsNotExist(err) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("socket %s left behind after the server stopped", socketPath)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func waitForSocketFile(t *testing.T, socketPath string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if info, err := os.Lstat(socketPath); err == nil && info.Mode()&os.ModeSocket != 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("socket %s was not created", socketPath)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}

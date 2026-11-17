@@ -167,14 +167,47 @@ func ServeGrpcOnLocalSocket(grpcServer *grpc.Server, grpcPort int) {
 	if listener == nil {
 		return
 	}
-	listener = &localSocketListener{Listener: listener}
 	glog.V(0).Infof("gRPC also listening on Unix socket %s", socketPath)
-	go func() {
-		if err := grpcServer.Serve(listener); err != nil && err != grpc.ErrServerStopped {
-			glog.Errorf("gRPC Unix socket server error on %s: %v", socketPath, err)
+	go serveGrpcOnLocalListener(grpcServer, socketPath, listener)
+}
+
+// localSocketCheckInterval is how often a served socket path is checked for
+// removal by something else, such as a temp cleaner aging /tmp.
+var localSocketCheckInterval = time.Minute
+
+// serveGrpcOnLocalListener serves the socket until the gRPC server stops,
+// rebinding it when the socket file is removed underneath the listener.
+func serveGrpcOnLocalListener(grpcServer *grpc.Server, socketPath string, listener net.Listener) {
+	served := make(chan error, 1)
+	serve := func(l net.Listener) {
+		go func() { served <- grpcServer.Serve(&localSocketListener{Listener: l}) }()
+	}
+	serve(listener)
+	ticker := time.NewTicker(localSocketCheckInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case err := <-served:
+			if err != nil && err != grpc.ErrServerStopped {
+				glog.Errorf("gRPC Unix socket server error on %s: %v", socketPath, err)
+			}
+			os.Remove(socketPath)
+			return
+		case <-ticker.C:
+			if _, err := os.Lstat(socketPath); !os.IsNotExist(err) {
+				continue
+			}
+			glog.Warningf("gRPC Unix socket %s was removed, recreating it", socketPath)
+			listener.Close()
+			if err := <-served; err == nil || err == grpc.ErrServerStopped {
+				return
+			}
+			if listener = ListenOnLocalSocket(socketPath); listener == nil {
+				return
+			}
+			serve(listener)
 		}
-		os.Remove(socketPath)
-	}()
+	}
 }
 
 // localSocketListener re-applies the buffer sizes to every accepted connection.
