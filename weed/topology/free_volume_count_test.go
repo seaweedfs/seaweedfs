@@ -53,7 +53,7 @@ func TestFreeVolumeCountSkipsOverCommittedServer(t *testing.T) {
 	rack1 := dc1.GetOrCreateRack("rack1")
 	over := rack1.GetOrCreateDataNode("10.0.0.1", 8080, 18080, "", "", map[string]uint32{"": 5})
 	over.getOrCreateDisk("").UpAdjustDiskUsageDelta("", &DiskUsageCounts{volumeCount: 20})
-	rack1.GetOrCreateDataNode("10.0.0.2", 8080, 18080, "", "", map[string]uint32{"": 10})
+	healthy := rack1.GetOrCreateDataNode("10.0.0.2", 8080, 18080, "", "", map[string]uint32{"": 10})
 	dc2 := topo.GetOrCreateDataCenter("dc2")
 	other := dc2.GetOrCreateRack("rack1").GetOrCreateDataNode("10.0.0.3", 8080, 18080, "", "", map[string]uint32{"": 4})
 	other.getOrCreateDisk("").UpAdjustDiskUsageDelta("", &DiskUsageCounts{volumeCount: 1})
@@ -72,5 +72,35 @@ func TestFreeVolumeCountSkipsOverCommittedServer(t *testing.T) {
 		if got := c.node.AvailableSpaceFor(option); got != c.want {
 			t.Errorf("%s AvailableSpaceFor = %d, want %d", c.name, got, c.want)
 		}
+	}
+
+	for i := 0; i < 20; i++ {
+		first, rest, err := topo.PickNodesByWeight(2, option, func(Node) error { return nil })
+		if err != nil {
+			t.Fatalf("topology PickNodesByWeight: %v", err)
+		}
+		if picked := map[Node]bool{first: true, rest[0]: true}; !picked[dc1] || !picked[dc2] {
+			t.Fatalf("topology picked %s and %s, want dc1 and dc2", first.Id(), rest[0].Id())
+		}
+		first, _, err = rack1.PickNodesByWeight(1, option, func(Node) error { return nil })
+		if err != nil {
+			t.Fatalf("rack1 PickNodesByWeight: %v", err)
+		}
+		if first != Node(healthy) {
+			t.Fatalf("rack1 picked %s, want %s", first.Id(), healthy.Id())
+		}
+	}
+
+	assigned := map[*DataNode]int{}
+	for r := int64(0); r < 13; r++ {
+		dn, err := topo.ReserveOneVolume(r, option)
+		if err != nil {
+			t.Fatalf("ReserveOneVolume(%d): %v", r, err)
+		}
+		assigned[dn]++
+	}
+	if assigned[over] != 0 || assigned[healthy] != 10 || assigned[other] != 3 {
+		t.Errorf("ReserveOneVolume spread over=%d healthy=%d other=%d, want 0/10/3",
+			assigned[over], assigned[healthy], assigned[other])
 	}
 }
