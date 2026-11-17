@@ -100,7 +100,6 @@ type S3ApiServer struct {
 	s3_pb.UnimplementedSeaweedS3IamCacheServer
 	s3_lifecycle_pb.UnimplementedSeaweedS3LifecycleInternalServer
 	option                *S3ApiServerOption
-	draining              atomic.Bool
 	iam                   *IdentityAccessManagement
 	iamIntegration        *S3IAMIntegration // Advanced IAM integration for JWT authentication
 	cb                    *CircuitBreaker
@@ -116,6 +115,7 @@ type S3ApiServer struct {
 	inFlightDataSize      int64
 	inFlightUploads       int64
 	inFlightDataLimitCond *sync.Cond
+	draining              atomic.Bool
 	embeddedIam           *EmbeddedIamApi // Embedded IAM API server (when enabled)
 	stsHandlers           *STSHandlers    // STS HTTP handlers for AssumeRoleWithWebIdentity
 	// icebergCredentialRole is the role the Iceberg catalog assumes to vend

@@ -3,7 +3,7 @@
 {{- $preStopSeconds := .Values.s3.preStopSeconds | int }}
 {{- $minGracePeriod := add $preStopSeconds 15 }}
 {{- if and (gt $preStopSeconds 0) (lt (.Values.s3.terminationGracePeriodSeconds | int) $minGracePeriod) }}
-{{- fail (printf "s3.terminationGracePeriodSeconds (%v) must be at least %d: the gateway keeps serving for s3.preStopSeconds (%d) after SIGTERM, then gives in-flight requests up to 15s to finish" .Values.s3.terminationGracePeriodSeconds $minGracePeriod $preStopSeconds) -}}
+{{- fail (printf "s3.terminationGracePeriodSeconds (%v) must be at least %d: the gateway keeps serving for s3.preStopSeconds (%d) after SIGTERM, then gives in-flight requests up to 15s to finish; add the time any s3.lifecycle.preStop hook takes" .Values.s3.terminationGracePeriodSeconds $minGracePeriod $preStopSeconds) -}}
 {{- end }}
 apiVersion: apps/v1
 kind: Deployment

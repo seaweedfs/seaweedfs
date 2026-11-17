@@ -137,6 +137,16 @@ jobs:
             --set s3.preStopSeconds=20 > /tmp/aio-s3-prestop.yaml
           grep -q -- "-s3.preStopSeconds=20 " /tmp/aio-s3-prestop.yaml
           grep -q "terminationGracePeriodSeconds: 80$" /tmp/aio-s3-prestop.yaml
+          helm template test $CHART_DIR --show-only templates/all-in-one/all-in-one-deployment.yaml \
+            --set allInOne.enabled=true --set allInOne.s3.enabled=true \
+            --set s3.preStopSeconds=20 --set allInOne.s3.preStopSeconds=0 > /tmp/aio-s3-prestop-off.yaml
+          test "$(grep -c -- '-s3.preStopSeconds' /tmp/aio-s3-prestop-off.yaml)" -eq 0
+          grep -q "terminationGracePeriodSeconds: 60$" /tmp/aio-s3-prestop-off.yaml
+          helm template test $CHART_DIR --show-only templates/all-in-one/all-in-one-deployment.yaml \
+            --set allInOne.enabled=true --set allInOne.s3.enabled=true \
+            --set s3.preStopSeconds=20 --set allInOne.s3.preStopSeconds=25 > /tmp/aio-s3-prestop-own.yaml
+          grep -q -- "-s3.preStopSeconds=25 " /tmp/aio-s3-prestop-own.yaml
+          grep -q "terminationGracePeriodSeconds: 85$" /tmp/aio-s3-prestop-own.yaml
           echo "S3 preStopSeconds renders correctly"
 
           echo "=== Testing the S3 config checksum is stable across renders ==="

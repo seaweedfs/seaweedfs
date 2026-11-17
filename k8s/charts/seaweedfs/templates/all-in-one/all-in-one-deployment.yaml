@@ -2,7 +2,11 @@
 {{- if .Values.allInOne.enabled }}
 {{- $s3PreStopSeconds := 0 }}
 {{- if .Values.allInOne.s3.enabled }}
-{{- $s3PreStopSeconds = .Values.allInOne.s3.preStopSeconds | default .Values.s3.preStopSeconds | int }}
+{{- $s3PreStopSeconds = .Values.allInOne.s3.preStopSeconds }}
+{{- if kindIs "invalid" $s3PreStopSeconds }}
+{{- $s3PreStopSeconds = .Values.s3.preStopSeconds }}
+{{- end }}
+{{- $s3PreStopSeconds = $s3PreStopSeconds | int }}
 {{- end }}
 apiVersion: apps/v1
 kind: Deployment
