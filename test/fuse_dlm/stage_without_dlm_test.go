@@ -59,21 +59,27 @@ func TestStageSameFilesWithoutDLM(t *testing.T) {
 	// What the losing mount is told depends on the version (nothing, EIO,
 	// EAGAIN); the files are what this test checks.
 	failed := make([][]string, 2)
-	var wg sync.WaitGroup
+	setupErr := make([]error, 2)
+	wrote := [2][]bool{make([]bool, files), make([]bool, files)}
+	var ready, wg sync.WaitGroup
+	ready.Add(2)
 	for m := 0; m < 2; m++ {
 		wg.Add(1)
 		go func(m int) {
 			defer wg.Done()
 			stage := filepath.Join(cluster.mountPoints[m], dir)
-			if err := os.MkdirAll(stage, 0755); err != nil {
-				failed[m] = append(failed[m], err.Error())
+			setupErr[m] = os.MkdirAll(stage, 0755)
+			ready.Done()
+			ready.Wait()
+			if setupErr[m] != nil {
 				return
 			}
-			for _, name := range names {
+			for i, name := range names {
 				p := filepath.Join(stage, name)
 				if _, err := os.Lstat(p); err == nil {
 					continue
 				}
+				wrote[m][i] = true
 				if err := os.WriteFile(p, content[name], 0644); err != nil {
 					failed[m] = append(failed[m], err.Error())
 					continue
@@ -90,10 +96,19 @@ func TestStageSameFilesWithoutDLM(t *testing.T) {
 	}
 	wg.Wait()
 	for m, f := range failed {
+		require.NoError(t, setupErr[m], "mount%d", m)
 		if len(f) > 0 {
 			t.Logf("mount%d: %d calls failed, first: %s", m, len(f), f[0])
 		}
 	}
+	both := 0
+	for i := range names {
+		if wrote[0][i] && wrote[1][i] {
+			both++
+		}
+	}
+	t.Logf("both mounts wrote %d of %d files", both, files)
+	require.Positive(t, both, "the mounts never wrote the same file")
 
 	// The filer deletes the chunks an update dropped shortly after the update.
 	time.Sleep(5 * time.Second)
