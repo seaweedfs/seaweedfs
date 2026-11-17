@@ -46,6 +46,10 @@ type vidMapClient struct {
 	// answered: that answer may still carry an earlier master's view, and a
 	// server the current master never knew is never pushed as removed.
 	authority *vidMap
+	// relookups holds vids a failed read invalidated. Their next provider
+	// answer is served whole, since the authority may lack a replica whose
+	// add the master dropped on a full client channel.
+	relookups map[uint32]struct{}
 }
 
 type recentDelete struct {
@@ -444,7 +448,9 @@ func (vc *vidMapClient) fillLocations(vid uint32, locations []Location, epoch ui
 	vc.recentDeletesMu.Lock()
 	defer vc.recentDeletesMu.Unlock()
 	vc.expireRecentDeletes(time.Now())
-	if vc.authority != nil {
+	if _, relookup := vc.relookups[vid]; relookup {
+		delete(vc.relookups, vid)
+	} else if vc.authority != nil {
 		if current, found := vc.authority.GetCurrentLocations(vid); found {
 			if listed := listedLocations(locations, current); len(listed) > 0 {
 				locations = listed
@@ -497,6 +503,14 @@ func (vc *vidMapClient) InvalidateCache(fileId string) {
 	vid, err := strconv.ParseUint(vidString, 10, 32)
 	if err != nil {
 		return
+	}
+	if vc.authority != nil {
+		vc.recentDeletesMu.Lock()
+		if vc.relookups == nil {
+			vc.relookups = make(map[uint32]struct{})
+		}
+		vc.relookups[uint32(vid)] = struct{}{}
+		vc.recentDeletesMu.Unlock()
 	}
 	vc.vidMap.deleteVid(uint32(vid))
 }

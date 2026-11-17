@@ -632,3 +632,20 @@ func TestPushedAddLeavesUncachedVolumeAlone(t *testing.T) {
 		t.Fatalf("an add cached volume 5 at %v", cached)
 	}
 }
+
+// A master that dropped a replica's add lists only the other one. A read
+// failing there re-looks the volume up, and that answer must reach the
+// replica the master did not list.
+func TestRelookupAfterFailedReadServesWholeAnswer(t *testing.T) {
+	a := Location{Url: "a:8080"}
+	b := Location{Url: "b:8080"}
+	provider := &testLocationProvider{locations: map[string][]Location{"5": {a, b}}}
+	mc := moveClient()
+	fc := hookedFilerClient(mc, provider)
+	pushVolumeLocation(mc, a.Url, []uint32{5}, nil, nil, nil)
+	expectServed(t, fc, "5", a)
+
+	fc.InvalidateCache("5,01")
+
+	expectServed(t, fc, "5", a, b)
+}
