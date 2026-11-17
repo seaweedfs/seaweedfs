@@ -28,11 +28,13 @@ import (
 const filerGroup = "fuse-dlm-test"
 
 // dlmTestCluster manages a full SeaweedFS cluster with 2 filers and 2 FUSE
-// mounts for testing DLM-based cross-mount write coordination.
+// mounts for testing DLM-based cross-mount write coordination, and what two
+// mounts do without it.
 type dlmTestCluster struct {
 	t          testing.TB
 	baseDir    string
 	weedBinary string
+	dlm        bool // the mounts run with -dlm
 
 	masterPort     int
 	masterGrpcPort int
@@ -52,6 +54,11 @@ type dlmTestCluster struct {
 }
 
 func startDLMTestCluster(t testing.TB) *dlmTestCluster {
+	return startTestCluster(t, true)
+}
+
+// startTestCluster starts the cluster; dlm says whether the mounts run with -dlm.
+func startTestCluster(t testing.TB, dlm bool) *dlmTestCluster {
 	binary := findWeedBinary()
 	if binary == "" {
 		t.Skip("weed binary not found; set WEED_BINARY or ensure it is on PATH")
@@ -64,6 +71,7 @@ func startDLMTestCluster(t testing.TB) *dlmTestCluster {
 		t:          t,
 		baseDir:    baseDir,
 		weedBinary: binary,
+		dlm:        dlm,
 	}
 	// Register cleanup early so processes are stopped even if a require fails below.
 	t.Cleanup(c.Stop)
@@ -224,17 +232,20 @@ func (c *dlmTestCluster) startMount(idx int, configDir string) error {
 	if err := os.MkdirAll(cacheDir, 0755); err != nil {
 		return fmt.Errorf("create cache dir: %w", err)
 	}
-	c.mountCmds[idx] = exec.Command(c.weedBinary,
-		"-logdir="+filepath.Join(c.baseDir, "logs"),
+	args := []string{
+		"-logdir=" + filepath.Join(c.baseDir, "logs"),
 		"mount",
-		"-filer="+c.filerAddress(0), // both mounts use filer0 for shared metadata
-		"-dir="+c.mountPoints[idx],
+		"-filer=" + c.filerAddress(0), // both mounts use filer0 for shared metadata
+		"-dir=" + c.mountPoints[idx],
 		"-filer.path=/",
 		"-dirAutoCreate",
 		"-allowOthers=false",
-		"-cacheDir="+cacheDir,
-		"-dlm",
-	)
+		"-cacheDir=" + cacheDir,
+	}
+	if c.dlm {
+		args = append(args, "-dlm")
+	}
+	c.mountCmds[idx] = exec.Command(c.weedBinary, args...)
 	return c.startCmd(c.mountCmds[idx], fmt.Sprintf("mount%d", idx))
 }
 
