@@ -30,14 +30,11 @@ type managedWebhooks struct {
 }
 
 func (f *Filer) LoadNotificationWebhooks() {
-	if !f.ManagedWebhooksEnabled {
-		return
-	}
 	f.reloadNotificationWebhooks()
 }
 
 func (f *Filer) maybeReloadNotificationWebhooks(event *filer_pb.SubscribeMetadataResponse) {
-	if !f.ManagedWebhooksEnabled || event == nil || event.EventNotification == nil {
+	if event == nil || event.EventNotification == nil {
 		return
 	}
 	n := event.EventNotification

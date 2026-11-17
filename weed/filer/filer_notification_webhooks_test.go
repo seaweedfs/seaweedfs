@@ -33,7 +33,6 @@ func TestManagedNotificationWebhooks(t *testing.T) {
 
 	store := newStubFilerStore()
 	f := newTestFiler(t, store, nil)
-	f.ManagedWebhooksEnabled = true
 	t.Cleanup(func() {
 		if q := f.webhooks.queue.Load(); q != nil {
 			q.Close(time.Second)
@@ -86,23 +85,6 @@ func TestManagedNotificationWebhooks(t *testing.T) {
 	})
 	if f.webhooks.queue.Load() != nil {
 		t.Fatal("expected deleting the stored targets to stop the queue")
-	}
-}
-
-func TestManagedNotificationWebhooksDisabled(t *testing.T) {
-	store := newStubFilerStore()
-	f := newTestFiler(t, store, nil)
-	store.entries[NotificationWebhooksConfPath] = &Entry{
-		FullPath: util.FullPath(NotificationWebhooksConfPath),
-		Content:  []byte(`{"targets":[{"name":"a","enabled":true,"endpoint":"https://example.com"}]}`),
-	}
-	f.LoadNotificationWebhooks()
-	f.maybeReloadNotificationWebhooks(&filer_pb.SubscribeMetadataResponse{
-		Directory:         DirectoryEtcSeaweedFS,
-		EventNotification: &filer_pb.EventNotification{NewEntry: &filer_pb.Entry{Name: NotificationWebhooksConfName}},
-	})
-	if f.webhooks.queue.Load() != nil {
-		t.Fatal("stored targets must be ignored unless notification.webhook.managed is set")
 	}
 }
 

@@ -44,7 +44,7 @@ func NotificationWebhooks(data dash.NotificationWebhooksData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "</code> and apply without a restart on filers that set <code>managed = true</code> under <code>[notification.webhook]</code> in <code>notification.toml</code>.</div><div class=\"card shadow mb-4\"><div class=\"card-body\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "</code> and apply to all filers without a restart.</div><div class=\"card shadow mb-4\"><div class=\"card-body\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -66,7 +66,7 @@ func NotificationWebhooks(data dash.NotificationWebhooksData) templ.Component {
 				var templ_7745c5c3_Var3 string
 				templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(hook.Name)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/notification_webhooks.templ`, Line: 52, Col: 63}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/notification_webhooks.templ`, Line: 51, Col: 63}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 				if templ_7745c5c3_Err != nil {
@@ -94,7 +94,7 @@ func NotificationWebhooks(data dash.NotificationWebhooksData) templ.Component {
 				var templ_7745c5c3_Var4 string
 				templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(hook.Endpoint)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/notification_webhooks.templ`, Line: 60, Col: 65}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/notification_webhooks.templ`, Line: 59, Col: 65}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
 				if templ_7745c5c3_Err != nil {
@@ -107,7 +107,7 @@ func NotificationWebhooks(data dash.NotificationWebhooksData) templ.Component {
 				var templ_7745c5c3_Var5 string
 				templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(webhookFilterLabel(hook.EventTypes))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/notification_webhooks.templ`, Line: 61, Col: 81}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/notification_webhooks.templ`, Line: 60, Col: 81}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 				if templ_7745c5c3_Err != nil {
@@ -120,7 +120,7 @@ func NotificationWebhooks(data dash.NotificationWebhooksData) templ.Component {
 				var templ_7745c5c3_Var6 string
 				templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(webhookFilterLabel(hook.PathPrefixes))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/notification_webhooks.templ`, Line: 62, Col: 83}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/notification_webhooks.templ`, Line: 61, Col: 83}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 				if templ_7745c5c3_Err != nil {
@@ -148,7 +148,7 @@ func NotificationWebhooks(data dash.NotificationWebhooksData) templ.Component {
 				var templ_7745c5c3_Var7 string
 				templ_7745c5c3_Var7, templ_7745c5c3_Err = templruntime.NewAttributeExpression(hook.Name).Resolve(ctx)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/notification_webhooks.templ`, Line: 72, Col: 136}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/notification_webhooks.templ`, Line: 71, Col: 136}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var7)
 				if templ_7745c5c3_Err != nil {
@@ -161,7 +161,7 @@ func NotificationWebhooks(data dash.NotificationWebhooksData) templ.Component {
 				var templ_7745c5c3_Var8 string
 				templ_7745c5c3_Var8, templ_7745c5c3_Err = templruntime.NewAttributeExpression(hook.Name).Resolve(ctx)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/notification_webhooks.templ`, Line: 75, Col: 137}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/notification_webhooks.templ`, Line: 74, Col: 137}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var8)
 				if templ_7745c5c3_Err != nil {
@@ -189,7 +189,7 @@ func NotificationWebhooks(data dash.NotificationWebhooksData) templ.Component {
 			var templ_7745c5c3_Var9 string
 			templ_7745c5c3_Var9, templ_7745c5c3_Err = templruntime.NewAttributeExpression("webhookEvent-" + et).Resolve(ctx)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/notification_webhooks.templ`, Line: 122, Col: 127}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/notification_webhooks.templ`, Line: 121, Col: 127}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var9)
 			if templ_7745c5c3_Err != nil {
@@ -202,7 +202,7 @@ func NotificationWebhooks(data dash.NotificationWebhooksData) templ.Component {
 			var templ_7745c5c3_Var10 string
 			templ_7745c5c3_Var10, templ_7745c5c3_Err = templruntime.NewAttributeExpression(et).Resolve(ctx)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/notification_webhooks.templ`, Line: 122, Col: 140}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/notification_webhooks.templ`, Line: 121, Col: 140}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var10)
 			if templ_7745c5c3_Err != nil {
@@ -215,7 +215,7 @@ func NotificationWebhooks(data dash.NotificationWebhooksData) templ.Component {
 			var templ_7745c5c3_Var11 string
 			templ_7745c5c3_Var11, templ_7745c5c3_Err = templruntime.NewAttributeExpression("webhookEvent-" + et).Resolve(ctx)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/notification_webhooks.templ`, Line: 123, Col: 98}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/notification_webhooks.templ`, Line: 122, Col: 98}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var11)
 			if templ_7745c5c3_Err != nil {
@@ -228,7 +228,7 @@ func NotificationWebhooks(data dash.NotificationWebhooksData) templ.Component {
 			var templ_7745c5c3_Var12 string
 			templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(et)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/notification_webhooks.templ`, Line: 123, Col: 105}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/notification_webhooks.templ`, Line: 122, Col: 105}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var12))
 			if templ_7745c5c3_Err != nil {
@@ -299,7 +299,7 @@ func webhookNumberInput(id string, label string, placeholder string) templ.Compo
 		var templ_7745c5c3_Var14 string
 		templ_7745c5c3_Var14, templ_7745c5c3_Err = templruntime.NewAttributeExpression(id).Resolve(ctx)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/notification_webhooks.templ`, Line: 274, Col: 23}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/notification_webhooks.templ`, Line: 273, Col: 23}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var14)
 		if templ_7745c5c3_Err != nil {
@@ -312,7 +312,7 @@ func webhookNumberInput(id string, label string, placeholder string) templ.Compo
 		var templ_7745c5c3_Var15 string
 		templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.JoinStringErrs(label)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/notification_webhooks.templ`, Line: 274, Col: 52}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/notification_webhooks.templ`, Line: 273, Col: 52}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var15))
 		if templ_7745c5c3_Err != nil {
@@ -325,7 +325,7 @@ func webhookNumberInput(id string, label string, placeholder string) templ.Compo
 		var templ_7745c5c3_Var16 string
 		templ_7745c5c3_Var16, templ_7745c5c3_Err = templruntime.NewAttributeExpression(id).Resolve(ctx)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/notification_webhooks.templ`, Line: 275, Col: 65}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/notification_webhooks.templ`, Line: 274, Col: 65}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var16)
 		if templ_7745c5c3_Err != nil {
@@ -338,7 +338,7 @@ func webhookNumberInput(id string, label string, placeholder string) templ.Compo
 		var templ_7745c5c3_Var17 string
 		templ_7745c5c3_Var17, templ_7745c5c3_Err = templruntime.NewAttributeExpression(placeholder).Resolve(ctx)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/notification_webhooks.templ`, Line: 275, Col: 93}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/notification_webhooks.templ`, Line: 274, Col: 93}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var17)
 		if templ_7745c5c3_Err != nil {

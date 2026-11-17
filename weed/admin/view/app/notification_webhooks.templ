@@ -21,8 +21,7 @@ templ NotificationWebhooks(data dash.NotificationWebhooksData) {
 
         <div class="alert alert-info">
             <i class="bi bi-info-circle me-1"></i>
-            Targets are stored in the filer at <code>{ data.ConfigPath }</code> and apply without a restart on filers that set
-            <code>managed = true</code> under <code>[notification.webhook]</code> in <code>notification.toml</code>.
+            Targets are stored in the filer at <code>{ data.ConfigPath }</code> and apply to all filers without a restart.
         </div>
 
         <div class="card shadow mb-4">

@@ -342,7 +342,6 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	isFresh := fs.filer.LoadConfiguration(v)
 
 	notification.LoadConfiguration(v, "notification.")
-	fs.filer.ManagedWebhooksEnabled = v.GetBool("notification.webhook.managed")
 
 	handleStaticResources(defaultMux)
 	if !option.DisableHttp {
