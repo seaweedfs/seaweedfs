@@ -66,10 +66,17 @@ func TestHeartbeatReceiverTimesOutOnSilentStream(t *testing.T) {
 
 	_, err := recv()
 	require.NoError(t, err)
-	start := time.Now()
-	_, err = recv()
-	assert.Equal(t, codes.DeadlineExceeded, status.Code(err))
-	assert.Less(t, time.Since(start), 5*time.Second)
+	errc := make(chan error, 1)
+	go func() {
+		_, err := recv()
+		errc <- err
+	}()
+	select {
+	case err = <-errc:
+		assert.Equal(t, codes.DeadlineExceeded, status.Code(err))
+	case <-time.After(5 * time.Second):
+		t.Fatal("recv still waiting on a silent stream")
+	}
 }
 
 // A volume server that stops sending heartbeats is unregistered once
