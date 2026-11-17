@@ -72,8 +72,10 @@ sub_url = "rabbit://myqueue"
 # Documentation: https://github.com/seaweedfs/seaweedfs/wiki/Filer-Notification-Webhook
 #
 # Webhook targets edited in the admin UI (stored in the filer at
-# /etc/seaweedfs/notification_webhooks.json) always run, apply without a filer
-# restart, and do not depend on this section or any other queue.
+# /etc/seaweedfs/notification_webhooks.json) always run and apply without a
+# filer restart, whether or not this section is enabled. They are sent after
+# the notification queue configured in this file, so a saturated target there
+# also delays them.
 enabled = false
 endpoint = "https://your-server.com/webhook"       # required: HTTP endpoint URL
 bearer_token = ""                                  # optional: bearer token for authentication
