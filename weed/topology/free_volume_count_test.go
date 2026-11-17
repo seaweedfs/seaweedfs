@@ -45,3 +45,31 @@ func TestFreeVolumeCountPositiveCaseUnchanged(t *testing.T) {
 		t.Errorf("disk info FreeVolumeCount = %d, want 3", got)
 	}
 }
+
+func TestFreeVolumeCountSkipsOverCommittedServer(t *testing.T) {
+	topo := NewTopology("free-slots", nil, 32*1024*1024*1024, 5, false)
+	dc1 := topo.GetOrCreateDataCenter("dc1")
+	rack1 := dc1.GetOrCreateRack("rack1")
+	over := rack1.GetOrCreateDataNode("10.0.0.1", 8080, 18080, "", "", map[string]uint32{"": 5})
+	over.getOrCreateDisk("").UpAdjustDiskUsageDelta("", &DiskUsageCounts{volumeCount: 20})
+	rack1.GetOrCreateDataNode("10.0.0.2", 8080, 18080, "", "", map[string]uint32{"": 10})
+	dc2 := topo.GetOrCreateDataCenter("dc2")
+	other := dc2.GetOrCreateRack("rack1").GetOrCreateDataNode("10.0.0.3", 8080, 18080, "", "", map[string]uint32{"": 4})
+	other.getOrCreateDisk("").UpAdjustDiskUsageDelta("", &DiskUsageCounts{volumeCount: 1})
+
+	option := &VolumeGrowOption{DiskType: types.HardDriveType}
+	for _, c := range []struct {
+		name string
+		node Node
+		want int64
+	}{
+		{"rack1", rack1, 10},
+		{"dc1", dc1, 10},
+		{"dc2", dc2, 3},
+		{"topology", topo, 13},
+	} {
+		if got := c.node.AvailableSpaceFor(option); got != c.want {
+			t.Errorf("%s AvailableSpaceFor = %d, want %d", c.name, got, c.want)
+		}
+	}
+}
