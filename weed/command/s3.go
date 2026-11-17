@@ -758,8 +758,6 @@ func (s3opt *S3Options) vectorsRouter(s3ApiServer *s3api.S3ApiServer, grpcDialOp
 	return vectorsRouter
 }
 
-// isVectorsRequest routes by the SigV4 credential scope — the s3vectors
-// service name lives there, not in the path.
 // s3Handler serves router, and vectors for Vectors API requests when set. mux
 // matches Queries() before router middleware runs, so the escape wraps the
 // router for routing and authorization to read one query.
@@ -777,6 +775,8 @@ func s3Handler(router, vectors *mux.Router) http.Handler {
 	})
 }
 
+// isVectorsRequest routes by the SigV4 credential scope — the s3vectors
+// service name lives there, not in the path.
 func isVectorsRequest(r *http.Request) bool {
 	if v := r.Header.Get("Authorization"); v != "" {
 		return strings.Contains(v, "/s3vectors/")
