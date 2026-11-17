@@ -37,7 +37,7 @@ func TestLockRingHealthy(t *testing.T) {
 	if !fs.lockRingHealthy() {
 		t.Fatal("expected healthy when self is in ring")
 	}
-	if fs.lockRingUnhealthySince.Load() != 0 {
+	if fs.lockRingUnhealthySince.Load() > 0 {
 		t.Fatal("expected unhealthy timer to reset")
 	}
 }
@@ -48,7 +48,7 @@ func TestLockRingHealthyWaitsForAnnounce(t *testing.T) {
 	fs := &FilerServer{filer: &filer.Filer{Dlm: dlm}, option: &FilerOption{AnnounceCh: announce}}
 	expired := time.Now().Add(-lockRingUnhealthyGracePeriod - time.Second).UnixNano()
 
-	if !fs.lockRingHealthy() || fs.lockRingUnhealthySince.Load() != 0 {
+	if !fs.lockRingHealthy() || fs.lockRingUnhealthySince.Load() > 0 {
 		t.Fatal("expected healthy with no absence clock while registration is held")
 	}
 	fs.lockRingUnhealthySince.Store(expired)
@@ -58,7 +58,7 @@ func TestLockRingHealthyWaitsForAnnounce(t *testing.T) {
 
 	close(announce)
 	fs.lockRingUnhealthySince.Store(0)
-	if !fs.lockRingHealthy() || fs.lockRingUnhealthySince.Load() == 0 {
+	if !fs.lockRingHealthy() || fs.lockRingUnhealthySince.Load() <= 0 {
 		t.Fatal("expected the first probe after announcing to start the grace period")
 	}
 	fs.lockRingUnhealthySince.Store(expired)
@@ -92,30 +92,44 @@ func TestLockRingAbsenceRingUpdatesDuringProbe(t *testing.T) {
 		version++
 		dlm.LockRing.SetSnapshot(servers, version)
 	}
-	probe := func(afterFirstRead, beforeSecondRead func()) time.Duration {
-		reads := 0
+	rejoinAndLeave := func() { install(self, other); install(other) }
+	probe := func(beforeRead, afterRead func()) time.Duration {
 		return fs.lockRingAbsence(func() bool {
-			reads++
-			if reads == 2 && beforeSecondRead != nil {
-				beforeSecondRead()
+			if beforeRead != nil {
+				beforeRead()
 			}
 			in := slices.Contains(dlm.LockRing.Ring.GetServers(), self)
-			if reads == 1 && afterFirstRead != nil {
-				afterFirstRead()
+			if afterRead != nil {
+				afterRead()
 			}
 			return in
 		})
 	}
-	install(other)
+	expired := func() {
+		install(other)
+		fs.lockRingUnhealthySince.Store(time.Now().Add(-lockRingUnhealthyGracePeriod - time.Second).UnixNano())
+	}
 
-	fs.lockRingUnhealthySince.Store(time.Now().Add(-lockRingUnhealthyGracePeriod - time.Second).UnixNano())
-	if absent := probe(func() { install(self, other) }, nil); absent != 0 || fs.lockRingUnhealthySince.Load() != 0 {
-		t.Fatalf("rejoin after the first read: absent %v, clock %d; want 0, 0", absent, fs.lockRingUnhealthySince.Load())
+	expired()
+	if absent := probe(nil, func() { install(self, other) }); absent != 0 || fs.lockRingUnhealthySince.Load() > 0 {
+		t.Fatalf("rejoin after the read: absent %v, clock %d; want 0 and no clock", absent, fs.lockRingUnhealthySince.Load())
+	}
+
+	expired()
+	if absent := probe(rejoinAndLeave, nil); absent >= lockRingUnhealthyGracePeriod {
+		t.Fatalf("rejoin and removal before the read: absent %v, want a fresh grace period", absent)
+	}
+
+	expired()
+	if absent := probe(nil, rejoinAndLeave); absent >= lockRingUnhealthyGracePeriod || fs.lockRingUnhealthySince.Load() > 0 {
+		t.Fatalf("rejoin and removal after the read: absent %v, clock %d; want a fresh grace period", absent, fs.lockRingUnhealthySince.Load())
 	}
 
 	install(other)
-	fs.lockRingUnhealthySince.Store(time.Now().Add(-lockRingUnhealthyGracePeriod - time.Second).UnixNano())
-	if absent := probe(nil, func() { install(self, other); install(other) }); absent >= lockRingUnhealthyGracePeriod {
-		t.Fatalf("rejoin and removal between the reads: absent %v, want a fresh grace period", absent)
+	fs.resetLockRingClock()
+	var left int64
+	probe(nil, func() { rejoinAndLeave(); left = time.Now().UnixNano() })
+	if since := fs.lockRingUnhealthySince.Load(); since > 0 && since < left {
+		t.Fatalf("clock started at %d, before the removal at %d", since, left)
 	}
 }
