@@ -80,11 +80,13 @@ func TestSendHeartbeatUnregistersSilentVolumeServer(t *testing.T) {
 	defer func() { volumeHeartbeatTimeout = saved }()
 
 	ms := newLeaderMaster()
+	ms.clientChans = make(map[string]chan *master_pb.KeepConnectedResponse)
+	_, clientChan := ms.addClient("", "filer", "10.0.0.9:8888")
 	stream := newSilentHeartbeatStream(t, &master_pb.Heartbeat{
 		Ip:              "10.0.0.1",
 		Port:            8080,
 		MaxVolumeCounts: map[string]uint32{"": 10},
-		HasNoVolumes:    true,
+		Volumes:         []*master_pb.VolumeInformationMessage{{Id: 7, Version: 3}},
 	})
 
 	errc := make(chan error, 1)
@@ -98,4 +100,15 @@ func TestSendHeartbeatUnregistersSilentVolumeServer(t *testing.T) {
 		t.Fatal("SendHeartbeat still waiting on a silent stream")
 	}
 	assert.False(t, ms.Topo.DataNodeExists("", "", "10.0.0.1:8080"))
+	for {
+		select {
+		case message := <-clientChan:
+			if location := message.GetVolumeLocation(); len(location.GetDeletedVids()) > 0 {
+				assert.Equal(t, []uint32{7}, location.DeletedVids)
+				return
+			}
+		default:
+			t.Fatal("clients were not told the silent server's volumes are gone")
+		}
+	}
 }
