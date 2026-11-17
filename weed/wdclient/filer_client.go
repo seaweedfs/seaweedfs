@@ -528,8 +528,16 @@ func (fc *FilerClient) applyDiscoveredFilersLocked(discoveredFilers map[pb.Serve
 }
 
 // OnVolumeLocationChange applies master-pushed changes to the lookup-fed cache,
-// so a retired server stops being tried before a read against it fails. Adds
-// only lift the removal fence; locations are still learned by lookup.
+// so a retired server stops being tried before a read against it fails. An
+// add lifts the removal fence and caches the volume where the master client
+// now knows it to be, replacing what a lookup cached for it.
+//
+// The replacement matters after a leader change. The reconnect clears this
+// cache, and lookups refill it from the filer, whose own master client can
+// still answer from the previous leader's view until the new leader has heard
+// from the volume servers. A server lost with the old leader is then cached
+// again, and the new leader, which never knew it, never pushes its removal.
+// Its adds for the volumes that server held are what correct the refill.
 func (fc *FilerClient) OnVolumeLocationChange(loc Location, addedVids, deletedVids []uint32) {
 	for _, vid := range deletedVids {
 		fc.tombstone(vid, loc)
@@ -537,6 +545,12 @@ func (fc *FilerClient) OnVolumeLocationChange(loc Location, addedVids, deletedVi
 	}
 	for _, vid := range addedVids {
 		fc.untombstone(vid, loc)
+		if fc.masterClient == nil {
+			continue
+		}
+		if locations, found := fc.masterClient.vidMap.currentLocations(vid); found {
+			fc.confirmLocations(vid, locations)
+		}
 	}
 }
 

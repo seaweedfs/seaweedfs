@@ -561,3 +561,28 @@ func TestReconnectReplayLiftsFence(t *testing.T) {
 
 	expectServed(t, fc, "5", a)
 }
+
+// A gateway that reconnects to a new leader drops its cache and refills it
+// from a filer that may still answer with the old leader's view, a server
+// that died with it included. The new leader never knew that server, so it
+// never pushes its removal; its re-told adds are what replace the refill.
+func TestLeaderChangeAddsReplaceStaleRefill(t *testing.T) {
+	dead := Location{Url: "dead:8080"}
+	live := Location{Url: "live:8080"}
+	other := Location{Url: "other:8080"}
+	provider := &testLocationProvider{locations: map[string][]Location{"5": {dead, live}}}
+	mc := moveClient()
+	fc := hookedFilerClient(mc, provider)
+	fc.masterClient = mc
+	pushVolumeLocation(mc, dead.Url, []uint32{5}, nil, nil, nil)
+	pushVolumeLocation(mc, live.Url, []uint32{5}, nil, nil, nil)
+
+	mc.resetVidMap()
+	expectServed(t, fc, "5", dead, live)
+
+	pushVolumeLocation(mc, live.Url, []uint32{5}, nil, nil, nil)
+	expectServed(t, fc, "5", live)
+
+	pushVolumeLocation(mc, other.Url, []uint32{5}, nil, nil, nil)
+	expectServed(t, fc, "5", live, other)
+}
