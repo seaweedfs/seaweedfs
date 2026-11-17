@@ -302,6 +302,12 @@ func TestAuthorizeAction_BucketListingConditions(t *testing.T) {
 	allow("MaxKeysTen", "s3:ListBucket", map[string]map[string]interface{}{
 		"NumericLessThanEquals": {"s3:max-keys": 10},
 	})
+	allow("VersionsMaxKeysTen", "s3:ListBucketVersions", map[string]map[string]interface{}{
+		"NumericLessThanEquals": {"s3:max-keys": 10},
+	})
+	allow("UploadsMaxKeysTen", "s3:ListBucketMultipartUploads", map[string]map[string]interface{}{
+		"NumericLessThanEquals": {"s3:max-keys": 10},
+	})
 
 	s3iam := NewS3IAMIntegration(iamManager, "localhost:8888")
 
@@ -324,6 +330,10 @@ func TestAuthorizeAction_BucketListingConditions(t *testing.T) {
 		{"ListMultipartUploads without a delimiter is denied", "UploadsHomeOneLevel", "/" + bucket + "?uploads&prefix=home/", s3_constants.ACTION_READ, "", s3err.ErrAccessDenied},
 		{"max-keys within s3:max-keys is allowed", "MaxKeysTen", "/" + bucket + "?list-type=2&prefix=home/&delimiter=/&max-keys=5", s3_constants.ACTION_LIST, "home/", s3err.ErrNone},
 		{"max-keys above s3:max-keys is denied", "MaxKeysTen", "/" + bucket + "?list-type=2&prefix=home/&delimiter=/&max-keys=20", s3_constants.ACTION_LIST, "home/", s3err.ErrAccessDenied},
+		{"versions max-keys within limit is allowed", "VersionsMaxKeysTen", "/" + bucket + "?versions&max-keys=5", s3_constants.ACTION_LIST, "", s3err.ErrNone},
+		{"versions max-keys above limit is denied", "VersionsMaxKeysTen", "/" + bucket + "?versions&max-keys=20", s3_constants.ACTION_LIST, "", s3err.ErrAccessDenied},
+		{"uploads max-uploads does not satisfy max-keys", "UploadsMaxKeysTen", "/" + bucket + "?uploads&max-uploads=5", s3_constants.ACTION_READ, "", s3err.ErrAccessDenied},
+		{"uploads spoofed max-keys does not satisfy policy", "UploadsMaxKeysTen", "/" + bucket + "?uploads&max-uploads=1000&max-keys=5", s3_constants.ACTION_READ, "", s3err.ErrAccessDenied},
 	}
 
 	for _, tt := range tests {

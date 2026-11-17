@@ -325,8 +325,11 @@ func addBucketListingConditions(requestContext map[string]interface{}, r *http.R
 		requestContext["s3:delimiter"] = delimiter
 	}
 
-	if maxKeys := query.Get("max-keys"); maxKeys != "" {
-		requestContext["s3:max-keys"] = maxKeys
+	// Multipart listings use max-uploads, so max-keys cannot constrain them.
+	if !query.Has("uploads") {
+		if maxKeys := query.Get("max-keys"); maxKeys != "" {
+			requestContext["s3:max-keys"] = maxKeys
+		}
 	}
 }
 
