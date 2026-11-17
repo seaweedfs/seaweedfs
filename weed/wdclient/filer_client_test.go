@@ -649,3 +649,24 @@ func TestRelookupAfterFailedReadServesWholeAnswer(t *testing.T) {
 
 	expectServed(t, fc, "5", a, b)
 }
+
+// Overlapping lookups can answer from different filer snapshots. One that
+// lands after an add adopted the master's view, and names none of its
+// servers, is served but must not merge back into the adopted entry.
+func TestDisjointAnswerDoesNotUndoAdoption(t *testing.T) {
+	a := Location{Url: "a:8080"}
+	dead := Location{Url: "dead:8080"}
+	provider := &testLocationProvider{locations: map[string][]Location{"5": {a, dead}}}
+	mc := moveClient()
+	fc := hookedFilerClient(mc, provider)
+	expectServed(t, fc, "5", a, dead)
+	epoch := fc.mapEpoch()
+	pushVolumeLocation(mc, a.Url, []uint32{5}, nil, nil, nil)
+
+	if live := fc.fillLocations(5, []Location{dead}, epoch); len(live) != 1 || live[0].Url != dead.Url {
+		t.Fatalf("disjoint answer served as %v, want %v", live, dead)
+	}
+	if cached, _ := fc.GetLocations(5); len(cached) != 1 || cached[0].Url != a.Url {
+		t.Fatalf("cache holds %v, want only %v", cached, a)
+	}
+}

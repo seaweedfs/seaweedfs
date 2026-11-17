@@ -448,12 +448,16 @@ func (vc *vidMapClient) fillLocations(vid uint32, locations []Location, epoch ui
 	vc.recentDeletesMu.Lock()
 	defer vc.recentDeletesMu.Unlock()
 	vc.expireRecentDeletes(time.Now())
+	cache := vc.vidMapEpoch == epoch
 	if _, relookup := vc.relookups[vid]; relookup {
 		delete(vc.relookups, vid)
 	} else if vc.authority != nil {
 		if current, found := vc.authority.GetCurrentLocations(vid); found {
 			if listed := listedLocations(locations, current); len(listed) > 0 {
 				locations = listed
+			} else {
+				// Served, but not merged into what a pushed add adopted.
+				cache = false
 			}
 		}
 	}
@@ -461,7 +465,7 @@ func (vc *vidMapClient) fillLocations(vid uint32, locations []Location, epoch ui
 		if _, found := vc.recentDeletes[vidLocationKey{vid: vid, url: loc.Url}]; found {
 			continue
 		}
-		if vc.vidMapEpoch == epoch {
+		if cache {
 			vc.vidMap.addLocation(vid, loc)
 		}
 		live = append(live, loc)
