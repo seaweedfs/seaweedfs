@@ -239,7 +239,7 @@ The tests are automatically run in GitHub Actions on every push/PR that affects 
 **Workflow**: `.github/workflows/s3-parquet-tests.yml`
 
 **Test Matrix**:
-- Python versions: 3.9, 3.11, 3.12
+- Python versions: 3.10, 3.11, 3.12
 - PyArrow integration tests (s3fs): 20 test combinations
 - PyArrow native S3 tests: 6 test scenarios ✅
 - Cross-filesystem compatibility tests: 12 test scenarios ✅ **NEW**
