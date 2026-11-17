@@ -56,3 +56,17 @@ func TestLockRingHealthyWaitsForAnnounce(t *testing.T) {
 		t.Fatal("expected unhealthy after announcing with an empty ring")
 	}
 }
+
+func TestLockRingHealthyRestartsGraceAfterUnprobedRejoin(t *testing.T) {
+	self := pb.ServerAddress("filer-0:8888")
+	dlm := lock_manager.NewDistributedLockManager(self)
+	fs := &FilerServer{filer: &filer.Filer{Dlm: dlm}, option: &FilerOption{Host: self}}
+	dlm.LockRing.SetTakeSnapshotCallback(fs.OnDlmChangeSnapshot)
+
+	fs.lockRingUnhealthySince.Store(time.Now().Add(-lockRingUnhealthyGracePeriod - time.Second).UnixNano())
+	dlm.LockRing.SetSnapshot([]pb.ServerAddress{self, "filer-1:8888"}, 1)
+	dlm.LockRing.SetSnapshot([]pb.ServerAddress{"filer-1:8888"}, 2)
+	if !fs.lockRingHealthy() {
+		t.Fatal("expected a fresh grace period after rejoining the ring between probes")
+	}
+}
