@@ -492,12 +492,10 @@ const REDB_OLD_FLOOR_BYTES: u64 = 1024 * 1024 + 8 * 1024;
 /// Meta value `1` means a compact of a file in the old-floor band already finished.
 const META_FLOOR_COMPACT: &str = "floor_compact";
 
-/// True when this open should compact a reused `.rdb` once.
-///
-/// The band is the old 4.2 starting size. A file one byte past it has grown.
-/// `already_attempted` is the persisted `floor_compact` flag.
-fn should_compact_old_floor(len: u64, already_attempted: bool) -> bool {
-    !already_attempted && len > REDB_SMALL_FILE_BYTES && len <= REDB_OLD_FLOOR_BYTES
+/// True when a reused `.rdb` is still inside the old 4.2 starting size.
+/// A file one byte past it has grown.
+fn should_compact_old_floor(len: u64) -> bool {
+    len > REDB_SMALL_FILE_BYTES && len <= REDB_OLD_FLOOR_BYTES
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -740,7 +738,7 @@ impl RedbNeedleMap {
                 return Ok(());
             }
         };
-        if should_compact_old_floor(len, false) {
+        if should_compact_old_floor(len) {
             self.save_floor_compact()?;
         }
         Ok(())
@@ -765,7 +763,7 @@ impl RedbNeedleMap {
         };
         // The flag is irrelevant outside the band. A meta read error there
         // must not make `load_from_idx` rebuild a larger index.
-        if !should_compact_old_floor(len, false) {
+        if !should_compact_old_floor(len) {
             return Ok(());
         }
         if self.read_floor_compact()? == Some(1) {
@@ -1909,13 +1907,11 @@ mod tests {
     fn test_should_compact_old_floor_bounds() {
         let small = REDB_SMALL_FILE_BYTES;
         let floor = REDB_OLD_FLOOR_BYTES;
-        assert!(!should_compact_old_floor(small, false));
-        assert!(should_compact_old_floor(small + 1, false));
-        assert!(should_compact_old_floor(floor, false));
-        assert!(!should_compact_old_floor(floor + 1, false));
-        assert!(!should_compact_old_floor(small + 1, true));
-        assert!(!should_compact_old_floor(floor, true));
-        assert!(!should_compact_old_floor(0, false));
+        assert!(!should_compact_old_floor(small));
+        assert!(should_compact_old_floor(small + 1));
+        assert!(should_compact_old_floor(floor));
+        assert!(!should_compact_old_floor(floor + 1));
+        assert!(!should_compact_old_floor(0));
     }
 
     fn reload_redb(db_path: &std::path::Path, idx_path: &std::path::Path) -> RedbNeedleMap {
@@ -2667,7 +2663,7 @@ mod tests {
             )
             .unwrap();
             let len = std::fs::metadata(&db_path).unwrap().len();
-            if should_compact_old_floor(len, false) {
+            if should_compact_old_floor(len) {
                 break;
             }
             assert!(
@@ -2682,7 +2678,7 @@ mod tests {
         let mut loaded = reload_redb(&db_path, &idx_path);
         let len = std::fs::metadata(&db_path).unwrap().len();
         let flag = loaded.live_floor_compact();
-        if should_compact_old_floor(len, false) {
+        if should_compact_old_floor(len) {
             assert_eq!(flag, Some(1));
         } else {
             assert!(len <= REDB_SMALL_FILE_BYTES, "compacted file is {len} bytes");
@@ -2716,7 +2712,7 @@ mod tests {
             )
             .unwrap();
             let len = std::fs::metadata(&db_path).unwrap().len();
-            if should_compact_old_floor(len, false) {
+            if should_compact_old_floor(len) {
                 break;
             }
             assert!(n < 2_000_000, "file is {len} bytes and never entered the band");
