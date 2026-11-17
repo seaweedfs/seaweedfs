@@ -81,6 +81,26 @@ func TestLockRingHealthyRestartsGraceAfterUnprobedRejoin(t *testing.T) {
 	}
 }
 
+func TestLockRingHealthyDoesNotWaitOnRingMutex(t *testing.T) {
+	dlm := lock_manager.NewDistributedLockManager("filer-0:8888")
+	fs := &FilerServer{filer: &filer.Filer{Dlm: dlm}, option: &FilerOption{}}
+	dlm.LockRing.SetSnapshot([]pb.ServerAddress{"filer-1:8888"}, 1)
+	fs.lockRingUnhealthySince.Store(time.Now().Add(-lockRingUnhealthyGracePeriod - time.Second).UnixNano())
+
+	dlm.LockRing.Lock()
+	defer dlm.LockRing.Unlock()
+	done := make(chan bool, 1)
+	go func() { done <- fs.lockRingHealthy() }()
+	select {
+	case healthy := <-done:
+		if healthy {
+			t.Fatal("expected unhealthy after the grace period")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("expired-absence probe waited on the lock-ring mutex")
+	}
+}
+
 func TestLockRingAbsenceRingUpdatesDuringProbe(t *testing.T) {
 	self := pb.ServerAddress("filer-0:8888")
 	other := pb.ServerAddress("filer-1:8888")
