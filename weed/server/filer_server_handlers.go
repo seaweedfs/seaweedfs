@@ -414,8 +414,8 @@ func (fs *FilerServer) lockRingHealthy() bool {
 	if absent < lockRingUnhealthyGracePeriod {
 		return true
 	}
-	glog.Warningf("filerHealthz: %s absent from lock ring for %v (ring v%d: %v)",
-		dlm.Host, absent.Round(time.Second), dlm.LockRing.Version(), dlm.LockRing.Ring.GetServers())
+	glog.Warningf("filerHealthz: %s absent from lock ring for %v (ring: %v)",
+		dlm.Host, absent.Round(time.Second), dlm.LockRing.Ring.GetServers())
 	return false
 }
 
