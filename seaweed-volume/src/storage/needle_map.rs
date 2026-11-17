@@ -484,6 +484,22 @@ const NEEDLE_TABLE: TableDefinition<u64, &[u8]> = TableDefinition::new("needles"
 const META_TABLE: TableDefinition<&str, u64> = TableDefinition::new("meta");
 const META_IDX_SIZE: &str = "idx_size";
 
+/// redb 4.6 starts a new file at 72 KiB: 64 KiB of pages plus the header
+/// and the region tracker.
+const REDB_SMALL_FILE_BYTES: u64 = 72 * 1024;
+/// redb 4.2 started at 1 MiB of pages plus that same 8 KiB.
+const REDB_OLD_FLOOR_BYTES: u64 = 1024 * 1024 + 8 * 1024;
+/// Meta value `1` means a compact of a file in the old-floor band already finished.
+const META_FLOOR_COMPACT: &str = "floor_compact";
+
+/// True when this open should compact a reused `.rdb` once.
+///
+/// The band is the old 4.2 starting size. A file one byte past it has grown.
+/// `already_attempted` is the persisted `floor_compact` flag.
+fn should_compact_old_floor(len: u64, already_attempted: bool) -> bool {
+    !already_attempted && len > REDB_SMALL_FILE_BYTES && len <= REDB_OLD_FLOOR_BYTES
+}
+
 /// Writes between two durable redb checkpoints. Every non-durable commit
 /// leaves an entry in redb's transaction tracker and pins the pages that
 /// were on disk at the last durable commit; only a durable commit clears
@@ -1753,7 +1769,7 @@ mod tests {
         let nm = RedbNeedleMap::new(db_path.to_str().unwrap(), redb_test_cache()).unwrap();
         let len = std::fs::metadata(&db_path).unwrap().len();
         assert!(
-            len <= 72 * 1024,
+            len <= REDB_SMALL_FILE_BYTES,
             "fresh redb file is {len} bytes, above the 72 KiB start"
         );
         drop(nm);
@@ -1761,8 +1777,8 @@ mod tests {
 
     #[test]
     fn test_should_compact_old_floor_bounds() {
-        let small = 72 * 1024;
-        let floor = 1024 * 1024 + 8 * 1024;
+        let small = REDB_SMALL_FILE_BYTES;
+        let floor = REDB_OLD_FLOOR_BYTES;
         assert!(!should_compact_old_floor(small, false));
         assert!(should_compact_old_floor(small + 1, false));
         assert!(should_compact_old_floor(floor, false));
