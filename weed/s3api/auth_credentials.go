@@ -1948,6 +1948,14 @@ func isBucketListingRequest(r *http.Request, action Action) bool {
 	return object == "" || object == "/"
 }
 
+// addEmptyListPrefix reports a listing that names no prefix as s3:prefix "",
+// as AWS and the advanced IAM path do.
+func addEmptyListPrefix(conditions map[string][]string, r *http.Request, action Action) {
+	if _, ok := conditions["s3:prefix"]; !ok && isBucketListingRequest(r, action) {
+		conditions["s3:prefix"] = []string{""}
+	}
+}
+
 // multipartListingAction returns the scoped action for a request the router
 // sends to ListObjectPartsHandler or ListMultipartUploadsHandler, or "" for
 // any other request. It follows the route order in s3api_server.go and reads
@@ -2752,6 +2760,7 @@ func (iam *IdentityAccessManagement) evaluateAttachedIAMPolicies(r *http.Request
 	principal := buildPrincipalARN(identity, r)
 	explicitAllow := false
 	conditions := engine.ExtractConditionValuesFromRequest(r)
+	addEmptyListPrefix(conditions, r, action)
 	for key, values := range vectorIAMConditions(r) {
 		conditions[key] = values
 	}

@@ -147,6 +147,7 @@ func (bpe *BucketPolicyEngine) EvaluatePolicy(bucket, object, action, principal 
 	if r != nil {
 		args.OriginalGrantConditions = policy_engine.OriginalGrantConditionsFromRequest(r)
 		args.Conditions = bpe.engine.ExtractConditionValuesFromRequest(r)
+		addEmptyListPrefix(args.Conditions, r, Action(action))
 
 		// Extract principal-related variables (aws:username, etc.) from principal ARN
 		principalVars := principalVariables(principal, claims)
