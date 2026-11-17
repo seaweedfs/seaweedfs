@@ -78,10 +78,26 @@ func (t *ManagedTarget) Validate() error {
 			return fmt.Errorf("webhook target %q: path prefix %q must start with '/'", t.Name, p)
 		}
 	}
+	for field, v := range t.settings() {
+		if v < 0 {
+			return fmt.Errorf("webhook target %q: %s must not be negative", t.Name, field)
+		}
+	}
 	if err := t.config().validate(); err != nil {
 		return fmt.Errorf("webhook target %q: %w", t.Name, err)
 	}
 	return nil
+}
+
+func (t *ManagedTarget) settings() map[string]int {
+	return map[string]int{
+		"timeout_seconds":     t.TimeoutSeconds,
+		"max_retries":         t.MaxRetries,
+		"backoff_seconds":     t.BackoffSeconds,
+		"max_backoff_seconds": t.MaxBackoffSeconds,
+		"workers":             t.Workers,
+		"buffer_size":         t.BufferSize,
+	}
 }
 
 func (t *ManagedTarget) config() *config {

@@ -34,6 +34,8 @@ func TestParseManagedConfig(t *testing.T) {
 		"event type":    `{"targets":[{"name":"a","endpoint":"https://example.com","event_types":["chmod"]}]}`,
 		"relative path": `{"targets":[{"name":"a","endpoint":"https://example.com","path_prefixes":["buckets"]}]}`,
 		"timeout range": `{"targets":[{"name":"a","endpoint":"https://example.com","timeout_seconds":301}]}`,
+		"neg timeout":   `{"targets":[{"name":"a","endpoint":"https://example.com","timeout_seconds":-1}]}`,
+		"neg workers":   `{"targets":[{"name":"a","endpoint":"https://example.com","workers":-1}]}`,
 		"not json":      `targets`,
 	} {
 		if _, err := ParseManagedConfig([]byte(body)); err == nil {
