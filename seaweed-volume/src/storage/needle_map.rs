@@ -1763,6 +1763,19 @@ mod tests {
         NeedleMapKind::Redb.redb_cache_bytes()
     }
 
+    #[test]
+    fn test_redb_new_file_is_at_most_72kib() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("fresh.rdb");
+        let nm = RedbNeedleMap::new(db_path.to_str().unwrap(), redb_test_cache()).unwrap();
+        let len = std::fs::metadata(&db_path).unwrap().len();
+        assert!(
+            len <= 72 * 1024,
+            "fresh redb file is {len} bytes, above the 72 KiB start"
+        );
+        drop(nm);
+    }
+
     /// Open a redb map on an empty .idx with an append writer attached, the
     /// way `Volume::load_index_redb` opens a writable volume.
     fn open_writable_redb(
