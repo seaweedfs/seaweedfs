@@ -419,8 +419,13 @@ func (fs *FilerServer) lockRingHealthy() bool {
 		}
 	}
 	now := time.Now().UnixNano()
-	fs.lockRingUnhealthySince.CompareAndSwap(0, now)
-	absent := time.Duration(now - fs.lockRingUnhealthySince.Load())
+	since := now
+	if !fs.lockRingUnhealthySince.CompareAndSwap(0, now) {
+		if s := fs.lockRingUnhealthySince.Load(); s != 0 {
+			since = s
+		}
+	}
+	absent := time.Duration(now - since)
 	if absent < lockRingUnhealthyGracePeriod {
 		return true
 	}
