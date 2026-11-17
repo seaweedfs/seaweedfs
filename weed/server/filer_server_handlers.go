@@ -390,16 +390,13 @@ func pathHasComponentPrefix(reqPath, prefix string) bool {
 	return strings.HasPrefix(cleanedPath, cleanedPrefix+"/")
 }
 
-// lockRingUnhealthyGracePeriod is how long the filer may be absent from its own
-// lock ring before health checks fail. It covers startup (before the first
-// LockRingUpdate arrives) and the master's ring-change batching delay.
+// lockRingUnhealthyGracePeriod covers the first ring update after announcing
+// and the master's ring-change batching delay.
 const lockRingUnhealthyGracePeriod = 30 * time.Second
 
-// lockRingHealthy reports false once this filer has been missing from the
-// distributed lock ring for longer than lockRingUnhealthyGracePeriod. In that
-// state every lock acquisition (and therefore every locked write, including
-// S3 PUTs) fails with "no lock server found" and nothing repopulates the ring
-// (see seaweedfs#11442). Restarting the filer re-registers it with the master.
+// lockRingHealthy reports false once this filer has been missing from its own
+// lock ring past the grace period: locked writes cannot be routed to it, and
+// a restart re-registers it with the master.
 func (fs *FilerServer) lockRingHealthy() bool {
 	dlm := fs.filer.Dlm
 	if dlm == nil || dlm.LockRing == nil || dlm.LockRing.Ring == nil {
