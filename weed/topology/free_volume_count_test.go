@@ -8,7 +8,7 @@ import (
 
 // An over-committed node (more volumes registered than it has slots for) must
 // report zero free slots, not a negative count that drags the cluster total
-// below the slots healthy servers can still offer. See issue #6700.
+// below the slots healthy servers can still offer.
 func TestFreeVolumeCountNeverNegative(t *testing.T) {
 	topo := NewTopology("free-slots", nil, 32*1024*1024*1024, 5, false)
 	dn := topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1").
