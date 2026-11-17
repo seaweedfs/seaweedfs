@@ -504,13 +504,13 @@ func (vc *vidMapClient) InvalidateCache(fileId string) {
 	if err != nil {
 		return
 	}
+	vc.recentDeletesMu.Lock()
+	defer vc.recentDeletesMu.Unlock()
 	if vc.authority != nil {
-		vc.recentDeletesMu.Lock()
 		if vc.relookups == nil {
 			vc.relookups = make(map[uint32]struct{})
 		}
 		vc.relookups[uint32(vid)] = struct{}{}
-		vc.recentDeletesMu.Unlock()
 	}
 	vc.vidMap.deleteVid(uint32(vid))
 }
