@@ -38,10 +38,10 @@ func grpcLocalSocketPathLimit() int {
 // fails at startup instead of leaving every local RPC to dial a socket that
 // was never bound.
 //
-// Windows never creates these sockets (see pb.RegisterLocalGrpcSocket), so
-// there the folder is irrelevant and is not checked.
+// The folder is unused, and not checked, on Windows (see
+// pb.RegisterLocalGrpcSocket) or when no service registers a socket.
 func checkGrpcLocalSocketDir(dir string, sockets []grpcLocalSocket) error {
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == "windows" || len(sockets) == 0 {
 		return nil
 	}
 	info, err := os.Stat(dir)
@@ -64,23 +64,21 @@ func checkGrpcLocalSocketDir(dir string, sockets []grpcLocalSocket) error {
 	// logs that failure while GrpcDial keeps dialing the missing socket, so
 	// prove now that this process can create one. The probe name is random,
 	// so a file another user left in a shared folder cannot block startup.
-	return probeGrpcLocalSocketDir(dir, limit)
+	return probeGrpcLocalSocketDir(dir)
 }
 
 // probeGrpcLocalSocketDir binds and removes a randomly named Unix socket in
-// dir, retrying a name that is already taken.
-func probeGrpcLocalSocketDir(dir string, limit int) error {
+// dir, retrying a name that is already taken. The 23-byte probe name is
+// shorter than any service socket name, so it fits wherever they do.
+func probeGrpcLocalSocketDir(dir string) error {
 	const attempts = 5
 	var lastErr error
 	for i := 0; i < attempts; i++ {
-		suffix := make([]byte, 8)
+		suffix := make([]byte, 4)
 		if _, err := rand.Read(suffix); err != nil {
 			return fmt.Errorf("cannot pick a Unix socket probe name: %v", err)
 		}
-		probePath := filepath.Join(dir, fmt.Sprintf("seaweedfs-probe-%x.sock", suffix))
-		if len(probePath) > limit {
-			return fmt.Errorf("probe socket path %q is %d bytes and does not fit the platform's %d-byte Unix socket path limit; use a shorter -grpc.localSocketDir", probePath, len(probePath), limit)
-		}
+		probePath := filepath.Join(dir, fmt.Sprintf("seaweedfs-%x.sock", suffix))
 		listener, err := net.Listen("unix", probePath)
 		if errors.Is(err, syscall.EADDRINUSE) {
 			lastErr = err

@@ -1,6 +1,7 @@
 package command
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -86,6 +87,47 @@ func TestGrpcLocalSocketDir(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), strconv.Itoa(limit)) {
 		t.Fatalf("error %q does not name the %d-byte limit", err, limit)
+	}
+}
+
+// TestGrpcLocalSocketDirAtLimit checks that a folder whose longest socket
+// path is exactly the platform limit is accepted and that the socket binds.
+func TestGrpcLocalSocketDirAtLimit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix-socket routing is disabled on Windows")
+	}
+
+	base, err := os.MkdirTemp("/tmp", "seaweedfs-grpc-limit-")
+	if err != nil {
+		t.Fatalf("create folder: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(base); err != nil {
+			t.Errorf("remove %q: %v", base, err)
+		}
+	})
+
+	sockets := []grpcLocalSocket{{"s3", 18333}, {"volume", 18080}}
+	limit := grpcLocalSocketPathLimit()
+	name := filepath.Base(grpcLocalSocketPath(base, "volume", 18080))
+	dir := filepath.Join(base, strings.Repeat("d", limit-len(base)-len(name)-2))
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatalf("create %q: %v", dir, err)
+	}
+	path := grpcLocalSocketPath(dir, "volume", 18080)
+	if len(path) != limit {
+		t.Fatalf("socket path %q is %d bytes, want %d", path, len(path), limit)
+	}
+
+	if err := checkGrpcLocalSocketDir(dir, sockets); err != nil {
+		t.Fatalf("checkGrpcLocalSocketDir(%q): %v", dir, err)
+	}
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatalf("bind %q: %v", path, err)
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatalf("close %q: %v", path, err)
 	}
 }
 
