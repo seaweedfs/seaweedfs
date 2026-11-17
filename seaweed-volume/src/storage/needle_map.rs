@@ -753,6 +753,11 @@ impl RedbNeedleMap {
     ///
     /// Called only from `try_reuse_rdb`, after the replay transaction has
     /// committed. `new` and `full_rebuild` already create a 72 KiB file.
+    ///
+    /// An empty durable commit publishes a `Durability::None` tail before
+    /// `compact`. A storage error inside `compact` would otherwise drop that
+    /// tail when the handle is reopened. `checkpoint` is not used: during
+    /// reuse `idx_file` is `None` and `idx_file_offset` is 0.
     fn shrink_old_floor(&mut self) -> io::Result<()> {
         let len = match self.rdb_file_len() {
             Ok(len) => len,
@@ -761,10 +766,23 @@ impl RedbNeedleMap {
                 return Ok(());
             }
         };
-        let already = self.read_floor_compact()? == Some(1);
-        if !should_compact_old_floor(len, already) {
+        // The flag is irrelevant outside the band. A meta read error there
+        // must not make `load_from_idx` rebuild a larger index.
+        if !should_compact_old_floor(len, false) {
             return Ok(());
         }
+        if self.read_floor_compact()? == Some(1) {
+            return Ok(());
+        }
+        // Failure returns Err so `load_from_idx` full-rebuilds. Do not reopen
+        // over a tail that this commit did not publish.
+        let mut txn = self
+            .db_or_err()?
+            .begin_write()
+            .map_err(|e| io::Error::other(format!("redb begin_write: {}", e)))?;
+        txn.set_quick_repair(true);
+        txn.commit()
+            .map_err(|e| io::Error::other(format!("redb commit: {}", e)))?;
         let compact_result = self
             .db
             .as_mut()
