@@ -22,9 +22,12 @@ var NotificationWebhooksConfPath = string(util.NewFullPath(DirectoryEtcSeaweedFS
 
 // managedWebhooks runs the webhook targets edited from the admin UI, next to
 // whatever notification.toml configures.
+// sendMu keeps a replaced queue open until every sender that loaded it has
+// handed its event over.
 type managedWebhooks struct {
 	reloadMu sync.Mutex
 	applied  []byte
+	sendMu   sync.RWMutex
 	queue    atomic.Pointer[webhook.Queue]
 }
 
@@ -86,12 +89,17 @@ func (f *Filer) reloadNotificationWebhooks() {
 	}
 	glog.V(0).Infof("apply %d webhook targets from %s", len(conf.Targets), NotificationWebhooksConfPath)
 	f.webhooks.applied = append([]byte{}, content...)
-	if old := f.webhooks.queue.Swap(queue); old != nil {
+	f.webhooks.sendMu.Lock()
+	old := f.webhooks.queue.Swap(queue)
+	f.webhooks.sendMu.Unlock()
+	if old != nil {
 		go old.Close(notificationWebhooksDrain)
 	}
 }
 
 func (f *Filer) sendToNotificationWebhooks(key string, message *filer_pb.EventNotification) {
+	f.webhooks.sendMu.RLock()
+	defer f.webhooks.sendMu.RUnlock()
 	if q := f.webhooks.queue.Load(); q != nil {
 		if err := q.SendMessage(key, message); err != nil {
 			glog.Error(err)
