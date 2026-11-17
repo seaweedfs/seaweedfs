@@ -35,6 +35,7 @@ templ themeScript() {
                 var dark = choice === 'dark' || (choice === 'auto' && media && media.matches);
                 root.setAttribute('data-bs-theme', dark ? 'dark' : 'light');
                 root.setAttribute('data-theme-choice', choice);
+                root.style.colorScheme = dark ? 'dark' : 'light';
             }
 
             var current = savedChoice();
