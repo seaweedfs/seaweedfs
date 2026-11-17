@@ -74,6 +74,7 @@ var (
 	volumeMinFreeSpace        = cmdServer.Flag.String("volume.minFreeSpace", "", "min free disk space (value<=100 as percentage like 1, other as human readable bytes, like 10GiB). Low disk space will mark all volumes as ReadOnly.")
 	serverMetricsHttpPort     = cmdServer.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
 	serverMetricsHttpIp       = cmdServer.Flag.String("metricsIp", "", "metrics listen ip. If empty, default to same as -ip.bind option.")
+	serverGrpcLocalSocketDir  = cmdServer.Flag.String("grpc.localSocketDir", "/tmp", "directory for the local gRPC Unix sockets; default to /tmp. Point it at a directory a temp cleaner does not sweep, such as /run/seaweedfs")
 
 	// pulseSeconds              = cmdServer.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
 	isStartingMasterServer = cmdServer.Flag.Bool("master", true, "whether to start master server")
@@ -433,6 +434,7 @@ func runServer(cmd *Command, args []string) bool {
 	// Register Unix socket paths for gRPC services running in this process
 	// so local inter-service communication uses Unix sockets instead of TCP.
 	// Resolve gRPC ports early (same calculation each service does internally).
+	var localSockets []grpcLocalSocket
 	for _, svc := range []struct {
 		starting *bool
 		portGrpc *int
@@ -448,8 +450,14 @@ func runServer(cmd *Command, args []string) bool {
 			if *svc.portGrpc == 0 {
 				*svc.portGrpc = 10000 + *svc.port
 			}
-			pb.RegisterLocalGrpcSocket(*serverIp, *svc.portGrpc, fmt.Sprintf("/tmp/seaweedfs-%s-grpc-%d.sock", svc.name, *svc.portGrpc))
+			localSockets = append(localSockets, grpcLocalSocket{svc.name, *svc.portGrpc})
 		}
+	}
+	if err := checkGrpcLocalSocketDir(*serverGrpcLocalSocketDir, localSockets); err != nil {
+		glog.Fatalf("Check gRPC local socket folder (-grpc.localSocketDir=%q): %v", *serverGrpcLocalSocketDir, err)
+	}
+	for _, socket := range localSockets {
+		pb.RegisterLocalGrpcSocket(*serverIp, socket.port, grpcLocalSocketPath(*serverGrpcLocalSocketDir, socket.name, socket.port))
 	}
 
 	serverWhiteList := util.StringSplit(*serverWhiteListOption, ",")

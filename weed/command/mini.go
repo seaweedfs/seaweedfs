@@ -410,6 +410,7 @@ var (
 	miniDataFolders                 = cmdMini.Flag.String("dir", ".", "directory to store data files")
 	miniMetricsHttpPort             = cmdMini.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
 	miniMetricsHttpIp               = cmdMini.Flag.String("metricsIp", "", "metrics listen ip. If empty, default to same as -ip.bind option.")
+	miniGrpcLocalSocketDir          = cmdMini.Flag.String("grpc.localSocketDir", "/tmp", "directory for the local gRPC Unix sockets; default to /tmp. Point it at a directory a temp cleaner does not sweep, such as /run/seaweedfs")
 	miniS3Config                    = cmdMini.Flag.String("s3.config", "", "path to the S3 config file")
 	miniIamConfig                   = cmdMini.Flag.String("s3.iam.config", "", "path to the advanced IAM config file for S3")
 	miniS3AllowDeleteBucketNotEmpty = cmdMini.Flag.Bool("s3.allowDeleteBucketNotEmpty", false, "allow recursive deleting all entries along with bucket")
@@ -1568,13 +1569,21 @@ func runMini(cmd *Command, args []string) bool {
 
 	// Register Unix socket paths for gRPC services so local inter-service
 	// communication goes through Unix sockets instead of TCP.
-	pb.RegisterLocalGrpcSocket(*miniIp, *miniMasterOptions.portGrpc, fmt.Sprintf("/tmp/seaweedfs-master-grpc-%d.sock", *miniMasterOptions.portGrpc))
-	pb.RegisterLocalGrpcSocket(*miniIp, *miniOptions.v.portGrpc, fmt.Sprintf("/tmp/seaweedfs-volume-grpc-%d.sock", *miniOptions.v.portGrpc))
-	pb.RegisterLocalGrpcSocket(*miniIp, *miniFilerOptions.portGrpc, fmt.Sprintf("/tmp/seaweedfs-filer-grpc-%d.sock", *miniFilerOptions.portGrpc))
-	if *miniS3Options.portGrpc > 0 {
-		pb.RegisterLocalGrpcSocket(*miniIp, *miniS3Options.portGrpc, fmt.Sprintf("/tmp/seaweedfs-s3-grpc-%d.sock", *miniS3Options.portGrpc))
+	localSockets := []grpcLocalSocket{
+		{"master", *miniMasterOptions.portGrpc},
+		{"volume", *miniOptions.v.portGrpc},
+		{"filer", *miniFilerOptions.portGrpc},
+		{"admin", *miniAdminOptions.grpcPort},
 	}
-	pb.RegisterLocalGrpcSocket(*miniIp, *miniAdminOptions.grpcPort, fmt.Sprintf("/tmp/seaweedfs-admin-grpc-%d.sock", *miniAdminOptions.grpcPort))
+	if *miniS3Options.portGrpc > 0 {
+		localSockets = append(localSockets, grpcLocalSocket{"s3", *miniS3Options.portGrpc})
+	}
+	if err := checkGrpcLocalSocketDir(*miniGrpcLocalSocketDir, localSockets); err != nil {
+		glog.Fatalf("Check gRPC local socket folder (-grpc.localSocketDir=%q): %v", *miniGrpcLocalSocketDir, err)
+	}
+	for _, socket := range localSockets {
+		pb.RegisterLocalGrpcSocket(*miniIp, socket.port, grpcLocalSocketPath(*miniGrpcLocalSocketDir, socket.name, socket.port))
+	}
 
 	go stats_collect.StartMetricsServer(*miniMetricsHttpIp, *miniMetricsHttpPort)
 
