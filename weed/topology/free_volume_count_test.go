@@ -26,8 +26,9 @@ func TestFreeVolumeCountNeverNegative(t *testing.T) {
 	if got := dn.diskUsages.FreeSpace(); got != 0 {
 		t.Errorf("diskUsages.FreeSpace = %d, want 0", got)
 	}
-	if got := dn.diskUsages.ToDiskInfo()[""].FreeVolumeCount; got != 0 {
-		t.Errorf("disk info FreeVolumeCount = %d, want 0", got)
+	// Planners add refunds and moves to the published count, so it keeps the deficit.
+	if got := dn.diskUsages.ToDiskInfo()[""].FreeVolumeCount; got != -3 {
+		t.Errorf("disk info FreeVolumeCount = %d, want -3", got)
 	}
 }
 
