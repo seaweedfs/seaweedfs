@@ -454,7 +454,8 @@ func (engine *PolicyEngine) ExtractConditionValuesFromRequest(r *http.Request) m
 		values["s3:prefix"] = []string{prefix}
 	}
 
-	if maxKeys := r.URL.Query().Get("max-keys"); maxKeys != "" {
+	// Multipart listings use max-uploads, so max-keys cannot constrain them.
+	if maxKeys := r.URL.Query().Get("max-keys"); maxKeys != "" && !r.URL.Query().Has("uploads") {
 		values["s3:max-keys"] = []string{maxKeys}
 	}
 
