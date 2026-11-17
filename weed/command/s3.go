@@ -449,15 +449,18 @@ func (s3opt *S3Options) startS3Server() bool {
 	// The Vectors API rides the main -port listener whenever a weed-vector
 	// backend is reachable — /s3vectors/ in the SigV4 credential scope picks
 	// the vectors router.
-	vectorsHandler := http.Handler(router)
+	// mux matches Queries() before any router middleware runs, so the escape
+	// has to wrap the router for routing and authorization to read one query.
+	mainHandler := util_http.EscapeSemicolonsInQuery(router)
+	vectorsHandler := mainHandler
 	if vectorsRouter := s3opt.vectorsRouter(s3ApiServer, grpcDialOption, masterAddresses, filerGroup); vectorsRouter != nil {
-		vr, mainRouter := vectorsRouter, router
+		vr := vectorsRouter
 		vectorsHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if isVectorsRequest(r) {
 				vr.ServeHTTP(w, r)
 				return
 			}
-			mainRouter.ServeHTTP(w, r)
+			mainHandler.ServeHTTP(w, r)
 		})
 	}
 
