@@ -703,3 +703,22 @@ func TestStaleAnswerKeepsRelookupMark(t *testing.T) {
 
 	expectServed(t, fc, "5", a, b)
 }
+
+// A disjoint answer that filled the cache is dropped once an answer the
+// master confirms arrives, instead of staying merged beside it.
+func TestMatchingAnswerDropsCachedDisjointLocation(t *testing.T) {
+	a := Location{Url: "a:8080"}
+	dead := Location{Url: "dead:8080"}
+	mc := moveClient()
+	fc := hookedFilerClient(mc, &testLocationProvider{})
+	pushVolumeLocation(mc, a.Url, []uint32{5}, nil, nil, nil)
+	epoch := fc.mapEpoch()
+	fc.fillLocations(5, []Location{dead}, epoch)
+
+	if live := fc.fillLocations(5, []Location{a, dead}, epoch); len(live) != 1 || live[0].Url != a.Url {
+		t.Fatalf("matching answer served as %v, want %v", live, a)
+	}
+	if cached, _ := fc.GetLocations(5); len(cached) != 1 || cached[0].Url != a.Url {
+		t.Fatalf("cache holds %v, want only %v", cached, a)
+	}
+}
