@@ -1,6 +1,7 @@
 package dash
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -37,11 +38,12 @@ var notificationWebhooksMu sync.Mutex
 func (s *AdminServer) readNotificationWebhooks(ctx context.Context) (*webhook.ManagedConfig, error) {
 	var conf *webhook.ManagedConfig
 	err := s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		content, err := filer.ReadInsideFiler(ctx, client, filer.DirectoryEtcSeaweedFS, filer.NotificationWebhooksConfName)
+		var buf bytes.Buffer
+		err := filer.ReadEntry(s.masterClient, client, filer.DirectoryEtcSeaweedFS, filer.NotificationWebhooksConfName, &buf)
 		if err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
 			return err
 		}
-		conf, err = webhook.ParseManagedConfig(content)
+		conf, err = webhook.ParseManagedConfig(buf.Bytes())
 		return err
 	})
 	return conf, err
