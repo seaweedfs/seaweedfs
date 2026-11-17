@@ -130,3 +130,35 @@ func TestGrpcLocalSocketDirUnwritable(t *testing.T) {
 		t.Fatalf("error %q does not report the failed socket bind", err)
 	}
 }
+
+// TestGrpcLocalSocketDirProbeLeavesNothing checks that the startup probe
+// removes its socket, so repeated starts never fill a shared folder.
+func TestGrpcLocalSocketDirProbeLeavesNothing(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix-socket routing is disabled on Windows (#9430)")
+	}
+
+	// See TestGrpcLocalSocketDirUnwritable for why the folder is under /tmp.
+	dir, err := os.MkdirTemp("/tmp", "seaweedfs-grpc-probe-")
+	if err != nil {
+		t.Fatalf("create folder: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(dir); err != nil {
+			t.Errorf("remove %q: %v", dir, err)
+		}
+	})
+
+	for i := 0; i < 3; i++ {
+		if err := checkGrpcLocalSocketDir(dir, []grpcLocalSocket{{"volume", 17334}}); err != nil {
+			t.Fatalf("checkGrpcLocalSocketDir(%q): %v", dir, err)
+		}
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read %q: %v", dir, err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("probe left %d entries in %q, first %q", len(entries), dir, entries[0].Name())
+	}
+}

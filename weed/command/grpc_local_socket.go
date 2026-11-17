@@ -1,6 +1,7 @@
 package command
 
 import (
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"net"
@@ -61,25 +62,38 @@ func checkGrpcLocalSocketDir(dir string, sockets []grpcLocalSocket) error {
 	// An existing folder can still refuse a bind, for example because it is
 	// owned by another user or mounted read-only. ListenOnLocalSocket only
 	// logs that failure while GrpcDial keeps dialing the missing socket, so
-	// prove now that this process can create one, using a throwaway name.
-	probePath := filepath.Join(dir, fmt.Sprintf("seaweedfs-probe-%d.sock", os.Getpid()))
-	if len(probePath) > limit {
-		return fmt.Errorf("probe socket path %q is %d bytes and does not fit the platform's %d-byte Unix socket path limit; use a shorter -grpc.localSocketDir", probePath, len(probePath), limit)
+	// prove now that this process can create one. The probe name is random,
+	// so a file another user left in a shared folder cannot block startup.
+	return probeGrpcLocalSocketDir(dir, limit)
+}
+
+// probeGrpcLocalSocketDir binds and removes a randomly named Unix socket in
+// dir, retrying a name that is already taken.
+func probeGrpcLocalSocketDir(dir string, limit int) error {
+	const attempts = 5
+	var lastErr error
+	for i := 0; i < attempts; i++ {
+		suffix := make([]byte, 8)
+		if _, err := rand.Read(suffix); err != nil {
+			return fmt.Errorf("cannot pick a Unix socket probe name: %v", err)
+		}
+		probePath := filepath.Join(dir, fmt.Sprintf("seaweedfs-probe-%x.sock", suffix))
+		if len(probePath) > limit {
+			return fmt.Errorf("probe socket path %q is %d bytes and does not fit the platform's %d-byte Unix socket path limit; use a shorter -grpc.localSocketDir", probePath, len(probePath), limit)
+		}
+		listener, err := net.Listen("unix", probePath)
+		if errors.Is(err, syscall.EADDRINUSE) {
+			lastErr = err
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("cannot create a Unix socket in it: %v; give the server's user write access or choose another -grpc.localSocketDir", err)
+		}
+		// Closing a listener the Go runtime created unlinks its socket file.
+		if err := listener.Close(); err != nil {
+			return fmt.Errorf("cannot close the Unix socket probe %q: %v", probePath, err)
+		}
+		return nil
 	}
-	// A process that crashed with this pid may have left its probe behind.
-	if err := os.Remove(probePath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("cannot remove the stale Unix socket probe %q: %v; give the server's user write access or choose another -grpc.localSocketDir", probePath, err)
-	}
-	listener, err := net.Listen("unix", probePath)
-	if err != nil {
-		return fmt.Errorf("cannot create a Unix socket in it: %v; give the server's user write access or choose another -grpc.localSocketDir", err)
-	}
-	if err := listener.Close(); err != nil {
-		return fmt.Errorf("cannot close the Unix socket probe %q: %v", probePath, err)
-	}
-	// Close already unlinks the socket on Unix; remove any file it left.
-	if err := os.Remove(probePath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("cannot remove the Unix socket probe %q: %v; the folder must let the server's user remove socket files", probePath, err)
-	}
-	return nil
+	return fmt.Errorf("cannot create a Unix socket in it: %d random probe names were all taken, last: %v", attempts, lastErr)
 }
