@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -44,8 +45,8 @@ security settings:
 // Control Flow:
 //   - No limit configured → return true (proceed normally)
 //   - Within limit → return true (proceed normally)
-//   - Over limit + has replicas → proxy to replica, return false (already handled)
-//   - Over limit + no replicas → wait with timeout:
+//   - Over limit + has replicas + readMode not local → proxy to replica, return false (already handled)
+//   - Over limit otherwise → wait with timeout:
 //   - Timeout → send 429 response, return false (already handled)
 //   - Cancelled → send 499 response, return false (already handled)
 //   - Capacity available → return true (proceed normally)
@@ -73,10 +74,10 @@ func (vs *VolumeServer) checkDownloadLimit(w http.ResponseWriter, r *http.Reques
 // tryProxyToReplica attempts to proxy the request to a replica server if the volume has replication.
 // Returns:
 //   - true:  Request was handled (either proxied successfully or failed with error response)
-//   - false: No proxy available (volume has no replicas or request already proxied)
+//   - false: No proxy available (readMode is local, volume has no replicas, or request already proxied)
 func (vs *VolumeServer) tryProxyToReplica(w http.ResponseWriter, r *http.Request) bool {
-	if r.URL.Query().Get(reqIsProxied) == "true" {
-		return false // already proxied
+	if vs.ReadMode == "local" || r.URL.Query().Get(reqIsProxied) == "true" {
+		return false
 	}
 
 	vid, _, _, _, _ := parseURLPath(r.URL.Path)
@@ -109,27 +110,30 @@ func (vs *VolumeServer) tryProxyToReplica(w http.ResponseWriter, r *http.Request
 //   - 429 Too Many Requests: Wait timeout exceeded
 //   - 499 Client Closed Request: Request cancelled by client
 func (vs *VolumeServer) waitForDownloadSlot(w http.ResponseWriter, r *http.Request) bool {
-	timerDownload := time.NewTimer(vs.inflightDownloadDataTimeout)
-	defer timerDownload.Stop()
+	ctx, cancel := context.WithTimeout(r.Context(), vs.inflightDownloadDataTimeout)
+	defer cancel()
 
-	inFlightDownloadSize := atomic.LoadInt64(&vs.inFlightDownloadDataSize)
-	for inFlightDownloadSize > vs.concurrentDownloadLimit {
-		switch util.WaitWithTimeout(r.Context(), vs.inFlightDownloadDataLimitCond, timerDownload) {
-		case http.StatusTooManyRequests:
-			err := fmt.Errorf("request %s because inflight download data %d > %d, and wait timeout",
-				r.URL.Path, inFlightDownloadSize, vs.concurrentDownloadLimit)
-			glog.V(1).Infof("too many requests: %v", err)
-			writeJsonError(w, r, http.StatusTooManyRequests, err)
-			return false
-		case util.HttpStatusCancelled:
-			glog.V(1).Infof("request %s cancelled from %s: %v", r.URL.Path, r.RemoteAddr, r.Context().Err())
-			w.WriteHeader(util.HttpStatusCancelled)
-			return false
-		}
+	var inFlightDownloadSize int64
+	vs.inFlightDownloadDataLimitCond.L.Lock()
+	err := util.WaitUntil(ctx, vs.inFlightDownloadDataLimitCond, 0, func() bool {
 		inFlightDownloadSize = atomic.LoadInt64(&vs.inFlightDownloadDataSize)
 		stats.VolumeServerInFlightDownloadSize.Set(float64(inFlightDownloadSize))
+		return inFlightDownloadSize <= vs.concurrentDownloadLimit
+	})
+	vs.inFlightDownloadDataLimitCond.L.Unlock()
+	if err == nil {
+		return true
 	}
-	return true
+	if r.Context().Err() != nil {
+		glog.V(1).Infof("request %s cancelled from %s: %v", r.URL.Path, r.RemoteAddr, r.Context().Err())
+		w.WriteHeader(util.HttpStatusCancelled)
+		return false
+	}
+	err = fmt.Errorf("request %s because inflight download data %d > %d, and wait timeout",
+		r.URL.Path, inFlightDownloadSize, vs.concurrentDownloadLimit)
+	glog.V(1).Infof("too many requests: %v", err)
+	writeJsonError(w, r, http.StatusTooManyRequests, err)
+	return false
 }
 
 // checkUploadLimit handles upload concurrency limiting with timeout.

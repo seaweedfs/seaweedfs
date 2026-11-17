@@ -138,7 +138,8 @@ pub struct Cli {
     #[arg(long = "concurrentUploadLimitMB", default_value_t = 0)]
     pub concurrent_upload_limit_mb: u32,
 
-    /// Limit total concurrent download size in MB, 0 means unlimited.
+    /// Limit total concurrent download size in MB, 0 means unlimited; reads over
+    /// the limit are sent to a replica unless readMode is local.
     #[arg(long = "concurrentDownloadLimitMB", default_value_t = 0)]
     pub concurrent_download_limit_mb: u32,
 

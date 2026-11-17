@@ -266,7 +266,9 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 	defer func() {
 		atomic.AddInt64(&vs.inFlightDownloadDataSize, -int64(memoryCost))
 		if vs.concurrentDownloadLimit != 0 {
+			vs.inFlightDownloadDataLimitCond.L.Lock()
 			vs.inFlightDownloadDataLimitCond.Broadcast()
+			vs.inFlightDownloadDataLimitCond.L.Unlock()
 		}
 	}()
 

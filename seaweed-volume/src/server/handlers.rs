@@ -913,7 +913,6 @@ async fn proxy_or_redirect_to_target(
     state: &VolumeServerState,
     info: ProxyRequestInfo,
     vid: VolumeId,
-    allow_local_redirect: bool,
 ) -> Response {
     // Look up volume locations from master
     let locations = match lookup_volume(
@@ -961,10 +960,7 @@ async fn proxy_or_redirect_to_target(
     match state.read_mode {
         ReadMode::Proxy => proxy_request(state, &info, target).await,
         ReadMode::Redirect => redirect_request(&info, target, &state.outgoing_http_scheme),
-        ReadMode::Local if allow_local_redirect => {
-            redirect_request(&info, target, &state.outgoing_http_scheme)
-        }
-        ReadMode::Local => unreachable!(),
+        ReadMode::Local => StatusCode::NOT_FOUND.into_response(),
     }
 }
 
@@ -1431,7 +1427,7 @@ async fn proxy_missing_volume(
         None => return StatusCode::NOT_FOUND.into_response(),
     };
 
-    proxy_or_redirect_to_target(state, info, vid, false).await
+    proxy_or_redirect_to_target(state, info, vid).await
 }
 
 /// Go's `proxied` query param check (loop prevention).
@@ -1464,8 +1460,10 @@ async fn check_download_limit(
 
         // Go tries proxy to replica once before the wait loop
         // (checkDownloadLimit); it does not retry on each wakeup.
-        let should_try_replica =
-            !is_proxied_query(&query_string) && !state.current_master().await.is_empty() && {
+        let should_try_replica = state.read_mode != ReadMode::Local
+            && !is_proxied_query(&query_string)
+            && !state.current_master().await.is_empty()
+            && {
                 let store = state.store.read().unwrap();
                 store
                     .find_volume(vid)
@@ -1475,24 +1473,23 @@ async fn check_download_limit(
             && let Some(info) =
                 build_proxy_request_info(path, request_headers, &query_string, method)
         {
-            return ControlFlow::Break(proxy_or_redirect_to_target(state, info, vid, true).await);
+            return ControlFlow::Break(proxy_or_redirect_to_target(state, info, vid).await);
         }
 
         // Blocking wait loop (Go's waitForDownloadSlot)
         loop {
-            if tokio::time::timeout_at(deadline, state.download_notify.notified())
-                .await
-                .is_err()
+            let notified = state.download_notify.notified();
+            if state.inflight_download_bytes.load(Ordering::Relaxed)
+                <= state.concurrent_download_limit
             {
+                break;
+            }
+            if tokio::time::timeout_at(deadline, notified).await.is_err() {
                 return ControlFlow::Break(json_error_with_query(
                     StatusCode::TOO_MANY_REQUESTS,
                     "download limit exceeded",
                     uri.query(),
                 ));
-            }
-            let current = state.inflight_download_bytes.load(Ordering::Relaxed);
-            if current <= state.concurrent_download_limit {
-                break;
             }
         }
     }
@@ -6360,6 +6357,88 @@ mod tests {
             .add_volume(VolumeId(1), DiskType::HardDrive, &VolumeSpec::default())
             .unwrap();
         test_state_with_store(store)
+    }
+
+    #[tokio::test]
+    async fn download_limit_local_read_mode_waits_instead_of_proxying() {
+        use crate::storage::super_block::ReplicaPlacement;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut state = volume_test_state(&tmp);
+        {
+            let s = Arc::get_mut(&mut state).unwrap();
+            s.read_mode = ReadMode::Local;
+            s.concurrent_download_limit = 1;
+            s.inflight_download_data_timeout = std::time::Duration::from_millis(50);
+        }
+        *state.current_master_url.write().await = "127.0.0.1:1".to_string();
+        state.inflight_download_bytes.store(2, Ordering::Relaxed);
+        state
+            .store
+            .read()
+            .unwrap()
+            .find_volume(VolumeId(1))
+            .unwrap()
+            .1
+            .set_replica_placement(ReplicaPlacement::from_string("001").unwrap())
+            .unwrap();
+
+        let path = "/1,0123456789abcdef";
+        let uri: axum::http::Uri = path.parse().unwrap();
+        let flow = check_download_limit(
+            &state,
+            &uri,
+            &HeaderMap::new(),
+            path,
+            VolumeId(1),
+            &Method::GET,
+        )
+        .await;
+        match flow {
+            ControlFlow::Break(resp) => assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS),
+            ControlFlow::Continue(_) => panic!("read over the download limit must not proceed"),
+        }
+    }
+
+    #[tokio::test]
+    async fn download_limit_wait_sees_release_before_waiting() {
+        let mut state = streaming_test_state();
+        {
+            let s = Arc::get_mut(&mut state).unwrap();
+            s.read_mode = ReadMode::Proxy;
+            s.concurrent_download_limit = 1;
+            s.inflight_download_data_timeout = std::time::Duration::from_secs(5);
+        }
+        *state.current_master_url.write().await = "127.0.0.1:1".to_string();
+        state.inflight_download_bytes.store(2, Ordering::Relaxed);
+
+        let master_guard = state.current_master_url.write().await;
+        let waiter = tokio::spawn({
+            let state = state.clone();
+            async move {
+                let path = "/1,0123456789abcdef";
+                let uri: axum::http::Uri = path.parse().unwrap();
+                check_download_limit(
+                    &state,
+                    &uri,
+                    &HeaderMap::new(),
+                    path,
+                    VolumeId(1),
+                    &Method::GET,
+                )
+                .await
+            }
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        state.inflight_download_bytes.store(0, Ordering::Relaxed);
+        state.download_notify.notify_waiters();
+        drop(master_guard);
+
+        let flow = tokio::time::timeout(std::time::Duration::from_secs(2), waiter)
+            .await
+            .expect("waiter missed the released download slot")
+            .unwrap();
+        assert!(matches!(flow, ControlFlow::Continue(true)));
     }
 
     /// Write a needle to volume 1 and return its URL path.
