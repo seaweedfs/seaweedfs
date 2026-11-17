@@ -87,13 +87,19 @@ func TestServeGrpcOnLocalSocketRecreatesRemovedSocket(t *testing.T) {
 	t.Cleanup(func() { localSocketCheckInterval = prevInterval })
 
 	grpcServer, port := startHealthGrpcServer(t)
-	socketPath := filepath.Join(localSocketDir(t), "grpc.sock")
+	socketDir := localSocketDir(t)
+	socketPath := filepath.Join(socketDir, "grpc.sock")
 	RegisterLocalGrpcSocket("127.0.0.1", port, socketPath)
 	ServeGrpcOnLocalSocket(grpcServer, port)
 	waitForSocketFile(t, socketPath)
 
-	if err := os.Remove(socketPath); err != nil {
-		t.Fatalf("remove socket: %v", err)
+	// Rebinding fails while the folder is gone and must be retried later.
+	if err := os.RemoveAll(socketDir); err != nil {
+		t.Fatalf("remove socket dir: %v", err)
+	}
+	time.Sleep(10 * localSocketCheckInterval)
+	if err := os.Mkdir(socketDir, 0o700); err != nil {
+		t.Fatalf("recreate socket dir: %v", err)
 	}
 	waitForSocketFile(t, socketPath)
 

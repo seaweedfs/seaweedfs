@@ -197,14 +197,22 @@ func serveGrpcOnLocalListener(grpcServer *grpc.Server, socketPath string, listen
 			if _, err := os.Lstat(socketPath); !os.IsNotExist(err) {
 				continue
 			}
-			glog.Warningf("gRPC Unix socket %s was removed, recreating it", socketPath)
+			// Bind before closing the old listener, so a failed bind is
+			// retried on the next check and shutdown still ends this loop.
+			replacement := ListenOnLocalSocket(socketPath)
+			if replacement == nil {
+				continue
+			}
+			glog.Warningf("gRPC Unix socket %s was removed and has been recreated", socketPath)
+			if unixListener, ok := listener.(*net.UnixListener); ok {
+				unixListener.SetUnlinkOnClose(false)
+			}
 			listener.Close()
 			if err := <-served; err == nil || err == grpc.ErrServerStopped {
+				replacement.Close()
 				return
 			}
-			if listener = ListenOnLocalSocket(socketPath); listener == nil {
-				return
-			}
+			listener = replacement
 			serve(listener)
 		}
 	}
