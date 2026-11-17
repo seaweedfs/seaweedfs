@@ -105,13 +105,39 @@ jobs:
           grep -A 4 "^  strategy:" /tmp/s3-rollout.yaml | grep -q "type: RollingUpdate"
           grep -A 5 "^          lifecycle:" /tmp/s3-rollout.yaml | grep -q -- "- sleep"
           test "$(grep -c -- '-preStopSeconds' /tmp/s3-rollout-defaults.yaml)" -eq 0
+          echo "S3 rollout settings render correctly"
+
+          echo "=== Testing S3 preStopSeconds ==="
+          if helm template test $CHART_DIR --show-only templates/s3/s3-deployment.yaml \
+            --set s3.enabled=true --set s3.preStopSeconds=20 > /tmp/s3-prestop-short.yaml 2>&1; then
+            echo "FAIL: s3.preStopSeconds=20 rendered with the default 10s grace period"; exit 1
+          fi
+          grep -q "must be at least 35" /tmp/s3-prestop-short.yaml
           helm template test $CHART_DIR --show-only templates/s3/s3-deployment.yaml \
-            --set s3.enabled=true --set s3.preStopSeconds=20 > /tmp/s3-prestop.yaml
+            --set s3.enabled=true --set s3.preStopSeconds=20 \
+            --set s3.terminationGracePeriodSeconds=35 > /tmp/s3-prestop.yaml
           grep -q -- "-preStopSeconds=20 " /tmp/s3-prestop.yaml
+          grep -q "terminationGracePeriodSeconds: 35$" /tmp/s3-prestop.yaml
+
+          helm template test $CHART_DIR --show-only templates/filer/filer-statefulset.yaml \
+            --set filer.s3.enabled=true > /tmp/filer-s3-prestop-defaults.yaml
+          test "$(grep -c -- '-s3.preStopSeconds' /tmp/filer-s3-prestop-defaults.yaml)" -eq 0
+          grep -q "terminationGracePeriodSeconds: 60$" /tmp/filer-s3-prestop-defaults.yaml
           helm template test $CHART_DIR --show-only templates/filer/filer-statefulset.yaml \
             --set filer.s3.enabled=true --set filer.s3.preStopSeconds=20 > /tmp/filer-s3-prestop.yaml
           grep -q -- "-s3.preStopSeconds=20 " /tmp/filer-s3-prestop.yaml
-          echo "S3 rollout settings render correctly"
+          grep -q "terminationGracePeriodSeconds: 80$" /tmp/filer-s3-prestop.yaml
+
+          helm template test $CHART_DIR --show-only templates/all-in-one/all-in-one-deployment.yaml \
+            --set allInOne.enabled=true --set allInOne.s3.enabled=true > /tmp/aio-s3-prestop-defaults.yaml
+          test "$(grep -c -- '-s3.preStopSeconds' /tmp/aio-s3-prestop-defaults.yaml)" -eq 0
+          grep -q "terminationGracePeriodSeconds: 60$" /tmp/aio-s3-prestop-defaults.yaml
+          helm template test $CHART_DIR --show-only templates/all-in-one/all-in-one-deployment.yaml \
+            --set allInOne.enabled=true --set allInOne.s3.enabled=true \
+            --set s3.preStopSeconds=20 > /tmp/aio-s3-prestop.yaml
+          grep -q -- "-s3.preStopSeconds=20 " /tmp/aio-s3-prestop.yaml
+          grep -q "terminationGracePeriodSeconds: 80$" /tmp/aio-s3-prestop.yaml
+          echo "S3 preStopSeconds renders correctly"
 
           echo "=== Testing the S3 config checksum is stable across renders ==="
           # s3-secret.yaml keeps its generated keys with lookup. Hashing the rendered

@@ -80,13 +80,22 @@ func TestS3ShutdownDrainsActiveRequestBeforeServeReturns(t *testing.T) {
 	}
 }
 
-func TestS3PreStopFailsProbesWhileServing(t *testing.T) {
+func TestS3PreStopRunsBeforeMiniCancelsClients(t *testing.T) {
+	savedClients, savedClusterCtx := miniClients, MiniClusterCtx
+	t.Cleanup(func() { miniClients, MiniClusterCtx = savedClients, savedClusterCtx })
+	clusterCtx, stopCluster := context.WithCancel(context.Background())
+	t.Cleanup(stopCluster)
+	MiniClusterCtx = clusterCtx
+	resetMiniClients()
+
 	s3a := &s3api.S3ApiServer{}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s3a.StatusHandler)
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
+	httpClosing := make(chan struct{})
+	server.Config.RegisterOnShutdown(func() { close(httpClosing) })
 
 	get := func(path string) int {
 		t.Helper()
@@ -98,57 +107,64 @@ func TestS3PreStopFailsProbesWhileServing(t *testing.T) {
 		return response.StatusCode
 	}
 	if code := get("/healthz"); code != http.StatusOK {
-		t.Fatalf("probe before SIGTERM returned %d", code)
+		t.Fatalf("probe before shutdown returned %d", code)
 	}
 
-	endWait := make(chan struct{})
-	shutdownCalled := make(chan struct{})
-	hook := preStopShutdown(s3a.StartDraining, time.Hour, endWait, func() { close(shutdownCalled) })
-	hookDone := make(chan struct{})
-	go func() { hook(); close(hookDone) }()
+	preStopSeconds := 3600
+	s3opt := &S3Options{shutdownCtx: miniClientsCtx(), preStopSeconds: &preStopSeconds}
+	s3opt.newShutdown(func() {}, s3a, []*http.Server{server.Config})
+
+	// weed mini's interrupt hook, which runs before the S3 one.
+	triggerDone := make(chan struct{})
+	go func() { triggerMiniClientsShutdown(5 * time.Second); close(triggerDone) }()
 
 	deadline := time.Now().Add(5 * time.Second)
 	for get("/healthz") != http.StatusServiceUnavailable {
 		if time.Now().After(deadline) {
-			t.Fatal("probe did not start failing during the pre-stop delay")
+			t.Fatal("probe did not start failing before mini cancelled its clients")
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
 	if code := get("/bucket/key"); code != http.StatusNoContent {
-		t.Fatalf("request during the pre-stop delay returned %d", code)
+		t.Fatalf("request during the pre-stop wait returned %d", code)
 	}
 	select {
-	case <-shutdownCalled:
-		t.Fatal("shutdown started before the pre-stop delay ended")
+	case <-httpClosing:
+		t.Fatal("HTTP drain started during the pre-stop wait")
 	default:
 	}
 
-	close(endWait)
+	stopCluster()
 	select {
-	case <-hookDone:
+	case <-httpClosing:
 	case <-time.After(5 * time.Second):
-		t.Fatal("hook did not return after the pre-stop delay ended")
+		t.Fatal("HTTP drain did not start once the wait ended")
 	}
-	<-shutdownCalled
+	select {
+	case <-triggerDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("mini client shutdown did not finish")
+	}
 }
 
-func TestS3PreStopZeroDelayShutsDownAtOnce(t *testing.T) {
-	drained, shutDown := false, false
-	preStopShutdown(func() { drained = true }, 0, nil, func() { shutDown = true })()
+func TestS3PreStopWaitZeroDelay(t *testing.T) {
+	drained := false
+	preStopWait(func() { drained = true }, 0, nil)()
 	if drained {
 		t.Error("probes failed with no pre-stop delay")
 	}
-	if !shutDown {
-		t.Error("shutdown did not run")
-	}
 }
 
-func TestS3PreStopDelayElapses(t *testing.T) {
+func TestS3PreStopWaitElapses(t *testing.T) {
 	const delay = 50 * time.Millisecond
+	drained := false
 	started := time.Now()
-	preStopShutdown(func() {}, delay, nil, func() {})()
+	preStopWait(func() { drained = true }, delay, nil)()
+	if !drained {
+		t.Error("probes did not fail during the pre-stop delay")
+	}
 	if elapsed := time.Since(started); elapsed < delay {
-		t.Fatalf("hook returned after %s, want at least %s", elapsed, delay)
+		t.Fatalf("wait returned after %s, want at least %s", elapsed, delay)
 	}
 }
 

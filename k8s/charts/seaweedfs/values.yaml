@@ -1071,7 +1071,8 @@ filer:
     # Suffix of the host name, {bucket}.{domainName}
     domainName: ""
     # Seconds the gateway keeps serving after SIGTERM while its health checks
-    # return 503 (see s3.preStopSeconds). The filer pod's grace period is 60s.
+    # return 503 (see s3.preStopSeconds). Added to the filer pod's 60s
+    # termination grace period.
     preStopSeconds: 0
     # enable user & permission to s3 (need to inject to all services)
     enableAuth: false
@@ -1122,8 +1123,8 @@ s3:
   #     maxSurge: 25%
   updateStrategy: {}
   # Time the s3 pod is given to shut down, including any preStop hook.
-  # With preStopSeconds set, keep it above preStopSeconds plus 15 seconds
-  # for in-flight requests to finish.
+  # With preStopSeconds set, it must be at least preStopSeconds + 15 (the
+  # in-flight request drain), or the chart refuses to render.
   terminationGracePeriodSeconds: 10
   # Seconds the gateway keeps serving after SIGTERM while its health checks
   # return 503, so the pod leaves the Service endpoints before it stops
@@ -2020,6 +2021,7 @@ allInOne:
     # The s3-secret.yaml template only reads from .Values.s3.credentials.
     # See: s3.credentials.admin.accessKey, s3.credentials.read.accessKey
     auditLogConfig: null  # S3 audit log configuration (null inherits from s3.auditLogConfig)
+    preStopSeconds: null  # Seconds to keep serving after SIGTERM, added to the pod's 60s grace period (null inherits from s3.preStopSeconds)
     trafficDistribution: null  # Service traffic distribution (e.g., "PreferClose"); auto-converts to "PreferSameZone" on k8s >=1.35
     # You may specify buckets to be created during the install process.
     # Buckets may be exposed publicly by setting `anonymousRead` to `true`

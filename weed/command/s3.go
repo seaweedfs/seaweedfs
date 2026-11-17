@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -622,7 +623,14 @@ func (s3opt *S3Options) newShutdown(stopGrpc func(), s3ApiServer *s3api.S3ApiSer
 			shutdown()
 		}()
 	}
-	grace.OnInterrupt(preStopShutdown(s3ApiServer.StartDraining, s3opt.preStopDelay(), cancelled, shutdown))
+	preStop := sync.OnceFunc(preStopWait(s3ApiServer.StartDraining, s3opt.preStopDelay(), cancelled))
+	// weed mini's interrupt hook runs before this one and cancels shutdownCtx,
+	// so the wait has to happen before that cancel.
+	beforeMiniClientsShutdown(preStop)
+	grace.OnInterrupt(func() {
+		preStop()
+		shutdown()
+	})
 	return shutdown
 }
 
@@ -633,19 +641,19 @@ func (s3opt *S3Options) preStopDelay() time.Duration {
 	return time.Duration(*s3opt.preStopSeconds) * time.Second
 }
 
-func preStopShutdown(startDraining func(), delay time.Duration, cancelled <-chan struct{}, shutdown func()) func() {
+func preStopWait(startDraining func(), delay time.Duration, cancelled <-chan struct{}) func() {
 	return func() {
-		if delay > 0 {
-			startDraining()
-			glog.V(0).Infof("S3 API Server failing health checks for %s before shutdown", delay)
-			timer := time.NewTimer(delay)
-			select {
-			case <-timer.C:
-			case <-cancelled:
-				timer.Stop()
-			}
+		if delay <= 0 {
+			return
 		}
-		shutdown()
+		startDraining()
+		glog.V(0).Infof("S3 API Server failing health checks for %s before shutdown", delay)
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-cancelled:
+		}
 	}
 }
 
