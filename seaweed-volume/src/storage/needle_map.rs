@@ -681,9 +681,6 @@ impl RedbNeedleMap {
         let meta = txn
             .open_table(META_TABLE)
             .map_err(|e| io::Error::other(format!("redb open meta: {}", e)))?;
-        // experimental-api-5 drops inherent ReadOnlyTable::get ('static guard).
-        // ReadableTable::get guard borrows `meta`; edition 2024 drops the tail
-        // expression's temporaries before `meta`, so no extra binding is needed.
         match meta.get(META_IDX_SIZE) {
             Ok(Some(guard)) => Ok(Some(guard.value())),
             Ok(None) => Ok(None),
@@ -1182,9 +1179,6 @@ impl RedbNeedleMap {
         let table = txn
             .open_table(NEEDLE_TABLE)
             .map_err(|e| io::Error::other(format!("redb open_table: {}", e)))?;
-        // experimental-api-5 drops inherent ReadOnlyTable::get ('static guard).
-        // ReadableTable::get guard borrows `table`; edition 2024 drops the tail
-        // expression's temporaries before `table`, so no extra binding is needed.
         match table.get(key_u64) {
             Ok(Some(guard)) => Ok(packed_to_needle_value(guard.value())),
             Ok(None) => Ok(None),
