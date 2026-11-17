@@ -105,3 +105,56 @@ func TestManagedQueueNoEnabledTargets(t *testing.T) {
 		t.Fatalf("expected no queue, got %v, %v", q, err)
 	}
 }
+
+func TestManagedQueueCloseWaitsForBlockedSender(t *testing.T) {
+	var hits atomic.Int32
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-release
+		hits.Add(1)
+	}))
+	defer server.Close()
+
+	q, err := NewManagedQueue(&ManagedConfig{Targets: []ManagedTarget{
+		{Name: "slow", Enabled: true, Endpoint: server.URL, Workers: 1, BufferSize: 100},
+	}})
+	if err != nil {
+		t.Fatalf("NewManagedQueue: %v", err)
+	}
+	msg := &filer_pb.EventNotification{NewEntry: &filer_pb.Entry{Name: "f.txt"}}
+	for i := 0; i < 100; i++ {
+		if err := q.SendMessage("/a", msg); err != nil {
+			t.Fatalf("SendMessage: %v", err)
+		}
+	}
+	blocked := make(chan error, 1)
+	go func() { blocked <- q.SendMessage("/b", msg) }()
+	for q.senders.Load() == 0 {
+		time.Sleep(time.Millisecond)
+	}
+
+	closed := make(chan struct{})
+	go func() {
+		q.Close(10 * time.Second)
+		close(closed)
+	}()
+	for !q.closing.Load() {
+		time.Sleep(time.Millisecond)
+	}
+	if err := q.SendMessage("/c", msg); err != ErrQueueClosed {
+		t.Fatalf("expected ErrQueueClosed after Close started, got %v", err)
+	}
+
+	close(release)
+	if err := <-blocked; err != nil {
+		t.Fatalf("blocked sender: %v", err)
+	}
+	select {
+	case <-closed:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Close did not return")
+	}
+	if got := hits.Load(); got != 101 {
+		t.Fatalf("expected both accepted events delivered, got %d", got)
+	}
+}

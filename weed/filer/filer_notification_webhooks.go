@@ -3,6 +3,7 @@ package filer
 import (
 	"bytes"
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -22,12 +23,9 @@ var NotificationWebhooksConfPath = string(util.NewFullPath(DirectoryEtcSeaweedFS
 
 // managedWebhooks runs the webhook targets edited from the admin UI, next to
 // whatever notification.toml configures.
-// sendMu keeps a replaced queue open until every sender that loaded it has
-// handed its event over.
 type managedWebhooks struct {
 	reloadMu sync.Mutex
 	applied  []byte
-	sendMu   sync.RWMutex
 	queue    atomic.Pointer[webhook.Queue]
 }
 
@@ -89,21 +87,27 @@ func (f *Filer) reloadNotificationWebhooks() {
 	}
 	glog.V(0).Infof("apply %d webhook targets from %s", len(conf.Targets), NotificationWebhooksConfPath)
 	f.webhooks.applied = append([]byte{}, content...)
-	f.webhooks.sendMu.Lock()
-	old := f.webhooks.queue.Swap(queue)
-	f.webhooks.sendMu.Unlock()
-	if old != nil {
+	if old := f.webhooks.queue.Swap(queue); old != nil {
 		go old.Close(notificationWebhooksDrain)
 	}
 }
 
+// sendToNotificationWebhooks hands a send that raced a reload to the queue
+// that replaced the closing one.
 func (f *Filer) sendToNotificationWebhooks(key string, message *filer_pb.EventNotification) {
-	f.webhooks.sendMu.RLock()
-	defer f.webhooks.sendMu.RUnlock()
-	if q := f.webhooks.queue.Load(); q != nil {
-		if err := q.SendMessage(key, message); err != nil {
+	for {
+		q := f.webhooks.queue.Load()
+		if q == nil {
+			return
+		}
+		err := q.SendMessage(key, message)
+		if errors.Is(err, webhook.ErrQueueClosed) && f.webhooks.queue.Load() != q {
+			continue
+		}
+		if err != nil {
 			glog.Error(err)
 		}
+		return
 	}
 }
 

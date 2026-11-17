@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ThreeDotsLabs/watermill"
@@ -79,7 +80,12 @@ type Queue struct {
 	stopped chan struct{}
 	// managed queues are replaced on reload and stopped with Close
 	managed bool
+	closing atomic.Bool
+	senders atomic.Int64
 }
+
+// ErrQueueClosed is returned by SendMessage once Close has started.
+var ErrQueueClosed = errors.New("webhook queue closed")
 
 func (w *Queue) GetName() string {
 	return queueName
@@ -141,6 +147,11 @@ func buildTargets(configuration util.Configuration, prefix string) ([]*target, e
 }
 
 func (w *Queue) SendMessage(key string, msg proto.Message) error {
+	w.senders.Add(1)
+	defer w.senders.Add(-1)
+	if w.closing.Load() {
+		return ErrQueueClosed
+	}
 	eventNotification, ok := msg.(*filer_pb.EventNotification)
 	if !ok {
 		return nil
@@ -341,11 +352,13 @@ func (w *Queue) setupWatermillQueue(targets []*target) error {
 	return nil
 }
 
-// Close stops the queue once every target has delivered or dead-lettered
-// what it holds, or when drainTimeout passes.
+// Close stops the queue once every sender already inside SendMessage has
+// returned and every target has delivered or dead-lettered what it holds, or
+// when drainTimeout passes.
 func (w *Queue) Close(drainTimeout time.Duration) {
+	w.closing.Store(true)
 	deadline := time.Now().Add(drainTimeout)
-	for !w.drained() && time.Now().Before(deadline) {
+	for (w.senders.Load() > 0 || !w.drained()) && time.Now().Before(deadline) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	w.cancel()
