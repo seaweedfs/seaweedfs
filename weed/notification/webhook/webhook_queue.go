@@ -77,6 +77,8 @@ type Queue struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
 	stopped chan struct{}
+	// managed queues are replaced on reload and stopped with Close
+	managed bool
 }
 
 func (w *Queue) GetName() string {
@@ -283,7 +285,9 @@ func (w *Queue) setupWatermillQueue(targets []*target) error {
 			return fmt.Errorf("failed to create poison queue: %w", err)
 		}
 
-		router.AddPlugin(plugin.SignalsHandler)
+		if !w.managed {
+			router.AddPlugin(plugin.SignalsHandler)
+		}
 		// outermost: the reservation SendMessage took releases once the whole
 		// chain (retries, dead letter) is done, bounding in-flight deliveries.
 		// poison wraps retry so the delivery is retried before dead-lettering.

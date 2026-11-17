@@ -141,7 +141,7 @@ func NewManagedQueue(c *ManagedConfig) (*Queue, error) {
 	if len(targets) == 0 {
 		return nil, nil
 	}
-	w := &Queue{}
+	w := &Queue{managed: true}
 	if err := w.initialize(targets); err != nil {
 		w.cancel()
 		return nil, err
