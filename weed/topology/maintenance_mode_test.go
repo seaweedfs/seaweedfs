@@ -53,8 +53,11 @@ func TestMaintenanceModeReportsNoFreeSlots(t *testing.T) {
 	if _, ok := dn.TryReserveCapacity(types.HardDriveType, 1); ok {
 		t.Error("reserved capacity on a server in maintenance")
 	}
-	if got := rack.AvailableSpaceFor(option); got != 10 {
-		t.Errorf("rack AvailableSpaceFor = %d, want 10: the node's capacity still rolls up to its parents", got)
+	if got := rack.CapacityFor(option); got != 10 {
+		t.Errorf("rack CapacityFor = %d, want 10: the node's capacity still rolls up to its parents", got)
+	}
+	if got := rack.AvailableSpaceFor(option); got != 0 {
+		t.Errorf("rack AvailableSpaceFor = %d, want 0: its only node is in maintenance", got)
 	}
 
 	if !dn.SetMaintenanceMode(false) {
