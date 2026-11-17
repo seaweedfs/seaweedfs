@@ -10,13 +10,11 @@ import (
 	"testing"
 )
 
-// TestGrpcLocalSocketPath covers the -grpc.localSocketDir folder that
-// `weed server` and `weed mini` hand to pb.RegisterLocalGrpcSocket. Unset, the
-// path stays the historical /tmp one; set, every role's socket lands in that
-// folder (issue #12692).
+// TestGrpcLocalSocketPath checks that -grpc.localSocketDir defaults to /tmp
+// for `weed server` and `weed mini` and that every role's socket lands in it.
 func TestGrpcLocalSocketPath(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("Unix-socket routing is disabled on Windows (#9430)")
+		t.Skip("Unix-socket routing is disabled on Windows")
 	}
 
 	for _, tc := range []struct {
@@ -53,12 +51,10 @@ func TestGrpcLocalSocketPath(t *testing.T) {
 }
 
 // TestGrpcLocalSocketDir checks that -grpc.localSocketDir is refused when one
-// of its socket paths cannot fit in the platform's sockaddr_un (issue #12692).
-// A folder whose socket binds fail leaves every local RPC dialing a socket
-// that was never created.
+// of its socket paths cannot fit in the platform's sockaddr_un.
 func TestGrpcLocalSocketDir(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("Unix-socket routing is disabled on Windows (#9430)")
+		t.Skip("Unix-socket routing is disabled on Windows")
 	}
 
 	sockets := []grpcLocalSocket{{"volume", 17334}}
@@ -132,12 +128,10 @@ func TestGrpcLocalSocketDirAtLimit(t *testing.T) {
 }
 
 // TestGrpcLocalSocketDirUnwritable checks that -grpc.localSocketDir is
-// refused when the folder exists but the server's user cannot create a socket
-// in it: every bind would fail, and each local RPC would dial a socket that
-// was never created (issue #12692).
+// refused when the server's user cannot create a socket in the folder.
 func TestGrpcLocalSocketDirUnwritable(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("Unix-socket routing is disabled on Windows (#9430)")
+		t.Skip("Unix-socket routing is disabled on Windows")
 	}
 	if os.Geteuid() == 0 {
 		t.Skip("root bypasses folder mode bits")
@@ -177,7 +171,7 @@ func TestGrpcLocalSocketDirUnwritable(t *testing.T) {
 // removes its socket, so repeated starts never fill a shared folder.
 func TestGrpcLocalSocketDirProbeLeavesNothing(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("Unix-socket routing is disabled on Windows (#9430)")
+		t.Skip("Unix-socket routing is disabled on Windows")
 	}
 
 	// See TestGrpcLocalSocketDirUnwritable for why the folder is under /tmp.

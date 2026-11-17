@@ -11,32 +11,27 @@ import (
 	"syscall"
 )
 
-// grpcLocalSocket names a local gRPC socket this process registers: the
-// service name and the resolved gRPC port it listens on.
+// grpcLocalSocket is a service name and the resolved gRPC port it listens on.
 type grpcLocalSocket struct {
 	name string
 	port int
 }
 
-// grpcLocalSocketPath returns the Unix socket path a gRPC service listens on
-// for local inter-service RPCs, inside dir.
+// grpcLocalSocketPath returns the Unix socket path for local RPCs to a gRPC
+// service, inside dir.
 func grpcLocalSocketPath(dir, name string, grpcPort int) string {
 	return filepath.Join(dir, fmt.Sprintf("seaweedfs-%s-grpc-%d.sock", name, grpcPort))
 }
 
 // grpcLocalSocketPathLimit returns the longest Unix socket path the platform
-// accepts. sun_path is a fixed-size field in sockaddr_un (108 bytes on Linux,
-// 104 on macOS and the BSDs) and bind fails with EINVAL for a longer path; the
-// terminating NUL occupies one byte of it.
+// accepts: sockaddr_un's sun_path less the terminating NUL.
 func grpcLocalSocketPathLimit() int {
 	return len(syscall.RawSockaddrUnix{}.Path) - 1
 }
 
 // checkGrpcLocalSocketDir rejects a socket folder that does not exist, is not
-// a directory, is too long to hold one of its sockets as a Unix socket path, or
-// refuses a socket bind by the server's user, so a bad -grpc.localSocketDir
-// fails at startup instead of leaving every local RPC to dial a socket that
-// was never bound.
+// a directory, is too long for one of its socket paths, or refuses a socket
+// bind, since local RPCs keep dialing a registered socket that was never bound.
 //
 // The folder is unused, and not checked, on Windows (see
 // pb.RegisterLocalGrpcSocket) or when no service registers a socket.
@@ -58,18 +53,12 @@ func checkGrpcLocalSocketDir(dir string, sockets []grpcLocalSocket) error {
 			return fmt.Errorf("socket path %q is %d bytes and does not fit the platform's %d-byte Unix socket path limit; use a shorter -grpc.localSocketDir", path, len(path), limit)
 		}
 	}
-
-	// An existing folder can still refuse a bind, for example because it is
-	// owned by another user or mounted read-only. ListenOnLocalSocket only
-	// logs that failure while GrpcDial keeps dialing the missing socket, so
-	// prove now that this process can create one. The probe name is random,
-	// so a file another user left in a shared folder cannot block startup.
 	return probeGrpcLocalSocketDir(dir)
 }
 
 // probeGrpcLocalSocketDir binds and removes a randomly named Unix socket in
-// dir, retrying a name that is already taken. The 23-byte probe name is
-// shorter than any service socket name, so it fits wherever they do.
+// dir, so a file another user left in a shared folder cannot block startup.
+// The 23-byte name is shorter than any service socket name.
 func probeGrpcLocalSocketDir(dir string) error {
 	const attempts = 5
 	var lastErr error
@@ -87,7 +76,6 @@ func probeGrpcLocalSocketDir(dir string) error {
 		if err != nil {
 			return fmt.Errorf("cannot create a Unix socket in it: %v; give the server's user write access or choose another -grpc.localSocketDir", err)
 		}
-		// Closing a listener the Go runtime created unlinks its socket file.
 		if err := listener.Close(); err != nil {
 			return fmt.Errorf("cannot close the Unix socket probe %q: %v", probePath, err)
 		}
