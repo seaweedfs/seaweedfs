@@ -62,6 +62,20 @@ func TestSetupRoutes_RegistersBucketLifecycleAPI_WithAuth(t *testing.T) {
 	assertHasRoute(t, router, http.MethodDelete, "/api/s3/buckets/example/lifecycle")
 }
 
+func TestSetupRoutes_RegistersNotificationWebhooks(t *testing.T) {
+	for _, authRequired := range []bool{false, true} {
+		router := mux.NewRouter()
+
+		newRouteTestAdminHandlers().SetupRoutes(router, authRequired, "admin", "password", "", "", true)
+
+		assertHasRoute(t, router, http.MethodGet, "/notifications/webhooks")
+		assertHasRoute(t, router, http.MethodGet, "/api/notifications/webhooks")
+		assertHasRoute(t, router, http.MethodPost, "/api/notifications/webhooks")
+		assertHasRoute(t, router, http.MethodPut, "/api/notifications/webhooks/example")
+		assertHasRoute(t, router, http.MethodDelete, "/api/notifications/webhooks/example")
+	}
+}
+
 func TestSetupRoutes_RegistersBucketPolicyAPI_NoAuth(t *testing.T) {
 	router := mux.NewRouter()
 

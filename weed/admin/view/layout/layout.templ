@@ -289,6 +289,11 @@ templ Layout(view ViewContext, content templ.Component) {
                             </a>
                         </li>
                         <li class="nav-item">
+                            <a class="nav-link" href={ view.P("/notifications/webhooks") }>
+                                <i class="bi bi-broadcast me-2"></i>Webhooks
+                            </a>
+                        </li>
+                        <li class="nav-item">
                             if isMQPage {
                                 <a class="nav-link" href="#" data-bs-toggle="collapse" data-bs-target="#messageQueueSubmenu" aria-expanded="true" aria-controls="messageQueueSubmenu">
                                     <i class="bi bi-chat-dots me-2"></i>Message Queue
