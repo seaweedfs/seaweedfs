@@ -500,6 +500,24 @@ fn should_compact_old_floor(len: u64, already_attempted: bool) -> bool {
     !already_attempted && len > REDB_SMALL_FILE_BYTES && len <= REDB_OLD_FLOOR_BYTES
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CompactFollowUp {
+    /// Drop the `Database` and open the same path once. Do not compact again.
+    ReopenSkipCompact,
+    /// The handle can still begin a write. Do not record `floor_compact`.
+    KeepHandle,
+}
+
+fn compact_follow_up(err: &redb::CompactionError) -> CompactFollowUp {
+    match err {
+        redb::CompactionError::Storage(_) => CompactFollowUp::ReopenSkipCompact,
+        redb::CompactionError::TransactionInProgress
+        | redb::CompactionError::PersistentSavepointExists
+        | redb::CompactionError::EphemeralSavepointExists => CompactFollowUp::KeepHandle,
+        _ => CompactFollowUp::KeepHandle,
+    }
+}
+
 /// Writes between two durable redb checkpoints. Every non-durable commit
 /// leaves an entry in redb's transaction tracker and pins the pages that
 /// were on disk at the last durable commit; only a durable commit clears
@@ -673,12 +691,111 @@ impl RedbNeedleMap {
         }
     }
 
+    fn rdb_file_len(&self) -> io::Result<u64> {
+        Ok(std::fs::metadata(&self.rdb_path)?.len())
+    }
+
+    fn read_floor_compact(&self) -> io::Result<Option<u64>> {
+        let txn = self
+            .db_or_err()?
+            .begin_read()
+            .map_err(|e| io::Error::other(format!("redb begin_read: {}", e)))?;
+        let meta = txn
+            .open_table(META_TABLE)
+            .map_err(|e| io::Error::other(format!("redb open meta: {}", e)))?;
+        match meta.get(META_FLOOR_COMPACT) {
+            Ok(Some(guard)) => Ok(Some(guard.value())),
+            Ok(None) => Ok(None),
+            Err(e) => Err(io::Error::other(format!("redb get meta: {}", e))),
+        }
+    }
+
+    fn save_floor_compact(&self) -> io::Result<()> {
+        let txn = Self::begin_write_no_fsync(self.db_or_err()?)?;
+        {
+            let mut meta = txn
+                .open_table(META_TABLE)
+                .map_err(|e| io::Error::other(format!("redb open meta: {}", e)))?;
+            meta.insert(META_FLOOR_COMPACT, 1u64)
+                .map_err(|e| io::Error::other(format!("redb insert meta: {}", e)))?;
+        }
+        txn.commit()
+            .map_err(|e| io::Error::other(format!("redb commit meta: {}", e)))?;
+        Ok(())
+    }
+
+    /// Drop the exclusive lock and open the same file. Does not compact.
+    fn reopen_database(&mut self) -> io::Result<()> {
+        self.db.take();
+        let db = Database::builder()
+            .set_cache_size(self.cache_bytes)
+            .open(&self.rdb_path)
+            .map_err(|e| io::Error::other(format!("redb reopen after compact: {}", e)))?;
+        self.db = Some(db);
+        Ok(())
+    }
+
+    fn record_floor_compact_if_still_in_band(&self) -> io::Result<()> {
+        let len = match self.rdb_file_len() {
+            Ok(len) => len,
+            Err(e) => {
+                tracing::warn!("redb floor compact flag skipped, metadata failed: {}", e);
+                return Ok(());
+            }
+        };
+        if should_compact_old_floor(len, false) {
+            self.save_floor_compact()?;
+        }
+        Ok(())
+    }
+
+    /// Compact a reused file that is still the 4.2 starting allocation.
+    ///
+    /// Called only from `try_reuse_rdb`, after the replay transaction has
+    /// committed. `new` and `full_rebuild` already create a 72 KiB file.
+    fn shrink_old_floor(&mut self) -> io::Result<()> {
+        let len = match self.rdb_file_len() {
+            Ok(len) => len,
+            Err(e) => {
+                tracing::warn!("redb floor compact skipped, metadata failed: {}", e);
+                return Ok(());
+            }
+        };
+        let already = self.read_floor_compact()? == Some(1);
+        if !should_compact_old_floor(len, already) {
+            return Ok(());
+        }
+        let compact_result = self
+            .db
+            .as_mut()
+            .ok_or_else(|| io::Error::other("redb database is closed"))?
+            .compact();
+        match compact_result {
+            Ok(_) => self.record_floor_compact_if_still_in_band(),
+            Err(e) => match compact_follow_up(&e) {
+                CompactFollowUp::ReopenSkipCompact => {
+                    tracing::warn!("redb floor compact storage error, reopening: {}", e);
+                    self.reopen_database()
+                }
+                CompactFollowUp::KeepHandle => {
+                    tracing::warn!("redb floor compact skipped: {}", e);
+                    Ok(())
+                }
+            },
+        }
+    }
+
     /// Test-only read of META `idx_size` through the live handle. See
     /// [`test_support::live_meta_idx_size`] for why durability tests use
     /// this instead of copying the open `.rdb`.
     #[cfg(test)]
     pub(crate) fn live_meta_idx_size(&self) -> Option<u64> {
         self.read_idx_size_meta().unwrap()
+    }
+
+    #[cfg(test)]
+    fn live_floor_compact(&self) -> Option<u64> {
+        self.read_floor_compact().unwrap()
     }
 
     /// Load from an .idx file, reusing an existing .rdb if it is consistent.
@@ -789,6 +906,7 @@ impl RedbNeedleMap {
             nm.save_idx_size_meta(idx_size)?;
         }
 
+        nm.shrink_old_floor()?;
         Ok(nm)
     }
 
