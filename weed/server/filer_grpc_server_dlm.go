@@ -180,7 +180,7 @@ func (fs *FilerServer) ReplicateLock(ctx context.Context, req *filer_pb.Replicat
 // 3. Transferring locks that no longer belong here
 func (fs *FilerServer) OnDlmChangeSnapshot(snapshot []pb.ServerAddress) {
 	if slices.Contains(snapshot, fs.option.Host) {
-		fs.lockRingUnhealthySince.Store(0)
+		fs.resetLockRingClock()
 	}
 	locks := fs.filer.Dlm.AllLocks()
 	if len(locks) == 0 {

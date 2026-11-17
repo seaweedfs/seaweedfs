@@ -422,24 +422,25 @@ func (fs *FilerServer) lockRingHealthy() bool {
 // lockRingAbsence returns how long inRing has reported this filer missing,
 // or 0 while it is in the ring.
 func (fs *FilerServer) lockRingAbsence(inRing func() bool) time.Duration {
+	since := fs.lockRingUnhealthySince.Load()
 	if inRing() {
-		fs.lockRingUnhealthySince.Store(0)
+		fs.resetLockRingClock()
 		return 0
 	}
-	now := time.Now().UnixNano()
-	since := now
-	if !fs.lockRingUnhealthySince.CompareAndSwap(0, now) {
-		if s := fs.lockRingUnhealthySince.Load(); s != 0 {
-			since = s
-		}
-	}
-	// A rejoin since the first read is either still in the ring or has reset
-	// the clock: the reset runs before the next ring update is installed.
-	if inRing() || fs.lockRingUnhealthySince.Load() != since {
-		fs.lockRingUnhealthySince.CompareAndSwap(now, 0)
+	// A rejoin after the load has stored a new reset value, so the clock
+	// neither starts nor is read across it.
+	if since <= 0 {
+		fs.lockRingUnhealthySince.CompareAndSwap(since, time.Now().UnixNano())
 		return 0
 	}
-	return time.Duration(now - since)
+	if fs.lockRingUnhealthySince.Load() != since {
+		return 0
+	}
+	return time.Since(time.Unix(0, since))
+}
+
+func (fs *FilerServer) resetLockRingClock() {
+	fs.lockRingUnhealthySince.Store(-fs.lockRingResets.Add(1))
 }
 
 func (fs *FilerServer) filerHealthzHandler(w http.ResponseWriter, r *http.Request) {
