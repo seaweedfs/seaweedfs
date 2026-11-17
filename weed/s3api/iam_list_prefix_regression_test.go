@@ -3,6 +3,7 @@ package s3api
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -256,6 +257,87 @@ func TestAuthorizeAction_ListVersionsWithPromotedPrefix(t *testing.T) {
 	require.Equal(t, s3err.ErrAccessDenied,
 		s3iam.AuthorizeAction(ctx, getReader, s3_constants.ACTION_READ, bucket, "b/", uploadsReq),
 		"s3:GetObject must not satisfy the uploads listing")
+}
+
+// Bucket-listing policies are evaluated by the IAM integration. Its authorizer
+// must expose prefix, delimiter and max-keys to conditions, and resolve the
+// listing variant (?versions, ?uploads) to its own action.
+func TestAuthorizeAction_BucketListingConditions(t *testing.T) {
+	const bucket = "test-bucket"
+
+	ctx := context.Background()
+	iamManager := integration.NewIAMManager()
+	require.NoError(t, iamManager.Initialize(&integration.IAMConfig{
+		STS: &sts.STSConfig{
+			TokenDuration:    sts.FlexibleDuration{Duration: time.Hour},
+			MaxSessionLength: sts.FlexibleDuration{Duration: 12 * time.Hour},
+			Issuer:           "test-sts",
+			SigningKey:       []byte("test-signing-key-32-characters-long"),
+		},
+		Policy: &policy.PolicyEngineConfig{DefaultEffect: "Deny", StoreType: "memory"},
+		Roles:  &integration.RoleStoreConfig{StoreType: "memory"},
+	}, func() string { return "localhost:8888" }))
+
+	allow := func(name, action string, condition map[string]map[string]interface{}) {
+		t.Helper()
+		require.NoError(t, iamManager.CreatePolicy(ctx, "", name, &policy.PolicyDocument{
+			Version: "2012-10-17",
+			Statement: []policy.Statement{{
+				Effect:    "Allow",
+				Action:    []string{action},
+				Resource:  []string{"arn:aws:s3:::" + bucket},
+				Condition: condition,
+			}},
+		}))
+	}
+	// One-level listing of home/: a prefix alone is recursive, so the
+	// delimiter is what narrows the grant.
+	homeOneLevel := map[string]map[string]interface{}{"StringEquals": {
+		"s3:prefix":    "home/",
+		"s3:delimiter": "/",
+	}}
+	allow("HomeOneLevel", "s3:ListBucket", homeOneLevel)
+	allow("VersionsHomeOneLevel", "s3:ListBucketVersions", homeOneLevel)
+	allow("UploadsHomeOneLevel", "s3:ListBucketMultipartUploads", homeOneLevel)
+	allow("MaxKeysTen", "s3:ListBucket", map[string]map[string]interface{}{
+		"NumericLessThanEquals": {"s3:max-keys": 10},
+	})
+
+	s3iam := NewS3IAMIntegration(iamManager, "localhost:8888")
+
+	tests := []struct {
+		name     string
+		policy   string
+		url      string
+		action   Action
+		object   string
+		expected s3err.ErrorCode
+	}{
+		{"ListObjectsV2 one level with the permitted delimiter", "HomeOneLevel", "/" + bucket + "?list-type=2&prefix=home/&delimiter=/", s3_constants.ACTION_LIST, "home/", s3err.ErrNone},
+		{"recursive ListObjectsV2 without a delimiter is denied", "HomeOneLevel", "/" + bucket + "?list-type=2&prefix=home/", s3_constants.ACTION_LIST, "home/", s3err.ErrAccessDenied},
+		{"nested prefix with the permitted delimiter is denied", "HomeOneLevel", "/" + bucket + "?list-type=2&prefix=home/bob/&delimiter=/", s3_constants.ACTION_LIST, "home/bob/", s3err.ErrAccessDenied},
+		{"different delimiter is denied", "HomeOneLevel", "/" + bucket + "?list-type=2&prefix=home/&delimiter=.", s3_constants.ACTION_LIST, "home/", s3err.ErrAccessDenied},
+		{"bucket root listing is denied", "HomeOneLevel", "/" + bucket + "?list-type=2&delimiter=/", s3_constants.ACTION_LIST, "", s3err.ErrAccessDenied},
+		{"ListObjectVersions one level is allowed", "VersionsHomeOneLevel", "/" + bucket + "?versions&prefix=home/&delimiter=/", s3_constants.ACTION_LIST, "home/", s3err.ErrNone},
+		{"ListObjectVersions without a delimiter is denied", "VersionsHomeOneLevel", "/" + bucket + "?versions&prefix=home/", s3_constants.ACTION_LIST, "home/", s3err.ErrAccessDenied},
+		{"ListMultipartUploads one level is allowed", "UploadsHomeOneLevel", "/" + bucket + "?uploads&prefix=home/&delimiter=/", s3_constants.ACTION_READ, "", s3err.ErrNone},
+		{"ListMultipartUploads without a delimiter is denied", "UploadsHomeOneLevel", "/" + bucket + "?uploads&prefix=home/", s3_constants.ACTION_READ, "", s3err.ErrAccessDenied},
+		{"max-keys within s3:max-keys is allowed", "MaxKeysTen", "/" + bucket + "?list-type=2&prefix=home/&delimiter=/&max-keys=5", s3_constants.ACTION_LIST, "home/", s3err.ErrNone},
+		{"max-keys above s3:max-keys is denied", "MaxKeysTen", "/" + bucket + "?list-type=2&prefix=home/&delimiter=/&max-keys=20", s3_constants.ACTION_LIST, "home/", s3err.ErrAccessDenied},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			identity := &IAMIdentity{
+				Name:        "reader",
+				Principal:   "arn:aws:iam::000000000000:user/reader",
+				PolicyNames: []string{tt.policy},
+			}
+			req := httptest.NewRequest("GET", tt.url, http.NoBody)
+			require.Equal(t, tt.expected,
+				s3iam.AuthorizeAction(ctx, identity, tt.action, bucket, tt.object, req))
+		})
+	}
 }
 
 func mustPolicy(t *testing.T, doc map[string]any) string {
