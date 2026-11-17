@@ -41,6 +41,11 @@ type vidMapClient struct {
 	recentDeletes     map[vidLocationKey]*list.Element
 	recentDeleteOrder *list.List // of recentDelete, oldest first
 	vidMapEpoch       uint64
+	// authority, when set, is the vid map a master keeps pushing. Its view of
+	// a volume relearned since its last reset replaces what a provider
+	// answered: that answer may still carry an earlier master's view, and a
+	// server the current master never knew is never pushed as removed.
+	authority *vidMap
 }
 
 type recentDelete struct {
@@ -440,7 +445,8 @@ func (vc *vidMapClient) untombstone(vid uint32, loc Location) {
 
 // fillLocation reports whether a provider answer may be served, and caches it
 // unless a reset or clear happened since epoch. Holding recentDeletesMu across
-// the check and the add keeps a concurrent removal from being undone.
+// the check and the add keeps a concurrent removal or adoption from being
+// undone.
 func (vc *vidMapClient) fillLocation(vid uint32, loc Location, epoch uint64) bool {
 	vc.recentDeletesMu.Lock()
 	defer vc.recentDeletesMu.Unlock()
@@ -452,6 +458,19 @@ func (vc *vidMapClient) fillLocation(vid uint32, loc Location, epoch uint64) boo
 		vc.vidMap.addLocation(vid, loc)
 	}
 	return true
+}
+
+// adoptLocations replaces what is cached for vid with the authority's view,
+// once the authority has relearned vid since its last reset.
+func (vc *vidMapClient) adoptLocations(vid uint32) {
+	if vc.authority == nil {
+		return
+	}
+	vc.recentDeletesMu.Lock()
+	defer vc.recentDeletesMu.Unlock()
+	if current, found := vc.authority.GetCurrentLocations(vid); found {
+		vc.vidMap.replaceLocations(vid, current)
+	}
 }
 
 // InvalidateCache removes all cached locations for a volume ID

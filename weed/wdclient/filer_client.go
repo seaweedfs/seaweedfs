@@ -186,6 +186,9 @@ func NewFilerClient(filerAddresses []pb.ServerAddress, grpcDialOption grpc.DialO
 	}
 
 	fc.vidMapClient = newVidMapClient(provider, dataCenter, cacheSize)
+	if masterClient != nil {
+		fc.vidMapClient.authority = masterClient.vidMap
+	}
 
 	return fc
 }
@@ -528,8 +531,9 @@ func (fc *FilerClient) applyDiscoveredFilersLocked(discoveredFilers map[pb.Serve
 }
 
 // OnVolumeLocationChange applies master-pushed changes to the lookup-fed cache,
-// so a retired server stops being tried before a read against it fails. Adds
-// only lift the removal fence; locations are still learned by lookup.
+// so a retired server stops being tried before a read against it fails. An add
+// lifts the removal fence and replaces what lookups cached for the volume with
+// the master's view.
 func (fc *FilerClient) OnVolumeLocationChange(loc Location, addedVids, deletedVids []uint32) {
 	for _, vid := range deletedVids {
 		fc.tombstone(vid, loc)
@@ -537,6 +541,7 @@ func (fc *FilerClient) OnVolumeLocationChange(loc Location, addedVids, deletedVi
 	}
 	for _, vid := range addedVids {
 		fc.untombstone(vid, loc)
+		fc.adoptLocations(vid)
 	}
 }
 

@@ -444,6 +444,7 @@ func TestOnVolumeLocationChangeReaddClearsTombstone(t *testing.T) {
 func hookedFilerClient(mc *MasterClient, provider VolumeLocationProvider) *FilerClient {
 	fc := newTestFilerClient()
 	fc.vidMapClient = newVidMapClient(provider, "", 0)
+	fc.vidMapClient.authority = mc.vidMap
 	mc.SetOnVolumeLocationChangeFn(fc.OnVolumeLocationChange)
 	mc.SetOnVidMapResetFn(fc.OnVidMapReset)
 	return fc
@@ -560,4 +561,39 @@ func TestReconnectReplayLiftsFence(t *testing.T) {
 	pushVolumeLocation(mc, a.Url, []uint32{5}, nil, nil, nil)
 
 	expectServed(t, fc, "5", a)
+}
+
+// A new leader never knew a server lost with the old one, so no removal names
+// it; a lookup answered from the old view before the adds arrived must not
+// keep it cached once they do.
+func TestPushedAddsReplaceStaleLookup(t *testing.T) {
+	a := Location{Url: "a:8080"}
+	b := Location{Url: "b:8080"}
+	dead := Location{Url: "dead:8080"}
+	provider := &testLocationProvider{locations: map[string][]Location{"5": {a, b, dead}}}
+	mc := moveClient()
+	fc := hookedFilerClient(mc, provider)
+	for _, url := range []string{a.Url, b.Url, dead.Url} {
+		pushVolumeLocation(mc, url, []uint32{5}, nil, nil, nil)
+	}
+
+	mc.resetVidMap()
+	expectServed(t, fc, "5", a, b, dead)
+	pushVolumeLocation(mc, a.Url, []uint32{5}, nil, nil, nil)
+	pushVolumeLocation(mc, b.Url, []uint32{5}, nil, nil, nil)
+
+	if cached, _ := fc.GetLocations(5); len(cached) != 2 || cached[0].Url != a.Url || cached[1].Url != b.Url {
+		t.Fatalf("cache holds %v, want %v and %v", cached, a, b)
+	}
+}
+
+// Adds only correct what lookups cached, they do not fill the cache.
+func TestPushedAddLeavesUncachedVolumeAlone(t *testing.T) {
+	mc := moveClient()
+	fc := hookedFilerClient(mc, &testLocationProvider{})
+	pushVolumeLocation(mc, "a:8080", []uint32{5}, nil, nil, nil)
+
+	if cached, found := fc.GetLocations(5); found {
+		t.Fatalf("an add cached volume 5 at %v", cached)
+	}
 }

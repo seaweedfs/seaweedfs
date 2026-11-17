@@ -178,11 +178,27 @@ func (vc *vidMap) GetVidLocations(vid string) (locations []Location, err error) 
 // answering from the stale copy. Returns found=false when nothing remains,
 // including when only an older-generation entry would otherwise apply.
 func (vc *vidMap) GetLocations(vid uint32) (locations []Location, found bool) {
+	return vc.getLocations(vid, false)
+}
+
+// GetCurrentLocations only returns locations refreshed in the active Master
+// session. Ordinary callers may intentionally use retained generations during
+// topology churn; cache retirement callers must not trust an older positive
+// after reconnecting and potentially missing a DeletedVids update.
+func (vc *vidMap) GetCurrentLocations(vid uint32) (locations []Location, found bool) {
+	return vc.getLocations(vid, true)
+}
+
+func (vc *vidMap) getLocations(vid uint32, currentOnly bool) (locations []Location, found bool) {
 	vc.RLock()
 	defer vc.RUnlock()
 
 	regular, hasRegular := lookupEntry(vc.vid2Locations, vid)
 	ec, hasEc := lookupEntry(vc.ecVid2Locations, vid)
+	if currentOnly {
+		hasRegular = hasRegular && regular.generation == vc.generation
+		hasEc = hasEc && ec.generation == vc.generation
+	}
 
 	switch {
 	case hasRegular && hasEc:
@@ -384,6 +400,32 @@ func (vc *vidMap) deleteVid(vid uint32) {
 	if entry, found := vc.ecVid2Locations[vid]; found {
 		vc.releaseEntry(entry)
 		delete(vc.ecVid2Locations, vid)
+	}
+}
+
+// replaceLocations sets the locations of a vid already cached, as one regular
+// entry of the current generation.
+func (vc *vidMap) replaceLocations(vid uint32, locations []Location) {
+	vc.Lock()
+	defer vc.Unlock()
+
+	regular, hasRegular := vc.vid2Locations[vid]
+	ec, hasEc := vc.ecVid2Locations[vid]
+	if !hasRegular && !hasEc {
+		return
+	}
+	if hasRegular {
+		vc.releaseEntry(regular)
+	}
+	if hasEc {
+		vc.releaseEntry(ec)
+		delete(vc.ecVid2Locations, vid)
+	}
+	replaced := make([]Location, len(locations))
+	copy(replaced, locations)
+	vc.vid2Locations[vid] = &locationsEntry{locations: replaced, generation: vc.generation}
+	for _, loc := range replaced {
+		vc.incrementServerRef(locationServerKey(loc))
 	}
 }
 
