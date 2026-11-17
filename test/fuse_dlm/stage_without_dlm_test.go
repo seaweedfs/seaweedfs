@@ -118,24 +118,28 @@ func TestStageSameFilesWithoutDLM(t *testing.T) {
 	defer conn.Close()
 	client := filer_pb.NewSeaweedFilerClient(conn)
 
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
 	var broken []string
 	for _, name := range names {
-		ctx, cancel := context.WithTimeout(context.Background(), checkTimeout)
+		if ctx.Err() != nil {
+			broken = append(broken, "checks did not finish: "+ctx.Err().Error())
+			break
+		}
 		resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
 			Directory: "/" + dir,
 			Name:      name,
 		})
-		cancel()
 		if err != nil {
 			broken = append(broken, fmt.Sprintf("%s: lookup: %v", name, err))
 			continue
 		}
 		for _, chunk := range resp.Entry.GetChunks() {
-			if !cluster.needleExists(t, chunk.GetFileIdString()) {
+			if !cluster.needleExists(ctx, t, chunk.GetFileIdString()) {
 				broken = append(broken, fmt.Sprintf("%s: chunk %s is deleted", name, chunk.GetFileIdString()))
 			}
 		}
-		if got, err := cluster.readFromFiler("/" + dir + "/" + name); err != nil {
+		if got, err := cluster.readFromFiler(ctx, "/"+dir+"/"+name); err != nil {
 			broken = append(broken, fmt.Sprintf("%s: read: %v", name, err))
 		} else if !bytes.Equal(got, content[name]) {
 			broken = append(broken, fmt.Sprintf("%s: read %d bytes, want the %d written", name, len(got), len(content[name])))
@@ -144,22 +148,24 @@ func TestStageSameFilesWithoutDLM(t *testing.T) {
 	require.Empty(t, broken, "%d of %d staged files are broken", len(broken), files)
 }
 
-const checkTimeout = 30 * time.Second
-
-var checkClient = &http.Client{Timeout: checkTimeout}
-
 // needleExists reports whether the volume server still has the needle; a
 // deleted one answers 404 (only readDeleted=true would serve it).
-func (c *dlmTestCluster) needleExists(t testing.TB, fid string) bool {
-	resp, err := checkClient.Head(fmt.Sprintf("http://127.0.0.1:%d/%s", c.volumePort, fid))
+func (c *dlmTestCluster) needleExists(ctx context.Context, t testing.TB, fid string) bool {
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, fmt.Sprintf("http://127.0.0.1:%d/%s", c.volumePort, fid), nil)
+	require.NoError(t, err)
+	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	resp.Body.Close()
 	return resp.StatusCode == http.StatusOK
 }
 
 // readFromFiler reads a file whole through filer0's HTTP API.
-func (c *dlmTestCluster) readFromFiler(path string) ([]byte, error) {
-	resp, err := checkClient.Get(fmt.Sprintf("http://127.0.0.1:%d%s", c.filerPorts[0], path))
+func (c *dlmTestCluster) readFromFiler(ctx context.Context, path string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d%s", c.filerPorts[0], path), nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
