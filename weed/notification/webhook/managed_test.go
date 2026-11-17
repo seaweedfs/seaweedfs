@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -55,6 +56,8 @@ func TestManagedQueueDeliversAndDrainsOnClose(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
+	unblock := sync.OnceFunc(func() { close(release) })
+	defer unblock()
 
 	q, err := NewManagedQueue(&ManagedConfig{Targets: []ManagedTarget{
 		{Name: "on", Enabled: true, Endpoint: server.URL, BearerToken: "secret", PathPrefixes: []string{"/data/"}},
@@ -84,7 +87,7 @@ func TestManagedQueueDeliversAndDrainsOnClose(t *testing.T) {
 		t.Fatal("Close returned before the in-flight delivery finished")
 	case <-time.After(300 * time.Millisecond):
 	}
-	close(release)
+	unblock()
 	select {
 	case <-closed:
 	case <-time.After(10 * time.Second):
@@ -114,6 +117,8 @@ func TestManagedQueueCloseWaitsForBlockedSender(t *testing.T) {
 		hits.Add(1)
 	}))
 	defer server.Close()
+	unblock := sync.OnceFunc(func() { close(release) })
+	defer unblock()
 
 	q, err := NewManagedQueue(&ManagedConfig{Targets: []ManagedTarget{
 		{Name: "slow", Enabled: true, Endpoint: server.URL, Workers: 1, BufferSize: 100},
@@ -145,7 +150,7 @@ func TestManagedQueueCloseWaitsForBlockedSender(t *testing.T) {
 		t.Fatalf("expected ErrQueueClosed after Close started, got %v", err)
 	}
 
-	close(release)
+	unblock()
 	if err := <-blocked; err != nil {
 		t.Fatalf("blocked sender: %v", err)
 	}
