@@ -685,3 +685,21 @@ func TestDisjointAnswerFillsEmptyCache(t *testing.T) {
 		t.Fatalf("cache holds %v, want %v", cached, b)
 	}
 }
+
+// A lookup that crossed a cache reset is not cached, so it must leave the
+// re-lookup mark for the answer that will be.
+func TestStaleAnswerKeepsRelookupMark(t *testing.T) {
+	a := Location{Url: "a:8080"}
+	b := Location{Url: "b:8080"}
+	provider := &testLocationProvider{locations: map[string][]Location{"5": {a, b}}}
+	mc := moveClient()
+	fc := hookedFilerClient(mc, provider)
+	pushVolumeLocation(mc, a.Url, []uint32{5}, nil, nil, nil)
+	epoch := fc.mapEpoch()
+	fc.clearVidMap()
+	fc.InvalidateCache("5,01")
+
+	fc.fillLocations(5, []Location{a}, epoch)
+
+	expectServed(t, fc, "5", a, b)
+}

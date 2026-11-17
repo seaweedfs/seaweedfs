@@ -450,7 +450,9 @@ func (vc *vidMapClient) fillLocations(vid uint32, locations []Location, epoch ui
 	vc.expireRecentDeletes(time.Now())
 	cache := vc.vidMapEpoch == epoch
 	if _, relookup := vc.relookups[vid]; relookup {
-		delete(vc.relookups, vid)
+		if cache {
+			delete(vc.relookups, vid)
+		}
 	} else if vc.authority != nil {
 		if current, found := vc.authority.GetCurrentLocations(vid); found {
 			if listed := listedLocations(locations, current); len(listed) > 0 {
