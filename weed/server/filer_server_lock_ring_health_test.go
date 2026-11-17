@@ -45,13 +45,22 @@ func TestLockRingHealthyWaitsForAnnounce(t *testing.T) {
 	dlm := lock_manager.NewDistributedLockManager("filer-0:8888")
 	announce := make(chan struct{})
 	fs := &FilerServer{filer: &filer.Filer{Dlm: dlm}, option: &FilerOption{AnnounceCh: announce}}
+	expired := time.Now().Add(-lockRingUnhealthyGracePeriod - time.Second).UnixNano()
 
-	fs.lockRingUnhealthySince.Store(time.Now().Add(-lockRingUnhealthyGracePeriod - time.Second).UnixNano())
+	if !fs.lockRingHealthy() || fs.lockRingUnhealthySince.Load() != 0 {
+		t.Fatal("expected healthy with no absence clock while registration is held")
+	}
+	fs.lockRingUnhealthySince.Store(expired)
 	if !fs.lockRingHealthy() {
 		t.Fatal("expected healthy while registration is held")
 	}
 
 	close(announce)
+	fs.lockRingUnhealthySince.Store(0)
+	if !fs.lockRingHealthy() || fs.lockRingUnhealthySince.Load() == 0 {
+		t.Fatal("expected the first probe after announcing to start the grace period")
+	}
+	fs.lockRingUnhealthySince.Store(expired)
 	if fs.lockRingHealthy() {
 		t.Fatal("expected unhealthy after announcing with an empty ring")
 	}
