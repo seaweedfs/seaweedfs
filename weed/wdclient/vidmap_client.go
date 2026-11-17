@@ -248,14 +248,7 @@ func (vc *vidMapClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 				continue
 			}
 
-			var live []Location
-			for _, loc := range locations {
-				if vc.fillLocation(uint32(vid), loc, fillEpoch) {
-					live = append(live, loc)
-				}
-			}
-
-			if len(live) > 0 {
+			if live := vc.fillLocations(uint32(vid), locations, fillEpoch); len(live) > 0 {
 				batchResult[vidString] = live
 			}
 		}
@@ -443,21 +436,31 @@ func (vc *vidMapClient) untombstone(vid uint32, loc Location) {
 	}
 }
 
-// fillLocation reports whether a provider answer may be served, and caches it
-// unless a reset or clear happened since epoch. Holding recentDeletesMu across
-// the check and the add keeps a concurrent removal or adoption from being
-// undone.
-func (vc *vidMapClient) fillLocation(vid uint32, loc Location, epoch uint64) bool {
+// fillLocations returns the part of a provider answer that may be served, and
+// caches it unless a reset or clear happened since epoch. Holding
+// recentDeletesMu across the checks and the adds keeps a concurrent removal or
+// adoption from being undone.
+func (vc *vidMapClient) fillLocations(vid uint32, locations []Location, epoch uint64) (live []Location) {
 	vc.recentDeletesMu.Lock()
 	defer vc.recentDeletesMu.Unlock()
 	vc.expireRecentDeletes(time.Now())
-	if _, found := vc.recentDeletes[vidLocationKey{vid: vid, url: loc.Url}]; found {
-		return false
+	if vc.authority != nil {
+		if current, found := vc.authority.GetCurrentLocations(vid); found {
+			if listed := listedLocations(locations, current); len(listed) > 0 {
+				locations = listed
+			}
+		}
 	}
-	if vc.vidMapEpoch == epoch {
-		vc.vidMap.addLocation(vid, loc)
+	for _, loc := range locations {
+		if _, found := vc.recentDeletes[vidLocationKey{vid: vid, url: loc.Url}]; found {
+			continue
+		}
+		if vc.vidMapEpoch == epoch {
+			vc.vidMap.addLocation(vid, loc)
+		}
+		live = append(live, loc)
 	}
-	return true
+	return live
 }
 
 // adoptLocations replaces what is cached for vid with the authority's view,
@@ -471,6 +474,20 @@ func (vc *vidMapClient) adoptLocations(vid uint32) {
 	if current, found := vc.authority.GetCurrentLocations(vid); found {
 		vc.vidMap.replaceLocations(vid, current)
 	}
+}
+
+// listedLocations returns the entries of current whose server also appears in
+// locations.
+func listedLocations(locations, current []Location) (listed []Location) {
+	for _, c := range current {
+		for _, loc := range locations {
+			if loc.Url == c.Url {
+				listed = append(listed, c)
+				break
+			}
+		}
+	}
+	return listed
 }
 
 // InvalidateCache removes all cached locations for a volume ID

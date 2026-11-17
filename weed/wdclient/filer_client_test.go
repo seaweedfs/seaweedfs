@@ -587,6 +587,41 @@ func TestPushedAddsReplaceStaleLookup(t *testing.T) {
 	}
 }
 
+// A filer still serving the old leader's view answers a lookup made after the
+// adds arrived.
+func TestLookupServesOnlyRelearnedServers(t *testing.T) {
+	a := Location{Url: "a:8080"}
+	dead := Location{Url: "dead:8080"}
+	provider := &testLocationProvider{locations: map[string][]Location{"5": {a, dead}}}
+	mc := moveClient()
+	fc := hookedFilerClient(mc, provider)
+	pushVolumeLocation(mc, dead.Url, []uint32{5}, nil, nil, nil)
+
+	mc.resetVidMap()
+	pushVolumeLocation(mc, a.Url, []uint32{5}, nil, nil, nil)
+
+	expectServed(t, fc, "5", a)
+	if cached, _ := fc.GetLocations(5); len(cached) != 1 || cached[0].Url != a.Url {
+		t.Fatalf("cache holds %v, want only %v", cached, a)
+	}
+}
+
+// Volumes the master has not relearned, or for which it lists none of the
+// answered servers, are served as the lookup answered.
+func TestLookupKeepsAnswerTheMasterCannotConfirm(t *testing.T) {
+	a := Location{Url: "a:8080"}
+	b := Location{Url: "b:8080"}
+	provider := &testLocationProvider{locations: map[string][]Location{"5": {a}, "6": {a}}}
+	mc := moveClient()
+	fc := hookedFilerClient(mc, provider)
+	pushVolumeLocation(mc, a.Url, []uint32{5}, nil, nil, nil)
+	mc.resetVidMap()
+	pushVolumeLocation(mc, b.Url, []uint32{6}, nil, nil, nil)
+
+	expectServed(t, fc, "5", a)
+	expectServed(t, fc, "6", a)
+}
+
 // Adds only correct what lookups cached, they do not fill the cache.
 func TestPushedAddLeavesUncachedVolumeAlone(t *testing.T) {
 	mc := moveClient()
