@@ -185,3 +185,131 @@ func TestNewEcVolumeRejectsUnusableSoleSidecar(t *testing.T) {
 		}
 	}
 }
+
+// Shards placed on the disk that still holds the source volume's .vif mount
+// against an index on a sibling disk; the encode identity and layout come from
+// the sibling's .vif, not from the source's config-free one.
+func TestNewEcVolumePrefersIndexVifOverConfigFreeLocalVif(t *testing.T) {
+	dataDir, idxDir := t.TempDir(), t.TempDir()
+	const encodeTsNs = int64(1_700_000_000_123_456_789)
+	if err := volume_info.SaveVolumeInfo(filepath.Join(dataDir, "c_1.vif"), &volume_server_pb.VolumeInfo{
+		Version:  uint32(needle.Version3),
+		ReadOnly: true,
+	}); err != nil {
+		t.Fatalf("seed source .vif: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(idxDir, "c_1.ecx"), []byte{}, 0644); err != nil {
+		t.Fatalf("seed .ecx: %v", err)
+	}
+	if err := volume_info.SaveVolumeInfo(filepath.Join(idxDir, "c_1.vif"), &volume_server_pb.VolumeInfo{
+		Version:     uint32(needle.Version3),
+		DatFileSize: 4096,
+		EcShardConfig: &volume_server_pb.EcShardConfig{
+			DataShards: 12, ParityShards: 4, BlockSize: 3 * 1024 * 1024, EncodeTsNs: encodeTsNs,
+		},
+	}); err != nil {
+		t.Fatalf("seed index .vif: %v", err)
+	}
+
+	ev, err := NewEcVolume(types.HardDriveType, dataDir, idxDir, "c", needle.VolumeId(1))
+	if err != nil {
+		t.Fatalf("mount: %v", err)
+	}
+	defer ev.Close()
+	if ev.EncodeTsNs != encodeTsNs {
+		t.Errorf("EncodeTsNs = %d, want %d", ev.EncodeTsNs, encodeTsNs)
+	}
+	if got := ev.ECContext; got.DataShards != 12 || got.ParityShards != 4 || got.BlockSize != 3*1024*1024 {
+		t.Errorf("layout = %d+%d block %d, want 12+4 block 3MiB", got.DataShards, got.ParityShards, got.BlockSize)
+	}
+	if ev.datFileSize != 4096 {
+		t.Errorf("datFileSize = %d, want 4096", ev.datFileSize)
+	}
+}
+
+// A local .vif that records an EC config stays authoritative for its disk.
+func TestNewEcVolumeKeepsLocalVifWithEcConfig(t *testing.T) {
+	dataDir, idxDir := t.TempDir(), t.TempDir()
+	if err := volume_info.SaveVolumeInfo(filepath.Join(dataDir, "1.vif"), &volume_server_pb.VolumeInfo{
+		Version:       uint32(needle.Version3),
+		EcShardConfig: &volume_server_pb.EcShardConfig{DataShards: 10, ParityShards: 4, EncodeTsNs: 11},
+	}); err != nil {
+		t.Fatalf("seed local .vif: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(idxDir, "1.ecx"), []byte{}, 0644); err != nil {
+		t.Fatalf("seed .ecx: %v", err)
+	}
+	if err := volume_info.SaveVolumeInfo(filepath.Join(idxDir, "1.vif"), &volume_server_pb.VolumeInfo{
+		Version:       uint32(needle.Version3),
+		EcShardConfig: &volume_server_pb.EcShardConfig{DataShards: 10, ParityShards: 4, EncodeTsNs: 22},
+	}); err != nil {
+		t.Fatalf("seed index .vif: %v", err)
+	}
+
+	ev, err := NewEcVolume(types.HardDriveType, dataDir, idxDir, "", needle.VolumeId(1))
+	if err != nil {
+		t.Fatalf("mount: %v", err)
+	}
+	defer ev.Close()
+	if ev.EncodeTsNs != 11 {
+		t.Errorf("EncodeTsNs = %d, want the local 11", ev.EncodeTsNs)
+	}
+}
+
+// With a shared -dir.idx the encode's .vif sits in the data dir of the disk
+// that received the index, so a disk holding a source volume's config-free
+// .vif takes it from that sibling, but only when the siblings agree on one run.
+func TestNewEcVolumeTakesSiblingVifWithSharedIndex(t *testing.T) {
+	const runA, runB = int64(1_700_000_000_000_000_011), int64(1_700_000_000_000_000_022)
+	cases := []struct {
+		name       string
+		siblingTs  []int64
+		localIndex bool
+		want       int64
+	}{
+		{name: "one sibling", siblingTs: []int64{runA}, want: runA},
+		{name: "siblings agree", siblingTs: []int64{runA, runA}, want: runA},
+		{name: "siblings disagree", siblingTs: []int64{runA, runB}, want: 0},
+		{name: "local index", siblingTs: []int64{runA}, localIndex: true, want: 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dataDir, idxDir := t.TempDir(), t.TempDir()
+			dirs := []string{dataDir}
+			if err := volume_info.SaveVolumeInfo(filepath.Join(dataDir, "c_1.vif"), &volume_server_pb.VolumeInfo{
+				Version:  uint32(needle.Version3),
+				ReadOnly: true,
+			}); err != nil {
+				t.Fatalf("seed source .vif: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(idxDir, "c_1.ecx"), make([]byte, 20), 0644); err != nil {
+				t.Fatalf("seed .ecx: %v", err)
+			}
+			if tc.localIndex {
+				if err := os.WriteFile(filepath.Join(dataDir, "c_1.ecx"), make([]byte, 20), 0644); err != nil {
+					t.Fatalf("seed local .ecx: %v", err)
+				}
+			}
+			for _, ts := range tc.siblingTs {
+				sibling := t.TempDir()
+				dirs = append(dirs, sibling)
+				if err := volume_info.SaveVolumeInfo(filepath.Join(sibling, "c_1.vif"), &volume_server_pb.VolumeInfo{
+					Version:       uint32(needle.Version3),
+					DatFileSize:   4096,
+					EcShardConfig: &volume_server_pb.EcShardConfig{DataShards: 10, ParityShards: 4, EncodeTsNs: ts},
+				}); err != nil {
+					t.Fatalf("seed sibling .vif: %v", err)
+				}
+			}
+
+			ev, err := NewEcVolume(types.HardDriveType, dataDir, idxDir, "c", needle.VolumeId(1), dirs...)
+			if err != nil {
+				t.Fatalf("mount: %v", err)
+			}
+			defer ev.Close()
+			if ev.EncodeTsNs != tc.want {
+				t.Errorf("EncodeTsNs = %d, want %d", ev.EncodeTsNs, tc.want)
+			}
+		})
+	}
+}

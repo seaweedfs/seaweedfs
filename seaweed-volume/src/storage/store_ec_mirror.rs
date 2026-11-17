@@ -8,7 +8,9 @@ use std::path::Path;
 
 use tracing::{info, warn};
 
-use crate::storage::disk_location::{DiskLocation, parse_collection_volume_id_pub};
+use crate::storage::disk_location::{
+    DiskLocation, parse_collection_volume_id_pub, vif_is_ec_volume,
+};
 use crate::storage::store::Store;
 use crate::storage::types::VolumeId;
 
@@ -207,6 +209,33 @@ fn mirror_sidecars_for_volume(
     collection: &str,
     vid: VolumeId,
 ) -> io::Result<usize> {
+    // A local .vif with no EC config (a source volume's own) would shadow the
+    // owner's once the index is copied next to it; keep mounting across disks.
+    let dst_vif = sidecar_dest_path(dst_data_dir, dst_idx_dir, collection, vid, ".vif");
+    if path_is_regular_file(&dst_vif)
+        && !vif_is_ec_volume(&dst_vif)
+        && (vif_is_ec_volume(&sidecar_dest_path(
+            src_data_dir,
+            src_idx_dir,
+            collection,
+            vid,
+            ".vif",
+        )) || vif_is_ec_volume(&sidecar_dest_path(
+            src_idx_dir,
+            src_data_dir,
+            collection,
+            vid,
+            ".vif",
+        )))
+    {
+        info!(
+            volume_id = vid.0,
+            collection = %collection,
+            vif = %dst_vif,
+            "local .vif records no EC config; not mirroring EC sidecars",
+        );
+        return Ok(0);
+    }
     let mut copied = 0usize;
     for ext in EC_MIRRORED_SIDECARS {
         let dst = sidecar_dest_path(dst_data_dir, dst_idx_dir, collection, vid, ext);
@@ -389,6 +418,222 @@ mod tests {
         assert_eq!(ecx_dst, ecx, ".ecx mirrored bytes differ from source");
         let ecj_dst = fs::read(dir0.join(format!("{}_{}.ecj", collection, vid))).unwrap();
         assert_eq!(ecj_dst, ecj, ".ecj mirrored bytes differ from source");
+    }
+
+    /// Shards on a disk that still holds the source volume's config-free
+    /// `.vif` must mount with the owner's encode identity: mirroring the index
+    /// next to that `.vif` would make the disk mount through it.
+    #[test]
+    fn mirror_skips_disk_with_config_free_vif() {
+        let tmp = TempDir::new().unwrap();
+        let dir0 = tmp.path().join("data0");
+        let dir1 = tmp.path().join("data1");
+        fs::create_dir_all(&dir0).unwrap();
+        fs::create_dir_all(&dir1).unwrap();
+
+        let collection = "c";
+        let vid = 4122u32;
+        plant_shard(&dir0, collection, vid, 2);
+        plant_shard(&dir1, collection, vid, 0);
+        fs::write(
+            dir0.join(format!("{}_{}.vif", collection, vid)),
+            r#"{"version":3,"readOnly":true}"#,
+        )
+        .unwrap();
+        plant_ecx(&dir1, collection, vid, &[0xA1u8; 20]);
+        let vif = VifVolumeInfo {
+            version: 3,
+            ec_shard_config: Some(VifEcShardConfig {
+                data_shards: 10,
+                parity_shards: 4,
+                encode_ts_ns: 1_700_000_000_000_000_042,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        fs::write(
+            dir1.join(format!("{}_{}.vif", collection, vid)),
+            serde_json::to_string(&vif).unwrap(),
+        )
+        .unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        add_loc(&mut store, &dir0);
+        add_loc(&mut store, &dir1);
+
+        assert!(
+            !dir0.join(format!("{}_{}.ecx", collection, vid)).exists(),
+            ".ecx mirrored next to the config-free .vif"
+        );
+        let ec_vol = store.locations[0]
+            .find_ec_volume(VolumeId(vid))
+            .expect("dir0 ec volume mounted");
+        assert_eq!(ec_vol.encode_ts_ns, 1_700_000_000_000_000_042);
+    }
+
+    /// With a shared `-dir.idx` every disk sees the `.ecx`, and only the disk
+    /// that received it holds the encode's `.vif`. A disk loaded first that
+    /// still holds the source volume's config-free `.vif` must take that
+    /// identity from its sibling.
+    #[test]
+    fn shared_index_disk_takes_sibling_vif_on_startup() {
+        let tmp = TempDir::new().unwrap();
+        let dir0 = tmp.path().join("data0");
+        let dir1 = tmp.path().join("data1");
+        let idx = tmp.path().join("idx");
+        for d in [&dir0, &dir1, &idx] {
+            fs::create_dir_all(d).unwrap();
+        }
+
+        let collection = "c";
+        let vid = 4123u32;
+        plant_shard(&dir0, collection, vid, 2);
+        plant_shard(&dir1, collection, vid, 0);
+        fs::write(
+            dir0.join(format!("{}_{}.vif", collection, vid)),
+            r#"{"version":3,"readOnly":true}"#,
+        )
+        .unwrap();
+        plant_ecx(&idx, collection, vid, &[0xA1u8; 20]);
+        let vif = VifVolumeInfo {
+            version: 3,
+            ec_shard_config: Some(VifEcShardConfig {
+                data_shards: 10,
+                parity_shards: 4,
+                encode_ts_ns: 1_700_000_000_000_000_043,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        fs::write(
+            dir1.join(format!("{}_{}.vif", collection, vid)),
+            serde_json::to_string(&vif).unwrap(),
+        )
+        .unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store.store_dirs = vec![
+            dir0.to_str().unwrap().to_string(),
+            dir1.to_str().unwrap().to_string(),
+        ];
+        for dir in [&dir0, &dir1] {
+            store
+                .add_location(
+                    dir.to_str().unwrap(),
+                    idx.to_str().unwrap(),
+                    100,
+                    DiskType::HardDrive,
+                    MinFreeSpace::Percent(0.0),
+                    Vec::new(),
+                )
+                .unwrap();
+        }
+
+        for loc in &store.locations {
+            let ec_vol = loc
+                .find_ec_volume(VolumeId(vid))
+                .unwrap_or_else(|| panic!("{} ec volume mounted", loc.directory));
+            assert_eq!(
+                ec_vol.encode_ts_ns, 1_700_000_000_000_000_043,
+                "{}",
+                loc.directory
+            );
+        }
+    }
+
+    /// Starts a store whose first disk still holds the source `.dat`, its
+    /// config-free `.vif` and one 12+4 shard, with the `.ecx` in a shared
+    /// index dir and one sibling encode `.vif` per entry of `sibling_runs`.
+    /// Asserts the source `.dat`, the shard and the `.ecx` survive startup.
+    fn start_with_sibling_encode_vifs(sibling_runs: &[i64]) -> Store {
+        let tmp = TempDir::new().unwrap();
+        let dirs: Vec<_> = (0..=sibling_runs.len())
+            .map(|i| tmp.path().join(format!("data{}", i)))
+            .collect();
+        let idx = tmp.path().join("idx");
+        for d in dirs.iter().chain([&idx]) {
+            fs::create_dir_all(d).unwrap();
+        }
+
+        let collection = "c";
+        let vid = 4124u32;
+        let base0 = dirs[0].join(format!("{}_{}", collection, vid));
+        let dat = format!("{}.dat", base0.display());
+        let shard = format!("{}.ec02", base0.display());
+        fs::File::create(&dat)
+            .unwrap()
+            .set_len(11 * 1024 * 1024)
+            .unwrap();
+        fs::File::create(&shard)
+            .unwrap()
+            .set_len(1024 * 1024)
+            .unwrap();
+        fs::write(
+            format!("{}.vif", base0.display()),
+            r#"{"version":3,"readOnly":true}"#,
+        )
+        .unwrap();
+        plant_ecx(&idx, collection, vid, &[0xA1u8; 20]);
+        for (dir, run) in dirs[1..].iter().zip(sibling_runs) {
+            let vif = VifVolumeInfo {
+                version: 3,
+                ec_shard_config: Some(VifEcShardConfig {
+                    data_shards: 12,
+                    parity_shards: 4,
+                    encode_ts_ns: *run,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            fs::write(
+                dir.join(format!("{}_{}.vif", collection, vid)),
+                serde_json::to_string(&vif).unwrap(),
+            )
+            .unwrap();
+        }
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store.store_dirs = dirs
+            .iter()
+            .map(|d| d.to_str().unwrap().to_string())
+            .collect();
+        for dir in &dirs {
+            store
+                .add_location(
+                    dir.to_str().unwrap(),
+                    idx.to_str().unwrap(),
+                    100,
+                    DiskType::HardDrive,
+                    MinFreeSpace::Percent(0.0),
+                    Vec::new(),
+                )
+                .unwrap();
+        }
+
+        let ecx = idx.join(format!("{}_{}.ecx", collection, vid));
+        for path in [dat.as_str(), shard.as_str(), ecx.to_str().unwrap()] {
+            assert!(Path::new(path).exists(), "{} removed at startup", path);
+        }
+        store
+    }
+
+    /// A disk still holding the source `.dat` sizes its shards by the
+    /// sibling's encode `.vif` before the startup check decides whether they
+    /// are leftovers of an interrupted encode.
+    #[test]
+    fn shared_index_startup_validation_uses_sibling_vif_ratio() {
+        let store = start_with_sibling_encode_vifs(&[1_700_000_000_000_000_044]);
+        let ec_vol = store.locations[0]
+            .find_ec_volume(VolumeId(4124))
+            .expect("dir0 ec volume mounted");
+        assert!(ec_vol.has_shard(2), "shard 2 not mounted on dir0");
+    }
+
+    /// Sibling `.vif` files naming different encode runs leave the ratio
+    /// unknown, so the startup check keeps the shards.
+    #[test]
+    fn shared_index_startup_validation_keeps_shards_on_disagreeing_siblings() {
+        start_with_sibling_encode_vifs(&[1_700_000_000_000_000_044, 1_700_000_000_000_000_045]);
     }
 
     #[test]

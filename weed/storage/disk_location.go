@@ -59,6 +59,8 @@ type DiskLocation struct {
 	ecVolumesDestroying map[needle.VolumeId]chan struct{}
 
 	ecShardNotifyHandler func(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, ecVolume *erasure_coding.EcVolume)
+	// storeDirs is the data directory of every disk on this server.
+	storeDirs []string
 
 	// loadGuard serializes a volume's load-and-register against an in-flight
 	// VolumeCopy of the same id on the server. When set, the hook runs before

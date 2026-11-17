@@ -58,6 +58,8 @@ pub struct DiskLocation {
     /// skips a claimed vid outright and claims any other through its load,
     /// so a VolumeCopy's .note sweep cannot unlink files it still writes.
     pub(crate) load_guard: Option<Arc<Mutex<HashSet<VolumeId>>>>,
+    /// The data directory of every disk on this server.
+    pub(crate) store_dirs: Vec<String>,
 }
 
 /// Keeps `vid` in the copy-claim set through one scan load so a VolumeCopy
@@ -123,6 +125,7 @@ impl DiskLocation {
             disk_free_bytes: AtomicU64::new(0),
             min_free_space,
             load_guard: None,
+            store_dirs: Vec::new(),
         })
     }
 
@@ -486,8 +489,20 @@ impl DiskLocation {
 
         // Custom ratio comes from the volume's own .vif; the server holds no
         // cluster EC config in memory.
-        let data_shards =
-            ec_data_shards_from_vif(&self.directory, &self.idx_directory, collection, vid);
+        let data_shards = ec_data_shards_from_vif(
+            &self.directory,
+            &self.idx_directory,
+            &self.store_dirs,
+            collection,
+            vid,
+        );
+        if data_shards == 0 {
+            warn!(
+                volume_id = vid.0,
+                "sibling .vif files disagree on the encode; keeping EC shards"
+            );
+            return true;
+        }
 
         // On-disk .dat: an empty <= superblock one is a stub; a transient stat
         // error keeps the shards rather than deleting.
@@ -1020,7 +1035,9 @@ impl DiskLocation {
         // propagate the error to the caller.
         let created = !self.ec_volumes.contains_key(&vid);
         if created {
-            let ec_vol = EcVolume::new(&dir, idx_dir, collection, vid).map_err(VolumeError::Io)?;
+            let ec_vol =
+                EcVolume::new_with_vif_dirs(&dir, idx_dir, &self.store_dirs, collection, vid)
+                    .map_err(VolumeError::Io)?;
             self.ec_volumes.insert(vid, ec_vol);
         }
         let ec_vol = self.ec_volumes.get_mut(&vid).expect("just inserted above");
@@ -1441,6 +1458,7 @@ fn rm_if_present(path: String) -> io::Result<()> {
 fn ec_data_shards_from_vif(
     directory: &str,
     idx_directory: &str,
+    store_dirs: &[String],
     collection: &str,
     vid: VolumeId,
 ) -> usize {
@@ -1458,6 +1476,23 @@ fn ec_data_shards_from_vif(
         if directory == idx_directory {
             break;
         }
+    }
+    match crate::storage::erasure_coding::ec_volume::sibling_ec_config_vif(
+        directory,
+        idx_directory,
+        store_dirs,
+        collection,
+        vid,
+    ) {
+        Err(()) => return 0,
+        Ok(Some(vi)) => {
+            if let Some(ds) = vi.ec_shard_config.map(|c| c.data_shards as usize)
+                && ds > 0
+            {
+                return ds;
+            }
+        }
+        Ok(None) => {}
     }
     DATA_SHARDS_COUNT
 }
@@ -1542,7 +1577,7 @@ pub(crate) fn vif_references_remote_file(vif_path: &str) -> bool {
 /// True when a `.vif` records an EC shard config, i.e. the volume was
 /// erasure-coded. Such a volume keeps no local `.dat`, so an empty `.dat`
 /// alongside it is a leftover stub safe to remove.
-fn vif_is_ec_volume(vif_path: &str) -> bool {
+pub(crate) fn vif_is_ec_volume(vif_path: &str) -> bool {
     fs::read_to_string(vif_path)
         .ok()
         .and_then(|s| serde_json::from_str::<VifVolumeInfo>(&s).ok())

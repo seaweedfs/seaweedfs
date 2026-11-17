@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -844,6 +845,33 @@ func TestLoadEcShardDuplicateReleasesTheNewShard(t *testing.T) {
 	}
 	if after := testutil.ToFloat64(gauge); after != before+1 {
 		t.Errorf("mount gauge at %v after a duplicate load; want %v (the duplicate's Mount must be released)", after, before+1)
+	}
+}
+
+// TestLoadEcShardReleasesShardWhenVolumeFails: the shard file opens, but the
+// EcVolume cannot be built (no .ecx). The opened shard is not registered, so
+// the loader must release its fd and mount gauge itself.
+func TestLoadEcShardReleasesShardWhenVolumeFails(t *testing.T) {
+	dir := t.TempDir()
+	diskLocation := NewDiskLocation(dir, 10, util.MinFreeSpace{}, dir, types.HardDriveType, nil, stats.DefaultDiskIOProbeConfig())
+	defer diskLocation.Close()
+
+	if err := os.WriteFile(filepath.Join(dir, "125.ec00"), []byte("shard bytes"), 0o644); err != nil {
+		t.Fatalf("seed .ec00: %v", err)
+	}
+
+	gauge := stats.VolumeServerVolumeGauge.WithLabelValues("", "ec_shards")
+	before := testutil.ToFloat64(gauge)
+
+	_, err := diskLocation.LoadEcShard("", needle.VolumeId(125), erasure_coding.ShardId(0))
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("LoadEcShard without .ecx: got %v, want os.ErrNotExist", err)
+	}
+	if after := testutil.ToFloat64(gauge); after != before {
+		t.Errorf("mount gauge at %v after a failed load; want %v", after, before)
+	}
+	if _, found := diskLocation.FindEcVolume(needle.VolumeId(125)); found {
+		t.Errorf("a failed load must not register an EcVolume")
 	}
 }
 
