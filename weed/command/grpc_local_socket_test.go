@@ -88,3 +88,45 @@ func TestGrpcLocalSocketDir(t *testing.T) {
 		t.Fatalf("error %q does not name the %d-byte limit", err, limit)
 	}
 }
+
+// TestGrpcLocalSocketDirUnwritable checks that -grpc.localSocketDir is
+// refused when the folder exists but the server's user cannot create a socket
+// in it: every bind would fail, and each local RPC would dial a socket that
+// was never created (issue #12692).
+func TestGrpcLocalSocketDirUnwritable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix-socket routing is disabled on Windows (#9430)")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses folder mode bits")
+	}
+
+	// A folder directly under /tmp keeps the probe socket path well inside the
+	// sockaddr_un limit, which t.TempDir() does not on macOS.
+	dir, err := os.MkdirTemp("/tmp", "seaweedfs-grpc-unwritable-")
+	if err != nil {
+		t.Fatalf("create folder: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(dir, 0o755); err != nil {
+			t.Errorf("restore mode of %q: %v", dir, err)
+		}
+		if err := os.RemoveAll(dir); err != nil {
+			t.Errorf("remove %q: %v", dir, err)
+		}
+	})
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatalf("chmod %q: %v", dir, err)
+	}
+
+	err = checkGrpcLocalSocketDir(dir, []grpcLocalSocket{{"volume", 17334}})
+	if err == nil {
+		t.Fatalf("checkGrpcLocalSocketDir accepted %q, where the server cannot create a socket", dir)
+	}
+	if !strings.Contains(err.Error(), dir) {
+		t.Fatalf("error %q does not name the folder %q", err, dir)
+	}
+	if !strings.Contains(err.Error(), "cannot create a Unix socket") {
+		t.Fatalf("error %q does not report the failed socket bind", err)
+	}
+}
