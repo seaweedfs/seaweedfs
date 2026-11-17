@@ -586,3 +586,26 @@ func TestLeaderChangeAddsReplaceStaleRefill(t *testing.T) {
 	pushVolumeLocation(mc, other.Url, []uint32{5}, nil, nil, nil)
 	expectServed(t, fc, "5", live, other)
 }
+
+// A master add that lands between a lookup's second cache check and its query
+// to a filer that has not caught up must not be undone by that filer's answer.
+func TestConfirmDuringLookupIsNotUndone(t *testing.T) {
+	dead := Location{Url: "dead:8080"}
+	live := Location{Url: "live:8080"}
+	provider := &testLocationProvider{locations: map[string][]Location{"5": {dead, live}}}
+	mc := moveClient()
+	fc := hookedFilerClient(mc, provider)
+	fc.masterClient = mc
+	mc.resetVidMap()
+
+	afterLookupRecheck = func() {
+		afterLookupRecheck = nil
+		pushVolumeLocation(mc, live.Url, []uint32{5}, nil, nil, nil)
+	}
+	t.Cleanup(func() { afterLookupRecheck = nil })
+	if _, err := fc.LookupVolumeIdsWithFallback(context.Background(), []string{"5"}); err != nil {
+		t.Fatalf("lookup: %v", err)
+	}
+
+	expectServed(t, fc, "5", live)
+}

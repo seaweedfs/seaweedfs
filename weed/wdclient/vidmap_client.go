@@ -29,6 +29,10 @@ type VolumeLocationProvider interface {
 
 // vidMapClient provides volume location caching with pluggable lookup
 // It wraps the battle-tested vidMap with customizable volume lookup strategies
+// afterLookupRecheck, when set by a test, runs between a lookup's second cache
+// check and its provider query.
+var afterLookupRecheck func()
+
 type vidMapClient struct {
 	vidMap         *vidMap
 	provider       VolumeLocationProvider
@@ -210,6 +214,11 @@ func (vc *vidMapClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 	batchKey := strings.Join(needsLookup, ",")
 
 	sfResult, err := vc.doSharedLookup(ctx, batchKey, func(ctx context.Context) (interface{}, error) {
+		// The epoch is taken before the cache is checked again: a confirmation
+		// or reset that lands after it either shows up in that check or stops
+		// the provider's answer from being cached.
+		fillEpoch := vc.mapEpoch()
+
 		// Double-check cache for volumes that might have been populated while waiting
 		stillNeedLookup := make([]string, 0, len(needsLookup))
 		batchResult := make(map[string][]Location)
@@ -223,6 +232,10 @@ func (vc *vidMapClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 			}
 		}
 
+		if afterLookupRecheck != nil {
+			afterLookupRecheck()
+		}
+
 		if len(stillNeedLookup) == 0 {
 			return batchResult, nil
 		}
@@ -230,7 +243,6 @@ func (vc *vidMapClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 		// Query provider with batched volume IDs
 		glog.V(2).Infof("Looking up %d volumes from provider: %v", len(stillNeedLookup), stillNeedLookup)
 
-		fillEpoch := vc.mapEpoch()
 		providerResults, err := vc.provider.LookupVolumeIds(ctx, stillNeedLookup)
 		if err != nil {
 			return batchResult, fmt.Errorf("provider lookup failed: %w", err)
