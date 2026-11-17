@@ -12,7 +12,7 @@ import (
 func TestLockRingHealthy(t *testing.T) {
 	self := pb.ServerAddress("filer-0:8888")
 	dlm := lock_manager.NewDistributedLockManager(self)
-	fs := &FilerServer{filer: &filer.Filer{Dlm: dlm}}
+	fs := &FilerServer{filer: &filer.Filer{Dlm: dlm}, option: &FilerOption{}}
 
 	// Empty ring, within grace period: healthy.
 	if !fs.lockRingHealthy() {
@@ -38,5 +38,21 @@ func TestLockRingHealthy(t *testing.T) {
 	}
 	if fs.lockRingUnhealthySince.Load() != 0 {
 		t.Fatal("expected unhealthy timer to reset")
+	}
+}
+
+func TestLockRingHealthyWaitsForAnnounce(t *testing.T) {
+	dlm := lock_manager.NewDistributedLockManager("filer-0:8888")
+	announce := make(chan struct{})
+	fs := &FilerServer{filer: &filer.Filer{Dlm: dlm}, option: &FilerOption{AnnounceCh: announce}}
+
+	fs.lockRingUnhealthySince.Store(time.Now().Add(-lockRingUnhealthyGracePeriod - time.Second).UnixNano())
+	if !fs.lockRingHealthy() {
+		t.Fatal("expected healthy while registration is held")
+	}
+
+	close(announce)
+	if fs.lockRingHealthy() {
+		t.Fatal("expected unhealthy after announcing with an empty ring")
 	}
 }

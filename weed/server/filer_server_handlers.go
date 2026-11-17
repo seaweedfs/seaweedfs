@@ -405,6 +405,13 @@ func (fs *FilerServer) lockRingHealthy() bool {
 	if dlm == nil || dlm.LockRing == nil || dlm.LockRing.Ring == nil {
 		return true
 	}
+	if announce := fs.option.AnnounceCh; announce != nil {
+		select {
+		case <-announce:
+		default:
+			return true
+		}
+	}
 	for _, s := range dlm.LockRing.Ring.GetServers() {
 		if s == dlm.Host {
 			fs.lockRingUnhealthySince.Store(0)
