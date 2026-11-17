@@ -69,6 +69,10 @@ func TestManagedNotificationWebhooks(t *testing.T) {
 	}
 
 	running := f.webhooks.queue.Load()
+	f.maybeReloadNotificationWebhooks(confEvent)
+	if f.webhooks.queue.Load() != running {
+		t.Fatal("unchanged targets must keep the running queue")
+	}
 	saveConf(`{"targets":[{"name":"bad name","enabled":true,"endpoint":"https://example.com"}]}`)
 	f.maybeReloadNotificationWebhooks(confEvent)
 	if f.webhooks.queue.Load() != running {

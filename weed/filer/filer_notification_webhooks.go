@@ -1,6 +1,7 @@
 package filer
 
 import (
+	"bytes"
 	"context"
 	"sync"
 	"sync/atomic"
@@ -23,6 +24,7 @@ var NotificationWebhooksConfPath = string(util.NewFullPath(DirectoryEtcSeaweedFS
 // whatever notification.toml configures.
 type managedWebhooks struct {
 	reloadMu sync.Mutex
+	applied  []byte
 	queue    atomic.Pointer[webhook.Queue]
 }
 
@@ -69,6 +71,9 @@ func (f *Filer) reloadNotificationWebhooks() {
 		}
 	}
 
+	if f.webhooks.applied != nil && bytes.Equal(content, f.webhooks.applied) {
+		return
+	}
 	conf, err := webhook.ParseManagedConfig(content)
 	if err != nil {
 		glog.Errorf("keep current webhook targets, %s: %v", NotificationWebhooksConfPath, err)
@@ -80,6 +85,7 @@ func (f *Filer) reloadNotificationWebhooks() {
 		return
 	}
 	glog.V(0).Infof("apply %d webhook targets from %s", len(conf.Targets), NotificationWebhooksConfPath)
+	f.webhooks.applied = append([]byte{}, content...)
 	if old := f.webhooks.queue.Swap(queue); old != nil {
 		go old.Close(notificationWebhooksDrain)
 	}
