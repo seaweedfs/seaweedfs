@@ -40,9 +40,9 @@ type target struct {
 
 func newTarget(name string, cfg *config) (*target, error) {
 	t := &target{
-		name:   name,
-		config: cfg,
-		filter: newFilter(cfg),
+		name:    name,
+		config:  cfg,
+		filter:  newFilter(cfg),
 		sem:     make(chan struct{}, cfg.nWorkers),
 		inbox:   make(chan *message.Message, cfg.bufferSize),
 		pending: make(chan struct{}, cfg.bufferSize),
@@ -74,8 +74,9 @@ type Queue struct {
 	queueChannel *gochannel.GoChannel
 	targets      []*target
 
-	ctx    context.Context
-	cancel context.CancelFunc
+	ctx     context.Context
+	cancel  context.CancelFunc
+	stopped chan struct{}
 }
 
 func (w *Queue) GetName() string {
@@ -225,6 +226,7 @@ func (w *Queue) Initialize(configuration util.Configuration, prefix string) erro
 
 func (w *Queue) initialize(targets []*target) error {
 	w.ctx, w.cancel = context.WithCancel(context.Background())
+	w.stopped = make(chan struct{})
 	w.targets = targets
 
 	if err := w.setupWatermillQueue(targets); err != nil {
@@ -329,9 +331,33 @@ func (w *Queue) setupWatermillQueue(targets []*target) error {
 	go func() {
 		wg.Wait()
 		w.cancel()
+		close(w.stopped)
 	}()
 
 	return nil
+}
+
+// Close stops the queue once every target has delivered or dead-lettered
+// what it holds, or when drainTimeout passes.
+func (w *Queue) Close(drainTimeout time.Duration) {
+	deadline := time.Now().Add(drainTimeout)
+	for !w.drained() && time.Now().Before(deadline) {
+		time.Sleep(50 * time.Millisecond)
+	}
+	w.cancel()
+	<-w.stopped
+	if err := w.queueChannel.Close(); err != nil {
+		glog.Warningf("close webhook queue: %v", err)
+	}
+}
+
+func (w *Queue) drained() bool {
+	for _, t := range w.targets {
+		if len(t.pending) > 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // forwardTargetMessages publishes each queued event to the target's topic in
