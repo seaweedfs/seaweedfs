@@ -117,3 +117,40 @@ func TestLookupVolumeIdsStopsOnContextCancel(t *testing.T) {
 		t.Errorf("took %v, expected to stop near context deadline of 2s", elapsed)
 	}
 }
+
+type resetDuringLookupServer struct {
+	fakeLookupServer
+	mc *MasterClient
+}
+
+func (s *resetDuringLookupServer) LookupVolume(ctx context.Context, req *master_pb.LookupVolumeRequest) (*master_pb.LookupVolumeResponse, error) {
+	s.mc.resetVidMap()
+	return s.fakeLookupServer.LookupVolume(ctx, req)
+}
+
+// An answer sent before a reset must not land in the new generation, which a
+// gateway's FilerClient reads as the current master's view.
+func TestLookupAnswerCrossingResetIsNotCached(t *testing.T) {
+	mc := NewMasterClient(
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		"", "test", "", "", "",
+		pb.ServerDiscovery{},
+	)
+	srv := &resetDuringLookupServer{mc: mc}
+	mc.setCurrentMaster(startFakeMasterServer(t, srv))
+	mc.grpcTimeout = 5 * time.Second
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	provider := &masterVolumeProvider{masterClient: mc}
+	result, err := provider.LookupVolumeIds(ctx, []string{"1"})
+	if err != nil {
+		t.Fatalf("lookup: %v", err)
+	}
+	if _, ok := result["1"]; !ok {
+		t.Fatal("expected volume 1 to be served")
+	}
+	if locations, found := mc.vidMap.currentLocations(1); found {
+		t.Fatalf("answer that crossed a reset was cached: %v", locations)
+	}
+}

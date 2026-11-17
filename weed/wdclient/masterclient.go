@@ -72,6 +72,7 @@ func (p *masterVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []
 		func() error {
 			result = make(map[string][]Location)
 			lookupErrors = nil
+			epoch := p.masterClient.mapEpoch()
 
 			// Per-attempt timeout bounds both master resolution and the RPC
 			// so a single attempt cannot consume the entire retry budget.
@@ -124,10 +125,9 @@ func (p *masterVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []
 							ReadOnly:          masterLoc.ReadOnly,
 							ReadOnlyCanDelete: masterLoc.ReadOnlyCanDelete,
 						}
-						// Update cache with the location
-						p.masterClient.addLocation(uint32(vid), loc)
 						locations = append(locations, loc)
 					}
+					p.masterClient.fillLocations(uint32(vid), locations, epoch)
 
 					if len(locations) > 0 {
 						result[vidOnly] = locations
