@@ -640,3 +640,35 @@ func TestRefNeedsReship(t *testing.T) {
 		})
 	}
 }
+
+// TestRingServesCursor pins when an aggregated subscriber may skip the
+// persisted logs: only when the ring was already filling at its cursor,
+// evicted nothing after it, and no peer started streaming into it after it.
+func TestRingServesCursor(t *testing.T) {
+	cursor := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC).UnixNano()
+	before := time.Unix(0, cursor-int64(time.Minute))
+	cases := []struct {
+		name          string
+		earliest      time.Time
+		evictedTsNs   int64
+		peerStartTsNs int64
+		want          bool
+	}{
+		{"empty ring", time.Time{}, 0, 0, false},
+		{"ring starting past the cursor", time.Unix(0, cursor+1), 0, 0, false},
+		{"ring starting at the cursor", time.Unix(0, cursor), 0, 0, true},
+		{"ring holding the cursor", before, 0, 0, true},
+		{"evicted through the cursor", before, cursor, 0, true},
+		{"evicted past the cursor", before, cursor + 1, 0, false},
+		{"new peer streaming from the cursor", before, 0, cursor, true},
+		{"new peer streaming from past the cursor", before, 0, cursor + 1, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ringServesCursor(cursor, tc.earliest, tc.evictedTsNs, tc.peerStartTsNs); got != tc.want {
+				t.Fatalf("ringServesCursor(%d, %v, %d, %d) = %v, want %v",
+					cursor, tc.earliest, tc.evictedTsNs, tc.peerStartTsNs, got, tc.want)
+			}
+		})
+	}
+}

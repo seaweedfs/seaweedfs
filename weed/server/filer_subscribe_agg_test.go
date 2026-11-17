@@ -316,3 +316,65 @@ func TestSubscribeLoop_AggregatedDiskHoldIgnoresDeliveryProgress(t *testing.T) {
 	reportPeersAt(ma, 0, onDisk)
 	waitForEvents(t, r, []int64{onDisk}, 3*time.Second)
 }
+
+// TestSubscribeLoop_AggregatedRingServesPastDiskHold: peers flush on their own
+// schedules, so the persisted logs hold files past the slowest peer's flush
+// watermark, and a disk pass from a caught-up cursor holds on the first of
+// them. Every cursor move used to start such a pass, so a subscriber that does
+// not take metadata chunks stayed in that hold and got each change only once
+// the slowest peer flushed it. The ring has everything after the cursor: read
+// it there.
+func TestSubscribeLoop_AggregatedRingServesPastDiskHold(t *testing.T) {
+	h := newSubscribeHarness(t)
+	// Far longer than this test runs: a disk hold cannot time out into the
+	// ring here.
+	prevRetry := unflushedGapRetryInterval
+	unflushedGapRetryInterval = 30 * time.Second
+	t.Cleanup(func() { unflushedGapRetryInterval = prevRetry })
+
+	now := time.Now()
+	onDisk := now.Add(-20 * time.Second).UnixNano()
+	h.append(onDisk)
+	h.f.LocalMetaLogBuffer.ForceFlush()
+	waitForFlushedFiles(t, h, onDisk)
+
+	ma := h.startAggregator()
+	// The ring took the same entry, and was filling before the cursor.
+	h.appendAggregated(now.Add(-30 * time.Second).UnixNano())
+	h.appendAggregated(onDisk)
+	live := now.Add(-10 * time.Second).UnixNano()
+	h.appendAggregated(live)
+	// Delivered through the newest entry, flushed only below the one on disk.
+	reportPeersAt(ma, live, onDisk-int64(time.Second))
+
+	r := h.subscribeAggregated(now.Add(-25 * time.Second).UnixNano())
+	waitForEvents(t, r, []int64{onDisk, live}, 3*time.Second)
+}
+
+// TestSubscribeLoop_AggregatedNewPeerHistoryReadFromDisk: a peer first
+// followed after the cursor streams into the ring only from its start, so what
+// it logged before then is on disk alone and the ring cannot serve the cursor.
+func TestSubscribeLoop_AggregatedNewPeerHistoryReadFromDisk(t *testing.T) {
+	h := newSubscribeHarness(t)
+	prevRetry := unflushedGapRetryInterval
+	unflushedGapRetryInterval = 30 * time.Second
+	t.Cleanup(func() { unflushedGapRetryInterval = prevRetry })
+
+	now := time.Now()
+	onDisk := now.Add(-20 * time.Second).UnixNano()
+	h.append(onDisk)
+	h.f.LocalMetaLogBuffer.ForceFlush()
+	waitForFlushedFiles(t, h, onDisk)
+
+	ma := h.startAggregator()
+	newPeer := pb.ServerAddress("new-peer:8888")
+	ma.StartPeerForTesting(newPeer, now.Add(-15*time.Second))
+	h.appendAggregated(now.Add(-30 * time.Second).UnixNano())
+	live := now.Add(-10 * time.Second).UnixNano()
+	h.appendAggregated(live)
+	reportPeersAt(ma, live, live)
+	ma.ReportPeerWatermarksForTesting(newPeer, live, live)
+
+	r := h.subscribeAggregated(now.Add(-25 * time.Second).UnixNano())
+	waitForEvents(t, r, []int64{onDisk, live}, 3*time.Second)
+}

@@ -301,6 +301,19 @@ func memoryHoldsGap(currentTsNs, lastEvictedTsNs int64) bool {
 	return currentTsNs >= lastEvictedTsNs
 }
 
+// ringServesCursor reports whether the aggregated ring alone can serve a read
+// from the cursor: it was already filling at the cursor, evicted nothing
+// after it (lastEvictedTsNs in pre-bump timestamps, as the gap checks take it),
+// and every peer was streaming into it by then (newPeerStartTsNs). An empty
+// ring, or one that starts past the cursor, proves nothing about what only the
+// persisted logs hold.
+func ringServesCursor(cursorTsNs int64, earliest time.Time, lastEvictedTsNs, newPeerStartTsNs int64) bool {
+	if earliest.IsZero() || earliest.UnixNano() > cursorTsNs || cursorTsNs < newPeerStartTsNs {
+		return false
+	}
+	return memoryHoldsGap(cursorTsNs, lastEvictedTsNs)
+}
+
 // errHeldByPeerWatermark aborts a read at an entry beyond the hold point; the
 // caller rewinds to the last delivered entry, waits, and re-reads (the
 // re-listing is what picks up a late-landing log file). Holding is the normal
@@ -835,6 +848,9 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 			time.Since(lastDiskPassAt) >= aggDiskReprobeInterval
 
 		diskAdvanced := false
+		// Set when the persisted logs were not read because memory holds
+		// everything after the cursor: nothing on disk was proven empty.
+		memoryServesCursor := false
 		if shouldReadFromDisk {
 			lastCheckedFlushTsNs = currentFlushTsNs
 			lastCheckedFlushLowTsNs = diskPassFlushLowTsNs
@@ -855,6 +871,27 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 				} else {
 					processedTsNs, isDone, readPersistedLogErr = 0, false, nil
 				}
+			} else if cursorTsNs := lastReadTime.Time.UnixNano(); !errors.Is(readInMemoryLogErr, log_buffer.ResumeFromDiskError) &&
+				ringServesCursor(cursorTsNs, aggBuffer.GetEarliestTime(), aggBuffer.GetLastEvictedOriginalTsNs(), fs.filer.MetaAggregator.NewPeerStartTsNs()) {
+				// The ring holds everything after the cursor (every peer's log
+				// reaches it through this aggregator), so read it there, held at
+				// the delivery low-watermark. The persisted logs are complete only
+				// through the peers' flush low-watermark, and the peers that flushed
+				// after the slowest one already have files past it: a pass from a
+				// caught-up cursor holds on the first of them. Each cursor move
+				// (every memory hold, every re-probe) started such a pass, so on a
+				// cluster that keeps writing the stream stayed in the disk hold and
+				// got each event only once the slowest peer flushed it, up to a
+				// flush interval late. Chunk subscribers are served the same way:
+				// their ref listing stops below the flush hold.
+				//
+				// A cursor memory just refused still takes the pass; the gap checks
+				// below re-arm it from there.
+				if cursorTsNs < diskPassProvenTsNs {
+					diskPassProvenTsNs = cursorTsNs
+				}
+				memoryServesCursor = true
+				processedTsNs, isDone, readPersistedLogErr = 0, false, nil
 			} else {
 				processedTsNs, isDone, readPersistedLogErr = fs.filer.ReadPersistedLogBuffer(ctx, lastReadTime, req.UntilNs, diskEachLogEntryFn)
 			}
@@ -896,7 +933,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 				if processedTsNs > diskAnchorTsNs {
 					diskAnchorTsNs = processedTsNs
 				}
-			} else if readInMemoryLogErr == nil {
+			} else if readInMemoryLogErr == nil && !memoryServesCursor {
 				// Nothing on disk and memory never spoke: scan forward for the next
 				// day that has logs.
 				nextDayTs := util.GetNextDayTsNano(lastReadTime.Time.UnixNano())
