@@ -80,6 +80,8 @@ type Filer struct {
 	RemoteStorage                 *FilerRemoteStorage
 	BuildGuardedRemoteClient      RemoteStorageClientBuilder
 	AllowUntrustedRemoteEndpoints bool
+	ManagedWebhooksEnabled        bool
+	webhooks                      managedWebhooks
 	lazyFetchGroup                singleflight.Group
 	lazyListGroup                 singleflight.Group
 	Dlm                           *lock_manager.DistributedLockManager

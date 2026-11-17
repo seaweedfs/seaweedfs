@@ -68,12 +68,15 @@ func (f *Filer) notifyUpdateEvent(ctx context.Context, oldEntry, newEntry *Entry
 	defer f.metaLogInflight.done(event.TsNs)
 	eventNotification := event.EventNotification
 
-	if notification.Queue != nil {
-		glog.V(3).Infof("notifying entry update %v", fullpath)
-		if err := notification.Queue.SendMessage(fullpath, eventNotification); err != nil {
-			// throw message
-			glog.Error(err)
+	if !isNotificationWebhooksConf(oldEntry, newEntry) {
+		if notification.Queue != nil {
+			glog.V(3).Infof("notifying entry update %v", fullpath)
+			if err := notification.Queue.SendMessage(fullpath, eventNotification); err != nil {
+				// throw message
+				glog.Error(err)
+			}
 		}
+		f.sendToNotificationWebhooks(fullpath, eventNotification)
 	}
 
 	f.logMetaEvent(ctx, event)

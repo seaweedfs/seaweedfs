@@ -342,6 +342,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	isFresh := fs.filer.LoadConfiguration(v)
 
 	notification.LoadConfiguration(v, "notification.")
+	fs.filer.ManagedWebhooksEnabled = v.GetBool("notification.webhook.managed")
 
 	handleStaticResources(defaultMux)
 	if !option.DisableHttp {
@@ -420,6 +421,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	}
 
 	fs.filer.LoadFilerConf()
+	fs.filer.LoadNotificationWebhooks()
 
 	fs.filer.LoadRemoteStorageConfAndMapping()
 
