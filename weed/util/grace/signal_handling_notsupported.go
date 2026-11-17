@@ -4,3 +4,6 @@ package grace
 
 func OnInterrupt(fn func()) {
 }
+
+func OnInterruptFirst(fn func()) {
+}
