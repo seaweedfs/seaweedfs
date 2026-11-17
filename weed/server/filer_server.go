@@ -120,6 +120,8 @@ type FilerOption struct {
 type FilerServer struct {
 	inFlightDataSize int64
 	inFlightUploads  int64
+	// unix nanos when this filer was first seen missing from its own lock ring; 0 = healthy
+	lockRingUnhealthySince atomic.Int64
 
 	inFlightDataLimitCond *sync.Cond
 

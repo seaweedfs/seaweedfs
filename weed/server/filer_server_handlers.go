@@ -390,12 +390,48 @@ func pathHasComponentPrefix(reqPath, prefix string) bool {
 	return strings.HasPrefix(cleanedPath, cleanedPrefix+"/")
 }
 
+// lockRingUnhealthyGracePeriod is how long the filer may be absent from its own
+// lock ring before health checks fail. It covers startup (before the first
+// LockRingUpdate arrives) and the master's ring-change batching delay.
+const lockRingUnhealthyGracePeriod = 30 * time.Second
+
+// lockRingHealthy reports false once this filer has been missing from the
+// distributed lock ring for longer than lockRingUnhealthyGracePeriod. In that
+// state every lock acquisition (and therefore every locked write, including
+// S3 PUTs) fails with "no lock server found" and nothing repopulates the ring
+// (see seaweedfs#11442). Restarting the filer re-registers it with the master.
+func (fs *FilerServer) lockRingHealthy() bool {
+	dlm := fs.filer.Dlm
+	if dlm == nil || dlm.LockRing == nil || dlm.LockRing.Ring == nil {
+		return true
+	}
+	for _, s := range dlm.LockRing.Ring.GetServers() {
+		if s == dlm.Host {
+			fs.lockRingUnhealthySince.Store(0)
+			return true
+		}
+	}
+	now := time.Now().UnixNano()
+	fs.lockRingUnhealthySince.CompareAndSwap(0, now)
+	absent := time.Duration(now - fs.lockRingUnhealthySince.Load())
+	if absent < lockRingUnhealthyGracePeriod {
+		return true
+	}
+	glog.Warningf("filerHealthz: %s absent from lock ring for %v (ring v%d: %v)",
+		dlm.Host, absent.Round(time.Second), dlm.LockRing.Version(), dlm.LockRing.Ring.GetServers())
+	return false
+}
+
 func (fs *FilerServer) filerHealthzHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Server", "SeaweedFS "+version.VERSION)
 	if _, err := fs.filer.Store.FindEntry(context.Background(), filer.TopicsDir); err != nil && err != filer_pb.ErrNotFound {
 		glog.Warningf("filerHealthzHandler FindEntry: %+v", err)
 		w.WriteHeader(http.StatusServiceUnavailable)
-	} else {
-		w.WriteHeader(http.StatusOK)
+		return
 	}
+	if !fs.lockRingHealthy() {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
 }
