@@ -142,3 +142,35 @@ func TestManagedNotificationWebhooksRetryAfterReadError(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+func TestManagedNotificationWebhooksStopOnShutdown(t *testing.T) {
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, nil)
+	store.entries[NotificationWebhooksConfPath] = &Entry{
+		FullPath: util.FullPath(NotificationWebhooksConfPath),
+		Content:  []byte(`{"targets":[{"name":"data","enabled":true,"endpoint":"http://127.0.0.1:1/hook"}]}`),
+	}
+
+	f.LoadNotificationWebhooks()
+	if f.webhooks.queue.Load() == nil {
+		t.Fatal("expected a webhook queue for the stored targets")
+	}
+
+	close(f.deletionQuit)
+	deadline := time.Now().Add(5 * time.Second)
+	for f.webhooks.queue.Load() != nil {
+		if time.Now().After(deadline) {
+			t.Fatal("webhook queue still installed after shutdown")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	store.entries[NotificationWebhooksConfPath] = &Entry{
+		FullPath: util.FullPath(NotificationWebhooksConfPath),
+		Content:  []byte(`{"targets":[{"name":"late","enabled":true,"endpoint":"http://127.0.0.1:1/late"}]}`),
+	}
+	f.reloadNotificationWebhooks()
+	if f.webhooks.queue.Load() != nil {
+		t.Fatal("a reload after shutdown installed a webhook queue")
+	}
+}

@@ -34,6 +34,17 @@ type managedWebhooks struct {
 
 func (f *Filer) LoadNotificationWebhooks() {
 	f.reloadNotificationWebhooks()
+	go func() {
+		<-f.deletionQuit
+		f.webhooks.reloadMu.Lock()
+		defer f.webhooks.reloadMu.Unlock()
+		if f.webhooks.retry != nil {
+			f.webhooks.retry.Stop()
+		}
+		if q := f.webhooks.queue.Swap(nil); q != nil {
+			go q.Close(notificationWebhooksDrain)
+		}
+	}()
 }
 
 func (f *Filer) maybeReloadNotificationWebhooks(event *filer_pb.SubscribeMetadataResponse) {
@@ -55,6 +66,11 @@ func (f *Filer) maybeReloadNotificationWebhooks(event *filer_pb.SubscribeMetadat
 func (f *Filer) reloadNotificationWebhooks() {
 	f.webhooks.reloadMu.Lock()
 	defer f.webhooks.reloadMu.Unlock()
+	select {
+	case <-f.deletionQuit:
+		return
+	default:
+	}
 
 	var content []byte
 	entry, err := f.FindEntry(context.Background(), util.FullPath(NotificationWebhooksConfPath))
@@ -100,13 +116,7 @@ func (f *Filer) retryNotificationWebhooks() {
 	if f.webhooks.retry != nil {
 		f.webhooks.retry.Stop()
 	}
-	f.webhooks.retry = time.AfterFunc(notificationWebhooksRetry, func() {
-		select {
-		case <-f.deletionQuit:
-		default:
-			f.reloadNotificationWebhooks()
-		}
-	})
+	f.webhooks.retry = time.AfterFunc(notificationWebhooksRetry, f.reloadNotificationWebhooks)
 }
 
 // sendToNotificationWebhooks hands a send that raced a reload to the queue
