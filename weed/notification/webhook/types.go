@@ -69,10 +69,8 @@ type config struct {
 	pathPrefixes []string
 }
 
-func newConfigWithDefaults(configuration util.Configuration, prefix string) *config {
-	c := &config{
-		endpoint:          configuration.GetString(prefix + "endpoint"),
-		authBearerToken:   configuration.GetString(prefix + "bearer_token"),
+func defaultConfig() *config {
+	return &config{
 		timeoutSeconds:    10,
 		maxRetries:        3,
 		backoffSeconds:    3,
@@ -80,6 +78,12 @@ func newConfigWithDefaults(configuration util.Configuration, prefix string) *con
 		nWorkers:          5,
 		bufferSize:        10_000,
 	}
+}
+
+func newConfigWithDefaults(configuration util.Configuration, prefix string) *config {
+	c := defaultConfig()
+	c.endpoint = configuration.GetString(prefix + "endpoint")
+	c.authBearerToken = configuration.GetString(prefix + "bearer_token")
 
 	if bufferSize := configuration.GetInt(prefix + "buffer_size"); bufferSize > 0 {
 		c.bufferSize = bufferSize
