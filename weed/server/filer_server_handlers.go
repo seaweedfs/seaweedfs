@@ -422,8 +422,9 @@ func (fs *FilerServer) lockRingHealthy() bool {
 			since = s
 		}
 	}
-	// A rejoin installed after the first read may already have reset the clock.
-	if inRing() {
+	// A rejoin since the first read is either still in the ring or has reset
+	// the clock: the reset runs before the next ring update is installed.
+	if inRing() || fs.lockRingUnhealthySince.Load() != since {
 		fs.lockRingUnhealthySince.CompareAndSwap(now, 0)
 		return true
 	}
