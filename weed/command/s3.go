@@ -624,13 +624,12 @@ func (s3opt *S3Options) newShutdown(stopGrpc func(), s3ApiServer *s3api.S3ApiSer
 		}()
 	}
 	preStop := sync.OnceFunc(preStopWait(s3ApiServer.StartDraining, s3opt.preStopDelay(), cancelled))
-	// weed mini's interrupt hook runs before this one and cancels shutdownCtx,
-	// so the wait has to happen before that cancel.
+	// The wait has to finish before weed mini cancels shutdownCtx, and before
+	// weed server shuts down the filer and volume server, whose hooks may be
+	// registered after this one.
 	beforeMiniClientsShutdown(preStop)
-	grace.OnInterrupt(func() {
-		preStop()
-		shutdown()
-	})
+	grace.OnInterruptFirst(preStop)
+	grace.OnInterrupt(shutdown)
 	return shutdown
 }
 
