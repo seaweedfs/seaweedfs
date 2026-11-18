@@ -340,6 +340,9 @@ func (n *NodeImpl) AvailableSpaceFor(option *VolumeGrowOption) int64 {
 		}
 		return free
 	}
+	if option.hasRefused(n) {
+		return 0
+	}
 	t := n.diskUsages.getDisk(option.DiskType)
 	if t == nil {
 		return 0

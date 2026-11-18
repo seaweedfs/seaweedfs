@@ -73,6 +73,9 @@ type VolumeGrowOption struct {
 	// layoutLoad is set only during one grow request: the writable
 	// volumes of the layout being grown on each data node. See lessLoaded.
 	layoutLoad map[*DataNode]int
+	// refused holds the data nodes that refused an allocation earlier in the
+	// same grow request; they offer no free slots for the rest of it.
+	refused map[*DataNode]bool
 
 	Collection         string                        `json:"collection,omitempty"`
 	ReplicaPlacement   *super_block.ReplicaPlacement `json:"replication,omitempty"`
@@ -156,6 +159,7 @@ func (vg *VolumeGrowth) GrowByCountAndType(grpcDialOption grpc.DialOption, targe
 	// load out of the caller's option.
 	placed := *option
 	placed.layoutLoad = nil
+	placed.refused = nil
 	option = &placed
 	retries := 0
 	for i := uint32(0); i < targetCount; i++ {
@@ -166,8 +170,8 @@ func (vg *VolumeGrowth) GrowByCountAndType(grpcDialOption grpc.DialOption, targe
 			continue
 		}
 		stats.MasterVolumeCreationCounter.WithLabelValues("failure").Inc()
-		// A server that refused the allocation now ranks last, so another
-		// attempt places the volume elsewhere instead of failing on it again.
+		// A server that refused the allocation is left out of the next
+		// attempt, so it places the volume elsewhere if it can.
 		var refused *allocateError
 		if errors.As(e, &refused) && retries < maxAllocateRetries {
 			retries++
@@ -206,6 +210,12 @@ func (vg *VolumeGrowth) findAndGrow(grpcDialOption grpc.DialOption, topo *Topolo
 	}
 
 	servers, reservation, e := vg.findEmptySlotsForOneVolume(topo, option, true) // use reservations
+	if e != nil && len(option.refused) > 0 {
+		// Only servers that refused are left, so try them again.
+		retry := *option
+		retry.refused = nil
+		servers, reservation, e = vg.findEmptySlotsForOneVolume(topo, &retry, true)
+	}
 	if e != nil {
 		return nil, e
 	}
@@ -233,14 +243,13 @@ func (vg *VolumeGrowth) findAndGrow(grpcDialOption grpc.DialOption, topo *Topolo
 			})
 		}
 	} else if refused := (*allocateError)(nil); errors.As(err, &refused) {
-		option.layoutLoad[refused.server] += refusedAllocationLoad
+		if option.refused == nil {
+			option.refused = make(map[*DataNode]bool)
+		}
+		option.refused[refused.server] = true
 	}
 	return
 }
-
-// refusedAllocationLoad is added to the load of a server that refused an
-// allocation, which ranks it after every server that has not.
-const refusedAllocationLoad = 1 << 20
 
 // 1. find the main data node
 // 1.1 collect all data nodes that have 1 slots

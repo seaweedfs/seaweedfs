@@ -120,15 +120,15 @@ func TestVolumeGrowthSkipsDisksWithoutSlots(t *testing.T) {
 	}
 }
 
-// A server that refused an allocation in this grow request ranks after every
-// other server, so the retry places the volume elsewhere.
-func TestVolumeGrowthRanksRefusingServerLast(t *testing.T) {
+// A server that refused an allocation in this grow request offers no slots
+// for the rest of it, so the retry places the volume elsewhere.
+func TestVolumeGrowthSkipsRefusingServer(t *testing.T) {
 	rp, _ := super_block.NewReplicaPlacementFromString("000")
 	option := &VolumeGrowOption{Collection: "spread", ReplicaPlacement: rp, Ttl: needle.EMPTY_TTL, DiskType: types.HardDriveType}
 	topo, racks := newSpreadTopology(1, 4, 100)
 	refusing := racks[0].Children()[0].(*DataNode)
 	placed := option.withLayoutLoad(topo)
-	placed.layoutLoad[refusing] += refusedAllocationLoad
+	placed.refused = map[*DataNode]bool{refusing: true}
 	vg := NewDefaultVolumeGrowth()
 	for i := 0; i < 50; i++ {
 		servers, _, err := vg.findEmptySlotsForOneVolume(topo, placed, false)
@@ -137,6 +137,30 @@ func TestVolumeGrowthRanksRefusingServerLast(t *testing.T) {
 		}
 		if servers[0] == refusing {
 			t.Fatalf("attempt %d picked %s, which refused an allocation", i, refusing.Id())
+		}
+	}
+}
+
+// The refusing server's free slots also leave the rack and data center
+// weights, so a much emptier rack holding only that server is not picked.
+func TestVolumeGrowthSkipsRefusingServerInOtherRack(t *testing.T) {
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+	option := &VolumeGrowOption{Collection: "spread", ReplicaPlacement: rp, Ttl: needle.EMPTY_TTL, DiskType: types.HardDriveType}
+	topo, racks := newSpreadTopology(1, 0, 0)
+	refusing := addMaintenanceTestNode(racks[0], "refusing", 100)
+	otherRack := NewRack("rack2")
+	racks[0].Parent().LinkChildNode(otherRack)
+	healthy := addMaintenanceTestNode(otherRack, "healthy", 1)
+	placed := option.withLayoutLoad(topo)
+	placed.refused = map[*DataNode]bool{refusing: true}
+	vg := NewDefaultVolumeGrowth()
+	for i := 0; i < 50; i++ {
+		servers, _, err := vg.findEmptySlotsForOneVolume(topo, placed, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if servers[0] != healthy {
+			t.Fatalf("attempt %d picked %s, want %s", i, servers[0].Id(), healthy.Id())
 		}
 	}
 }

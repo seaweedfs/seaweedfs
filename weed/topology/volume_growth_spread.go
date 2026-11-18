@@ -61,6 +61,16 @@ func (dn *DataNode) diskCount(diskType types.DiskType) int {
 	return max(count, 1)
 }
 
+// hasRefused reports whether data node n refused an allocation earlier in
+// this grow request.
+func (o *VolumeGrowOption) hasRefused(n *NodeImpl) bool {
+	if len(o.refused) == 0 {
+		return false
+	}
+	dn, ok := n.value.(*DataNode)
+	return ok && o.refused[dn]
+}
+
 // lessLoaded reports whether a holds fewer writable volumes of the layout per
 // disk than b. Only data nodes carry a load, so for racks and data centers it
 // is false and a stable sort keeps their weighted order.
