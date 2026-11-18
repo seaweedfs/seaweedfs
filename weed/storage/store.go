@@ -420,16 +420,21 @@ func (s *Store) addVolume(vid needle.VolumeId, collection string, needleMapKind 
 		return fmt.Errorf("Volume Id %d already exists!", vid)
 	}
 
-	// Find location with lowest local volume count (load balancing)
+	// Find the location with the fewest writable volumes of this collection, so
+	// they do not share one disk's write bandwidth, then the lowest local
+	// volume count (load balancing)
 	var location *DiskLocation
 	var diskId uint32
-	var minVolCount int
+	var minWritable, minVolCount int
+	volumeSizeLimit := s.GetVolumeSizeLimit()
 	for i, loc := range s.Locations {
 		if loc.DiskType == diskType && s.hasFreeDiskLocation(loc) && hasRoomForNewVolume(loc, preallocate) {
+			writable := loc.WritableCollectionVolumesLen(collection, volumeSizeLimit)
 			volCount := loc.LocalVolumesLen()
-			if location == nil || volCount < minVolCount {
+			if location == nil || writable < minWritable || (writable == minWritable && volCount < minVolCount) {
 				location = loc
 				diskId = uint32(i)
+				minWritable = writable
 				minVolCount = volCount
 			}
 		}

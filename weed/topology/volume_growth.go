@@ -2,6 +2,7 @@ package topology
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand/v2"
 	"reflect"
@@ -69,6 +70,13 @@ var (
 )
 
 type VolumeGrowOption struct {
+	// layoutLoad is set only during one grow request: the writable
+	// volumes of the layout being grown on each data node. See lessLoaded.
+	layoutLoad map[*DataNode]int
+	// refused holds the data nodes that refused an allocation earlier in the
+	// same grow request; they offer no free slots for the rest of it.
+	refused map[*DataNode]bool
+
 	Collection         string                        `json:"collection,omitempty"`
 	ReplicaPlacement   *super_block.ReplicaPlacement `json:"replication,omitempty"`
 	Ttl                *needle.TTL                   `json:"ttl,omitempty"`
@@ -145,18 +153,50 @@ func (vg *VolumeGrowth) GrowByCountAndType(grpcDialOption grpc.DialOption, targe
 	vg.accessLock.Lock()
 	defer vg.accessLock.Unlock()
 
+	// findAndGrow scans the layout for its load once per request, after
+	// warmup, and adds each volume it creates, so the scan does not hold the
+	// layout's lock, which assigns need, once per volume. The copy keeps that
+	// load out of the caller's option.
+	placed := *option
+	placed.layoutLoad = nil
+	placed.refused = nil
+	option = &placed
+	retries := 0
 	for i := uint32(0); i < targetCount; i++ {
-		if res, e := vg.findAndGrow(grpcDialOption, topo, option); e == nil {
+		res, e := vg.findAndGrow(grpcDialOption, topo, option)
+		if e == nil {
 			result = append(result, res...)
 			stats.MasterVolumeCreationCounter.WithLabelValues("success").Inc()
-		} else {
-			glog.V(0).Infof("create %d volume, created %d: %v", targetCount, len(result), e)
-			stats.MasterVolumeCreationCounter.WithLabelValues("failure").Inc()
-			return result, e
+			continue
 		}
+		stats.MasterVolumeCreationCounter.WithLabelValues("failure").Inc()
+		// A server that refused the allocation is left out of the next
+		// attempt, so it places the volume elsewhere if it can.
+		var refused *allocateError
+		if errors.As(e, &refused) && retries < maxAllocateRetries {
+			retries++
+			i--
+			continue
+		}
+		glog.V(0).Infof("create %d volume, created %d: %v", targetCount, len(result), e)
+		return result, e
 	}
 	return
 }
+
+// maxAllocateRetries bounds how many refused allocations one grow request
+// retries on other servers.
+const maxAllocateRetries = 3
+
+// allocateError is a volume allocation that one server refused.
+type allocateError struct {
+	server *DataNode
+	err    error
+}
+
+func (e *allocateError) Error() string { return e.err.Error() }
+
+func (e *allocateError) Unwrap() error { return e.err }
 
 func (vg *VolumeGrowth) findAndGrow(grpcDialOption grpc.DialOption, topo *Topology, option *VolumeGrowOption) (result []*master_pb.VolumeLocation, err error) {
 	// Wait for warmup to complete before searching for slots so the
@@ -165,8 +205,17 @@ func (vg *VolumeGrowth) findAndGrow(grpcDialOption grpc.DialOption, topo *Topolo
 		glog.V(0).Infof("wait for volume servers to join back")
 		time.Sleep(topo.WarmupDuration() / WarmupPulseMultiplier / 2)
 	}
+	if option.layoutLoad == nil {
+		option.layoutLoad = option.withLayoutLoad(topo).layoutLoad
+	}
 
 	servers, reservation, e := vg.findEmptySlotsForOneVolume(topo, option, true) // use reservations
+	if e != nil && len(option.refused) > 0 {
+		// Only servers that refused are left, so try them again.
+		retry := *option
+		retry.refused = nil
+		servers, reservation, e = vg.findEmptySlotsForOneVolume(topo, &retry, true)
+	}
 	if e != nil {
 		return nil, e
 	}
@@ -182,6 +231,9 @@ func (vg *VolumeGrowth) findAndGrow(grpcDialOption grpc.DialOption, topo *Topolo
 	}
 	if err = vg.grow(grpcDialOption, topo, vid, option, reservation, servers...); err == nil {
 		for _, server := range servers {
+			if option.layoutLoad != nil {
+				option.layoutLoad[server]++
+			}
 			result = append(result, &master_pb.VolumeLocation{
 				Url:        server.Url(),
 				PublicUrl:  server.PublicUrl,
@@ -190,6 +242,11 @@ func (vg *VolumeGrowth) findAndGrow(grpcDialOption grpc.DialOption, topo *Topolo
 				NewVids:    []uint32{uint32(vid)},
 			})
 		}
+	} else if refused := (*allocateError)(nil); errors.As(err, &refused) {
+		if option.refused == nil {
+			option.refused = make(map[*DataNode]bool)
+		}
+		option.refused[refused.server] = true
 	}
 	return
 }
@@ -201,6 +258,10 @@ func (vg *VolumeGrowth) findAndGrow(grpcDialOption grpc.DialOption, topo *Topolo
 // 2. find rest data nodes
 // If useReservations is true, reserves capacity on each server and returns reservation info
 func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *VolumeGrowOption, useReservations bool) (servers []*DataNode, reservation *VolumeGrowReservation, err error) {
+	if option.layoutLoad == nil {
+		option = option.withLayoutLoad(topo)
+	}
+
 	//find main datacenter and other data centers
 	rp := option.ReplicaPlacement
 
@@ -251,7 +312,7 @@ func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *Volum
 		if availableSpaceFunc(node, option) < int64(rp.DiffRackCount+rp.SameRackCount+1) {
 			return fmt.Errorf("Free:%d < Expected:%d", availableSpaceFunc(node, option), rp.DiffRackCount+rp.SameRackCount+1)
 		}
-		possibleRacksCount := 0
+		possibleRacksCount, possibleMainRacksCount := 0, 0
 		for _, rack := range node.Children() {
 			possibleDataNodesCount := 0
 			for _, n := range rack.Children() {
@@ -259,12 +320,18 @@ func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *Volum
 					possibleDataNodesCount++
 				}
 			}
-			if possibleDataNodesCount >= rp.SameRackCount+1 {
+			if possibleDataNodesCount >= 1 {
 				possibleRacksCount++
 			}
+			if possibleDataNodesCount >= rp.SameRackCount+1 {
+				possibleMainRacksCount++
+			}
+		}
+		if possibleMainRacksCount == 0 {
+			return fmt.Errorf("No rack has %d free data nodes.", rp.SameRackCount+1)
 		}
 		if possibleRacksCount < rp.DiffRackCount+1 {
-			return fmt.Errorf("Only has %d racks with more than %d free data nodes, not enough for %d.", possibleRacksCount, rp.SameRackCount+1, rp.DiffRackCount+1)
+			return fmt.Errorf("Only has %d racks with a free data node, not enough for %d.", possibleRacksCount, rp.DiffRackCount+1)
 		}
 		return nil
 	})
@@ -395,7 +462,7 @@ func (vg *VolumeGrowth) grow(grpcDialOption grpc.DialOption, topo *Topology, vid
 			glog.V(0).Infof("Created Volume %d on %s", vid, server.NodeImpl.String())
 		} else {
 			glog.Warningf("Failed to assign volume %d on %s: %v", vid, server.NodeImpl.String(), err)
-			growErr = fmt.Errorf("failed to assign volume %d on %s: %v", vid, server.NodeImpl.String(), err)
+			growErr = &allocateError{server: server, err: fmt.Errorf("failed to assign volume %d on %s: %v", vid, server.NodeImpl.String(), err)}
 			break
 		}
 	}

@@ -292,12 +292,20 @@ impl Store {
 
     // ---- Volume lifecycle ----
 
-    /// Find the location with fewest volumes (load-balance) of the given disk type.
-    /// Matches Go's FindFreeLocation: accounts for EC shards when computing free slots.
-    fn find_free_location(&self, disk_type: &DiskType, preallocate: u64) -> Option<usize> {
+    /// Find the location with the fewest writable volumes of `collection`, so
+    /// they do not share one disk's write bandwidth, then the most free slots
+    /// (load-balance) of the given disk type. Matches Go's FindFreeLocation:
+    /// accounts for EC shards when computing free slots.
+    fn find_free_location(
+        &self,
+        disk_type: &DiskType,
+        collection: &str,
+        preallocate: u64,
+    ) -> Option<usize> {
         use crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT;
 
-        let mut best: Option<(usize, i64)> = None; // (index, effective_free)
+        let volume_size_limit = self.volume_size_limit.load(Ordering::Relaxed);
+        let mut best: Option<(usize, usize, i64)> = None; // (index, writable, effective_free)
         for (i, loc) in self.locations.iter().enumerate() {
             if &loc.disk_type != disk_type {
                 continue;
@@ -327,11 +335,14 @@ impl Store {
             ) {
                 continue;
             }
-            if best.is_none() || effective_free > best.unwrap().1 {
-                best = Some((i, effective_free));
+            let writable = loc.writable_collection_volumes_len(collection, volume_size_limit);
+            if best.is_none_or(|(_, min_writable, max_free)| {
+                writable < min_writable || (writable == min_writable && effective_free > max_free)
+            }) {
+                best = Some((i, writable, effective_free));
             }
         }
-        best.map(|(i, _)| i)
+        best.map(|(i, _, _)| i)
     }
 
     /// Find a free location matching a predicate.
@@ -601,7 +612,7 @@ impl Store {
             return Err(VolumeError::AlreadyExists);
         }
         let loc_idx = self
-            .find_free_location(&disk_type, spec.preallocate)
+            .find_free_location(&disk_type, spec.collection, spec.preallocate)
             .ok_or_else(|| {
                 VolumeError::Io(io::Error::other(format!(
                     "no free location for disk type {:?}",
@@ -3037,6 +3048,87 @@ mod tests {
         // Both locations should have 1 volume each (load-balanced)
         assert_eq!(store.locations[0].volumes_len(), 1);
         assert_eq!(store.locations[1].volumes_len(), 1);
+    }
+
+    fn add_spread_test_volume(store: &mut Store, vid: u32, collection: &str) {
+        let spec = VolumeSpec {
+            collection,
+            ..VolumeSpec::default()
+        };
+        store
+            .add_volume(VolumeId(vid), DiskType::HardDrive, &spec)
+            .unwrap();
+    }
+
+    fn location_of(store: &Store, vid: u32) -> Option<usize> {
+        store
+            .locations
+            .iter()
+            .position(|loc| loc.find_volume(VolumeId(vid)).is_some())
+    }
+
+    // Mirrors Go's TestAddVolumeSpreadsCollectionOverDisks.
+    #[test]
+    fn test_add_volume_spreads_collection_over_disks() {
+        let tmp1 = TempDir::new().unwrap();
+        let tmp2 = TempDir::new().unwrap();
+        let mut store =
+            make_test_store(&[tmp1.path().to_str().unwrap(), tmp2.path().to_str().unwrap()]);
+
+        add_spread_test_volume(&mut store, 1, "other");
+        add_spread_test_volume(&mut store, 2, "other");
+        add_spread_test_volume(&mut store, 3, "spread");
+        let first = location_of(&store, 3);
+        // Leave the disk with the "spread" volume holding fewer volumes overall.
+        let other_on_first = if first == Some(1) { 2 } else { 1 };
+        store
+            .delete_volume(VolumeId(other_on_first), false, false, false)
+            .unwrap();
+
+        add_spread_test_volume(&mut store, 4, "spread");
+        assert_ne!(location_of(&store, 4), first);
+    }
+
+    // Mirrors Go's TestAddVolumeIgnoresFullVolumesOfCollection.
+    #[test]
+    fn test_add_volume_ignores_full_volumes_of_collection() {
+        let tmp1 = TempDir::new().unwrap();
+        let tmp2 = TempDir::new().unwrap();
+        let mut store =
+            make_test_store(&[tmp1.path().to_str().unwrap(), tmp2.path().to_str().unwrap()]);
+        // Every .dat holds at least its superblock, so all volumes are full.
+        store.volume_size_limit.store(1, Ordering::Relaxed);
+
+        add_spread_test_volume(&mut store, 1, "spread");
+        let full_disk = location_of(&store, 1);
+        add_spread_test_volume(&mut store, 2, "other");
+        add_spread_test_volume(&mut store, 3, "spread");
+        assert_eq!(location_of(&store, 3), full_disk);
+    }
+
+    // Mirrors Go's TestAddVolumeIgnoresReadOnlyVolumesOfCollection.
+    #[test]
+    fn test_add_volume_ignores_read_only_volumes_of_collection() {
+        let tmp1 = TempDir::new().unwrap();
+        let tmp2 = TempDir::new().unwrap();
+        let mut store =
+            make_test_store(&[tmp1.path().to_str().unwrap(), tmp2.path().to_str().unwrap()]);
+
+        add_spread_test_volume(&mut store, 1, "spread");
+        let writable_disk = location_of(&store, 1);
+        add_spread_test_volume(&mut store, 2, "other");
+        add_spread_test_volume(&mut store, 3, "spread");
+        assert_ne!(location_of(&store, 3), writable_disk);
+        store
+            .find_volume(VolumeId(3))
+            .unwrap()
+            .1
+            .set_read_only()
+            .unwrap();
+
+        // The other disk holds more volumes, but its "spread" volume is read-only.
+        add_spread_test_volume(&mut store, 4, "spread");
+        assert_ne!(location_of(&store, 4), writable_disk);
     }
 
     #[test]
