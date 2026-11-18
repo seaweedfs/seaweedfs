@@ -146,7 +146,9 @@ func TestOpensWithinTheIntervalAreReportedOnce(t *testing.T) {
 		t.Fatalf("reports = %v, want %v", got, want)
 	}
 
-	wfs.accessReporter.recent.Add("/dir/a", time.Now().Add(-time.Hour).UnixNano())
+	last, _ := wfs.accessReporter.recent.Get("/dir/a")
+	last.reportedNs -= int64(time.Hour)
+	wfs.accessReporter.recent.Add("/dir/a", last)
 	openForTest(t, wfs, "a", syscall.O_RDONLY)
 	openForTest(t, wfs, "b", syscall.O_RDONLY)
 	if got, want := queuedReports(wfs.accessReporter), []string{"/dir/a"}; !slices.Equal(got, want) {
@@ -187,6 +189,24 @@ func TestOpenAfterAWriteIsReportedWithinTheInterval(t *testing.T) {
 	openForTest(t, wfs, "a", syscall.O_RDONLY)
 	if got, want := queuedReports(wfs.accessReporter), []string{"/dir/a"}; !slices.Equal(got, want) {
 		t.Fatalf("reports with the writer clock ahead = %v, want %v", got, want)
+	}
+}
+
+// TestMtimeAheadDoesNotExtendTheInterval checks that a file dated in the
+// future is reported again once the interval has passed by this mount's
+// clock.
+func TestMtimeAheadDoesNotExtendTheInterval(t *testing.T) {
+	r := newAccessReporter(nil, time.Hour)
+	t.Cleanup(r.stop)
+	start := time.Now().UnixNano()
+	mtime := start + int64(24*time.Hour)
+	for _, step := range []struct {
+		after time.Duration
+		due   bool
+	}{{0, true}, {time.Minute, false}, {time.Hour, true}, {time.Hour + time.Minute, false}} {
+		if got := r.due("/dir/a", start+int64(step.after), mtime); got != step.due {
+			t.Fatalf("due after %v = %v, want %v", step.after, got, step.due)
+		}
 	}
 }
 

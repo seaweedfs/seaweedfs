@@ -45,7 +45,7 @@ type accessReporter struct {
 	touch       func(ctx context.Context, path util.FullPath, atimeNs int64) error
 	interval    time.Duration
 	recentMu    sync.Mutex
-	recent      *simplelru.LRU[util.FullPath, int64] // last report of a path, unix nanoseconds; nil when interval is 0
+	recent      *simplelru.LRU[util.FullPath, lastAccessReport] // nil when interval is 0
 	queue       chan accessReport
 	ctx         context.Context // done once stop is called
 	cancel      context.CancelFunc
@@ -60,6 +60,13 @@ type accessReport struct {
 	atimeNs int64
 }
 
+// lastAccessReport is when a path was last reported, by this mount's clock,
+// and the mtime its entry had then.
+type lastAccessReport struct {
+	reportedNs int64
+	mtimeNs    int64
+}
+
 // newAccessReporter returns a reporter that queues reports; start sends them.
 // An interval of 0 reports every open.
 func newAccessReporter(touch func(ctx context.Context, path util.FullPath, atimeNs int64) error, interval time.Duration) *accessReporter {
@@ -72,7 +79,7 @@ func newAccessReporter(touch func(ctx context.Context, path util.FullPath, atime
 		cancel:   cancel,
 	}
 	if interval > 0 {
-		r.recent, _ = simplelru.NewLRU[util.FullPath, int64](accessReportRecentPaths, nil)
+		r.recent, _ = simplelru.NewLRU[util.FullPath, lastAccessReport](accessReportRecentPaths, nil)
 	}
 	return r
 }
@@ -109,20 +116,20 @@ func (r *accessReporter) report(path util.FullPath, mtimeNs int64) {
 	}
 }
 
-// due reports whether path has no report within the interval or was modified
-// after its last report, and if so records the report. The record is never
-// older than mtimeNs, so a writer clock ahead of this one does not make every
-// open due.
+// due reports whether path has no report within the interval or its mtime
+// changed since its last report, and if so records the report. Comparing
+// mtimes with each other keeps a writer clock that differs from this one from
+// making opens due or holding them back.
 func (r *accessReporter) due(path util.FullPath, now, mtimeNs int64) bool {
 	if r.recent == nil {
 		return true
 	}
 	r.recentMu.Lock()
 	defer r.recentMu.Unlock()
-	if last, ok := r.recent.Get(path); ok && now-last < int64(r.interval) && mtimeNs <= last {
+	if last, ok := r.recent.Get(path); ok && now-last.reportedNs < int64(r.interval) && mtimeNs == last.mtimeNs {
 		return false
 	}
-	r.recent.Add(path, max(now, mtimeNs))
+	r.recent.Add(path, lastAccessReport{reportedNs: now, mtimeNs: mtimeNs})
 	return true
 }
 
