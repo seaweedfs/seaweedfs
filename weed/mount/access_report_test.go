@@ -3,6 +3,7 @@ package mount
 import (
 	"context"
 	"slices"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -353,16 +354,32 @@ func TestRejectedReportKeepsTheFilerChannel(t *testing.T) {
 		}
 	}
 	wfs := newAccessReportTestWFS(t, fake)
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(unblock)
 
 	ctx, cancel := context.WithTimeout(context.Background(), accessReportTimeout)
 	defer cancel()
+	// The call held in flight gets the whole test deadline, not a report
+	// attempt's share, so a slow runner cannot time it out on a healthy channel.
 	first := make(chan error, 1)
-	go func() { first <- wfs.touchAccessTime(ctx, "/dir/a", time.Now().UnixNano()) }()
-	<-inFlight
+	go func() {
+		first <- wfs.callFiler(ctx, false, accessReportTimeout, wfs.option.FilerAddresses[0].ToGrpcAddress(), func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
+			_, err := client.TouchAccessTime(ctx, &filer_pb.TouchAccessTimeRequest{Directory: "/dir", Name: "a", ClientAtimeNs: time.Now().UnixNano()})
+			return err
+		})
+	}()
+	select {
+	case <-inFlight:
+	case err := <-first:
+		t.Fatalf("first call returned %v before reaching the filer", err)
+	case <-ctx.Done():
+		t.Fatal("first call never reached the filer")
+	}
 	if err := wfs.touchAccessTime(ctx, "/dir/transport", time.Now().UnixNano()); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("rejected report: err = %v, want InvalidArgument", err)
 	}
-	close(release)
+	unblock()
 	if err := <-first; status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("call in flight on the same channel: err = %v, want the filer's InvalidArgument", err)
 	}
