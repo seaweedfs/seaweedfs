@@ -4122,7 +4122,10 @@ impl VolumeServer for VolumeGrpcService {
             }
         }
 
-        // Copy .vif file if requested
+        // The sidecars are staged too and committed with the index, so a failed
+        // copy cannot pair a new .vif with the index this disk keeps.
+        let mut staged_sidecars: Vec<(String, crate::server::store_ec::RemoveIncomplete)> =
+            Vec::new();
         if req.copy_vif_file {
             let copy_req = volume_server_pb::CopyFileRequest {
                 volume_id: req.volume_id,
@@ -4146,8 +4149,11 @@ impl VolumeServer for VolumeGrpcService {
                 .into_inner();
 
             let file_path = format!("{}.vif", data_base);
-            track_ec_copy_created(&mut created, &file_path);
-            drain_optional_copy_to_file(&mut stream, &file_path, ".vif").await?;
+            let staging = format!("{}.copying", file_path);
+            let staged = crate::server::store_ec::RemoveIncomplete::new(&staging);
+            if drain_optional_copy_to_file(&mut stream, &staging, ".vif").await? > 0 {
+                staged_sidecars.push((file_path, staged));
+            }
         }
 
         // Copy the generation-0 bitrot checksum sidecar (.ecsum) when requested, so
@@ -4177,8 +4183,19 @@ impl VolumeServer for VolumeGrpcService {
                 .into_inner();
 
             let file_path = format!("{}.ecsum", data_base);
+            let staging = format!("{}.copying", file_path);
+            let staged = crate::server::store_ec::RemoveIncomplete::new(&staging);
+            if drain_optional_copy_to_file(&mut stream, &staging, ".ecsum").await? > 0 {
+                staged_sidecars.push((file_path, staged));
+            }
+        }
+
+        for (file_path, mut staged) in staged_sidecars {
             track_ec_copy_created(&mut created, &file_path);
-            drain_optional_copy_to_file(&mut stream, &file_path, ".ecsum").await?;
+            tokio::fs::rename(format!("{}.copying", file_path), &file_path)
+                .await
+                .map_err(|e| Status::internal(format!("commit {}: {}", file_path, e)))?;
+            staged.committed();
         }
 
         for (shard_id, mut staged) in replaced_shards {
@@ -10176,6 +10193,8 @@ mod tests {
         std::fs::write(format!("{}/59.ecx", src), &src_ecx).unwrap();
         let src_ec00 = vec![1u8; 4096];
         std::fs::write(format!("{}/59.ec00", src), &src_ec00).unwrap();
+        let src_vif = br#"{"version":3}"#.to_vec();
+        std::fs::write(format!("{}/59.vif", src), &src_vif).unwrap();
         let (port, _shutdown) = serve_source(source_service).await;
 
         let (dest, _dest_tmp, dir) = ec_copy_destination().await;
@@ -10191,6 +10210,8 @@ mod tests {
             volume_id: 59,
             shard_ids: vec![0],
             copy_ecx_file: true,
+            copy_vif_file: true,
+            copy_ecsum_file: true,
             source_data_node: format!("127.0.0.1:1.{}", port),
             ..Default::default()
         }))
@@ -10200,6 +10221,8 @@ mod tests {
         std::os::unix::fs::FileExt::read_exact_at(&held, &mut got, 0).unwrap();
         assert_eq!(got, src_ecx, "open .ecx handle must read the source index");
         assert_eq!(std::fs::read(format!("{}/59.ec00", dir)).unwrap(), src_ec00);
+        assert_eq!(std::fs::read(format!("{}/59.vif", dir)).unwrap(), src_vif);
+        assert!(!std::path::Path::new(&format!("{}/59.ecsum", dir)).exists());
         assert!(
             sorted_dir_names(&dir)
                 .iter()
@@ -10207,6 +10230,45 @@ mod tests {
             "{:?}",
             sorted_dir_names(&dir)
         );
+    }
+
+    // A copy failing after the .vif transferred keeps the existing holder's
+    // .vif, which must stay paired with the index the failed copy left in place.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_ec_shards_copy_failed_sidecar_keeps_existing_vif() {
+        let (source_service, source_tmp) = make_local_service_with_volume("", None);
+        let src = source_tmp.path().to_str().unwrap().to_string();
+        std::fs::write(
+            format!("{}/60.ecx", src),
+            vec![9u8; NEEDLE_MAP_ENTRY_SIZE as usize],
+        )
+        .unwrap();
+        std::fs::write(format!("{}/60.ec00", src), vec![1u8; 4096]).unwrap();
+        std::fs::write(format!("{}/60.vif", src), br#"{"version":3}"#).unwrap();
+        std::fs::create_dir(format!("{}/60.ecsum", src)).unwrap();
+        let (port, _shutdown) = serve_source(source_service).await;
+
+        let (dest, _dest_tmp, dir) = ec_copy_destination().await;
+        let ecx = vec![0u8; NEEDLE_MAP_ENTRY_SIZE as usize];
+        std::fs::write(format!("{}/60.ecx", dir), &ecx).unwrap();
+        let vif = br#"{"version":2}"#.to_vec();
+        std::fs::write(format!("{}/60.vif", dir), &vif).unwrap();
+        let before = sorted_dir_names(&dir);
+
+        dest.volume_ec_shards_copy(Request::new(volume_server_pb::VolumeEcShardsCopyRequest {
+            volume_id: 60,
+            shard_ids: vec![0],
+            copy_ecx_file: true,
+            copy_vif_file: true,
+            copy_ecsum_file: true,
+            source_data_node: format!("127.0.0.1:1.{}", port),
+            ..Default::default()
+        }))
+        .await
+        .expect_err("the source .ecsum is unreadable");
+        assert_eq!(sorted_dir_names(&dir), before);
+        assert_eq!(std::fs::read(format!("{}/60.vif", dir)).unwrap(), vif);
+        assert_eq!(std::fs::read(format!("{}/60.ecx", dir)).unwrap(), ecx);
     }
 
     // The transfer itself must notice a caller that has gone, with no progress

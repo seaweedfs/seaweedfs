@@ -199,6 +199,8 @@ func TestVolumeEcShardsCopy_ExistingEcxUpdatedInPlace(t *testing.T) {
 	writeFile(t, srcBase+".ecx", srcEcx)
 	srcEc00 := bytes.Repeat([]byte{1}, 4096)
 	writeFile(t, srcBase+".ec00", srcEc00)
+	srcVif := []byte(`{"version":3}`)
+	writeFile(t, srcBase+".vif", srcVif)
 
 	dstDir := filepath.Join(t.TempDir(), "dst")
 	receiver := newEcCopyReceiver(t, dstDir)
@@ -216,6 +218,8 @@ func TestVolumeEcShardsCopy_ExistingEcxUpdatedInPlace(t *testing.T) {
 		Collection:     collection,
 		ShardIds:       []uint32{0},
 		CopyEcxFile:    true,
+		CopyVifFile:    true,
+		CopyEcsumFile:  true,
 		SourceDataNode: source,
 	}); err != nil {
 		t.Fatalf("VolumeEcShardsCopy: %v", err)
@@ -230,9 +234,62 @@ func TestVolumeEcShardsCopy_ExistingEcxUpdatedInPlace(t *testing.T) {
 	if got, _ := os.ReadFile(dstBase + ".ec00"); !bytes.Equal(got, srcEc00) {
 		t.Errorf("existing .ec00 not replaced by the source's")
 	}
+	if got, _ := os.ReadFile(dstBase + ".vif"); !bytes.Equal(got, srcVif) {
+		t.Errorf("copied .vif = %s, want %s", got, srcVif)
+	}
+	if _, err := os.Stat(dstBase + erasure_coding.BitrotSidecarExt); !os.IsNotExist(err) {
+		t.Errorf("a source without .ecsum left one here: %v", err)
+	}
 	for _, name := range listDir(t, dstDir) {
 		if strings.HasSuffix(name, ".copying") {
 			t.Errorf("staged file %s left behind", name)
 		}
+	}
+}
+
+// A copy failing after the .vif transferred keeps the existing holder's .vif,
+// which must stay paired with the index the failed copy left in place.
+func TestVolumeEcShardsCopy_FailedSidecarKeepsExistingVif(t *testing.T) {
+	const collection = "col"
+	vid := needle.VolumeId(60)
+
+	srcDir := filepath.Join(t.TempDir(), "src")
+	source := startEcCopySource(t, srcDir)
+	srcBase := erasure_coding.EcShardFileName(collection, srcDir, int(vid))
+	writeFile(t, srcBase+".ecx", bytes.Repeat([]byte{9}, types.NeedleMapEntrySize))
+	writeFile(t, srcBase+".ec00", bytes.Repeat([]byte{1}, 4096))
+	writeFile(t, srcBase+".vif", []byte(`{"version":3}`))
+	if err := os.Mkdir(srcBase+erasure_coding.BitrotSidecarExt, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	dstDir := filepath.Join(t.TempDir(), "dst")
+	receiver := newEcCopyReceiver(t, dstDir)
+	dstBase := erasure_coding.EcShardFileName(collection, dstDir, int(vid))
+	ecx := make([]byte, types.NeedleMapEntrySize)
+	writeFile(t, dstBase+".ecx", ecx)
+	vif := []byte(`{"version":2}`)
+	writeFile(t, dstBase+".vif", vif)
+	before := listDir(t, dstDir)
+
+	if _, err := receiver.VolumeEcShardsCopy(context.Background(), &volume_server_pb.VolumeEcShardsCopyRequest{
+		VolumeId:       uint32(vid),
+		Collection:     collection,
+		ShardIds:       []uint32{0},
+		CopyEcxFile:    true,
+		CopyVifFile:    true,
+		CopyEcsumFile:  true,
+		SourceDataNode: source,
+	}); err == nil {
+		t.Fatalf("VolumeEcShardsCopy succeeded although the source .ecsum is unreadable")
+	}
+	if after := listDir(t, dstDir); strings.Join(after, ",") != strings.Join(before, ",") {
+		t.Fatalf("destination files after failed copy = %v, want %v", after, before)
+	}
+	if got, _ := os.ReadFile(dstBase + ".vif"); !bytes.Equal(got, vif) {
+		t.Errorf("pre-existing .vif changed to %s, want %s", got, vif)
+	}
+	if got, _ := os.ReadFile(dstBase + ".ecx"); !bytes.Equal(got, ecx) {
+		t.Errorf("pre-existing .ecx changed")
 	}
 }
