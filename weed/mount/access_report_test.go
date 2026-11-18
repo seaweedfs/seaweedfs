@@ -353,3 +353,27 @@ func TestTouchAccessTimeKeepsANewerFilerSelection(t *testing.T) {
 		t.Fatalf("filerIndex = %d, want 2, the filer selected during the report", i)
 	}
 }
+
+// TestTouchAccessTimeLeavesTimeForTheLastFiler checks that stalled filers
+// share the report's time with the filers after them instead of each taking
+// a full attempt, so a healthy last filer is still reached.
+func TestTouchAccessTimeLeavesTimeForTheLastFiler(t *testing.T) {
+	first := newAccessReportTestFiler(nil)
+	first.stall = true
+	wfs := newAccessReportTestWFS(t, first)
+	second := newAccessReportTestFiler(nil)
+	second.stall = true
+	addFiler(t, wfs, second)
+	healthy := newAccessReportTestFiler(nil)
+	addFiler(t, wfs, healthy)
+
+	reportTime := 3 * accessReportAttemptTimeout / 4
+	ctx, cancel := context.WithTimeout(context.Background(), reportTime)
+	defer cancel()
+	if err := wfs.touchAccessTime(ctx, "/dir/a", time.Now().UnixNano()); err != nil {
+		t.Fatalf("report did not reach the last filer within %v: %v", reportTime, err)
+	}
+	if len(first.touches) != 1 || len(second.touches) != 1 || len(healthy.touches) != 1 {
+		t.Fatalf("reports: %d, %d, %d, want one to each filer", len(first.touches), len(second.touches), len(healthy.touches))
+	}
+}

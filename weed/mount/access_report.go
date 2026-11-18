@@ -169,15 +169,22 @@ func (wfs *WFS) touchAccessTime(ctx context.Context, path util.FullPath, atimeNs
 		Name:          name,
 		ClientAtimeNs: atimeNs,
 	}
-	attemptWait := wfs.filerRPCWait()
-	if attemptWait > accessReportAttemptTimeout {
-		attemptWait = accessReportAttemptTimeout
+	maxWait := wfs.filerRPCWait()
+	if maxWait > accessReportAttemptTimeout {
+		maxWait = accessReportAttemptTimeout
 	}
 	addresses := wfs.option.FilerAddresses
 	start := int(atomic.LoadInt32(&wfs.option.filerIndex))
 	err := fmt.Errorf("no filer to report %s to", path)
 	for x := 0; x < len(addresses); x++ {
 		i := (start + x) % len(addresses)
+		attemptWait := maxWait
+		if deadline, ok := ctx.Deadline(); ok {
+			// leave every filer not yet tried an equal share of the report
+			if share := time.Until(deadline) / time.Duration(len(addresses)-x); share < attemptWait {
+				attemptWait = share
+			}
+		}
 		err = wfs.callFiler(ctx, false, attemptWait, addresses[i].ToGrpcAddress(), func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 			_, err := client.TouchAccessTime(ctx, req)
 			return err
