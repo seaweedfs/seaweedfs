@@ -57,9 +57,10 @@ type OpenBaoKMSProvider struct {
 // is taken for a policy denial.
 const reloginMinTokenAge = time.Minute
 
-// defaultReloginTimeout bounds the shared check and login when the client has no timeout of
-// its own: a request_timeout that is not positive leaves Vault requests without one.
-const defaultReloginTimeout = 30 * time.Second
+// defaultReloginTimeout bounds the logins and lookup-self checks when the client has no
+// timeout of its own: a request_timeout that is not positive leaves Vault requests without
+// one. A variable so that tests can shorten it.
+var defaultReloginTimeout = 30 * time.Second
 
 // reloginFailureBackoff is how long refused requests wait for a new login attempt after one failed.
 const reloginFailureBackoff = 5 * time.Second
@@ -204,13 +205,23 @@ func (p *OpenBaoKMSProvider) login(ctx context.Context) error {
 	if ttl := time.Duration(auth.LeaseDuration) * time.Second; ttl > 0 && ttl/2 < minAge {
 		minAge = ttl / 2
 	}
-	canLookupSelf := p.lookupSelf(ctx, auth.ClientToken) == nil
+	probeCtx, cancel := context.WithTimeout(ctx, p.boundedTimeout())
+	canLookupSelf := p.lookupSelf(probeCtx, auth.ClientToken) == nil
+	cancel()
 	p.tokenMu.Lock()
 	p.client.SetToken(auth.ClientToken)
 	p.canLookupSelf = canLookupSelf
 	p.reloginAfter = start.Add(minAge)
 	p.tokenMu.Unlock()
 	return nil
+}
+
+// boundedTimeout is the client's timeout, or reloginTimeout when the client has none.
+func (p *OpenBaoKMSProvider) boundedTimeout() time.Duration {
+	if timeout := p.client.ClientTimeout(); timeout > 0 {
+		return timeout
+	}
+	return p.reloginTimeout
 }
 
 // lookupSelf calls auth/token/lookup-self with the given token.
@@ -278,11 +289,7 @@ func (p *OpenBaoKMSProvider) relogin(ctx context.Context, refusedToken string) e
 		if backoff {
 			return nil, errLoginBackoff
 		}
-		timeout := p.client.ClientTimeout()
-		if timeout <= 0 {
-			timeout = p.reloginTimeout
-		}
-		sharedCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
+		sharedCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), p.boundedTimeout())
 		defer cancel()
 		if p.tokenStillValid(sharedCtx, refusedToken, canLookupSelf, fresh) {
 			return nil, errPolicyDenied

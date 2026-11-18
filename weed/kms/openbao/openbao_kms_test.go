@@ -57,6 +57,7 @@ type fakeBao struct {
 	failLogins      bool          // refuse every login, like a revoked secret ID
 	lookupDenied    bool          // refuse lookup-self to every token, like a default policy without it
 	lookupMissing   bool          // answer lookup-self with 404, like a proxy that does not pass it on
+	lookupGate      chan struct{} // when set, lookup-self hangs until it is closed or the client leaves
 	loginGate       chan struct{} // when set, a login hangs until it is closed
 	loginStarted    chan struct{} // signalled when a login starts hanging
 	loginAbandoned  chan struct{} // signalled when its client gives up on a hanging login
@@ -68,6 +69,16 @@ type fakeBao struct {
 func (f *fakeBao) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if r.URL.Path == "/v1/auth/token/lookup-self" {
+		f.mu.Lock()
+		gate := f.lookupGate
+		f.mu.Unlock()
+		if gate != nil {
+			select {
+			case <-gate:
+			case <-r.Context().Done():
+				return
+			}
+		}
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		f.lookups++
@@ -413,6 +424,47 @@ func TestHungLoginGivesUpWithoutAClientTimeout(t *testing.T) {
 	}
 	if got := bao.loginCount(); got != 2 {
 		t.Fatalf("logins = %d, want 2", got)
+	}
+}
+
+func TestHungLookupAtStartFallsBackToTheAgeRule(t *testing.T) {
+	saved := defaultReloginTimeout
+	defaultReloginTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { defaultReloginTimeout = saved })
+	t.Setenv("VAULT_AGENT_ADDR", "")
+	gate := make(chan struct{})
+	bao := &fakeBao{lookupGate: gate}
+	server := httptest.NewServer(bao)
+	t.Cleanup(server.Close)
+	t.Cleanup(func() { close(gate) })
+	config := appRoleConfig()
+	config["address"] = server.URL
+	config["request_timeout"] = -1 // leaves Vault requests without a timeout
+
+	// The check after the login gives up on its own, so the provider still starts.
+	type started struct {
+		provider seaweedkms.KMSProvider
+		err      error
+	}
+	result := make(chan started, 1)
+	go func() {
+		provider, err := NewOpenBaoKMSProvider(config)
+		result <- started{provider, err}
+	}()
+	start := waitFor(t, result, "the provider to start")
+	if start.err != nil {
+		t.Fatalf("NewOpenBaoKMSProvider: %v", start.err)
+	}
+	t.Cleanup(func() { start.provider.Close() })
+	p := start.provider.(*OpenBaoKMSProvider)
+	p.tokenMu.Lock()
+	canLookupSelf := p.canLookupSelf
+	p.tokenMu.Unlock()
+	if canLookupSelf {
+		t.Fatal("canLookupSelf = true after lookup-self hung, want the age rule")
+	}
+	if err := generateDataKey(context.Background(), p); err != nil {
+		t.Fatalf("request with the token from the start: %v", err)
 	}
 }
 
