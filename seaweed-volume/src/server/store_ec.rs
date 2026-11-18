@@ -2384,16 +2384,9 @@ pub(crate) async fn recover_missing_ec_indexes(
                     "cannot look up peers to recover missing .ecx: {}",
                     e
                 );
-                continue;
+                Vec::new()
             }
         };
-        if peers.is_empty() {
-            tracing::warn!(
-                volume_id = m.vid.0,
-                "shards present locally but .ecx missing and no peer holds it; leaving shards unloaded"
-            );
-            continue;
-        }
         // Under the volume's lifecycle lock, so an in-flight VolumeEcShardsCopy
         // of it, which may unlink the shards it renamed in, never has them
         // mounted from under it.
@@ -2408,6 +2401,13 @@ pub(crate) async fn recover_missing_ec_indexes(
         // A copy holding the lock may have installed the index meanwhile: skip
         // the fetch, but its shards still need the mount.
         if let Some(current) = &current {
+            if peers.is_empty() {
+                tracing::warn!(
+                    volume_id = m.vid.0,
+                    "shards present locally but .ecx missing and no peer holds it; leaving shards unloaded"
+                );
+                continue;
+            }
             if !fetch_ec_index_from_peers(state, current, &peers).await {
                 continue;
             }
