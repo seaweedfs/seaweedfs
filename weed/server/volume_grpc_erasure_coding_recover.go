@@ -50,21 +50,18 @@ func (vs *VolumeServer) recoverMissingEcIndexes(filterVid uint32) int {
 
 	master := vs.getCurrentMaster()
 	if master == "" {
-		glog.Warningf("cannot recover missing EC index without a master connection")
-		return 0
+		glog.Warningf("cannot look up peers to recover missing EC indexes without a master connection")
 	}
 	self := pb.NewServerAddress(vs.store.Ip, vs.store.Port, vs.store.GrpcPort)
 
 	recovered := 0
 	for _, m := range orphans {
-		peers, err := vs.lookupEcVolumePeers(master, uint32(m.VolumeId), self)
-		if err != nil {
-			glog.Warningf("ec volume %d: cannot look up peers to recover missing .ecx: %v", m.VolumeId, err)
-			continue
-		}
-		if len(peers) == 0 {
-			glog.Warningf("ec volume %d: shards present locally but .ecx missing and no peer holds it; leaving shards unloaded", m.VolumeId)
-			continue
+		var peers []pb.ServerAddress
+		if master != "" {
+			var err error
+			if peers, err = vs.lookupEcVolumePeers(master, uint32(m.VolumeId), self); err != nil {
+				glog.Warningf("ec volume %d: cannot look up peers to recover missing .ecx: %v", m.VolumeId, err)
+			}
 		}
 		if vs.recoverEcIndexLocked(peers, m) {
 			recovered++
@@ -89,6 +86,10 @@ func (vs *VolumeServer) recoverEcIndexLocked(peers []pb.ServerAddress, m storage
 	fetched := false
 	current := vs.store.CollectEcVolumesMissingIndex()
 	if i := slices.IndexFunc(current, func(x storage.EcVolumeMissingIndex) bool { return x.VolumeId == m.VolumeId }); i >= 0 {
+		if len(peers) == 0 {
+			glog.Warningf("ec volume %d: shards present locally but .ecx missing and no peer holds it; leaving shards unloaded", m.VolumeId)
+			return false
+		}
 		if !vs.fetchEcIndexFromPeers(peers, current[i]) {
 			return false
 		}
