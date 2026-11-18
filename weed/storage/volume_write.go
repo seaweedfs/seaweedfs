@@ -163,11 +163,17 @@ func removeVolumeFiles(filename string, keepVif bool) {
 // asyncRequestAppend queues a request for the batch worker, starting it on the
 // first one. It reports false for a destroyed volume, so the caller writes
 // inline rather than wait on a worker that will never answer.
-func (v *Volume) asyncRequestAppend(request *needle.AsyncRequest) bool {
+func (v *Volume) asyncRequestAppend(request *needle.AsyncRequest) (queued bool) {
 	requests := v.startWorker()
 	if requests == nil {
 		return false
 	}
+	// stopWorker may close the channel between startWorker and the send.
+	defer func() {
+		if recover() != nil {
+			queued = false
+		}
+	}()
 	requests <- request
 	return true
 }
@@ -344,6 +350,11 @@ func (v *Volume) appendWriteRequest(n *needle.Needle, checkCookie bool, fsync bo
 	if v.IsReadOnly() {
 		return 0, 0, false, fmt.Errorf("volume %d is %w", v.Id, ErrorReadOnly)
 	}
+	// A write cancelled before it got here must not append: its delete may
+	// already be durable, and an unsynced row could outlive its tombstone.
+	if v.isCancelledWrite(n) {
+		return 0, 0, false, fmt.Errorf("needle %s: %w", needle.NewFileIdFromNeedle(v.Id, n), ErrorDeleted)
+	}
 	if v.isFileUnchanged(n) {
 		size = Size(n.DataSize)
 		isUnchanged = true
@@ -438,7 +449,7 @@ func (v *Volume) publishWriteRequest(n *needle.Needle, offset uint64, fsync bool
 	return
 }
 
-func (v *Volume) syncDelete(n *needle.Needle) (Size, error) {
+func (v *Volume) syncDelete(n *needle.Needle, fsync bool) (Size, error) {
 	// glog.V(4).Infof("delete needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
 	v.dataFileSyncLock.Lock()
 	defer v.dataFileSyncLock.Unlock()
@@ -456,28 +467,66 @@ func (v *Volume) syncDelete(n *needle.Needle) (Size, error) {
 		return 0, nil
 	}
 
-	return v.doDeleteRequest(n)
+	if !fsync {
+		return v.doDeleteRequest(n)
+	}
+
+	end, _, statErr := v.DataBackend.GetStat()
+	if statErr != nil {
+		return 0, fmt.Errorf("cannot read current volume position: %v", statErr)
+	}
+	lastAppendAtNs := v.lastAppendAtNs
+
+	size, offset, tombstoned, err := v.appendDeleteRequest(n)
+	if err != nil {
+		return size, err
+	}
+	// Same order as a durable write: the tombstone is down before the map
+	// drops the needle, and its .idx row before the delete is acknowledged.
+	// An already-deleted needle still syncs: an earlier delete may have skipped it.
+	backend := v.DataBackend
+	v.dataFileAccessLock.Unlock()
+	syncErr := backend.Sync()
+	v.dataFileAccessLock.Lock()
+	if syncErr != nil {
+		v.checkReadWriteError(syncErr)
+		v.lastAppendAtNs = lastAppendAtNs
+		if !v.HasRemoteFile() {
+			if te := v.DataBackend.Truncate(end); te != nil {
+				v.markIoUnavailable(fmt.Errorf("truncate %s back to %d after a failed fsync: %w",
+					v.DataBackend.Name(), end, te))
+			}
+		}
+		return 0, syncErr
+	}
+	if tombstoned {
+		if err = v.publishDeleteRequest(n, offset); err != nil {
+			return size, err
+		}
+	}
+	v.dataFileAccessLock.Unlock()
+	err = v.syncIndex()
+	v.dataFileAccessLock.Lock()
+	return size, err
 }
 
-func (v *Volume) deleteNeedle2(n *needle.Needle) (Size, error) {
+// deleteNeedle2 acknowledges a durable delete only once its tombstone and .idx
+// row are on disk, through the batch worker like a durable write.
+func (v *Volume) deleteNeedle2(n *needle.Needle, fsync bool) (Size, error) {
 	v.CancelPendingWrites(n.Id, n.Cookie)
 
-	// todo: delete info is always appended no fsync, it may need fsync in future
-	fsync := false
-
 	if !fsync {
-		return v.syncDelete(n)
-	} else {
-		asyncRequest := needle.NewAsyncRequest(n, false)
-		asyncRequest.ActualSize = needle.GetActualSize(0, v.Version())
-
-		if !v.asyncRequestAppend(asyncRequest) {
-			return v.syncDelete(n)
-		}
-		_, size, _, err := asyncRequest.WaitComplete()
-
-		return Size(size), err
+		return v.syncDelete(n, false)
 	}
+	asyncRequest := needle.NewAsyncRequest(n, false)
+	asyncRequest.ActualSize = needle.GetActualSize(0, v.Version())
+
+	if !v.asyncRequestAppend(asyncRequest) {
+		return v.syncDelete(n, true)
+	}
+	_, size, _, err := asyncRequest.WaitComplete()
+
+	return Size(size), err
 }
 
 func (v *Volume) doDeleteRequest(n *needle.Needle) (Size, error) {
@@ -517,6 +566,11 @@ func (v *Volume) appendDeleteRequest(n *needle.Needle) (size Size, offset uint64
 
 func (v *Volume) publishDeleteRequest(n *needle.Needle, offset uint64) error {
 	if err := v.nm.Delete(n.Id, ToOffset(int64(offset))); err != nil {
+		// The map already dropped the needle, so a retry, durable or not, would
+		// ack without the missing .idx row. Stop taking writes.
+		v.noWriteLock.Lock()
+		v.noWriteOrDelete = true
+		v.noWriteLock.Unlock()
 		return err
 	}
 	if n.Id == v.lastWriteNeedleKey {
@@ -677,6 +731,7 @@ func (v *Volume) processBatchRun(run []*needle.AsyncRequest) {
 		} else if stagedDeleteOk[i] {
 			if perr := v.publishDeleteRequest(run[i].N, stagedDeleteOffsets[i]); perr != nil {
 				run[i].UpdateResult(0, 0, false, perr)
+				refused = true
 			}
 		}
 	}
@@ -769,7 +824,7 @@ func (v *Volume) startWorker() chan *needle.AsyncRequest {
 				if request == nil {
 					break
 				}
-				if MaxPossibleVolumeSize < v.ContentSize()+uint64(currentBytesToWrite+request.ActualSize) {
+				if request.IsWriteRequest && MaxPossibleVolumeSize < v.ContentSize()+uint64(currentBytesToWrite+request.ActualSize) {
 					request.Complete(0, 0, false,
 						fmt.Errorf("volume size limit %d exceeded! current size is %d", MaxPossibleVolumeSize, v.ContentSize()))
 					break

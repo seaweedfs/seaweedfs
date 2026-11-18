@@ -179,7 +179,7 @@ func TestCommitCompactDeletionTailKeepsWritable(t *testing.T) {
 
 	// The sole change in the commit window is a deletion, so makeupDiff appends
 	// its tombstone last, putting it at the .dat tail.
-	if _, err := v.deleteNeedle2(newEmptyNeedle(3)); err != nil {
+	if _, err := v.deleteNeedle2(newEmptyNeedle(3), false); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
 
@@ -301,7 +301,7 @@ func TestCommitCompactMakeupDiffFailureKeepsVolumeLoaded(t *testing.T) {
 		}
 	}
 	// Moves needle 3 in the compacted copy, so reads through its map would miss.
-	if _, err := v.deleteNeedle2(newEmptyNeedle(1)); err != nil {
+	if _, err := v.deleteNeedle2(newEmptyNeedle(1), false); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
 	delete(written, 1)
@@ -733,7 +733,7 @@ func doSomeWritesDeletes(i int, v *Volume, t *testing.T, infos []*needleInfo) {
 	if rand.Float64() < 0.03 {
 		toBeDeleted := rand.Intn(i) + 1
 		oldNeedle := newEmptyNeedle(uint64(toBeDeleted))
-		v.deleteNeedle2(oldNeedle)
+		v.deleteNeedle2(oldNeedle, false)
 		// println("deleted file", toBeDeleted)
 		infos[toBeDeleted-1] = &needleInfo{
 			size: 0,

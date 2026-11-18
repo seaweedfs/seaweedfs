@@ -28,7 +28,7 @@ func newVolumeWithGarbage(t *testing.T, live, deleted int) *Volume {
 		}
 	}
 	for i := 1; i <= deleted; i++ {
-		if _, err := v.deleteNeedle2(newEmptyNeedle(uint64(i))); err != nil {
+		if _, err := v.deleteNeedle2(newEmptyNeedle(uint64(i)), false); err != nil {
 			t.Fatalf("delete needle %d: %v", i, err)
 		}
 	}

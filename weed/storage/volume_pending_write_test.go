@@ -60,14 +60,16 @@ func TestDeleteOfMissingNeedleCancelsQueuedWrite(t *testing.T) {
 			v.dataFileSyncLock.Unlock()
 
 			require.ErrorIs(t, <-written, ErrorDeleted)
-			requireNeedleDeleted(t, v, n.Id)
+			_, err = v.readNeedle(&needle.Needle{Id: n.Id}, nil, nil)
+			require.ErrorIs(t, err, ErrorNotFound)
 			require.Empty(t, v.pendingWrites.byId)
 
 			v.Close()
 			v, err = NewVolume(dir, dir, "", 1, NeedleMapInMemory, nil, nil, 0, needle.GetCurrentVersion(), 0, 0)
 			require.NoError(t, err)
 			defer v.Close()
-			requireNeedleDeleted(t, v, n.Id)
+			_, err = v.readNeedle(&needle.Needle{Id: n.Id}, nil, nil)
+			require.ErrorIs(t, err, ErrorNotFound)
 		})
 	}
 }
@@ -91,7 +93,7 @@ func TestDeleteCancelsQueuedRewrite(t *testing.T) {
 	}()
 	waitForPendingWrites(t, v, n.Id, 1)
 
-	_, err = v.deleteNeedle2(&needle.Needle{Id: n.Id, Cookie: n.Cookie})
+	_, err = v.deleteNeedle2(&needle.Needle{Id: n.Id, Cookie: n.Cookie}, false)
 	require.NoError(t, err)
 	requireNeedleDeleted(t, v, n.Id)
 	v.asyncWorkerLock.Unlock()
@@ -101,13 +103,45 @@ func TestDeleteCancelsQueuedRewrite(t *testing.T) {
 	require.Empty(t, v.pendingWrites.byId)
 }
 
+// A rewrite cancelled before it takes the volume locks appends nothing, so
+// no unsynced row of it can outlive a durable delete after a crash.
+func TestCancelledRewriteDoesNotAppend(t *testing.T) {
+	v := newWorkerTestVolume(t)
+	n := newRandomNeedle(1)
+	_, _, _, err := v.writeNeedle2(n, true, false, false)
+	require.NoError(t, err)
+	before, _, err := v.DataBackend.GetStat()
+	require.NoError(t, err)
+
+	rewrite := newRandomNeedle(1)
+	rewrite.Cookie = n.Cookie
+	v.dataFileSyncLock.Lock()
+	written := make(chan error, 1)
+	go func() {
+		_, _, _, err := v.writeNeedle2(rewrite, true, false, false)
+		written <- err
+	}()
+	waitForPendingWrites(t, v, n.Id, 1)
+	v.CancelPendingWrites(n.Id, n.Cookie)
+	v.dataFileSyncLock.Unlock()
+
+	require.ErrorIs(t, <-written, ErrorDeleted)
+	after, _, err := v.DataBackend.GetStat()
+	require.NoError(t, err)
+	require.Equal(t, before, after)
+
+	_, err = v.deleteNeedle2(&needle.Needle{Id: n.Id, Cookie: n.Cookie}, true)
+	require.NoError(t, err)
+	requireNeedleDeleted(t, v, n.Id)
+}
+
 // Only writes already in flight are cancelled: writing the needle again after
 // the delete works as before.
 func TestWriteAfterDeleteIsNotCancelled(t *testing.T) {
 	v := newWorkerTestVolume(t)
 	n := newRandomNeedle(1)
 	v.CancelPendingWrites(n.Id, n.Cookie)
-	_, err := v.deleteNeedle2(&needle.Needle{Id: n.Id, Cookie: n.Cookie})
+	_, err := v.deleteNeedle2(&needle.Needle{Id: n.Id, Cookie: n.Cookie}, false)
 	require.NoError(t, err)
 
 	_, _, _, err = v.writeNeedle2(n, true, false, false)
@@ -189,9 +223,14 @@ func TestWriteAfterCancelledWriteStaysLive(t *testing.T) {
 type syncedSizeBackend struct {
 	backend.BackendStorageFile
 	synced atomic.Int64
+	onSync func()
 }
 
 func (b *syncedSizeBackend) Sync() error {
+	if f := b.onSync; f != nil {
+		b.onSync = nil
+		f()
+	}
 	size, _, err := b.GetStat()
 	if err != nil {
 		return err
@@ -210,17 +249,9 @@ func TestTakenBackTombstoneIsSynced(t *testing.T) {
 			v.DataBackend = synced
 
 			n := newRandomNeedle(1)
-			v.dataFileSyncLock.Lock()
-			written := make(chan error, 1)
-			go func() {
-				_, _, _, err := v.writeNeedle2(n, true, true, isStopping)
-				written <- err
-			}()
-			waitForPendingWrites(t, v, n.Id, 1)
-			v.CancelPendingWrites(n.Id, n.Cookie)
-			v.dataFileSyncLock.Unlock()
-
-			require.ErrorIs(t, <-written, ErrorDeleted)
+			synced.onSync = func() { v.CancelPendingWrites(n.Id, n.Cookie) }
+			_, _, _, err := v.writeNeedle2(n, true, true, isStopping)
+			require.ErrorIs(t, err, ErrorDeleted)
 			size, _, err := v.DataBackend.GetStat()
 			require.NoError(t, err)
 			require.Equal(t, size, synced.synced.Load(), "the tombstone was not flushed")

@@ -112,12 +112,12 @@ func TestDeleteVolumeNeedleRacesMarkTieredDeletable(t *testing.T) {
 		}
 	}()
 	for i := 0; i < 100; i++ {
-		_, _ = s.DeleteVolumeNeedle(85, &needle.Needle{Id: types.Uint64ToNeedleId(1000)})
+		_, _ = s.DeleteVolumeNeedle(85, &needle.Needle{Id: types.Uint64ToNeedleId(1000)}, false)
 	}
 	<-done
 
 	// Positive control: once deletable, a delete of a live needle goes through.
-	size, err := s.DeleteVolumeNeedle(85, &needle.Needle{Id: types.Uint64ToNeedleId(1)})
+	size, err := s.DeleteVolumeNeedle(85, &needle.Needle{Id: types.Uint64ToNeedleId(1)}, false)
 	require.NoError(t, err)
 	require.NotZero(t, size)
 }

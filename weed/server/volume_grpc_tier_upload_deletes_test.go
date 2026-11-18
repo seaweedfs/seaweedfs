@@ -50,7 +50,7 @@ func tierUploadForDeletes(t *testing.T, replication string) *storage.Store {
 // then, leaving the needles live in the index.
 func TestTierUploadAcceptsDeletesOnASingleCopyVolume(t *testing.T) {
 	store := tierUploadForDeletes(t, "000")
-	if _, err := store.DeleteVolumeNeedle(1, &needle.Needle{Id: 2}); err != nil {
+	if _, err := store.DeleteVolumeNeedle(1, &needle.Needle{Id: 2}, false); err != nil {
 		t.Fatalf("delete on the freshly tiered volume: %v", err)
 	}
 	if _, err := store.ReadVolumeNeedle(1, &needle.Needle{Id: 2}, nil, nil); err == nil {
@@ -71,7 +71,7 @@ func TestTierUploadAcceptsDeletesOnASingleCopyVolume(t *testing.T) {
 // written before that copy would reach one replica only.
 func TestTierUploadKeepsRefusingDeletesOnAReplicatedVolume(t *testing.T) {
 	store := tierUploadForDeletes(t, "001")
-	if _, err := store.DeleteVolumeNeedle(1, &needle.Needle{Id: 2}); err == nil {
+	if _, err := store.DeleteVolumeNeedle(1, &needle.Needle{Id: 2}, false); err == nil {
 		t.Fatalf("a replicated volume accepted a delete right after the tier upload")
 	}
 }

@@ -1276,7 +1276,7 @@ impl VolumeServer for VolumeGrpcService {
                     Some(vol) if vol.is_no_write_or_delete() => {
                         Err(crate::storage::volume::VolumeError::ReadOnly(file_id.volume_id))
                     }
-                    Some(vol) => vol.delete_needle(&mut n),
+                    Some(vol) => vol.delete_needle(&mut n, false),
                 };
                 match delete_result {
                     Ok(size) => {
@@ -9260,6 +9260,7 @@ mod tests {
                         id: NeedleId(7),
                         ..Needle::default()
                     },
+                    false,
                 )
                 .unwrap();
         }
@@ -9685,7 +9686,9 @@ mod tests {
             cookie: Cookie(1),
             ..Needle::default()
         };
-        store.delete_volume_needle(VolumeId(1), &mut n).unwrap();
+        store
+            .delete_volume_needle(VolumeId(1), &mut n, false)
+            .unwrap();
     }
 
     fn read_surviving_needle(
@@ -14158,7 +14161,9 @@ mod tests {
                 cookie: Cookie(0x3344),
                 ..Needle::default()
             };
-            store.delete_volume_needle(VolumeId(1), &mut n).unwrap();
+            store
+                .delete_volume_needle(VolumeId(1), &mut n, false)
+                .unwrap();
         }
         let err = needle_status(&service, 11).await.unwrap_err();
         assert_eq!(err.code(), tonic::Code::Unknown, "{err}");
@@ -15281,11 +15286,14 @@ mod tests {
         {
             let store = service.state.store.read().unwrap();
             let (_, vol) = store.find_volume(VolumeId(1)).unwrap();
-            vol.delete_needle(&mut Needle {
-                id: NeedleId(11),
-                cookie: Cookie(0x3344),
-                ..Needle::default()
-            })
+            vol.delete_needle(
+                &mut Needle {
+                    id: NeedleId(11),
+                    cookie: Cookie(0x3344),
+                    ..Needle::default()
+                },
+                false,
+            )
             .unwrap();
             vol.sync_to_disk().unwrap();
         }
@@ -15344,11 +15352,14 @@ mod tests {
         {
             let store = service.state.store.read().unwrap();
             let (_, vol) = store.find_volume(VolumeId(1)).unwrap();
-            vol.delete_needle(&mut Needle {
-                id: NeedleId(11),
-                cookie: Cookie(0x3344),
-                ..Needle::default()
-            })
+            vol.delete_needle(
+                &mut Needle {
+                    id: NeedleId(11),
+                    cookie: Cookie(0x3344),
+                    ..Needle::default()
+                },
+                false,
+            )
             .unwrap();
             vol.sync_to_disk().unwrap();
         }

@@ -3680,11 +3680,16 @@ pub async fn delete_handler(
 
     // Read needle first to validate cookie (matching Go behavior)
     let original_cookie = cookie;
-    let is_replicate = serde_urlencoded::from_str::<Vec<(String, String)>>(&del_query)
-        .unwrap_or_default()
-        .into_iter()
-        .find(|(name, _)| name == "type")
-        .is_some_and(|(_, value)| value == "replicate");
+    let del_fields =
+        serde_urlencoded::from_str::<Vec<(String, String)>>(&del_query).unwrap_or_default();
+    let del_field = |key: &str| {
+        del_fields
+            .iter()
+            .find(|(name, _)| name == key)
+            .map(|(_, value)| value.as_str())
+    };
+    let is_replicate = del_field("type") == Some("replicate");
+    let fsync = del_field("fsync") == Some("true");
     {
         let vol = {
             let store = state.store.read().unwrap();
@@ -3786,7 +3791,16 @@ pub async fn delete_handler(
             Ok(vol) if vol.is_no_write_or_delete() => {
                 Err(crate::storage::volume::VolumeError::ReadOnly(vid))
             }
-            Ok(vol) => vol.delete_needle(&mut n),
+            Ok(vol) if fsync => {
+                tokio::task::spawn_blocking(move || vol.delete_needle(&mut n, true))
+                    .await
+                    .unwrap_or_else(|e| {
+                        Err(crate::storage::volume::VolumeError::Io(
+                            std::io::Error::other(e),
+                        ))
+                    })
+            }
+            Ok(vol) => vol.delete_needle(&mut n, false),
         }
     };
 
@@ -8760,7 +8774,7 @@ mod tests {
             .store
             .write()
             .unwrap()
-            .delete_volume_needle(VolumeId(1), &mut filler)
+            .delete_volume_needle(VolumeId(1), &mut filler, false)
             .unwrap();
         let data_offset = || {
             let mut plan = crate::storage::store::Store::needle_read_plan(

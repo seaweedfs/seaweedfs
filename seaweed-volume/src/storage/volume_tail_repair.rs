@@ -505,10 +505,13 @@ mod tests {
                         f.written.insert(*id, n.data.clone());
                     }
                     Op::Del(id) => {
-                        v.delete_needle(&mut Needle {
-                            id: NeedleId(*id),
-                            ..Needle::default()
-                        })
+                        v.delete_needle(
+                            &mut Needle {
+                                id: NeedleId(*id),
+                                ..Needle::default()
+                            },
+                            false,
+                        )
                         .unwrap();
                     }
                     Op::Empty(id) => {

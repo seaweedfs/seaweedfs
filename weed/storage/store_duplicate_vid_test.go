@@ -73,7 +73,7 @@ func TestDeleteVolumeGuardChecksAllCopiesBeforeDeleting(t *testing.T) {
 	require.NoError(t, err)
 	_, _, _, err = copy1.writeNeedle2(n, false, false, false)
 	require.NoError(t, err)
-	_, err = copy0.deleteNeedle2(n)
+	_, err = copy0.deleteNeedle2(n, false)
 	require.NoError(t, err)
 
 	err = store.DeleteVolume(vid, false, true, false)

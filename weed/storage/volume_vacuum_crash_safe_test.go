@@ -48,7 +48,7 @@ func TestReconcileRollForwardMarkerOnly(t *testing.T) {
 	}
 	// Delete two so the compacted generation is strictly smaller than the source.
 	for _, id := range []uint64{2, 5} {
-		if _, err := v.deleteNeedle2(newEmptyNeedle(id)); err != nil {
+		if _, err := v.deleteNeedle2(newEmptyNeedle(id), false); err != nil {
 			t.Fatalf("delete %d: %v", id, err)
 		}
 	}
@@ -122,7 +122,7 @@ func TestReconcileRollForwardPartialRename(t *testing.T) {
 		}
 	}
 	for _, id := range []uint64{2, 5} {
-		if _, err := v.deleteNeedle2(newEmptyNeedle(id)); err != nil {
+		if _, err := v.deleteNeedle2(newEmptyNeedle(id), false); err != nil {
 			t.Fatalf("delete %d: %v", id, err)
 		}
 	}

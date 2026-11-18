@@ -2,6 +2,8 @@ package storage
 
 import (
 	"errors"
+	"os"
+	"sync/atomic"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
@@ -607,4 +609,136 @@ func TestStoreWriteVolumeNeedleStaysDurableWhileStopping(t *testing.T) {
 	require.NoError(t, err, "the drain must keep accepting durable writes")
 	require.False(t, isUnchanged)
 	require.Equal(t, 1, counting.syncCount, "the accepted write must actually be on disk")
+}
+
+func TestDurableDeleteSyncsTombstone(t *testing.T) {
+	v, counting := newCountingVolume(t)
+
+	for id := uint64(1); id <= 2; id++ {
+		_, _, _, err := v.writeNeedle2(fixedNeedle(id, "payload"), true, false, false)
+		require.NoError(t, err)
+	}
+	require.Equal(t, 0, counting.syncCount)
+
+	_, err := v.deleteNeedle2(fixedNeedle(1, ""), false)
+	require.NoError(t, err)
+	require.Equal(t, 0, counting.syncCount, "a delete that did not ask for fsync must not pay for one")
+
+	size, err := v.deleteNeedle2(fixedNeedle(2, ""), true)
+	require.NoError(t, err)
+	require.NotZero(t, size)
+	require.Equal(t, 1, counting.syncCount, "a durable delete must flush its tombstone before the ack")
+
+	reloaded := reopenCountingVolume(t, v)
+	nv, found := reloaded.nm.Get(types.Uint64ToNeedleId(2))
+	require.True(t, !found || nv.Size.IsDeleted(), "the durable delete must survive a reload")
+}
+
+func TestDurableDeleteTakesBackTombstoneWhenFsyncFails(t *testing.T) {
+	v, counting := newCountingVolume(t)
+
+	_, _, _, err := v.writeNeedle2(fixedNeedle(1, "payload"), true, true, true)
+	require.NoError(t, err)
+	before, _, err := v.DataBackend.GetStat()
+	require.NoError(t, err)
+	syncs := counting.syncCount
+
+	counting.syncErr = errors.New("disk went away")
+	_, err = v.syncDelete(fixedNeedle(1, ""), true)
+	require.Error(t, err, "a delete whose fsync failed must not be acked")
+	require.Equal(t, syncs+1, counting.syncCount)
+
+	after, _, err := v.DataBackend.GetStat()
+	require.NoError(t, err)
+	require.Equal(t, before, after, "the unflushed tombstone should be taken back off the .dat")
+	nv, found := v.nm.Get(types.Uint64ToNeedleId(1))
+	require.True(t, found)
+	require.False(t, nv.Size.IsDeleted(), "the needle must stay live when its delete was not acked")
+}
+
+func TestDurableDeleteOnFullVolume(t *testing.T) {
+	v, counting := newCountingVolume(t)
+
+	_, _, _, err := v.writeNeedle2(fixedNeedle(1, "payload"), true, false, false)
+	require.NoError(t, err)
+	atomic.StoreUint64(&v.nm.(*NeedleMap).FileByteCounter, types.MaxPossibleVolumeSize)
+
+	_, err = v.deleteNeedle2(fixedNeedle(1, ""), true)
+	require.NoError(t, err, "a full volume must still take a durable delete")
+	require.Equal(t, 1, counting.syncCount)
+	nv, found := v.nm.Get(types.Uint64ToNeedleId(1))
+	require.True(t, !found || nv.Size.IsDeleted())
+}
+
+func TestDurableDeleteSyncsAfterUnsyncedDelete(t *testing.T) {
+	v, counting := newCountingVolume(t)
+
+	_, _, _, err := v.writeNeedle2(fixedNeedle(1, "payload"), true, false, false)
+	require.NoError(t, err)
+	_, err = v.syncDelete(fixedNeedle(1, ""), false)
+	require.NoError(t, err)
+	require.Equal(t, 0, counting.syncCount)
+
+	size, err := v.syncDelete(fixedNeedle(1, ""), true)
+	require.NoError(t, err)
+	require.Zero(t, size)
+	require.Equal(t, 1, counting.syncCount, "an earlier unsynced delete must still be flushed before a durable ack")
+}
+
+func TestAsyncRequestAppendRefusesAfterChannelClosed(t *testing.T) {
+	v, _ := newCountingVolume(t)
+
+	closed := make(chan *needle.AsyncRequest)
+	close(closed)
+	v.asyncWorkerLock.Lock()
+	v.asyncRequestsChan = closed
+	v.asyncWorkerLock.Unlock()
+
+	require.False(t, v.asyncRequestAppend(needle.NewAsyncRequest(fixedNeedle(1, "payload"), true)),
+		"a request racing stopWorker must be refused, not panic")
+}
+
+// A durable delete whose .idx row fails has already dropped the needle from
+// the map, so a retry would find nothing to delete and ack. The volume stops
+// taking writes instead: nothing is appended past the tombstone, so a reload
+// re-indexes it from the .dat tail rather than resurrect the needle.
+func TestDurableDeleteIndexFailureStopsWrites(t *testing.T) {
+	durableBatch := func(v *Volume, n *needle.Needle) (types.Size, error) { return v.deleteNeedle2(n, true) }
+	durableInline := func(v *Volume, n *needle.Needle) (types.Size, error) { return v.syncDelete(n, true) }
+	for _, tc := range []struct {
+		name   string
+		first  func(*Volume, *needle.Needle) (types.Size, error)
+		delete func(*Volume, *needle.Needle) (types.Size, error)
+	}{
+		{"batch", durableBatch, durableBatch},
+		{"inline", durableInline, durableInline},
+		{"non-durable then durable retry", func(v *Volume, n *needle.Needle) (types.Size, error) { return v.deleteNeedle2(n, false) }, durableBatch},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v, _ := newCountingVolume(t)
+			_, _, _, err := v.writeNeedle2(fixedNeedle(1, "payload"), true, true, true)
+			require.NoError(t, err)
+
+			nm := v.nm.(*NeedleMap)
+			indexFile := nm.indexFile
+			readOnlyIndex, err := os.Open(indexFile.Name())
+			require.NoError(t, err)
+			defer readOnlyIndex.Close()
+			nm.indexFile = readOnlyIndex
+			_, err = tc.first(v, fixedNeedle(1, ""))
+			nm.indexFile = indexFile
+			require.Error(t, err)
+
+			_, _, _, err = v.writeNeedle2(fixedNeedle(2, "later"), true, true, true)
+			require.Error(t, err, "nothing may be appended past the unindexed tombstone")
+			_, err = tc.delete(v, fixedNeedle(1, ""))
+			require.Error(t, err, "a retry must not ack a delete whose .idx row never landed")
+
+			reloaded := reopenCountingVolume(t, v)
+			readBack := fixedNeedle(1, "")
+			_, err = reloaded.readNeedle(readBack, nil, nil)
+			require.False(t, err == nil && string(readBack.Data) == "payload",
+				"the deleted needle must not come back on reload")
+		})
+	}
 }

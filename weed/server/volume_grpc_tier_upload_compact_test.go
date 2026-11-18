@@ -57,7 +57,7 @@ func TestTierUploadRefusesADatReplacedByACompactionCommit(t *testing.T) {
 		written[i] = n.Data
 	}
 	for i := uint64(1); i <= 5; i++ {
-		if _, err := store.DeleteVolumeNeedle(1, &needle.Needle{Id: types.Uint64ToNeedleId(i)}); err != nil {
+		if _, err := store.DeleteVolumeNeedle(1, &needle.Needle{Id: types.Uint64ToNeedleId(i)}, false); err != nil {
 			t.Fatalf("delete %d: %v", i, err)
 		}
 	}
