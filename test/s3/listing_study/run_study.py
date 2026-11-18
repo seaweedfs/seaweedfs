@@ -447,10 +447,14 @@ def deleted_prefixes(s3: S3, bucket: str) -> None:
     p.delimiter("gone/", "/", 1000)
 
 
-def run_probes(s3: S3, buckets: dict[str, dict[str, int]], churn_bucket: str) -> list[tuple[str, str | None]]:
+def run_probes(
+    s3: S3, buckets: dict[str, dict[str, int]], churn_bucket: str, only: re.Pattern | None
+) -> list[tuple[str, str | None]]:
     results: list[tuple[str, str | None]] = []
 
     def check(name: str, fn, *a) -> None:
+        if only and not only.search(name):
+            return
         try:
             fn(*a)
             results.append((name, None))
@@ -855,9 +859,7 @@ def main() -> int:
 
     only = re.compile(args.only) if args.only else None
     results: list[tuple[str, str, str]] = []
-    for name, err in run_probes(s3, buckets, f"{args.bucket_prefix}-churn"):
-        if only and not only.search(name):
-            continue
+    for name, err in run_probes(s3, buckets, f"{args.bucket_prefix}-churn", only):
         results.append((name, "fail" if err else "pass", err or ""))
 
     runner = ToolRunner(args, study, work, args.endpoint)
