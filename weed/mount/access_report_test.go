@@ -24,6 +24,7 @@ type accessReportTestFiler struct {
 	*lookupCacheTestFiler
 	err     error
 	stall   bool
+	onTouch func()
 	touches chan string
 }
 
@@ -44,6 +45,9 @@ func newAccessReportTestFiler(err error) *accessReportTestFiler {
 
 func (s *accessReportTestFiler) TouchAccessTime(ctx context.Context, req *filer_pb.TouchAccessTimeRequest) (*filer_pb.TouchAccessTimeResponse, error) {
 	s.touches <- string(util.JoinPath(req.Directory, req.Name))
+	if s.onTouch != nil {
+		s.onTouch()
+	}
 	if s.stall {
 		<-ctx.Done()
 		return nil, ctx.Err()
@@ -323,5 +327,29 @@ func TestTouchAccessTimeFailsOverPastAStalledFiler(t *testing.T) {
 	}
 	if i := atomic.LoadInt32(&wfs.option.filerIndex); i != 1 {
 		t.Fatalf("filerIndex = %d, want 1, the filer that answered", i)
+	}
+}
+
+// TestTouchAccessTimeKeepsANewerFilerSelection checks that a report that
+// failed over does not move the mount back from a filer another call
+// selected while the report was in flight.
+func TestTouchAccessTimeKeepsANewerFilerSelection(t *testing.T) {
+	down := newAccessReportTestFiler(status.Error(codes.Unavailable, "down"))
+	wfs := newAccessReportTestWFS(t, down)
+	answering := newAccessReportTestFiler(nil)
+	addFiler(t, wfs, answering)
+	addFiler(t, wfs, newAccessReportTestFiler(nil))
+	answering.onTouch = func() { atomic.StoreInt32(&wfs.option.filerIndex, 2) }
+
+	ctx, cancel := context.WithTimeout(context.Background(), accessReportTimeout)
+	defer cancel()
+	if err := wfs.touchAccessTime(ctx, "/dir/a", time.Now().UnixNano()); err != nil {
+		t.Fatalf("report: %v", err)
+	}
+	if len(down.touches) != 1 || len(answering.touches) != 1 {
+		t.Fatalf("reports: unavailable filer %d, answering filer %d, want 1 and 1", len(down.touches), len(answering.touches))
+	}
+	if i := atomic.LoadInt32(&wfs.option.filerIndex); i != 2 {
+		t.Fatalf("filerIndex = %d, want 2, the filer selected during the report", i)
 	}
 }
