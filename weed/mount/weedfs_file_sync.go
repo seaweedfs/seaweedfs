@@ -333,9 +333,12 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 		// without the handle lock, and writes that landed after doFlush drained
 		// the pages may still be uploading: drain them while the lock holds
 		// writes off and take the chunks again, so that nothing attaches
-		// during the merge or after its chunks replace the list.
+		// during the merge or after its chunks replace the list. FlushData
+		// returns once every upload has ended, failed ones too; a failure
+		// stays with the pages, and the next flush reports it as a write
+		// error, as it would without a merge.
 		if err := fh.dirtyPages.FlushData(); err != nil {
-			return fmt.Errorf("flush data of %s before merging its chunks: %w", fileFullPath, err)
+			glog.V(1).Infof("%s: upload before merging chunks: %v", fileFullPath, err)
 		}
 		snapshot = entry.GetChunks()
 		manifestChunks, nonManifestChunks = filer.SeparateManifestChunks(snapshot)
