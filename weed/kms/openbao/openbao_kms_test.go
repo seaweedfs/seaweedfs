@@ -55,12 +55,14 @@ type fakeBao struct {
 	valid           string
 	denyAll         bool          // refuse every transit request, like a policy without the key
 	failLogins      bool          // refuse every login, like a revoked secret ID
-	noDefaultPolicy bool          // issue tokens without the default policy, so lookup-self is refused
+	lookupDenied    bool          // refuse lookup-self to every token, like a default policy without it
+	lookupMissing   bool          // answer lookup-self with 404, like a proxy that does not pass it on
 	loginGate       chan struct{} // when set, a login hangs until it is closed
 	loginStarted    chan struct{} // signalled when a login starts hanging
 	loginAbandoned  chan struct{} // signalled when its client gives up on a hanging login
 	holdRefusals    int           // when set, refusals are answered only once this many have arrived
 	refusalsHeld    chan struct{} // closed when they have
+	releaseRefusals func()        // closes refusalsHeld once
 }
 
 func (f *fakeBao) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -70,7 +72,12 @@ func (f *fakeBao) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		defer f.mu.Unlock()
 		f.lookups++
 		token := r.Header.Get("X-Vault-Token")
-		if f.noDefaultPolicy || token == "" || token != f.valid {
+		if f.lookupMissing {
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(`{"errors":[]}`))
+			return
+		}
+		if f.lookupDenied || token == "" || token != f.valid {
 			w.WriteHeader(http.StatusForbidden)
 			w.Write([]byte(`{"errors":["permission denied"]}`))
 			return
@@ -108,21 +115,18 @@ func (f *fakeBao) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		f.logins++
 		f.valid = fmt.Sprintf("token-%d", f.logins)
-		policies := []string{"default", "kms"}
-		if f.noDefaultPolicy {
-			policies = []string{"kms"}
-		}
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"auth": map[string]interface{}{"client_token": f.valid, "lease_duration": 3600, "policies": policies},
+			"auth": map[string]interface{}{"client_token": f.valid, "lease_duration": 3600},
 		})
 		return
 	}
+	io.Copy(io.Discard, r.Body) // only a fully read request notices its client leaving
 	f.mu.Lock()
 	token := r.Header.Get("X-Vault-Token")
 	if f.denyAll || token == "" || token != f.valid {
 		f.refused++
 		if f.refusalsHeld != nil && f.refused == f.holdRefusals {
-			close(f.refusalsHeld)
+			f.releaseRefusals()
 		}
 		held := f.refusalsHeld
 		f.mu.Unlock()
@@ -170,12 +174,21 @@ func (f *fakeBao) hangLogins(t *testing.T) (release func()) {
 	return release
 }
 
-// holdRefusalsUntil answers no refusal before n requests have been refused, so they overlap.
-func (f *fakeBao) holdRefusalsUntil(n int) {
+// holdRefusalsUntil answers no refusal before n requests have been refused, so they overlap;
+// the end of the test answers them too, so the test server can shut down.
+func (f *fakeBao) holdRefusalsUntil(t *testing.T, n int) {
+	held := make(chan struct{})
+	var once sync.Once
 	f.mu.Lock()
 	f.holdRefusals = n
-	f.refusalsHeld = make(chan struct{})
+	f.refusalsHeld = held
+	f.releaseRefusals = func() { once.Do(func() { close(held) }) }
 	f.mu.Unlock()
+	t.Cleanup(func() {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		f.releaseRefusals()
+	})
 }
 
 func (f *fakeBao) counts() (logins, failedLogins, refused int) {
@@ -232,14 +245,27 @@ func waitFor[T any](t *testing.T, ch <-chan T, what string) T {
 	}
 }
 
-// wantDeadline checks that a request ended by its 100ms deadline, not sooner and not much later.
-func wantDeadline(t *testing.T, err error, elapsed time.Duration) {
+// generateWithin runs a request and fails the test if it has not returned within a few seconds.
+func generateWithin(t *testing.T, ctx context.Context, provider seaweedkms.KMSProvider) error {
 	t.Helper()
+	result := make(chan error, 1)
+	go func() { result <- generateDataKey(ctx, provider) }()
+	return waitFor(t, result, "the request")
+}
+
+// wantDeadline checks that a request just ended by its deadline, not sooner and not much later.
+func wantDeadline(t *testing.T, ctx context.Context, err error) {
+	t.Helper()
+	returned := time.Now()
+	if ctx.Err() == nil {
+		t.Fatalf("request returned before its deadline: %v", err)
+	}
 	if err == nil || !strings.Contains(err.Error(), context.DeadlineExceeded.Error()) {
 		t.Fatalf("err = %v, want the request's deadline", err)
 	}
-	if elapsed < 90*time.Millisecond || elapsed > time.Second {
-		t.Fatalf("request returned after %v, want about its 100ms deadline", elapsed)
+	deadline, _ := ctx.Deadline()
+	if returned.After(deadline.Add(time.Second)) {
+		t.Fatalf("request returned %v after its deadline, want soon after it", returned.Sub(deadline))
 	}
 }
 
@@ -290,7 +316,7 @@ func TestConcurrentRefusalsLogInOnce(t *testing.T) {
 	bao := &fakeBao{}
 	provider := newTestProvider(t, bao, appRoleConfig())
 	bao.expire()
-	bao.holdRefusalsUntil(20)
+	bao.holdRefusalsUntil(t, 20)
 
 	for _, err := range generateConcurrently(provider, 20) {
 		if err != nil {
@@ -310,7 +336,7 @@ func TestConcurrentRefusalsShareAFailedLogin(t *testing.T) {
 	bao.failLogins = true
 	bao.mu.Unlock()
 	bao.expire()
-	bao.holdRefusalsUntil(20)
+	bao.holdRefusalsUntil(t, 20)
 
 	var waiting atomic.Int32
 	provider.reloginWaiting = func() { waiting.Add(1) }
@@ -414,34 +440,56 @@ func TestPolicyDenialDoesNotLogIn(t *testing.T) {
 		}
 		wantAccessDenied(t, generateDataKey(context.Background(), provider))
 	}
-	if logins, lookups := bao.loginCount(), bao.lookupCount(); logins != 1 || lookups != 10 {
-		t.Fatalf("logins = %d, lookups = %d, want 1 and 10", logins, lookups)
+	if logins, lookups := bao.loginCount(), bao.lookupCount(); logins != 1 || lookups != 11 {
+		t.Fatalf("logins = %d, lookups = %d, want 1 and 11 (the check after the login + 10)", logins, lookups)
 	}
 }
 
-func TestWithoutDefaultPolicyRefusalOfAFreshTokenIsAPolicyDenial(t *testing.T) {
-	bao := &fakeBao{denyAll: true, noDefaultPolicy: true}
+func TestWithoutLookupSelfRefusalOfAFreshTokenIsAPolicyDenial(t *testing.T) {
+	for name, bao := range map[string]*fakeBao{
+		"refused":   {denyAll: true, lookupDenied: true},
+		"not found": {denyAll: true, lookupMissing: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			provider := newTestProvider(t, bao, appRoleConfig())
+
+			// A token just issued has not expired, so a refusal is not a reason to log in.
+			for i := 0; i < 5; i++ {
+				wantAccessDenied(t, generateDataKey(context.Background(), provider))
+			}
+			if got := bao.loginCount(); got != 1 {
+				t.Fatalf("logins = %d, want 1", got)
+			}
+
+			// An older token may have expired: one new login and a retry with the new token,
+			// which is not replaced again.
+			bao.clock.advance(time.Hour)
+			for i := 0; i < 5; i++ {
+				wantAccessDenied(t, generateDataKey(context.Background(), provider))
+			}
+			if logins, _, refused := bao.counts(); logins != 2 || refused != 11 {
+				t.Fatalf("logins = %d, refused requests = %d, want 2 and 11 (5 + the retry + 5)", logins, refused)
+			}
+			if got := bao.lookupCount(); got != 2 {
+				t.Fatalf("lookups = %d, want 2: only the checks after the logins", got)
+			}
+		})
+	}
+}
+
+func TestLookupErrorFallsBackToTheAgeRule(t *testing.T) {
+	bao := &fakeBao{}
 	provider := newTestProvider(t, bao, appRoleConfig())
+	bao.mu.Lock()
+	bao.lookupMissing = true // lookup-self worked at login, then a proxy stops passing it on
+	bao.mu.Unlock()
+	bao.expire()
 
-	// A token just issued has not expired, so a refusal is not a reason to log in.
-	for i := 0; i < 5; i++ {
-		wantAccessDenied(t, generateDataKey(context.Background(), provider))
+	if err := generateDataKey(context.Background(), provider); err != nil {
+		t.Fatalf("request after the token expired: %v", err)
 	}
-	if got := bao.loginCount(); got != 1 {
-		t.Fatalf("logins = %d, want 1", got)
-	}
-
-	// An older token may have expired: one new login and a retry with the new token, which
-	// is not replaced again.
-	bao.clock.advance(time.Hour)
-	for i := 0; i < 5; i++ {
-		wantAccessDenied(t, generateDataKey(context.Background(), provider))
-	}
-	if logins, _, refused := bao.counts(); logins != 2 || refused != 11 {
-		t.Fatalf("logins = %d, refused requests = %d, want 2 and 11 (5 + the retry + 5)", logins, refused)
-	}
-	if got := bao.lookupCount(); got != 0 {
-		t.Fatalf("lookups = %d, want 0: the token may not look itself up", got)
+	if got := bao.loginCount(); got != 2 {
+		t.Fatalf("logins = %d, want 2", got)
 	}
 }
 
@@ -463,9 +511,7 @@ func TestRequestStopsWaitingForItsLoginAtItsDeadline(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
-	start := time.Now()
-	err := generateDataKey(ctx, provider)
-	wantDeadline(t, err, time.Since(start))
+	wantDeadline(t, ctx, generateWithin(t, ctx, provider))
 	waitFor(t, bao.loginStarted, "the login")
 
 	// The login it started is not cancelled with it: once OpenBao answers, requests work.
@@ -490,9 +536,7 @@ func TestRequestStopsWaitingForAnotherLoginAtItsDeadline(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
-	start := time.Now()
-	err := generateDataKey(ctx, provider)
-	wantDeadline(t, err, time.Since(start))
+	wantDeadline(t, ctx, generateWithin(t, ctx, provider))
 
 	release()
 	if err := waitFor(t, first, "the request that started the login"); err != nil {
