@@ -187,14 +187,7 @@ func (ma *MetaAggregator) notePeerUnreachable(peer pb.ServerAddress, stopChan <-
 		ma.peerUnreachableSinceNs[peer] = nowNs
 		since = nowNs
 	}
-	ma.peerWatermarksLock.Lock()
-	_, alreadyMarked := ma.peerRemovedAtNs[peer]
-	ma.peerWatermarksLock.Unlock()
-	if nowNs-since < int64(peerUnreachableRemovalAfter) {
-		return false
-	}
-	ma.markPeerWatermarkRemoved(peer)
-	return !alreadyMarked
+	return nowNs-since >= int64(peerUnreachableRemovalAfter) && ma.markPeerWatermarkRemoved(peer)
 }
 
 // notePeerReachable tracks peer again after a successful connection, from a
@@ -225,16 +218,19 @@ func (ma *MetaAggregator) initPeerWatermark(peer pb.ServerAddress) {
 	ma.noteLowWatermarksLocked()
 }
 
-func (ma *MetaAggregator) markPeerWatermarkRemoved(peer pb.ServerAddress) {
+// markPeerWatermarkRemoved reports whether it set a new mark.
+func (ma *MetaAggregator) markPeerWatermarkRemoved(peer pb.ServerAddress) bool {
 	ma.peerWatermarksLock.Lock()
 	defer ma.peerWatermarksLock.Unlock()
 	if _, found := ma.peerWatermarks[peer]; !found {
-		return
+		return false
 	}
 	// First removal time wins: duplicate removals must not refresh the grace.
-	if _, marked := ma.peerRemovedAtNs[peer]; !marked {
-		ma.peerRemovedAtNs[peer] = time.Now().UnixNano()
+	if _, marked := ma.peerRemovedAtNs[peer]; marked {
+		return false
 	}
+	ma.peerRemovedAtNs[peer] = time.Now().UnixNano()
+	return true
 }
 
 // dropExpiredRemovedPeersLocked drops the watermarks of peers whose removal

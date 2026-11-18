@@ -321,3 +321,25 @@ func TestMasterRemovalForgetsUnreachableClock(t *testing.T) {
 		t.Fatal("a re-added peer inherited the previous outage clock")
 	}
 }
+
+// A peer still unreachable once its removal mark has been forgotten is no
+// longer tracked, so it is not reported as newly marked on every retry.
+func TestLongUnreachablePeerIsReportedOnce(t *testing.T) {
+	ma := newTestAggregator()
+	b := pb.ServerAddress("filer-b:8888")
+	ma.initPeerWatermark(b)
+	stopB := make(chan struct{})
+	ma.peerChans[b] = stopB
+	t0 := time.Now().UnixNano()
+	ma.notePeerUnreachable(b, stopB, t0)
+	if !ma.notePeerUnreachable(b, stopB, t0+int64(peerUnreachableRemovalAfter)) {
+		t.Fatal("a peer unreachable for the bound must be marked removed")
+	}
+	ma.peerWatermarksLock.Lock()
+	ma.peerRemovedAtNs[b] = time.Now().UnixNano() - int64(peerResumeRetention) - 1
+	ma.dropExpiredRemovedPeersLocked()
+	ma.peerWatermarksLock.Unlock()
+	if ma.notePeerUnreachable(b, stopB, t0+2*int64(peerUnreachableRemovalAfter)) {
+		t.Fatal("an untracked peer was reported as newly marked")
+	}
+}
