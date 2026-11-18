@@ -60,11 +60,7 @@ func (wfs *WFS) AcquireHandle(ctx context.Context, inode uint64, flags, uid, gid
 		// default_permissions the kernel already enforced them before this
 		// open, so the check (and its supplementary-group lookup) is redundant.
 		if !wfs.option.DefaultPermissions && entry != nil && entry.Attributes != nil {
-			fileUid, fileGid := entry.Attributes.Uid, entry.Attributes.Gid
-			if wfs.option.UidGidMapper != nil {
-				fileUid, fileGid = wfs.option.UidGidMapper.FilerToLocal(fileUid, fileGid)
-			}
-			if mask := openFlagsToAccessMask(flags); mask != 0 && !hasAccess(uid, gid, fileUid, fileGid, entry.Attributes.FileMode, mask) {
+			if mask := openFlagsToAccessMask(flags); mask != 0 && !hasAccess(uid, gid, entry.Attributes.Uid, entry.Attributes.Gid, entry.Attributes.FileMode, mask) {
 				return nil, 0, fuse.EACCES
 			}
 		}
