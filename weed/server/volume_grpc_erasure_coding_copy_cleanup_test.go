@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -44,21 +45,38 @@ func serveEcCopySource(t *testing.T, srv volume_server_pb.VolumeServerServer) st
 	return string(pb.NewServerAddress("127.0.0.1", port-10000, port))
 }
 
-// failingExtCopySource fails CopyFile for one extension, running onFail first.
+// failingExtCopySource counts CopyFile requests per extension and fails the
+// one for failExt, running onFail first.
 type failingExtCopySource struct {
 	*VolumeServer
-	failExt string
-	onFail  func()
+	failExt   string
+	onFail    func() error
+	mu        sync.Mutex
+	requested map[string]int
 }
 
 func (s *failingExtCopySource) CopyFile(req *volume_server_pb.CopyFileRequest, stream volume_server_pb.VolumeServer_CopyFileServer) error {
+	s.mu.Lock()
+	if s.requested == nil {
+		s.requested = make(map[string]int)
+	}
+	s.requested[req.Ext]++
+	s.mu.Unlock()
 	if req.Ext == s.failExt {
 		if s.onFail != nil {
-			s.onFail()
+			if err := s.onFail(); err != nil {
+				return status.Errorf(codes.Internal, "fixture: %v", err)
+			}
 		}
 		return status.Errorf(codes.Unavailable, "injected %s failure", req.Ext)
 	}
 	return s.VolumeServer.CopyFile(req, stream)
+}
+
+func (s *failingExtCopySource) requests(ext string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.requested[ext]
 }
 
 func newEcCopyReceiver(t *testing.T, dstDir string) *VolumeServer {
@@ -278,7 +296,8 @@ func TestVolumeEcShardsCopy_DuplicateShardIdCopiedOnce(t *testing.T) {
 	vid := needle.VolumeId(62)
 
 	srcDir := filepath.Join(t.TempDir(), "src")
-	source := startEcCopySource(t, srcDir)
+	src := &failingExtCopySource{VolumeServer: &VolumeServer{store: newRecoverTestStore(t, srcDir)}}
+	source := serveEcCopySource(t, src)
 	srcBase := erasure_coding.EcShardFileName(collection, srcDir, int(vid))
 	writeFile(t, srcBase+".ecx", bytes.Repeat([]byte{9}, types.NeedleMapEntrySize))
 	srcEc05 := bytes.Repeat([]byte{2}, 4096)
@@ -302,6 +321,9 @@ func TestVolumeEcShardsCopy_DuplicateShardIdCopiedOnce(t *testing.T) {
 	if got, _ := os.ReadFile(dstBase + ".ec05"); !bytes.Equal(got, srcEc05) {
 		t.Errorf("existing .ec05 not replaced by the source's")
 	}
+	if n := src.requests(".ec05"); n != 1 {
+		t.Errorf("source served .ec05 %d times, want once", n)
+	}
 }
 
 // A copy failing after the .vif transferred keeps the existing holder's .vif,
@@ -315,12 +337,16 @@ func TestVolumeEcShardsCopy_FailedSidecarKeepsExistingVif(t *testing.T) {
 	dstBase := erasure_coding.EcShardFileName(collection, dstDir, int(vid))
 
 	srcVif := []byte(`{"version":3}`)
-	var stagedVif []byte
+	stagedVif := make(chan []byte, 1)
 	srcDir := filepath.Join(t.TempDir(), "src")
 	src := &failingExtCopySource{
 		VolumeServer: &VolumeServer{store: newRecoverTestStore(t, srcDir)},
 		failExt:      erasure_coding.BitrotSidecarExt,
-		onFail:       func() { stagedVif, _ = os.ReadFile(dstBase + ".vif.copying") },
+		onFail: func() error {
+			data, err := os.ReadFile(dstBase + ".vif.copying")
+			stagedVif <- data
+			return err
+		},
 	}
 	source := serveEcCopySource(t, src)
 	srcBase := erasure_coding.EcShardFileName(collection, srcDir, int(vid))
@@ -344,11 +370,16 @@ func TestVolumeEcShardsCopy_FailedSidecarKeepsExistingVif(t *testing.T) {
 		CopyEcsumFile:  true,
 		SourceDataNode: source,
 	})
-	if err == nil || !strings.Contains(err.Error(), "copy "+erasure_coding.BitrotSidecarExt+" sidecar") {
+	if err == nil || !strings.Contains(err.Error(), "injected "+erasure_coding.BitrotSidecarExt+" failure") {
 		t.Fatalf("VolumeEcShardsCopy error = %v, want the %s transfer to fail", err, erasure_coding.BitrotSidecarExt)
 	}
-	if !bytes.Equal(stagedVif, srcVif) {
-		t.Fatalf("staged .vif at the %s failure = %q, want the source's %q", erasure_coding.BitrotSidecarExt, stagedVif, srcVif)
+	select {
+	case got := <-stagedVif:
+		if !bytes.Equal(got, srcVif) {
+			t.Fatalf("staged .vif at the %s failure = %q, want the source's %q", erasure_coding.BitrotSidecarExt, got, srcVif)
+		}
+	default:
+		t.Fatalf("the %s request never reached the source", erasure_coding.BitrotSidecarExt)
 	}
 	if after := listDir(t, dstDir); strings.Join(after, ",") != strings.Join(before, ",") {
 		t.Fatalf("destination files after failed copy = %v, want %v", after, before)
@@ -364,56 +395,72 @@ func TestVolumeEcShardsCopy_FailedSidecarKeepsExistingVif(t *testing.T) {
 // A mount waits out an in-flight copy of the same volume, whose failure cleanup
 // would remove a shard mounted meanwhile.
 func TestVolumeEcShardsMount_WaitsForInFlightCopy(t *testing.T) {
+	const collection = "col"
 	vid := needle.VolumeId(63)
-	receiver := newEcCopyReceiver(t, filepath.Join(t.TempDir(), "dst"))
+	dstDir := filepath.Join(t.TempDir(), "dst")
+	receiver := newEcCopyReceiver(t, dstDir)
+	dstBase := erasure_coding.EcShardFileName(collection, dstDir, int(vid))
+	writeFile(t, dstBase+".ecx", make([]byte, types.NeedleMapEntrySize))
+	writeFile(t, dstBase+".ec00", bytes.Repeat([]byte{1}, 4096))
+
 	lifecycle := receiver.store.EcLifecycleLock(vid)
 	lifecycle.Lock()
-	mounted := make(chan struct{})
+	done := make(chan error, 1)
 	go func() {
-		defer close(mounted)
-		_, _ = receiver.VolumeEcShardsMount(context.Background(), &volume_server_pb.VolumeEcShardsMountRequest{
+		_, err := receiver.VolumeEcShardsMount(context.Background(), &volume_server_pb.VolumeEcShardsMountRequest{
 			VolumeId:   uint32(vid),
-			Collection: "col",
+			Collection: collection,
 			ShardIds:   []uint32{0},
 		})
+		done <- err
 	}()
-	select {
-	case <-mounted:
-		lifecycle.Unlock()
-		t.Fatal("mount ran while a copy of the same volume held its lifecycle lock")
-	case <-time.After(200 * time.Millisecond):
-	}
+	time.Sleep(200 * time.Millisecond)
+	_, _, mountedEarly := receiver.store.FindEcShard(vid, 0)
 	lifecycle.Unlock()
+	if mountedEarly {
+		t.Fatal("mount ran while a copy of the same volume held its lifecycle lock")
+	}
 	select {
-	case <-mounted:
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("mount: %v", err)
+		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("mount did not finish after the copy released the lifecycle lock")
+	}
+	if _, _, found := receiver.store.FindEcShard(vid, 0); !found {
+		t.Fatal("shard 0 not mounted after the copy released the lifecycle lock")
 	}
 }
 
 // A full teardown waits out an in-flight copy of the same volume, which would
 // otherwise recreate the files after the teardown is acknowledged.
 func TestVolumeEcShardsDelete_FullTeardownWaitsForInFlightCopy(t *testing.T) {
+	const collection = "col"
 	vid := needle.VolumeId(64)
-	receiver := newEcCopyReceiver(t, filepath.Join(t.TempDir(), "dst"))
+	dstDir := filepath.Join(t.TempDir(), "dst")
+	receiver := newEcCopyReceiver(t, dstDir)
+	dstBase := erasure_coding.EcShardFileName(collection, dstDir, int(vid))
+	writeFile(t, dstBase+".ecx", make([]byte, types.NeedleMapEntrySize))
+	writeFile(t, dstBase+".ec00", bytes.Repeat([]byte{1}, 4096))
+
 	lifecycle := receiver.store.EcLifecycleLock(vid)
 	lifecycle.Lock()
 	done := make(chan error, 1)
 	go func() {
 		_, err := receiver.VolumeEcShardsDelete(context.Background(), &volume_server_pb.VolumeEcShardsDeleteRequest{
 			VolumeId:     uint32(vid),
-			Collection:   "col",
+			Collection:   collection,
 			FullTeardown: true,
 		})
 		done <- err
 	}()
-	select {
-	case <-done:
-		lifecycle.Unlock()
-		t.Fatal("full teardown ran while a copy of the same volume held its lifecycle lock")
-	case <-time.After(200 * time.Millisecond):
-	}
+	time.Sleep(200 * time.Millisecond)
+	_, statErr := os.Stat(dstBase + ".ecx")
 	lifecycle.Unlock()
+	if statErr != nil {
+		t.Fatalf("full teardown ran while a copy of the same volume held its lifecycle lock: %v", statErr)
+	}
 	select {
 	case err := <-done:
 		if err != nil {
@@ -421,6 +468,9 @@ func TestVolumeEcShardsDelete_FullTeardownWaitsForInFlightCopy(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("full teardown did not finish after the copy released the lifecycle lock")
+	}
+	if _, err := os.Stat(dstBase + ".ecx"); !os.IsNotExist(err) {
+		t.Fatalf(".ecx after the teardown: %v, want it removed", err)
 	}
 }
 
@@ -439,7 +489,7 @@ func TestVolumeEcShardsCopy_FailedCopyKeepsShardWrittenMeanwhile(t *testing.T) {
 	src := &failingExtCopySource{
 		VolumeServer: &VolumeServer{store: newRecoverTestStore(t, srcDir)},
 		failExt:      ".ec01",
-		onFail:       func() { writeFile(t, dstBase+".ec00", received) },
+		onFail:       func() error { return os.WriteFile(dstBase+".ec00", received, 0o644) },
 	}
 	source := serveEcCopySource(t, src)
 	srcBase := erasure_coding.EcShardFileName(collection, srcDir, int(vid))
@@ -454,7 +504,7 @@ func TestVolumeEcShardsCopy_FailedCopyKeepsShardWrittenMeanwhile(t *testing.T) {
 		CopyEcxFile:    true,
 		SourceDataNode: source,
 	})
-	if err == nil || !strings.Contains(err.Error(), ".ec01") {
+	if err == nil || !strings.Contains(err.Error(), "injected .ec01 failure") {
 		t.Fatalf("VolumeEcShardsCopy error = %v, want the .ec01 transfer to fail", err)
 	}
 	if got, err := os.ReadFile(dstBase + ".ec00"); err != nil || !bytes.Equal(got, received) {
