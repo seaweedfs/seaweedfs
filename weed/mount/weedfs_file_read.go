@@ -52,7 +52,7 @@ func (wfs *WFS) Read(cancel <-chan struct{}, in *fuse.ReadIn, buff []byte) (fuse
 
 	offset := int64(in.Offset)
 	totalRead, err := readDataByFileHandleWithContext(ctx, buff, fh, offset)
-	if err != nil {
+	if err != nil && ctx.Err() == nil {
 		// The chunk views a read resolves can name data a concurrent overwrite
 		// already replaced: the filer queues replaced file ids for deletion at
 		// commit while this handle only learns the new list when the metadata
@@ -66,6 +66,14 @@ func (wfs *WFS) Read(cancel <-chan struct{}, in *fuse.ReadIn, buff []byte) (fuse
 		}
 	}
 	if err != nil {
+		// The kernel's FUSE contract answers an interrupted request with EINTR
+		// on the original request, never EIO. Interrupts come from any signal
+		// the reader handles, Go's preemption SIGURG included, so they are
+		// routine and not worth a warning.
+		if ctx.Err() != nil {
+			glog.V(3).Infof("file handle read %s %d: interrupted: %v", fh.FullPath(), totalRead, err)
+			return nil, fuse.EINTR
+		}
 		glog.Warningf("file handle read %s %d: %v", fh.FullPath(), totalRead, err)
 		return nil, fuse.EIO
 	}
