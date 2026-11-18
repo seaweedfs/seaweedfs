@@ -155,9 +155,20 @@ class S3:
             return err.code, err.read()
 
     def put_object(self, bucket: str, key: str, body: bytes) -> None:
-        status, out = self.request("PUT", f"/{bucket}/{key}", body=body)
+        # The first writes to a new bucket can get a retryable 500 while its
+        # volumes grow; SDK clients retry those the same way.
+        for attempt in range(10):
+            status, out = self.request("PUT", f"/{bucket}/{key}", body=body)
+            if status < 500:
+                break
+            time.sleep(0.5 * (attempt + 1))
         if status != 200:
             raise RuntimeError(f"PUT {bucket}/{key!r}: {status} {out[:300]!r}")
+
+    def delete_object(self, bucket: str, key: str) -> None:
+        status, out = self.request("DELETE", f"/{bucket}/{key}")
+        if status != 204:
+            raise RuntimeError(f"DELETE {bucket}/{key!r}: {status} {out[:300]!r}")
 
     def create_bucket(self, bucket: str) -> None:
         status, out = self.request("PUT", f"/{bucket}")
@@ -413,7 +424,21 @@ class Probe:
         assert text(root, "EncodingType") == "url", "EncodingType not echoed"
 
 
-def run_probes(s3: S3, buckets: dict[str, dict[str, int]]) -> list[tuple[str, str | None]]:
+def deleted_prefixes(s3: S3, bucket: str) -> None:
+    """A prefix whose last key was deleted is no longer a CommonPrefix."""
+    s3.create_bucket(bucket)
+    keys = ["keep", "gone/a/b", "gone/c", "half/x", "half/y/z"]
+    for k in keys:
+        s3.put_object(bucket, k, b"x")
+    for k in ("gone/a/b", "gone/c", "half/y/z"):
+        s3.delete_object(bucket, k)
+    p = Probe(s3, bucket, ["keep", "half/x"])
+    p.delimiter("", "/", 1000)
+    p.delimiter("half/", "/", 1000)
+    p.delimiter("gone/", "/", 1000)
+
+
+def run_probes(s3: S3, buckets: dict[str, dict[str, int]], churn_bucket: str) -> list[tuple[str, str | None]]:
     results: list[tuple[str, str | None]] = []
 
     def check(name: str, fn, *a) -> None:
@@ -423,6 +448,7 @@ def run_probes(s3: S3, buckets: dict[str, dict[str, int]]) -> list[tuple[str, st
         except Exception as exc:  # noqa: BLE001
             results.append((name, f"{type(exc).__name__}: {exc}"))
 
+    check(f"reference:{churn_bucket}:deleted-prefixes", deleted_prefixes, s3, churn_bucket)
     for bucket, keymap in buckets.items():
         p = Probe(s3, bucket, list(keymap))
         keys = p.keys
@@ -820,7 +846,7 @@ def main() -> int:
 
     only = re.compile(args.only) if args.only else None
     results: list[tuple[str, str, str]] = []
-    for name, err in run_probes(s3, buckets):
+    for name, err in run_probes(s3, buckets, f"{args.bucket_prefix}-churn"):
         if only and not only.search(name):
             continue
         results.append((name, "fail" if err else "pass", err or ""))

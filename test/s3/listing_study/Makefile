@@ -6,6 +6,10 @@
 #   make run ENDPOINT=...  run against an already running endpoint
 #
 # Needs: go, python3, node/npm, cargo, docker (swath image), curl.
+#
+# The server runs with -s3.allowBackslashInKey, the AWS-compatible key mode: by
+# default SeaweedFS rewrites '\' in object keys to '/', and the edge key set
+# holds a key with a backslash.
 
 STUDY_REPO ?= https://github.com/varveio/s3-listing-study.git
 STUDY_REV ?= 666ec620d245e16baaaa0cf53461382f42c35917
@@ -48,10 +52,10 @@ tools: study venv
 	$(VENV)/bin/python install_tools.py --study $(STUDY_DIR) --tools-dir $(TOOLS_DIR) --tools $(TOOLS)
 
 start-server:
-	@mkdir -p $(WORK_DIR)/data
-	@set -e; ports=$$(python3 free_ports.py 5); \
+	@mkdir -p $(WORK_DIR)
+	@set -e; data=$$(mktemp -d $(WORK_DIR)/data.XXXXXX); ports=$$(python3 free_ports.py 5); \
 	set -- $$ports; \
-	$(WEED_BINARY) server -filer -s3 -ip 127.0.0.1 -ip.bind 127.0.0.1 -dir=$(WORK_DIR)/data \
+	$(WEED_BINARY) server -filer -s3 -ip 127.0.0.1 -ip.bind 127.0.0.1 -dir=$$data \
 		-master.peers=none -master.raftHashicorp -master.electionTimeout 1s -master.volumeSizeLimitMB=1024 \
 		-volume.max=50 -volume.preStopSeconds=1 \
 		-master.port=$$1 -volume.port=$$2 -filer.port=$$3 -s3.port=$$4 -metricsPort=$$5 \
@@ -66,7 +70,11 @@ start-server:
 	done; tail -50 $(WORK_DIR)/weed.log; exit 1
 
 stop-server:
-	@if [ -f $(WORK_DIR)/weed.pid ]; then kill $$(cat $(WORK_DIR)/weed.pid) 2>/dev/null || true; rm -f $(WORK_DIR)/weed.pid; fi
+	@if [ -f $(WORK_DIR)/weed.pid ]; then \
+		pid=$$(cat $(WORK_DIR)/weed.pid); kill $$pid 2>/dev/null || true; \
+		for i in $$(seq 1 20); do kill -0 $$pid 2>/dev/null || break; sleep 0.5; done; \
+		rm -f $(WORK_DIR)/weed.pid; \
+	fi
 
 run: study
 	$(VENV)/bin/python run_study.py --endpoint $(ENDPOINT) \

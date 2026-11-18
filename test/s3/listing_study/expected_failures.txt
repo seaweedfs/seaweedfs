@@ -19,3 +19,11 @@ rclone:lsf:edge:/  # tool hides directory marker objects
 s5cmd:recursive:edge:/  # tool hides directory marker objects
 s5cmd:listv1:edge:/  # tool hides directory marker objects
 s5cmd:allversions:edge:/  # tool hides directory marker objects
+
+# Deleting the last key under a prefix leaves its filer directory behind, and an
+# empty directory is still listed as a CommonPrefix until the filer's empty-folder
+# cleanup removes it (2 minutes by default). This is deliberate: directories made
+# through mount or the filer stay visible to S3 clients (dirHoldsOnlyHiddenEntries
+# in weed/s3api/s3api_object_handlers_list.go). AWS derives CommonPrefixes from
+# keys only, so prefix-discovery tools briefly see the deleted prefix.
+reference:study-churn:deleted-prefixes  # empty directories are listed until cleanup
