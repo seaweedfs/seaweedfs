@@ -3903,9 +3903,14 @@ impl VolumeServer for VolumeGrpcService {
         let svc = VolumeGrpcService {
             state: self.state.clone(),
         };
+        let request_id = crate::server::request_id::current_request_id();
         tokio::spawn(async move {
             let _lifecycle = lifecycle;
-            svc.volume_ec_shards_copy_locked(req, vid, shard_ids).await
+            let copy = svc.volume_ec_shards_copy_locked(req, vid, shard_ids);
+            match request_id {
+                Some(id) => crate::server::request_id::scope_request_id(id, copy).await,
+                None => copy.await,
+            }
         })
         .await
         .map_err(|e| Status::internal(format!("VolumeEcShardsCopy volume {}: {}", vid, e)))?
