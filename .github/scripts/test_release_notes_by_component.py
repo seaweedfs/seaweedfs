@@ -92,6 +92,9 @@ class ClassifyTest(unittest.TestCase):
     def test_test_files_count_only_when_alone(self):
         self.check("Make it faster", "Mount",
                    files=["weed/mount/weedfs.go", "test/fuse/a_test.go", "test/fuse/b_test.go"])
+        self.check("Make it right", "S3 API",
+                   files=["weed/s3api/auth.go", "test/s3/iam/test_a.py", "test/s3/iam/test_b.py"])
+        self.check("Cover more", "Tests and CI", files=["test/s3/iam/test_a.py"])
 
 
 NOTES = """## What's Changed

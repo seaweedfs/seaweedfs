@@ -175,7 +175,7 @@ def section_by_scope(scope):
 
 def section_by_paths(paths):
     votes = {}
-    code = [p for p in paths if not p.endswith("_test.go") and not p.endswith("_test.rs")]
+    code = [p for p in paths if not p.endswith(("_test.go", "_test.rs")) and not p.startswith("test/")]
     for p in code or paths:
         if p.endswith(".md"):
             section = "Documentation"
