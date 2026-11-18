@@ -92,6 +92,10 @@ impl Store {
     ///
     /// Mirrors `Store.reconcileEcShardsAcrossDisks` in Go.
     pub fn reconcile_ec_shards_across_disks(&mut self) {
+        self.reconcile_ec_shards_across_disks_only(None)
+    }
+
+    pub(crate) fn reconcile_ec_shards_across_disks_only(&mut self, only: Option<VolumeId>) {
         if self.locations.len() < 2 {
             return;
         }
@@ -108,6 +112,9 @@ impl Store {
         for (loc_idx, loc) in self.locations.iter().enumerate() {
             let orphans = collect_orphan_ec_shards(loc, loc_idx);
             for (key, shards) in orphans {
+                if only.is_some_and(|vid| vid != key.vid) {
+                    continue;
+                }
                 let Some(owner) = owners.get(&key) else {
                     warn!(
                         volume_id = key.vid.0,
@@ -474,19 +481,27 @@ impl Store {
     /// the disks that now have a local index, then fall back to the cross-disk
     /// virtual mount. Mirrors `Store.MountRecoveredEcShards` in Go.
     pub(crate) fn mount_recovered_ec_shards(&mut self) {
-        self.mirror_ec_metadata_to_shard_disks();
-        self.load_orphan_ec_shards_with_local_index();
-        self.reconcile_ec_shards_across_disks();
+        self.mount_recovered_ec_shards_only(None)
+    }
+
+    /// `mount_recovered_ec_shards` restricted to one volume's shards when
+    /// `only` names it.
+    pub(crate) fn mount_recovered_ec_shards_only(&mut self, only: Option<VolumeId>) {
+        self.mirror_ec_metadata_to_shard_disks_only(only);
+        self.load_orphan_ec_shards_with_local_index(only);
+        self.reconcile_ec_shards_across_disks_only(only);
     }
 
     /// Mount on-disk EC shards whose `.ecx` index is now present on the same disk.
     /// Unlike `reconcile_ec_shards_across_disks` it needs no sibling disk, so a
     /// single-disk store recovers once its index has been fetched from a peer.
-    fn load_orphan_ec_shards_with_local_index(&mut self) {
+    fn load_orphan_ec_shards_with_local_index(&mut self, only: Option<VolumeId>) {
         let mut work: Vec<(usize, EcKey, Vec<ShardId>)> = Vec::new();
         for (loc_idx, loc) in self.locations.iter().enumerate() {
             for (key, shards) in collect_orphan_ec_shards(loc, loc_idx) {
-                if !loc.has_ecx_file_on_disk(&key.collection, key.vid) {
+                if only.is_some_and(|vid| vid != key.vid)
+                    || !loc.has_ecx_file_on_disk(&key.collection, key.vid)
+                {
                     continue;
                 }
                 let ids: Vec<ShardId> = shards.iter().map(|(_, sid)| *sid).collect();
@@ -1237,6 +1252,79 @@ mod tests {
                 .collect_ec_volumes_missing_index()
                 .iter()
                 .all(|m| m.vid != VolumeId(vid))
+        );
+    }
+
+    #[test]
+    fn test_mount_recovered_ec_shards_only_named_volume() {
+        // Recovering one volume mounts only its shards. Another volume's orphan
+        // shards, such as ones an in-flight copy just renamed in, stay unmounted
+        // even when an index for them is already on disk. Mirrors Go
+        // TestMountRecoveredEcShards_OnlyNamedVolume.
+        let tmp = TempDir::new().unwrap();
+        let dir0 = tmp.path().join("data0");
+        let dir1 = tmp.path().join("data1");
+        std::fs::create_dir_all(&dir0).unwrap();
+        std::fs::create_dir_all(&dir1).unwrap();
+
+        let collection = "col";
+        let (recovered_vid, other_vid) = (71u32, 72u32);
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        for d in [&dir0, &dir1] {
+            store
+                .add_location(
+                    d.to_str().unwrap(),
+                    d.to_str().unwrap(),
+                    100,
+                    DiskType::HardDrive,
+                    MinFreeSpace::Percent(0.0),
+                    Vec::new(),
+                )
+                .unwrap();
+        }
+        for vid in [recovered_vid, other_vid] {
+            write_shard(dir0.to_str().unwrap(), collection, vid, 0);
+            write_shard(dir1.to_str().unwrap(), collection, vid, 1);
+        }
+        write_index_files(dir0.to_str().unwrap(), collection, other_vid, 10, 4);
+        let missing = store.collect_ec_volumes_missing_index();
+        let m = missing
+            .iter()
+            .find(|m| m.vid == VolumeId(recovered_vid))
+            .expect("recovered volume not reported as missing its index");
+        write_index_files(&m.idx_dir, collection, recovered_vid, 10, 4);
+
+        store.mount_recovered_ec_shards_only(Some(VolumeId(recovered_vid)));
+
+        for (i, loc) in store.locations.iter().enumerate() {
+            let ev = loc
+                .find_ec_volume(VolumeId(recovered_vid))
+                .unwrap_or_else(|| panic!("volume {} not mounted on disk{}", recovered_vid, i));
+            assert!(
+                ev.has_shard(i as u8),
+                "shard {}.{} not mounted",
+                recovered_vid,
+                i
+            );
+            assert!(
+                loc.find_ec_volume(VolumeId(other_vid)).is_none(),
+                "volume {} mounted on disk{} by the recovery of volume {}",
+                other_vid,
+                i,
+                recovered_vid,
+            );
+        }
+        let mirrored = format!(
+            "{}/{}_{}.ecx",
+            dir1.to_str().unwrap(),
+            collection,
+            other_vid
+        );
+        assert!(
+            !std::path::Path::new(&mirrored).exists(),
+            "volume {} index mirrored to disk1 by the recovery of volume {}",
+            other_vid,
+            recovered_vid,
         );
     }
 

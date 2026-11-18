@@ -2394,13 +2394,28 @@ pub(crate) async fn recover_missing_ec_indexes(
             );
             continue;
         }
-        if fetch_ec_index_from_peers(state, m, &peers).await {
+        // Under the volume's lifecycle lock, so an in-flight VolumeEcShardsCopy
+        // of it, which may unlink the shards it renamed in, never has them
+        // mounted from under it.
+        let _lifecycle = state.ec_lifecycle_lock(m.vid).lock_owned().await;
+        let still_missing = state
+            .store
+            .read()
+            .unwrap()
+            .collect_ec_volumes_missing_index()
+            .iter()
+            .any(|x| x.vid == m.vid);
+        if still_missing && fetch_ec_index_from_peers(state, m, &peers).await {
+            state
+                .store
+                .write()
+                .unwrap()
+                .mount_recovered_ec_shards_only(Some(m.vid));
             recovered += 1;
         }
     }
 
     if recovered > 0 {
-        state.store.write().unwrap().mount_recovered_ec_shards();
         tracing::info!(
             "recovered missing EC index for {} volume(s) from peers and mounted their shards",
             recovered

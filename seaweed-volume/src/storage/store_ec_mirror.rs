@@ -36,6 +36,10 @@ impl Store {
     /// `reconcile_ec_shards_across_disks` so the orphan pass can
     /// prefer the local idx_directory.
     pub fn mirror_ec_metadata_to_shard_disks(&mut self) {
+        self.mirror_ec_metadata_to_shard_disks_only(None)
+    }
+
+    pub(crate) fn mirror_ec_metadata_to_shard_disks_only(&mut self, only: Option<VolumeId>) {
         if self.locations.len() < 2 {
             return;
         }
@@ -56,6 +60,9 @@ impl Store {
         for (loc_idx, loc) in self.locations.iter().enumerate() {
             let orphans = collect_shard_disk_volumes(loc);
             for (key, _shards) in orphans {
+                if only.is_some_and(|vid| vid != key.vid) {
+                    continue;
+                }
                 let Some(owner) = owners.get(&key) else {
                     continue;
                 };
