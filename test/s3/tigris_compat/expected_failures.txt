@@ -20,5 +20,4 @@ RenameObject_SourceIsLiteralKey
 # Not yet fixed in SeaweedFS.
 PutBucketAccelerateConfiguration
 GetBucketAccelerateConfiguration error
-DeleteBucketOwnershipControls
 PutBucketNotificationConfiguration

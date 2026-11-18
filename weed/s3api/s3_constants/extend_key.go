@@ -5,6 +5,7 @@ const (
 	ExtAmzOwnerKey              = "Seaweed-X-Amz-Owner"
 	ExtAmzAclKey                = "Seaweed-X-Amz-Acl"
 	ExtOwnershipKey             = "Seaweed-X-Amz-Ownership"
+	ExtOwnershipDeletedKey      = "Seaweed-X-Amz-Ownership-Deleted"
 	ExtPublicAccessBlockKey     = "Seaweed-X-Amz-Public-Access-Block"
 	ExtVersioningKey            = "Seaweed-X-Amz-Versioning"
 	ExtVersionIdKey             = "Seaweed-X-Amz-Version-Id"

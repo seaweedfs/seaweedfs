@@ -230,3 +230,18 @@ func TestLookupRecordsHardLinkNames(t *testing.T) {
 		t.Fatal("the final forget left /b mapped to a released inode")
 	}
 }
+
+func TestRemoveAliasKeepsSoleName(t *testing.T) {
+	table := NewInodeToPath(util.FullPath("/"), 0)
+	inode := table.Lookup("/a", 1, false, true, 42, true)
+	if _, ok := table.RemoveAlias("/a"); ok || !table.HasPath("/a") {
+		t.Fatal("removed the only name")
+	}
+	table.AddPath(inode, "/b")
+	if survivor, ok := table.RemoveAlias("/a"); !ok || survivor != "/b" || table.HasPath("/a") {
+		t.Fatalf("RemoveAlias(/a) = %q, %v, want /b", survivor, ok)
+	}
+	if _, ok := table.RemoveAlias("/b"); ok || !table.HasPath("/b") {
+		t.Fatal("removed the surviving name")
+	}
+}

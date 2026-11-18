@@ -9,6 +9,7 @@
 pub mod cleanup;
 pub mod compact;
 pub mod indices;
+pub mod purge;
 pub mod sort;
 pub mod vector_index;
 

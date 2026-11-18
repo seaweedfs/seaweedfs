@@ -629,6 +629,32 @@ func (i *InodeToPath) RemovePath(path util.FullPath, onStillReferenced func(inod
 	delete(i.wasCachedDirs, path)
 }
 
+// RemoveAlias drops a name only while its inode keeps another one, returning
+// the inode's primary path afterwards. A sole name stays for a delayed rename
+// to move.
+func (i *InodeToPath) RemoveAlias(path util.FullPath) (util.FullPath, bool) {
+	i.Lock()
+	defer i.Unlock()
+	inode, found := i.path2inode[path]
+	if !found {
+		return "", false
+	}
+	ie := i.inode2path[inode]
+	if ie == nil {
+		return "", false
+	}
+	survives := false
+	for _, p := range ie.appendPaths(nil) {
+		survives = survives || p != path
+	}
+	if !survives {
+		return "", false
+	}
+	delete(i.path2inode, path)
+	ie.removeOnePath(path)
+	return ie.path, true
+}
+
 func (i *InodeToPath) removePathFromInode2Path(inode uint64, path util.FullPath) {
 	ie, found := i.inode2path[inode]
 	if !found {
