@@ -194,8 +194,14 @@ func (ma *MetaAggregator) notePeerUnreachable(peer pb.ServerAddress, nowNs int64
 }
 
 // notePeerReachable tracks peer again after a successful connection, from a
-// zero watermark if the removal grace already dropped it.
-func (ma *MetaAggregator) notePeerReachable(peer pb.ServerAddress) {
+// zero watermark if the removal grace already dropped it. A subscription the
+// master has removed meanwhile must not undo that removal.
+func (ma *MetaAggregator) notePeerReachable(peer pb.ServerAddress, stopChan <-chan struct{}) {
+	ma.peerChansLock.Lock()
+	defer ma.peerChansLock.Unlock()
+	if ma.peerChans[peer] != stopChan {
+		return
+	}
 	ma.peerWatermarksLock.Lock()
 	delete(ma.peerUnreachableSinceNs, peer)
 	ma.peerWatermarksLock.Unlock()
@@ -599,7 +605,7 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 	if err != nil {
 		return lastTsNs, fmt.Errorf("%w %s: %v", errPeerUnreachable, peer, err)
 	}
-	ma.notePeerReachable(peer)
+	ma.notePeerReachable(peer, stopChan)
 
 	// when filer store is not shared by multiple filers
 	if peerSignature != f.Signature {

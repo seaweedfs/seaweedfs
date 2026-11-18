@@ -5,14 +5,18 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )
 
 func newTestAggregator() *MetaAggregator {
 	ma := &MetaAggregator{
+		peerChans:           make(map[pb.ServerAddress]chan struct{}),
 		peerWatermarks:      make(map[pb.ServerAddress]int64),
 		peerFlushWatermarks: make(map[pb.ServerAddress]int64),
 		peerRemovedAtNs:     make(map[pb.ServerAddress]int64),
 		peerResumeTsNs:      make(map[pb.ServerAddress]int64),
+
+		peerUnreachableSinceNs: make(map[pb.ServerAddress]int64),
 	}
 	ma.peerSubscribeLoop = ma.loopSubscribeToOneFiler
 	return ma
@@ -229,6 +233,8 @@ func TestUnreachablePeerStopsPinningAfterTheGrace(t *testing.T) {
 	ma.initPeerWatermark(a)
 	ma.initPeerWatermark(b)
 	ma.advancePeerWatermark(a, 100)
+	stopB := make(chan struct{})
+	ma.peerChans[b] = stopB
 
 	t0 := time.Now().UnixNano()
 	if ma.notePeerUnreachable(b, t0) || ma.notePeerUnreachable(b, t0+int64(peerUnreachableRemovalAfter)-1) {
@@ -251,7 +257,7 @@ func TestUnreachablePeerStopsPinningAfterTheGrace(t *testing.T) {
 	}
 
 	// It answers again: tracked from zero until it signals.
-	ma.notePeerReachable(b)
+	ma.notePeerReachable(b, stopB)
 	if got := ma.PeerLowWatermarkTsNs(); got != 0 {
 		t.Fatalf("re-tracked peer before its first claim: low=%d want 0", got)
 	}
@@ -261,5 +267,33 @@ func TestUnreachablePeerStopsPinningAfterTheGrace(t *testing.T) {
 	}
 	if ma.notePeerUnreachable(b, t0+10*int64(peerUnreachableRemovalAfter)) {
 		t.Fatal("a fresh outage must start a fresh clock")
+	}
+}
+
+// A subscription whose signature read succeeded just before the master
+// removed the peer must not clear the removal: its loop is about to exit, so
+// nothing would advance or drop the watermark it re-tracked.
+func TestStaleSubscriptionDoesNotUndoMasterRemoval(t *testing.T) {
+	ma := newTestAggregator()
+	ma.peerSubscribeLoop = func(_ *Filer, _, _ pb.ServerAddress, _ time.Time, _ chan struct{}) {}
+	a, b := pb.ServerAddress("filer-a:8888"), pb.ServerAddress("filer-b:8888")
+	ma.OnPeerUpdate(&master_pb.ClusterNodeUpdate{Address: string(a), IsAdd: true}, time.Now())
+	ma.OnPeerUpdate(&master_pb.ClusterNodeUpdate{Address: string(b), IsAdd: true}, time.Now())
+	ma.advancePeerWatermark(a, 100)
+	ma.advancePeerWatermark(b, 50)
+	stopB := ma.peerChans[b]
+
+	ma.OnPeerUpdate(&master_pb.ClusterNodeUpdate{Address: string(b), IsAdd: false}, time.Now())
+	ma.notePeerReachable(b, stopB)
+
+	ma.peerWatermarksLock.Lock()
+	_, marked := ma.peerRemovedAtNs[b]
+	ma.peerRemovedAtNs[b] = time.Now().UnixNano() - int64(peerWatermarkRemovalGrace) - 1
+	ma.peerWatermarksLock.Unlock()
+	if !marked {
+		t.Fatal("a stale subscription cleared the master's removal mark")
+	}
+	if got := ma.PeerLowWatermarkTsNs(); got != 100 {
+		t.Fatalf("the removed peer still pins past the grace: low=%d want 100", got)
 	}
 }
