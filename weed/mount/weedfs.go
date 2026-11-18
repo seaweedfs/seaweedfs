@@ -128,12 +128,14 @@ type Option struct {
 	// When false (default), directories report nlink=2.
 	PosixDirNlink bool
 
-	// AccessReport reports each open of a file for reading to the filer with
-	// TouchAccessTime, so a filer that tracks access also sees the reads
-	// answered from the metadata cache. It has no effect unless the filer
-	// implements TouchAccessTime: while the filer answers Unimplemented,
-	// reporting pauses.
-	AccessReport bool
+	// AccessReport reports opens of a file for reading to the filer with
+	// TouchAccessTime, at most once per AccessReportInterval for each path
+	// (0 reports every open), so a filer that tracks access also sees the
+	// reads answered from the metadata cache. It has no effect unless the
+	// filer implements TouchAccessTime: while the filer answers
+	// Unimplemented, reporting pauses.
+	AccessReport         bool
+	AccessReportInterval time.Duration
 
 	uniqueCacheDirForRead  string
 	uniqueCacheDirForWrite string
@@ -308,7 +310,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 	}
 
 	if option.AccessReport {
-		wfs.accessReporter = newAccessReporter(wfs.touchAccessTime)
+		wfs.accessReporter = newAccessReporter(wfs.touchAccessTime, option.AccessReportInterval)
 		wfs.accessReporter.start()
 	}
 

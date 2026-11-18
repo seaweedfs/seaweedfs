@@ -3,9 +3,11 @@ package mount
 import (
 	"context"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/hashicorp/golang-lru/v2/simplelru"
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -27,16 +29,22 @@ const (
 	// that it does not implement TouchAccessTime.
 	accessReportPause       = 10 * time.Minute
 	accessReportLogInterval = time.Minute
+	// accessReportRecentPaths bounds how many paths remember their last
+	// report; a path that falls out is reported again on its next open.
+	accessReportRecentPaths = 1 << 16
 )
 
-// accessReporter sends one TouchAccessTime per open of a file for reading
-// (-accessReport). An open answered from the metadata cache never reaches the
-// filer, so without the report a filer that tracks access cannot tell a cached
-// file that is still read from one that is not. Reports are sent in the
-// background and never hold up the open: a report that does not fit in the
-// queue is dropped and counted.
+// accessReporter sends a TouchAccessTime for an open of a file for reading
+// (-accessReport), at most once per interval for each path. An open answered
+// from the metadata cache never reaches the filer, so without the report a
+// filer that tracks access cannot tell a cached file that is still read from
+// one that is not. Reports are sent in the background and never hold up the
+// open: a report that does not fit in the queue is dropped and counted.
 type accessReporter struct {
 	touch       func(ctx context.Context, path util.FullPath, atimeNs int64) error
+	interval    time.Duration
+	recentMu    sync.Mutex
+	recent      *simplelru.LRU[util.FullPath, int64] // last report of a path, unix nanoseconds; nil when interval is 0
 	queue       chan accessReport
 	ctx         context.Context // done once stop is called
 	cancel      context.CancelFunc
@@ -52,14 +60,20 @@ type accessReport struct {
 }
 
 // newAccessReporter returns a reporter that queues reports; start sends them.
-func newAccessReporter(touch func(ctx context.Context, path util.FullPath, atimeNs int64) error) *accessReporter {
+// An interval of 0 reports every open.
+func newAccessReporter(touch func(ctx context.Context, path util.FullPath, atimeNs int64) error, interval time.Duration) *accessReporter {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &accessReporter{
-		touch:  touch,
-		queue:  make(chan accessReport, accessReportQueueSize),
-		ctx:    ctx,
-		cancel: cancel,
+	r := &accessReporter{
+		touch:    touch,
+		interval: interval,
+		queue:    make(chan accessReport, accessReportQueueSize),
+		ctx:      ctx,
+		cancel:   cancel,
 	}
+	if interval > 0 {
+		r.recent, _ = simplelru.NewLRU[util.FullPath, int64](accessReportRecentPaths, nil)
+	}
+	return r
 }
 
 // start starts the workers that send the queued reports.
@@ -76,16 +90,36 @@ func (r *accessReporter) stop() {
 	r.cancel()
 }
 
-// report queues one read of path. It does nothing while reporting is paused.
+// report queues one read of path unless path was reported within the
+// interval. It does nothing while reporting is paused.
 func (r *accessReporter) report(path util.FullPath) {
 	if r.paused() || r.ctx.Err() != nil {
 		return
 	}
+	now := time.Now().UnixNano()
+	if !r.due(path, now) {
+		return
+	}
 	select {
-	case r.queue <- accessReport{path: path, atimeNs: time.Now().UnixNano()}:
+	case r.queue <- accessReport{path: path, atimeNs: now}:
 	default:
 		r.dropped.Add(1)
 	}
+}
+
+// due reports whether path has no report within the interval, and if so
+// records now as its last report.
+func (r *accessReporter) due(path util.FullPath, now int64) bool {
+	if r.recent == nil {
+		return true
+	}
+	r.recentMu.Lock()
+	defer r.recentMu.Unlock()
+	if last, ok := r.recent.Get(path); ok && now-last < int64(r.interval) {
+		return false
+	}
+	r.recent.Add(path, now)
+	return true
 }
 
 func (r *accessReporter) paused() bool {

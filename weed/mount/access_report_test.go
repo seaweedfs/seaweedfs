@@ -67,7 +67,7 @@ func newAccessReportTestWFS(t *testing.T, fake *accessReportTestFiler) *WFS {
 	wfs.openMtimeCache = make(map[uint64][2]int64)
 	wfs.inodeToPath.Lookup("/dir", time.Now().Unix(), true, false, 0, true)
 	startFakeFiler(t, wfs, fake)
-	wfs.accessReporter = newAccessReporter(wfs.touchAccessTime)
+	wfs.accessReporter = newAccessReporter(wfs.touchAccessTime, 0)
 	t.Cleanup(wfs.accessReporter.stop)
 	return wfs
 }
@@ -127,6 +127,29 @@ func TestEachOpenForReadingIsReportedOnce(t *testing.T) {
 	}
 	if lookups := fake.lookupCalls.Load(); lookups != 1 {
 		t.Fatalf("lookups = %d, want 1: opens in a cached directory are answered locally", lookups)
+	}
+}
+
+// TestOpensWithinTheIntervalAreReportedOnce checks that a path is reported
+// on its first open and again only once the interval has passed.
+func TestOpensWithinTheIntervalAreReportedOnce(t *testing.T) {
+	wfs := newAccessReportTestWFS(t, newAccessReportTestFiler(nil))
+	wfs.accessReporter = newAccessReporter(wfs.touchAccessTime, time.Hour)
+	t.Cleanup(wfs.accessReporter.stop)
+
+	openForTest(t, wfs, "a", syscall.O_RDONLY)
+	openForTest(t, wfs, "a", syscall.O_RDONLY)
+	openForTest(t, wfs, "b", syscall.O_RDWR)
+	openForTest(t, wfs, "a", syscall.O_RDONLY)
+	if got, want := queuedReports(wfs.accessReporter), []string{"/dir/a", "/dir/b"}; !slices.Equal(got, want) {
+		t.Fatalf("reports = %v, want %v", got, want)
+	}
+
+	wfs.accessReporter.recent.Add("/dir/a", time.Now().Add(-time.Hour).UnixNano())
+	openForTest(t, wfs, "a", syscall.O_RDONLY)
+	openForTest(t, wfs, "b", syscall.O_RDONLY)
+	if got, want := queuedReports(wfs.accessReporter), []string{"/dir/a"}; !slices.Equal(got, want) {
+		t.Fatalf("reports after the interval = %v, want %v", got, want)
 	}
 }
 
@@ -238,7 +261,7 @@ func TestQueuedReportsAreDroppedWhilePaused(t *testing.T) {
 	r := newAccessReporter(func(ctx context.Context, path util.FullPath, atimeNs int64) error {
 		sent.Add(1)
 		return nil
-	})
+	}, 0)
 	defer r.stop()
 	r.report("/dir/a")
 	r.report("/dir/b")
@@ -254,7 +277,7 @@ func TestQueuedReportsAreDroppedWhilePaused(t *testing.T) {
 // TestReportDoesNotBlockOnAFullQueue checks that report drops and counts what
 // does not fit instead of waiting for room.
 func TestReportDoesNotBlockOnAFullQueue(t *testing.T) {
-	r := newAccessReporter(func(ctx context.Context, path util.FullPath, atimeNs int64) error { return nil })
+	r := newAccessReporter(func(ctx context.Context, path util.FullPath, atimeNs int64) error { return nil }, 0)
 	defer r.stop()
 
 	done := make(chan struct{})
@@ -281,7 +304,7 @@ func TestStopCancelsTheReportInFlight(t *testing.T) {
 		<-ctx.Done()
 		close(cancelled)
 		return ctx.Err()
-	})
+	}, 0)
 	r.start()
 	r.report("/dir/a")
 	select {
@@ -301,7 +324,7 @@ func TestStopCancelsTheReportInFlight(t *testing.T) {
 // TestReportAfterStopIsDropped uses a reporter without workers, so a report
 // that stop failed to refuse stays in the queue.
 func TestReportAfterStopIsDropped(t *testing.T) {
-	r := newAccessReporter(func(ctx context.Context, path util.FullPath, atimeNs int64) error { return nil })
+	r := newAccessReporter(func(ctx context.Context, path util.FullPath, atimeNs int64) error { return nil }, 0)
 	r.stop()
 	r.report("/dir/b")
 	if got := queuedReports(r); len(got) != 0 {
