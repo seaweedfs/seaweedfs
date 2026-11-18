@@ -13,6 +13,7 @@ import (
 	"time"
 
 	vault "github.com/hashicorp/vault/api"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	seaweedkms "github.com/seaweedfs/seaweedfs/weed/kms"
@@ -34,8 +35,19 @@ type OpenBaoKMSProvider struct {
 	// AppRole credentials, kept to log in again when the token expires or is revoked
 	roleID   string
 	secretID string
-	loginMu  sync.Mutex
+	logins   singleflight.Group
+	now      func() time.Time
+
+	tokenMu      sync.Mutex
+	reloginAfter time.Time // until then a refused token is a policy denial, not an expired token
 }
+
+// reloginMinTokenAge is how old a token must be (or half its TTL, if shorter) before a
+// refusal is taken for an expired token. OpenBao/Vault answer 403 both to an expired token
+// and to a key the token may not use, and a new login would not fix the second.
+const reloginMinTokenAge = time.Minute
+
+var errFreshTokenRefused = errors.New("a fresh token was refused: policy denial")
 
 // OpenBaoKMSConfig contains configuration for the OpenBao/Vault KMS provider
 type OpenBaoKMSConfig struct {
@@ -110,12 +122,21 @@ func NewOpenBaoKMSProvider(config util.Configuration) (seaweedkms.KMSProvider, e
 		return nil, fmt.Errorf("failed to create OpenBao/Vault client: %w", err)
 	}
 
+	provider := &OpenBaoKMSProvider{
+		client:      client,
+		transitPath: transitPath,
+		address:     address,
+		now:         time.Now,
+	}
+
 	// Authenticate
 	if token != "" {
 		client.SetToken(token)
 		glog.V(1).Infof("OpenBao KMS: Using token authentication")
 	} else if roleID != "" && secretID != "" {
-		if err := authenticateAppRole(client, roleID, secretID); err != nil {
+		provider.roleID = roleID
+		provider.secretID = secretID
+		if err := provider.login(context.Background()); err != nil {
 			return nil, fmt.Errorf("failed to authenticate with AppRole: %w", err)
 		}
 		glog.V(1).Infof("OpenBao KMS: Using AppRole authentication")
@@ -123,65 +144,92 @@ func NewOpenBaoKMSProvider(config util.Configuration) (seaweedkms.KMSProvider, e
 		return nil, fmt.Errorf("either token or role_id+secret_id must be provided")
 	}
 
-	provider := &OpenBaoKMSProvider{
-		client:      client,
-		transitPath: transitPath,
-		address:     address,
-	}
-	if token == "" {
-		provider.roleID = roleID
-		provider.secretID = secretID
-	}
-
 	glog.V(1).Infof("OpenBao/Vault KMS provider initialized at %s", address)
 	return provider, nil
 }
 
-// authenticateAppRole authenticates using AppRole method
-func authenticateAppRole(client *vault.Client, roleID, secretID string) error {
+// authenticateAppRole authenticates using AppRole method and returns the token's TTL
+func authenticateAppRole(ctx context.Context, client *vault.Client, roleID, secretID string) (time.Duration, error) {
 	data := map[string]interface{}{
 		"role_id":   roleID,
 		"secret_id": secretID,
 	}
 
-	secret, err := client.Logical().Write("auth/approle/login", data)
+	secret, err := client.Logical().WriteWithContext(ctx, "auth/approle/login", data)
 	if err != nil {
-		return fmt.Errorf("AppRole authentication failed: %w", err)
+		return 0, fmt.Errorf("AppRole authentication failed: %w", err)
 	}
 
 	if secret == nil || secret.Auth == nil {
-		return fmt.Errorf("AppRole authentication returned empty token")
+		return 0, fmt.Errorf("AppRole authentication returned empty token")
 	}
 
 	client.SetToken(secret.Auth.ClientToken)
+	return time.Duration(secret.Auth.LeaseDuration) * time.Second, nil
+}
+
+// login logs in with AppRole and notes from when a refusal of the new token may mean it expired.
+func (p *OpenBaoKMSProvider) login(ctx context.Context) error {
+	ttl, err := authenticateAppRole(ctx, p.client, p.roleID, p.secretID)
+	if err != nil {
+		return err
+	}
+	minAge := reloginMinTokenAge
+	if ttl > 0 && ttl/2 < minAge {
+		minAge = ttl / 2
+	}
+	p.tokenMu.Lock()
+	p.reloginAfter = p.now().Add(minAge)
+	p.tokenMu.Unlock()
 	return nil
 }
 
 // withRelogin runs a request and, with AppRole authentication, logs in again once and
 // retries when OpenBao/Vault refuses the token: an AppRole token expires after its TTL
 // and is never renewed, so without this every request fails until a restart.
-func (p *OpenBaoKMSProvider) withRelogin(call func() (*vault.Secret, error)) (*vault.Secret, error) {
+func (p *OpenBaoKMSProvider) withRelogin(ctx context.Context, call func() (*vault.Secret, error)) (*vault.Secret, error) {
 	token := p.client.Token()
 	secret, err := call()
 	if err == nil || p.roleID == "" || !isPermissionDenied(err) {
 		return secret, err
 	}
-	if loginErr := p.relogin(token); loginErr != nil {
-		glog.Warningf("OpenBao KMS: %v", loginErr)
+	if loginErr := p.relogin(ctx, token); loginErr != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		if !errors.Is(loginErr, errFreshTokenRefused) {
+			glog.Warningf("OpenBao KMS: %v", loginErr)
+		}
 		return nil, err
 	}
 	return call()
 }
 
-// relogin logs in again, unless another request already did so after the refused token was used.
-func (p *OpenBaoKMSProvider) relogin(refusedToken string) error {
-	p.loginMu.Lock()
-	defer p.loginMu.Unlock()
-	if p.client.Token() != refusedToken {
-		return nil
+// relogin logs in again, unless another request already did so after the refused token
+// was used, or the token is too fresh to have expired. Concurrent callers share one login
+// and its result, failure included; the login is not bound to any one caller's context
+// (the client's request timeout still applies), and each caller stops waiting when its
+// own context ends.
+func (p *OpenBaoKMSProvider) relogin(ctx context.Context, refusedToken string) error {
+	result := p.logins.DoChan("approle", func() (interface{}, error) {
+		if p.client.Token() != refusedToken {
+			return nil, nil
+		}
+		p.tokenMu.Lock()
+		fresh := p.now().Before(p.reloginAfter)
+		p.tokenMu.Unlock()
+		if fresh {
+			return nil, errFreshTokenRefused
+		}
+		glog.V(1).Infof("OpenBao KMS: token refused, logging in again with AppRole")
+		return nil, p.login(context.WithoutCancel(ctx))
+	})
+	select {
+	case r := <-result:
+		return r.Err
+	case <-ctx.Done():
+		return ctx.Err()
 	}
-	glog.V(1).Infof("OpenBao KMS: token refused, logging in again with AppRole")
-	return authenticateAppRole(p.client, p.roleID, p.secretID)
 }
 
 func isPermissionDenied(err error) bool {
@@ -233,7 +281,7 @@ func (p *OpenBaoKMSProvider) GenerateDataKey(ctx context.Context, req *seaweedkm
 
 	// Call OpenBao/Vault Transit encrypt endpoint
 	path := fmt.Sprintf("%s/encrypt/%s", p.transitPath, req.KeyID)
-	secret, err := p.withRelogin(func() (*vault.Secret, error) {
+	secret, err := p.withRelogin(ctx, func() (*vault.Secret, error) {
 		return p.client.Logical().WriteWithContext(ctx, path, encryptData)
 	})
 	if err != nil {
@@ -306,7 +354,7 @@ func (p *OpenBaoKMSProvider) Decrypt(ctx context.Context, req *seaweedkms.Decryp
 	// Call OpenBao/Vault Transit decrypt endpoint
 	path := fmt.Sprintf("%s/decrypt/%s", p.transitPath, keyID)
 	glog.V(4).Infof("OpenBao KMS: Decrypting data key using key %s", keyID)
-	secret, err := p.withRelogin(func() (*vault.Secret, error) {
+	secret, err := p.withRelogin(ctx, func() (*vault.Secret, error) {
 		return p.client.Logical().WriteWithContext(ctx, path, decryptData)
 	})
 	if err != nil {
@@ -349,7 +397,7 @@ func (p *OpenBaoKMSProvider) DescribeKey(ctx context.Context, req *seaweedkms.De
 	// Get key information from OpenBao/Vault
 	path := fmt.Sprintf("%s/keys/%s", p.transitPath, req.KeyID)
 	glog.V(4).Infof("OpenBao KMS: Describing key %s", req.KeyID)
-	secret, err := p.withRelogin(func() (*vault.Secret, error) {
+	secret, err := p.withRelogin(ctx, func() (*vault.Secret, error) {
 		return p.client.Logical().ReadWithContext(ctx, path)
 	})
 	if err != nil {
