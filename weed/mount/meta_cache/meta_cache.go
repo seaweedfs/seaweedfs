@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
-	"math"
 	"os"
 	"sync"
 	"time"
@@ -718,34 +717,66 @@ func (mc *MetaCache) SetPinnedChildFn(fn func(*filer.Entry) bool) {
 	mc.pinnedChildFn = fn
 }
 
+// rebuildWipeBatchSize caps how many cached children one locked step of a
+// rebuild's wipe visits. Every metadata read in the mount takes mc's read lock,
+// and a pending writer blocks new readers, so a wipe that held the write lock
+// across a whole directory stalled lookups in unrelated directories for as long
+// as the scan took — longer still while leveldb carries the deletion markers of
+// earlier wipes of the same directory.
+const rebuildWipeBatchSize = 1024
+
 // deleteFolderChildrenForRebuild clears a directory's cached children ahead of a
 // rebuild, but keeps any child flagged pinned by pinnedChildFn — a local-only
 // create not yet flushed to the filer. A rebuild refills from a filer listing
 // that does not include such a create; a blind wipe would drop it and then
 // markCachedFn publishes the directory authoritatively cached without a file the
 // client created, so it vanishes from the mount.
+//
+// The wipe runs in batches and lets go of the lock between them. That adds no
+// interleaving the build did not already allow: the listing that refills the
+// directory runs after the wipe, outside the lock.
 func (mc *MetaCache) deleteFolderChildrenForRebuild(ctx context.Context, dirPath util.FullPath) error {
+	startFrom := ""
+	for {
+		last, err := mc.deleteFolderChildrenBatch(ctx, dirPath, startFrom)
+		if err != nil {
+			return err
+		}
+		if last == "" {
+			return nil
+		}
+		startFrom = last
+	}
+}
+
+// deleteFolderChildrenBatch deletes the unpinned ones among the next
+// rebuildWipeBatchSize children of dirPath that sort after startFrom. It
+// returns the name to resume from, or "" once the directory is exhausted. A
+// child is judged pinned under the same lock that deletes it, so a create
+// pinned between batches survives as surely as one pinned before the wipe
+// began.
+func (mc *MetaCache) deleteFolderChildrenBatch(ctx context.Context, dirPath util.FullPath, startFrom string) (string, error) {
 	mc.Lock()
 	defer mc.Unlock()
-	if mc.pinnedChildFn == nil {
-		return mc.localStore.DeleteFolderChildren(ctx, dirPath)
-	}
-	var pinned []*filer.Entry
-	if _, err := mc.localStore.ListDirectoryEntries(ctx, dirPath, "", true, math.MaxInt64, func(entry *filer.Entry) (bool, error) {
-		if mc.pinnedChildFn(entry) {
-			pinned = append(pinned, entry)
+	visited := 0
+	var doomed []util.FullPath
+	last, err := mc.localStore.ListDirectoryEntries(ctx, dirPath, startFrom, false, rebuildWipeBatchSize, func(entry *filer.Entry) (bool, error) {
+		visited++
+		if mc.pinnedChildFn == nil || !mc.pinnedChildFn(entry) {
+			doomed = append(doomed, entry.FullPath)
 		}
 		return true, nil
-	}); err != nil {
-		return err
+	})
+	if err != nil {
+		return "", err
 	}
-	if err := mc.localStore.DeleteFolderChildren(ctx, dirPath); err != nil {
-		return err
+	if err := mc.leveldbStore.BatchDeleteEntries(ctx, doomed); err != nil {
+		return "", err
 	}
-	if len(pinned) > 0 {
-		return mc.doBatchInsertEntries(ctx, pinned)
+	if visited < rebuildWipeBatchSize {
+		return "", nil
 	}
-	return nil
+	return last, nil
 }
 
 // ListDirectoryEntries reports the last name the store reached, which is not
