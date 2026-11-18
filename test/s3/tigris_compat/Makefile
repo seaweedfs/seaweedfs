@@ -53,7 +53,7 @@ build-suite:
 
 start-server: build-weed
 	@mkdir -p $(SERVER_DIR)
-	@if curl -sS -o /dev/null http://127.0.0.1:$(S3_PORT)/ >/dev/null 2>&1; then \
+	@if curl -sS --max-time 2 -o /dev/null http://127.0.0.1:$(S3_PORT)/ >/dev/null 2>&1; then \
 		echo "port $(S3_PORT) is already served by another process; refusing to test against it"; \
 		exit 1; \
 	fi
@@ -78,7 +78,7 @@ start-server: build-weed
 			cat weed-test.log; \
 			exit 1; \
 		}; \
-		if curl -sS -o /dev/null http://127.0.0.1:$(S3_PORT)/ >/dev/null 2>&1; then \
+		if curl -sS --max-time 2 -o /dev/null http://127.0.0.1:$(S3_PORT)/ >/dev/null 2>&1; then \
 			echo "SeaweedFS S3 server is ready on port $(S3_PORT)"; \
 			exit 0; \
 		fi; \
