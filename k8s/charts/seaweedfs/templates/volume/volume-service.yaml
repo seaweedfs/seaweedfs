@@ -23,6 +23,7 @@ metadata:
 {{- end }}
 spec:
   clusterIP: None
+  publishNotReadyAddresses: true
   internalTrafficPolicy: {{ $volume.internalTrafficPolicy | default "Cluster" }}
   ports:
   - name: "swfs-volume"
