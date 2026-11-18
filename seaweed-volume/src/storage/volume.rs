@@ -3799,7 +3799,7 @@ impl Volume {
             cookie: n.cookie,
             ..Needle::default()
         };
-        self.do_delete_request(io, &mut tombstone)?;
+        self.do_delete_request(io, &mut tombstone, false)?;
         Err(VolumeError::Deleted)
     }
 
@@ -3807,6 +3807,16 @@ impl Volume {
 
     /// Delete a needle from the volume.
     pub fn delete_needle(&self, n: &mut Needle) -> Result<Size, VolumeError> {
+        self.delete_needle_with_fsync(n, false)
+    }
+
+    /// With `fsync` the delete is only acknowledged once its tombstone and
+    /// .idx row are on disk, in the same order as a durable write.
+    pub fn delete_needle_with_fsync(
+        &self,
+        n: &mut Needle,
+        fsync: bool,
+    ) -> Result<Size, VolumeError> {
         self.cancel_pending_writes(n.id, n.cookie);
         let _sync_guard = self.data_file_sync_lock.lock().unwrap();
         let _guard = self.data_file_access_control.write_lock();
@@ -3823,10 +3833,15 @@ impl Volume {
         if self.no_write_flags().0 {
             return Err(VolumeError::ReadOnly(self.id));
         }
-        self.do_delete_request(&mut io, n)
+        self.do_delete_request(&mut io, n, fsync)
     }
 
-    fn do_delete_request(&self, io: &mut VolumeIo, n: &mut Needle) -> Result<Size, VolumeError> {
+    fn do_delete_request(
+        &self,
+        io: &mut VolumeIo,
+        n: &mut Needle,
+        fsync: bool,
+    ) -> Result<Size, VolumeError> {
         let (found, size, _stored_offset) = if let Some(nm) = &io.nm {
             // Propagate: acknowledging the delete as a no-op because the index
             // could not be read would drop the tombstone on the floor while the
@@ -3855,6 +3870,11 @@ impl Volume {
         let offset = if !self.has_remote_file() {
             // Normal volume: append tombstone to .dat file
             let (offset, _, _) = self.append_needle(io, n)?;
+            if fsync && let Err(e) = self.flush_dat(io) {
+                self.check_read_write_error(Some(&e));
+                self.undo_unsynced_append(io, offset);
+                return Err(VolumeError::Io(e));
+            }
             offset
         } else {
             // Remote-tiered volume: skip .dat append, use offset 0
@@ -3871,7 +3891,10 @@ impl Volume {
             io.last_write_needle_key = NeedleId(0);
             io.last_write_deleted = true;
         }
-        let checkpoint_ok = self.maybe_checkpoint_index(io, false);
+        if fsync {
+            self.flush_idx(io)?;
+        }
+        let checkpoint_ok = self.maybe_checkpoint_index(io, fsync);
 
         // Clear the EIO streak after a successful delete (tombstone append +
         // index update + checkpoint), mirroring do_write_request.
@@ -8274,6 +8297,60 @@ mod tests {
 
     /// A batch of durable writes shares one .dat sync and one .idx sync,
     /// where writing them one at a time syncs both files per needle.
+    #[test]
+    fn test_delete_needle_with_fsync_syncs_tombstone() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let v = make_test_volume(dir);
+
+        let mut writes: Vec<_> = (1..=2u64)
+            .map(|id| (batch_needle(id, 0xaa, b"payload"), false))
+            .collect();
+        assert!(
+            v.write_needles_grouped(&mut writes)
+                .iter()
+                .all(|r| r.is_ok())
+        );
+        assert_eq!(v.sync_counts_for_test(), (0, 0));
+
+        v.delete_needle(&mut batch_needle(1, 0xaa, b"")).unwrap();
+        assert_eq!(v.sync_counts_for_test(), (0, 0));
+
+        let size = v
+            .delete_needle_with_fsync(&mut batch_needle(2, 0xaa, b""), true)
+            .unwrap();
+        assert!(size.0 > 0);
+        assert_eq!(v.sync_counts_for_test(), (1, 1));
+    }
+
+    #[test]
+    fn test_delete_needle_failed_fsync_keeps_needle() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let v = make_test_volume(dir);
+
+        let mut writes = vec![(batch_needle(1, 0xaa, b"payload"), false)];
+        assert!(
+            v.write_needles_grouped(&mut writes)
+                .iter()
+                .all(|r| r.is_ok())
+        );
+
+        v.fail_next_fsync_for_test(true);
+        assert!(
+            v.delete_needle_with_fsync(&mut batch_needle(1, 0xaa, b""), true)
+                .is_err()
+        );
+        v.fail_next_fsync_for_test(false);
+
+        let mut n = Needle {
+            id: NeedleId(1),
+            ..Needle::default()
+        };
+        v.read_needle(&mut n).unwrap();
+        assert_eq!(n.data, b"payload");
+    }
+
     #[test]
     fn test_grouped_fsync_writes_share_one_sync() {
         let tmp = TempDir::new().unwrap();

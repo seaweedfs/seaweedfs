@@ -1043,12 +1043,21 @@ impl Store {
 
     /// Delete a needle from a volume.
     pub fn delete_volume_needle(&self, vid: VolumeId, n: &mut Needle) -> Result<Size, VolumeError> {
+        self.delete_volume_needle_with_fsync(vid, n, false)
+    }
+
+    pub fn delete_volume_needle_with_fsync(
+        &self,
+        vid: VolumeId,
+        n: &mut Needle,
+        fsync: bool,
+    ) -> Result<Size, VolumeError> {
         // Match Go's DeleteVolumeNeedle: check noWriteOrDelete before proceeding.
         let (_, vol) = self.find_volume(vid).ok_or(VolumeError::NotFound)?;
         if vol.is_no_write_or_delete() {
             return Err(VolumeError::ReadOnly(vid));
         }
-        vol.delete_needle(n)
+        vol.delete_needle_with_fsync(n, fsync)
     }
 
     // ---- Collection operations ----
