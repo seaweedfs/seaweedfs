@@ -390,21 +390,31 @@ func (vcd *volumeCheckDisk) eqVolumeFileCount(a, b *VolumeReplica) (bool, error)
 		return false, fmt.Errorf("getting volume %d status from %s: %w", b.info.Id, b.location.dataNode.Id, errB)
 	}
 
-	// VolumeStatus reports no compaction revision, so these counts never count as a vacuum-state difference.
-	return !vcd.countsDiffer(fileCountA, fileDeletedCountA, fileCountB, fileDeletedCountB, true), nil
+	// VolumeStatus reports no compaction revision to pair with these counts.
+	return !vcd.countsDiffer(fileCountA, fileDeletedCountA, fileCountB, fileDeletedCountB, false), nil
 }
 
 // countsDiffer reports whether two replicas' needle counters suggest a needle
 // is missing on one side. FileCount counts every write and DeleteCount every
-// delete or overwrite until a vacuum drops them, so replicas holding the same
-// live needles at different compaction revisions differ in both by the same
-// amount. At the same revision such a difference is a missed write and a
-// missed delete, which still need a check.
-func (vcd *volumeCheckDisk) countsDiffer(fileCountA, deleteCountA, fileCountB, deleteCountB uint64, sameRevision bool) bool {
-	if !sameRevision && int64(fileCountA)-int64(deleteCountA) == int64(fileCountB)-int64(deleteCountB) {
+// delete or overwrite until a vacuum drops them; with liveCountsSuffice, equal
+// live counts are taken as a vacuum-state difference.
+func (vcd *volumeCheckDisk) countsDiffer(fileCountA, deleteCountA, fileCountB, deleteCountB uint64, liveCountsSuffice bool) bool {
+	if liveCountsSuffice && int64(fileCountA)-int64(deleteCountA) == int64(fileCountB)-int64(deleteCountB) {
 		return false
 	}
 	return fileCountA != fileCountB || (vcd.syncDeletions && deleteCountA != deleteCountB)
+}
+
+// liveCountsSuffice reports whether equal live counts are enough to skip two
+// replicas at different compaction revisions. Equal live counts can also hide
+// a missed write plus a missed delete, so this holds only when no repair this
+// run could make depends on them: deletes are not synced and neither replica
+// can take a resurrected needle.
+func (vcd *volumeCheckDisk) liveCountsSuffice(a, b *VolumeReplica) bool {
+	if vcd.syncDeletions || a.info.CompactRevision == b.info.CompactRevision {
+		return false
+	}
+	return !vcd.resurrectMissingNeedles || (a.info.CompactRevision > 0 && b.info.CompactRevision > 0)
 }
 
 // shouldSkipVolume determines whether two volume replicas should skip synchronization.
@@ -430,7 +440,7 @@ func (vcd *volumeCheckDisk) shouldSkipVolume(a, b *VolumeReplica) (bool, error) 
 	}
 
 	pulseTimeAtSecond := vcd.now.Add(-constants.VolumePulsePeriod * 2).Unix()
-	if vcd.countsDiffer(a.info.FileCount, a.info.DeleteCount, b.info.FileCount, b.info.DeleteCount, a.info.CompactRevision == b.info.CompactRevision) {
+	if vcd.countsDiffer(a.info.FileCount, a.info.DeleteCount, b.info.FileCount, b.info.DeleteCount, vcd.liveCountsSuffice(a, b)) {
 		// Do synchronization of volumes, if the modification time was before the last pulsation time
 		if a.info.ModifiedAtSecond < pulseTimeAtSecond || b.info.ModifiedAtSecond < pulseTimeAtSecond {
 			return false, nil
