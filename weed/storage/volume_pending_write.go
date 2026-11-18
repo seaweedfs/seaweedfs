@@ -91,5 +91,9 @@ func (v *Volume) dropCancelledWrite(n *needle.Needle, offset uint64) error {
 	if _, err := v.doDeleteRequest(tombstone); err != nil {
 		return err
 	}
-	return fmt.Errorf("needle %s: %w", needle.NewFileIdFromNeedle(v.Id, n), ErrorDeleted)
+	return cancelledWriteError(v.Id, n)
+}
+
+func cancelledWriteError(vid needle.VolumeId, n *needle.Needle) error {
+	return fmt.Errorf("needle %s: %w", needle.NewFileIdFromNeedle(vid, n), ErrorDeleted)
 }

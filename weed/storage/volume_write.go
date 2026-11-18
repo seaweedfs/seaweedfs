@@ -350,6 +350,11 @@ func (v *Volume) appendWriteRequest(n *needle.Needle, checkCookie bool, fsync bo
 	if v.IsReadOnly() {
 		return 0, 0, false, fmt.Errorf("volume %d is %w", v.Id, ErrorReadOnly)
 	}
+	// A write cancelled before it got here must not append: its delete may
+	// already be durable, and an unsynced row could outlive its tombstone.
+	if v.isCancelledWrite(n) {
+		return 0, 0, false, cancelledWriteError(v.Id, n)
+	}
 	if v.isFileUnchanged(n) {
 		size = Size(n.DataSize)
 		isUnchanged = true
