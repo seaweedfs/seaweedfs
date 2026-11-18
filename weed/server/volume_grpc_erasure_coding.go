@@ -505,10 +505,12 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 		// once the whole copy succeeds, so a failed transfer leaves a shard
 		// already here as is and never removes one another writer put there.
 		var stagedShards []uint32
-		for i, shardId := range req.ShardIds {
-			if slices.Contains(req.ShardIds[:i], shardId) {
+		seen := make(map[uint32]bool, len(req.ShardIds))
+		for _, shardId := range req.ShardIds {
+			if seen[shardId] {
 				continue
 			}
+			seen[shardId] = true
 			ext := erasure_coding.ToExt(int(shardId))
 			staged, err := vs.stageEcCopyFile(client, req.Collection, req.VolumeId, ext, dataBaseFileName+ext, false, throttler)
 			if err != nil {
