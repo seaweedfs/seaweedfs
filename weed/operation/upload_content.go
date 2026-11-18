@@ -402,6 +402,17 @@ func (uploader *Uploader) retriedUploadData(ctx context.Context, prepared *prepa
 			if statusErr.StatusCode == http.StatusConflict || (statusErr.StatusCode == http.StatusUnauthorized && statusErr.expiredBeforeAppend && !util_http.IsProxyChunkUrl(option.UploadUrl)) {
 				return nil, err
 			}
+			if statusErr.StatusCode == http.StatusUnauthorized && statusErr.expiredBeforeAppend && util_http.IsProxyChunkUrl(option.UploadUrl) {
+				// The caller's filer credential was minted once and may have
+				// expired alongside the volume JWT (both default to 10s), so
+				// re-mint it before replaying the same FID; otherwise the filer
+				// rejects the retry with an unmarked 401 and recovery stops.
+				if option.FilerJwt != nil {
+					option.Jwt = option.FilerJwt(true)
+				} else {
+					option.Jwt = security.EncodedJwt(util_http.JwtForFilerServer(true))
+				}
+			}
 			if statusErr.stalled {
 				option.stallWatchdogDisarmed = true
 			}

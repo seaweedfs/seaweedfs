@@ -175,6 +175,49 @@ func TestUploadExpiryProxyRetriesSameFid(t *testing.T) {
 	require.Equal(t, []string{fid, fid}, seenFids)
 }
 
+// With filer signing enabled, the caller's filer credential can expire together
+// with the volume JWT. The proxy same-FID retry must carry a freshly minted
+// filer credential, not replay the stale one (which the filer would reject with
+// an unmarked 401 that stops recovery).
+func TestUploadExpiryProxyRefreshesFilerJwtOnRetry(t *testing.T) {
+	const fid = "3,01637037d6"
+	var mu sync.Mutex
+	calls := 0
+	var auths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		mu.Lock()
+		calls++
+		n := calls
+		auths = append(auths, r.Header.Get("Authorization"))
+		mu.Unlock()
+		if n == 1 {
+			w.Header().Set(util_http.WriteOutcomeHeader, util_http.WriteOutcomeExpiredJwtBeforeAppend)
+			w.WriteHeader(401)
+			_, _ = io.WriteString(w, `{"error":"wrong jwt"}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"size":5}`)
+	}))
+	defer srv.Close()
+	proxyURL := srv.URL + "/?" + util_http.ProxyChunkIdParam + "=" + fid
+	minted := 0
+	option := &UploadOption{UploadUrl: proxyURL, Jwt: "stale-filer-jwt", FilerJwt: func(isWrite bool) security.EncodedJwt {
+		minted++
+		return security.EncodedJwt(fmt.Sprintf("fresh-filer-jwt-%d", minted))
+	}}
+	result, err := NewUploaderWithHttpClient(srv.Client()).UploadData(context.Background(), []byte("plain"), option)
+	require.NoError(t, err)
+	require.Equal(t, uint32(5), result.Size)
+	mu.Lock()
+	defer mu.Unlock()
+	require.Equal(t, 2, calls)
+	require.Equal(t, 1, minted)
+	// The first request carried the stale credential; the retry re-minted one.
+	require.Equal(t, "Bearer stale-filer-jwt", auths[0])
+	require.Equal(t, "Bearer fresh-filer-jwt-1", auths[1])
+}
+
 // Generic401 still uses the old RetryForever behavior. Only the explicitly
 // marked expiry path gains the separate finite recovery budget.
 func TestUploadExpiryPreservesRetryForeverGenericDenial(t *testing.T) {
